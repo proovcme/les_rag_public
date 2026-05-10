@@ -38,24 +38,26 @@ OLLAMA_CONTEXT_LENGTH=8192
 | `qwen2.5-coder:14b` | 9.0 GB | Генерация кода (Roo Code) | ~9.0 GB |
 | `bge-m3:latest` | 1.2 GB | Эмбеддинги (векторизация чанков) | ~1.2 GB |
 
-*Ollama автоматически выгружает неактивную модель. Параллельно в RAM живут только чат + эмбеддинг (~10.5 GB).*
+Ollama автоматически выгружает неактивную модель. Параллельно в RAM живут только чат + эмбеддинг (~10.5 GB).
 
 ## 🐳 Сервисы и контейнеры v2.0
 **Путь:** `~/Projects/LES_v2/docker-compose.yml`
 
 | Сервис | Образ | Порт | RAM | Роль |
 |---|---|---|---|---|
-| `les-qdrant` | `qdrant/qdrant:latest` | 6333 | ~1.5 GB | Векторная БД, хранение чанков и payload |
-| `les-proxy` | `python:3.11-slim` (custom) | 8050 | ~0.5 GB | FastAPI ядро, CRAG, ConverterRouter, SSE |
+| les-qdrant | qdrant/qdrant:latest | 6333 | ~1.5 GB | Векторная БД, хранение чанков и payload |
+| les-proxy | python:3.11-slim (custom) | 8050 | ~0.5 GB | FastAPI ядро, CRAG, ConverterRouter, SSE, Metrics |
 
 **Зависимости Proxy (`requirements.txt`):**  
-FastAPI, Uvicorn, Pydantic v2, LlamaIndex, Qdrant-client, `pymupdf4llm`, `mammoth`, `extract-msg`, `pandas`, `sse-starlette`.
+FastAPI, Uvicorn, Pydantic v2, LlamaIndex, Qdrant-client, `pymupdf4llm`, `mammoth`, `extract-msg`, `pandas`, `sse-starlette`, `psutil`.
 
-**Хранение данных:**
+**Хранение данных (Volumes):**
 - `./data/qdrant/` → Volume векторной БД
 - `./data/les_meta.db` → SQLite метаданные датасетов/документов
+- `./data/les_metrics.db` → SQLite time-series метрики П.Р.О.Р.А.Б.
 - `./storage/datasets/` → Физические UUID-папки загруженных файлов
 - `./RAG_Content/` → Исходники (NTD, BIM, MAIL) для загрузки
+- `./frontend/`, `./backend/` → Hot-reload кода без пересборки
 
 ## 🔄 Сценарии эксплуатации
 ### 1. Полный сброс питания
@@ -63,7 +65,7 @@ FastAPI, Uvicorn, Pydantic v2, LlamaIndex, Qdrant-client, `pymupdf4llm`, `mammot
 2. Загрузка macOS → автологин `ovc`.
 3. Запуск Login Items → Docker Desktop, Ollama.
 4. `docker compose up -d` (если не настроен автозапуск compose).
-5. **Итог:** Через 60 сек доступен `http://localhost:8050` и SSH.
+**Итог:** Через 60 сек доступен `http://localhost:8050` и SSH.
 
 ### 2. Проверка состояния
 ```bash
@@ -75,6 +77,9 @@ ollama ps
 
 # Метрики системы
 curl -s http://localhost:8050/api/metrics | python3 -m json.tool
+
+# Логи индексации
+docker logs -f les-proxy | grep -E "\[PARSE\]|\[CONVERT\]"
 ```
 
 ### 3. Пересборка ядра (при обновлении кода)
@@ -82,6 +87,10 @@ curl -s http://localhost:8050/api/metrics | python3 -m json.tool
 cd ~/Projects/LES_v2
 docker compose build proxy && docker compose up -d proxy
 ```
+
+### 4. Массовая загрузка нормативки
+Через UI С.О.В.У.Ш.К.А. → вкладка **Датасеты** → кнопка `🔄 Загрузить в индекс` напротив нужной папки.  
+Или через API: `POST /api/rag/sync/NTD`
 
 ## 🛡️ Безопасность
 | Уровень | Мера | Статус |
@@ -91,6 +100,7 @@ docker compose build proxy && docker compose up -d proxy
 | Данные | Полностью локально, Zero-Cloud | ✅ |
 | Контейнеры | Изоляция сетей Docker, `unless-stopped` | ✅ |
 | Модели | Лимиты RAM, автовыгрузка, контекст 8K | ✅ |
+| Нагрузка | `asyncio.Semaphore(2)` на индексацию | ✅ |
 
 ## 📝 История изменений
 | Дата | Изменение |
@@ -99,5 +109,23 @@ docker compose build proxy && docker compose up -d proxy
 | 10.05.2026 | Внедрён стек Qdrant + FastAPI + LlamaIndex + Ollama. |
 | 10.05.2026 | Настроен ConverterRouter (pymupdf4llm, mammoth, pandas). |
 | 10.05.2026 | Фиксация Ollama env, приоритет Ethernet, структура storage/datasets. |
+| 10.05.2026 | Внедрены SQLite-метрики, SSE-логи, Chart.js дашборды. |
+| 10.05.2026 | Реализован UI Sync: `/api/rag/sources`, `/api/rag/sync/{folder}`, вкладка Датасеты. |
+| 10.05.2026 | Исправлен persistence: проброс `./data` и `./storage` в volumes. |
 
 📅 **Документация актуальна на:** 10.05.2026
+
+
+## 🐳 Сервисы и контейнеры v2.0 (Обновлено 10.05.2026)
+- Uvicorn работает в production-режиме. Авто-релоад отключён во избежание deadlock'ов при маппинге volumes.
+- Метрики (П.Р.О.Р.А.Б.) собираются неблокирующим фоновым циклом (`asyncio.to_thread` + `psutil` + SQLite + Qdrant).
+- Volumes проброшены полностью: `./data`, `./storage`, `./RAG_Content`, `./frontend`, `./backend`. Данные переживают рестарты.
+- Прокси использует `asyncio.to_thread` для всех дисковых операций → event-loop не зависает под нагрузкой.
+
+## 📝 История изменений
+| Дата | Изменение |
+|---|---|
+| 10.05.2026 | Фикс Uvicorn hot-reload deadlock, переход на production-режим. |
+| 10.05.2026 | Внедрён фоновый коллектор метрик, неблокирующий кэш. |
+| 10.05.2026 | Delta-Sync, идемпотентная регистрация, рекурсивный обход. |
+| 10.05.2026 | Потоковый JSON-парсер для логов LLM (200MB+). |

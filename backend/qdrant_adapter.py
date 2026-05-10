@@ -6,7 +6,7 @@ import asyncio
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
-from llama_index.core import SimpleDirectoryReader, Settings
+from llama_index.core import Settings
 from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.core.schema import Document
@@ -56,26 +56,22 @@ class MetaDB:
             return [DatasetInfo(id=r["id"], name=r["name"], status=r["status"], doc_count=r["doc_count"], chunk_count=0) for r in rows]
 
     def add_document(self, dataset_id: str, file_name: str) -> str:
-        doc_id = str(uuid.uuid4())
         with self._get_conn() as conn:
+            existing = conn.execute("SELECT id FROM documents WHERE dataset_id = ? AND file_name = ?", (dataset_id, file_name)).fetchone()
+            if existing:
+                return existing["id"]
+            doc_id = str(uuid.uuid4())
             conn.execute("INSERT INTO documents (id, dataset_id, file_name, status) VALUES (?, ?, ?, 'PENDING')", (doc_id, dataset_id, file_name))
-        return doc_id
+            return doc_id
 
 class QdrantLlamaIndexAdapter(RAGBackend):
     def __init__(self, qdrant_url: str, ollama_url: str, embed_model_name: str, content_dir: str = "./storage/datasets"):
         self.content_dir = Path(content_dir)
         self.content_dir.mkdir(parents=True, exist_ok=True)
-        
         self.db = MetaDB()
         self.aclient = qdrant_client.AsyncQdrantClient(url=qdrant_url)
-        
-        self.embed_model = OllamaEmbedding(
-            model_name=embed_model_name,
-            base_url=ollama_url,
-            embed_batch_size=10
-        )
+        self.embed_model = OllamaEmbedding(model_name=embed_model_name, base_url=ollama_url, embed_batch_size=10)
         Settings.embed_model = self.embed_model
-        
         self.collection_name = "les_rag"
         self._collection_ready = False
 
@@ -84,11 +80,8 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         try:
             await self.aclient.get_collection(self.collection_name)
         except Exception:
-            print(f"[INIT] Creating collection {self.collection_name}")
-            await self.aclient.create_collection(
-                collection_name=self.collection_name,
-                vectors_config=models.VectorParams(size=1024, distance=models.Distance.COSINE)
-            )
+            logger.info(f"[INIT] Creating collection {self.collection_name}")
+            await self.aclient.create_collection(collection_name=self.collection_name, vectors_config=models.VectorParams(size=1024, distance=models.Distance.COSINE))
         self._collection_ready = True
 
     async def health(self) -> bool:
@@ -109,7 +102,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         dest_file = dest_dir / file_path.name
         if file_path.exists():
             import shutil
-            shutil.copy(file_path, dest_file)
+            shutil.copy2(file_path, dest_file)
         return self.db.add_document(dataset_id, file_path.name)
 
     async def parse_dataset(self, dataset_id: str) -> Dict[str, Any]:
@@ -122,15 +115,20 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         return res
 
     def _sync_parse(self, dataset_id: str):
-        print(f"[PARSE] Start {dataset_id}")
+        logger.info(f"[PARSE] Start dataset {dataset_id}")
         data_dir = self.content_dir / dataset_id
         if not data_dir.exists(): return {"status": "error", "msg": "dir missing"}
 
         try:
             final_nodes = []
-            for file_path in data_dir.iterdir():
-                if not file_path.is_file(): continue
-                print(f"[PARSE] Converting {file_path.name}...")
+            files = [f for f in data_dir.rglob('*') if f.is_file()]
+            total = len(files)
+            logger.info(f"[PARSE] Found {total} files (recursive)")
+
+            for i, file_path in enumerate(files, 1):
+                if i % 50 == 0 or i == total:
+                    logger.info(f"[PARSE] Progress: {i}/{total} files")
+                
                 md_content = convert_to_markdown(file_path)
                 if md_content:
                     doc = Document(text=md_content, metadata={"file_name": file_path.name, "dataset_id": dataset_id})
@@ -147,25 +145,22 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             if not final_nodes:
                 return {"status": "empty", "msg": "no parsable content"}
 
-            print(f"[PARSE] Embedding {len(final_nodes)} chunks...")
+            logger.info(f"[PARSE] Embedding {len(final_nodes)} chunks...")
             points = []
             sync_client = qdrant_client.QdrantClient(url=os.getenv("QDRANT_URL", "http://qdrant:6333"))
             for node in final_nodes:
                 vec = self.embed_model.get_text_embedding(node.text)
                 points.append(models.PointStruct(
-                    id=str(uuid.uuid4()),
-                    vector=vec,
+                    id=str(uuid.uuid4()), vector=vec,
                     payload={"text": node.text, "dataset_id": dataset_id, "doc_id": node.node_id, "file_name": node.metadata.get("file_name", "unknown")}
                 ))
             
-            print(f"[PARSE] Upserting {len(points)} points...")
+            logger.info(f"[PARSE] Upserting {len(points)} points...")
             sync_client.upsert(collection_name=self.collection_name, points=points)
-            print("[PARSE] DONE")
+            logger.info("[PARSE] DONE")
             return {"status": "completed", "chunks": len(points)}
         except Exception as e:
-            print(f"[PARSE] ERROR: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"[PARSE] ERROR: {e}", exc_info=True)
             return {"status": "failed", "error": str(e)}
 
     async def retrieve(self, query: str, dataset_ids: Optional[List[str]] = None, top_k: int = 5) -> List[Chunk]:
@@ -174,10 +169,5 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         if dataset_ids:
             query_filter = models.Filter(must=[models.FieldCondition(key="dataset_id", match=models.MatchAny(any=dataset_ids))])
         query_vec = self.embed_model.get_query_embedding(query)
-        results = await self.aclient.query_points(
-            collection_name=self.collection_name, query=query_vec, query_filter=query_filter, limit=top_k, with_payload=True
-        )
-        return [Chunk(
-            content=p.payload.get("text", ""), doc_id=p.payload.get("doc_id", ""), 
-            doc_name=p.payload.get("file_name", "unknown"), score=p.score, meta=p.payload
-        ) for p in results.points]
+        results = await self.aclient.query_points(collection_name=self.collection_name, query=query_vec, query_filter=query_filter, limit=top_k, with_payload=True)
+        return [Chunk(content=p.payload.get("text", ""), doc_id=p.payload.get("doc_id", ""), doc_name=p.payload.get("file_name", "unknown"), score=p.score, meta=p.payload) for p in results.points]

@@ -32,7 +32,7 @@ main { padding: 16px; }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 input, textarea { width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; font-family: var(--font); }
 .row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
-.log-box { background: #000; color: #0f0; font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: 6px; height: 200px; overflow-y: auto; white-space: pre-wrap; }
+.log-box { background: #000; color: #0f0; font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: 6px; height: 300px; overflow-y: auto; white-space: pre-wrap; }
 .log-controls { display: flex; gap: 8px; margin-bottom: 8px; }
 .log-btn { padding: 4px 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
 .log-btn.active { background: var(--accent); color: #fff; }
@@ -56,13 +56,13 @@ th { color: var(--muted); font-weight: 600; }
 <body>
 <header>
   <div class="header-left"><span class="logo">🦉 С.О.В.У.Ш.К.А.</span><span class="version">Л.Е.С. v2.0 Core</span></div>
-  <div class="controls"><button class="btn-sm" onclick="toggleTheme()">🌓 Тема</button></div>
+  <div class="controls"><button class="btn-sm" id="btn-theme">🌓 Тема</button></div>
 </header>
 <nav>
-  <a href="#" class="active" onclick="switchTab('overview', this)">Обзор</a>
-  <a href="#" onclick="switchTab('datasets', this)">Датасеты</a>
-  <a href="#" onclick="switchTab('rag', this)">RAG</a>
-  <a href="#" onclick="switchTab('logs', this)">Логи</a>
+  <a href="#" class="active" data-tab="overview">Обзор</a>
+  <a href="#" data-tab="datasets">Датасеты</a>
+  <a href="#" data-tab="rag">RAG</a>
+  <a href="#" data-tab="logs">Логи</a>
 </nav>
 <main>
   <div id="tab-overview" class="tab-content active">
@@ -97,175 +97,204 @@ th { color: var(--muted); font-weight: 600; }
   <div id="tab-rag" class="tab-content">
     <div class="card">
       <h3>Источники для поиска</h3>
-      <div class="ds-selector" id="ds-selector">
-        <span style="color:var(--muted); font-size:0.8rem;">Загрузка списка...</span>
-      </div>
+      <div class="ds-selector" id="ds-selector"><span style="color:var(--muted); font-size:0.8rem;">Загрузка списка...</span></div>
     </div>
     <div class="card">
       <h3>AI Чат (Т.О.С.К.А.)</h3>
       <textarea id="chat-input" rows="3" placeholder="Задайте вопрос по выбранным источникам..."></textarea>
-      <div class="row" style="margin-top:8px;"><button class="btn-sm" onclick="sendChat()">Отправить</button></div>
+      <div class="row" style="margin-top:8px;"><button class="btn-sm" id="btn-send">Отправить</button></div>
       <div id="chat-output" style="margin-top:10px; font-size:0.9rem; color:var(--muted); white-space: pre-wrap;"></div>
     </div>
   </div>
 
   <div id="tab-logs" class="tab-content">
     <div class="card">
-      <h3>Системный лог (SSE)</h3>
+      <h3>Системный лог (Live)</h3>
       <div class="log-controls">
-        <button class="log-btn active" onclick="filterLogs('ALL', this)">ALL</button>
-        <button class="log-btn" onclick="filterLogs('INFO', this)">INFO</button>
-        <button class="log-btn" onclick="filterLogs('ERROR', this)">ERROR</button>
+        <button class="log-btn active" id="btn-pause">⏸ Пауза</button>
+        <button class="log-btn" id="btn-clear">🗑 Очистить</button>
       </div>
-      <div class="log-box" id="sys-log">[init] Подключение...</div>
+      <div class="log-box" id="sys-log">[init] Подключение к потоку логов...</div>
     </div>
   </div>
 </main>
 
 <script>
-let logFilter = 'ALL';
-let chartLatency, chartCrag;
-let availableDatasets = [];
+document.addEventListener('DOMContentLoaded', () => {
+  let chartLatency, chartCrag;
+  let selectedDatasetIds = new Set();
+  let datasetsInitialized = false;
+  let logPaused = false;
+  let currentDatasetList = [];
 
-function toggleTheme() { document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; }
-function switchTab(id, el) {
-  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
-  document.getElementById('tab-' + id).classList.add('active');
-  el.classList.add('active');
-}
-function filterLogs(level, el) { logFilter = level; document.querySelectorAll('.log-btn').forEach(b => b.classList.remove('active')); el.classList.add('active'); }
-
-function initCharts() {
-  const ctxL = document.getElementById('chart-latency').getContext('2d');
-  chartLatency = new Chart(ctxL, {
-    type: 'line',
-    data: { labels: [], datasets: [{ label: 'Latency (s)', data: [], borderColor: '#3b82f6', tension: 0.3, fill: false }] },
-    options: { responsive: true, scales: { y: { beginAtZero: true } }, animation: false }
+  // Theme
+  document.getElementById('btn-theme').addEventListener('click', () => {
+    const html = document.documentElement;
+    html.dataset.theme = html.dataset.theme === 'dark' ? 'light' : 'dark';
   });
-  const ctxC = document.getElementById('chart-crag').getContext('2d');
-  chartCrag = new Chart(ctxC, {
-    type: 'bar',
-    data: { labels: ['VERIFIED', 'NO_DATA'], datasets: [{ label: 'Count', data: [0,0], backgroundColor: ['#22c55e','#eab308'] }] },
-    options: { responsive: true, scales: { y: { beginAtZero: true } } }
-  });
-}
 
-async function fetchMetrics() {
-  try {
-    const res = await fetch('/api/metrics');
-    const data = await res.json();
-    const m = data.latest || {};
-    document.getElementById('m-cpu').textContent = (m.cpu || 0).toFixed(1);
-    document.getElementById('m-ram').textContent = m.ram_total ? ((m.ram_used/m.ram_total)*100).toFixed(0)+'%' : '...';
-    document.getElementById('m-datasets').textContent = m.datasets || 0;
-    document.getElementById('m-files').textContent = m.files_processed || 0;
-    document.getElementById('m-chunks').textContent = m.chunks_indexed || 0;
-    document.getElementById('m-queue').textContent = m.queue || 0;
-    document.getElementById('m-active').textContent = m.active || 0;
-    document.getElementById('m-speed').textContent = (m.avg_speed_fps || 0).toFixed(2);
-    if (chartLatency && data.history?.length) { chartLatency.data.labels = data.history.map((_, i) => i); chartLatency.data.datasets[0].data = data.history.map(h => h.chat_latency); chartLatency.update(); }
-    if (chartCrag) { chartCrag.data.datasets[0].data = [m.crag_verified || 0, m.crag_no_data || 0]; chartCrag.update(); }
-  } catch(e) {}
-}
-
-async function fetchSources() {
-  try {
-    const res = await fetch('/api/rag/sources');
-    const list = await res.json();
-    const tbody = document.getElementById('src-body');
-    tbody.innerHTML = '';
-    if (!list.length) { tbody.innerHTML = '<tr><td colspan="5" style="color:var(--muted)">Нет папок в RAG_Content</td></tr>'; return; }
-    list.forEach(s => {
-      const badgeClass = s.dataset_status === 'PARSING' ? 'b-parsing' : s.dataset_status === 'COMPLETED' ? 'b-completed' : s.dataset_status === 'ERROR' ? 'b-error' : s.dataset_status === 'NOT_CREATED' ? 'b-none' : 'b-idle';
-      const row = document.createElement('tr');
-      row.innerHTML = `
-        <td><strong>${s.folder}</strong><br><span style="font-size:0.7rem;color:var(--muted)">RAG_Content/${s.folder}</span></td>
-        <td>${s.source_files}</td>
-        <td><span class="badge ${badgeClass}">${s.dataset_status}</span></td>
-        <td>${s.indexed_files}</td>
-        <td><button class="btn-sm" onclick="syncFolder('${s.folder}')">🔄 Загрузить в индекс</button></td>
-      `;
-      tbody.appendChild(row);
+  // Tabs
+  document.querySelectorAll('nav a').forEach(link => {
+    link.addEventListener('click', e => {
+      e.preventDefault();
+      const tab = link.dataset.tab;
+      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
+      document.getElementById('tab-' + tab).classList.add('active');
+      link.classList.add('active');
     });
-  } catch(e) { console.error(e); }
-}
-
-async function fetchDatasetsForChat() {
-  try {
-    const res = await fetch('/api/rag/datasets');
-    const list = await res.json();
-    availableDatasets = list.filter(d => d.status === 'COMPLETED' || d.status === 'IDLE' || d.status === 'PARSING');
-    renderDatasetSelector();
-  } catch(e) {}
-}
-
-function renderDatasetSelector() {
-  const container = document.getElementById('ds-selector');
-  container.innerHTML = '';
-  if (!availableDatasets.length) {
-    container.innerHTML = '<span style="color:var(--muted); font-size:0.8rem;">Нет готовых датасетов. Загрузите файлы во вкладке "Датасеты".</span>';
-    return;
-  }
-  availableDatasets.forEach(ds => {
-    const chip = document.createElement('label');
-    chip.className = 'ds-chip active';
-    chip.innerHTML = `<input type="checkbox" value="${ds.id}" checked onchange="toggleChip(this)"> ${ds.name}`;
-    container.appendChild(chip);
   });
-}
 
-function toggleChip(cb) {
-  cb.parentElement.classList.toggle('active', cb.checked);
-}
+  // Logs controls
+  document.getElementById('btn-pause').addEventListener('click', function() {
+    logPaused = !logPaused;
+    this.textContent = logPaused ? '▶ Продолжить' : '⏸ Пауза';
+    this.classList.toggle('active', !logPaused);
+  });
+  document.getElementById('btn-clear').addEventListener('click', () => {
+    document.getElementById('sys-log').textContent = '';
+  });
 
-async function syncFolder(folder) {
-  if (!confirm(`Загрузить все файлы из ${folder} в индекс?`)) return;
+  // Charts
   try {
-    const res = await fetch(`/api/rag/sync/${folder}`, { method: 'POST' });
-    const data = await res.json();
-    alert(`✅ Синхронизация запущена. Файлов в очереди: ${data.files_queued}`);
-    fetchSources();
-    fetchDatasetsForChat();
-  } catch(e) { alert('❌ Ошибка запуска: ' + e.message); }
-}
+    const ctxL = document.getElementById('chart-latency').getContext('2d');
+    chartLatency = new Chart(ctxL, {
+      type: 'line',
+      data: { labels: [], datasets: [{ label: 'Latency (s)', data: [], borderColor: '#3b82f6', tension: 0.3, fill: false }] },
+      options: { responsive: true, scales: { y: { beginAtZero: true } }, animation: false }
+    });
+    const ctxC = document.getElementById('chart-crag').getContext('2d');
+    chartCrag = new Chart(ctxC, {
+      type: 'bar',
+      data: { labels: ['VERIFIED', 'NO_DATA'], datasets: [{ label: 'Count', data: [0,0], backgroundColor: ['#22c55e','#eab308'] }] },
+      options: { responsive: true, scales: { y: { beginAtZero: true } } }
+    });
+  } catch(e) { console.error('Chart init failed:', e); }
 
-function connectLogs() {
-  const evt = new EventSource('/api/logs/stream');
-  const box = document.getElementById('sys-log');
-  evt.onmessage = e => {
+  // Metrics
+  async function fetchMetrics() {
     try {
-      const log = JSON.parse(e.data);
-      if (logFilter === 'ALL' || log.level === logFilter) {
-        box.textContent += `[${new Date(log.ts*1000).toLocaleTimeString()}] ${log.msg}\n`;
-        box.scrollTop = box.scrollHeight;
+      const res = await fetch('/api/metrics');
+      const data = await res.json();
+      const m = data.latest || {};
+      document.getElementById('m-cpu').textContent = (m.cpu || 0).toFixed(1);
+      document.getElementById('m-ram').textContent = m.ram_total ? ((m.ram_used/m.ram_total)*100).toFixed(0)+'%' : '...';
+      document.getElementById('m-datasets').textContent = m.datasets || 0;
+      document.getElementById('m-files').textContent = m.files_processed || 0;
+      document.getElementById('m-chunks').textContent = m.chunks_indexed || 0;
+      document.getElementById('m-queue').textContent = m.queue || 0;
+      document.getElementById('m-active').textContent = m.active || 0;
+      document.getElementById('m-speed').textContent = (m.avg_speed_fps || 0).toFixed(2);
+      if (chartLatency && data.history?.length) {
+        chartLatency.data.labels = data.history.map((_, i) => i);
+        chartLatency.data.datasets[0].data = data.history.map(h => h.chat_latency);
+        chartLatency.update();
       }
-    } catch{}
+      if (chartCrag) {
+        chartCrag.data.datasets[0].data = [m.crag_verified || 0, m.crag_no_data || 0];
+        chartCrag.update();
+      }
+    } catch(e) {}
+  }
+
+  // Sources
+  async function fetchSources() {
+    try {
+      const res = await fetch('/api/rag/sources');
+      const list = await res.json();
+      const tbody = document.getElementById('src-body');
+      tbody.innerHTML = '';
+      if (!list.length) { tbody.innerHTML = '<tr><td colspan="5" style="color:var(--muted)">Нет папок в RAG_Content</td></tr>'; return; }
+      list.forEach(s => {
+        const badgeClass = s.dataset_status === 'PARSING' ? 'b-parsing' : s.dataset_status === 'COMPLETED' ? 'b-completed' : s.dataset_status === 'ERROR' ? 'b-error' : s.dataset_status === 'NOT_CREATED' ? 'b-none' : 'b-idle';
+        const row = document.createElement('tr');
+        row.innerHTML = `<td><strong>${s.folder}</strong><br><span style="font-size:0.7rem;color:var(--muted)">RAG_Content/${s.folder}</span></td><td>${s.source_files}</td><td><span class="badge ${badgeClass}">${s.dataset_status}</span></td><td>${s.indexed_files}</td><td><button class="btn-sm" onclick="window.syncFolder('${s.folder}')">🔄 Загрузить в индекс</button></td>`;
+        tbody.appendChild(row);
+      });
+    } catch(e) { console.error(e); }
+  }
+
+  // Datasets for chat
+  async function fetchDatasetsForChat() {
+    try {
+      const res = await fetch('/api/rag/datasets');
+      const list = await res.json();
+      const valid = list.filter(d => d.status === 'COMPLETED' || d.status === 'IDLE' || d.status === 'PARSING');
+      const ids = valid.map(d => d.id).sort().join(',');
+      if (datasetsInitialized && currentDatasetList === ids) return;
+      currentDatasetList = ids;
+      
+      const container = document.getElementById('ds-selector');
+      container.innerHTML = '';
+      if (!valid.length) { container.innerHTML = '<span style="color:var(--muted); font-size:0.8rem;">Нет готовых датасетов.</span>'; return; }
+      
+      valid.forEach(ds => {
+        const isChecked = !datasetsInitialized || selectedDatasetIds.has(ds.id);
+        if (isChecked) selectedDatasetIds.add(ds.id);
+        const chip = document.createElement('label');
+        chip.className = `ds-chip ${isChecked ? 'active' : ''}`;
+        chip.innerHTML = `<input type="checkbox" value="${ds.id}" ${isChecked ? 'checked' : ''}> ${ds.name}`;
+        chip.querySelector('input').addEventListener('change', function() {
+          if (this.checked) selectedDatasetIds.add(this.value);
+          else selectedDatasetIds.delete(this.value);
+          chip.classList.toggle('active', this.checked);
+        });
+        container.appendChild(chip);
+      });
+      datasetsInitialized = true;
+    } catch(e) {}
+  }
+
+  // Sync folder
+  window.syncFolder = async function(folder) {
+    if (!confirm(`Синхронизировать папку ${folder} с индексом?`)) return;
+    try {
+      const res = await fetch(`/api/rag/sync/${folder}`, { method: 'POST' });
+      const data = await res.json();
+      alert(`✅ Синхронизация завершена.\n🆕 Новых файлов: ${data.new_files}\n⏭ Пропущено: ${data.skipped_files}`);
+      fetchSources(); fetchDatasetsForChat();
+    } catch(e) { alert('❌ Ошибка запуска: ' + e.message); }
   };
-}
 
-async function sendChat() {
-  const q = document.getElementById('chat-input').value;
-  if(!q) return;
-  const selectedIds = Array.from(document.querySelectorAll('#ds-selector input:checked')).map(cb => cb.value);
-  const out = document.getElementById('chat-output');
-  out.textContent = '⏳ CRAG валидация...';
-  try {
-    const res = await fetch('/api/chat', { 
-      method: 'POST', 
-      headers: {'Content-Type': 'application/json'}, 
-      body: JSON.stringify({question: q, dataset_ids: selectedIds.length ? selectedIds : null}) 
-    });
-    const data = await res.json();
-    out.textContent = `[${data.crag_status}] ${data.answer}\n\nИсточники: ${data.sources?.join(', ') || '-'}`;
-  } catch(e) { out.textContent = '❌ Ошибка: ' + e.message; }
-}
+  // Logs SSE
+  function connectLogs() {
+    const evt = new EventSource('/api/logs/stream');
+    const box = document.getElementById('sys-log');
+    evt.onmessage = e => {
+      if (logPaused) return;
+      box.textContent += e.data;
+      box.scrollTop = box.scrollHeight;
+    };
+    evt.onerror = () => { box.textContent += '\n[sys] Соединение потеряно. Переподключение...\n'; };
+  }
 
-initCharts(); connectLogs(); fetchSources(); fetchDatasetsForChat();
-setInterval(fetchMetrics, 3000);
-setInterval(fetchSources, 10000);
-setInterval(fetchDatasetsForChat, 10000);
-fetchMetrics();
+  // Chat
+  document.getElementById('btn-send').addEventListener('click', async () => {
+    const q = document.getElementById('chat-input').value;
+    if(!q) return;
+    const selectedIds = Array.from(selectedDatasetIds);
+    const out = document.getElementById('chat-output');
+    out.textContent = '⏳ CRAG валидация...';
+    try {
+      const res = await fetch('/api/chat', { 
+        method: 'POST', 
+        headers: {'Content-Type': 'application/json'}, 
+        body: JSON.stringify({question: q, dataset_ids: selectedIds.length ? selectedIds : null}) 
+      });
+      const data = await res.json();
+      out.textContent = `[${data.crag_status}] ${data.answer}\n\nИсточники: ${data.sources?.join(', ') || '-'}`;
+    } catch(e) { out.textContent = '❌ Ошибка: ' + e.message; }
+  });
+
+  // Init
+  connectLogs();
+  fetchSources();
+  fetchDatasetsForChat();
+  fetchMetrics();
+  setInterval(fetchMetrics, 3000);
+  setInterval(fetchSources, 10000);
+  setInterval(fetchDatasetsForChat, 10000);
+});
 </script>
 </body>
 </html>
