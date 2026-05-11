@@ -162,37 +162,21 @@ async def get_metrics():
     rows = conn.execute("SELECT * FROM metrics ORDER BY id DESC LIMIT 60").fetchall()
     conn.close()
 
-        rag_stats = {"datasets": 0, "files": 0, "chunks": 0, "status": "unknown"}
-        try:
-            _c = sqlite3.connect(DB_PATH)
-            _c.execute("SELECT COUNT(*) FROM datasets")
-            rag_stats["datasets"] = _c.fetchone()[0] or 0
-            _c.execute("SELECT COUNT(*) FROM documents")
-            rag_stats["files"] = _c.fetchone()[0] or 0
-            _c.close()
-            if qdrant_client:
-                coll = qdrant_client.get_collection("les_rag")
-                rag_stats["chunks"] = coll.points_count or 0
-                rag_stats["status"] = "ready" if rag_stats["chunks"] > 0 else "indexing"
-        except Exception as e:
-            logger.warning(f"RAG stats error: {e}")
-            rag_stats["status"] = "error"
-
-        rag_stats = {"datasets": 0, "files": 0, "chunks": 0, "status": "unknown"}
-        try:
-            _c = sqlite3.connect(DB_PATH)
-            _c.execute("SELECT COUNT(*) FROM datasets")
-            rag_stats["datasets"] = _c.fetchone()[0] or 0
-            _c.execute("SELECT COUNT(*) FROM documents")
-            rag_stats["files"] = _c.fetchone()[0] or 0
-            _c.close()
-            if qdrant_client:
-                coll = qdrant_client.get_collection("les_rag")
-                rag_stats["chunks"] = coll.points_count or 0
-                rag_stats["status"] = "ready" if rag_stats["chunks"] > 0 else "indexing"
-        except Exception as e:
-            logger.warning(f"RAG stats error: {e}")
-            rag_stats["status"] = "error"
+    rag_stats = {"datasets": 0, "files": 0, "chunks": 0, "status": "unknown"}
+    try:
+        _c = sqlite3.connect(DB_PATH)
+        _c.execute("SELECT COUNT(*) FROM datasets")
+        rag_stats["datasets"] = _c.fetchone()[0] or 0
+        _c.execute("SELECT COUNT(*) FROM documents")
+        rag_stats["files"] = _c.fetchone()[0] or 0
+        _c.close()
+        if rag_backend:
+            coll = await rag_backend.aclient.get_collection("les_rag")
+            rag_stats["chunks"] = coll.points_count or 0
+            rag_stats["status"] = "ready" if rag_stats["chunks"] > 0 else "indexing"
+    except Exception as e:
+        logger.warning(f"RAG stats error: {e}")
+        rag_stats["status"] = "error"
 
     return {
         "system": {
@@ -214,7 +198,6 @@ async def get_metrics():
         "queue": {"llm_waiting": llm_queue_size},
         "errors": dict(error_counts),
         "heartbeats": heartbeats,
-        "rag": rag_stats
         "rag": rag_stats
     }
 
