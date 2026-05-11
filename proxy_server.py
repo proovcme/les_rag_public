@@ -164,7 +164,7 @@ async def get_metrics():
 
     rag_stats = {"datasets": 0, "files": 0, "chunks": 0, "status": "unknown"}
     try:
-        _c = sqlite3.connect(DB_PATH)
+        _c = sqlite3.connect('/app/data/les_meta.db')
         _c.execute("SELECT COUNT(*) FROM datasets")
         rag_stats["datasets"] = _c.fetchone()[0] or 0
         _c.execute("SELECT COUNT(*) FROM documents")
