@@ -12,13 +12,14 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import Request, FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel
 import httpx
 
+from backend.metrics_collector import DB_PATH, heartbeats, init_db, metrics_loop
 from backend.qdrant_adapter import QdrantLlamaIndexAdapter
 from backend.interface import DatasetInfo
 
@@ -39,7 +40,19 @@ crag_stats = {"verified": 0, "no_data": 0}
 UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
 
 rag_backend = None
-job_tracker = {}  # job_id -> {dataset_id, status, total, processed, message}
+job_tracker = {}
+import time
+from collections import defaultdict
+
+error_counts = defaultdict(int)
+llm_queue_size = 0
+chat_metrics = {
+    "latency_search": [], 
+    "latency_gen": [], 
+    "tokens": [], 
+    "crag_pass": 0, 
+    "crag_fail": 0
+}  # job_id -> {dataset_id, status, total, processed, message}
 
 metrics_cache = {
     "cpu": 0.0, "ram_used": 0.0, "ram_total": 1.0,
@@ -124,6 +137,19 @@ async def startup():
         logger.error(f"[INIT] Backend initialization failed: {e}")
         raise
 
+
+@app.on_event("startup")
+async def startup_event():
+    init_db()
+    asyncio.create_task(metrics_loop())
+
+@app.middleware("http")
+async def track_errors(request: Request, call_next):
+    response = await call_next(request)
+    if response.status_code >= 400:
+        error_counts[response.status_code] += 1
+    return response
+
 @app.get("/api/health")
 async def health():
     if not rag_backend: return {"status": "starting", "backend": "none"}
@@ -131,7 +157,66 @@ async def health():
 
 @app.get("/api/metrics")
 async def get_metrics():
-    return {"latest": metrics_cache, "history": []}
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("SELECT * FROM metrics ORDER BY id DESC LIMIT 60").fetchall()
+    conn.close()
+
+        rag_stats = {"datasets": 0, "files": 0, "chunks": 0, "status": "unknown"}
+        try:
+            _c = sqlite3.connect(DB_PATH)
+            _c.execute("SELECT COUNT(*) FROM datasets")
+            rag_stats["datasets"] = _c.fetchone()[0] or 0
+            _c.execute("SELECT COUNT(*) FROM documents")
+            rag_stats["files"] = _c.fetchone()[0] or 0
+            _c.close()
+            if qdrant_client:
+                coll = qdrant_client.get_collection("les_rag")
+                rag_stats["chunks"] = coll.points_count or 0
+                rag_stats["status"] = "ready" if rag_stats["chunks"] > 0 else "indexing"
+        except Exception as e:
+            logger.warning(f"RAG stats error: {e}")
+            rag_stats["status"] = "error"
+
+        rag_stats = {"datasets": 0, "files": 0, "chunks": 0, "status": "unknown"}
+        try:
+            _c = sqlite3.connect(DB_PATH)
+            _c.execute("SELECT COUNT(*) FROM datasets")
+            rag_stats["datasets"] = _c.fetchone()[0] or 0
+            _c.execute("SELECT COUNT(*) FROM documents")
+            rag_stats["files"] = _c.fetchone()[0] or 0
+            _c.close()
+            if qdrant_client:
+                coll = qdrant_client.get_collection("les_rag")
+                rag_stats["chunks"] = coll.points_count or 0
+                rag_stats["status"] = "ready" if rag_stats["chunks"] > 0 else "indexing"
+        except Exception as e:
+            logger.warning(f"RAG stats error: {e}")
+            rag_stats["status"] = "error"
+
+    return {
+        "system": {
+            "cpu": rows[0]["cpu"] if rows else 0,
+            "ram_used": rows[0]["ram_used"] if rows else 0,
+            "ram_total": rows[0]["ram_total"] if rows else 0,
+            "swap_used": rows[0]["swap_used"] if rows else 0,
+            "disk_used": rows[0]["disk_used"] if rows else 0,
+            "disk_total": rows[0]["disk_total"] if rows else 0,
+            "ollama_ram": rows[0]["ollama_ram"] if rows else 0,
+            "network_ok": rows[0]["network_ok"] if rows else 0
+        },
+        "pipeline": {
+            "latency_search": chat_metrics["latency_search"][-10:],
+            "latency_gen": chat_metrics["latency_gen"][-10:],
+            "tokens": chat_metrics["tokens"][-10:],
+            "crag_pass_rate": chat_metrics["crag_pass"] / max(1, chat_metrics["crag_pass"] + chat_metrics["crag_fail"])
+        },
+        "queue": {"llm_waiting": llm_queue_size},
+        "errors": dict(error_counts),
+        "heartbeats": heartbeats,
+        "rag": rag_stats
+        "rag": rag_stats
+    }
 
 @app.get("/api/rag/datasets")
 async def list_datasets(): return await rag_backend.list_datasets()
