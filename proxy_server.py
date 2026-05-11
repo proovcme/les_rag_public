@@ -8,6 +8,8 @@ import shutil
 import collections
 import sqlite3
 import psutil
+import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException, UploadFile, File
@@ -37,6 +39,7 @@ crag_stats = {"verified": 0, "no_data": 0}
 UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
 
 rag_backend = None
+job_tracker = {}  # job_id -> {dataset_id, status, total, processed, message}
 
 metrics_cache = {
     "cpu": 0.0, "ram_used": 0.0, "ram_total": 1.0,
@@ -167,26 +170,46 @@ async def sync_folder(folder: str):
     if not ds:
         ds_id = await rag_backend.create_dataset(ds_name)
         ds = DatasetInfo(id=ds_id, name=ds_name, status="IDLE", doc_count=0, chunk_count=0)
+
+    job_id = str(uuid.uuid4())[:8]
+    job_tracker[job_id] = {"dataset_id": ds.id, "dataset_name": ds_name, "status": "SCANNING", "total": 0, "processed": 0, "started_at": datetime.now().isoformat(), "message": "Сканирование..."}
+
     dest_dir = Path(f"./storage/datasets/{ds.id}")
     dest_dir.mkdir(parents=True, exist_ok=True)
     new_count, skip_count = 0, 0
-    for f in src_dir.iterdir():
-        if f.is_file():
-            dest = dest_dir / f.name
-            is_new = not dest.exists()
-            if not is_new:
-                s_src, s_dst = f.stat(), dest.stat()
-                if s_src.st_size != s_dst.st_size or abs(s_src.st_mtime - s_dst.st_mtime) > 1.0: is_new = True
-            if is_new:
-                await asyncio.to_thread(shutil.copy2, f, dest)
-                await rag_backend.upload_file(ds.id, f)
-                new_count += 1
-            else: skip_count += 1
+    files = [f for f in src_dir.iterdir() if f.is_file()]
+    job_tracker[job_id]["total"] = len(files)
+
+    for i, f in enumerate(files):
+        dest = dest_dir / f.name
+        is_new = not dest.exists()
+        if not is_new:
+            s_src, s_dst = f.stat(), dest.stat()
+            if s_src.st_size != s_dst.st_size or abs(s_src.st_mtime - s_dst.st_mtime) > 1.0: is_new = True
+        if is_new:
+            await asyncio.to_thread(shutil.copy2, f, dest)
+            await rag_backend.upload_file(ds.id, f)
+            new_count += 1
+        else: skip_count += 1
+        job_tracker[job_id]["processed"] = i + 1
+        job_tracker[job_id]["message"] = f"Копирование: {f.name}"
+        log_history.append(f"[JOB {job_id}] {f.name} ({i+1}/{len(files)})")
+
+    job_tracker[job_id]["status"] = "PARSING" if new_count > 0 else "COMPLETED"
+    job_tracker[job_id]["message"] = "Векторизация (bge-m3)..." if new_count > 0 else "Нет новых файлов"
+
     if new_count > 0:
         async def _run():
-            async with parse_semaphore: await rag_backend.parse_dataset(ds.id)
+            try:
+                async with parse_semaphore: await rag_backend.parse_dataset(ds.id)
+                job_tracker[job_id]["status"] = "COMPLETED"
+                job_tracker[job_id]["message"] = f"Готово. Новых: {new_count}, Пропущено: {skip_count}"
+            except Exception as e:
+                job_tracker[job_id]["status"] = "FAILED"
+                job_tracker[job_id]["message"] = f"Ошибка: {str(e)}"
         asyncio.create_task(_run())
-    return {"status": "sync_completed", "dataset_id": ds.id, "new_files": new_count, "skipped_files": skip_count}
+
+    return {"status": "sync_started", "job_id": job_id, "dataset_id": ds.id, "new_files": new_count, "skipped_files": skip_count}
 
 @app.post("/api/rag/upload/{dataset_id}")
 async def upload_file(dataset_id: str, file: UploadFile = File(...)):
@@ -218,6 +241,11 @@ async def chat(req: ChatRequest):
             return {"answer": resp.json().get("response"), "crag_status": "VERIFIED", "sources": list(set(c.doc_name for c in chunks))}
     except httpx.HTTPStatusError as e: raise HTTPException(502, f"LLM error: {e.response.text}")
     except Exception as e: raise HTTPException(500, str(e))
+
+
+@app.get("/api/jobs")
+async def get_jobs():
+    return job_tracker
 
 @app.get("/api/logs/stream")
 async def log_stream():

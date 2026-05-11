@@ -4,7 +4,26 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>С.О.В.У.Ш.К.А. — Л.Е.С. v2.0</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js">
+async function updateJobs() {
+  try {
+    const res = await fetch('/api/jobs');
+    const jobs = await res.json();
+    const c = document.getElementById('jobs-list');
+    if (Object.keys(jobs).length === 0) { c.innerHTML = '<div class="muted">Нет активных задач</div>'; return; }
+    c.innerHTML = '';
+    for (const [id, j] of Object.entries(jobs)) {
+      const pct = j.total > 0 ? Math.round((j.processed / j.total) * 100) : 0;
+      const rem = Math.max(0, j.total - j.processed);
+      const col = j.status === 'COMPLETED' ? '#4caf50' : j.status === 'FAILED' ? '#f44336' : '#2196f3';
+      c.innerHTML += `<div class="job-row"><div class="job-header"><span><b>${j.dataset_name||id}</b> [${j.status}]</span><span style="color:${col}">${j.message||''}</span></div><div class="progress-bg"><div class="progress-fill" style="width:${pct}%;background:${col}"></div></div><div class="job-stats">Сделано: ${j.processed} / ${j.total} | Осталось: ${rem}</div></div>`;
+    }
+  } catch(e) {}
+}
+setInterval(updateJobs, 2000);
+updateJobs();
+
+</script>
 <style>
 :root { --bg: #0f1115; --surface: #161920; --border: #2a2e38; --text: #e6e8eb; --muted: #8b92a0; --accent: #3b82f6; --ok: #22c55e; --warn: #eab308; --busy: #ef4444; --font: system-ui, sans-serif; }
 [data-theme="light"] { --bg: #f8f9fa; --surface: #fff; --border: #e2e5ea; --text: #111827; --muted: #6b7280; --accent: #2563eb; }
@@ -51,6 +70,13 @@ th { color: var(--muted); font-weight: 600; }
 .ds-chip input { display: none; }
 .ds-chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 @media (max-width: 1024px) { .grid-2 { grid-template-columns: 1fr; } }
+
+.job-row { background: var(--bg); padding: 10px; border-radius: 6px; margin-bottom: 8px; }
+.job-header { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 0.85rem; }
+.progress-bg { background: #333; height: 8px; border-radius: 4px; overflow: hidden; }
+.progress-fill { height: 100%; background: #2196f3; transition: width 0.3s; }
+.job-stats { font-size: 0.75rem; color: var(--muted); margin-top: 4px; }
+
 </style>
 </head>
 <body>
@@ -79,6 +105,12 @@ th { color: var(--muted); font-weight: 600; }
       </div>
     </div>
     <div class="grid-2">
+      
+      <div class="card" id="jobs-card">
+        <h3>📦 Задачи индексации</h3>
+        <div id="jobs-list"><div class="muted">Нет активных задач</div></div>
+      </div>
+
       <div class="card"><h3>Latency /api/chat</h3><canvas id="chart-latency"></canvas></div>
       <div class="card"><h3>CRAG Валидация</h3><canvas id="chart-crag"></canvas></div>
     </div>
@@ -295,6 +327,25 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(fetchSources, 10000);
   setInterval(fetchDatasetsForChat, 10000);
 });
+
+async function updateJobs() {
+  try {
+    const res = await fetch('/api/jobs');
+    const jobs = await res.json();
+    const c = document.getElementById('jobs-list');
+    if (Object.keys(jobs).length === 0) { c.innerHTML = '<div class="muted">Нет активных задач</div>'; return; }
+    c.innerHTML = '';
+    for (const [id, j] of Object.entries(jobs)) {
+      const pct = j.total > 0 ? Math.round((j.processed / j.total) * 100) : 0;
+      const rem = Math.max(0, j.total - j.processed);
+      const col = j.status === 'COMPLETED' ? '#4caf50' : j.status === 'FAILED' ? '#f44336' : '#2196f3';
+      c.innerHTML += `<div class="job-row"><div class="job-header"><span><b>${j.dataset_name||id}</b> [${j.status}]</span><span style="color:${col}">${j.message||''}</span></div><div class="progress-bg"><div class="progress-fill" style="width:${pct}%;background:${col}"></div></div><div class="job-stats">Сделано: ${j.processed} / ${j.total} | Осталось: ${rem}</div></div>`;
+    }
+  } catch(e) {}
+}
+setInterval(updateJobs, 2000);
+updateJobs();
+
 </script>
 </body>
 </html>
