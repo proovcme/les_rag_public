@@ -165,10 +165,11 @@ async def get_metrics():
     rag_stats = {"datasets": 0, "files": 0, "chunks": 0, "status": "unknown"}
     try:
         _c = sqlite3.connect('./data/les_meta.db')
-        _c.execute("SELECT COUNT(*) FROM datasets")
-        rag_stats["datasets"] = _c.fetchone()[0] or 0
-        _c.execute("SELECT COUNT(*) FROM documents")
-        rag_stats["files"] = _c.fetchone()[0] or 0
+        cur = _c.cursor()
+        cur.execute("SELECT COUNT(*) FROM datasets")
+        rag_stats["datasets"] = cur.fetchone()[0] or 0
+        cur.execute("SELECT COUNT(*) FROM documents")
+        rag_stats["files"] = cur.fetchone()[0] or 0
         _c.close()
         if rag_backend:
             coll = await rag_backend.aclient.get_collection("les_rag")
