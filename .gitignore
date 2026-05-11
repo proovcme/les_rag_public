@@ -32,3 +32,4 @@ Thumbs.db
 
 # Логи
 *.log
+.aider*
