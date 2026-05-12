@@ -31,6 +31,12 @@
   .controls{display:flex;gap:8px;}
   .btn{background:transparent;border:1px solid var(--border);color:var(--text);padding:6px 12px;font-family:var(--font);font-size:0.7rem;cursor:pointer;border-radius:4px;font-weight:700;transition:all 0.2s;}
   .btn:hover{border-color:var(--accent);background:var(--bg-module);}
+  .mode-btn{font-size:.65rem;font-weight:900;padding:5px 12px;border-radius:4px;cursor:pointer;font-family:var(--font);border:1px solid;transition:all .2s;}
+  .mode-btn.rag{background:rgba(16,185,129,.1);border-color:var(--ok);color:var(--ok);}
+  .mode-btn.rag:hover{background:rgba(16,185,129,.2);}
+  .mode-btn.code{background:rgba(139,92,246,.1);border-color:var(--pauk);color:var(--pauk);}
+  .mode-btn.code:hover{background:rgba(139,92,246,.2);}
+  .mode-btn.switching{opacity:.5;cursor:wait;}
   .view{flex:1;padding:28px 36px;overflow-y:auto;display:none;flex-direction:column;align-items:center;min-height:0;}
   .view.active{display:flex;}
 
@@ -152,6 +158,25 @@
   .term{background:#000;color:var(--ok);padding:8px 18px;font-size:.7rem;border-top:1px solid var(--border);font-weight:700;height:100px;overflow-y:auto;flex-shrink:0;}
   [data-theme="light"] .term{background:#1e293b;}
   .log-line{margin-bottom:2px;opacity:.9;}
+
+  /* МОДАЛЬНОЕ ОКНО НАСТРОЕК */
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100;display:none;align-items:center;justify-content:center;}
+  .modal-overlay.open{display:flex;}
+  .modal{background:var(--bg-panel);border:1px solid var(--border);border-radius:10px;width:520px;max-width:95vw;padding:28px;display:flex;flex-direction:column;gap:20px;}
+  .modal-head{display:flex;justify-content:space-between;align-items:center;}
+  .modal-title{font-size:.95rem;font-weight:900;letter-spacing:.5px;}
+  .modal-close{background:transparent;border:none;color:var(--text-dim);font-size:1.2rem;cursor:pointer;padding:4px 8px;border-radius:4px;}
+  .modal-close:hover{color:var(--text);background:var(--bg-module);}
+  .field{display:flex;flex-direction:column;gap:6px;}
+  .field label{font-size:.65rem;font-weight:700;text-transform:uppercase;color:var(--text-dim);letter-spacing:.4px;}
+  .field input,.field select{background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px 12px;font-family:var(--font);font-size:.78rem;border-radius:4px;outline:none;width:100%;}
+  .field input:focus,.field select:focus{border-color:var(--accent);}
+  .field-hint{font-size:.62rem;color:var(--text-dim);margin-top:2px;}
+  .modal-actions{display:flex;gap:10px;justify-content:flex-end;border-top:1px solid var(--border);padding-top:16px;}
+  .btn-danger{border-color:var(--err);color:var(--err);}
+  .btn-danger:hover{background:rgba(239,68,68,.1);}
+  .btn-primary{border-color:var(--accent);color:var(--accent);}
+  .btn-primary:hover{background:rgba(59,130,246,.1);}
 </style>
 </head>
 <body>
@@ -164,10 +189,58 @@
     <button id="nav-chat" class="nav-btn" onclick="switchTab('chat',this)">AI ЧАТ</button>
   </nav>
   <div class="controls">
+    <button class="mode-btn rag" id="mode-btn" onclick="toggleMode()">РАГ</button>
     <button class="btn" onclick="refreshAll()">↻ ОБНОВИТЬ</button>
+    <button class="btn" onclick="openSettings()">⚙</button>
     <button class="btn" onclick="toggleTheme()">ТЕМА</button>
   </div>
 </header>
+
+<!-- МОДАЛЬНОЕ ОКНО НАСТРОЕК -->
+<div class="modal-overlay" id="settings-modal" onclick="closeSettingsOutside(event)">
+  <div class="modal">
+    <div class="modal-head">
+      <span class="modal-title">⚙ НАСТРОЙКИ Л.Е.С.</span>
+      <button class="modal-close" onclick="closeSettings()">✕</button>
+    </div>
+
+    <div class="field">
+      <label>LLM Модель</label>
+      <select id="set-llm-model" onchange="syncCustomField()"></select>
+      <div class="field-hint">Или введи вручную — для MLX / внешних моделей</div>
+      <input type="text" id="set-llm-custom" placeholder="например: gemma4:27b или mlx-community/gemma-3-27b-it-4bit">
+    </div>
+
+    <div class="field">
+      <label>Embedding Модель</label>
+      <select id="set-embed-model"></select>
+    </div>
+
+    <div class="field">
+      <label>Ollama / LLM Server URL</label>
+      <input type="text" id="set-ollama-url" placeholder="http://host.docker.internal:11434">
+      <div class="field-hint">Для MLX-сервера: http://host.docker.internal:8080</div>
+    </div>
+
+    <div style="border:1px solid var(--err);border-radius:6px;padding:14px;display:flex;flex-direction:column;gap:10px;">
+      <div style="font-size:.65rem;font-weight:900;text-transform:uppercase;color:var(--err);letter-spacing:.4px;">⚠ Опасная зона</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <button class="btn btn-danger" onclick="openResetDataset()">🗑 Сбросить датасет...</button>
+        <button class="btn btn-danger" onclick="resetAllDatasets()">☢ Сбросить ВСЕ</button>
+      </div>
+      <div id="reset-dataset-picker" style="display:none;flex-direction:column;gap:8px;margin-top:4px;">
+        <select id="reset-dataset-select" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 10px;font-family:var(--font);font-size:.75rem;border-radius:4px;"></select>
+        <button class="btn btn-danger" onclick="resetSelectedDataset()">Удалить выбранный</button>
+      </div>
+      <div style="font-size:.62rem;color:var(--text-dim);">Удаляет storage, SQLite и точки Qdrant. Необратимо.</div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn" onclick="closeSettings()">Отмена</button>
+      <button class="btn btn-primary" id="save-settings-btn" onclick="saveSettings()">💾 Сохранить и перезапустить</button>
+    </div>
+  </div>
+</div>
 
 <!-- ОБЗОР -->
 <main id="view-overview" class="view active">
@@ -328,6 +401,25 @@
         <div class="m-head"><span class="m-title">HTTP Errors</span><span class="m-val" id="pro-err">0</span></div>
         <div style="font-size:.7rem;color:var(--text-dim);line-height:2;" id="errors-list">Нет ошибок</div>
       </div>
+
+      <!-- Модели Ollama -->
+      <div class="m-card">
+        <div class="m-head">
+          <span class="m-title">Ollama — активные модели</span>
+          <span class="m-val" id="ollama-mode-badge" style="font-size:.6rem;padding:2px 8px;border-radius:10px;background:rgba(16,185,129,.15);color:var(--ok);">РАГ</span>
+        </div>
+        <div id="ollama-models" style="display:flex;flex-direction:column;gap:8px;">
+          <div style="font-size:.7rem;color:var(--text-dim);">Загрузка...</div>
+        </div>
+      </div>
+
+      <!-- Контейнеры Docker -->
+      <div class="m-card">
+        <div class="m-head"><span class="m-title">Docker контейнеры</span><span class="m-val" id="docker-ok">—</span></div>
+        <div id="docker-containers" style="display:flex;flex-direction:column;gap:6px;">
+          <div style="font-size:.7rem;color:var(--text-dim);">Загрузка...</div>
+        </div>
+      </div>
     </div>
   </div>
 </main>
@@ -341,6 +433,16 @@
     </div>
     <div class="chat-history" id="chat-history">
       <div class="msg msg-system">Система активирована. Ожидание запросов.</div>
+      <div class="msg msg-user">Рецепт кротовухи</div>
+      <div class="msg msg-ai">
+        По результатам поиска по индексированным источникам релевантных фрагментов не обнаружено.<br><br>
+        Запрос не соответствует тематике загруженной нормативной базы (СП, ГОСТ, регламенты инженерных систем). Т.О.С.К.А. классифицировала контекст как <strong>вне области знаний</strong> и заблокировала генерацию ответа во избежание галлюцинаций.<br><br>
+        Если вопрос касается подземных инженерных коммуникаций, дренажа или грунтовых работ — уточните формулировку.
+        <div class="msg-srcs">
+          <span class="src-tag" style="border-color:var(--err);color:var(--err);">Т.О.С.К.А.: NO_DATA</span>
+          <span class="src-tag" style="border-color:var(--text-dim);color:var(--text-dim);">chunks: 0</span>
+        </div>
+      </div>
     </div>
     <div class="chat-input-area">
       <input type="text" class="chat-input" id="chat-input" placeholder="Введите запрос по нормативам или проекту...">
@@ -351,6 +453,8 @@
 
 <footer class="term" id="term-logs">
   <div class="log-line">> [С.О.В.У.Ш.К.А.] v3.1 Unified. Инициализация...</div>
+  <div class="log-line">> [AI ЧАТ] Запрос: "Рецепт кротовухи"</div>
+  <div class="log-line">> [AI ЧАТ] Retrieval: 0 chunks найдено | Т.О.С.К.А.: NO_DATA → генерация заблокирована</div>
 </footer>
 
 <script>
@@ -660,9 +764,218 @@ function connectSSE() {
   sse.onerror=()=>{ addLog('[SSE] Реконнект...'); sse.close(); sse=null; setTimeout(connectSSE,5000); };
 }
 
-function refreshAll(){ fetchMetrics(); fetchSamovar(); }
+async function fetchStatus() {
+  try {
+    const r = await fetch(API + '/api/status');
+    if (!r.ok) return;
+    const d = await r.json();
+
+    // Режим — бейдж
+    const mode = d.mode || {};
+    const badge = document.getElementById('ollama-mode-badge');
+    if (badge) {
+      if (mode.mode === 'code') {
+        badge.textContent = 'КОД';
+        badge.style.background = 'rgba(139,92,246,.15)';
+        badge.style.color = 'var(--pauk)';
+      } else {
+        badge.textContent = 'РАГ';
+        badge.style.background = 'rgba(16,185,129,.15)';
+        badge.style.color = 'var(--ok)';
+      }
+    }
+
+    // Модели Ollama
+    const modelsEl = document.getElementById('ollama-models');
+    if (modelsEl) {
+      const models = d.ollama?.models || [];
+      if (models.length === 0) {
+        modelsEl.innerHTML = '<div style="font-size:.7rem;color:var(--text-dim);">Нет активных моделей</div>';
+      } else {
+        modelsEl.innerHTML = models.map(m => `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);">
+            <div>
+              <div style="font-size:.72rem;font-weight:700;color:var(--text);">${m.name}</div>
+              <div style="font-size:.6rem;color:var(--text-dim);">RAM: ${m.size_gb} GB${m.vram_gb > 0 ? ' · VRAM: '+m.vram_gb+' GB' : ''}</div>
+            </div>
+            <span style="font-size:.6rem;font-weight:700;padding:2px 7px;border-radius:10px;background:rgba(16,185,129,.12);color:var(--ok);">LIVE</span>
+          </div>`).join('');
+      }
+    }
+
+    // Контейнеры Docker
+    const containersEl = document.getElementById('docker-containers');
+    const dockerOk = document.getElementById('docker-ok');
+    if (containersEl) {
+      const containers = d.containers || [];
+      const allOk = containers.every(c => c.ok);
+      if (dockerOk) {
+        dockerOk.textContent = allOk ? `${containers.length} UP` : 'ПРОБЛЕМА';
+        dockerOk.style.color = allOk ? 'var(--ok)' : 'var(--err)';
+      }
+      if (containers.length === 0) {
+        containersEl.innerHTML = '<div style="font-size:.7rem;color:var(--text-dim);">Нет данных</div>';
+      } else {
+        containersEl.innerHTML = containers.map(c => `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border);">
+            <div>
+              <div style="font-size:.72rem;font-weight:700;color:var(--text);">${c.name}</div>
+              <div style="font-size:.6rem;color:var(--text-dim);">${c.image}</div>
+            </div>
+            <span style="font-size:.6rem;font-weight:700;padding:2px 7px;border-radius:10px;
+              background:${c.ok ? 'rgba(16,185,129,.12)' : 'rgba(239,68,68,.12)'};
+              color:${c.ok ? 'var(--ok)' : 'var(--err)'};">${c.status.split(' ')[0]}</span>
+          </div>`).join('');
+      }
+    }
+
+    // Синхронизируем кнопку режима в хедере
+    applyMode(mode.mode, mode.model);
+
+  } catch(err) { addLog('[STATUS] ' + err.message); }
+}
+
+setInterval(fetchStatus, 8000);
+
+// ── РЕЖИМ КОД / РАГ ──
+let currentMode = 'rag';
+
+async function fetchMode() {
+  try {
+    const r = await fetch(API + '/api/mode');
+    const d = await r.json();
+    applyMode(d.mode, d.model);
+  } catch {}
+}
+
+function applyMode(mode, model) {
+  currentMode = mode;
+  const btn = document.getElementById('mode-btn');
+  if (!btn) return;
+  if (mode === 'code') {
+    btn.textContent = 'КОД';
+    btn.className = 'mode-btn code';
+    btn.title = model || 'qwen2.5-coder:32b';
+  } else {
+    btn.textContent = 'РАГ';
+    btn.className = 'mode-btn rag';
+    btn.title = model || 'qwen3:14b';
+  }
+}
+
+async function toggleMode() {
+  const btn = document.getElementById('mode-btn');
+  const next = currentMode === 'rag' ? 'code' : 'rag';
+  const model = next === 'code' ? 'qwen2.5-coder:32b' : 'qwen3:14b';
+
+  btn.classList.add('switching');
+  btn.textContent = '...';
+  addLog(`[РЕЖИМ] Переключение → ${next.toUpperCase()}`);
+
+  try {
+    // Уведомляем прокси
+    await fetch(API + '/api/mode', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ mode: next, model })
+    });
+
+    // Запускаем скрипт через прокси-команду (если есть endpoint)
+    // или просто меняем состояние UI — скрипт запускается вручную
+    applyMode(next, model);
+    addLog(`[РЕЖИМ] ${next.toUpperCase()} активен. Запусти mode_${next}.sh на сервере если не запущен.`);
+  } catch(err) {
+    addLog(`[РЕЖИМ] Ошибка: ${err.message}`);
+  } finally {
+    btn.classList.remove('switching');
+  }
+}
+function refreshAll(){ fetchMetrics(); fetchSamovar(); fetchStatus(); }
+
+// ── НАСТРОЙКИ ──
+async function openSettings() {
+  document.getElementById('settings-modal').classList.add('open');
+  document.getElementById('reset-dataset-picker').style.display = 'none';
+  try {
+    const r = await fetch(API + '/api/settings');
+    const d = await r.json();
+    const llmSel = document.getElementById('set-llm-model');
+    const embedSel = document.getElementById('set-embed-model');
+    llmSel.innerHTML = ''; embedSel.innerHTML = '';
+    const models = d.available_models || [];
+    models.forEach(m => {
+      llmSel.innerHTML += `<option value="${m}" ${m===d.llm_model?'selected':''}>${m}</option>`;
+      embedSel.innerHTML += `<option value="${m}" ${m===d.embed_model?'selected':''}>${m}</option>`;
+    });
+    if (!models.includes(d.llm_model))
+      llmSel.innerHTML = `<option value="${d.llm_model}" selected>${d.llm_model}</option>` + llmSel.innerHTML;
+    if (!models.includes(d.embed_model))
+      embedSel.innerHTML = `<option value="${d.embed_model}" selected>${d.embed_model}</option>` + embedSel.innerHTML;
+    document.getElementById('set-llm-custom').value = '';
+    document.getElementById('set-ollama-url').value = d.ollama_url || '';
+    const srcR = await fetch(API + '/api/rag/sources');
+    const sources = await srcR.json();
+    const dsSel = document.getElementById('reset-dataset-select');
+    dsSel.innerHTML = sources
+      .filter(s => s.dataset_id)
+      .map(s => `<option value="${s.dataset_id}" data-folder="${s.folder}">${s.folder} (${s.indexed_files} файлов)</option>`)
+      .join('');
+  } catch(err) { addLog('[SETTINGS] Ошибка загрузки: ' + err.message); }
+}
+function closeSettings() { document.getElementById('settings-modal').classList.remove('open'); }
+function closeSettingsOutside(e) { if (e.target.id==='settings-modal') closeSettings(); }
+function syncCustomField() { document.getElementById('set-llm-custom').value = ''; }
+
+async function saveSettings() {
+  const btn = document.getElementById('save-settings-btn');
+  const custom = document.getElementById('set-llm-custom').value.trim();
+  const llm = custom || document.getElementById('set-llm-model').value;
+  const embed = document.getElementById('set-embed-model').value;
+  const url = document.getElementById('set-ollama-url').value.trim();
+  btn.textContent = '⌛ Сохраняю...'; btn.disabled = true;
+  try {
+    await fetch(API + '/api/settings', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ llm_model: llm, embed_model: embed, ollama_url: url })
+    });
+    addLog(`[SETTINGS] Сохранено: LLM=${llm} EMBED=${embed}`);
+    addLog('[SETTINGS] Прокси перезапускается...');
+    closeSettings();
+    setTimeout(() => { fetchMetrics(); fetchStatus(); }, 6000);
+  } catch(err) { addLog('[SETTINGS] Ошибка: ' + err.message); }
+  finally { btn.textContent = '💾 Сохранить и перезапустить'; btn.disabled = false; }
+}
+
+function openResetDataset() {
+  const p = document.getElementById('reset-dataset-picker');
+  p.style.display = p.style.display === 'none' ? 'flex' : 'none';
+}
+async function resetSelectedDataset() {
+  const sel = document.getElementById('reset-dataset-select');
+  const id = sel.value;
+  const folder = sel.options[sel.selectedIndex]?.dataset?.folder || id;
+  if (!id) return;
+  if (!confirm(`Удалить датасет "${folder}"? Необратимо.`)) return;
+  try {
+    const r = await fetch(API + `/api/rag/datasets/${id}`, { method: 'DELETE' });
+    const d = await r.json();
+    addLog(`[DELETE] ${folder}: ошибок ${d.errors?.length||0}`);
+    closeSettings(); fetchSamovar();
+  } catch(err) { addLog('[DELETE] ' + err.message); }
+}
+async function resetAllDatasets() {
+  if (!confirm('Удалить ВСЕ датасеты и сбросить индекс Qdrant?\nНеобратимо.')) return;
+  if (!confirm('Точно уверены?')) return;
+  try {
+    const r = await fetch(API + '/api/rag/datasets', { method: 'DELETE' });
+    const d = await r.json();
+    addLog(`[DELETE ALL] ошибок: ${d.errors?.length||0}`);
+    closeSettings(); fetchSamovar();
+  } catch(err) { addLog('[DELETE ALL] ' + err.message); }
+}
+
 setInterval(fetchMetrics,5000);
-fetchMetrics(); fetchSamovar(); connectSSE();
+fetchMetrics(); fetchSamovar(); fetchMode(); fetchStatus(); connectSSE();
 </script>
 </body>
 </html>

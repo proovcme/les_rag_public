@@ -18,6 +18,7 @@ services:
       - ./RAG_Content:/app/RAG_Content
       - ./data:/app/data
       - ./storage:/app/storage
+      - /var/run/docker.sock:/var/run/docker.sock
     env_file: [.env]
     environment:
       - OLLAMA_URL=http://host.docker.internal:11434
