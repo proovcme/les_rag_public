@@ -1,0 +1,33 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: les-qdrant
+    ports: ["6333:6333", "6334:6334"]
+    volumes: ["./data/qdrant:/qdrant/storage"]
+    networks: [les-net]
+    restart: unless-stopped
+
+  proxy:
+    build: {context: ., dockerfile: Dockerfile.proxy}
+    container_name: les-proxy
+    ports: ["8050:8050"]
+    volumes:
+      - ./backend:/app/backend
+      - ./proxy_server.py:/app/proxy_server.py
+      - ./frontend:/app/frontend
+      - ./RAG_Content:/app/RAG_Content
+      - ./data:/app/data
+      - ./storage:/app/storage
+      - /var/run/docker.sock:/var/run/docker.sock
+    env_file: [.env]
+    environment:
+      - OLLAMA_URL=http://host.docker.internal:8080
+      - QDRANT_URL=http://qdrant:6333
+      - TZ=Europe/Moscow
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on: [qdrant]
+    networks: [les-net]
+    restart: unless-stopped
+
+networks:
+  les-net: {driver: bridge}
