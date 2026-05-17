@@ -1,72 +1,127 @@
+"""
+MLXMemoryManager — управление памятью Metal для LLM.
+
+Токенизатор грузится один раз при старте (лёгкий, ~10MB).
+Веса модели — лениво при первом запросе, выгружаются по TTL.
+Глобальный metal_semaphore — один движок на Metal в любой момент.
+"""
 import asyncio
-import time
-import logging
 import gc
-import inspect
-import mlx.core as mx
+import logging
+import time
+
 from mlx_lm import load, generate
+from transformers import AutoTokenizer
 
 logger = logging.getLogger(__name__)
 
+# Один запрос к Metal одновременно — защита от OOM при параллельных движках
+metal_semaphore = asyncio.Semaphore(1)
+
+STOP_TOKENS = ["<|im_end|>", "<|endoftext|>", "<|end|>"]
+
+
 class MLXMemoryManager:
-    def __init__(self, model_path: str, ttl_seconds: int = 180):
-        self.model_path = model_path
-        self.ttl_seconds = ttl_seconds
-        self.model = None
-        self.tokenizer = None
-        self.last_used = 0
-        self.lock = asyncio.Lock()
-        self._watchdog_task = None
-        logger.info(f"[MLX] Менеджер инициализирован: {self.model_path}")
+    def __init__(self, model_path: str, ttl_seconds: int = 300):
+        self.model_path    = model_path
+        self.ttl_seconds   = ttl_seconds
+        self.model         = None
+        self.tokenizer     = None
+        self.last_used     = 0.0
+        self._lock         = None
+        self._cleanup_task = None
 
     def start(self):
-        if self._watchdog_task is None:
-            self._watchdog_task = asyncio.create_task(self._watchdog())
-            logger.info(f"[MLX] Watchdog стартовал для {self.model_path}")
+        """Вызывается внутри lifespan когда event loop уже запущен."""
+        self._lock = asyncio.Lock()
+        try:
+            logger.info(f"[TOKENIZER] Загрузка {self.model_path}...")
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
+            logger.info(f"[TOKENIZER] Готов.")
+        except Exception as e:
+            logger.warning(f"[TOKENIZER] Не удалось загрузить: {e}")
+        self._cleanup_task = asyncio.create_task(self._auto_unload_loop())
 
-    async def _watchdog(self):
+    async def _auto_unload_loop(self):
         while True:
             await asyncio.sleep(10)
-            if self.model is None: continue
-            if time.time() - self.last_used > self.ttl_seconds:
-                async with self.lock:
-                    if self.model is not None and time.time() - self.last_used > self.ttl_seconds:
-                        self._unload_model()
+            if self.model is not None:
+                idle = time.time() - self.last_used
+                if idle > self.ttl_seconds:
+                    logger.info(f"[TTL] Выгрузка {self.model_path} (idle {idle:.0f}s)")
+                    self._unload_model()
 
     def _unload_model(self):
-        logger.info(f"[MLX] Выгрузка модели {self.model_path} по таймеру...")
-        self.model = None; self.tokenizer = None; gc.collect(); mx.metal.clear_cache()
-        logger.info("[MLX] Память Metal очищена.")
+        """Выгружает только веса, токенизатор остаётся."""
+        self.model = None
+        gc.collect()
+        logger.info(f"[TTL] Память Metal освобождена: {self.model_path}")
 
     def force_unload(self):
-        if self.model is not None: self._unload_model()
+        """Полная выгрузка включая токенизатор (при смене модели)."""
+        self.model     = None
+        self.tokenizer = None
+        gc.collect()
+        logger.info(f"[SWITCH] Полная выгрузка: {self.model_path}")
 
-    async def generate_text(self, prompt: str, max_tokens: int = 1024) -> str:
-        async with self.lock:
-            if self.model is None:
-                logger.info(f"[MLX] Загрузка весов {self.model_path}...")
-                self.model, self.tokenizer = await asyncio.to_thread(load, self.model_path)
-                logger.info("[MLX] Модель готова.")
-            
-            self.last_used = time.time()
-            
-            def _do_generate():
-                # Проверяем сигнатуру функции generate
-                sig = inspect.signature(generate)
-                kwargs = {"prompt": prompt, "max_tokens": max_tokens}
-                
-                # Пытаемся добавить параметры контроля зацикливания
-                if "temp" in sig.parameters:
-                    kwargs["temp"] = 0.6 # Немного случайности
-                if "repetition_penalty" in sig.parameters:
-                    kwargs["repetition_penalty"] = 1.2 # Штраф за повторы (лечит "Надю")
-                    
-                try:
-                    return generate(self.model, self.tokenizer, **kwargs)
-                except TypeError as e:
-                    logger.error(f"[MLX] Параметры не приняты: {e}. Fallback без штрафов.")
-                    return generate(self.model, self.tokenizer, prompt=prompt, max_tokens=max_tokens)
-            
-            response = await asyncio.to_thread(_do_generate)
-            self.last_used = time.time()
-            return response
+    def reload_tokenizer(self):
+        """Перегружает токенизатор после смены model_path."""
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
+            logger.info(f"[TOKENIZER] Перезагружен для {self.model_path}")
+        except Exception as e:
+            logger.warning(f"[TOKENIZER] Ошибка перезагрузки: {e}")
+
+    def _load_model_if_needed(self):
+        """Загружает веса если не загружены. Вызывается внутри to_thread."""
+        if self.model is None:
+            logger.info(f"[LOAD] Загрузка весов {self.model_path} в Metal...")
+            model, tokenizer = load(self.model_path)
+            self.model = model
+            if self.tokenizer is None:
+                self.tokenizer = tokenizer
+            logger.info(f"[LOAD] Готово: {self.model_path}")
+        self.last_used = time.time()
+
+    def apply_chat_template(self, messages: list) -> str:
+        """
+        Применяет chat template токенизатора.
+        messages: [{"role": "user"|"assistant"|"system", "content": str}]
+        """
+        if self.tokenizer is None:
+            # Fallback: Qwen3 ChatML формат
+            parts = []
+            for m in messages:
+                parts.append(f"<|im_start|>{m['role']}\n{m['content']}<|im_end|>")
+            parts.append("<|im_start|>assistant\n")
+            return "\n".join(parts)
+
+        return self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+
+    async def generate_text(self, prompt: str, max_tokens: int = 2048) -> str:
+        if self._lock is None:
+            raise RuntimeError("MLXMemoryManager не запущен — вызови start() внутри lifespan.")
+
+        async with self._lock:
+            async with metal_semaphore:
+                def _run():
+                    self._load_model_if_needed()
+                    return generate(
+                        self.model,
+                        self.tokenizer,
+                        prompt=prompt,
+                        max_tokens=max_tokens,
+                        verbose=False,
+                    )
+                result = await asyncio.to_thread(_run)
+                self.last_used = time.time()
+
+        # Обрезаем stop-токены если модель их включила в ответ
+        for stop in STOP_TOKENS:
+            if stop in result:
+                result = result[:result.index(stop)]
+        return result.strip()

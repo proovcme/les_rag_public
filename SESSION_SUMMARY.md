@@ -1,125 +1,169 @@
-# Что было сделано за сессию (11.05.2026)
+# Состояние системы Л.Е.С. (17.05.2026 — финал сессии)
 
-Контекст: работали с Claude (Клодыч). Все изменения применены и проверены в production.
-
----
-
-## Файлы которые изменились
-
-### `proxy_server.py`
-
-1. Дублирующий `import time` удалён, `from collections import defaultdict` перенесён наверх
-2. Два `@app.on_event("startup")` объединены в один. Порядок: `init_db()` — инит `rag_backend` — `metrics_collector_loop()` — `metrics_loop()`
-3. В `/api/chat` добавлено измерение latency и запись в `chat_metrics`
-4. В `upload_file` добавлен `finally: temp_path.unlink(missing_ok=True)`
-5. В `sync_folder` добавлен `changed_count`, в ответе теперь `changed_files`
-6. Добавлен `current_mode = {"mode": "rag", "model": "qwen3:14b"}`
-7. Добавлены модели `ModeRequest`, `SettingsRequest`
-8. Новые эндпоинты: `/api/mode` (GET/POST), `/api/status`, `/api/settings` (GET/POST), `DELETE /api/rag/datasets/{id}`, `DELETE /api/rag/datasets`
-9. Автодетект формата LLM в `/api/chat`: порт 11434 — Ollama (`/api/generate`), любой другой — OpenAI (`/v1/chat/completions`). Нужно для MLX на порту 8080.
-
-### `frontend/sovushka.html` — v3.1
-
-- Вкладка С.А.М.О.В.А.Р. с деревом датасетов, KPI, историей jobs, кнопкой SYNC
-- В П.Р.О.Р.А.Б.: карточки Ollama активные модели + Docker контейнеры
-- Хедер: кнопка режима РАГ/КОД + кнопка настроек
-- Модальное окно настроек: LLM/embed модель, URL сервера, сброс датасетов
-
-### `backend/metrics_collector.py`
-
-Не трогали. Файл хороший, написан Квеном ранее.
-
-### `Dockerfile.proxy`
-
-Добавлен `docker-ce-cli`. Убран `--reload` из CMD.
-
-### `docker-compose.yml`
-
-Добавлен volume: `/var/run/docker.sock:/var/run/docker.sock`
-
-### `mode_code.sh` / `mode_rag.sh`
-
-Лежат в корне проекта. Переключают модели Ollama вручную через SSH.
+Авторы правок: Claude (Клодыч), Qwen (Кен), Gemini (Панорамыч).
 
 ---
 
-## Текущее состояние
+## Архитектура стека
 
 ```
-Health:      ok / qdrant_llama
-Контейнеры:  les-proxy UP, les-qdrant UP
-Ollama:      qwen3:14b + bge-m3
-NTD:         сброшен и запущен заново, 801 файл, идёт PARSING
-Датасеты:    QWEN_Index (1), CLAUDE_Index (4), NTD_Index (в процессе)
+Mac Mini M4 / 24 GB
+├── Docker
+│   ├── les-proxy   (FastAPI, порт 8050)
+│   └── les-qdrant  (Qdrant, порт 6333)
+├── MLX Native Host (FastAPI, порт 8080) — uv run python3 mlx_host.py
+│   ├── Qwen3-14B-4bit   (main, TTL 300с, lazy weights)
+│   ├── Qwen3-4B-4bit    (val,  TTL 120с, lazy weights)
+│   └── BGE-M3           (sentence-transformers + MPS, lazy)
+└── С.О.В.У.Ш.К.А. (NiceGUI, порт 8051) — python3 sovushka_ng.py
+    автозапуск: ~/Library/LaunchAgents/com.les.sovushka.plist
 ```
 
----
-
-## Известные проблемы
-
-**Чанков в С.А.М.О.В.А.Р. показывает 0.** Схема SQLite таблицы `datasets` — только `(id, name, status)`, колонки `chunk_count` нет. Чанки правильно отображаются в `/api/metrics` из Qdrant напрямую. Нужно либо добавить колонку, либо в `fetchSamovar()` брать чанки из `/api/metrics`.
-
-**Чанки не удаляются из Qdrant по фильтру.** LlamaIndex не проставляет `dataset_id` как payload. Поэтому `DELETE /api/rag/datasets` удаляет всю коллекцию `les_rag` целиком.
-
-**list_sources() и sync_folder() не рекурсивные.** `folder.iterdir()` — только первый уровень. Для подпапок нужен `rglob('*')`.
+curl на MLX — всегда **127.0.0.1:8080** (не localhost — Docker занимает IPv6).
 
 ---
 
-## Как подключить MLX + Gemma
-
-```bash
-pip install mlx-lm
-
-mlx_lm.server \
-  --model mlx-community/gemma-3-12b-it-4bit \
-  --port 8080 \
-  --host 0.0.0.0
-```
-
-В совушке нажать, поменять URL на `http://host.docker.internal:8080`, вписать модель вручную, сохранить. Прокси сам переключится на OpenAI-формат по порту.
-
-Варианты моделей: `gemma-3-4b-it-4bit` (~2.5 GB), `gemma-3-12b-it-4bit` (~7 GB), `gemma-3-27b-it-4bit` (~16 GB).
-
----
-
-## Бэклог
-
-- `chunk_count` в С.А.М.О.В.А.Р. всегда 0 — нужно добавить колонку в SQLite или брать из Qdrant
-- Рекурсивный обход: заменить `iterdir()` на `rglob('*')` в `list_sources()` и `sync_folder()`
-- Кнопка режима в UI переключает только `/api/mode` — реальную загрузку модели делают скрипты вручную
-- Убрать кротовуху из чата (статичный демо-диалог в HTML)
-
----
-
-## Полный список API
-
-| Endpoint | Метод | Что делает |
-|---|---|---|
-| `/api/health` | GET | Статус бэкенда |
-| `/api/mode` | GET/POST | Текущий режим / переключить |
-| `/api/status` | GET | Ollama модели + Docker контейнеры |
-| `/api/settings` | GET | Настройки + список моделей Ollama |
-| `/api/settings` | POST | Сохранить в .env + restart прокси |
-| `/api/metrics` | GET | CPU/RAM/disk/latency/CRAG |
-| `/api/rag/sources` | GET | Папки RAG_Content с маппингом |
-| `/api/rag/datasets` | GET/POST | Список/создание датасетов |
-| `/api/rag/datasets/{id}` | DELETE | Удалить один датасет |
-| `/api/rag/datasets` | DELETE | Сбросить все + Qdrant коллекцию |
-| `/api/rag/sync/{folder}` | POST | Синк папки в индекс |
-| `/api/rag/upload/{id}` | POST | Загрузка файла |
-| `/api/jobs` | GET | История jobs |
-| `/api/chat` | POST | RAG-чат, поле `question`, автодетект Ollama/OpenAI |
-| `/api/logs/stream` | GET | SSE логи |
-
-## .env
+## .env (текущий)
 
 ```env
-LLM_MODEL=qwen3:14b
-EMBED_MODEL=bge-m3:latest
-OLLAMA_URL=http://host.docker.internal:11434
+LLM_MODEL=mlx-community/Qwen3-14B-4bit
+EMBED_MODEL=bge-m3
+OLLAMA_URL=http://host.docker.internal:8080
+MLX_MODEL=mlx-community/Qwen3-14B-4bit
+MLX_VAL_MODEL=mlx-community/Qwen3-4B-4bit
 QDRANT_URL=http://qdrant:6333
 JWT_SECRET=les_v2_secret_key_change_in_prod
 ADMIN_PASSWORD=admin123
 ```
 
-Логика автодетекта: если порт в `OLLAMA_URL` не 11434 — прокси использует OpenAI-формат. Менять код не нужно.
+---
+
+## Что сделано за сессию 17.05
+
+### Архитектурная стабилизация — полный аудит и правка всех файлов
+
+#### `pyproject.toml` — новый (вместо requirements.txt)
+- `uv sync` создаёт `.venv` в папке проекта
+- `mlx-embedding-models` выброшен (сломан в transformers>=4.40)
+- `sentence-transformers` для BGE-M3 (MPS на Apple Silicon)
+- Нет warnings, нет `python =` в `[tool.uv]`
+
+#### `backend/mlx_adapter.py` — переписан
+- Токенизатор грузится в `start()` один раз (без весов, ~1с)
+- `apply_chat_template()` — правильный ChatML для Qwen3
+- `metal_semaphore = Semaphore(1)` — один движок на Metal одновременно
+- Stop-токены обрезаются из ответа
+- `force_unload` vs `_unload_model` — раздельно (токенизатор остаётся)
+- `reload_tokenizer()` после `switch_model`
+
+#### `mlx_host.py` — переписан
+- BGE-M3 через `sentence-transformers` (не mlx_embedding_models)
+- `_messages_to_prompt` → `engine.apply_chat_template()` — нет дублирования
+- `/api/validate` использует chat template для Qwen3-4B
+- `switch_model` перезагружает токенизатор
+- FutureWarning `get_sentence_embedding_dimension` исправлен
+
+#### `proxy_server.py` — пропатчен (8 правок)
+- Промпт через `system + user messages` — правильный ChatML
+- Лимит контекста 12k символов — защита от overflow
+- Таймаут валидации 90s (было 15s)
+- Двойное копирование файлов убрано
+- `job_tracker` чистится (старше 24ч)
+- `llm_queue_size` реальный счётчик
+- Диагностика правильно парсит `{path, loaded}` из health
+- Ollama fallback тоже получает нормальный промпт
+
+#### `backend/qdrant_adapter.py` — переписан
+- **Батч-эмбеддинги**: 32 чанка за запрос вместо по одному → в 10-30x быстрее индексация
+- **EmbedClient**: прямой httpx к MLX /v1/embeddings, без llama-index OpenAIEmbedding
+- `retrieve` async через httpx (не блокирует event loop)
+- `_ensure_collection` с asyncio.Lock (race condition при startup)
+- WAL + NORMAL synchronous для SQLite
+- Индекс на `documents(dataset_id)`
+- Пустые чанки < 20 символов не индексируются
+- Upsert батчами по 100 точек
+
+#### `backend/converter.py` — переписан
+- Добавлен `.txt`
+- Лимит 500k символов на файл
+- PDF fallback постраничный
+- CSV автодетект кодировки (cp1251 для русских файлов)
+- JSON стриминг лимит 2000 записей
+- Рекурсивный `_extract_json_text` глубина 2
+
+#### `backend/metrics_collector.py` — переписан
+- `requests` → `httpx` async (не блокирует event loop)
+- Убран хардкод ZeroTier IP
+- Таблица чистится автоматически (хранит 3 суток)
+- `init_db` не вызывается дважды
+
+#### `sovushka_ng.py` — MLX_URL исправлен на 127.0.0.1
+
+---
+
+## Быстрые команды
+
+```bash
+# Полный деплой
+cd ~/Projects/LES_v2
+./stop_mlx.command && ./start_mlx.command
+docker compose build proxy && docker compose up -d
+python3 sovushka_ng.py
+
+# Проверка стека
+curl -s http://127.0.0.1:8080/api/health | python3 -m json.tool
+curl -s http://localhost:8050/api/health
+curl -s http://localhost:8050/api/diag | python3 -c \
+  "import sys,json; d=json.load(sys.stdin); [print(f\"{r['status'].upper():6} {r['name']:30} {r['value']}\") for r in d['checks']]"
+
+# Тест эмбеддингов
+curl -s -X POST http://127.0.0.1:8080/api/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{"model":"bge-m3","prompt":"тест"}' | python3 -c \
+  "import sys,json; d=json.load(sys.stdin); e=d.get('embedding',[]); print('OK dim:', len(e))"
+
+# Тест чата
+curl -s -X POST http://localhost:8050/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"question":"Ширина путей эвакуации"}' | python3 -m json.tool
+
+# SYNC датасетов
+curl -s -X POST http://localhost:8050/api/rag/sync/NTD | python3 -m json.tool
+curl -s -X POST http://localhost:8050/api/rag/sync/CLAUDE | python3 -m json.tool
+```
+
+---
+
+## Бэклог
+
+| Приоритет | Задача |
+|---|---|
+| 🔴 | Живые тесты: SYNC NTD → тестовый запрос по нормативам |
+| 🔴 | Проверить качество ответов (нет ли дублирования после chat template) |
+| 🔴 | Aider: `pip3 install huggingface-hub==0.30.2 pillow==11.2.1 tokenizers==0.21.1 markupsafe==3.0.2 typing-inspection==0.4.0 pydantic==2.11.4` |
+| 🟠 | Е.Ж.И.К.: вкладка настройки IMAP в Совушке + тест на реальных письмах |
+| 🟠 | Caddy VPS + les.ovc.me + SSL |
+| 🟡 | Датасет LES_Docs — документация системы в RAG |
+| 🟡 | В.О.Л.К. v2: ключи доступа (admin/user, SQLite) |
+| 🟡 | Parquet пайплайн XLSX/CSV (сметы, спецификации) |
+| 🟡 | Folder Watcher — автосинк |
+| ⚪ | VLM пайплайн Gemma 4 для PDF чертежей |
+| ⚪ | Реранкер Qwen3-4B как cross-encoder (при индексе > 5000 чанков) |
+
+---
+
+## Файлы проекта (актуальное состояние)
+
+| Файл | Версия | Статус |
+|---|---|---|
+| `mlx_host.py` | v3.2 | ✅ переписан |
+| `backend/mlx_adapter.py` | v2.0 | ✅ переписан |
+| `backend/qdrant_adapter.py` | v3.0 | ✅ переписан |
+| `backend/converter.py` | v2.0 | ✅ переписан |
+| `backend/metrics_collector.py` | v2.0 | ✅ переписан |
+| `backend/interface.py` | v1.1 | ✅ чисто |
+| `proxy_server.py` | v2.3 | ✅ пропатчен |
+| `sovushka_ng.py` | v4.1 | ✅ MLX URL исправлен |
+| `pyproject.toml` | v1.0 | ✅ новый |
+| `start_mlx.command` | v2.0 | ✅ через uv sync |
+| `stop_mlx.command` | v1.0 | ✅ создан |

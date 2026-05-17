@@ -1,0 +1,49 @@
+[project]
+name = "les-v2"
+version = "2.2.0"
+description = "Л.Е.С. — Локальная Экспертная Система"
+requires-python = ">=3.12"
+
+dependencies = [
+    # ── MLX / Metal ──────────────────────────────────────────────
+    "mlx-lm>=0.22.0",
+    "sentence-transformers>=3.0.0",     # BGE-M3, использует MPS на Apple Silicon
+
+    # ── API сервер ───────────────────────────────────────────────
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",        # [standard] = uvloop + httptools
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.5.0",
+    "python-multipart>=0.0.9",
+    "sse-starlette>=2.1.0",
+    "httpx>=0.27.0",
+    "psutil>=5.9.0",
+
+    # ── RAG / Qdrant ─────────────────────────────────────────────
+    "qdrant-client>=1.11.0",
+    "llama-index-core>=0.10.0",
+    "llama-index-vector-stores-qdrant>=0.2.0",
+    "llama-index-embeddings-openai>=0.1.0",
+    "llama-index-embeddings-ollama>=0.1.0",
+
+    # ── Конвертация документов ───────────────────────────────────
+    "pymupdf>=1.24.0",
+    "pymupdf4llm>=0.0.17",
+    "mammoth>=1.8.0",
+    "openpyxl>=3.1.0",
+    "pandas>=2.0.0",
+    "extract-msg>=0.48.0",
+    "pdfplumber>=0.11.0",
+
+    # ── UI ───────────────────────────────────────────────────────
+    "nicegui>=2.0.0",
+
+    # ── Утилиты ──────────────────────────────────────────────────
+    "python-dotenv>=1.0.0",
+    "aiofiles>=23.0.0",
+]
+
+[dependency-groups]
+dev = []
+
+[tool.uv]

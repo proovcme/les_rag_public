@@ -21,7 +21,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     env_file: [.env]
     environment:
-      - OLLAMA_URL=http://host.docker.internal:11434
+      - OLLAMA_URL=http://host.docker.internal:8080
       - QDRANT_URL=http://qdrant:6333
     extra_hosts: ["host.docker.internal:host-gateway"]
     depends_on: [qdrant]
