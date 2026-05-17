@@ -156,7 +156,20 @@ class SwitchModelRequest(BaseModel):
 
 # ── Хелперы ───────────────────────────────────────────────────────────────────
 
-def _get_engine(model_name: str) -> MLXMemoryManager:
+def _strip_think_tags(text: str) -> str:
+    """Убирает блоки <think>…</think> и артефакты токенайзера из ответа Qwen3."""
+    import re
+    # Полный блок <think>…</think> (жадный, на случай нескольких)
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    # Незакрытый <think> до конца строки
+    text = re.sub(r"<think>.*", "", text, flags=re.DOTALL)
+    # Хвостовые стоп-токены, которые MLX иногда пропускает
+    for token in ("<|im_end|>", "<|endoftext|>", "<|im_start|>", "</s>"):
+        text = text.replace(token, "")
+    return text.strip()
+
+
+
     if model_name == VAL_MODEL or "4B" in model_name or "4b" in model_name:
         return val_engine
     return main_engine
@@ -215,6 +228,32 @@ async def health():
     }
 
 
+@app.get("/api/ps")
+async def api_ps():
+    """Ollama-совместимый /api/ps — список загруженных моделей.
+    Нужен proxy_server.py и metrics_collector.py для опроса статуса."""
+    models = []
+    if main_engine.model is not None:
+        models.append({
+            "name":       main_engine.model_path,
+            "model":      main_engine.model_path,
+            "size":       0,
+            "digest":     "",
+            "details":    {"family": "qwen3"},
+            "expires_at": "",
+        })
+    if val_engine.model is not None:
+        models.append({
+            "name":       val_engine.model_path,
+            "model":      val_engine.model_path,
+            "size":       0,
+            "digest":     "",
+            "details":    {"family": "qwen3"},
+            "expires_at": "",
+        })
+    return {"models": models}
+
+
 @app.post("/api/switch_model")
 async def switch_model(req: SwitchModelRequest):
     if req.target == "val":
@@ -248,7 +287,7 @@ async def list_models():
 async def generate_ollama(req: GenerateRequest):
     """Ollama-совместимый endpoint для обратной совместимости."""
     engine = _get_engine(req.model)
-    answer = await engine.generate_text(prompt=req.prompt, max_tokens=req.max_tokens)
+    answer = _strip_think_tags(await engine.generate_text(prompt=req.prompt, max_tokens=req.max_tokens))
     return {"model": req.model, "response": answer, "eval_count": len(answer.split())}
 
 
@@ -258,10 +297,10 @@ async def chat_completions(req: OAIChatRequest):
     engine = _get_engine(req.model or MAIN_MODEL)
     prompt = _messages_to_prompt(req.messages, engine)
     try:
-        answer = await engine.generate_text(
+        answer = _strip_think_tags(await engine.generate_text(
             prompt=prompt,
             max_tokens=req.max_tokens or 2048,
-        )
+        ))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     return _oai_response(answer, engine.model_path)
@@ -291,7 +330,7 @@ async def validate_answer(req: ValidateRequest):
         ),
     }])
     try:
-        raw = (await val_engine.generate_text(prompt=prompt, max_tokens=10)).strip().upper()
+        raw = _strip_think_tags(await val_engine.generate_text(prompt=prompt, max_tokens=10)).upper()
         if "VERIFIED" in raw:        status = "VERIFIED"
         elif "NO_DATA" in raw:       status = "NO_DATA"
         elif "HALLUCINATION" in raw: status = "HALLUCINATION"

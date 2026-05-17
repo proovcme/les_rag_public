@@ -23,6 +23,7 @@ services:
     environment:
       - OLLAMA_URL=http://host.docker.internal:8080
       - QDRANT_URL=http://qdrant:6333
+      - TZ=Europe/Moscow
     extra_hosts: ["host.docker.internal:host-gateway"]
     depends_on: [qdrant]
     networks: [les-net]

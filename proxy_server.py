@@ -160,6 +160,7 @@ async def metrics_collector_loop():
 async def startup():
     global rag_backend
     init_db()
+    _seed_admin_key()
     try:
         rag_backend = QdrantLlamaIndexAdapter(
             qdrant_url=os.getenv("QDRANT_URL", "http://qdrant:6333"),
@@ -181,10 +182,132 @@ async def track_errors(request: Request, call_next):
         error_counts[response.status_code] += 1
     return response
 
+# ══════════════════════════════════════════════════════════════════════════════
+# В.О.Л.К. v2.2 — управление ключами доступа
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _auth_db() -> sqlite3.Connection:
+    conn = sqlite3.connect("./data/les_meta.db", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS auth_keys (
+            key_value   TEXT PRIMARY KEY,
+            holder_name TEXT NOT NULL DEFAULT '',
+            role        TEXT NOT NULL DEFAULT 'user',
+            is_active   INTEGER NOT NULL DEFAULT 1,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        )
+    """)
+    conn.commit()
+    return conn
+
+
+def _seed_admin_key():
+    admin_key = os.getenv("ADMIN_PASSWORD", "admin123")
+    conn = _auth_db()
+    try:
+        exists = conn.execute("SELECT 1 FROM auth_keys WHERE role='admin' LIMIT 1").fetchone()
+        if not exists:
+            conn.execute(
+                "INSERT OR IGNORE INTO auth_keys (key_value, holder_name, role) VALUES (?,?,?)",
+                (admin_key, "admin", "admin")
+            )
+            conn.commit()
+            logger.info(f"[В.О.Л.К.] Admin-ключ создан из ADMIN_PASSWORD")
+    finally:
+        conn.close()
+
+
+class AuthVerifyReq(BaseModel):
+    key: str
+
+class AuthKeyCreate(BaseModel):
+    key_value:   str
+    holder_name: str = ""
+    role:        str = "user"
+
+class AuthKeyToggle(BaseModel):
+    key_value: str
+    is_active: int
+
+
+@app.post("/api/auth/verify")
+async def auth_verify(req: AuthVerifyReq):
+    conn = _auth_db()
+    try:
+        row = conn.execute(
+            "SELECT role, holder_name FROM auth_keys WHERE key_value=? AND is_active=1",
+            (req.key.strip(),)
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        raise HTTPException(status_code=401, detail="Неверный ключ или ключ отключён")
+    return {"role": row["role"], "holder": row["holder_name"]}
+
+
+@app.get("/api/auth/keys")
+async def auth_list_keys():
+    conn = _auth_db()
+    try:
+        rows = conn.execute(
+            "SELECT key_value, holder_name, role, is_active, created_at "
+            "FROM auth_keys ORDER BY created_at DESC"
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
+@app.post("/api/auth/keys")
+async def auth_create_key(req: AuthKeyCreate):
+    if not req.key_value.strip():
+        raise HTTPException(400, "key_value не может быть пустым")
+    conn = _auth_db()
+    try:
+        conn.execute(
+            "INSERT INTO auth_keys (key_value, holder_name, role) VALUES (?,?,?)",
+            (req.key_value.strip(), req.holder_name.strip(), req.role)
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, "Ключ уже существует")
+    finally:
+        conn.close()
+    logger.info(f"[В.О.Л.К.] Новый ключ: {req.holder_name} [{req.role}]")
+    return {"status": "created", "key_value": req.key_value, "role": req.role}
+
+
+@app.post("/api/auth/keys/toggle")
+async def auth_toggle_key(req: AuthKeyToggle):
+    conn = _auth_db()
+    try:
+        conn.execute(
+            "UPDATE auth_keys SET is_active=? WHERE key_value=?",
+            (req.is_active, req.key_value)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"status": "ok", "key_value": req.key_value, "is_active": req.is_active}
+
+
+@app.delete("/api/auth/keys/{key_value}")
+async def auth_delete_key(key_value: str):
+    conn = _auth_db()
+    try:
+        conn.execute("DELETE FROM auth_keys WHERE key_value=?", (key_value,))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"status": "deleted", "key_value": key_value}
+
+
 @app.get("/api/health")
 async def health():
     if not rag_backend: return {"status": "starting", "backend": "none"}
-    return {"status": "ok" if await rag_backend.health() else "error", "backend": "qdrant_llama"}
+    ok = await rag_backend.health()
+    return {"status": "ok" if ok else "error", "backend": "qdrant_llama"}
 
 @app.get("/api/mode")
 async def get_mode():
