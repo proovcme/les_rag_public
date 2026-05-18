@@ -68,39 +68,68 @@ async def main_page(request: Request):
             "color:var(--dim);font-family:var(--font);font-size:.7rem;font-weight:700;"
             "padding:0 24px;"
         ) as tabs:
-            tab_overview = ui.tab("ОБЗОР",          icon="o_dashboard")
-            tab_samovar  = ui.tab("С.А.М.О.В.А.Р.", icon="o_inventory_2")
-            tab_prorab   = ui.tab("П.Р.О.Р.А.Б.",   icon="o_monitor")
+            tab_overview = ui.tab("ОБЗОР",          icon="o_dashboard") if is_admin else None
+            tab_samovar  = ui.tab("С.А.М.О.В.А.Р.", icon="o_inventory_2") if is_admin else None
+            tab_prorab   = ui.tab("П.Р.О.Р.А.Б.",   icon="o_monitor") if is_admin else None
             tab_chat     = ui.tab("AI ЧАТ",         icon="o_forum")
-            tab_mermaid  = ui.tab("ГРАФ",           icon="o_account_tree")
-            tab_diag     = ui.tab("🔬 ДИАГНОСТИКА", icon="o_medical_services")
-            tab_volk     = ui.tab("В.О.Л.К.", icon="o_vpn_key") if is_admin else None
+            tab_mermaid  = ui.tab("ГРАФ",           icon="o_account_tree") if is_admin else None
+            tab_diag     = ui.tab("🔬 ДИАГНОСТИКА", icon="o_medical_services") if is_admin else None
+            tab_volk     = ui.tab("В.О.Л.К.",       icon="o_vpn_key") if is_admin else None
+
+        # Персистим активный таб — при любом переключении сохраняем имя
+        def _save_tab(e):
+            try:
+                val = e.args if isinstance(e.args, str) else (e.args[0] if isinstance(e.args, (list, tuple)) and e.args else None)
+                if val:
+                    app.storage.user["last_tab"] = str(val)
+            except Exception:
+                pass
+
+        tabs.on("update:model-value", _save_tab)
 
         # Шапка (после tabs, чтобы sticky работал корректно)
         build_header(tabs, role, holder, is_admin)
 
         # 2. Контент (Panels)
-        with ui.tab_panels(tabs, value=tab_overview).classes("w-full flex-1").style(
+        _default_tab = tab_overview if is_admin else tab_chat
+        with ui.tab_panels(tabs, value=_default_tab).classes("w-full flex-1").style(
             "background:var(--bg);overflow-y:auto;padding:0;"
         ):
-            with ui.tab_panel(tab_overview):
-                build_overview(tabs, is_admin)
-            with ui.tab_panel(tab_samovar):
-                build_samovar()
-            with ui.tab_panel(tab_prorab):
-                build_prorab()
+            if is_admin:
+                with ui.tab_panel(tab_overview):
+                    build_overview(tabs, is_admin)
+                with ui.tab_panel(tab_samovar):
+                    build_samovar()
+                with ui.tab_panel(tab_prorab):
+                    build_prorab()
             with ui.tab_panel(tab_chat):
                 build_chat(is_admin, tabs, tab_mermaid)
-            with ui.tab_panel(tab_mermaid):
-                build_mermaid()
-            with ui.tab_panel(tab_diag):
-                build_diag()
-            if is_admin and tab_volk:
+            if is_admin:
+                with ui.tab_panel(tab_mermaid):
+                    build_mermaid()
+                with ui.tab_panel(tab_diag):
+                    build_diag()
                 with ui.tab_panel(tab_volk):
                     build_volk()
 
         # 3. Подвал (Лог)
         build_log_terminal()
+
+    # Восстанавливаем последний активный таб (защита от reset при reconnect)
+    _last_tab = app.storage.user.get("last_tab", "AI ЧАТ" if not is_admin else "ОБЗОР")
+    _tab_map = {"AI ЧАТ": tab_chat}
+    if is_admin:
+        _tab_map.update({
+            "ОБЗОР":          tab_overview,
+            "С.А.М.О.В.А.Р.": tab_samovar,
+            "П.Р.О.Р.А.Б.":   tab_prorab,
+            "ГРАФ":            tab_mermaid,
+            "🔬 ДИАГНОСТИКА":  tab_diag,
+            "В.О.Л.К.":       tab_volk,
+        })
+    _target = _tab_map.get(_last_tab)
+    if _target and _target != _default_tab:
+        ui.timer(0.05, lambda t=_target: tabs.set_value(t), once=True)
 
 
 

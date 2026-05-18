@@ -156,7 +156,7 @@ async def refresh_samovar():
 
 async def bg_loop():
     """Главный фоновый цикл опроса.
-    
+
     Расписание (интервал тика = 10с):
       - metrics:  каждые 10с
       - status:   каждые 20с  (tick % 2)
@@ -165,12 +165,15 @@ async def bg_loop():
     """
     tick = 0
     while True:
-        await asyncio.sleep(10)  # был 5с — уменьшает нагрузку на логи
+        await asyncio.sleep(10)
         tick += 1
-        await refresh_metrics()
-        if tick % 2 == 0:
-            await refresh_status()
-        if tick % 3 == 0:
-            await refresh_mlx()
-        if tick % 6 == 0:
-            await refresh_samovar()
+        try:
+            await refresh_metrics()
+            if tick % 2 == 0:
+                await refresh_status()
+            if tick % 3 == 0:
+                await refresh_mlx()
+            if tick % 6 == 0:
+                await refresh_samovar()
+        except Exception as e:
+            add_log(f"[bg_loop] Ошибка тика {tick}: {e}")

@@ -111,10 +111,12 @@ def build_prorab():
             """Извлекает loaded из MLX объекта."""
             return v.get("loaded", default) if isinstance(v, dict) else default
 
+        _prev_render = {"mlx": None, "containers": None}
+
         def _render_prorab():
-            m   = state["metrics"]
-            st  = state["status"]
-            mlx = state["mlx_health"]
+            m   = state.get("metrics", {})
+            st  = state.get("status", {})
+            mlx = state.get("mlx_health", {})
             s   = m.get("system", {})
             p   = m.get("pipeline", {})
             r   = m.get("rag", {})
@@ -172,59 +174,65 @@ def build_prorab():
                 avg = sum(combined) / len(combined) if combined else 0
                 lat_lbl.set_text(f"{avg*1000:.0f} ms avg")
 
-            # MLX Host
+            # MLX Host — clear() только если данные изменились
+            mlx_key = str(mlx)
             if mlx:
                 mlx_badge.set_content('<span class="tag-ok">UP</span>')
-                engines = []
-                if mlx.get("main_model") or mlx.get("model"):
-                    mv = mlx.get("main_model") or mlx.get("model")
-                    engines.append(("MAIN", _n(mv), _l(mv, True), "var(--accent)"))
-                if mlx.get("val_model"):
-                    engines.append(("VAL", _n(mlx["val_model"]), _l(mlx["val_model"], False), "var(--pauk)"))
-                if mlx.get("embed_model") or mlx.get("embedding_model"):
-                    ev = mlx.get("embed_model") or mlx.get("embedding_model")
-                    engines.append(("EMBED", _n(ev) or "bge-m3", True, "var(--ok)"))
+                if mlx_key != _prev_render["mlx"]:
+                    _prev_render["mlx"] = mlx_key
+                    engines = []
+                    if mlx.get("main_model") or mlx.get("model"):
+                        mv = mlx.get("main_model") or mlx.get("model")
+                        engines.append(("MAIN", _n(mv), _l(mv, True), "var(--accent)"))
+                    if mlx.get("val_model"):
+                        engines.append(("VAL", _n(mlx["val_model"]), _l(mlx["val_model"], False), "var(--pauk)"))
+                    if mlx.get("embed_model") or mlx.get("embedding_model"):
+                        ev = mlx.get("embed_model") or mlx.get("embedding_model")
+                        engines.append(("EMBED", _n(ev) or "bge-m3", True, "var(--ok)"))
 
-                mlx_models_container.clear()
-                for label, name, loaded, color in engines:
-                    with mlx_models_container:
-                        with ui.row().classes("items-center justify-between w-full py-1").style(
-                            "border-bottom:1px solid var(--border);"
-                        ):
-                            with ui.column().classes("gap-0"):
-                                ui.label(name or "—").style(
-                                    "font-size:.72rem;font-weight:700;color:var(--text);"
-                                    "max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+                    mlx_models_container.clear()
+                    for label, name, loaded, color in engines:
+                        with mlx_models_container:
+                            with ui.row().classes("items-center justify-between w-full py-1").style(
+                                "border-bottom:1px solid var(--border);"
+                            ):
+                                with ui.column().classes("gap-0"):
+                                    ui.label(name or "—").style(
+                                        "font-size:.72rem;font-weight:700;color:var(--text);"
+                                        "max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+                                    )
+                                    _html(f'<span class="tag-dim" style="color:{color};">{label}</span>')
+                                _html(
+                                    f'<span class="{"tag-ok" if loaded else "tag-dim"}">'
+                                    f'{"LIVE" if loaded else "IDLE"}</span>'
                                 )
-                                _html(f'<span class="tag-dim" style="color:{color};">{label}</span>')
-                            _html(
-                                f'<span class="{"tag-ok" if loaded else "tag-dim"}">'
-                                f'{"LIVE" if loaded else "IDLE"}</span>'
-                            )
             else:
-                mlx_badge.set_content('<span class="tag-err">DOWN</span>')
-                mlx_models_container.clear()
-                with mlx_models_container:
-                    ui.label("MLX Host недоступен").style("font-size:.7rem;color:var(--err);")
+                if mlx_key != _prev_render["mlx"]:
+                    _prev_render["mlx"] = mlx_key
+                    mlx_badge.set_content('<span class="tag-err">DOWN</span>')
+                    mlx_models_container.clear()
+                    with mlx_models_container:
+                        ui.label("MLX Host недоступен").style("font-size:.7rem;color:var(--err);")
 
-
-
-            # Docker
+            # Docker — clear() только если список контейнеров изменился
             containers = st.get("containers", [])
             all_ok = all(c.get("ok") for c in containers) if containers else False
             docker_badge.set_text(f"{len(containers)} UP" if all_ok else "ПРОБЛЕМА")
             docker_badge.style(f"color:{'var(--ok)' if all_ok else 'var(--err)'};")
-            docker_container.clear()
-            for c in containers:
-                with docker_container:
-                    with ui.row().classes("items-center justify-between py-1").style(
-                        "border-bottom:1px solid var(--border);"
-                    ):
-                        ui.label(c["name"]).style("font-size:.72rem;font-weight:700;")
-                        _html(
-                            f'<span class="{"tag-ok" if c.get("ok") else "tag-err"}">'
-                            f'{c.get("status","?").split()[0]}</span>'
-                        )
+            containers_key = str(containers)
+            if containers_key != _prev_render["containers"]:
+                _prev_render["containers"] = containers_key
+                docker_container.clear()
+                for c in containers:
+                    with docker_container:
+                        with ui.row().classes("items-center justify-between py-1").style(
+                            "border-bottom:1px solid var(--border);"
+                        ):
+                            ui.label(c["name"]).style("font-size:.72rem;font-weight:700;")
+                            _html(
+                                f'<span class="{"tag-ok" if c.get("ok") else "tag-err"}">'
+                                f'{c.get("status","?").split()[0]}</span>'
+                            )
 
             # Errors
             if e:
@@ -234,5 +242,5 @@ def build_prorab():
                 errors_lbl.set_text("Нет ошибок")
                 errors_lbl.style("color:var(--dim);")
 
-        ui.timer(10, lambda: _render_prorab())  # синхронизован с bg_loop (10с)
+        ui.timer(10, lambda: _render_prorab(), active=True)
         ui.timer(0.3, lambda: _render_prorab(), once=True)

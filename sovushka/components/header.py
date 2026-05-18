@@ -37,30 +37,44 @@ def build_header(tabs, auth_role: str, auth_holder: str, is_admin: bool):
             ).props("flat").style("color:var(--dim);")
 
             # Переключатель темы
-            _th = {"dark": True}
+            _DARK_VARS  = ["#08090b", "#12151a", "#1a1e25", "#ffffff",
+                           "#94a3b8", "#2d3748", "#3b82f6", "#10b981", "#ef4444", "#f59e0b", "#8b5cf6"]
+            _LIGHT_VARS = ["#f6f8fa", "#ffffff", "#eaeef2", "#1f2328",
+                           "#424a53", "#d0d7de", "#0969da", "#1a7f37", "#cf222e", "#9a6700", "#8250df"]
+            _CSS_KEYS   = ["--bg", "--bg-panel", "--bg-mod", "--text", "--dim",
+                           "--border", "--accent", "--ok", "--err", "--warn", "--pauk"]
 
-            def _toggle_theme():
-                _th["dark"] = not _th["dark"]
-                d = _th["dark"]
-                if d:
-                    vs = ["#08090b", "#12151a", "#1a1e25", "#ffffff",
-                          "#94a3b8", "#2d3748", "#3b82f6", "#10b981", "#ef4444", "#f59e0b"]
-                else:
-                    vs = ["#f0f2f5", "#ffffff", "#e8ecf0", "#0d1117",
-                          "#444d56", "#c8d0d8", "#0969da", "#1a7f37", "#cf222e", "#9a6700"]
-                ks = ["--bg", "--bg-panel", "--bg-mod", "--text", "--dim",
-                      "--border", "--accent", "--ok", "--err", "--warn"]
+            def _apply_theme_js(dark: bool) -> str:
+                vs = _DARK_VARS if dark else _LIGHT_VARS
                 js = ";".join(
                     f"document.documentElement.style.setProperty('{k}','{v}')"
-                    for k, v in zip(ks, vs)
+                    for k, v in zip(_CSS_KEYS, vs)
                 )
                 js += f";document.body.style.background='{vs[0]}';document.body.style.color='{vs[3]}';"
-                ui.run_javascript(js)
-                theme_btn.set_text("☀" if d else "🌙")
+                return js
 
-            theme_btn = ui.button("🌙", on_click=_toggle_theme).props("flat").style(
+            _dark_init = app.storage.user.get("dark_theme", True)
+
+            def _toggle_theme():
+                d = not app.storage.user.get("dark_theme", True)
+                app.storage.user["dark_theme"] = d
+                vs = _DARK_VARS if d else _LIGHT_VARS
+                js = ";".join(
+                    f"document.documentElement.style.setProperty('{k}','{v}')"
+                    for k, v in zip(_CSS_KEYS, vs)
+                )
+                js += f";document.body.style.background='{vs[0]}';document.body.style.color='{vs[3]}';"
+                js += f";if(window.Quasar){{Quasar.Dark.set({'true' if d else 'false'});}}"
+                ui.run_javascript(js)
+                theme_btn.set_text("🌙" if d else "☀")
+
+            theme_btn = ui.button("🌙" if _dark_init else "☀", on_click=_toggle_theme).props("flat").style(
                 "color:var(--dim);font-size:.85rem;"
             )
+
+            # Восстанавливаем тему при реконнекте WebSocket (если была светлая)
+            if not _dark_init:
+                ui.timer(0.1, lambda: ui.run_javascript(_apply_theme_js(False)), once=True)
 
             # Диалог настроек
             with ui.dialog() as settings_dialog, ui.card().style(

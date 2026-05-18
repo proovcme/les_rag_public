@@ -20,27 +20,35 @@
 ## Архитектура
 
 ```
-┌─────────────────────────────────────────────────┐
-│              Mac Mini M4 / 24 GB                │
+Интернет → les.ovc.me
+                │
+┌───────────────▼─────────────────────────────────┐
+│  VPS П.А.У.К. (Debian 13, 185.185.71.196)       │
+│                                                 │
+│  Caddy :443  (Let's Encrypt, les.ovc.me)        │
+│       ├── /api/* → proxy_server :8050           │
+│       └── /*     → sovushka_ng  :8051           │
+│                                                 │
+│  SSH reverse tunnel ◄── Mac Mini               │
+│       ├── :6333 → Qdrant (Mac Mini)             │
+│       └── :8080 → MLX Host (Mac Mini)           │
+└─────────────────────────────────────────────────┘
+         │  ZeroTier `8d1c312afa249de4`
+┌────────▼────────────────────────────────────────┐
+│  Mac Mini M4 / 24 GB (Ж.А.Б.А.)                │
 │                                                 │
 │  С.О.В.У.Ш.К.А.  (NiceGUI UI, порт 8051)       │
-│       │                                         │
-│  les-proxy  (FastAPI, порт 8050)                │
-│       ├── RAG pipeline                          │
-│       ├── Т.О.С.К.А. (CRAG валидация)           │
-│       └── В.О.Л.К.   (auth, ключи доступа)      │
-│       │                                         │
+│  les-proxy        (FastAPI,    порт 8050)        │
+│       ├── RAG pipeline  (С.А.М.О.В.А.Р.)        │
+│       ├── Т.О.С.К.А.    (CRAG валидация)        │
+│       └── В.О.Л.К.      (ключи, SQLite)         │
+│                                                 │
 │  MLX Native Host  (порт 8080)                   │
 │       ├── Qwen3-14B-4bit  (LLM, Metal)          │
 │       ├── Qwen3-4B-4bit   (валидатор)           │
 │       └── BGE-M3          (эмбеддинги, MPS)     │
-│       │                                         │
+│                                                 │
 │  Qdrant  (векторная база, порт 6333)            │
-└─────────────────────────────────────────────────┘
-         │  ZeroTier overlay network
-┌────────┴────────────────────────────────────────┐
-│  VPS П.А.У.К. (Debian 13)                       │
-│  Caddy → HTTPS les.ovc.me → Mac Mini           │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -68,9 +76,10 @@
 | Валидатор | Qwen3-4B-4bit (CRAG: VERIFIED / NO_DATA / HALLUCINATION) |
 | Эмбеддинги | [BGE-M3](https://huggingface.co/BAAI/bge-m3) via sentence-transformers + MPS |
 | Векторная база | [Qdrant](https://qdrant.tech/) |
-| Backend | FastAPI + httpx |
-| Frontend | [NiceGUI](https://nicegui.io/) |
-| Внешний доступ | Caddy + Let's Encrypt + ZeroTier |
+| Backend | FastAPI + LlamaIndex |
+| Frontend | [NiceGUI](https://nicegui.io/) v5.0 |
+| Auth | В.О.Л.К. — API-ключи + SQLite, auto-bypass для ZeroTier IP |
+| Внешний доступ | Caddy + Let's Encrypt + SSH reverse tunnel |
 | Форматы документов | PDF, DOCX, XLSX, CSV, EML, MSG, JSON, MD, TXT |
 
 ---
@@ -97,7 +106,7 @@ cp .env.example .env
 # Отредактируй .env — укажи модели и пароль
 
 # Запуск
-docker compose up -d          # Qdrant
+docker compose up -d          # Qdrant + les-proxy
 ./start_mlx.command           # MLX Host (LLM + Embeddings)
 uv run python3 sovushka_ng.py # UI
 ```
@@ -159,7 +168,7 @@ Qwen3-14B (MLX, Metal)
 ```
 Интернет → les.ovc.me (VPS, Caddy, SSL)
                 │
-          ZeroTier VPN
+          SSH reverse tunnel
                 │
          Mac Mini :8050/:8051
 ```
@@ -167,6 +176,23 @@ Qwen3-14B (MLX, Metal)
 Доступ по ключам (В.О.Л.К.):
 - `admin` — полный интерфейс
 - `user`  — только AI ЧАТ
+- ZeroTier IP (`10.x.x.x`) — автобайпас (роль user, ключ не нужен)
+
+---
+
+## Быстрая диагностика
+
+```bash
+# Все сервисы
+curl -s http://localhost:8050/api/diag | python3 -c \
+  "import sys,json; [print(f\"{r['status'].upper():6} {r['name']}\") for r in json.load(sys.stdin)['checks']]"
+
+# Метрики (файлы, чанки, RAM, CPU)
+curl -s http://localhost:8050/api/metrics | python3 -m json.tool
+
+# Логи в реальном времени
+docker logs -f les-proxy 2>&1 | grep -E "\[CHAT\]|\[PARSE\]|\[ERROR\]"
+```
 
 ---
 
@@ -181,22 +207,25 @@ les-rag-public/
 ├── Dockerfile.proxy
 ├── start_mlx.command
 ├── stop_mlx.command
-├── mlx_host.py              ← MLX Native Host
+├── start_pauk.command        ← SSH tunnel к VPS
+├── stop_pauk.command
+├── pauk_launchd.plist        ← launchd автозапуск туннеля (Mac Mini)
+├── mlx_host.py               ← MLX Native Host
 ├── backend/
-│   ├── mlx_adapter.py       ← MLXMemoryManager
-│   ├── qdrant_adapter.py    ← EmbedClient + RAG
-│   ├── converter.py         ← PDF/DOCX/XLSX → текст
+│   ├── mlx_adapter.py        ← MLXMemoryManager
+│   ├── qdrant_adapter.py     ← EmbedClient + RAG
+│   ├── converter.py          ← PDF/DOCX/XLSX → текст
 │   ├── metrics_collector.py
 │   └── interface.py
-├── sovushka/                ← UI модули (рефакторинг)
-│   ├── auth.py              ← В.О.Л.К.
+├── sovushka/                 ← UI модули (рефакторинг)
+│   ├── config.py             ← PROXY_URL, MLX_URL, UI_PORT
 │   ├── state.py
 │   ├── styles.py
 │   └── pages/
 │       ├── chat.py
 │       ├── samovar.py
 │       └── ...
-└── sovushka_ng.py           ← точка входа UI
+└── sovushka_ng.py            ← точка входа UI
 ```
 
 **Не входит в публичную версию:** `proxy_server.py` (содержит внутреннюю логику), `.env`, ключи, данные индексов.
@@ -213,11 +242,16 @@ MIT — используй, форкай, улучшай.
 ## Дорожная карта
 
 - [x] RAG pipeline (Qdrant + BGE-M3 + Qwen3)
-- [x] CRAG валидация (Т.О.С.К.А.)
-- [x] NiceGUI интерфейс (С.О.В.У.Ш.К.А.)
-- [x] Внешний доступ через VPS (П.А.У.К.)
-- [x] Auth по ключам (В.О.Л.К.)
+- [x] CRAG валидация (Т.О.С.К.А.) — VERIFIED / NO_DATA / HALLUCINATION
+- [x] NiceGUI интерфейс (С.О.В.У.Ш.К.А.) v5.0 — модульная архитектура
+- [x] Светлая и тёмная тема — персистентная через `app.storage.user`, WCAG AA контрасты
+- [x] Внешний доступ через VPS (П.А.У.К.) — Caddy + Let's Encrypt + SSH tunnel, `les.ovc.me` live
+- [x] Auth по ключам (В.О.Л.К.) — admin/user роли, временные ключи, привязка к устройству (fingerprint)
+- [x] История чатов (SQLite `chat_history`) — выживает рестарт процесса
+- [x] CRAG error handling — таймаут/ошибка валидатора → UNKNOWN (не VERIFIED)
+- [x] Rate limiting (≤ 2 параллельных LLM-запроса), защита от prompt injection, path traversal
+- [x] `les.command` — единый скрипт управления (start/stop/restart/status)
 - [ ] Е.Ж.И.К. — IMAP коннектор для почты
-- [ ] VLM pipeline — анализ PDF-чертежей через Gemma 4
+- [ ] VLM pipeline — анализ PDF-чертежей
 - [ ] Folder Watcher — автосинк новых файлов
 - [ ] Parquet pipeline для смет и спецификаций

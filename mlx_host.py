@@ -170,7 +170,7 @@ def _strip_think_tags(text: str) -> str:
 
 
 def _get_engine(model_name: str) -> "MLXMemoryManager":
-    if model_name == VAL_MODEL or "4B" in model_name or "4b" in model_name:
+    if model_name == VAL_MODEL:
         return val_engine
     return main_engine
 
@@ -311,10 +311,11 @@ async def chat_completions(req: OAIChatRequest):
 @app.post("/api/validate")
 async def validate_answer(req: ValidateRequest):
     """Проверка ответа через Qwen3-4B. Возвращает VERIFIED / NO_DATA / HALLUCINATION."""
+    # enable_thinking=False — валидатору не нужен <think> блок, нужен мгновенный ответ
     prompt = val_engine.apply_chat_template([{
         "role": "system",
         "content": (
-            "Ты — строгий валидатор. Отвечай ТОЛЬКО одним словом: "
+            "Ты — строгий валидатор. Отвечай ТОЛЬКО одним словом без пояснений: "
             "VERIFIED, NO_DATA или HALLUCINATION."
         ),
     }, {
@@ -328,9 +329,9 @@ async def validate_answer(req: ValidateRequest):
             "HALLUCINATION — ответ противоречит контексту.\n"
             "Одно слово:"
         ),
-    }])
+    }], enable_thinking=False)
     try:
-        raw = _strip_think_tags(await val_engine.generate_text(prompt=prompt, max_tokens=10)).upper()
+        raw = _strip_think_tags(await val_engine.generate_text(prompt=prompt, max_tokens=64)).upper()
         if "VERIFIED" in raw:        status = "VERIFIED"
         elif "NO_DATA" in raw:       status = "NO_DATA"
         elif "HALLUCINATION" in raw: status = "HALLUCINATION"

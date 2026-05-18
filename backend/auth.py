@@ -34,13 +34,14 @@ def get_role() -> str:
 def get_holder() -> str:
     return app.storage.user.get("holder", "")
 
-async def login(key: str) -> bool:
-    """Проверяет ключ через proxy /api/auth/verify, сохраняет сессию."""
+async def login(key: str, fingerprint: str = "") -> dict:
+    """Проверяет ключ через proxy /api/auth/verify, сохраняет сессию.
+    Возвращает {"ok": bool, "detail": str}."""
     try:
         async with httpx.AsyncClient(timeout=5) as c:
             r = await c.post(
                 f"{PROXY_URL}/api/auth/verify",
-                json={"key": key.strip()}
+                json={"key": key.strip(), "fingerprint": fingerprint.strip()}
             )
             if r.status_code == 200:
                 data = r.json()
@@ -49,10 +50,13 @@ async def login(key: str) -> bool:
                 app.storage.user["holder"]        = data.get("holder", "")
                 app.storage.user["key"]           = key.strip()
                 logger.info(f"[В.О.Л.К.] Вход: {data.get('holder')} [{data.get('role')}]")
-                return True
+                return {"ok": True}
+            else:
+                detail = r.json().get("detail", "Ошибка авторизации") if r.headers.get("content-type", "").startswith("application/json") else "Ошибка авторизации"
+                return {"ok": False, "detail": detail}
     except Exception as e:
         logger.warning(f"[В.О.Л.К.] Ошибка verify: {e}")
-    return False
+        return {"ok": False, "detail": "Ошибка соединения с сервером"}
 
 def logout():
     app.storage.user.clear()

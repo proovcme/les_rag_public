@@ -217,6 +217,30 @@ def register_login_page():
   setTimeout(function(){{ document.getElementById('volk-key').focus(); }}, 150);
 }})();
 
+function volkFingerprint() {{
+  var c = [];
+  c.push(navigator.userAgent || '');
+  c.push((navigator.languages || [navigator.language || '']).join(','));
+  c.push(screen.width + 'x' + screen.height + 'x' + (screen.colorDepth || 24));
+  c.push(navigator.hardwareConcurrency || 0);
+  c.push(Intl.DateTimeFormat().resolvedOptions().timeZone || '');
+  c.push(navigator.platform || '');
+  try {{
+    var cv = document.createElement('canvas');
+    var cx = cv.getContext('2d');
+    cx.textBaseline = 'top';
+    cx.font = '14px monospace';
+    cx.fillStyle = '#3b82f6';
+    cx.fillRect(0, 0, 80, 20);
+    cx.fillStyle = '#ffffff';
+    cx.fillText('Л.Е.С. 🔑', 2, 4);
+    c.push(cv.toDataURL().slice(-64));
+  }} catch(e) {{}}
+  var s = c.join('|'), h = 5381;
+  for (var i = 0; i < s.length; i++) {{ h = ((h << 5) + h) ^ s.charCodeAt(i); h = h >>> 0; }}
+  return 'fp_' + h.toString(16).padStart(8, '0');
+}}
+
 function volkLogin() {{
   var key = document.getElementById('volk-key').value.trim();
   var err = document.getElementById('volk-err');
@@ -224,6 +248,7 @@ function volkLogin() {{
   if (!key) {{ err.textContent = 'Введите ключ доступа'; return; }}
   btn.disabled = true; btn.textContent = '...'; err.textContent = '';
   window.__volkKey = key;
+  window.__volkFp  = volkFingerprint();
   document.getElementById('_volk_trigger').click();
 }}
 </script>
@@ -232,18 +257,20 @@ function volkLogin() {{
         # Скрытая кнопка-мост JS → Python
         async def _handle_login():
             key_val = await ui.run_javascript("return window.__volkKey || '';")
+            fp_val  = await ui.run_javascript("return window.__volkFp  || '';")
             if not key_val:
                 return
-            success = await login(key_val)
-            if success:
+            result = await login(key_val, fingerprint=fp_val)
+            if result["ok"]:
                 ui.navigate.to("/")
             else:
+                msg = result.get("detail", "Неверный ключ или ключ отключён")
                 await ui.run_javascript(
-                    "document.getElementById('volk-err').textContent='Неверный ключ или ключ отключён';"
+                    f"document.getElementById('volk-err').textContent={msg!r};"
                     "var b=document.getElementById('volk-btn');"
                     "b.disabled=false;b.textContent='\\u25BA\\u00A0\\u00A0ВОЙТИ В СИСТЕМУ';"
                     "document.getElementById('volk-key').focus();"
-                    "window.__volkKey='';"
+                    "window.__volkKey='';window.__volkFp='';"
                 )
 
         ui.button("", on_click=_handle_login).props('id="_volk_trigger"').style("display:none;")

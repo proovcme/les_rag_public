@@ -6,10 +6,11 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from typing import Optional
 from nicegui import ui
 
-from sovushka.state import state, api_post, add_log, refresh_samovar
+from sovushka.state import state, api_get, api_post, add_log, refresh_samovar
 from sovushka.components.charts import _html
 
 
@@ -30,26 +31,43 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     chat_column = ui.column().classes("w-full p-4 gap-3")
                     with chat_column:
                         _html('<div class="chat-msg-sys">Система активирована. Ожидание запросов.</div>')
-                        for msg in state.get("chat_history", []):
-                            if msg["role"] == "user":
-                                safe_q = msg["text"].replace("<", "&lt;").replace(">", "&gt;")
-                                _html(f'<div class="chat-msg-user">{safe_q}</div>')
-                            else:
-                                ans = msg.get("text", "")
-                                srcs = msg.get("srcs", [])
-                                crag = msg.get("crag", "")
-                                
-                                srcs_html = ""
-                                if srcs:
-                                    tags = "".join(f'<span class="src-tag">{s.get("file", s) if isinstance(s, dict) else s}</span>' for s in srcs)
-                                    srcs_html = f'<div class="msg-srcs" style="margin-top:8px;">{tags}</div>'
-                                if crag:
-                                    cls = "src-tag" if crag == "VERIFIED" else "src-tag src-tag-err"
-                                    srcs_html += f'<span class="{cls}" style="margin-left:4px;">Т.О.С.К.А.: {crag}</span>'
-                                    
-                                short_ans = ans if len(ans) < 600 else ans[:600] + "…"
-                                safe_ans = short_ans.replace("<", "&lt;").replace(">", "&gt;").replace(chr(10), "<br>")
-                                _html(f'<div class="chat-msg-ai">{safe_ans}{srcs_html}</div>')
+
+                def _render_msg(msg):
+                    if msg["role"] == "user":
+                        safe_q = msg["text"].replace("<", "&lt;").replace(">", "&gt;")
+                        _html(f'<div class="chat-msg-user">{safe_q}</div>')
+                    else:
+                        ans = msg.get("text", "")
+                        srcs = msg.get("srcs", [])
+                        crag = msg.get("crag", "")
+                        srcs_html = ""
+                        if srcs:
+                            tags = "".join(f'<span class="src-tag">{s.get("file", s) if isinstance(s, dict) else s}</span>' for s in srcs)
+                            srcs_html = f'<div class="msg-srcs" style="margin-top:8px;">{tags}</div>'
+                        if crag:
+                            cls = "src-tag" if crag == "VERIFIED" else "src-tag src-tag-err"
+                            srcs_html += f'<span class="{cls}" style="margin-left:4px;">Т.О.С.К.А.: {crag}</span>'
+                        safe_ans = ans.replace("<", "&lt;").replace(">", "&gt;").replace(chr(10), "<br>")
+                        _html(f'<div class="chat-msg-ai">{safe_ans}{srcs_html}</div>')
+
+                # Рендер текущей (in-memory) истории — если совушка не перезапускалась
+                with chat_column:
+                    for msg in state.get("chat_history", []):
+                        _render_msg(msg)
+
+                async def _load_history():
+                    if not state.get("chat_history"):
+                        hist = await api_get("/api/chat/history?limit=40")
+                        if hist:
+                            state["chat_history"] = hist
+                            chat_column.clear()
+                            with chat_column:
+                                _html('<div class="chat-msg-sys">История загружена.</div>')
+                                for m in hist:
+                                    _render_msg(m)
+                            chat_scroll.scroll_to(percent=1)
+
+                ui.timer(0.5, lambda: asyncio.create_task(_load_history()), once=True)
 
                 # Ввод + кнопка
                 with ui.row().classes("w-full gap-2 items-end"):
@@ -442,10 +460,19 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         state["chat_history"].clear()
         add_log("[ЧАТ] История очищена")
 
+    _sending = {"v": False}
+
     async def _do_send(question: str):
+        if _sending["v"]:
+            return
+        _sending["v"] = True
         send_btn.props("disabled")
         apply_btn.props("disabled")
+        chat_input.props("disabled")
         out_mode = out_mode_val["v"]
+
+        # Сохраняем вопрос СРАЗУ — до await, чтобы пережить реконнект
+        state["chat_history"].append({"role": "user", "text": question})
 
         with chat_column:
             safe_q = question.replace("<", "&lt;").replace(">", "&gt;")
@@ -454,13 +481,31 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         add_log(f'[AI] Запрос: "{question[:60]}"')
 
         with chat_column:
-            ai_placeholder = _html('<div class="chat-msg-ai typing">Обрабатываю...</div>')
+            ai_placeholder = _html('<div class="chat-msg-ai typing">⟳ Генерирую... 0с</div>')
         chat_scroll.scroll_to(percent=1)
 
         extra_prompt = _build_extra_prompt(question)
         payload = {"question": question + extra_prompt}
         if detail_dataset.value and detail_dataset.value != "(все датасеты)":
             payload["dataset_filter"] = detail_dataset.value
+
+        # Тикер: обновляем placeholder каждую секунду
+        _t0 = time.monotonic()
+        _stop_tick = {"v": False}
+
+        async def _tick():
+            spin = ["⟳", "↻", "⟲", "↺"]
+            i = 0
+            while not _stop_tick["v"]:
+                elapsed = int(time.monotonic() - _t0)
+                s = spin[i % len(spin)]
+                ai_placeholder.set_content(
+                    f'<div class="chat-msg-ai typing">{s} Генерирую... {elapsed}с</div>'
+                )
+                i += 1
+                await asyncio.sleep(1)
+
+        _tick_task = asyncio.create_task(_tick())
 
         try:
             d = await api_post("/api/chat", payload)
@@ -469,7 +514,6 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 srcs = d.get("sources", [])
                 crag = d.get("crag_status", "")
 
-                state["chat_history"].append({"role": "user", "text": question})
                 state["chat_history"].append({"role": "ai", "text": ans, "srcs": srcs, "crag": crag})
 
                 srcs_html = ""
@@ -480,15 +524,18 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     cls = "src-tag" if crag == "VERIFIED" else "src-tag src-tag-err"
                     srcs_html += f'<span class="{cls}" style="margin-left:4px;">Т.О.С.К.А.: {crag}</span>'
 
-                short_ans = ans if len(ans) < 600 else ans[:600] + "…"
-                safe_ans = short_ans.replace("<", "&lt;").replace(">", "&gt;").replace(chr(10), "<br>")
+                safe_ans = ans.replace("<", "&lt;").replace(">", "&gt;").replace(chr(10), "<br>")
                 ai_placeholder.set_content(
                     f'<div class="chat-msg-ai">{safe_ans}{srcs_html}</div>'
                 )
 
                 if separate_output_sw.value:
                     result_panel.clear()
-                    _render_result(ans, out_mode, result_panel)
+                    try:
+                        _render_result(ans, out_mode, result_panel)
+                    except Exception as render_ex:
+                        with result_panel:
+                            ui.label(f"Ошибка рендера: {render_ex}").style("color:var(--err);font-size:.75rem;")
 
                 add_log(f"[AI] Формат:{out_mode} CRAG:{crag or 'N/A'} src:{len(srcs)}")
             else:
@@ -496,8 +543,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         except Exception as ex:
             ai_placeholder.set_content(f'<div class="chat-msg-ai" style="color:var(--err);">Ошибка: {ex}</div>')
         finally:
+            _stop_tick["v"] = True
+            _tick_task.cancel()
+            _sending["v"] = False
             send_btn.props(remove="disabled")
             apply_btn.props(remove="disabled")
+            chat_input.props(remove="disabled")
             chat_scroll.scroll_to(percent=1)
 
     async def send_chat():

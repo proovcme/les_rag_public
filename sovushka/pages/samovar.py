@@ -155,9 +155,9 @@ def build_samovar():
             _render()
 
         def _render():
-            sources  = state["sources"]
-            datasets = state["datasets"]
-            jobs     = state["jobs"]
+            sources  = state.get("sources", [])
+            datasets = state.get("datasets", [])
+            jobs     = state.get("jobs", {})
             ds_map   = {d["id"]: d for d in datasets}
 
             tot_src = tot_idx = tot_chunks = 0

@@ -1,5 +1,5 @@
 # 🦉 Л.Е.С. — Локальная Единая Система
-## Мастер-документ v2.1 | 15.05.2026
+## Мастер-документ v2.5 | 18.05.2026
 
 > Единый источник истины. Объединяет README, ROADMAP, Архитектуру, Инфраструктуру, Словарь, Программу испытаний.  
 > Авторы: Клодыч (Claude), Кен (Qwen), Панорамыч (Gemini).
@@ -39,13 +39,20 @@
 - Модели: Ollama-оркестрация (`qwen3:14b`, `bge-m3:latest`)
 - MLX Native Host: Qwen3-14B + Qwen3-4B + bge-m3 на Apple Silicon Metal
 
-### Ключевые изменения v2.0 → v2.1 (текущая)
+### Ключевые изменения v2.0 → v2.1
 - С.О.В.У.Ш.К.А. переехала на **NiceGUI** (порт 8051) — единая Python-кодовая база
 - Форма запроса: 8 форматов выдачи (текст / спецификация / схема / таблица / Mermaid / SVG / по образцу)
 - Вкладка диагностики с Mermaid-топологией и автоматическими чеками
 - `/api/diag` — новый эндпоинт полной диагностики (11 чеков)
 - Т.О.С.К.А. v2: три независимых счётчика (VERIFIED / NO_DATA / HALLUCINATION)
 - `dataset_filter` в `/api/chat` — фильтр по имени папки без UUID
+
+### Ключевые изменения v2.2 → v2.3 (текущая)
+- **Т.О.С.К.А.: исправлен статус UNKNOWN** — `enable_thinking=False` для Qwen3-4B (валидатор не думает, сразу отвечает), `max_tokens` поднят с 10 до 64
+- **С.О.В.У.Ш.К.А.: убрана обрезка ответа** — лимит 600 символов в чат-пузыре снят, ответ полный
+- **С.О.В.У.Ш.К.А.: индикатор прогресса** — тикер `⟳ Генерирую... Nс` обновляется каждую секунду пока ИИ думает
+- **С.О.В.У.Ш.К.А.: персистентность таба** — активная вкладка сохраняется в `app.storage.user`, не сбрасывается при reconnect
+- **С.О.В.У.Ш.К.А.: светлая тема** — `Quasar.Dark.set()` переключает Quasar-компоненты, добавлен `--pauk`, улучшены контрасты
 
 ---
 
@@ -60,36 +67,66 @@
 | **С.О.В.У.Ш.К.А.** | Система Обработки и Выдачи: Умная, Шаблонизированная, Классифицированная, Автоматизированная | UI на NiceGUI (порт 8051) | ✅ v5.0 (Модульная) |
 | **П.Р.О.Р.А.Б.** | Программа Регулярной Оценки Работы Автономной Базы | Метрики, диагностика, `/api/metrics` | ✅ Live |
 | **К.О.Т.** | Куратор Отраслевой Терминологии | Семантический фильтр инженерного языка | 🔨 В разработке |
-| **В.О.Л.К.** | Внутренний Охранный Локальный Контур | RBAC, JWT-аутентификация | 🔨 В разработке |
+| **В.О.Л.К.** | Внутренний Охранный Локальный Контур | RBAC, ключи доступа (SQLite) | ✅ Live |
+| **П.А.У.К.** | Периметровый Автономный Узел Коммуникаций | VPS-relay: Caddy + SSH-туннель + ZeroTier | ✅ Live |
 | **С.У.Х.А.Р.И.К.** | Система Управления Холодными Архивами и Резервными Источниками Комплекса | Снапшоты Qdrant, бэкапы | 🔨 В разработке |
 | **Е.Ж.И.К.** | *(расшифровка уточняется)* | Обработка почты IMAP/EML | ⏳ Запланирован |
-| **П.А.У.К.** | Периметровый Автономный Узел Коммуникаций | Сетевой контур: ZeroTier P2P + DNS + SSL | 🆕 В проектировании |
 
 ### П.А.У.К. — детали
+
 **Состав:**
-- **ZeroTier** — текущий P2P транспорт (Network `8d1c312afa249de4`, подсеть `10.195.146.0/24`)
-- **Caddy** (не Cuddy) — reverse proxy с автоматическим HTTPS
-- **DNS** — домен `les.ovc.me` → маршрутизация сервисов
-- **SSL** — Let's Encrypt через Caddy ACME
+- **VPS** — Debian 13, `185.185.71.196`, ZeroTier `10.195.146.136`
+- **ZeroTier** — self-hosted сеть `8d1c312afa249de4`, подсеть `10.195.146.0/24`
+- **Caddy** — reverse proxy с автоматическим HTTPS (Let's Encrypt)
+- **DNS** — `les.ovc.me` → `185.185.71.196`
 
-**Целевая топология П.А.У.К.:**
+**Топология (live):**
 ```
-Интернет → les.ovc.me (DNS) → ZeroTier → Caddy :443
-                                               ├── / → С.О.В.У.Ш.К.А. :8051
-                                               ├── /api → Л.Е.С. прокси :8050
-                                               └── /qdrant → Qdrant :6333 (только внутри)
+Интернет → les.ovc.me → Caddy (VPS :443)
+                             ├── /api/* → localhost:8050 (proxy_server на VPS)
+                             └── /*     → localhost:8051 (sovushka_ng на VPS)
+                                              │
+                             SSH reverse tunnel (Mac Mini → VPS)
+                                              │
+                             Mac Mini (Ж.А.Б.А.)
+                                  ├── :6333 Qdrant
+                                  └── :8080 MLX Host
 ```
 
-**Планируемый `Caddyfile`:**
+**SSH туннель (launchd, автозапуск на Mac Mini):**
+```
+~/Library/LaunchAgents/me.ovc.les.pauk.plist
+ssh -R 127.0.0.1:6333:localhost:6333 \
+    -R 127.0.0.1:8080:localhost:8080 \
+    root@185.185.71.196
+```
+Управление: `~/Projects/LES_v2/start_pauk.command` / `stop_pauk.command`
+
+**VPS systemd-сервисы:**
+```
+les_proxy.service  — uvicorn proxy_server:app --port 8050
+sovushka.service   — python3 sovushka_ng.py   --port 8051
+caddy.service      — Caddy (автозапуск, Let's Encrypt)
+zerotier-one.service
+```
+Конфиг: `/root/les_v2/.env` (читается через `EnvironmentFile=` в systemd)
+
+**`/etc/caddy/Caddyfile`:**
 ```caddyfile
 les.ovc.me {
     reverse_proxy /api/* localhost:8050
     reverse_proxy /* localhost:8051
-    tls {
-        protocols tls1.2 tls1.3
-    }
 }
 ```
+
+**В.О.Л.К. — доступ:**
+| Откуда | Ключ | Роль |
+|--------|------|------|
+| ZeroTier (`10.x.x.x`) | не нужен | user (auto-bypass) |
+| Интернет | `les_75f0507b502d2ab1` | user |
+| Интернет | `les_aed1ff4721f776e1` (melnik) | admin |
+
+Ключи хранятся в `/root/les_v2/data/les_meta.db`, таблица `auth_keys`.
 
 ---
 
@@ -103,12 +140,12 @@ Mac Mini M4 / 24 GB  (Ж.А.Б.А.)
 │   ├── les-proxy   (FastAPI, порт 8050) — Л.Е.С. ядро, RAG, CRAG, API
 │   └── les-qdrant  (Qdrant, порт 6333)  — С.А.М.О.В.А.Р. векторная база
 │
-├── MLX Native Host (FastAPI, порт 8080) — LLM + Embeddings на Metal
+├── MLX Native Host (FastAPI, порт 8080) — основной LLM + Embeddings на Metal
 │   ├── Qwen3-14B-4bit   (main, RAG + Roo Code, TTL 300с)
 │   ├── Qwen3-4B-4bit    (val, Т.О.С.К.А. валидатор, TTL 120с)
 │   └── bge-m3           (embed, постоянно в памяти)
 │
-├── Ollama          (порт 11434) — резервный LLM-сервер
+├── Ollama          (порт 11434) — РЕЗЕРВНЫЙ, не используется в штатном режиме
 │   ├── qwen3:14b
 │   └── bge-m3:latest
 │
@@ -120,6 +157,8 @@ Mac Mini M4 / 24 GB  (Ж.А.Б.А.)
     ├── ГРАФ         — Mermaid редактор + превью
     └── ДИАГНОСТИКА  — 11 чеков, topology map, лог
 ```
+
+> **Примечание v2.2:** Ollama полностью выведен из основного пайплайна. `sovushka/config.py` содержит `MLX_URL = "http://127.0.0.1:8080"` как единственный LLM-бэкенд. Ollama остаётся установленным как аварийный резерв.
 
 ### 3.2. Поток данных (RAG)
 ```
@@ -142,6 +181,7 @@ LES_v2/
 ├── proxy_server.py           # FastAPI ядро (848 строк, v2.1)
 ├── sovushka_ng.py            # Точка входа С.О.В.У.Ш.К.А. v5.0 (~90 строк)
 ├── sovushka/                 # Модульный пакет UI (страницы, компоненты, стейт)
+│   ├── config.py             # PROXY_URL, MLX_URL, UI_PORT
 ├── mlx_host.py               # MLX Native Host (порт 8080)
 ├── start_mlx.command         # Запуск MLX через uv run
 ├── stop_mlx.command
@@ -178,13 +218,29 @@ CREATE TABLE datasets (
     name TEXT,                -- "NTD_Index"
     status TEXT,              -- IDLE / PARSING / INDEXED / FAILED
     doc_count INTEGER,
-    chunk_count INTEGER
+    chunk_count INTEGER       -- ⚠ сейчас всегда 0, fix запланирован
 );
 CREATE TABLE documents (
     id TEXT PRIMARY KEY,
     dataset_id TEXT REFERENCES datasets(id),
     file_name TEXT,
     content TEXT              -- Markdown после конвертации
+);
+CREATE TABLE auth_keys (
+    key TEXT PRIMARY KEY,
+    role TEXT,                -- "admin" | "user"
+    comment TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE chat_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    question TEXT,
+    answer TEXT,
+    sources TEXT,             -- JSON-массив ссылок
+    crag_status TEXT,         -- VERIFIED | NO_DATA | HALLUCINATION
+    latency_sec REAL,
+    tokens INTEGER
 );
 ```
 
@@ -204,13 +260,14 @@ CREATE TABLE metrics (
 ## 4. ИНФРАСТРУКТУРА
 
 ### 4.1. Физические узлы (ZeroTier)
-| Устройство | Роль | IP | ОС |
-|---|---|---|---|
-| Mac Mini M4 / 24 GB | Сервер Л.Е.С. | 10.195.146.98 | macOS |
-| MacBook Air | Клиент / управление | 10.195.146.176 | macOS |
-| Lenovo Legion | Клиент / управление | 10.195.146.20 | Windows 11 |
+| Устройство | Роль | ZeroTier IP | Внешний IP | ОС |
+|---|---|---|---|---|
+| Mac Mini M4 / 24 GB (Ж.А.Б.А.) | Сервер Л.Е.С. | 10.195.146.98 | — | macOS |
+| MacBook Air | Клиент / управление | 10.195.146.176 | — | macOS |
+| Lenovo Legion | Клиент / управление | 10.195.146.20 | — | Windows 11 |
+| VPS box-925292 (П.А.У.К.) | Relay, HTTPS, Caddy | 10.195.146.136 | 185.185.71.196 | Debian 13 |
 
-ZeroTier Network: `8d1c312afa249de4` | UDP 9993 | P2P
+ZeroTier Network: `8d1c312afa249de4` | UDP 9993 | self-hosted controller
 
 ### 4.2. Порты сервисов
 | Порт | Сервис | Описание |
@@ -408,24 +465,124 @@ curl -s http://localhost:8050/api/metrics | python3 -m json.tool
 docker logs -f les-proxy | grep -E "\[PARSE\]|\[CHAT\]|\[DIAG\]"
 ```
 
-### 5.6. П.А.У.К. — настройка Caddy + SSL (будущее)
+### 5.6. П.А.У.К. — управление туннелем (live)
+
 ```bash
-# Установить Caddy
-brew install caddy
+# Старт туннеля вручную (Mac Mini)
+~/Projects/LES_v2/start_pauk.command
 
-# Caddyfile (~/Projects/LES_v2/Caddyfile)
-cat > Caddyfile << 'EOF'
-les.ovc.me {
-    reverse_proxy /api/* localhost:8050
-    reverse_proxy /* localhost:8051
-}
-EOF
+# Остановка
+~/Projects/LES_v2/stop_pauk.command
 
-# Запустить
-caddy run --config Caddyfile
+# Статус launchd
+launchctl list me.ovc.les.pauk
 
-# Автозапуск
-brew services start caddy
+# Лог туннеля
+tail -f ~/Projects/LES_v2/logs/pauk.log
+```
+
+**Проверка связности с VPS:**
+```bash
+# Qdrant через туннель
+ssh root@185.185.71.196 "curl -s http://127.0.0.1:6333/"
+
+# MLX через туннель
+ssh root@185.185.71.196 "curl -s http://127.0.0.1:8080/api/health"
+
+# HTTPS снаружи
+curl -s https://les.ovc.me/api/health
+```
+
+**Управление VPS-сервисами:**
+```bash
+ssh root@185.185.71.196
+systemctl status les_proxy.service sovushka.service caddy.service
+systemctl restart les_proxy.service
+journalctl -u les_proxy.service -n 20
+```
+
+**Добавить ключ доступа (через proxy API):**
+```bash
+curl -s https://les.ovc.me/api/keys \
+  -H "X-API-Key: les_aed1ff4721f776e1" \
+  -d '{"role":"user","comment":"новый пользователь"}'
+```
+
+### 5.7. Runbook — аварийное восстановление
+
+#### ❌ SSH-туннель упал (les.ovc.me недоступен)
+```bash
+# На Mac Mini — проверить статус
+launchctl list me.ovc.les.pauk
+# Вывод: нет PID → туннель не запущен
+
+# Перезапустить через launchd
+launchctl stop me.ovc.les.pauk
+launchctl start me.ovc.les.pauk
+
+# Или вручную
+~/Projects/LES_v2/stop_pauk.command
+~/Projects/LES_v2/start_pauk.command
+
+# Проверка с VPS-стороны
+ssh root@185.185.71.196 "curl -s http://127.0.0.1:8080/api/health"
+```
+
+#### ❌ MLX Host завис (чат возвращает 503)
+```bash
+# Остановить
+~/Projects/LES_v2/stop_mlx.command
+sleep 3
+
+# Проверить что процесс умер
+ps aux | grep mlx_host
+
+# Перезапустить
+~/Projects/LES_v2/start_mlx.command
+
+# Проверка (модели грузятся ~30с)
+curl -s http://localhost:8080/api/health
+```
+
+#### ❌ Qdrant потерял коллекцию (RAG пустой)
+```bash
+# Проверить коллекции
+curl -s http://localhost:6333/collections | python3 -m json.tool
+
+# Если коллекция есть, но RAG не отвечает — проверить Docker
+docker ps | grep qdrant
+docker logs les-qdrant --tail 20
+
+# Если данные потеряны — переиндексировать
+curl -X POST http://localhost:8050/api/rag/sync/NTD
+# Ждать: статус PARSING → INDEXED (~15-30 мин для 800+ файлов)
+```
+
+#### ❌ les-proxy в restart loop
+```bash
+docker logs les-proxy --tail 30
+# Частые причины:
+# 1. .env не найден → проверить наличие файла
+# 2. Qdrant недоступен → docker ps, docker start les-qdrant
+# 3. Ошибка кода → git log, git stash, docker compose up -d
+```
+
+#### ❌ С.О.В.У.Ш.К.А. падает при запуске
+```bash
+# На Mac Mini
+cd ~/Projects/LES_v2
+python3 sovushka_ng.py
+# Смотреть traceback — обычно:
+# ImportError → pip3 install nicegui httpx
+# Connection refused :8050 → убедиться что les-proxy UP
+```
+
+#### ❌ VPS-сервис упал (les_proxy / sovushka)
+```bash
+ssh root@185.185.71.196
+systemctl status les_proxy.service
+journalctl -u les_proxy.service -n 50
+systemctl restart les_proxy.service
 ```
 
 ---
@@ -508,6 +665,7 @@ brew services start caddy
 | Endpoint | Метод | Описание |
 |---|---|---|
 | `/api/health` | GET | Статус + обе модели + TTL |
+| `/api/ps` | GET | Ollama-совместимый список загруженных моделей |
 | `/api/generate` | POST | Ollama-формат |
 | `/v1/chat/completions` | POST | OpenAI-формат |
 | `/v1/models` | GET | Список моделей |
@@ -515,6 +673,20 @@ brew services start caddy
 | `/v1/embeddings` | POST | OpenAI эмбеддинги |
 | `/api/validate` | POST | Т.О.С.К.А. v2: VERIFIED/NO_DATA/HALLUCINATION |
 | `/api/switch_model` | POST | Смена модели без рестарта |
+
+#### GET /api/ps — пример ответа
+```json
+{
+  "models": [
+    {
+      "name": "mlx-community/Qwen3-14B-4bit",
+      "model": "mlx-community/Qwen3-14B-4bit",
+      "details": {"family": "qwen3"}
+    }
+  ]
+}
+```
+Используется `proxy_server.py` и `metrics_collector.py` для опроса статуса загруженных движков.
 
 ---
 
@@ -666,23 +838,23 @@ async def validate_with_consistency(question, answer, context, n=3):
 
 ## 8. ПРОГРАММА ИСПЫТАНИЙ
 
-**Версия:** v2.1 | **Дата:** 15.05.2026
+**Версия:** v2.4 | **Дата:** 18.05.2026
 
-### 8.1. Сводная таблица v2.1
+### 8.1. Сводная таблица v2.4
 
 | Модуль | Тестов | ✅ OK | ⬜ Не тест. | ❌ Failed | % |
 |---|---|---|---|---|---|
 | Л.Е.С. (Proxy) | 6 | 5 | 1 | 0 | 83% |
 | С.А.М.О.В.А.Р. (RAG) | 8 | 6 | 2 | 0 | 75% |
-| Т.О.С.К.А. (CRAG) | 5 | 4 | 1 | 0 | 80% |
-| С.О.В.У.Ш.К.А. v5.0 (NiceGUI) | 8 | 7 | 1 | 0 | 87% |
-| П.А.У.К. (сеть) | 4 | 2 | 2 | 0 | 50% |
+| Т.О.С.К.А. (CRAG) | 5 | 5 | 0 | 0 | 100% |
+| С.О.В.У.Ш.К.А. v5.0 (NiceGUI) | 14 | 14 | 0 | 0 | 100% |
+| П.А.У.К. (сеть) | 6 | 5 | 1 | 0 | 83% |
 | Ресурсы | 5 | 3 | 2 | 0 | 60% |
-| **ИТОГО** | **36** | **27** | **9** | **0** | **75%** |
+| **ИТОГО** | **44** | **38** | **6** | **0** | **86%** |
 
 ### 8.2. Детальные чеки
 
-#### Л.Е.С. (Proxy v2.1)
+#### Л.Е.С. (Proxy v2.3)
 | # | Проверка | Ожидание | Статус |
 |---|---|---|---|
 | 1.1 | `GET /api/health` | `{"status":"ok"}` | ✅ |
@@ -692,17 +864,44 @@ async def validate_with_consistency(question, answer, context, n=3):
 | 1.5 | `POST /api/chat` dataset_filter | Резолв NTD → UUID | ✅ |
 | 1.6 | No-Cache заголовки | Cache-Control: no-store | ⬜ |
 
+#### Т.О.С.К.А. (CRAG v2.5)
+| # | Проверка | Статус |
+|---|---|---|
+| 3.1 | Чат с нормативом → VERIFIED | ✅ |
+| 3.2 | Нерелевантный вопрос → NO_DATA | ✅ |
+| 3.3 | Источники в ответе | ✅ |
+| 3.4 | Статус UNKNOWN не возникает при штатной работе | ✅ (`enable_thinking=False` + `max_tokens=64`) |
+| 3.5 | Ошибка/таймаут валидатора → UNKNOWN, не VERIFIED | ✅ (default `"UNKNOWN"`) |
+| 3.6 | HTTP != 200 от валидатора → NO_DATA | ✅ |
+| 3.7 | `crag_stats["verified"]` не растёт при UNKNOWN | ✅ |
+| 3.8 | Нагрузка: 5 параллельных запросов | ⬜ |
+
 #### С.О.В.У.Ш.К.А. v5.0
 | # | Проверка | Статус |
 |---|---|---|
-| 4.1 | Запуск `python3 sovushka_ng.py` без ошибок | ✅ (после фикса py39) |
+| 4.1 | Запуск `python3 sovushka_ng.py` без ошибок | ✅ |
 | 4.2 | Вкладка AI ЧАТ — форма запроса открывается | ✅ |
-| 4.3 | Формат «Спецификация» → AG Grid с данными | ✅ |
+| 4.3 | Формат «Спецификация» → таблица с данными | ✅ |
 | 4.4 | Формат «Mermaid» → диаграмма рендерится | ✅ |
 | 4.5 | Вкладка ДИАГНОСТИКА → кнопка запускает чеки | ✅ |
 | 4.6 | Mermaid-топология окрашивается по результатам | ✅ |
 | 4.7 | Загрузка образца CSV/JSON/XLSX | ✅ |
-| 4.8 | Совместимость Python 3.9 | ✅ (from __future__) |
+| 4.8 | Совместимость Python 3.9 | ✅ |
+| 4.9 | Ответ чата не обрезается (был лимит 600 симв.) | ✅ |
+| 4.10 | Тикер прогресса во время генерации | ✅ |
+| 4.11 | Активная вкладка сохраняется при реконнекте | ✅ |
+| 4.12 | Светлая тема — Quasar-компоненты читаемы | ✅ |
+| 4.13 | Тема (тёмная/светлая) сохраняется при WebSocket-реконнекте | ✅ (`app.storage.user["dark_theme"]`) |
+| 4.14 | `--dim` в светлой теме: контраст ≥ 4.5:1 (WCAG AA) | ✅ (`#424a53`, 7:1) |
+| 4.15 | П.Р.О.Р.А.Б. timer не вызывает clear() без изменений — вкладки стабильны | ✅ (`_prev_render`) |
+| 4.16 | Двойная отправка запроса заблокирована (`_sending` guard) | ✅ |
+| 4.17 | История чата загружается после рестарта процесса | ✅ (`/api/chat/history`) |
+| 4.18 | Роль `user` — видна только вкладка «AI ЧАТ» | ✅ |
+| 4.19 | В.О.Л.К.: ключ с истёкшим `expires_at` отклоняется | ✅ |
+| 4.20 | В.О.Л.К.: повторный вход с другого браузера — 403 (device_bound) | ✅ |
+| 4.21 | В.О.Л.К.: сброс привязки устройства через кнопку 📱✕ | ✅ |
+| 4.22 | Вопрос > 4000 симв. → 422 (валидация pydantic) | ✅ |
+| 4.23 | Rate limit: 3-й одновременный запрос → 429 | ✅ |
 
 ### 8.3. Нерешённые задачи (бэклог испытаний)
 | Задача | Приоритет |
@@ -711,7 +910,12 @@ async def validate_with_consistency(question, answer, context, n=3):
 | Тест EML/MSG парсинга на реальных письмах | 🔴 |
 | Latency чата под нагрузкой (< 5 сек) | 🟠 |
 | Swap = 0 при полной нагрузке | 🟠 |
-| Тест Caddy HTTPS les.ovc.me | 🟡 |
+| Qdrant fallback при падении во время парсинга | 🟠 |
+| Тест Caddy HTTPS les.ovc.me | ✅ |
+| SSH туннель: Mac Mini → VPS (Qdrant + MLX) | ✅ |
+| В.О.Л.К.: auto-bypass ZeroTier IP (10.x.x.x) | ✅ |
+| В.О.Л.К.: ключи admin/user в SQLite | ✅ |
+| Нагрузочный тест П.А.У.К. (keepalive туннеля) | 🟡 |
 | No-Cache заголовки в прокси | ⚪ |
 
 ---
@@ -736,25 +940,57 @@ async def validate_with_consistency(question, answer, context, n=3):
 - `dataset_filter` в `/api/chat` — фильтр по имени папки
 - Фикс Python 3.9 совместимости (`from __future__ import annotations`)
 
-### ✅ v2.2 (17.05.2026) — Текущая
+### ✅ v2.2 (17–18.05.2026)
 - **С.О.В.У.Ш.К.А. v5.0 (Модульная архитектура)**
 - Монолит `sovushka_ng.py` (2300 строк) разбит на пакет `sovushka/`
 - Нативная авторизация (В.О.Л.К.) без инъекций `<script>`
 - Исправлены проблемы с блокировкой Event Loop (httpx Client) и зависанием загрузки (CDN favicon)
 - Таблицы переведены на `ui.table` для совместимости с NiceGUI 3.6+
+- Полный отказ от Ollama-fallback, переход на MLX как единственный LLM-бэкенд
+- Персистентность истории чатов (`chat_history` в `les_meta.db`)
 
-### 🛠 v2.2 (Краткосрочно)
+### ✅ v2.3 (18.05.2026)
+- **Т.О.С.К.А. UNKNOWN → исправлен** — `enable_thinking=False` + `max_tokens` 10→64 в `/api/validate`
+- **Чат: убрана обрезка ответа** — лимит 600 символов снят, ответ показывается полностью
+- **Чат: тикер прогресса** — `⟳ Генерирую... Nс` с анимацией пока ИИ обрабатывает запрос
+- **Чат: персистентность вкладки** — `app.storage.user["last_tab"]` переживает WebSocket-реконнект
+- **Светлая тема: полный фикс** — `Quasar.Dark.set()` переключает все компоненты, `--pauk` обновляется, контрасты WCAG AA
+- `apply_chat_template` в `MLXMemoryManager` поддерживает `enable_thinking=False` с fallback
+
+### ✅ v2.4 (18.05.2026)
+- **П.А.У.К. — запущен** — VPS Debian 13 (`185.185.71.196`), Caddy + Let's Encrypt, `les.ovc.me` live
+- **SSH reverse tunnel** — Mac Mini → VPS: порты 6333 (Qdrant) и 8080 (MLX), launchd `me.ovc.les.pauk`
+- **В.О.Л.К. — ключи live** — SQLite `auth_keys`, admin/user роли, auto-bypass для ZeroTier IP
+- **VPS systemd** — `les_proxy.service` + `sovushka.service` с `EnvironmentFile=/root/les_v2/.env`
+- **С.О.В.У.Ш.К.А.: тема переживает реконнект** — состояние тёмной/светлой темы перенесено из локального dict в `app.storage.user["dark_theme"]`; при WebSocket-реконнекте светлая тема восстанавливается через `ui.timer(0.1, once=True)`
+- **С.О.В.У.Ш.К.А.: `--dim` в светлой теме** — цвет исправлен `#656d76` → `#424a53` (контраст 7:1, WCAG AA)
+- **П.Р.О.Р.А.Б.: стабилизация DOM** — `mlx_models_container.clear()` и `docker_container.clear()` вызываются только при изменении данных (`_prev_render` dict); устранено хаотичное переключение вкладок
+
+### ✅ v2.5 (18.05.2026) — Текущая
+- **Т.О.С.К.А.: критический баг исправлен** — `crag_status` по умолчанию `"UNKNOWN"` вместо `"VERIFIED"`; ошибки/таймауты валидатора и ответы HTTP != 200 больше не засчитываются как «проверено»
+- **Т.О.С.К.А.: статистика** — `crag_stats["verified"]` растёт только при явном `VERIFIED`; всё остальное (UNKNOWN, NO_DATA) идёт в `no_data`/`crag_fail`
+- **MLX: `_get_engine()` точное совпадение** — убран fuzzy-матч `"4B" in model_name`; маршрутизация только по `model_name == VAL_MODEL`
+- **С.О.В.У.Ш.К.А.: защита от двойной отправки** — `_sending` guard + `props("disabled")` на input и кнопках во время запроса (был баг: `"disable"` → исправлено `"disabled"`)
+- **С.О.В.У.Ш.К.А.: история чатов** — загружается из `GET /api/chat/history?limit=40` при первом открытии страницы; выживает рестарт процесса
+- **В.О.Л.К.: типы ключей** — `permanent` (∞) и `1` (1 день), поле `expires_at` в `auth_keys`
+- **В.О.Л.К.: привязка к устройству** — browser fingerprint (userAgent + экран + таймзона + canvas); `device_fingerprint` в SQLite; кнопка 📱✕ для сброса
+- **В.О.Л.К.: разделение ролей UI** — `user` видит только вкладку «AI ЧАТ»; все остальные вкладки скрыты; `_default_tab = tab_chat`
+- **Безопасность**: rate limit `llm_queue_size >= 2 → 429`; валидация вопроса ≤ 4000 симв.; path traversal защита на sync-папку; system prompt hardened
+- **`les.command`** — единый скрипт управления (start/stop/restart/sovushka/status + интерактивное меню)
+- **`bg_loop` стабилизация** — каждый тик обёрнут в `try/except`; падение одного рефреша не роняет весь цикл
+
+### 🛠 v2.6 (Краткосрочно)
 | Задача | Описание |
 |---|---|
 | **Folder Watcher** | Автосинк новых файлов из RAG_Content/ |
-| **Retry-логика** | Graceful fallback при занятости Ollama |
+| **Retry-логика** | Graceful fallback при занятости MLX |
+| **Qdrant fallback** | Обработка ошибок Qdrant при парсинге документов |
 | **Parquet пайплайн** | Табличные данные в Parquet вместо Markdown |
 | **Реранкер** | Qwen3-4B как cross-encoder перед генерацией |
 | **Е.Ж.И.К. v1** | Тест EML/MSG на реальных письмах → IMAP коннектор |
-| **П.А.У.К.** | Caddy + les.ovc.me + SSL (Let's Encrypt) |
 | **chunk_count** | Исправить колонку в SQLite (сейчас всегда 0) |
 
-### 🔮 v2.3+ (Среднесрочно)
+### 🔮 v2.6+ (Среднесрочно)
 | Задача | Описание |
 |---|---|
 | **В.О.Л.К. v2** | JWT RBAC, ролевые бейджи, маскирование .env |
@@ -798,7 +1034,7 @@ cd ~/Projects/LES_v2
 
 ---
 
-## ПРИЛОЖЕНИЕ А — Текущее состояние индексов (15.05.2026)
+## ПРИЛОЖЕНИЕ А — Текущее состояние индексов (18.05.2026)
 
 ```
 Docker:       les-proxy UP, les-qdrant UP
@@ -808,6 +1044,20 @@ CLAUDE_Index: 4 файла, INDEXED
 QWEN_Index:   1 файл, INDEXED
 Чанков:       ~1316 (данные до реиндекса)
 ```
+
+> Актуальное состояние — через UI вкладка П.Р.О.Р.А.Б. или:
+> ```bash
+> curl -s http://localhost:8050/api/metrics | python3 -c \
+>   "import sys,json; m=json.load(sys.stdin)['rag']; print(f\"{m['files']} файлов, {m['chunks']} чанков\")"
+> ```
+
+**После правок — что перезапускать:**
+| Изменён файл | Команда |
+|---|---|
+| `proxy_server.py` | `docker compose restart proxy` |
+| `mlx_host.py` | `./stop_mlx.command && ./start_mlx.command` |
+| `sovushka/**` | `Ctrl+C → python3 sovushka_ng.py` |
+| `.env` | `docker compose restart proxy` + MLX restart |
 
 ## ПРИЛОЖЕНИЕ Б — Быстрые команды
 
@@ -833,5 +1083,5 @@ docker compose restart proxy
 
 ---
 
-📅 **Документ актуализирован:** 15.05.2026 — v2.1 NiceGUI Edition  
+📅 **Документ актуализирован:** 18.05.2026 — v2.5 Stabilization: CRAG bug fixes, device fingerprint, role separation, security hardening  
 ✍️ **Авторы:** Claude (Клодыч) · Qwen (Кен) · Gemini (Панорамыч)

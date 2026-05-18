@@ -84,7 +84,7 @@ def build_diag():
     STATUS_TAG   = {"ok": "tag-ok", "warn": "tag-warn", "err": "tag-err"}
 
     def _render_diag_cards():
-        results = state["diag_results"]
+        results = state.get("diag_results", [])
         diag_cards.clear()
         with diag_cards:
             for r in results:
