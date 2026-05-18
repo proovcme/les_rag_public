@@ -99,6 +99,20 @@ ADMIN_PASSWORD=admin123
 
 #### `sovushka_ng.py` — MLX_URL исправлен на 127.0.0.1
 
+### Что сделано за сессию 18.05 (Удаление Ollama и персистентность)
+
+#### Персистентность истории чатов
+- В `les_meta.db` добавлена постоянная таблица `chat_history` (id, timestamp, question, answer, sources, crag_status, latency_sec, tokens).
+- `/api/chat` теперь автоматически сохраняет каждый запрос и ответ.
+
+#### Полный отказ от Ollama
+- `proxy_server.py`, `backend/qdrant_adapter.py`, `backend/metrics_collector.py` — вырезаны все `OLLAMA_URL` и `OLLAMA_HOST`, заменены на `MLX_URL`.
+- В `/api/chat` удален блок fallback на `use_openai = False` и вызов `/api/generate`. Теперь жестко используется OpenAI-совместимый эндпоинт `/v1/chat/completions` от MLX Host.
+- В `sovushka/pages/prorab.py` (П.Р.О.Р.А.Б.) удалена карточка мониторинга Ollama-моделей и учет памяти `ollama_ram`. Система теперь полностью базируется на MLX.
+
+#### Фикс валидатора Т.О.С.К.А.
+- Валидатор в `/api/chat` теперь принудительно работает всегда через `MLX_URL` на порту `8080` (вызов `/api/validate`), устранен баг со скипом и статусом `UNKNOWN` из-за некорректного роутинга.
+
 ---
 
 ## Быстрые команды

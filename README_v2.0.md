@@ -22,7 +22,7 @@
 | С.А.М.О.В.А.Р. | Система Автономная Машинной Обработки Внутренних Архивов РАГ | Ядро RAG и поиска | Qdrant + LlamaIndex + `bge-m3` |
 | Т.О.С.К.А. | Терминал Оценки, Самопроверки и Контроля Архитектуры | CRAG-валидация, фильтр галлюцинаций | Native Python pipeline в прокси |
 | В.О.Л.К. | Внутренний Охранный Локальный Контур | RBAC, аутентификация | JWT-токены, SQLite, middleware (в разработке) |
-| С.О.В.У.Ш.К.А. | Система Обработки и Выдачи... | Интеллектуальный UI | `frontend/sovushka.html` + Chart.js + SSE |
+| С.О.В.У.Ш.К.А. | Система Обработки и Выдачи... | Интеллектуальный UI | `sovushka_ng.py` (NiceGUI v5.0 модульный) |
 | С.У.Х.А.Р.И.К. | Система Управления Холодными Архивами... | Бэкапы и архивация | Снапшоты Qdrant + `storage/` (в разработке) |
 | П.Р.О.Р.А.Б. | Программа Регулярной Оценки Работы Автономной Базы | Метрики и диагностика | `/api/metrics`, SSE-логи, `psutil` |
 
@@ -47,16 +47,18 @@ docker compose build proxy && docker compose up -d proxy
 ### Доступ к сервисам
 | Сервис | URL | Описание |
 |---|---|---|
-| С.О.В.У.Ш.К.А. (Dashboard) | `http://localhost:8050` | Главный UI с чатом, метриками, логами, управлением датасетами |
+| С.О.В.У.Ш.К.А. (Dashboard) | `http://localhost:8051` | Главный UI с чатом, метриками, логами, управлением датасетами |
 | Qdrant Dashboard | `http://localhost:6333/dashboard` | Управление коллекциями и точками |
 | Ollama API | `http://localhost:11434` | Локальный LLM-сервер (на хосте) |
 
 ## 📡 Топология портов
 | Порт | Сервис | Роль |
 |---|---|---|
-| 8050 | proxy (Л.Е.С.) | Единая точка входа, Static & API Gateway |
+| 8050 | proxy (Л.Е.С.) | Единая точка входа, API Gateway |
+| 8051 | sovushka_ng.py | С.О.В.У.Ш.К.А. UI (NiceGUI) |
 | 6333 | qdrant | Векторная база данных (UI + API) |
 | 11434 | ollama (хост) | LLM и Embedding сервер |
+| 8080 | mlx_host.py | MLX LLM + Embeddings (на Metal) |
 
 ## 📁 Структура проекта v2.0
 ```
@@ -74,9 +76,11 @@ LES_v2/
 │   ├── converter.py          # ConverterRouter (PDF/DOCX/EML/XLSX → Markdown)
 │   └── metrics_collector.py  # SQLite time-series метрики
 │
-├── frontend/
-│   └── sovushka.html         # UI с Chart.js, SSE-логами, чатом, вкладкой Датасеты
-│
+├── sovushka_ng.py            # Точка входа UI v5.0 (NiceGUI)
+├── sovushka/                 # Модульный пакет UI
+│   ├── config.py, state.py, styles.py, auth.py
+│   ├── components/           # header, logterm, charts
+│   └── pages/                # overview, samovar, prorab, chat, mermaid_page, diag, volk
 ├── storage/
 │   └── datasets/             # Физические UUID-папки датасетов
 │
@@ -127,10 +131,10 @@ LES_v2/
 - Folder Watcher для автоматической синхронизации новых файлов.
 - Deep BIM Linking, сравнение версий нормативов, multi-project support.
 
-📅 **Документация актуализирована:** 10.05.2026 — релиз v2.0 Core + UI Sync + Metrics
+📅 **Документация актуализирована:** 17.05.2026 — релиз v5.0 UI (NiceGUI Modular)
 
 
-## 📊 Фактический статус системы (Аудит 10.05.2026)
+## 📊 Фактический статус системы (Аудит 17.05.2026)
 ✅ Подтверждено работой в production:
 - Uvicorn запущен без `--reload`. Hot-reload отключён для стабильности Docker.
 - Метрики собираются фоновым async-циклом каждые 3 сек. HTTP-запросы не блокируются.

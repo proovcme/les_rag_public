@@ -231,7 +231,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
     def __init__(
         self,
         qdrant_url:       str,
-        ollama_url:       str,
+        mlx_url:       str,
         embed_model_name: str,
         content_dir:      str = "./storage/datasets",
     ):
@@ -240,7 +240,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         self.db              = MetaDB()
         self.aclient         = qdrant_client.AsyncQdrantClient(url=qdrant_url)
         self.qdrant_url      = qdrant_url
-        self.embed           = EmbedClient(ollama_url, model=embed_model_name.replace(":latest", ""))
+        self.embed           = EmbedClient(mlx_url, model=embed_model_name.replace(":latest", ""))
         self.collection_name = "les_rag"
         self._collection_ready = False
         self._collection_lock  = asyncio.Lock()

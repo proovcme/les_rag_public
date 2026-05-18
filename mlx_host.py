@@ -169,7 +169,7 @@ def _strip_think_tags(text: str) -> str:
     return text.strip()
 
 
-
+def _get_engine(model_name: str) -> "MLXMemoryManager":
     if model_name == VAL_MODEL or "4B" in model_name or "4b" in model_name:
         return val_engine
     return main_engine

@@ -162,9 +162,29 @@ async def startup():
     init_db()
     _seed_admin_key()
     try:
+        # Create chat history table in meta DB
+        conn = sqlite3.connect("./data/les_meta.db", check_same_thread=False)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS chat_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                question TEXT,
+                answer TEXT,
+                sources TEXT,
+                crag_status TEXT,
+                latency_sec REAL,
+                tokens INTEGER
+            )
+        """)
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"[INIT] Failed to init chat_history table: {e}")
+
+    try:
         rag_backend = QdrantLlamaIndexAdapter(
             qdrant_url=os.getenv("QDRANT_URL", "http://qdrant:6333"),
-            ollama_url=os.getenv("OLLAMA_URL", "http://host.docker.internal:11434"),
+            mlx_url=os.getenv("MLX_URL", "http://host.docker.internal:11434"),
             embed_model_name=os.getenv("EMBED_MODEL", "bge-m3:latest")
         )
         await rag_backend.health()
@@ -322,13 +342,13 @@ async def set_mode(req: ModeRequest):
 
 @app.get("/api/status")
 async def get_status():
-    ollama_url = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434")
+    mlx_url = os.getenv("MLX_URL", "http://host.docker.internal:11434")
 
     # Активные модели Ollama
     models = []
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
-            r = await client.get(f"{ollama_url}/api/ps")
+            r = await client.get(f"{mlx_url}/api/ps")
             if r.status_code == 200:
                 for m in r.json().get("models", []):
                     models.append({
@@ -369,29 +389,29 @@ async def get_status():
             "uptime_sec": int(time.time() - _PROXY_START),
             "version": "2.1",
             "port": 8050,
-            "llm_url": os.getenv("OLLAMA_URL", "http://host.docker.internal:11434"),
+            "llm_url": os.getenv("MLX_URL", "http://host.docker.internal:11434"),
             "llm_model": os.getenv("LLM_MODEL", "qwen3:14b"),
         }
     }
 
 ENV_PATH = Path(".env")
-KNOWN_SETTINGS = {"LLM_MODEL", "EMBED_MODEL", "OLLAMA_URL", "QDRANT_URL"}
+KNOWN_SETTINGS = {"LLM_MODEL", "EMBED_MODEL", "MLX_URL", "QDRANT_URL"}
 
 class SettingsRequest(BaseModel):
     llm_model: Optional[str] = None
     embed_model: Optional[str] = None
-    ollama_url: Optional[str] = None
+    mlx_url: Optional[str] = None
 
 @app.get("/api/settings")
 async def get_settings():
     result = {}
     try:
-        ollama_url = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434")
+        mlx_url = os.getenv("MLX_URL", "http://host.docker.internal:11434")
         # Список доступных моделей из Ollama
         available = []
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:
-                r = await client.get(f"{ollama_url}/api/tags")
+                r = await client.get(f"{mlx_url}/api/tags")
                 if r.status_code == 200:
                     available = [m["name"] for m in r.json().get("models", [])]
         except Exception: pass
@@ -399,7 +419,7 @@ async def get_settings():
         result = {
             "llm_model": os.getenv("LLM_MODEL", "qwen3:14b"),
             "embed_model": os.getenv("EMBED_MODEL", "bge-m3:latest"),
-            "ollama_url": ollama_url,
+            "mlx_url": mlx_url,
             "available_models": available,
         }
     except Exception as e:
@@ -419,7 +439,7 @@ async def save_settings(req: SettingsRequest):
     updates = {}
     if req.llm_model:   updates["LLM_MODEL"]   = req.llm_model
     if req.embed_model: updates["EMBED_MODEL"]  = req.embed_model
-    if req.ollama_url:  updates["OLLAMA_URL"]   = req.ollama_url
+    if req.mlx_url:  updates["MLX_URL"]   = req.mlx_url
 
     new_lines = []
     updated_keys = set()
@@ -735,7 +755,7 @@ async def chat(req: ChatRequest):
             raw_chunks = await rag_backend.retrieve(req.question, dataset_ids=_dataset_ids, top_k=20)
             if raw_chunks and len(raw_chunks) > 5:
                 try:
-                    mlx_url = os.getenv("OLLAMA_URL", "http://host.docker.internal:8080")
+                    mlx_url = os.getenv("MLX_URL", "http://host.docker.internal:8080")
                     reranker = Reranker(mlx_url=mlx_url)
                     # Конвертируем в формат реранкера
                     rerank_input = [{"text": c.content, "metadata": {"doc_name": c.doc_name}, "score": getattr(c, "score", 0.0)} for c in raw_chunks]
@@ -806,74 +826,47 @@ async def chat(req: ChatRequest):
         },
     ]
 
-    llm_url = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434")
+    llm_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
     llm_model = os.getenv("LLM_MODEL", "qwen3:14b")
-    # Автодетект: MLX/OpenAI если порт не 11434 или есть флаг LLM_FORMAT=openai
-    use_openai = os.getenv("LLM_FORMAT", "").lower() == "openai" or (
-        "11434" not in llm_url and "11434" not in llm_url
-    )
-    # Простое правило: если порт не 11434 — OpenAI формат
-    try:
-        from urllib.parse import urlparse
-        _port = urlparse(llm_url).port
-        use_openai = _port is not None and _port != 11434
-    except Exception:
-        use_openai = False
 
     global llm_queue_size
     llm_queue_size += 1
     t_gen_start = time.time()
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
-            if use_openai:
-                resp = await client.post(
-                    f"{llm_url.rstrip('/')}/v1/chat/completions",
-                    json={
-                        "model": llm_model,
-                        "messages": llm_messages,
-                        "stream": False,
-                        "temperature": 0.7,
-                        "max_tokens": 2048,
-                    }
-                )
-                resp.raise_for_status()
-                rj = resp.json()
-                answer = rj["choices"][0]["message"]["content"]
-                tokens = rj.get("usage", {}).get("completion_tokens", 0)
-                logger.info(f"[CHAT] OpenAI format | model={llm_model} | tokens={tokens}")
-            else:
-                # Ollama: собираем plain prompt из messages
-                _ollama_prompt = (
-                    f"Система: {llm_messages[0]['content']}\n\n"
-                    f"{llm_messages[1]['content']}\n\nОтвет:"
-                )
-                resp = await client.post(
-                    f"{llm_url}/api/generate",
-                    json={"model": llm_model, "prompt": _ollama_prompt, "stream": False}
-                )
-                resp.raise_for_status()
-                rj = resp.json()
-                answer = rj.get("response", "")
-                tokens = rj.get("eval_count", 0)
-                logger.info(f"[CHAT] Ollama format | model={llm_model} | tokens={tokens}")
+            resp = await client.post(
+                f"{llm_url.rstrip('/')}/v1/chat/completions",
+                json={
+                    "model": llm_model,
+                    "messages": llm_messages,
+                    "stream": False,
+                    "temperature": 0.7,
+                    "max_tokens": 2048,
+                }
+            )
+            resp.raise_for_status()
+            rj = resp.json()
+            answer = rj["choices"][0]["message"]["content"]
+            tokens = rj.get("usage", {}).get("completion_tokens", 0)
+            logger.info(f"[CHAT] MLX format | model={llm_model} | tokens={tokens}")
 
             t_gen = time.time() - t_gen_start
 
-            # Т.О.С.К.А. v2 — валидация через Qwen3-4B если MLX Host доступен
+            # Т.О.С.К.А. v2 — валидация через Qwen3-4B на MLX_URL (всегда)
             crag_status = "VERIFIED"
-            if use_openai:
-                try:
-                    context_snippet = "\n".join([c.content[:300] for c in chunks[:3]])
-                    val_resp = await client.post(
-                        f"{llm_url.rstrip('/')}/api/validate",
-                        json={"question": req.question, "answer": answer, "context": context_snippet},
-                        timeout=90.0
-                    )
-                    if val_resp.status_code == 200:
-                        crag_status = val_resp.json().get("status", "VERIFIED")
-                        logger.info(f"[TOSKA] Validation: {crag_status}")
-                except Exception as ve:
-                    logger.warning(f"[TOSKA] Validate skip: {ve}")
+            try:
+                val_url = os.getenv("MLX_URL", "http://127.0.0.1:8080").rstrip('/')
+                context_snippet = "\n".join([c.content[:300] for c in chunks[:3]])
+                val_resp = await client.post(
+                    f"{val_url}/api/validate",
+                    json={"question": req.question, "answer": answer, "context": context_snippet},
+                    timeout=90.0
+                )
+                if val_resp.status_code == 200:
+                    crag_status = val_resp.json().get("status", "VERIFIED")
+                    logger.info(f"[TOSKA] Validation: {crag_status}")
+            except Exception as ve:
+                logger.warning(f"[TOSKA] Validate skip: {ve}")
 
             # Раздельный учёт Т.О.С.К.А. v2
             if crag_status == "HALLUCINATION":
@@ -891,9 +884,23 @@ async def chat(req: ChatRequest):
             chat_metrics["tokens"].append(tokens)
             for key in ("latency_search", "latency_gen", "tokens"):
                 chat_metrics[key] = chat_metrics[key][-100:]
+                
+            sources_list = list(set(c.doc_name for c in chunks))
+            
+            # Сохранение истории чата в БД
+            try:
+                conn = sqlite3.connect("./data/les_meta.db", check_same_thread=False)
+                conn.execute(
+                    "INSERT INTO chat_history (question, answer, sources, crag_status, latency_sec, tokens) VALUES (?, ?, ?, ?, ?, ?)",
+                    (req.question, answer, ",".join(sources_list), crag_status, t_search + t_gen, tokens)
+                )
+                conn.commit()
+                conn.close()
+            except Exception as db_err:
+                logger.warning(f"[CHAT] History save error: {db_err}")
 
             llm_queue_size = max(0, llm_queue_size - 1)
-            return {"answer": answer, "crag_status": crag_status, "sources": list(set(c.doc_name for c in chunks))}
+            return {"answer": answer, "crag_status": crag_status, "sources": sources_list}
     except httpx.TimeoutException as e:
         detail = f"LLM timeout (>{120}s) — модель перегружена или не отвечает. Попробуй позже."
         logger.error(f"[CHAT] LLM TIMEOUT: {e}")
@@ -962,18 +969,11 @@ async def run_diagnostics():
         return status, f"{total_pts} pts / {len(cols)} cols", ">0", ""
     await _check("Qdrant :6333", _chk_qdrant())
 
-    # ── MLX Host / Ollama ──
+    # ── MLX Host ──
     async def _chk_llm():
-        llm_url = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434")
+        llm_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
         llm_model = os.getenv("LLM_MODEL", "?")
         try:
-            from urllib.parse import urlparse
-            port = urlparse(llm_url).port
-            use_openai = port is not None and port != 11434
-        except Exception:
-            use_openai = False
-
-        if use_openai:
             async with httpx.AsyncClient(timeout=5.0) as c:
                 r = await c.get(f"{llm_url}/api/health")
                 d = r.json()
@@ -985,13 +985,9 @@ async def run_diagnostics():
             status = "ok" if loaded else "warn"
             msg = f"embed={'OK' if embed_ok else 'lazy'}"
             return status, model_path.split("/")[-1], "loaded", msg
-        else:
-            async with httpx.AsyncClient(timeout=5.0) as c:
-                r = await c.get(f"{llm_url}/api/tags")
-                r.raise_for_status()
-                models = [m["name"] for m in r.json().get("models", [])]
-            return "ok", ", ".join(models[:2]) or "?", "≥1 model", "Ollama"
-    await _check("LLM Backend", _chk_llm())
+        except Exception as e:
+            return "err", "?", "loaded", str(e)
+    await _check("MLX Backend", _chk_llm())
 
     # ── RAM ──
     async def _chk_ram():
@@ -1403,7 +1399,7 @@ async def rerank_direct(request: Request):
     if not query or not chunks:
         raise HTTPException(400, "query и chunks обязательны")
 
-    mlx_url = os.getenv("OLLAMA_URL", "http://host.docker.internal:8080")
+    mlx_url = os.getenv("MLX_URL", "http://host.docker.internal:8080")
     reranker = Reranker(mlx_url=mlx_url)
     ranked = await reranker.rerank(query, chunks, top_k=top_k)
 
@@ -1437,7 +1433,49 @@ async def log_stream():
                 idx = len(log_history)
     return EventSourceResponse(gen())
 
+
+
 @app.get("/", response_class=HTMLResponse)
-async def serve_frontend():
-    p = Path("frontend/sovushka.html")
-    return p.read_text(encoding="utf-8") if p.exists() else "<h1>No UI</h1>"
+async def status_page():
+    from fastapi.responses import HTMLResponse
+    import time
+    uptime = int(time.time() - _PROXY_START)
+    h, m = divmod(uptime // 60, 60)
+    ds = state["datasets"] if hasattr(state, "__getitem__") else []
+    return HTMLResponse(f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Л.Е.С.</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:#08090b;color:#e2e8f0;font-family:'Courier New',monospace;padding:32px}}
+.brand{{color:#3b82f6;font-size:1.4rem;font-weight:900;letter-spacing:2px}}
+.sub{{color:#94a3b8;font-size:.7rem;margin-top:4px;margin-bottom:32px}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:24px}}
+.card{{background:#12151a;border:1px solid #2d3748;border-radius:8px;padding:16px}}
+.val{{font-size:1.4rem;font-weight:900;color:#10b981}}
+.lbl{{font-size:.6rem;text-transform:uppercase;color:#94a3b8;margin-top:4px;letter-spacing:.5px}}
+.ok{{color:#10b981}}.err{{color:#ef4444}}.dim{{color:#94a3b8}}
+a{{color:#3b82f6;text-decoration:none}}
+</style></head><body>
+<div class="brand">[O_O] Л.Е.С.</div>
+<div class="sub">Локальная Экспертная Система · les.ovc.me · proxy :8050</div>
+<div class="grid">
+  <div class="card"><div class="val ok">UP</div><div class="lbl">Статус прокси</div></div>
+  <div class="card"><div class="val">{h}ч {m}м</div><div class="lbl">Uptime</div></div>
+  <div class="card"><div class="val">{crag_stats.get("verified",0)}</div><div class="lbl">CRAG Verified</div></div>
+  <div class="card"><div class="val">{crag_stats.get("hallucination",0)}</div><div class="lbl">Hallucinations</div></div>
+</div>
+<div class="card" style="margin-bottom:12px">
+  <div class="lbl" style="margin-bottom:8px">Эндпоинты</div>
+  <div style="font-size:.75rem;line-height:2;color:#94a3b8">
+    <a href="/api/health">/api/health</a> &nbsp;·&nbsp;
+    <a href="/api/status">/api/status</a> &nbsp;·&nbsp;
+    <a href="/api/metrics">/api/metrics</a> &nbsp;·&nbsp;
+    <a href="/api/rag/datasets">/api/rag/datasets</a> &nbsp;·&nbsp;
+    <a href="/api/diag">/api/diag</a> &nbsp;·&nbsp;
+    <a href="/docs">/docs</a>
+  </div>
+</div>
+<div class="dim" style="font-size:.65rem;margin-top:16px">
+  С.О.В.У.Ш.К.А. UI → <a href="http://les.ovc.me:8051">:8051</a>
+</div>
+</body></html>""")
