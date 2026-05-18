@@ -900,13 +900,13 @@ async def chat(req: ChatRequest):
         },
     ]
 
+    global llm_queue_size
     llm_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
     llm_model = os.getenv("LLM_MODEL", "qwen3:14b")
 
     if llm_queue_size >= 2:
         raise HTTPException(429, "Сервер занят — идёт генерация, попробуй через несколько секунд")
 
-    global llm_queue_size
     llm_queue_size += 1
     t_gen_start = time.time()
     try:
