@@ -79,7 +79,7 @@
 | **П.Р.О.Р.А.Б.** | Программа Регулярной Оценки Работы Автономной Базы | Метрики, диагностика, `/api/metrics` | ✅ Live |
 | **К.О.Т.** | Куратор Отраслевой Терминологии | Семантический фильтр инженерного языка | 🔨 В разработке |
 | **В.О.Л.К.** | Внутренний Охранный Локальный Контур | RBAC, ключи доступа (SQLite) | ✅ Live |
-| **П.А.У.К.** | Периметровый Автономный Узел Коммуникаций | VPS-relay: Caddy + SSH-туннель + ZeroTier | ✅ Live |
+| **П.А.У.К.** | Периметровый Автономный Узел Коммуникаций | VPS-relay: Caddy + ZeroTier mesh | ✅ Live |
 | **С.У.Х.А.Р.И.К.** | Система Управления Холодными Архивами и Резервными Источниками Комплекса | Снапшоты Qdrant, бэкапы | 🔨 В разработке |
 | **Е.Ж.И.К.** | *(расшифровка уточняется)* | Обработка почты IMAP/EML | ⏳ Запланирован |
 
@@ -91,27 +91,29 @@
 - **Caddy** — reverse proxy с автоматическим HTTPS (Let's Encrypt)
 - **DNS** — `les.ovc.me` → `185.185.71.196`
 
-**Топология (live):**
+**Топология (live, v2.7+):**
 ```
 Интернет → les.ovc.me → Caddy (VPS :443)
                              ├── /api/* → localhost:8050 (proxy_server на VPS)
                              └── /*     → localhost:8051 (sovushka_ng на VPS)
                                               │
-                             SSH reverse tunnel (Mac Mini → VPS)
+                             ZeroTier mesh (10.195.146.0/24)
                                               │
-                             Mac Mini (Ж.А.Б.А.)
+                             Mac Mini (Ж.А.Б.А.) — 10.195.146.98
                                   ├── :6333 Qdrant
                                   └── :8080 MLX Host
 ```
 
-**SSH туннель (launchd, автозапуск на Mac Mini):**
+**ZeroTier:**
+- VPS: `10.195.146.136`, Mac Mini: `10.195.146.98`, сеть `8d1c312afa249de4`
+- VPS `.env`: `QDRANT_URL=http://10.195.146.98:6333`, `OLLAMA_URL=http://10.195.146.98:8080`
+
+**SSH туннель (резерв, не активен):**
 ```
-~/Library/LaunchAgents/me.ovc.les.pauk.plist
-ssh -R 127.0.0.1:6333:localhost:6333 \
-    -R 127.0.0.1:8080:localhost:8080 \
-    root@185.185.71.196
+~/Library/LaunchAgents/me.ovc.les.pauk.plist  — НЕ удалять, использовать как fallback
+# Запустить при необходимости: launchctl load ~/Library/LaunchAgents/me.ovc.les.pauk.plist
+# Также вернуть в .env: QDRANT_URL=http://127.0.0.1:6333 / OLLAMA_URL=http://127.0.0.1:8080
 ```
-Управление: `~/Projects/LES_v2/start_pauk.command` / `stop_pauk.command`
 
 **VPS systemd-сервисы:**
 ```
@@ -474,29 +476,40 @@ curl -s http://localhost:8050/api/metrics | python3 -m json.tool
 docker logs -f les-proxy | grep -E "\[PARSE\]|\[CHAT\]|\[DIAG\]"
 ```
 
-### 5.6. П.А.У.К. — управление туннелем (live)
+### 5.6. П.А.У.К. — управление транспортом
 
+**Основной транспорт — ZeroTier (активен):**
 ```bash
-# Старт туннеля вручную (Mac Mini)
-~/Projects/LES_v2/start_pauk.command
+# Проверка связности
+ping -c 3 10.195.146.98      # с VPS → Mac Mini
+ping -c 3 10.195.146.136     # с Mac Mini → VPS
 
-# Остановка
-~/Projects/LES_v2/stop_pauk.command
+# Qdrant через ZeroTier
+curl -s http://10.195.146.98:6333/healthz
 
-# Статус launchd
+# MLX через ZeroTier
+curl -s http://10.195.146.98:8080/api/health
+```
+
+**Резервный транспорт — SSH tunnel (не активен, plist сохранён):**
+```bash
+# Активировать при необходимости (Mac Mini)
+launchctl load ~/Library/LaunchAgents/me.ovc.les.pauk.plist
+# Деактивировать
+launchctl unload ~/Library/LaunchAgents/me.ovc.les.pauk.plist
+# Статус
 launchctl list me.ovc.les.pauk
-
-# Лог туннеля
+# Лог
 tail -f ~/Projects/LES_v2/logs/pauk.log
 ```
 
 **Проверка связности с VPS:**
 ```bash
-# Qdrant через туннель
-ssh root@185.185.71.196 "curl -s http://127.0.0.1:6333/"
+# Qdrant (ZeroTier)
+ssh root@185.185.71.196 "curl -s http://10.195.146.98:6333/healthz"
 
-# MLX через туннель
-ssh root@185.185.71.196 "curl -s http://127.0.0.1:8080/api/health"
+# MLX (ZeroTier)
+ssh root@185.185.71.196 "curl -s http://10.195.146.98:8080/api/health"
 
 # HTTPS снаружи
 curl -s https://les.ovc.me/api/health
@@ -963,7 +976,7 @@ async def validate_with_consistency(question, answer, context, n=3):
 
 ### ✅ v2.4 (18.05.2026)
 - **П.А.У.К. — запущен** — VPS Debian 13 (`185.185.71.196`), Caddy + Let's Encrypt, `les.ovc.me` live
-- **SSH reverse tunnel** — Mac Mini → VPS: порты 6333 (Qdrant) и 8080 (MLX), launchd `me.ovc.les.pauk`
+- **SSH reverse tunnel** — Mac Mini → VPS: порты 6333 (Qdrant) и 8080 (MLX), launchd `me.ovc.les.pauk` (выведен из эксплуатации в v2.8, plist сохранён как резерв)
 - **В.О.Л.К. — ключи live** — SQLite `auth_keys`, admin/user роли, auto-bypass для ZeroTier IP
 - **VPS systemd** — `les_proxy.service` + `sovushka.service` с `EnvironmentFile=/root/les_v2/.env`
 - **С.О.В.У.Ш.К.А.: тема переживает реконнект** — состояние тёмной/светлой темы перенесено из локального dict в `app.storage.user["dark_theme"]`; при WebSocket-реконнекте светлая тема восстанавливается через `ui.timer(0.1, once=True)`
