@@ -1,5 +1,5 @@
 """
-С.О.В.У.Ш.К.А. v5.0 — Шапка (Header)
+С.О.В.У.Ш.К.А. v5.0 — Шапка (Header) со встроенными табами
 """
 from __future__ import annotations
 
@@ -10,48 +10,56 @@ from backend.auth import logout
 from sovushka.components.charts import _html
 
 
-def build_header(tabs, auth_role: str, auth_holder: str, is_admin: bool):
-    """Строит sticky header. Вызывать внутри @ui.page("/")."""
+def build_header(is_admin: bool, auth_role: str, auth_holder: str):
+    """
+    Строит единую sticky-полосу: [лого] [табы] [контролы].
+    Возвращает (tabs, tab_objects_dict) — используется в sovushka_ng.py для tab_panels.
+    """
 
-    with ui.element("header").classes("les-header w-full").style(
+    tab_refs = {}
+
+    with ui.element("header").classes("w-full").style(
         "position:sticky;top:0;z-index:999;"
+        "background:var(--bg-panel);border-bottom:1px solid var(--border);"
+        "display:flex;align-items:center;padding:0 16px;height:44px;gap:0;"
     ):
-        with ui.row().classes("items-center gap-3"):
-            _html('<span class="les-brand">[O_O] С.О.В.У.Ш.К.А.</span>')
-            ui.label("v5.0 · NiceGUI").style(
-                "font-size:.65rem;color:var(--dim);font-weight:700;"
-            )
+        # ── Лого ──────────────────────────────────────────────────────────────
+        _html(
+            '<span class="les-brand" style="white-space:nowrap;margin-right:16px;">'
+            '[O_O] Л.Е.С.</span>'
+        )
 
-        with ui.row().classes("items-center gap-2"):
-            # Кнопка режима РАГ / КОД
-            mode_btn = ui.button(
-                "РАГ",
-                on_click=lambda: asyncio.create_task(_toggle_mode(mode_btn))
-            ).classes("mode-rag")
-            mode_btn.props("no-caps flat")
+        # ── Табы (по центру, растягиваются) ───────────────────────────────────
+        with ui.tabs().style(
+            "flex:1;min-width:0;background:transparent;border:none;"
+            "font-family:var(--font);font-size:.65rem;font-weight:700;"
+            "color:var(--dim);height:44px;"
+        ) as tabs:
+            if is_admin:
+                tab_refs["overview"] = ui.tab("ОБЗОР",          icon="o_dashboard")
+                tab_refs["samovar"]  = ui.tab("С.А.М.О.В.А.Р.", icon="o_inventory_2")
+                tab_refs["prorab"]   = ui.tab("П.Р.О.Р.А.Б.",   icon="o_monitor")
+            tab_refs["chat"]     = ui.tab("AI ЧАТ",         icon="o_forum")
+            tab_refs["history"]  = ui.tab("ИСТОРИЯ",        icon="o_history")
+            if is_admin:
+                tab_refs["mermaid"]  = ui.tab("ГРАФ",           icon="o_account_tree")
+                tab_refs["diag"]     = ui.tab("🔬 ДИАГН",       icon="o_medical_services")
+                tab_refs["volk"]     = ui.tab("В.О.Л.К.",       icon="o_vpn_key")
 
-            # Кнопка обновить
-            ui.button(
-                "↻",
-                on_click=lambda: asyncio.create_task(_full_refresh())
-            ).props("flat").style("color:var(--dim);")
+        # ── Контролы (справа) ─────────────────────────────────────────────────
+        with ui.row().classes("items-center gap-1").style("flex-shrink:0;margin-left:8px;"):
 
-            # Переключатель темы
-            _DARK_VARS  = ["#08090b", "#12151a", "#1a1e25", "#ffffff",
-                           "#94a3b8", "#2d3748", "#3b82f6", "#10b981", "#ef4444", "#f59e0b", "#8b5cf6"]
-            _LIGHT_VARS = ["#f6f8fa", "#ffffff", "#eaeef2", "#1f2328",
-                           "#424a53", "#d0d7de", "#0969da", "#1a7f37", "#cf222e", "#9a6700", "#8250df"]
-            _CSS_KEYS   = ["--bg", "--bg-panel", "--bg-mod", "--text", "--dim",
-                           "--border", "--accent", "--ok", "--err", "--warn", "--pauk"]
+            # Обновить
+            ui.button("↻", on_click=lambda: asyncio.create_task(_full_refresh())
+            ).props("flat dense").style("color:var(--dim);font-size:.85rem;")
 
-            def _apply_theme_js(dark: bool) -> str:
-                vs = _DARK_VARS if dark else _LIGHT_VARS
-                js = ";".join(
-                    f"document.documentElement.style.setProperty('{k}','{v}')"
-                    for k, v in zip(_CSS_KEYS, vs)
-                )
-                js += f";document.body.style.background='{vs[0]}';document.body.style.color='{vs[3]}';"
-                return js
+            # Тема
+            _DARK_VARS  = ["#08090b","#12151a","#1a1e25","#f0f4f8",
+                           "#c4cfd9","#3d4f63","#60a5fa","#34d399","#f87171","#fbbf24","#a78bfa"]
+            _LIGHT_VARS = ["#f6f8fa","#ffffff","#eaeef2","#0d1117",
+                           "#2d3a46","#b0bec8","#0550ae","#116329","#a0111f","#7d4e00","#6639ba"]
+            _CSS_KEYS   = ["--bg","--bg-panel","--bg-mod","--text","--dim",
+                           "--border","--accent","--ok","--err","--warn","--pauk"]
 
             _dark_init = app.storage.user.get("dark_theme", True)
 
@@ -68,34 +76,25 @@ def build_header(tabs, auth_role: str, auth_holder: str, is_admin: bool):
                 ui.run_javascript(js)
                 theme_btn.set_text("🌙" if d else "☀")
 
-            theme_btn = ui.button("🌙" if _dark_init else "☀", on_click=_toggle_theme).props("flat").style(
-                "color:var(--dim);font-size:.85rem;"
-            )
+            theme_btn = ui.button(
+                "🌙" if _dark_init else "☀", on_click=_toggle_theme
+            ).props("flat dense").style("color:var(--dim);font-size:.85rem;")
 
-            # Тема применяется через theme_vars_css() в <head> синхронно (sovushka_ng.py).
-            # Quasar Dark mode синхронизируем без задержки:
             if not _dark_init:
                 ui.timer(0.0, lambda: ui.run_javascript(
                     "if(window.Quasar){Quasar.Dark.set(false);}"
                 ), once=True)
 
-            # Диалог настроек
+            # Настройки
             with ui.dialog() as settings_dialog, ui.card().style(
                 "background:var(--bg-panel);border:1px solid var(--border);min-width:480px;padding:24px;"
             ):
                 ui.label("⚙ НАСТРОЙКИ Л.Е.С.").style(
                     "font-size:.95rem;font-weight:900;margin-bottom:16px;"
                 )
-
-                set_llm = ui.input("LLM Модель", value="").style(
-                    "background:var(--bg);color:var(--text);font-family:var(--font);width:100%;"
-                )
-                set_embed = ui.input("Embedding Модель", value="").style(
-                    "background:var(--bg);color:var(--text);font-family:var(--font);width:100%;"
-                )
-                set_url = ui.input("Ollama / MLX URL", value="").style(
-                    "background:var(--bg);color:var(--text);font-family:var(--font);width:100%;"
-                )
+                set_llm   = ui.input("LLM Модель",        value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                set_embed = ui.input("Embedding Модель",  value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                set_url   = ui.input("Ollama / MLX URL",  value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
 
                 async def _load_settings():
                     from sovushka.state import api_get
@@ -106,11 +105,8 @@ def build_header(tabs, auth_role: str, auth_holder: str, is_admin: bool):
                         set_url.set_value(d.get("ollama_url", ""))
 
                 ui.timer(0.1, lambda: asyncio.create_task(_load_settings()), once=True)
-
                 ui.separator().style("border-color:var(--border);margin:12px 0;")
-                ui.label("⚠ Опасная зона").style(
-                    "color:var(--err);font-size:.65rem;font-weight:900;text-transform:uppercase;"
-                )
+                ui.label("⚠ Опасная зона").style("color:var(--err);font-size:.65rem;font-weight:900;text-transform:uppercase;")
 
                 async def _reset_all():
                     ok = await ui.run_javascript("confirm('Сбросить ВСЕ датасеты? Необратимо!')")
@@ -123,82 +119,41 @@ def build_header(tabs, auth_role: str, auth_holder: str, is_admin: bool):
                 ui.button("☢ Сбросить ВСЕ датасеты", on_click=_reset_all).props("no-caps").style(
                     "border:1px solid var(--err);color:var(--err);background:transparent;margin-top:8px;"
                 )
-
                 with ui.row().classes("justify-end gap-2 mt-4"):
-                    ui.button("Отмена", on_click=settings_dialog.close).props("no-caps flat").style(
-                        "color:var(--dim);"
-                    )
+                    ui.button("Отмена", on_click=settings_dialog.close).props("no-caps flat").style("color:var(--dim);")
 
                     async def save_settings():
                         from sovushka.state import api_post, add_log
                         d = await api_post("/api/settings", {
-                            "llm_model":  set_llm.value,
+                            "llm_model":   set_llm.value,
                             "embed_model": set_embed.value,
                             "ollama_url":  set_url.value,
                         })
                         add_log(f"[SETTINGS] Сохранено: LLM={set_llm.value}")
-                        ui.notify("Настройки сохранены, прокси перезапускается...", type="positive")
+                        ui.notify("Настройки сохранены", type="positive")
                         settings_dialog.close()
 
                     ui.button("💾 Сохранить", on_click=save_settings).props("no-caps").style(
                         "border:1px solid var(--accent);color:var(--accent);background:transparent;"
                     )
 
-            ui.button("⚙", on_click=lambda: settings_dialog.open()).props("flat").style(
-                "color:var(--dim);"
-            )
+            ui.button("⚙", on_click=lambda: settings_dialog.open()).props("flat dense").style("color:var(--dim);")
 
-            # В.О.Л.К. badge — имя + выход
+            # Пользователь / выход
             badge_text = f"{'👑' if is_admin else '👤'} {auth_holder or auth_role}"
-            ui.button(
-                badge_text,
-                on_click=lambda: (logout(), ui.navigate.to("/login"))
-            ).props("flat no-caps").style(
-                "color:var(--ok);font-size:.65rem;font-family:var(--font);"
+            ui.button(badge_text, on_click=lambda: (logout(), ui.navigate.to("/login"))
+            ).props("flat no-caps dense").style(
+                "color:var(--ok);font-size:.62rem;font-family:var(--font);max-width:120px;"
+                "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
             )
 
+    return tabs, tab_refs
 
-# ── Приватные функции хедера ──────────────────────────────────────────────────
 
-async def _toggle_mode(btn):
-    from sovushka.state import state, api_post, add_log
-    from sovushka.config import MLX_URL
-
-    next_mode = "code" if state["mode"] == "rag" else "rag"
-    next_model = "mlx-community/Qwen3-14B-4bit"
-    btn.set_text("...")
-    add_log(f"[РЕЖИМ] Переключение → {next_mode.upper()}")
-    try:
-        await api_post("/api/mode", {"mode": next_mode, "model": next_model})
-        try:
-            await api_post(
-                "/api/switch_model",
-                {"model": next_model, "mode": next_mode},
-                base=MLX_URL
-            )
-            add_log(f"[MLX] switch_model → {next_model}")
-        except Exception as e:
-            add_log(f"[MLX] switch_model недоступен: {e}")
-        state["mode"] = next_mode
-        if next_mode == "code":
-            btn.set_text("КОД")
-            btn.classes(remove="mode-rag", add="mode-code")
-        else:
-            btn.set_text("РАГ")
-            btn.classes(remove="mode-code", add="mode-rag")
-        add_log(f"[РЕЖИМ] {next_mode.upper()} активен.")
-    except Exception as e:
-        add_log(f"[РЕЖИМ] Ошибка: {e}")
-        btn.set_text("РАГ" if state["mode"] == "rag" else "КОД")
-
+# ── Приватные функции ─────────────────────────────────────────────────────────
 
 async def _full_refresh():
     from sovushka.state import refresh_metrics, refresh_status, refresh_mlx, refresh_samovar, add_log
     add_log("[REFRESH] Полное обновление...")
-    await asyncio.gather(
-        refresh_metrics(),
-        refresh_status(),
-        refresh_mlx(),
-        refresh_samovar(),
-    )
+    await asyncio.gather(refresh_metrics(), refresh_status(), refresh_mlx(), refresh_samovar())
     add_log("[REFRESH] Готово.")

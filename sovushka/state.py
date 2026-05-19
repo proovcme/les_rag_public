@@ -5,12 +5,17 @@ from __future__ import annotations
 
 import asyncio
 import httpx
+import uuid
 from datetime import datetime
 from typing import Optional, Union
 
 # ─────────────────────────────────────────
 # СОСТОЯНИЕ ПРИЛОЖЕНИЯ
 # ─────────────────────────────────────────
+def _new_session_id() -> str:
+    return str(uuid.uuid4())
+
+
 state = {
     "mode": "rag",
     "mode_model": "mlx-community/Qwen3-14B-4bit",
@@ -20,11 +25,13 @@ state = {
     "datasets": [],
     "sources": [],
     "jobs": {},
-    "chat_history": [],   # list of {role, text, srcs, crag}
+    "chat_history": [],        # list of {role, text, srcs, crag}
+    "session_id": _new_session_id(),  # UUID текущей сессии чата
+    "load_session_id": None,   # если задан — чат отобразит эту сессию
     "logs": [],
     "mermaid_last": "",
-    "output_template": None,  # образец таблицы выдачи
-    "diag_results": [],       # последний прогон диагностики
+    "output_template": None,
+    "diag_results": [],
     "diag_running": False,
 }
 

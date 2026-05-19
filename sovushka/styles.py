@@ -6,28 +6,28 @@ _DARK_THEME = {
     "--bg":       "#08090b",
     "--bg-panel": "#12151a",
     "--bg-mod":   "#1a1e25",
-    "--text":     "#ffffff",
-    "--dim":      "#94a3b8",
-    "--border":   "#2d3748",
-    "--accent":   "#3b82f6",
-    "--ok":       "#10b981",
-    "--pauk":     "#8b5cf6",
-    "--warn":     "#f59e0b",
-    "--err":      "#ef4444",
+    "--text":     "#f0f4f8",
+    "--dim":      "#c4cfd9",
+    "--border":   "#3d4f63",
+    "--accent":   "#60a5fa",
+    "--ok":       "#34d399",
+    "--pauk":     "#a78bfa",
+    "--warn":     "#fbbf24",
+    "--err":      "#f87171",
 }
 
 _LIGHT_THEME = {
     "--bg":       "#f6f8fa",
     "--bg-panel": "#ffffff",
     "--bg-mod":   "#eaeef2",
-    "--text":     "#1f2328",
-    "--dim":      "#424a53",
-    "--border":   "#d0d7de",
-    "--accent":   "#0969da",
-    "--ok":       "#1a7f37",
-    "--pauk":     "#8250df",
-    "--warn":     "#9a6700",
-    "--err":      "#cf222e",
+    "--text":     "#0d1117",
+    "--dim":      "#2d3a46",
+    "--border":   "#b0bec8",
+    "--accent":   "#0550ae",
+    "--ok":       "#116329",
+    "--pauk":     "#6639ba",
+    "--warn":     "#7d4e00",
+    "--err":      "#a0111f",
 }
 
 
@@ -47,19 +47,26 @@ def theme_vars_css(dark: bool = True) -> str:
 
 CUSTOM_CSS = """
 <style>
+@font-face {
+  font-family: 'ISOCPEUR';
+  src: url('/static/fonts/ISOCPEUR.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+}
 :root {
   --bg:       #08090b;
   --bg-panel: #12151a;
   --bg-mod:   #1a1e25;
-  --text:     #ffffff;
-  --dim:      #94a3b8;
-  --border:   #2d3748;
-  --accent:   #3b82f6;
-  --ok:       #10b981;
-  --pauk:     #8b5cf6;
-  --warn:     #f59e0b;
-  --err:      #ef4444;
+  --text:     #f0f4f8;
+  --dim:      #c4cfd9;
+  --border:   #3d4f63;
+  --accent:   #60a5fa;
+  --ok:       #34d399;
+  --pauk:     #a78bfa;
+  --warn:     #fbbf24;
+  --err:      #f87171;
   --font:     'Courier New', Courier, monospace;
+  --font-chat: 'ISOCPEUR', 'Courier New', Courier, monospace;
 }
 body, .nicegui-content { font-family: var(--font) !important; }
 .les-header {
@@ -112,20 +119,50 @@ body, .nicegui-content { font-family: var(--font) !important; }
 .output-table th { padding:8px 12px; background:var(--bg-mod); border-bottom:1px solid var(--border); color:var(--dim); font-weight:700; text-transform:uppercase; font-size:.6rem; letter-spacing:.4px; text-align:left; }
 .output-table td { padding:7px 12px; border-bottom:1px solid var(--border); color:var(--text); vertical-align:top; }
 .output-table tr:hover td { background:var(--bg-mod); }
-.chat-msg-user { align-self:flex-end; background:var(--border); color:var(--text); border-right:3px solid var(--pauk); border-radius:6px; padding:10px 14px; max-width:80%; font-size:.8rem; line-height:1.5; }
-.chat-msg-ai   { align-self:flex-start; background:var(--bg-panel); color:var(--text); border:1px solid var(--border); border-left:3px solid var(--accent); border-radius:6px; padding:10px 14px; max-width:85%; font-size:.8rem; line-height:1.5; }
-.chat-msg-sys  { align-self:center; color:var(--dim); font-size:.7rem; border:1px solid var(--border); border-radius:4px; padding:4px 12px; }
+.chat-msg-user { align-self:flex-end; background:var(--border); color:#f0f4f8 !important; border-right:3px solid var(--pauk); border-radius:6px; padding:10px 14px; max-width:80%; font-family:var(--font-chat) !important; font-size:.9rem; line-height:1.6; }
+.chat-msg-ai   { align-self:flex-start; background:var(--bg-panel); color:#f0f4f8 !important; border:1px solid var(--border); border-left:3px solid var(--accent); border-radius:6px; padding:10px 14px; max-width:85%; font-family:var(--font-chat) !important; font-size:.9rem; line-height:1.6; }
+.chat-msg-sys  { align-self:center; color:var(--dim); font-size:.72rem; border:1px solid var(--border); border-radius:4px; padding:4px 12px; font-family:var(--font-chat); }
 .src-tag { font-size:.6rem; font-weight:700; padding:2px 6px; border:1px solid var(--ok); color:var(--ok); border-radius:4px; margin-right:4px; }
 .src-tag-err { border-color:var(--err); color:var(--err); }
 .typing::after { content:'▋'; animation:blink 1s step-end infinite; opacity:.7; margin-left:4px; }
 @keyframes blink { 50%{opacity:0} }
-/* Quasar рендерит текст в .q-field__native — принудительно красим через переменную */
-.q-field__native, .q-field__input, .q-field__prefix, .q-field__suffix {
+/* Quasar: текст в полях ввода */
+.q-field__native, .q-field__input, .q-field__prefix, .q-field__suffix,
+.q-field--dark .q-field__native, .q-field--dark .q-field__input {
   color: var(--text) !important;
 }
-.q-field--dark .q-field__native,
-.q-field--dark .q-field__input {
+/* Quasar: лейблы, заголовки, подписи */
+.q-item__label, .q-item__label--header, .q-field__label {
+  color: var(--dim) !important;
+  opacity: 1 !important;
+}
+/* Quasar: основной текст в списках и кнопках */
+.q-item__section--main, .q-btn__content, .q-tab__label {
+  color: var(--text) !important;
+  opacity: 1 !important;
+}
+/* Quasar: select/option текст */
+.q-select__dropdown-icon, .q-field__marginal {
+  color: var(--dim) !important;
+}
+/* Quasar select — выпадающий список */
+.q-menu { background: var(--bg-panel) !important; border: 1px solid var(--border) !important; }
+.q-item  { color: var(--text) !important; }
+.q-item:hover, .q-item--active { background: var(--bg-mod) !important; color: var(--accent) !important; }
+/* Quasar select — выбранное значение */
+.q-field__native span, .q-select .q-field__native {
   color: var(--text) !important;
 }
+/* Убираем opacity у disabled-like элементов */
+.q-field--readonly .q-field__native,
+.q-field--disabled .q-field__native {
+  opacity: 0.85 !important;
+  color: var(--text) !important;
+}
+/* Tabs */
+.q-tab { color: var(--dim) !important; opacity: 1 !important; }
+.q-tab--active { color: var(--accent) !important; }
+/* Generic text */
+.q-card, .q-card__section { color: var(--text) !important; }
 </style>
 """

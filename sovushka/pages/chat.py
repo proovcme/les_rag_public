@@ -56,6 +56,19 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                         _render_msg(msg)
 
                 async def _load_history():
+                    # Если история пришла из вкладки ИСТОРИЯ — рендерим её
+                    if state.get("load_session_id"):
+                        sid = state["load_session_id"]
+                        state["load_session_id"] = None
+                        state["session_id"] = sid
+                        hist = state.get("chat_history", [])
+                        chat_column.clear()
+                        with chat_column:
+                            _html('<div class="chat-msg-sys">Сессия загружена из истории.</div>')
+                            for m in hist:
+                                _render_msg(m)
+                        chat_scroll.scroll_to(percent=1)
+                        return
                     if not state.get("chat_history"):
                         hist = await api_get("/api/chat/history?limit=40")
                         if hist:
@@ -68,6 +81,13 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                             chat_scroll.scroll_to(percent=1)
 
                 ui.timer(0.5, lambda: asyncio.create_task(_load_history()), once=True)
+
+                # Следим за переходом из вкладки ИСТОРИЯ
+                async def _watch_session_load():
+                    if state.get("load_session_id"):
+                        await _load_history()
+
+                ui.timer(0.5, lambda: asyncio.create_task(_watch_session_load()))
 
                 # Ввод + кнопка
                 with ui.row().classes("w-full gap-2 items-end"):
@@ -460,12 +480,15 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
     chat_input.on("input", lambda: _update_prompt_preview())
 
     def _clear_chat():
+        from sovushka.state import _new_session_id
         chat_column.clear()
         with chat_column:
             _html('<div class="chat-msg-sys">Чат очищен.</div>')
         result_panel.clear()
         state["chat_history"].clear()
-        add_log("[ЧАТ] История очищена")
+        state["session_id"] = _new_session_id()
+        state["load_session_id"] = None
+        add_log("[ЧАТ] История очищена, новая сессия")
 
     _sending = {"v": False}
 
@@ -492,7 +515,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         chat_scroll.scroll_to(percent=1)
 
         extra_prompt = _build_extra_prompt(question)
-        payload = {"question": question + extra_prompt, "reranker_enabled": reranker_sw.value}
+        payload = {
+            "question": question + extra_prompt,
+            "reranker_enabled": reranker_sw.value,
+            "session_id": state.get("session_id"),
+        }
         if detail_dataset.value and detail_dataset.value != "(все датасеты)":
             payload["dataset_filter"] = detail_dataset.value
 

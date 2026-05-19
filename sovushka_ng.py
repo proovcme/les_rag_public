@@ -17,6 +17,7 @@ from sovushka.pages.overview import build_overview
 from sovushka.pages.samovar import build_samovar
 from sovushka.pages.prorab import build_prorab
 from sovushka.pages.chat import build_chat
+from sovushka.pages.history import build_history
 from sovushka.pages.mermaid_page import build_mermaid
 from sovushka.pages.diag import build_diag
 from sovushka.pages.volk import build_volk
@@ -62,24 +63,22 @@ async def main_page(request: Request):
     ui.query("body").style("background:var(--bg);color:var(--text);margin:0;")
     ui.query(".nicegui-content").classes("p-0 m-0 w-full").style("max-width:none;")
 
-    # Layout: Header + Tabs + Content + Footer
+    # Layout: Header (со встроенными табами) + Content + Footer
     with ui.column().classes("w-full h-screen no-wrap gap-0"):
 
-        # Создаем табы
-        with ui.tabs().classes("w-full bg-panel border-b border-border text-dim").style(
-            "background:var(--bg-panel);border-bottom:1px solid var(--border);"
-            "color:var(--dim);font-family:var(--font);font-size:.7rem;font-weight:700;"
-            "padding:0 24px;"
-        ) as tabs:
-            tab_overview = ui.tab("ОБЗОР",          icon="o_dashboard") if is_admin else None
-            tab_samovar  = ui.tab("С.А.М.О.В.А.Р.", icon="o_inventory_2") if is_admin else None
-            tab_prorab   = ui.tab("П.Р.О.Р.А.Б.",   icon="o_monitor") if is_admin else None
-            tab_chat     = ui.tab("AI ЧАТ",         icon="o_forum")
-            tab_mermaid  = ui.tab("ГРАФ",           icon="o_account_tree") if is_admin else None
-            tab_diag     = ui.tab("🔬 ДИАГНОСТИКА", icon="o_medical_services") if is_admin else None
-            tab_volk     = ui.tab("В.О.Л.К.",       icon="o_vpn_key") if is_admin else None
+        # Единая полоса: лого + табы + контролы
+        tabs, tr = build_header(is_admin, role, holder)
 
-        # Персистим активный таб — при любом переключении сохраняем имя
+        tab_overview = tr.get("overview")
+        tab_samovar  = tr.get("samovar")
+        tab_prorab   = tr.get("prorab")
+        tab_chat     = tr["chat"]
+        tab_history  = tr["history"]
+        tab_mermaid  = tr.get("mermaid")
+        tab_diag     = tr.get("diag")
+        tab_volk     = tr.get("volk")
+
+        # Персистим активный таб
         def _save_tab(e):
             try:
                 val = e.args if isinstance(e.args, str) else (e.args[0] if isinstance(e.args, (list, tuple)) and e.args else None)
@@ -87,13 +86,9 @@ async def main_page(request: Request):
                     app.storage.user["last_tab"] = str(val)
             except Exception:
                 pass
-
         tabs.on("update:model-value", _save_tab)
 
-        # Шапка (после tabs, чтобы sticky работал корректно)
-        build_header(tabs, role, holder, is_admin)
-
-        # 2. Контент (Panels)
+        # Контент
         _default_tab = tab_overview if is_admin else tab_chat
         with ui.tab_panels(tabs, value=_default_tab).classes("w-full flex-1").style(
             "background:var(--bg);overflow-y:auto;padding:0;"
@@ -107,6 +102,8 @@ async def main_page(request: Request):
                     build_prorab()
             with ui.tab_panel(tab_chat):
                 build_chat(is_admin, tabs, tab_mermaid)
+            with ui.tab_panel(tab_history):
+                build_history(tabs, tab_chat)
             if is_admin:
                 with ui.tab_panel(tab_mermaid):
                     build_mermaid()
@@ -115,19 +112,19 @@ async def main_page(request: Request):
                 with ui.tab_panel(tab_volk):
                     build_volk()
 
-        # 3. Подвал (Лог)
+        # Подвал (Лог)
         build_log_terminal()
 
-    # Восстанавливаем последний активный таб (защита от reset при reconnect)
+    # Восстанавливаем последний активный таб
     _last_tab = app.storage.user.get("last_tab", "AI ЧАТ" if not is_admin else "ОБЗОР")
-    _tab_map = {"AI ЧАТ": tab_chat}
+    _tab_map = {"AI ЧАТ": tab_chat, "ИСТОРИЯ": tab_history}
     if is_admin:
         _tab_map.update({
             "ОБЗОР":          tab_overview,
             "С.А.М.О.В.А.Р.": tab_samovar,
             "П.Р.О.Р.А.Б.":   tab_prorab,
             "ГРАФ":            tab_mermaid,
-            "🔬 ДИАГНОСТИКА":  tab_diag,
+            "🔬 ДИАГН":        tab_diag,
             "В.О.Л.К.":       tab_volk,
         })
     _target = _tab_map.get(_last_tab)
