@@ -1,0 +1,15 @@
+[Unit]
+Description=С.О.В.У.Ш.К.А. v5.0 NiceGUI
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/les_v2
+ExecStart=/root/les_v2/.venv/bin/python3 sovushka_ng.py
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

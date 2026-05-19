@@ -1,5 +1,5 @@
 # 🦉 Л.Е.С. — Локальная Единая Система
-## Мастер-документ v2.7 | 19.05.2026
+## Мастер-документ v2.8 | 19.05.2026
 
 > Единый источник истины. Объединяет README, ROADMAP, Архитектуру, Инфраструктуру, Словарь, Программу испытаний.  
 > Авторы: Клодыч (Claude), Кен (Qwen), Панорамыч (Gemini).
@@ -122,14 +122,21 @@ sovushka.service   — python3 sovushka_ng.py   --port 8051
 caddy.service      — Caddy (автозапуск, Let's Encrypt)
 zerotier-one.service
 ```
-Конфиг: `/root/les_v2/.env` (читается через `EnvironmentFile=` в systemd)
+Конфиги в репо: `deploy/pauk/les_proxy.service`, `deploy/pauk/sovushka.service`
+Размещение: `/etc/systemd/system/`
+Конфиг приложения: `/root/les_v2/.env` (EnvironmentFile в systemd; шаблон: `deploy/pauk/.env.example`)
 
-**`/etc/caddy/Caddyfile`:**
+**`/etc/caddy/Caddyfile`** (репо: `deploy/pauk/Caddyfile`)**:**
 ```caddyfile
 les.ovc.me {
     reverse_proxy /api/* localhost:8050
     reverse_proxy /* localhost:8051
 }
+```
+
+**Деплой кода на VPS:**
+```bash
+bash deploy/pauk/deploy.sh   # rsync репо → VPS + systemctl restart
 ```
 
 **В.О.Л.К. — доступ:**
@@ -1004,7 +1011,12 @@ async def validate_with_consistency(question, answer, context, n=3):
 - **Реранкер batch-режим:** top_k 20→8, mode sequential→batch (1 вызов вместо 20, ~100с→~5с)
 - **Переключатель реранкера в UI чата** — по умолчанию выключен (`RERANKER_ENABLED=false`)
 
-### 🛠 v2.7 (Краткосрочно)
+### ✅ v2.8 (19.05.2026)
+- **П.А.У.К. — ZeroTier как основной транспорт** — SSH reverse tunnel выведен из эксплуатации; `QDRANT_URL` и `OLLAMA_URL` на VPS теперь указывают на ZeroTier IP Mac Mini (`10.195.146.98`); plist туннеля сохранён как резерв
+- **deploy/pauk/** — инфраструктура VPS добавлена в репо: `les_proxy.service`, `sovushka.service`, `Caddyfile`, `.env.example`, `deploy.sh`
+- **VPS синхронизирован с репо** — rsync Mac Mini → VPS, proxy_server.py обновлён до текущей версии
+
+### 🛠 v2.9 (Краткосрочно)
 | Задача | Описание |
 |---|---|
 | **Folder Watcher** | Автосинк новых файлов из RAG_Content/ |

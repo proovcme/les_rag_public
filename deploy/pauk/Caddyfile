@@ -1,0 +1,4 @@
+les.ovc.me {
+    reverse_proxy /api/* localhost:8050
+    reverse_proxy /* localhost:8051
+}

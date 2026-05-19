@@ -3,6 +3,9 @@
 data/
 storage/
 RAG_Content/
+logs/
+.claude/
+.nicegui/
 
 # Python
 __pycache__/
