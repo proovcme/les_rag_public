@@ -66,7 +66,6 @@ job_tracker = {}
 current_mode = {"mode": "rag", "model": os.getenv("LLM_MODEL", "qwen3:14b")}
 
 error_counts = defaultdict(int)
-llm_queue_size = 0
 chat_metrics = {
     "latency_search": [],
     "latency_gen": [],
@@ -109,6 +108,7 @@ class ChatRequest(BaseModel):
     question: str
     dataset_ids: Optional[List[str]] = None
     dataset_filter: Optional[str] = None  # имя папки, напр. "NTD" → ищет датасет NTD_Index
+    reranker_enabled: Optional[bool] = None  # None = берётся из env RERANKER_ENABLED
 
     @validator("question")
     def question_limits(cls, v):
@@ -194,7 +194,7 @@ async def startup():
     try:
         rag_backend = QdrantLlamaIndexAdapter(
             qdrant_url=os.getenv("QDRANT_URL", "http://qdrant:6333"),
-            mlx_url=os.getenv("MLX_URL", "http://host.docker.internal:11434"),
+            mlx_url=os.getenv("MLX_URL", "http://host.docker.internal:8080"),
             embed_model_name=os.getenv("EMBED_MODEL", "bge-m3:latest")
         )
         await rag_backend.health()
@@ -394,6 +394,31 @@ async def health():
     ok = await rag_backend.health()
     return {"status": "ok" if ok else "error", "backend": "qdrant_llama"}
 
+@app.post("/api/warmup")
+async def warmup_models():
+    """Принудительная загрузка MLX моделей в память (lazy-load → eager-load)."""
+    mlx_url = os.getenv("MLX_URL", "http://host.docker.internal:8080").rstrip("/")
+    results = {}
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        for name, model in [
+            ("main",  os.getenv("LLM_MODEL",     "mlx-community/Qwen3-14B-4bit")),
+            ("val",   os.getenv("MLX_VAL_MODEL",  "mlx-community/Qwen3-4B-4bit")),
+        ]:
+            try:
+                t = time.time()
+                r = await client.post(f"{mlx_url}/v1/chat/completions", json={
+                    "model":      model,
+                    "messages":   [{"role": "user", "content": "/no_think\n1"}],
+                    "max_tokens": 1,
+                    "temperature": 0.0,
+                })
+                r.raise_for_status()
+                results[name] = {"status": "ok", "elapsed": round(time.time() - t, 1)}
+            except Exception as e:
+                results[name] = {"status": "error", "msg": str(e)}
+    logger.info(f"[WARMUP] {results}")
+    return {"status": "done", "models": results}
+
 @app.get("/api/mode")
 async def get_mode():
     return current_mode
@@ -407,7 +432,7 @@ async def set_mode(req: ModeRequest):
 
 @app.get("/api/status")
 async def get_status():
-    mlx_url = os.getenv("MLX_URL", "http://host.docker.internal:11434")
+    mlx_url = os.getenv("MLX_URL", "http://host.docker.internal:8080")
 
     # Активные модели Ollama
     models = []
@@ -454,7 +479,7 @@ async def get_status():
             "uptime_sec": int(time.time() - _PROXY_START),
             "version": "2.1",
             "port": 8050,
-            "llm_url": os.getenv("MLX_URL", "http://host.docker.internal:11434"),
+            "llm_url": os.getenv("MLX_URL", "http://host.docker.internal:8080"),
             "llm_model": os.getenv("LLM_MODEL", "qwen3:14b"),
         }
     }
@@ -471,7 +496,7 @@ class SettingsRequest(BaseModel):
 async def get_settings():
     result = {}
     try:
-        mlx_url = os.getenv("MLX_URL", "http://host.docker.internal:11434")
+        mlx_url = os.getenv("MLX_URL", "http://host.docker.internal:8080")
         # Список доступных моделей из Ollama
         available = []
         try:
@@ -544,25 +569,9 @@ async def save_settings(req: SettingsRequest):
 
 @app.delete("/api/rag/datasets/{dataset_id}")
 async def delete_dataset(dataset_id: str):
-    import subprocess
     errors = []
 
-    # Удаляем из SQLite
-    try:
-        conn = sqlite3.connect("./data/les_meta.db")
-        conn.execute("DELETE FROM documents WHERE dataset_id=?", (dataset_id,))
-        conn.execute("DELETE FROM datasets WHERE id=?", (dataset_id,))
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        errors.append(f"SQLite: {e}")
-
-    # Удаляем физические файлы
-    ds_dir = Path(f"./storage/datasets/{dataset_id}")
-    if ds_dir.exists():
-        await asyncio.to_thread(shutil.rmtree, ds_dir)
-
-    # Удаляем из Qdrant по фильтру
+    # 1. Qdrant — если упадёт, SQLite остаётся консистентным
     try:
         qdrant_url = os.getenv("QDRANT_URL", "http://qdrant:6333")
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -573,6 +582,21 @@ async def delete_dataset(dataset_id: str):
     except Exception as e:
         errors.append(f"Qdrant: {e}")
 
+    # 2. SQLite — оба DELETE в одной транзакции
+    try:
+        with sqlite3.connect("./data/les_meta.db") as conn:
+            conn.execute("BEGIN")
+            conn.execute("DELETE FROM documents WHERE dataset_id=?", (dataset_id,))
+            conn.execute("DELETE FROM datasets WHERE id=?", (dataset_id,))
+            conn.execute("COMMIT")
+    except Exception as e:
+        errors.append(f"SQLite: {e}")
+
+    # 3. Физические файлы
+    ds_dir = Path(f"./storage/datasets/{dataset_id}")
+    if ds_dir.exists():
+        await asyncio.to_thread(shutil.rmtree, ds_dir)
+
     logger.info(f"[DELETE] Dataset {dataset_id} removed")
     return {"status": "deleted", "dataset_id": dataset_id, "errors": errors}
 
@@ -580,24 +604,7 @@ async def delete_dataset(dataset_id: str):
 async def delete_all_datasets():
     errors = []
 
-    # Полный сброс SQLite
-    try:
-        conn = sqlite3.connect("./data/les_meta.db")
-        conn.execute("DELETE FROM documents")
-        conn.execute("DELETE FROM datasets")
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        errors.append(f"SQLite: {e}")
-
-    # Удаляем все физические датасеты
-    ds_root = Path("./storage/datasets")
-    if ds_root.exists():
-        for d in ds_root.iterdir():
-            if d.is_dir():
-                await asyncio.to_thread(shutil.rmtree, d)
-
-    # Пересоздаём коллекцию Qdrant
+    # 1. Сначала Qdrant — если упадёт, SQLite остаётся консистентным
     try:
         qdrant_url = os.getenv("QDRANT_URL", "http://qdrant:6333")
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -605,25 +612,40 @@ async def delete_all_datasets():
     except Exception as e:
         errors.append(f"Qdrant delete: {e}")
 
+    # 2. SQLite — оба DELETE в одной явной транзакции
+    try:
+        with sqlite3.connect("./data/les_meta.db") as conn:
+            conn.execute("BEGIN")
+            conn.execute("DELETE FROM documents")
+            conn.execute("DELETE FROM datasets")
+            conn.execute("COMMIT")
+    except Exception as e:
+        errors.append(f"SQLite: {e}")
+
+    # 3. Физические файлы датасетов
+    ds_root = Path("./storage/datasets")
+    if ds_root.exists():
+        for d in ds_root.iterdir():
+            if d.is_dir():
+                await asyncio.to_thread(shutil.rmtree, d)
+
     logger.info("[DELETE] All datasets reset")
     return {"status": "reset", "errors": errors}
 
 @app.get("/api/metrics")
 async def get_metrics():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute("SELECT * FROM metrics ORDER BY id DESC LIMIT 60").fetchall()
-    conn.close()
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT * FROM metrics ORDER BY id DESC LIMIT 60").fetchall()
 
     rag_stats = {"datasets": 0, "files": 0, "chunks": 0, "status": "unknown"}
     try:
-        _c = sqlite3.connect('./data/les_meta.db')
-        cur = _c.cursor()
-        cur.execute("SELECT COUNT(*) FROM datasets")
-        rag_stats["datasets"] = cur.fetchone()[0] or 0
-        cur.execute("SELECT COUNT(*) FROM documents")
-        rag_stats["files"] = cur.fetchone()[0] or 0
-        _c.close()
+        with sqlite3.connect('./data/les_meta.db') as _c:
+            cur = _c.cursor()
+            cur.execute("SELECT COUNT(*) FROM datasets")
+            rag_stats["datasets"] = cur.fetchone()[0] or 0
+            cur.execute("SELECT COUNT(*) FROM documents")
+            rag_stats["files"] = cur.fetchone()[0] or 0
         if rag_backend:
             coll = await rag_backend.aclient.get_collection("les_rag")
             rag_stats["chunks"] = coll.points_count or 0
@@ -655,7 +677,7 @@ async def get_metrics():
             "crag_halluc_rate":      crag_stats["hallucination"] / max(1, sum(crag_stats.values())),
             "total_requests":        sum(crag_stats.values()),
         },
-        "queue": {"llm_waiting": llm_queue_size},
+        "queue": {"llm_waiting": 2 - llm_semaphore._value},
         "errors": dict(error_counts),
         "heartbeats": heartbeats,
         "rag": rag_stats
@@ -753,10 +775,18 @@ async def sync_folder(folder: str):
         if (i + 1) % 20 == 0 or is_new or is_changed:
             log_history.append(f"[JOB {job_id}] {f.name} ({i+1}/{len(files)}): {'NEW' if is_new else 'CHANGED' if is_changed else 'SKIP'}")
 
-    job_tracker[job_id]["status"] = "PARSING" if (new_count + changed_count) > 0 else "COMPLETED"
-    job_tracker[job_id]["message"] = f"Векторизация bge-m3: {new_count} новых, {changed_count} изм." if (new_count + changed_count) > 0 else f"Нет изменений (пропущено {skip_count})"
+    # Если файлы не изменились но индекс пуст — принудительная переиндексация
+    force_reindex = (new_count + changed_count) == 0 and (ds.chunk_count or 0) == 0 and skip_count > 0
 
-    if (new_count + changed_count) > 0:
+    if force_reindex:
+        job_tracker[job_id]["status"] = "PARSING"
+        job_tracker[job_id]["message"] = f"Индекс пуст — принудительная переиндексация {skip_count} файлов"
+        logger.info(f"[JOB {job_id}] Force reindex: 0 chunks in Qdrant, {skip_count} files on disk")
+    else:
+        job_tracker[job_id]["status"] = "PARSING" if (new_count + changed_count) > 0 else "COMPLETED"
+        job_tracker[job_id]["message"] = f"Векторизация bge-m3: {new_count} новых, {changed_count} изм." if (new_count + changed_count) > 0 else f"Нет изменений (пропущено {skip_count})"
+
+    if (new_count + changed_count) > 0 or force_reindex:
         async def _run():
             try:
                 async with parse_semaphore:
@@ -823,12 +853,13 @@ async def chat(req: ChatRequest):
     t_search_start = time.time()
     try:
         # Реранкер: top-20 из Qdrant → Qwen3-4B → top-5
-        if RERANKER_AVAILABLE and os.getenv("RERANKER_ENABLED", "true").lower() == "true":
-            raw_chunks = await rag_backend.retrieve(req.question, dataset_ids=_dataset_ids, top_k=20)
+        _reranker_on = req.reranker_enabled if req.reranker_enabled is not None else os.getenv("RERANKER_ENABLED", "true").lower() == "true"
+        if RERANKER_AVAILABLE and _reranker_on:
+            raw_chunks = await rag_backend.retrieve(req.question, dataset_ids=_dataset_ids, top_k=8)
             if raw_chunks and len(raw_chunks) > 5:
                 try:
                     mlx_url = os.getenv("MLX_URL", "http://host.docker.internal:8080")
-                    reranker = Reranker(mlx_url=mlx_url)
+                    reranker = Reranker(mlx_url=mlx_url, mode="batch")
                     # Конвертируем в формат реранкера
                     rerank_input = [{"text": c.content, "metadata": {"doc_name": c.doc_name}, "score": getattr(c, "score", 0.0)} for c in raw_chunks]
                     ranked = await reranker.rerank(req.question, rerank_input, top_k=5)
@@ -900,16 +931,17 @@ async def chat(req: ChatRequest):
         },
     ]
 
-    global llm_queue_size
-    llm_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
+    llm_url   = os.getenv("MLX_URL", "http://host.docker.internal:8080")
     llm_model = os.getenv("LLM_MODEL", "qwen3:14b")
 
-    if llm_queue_size >= 2:
+    # Проверяем не заблокирован ли семафор (non-blocking check через _value).
+    # llm_semaphore объявлен глобально с limit=2.
+    if llm_semaphore._value == 0:
         raise HTTPException(429, "Сервер занят — идёт генерация, попробуй через несколько секунд")
 
-    llm_queue_size += 1
     t_gen_start = time.time()
-    try:
+    async with llm_semaphore:   # гарантированный release через try/finally внутри семафора
+      try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(
                 f"{llm_url.rstrip('/')}/v1/chat/completions",
@@ -923,7 +955,9 @@ async def chat(req: ChatRequest):
             )
             resp.raise_for_status()
             rj = resp.json()
-            answer = rj["choices"][0]["message"]["content"]
+            answer = rj.get("choices", [{}])[0].get("message", {}).get("content", "")
+            if not answer:
+                raise ValueError(f"Пустой ответ LLM: {rj}")
             tokens = rj.get("usage", {}).get("completion_tokens", 0)
             logger.info(f"[CHAT] MLX format | model={llm_model} | tokens={tokens}")
 
@@ -932,7 +966,7 @@ async def chat(req: ChatRequest):
             # Т.О.С.К.А. v2 — валидация через Qwen3-4B на MLX_URL (всегда)
             crag_status = "UNKNOWN"  # default: validator not reached → не считаем VERIFIED
             try:
-                val_url = os.getenv("MLX_URL", "http://127.0.0.1:8080").rstrip('/')
+                val_url = os.getenv("MLX_URL", "http://host.docker.internal:8080").rstrip('/')
                 context_snippet = "\n".join([c.content[:300] for c in chunks[:3]])
                 val_resp = await client.post(
                     f"{val_url}/api/validate",
@@ -970,38 +1004,28 @@ async def chat(req: ChatRequest):
             
             # Сохранение истории чата в БД
             try:
-                conn = sqlite3.connect("./data/les_meta.db", check_same_thread=False)
-                conn.execute(
-                    "INSERT INTO chat_history (question, answer, sources, crag_status, latency_sec, tokens) VALUES (?, ?, ?, ?, ?, ?)",
-                    (req.question, answer, ",".join(sources_list), crag_status, t_search + t_gen, tokens)
-                )
-                conn.commit()
-                conn.close()
+                with sqlite3.connect("./data/les_meta.db") as conn:
+                    conn.execute(
+                        "INSERT INTO chat_history (question, answer, sources, crag_status, latency_sec, tokens) VALUES (?, ?, ?, ?, ?, ?)",
+                        (req.question, answer, ",".join(sources_list), crag_status, t_search + t_gen, tokens)
+                    )
             except Exception as db_err:
                 logger.warning(f"[CHAT] History save error: {db_err}")
 
-            llm_queue_size = max(0, llm_queue_size - 1)
             return {"answer": answer, "crag_status": crag_status, "sources": sources_list}
-    except httpx.TimeoutException as e:
-        detail = f"LLM timeout (>{120}s) — модель перегружена или не отвечает. Попробуй позже."
+      except httpx.TimeoutException as e:
         logger.error(f"[CHAT] LLM TIMEOUT: {e}")
-        llm_queue_size = max(0, llm_queue_size - 1)
-        raise HTTPException(504, detail)
-    except httpx.HTTPStatusError as e:
+        raise HTTPException(504, f"LLM timeout (>{120}s) — модель перегружена или не отвечает. Попробуй позже.")
+      except httpx.HTTPStatusError as e:
         detail = f"LLM HTTP {e.response.status_code}: {e.response.text[:200]}"
         logger.error(f"[CHAT] LLM HTTP ERROR: {detail}")
-        llm_queue_size = max(0, llm_queue_size - 1)
         raise HTTPException(502, detail)
-    except httpx.ConnectError as e:
-        detail = f"LLM недоступен ({llm_url}) — проверь MLX Host или Ollama."
+      except httpx.ConnectError as e:
         logger.error(f"[CHAT] LLM CONNECT ERROR: {e}")
-        llm_queue_size = max(0, llm_queue_size - 1)
-        raise HTTPException(503, detail)
-    except Exception as e:
+        raise HTTPException(503, f"LLM недоступен ({llm_url}) — проверь MLX Host или Ollama.")
+      except Exception as e:
         import traceback
-        tb = traceback.format_exc()
-        logger.error(f"[CHAT] UNEXPECTED ERROR: {e}\n{tb}")
-        llm_queue_size = max(0, llm_queue_size - 1)
+        logger.error(f"[CHAT] UNEXPECTED ERROR: {e}\n{traceback.format_exc()}")
         raise HTTPException(500, f"{type(e).__name__}: {e}")
 
 
@@ -1009,12 +1033,11 @@ async def chat(req: ChatRequest):
 async def get_chat_history(limit: int = 40):
     """Последние N сообщений из chat_history SQLite (пары вопрос/ответ)."""
     try:
-        conn = sqlite3.connect("./data/les_meta.db", check_same_thread=False)
-        rows = conn.execute(
-            "SELECT question, answer, sources, crag_status FROM chat_history "
-            "ORDER BY id DESC LIMIT ?", (limit,)
-        ).fetchall()
-        conn.close()
+        with sqlite3.connect("./data/les_meta.db") as conn:
+            rows = conn.execute(
+                "SELECT question, answer, sources, crag_status FROM chat_history "
+                "ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
         messages = []
         for q, a, srcs_str, crag in reversed(rows):
             srcs = [s for s in (srcs_str or "").split(",") if s]
@@ -1073,7 +1096,7 @@ async def run_diagnostics():
 
     # ── MLX Host ──
     async def _chk_llm():
-        llm_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
+        llm_url = os.getenv("MLX_URL", "http://host.docker.internal:8080")
         llm_model = os.getenv("LLM_MODEL", "?")
         try:
             async with httpx.AsyncClient(timeout=5.0) as c:
@@ -1133,10 +1156,9 @@ async def run_diagnostics():
     # ── SQLite метабаза ──
     async def _chk_sqlite():
         def _q():
-            conn = sqlite3.connect("./data/les_meta.db")
-            ds = conn.execute("SELECT COUNT(*) FROM datasets").fetchone()[0]
-            docs = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
-            conn.close()
+            with sqlite3.connect("./data/les_meta.db") as conn:
+                ds   = conn.execute("SELECT COUNT(*) FROM datasets").fetchone()[0]
+                docs = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
             return ds, docs
         ds, docs = await asyncio.to_thread(_q)
         status = "ok" if ds > 0 else "warn"

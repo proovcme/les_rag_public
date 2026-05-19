@@ -72,9 +72,12 @@ def build_header(tabs, auth_role: str, auth_holder: str, is_admin: bool):
                 "color:var(--dim);font-size:.85rem;"
             )
 
-            # Восстанавливаем тему при реконнекте WebSocket (если была светлая)
+            # Тема применяется через theme_vars_css() в <head> синхронно (sovushka_ng.py).
+            # Quasar Dark mode синхронизируем без задержки:
             if not _dark_init:
-                ui.timer(0.1, lambda: ui.run_javascript(_apply_theme_js(False)), once=True)
+                ui.timer(0.0, lambda: ui.run_javascript(
+                    "if(window.Quasar){Quasar.Dark.set(false);}"
+                ), once=True)
 
             # Диалог настроек
             with ui.dialog() as settings_dialog, ui.card().style(

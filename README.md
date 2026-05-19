@@ -44,9 +44,9 @@
 │       └── В.О.Л.К.      (ключи, SQLite)         │
 │                                                 │
 │  MLX Native Host  (порт 8080)                   │
-│       ├── Qwen3-14B-4bit  (LLM, Metal)          │
-│       ├── Qwen3-4B-4bit   (валидатор)           │
-│       └── BGE-M3          (эмбеддинги, MPS)     │
+│       ├── Qwen3.5-9B-4bit   (LLM, Metal, ~6GB)  │
+│       ├── Qwen3-4B-2507-4bit (валидатор, ~2.5GB) │
+│       └── BGE-M3             (эмбеддинги, MPS)   │
 │                                                 │
 │  Qdrant  (векторная база, порт 6333)            │
 └─────────────────────────────────────────────────┘
@@ -72,8 +72,8 @@
 
 | Компонент | Технология |
 |---|---|
-| LLM | [Qwen3-14B-4bit](https://huggingface.co/mlx-community/Qwen3-14B-4bit) via MLX |
-| Валидатор | Qwen3-4B-4bit (CRAG: VERIFIED / NO_DATA / HALLUCINATION) |
+| LLM | [Qwen3.5-9B-MLX-4bit](https://huggingface.co/mlx-community/Qwen3.5-9B-MLX-4bit) via MLX (~6 GB RAM) |
+| Валидатор | [Qwen3-4B-Instruct-2507-4bit](https://huggingface.co/mlx-community/Qwen3-4B-Instruct-2507-4bit) (CRAG: VERIFIED / NO_DATA / HALLUCINATION) |
 | Эмбеддинги | [BGE-M3](https://huggingface.co/BAAI/bge-m3) via sentence-transformers + MPS |
 | Векторная база | [Qdrant](https://qdrant.tech/) |
 | Backend | FastAPI + LlamaIndex |
@@ -87,7 +87,7 @@
 ## Быстрый старт
 
 ### Требования
-- Mac с Apple Silicon (M1/M2/M4) и минимум 16 GB RAM
+- Mac с Apple Silicon (M1/M2/M4) и минимум 16 GB RAM (рекомендуется 24 GB)
 - Docker Desktop
 - [uv](https://docs.astral.sh/uv/) (`brew install uv`)
 - Python 3.11+
@@ -132,16 +132,19 @@ curl -X POST http://localhost:8050/api/rag/sync/MyDocs
 Запрос пользователя
       │
       ▼
-Векторный поиск (BGE-M3 + Qdrant)
-      │  top-5 чанков
+Векторный поиск (BGE-M3 + Qdrant)  top-8 чанков
+      │
+      ▼ [опционально, включается в UI]
+Реранкер (Qwen3-4B batch) → top-5 релевантных чанков
+      │
       ▼
 Промпт = системный + контекст + вопрос
       │
       ▼
-Qwen3-14B (MLX, Metal)
+Qwen3.5-9B (MLX, Metal)
       │  ответ
       ▼
-Т.О.С.К.А. валидация (Qwen3-4B)
+Т.О.С.К.А. валидация (Qwen3-4B-2507)
       │  VERIFIED / NO_DATA / HALLUCINATION
       ▼
 Ответ пользователю + источники
@@ -177,6 +180,26 @@ Qwen3-14B (MLX, Metal)
 - `admin` — полный интерфейс
 - `user`  — только AI ЧАТ
 - ZeroTier IP (`10.x.x.x`) — автобайпас (роль user, ключ не нужен)
+
+---
+
+## Управление памятью
+
+Система оптимизирована под ограниченную RAM Mac Mini:
+
+| Процесс | RAM |
+|---------|-----|
+| MLX (Qwen3.5-9B) | ~6 GB |
+| MLX (Qwen3-4B val) | ~2.5 GB |
+| les-proxy (Docker) | ≤ 512 MB |
+| les-qdrant (Docker) | ≤ 1 GB |
+| **Итого** | **~10 GB** |
+
+Docker-контейнеры имеют жёсткий `mem_limit` в `docker-compose.yml`.
+
+`les.command` запускает **MLX Watchdog** — фоновый процесс, который перезапускает MLX через 30 секунд при падении (OOM kill). Виден в `./les.command status`.
+
+`mlx_host.py` читает `.env` самостоятельно при старте — не зависит от оболочки запуска.
 
 ---
 

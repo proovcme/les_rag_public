@@ -10,7 +10,7 @@
 #    ./les.command status    — состояние сервисов
 # ═══════════════════════════════════════════════════════
 
-DIR="$HOME/Projects/LES_v2"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOGS="$DIR/logs"
 mkdir -p "$LOGS"
 
@@ -37,9 +37,56 @@ _pid_status() {
     fi
 }
 
+# ── Запуск MLX (общий для старта и watchdog) ─────────────
+_launch_mlx() {
+    source ~/.zprofile 2>/dev/null; source ~/.zshrc 2>/dev/null
+    # Грузим .env чтобы подхватить MLX_MODEL / MLX_VAL_MODEL
+    set -a; [ -f "$DIR/.env" ] && source "$DIR/.env"; set +a
+    nohup uv run --project "$DIR" python3 "$DIR/mlx_host.py" >> "$LOGS/mlx_host.log" 2>&1 &
+    echo $! > "$LOGS/mlx_host.pid"
+}
+
+# ── MLX Watchdog (запускается фоном при старте) ───────────
+# Каждые 30 сек проверяет PID + /api/health, перезапускает если упал.
+_mlx_watchdog() {
+    local _dir="$DIR" _logs="$LOGS"
+    while true; do
+        sleep 30
+        [ -f "$_logs/mlx_watchdog.stop" ] && { rm -f "$_logs/mlx_watchdog.stop"; exit 0; }
+        pid_ok=false
+        [ -f "$_logs/mlx_host.pid" ] && kill -0 "$(cat "$_logs/mlx_host.pid")" 2>/dev/null && pid_ok=true
+        if ! $pid_ok; then
+            echo "[$(date '+%H:%M:%S')] [WATCHDOG] MLX упал (OOM?) — перезапускаю..." >> "$_logs/mlx_host.log"
+            source ~/.zprofile 2>/dev/null; source ~/.zshrc 2>/dev/null
+            set -a; [ -f "$_dir/.env" ] && source "$_dir/.env"; set +a
+            nohup uv run --project "$_dir" python3 "$_dir/mlx_host.py" >> "$_logs/mlx_host.log" 2>&1 &
+            echo $! > "$_logs/mlx_host.pid"
+        fi
+    done
+}
+
+_start_watchdog() {
+    if [ -f "$LOGS/mlx_watchdog.pid" ] && kill -0 "$(cat "$LOGS/mlx_watchdog.pid")" 2>/dev/null; then
+        return
+    fi
+    _mlx_watchdog &
+    echo $! > "$LOGS/mlx_watchdog.pid"
+    _ok "MLX Watchdog (PID $(cat "$LOGS/mlx_watchdog.pid"))"
+}
+
+_stop_watchdog() {
+    touch "$LOGS/mlx_watchdog.stop"
+    if [ -f "$LOGS/mlx_watchdog.pid" ]; then
+        kill "$(cat "$LOGS/mlx_watchdog.pid")" 2>/dev/null
+        rm -f "$LOGS/mlx_watchdog.pid" "$LOGS/mlx_watchdog.stop"
+    fi
+}
+
 # ── СТОП ────────────────────────────────────────────────
 do_stop() {
     header "ОСТАНОВКА"
+
+    _stop_watchdog
 
     # С.О.В.У.Ш.К.А.
     if [ -f "$LOGS/sovushka.pid" ]; then
@@ -64,8 +111,9 @@ do_stop() {
 # ── СТАРТ ────────────────────────────────────────────────
 do_start() {
     header "ЗАПУСК"
-    cd "$DIR"
     source ~/.zprofile 2>/dev/null; source ~/.zshrc 2>/dev/null
+    cd "$DIR" || { _err "Не могу перейти в $DIR"; return 1; }
+    mkdir -p "$LOGS"
 
     # 1. Docker
     echo -e "\n${B}[1/3] Docker...${D}"
@@ -79,21 +127,19 @@ do_start() {
     if [ -f "$LOGS/mlx_host.pid" ] && kill -0 "$(cat "$LOGS/mlx_host.pid")" 2>/dev/null; then
         _inf "MLX уже запущен (PID $(cat "$LOGS/mlx_host.pid"))"
     else
-        uv sync --quiet
-        export MLX_MODEL="${MLX_MODEL:-mlx-community/Qwen3-14B-4bit}"
-        export MLX_VAL_MODEL="${MLX_VAL_MODEL:-mlx-community/Qwen3-4B-4bit}"
-        nohup uv run python3 mlx_host.py >> "$LOGS/mlx_host.log" 2>&1 &
-        echo $! > "$LOGS/mlx_host.pid"
+        uv sync --quiet --project "$DIR"
+        _launch_mlx
         sleep 3
         curl -sf http://127.0.0.1:8080/api/health > /dev/null \
             && _ok "MLX Host (PID $(cat "$LOGS/mlx_host.pid"))" \
             || _inf "MLX запущен (PID $(cat "$LOGS/mlx_host.pid")), модель грузится..."
     fi
+    _start_watchdog
 
     # 3. С.О.В.У.Ш.К.А.
     echo -e "\n${B}[3/3] С.О.В.У.Ш.К.А....${D}"
     lsof -ti :8051 | xargs kill -9 2>/dev/null; sleep 1
-    nohup uv run python3 sovushka_ng.py >> "$LOGS/sovushka.log" 2>&1 &
+    nohup uv run --project "$DIR" python3 "$DIR/sovushka_ng.py" >> "$LOGS/sovushka.log" 2>&1 &
     echo $! > "$LOGS/sovushka.pid"
     sleep 2
     kill -0 "$(cat "$LOGS/sovushka.pid")" 2>/dev/null \
@@ -112,7 +158,7 @@ do_sovushka() {
     lsof -ti :8051 | xargs kill -9 2>/dev/null
     rm -f "$LOGS/sovushka.pid"
     sleep 1
-    nohup uv run python3 sovushka_ng.py >> "$LOGS/sovushka.log" 2>&1 &
+    nohup uv run --project "$DIR" python3 "$DIR/sovushka_ng.py" >> "$LOGS/sovushka.log" 2>&1 &
     echo $! > "$LOGS/sovushka.pid"
     sleep 2
     kill -0 "$(cat "$LOGS/sovushka.pid")" 2>/dev/null \
@@ -125,6 +171,7 @@ do_status() {
     header "СТАТУС"
     _pid_status "С.О.В.У.Ш.К.А. :8051" "$LOGS/sovushka.pid"
     _pid_status "MLX Host        :8080" "$LOGS/mlx_host.pid"
+    _pid_status "MLX Watchdog   " "$LOGS/mlx_watchdog.pid"
     docker ps --format "{{.Names}}\t{{.Status}}" | grep "^les-" | while read line; do
         _ok "Docker  $line"
     done

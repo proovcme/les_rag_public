@@ -6,6 +6,8 @@ services:
     volumes: ["./data/qdrant:/qdrant/storage"]
     networks: [les-net]
     restart: unless-stopped
+    mem_limit: 1g
+    memswap_limit: 1g
 
   proxy:
     build: {context: ., dockerfile: Dockerfile.proxy}
@@ -21,13 +23,15 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     env_file: [.env]
     environment:
-      - OLLAMA_URL=http://host.docker.internal:8080
+      - MLX_URL=http://host.docker.internal:8080
       - QDRANT_URL=http://qdrant:6333
       - TZ=Europe/Moscow
     extra_hosts: ["host.docker.internal:host-gateway"]
     depends_on: [qdrant]
     networks: [les-net]
     restart: unless-stopped
+    mem_limit: 512m
+    memswap_limit: 512m
 
 networks:
   les-net: {driver: bridge}

@@ -7,7 +7,7 @@ from nicegui import app, ui
 
 from sovushka.config import UI_PORT
 from sovushka.state import bg_loop
-from sovushka.styles import CUSTOM_CSS
+from sovushka.styles import CUSTOM_CSS, theme_vars_css
 from sovushka.auth import register_login_page, get_auth
 
 from sovushka.components.header import build_header
@@ -54,7 +54,10 @@ async def main_page(request: Request):
         
     is_admin = (role == "admin")
 
-    # Базовые стили
+    # Тема — инжектируем CSS-переменные СИНХРОННО в <head> до рендера.
+    # Это устраняет flash: браузер получает правильные цвета сразу, без JS-таймера.
+    _dark = app.storage.user.get("dark_theme", True)
+    ui.add_head_html(theme_vars_css(_dark))
     ui.add_head_html(CUSTOM_CSS)
     ui.query("body").style("background:var(--bg);color:var(--text);margin:0;")
     ui.query(".nicegui-content").classes("p-0 m-0 w-full").style("max-width:none;")
@@ -129,7 +132,7 @@ async def main_page(request: Request):
         })
     _target = _tab_map.get(_last_tab)
     if _target and _target != _default_tab:
-        ui.timer(0.05, lambda t=_target: tabs.set_value(t), once=True)
+        ui.timer(0.0, lambda t=_target: tabs.set_value(t), once=True)
 
 
 
@@ -143,5 +146,6 @@ if __name__ in {"__main__", "__mp_main__"}:
         dark=True,
         show=False,
         storage_secret="les_secret_883",
-        reload=False
+        reload=False,
+        reconnect_timeout=10,   # NiceGUI 3.12: ждать 10с перед hard reload
     )

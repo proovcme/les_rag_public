@@ -170,10 +170,13 @@ class Reranker:
     async def _call_llm(self, prompt: str) -> str:
         """Вызывает Qwen3-4B через /v1/chat/completions."""
         import httpx
+        # /no_think отключает thinking-mode Qwen3 (hard switch).
+        # Без него модель генерирует <think>...</think> (~300 токенов),
+        # который срезается при max_tokens=50 → пустой ответ → score=0.
         payload = {
             "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 50,
+            "messages": [{"role": "user", "content": "/no_think\n" + prompt}],
+            "max_tokens": 256,
             "temperature": 0.0,
         }
         try:
@@ -184,7 +187,11 @@ class Reranker:
                 )
                 r.raise_for_status()
                 data = r.json()
-                return data["choices"][0]["message"]["content"].strip()
+                content = data["choices"][0]["message"]["content"].strip()
+                # Защитный стрип на случай если think-теги всё же прошли
+                content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
+                content = re.sub(r"<think>.*",         "", content, flags=re.DOTALL)
+                return content.strip() or "0"
         except Exception as e:
             logger.warning(f"[RERANKER] LLM ошибка: {e}")
             return "0"

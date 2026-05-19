@@ -4,7 +4,7 @@
 # Запускает: Docker → MLX Host → С.О.В.У.Ш.К.А.
 # ═══════════════════════════════════════════════════════
 cd "$(dirname "$0")"
-LES_DIR="$HOME/Projects/LES_v2"
+LES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="$LES_DIR/logs"
 SOVUSHKA_PID_FILE="$LOG_DIR/sovushka.pid"
 mkdir -p "$LOG_DIR"

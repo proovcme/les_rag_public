@@ -273,7 +273,7 @@ function volkLogin() {{
                     "window.__volkKey='';window.__volkFp='';"
                 )
 
-        ui.button("", on_click=_handle_login).props('id="_volk_trigger"').style("display:none;")
+        ui.button("", on_click=_handle_login).props('id="_volk_trigger"').style("visibility:hidden;position:absolute;")
 
 
 # ── Хелпер для main_page ─────────────────────────────────────────────────────

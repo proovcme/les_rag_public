@@ -274,6 +274,13 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                             label="Стиль ответа"
                         ).style("font-size:.72rem;width:100%;")
 
+                        reranker_sw = ui.switch("Реранкер", value=False).style(
+                            "font-size:.72rem;margin-top:4px;"
+                        )
+                        ui.label("Улучшает подбор чанков, замедляет ответ ~5–10с").style(
+                            "font-size:.6rem;color:var(--dim);margin-top:-4px;"
+                        )
+
                         detail_extra = ui.textarea(
                             label="Дополнительные требования"
                         ).props("rows=2").style(
@@ -485,7 +492,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         chat_scroll.scroll_to(percent=1)
 
         extra_prompt = _build_extra_prompt(question)
-        payload = {"question": question + extra_prompt}
+        payload = {"question": question + extra_prompt, "reranker_enabled": reranker_sw.value}
         if detail_dataset.value and detail_dataset.value != "(все датасеты)":
             payload["dataset_filter"] = detail_dataset.value
 

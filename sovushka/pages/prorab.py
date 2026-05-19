@@ -85,7 +85,14 @@ def build_prorab():
             with ui.card().classes("card-les col-span-2"):
                 with ui.row().classes("items-center justify-between mb-2"):
                     ui.label("MLX HOST :8080").classes("section-title")
-                    mlx_badge = _html('<span class="tag-dim">—</span>')
+                    with ui.row().classes("items-center gap-2"):
+                        mlx_badge = _html('<span class="tag-dim">—</span>')
+                        warmup_btn = ui.button(
+                            "⚡ ПРОГРЕВ", on_click=lambda: asyncio.create_task(_warmup())
+                        ).props("no-caps outline dense").style(
+                            "font-size:.6rem;color:var(--warn);border-color:var(--warn);"
+                            "padding:2px 8px;"
+                        )
                 mlx_models_container = ui.column().classes("gap-2 w-full")
 
 
@@ -101,6 +108,26 @@ def build_prorab():
                 ui.label("HTTP ERRORS").classes("section-title mb-2")
                 errors_lbl = ui.label("Нет ошибок").style("font-size:.7rem;color:var(--dim);")
 
+        # ── Вспомогательные действия ───────────────────────────────────────────
+
+        async def _warmup():
+            warmup_btn.props("loading")
+            warmup_btn.set_text("...")
+            from sovushka.state import api_post, add_log
+            add_log("[MLX] Прогрев моделей...")
+            d = await api_post("/api/warmup")
+            warmup_btn.props(remove="loading")
+            if d and d.get("status") == "done":
+                models = d.get("models", {})
+                main_t = models.get("main", {}).get("elapsed", "?")
+                val_t  = models.get("val",  {}).get("elapsed", "?")
+                ui.notify(f"✓ Прогрев OK: main {main_t}с, val {val_t}с", type="positive")
+                add_log(f"[MLX] Прогрев завершён: main={main_t}с val={val_t}с")
+                warmup_btn.set_text("✓ OK")
+            else:
+                ui.notify("Ошибка прогрева — проверь логи", type="negative")
+                warmup_btn.set_text("⚡ ПРОГРЕВ")
+
         # ── Рендер метрик ──────────────────────────────────────────────────────
 
         def _n(v):
@@ -114,6 +141,7 @@ def build_prorab():
         _prev_render = {"mlx": None, "containers": None}
 
         def _render_prorab():
+          try:
             m   = state.get("metrics", {})
             st  = state.get("status", {})
             mlx = state.get("mlx_health", {})
@@ -131,7 +159,7 @@ def build_prorab():
             pro_kpi["queue"].set_text(str(q.get("llm_waiting", 0)))
 
             # RAM bar
-            rt = s.get("ram_total", 24)
+            rt = s.get("ram_total", 24) or 24
             ru = s.get("ram_used", 0)
             rf = max(0, rt - ru)
             ram_bar.set_content(pct_bar_html([
@@ -241,6 +269,9 @@ def build_prorab():
             else:
                 errors_lbl.set_text("Нет ошибок")
                 errors_lbl.style("color:var(--dim);")
+          except Exception as _ex:
+              import logging
+              logging.getLogger("les.prorab").warning(f"_render_prorab: {_ex}")
 
         ui.timer(10, lambda: _render_prorab(), active=True)
         ui.timer(0.3, lambda: _render_prorab(), once=True)

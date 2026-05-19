@@ -1,8 +1,11 @@
 #!/bin/bash
-cd "$HOME/Projects/LES_v2"
-LOG="logs/sovushka.log"
-PID_FILE="logs/sovushka.pid"
-mkdir -p logs
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOG="$DIR/logs/sovushka.log"
+PID_FILE="$DIR/logs/sovushka.pid"
+
+source ~/.zprofile 2>/dev/null; source ~/.zshrc 2>/dev/null
+cd "$DIR" || { echo "Не могу перейти в $DIR"; exit 1; }
+mkdir -p "$DIR/logs"
 
 # Стоп
 if [ -f "$PID_FILE" ]; then
@@ -13,7 +16,7 @@ lsof -ti :8051 | xargs kill -9 2>/dev/null
 sleep 1
 
 # Старт
-nohup uv run python3 sovushka_ng.py >> "$LOG" 2>&1 &
+nohup uv run --project "$DIR" python3 "$DIR/sovushka_ng.py" >> "$LOG" 2>&1 &
 echo $! > "$PID_FILE"
 sleep 2
 

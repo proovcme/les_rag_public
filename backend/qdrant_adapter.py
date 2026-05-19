@@ -327,8 +327,12 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             pending_names = set(self.db.get_pending_files(dataset_id))
             all_files     = [f for f in data_dir.rglob("*") if f.is_file()]
 
+            # Матчинг по относительному пути и по имени файла для совместимости
+            # со старыми записями БД где хранится только f.name.
             files_to_parse = (
-                [f for f in all_files if f.name in pending_names]
+                [f for f in all_files
+                 if str(f.relative_to(data_dir)) in pending_names
+                 or f.name in pending_names]
                 if pending_names else all_files
             )
 

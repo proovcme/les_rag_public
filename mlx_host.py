@@ -5,9 +5,9 @@ FastAPI сервер на порту 8080.
 Запуск: uv run python3 mlx_host.py
 
 Движки:
-  main_engine  — Qwen3-14B-4bit  (RAG, Roo Code, TTL 300с)
-  val_engine   — Qwen3-4B-4bit   (Т.О.С.К.А. v2, TTL 120с)
-  embedder     — BGE-M3          (sentence-transformers + MPS, lazy load)
+  main_engine  — MLX_MODEL     (RAG, TTL 300с)
+  val_engine   — MLX_VAL_MODEL (Т.О.С.К.А. v2, TTL 120с)
+  embedder     — BGE-M3        (sentence-transformers + MPS, lazy load)
 """
 
 import gc
@@ -15,7 +15,17 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import List, Optional, Union
+
+# Грузим .env из директории проекта — независимо от того, кто запустил процесс
+_env_file = Path(__file__).parent / ".env"
+if _env_file.exists():
+    for _line in _env_file.read_text().splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _, _v = _line.partition("=")
+            os.environ.setdefault(_k.strip(), _v.strip())
 
 import uvicorn
 from fastapi import FastAPI, HTTPException

@@ -2,6 +2,49 @@
 С.О.В.У.Ш.К.А. v5.0 — CSS стили
 """
 
+_DARK_THEME = {
+    "--bg":       "#08090b",
+    "--bg-panel": "#12151a",
+    "--bg-mod":   "#1a1e25",
+    "--text":     "#ffffff",
+    "--dim":      "#94a3b8",
+    "--border":   "#2d3748",
+    "--accent":   "#3b82f6",
+    "--ok":       "#10b981",
+    "--pauk":     "#8b5cf6",
+    "--warn":     "#f59e0b",
+    "--err":      "#ef4444",
+}
+
+_LIGHT_THEME = {
+    "--bg":       "#f6f8fa",
+    "--bg-panel": "#ffffff",
+    "--bg-mod":   "#eaeef2",
+    "--text":     "#1f2328",
+    "--dim":      "#424a53",
+    "--border":   "#d0d7de",
+    "--accent":   "#0969da",
+    "--ok":       "#1a7f37",
+    "--pauk":     "#8250df",
+    "--warn":     "#9a6700",
+    "--err":      "#cf222e",
+}
+
+
+def theme_vars_css(dark: bool = True) -> str:
+    """Возвращает <style> блок с CSS-переменными для нужной темы.
+    Вызывать внутри main_page() через ui.add_head_html() — синхронно, без flash."""
+    vars_ = _DARK_THEME if dark else _LIGHT_THEME
+    body_bg = vars_["--bg"]
+    body_fg = vars_["--text"]
+    lines = "\n".join(f"  {k}: {v};" for k, v in vars_.items())
+    return (
+        f"<style>\n:root {{\n{lines}\n"
+        f"  --font: 'Courier New', Courier, monospace;\n}}\n"
+        f"body {{ background:{body_bg}; color:{body_fg}; }}\n</style>"
+    )
+
+
 CUSTOM_CSS = """
 <style>
 :root {
@@ -76,5 +119,13 @@ body, .nicegui-content { font-family: var(--font) !important; }
 .src-tag-err { border-color:var(--err); color:var(--err); }
 .typing::after { content:'▋'; animation:blink 1s step-end infinite; opacity:.7; margin-left:4px; }
 @keyframes blink { 50%{opacity:0} }
+/* Quasar рендерит текст в .q-field__native — принудительно красим через переменную */
+.q-field__native, .q-field__input, .q-field__prefix, .q-field__suffix {
+  color: var(--text) !important;
+}
+.q-field--dark .q-field__native,
+.q-field--dark .q-field__input {
+  color: var(--text) !important;
+}
 </style>
 """
