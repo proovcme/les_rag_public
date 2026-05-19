@@ -1,5 +1,5 @@
 # 🦉 Л.Е.С. — Локальная Единая Система
-## Мастер-документ v2.5 | 18.05.2026
+## Мастер-документ v2.6 | 19.05.2026
 
 > Единый источник истины. Объединяет README, ROADMAP, Архитектуру, Инфраструктуру, Словарь, Программу испытаний.  
 > Авторы: Клодыч (Claude), Кен (Qwen), Панорамыч (Gemini).
@@ -141,13 +141,9 @@ Mac Mini M4 / 24 GB  (Ж.А.Б.А.)
 │   └── les-qdrant  (Qdrant, порт 6333)  — С.А.М.О.В.А.Р. векторная база
 │
 ├── MLX Native Host (FastAPI, порт 8080) — основной LLM + Embeddings на Metal
-│   ├── Qwen3-14B-4bit   (main, RAG + Roo Code, TTL 300с)
-│   ├── Qwen3-4B-4bit    (val, Т.О.С.К.А. валидатор, TTL 120с)
-│   └── bge-m3           (embed, постоянно в памяти)
-│
-├── Ollama          (порт 11434) — РЕЗЕРВНЫЙ, не используется в штатном режиме
-│   ├── qwen3:14b
-│   └── bge-m3:latest
+│   ├── Qwen3.5-9B-MLX-4bit        (main, RAG, TTL 300с, ~6 GB RAM)
+│   ├── Qwen3-4B-Instruct-2507-4bit (val, Т.О.С.К.А.+реранкер, TTL 120с, ~2.5 GB)
+│   └── bge-m3                      (embed, постоянно в памяти)
 │
 └── С.О.В.У.Ш.К.А. (NiceGUI, порт 8051) — UI v5.0
     ├── ОБЗОР        — карта модулей, стек
@@ -164,10 +160,11 @@ Mac Mini M4 / 24 GB  (Ж.А.Б.А.)
 ```
 Запрос → /api/chat
   → dataset_filter resolve (имя → UUID)
-  → Qdrant retrieve (bge-m3 embeddings, top-k=5)
+  → Qdrant retrieve (bge-m3 embeddings, top-k=8)
+  → [опц.] Реранкер (Qwen3-4B batch, 1 вызов) → top-5
   → Chunks → Prompt building
-  → MLX Host / Ollama (Qwen3-14B)
-  → Т.О.С.К.А. /api/validate (Qwen3-4B)
+  → MLX Host (Qwen3.5-9B)
+  → Т.О.С.К.А. /api/validate (Qwen3-4B-2507)
       VERIFIED → ответ
       NO_DATA  → "нет данных"
       HALLUCINATION → заблокировано
@@ -297,9 +294,9 @@ OLLAMA_CONTEXT_LENGTH=8192
 ### 4.4. MLX стек
 | Движок | Модель | TTL | Назначение |
 |---|---|---|---|
-| main_engine | `mlx-community/Qwen3-14B-4bit` | 300с | RAG + Roo Code |
-| val_engine | `mlx-community/Qwen3-4B-4bit` | 120с | Т.О.С.К.А. валидация |
-| embed | `bge-m3` | ∞ | Эмбеддинги (постоянно) |
+| main_engine | `mlx-community/Qwen3.5-9B-MLX-4bit` | 300с | RAG (~6 GB RAM) |
+| val_engine | `mlx-community/Qwen3-4B-Instruct-2507-4bit` | 120с | Т.О.С.К.А. + реранкер (~2.5 GB) |
+| embed | `BAAI/bge-m3` | ∞ | Эмбеддинги (постоянно) |
 
 ### 4.5. Mac Mini — базовая конфигурация
 ```bash
@@ -334,29 +331,19 @@ git clone <repo> LES_v2
 cd LES_v2
 ```
 
-#### Шаг 2. Скачать модели Ollama
-```bash
-ollama pull qwen3:14b
-ollama pull qwen2.5-coder:14b
-ollama pull bge-m3:latest
-# Проверка
-ollama list
-```
+#### Шаг 2. (пропустить — Ollama не используется)
+MLX модели скачиваются автоматически при первом запросе из HuggingFace.
 
 #### Шаг 3. Настроить `.env`
 ```env
-# Режим MLX (рекомендуется)
-LLM_MODEL=mlx-community/Qwen3-14B-4bit
+LLM_MODEL=mlx-community/Qwen3.5-9B-MLX-4bit
 EMBED_MODEL=bge-m3
-OLLAMA_URL=http://host.docker.internal:8080
+MLX_URL=http://host.docker.internal:8080
 
-# Режим Ollama (резервный)
-# LLM_MODEL=qwen3:14b
-# EMBED_MODEL=bge-m3:latest
-# OLLAMA_URL=http://host.docker.internal:11434
+MLX_MODEL=mlx-community/Qwen3.5-9B-MLX-4bit
+MLX_VAL_MODEL=mlx-community/Qwen3-4B-Instruct-2507-4bit
+RERANKER_ENABLED=false   # включается через переключатель в UI чата
 
-MLX_MODEL=mlx-community/Qwen3-14B-4bit
-MLX_VAL_MODEL=mlx-community/Qwen3-4B-4bit
 QDRANT_URL=http://qdrant:6333
 JWT_SECRET=les_v2_secret_key_change_in_prod
 ADMIN_PASSWORD=admin123
@@ -605,7 +592,7 @@ systemctl restart les_proxy.service
 | `/api/rag/sync/{folder}` | POST | Синк папки | — |
 | `/api/rag/upload/{id}` | POST | Загрузка файла | — |
 | `/api/jobs` | GET | История jobs | — |
-| `/api/chat` | POST | RAG-чат + Т.О.С.К.А. v2 | ✅ `dataset_filter` |
+| `/api/chat` | POST | RAG-чат + Т.О.С.К.А. v2 | ✅ `dataset_filter`, `reranker_enabled` |
 | `/api/logs/stream` | GET | SSE логи | — |
 
 #### POST /api/chat — расширенное
@@ -613,11 +600,13 @@ systemctl restart les_proxy.service
 {
   "question": "Какие требования к вентиляции по СП 60?",
   "dataset_ids": null,
-  "dataset_filter": "NTD"
+  "dataset_filter": "NTD",
+  "reranker_enabled": false
 }
 ```
 - `dataset_ids` — список UUID (старый способ)
-- `dataset_filter` — **имя папки** из RAG_Content (новый, удобный). `"NTD"` → автоматически резолвится в UUID датасета `NTD_Index`
+- `dataset_filter` — **имя папки** из RAG_Content. `"NTD"` → автоматически резолвится в UUID датасета `NTD_Index`
+- `reranker_enabled` — `true/false/null`. `null` = берётся из env `RERANKER_ENABLED`. Управляется переключателем в UI чата.
 
 #### GET /api/metrics — структура ответа
 ```json
@@ -692,35 +681,28 @@ systemctl restart les_proxy.service
 
 ## 7. ТЕХНИЧЕСКИЕ ВОПРОСЫ И РЕШЕНИЯ
 
-### 7.1. Нужен ли реранкер?
+### 7.1. Реранкер — статус и архитектура
 
-**Короткий ответ:** да, на этапе 2.2, но не сейчас.
+**Статус:** ✅ Реализован в v2.6, управляется переключателем в UI чата.
 
-**Детали:**  
-Текущий пайплайн: `bge-m3` → top-k=5 чанков по косинусному сходству → Qwen3.  
-Реранкер (cross-encoder) улучшает **точность релевантности** за счёт более дорогого попарного сравнения.
+**Архитектура (batch-режим):**
+- Qdrant возвращает top-8 чанков
+- Реранкер формирует **один** LLM-запрос с 8 чанками → получает JSON-массив оценок [0..10]
+- Топ-5 по оценке идут в контекст генерации
 
-**Когда реранкер даст результат:**
-- Индекс > 5000 чанков (сейчас ~1316 — ещё рано)
-- Начнутся жалобы на нерелевантные ответы при наличии данных в индексе
-- Появится multi-document поиск по нескольким датасетам
+**Файл:** `backend/reranker.py`, класс `Reranker(mode="batch")`
 
-**Варианты реализации:**
-```python
-# Вариант 1: BGE Reranker (MLX-native, рекомендуется)
-# mlx-community/bge-reranker-v2-m3-4bit
-# Встроить в qdrant_adapter.py: retrieve() → rerank() → top-3
+**Когда включать:**
+- Датасет > 5000 чанков
+- Жалобы на нерелевантные ответы при наличии данных
+- Multi-document поиск по нескольким датасетам
 
-# Вариант 2: Qwen3-4B как реранкер (уже есть в памяти!)
-# Промпт: "Оцени релевантность чанка вопросу. Ответь: RELEVANT / NOT_RELEVANT"
-# Это уже частично делает Т.О.С.К.А. на выходе, но можно сдвинуть на вход
+**Производительность:** batch-режим = 1 LLM-вызов (~5с) vs sequential = 20 вызовов (~100с).
 
-# Вариант 3: LlamaIndex cross-encoder (CPU)
-from llama_index.postprocessor import SentenceTransformerRerank
-reranker = SentenceTransformerRerank(model="cross-encoder/ms-marco-MiniLM-L-6-v2", top_n=3)
-```
-
-**Рекомендация:** начать с Qwen3-4B как реранкером на входе — он уже загружен, не требует новых зависимостей. Промпт отдельным вызовом перед генерацией.
+**Управление:**
+- UI: переключатель «Реранкер» в панели настроек чата
+- API: `"reranker_enabled": true` в теле `/api/chat`
+- Default: `RERANKER_ENABLED=false` в `.env`
 
 ### 7.2. Parquet для хранения таблиц
 
@@ -979,14 +961,21 @@ async def validate_with_consistency(question, answer, context, n=3):
 - **`les.command`** — единый скрипт управления (start/stop/restart/sovushka/status + интерактивное меню)
 - **`bg_loop` стабилизация** — каждый тик обёрнут в `try/except`; падение одного рефреша не роняет весь цикл
 
-### 🛠 v2.6 (Краткосрочно)
+### ✅ v2.6 (19.05.2026)
+- **Модели обновлены:** LLM `Qwen3-14B` → `Qwen3.5-9B-MLX-4bit` (-3 GB RAM); валидатор → `Qwen3-4B-Instruct-2507-4bit`
+- **mlx_host.py читает .env самостоятельно** — `os.environ.setdefault()` при старте, независим от оболочки запуска
+- **MLX Watchdog** — фоновый процесс в `les.command`, автоперезапуск MLX через 30с при OOM kill
+- **Docker mem_limit:** `proxy=512m`, `qdrant=1g` — защита от вытеснения MLX из RAM
+- **Реранкер batch-режим:** top_k 20→8, mode sequential→batch (1 вызов вместо 20, ~100с→~5с)
+- **Переключатель реранкера в UI чата** — по умолчанию выключен (`RERANKER_ENABLED=false`)
+
+### 🛠 v2.7 (Краткосрочно)
 | Задача | Описание |
 |---|---|
 | **Folder Watcher** | Автосинк новых файлов из RAG_Content/ |
 | **Retry-логика** | Graceful fallback при занятости MLX |
 | **Qdrant fallback** | Обработка ошибок Qdrant при парсинге документов |
 | **Parquet пайплайн** | Табличные данные в Parquet вместо Markdown |
-| **Реранкер** | Qwen3-4B как cross-encoder перед генерацией |
 | **Е.Ж.И.К. v1** | Тест EML/MSG на реальных письмах → IMAP коннектор |
 | **chunk_count** | Исправить колонку в SQLite (сейчас всегда 0) |
 
@@ -1055,17 +1044,26 @@ QWEN_Index:   1 файл, INDEXED
 | Изменён файл | Команда |
 |---|---|
 | `proxy_server.py` | `docker compose restart proxy` |
-| `mlx_host.py` | `./stop_mlx.command && ./start_mlx.command` |
-| `sovushka/**` | `Ctrl+C → python3 sovushka_ng.py` |
-| `.env` | `docker compose restart proxy` + MLX restart |
+| `mlx_host.py` | `./les.command stop && ./les.command start` |
+| `sovushka/**` | `./les.command sovushka` |
+| `.env` | `docker compose restart proxy && ./les.command stop && ./les.command start` |
 
 ## ПРИЛОЖЕНИЕ Б — Быстрые команды
 
 ```bash
-# Запустить всё
-./start_mlx.command && docker compose up -d && python3 sovushka_ng.py
+# Запустить всё (включает watchdog для MLX)
+./les.command start
 
-# Статус одной строкой
+# Остановить всё
+./les.command stop
+
+# Статус
+./les.command status
+
+# Перезапустить только UI
+./les.command sovushka
+
+# Статус одной строкой (низкоуровневый)
 docker ps --format "{{.Names}}:{{.Status}}" && curl -s localhost:8050/api/health && curl -s localhost:8080/api/health
 
 # Диагностика
@@ -1083,5 +1081,5 @@ docker compose restart proxy
 
 ---
 
-📅 **Документ актуализирован:** 18.05.2026 — v2.5 Stabilization: CRAG bug fixes, device fingerprint, role separation, security hardening  
+📅 **Документ актуализирован:** 19.05.2026 — v2.6: модели Qwen3.5-9B + Qwen3-4B-2507, watchdog, mem_limit, реранкер batch-режим, переключатель в UI  
 ✍️ **Авторы:** Claude (Клодыч) · Qwen (Кен) · Gemini (Панорамыч)
