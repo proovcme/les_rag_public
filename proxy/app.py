@@ -2,9 +2,285 @@
 
 from __future__ import annotations
 
-from proxy.legacy_app import app
+import asyncio
+import collections
+import logging
+import os
+import sqlite3
+import time
+from collections import defaultdict
+
+import httpx
+import psutil
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+
+from backend.metrics_collector import init_db, metrics_loop
+from backend.qdrant_adapter import QdrantLlamaIndexAdapter
+from proxy.config import CORS_ALLOWED_ORIGINS
+from proxy.routers.auth import router as auth_router, seed_admin_key
+from proxy.routers.chat import ChatRouterState, router as chat_router, set_chat_state
+from proxy.routers.chat_history import router as chat_history_router
+from proxy.routers.datasets import DatasetRouterState, router as datasets_router, set_dataset_state
+from proxy.routers.diagnostics import DiagnosticsRouterState, router as diagnostics_router, set_diagnostics_state
+from proxy.routers.jobs import JobsRouterState, router as jobs_router, set_jobs_state
+from proxy.routers.logs import LogsRouterState, router as logs_router, set_logs_state
+from proxy.routers.rerank import RERANKER_AVAILABLE, Reranker, router as rerank_router
+from proxy.routers.runtime import RuntimeRouterState, router as runtime_router, set_runtime_state
+from proxy.routers.settings import router as settings_router
+from proxy.routers.status_page import StatusPageState, router as status_page_router, set_status_page_state
+from proxy.services.job_service import JobService
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
+
+log_history = collections.deque(maxlen=2000)
+
+
+class LogCapture(logging.Handler):
+    def emit(self, record):
+        log_history.append(self.format(record))
+
+
+logging.getLogger().addHandler(LogCapture())
+
+parse_semaphore = asyncio.Semaphore(2)
+sync_parse_semaphore = asyncio.Semaphore(3)
+llm_semaphore = asyncio.Semaphore(2)
+crag_stats = {"verified": 0, "no_data": 0, "hallucination": 0}
+proxy_start = time.time()
+rag_backend = None
+job_tracker = {}
+job_service = JobService()
+current_mode = {"mode": "rag", "model": os.getenv("LLM_MODEL", "qwen3:14b")}
+
+error_counts = defaultdict(int)
+chat_metrics = {
+    "latency_search": [],
+    "latency_gen": [],
+    "tokens": [],
+    "crag_pass": 0,
+    "crag_fail": 0,
+}
+
+metrics_cache = {
+    "cpu": 0.0,
+    "ram_used": 0.0,
+    "ram_total": 1.0,
+    "datasets": 0,
+    "files_processed": 0,
+    "chunks_indexed": 0,
+    "queue": 0,
+    "active": 0,
+    "avg_speed_fps": 0.0,
+    "crag_verified": 0,
+    "crag_no_data": 0,
+}
+
+
+class ParseStats:
+    def __init__(self):
+        self.queued = 0
+        self.active = 0
+        self.total_files = 0
+        self.total_chunks = 0
+        self.durations = []
+
+    def avg_speed(self):
+        if not self.durations:
+            return 0.0
+        avg = sum(self.durations) / len(self.durations)
+        return round(1.0 / avg, 2) if avg > 0 else 0.0
+
+
+parse_stats = ParseStats()
+
+
+def _get_db_files():
+    try:
+        conn = sqlite3.connect("./data/les_meta.db")
+        count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+        conn.close()
+        return count
+    except Exception:
+        return 0
+
+
+async def metrics_collector_loop():
+    while True:
+        try:
+            cpu = await asyncio.to_thread(psutil.cpu_percent, interval=None)
+            vm = await asyncio.to_thread(psutil.virtual_memory)
+            files = await asyncio.to_thread(_get_db_files)
+
+            host_mem = {}
+            try:
+                mlx_url = os.getenv("MLX_URL", "http://host.docker.internal:8080")
+                async with httpx.AsyncClient(timeout=2.0) as client:
+                    response = await client.get(f"{mlx_url}/api/host_memory")
+                    if response.status_code == 200:
+                        host_mem = response.json()
+            except Exception:
+                pass
+
+            chunks = 0
+            ds_count = 0
+            if rag_backend:
+                try:
+                    ds_list = await rag_backend.list_datasets()
+                    ds_count = len(ds_list)
+                    if rag_backend._collection_ready:
+                        info = await rag_backend.aclient.get_collection("les_rag")
+                        chunks = getattr(info, "points_count", 0) or 0
+                except Exception:
+                    pass
+
+            metrics_cache.update(
+                {
+                    "cpu": cpu,
+                    "ram_used": host_mem.get("ram_free_gb", vm.used / (1024**3)),
+                    "ram_total": host_mem.get("ram_total_gb", vm.total / (1024**3)),
+                    "swap_used_gb": host_mem.get("swap_used_gb", 0),
+                    "swap_total_gb": host_mem.get("swap_total_gb", 0),
+                    "swap_pct": host_mem.get("swap_pct", 0),
+                    "datasets": ds_count,
+                    "files_processed": files,
+                    "chunks_indexed": chunks,
+                    "queue": parse_stats.queued,
+                    "active": parse_stats.active,
+                    "avg_speed_fps": parse_stats.avg_speed(),
+                    "crag_verified": crag_stats["verified"],
+                    "crag_no_data": crag_stats["no_data"],
+                }
+            )
+        except Exception:
+            pass
+        await asyncio.sleep(3)
+
+
+async def startup():
+    global rag_backend
+    init_db()
+    seed_admin_key()
+    try:
+        conn = sqlite3.connect("./data/les_meta.db", check_same_thread=False)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chat_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                question TEXT,
+                answer TEXT,
+                sources TEXT,
+                crag_status TEXT,
+                latency_sec REAL,
+                tokens INTEGER,
+                session_id TEXT DEFAULT NULL
+            )
+        """
+        )
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(chat_history)").fetchall()]
+        if "session_id" not in cols:
+            conn.execute("ALTER TABLE chat_history ADD COLUMN session_id TEXT DEFAULT NULL")
+            logger.info("[INIT] chat_history: добавлен session_id")
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error("[INIT] Failed to init chat_history table: %s", e)
+
+    try:
+        rag_backend = QdrantLlamaIndexAdapter(
+            qdrant_url=os.getenv("QDRANT_URL", "http://qdrant:6333"),
+            mlx_url=os.getenv("MLX_URL", "http://host.docker.internal:8080"),
+            embed_model_name=os.getenv("EMBED_MODEL", "bge-m3:latest"),
+        )
+        await rag_backend.health()
+        logger.info("[INIT] Backend initialized successfully")
+        asyncio.create_task(metrics_collector_loop())
+        asyncio.create_task(metrics_loop())
+    except Exception as e:
+        logger.error("[INIT] Backend initialization failed: %s", e)
+        raise
+
+
+async def track_errors(request: Request, call_next):
+    response = await call_next(request)
+    if response.status_code >= 400:
+        error_counts[response.status_code] += 1
+    return response
+
+
+def configure_router_state() -> None:
+    set_dataset_state(
+        DatasetRouterState(
+            rag_backend=lambda: rag_backend,
+            job_service=job_service,
+            job_tracker=job_tracker,
+            log_history=log_history,
+            parse_semaphore=parse_semaphore,
+            sync_parse_semaphore=sync_parse_semaphore,
+        )
+    )
+    set_runtime_state(
+        RuntimeRouterState(
+            rag_backend=lambda: rag_backend,
+            current_mode=current_mode,
+            metrics_cache=metrics_cache,
+            chat_metrics=chat_metrics,
+            crag_stats=crag_stats,
+            error_counts=error_counts,
+            llm_semaphore=llm_semaphore,
+            proxy_start=proxy_start,
+        )
+    )
+    set_diagnostics_state(DiagnosticsRouterState(crag_stats=crag_stats, proxy_start=proxy_start))
+    set_jobs_state(JobsRouterState(job_service=job_service, job_tracker=job_tracker))
+    set_logs_state(LogsRouterState(log_history=log_history))
+    set_status_page_state(StatusPageState(crag_stats=crag_stats, proxy_start=proxy_start))
+    set_chat_state(
+        ChatRouterState(
+            rag_backend=lambda: rag_backend,
+            llm_semaphore=llm_semaphore,
+            crag_stats=crag_stats,
+            chat_metrics=chat_metrics,
+            reranker_available=RERANKER_AVAILABLE,
+            reranker_cls=Reranker,
+        )
+    )
+
+
+_app: FastAPI | None = None
 
 
 def create_app():
-    return app
+    global _app
+    if _app is not None:
+        return _app
 
+    configure_router_state()
+
+    fastapi_app = FastAPI(title="LES Proxy v2.0", version="2.0.0")
+    fastapi_app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(CORS_ALLOWED_ORIGINS),
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    fastapi_app.include_router(auth_router)
+    fastapi_app.include_router(settings_router)
+    fastapi_app.include_router(chat_history_router)
+    fastapi_app.include_router(datasets_router)
+    fastapi_app.include_router(runtime_router)
+    fastapi_app.include_router(diagnostics_router)
+    fastapi_app.include_router(jobs_router)
+    fastapi_app.include_router(logs_router)
+    fastapi_app.include_router(rerank_router)
+    fastapi_app.include_router(status_page_router)
+    fastapi_app.include_router(chat_router)
+    fastapi_app.on_event("startup")(startup)
+    fastapi_app.middleware("http")(track_errors)
+    _app = fastapi_app
+    return _app
+
+
+app = create_app()

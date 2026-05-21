@@ -10,7 +10,14 @@ from typing import Optional
 
 from fastapi import Depends, Header, HTTPException, Request
 
-from proxy.config import ADMIN_ROLE, META_DB_PATH, TRUSTED_NETWORK_ROLE, TRUSTED_NETWORKS, USER_ROLE
+from proxy.config import (
+    ADMIN_ROLE,
+    META_DB_PATH,
+    TRUSTED_NETWORK_ROLE,
+    TRUSTED_NETWORKS,
+    TRUSTED_PROXY_NETWORKS,
+    USER_ROLE,
+)
 
 
 @dataclass(frozen=True)
@@ -26,26 +33,34 @@ class RequestUser:
 
 
 def _client_ip(request: Request) -> str:
+    peer_ip = request.client.host if request.client else ""
     forwarded = request.headers.get("x-forwarded-for")
     real_ip = request.headers.get("x-real-ip")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    if real_ip:
-        return real_ip.strip()
-    return request.client.host if request.client else ""
+    if _ip_in_networks(peer_ip, TRUSTED_PROXY_NETWORKS):
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        if real_ip:
+            return real_ip.strip()
+    return peer_ip
 
 
-def _trusted_network_role(ip_value: str) -> Optional[str]:
+def _ip_in_networks(ip_value: str, networks: tuple[str, ...]) -> bool:
     try:
         ip = ipaddress.ip_address(ip_value)
     except ValueError:
-        return None
-    for net_value in TRUSTED_NETWORKS:
+        return False
+    for net_value in networks:
         try:
             if ip in ipaddress.ip_network(net_value, strict=False):
-                return TRUSTED_NETWORK_ROLE
+                return True
         except ValueError:
             continue
+    return False
+
+
+def _trusted_network_role(ip_value: str) -> Optional[str]:
+    if _ip_in_networks(ip_value, TRUSTED_NETWORKS):
+        return TRUSTED_NETWORK_ROLE
     return None
 
 

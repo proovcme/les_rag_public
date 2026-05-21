@@ -60,7 +60,7 @@
 
 ### Ключевые изменения v2.8 (патч — OOM при индексации)
 - **Throttling sync_folder** — цикл обхода файлов теперь делает `await asyncio.sleep(0.1)` на каждой итерации; event loop не блокируется при обходе 800+ файлов (NTD)
-- **`_PARSE_SEMAPHORE`** — отдельный семафор для `parse_dataset` в `sync_folder._run()`, изолирован от остальных путей (`parse_semaphore` сохранён для EJIK, upload)
+- **`_PARSE_SEMAPHORE`** — отдельный семафор для `parse_dataset` в `sync_folder._run()`, изолирован от остальных путей (`parse_semaphore` сохранён для upload)
 - **`os.nice(10)` перед парсингом** — снижает CPU-приоритет процесса bge-m3 эмбеддинга; ядро отдаёт ресурсы UI/API при конкуренции
 - **mem_limit подтверждён** — `docker-compose.yml` уже содержал `proxy=512m`, `qdrant=1g`; дополнительных изменений не потребовалось
 - **Цель:** Load Average при SYNC NTD (801 файл) не выше 5; система остаётся отзывчивой
@@ -69,7 +69,18 @@
 - **Тонкий ASGI entrypoint:** `proxy_server.py` теперь только создаёт `app`; основная логика вынесена в пакет `proxy/`.
 - **Server-side auth boundary:** admin/user guards в `proxy/security.py`; UI-сессия С.О.В.У.Ш.К.А. больше не считается защитой API.
 - **Trusted contour:** только loopback и явно заданные `TRUSTED_NETWORKS` получают роль `TRUSTED_NETWORK_ROLE` без ключа. По умолчанию это `127.0.0.0/8,::1/128,10.195.146.0/24` → `admin`.
-- **Durable jobs:** `proxy/services/job_service.py` хранит sync/mail/parquet jobs в SQLite, `/api/jobs` объединяет persisted + live jobs.
+- **Forwarded headers boundary:** `X-Forwarded-For` / `X-Real-IP` принимаются только от IP из `TRUSTED_PROXY_NETWORKS`; внешний клиент больше не может сам назначить себе trusted IP через header.
+- **CORS allowlist:** `allow_origins=["*"]` заменён на `CORS_ALLOWED_ORIGINS`.
+- **Docker control opt-in:** proxy-контейнер больше не получает Docker socket по умолчанию; Docker CLI/status/restart включаются только через `LES_ENABLE_DOCKER_CONTROL=true` и явный mount socket.
+- **Upload limits:** `/api/rag/upload/*` сохраняет файлы потоково, проверяет `RAG_UPLOAD_SUFFIXES` и `MAX_UPLOAD_MB`.
+
+### Ключевые изменения v3.2 (Legacy retirement, 21.05.2026)
+- **Legacy runtime закрыт:** `proxy/legacy_app.py` больше не содержит endpoints и оставлен только как compatibility shim для старых импортов.
+- **Композиция приложения:** `proxy/app.py` владеет `create_app()`, startup, middleware, shared state и подключением routers.
+- **Routers/services:** активные `auth`, `settings`, `chat`, `chat_history`, `datasets`, `runtime`, `diagnostics`, `jobs`, `logs`, `rerank`, root status page вынесены из legacy в `proxy/routers/*`; retrieval/SafeRAG/job логика живёт в `proxy/services/*`.
+- **Mail/Parquet не активны:** `/api/mail/*` и `/api/mail/index-table` отсутствуют в runtime; будущие Е.Ж.И.К./Parquet должны проектироваться заново.
+- **Проверки:** `pytest -q`, `compileall`, import smoke `proxy_server`/`sovushka_ng`, route smoke без `/api/mail/*`, `docker compose config --quiet`.
+- **Durable jobs:** `proxy/services/job_service.py` хранит RAG sync jobs в SQLite, `/api/jobs` объединяет persisted + live jobs.
 - **SafeRAG hardening:** `UNKNOWN` от валидатора блокируется safe fallback, как и `HALLUCINATION`; неподтверждённый ответ не отдаётся как нормальный.
 - **Read-only diagnostics:** `/api/diag` больше не вызывает `/api/chat`, не пишет историю и не меняет CRAG counters.
 - **Safe storage:** upload filenames санитизируются, sync вложенных папок сохраняет относительные пути, одинаковые имена в разных подпапках не должны конфликтовать.
@@ -225,10 +236,11 @@ Mac Mini M4 / 24 GB  (Ж.А.Б.А.)
 LES_v2/
 ├── proxy_server.py           # Тонкий ASGI entrypoint: app = create_app()
 ├── proxy/                    # LES Proxy v3: app/security/services/storage/...
-│   ├── app.py                # create_app()
-│   ├── legacy_app.py         # переходный слой со старыми endpoint-ами
+│   ├── app.py                # create_app(), startup, middleware, router wiring
+│   ├── legacy_app.py         # compatibility shim для старых импортов
+│   ├── routers/              # auth, chat, datasets, runtime, diagnostics, jobs, logs
 │   ├── security.py           # RequestUser, X-API-Key/Bearer, role guards
-│   ├── services/             # JobService, SafeRAG policy
+│   ├── services/             # JobService, retrieval, SafeRAG policy
 │   └── storage/              # safe upload paths, source-folder validation
 ├── sovushka_ng.py            # Точка входа С.О.В.У.Ш.К.А. v5.0 (~90 строк)
 ├── sovushka/                 # Модульный пакет UI (страницы, компоненты, стейт)
@@ -237,7 +249,7 @@ LES_v2/
 ├── start_mlx.command         # Запуск MLX через uv run
 ├── stop_mlx.command
 ├── docker-compose.yml        # les-qdrant + les-proxy
-├── Dockerfile.proxy          # python:3.11-slim + docker-ce-cli
+├── Dockerfile.proxy          # python:3.12-slim, без Docker CLI по умолчанию
 ├── requirements.txt
 ├── .env                      # LLM_MODEL, EMBED_MODEL, MLX_URL, QDRANT_URL, TRUSTED_NETWORKS...
 │
@@ -422,6 +434,12 @@ JWT_SECRET=les_v2_secret_key_change_in_prod
 ADMIN_PASSWORD=admin123
 TRUSTED_NETWORKS=127.0.0.0/8,::1/128,10.195.146.0/24
 TRUSTED_NETWORK_ROLE=admin
+TRUSTED_PROXY_NETWORKS=127.0.0.0/8,::1/128
+CORS_ALLOWED_ORIGINS=http://localhost:8080,http://127.0.0.1:8080,http://localhost:8050,http://127.0.0.1:8050
+LES_ENABLE_DOCKER_CONTROL=false
+RAG_UPLOAD_SUFFIXES=.pdf,.docx,.doc,.eml,.msg,.xlsx,.xls,.csv,.json,.jsonl,.md,.txt
+MAX_UPLOAD_MB=100
+MAX_PST_UPLOAD_MB=2048
 SOVUSHKA_STORAGE_SECRET=change_me_to_random_string_32chars
 ```
 
@@ -1091,7 +1109,7 @@ async def validate_with_consistency(question, answer, context, n=3):
 
 ### ✅ v3.0 (21.05.2026)
 - **Proxy v3 package** — добавлен пакет `proxy/`; `proxy_server.py` сокращён до entrypoint, контейнер монтирует `./proxy:/app/proxy`.
-- **В.О.Л.К. server-side** — admin endpoints защищены на уровне FastAPI dependencies: `/api/auth/keys*`, destructive `/api/rag/*`, `/api/settings`, `/api/warmup`, `/api/mail/*`, `/api/rerank`.
+- **В.О.Л.К. server-side** — admin endpoints защищены на уровне FastAPI dependencies: `/api/auth/keys*`, destructive `/api/rag/*`, `/api/settings`, `/api/warmup`, `/api/rerank`.
 - **С.О.В.У.Ш.К.А. → Proxy auth** — UI API-клиент передаёт `X-API-Key` из `app.storage.user`; ZeroTier/local trusted bypass даёт роль `admin` без ключа.
 - **Settings safety** — `/api/settings` принимает только allowlisted поля, валидирует `MLX_URL`, рестарт только явно через `?restart=true`.
 - **SafeRAG UNKNOWN policy** — timeout/500 валидатора больше не пропускает неподтверждённый ответ пользователю.
@@ -1105,7 +1123,13 @@ async def validate_with_consistency(question, answer, context, n=3):
 - **VPS UI service:** `deploy/pauk/sovushka.service` теперь читает `EnvironmentFile=/root/les_v2/.env`, как заявлено в runbook.
 - **Проверки:** `pytest -q`, import smoke `proxy_server`/`sovushka_ng`, `compileall`, `docker compose config --quiet`.
 
-### 🛠 v3.2 (Краткосрочно)
+### ✅ v3.2 Legacy retirement (21.05.2026)
+- **Proxy modularization завершён:** активные endpoints вынесены из `proxy/legacy_app.py` в routers/services; `legacy_app.py` теперь только compatibility shim.
+- **SafeRAG chat router:** `/api/chat` живёт в `proxy/routers/chat.py`, retrieval вынесен в `proxy/services/retrieval_service.py`.
+- **Runtime honesty:** mail/parquet endpoints не подключены к FastAPI runtime; черновики сохранены как материал для будущего редизайна.
+- **Проверки:** `pytest -q`, `compileall`, import smoke `proxy_server`/`sovushka_ng`, route smoke без `/api/mail/*`, `docker compose config --quiet`.
+
+### 🛠 v3.3 (Краткосрочно)
 | Задача | Описание |
 |---|---|
 | **VPS runtime smoke** | После деплоя проверить `les.ovc.me`: внешний вход требует ключ, trusted ZeroTier/local работает без ключа |
@@ -1113,9 +1137,10 @@ async def validate_with_consistency(question, answer, context, n=3):
 | **SafeRAG tests** | UNKNOWN/timeout валидатора → safe fallback, `/api/diag` не пишет историю/counters |
 | **Dataset tests** | URL-encoded sync/delete, failed operations не показывают success |
 | **Qdrant fallback** | Обработка ошибок Qdrant при парсинге документов |
+| **RAG quality hardening** | Hybrid retrieval dense + exact/sparse, fusion/rerank strategy interface, golden set, trace/audit запросов |
 | **Folder Watcher** | Автосинк новых файлов из RAG_Content/ |
-| **Parquet пайплайн** | Табличные данные в Parquet вместо Markdown |
-| **Е.Ж.И.К. v1** | Тест EML/MSG на реальных письмах → IMAP коннектор |
+| **Parquet пайплайн** | Спроектировать заново: таблицы/сметы, Parquet-хранилище, точные row-level ссылки |
+| **Е.Ж.И.К. v1** | Спроектировать заново: EML/MSG/PST/IMAP ingest, privacy model, тесты на реальных письмах |
 | **chunk_count** | Исправить колонку в SQLite (сейчас всегда 0) |
 
 ### 🔮 v2.6+ (Среднесрочно)

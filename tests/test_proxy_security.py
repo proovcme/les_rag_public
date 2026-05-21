@@ -52,6 +52,7 @@ def auth_db(tmp_path, monkeypatch):
     _init_auth_db(path)
     monkeypatch.setattr(security, "META_DB_PATH", path)
     monkeypatch.setattr(security, "TRUSTED_NETWORKS", ("127.0.0.0/8", "::1/128", "10.195.146.0/24"))
+    monkeypatch.setattr(security, "TRUSTED_PROXY_NETWORKS", ("127.0.0.0/8", "::1/128"))
     monkeypatch.setattr(security, "TRUSTED_NETWORK_ROLE", "admin")
     return path
 
@@ -72,6 +73,19 @@ async def test_public_ip_without_key_is_unauthorized(auth_db):
         await security.get_request_user(_request("185.185.71.196"), x_api_key=None, authorization=None)
 
     assert exc.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_forwarded_headers_only_trusted_from_proxy_network(auth_db):
+    spoofed = _request("185.185.71.196", {"x-forwarded-for": "10.195.146.98"})
+    with pytest.raises(HTTPException) as exc:
+        await security.get_request_user(spoofed, x_api_key=None, authorization=None)
+    assert exc.value.status_code == 401
+
+    proxied = _request("127.0.0.1", {"x-forwarded-for": "10.195.146.98"})
+    user = await security.get_request_user(proxied, x_api_key=None, authorization=None)
+    assert user.role == "admin"
+    assert user.source == "10.195.146.98"
 
 
 @pytest.mark.asyncio

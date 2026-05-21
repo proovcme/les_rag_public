@@ -21,7 +21,6 @@ services:
       - ./RAG_Content:/app/RAG_Content
       - ./data:/app/data
       - ./storage:/app/storage
-      - /var/run/docker.sock:/var/run/docker.sock
     env_file: [.env]
     environment:
       - MLX_URL=http://host.docker.internal:8080

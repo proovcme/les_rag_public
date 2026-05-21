@@ -16,6 +16,20 @@ USER_ROLE = "user"
 ADMIN_ROLE = "admin"
 
 ALLOWED_SETTINGS = {"LLM_MODEL", "EMBED_MODEL", "MLX_URL"}
+DEFAULT_RAG_UPLOAD_SUFFIXES = (
+    ".pdf",
+    ".docx",
+    ".doc",
+    ".eml",
+    ".msg",
+    ".xlsx",
+    ".xls",
+    ".csv",
+    ".json",
+    ".jsonl",
+    ".md",
+    ".txt",
+)
 
 TRUSTED_NETWORKS = tuple(
     item.strip()
@@ -26,6 +40,39 @@ TRUSTED_NETWORKS = tuple(
     if item.strip()
 )
 TRUSTED_NETWORK_ROLE = os.getenv("TRUSTED_NETWORK_ROLE", ADMIN_ROLE)
+
+TRUSTED_PROXY_NETWORKS = tuple(
+    item.strip()
+    for item in os.getenv("TRUSTED_PROXY_NETWORKS", "127.0.0.0/8,::1/128").split(",")
+    if item.strip()
+)
+
+CORS_ALLOWED_ORIGINS = tuple(
+    item.strip()
+    for item in os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:8080,http://127.0.0.1:8080,"
+        "http://localhost:8050,http://127.0.0.1:8050",
+    ).split(",")
+    if item.strip()
+)
+
+
+def docker_control_enabled() -> bool:
+    return os.getenv("LES_ENABLE_DOCKER_CONTROL", "false").lower() in {"1", "true", "yes", "on"}
+
+
+def rag_upload_suffixes() -> set[str]:
+    raw = os.getenv("RAG_UPLOAD_SUFFIXES", ",".join(DEFAULT_RAG_UPLOAD_SUFFIXES))
+    return {item.strip().lower() for item in raw.split(",") if item.strip()}
+
+
+def max_upload_bytes() -> int:
+    return int(os.getenv("MAX_UPLOAD_MB", "100")) * 1024 * 1024
+
+
+def max_pst_upload_bytes() -> int:
+    return int(os.getenv("MAX_PST_UPLOAD_MB", "2048")) * 1024 * 1024
 
 
 def mlx_url() -> str:

@@ -80,7 +80,7 @@
 | Векторная база | [Qdrant](https://qdrant.tech/) |
 | Backend | FastAPI + LlamaIndex |
 | Frontend | [NiceGUI](https://nicegui.io/) v5.0 |
-| Auth | В.О.Л.К. — server-side API guards, API-ключи + SQLite, admin auto-bypass для trusted local/ZeroTier IP |
+| Auth | В.О.Л.К. — server-side API guards, API-ключи + SQLite, trusted local/ZeroTier contour, trusted-proxy boundary для forwarded headers |
 | Внешний доступ | Caddy + Let's Encrypt + ZeroTier mesh; SSH tunnel только резерв |
 | Форматы документов | PDF, DOCX, XLSX, CSV, EML, MSG, JSON, MD, TXT |
 
@@ -92,7 +92,7 @@
 - Mac с Apple Silicon (M1/M2/M4) и минимум 16 GB RAM (рекомендуется 24 GB)
 - Docker Desktop
 - [uv](https://docs.astral.sh/uv/) (`brew install uv`)
-- Python 3.11+
+- Python 3.12+
 
 ### Установка
 
@@ -234,10 +234,11 @@ les-rag-public/
 ├── docker-compose.yml
 ├── Dockerfile.proxy
 ├── proxy/                    ← Proxy v3: app, security, services, storage
-│   ├── app.py                ← create_app()
-│   ├── legacy_app.py         ← переходный слой endpoints
+│   ├── app.py                ← create_app(), startup, middleware, router wiring
+│   ├── legacy_app.py         ← compatibility shim for old imports
+│   ├── routers/              ← auth, chat, datasets, runtime, diagnostics, jobs
 │   ├── security.py           ← X-API-Key/Bearer, admin/user guards
-│   └── services/             ← JobService, SafeRAG policy
+│   └── services/             ← JobService, retrieval, SafeRAG policy
 ├── start_mlx.command
 ├── stop_mlx.command
 ├── start_pauk.command        ← резервный SSH tunnel к VPS
@@ -286,7 +287,10 @@ MIT — используй, форкай, улучшай.
 - [x] SafeRAG error handling — таймаут/ошибка валидатора → safe fallback, неподтверждённый ответ не отдаётся как нормальный
 - [x] Rate limiting (≤ 2 параллельных LLM-запроса), защита от prompt injection, path traversal
 - [x] `les.command` — единый скрипт управления (start/stop/restart/status)
-- [ ] Е.Ж.И.К. — IMAP коннектор для почты
-- [ ] VLM pipeline — анализ PDF-чертежей
+- [x] Proxy modularization — активные endpoints вынесены в routers/services, `legacy_app.py` оставлен shim
+- [ ] Stabilization: VPS/browser smoke
+- [ ] RAG quality hardening: hybrid retrieval (dense + exact/sparse), golden set, trace/audit
 - [ ] Folder Watcher — автосинк новых файлов
 - [ ] Parquet pipeline для смет и спецификаций
+- [ ] Е.Ж.И.К. — IMAP коннектор для почты
+- [ ] VLM pipeline — анализ PDF-чертежей
