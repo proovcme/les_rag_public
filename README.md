@@ -242,6 +242,28 @@ uv run python tools/runtime_smoke.py \
 
 Smoke проверяет health/status/metrics/diag, загрузку UI shell, auth boundary для admin/user ключей и опциональные живые RAG-вопросы.
 
+### Browser smoke UI
+
+```bash
+# Локально: trusted localhost/ZeroTier должен сразу открыть admin shell
+uv run --with playwright python tools/browser_smoke.py --trusted-local
+
+# VPS/public URL: проверка логина admin/user и границ видимости вкладок
+LES_UI_URL=https://les.ovc.me \
+LES_ADMIN_KEY="$ADMIN_PASSWORD" \
+LES_USER_KEY="user-key" \
+uv run --with playwright python tools/browser_smoke.py \
+  --question "Ширина путей эвакуации"
+```
+
+При первом запуске на машине может понадобиться браузер Playwright:
+
+```bash
+uv run --with playwright python -m playwright install chromium
+```
+
+Browser smoke проверяет admin-вкладки, user-вкладки, отсутствие admin-разделов у user и, если передан вопрос, появление ответа в UI-чате.
+
 ---
 
 ## Структура репозитория (публичная версия)
@@ -272,7 +294,8 @@ les-rag-public/
 │   ├── metrics_collector.py
 │   └── interface.py
 ├── tools/
-│   └── runtime_smoke.py      ← post-deploy smoke: auth/UI/runtime/RAG
+│   ├── runtime_smoke.py      ← post-deploy smoke: auth/UI/runtime/RAG
+│   └── browser_smoke.py      ← Playwright smoke: UI admin/user scenarios
 ├── sovushka/                 ← UI модули (рефакторинг)
 │   ├── config.py             ← PROXY_URL, MLX_URL, UI_PORT
 │   ├── state.py
@@ -311,7 +334,7 @@ MIT — используй, форкай, улучшай.
 - [x] `les.command` — единый скрипт управления (start/stop/restart/status)
 - [x] Proxy modularization — активные endpoints вынесены в routers/services, `legacy_app.py` оставлен shim
 - [x] Stabilization: runtime smoke для локального/VPS post-deploy контура
-- [ ] Stabilization: browser smoke UI admin/user сценариев
+- [x] Stabilization: browser smoke UI admin/user сценариев
 - [ ] RAG quality hardening: hybrid retrieval (dense + exact/sparse), golden set, trace/audit
 - [ ] Folder Watcher — автосинк новых файлов
 - [ ] Parquet pipeline для смет и спецификаций
