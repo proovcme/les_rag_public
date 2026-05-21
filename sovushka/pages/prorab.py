@@ -3,8 +3,9 @@
 """
 from __future__ import annotations
 
+import asyncio
 from nicegui import ui
-from sovushka.state import state
+from sovushka.state import state, last_api_error_text
 from sovushka.components.charts import _html, pct_bar_html, format_bytes
 
 
@@ -125,7 +126,7 @@ def build_prorab():
                 add_log(f"[MLX] Прогрев завершён: main={main_t}с val={val_t}с")
                 warmup_btn.set_text("✓ OK")
             else:
-                ui.notify("Ошибка прогрева — проверь логи", type="negative")
+                ui.notify(last_api_error_text("Ошибка прогрева — проверь логи"), type="negative")
                 warmup_btn.set_text("⚡ ПРОГРЕВ")
 
         # ── Рендер метрик ──────────────────────────────────────────────────────

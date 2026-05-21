@@ -1,5 +1,5 @@
 # 🦉 Л.Е.С. — Локальная Единая Система
-## Мастер-документ v2.8 | 19.05.2026
+## Мастер-документ v3.0 | 21.05.2026
 
 > Единый источник истины. Объединяет README, ROADMAP, Архитектуру, Инфраструктуру, Словарь, Программу испытаний.  
 > Авторы: Клодыч (Claude), Кен (Qwen), Панорамыч (Gemini).
@@ -58,6 +58,23 @@
 - **Watchdog памяти** — `memory_guard_loop()` в `mlx_host.py`: ≥70% swap → выгрузка val-модели; ≥85% → kill non-essential processes; TTL: val=120с, main=300с
 - **Сессионный `session_id`** — передаётся в `/api/chat`, сохраняется в `chat_history`; новая сессия при сбросе чата
 
+### Ключевые изменения v2.8 (патч — OOM при индексации)
+- **Throttling sync_folder** — цикл обхода файлов теперь делает `await asyncio.sleep(0.1)` на каждой итерации; event loop не блокируется при обходе 800+ файлов (NTD)
+- **`_PARSE_SEMAPHORE`** — отдельный семафор для `parse_dataset` в `sync_folder._run()`, изолирован от остальных путей (`parse_semaphore` сохранён для EJIK, upload)
+- **`os.nice(10)` перед парсингом** — снижает CPU-приоритет процесса bge-m3 эмбеддинга; ядро отдаёт ресурсы UI/API при конкуренции
+- **mem_limit подтверждён** — `docker-compose.yml` уже содержал `proxy=512m`, `qdrant=1g`; дополнительных изменений не потребовалось
+- **Цель:** Load Average при SYNC NTD (801 файл) не выше 5; система остаётся отзывчивой
+
+### Ключевые изменения v3.0 (Proxy Architecture + Auth Boundary)
+- **Тонкий ASGI entrypoint:** `proxy_server.py` теперь только создаёт `app`; основная логика вынесена в пакет `proxy/`.
+- **Server-side auth boundary:** admin/user guards в `proxy/security.py`; UI-сессия С.О.В.У.Ш.К.А. больше не считается защитой API.
+- **Trusted contour:** только loopback и явно заданные `TRUSTED_NETWORKS` получают роль `TRUSTED_NETWORK_ROLE` без ключа. По умолчанию это `127.0.0.0/8,::1/128,10.195.146.0/24` → `admin`.
+- **Durable jobs:** `proxy/services/job_service.py` хранит sync/mail/parquet jobs в SQLite, `/api/jobs` объединяет persisted + live jobs.
+- **SafeRAG hardening:** `UNKNOWN` от валидатора блокируется safe fallback, как и `HALLUCINATION`; неподтверждённый ответ не отдаётся как нормальный.
+- **Read-only diagnostics:** `/api/diag` больше не вызывает `/api/chat`, не пишет историю и не меняет CRAG counters.
+- **Safe storage:** upload filenames санитизируются, sync вложенных папок сохраняет относительные пути, одинаковые имена в разных подпапках не должны конфликтовать.
+- **С.О.В.У.Ш.К.А. hardening:** API-ошибки 401/403/409 показываются как реальные ошибки, raw SVG/XML больше не исполняется как HTML, пользовательский текст экранируется.
+
 ### Ключевые изменения v2.2 → v2.3
 - **Т.О.С.К.А.: исправлен статус UNKNOWN** — `enable_thinking=False` для Qwen3-4B (валидатор не думает, сразу отвечает), `max_tokens` поднят с 10 до 64
 - **С.О.В.У.Ш.К.А.: убрана обрезка ответа** — лимит 600 символов в чат-пузыре снят, ответ полный
@@ -106,13 +123,13 @@
 
 **ZeroTier:**
 - VPS: `10.195.146.136`, Mac Mini: `10.195.146.98`, сеть `8d1c312afa249de4`
-- VPS `.env`: `QDRANT_URL=http://10.195.146.98:6333`, `OLLAMA_URL=http://10.195.146.98:8080`
+- VPS `.env`: `QDRANT_URL=http://10.195.146.98:6333`, `MLX_URL=http://10.195.146.98:8080`
 
 **SSH туннель (резерв, не активен):**
 ```
 ~/Library/LaunchAgents/me.ovc.les.pauk.plist  — НЕ удалять, использовать как fallback
 # Запустить при необходимости: launchctl load ~/Library/LaunchAgents/me.ovc.les.pauk.plist
-# Также вернуть в .env: QDRANT_URL=http://127.0.0.1:6333 / OLLAMA_URL=http://127.0.0.1:8080
+# Также вернуть в .env: QDRANT_URL=http://127.0.0.1:6333 / MLX_URL=http://127.0.0.1:8080
 ```
 
 **VPS systemd-сервисы:**
@@ -142,11 +159,11 @@ bash deploy/pauk/deploy.sh   # rsync репо → VPS + systemctl restart
 **В.О.Л.К. — доступ:**
 | Откуда | Ключ | Роль |
 |--------|------|------|
-| ZeroTier (`10.x.x.x`) | не нужен | user (auto-bypass) |
-| Интернет | `les_75f0507b502d2ab1` | user |
-| Интернет | `les_aed1ff4721f776e1` (melnik) | admin |
+| Localhost (`127.0.0.1`, `::1`) | не нужен | `TRUSTED_NETWORK_ROLE`, по умолчанию `admin` |
+| ZeroTier (`10.195.146.0/24`) при прямом доступе к сервисам | не нужен | `TRUSTED_NETWORK_ROLE`, по умолчанию `admin` |
+| Интернет / внешний контур через VPS (`les.ovc.me`) | нужен | `user` или `admin` по записи в `auth_keys` |
 
-Ключи хранятся в `/root/les_v2/data/les_meta.db`, таблица `auth_keys`.
+Ключи хранятся в `/root/les_v2/data/les_meta.db`, таблица `auth_keys`. Боевые значения ключей в документацию не заносить; управлять через UI В.О.Л.К. или `/api/auth/keys*`.
 
 ---
 
@@ -161,8 +178,8 @@ Mac Mini M4 / 24 GB  (Ж.А.Б.А.)
 │   └── les-qdrant  (Qdrant, порт 6333)  — С.А.М.О.В.А.Р. векторная база
 │
 ├── MLX Native Host (FastAPI, порт 8080) — основной LLM + Embeddings на Metal
-│   ├── Qwen3.5-9B-MLX-4bit        (main, RAG, TTL 300с, ~6 GB RAM)
-│   ├── Qwen3-4B-Instruct-2507-4bit (val, Т.О.С.К.А.+реранкер, TTL 120с, ~2.5 GB)
+│   ├── Qwen3-14B-4bit             (main, RAG, TTL 300с)
+│   ├── Qwen3-4B-4bit              (val, Т.О.С.К.А.+реранкер, TTL 120с)
 │   └── bge-m3                      (embed, постоянно в памяти)
 │
 └── С.О.В.У.Ш.К.А. (NiceGUI, порт 8051) — UI v5.0
@@ -185,14 +202,14 @@ Mac Mini M4 / 24 GB  (Ж.А.Б.А.)
   → _concentrate_sources(): top-2 документа по max-score, min_score=0.45
   │
   ├─ Попытка 1: нормальный промпт, 12 000 симв., top-2 docs
-  │     → MLX Host Qwen3.5-9B генерирует ответ
+  │     → MLX Host main-модель генерирует ответ
   │     → Т.О.С.К.А. /api/validate (Qwen3-4B)
   │         VERIFIED  → ответ клиенту ✓
   │         NO_DATA   → "нет данных" ✓
   │         HALLUCINATION → переход к попытке 2
   │
   └─ Попытка 2: строгий промпт, 6 000 симв., top-1 doc
-        → MLX Host Qwen3.5-9B генерирует ответ
+        → MLX Host main-модель генерирует ответ
         → Т.О.С.К.А. /api/validate (Qwen3-4B)
             VERIFIED  → ответ клиенту ✓
             NO_DATA   → "нет данных" ✓
@@ -206,7 +223,13 @@ Mac Mini M4 / 24 GB  (Ж.А.Б.А.)
 ### 3.3. Структура файлов проекта
 ```
 LES_v2/
-├── proxy_server.py           # FastAPI ядро (848 строк, v2.1)
+├── proxy_server.py           # Тонкий ASGI entrypoint: app = create_app()
+├── proxy/                    # LES Proxy v3: app/security/services/storage/...
+│   ├── app.py                # create_app()
+│   ├── legacy_app.py         # переходный слой со старыми endpoint-ами
+│   ├── security.py           # RequestUser, X-API-Key/Bearer, role guards
+│   ├── services/             # JobService, SafeRAG policy
+│   └── storage/              # safe upload paths, source-folder validation
 ├── sovushka_ng.py            # Точка входа С.О.В.У.Ш.К.А. v5.0 (~90 строк)
 ├── sovushka/                 # Модульный пакет UI (страницы, компоненты, стейт)
 │   ├── config.py             # PROXY_URL, MLX_URL, UI_PORT
@@ -216,7 +239,7 @@ LES_v2/
 ├── docker-compose.yml        # les-qdrant + les-proxy
 ├── Dockerfile.proxy          # python:3.11-slim + docker-ce-cli
 ├── requirements.txt
-├── .env                      # LLM_MODEL, EMBED_MODEL, OLLAMA_URL...
+├── .env                      # LLM_MODEL, EMBED_MODEL, MLX_URL, QDRANT_URL, TRUSTED_NETWORKS...
 │
 ├── backend/
 │   ├── __init__.py
@@ -255,10 +278,13 @@ CREATE TABLE documents (
     content TEXT              -- Markdown после конвертации
 );
 CREATE TABLE auth_keys (
-    key TEXT PRIMARY KEY,
-    role TEXT,                -- "admin" | "user"
-    comment TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    key_value TEXT PRIMARY KEY,
+    holder_name TEXT NOT NULL DEFAULT '',
+    role TEXT NOT NULL DEFAULT 'user',       -- "admin" | "user"
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    expires_at TEXT DEFAULT NULL,
+    device_fingerprint TEXT DEFAULT NULL
 );
 CREATE TABLE chat_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -268,7 +294,23 @@ CREATE TABLE chat_history (
     sources TEXT,             -- JSON-массив ссылок
     crag_status TEXT,         -- VERIFIED | NO_DATA | HALLUCINATION
     latency_sec REAL,
-    tokens INTEGER
+    tokens INTEGER,
+    session_id TEXT DEFAULT NULL
+);
+CREATE TABLE jobs (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    source TEXT DEFAULT '',
+    dataset_id TEXT DEFAULT '',
+    dataset_name TEXT DEFAULT '',
+    total INTEGER DEFAULT 0,
+    processed INTEGER DEFAULT 0,
+    errors INTEGER DEFAULT 0,
+    message TEXT DEFAULT '',
+    result TEXT DEFAULT '',
+    started_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 ```
 
@@ -325,8 +367,8 @@ OLLAMA_CONTEXT_LENGTH=8192
 ### 4.4. MLX стек
 | Движок | Модель | TTL | Назначение |
 |---|---|---|---|
-| main_engine | `mlx-community/Qwen3.5-9B-MLX-4bit` | 300с | RAG (~6 GB RAM) |
-| val_engine | `mlx-community/Qwen3-4B-Instruct-2507-4bit` | 120с | Т.О.С.К.А. + реранкер (~2.5 GB) |
+| main_engine | `mlx-community/Qwen3-14B-4bit` | 300с | RAG |
+| val_engine | `mlx-community/Qwen3-4B-4bit` | 120с | Т.О.С.К.А. + реранкер |
 | embed | `BAAI/bge-m3` | ∞ | Эмбеддинги (постоянно) |
 
 ### 4.5. Mac Mini — базовая конфигурация
@@ -367,18 +409,23 @@ MLX модели скачиваются автоматически при пер
 
 #### Шаг 3. Настроить `.env`
 ```env
-LLM_MODEL=mlx-community/Qwen3.5-9B-MLX-4bit
+LLM_MODEL=mlx-community/Qwen3-14B-4bit
 EMBED_MODEL=bge-m3
 MLX_URL=http://host.docker.internal:8080
 
-MLX_MODEL=mlx-community/Qwen3.5-9B-MLX-4bit
-MLX_VAL_MODEL=mlx-community/Qwen3-4B-Instruct-2507-4bit
+MLX_MODEL=mlx-community/Qwen3-14B-4bit
+MLX_VAL_MODEL=mlx-community/Qwen3-4B-4bit
 RERANKER_ENABLED=false   # включается через переключатель в UI чата
 
 QDRANT_URL=http://qdrant:6333
 JWT_SECRET=les_v2_secret_key_change_in_prod
 ADMIN_PASSWORD=admin123
+TRUSTED_NETWORKS=127.0.0.0/8,::1/128,10.195.146.0/24
+TRUSTED_NETWORK_ROLE=admin
+SOVUSHKA_STORAGE_SECRET=change_me_to_random_string_32chars
 ```
+
+> Факт по коду на 21.05.2026: `mlx_host.py` и `env.example` дефолтят `mlx-community/Qwen3-14B-4bit` / `mlx-community/Qwen3-4B-4bit`, а часть исторической документации v2.6 описывает `Qwen3.5-9B-MLX-4bit` / `Qwen3-4B-Instruct-2507-4bit`. Перед деплоем считать источником истины `.env`; если нужен 9B-профиль, его надо явно задать в `.env`.
 
 #### Шаг 4. Запустить Docker стек
 ```bash
@@ -532,9 +579,10 @@ journalctl -u les_proxy.service -n 20
 
 **Добавить ключ доступа (через proxy API):**
 ```bash
-curl -s https://les.ovc.me/api/keys \
-  -H "X-API-Key: les_aed1ff4721f776e1" \
-  -d '{"role":"user","comment":"новый пользователь"}'
+curl -s https://les.ovc.me/api/auth/keys \
+  -H "X-API-Key: <admin-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"key_value":"les_new_key","holder_name":"user name","role":"user","expires_days":0}'
 ```
 
 ### 5.7. Runbook — аварийное восстановление
@@ -636,6 +684,13 @@ systemctl restart les_proxy.service
 | `/api/jobs` | GET | История jobs | — |
 | `/api/chat` | POST | RAG-чат + Т.О.С.К.А. v2 | ✅ `dataset_filter`, `reranker_enabled` |
 | `/api/logs/stream` | GET | SSE логи | — |
+
+**Auth/RBAC факт v3.0:**
+- `X-API-Key: <key>` или `Authorization: Bearer <key>` проверяются по SQLite `auth_keys`.
+- Без ключа допускаются только IP из `TRUSTED_NETWORKS`; роль задаёт `TRUSTED_NETWORK_ROLE`.
+- `user` имеет доступ к чату, истории, чтению статуса/метрик/датасетов; destructive/admin endpoints требуют `admin`.
+- `/api/auth/keys`, `/api/auth/keys/toggle`, `/api/auth/keys/reset-device`, `/api/auth/keys/delete` требуют admin. Старый `DELETE /api/auth/keys/{key_value}` оставлен только для совместимости; UI использует body endpoint, чтобы не класть ключ в URL.
+- `/api/settings` принимает `llm_model`, `embed_model`, `mlx_url`; рестарт только при `POST /api/settings?restart=true`.
 
 #### POST /api/chat — расширенное
 ```json
@@ -858,6 +913,23 @@ async def validate_with_consistency(question, answer, context, n=3):
 
 **Ориентировочный старт:** после стабилизации NTD индекса и реализации Folder Watcher (v2.1). **Срок: v2.2**.
 
+### 7.5. OOM при индексации больших папок (NTD, 800+ файлов)
+
+**Проблема:** `POST /api/rag/sync/NTD` запускает цикл из 800+ итераций без `await`, блокирует event loop; затем `parse_dataset` пытается встроить все файлы разом через bge-m3 — Load Average 39, Mac Mini неуправляем.
+
+**Решение (v2.8 патч, `proxy_server.py`):**
+
+| Мера | Место | Эффект |
+|---|---|---|
+| `await asyncio.sleep(0.1)` | конец каждой итерации в `sync_folder` | event loop дышит между файлами |
+| `async with _PARSE_SEMAPHORE:` | `sync_folder._run()` | максимум 3 параллельных parse-job |
+| `os.nice(10)` | перед `parse_dataset()` | CPU-приоритет ниже UI/API |
+| `mem_limit: 512m / 1g` | `docker-compose.yml` (уже стоял) | Docker не вытесняет MLX из RAM |
+
+**Что НЕ трогать:** `backend/qdrant_adapter.py`, `backend/converter.py`, `mlx_host.py`.
+
+**Критерий успеха:** SYNC NTD (801 файл) не поднимает Load Average выше 5.
+
 ---
 
 ## 8. ПРОГРАММА ИСПЫТАНИЙ
@@ -937,7 +1009,7 @@ async def validate_with_consistency(question, answer, context, n=3):
 | Qdrant fallback при падении во время парсинга | 🟠 |
 | Тест Caddy HTTPS les.ovc.me | ✅ |
 | SSH туннель: Mac Mini → VPS (Qdrant + MLX) | ✅ |
-| В.О.Л.К.: auto-bypass ZeroTier IP (10.x.x.x) | ✅ |
+| В.О.Л.К.: auto-bypass только для configured trusted networks (`127.0.0.0/8`, `::1/128`, `10.195.146.0/24`) | ✅ |
 | В.О.Л.К.: ключи admin/user в SQLite | ✅ |
 | Нагрузочный тест П.А.У.К. (keepalive туннеля) | 🟡 |
 | No-Cache заголовки в прокси | ⚪ |
@@ -1012,16 +1084,36 @@ async def validate_with_consistency(question, answer, context, n=3):
 - **Переключатель реранкера в UI чата** — по умолчанию выключен (`RERANKER_ENABLED=false`)
 
 ### ✅ v2.8 (19.05.2026)
-- **П.А.У.К. — ZeroTier как основной транспорт** — SSH reverse tunnel выведен из эксплуатации; `QDRANT_URL` и `OLLAMA_URL` на VPS теперь указывают на ZeroTier IP Mac Mini (`10.195.146.98`); plist туннеля сохранён как резерв
+- **П.А.У.К. — ZeroTier как основной транспорт** — SSH reverse tunnel выведен из эксплуатации; `QDRANT_URL` и `MLX_URL` на VPS теперь указывают на ZeroTier IP Mac Mini (`10.195.146.98`); plist туннеля сохранён как резерв
 - **deploy/pauk/** — инфраструктура VPS добавлена в репо: `les_proxy.service`, `sovushka.service`, `Caddyfile`, `.env.example`, `deploy.sh`
 - **VPS синхронизирован с репо** — rsync Mac Mini → VPS, proxy_server.py обновлён до текущей версии
+- **OOM-защита sync_folder** — `await asyncio.sleep(0.1)` в цикле файлов + `_PARSE_SEMAPHORE` + `os.nice(10)` перед `parse_dataset`; индексация NTD (801 файл) больше не убивает систему (см. раздел 7.5)
 
-### 🛠 v2.9 (Краткосрочно)
+### ✅ v3.0 (21.05.2026)
+- **Proxy v3 package** — добавлен пакет `proxy/`; `proxy_server.py` сокращён до entrypoint, контейнер монтирует `./proxy:/app/proxy`.
+- **В.О.Л.К. server-side** — admin endpoints защищены на уровне FastAPI dependencies: `/api/auth/keys*`, destructive `/api/rag/*`, `/api/settings`, `/api/warmup`, `/api/mail/*`, `/api/rerank`.
+- **С.О.В.У.Ш.К.А. → Proxy auth** — UI API-клиент передаёт `X-API-Key` из `app.storage.user`; ZeroTier/local trusted bypass даёт роль `admin` без ключа.
+- **Settings safety** — `/api/settings` принимает только allowlisted поля, валидирует `MLX_URL`, рестарт только явно через `?restart=true`.
+- **SafeRAG UNKNOWN policy** — timeout/500 валидатора больше не пропускает неподтверждённый ответ пользователю.
+- **Diagnostics safety** — `/api/diag` проверяет MLX health вместо вызова `/api/chat`.
+- **Relative paths in RAG** — `backend/qdrant_adapter.py` принимает `relative_path`; sync не схлопывает вложенные папки.
+
+### ✅ v3.1 Stabilization (21.05.2026)
+- **Regression tests:** добавлен `pytest.ini` и `tests/test_proxy_security.py`; проверяются trusted local/ZeroTier admin, внешний IP без ключа → 401, admin/user key roles, user → 403 на admin guard, disabled/expired key → 401.
+- **Default alignment:** `proxy/config.py` fallback `LLM_MODEL` приведён к `mlx-community/Qwen3-14B-4bit`; `backend/metrics_collector.py` fallback `MLX_URL` приведён к `http://host.docker.internal:8080`.
+- **VPS env alignment:** `deploy/pauk/.env.example` использует `MLX_URL`, `TRUSTED_NETWORKS`, `TRUSTED_NETWORK_ROLE`, `SOVUSHKA_STORAGE_SECRET`.
+- **VPS UI service:** `deploy/pauk/sovushka.service` теперь читает `EnvironmentFile=/root/les_v2/.env`, как заявлено в runbook.
+- **Проверки:** `pytest -q`, import smoke `proxy_server`/`sovushka_ng`, `compileall`, `docker compose config --quiet`.
+
+### 🛠 v3.2 (Краткосрочно)
 | Задача | Описание |
 |---|---|
-| **Folder Watcher** | Автосинк новых файлов из RAG_Content/ |
-| **Retry-логика** | Graceful fallback при занятости MLX |
+| **VPS runtime smoke** | После деплоя проверить `les.ovc.me`: внешний вход требует ключ, trusted ZeroTier/local работает без ключа |
+| **Browser smoke UI** | Локально проверить admin/user вкладки, settings, В.О.Л.К. lifecycle, error notifications |
+| **SafeRAG tests** | UNKNOWN/timeout валидатора → safe fallback, `/api/diag` не пишет историю/counters |
+| **Dataset tests** | URL-encoded sync/delete, failed operations не показывают success |
 | **Qdrant fallback** | Обработка ошибок Qdrant при парсинге документов |
+| **Folder Watcher** | Автосинк новых файлов из RAG_Content/ |
 | **Parquet пайплайн** | Табличные данные в Parquet вместо Markdown |
 | **Е.Ж.И.К. v1** | Тест EML/MSG на реальных письмах → IMAP коннектор |
 | **chunk_count** | Исправить колонку в SQLite (сейчас всегда 0) |
@@ -1091,6 +1183,7 @@ QWEN_Index:   1 файл, INDEXED
 | Изменён файл | Команда |
 |---|---|
 | `proxy_server.py` | `docker compose restart proxy` |
+| `proxy/**` | `docker compose up -d --build proxy` (первый раз после v3 обязательно, из-за нового volume) |
 | `mlx_host.py` | `./les.command stop && ./les.command start` |
 | `sovushka/**` | `./les.command sovushka` |
 | `.env` | `docker compose restart proxy && ./les.command stop && ./les.command start` |
@@ -1129,4 +1222,5 @@ docker compose restart proxy
 ---
 
 📅 **Документ актуализирован:** 19.05.2026 — v2.6: модели Qwen3.5-9B + Qwen3-4B-2507, watchdog, mem_limit, реранкер batch-режим, переключатель в UI  
+📅 **Документ сверян с кодом:** 21.05.2026 — Proxy v3 auth boundary, trusted networks, `MLX_URL`, актуальная схема `auth_keys`, body delete для ключей  
 ✍️ **Авторы:** Claude (Клодыч) · Qwen (Кен) · Gemini (Панорамыч)

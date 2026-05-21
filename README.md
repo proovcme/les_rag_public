@@ -29,9 +29,9 @@
 │       ├── /api/* → proxy_server :8050           │
 │       └── /*     → sovushka_ng  :8051           │
 │                                                 │
-│  SSH reverse tunnel ◄── Mac Mini               │
-│       ├── :6333 → Qdrant (Mac Mini)             │
-│       └── :8080 → MLX Host (Mac Mini)           │
+│  ZeroTier mesh → Mac Mini                       │
+│       ├── 10.195.146.98:6333 → Qdrant           │
+│       └── 10.195.146.98:8080 → MLX Host         │
 └─────────────────────────────────────────────────┘
          │  ZeroTier `8d1c312afa249de4`
 ┌────────▼────────────────────────────────────────┐
@@ -39,13 +39,15 @@
 │                                                 │
 │  С.О.В.У.Ш.К.А.  (NiceGUI UI, порт 8051)       │
 │  les-proxy        (FastAPI,    порт 8050)        │
+│       ├── proxy_server.py → proxy.app           │
+│       ├── proxy/security.py (server-side RBAC)  │
 │       ├── RAG pipeline  (С.А.М.О.В.А.Р.)        │
-│       ├── Т.О.С.К.А.    (CRAG валидация)        │
+│       ├── Т.О.С.К.А.    (SafeRAG валидация)     │
 │       └── В.О.Л.К.      (ключи, SQLite)         │
 │                                                 │
 │  MLX Native Host  (порт 8080)                   │
-│       ├── Qwen3.5-9B-4bit   (LLM, Metal, ~6GB)  │
-│       ├── Qwen3-4B-2507-4bit (валидатор, ~2.5GB) │
+│       ├── Qwen3-14B-4bit     (LLM, Metal)        │
+│       ├── Qwen3-4B-4bit      (валидатор)         │
 │       └── BGE-M3             (эмбеддинги, MPS)   │
 │                                                 │
 │  Qdrant  (векторная база, порт 6333)            │
@@ -72,14 +74,14 @@
 
 | Компонент | Технология |
 |---|---|
-| LLM | [Qwen3.5-9B-MLX-4bit](https://huggingface.co/mlx-community/Qwen3.5-9B-MLX-4bit) via MLX (~6 GB RAM) |
-| Валидатор | [Qwen3-4B-Instruct-2507-4bit](https://huggingface.co/mlx-community/Qwen3-4B-Instruct-2507-4bit) (CRAG: VERIFIED / NO_DATA / HALLUCINATION) |
+| LLM | `mlx-community/Qwen3-14B-4bit` via MLX |
+| Валидатор | `mlx-community/Qwen3-4B-4bit` (CRAG: VERIFIED / NO_DATA / HALLUCINATION) |
 | Эмбеддинги | [BGE-M3](https://huggingface.co/BAAI/bge-m3) via sentence-transformers + MPS |
 | Векторная база | [Qdrant](https://qdrant.tech/) |
 | Backend | FastAPI + LlamaIndex |
 | Frontend | [NiceGUI](https://nicegui.io/) v5.0 |
-| Auth | В.О.Л.К. — API-ключи + SQLite, auto-bypass для ZeroTier IP |
-| Внешний доступ | Caddy + Let's Encrypt + SSH reverse tunnel |
+| Auth | В.О.Л.К. — server-side API guards, API-ключи + SQLite, admin auto-bypass для trusted local/ZeroTier IP |
+| Внешний доступ | Caddy + Let's Encrypt + ZeroTier mesh; SSH tunnel только резерв |
 | Форматы документов | PDF, DOCX, XLSX, CSV, EML, MSG, JSON, MD, TXT |
 
 ---
@@ -141,10 +143,10 @@ curl -X POST http://localhost:8050/api/rag/sync/MyDocs
 Промпт = системный + контекст + вопрос
       │
       ▼
-Qwen3.5-9B (MLX, Metal)
+Qwen3-14B (MLX, Metal)
       │  ответ
       ▼
-Т.О.С.К.А. валидация (Qwen3-4B-2507)
+Т.О.С.К.А. валидация (Qwen3-4B)
       │  VERIFIED / NO_DATA / HALLUCINATION
       ▼
 Ответ пользователю + источники
@@ -171,15 +173,18 @@ Qwen3.5-9B (MLX, Metal)
 ```
 Интернет → les.ovc.me (VPS, Caddy, SSL)
                 │
-          SSH reverse tunnel
+          proxy/UI на VPS
                 │
-         Mac Mini :8050/:8051
+          ZeroTier mesh
+                │
+         Mac Mini :6333/:8080
 ```
 
 Доступ по ключам (В.О.Л.К.):
 - `admin` — полный интерфейс
 - `user`  — только AI ЧАТ
-- ZeroTier IP (`10.x.x.x`) — автобайпас (роль user, ключ не нужен)
+- Local/ZeroTier IP (`127.0.0.1`, `10.195.146.x`) — trusted admin автобайпас, ключ не нужен
+- Внешний доступ через `les.ovc.me` — ключ обязателен
 
 ---
 
@@ -189,8 +194,8 @@ Qwen3.5-9B (MLX, Metal)
 
 | Процесс | RAM |
 |---------|-----|
-| MLX (Qwen3.5-9B) | ~6 GB |
-| MLX (Qwen3-4B val) | ~2.5 GB |
+| MLX (Qwen3-14B) | зависит от квантования |
+| MLX (Qwen3-4B val) | зависит от квантования |
 | les-proxy (Docker) | ≤ 512 MB |
 | les-qdrant (Docker) | ≤ 1 GB |
 | **Итого** | **~10 GB** |
@@ -228,9 +233,14 @@ les-rag-public/
 ├── .env.example
 ├── docker-compose.yml
 ├── Dockerfile.proxy
+├── proxy/                    ← Proxy v3: app, security, services, storage
+│   ├── app.py                ← create_app()
+│   ├── legacy_app.py         ← переходный слой endpoints
+│   ├── security.py           ← X-API-Key/Bearer, admin/user guards
+│   └── services/             ← JobService, SafeRAG policy
 ├── start_mlx.command
 ├── stop_mlx.command
-├── start_pauk.command        ← SSH tunnel к VPS
+├── start_pauk.command        ← резервный SSH tunnel к VPS
 ├── stop_pauk.command
 ├── pauk_launchd.plist        ← launchd автозапуск туннеля (Mac Mini)
 ├── mlx_host.py               ← MLX Native Host
@@ -251,7 +261,7 @@ les-rag-public/
 └── sovushka_ng.py            ← точка входа UI
 ```
 
-**Не входит в публичную версию:** `proxy_server.py` (содержит внутреннюю логику), `.env`, ключи, данные индексов.
+**Не входит в публичную версию:** `.env`, ключи, данные индексов.
 
 ---
 
@@ -268,10 +278,12 @@ MIT — используй, форкай, улучшай.
 - [x] CRAG валидация (Т.О.С.К.А.) — VERIFIED / NO_DATA / HALLUCINATION
 - [x] NiceGUI интерфейс (С.О.В.У.Ш.К.А.) v5.0 — модульная архитектура
 - [x] Светлая и тёмная тема — персистентная через `app.storage.user`, WCAG AA контрасты
-- [x] Внешний доступ через VPS (П.А.У.К.) — Caddy + Let's Encrypt + SSH tunnel, `les.ovc.me` live
+- [x] Внешний доступ через VPS (П.А.У.К.) — Caddy + Let's Encrypt + ZeroTier, `les.ovc.me` live
 - [x] Auth по ключам (В.О.Л.К.) — admin/user роли, временные ключи, привязка к устройству (fingerprint)
+- [x] Proxy v3 — тонкий `proxy_server.py`, пакет `proxy/`, server-side guards для admin/user endpoints
+- [x] Stabilization tests — pytest regression для trusted network и API-key RBAC boundary
 - [x] История чатов (SQLite `chat_history`) — выживает рестарт процесса
-- [x] CRAG error handling — таймаут/ошибка валидатора → UNKNOWN (не VERIFIED)
+- [x] SafeRAG error handling — таймаут/ошибка валидатора → safe fallback, неподтверждённый ответ не отдаётся как нормальный
 - [x] Rate limiting (≤ 2 параллельных LLM-запроса), защита от prompt injection, path traversal
 - [x] `les.command` — единый скрипт управления (start/stop/restart/status)
 - [ ] Е.Ж.И.К. — IMAP коннектор для почты

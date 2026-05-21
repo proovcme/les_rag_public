@@ -280,10 +280,15 @@ class QdrantLlamaIndexAdapter(RAGBackend):
     async def create_dataset(self, name: str) -> str:
         return self.db.create_dataset(name)
 
-    async def upload_file(self, dataset_id: str, file_path: Path) -> str:
+    async def upload_file(self, dataset_id: str, file_path: Path, relative_path: Optional[str] = None) -> str:
         dest_dir  = self.content_dir / dataset_id
         dest_dir.mkdir(parents=True, exist_ok=True)
-        dest_file = dest_dir / file_path.name
+        rel_name = relative_path or file_path.name
+        rel_path = Path(rel_name)
+        if rel_path.is_absolute() or ".." in rel_path.parts:
+            raise ValueError(f"unsafe relative path: {rel_name}")
+        dest_file = dest_dir / rel_path
+        dest_file.parent.mkdir(parents=True, exist_ok=True)
 
         stat  = file_path.stat() if file_path.exists() else None
         mtime = stat.st_mtime if stat else 0.0
@@ -293,7 +298,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             await asyncio.to_thread(shutil.copy2, file_path, dest_file)
 
         doc_id, _, _ = self.db.add_document(
-            dataset_id, file_path.name, file_mtime=mtime, file_size=size
+            dataset_id, rel_path.as_posix(), file_mtime=mtime, file_size=size
         )
         return doc_id
 
@@ -347,6 +352,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             errors       = 0
 
             for i, file_path in enumerate(files_to_parse, 1):
+                file_key = file_path.relative_to(data_dir).as_posix()
                 if i % 50 == 0 or i == total:
                     logger.info(f"[PARSE] {i}/{total} ({_t.time()-t0:.0f}с)")
                 try:
@@ -358,7 +364,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                                 filter=models.Filter(must=[
                                     models.FieldCondition(
                                         key="file_name",
-                                        match=models.MatchValue(value=file_path.name),
+                                        match=models.MatchValue(value=file_key),
                                     ),
                                     models.FieldCondition(
                                         key="dataset_id",
@@ -372,12 +378,12 @@ class QdrantLlamaIndexAdapter(RAGBackend):
 
                     md_content = convert_to_markdown(file_path)
                     if not md_content:
-                        self.db.update_document_status(dataset_id, file_path.name, "INDEXED", 0)
+                        self.db.update_document_status(dataset_id, file_key, "INDEXED", 0)
                         continue
 
                     doc   = Document(
                         text=md_content,
-                        metadata={"file_name": file_path.name, "dataset_id": dataset_id},
+                        metadata={"file_name": file_key, "dataset_id": dataset_id},
                     )
                     nodes = md_parser.get_nodes_from_documents([doc])
 
@@ -391,7 +397,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                             file_nodes.append(node)
 
                     if not file_nodes:
-                        self.db.update_document_status(dataset_id, file_path.name, "INDEXED", 0)
+                        self.db.update_document_status(dataset_id, file_key, "INDEXED", 0)
                         continue
 
                     # Батч-эмбеддинги по EMBED_BATCH чанков
@@ -402,7 +408,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                         try:
                             vectors = self.embed.encode_sync(texts)
                         except Exception as emb_err:
-                            logger.error(f"[PARSE] embed error {file_path.name}: {emb_err}")
+                            logger.error(f"[PARSE] embed error {file_key}: {emb_err}")
                             errors += 1
                             continue
 
@@ -414,7 +420,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                                     "text":       node.text,
                                     "dataset_id": dataset_id,
                                     "doc_id":     node.node_id,
-                                    "file_name":  file_path.name,
+                                    "file_name":  file_key,
                                 },
                             ))
 
@@ -433,12 +439,12 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     file_chunk_count = len(file_nodes)
                     total_chunks    += file_chunk_count
                     self.db.update_document_status(
-                        dataset_id, file_path.name, "INDEXED", file_chunk_count
+                        dataset_id, file_key, "INDEXED", file_chunk_count
                     )
 
                 except Exception as file_err:
-                    logger.error(f"[PARSE] ERROR {file_path.name}: {file_err}", exc_info=True)
-                    self.db.update_document_status(dataset_id, file_path.name, "ERROR", 0)
+                    logger.error(f"[PARSE] ERROR {file_key}: {file_err}", exc_info=True)
+                    self.db.update_document_status(dataset_id, file_key, "ERROR", 0)
                     errors += 1
 
             self.db.update_dataset_chunk_count(dataset_id)

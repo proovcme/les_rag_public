@@ -11,7 +11,7 @@ from typing import Optional
 from nicegui import ui
 
 from sovushka.state import state, api_get, api_post, add_log, refresh_samovar
-from sovushka.components.charts import _html
+from sovushka.components.charts import _html, esc
 
 
 def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
@@ -34,7 +34,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
 
                 def _render_msg(msg):
                     if msg["role"] == "user":
-                        safe_q = msg["text"].replace("<", "&lt;").replace(">", "&gt;")
+                        safe_q = esc(msg["text"])
                         _html(f'<div class="chat-msg-user">{safe_q}</div>')
                     else:
                         ans = msg.get("text", "")
@@ -42,12 +42,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                         crag = msg.get("crag", "")
                         srcs_html = ""
                         if srcs:
-                            tags = "".join(f'<span class="src-tag">{s.get("file", s) if isinstance(s, dict) else s}</span>' for s in srcs)
+                            tags = "".join(f'<span class="src-tag">{esc(s.get("file", s) if isinstance(s, dict) else s)}</span>' for s in srcs)
                             srcs_html = f'<div class="msg-srcs" style="margin-top:8px;">{tags}</div>'
                         if crag:
                             cls = "src-tag" if crag == "VERIFIED" else "src-tag src-tag-err"
-                            srcs_html += f'<span class="{cls}" style="margin-left:4px;">Т.О.С.К.А.: {crag}</span>'
-                        safe_ans = ans.replace("<", "&lt;").replace(">", "&gt;").replace(chr(10), "<br>")
+                            srcs_html += f'<span class="{cls}" style="margin-left:4px;">Т.О.С.К.А.: {esc(crag)}</span>'
+                        safe_ans = esc(ans).replace(chr(10), "<br>")
                         _html(f'<div class="chat-msg-ai">{safe_ans}{srcs_html}</div>')
 
                 # Рендер текущей (in-memory) истории — если совушка не перезапускалась
@@ -472,7 +472,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         q = chat_input.value.strip() or "[текст запроса]"
         extra = _build_extra_prompt(q)
         preview_text = (q + extra)[:800] + ("…" if len(q + extra) > 800 else "")
-        safe_preview = preview_text.replace("<", "&lt;").replace(">", "&gt;")
+        safe_preview = esc(preview_text)
         prompt_preview.set_content(
             f'<pre style="margin:0;font-size:.63rem;color:var(--dim);white-space:pre-wrap;">{safe_preview}</pre>'
         )
@@ -505,7 +505,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         state["chat_history"].append({"role": "user", "text": question})
 
         with chat_column:
-            safe_q = question.replace("<", "&lt;").replace(">", "&gt;")
+            safe_q = esc(question)
             _html(f'<div class="chat-msg-user">{safe_q}</div>')
         chat_scroll.scroll_to(percent=1)
         add_log(f'[AI] Запрос: "{question[:60]}"')
@@ -552,13 +552,13 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
 
                 srcs_html = ""
                 if srcs:
-                    tags = "".join(f'<span class="src-tag">{s.get("file", s) if isinstance(s, dict) else s}</span>' for s in srcs)
+                    tags = "".join(f'<span class="src-tag">{esc(s.get("file", s) if isinstance(s, dict) else s)}</span>' for s in srcs)
                     srcs_html = f'<div class="msg-srcs" style="margin-top:8px;">{tags}</div>'
                 if crag:
                     cls = "src-tag" if crag == "VERIFIED" else "src-tag src-tag-err"
-                    srcs_html += f'<span class="{cls}" style="margin-left:4px;">Т.О.С.К.А.: {crag}</span>'
+                    srcs_html += f'<span class="{cls}" style="margin-left:4px;">Т.О.С.К.А.: {esc(crag)}</span>'
 
-                safe_ans = ans.replace("<", "&lt;").replace(">", "&gt;").replace(chr(10), "<br>")
+                safe_ans = esc(ans).replace(chr(10), "<br>")
                 ai_placeholder.set_content(
                     f'<div class="chat-msg-ai">{safe_ans}{srcs_html}</div>'
                 )
@@ -654,7 +654,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     _html('<div class="section-title mb-2">РЕЗУЛЬТАТ // SVG СХЕМА</div>')
                     svg_code = _parse_svg_from_ai(ans)
                     if svg_code:
-                        _html(svg_code).style("width:100%;overflow:auto;background:var(--bg-mod);border:1px solid var(--border);border-radius:4px;padding:8px;")
+                        ui.code(svg_code, language="xml").classes("w-full")
                         ui.button("📋 Копировать SVG", on_click=lambda c=svg_code: ui.clipboard.write(c)).props("no-caps flat").style("font-size:.65rem;color:var(--accent);mt-2")
                     else:
                         ui.markdown(ans).style("font-size:.78rem;")
@@ -706,8 +706,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             indent = level * 16
             with ui.row().classes("items-start gap-1").style(f"margin-left:{indent}px;"):
                 _html(f'<span style="color:var(--accent);font-weight:700;font-size:.75rem;">{"▶" if children else "•"}</span>'
-                      f'<span style="font-size:.75rem;font-weight:{"700" if level==0 else "400"};color:var(--text);">{name}</span>'
-                      + (f'<span style="font-size:.65rem;color:var(--dim);margin-left:4px;">{desc}</span>' if desc else ""))
+                      f'<span style="font-size:.75rem;font-weight:{"700" if level==0 else "400"};color:var(--text);">{esc(name)}</span>'
+                      + (f'<span style="font-size:.65rem;color:var(--dim);margin-left:4px;">{esc(desc)}</span>' if desc else ""))
             for child in (children if isinstance(children, list) else []):
                 _render_tree(child, level + 1)
         elif isinstance(data, list):

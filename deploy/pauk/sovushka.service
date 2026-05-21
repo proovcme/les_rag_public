@@ -10,6 +10,7 @@ ExecStart=/root/les_v2/.venv/bin/python3 sovushka_ng.py
 Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/root/les_v2/.env
 
 [Install]
 WantedBy=multi-user.target

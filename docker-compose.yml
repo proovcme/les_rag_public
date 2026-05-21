@@ -15,6 +15,7 @@ services:
     ports: ["8050:8050"]
     volumes:
       - ./backend:/app/backend
+      - ./proxy:/app/proxy
       - ./proxy_server.py:/app/proxy_server.py
       - ./frontend:/app/frontend
       - ./RAG_Content:/app/RAG_Content

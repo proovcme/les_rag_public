@@ -3,12 +3,18 @@
 """
 from __future__ import annotations
 
+from html import escape
 from nicegui import ui
 
 
 def _html(content: str) -> "ui.html":
     """Безопасный рендер HTML без скриптов."""
     return ui.html(content, sanitize=False)
+
+
+def esc(value) -> str:
+    """Escapes user/API/model text before it is embedded into raw UI HTML."""
+    return escape(str(value or ""), quote=True)
 
 
 def pct_bar_html(segments: list, height: int = 16) -> str:

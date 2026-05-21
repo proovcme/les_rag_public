@@ -7,6 +7,7 @@ import asyncio
 import httpx
 import uuid
 from datetime import datetime
+from nicegui import app
 from typing import Optional, Union
 
 # ─────────────────────────────────────────
@@ -33,6 +34,7 @@ state = {
     "output_template": None,
     "diag_results": [],
     "diag_running": False,
+    "last_api_error": None,
 }
 
 # ─────────────────────────────────────────
@@ -49,17 +51,45 @@ log_element = None
 # API ХЕЛПЕРЫ
 # ─────────────────────────────────────────
 
+def _auth_headers() -> dict:
+    try:
+        key = app.storage.user.get("key", "")
+    except Exception:
+        key = ""
+    return {"X-API-Key": key} if key else {}
+
+
+def _api_error(method: str, path: str, exc: Exception) -> None:
+    detail = str(exc)
+    status_code = None
+    if isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+        try:
+            body = exc.response.json()
+            detail = body.get("detail", detail) if isinstance(body, dict) else str(body)
+        except Exception:
+            detail = exc.response.text or detail
+    state["last_api_error"] = {
+        "method": method,
+        "path": path,
+        "status_code": status_code,
+        "detail": detail,
+    }
+    prefix = f"{status_code} " if status_code else ""
+    add_log(f"[ERR] {method} {path}: {prefix}{detail}")
+
 async def api_get(path: str, base: Optional[str] = None) -> Optional[Union[dict, list]]:
     from sovushka.config import PROXY_URL
     if base is None:
         base = PROXY_URL
     try:
         async with httpx.AsyncClient(timeout=180.0) as client:
-            r = await client.get(f"{base}{path}")
+            r = await client.get(f"{base}{path}", headers=_auth_headers())
             r.raise_for_status()
+            state["last_api_error"] = None
             return r.json()
     except Exception as e:
-        add_log(f"[ERR] GET {path}: {e}")
+        _api_error("GET", path, e)
         return None
 
 
@@ -69,11 +99,12 @@ async def api_post(path: str, data: Optional[dict] = None, base: Optional[str] =
         base = PROXY_URL
     try:
         async with httpx.AsyncClient(timeout=180.0) as client:
-            r = await client.post(f"{base}{path}", json=data or {})
+            r = await client.post(f"{base}{path}", json=data or {}, headers=_auth_headers())
             r.raise_for_status()
+            state["last_api_error"] = None
             return r.json()
     except Exception as e:
-        add_log(f"[ERR] POST {path}: {e}")
+        _api_error("POST", path, e)
         return None
 
 
@@ -83,12 +114,20 @@ async def api_delete(path: str, base: Optional[str] = None) -> Optional[dict]:
         base = PROXY_URL
     try:
         async with httpx.AsyncClient(timeout=180.0) as client:
-            r = await client.delete(f"{base}{path}")
+            r = await client.delete(f"{base}{path}", headers=_auth_headers())
             r.raise_for_status()
+            state["last_api_error"] = None
             return r.json()
     except Exception as e:
-        add_log(f"[ERR] DELETE {path}: {e}")
+        _api_error("DELETE", path, e)
         return None
+
+
+def last_api_error_text(default: str = "Ошибка API") -> str:
+    err = state.get("last_api_error") or {}
+    status = err.get("status_code")
+    detail = err.get("detail") or default
+    return f"{status}: {detail}" if status else detail
 
 
 # ─────────────────────────────────────────

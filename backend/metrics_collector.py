@@ -20,7 +20,7 @@ import psutil
 logger = logging.getLogger(__name__)
 
 DB_PATH      = "./data/les_metrics.db"
-MLX_HOST  = os.getenv("MLX_URL", "http://host.docker.internal:11434")
+MLX_HOST  = os.getenv("MLX_URL", "http://host.docker.internal:8080")
 # Сколько строк хранить — ~3 суток при интервале 3с
 MAX_METRICS_ROWS = 86400
 

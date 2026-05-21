@@ -5,10 +5,11 @@ import asyncio
 from fastapi import Request
 from nicegui import app, ui
 
-from sovushka.config import UI_PORT
+from sovushka.config import STORAGE_SECRET, UI_PORT
 from sovushka.state import bg_loop
 from sovushka.styles import CUSTOM_CSS, theme_vars_css
 from sovushka.auth import register_login_page, get_auth
+from sovushka.trust import client_ip_from_request, trusted_role_for_ip
 
 from sovushka.components.header import build_header
 from sovushka.components.logterm import build_log_terminal
@@ -34,24 +35,16 @@ register_login_page()
 async def main_page(request: Request):
     is_auth, role, holder = get_auth()
     
-    forwarded = request.headers.get("x-forwarded-for")
-    real_ip = request.headers.get("x-real-ip")
-    if forwarded:
-        client_ip = forwarded.split(",")[0].strip()
-    elif real_ip:
-        client_ip = real_ip.strip()
-    else:
-        client_ip = request.client.host if request and request.client else "127.0.0.1"
-        
-    is_local = any(client_ip.startswith(p) for p in ("127.", "10.", "192.168.", "172.", "::1"))
+    client_ip = client_ip_from_request(request)
+    trusted_role = trusted_role_for_ip(client_ip)
     
-    if not is_auth and not is_local:
+    if not is_auth and not trusted_role:
         ui.navigate.to("/login")
         return
 
-    if not is_auth and is_local:
-        role = "admin"
-        holder = "Local (Auto)"
+    if not is_auth and trusted_role:
+        role = trusted_role
+        holder = "Trusted Network"
         
     is_admin = (role == "admin")
 
@@ -142,7 +135,7 @@ if __name__ in {"__main__", "__mp_main__"}:
         title="Л.Е.С. v5.0",
         dark=True,
         show=False,
-        storage_secret="les_secret_883",
+        storage_secret=STORAGE_SECRET,
         reload=False,
         reconnect_timeout=10,   # NiceGUI 3.12: ждать 10с перед hard reload
     )

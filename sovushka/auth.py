@@ -12,6 +12,7 @@ from fastapi import Request
 from nicegui import app, ui
 
 from backend.auth import login, is_authenticated, get_role, get_holder, logout
+from sovushka.trust import client_ip_from_request, trusted_role_for_ip
 
 # ── Цитаты В.О.Л.К. ──────────────────────────────────────────────────────────
 
@@ -162,18 +163,10 @@ def register_login_page():
 
     @ui.page("/login")
     async def login_page(request: Request):
-        forwarded = request.headers.get("x-forwarded-for")
-        real_ip = request.headers.get("x-real-ip")
-        if forwarded:
-            client_ip = forwarded.split(",")[0].strip()
-        elif real_ip:
-            client_ip = real_ip.strip()
-        else:
-            client_ip = request.client.host if request and request.client else "127.0.0.1"
-            
-        is_local = any(client_ip.startswith(p) for p in ("127.", "10.", "192.168.", "172.", "::1"))
+        client_ip = client_ip_from_request(request)
+        trusted_role = trusted_role_for_ip(client_ip)
         
-        if is_authenticated() or is_local:
+        if is_authenticated() or trusted_role:
             ui.navigate.to("/")
             return
 

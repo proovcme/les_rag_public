@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 from nicegui import app, ui
 
-from sovushka.state import api_get, api_post, api_delete
+from sovushka.state import api_get, api_post, last_api_error_text
 
 
 def build_volk():
@@ -153,28 +153,37 @@ def build_volk():
                 inp_holder.set_value("")
                 await _volk_load()
             else:
-                ui.notify("Ошибка (ключ уже существует?)", type="negative")
+                ui.notify(last_api_error_text("Ошибка создания ключа"), type="negative")
 
         async def _volk_toggle(row):
             k   = row.get("key_value", "") if isinstance(row, dict) else str(row)
             cur = row.get("is_active", 1)  if isinstance(row, dict) else 1
-            await api_post("/api/auth/keys/toggle", {"key_value": k, "is_active": 0 if cur else 1})
-            await _volk_load()
+            d = await api_post("/api/auth/keys/toggle", {"key_value": k, "is_active": 0 if cur else 1})
+            if d:
+                await _volk_load()
+            else:
+                ui.notify(last_api_error_text("Ошибка переключения ключа"), type="negative")
 
         async def _volk_reset_device(row):
             k = row.get("key_value", "") if isinstance(row, dict) else str(row)
             h = row.get("holder_name", k) if isinstance(row, dict) else k
-            await api_post("/api/auth/keys/reset-device", {"key_value": k, "is_active": 1})
-            ui.notify(f"📱 Устройство отвязано: {h}", type="info")
-            await _volk_load()
+            d = await api_post("/api/auth/keys/reset-device", {"key_value": k, "is_active": 1})
+            if d:
+                ui.notify(f"📱 Устройство отвязано: {h}", type="info")
+                await _volk_load()
+            else:
+                ui.notify(last_api_error_text("Ошибка отвязки устройства"), type="negative")
 
         async def _volk_delete(row):
             k = row.get("key_value", "") if isinstance(row, dict) else str(row)
             if k == raw_key:
                 ui.notify("Нельзя удалить свой ключ", type="warning")
                 return
-            await api_delete(f"/api/auth/keys/{k}")
-            ui.notify(f"Удалён: {k[:16]}…", type="warning")
-            await _volk_load()
+            d = await api_post("/api/auth/keys/delete", {"key_value": k})
+            if d:
+                ui.notify(f"Удалён: {k[:16]}…", type="warning")
+                await _volk_load()
+            else:
+                ui.notify(last_api_error_text("Ошибка удаления ключа"), type="negative")
 
         ui.timer(0.5, lambda: asyncio.create_task(_volk_load()), once=True)
