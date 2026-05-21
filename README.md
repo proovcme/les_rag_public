@@ -222,6 +222,26 @@ curl -s http://localhost:8050/api/metrics | python3 -m json.tool
 docker logs -f les-proxy 2>&1 | grep -E "\[CHAT\]|\[PARSE\]|\[ERROR\]"
 ```
 
+### Runtime smoke после деплоя
+
+```bash
+# Локальный контур: localhost/ZeroTier считается trusted admin, no-key boundary пропускается
+uv run python tools/runtime_smoke.py \
+  --admin-key "$ADMIN_PASSWORD" \
+  --question "Ширина путей эвакуации"
+
+# VPS/public URL: без ключа admin endpoint обязан вернуть 401/403
+LES_PROXY_URL=https://les.ovc.me \
+LES_UI_URL=https://les.ovc.me \
+LES_ADMIN_KEY="$ADMIN_PASSWORD" \
+LES_USER_KEY="user-key" \
+uv run python tools/runtime_smoke.py \
+  --expect-external-auth \
+  --question "Ширина путей эвакуации"
+```
+
+Smoke проверяет health/status/metrics/diag, загрузку UI shell, auth boundary для admin/user ключей и опциональные живые RAG-вопросы.
+
 ---
 
 ## Структура репозитория (публичная версия)
@@ -251,6 +271,8 @@ les-rag-public/
 │   ├── converter.py          ← PDF/DOCX/XLSX → текст
 │   ├── metrics_collector.py
 │   └── interface.py
+├── tools/
+│   └── runtime_smoke.py      ← post-deploy smoke: auth/UI/runtime/RAG
 ├── sovushka/                 ← UI модули (рефакторинг)
 │   ├── config.py             ← PROXY_URL, MLX_URL, UI_PORT
 │   ├── state.py
@@ -288,7 +310,8 @@ MIT — используй, форкай, улучшай.
 - [x] Rate limiting (≤ 2 параллельных LLM-запроса), защита от prompt injection, path traversal
 - [x] `les.command` — единый скрипт управления (start/stop/restart/status)
 - [x] Proxy modularization — активные endpoints вынесены в routers/services, `legacy_app.py` оставлен shim
-- [ ] Stabilization: VPS/browser smoke
+- [x] Stabilization: runtime smoke для локального/VPS post-deploy контура
+- [ ] Stabilization: browser smoke UI admin/user сценариев
 - [ ] RAG quality hardening: hybrid retrieval (dense + exact/sparse), golden set, trace/audit
 - [ ] Folder Watcher — автосинк новых файлов
 - [ ] Parquet pipeline для смет и спецификаций
