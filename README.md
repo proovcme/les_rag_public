@@ -3,6 +3,8 @@
 **Локальная RAG-система для работы с нормативной документацией.**  
 Работает полностью офлайн на Apple Silicon (Mac Mini M4). Никакие данные не покидают локальную сеть.
 
+**Актуальный статус: 22.05.2026.** С.О.В.У.Ш.К.А. разделена на лёгкий чат и админку: `https://les.ovc.me/` открывает премиальный чат с выезжающей историей и панелью артефактов, `https://les.ovc.me/les` открывает админский контур. Основной LLM-контур работает через MLX Host, Ollama оставлен только как резерв.
+
 ---
 
 ## Что это
@@ -28,6 +30,8 @@
 │  Caddy :443  (Let's Encrypt, les.ovc.me)        │
 │       ├── /api/* → proxy_server :8050           │
 │       └── /*     → sovushka_ng  :8051           │
+│             ├── /     → AI ЧАТ + история        │
+│             └── /les  → админка Л.Е.С.          │
 │                                                 │
 │  ZeroTier mesh → Mac Mini                       │
 │       ├── 10.195.146.98:6333 → Qdrant           │
@@ -83,6 +87,7 @@
 | Auth | В.О.Л.К. — server-side API guards, API-ключи + SQLite, trusted local/ZeroTier contour, trusted-proxy boundary для forwarded headers |
 | Внешний доступ | Caddy + Let's Encrypt + ZeroTier mesh; SSH tunnel только резерв |
 | Форматы документов | PDF, DOCX, XLSX, CSV, EML, MSG, JSON, MD, TXT |
+| Артефакты | Таблицы/JSON/Mermaid/SVG в правой панели чата, XLSX/CSV ingestion и Parquet artifacts |
 
 ---
 
@@ -104,16 +109,16 @@ cd les-rag-public
 uv sync
 
 # Конфигурация
-cp .env.example .env
+cp env.example .env
 # Отредактируй .env — укажи модели и пароль
 
 # Запуск
 docker compose up -d          # Qdrant + les-proxy
 ./start_mlx.command           # MLX Host (LLM + Embeddings)
-uv run python3 sovushka_ng.py # UI
+uv run python sovushka_ng.py  # UI
 ```
 
-Открой `http://localhost:8051`
+Открой `http://localhost:8051` для чата или `http://localhost:8051/les` для админки.
 
 ### Добавление документов
 
@@ -163,6 +168,9 @@ Qwen3-14B (MLX, Metal)
 - Mermaid-диаграмму (flowchart, sequence, ER)
 - SVG-схему
 - Произвольную таблицу
+- Артефакт в правой панели чата с копированием JSON/SVG/Mermaid
+
+Расширенные параметры запроса вынесены из основной области в модальное окно **Расширенный запрос**: формат, датасет, стиль, реранкер и шаблон вывода. История чатов открывается выезжающей левой панелью.
 
 ---
 
@@ -186,6 +194,10 @@ Qwen3-14B (MLX, Metal)
 - Local/ZeroTier IP (`127.0.0.1`, `10.195.146.x`) — trusted admin автобайпас, ключ не нужен
 - Внешний доступ через `les.ovc.me` — ключ обязателен
 
+Публичные маршруты UI:
+- `https://les.ovc.me/` — устойчивый чатовый контур, не монтирует админские страницы.
+- `https://les.ovc.me/les` — админский контур, доступен только admin/trusted.
+
 ---
 
 ## Управление памятью
@@ -205,6 +217,28 @@ Docker-контейнеры имеют жёсткий `mem_limit` в `docker-com
 `les.command` запускает **MLX Watchdog** — фоновый процесс, который перезапускает MLX через 30 секунд при падении (OOM kill). Виден в `./les.command status`.
 
 `mlx_host.py` читает `.env` самостоятельно при старте — не зависит от оболочки запуска.
+
+### Performance flags
+
+```bash
+# Кэширует только VERIFIED ответы. Переиндексация датасета инвалидирует scope через chunk_count.
+SEMANTIC_CACHE_ENABLED=true
+SEMANTIC_CACHE_THRESHOLD=0.94
+
+# Экспериментальный PDF tables → Parquet слой. Markdown ingestion PDF остаётся основным fallback.
+PDF_TABLE_EXTRACTION_ENABLED=false
+PDF_TABLE_MAX_PAGES=30
+PDF_TABLE_MAX_TABLES=50
+DOC_ROUTER_SAMPLE_PAGES=3
+```
+
+### Новое в релизе 22.05.2026
+
+- Чат Совушки отделён от админки: меньше фоновых UI-зависимостей на основном рабочем экране.
+- `reconnect_timeout=180` и `chat_pending` помогают переживать долгие RAG-запросы и реконнекты.
+- Premium chat layout: нижний composer, левая drawer-история, правая панель артефактов.
+- `restart_sovushka.command` запускает UI через `.venv/bin/python3`, чтобы не сваливаться в системный Python 3.9.
+- Добавлены semantic cache, document router, Parquet/XLSX/CSV pipeline и тесты для них.
 
 ---
 
@@ -336,7 +370,23 @@ MIT — используй, форкай, улучшай.
 - [x] Stabilization: runtime smoke для локального/VPS post-deploy контура
 - [x] Stabilization: browser smoke UI admin/user сценариев
 - [ ] RAG quality hardening: hybrid retrieval (dense + exact/sparse), golden set, trace/audit
+- [x] Performance: semantic cache для VERIFIED ответов с dataset-scope invalidation
+- [ ] Performance backlog: streaming validation, embedder TTL/offload, MLX tuning
 - [ ] Folder Watcher — автосинк новых файлов
-- [ ] Parquet pipeline для смет и спецификаций
+- [x] Parquet pipeline для XLSX/XLS/CSV — row-level chunks + `.parquet` artifacts
+- [x] Experimental PDF tables → Parquet — PyMuPDF first, pdfplumber fallback, `needs_ocr` marker
+- [x] Document Router — быстрый probe/classify/complexity перед выбором ingestion pipeline
+- [ ] XLS/CSV export — выдача табличных результатов как готовых файлов
+- [ ] Field Intake — внешние формы загрузки в карантинный `FIELD_Index`
 - [ ] Е.Ж.И.К. — IMAP коннектор для почты
 - [ ] VLM pipeline — анализ PDF-чертежей
+
+### Backlog ускорения и оптимизации
+
+- **Семантическое кэширование:** базовый слой внедрён для `VERIFIED` ответов. Ключ учитывает semantic similarity и snapshot датасетов (`chunk_count`), чтобы переиндексация инвалидировала старые ответы.
+- **Динамическая выгрузка эмбеддера:** держать `bge-m3` в памяти только во время retrieval/warm path, затем выгружать по агрессивному TTL, освобождая RAM/MPS для основной LLM.
+- **Параллельная валидация:** перейти от post-factum проверки полного ответа к асинхронной проверке чанков по мере streaming generation, чтобы снизить time-to-first-token в UI.
+- **Аппаратный тюнинг MLX:** проверить Flash Attention на длинном контексте и смешанное квантование 14B модели: критичные слои в 8 bit, остальные в 4 bit.
+- **Табличный контур:** базовый Parquet ingestion внедрён для XLSX/XLS/CSV. PDF tables слой добавлен как экспериментальный `PDF_TABLE_EXTRACTION_ENABLED`: PyMuPDF `find_tables()` first, pdfplumber fallback, сканы помечаются `needs_ocr`.
+- **Полевой загрузчик:** внешняя форма через П.А.У.К. для загрузки актов, фотоотчётов, предписаний и комментариев в изолированный карантинный датасет `FIELD_Index`, без смешивания с нормативной базой.
+- **Выдача XLS/CSV:** экспорт табличных ответов и AG Grid результатов в цифровой артефакт для смет, ведомостей и рабочей документации.

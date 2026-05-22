@@ -11,13 +11,23 @@ from sovushka.components.charts import _html
 from sovushka.state import last_api_error_text
 
 
-def build_header(is_admin: bool, auth_role: str, auth_holder: str):
+def build_header(
+    is_admin: bool,
+    auth_role: str,
+    auth_holder: str,
+    *,
+    admin_tabs: bool | None = None,
+    include_chat: bool = True,
+    admin_link: bool = False,
+    chat_link: bool = False,
+):
     """
     Строит единую sticky-полосу: [лого] [табы] [контролы].
     Возвращает (tabs, tab_objects_dict) — используется в sovushka_ng.py для tab_panels.
     """
 
     tab_refs = {}
+    show_admin_tabs = is_admin if admin_tabs is None else admin_tabs
 
     with ui.element("header").classes("w-full").style(
         "position:sticky;top:0;z-index:999;"
@@ -36,13 +46,14 @@ def build_header(is_admin: bool, auth_role: str, auth_holder: str):
             "font-family:var(--font);font-size:.65rem;font-weight:700;"
             "color:var(--dim);height:44px;"
         ) as tabs:
-            if is_admin:
+            if show_admin_tabs:
                 tab_refs["overview"] = ui.tab("ОБЗОР",          icon="o_dashboard")
                 tab_refs["samovar"]  = ui.tab("С.А.М.О.В.А.Р.", icon="o_inventory_2")
                 tab_refs["prorab"]   = ui.tab("П.Р.О.Р.А.Б.",   icon="o_monitor")
-            tab_refs["chat"]     = ui.tab("AI ЧАТ",         icon="o_forum")
-            tab_refs["history"]  = ui.tab("ИСТОРИЯ",        icon="o_history")
-            if is_admin:
+            if include_chat:
+                tab_refs["chat"]     = ui.tab("AI ЧАТ",         icon="o_forum")
+                tab_refs["history"]  = ui.tab("ИСТОРИЯ",        icon="o_history")
+            if show_admin_tabs:
                 tab_refs["mermaid"]  = ui.tab("ГРАФ",           icon="o_account_tree")
                 tab_refs["diag"]     = ui.tab("🔬 ДИАГН",       icon="o_medical_services")
                 tab_refs["volk"]     = ui.tab("В.О.Л.К.",       icon="o_vpn_key")
@@ -55,10 +66,10 @@ def build_header(is_admin: bool, auth_role: str, auth_holder: str):
             ).props("flat dense").style("color:var(--dim);font-size:.85rem;")
 
             # Тема
-            _DARK_VARS  = ["#08090b","#12151a","#1a1e25","#f0f4f8",
-                           "#c4cfd9","#3d4f63","#60a5fa","#34d399","#f87171","#fbbf24","#a78bfa"]
-            _LIGHT_VARS = ["#f6f8fa","#ffffff","#eaeef2","#0d1117",
-                           "#2d3a46","#b0bec8","#0550ae","#116329","#a0111f","#7d4e00","#6639ba"]
+            _DARK_VARS  = ["#050608","#10141b","#18212c","#f8fbff",
+                           "#d2deea","#55708a","#38bdf8","#22e06f","#ff6b6b","#ffd166","#c084fc"]
+            _LIGHT_VARS = ["#f7fafc","#ffffff","#e6edf5","#0d1117",
+                           "#263544","#8aa2b8","#005fcc","#007a3d","#b4232a","#8a5400","#7c3aed"]
             _CSS_KEYS   = ["--bg","--bg-panel","--bg-mod","--text","--dim",
                            "--border","--accent","--ok","--err","--warn","--pauk"]
 
@@ -87,6 +98,16 @@ def build_header(is_admin: bool, auth_role: str, auth_holder: str):
                 ), once=True)
 
             if is_admin:
+                if chat_link:
+                    ui.button("ЧАТ", on_click=lambda: ui.navigate.to("/")).props(
+                        "flat no-caps dense"
+                    ).style("color:var(--accent);font-size:.62rem;font-family:var(--font);")
+
+                if admin_link:
+                    ui.button("АДМИНКА", on_click=lambda: ui.navigate.to("/les")).props(
+                        "flat no-caps dense"
+                    ).style("color:var(--accent);font-size:.62rem;font-family:var(--font);")
+
                 # Настройки
                 with ui.dialog() as settings_dialog, ui.card().style(
                     "background:var(--bg-panel);border:1px solid var(--border);min-width:480px;padding:24px;"

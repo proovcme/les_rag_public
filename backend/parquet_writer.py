@@ -27,7 +27,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -88,6 +90,10 @@ STANDARD_SCHEMA = {
     # Примечания
     "note":          "",
     "raw_row":       "",   # Оригинальная строка как JSON (резерв)
+    "source_page":   None,
+    "table_index":   None,
+    "needs_ocr":     False,
+    "extractor":     "",
 }
 
 # ─────────────────────────────────────────
@@ -152,6 +158,13 @@ position, designation, weight_unit, weight_total, note
 def _detect_doc_type_simple(headers: list, sheet_name: str = "") -> str:
     """Быстрый детект типа по ключевым словам без LLM."""
     text = " ".join(headers + [sheet_name]).lower()
+    if any(token in text for token in ("цена", "сумма", "стоимость", "расценка")):
+        return "SMETA"
+    if (
+        any(token in text for token in ("позиция", "поз.", "поз "))
+        and any(token in text for token in ("кол-во", "количество", "ед.изм", "единица"))
+    ):
+        return "SPEC"
     scores = {dt: 0 for dt in DOC_TYPES}
     for dt, hints in DOC_TYPE_HINTS.items():
         for hint in hints:
@@ -159,6 +172,43 @@ def _detect_doc_type_simple(headers: list, sheet_name: str = "") -> str:
                 scores[dt] += 1
     best = max(scores, key=scores.get)
     return best if scores[best] > 0 else "TABLE"
+
+
+def _map_columns_simple(headers: list) -> dict:
+    """Детерминированный mapping типовых русских табличных заголовков."""
+    mapping = {}
+    patterns = [
+        ("pos", ("№", "номер", "поз", "позиция", "п/п")),
+        ("section", ("раздел", "глава", "этап")),
+        ("subsection", ("подраздел", "подэтап")),
+        ("amount", ("сумма", "итого", "всего")),
+        ("amount_mat", ("материал", "материалы")),
+        ("amount_work", ("работа", "работы", "зп", "оплата труда")),
+        ("work_done", ("выполнено", "отчет", "отчёт")),
+        ("work_since_start", ("с начала", "накопительно")),
+        ("price", ("цена", "стоимость ед", "единичная")),
+        ("qty_per_unit", ("расход", "на единицу")),
+        ("qty", ("кол-во", "количество", "объем", "объём", "qty")),
+        ("unit", ("ед.изм", "единица", "изм.", "ед.")),
+        ("name", ("наименование", "работ", "оборудован", "материал", "ресурс")),
+        ("code", ("шифр", "код", "расценка", "артикул")),
+        ("mark", ("марка", "тип", "модель")),
+        ("norms_refs", ("норматив", "гост", "сп ", "снип", "ту")),
+        ("designation", ("обозначение", "документ")),
+        ("weight_unit", ("масса ед", "масса 1")),
+        ("weight_total", ("масса общ", "общая масса")),
+        ("note", ("примеч", "комментар", "основание")),
+    ]
+    for header in headers:
+        h = str(header).strip()
+        lower = h.lower()
+        field = "skip"
+        for candidate, hints in patterns:
+            if any(hint in lower for hint in hints):
+                field = candidate
+                break
+        mapping[h] = field
+    return mapping
 
 
 async def _llm_map_columns(
@@ -197,7 +247,7 @@ async def _llm_map_columns(
 
     # Fallback: простой детект + пустой маппинг
     doc_type = _detect_doc_type_simple(headers)
-    return {"doc_type": doc_type, "mapping": {h: "skip" for h in headers}}
+    return {"doc_type": doc_type, "mapping": _map_columns_simple(headers)}
 
 
 # ─────────────────────────────────────────
@@ -305,6 +355,198 @@ def read_csv(file_path: str) -> list:
     return []
 
 
+def _unique_headers(headers: list) -> list:
+    result = []
+    seen = {}
+    for i, header in enumerate(headers, 1):
+        name = str(header or "").strip()
+        name = _WS_RE.sub(" ", name) if name else f"col_{i}"
+        if name in seen:
+            seen[name] += 1
+            name = f"{name}_{seen[name]}"
+        else:
+            seen[name] = 1
+        result.append(name)
+    return result
+
+
+_WS_RE = re.compile(r"\s+")
+
+
+def _clean_pdf_table(raw_table: list) -> tuple[list, list[dict]]:
+    """Очищает таблицу из PDF: склейка шапки, пустые колонки, raw rows."""
+    rows = [
+        ["" if cell is None else _WS_RE.sub(" ", str(cell).strip()) for cell in row]
+        for row in raw_table
+        if row and any(str(cell or "").strip() for cell in row)
+    ]
+    if len(rows) < 2:
+        return [], []
+
+    width = max(len(row) for row in rows)
+    rows = [row + [""] * (width - len(row)) for row in rows]
+    keep_cols = [
+        idx for idx in range(width)
+        if any(row[idx] for row in rows)
+    ]
+    if not keep_cols:
+        return [], []
+    rows = [[row[idx] for idx in keep_cols] for row in rows]
+
+    header_depth = 1
+    for idx, row in enumerate(rows[:3]):
+        text_cells = sum(1 for cell in row if cell and not _safe_float(cell))
+        numeric_cells = sum(1 for cell in row if _safe_float(cell) is not None)
+        if idx > 0 and text_cells >= numeric_cells:
+            header_depth = idx + 1
+        elif idx > 0:
+            break
+
+    header_rows = rows[:header_depth]
+    headers = []
+    for col_idx in range(len(rows[0])):
+        parts = [row[col_idx] for row in header_rows if row[col_idx]]
+        headers.append(" ".join(parts) if parts else f"col_{col_idx + 1}")
+    headers = _unique_headers(headers)
+
+    data_rows = []
+    for row in rows[header_depth:]:
+        if not any(row):
+            continue
+        data_rows.append({header: row[idx] for idx, header in enumerate(headers)})
+    return headers, data_rows
+
+
+def _table_is_usable(headers: list, rows: list[dict]) -> bool:
+    if not headers or not rows:
+        return False
+    useful_headers = sum(1 for h in headers if not str(h).startswith("col_"))
+    non_empty_cells = sum(
+        1
+        for row in rows[:10]
+        for value in row.values()
+        if value is not None and str(value).strip()
+    )
+    return len(headers) >= 2 and non_empty_cells >= max(2, len(rows[:10])) and useful_headers >= 1
+
+
+def _pdf_max_pages() -> int:
+    try:
+        return max(1, int(os.getenv("PDF_TABLE_MAX_PAGES", "30")))
+    except ValueError:
+        return 30
+
+
+def _pdf_max_tables() -> int:
+    try:
+        return max(1, int(os.getenv("PDF_TABLE_MAX_TABLES", "50")))
+    except ValueError:
+        return 50
+
+
+def _extract_tables_pymupdf(file_path: str, max_pages: int, max_tables: int) -> tuple[list, set[int]]:
+    try:
+        import fitz
+    except ImportError:
+        return [], set()
+
+    sheets = []
+    scanned_pages = set()
+    doc = fitz.open(file_path)
+    try:
+        for page_no in range(min(max_pages, len(doc))):
+            page_idx = page_no + 1
+            page = doc[page_no]
+            if not page.get_text("text").strip():
+                scanned_pages.add(page_idx)
+                continue
+            finder = getattr(page, "find_tables", None)
+            if not finder:
+                continue
+            try:
+                tables = finder()
+            except Exception as e:
+                logger.debug("[PDF_TABLE] PyMuPDF page %s failed: %s", page_idx, e)
+                continue
+            for table_idx, table in enumerate(getattr(tables, "tables", []) or [], 1):
+                try:
+                    headers, rows = _clean_pdf_table(table.extract())
+                except Exception as e:
+                    logger.debug("[PDF_TABLE] PyMuPDF table cleanup failed: %s", e)
+                    continue
+                if not _table_is_usable(headers, rows):
+                    continue
+                sheets.append({
+                    "sheet_name": f"page_{page_idx}_table_{table_idx}",
+                    "headers": headers,
+                    "rows": rows,
+                    "header_row": 1,
+                    "source_page": page_idx,
+                    "table_index": table_idx,
+                    "extractor": "pymupdf",
+                })
+                if len(sheets) >= max_tables:
+                    return sheets, scanned_pages
+    finally:
+        doc.close()
+    return sheets, scanned_pages
+
+
+def _extract_tables_pdfplumber(file_path: str, max_pages: int, max_tables: int) -> list:
+    try:
+        import pdfplumber
+    except ImportError:
+        return []
+
+    sheets = []
+    with pdfplumber.open(file_path) as pdf:
+        for page_idx, page in enumerate(pdf.pages[:max_pages], 1):
+            try:
+                raw_tables = page.extract_tables() or []
+            except Exception as e:
+                logger.debug("[PDF_TABLE] pdfplumber page %s failed: %s", page_idx, e)
+                continue
+            for table_idx, raw_table in enumerate(raw_tables, 1):
+                headers, rows = _clean_pdf_table(raw_table)
+                if not _table_is_usable(headers, rows):
+                    continue
+                sheets.append({
+                    "sheet_name": f"page_{page_idx}_table_{table_idx}",
+                    "headers": headers,
+                    "rows": rows,
+                    "header_row": 1,
+                    "source_page": page_idx,
+                    "table_index": table_idx,
+                    "extractor": "pdfplumber",
+                })
+                if len(sheets) >= max_tables:
+                    return sheets
+    return sheets
+
+
+def read_pdf_tables(file_path: str) -> dict:
+    """Извлекает таблицы из PDF: PyMuPDF first, pdfplumber fallback."""
+    max_pages = _pdf_max_pages()
+    max_tables = _pdf_max_tables()
+    t0 = time.time()
+    sheets, scanned_pages = _extract_tables_pymupdf(file_path, max_pages, max_tables)
+    extractor = "pymupdf"
+
+    if not sheets:
+        fallback = _extract_tables_pdfplumber(file_path, max_pages, max_tables)
+        if fallback:
+            sheets = fallback
+            extractor = "pdfplumber"
+
+    return {
+        "sheets": sheets,
+        "needs_ocr": bool(scanned_pages) and not sheets,
+        "scanned_pages": sorted(scanned_pages),
+        "extractor": extractor if sheets else "",
+        "elapsed_sec": round(time.time() - t0, 3),
+    }
+
+
 # ─────────────────────────────────────────
 # НОРМАЛИЗАТОР СТРОК
 # ─────────────────────────────────────────
@@ -326,6 +568,9 @@ def normalize_row(raw_row: dict, mapping: dict, doc_type: str, doc_title: str, s
     norm["doc_title"] = doc_title
     norm["source_file"] = source_file
     norm["raw_row"] = json.dumps(raw_row, ensure_ascii=False, default=str)
+    for extra_key in ("source_page", "table_index", "needs_ocr", "extractor"):
+        if extra_key in raw_row:
+            norm[extra_key] = raw_row[extra_key]
 
     for orig_col, std_field in mapping.items():
         if std_field == "skip" or std_field not in norm:
@@ -362,6 +607,9 @@ def row_to_chunk_text(row: dict) -> str:
     if row.get("section"):
         parts.append(f"Раздел: {row['section']}")
 
+    if row.get("pos") or row.get("position"):
+        parts.append(f"Позиция: {row.get('pos') or row.get('position')}")
+
     if row.get("name") or row.get("work_name"):
         parts.append(f"Наименование: {row.get('name') or row.get('work_name')}")
 
@@ -392,6 +640,21 @@ def row_to_chunk_text(row: dict) -> str:
     if row.get("note"):
         parts.append(f"Примечание: {row['note']}")
 
+    if len(parts) <= 1 and row.get("raw_row"):
+        try:
+            raw = json.loads(row["raw_row"])
+        except Exception:
+            raw = {}
+        raw_parts = []
+        for key, value in raw.items():
+            if value is None or str(value).strip() == "":
+                continue
+            raw_parts.append(f"{key}: {str(value).strip()}")
+            if len("; ".join(raw_parts)) > 1200:
+                break
+        if raw_parts:
+            parts.append("Строка: " + "; ".join(raw_parts))
+
     return "\n".join(parts) if parts else json.dumps(row, ensure_ascii=False)
 
 
@@ -412,6 +675,10 @@ def rows_to_qdrant_chunks(rows: list, dataset_id: str = "") -> list:
             "doc_type": row.get("doc_type", ""),
             "doc_title": row.get("doc_title", ""),
             "source_file": row.get("source_file", ""),
+            "source_page": row.get("source_page"),
+            "table_index": row.get("table_index"),
+            "needs_ocr": row.get("needs_ocr", False),
+            "extractor": row.get("extractor", ""),
             "section": row.get("section", ""),
             "name": row.get("name", "") or row.get("work_name", ""),
             "code": row.get("code", "") or row.get("designation", ""),
@@ -511,16 +778,31 @@ class TableNormalizer:
         fpath = Path(file_path)
         ext = fpath.suffix.lower()
 
+        pdf_meta = {}
         if ext in (".xlsx", ".xls"):
             sheets = read_xlsx_sheets(str(fpath))
         elif ext == ".csv":
             sheets = read_csv(str(fpath))
+        elif ext == ".pdf":
+            pdf_meta = read_pdf_tables(str(fpath))
+            sheets = pdf_meta["sheets"]
         else:
             raise ValueError(f"Неподдерживаемый формат: {ext}")
 
         if not sheets:
-            logger.warning(f"[PARQUET] Нет данных в {fpath.name}")
-            return {"chunks": [], "parquet_path": "", "rows": 0, "doc_type": "TABLE", "sheets": 0}
+            if pdf_meta.get("needs_ocr"):
+                logger.warning(f"[PARQUET] {fpath.name}: скан без текстового слоя, нужна OCR/VLM очередь")
+            else:
+                logger.warning(f"[PARQUET] Нет данных в {fpath.name}")
+            return {
+                "chunks": [],
+                "parquet_path": "",
+                "rows": 0,
+                "doc_type": "TABLE",
+                "sheets": 0,
+                "needs_ocr": bool(pdf_meta.get("needs_ocr")),
+                "scanned_pages": pdf_meta.get("scanned_pages", []),
+            }
 
         all_normalized = []
         all_chunks = []
@@ -542,7 +824,7 @@ class TableNormalizer:
                 doc_type = _detect_doc_type_simple(headers, sheet_name)
                 mapping_result = {
                     "doc_type": doc_type,
-                    "mapping": {h: "skip" for h in headers},
+                    "mapping": _map_columns_simple(headers),
                 }
 
             doc_type = mapping_result.get("doc_type", "TABLE")
@@ -553,6 +835,10 @@ class TableNormalizer:
 
             # Нормализация строк
             for raw_row in rows:
+                raw_row = dict(raw_row)
+                for extra_key in ("source_page", "table_index", "extractor"):
+                    if extra_key in sheet:
+                        raw_row[extra_key] = sheet[extra_key]
                 norm = normalize_row(
                     raw_row=raw_row,
                     mapping=mapping,
@@ -578,6 +864,8 @@ class TableNormalizer:
             "rows": len(all_normalized),
             "doc_type": doc_type_final,
             "sheets": len(sheets),
+            "needs_ocr": bool(pdf_meta.get("needs_ocr")),
+            "scanned_pages": pdf_meta.get("scanned_pages", []),
         }
 
 

@@ -1,7 +1,7 @@
-# Session Summary — LES v3.1 Stabilization
+# Session Summary — LES v3.3 Premium Chat + Docs/Push
 
-Workspace: `/Users/ovc/Projects/LES_v2`  
-Date: `2026-05-21`  
+Workspace: `/Users/ovc/Projects/LES_v2`
+Date: `2026-05-22`
 Mode: implementation allowed.
 
 ## User correction to preserve
@@ -25,6 +25,38 @@ Mode: implementation allowed.
   - `deploy/pauk/.env.example`: uses `MLX_URL` for Mac Mini MLX host and includes trusted/session settings;
   - `deploy/pauk/sovushka.service`: now reads `EnvironmentFile=/root/les_v2/.env`.
 
+## 22.05.2026 updates
+
+- Split Sovushka UI:
+  - `/` is the chat shell only.
+  - `/les` and `/les/` are admin shell routes.
+- Reworked chat UX:
+  - bottom composer;
+  - `Отправить` and `Расширенный запрос`;
+  - advanced form moved into dialog;
+  - chat sessions drawer on the left;
+  - Claude-like artifacts panel on the right.
+- Stabilized long chat requests:
+  - `reconnect_timeout=180`;
+  - `chat_pending` visible after reconnect.
+- Fixed `restart_sovushka.command`:
+  - explicit `.venv/bin/python3`;
+  - real listener PID written after startup.
+- Added/kept current data pipeline updates:
+  - semantic cache;
+  - document router;
+  - Parquet/XLSX/CSV artifacts;
+  - qdrant visualizer workbench.
+- Documentation refreshed:
+  - `README.md`;
+  - `README_v2.0.md`;
+  - `ROADMAP_LES_v2.0.md`;
+  - `INFRASTRUCTURE_v2.0.md`;
+  - `PROXY_ARCHITECTURE.md`;
+  - `DICTIONARY_LES_v2.0.md`;
+  - `LES_MASTER_DOC_v2_1.md`;
+  - dev mirror docs.
+
 ## Documentation updated
 
 - `LES_MASTER_DOC_v2_1.md`
@@ -44,6 +76,9 @@ Mode: implementation allowed.
 - `.venv/bin/python -c 'import sovushka_ng; print("routes", len(sovushka_ng.app.routes))'` → `routes 10`
 - `PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m compileall -q proxy sovushka backend proxy_server.py sovushka_ng.py` → OK
 - `docker compose config --quiet` → OK
+- `uv run pytest` → `58 passed`
+- `git diff --check` → OK
+- Browser smoke on `http://127.0.0.1:8051/` and `/les` → OK
 
 ## Current important files changed this session
 

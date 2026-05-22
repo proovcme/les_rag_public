@@ -32,6 +32,7 @@ dependencies = [
     "mammoth>=1.8.0",
     "openpyxl>=3.1.0",
     "pandas>=2.0.0",
+    "pyarrow>=16.0.0",
     "extract-msg>=0.48.0",
     "pdfplumber>=0.11.0",
 

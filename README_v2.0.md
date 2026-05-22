@@ -1,19 +1,23 @@
 # 🦉 Л.Е.С. — Локальная Единая Система v2.0 Core
 
+> **Актуализация 22.05.2026:** документ сохранён как historical v2.0 snapshot, но ниже отражает текущий runtime: MLX Host вместо Ollama в основном контуре, split UI (`/` чат, `/les` админка), premium chat/artifacts, semantic cache, document router и Parquet artifacts.
+
 ## Описание
 Л.Е.С. v2.0 — суверенный инженерный RAG-стек для работы с нормативной документацией (ГОСТ/СП), проектной перепиской, каталогами и BIM-данными. Построен на принципах **Fully Local / Zero-Cloud / Lightweight**.  
 В v2.0 полностью исключены тяжёлые зависимости (RAGFlow, Elasticsearch, MySQL, MinIO, Redis, Celery). Ядро переписано на **FastAPI + LlamaIndex + Qdrant**. Конфиденциальные данные никогда не покидают локальный контур.
 
-## 🔑 Ключевые изменения v2.0
+## 🔑 Ключевые изменения v2.0 → текущий runtime
 - **Ядро:** FastAPI Proxy + Qdrant (векторный поиск) + LlamaIndex (оркестрация).
-- **Модели:** `qwen3:14b` (чат/RAG), `qwen2.5-coder:14b` (код), `bge-m3:latest` (эмбеддинги). Ollama-оркестрация с лимитами RAM.
+- **Модели:** основной контур переведён на MLX Host (`mlx-community/Qwen3-14B-4bit`, `Qwen3-4B-4bit`, `bge-m3`); Ollama остаётся резервом.
 - **Конвертация:** Lightweight ConverterRouter (`pymupdf4llm`, `mammoth`, `extract-msg`, `pandas`). Без Docling/нейросетей на этапе парсинга.
 - **Чанкинг:** Structure-Aware (MarkdownNodeParser + SentenceSplitter). Нарезка по заголовкам ГОСТ/СП, а не по токенам.
 - **Метаданные:** SQLite (`les_meta.db`) вместо MySQL. UUID-датасеты в `storage/datasets/`.
 - **Т.О.С.К.А. (CRAG):** Нативный Python-пайплайн в прокси (Pre-Check → Retrieval → Generation → Post-Check).
-- **Мониторинг:** SSE-стрим + Chart.js в С.О.В.У.Ш.К.Е. Без Grafana/Metabase.
+- **UI:** С.О.В.У.Ш.К.А. на NiceGUI: `/` — премиальный AI-чат с drawer-историей и правой панелью артефактов, `/les` — админка.
 - **Управление датасетами:** UI-вкладка с маппингом `Источник → Индекс`, кнопка `🔄 Загрузить в индекс`, автообновление статусов.
-- **Ресурсы:** 2 контейнера (Qdrant + Proxy). RAM ~14–16 ГБ. Запуск на Mac M4 / 24 GB без свопа.
+- **Ресурсы:** 2 контейнера (Qdrant + Proxy) + MLX host process. Запуск на Mac M4 / 24 GB без облака.
+- **Документы и таблицы:** Document Router выбирает маршрут ingestion; XLSX/CSV пишутся row-level chunks и `.parquet` artifacts.
+- **Ускорение:** semantic cache кэширует только `VERIFIED` ответы с invalidation по dataset scope.
 
 ## 🗺️ Карта архитектуры v2.0
 | Модуль | Расшифровка | Роль | Реализация v2.0 |
@@ -22,20 +26,21 @@
 | С.А.М.О.В.А.Р. | Система Автономная Машинной Обработки Внутренних Архивов РАГ | Ядро RAG и поиска | Qdrant + LlamaIndex + `bge-m3` |
 | Т.О.С.К.А. | Терминал Оценки, Самопроверки и Контроля Архитектуры | CRAG-валидация, фильтр галлюцинаций | Native Python pipeline в прокси |
 | В.О.Л.К. | Внутренний Охранный Локальный Контур | RBAC, аутентификация | JWT-токены, SQLite, middleware (в разработке) |
-| С.О.В.У.Ш.К.А. | Система Обработки и Выдачи... | Интеллектуальный UI | `sovushka_ng.py` (NiceGUI v5.0 модульный) |
+| С.О.В.У.Ш.К.А. | Система Обработки и Выдачи... | Интеллектуальный UI | `sovushka_ng.py` (`/` чат, `/les` админка) |
 | С.У.Х.А.Р.И.К. | Система Управления Холодными Архивами... | Бэкапы и архивация | Снапшоты Qdrant + `storage/` (в разработке) |
 | П.Р.О.Р.А.Б. | Программа Регулярной Оценки Работы Автономной Базы | Метрики и диагностика | `/api/metrics`, SSE-логи, `psutil` |
 
 ## 🚀 Инструкция по запуску
 ### Предварительные требования
 - Docker Desktop / Docker Engine + Compose
-- Ollama на хосте (порт 11434) с моделями: `qwen3:14b`, `qwen2.5-coder:14b`, `bge-m3:latest`
+- MLX Host на хосте (порт 8080) с Qwen3/BGE-M3; Ollama опционален как резерв
 - Mac M4 / 24 GB RAM (или аналог)
 
 ### Быстрый старт
 ```bash
 # 1. Запуск стека
 docker compose up -d
+./start_mlx.command
 
 # 2. Проверка статуса
 curl http://localhost:8050/api/health
@@ -47,7 +52,8 @@ docker compose build proxy && docker compose up -d proxy
 ### Доступ к сервисам
 | Сервис | URL | Описание |
 |---|---|---|
-| С.О.В.У.Ш.К.А. (Dashboard) | `http://localhost:8051` | Главный UI с чатом, метриками, логами, управлением датасетами |
+| С.О.В.У.Ш.К.А. Chat | `http://localhost:8051/` | Основной чат, история, артефакты |
+| С.О.В.У.Ш.К.А. Admin | `http://localhost:8051/les` | Метрики, датасеты, диагностика, В.О.Л.К. |
 | Qdrant Dashboard | `http://localhost:6333/dashboard` | Управление коллекциями и точками |
 | Ollama API | `http://localhost:11434` | Локальный LLM-сервер (на хосте) |
 
@@ -57,8 +63,8 @@ docker compose build proxy && docker compose up -d proxy
 | 8050 | proxy (Л.Е.С.) | Единая точка входа, API Gateway |
 | 8051 | sovushka_ng.py | С.О.В.У.Ш.К.А. UI (NiceGUI) |
 | 6333 | qdrant | Векторная база данных (UI + API) |
-| 11434 | ollama (хост) | LLM и Embedding сервер |
 | 8080 | mlx_host.py | MLX LLM + Embeddings (на Metal) |
+| 11434 | ollama (хост) | Резервный LLM контур |
 
 ## 📁 Структура проекта v2.0
 ```
@@ -131,7 +137,7 @@ LES_v2/
 - Folder Watcher для автоматической синхронизации новых файлов.
 - Deep BIM Linking, сравнение версий нормативов, multi-project support.
 
-📅 **Документация актуализирована:** 17.05.2026 — релиз v5.0 UI (NiceGUI Modular)
+📅 **Документация актуализирована:** 22.05.2026 — split UI, premium chat/artifacts, semantic cache, document router, Parquet pipeline
 
 
 ## 📊 Фактический статус системы (Аудит 17.05.2026)
@@ -150,4 +156,3 @@ LES_v2/
 - **Запуск:** `cd ~/Projects/LES_v2 && /Users/ovc/Library/Python/3.9/bin/aider --model ollama_chat/qwen2.5-coder:14b --openai-api-base http://localhost:11434/v1 --yes-always <файлы> --message "задача"`
 - **Правила:** Указывать ≤3–4 файла. Для кода — EN промпт, для доков — RU. Лимит контекста ~32k токенов. После правок `.py` → `docker compose restart proxy`.
 - **Откаты:** `git status` перед стартом. Откат: `git checkout <commit> -- <file>`.
-

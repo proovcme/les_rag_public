@@ -22,6 +22,13 @@ from proxy.services.saferag_service import (
     final_answer_for_status,
     source_names,
 )
+from proxy.services.semantic_cache import (
+    SemanticCache,
+    dataset_scope_key,
+    embed_question,
+    semantic_cache_enabled,
+    semantic_cache_threshold,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +88,58 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
 
     rag_backend = state.backend
     _dataset_ids = await resolve_dataset_ids(rag_backend, req.dataset_ids, req.dataset_filter, logger)
+    cache = SemanticCache()
+    cache_embedding = None
+    cache_scope = ""
+
+    if semantic_cache_enabled():
+        try:
+            datasets = await rag_backend.list_datasets()
+            cache_scope = dataset_scope_key(datasets, _dataset_ids)
+            cache_embedding = await embed_question(rag_backend, req.question)
+            if cache_embedding:
+                cache_hit = cache.lookup(
+                    req.question,
+                    cache_scope,
+                    cache_embedding,
+                    semantic_cache_threshold(),
+                )
+                if cache_hit:
+                    state.crag_stats["verified"] += 1
+                    state.chat_metrics["latency_search"].append(0.0)
+                    state.chat_metrics["latency_gen"].append(0.0)
+                    state.chat_metrics["tokens"].append(0)
+                    state.chat_metrics["crag_pass"] += 1
+                    for key in ("latency_search", "latency_gen", "tokens"):
+                        state.chat_metrics[key] = state.chat_metrics[key][-100:]
+                    try:
+                        with sqlite3.connect("./data/les_meta.db") as conn:
+                            conn.execute(
+                                "INSERT INTO chat_history "
+                                "(question, answer, sources, crag_status, latency_sec, tokens, session_id) "
+                                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                (
+                                    req.question,
+                                    cache_hit.answer,
+                                    ",".join(cache_hit.sources),
+                                    "VERIFIED",
+                                    0.0,
+                                    0,
+                                    req.session_id,
+                                ),
+                            )
+                    except Exception as db_err:
+                        logger.warning("[CHAT] History save error: %s", db_err)
+                    logger.info("[SEM_CACHE] hit similarity=%.3f", cache_hit.similarity)
+                    return {
+                        "answer": cache_hit.answer,
+                        "crag_status": "VERIFIED",
+                        "sources": cache_hit.sources,
+                        "cache": "semantic",
+                        "similarity": round(cache_hit.similarity, 3),
+                    }
+        except Exception as cache_err:
+            logger.warning("[SEM_CACHE] lookup skipped: %s", cache_err)
 
     t_search_start = time.time()
     try:
@@ -255,6 +314,19 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                         )
                 except Exception as db_err:
                     logger.warning("[CHAT] History save error: %s", db_err)
+
+                if cache_embedding and cache_scope and crag_status == "VERIFIED":
+                    try:
+                        cache.store(
+                            req.question,
+                            cache_scope,
+                            cache_embedding,
+                            answer,
+                            sources_list,
+                            crag_status,
+                        )
+                    except Exception as cache_err:
+                        logger.warning("[SEM_CACHE] store skipped: %s", cache_err)
 
                 return {"answer": answer, "crag_status": crag_status, "sources": sources_list}
 

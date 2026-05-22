@@ -31,42 +31,101 @@ app.add_static_files("/static", "static")
 register_login_page()
 
 
-@ui.page("/")
-async def main_page(request: Request):
-    is_auth, role, holder = get_auth()
-    
-    client_ip = client_ip_from_request(request)
-    trusted_role = trusted_role_for_ip(client_ip)
-    
-    if not is_auth and not trusted_role:
-        ui.navigate.to("/login")
-        return
-
-    if not is_auth and trusted_role:
-        role = trusted_role
-        holder = "Trusted Network"
-        
-    is_admin = (role == "admin")
-
-    # Тема — инжектируем CSS-переменные СИНХРОННО в <head> до рендера.
-    # Это устраняет flash: браузер получает правильные цвета сразу, без JS-таймера.
+def _apply_theme() -> None:
+    """Inject theme CSS before rendering the page body."""
     _dark = app.storage.user.get("dark_theme", True)
     ui.add_head_html(theme_vars_css(_dark))
     ui.add_head_html(CUSTOM_CSS)
     ui.query("body").style("background:var(--bg);color:var(--text);margin:0;")
     ui.query(".nicegui-content").classes("p-0 m-0 w-full").style("max-width:none;")
 
+
+def _resolve_auth(request: Request):
+    is_auth, role, holder = get_auth()
+
+    client_ip = client_ip_from_request(request)
+    trusted_role = trusted_role_for_ip(client_ip)
+
+    if not is_auth and not trusted_role:
+        return False, None, None, False
+
+    if not is_auth and trusted_role:
+        role = trusted_role
+        holder = "Trusted Network"
+
+    is_admin = (role == "admin")
+    return True, role, holder, is_admin
+
+
+@ui.page("/")
+async def chat_page(request: Request):
+    allowed, role, holder, is_admin = _resolve_auth(request)
+    if not allowed:
+        ui.navigate.to("/login")
+        return
+
+    _apply_theme()
+
+    # Public shell: only chat/history. It stays lean and avoids mounting admin pages.
+    with ui.column().classes("w-full h-screen no-wrap gap-0"):
+        tabs, tr = build_header(
+            is_admin,
+            role,
+            holder,
+            admin_tabs=False,
+            admin_link=is_admin,
+        )
+
+        tab_chat = tr["chat"]
+        tab_history = tr["history"]
+
+        def _save_chat_tab(e):
+            try:
+                val = e.args if isinstance(e.args, str) else (e.args[0] if isinstance(e.args, (list, tuple)) and e.args else None)
+                if val:
+                    app.storage.user["last_chat_tab"] = str(val)
+            except Exception:
+                pass
+
+        tabs.on("update:model-value", _save_chat_tab)
+
+        with ui.tab_panels(tabs, value=tab_chat).classes("w-full flex-1").style(
+            "background:var(--bg);overflow-y:auto;padding:0;"
+        ):
+            with ui.tab_panel(tab_chat):
+                build_chat(is_admin, tabs, None)
+            with ui.tab_panel(tab_history):
+                build_history(tabs, tab_chat)
+
+    _last_tab = app.storage.user.get("last_chat_tab", "AI ЧАТ")
+    _target = {"AI ЧАТ": tab_chat, "ИСТОРИЯ": tab_history}.get(_last_tab)
+    if _target and _target != tab_chat:
+        ui.timer(0.0, lambda t=_target: tabs.set_value(t), once=True)
+
+
+@ui.page("/les")
+@ui.page("/les/")
+async def admin_page(request: Request):
+    allowed, role, holder, is_admin = _resolve_auth(request)
+    if not allowed:
+        ui.navigate.to("/login")
+        return
+
+    if not is_admin:
+        ui.navigate.to("/")
+        return
+
+    _apply_theme()
+
     # Layout: Header (со встроенными табами) + Content + Footer
     with ui.column().classes("w-full h-screen no-wrap gap-0"):
 
         # Единая полоса: лого + табы + контролы
-        tabs, tr = build_header(is_admin, role, holder)
+        tabs, tr = build_header(is_admin, role, holder, include_chat=False, chat_link=True)
 
         tab_overview = tr.get("overview")
         tab_samovar  = tr.get("samovar")
         tab_prorab   = tr.get("prorab")
-        tab_chat     = tr["chat"]
-        tab_history  = tr["history"]
         tab_mermaid  = tr.get("mermaid")
         tab_diag     = tr.get("diag")
         tab_volk     = tr.get("volk")
@@ -82,44 +141,36 @@ async def main_page(request: Request):
         tabs.on("update:model-value", _save_tab)
 
         # Контент
-        _default_tab = tab_overview if is_admin else tab_chat
+        _default_tab = tab_overview
         with ui.tab_panels(tabs, value=_default_tab).classes("w-full flex-1").style(
             "background:var(--bg);overflow-y:auto;padding:0;"
         ):
-            if is_admin:
-                with ui.tab_panel(tab_overview):
-                    build_overview(tabs, is_admin)
-                with ui.tab_panel(tab_samovar):
-                    build_samovar()
-                with ui.tab_panel(tab_prorab):
-                    build_prorab()
-            with ui.tab_panel(tab_chat):
-                build_chat(is_admin, tabs, tab_mermaid)
-            with ui.tab_panel(tab_history):
-                build_history(tabs, tab_chat)
-            if is_admin:
-                with ui.tab_panel(tab_mermaid):
-                    build_mermaid()
-                with ui.tab_panel(tab_diag):
-                    build_diag()
-                with ui.tab_panel(tab_volk):
-                    build_volk()
+            with ui.tab_panel(tab_overview):
+                build_overview(tabs, is_admin)
+            with ui.tab_panel(tab_samovar):
+                build_samovar()
+            with ui.tab_panel(tab_prorab):
+                build_prorab()
+            with ui.tab_panel(tab_mermaid):
+                build_mermaid()
+            with ui.tab_panel(tab_diag):
+                build_diag()
+            with ui.tab_panel(tab_volk):
+                build_volk()
 
         # Подвал (Лог)
         build_log_terminal()
 
     # Восстанавливаем последний активный таб
-    _last_tab = app.storage.user.get("last_tab", "AI ЧАТ" if not is_admin else "ОБЗОР")
-    _tab_map = {"AI ЧАТ": tab_chat, "ИСТОРИЯ": tab_history}
-    if is_admin:
-        _tab_map.update({
-            "ОБЗОР":          tab_overview,
-            "С.А.М.О.В.А.Р.": tab_samovar,
-            "П.Р.О.Р.А.Б.":   tab_prorab,
-            "ГРАФ":            tab_mermaid,
-            "🔬 ДИАГН":        tab_diag,
-            "В.О.Л.К.":       tab_volk,
-        })
+    _last_tab = app.storage.user.get("last_tab", "ОБЗОР")
+    _tab_map = {
+        "ОБЗОР":          tab_overview,
+        "С.А.М.О.В.А.Р.": tab_samovar,
+        "П.Р.О.Р.А.Б.":   tab_prorab,
+        "ГРАФ":            tab_mermaid,
+        "🔬 ДИАГН":        tab_diag,
+        "В.О.Л.К.":       tab_volk,
+    }
     _target = _tab_map.get(_last_tab)
     if _target and _target != _default_tab:
         ui.timer(0.0, lambda t=_target: tabs.set_value(t), once=True)
@@ -137,5 +188,5 @@ if __name__ in {"__main__", "__mp_main__"}:
         show=False,
         storage_secret=STORAGE_SECRET,
         reload=False,
-        reconnect_timeout=10,   # NiceGUI 3.12: ждать 10с перед hard reload
+        reconnect_timeout=180,  # длинные RAG-запросы не должны срывать страницу
     )

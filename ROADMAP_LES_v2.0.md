@@ -1,5 +1,15 @@
 # Roadmap развития системы Л.Е.С. v1.5 → v2.0
 
+## ✅ Выполнено в v3.3 Stabilization / Premium Chat (22.05.2026)
+- **Split UI:** `https://les.ovc.me/` теперь лёгкий чатовый контур; `https://les.ovc.me/les` — отдельная админка. Чат больше не зависит от монтирования админских страниц.
+- **Premium С.О.В.У.Ш.К.А.:** нижний composer, кнопка `Расширенный запрос`, модальное окно параметров, левая выезжающая история чатов, правая панель `Артефакты` в стиле Claude.
+- **Долгие RAG-запросы:** `reconnect_timeout=180` и `chat_pending` уменьшают видимость срывов при реконнекте.
+- **Restart hardening:** `restart_sovushka.command` запускает UI через `.venv/bin/python3` и пишет реальный PID слушателя.
+- **Semantic cache:** внедрён кэш только для `VERIFIED` ответов с dataset-scope invalidation.
+- **Document Router:** быстрый deterministic probe/classify/complexity слой перед ingestion.
+- **Parquet/XLSX/CSV:** row-level chunks для Qdrant и `.parquet` artifacts рядом с датасетом.
+- **Qdrant visualizer:** добавлен локальный визуализатор как отдельный tool/workbench.
+
 ## ✅ Выполнено в v1.5.0 (08.05.2026)
 - К.О.Т. v1.1: Интеграция с Speckle GraphQL API.
 - С.У.Х.А.Р.И.К. v1.0: Бэкапы MySQL/ES в MinIO.
@@ -20,7 +30,7 @@
 - **Ресурсная эффективность:** 2 контейнера, RAM ~14–16 ГБ, стабильная работа на Mac M4 / 24 GB без свопа.
 
 ## 🛠 Запланировано в v2.1 (Краткосрочно)
-- **Retry-логика в прокси:** Graceful fallback при занятости Ollama, автоматические повторы с экспоненциальной задержкой.
+- **Retry-логика в прокси:** graceful fallback при занятости MLX/Ollama reserve, автоматические повторы с экспоненциальной задержкой.
 - **Folder Watcher:** Автоматическая синхронизация новых файлов из `RAG_Content/` в индексы (аналог v1.5, но под Qdrant).
 - **RBAC v2.0:** Полноценная JWT-аутентификация, маскирование `.env`, ролевые бейджи в UI, защита `/api/rag/*` и `/api/system/env`.
 - **С.У.Х.А.Р.И.К. v2.0:** Снапшоты Qdrant, инкрементальные бэкапы `storage/datasets/`, ротация по дням, экспорт метрик в PNG/CSV.
@@ -31,10 +41,21 @@
 - **Сравнение версий нормативов:** Дифф СП/ГОСТ ("что изменилось в 2024 vs 2020").
 - **Multi-project Support:** Изоляция проектов, датасетов и ролей.
 - **Plugin Architecture:** Импорт из Revit, Tekla, NanoCAD через внешние плагины.
-- **Voice Control:** Whisper для голосового ввода на стройплощадке.
-- **Mobile Dashboard:** Адаптивная версия UI для планшетов.
+- **XLS/CSV Export:** выдача готовых табличных файлов из результатов чата и AG Grid.
+- **Field Intake:** внешние формы П.А.У.К. для полевой загрузки файлов, фотоотчётов, актов и комментариев в карантинный датасет.
+- **Mobile Field Form:** лёгкая мобильная форма для стройплощадки без доступа к админке и сложному чату.
+- **Artifact Export:** скачивание готовых JSON/XLSX/CSV/SVG/Mermaid из правой панели артефактов.
+- **Proxy/WebSocket диагностика:** если чат всё ещё срывается около 60 секунд, проверять внешний proxy/websocket timeout или рестарт процесса Совушки.
 
-📅 **Документ актуализирован:** 10.05.2026 — статус после релиза v2.0 Core + UI Sync + Metrics
+## ⚡ Backlog ускорения и оптимизации
+- **Семантическое кэширование:** базовый слой внедрён для `VERIFIED` ответов с dataset-scope invalidation по snapshot датасетов.
+- **Динамическая выгрузка эмбеддера:** агрессивный TTL для `bge-m3` после retrieval, чтобы освобождать память под основную LLM во время генерации.
+- **Параллельная валидация:** асинхронная проверка streaming-чанков вместо ожидания полного ответа перед запуском валидатора.
+- **Аппаратный тюнинг MLX:** бенчмарки Flash Attention на длинном контексте и смешанного квантования 14B модели.
+- **Parquet для таблиц:** базовый XLSX/XLS/CSV ingestion внедрён: row-level chunks для Qdrant + `.parquet` artifacts рядом с датасетом. Для PDF добавлен экспериментальный PyMuPDF-first слой с pdfplumber fallback и `needs_ocr` marker. Следующий шаг — table-aware retrieval и расширение схем смет/спецификаций.
+- **Document Router:** добавлен быстрый deterministic probe/classify/complexity слой перед ingestion, чтобы выбирать `markdown`, `parquet`, `markdown_pdf_tables` или `markdown_needs_ocr` и писать rich metadata в Qdrant payload.
+
+📅 **Документ актуализирован:** 22.05.2026 — split UI + premium chat/artifacts + cache/router/parquet stabilization
 
 
 ## 🚀 Выполнено в v2.0 Core (Факт на 10.05.2026)

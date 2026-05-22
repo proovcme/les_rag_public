@@ -27,15 +27,15 @@ from llama_index.core.schema import Document
 from qdrant_client import models
 
 from .converter import convert_to_markdown
+from .document_router import DocumentRoute, route_document
 from .interface import Chunk, DatasetInfo, RAGBackend
+from .parquet_writer import TableNormalizer
 
 logger = logging.getLogger(__name__)
 
 EMBED_BATCH  = 32    # чанков за один запрос к BGE-M3
 MIN_CHUNK    = 20    # символов — короче не индексируем
 UPSERT_BATCH = 100   # точек за один upsert в Qdrant
-
-
 # ── Прямой клиент эмбеддингов (httpx, без llama-index) ───────────────────────
 
 class EmbedClient:
@@ -330,7 +330,10 @@ class QdrantLlamaIndexAdapter(RAGBackend):
 
         try:
             pending_names = set(self.db.get_pending_files(dataset_id))
-            all_files     = [f for f in data_dir.rglob("*") if f.is_file()]
+            all_files     = [
+                f for f in data_dir.rglob("*")
+                if f.is_file() and "_parquet" not in f.relative_to(data_dir).parts
+            ]
 
             # Матчинг по относительному пути и по имени файла для совместимости
             # со старыми записями БД где хранится только f.name.
@@ -376,25 +379,48 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     except Exception:
                         pass
 
-                    md_content = convert_to_markdown(file_path)
-                    if not md_content:
-                        self.db.update_document_status(dataset_id, file_key, "INDEXED", 0)
-                        continue
-
-                    doc   = Document(
-                        text=md_content,
-                        metadata={"file_name": file_key, "dataset_id": dataset_id},
+                    route = route_document(file_path)
+                    logger.info(
+                        "[DOC_ROUTE] %s type=%s content=%s complexity=%s pipeline=%s",
+                        file_key,
+                        route.doc_type,
+                        route.content_type,
+                        route.complexity,
+                        route.pipeline,
                     )
-                    nodes = md_parser.get_nodes_from_documents([doc])
 
-                    # Сплиттер для длинных чанков + фильтр коротких
-                    file_nodes = []
-                    for node in nodes:
-                        node.metadata.update(doc.metadata)
-                        if len(node.text) > 2000:
-                            file_nodes.extend(splitter.get_nodes_from_documents([node]))
-                        elif len(node.text) >= MIN_CHUNK:
-                            file_nodes.append(node)
+                    if route.pipeline == "parquet":
+                        try:
+                            file_nodes = self._sync_table_nodes(file_path, data_dir, dataset_id, route)
+                        except Exception as table_err:
+                            logger.warning(
+                                "[PARQUET] fallback to markdown for %s: %s",
+                                file_key,
+                                table_err,
+                            )
+                            file_nodes = self._sync_markdown_nodes(
+                                file_path, file_key, dataset_id, md_parser, splitter, route
+                            )
+                    elif route.pipeline in ("markdown_pdf_tables", "markdown_needs_ocr"):
+                        file_nodes = self._sync_markdown_nodes(
+                            file_path, file_key, dataset_id, md_parser, splitter, route
+                        )
+                        if (
+                            route.pipeline == "markdown_pdf_tables"
+                            and os.getenv("PDF_TABLE_EXTRACTION_ENABLED", "false").lower() == "true"
+                        ):
+                            try:
+                                file_nodes.extend(self._sync_table_nodes(file_path, data_dir, dataset_id, route))
+                            except Exception as table_err:
+                                logger.warning(
+                                    "[PDF_TABLE] table extraction skipped for %s: %s",
+                                    file_key,
+                                    table_err,
+                                )
+                    else:
+                        file_nodes = self._sync_markdown_nodes(
+                            file_path, file_key, dataset_id, md_parser, splitter, route
+                        )
 
                     if not file_nodes:
                         self.db.update_document_status(dataset_id, file_key, "INDEXED", 0)
@@ -404,7 +430,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     points = []
                     for batch_start in range(0, len(file_nodes), EMBED_BATCH):
                         batch = file_nodes[batch_start:batch_start + EMBED_BATCH]
-                        texts = [n.text for n in batch]
+                        texts = [n["text"] for n in batch]
                         try:
                             vectors = self.embed.encode_sync(texts)
                         except Exception as emb_err:
@@ -413,15 +439,17 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                             continue
 
                         for node, vec in zip(batch, vectors):
+                            payload = dict(node.get("payload") or {})
+                            payload.update({
+                                "text":       node["text"],
+                                "dataset_id": dataset_id,
+                                "doc_id":     node.get("doc_id") or str(uuid.uuid4()),
+                                "file_name":  file_key,
+                            })
                             points.append(models.PointStruct(
                                 id=str(uuid.uuid4()),
                                 vector=vec,
-                                payload={
-                                    "text":       node.text,
-                                    "dataset_id": dataset_id,
-                                    "doc_id":     node.node_id,
-                                    "file_name":  file_key,
-                                },
+                                payload=payload,
                             ))
 
                         # Upsert батчами
@@ -465,6 +493,107 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         except Exception as e:
             logger.error(f"[PARSE] FATAL: {e}", exc_info=True)
             return {"status": "failed", "error": str(e)}
+
+    def _sync_markdown_nodes(
+        self,
+        file_path: Path,
+        file_key: str,
+        dataset_id: str,
+        md_parser: MarkdownNodeParser,
+        splitter: SentenceSplitter,
+        route: DocumentRoute | None = None,
+    ) -> list[dict]:
+        md_content = convert_to_markdown(file_path)
+        if not md_content:
+            return []
+
+        doc = Document(
+            text=md_content,
+            metadata={"file_name": file_key, "dataset_id": dataset_id},
+        )
+        nodes = md_parser.get_nodes_from_documents([doc])
+
+        file_nodes = []
+        for node in nodes:
+            node.metadata.update(doc.metadata)
+            if len(node.text) > 2000:
+                split_nodes = splitter.get_nodes_from_documents([node])
+                file_nodes.extend(
+                    {
+                        "text": split_node.text,
+                        "doc_id": split_node.node_id,
+                        "payload": self._route_payload(route, {"type": "markdown"}),
+                    }
+                    for split_node in split_nodes
+                    if len(split_node.text) >= MIN_CHUNK
+                )
+            elif len(node.text) >= MIN_CHUNK:
+                file_nodes.append({
+                    "text": node.text,
+                    "doc_id": node.node_id,
+                    "payload": self._route_payload(route, {"type": "markdown"}),
+                })
+        return file_nodes
+
+    def _sync_table_nodes(
+        self,
+        file_path: Path,
+        data_dir: Path,
+        dataset_id: str,
+        route: DocumentRoute | None = None,
+    ) -> list[dict]:
+        parquet_dir = data_dir / "_parquet" / file_path.relative_to(data_dir).parent
+        normalizer = TableNormalizer(parquet_dir=str(parquet_dir), use_llm=False)
+        result = asyncio.run(normalizer.process(str(file_path), dataset_id=dataset_id))
+        parquet_path = result.get("parquet_path") or ""
+        parquet_rel = ""
+        if parquet_path:
+            try:
+                parquet_rel = Path(parquet_path).relative_to(data_dir).as_posix()
+            except ValueError:
+                parquet_rel = parquet_path
+
+        nodes = []
+        for i, chunk in enumerate(result.get("chunks") or []):
+            text = str(chunk.get("text") or "")
+            if len(text) < MIN_CHUNK:
+                continue
+            payload = dict(chunk.get("metadata") or {})
+            payload.update({
+                "type": "table_row",
+                "parquet_path": parquet_rel,
+                "table_row": i,
+            })
+            nodes.append({
+                "text": text,
+                "doc_id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"{dataset_id}:{file_path}:{i}")),
+                "payload": self._route_payload(route, payload),
+            })
+        if not nodes and result.get("needs_ocr"):
+            scanned_pages = result.get("scanned_pages") or []
+            text = (
+                f"PDF {file_path.name} содержит страницы без текстового слоя; "
+                f"нужна OCR/VLM обработка. Страницы: {', '.join(map(str, scanned_pages)) or '?'}"
+            )
+            payload = {
+                "type": "pdf_needs_ocr",
+                "needs_ocr": True,
+                "scanned_pages": scanned_pages,
+                "parquet_path": "",
+            }
+            nodes.append({
+                "text": text,
+                "doc_id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"{dataset_id}:{file_path}:needs_ocr")),
+                "payload": self._route_payload(route, payload),
+            })
+        return nodes
+
+    def _route_payload(self, route: DocumentRoute | None, payload: dict) -> dict:
+        if route is None:
+            return payload
+        merged = dict(route.metadata)
+        merged.update(payload)
+        return merged
 
     async def retrieve(
         self,

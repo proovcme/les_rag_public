@@ -36,3 +36,6 @@ Thumbs.db
 # Логи
 *.log
 .aider*
+
+# Generated local workbench exports
+qdrant_visualizer/data.js

@@ -28,6 +28,7 @@ state = {
     "jobs": {},
     "chat_history": [],        # list of {role, text, srcs, crag}
     "session_id": _new_session_id(),  # UUID текущей сессии чата
+    "chat_pending": None,      # {question, started_at} для восстановления UI после реконнекта
     "load_session_id": None,   # если задан — чат отобразит эту сессию
     "logs": [],
     "mermaid_last": "",

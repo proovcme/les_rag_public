@@ -1,0 +1,246 @@
+"""Fast deterministic document routing for ingestion."""
+
+from __future__ import annotations
+
+import csv
+import os
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+
+TABLE_SUFFIXES = {".xlsx", ".xls", ".csv"}
+PDF_SUFFIXES = {".pdf"}
+
+
+@dataclass
+class DocumentProbe:
+    path: Path
+    suffix: str
+    size_bytes: int
+    page_count: int = 0
+    text_sample: str = ""
+    has_text_layer: bool = True
+    has_tables: bool = False
+    table_count_hint: int = 0
+    sheet_count: int = 0
+    row_count_hint: int = 0
+    column_count_hint: int = 0
+    needs_ocr: bool = False
+    signals: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class DocumentRoute:
+    doc_type: str
+    content_type: str
+    complexity: str
+    pipeline: str
+    metadata: dict[str, Any]
+
+
+def _sample_limit() -> int:
+    try:
+        return max(1, int(os.getenv("DOC_ROUTER_SAMPLE_PAGES", "3")))
+    except ValueError:
+        return 3
+
+
+def probe_document(path: Path) -> DocumentProbe:
+    suffix = path.suffix.lower()
+    stat = path.stat()
+    if suffix in PDF_SUFFIXES:
+        return _probe_pdf(path, stat.st_size)
+    if suffix in TABLE_SUFFIXES:
+        return _probe_table(path, stat.st_size)
+    return _probe_text_like(path, stat.st_size)
+
+
+def route_document(path: Path) -> DocumentRoute:
+    return classify_document(probe_document(path))
+
+
+def classify_document(probe: DocumentProbe) -> DocumentRoute:
+    doc_type = _classify_doc_type(probe)
+    content_type = _classify_content_type(probe)
+    complexity = _classify_complexity(probe, content_type)
+    pipeline = _select_pipeline(probe, content_type, complexity)
+    return DocumentRoute(
+        doc_type=doc_type,
+        content_type=content_type,
+        complexity=complexity,
+        pipeline=pipeline,
+        metadata={
+            "doc_type": doc_type,
+            "content_type": content_type,
+            "complexity": complexity,
+            "pipeline": pipeline,
+            "has_tables": probe.has_tables,
+            "needs_ocr": probe.needs_ocr,
+            "page_count": probe.page_count,
+            "sheet_count": probe.sheet_count,
+            "row_count_hint": probe.row_count_hint,
+            "column_count_hint": probe.column_count_hint,
+        },
+    )
+
+
+def _probe_pdf(path: Path, size_bytes: int) -> DocumentProbe:
+    probe = DocumentProbe(path=path, suffix=".pdf", size_bytes=size_bytes)
+    try:
+        import fitz
+
+        doc = fitz.open(path)
+        try:
+            probe.page_count = len(doc)
+            sample_text = []
+            text_pages = 0
+            table_count = 0
+            for page_no in range(min(_sample_limit(), len(doc))):
+                page = doc[page_no]
+                text = page.get_text("text") or ""
+                if text.strip():
+                    text_pages += 1
+                    sample_text.append(text[:2000])
+                finder = getattr(page, "find_tables", None)
+                if finder:
+                    try:
+                        table_count += len(getattr(finder(), "tables", []) or [])
+                    except Exception:
+                        pass
+            probe.text_sample = "\n".join(sample_text)[:6000]
+            probe.has_text_layer = text_pages > 0
+            probe.needs_ocr = not probe.has_text_layer and probe.page_count > 0
+            probe.has_tables = table_count > 0 or _text_has_table_signals(probe.text_sample)
+            probe.table_count_hint = table_count
+        finally:
+            doc.close()
+    except Exception as e:
+        probe.signals["probe_error"] = str(e)
+    return probe
+
+
+def _probe_table(path: Path, size_bytes: int) -> DocumentProbe:
+    probe = DocumentProbe(path=path, suffix=path.suffix.lower(), size_bytes=size_bytes, has_tables=True)
+    try:
+        if probe.suffix == ".csv":
+            with open(path, encoding="utf-8-sig", newline="") as f:
+                reader = csv.reader(f)
+                rows = []
+                for idx, row in enumerate(reader):
+                    rows.append(row)
+                    if idx >= 20:
+                        break
+            probe.sheet_count = 1
+            probe.row_count_hint = max(0, len(rows) - 1)
+            probe.column_count_hint = max((len(row) for row in rows), default=0)
+            probe.text_sample = "\n".join(",".join(row) for row in rows[:5])
+        else:
+            import openpyxl
+
+            wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+            try:
+                probe.sheet_count = len(wb.sheetnames)
+                samples = []
+                rows_total = 0
+                max_cols = 0
+                for sheet_name in wb.sheetnames[:3]:
+                    ws = wb[sheet_name]
+                    rows_total += ws.max_row or 0
+                    max_cols = max(max_cols, ws.max_column or 0)
+                    for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row or 0, 5), values_only=True):
+                        samples.append(" | ".join("" if v is None else str(v) for v in row))
+                probe.row_count_hint = rows_total
+                probe.column_count_hint = max_cols
+                probe.text_sample = "\n".join(samples)[:6000]
+            finally:
+                wb.close()
+    except UnicodeDecodeError:
+        try:
+            with open(path, encoding="cp1251", newline="") as f:
+                reader = csv.reader(f)
+                rows = [row for _, row in zip(range(20), reader)]
+            probe.sheet_count = 1
+            probe.row_count_hint = max(0, len(rows) - 1)
+            probe.column_count_hint = max((len(row) for row in rows), default=0)
+            probe.text_sample = "\n".join(",".join(row) for row in rows[:5])
+        except Exception as e:
+            probe.signals["probe_error"] = str(e)
+    except Exception as e:
+        probe.signals["probe_error"] = str(e)
+    return probe
+
+
+def _probe_text_like(path: Path, size_bytes: int) -> DocumentProbe:
+    probe = DocumentProbe(path=path, suffix=path.suffix.lower(), size_bytes=size_bytes)
+    try:
+        probe.text_sample = path.read_text(encoding="utf-8", errors="ignore")[:6000]
+        probe.has_tables = _text_has_table_signals(probe.text_sample)
+    except Exception as e:
+        probe.signals["probe_error"] = str(e)
+    return probe
+
+
+def _classify_doc_type(probe: DocumentProbe) -> str:
+    text = f"{probe.path.name}\n{probe.text_sample}".lower()
+    has_price_amount = any(token in text for token in ("цена", "сумма", "стоимость", "расценка"))
+    has_position_qty = (
+        any(token in text for token in ("позиция", "поз.", "поз,", "поз "))
+        and any(token in text for token in ("кол-во", "количество", "ед.изм", "единица"))
+    )
+    if any(token in text for token in ("кс-2", "кс2", "акт о приемке", "акт о приёмке")):
+        return "KS2"
+    if any(token in text for token in ("аоср", "скрытых работ", "освидетельствования")):
+        return "AOSR"
+    if any(token in text for token in ("смета", "локальный сметный", "гэсн", "фер", "тер", "расценка")):
+        return "SMETA"
+    if has_position_qty and not has_price_amount:
+        return "SPEC"
+    if any(token in text for token in ("спецификация", "ведомость оборудования", "масса единицы")):
+        return "SPEC"
+    if has_price_amount and probe.has_tables:
+        return "SMETA"
+    if any(token in text for token in ("гост", "сп ", "снип", "санпин", "норматив")):
+        return "NORMATIVE"
+    if probe.suffix in TABLE_SUFFIXES:
+        return "TABLE"
+    return "DOCUMENT"
+
+
+def _classify_content_type(probe: DocumentProbe) -> str:
+    if probe.needs_ocr:
+        return "scan"
+    if probe.suffix in TABLE_SUFFIXES:
+        return "table"
+    if probe.suffix in PDF_SUFFIXES and probe.has_tables:
+        return "mixed"
+    return "text"
+
+
+def _classify_complexity(probe: DocumentProbe, content_type: str) -> str:
+    if probe.needs_ocr:
+        return "needs_ocr"
+    if probe.size_bytes > 50 * 1024 * 1024 or probe.page_count > 200:
+        return "heavy"
+    if content_type in ("table", "mixed") or probe.row_count_hint > 2000:
+        return "structured"
+    return "simple"
+
+
+def _select_pipeline(probe: DocumentProbe, content_type: str, complexity: str) -> str:
+    if complexity == "needs_ocr":
+        return "markdown_needs_ocr"
+    if probe.suffix in TABLE_SUFFIXES:
+        return "parquet"
+    if probe.suffix in PDF_SUFFIXES and content_type == "mixed":
+        return "markdown_pdf_tables"
+    return "markdown"
+
+
+def _text_has_table_signals(text: str) -> bool:
+    lower = text.lower()
+    keywords = ("наименование", "кол-во", "количество", "ед.изм", "сумма", "цена", "поз.")
+    keyword_hits = sum(1 for keyword in keywords if keyword in lower)
+    numeric_lines = sum(1 for line in text.splitlines() if len(re.findall(r"\d+[,.]?\d*", line)) >= 3)
+    return keyword_hits >= 2 or numeric_lines >= 3

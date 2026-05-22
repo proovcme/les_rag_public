@@ -16,10 +16,14 @@ lsof -ti :8051 | xargs kill -9 2>/dev/null
 sleep 1
 
 # Старт
-nohup uv run --project "$DIR" python3 "$DIR/sovushka_ng.py" >> "$LOG" 2>&1 &
+nohup "$DIR/.venv/bin/python3" "$DIR/sovushka_ng.py" >> "$LOG" 2>&1 &
 echo $! > "$PID_FILE"
 sleep 2
 
-kill -0 "$(cat "$PID_FILE")" 2>/dev/null \
-    && echo "✓ С.О.В.У.Ш.К.А. UP (PID $(cat "$PID_FILE")) → http://localhost:8051" \
-    || echo "✗ Упала — смотри $LOG"
+SOV_PID="$(lsof -ti :8051 | head -n 1)"
+if [ -n "$SOV_PID" ]; then
+    echo "$SOV_PID" > "$PID_FILE"
+    echo "✓ С.О.В.У.Ш.К.А. UP (PID $SOV_PID) → http://localhost:8051"
+else
+    echo "✗ Упала — смотри $LOG"
+fi

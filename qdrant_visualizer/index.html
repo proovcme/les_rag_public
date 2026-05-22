@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-i18n="doc-title">3D Визуализатор Базы Знаний Qdrant</title>
+    <link rel="stylesheet" href="styles.css">
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/examples/jsm/controls/OrbitControls.js": "https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js"
+        }
+    }
+    </script>
+</head>
+<body>
+    <!-- Background Space Grid -->
+    <div class="bg-grid"></div>
+
+    <!-- Three.js Canvas Container -->
+    <div id="canvas-container"></div>
+
+    <!-- Header / Logo -->
+    <header class="glass-panel" style="padding: 10px 15px;">
+        <div class="logo-container">
+            <div class="logo-icon">Q</div>
+            <div>
+                <h1 data-i18n="app-title">Qdrant 3D Визуализатор</h1>
+                <div style="display: flex; gap: 8px; align-items: center; margin-top: 2px;">
+                    <div class="version-badge">V2.1 - NEURAL CORE</div>
+                    <button id="info-btn" class="version-badge" style="background: rgba(5, 255, 192, 0.1); border-color: var(--neon-green); color: var(--neon-green); cursor: pointer; display: flex; align-items: center; gap: 3px; font-weight: 600; outline: none; border-radius: 4px; font-family: var(--font-mono); font-size: 0.7rem; padding: 2px 6px;" data-i18n="info-btn">
+                        🧬 Эволюция (Spore)
+                    </button>
+                    <button id="lang-btn" class="version-badge" style="background: rgba(0, 240, 255, 0.1); border-color: var(--neon-cyan); color: var(--neon-cyan); cursor: pointer; display: flex; align-items: center; gap: 4px; font-weight: 600; outline: none; border-radius: 4px; font-family: var(--font-mono); font-size: 0.7rem; padding: 2px 6px; user-select: none;">
+                        <span id="lang-ru" style="color: #fff; text-shadow: 0 0 5px var(--neon-cyan); font-weight: bold;">RU</span>
+                        <span style="color: rgba(255,255,255,0.3);">/</span>
+                        <span id="lang-en" style="color: rgba(255,255,255,0.4);">EN</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- LEFT: Database and Controls Panel -->
+    <aside id="control-panel" class="glass-panel">
+        <!-- 1. Database Connection Section -->
+        <section class="panel-section">
+            <div class="section-title" data-i18n="section-conn">Подключение к Qdrant</div>
+            <div class="form-group">
+                <label for="qdrant-url" data-i18n="api-endpoint">Адрес Rest API</label>
+                <input type="text" id="qdrant-url" value="http://localhost:6333" placeholder="http://localhost:6333">
+            </div>
+            <button id="connect-btn" class="btn" data-i18n="connect-btn">Подключиться</button>
+            <div id="standalone-container" style="margin-top: 10px; display: none;">
+                <button id="load-standalone-btn" class="btn" style="background: linear-gradient(135deg, rgba(255, 0, 127, 0.25), rgba(0, 240, 255, 0.1)); border-color: var(--neon-magenta); color: #fff; width: 100%;" data-i18n="load-standalone-btn">
+                    ⚡ Загрузить локальную базу
+                </button>
+            </div>
+            <div class="form-group" style="margin-top: 5px;">
+                <label for="collection-select" data-i18n="target-collection">Целевая коллекция</label>
+                <select id="collection-select">
+                    <option value="" data-i18n="waiting-connection">(Ожидание подключения...)</option>
+                </select>
+            </div>
+        </section>
+
+        <!-- 2. Collection Statistics -->
+        <section class="panel-section">
+            <div class="section-title" data-i18n="section-stats">Статистика коллекции</div>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label" data-i18n="stat-points">Векторных точек</div>
+                    <div id="total-points" class="stat-val cyan">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label" data-i18n="stat-dims">Размерность</div>
+                    <div id="vector-dim" class="stat-val green">0</div>
+                </div>
+            </div>
+            <div style="font-size: 0.75rem; display: flex; justify-content: space-between; padding: 2px 5px; background: rgba(0,0,0,0.2); border-radius: 4px;">
+                <span data-i18n="stat-pca-label">Статус PCA:</span>
+                <span id="pca-status" style="font-family: var(--font-mono); color: var(--neon-cyan); font-weight: 700;">ОЖИДАНИЕ</span>
+            </div>
+        </section>
+
+        <!-- 3. Realtime Search / Filter -->
+        <section class="panel-section">
+            <div class="section-title" data-i18n="section-search">Поиск по контенту</div>
+            <div class="form-group">
+                <input type="text" id="search-input" placeholder="Поиск текста или документа..." data-i18n-placeholder="search-placeholder">
+            </div>
+        </section>
+
+        <!-- 4. Rendering & Effects Adjuster -->
+        <section class="panel-section">
+            <div class="section-title" data-i18n="section-tuning">Визуальная настройка</div>
+            
+            <div class="slider-container">
+                <div class="slider-header">
+                    <span data-i18n="tune-scale">Масштаб точек</span>
+                    <span id="node-size-val" class="slider-val">1.5</span>
+                </div>
+                <input type="range" id="node-size" min="0.5" max="4.0" step="0.1" value="1.5">
+            </div>
+
+            <div class="slider-container">
+                <div class="slider-header">
+                    <span data-i18n="tune-glow">Яркость свечения</span>
+                    <span id="glow-intensity-val" class="slider-val">1.0</span>
+                </div>
+                <input type="range" id="glow-intensity" min="0.1" max="3.0" step="0.1" value="1.0">
+            </div>
+
+            <div class="slider-container">
+                <div class="slider-header">
+                    <span data-i18n="tune-constellation">Связи созвездия</span>
+                    <span id="neighbors-val" class="slider-val">2</span>
+                </div>
+                <input type="range" id="constellation-neighbors" min="1" max="5" step="1" value="2">
+            </div>
+        </section>
+
+        <!-- 5. Display Toggles -->
+        <section class="panel-section">
+            <div class="section-title" data-i18n="section-toggles">Отображение</div>
+            <div style="display: flex; flex-direction: column; gap: 10px; font-size: 0.8rem;">
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;">
+                    <input type="checkbox" id="toggle-grid" checked style="accent-color: var(--neon-cyan);"> <span data-i18n="toggle-grid">Сетка на полу</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;">
+                    <input type="checkbox" id="toggle-constellation" checked style="accent-color: var(--neon-cyan);"> <span data-i18n="toggle-constellation">Линии созвездия</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;">
+                    <input type="checkbox" id="toggle-rotate" checked style="accent-color: var(--neon-cyan);"> <span data-i18n="toggle-rotate">Вращение камеры</span>
+                </label>
+            </div>
+        </section>
+
+        <!-- 6. File Metadata Checklist Filter -->
+        <section class="panel-section">
+            <div class="section-title" data-i18n="section-isolate">Фильтр по документам</div>
+            <div id="file-filter-list" class="file-filter-list">
+                <!-- populated dynamically -->
+            </div>
+        </section>
+    </aside>
+
+    <!-- RIGHT: Selected Node Metadata Details -->
+    <aside id="detail-panel" class="glass-panel">
+        <div class="meta-header">
+            <div>
+                <div class="meta-title" data-i18n="inspect-title">Инспекция точки</div>
+                <div class="meta-subtitle" data-i18n="inspect-subtitle">Данные выбранного вектора</div>
+            </div>
+            <button id="close-detail" class="close-btn">&times;</button>
+        </div>
+
+        <div class="meta-card">
+            <div class="meta-field">
+                <div class="meta-field-label" data-i18n="inspect-uuid">UUID точки</div>
+                <div id="meta-id" class="meta-field-value" style="color: var(--neon-cyan);">N/A</div>
+            </div>
+            
+            <div class="meta-field">
+                <div class="meta-field-label" data-i18n="inspect-file">Исходный документ</div>
+                <div id="meta-file" class="meta-field-value" style="font-family: var(--font-sans); font-weight: 500;">N/A</div>
+            </div>
+
+            <div class="meta-field">
+                <div class="meta-field-label" data-i18n="inspect-dochash">Хэш / ID документа</div>
+                <div id="meta-docid" class="meta-field-value">N/A</div>
+            </div>
+
+            <div class="meta-field">
+                <div class="meta-field-label" data-i18n="inspect-coords">3D координаты (PCA)</div>
+                <div id="meta-coords" class="meta-field-value" style="color: var(--neon-magenta);">N/A</div>
+            </div>
+        </div>
+
+        <div class="panel-section">
+            <div class="section-title" data-i18n="inspect-payload">Текст чанка (Payload)</div>
+            <div id="meta-text" class="meta-text-box">Выберите точку на графике, чтобы просмотреть её смысловое текстовое содержимое...</div>
+        </div>
+    </aside>
+
+    <!-- BOTTOM: User Guide Instructions Overlay -->
+    <footer id="instructions-bar" class="glass-panel">
+        <div class="instruction-item">
+            <span class="key-badge" data-i18n="help-rotate-key">ЛКМ + Перетаскивание</span> <span data-i18n="help-rotate-val">Вращение сцены</span>
+        </div>
+        <div class="instruction-item">
+            <span class="key-badge" data-i18n="help-zoom-key">Колесо мыши</span> <span data-i18n="help-zoom-val">Масштаб</span>
+        </div>
+        <div class="instruction-item">
+            <span class="key-badge" data-i18n="help-pan-key">ПКМ + Перетаскивание</span> <span data-i18n="help-pan-val">Панорама</span>
+        </div>
+        <div class="instruction-item">
+            <span class="key-badge" data-i18n="help-inspect-key">Клик по точке</span> <span data-i18n="help-inspect-val">Инспекция точки</span>
+        </div>
+    </footer>
+
+    <!-- LOADER SCREEN (Diagnostic console overlay) -->
+    <div id="loader-overlay">
+        <div class="loader-container">
+            <div class="spinner-outer">
+                <div class="spinner-inner">
+                    <div class="spinner-core"></div>
+                </div>
+            </div>
+            <div>
+                <div class="loader-title" data-i18n="loader-title">3D Нейровизуализатор</div>
+                <div id="loader-status" style="text-align: center; margin-top: 5px;">ПОДКЛЮЧЕНИЕ...</div>
+            </div>
+            <!-- Interactive Diagnostic Terminal Console logs -->
+            <div id="loader-console" class="loader-console"></div>
+            
+            <div style="font-size:0.7rem; color:var(--text-dim); text-align:center; max-width: 350px;" data-i18n="loader-note">
+                Подключение к локальному Qdrant. Для изменения адреса используйте боковую панель.
+            </div>
+        </div>
+    </div>
+
+    <!-- INFO MODAL (Spore / RAG Theory Guide) -->
+    <div id="info-modal" class="modal-overlay">
+        <div class="modal-content glass-panel">
+            <div class="modal-header">
+                <h2 data-i18n="modal-title">🧬 Эволюция Знаний: От Spore до Векторной Вселенной</h2>
+                <button id="close-info" class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="spore-stage">
+                    <div class="stage-num" data-i18n="modal-stage1-num">Этап 1</div>
+                    <div class="stage-body">
+                        <h3 data-i18n="modal-stage1-title">Клеточный бульон: Сырые данные 🧫</h3>
+                        <p data-i18n="modal-stage1-desc">Как и в первичном океане игры <i>Spore</i>, все начинается с хаотичного набора простейших молекул — сырых файлов (<code>.docx</code>, <code>.pdf</code>, <code>.txt</code>). На этом этапе компьютер видит только бесформенную груду символов, лишенную глобальной структуры и понимания.</p>
+                    </div>
+                </div>
+                <div class="spore-stage">
+                    <div class="stage-num" data-i18n="modal-stage2-num">Этап 2</div>
+                    <div class="stage-body">
+                        <h3 data-i18n="modal-stage2-title">Выход на сушу: Нарезка на Чанки 🦎</h3>
+                        <p data-i18n="modal-stage2-desc">Чтобы выжить в новой среде, данные должны структурироваться. Наш RAG-пайплайн берет длинные файлы и нарезает их на небольшие смысловые кусочки — <b>чанки</b> (наши светящиеся точки). Это первые многоклеточные организмы, выползшие на сушу. Каждый чанк — это самостоятельная «особь», несущая в себе законченную мысль.</p>
+                    </div>
+                </div>
+                <div class="spore-stage">
+                    <div class="stage-num" data-i18n="modal-stage3-num">Этап 3</div>
+                    <div class="stage-body">
+                        <h3 data-i18n="modal-stage3-title">Разум и ДНК: Векторизация эмбеддингами 🧠</h3>
+                        <p data-i18n="modal-stage3-desc">На этапе племени и цивилизации существа обретают ДНК и интеллект. Нейросеть берет каждый чанк и наделяет его уникальным математическим кодом — <b>вектором из 1024 чисел (эмбеддингом)</b>. Это ДНК смысла. Теперь чанк обладает «разумом» — он точно знает, о чем говорит, и в соответствии со своим смыслом занимает строго определенные координаты в нашей трехмерной космической системе.</p>
+                    </div>
+                </div>
+                <div class="spore-stage">
+                    <div class="stage-num" data-i18n="modal-stage4-num">Этап 4</div>
+                    <div class="stage-body">
+                        <h3 data-i18n="modal-stage4-title">Космическая эра: Векторная Вселенная (Qdrant) 🌌</h3>
+                        <p data-i18n="modal-stage4-desc">Вершина эволюции — выход в космос. Все векторизованные чанки загружаются в базу данных Qdrant. Она строит между ними гиперпространственные торговые пути — <b>графы связей ближайших соседей (HNSW)</b>, которые вы видите на экране в виде неоновых нитей. Когда вы задаете вопрос, ИИ мгновенно совершает варп-прыжок по этому созвездию смыслов и находит нужные знания!</p>
+                    </div>
+                </div>
+            </div>
+            <div style="margin-top: 15px; text-align: center;">
+                <button id="close-info-btn" class="btn btn-secondary" style="border-color: var(--neon-cyan); color: var(--neon-cyan); padding: 8px 25px;" data-i18n="modal-btn">Понятно, в космос! 🚀</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Application Script Engine Modules -->
+    <script type="module" src="visualizer.js"></script>
+</body>
+</html>
