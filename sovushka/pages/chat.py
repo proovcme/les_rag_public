@@ -354,12 +354,6 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
 
     ui.timer(0.5, lambda: asyncio.create_task(_load_history()), once=True)
 
-    async def _watch_session_load():
-        if state.get("load_session_id"):
-            await _load_history()
-
-    ui.timer(0.5, lambda: asyncio.create_task(_watch_session_load()))
-
     async def load_output_template(e):
         content = e.content.read()
         fname = e.name

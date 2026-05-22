@@ -52,7 +52,10 @@ echo "[3/3] С.О.В.У.Ш.К.А. (NiceGUI)..."
 
 # Убиваем ВСЁ что держит порт 8051 — гвоздями
 echo "  Очищаем порт 8051..."
-lsof -ti :8051 | xargs kill -9 2>/dev/null
+OLD_LISTENERS="$(lsof -tiTCP:8051 -sTCP:LISTEN 2>/dev/null)"
+if [ -n "$OLD_LISTENERS" ]; then
+    kill -9 $OLD_LISTENERS 2>/dev/null
+fi
 sleep 1
 
 cd "$LES_DIR"

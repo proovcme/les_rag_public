@@ -12,14 +12,21 @@ echo "==> Синхронизация кода: $LOCAL → $VPS:$REMOTE"
 rsync -avz --delete \
   --exclude='.env' \
   --exclude='.git/' \
+  --exclude='.DS_Store' \
+  --exclude='.aider*' \
+  --exclude='.claude/' \
+  --exclude='.nicegui/' \
+  --exclude='.pytest_cache/' \
   --exclude='__pycache__/' \
   --exclude='*.pyc' \
-  --exclude='data/' \
-  --exclude='storage/' \
-  --exclude='RAG_Content/' \
-  --exclude='logs/' \
+  --exclude='/data/' \
+  --exclude='/storage/' \
+  --exclude='/RAG_Content/' \
+  --exclude='/logs/' \
+  --exclude='/legacy/' \
   --exclude='.venv/' \
   --exclude='uv.lock' \
+  --exclude='qdrant_visualizer/data.js' \
   --exclude='mlx_host.py' \
   --exclude='les.command' \
   --exclude='pauk_launchd.plist' \
