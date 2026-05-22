@@ -5,17 +5,29 @@ FastAPI сервер на порту 8080.
 Запуск: uv run python3 mlx_host.py
 
 Движки:
-  main_engine  — Qwen3-14B-4bit  (RAG, Roo Code, TTL 300с)
-  val_engine   — Qwen3-4B-4bit   (Т.О.С.К.А. v2, TTL 120с)
-  embedder     — BGE-M3          (sentence-transformers + MPS, lazy load)
+  main_engine  — MLX_MODEL     (RAG, TTL 300с)
+  val_engine   — MLX_VAL_MODEL (Т.О.С.К.А. v2, TTL 120с)
+  embedder     — BGE-M3        (sentence-transformers + MPS, lazy load)
 """
 
+import asyncio
 import gc
 import logging
 import os
+import signal
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import List, Optional, Union
+
+# Грузим .env из директории проекта — независимо от того, кто запустил процесс
+_env_file = Path(__file__).parent / ".env"
+if _env_file.exists():
+    for _line in _env_file.read_text().splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _, _v = _line.partition("=")
+            os.environ.setdefault(_k.strip(), _v.strip())
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -82,6 +94,67 @@ embedder = BGEEmbedder()
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 
+# Процессы которые нельзя убивать (substring match по cmdline)
+_PROC_WHITELIST = (
+    "python3", "python", "uvicorn",
+    "docker", "com.docker", "containerd",
+    "qdrant",
+    "kernel_task", "launchd", "WindowServer",
+    "loginwindow", "ssh", "sshd", "zsh", "bash",
+    "Finder", "SystemUIServer", "Dock",
+)
+
+# Порог свопа при котором выгружаем val-модель (%)
+SWAP_WARN_PCT  = 70
+# Порог при котором убиваем сторонние процессы (%)
+SWAP_KILL_PCT  = 85
+
+
+def _kill_nonessential() -> list[str]:
+    """Убивает процессы не из whitelist. Возвращает список убитых."""
+    import psutil
+    killed = []
+    for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            cmdline = " ".join(proc.info["cmdline"] or [])
+            name    = proc.info["name"] or ""
+            if proc.pid == os.getpid():
+                continue
+            if any(w.lower() in cmdline.lower() or w.lower() in name.lower()
+                   for w in _PROC_WHITELIST):
+                continue
+            proc.send_signal(signal.SIGTERM)
+            killed.append(name)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    return killed
+
+
+async def memory_guard_loop():
+    """Мониторит swap каждые 30с. При давлении — выгружает val, при критическом — убивает лишние процессы."""
+    import psutil
+    await asyncio.sleep(30)  # даём системе стабилизироваться при старте
+    while True:
+        try:
+            sw = psutil.swap_memory()
+            if sw.percent >= SWAP_KILL_PCT:
+                logger.warning(f"[MEM] Swap {sw.percent:.0f}% >= {SWAP_KILL_PCT}% — выгружаю val + убиваю посторонние")
+                if val_engine.model is not None:
+                    val_engine._unload_model()
+                killed = await asyncio.to_thread(_kill_nonessential)
+                if killed:
+                    logger.warning(f"[MEM] Убито: {', '.join(set(killed))}")
+            elif sw.percent >= SWAP_WARN_PCT:
+                logger.warning(f"[MEM] Swap {sw.percent:.0f}% >= {SWAP_WARN_PCT}% — выгружаю val-модель")
+                if val_engine.model is not None:
+                    val_engine._unload_model()
+            else:
+                logger.debug(f"[MEM] Swap {sw.percent:.0f}% — норма")
+        except Exception as e:
+            logger.warning(f"[MEM] memory_guard ошибка: {e}")
+        await asyncio.sleep(30)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(f"[INIT] main  : {MAIN_MODEL}")
@@ -89,6 +162,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"[INIT] embed : {BGE_MODEL} (lazy)")
     main_engine.start()
     val_engine.start()
+    asyncio.create_task(memory_guard_loop())
     yield
     logger.info("[SHUTDOWN] Завершение работы.")
     embedder.force_unload()
@@ -170,15 +244,16 @@ def _strip_think_tags(text: str) -> str:
 
 
 def _get_engine(model_name: str) -> "MLXMemoryManager":
-    if model_name == VAL_MODEL or "4B" in model_name or "4b" in model_name:
+    if model_name == VAL_MODEL:
         return val_engine
     return main_engine
 
 
-def _messages_to_prompt(messages: List[OAIMessage], engine: "MLXMemoryManager") -> str:
+def _messages_to_prompt(messages: List[OAIMessage], engine: "MLXMemoryManager", enable_thinking: bool = False) -> str:
     """
     Строит промпт через chat_template токенизатора движка.
     Токенизатор загружен в engine.start() — без весов модели, быстро.
+    enable_thinking=False по умолчанию — RAG-система не нуждается в цепочке рассуждений.
     """
     msgs = []
     for m in messages:
@@ -193,7 +268,7 @@ def _messages_to_prompt(messages: List[OAIMessage], engine: "MLXMemoryManager") 
             text = str(m.content)
         msgs.append({"role": m.role, "content": text})
 
-    return engine.apply_chat_template(msgs)
+    return engine.apply_chat_template(msgs, enable_thinking=enable_thinking)
 
 
 def _oai_response(content: str, model: str, prompt_tokens: int = 0) -> dict:
@@ -220,11 +295,44 @@ def _oai_response(content: str, model: str, prompt_tokens: int = 0) -> dict:
 
 @app.get("/api/health")
 async def health():
+    import psutil
+    sw = psutil.swap_memory()
+    vm = psutil.virtual_memory()
     return {
         "status":      "ok",
         "main_model":  {"path": main_engine.model_path, "loaded": main_engine.model is not None},
         "val_model":   {"path": val_engine.model_path,  "loaded": val_engine.model is not None},
         "embed_model": {"path": BGE_MODEL,               "loaded": embedder._model is not None},
+        "memory": {
+            "ram_free_gb":  round(vm.available / 1e9, 1),
+            "swap_used_gb": round(sw.used / 1e9, 1),
+            "swap_pct":     round(sw.percent, 1),
+        },
+    }
+
+
+@app.post("/api/unload_val")
+async def unload_val():
+    """Принудительная выгрузка val-модели для освобождения памяти."""
+    was_loaded = val_engine.model is not None
+    if was_loaded:
+        val_engine._unload_model()
+    return {"unloaded": was_loaded, "val_model": val_engine.model_path}
+
+
+@app.get("/api/host_memory")
+async def host_memory():
+    """Реальная память хоста (не Docker). Используется proxy для memory_guard."""
+    import psutil
+    sw = psutil.swap_memory()
+    vm = psutil.virtual_memory()
+    return {
+        "ram_total_gb":  round(vm.total    / 1e9, 1),
+        "ram_free_gb":   round(vm.available / 1e9, 1),
+        "ram_used_pct":  round(vm.percent, 1),
+        "swap_total_gb": round(sw.total / 1e9, 1),
+        "swap_used_gb":  round(sw.used  / 1e9, 1),
+        "swap_pct":      round(sw.percent, 1),
     }
 
 
@@ -311,10 +419,11 @@ async def chat_completions(req: OAIChatRequest):
 @app.post("/api/validate")
 async def validate_answer(req: ValidateRequest):
     """Проверка ответа через Qwen3-4B. Возвращает VERIFIED / NO_DATA / HALLUCINATION."""
+    # enable_thinking=False — валидатору не нужен <think> блок, нужен мгновенный ответ
     prompt = val_engine.apply_chat_template([{
         "role": "system",
         "content": (
-            "Ты — строгий валидатор. Отвечай ТОЛЬКО одним словом: "
+            "Ты — строгий валидатор. Отвечай ТОЛЬКО одним словом без пояснений: "
             "VERIFIED, NO_DATA или HALLUCINATION."
         ),
     }, {
@@ -323,14 +432,15 @@ async def validate_answer(req: ValidateRequest):
             f"Вопрос: {req.question}\n"
             f"Контекст: {req.context[:1500] or 'не предоставлен'}\n"
             f"Ответ для проверки: {req.answer[:1000]}\n\n"
-            "VERIFIED — ответ подтверждается контекстом.\n"
-            "NO_DATA — контекст не содержит нужных данных.\n"
-            "HALLUCINATION — ответ противоречит контексту.\n"
+            "VERIFIED — ответ подтверждается контекстом И отвечает на заданный вопрос.\n"
+            "NO_DATA — контекст не содержит нужных данных для ответа на вопрос.\n"
+            "HALLUCINATION — ответ противоречит контексту, содержит выдумки, "
+            "или технически верен но НЕ отвечает на заданный вопрос.\n"
             "Одно слово:"
         ),
-    }])
+    }], enable_thinking=False)
     try:
-        raw = _strip_think_tags(await val_engine.generate_text(prompt=prompt, max_tokens=10)).upper()
+        raw = _strip_think_tags(await val_engine.generate_text(prompt=prompt, max_tokens=64)).upper()
         if "VERIFIED" in raw:        status = "VERIFIED"
         elif "NO_DATA" in raw:       status = "NO_DATA"
         elif "HALLUCINATION" in raw: status = "HALLUCINATION"

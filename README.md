@@ -1,161 +1,392 @@
-# Л.Е.С.
+# 🌲 Л.Е.С. — Локальная Экспертная Система
 
-Локальная экспертная RAG-система для работы с нормативной документацией. Построена на Apple Silicon, работает полностью локально.
+**Локальная RAG-система для работы с нормативной документацией.**
+Работает полностью офлайн на Apple Silicon (Apple Silicon Host). Никакие данные не покидают локальную сеть.
 
-Спрашиваешь по ПП РФ, ГОСТу или СП — получаешь ответ с номером пункта и источником. Модель проверяет сама себя через встроенный валидатор. Данные никуда не уходят.
+**Актуальный статус: 22.05.2026.** С.О.В.У.Ш.К.А. разделена на лёгкий чат и админку: `https://les.example.com/` открывает премиальный чат с выезжающей историей и панелью артефактов, `https://les.example.com/les` открывает админский контур. Основной LLM-контур работает через MLX Host, Ollama оставлен только как резерв.
 
 ---
 
-## Что внутри
+## Что это
+
+Л.Е.С. — это система для поиска и анализа технических норм, СП, ГОСТ, проектной документации. Задаёшь вопрос на русском языке — получаешь ответ со ссылками на источники и оценкой достоверности.
 
 ```
-Mac Mini M4 / 24 GB  (Ж.А.Б.А.)
-│
-├── Docker
-│   ├── les-proxy   :8050   — API, RAG, CRAG
-│   └── les-qdrant  :6333   — векторная база
-│
-├── MLX Native Host :8080   — LLM на Metal
-│   ├── Qwen3-14B-4bit      — основной, RAG
-│   ├── Qwen3-4B-4bit       — валидатор (Т.О.С.К.А.)
-│   └── BGE-M3              — эмбеддинги
-│
-└── С.О.В.У.Ш.К.А.  :8051  — UI на NiceGUI
+Вопрос: "Минимальная ширина пути эвакуации по СП 1.13130?"
+Ответ:  "Не менее 1,2 м (п. 4.3.4 СП 1.13130.2022). [VERIFIED]"
+         └── Источник: СП 1.13130.2022.pdf, стр. 12
 ```
 
-## Модули
+---
 
-| | Расшифровка | Роль |
+## Архитектура
+
+```
+Интернет → les.example.com
+                │
+┌───────────────▼─────────────────────────────────┐
+│  VPS П.А.У.К. (Debian 13, <public-vps-ip>)       │
+│                                                 │
+│  Caddy :443  (Let's Encrypt, les.example.com)        │
+│       ├── /api/* → proxy_server :8050           │
+│       └── /*     → sovushka_ng  :8051           │
+│             ├── /     → AI ЧАТ + история        │
+│             └── /les  → админка Л.Е.С.          │
+│                                                 │
+│  ZeroTier mesh → Apple Silicon Host                       │
+│       ├── 10.0.0.10:6333 → Qdrant           │
+│       └── 10.0.0.10:8080 → MLX Host         │
+└─────────────────────────────────────────────────┘
+         │  ZeroTier `<zerotier-network-id>`
+┌────────▼────────────────────────────────────────┐
+│  Apple Silicon Host / 24 GB (Ж.А.Б.А.)                │
+│                                                 │
+│  С.О.В.У.Ш.К.А.  (NiceGUI UI, порт 8051)       │
+│  les-proxy        (FastAPI,    порт 8050)        │
+│       ├── proxy_server.py → proxy.app           │
+│       ├── proxy/security.py (server-side RBAC)  │
+│       ├── RAG pipeline  (С.А.М.О.В.А.Р.)        │
+│       ├── Т.О.С.К.А.    (SafeRAG валидация)     │
+│       └── В.О.Л.К.      (ключи, SQLite)         │
+│                                                 │
+│  MLX Native Host  (порт 8080)                   │
+│       ├── Qwen3-14B-4bit     (LLM, Metal)        │
+│       ├── Qwen3-4B-4bit      (валидатор)         │
+│       └── BGE-M3             (эмбеддинги, MPS)   │
+│                                                 │
+│  Qdrant  (векторная база, порт 6333)            │
+└─────────────────────────────────────────────────┘
+```
+
+---
+
+## Модули системы
+
+| Аббревиатура | Расшифровка | Роль |
 |---|---|---|
-| **С.А.М.О.В.А.Р.** | Система Автономной Машинной Обработки Внутренних Архивов РАГ | RAG + Qdrant |
-| **Т.О.С.К.А.** | Терминал Оценки, Самопроверки и Контроля Архитектуры | CRAG-валидатор |
-| **С.О.В.У.Ш.К.А.** | Система Обработки и Выдачи: Умная, Шаблонизированная, Классифицированная, Автоматизированная | UI |
-| **П.Р.О.Р.А.Б.** | Программа Регулярной Оценки Работы Автономной Базы | Метрики |
-| **В.О.Л.К.** | Внутренний Охранный Локальный Контур | Авторизация |
-| **П.А.У.К.** | Периметральный Аванпост Удалённого Контроля | VPS + Caddy + ZeroTier |
-| **Е.Ж.И.К.** | Ежедневный Журнализатор Инженерной Корреспонденции | IMAP (в разработке) |
-| **Ж.А.Б.А.** | Жёсткая Аппаратная База Аналитики | Mac Mini (хост) |
+| **С.О.В.У.Ш.К.А.** | Система Оперативного Взаимодействия с Умной Шкатулкой Корпоративных Активов | UI (NiceGUI) |
+| **С.А.М.О.В.А.Р.** | Система Автоматической Масштабируемой Обработки Векторных Архивов Регламентов | RAG / Qdrant |
+| **Т.О.С.К.А.** | Технология Оценки Соответствия Контента Архивным данным | CRAG валидатор |
+| **В.О.Л.К.** | Валидатор Ограничений Лиц и Ключей | Auth / RBAC |
+| **П.А.У.К.** | Периметральный Аванпост Удалённого Контроля | VPS прокси |
+| **Е.Ж.И.К.** | Ежедневный Журнализатор Инженерной Корреспонденции | IMAP / почта |
+| **Ж.А.Б.А.** | — | Apple Silicon Host (хост) |
 
-## Поток данных
+---
 
-```
-Запрос → /api/chat
-  → Qdrant retrieve (BGE-M3, top-5)
-  → Qwen3-14B генерирует ответ
-  → Т.О.С.К.А. (Qwen3-4B) валидирует
-      VERIFIED       → ответ с источниками
-      NO_DATA        → нет данных в индексе
-      HALLUCINATION  → заблокировано
-```
+## Стек
 
-## С.А.М.О.В.А.Р. — индексация
+| Компонент | Технология |
+|---|---|
+| LLM | `mlx-community/Qwen3-14B-4bit` via MLX |
+| Валидатор | `mlx-community/Qwen3-4B-4bit` (CRAG: VERIFIED / NO_DATA / HALLUCINATION) |
+| Эмбеддинги | [BGE-M3](https://huggingface.co/BAAI/bge-m3) via sentence-transformers + MPS |
+| Векторная база | [Qdrant](https://qdrant.tech/) |
+| Backend | FastAPI + LlamaIndex |
+| Frontend | [NiceGUI](https://nicegui.io/) v5.0 |
+| Auth | В.О.Л.К. — server-side API guards, API-ключи + SQLite, trusted local/ZeroTier contour, trusted-proxy boundary для forwarded headers |
+| Внешний доступ | Caddy + Let's Encrypt + ZeroTier mesh; SSH tunnel только резерв |
+| Форматы документов | PDF, DOCX, XLSX, CSV, EML, MSG, JSON, MD, TXT |
+| Артефакты | Таблицы/JSON/Mermaid/SVG в правой панели чата, XLSX/CSV ingestion и Parquet artifacts |
 
-Документы кладутся в `RAG_Content/` по папкам-датасетам. Нажимаешь SYNC — система обходит папку рекурсивно, конвертирует каждый файл в Markdown, нарезает на чанки с учётом структуры заголовков ГОСТ/СП, считает эмбеддинги батчами по 32 и загружает в Qdrant. Дельта-синк: повторный запуск обрабатывает только новые и изменённые файлы.
+---
 
-```
-RAG_Content/
-  NTD/          → NTD_Index    (801 файл, ~6000 чанков)
-  CLAUDE/       → CLAUDE_Index
-  QWEN/         → QWEN_Index
-```
+## Быстрый старт
 
-## Т.О.С.К.А. — валидация ответов
-
-После генерации ответа Qwen3-14B он отправляется на проверку к Qwen3-4B. Валидатор сверяет ответ с контекстом из Qdrant и выносит вердикт:
-
-```
-VERIFIED      — ответ подтверждён источниками
-NO_DATA       — в индексе нет релевантных данных
-HALLUCINATION — ответ противоречит источникам, заблокирован
-```
-
-Статистика по каждому вердикту накапливается отдельно и видна в П.Р.О.Р.А.Б.
-
-## Форматы выдачи
-
-В AI чате восемь форматов: текст, спецификация (ГОСТ 21.110), схема, структура, таблица, Mermaid-диаграмма, SVG, по образцу. Можно спросить «нарисуй структуру разделов ПД» — получишь диаграмму прямо в интерфейсе.
-
-## Требования
-
-- Mac Apple Silicon (M1/M2/M3/M4)
+### Требования
+- Mac с Apple Silicon (M1/M2/M4) и минимум 16 GB RAM (рекомендуется 24 GB)
 - Docker Desktop
-- Python 3.9+
-- [uv](https://github.com/astral-sh/uv)
+- [uv](https://docs.astral.sh/uv/) (`brew install uv`)
+- Python 3.12+
 
-## Запуск
+### Установка
 
 ```bash
+git clone https://github.com/yourname/les-rag-public
+cd les-rag-public
+
 # Зависимости
 uv sync
 
-# MLX Host (LLM на Metal)
-./start_mlx.command
+# Конфигурация
+cp env.example .env
+# Отредактируй .env — укажи модели и пароль
 
-# Docker (прокси + Qdrant)
-docker compose up -d
-
-# UI
-python3 sovushka_ng.py
+# Запуск
+docker compose up -d          # Qdrant + les-proxy
+./start_mlx.command           # MLX Host (LLM + Embeddings)
+uv run python sovushka_ng.py  # UI
 ```
 
-## Конфигурация
+Открой `http://localhost:8051` для чата или `http://localhost:8051/les` для админки.
 
-Скопируй `.env.example` в `.env` и укажи модели:
+### Добавление документов
 
-```env
-LLM_MODEL=mlx-community/Qwen3-14B-4bit
-EMBED_MODEL=bge-m3
-OLLAMA_URL=http://host.docker.internal:8080
-MLX_MODEL=mlx-community/Qwen3-14B-4bit
-MLX_VAL_MODEL=mlx-community/Qwen3-4B-4bit
-QDRANT_URL=http://qdrant:6333
+```bash
+# Положи PDF/DOCX в папку
+mkdir -p RAG_Content/MyDocs
+cp my_norms/*.pdf RAG_Content/MyDocs/
+
+# Запусти индексацию через UI или curl
+curl -X POST http://localhost:8050/api/rag/sync/MyDocs
 ```
-
-## Структура проекта
-
-```
-├── mlx_host.py              # MLX Native Host
-├── sovushka_ng.py           # Точка входа UI
-├── sovushka/                # Модули UI
-│   ├── config.py
-│   ├── state.py
-│   ├── styles.py
-│   ├── auth.py
-│   ├── components/          # header, logterm, charts
-│   └── pages/               # overview, samovar, prorab, chat, mermaid, diag, volk
-├── backend/
-│   ├── qdrant_adapter.py    # Qdrant + батч-эмбеддинги
-│   ├── converter.py         # PDF/DOCX/XLSX/EML/MD → Markdown
-│   └── mlx_adapter.py       # MLX Memory Manager (TTL, Lock)
-├── docker-compose.yml
-└── .env.example
-```
-
-## Поддерживаемые форматы документов
-
-PDF, DOCX, XLSX, CSV, EML, MSG, JSON, JSONL, MD, TXT
-
-## П.А.У.К. — сетевой периметр
-
-Система живёт в локальной сети, наружу выходит через VPS на Debian. Трафик идёт по ZeroTier — зашифрованный P2P туннель между Жабой и VPS. Caddy на VPS терминирует HTTPS и проксирует запросы внутрь.
-
-```
-Браузер → les.ovc.me (DNS → VPS :443)
-  → Caddy (TLS, Let's Encrypt)
-  → ZeroTier туннель
-  → Mac Mini :8050 (API) / :8051 (UI)
-```
-
-Qdrant (:6333) наружу не смотрит — только внутри Docker-сети.
-
-## В.О.Л.К. — авторизация
-
-Вход в С.О.В.У.Ш.К.А. закрыт. Два способа попасть внутрь: ключ доступа или свой IP из доверенной подсети (локальная сеть и ZeroTier проходят автоматически).
-
-Ключи хранятся в SQLite, управляются через вкладку В.О.Л.К. в интерфейсе. Роли: `admin` (все вкладки) и `user` (только AI ЧАТ).
-
-Данные пользователей, документы и векторы никогда не покидают Жабу.
 
 ---
 
-Авторы: Claude (Клодыч) · Qwen (Кен) · Gemini (Панорамыч) · Антигравити
+## RAG Pipeline
+
+```
+Запрос пользователя
+      │
+      ▼
+Векторный поиск (BGE-M3 + Qdrant)  top-8 чанков
+      │
+      ▼ [опционально, включается в UI]
+Реранкер (Qwen3-4B batch) → top-5 релевантных чанков
+      │
+      ▼
+Промпт = системный + контекст + вопрос
+      │
+      ▼
+Qwen3-14B (MLX, Metal)
+      │  ответ
+      ▼
+Т.О.С.К.А. валидация (Qwen3-4B)
+      │  VERIFIED / NO_DATA / HALLUCINATION
+      ▼
+Ответ пользователю + источники
+```
+
+---
+
+## Форматы вывода
+
+С.О.В.У.Ш.К.А. умеет форматировать ответ в:
+- Свободный текст
+- Спецификацию оборудования (по ГОСТ 21.110)
+- JSON-дерево / иерархическую схему
+- Mermaid-диаграмму (flowchart, sequence, ER)
+- SVG-схему
+- Произвольную таблицу
+- Артефакт в правой панели чата с копированием JSON/SVG/Mermaid
+
+Расширенные параметры запроса вынесены из основной области в модальное окно **Расширенный запрос**: формат, датасет, стиль, реранкер и шаблон вывода. История чатов открывается выезжающей левой панелью.
+
+---
+
+## Внешний доступ (П.А.У.К.)
+
+Система доступна через HTTPS без открытия портов домашней сети:
+
+```
+Интернет → les.example.com (VPS, Caddy, SSL)
+                │
+          proxy/UI на VPS
+                │
+          ZeroTier mesh
+                │
+         Apple Silicon Host :6333/:8080
+```
+
+Доступ по ключам (В.О.Л.К.):
+- `admin` — полный интерфейс
+- `user`  — только AI ЧАТ
+- Local/ZeroTier IP (`127.0.0.1`, `10.0.0.x`) — trusted admin автобайпас, ключ не нужен
+- Внешний доступ через `les.example.com` — ключ обязателен
+
+Публичные маршруты UI:
+- `https://les.example.com/` — устойчивый чатовый контур, не монтирует админские страницы.
+- `https://les.example.com/les` — админский контур, доступен только admin/trusted.
+
+---
+
+## Управление памятью
+
+Система оптимизирована под ограниченную RAM Apple Silicon Host:
+
+| Процесс | RAM |
+|---------|-----|
+| MLX (Qwen3-14B) | зависит от квантования |
+| MLX (Qwen3-4B val) | зависит от квантования |
+| les-proxy (Docker) | ≤ 512 MB |
+| les-qdrant (Docker) | ≤ 1 GB |
+| **Итого** | **~10 GB** |
+
+Docker-контейнеры имеют жёсткий `mem_limit` в `docker-compose.yml`.
+
+`les.command` запускает **MLX Watchdog** — фоновый процесс, который перезапускает MLX через 30 секунд при падении (OOM kill). Виден в `./les.command status`.
+
+`mlx_host.py` читает `.env` самостоятельно при старте — не зависит от оболочки запуска.
+
+### Performance flags
+
+```bash
+# Кэширует только VERIFIED ответы. Переиндексация датасета инвалидирует scope через chunk_count.
+SEMANTIC_CACHE_ENABLED=true
+SEMANTIC_CACHE_THRESHOLD=0.94
+
+# Экспериментальный PDF tables → Parquet слой. Markdown ingestion PDF остаётся основным fallback.
+PDF_TABLE_EXTRACTION_ENABLED=false
+PDF_TABLE_MAX_PAGES=30
+PDF_TABLE_MAX_TABLES=50
+DOC_ROUTER_SAMPLE_PAGES=3
+```
+
+### Новое в релизе 22.05.2026
+
+- Чат Совушки отделён от админки: меньше фоновых UI-зависимостей на основном рабочем экране.
+- `reconnect_timeout=180` и `chat_pending` помогают переживать долгие RAG-запросы и реконнекты.
+- Premium chat layout: нижний composer, левая drawer-история, правая панель артефактов.
+- `restart_sovushka.command` запускает UI через `.venv/bin/python3`, чтобы не сваливаться в системный Python 3.9.
+- Добавлены semantic cache, document router, Parquet/XLSX/CSV pipeline и тесты для них.
+
+---
+
+## Быстрая диагностика
+
+```bash
+# Все сервисы
+curl -s http://localhost:8050/api/diag | python3 -c \
+  "import sys,json; [print(f\"{r['status'].upper():6} {r['name']}\") for r in json.load(sys.stdin)['checks']]"
+
+# Метрики (файлы, чанки, RAM, CPU)
+curl -s http://localhost:8050/api/metrics | python3 -m json.tool
+
+# Логи в реальном времени
+docker logs -f les-proxy 2>&1 | grep -E "\[CHAT\]|\[PARSE\]|\[ERROR\]"
+```
+
+### Runtime smoke после деплоя
+
+```bash
+# Локальный контур: localhost/ZeroTier считается trusted admin, no-key boundary пропускается
+uv run python tools/runtime_smoke.py \
+  --admin-key "$ADMIN_PASSWORD" \
+  --question "Ширина путей эвакуации"
+
+# VPS/public URL: без ключа admin endpoint обязан вернуть 401/403
+LES_PROXY_URL=https://les.example.com \
+LES_UI_URL=https://les.example.com \
+LES_ADMIN_KEY="$ADMIN_PASSWORD" \
+LES_USER_KEY="user-key" \
+uv run python tools/runtime_smoke.py \
+  --expect-external-auth \
+  --question "Ширина путей эвакуации"
+```
+
+Smoke проверяет health/status/metrics/diag, загрузку UI shell, auth boundary для admin/user ключей и опциональные живые RAG-вопросы.
+
+### Browser smoke UI
+
+```bash
+# Локально: trusted localhost/ZeroTier должен сразу открыть admin shell
+uv run --with playwright python tools/browser_smoke.py --trusted-local
+
+# VPS/public URL: проверка логина admin/user и границ видимости вкладок
+LES_UI_URL=https://les.example.com \
+LES_ADMIN_KEY="$ADMIN_PASSWORD" \
+LES_USER_KEY="user-key" \
+uv run --with playwright python tools/browser_smoke.py \
+  --question "Ширина путей эвакуации"
+```
+
+При первом запуске на машине может понадобиться браузер Playwright:
+
+```bash
+uv run --with playwright python -m playwright install chromium
+```
+
+Browser smoke проверяет admin-вкладки, user-вкладки, отсутствие admin-разделов у user и, если передан вопрос, появление ответа в UI-чате.
+
+---
+
+## Структура репозитория (публичная версия)
+
+```
+les-rag-public/
+├── README.md
+├── pyproject.toml
+├── .env.example
+├── docker-compose.yml
+├── Dockerfile.proxy
+├── proxy/                    ← Proxy v3: app, security, services, storage
+│   ├── app.py                ← create_app(), startup, middleware, router wiring
+│   ├── legacy_app.py         ← compatibility shim for old imports
+│   ├── routers/              ← auth, chat, datasets, runtime, diagnostics, jobs
+│   ├── security.py           ← X-API-Key/Bearer, admin/user guards
+│   └── services/             ← JobService, retrieval, SafeRAG policy
+├── start_mlx.command
+├── stop_mlx.command
+├── start_pauk.command        ← резервный SSH tunnel к VPS
+├── stop_pauk.command
+├── pauk_launchd.plist        ← launchd автозапуск туннеля (Apple Silicon Host)
+├── mlx_host.py               ← MLX Native Host
+├── backend/
+│   ├── mlx_adapter.py        ← MLXMemoryManager
+│   ├── qdrant_adapter.py     ← EmbedClient + RAG
+│   ├── converter.py          ← PDF/DOCX/XLSX → текст
+│   ├── metrics_collector.py
+│   └── interface.py
+├── tools/
+│   ├── runtime_smoke.py      ← post-deploy smoke: auth/UI/runtime/RAG
+│   └── browser_smoke.py      ← Playwright smoke: UI admin/user scenarios
+├── sovushka/                 ← UI модули (рефакторинг)
+│   ├── config.py             ← PROXY_URL, MLX_URL, UI_PORT
+│   ├── state.py
+│   ├── styles.py
+│   └── pages/
+│       ├── chat.py
+│       ├── samovar.py
+│       └── ...
+└── sovushka_ng.py            ← точка входа UI
+```
+
+**Не входит в публичную версию:** `.env`, ключи, данные индексов.
+
+---
+
+## Лицензия
+
+MIT — используй, форкай, улучшай.
+Если делаешь что-то интересное на этой базе — открой issue, интересно посмотреть.
+
+---
+
+## Дорожная карта
+
+- [x] RAG pipeline (Qdrant + BGE-M3 + Qwen3)
+- [x] CRAG валидация (Т.О.С.К.А.) — VERIFIED / NO_DATA / HALLUCINATION
+- [x] NiceGUI интерфейс (С.О.В.У.Ш.К.А.) v5.0 — модульная архитектура
+- [x] Светлая и тёмная тема — персистентная через `app.storage.user`, WCAG AA контрасты
+- [x] Внешний доступ через VPS (П.А.У.К.) — Caddy + Let's Encrypt + ZeroTier, `les.example.com` live
+- [x] Auth по ключам (В.О.Л.К.) — admin/user роли, временные ключи, привязка к устройству (fingerprint)
+- [x] Proxy v3 — тонкий `proxy_server.py`, пакет `proxy/`, server-side guards для admin/user endpoints
+- [x] Stabilization tests — pytest regression для trusted network и API-key RBAC boundary
+- [x] История чатов (SQLite `chat_history`) — выживает рестарт процесса
+- [x] SafeRAG error handling — таймаут/ошибка валидатора → safe fallback, неподтверждённый ответ не отдаётся как нормальный
+- [x] Rate limiting (≤ 2 параллельных LLM-запроса), защита от prompt injection, path traversal
+- [x] `les.command` — единый скрипт управления (start/stop/restart/status)
+- [x] Proxy modularization — активные endpoints вынесены в routers/services, `legacy_app.py` оставлен shim
+- [x] Stabilization: runtime smoke для локального/VPS post-deploy контура
+- [x] Stabilization: browser smoke UI admin/user сценариев
+- [ ] RAG quality hardening: hybrid retrieval (dense + exact/sparse), golden set, trace/audit
+- [x] Performance: semantic cache для VERIFIED ответов с dataset-scope invalidation
+- [ ] Performance backlog: streaming validation, embedder TTL/offload, MLX tuning
+- [ ] Folder Watcher — автосинк новых файлов
+- [x] Parquet pipeline для XLSX/XLS/CSV — row-level chunks + `.parquet` artifacts
+- [x] Experimental PDF tables → Parquet — PyMuPDF first, pdfplumber fallback, `needs_ocr` marker
+- [x] Document Router — быстрый probe/classify/complexity перед выбором ingestion pipeline
+- [ ] XLS/CSV export — выдача табличных результатов как готовых файлов
+- [ ] Field Intake — внешние формы загрузки в карантинный `FIELD_Index`
+- [ ] Е.Ж.И.К. — IMAP коннектор для почты
+- [ ] VLM pipeline — анализ PDF-чертежей
+
+### Backlog ускорения и оптимизации
+
+- **Семантическое кэширование:** базовый слой внедрён для `VERIFIED` ответов. Ключ учитывает semantic similarity и snapshot датасетов (`chunk_count`), чтобы переиндексация инвалидировала старые ответы.
+- **Динамическая выгрузка эмбеддера:** держать `bge-m3` в памяти только во время retrieval/warm path, затем выгружать по агрессивному TTL, освобождая RAM/MPS для основной LLM.
+- **Параллельная валидация:** перейти от post-factum проверки полного ответа к асинхронной проверке чанков по мере streaming generation, чтобы снизить time-to-first-token в UI.
+- **Аппаратный тюнинг MLX:** проверить Flash Attention на длинном контексте и смешанное квантование 14B модели: критичные слои в 8 bit, остальные в 4 bit.
+- **Табличный контур:** базовый Parquet ingestion внедрён для XLSX/XLS/CSV. PDF tables слой добавлен как экспериментальный `PDF_TABLE_EXTRACTION_ENABLED`: PyMuPDF `find_tables()` first, pdfplumber fallback, сканы помечаются `needs_ocr`.
+- **Полевой загрузчик:** внешняя форма через П.А.У.К. для загрузки актов, фотоотчётов, предписаний и комментариев в изолированный карантинный датасет `FIELD_Index`, без смешивания с нормативной базой.
+- **Выдача XLS/CSV:** экспорт табличных ответов и AG Grid результатов в цифровой артефакт для смет, ведомостей и рабочей документации.

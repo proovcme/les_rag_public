@@ -6,7 +6,7 @@
 source ~/.zprofile 2>/dev/null
 source ~/.zshrc 2>/dev/null
 
-PROJECT="/Users/ovc/Projects/LES_v2"
+PROJECT="~/Projects/LES_v2"
 LOG="$PROJECT/logs/mlx_host.log"
 PID_FILE="$PROJECT/logs/mlx_host.pid"
 

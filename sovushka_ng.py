@@ -5,10 +5,11 @@ import asyncio
 from fastapi import Request
 from nicegui import app, ui
 
-from sovushka.config import UI_PORT
+from sovushka.config import STORAGE_SECRET, UI_PORT
 from sovushka.state import bg_loop
-from sovushka.styles import CUSTOM_CSS
+from sovushka.styles import CUSTOM_CSS, theme_vars_css
 from sovushka.auth import register_login_page, get_auth
+from sovushka.trust import client_ip_from_request, trusted_role_for_ip
 
 from sovushka.components.header import build_header
 from sovushka.components.logterm import build_log_terminal
@@ -17,6 +18,7 @@ from sovushka.pages.overview import build_overview
 from sovushka.pages.samovar import build_samovar
 from sovushka.pages.prorab import build_prorab
 from sovushka.pages.chat import build_chat
+from sovushka.pages.history import build_history
 from sovushka.pages.mermaid_page import build_mermaid
 from sovushka.pages.diag import build_diag
 from sovushka.pages.volk import build_volk
@@ -29,66 +31,118 @@ app.add_static_files("/static", "static")
 register_login_page()
 
 
-@ui.page("/")
-async def main_page(request: Request):
-    is_auth, role, holder = get_auth()
-    
-    forwarded = request.headers.get("x-forwarded-for")
-    real_ip = request.headers.get("x-real-ip")
-    if forwarded:
-        client_ip = forwarded.split(",")[0].strip()
-    elif real_ip:
-        client_ip = real_ip.strip()
-    else:
-        client_ip = request.client.host if request and request.client else "127.0.0.1"
-        
-    is_local = any(client_ip.startswith(p) for p in ("127.", "10.", "192.168.", "172.", "::1"))
-    
-    if not is_auth and not is_local:
-        ui.navigate.to("/login")
-        return
-
-    if not is_auth and is_local:
-        role = "admin"
-        holder = "Local (Auto)"
-        
-    is_admin = (role == "admin")
-
-    # Базовые стили
+def _apply_theme() -> None:
+    """Inject theme CSS before rendering the page body."""
+    _dark = app.storage.user.get("dark_theme", True)
+    ui.add_head_html(theme_vars_css(_dark))
     ui.add_head_html(CUSTOM_CSS)
     ui.query("body").style("background:var(--bg);color:var(--text);margin:0;")
     ui.query(".nicegui-content").classes("p-0 m-0 w-full").style("max-width:none;")
 
-    # Layout: Header + Content + Footer
+
+def _resolve_auth(request: Request):
+    is_auth, role, holder = get_auth()
+
+    client_ip = client_ip_from_request(request)
+    trusted_role = trusted_role_for_ip(client_ip)
+
+    if not is_auth and not trusted_role:
+        return False, None, None, False
+
+    if not is_auth and trusted_role:
+        role = trusted_role
+        holder = "Trusted Network"
+
+    is_admin = (role == "admin")
+    return True, role, holder, is_admin
+
+
+@ui.page("/")
+async def chat_page(request: Request):
+    allowed, role, holder, is_admin = _resolve_auth(request)
+    if not allowed:
+        ui.navigate.to("/login")
+        return
+
+    _apply_theme()
+
+    # Public shell: only chat/history. It stays lean and avoids mounting admin pages.
     with ui.column().classes("w-full h-screen no-wrap gap-0"):
-        
-        # 1. Шапка
-        with ui.row().classes("w-full items-center"):
-            # Нам нужны tabs ДО того как мы вызовем build_header? 
-            # В build_header мы не передаём tabs для навигации.
-            pass
+        tabs, tr = build_header(
+            is_admin,
+            role,
+            holder,
+            admin_tabs=False,
+            admin_link=is_admin,
+        )
 
-        # Создаем табы
-        with ui.tabs().classes("w-full bg-panel border-b border-border text-dim").style(
-            "background:var(--bg-panel);border-bottom:1px solid var(--border);"
-            "color:var(--dim);font-family:var(--font);font-size:.7rem;font-weight:700;"
-            "padding:0 24px;"
-        ) as tabs:
-            tab_overview = ui.tab("ОБЗОР",          icon="o_dashboard")
-            tab_samovar  = ui.tab("С.А.М.О.В.А.Р.", icon="o_inventory_2")
-            tab_prorab   = ui.tab("П.Р.О.Р.А.Б.",   icon="o_monitor")
-            tab_chat     = ui.tab("AI ЧАТ",         icon="o_forum")
-            tab_mermaid  = ui.tab("ГРАФ",           icon="o_account_tree")
-            tab_diag     = ui.tab("🔬 ДИАГНОСТИКА", icon="o_medical_services")
-            if is_admin:
-                tab_volk = ui.tab("В.О.Л.К.",       icon="o_vpn_key")
+        tab_chat = tr["chat"]
+        tab_history = tr["history"]
 
-        # Теперь строим шапку, передавая tabs если нужно
-        # (в текущей реализации build_header не использует вкладки для навигации напрямую)
-        build_header(tabs, role, holder, is_admin)
+        def _save_chat_tab(e):
+            try:
+                val = e.args if isinstance(e.args, str) else (e.args[0] if isinstance(e.args, (list, tuple)) and e.args else None)
+                if val:
+                    app.storage.user["last_chat_tab"] = str(val)
+            except Exception:
+                pass
 
-        # 2. Контент (Panels)
-        with ui.tab_panels(tabs, value=tab_overview).classes("w-full flex-1").style(
+        tabs.on("update:model-value", _save_chat_tab)
+
+        with ui.tab_panels(tabs, value=tab_chat).classes("w-full flex-1").style(
+            "background:var(--bg);overflow-y:auto;padding:0;"
+        ):
+            with ui.tab_panel(tab_chat):
+                build_chat(is_admin, tabs, None)
+            with ui.tab_panel(tab_history):
+                build_history(tabs, tab_chat)
+
+    _last_tab = app.storage.user.get("last_chat_tab", "AI ЧАТ")
+    _target = {"AI ЧАТ": tab_chat, "ИСТОРИЯ": tab_history}.get(_last_tab)
+    if _target and _target != tab_chat:
+        ui.timer(0.0, lambda t=_target: tabs.set_value(t), once=True)
+
+
+@ui.page("/les")
+@ui.page("/les/")
+async def admin_page(request: Request):
+    allowed, role, holder, is_admin = _resolve_auth(request)
+    if not allowed:
+        ui.navigate.to("/login")
+        return
+
+    if not is_admin:
+        ui.navigate.to("/")
+        return
+
+    _apply_theme()
+
+    # Layout: Header (со встроенными табами) + Content + Footer
+    with ui.column().classes("w-full h-screen no-wrap gap-0"):
+
+        # Единая полоса: лого + табы + контролы
+        tabs, tr = build_header(is_admin, role, holder, include_chat=False, chat_link=True)
+
+        tab_overview = tr.get("overview")
+        tab_samovar  = tr.get("samovar")
+        tab_prorab   = tr.get("prorab")
+        tab_mermaid  = tr.get("mermaid")
+        tab_diag     = tr.get("diag")
+        tab_volk     = tr.get("volk")
+
+        # Персистим активный таб
+        def _save_tab(e):
+            try:
+                val = e.args if isinstance(e.args, str) else (e.args[0] if isinstance(e.args, (list, tuple)) and e.args else None)
+                if val:
+                    app.storage.user["last_tab"] = str(val)
+            except Exception:
+                pass
+        tabs.on("update:model-value", _save_tab)
+
+        # Контент
+        _default_tab = tab_overview
+        with ui.tab_panels(tabs, value=_default_tab).classes("w-full flex-1").style(
             "background:var(--bg);overflow-y:auto;padding:0;"
         ):
             with ui.tab_panel(tab_overview):
@@ -97,18 +151,30 @@ async def main_page(request: Request):
                 build_samovar()
             with ui.tab_panel(tab_prorab):
                 build_prorab()
-            with ui.tab_panel(tab_chat):
-                build_chat(is_admin, tabs, tab_mermaid)
             with ui.tab_panel(tab_mermaid):
                 build_mermaid()
             with ui.tab_panel(tab_diag):
                 build_diag()
-            if is_admin:
-                with ui.tab_panel(tab_volk):
-                    build_volk()
+            with ui.tab_panel(tab_volk):
+                build_volk()
 
-        # 3. Подвал (Лог)
+        # Подвал (Лог)
         build_log_terminal()
+
+    # Восстанавливаем последний активный таб
+    _last_tab = app.storage.user.get("last_tab", "ОБЗОР")
+    _tab_map = {
+        "ОБЗОР":          tab_overview,
+        "С.А.М.О.В.А.Р.": tab_samovar,
+        "П.Р.О.Р.А.Б.":   tab_prorab,
+        "ГРАФ":            tab_mermaid,
+        "🔬 ДИАГН":        tab_diag,
+        "В.О.Л.К.":       tab_volk,
+    }
+    _target = _tab_map.get(_last_tab)
+    if _target and _target != _default_tab:
+        ui.timer(0.0, lambda t=_target: tabs.set_value(t), once=True)
+
 
 
 if __name__ in {"__main__", "__mp_main__"}:
@@ -120,5 +186,7 @@ if __name__ in {"__main__", "__mp_main__"}:
         title="Л.Е.С. v5.0",
         dark=True,
         show=False,
-        storage_secret="les_secret_883"
+        storage_secret=STORAGE_SECRET,
+        reload=False,
+        reconnect_timeout=180,  # длинные RAG-запросы не должны срывать страницу
     )

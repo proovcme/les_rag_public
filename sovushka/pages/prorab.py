@@ -3,8 +3,9 @@
 """
 from __future__ import annotations
 
+import asyncio
 from nicegui import ui
-from sovushka.state import state
+from sovushka.state import state, last_api_error_text
 from sovushka.components.charts import _html, pct_bar_html, format_bytes
 
 
@@ -43,10 +44,9 @@ def build_prorab():
             with ui.card().classes("card-les"):
                 ui.label("RAM BREAKDOWN").classes("section-title mb-2")
                 ram_bar = _html(pct_bar_html([
-                    (33, "var(--err)"), (33, "var(--ok)"), (34, "var(--border)")
+                    (50, "var(--ok)"), (50, "var(--border)")
                 ]))
                 with ui.row().classes("justify-between mt-1"):
-                    ui.label("Ollama").style("font-size:.6rem;color:var(--err);")
                     ui.label("Sys").style("font-size:.6rem;color:var(--ok);")
                     ui.label("Free").style("font-size:.6rem;color:var(--dim);")
                 ram_total_lbl = ui.label("— / — GB").style(
@@ -86,13 +86,17 @@ def build_prorab():
             with ui.card().classes("card-les col-span-2"):
                 with ui.row().classes("items-center justify-between mb-2"):
                     ui.label("MLX HOST :8080").classes("section-title")
-                    mlx_badge = _html('<span class="tag-dim">—</span>')
+                    with ui.row().classes("items-center gap-2"):
+                        mlx_badge = _html('<span class="tag-dim">—</span>')
+                        warmup_btn = ui.button(
+                            "⚡ ПРОГРЕВ", on_click=lambda: asyncio.create_task(_warmup())
+                        ).props("no-caps outline dense").style(
+                            "font-size:.6rem;color:var(--warn);border-color:var(--warn);"
+                            "padding:2px 8px;"
+                        )
                 mlx_models_container = ui.column().classes("gap-2 w-full")
 
-            # Ollama
-            with ui.card().classes("card-les"):
-                ui.label("OLLAMA — МОДЕЛИ").classes("section-title mb-2")
-                ollama_container = ui.column().classes("gap-1 w-full")
+
 
             # Docker
             with ui.card().classes("card-les"):
@@ -105,6 +109,26 @@ def build_prorab():
                 ui.label("HTTP ERRORS").classes("section-title mb-2")
                 errors_lbl = ui.label("Нет ошибок").style("font-size:.7rem;color:var(--dim);")
 
+        # ── Вспомогательные действия ───────────────────────────────────────────
+
+        async def _warmup():
+            warmup_btn.props("loading")
+            warmup_btn.set_text("...")
+            from sovushka.state import api_post, add_log
+            add_log("[MLX] Прогрев моделей...")
+            d = await api_post("/api/warmup")
+            warmup_btn.props(remove="loading")
+            if d and d.get("status") == "done":
+                models = d.get("models", {})
+                main_t = models.get("main", {}).get("elapsed", "?")
+                val_t  = models.get("val",  {}).get("elapsed", "?")
+                ui.notify(f"✓ Прогрев OK: main {main_t}с, val {val_t}с", type="positive")
+                add_log(f"[MLX] Прогрев завершён: main={main_t}с val={val_t}с")
+                warmup_btn.set_text("✓ OK")
+            else:
+                ui.notify(last_api_error_text("Ошибка прогрева — проверь логи"), type="negative")
+                warmup_btn.set_text("⚡ ПРОГРЕВ")
+
         # ── Рендер метрик ──────────────────────────────────────────────────────
 
         def _n(v):
@@ -115,10 +139,13 @@ def build_prorab():
             """Извлекает loaded из MLX объекта."""
             return v.get("loaded", default) if isinstance(v, dict) else default
 
+        _prev_render = {"mlx": None, "containers": None}
+
         def _render_prorab():
-            m   = state["metrics"]
-            st  = state["status"]
-            mlx = state["mlx_health"]
+          try:
+            m   = state.get("metrics", {})
+            st  = state.get("status", {})
+            mlx = state.get("mlx_health", {})
             s   = m.get("system", {})
             p   = m.get("pipeline", {})
             r   = m.get("rag", {})
@@ -133,14 +160,11 @@ def build_prorab():
             pro_kpi["queue"].set_text(str(q.get("llm_waiting", 0)))
 
             # RAM bar
-            rt = s.get("ram_total", 24)
+            rt = s.get("ram_total", 24) or 24
             ru = s.get("ram_used", 0)
-            ro = s.get("ollama_ram", 0)
-            rs = max(0, ru - ro)
             rf = max(0, rt - ru)
             ram_bar.set_content(pct_bar_html([
-                (ro / rt * 100, "var(--err)"),
-                (rs / rt * 100, "var(--ok)"),
+                (ru / rt * 100, "var(--ok)"),
                 (rf / rt * 100, "var(--border)"),
             ]))
             ram_total_lbl.set_text(f"{ru:.1f} / {rt:.1f} GB")
@@ -179,76 +203,65 @@ def build_prorab():
                 avg = sum(combined) / len(combined) if combined else 0
                 lat_lbl.set_text(f"{avg*1000:.0f} ms avg")
 
-            # MLX Host
+            # MLX Host — clear() только если данные изменились
+            mlx_key = str(mlx)
             if mlx:
                 mlx_badge.set_content('<span class="tag-ok">UP</span>')
-                engines = []
-                if mlx.get("main_model") or mlx.get("model"):
-                    mv = mlx.get("main_model") or mlx.get("model")
-                    engines.append(("MAIN", _n(mv), _l(mv, True), "var(--accent)"))
-                if mlx.get("val_model"):
-                    engines.append(("VAL", _n(mlx["val_model"]), _l(mlx["val_model"], False), "var(--pauk)"))
-                if mlx.get("embed_model") or mlx.get("embedding_model"):
-                    ev = mlx.get("embed_model") or mlx.get("embedding_model")
-                    engines.append(("EMBED", _n(ev) or "bge-m3", True, "var(--ok)"))
+                if mlx_key != _prev_render["mlx"]:
+                    _prev_render["mlx"] = mlx_key
+                    engines = []
+                    if mlx.get("main_model") or mlx.get("model"):
+                        mv = mlx.get("main_model") or mlx.get("model")
+                        engines.append(("MAIN", _n(mv), _l(mv, True), "var(--accent)"))
+                    if mlx.get("val_model"):
+                        engines.append(("VAL", _n(mlx["val_model"]), _l(mlx["val_model"], False), "var(--pauk)"))
+                    if mlx.get("embed_model") or mlx.get("embedding_model"):
+                        ev = mlx.get("embed_model") or mlx.get("embedding_model")
+                        engines.append(("EMBED", _n(ev) or "bge-m3", True, "var(--ok)"))
 
-                mlx_models_container.clear()
-                for label, name, loaded, color in engines:
+                    mlx_models_container.clear()
+                    for label, name, loaded, color in engines:
+                        with mlx_models_container:
+                            with ui.row().classes("items-center justify-between w-full py-1").style(
+                                "border-bottom:1px solid var(--border);"
+                            ):
+                                with ui.column().classes("gap-0"):
+                                    ui.label(name or "—").style(
+                                        "font-size:.72rem;font-weight:700;color:var(--text);"
+                                        "max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+                                    )
+                                    _html(f'<span class="tag-dim" style="color:{color};">{label}</span>')
+                                _html(
+                                    f'<span class="{"tag-ok" if loaded else "tag-dim"}">'
+                                    f'{"LIVE" if loaded else "IDLE"}</span>'
+                                )
+            else:
+                if mlx_key != _prev_render["mlx"]:
+                    _prev_render["mlx"] = mlx_key
+                    mlx_badge.set_content('<span class="tag-err">DOWN</span>')
+                    mlx_models_container.clear()
                     with mlx_models_container:
-                        with ui.row().classes("items-center justify-between w-full py-1").style(
-                            "border-bottom:1px solid var(--border);"
-                        ):
-                            with ui.column().classes("gap-0"):
-                                ui.label(name or "—").style(
-                                    "font-size:.72rem;font-weight:700;color:var(--text);"
-                                    "max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
-                                )
-                                _html(f'<span class="tag-dim" style="color:{color};">{label}</span>')
-                            _html(
-                                f'<span class="{"tag-ok" if loaded else "tag-dim"}">'
-                                f'{"LIVE" if loaded else "IDLE"}</span>'
-                            )
-            else:
-                mlx_badge.set_content('<span class="tag-err">DOWN</span>')
-                mlx_models_container.clear()
-                with mlx_models_container:
-                    ui.label("MLX Host недоступен").style("font-size:.7rem;color:var(--err);")
+                        ui.label("MLX Host недоступен").style("font-size:.7rem;color:var(--err);")
 
-            # Ollama
-            ollama_container.clear()
-            models = st.get("ollama", {}).get("models", [])
-            if not models:
-                with ollama_container:
-                    ui.label("Нет активных моделей").style("font-size:.7rem;color:var(--dim);")
-            else:
-                for mod in models:
-                    with ollama_container:
-                        with ui.row().classes("items-center justify-between py-1").style(
-                            "border-bottom:1px solid var(--border);"
-                        ):
-                            with ui.column().classes("gap-0"):
-                                ui.label(mod["name"]).style("font-size:.72rem;font-weight:700;")
-                                ui.label(f"RAM: {mod.get('size_gb','?')} GB").style(
-                                    "font-size:.6rem;color:var(--dim);"
-                                )
-                            _html('<span class="tag-ok">LIVE</span>')
-
-            # Docker
+            # Docker — clear() только если список контейнеров изменился
             containers = st.get("containers", [])
             all_ok = all(c.get("ok") for c in containers) if containers else False
             docker_badge.set_text(f"{len(containers)} UP" if all_ok else "ПРОБЛЕМА")
             docker_badge.style(f"color:{'var(--ok)' if all_ok else 'var(--err)'};")
-            docker_container.clear()
-            for c in containers:
-                with docker_container:
-                    with ui.row().classes("items-center justify-between py-1").style(
-                        "border-bottom:1px solid var(--border);"
-                    ):
-                        ui.label(c["name"]).style("font-size:.72rem;font-weight:700;")
-                        _html(
-                            f'<span class="{"tag-ok" if c.get("ok") else "tag-err"}">'
-                            f'{c.get("status","?").split()[0]}</span>'
-                        )
+            containers_key = str(containers)
+            if containers_key != _prev_render["containers"]:
+                _prev_render["containers"] = containers_key
+                docker_container.clear()
+                for c in containers:
+                    with docker_container:
+                        with ui.row().classes("items-center justify-between py-1").style(
+                            "border-bottom:1px solid var(--border);"
+                        ):
+                            ui.label(c["name"]).style("font-size:.72rem;font-weight:700;")
+                            _html(
+                                f'<span class="{"tag-ok" if c.get("ok") else "tag-err"}">'
+                                f'{c.get("status","?").split()[0]}</span>'
+                            )
 
             # Errors
             if e:
@@ -257,6 +270,9 @@ def build_prorab():
             else:
                 errors_lbl.set_text("Нет ошибок")
                 errors_lbl.style("color:var(--dim);")
+          except Exception as _ex:
+              import logging
+              logging.getLogger("les.prorab").warning(f"_render_prorab: {_ex}")
 
-        ui.timer(5, lambda: _render_prorab())
+        ui.timer(10, lambda: _render_prorab(), active=True)
         ui.timer(0.3, lambda: _render_prorab(), once=True)

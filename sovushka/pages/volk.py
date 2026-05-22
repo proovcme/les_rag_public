@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 from nicegui import app, ui
 
-from sovushka.state import api_get, api_post, api_delete
+from sovushka.state import api_get, api_post, last_api_error_text
 
 
 def build_volk():
@@ -46,6 +46,10 @@ def build_volk():
                 inp_role = ui.select(["user", "admin"], value="user", label="Роль").style(
                     "font-size:.72rem;width:100px;"
                 )
+                inp_type = ui.select(
+                    {"permanent": "∞ Постоянный", "1": "⏱ 1 день"},
+                    value="permanent", label="Срок"
+                ).style("font-size:.72rem;width:130px;")
 
             with ui.row().classes("gap-2 mt-2"):
                 def _gen():
@@ -67,12 +71,14 @@ def build_volk():
         with ui.card().classes("card-les w-full"):
             ui.label("КЛЮЧИ ДОСТУПА").classes("section-title mb-3")
             volk_cols = [
-                {"name": "holder_name", "label": "Кто",    "field": "holder_name", "align": "left",   "sortable": True},
-                {"name": "role",        "label": "Роль",   "field": "role",        "align": "center"},
-                {"name": "key_value",   "label": "Ключ",   "field": "key_value",   "align": "left"},
-                {"name": "is_active",   "label": "Статус", "field": "is_active",   "align": "center"},
-                {"name": "created_at",  "label": "Создан", "field": "created_at",  "align": "left",   "sortable": True},
-                {"name": "actions",     "label": "",        "field": "key_value",   "align": "center"},
+                {"name": "holder_name",  "label": "Кто",       "field": "holder_name",  "align": "left",   "sortable": True},
+                {"name": "role",         "label": "Роль",      "field": "role",         "align": "center"},
+                {"name": "key_value",    "label": "Ключ",      "field": "key_value",    "align": "left"},
+                {"name": "is_active",    "label": "Статус",    "field": "is_active",    "align": "center"},
+                {"name": "device_bound", "label": "Устройство","field": "device_bound", "align": "center"},
+                {"name": "expires_at",   "label": "Истекает",  "field": "expires_at",   "align": "left"},
+                {"name": "created_at",   "label": "Создан",    "field": "created_at",   "align": "left",   "sortable": True},
+                {"name": "actions",      "label": "",           "field": "key_value",    "align": "center"},
             ]
             volk_tbl = ui.table(columns=volk_cols, rows=[], row_key="key_value").classes("w-full").style(
                 "background:var(--bg-panel);color:var(--text);font-family:var(--font);"
@@ -83,10 +89,22 @@ def build_volk():
                     {{ props.value ? 'ON' : 'OFF' }}
                   </span>
                 </q-td>""")
+            volk_tbl.add_slot("body-cell-expires_at", """
+                <q-td :props="props">
+                  <span :style="{color:props.value?'#f59e0b':'#94a3b8',fontSize:'.65rem'}">
+                    {{ props.value ? props.value.substring(0,10) : '∞' }}
+                  </span>
+                </q-td>""")
             volk_tbl.add_slot("body-cell-role", """
                 <q-td :props="props">
                   <span :style="{color:props.value==='admin'?'#8b5cf6':'#94a3b8',fontWeight:'700',fontSize:'.65rem'}">
                     {{ props.value.toUpperCase() }}
+                  </span>
+                </q-td>""")
+            volk_tbl.add_slot("body-cell-device_bound", """
+                <q-td :props="props" auto-width>
+                  <span :style="{color:props.value?'#f59e0b':'#94a3b8',fontSize:'.65rem',fontWeight:'700'}">
+                    {{ props.value ? '📱 привязан' : '🔓 свободен' }}
                   </span>
                 </q-td>""")
             volk_tbl.add_slot("body-cell-actions", """
@@ -96,11 +114,15 @@ def build_volk():
                          style="font-size:.6rem;margin-right:4px;">
                     {{ props.row.is_active ? 'OFF' : 'ON' }}
                   </q-btn>
+                  <q-btn v-if="props.row.device_bound" flat dense size="xs" color="info"
+                         @click="$parent.$emit('reset_device', props.row)"
+                         style="font-size:.6rem;margin-right:4px;">📱✕</q-btn>
                   <q-btn flat dense size="xs" color="negative"
                          @click="$parent.$emit('delete', props.row)"
                          style="font-size:.6rem;">DEL</q-btn>
                 </q-td>""")
             volk_tbl.on("toggle", lambda e: asyncio.create_task(_volk_toggle(e.args)))
+            volk_tbl.on("reset_device", lambda e: asyncio.create_task(_volk_reset_device(e.args)))
             volk_tbl.on("delete", lambda e: asyncio.create_task(_volk_delete(e.args)))
 
         # ── Логика ──────────────────────────────
@@ -115,31 +137,53 @@ def build_volk():
             k  = inp_key.value.strip()
             h  = inp_holder.value.strip()
             ro = inp_role.value
+            tp = inp_type.value
             if not k:
                 ui.notify("Введите или сгенерируйте ключ", type="warning")
                 return
-            d = await api_post("/api/auth/keys", {"key_value": k, "holder_name": h, "role": ro})
+            expires_days = 0 if tp == "permanent" else int(tp)
+            d = await api_post("/api/auth/keys", {
+                "key_value": k, "holder_name": h,
+                "role": ro, "expires_days": expires_days
+            })
             if d:
-                ui.notify(f"✓ Создан: {h or k} [{ro}]", type="positive")
+                kind = "∞ постоянный" if expires_days == 0 else f"⏱ {expires_days}д"
+                ui.notify(f"✓ Создан: {h or k} [{ro}] {kind}", type="positive")
                 inp_key.set_value("")
                 inp_holder.set_value("")
                 await _volk_load()
             else:
-                ui.notify("Ошибка (ключ уже существует?)", type="negative")
+                ui.notify(last_api_error_text("Ошибка создания ключа"), type="negative")
 
         async def _volk_toggle(row):
             k   = row.get("key_value", "") if isinstance(row, dict) else str(row)
             cur = row.get("is_active", 1)  if isinstance(row, dict) else 1
-            await api_post("/api/auth/keys/toggle", {"key_value": k, "is_active": 0 if cur else 1})
-            await _volk_load()
+            d = await api_post("/api/auth/keys/toggle", {"key_value": k, "is_active": 0 if cur else 1})
+            if d:
+                await _volk_load()
+            else:
+                ui.notify(last_api_error_text("Ошибка переключения ключа"), type="negative")
+
+        async def _volk_reset_device(row):
+            k = row.get("key_value", "") if isinstance(row, dict) else str(row)
+            h = row.get("holder_name", k) if isinstance(row, dict) else k
+            d = await api_post("/api/auth/keys/reset-device", {"key_value": k, "is_active": 1})
+            if d:
+                ui.notify(f"📱 Устройство отвязано: {h}", type="info")
+                await _volk_load()
+            else:
+                ui.notify(last_api_error_text("Ошибка отвязки устройства"), type="negative")
 
         async def _volk_delete(row):
             k = row.get("key_value", "") if isinstance(row, dict) else str(row)
             if k == raw_key:
                 ui.notify("Нельзя удалить свой ключ", type="warning")
                 return
-            await api_delete(f"/api/auth/keys/{k}")
-            ui.notify(f"Удалён: {k[:16]}…", type="warning")
-            await _volk_load()
+            d = await api_post("/api/auth/keys/delete", {"key_value": k})
+            if d:
+                ui.notify(f"Удалён: {k[:16]}…", type="warning")
+                await _volk_load()
+            else:
+                ui.notify(last_api_error_text("Ошибка удаления ключа"), type="negative")
 
         ui.timer(0.5, lambda: asyncio.create_task(_volk_load()), once=True)

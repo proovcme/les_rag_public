@@ -1,7 +1,44 @@
+# Данные и Секреты (НИКОГДА не пушить)
 .env
-*.env
-logs/
+data/
+storage/
 RAG_Content/
+logs/
+.claude/
+.nicegui/
+
+# Python
 __pycache__/
-*.pyc
-.venv/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Логи
+*.log
+.aider*
+
+# Generated local workbench exports
+qdrant_visualizer/data.js
+
+# Private/local font asset; UI falls back to Courier when absent.
+static/fonts/ISOCPEUR.ttf

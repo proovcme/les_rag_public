@@ -1,286 +1,364 @@
 """
-С.О.В.У.Ш.К.А. v5.0 — Вкладка AI ЧАТ
+С.О.В.У.Ш.К.А. v5.0 — премиальная рабочая вкладка AI ЧАТ
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import re
+import time
 from typing import Optional
+
 from nicegui import ui
 
-from sovushka.state import state, api_post, add_log, refresh_samovar
-from sovushka.components.charts import _html
+from sovushka.components.charts import _html, esc
+from sovushka.state import add_log, api_get, api_post, refresh_samovar, state
+
+
+OUTPUT_FORMATS = {
+    "text": ("Текст", "Свободный ответ"),
+    "spec": ("Спецификация", "JSON-таблица изделий"),
+    "schema": ("Схема", "Иерархия или дерево"),
+    "structure": ("Структура", "JSON-объект"),
+    "table": ("Таблица", "JSON-массив строк"),
+    "mermaid": ("Диаграмма", "Mermaid"),
+    "svg": ("SVG", "Векторная схема"),
+    "template": ("По образцу", "Структура файла"),
+}
 
 
 def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
-    """Строит содержимое вкладки AI ЧАТ. Вызывать внутри with ui.tab_panel(tab_chat)."""
-    with ui.splitter(value=62).classes("w-full").style("height:calc(100vh - 210px);min-height:500px;") as chat_split:
+    """Строит автономный экран чата: история слева, чат по центру, артефакты справа."""
 
-        # ── ЛЕВАЯ ПАНЕЛЬ: ЧАТ ──────────────────
-        with chat_split.before:
-            with ui.column().classes("w-full h-full gap-2 p-3"):
+    out_mode_val = {"v": "text"}
+    selected_session_card = {"el": None}
 
-                # Чат-история
-                chat_scroll = ui.scroll_area().classes("w-full flex-1").style(
-                    "background:var(--bg-panel);border:1px solid var(--border);"
-                    "border-radius:8px;min-height:0;"
-                )
-                with chat_scroll:
-                    chat_column = ui.column().classes("w-full p-4 gap-3")
-                    with chat_column:
-                        _html('<div class="chat-msg-sys">Система активирована. Ожидание запросов.</div>')
+    with ui.element("div").classes("sov-chat-shell"):
+        history_drawer = ui.element("aside").classes("sov-history-drawer")
+        history_drawer.set_visibility(False)
 
-                # Ввод + кнопка
-                with ui.row().classes("w-full gap-2 items-end"):
-                    chat_input = ui.textarea(
-                        placeholder="Запрос по нормативам или проекту... (Enter — отправить, Shift+Enter — перенос)"
-                    ).classes("flex-1").style(
-                        "background:var(--bg);border:1px solid var(--border);color:var(--text);"
-                        "font-family:var(--font);border-radius:4px;font-size:.8rem;resize:none;"
-                    ).props("rows=2 autogrow")
+        with history_drawer:
+            with ui.row().classes("w-full items-center justify-between"):
+                _html('<div class="sov-panel-title">История</div>')
+                ui.button(icon="o_close", on_click=lambda: history_drawer.set_visibility(False)).props(
+                    "flat round dense"
+                ).classes("sov-icon-btn")
+            sessions_col = ui.column().classes("w-full gap-2 sov-history-list")
 
-                    with ui.column().classes("gap-1"):
-                        send_btn = ui.button(
-                            "▶ ОТПРАВИТЬ",
-                            on_click=lambda: asyncio.create_task(send_chat())
-                        ).props("no-caps").style(
-                            "background:transparent;border:1px solid var(--ok);color:var(--ok);"
-                            "font-family:var(--font);font-weight:900;font-size:.7rem;white-space:nowrap;"
-                        )
-                        ui.button(
-                            "✕ ОЧИСТИТЬ",
-                            on_click=lambda: _clear_chat()
-                        ).props("no-caps flat").style(
-                            "font-size:.6rem;color:var(--dim);"
-                        )
+        with ui.element("main").classes("sov-chat-main"):
+            with ui.row().classes("sov-chat-topbar"):
+                with ui.row().classes("items-center gap-2"):
+                    ui.button(icon="o_history", on_click=lambda: _toggle_history()).props(
+                        "flat round dense"
+                    ).classes("sov-icon-btn")
+                    _html('<div class="sov-chat-title">С.О.В.У.Ш.К.А.</div>')
+                    _html('<div class="sov-chat-subtitle">нормативный RAG-диспетчер</div>')
+                with ui.row().classes("items-center gap-2"):
+                    _html('<span class="sov-chip">RAG</span>')
+                    _html('<span class="sov-chip sov-chip-soft">CRAG</span>')
+                    ui.button(icon="o_delete_sweep", on_click=lambda: _clear_chat()).props(
+                        "flat round dense"
+                    ).classes("sov-icon-btn")
 
-        # ── ПРАВАЯ ПАНЕЛЬ: ФОРМА ЗАПРОСА ───────
-        with chat_split.after:
-            with ui.column().classes("w-full h-full gap-0").style(
-                "background:var(--bg-panel);border-left:1px solid var(--border);"
-                "overflow-y:auto;"
-            ):
-                # Заголовок панели
+            chat_scroll = ui.scroll_area().classes("sov-chat-scroll")
+            with chat_scroll:
+                chat_column = ui.column().classes("sov-chat-thread")
+                with chat_column:
+                    _html('<div class="chat-msg-sys">Система активирована. Ожидание запросов.</div>')
+
+            with ui.element("div").classes("sov-composer"):
+                chat_input = ui.textarea(
+                    placeholder="Спросить по нормативам, проекту или базе знаний..."
+                ).classes("sov-composer-input").props("rows=2 autogrow borderless")
+                with ui.row().classes("sov-composer-actions"):
+                    advanced_btn = ui.button(
+                        "Расширенный запрос",
+                        icon="o_tune",
+                        on_click=lambda: advanced_dialog.open(),
+                    ).props("no-caps flat")
+                    send_btn = ui.button(
+                        "Отправить",
+                        icon="o_send",
+                        on_click=lambda: asyncio.create_task(send_chat()),
+                    ).props("no-caps")
+
+        with ui.element("aside").classes("sov-artifacts-panel"):
+            with ui.row().classes("w-full items-center justify-between"):
+                _html('<div class="sov-panel-title">Артефакты</div>')
+                _html('<span class="sov-chip sov-chip-soft">live</span>')
+            artifact_panel = ui.column().classes("sov-artifacts-body")
+            with artifact_panel:
                 _html(
-                    '<div style="padding:10px 14px;background:var(--bg-mod);border-bottom:1px solid var(--border);">'
-                    '<span style="font-size:.75rem;font-weight:900;letter-spacing:.5px;color:var(--accent);">'
-                    'ФОРМА ЗАПРОСА</span>'
-                    '<span style="font-size:.6rem;color:var(--dim);margin-left:8px;">формат · параметры · образец</span>'
+                    '<div class="sov-artifact-empty">'
+                    '<div class="sov-artifact-empty-title">Пока пусто</div>'
+                    '<div class="sov-muted">Структурированные ответы, таблицы, SVG и диаграммы появятся здесь.</div>'
                     '</div>'
                 )
 
-                with ui.column().classes("w-full gap-3 p-3"):
+    with ui.dialog() as advanced_dialog:
+        with ui.card().classes("sov-advanced-dialog"):
+            with ui.row().classes("w-full items-center justify-between"):
+                with ui.column().classes("gap-0"):
+                    _html('<div class="sov-panel-title">Расширенный запрос</div>')
+                    _html('<div class="sov-muted">формат, датасет, стиль и образец выдачи</div>')
+                ui.button(icon="o_close", on_click=advanced_dialog.close).props("flat round dense").classes("sov-icon-btn")
 
-                    # ── 1. ФОРМАТ ВЫДАЧИ ──────────────────
-                    with ui.card().classes("card-les w-full"):
-                        _html('<div class="section-title" style="margin-bottom:10px;">① ФОРМАТ ВЫДАЧИ</div>')
-
-                        OUTPUT_FORMATS = {
-                            "text":      ("📝", "Текст",        "Свободный текст, абзацы"),
-                            "spec":      ("📋", "Спецификация", "Таблица изделий: поз./марка/кол-во"),
-                            "schema":    ("🗂",  "Схема",        "Иерархия/классификатор в виде дерева"),
-                            "structure": ("🏗",  "Структура",    "JSON-объект с вложенностью"),
-                            "table":     ("📊", "Таблица",      "Произвольная таблица (AG Grid)"),
-                            "mermaid":   ("🔀", "Диаграмма",    "Mermaid: flowchart/sequence/ER"),
-                            "svg":       ("🖼",  "SVG",          "Векторная схема/план"),
-                            "template":  ("📎", "По образцу",   "Структура из загруженного файла"),
-                        }
-
-                        out_mode_val = {"v": "text"}
+            with ui.scroll_area().classes("sov-advanced-scroll"):
+                with ui.column().classes("w-full gap-3"):
+                    with ui.card().classes("sov-control-card"):
+                        _html('<div class="section-title">Формат выдачи</div>')
+                        format_hint_lbl = ui.label(OUTPUT_FORMATS["text"][1]).classes("sov-muted")
                         format_btns = {}
-
-                        with ui.grid(columns=2).classes("w-full gap-1"):
-                            for key, (icon, label, hint) in OUTPUT_FORMATS.items():
-                                btn = ui.button(
-                                    f"{icon} {label}",
-                                ).props("no-caps flat").style(
-                                    "font-size:.65rem;font-weight:700;text-align:left;justify-content:flex-start;"
-                                    "padding:6px 8px;border:1px solid var(--border);border-radius:4px;"
-                                    "color:var(--dim);background:var(--bg);width:100%;"
-                                )
+                        with ui.grid(columns=4).classes("w-full gap-2"):
+                            for key, (label, hint) in OUTPUT_FORMATS.items():
+                                btn = ui.button(label).props("no-caps flat").classes("sov-format-btn")
                                 format_btns[key] = btn
 
-                        format_hint_lbl = ui.label("Свободный текст, абзацы").style(
-                            "font-size:.6rem;color:var(--dim);margin-top:4px;font-style:italic;"
-                        )
-
-                        def select_format(key):
-                            out_mode_val["v"] = key
-                            icon, label, hint = OUTPUT_FORMATS[key]
-                            format_hint_lbl.set_text(hint)
-                            for k, b in format_btns.items():
-                                if k == key:
-                                    b.style(
-                                        "font-size:.65rem;font-weight:900;text-align:left;justify-content:flex-start;"
-                                        "padding:6px 8px;border:1px solid var(--accent);border-radius:4px;"
-                                        "color:var(--accent);background:rgba(59,130,246,.1);width:100%;"
-                                    )
-                                else:
-                                    b.style(
-                                        "font-size:.65rem;font-weight:700;text-align:left;justify-content:flex-start;"
-                                        "padding:6px 8px;border:1px solid var(--border);border-radius:4px;"
-                                        "color:var(--dim);background:var(--bg);width:100%;"
-                                    )
-                            mermaid_opts_row.set_visibility(key == "mermaid")
-                            svg_opts_row.set_visibility(key == "svg")
-                            spec_opts_row.set_visibility(key == "spec")
-                            schema_opts_row.set_visibility(key == "schema")
-                            template_row.set_visibility(key == "template")
-                            _update_prompt_preview()
-
-                        for key in OUTPUT_FORMATS:
-                            format_btns[key].on("click", lambda k=key: select_format(k))
-
-                    # ── 2. ПАРАМЕТРЫ ФОРМАТОВ ──────────────────
-                    with ui.card().classes("card-les w-full"):
-                        _html('<div class="section-title" style="margin-bottom:8px;">② ПАРАМЕТРЫ</div>')
-
+                    with ui.card().classes("sov-control-card"):
+                        _html('<div class="section-title">Параметры форматов</div>')
                         mermaid_opts_row = ui.column().classes("w-full gap-2")
                         with mermaid_opts_row:
                             mermaid_type = ui.select(
-                                ["flowchart TD", "flowchart LR", "sequenceDiagram",
-                                 "erDiagram", "gantt", "classDiagram", "mindmap"],
+                                [
+                                    "flowchart TD",
+                                    "flowchart LR",
+                                    "sequenceDiagram",
+                                    "erDiagram",
+                                    "gantt",
+                                    "classDiagram",
+                                    "mindmap",
+                                ],
                                 value="flowchart TD",
-                                label="Тип диаграммы"
-                            ).style("font-size:.72rem;width:100%;")
+                                label="Тип диаграммы",
+                            ).classes("w-full")
                         mermaid_opts_row.set_visibility(False)
 
                         svg_opts_row = ui.column().classes("w-full gap-2")
                         with svg_opts_row:
                             svg_type = ui.select(
-                                ["Аксонометрическая схема", "План помещения",
-                                 "Функциональная схема", "Принципиальная схема",
-                                 "Организационная структура", "Диаграмма потоков"],
+                                [
+                                    "Аксонометрическая схема",
+                                    "План помещения",
+                                    "Функциональная схема",
+                                    "Принципиальная схема",
+                                    "Организационная структура",
+                                    "Диаграмма потоков",
+                                ],
                                 value="Функциональная схема",
-                                label="Тип схемы SVG"
-                            ).style("font-size:.72rem;width:100%;")
+                                label="Тип SVG",
+                            ).classes("w-full")
                             svg_size = ui.select(
                                 ["800×600", "1200×800", "600×400", "1600×900"],
                                 value="800×600",
-                                label="Размер (px)"
-                            ).style("font-size:.72rem;width:100%;")
+                                label="Размер",
+                            ).classes("w-full")
                         svg_opts_row.set_visibility(False)
 
                         spec_opts_row = ui.column().classes("w-full gap-2")
                         with spec_opts_row:
                             spec_type = ui.select(
-                                ["Спецификация оборудования (по ГОСТ 21.110)",
-                                 "Ведомость чертежей (ГОСТ 21.101)",
-                                 "Ведомость ссылочных документов",
-                                 "Спецификация материалов",
-                                 "Перечень элементов (ПЭ3)"],
+                                [
+                                    "Спецификация оборудования (по ГОСТ 21.110)",
+                                    "Ведомость чертежей (ГОСТ 21.101)",
+                                    "Ведомость ссылочных документов",
+                                    "Спецификация материалов",
+                                    "Перечень элементов (ПЭ3)",
+                                ],
                                 value="Спецификация оборудования (по ГОСТ 21.110)",
-                                label="Тип спецификации"
-                            ).style("font-size:.72rem;width:100%;")
-                            spec_group = ui.switch("Группировать по разделам").style("font-size:.72rem;")
-                            spec_gost = ui.switch("Строгий формат ГОСТ", value=True).style("font-size:.72rem;")
+                                label="Тип спецификации",
+                            ).classes("w-full")
+                            spec_group = ui.switch("Группировать по разделам")
+                            spec_gost = ui.switch("Строгий формат ГОСТ", value=True)
                         spec_opts_row.set_visibility(False)
 
                         schema_opts_row = ui.column().classes("w-full gap-2")
                         with schema_opts_row:
-                            schema_depth = ui.number(
-                                "Глубина вложенности", value=3, min=1, max=6, step=1
-                            ).style("font-size:.72rem;width:100%;")
+                            schema_depth = ui.number("Глубина вложенности", value=3, min=1, max=6, step=1).classes("w-full")
                             schema_format = ui.select(
                                 ["JSON дерево", "Маркированный список", "Нумерованный список", "YAML"],
                                 value="JSON дерево",
-                                label="Формат схемы"
-                            ).style("font-size:.72rem;width:100%;")
+                                label="Формат схемы",
+                            ).classes("w-full")
                         schema_opts_row.set_visibility(False)
 
                         template_row = ui.column().classes("w-full gap-2")
                         with template_row:
-                            ui.label("Загрузи файл-образец (JSON, CSV, XLSX — первые 3 строки как шаблон)").style(
-                                "font-size:.65rem;color:var(--dim);"
-                            )
+                            ui.label("Файл-образец: JSON, CSV или XLSX").classes("sov-muted")
                             ui.upload(
                                 auto_upload=True,
-                                on_upload=lambda e: asyncio.create_task(load_output_template(e))
+                                on_upload=lambda e: asyncio.create_task(load_output_template(e)),
                             ).props("flat accept=.json,.csv,.xlsx").classes("w-full")
-                            template_lbl = ui.label("").style("font-size:.65rem;color:var(--ok);")
-                            template_preview = _html("").style(
-                                "font-size:.65rem;color:var(--dim);max-height:80px;overflow:auto;"
-                                "background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:6px;"
-                                "white-space:pre;font-family:var(--font);"
-                            )
+                            template_lbl = ui.label("").style("color:var(--ok);font-size:.72rem;")
+                            template_preview = _html("").classes("sov-template-preview")
                         template_row.set_visibility(False)
 
-                        with ui.row().classes("items-center gap-3 mt-2"):
-                            separate_output_sw = ui.switch(
-                                "Показать результат отдельной панелью", value=True
-                            ).style("font-size:.7rem;")
-
-                    # ── 3. ДЕТАЛИ ЗАПРОСА ──────────────────
-                    with ui.card().classes("card-les w-full"):
-                        _html('<div class="section-title" style="margin-bottom:8px;">③ ДЕТАЛИ ЗАПРОСА</div>')
-
-                        detail_dataset = ui.select(
-                            [], label="Датасет (опционально)"
-                        ).style("font-size:.72rem;width:100%;")
-                        ui.label("Если выбран — поиск только по этому индексу").style(
-                            "font-size:.6rem;color:var(--dim);margin-top:-4px;"
-                        )
-
+                    with ui.card().classes("sov-control-card"):
+                        _html('<div class="section-title">Детали запроса</div>')
+                        detail_dataset = ui.select([], label="Датасет").classes("w-full")
                         detail_depth = ui.select(
-                            ["Кратко (1-2 абзаца)", "Стандарт (3-5 абзацев)",
-                             "Подробно (развёрнутый ответ)", "Максимум (полный анализ)"],
+                            [
+                                "Кратко (1-2 абзаца)",
+                                "Стандарт (3-5 абзацев)",
+                                "Подробно (развёрнутый ответ)",
+                                "Максимум (полный анализ)",
+                            ],
                             value="Стандарт (3-5 абзацев)",
-                            label="Детальность"
-                        ).style("font-size:.72rem;width:100%;margin-top:8px;")
-
+                            label="Детальность",
+                        ).classes("w-full")
                         detail_lang = ui.select(
-                            ["Русский (технический)", "Русский (нормативный ГОСТ)",
-                             "Краткие тезисы", "Для презентации"],
+                            [
+                                "Русский (технический)",
+                                "Русский (нормативный ГОСТ)",
+                                "Краткие тезисы",
+                                "Для презентации",
+                            ],
                             value="Русский (технический)",
-                            label="Стиль ответа"
-                        ).style("font-size:.72rem;width:100%;")
+                            label="Стиль",
+                        ).classes("w-full")
+                        reranker_sw = ui.switch("Реранкер", value=False)
+                        detail_extra = ui.textarea(label="Дополнительные требования").props("rows=3").classes("w-full")
 
-                        detail_extra = ui.textarea(
-                            label="Дополнительные требования"
-                        ).props("rows=2").style(
-                            "font-size:.72rem;width:100%;background:var(--bg);"
-                            "border:1px solid var(--border);color:var(--text);border-radius:4px;"
-                        )
+                    with ui.card().classes("sov-control-card"):
+                        with ui.row().classes("w-full items-center justify-between"):
+                            _html('<div class="section-title">Промпт</div>')
+                            ui.button(icon="o_refresh", on_click=lambda: _update_prompt_preview()).props("flat round dense").classes("sov-icon-btn")
+                        prompt_preview = _html("").classes("sov-prompt-preview")
 
-                        async def _load_datasets_select():
-                            await refresh_samovar()
-                            names = [s.get("folder", "") for s in state["sources"]]
-                            detail_dataset.options = ["(все датасеты)"] + names
-                            detail_dataset.value = "(все датасеты)"
+            with ui.row().classes("w-full justify-end gap-2"):
+                ui.button("Закрыть", on_click=advanced_dialog.close).props("no-caps flat")
+                apply_btn = ui.button(
+                    "Применить и отправить",
+                    icon="o_send",
+                    on_click=lambda: asyncio.create_task(send_with_form()),
+                ).props("no-caps")
 
-                        ui.timer(0.5, lambda: asyncio.create_task(_load_datasets_select()), once=True)
+    def select_format(key: str):
+        out_mode_val["v"] = key
+        label, hint = OUTPUT_FORMATS[key]
+        format_hint_lbl.set_text(hint)
+        for fmt_key, btn in format_btns.items():
+            if fmt_key == key:
+                btn.classes(add="sov-format-btn-active")
+            else:
+                btn.classes(remove="sov-format-btn-active")
+        mermaid_opts_row.set_visibility(key == "mermaid")
+        svg_opts_row.set_visibility(key == "svg")
+        spec_opts_row.set_visibility(key == "spec")
+        schema_opts_row.set_visibility(key == "schema")
+        template_row.set_visibility(key == "template")
+        _html_set_artifact_mode(label, hint)
+        _update_prompt_preview()
 
-                    # ── 4. ПРЕВЬЮ ПРОМПТА ──────────────────
-                    with ui.card().classes("card-les w-full"):
-                        with ui.row().classes("items-center justify-between mb-2"):
-                            _html('<div class="section-title">④ ПРОМПТ</div>')
-                            ui.button("↻", on_click=lambda: _update_prompt_preview()).props("flat").style(
-                                "font-size:.7rem;color:var(--dim);"
-                            )
+    for _key in OUTPUT_FORMATS:
+        format_btns[_key].on("click", lambda k=_key: select_format(k))
 
-                        prompt_preview = _html("").style(
-                            "font-size:.65rem;color:var(--dim);background:var(--bg);"
-                            "border:1px solid var(--border);border-radius:4px;padding:8px;"
-                            "white-space:pre-wrap;font-family:var(--font);max-height:120px;overflow:auto;"
-                        )
+    async def _load_datasets_select():
+        await refresh_samovar()
+        names = [s.get("folder", "") for s in state["sources"]]
+        detail_dataset.options = ["(все датасеты)"] + names
+        detail_dataset.value = "(все датасеты)"
 
-                    # ── КНОПКА ПРИМЕНИТЬ ───────────────────
-                    apply_btn = ui.button(
-                        "▶ ПРИМЕНИТЬ ФОРМУ И ОТПРАВИТЬ",
-                        on_click=lambda: asyncio.create_task(send_with_form())
-                    ).props("no-caps").classes("w-full").style(
-                        "background:rgba(59,130,246,.15);border:1px solid var(--accent);"
-                        "color:var(--accent);font-family:var(--font);font-weight:900;font-size:.75rem;"
-                        "padding:10px;"
-                    )
+    ui.timer(0.4, lambda: asyncio.create_task(_load_datasets_select()), once=True)
 
-    # ── ПАНЕЛЬ РЕЗУЛЬТАТА ──────
-    result_panel = ui.column().classes("w-full")
+    def _toggle_history():
+        history_drawer.set_visibility(not history_drawer.visible)
+        if history_drawer.visible:
+            asyncio.create_task(_load_sessions())
 
-    # ─────────────────────────────────────────
-    # ЛОГИКА
-    # ─────────────────────────────────────────
+    async def _load_sessions():
+        sessions_col.clear()
+        data = await api_get("/api/chat/sessions?limit=40")
+        if not data:
+            with sessions_col:
+                _html('<div class="sov-muted" style="padding:14px;">Нет сохранённых сессий</div>')
+            return
+        with sessions_col:
+            for session in data:
+                _render_session_card(session)
+
+    def _render_session_card(session: dict):
+        sid = session["session_id"]
+        first_q = session.get("first_question") or "Без названия"
+        msg_count = session.get("msg_count", 0)
+        started_at = (session.get("started_at") or "")[:16].replace("T", " ")
+        with ui.element("button").classes("sov-session-card") as card:
+            _html(f'<span class="sov-session-title">{esc(first_q[:90])}</span>')
+            _html(f'<span class="sov-session-meta">{esc(started_at)} · {msg_count} сообщ.</span>')
+
+        async def _open(session_id=sid, el=card):
+            await _open_session(session_id, el)
+
+        card.on("click", _open)
+
+    async def _open_session(session_id: str, el=None):
+        add_log(f"[ИСТОРИЯ] Загружаю сессию {session_id[:8]}...")
+        msgs = await api_get(f"/api/chat/history?session_id={session_id}")
+        if msgs is None:
+            add_log("[ИСТОРИЯ] Ошибка загрузки сессии")
+            return
+        state["chat_history"] = msgs
+        state["load_session_id"] = session_id
+        state["session_id"] = session_id
+        if selected_session_card["el"]:
+            selected_session_card["el"].classes(remove="sov-session-card-active")
+        if el:
+            el.classes(add="sov-session-card-active")
+            selected_session_card["el"] = el
+        _render_chat_history("Сессия загружена из истории.")
+        history_drawer.set_visibility(False)
+        chat_scroll.scroll_to(percent=1)
+
+    def _render_msg(msg):
+        if msg.get("role") == "user":
+            _html(f'<div class="chat-msg-user">{esc(msg.get("text", ""))}</div>')
+            return
+        ans = msg.get("text", "")
+        srcs = msg.get("srcs", [])
+        crag = msg.get("crag", "")
+        srcs_html = ""
+        if srcs:
+            tags = "".join(
+                f'<span class="src-tag">{esc(s.get("file", s) if isinstance(s, dict) else s)}</span>'
+                for s in srcs
+            )
+            srcs_html = f'<div class="msg-srcs">{tags}</div>'
+        if crag:
+            cls = "src-tag" if crag == "VERIFIED" else "src-tag src-tag-err"
+            srcs_html += f'<span class="{cls}">Т.О.С.К.А.: {esc(crag)}</span>'
+        safe_ans = esc(ans).replace(chr(10), "<br>")
+        _html(f'<div class="chat-msg-ai">{safe_ans}{srcs_html}</div>')
+
+    def _render_chat_history(system_msg: str = "История загружена."):
+        chat_column.clear()
+        with chat_column:
+            _html(f'<div class="chat-msg-sys">{esc(system_msg)}</div>')
+            for msg in state.get("chat_history", []):
+                _render_msg(msg)
+            if state.get("chat_pending"):
+                pending_q = state["chat_pending"].get("question", "")
+                _html(f'<div class="chat-msg-ai typing">Запрос выполняется: {esc(pending_q[:80])}</div>')
+
+    async def _load_history():
+        if state.get("load_session_id"):
+            state["session_id"] = state["load_session_id"]
+            state["load_session_id"] = None
+            _render_chat_history("Сессия загружена из истории.")
+            chat_scroll.scroll_to(percent=1)
+            return
+        if not state.get("chat_history"):
+            hist = await api_get("/api/chat/history?limit=40")
+            if hist:
+                state["chat_history"] = hist
+                _render_chat_history()
+                chat_scroll.scroll_to(percent=1)
+
+    ui.timer(0.5, lambda: asyncio.create_task(_load_history()), once=True)
+
+    async def _watch_session_load():
+        if state.get("load_session_id"):
+            await _load_history()
+
+    ui.timer(0.5, lambda: asyncio.create_task(_watch_session_load()))
 
     async def load_output_template(e):
         content = e.content.read()
@@ -297,6 +375,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             elif fname.endswith(".xlsx"):
                 import tempfile
                 import openpyxl
+
                 with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tf:
                     tf.write(content)
                     tf.flush()
@@ -312,15 +391,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 return
 
             tmpl = state["output_template"]
-            template_lbl.set_text(f"✓ {fname} ({len(tmpl)} строк)")
+            template_lbl.set_text(f"{fname} · {len(tmpl)} строк")
             if tmpl:
                 preview_str = json.dumps(tmpl[0], ensure_ascii=False, indent=2)
-                template_preview.set_content(
-                    f'<pre style="margin:0;font-size:.62rem;color:var(--ok);">{preview_str}</pre>'
-                )
+                template_preview.set_content(f'<pre>{esc(preview_str)}</pre>')
             add_log(f"[ШАБЛОН] Загружен {fname} · {len(tmpl)} строк")
             _update_prompt_preview()
-            ui.notify(f"Образец загружен: {fname}", type="positive")
         except Exception as ex:
             ui.notify(f"Ошибка парсинга: {ex}", type="negative")
             add_log(f"[ШАБЛОН] Ошибка: {ex}")
@@ -328,23 +404,23 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
     def _build_extra_prompt(question: str) -> str:
         mode = out_mode_val["v"]
         depth_map = {
-            "Кратко (1-2 абзаца)":          "Ответь кратко — 1-2 абзаца.",
-            "Стандарт (3-5 абзацев)":       "Ответь развёрнуто — 3-5 абзацев.",
+            "Кратко (1-2 абзаца)": "Ответь кратко — 1-2 абзаца.",
+            "Стандарт (3-5 абзацев)": "Ответь развёрнуто — 3-5 абзацев.",
             "Подробно (развёрнутый ответ)": "Дай полный развёрнутый ответ со всеми деталями.",
-            "Максимум (полный анализ)":     "Проведи максимально подробный анализ. Не сокращай.",
+            "Максимум (полный анализ)": "Проведи максимально подробный анализ. Не сокращай.",
         }
         style_map = {
-            "Русский (технический)":      "Пиши профессиональным техническим языком.",
+            "Русский (технический)": "Пиши профессиональным техническим языком.",
             "Русский (нормативный ГОСТ)": "Пиши в нормативном стиле ГОСТ: чёткие формулировки, без лирики.",
-            "Краткие тезисы":             "Отвечай тезисами — каждый пункт одна мысль.",
-            "Для презентации":            "Формат для слайдов: заголовок + маркированный список.",
+            "Краткие тезисы": "Отвечай тезисами — каждый пункт одна мысль.",
+            "Для презентации": "Формат для слайдов: заголовок + маркированный список.",
         }
 
         parts = []
-        depth_inst = depth_map.get(detail_depth.value, "")
-        style_inst = style_map.get(detail_lang.value, "")
-        if depth_inst: parts.append(depth_inst)
-        if style_inst: parts.append(style_inst)
+        if depth_map.get(detail_depth.value):
+            parts.append(depth_map[detail_depth.value])
+        if style_map.get(detail_lang.value):
+            parts.append(style_map[detail_lang.value])
 
         if mode == "spec":
             gost_str = " строго по форме ГОСТ 21.110-2013" if spec_gost.value else ""
@@ -352,136 +428,155 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             parts.append(
                 f"\n\nВЫВЕДИ ОТВЕТ В ФОРМАТЕ СПЕЦИФИКАЦИИ{gost_str}.\n"
                 f"Тип: {spec_type.value}.{group_str}\n"
-                f"Верни JSON-массив объектов. Обязательные поля для оборудования: "
-                f"поз, обозначение, наименование, тип_марка, ед_изм, кол_во, масса_ед, примечание.\n"
-                f"Оберни в ```json ... ```"
+                "Верни JSON-массив объектов. Обязательные поля: "
+                "поз, обозначение, наименование, тип_марка, ед_изм, кол_во, масса_ед, примечание.\n"
+                "Оберни в ```json ... ```"
             )
         elif mode == "schema":
             depth = int(schema_depth.value) if schema_depth.value else 3
             fmt = schema_format.value
             if fmt == "JSON дерево":
                 parts.append(
-                    f"\n\nВЫВЕДИ ОТВЕТ В ВИДЕ ИЕРАРХИЧЕСКОЙ СХЕМЫ (JSON дерево, глубина {depth}).\n"
-                    f"Структура узла: {{\"name\": str, \"children\": [...], \"desc\": str}}.\n"
-                    f"Оберни в ```json ... ```"
+                    f"\n\nВЫВЕДИ ОТВЕТ В ВИДЕ JSON-ДЕРЕВА, глубина {depth}. "
+                    "Структура узла: {\"name\": str, \"children\": [...], \"desc\": str}. "
+                    "Оберни в ```json ... ```"
                 )
             elif fmt == "YAML":
-                parts.append(f"\n\nВЫВЕДИ ОТВЕТ В ВИДЕ YAML-ДЕРЕВА (глубина {depth}).\nОберни в ```yaml ... ```")
+                parts.append(f"\n\nВЫВЕДИ ОТВЕТ В ВИДЕ YAML-ДЕРЕВА, глубина {depth}. Оберни в ```yaml ... ```")
             else:
-                parts.append(f"\n\nВЫВЕДИ ОТВЕТ В ВИДЕ {fmt.upper()} (глубина {depth} уровней).")
+                parts.append(f"\n\nВЫВЕДИ ОТВЕТ В ВИДЕ {fmt.upper()}, глубина {depth} уровней.")
         elif mode == "structure":
-            parts.append("\n\nВЫВЕДИ ОТВЕТ В ВИДЕ СТРУКТУРИРОВАННОГО JSON-ОБЪЕКТА.\nОберни в ```json ... ```")
+            parts.append("\n\nВЫВЕДИ ОТВЕТ В ВИДЕ СТРУКТУРИРОВАННОГО JSON-ОБЪЕКТА. Оберни в ```json ... ```")
         elif mode == "table":
-            parts.append("\n\nВЫВЕДИ ОТВЕТ В ВИДЕ ТАБЛИЦЫ — JSON-массив объектов.\nОберни в ```json ... ```")
+            parts.append("\n\nВЫВЕДИ ОТВЕТ В ВИДЕ ТАБЛИЦЫ: JSON-массив объектов. Оберни в ```json ... ```")
         elif mode == "mermaid":
-            mtype = mermaid_type.value if hasattr(mermaid_type, 'value') else "flowchart TD"
             parts.append(
-                f"\n\nВЫВЕДИ ОТВЕТ В ВИДЕ MERMAID-ДИАГРАММЫ типа {mtype}.\n"
-                f"Оберни в ```mermaid ... ```\n"
-                f"Пиши на русском языке. Используй короткие метки узлов."
+                f"\n\nВЫВЕДИ ОТВЕТ В ВИДЕ MERMAID-ДИАГРАММЫ типа {mermaid_type.value}. "
+                "Оберни в ```mermaid ... ```. Пиши на русском, метки узлов короткие."
             )
         elif mode == "svg":
             w, h = svg_size.value.split("×") if "×" in svg_size.value else ("800", "600")
             parts.append(
-                f"\n\nВЫВЕДИ ОТВЕТ В ВИДЕ SVG-СХЕМЫ ({svg_type.value}).\n"
-                f"Размер viewBox: 0 0 {w} {h}. Тёмный фон #1a1e25, белый текст #ffffff.\n"
-                f"Оберни в ```svg ... ```"
+                f"\n\nВЫВЕДИ ОТВЕТ В ВИДЕ SVG-СХЕМЫ ({svg_type.value}). "
+                f"Размер viewBox: 0 0 {w} {h}. Оберни в ```svg ... ```"
             )
         elif mode == "template":
             tmpl = state.get("output_template")
             if tmpl:
                 parts.append(
-                    f"\n\nОТВЕЧАЙ СТРОГО ПО СТРУКТУРЕ ОБРАЗЦА (JSON-массив).\n"
+                    "\n\nОТВЕЧАЙ СТРОГО ПО СТРУКТУРЕ ОБРАЗЦА (JSON-массив).\n"
                     f"Образец:\n```json\n{json.dumps(tmpl[:3], ensure_ascii=False, indent=2)}\n```\n"
-                    f"Оберни в ```json ... ```"
+                    "Оберни в ```json ... ```"
                 )
             else:
                 parts.append("\n\nОТВЕЧАЙ В ВИДЕ JSON-МАССИВА ОБЪЕКТОВ. Оберни в ```json ... ```")
 
-        if detail_extra.value.strip():
+        if detail_extra.value and detail_extra.value.strip():
             parts.append(f"\n\nДОПОЛНИТЕЛЬНО: {detail_extra.value.strip()}")
-
-        return " ".join(p for p in parts[:2]) + "".join(parts[2:])
+        return " ".join(parts[:2]) + "".join(parts[2:])
 
     def _update_prompt_preview():
         q = chat_input.value.strip() or "[текст запроса]"
         extra = _build_extra_prompt(q)
-        preview_text = (q + extra)[:800] + ("…" if len(q + extra) > 800 else "")
-        prompt_preview.set_content(
-            f'<pre style="margin:0;font-size:.63rem;color:var(--dim);white-space:pre-wrap;">{preview_text}</pre>'
-        )
+        preview_text = (q + extra)[:1000] + ("..." if len(q + extra) > 1000 else "")
+        prompt_preview.set_content(f'<pre>{esc(preview_text)}</pre>')
 
     chat_input.on("input", lambda: _update_prompt_preview())
 
     def _clear_chat():
+        from sovushka.state import _new_session_id
+
         chat_column.clear()
         with chat_column:
-            _html('<div class="chat-msg-sys">Чат очищен.</div>')
-        result_panel.clear()
+            _html('<div class="chat-msg-sys">Чат очищен. Новая сессия готова.</div>')
+        artifact_panel.clear()
+        with artifact_panel:
+            _render_empty_artifacts()
         state["chat_history"].clear()
-        add_log("[ЧАТ] История очищена")
+        state["session_id"] = _new_session_id()
+        state["load_session_id"] = None
+        state["chat_pending"] = None
+        add_log("[ЧАТ] История очищена, новая сессия")
+
+    _sending = {"v": False}
 
     async def _do_send(question: str):
+        if _sending["v"]:
+            return
+        _sending["v"] = True
         send_btn.props("disabled")
         apply_btn.props("disabled")
+        advanced_btn.props("disabled")
+        chat_input.props("disabled")
         out_mode = out_mode_val["v"]
 
+        state["chat_history"].append({"role": "user", "text": question})
+        state["chat_pending"] = {"question": question, "started_at": time.time()}
+
         with chat_column:
-            safe_q = question.replace("<", "&lt;").replace(">", "&gt;")
-            _html(f'<div class="chat-msg-user">{safe_q}</div>')
+            _html(f'<div class="chat-msg-user">{esc(question)}</div>')
+            ai_placeholder = _html('<div class="chat-msg-ai typing">Генерирую... 0с</div>')
         chat_scroll.scroll_to(percent=1)
+        _render_artifact_loading(out_mode, question)
         add_log(f'[AI] Запрос: "{question[:60]}"')
 
-        with chat_column:
-            ai_placeholder = _html('<div class="chat-msg-ai typing">Обрабатываю...</div>')
-        chat_scroll.scroll_to(percent=1)
-
         extra_prompt = _build_extra_prompt(question)
-        payload = {"question": question + extra_prompt}
+        payload = {
+            "question": question + extra_prompt,
+            "reranker_enabled": reranker_sw.value,
+            "session_id": state.get("session_id"),
+        }
         if detail_dataset.value and detail_dataset.value != "(все датасеты)":
             payload["dataset_filter"] = detail_dataset.value
 
+        _t0 = time.monotonic()
+        _stop_tick = {"v": False}
+
+        async def _tick():
+            while not _stop_tick["v"]:
+                elapsed = int(time.monotonic() - _t0)
+                ai_placeholder.set_content(f'<div class="chat-msg-ai typing">Генерирую... {elapsed}с</div>')
+                await asyncio.sleep(1)
+
+        _tick_task = asyncio.create_task(_tick())
+
+        completed = False
         try:
             d = await api_post("/api/chat", payload)
+            completed = True
             if d:
-                ans  = d.get("answer", d.get("response", "Нет ответа"))
+                ans = d.get("answer", d.get("response", "Нет ответа"))
                 srcs = d.get("sources", [])
                 crag = d.get("crag_status", "")
-
-                state["chat_history"].append({"role": "user", "text": question})
                 state["chat_history"].append({"role": "ai", "text": ans, "srcs": srcs, "crag": crag})
-
-                srcs_html = ""
-                if srcs:
-                    tags = "".join(f'<span class="src-tag">{s.get("file", s) if isinstance(s, dict) else s}</span>' for s in srcs)
-                    srcs_html = f'<div class="msg-srcs" style="margin-top:8px;">{tags}</div>'
-                if crag:
-                    cls = "src-tag" if crag == "VERIFIED" else "src-tag src-tag-err"
-                    srcs_html += f'<span class="{cls}" style="margin-left:4px;">Т.О.С.К.А.: {crag}</span>'
-
-                short_ans = ans if len(ans) < 600 else ans[:600] + "…"
-                ai_placeholder.set_content(
-                    f'<div class="chat-msg-ai">{short_ans.replace(chr(10), "<br>")}{srcs_html}</div>'
-                )
-
-                if separate_output_sw.value:
-                    result_panel.clear()
-                    _render_result(ans, out_mode, result_panel)
-
+                ai_placeholder.set_content(_message_html(ans, srcs, crag))
+                _render_result(ans, out_mode, artifact_panel)
                 add_log(f"[AI] Формат:{out_mode} CRAG:{crag or 'N/A'} src:{len(srcs)}")
             else:
                 ai_placeholder.set_content('<div class="chat-msg-ai" style="color:var(--err);">Ошибка запроса</div>')
+                _render_artifact_error("Ошибка запроса")
         except Exception as ex:
-            ai_placeholder.set_content(f'<div class="chat-msg-ai" style="color:var(--err);">Ошибка: {ex}</div>')
+            completed = True
+            ai_placeholder.set_content(f'<div class="chat-msg-ai" style="color:var(--err);">Ошибка: {esc(str(ex))}</div>')
+            _render_artifact_error(str(ex))
         finally:
+            if completed:
+                state["chat_pending"] = None
+            _stop_tick["v"] = True
+            _tick_task.cancel()
+            _sending["v"] = False
             send_btn.props(remove="disabled")
             apply_btn.props(remove="disabled")
+            advanced_btn.props(remove="disabled")
+            chat_input.props(remove="disabled")
             chat_scroll.scroll_to(percent=1)
 
     async def send_chat():
         q = chat_input.value.strip()
-        if not q: return
+        if not q:
+            return
         chat_input.value = ""
+        _update_prompt_preview()
         await _do_send(q)
 
     async def send_with_form():
@@ -489,122 +584,184 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         if not q:
             ui.notify("Введите текст запроса", type="warning")
             return
+        advanced_dialog.close()
         chat_input.value = ""
         _update_prompt_preview()
         await _do_send(q)
 
-    # ── Рендер результатов ──
+    def _message_html(ans: str, srcs: list, crag: str) -> str:
+        srcs_html = ""
+        if srcs:
+            tags = "".join(
+                f'<span class="src-tag">{esc(s.get("file", s) if isinstance(s, dict) else s)}</span>'
+                for s in srcs
+            )
+            srcs_html = f'<div class="msg-srcs">{tags}</div>'
+        if crag:
+            cls = "src-tag" if crag == "VERIFIED" else "src-tag src-tag-err"
+            srcs_html += f'<span class="{cls}">Т.О.С.К.А.: {esc(crag)}</span>'
+        return f'<div class="chat-msg-ai">{esc(ans).replace(chr(10), "<br>")}{srcs_html}</div>'
+
+    def _html_set_artifact_mode(label: str, hint: str):
+        artifact_panel.clear()
+        with artifact_panel:
+            _html(
+                '<div class="sov-artifact-empty">'
+                f'<div class="sov-artifact-empty-title">{esc(label)}</div>'
+                f'<div class="sov-muted">{esc(hint)}</div>'
+                '</div>'
+            )
+
+    def _render_empty_artifacts():
+        _html(
+            '<div class="sov-artifact-empty">'
+            '<div class="sov-artifact-empty-title">Пока пусто</div>'
+            '<div class="sov-muted">Структурированные ответы, таблицы, SVG и диаграммы появятся здесь.</div>'
+            '</div>'
+        )
+
+    def _render_artifact_loading(mode: str, question: str):
+        artifact_panel.clear()
+        label = OUTPUT_FORMATS.get(mode, ("Артефакт", ""))[0]
+        with artifact_panel:
+            _html(
+                '<div class="sov-artifact-empty">'
+                f'<div class="sov-artifact-empty-title">{esc(label)}</div>'
+                f'<div class="sov-muted">Готовлю артефакт по запросу: {esc(question[:100])}</div>'
+                '<div class="sov-artifact-loader"></div>'
+                '</div>'
+            )
+
+    def _render_artifact_error(detail: str):
+        artifact_panel.clear()
+        with artifact_panel:
+            _html(
+                '<div class="sov-artifact-empty">'
+                '<div class="sov-artifact-empty-title" style="color:var(--err);">Ошибка</div>'
+                f'<div class="sov-muted">{esc(detail)}</div>'
+                '</div>'
+            )
+
     def _render_result(ans: str, mode: str, container):
+        container.clear()
         with container:
-            with ui.card().classes("card-les w-full"):
+            with ui.card().classes("sov-artifact-card"):
+                label = OUTPUT_FORMATS.get(mode, ("Ответ", ""))[0]
+                with ui.row().classes("w-full items-center justify-between"):
+                    _html(f'<div class="sov-panel-title">{esc(label)}</div>')
+                    ui.button("Копировать", icon="o_content_copy", on_click=lambda: ui.clipboard.write(ans)).props(
+                        "no-caps flat dense"
+                    )
+
                 if mode == "text":
-                    with ui.row().classes("items-center justify-between mb-2"):
-                        _html('<div class="section-title">РЕЗУЛЬТАТ // ТЕКСТ</div>')
-                        ui.button("📋 Копировать", on_click=lambda: ui.clipboard.write(ans)).props("no-caps flat").style("font-size:.65rem;color:var(--accent);")
-                    ui.markdown(ans).style("font-size:.8rem;line-height:1.6;color:var(--text);")
+                    ui.markdown(ans).classes("sov-artifact-markdown")
                 elif mode == "spec":
-                    _html('<div class="section-title mb-2">РЕЗУЛЬТАТ // СПЕЦИФИКАЦИЯ</div>')
                     data = _parse_table_from_ai(ans)
                     if data:
-                        _render_spec_table(data)
+                        _render_table(data)
                     else:
-                        ui.markdown(ans).style("font-size:.78rem;")
+                        ui.markdown(ans).classes("sov-artifact-markdown")
                 elif mode == "schema":
-                    _html('<div class="section-title mb-2">РЕЗУЛЬТАТ // СХЕМА</div>')
                     data = _parse_json_from_ai(ans)
                     if data:
-                        _render_tree(data)
+                        with ui.column().classes("w-full gap-1"):
+                            _render_tree(data)
                     else:
-                        ui.markdown(ans).style("font-size:.78rem;")
+                        ui.markdown(ans).classes("sov-artifact-markdown")
                 elif mode in ("structure", "table", "template"):
-                    lbl = {"structure": "СТРУКТУРА", "table": "ТАБЛИЦА", "template": "ПО ОБРАЗЦУ"}[mode]
-                    _html(f'<div class="section-title mb-2">РЕЗУЛЬТАТ // {lbl}</div>')
                     data = _parse_table_from_ai(ans) or _parse_json_from_ai(ans)
                     if isinstance(data, list) and data:
-                        keys = list(data[0].keys()) if isinstance(data[0], dict) else ["значение"]
-                        cols = [{"headerName": k, "field": k, "flex": 1, "filter": True, "sortable": True, "resizable": True} for k in keys]
-                        rows = data if isinstance(data[0], dict) else [{"значение": str(r)} for r in data]
-                        ui.table(columns=cols, rows=rows).classes("w-full") # table since aggrid doesn't render lines
-                        with ui.row().classes("gap-2 mt-2"):
-                            ui.button("📋 JSON", on_click=lambda d=data: ui.clipboard.write(json.dumps(d, ensure_ascii=False, indent=2))).props("no-caps flat").style("font-size:.65rem;color:var(--accent);")
+                        _render_table(data if isinstance(data[0], dict) else [{"значение": str(r)} for r in data])
                     elif isinstance(data, dict):
-                        ui.markdown(f"```json\n{json.dumps(data, ensure_ascii=False, indent=2)}\n```").style("font-size:.75rem;")
+                        ui.markdown(f"```json\n{json.dumps(data, ensure_ascii=False, indent=2)}\n```").classes("sov-artifact-markdown")
                     else:
-                        ui.markdown(ans).style("font-size:.78rem;")
+                        ui.markdown(ans).classes("sov-artifact-markdown")
                 elif mode == "mermaid":
-                    _html('<div class="section-title mb-2">РЕЗУЛЬТАТ // ДИАГРАММА</div>')
                     code = _parse_mermaid_from_ai(ans)
                     if code:
                         state["mermaid_last"] = code
-                        ui.mermaid(code)
-                        with ui.row().classes("gap-2 mt-2"):
-                            ui.button("📋 Копировать код", on_click=lambda c=code: ui.clipboard.write(c)).props("no-caps flat").style("font-size:.65rem;color:var(--accent);")
+                        ui.mermaid(code).classes("w-full")
+                        with ui.row().classes("gap-2"):
+                            ui.button("Код", icon="o_content_copy", on_click=lambda c=code: ui.clipboard.write(c)).props("no-caps flat dense")
                             if tabs and tab_mermaid:
-                                ui.button("→ В редактор", on_click=lambda: tabs.set_value(tab_mermaid)).props("no-caps flat").style("font-size:.65rem;color:var(--pauk);")
+                                ui.button("В редактор", icon="o_open_in_new", on_click=lambda: tabs.set_value(tab_mermaid)).props("no-caps flat dense")
                     else:
-                        ui.markdown(ans).style("font-size:.78rem;")
+                        ui.markdown(ans).classes("sov-artifact-markdown")
                 elif mode == "svg":
-                    _html('<div class="section-title mb-2">РЕЗУЛЬТАТ // SVG СХЕМА</div>')
                     svg_code = _parse_svg_from_ai(ans)
                     if svg_code:
-                        _html(svg_code).style("width:100%;overflow:auto;background:var(--bg-mod);border:1px solid var(--border);border-radius:4px;padding:8px;")
-                        ui.button("📋 Копировать SVG", on_click=lambda c=svg_code: ui.clipboard.write(c)).props("no-caps flat").style("font-size:.65rem;color:var(--accent);mt-2")
+                        _html(f'<div class="sov-svg-preview">{svg_code}</div>')
+                        ui.button("Копировать SVG", icon="o_content_copy", on_click=lambda c=svg_code: ui.clipboard.write(c)).props("no-caps flat dense")
                     else:
-                        ui.markdown(ans).style("font-size:.78rem;")
+                        ui.markdown(ans).classes("sov-artifact-markdown")
 
-    # ── Вспомогательные парсеры ──
     def _parse_table_from_ai(text: str):
-        m = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", text, re.DOTALL)
-        if m:
-            try: return json.loads(m.group(1))
-            except: pass
+        match = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(1))
+            except Exception:
+                pass
         return None
 
     def _parse_json_from_ai(text: str):
-        m = re.search(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", text, re.DOTALL)
-        if m:
-            try: return json.loads(m.group(1))
-            except: pass
+        match = re.search(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(1))
+            except Exception:
+                pass
         try:
             start = text.find("{") if "{" in text else text.find("[")
             if start >= 0:
                 end = text.rfind("}") if "{" in text else text.rfind("]")
-                return json.loads(text[start:end+1])
-        except: pass
+                return json.loads(text[start : end + 1])
+        except Exception:
+            pass
         return None
 
     def _parse_mermaid_from_ai(text: str) -> Optional[str]:
-        m = re.search(r"```mermaid\s*(.*?)```", text, re.DOTALL)
-        return m.group(1).strip() if m else None
+        match = re.search(r"```mermaid\s*(.*?)```", text, re.DOTALL)
+        return match.group(1).strip() if match else None
 
     def _parse_svg_from_ai(text: str) -> Optional[str]:
-        m = re.search(r"```svg\s*(.*?)```", text, re.DOTALL)
-        if m: return m.group(1).strip()
-        m2 = re.search(r"(<svg[\s\S]*?</svg>)", text, re.IGNORECASE)
-        return m2.group(1).strip() if m2 else None
+        match = re.search(r"```svg\s*(.*?)```", text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        match = re.search(r"(<svg[\s\S]*?</svg>)", text, re.IGNORECASE)
+        return match.group(1).strip() if match else None
 
-    def _render_spec_table(data: list[dict]):
-        if not data: return
-        keys = list(data[0].keys())
+    def _render_table(data: list[dict]):
+        keys = list(data[0].keys()) if data else []
         cols = [{"name": k, "label": k, "field": k, "align": "left", "sortable": True} for k in keys]
-        ui.table(columns=cols, rows=data).classes("w-full").style("background:var(--bg-panel);color:var(--text);font-family:var(--font);")
-        with ui.row().classes("gap-2 mt-2"):
-            ui.button("📋 JSON", on_click=lambda d=data: ui.clipboard.write(json.dumps(d, ensure_ascii=False, indent=2))).props("no-caps flat").style("font-size:.65rem;color:var(--accent);")
+        ui.table(columns=cols, rows=data, pagination=8).classes("sov-artifact-table")
+        ui.button(
+            "JSON",
+            icon="o_content_copy",
+            on_click=lambda d=data: ui.clipboard.write(json.dumps(d, ensure_ascii=False, indent=2)),
+        ).props("no-caps flat dense")
 
     def _render_tree(data, level: int = 0):
         if isinstance(data, dict):
             name = data.get("name", data.get("title", data.get("id", "—")))
             desc = data.get("desc", data.get("description", ""))
             children = data.get("children", data.get("items", []))
-            indent = level * 16
-            with ui.row().classes("items-start gap-1").style(f"margin-left:{indent}px;"):
-                _html(f'<span style="color:var(--accent);font-weight:700;font-size:.75rem;">{"▶" if children else "•"}</span>'
-                      f'<span style="font-size:.75rem;font-weight:{"700" if level==0 else "400"};color:var(--text);">{name}</span>'
-                      + (f'<span style="font-size:.65rem;color:var(--dim);margin-left:4px;">{desc}</span>' if desc else ""))
-            for child in (children if isinstance(children, list) else []):
+            indent = level * 14
+            _html(
+                f'<div class="sov-tree-row" style="margin-left:{indent}px;">'
+                f'<span class="sov-tree-mark">{"▸" if children else "•"}</span>'
+                f'<span class="sov-tree-name">{esc(name)}</span>'
+                f'<span class="sov-tree-desc">{esc(desc)}</span>'
+                '</div>'
+            )
+            for child in children if isinstance(children, list) else []:
                 _render_tree(child, level + 1)
         elif isinstance(data, list):
-            for item in data: _render_tree(item, level)
+            for item in data:
+                _render_tree(item, level)
 
     ui.timer(0.1, lambda: select_format("text"), once=True)
-    chat_input.on("keydown.enter.prevent", lambda e: asyncio.create_task(send_chat()) if not (e.args or {}).get("shiftKey") else None)
+    chat_input.on(
+        "keydown.enter.prevent",
+        lambda e: asyncio.create_task(send_chat()) if not (e.args or {}).get("shiftKey") else None,
+    )

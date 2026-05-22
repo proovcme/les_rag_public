@@ -1,26 +1,44 @@
 import json
 import subprocess
-import asyncio
 import re
-import os
-import time
 from pathlib import Path
 from datetime import datetime
 
 DIAG_DIR = Path('./data/diagnostics')
 DIAG_DIR.mkdir(parents=True, exist_ok=True)
 
-def run_cmd(cmd, timeout=10):
+def run_cmd(cmd: list[str], timeout=10):
     try:
-        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return r.stdout.strip(), r.returncode
     except Exception as e:
         return str(e), 1
 
+
+def _count_files(path: Path) -> int:
+    if not path.exists():
+        return 0
+    return sum(1 for item in path.rglob("*") if item.is_file())
+
+
+def _mlx_processes() -> str:
+    out, rc = run_cmd(["ps", "aux"])
+    if rc != 0:
+        return out
+    rows = []
+    for line in out.splitlines():
+        lower = line.lower()
+        if "mlx" not in lower or "grep" in lower:
+            continue
+        parts = line.split(None, 10)
+        if len(parts) >= 11:
+            rss_gb = int(parts[5]) / 1024 / 1024
+            rows.append(f"{parts[1]} {rss_gb:.2f} {parts[10].split()[0]}")
+    return "\n".join(rows)
+
 def parse_vmstat():
-    out, rc = run_cmd('vm_stat')
+    out, rc = run_cmd(["vm_stat"])
     if rc != 0: return {}
-    import re
     ps = re.search(r'page size of (\d+) bytes', out)
     sz = int(ps.group(1)) if ps else 4096
     res = {}
@@ -33,18 +51,14 @@ def parse_vmstat():
 
 async def run_diagnostics():
     vm = parse_vmstat()
-    dock, _ = run_cmd('docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"')
-    stats, _ = run_cmd('docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}"')
-    oll_ps, _ = run_cmd('ollama ps 2>/dev/null')
-    
-    # FIX: AWK command corrected
-    mlx_cmd = "ps aux | grep -i mlx | grep -v grep | awk '{print $2, $6/1024/1024, $11}'"
-    mlx, _ = run_cmd(mlx_cmd)
-    
-    qdrant, _ = run_cmd('curl -s http://localhost:6333/collections/les_rag')
-    health, _ = run_cmd('curl -s http://localhost:8050/api/health')
-    rag_files, _ = run_cmd('find ./RAG_Content -type f 2>/dev/null | wc -l')
-    sto_files, _ = run_cmd('find ./storage/datasets -type f 2>/dev/null | wc -l')
+    dock, _ = run_cmd(["docker", "ps", "--format", "table {{.Names}}\t{{.Status}}\t{{.Ports}}"])
+    stats, _ = run_cmd(["docker", "stats", "--no-stream", "--format", "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}"])
+    oll_ps, _ = run_cmd(["ollama", "ps"])
+    mlx = _mlx_processes()
+    qdrant, _ = run_cmd(["curl", "-s", "http://localhost:6333/collections/les_rag"])
+    health, _ = run_cmd(["curl", "-s", "http://localhost:8050/api/health"])
+    rag_files = _count_files(Path("./RAG_Content"))
+    sto_files = _count_files(Path("./storage/datasets"))
 
     report = {
         'timestamp': datetime.now().isoformat(),
@@ -55,8 +69,8 @@ async def run_diagnostics():
         'mlx_processes': mlx or 'None',
         'qdrant_raw': qdrant,
         'health_raw': health,
-        'rag_source_files': int(rag_files.strip() or 0),
-        'storage_indexed_files': int(sto_files.strip() or 0)
+        'rag_source_files': rag_files,
+        'storage_indexed_files': sto_files
     }
 
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -64,7 +78,7 @@ async def run_diagnostics():
     md_path = DIAG_DIR / f'diag_{ts}.md'
     
     json_path.write_text(json.dumps(report, indent=2, ensure_ascii=False))
-    md_content = f'# Диагностика Л.Е.С. {ts}\n\n' + '\n'.join(f'**{{k}}:** {{v}}' for k,v in report.items())
+    md_content = f'# Диагностика Л.Е.С. {ts}\n\n' + '\n'.join(f'**{k}:** {v}' for k, v in report.items())
     md_path.write_text(md_content)
 
     alerts = []

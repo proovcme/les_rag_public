@@ -1,0 +1,981 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>С.О.В.У.Ш.К.А. // v3.1</title>
+<style>
+  :root[data-theme="dark"] {
+    --bg:#08090b;--bg-panel:#12151a;--bg-module:#1a1e25;
+    --text:#ffffff;--text-dim:#94a3b8;
+    --border:#2d3748;--border-hl:#4a5568;
+    --accent:#3b82f6;--ok:#10b981;--pauk:#8b5cf6;--warn:#f59e0b;--err:#ef4444;
+    --font:'Courier New',Courier,monospace;
+  }
+  :root[data-theme="light"] {
+    --bg:#f8fafc;--bg-panel:#ffffff;--bg-module:#f1f5f9;
+    --text:#0f172a;--text-dim:#64748b;
+    --border:#cbd5e1;--border-hl:#94a3b8;
+    --accent:#2563eb;--ok:#059669;--pauk:#7c3aed;--warn:#d97706;--err:#dc2626;
+    --font:'Courier New',Courier,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:var(--font);background:var(--bg);color:var(--text);display:flex;flex-direction:column;height:100vh;overflow:hidden;}
+  .hdr{padding:14px 24px;background:var(--bg-panel);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;z-index:10;flex-shrink:0;}
+  .brand{font-weight:900;font-size:1.1rem;display:flex;gap:8px;align-items:center;}
+  .brand-logo{color:var(--accent);}
+  .nav{display:flex;gap:4px;}
+  .nav-btn{background:transparent;border:1px solid transparent;color:var(--text-dim);padding:6px 14px;cursor:pointer;font-family:var(--font);font-size:0.75rem;font-weight:700;border-radius:4px;transition:all 0.2s;}
+  .nav-btn:hover{color:var(--text);}
+  .nav-btn.active{color:var(--accent);border-color:var(--border);background:var(--bg);}
+  .controls{display:flex;gap:8px;}
+  .btn{background:transparent;border:1px solid var(--border);color:var(--text);padding:6px 12px;font-family:var(--font);font-size:0.7rem;cursor:pointer;border-radius:4px;font-weight:700;transition:all 0.2s;}
+  .btn:hover{border-color:var(--accent);background:var(--bg-module);}
+  .mode-btn{font-size:.65rem;font-weight:900;padding:5px 12px;border-radius:4px;cursor:pointer;font-family:var(--font);border:1px solid;transition:all .2s;}
+  .mode-btn.rag{background:rgba(16,185,129,.1);border-color:var(--ok);color:var(--ok);}
+  .mode-btn.rag:hover{background:rgba(16,185,129,.2);}
+  .mode-btn.code{background:rgba(139,92,246,.1);border-color:var(--pauk);color:var(--pauk);}
+  .mode-btn.code:hover{background:rgba(139,92,246,.2);}
+  .mode-btn.switching{opacity:.5;cursor:wait;}
+  .view{flex:1;padding:28px 36px;overflow-y:auto;display:none;flex-direction:column;align-items:center;min-height:0;}
+  .view.active{display:flex;}
+
+  /* КОНТУРЫ */
+  .c-label{position:absolute;top:-11px;left:20px;background:var(--bg);padding:0 10px;font-weight:900;font-size:0.75rem;letter-spacing:.5px;border-radius:4px;display:flex;align-items:center;gap:8px;}
+  .chip-container{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px;margin-top:4px;padding-left:4px;}
+  .chip{background:var(--bg-module);border:1px solid var(--border);padding:5px 12px;border-radius:16px;font-size:0.7rem;color:var(--text-dim);font-weight:700;display:flex;align-items:center;gap:8px;}
+  .chip-lbl{color:var(--text);font-size:0.65rem;background:var(--border);padding:2px 6px;border-radius:10px;}
+  .pauk-layer .chip-lbl{background:rgba(139,92,246,.2);color:var(--pauk);}
+  .pauk-layer{border:1px dashed var(--pauk);padding:42px 28px 28px;position:relative;width:100%;max-width:1200px;border-radius:12px;margin-bottom:16px;}
+  .pauk-layer>.c-label{color:var(--pauk);}
+  .zhaba-layer{border:1px solid var(--border-hl);padding:42px 28px 28px;position:relative;background:var(--bg-panel);border-radius:10px;}
+  .zhaba-layer>.c-label{color:var(--text);background:var(--bg-panel);}
+  .les-layer{border:2px solid var(--ok);padding:42px 28px 28px;position:relative;background:var(--bg);border-radius:8px;}
+  .les-layer>.c-label{color:var(--ok);background:var(--bg);}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;width:100%;}
+  .module{background:var(--bg-module);border:1px solid var(--border);padding:18px;border-radius:6px;position:relative;transition:all 0.2s;}
+  .module:hover{border-color:var(--accent);}
+  .module.core{border-color:var(--accent);box-shadow:0 4px 15px rgba(59,130,246,.1);}
+  .interactive-node{cursor:pointer;}
+  .interactive-node:hover{transform:translateY(-2px);box-shadow:0 6px 12px rgba(0,0,0,.2);}
+  .m-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px;}
+  .m-name-box{display:flex;align-items:center;gap:8px;flex:1;}
+  .m-name{font-weight:900;font-size:0.9rem;color:var(--text);white-space:nowrap;}
+  .btn-info{cursor:pointer;font-size:.75rem;font-weight:900;color:var(--accent);background:var(--border);width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;transition:all .2s;border:none;flex-shrink:0;}
+  .btn-info:hover{background:var(--accent);color:#fff;}
+  .m-tag{font-size:.6rem;background:var(--border);padding:2px 6px;border-radius:4px;color:var(--text-dim);white-space:nowrap;}
+  .module.core .m-tag{background:var(--accent);color:#fff;}
+  .m-expansion{max-height:0;overflow:hidden;transition:max-height .3s ease-out,margin-bottom .3s;font-size:.7rem;font-weight:700;color:var(--accent);background:rgba(59,130,246,.05);border-radius:4px;line-height:1.3;}
+  .m-expansion.open{max-height:80px;margin-bottom:10px;padding:6px 10px;border:1px solid var(--accent);}
+  .m-desc{font-size:.7rem;color:var(--text-dim);margin-bottom:14px;line-height:1.4;}
+  .m-status{display:flex;align-items:center;gap:8px;font-size:.65rem;font-weight:700;text-transform:uppercase;border-top:1px solid var(--border);padding-top:10px;}
+  .s-dot{width:8px;height:8px;border-radius:50%;background:var(--ok);flex-shrink:0;}
+  .s-dot.warn{background:var(--warn);}
+  .s-dot.err{background:var(--err);}
+  .s-dot.idle{background:var(--border-hl);}
+  .s-dot.blink{animation:blink-dot 1.2s infinite;}
+  @keyframes blink-dot{0%,100%{opacity:1}50%{opacity:.2}}
+
+  /* KPI / METRICS shared */
+  .kpi-row{display:flex;gap:0;margin-bottom:16px;background:var(--bg-panel);border:1px solid var(--border);border-radius:8px;overflow:hidden;flex-shrink:0;width:100%;}
+  .kpi{display:flex;flex-direction:column;flex:1;padding:16px 20px;border-right:1px solid var(--border);}
+  .kpi:last-child{border-right:none;}
+  .kpi-val{font-weight:900;font-size:1.6rem;color:var(--text);line-height:1;}
+  .kpi-lbl{color:var(--text-dim);font-size:.62rem;text-transform:uppercase;font-weight:700;margin-top:5px;letter-spacing:.5px;}
+  .metrics-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-bottom:16px;width:100%;}
+  .m-card{background:var(--bg-panel);border:1px solid var(--border);padding:14px;border-radius:8px;display:flex;flex-direction:column;gap:10px;}
+  .m-head{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);padding-bottom:8px;}
+  .m-title{font-size:.68rem;font-weight:900;text-transform:uppercase;color:var(--text-dim);letter-spacing:.4px;}
+  .m-val{font-size:.78rem;font-weight:900;color:var(--text);}
+  .hbar-wrap{height:20px;background:var(--bg-module);border-radius:4px;overflow:hidden;display:flex;}
+  .hbar-seg{height:100%;transition:width .6s ease;}
+  .hbar-legend{display:flex;justify-content:space-between;font-size:.6rem;color:var(--text-dim);}
+  .chart-area{height:60px;width:100%;display:flex;align-items:flex-end;gap:3px;}
+  .bar{flex:1;background:var(--accent);opacity:.7;min-height:2px;transition:height .5s;border-radius:2px 2px 0 0;}
+  .bar.ok{background:var(--ok);opacity:.85;}
+  .bar.err{background:var(--err);opacity:.85;}
+  .bar.warn{background:var(--warn);}
+  .bar.dim{background:var(--border-hl);}
+  .gauge-box{height:68px;display:flex;align-items:center;justify-content:center;position:relative;}
+  .gauge-arc{width:100px;height:50px;border:8px solid var(--border);border-bottom:none;border-radius:100px 100px 0 0;position:relative;}
+  .gauge-fill{position:absolute;top:0;left:0;width:100%;height:100%;border:8px solid var(--accent);border-bottom:none;border-radius:100px 100px 0 0;transform-origin:center bottom;transition:transform .8s ease;}
+  .gauge-pct{position:absolute;bottom:-2px;left:50%;transform:translateX(-50%);font-size:.85rem;font-weight:900;}
+  .dot-group{display:flex;gap:8px;flex-wrap:wrap;}
+  .status-tag{display:flex;align-items:center;gap:6px;font-size:.65rem;font-weight:700;background:var(--bg);padding:4px 10px;border-radius:4px;border:1px solid var(--border);}
+
+  /* САМОВАР */
+  #view-samovar{align-items:stretch;max-width:1400px;margin:0 auto;width:100%;}
+  .sam-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-shrink:0;}
+  .ds-tree{display:flex;flex-direction:column;gap:8px;width:100%;}
+  .ds-card{background:var(--bg-panel);border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+  .ds-card-head{display:flex;align-items:center;gap:12px;padding:12px 16px;cursor:pointer;transition:background .15s;flex-wrap:wrap;}
+  .ds-card-head:hover{background:var(--bg-module);}
+  .ds-name{font-weight:900;font-size:.85rem;flex:1;min-width:120px;}
+  .ds-badge{font-size:.6rem;font-weight:700;padding:2px 8px;border-radius:10px;background:var(--border);color:var(--text-dim);white-space:nowrap;}
+  .ds-badge.ok{background:rgba(16,185,129,.15);color:var(--ok);border:1px solid rgba(16,185,129,.3);}
+  .ds-badge.warn{background:rgba(245,158,11,.15);color:var(--warn);border:1px solid rgba(245,158,11,.3);}
+  .ds-badge.err{background:rgba(239,68,68,.15);color:var(--err);border:1px solid rgba(239,68,68,.3);}
+  .ds-stats{display:flex;gap:16px;font-size:.65rem;color:var(--text-dim);font-weight:700;flex-wrap:wrap;}
+  .ds-stats span span{color:var(--text);}
+  .ds-expand-btn{font-size:.7rem;color:var(--text-dim);transition:transform .2s;user-select:none;}
+  .ds-card-head.open .ds-expand-btn{transform:rotate(90deg);}
+  .ds-progress{height:3px;background:var(--border);}
+  .ds-progress-fill{height:100%;background:var(--ok);transition:width .5s;}
+  .ds-progress-fill.partial{background:var(--warn);}
+  .ds-files{display:none;}
+  .ds-files.open{display:block;}
+  .file-table{width:100%;border-collapse:collapse;font-size:.68rem;}
+  .file-table th{padding:7px 14px;text-align:left;color:var(--text-dim);font-weight:700;font-size:.6rem;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid var(--border);background:var(--bg-module);}
+  .file-table td{padding:7px 14px;border-bottom:1px solid var(--border);color:var(--text-dim);vertical-align:middle;}
+  .file-table tr:last-child td{border-bottom:none;}
+  .file-table tr:hover td{background:var(--bg-module);}
+  .fname{color:var(--text);font-weight:700;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .fstate{display:inline-flex;align-items:center;gap:4px;font-size:.6rem;font-weight:700;padding:2px 7px;border-radius:10px;}
+  .fstate.indexed{background:rgba(16,185,129,.12);color:var(--ok);}
+  .fstate.new-f{background:rgba(59,130,246,.12);color:var(--accent);}
+  .fstate.changed{background:rgba(245,158,11,.12);color:var(--warn);}
+  .fstate.pending{background:var(--bg-module);color:var(--text-dim);}
+  .sync-btn{background:transparent;border:1px solid var(--border);color:var(--text-dim);padding:3px 10px;font-family:var(--font);font-size:.6rem;font-weight:700;cursor:pointer;border-radius:4px;transition:all .15s;white-space:nowrap;}
+  .sync-btn:hover{border-color:var(--accent);color:var(--accent);}
+  .sync-btn.running{border-color:var(--warn);color:var(--warn);cursor:default;}
+  .ds-empty{padding:24px;text-align:center;color:var(--text-dim);font-size:.75rem;}
+
+  /* ЧАТ */
+  .chat-container{display:flex;flex-direction:column;height:100%;width:100%;background:var(--bg-panel);border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+  .chat-header{padding:12px 20px;background:var(--bg-module);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-shrink:0;}
+  .chat-history{flex:1;padding:18px;overflow-y:auto;display:flex;flex-direction:column;gap:14px;}
+  .msg{max-width:82%;padding:11px 15px;border-radius:6px;font-size:.8rem;line-height:1.5;}
+  .msg-system{align-self:center;background:transparent;color:var(--text-dim);font-size:.7rem;text-align:center;border:1px solid var(--border);max-width:100%;}
+  .msg-ai{align-self:flex-start;background:var(--bg);border:1px solid var(--border);color:var(--text);border-left:3px solid var(--accent);}
+  .msg-user{align-self:flex-end;background:var(--border-hl);color:var(--text);border-right:3px solid var(--pauk);}
+  .msg-srcs{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;}
+  .src-tag{font-size:.6rem;font-weight:700;padding:2px 6px;border:1px solid var(--ok);color:var(--ok);border-radius:4px;}
+  .chat-input-area{padding:12px 16px;background:var(--bg-module);border-top:1px solid var(--border);display:flex;gap:10px;flex-shrink:0;}
+  .chat-input{flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:9px 13px;border-radius:4px;font-family:inherit;font-size:.8rem;outline:none;}
+  .chat-input:focus{border-color:var(--accent);}
+  .typing-cursor::after{content:'▋';animation:blink 1s step-end infinite;opacity:.7;margin-left:4px;}
+  @keyframes blink{50%{opacity:0}}
+  .term{background:#000;color:var(--ok);padding:8px 18px;font-size:.7rem;border-top:1px solid var(--border);font-weight:700;height:100px;overflow-y:auto;flex-shrink:0;}
+  [data-theme="light"] .term{background:#1e293b;}
+  .log-line{margin-bottom:2px;opacity:.9;}
+
+  /* МОДАЛЬНОЕ ОКНО НАСТРОЕК */
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100;display:none;align-items:center;justify-content:center;}
+  .modal-overlay.open{display:flex;}
+  .modal{background:var(--bg-panel);border:1px solid var(--border);border-radius:10px;width:520px;max-width:95vw;padding:28px;display:flex;flex-direction:column;gap:20px;}
+  .modal-head{display:flex;justify-content:space-between;align-items:center;}
+  .modal-title{font-size:.95rem;font-weight:900;letter-spacing:.5px;}
+  .modal-close{background:transparent;border:none;color:var(--text-dim);font-size:1.2rem;cursor:pointer;padding:4px 8px;border-radius:4px;}
+  .modal-close:hover{color:var(--text);background:var(--bg-module);}
+  .field{display:flex;flex-direction:column;gap:6px;}
+  .field label{font-size:.65rem;font-weight:700;text-transform:uppercase;color:var(--text-dim);letter-spacing:.4px;}
+  .field input,.field select{background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px 12px;font-family:var(--font);font-size:.78rem;border-radius:4px;outline:none;width:100%;}
+  .field input:focus,.field select:focus{border-color:var(--accent);}
+  .field-hint{font-size:.62rem;color:var(--text-dim);margin-top:2px;}
+  .modal-actions{display:flex;gap:10px;justify-content:flex-end;border-top:1px solid var(--border);padding-top:16px;}
+  .btn-danger{border-color:var(--err);color:var(--err);}
+  .btn-danger:hover{background:rgba(239,68,68,.1);}
+  .btn-primary{border-color:var(--accent);color:var(--accent);}
+  .btn-primary:hover{background:rgba(59,130,246,.1);}
+</style>
+</head>
+<body>
+<header class="hdr">
+  <div class="brand"><span class="brand-logo">[O_O]</span><span>С.О.В.У.Ш.К.А.</span></div>
+  <nav class="nav">
+    <button id="nav-overview" class="nav-btn active" onclick="switchTab('overview',this)">ОБЗОР</button>
+    <button id="nav-samovar" class="nav-btn" onclick="switchTab('samovar',this)">С.А.М.О.В.А.Р.</button>
+    <button id="nav-prorab" class="nav-btn" onclick="switchTab('prorab',this)">П.Р.О.Р.А.Б.</button>
+    <button id="nav-chat" class="nav-btn" onclick="switchTab('chat',this)">AI ЧАТ</button>
+  </nav>
+  <div class="controls">
+    <button class="mode-btn rag" id="mode-btn" onclick="toggleMode()">РАГ</button>
+    <button class="btn" onclick="refreshAll()">↻ ОБНОВИТЬ</button>
+    <button class="btn" onclick="openSettings()">⚙</button>
+    <button class="btn" onclick="toggleTheme()">ТЕМА</button>
+  </div>
+</header>
+
+<!-- МОДАЛЬНОЕ ОКНО НАСТРОЕК -->
+<div class="modal-overlay" id="settings-modal" onclick="closeSettingsOutside(event)">
+  <div class="modal">
+    <div class="modal-head">
+      <span class="modal-title">⚙ НАСТРОЙКИ Л.Е.С.</span>
+      <button class="modal-close" onclick="closeSettings()">✕</button>
+    </div>
+
+    <div class="field">
+      <label>LLM Модель</label>
+      <select id="set-llm-model" onchange="syncCustomField()"></select>
+      <div class="field-hint">Или введи вручную — для MLX / внешних моделей</div>
+      <input type="text" id="set-llm-custom" placeholder="например: gemma4:27b или mlx-community/gemma-3-27b-it-4bit">
+    </div>
+
+    <div class="field">
+      <label>Embedding Модель</label>
+      <select id="set-embed-model"></select>
+    </div>
+
+    <div class="field">
+      <label>Ollama / LLM Server URL</label>
+      <input type="text" id="set-ollama-url" placeholder="http://host.docker.internal:11434">
+      <div class="field-hint">Для MLX-сервера: http://host.docker.internal:8080</div>
+    </div>
+
+    <div style="border:1px solid var(--err);border-radius:6px;padding:14px;display:flex;flex-direction:column;gap:10px;">
+      <div style="font-size:.65rem;font-weight:900;text-transform:uppercase;color:var(--err);letter-spacing:.4px;">⚠ Опасная зона</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <button class="btn btn-danger" onclick="openResetDataset()">🗑 Сбросить датасет...</button>
+        <button class="btn btn-danger" onclick="resetAllDatasets()">☢ Сбросить ВСЕ</button>
+      </div>
+      <div id="reset-dataset-picker" style="display:none;flex-direction:column;gap:8px;margin-top:4px;">
+        <select id="reset-dataset-select" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 10px;font-family:var(--font);font-size:.75rem;border-radius:4px;"></select>
+        <button class="btn btn-danger" onclick="resetSelectedDataset()">Удалить выбранный</button>
+      </div>
+      <div style="font-size:.62rem;color:var(--text-dim);">Удаляет storage, SQLite и точки Qdrant. Необратимо.</div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn" onclick="closeSettings()">Отмена</button>
+      <button class="btn btn-primary" id="save-settings-btn" onclick="saveSettings()">💾 Сохранить и перезапустить</button>
+    </div>
+  </div>
+</div>
+
+<!-- ОБЗОР -->
+<main id="view-overview" class="view active">
+  <div class="pauk-layer">
+    <div class="c-label"><span class="s-dot blink"></span> П.А.У.К. <button class="btn-info" onclick="toggleExpand('exp-pauk',event)">?</button></div>
+    <div id="exp-pauk" class="m-expansion">Паутина Автономного Удаленного Контроля</div>
+    <div class="chip-container">
+      <div class="chip"><span class="chip-lbl">MESH</span> ZeroTier [10.0.0.10]</div>
+      <div class="chip"><span class="chip-lbl">REMOTE</span> SSH / Proxy</div>
+      <div class="chip"><span class="chip-lbl">REPO</span> GitHub Sync</div>
+    </div>
+    <div class="zhaba-layer">
+      <div class="c-label"><span class="s-dot"></span> Ж.А.Б.А. <button class="btn-info" onclick="toggleExpand('exp-zhaba',event)">?</button></div>
+      <div id="exp-zhaba" class="m-expansion">Жесткая Аппаратная База Аналитики</div>
+      <div class="chip-container">
+        <div class="chip"><span class="chip-lbl">HOST</span> Apple Silicon Host / 24 GB</div>
+        <div class="chip"><span class="chip-lbl">OS</span> macOS</div>
+        <div class="chip"><span class="chip-lbl">RUNTIME</span> Docker + Ollama</div>
+      </div>
+      <div class="les-layer">
+        <div class="c-label"><span class="s-dot"></span> Л.Е.С. <button class="btn-info" onclick="toggleExpand('exp-les',event)">?</button></div>
+        <div id="exp-les" class="m-expansion">Локальная Единая Система</div>
+        <div class="grid">
+          <div class="module core interactive-node" onclick="switchTab('chat',document.getElementById('nav-chat'))">
+            <div class="m-header"><div class="m-name-box"><span class="m-name">С.О.В.У.Ш.К.А.</span><button class="btn-info" onclick="toggleExpand('exp-sova',event)">?</button></div><span class="m-tag">CORE UI</span></div>
+            <div id="exp-sova" class="m-expansion">Система Обработки и Выдачи: Умная, Шаблонизированная, Классифицированная, Автоматизированная</div>
+            <div class="m-desc">Интеллектуальный интерфейс чата.</div>
+            <div class="m-status"><span class="s-dot"></span><span>STATUS: LIVE</span></div>
+          </div>
+          <div class="module interactive-node" onclick="switchTab('prorab',document.getElementById('nav-prorab'))">
+            <div class="m-header"><div class="m-name-box"><span class="m-name">П.Р.О.Р.А.Б.</span><button class="btn-info" onclick="toggleExpand('exp-prorab',event)">?</button></div><span class="m-tag">METRICS</span></div>
+            <div id="exp-prorab" class="m-expansion">Программа Регулярной Оценки Работы Автономной Базы</div>
+            <div class="m-desc">Телеметрия узла. Кликни для дашборда.</div>
+            <div class="m-status"><span class="s-dot" id="dot-prorab"></span><span id="st-prorab">STATUS: SYNC OK</span></div>
+          </div>
+          <div class="module interactive-node" onclick="switchTab('samovar',document.getElementById('nav-samovar'))">
+            <div class="m-header"><div class="m-name-box"><span class="m-name">С.А.М.О.В.А.Р.</span><button class="btn-info" onclick="toggleExpand('exp-samovar',event)">?</button></div><span class="m-tag">RAG</span></div>
+            <div id="exp-samovar" class="m-expansion">Система Автономная Машинной Обработки Внутренних Архивов Регламентов</div>
+            <div class="m-desc">Векторная база Qdrant. Кликни для управления.</div>
+            <div class="m-status"><span class="s-dot" id="dot-qdrant"></span><span id="st-qdrant">STATUS: READY</span></div>
+          </div>
+          <div class="module">
+            <div class="m-header"><div class="m-name-box"><span class="m-name">Т.О.С.К.А.</span><button class="btn-info" onclick="toggleExpand('exp-toska',event)">?</button></div><span class="m-tag">CRAG</span></div>
+            <div id="exp-toska" class="m-expansion">Терминал Оценки, Самопроверки и Контроля Архитектуры</div>
+            <div class="m-desc">Валидация ответов LLM.</div>
+            <div class="m-status"><span class="s-dot"></span><span>STATUS: ACTIVE</span></div>
+          </div>
+          <div class="module">
+            <div class="m-header"><div class="m-name-box"><span class="m-name">В.О.Л.К.</span><button class="btn-info" onclick="toggleExpand('exp-volk',event)">?</button></div><span class="m-tag">AUTH</span></div>
+            <div id="exp-volk" class="m-expansion">Внутренний Охранный Локальный Контур</div>
+            <div class="m-desc">Защита контура, RBAC, аутентификация.</div>
+            <div class="m-status"><span class="s-dot"></span><span>STATUS: GUARDING</span></div>
+          </div>
+          <div class="module">
+            <div class="m-header"><div class="m-name-box"><span class="m-name">К.О.Т.</span><button class="btn-info" onclick="toggleExpand('exp-kot',event)">?</button></div><span class="m-tag">TERM</span></div>
+            <div id="exp-kot" class="m-expansion">Куратор Отраслевой Терминологии</div>
+            <div class="m-desc">Семантический фильтр инженерного языка.</div>
+            <div class="m-status"><span class="s-dot"></span><span>STATUS: ACTIVE</span></div>
+          </div>
+          <div class="module">
+            <div class="m-header"><div class="m-name-box"><span class="m-name">С.У.Х.А.Р.И.К.</span><button class="btn-info" onclick="toggleExpand('exp-suh',event)">?</button></div><span class="m-tag">BACKUP</span></div>
+            <div id="exp-suh" class="m-expansion">Система Управления Холодными Архивами и Резервными Источниками</div>
+            <div class="m-desc">Снапшоты индексов Qdrant.</div>
+            <div class="m-status"><span class="s-dot idle"></span><span>STATUS: IDLE</span></div>
+          </div>
+          <div class="module">
+            <div class="m-header"><div class="m-name-box"><span class="m-name">Е.Ж.И.К.</span><button class="btn-info" onclick="toggleExpand('exp-ezhik',event)">?</button></div><span class="m-tag">MAIL</span></div>
+            <div id="exp-ezhik" class="m-expansion">Единый Журнал Извлечения Контента</div>
+            <div class="m-desc">Обработка почты (IMAP) и парсинг вложений.</div>
+            <div class="m-status"><span class="s-dot warn"></span><span>STATUS: WAIT IMAP</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- С.А.М.О.В.А.Р. -->
+<main id="view-samovar" class="view">
+  <div class="sam-header" style="width:100%;">
+    <div>
+      <div style="font-size:1rem;font-weight:900;letter-spacing:1px;">С.А.М.О.В.А.Р. // ИНДЕКС ЗНАНИЙ</div>
+      <div style="font-size:.65rem;color:var(--text-dim);margin-top:2px;">/api/rag/sources + /api/rag/datasets</div>
+    </div>
+    <button class="btn" onclick="fetchSamovar()" style="border-color:var(--accent);color:var(--accent);">↻ ОБНОВИТЬ</button>
+  </div>
+  <div class="kpi-row">
+    <div class="kpi"><div class="kpi-val" id="sam-ds">—</div><div class="kpi-lbl">Датасетов</div></div>
+    <div class="kpi"><div class="kpi-val" id="sam-src">—</div><div class="kpi-lbl">Файлов в папках</div></div>
+    <div class="kpi"><div class="kpi-val" id="sam-idx" style="color:var(--ok)">—</div><div class="kpi-lbl">В индексе</div></div>
+    <div class="kpi"><div class="kpi-val" id="sam-pend" style="color:var(--warn)">—</div><div class="kpi-lbl">Ожидают</div></div>
+    <div class="kpi"><div class="kpi-val" id="sam-chunks">—</div><div class="kpi-lbl">Чанков Qdrant</div></div>
+  </div>
+  <div class="ds-tree" id="ds-tree" style="width:100%;">
+    <div class="ds-empty">Загрузка...</div>
+  </div>
+</main>
+
+<!-- П.Р.О.Р.А.Б. -->
+<main id="view-prorab" class="view">
+  <div style="width:100%;max-width:1400px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <div style="font-size:1rem;font-weight:900;letter-spacing:1px;">П.Р.О.Р.А.Б. // ДИАГНОСТИКА</div>
+      <div style="font-size:.65rem;color:var(--text-dim);">/api/metrics · 5s</div>
+    </div>
+    <div class="kpi-row">
+      <div class="kpi"><div class="kpi-val" id="kpi-files">—</div><div class="kpi-lbl">Файлов</div></div>
+      <div class="kpi"><div class="kpi-val" id="kpi-chunks">—</div><div class="kpi-lbl">Чанков</div></div>
+      <div class="kpi"><div class="kpi-val" id="kpi-ram">—</div><div class="kpi-lbl">RAM</div></div>
+      <div class="kpi"><div class="kpi-val" id="kpi-cpu">—</div><div class="kpi-lbl">CPU</div></div>
+      <div class="kpi"><div class="kpi-val" style="color:var(--ok)" id="kpi-queue">—</div><div class="kpi-lbl">LLM Queue</div></div>
+    </div>
+    <div class="metrics-grid">
+      <div class="m-card">
+        <div class="m-head"><span class="m-title">RAM Breakdown</span><span class="m-val" id="pro-ram-val">—</span></div>
+        <div class="hbar-wrap">
+          <div class="hbar-seg" id="bar-ram-ollama" style="width:0%;background:var(--err);"></div>
+          <div class="hbar-seg" id="bar-ram-sys" style="width:0%;background:var(--ok);"></div>
+          <div class="hbar-seg" id="bar-ram-free" style="width:100%;background:var(--border);"></div>
+        </div>
+        <div class="hbar-legend"><span>Ollama</span><span>Sys</span><span>Free</span></div>
+      </div>
+      <div class="m-card">
+        <div class="m-head"><span class="m-title">Pipeline Latency</span><span class="m-val" id="pro-lat">— ms</span></div>
+        <div class="chart-area" id="chart-lat">
+          <div class="bar dim" style="height:5%"></div><div class="bar dim" style="height:5%"></div><div class="bar dim" style="height:5%"></div><div class="bar dim" style="height:5%"></div><div class="bar dim" style="height:5%"></div>
+          <div class="bar dim" style="height:5%"></div><div class="bar dim" style="height:5%"></div><div class="bar dim" style="height:5%"></div><div class="bar dim" style="height:5%"></div><div class="bar dim" style="height:5%"></div>
+        </div>
+        <div style="font-size:.6rem;color:var(--text-dim);text-align:center;">Search + Gen (10)</div>
+      </div>
+      <div class="m-card">
+        <div class="m-head"><span class="m-title">Диск</span><span class="m-val" id="pro-disk">—</span></div>
+        <div class="gauge-box">
+          <div class="gauge-arc"><div class="gauge-fill" id="gauge-disk" style="transform:rotate(-180deg);"></div></div>
+          <div class="gauge-pct" id="gauge-pct">—%</div>
+        </div>
+        <div style="font-size:.6rem;color:var(--text-dim);text-align:center;">Datasets + Qdrant</div>
+      </div>
+      <div class="m-card">
+        <div class="m-head"><span class="m-title">Т.О.С.К.А.</span><span class="m-val" id="pro-crag">—%</span></div>
+        <div class="chart-area" style="gap:0;">
+          <div id="bar-crag-pass" style="background:var(--ok);opacity:.85;height:100%;flex:none;width:50%;border-radius:2px 0 0 2px;transition:width .6s;"></div>
+          <div id="bar-crag-fail" style="background:var(--err);opacity:.85;height:100%;flex:none;width:50%;border-radius:0 2px 2px 0;transition:width .6s;"></div>
+        </div>
+        <div style="font-size:.6rem;color:var(--text-dim);text-align:center;">Verified vs Rejected</div>
+      </div>
+      <div class="m-card" style="grid-column:span 2;">
+        <div class="m-head"><span class="m-title">Сервисы</span></div>
+        <div class="dot-group">
+          <div class="status-tag"><span class="s-dot blink"></span>Ollama</div>
+          <div class="status-tag"><span class="s-dot" id="svc-qdrant"></span>Qdrant</div>
+          <div class="status-tag"><span class="s-dot"></span>Proxy</div>
+          <div class="status-tag"><span class="s-dot idle"></span>В.О.Л.К.</div>
+          <div class="status-tag"><span class="s-dot warn"></span>Е.Ж.И.К.</div>
+        </div>
+      </div>
+      <div class="m-card">
+        <div class="m-head"><span class="m-title">HTTP Errors</span><span class="m-val" id="pro-err">0</span></div>
+        <div style="font-size:.7rem;color:var(--text-dim);line-height:2;" id="errors-list">Нет ошибок</div>
+      </div>
+
+      <!-- Модели Ollama -->
+      <div class="m-card">
+        <div class="m-head">
+          <span class="m-title">Ollama — активные модели</span>
+          <span class="m-val" id="ollama-mode-badge" style="font-size:.6rem;padding:2px 8px;border-radius:10px;background:rgba(16,185,129,.15);color:var(--ok);">РАГ</span>
+        </div>
+        <div id="ollama-models" style="display:flex;flex-direction:column;gap:8px;">
+          <div style="font-size:.7rem;color:var(--text-dim);">Загрузка...</div>
+        </div>
+      </div>
+
+      <!-- Контейнеры Docker -->
+      <div class="m-card">
+        <div class="m-head"><span class="m-title">Docker контейнеры</span><span class="m-val" id="docker-ok">—</span></div>
+        <div id="docker-containers" style="display:flex;flex-direction:column;gap:6px;">
+          <div style="font-size:.7rem;color:var(--text-dim);">Загрузка...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- AI ЧАТ -->
+<main id="view-chat" class="view" style="max-width:900px;margin:0 auto;width:100%;">
+  <div class="chat-container">
+    <div class="chat-header">
+      <div style="font-weight:900;font-size:.8rem;color:var(--accent);">С.О.В.У.Ш.К.А. // AI АССИСТЕНТ</div>
+      <div style="font-size:.65rem;color:var(--text-dim);font-weight:700;">Engine: qwen3:14b | RAG: Active</div>
+    </div>
+    <div class="chat-history" id="chat-history">
+      <div class="msg msg-system">Система активирована. Ожидание запросов.</div>
+      <div class="msg msg-user">Рецепт кротовухи</div>
+      <div class="msg msg-ai">
+        По результатам поиска по индексированным источникам релевантных фрагментов не обнаружено.<br><br>
+        Запрос не соответствует тематике загруженной нормативной базы (СП, ГОСТ, регламенты инженерных систем). Т.О.С.К.А. классифицировала контекст как <strong>вне области знаний</strong> и заблокировала генерацию ответа во избежание галлюцинаций.<br><br>
+        Если вопрос касается подземных инженерных коммуникаций, дренажа или грунтовых работ — уточните формулировку.
+        <div class="msg-srcs">
+          <span class="src-tag" style="border-color:var(--err);color:var(--err);">Т.О.С.К.А.: NO_DATA</span>
+          <span class="src-tag" style="border-color:var(--text-dim);color:var(--text-dim);">chunks: 0</span>
+        </div>
+      </div>
+    </div>
+    <div class="chat-input-area">
+      <input type="text" class="chat-input" id="chat-input" placeholder="Введите запрос по нормативам или проекту...">
+      <button class="btn" id="chat-btn" style="border-color:var(--ok);color:var(--ok);" onclick="sendChat()">ОТПРАВИТЬ</button>
+    </div>
+  </div>
+</main>
+
+<footer class="term" id="term-logs">
+  <div class="log-line">> [С.О.В.У.Ш.К.А.] v3.1 Unified. Инициализация...</div>
+  <div class="log-line">> [AI ЧАТ] Запрос: "Рецепт кротовухи"</div>
+  <div class="log-line">> [AI ЧАТ] Retrieval: 0 chunks найдено | Т.О.С.К.А.: NO_DATA → генерация заблокирована</div>
+</footer>
+
+<script>
+const API = '';
+let sse = null;
+
+function toggleTheme() {
+  const t = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', t);
+  addLog(`Тема: ${t.toUpperCase()}`);
+}
+function toggleExpand(id, ev) {
+  if (ev) ev.stopPropagation();
+  document.getElementById(id).classList.toggle('open');
+}
+function switchTab(id, btn) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('view-' + id).classList.add('active');
+  btn.classList.add('active');
+  addLog(`→ ${btn.innerText}`);
+}
+function addLog(msg) {
+  const term = document.getElementById('term-logs');
+  const t = new Date().toLocaleTimeString('ru-RU');
+  const d = document.createElement('div');
+  d.className = 'log-line';
+  d.innerText = `> [${t}] ${msg}`;
+  term.appendChild(d);
+  term.scrollTop = term.scrollHeight;
+}
+
+// ── МЕТРИКИ ──
+async function fetchMetrics() {
+  try {
+    const res = await fetch(API + '/api/metrics');
+    if (!res.ok) return;
+    const d = await res.json();
+    const s = d.system||{}, p = d.pipeline||{}, r = d.rag||{}, q = d.queue||{}, e = d.errors||{};
+
+    document.getElementById('kpi-files').innerText = r.files ?? r.documents ?? 0;
+    document.getElementById('kpi-chunks').innerText = r.chunks ?? 0;
+    document.getElementById('kpi-ram').innerText = (s.ram_used||0).toFixed(1)+' GB';
+    document.getElementById('kpi-cpu').innerText = (s.cpu||0).toFixed(1)+'%';
+    document.getElementById('kpi-queue').innerText = q.llm_waiting ?? 0;
+
+    const rT=s.ram_total||24, rU=s.ram_used||0, rO=s.ollama_ram||0, rS=Math.max(0,rU-rO), rF=Math.max(0,rT-rU);
+    document.getElementById('pro-ram-val').innerText = rU.toFixed(1)+' / '+rT.toFixed(1)+' GB';
+    document.getElementById('bar-ram-ollama').style.width=(rO/rT*100).toFixed(1)+'%';
+    document.getElementById('bar-ram-sys').style.width=(rS/rT*100).toFixed(1)+'%';
+    document.getElementById('bar-ram-free').style.width=(rF/rT*100).toFixed(1)+'%';
+
+    const ls=p.latency_search||[], lg=p.latency_gen||[];
+    const comb=ls.map((v,i)=>(v||0)+(lg[i]||0));
+    if(comb.length){
+      const avg=comb.reduce((a,b)=>a+b,0)/comb.length;
+      document.getElementById('pro-lat').innerText=(avg*1000).toFixed(0)+' ms';
+      const mx=Math.max(...comb,0.001);
+      document.querySelectorAll('#chart-lat .bar').forEach((b,i)=>{
+        const v=comb.slice(-10)[i]??0;
+        b.style.height=Math.max(4,v/mx*100).toFixed(0)+'%';
+        b.className='bar'+(v>mx*.8?' err':v>mx*.5?' warn':'');
+      });
+    }
+
+    const dU=s.disk_used||0, dT=s.disk_total||512, dP=dT?dU/dT:0;
+    document.getElementById('pro-disk').innerText=dU.toFixed(0)+' / '+dT.toFixed(0)+' GB';
+    document.getElementById('gauge-disk').style.transform=`rotate(${(dP*180-180).toFixed(0)}deg)`;
+    document.getElementById('gauge-pct').innerText=(dP*100).toFixed(0)+'%';
+
+    const cp=p.crag_pass_rate||0;
+    document.getElementById('pro-crag').innerText=(cp*100).toFixed(1)+'% Pass';
+    document.getElementById('bar-crag-pass').style.width=(cp*100).toFixed(1)+'%';
+    document.getElementById('bar-crag-fail').style.width=((1-cp)*100).toFixed(1)+'%';
+
+    const ek=Object.keys(e);
+    document.getElementById('pro-err').innerText=ek.length?ek.reduce((a,k)=>a+e[k],0):'0';
+    document.getElementById('errors-list').innerHTML=ek.length?ek.map(k=>`<span style="color:var(--err)">${k}</span>: ${e[k]}`).join(' | '):'Нет ошибок';
+
+    const rOk=r.status==='ready';
+    if(document.getElementById('dot-qdrant')) document.getElementById('dot-qdrant').className='s-dot'+(rOk?'':' warn');
+    if(document.getElementById('st-qdrant')) document.getElementById('st-qdrant').innerText='STATUS: '+(r.status||'UNKNOWN').toUpperCase();
+    if(document.getElementById('svc-qdrant')) document.getElementById('svc-qdrant').className='s-dot'+(rOk?'':' warn');
+  } catch(err){ addLog('[П.Р.О.Р.А.Б.] '+err.message); }
+}
+
+// ── САМОВАР ──
+async function fetchSamovar() {
+  try {
+    const [sRes, dRes] = await Promise.all([
+      fetch(API+'/api/rag/sources'),
+      fetch(API+'/api/rag/datasets')
+    ]);
+    const sources = await sRes.json();
+    const datasets = await dRes.json();
+    const dsMap = {};
+    datasets.forEach(d => dsMap[d.id] = d);
+
+    let totSrc=0, totIdx=0, totChunks=0;
+    sources.forEach(s => {
+      totSrc += s.source_files||0;
+      totIdx += s.indexed_files||0;
+      if(s.dataset_id && dsMap[s.dataset_id]) totChunks += dsMap[s.dataset_id].chunk_count||0;
+    });
+    const totPend = Math.max(0, totSrc - totIdx);
+
+    document.getElementById('sam-ds').innerText = sources.length;
+    document.getElementById('sam-src').innerText = totSrc;
+    document.getElementById('sam-idx').innerText = totIdx;
+    document.getElementById('sam-pend').innerText = totPend;
+    document.getElementById('sam-chunks').innerText = totChunks;
+
+    const tree = document.getElementById('ds-tree');
+    if(!sources.length){ tree.innerHTML='<div class="ds-empty">Папки в RAG_Content не найдены</div>'; return; }
+    tree.innerHTML = '';
+
+    sources.forEach((src, i) => {
+      const ds = src.dataset_id ? dsMap[src.dataset_id] : null;
+      const total = src.source_files||0;
+      const indexed = src.indexed_files||0;
+      const pending = Math.max(0, total - indexed);
+      const pct = total > 0 ? indexed/total*100 : 0;
+      const status = src.dataset_status||'NOT_CREATED';
+
+      let bc='idle', bt=status;
+      if(status==='NOT_CREATED'){ bc='idle'; bt='NOT CREATED'; }
+      else if(status==='PARSING'||status==='SCANNING'){ bc='warn'; bt='PARSING'; }
+      else if(status==='FAILED'){ bc='err'; bt='FAILED'; }
+      else if(pending===0 && total>0){ bc='ok'; bt='INDEXED'; }
+      else if(pending>0){ bc='warn'; bt=`${pending} PENDING`; }
+      else { bc='ok'; bt='READY'; }
+
+      const dotC = bc==='ok'?'':'s-dot '+(bc==='warn'?'warn':bc==='err'?'err':'idle');
+
+      const card = document.createElement('div');
+      card.className = 'ds-card';
+      card.innerHTML = `
+        <div class="ds-card-head" id="dh-${i}" onclick="toggleDs(${i})">
+          <span class="s-dot ${dotC}"></span>
+          <span class="ds-name">📁 ${src.folder}</span>
+          <div class="ds-stats">
+            <span>Файлов: <span>${total}</span></span>
+            <span style="color:var(--ok)">Индекс: <span>${indexed}</span></span>
+            ${pending>0?`<span style="color:var(--warn)">Pending: <span>${pending}</span></span>`:''}
+            ${ds?`<span>Чанков: <span>${ds.chunk_count??'—'}</span></span>`:''}
+          </div>
+          <span class="ds-badge ${bc}">${bt}</span>
+          <button class="sync-btn" id="sb-${i}" onclick="syncDs(event,'${src.folder}',${i})">↻ SYNC</button>
+          <span class="ds-expand-btn">▶</span>
+        </div>
+        <div class="ds-progress"><div class="ds-progress-fill ${pct<100&&pct>0?'partial':''}" style="width:${pct.toFixed(0)}%"></div></div>
+        <div class="ds-files" id="df-${i}">
+          <div class="ds-empty" id="dfl-${i}">▼ Раскрой для деталей</div>
+        </div>`;
+      tree.appendChild(card);
+    });
+
+    addLog(`[С.А.М.О.В.А.Р.] ${sources.length} папок | ${totSrc} файлов | ${totIdx} в индексе | ${totPend} pending`);
+  } catch(err){
+    document.getElementById('ds-tree').innerHTML='<div class="ds-empty">Ошибка: '+err.message+'</div>';
+    addLog('[С.А.М.О.В.А.Р.] '+err.message);
+  }
+}
+
+function toggleDs(i) {
+  const head = document.getElementById(`dh-${i}`);
+  const files = document.getElementById(`df-${i}`);
+  const isOpen = head.classList.toggle('open');
+  files.classList.toggle('open', isOpen);
+  if(isOpen) loadDsDetail(i);
+}
+
+async function loadDsDetail(i) {
+  const loader = document.getElementById(`dfl-${i}`);
+  if(!loader || !loader.innerText.includes('▼')) return;
+  loader.innerText = 'Загрузка...';
+  try {
+    const [sRes, jRes] = await Promise.all([
+      fetch(API+'/api/rag/sources'),
+      fetch(API+'/api/jobs')
+    ]);
+    const sources = await sRes.json();
+    const jobs = await jRes.json();
+    const src = sources[i];
+    if(!src){ loader.innerText='Ошибка данных'; return; }
+    const folder = src.folder;
+    const total = src.source_files||0;
+    const indexed = src.indexed_files||0;
+    const pending = Math.max(0, total-indexed);
+    const pct = total>0 ? (indexed/total*100).toFixed(0) : 0;
+
+    // Ищем активный job для этой папки
+    const activeJob = Object.entries(jobs).find(([,j])=>
+      j.dataset_name===`${folder}_Index` && j.status!=='COMPLETED' && j.status!=='FAILED'
+    );
+    const lastJob = Object.entries(jobs)
+      .filter(([,j])=>j.dataset_name===`${folder}_Index`)
+      .sort(([,a],[,b])=>new Date(b.started_at)-new Date(a.started_at))[0];
+
+    const df = document.getElementById(`df-${i}`);
+    let html = `<table class="file-table">
+      <thead><tr><th>Папка</th><th>Файлов</th><th>В индексе</th><th>Pending</th><th>Прогресс</th><th>Статус</th></tr></thead>
+      <tbody><tr>
+        <td class="fname">📁 ${folder}/</td>
+        <td>${total}</td>
+        <td style="color:var(--ok);font-weight:900">${indexed}</td>
+        <td style="color:${pending>0?'var(--warn)':'var(--text-dim)'};font-weight:900">${pending}</td>
+        <td>
+          <div style="width:120px;height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
+            <div style="width:${pct}%;height:100%;background:${pct==='100'?'var(--ok)':'var(--warn)'};transition:width .5s;"></div>
+          </div>
+          <div style="font-size:.58rem;color:var(--text-dim);margin-top:2px;">${pct}%</div>
+        </td>
+        <td>`;
+
+    if(activeJob){
+      const [,job] = activeJob;
+      const jp = job.total>0?(job.processed/job.total*100).toFixed(0):0;
+      html+=`<span class="fstate changed">🔄 ${job.status} ${job.processed}/${job.total}</span>
+        <div style="font-size:.6rem;color:var(--text-dim);margin-top:3px;">${job.message||''}</div>`;
+    } else if(pending===0 && total>0){
+      html+=`<span class="fstate indexed">✓ Синхронизировано</span>`;
+      if(lastJob) html+=`<div style="font-size:.58rem;color:var(--text-dim);margin-top:2px;">Последний job: ${new Date(lastJob[1].started_at).toLocaleString('ru-RU')}</div>`;
+    } else if(src.dataset_status==='NOT_CREATED'){
+      html+=`<span class="fstate pending">⊘ Датасет не создан</span>`;
+    } else {
+      html+=`<span class="fstate changed">⚠ ${pending} файлов ожидают</span>`;
+    }
+    html += `</td></tr></tbody></table>`;
+
+    // Job history
+    const folderJobs = Object.entries(jobs).filter(([,j])=>j.dataset_name===`${folder}_Index`);
+    if(folderJobs.length>0){
+      html+=`<table class="file-table" style="border-top:2px solid var(--border);">
+        <thead><tr><th>Job ID</th><th>Статус</th><th>Файлов</th><th>Время</th><th>Сообщение</th></tr></thead><tbody>`;
+      folderJobs.sort(([,a],[,b])=>new Date(b.started_at)-new Date(a.started_at)).forEach(([id,j])=>{
+        const stClass = j.status==='COMPLETED'?'indexed':j.status==='FAILED'?'new-f':'changed';
+        html+=`<tr>
+          <td style="color:var(--text-dim);font-size:.62rem">${id}</td>
+          <td><span class="fstate ${stClass}">${j.status}</span></td>
+          <td>${j.processed}/${j.total}</td>
+          <td style="font-size:.62rem">${j.started_at?new Date(j.started_at).toLocaleString('ru-RU'):'-'}</td>
+          <td style="font-size:.62rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${j.message||'-'}</td>
+        </tr>`;
+      });
+      html+=`</tbody></table>`;
+    }
+
+    df.innerHTML = html;
+  } catch(err){ loader.innerText='Ошибка: '+err.message; }
+}
+
+async function syncDs(ev, folder, i) {
+  ev.stopPropagation();
+  const btn = document.getElementById(`sb-${i}`);
+  if(btn.classList.contains('running')) return;
+  btn.classList.add('running'); btn.innerText='⌛';
+  addLog(`[SYNC] Запуск: ${folder}`);
+  try {
+    const r = await fetch(API+`/api/rag/sync/${folder}`, {method:'POST'});
+    const d = await r.json();
+    addLog(`[SYNC] ${folder} → job ${d.job_id}: +${d.new_files} новых, ${d.skipped_files} пропущено`);
+    setTimeout(()=>{ fetchSamovar(); btn.classList.remove('running'); btn.innerText='↻ SYNC'; }, 3000);
+  } catch(err){
+    addLog('[SYNC] Ошибка: '+err.message);
+    btn.classList.remove('running'); btn.innerText='↻ SYNC';
+  }
+}
+
+// ── ЧАТ ──
+async function sendChat() {
+  const inp=document.getElementById('chat-input'), btn=document.getElementById('chat-btn'), hist=document.getElementById('chat-history');
+  const q=inp.value.trim(); if(!q) return;
+  inp.value=''; btn.disabled=true;
+  const ud=document.createElement('div'); ud.className='msg msg-user'; ud.innerText=q; hist.appendChild(ud);
+  const bot=document.createElement('div'); bot.className='msg msg-ai typing-cursor'; bot.innerText='Обрабатываю...'; hist.appendChild(bot);
+  hist.scrollTop=hist.scrollHeight;
+  addLog(`[AI] Запрос: "${q.substring(0,50)}${q.length>50?'..':''}"`);
+  try {
+    const r=await fetch(API+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})});
+    const d=await r.json();
+    const ans=d.answer||d.response||'Нет ответа', srcs=d.sources||[], crag=d.crag_status||'';
+    bot.classList.remove('typing-cursor'); bot.innerText='';
+    let i=0;
+    const iv=setInterval(()=>{
+      bot.innerHTML+=ans.charAt(i); i++; hist.scrollTop=hist.scrollHeight;
+      if(i>=ans.length){
+        clearInterval(iv); btn.disabled=false;
+        if(srcs.length||crag){
+          const sd=document.createElement('div'); sd.className='msg-srcs';
+          sd.innerHTML=srcs.map(s=>`<span class="src-tag">${s.file||s}</span>`).join('')
+            +(crag?`<span class="src-tag" style="border-color:var(--accent);color:var(--accent);">Т.О.С.К.А.: ${crag}</span>`:'');
+          bot.appendChild(sd);
+        }
+        addLog(`[AI] Готово. CRAG: ${crag||'N/A'} | src: ${srcs.length}`);
+      }
+    },14);
+  } catch(err){ bot.classList.remove('typing-cursor'); bot.innerText='Ошибка: '+err.message; btn.disabled=false; }
+}
+document.getElementById('chat-input').addEventListener('keydown',e=>{ if(e.key==='Enter') sendChat(); });
+
+// ── SSE ──
+function connectSSE() {
+  if(sse) return;
+  sse=new EventSource(API+'/api/logs/stream');
+  sse.onmessage=ev=>{ try{ let m; try{const p=JSON.parse(ev.data);m=p.message||p.event||ev.data;}catch{m=ev.data;} addLog(m); }catch{} };
+  sse.onerror=()=>{ addLog('[SSE] Реконнект...'); sse.close(); sse=null; setTimeout(connectSSE,5000); };
+}
+
+async function fetchStatus() {
+  try {
+    const r = await fetch(API + '/api/status');
+    if (!r.ok) return;
+    const d = await r.json();
+
+    // Режим — бейдж
+    const mode = d.mode || {};
+    const badge = document.getElementById('ollama-mode-badge');
+    if (badge) {
+      if (mode.mode === 'code') {
+        badge.textContent = 'КОД';
+        badge.style.background = 'rgba(139,92,246,.15)';
+        badge.style.color = 'var(--pauk)';
+      } else {
+        badge.textContent = 'РАГ';
+        badge.style.background = 'rgba(16,185,129,.15)';
+        badge.style.color = 'var(--ok)';
+      }
+    }
+
+    // Модели Ollama
+    const modelsEl = document.getElementById('ollama-models');
+    if (modelsEl) {
+      const models = d.ollama?.models || [];
+      if (models.length === 0) {
+        modelsEl.innerHTML = '<div style="font-size:.7rem;color:var(--text-dim);">Нет активных моделей</div>';
+      } else {
+        modelsEl.innerHTML = models.map(m => `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);">
+            <div>
+              <div style="font-size:.72rem;font-weight:700;color:var(--text);">${m.name}</div>
+              <div style="font-size:.6rem;color:var(--text-dim);">RAM: ${m.size_gb} GB${m.vram_gb > 0 ? ' · VRAM: '+m.vram_gb+' GB' : ''}</div>
+            </div>
+            <span style="font-size:.6rem;font-weight:700;padding:2px 7px;border-radius:10px;background:rgba(16,185,129,.12);color:var(--ok);">LIVE</span>
+          </div>`).join('');
+      }
+    }
+
+    // Контейнеры Docker
+    const containersEl = document.getElementById('docker-containers');
+    const dockerOk = document.getElementById('docker-ok');
+    if (containersEl) {
+      const containers = d.containers || [];
+      const allOk = containers.every(c => c.ok);
+      if (dockerOk) {
+        dockerOk.textContent = allOk ? `${containers.length} UP` : 'ПРОБЛЕМА';
+        dockerOk.style.color = allOk ? 'var(--ok)' : 'var(--err)';
+      }
+      if (containers.length === 0) {
+        containersEl.innerHTML = '<div style="font-size:.7rem;color:var(--text-dim);">Нет данных</div>';
+      } else {
+        containersEl.innerHTML = containers.map(c => `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border);">
+            <div>
+              <div style="font-size:.72rem;font-weight:700;color:var(--text);">${c.name}</div>
+              <div style="font-size:.6rem;color:var(--text-dim);">${c.image}</div>
+            </div>
+            <span style="font-size:.6rem;font-weight:700;padding:2px 7px;border-radius:10px;
+              background:${c.ok ? 'rgba(16,185,129,.12)' : 'rgba(239,68,68,.12)'};
+              color:${c.ok ? 'var(--ok)' : 'var(--err)'};">${c.status.split(' ')[0]}</span>
+          </div>`).join('');
+      }
+    }
+
+    // Синхронизируем кнопку режима в хедере
+    applyMode(mode.mode, mode.model);
+
+  } catch(err) { addLog('[STATUS] ' + err.message); }
+}
+
+setInterval(fetchStatus, 8000);
+
+// ── РЕЖИМ КОД / РАГ ──
+let currentMode = 'rag';
+
+async function fetchMode() {
+  try {
+    const r = await fetch(API + '/api/mode');
+    const d = await r.json();
+    applyMode(d.mode, d.model);
+  } catch {}
+}
+
+function applyMode(mode, model) {
+  currentMode = mode;
+  const btn = document.getElementById('mode-btn');
+  if (!btn) return;
+  if (mode === 'code') {
+    btn.textContent = 'КОД';
+    btn.className = 'mode-btn code';
+    btn.title = model || 'qwen2.5-coder:32b';
+  } else {
+    btn.textContent = 'РАГ';
+    btn.className = 'mode-btn rag';
+    btn.title = model || 'qwen3:14b';
+  }
+}
+
+async function toggleMode() {
+  const btn = document.getElementById('mode-btn');
+  const next = currentMode === 'rag' ? 'code' : 'rag';
+  const model = next === 'code' ? 'qwen2.5-coder:32b' : 'qwen3:14b';
+
+  btn.classList.add('switching');
+  btn.textContent = '...';
+  addLog(`[РЕЖИМ] Переключение → ${next.toUpperCase()}`);
+
+  try {
+    // Уведомляем прокси
+    await fetch(API + '/api/mode', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ mode: next, model })
+    });
+
+    // Запускаем скрипт через прокси-команду (если есть endpoint)
+    // или просто меняем состояние UI — скрипт запускается вручную
+    applyMode(next, model);
+    addLog(`[РЕЖИМ] ${next.toUpperCase()} активен. Запусти mode_${next}.sh на сервере если не запущен.`);
+  } catch(err) {
+    addLog(`[РЕЖИМ] Ошибка: ${err.message}`);
+  } finally {
+    btn.classList.remove('switching');
+  }
+}
+function refreshAll(){ fetchMetrics(); fetchSamovar(); fetchStatus(); }
+
+// ── НАСТРОЙКИ ──
+async function openSettings() {
+  document.getElementById('settings-modal').classList.add('open');
+  document.getElementById('reset-dataset-picker').style.display = 'none';
+  try {
+    const r = await fetch(API + '/api/settings');
+    const d = await r.json();
+    const llmSel = document.getElementById('set-llm-model');
+    const embedSel = document.getElementById('set-embed-model');
+    llmSel.innerHTML = ''; embedSel.innerHTML = '';
+    const models = d.available_models || [];
+    models.forEach(m => {
+      llmSel.innerHTML += `<option value="${m}" ${m===d.llm_model?'selected':''}>${m}</option>`;
+      embedSel.innerHTML += `<option value="${m}" ${m===d.embed_model?'selected':''}>${m}</option>`;
+    });
+    if (!models.includes(d.llm_model))
+      llmSel.innerHTML = `<option value="${d.llm_model}" selected>${d.llm_model}</option>` + llmSel.innerHTML;
+    if (!models.includes(d.embed_model))
+      embedSel.innerHTML = `<option value="${d.embed_model}" selected>${d.embed_model}</option>` + embedSel.innerHTML;
+    document.getElementById('set-llm-custom').value = '';
+    document.getElementById('set-ollama-url').value = d.ollama_url || '';
+    const srcR = await fetch(API + '/api/rag/sources');
+    const sources = await srcR.json();
+    const dsSel = document.getElementById('reset-dataset-select');
+    dsSel.innerHTML = sources
+      .filter(s => s.dataset_id)
+      .map(s => `<option value="${s.dataset_id}" data-folder="${s.folder}">${s.folder} (${s.indexed_files} файлов)</option>`)
+      .join('');
+  } catch(err) { addLog('[SETTINGS] Ошибка загрузки: ' + err.message); }
+}
+function closeSettings() { document.getElementById('settings-modal').classList.remove('open'); }
+function closeSettingsOutside(e) { if (e.target.id==='settings-modal') closeSettings(); }
+function syncCustomField() { document.getElementById('set-llm-custom').value = ''; }
+
+async function saveSettings() {
+  const btn = document.getElementById('save-settings-btn');
+  const custom = document.getElementById('set-llm-custom').value.trim();
+  const llm = custom || document.getElementById('set-llm-model').value;
+  const embed = document.getElementById('set-embed-model').value;
+  const url = document.getElementById('set-ollama-url').value.trim();
+  btn.textContent = '⌛ Сохраняю...'; btn.disabled = true;
+  try {
+    await fetch(API + '/api/settings', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ llm_model: llm, embed_model: embed, ollama_url: url })
+    });
+    addLog(`[SETTINGS] Сохранено: LLM=${llm} EMBED=${embed}`);
+    addLog('[SETTINGS] Прокси перезапускается...');
+    closeSettings();
+    setTimeout(() => { fetchMetrics(); fetchStatus(); }, 6000);
+  } catch(err) { addLog('[SETTINGS] Ошибка: ' + err.message); }
+  finally { btn.textContent = '💾 Сохранить и перезапустить'; btn.disabled = false; }
+}
+
+function openResetDataset() {
+  const p = document.getElementById('reset-dataset-picker');
+  p.style.display = p.style.display === 'none' ? 'flex' : 'none';
+}
+async function resetSelectedDataset() {
+  const sel = document.getElementById('reset-dataset-select');
+  const id = sel.value;
+  const folder = sel.options[sel.selectedIndex]?.dataset?.folder || id;
+  if (!id) return;
+  if (!confirm(`Удалить датасет "${folder}"? Необратимо.`)) return;
+  try {
+    const r = await fetch(API + `/api/rag/datasets/${id}`, { method: 'DELETE' });
+    const d = await r.json();
+    addLog(`[DELETE] ${folder}: ошибок ${d.errors?.length||0}`);
+    closeSettings(); fetchSamovar();
+  } catch(err) { addLog('[DELETE] ' + err.message); }
+}
+async function resetAllDatasets() {
+  if (!confirm('Удалить ВСЕ датасеты и сбросить индекс Qdrant?\nНеобратимо.')) return;
+  if (!confirm('Точно уверены?')) return;
+  try {
+    const r = await fetch(API + '/api/rag/datasets', { method: 'DELETE' });
+    const d = await r.json();
+    addLog(`[DELETE ALL] ошибок: ${d.errors?.length||0}`);
+    closeSettings(); fetchSamovar();
+  } catch(err) { addLog('[DELETE ALL] ' + err.message); }
+}
+
+setInterval(fetchMetrics,5000);
+fetchMetrics(); fetchSamovar(); fetchMode(); fetchStatus(); connectSSE();
+</script>
+</body>
+</html>

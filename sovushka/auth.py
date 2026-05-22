@@ -12,6 +12,7 @@ from fastapi import Request
 from nicegui import app, ui
 
 from backend.auth import login, is_authenticated, get_role, get_holder, logout
+from sovushka.trust import client_ip_from_request, trusted_role_for_ip
 
 # ── Цитаты В.О.Л.К. ──────────────────────────────────────────────────────────
 
@@ -162,72 +163,34 @@ def register_login_page():
 
     @ui.page("/login")
     async def login_page(request: Request):
-        forwarded = request.headers.get("x-forwarded-for")
-        real_ip = request.headers.get("x-real-ip")
-        if forwarded:
-            client_ip = forwarded.split(",")[0].strip()
-        elif real_ip:
-            client_ip = real_ip.strip()
-        else:
-            client_ip = request.client.host if request and request.client else "127.0.0.1"
-            
-        is_local = any(client_ip.startswith(p) for p in ("127.", "10.", "192.168.", "172.", "::1"))
+        client_ip = client_ip_from_request(request)
+        trusted_role = trusted_role_for_ip(client_ip)
         
-        if is_authenticated() or is_local:
+        if is_authenticated() or trusted_role:
             ui.navigate.to("/")
             return
 
-        # CSS — без скриптов, только стили
         ui.add_head_html(_LOGIN_CSS)
         ui.query("body").style("background:#08090b;margin:0;")
 
-        with ui.element('div').classes('volk-wrap'):
-            with ui.element('div').classes('volk-card'):
-                ui.label('В.О.Л.К.').classes('volk-logo-main')
-                ui.element('span').classes('volk-logo-full').set_text('Внутренний Охранный Локальный Контур')
-                ui.element('span').classes('volk-logo-sub').set_text('Л.Е.С. · Система контроля доступа')
-                ui.element('hr').classes('volk-divider')
-                
-                quote_div = ui.element('div').classes('volk-quote show').props('id="volk-q"')
-                
-                ui.element('div').classes('volk-label').set_text('Ключ доступа')
-                
-                key_input = ui.element('input').classes('volk-input').props(
-                    'type="password" placeholder="les_xxxxxxxxxxxxxxxx" id="volk-key-native"'
-                )
-                
-                err_label = ui.element('div').classes('volk-err').props('id="volk-err-native"')
-                
-                async def do_login(e=None):
-                    key_val = await ui.run_javascript("document.getElementById('volk-key-native').value.trim()")
-                    if not key_val:
-                        err_label.set_text('Введите ключ доступа')
-                        return
-                    
-                    err_label.set_text('')
-                    submit_btn.props('disabled')
-                    submit_btn.set_text('...')
-                    
-                    success = await login(key_val)
-                    
-                    if success:
-                        ui.navigate.to("/")
-                    else:
-                        submit_btn.props(remove='disabled')
-                        submit_btn.set_text('▶  ВОЙТИ В СИСТЕМУ')
-                        err_label.set_text('Неверный ключ или ключ отключён')
-                        await ui.run_javascript("document.getElementById('volk-key-native').focus()")
-
-                key_input.on('keydown.enter', do_login)
-                
-                submit_btn = ui.element('button').classes('volk-btn').set_text('▶  ВОЙТИ В СИСТЕМУ')
-                submit_btn.on('click', do_login)
-                
-                ui.element('div').classes('volk-foot').set_text('les.ovc.me · Л.Е.С. · доступ только по ключу')
-
-        # JS-скрипт цитат
         quotes_json = json.dumps(_QUOTES, ensure_ascii=False)
         ui.add_body_html(f"""
+<div class="volk-wrap">
+  <div class="volk-card">
+    <span class="volk-logo-main">В.О.Л.К.</span>
+    <span class="volk-logo-full">Внутренний Охранный Локальный Контур</span>
+    <span class="volk-logo-sub">Л.Е.С. &middot; Система контроля доступа</span>
+    <hr class="volk-divider">
+    <div class="volk-quote" id="volk-q"></div>
+    <div class="volk-label">Ключ доступа</div>
+    <input class="volk-input" id="volk-key" type="password"
+           placeholder="les_xxxxxxxxxxxxxxxx"
+           onkeydown="if(event.key==='Enter')volkLogin()">
+    <button class="volk-btn" id="volk-btn" onclick="volkLogin()">&#9654;&nbsp;&nbsp;ВОЙТИ В СИСТЕМУ</button>
+    <div class="volk-err" id="volk-err"></div>
+    <div class="volk-foot">les.example.com &middot; Л.Е.С. &middot; доступ только по ключу</div>
+  </div>
+</div>
 <script>
 (function(){{
   var qs = {quotes_json};
@@ -244,11 +207,66 @@ def register_login_page():
   }}
   showQ();
   setInterval(showQ, 4500);
-  
-  setTimeout(() => document.getElementById('volk-key-native').focus(), 100);
+  setTimeout(function(){{ document.getElementById('volk-key').focus(); }}, 150);
 }})();
+
+function volkFingerprint() {{
+  var c = [];
+  c.push(navigator.userAgent || '');
+  c.push((navigator.languages || [navigator.language || '']).join(','));
+  c.push(screen.width + 'x' + screen.height + 'x' + (screen.colorDepth || 24));
+  c.push(navigator.hardwareConcurrency || 0);
+  c.push(Intl.DateTimeFormat().resolvedOptions().timeZone || '');
+  c.push(navigator.platform || '');
+  try {{
+    var cv = document.createElement('canvas');
+    var cx = cv.getContext('2d');
+    cx.textBaseline = 'top';
+    cx.font = '14px monospace';
+    cx.fillStyle = '#3b82f6';
+    cx.fillRect(0, 0, 80, 20);
+    cx.fillStyle = '#ffffff';
+    cx.fillText('Л.Е.С. 🔑', 2, 4);
+    c.push(cv.toDataURL().slice(-64));
+  }} catch(e) {{}}
+  var s = c.join('|'), h = 5381;
+  for (var i = 0; i < s.length; i++) {{ h = ((h << 5) + h) ^ s.charCodeAt(i); h = h >>> 0; }}
+  return 'fp_' + h.toString(16).padStart(8, '0');
+}}
+
+function volkLogin() {{
+  var key = document.getElementById('volk-key').value.trim();
+  var err = document.getElementById('volk-err');
+  var btn = document.getElementById('volk-btn');
+  if (!key) {{ err.textContent = 'Введите ключ доступа'; return; }}
+  btn.disabled = true; btn.textContent = '...'; err.textContent = '';
+  window.__volkKey = key;
+  window.__volkFp  = volkFingerprint();
+  document.getElementById('_volk_trigger').click();
+}}
 </script>
 """)
+
+        # Скрытая кнопка-мост JS → Python
+        async def _handle_login():
+            key_val = await ui.run_javascript("return window.__volkKey || '';")
+            fp_val  = await ui.run_javascript("return window.__volkFp  || '';")
+            if not key_val:
+                return
+            result = await login(key_val, fingerprint=fp_val)
+            if result["ok"]:
+                ui.navigate.to("/")
+            else:
+                msg = result.get("detail", "Неверный ключ или ключ отключён")
+                await ui.run_javascript(
+                    f"document.getElementById('volk-err').textContent={msg!r};"
+                    "var b=document.getElementById('volk-btn');"
+                    "b.disabled=false;b.textContent='\\u25BA\\u00A0\\u00A0ВОЙТИ В СИСТЕМУ';"
+                    "document.getElementById('volk-key').focus();"
+                    "window.__volkKey='';window.__volkFp='';"
+                )
+
+        ui.button("", on_click=_handle_login).props('id="_volk_trigger"').style("visibility:hidden;position:absolute;")
 
 
 # ── Хелпер для main_page ─────────────────────────────────────────────────────

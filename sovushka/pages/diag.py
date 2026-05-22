@@ -84,7 +84,7 @@ def build_diag():
     STATUS_TAG   = {"ok": "tag-ok", "warn": "tag-warn", "err": "tag-err"}
 
     def _render_diag_cards():
-        results = state["diag_results"]
+        results = state.get("diag_results", [])
         diag_cards.clear()
         with diag_cards:
             for r in results:
@@ -233,6 +233,7 @@ def build_diag():
             diag_run_btn.set_text("▶ ЗАПУСТИТЬ ДИАГНОСТИКУ")
 
     async def _run_local_diag() -> dict:
+        """Встроенная диагностика — имена чеков соответствуют node_map в _build_diag_mermaid."""
         results = []
         t0 = time.time()
 
@@ -246,17 +247,18 @@ def build_diag():
             results.append({"name": name, "status": status, "value": str(value),
                              "expected": str(expected), "message": msg, "latency_ms": ms})
 
+        # ── Прокси (les-proxy) ──
         async def chk_proxy():
             r = await api_get("/api/health")
             ok = r is not None
             return ("ok" if ok else "err"), ("UP" if ok else "DOWN"), "UP", ""
         await _chk("les-proxy :8050", chk_proxy())
 
+        # ── MLX Host — имя совпадает с node_map ──
         async def chk_mlx():
             r = await api_get("/api/health", base=MLX_URL)
             if not r:
                 return "err", "DOWN", "UP", "MLX Host недоступен"
-            
             m = r.get("main_model") or r.get("model", "?")
             if isinstance(m, dict):
                 model_name = m.get("path", "?")
@@ -264,37 +266,103 @@ def build_diag():
             else:
                 model_name = str(m)
                 is_loaded = r.get("main_loaded", True)
-                
             status = "ok" if is_loaded else "warn"
             val_str = f"{model_name} [{'LIVE' if is_loaded else 'IDLE'}]"
             return status, val_str, "LIVE", ""
         await _chk("MLX Host :8080", chk_mlx())
 
+        # ── Qdrant — имя совпадает с node_map ──
         async def chk_qdrant():
             r = await api_get("/api/metrics")
             if not r:
-                return "warn", "—", "—", "metrics недоступны"
+                return "warn", "DOWN", "UP", "metrics недоступны"
             rag = r.get("rag", {})
             st = rag.get("status", "?")
             chunks = rag.get("chunks", 0)
             ok = st in ("ready", "ok")
             return ("ok" if ok else "warn"), f"{chunks} chunks / {st}", "ready", ""
-        await _chk("Qdrant (через proxy)", chk_qdrant())
+        await _chk("Qdrant :6333", chk_qdrant())
 
-        async def chk_samovar():
+        # ── Qdrant индекс ──
+        async def chk_qdrant_idx():
             r = await api_get("/api/rag/datasets")
             if r is None:
                 return "err", "—", "—", "datasets недоступны"
-            indexed = [d for d in r if d.get("status") in ("INDEXED","READY")]
-            return "ok", f"{len(indexed)}/{len(r)} indexed", "≥1", ""
-        await _chk("Датасеты RAG", chk_samovar())
+            indexed = [d for d in r if d.get("status") in ("INDEXED", "READY")]
+            total = len(r)
+            ok_flag = len(indexed) > 0
+            return ("ok" if ok_flag else "warn"), f"{len(indexed)}/{total} indexed", "≥1", ""
+        await _chk("Qdrant индекс", chk_qdrant_idx())
 
-        async def chk_mode():
-            r = await api_get("/api/mode")
+        # ── Ollama ──
+        async def chk_ollama():
+            r = await api_get("/api/status")
             if not r:
-                return "warn", "—", "rag|code", ""
-            return "ok", r.get("mode","?"), "rag|code", ""
-        await _chk("Режим (mode)", chk_mode())
+                return "warn", "—", "UP", "status недоступен"
+            ol = r.get("ollama", {})
+            models = ol.get("models", [])
+            if models:
+                return "ok", f"{len(models)} models", "≥1", ""
+            return "warn", "0 models", "≥1", "Нет загруженных моделей"
+        await _chk("Ollama :11434", chk_ollama())
+
+        # ── Docker ──
+        async def chk_docker():
+            r = await api_get("/api/status")
+            if not r:
+                return "warn", "—", "UP", "status недоступен"
+            containers = r.get("containers", [])
+            if not containers:
+                return "warn", "0 containers", "≥1", ""
+            all_ok = all(c.get("ok") for c in containers)
+            return ("ok" if all_ok else "err"), f"{len(containers)} containers", "all UP", ""
+        await _chk("Docker", chk_docker())
+
+        # ── RAM / CPU / Диск из метрик ──
+        metrics_data = state.get("metrics", {})
+        sys_m = metrics_data.get("system", {})
+
+        async def chk_ram():
+            ram_used = sys_m.get("ram_used", 0)
+            ram_total = sys_m.get("ram_total", 24) or 24
+            pct = ram_used / ram_total * 100
+            if pct > 90:
+                return "err", f"{ram_used:.1f}/{ram_total:.0f} GB ({pct:.0f}%)", "<90%", "Критически мало RAM"
+            if pct > 75:
+                return "warn", f"{ram_used:.1f}/{ram_total:.0f} GB ({pct:.0f}%)", "<75%", ""
+            return "ok", f"{ram_used:.1f}/{ram_total:.0f} GB ({pct:.0f}%)", "<75%", ""
+        await _chk("RAM", chk_ram())
+
+        async def chk_cpu():
+            cpu = sys_m.get("cpu", 0)
+            if cpu > 90:
+                return "err", f"{cpu:.1f}%", "<90%", "Высокая нагрузка"
+            if cpu > 70:
+                return "warn", f"{cpu:.1f}%", "<70%", ""
+            return "ok", f"{cpu:.1f}%", "<70%", ""
+        await _chk("CPU", chk_cpu())
+
+        async def chk_disk():
+            du = sys_m.get("disk_used", 0)
+            dt = sys_m.get("disk_total", 512) or 512
+            pct = du / dt * 100
+            if pct > 90:
+                return "err", f"{du:.0f}/{dt:.0f} GB", "<90%", "Диск почти заполнен"
+            if pct > 75:
+                return "warn", f"{du:.0f}/{dt:.0f} GB", "<75%", ""
+            return "ok", f"{du:.0f}/{dt:.0f} GB", "<75%", ""
+        await _chk("Диск", chk_disk())
+
+        # ── Сеть ──
+        async def chk_net():
+            try:
+                import httpx
+                async with httpx.AsyncClient(timeout=5.0) as c:
+                    resp = await c.get("https://api.ipify.org")
+                    return "ok", "Доступна", "UP", ""
+            except Exception as e:
+                return "err", "Недоступна", "UP", str(e)
+        await _chk("Сеть (интернет)", chk_net())
 
         total_ms = round((time.time() - t0) * 1000, 1)
         ok_c   = sum(1 for r in results if r["status"] == "ok")

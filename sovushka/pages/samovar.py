@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
+from urllib.parse import quote
 from nicegui import ui
 
-from sovushka.state import state, api_post, add_log, refresh_samovar
+from sovushka.state import state, api_post, api_delete, add_log, refresh_samovar, last_api_error_text
 
 
 def build_samovar():
@@ -82,8 +83,12 @@ def build_samovar():
               <q-btn flat dense size="xs" color="primary" icon="sync"
                      @click="$parent.$emit('sync', props.row)"
                      style="font-size:.6rem;padding:2px 6px;">SYNC</q-btn>
+              <q-btn flat dense size="xs" color="negative" icon="delete_sweep"
+                     @click="$parent.$emit('reset', props.row)"
+                     style="font-size:.6rem;padding:2px 6px;margin-left:4px;">↺ СБРОС</q-btn>
             </q-td>""")
-        sam_grid.on("sync", lambda e: asyncio.create_task(_sync_row(e.args)))
+        sam_grid.on("sync",  lambda e: asyncio.create_task(_sync_row(e.args)))
+        sam_grid.on("reset", lambda e: asyncio.create_task(_reset_row(e.args)))
 
         # Поле ручного синка
         with ui.row().classes("gap-3 w-full"):
@@ -100,7 +105,7 @@ def build_samovar():
                     ui.notify("Укажи имя папки", type="warning")
                     return
                 add_log(f"[SYNC] Запуск: {folder}")
-                d = await api_post(f"/api/rag/sync/{folder}")
+                d = await api_post(f"/api/rag/sync/{quote(folder, safe='')}")
                 if d:
                     ui.notify(
                         f"SYNC запущен. Job: {d.get('job_id','?')} | +{d.get('new_files',0)} новых",
@@ -109,6 +114,8 @@ def build_samovar():
                     add_log(f"[SYNC] {folder} → job {d.get('job_id')} +{d.get('new_files',0)} новых")
                     await asyncio.sleep(3)
                     await refresh_and_render()
+                else:
+                    ui.notify(last_api_error_text(f"Ошибка SYNC {folder}"), type="negative")
 
             ui.button("↻ SYNC", on_click=do_sync).props("no-caps outline").style(
                 "border-color:var(--accent);color:var(--accent);font-size:.7rem;"
@@ -138,7 +145,7 @@ def build_samovar():
             if not folder:
                 return
             add_log(f"[SYNC] Запуск: {folder}")
-            d = await api_post(f"/api/rag/sync/{folder}")
+            d = await api_post(f"/api/rag/sync/{quote(folder, safe='')}")
             if d:
                 ui.notify(
                     f"✓ SYNC {folder}: job {d.get('job_id','?')} +{d.get('new_files',0)} файлов",
@@ -148,16 +155,41 @@ def build_samovar():
                 await asyncio.sleep(2)
                 await refresh_and_render()
             else:
-                ui.notify(f"Ошибка SYNC {folder}", type="negative")
+                ui.notify(last_api_error_text(f"Ошибка SYNC {folder}"), type="negative")
+
+        async def _reset_row(row):
+            folder    = row.get("folder", "") if isinstance(row, dict) else str(row)
+            ds_id     = row.get("dataset_id", "") if isinstance(row, dict) else ""
+            if not folder:
+                return
+            ok = await ui.run_javascript(f"confirm('Удалить индекс {folder} и запустить переиндексацию?')")
+            if not ok:
+                return
+            add_log(f"[СБРОС] {folder}: удаление датасета {ds_id}")
+            if ds_id:
+                d_del = await api_delete(f"/api/rag/datasets/{quote(ds_id, safe='')}")
+                if not d_del:
+                    ui.notify(last_api_error_text(f"Ошибка удаления датасета {folder}"), type="negative")
+                    return
+            ui.notify(f"↺ Датасет {folder} удалён — запускаю полную переиндексацию", type="warning")
+            await asyncio.sleep(0.5)
+            d = await api_post(f"/api/rag/sync/{quote(folder, safe='')}")
+            if d:
+                add_log(f"[СБРОС] {folder} → job {d.get('job_id')} переиндексация")
+                ui.notify(f"✓ Переиндексация запущена: job {d.get('job_id','?')}", type="positive")
+                await asyncio.sleep(2)
+                await refresh_and_render()
+            else:
+                ui.notify(last_api_error_text(f"Ошибка sync после сброса {folder}"), type="negative")
 
         async def refresh_and_render():
             await refresh_samovar()
             _render()
 
         def _render():
-            sources  = state["sources"]
-            datasets = state["datasets"]
-            jobs     = state["jobs"]
+            sources  = state.get("sources", [])
+            datasets = state.get("datasets", [])
+            jobs     = state.get("jobs", {})
             ds_map   = {d["id"]: d for d in datasets}
 
             tot_src = tot_idx = tot_chunks = 0
@@ -193,13 +225,14 @@ def build_samovar():
                     )
 
                 rows.append({
-                    "folder":   src.get("folder", ""),
-                    "total":    total,
-                    "indexed":  indexed,
-                    "pending":  pending,
-                    "chunks":   chunks,
-                    "status":   status,
-                    "job_info": job_info,
+                    "folder":     src.get("folder", ""),
+                    "dataset_id": src.get("dataset_id", ""),
+                    "total":      total,
+                    "indexed":    indexed,
+                    "pending":    pending,
+                    "chunks":     chunks,
+                    "status":     status,
+                    "job_info":   job_info,
                 })
 
             sam_kpi["ds"].set_text(str(len(sources)))

@@ -20,7 +20,7 @@ import psutil
 logger = logging.getLogger(__name__)
 
 DB_PATH      = "./data/les_metrics.db"
-OLLAMA_HOST  = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434")
+MLX_HOST  = os.getenv("MLX_URL", "http://host.docker.internal:8080")
 # Сколько строк хранить — ~3 суток при интервале 3с
 MAX_METRICS_ROWS = 86400
 
@@ -62,7 +62,7 @@ async def _get_ollama_ram() -> float:
     """Асинхронно запрашивает RAM занятый Ollama/MLX моделями."""
     try:
         async with httpx.AsyncClient(timeout=2.0) as c:
-            r = await c.get(f"{OLLAMA_HOST}/api/ps")
+            r = await c.get(f"{MLX_HOST}/api/ps")
             if r.status_code == 200:
                 return sum(
                     m.get("size", 0) for m in r.json().get("models", [])

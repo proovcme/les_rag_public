@@ -83,10 +83,10 @@ class MLXMemoryManager:
             logger.info(f"[LOAD] Готово: {self.model_path}")
         self.last_used = time.time()
 
-    def apply_chat_template(self, messages: list) -> str:
+    def apply_chat_template(self, messages: list, enable_thinking: bool = True) -> str:
         """
         Применяет chat template токенизатора.
-        messages: [{"role": "user"|"assistant"|"system", "content": str}]
+        enable_thinking=False отключает <think> блоки у Qwen3 — используй для валидатора.
         """
         if self.tokenizer is None:
             # Fallback: Qwen3 ChatML формат
@@ -96,11 +96,15 @@ class MLXMemoryManager:
             parts.append("<|im_start|>assistant\n")
             return "\n".join(parts)
 
-        return self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-        )
+        kwargs = {"tokenize": False, "add_generation_prompt": True}
+        if not enable_thinking:
+            kwargs["enable_thinking"] = False
+        try:
+            return self.tokenizer.apply_chat_template(messages, **kwargs)
+        except TypeError:
+            # Токенизатор не поддерживает enable_thinking — игнорируем параметр
+            kwargs.pop("enable_thinking", None)
+            return self.tokenizer.apply_chat_template(messages, **kwargs)
 
     async def generate_text(self, prompt: str, max_tokens: int = 2048) -> str:
         if self._lock is None:
