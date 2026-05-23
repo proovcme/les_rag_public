@@ -261,11 +261,13 @@ async def refresh_samovar():
         state["datasets"] = ds
     if isinstance(health, dict):
         state["rag_health"] = health.get("rag", {})
-    # UI runs on the same host as SQLite in the normal runtime; prefer this path
-    # so current indexing jobs are visible without restarting the proxy process.
-    docs = await asyncio.to_thread(_local_rag_documents, 120)
+    # The proxy owns the active RAG profile (collection/meta DB). Use the API
+    # first so Qwen/BGE profile switches do not show stale legacy SQLite rows.
+    docs = await api_get("/api/rag/documents?limit=120")
     if not isinstance(docs, dict):
-        docs = await api_get("/api/rag/documents?limit=120")
+        docs = await asyncio.to_thread(_local_rag_documents, 120)
+    elif "source" not in docs:
+        docs["source"] = "api_active_profile"
     if isinstance(docs, dict):
         state["rag_documents"] = docs
     j = await api_get("/api/jobs")

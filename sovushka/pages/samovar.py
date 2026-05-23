@@ -383,11 +383,16 @@ def build_samovar():
                 (jid, j) for jid, j in jobs.items()
                 if j.get("type") == "rag_parse_scheduler"
             ]
+            active_scheduler_jobs = [
+                (jid, j) for jid, j in scheduler_jobs
+                if str(j.get("status", "")).upper() in {"QUEUED", "PARSING", "RUNNING"}
+            ]
+            scheduler_candidates = active_scheduler_jobs or scheduler_jobs
             last_scheduler = sorted(
-                scheduler_jobs,
+                scheduler_candidates,
                 key=lambda item: item[1].get("started_at", ""),
                 reverse=True,
-            )[0] if scheduler_jobs else None
+            )[0] if scheduler_candidates else None
             scheduler_status.set_text(
                 f"pending: {tot_pending} · errors: {tot_errors} · "
                 f"job: {(last_scheduler[0][:12] + ' ' + last_scheduler[1].get('status','')) if last_scheduler else '—'}"
@@ -436,11 +441,14 @@ def build_samovar():
                     "pipeline": item.get("pipeline", ""),
                 })
             summary = docs.get("summary", {}) if isinstance(docs, dict) else {}
+            docs_source = docs.get("source", "") if isinstance(docs, dict) else ""
             docs_status.set_text(
                 " · ".join(
                     f"{key}: {value.get('files', 0)}"
                     for key, value in summary.items()
-                ) or "INDEXED/PENDING/ERROR"
+                )
+                + (f" · source: {docs_source}" if docs_source else "")
+                or "INDEXED/PENDING/ERROR"
             )
             docs_grid.rows = doc_rows
             docs_grid.update()
