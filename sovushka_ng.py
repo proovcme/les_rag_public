@@ -10,7 +10,7 @@ from sovushka.config import STORAGE_SECRET, UI_PORT
 from sovushka.state import bg_loop
 from sovushka.styles import CUSTOM_CSS, theme_vars_css
 from sovushka.auth import register_login_page, get_auth
-from sovushka.trust import client_ip_from_request, trusted_role_for_ip
+from sovushka.trust import trusted_role_for_request
 
 from sovushka.components.header import build_header
 from sovushka.components.logterm import build_log_terminal
@@ -44,8 +44,7 @@ def _apply_theme() -> None:
 def _resolve_auth(request: Request):
     is_auth, role, holder = get_auth()
 
-    client_ip = client_ip_from_request(request)
-    trusted_role = trusted_role_for_ip(client_ip)
+    trusted_role = trusted_role_for_request(request)
 
     if not is_auth and not trusted_role:
         return False, None, None, False

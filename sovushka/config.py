@@ -15,4 +15,10 @@ TRUSTED_NETWORKS = tuple(
     if item.strip()
 )
 TRUSTED_NETWORK_ROLE = os.getenv("TRUSTED_NETWORK_ROLE", "admin")
+TRUSTED_PROXY_NETWORKS = tuple(
+    item.strip()
+    for item in os.getenv("TRUSTED_PROXY_NETWORKS", "127.0.0.0/8,::1/128").split(",")
+    if item.strip()
+)
+TRUSTED_PROXY_HEADER = os.getenv("TRUSTED_PROXY_HEADER", "x-les-trusted-network")
 STORAGE_SECRET = os.getenv("SOVUSHKA_STORAGE_SECRET", "les_secret_883")

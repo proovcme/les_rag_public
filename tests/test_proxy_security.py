@@ -89,6 +89,19 @@ async def test_forwarded_headers_only_trusted_from_proxy_network(auth_db):
 
 
 @pytest.mark.asyncio
+async def test_trusted_proxy_header_only_trusted_from_proxy_network(auth_db):
+    spoofed = _request("185.185.71.196", {"x-les-trusted-network": "1"})
+    with pytest.raises(HTTPException) as exc:
+        await security.get_request_user(spoofed, x_api_key=None, authorization=None)
+    assert exc.value.status_code == 401
+
+    proxied = _request("127.0.0.1", {"x-forwarded-for": "203.0.113.10", "x-les-trusted-network": "1"})
+    user = await security.get_request_user(proxied, x_api_key=None, authorization=None)
+    assert user.role == "admin"
+    assert user.holder == "trusted-proxy"
+
+
+@pytest.mark.asyncio
 async def test_api_key_roles_and_admin_guard(auth_db):
     admin = await security.get_request_user(_request("185.185.71.196"), x_api_key="admin-key")
     user = await security.get_request_user(

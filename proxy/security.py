@@ -15,6 +15,7 @@ from proxy.config import (
     META_DB_PATH,
     TRUSTED_NETWORK_ROLE,
     TRUSTED_NETWORKS,
+    TRUSTED_PROXY_HEADER,
     TRUSTED_PROXY_NETWORKS,
     USER_ROLE,
 )
@@ -64,6 +65,14 @@ def _trusted_network_role(ip_value: str) -> Optional[str]:
     return None
 
 
+def _trusted_proxy_asserts_network(request: Request) -> bool:
+    peer_ip = request.client.host if request.client else ""
+    if not _ip_in_networks(peer_ip, TRUSTED_PROXY_NETWORKS):
+        return False
+    value = request.headers.get(TRUSTED_PROXY_HEADER, "")
+    return value.lower() in {"1", "true", "yes", "on", TRUSTED_NETWORK_ROLE}
+
+
 def _extract_key(api_key: Optional[str], authorization: Optional[str]) -> str:
     if api_key:
         return api_key.strip()
@@ -111,6 +120,9 @@ async def get_request_user(
         )
 
     ip_value = _client_ip(request)
+    if _trusted_proxy_asserts_network(request):
+        return RequestUser(role=TRUSTED_NETWORK_ROLE, holder="trusted-proxy", source=ip_value)
+
     trusted_role = _trusted_network_role(ip_value)
     if trusted_role:
         return RequestUser(role=trusted_role, holder="trusted-network", source=ip_value)
