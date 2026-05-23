@@ -57,6 +57,7 @@ TRUSTED_PROXY_NETWORKS = tuple(
     for item in os.getenv("TRUSTED_PROXY_NETWORKS", "127.0.0.0/8,::1/128").split(",")
     if item.strip()
 )
+TRUSTED_PROXY_HEADER = os.getenv("TRUSTED_PROXY_HEADER", "x-les-trusted-network")
 
 CORS_ALLOWED_ORIGINS = tuple(
     item.strip()

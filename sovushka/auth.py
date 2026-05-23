@@ -13,7 +13,7 @@ from nicegui import app, ui
 from starlette.responses import RedirectResponse
 
 from backend.auth import login, is_authenticated, get_role, get_holder, logout
-from sovushka.trust import client_ip_from_request, trusted_role_for_ip
+from sovushka.trust import trusted_role_for_request
 
 # ── Цитаты В.О.Л.К. ──────────────────────────────────────────────────────────
 
@@ -164,8 +164,7 @@ def register_login_page():
 
     @ui.page("/login")
     async def login_page(request: Request):
-        client_ip = client_ip_from_request(request)
-        trusted_role = trusted_role_for_ip(client_ip)
+        trusted_role = trusted_role_for_request(request)
         
         if is_authenticated() or trusted_role:
             return RedirectResponse("/")

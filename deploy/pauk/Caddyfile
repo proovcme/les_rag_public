@@ -3,6 +3,23 @@ speckle.ovc.me {
 }
 
 les.ovc.me {
-	reverse_proxy /api/* 10.195.146.98:8050
-	reverse_proxy /* 10.195.146.98:8051
+	@zerotier remote_ip 10.195.146.0/24
+
+	handle @zerotier {
+		reverse_proxy /api/* 127.0.0.1:8050 {
+			header_up X-LES-Trusted-Network 1
+		}
+		reverse_proxy /* 127.0.0.1:8051 {
+			header_up X-LES-Trusted-Network 1
+		}
+	}
+
+	handle {
+		reverse_proxy /api/* 127.0.0.1:8050 {
+			header_up X-LES-Trusted-Network ""
+		}
+		reverse_proxy /* 127.0.0.1:8051 {
+			header_up X-LES-Trusted-Network ""
+		}
+	}
 }

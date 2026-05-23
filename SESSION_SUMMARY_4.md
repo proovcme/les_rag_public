@@ -44,6 +44,10 @@ The runner waits while any parse scheduler is active. When the current wave fini
   - Caddy temporarily points to `127.0.0.1`
 - `start_pauk.command` was fixed to use `ssh -f -n -N` and `127.0.0.1` local targets.
 - `https://les.ovc.me/` and `/les` currently resolve to `/login` with HTTP 200.
+- Caddy now marks requests whose source IP is inside `10.195.146.0/24` with
+  `X-LES-Trusted-Network: 1`; UI/proxy trust that header only from
+  `TRUSTED_PROXY_NETWORKS`. Spoofed forwarded headers from direct/public clients
+  are ignored.
 
 ## Implemented in this session
 
