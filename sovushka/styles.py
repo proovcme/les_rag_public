@@ -14,20 +14,38 @@ _DARK_THEME = {
     "--pauk":     "#c084fc",
     "--warn":     "#ffd166",
     "--err":      "#ff6b6b",
+    "--shell-bg": "radial-gradient(circle at 14% 10%, rgba(56,189,248,.10), transparent 28%), linear-gradient(180deg, rgba(16,20,27,.96), #050608)",
+    "--panel-glass": "rgba(16,20,27,.88)",
+    "--panel-top": "rgba(24,33,44,.70)",
+    "--scroll-bg": "linear-gradient(180deg, rgba(5,6,8,.18), rgba(5,6,8,.44))",
+    "--composer-bg": "rgba(5,6,8,.82)",
+    "--artifact-bg": "rgba(5,6,8,.28)",
+    "--card-bg": "rgba(5,6,8,.34)",
+    "--input-bg": "rgba(5,6,8,.58)",
+    "--shadow-strong": "0 18px 60px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.05)",
 }
 
 _LIGHT_THEME = {
-    "--bg":       "#f7fafc",
+    "--bg":       "#eef3f8",
     "--bg-panel": "#ffffff",
-    "--bg-mod":   "#e6edf5",
-    "--text":     "#0d1117",
-    "--dim":      "#263544",
-    "--border":   "#8aa2b8",
-    "--accent":   "#005fcc",
-    "--ok":       "#007a3d",
-    "--pauk":     "#7c3aed",
-    "--warn":     "#8a5400",
-    "--err":      "#b4232a",
+    "--bg-mod":   "#e3ebf4",
+    "--text":     "#0b1220",
+    "--dim":      "#2f3f53",
+    "--border":   "#60758c",
+    "--accent":   "#0057bd",
+    "--ok":       "#006d3a",
+    "--pauk":     "#6d28d9",
+    "--warn":     "#8a4b00",
+    "--err":      "#b91c1c",
+    "--shell-bg": "linear-gradient(180deg, #f8fafc 0%, #e4ebf3 100%)",
+    "--panel-glass": "rgba(255,255,255,.96)",
+    "--panel-top": "rgba(237,244,251,.96)",
+    "--scroll-bg": "linear-gradient(180deg, #f7fafc 0%, #edf3f9 100%)",
+    "--composer-bg": "#ffffff",
+    "--artifact-bg": "#f5f8fc",
+    "--card-bg": "#ffffff",
+    "--input-bg": "#ffffff",
+    "--shadow-strong": "0 14px 40px rgba(15,23,42,.14), inset 0 1px 0 rgba(255,255,255,.85)",
 }
 
 
@@ -40,7 +58,8 @@ def theme_vars_css(dark: bool = True) -> str:
     lines = "\n".join(f"  {k}: {v};" for k, v in vars_.items())
     return (
         f"<style>\n:root {{\n{lines}\n"
-        f"  --font: 'Courier New', Courier, monospace;\n}}\n"
+        f"  --font: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Courier New', monospace;\n"
+        f"  --font-chat: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Courier New', monospace;\n}}\n"
         f"body {{ background:{body_bg}; color:{body_fg}; }}\n</style>"
     )
 
@@ -65,10 +84,19 @@ CUSTOM_CSS = """
   --pauk:     #c084fc;
   --warn:     #ffd166;
   --err:      #ff6b6b;
-  --font:     'Courier New', Courier, monospace;
-  --font-chat: 'ISOCPEUR', 'Courier New', Courier, monospace;
+  --shell-bg: radial-gradient(circle at 14% 10%, rgba(56,189,248,.10), transparent 28%), linear-gradient(180deg, rgba(16,20,27,.96), #050608);
+  --panel-glass: rgba(16,20,27,.88);
+  --panel-top: rgba(24,33,44,.70);
+  --scroll-bg: linear-gradient(180deg, rgba(5,6,8,.18), rgba(5,6,8,.44));
+  --composer-bg: rgba(5,6,8,.82);
+  --artifact-bg: rgba(5,6,8,.28);
+  --card-bg: rgba(5,6,8,.34);
+  --input-bg: rgba(5,6,8,.58);
+  --shadow-strong: 0 18px 60px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.05);
+  --font:     ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Courier New', monospace;
+  --font-chat: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Courier New', monospace;
 }
-body, .nicegui-content { font-family: var(--font) !important; }
+body, .nicegui-content { font-family: var(--font) !important; color: var(--text) !important; }
 .les-header {
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
@@ -132,15 +160,13 @@ body, .nicegui-content { font-family: var(--font) !important; }
   grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
   gap: 14px;
   padding: 14px;
-  background:
-    radial-gradient(circle at 14% 10%, rgba(56,189,248,.10), transparent 28%),
-    linear-gradient(180deg, rgba(16,20,27,.96), var(--bg));
+  background: var(--shell-bg);
   overflow: hidden;
 }
 .sov-chat-main, .sov-artifacts-panel, .sov-history-drawer {
-  background: rgba(16,20,27,.86);
+  background: var(--panel-glass);
   border: 1px solid rgba(138,162,184,.32);
-  box-shadow: 0 18px 60px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.05);
+  box-shadow: var(--shadow-strong);
   backdrop-filter: blur(14px);
 }
 .sov-chat-main {
@@ -156,14 +182,14 @@ body, .nicegui-content { font-family: var(--font) !important; }
   align-items: center;
   justify-content: space-between;
   border-bottom: 1px solid rgba(138,162,184,.22);
-  background: rgba(24,33,44,.58);
+  background: var(--panel-top);
 }
 .sov-chat-title { color: var(--text); font-size: .92rem; font-weight: 900; letter-spacing: .08em; }
 .sov-chat-subtitle { color: var(--dim); font-size: .68rem; }
 .sov-chat-scroll {
   flex: 1;
   min-height: 0;
-  background: linear-gradient(180deg, rgba(5,6,8,.18), rgba(5,6,8,.44));
+  background: var(--scroll-bg);
 }
 .sov-chat-thread {
   width: 100%;
@@ -176,14 +202,15 @@ body, .nicegui-content { font-family: var(--font) !important; }
   padding: 10px;
   border: 1px solid rgba(138,162,184,.32);
   border-radius: 8px;
-  background: rgba(5,6,8,.78);
-  box-shadow: 0 18px 42px rgba(0,0,0,.26);
+  background: var(--composer-bg);
+  box-shadow: var(--shadow-strong);
 }
 .sov-composer-input {
   width: 100%;
   color: var(--text);
   font-family: var(--font-chat) !important;
   font-size: .92rem;
+  font-weight: 650;
 }
 .sov-composer-actions {
   width: 100%;
@@ -208,6 +235,21 @@ body, .nicegui-content { font-family: var(--font) !important; }
   background: rgba(56,189,248,.10);
   font-size: .62rem;
   font-weight: 900;
+}
+.sov-indexing-banner {
+  margin: 0 18px 10px;
+  padding: 9px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(245,158,11,.46);
+  background: rgba(245,158,11,.13);
+  color: var(--warn);
+  font-size: .72rem;
+  font-weight: 900;
+  letter-spacing: .02em;
+}
+.sov-composer-blocked {
+  opacity: .72;
+  filter: saturate(.75);
 }
 .sov-chip-soft {
   border-color: rgba(192,132,252,.32);
@@ -257,7 +299,7 @@ body, .nicegui-content { font-family: var(--font) !important; }
   flex-direction: column;
   justify-content: center;
   gap: 8px;
-  background: rgba(5,6,8,.22);
+  background: var(--artifact-bg);
 }
 .sov-artifact-empty-title {
   color: var(--text);
@@ -285,7 +327,7 @@ body, .nicegui-content { font-family: var(--font) !important; }
 }
 .sov-artifact-card {
   width: 100%;
-  background: rgba(5,6,8,.34) !important;
+  background: var(--card-bg) !important;
   border: 1px solid rgba(138,162,184,.32) !important;
   border-radius: 8px !important;
   box-shadow: none !important;
@@ -337,7 +379,7 @@ body, .nicegui-content { font-family: var(--font) !important; }
   padding: 11px 12px;
   border-radius: 8px;
   border: 1px solid rgba(138,162,184,.28);
-  background: rgba(5,6,8,.32);
+  background: var(--artifact-bg);
   cursor: pointer;
 }
 .sov-session-card:hover, .sov-session-card-active {
@@ -357,7 +399,7 @@ body, .nicegui-content { font-family: var(--font) !important; }
 .sov-advanced-dialog {
   width: min(920px, calc(100vw - 32px));
   max-height: min(820px, calc(100vh - 40px));
-  background: rgba(16,20,27,.97) !important;
+  background: var(--panel-glass) !important;
   border: 1px solid rgba(138,162,184,.34) !important;
   border-radius: 8px !important;
   color: var(--text);
@@ -367,7 +409,7 @@ body, .nicegui-content { font-family: var(--font) !important; }
   max-height: calc(100vh - 210px);
 }
 .sov-control-card {
-  background: rgba(5,6,8,.26) !important;
+  background: var(--artifact-bg) !important;
   border: 1px solid rgba(138,162,184,.28) !important;
   border-radius: 8px !important;
   box-shadow: none !important;
@@ -393,7 +435,7 @@ body, .nicegui-content { font-family: var(--font) !important; }
   overflow: auto;
   border: 1px solid rgba(138,162,184,.28);
   border-radius: 8px;
-  background: rgba(5,6,8,.34);
+  background: var(--input-bg);
   padding: 10px;
 }
 .sov-template-preview pre,
@@ -412,6 +454,25 @@ body, .nicegui-content { font-family: var(--font) !important; }
 .sov-tree-mark { color: var(--accent); font-size: .72rem; }
 .sov-tree-name { color: var(--text); font-size: .74rem; font-weight: 800; }
 .sov-tree-desc { color: var(--dim); font-size: .68rem; }
+.sov-live-log {
+  width: 100%;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--input-bg);
+  padding: 10px 12px;
+  color: var(--text);
+}
+.sov-live-log pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font);
+  font-size: .68rem;
+  line-height: 1.45;
+  font-weight: 650;
+}
 @media (max-width: 980px) {
   .sov-chat-shell {
     grid-template-columns: 1fr;
@@ -468,5 +529,29 @@ body, .nicegui-content { font-family: var(--font) !important; }
 .q-tab--active { color: var(--accent) !important; background: rgba(56,189,248,.10) !important; }
 /* Generic text */
 .q-card, .q-card__section { color: var(--text) !important; }
+.q-field__control {
+  background: var(--input-bg) !important;
+}
+.q-placeholder::placeholder,
+textarea::placeholder,
+input::placeholder {
+  color: var(--dim) !important;
+  opacity: .78 !important;
+}
+.q-table,
+.q-table__container,
+.q-table__middle,
+.q-table thead,
+.q-table tbody {
+  background: var(--bg-panel) !important;
+  color: var(--text) !important;
+}
+.q-table th {
+  color: var(--dim) !important;
+  font-weight: 900 !important;
+}
+.q-table td {
+  color: var(--text) !important;
+}
 </style>
 """

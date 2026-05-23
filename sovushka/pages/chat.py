@@ -12,7 +12,7 @@ from typing import Optional
 from nicegui import ui
 
 from sovushka.components.charts import _html, esc
-from sovushka.state import add_log, api_get, api_post, refresh_samovar, state
+from sovushka.state import add_log, api_get, api_post, refresh_indexing_mode, refresh_samovar, state
 
 
 OUTPUT_FORMATS = {
@@ -54,7 +54,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     _html('<div class="sov-chat-title">С.О.В.У.Ш.К.А.</div>')
                     _html('<div class="sov-chat-subtitle">нормативный RAG-диспетчер</div>')
                 with ui.row().classes("items-center gap-2"):
-                    _html('<span class="sov-chip">RAG</span>')
+                    mode_chip = ui.label("RAG").classes("sov-chip")
                     _html('<span class="sov-chip sov-chip-soft">CRAG</span>')
                     ui.button(icon="o_delete_sweep", on_click=lambda: _clear_chat()).props(
                         "flat round dense"
@@ -66,7 +66,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 with chat_column:
                     _html('<div class="chat-msg-sys">Система активирована. Ожидание запросов.</div>')
 
-            with ui.element("div").classes("sov-composer"):
+            indexing_banner = ui.label("").classes("sov-indexing-banner")
+            indexing_banner.set_visibility(False)
+
+            with ui.element("div").classes("sov-composer") as composer_box:
                 chat_input = ui.textarea(
                     placeholder="Спросить по нормативам, проекту или базе знаний..."
                 ).classes("sov-composer-input").props("rows=2 autogrow borderless")
@@ -493,9 +496,62 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         add_log("[ЧАТ] История очищена, новая сессия")
 
     _sending = {"v": False}
+    _resource_blocked = {"v": False, "reason": ""}
+
+    def _indexing_summary(data: dict) -> str:
+        rag = state.get("rag_health", {}) if isinstance(state.get("rag_health"), dict) else {}
+        totals = rag.get("totals", {}) if isinstance(rag, dict) else {}
+        indexed = totals.get("indexed_files", "—")
+        pending = totals.get("pending_files", "—")
+        errors = totals.get("error_files", "—")
+        chunks = totals.get("chunks", "—")
+        reason = data.get("chat_generation_reason") or "Индексация активна."
+        return (
+            f"Индексация активна: чат заблокирован. "
+            f"indexed={indexed} · pending={pending} · errors={errors} · chunks={chunks}. "
+            f"{reason}"
+        )
+
+    def _set_chat_blocked(blocked: bool, reason: str = ""):
+        _resource_blocked["v"] = blocked
+        _resource_blocked["reason"] = reason
+        if blocked:
+            send_btn.props("disabled")
+            apply_btn.props("disabled")
+            advanced_btn.props("disabled")
+            chat_input.props("disabled")
+            composer_box.classes(add="sov-composer-blocked")
+            indexing_banner.set_text(reason)
+            indexing_banner.set_visibility(True)
+            mode_chip.set_text("INDEXING")
+            mode_chip.classes(add="sov-chip-soft")
+            return
+        if not _sending["v"]:
+            send_btn.props(remove="disabled")
+            apply_btn.props(remove="disabled")
+            advanced_btn.props(remove="disabled")
+            chat_input.props(remove="disabled")
+        composer_box.classes(remove="sov-composer-blocked")
+        indexing_banner.set_visibility(False)
+        mode_chip.set_text("RAG")
+        mode_chip.classes(remove="sov-chip-soft")
+
+    async def _refresh_resource_gate() -> bool:
+        data = await refresh_indexing_mode()
+        allowed = bool(data.get("chat_generation_allowed", True)) if isinstance(data, dict) else True
+        blocked = not allowed
+        _set_chat_blocked(blocked, _indexing_summary(data) if blocked else "")
+        return allowed
 
     async def _do_send(question: str):
         if _sending["v"]:
+            return
+        if not await _refresh_resource_gate():
+            msg = _resource_blocked["reason"] or "Индексация активна: чат временно заблокирован."
+            ui.notify(msg, type="warning")
+            with chat_column:
+                _html(f'<div class="chat-msg-sys">{esc(msg)}</div>')
+            chat_scroll.scroll_to(percent=1)
             return
         _sending["v"] = True
         send_btn.props("disabled")
@@ -559,10 +615,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             _stop_tick["v"] = True
             _tick_task.cancel()
             _sending["v"] = False
-            send_btn.props(remove="disabled")
-            apply_btn.props(remove="disabled")
-            advanced_btn.props(remove="disabled")
-            chat_input.props(remove="disabled")
+            await _refresh_resource_gate()
             chat_scroll.scroll_to(percent=1)
 
     async def send_chat():
@@ -755,7 +808,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 _render_tree(item, level)
 
     select_format("text")
+    asyncio.create_task(_refresh_resource_gate())
+    ui.timer(5.0, lambda: asyncio.create_task(_refresh_resource_gate()))
     chat_input.on(
         "keydown.enter.prevent",
-        lambda e: asyncio.create_task(send_chat()) if not (e.args or {}).get("shiftKey") else None,
+        lambda e: asyncio.create_task(send_chat()) if not (e.args or {}).get("shiftKey") and not _resource_blocked["v"] else None,
     )

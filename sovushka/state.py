@@ -29,6 +29,8 @@ state = {
     "datasets": [],
     "rag_health": {},
     "rag_documents": {},
+    "indexing_mode": {},
+    "proxy_logs": [],
     "sources": [],
     "jobs": {},
     "chat_history": [],        # list of {role, text, srcs, crag}
@@ -170,6 +172,40 @@ async def refresh_status():
             state["mode"] = mode["mode"]
 
 
+async def refresh_indexing_mode():
+    d = await api_get("/api/indexing-mode")
+    if isinstance(d, dict):
+        state["indexing_mode"] = d
+        mode = d.get("mode", {})
+        if isinstance(mode, dict) and mode.get("mode"):
+            state["mode"] = mode["mode"]
+    return state.get("indexing_mode", {})
+
+
+async def refresh_proxy_logs(limit: int = 120):
+    from sovushka.config import PROXY_URL
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{PROXY_URL}/api/logs/recent?limit={limit}", headers=_auth_headers())
+            r.raise_for_status()
+            d = r.json()
+        if isinstance(d, dict):
+            state["proxy_logs"] = d.get("lines", [])
+            return state.get("proxy_logs", [])
+    except Exception:
+        pass
+
+    logs_path = Path("logs/proxy.log")
+    if logs_path.exists():
+        try:
+            lines = await asyncio.to_thread(lambda: logs_path.read_text(errors="replace").splitlines()[-limit:])
+            state["proxy_logs"] = lines
+        except Exception as error:
+            add_log(f"[LOGS] local proxy.log read error: {error}")
+    return state.get("proxy_logs", [])
+
+
 async def refresh_mlx():
     from sovushka.config import MLX_URL
     prev_loaded = state["mlx_health"].get("main_model", {}).get("loaded") if isinstance(state["mlx_health"].get("main_model"), dict) else None
@@ -255,6 +291,7 @@ async def refresh_samovar():
     src = await api_get("/api/rag/sources")
     ds  = await api_get("/api/rag/datasets")
     health = await api_get("/api/health")
+    await refresh_indexing_mode()
     if src is not None:
         state["sources"] = src
     if ds is not None:
@@ -273,6 +310,7 @@ async def refresh_samovar():
     j = await api_get("/api/jobs")
     if j:
         state["jobs"] = j
+    await refresh_proxy_logs(120)
     # Логируем только при изменении количества источников
     now_count = len(state["sources"])
     if now_count != prev_count:
@@ -296,6 +334,7 @@ async def bg_loop():
             await refresh_metrics()
             if tick % 2 == 0:
                 await refresh_status()
+                await refresh_indexing_mode()
             if tick % 3 == 0:
                 await refresh_mlx()
             if tick % 6 == 0:
