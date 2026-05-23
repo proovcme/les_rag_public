@@ -93,9 +93,7 @@ def build_header(
             ).props("flat dense").style("color:var(--dim);font-size:.85rem;")
 
             if not _dark_init:
-                ui.timer(0.0, lambda: ui.run_javascript(
-                    "if(window.Quasar){Quasar.Dark.set(false);}"
-                ), once=True)
+                ui.run_javascript("if(window.Quasar){Quasar.Dark.set(false);}")
 
             if is_admin:
                 if chat_link:
@@ -127,7 +125,7 @@ def build_header(
                             set_embed.set_value(d.get("embed_model", ""))
                             set_url.set_value(d.get("mlx_url", ""))
 
-                    ui.timer(0.1, lambda: asyncio.create_task(_load_settings()), once=True)
+                    asyncio.create_task(_load_settings())
                     ui.separator().style("border-color:var(--border);margin:12px 0;")
                     ui.label("⚠ Опасная зона").style("color:var(--err);font-size:.65rem;font-weight:900;text-transform:uppercase;")
 

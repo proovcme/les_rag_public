@@ -32,7 +32,7 @@ class SettingsRequest(BaseModel):
 @router.get("")
 async def get_settings(_user=Depends(require_user)):
     try:
-        mlx_url = os.getenv("MLX_URL", "http://host.docker.internal:8080")
+        mlx_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
         available = []
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:

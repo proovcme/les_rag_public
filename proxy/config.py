@@ -5,17 +5,28 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 
 ROOT = Path(".")
 DATA_DIR = ROOT / "data"
 META_DB_PATH = DATA_DIR / "les_meta.db"
 ENV_PATH = ROOT / ".env"
+load_dotenv(ENV_PATH, override=False)
 
 PUBLIC_ROLE = "public"
 USER_ROLE = "user"
 ADMIN_ROLE = "admin"
 
-ALLOWED_SETTINGS = {"LLM_MODEL", "EMBED_MODEL", "MLX_URL"}
+ALLOWED_SETTINGS = {
+    "LLM_MODEL",
+    "EMBED_MODEL",
+    "EMBEDDING_MODEL",
+    "LES_EMBED_PROFILE",
+    "MLX_URL",
+    "RAG_COLLECTION_NAME",
+    "RAG_VECTOR_SIZE",
+}
 DEFAULT_RAG_UPLOAD_SUFFIXES = (
     ".pdf",
     ".docx",
@@ -35,7 +46,7 @@ TRUSTED_NETWORKS = tuple(
     item.strip()
     for item in os.getenv(
         "TRUSTED_NETWORKS",
-        "127.0.0.0/8,::1/128,10.0.0.0/24",
+        "127.0.0.0/8,::1/128,10.195.146.0/24",
     ).split(",")
     if item.strip()
 )
@@ -76,11 +87,11 @@ def max_pst_upload_bytes() -> int:
 
 
 def mlx_url() -> str:
-    return os.getenv("MLX_URL", "http://host.docker.internal:8080").rstrip("/")
+    return os.getenv("MLX_URL", "http://127.0.0.1:8080").rstrip("/")
 
 
 def qdrant_url() -> str:
-    return os.getenv("QDRANT_URL", "http://qdrant:6333").rstrip("/")
+    return os.getenv("QDRANT_URL", "http://127.0.0.1:6333").rstrip("/")
 
 
 def llm_model() -> str:

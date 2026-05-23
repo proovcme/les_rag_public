@@ -16,8 +16,16 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from backend.metrics_collector import DB_PATH, heartbeats
-from proxy.config import docker_control_enabled
+from backend.rag_config import embed_profile_name, embedding_model_id, rag_meta_db_path
+from proxy.config import docker_control_enabled, mlx_url
 from proxy.security import require_admin
+from proxy.services.resource_governor import (
+    active_parse_priority_order,
+    chat_generation_allowed,
+    enter_chat_mode,
+    enter_indexing_mode,
+    is_indexing_mode,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +37,13 @@ class ModeRequest(BaseModel):
     model: str
 
 
+class IndexingModeRequest(BaseModel):
+    enabled: bool = True
+    reason: str = "manual"
+    unload_models: bool = True
+    dataset_priority_order: list[str] | None = None
+
+
 @dataclass
 class RuntimeRouterState:
     rag_backend: Any
@@ -38,6 +53,7 @@ class RuntimeRouterState:
     crag_stats: dict
     error_counts: dict
     llm_semaphore: asyncio.Semaphore
+    llm_concurrency: int
     proxy_start: float
 
     @property
@@ -65,12 +81,23 @@ async def health():
     if not backend:
         return {"status": "starting", "backend": "none"}
     ok = await backend.health()
-    return {"status": "ok" if ok else "error", "backend": "qdrant_llama"}
+    response = {"status": "ok" if ok else "error", "backend": "qdrant_llama"}
+    if hasattr(backend, "health_snapshot"):
+        try:
+            snapshot = await backend.health_snapshot()
+            response["rag"] = snapshot
+            rag_status = snapshot.get("status")
+            if ok and rag_status in {"empty", "not_indexed", "degraded"}:
+                response["status"] = "degraded"
+        except Exception as error:
+            logger.warning("[HEALTH] RAG snapshot failed: %s", error)
+            response["rag"] = {"status": "unknown", "error": str(error)}
+    return response
 
 
 @router.post("/warmup")
 async def warmup_models(_admin=Depends(require_admin)):
-    mlx_url = os.getenv("MLX_URL", "http://host.docker.internal:8080").rstrip("/")
+    mlx_url = os.getenv("MLX_URL", "http://127.0.0.1:8080").rstrip("/")
     results = {}
     async with httpx.AsyncClient(timeout=120.0) as client:
         for name, model in [
@@ -110,10 +137,73 @@ async def set_mode(req: ModeRequest, _admin=Depends(require_admin)):
     return state.current_mode
 
 
+async def _unload_mlx_models() -> dict[str, Any]:
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(f"{mlx_url()}/api/unload_all", json={})
+        result: Any
+        try:
+            result = response.json()
+        except ValueError:
+            result = response.text[:500]
+        return {"ok": response.status_code == 200, "status_code": response.status_code, "result": result}
+    except Exception as error:
+        return {"ok": False, "error": str(error)}
+
+
+async def _host_memory() -> dict[str, Any]:
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{mlx_url()}/api/host_memory")
+        response.raise_for_status()
+        return response.json()
+    except Exception as error:
+        return {"error": str(error)}
+
+
+@router.get("/indexing-mode")
+async def get_indexing_mode():
+    state = get_runtime_state()
+    allowed, reason = chat_generation_allowed(state.current_mode)
+    return {
+        "active": is_indexing_mode(state.current_mode),
+        "mode": state.current_mode,
+        "chat_generation_allowed": allowed,
+        "chat_generation_reason": reason,
+        "dataset_priority_order": active_parse_priority_order(state.current_mode),
+    }
+
+
+@router.post("/indexing-mode")
+async def set_indexing_mode(req: IndexingModeRequest, _admin=Depends(require_admin)):
+    state = get_runtime_state()
+    unload = None
+    if req.enabled:
+        enter_indexing_mode(
+            state.current_mode,
+            reason=req.reason,
+            priority_order=req.dataset_priority_order,
+        )
+        if req.unload_models:
+            unload = await _unload_mlx_models()
+    else:
+        enter_chat_mode(state.current_mode, reason=req.reason)
+
+    memory = await _host_memory()
+    logger.info("[RESOURCE] indexing_mode=%s reason=%s", req.enabled, req.reason)
+    return {
+        "active": is_indexing_mode(state.current_mode),
+        "mode": state.current_mode,
+        "unload": unload,
+        "memory": memory,
+        "dataset_priority_order": active_parse_priority_order(state.current_mode),
+    }
+
+
 @router.get("/status")
 async def get_status():
     state = get_runtime_state()
-    mlx_url = os.getenv("MLX_URL", "http://host.docker.internal:8080")
+    mlx_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
 
     models = []
     try:
@@ -164,7 +254,7 @@ async def get_status():
             "uptime_sec": int(time.time() - state.proxy_start),
             "version": "2.1",
             "port": 8050,
-            "llm_url": os.getenv("MLX_URL", "http://host.docker.internal:8080"),
+            "llm_url": os.getenv("MLX_URL", "http://127.0.0.1:8080"),
             "llm_model": os.getenv("LLM_MODEL", "qwen3:14b"),
         },
     }
@@ -179,7 +269,7 @@ async def get_metrics():
 
     rag_stats = {"datasets": 0, "files": 0, "chunks": 0, "status": "unknown"}
     try:
-        with sqlite3.connect("./data/les_meta.db") as conn:
+        with sqlite3.connect(rag_meta_db_path()) as conn:
             cur = conn.cursor()
             cur.execute("SELECT COUNT(*) FROM datasets")
             rag_stats["datasets"] = cur.fetchone()[0] or 0
@@ -187,7 +277,7 @@ async def get_metrics():
             rag_stats["files"] = cur.fetchone()[0] or 0
         backend = state.backend
         if backend:
-            collection = await backend.aclient.get_collection("les_rag")
+            collection = await backend.aclient.get_collection(backend.collection_name)
             rag_stats["chunks"] = collection.points_count or 0
             rag_stats["status"] = "ready" if rag_stats["chunks"] > 0 else "indexing"
     except Exception as e:
@@ -218,8 +308,15 @@ async def get_metrics():
             "crag_halluc_rate": state.crag_stats["hallucination"] / crag_total,
             "total_requests": sum(state.crag_stats.values()),
         },
-        "queue": {"llm_waiting": 2 - state.llm_semaphore._value},
+        "queue": {"llm_waiting": max(0, state.llm_concurrency - state.llm_semaphore._value)},
         "errors": dict(state.error_counts),
         "heartbeats": heartbeats,
         "rag": rag_stats,
+        "embedding": {
+            "profile": embed_profile_name(),
+            "model": embedding_model_id(),
+            "meta_db": rag_meta_db_path(),
+            "collection": getattr(state.backend, "collection_name", ""),
+            "vector_size": getattr(state.backend, "vector_size", 0),
+        },
     }

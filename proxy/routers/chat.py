@@ -7,6 +7,7 @@ import os
 import sqlite3
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, List, Optional
 
 import httpx
@@ -14,6 +15,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, validator
 
 from proxy.security import require_user
+from proxy.services.clarification_service import build_clarification_decision
+from proxy.services.query_router import route_query
+from proxy.services.resource_governor import chat_generation_allowed
 from proxy.services.retrieval_service import resolve_dataset_ids, retrieve_chat_chunks
 from proxy.services.saferag_service import (
     SAFE_FALLBACK,
@@ -29,6 +33,7 @@ from proxy.services.semantic_cache import (
     semantic_cache_enabled,
     semantic_cache_threshold,
 )
+from proxy.services.table_query_service import maybe_answer_table_query
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +65,7 @@ class ChatRouterState:
     chat_metrics: dict
     reranker_available: bool
     reranker_cls: Any
+    current_mode: dict[str, Any] | None = None
 
     @property
     def backend(self):
@@ -87,7 +93,47 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
         raise HTTPException(400, "Empty question")
 
     rag_backend = state.backend
-    _dataset_ids = await resolve_dataset_ids(rag_backend, req.dataset_ids, req.dataset_filter, logger)
+    clarification = build_clarification_decision(
+        req.question,
+        dataset_ids=req.dataset_ids,
+        dataset_filter=req.dataset_filter,
+    )
+    if clarification.needs_clarification:
+        logger.info(
+            "[CLARIFY] reasons=%s route=%s filter=%s",
+            clarification.classification.reasons,
+            clarification.classification.route_reason,
+            clarification.classification.dataset_filter,
+        )
+        return {
+            "answer": clarification.answer,
+            "crag_status": "NEEDS_CLARIFICATION",
+            "sources": [],
+            "clarification": clarification.payload(),
+            "clarifying_questions": clarification.questions,
+            "suggested_filters": clarification.suggested_filters,
+        }
+
+    allowed, resource_reason = chat_generation_allowed(state.current_mode)
+    if not allowed:
+        raise HTTPException(status_code=409, detail=resource_reason)
+
+    query_intent = route_query(
+        req.question,
+        dataset_filter=req.dataset_filter,
+        dataset_ids=req.dataset_ids,
+    )
+    effective_dataset_filter = req.dataset_filter or query_intent.dataset_filter
+    logger.info(
+        "[QUERY_ROUTER] channel=%s reason=%s filter=%s",
+        query_intent.channel,
+        query_intent.reason,
+        effective_dataset_filter,
+    )
+
+    _dataset_ids = await resolve_dataset_ids(
+        rag_backend, req.dataset_ids, effective_dataset_filter, logger, question=req.question
+    )
     cache = SemanticCache()
     cache_embedding = None
     cache_scope = ""
@@ -135,6 +181,11 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                         "answer": cache_hit.answer,
                         "crag_status": "VERIFIED",
                         "sources": cache_hit.sources,
+                        "query_route": {
+                            "channel": query_intent.channel,
+                            "reason": query_intent.reason,
+                            "dataset_filter": effective_dataset_filter,
+                        },
                         "cache": "semantic",
                         "similarity": round(cache_hit.similarity, 3),
                     }
@@ -155,7 +206,7 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
             reranker_enabled=_reranker_on,
             reranker_available=state.reranker_available,
             reranker_cls=state.reranker_cls,
-            mlx_url=os.getenv("MLX_URL", "http://host.docker.internal:8080"),
+            mlx_url=os.getenv("MLX_URL", "http://127.0.0.1:8080"),
             logger=logger,
         )
     except Exception as e:
@@ -173,6 +224,49 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
         len(set(c.doc_name for c in chunks)),
     )
 
+    table_result = maybe_answer_table_query(
+        req.question,
+        chunks,
+        storage_root=Path("./storage/datasets"),
+    )
+    if table_result:
+        state.crag_stats["verified"] += 1
+        state.chat_metrics["latency_search"].append(t_search)
+        state.chat_metrics["latency_gen"].append(0.0)
+        state.chat_metrics["tokens"].append(0)
+        state.chat_metrics["crag_pass"] += 1
+        for key in ("latency_search", "latency_gen", "tokens"):
+            state.chat_metrics[key] = state.chat_metrics[key][-100:]
+        try:
+            with sqlite3.connect("./data/les_meta.db") as conn:
+                conn.execute(
+                    "INSERT INTO chat_history "
+                    "(question, answer, sources, crag_status, latency_sec, tokens, session_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        req.question,
+                        table_result.answer,
+                        ",".join(table_result.sources),
+                        "VERIFIED",
+                        t_search,
+                        0,
+                        req.session_id,
+                    ),
+                )
+        except Exception as db_err:
+            logger.warning("[CHAT] History save error: %s", db_err)
+        return {
+            "answer": table_result.answer,
+            "crag_status": "VERIFIED",
+            "sources": table_result.sources,
+            "query_route": {
+                "channel": query_intent.channel,
+                "reason": query_intent.reason,
+                "dataset_filter": effective_dataset_filter,
+            },
+            "table_query": table_result.payload(),
+        }
+
     if not chunks:
         state.crag_stats["no_data"] += 1
         state.chat_metrics["latency_search"].append(t_search)
@@ -180,9 +274,18 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
         state.chat_metrics["crag_fail"] += 1
         for key in ("latency_search", "latency_gen", "tokens"):
             state.chat_metrics[key] = state.chat_metrics[key][-100:]
-        return {"answer": "Нет данных в выбранных источниках.", "crag_status": "NO_DATA", "sources": []}
+        return {
+            "answer": "Нет данных в выбранных источниках.",
+            "crag_status": "NO_DATA",
+            "sources": [],
+            "query_route": {
+                "channel": query_intent.channel,
+                "reason": query_intent.reason,
+                "dataset_filter": effective_dataset_filter,
+            },
+        }
 
-    llm_url = os.getenv("MLX_URL", "http://host.docker.internal:8080")
+    llm_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
     llm_model = os.getenv("LLM_MODEL", "qwen3:14b")
     val_url = llm_url.rstrip("/")
 
@@ -328,7 +431,16 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                     except Exception as cache_err:
                         logger.warning("[SEM_CACHE] store skipped: %s", cache_err)
 
-                return {"answer": answer, "crag_status": crag_status, "sources": sources_list}
+                return {
+                    "answer": answer,
+                    "crag_status": crag_status,
+                    "sources": sources_list,
+                    "query_route": {
+                        "channel": query_intent.channel,
+                        "reason": query_intent.reason,
+                        "dataset_filter": effective_dataset_filter,
+                    },
+                }
 
         except httpx.TimeoutException as e:
             logger.error("[CHAT] LLM TIMEOUT: %s", e)

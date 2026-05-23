@@ -12,6 +12,7 @@ services:
   proxy:
     build: {context: ., dockerfile: Dockerfile.proxy}
     container_name: les-proxy
+    profiles: ["docker-proxy"]
     ports: ["8050:8050"]
     volumes:
       - ./backend:/app/backend

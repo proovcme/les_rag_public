@@ -186,4 +186,4 @@ def build_volk():
             else:
                 ui.notify(last_api_error_text("Ошибка удаления ключа"), type="negative")
 
-        ui.timer(0.5, lambda: asyncio.create_task(_volk_load()), once=True)
+        asyncio.create_task(_volk_load())

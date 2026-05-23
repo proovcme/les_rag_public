@@ -12,6 +12,7 @@ from typing import Any
 
 TABLE_SUFFIXES = {".xlsx", ".xls", ".csv"}
 PDF_SUFFIXES = {".pdf"}
+EMAIL_SUFFIXES = {".eml", ".msg"}
 
 
 @dataclass
@@ -33,6 +34,8 @@ class DocumentProbe:
 
 @dataclass
 class DocumentRoute:
+    domain: str
+    dataset_name: str
     doc_type: str
     content_type: str
     complexity: str
@@ -63,15 +66,21 @@ def route_document(path: Path) -> DocumentRoute:
 
 def classify_document(probe: DocumentProbe) -> DocumentRoute:
     doc_type = _classify_doc_type(probe)
+    domain = _classify_domain(probe, doc_type)
     content_type = _classify_content_type(probe)
     complexity = _classify_complexity(probe, content_type)
     pipeline = _select_pipeline(probe, content_type, complexity)
+    dataset_name = f"{domain}_Index"
     return DocumentRoute(
+        domain=domain,
+        dataset_name=dataset_name,
         doc_type=doc_type,
         content_type=content_type,
         complexity=complexity,
         pipeline=pipeline,
         metadata={
+            "domain": domain,
+            "dataset_name": dataset_name,
             "doc_type": doc_type,
             "content_type": content_type,
             "complexity": complexity,
@@ -184,6 +193,12 @@ def _probe_text_like(path: Path, size_bytes: int) -> DocumentProbe:
 
 def _classify_doc_type(probe: DocumentProbe) -> str:
     text = f"{probe.path.name}\n{probe.text_sample}".lower()
+    name = probe.path.name.lower()
+    if probe.suffix in EMAIL_SUFFIXES:
+        return "EMAIL"
+    normative_name_prefixes = ("гост", "сп ", "снип", "санпин", "постановление", "приказ")
+    if name.startswith(normative_name_prefixes):
+        return "NORMATIVE"
     has_price_amount = any(token in text for token in ("цена", "сумма", "стоимость", "расценка"))
     has_position_qty = (
         any(token in text for token in ("позиция", "поз.", "поз,", "поз "))
@@ -193,6 +208,8 @@ def _classify_doc_type(probe: DocumentProbe) -> str:
         return "KS2"
     if any(token in text for token in ("аоср", "скрытых работ", "освидетельствования")):
         return "AOSR"
+    if any(token in text for token in ("постановление", "федеральный закон", "приказ росстандарта", "свод правил")):
+        return "NORMATIVE"
     if any(token in text for token in ("смета", "локальный сметный", "гэсн", "фер", "тер", "расценка")):
         return "SMETA"
     if has_position_qty and not has_price_amount:
@@ -201,14 +218,99 @@ def _classify_doc_type(probe: DocumentProbe) -> str:
         return "SPEC"
     if has_price_amount and probe.has_tables:
         return "SMETA"
-    if any(token in text for token in ("гост", "сп ", "снип", "санпин", "норматив")):
+    if any(token in text for token in ("гост", "сп ", "снип", "санпин", "норматив", "постановление")):
         return "NORMATIVE"
     if probe.suffix in TABLE_SUFFIXES:
         return "TABLE"
     return "DOCUMENT"
 
 
+def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
+    text = f"{' '.join(probe.path.parts)}\n{probe.text_sample}".casefold()
+    name = probe.path.name.casefold()
+
+    if doc_type == "EMAIL" or probe.suffix in EMAIL_SUFFIXES:
+        return "MAIL"
+
+    if any(token in text for token in ("гкрф", "градостроительн", "постановление 87", "пп 87")):
+        return "GKRF"
+    if any(token in name for token in ("87",)) and "постановлен" in text:
+        return "GKRF"
+
+    if doc_type in {"KS2", "AOSR", "SMETA", "SPEC", "TABLE"}:
+        return f"TABLE_{doc_type}"
+
+    if any(
+        token in name
+        for token in (
+            "13130",
+            "пожар",
+            "пожаротуш",
+            "огнев",
+            "огнестойк",
+            "огнезащит",
+            "огнепреград",
+            "эвакуац",
+            "эвакуа",
+            "противодым",
+            "противопожар",
+            "пожарной безопасности",
+            "дымовые",
+        )
+    ):
+        return "NTD_FIRE"
+    if any(
+        token in name
+        for token in (
+            "пуэ",
+            "iec",
+            "мэк",
+            "электр",
+            "кабел",
+            "заземл",
+            "молниезащит",
+            "освещен",
+            "напряжен",
+            "светиль",
+            "выключател",
+            "предохранител",
+            "низковоль",
+            "электроустанов",
+        )
+    ):
+        return "NTD_ELECTRICAL"
+    if any(
+        token in name
+        for token in (
+            "конструкц",
+            "нагрузк",
+            "фундамент",
+            "основан",
+            "железобетон",
+            "бетон",
+            "грунт",
+            "здани",
+            "сооруж",
+            "сейсми",
+        )
+    ):
+        return "NTD_STRUCTURAL"
+    if doc_type == "NORMATIVE" and (
+        "электроустановки" in text
+        or "пожарной безопасности" in text
+        or ("пожарн" in text and "безопас" in text)
+    ):
+        if "пожарной безопасности" in text or ("пожарн" in text and "безопас" in text):
+            return "NTD_FIRE"
+        return "NTD_ELECTRICAL"
+    if doc_type == "NORMATIVE":
+        return "NTD_OTHER"
+    return "DOCS_OTHER"
+
+
 def _classify_content_type(probe: DocumentProbe) -> str:
+    if probe.suffix in EMAIL_SUFFIXES:
+        return "email"
     if probe.needs_ocr:
         return "scan"
     if probe.suffix in TABLE_SUFFIXES:

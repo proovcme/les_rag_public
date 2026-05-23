@@ -39,6 +39,3 @@ Thumbs.db
 
 # Generated local workbench exports
 qdrant_visualizer/data.js
-
-# Private/local font asset; UI falls back to Courier when absent.
-static/fonts/ISOCPEUR.ttf

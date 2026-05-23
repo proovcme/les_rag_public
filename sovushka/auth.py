@@ -10,6 +10,7 @@ import json
 import httpx
 from fastapi import Request
 from nicegui import app, ui
+from starlette.responses import RedirectResponse
 
 from backend.auth import login, is_authenticated, get_role, get_holder, logout
 from sovushka.trust import client_ip_from_request, trusted_role_for_ip
@@ -167,8 +168,7 @@ def register_login_page():
         trusted_role = trusted_role_for_ip(client_ip)
         
         if is_authenticated() or trusted_role:
-            ui.navigate.to("/")
-            return
+            return RedirectResponse("/")
 
         ui.add_head_html(_LOGIN_CSS)
         ui.query("body").style("background:#08090b;margin:0;")
@@ -188,7 +188,7 @@ def register_login_page():
            onkeydown="if(event.key==='Enter')volkLogin()">
     <button class="volk-btn" id="volk-btn" onclick="volkLogin()">&#9654;&nbsp;&nbsp;ВОЙТИ В СИСТЕМУ</button>
     <div class="volk-err" id="volk-err"></div>
-    <div class="volk-foot">les.example.com &middot; Л.Е.С. &middot; доступ только по ключу</div>
+    <div class="volk-foot">les.ovc.me &middot; Л.Е.С. &middot; доступ только по ключу</div>
   </div>
 </div>
 <script>

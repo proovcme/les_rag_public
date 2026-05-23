@@ -258,7 +258,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         detail_dataset.options = ["(все датасеты)"] + names
         detail_dataset.value = "(все датасеты)"
 
-    ui.timer(0.4, lambda: asyncio.create_task(_load_datasets_select()), once=True)
+    asyncio.create_task(_load_datasets_select())
 
     def _toggle_history():
         history_drawer.set_visibility(not history_drawer.visible)
@@ -352,13 +352,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 _render_chat_history()
                 chat_scroll.scroll_to(percent=1)
 
-    ui.timer(0.5, lambda: asyncio.create_task(_load_history()), once=True)
-
-    async def _watch_session_load():
-        if state.get("load_session_id"):
-            await _load_history()
-
-    ui.timer(0.5, lambda: asyncio.create_task(_watch_session_load()))
+    asyncio.create_task(_load_history())
 
     async def load_output_template(e):
         content = e.content.read()
@@ -760,7 +754,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             for item in data:
                 _render_tree(item, level)
 
-    ui.timer(0.1, lambda: select_format("text"), once=True)
+    select_format("text")
     chat_input.on(
         "keydown.enter.prevent",
         lambda e: asyncio.create_task(send_chat()) if not (e.args or {}).get("shiftKey") else None,

@@ -1,0 +1,8 @@
+speckle.ovc.me {
+	reverse_proxy 10.195.146.20:31555
+}
+
+les.ovc.me {
+	reverse_proxy /api/* 10.195.146.98:8050
+	reverse_proxy /* 10.195.146.98:8051
+}

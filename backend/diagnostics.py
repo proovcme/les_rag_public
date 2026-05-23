@@ -4,6 +4,8 @@ import re
 from pathlib import Path
 from datetime import datetime
 
+from backend.rag_config import rag_collection_name
+
 DIAG_DIR = Path('./data/diagnostics')
 DIAG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -55,7 +57,7 @@ async def run_diagnostics():
     stats, _ = run_cmd(["docker", "stats", "--no-stream", "--format", "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}"])
     oll_ps, _ = run_cmd(["ollama", "ps"])
     mlx = _mlx_processes()
-    qdrant, _ = run_cmd(["curl", "-s", "http://localhost:6333/collections/les_rag"])
+    qdrant, _ = run_cmd(["curl", "-s", f"http://localhost:6333/collections/{rag_collection_name()}"])
     health, _ = run_cmd(["curl", "-s", "http://localhost:8050/api/health"])
     rag_files = _count_files(Path("./RAG_Content"))
     sto_files = _count_files(Path("./storage/datasets"))

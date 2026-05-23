@@ -54,7 +54,7 @@ def build_overview(tabs, is_admin: bool):
         with ui.card().classes("card-les w-full"):
             ui.label("СТЕК").classes("section-title mb-3")
             stack_items = [
-                ("Apple Silicon Host / 24 GB",                                   "HOST"),
+                ("Mac Mini M4 / 24 GB",                                   "HOST"),
                 ("Docker: les-proxy :8050 · les-qdrant :6333",            "DOCKER"),
                 ("MLX Host :8080 · Qwen3-14B + Qwen3-4B + bge-m3",       "MLX"),
                 ("Ollama :11434 · qwen3:14b + bge-m3 (резерв)",           "OLLAMA"),

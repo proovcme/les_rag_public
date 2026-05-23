@@ -96,6 +96,8 @@ def _parse_email(path: Path) -> str:
         parts = [
             f"# {msg.subject or '(без темы)'}",
             f"От: {msg.sender}",
+            f"Кому: {getattr(msg, 'to', '') or '?'}",
+            f"Копия: {getattr(msg, 'cc', '') or ''}",
             f"Дата: {msg.date}",
             "",
             msg.body or "",
@@ -107,10 +109,21 @@ def _parse_email(path: Path) -> str:
         with open(path, "rb") as f:
             msg = email.message_from_binary_file(f, policy=policy.default)
         body_parts = []
+        attachments = []
         if msg.is_multipart():
             for part in msg.walk():
                 ct = part.get_content_type()
+                disposition = (part.get_content_disposition() or "").lower()
+                filename = part.get_filename()
+                if filename or disposition == "attachment":
+                    attachments.append(filename or "(без имени)")
+                    continue
                 if ct == "text/plain":
+                    try:
+                        body_parts.append(part.get_content())
+                    except Exception:
+                        pass
+                elif ct == "text/html" and not body_parts:
                     try:
                         body_parts.append(part.get_content())
                     except Exception:
@@ -121,11 +134,17 @@ def _parse_email(path: Path) -> str:
             except Exception:
                 pass
         body = "\n".join(body_parts)
+        attachments_md = ""
+        if attachments:
+            attachments_md = "\n\nВложения:\n" + "\n".join(f"- {name}" for name in attachments)
         return (
             f"# {msg.get('Subject', '(без темы)')}\n"
             f"От: {msg.get('From', '?')}\n"
+            f"Кому: {msg.get('To', '?')}\n"
+            f"Копия: {msg.get('Cc', '')}\n"
             f"Дата: {msg.get('Date', '?')}\n\n"
             f"{body}"
+            f"{attachments_md}"
         )
 
 
