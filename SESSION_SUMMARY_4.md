@@ -38,13 +38,13 @@ The runner waits while any parse scheduler is active. When the current wave fini
 
 ## Public access
 
-- `https://les.ovc.me` had `502` because VPS Caddy could not reach Mac over ZeroTier `10.195.146.98`.
+- `https://<your-domain>` had `502` because VPS Caddy could not reach Mac over ZeroTier `<app-host-vpn-ip>`.
 - Emergency П.А.У.К. reverse tunnel was enabled:
   - Mac SSH tunnel publishes local `8050/8051` to VPS `127.0.0.1:8050/8051`
   - Caddy temporarily points to `127.0.0.1`
 - `start_pauk.command` was fixed to use `ssh -f -n -N` and `127.0.0.1` local targets.
-- `https://les.ovc.me/` and `/les` currently resolve to `/login` with HTTP 200.
-- Caddy now marks requests whose source IP is inside `10.195.146.0/24` with
+- `https://<your-domain>/` and `/les` currently resolve to `/login` with HTTP 200.
+- Caddy now marks requests whose source IP is inside `<trusted-vpn-cidr>` with
   `X-LES-Trusted-Network: 1`; UI/proxy trust that header only from
   `TRUSTED_PROXY_NETWORKS`. Spoofed forwarded headers from direct/public clients
   are ignored.

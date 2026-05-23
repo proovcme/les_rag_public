@@ -46,7 +46,7 @@ TRUSTED_NETWORKS = tuple(
     item.strip()
     for item in os.getenv(
         "TRUSTED_NETWORKS",
-        "127.0.0.0/8,::1/128,10.195.146.0/24",
+        "127.0.0.0/8,::1/128",
     ).split(",")
     if item.strip()
 )

@@ -1,24 +1,25 @@
-speckle.ovc.me {
-	reverse_proxy 10.195.146.20:31555
+{
+	# Replace placeholders before installing:
+	# {{LES_DOMAIN}}, {{LES_APP_HOST}}, {{LES_TRUSTED_CIDR}}
 }
 
-les.ovc.me {
-	@zerotier remote_ip 10.195.146.0/24
+{{LES_DOMAIN}} {
+	@trusted_network remote_ip {{LES_TRUSTED_CIDR}}
 
-	handle @zerotier {
-		reverse_proxy /api/* 127.0.0.1:8050 {
+	handle @trusted_network {
+		reverse_proxy /api/* {{LES_APP_HOST}}:8050 {
 			header_up X-LES-Trusted-Network 1
 		}
-		reverse_proxy /* 127.0.0.1:8051 {
+		reverse_proxy /* {{LES_APP_HOST}}:8051 {
 			header_up X-LES-Trusted-Network 1
 		}
 	}
 
 	handle {
-		reverse_proxy /api/* 127.0.0.1:8050 {
+		reverse_proxy /api/* {{LES_APP_HOST}}:8050 {
 			header_up X-LES-Trusted-Network ""
 		}
-		reverse_proxy /* 127.0.0.1:8051 {
+		reverse_proxy /* {{LES_APP_HOST}}:8051 {
 			header_up X-LES-Trusted-Network ""
 		}
 	}
