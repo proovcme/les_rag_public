@@ -185,6 +185,15 @@ async def refresh_indexing_mode():
 async def refresh_proxy_logs(limit: int = 120):
     from sovushka.config import PROXY_URL
 
+    logs_path = Path("logs/proxy.log")
+    if logs_path.exists():
+        try:
+            lines = await asyncio.to_thread(lambda: logs_path.read_text(errors="replace").splitlines()[-limit:])
+            state["proxy_logs"] = lines
+            return state.get("proxy_logs", [])
+        except Exception as error:
+            add_log(f"[LOGS] local proxy.log read error: {error}")
+
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             r = await client.get(f"{PROXY_URL}/api/logs/recent?limit={limit}", headers=_auth_headers())
@@ -196,13 +205,6 @@ async def refresh_proxy_logs(limit: int = 120):
     except Exception:
         pass
 
-    logs_path = Path("logs/proxy.log")
-    if logs_path.exists():
-        try:
-            lines = await asyncio.to_thread(lambda: logs_path.read_text(errors="replace").splitlines()[-limit:])
-            state["proxy_logs"] = lines
-        except Exception as error:
-            add_log(f"[LOGS] local proxy.log read error: {error}")
     return state.get("proxy_logs", [])
 
 
