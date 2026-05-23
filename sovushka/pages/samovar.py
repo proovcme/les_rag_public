@@ -4,11 +4,20 @@
 from __future__ import annotations
 
 import asyncio
+from html import escape
 from datetime import datetime
 from urllib.parse import quote
 from nicegui import ui
 
-from sovushka.state import state, api_post, api_delete, add_log, refresh_samovar, last_api_error_text
+from sovushka.state import (
+    state,
+    api_post,
+    api_delete,
+    add_log,
+    refresh_proxy_logs,
+    refresh_samovar,
+    last_api_error_text,
+)
 
 
 def build_samovar():
@@ -187,6 +196,13 @@ def build_samovar():
                         "color:var(--warn);font-size:.7rem;font-weight:900;"
                     )
 
+        # Live proxy log
+        with ui.card().classes("card-les w-full"):
+            with ui.row().classes("items-center justify-between w-full"):
+                ui.label("LIVE LOG // PROXY + INDEXER").classes("section-title")
+                live_log_status = ui.label("waiting").style("font-size:.65rem;color:var(--dim);")
+            live_log_box = ui.html("", sanitize=False).classes("sov-live-log")
+
         # История Jobs
         with ui.card().classes("card-les w-full"):
             ui.label("ИСТОРИЯ JOBS").classes("section-title mb-3")
@@ -278,6 +294,20 @@ def build_samovar():
         async def refresh_and_render():
             await refresh_samovar()
             _render()
+            _render_live_logs()
+
+        async def refresh_live_logs():
+            await refresh_proxy_logs(140)
+            _render_live_logs()
+
+        def _render_live_logs():
+            lines = list(state.get("proxy_logs") or state.get("logs") or [])[-140:]
+            if not lines:
+                live_log_box.set_content("<pre>log buffer empty</pre>")
+                live_log_status.set_text("empty")
+                return
+            live_log_status.set_text(f"{len(lines)} lines · live")
+            live_log_box.set_content(f"<pre>{escape(chr(10).join(lines))}</pre>")
 
         def _render():
             sources  = state.get("sources", [])
@@ -381,7 +411,7 @@ def build_samovar():
             sam_kpi["chunks"].set_text(str(tot_chunks))
             scheduler_jobs = [
                 (jid, j) for jid, j in jobs.items()
-                if j.get("type") == "rag_parse_scheduler"
+                if j.get("type") == "rag_parse_scheduler" or "Batch " in str(j.get("message", ""))
             ]
             active_scheduler_jobs = [
                 (jid, j) for jid, j in scheduler_jobs
@@ -456,3 +486,4 @@ def build_samovar():
         # Загружаем при входе без одноразового timer, чтобы обновление не
         # прилетало в уже удалённый slot при быстрой навигации.
         asyncio.create_task(refresh_and_render())
+        ui.timer(3.0, lambda: asyncio.create_task(refresh_live_logs()))

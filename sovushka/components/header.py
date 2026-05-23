@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from nicegui import app, ui
 
 from backend.auth import logout
 from sovushka.components.charts import _html
 from sovushka.state import last_api_error_text
+from sovushka.styles import _DARK_THEME, _LIGHT_THEME
 
 
 def build_header(
@@ -66,24 +68,20 @@ def build_header(
             ).props("flat dense").style("color:var(--dim);font-size:.85rem;")
 
             # Тема
-            _DARK_VARS  = ["#050608","#10141b","#18212c","#f8fbff",
-                           "#d2deea","#55708a","#38bdf8","#22e06f","#ff6b6b","#ffd166","#c084fc"]
-            _LIGHT_VARS = ["#f7fafc","#ffffff","#e6edf5","#0d1117",
-                           "#263544","#8aa2b8","#005fcc","#007a3d","#b4232a","#8a5400","#7c3aed"]
-            _CSS_KEYS   = ["--bg","--bg-panel","--bg-mod","--text","--dim",
-                           "--border","--accent","--ok","--err","--warn","--pauk"]
-
             _dark_init = app.storage.user.get("dark_theme", True)
 
             def _toggle_theme():
                 d = not app.storage.user.get("dark_theme", True)
                 app.storage.user["dark_theme"] = d
-                vs = _DARK_VARS if d else _LIGHT_VARS
+                vars_ = _DARK_THEME if d else _LIGHT_THEME
                 js = ";".join(
-                    f"document.documentElement.style.setProperty('{k}','{v}')"
-                    for k, v in zip(_CSS_KEYS, vs)
+                    f"document.documentElement.style.setProperty({json.dumps(k)},{json.dumps(v)})"
+                    for k, v in vars_.items()
                 )
-                js += f";document.body.style.background='{vs[0]}';document.body.style.color='{vs[3]}';"
+                js += (
+                    f";document.body.style.background={json.dumps(vars_['--bg'])};"
+                    f"document.body.style.color={json.dumps(vars_['--text'])};"
+                )
                 js += f";if(window.Quasar){{Quasar.Dark.set({'true' if d else 'false'});}}"
                 ui.run_javascript(js)
                 theme_btn.set_text("🌙" if d else "☀")
