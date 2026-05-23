@@ -136,6 +136,34 @@ def test_iec_and_fire_protection_names_route_to_specific_domains():
     assert fire.domain == "NTD_FIRE"
 
 
+def test_industrial_smoke_stacks_are_structural_not_fire():
+    route = classify_document(
+        DocumentProbe(
+            path=Path("СП 375.1325800.2023. Свод правил. Трубы промышленные дымовые.docx"),
+            suffix=".docx",
+            size_bytes=841_000,
+            text_sample="Трубы промышленные дымовые. Правила проектирования и строительства.",
+        )
+    )
+
+    assert route.doc_type == "NORMATIVE"
+    assert route.domain == "NTD_STRUCTURAL"
+    assert route.dataset_name == "NTD_STRUCTURAL_Index"
+
+
+def test_smoke_control_still_routes_to_fire():
+    route = classify_document(
+        DocumentProbe(
+            path=Path("СП 7.13130. Отопление вентиляция противодымная защита.docx"),
+            suffix=".docx",
+            size_bytes=100_000,
+            text_sample="Требования пожарной безопасности и противодымной защиты.",
+        )
+    )
+
+    assert route.domain == "NTD_FIRE"
+
+
 def test_email_routes_to_mail_index(tmp_path):
     path = tmp_path / "site-letter.eml"
     path.write_text(

@@ -240,6 +240,9 @@ def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
     if doc_type in {"KS2", "AOSR", "SMETA", "SPEC", "TABLE"}:
         return f"TABLE_{doc_type}"
 
+    if _is_industrial_chimney_norm(text, name):
+        return "NTD_STRUCTURAL"
+
     if any(
         token in name
         for token in (
@@ -255,7 +258,7 @@ def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
             "противодым",
             "противопожар",
             "пожарной безопасности",
-            "дымовые",
+            "дымоудален",
         )
     ):
         return "NTD_FIRE"
@@ -306,6 +309,23 @@ def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
     if doc_type == "NORMATIVE":
         return "NTD_OTHER"
     return "DOCS_OTHER"
+
+
+def _is_industrial_chimney_norm(text: str, name: str) -> bool:
+    haystack = f"{name}\n{text}"
+    chimney_phrases = (
+        "трубы промышленные дымовые",
+        "промышленные дымовые трубы",
+        "дымовые промышленные трубы",
+        "дымовая промышленная труба",
+        "дымовых промышленных труб",
+        "smoke stack",
+        "smokestack",
+        "industrial chimney",
+    )
+    if any(phrase in haystack for phrase in chimney_phrases):
+        return True
+    return "дымовые" in haystack and "труб" in haystack and "противодым" not in haystack
 
 
 def _classify_content_type(probe: DocumentProbe) -> str:
