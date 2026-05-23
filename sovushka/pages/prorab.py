@@ -274,5 +274,5 @@ def build_prorab():
               import logging
               logging.getLogger("les.prorab").warning(f"_render_prorab: {_ex}")
 
-        ui.timer(10, lambda: _render_prorab(), active=True)
-        ui.timer(0.3, lambda: _render_prorab(), once=True)
+        ui.timer(10, _render_prorab, active=True)
+        _render_prorab()

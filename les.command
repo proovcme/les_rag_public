@@ -27,6 +27,31 @@ header() {
     echo -e "${B}═══════════════════════════════════════${D}"
 }
 
+_ensure_docker() {
+    if docker info >/dev/null 2>&1; then
+        return 0
+    fi
+    _inf "Docker daemon недоступен, запускаю OrbStack..."
+    open -a OrbStack >/dev/null 2>&1 || open -a Docker >/dev/null 2>&1 || true
+    for _ in {1..45}; do
+        if docker info >/dev/null 2>&1; then
+            _ok "Docker daemon готов"
+            return 0
+        fi
+        sleep 2
+    done
+    _err "Docker daemon не поднялся за 90 секунд"
+    return 1
+}
+
+_load_env() {
+    set -a
+    [ -f "$DIR/.env" ] && source "$DIR/.env"
+    set +a
+    export MLX_URL="${MLX_URL:-http://127.0.0.1:8080}"
+    export QDRANT_URL="${QDRANT_URL:-http://127.0.0.1:6333}"
+}
+
 # ── Статус одного сервиса ────────────────────────────────
 _pid_status() {
     local name=$1 pid_file=$2 port=$3
@@ -41,9 +66,26 @@ _pid_status() {
 _launch_mlx() {
     source ~/.zprofile 2>/dev/null; source ~/.zshrc 2>/dev/null
     # Грузим .env чтобы подхватить MLX_MODEL / MLX_VAL_MODEL
-    set -a; [ -f "$DIR/.env" ] && source "$DIR/.env"; set +a
+    _load_env
     nohup uv run --project "$DIR" python3 "$DIR/mlx_host.py" >> "$LOGS/mlx_host.log" 2>&1 &
     echo $! > "$LOGS/mlx_host.pid"
+}
+
+_launch_proxy() {
+    source ~/.zprofile 2>/dev/null; source ~/.zshrc 2>/dev/null
+    _load_env
+    uv sync --quiet --project "$DIR"
+    if [ -f "$DIR/proxy_launchd.plist" ]; then
+        cp "$DIR/proxy_launchd.plist" "$HOME/Library/LaunchAgents/me.ovc.les.proxy.plist"
+        launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/me.ovc.les.proxy.plist" >/dev/null 2>&1 || true
+        launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/me.ovc.les.proxy.plist"
+        sleep 1
+        launchctl list | awk '/me\.ovc\.les\.proxy/ {print $1}' > "$LOGS/proxy.pid"
+    else
+        nohup "$DIR/.venv/bin/python3" -m uvicorn proxy_server:app --host 0.0.0.0 --port 8050 >> "$LOGS/proxy.log" 2>&1 &
+        echo $! > "$LOGS/proxy.pid"
+        disown $! 2>/dev/null || true
+    fi
 }
 
 # ── MLX Watchdog (запускается фоном при старте) ───────────
@@ -66,6 +108,10 @@ _mlx_watchdog() {
 }
 
 _start_watchdog() {
+    if launchctl list | grep -q "me.ovc.les.mlx"; then
+        _ok "MLX LaunchAgent me.ovc.les.mlx"
+        return
+    fi
     if [ -f "$LOGS/mlx_watchdog.pid" ] && kill -0 "$(cat "$LOGS/mlx_watchdog.pid")" 2>/dev/null; then
         return
     fi
@@ -103,9 +149,19 @@ do_stop() {
     fi
     _ok "MLX Host остановлен"
 
+    # Proxy host
+    cd "$DIR" && docker compose stop proxy >/dev/null 2>&1 || true
+    launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/me.ovc.les.proxy.plist" >/dev/null 2>&1 || true
+    if [ -f "$LOGS/proxy.pid" ]; then
+        kill "$(cat "$LOGS/proxy.pid")" 2>/dev/null
+        rm -f "$LOGS/proxy.pid"
+    fi
+    lsof -ti :8050 | xargs kill -9 2>/dev/null
+    _ok "les-proxy host остановлен"
+
     # Docker
     cd "$DIR" && docker compose stop 2>&1 | tail -2
-    _ok "Docker остановлен"
+    _ok "Docker/Qdrant остановлен"
 }
 
 # ── СТАРТ ────────────────────────────────────────────────
@@ -115,17 +171,25 @@ do_start() {
     cd "$DIR" || { _err "Не могу перейти в $DIR"; return 1; }
     mkdir -p "$LOGS"
 
-    # 1. Docker
-    echo -e "\n${B}[1/3] Docker...${D}"
-    docker compose up -d 2>&1 | tail -3
+    # 1. Qdrant
+    echo -e "\n${B}[1/4] Qdrant (OrbStack)...${D}"
+    _ensure_docker || return 1
+    docker compose up -d qdrant 2>&1 | tail -3
+    local compose_status=${PIPESTATUS[0]}
+    if [ "$compose_status" -ne 0 ]; then
+        _err "docker compose up qdrant завершился с ошибкой"
+        return 1
+    fi
     sleep 2
-    docker ps --format "{{.Names}}" | grep -q "les-proxy"  && _ok "les-proxy"  || _err "les-proxy не поднялся"
     docker ps --format "{{.Names}}" | grep -q "les-qdrant" && _ok "les-qdrant" || _err "les-qdrant не поднялся"
 
     # 2. MLX Host
-    echo -e "\n${B}[2/3] MLX Host...${D}"
+    echo -e "\n${B}[2/4] MLX Host...${D}"
     if [ -f "$LOGS/mlx_host.pid" ] && kill -0 "$(cat "$LOGS/mlx_host.pid")" 2>/dev/null; then
         _inf "MLX уже запущен (PID $(cat "$LOGS/mlx_host.pid"))"
+    elif MLX_LISTENER="$(lsof -tiTCP:8080 -sTCP:LISTEN 2>/dev/null | head -1)" && [ -n "$MLX_LISTENER" ]; then
+        echo "$MLX_LISTENER" > "$LOGS/mlx_host.pid"
+        _inf "MLX уже слушает :8080 (PID $MLX_LISTENER)"
     else
         uv sync --quiet --project "$DIR"
         _launch_mlx
@@ -136,15 +200,36 @@ do_start() {
     fi
     _start_watchdog
 
-    # 3. С.О.В.У.Ш.К.А.
-    echo -e "\n${B}[3/3] С.О.В.У.Ш.К.А....${D}"
-    lsof -ti :8051 | xargs kill -9 2>/dev/null; sleep 1
-    nohup uv run --project "$DIR" python3 "$DIR/sovushka_ng.py" >> "$LOGS/sovushka.log" 2>&1 &
-    echo $! > "$LOGS/sovushka.pid"
-    sleep 2
-    kill -0 "$(cat "$LOGS/sovushka.pid")" 2>/dev/null \
-        && _ok "С.О.В.У.Ш.К.А. (PID $(cat "$LOGS/sovushka.pid")) → http://localhost:8051" \
-        || _err "Упала — смотри $LOGS/sovushka.log"
+    # 3. Proxy host
+    echo -e "\n${B}[3/4] les-proxy host...${D}"
+    if [ -f "$LOGS/proxy.pid" ] && kill -0 "$(cat "$LOGS/proxy.pid")" 2>/dev/null; then
+        _inf "les-proxy уже запущен (PID $(cat "$LOGS/proxy.pid"))"
+    elif PROXY_LISTENER="$(lsof -tiTCP:8050 -sTCP:LISTEN 2>/dev/null | head -1)" && [ -n "$PROXY_LISTENER" ]; then
+        echo "$PROXY_LISTENER" > "$LOGS/proxy.pid"
+        _inf "les-proxy уже слушает :8050 (PID $PROXY_LISTENER)"
+    else
+        docker compose stop proxy >/dev/null 2>&1 || true
+        lsof -ti :8050 | xargs kill -9 2>/dev/null; sleep 1
+        _launch_proxy
+        sleep 3
+        curl -sf http://127.0.0.1:8050/api/health > /dev/null \
+            && _ok "les-proxy host (PID $(cat "$LOGS/proxy.pid")) → http://localhost:8050" \
+            || _err "les-proxy host не поднялся — смотри $LOGS/proxy.log"
+    fi
+
+    # 4. С.О.В.У.Ш.К.А.
+    echo -e "\n${B}[4/4] С.О.В.У.Ш.К.А....${D}"
+    if UI_LISTENER="$(lsof -tiTCP:8051 -sTCP:LISTEN 2>/dev/null | head -1)" && [ -n "$UI_LISTENER" ]; then
+        echo "$UI_LISTENER" > "$LOGS/sovushka.pid"
+        _ok "С.О.В.У.Ш.К.А. уже слушает :8051 (PID $UI_LISTENER)"
+    else
+        nohup uv run --project "$DIR" python3 "$DIR/sovushka_ng.py" >> "$LOGS/sovushka.log" 2>&1 &
+        echo $! > "$LOGS/sovushka.pid"
+        sleep 2
+        kill -0 "$(cat "$LOGS/sovushka.pid")" 2>/dev/null \
+            && _ok "С.О.В.У.Ш.К.А. (PID $(cat "$LOGS/sovushka.pid")) → http://localhost:8051" \
+            || _err "Упала — смотри $LOGS/sovushka.log"
+    fi
 
     echo ""
     _ok "http://localhost:8051"
@@ -170,8 +255,11 @@ do_sovushka() {
 do_status() {
     header "СТАТУС"
     _pid_status "С.О.В.У.Ш.К.А. :8051" "$LOGS/sovushka.pid"
+    _pid_status "les-proxy host  :8050" "$LOGS/proxy.pid"
     _pid_status "MLX Host        :8080" "$LOGS/mlx_host.pid"
-    _pid_status "MLX Watchdog   " "$LOGS/mlx_watchdog.pid"
+    launchctl list | grep -q "me.ovc.les.mlx" \
+        && _ok "MLX LaunchAgent me.ovc.les.mlx" \
+        || _pid_status "MLX Watchdog   " "$LOGS/mlx_watchdog.pid"
     docker ps --format "{{.Names}}\t{{.Status}}" | grep "^les-" | while read line; do
         _ok "Docker  $line"
     done

@@ -85,5 +85,6 @@ def build_history(tabs=None, tab_chat=None):
 
         refresh_btn.on("click", lambda: asyncio.create_task(_load_sessions()))
 
-        # Загружаем сессии при открытии вкладки
-        ui.timer(0.3, lambda: asyncio.create_task(_load_sessions()), once=True)
+        # Загружаем сессии при открытии вкладки без NiceGUI timer: одноразовые
+        # timers могут сработать после пересборки tab panel.
+        asyncio.create_task(_load_sessions())

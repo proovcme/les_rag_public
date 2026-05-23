@@ -1,8 +1,10 @@
 import asyncio
 from collections import deque
 from dataclasses import dataclass
+from io import BytesIO
 
 import pytest
+from fastapi import UploadFile
 
 from proxy.routers import datasets
 
@@ -16,9 +18,21 @@ class Dataset:
     chunk_count: int = 0
 
 
+@dataclass
+class Chunk:
+    content: str
+    doc_id: str
+    doc_name: str
+    score: float
+    meta: dict
+
+
 class FakeBackend:
     def __init__(self):
         self.datasets = [Dataset("ds-1", "NTD_Index", doc_count=3, chunk_count=7)]
+        self.uploads = []
+        self.parses = []
+        self.pending_files = {}
 
     async def list_datasets(self):
         return self.datasets
@@ -28,6 +42,42 @@ class FakeBackend:
         self.datasets.append(Dataset(dataset_id, name))
         return dataset_id
 
+    async def upload_file(self, dataset_id, file_path, relative_path=None):
+        self.uploads.append((dataset_id, file_path.name, relative_path))
+        return f"doc-{len(self.uploads)}"
+
+    async def parse_dataset(self, dataset_id, limit=None):
+        self.parses.append((dataset_id, limit))
+        pending = max(0, int(self.pending_files.get(dataset_id, 0)) - int(limit or 0))
+        self.pending_files[dataset_id] = pending
+        return {"status": "completed", "chunks": 0, "remaining_pending": pending, "errors": 0}
+
+    async def health(self):
+        return True
+
+    async def health_snapshot(self):
+        return {
+            "datasets": [
+                {
+                    "id": dataset.id,
+                    "name": dataset.name,
+                    "pending_files": self.pending_files.get(dataset.id, 0),
+                }
+                for dataset in self.datasets
+            ]
+        }
+
+    async def retrieve(self, question, dataset_ids=None, top_k=5):
+        return [
+            Chunk(
+                content=f"{question} result",
+                doc_id="doc-1",
+                doc_name="СП 3.13130.docx",
+                score=0.73,
+                meta={"doc_type": "NORMATIVE", "content_type": "text"},
+            )
+        ][:top_k]
+
 
 class FakeJobService:
     def create(self, *args, **kwargs):
@@ -35,6 +85,10 @@ class FakeJobService:
 
     def update(self, *args, **kwargs):
         return {}
+
+
+def _upload(filename: str, content: bytes) -> UploadFile:
+    return UploadFile(file=BytesIO(content), filename=filename)
 
 
 @pytest.fixture()
@@ -70,6 +124,9 @@ async def test_list_sources_maps_folders_to_existing_datasets(tmp_path, monkeypa
     source = tmp_path / "RAG_Content" / "NTD" / "sub"
     source.mkdir(parents=True)
     (source / "doc.pdf").write_text("x")
+    claude = tmp_path / "RAG_Content" / "CLAUDE"
+    claude.mkdir()
+    (claude / "conversations.json").write_text("{}", encoding="utf-8")
     uuid_like = tmp_path / "RAG_Content" / "123e4567-e89b-12d3-a456-426614174000"
     uuid_like.mkdir()
     (uuid_like / "skip.pdf").write_text("x")
@@ -86,3 +143,280 @@ async def test_list_sources_maps_folders_to_existing_datasets(tmp_path, monkeypa
             "chunk_count": 7,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_retrieve_debug_returns_ranked_chunks_and_inferred_dataset(dataset_state):
+    result = await datasets.retrieve_debug(
+        datasets.RetrievalDebugRequest(question="ширина путей эвакуации"),
+        _user=object(),
+    )
+
+    assert result["dataset_ids"] == ["ds-1"]
+    assert result["query_route"]["dataset_filter"] == "NTD_FIRE"
+    assert result["chunks"][0]["doc_name"] == "СП 3.13130.docx"
+    assert result["chunks"][0]["doc_type"] == "NORMATIVE"
+
+
+@pytest.mark.asyncio
+async def test_pending_parse_datasets_uses_priority_before_pending_count(dataset_state):
+    dataset_state.datasets = [
+        Dataset("other", "NTD_OTHER_Index"),
+        Dataset("fire", "NTD_FIRE_Index"),
+        Dataset("electrical", "NTD_ELECTRICAL_Index"),
+    ]
+    dataset_state.pending_files = {"other": 100, "fire": 1, "electrical": 5}
+
+    queue = await datasets.pending_parse_datasets(datasets.get_dataset_state())
+
+    assert [item["dataset_name"] for item in queue] == [
+        "NTD_FIRE_Index",
+        "NTD_ELECTRICAL_Index",
+        "NTD_OTHER_Index",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_smart_plan_groups_files_by_document_route(tmp_path, monkeypatch, dataset_state):
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "RAG_Content" / "mixed"
+    source.mkdir(parents=True)
+    (source / "fire.txt").write_text("СП 1.13130 пожарная безопасность эвакуация", encoding="utf-8")
+
+    result = await datasets.smart_plan(_user=object())
+
+    assert result["total_files"] == 1
+    assert result["datasets"][0]["dataset"] == "NTD_FIRE_Index"
+    assert result["rejected_total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_sync_smart_registers_files_in_routed_datasets(tmp_path, monkeypatch, dataset_state):
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "RAG_Content" / "mixed"
+    source.mkdir(parents=True)
+    (source / "pp87.txt").write_text("Постановление 87 градостроительный кодекс", encoding="utf-8")
+
+    result = await datasets.sync_smart(datasets.SmartSyncRequest(), _admin=object())
+
+    assert result["files"] == 1
+    assert result["datasets"][0]["dataset_name"] == "GKRF_Index"
+    assert dataset_state.uploads == [("ds-2", "pp87.txt", "mixed/pp87.txt")]
+
+
+@pytest.mark.asyncio
+async def test_sync_folder_rejects_claude_source(tmp_path, monkeypatch, dataset_state):
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "RAG_Content" / "CLAUDE"
+    source.mkdir(parents=True)
+    (source / "conversations.json").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(datasets.HTTPException) as exc:
+        await datasets.sync_folder("CLAUDE", _admin=object())
+
+    assert exc.value.status_code == 400
+    assert dataset_state.uploads == []
+
+
+@pytest.mark.asyncio
+async def test_sync_folder_filters_unsupported_files(tmp_path, monkeypatch, dataset_state):
+    monkeypatch.chdir(tmp_path)
+    async def _admit(state, **kwargs):
+        return None
+
+    monkeypatch.setattr(datasets, "assert_parse_admission", _admit)
+    source = tmp_path / "RAG_Content" / "NTD"
+    source.mkdir(parents=True)
+    (source / ".DS_Store").write_text("noise")
+    (source / "doc.txt").write_text("СП 1.13130 пожарная безопасность", encoding="utf-8")
+
+    result = await datasets.sync_folder("NTD", _admin=object())
+
+    assert result["new_files"] == 1
+    assert result["rejected_files"] == 1
+    assert result["rejected_reasons"] == {"unsupported_suffix": 1}
+    assert dataset_state.uploads == [("ds-1", "doc.txt", "doc.txt")]
+
+
+@pytest.mark.asyncio
+async def test_upload_smart_routes_file_to_classified_dataset(tmp_path, monkeypatch, dataset_state):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data").mkdir()
+    (tmp_path / "storage" / "datasets").mkdir(parents=True)
+
+    result = await datasets.upload_file_smart(
+        file=_upload(
+            "local_smeta.csv",
+            (
+                "№,Наименование работ,Ед.изм.,Кол-во,Цена,Сумма\n"
+                "1,Монтаж кабеля,м,12,100,1200\n"
+            ).encode("utf-8"),
+        ),
+        parse=False,
+        _admin=object(),
+    )
+
+    assert result["status"] == "registered"
+    assert result["dataset_name"] == "TABLE_SMETA_Index"
+    assert result["dataset_created"] is True
+    assert result["route"]["doc_type"] == "SMETA"
+    assert result["route"]["pipeline"] == "parquet"
+    assert result["intake"]["file_name"] == "local_smeta.csv"
+    assert dataset_state.uploads[0][0] == "ds-2"
+    assert dataset_state.uploads[0][1].endswith("_local_smeta.csv")
+    assert dataset_state.uploads[0][2] == "local_smeta.csv"
+
+
+@pytest.mark.asyncio
+async def test_upload_smart_rejects_empty_file(tmp_path, monkeypatch, dataset_state):
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(datasets.HTTPException) as exc:
+        await datasets.upload_file_smart(file=_upload("empty.txt", b""), parse=False, _admin=object())
+
+    assert exc.value.status_code == 400
+    assert dataset_state.uploads == []
+
+
+@pytest.mark.asyncio
+async def test_parse_scheduler_runs_pending_batches(monkeypatch, dataset_state):
+    dataset_state.pending_files["ds-1"] = 3
+
+    async def _admit(state, **kwargs):
+        return None
+
+    unloads = []
+
+    async def _unload():
+        unloads.append(True)
+        return {"ok": True}
+
+    async def _memory():
+        return {"ram_free_gb": 16.0, "swap_pct": 0.0, "raw": {}}
+
+    monkeypatch.setattr(datasets, "assert_parse_admission", _admit)
+    monkeypatch.setattr(datasets, "parse_memory_state", _memory)
+    monkeypatch.setattr(datasets, "unload_mlx_models", _unload)
+
+    result = await datasets.parse_scheduler(
+        datasets.ParseSchedulerRequest(
+            batch_limit=2,
+            max_batches=3,
+            cooldown_sec=0,
+            unload_before_start=False,
+            background=False,
+        ),
+        _admin=object(),
+    )
+
+    assert result["status"] == "completed"
+    assert result["batches_run"] == 2
+    assert result["remaining_pending"] == 0
+    assert result["stop_reason"] == ""
+    assert dataset_state.parses == [("ds-1", 2), ("ds-1", 2)]
+    assert len(unloads) == 2
+
+
+@pytest.mark.asyncio
+async def test_parse_scheduler_passes_request_memory_guard(monkeypatch, dataset_state):
+    dataset_state.pending_files["ds-1"] = 1
+    seen = {}
+
+    async def _admit(state, *, min_free_gb, max_swap_pct):
+        seen["min_free_gb"] = min_free_gb
+        seen["max_swap_pct"] = max_swap_pct
+
+    async def _memory():
+        return {"ram_free_gb": 16.0, "swap_pct": 0.0, "raw": {}}
+
+    monkeypatch.setattr(datasets, "assert_parse_admission", _admit)
+    monkeypatch.setattr(datasets, "parse_memory_state", _memory)
+    monkeypatch.setattr(datasets, "unload_mlx_models", lambda: None)
+
+    result = await datasets.parse_scheduler(
+        datasets.ParseSchedulerRequest(
+            batch_limit=1,
+            max_batches=1,
+            cooldown_sec=0,
+            unload_before_start=False,
+            min_free_gb=4,
+            max_swap_pct=75,
+            unload_between_batches=False,
+            background=False,
+        ),
+        _admin=object(),
+    )
+
+    assert result["status"] == "completed"
+    assert seen == {"min_free_gb": 4.0, "max_swap_pct": 75.0}
+
+
+@pytest.mark.asyncio
+async def test_parse_scheduler_stops_after_batch_when_swap_rises(monkeypatch, dataset_state):
+    dataset_state.pending_files["ds-1"] = 3
+
+    async def _admit(state, **kwargs):
+        return None
+
+    async def _memory():
+        return {"ram_free_gb": 16.0, "swap_pct": 80.0, "raw": {}}
+
+    monkeypatch.setattr(datasets, "assert_parse_admission", _admit)
+    monkeypatch.setattr(datasets, "parse_memory_state", _memory)
+    monkeypatch.setattr(datasets, "unload_mlx_models", lambda: {"ok": True})
+
+    result = await datasets.parse_scheduler(
+        datasets.ParseSchedulerRequest(
+            batch_limit=1,
+            max_batches=3,
+            cooldown_sec=0,
+            unload_before_start=False,
+            unload_between_batches=False,
+            post_batch_max_swap_pct=60,
+            background=False,
+        ),
+        _admin=object(),
+    )
+
+    assert result["batches_run"] == 1
+    assert result["remaining_pending"] == 2
+    assert "post-batch memory guard: swap_pct=80.0 > 60.0" == result["stop_reason"]
+
+
+@pytest.mark.asyncio
+async def test_parse_scheduler_warm_embedder_skips_between_batch_unload(monkeypatch, dataset_state):
+    dataset_state.pending_files["ds-1"] = 1
+    unloads = []
+
+    async def _admit(state, **kwargs):
+        return None
+
+    async def _memory():
+        return {"ram_free_gb": 16.0, "swap_pct": 0.0, "raw": {}}
+
+    async def _unload():
+        unloads.append(True)
+        return {"ok": True}
+
+    monkeypatch.setattr(datasets, "assert_parse_admission", _admit)
+    monkeypatch.setattr(datasets, "parse_memory_state", _memory)
+    monkeypatch.setattr(datasets, "unload_mlx_models", _unload)
+
+    result = await datasets.parse_scheduler(
+        datasets.ParseSchedulerRequest(
+            batch_limit=1,
+            max_batches=1,
+            cooldown_sec=0,
+            unload_before_start=False,
+            unload_between_batches=True,
+            warm_embedder=True,
+            unload_after_finish=True,
+            background=False,
+        ),
+        _admin=object(),
+    )
+
+    assert result["batches_run"] == 1
+    assert "unload" not in result["batches"][0]
+    assert result["final_unload"] == {"ok": True}
+    assert len(unloads) == 1

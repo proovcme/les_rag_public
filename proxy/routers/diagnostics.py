@@ -74,7 +74,7 @@ async def run_diagnostics(_internal=Depends(require_internal)):
     await _check("les-proxy :8050", _chk_proxy())
 
     async def _chk_qdrant():
-        qdrant_url = os.getenv("QDRANT_URL", "http://qdrant:6333")
+        qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(f"{qdrant_url}/collections")
             response.raise_for_status()
@@ -93,7 +93,7 @@ async def run_diagnostics(_internal=Depends(require_internal)):
     await _check("Qdrant :6333", _chk_qdrant())
 
     async def _chk_llm():
-        llm_url = os.getenv("MLX_URL", "http://host.docker.internal:8080")
+        llm_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
         llm_model = os.getenv("LLM_MODEL", "?")
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
@@ -165,7 +165,7 @@ async def run_diagnostics(_internal=Depends(require_internal)):
 
     async def _chk_chat():
         started = time.time()
-        llm_url = os.getenv("MLX_URL", "http://host.docker.internal:8080")
+        llm_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(f"{llm_url}/api/health")
         ms = (time.time() - started) * 1000

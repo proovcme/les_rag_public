@@ -100,7 +100,7 @@ async def chat_page(request: Request):
     _last_tab = app.storage.user.get("last_chat_tab", "AI ЧАТ")
     _target = {"AI ЧАТ": tab_chat, "ИСТОРИЯ": tab_history}.get(_last_tab)
     if _target and _target != tab_chat:
-        ui.timer(0.0, lambda t=_target: tabs.set_value(t), once=True)
+        tabs.set_value(_target)
 
 
 @ui.page("/les")
@@ -173,7 +173,7 @@ async def admin_page(request: Request):
     }
     _target = _tab_map.get(_last_tab)
     if _target and _target != _default_tab:
-        ui.timer(0.0, lambda t=_target: tabs.set_value(t), once=True)
+        tabs.set_value(_target)
 
 
 

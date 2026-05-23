@@ -1,0 +1,107 @@
+"""Deterministic query routing between table SQL and semantic RAG."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal, Optional
+
+
+QueryChannel = Literal["table", "rag"]
+
+
+@dataclass(frozen=True)
+class QueryIntent:
+    channel: QueryChannel
+    dataset_filter: Optional[str]
+    reason: str
+
+
+TABLE_AGGREGATE_TOKENS = (
+    "сколько",
+    "итого",
+    "сумм",
+    "колич",
+    "кол-во",
+    "объем",
+    "объём",
+    "стоимост",
+    "цена",
+    "масса",
+    "вес",
+    "топ",
+    "позици",
+)
+
+TABLE_CONTEXT_TOKENS = (
+    "проект",
+    "смете",
+    "смет",
+    "спецификац",
+    "ведомост",
+    "кс-2",
+    "кс2",
+    "таблиц",
+    "кабел",
+    "оборудован",
+    "материал",
+    "работ",
+)
+
+NORMATIVE_TOKENS = (
+    "требован",
+    "норм",
+    "норматив",
+    "нтд",
+    "гост",
+    "сп ",
+    "снип",
+    "пуэ",
+    "допуска",
+    "должн",
+    "разреш",
+    "запрещ",
+    "минимальн",
+    "максимальн",
+)
+
+RAG_QUESTION_TOKENS = (
+    "какие",
+    "какой",
+    "какая",
+    "как ",
+    "можно ли",
+    "допускается ли",
+    "требуется ли",
+)
+
+
+def route_query(
+    question: str,
+    *,
+    dataset_filter: Optional[str] = None,
+    dataset_ids: Optional[list[str]] = None,
+) -> QueryIntent:
+    q = question.casefold()
+    if dataset_ids:
+        return QueryIntent("rag", dataset_filter, "explicit_dataset_ids")
+    if dataset_filter:
+        if dataset_filter.startswith("TABLE"):
+            return QueryIntent("table", dataset_filter, "explicit_table_filter")
+        if dataset_filter.startswith("NTD") or dataset_filter == "GKRF":
+            return QueryIntent("rag", dataset_filter, "explicit_rag_filter")
+
+    has_normative = any(token in q for token in NORMATIVE_TOKENS)
+    has_rag_form = any(token in q for token in RAG_QUESTION_TOKENS)
+    if has_normative and has_rag_form:
+        return QueryIntent("rag", None, "normative_question")
+    if has_normative and not any(token in q for token in ("смет", "спецификац", "ведомост", "таблиц")):
+        return QueryIntent("rag", None, "normative_keyword")
+
+    has_aggregate = any(token in q for token in TABLE_AGGREGATE_TOKENS)
+    has_table_context = any(token in q for token in TABLE_CONTEXT_TOKENS)
+    if has_aggregate and has_table_context:
+        return QueryIntent("table", "TABLE", "table_aggregate_context")
+    if any(token in q for token in ("смет", "спецификац", "ведомост", "кс-2", "кс2")):
+        return QueryIntent("table", "TABLE", "table_document_keyword")
+
+    return QueryIntent("rag", None, "default_rag")

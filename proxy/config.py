@@ -5,11 +5,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 
 ROOT = Path(".")
 DATA_DIR = ROOT / "data"
 META_DB_PATH = DATA_DIR / "les_meta.db"
 ENV_PATH = ROOT / ".env"
+load_dotenv(ENV_PATH, override=False)
 
 PUBLIC_ROLE = "public"
 USER_ROLE = "user"
@@ -76,11 +79,11 @@ def max_pst_upload_bytes() -> int:
 
 
 def mlx_url() -> str:
-    return os.getenv("MLX_URL", "http://host.docker.internal:8080").rstrip("/")
+    return os.getenv("MLX_URL", "http://127.0.0.1:8080").rstrip("/")
 
 
 def qdrant_url() -> str:
-    return os.getenv("QDRANT_URL", "http://qdrant:6333").rstrip("/")
+    return os.getenv("QDRANT_URL", "http://127.0.0.1:6333").rstrip("/")
 
 
 def llm_model() -> str:

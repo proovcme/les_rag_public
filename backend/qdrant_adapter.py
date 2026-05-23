@@ -33,9 +33,12 @@ from .parquet_writer import TableNormalizer
 
 logger = logging.getLogger(__name__)
 
-EMBED_BATCH  = 32    # чанков за один запрос к BGE-M3
-MIN_CHUNK    = 20    # символов — короче не индексируем
-UPSERT_BATCH = 100   # точек за один upsert в Qdrant
+EMBED_BATCH  = int(os.getenv("RAG_EMBED_BATCH", "32"))      # чанков за один запрос к MLX embeddings
+MIN_CHUNK    = int(os.getenv("RAG_MIN_CHUNK_CHARS", "20"))  # символов — короче не индексируем
+UPSERT_BATCH = int(os.getenv("RAG_UPSERT_BATCH", "100"))    # точек за один upsert в Qdrant
+RAG_CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "600"))
+RAG_CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "60"))
+ALLOW_UNBOUNDED_PARSE = "ALLOW_UNBOUNDED_PARSE"
 # ── Прямой клиент эмбеддингов (httpx, без llama-index) ───────────────────────
 
 class EmbedClient:
@@ -119,6 +122,13 @@ class MetaDB:
                 ("file_mtime",  "REAL"),
                 ("file_size",   "INTEGER"),
                 ("chunk_count", "INTEGER DEFAULT 0"),
+                ("domain",      "TEXT DEFAULT ''"),
+                ("route_dataset", "TEXT DEFAULT ''"),
+                ("doc_type",    "TEXT DEFAULT ''"),
+                ("content_type", "TEXT DEFAULT ''"),
+                ("complexity",   "TEXT DEFAULT ''"),
+                ("pipeline",     "TEXT DEFAULT ''"),
+                ("last_error",   "TEXT DEFAULT ''"),
             ]:
                 try:
                     conn.execute(f"ALTER TABLE documents ADD COLUMN {col} {typedef}")
@@ -195,13 +205,61 @@ class MetaDB:
             return doc_id, True, True
 
     def update_document_status(
-        self, dataset_id: str, file_name: str, status: str, chunk_count: int = 0
+        self,
+        dataset_id: str,
+        file_name: str,
+        status: str,
+        chunk_count: int = 0,
+        route: DocumentRoute | None = None,
+        last_error: str = "",
     ):
         with self._get_conn() as conn:
-            conn.execute(
-                "UPDATE documents SET status=?, chunk_count=? "
+            fields = ["status=?", "chunk_count=?", "last_error=?"]
+            values: list[Any] = [status, chunk_count, last_error[:2000]]
+            if route is not None:
+                fields.extend([
+                    "domain=?",
+                    "route_dataset=?",
+                    "doc_type=?",
+                    "content_type=?",
+                    "complexity=?",
+                    "pipeline=?",
+                ])
+                values.extend([
+                    route.domain,
+                    route.dataset_name,
+                    route.doc_type,
+                    route.content_type,
+                    route.complexity,
+                    route.pipeline,
+                ])
+            values.extend([dataset_id, file_name])
+            cur = conn.execute(
+                f"UPDATE documents SET {', '.join(fields)} "
                 "WHERE dataset_id=? AND file_name=?",
-                (status, chunk_count, dataset_id, file_name),
+                values,
+            )
+            if cur.rowcount != 1:
+                raise RuntimeError(
+                    f"document status update affected {cur.rowcount} rows "
+                    f"for dataset_id={dataset_id}, file_name={file_name}"
+                )
+
+    def update_document_route(self, dataset_id: str, file_name: str, route: DocumentRoute):
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE documents SET domain=?, route_dataset=?, doc_type=?, content_type=?, complexity=?, pipeline=? "
+                "WHERE dataset_id=? AND file_name=?",
+                (
+                    route.domain,
+                    route.dataset_name,
+                    route.doc_type,
+                    route.content_type,
+                    route.complexity,
+                    route.pipeline,
+                    dataset_id,
+                    file_name,
+                ),
             )
 
     def update_dataset_chunk_count(self, dataset_id: str):
@@ -216,13 +274,103 @@ class MetaDB:
                 (row["total"] if row else 0, dataset_id),
             )
 
-    def get_pending_files(self, dataset_id: str) -> List[str]:
+    def get_pending_files(self, dataset_id: str, limit: int | None = None) -> List[str]:
+        sql = (
+            "SELECT file_name FROM documents WHERE dataset_id=? AND status='PENDING' "
+            "ORDER BY COALESCE(NULLIF(file_size, 0), 9223372036854775807), file_name"
+        )
+        params: list[Any] = [dataset_id]
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(max(0, int(limit)))
         with self._get_conn() as conn:
-            rows = conn.execute(
-                "SELECT file_name FROM documents WHERE dataset_id=? AND status='PENDING'",
-                (dataset_id,),
-            ).fetchall()
+            rows = conn.execute(sql, params).fetchall()
         return [r["file_name"] for r in rows]
+
+    def health_snapshot(self) -> Dict[str, Any]:
+        with self._get_conn() as conn:
+            dataset_rows = conn.execute("""
+                SELECT d.id, d.name, d.status, d.chunk_count,
+                       COUNT(doc.id) AS total_files,
+                       SUM(CASE WHEN doc.status='INDEXED' THEN 1 ELSE 0 END) AS indexed_files,
+                       SUM(CASE WHEN doc.status='PENDING' THEN 1 ELSE 0 END) AS pending_files,
+                       SUM(CASE WHEN doc.status='ERROR' THEN 1 ELSE 0 END) AS error_files,
+                       COALESCE(SUM(CASE WHEN doc.status='INDEXED' THEN doc.chunk_count ELSE 0 END), 0) AS indexed_chunks
+                FROM datasets d
+                LEFT JOIN documents doc ON d.id = doc.dataset_id
+                GROUP BY d.id
+                ORDER BY d.name
+            """).fetchall()
+            status_rows = conn.execute(
+                "SELECT status, COUNT(*) AS files, COALESCE(SUM(chunk_count),0) AS chunks "
+                "FROM documents GROUP BY status"
+            ).fetchall()
+            route_rows = conn.execute("""
+                SELECT COALESCE(NULLIF(domain, ''), 'UNCLASSIFIED') AS domain,
+                       COUNT(*) AS files,
+                       COALESCE(SUM(chunk_count),0) AS chunks
+                FROM documents
+                GROUP BY COALESCE(NULLIF(domain, ''), 'UNCLASSIFIED')
+                ORDER BY files DESC
+            """).fetchall()
+            doc_type_rows = conn.execute("""
+                SELECT COALESCE(NULLIF(doc_type, ''), 'UNCLASSIFIED') AS doc_type,
+                       COUNT(*) AS files,
+                       COALESCE(SUM(chunk_count),0) AS chunks
+                FROM documents
+                GROUP BY COALESCE(NULLIF(doc_type, ''), 'UNCLASSIFIED')
+                ORDER BY files DESC
+            """).fetchall()
+
+        datasets = [
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "status": row["status"],
+                "files": row["total_files"] or 0,
+                "indexed_files": row["indexed_files"] or 0,
+                "pending_files": row["pending_files"] or 0,
+                "error_files": row["error_files"] or 0,
+                "chunks": row["indexed_chunks"] or 0,
+            }
+            for row in dataset_rows
+        ]
+        totals = {
+            "datasets": len(datasets),
+            "files": sum(item["files"] for item in datasets),
+            "indexed_files": sum(item["indexed_files"] for item in datasets),
+            "pending_files": sum(item["pending_files"] for item in datasets),
+            "error_files": sum(item["error_files"] for item in datasets),
+            "chunks": sum(item["chunks"] for item in datasets),
+        }
+        return {
+            "status": self._rag_status(totals, datasets),
+            "totals": totals,
+            "by_status": {
+                row["status"]: {"files": row["files"], "chunks": row["chunks"]}
+                for row in status_rows
+            },
+            "by_domain": {
+                row["domain"]: {"files": row["files"], "chunks": row["chunks"]}
+                for row in route_rows
+            },
+            "by_doc_type": {
+                row["doc_type"]: {"files": row["files"], "chunks": row["chunks"]}
+                for row in doc_type_rows
+            },
+            "datasets": datasets,
+        }
+
+    def _rag_status(self, totals: Dict[str, int], datasets: list[dict]) -> str:
+        if totals["files"] == 0:
+            return "empty"
+        if totals["indexed_files"] == 0:
+            return "not_indexed"
+        if totals["pending_files"] or totals["error_files"]:
+            return "degraded"
+        if any(dataset["status"] not in ("COMPLETED", "IDLE") for dataset in datasets):
+            return "degraded"
+        return "ready"
 
 
 # ── Основной адаптер ──────────────────────────────────────────────────────────
@@ -272,6 +420,27 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         except Exception:
             return False
 
+    async def health_snapshot(self) -> Dict[str, Any]:
+        ok = await self.health()
+        snapshot = self.db.health_snapshot()
+        snapshot["qdrant"] = {"ok": ok, "collection": self.collection_name}
+        if ok:
+            try:
+                collection = await self.aclient.get_collection(self.collection_name)
+                points = collection.points_count or 0
+                snapshot["qdrant"]["points"] = points
+                expected_chunks = snapshot.get("totals", {}).get("chunks") or 0
+                snapshot["qdrant"]["points_match_sqlite_chunks"] = points == expected_chunks
+                if points != expected_chunks:
+                    snapshot["qdrant"]["mismatch"] = {
+                        "sqlite_chunks": expected_chunks,
+                        "qdrant_points": points,
+                    }
+                    snapshot["status"] = "degraded"
+            except Exception as error:
+                snapshot["qdrant"].update({"ok": False, "error": str(error)})
+        return snapshot
+
     # ── RAGBackend interface ───────────────────────────────────────────────────
 
     async def list_datasets(self) -> List[DatasetInfo]:
@@ -297,52 +466,97 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         if file_path.exists() and file_path != dest_file:
             await asyncio.to_thread(shutil.copy2, file_path, dest_file)
 
-        doc_id, _, _ = self.db.add_document(
+        doc_id, _, needs_reindex = self.db.add_document(
             dataset_id, rel_path.as_posix(), file_mtime=mtime, file_size=size
         )
+        try:
+            route_source = dest_file if dest_file.exists() else file_path
+            route = route_document(route_source)
+            if needs_reindex:
+                self.db.update_document_status(dataset_id, rel_path.as_posix(), "PENDING", 0, route=route)
+            else:
+                self.db.update_document_route(dataset_id, rel_path.as_posix(), route)
+        except Exception as error:
+            logger.warning("[DOC_ROUTE] upload classification skipped for %s: %s", rel_path.as_posix(), error)
         return doc_id
 
-    async def parse_dataset(self, dataset_id: str) -> Dict[str, Any]:
+    async def parse_dataset(self, dataset_id: str, limit: int | None = None) -> Dict[str, Any]:
+        if limit is None and os.getenv(ALLOW_UNBOUNDED_PARSE, "").lower() not in ("1", "true", "yes"):
+            return {
+                "status": "rejected",
+                "error": (
+                    "unbounded parse is disabled; use parse_dataset(..., limit=N) "
+                    f"or set {ALLOW_UNBOUNDED_PARSE}=1 explicitly"
+                ),
+            }
         await self._ensure_collection()
         self.db.update_dataset_status(dataset_id, "PARSING")
-        res = await asyncio.to_thread(self._sync_parse, dataset_id)
+        res = await asyncio.to_thread(self._sync_parse, dataset_id, limit)
         status = "COMPLETED" if res.get("status") == "completed" else "ERROR"
+        if res.get("errors", 0) > 0:
+            status = "ERROR"
+        if res.get("remaining_pending", 0) > 0 and status == "COMPLETED":
+            status = "IDLE" if limit is not None else "PARSING"
         self.db.update_dataset_status(dataset_id, status)
         return res
 
-    def _sync_parse(self, dataset_id: str) -> Dict[str, Any]:
+    def _sync_parse(self, dataset_id: str, limit: int | None = None) -> Dict[str, Any]:
         """
         Синхронный парсинг в threadpool.
         Батч-эмбеддинги: 32 чанка за запрос вместо по одному.
         """
         import time as _t
         t0 = _t.time()
+        timings = {
+            "delete_sec": 0.0,
+            "route_sec": 0.0,
+            "convert_sec": 0.0,
+            "chunk_sec": 0.0,
+            "embed_sec": 0.0,
+            "upsert_sec": 0.0,
+            "count_sec": 0.0,
+            "db_sec": 0.0,
+        }
+
+        def _add_timing(key: str, started: float) -> None:
+            timings[key] = timings.get(key, 0.0) + (_t.time() - started)
 
         data_dir = self.content_dir / dataset_id
         if not data_dir.exists():
             return {"status": "error", "msg": "dir missing"}
 
-        sync_qdrant = qdrant_client.QdrantClient(
-            url=os.getenv("QDRANT_URL", "http://qdrant:6333")
-        )
         md_parser = MarkdownNodeParser()
-        splitter  = SentenceSplitter(chunk_size=600, chunk_overlap=60)
+        splitter  = SentenceSplitter(chunk_size=RAG_CHUNK_SIZE, chunk_overlap=RAG_CHUNK_OVERLAP)
 
         try:
-            pending_names = set(self.db.get_pending_files(dataset_id))
+            pending_names = set(self.db.get_pending_files(dataset_id, limit=limit))
             all_files     = [
                 f for f in data_dir.rglob("*")
                 if f.is_file() and "_parquet" not in f.relative_to(data_dir).parts
             ]
 
+            if not pending_names:
+                return {
+                    "status": "completed",
+                    "chunks": 0,
+                    "files_parsed": 0,
+                    "files_skipped": len(all_files),
+                    "remaining_pending": 0,
+                    "errors": 0,
+                    "elapsed_sec": 0,
+                }
+
+            sync_qdrant = qdrant_client.QdrantClient(
+                url=self.qdrant_url
+            )
+
             # Матчинг по относительному пути и по имени файла для совместимости
             # со старыми записями БД где хранится только f.name.
-            files_to_parse = (
-                [f for f in all_files
-                 if str(f.relative_to(data_dir)) in pending_names
-                 or f.name in pending_names]
-                if pending_names else all_files
-            )
+            files_to_parse = [
+                f for f in all_files
+                if str(f.relative_to(data_dir)) in pending_names
+                or f.name in pending_names
+            ]
 
             total     = len(files_to_parse)
             total_all = len(all_files)
@@ -356,33 +570,24 @@ class QdrantLlamaIndexAdapter(RAGBackend):
 
             for i, file_path in enumerate(files_to_parse, 1):
                 file_key = file_path.relative_to(data_dir).as_posix()
+                db_file_key = file_key if file_key in pending_names else file_path.name
                 if i % 50 == 0 or i == total:
                     logger.info(f"[PARSE] {i}/{total} ({_t.time()-t0:.0f}с)")
                 try:
-                    # Удаляем старые точки файла
-                    try:
-                        sync_qdrant.delete(
-                            collection_name=self.collection_name,
-                            points_selector=models.FilterSelector(
-                                filter=models.Filter(must=[
-                                    models.FieldCondition(
-                                        key="file_name",
-                                        match=models.MatchValue(value=file_key),
-                                    ),
-                                    models.FieldCondition(
-                                        key="dataset_id",
-                                        match=models.MatchValue(value=dataset_id),
-                                    ),
-                                ])
-                            ),
-                        )
-                    except Exception:
-                        pass
+                    # Удаляем старые точки файла до переиндексации. Если удаление
+                    # не удалось, нельзя честно подтвердить итоговый point count.
+                    phase_start = _t.time()
+                    self._sync_delete_file_points(sync_qdrant, dataset_id, file_key)
+                    _add_timing("delete_sec", phase_start)
 
+                    phase_start = _t.time()
                     route = route_document(file_path)
+                    _add_timing("route_sec", phase_start)
                     logger.info(
-                        "[DOC_ROUTE] %s type=%s content=%s complexity=%s pipeline=%s",
+                        "[DOC_ROUTE] %s domain=%s dataset=%s type=%s content=%s complexity=%s pipeline=%s",
                         file_key,
+                        route.domain,
+                        route.dataset_name,
                         route.doc_type,
                         route.content_type,
                         route.complexity,
@@ -391,7 +596,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
 
                     if route.pipeline == "parquet":
                         try:
-                            file_nodes = self._sync_table_nodes(file_path, data_dir, dataset_id, route)
+                            file_nodes = self._sync_table_nodes(file_path, data_dir, dataset_id, route, timings)
                         except Exception as table_err:
                             logger.warning(
                                 "[PARQUET] fallback to markdown for %s: %s",
@@ -399,18 +604,18 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                                 table_err,
                             )
                             file_nodes = self._sync_markdown_nodes(
-                                file_path, file_key, dataset_id, md_parser, splitter, route
+                                file_path, file_key, dataset_id, md_parser, splitter, route, timings
                             )
                     elif route.pipeline in ("markdown_pdf_tables", "markdown_needs_ocr"):
                         file_nodes = self._sync_markdown_nodes(
-                            file_path, file_key, dataset_id, md_parser, splitter, route
+                            file_path, file_key, dataset_id, md_parser, splitter, route, timings
                         )
                         if (
                             route.pipeline == "markdown_pdf_tables"
                             and os.getenv("PDF_TABLE_EXTRACTION_ENABLED", "false").lower() == "true"
                         ):
                             try:
-                                file_nodes.extend(self._sync_table_nodes(file_path, data_dir, dataset_id, route))
+                                file_nodes.extend(self._sync_table_nodes(file_path, data_dir, dataset_id, route, timings))
                             except Exception as table_err:
                                 logger.warning(
                                     "[PDF_TABLE] table extraction skipped for %s: %s",
@@ -419,24 +624,29 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                                 )
                     else:
                         file_nodes = self._sync_markdown_nodes(
-                            file_path, file_key, dataset_id, md_parser, splitter, route
+                            file_path, file_key, dataset_id, md_parser, splitter, route, timings
                         )
 
                     if not file_nodes:
-                        self.db.update_document_status(dataset_id, file_key, "INDEXED", 0)
+                        phase_start = _t.time()
+                        self.db.update_document_status(dataset_id, db_file_key, "INDEXED", 0, route=route)
+                        _add_timing("db_sec", phase_start)
                         continue
 
-                    # Батч-эмбеддинги по EMBED_BATCH чанков
+                    # Батч-эмбеддинги по EMBED_BATCH чанков. Upsert начинаем только
+                    # после успешного embedding всех чанков файла, чтобы не оставлять
+                    # частичный индекс при сбое середины документа.
                     points = []
                     for batch_start in range(0, len(file_nodes), EMBED_BATCH):
                         batch = file_nodes[batch_start:batch_start + EMBED_BATCH]
                         texts = [n["text"] for n in batch]
-                        try:
-                            vectors = self.embed.encode_sync(texts)
-                        except Exception as emb_err:
-                            logger.error(f"[PARSE] embed error {file_key}: {emb_err}")
-                            errors += 1
-                            continue
+                        phase_start = _t.time()
+                        vectors = self.embed.encode_sync(texts)
+                        _add_timing("embed_sec", phase_start)
+                        if len(vectors) != len(batch):
+                            raise RuntimeError(
+                                f"embedding count mismatch: got {len(vectors)}, expected {len(batch)}"
+                            )
 
                         for node, vec in zip(batch, vectors):
                             payload = dict(node.get("payload") or {})
@@ -452,47 +662,107 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                                 payload=payload,
                             ))
 
-                        # Upsert батчами
-                        if len(points) >= UPSERT_BATCH:
-                            sync_qdrant.upsert(
-                                collection_name=self.collection_name, points=points
-                            )
-                            points = []
-
-                    if points:
+                    # Upsert батчами после успешного embedding всего файла.
+                    for point_start in range(0, len(points), UPSERT_BATCH):
+                        phase_start = _t.time()
                         sync_qdrant.upsert(
-                            collection_name=self.collection_name, points=points
+                            collection_name=self.collection_name,
+                            points=points[point_start:point_start + UPSERT_BATCH],
                         )
+                        _add_timing("upsert_sec", phase_start)
 
                     file_chunk_count = len(file_nodes)
+                    phase_start = _t.time()
+                    indexed_points = self._sync_count_file_points(sync_qdrant, dataset_id, file_key)
+                    _add_timing("count_sec", phase_start)
+                    if indexed_points != file_chunk_count:
+                        raise RuntimeError(
+                            f"qdrant point count mismatch: got {indexed_points}, expected {file_chunk_count}"
+                        )
                     total_chunks    += file_chunk_count
+                    phase_start = _t.time()
                     self.db.update_document_status(
-                        dataset_id, file_key, "INDEXED", file_chunk_count
+                        dataset_id, db_file_key, "INDEXED", file_chunk_count, route=route
                     )
+                    _add_timing("db_sec", phase_start)
 
                 except Exception as file_err:
                     logger.error(f"[PARSE] ERROR {file_key}: {file_err}", exc_info=True)
-                    self.db.update_document_status(dataset_id, file_key, "ERROR", 0)
+                    try:
+                        self._sync_delete_file_points(sync_qdrant, dataset_id, file_key)
+                    except Exception as cleanup_err:
+                        logger.error("[PARSE] cleanup failed %s: %s", file_key, cleanup_err)
+                    phase_start = _t.time()
+                    self.db.update_document_status(
+                        dataset_id, db_file_key, "ERROR", 0, last_error=str(file_err)
+                    )
+                    _add_timing("db_sec", phase_start)
                     errors += 1
 
+            phase_start = _t.time()
             self.db.update_dataset_chunk_count(dataset_id)
+            remaining_pending = len(self.db.get_pending_files(dataset_id))
+            _add_timing("db_sec", phase_start)
             elapsed = _t.time() - t0
+            timings = {key: round(value, 3) for key, value in timings.items()}
             logger.info(
                 f"[PARSE] DONE: {total} файлов, {total_chunks} чанков, "
-                f"{errors} ошибок за {elapsed:.0f}с"
+                f"{errors} ошибок за {elapsed:.0f}с, осталось pending={remaining_pending}, "
+                f"timings={timings}"
             )
             return {
                 "status":       "completed",
                 "chunks":       total_chunks,
                 "files_parsed": total,
                 "files_skipped": total_all - total,
+                "remaining_pending": remaining_pending,
                 "errors":       errors,
                 "elapsed_sec":  round(elapsed, 1),
+                "timings":      timings,
             }
 
         except Exception as e:
             logger.error(f"[PARSE] FATAL: {e}", exc_info=True)
             return {"status": "failed", "error": str(e)}
+
+    def _file_filter(self, dataset_id: str, file_key: str) -> models.Filter:
+        return models.Filter(must=[
+            models.FieldCondition(
+                key="file_name",
+                match=models.MatchValue(value=file_key),
+            ),
+            models.FieldCondition(
+                key="dataset_id",
+                match=models.MatchValue(value=dataset_id),
+            ),
+        ])
+
+    def _sync_delete_file_points(
+        self,
+        sync_qdrant: qdrant_client.QdrantClient,
+        dataset_id: str,
+        file_key: str,
+    ) -> None:
+        sync_qdrant.delete(
+            collection_name=self.collection_name,
+            points_selector=models.FilterSelector(
+                filter=self._file_filter(dataset_id, file_key)
+            ),
+            wait=True,
+        )
+
+    def _sync_count_file_points(
+        self,
+        sync_qdrant: qdrant_client.QdrantClient,
+        dataset_id: str,
+        file_key: str,
+    ) -> int:
+        result = sync_qdrant.count(
+            collection_name=self.collection_name,
+            count_filter=self._file_filter(dataset_id, file_key),
+            exact=True,
+        )
+        return int(result.count)
 
     def _sync_markdown_nodes(
         self,
@@ -502,11 +772,17 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         md_parser: MarkdownNodeParser,
         splitter: SentenceSplitter,
         route: DocumentRoute | None = None,
+        timings: dict[str, float] | None = None,
     ) -> list[dict]:
+        import time as _t
+        phase_start = _t.time()
         md_content = convert_to_markdown(file_path)
+        if timings is not None:
+            timings["convert_sec"] = timings.get("convert_sec", 0.0) + (_t.time() - phase_start)
         if not md_content:
             return []
 
+        phase_start = _t.time()
         doc = Document(
             text=md_content,
             metadata={"file_name": file_key, "dataset_id": dataset_id},
@@ -533,6 +809,8 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     "doc_id": node.node_id,
                     "payload": self._route_payload(route, {"type": "markdown"}),
                 })
+        if timings is not None:
+            timings["chunk_sec"] = timings.get("chunk_sec", 0.0) + (_t.time() - phase_start)
         return file_nodes
 
     def _sync_table_nodes(
@@ -541,10 +819,15 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         data_dir: Path,
         dataset_id: str,
         route: DocumentRoute | None = None,
+        timings: dict[str, float] | None = None,
     ) -> list[dict]:
+        import time as _t
         parquet_dir = data_dir / "_parquet" / file_path.relative_to(data_dir).parent
         normalizer = TableNormalizer(parquet_dir=str(parquet_dir), use_llm=False)
+        phase_start = _t.time()
         result = asyncio.run(normalizer.process(str(file_path), dataset_id=dataset_id))
+        if timings is not None:
+            timings["convert_sec"] = timings.get("convert_sec", 0.0) + (_t.time() - phase_start)
         parquet_path = result.get("parquet_path") or ""
         parquet_rel = ""
         if parquet_path:
@@ -553,6 +836,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             except ValueError:
                 parquet_rel = parquet_path
 
+        phase_start = _t.time()
         nodes = []
         for i, chunk in enumerate(result.get("chunks") or []):
             text = str(chunk.get("text") or "")
@@ -586,6 +870,8 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 "doc_id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"{dataset_id}:{file_path}:needs_ocr")),
                 "payload": self._route_payload(route, payload),
             })
+        if timings is not None:
+            timings["chunk_sec"] = timings.get("chunk_sec", 0.0) + (_t.time() - phase_start)
         return nodes
 
     def _route_payload(self, route: DocumentRoute | None, payload: dict) -> dict:

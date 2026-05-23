@@ -3,7 +3,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from proxy.services.retrieval_service import resolve_dataset_ids, retrieve_chat_chunks
+from proxy.services.retrieval_service import (
+    classify_query,
+    expand_retrieval_query,
+    infer_dataset_filter,
+    resolve_dataset_ids,
+    retrieve_chat_chunks,
+)
 
 
 @dataclass
@@ -24,7 +30,12 @@ class FakeBackend:
         self.calls = []
 
     async def list_datasets(self):
-        return [Dataset("ds-1", "NTD_Index"), Dataset("ds-2", "Other_Index")]
+        return [
+            Dataset("ds-1", "NTD_FIRE_Index"),
+            Dataset("ds-4", "NTD_OTHER_Index"),
+            Dataset("ds-2", "Other_Index"),
+            Dataset("ds-3", "GKRF_Index"),
+        ]
 
     async def retrieve(self, question, dataset_ids=None, top_k=5):
         self.calls.append({"question": question, "dataset_ids": dataset_ids, "top_k": top_k})
@@ -57,7 +68,7 @@ async def test_resolve_dataset_ids_uses_named_filter_when_ids_missing():
 
     resolved = await resolve_dataset_ids(backend, None, "NTD", SimpleNamespace(info=lambda *a: None, warning=lambda *a: None))
 
-    assert resolved == ["ds-1"]
+    assert resolved == ["ds-1", "ds-4"]
 
 
 @pytest.mark.asyncio
@@ -67,6 +78,42 @@ async def test_resolve_dataset_ids_preserves_explicit_ids():
     resolved = await resolve_dataset_ids(backend, ["explicit"], "NTD", SimpleNamespace(info=lambda *a: None, warning=lambda *a: None))
 
     assert resolved == ["explicit"]
+
+
+def test_infer_dataset_filter_routes_normative_queries():
+    assert infer_dataset_filter("ширина путей эвакуации") == "NTD_FIRE"
+    assert infer_dataset_filter("список разделов проектной документации по постановлению 87") == "GKRF"
+
+
+def test_classify_query_explains_route():
+    route = classify_query("какое сечение кабеля заземления")
+
+    assert route.dataset_filter == "NTD_ELECTRICAL"
+    assert route.reason == "electrical_keyword"
+    assert route.expanded_query == "какое сечение кабеля заземления"
+
+
+def test_expand_retrieval_query_for_pp87_section_list():
+    expanded = expand_retrieval_query("список разделов проектной документации по постановлению 87")
+
+    assert "Проектная документация на объекты капитального строительства состоит из 12 разделов" in expanded
+    assert "Раздел 1 Пояснительная записка" in expanded
+    assert "линейные объекты" in expanded
+
+
+@pytest.mark.asyncio
+async def test_resolve_dataset_ids_infers_filter_from_question():
+    backend = FakeBackend()
+
+    resolved = await resolve_dataset_ids(
+        backend,
+        None,
+        None,
+        SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+        question="список разделов проектной документации по постановлению 87",
+    )
+
+    assert resolved == ["ds-3"]
 
 
 @pytest.mark.asyncio

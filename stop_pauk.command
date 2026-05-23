@@ -18,5 +18,5 @@ if [ -f "$PID_FILE" ]; then
     rm -f "$PID_FILE"
 else
     # Fallback: убиваем по паттерну
-    pkill -f "ssh.*8051:localhost:8051.*185.185.71.196" && echo "  ✓ Туннель остановлен" || echo "  ⚠ Туннель не найден"
+    pkill -f "ssh.*127.0.0.1:8050:localhost:8050.*185.185.71.196" && echo "  ✓ Туннель остановлен" || echo "  ⚠ Туннель не найден"
 fi

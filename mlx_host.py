@@ -45,7 +45,8 @@ logger = logging.getLogger(__name__)
 # ── Конфигурация ──────────────────────────────────────────────────────────────
 MAIN_MODEL = os.getenv("MLX_MODEL",     "mlx-community/Qwen3-14B-4bit")
 VAL_MODEL  = os.getenv("MLX_VAL_MODEL", "mlx-community/Qwen3-4B-4bit")
-BGE_MODEL  = "BAAI/bge-m3"
+BGE_MODEL  = os.getenv("BGE_MODEL", "BAAI/bge-m3")
+BGE_BATCH_SIZE = int(os.getenv("BGE_BATCH_SIZE", "32"))
 
 main_engine = MLXMemoryManager(model_path=MAIN_MODEL, ttl_seconds=300)
 val_engine  = MLXMemoryManager(model_path=VAL_MODEL,  ttl_seconds=120)
@@ -79,7 +80,7 @@ class BGEEmbedder:
             texts,
             normalize_embeddings=True,  # L2-норма встроена
             show_progress_bar=False,
-            batch_size=32,
+            batch_size=int(os.getenv("BGE_BATCH_SIZE", str(BGE_BATCH_SIZE))),
         )
         return [v.tolist() for v in vecs]
 
@@ -302,7 +303,11 @@ async def health():
         "status":      "ok",
         "main_model":  {"path": main_engine.model_path, "loaded": main_engine.model is not None},
         "val_model":   {"path": val_engine.model_path,  "loaded": val_engine.model is not None},
-        "embed_model": {"path": BGE_MODEL,               "loaded": embedder._model is not None},
+        "embed_model": {
+            "path": BGE_MODEL,
+            "loaded": embedder._model is not None,
+            "batch_size": int(os.getenv("BGE_BATCH_SIZE", str(BGE_BATCH_SIZE))),
+        },
         "memory": {
             "ram_free_gb":  round(vm.available / 1e9, 1),
             "swap_used_gb": round(sw.used / 1e9, 1),
@@ -318,6 +323,24 @@ async def unload_val():
     if was_loaded:
         val_engine._unload_model()
     return {"unloaded": was_loaded, "val_model": val_engine.model_path}
+
+
+@app.post("/api/unload_all")
+async def unload_all():
+    """Принудительно освобождает все тяжёлые модели между стресс-тестами."""
+    state = {
+        "main_model": main_engine.model is not None,
+        "val_model": val_engine.model is not None,
+        "embed_model": embedder._model is not None,
+    }
+    if state["main_model"]:
+        main_engine.force_unload()
+    if state["val_model"]:
+        val_engine.force_unload()
+    if state["embed_model"]:
+        embedder.force_unload()
+    gc.collect()
+    return {"unloaded": state}
 
 
 @app.get("/api/host_memory")

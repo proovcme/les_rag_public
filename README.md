@@ -1,9 +1,9 @@
-# 🌲 Л.Е.С. — Локальная Экспертная Система
+# 🌲 Л.Е.С. — Локальная Единая Система
 
 **Локальная RAG-система для работы с нормативной документацией.**  
 Работает полностью офлайн на Apple Silicon (Mac Mini M4). Никакие данные не покидают локальную сеть.
 
-**Актуальный статус: 22.05.2026.** С.О.В.У.Ш.К.А. разделена на лёгкий чат и админку: `https://les.ovc.me/` открывает премиальный чат с выезжающей историей и панелью артефактов, `https://les.ovc.me/les` открывает админский контур. Основной LLM-контур работает через MLX Host, Ollama оставлен только как резерв.
+**Актуальный статус: 23.05.2026.** С.О.В.У.Ш.К.А. разделена на лёгкий чат и админку: `https://les.ovc.me/` открывает премиальный чат с выезжающей историей и панелью артефактов, `https://les.ovc.me/les` открывает админский контур. Runtime стабилизирован: Qdrant живёт в OrbStack/Docker, `les-proxy` и SQLite работают на host через LaunchAgent `me.ovc.les.proxy`, MLX Host обслуживает LLM/validator/embedder. Intake/RAG усилен smart validation, deterministic routing, clarification gate, smart upload, micro-indexing и первым parquet-backed table query слоем.
 
 ---
 
@@ -28,21 +28,20 @@
 │  VPS П.А.У.К. (Debian 13, 185.185.71.196)       │
 │                                                 │
 │  Caddy :443  (Let's Encrypt, les.ovc.me)        │
-│       ├── /api/* → proxy_server :8050           │
-│       └── /*     → sovushka_ng  :8051           │
+│       ├── /api/* → 10.195.146.98:8050           │
+│       └── /*     → 10.195.146.98:8051           │
 │             ├── /     → AI ЧАТ + история        │
 │             └── /les  → админка Л.Е.С.          │
 │                                                 │
-│  ZeroTier mesh → Mac Mini                       │
-│       ├── 10.195.146.98:6333 → Qdrant           │
-│       └── 10.195.146.98:8080 → MLX Host         │
+│  Только HTTPS-релей. RAG/SQLite/UI/LLM не живут │
+│  на VPS; вся механика работает на Mac Mini.     │
 └─────────────────────────────────────────────────┘
          │  ZeroTier `8d1c312afa249de4`
 ┌────────▼────────────────────────────────────────┐
 │  Mac Mini M4 / 24 GB (Ж.А.Б.А.)                │
 │                                                 │
 │  С.О.В.У.Ш.К.А.  (NiceGUI UI, порт 8051)       │
-│  les-proxy        (FastAPI,    порт 8050)        │
+│  les-proxy        (FastAPI host, порт 8050)      │
 │       ├── proxy_server.py → proxy.app           │
 │       ├── proxy/security.py (server-side RBAC)  │
 │       ├── RAG pipeline  (С.А.М.О.В.А.Р.)        │
@@ -54,7 +53,7 @@
 │       ├── Qwen3-4B-4bit      (валидатор)         │
 │       └── BGE-M3             (эмбеддинги, MPS)   │
 │                                                 │
-│  Qdrant  (векторная база, порт 6333)            │
+│  Qdrant  (OrbStack/Docker, порт 6333)           │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -64,13 +63,17 @@
 
 | Аббревиатура | Расшифровка | Роль |
 |---|---|---|
-| **С.О.В.У.Ш.К.А.** | Система Оперативного Взаимодействия с Умной Шкатулкой Корпоративных Активов | UI (NiceGUI) |
-| **С.А.М.О.В.А.Р.** | Система Автоматической Масштабируемой Обработки Векторных Архивов Регламентов | RAG / Qdrant |
-| **Т.О.С.К.А.** | Технология Оценки Соответствия Контента Архивным данным | CRAG валидатор |
-| **В.О.Л.К.** | Валидатор Ограничений Лиц и Ключей | Auth / RBAC |
-| **П.А.У.К.** | Периметральный Аванпост Удалённого Контроля | VPS прокси |
-| **Е.Ж.И.К.** | Ежедневный Журнализатор Инженерной Корреспонденции | IMAP / почта |
-| **Ж.А.Б.А.** | — | Mac Mini (хост) |
+| **Л.Е.С.** | Локальная Единая Система | Оркестратор, API Gateway |
+| **Ж.А.Б.А.** | Жёсткая Аппаратная База Аналитики | Mac Mini (хост) |
+| **С.А.М.О.В.А.Р.** | Система Автономная Машинной Обработки Внутренних Архивов РАГ | RAG / Qdrant |
+| **Т.О.С.К.А.** | Терминал Оценки, Самопроверки и Контроля Архитектуры | CRAG валидатор |
+| **С.О.В.У.Ш.К.А.** | Система Обработки и Выдачи: Умная, Шаблонизированная, Классифицированная, Автоматизированная | UI (NiceGUI) |
+| **П.Р.О.Р.А.Б.** | Программа Регулярной Оценки Работы Автономной Базы | Метрики / диагностика |
+| **К.О.Т.** | Куратор Отраслевой Терминологии | Семантический фильтр |
+| **В.О.Л.К.** | Внутренний Охранный Локальный Контур | Auth / RBAC |
+| **П.А.У.К.** | Периметровый Автономный Узел Коммуникаций | VPS relay |
+| **С.У.Х.А.Р.И.К.** | Система Управления Холодными Архивами и Резервными Источниками Комплекса | Снапшоты / бэкапы |
+| **Е.Ж.И.К.** | *(расшифровка уточняется)* | IMAP / почта |
 
 ---
 
@@ -95,7 +98,7 @@
 
 ### Требования
 - Mac с Apple Silicon (M1/M2/M4) и минимум 16 GB RAM (рекомендуется 24 GB)
-- Docker Desktop
+- OrbStack или Docker Desktop; штатно используется только Qdrant-контейнер
 - [uv](https://docs.astral.sh/uv/) (`brew install uv`)
 - Python 3.12+
 
@@ -112,10 +115,8 @@ uv sync
 cp env.example .env
 # Отредактируй .env — укажи модели и пароль
 
-# Запуск
-docker compose up -d          # Qdrant + les-proxy
-./start_mlx.command           # MLX Host (LLM + Embeddings)
-uv run python sovushka_ng.py  # UI
+# Запуск всего контура: Qdrant в OrbStack/Docker, proxy/MLX/UI на host
+./les.command start
 ```
 
 Открой `http://localhost:8051` для чата или `http://localhost:8051/les` для админки.
@@ -127,8 +128,17 @@ uv run python sovushka_ng.py  # UI
 mkdir -p RAG_Content/MyDocs
 cp my_norms/*.pdf RAG_Content/MyDocs/
 
-# Запусти индексацию через UI или curl
-curl -X POST http://localhost:8050/api/rag/sync/MyDocs
+# Сухой smart-plan: покажет accepted/rejected и будущие индексы
+curl -s http://localhost:8050/api/rag/smart-plan | python3 -m json.tool
+
+# Smart sync: файлы раскладываются по классифицированным индексам
+curl -X POST http://localhost:8050/api/rag/sync-smart \
+  -H 'Content-Type: application/json' \
+  -d '{"source_root":"RAG_Content","parse":false}'
+
+# Smart upload одного файла: индекс выбирается автоматически
+curl -X POST http://localhost:8050/api/rag/upload-smart \
+  -F "file=@my_smeta.csv"
 ```
 
 ---
@@ -139,10 +149,20 @@ curl -X POST http://localhost:8050/api/rag/sync/MyDocs
 Запрос пользователя
       │
       ▼
+Clarification gate
+      ├── широкий/неясный запрос → NEEDS_CLARIFICATION + вопросы
+      └── узкий запрос → retrieval
+      │
+      ▼
 Векторный поиск (BGE-M3 + Qdrant)  top-8 чанков
       │
       ▼ [опционально, включается в UI]
 Реранкер (Qwen3-4B batch) → top-5 релевантных чанков
+      │
+      ▼
+Table query gate
+      ├── найден parquet_path + табличный вопрос → точный VERIFIED ответ из Parquet
+      └── нет табличного ответа → LLM
       │
       ▼
 Промпт = системный + контекст + вопрос
@@ -208,13 +228,13 @@ Qwen3-14B (MLX, Metal)
 |---------|-----|
 | MLX (Qwen3-14B) | зависит от квантования |
 | MLX (Qwen3-4B val) | зависит от квантования |
-| les-proxy (Docker) | ≤ 512 MB |
-| les-qdrant (Docker) | ≤ 1 GB |
+| les-proxy (host LaunchAgent) | Python-процесс, без Docker VM |
+| les-qdrant (OrbStack/Docker) | ≤ 1 GB |
 | **Итого** | **~10 GB** |
 
-Docker-контейнеры имеют жёсткий `mem_limit` в `docker-compose.yml`.
+В штатном режиме Docker/OrbStack держит только Qdrant. Docker-proxy оставлен как opt-in profile `docker-proxy`, чтобы SQLite работал напрямую на host, а не через bind mount VM.
 
-`les.command` запускает **MLX Watchdog** — фоновый процесс, который перезапускает MLX через 30 секунд при падении (OOM kill). Виден в `./les.command status`.
+`les.command` поднимает Qdrant через OrbStack, а `les-proxy` — как host LaunchAgent `me.ovc.les.proxy`.
 
 `mlx_host.py` читает `.env` самостоятельно при старте — не зависит от оболочки запуска.
 
@@ -240,6 +260,27 @@ DOC_ROUTER_SAMPLE_PAGES=3
 - `restart_sovushka.command` запускает UI через `.venv/bin/python3`, чтобы не сваливаться в системный Python 3.9.
 - Добавлены semantic cache, document router, Parquet/XLSX/CSV pipeline и тесты для них.
 
+### Новое в релизе 23.05.2026
+
+- **Smart intake:** `verify_source_file()` отбрасывает служебные директории, UUID staging, неподдержанные расширения, пустые и слишком крупные файлы (`RAG_SOURCE_MAX_MB`, default `100`).
+- **Smart plan/sync:** `/api/rag/smart-plan` и `/api/rag/sync-smart` строят deterministic route по имени, пути, типу, размеру и probes без LLM.
+- **Smart upload:** `/api/rag/upload-smart` сохраняет файл потоково, классифицирует через Document Router, сам выбирает/создаёт `*_Index` и запускает guarded parse `limit=1`.
+- **Clarification gate:** `/api/chat` возвращает `NEEDS_CLARIFICATION` и уточняющие вопросы до retrieval/LLM, если запрос слишком широкий.
+- **Table query MVP:** `proxy/services/table_query_service.py` читает `.parquet` по `parquet_path` из payload и считает суммы/количества без генерации LLM.
+- **OrbStack runtime:** Docker/OrbStack держит только `les-qdrant`; `les-proxy` вынесен на host LaunchAgent `me.ovc.les.proxy`, SQLite больше не работает через VM bind mount.
+- **Micro-indexing:** safe loop `tools/rag_safe_parse_loop.py` индексирует по одному файлу, проверяет RAM/swap и `points_match_sqlite_chunks`.
+- **Memory guard fix:** `swap_pct=0.0` больше не превращается в `100.0` в safe-loop и server-side parse admission.
+- **Startup hardening:** `les.command` стартует Qdrant, MLX, host-proxy и UI без дублирования уже живых listener-процессов.
+- **Resource Governor v1:** `/api/indexing-mode` разделяет рабочий чат и индексацию, ставит chat generation на паузу, управляет unload MLX и приоритетом индексов.
+- **Parse scheduler v2:** приоритет `NTD_FIRE → GKRF → NTD_ELECTRICAL → NTD_STRUCTURAL → TABLE_SMETA → NTD_OTHER`, post-batch memory hysteresis, `warm_embedder`, phase timings.
+- **BGE/chunk knobs:** `BGE_BATCH_SIZE`, `RAG_EMBED_BATCH`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP`, `RAG_PARSE_POST_MAX_SWAP_PCT`.
+- **Финальное состояние сессии:** `indexed_files=9`, `pending_files=792`, `chunks=850`, Qdrant points `850`, `points_match_sqlite_chunks=true`, `errors=0`.
+- **Проверки:** `uv run pytest` → `107 passed`; `git diff --check` → OK.
+
+### Следующая сессия
+
+Начать с независимой оценки архитектуры: пройти runtime/resource-governor/indexing/RAG-quality как внешний reviewer, не продолжая кодинг до формулировки рисков, границ и приоритетов.
+
 ---
 
 ## Быстрая диагностика
@@ -253,7 +294,7 @@ curl -s http://localhost:8050/api/diag | python3 -c \
 curl -s http://localhost:8050/api/metrics | python3 -m json.tool
 
 # Логи в реальном времени
-docker logs -f les-proxy 2>&1 | grep -E "\[CHAT\]|\[PARSE\]|\[ERROR\]"
+tail -f logs/proxy.log | grep -E "\[CHAT\]|\[PARSE\]|\[ERROR\]"
 ```
 
 ### Runtime smoke после деплоя
@@ -275,6 +316,55 @@ uv run python tools/runtime_smoke.py \
 ```
 
 Smoke проверяет health/status/metrics/diag, загрузку UI shell, auth boundary для admin/user ключей и опциональные живые RAG-вопросы.
+
+### RAG golden set после milestone индексирования
+
+```bash
+uv run python tools/rag_golden_set.py \
+  --key-db data/les_meta.db \
+  --key-role user
+```
+
+Golden set использует `/api/rag/retrieve-debug`, поэтому проверяет качество найденных источников без запуска LLM. Базовые NTD-кейсы лежат в `golden/ntd_golden_set.json`; после каждого блока micro-indexing команда должна проходить без падений и показывать ожидаемые source/content hints.
+
+### Indexing mode
+
+```bash
+# Включить режим индексации: выгружает MLX-модели, ставит chat generation на паузу
+curl -X POST http://localhost:8050/api/indexing-mode \
+  -H 'Content-Type: application/json' \
+  -d '{"enabled":true,"reason":"night batch","unload_models":true}'
+
+# Один приоритетный batch: NTD_FIRE → GKRF → NTD_ELECTRICAL → NTD_STRUCTURAL → TABLE_SMETA → NTD_OTHER
+curl -X POST http://localhost:8050/api/rag/parse-scheduler \
+  -H 'Content-Type: application/json' \
+  -d '{"batch_limit":1,"max_batches":1,"background":false,"stop_on_error":true}'
+
+# Короткая warm-embedder серия: не выгружать BGE-M3 между файлами, но остановиться после batch при росте swap
+curl -X POST http://localhost:8050/api/rag/parse-scheduler \
+  -H 'Content-Type: application/json' \
+  -d '{"batch_limit":1,"max_batches":3,"warm_embedder":true,"post_batch_max_swap_pct":60,"background":false,"stop_on_error":true}'
+
+# Вернуться к рабочему чату
+curl -X POST http://localhost:8050/api/indexing-mode \
+  -H 'Content-Type: application/json' \
+  -d '{"enabled":false,"reason":"work/chat"}'
+```
+
+В `indexing-mode` чат-генерация возвращает `409`, чтобы не грузить main LLM параллельно с embedder. Clarification/retrieval/golden запускаются только после явного возврата в chat mode.
+
+Ответ `parse-scheduler` содержит phase timings по batch: `convert_sec`, `chunk_sec`, `embed_sec`, `upsert_sec`, `count_sec`. Это основной диагностический сигнал для ускорения индексации; на контрольном NTD_FIRE-файле bottleneck был в `embed_sec`.
+
+Операторские env-ручки:
+
+```env
+BGE_MODEL=BAAI/bge-m3
+BGE_BATCH_SIZE=16              # внутренний batch sentence-transformers; меньше = ниже peak memory
+RAG_EMBED_BATCH=16             # чанков за один HTTP-запрос к /v1/embeddings
+RAG_CHUNK_SIZE=900             # больше chunk = меньше embedding-вызовов
+RAG_CHUNK_OVERLAP=80
+RAG_PARSE_POST_MAX_SWAP_PCT=60 # auto-stop после batch
+```
 
 ### Browser smoke UI
 
@@ -314,7 +404,7 @@ les-rag-public/
 │   ├── legacy_app.py         ← compatibility shim for old imports
 │   ├── routers/              ← auth, chat, datasets, runtime, diagnostics, jobs
 │   ├── security.py           ← X-API-Key/Bearer, admin/user guards
-│   └── services/             ← JobService, retrieval, SafeRAG policy
+│   └── services/             ← JobService, retrieval, SafeRAG, clarification, table query
 ├── start_mlx.command
 ├── stop_mlx.command
 ├── start_pauk.command        ← резервный SSH tunnel к VPS
@@ -324,6 +414,9 @@ les-rag-public/
 ├── backend/
 │   ├── mlx_adapter.py        ← MLXMemoryManager
 │   ├── qdrant_adapter.py     ← EmbedClient + RAG
+│   ├── smart_index.py        ← source verification + smart plan
+│   ├── document_router.py    ← deterministic ingestion classifier
+│   ├── parquet_writer.py     ← table normalization + parquet artifacts
 │   ├── converter.py          ← PDF/DOCX/XLSX → текст
 │   ├── metrics_collector.py
 │   └── interface.py
@@ -366,15 +459,20 @@ MIT — используй, форкай, улучшай.
 - [x] SafeRAG error handling — таймаут/ошибка валидатора → safe fallback, неподтверждённый ответ не отдаётся как нормальный
 - [x] Rate limiting (≤ 2 параллельных LLM-запроса), защита от prompt injection, path traversal
 - [x] `les.command` — единый скрипт управления (start/stop/restart/status)
+- [x] Startup hardening — ожидание Docker daemon перед запуском proxy/Qdrant
 - [x] Proxy modularization — активные endpoints вынесены в routers/services, `legacy_app.py` оставлен shim
 - [x] Stabilization: runtime smoke для локального/VPS post-deploy контура
 - [x] Stabilization: browser smoke UI admin/user сценариев
-- [ ] RAG quality hardening: hybrid retrieval (dense + exact/sparse), golden set, trace/audit
+- [ ] RAG quality hardening: hybrid retrieval (dense + exact/sparse), расширение golden set, trace/audit
+- [x] RAG intake hardening: smart-plan, source verification, size guard, excluded dirs
+- [x] Chat clarification gate — broad запросы получают уточняющие вопросы до retrieval/LLM
 - [x] Performance: semantic cache для VERIFIED ответов с dataset-scope invalidation
 - [ ] Performance backlog: streaming validation, embedder TTL/offload, MLX tuning
+- [x] Indexing mode + parse scheduler — приоритетные батчи pending файлов с memory hysteresis
 - [ ] Folder Watcher — автосинк новых файлов
 - [x] Parquet pipeline для XLSX/XLS/CSV — row-level chunks + `.parquet` artifacts
 - [x] Experimental PDF tables → Parquet — PyMuPDF first, pdfplumber fallback, `needs_ocr` marker
+- [x] Table query MVP — суммы/количества из Parquet по `parquet_path` без LLM
 - [x] Document Router — быстрый probe/classify/complexity перед выбором ingestion pipeline
 - [ ] XLS/CSV export — выдача табличных результатов как готовых файлов
 - [ ] Field Intake — внешние формы загрузки в карантинный `FIELD_Index`
@@ -387,6 +485,6 @@ MIT — используй, форкай, улучшай.
 - **Динамическая выгрузка эмбеддера:** держать `bge-m3` в памяти только во время retrieval/warm path, затем выгружать по агрессивному TTL, освобождая RAM/MPS для основной LLM.
 - **Параллельная валидация:** перейти от post-factum проверки полного ответа к асинхронной проверке чанков по мере streaming generation, чтобы снизить time-to-first-token в UI.
 - **Аппаратный тюнинг MLX:** проверить Flash Attention на длинном контексте и смешанное квантование 14B модели: критичные слои в 8 bit, остальные в 4 bit.
-- **Табличный контур:** базовый Parquet ingestion внедрён для XLSX/XLS/CSV. PDF tables слой добавлен как экспериментальный `PDF_TABLE_EXTRACTION_ENABLED`: PyMuPDF `find_tables()` first, pdfplumber fallback, сканы помечаются `needs_ocr`.
+- **Табличный контур:** базовый Parquet ingestion внедрён для XLSX/XLS/CSV. PDF tables слой добавлен как экспериментальный `PDF_TABLE_EXTRACTION_ENABLED`: PyMuPDF `find_tables()` first, pdfplumber fallback, сканы помечаются `needs_ocr`. Первый query слой уже читает parquet напрямую для сумм/количеств; следующий шаг — фильтры, группировки, сравнение смет и UI-таблица `table_query.rows`.
 - **Полевой загрузчик:** внешняя форма через П.А.У.К. для загрузки актов, фотоотчётов, предписаний и комментариев в изолированный карантинный датасет `FIELD_Index`, без смешивания с нормативной базой.
 - **Выдача XLS/CSV:** экспорт табличных ответов и AG Grid результатов в цифровой артефакт для смет, ведомостей и рабочей документации.

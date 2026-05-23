@@ -71,6 +71,6 @@ a{{color:#3b82f6;text-decoration:none}}
   </div>
 </div>
 <div class="dim" style="font-size:.65rem;margin-top:16px">
-  С.О.В.У.Ш.К.А. UI → <a href="http://les.ovc.me:8051">:8051</a>
+  С.О.В.У.Ш.К.А. UI → <a href="https://les.ovc.me/">les.ovc.me</a>
 </div>
 </body></html>""")

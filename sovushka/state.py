@@ -24,6 +24,7 @@ state = {
     "status": {},
     "mlx_health": {},
     "datasets": [],
+    "rag_health": {},
     "sources": [],
     "jobs": {},
     "chat_history": [],        # list of {role, text, srcs, crag}
@@ -188,10 +189,13 @@ async def refresh_samovar():
     prev_count = len(state["sources"])
     src = await api_get("/api/rag/sources")
     ds  = await api_get("/api/rag/datasets")
+    health = await api_get("/api/health")
     if src is not None:
         state["sources"] = src
     if ds is not None:
         state["datasets"] = ds
+    if isinstance(health, dict):
+        state["rag_health"] = health.get("rag", {})
     j = await api_get("/api/jobs")
     if j:
         state["jobs"] = j

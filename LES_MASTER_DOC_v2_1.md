@@ -1,5 +1,5 @@
 # 🦉 Л.Е.С. — Локальная Единая Система
-## Мастер-документ v3.3 | 22.05.2026
+## Мастер-документ v3.5 | 23.05.2026
 
 > Единый источник истины. Объединяет README, ROADMAP, Архитектуру, Инфраструктуру, Словарь, Программу испытаний.  
 > Авторы: Клодыч (Claude), Кен (Qwen), Панорамыч (Gemini).
@@ -30,7 +30,7 @@
 |---|---|
 | **Fully Local** | Все модели на устройстве, нет cloud API |
 | **Zero-Cloud** | Данные никогда не покидают локальный контур |
-| **Lightweight** | 2 Docker-контейнера, без RAGFlow/ES/MySQL/MinIO/Redis/Celery |
+| **Lightweight** | Qdrant в OrbStack/Docker; proxy/SQLite/MLX/UI на host, без RAGFlow/ES/MySQL/MinIO/Redis/Celery |
 | **Sovereign** | Полный контроль над кодом, данными, моделями |
 
 ### Ключевые изменения v1.5 → v2.0
@@ -96,6 +96,27 @@
 - **Restart hardening:** `restart_sovushka.command` запускает `.venv/bin/python3`, а не системный Python 3.9, и сохраняет реальный PID слушателя.
 - **Data pipeline:** semantic cache, Document Router, XLSX/CSV row-level chunks и Parquet artifacts покрыты тестами.
 
+### Ключевые изменения v3.4 (Smart intake + Table query, 23.05.2026)
+- **Source verification:** `backend/smart_index.py` проверяет каждый входной файл и возвращает `accepted/rejected + reason`: `excluded_dir`, `uuid_staging_dir`, `unsupported_suffix`, `empty_file`, `file_too_large`.
+- **Memory-safe intake:** `RAG_SOURCE_MAX_MB` ограничивает размер исходника для smart-plan, default `100`; служебные `CLAUDE/QWEN` и UUID staging не попадают в кандидаты.
+- **Smart plan/sync:** `/api/rag/smart-plan` и `/api/rag/sync-smart` раскладывают документы по deterministic route без LLM: `NTD_FIRE`, `NTD_ELECTRICAL`, `NTD_STRUCTURAL`, `NTD_OTHER`, `GKRF`, `TABLE_*`.
+- **Smart upload:** `/api/rag/upload-smart` потоково принимает файл, классифицирует через `backend/document_router.py`, сам находит или создаёт нужный `*_Index`, затем запускает guarded parse `limit=1`.
+- **Clarification gate:** `/api/chat` до retrieval/LLM останавливает слишком широкие запросы и возвращает `NEEDS_CLARIFICATION`, `clarifying_questions`, `suggested_filters`.
+- **Table query MVP:** `proxy/services/table_query_service.py` читает `.parquet` по `parquet_path` из Qdrant payload и считает суммы/количества без генерации LLM. Ответ возвращается как `VERIFIED` с полем `table_query`.
+- **Startup hardening:** `les.command` и `start_les.command` ждут Docker daemon и прекращают старт при ошибке compose.
+- **Историческая проверка v3.4:** `uv run pytest` → `82 passed`; `git diff --check` → OK.
+
+### Ключевые изменения v3.5 (Runtime stabilization + micro-indexing, 23.05.2026)
+- **Docker Desktop снят с критического пути:** система переведена на OrbStack; штатный compose поднимает только `les-qdrant`.
+- **Host-proxy:** `les-proxy` вынесен из Docker и запускается через LaunchAgent `me.ovc.les.proxy`; SQLite `data/les_meta.db` больше не работает через VM bind mount.
+- **Docker-proxy opt-in:** сервис `proxy` в `docker-compose.yml` оставлен только под profile `docker-proxy`.
+- **Host URLs:** локальный runtime использует `MLX_URL=http://127.0.0.1:8080` и `QDRANT_URL=http://127.0.0.1:6333`; Docker overrides сохранены в compose.
+- **Safe micro-indexing:** `tools/rag_safe_parse_loop.py` индексирует `batch=1`, перед стартом проверяет RAM/swap, после старта сверяет SQLite chunks и Qdrant points.
+- **Memory guard fix:** `swap_pct=0.0` больше не трактуется как `100.0` в safe-loop и `/api/rag/parse-scheduler`.
+- **Dataset status fix:** limited parse (`limit=1`) возвращает dataset в `IDLE`, а не оставляет его в `PARSING`.
+- **Контрольный прогон:** после перехода micro-index увеличил состояние до `indexed_files=5`, `pending_files=796`, `chunks=529`, `qdrant.points=529`, `points_match_sqlite_chunks=true`.
+- **Проверки:** `uv run pytest` → `97 passed`; `git diff --check` и `docker compose config --quiet` → OK.
+
 ### Ключевые изменения v2.2 → v2.3
 - **Т.О.С.К.А.: исправлен статус UNKNOWN** — `enable_thinking=False` для Qwen3-4B (валидатор не думает, сразу отвечает), `max_tokens` поднят с 10 до 64
 - **С.О.В.У.Ш.К.А.: убрана обрезка ответа** — лимит 600 символов в чат-пузыре снят, ответ полный
@@ -129,52 +150,49 @@
 - **Caddy** — reverse proxy с автоматическим HTTPS (Let's Encrypt)
 - **DNS** — `les.ovc.me` → `185.185.71.196`
 
-**Топология (live, v2.7+):**
+**Топология (live, v2.9+):**
 ```
 Интернет → les.ovc.me → Caddy (VPS :443)
-                             ├── /api/* → localhost:8050 (proxy_server на VPS)
-                             └── /*     → localhost:8051 (sovushka_ng на VPS)
-                                              │
-                             ZeroTier mesh (10.195.146.0/24)
+                             ├── /api/* → 10.195.146.98:8050 (les-proxy на Mac)
+                             └── /*     → 10.195.146.98:8051 (С.О.В.У.Ш.К.А. на Mac)
                                               │
                              Mac Mini (Ж.А.Б.А.) — 10.195.146.98
+                                  ├── :8050 les-proxy / API / RAG
+                                  ├── :8051 NiceGUI UI
                                   ├── :6333 Qdrant
                                   └── :8080 MLX Host
 ```
 
 **ZeroTier:**
 - VPS: `10.195.146.136`, Mac Mini: `10.195.146.98`, сеть `8d1c312afa249de4`
-- VPS `.env`: `QDRANT_URL=http://10.195.146.98:6333`, `MLX_URL=http://10.195.146.98:8080`
+- VPS не запускает приложение и не хранит runtime-состояние; Caddy ходит к Mac Mini по `10.195.146.98:8050/8051`.
 
 **SSH туннель (резерв, не активен):**
 ```
 ~/Library/LaunchAgents/me.ovc.les.pauk.plist  — НЕ удалять, использовать как fallback
 # Запустить при необходимости: launchctl load ~/Library/LaunchAgents/me.ovc.les.pauk.plist
-# Также вернуть в .env: QDRANT_URL=http://127.0.0.1:6333 / MLX_URL=http://127.0.0.1:8080
+# На время аварии переключить Caddy на 127.0.0.1:8050 / 127.0.0.1:8051
 ```
 
 **VPS systemd-сервисы:**
 ```
-les_proxy.service  — uvicorn proxy_server:app --port 8050
-sovushka.service   — python3 sovushka_ng.py   --port 8051
 caddy.service      — Caddy (автозапуск, Let's Encrypt)
 zerotier-one.service
 ```
-Конфиги в репо: `deploy/pauk/les_proxy.service`, `deploy/pauk/sovushka.service`
-Размещение: `/etc/systemd/system/`
-Конфиг приложения: `/root/les_v2/.env` (EnvironmentFile в systemd; шаблон: `deploy/pauk/.env.example`)
+`les_proxy.service` и `sovushka.service` на VPS должны быть `disabled/inactive`.
+SQLite, storage, Qdrant, MLX, RAG и UI живут только на Mac Mini.
 
 **`/etc/caddy/Caddyfile`** (репо: `deploy/pauk/Caddyfile`)**:**
 ```caddyfile
 les.ovc.me {
-    reverse_proxy /api/* localhost:8050
-    reverse_proxy /* localhost:8051
+    reverse_proxy /api/* 10.195.146.98:8050
+    reverse_proxy /* 10.195.146.98:8051
 }
 ```
 
-**Деплой кода на VPS:**
+**Деплой Caddy на VPS:**
 ```bash
-bash deploy/pauk/deploy.sh   # rsync репо → VPS + systemctl restart
+bash deploy/pauk/deploy.sh   # Caddyfile → VPS; app-сервисы выключены
 ```
 
 **В.О.Л.К. — доступ:**
@@ -213,10 +231,12 @@ Mac Mini M4 / 24 GB  (Ж.А.Б.А.)
 ### 3.2. Поток данных (SafeRAG v2.7)
 ```
 Запрос → /api/chat
+  → clarification gate: широкий запрос → NEEDS_CLARIFICATION + вопросы
   → dataset_filter resolve (имя → UUID)
   → Qdrant retrieve (bge-m3 embeddings, top-k=8)
   → [опц.] Реранкер (Qwen3-4B batch, 1 вызов) → top-5
   → _concentrate_sources(): top-2 документа по max-score, min_score=0.45
+  → table query gate: parquet_path + табличный запрос → VERIFIED из Parquet без LLM
   │
   ├─ Попытка 1: нормальный промпт, 12 000 симв., top-2 docs
   │     → MLX Host main-модель генерирует ответ
@@ -247,6 +267,7 @@ LES_v2/
 │   ├── routers/              # auth, chat, datasets, runtime, diagnostics, jobs, logs
 │   ├── security.py           # RequestUser, X-API-Key/Bearer, role guards
 │   ├── services/             # JobService, retrieval, SafeRAG policy
+│   │                          # clarification gate, table query service
 │   └── storage/              # safe upload paths, source-folder validation
 ├── sovushka_ng.py            # Точка входа С.О.В.У.Ш.К.А. v5.0 (~90 строк)
 ├── sovushka/                 # Модульный пакет UI (страницы, компоненты, стейт)
@@ -254,14 +275,18 @@ LES_v2/
 ├── mlx_host.py               # MLX Native Host (порт 8080)
 ├── start_mlx.command         # Запуск MLX через uv run
 ├── stop_mlx.command
-├── docker-compose.yml        # les-qdrant + les-proxy
-├── Dockerfile.proxy          # python:3.12-slim, без Docker CLI по умолчанию
+├── docker-compose.yml        # les-qdrant по умолчанию; les-proxy только profile docker-proxy
+├── Dockerfile.proxy          # legacy/opt-in Docker proxy image
+├── proxy_launchd.plist       # host LaunchAgent для les-proxy :8050
 ├── requirements.txt
 ├── .env                      # LLM_MODEL, EMBED_MODEL, MLX_URL, QDRANT_URL, TRUSTED_NETWORKS...
 │
 ├── backend/
 │   ├── __init__.py
 │   ├── interface.py          # Контракт RAGBackend / DatasetInfo
+│   ├── smart_index.py        # verify_source_file(), smart plan
+│   ├── document_router.py    # deterministic route_document()
+│   ├── parquet_writer.py     # XLSX/CSV/PDF tables → Parquet + row chunks
 │   ├── qdrant_adapter.py     # Qdrant + LlamaIndex + rglob
 │   ├── converter.py          # PDF/DOCX/EML/XLSX → Markdown
 │   ├── mlx_adapter.py        # MLXMemoryManager (TTL, Lock, gc)
@@ -360,7 +385,7 @@ ZeroTier Network: `8d1c312afa249de4` | UDP 9993 | self-hosted controller
 ### 4.2. Порты сервисов
 | Порт | Сервис | Описание |
 |---|---|---|
-| **8050** | les-proxy (Docker) | Л.Е.С. API Gateway |
+| **8050** | les-proxy (host LaunchAgent) | Л.Е.С. API Gateway |
 | **8051** | sovushka_ng.py | С.О.В.У.Ш.К.А. NiceGUI UI |
 | **8080** | mlx_host.py (native) | MLX LLM + Embeddings |
 | **6333** | les-qdrant (Docker) | Qdrant векторная база |
@@ -407,8 +432,8 @@ sudo pmset -a autorestart 1
 
 ### 5.1. Предварительные требования
 - **Mac M4 / 24 GB** (или совместимый Apple Silicon)
-- **Docker Desktop** — установить с docker.com
-- **Ollama** — `brew install ollama`
+- **OrbStack** — штатный Docker runtime для Qdrant; Docker Desktop допустим как fallback
+- **Ollama** — не требуется для основного контура, только аварийный резерв
 - **Python 3.9+** — системный или через `brew install python@3.11`
 - **uv** — `curl -LsSf https://astral.sh/uv/install.sh | sh`
 - **ZeroTier** — https://zerotier.com (для сетевого контура П.А.У.К.)
@@ -429,13 +454,13 @@ MLX модели скачиваются автоматически при пер
 ```env
 LLM_MODEL=mlx-community/Qwen3-14B-4bit
 EMBED_MODEL=bge-m3
-MLX_URL=http://host.docker.internal:8080
+MLX_URL=http://127.0.0.1:8080
 
 MLX_MODEL=mlx-community/Qwen3-14B-4bit
 MLX_VAL_MODEL=mlx-community/Qwen3-4B-4bit
 RERANKER_ENABLED=false   # включается через переключатель в UI чата
 
-QDRANT_URL=http://qdrant:6333
+QDRANT_URL=http://127.0.0.1:6333
 JWT_SECRET=les_v2_secret_key_change_in_prod
 ADMIN_PASSWORD=admin123
 TRUSTED_NETWORKS=127.0.0.0/8,::1/128,10.195.146.0/24
@@ -451,22 +476,23 @@ SOVUSHKA_STORAGE_SECRET=change_me_to_random_string_32chars
 
 > Факт по коду на 21.05.2026: `mlx_host.py` и `env.example` дефолтят `mlx-community/Qwen3-14B-4bit` / `mlx-community/Qwen3-4B-4bit`, а часть исторической документации v2.6 описывает `Qwen3.5-9B-MLX-4bit` / `Qwen3-4B-Instruct-2507-4bit`. Перед деплоем считать источником истины `.env`; если нужен 9B-профиль, его надо явно задать в `.env`.
 
-#### Шаг 4. Запустить Docker стек
+#### Шаг 4. Запустить Qdrant в OrbStack/Docker
 ```bash
-docker compose up -d
+docker compose up -d qdrant
 # Проверка
 docker ps
-curl http://localhost:8050/api/health
+curl http://localhost:6333/collections
 ```
 
-#### Шаг 5. Запустить MLX Host
+#### Шаг 5. Запустить MLX Host и host-proxy
 ```bash
-chmod +x start_mlx.command stop_mlx.command
-./start_mlx.command
+chmod +x les.command
+./les.command start
 # Проверка
 curl http://localhost:8080/api/health
+curl http://localhost:8050/api/health
 ```
-> Для автозапуска: добавить `start_mlx.command` в **System Settings → General → Login Items**.
+> `les-proxy` запускается как LaunchAgent `me.ovc.les.proxy`; Docker-proxy включается только явно через profile `docker-proxy`.
 
 #### Шаг 6. Установить зависимости NiceGUI
 ```bash
@@ -700,13 +726,16 @@ systemctl restart les_proxy.service
 | `/api/metrics` | GET | CPU/RAM/RAG/**CRAG v2** | ✅ 3 отдельных rate |
 | `/api/diag` | GET | **Полная диагностика 11 чеков** | ✅ Новый |
 | `/api/rag/sources` | GET | Папки RAG_Content | — |
+| `/api/rag/smart-plan` | GET | Smart audit входящих: accepted/rejected summary, route plan | ✅ v3.4 |
+| `/api/rag/sync-smart` | POST | Smart sync по deterministic route в classified indexes | ✅ v3.4 |
 | `/api/rag/datasets` | GET/POST | Датасеты | — |
 | `/api/rag/datasets/{id}` | DELETE | Удалить датасет | — |
 | `/api/rag/datasets` | DELETE | Сброс всех | — |
 | `/api/rag/sync/{folder}` | POST | Синк папки | — |
 | `/api/rag/upload/{id}` | POST | Загрузка файла | — |
+| `/api/rag/upload-smart` | POST | Умная загрузка: classify → `*_Index` → guarded parse | ✅ v3.4 |
 | `/api/jobs` | GET | История jobs | — |
-| `/api/chat` | POST | RAG-чат + Т.О.С.К.А. v2 | ✅ `dataset_filter`, `reranker_enabled` |
+| `/api/chat` | POST | RAG-чат + clarification + table query + Т.О.С.К.А. | ✅ `NEEDS_CLARIFICATION`, `table_query` |
 | `/api/logs/stream` | GET | SSE логи | — |
 
 **Auth/RBAC факт v3.0:**
@@ -728,6 +757,8 @@ systemctl restart les_proxy.service
 - `dataset_ids` — список UUID (старый способ)
 - `dataset_filter` — **имя папки** из RAG_Content. `"NTD"` → автоматически резолвится в UUID датасета `NTD_Index`
 - `reranker_enabled` — `true/false/null`. `null` = берётся из env `RERANKER_ENABLED`. Управляется переключателем в UI чата.
+- При широком запросе возвращает `crag_status: "NEEDS_CLARIFICATION"`, `clarifying_questions`, `suggested_filters` и не запускает retrieval/LLM.
+- При табличном запросе и наличии `parquet_path` в retrieved payload может вернуть `crag_status: "VERIFIED"` и `table_query` без генерации LLM.
 
 #### GET /api/metrics — структура ответа
 ```json
@@ -1081,7 +1112,7 @@ async def validate_with_consistency(question, answer, context, n=3):
 - **П.А.У.К. — запущен** — VPS Debian 13 (`185.185.71.196`), Caddy + Let's Encrypt, `les.ovc.me` live
 - **SSH reverse tunnel** — Mac Mini → VPS: порты 6333 (Qdrant) и 8080 (MLX), launchd `me.ovc.les.pauk` (выведен из эксплуатации в v2.8, plist сохранён как резерв)
 - **В.О.Л.К. — ключи live** — SQLite `auth_keys`, admin/user роли, auto-bypass для ZeroTier IP
-- **VPS systemd** — `les_proxy.service` + `sovushka.service` с `EnvironmentFile=/root/les_v2/.env`
+- **VPS runtime упразднён** — на VPS остаются только `caddy.service` и `zerotier-one.service`; `les_proxy.service` и `sovushka.service` disabled/inactive
 - **С.О.В.У.Ш.К.А.: тема переживает реконнект** — состояние тёмной/светлой темы перенесено из локального dict в `app.storage.user["dark_theme"]`; при WebSocket-реконнекте светлая тема восстанавливается через `ui.timer(0.1, once=True)`
 - **С.О.В.У.Ш.К.А.: `--dim` в светлой теме** — цвет исправлен `#656d76` → `#424a53` (контраст 7:1, WCAG AA)
 - **П.Р.О.Р.А.Б.: стабилизация DOM** — `mlx_models_container.clear()` и `docker_container.clear()` вызываются только при изменении данных (`_prev_render` dict); устранено хаотичное переключение вкладок
@@ -1124,7 +1155,7 @@ async def validate_with_consistency(question, answer, context, n=3):
 
 ### ✅ v3.1 Stabilization (21.05.2026)
 - **Regression tests:** добавлен `pytest.ini` и `tests/test_proxy_security.py`; проверяются trusted local/ZeroTier admin, внешний IP без ключа → 401, admin/user key roles, user → 403 на admin guard, disabled/expired key → 401.
-- **Default alignment:** `proxy/config.py` fallback `LLM_MODEL` приведён к `mlx-community/Qwen3-14B-4bit`; `backend/metrics_collector.py` fallback `MLX_URL` приведён к `http://host.docker.internal:8080`.
+- **Default alignment:** `proxy/config.py` fallback `LLM_MODEL` приведён к `mlx-community/Qwen3-14B-4bit`; host runtime использует `MLX_URL=http://127.0.0.1:8080`.
 - **VPS env alignment:** `deploy/pauk/.env.example` использует `MLX_URL`, `TRUSTED_NETWORKS`, `TRUSTED_NETWORK_ROLE`, `SOVUSHKA_STORAGE_SECRET`.
 - **VPS UI service:** `deploy/pauk/sovushka.service` теперь читает `EnvironmentFile=/root/les_v2/.env`, как заявлено в runbook.
 - **Проверки:** `pytest -q`, import smoke `proxy_server`/`sovushka_ng`, `compileall`, `docker compose config --quiet`.
@@ -1135,19 +1166,41 @@ async def validate_with_consistency(question, answer, context, n=3):
 - **Runtime honesty:** mail/parquet endpoints не подключены к FastAPI runtime; черновики сохранены как материал для будущего редизайна.
 - **Проверки:** `pytest -q`, `compileall`, import smoke `proxy_server`/`sovushka_ng`, route smoke без `/api/mail/*`, `docker compose config --quiet`.
 
-### 🛠 v3.3 (Краткосрочно)
+### ✅ v3.4 Smart intake + table query (23.05.2026)
+- **Smart source audit:** `verify_source_file()` и `/api/rag/smart-plan` дают bounded summary по rejected без огромных списков.
+- **Smart upload:** `/api/rag/upload-smart` классифицирует одиночный upload и отправляет его в нужный classified index.
+- **Clarification router:** `proxy/services/clarification_service.py` защищает chat от широких запросов до retrieval/LLM.
+- **Table query service:** `proxy/services/table_query_service.py` читает Parquet artifact из `storage/datasets/{dataset_id}/_parquet/...` и считает точные суммы/количества.
+- **Startup guard:** `les.command` и `start_les.command` больше не продолжают запуск при недоступном Docker daemon.
+- **Историческая проверка v3.4:** `uv run pytest` → `82 passed`; `git diff --check` → OK.
+- **Runtime stabilization:** Qdrant остался в OrbStack/Docker, `les-proxy` вынесен на host LaunchAgent `me.ovc.les.proxy`, Docker-proxy переведён в opt-in profile.
+- **Micro-indexing:** безопасный `batch=1` через `tools/rag_safe_parse_loop.py`; контроль после перехода: `indexed_files=5`, `pending_files=796`, `chunks=529`, Qdrant points `529`, `points_match_sqlite_chunks=true`.
+- **Golden set v1:** `tools/rag_golden_set.py` проверяет `/api/rag/retrieve-debug` по базовым NTD-вопросам из `golden/ntd_golden_set.json` без запуска LLM.
+- **Indexing mode v1:** `/api/indexing-mode` включает ресурсный режим индексации: выгружает MLX-модели, ставит chat generation на паузу и отдаёт приоритетный порядок `NTD_FIRE → GKRF → NTD_ELECTRICAL → NTD_STRUCTURAL → TABLE_SMETA → NTD_OTHER`.
+- **Parse phase timing:** `parse_dataset` возвращает `timings` по фазам `convert/chunk/embed/upsert/count`; контрольный batch NTD_FIRE показал bottleneck в `embed_sec`.
+- **Memory hysteresis:** `parse-scheduler` умеет post-batch stop по `post_batch_min_free_gb/post_batch_max_swap_pct`, а `warm_embedder=true` держит BGE-M3 между короткими batch-ами и выгружает его в конце.
+- **BGE/chunk knobs:** добавлены env `BGE_MODEL`, `BGE_BATCH_SIZE`, `RAG_EMBED_BATCH`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP`, `RAG_PARSE_POST_MAX_SWAP_PCT`.
+- **Финальный runtime snapshot:** `indexed_files=9`, `pending_files=792`, `chunks=850`, Qdrant points `850`, `points_match_sqlite_chunks=true`, `errors=0`; режим `chat`, chat generation allowed.
+- **Проверки v3.5:** `uv run pytest` → `107 passed`; `git diff --check`; live `/api/indexing-mode` и `/api/health`.
+
+### Старт следующей сессии
+- Провести **независимую оценку архитектуры** перед дальнейшим кодингом.
+- Проверить отдельно: Resource Governor, MLX/BGE memory model, scheduler strategy, RAG quality gates, границы chat/indexing mode, документацию операторских процедур.
+- Не начинать новые фичи до списка архитектурных рисков и приоритетов.
+
+### 🛠 v3.6 (Краткосрочно)
 | Задача | Описание |
 |---|---|
-| **VPS runtime smoke** | После деплоя проверить `les.ovc.me`: внешний вход требует ключ, trusted ZeroTier/local работает без ключа |
-| **Browser smoke UI** | Локально проверить admin/user вкладки, settings, В.О.Л.К. lifecycle, error notifications |
-| **SafeRAG tests** | UNKNOWN/timeout валидатора → safe fallback, `/api/diag` не пишет историю/counters |
-| **Dataset tests** | URL-encoded sync/delete, failed operations не показывают success |
-| **Qdrant fallback** | Обработка ошибок Qdrant при парсинге документов |
+| **Indexing mode polish** | Persistent progress, UI status, аварийный auto-return в chat mode |
+| **Parse scheduler v3** | Backoff, пауза при swap, persistent progress, автоостановка при mismatch |
+| **NiceGUI timers** | Убрать/обернуть timers, которые стреляют после удаления parent slot |
+| **Runtime watchdog polish** | Единый status для LaunchAgents `proxy/mlx/sovushka` и Qdrant |
+| **Table query v2** | Фильтры по `code/name/section`, группировки, top rows, сравнение смет/спецификаций |
+| **UI table query** | Показывать `table_query.rows` как таблицу в панели артефактов |
 | **RAG quality hardening** | Hybrid retrieval dense + exact/sparse, fusion/rerank strategy interface, golden set, trace/audit запросов |
 | **Folder Watcher** | Автосинк новых файлов из RAG_Content/ |
-| **Parquet пайплайн** | Спроектировать заново: таблицы/сметы, Parquet-хранилище, точные row-level ссылки |
 | **Е.Ж.И.К. v1** | Спроектировать заново: EML/MSG/PST/IMAP ingest, privacy model, тесты на реальных письмах |
-| **chunk_count** | Исправить колонку в SQLite (сейчас всегда 0) |
+| **Golden set** | Расширить v1 retrieval set до 5-10 живых NTD-вопросов с проверкой ответов `/api/chat` после каждого indexing milestone |
 
 ### 🔮 v2.6+ (Среднесрочно)
 | Задача | Описание |
@@ -1193,15 +1246,16 @@ cd ~/Projects/LES_v2
 
 ---
 
-## ПРИЛОЖЕНИЕ А — Текущее состояние индексов (18.05.2026)
+## ПРИЛОЖЕНИЕ А — Текущее состояние индексов (23.05.2026)
 
 ```
-Docker:       les-proxy UP, les-qdrant UP
-MLX Host:     порт 8080, Qwen3-14B + Qwen3-4B + bge-m3
-NTD_Index:    801 файл — уточнить статус после реиндекса
-CLAUDE_Index: 4 файла, INDEXED
-QWEN_Index:   1 файл, INDEXED
-Чанков:       ~1316 (данные до реиндекса)
+Runtime:      les-qdrant в OrbStack/Docker; les-proxy host LaunchAgent me.ovc.les.proxy
+MLX Host:     порт 8080, main/val/embed модели unloaded после micro-index
+RAG status:   degraded до завершения batch parse
+Datasets:     6 classified indexes
+Files:        801 total, 5 indexed, 796 pending
+Chunks:       529, Qdrant points match SQLite chunks
+Memory:       parse guard блокирует тяжёлую индексацию при RAM < 8 GB или swap > 45%
 ```
 
 > Актуальное состояние — через UI вкладка П.Р.О.Р.А.Б. или:

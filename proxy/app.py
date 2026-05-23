@@ -30,6 +30,7 @@ from proxy.routers.runtime import RuntimeRouterState, router as runtime_router, 
 from proxy.routers.settings import router as settings_router
 from proxy.routers.status_page import StatusPageState, router as status_page_router, set_status_page_state
 from proxy.services.job_service import JobService
+from proxy.services.resource_governor import CHAT_MODE
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -44,15 +45,22 @@ class LogCapture(logging.Handler):
 
 logging.getLogger().addHandler(LogCapture())
 
-parse_semaphore = asyncio.Semaphore(2)
-sync_parse_semaphore = asyncio.Semaphore(3)
-llm_semaphore = asyncio.Semaphore(2)
+PARSE_CONCURRENCY = int(os.getenv("RAG_PARSE_CONCURRENCY", "1"))
+SYNC_PARSE_CONCURRENCY = int(os.getenv("RAG_SYNC_PARSE_CONCURRENCY", "1"))
+LLM_CONCURRENCY = int(os.getenv("LLM_CONCURRENCY", "1"))
+parse_semaphore = asyncio.Semaphore(PARSE_CONCURRENCY)
+sync_parse_semaphore = asyncio.Semaphore(SYNC_PARSE_CONCURRENCY)
+llm_semaphore = asyncio.Semaphore(LLM_CONCURRENCY)
 crag_stats = {"verified": 0, "no_data": 0, "hallucination": 0}
 proxy_start = time.time()
 rag_backend = None
 job_tracker = {}
 job_service = JobService()
-current_mode = {"mode": "rag", "model": os.getenv("LLM_MODEL", "qwen3:14b")}
+current_mode = {
+    "mode": CHAT_MODE,
+    "model": os.getenv("LLM_MODEL", "mlx-community/Qwen3-14B-4bit"),
+    "chat_generation": "allowed",
+}
 
 error_counts = defaultdict(int)
 chat_metrics = {
@@ -115,7 +123,7 @@ async def metrics_collector_loop():
 
             host_mem = {}
             try:
-                mlx_url = os.getenv("MLX_URL", "http://host.docker.internal:8080")
+                mlx_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
                 async with httpx.AsyncClient(timeout=2.0) as client:
                     response = await client.get(f"{mlx_url}/api/host_memory")
                     if response.status_code == 200:
@@ -190,8 +198,8 @@ async def startup():
 
     try:
         rag_backend = QdrantLlamaIndexAdapter(
-            qdrant_url=os.getenv("QDRANT_URL", "http://qdrant:6333"),
-            mlx_url=os.getenv("MLX_URL", "http://host.docker.internal:8080"),
+            qdrant_url=os.getenv("QDRANT_URL", "http://127.0.0.1:6333"),
+            mlx_url=os.getenv("MLX_URL", "http://127.0.0.1:8080"),
             embed_model_name=os.getenv("EMBED_MODEL", "bge-m3:latest"),
         )
         await rag_backend.health()
@@ -219,6 +227,7 @@ def configure_router_state() -> None:
             log_history=log_history,
             parse_semaphore=parse_semaphore,
             sync_parse_semaphore=sync_parse_semaphore,
+            current_mode=current_mode,
         )
     )
     set_runtime_state(
@@ -230,6 +239,7 @@ def configure_router_state() -> None:
             crag_stats=crag_stats,
             error_counts=error_counts,
             llm_semaphore=llm_semaphore,
+            llm_concurrency=LLM_CONCURRENCY,
             proxy_start=proxy_start,
         )
     )
@@ -245,6 +255,7 @@ def configure_router_state() -> None:
             chat_metrics=chat_metrics,
             reranker_available=RERANKER_AVAILABLE,
             reranker_cls=Reranker,
+            current_mode=current_mode,
         )
     )
 

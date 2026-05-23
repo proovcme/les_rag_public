@@ -8,22 +8,14 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/bin/ssh</string>
-        <string>-N</string>
-        <string>-o</string><string>ServerAliveInterval=30</string>
-        <string>-o</string><string>ServerAliveCountMax=3</string>
-        <string>-o</string><string>ExitOnForwardFailure=yes</string>
-        <string>-o</string><string>StrictHostKeyChecking=no</string>
-        <string>-R</string><string>127.0.0.1:6333:localhost:6333</string>
-        <string>-R</string><string>127.0.0.1:8080:localhost:8080</string>
-        <string>root@185.185.71.196</string>
+        <string>/Users/ovc/Projects/LES_v2/start_pauk.command</string>
     </array>
 
     <key>RunAtLoad</key>
     <true/>
 
     <key>KeepAlive</key>
-    <true/>
+    <false/>
 
     <key>StandardOutPath</key>
     <string>/Users/ovc/Projects/LES_v2/logs/pauk.log</string>

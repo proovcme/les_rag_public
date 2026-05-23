@@ -35,7 +35,7 @@ async def rerank_direct(request: Request, _admin=Depends(require_admin)):
     if not query or not chunks:
         raise HTTPException(400, "query и chunks обязательны")
 
-    mlx_url = os.getenv("MLX_URL", "http://host.docker.internal:8080")
+    mlx_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
     reranker = Reranker(mlx_url=mlx_url)
     ranked = await reranker.rerank(query, chunks, top_k=top_k)
 

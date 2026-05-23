@@ -1,7 +1,15 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════
-# start_pauk.command — П.А.У.К. SSH reverse tunnel
-# Mac Mini → VPS → les.ovc.me
+# start_pauk.command — П.А.У.К. аварийный SSH reverse tunnel
+#
+# Основной транспорт: ZeroTier. В штатном режиме Caddy на VPS проксирует
+# les.ovc.me напрямую на Mac Mini:
+#   /api/* -> 10.195.146.98:8050
+#   /*     -> 10.195.146.98:8051
+#
+# Туннель нужен только как ручной аварийный режим, если ZeroTier недоступен:
+# он публикует Mac :8050/:8051 как VPS localhost :8050/:8051.
+# На время аварии Caddyfile нужно переключить на 127.0.0.1.
 # ═══════════════════════════════════════════════════════
 LES_DIR="$HOME/Projects/LES_v2"
 LOG_DIR="$LES_DIR/logs"
@@ -13,9 +21,21 @@ KEY="$HOME/.ssh/id_ed25519"
 mkdir -p "$LOG_DIR"
 
 echo "═══════════════════════════════════════"
-echo "  П.А.У.К. // ЗАПУСК ТУННЕЛЯ"
+echo "  П.А.У.К. // РЕЗЕРВНЫЙ SSH-ТУННЕЛЬ"
 echo "  $(date '+%Y-%m-%d %H:%M:%S')"
 echo "═══════════════════════════════════════"
+
+if [ "${LES_ENABLE_SSH_TUNNEL:-0}" != "1" ]; then
+    echo "  Основной транспорт сейчас ZeroTier, SSH-туннель выключен."
+    echo "  Для аварийного режима запусти:"
+    echo "    LES_ENABLE_SSH_TUNNEL=1 $0"
+    echo ""
+    echo "  Проверка ZeroTier с VPS:"
+    echo "    ssh $VPS 'curl -s http://10.195.146.98:8050/api/health'"
+    echo "    ssh $VPS 'curl -I http://10.195.146.98:8051'"
+    echo "═══════════════════════════════════════"
+    exit 0
+fi
 
 # Убиваем старый процесс
 if [ -f "$PID_FILE" ]; then
@@ -37,8 +57,8 @@ nohup ssh -N \
     -o ServerAliveCountMax=3 \
     -o ExitOnForwardFailure=yes \
     -o StrictHostKeyChecking=no \
-    -R 8050:localhost:8050 \
-    -R 8051:localhost:8051 \
+    -R 127.0.0.1:8050:localhost:8050 \
+    -R 127.0.0.1:8051:localhost:8051 \
     "$VPS" >> "$LOG_FILE" 2>&1 &
 
 PAUK_PID=$!
@@ -48,9 +68,10 @@ sleep 2
 if kill -0 "$PAUK_PID" 2>/dev/null; then
     echo "  ✓ П.А.У.К. UP (PID $PAUK_PID)"
     echo ""
-    echo "  les.ovc.me → VPS :8050/:8051 → Mac Mini"
+    echo "  VPS 127.0.0.1:8050/:8051 → Mac Mini les-proxy/UI"
+    echo "  Не забудь временно переключить Caddy на 127.0.0.1."
     echo ""
-    echo "  Проверка: curl https://les.ovc.me/api/health"
+    echo "  Проверка: ssh $VPS 'curl -s http://127.0.0.1:8050/api/health'"
 else
     echo "  ✗ Туннель упал — смотри logs/pauk.log"
     cat "$LOG_FILE" | tail -10
