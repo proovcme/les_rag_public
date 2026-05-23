@@ -1,4 +1,5 @@
 import asyncio
+import sqlite3
 from collections import deque
 from dataclasses import dataclass
 from io import BytesIO
@@ -116,6 +117,50 @@ async def test_dataset_list_and_create_use_configured_state(dataset_state):
     created = await datasets.create_dataset("Mail_Index", _admin=object())
 
     assert created == {"id": "ds-2", "name": "Mail_Index"}
+
+
+@pytest.mark.asyncio
+async def test_list_documents_returns_file_status_rows(tmp_path, monkeypatch, dataset_state):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RAG_META_DB_PATH", str(tmp_path / "data" / "les_meta.db"))
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    with sqlite3.connect(data_dir / "les_meta.db") as conn:
+        conn.execute("CREATE TABLE datasets (id TEXT PRIMARY KEY, name TEXT, status TEXT, chunk_count INTEGER DEFAULT 0)")
+        conn.execute(
+            """
+            CREATE TABLE documents (
+                id TEXT PRIMARY KEY,
+                dataset_id TEXT,
+                file_name TEXT,
+                status TEXT,
+                file_size INTEGER,
+                chunk_count INTEGER DEFAULT 0,
+                domain TEXT DEFAULT '',
+                doc_type TEXT DEFAULT '',
+                content_type TEXT DEFAULT '',
+                complexity TEXT DEFAULT '',
+                pipeline TEXT DEFAULT '',
+                last_error TEXT DEFAULT ''
+            )
+            """
+        )
+        conn.execute("INSERT INTO datasets (id, name, status) VALUES ('ds-1', 'NTD_FIRE_Index', 'IDLE')")
+        conn.execute(
+            """
+            INSERT INTO documents
+            (id, dataset_id, file_name, status, file_size, chunk_count, domain, doc_type, content_type, complexity, pipeline)
+            VALUES ('doc-1', 'ds-1', 'NTD/SP.docx', 'INDEXED', 2048, 12, 'NTD_FIRE', 'NORMATIVE', 'text', 'simple', 'markdown')
+            """
+        )
+
+    result = await datasets.list_documents(status="INDEXED", _user=object())
+
+    assert result["total"] == 1
+    assert result["summary"]["INDEXED"] == {"files": 1, "chunks": 12}
+    assert result["documents"][0]["dataset_name"] == "NTD_FIRE_Index"
+    assert result["documents"][0]["file_name"] == "NTD/SP.docx"
+    assert result["documents"][0]["chunk_count"] == 12
 
 
 @pytest.mark.asyncio

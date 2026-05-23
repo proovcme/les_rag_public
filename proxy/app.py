@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.metrics_collector import init_db, metrics_loop
 from backend.qdrant_adapter import QdrantLlamaIndexAdapter
+from backend.rag_config import embedding_api_model, rag_meta_db_path
 from proxy.config import CORS_ALLOWED_ORIGINS
 from proxy.routers.auth import router as auth_router, seed_admin_key
 from proxy.routers.chat import ChatRouterState, router as chat_router, set_chat_state
@@ -106,7 +107,7 @@ parse_stats = ParseStats()
 
 def _get_db_files():
     try:
-        conn = sqlite3.connect("./data/les_meta.db")
+        conn = sqlite3.connect(rag_meta_db_path())
         count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
         conn.close()
         return count
@@ -138,7 +139,7 @@ async def metrics_collector_loop():
                     ds_list = await rag_backend.list_datasets()
                     ds_count = len(ds_list)
                     if rag_backend._collection_ready:
-                        info = await rag_backend.aclient.get_collection("les_rag")
+                        info = await rag_backend.aclient.get_collection(rag_backend.collection_name)
                         chunks = getattr(info, "points_count", 0) or 0
                 except Exception:
                     pass
@@ -200,7 +201,7 @@ async def startup():
         rag_backend = QdrantLlamaIndexAdapter(
             qdrant_url=os.getenv("QDRANT_URL", "http://127.0.0.1:6333"),
             mlx_url=os.getenv("MLX_URL", "http://127.0.0.1:8080"),
-            embed_model_name=os.getenv("EMBED_MODEL", "bge-m3:latest"),
+            embed_model_name=embedding_api_model(),
         )
         await rag_backend.health()
         logger.info("[INIT] Backend initialized successfully")

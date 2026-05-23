@@ -50,22 +50,23 @@ if [ ! -f "$KEY" ]; then
     exit 1
 fi
 
-# Запуск туннеля
-nohup ssh -N \
+# Запуск туннеля. В Codex/launchd обычный background child может умереть
+# вместе с родительским shell, поэтому ssh должен демонизироваться сам.
+ssh -f -n -N \
     -i "$KEY" \
     -o ServerAliveInterval=30 \
     -o ServerAliveCountMax=3 \
     -o ExitOnForwardFailure=yes \
     -o StrictHostKeyChecking=no \
-    -R 127.0.0.1:8050:localhost:8050 \
-    -R 127.0.0.1:8051:localhost:8051 \
-    "$VPS" >> "$LOG_FILE" 2>&1 &
+    -R 127.0.0.1:8050:127.0.0.1:8050 \
+    -R 127.0.0.1:8051:127.0.0.1:8051 \
+    "$VPS" >> "$LOG_FILE" 2>&1
 
-PAUK_PID=$!
-echo $PAUK_PID > "$PID_FILE"
 sleep 2
+PAUK_PID=$(pgrep -f "ssh -f -n -N.*127.0.0.1:8050:127.0.0.1:8050" | head -1)
+[ -n "$PAUK_PID" ] && echo "$PAUK_PID" > "$PID_FILE"
 
-if kill -0 "$PAUK_PID" 2>/dev/null; then
+if [ -n "$PAUK_PID" ] && kill -0 "$PAUK_PID" 2>/dev/null; then
     echo "  ✓ П.А.У.К. UP (PID $PAUK_PID)"
     echo ""
     echo "  VPS 127.0.0.1:8050/:8051 → Mac Mini les-proxy/UI"

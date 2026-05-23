@@ -35,6 +35,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from backend.mlx_adapter import MLXMemoryManager
+from backend.rag_config import embed_profile_name, embedding_model_id
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,16 +46,16 @@ logger = logging.getLogger(__name__)
 # ── Конфигурация ──────────────────────────────────────────────────────────────
 MAIN_MODEL = os.getenv("MLX_MODEL",     "mlx-community/Qwen3-14B-4bit")
 VAL_MODEL  = os.getenv("MLX_VAL_MODEL", "mlx-community/Qwen3-4B-4bit")
-BGE_MODEL  = os.getenv("BGE_MODEL", "BAAI/bge-m3")
+BGE_MODEL  = embedding_model_id()
 BGE_BATCH_SIZE = int(os.getenv("BGE_BATCH_SIZE", "32"))
 
 main_engine = MLXMemoryManager(model_path=MAIN_MODEL, ttl_seconds=300)
 val_engine  = MLXMemoryManager(model_path=VAL_MODEL,  ttl_seconds=120)
 
 
-# ── BGE-M3 через sentence-transformers (MPS на Apple Silicon) ─────────────────
+# ── Embeddings через sentence-transformers (MPS на Apple Silicon) ─────────────
 
-class BGEEmbedder:
+class SentenceTransformersEmbedder:
     """
     Lazy-load обёртка над SentenceTransformer.
     Загружается при первом запросе, выгружается через force_unload().
@@ -72,7 +73,7 @@ class BGEEmbedder:
         logger.info(f"[EMBED] Загрузка {self.model_id}...")
         self._model = SentenceTransformer(self.model_id)
         dim = self._model.get_embedding_dimension() if hasattr(self._model, 'get_embedding_dimension') else self._model.get_sentence_embedding_dimension()
-        logger.info(f"[EMBED] BGE-M3 готов. dim={dim}")
+        logger.info(f"[EMBED] модель готова. dim={dim}")
 
     def encode(self, texts: List[str]) -> List[List[float]]:
         self._load()
@@ -87,10 +88,10 @@ class BGEEmbedder:
     def force_unload(self):
         self._model = None
         gc.collect()
-        logger.info("[EMBED] BGE-M3 выгружен.")
+        logger.info("[EMBED] модель выгружена.")
 
 
-embedder = BGEEmbedder()
+embedder = SentenceTransformersEmbedder()
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
@@ -305,6 +306,7 @@ async def health():
         "val_model":   {"path": val_engine.model_path,  "loaded": val_engine.model is not None},
         "embed_model": {
             "path": BGE_MODEL,
+            "profile": embed_profile_name(),
             "loaded": embedder._model is not None,
             "batch_size": int(os.getenv("BGE_BATCH_SIZE", str(BGE_BATCH_SIZE))),
         },

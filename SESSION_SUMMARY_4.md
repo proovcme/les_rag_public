@@ -1,85 +1,75 @@
-# Session Summary — LES v3.5 Resource Governor + Indexing Control
+# Session Summary — LES v3.6 Qwen Indexing Run
 
 Workspace: `/Users/ovc/Projects/LES_v2`
 Date: `2026-05-23`
 
 ## Current runtime
 
-- Mode: `chat`
-- Chat generation: `allowed`
-- MLX models: unloaded after final checks
-- Qdrant/SQLite: `points_match_sqlite_chunks=true`
-- Final RAG snapshot:
-  - `files=801`
-  - `indexed_files=9`
-  - `pending_files=792`
-  - `chunks=850`
-  - `qdrant.points=850`
-  - `errors=0`
+- Mode: `indexing`
+- Chat generation: `paused`
+- Active embedding profile: `qwen`
+- Embedding model: `Qwen/Qwen3-Embedding-0.6B`
+- API embedding model name: `qwen3-embedding-0.6b`
+- Qdrant collection: `les_rag_qwen3_06b`
+- SQLite meta DB: `data/les_meta_qwen.db`
+- Legacy BGE baseline remains in `les_rag` / `data/les_meta.db`
 
-## Implemented
+## Live indexing
 
-- Host runtime stabilized: Qdrant remains the only Docker/OrbStack service; proxy/SQLite/MLX/UI run on host.
-- Smart intake and routing:
-  - `backend/smart_index.py`
-  - `/api/rag/smart-plan`
-  - `/api/rag/sync-smart`
-  - `/api/rag/upload-smart`
-- Chat quality and safety:
-  - clarification gate before retrieval/LLM;
-  - table query MVP from Parquet payloads;
-  - golden retrieval set in `golden/ntd_golden_set.json`.
-- Resource Governor v1:
-  - `proxy/services/resource_governor.py`;
-  - `/api/indexing-mode`;
-  - chat generation returns `409` while indexing mode is active.
-- Parse scheduler improvements:
-  - priority order: `NTD_FIRE → GKRF → NTD_ELECTRICAL → NTD_STRUCTURAL → TABLE_SMETA → NTD_OTHER`;
-  - post-batch memory hysteresis;
-  - `warm_embedder`;
-  - phase timings: `convert/chunk/embed/upsert/count`.
-- BGE/chunk operator knobs:
-  - `BGE_MODEL`
-  - `BGE_BATCH_SIZE`
-  - `RAG_EMBED_BATCH`
-  - `RAG_CHUNK_SIZE`
-  - `RAG_CHUNK_OVERLAP`
-  - `RAG_PARSE_POST_MAX_SWAP_PCT`
+- Current scheduler job when this handoff was written: `a532f3d6-d5c`
+- Current wave: `max_batches=50`, `batch_limit=1`, `warm_embedder=true`
+- Index-until-done LaunchAgent: `me.ovc.les.qwen-index-until-done`
+- Runner script: `tools/qwen_index_until_done.py`
+- Runner plist: `qwen_index_launchd.plist`
+- Runner log: `logs/qwen_index_until_done.log`
 
-## Measured bottleneck
+The runner waits while any parse scheduler is active. When the current wave finishes, it starts new Qwen waves with `max_batches=1000`, `batch_limit=1`, memory guards enabled, until `pending_files=0`.
 
-Control NTD_FIRE batch:
+## Qwen vs BGE observations
 
-```text
-elapsed_sec: 30.9
-embed_sec:   29.538
-chunk_sec:    1.121
-convert_sec:  0.084
-upsert_sec:   0.086
-count_sec:    0.015
-```
+- Qwen uses larger chunks: `RAG_CHUNK_SIZE=1400`, `RAG_CHUNK_OVERLAP=100`.
+- Legacy BGE used `900/80`.
+- On the first 18 common files:
+  - BGE: `3306 chunks`
+  - Qwen: `2045 chunks`
+  - Ratio: `0.619`
+- The lower Qwen chunk count is expected from chunking geometry, not missing documents.
+- Bottleneck remains embedding encode (`embed_sec`), not Qdrant/SQLite/conversion.
 
-Conclusion: the indexing bottleneck is BGE-M3 embedding and memory/swap pressure, not Qdrant, SQLite, or conversion.
+## Public access
+
+- `https://les.ovc.me` had `502` because VPS Caddy could not reach Mac over ZeroTier `10.195.146.98`.
+- Emergency П.А.У.К. reverse tunnel was enabled:
+  - Mac SSH tunnel publishes local `8050/8051` to VPS `127.0.0.1:8050/8051`
+  - Caddy temporarily points to `127.0.0.1`
+- `start_pauk.command` was fixed to use `ssh -f -n -N` and `127.0.0.1` local targets.
+- `https://les.ovc.me/` and `/les` currently resolve to `/login` with HTTP 200.
+
+## Implemented in this session
+
+- Embedding profile abstraction in `backend/rag_config.py`.
+- Qdrant adapter now reads active collection/vector/chunk/meta settings.
+- MLX host loads the configured embedding model and reports profile in health.
+- Proxy health/runtime/diagnostics/dataset deletion use the active RAG profile.
+- Samovar GUI shows document-level indexed/pending/error status.
+- Public `/les` route redirects to login instead of blanking out.
+- Qwen benchmark helper: `tools/embedding_profile_benchmark.py`.
+- Qwen index-until-done runner: `tools/qwen_index_until_done.py`.
 
 ## Checks
 
-- `uv run pytest -q` → `107 passed`, 1 known Pydantic v1 `@validator` warning.
-- Targeted scheduler/parser tests → passed.
-- `git diff --check` → OK.
-- Live `/api/health` → Qdrant/SQLite match.
-- Live `/api/indexing-mode` → `active=false`, `chat_generation_allowed=true`.
+- Targeted tests passed:
+  - `tests/test_rag_config.py`
+  - `tests/test_qdrant_adapter_parse.py`
+  - `tests/test_datasets_router.py`
+- `git diff --check` passed after edits.
+- Live Qdrant/SQLite match stayed true while Qwen indexing was running.
 
-## Next session
+## Next operator actions
 
-Start with an independent architecture assessment before more implementation.
-
-Review as an external architect:
-
-- Resource Governor design and failure modes.
-- MLX/BGE memory lifecycle and swap policy.
-- Parse scheduler strategy and persistence.
-- RAG quality gates: golden set, SafeRAG, retrieval traces.
-- Operator procedure clarity: chat mode vs indexing mode.
-- Whether current abstractions are sufficient or hiding coupling.
-
-Do not start new feature work until risks and priorities are written down.
+- Monitor:
+  - `tail -f logs/qwen_index_until_done.log`
+  - `curl -s http://localhost:8050/api/health`
+  - `curl -s http://localhost:8050/api/jobs`
+- Do not start another parse scheduler manually while the runner is active.
+- After `pending_files=0`, run BGE vs Qwen golden retrieval comparison before making Qwen the permanent search default.

@@ -16,6 +16,7 @@ import httpx
 import psutil
 from fastapi import APIRouter, Depends
 
+from backend.rag_config import rag_collection_name, rag_meta_db_path
 from proxy.security import require_internal
 
 logger = logging.getLogger(__name__)
@@ -88,7 +89,8 @@ async def run_diagnostics(_internal=Depends(require_internal)):
                 except Exception:
                     pass
         status = "ok" if total_points > 0 else "warn"
-        return status, f"{total_points} pts / {len(collections)} cols", ">0", ""
+        active_collection = rag_collection_name()
+        return status, f"{total_points} pts / {len(collections)} cols; active={active_collection}", ">0", ""
 
     await _check("Qdrant :6333", _chk_qdrant())
 
@@ -152,7 +154,7 @@ async def run_diagnostics(_internal=Depends(require_internal)):
 
     async def _chk_sqlite():
         def _query():
-            with sqlite3.connect("./data/les_meta.db") as conn:
+            with sqlite3.connect(rag_meta_db_path()) as conn:
                 datasets = conn.execute("SELECT COUNT(*) FROM datasets").fetchone()[0]
                 docs = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
             return datasets, docs

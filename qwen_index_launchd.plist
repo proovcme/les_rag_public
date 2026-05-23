@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>me.ovc.les.qwen-index-until-done</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/ovc/Projects/LES_v2/.venv/bin/python3</string>
+        <string>/Users/ovc/Projects/LES_v2/tools/qwen_index_until_done.py</string>
+        <string>--wave-batches</string>
+        <string>1000</string>
+        <string>--poll-sec</string>
+        <string>60</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/ovc/Projects/LES_v2</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/ovc/Projects/LES_v2/logs/qwen_index_until_done.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/ovc/Projects/LES_v2/logs/qwen_index_until_done.log</string>
+
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+</dict>
+</plist>

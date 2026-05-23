@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from backend.interface import DatasetInfo
 from backend.document_router import route_document
+from backend.rag_config import rag_collection_name, rag_meta_db_path
 from backend.smart_index import SKIP_DIRS, build_smart_plan, should_index_source_file, verify_source_file
 from proxy.config import max_upload_bytes, mlx_url, rag_upload_suffixes
 from proxy.security import require_admin, require_user
@@ -337,14 +338,14 @@ async def delete_dataset(dataset_id: str, _admin=Depends(require_admin)):
         qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
         async with httpx.AsyncClient(timeout=10.0) as client:
             await client.post(
-                f"{qdrant_url}/collections/les_rag/points/delete",
+                f"{qdrant_url}/collections/{rag_collection_name()}/points/delete",
                 json={"filter": {"must": [{"key": "dataset_id", "match": {"value": dataset_id}}]}},
             )
     except Exception as e:
         errors.append(f"Qdrant: {e}")
 
     try:
-        with sqlite3.connect("./data/les_meta.db") as conn:
+        with sqlite3.connect(rag_meta_db_path()) as conn:
             conn.execute("BEGIN")
             conn.execute("DELETE FROM documents WHERE dataset_id=?", (dataset_id,))
             conn.execute("DELETE FROM datasets WHERE id=?", (dataset_id,))
@@ -367,12 +368,12 @@ async def delete_all_datasets(_admin=Depends(require_admin)):
     try:
         qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
         async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.delete(f"{qdrant_url}/collections/les_rag")
+            await client.delete(f"{qdrant_url}/collections/{rag_collection_name()}")
     except Exception as e:
         errors.append(f"Qdrant delete: {e}")
 
     try:
-        with sqlite3.connect("./data/les_meta.db") as conn:
+        with sqlite3.connect(rag_meta_db_path()) as conn:
             conn.execute("BEGIN")
             conn.execute("DELETE FROM documents")
             conn.execute("DELETE FROM datasets")
@@ -393,6 +394,92 @@ async def delete_all_datasets(_admin=Depends(require_admin)):
 @router.get("/datasets")
 async def list_datasets(_user=Depends(require_user)):
     return await get_dataset_state().backend.list_datasets()
+
+
+@router.get("/documents")
+async def list_documents(
+    dataset_id: str | None = None,
+    status: str | None = Query(default=None, pattern="^(PENDING|INDEXED|ERROR)$"),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    _user=Depends(require_user),
+):
+    # Keep direct unit-test calls usable; FastAPI replaces Query defaults at runtime.
+    if not isinstance(dataset_id, str):
+        dataset_id = None
+    if not isinstance(status, str):
+        status = None
+    if not isinstance(limit, int):
+        limit = 100
+    if not isinstance(offset, int):
+        offset = 0
+
+    where = []
+    params: list[Any] = []
+    if dataset_id:
+        where.append("doc.dataset_id=?")
+        params.append(dataset_id)
+    if status:
+        where.append("doc.status=?")
+        params.append(status)
+    where_sql = "WHERE " + " AND ".join(where) if where else ""
+
+    with sqlite3.connect(rag_meta_db_path()) as conn:
+        conn.row_factory = sqlite3.Row
+        summary_rows = conn.execute(
+            """
+            SELECT status, COUNT(*) AS files, COALESCE(SUM(chunk_count),0) AS chunks
+            FROM documents
+            GROUP BY status
+            """
+        ).fetchall()
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM documents doc {where_sql}",
+            params,
+        ).fetchone()[0]
+        rows = conn.execute(
+            f"""
+            SELECT
+                doc.id,
+                doc.dataset_id,
+                COALESCE(ds.name, '') AS dataset_name,
+                doc.file_name,
+                doc.status,
+                COALESCE(doc.file_size, 0) AS file_size,
+                COALESCE(doc.chunk_count, 0) AS chunk_count,
+                COALESCE(doc.domain, '') AS domain,
+                COALESCE(doc.doc_type, '') AS doc_type,
+                COALESCE(doc.content_type, '') AS content_type,
+                COALESCE(doc.complexity, '') AS complexity,
+                COALESCE(doc.pipeline, '') AS pipeline,
+                COALESCE(doc.last_error, '') AS last_error
+            FROM documents doc
+            LEFT JOIN datasets ds ON ds.id = doc.dataset_id
+            {where_sql}
+            ORDER BY
+                CASE doc.status
+                    WHEN 'ERROR' THEN 0
+                    WHEN 'INDEXED' THEN 1
+                    WHEN 'PENDING' THEN 2
+                    ELSE 3
+                END,
+                doc.chunk_count DESC,
+                doc.file_name
+            LIMIT ? OFFSET ?
+            """,
+            [*params, limit, offset],
+        ).fetchall()
+
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "summary": {
+            row["status"]: {"files": row["files"], "chunks": row["chunks"]}
+            for row in summary_rows
+        },
+        "documents": [dict(row) for row in rows],
+    }
 
 
 @router.post("/retrieve-debug")

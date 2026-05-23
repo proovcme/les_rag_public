@@ -3,7 +3,7 @@
 **Локальная RAG-система для работы с нормативной документацией.**  
 Работает полностью офлайн на Apple Silicon (Mac Mini M4). Никакие данные не покидают локальную сеть.
 
-**Актуальный статус: 23.05.2026.** С.О.В.У.Ш.К.А. разделена на лёгкий чат и админку: `https://les.ovc.me/` открывает премиальный чат с выезжающей историей и панелью артефактов, `https://les.ovc.me/les` открывает админский контур. Runtime стабилизирован: Qdrant живёт в OrbStack/Docker, `les-proxy` и SQLite работают на host через LaunchAgent `me.ovc.les.proxy`, MLX Host обслуживает LLM/validator/embedder. Intake/RAG усилен smart validation, deterministic routing, clarification gate, smart upload, micro-indexing и первым parquet-backed table query слоем.
+**Актуальный статус: 23.05.2026.** С.О.В.У.Ш.К.А. разделена на лёгкий чат и админку: `https://les.ovc.me/` открывает премиальный чат с выезжающей историей и панелью артефактов, `https://les.ovc.me/les` открывает админский контур. Runtime стабилизирован: Qdrant живёт в OrbStack/Docker, `les-proxy` и SQLite работают на host через LaunchAgent `me.ovc.les.proxy`, MLX Host обслуживает LLM/validator/embedder. Активный embedding-профиль переведён на Qwen/Qwen3-Embedding-0.6B в отдельной коллекции `les_rag_qwen3_06b`; BGE-M3 сохранён как legacy baseline в `les_rag`. Intake/RAG усилен smart validation, deterministic routing, clarification gate, smart upload, micro-indexing и первым parquet-backed table query слоем.
 
 ---
 
@@ -30,6 +30,7 @@
 │  Caddy :443  (Let's Encrypt, les.ovc.me)        │
 │       ├── /api/* → 10.195.146.98:8050           │
 │       └── /*     → 10.195.146.98:8051           │
+│       fallback: 127.0.0.1:8050/8051 через SSH   │
 │             ├── /     → AI ЧАТ + история        │
 │             └── /les  → админка Л.Е.С.          │
 │                                                 │
@@ -51,7 +52,7 @@
 │  MLX Native Host  (порт 8080)                   │
 │       ├── Qwen3-14B-4bit     (LLM, Metal)        │
 │       ├── Qwen3-4B-4bit      (валидатор)         │
-│       └── BGE-M3             (эмбеддинги, MPS)   │
+│       └── Qwen3-Embedding-0.6B (эмбеддинги, MPS)│
 │                                                 │
 │  Qdrant  (OrbStack/Docker, порт 6333)           │
 └─────────────────────────────────────────────────┘
@@ -340,10 +341,16 @@ curl -X POST http://localhost:8050/api/rag/parse-scheduler \
   -H 'Content-Type: application/json' \
   -d '{"batch_limit":1,"max_batches":1,"background":false,"stop_on_error":true}'
 
-# Короткая warm-embedder серия: не выгружать BGE-M3 между файлами, но остановиться после batch при росте swap
+# Короткая warm-embedder серия: не выгружать embedder между файлами, но остановиться после batch при росте swap
 curl -X POST http://localhost:8050/api/rag/parse-scheduler \
   -H 'Content-Type: application/json' \
   -d '{"batch_limit":1,"max_batches":3,"warm_embedder":true,"post_batch_max_swap_pct":60,"background":false,"stop_on_error":true}'
+
+# Qwen до полного pending=0: launchd runner не стартует второй scheduler,
+# пока активна текущая волна; каждая волна batch_limit=1, max_batches=1000.
+cp qwen_index_launchd.plist ~/Library/LaunchAgents/me.ovc.les.qwen-index-until-done.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/me.ovc.les.qwen-index-until-done.plist
+tail -f logs/qwen_index_until_done.log
 
 # Вернуться к рабочему чату
 curl -X POST http://localhost:8050/api/indexing-mode \
@@ -358,13 +365,28 @@ curl -X POST http://localhost:8050/api/indexing-mode \
 Операторские env-ручки:
 
 ```env
-BGE_MODEL=BAAI/bge-m3
+LES_EMBED_PROFILE=legacy       # legacy|quality|qwen|fast; legacy keeps historical les_rag
+EMBEDDING_MODEL=BAAI/bge-m3    # or Qwen/Qwen3-Embedding-0.6B for qwen profile
+EMBED_MODEL=bge-m3             # API model name sent to /v1/embeddings
+RAG_COLLECTION_NAME=les_rag    # do not mix embedding models in one collection
+RAG_META_DB_PATH=./data/les_meta.db
+RAG_VECTOR_SIZE=1024
 BGE_BATCH_SIZE=16              # внутренний batch sentence-transformers; меньше = ниже peak memory
 RAG_EMBED_BATCH=16             # чанков за один HTTP-запрос к /v1/embeddings
 RAG_CHUNK_SIZE=900             # больше chunk = меньше embedding-вызовов
 RAG_CHUNK_OVERLAP=80
 RAG_PARSE_POST_MAX_SWAP_PCT=60 # auto-stop после batch
 ```
+
+Qwen-native индексирование идёт в отдельную коллекцию, чтобы не смешивать векторы разных embedding-моделей:
+`LES_EMBED_PROFILE=qwen`, `EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B`,
+`RAG_COLLECTION_NAME=les_rag_qwen3_06b`, `RAG_META_DB_PATH=./data/les_meta_qwen.db`,
+`RAG_VECTOR_SIZE=1024`.
+
+Ожидаемая плотность Qwen-чанков ниже BGE: профиль Qwen использует `RAG_CHUNK_SIZE=1400`
+и `RAG_CHUNK_OVERLAP=100`, тогда как legacy BGE использовал `900/80`. На первых 18 общих
+файлах Qwen дал `2045` chunks против `3306` у BGE (`ratio=0.619`), что соответствует
+настройкам и не означает потери документов.
 
 ### Browser smoke UI
 

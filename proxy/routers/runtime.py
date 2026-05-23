@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from backend.metrics_collector import DB_PATH, heartbeats
+from backend.rag_config import embed_profile_name, embedding_model_id, rag_meta_db_path
 from proxy.config import docker_control_enabled, mlx_url
 from proxy.security import require_admin
 from proxy.services.resource_governor import (
@@ -268,7 +269,7 @@ async def get_metrics():
 
     rag_stats = {"datasets": 0, "files": 0, "chunks": 0, "status": "unknown"}
     try:
-        with sqlite3.connect("./data/les_meta.db") as conn:
+        with sqlite3.connect(rag_meta_db_path()) as conn:
             cur = conn.cursor()
             cur.execute("SELECT COUNT(*) FROM datasets")
             rag_stats["datasets"] = cur.fetchone()[0] or 0
@@ -276,7 +277,7 @@ async def get_metrics():
             rag_stats["files"] = cur.fetchone()[0] or 0
         backend = state.backend
         if backend:
-            collection = await backend.aclient.get_collection("les_rag")
+            collection = await backend.aclient.get_collection(backend.collection_name)
             rag_stats["chunks"] = collection.points_count or 0
             rag_stats["status"] = "ready" if rag_stats["chunks"] > 0 else "indexing"
     except Exception as e:
@@ -311,4 +312,11 @@ async def get_metrics():
         "errors": dict(state.error_counts),
         "heartbeats": heartbeats,
         "rag": rag_stats,
+        "embedding": {
+            "profile": embed_profile_name(),
+            "model": embedding_model_id(),
+            "meta_db": rag_meta_db_path(),
+            "collection": getattr(state.backend, "collection_name", ""),
+            "vector_size": getattr(state.backend, "vector_size", 0),
+        },
     }

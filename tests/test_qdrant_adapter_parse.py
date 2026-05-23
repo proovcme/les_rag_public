@@ -114,3 +114,19 @@ async def test_parse_dataset_rejects_unbounded_parse_by_default(monkeypatch):
 
     assert result["status"] == "rejected"
     assert "unbounded parse is disabled" in result["error"]
+
+
+def test_adapter_uses_configured_collection_and_vector_size(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAG_COLLECTION_NAME", "les_rag_qwen3_06b")
+    monkeypatch.setenv("RAG_VECTOR_SIZE", "1024")
+
+    adapter = QdrantLlamaIndexAdapter(
+        qdrant_url="http://127.0.0.1:6333",
+        mlx_url="http://127.0.0.1:8080",
+        embed_model_name="qwen3-embedding-0.6b",
+        content_dir=str(tmp_path),
+    )
+
+    assert adapter.collection_name == "les_rag_qwen3_06b"
+    assert adapter.vector_size == 1024
+    assert adapter.embed.model == "qwen3-embedding-0.6b"

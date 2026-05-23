@@ -204,6 +204,33 @@ def build_samovar():
                 "background:var(--bg-panel);color:var(--text);font-family:var(--font);"
             )
 
+        # Статус документов
+        with ui.card().classes("card-les w-full"):
+            with ui.row().classes("items-center justify-between w-full"):
+                ui.label("ФАЙЛЫ ИНДЕКСАЦИИ").classes("section-title mb-3")
+                docs_status = ui.label("INDEXED/PENDING/ERROR").style(
+                    "font-size:.65rem;color:var(--dim);"
+                )
+            docs_tbl_cols = [
+                {"name": "status", "label": "Статус", "field": "status", "align": "left", "sortable": True},
+                {"name": "dataset", "label": "Датасет", "field": "dataset", "align": "left", "sortable": True},
+                {"name": "chunks", "label": "Чанков", "field": "chunks", "align": "center", "sortable": True},
+                {"name": "size", "label": "Размер", "field": "size", "align": "right", "sortable": True},
+                {"name": "file", "label": "Файл", "field": "file", "align": "left", "sortable": True},
+                {"name": "pipeline", "label": "Pipeline", "field": "pipeline", "align": "left"},
+            ]
+            docs_grid = ui.table(
+                columns=docs_tbl_cols, rows=[], row_key="id", pagination=15
+            ).classes("w-full").style(
+                "background:var(--bg-panel);color:var(--text);font-family:var(--font);"
+            )
+            docs_grid.add_slot("body-cell-status", """
+                <q-td :props="props">
+                  <span :style="{color: props.value === 'INDEXED' ? '#10b981' : props.value === 'ERROR' ? '#ef4444' : '#f59e0b', fontWeight:'800'}">
+                    {{ props.value }}
+                  </span>
+                </q-td>""")
+
         # ── Внутренние функции ──
 
         async def _sync_row(row):
@@ -258,6 +285,7 @@ def build_samovar():
             datasets = rag.get("datasets") or state.get("datasets", [])
             totals   = rag.get("totals") or {}
             jobs     = state.get("jobs", {})
+            docs     = state.get("rag_documents", {}) if isinstance(state.get("rag_documents"), dict) else {}
             ds_map   = {d["id"]: d for d in datasets}
 
             tot_src = tot_idx = tot_pending = tot_errors = tot_chunks = 0
@@ -388,6 +416,34 @@ def build_samovar():
             job_rows.sort(key=lambda r: r["started"], reverse=True)
             jobs_grid.rows = job_rows
             jobs_grid.update()
+
+            doc_rows = []
+            for item in docs.get("documents", []) if isinstance(docs, dict) else []:
+                file_size = int(item.get("file_size") or 0)
+                if file_size >= 1024 * 1024:
+                    size_text = f"{file_size / (1024 * 1024):.1f} MB"
+                elif file_size >= 1024:
+                    size_text = f"{file_size / 1024:.0f} KB"
+                else:
+                    size_text = f"{file_size} B"
+                doc_rows.append({
+                    "id": item.get("id", item.get("file_name", "")),
+                    "status": item.get("status", ""),
+                    "dataset": item.get("dataset_name", ""),
+                    "chunks": item.get("chunk_count", 0),
+                    "size": size_text,
+                    "file": item.get("file_name", ""),
+                    "pipeline": item.get("pipeline", ""),
+                })
+            summary = docs.get("summary", {}) if isinstance(docs, dict) else {}
+            docs_status.set_text(
+                " · ".join(
+                    f"{key}: {value.get('files', 0)}"
+                    for key, value in summary.items()
+                ) or "INDEXED/PENDING/ERROR"
+            )
+            docs_grid.rows = doc_rows
+            docs_grid.update()
 
         # Загружаем при входе без одноразового timer, чтобы обновление не
         # прилетало в уже удалённый slot при быстрой навигации.

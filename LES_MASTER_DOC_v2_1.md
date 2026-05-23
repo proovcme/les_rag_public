@@ -1,7 +1,7 @@
 # 🦉 Л.Е.С. — Локальная Единая Система
 ## Мастер-документ v3.5 | 23.05.2026
 
-> Единый источник истины. Объединяет README, ROADMAP, Архитектуру, Инфраструктуру, Словарь, Программу испытаний.  
+> Единый источник истины. Объединяет README, ROADMAP, Архитектуру, Инфраструктуру, Словарь, Программу испытаний.
 > Авторы: Клодыч (Claude), Кен (Qwen), Панорамыч (Gemini).
 
 ---
@@ -511,7 +511,7 @@ python3 sovushka_ng.py
 ### 5.3. Известные проблемы при установке
 
 #### ❌ TypeError: unsupported operand type(s) for |
-**Причина:** `sovushka_ng.py` написан с `from __future__ import annotations` для поддержки Python 3.9, но строка запускается до применения этого импорта.  
+**Причина:** `sovushka_ng.py` написан с `from __future__ import annotations` для поддержки Python 3.9, но строка запускается до применения этого импорта.
 **Решение:** Убедись что первая строка файла — `from __future__ import annotations`. В v4.0 (исправленном) это уже сделано.
 
 #### ❌ Конфликт зависимостей aider-chat
@@ -1158,6 +1158,14 @@ async def validate_with_consistency(question, answer, context, n=3):
 - **Default alignment:** `proxy/config.py` fallback `LLM_MODEL` приведён к `mlx-community/Qwen3-14B-4bit`; host runtime использует `MLX_URL=http://127.0.0.1:8080`.
 - **VPS env alignment:** `deploy/pauk/.env.example` использует `MLX_URL`, `TRUSTED_NETWORKS`, `TRUSTED_NETWORK_ROLE`, `SOVUSHKA_STORAGE_SECRET`.
 - **VPS UI service:** `deploy/pauk/sovushka.service` теперь читает `EnvironmentFile=/root/les_v2/.env`, как заявлено в runbook.
+
+### ✅ v3.6 Qwen Embedding Index Run (23.05.2026)
+- **Embedding profiles:** добавлен `backend/rag_config.py`; активный профиль выбирает модель, API model name, Qdrant collection, SQLite meta DB, vector size и chunk geometry.
+- **Qwen profile:** `LES_EMBED_PROFILE=qwen`, `EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B`, `EMBED_MODEL=qwen3-embedding-0.6b`, `RAG_COLLECTION_NAME=les_rag_qwen3_06b`, `RAG_META_DB_PATH=./data/les_meta_qwen.db`.
+- **BGE baseline сохранён:** legacy `les_rag` / `data/les_meta.db` не смешивается с Qwen-векторами.
+- **Qwen chunk density:** профиль Qwen использует `1400/100` вместо BGE `900/80`; на первых 18 общих файлах Qwen дал `2045` chunks против `3306` у BGE (`ratio=0.619`).
+- **Index-until-done:** добавлен `tools/qwen_index_until_done.py` и LaunchAgent `me.ovc.les.qwen-index-until-done`; runner ждёт активный scheduler и запускает следующие waves до `pending_files=0`.
+- **П.А.У.К. emergency fallback:** при отказе ZeroTier-доступа VPS→Mac Caddy временно переключён на `127.0.0.1:8050/8051`, которые публикуются через reverse SSH tunnel. `start_pauk.command` исправлен на `ssh -f -n -N`.
 - **Проверки:** `pytest -q`, import smoke `proxy_server`/`sovushka_ng`, `compileall`, `docker compose config --quiet`.
 
 ### ✅ v3.2 Legacy retirement (21.05.2026)
@@ -1241,7 +1249,7 @@ cd ~/Projects/LES_v2
 - `git status` перед стартом, `git checkout <commit> -- <file>` для отката
 
 ### Claude (Клодыч)
-Работает через claude.ai. Контекст между сессиями — через `SESSION_SUMMARY.md`.  
+Работает через claude.ai. Контекст между сессиями — через `SESSION_SUMMARY.md`.
 Обновлять `SESSION_SUMMARY.md` в конце каждой сессии!
 
 ---
@@ -1250,12 +1258,12 @@ cd ~/Projects/LES_v2
 
 ```
 Runtime:      les-qdrant в OrbStack/Docker; les-proxy host LaunchAgent me.ovc.les.proxy
-MLX Host:     порт 8080, main/val/embed модели unloaded после micro-index
-RAG status:   degraded до завершения batch parse
-Datasets:     6 classified indexes
-Files:        801 total, 5 indexed, 796 pending
-Chunks:       529, Qdrant points match SQLite chunks
-Memory:       parse guard блокирует тяжёлую индексацию при RAM < 8 GB или swap > 45%
+MLX Host:     порт 8080, Qwen3.5 main / Qwen3 validator / Qwen3-Embedding-0.6B embedder
+RAG status:   degraded до завершения полного Qwen batch parse
+Datasets:     5 classified indexes
+Files:        801 total; Qwen indexing running until pending=0
+Chunks:       Qwen writes to les_rag_qwen3_06b; Qdrant points match SQLite chunks
+Memory:       parse guard проверяет RAM/swap после каждого файла; runner batch_limit=1
 ```
 
 > Актуальное состояние — через UI вкладка П.Р.О.Р.А.Б. или:
@@ -1306,6 +1314,6 @@ docker compose restart proxy
 
 ---
 
-📅 **Документ актуализирован:** 19.05.2026 — v2.6: модели Qwen3.5-9B + Qwen3-4B-2507, watchdog, mem_limit, реранкер batch-режим, переключатель в UI  
-📅 **Документ сверян с кодом:** 21.05.2026 — Proxy v3 auth boundary, trusted networks, `MLX_URL`, актуальная схема `auth_keys`, body delete для ключей  
+📅 **Документ актуализирован:** 23.05.2026 — v3.6: Qwen embedding profile, отдельная Qdrant collection, index-until-done runner, П.А.У.К. emergency fallback
+📅 **Документ сверян с кодом:** 23.05.2026 — active RAG profile config, Qwen runner, public fallback tunnel, Qdrant/SQLite match checks
 ✍️ **Авторы:** Claude (Клодыч) · Qwen (Кен) · Gemini (Панорамыч)

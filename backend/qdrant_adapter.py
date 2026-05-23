@@ -30,14 +30,21 @@ from .converter import convert_to_markdown
 from .document_router import DocumentRoute, route_document
 from .interface import Chunk, DatasetInfo, RAGBackend
 from .parquet_writer import TableNormalizer
+from .rag_config import (
+    rag_chunk_overlap,
+    rag_chunk_size,
+    rag_collection_name,
+    rag_meta_db_path,
+    rag_vector_size,
+)
 
 logger = logging.getLogger(__name__)
 
 EMBED_BATCH  = int(os.getenv("RAG_EMBED_BATCH", "32"))      # чанков за один запрос к MLX embeddings
 MIN_CHUNK    = int(os.getenv("RAG_MIN_CHUNK_CHARS", "20"))  # символов — короче не индексируем
 UPSERT_BATCH = int(os.getenv("RAG_UPSERT_BATCH", "100"))    # точек за один upsert в Qdrant
-RAG_CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "600"))
-RAG_CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "60"))
+RAG_CHUNK_SIZE = rag_chunk_size()
+RAG_CHUNK_OVERLAP = rag_chunk_overlap()
 ALLOW_UNBOUNDED_PARSE = "ALLOW_UNBOUNDED_PARSE"
 # ── Прямой клиент эмбеддингов (httpx, без llama-index) ───────────────────────
 
@@ -79,7 +86,8 @@ class EmbedClient:
 # ── SQLite метабаза ───────────────────────────────────────────────────────────
 
 class MetaDB:
-    def __init__(self, db_path: str = "./data/les_meta.db"):
+    def __init__(self, db_path: str | None = None):
+        db_path = db_path or rag_meta_db_path()
         self.db_path = db_path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
@@ -389,7 +397,8 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         self.aclient         = qdrant_client.AsyncQdrantClient(url=qdrant_url)
         self.qdrant_url      = qdrant_url
         self.embed           = EmbedClient(mlx_url, model=embed_model_name.replace(":latest", ""))
-        self.collection_name = "les_rag"
+        self.collection_name = rag_collection_name()
+        self.vector_size     = rag_vector_size()
         self._collection_ready = False
         self._collection_lock  = asyncio.Lock()
 
@@ -408,7 +417,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 await self.aclient.create_collection(
                     collection_name=self.collection_name,
                     vectors_config=models.VectorParams(
-                        size=1024, distance=models.Distance.COSINE
+                        size=self.vector_size, distance=models.Distance.COSINE
                     ),
                 )
             self._collection_ready = True

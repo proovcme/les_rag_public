@@ -4,6 +4,7 @@
 import asyncio
 from fastapi import Request
 from nicegui import app, ui
+from starlette.responses import RedirectResponse
 
 from sovushka.config import STORAGE_SECRET, UI_PORT
 from sovushka.state import bg_loop
@@ -61,8 +62,7 @@ def _resolve_auth(request: Request):
 async def chat_page(request: Request):
     allowed, role, holder, is_admin = _resolve_auth(request)
     if not allowed:
-        ui.navigate.to("/login")
-        return
+        return RedirectResponse("/login")
 
     _apply_theme()
 
@@ -108,12 +108,10 @@ async def chat_page(request: Request):
 async def admin_page(request: Request):
     allowed, role, holder, is_admin = _resolve_auth(request)
     if not allowed:
-        ui.navigate.to("/login")
-        return
+        return RedirectResponse("/login")
 
     if not is_admin:
-        ui.navigate.to("/")
-        return
+        return RedirectResponse("/")
 
     _apply_theme()
 

@@ -5,8 +5,11 @@ from __future__ import annotations
 
 import asyncio
 import httpx
+import os
+import sqlite3
 import uuid
 from datetime import datetime
+from pathlib import Path
 from nicegui import app
 from typing import Optional, Union
 
@@ -25,6 +28,7 @@ state = {
     "mlx_health": {},
     "datasets": [],
     "rag_health": {},
+    "rag_documents": {},
     "sources": [],
     "jobs": {},
     "chat_history": [],        # list of {role, text, srcs, crag}
@@ -185,6 +189,67 @@ async def refresh_mlx():
         state["mlx_health"] = {}
 
 
+def _local_rag_documents(limit: int = 120) -> dict:
+    db_path = Path(os.getenv("RAG_META_DB_PATH", "data/les_meta.db"))
+    if not db_path.exists():
+        return {}
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            summary_rows = conn.execute(
+                """
+                SELECT status, COUNT(*) AS files, COALESCE(SUM(chunk_count),0) AS chunks
+                FROM documents
+                GROUP BY status
+                """
+            ).fetchall()
+            rows = conn.execute(
+                """
+                SELECT
+                    doc.id,
+                    doc.dataset_id,
+                    COALESCE(ds.name, '') AS dataset_name,
+                    doc.file_name,
+                    doc.status,
+                    COALESCE(doc.file_size, 0) AS file_size,
+                    COALESCE(doc.chunk_count, 0) AS chunk_count,
+                    COALESCE(doc.domain, '') AS domain,
+                    COALESCE(doc.doc_type, '') AS doc_type,
+                    COALESCE(doc.content_type, '') AS content_type,
+                    COALESCE(doc.complexity, '') AS complexity,
+                    COALESCE(doc.pipeline, '') AS pipeline,
+                    COALESCE(doc.last_error, '') AS last_error
+                FROM documents doc
+                LEFT JOIN datasets ds ON ds.id = doc.dataset_id
+                ORDER BY
+                    CASE doc.status
+                        WHEN 'ERROR' THEN 0
+                        WHEN 'INDEXED' THEN 1
+                        WHEN 'PENDING' THEN 2
+                        ELSE 3
+                    END,
+                    doc.chunk_count DESC,
+                    doc.file_name
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return {
+            "total": len(rows),
+            "limit": limit,
+            "offset": 0,
+            "source": "sqlite",
+            "summary": {
+                row["status"]: {"files": row["files"], "chunks": row["chunks"]}
+                for row in summary_rows
+            },
+            "documents": [dict(row) for row in rows],
+        }
+    except Exception as error:
+        add_log(f"[С.А.М.О.В.А.Р.] SQLite documents fallback error: {error}")
+        return {}
+
+
 async def refresh_samovar():
     prev_count = len(state["sources"])
     src = await api_get("/api/rag/sources")
@@ -196,6 +261,13 @@ async def refresh_samovar():
         state["datasets"] = ds
     if isinstance(health, dict):
         state["rag_health"] = health.get("rag", {})
+    # UI runs on the same host as SQLite in the normal runtime; prefer this path
+    # so current indexing jobs are visible without restarting the proxy process.
+    docs = await asyncio.to_thread(_local_rag_documents, 120)
+    if not isinstance(docs, dict):
+        docs = await api_get("/api/rag/documents?limit=120")
+    if isinstance(docs, dict):
+        state["rag_documents"] = docs
     j = await api_get("/api/jobs")
     if j:
         state["jobs"] = j
