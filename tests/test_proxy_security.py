@@ -51,46 +51,46 @@ def auth_db(tmp_path, monkeypatch):
     path = tmp_path / "les_meta.db"
     _init_auth_db(path)
     monkeypatch.setattr(security, "META_DB_PATH", path)
-    monkeypatch.setattr(security, "TRUSTED_NETWORKS", ("127.0.0.0/8", "::1/128", "10.195.146.0/24"))
+    monkeypatch.setattr(security, "TRUSTED_NETWORKS", ("127.0.0.0/8", "::1/128", "10.10.10.0/24"))
     monkeypatch.setattr(security, "TRUSTED_PROXY_NETWORKS", ("127.0.0.0/8", "::1/128"))
     monkeypatch.setattr(security, "TRUSTED_NETWORK_ROLE", "admin")
     return path
 
 
 @pytest.mark.asyncio
-async def test_trusted_loopback_and_zerotier_are_admin(auth_db):
+async def test_configured_private_network_is_admin(auth_db):
     local = await security.get_request_user(_request("127.0.0.1"), x_api_key=None, authorization=None)
-    zerotier = await security.get_request_user(_request("10.195.146.98"), x_api_key=None, authorization=None)
+    private_client = await security.get_request_user(_request("10.10.10.98"), x_api_key=None, authorization=None)
 
     assert local.role == "admin"
     assert local.holder == "trusted-network"
-    assert zerotier.role == "admin"
+    assert private_client.role == "admin"
 
 
 @pytest.mark.asyncio
 async def test_public_ip_without_key_is_unauthorized(auth_db):
     with pytest.raises(HTTPException) as exc:
-        await security.get_request_user(_request("185.185.71.196"), x_api_key=None, authorization=None)
+        await security.get_request_user(_request("203.0.113.10"), x_api_key=None, authorization=None)
 
     assert exc.value.status_code == 401
 
 
 @pytest.mark.asyncio
 async def test_forwarded_headers_only_trusted_from_proxy_network(auth_db):
-    spoofed = _request("185.185.71.196", {"x-forwarded-for": "10.195.146.98"})
+    spoofed = _request("203.0.113.10", {"x-forwarded-for": "10.10.10.98"})
     with pytest.raises(HTTPException) as exc:
         await security.get_request_user(spoofed, x_api_key=None, authorization=None)
     assert exc.value.status_code == 401
 
-    proxied = _request("127.0.0.1", {"x-forwarded-for": "10.195.146.98"})
+    proxied = _request("127.0.0.1", {"x-forwarded-for": "10.10.10.98"})
     user = await security.get_request_user(proxied, x_api_key=None, authorization=None)
     assert user.role == "admin"
-    assert user.source == "10.195.146.98"
+    assert user.source == "10.10.10.98"
 
 
 @pytest.mark.asyncio
 async def test_trusted_proxy_header_only_trusted_from_proxy_network(auth_db):
-    spoofed = _request("185.185.71.196", {"x-les-trusted-network": "1"})
+    spoofed = _request("203.0.113.10", {"x-les-trusted-network": "1"})
     with pytest.raises(HTTPException) as exc:
         await security.get_request_user(spoofed, x_api_key=None, authorization=None)
     assert exc.value.status_code == 401
@@ -103,9 +103,9 @@ async def test_trusted_proxy_header_only_trusted_from_proxy_network(auth_db):
 
 @pytest.mark.asyncio
 async def test_api_key_roles_and_admin_guard(auth_db):
-    admin = await security.get_request_user(_request("185.185.71.196"), x_api_key="admin-key")
+    admin = await security.get_request_user(_request("203.0.113.10"), x_api_key="admin-key")
     user = await security.get_request_user(
-        _request("185.185.71.196", {"authorization": "Bearer user-key"}),
+        _request("203.0.113.10", {"authorization": "Bearer user-key"}),
         x_api_key=None,
         authorization="Bearer user-key",
     )
@@ -123,9 +123,9 @@ async def test_api_key_roles_and_admin_guard(auth_db):
 @pytest.mark.asyncio
 async def test_disabled_and_expired_keys_are_unauthorized(auth_db):
     with pytest.raises(HTTPException) as disabled:
-        await security.get_request_user(_request("185.185.71.196"), x_api_key="disabled-key")
+        await security.get_request_user(_request("203.0.113.10"), x_api_key="disabled-key")
     with pytest.raises(HTTPException) as expired:
-        await security.get_request_user(_request("185.185.71.196"), x_api_key="expired-key")
+        await security.get_request_user(_request("203.0.113.10"), x_api_key="expired-key")
 
     assert disabled.value.status_code == 401
     assert expired.value.status_code == 401

@@ -10,7 +10,7 @@ def test_validate_args_requires_url_scheme():
 
 
 def test_validate_args_requires_admin_key_outside_trusted_local():
-    args = argparse.Namespace(ui_url="https://les.ovc.me", trusted_local=False, admin_key="")
+    args = argparse.Namespace(ui_url="https://les.example.com", trusted_local=False, admin_key="")
 
     assert "admin-key" in browser_smoke.validate_args(args)
 

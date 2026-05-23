@@ -3,7 +3,7 @@
 **Локальная RAG-система для работы с нормативной документацией.**
 Работает полностью офлайн на Apple Silicon (Mac Mini M4). Никакие данные не покидают локальную сеть.
 
-**Актуальный статус: 23.05.2026.** С.О.В.У.Ш.К.А. разделена на лёгкий чат и админку: `https://les.ovc.me/` открывает премиальный чат с выезжающей историей и панелью артефактов, `https://les.ovc.me/les` открывает админский контур. Runtime стабилизирован: Qdrant живёт в OrbStack/Docker, `les-proxy` и SQLite работают на host через LaunchAgent `me.ovc.les.proxy`, MLX Host обслуживает LLM/validator/embedder. Активный embedding-профиль переведён на Qwen/Qwen3-Embedding-0.6B в отдельной коллекции `les_rag_qwen3_06b`; BGE-M3 сохранён как legacy baseline в `les_rag`. Intake/RAG усилен smart validation, deterministic routing, clarification gate, smart upload, micro-indexing и первым parquet-backed table query слоем.
+**Актуальный статус: 23.05.2026.** С.О.В.У.Ш.К.А. разделена на лёгкий чат и админку: `https://<your-domain>/` открывает премиальный чат с выезжающей историей и панелью артефактов, `https://<your-domain>/les` открывает админский контур. Runtime стабилизирован: Qdrant живёт в OrbStack/Docker, `les-proxy` и SQLite работают на host через LaunchAgent `me.ovc.les.proxy`, MLX Host обслуживает LLM/validator/embedder. Активный embedding-профиль переведён на Qwen/Qwen3-Embedding-0.6B в отдельной коллекции `les_rag_qwen3_06b`; BGE-M3 сохранён как legacy baseline в `les_rag`. Intake/RAG усилен smart validation, deterministic routing, clarification gate, smart upload, micro-indexing и первым parquet-backed table query слоем.
 
 ---
 
@@ -22,14 +22,14 @@
 ## Архитектура
 
 ```
-Интернет → les.ovc.me
+Интернет → <your-domain>
                 │
 ┌───────────────▼─────────────────────────────────┐
-│  VPS П.А.У.К. (Debian 13, 185.185.71.196)       │
+│  VPS П.А.У.К. (Debian 13, <public-vps-ip>)       │
 │                                                 │
-│  Caddy :443  (Let's Encrypt, les.ovc.me)        │
-│       ├── /api/* → 10.195.146.98:8050           │
-│       └── /*     → 10.195.146.98:8051           │
+│  Caddy :443  (Let's Encrypt, <your-domain>)        │
+│       ├── /api/* → <app-host-vpn-ip>:8050           │
+│       └── /*     → <app-host-vpn-ip>:8051           │
 │       fallback: 127.0.0.1:8050/8051 через SSH   │
 │             ├── /     → AI ЧАТ + история        │
 │             └── /les  → админка Л.Е.С.          │
@@ -37,7 +37,7 @@
 │  Только HTTPS-релей. RAG/SQLite/UI/LLM не живут │
 │  на VPS; вся механика работает на Mac Mini.     │
 └─────────────────────────────────────────────────┘
-         │  ZeroTier `8d1c312afa249de4`
+         │  ZeroTier `<vpn-network-id>`
 ┌────────▼────────────────────────────────────────┐
 │  Mac Mini M4 / 24 GB (Ж.А.Б.А.)                │
 │                                                 │
@@ -88,7 +88,7 @@
 | Векторная база | [Qdrant](https://qdrant.tech/) |
 | Backend | FastAPI + LlamaIndex |
 | Frontend | [NiceGUI](https://nicegui.io/) v5.0 |
-| Auth | В.О.Л.К. — server-side API guards, API-ключи + SQLite, trusted local/ZeroTier contour, trusted-proxy boundary для forwarded headers |
+| Auth | В.О.Л.К. — server-side API guards, API-ключи + SQLite, trusted local/configured private-network contour, trusted-proxy boundary для forwarded headers |
 | Внешний доступ | Caddy + Let's Encrypt + ZeroTier mesh; SSH tunnel только резерв |
 | Форматы документов | PDF, DOCX, XLSX, CSV, EML, MSG, JSON, MD, TXT |
 | Артефакты | Таблицы/JSON/Mermaid/SVG в правой панели чата, XLSX/CSV ingestion и Parquet artifacts |
@@ -197,34 +197,33 @@ Qwen3-14B (MLX, Metal)
 
 ## Внешний доступ (П.А.У.К.)
 
-Система доступна через HTTPS без открытия портов домашней сети:
+Система может публиковаться через HTTPS без открытия портов домашней сети:
 
 ```
-Интернет → les.ovc.me (VPS, Caddy, SSL)
+Интернет → <your-domain> (VPS, Caddy, SSL)
                 │
-          proxy/UI на VPS
+          HTTPS relay на VPS
                 │
-          ZeroTier mesh
+          private VPN/LAN или SSH tunnel
                 │
-         Mac Mini :6333/:8080
+         app host :8050/:8051
 ```
 
 Доступ по ключам (В.О.Л.К.):
 - `admin` — полный интерфейс
 - `user`  — только AI ЧАТ
-- Local/ZeroTier IP (`127.0.0.1`, `10.195.146.x`) — trusted admin автобайпас, ключ не нужен
-- Внешний доступ через `les.ovc.me` — ключ обязателен
+- Loopback (`127.0.0.1`, `::1`) — trusted admin без ключа по умолчанию
+- VPN/LAN CIDR — trusted admin только если оператор явно добавил сеть в `TRUSTED_NETWORKS`
+- Внешний доступ через `<your-domain>` — ключ обязателен по умолчанию
 
-Если `les.ovc.me` открыт через ZeroTier-адрес VPS, Caddy помечает такой запрос
-`X-LES-Trusted-Network: 1`, и UI/API пропускают его без ключа. Если DNS/маршрут
-ведёт на публичный IP VPS, запрос считается внешним и ключ нужен даже с устройства,
-которое состоит в ZeroTier. В аварийном режиме Caddy проксирует на `127.0.0.1:8050/8051`
-через reverse SSH tunnel; входящий trusted-статус всё равно определяется только по
-IP клиента на стороне VPS.
+Reverse proxy может помечать запросы из выбранного private CIDR заголовком
+`X-LES-Trusted-Network: 1`; UI/API доверяют этому заголовку только от адресов из
+`TRUSTED_PROXY_NETWORKS`. Для публичного клона безопасный дефолт — не доверять
+никакой внешней сети автоматически: добавляй VPN/LAN CIDR только в приватном `.env`.
 
 Публичные маршруты UI:
-- `https://les.ovc.me/` — устойчивый чатовый контур, не монтирует админские страницы.
-- `https://les.ovc.me/les` — админский контур, доступен только admin/trusted.
+- `https://<your-domain>/` — устойчивый чатовый контур, не монтирует админские страницы.
+- `https://<your-domain>/les` — админский контур, доступен только admin/trusted.
 
 ---
 
@@ -308,14 +307,14 @@ tail -f logs/proxy.log | grep -E "\[CHAT\]|\[PARSE\]|\[ERROR\]"
 ### Runtime smoke после деплоя
 
 ```bash
-# Локальный контур: localhost/ZeroTier считается trusted admin, no-key boundary пропускается
+# Локальный контур: localhost считается trusted admin; VPN/LAN включается только через TRUSTED_NETWORKS
 uv run python tools/runtime_smoke.py \
   --admin-key "$ADMIN_PASSWORD" \
   --question "Ширина путей эвакуации"
 
 # VPS/public URL: без ключа admin endpoint обязан вернуть 401/403
-LES_PROXY_URL=https://les.ovc.me \
-LES_UI_URL=https://les.ovc.me \
+LES_PROXY_URL=https://<your-domain> \
+LES_UI_URL=https://<your-domain> \
 LES_ADMIN_KEY="$ADMIN_PASSWORD" \
 LES_USER_KEY="user-key" \
 uv run python tools/runtime_smoke.py \
@@ -398,11 +397,11 @@ Qwen-native индексирование идёт в отдельную колл
 ### Browser smoke UI
 
 ```bash
-# Локально: trusted localhost/ZeroTier должен сразу открыть admin shell
+# Локально: trusted localhost должен сразу открыть admin shell
 uv run --with playwright python tools/browser_smoke.py --trusted-local
 
 # VPS/public URL: проверка логина admin/user и границ видимости вкладок
-LES_UI_URL=https://les.ovc.me \
+LES_UI_URL=https://<your-domain> \
 LES_ADMIN_KEY="$ADMIN_PASSWORD" \
 LES_USER_KEY="user-key" \
 uv run --with playwright python tools/browser_smoke.py \
@@ -480,7 +479,7 @@ MIT — используй, форкай, улучшай.
 - [x] CRAG валидация (Т.О.С.К.А.) — VERIFIED / NO_DATA / HALLUCINATION
 - [x] NiceGUI интерфейс (С.О.В.У.Ш.К.А.) v5.0 — модульная архитектура
 - [x] Светлая и тёмная тема — персистентная через `app.storage.user`, WCAG AA контрасты
-- [x] Внешний доступ через VPS (П.А.У.К.) — Caddy + Let's Encrypt + ZeroTier, `les.ovc.me` live
+- [x] Внешний доступ через VPS (П.А.У.К.) — Caddy + Let's Encrypt + ZeroTier, `<your-domain>` live
 - [x] Auth по ключам (В.О.Л.К.) — admin/user роли, временные ключи, привязка к устройству (fingerprint)
 - [x] Proxy v3 — тонкий `proxy_server.py`, пакет `proxy/`, server-side guards для admin/user endpoints
 - [x] Stabilization tests — pytest regression для trusted network и API-key RBAC boundary
