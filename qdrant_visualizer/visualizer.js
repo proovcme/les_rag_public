@@ -8,19 +8,23 @@ let state = {
     collections: [],
     currentCollection: '',
     points: [],            // Raw points with payload & vectors
+    baseProjectedPoints: [], // PCA coordinates before visual spreading
     projectedPoints: [],   // N x 3 PCA coordinates
     selectedPointId: null,
     searchQuery: '',
     selectedFiles: new Set(),
+    snapshotUrl: '',
     language: 'ru',        // Default UI language
     
     // Visualization Settings
-    nodeSize: 1.5,
-    glowIntensity: 1.0,
+    nodeSize: 1.0,
+    glowIntensity: 0.7,
     showGrid: true,
     showConstellation: true,
     constellationNeighbors: 2, // number of neighbors to connect
     autoRotate: true,
+    spreadStrength: 2.2,
+    documentSpread: 1.4,
 };
 
 // Three.js Core Variables
@@ -28,11 +32,16 @@ let scene, camera, renderer, controls;
 let instancedMesh;
 let glowMesh;
 let constellationLines;
+let selectedDocumentMesh;
 let gridHelper;
 let starField;
 let ambientLight, directionalLight, pointLight;
 let requestId = null;
-let embeddedData = null;
+const LES_QDRANT_URL = (() => {
+    const host = window.location.hostname || '127.0.0.1';
+    return `http://${host}:6333`;
+})();
+const LES_COLLECTION_PRIORITY = ['les_rag_qwen3_06b', 'les_rag'];
 
 // Hover & Raycasting
 const raycaster = new THREE.Raycaster();
@@ -48,17 +57,28 @@ const transitionSpeed = 0.02;
 const COLOR_NORMAL = new THREE.Color('#00f0ff');   // Cyan
 const COLOR_MATCH = new THREE.Color('#05ffc0');    // Neon Green
 const COLOR_DIM = new THREE.Color('#101c38');      // Deep Blue/Grey
+const COLOR_CONTEXT = new THREE.Color('#17304f');  // Muted context blue
 const COLOR_HOVER = new THREE.Color('#ff007f');    // Magenta
 const COLOR_SELECT = new THREE.Color('#ffffff');   // White
+const FILE_HIGHLIGHT_COLORS = [
+    '#ff2f92',
+    '#ffe15a',
+    '#6dff8f',
+    '#8f7cff',
+    '#ff9f43',
+    '#4df7ff',
+    '#ff5f5f',
+    '#b6ff3d',
+];
 
 // DOM Elements
 const elements = {
     loader: document.getElementById('loader-overlay'),
     loaderStatus: document.getElementById('loader-status'),
     loaderConsole: document.getElementById('loader-console'),
-    qdrantUrlInput: document.getElementById('qdrant-url'),
-    connectBtn: document.getElementById('connect-btn'),
-    collectionSelect: document.getElementById('collection-select'),
+    loadLesBtn: document.getElementById('load-les-btn'),
+    loadSnapshotBtn: document.getElementById('load-snapshot-btn'),
+    snapshotDownload: document.getElementById('snapshot-download'),
     totalPoints: document.getElementById('total-points'),
     vectorDim: document.getElementById('vector-dim'),
     pcaStatus: document.getElementById('pca-status'),
@@ -70,6 +90,10 @@ const elements = {
     glowVal: document.getElementById('glow-intensity-val'),
     neighborsSlider: document.getElementById('constellation-neighbors'),
     neighborsVal: document.getElementById('neighbors-val'),
+    spreadSlider: document.getElementById('spread-strength'),
+    spreadVal: document.getElementById('spread-val'),
+    docSpreadSlider: document.getElementById('doc-spread-strength'),
+    docSpreadVal: document.getElementById('doc-spread-val'),
     
     // Toggles
     toggleGrid: document.getElementById('toggle-grid'),
@@ -81,6 +105,8 @@ const elements = {
     fileFilterList: document.getElementById('file-filter-list'),
     detailPanel: document.getElementById('detail-panel'),
     closeDetailBtn: document.getElementById('close-detail'),
+    helpToggleBtn: document.getElementById('help-toggle'),
+    instructionsBar: document.getElementById('instructions-bar'),
     
     // Metadata fields
     metaId: document.getElementById('meta-id'),
@@ -97,12 +123,11 @@ const TRANSLATIONS = {
     ru: {
         "doc-title": "3D Визуализатор Базы Знаний Qdrant",
         "app-title": "Qdrant 3D Визуализатор",
-        "info-btn": "🧬 Эволюция (Spore)",
-        "section-conn": "Подключение к Qdrant",
-        "api-endpoint": "Адрес Rest API",
-        "connect-btn": "Подключиться",
-        "load-standalone-btn": "⚡ Загрузить локальную базу",
-        "target-collection": "Целевая коллекция",
+        "section-conn": "Данные Л.Е.С.",
+        "load-les-btn": "Обновить из Qdrant",
+        "snapshot-download": "Скачать слепок data.js",
+        "load-snapshot-btn": "Загрузить слепок data.js",
+        "source-note": "Источник: локальный Qdrant Л.Е.С. · загрузка только по кнопке",
         "waiting-connection": "(Ожидание подключения...)",
         "section-stats": "Статистика коллекции",
         "stat-points": "Векторных точек",
@@ -114,11 +139,13 @@ const TRANSLATIONS = {
         "tune-scale": "Масштаб точек",
         "tune-glow": "Яркость свечения",
         "tune-constellation": "Связи созвездия",
+        "tune-spread": "Разлипание точек",
+        "tune-doc-spread": "Разнос документов",
         "section-toggles": "Отображение",
         "toggle-grid": "Сетка на полу",
         "toggle-constellation": "Линии созвездия",
         "toggle-rotate": "Вращение камеры",
-        "section-isolate": "Фильтр по документам",
+        "section-isolate": "Подсветка документов",
         "inspect-title": "Инспекция точки",
         "inspect-subtitle": "Данные выбранного вектора",
         "inspect-uuid": "UUID точки",
@@ -138,21 +165,7 @@ const TRANSLATIONS = {
         "help-inspect-key": "Клик по точке",
         "help-inspect-val": "Инспекция точки",
         "loader-title": "3D Нейровизуализатор",
-        "loader-note": "Подключение к локальному Qdrant. Для изменения адреса используйте боковую панель.",
-        "modal-title": "🧬 Эволюция Знаний: От Spore до Векторной Вселенной",
-        "modal-stage1-num": "Этап 1",
-        "modal-stage1-title": "Клеточный бульон: Сырые данные 🧫",
-        "modal-stage1-desc": "Как и в первичном океане игры <i>Spore</i>, все начинается с хаотичного набора простейших молекул — сырых файлов (<code>.docx</code>, <code>.pdf</code>, <code>.txt</code>). На этом этапе компьютер видит только бесформенную груду символов, лишенную глобальной структуры и понимания.",
-        "modal-stage2-num": "Этап 2",
-        "modal-stage2-title": "Выход на сушу: Нарезка на Чанки 🦎",
-        "modal-stage2-desc": "Чтобы выжить в новой среде, данные должны структурироваться. Наш RAG-пайплайн берет длинные файлы и нарезает их на небольшие смысловые кусочки — <b>чанки</b> (наши светящиеся точки). Это первые многоклеточные организмы, выползшие на сушу. Каждый чанк — это самостоятельная «особь», несущая в себе законченную мысль.",
-        "modal-stage3-num": "Этап 3",
-        "modal-stage3-title": "Разум и ДНК: Векторизация эмбеддингами 🧠",
-        "modal-stage3-desc": "На этапе племени и цивилизации существа обретают ДНК и интеллект. Нейросеть берет каждый чанк и наделяет его уникальным математическим кодом — <b>вектором из 1024 чисел (эмбеддингом)</b>. Это ДНК смысла. Теперь чанк обладает «разумом» — он точно знает, о чем говорит, и в соответствии со своим смыслом занимает строго определенные координаты в нашей трехмерной космической системе.",
-        "modal-stage4-num": "Этап 4",
-        "modal-stage4-title": "Космическая эра: Векторная Вселенная (Qdrant) 🌌",
-        "modal-stage4-desc": "Вершина эволюции — выход в космос. Все векторизованные чанки загружаются в базу данных Qdrant. Она строит между ними гиперпространственные торговые пути — <b>графы связей ближайших соседей (HNSW)</b>, которые вы видите на экране в виде неоновых нитей. Когда вы задаете вопрос, ИИ мгновенно совершает варп-прыжок по этому созвездию смыслов и находит нужные знания!",
-        "modal-btn": "Понятно, в космос! 🚀",
+        "loader-note": "Загрузка данных запускается только вручную.",
         "toast-connect-fail": "Не удалось подключиться к Qdrant по адресу",
         "no-collections": "(Коллекции не найдены)",
         "no-file-metadata": "Метаданные о файлах отсутствуют",
@@ -161,12 +174,11 @@ const TRANSLATIONS = {
     en: {
         "doc-title": "Qdrant 3D Vector Space Visualizer",
         "app-title": "Qdrant 3D Visualizer",
-        "info-btn": "🧬 Evolution (Spore)",
-        "section-conn": "Qdrant Connection",
-        "api-endpoint": "Rest API Endpoint",
-        "connect-btn": "Connect Endpoint",
-        "load-standalone-btn": "⚡ Load Standalone Data",
-        "target-collection": "Target Collection",
+        "section-conn": "LES Data",
+        "load-les-btn": "Refresh from Qdrant",
+        "snapshot-download": "Download data.js snapshot",
+        "load-snapshot-btn": "Load data.js snapshot",
+        "source-note": "Source: local LES Qdrant · loads only after button click",
         "waiting-connection": "(Waiting for connection...)",
         "section-stats": "Collection Stats",
         "stat-points": "Vector Points",
@@ -178,11 +190,13 @@ const TRANSLATIONS = {
         "tune-scale": "Node Scale",
         "tune-glow": "Glow Intensity",
         "tune-constellation": "Constellation Degree",
+        "tune-spread": "Point Spread",
+        "tune-doc-spread": "Document Spread",
         "section-toggles": "Toggles",
         "toggle-grid": "Show Grid floor",
         "toggle-constellation": "Show Constellation links",
         "toggle-rotate": "Auto Orbit Camera",
-        "section-isolate": "Isolate Documents",
+        "section-isolate": "Document Highlight",
         "inspect-title": "Point Inspection",
         "inspect-subtitle": "Selected Vector Dimensions Data",
         "inspect-uuid": "Point UUID",
@@ -202,21 +216,7 @@ const TRANSLATIONS = {
         "help-inspect-key": "Left Click Node",
         "help-inspect-val": "Inspect Point",
         "loader-title": "3D Neural Visualizer",
-        "loader-note": "Connecting to local Qdrant container. To override, enter custom address in controls panel.",
-        "modal-title": "🧬 Knowledge Evolution: From Spore to Vector Universe",
-        "modal-stage1-num": "Stage 1",
-        "modal-stage1-title": "Primordial Soup: Raw Data 🧫",
-        "modal-stage1-desc": "Just like in the primordial ocean of the game <i>Spore</i>, it all begins with a chaotic pool of simple molecules - raw files (<code>.docx</code>, <code>.pdf</code>, <code>.txt</code>). At this stage, the computer only sees an amorphous heap of characters, devoid of global structure and understanding.",
-        "modal-stage2-num": "Stage 2",
-        "modal-stage2-title": "Crawling onto Land: Chunking 🦎",
-        "modal-stage2-desc": "To survive in the new environment, the data must become structured. Our RAG pipeline takes long files and slices them into small semantic pieces - <b>chunks</b> (our glowing nodes). These are the first multicellular organisms crawling onto land. Each chunk is an independent 'individual' carrying a complete thought.",
-        "modal-stage3-num": "Stage 3",
-        "modal-stage3-title": "Sentience & DNA: Embedding Vectorization 🧠",
-        "modal-stage3-desc": "During the tribe and civilization stages, creatures acquire DNA and intelligence. The neural network takes each chunk and imbues it with a unique mathematical code - a <b>vector of 1024 numbers (an embedding)</b>. This is the DNA of meaning. Now the chunk possesses 'sentience' - it knows exactly what it discusses, and based on its semantic meaning, is placed at specific coordinates in our 3D cosmic space.",
-        "modal-stage4-num": "Stage 4",
-        "modal-stage4-title": "Space Age: Vector Universe (Qdrant) 🌌",
-        "modal-stage4-desc": "The peak of evolution is going into space. All vectorized chunks are loaded into the Qdrant database. It builds hyperspace trade routes between them - <b>hierarchical navigable small world (HNSW) graphs</b>, which you see on the screen as neon constellation lines. When you search or query, the AI performs a warp jump through this constellation of meanings to retrieve the exact knowledge!",
-        "modal-btn": "Understood, into space! 🚀",
+        "loader-note": "Data loading starts only after button click.",
         "toast-connect-fail": "Failed to connect to Qdrant at",
         "no-collections": "(No collections found)",
         "no-file-metadata": "No file metadata available",
@@ -386,13 +386,13 @@ function updateStatus(statusText) {
 // 1. DATABASE CONNECTION & DATA FETCHING
 // ----------------------------------------------------
 
-async function connectToQdrant() {
-    state.qdrantUrl = elements.qdrantUrlInput.value.trim().replace(/\/$/, "");
+async function loadLesQdrantData() {
+    state.qdrantUrl = LES_QDRANT_URL;
     elements.loader.classList.remove('hidden');
     elements.loaderConsole.innerHTML = '';
     
     updateStatus("CONNECTING TO DATABASE...");
-    logToConsole(`Attempting connection to Qdrant at ${state.qdrantUrl}...`);
+    logToConsole(`Reading LES Qdrant at ${state.qdrantUrl}...`);
     
     try {
         const response = await fetch(`${state.qdrantUrl}/collections`, { method: 'GET' });
@@ -401,34 +401,23 @@ async function connectToQdrant() {
         const data = await response.json();
         state.collections = data.result.collections.map(c => c.name);
         
-        logToConsole(`Connected successfully! Found ${state.collections.length} collections.`, 'highlight');
-        
-        // Populate dropdown list
-        elements.collectionSelect.innerHTML = '';
         if (state.collections.length === 0) {
-            elements.collectionSelect.innerHTML = `<option value="">${TRANSLATIONS[state.language || 'ru']["no-collections"]}</option>`;
             updateStatus("NO COLLECTIONS FOUND");
+            elements.loader.classList.add('hidden');
             return;
         }
         
-        state.collections.forEach(c => {
-            const opt = document.createElement('option');
-            opt.value = c;
-            opt.textContent = c;
-            elements.collectionSelect.appendChild(opt);
-        });
-        
-        // Auto-load collection les_rag or the first available
-        let colToLoad = state.collections.includes('les_rag') ? 'les_rag' : state.collections[0];
-        elements.collectionSelect.value = colToLoad;
-        await loadCollection(colToLoad);
+        const collectionToLoad = LES_COLLECTION_PRIORITY.find(c => state.collections.includes(c)) || state.collections[0];
+        logToConsole(`Selected LES collection "${collectionToLoad}".`, 'highlight');
+        await loadCollection(collectionToLoad);
         
     } catch (err) {
         logToConsole(`Connection failed: ${err.message}`, 'error');
-        logToConsole(`Is Qdrant running? Check Docker or Qdrant URL.`, 'error');
+        logToConsole(`Is local LES Qdrant running on ${state.qdrantUrl}?`, 'error');
         updateStatus("CONNECTION ERROR");
         const errMsg = `${TRANSLATIONS[state.language || 'ru']["toast-connect-fail"]} ${state.qdrantUrl}`;
         showToast(errMsg);
+        elements.loader.classList.add('hidden');
     }
 }
 
@@ -464,27 +453,70 @@ async function loadCollection(name) {
             return;
         }
         
-        state.points = points;
-        logToConsole(`Loaded ${points.length} points from Qdrant.`, 'highlight');
-        
-        // Extract vector info
-        const vectorDim = points[0].vector.length;
-        elements.totalPoints.textContent = points.length;
-        elements.vectorDim.textContent = vectorDim;
-        
-        // Perform PCA
-        await runPCA();
-        
-        // Update document filters in UI
-        populateFileFilters();
-        
-        // Initialize or update 3D Scene
-        build3DScene();
+        await applyPoints(points, name, 'Qdrant');
         
     } catch (err) {
         logToConsole(`Error loading collection: ${err.message}`, 'error');
         updateStatus("ERROR LOADING DATA");
     }
+}
+
+async function loadSnapshotData() {
+    elements.loader.classList.remove('hidden');
+    elements.loaderConsole.innerHTML = '';
+    updateStatus("LOADING OFFLINE DATA...");
+    logToConsole("Loading static snapshot from data.js...");
+
+    try {
+        const module = await import(`./data.js?v=${Date.now()}`);
+        const backup = module.qdrantBackupData;
+        if (!backup?.points?.length) throw new Error('data.js does not export qdrantBackupData.points');
+        await applyPoints(backup.points, backup.collectionName || 'snapshot', 'data.js');
+    } catch (err) {
+        logToConsole(`Snapshot load failed: ${err.message}`, 'error');
+        updateStatus("STANDALONE LOAD ERROR");
+        showToast('Не удалось загрузить data.js рядом с визуализатором');
+        elements.loader.classList.add('hidden');
+    }
+}
+
+async function applyPoints(points, collectionName, sourceLabel) {
+    state.currentCollection = collectionName;
+    state.points = points;
+    logToConsole(`Loaded ${points.length} points from ${sourceLabel}.`, 'highlight');
+
+    const vectorDim = points[0].vector.length;
+    elements.totalPoints.textContent = points.length;
+    elements.vectorDim.textContent = vectorDim;
+
+    prepareSnapshotDownload(collectionName, points);
+    await runPCA();
+    populateFileFilters();
+    build3DScene();
+}
+
+function prepareSnapshotDownload(collectionName, points) {
+    if (!elements.snapshotDownload) return;
+    if (state.snapshotUrl) URL.revokeObjectURL(state.snapshotUrl);
+
+    const exportStructure = {
+        collectionName,
+        exportDate: new Date().toISOString(),
+        points,
+    };
+    const js = [
+        '// Standalone backup data for LES Qdrant 3D Visualizer',
+        `// Generated on: ${new Date().toLocaleString('sv-SE')}`,
+        'export const qdrantBackupData = ',
+        JSON.stringify(exportStructure, null, 2),
+        ';',
+        '',
+    ].join('\n');
+
+    const blob = new Blob([js], { type: 'text/javascript;charset=utf-8' });
+    state.snapshotUrl = URL.createObjectURL(blob);
+    elements.snapshotDownload.href = state.snapshotUrl;
+    elements.snapshotDownload.classList.remove('disabled-link');
 }
 
 // ----------------------------------------------------
@@ -531,11 +563,12 @@ async function runPCA() {
         const centerY = minY + sizeY / 2;
         const centerZ = minZ + sizeZ / 2;
         
-        state.projectedPoints = pts.map(p => [
+        state.baseProjectedPoints = pts.map(p => [
             (p[0] - centerX) * scale,
             (p[1] - centerY) * scale,
             (p[2] - centerZ) * scale
         ]);
+        state.projectedPoints = spreadProjectedPoints(state.baseProjectedPoints, state.spreadStrength);
         
         logToConsole(`PCA completed successfully! Top eigenvalues: ${pcaResult.eigenvalues.map(v => v.toFixed(4)).join(", ")}`, 'highlight');
         elements.pcaStatus.textContent = state.language === 'ru' ? 'УСПЕШНО' : 'COMPLETED';
@@ -545,6 +578,139 @@ async function runPCA() {
         updateStatus("PCA FAILURE");
         throw err;
     }
+}
+
+function stableNoise(index, salt) {
+    const x = Math.sin(index * 127.1 + salt * 311.7) * 43758.5453;
+    return x - Math.floor(x);
+}
+
+function stableUnitVector(key) {
+    let hash = 0;
+    for (let i = 0; i < key.length; i++) {
+        hash = ((hash << 5) - hash + key.charCodeAt(i)) | 0;
+    }
+    const a = stableNoise(Math.abs(hash), 7) * Math.PI * 2;
+    const z = stableNoise(Math.abs(hash), 11) * 2 - 1;
+    const r = Math.sqrt(Math.max(0, 1 - z * z));
+    return new THREE.Vector3(Math.cos(a) * r, Math.sin(a) * r, z);
+}
+
+function documentCounts() {
+    const counts = new Map();
+    state.points.forEach(point => {
+        const fileName = point.payload?.file_name || '';
+        counts.set(fileName, (counts.get(fileName) || 0) + 1);
+    });
+    return counts;
+}
+
+function spreadProjectedPoints(points, strength) {
+    if (!points.length || strength <= 0) return points.map(p => [...p]);
+
+    const spread = Math.min(Math.max(strength, 0), 3.0);
+    const docSpread = Math.min(Math.max(state.documentSpread, 0), 3.0);
+    const counts = documentCounts();
+    const result = points.map((p, i) => {
+        const fileName = state.points[i]?.payload?.file_name || '';
+        const fileCount = counts.get(fileName) || 1;
+        const fileFan = stableUnitVector(fileName).multiplyScalar(docSpread * (7.0 + Math.log2(fileCount + 1) * 1.6));
+        const jitter = 1.2 * spread;
+        return new THREE.Vector3(
+            p[0] + fileFan.x + (stableNoise(i, 1) - 0.5) * jitter,
+            p[1] + fileFan.y + (stableNoise(i, 2) - 0.5) * jitter,
+            p[2] + fileFan.z + (stableNoise(i, 3) - 0.5) * jitter
+        );
+    });
+
+    const minDist = 2.6 + spread * 3.2;
+    const minDistSq = minDist * minDist;
+    const stiffness = 0.18 * spread;
+    const iterations = Math.round(8 + spread * 8);
+    const neighborOffsets = [];
+    for (let x = -1; x <= 1; x++) {
+        for (let y = -1; y <= 1; y++) {
+            for (let z = -1; z <= 1; z++) {
+                neighborOffsets.push([x, y, z]);
+            }
+        }
+    }
+
+    for (let iter = 0; iter < iterations; iter++) {
+        const cells = new Map();
+        for (let i = 0; i < result.length; i++) {
+            const p = result[i];
+            const key = `${Math.floor(p.x / minDist)},${Math.floor(p.y / minDist)},${Math.floor(p.z / minDist)}`;
+            if (!cells.has(key)) cells.set(key, []);
+            cells.get(key).push(i);
+        }
+
+        for (let i = 0; i < result.length; i++) {
+            const a = result[i];
+            const cx = Math.floor(a.x / minDist);
+            const cy = Math.floor(a.y / minDist);
+            const cz = Math.floor(a.z / minDist);
+
+            for (const [ox, oy, oz] of neighborOffsets) {
+                const bucket = cells.get(`${cx + ox},${cy + oy},${cz + oz}`);
+                if (!bucket) continue;
+                for (const j of bucket) {
+                    if (j <= i) continue;
+                    const b = result[j];
+                    const dx = b.x - a.x;
+                    const dy = b.y - a.y;
+                    const dz = b.z - a.z;
+                    const distSq = dx * dx + dy * dy + dz * dz;
+                    if (distSq <= 0.0001 || distSq >= minDistSq) continue;
+
+                    const dist = Math.sqrt(distSq);
+                    const push = Math.min((minDist - dist) * stiffness, minDist * 0.45);
+                    const ux = dx / dist;
+                    const uy = dy / dist;
+                    const uz = dz / dist;
+                    a.x -= ux * push;
+                    a.y -= uy * push;
+                    a.z -= uz * push;
+                    b.x += ux * push;
+                    b.y += uy * push;
+                    b.z += uz * push;
+                }
+            }
+        }
+
+        const centerPull = 0.009 * spread;
+        for (let i = 0; i < result.length; i++) {
+            const base = points[i];
+            result[i].x += (base[0] - result[i].x) * centerPull;
+            result[i].y += (base[1] - result[i].y) * centerPull;
+            result[i].z += (base[2] - result[i].z) * centerPull;
+        }
+    }
+
+    return result.map(v => [v.x, v.y, v.z]);
+}
+
+function applySpreadLayout() {
+    if (!state.baseProjectedPoints.length) return;
+
+    state.projectedPoints = spreadProjectedPoints(state.baseProjectedPoints, state.spreadStrength);
+    targetInstancePositions = state.projectedPoints.map(([x, y, z]) => new THREE.Vector3(x, y, z));
+
+    if (transitionProgress >= 1.0) {
+        updateNodeVisuals();
+    }
+    buildConstellationLines();
+    focusSelectedFiles();
+}
+
+function colorForFile(fileName) {
+    const key = fileName || '';
+    let hash = 0;
+    for (let i = 0; i < key.length; i++) {
+        hash = ((hash << 5) - hash + key.charCodeAt(i)) | 0;
+    }
+    const color = FILE_HIGHLIGHT_COLORS[Math.abs(hash) % FILE_HIGHLIGHT_COLORS.length];
+    return new THREE.Color(color);
 }
 
 // Fill UI sidebar file checklist based on unique files in payload
@@ -572,6 +738,10 @@ function populateFileFilters() {
         
         const checkbox = document.createElement('div');
         checkbox.className = 'file-filter-checkbox';
+
+        const swatch = document.createElement('div');
+        swatch.className = 'file-filter-swatch';
+        swatch.style.backgroundColor = `#${colorForFile(file).getHexString()}`;
         
         const nameSpan = document.createElement('span');
         nameSpan.className = 'file-filter-name';
@@ -579,6 +749,7 @@ function populateFileFilters() {
         nameSpan.title = file;
         
         item.appendChild(checkbox);
+        item.appendChild(swatch);
         item.appendChild(nameSpan);
         
         item.addEventListener('click', () => {
@@ -592,6 +763,8 @@ function populateFileFilters() {
                 item.classList.add('selected');
             }
             updateNodeVisuals();
+            buildConstellationLines();
+            focusSelectedFiles();
         });
         
         elements.fileFilterList.appendChild(item);
@@ -682,11 +855,11 @@ function build3DScene() {
     
     // Low polygon count per sphere ensures fast render speeds
     const sphereGeo = new THREE.SphereGeometry(state.nodeSize * 0.4, 8, 8);
-    const sphereMat = new THREE.MeshPhongMaterial({
-        shininess: 80,
-        specular: 0xffffff,
+    const sphereMat = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
         transparent: true,
-        opacity: 0.95
+        opacity: 0.95,
+        vertexColors: true
     });
     
     instancedMesh = new THREE.InstancedMesh(sphereGeo, sphereMat, nodeCount);
@@ -778,7 +951,12 @@ function build3DScene() {
 
 // Nearest-neighbor constellations
 function buildConstellationLines() {
-    if (constellationLines) scene.remove(constellationLines);
+    if (constellationLines) {
+        scene.remove(constellationLines);
+        constellationLines.geometry.dispose();
+        constellationLines.material.dispose();
+        constellationLines = null;
+    }
     
     if (!state.showConstellation) return;
     
@@ -807,26 +985,45 @@ function buildConstellationLines() {
         for (let idx = 0; idx < Math.min(k, dists.length); idx++) {
             const neighborIdx = dists[idx].index;
             const p2 = targetInstancePositions[neighborIdx];
+            const fileA = state.points[i]?.payload?.file_name || '';
+            const fileB = state.points[neighborIdx]?.payload?.file_name || '';
+            let lineColor = new THREE.Color('#00e5ff');
+            let opacity = 0.35;
+
+            if (state.selectedFiles.size > 0) {
+                const aSelected = state.selectedFiles.has(fileA);
+                const bSelected = state.selectedFiles.has(fileB);
+                if (aSelected && bSelected && fileA === fileB) {
+                    lineColor = colorForFile(fileA);
+                    opacity = 0.75;
+                } else if (aSelected || bSelected) {
+                    lineColor = colorForFile(aSelected ? fileA : fileB);
+                    opacity = 0.45;
+                } else {
+                    lineColor = new THREE.Color('#0d1a2f');
+                    opacity = 0.12;
+                }
+            }
             
             positions.push(p1.x, p1.y, p1.z);
             positions.push(p2.x, p2.y, p2.z);
             
-            // Neon cyan to dark indigo fade
-            colors.push(0.0, 0.94, 1.0, 0.4);
-            colors.push(0.1, 0.15, 0.35, 0.05);
+            colors.push(lineColor.r * opacity, lineColor.g * opacity, lineColor.b * opacity);
+            colors.push(lineColor.r * opacity, lineColor.g * opacity, lineColor.b * opacity);
         }
     }
     
     const lineGeo = new THREE.BufferGeometry();
     lineGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    lineGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     
     // Standard LineBasicMaterial doesn't support alpha values per vertex well on some systems, 
     // but using vertexColors works extremely well.
     const lineMat = new THREE.LineBasicMaterial({
-        color: 0x00e5ff,
         transparent: true,
         opacity: 0.35 * state.glowIntensity,
-        blending: THREE.AdditiveBlending
+        blending: THREE.AdditiveBlending,
+        vertexColors: true
     });
     
     constellationLines = new THREE.LineSegments(lineGeo, lineMat);
@@ -919,40 +1116,36 @@ function updateNodeVisuals() {
         const textContent = (payload.text || '').toLowerCase();
         const fileName = (payload.file_name || '').toLowerCase();
         
-        let color = COLOR_NORMAL.clone();
+        const isSelectedFile = state.selectedFiles.has(payload.file_name);
+        const hasDocumentHighlight = state.selectedFiles.size > 0;
+        let color = hasDocumentHighlight
+            ? (isSelectedFile ? colorForFile(payload.file_name).lerp(COLOR_SELECT, 0.16) : COLOR_CONTEXT.clone())
+            : COLOR_NORMAL.clone();
         let scale = 1.0;
-        
-        // 1. Selection
-        if (i === selectedInstanceId) {
-            color = COLOR_SELECT.clone();
-            scale = 1.6;
-        } 
-        // 2. Hover
-        else if (i === hoveredInstanceId) {
-            color = COLOR_HOVER.clone();
-            scale = 1.4;
-        } 
-        // 3. Search query filter
-        else if (query.length > 0) {
+
+        if (hasDocumentHighlight) {
+            scale = isSelectedFile ? 2.8 : 0.38;
+        }
+
+        // Search query dims non-matches without losing selected document colors.
+        if (query.length > 0) {
             const isMatch = textContent.includes(query) || fileName.includes(query);
             if (isMatch) {
-                color = COLOR_MATCH.clone();
-                scale = 1.3;
+                if (!hasDocumentHighlight) color = COLOR_MATCH.clone();
+                scale = hasDocumentHighlight && isSelectedFile ? 3.0 : 1.3;
             } else {
                 color = COLOR_DIM.clone();
                 scale = 0.5;
             }
         }
-        // 4. File name checkboxes filter
-        if (state.selectedFiles.size > 0 && query.length === 0) {
-            const hasFile = state.selectedFiles.has(payload.file_name);
-            if (hasFile) {
-                color = COLOR_NORMAL.clone();
-                scale = 1.2;
-            } else {
-                color = COLOR_DIM.clone();
-                scale = 0.4;
-            }
+
+        // Selection and hover remain strongest visual states.
+        if (i === selectedInstanceId) {
+            color = COLOR_SELECT.clone();
+            scale = 1.65;
+        } else if (i === hoveredInstanceId) {
+            color = COLOR_HOVER.clone();
+            scale = 1.45;
         }
         
         instancedMesh.setColorAt(i, color);
@@ -990,6 +1183,90 @@ function updateNodeVisuals() {
         glowMesh.geometry.attributes.color.needsUpdate = true;
         glowMesh.geometry.attributes.position.needsUpdate = true;
     }
+
+    updateSelectedDocumentOverlay();
+}
+
+function updateSelectedDocumentOverlay() {
+    if (!scene) return;
+    if (selectedDocumentMesh) {
+        scene.remove(selectedDocumentMesh);
+        selectedDocumentMesh.traverse(child => {
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) child.material.dispose();
+        });
+        selectedDocumentMesh = null;
+    }
+    if (state.selectedFiles.size === 0 || transitionProgress < 1.0) return;
+
+    const byFile = new Map();
+    for (let i = 0; i < state.points.length; i++) {
+        const fileName = state.points[i]?.payload?.file_name || '';
+        if (!state.selectedFiles.has(fileName)) continue;
+
+        const pos = targetInstancePositions[i];
+        if (!byFile.has(fileName)) byFile.set(fileName, []);
+        byFile.get(fileName).push(pos);
+    }
+    if (byFile.size === 0) return;
+
+    const geo = new THREE.SphereGeometry(Math.max(0.9, state.nodeSize * 1.45), 12, 12);
+    selectedDocumentMesh = new THREE.Group();
+    selectedDocumentMesh.renderOrder = 20;
+    const dummy = new THREE.Object3D();
+
+    byFile.forEach((positions, fileName) => {
+        const mat = new THREE.MeshBasicMaterial({
+            color: colorForFile(fileName).lerp(COLOR_SELECT, 0.12),
+            transparent: true,
+            opacity: 1,
+            depthTest: false,
+            depthWrite: false,
+        });
+        const mesh = new THREE.InstancedMesh(geo.clone(), mat, positions.length);
+        mesh.renderOrder = 20;
+        positions.forEach((pos, i) => {
+            dummy.position.copy(pos);
+            dummy.updateMatrix();
+            mesh.setMatrixAt(i, dummy.matrix);
+        });
+        mesh.instanceMatrix.needsUpdate = true;
+        selectedDocumentMesh.add(mesh);
+    });
+
+    scene.add(selectedDocumentMesh);
+}
+
+function focusSelectedFiles() {
+    if (!camera || !controls || state.selectedFiles.size === 0 || !targetInstancePositions.length) return;
+
+    const selectedPositions = [];
+    for (let i = 0; i < state.points.length; i++) {
+        const fileName = state.points[i]?.payload?.file_name || '';
+        if (state.selectedFiles.has(fileName)) {
+            selectedPositions.push(targetInstancePositions[i]);
+        }
+    }
+    if (!selectedPositions.length) return;
+
+    const center = new THREE.Vector3();
+    selectedPositions.forEach(pos => center.add(pos));
+    center.divideScalar(selectedPositions.length);
+
+    let radius = 8;
+    selectedPositions.forEach(pos => {
+        radius = Math.max(radius, center.distanceTo(pos));
+    });
+
+    const direction = new THREE.Vector3().subVectors(camera.position, controls.target);
+    if (direction.lengthSq() < 0.001) direction.set(1, 0.7, 1);
+    direction.normalize();
+
+    const distance = Math.min(Math.max(radius * 2.8, 32), 140);
+    controls.target.copy(center);
+    camera.position.copy(center).add(direction.multiplyScalar(distance));
+    camera.lookAt(center);
+    controls.update();
 }
 
 function onMouseMove(event) {
@@ -1087,16 +1364,8 @@ function showToast(message) {
 // ----------------------------------------------------
 
 function setupGUIEvents() {
-    // URL connect click
-    elements.connectBtn.addEventListener('click', connectToQdrant);
-    elements.qdrantUrlInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') connectToQdrant();
-    });
-    
-    // Collection change dropdown
-    elements.collectionSelect.addEventListener('change', (e) => {
-        loadCollection(e.target.value);
-    });
+    elements.loadLesBtn.addEventListener('click', loadLesQdrantData);
+    elements.loadSnapshotBtn.addEventListener('click', loadSnapshotData);
     
     // Node Size slider
     elements.nodeSizeSlider.addEventListener('input', (e) => {
@@ -1109,11 +1378,11 @@ function setupGUIEvents() {
             scene.remove(instancedMesh);
             
             const sphereGeo = new THREE.SphereGeometry(state.nodeSize * 0.4, 8, 8);
-            const sphereMat = new THREE.MeshPhongMaterial({
-                shininess: 80,
-                specular: 0xffffff,
+            const sphereMat = new THREE.MeshBasicMaterial({
+                color: 0xffffff,
                 transparent: true,
-                opacity: 0.95
+                opacity: 0.95,
+                vertexColors: true
             });
             
             const newMesh = new THREE.InstancedMesh(sphereGeo, sphereMat, state.points.length);
@@ -1166,6 +1435,20 @@ function setupGUIEvents() {
         elements.neighborsVal.textContent = val;
         buildConstellationLines();
     });
+
+    elements.spreadSlider.addEventListener('input', (e) => {
+        const val = parseFloat(e.target.value);
+        state.spreadStrength = val;
+        elements.spreadVal.textContent = val.toFixed(1);
+        applySpreadLayout();
+    });
+
+    elements.docSpreadSlider.addEventListener('input', (e) => {
+        const val = parseFloat(e.target.value);
+        state.documentSpread = val;
+        elements.docSpreadVal.textContent = val.toFixed(1);
+        applySpreadLayout();
+    });
     
     // Toggles
     elements.toggleGrid.addEventListener('change', (e) => {
@@ -1192,85 +1475,19 @@ function setupGUIEvents() {
     // Close sidebar
     elements.closeDetailBtn.addEventListener('click', closeDetail);
 
-    // Info Modal Event Listeners
-    const infoBtn = document.getElementById('info-btn');
-    const infoModal = document.getElementById('info-modal');
-    const closeInfo = document.getElementById('close-info');
-    const closeInfoBtn = document.getElementById('close-info-btn');
-    
-    if (infoBtn && infoModal) {
-        infoBtn.addEventListener('click', () => {
-            infoModal.classList.add('visible');
+    if (elements.helpToggleBtn && elements.instructionsBar) {
+        const setHelpVisible = (visible) => {
+            elements.instructionsBar.classList.toggle('is-collapsed', !visible);
+            elements.helpToggleBtn.classList.toggle('panel-open', visible);
+            elements.helpToggleBtn.textContent = visible ? 'Скрыть управление' : 'Управление';
+            elements.helpToggleBtn.setAttribute('aria-expanded', String(visible));
+            localStorage.setItem('qdrant_viz_help_visible', String(visible));
+        };
+        setHelpVisible(localStorage.getItem('qdrant_viz_help_visible') === 'true');
+        elements.helpToggleBtn.addEventListener('click', () => {
+            const visible = elements.instructionsBar.classList.contains('is-collapsed');
+            setHelpVisible(visible);
         });
-    }
-    
-    const hideInfoModal = () => {
-        if (infoModal) infoModal.classList.remove('visible');
-    };
-    
-    if (closeInfo) closeInfo.addEventListener('click', hideInfoModal);
-    if (closeInfoBtn) closeInfoBtn.addEventListener('click', hideInfoModal);
-    
-    if (infoModal) {
-        infoModal.addEventListener('click', (e) => {
-            if (e.target === infoModal) hideInfoModal();
-        });
-    }
-
-    // Standalone data loading event
-    const standaloneBtn = document.getElementById('load-standalone-btn');
-    if (standaloneBtn) {
-        standaloneBtn.addEventListener('click', loadStandaloneData);
-    }
-
-    // Language Toggle Click Event
-    const langBtn = document.getElementById('lang-btn');
-    if (langBtn) {
-        langBtn.addEventListener('click', () => {
-            const newLang = state.language === 'ru' ? 'en' : 'ru';
-            switchLanguage(newLang);
-        });
-    }
-}
-
-async function loadStandaloneData() {
-    if (!embeddedData) return;
-    
-    elements.loader.classList.remove('hidden');
-    elements.loaderConsole.innerHTML = '';
-    updateStatus("LOADING OFFLINE DATA...");
-    logToConsole(`Initializing standalone visualizer with collection "${embeddedData.collectionName}"...`);
-    logToConsole(`Data snapshot exported on: ${new Date(embeddedData.exportDate).toLocaleString()}`);
-    
-    try {
-        const points = embeddedData.points;
-        state.currentCollection = embeddedData.collectionName;
-        state.points = points;
-        
-        logToConsole(`Loaded ${points.length} offline standalone points successfully!`, 'highlight');
-        
-        // Extract vector info
-        const vectorDim = points[0].vector.length;
-        elements.totalPoints.textContent = points.length;
-        elements.vectorDim.textContent = vectorDim;
-        
-        // Perform PCA
-        await runPCA();
-        
-        // Update document filters in UI
-        populateFileFilters();
-        
-        // Initialize or update 3D Scene
-        build3DScene();
-        
-        // Show status in dropdown
-        const offlinePrefix = state.language === 'ru' ? 'Локально' : 'Offline';
-        elements.collectionSelect.innerHTML = `<option value="${state.currentCollection}">[${offlinePrefix}] ${state.currentCollection}</option>`;
-        elements.collectionSelect.value = state.currentCollection;
-        
-    } catch (err) {
-        logToConsole(`Error loading standalone data: ${err.message}`, 'error');
-        updateStatus("STANDALONE LOAD ERROR");
     }
 }
 
@@ -1278,34 +1495,12 @@ async function loadStandaloneData() {
 // 7. INITIALIZE WEB APPLICATION ON PAGE LOAD
 // ----------------------------------------------------
 
-window.addEventListener('DOMContentLoaded', async () => {
-    // Set Qdrant host from URL hash or default
-    const hash = window.location.hash.substring(1);
-    if (hash && hash.startsWith("http")) {
-        elements.qdrantUrlInput.value = hash;
-    }
-    
+window.addEventListener('DOMContentLoaded', () => {
     setupGUIEvents();
 
     // Initialize localization from localStorage or default 'ru'
     const savedLang = localStorage.getItem('qdrant_viz_lang') || 'ru';
     switchLanguage(savedLang);
-    
-    // Check for standalone offline backup data
-    try {
-        const module = await import('./data.js');
-        embeddedData = module.qdrantBackupData;
-        logToConsole("Standalone backup data detected!", "highlight");
-        
-        const container = document.getElementById('standalone-container');
-        if (container) container.style.display = 'block';
-        
-        // Auto-load standalone data
-        loadStandaloneData();
-    } catch (e) {
-        logToConsole("No offline backup data found. Operating in live API mode.");
-        connectToQdrant();
-    }
 });
 
 // Dynamic glowing neural halo particle generator

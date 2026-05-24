@@ -2,11 +2,17 @@
 С.О.В.У.Ш.К.А. v5.0 — Модульная точка входа
 """
 import asyncio
+import contextlib
+import socket
+import threading
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from fastapi import Request
 from nicegui import app, ui
 from starlette.responses import RedirectResponse
 
-from sovushka.config import STORAGE_SECRET, UI_PORT
+from sovushka.config import QDRANT_VISUALIZER_PORT, STORAGE_SECRET, UI_PORT
 from sovushka.state import bg_loop
 from sovushka.styles import CUSTOM_CSS, theme_vars_css
 from sovushka.auth import register_login_page, get_auth
@@ -30,6 +36,43 @@ app.add_static_files("/static", "static")
 
 # Регистрируем /login (отдельная страница, без обвязки main_page)
 register_login_page()
+
+
+def _start_qdrant_visualizer() -> None:
+    """Serve the static Qdrant visualizer on its own local port."""
+    with contextlib.suppress(OSError):
+        with socket.create_connection(("127.0.0.1", QDRANT_VISUALIZER_PORT), timeout=0.2):
+            return
+
+    visualizer_dir = Path(__file__).resolve().parent / "qdrant_visualizer"
+    if not visualizer_dir.exists():
+        return
+
+    class QuietHandler(SimpleHTTPRequestHandler):
+        def log_message(self, format, *args):
+            return
+
+    handler = partial(QuietHandler, directory=str(visualizer_dir))
+    server = ThreadingHTTPServer(("0.0.0.0", QDRANT_VISUALIZER_PORT), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+
+def _build_qdrant_visualizer_panel(visualizer_url: str) -> None:
+    with ui.column().classes("w-full h-full gap-0").style("background:var(--bg);"):
+        with ui.row().classes("items-center justify-between w-full px-4 py-2").style(
+            "border-bottom:1px solid var(--border);background:var(--bg-panel);"
+        ):
+            ui.label("QDRANT // ВИЗУАЛИЗАТОР").style(
+                "font-size:.8rem;font-weight:900;letter-spacing:1px;color:var(--text);"
+            )
+            ui.button("ОТКРЫТЬ В ОТДЕЛЬНОЙ ВКЛАДКЕ", on_click=lambda: ui.navigate.to(visualizer_url, new_tab=True)).props(
+                "flat no-caps dense"
+            ).style("color:var(--accent);font-size:.62rem;font-family:var(--font);")
+
+        ui.element("iframe").props(f'src="{visualizer_url}"').classes("w-full flex-1").style(
+            "border:0;background:#060913;min-height:calc(100vh - 88px);"
+        )
 
 
 def _apply_theme() -> None:
@@ -116,14 +159,24 @@ async def admin_page(request: Request):
 
     # Layout: Header (со встроенными табами) + Content + Footer
     with ui.column().classes("w-full h-screen no-wrap gap-0"):
+        visualizer_host = request.url.hostname or "127.0.0.1"
+        visualizer_url = f"http://{visualizer_host}:{QDRANT_VISUALIZER_PORT}/"
 
         # Единая полоса: лого + табы + контролы
-        tabs, tr = build_header(is_admin, role, holder, include_chat=False, chat_link=True)
+        tabs, tr = build_header(
+            is_admin,
+            role,
+            holder,
+            include_chat=False,
+            chat_link=True,
+            visualizer_url=visualizer_url,
+        )
 
         tab_overview = tr.get("overview")
         tab_samovar  = tr.get("samovar")
         tab_prorab   = tr.get("prorab")
         tab_mermaid  = tr.get("mermaid")
+        tab_qdrant_viz = tr.get("qdrant_viz")
         tab_diag     = tr.get("diag")
         tab_volk     = tr.get("volk")
 
@@ -150,6 +203,8 @@ async def admin_page(request: Request):
                 build_prorab()
             with ui.tab_panel(tab_mermaid):
                 build_mermaid()
+            with ui.tab_panel(tab_qdrant_viz):
+                _build_qdrant_visualizer_panel(visualizer_url)
             with ui.tab_panel(tab_diag):
                 build_diag()
             with ui.tab_panel(tab_volk):
@@ -165,6 +220,7 @@ async def admin_page(request: Request):
         "С.А.М.О.В.А.Р.": tab_samovar,
         "П.Р.О.Р.А.Б.":   tab_prorab,
         "ГРАФ":            tab_mermaid,
+        "КВАДРАНТ":        tab_qdrant_viz,
         "🔬 ДИАГН":        tab_diag,
         "В.О.Л.К.":       tab_volk,
     }
@@ -177,6 +233,7 @@ async def admin_page(request: Request):
 if __name__ in {"__main__", "__mp_main__"}:
     # Фоновые задачи запускаем при старте UI
     app.on_startup(lambda: asyncio.create_task(bg_loop()))
+    app.on_startup(_start_qdrant_visualizer)
     
     ui.run(
         port=UI_PORT,

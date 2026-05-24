@@ -43,5 +43,9 @@ async def get_jobs(_user=Depends(require_user)):
         logger.warning("[JOBS] durable list failed: %s", error)
         durable = {}
     merged = dict(durable)
-    merged.update(state.job_tracker)
+    for job_id, memory_job in state.job_tracker.items():
+        if isinstance(memory_job, dict):
+            merged[job_id] = {**merged.get(job_id, {}), **memory_job}
+        else:
+            merged[job_id] = memory_job
     return merged

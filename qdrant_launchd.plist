@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>me.ovc.les.qdrant</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/ovc/.local/bin/qdrant</string>
+        <string>--disable-telemetry</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/ovc/Projects/LES_v2</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>QDRANT__STORAGE__STORAGE_PATH</key>
+        <string>/Users/ovc/Projects/LES_v2/data/qdrant</string>
+        <key>QDRANT__SERVICE__HTTP_PORT</key>
+        <string>6333</string>
+        <key>QDRANT__SERVICE__GRPC_PORT</key>
+        <string>6334</string>
+        <key>PATH</key>
+        <string>/Users/ovc/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/ovc/Projects/LES_v2/logs/qdrant.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/ovc/Projects/LES_v2/logs/qdrant.log</string>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+</dict>
+</plist>

@@ -5,7 +5,9 @@ from __future__ import annotations
 import csv
 import os
 import re
+import zipfile
 from dataclasses import dataclass, field
+from xml.etree import ElementTree
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +59,8 @@ def probe_document(path: Path) -> DocumentProbe:
         return _probe_pdf(path, stat.st_size)
     if suffix in TABLE_SUFFIXES:
         return _probe_table(path, stat.st_size)
+    if suffix == ".docx":
+        return _probe_docx(path, stat.st_size)
     return _probe_text_like(path, stat.st_size)
 
 
@@ -181,6 +185,35 @@ def _probe_table(path: Path, size_bytes: int) -> DocumentProbe:
     return probe
 
 
+def _probe_docx(path: Path, size_bytes: int) -> DocumentProbe:
+    probe = DocumentProbe(path=path, suffix=".docx", size_bytes=size_bytes)
+    try:
+        with zipfile.ZipFile(path) as docx:
+            xml_names = [
+                name
+                for name in docx.namelist()
+                if name == "word/document.xml"
+                or (name.startswith("word/header") and name.endswith(".xml"))
+            ]
+            samples = []
+            for name in xml_names:
+                root = ElementTree.fromstring(docx.read(name))
+                for node in root.iter():
+                    if node.tag.endswith("}t") and node.text:
+                        samples.append(node.text)
+                        if sum(len(item) for item in samples) >= 6000:
+                            break
+                if sum(len(item) for item in samples) >= 6000:
+                    break
+            probe.text_sample = " ".join(samples)[:6000]
+            probe.has_text_layer = bool(probe.text_sample.strip())
+            probe.has_tables = _text_has_table_signals(probe.text_sample)
+    except Exception as e:
+        probe.signals["probe_error"] = str(e)
+        return _probe_text_like(path, size_bytes)
+    return probe
+
+
 def _probe_text_like(path: Path, size_bytes: int) -> DocumentProbe:
     probe = DocumentProbe(path=path, suffix=path.suffix.lower(), size_bytes=size_bytes)
     try:
@@ -232,9 +265,16 @@ def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
     if doc_type == "EMAIL" or probe.suffix in EMAIL_SUFFIXES:
         return "MAIL"
 
-    if any(token in text for token in ("гкрф", "градостроительн", "постановление 87", "пп 87")):
+    if any(token in name for token in ("гкрф", "градостроительный кодекс", "постановление 87", "пп 87")):
         return "GKRF"
-    if any(token in name for token in ("87",)) and "постановлен" in text:
+    if (
+        ("постановление 87" in text or "пп 87" in text)
+        and "состав" in text
+        and "раздел" in text
+        and "проектн" in text
+    ):
+        return "GKRF"
+    if "87" in name and "постановлен" in name:
         return "GKRF"
 
     if doc_type in {"KS2", "AOSR", "SMETA", "SPEC", "TABLE"}:
@@ -243,6 +283,36 @@ def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
     if _is_industrial_chimney_norm(text, name):
         return "NTD_STRUCTURAL"
 
+    if _has_any(name, _FIRE_TOKENS) or _has_any(text, _FIRE_TEXT_TOKENS):
+        return "NTD_FIRE"
+    if _has_any(name, _ELECTRICAL_TOKENS) or _has_any(text, _ELECTRICAL_TEXT_TOKENS):
+        return "NTD_ELECTRICAL"
+    if _is_spds_norm(name, text):
+        return "NTD_SPDS"
+    if _has_any(name, _GEOTECH_TOKENS) or _has_any(text, _GEOTECH_TEXT_TOKENS):
+        return "NTD_GEOTECH"
+    if _has_any(name, _TRANSPORT_TOKENS) or _has_any(text, _TRANSPORT_TEXT_TOKENS):
+        return "NTD_TRANSPORT"
+    if _has_any(name, _HVAC_TOKENS) or _has_any(text, _HVAC_TEXT_TOKENS):
+        return "NTD_HVAC"
+    if _has_any(name, _WATER_TOKENS) or _has_any(text, _WATER_TEXT_TOKENS):
+        return "NTD_WATER"
+    if _has_any(name, _PIPELINE_TOKENS) or _has_any(text, _PIPELINE_TEXT_TOKENS):
+        return "NTD_PIPELINES"
+    if _has_any(name, _BIM_OPERATION_TOKENS) or _has_any(text, _BIM_OPERATION_TEXT_TOKENS):
+        return "NTD_BIM_OPERATION"
+    if _has_any(name, _CONSTRUCTION_TOKENS) or _has_any(text, _CONSTRUCTION_TEXT_TOKENS):
+        return "NTD_CONSTRUCTION"
+    if _has_any(name, _MATERIALS_TOKENS) or _has_any(text, _MATERIALS_TEXT_TOKENS):
+        return "NTD_MATERIALS"
+    if _has_any(name, _ARCH_URBAN_TOKENS) or _has_any(text, _ARCH_URBAN_TEXT_TOKENS):
+        return "NTD_ARCH_URBAN"
+    if _has_any(name, _SAFETY_TOKENS) or _has_any(text, _SAFETY_TEXT_TOKENS):
+        return "NTD_SAFETY"
+    if _has_any(name, _STRUCTURAL_TOKENS) or _has_any(text, _STRUCTURAL_TEXT_TOKENS):
+        return "NTD_STRUCTURAL"
+
+    # Backward-compatible broad buckets kept for older abbreviated filenames.
     if any(
         token in name
         for token in (
@@ -307,8 +377,243 @@ def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
             return "NTD_FIRE"
         return "NTD_ELECTRICAL"
     if doc_type == "NORMATIVE":
-        return "NTD_OTHER"
+        return "NTD_GENERAL"
+    if _is_ntd_source(probe):
+        return "NTD_GENERAL"
     return "DOCS_OTHER"
+
+
+_FIRE_TOKENS = (
+    "13130",
+    "пожар",
+    "пожаротуш",
+    "огнев",
+    "огнестойк",
+    "огнезащит",
+    "огнепреград",
+    "эвакуац",
+    "эвакуа",
+    "противодым",
+    "противопожар",
+    "дымоудален",
+    "взрывопожар",
+    "огн.",
+    "горюч",
+    "воспламен",
+    "пенного пожаротушения",
+)
+_FIRE_TEXT_TOKENS = (
+    "пожарной безопасности",
+    "требования пожарной безопасности",
+    "огнестойкости",
+    "пожарная опасность",
+)
+
+_ELECTRICAL_TOKENS = (
+    "пуэ",
+    "iec",
+    "мэк",
+    "электр",
+    "кабел",
+    "заземл",
+    "молниезащит",
+    "освещен",
+    "напряжен",
+    "светиль",
+    "выключател",
+    "предохранител",
+    "низковоль",
+    "электроустанов",
+    "60364",
+    "50571",
+    "30331",
+    "60079",
+    "31610",
+    "60968",
+    "61008",
+)
+_ELECTRICAL_TEXT_TOKENS = ("электроустановки", "электрические сети", "электроснабжение")
+
+_SPDS_TOKENS = (
+    "гост 21.",
+    "гост р 21.",
+    "спдс",
+    "система проектной документации",
+    "проектной документации для строитель",
+    "рабочая документация",
+)
+
+_GEOTECH_TOKENS = (
+    "грунт",
+    "геотехник",
+    "основан",
+    "фундамент",
+    "сейсми",
+    "землетряс",
+    "оползн",
+    "карст",
+    "мерзлот",
+    "подпорн",
+    "геофизик",
+)
+_GEOTECH_TEXT_TOKENS = ("механика грунтов", "основания зданий", "основания и фундаменты")
+
+_TRANSPORT_TOKENS = (
+    "дорог",
+    "мост",
+    "тоннел",
+    "метрополитен",
+    "железн",
+    "аэродром",
+    "улиц",
+    "транспорт",
+    "габарит",
+    "путепровод",
+    "биопереход",
+)
+_TRANSPORT_TEXT_TOKENS = ("автомобильные дороги", "железные дороги", "мосты и трубы")
+
+_HVAC_TOKENS = (
+    "отоп",
+    "вентиля",
+    "кондицион",
+    "теплов",
+    "теплоснаб",
+    "воздух",
+    "дымоудален",
+    "шум",
+    "акуст",
+    "микроклимат",
+)
+_HVAC_TEXT_TOKENS = ("отопление вентиляция", "тепловые сети", "защита от шума")
+
+_WATER_TOKENS = (
+    "водоснаб",
+    "водоотвед",
+    "канализац",
+    "гидротех",
+    "мелиоратив",
+    "водопропуск",
+    "водоочист",
+    "очистн",
+    "морские причаль",
+    "гидроаэродром",
+)
+_WATER_TEXT_TOKENS = ("системы водоснабжения", "гидротехнические сооружения")
+
+_PIPELINE_TOKENS = (
+    "трубопровод",
+    "промыслов",
+    "магистральн",
+    "газопровод",
+    "нефтепровод",
+    "морские трубопроводы",
+)
+_PIPELINE_TEXT_TOKENS = ("магистральные трубопроводы", "промысловые трубопроводы")
+
+_BIM_OPERATION_TOKENS = (
+    "информационное моделирован",
+    "bim",
+    "обследован",
+    "мониторинг",
+    "эксплуатац",
+    "техническ",
+    "технич",
+    "надзор",
+)
+_BIM_OPERATION_TEXT_TOKENS = ("информационная модель", "техническое состояние")
+
+_CONSTRUCTION_TOKENS = (
+    "организация строительства",
+    "производства работ",
+    "приемк",
+    "приёмк",
+    "земляные работы",
+    "изоляционные и отделочные",
+    "механизация строительства",
+    "свароч",
+    "снип iii",
+    "iii-",
+)
+_CONSTRUCTION_TEXT_TOKENS = ("правила производства и приемки", "организация строительного производства")
+
+_MATERIALS_TOKENS = (
+    "материал",
+    "издел",
+    "изоляц",
+    "опалуб",
+    "полы",
+    "стены",
+    "покрыт",
+    "пластмасс",
+    "ограждающ",
+    "панел",
+    "кровл",
+    "тепловая изоля",
+)
+_MATERIALS_TEXT_TOKENS = ("материалы строительные", "строительные материалы")
+
+_ARCH_URBAN_TOKENS = (
+    "жил",
+    "обществен",
+    "градостро",
+    "планировк",
+    "территор",
+    "доступность",
+    "учрежден",
+    "образователь",
+    "детск",
+    "больниц",
+    "спорт",
+    "парк",
+    "общежит",
+    "полици",
+    "наемные дома",
+    "малоэтаж",
+    "высотн",
+)
+_ARCH_URBAN_TEXT_TOKENS = ("жилые здания", "общественные здания", "городская среда")
+
+_SAFETY_TOKENS = (
+    "12.",
+    "ссбт",
+    "безопасност",
+    "охрана труда",
+    "опасн",
+    "защитные сооружения",
+    "гражданск",
+    "аварийн",
+    "химическ",
+)
+_SAFETY_TEXT_TOKENS = ("система стандартов безопасности труда", "защитные сооружения гражданской обороны")
+
+_STRUCTURAL_TOKENS = (
+    "конструкц",
+    "нагрузк",
+    "железобетон",
+    "бетон",
+    "стальные конструкции",
+    "каменные конструкции",
+    "деревянн",
+    "сооруж",
+    "резервуар",
+    "силос",
+    "дымовые трубы",
+)
+_STRUCTURAL_TEXT_TOKENS = ("строительные конструкции", "несущие конструкции")
+
+
+def _has_any(haystack: str, tokens: tuple[str, ...]) -> bool:
+    return any(token in haystack for token in tokens)
+
+
+def _is_spds_norm(name: str, text: str) -> bool:
+    haystack = f"{name}\n{text}"
+    return _has_any(haystack, _SPDS_TOKENS)
+
+
+def _is_ntd_source(probe: DocumentProbe) -> bool:
+    return any(part.casefold() == "ntd" for part in probe.path.parts)
 
 
 def _is_industrial_chimney_norm(text: str, name: str) -> bool:

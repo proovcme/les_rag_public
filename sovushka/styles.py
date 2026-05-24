@@ -527,6 +527,33 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
 /* Tabs */
 .q-tab { color: var(--dim) !important; opacity: 1 !important; }
 .q-tab--active { color: var(--accent) !important; background: rgba(56,189,248,.10) !important; }
+.les-top-tabs .q-tabs__content {
+  height: 56px !important;
+}
+.les-top-tabs .q-tab {
+  height: 56px !important;
+  min-height: 56px !important;
+  padding: 0 14px !important;
+}
+.les-top-tabs .q-tab__content {
+  height: 56px !important;
+  min-width: 0 !important;
+  padding: 0 !important;
+  justify-content: center !important;
+  gap: 2px !important;
+}
+.les-top-tabs .q-tab__icon {
+  font-size: 23px !important;
+  margin-bottom: 0 !important;
+}
+.les-top-tabs .q-tab__label {
+  font-size: .62rem !important;
+  line-height: 1.05 !important;
+  max-width: 112px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
 /* Generic text */
 .q-card, .q-card__section { color: var(--text) !important; }
 .q-field__control {

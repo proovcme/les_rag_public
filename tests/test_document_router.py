@@ -113,7 +113,7 @@ def test_normative_name_wins_over_table_price_words():
     route = classify_document(probe)
 
     assert route.doc_type == "NORMATIVE"
-    assert route.domain == "NTD_OTHER"
+    assert route.domain == "NTD_MATERIALS"
 
 
 def test_iec_and_fire_protection_names_route_to_specific_domains():
@@ -182,3 +182,58 @@ def test_email_routes_to_mail_index(tmp_path):
     assert route.dataset_name == "MAIL_Index"
     assert route.content_type == "email"
     assert route.pipeline == "markdown"
+
+
+def test_spds_and_geotech_route_out_of_other():
+    spds = classify_document(
+        DocumentProbe(
+            path=Path("ГОСТ 21.101-2020. Система проектной документации.docx"),
+            suffix=".docx",
+            size_bytes=10_000,
+        )
+    )
+    geotech = classify_document(
+        DocumentProbe(
+            path=Path("ГОСТ 12071-2014. Грунты. Отбор образцов.docx"),
+            suffix=".docx",
+            size_bytes=10_000,
+        )
+    )
+
+    assert spds.domain == "NTD_SPDS"
+    assert spds.dataset_name == "NTD_SPDS_Index"
+    assert geotech.domain == "NTD_GEOTECH"
+    assert geotech.dataset_name == "NTD_GEOTECH_Index"
+
+
+def test_transport_and_hvac_route_out_of_other():
+    transport = classify_document(
+        DocumentProbe(
+            path=Path("СП 35.13330.2011. Мосты и трубы.docx"),
+            suffix=".docx",
+            size_bytes=10_000,
+        )
+    )
+    hvac = classify_document(
+        DocumentProbe(
+            path=Path("СП 51.13330.2011. Защита от шума.docx"),
+            suffix=".docx",
+            size_bytes=10_000,
+        )
+    )
+
+    assert transport.domain == "NTD_TRANSPORT"
+    assert hvac.domain == "NTD_HVAC"
+
+
+def test_generic_ntd_normative_uses_general_bucket():
+    route = classify_document(
+        DocumentProbe(
+            path=Path("RAG_Content/NTD/ГОСТ Р 70070-2022. Национальный стандарт Российской Федерации.docx"),
+            suffix=".docx",
+            size_bytes=10_000,
+        )
+    )
+
+    assert route.domain == "NTD_GENERAL"
+    assert route.dataset_name == "NTD_GENERAL_Index"
