@@ -42,6 +42,28 @@ def classify_query(question: str) -> QueryRoute:
         return QueryRoute("NTD_ELECTRICAL", question, "electrical_keyword")
     if any(token in q for token in ("конструкц", "нагрузк", "фундамент", "основан", "железобетон")):
         return QueryRoute("NTD_STRUCTURAL", question, "structural_keyword")
+    if any(token in q for token in ("спдс", "рабочая документац", "проектная документац", "гост 21")):
+        return QueryRoute("NTD_SPDS", question, "spds_keyword")
+    if any(token in q for token in ("грунт", "геотех", "сейсми", "землетряс", "основания и фундаменты")):
+        return QueryRoute("NTD_GEOTECH", question, "geotech_keyword")
+    if any(token in q for token in ("дорог", "мост", "тоннел", "железн", "аэродром", "транспорт")):
+        return QueryRoute("NTD_TRANSPORT", question, "transport_keyword")
+    if any(token in q for token in ("отоп", "вентиля", "кондицион", "теплов", "шум", "акуст")):
+        return QueryRoute("NTD_HVAC", question, "hvac_keyword")
+    if any(token in q for token in ("водоснаб", "водоотвед", "канализац", "гидротех", "мелиоратив")):
+        return QueryRoute("NTD_WATER", question, "water_keyword")
+    if any(token in q for token in ("трубопровод", "газопровод", "нефтепровод", "магистральн")):
+        return QueryRoute("NTD_PIPELINES", question, "pipeline_keyword")
+    if any(token in q for token in ("жил", "обществен", "градостро", "территор", "доступность", "городская среда")):
+        return QueryRoute("NTD_ARCH_URBAN", question, "arch_urban_keyword")
+    if any(token in q for token in ("организация строительства", "приемк", "приёмк", "производство работ")):
+        return QueryRoute("NTD_CONSTRUCTION", question, "construction_keyword")
+    if any(token in q for token in ("bim", "информационное модел", "обследован", "эксплуатац", "мониторинг")):
+        return QueryRoute("NTD_BIM_OPERATION", question, "bim_operation_keyword")
+    if any(token in q for token in ("ссбт", "охрана труда", "защитные сооружения", "опасн")):
+        return QueryRoute("NTD_SAFETY", question, "safety_keyword")
+    if any(token in q for token in ("материал", "изоляц", "опалуб", "полы", "покрыт", "стены")):
+        return QueryRoute("NTD_MATERIALS", question, "materials_keyword")
     if any(token in q for token in ("смет", "ведомост", "таблиц", "расценк")):
         return QueryRoute("TABLE_SMETA", question, "table_smeta_keyword")
     if any(token in q for token in ("сп ", "норматив", "снип", "гост")):
@@ -96,6 +118,18 @@ def _dataset_name_candidates(dataset_filter: str) -> list[str]:
             "NTD_FIRE_Index",
             "NTD_ELECTRICAL_Index",
             "NTD_STRUCTURAL_Index",
+            "NTD_GEOTECH_Index",
+            "NTD_SPDS_Index",
+            "NTD_HVAC_Index",
+            "NTD_WATER_Index",
+            "NTD_PIPELINES_Index",
+            "NTD_TRANSPORT_Index",
+            "NTD_ARCH_URBAN_Index",
+            "NTD_CONSTRUCTION_Index",
+            "NTD_BIM_OPERATION_Index",
+            "NTD_SAFETY_Index",
+            "NTD_MATERIALS_Index",
+            "NTD_GENERAL_Index",
             "NTD_OTHER_Index",
             "NTD_Index",
         ]

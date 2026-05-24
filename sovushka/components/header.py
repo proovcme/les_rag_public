@@ -22,6 +22,7 @@ def build_header(
     include_chat: bool = True,
     admin_link: bool = False,
     chat_link: bool = False,
+    visualizer_url: str | None = None,
 ):
     """
     Строит единую sticky-полосу: [лого] [табы] [контролы].
@@ -34,7 +35,7 @@ def build_header(
     with ui.element("header").classes("w-full").style(
         "position:sticky;top:0;z-index:999;"
         "background:var(--bg-panel);border-bottom:1px solid var(--border);"
-        "display:flex;align-items:center;padding:0 16px;height:44px;gap:0;"
+        "display:flex;align-items:center;padding:0 16px;height:56px;gap:0;"
     ):
         # ── Лого ──────────────────────────────────────────────────────────────
         _html(
@@ -43,10 +44,10 @@ def build_header(
         )
 
         # ── Табы (по центру, растягиваются) ───────────────────────────────────
-        with ui.tabs().style(
+        with ui.tabs().classes("les-top-tabs").props("dense no-caps").style(
             "flex:1;min-width:0;background:transparent;border:none;"
             "font-family:var(--font);font-size:.65rem;font-weight:700;"
-            "color:var(--dim);height:44px;"
+            "color:var(--dim);height:56px;"
         ) as tabs:
             if show_admin_tabs:
                 tab_refs["overview"] = ui.tab("ОБЗОР",          icon="o_dashboard")
@@ -57,6 +58,7 @@ def build_header(
                 tab_refs["history"]  = ui.tab("ИСТОРИЯ",        icon="o_history")
             if show_admin_tabs:
                 tab_refs["mermaid"]  = ui.tab("ГРАФ",           icon="o_account_tree")
+                tab_refs["qdrant_viz"] = ui.tab("КВАДРАНТ",      icon="o_scatter_plot")
                 tab_refs["diag"]     = ui.tab("🔬 ДИАГН",       icon="o_medical_services")
                 tab_refs["volk"]     = ui.tab("В.О.Л.К.",       icon="o_vpn_key")
 
@@ -103,6 +105,14 @@ def build_header(
                     ui.button("АДМИНКА", on_click=lambda: ui.navigate.to("/les")).props(
                         "flat no-caps dense"
                     ).style("color:var(--accent);font-size:.62rem;font-family:var(--font);")
+
+                if visualizer_url:
+                    ui.link("КВАДРАНТ ↗", target=visualizer_url, new_tab=True).classes(
+                        "no-underline"
+                    ).style(
+                        "color:var(--accent);font-size:.62rem;font-family:var(--font);"
+                        "font-weight:700;white-space:nowrap;padding:4px 6px;"
+                    )
 
                 # Настройки
                 with ui.dialog() as settings_dialog, ui.card().style(

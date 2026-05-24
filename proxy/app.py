@@ -171,6 +171,9 @@ async def startup():
     global rag_backend
     init_db()
     seed_admin_key()
+    interrupted_jobs = job_service.mark_interrupted_active_jobs("proxy startup")
+    if interrupted_jobs:
+        logger.info("[INIT] Marked %s stale active job(s) as interrupted", interrupted_jobs)
     try:
         conn = sqlite3.connect("./data/les_meta.db", check_same_thread=False)
         conn.execute(

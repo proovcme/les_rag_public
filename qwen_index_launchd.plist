@@ -11,7 +11,7 @@
         <string>/Users/ovc/Projects/LES_v2/.venv/bin/python3</string>
         <string>/Users/ovc/Projects/LES_v2/tools/qwen_index_until_done.py</string>
         <string>--wave-batches</string>
-        <string>1000</string>
+        <string>500</string>
         <string>--poll-sec</string>
         <string>60</string>
     </array>

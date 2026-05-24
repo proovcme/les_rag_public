@@ -50,6 +50,99 @@ _load_env() {
     set +a
     export MLX_URL="${MLX_URL:-http://127.0.0.1:8080}"
     export QDRANT_URL="${QDRANT_URL:-http://127.0.0.1:6333}"
+    export LES_QDRANT_RUNTIME="${LES_QDRANT_RUNTIME:-auto}"
+}
+
+_qdrant_bin() {
+    if [ -x "$HOME/.local/bin/qdrant" ]; then
+        echo "$HOME/.local/bin/qdrant"
+    elif command -v qdrant >/dev/null 2>&1; then
+        command -v qdrant
+    fi
+}
+
+_qdrant_runtime() {
+    local runtime="${LES_QDRANT_RUNTIME:-auto}"
+    if [ "$runtime" = "auto" ]; then
+        if [ -n "$(_qdrant_bin)" ]; then
+            echo "local"
+        else
+            echo "docker"
+        fi
+    else
+        echo "$runtime"
+    fi
+}
+
+_qdrant_health() {
+    curl -sf "${QDRANT_URL:-http://127.0.0.1:6333}" >/dev/null 2>&1
+}
+
+_start_qdrant_local() {
+    local bin="$(_qdrant_bin)"
+    if [ -z "$bin" ]; then
+        _err "qdrant binary не найден ($HOME/.local/bin/qdrant)"
+        return 1
+    fi
+    if _qdrant_health; then
+        _ok "Qdrant local уже доступен"
+        return 0
+    fi
+
+    if [ -f "$DIR/qdrant_launchd.plist" ]; then
+        cp "$DIR/qdrant_launchd.plist" "$HOME/Library/LaunchAgents/me.ovc.les.qdrant.plist"
+        launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/me.ovc.les.qdrant.plist" >/dev/null 2>&1 || true
+        launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/me.ovc.les.qdrant.plist"
+    else
+        QDRANT__STORAGE__STORAGE_PATH="$DIR/data/qdrant" \
+        QDRANT__SERVICE__HTTP_PORT=6333 \
+        QDRANT__SERVICE__GRPC_PORT=6334 \
+        nohup "$bin" --disable-telemetry >> "$LOGS/qdrant.log" 2>&1 &
+    fi
+
+    for _ in {1..45}; do
+        if _qdrant_health; then
+            _ok "Qdrant local → ${QDRANT_URL:-http://127.0.0.1:6333}"
+            return 0
+        fi
+        sleep 1
+    done
+    _err "Qdrant local не поднялся — смотри $LOGS/qdrant.log"
+    return 1
+}
+
+_start_qdrant_docker() {
+    _ensure_docker || return 1
+    docker compose up -d qdrant 2>&1 | tail -3
+    local compose_status=${PIPESTATUS[0]}
+    if [ "$compose_status" -ne 0 ]; then
+        _err "docker compose up qdrant завершился с ошибкой"
+        return 1
+    fi
+    sleep 2
+    docker ps --format "{{.Names}}" | grep -q "les-qdrant" && _ok "les-qdrant" || _err "les-qdrant не поднялся"
+}
+
+_start_qdrant() {
+    _load_env
+    case "$(_qdrant_runtime)" in
+        local) _start_qdrant_local ;;
+        docker) _start_qdrant_docker ;;
+        *)
+            _err "Неизвестный LES_QDRANT_RUNTIME=$LES_QDRANT_RUNTIME (нужно auto/local/docker)"
+            return 1
+            ;;
+    esac
+}
+
+_stop_qdrant() {
+    launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/me.ovc.les.qdrant.plist" >/dev/null 2>&1 || true
+    lsof -tiTCP:6333 -sTCP:LISTEN 2>/dev/null | while read pid; do
+        ps -o command= -p "$pid" 2>/dev/null | grep -q "qdrant" && kill "$pid" 2>/dev/null
+    done
+    if docker info >/dev/null 2>&1; then
+        cd "$DIR" && docker compose stop qdrant >/dev/null 2>&1 || true
+    fi
 }
 
 # ── Статус одного сервиса ────────────────────────────────
@@ -57,6 +150,9 @@ _pid_status() {
     local name=$1 pid_file=$2 port=$3
     if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
         _ok "$name (PID $(cat "$pid_file"))"
+    elif [ -n "$port" ] && LISTENER="$(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | head -1)" && [ -n "$LISTENER" ]; then
+        echo "$LISTENER" > "$pid_file"
+        _ok "$name (PID $LISTENER, найден по :$port)"
     else
         _err "$name не запущен"
     fi
@@ -115,8 +211,10 @@ _start_watchdog() {
     if [ -f "$LOGS/mlx_watchdog.pid" ] && kill -0 "$(cat "$LOGS/mlx_watchdog.pid")" 2>/dev/null; then
         return
     fi
-    _mlx_watchdog &
+    rm -f "$LOGS/mlx_watchdog.pid"
+    nohup "$DIR/les.command" mlx-watchdog >> "$LOGS/mlx_host.log" 2>&1 &
     echo $! > "$LOGS/mlx_watchdog.pid"
+    disown $! 2>/dev/null || true
     _ok "MLX Watchdog (PID $(cat "$LOGS/mlx_watchdog.pid"))"
 }
 
@@ -159,9 +257,9 @@ do_stop() {
     lsof -ti :8050 | xargs kill -9 2>/dev/null
     _ok "les-proxy host остановлен"
 
-    # Docker
-    cd "$DIR" && docker compose stop 2>&1 | tail -2
-    _ok "Docker/Qdrant остановлен"
+    # Qdrant
+    _stop_qdrant
+    _ok "Qdrant остановлен"
 }
 
 # ── СТАРТ ────────────────────────────────────────────────
@@ -172,16 +270,8 @@ do_start() {
     mkdir -p "$LOGS"
 
     # 1. Qdrant
-    echo -e "\n${B}[1/4] Qdrant (OrbStack)...${D}"
-    _ensure_docker || return 1
-    docker compose up -d qdrant 2>&1 | tail -3
-    local compose_status=${PIPESTATUS[0]}
-    if [ "$compose_status" -ne 0 ]; then
-        _err "docker compose up qdrant завершился с ошибкой"
-        return 1
-    fi
-    sleep 2
-    docker ps --format "{{.Names}}" | grep -q "les-qdrant" && _ok "les-qdrant" || _err "les-qdrant не поднялся"
+    echo -e "\n${B}[1/4] Qdrant ($(_qdrant_runtime))...${D}"
+    _start_qdrant || return 1
 
     # 2. MLX Host
     echo -e "\n${B}[2/4] MLX Host...${D}"
@@ -254,15 +344,19 @@ do_sovushka() {
 # ── СТАТУС ───────────────────────────────────────────────
 do_status() {
     header "СТАТУС"
-    _pid_status "С.О.В.У.Ш.К.А. :8051" "$LOGS/sovushka.pid"
-    _pid_status "les-proxy host  :8050" "$LOGS/proxy.pid"
-    _pid_status "MLX Host        :8080" "$LOGS/mlx_host.pid"
+    _load_env
+    _pid_status "С.О.В.У.Ш.К.А. :8051" "$LOGS/sovushka.pid" 8051
+    _pid_status "les-proxy host  :8050" "$LOGS/proxy.pid" 8050
+    _pid_status "MLX Host        :8080" "$LOGS/mlx_host.pid" 8080
     launchctl list | grep -q "me.ovc.les.mlx" \
         && _ok "MLX LaunchAgent me.ovc.les.mlx" \
         || _pid_status "MLX Watchdog   " "$LOGS/mlx_watchdog.pid"
-    docker ps --format "{{.Names}}\t{{.Status}}" | grep "^les-" | while read line; do
-        _ok "Docker  $line"
-    done
+    _qdrant_health && _ok "Qdrant ${QDRANT_URL}" || _err "Qdrant недоступен"
+    if docker info >/dev/null 2>&1; then
+        docker ps --format "{{.Names}}\t{{.Status}}" | grep "^les-" | while read line; do
+            _ok "Docker  $line"
+        done
+    fi
     echo ""
     curl -sf http://localhost:8050/api/health > /dev/null \
         && _ok "API /health → OK" || _err "API /health → недоступен"
@@ -300,6 +394,7 @@ case "${1:-menu}" in
     restart)  do_stop; sleep 1; do_start ;;
     sovushka) do_sovushka ;;
     status)   do_status  ;;
+    mlx-watchdog) _mlx_watchdog ;;
     menu)     show_menu  ;;
     *)        echo "Использование: $0 {start|stop|restart|sovushka|status}"; exit 1 ;;
 esac

@@ -120,6 +120,32 @@ class JobService:
         rows = self._with_retry(_list)
         return {row["id"]: self._row_to_job(row) for row in rows}
 
+    def mark_interrupted_active_jobs(self, reason: str) -> int:
+        """Mark durable active jobs as interrupted after process restart."""
+        now = datetime.now().isoformat()
+        message = f"Interrupted by {reason}"
+
+        def _update():
+            with self._connect() as conn:
+                cursor = conn.execute(
+                    """
+                    UPDATE jobs
+                    SET status='cancelled',
+                        message=CASE
+                            WHEN COALESCE(message, '') = '' THEN ?
+                            ELSE message || ' | ' || ?
+                        END,
+                        updated_at=?,
+                        finished_at=?
+                    WHERE finished_at IS NULL
+                      AND lower(status) IN ('queued', 'running')
+                    """,
+                    (message, message, now, now),
+                )
+                return cursor.rowcount
+
+        return int(self._with_retry(_update) or 0)
+
     def _row_to_job(self, row: sqlite3.Row) -> Dict[str, Any]:
         item = dict(row)
         try:

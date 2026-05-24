@@ -18,6 +18,7 @@ from typing import Any
 
 
 ACTIVE_STATUSES = {"QUEUED", "PARSING", "RUNNING"}
+MAX_WAVE_BATCHES = 500
 
 
 def request(method: str, url: str, payload: dict[str, Any] | None = None, timeout: float = 20) -> Any:
@@ -78,6 +79,18 @@ def set_indexing_mode(proxy_url: str) -> None:
             "NTD_FIRE_Index",
             "NTD_ELECTRICAL_Index",
             "NTD_STRUCTURAL_Index",
+            "NTD_GEOTECH_Index",
+            "NTD_SPDS_Index",
+            "NTD_HVAC_Index",
+            "NTD_WATER_Index",
+            "NTD_PIPELINES_Index",
+            "NTD_TRANSPORT_Index",
+            "NTD_ARCH_URBAN_Index",
+            "NTD_CONSTRUCTION_Index",
+            "NTD_BIM_OPERATION_Index",
+            "NTD_SAFETY_Index",
+            "NTD_MATERIALS_Index",
+            "NTD_GENERAL_Index",
             "NTD_OTHER_Index",
         ],
     }
@@ -112,7 +125,7 @@ def start_wave(proxy_url: str, args: argparse.Namespace) -> str:
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--proxy-url", default="http://127.0.0.1:8050")
-    parser.add_argument("--wave-batches", type=int, default=1000)
+    parser.add_argument("--wave-batches", type=int, default=MAX_WAVE_BATCHES)
     parser.add_argument("--poll-sec", type=float, default=60)
     parser.add_argument("--cooldown-sec", type=float, default=0)
     parser.add_argument("--min-free-gb", type=float, default=4)
@@ -124,6 +137,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
+    if args.wave_batches > MAX_WAVE_BATCHES:
+        log("wave_batches_clamped", requested=args.wave_batches, effective=MAX_WAVE_BATCHES)
+        args.wave_batches = MAX_WAVE_BATCHES
+
     proxy_url = args.proxy_url.rstrip("/")
     set_indexing_mode(proxy_url)
 
