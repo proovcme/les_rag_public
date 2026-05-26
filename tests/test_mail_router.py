@@ -5,6 +5,7 @@ from email.message import EmailMessage
 
 import pytest
 
+from backend.mail_ingest import ImapFetchedFile
 from proxy.routers import datasets, mail
 
 
@@ -150,3 +151,54 @@ async def test_import_local_mail_defers_parse_during_guarded_reindex(tmp_path, m
     assert result["parse_started"] is False
     assert result["parse_blocked"] == "guarded reindex active"
     assert mail_state.parses == []
+
+
+@pytest.mark.asyncio
+async def test_mail_status_reports_imap_config(monkeypatch, mail_state):
+    monkeypatch.setenv("MAIL_IMAP_HOST", "imap.example.com")
+    monkeypatch.setenv("MAIL_IMAP_LOGIN", "mail@example.com")
+    monkeypatch.setenv("MAIL_IMAP_PASSWORD", "secret")
+    monkeypatch.setenv("MAIL_IMAP_FOLDERS", "INBOX,Archive")
+
+    status = await mail.mail_status(_user=object())
+
+    assert status["imap"]["enabled"] is True
+    assert status["imap"]["host"] == "imap.example.com"
+    assert status["imap"]["login"] == "ma***l@example.com"
+    assert status["imap"]["folders"] == ["INBOX", "Archive"]
+
+
+@pytest.mark.asyncio
+async def test_import_imap_mail_registers_fetched_eml(tmp_path, monkeypatch, mail_state):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MAIL_IMAP_HOST", "imap.example.com")
+    monkeypatch.setenv("MAIL_IMAP_LOGIN", "mail@example.com")
+    monkeypatch.setenv("MAIL_IMAP_PASSWORD", "secret")
+    source = tmp_path / "RAG_Content" / "MAIL" / "IMAP" / "mail@example.com" / "INBOX"
+    source.mkdir(parents=True)
+    eml = source / "0000000001_test.eml"
+    _write_eml(eml)
+
+    monkeypatch.setattr(
+        mail,
+        "fetch_imap_eml_files",
+        lambda settings, max_messages: [
+            ImapFetchedFile(
+                path=eml,
+                relative_path="MAIL/IMAP/mail@example.com/INBOX/0000000001_test.eml",
+                folder="INBOX",
+                uid=1,
+                subject="Письмо по проекту",
+                message_id="<m1>",
+            )
+        ],
+    )
+
+    result = await mail.import_imap_mail(mail.MailImapImportRequest(parse=False), _admin=object())
+
+    assert result["status"] == "registered"
+    assert result["dataset_name"] == "MAIL_Index"
+    assert result["files"] == 1
+    assert mail_state.uploads == [
+        ("ds-1", "0000000001_test.eml", "MAIL/IMAP/mail@example.com/INBOX/0000000001_test.eml")
+    ]

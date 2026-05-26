@@ -396,7 +396,7 @@ DOC_ROUTER_SAMPLE_PAGES=3
 - **Sovushka emergency control:** П.Р.О.Р.А.Б. получил локальные launchd-кнопки start/stop/restart для Qdrant, MLX, proxy, UI и guarded indexer; управление не зависит от работоспособности proxy.
 - **Resource Governor v1:** `/api/indexing-mode` разделяет рабочий чат и индексацию, ставит chat generation на паузу, управляет unload MLX и приоритетом индексов.
 - **Parse scheduler v2:** приоритет `NTD_FIRE → GKRF → NTD_ELECTRICAL → NTD_STRUCTURAL → TABLE_SMETA → NTD_OTHER`, post-batch memory hysteresis, `warm_embedder`, phase timings.
-- **Е.Ж.И.К. v0:** `/api/mail/status` и `/api/mail/import-local` регистрируют локальные `.eml/.msg` из `RAG_Content/MAIL` в `MAIL_Index`; IMAP credentials пока не хранятся.
+- **Е.Ж.И.К. v1:** `/api/mail/status`, `/api/mail/import-local` и `/api/mail/import-imap` регистрируют локальные `.eml/.msg` и новые IMAP-письма в `MAIL_Index`; IMAP credentials читаются только из `.env`, checkpoint UID хранится локально.
 - **BGE/chunk knobs:** `BGE_BATCH_SIZE`, `RAG_EMBED_BATCH`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP`, `RAG_PARSE_POST_MAX_SWAP_PCT`.
 - **Состояние индекса на 26.05.2026:** `indexed_files=801`, `pending_files=1`, `chunks=264307`, Qdrant points `264307`, `points_match_sqlite_chunks=true`, `errors=0`.
 - **Проверки на 26.05.2026:** `uv run pytest -q` → `224 passed`; `git diff --check` → OK.
@@ -408,6 +408,8 @@ DOC_ROUTER_SAMPLE_PAGES=3
 - **Heavy PDF guard:** автоиндексатор не запускает parse job, если pending очередь состоит только из тяжёлых book-PDF; runtime возвращается в `CHAT`.
 - **Sovushka Lite:** `/` теперь статический чатовый shell без NiceGUI client state; прежний rich chat доступен на `/classic`.
 - **Sovushka Lite Admin:** `/les` теперь статическая memory-first админка; прежняя rich NiceGUI admin доступна на `/les/classic`.
+- **Runtime Dispatcher v0:** `/api/runtime/dispatcher/status` объединяет память, launchd-сервисы и guarded reindex; chat admission учитывает активный reindex даже после рестарта proxy.
+- **Е.Ж.И.К. IMAP v1:** `/api/mail/import-imap` забирает новые письма через IMAP, сохраняет raw `.eml` в `RAG_Content/MAIL/IMAP`, регистрирует их в `MAIL_Index` и уважает dispatcher/reindex guard.
 - **Sovushka `/healthz`:** runtime health check больше не рендерит страницу `/les`, чтобы не создавать тяжёлый NiceGUI client state.
 - **Launchd hardening:** `start_service` делает `launchctl enable` перед bootstrap/kickstart; disabled labels не ломают восстановление контура.
 
@@ -509,6 +511,14 @@ RAG_EMBED_BATCH=16             # чанков за один HTTP-запрос к
 RAG_CHUNK_SIZE=900             # больше chunk = меньше embedding-вызовов
 RAG_CHUNK_OVERLAP=80
 RAG_PARSE_POST_MAX_SWAP_PCT=60 # auto-stop после batch
+MAIL_IMAP_HOST=imap.example.com
+MAIL_IMAP_PORT=993
+MAIL_IMAP_SSL=true
+MAIL_IMAP_LOGIN=mail@example.com
+MAIL_IMAP_PASSWORD=app-password
+MAIL_IMAP_FOLDERS=INBOX
+MAIL_IMAP_CHECKPOINT_DIR=data/mail_imap_checkpoints
+MAIL_IMAP_STORAGE_ROOT=RAG_Content/MAIL/IMAP
 ```
 
 Qwen-native индексирование идёт в отдельную коллекцию, чтобы не смешивать векторы разных embedding-моделей:
@@ -634,7 +644,7 @@ MIT — используй, форкай, улучшай.
 - [ ] XLS/CSV export — выдача табличных результатов как готовых файлов
 - [ ] Field Intake — внешние формы загрузки в карантинный `FIELD_Index`
 - [x] Е.Ж.И.К. v0 — локальный импорт EML/MSG в `MAIL_Index`
-- [ ] Е.Ж.И.К. v1 — IMAP коннектор для почты
+- [x] Е.Ж.И.К. v1 — IMAP коннектор для почты
 - [ ] VLM pipeline — анализ PDF-чертежей
 
 ### Backlog ускорения и оптимизации
