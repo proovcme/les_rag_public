@@ -1,9 +1,10 @@
 # Л.Е.С. — локальная RAG-машина для Apple Silicon
 
-**Л.Е.С.** превращает приватный архив PDF, DOCX, таблиц, Markdown, JSON и
-почтовых файлов в локальную базу знаний с ответами по источникам. Система
-рассчитана на Mac с Apple Silicon и unified memory: Qdrant, MLX, FastAPI proxy,
-UI и метаданные работают на вашей машине или внутри private network.
+**Л.Е.С.** превращает приватный архив PDF, DOCX, таблиц, Markdown, JSON,
+локальной почты и IMAP-писем в локальную базу знаний с ответами по источникам.
+Система рассчитана на Mac с Apple Silicon и unified memory: Qdrant, MLX,
+FastAPI proxy, UI и метаданные работают на вашей машине или внутри private
+network.
 
 Позиционирование проекта: **локальный RAG appliance для инженерных, нормативных
 и корпоративных архивов на Apple Silicon**. Главные акценты: приватность,
@@ -47,10 +48,12 @@ UI и метаданные работают на вашей машине или 
 ```mermaid
 flowchart LR
     User[User browser] --> Lite[Sovushka Lite<br/>static chat :8051]
-    Admin[Operator] --> AdminUI[NiceGUI admin<br/>/les]
+    Admin[Operator] --> AdminUI[Sovushka Lite Admin<br/>static /les]
+    Classic[Classic UI fallback<br/>NiceGUI /classic] -.-> Proxy
     Lite --> Proxy[FastAPI proxy<br/>:8050]
     AdminUI --> Proxy
     Proxy --> Auth[RBAC + API keys]
+    Proxy --> Dispatcher[Runtime Dispatcher<br/>memory + guarded reindex]
     Proxy --> RAG[Retrieval + routing]
     RAG --> Qdrant[(Qdrant vectors)]
     RAG --> Meta[(SQLite metadata)]
@@ -84,10 +87,10 @@ flowchart TD
 |---|---|
 | RAG chat | Русскоязычные ответы с источниками, dataset filter, clarification gate |
 | SafeRAG | Post-generation validation, статусы `VERIFIED / NO_DATA / HALLUCINATION` |
-| Индексация | Smart plan/sync/upload, deterministic routing, guarded micro-indexing |
-| Документы | PDF, DOCX, DOC, XLSX, XLS, CSV, EML, MSG, JSON, JSONL, MD, TXT |
+| Индексация | Smart plan/sync/upload, Folder Watcher status/scan, Runtime Dispatcher guarded reindex |
+| Документы | PDF, DOCX, DOC, XLSX, XLS, CSV, EML, MSG, IMAP `.eml`, JSON, JSONL, MD, TXT |
 | Таблицы | Row-level chunks, Parquet artifacts, прямые суммы/количества без LLM |
-| UI | Sovushka Lite chat, legacy NiceGUI chat, admin console, metrics, jobs |
+| UI | Sovushka Lite chat/admin, legacy NiceGUI fallback, metrics, jobs, runtime controls |
 | Диагностика | `/api/health`, `/api/status`, `/api/metrics`, `/api/diag`, smoke/golden tests |
 | Доступ | Localhost/private network by default; optional reverse proxy behind VPN |
 
@@ -110,9 +113,11 @@ flowchart TD
 | No-Docker host runtime | Меньше overhead на 16-24 GB Mac, особенно под MLX/Metal |
 | Runtime profiles | `CHAT`, `CHAT_VALIDATED`, `INDEX_LIGHT`, `INDEX_HEAVY_PDF`, `MAINTENANCE` |
 | Memory states | `GREEN/YELLOW/RED/CRITICAL` для admission chat/index/warmup |
+| Runtime Dispatcher | Proxy-side status/start/pause/resume для guarded reindex; duplicate start guard |
+| Wait-only policy | LES показывает top memory consumers, но не убивает пользовательские процессы автоматически |
 | Model leases | Модели грузятся лениво и выгружаются после операции под давлением памяти |
 | Heavy PDF guard | Большие book-PDF не попадают в auto-index loop без ручного admission |
-| Lite UI shell | `/` отдаёт статический чат без NiceGUI client state; `/classic` оставлен для rich UI |
+| Lite UI shell | `/` и `/les` отдают статические shell без NiceGUI client state; `/classic` оставлен для rich UI |
 | Health checks | `/healthz` и API health не должны рендерить тяжёлые UI routes |
 
 Подробная политика памяти: [RUNTIME_MEMORY_PROFILES.md](RUNTIME_MEMORY_PROFILES.md).
@@ -128,9 +133,47 @@ flowchart TD
 | Embeddings | Qwen3 Embedding 0.6B или BGE-M3-compatible profile |
 | Vector DB | Qdrant local binary or configured external Qdrant |
 | Backend | FastAPI, httpx, SQLite, LlamaIndex-compatible backend interfaces |
-| Frontend | Sovushka Lite static chat + NiceGUI admin |
+| Frontend | Sovushka Lite static chat/admin + optional NiceGUI classic |
 | Storage | Local filesystem + SQLite metadata + Parquet artifacts |
 | Optional relay | Caddy/HTTPS/VPN/ZeroTier-style private network pattern |
+
+## Runtime Dispatcher / One-Click Indexing
+
+Runtime Dispatcher v0 живёт внутри proxy и собирает единый статус памяти,
+launchd-сервисов и guarded reindex кампаний:
+
+```bash
+curl -s http://127.0.0.1:8050/api/runtime/dispatcher/status \
+  | python3 -m json.tool
+```
+
+Поведение консервативное: если memory guard красный, reindex не стартует и
+возвращает понятную причину. Если кампания уже идёт, повторный start не создаёт
+дубликат. Pause/resume работают через state/log/pid runner'а; v0 не добавляет
+отдельный daemon.
+
+Folder Watcher v0 помогает перед индексацией понять, что реально изменилось в
+`RAG_Content/`:
+
+```bash
+curl -s 'http://127.0.0.1:8050/api/rag/watch/status?source_root=RAG_Content' \
+  | python3 -m json.tool
+```
+
+Ответ разделяет `new`, `changed`, `route_changed` и `unchanged`. `route_changed`
+означает, что документ уже был в базе, но новые правила routing отправляют его
+в другой dataset, то есть нужен аккуратный reindex по новым правилам.
+
+## Е.Ж.И.К. Mail Intake
+
+Е.Ж.И.К. импортирует локальные `.eml/.msg` и новые письма через IMAP в
+`MAIL_Index`. Credentials читаются только из `.env`; сырые IMAP письма
+сохраняются как `.eml`, UID checkpoints лежат локально.
+
+```bash
+curl -s http://127.0.0.1:8050/api/mail/status | python3 -m json.tool
+curl -X POST http://127.0.0.1:8050/api/mail/import-imap
+```
 
 ## Масштабируемость
 
