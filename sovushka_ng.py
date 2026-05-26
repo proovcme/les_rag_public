@@ -16,6 +16,7 @@ from sovushka.config import QDRANT_VISUALIZER_PORT, STORAGE_SECRET, UI_PORT
 from sovushka.state import bg_loop
 from sovushka.styles import CUSTOM_CSS, theme_vars_css
 from sovushka.auth import register_login_page, get_auth
+from sovushka.lite_chat import register_lite_chat_routes
 from sovushka.trust import trusted_role_for_request
 
 from sovushka.components.header import build_header
@@ -35,6 +36,7 @@ app.add_static_files("/static", "static")
 
 # Регистрируем /login (отдельная страница, без обвязки main_page)
 register_login_page()
+register_lite_chat_routes()
 
 
 @app.get("/healthz")
@@ -104,8 +106,8 @@ def _resolve_auth(request: Request):
     return True, role, holder, is_admin
 
 
-@ui.page("/")
-async def chat_page(request: Request):
+@ui.page("/classic")
+async def classic_chat_page(request: Request):
     allowed, role, holder, is_admin = _resolve_auth(request)
     if not allowed:
         return RedirectResponse("/login")

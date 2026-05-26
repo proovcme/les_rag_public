@@ -167,7 +167,8 @@ def register_login_page():
         trusted_role = trusted_role_for_request(request)
         
         if is_authenticated() or trusted_role:
-            return RedirectResponse("/")
+            role = trusted_role or get_role()
+            return RedirectResponse("/les" if role == "admin" else "/")
 
         ui.add_head_html(_LOGIN_CSS)
         ui.query("body").style("background:#08090b;margin:0;")
@@ -254,7 +255,7 @@ function volkLogin() {{
                 return
             result = await login(key_val, fingerprint=fp_val)
             if result["ok"]:
-                ui.navigate.to("/")
+                ui.navigate.to("/les" if get_role() == "admin" else "/")
             else:
                 msg = result.get("detail", "Неверный ключ или ключ отключён")
                 await ui.run_javascript(

@@ -4,7 +4,7 @@
 
 **Публичное позиционирование:** локальная RAG-машина для инженерных, нормативных и корпоративных архивов на Apple Silicon. Фокус: приватность, воспроизводимость, наблюдаемость, безопасная индексация и ответы с проверяемыми источниками.
 
-**Актуальный статус: 26.05.2026.** Референсный контур работает на Mac Mini M4 / 24 GB в no-Docker runtime: Qdrant local binary, MLX Host, FastAPI proxy и NiceGUI UI запускаются через launchd. Активный embedding-профиль — `Qwen/Qwen3-Embedding-0.6B` в коллекции `les_rag_qwen3_06b`; legacy BGE-M3 сохранён отдельно. Текущий публичный baseline: `801/802` файлов проиндексировано, `264307` чанков, Qdrant points совпадают с SQLite; один тяжёлый book-PDF оставлен за ручным admission guard.
+**Актуальный статус: 26.05.2026.** Референсный контур работает на Mac Mini M4 / 24 GB в no-Docker runtime: Qdrant local binary, MLX Host, FastAPI proxy и Sovushka Lite + NiceGUI admin запускаются через launchd. Активный embedding-профиль — `Qwen/Qwen3-Embedding-0.6B` в коллекции `les_rag_qwen3_06b`; legacy BGE-M3 сохранён отдельно. Текущий публичный baseline: `801/802` файлов проиндексировано, `264307` чанков, Qdrant points совпадают с SQLite; один тяжёлый book-PDF оставлен за ручным admission guard.
 
 ---
 
@@ -32,7 +32,9 @@
 
 ```mermaid
 flowchart LR
-    User[Пользователь<br/>браузер] --> UI[С.О.В.У.Ш.К.А.<br/>NiceGUI :8051]
+    User[Пользователь<br/>браузер] --> Lite[Sovushka Lite<br/>static chat :8051]
+    Admin[Оператор<br/>браузер] --> UI[С.О.В.У.Ш.К.А.<br/>NiceGUI admin :8051/les]
+    Lite --> Proxy[les-proxy<br/>FastAPI :8050]
     UI --> Proxy[les-proxy<br/>FastAPI :8050]
     Proxy --> Auth[В.О.Л.К.<br/>RBAC + API keys]
     Proxy --> RAG[С.А.М.О.В.А.Р.<br/>retrieval + routing]
@@ -43,7 +45,8 @@ flowchart LR
     MLX --> Val[Qwen validator<br/>sequential]
     MLX --> Embed[Qwen3 Embedding<br/>0.6B]
 
-    Public[Optional public HTTPS<br/>Caddy VPS relay] -. ZeroTier/SSH .-> UI
+    Public[Optional public HTTPS<br/>Caddy VPS relay] -. / .-> Lite
+    Public -. /les .-> UI
     Public -. /api .-> Proxy
 ```
 
@@ -76,7 +79,7 @@ flowchart TD
 | Индексация | Smart plan/sync/upload, deterministic routing, batch scheduler, guarded micro-indexing |
 | Документы | PDF, DOCX, DOC, XLSX, XLS, CSV, EML, MSG, JSON, JSONL, MD, TXT |
 | Таблицы | Row-level chunks, Parquet artifacts, прямые суммы/количества без LLM |
-| UI | Чат, история, панель артефактов, админка, метрики, jobs, runtime controls |
+| UI | Lite-чат без NiceGUI client state, classic NiceGUI chat, админка, метрики, jobs, runtime controls |
 | Диагностика | `/api/health`, `/api/status`, `/api/metrics`, `/api/diag`, smoke/browser/golden tests |
 | Внешний доступ | Опциональный HTTPS relay через Caddy + private VPN/ZeroTier; RAG и модели остаются на Mac |
 
@@ -105,9 +108,10 @@ flowchart TD
 | Memory states | `GREEN/YELLOW/RED/CRITICAL` централизуют admission для chat/index/warmup |
 | Model leases | Модели грузятся лениво; validator и embedder не должны конфликтовать с chat/index без admission |
 | Heavy PDF guard | Тяжёлые book-PDF не идут в auto-index loop; нужен ручной `INDEX_HEAVY_PDF` или streaming pipeline |
+| Lightweight chat shell | `/` отдаёт статический Sovushka Lite без NiceGUI client state; `/classic` сохраняет rich NiceGUI chat |
 | Lightweight UI health | Sovushka отвечает `/healthz`; runtime status не рендерит тяжёлую NiceGUI страницу |
 | Durable jobs | `/api/jobs` объединяет SQLite job history и live jobs |
-| Regression suite | На 26.05.2026: `218 passed`, включая auth, storage, runtime admission, SafeRAG и indexer guards |
+| Regression suite | На 26.05.2026: `222 passed`, включая auth, storage, runtime admission, SafeRAG, Lite UI и indexer guards |
 
 Подробная модель памяти описана в [RUNTIME_MEMORY_PROFILES.md](RUNTIME_MEMORY_PROFILES.md).
 
@@ -124,7 +128,7 @@ flowchart TD
 | Embeddings | Active: `Qwen/Qwen3-Embedding-0.6B`; legacy baseline: `BAAI/bge-m3` |
 | Vector DB | Qdrant local binary + per-profile collections |
 | Backend | FastAPI, httpx, SQLite, LlamaIndex-compatible backend interfaces |
-| Frontend | NiceGUI / С.О.В.У.Ш.К.А. |
+| Frontend | Sovushka Lite static chat + NiceGUI admin / С.О.В.У.Ш.К.А. |
 | Storage | Local filesystem + SQLite metadata, Parquet artifacts for tables |
 | Public relay | Optional Caddy + Let's Encrypt + ZeroTier/private network |
 
@@ -211,7 +215,7 @@ cp env.example .env
 ./start_les.command
 ```
 
-Открой `http://localhost:8051` для чата или `http://localhost:8051/les` для админки.
+Открой `http://localhost:8051` для Lite-чата, `http://localhost:8051/classic` для прежнего NiceGUI-чата или `http://localhost:8051/les` для админки.
 
 На рабочем столе есть аварийный ярлык `Запуск_ЛЕС.command`: он вызывает `start_les.command`,
 поднимает launchd-сервисы и открывает С.О.В.У.Ш.К.А. Управлять контуром можно и из админки:
@@ -317,7 +321,8 @@ Reverse proxy может помечать запросы из выбранног
 никакой внешней сети автоматически: добавляй VPN/LAN CIDR только в приватном `.env`.
 
 Публичные маршруты UI:
-- `https://<your-domain>/` — устойчивый чатовый контур, не монтирует админские страницы.
+- `https://<your-domain>/` — Lite-чатовый контур, не монтирует NiceGUI client state.
+- `https://<your-domain>/classic` — прежний rich NiceGUI chat для локальной работы.
 - `https://<your-domain>/les` — админский контур, доступен только admin/trusted.
 
 ---
@@ -329,7 +334,7 @@ Reverse proxy может помечать запросы из выбранног
 | Компонент | Типичный режим |
 |---|---|
 | Qdrant local binary | ~1.5-2.0 GB RSS на текущем индексе |
-| Sovushka UI | ~1-3 GB после lightweight `/healthz`; не использовать `/les` как health probe |
+| Sovushka UI | ~1-3 GB base RSS; `/` не создаёт NiceGUI client state, `/les` и `/classic` не использовать как health probe |
 | les-proxy | сотни MB, без Docker VM |
 | MLX Host idle | сотни MB; модели не resident до запроса |
 | Chat model | lazy load на время ответа; размер зависит от модели и квантования |
@@ -390,13 +395,14 @@ DOC_ROUTER_SAMPLE_PAGES=3
 - **Parse scheduler v2:** приоритет `NTD_FIRE → GKRF → NTD_ELECTRICAL → NTD_STRUCTURAL → TABLE_SMETA → NTD_OTHER`, post-batch memory hysteresis, `warm_embedder`, phase timings.
 - **BGE/chunk knobs:** `BGE_BATCH_SIZE`, `RAG_EMBED_BATCH`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP`, `RAG_PARSE_POST_MAX_SWAP_PCT`.
 - **Состояние индекса на 26.05.2026:** `indexed_files=801`, `pending_files=1`, `chunks=264307`, Qdrant points `264307`, `points_match_sqlite_chunks=true`, `errors=0`.
-- **Проверки на 26.05.2026:** `uv run pytest -q` → `218 passed`; `git diff --check` → OK.
+- **Проверки на 26.05.2026:** `uv run pytest -q` → `222 passed`; `git diff --check` → OK.
 
 ### Новое в релизе 26.05.2026
 
 - **Runtime memory profiles:** `/api/status` и `/api/indexing-mode` показывают активный `runtime_profile` и `memory_state`.
 - **Startup memory preflight:** `start_les.command` перед стартом показывает крупнейшие процессы и предлагает ручной `SIGTERM` только безопасным кандидатам.
 - **Heavy PDF guard:** автоиндексатор не запускает parse job, если pending очередь состоит только из тяжёлых book-PDF; runtime возвращается в `CHAT`.
+- **Sovushka Lite:** `/` теперь статический чатовый shell без NiceGUI client state; прежний rich chat доступен на `/classic`, админка остаётся на `/les`.
 - **Sovushka `/healthz`:** runtime health check больше не рендерит страницу `/les`, чтобы не создавать тяжёлый NiceGUI client state.
 - **Launchd hardening:** `start_service` делает `launchctl enable` перед bootstrap/kickstart; disabled labels не ломают восстановление контура.
 

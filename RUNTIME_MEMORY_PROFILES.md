@@ -137,8 +137,9 @@ interactive terminal, asks which non-LES, non-protected candidates should receiv
 explicit selection.
 
 Runtime status checks must use lightweight health endpoints. For Sovushka UI,
-use `/healthz`; probing `/` or `/les` renders a NiceGUI page and can create large
-server-side client state.
+use `/healthz`. The default `/` route is the static Sovushka Lite chat shell;
+do not use `/classic` or `/les` as health probes because those routes render
+NiceGUI pages and can create large server-side client state.
 
 Safe session close:
 
