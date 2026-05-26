@@ -1,68 +1,171 @@
-# LES RAG
+# Л.Е.С. — локальная RAG-машина для Apple Silicon
 
-LES RAG is a local-first retrieval-augmented generation project for working with
-technical documents. It indexes files into a vector database, retrieves relevant
-fragments for a user question, and generates an answer with source references.
+**Л.Е.С.** превращает приватный архив PDF, DOCX, таблиц, Markdown, JSON и
+почтовых файлов в локальную базу знаний с ответами по источникам. Система
+рассчитана на Mac с Apple Silicon и unified memory: Qdrant, MLX, FastAPI proxy,
+UI и метаданные работают на вашей машине или внутри private network.
 
-The project is designed for private deployments where documents should stay on
-the operator's machine or inside a controlled network.
+Позиционирование проекта: **локальный RAG appliance для инженерных, нормативных
+и корпоративных архивов на Apple Silicon**. Главные акценты: приватность,
+воспроизводимость, наблюдаемость, безопасная индексация, memory guardrails и
+проверяемые ответы.
 
-## Features
+> Public repo содержит безопасный snapshot кода и документации. Приватные
+> датасеты, `.env`, индексы, логи, ключи и локальные runtime artifacts сюда не
+> входят.
 
-- Document intake for PDF, DOCX, spreadsheets, text, Markdown, JSON, and mail-like formats.
-- Deterministic document routing into domain-specific datasets.
-- Qdrant-backed vector search.
-- Local embedding and generation endpoints.
-- FastAPI proxy for chat, retrieval, indexing, diagnostics, and administration.
-- Optional NiceGUI interface for chat and operational views.
-- SQLite metadata for datasets, documents, jobs, metrics, and access keys.
-- Conservative indexing mode with memory guards and resumable background waves.
+## Скриншоты
 
-## Architecture
+<p>
+  <img src="docs/assets/sovushka-lite-desktop.png" alt="Sovushka Lite desktop chat shell" width="100%">
+</p>
+
+<p>
+  <img src="docs/assets/sovushka-lite-mobile.png" alt="Sovushka Lite mobile chat shell" width="360">
+</p>
+
+## Что Это Даёт
+
+| Задача | Для пользователя | Что делает Л.Е.С. |
+|---|---|---|
+| Найти норму или факт | Задать вопрос по локальному архиву | Ищет релевантные chunks, собирает ответ, показывает источники |
+| Проверить ответ | Видеть `VERIFIED`, `NO_DATA` или safe fallback | Отдельный validator снижает риск неподтверждённых ответов |
+| Загрузить архив | Положить файлы в `RAG_Content/` или загрузить через API/UI | Smart intake классифицирует файлы и выбирает pipeline |
+| Работать с таблицами | Спрашивать суммы, количества, позиции | XLSX/CSV превращаются в row-level chunks и Parquet artifacts |
+| Эксплуатировать локально | Запускать контур как appliance | launchd/runtime scripts, health API, jobs, smoke tests, memory profiles |
+
+Пример поведения:
 
 ```text
-Documents
-   |
-   v
-Intake and routing
-   |
-   v
-Chunking and embeddings
-   |
-   v
-Qdrant + SQLite metadata
-   |
-   v
-Retrieval API
-   |
-   v
-Local generation and validation
-   |
-   v
-Answer with sources
+Вопрос:  "Какая минимальная ширина пути эвакуации?"
+Ответ:   "По найденным фрагментам ... [VERIFIED]"
+Источник: document.pdf, page 12
 ```
 
-Typical services:
+## Архитектура
 
-- `proxy_server.py` starts the FastAPI application.
-- `mlx_host.py` provides local model endpoints.
-- Qdrant stores vectors.
-- SQLite stores metadata and job state.
-- `les.command` manages the local runtime.
+```mermaid
+flowchart LR
+    User[User browser] --> Lite[Sovushka Lite<br/>static chat :8051]
+    Admin[Operator] --> AdminUI[NiceGUI admin<br/>/les]
+    Lite --> Proxy[FastAPI proxy<br/>:8050]
+    AdminUI --> Proxy
+    Proxy --> Auth[RBAC + API keys]
+    Proxy --> RAG[Retrieval + routing]
+    RAG --> Qdrant[(Qdrant vectors)]
+    RAG --> Meta[(SQLite metadata)]
+    Proxy --> MLX[MLX host<br/>chat / validation / embeddings]
+    MLX --> Main[Chat model<br/>lazy lease]
+    MLX --> Val[Validator<br/>sequential lease]
+    MLX --> Emb[Embedding model]
+```
 
-## Requirements
+```mermaid
+flowchart TD
+    Q[Question] --> Gate{Clarification gate}
+    Gate -->|too broad| Ask[Ask clarifying questions]
+    Gate -->|specific enough| Ret[Dense retrieval]
+    Ret --> Rerank{Optional reranker}
+    Rerank -->|on| RR[Validator model scoring]
+    Rerank -->|off| Ctx[Top chunks]
+    RR --> Ctx
+    Ctx --> Table{Table query?}
+    Table -->|yes| Exact[Deterministic table answer]
+    Table -->|no| Gen[Local LLM generation]
+    Exact --> Judge[SafeRAG validation]
+    Gen --> Judge
+    Judge -->|verified| Answer[Answer + sources]
+    Judge -->|no data / hallucination| Safe[Safe fallback]
+```
 
-- macOS or Linux
-- Python 3.12+
-- `uv`
-- Qdrant, either local binary or containerized
-- A local embedding/generation endpoint compatible with the configured API
+## Функции
 
-Apple Silicon with MLX is the primary development target, but the repository is
-structured so that model and vector services can be configured through
-environment variables.
+| Блок | Возможности |
+|---|---|
+| RAG chat | Русскоязычные ответы с источниками, dataset filter, clarification gate |
+| SafeRAG | Post-generation validation, статусы `VERIFIED / NO_DATA / HALLUCINATION` |
+| Индексация | Smart plan/sync/upload, deterministic routing, guarded micro-indexing |
+| Документы | PDF, DOCX, DOC, XLSX, XLS, CSV, EML, MSG, JSON, JSONL, MD, TXT |
+| Таблицы | Row-level chunks, Parquet artifacts, прямые суммы/количества без LLM |
+| UI | Sovushka Lite chat, legacy NiceGUI chat, admin console, metrics, jobs |
+| Диагностика | `/api/health`, `/api/status`, `/api/metrics`, `/api/diag`, smoke/golden tests |
+| Доступ | Localhost/private network by default; optional reverse proxy behind VPN |
 
-## Quick Start
+## Безопасность
+
+| Риск | Защита |
+|---|---|
+| Утечка документов | Штатный runtime локальный; облако не требуется |
+| Публичная админка | RBAC, API keys, trusted networks only by explicit config |
+| Подмена trusted headers | `TRUSTED_PROXY_NETWORKS` ограничивает доверенные reverse proxies |
+| Path traversal | Storage helpers проверяют dataset paths и storage root |
+| Неподтверждённые ответы | SafeRAG не отдаёт validator timeout/error как нормальный факт |
+| Отравление кэша | Semantic cache сохраняет только verified answers и инвалидируется по scope |
+| Агрессивный memory cleanup | Guards выгружают LES-owned models/jobs; чужие процессы только по решению оператора |
+
+## Стабильность
+
+| Механизм | Зачем |
+|---|---|
+| No-Docker host runtime | Меньше overhead на 16-24 GB Mac, особенно под MLX/Metal |
+| Runtime profiles | `CHAT`, `CHAT_VALIDATED`, `INDEX_LIGHT`, `INDEX_HEAVY_PDF`, `MAINTENANCE` |
+| Memory states | `GREEN/YELLOW/RED/CRITICAL` для admission chat/index/warmup |
+| Model leases | Модели грузятся лениво и выгружаются после операции под давлением памяти |
+| Heavy PDF guard | Большие book-PDF не попадают в auto-index loop без ручного admission |
+| Lite UI shell | `/` отдаёт статический чат без NiceGUI client state; `/classic` оставлен для rich UI |
+| Health checks | `/healthz` и API health не должны рендерить тяжёлые UI routes |
+
+Подробная политика памяти: [RUNTIME_MEMORY_PROFILES.md](RUNTIME_MEMORY_PROFILES.md).
+
+## Стек
+
+| Слой | Технологии |
+|---|---|
+| Host | macOS + Apple Silicon, launchd, `uv`, Python 3.12 |
+| LLM runtime | MLX / `mlx-lm`, OpenAI-compatible local host |
+| Chat models | Qwen / Gemma / Mistral-class local models, выбранные под RAM budget |
+| Validator/reranker | Небольшая локальная instruct model, sequential lease |
+| Embeddings | Qwen3 Embedding 0.6B или BGE-M3-compatible profile |
+| Vector DB | Qdrant local binary or configured external Qdrant |
+| Backend | FastAPI, httpx, SQLite, LlamaIndex-compatible backend interfaces |
+| Frontend | Sovushka Lite static chat + NiceGUI admin |
+| Storage | Local filesystem + SQLite metadata + Parquet artifacts |
+| Optional relay | Caddy/HTTPS/VPN/ZeroTier-style private network pattern |
+
+## Масштабируемость
+
+```mermaid
+flowchart LR
+    A[Single Mac<br/>16-24 GB] --> B[24-64 GB Mac<br/>larger model/context]
+    B --> C[Split services<br/>QDRANT_URL / MLX_URL / proxy / UI]
+    C --> D[Private public access<br/>Caddy + VPN]
+    A --> E[Corpus scale<br/>collections per embedding profile]
+    E --> F[Quality scale<br/>golden set + reranker + hybrid retrieval]
+```
+
+| Направление | Как масштабировать |
+|---|---|
+| RAM / модели | 16 GB: small models; 24 GB: stable local RAG; 32-64 GB: larger context and 14B+ |
+| Корпус | Separate Qdrant collections per embedding profile; SQLite metadata; batch scheduler |
+| Индексация | `batch_limit=1`, post-batch memory guard, manual heavy-PDF admission |
+| Пользователи | UI/API можно вынести за private relay; RAG/LLM остаются на local Mac |
+| Качество | Golden set, retrieval debug, optional reranker, future dense+sparse/RRF |
+| Сервисы | `MLX_URL`, `QDRANT_URL`, `PROXY_URL` позволяют разнести компоненты |
+
+## Рекомендуемые Модели
+
+| Машина | Chat model | Validator / reranker | Embeddings | Комментарий |
+|---|---|---|---|---|
+| Apple Silicon 16 GB | 3B-4B 4-bit MLX | выключить по умолчанию или запускать строго sequential | Qwen3 Embedding 0.6B / BGE-M3 | Лёгкий RAG, короткие контексты, без параллельной индексации |
+| Apple Silicon 24 GB | 4B-8B 4-bit MLX как safe default | 4B validator sequential | Qwen3 Embedding 0.6B | Лучший баланс скорости, памяти и стабильности |
+| Apple Silicon 24 GB quality run | 12B-14B 4-bit MLX/GGUF | только sequential validation | Qwen3 Embedding 0.6B | Сильнее ответы, но меньше запас под контекст и parsing |
+| Apple Silicon 32-64 GB | 14B+ profiles after golden-set check | 4B/8B validator or reranker | Qwen3 0.6B/4B | Для большого корпуса, длинного контекста и более сложной аналитики |
+
+Эксплуатационное правило для 24 GB: не держать одновременно chat model,
+validator, embedder и тяжёлый PDF parser. Сначала профиль, потом admission,
+затем job.
+
+## Быстрый Старт
 
 ```bash
 git clone https://github.com/proovcme/les_rag_public.git
@@ -70,65 +173,65 @@ cd les_rag_public
 
 uv sync
 cp env.example .env
+# edit .env: local paths, API keys, trusted networks, model endpoints
 ```
 
-Edit `.env` for local paths, model endpoints, authentication settings, and
-Qdrant settings.
-
-Start the local runtime:
+Запуск локального runtime зависит от выбранной конфигурации Qdrant/MLX. Типовой
+host-mode сценарий:
 
 ```bash
-./les.command start
+./start_les.command
 ```
 
-Check health:
+Проверка:
 
 ```bash
 curl http://127.0.0.1:8050/api/health
+curl http://127.0.0.1:8051/healthz
 ```
 
-## Indexing Documents
+UI routes:
 
-Place source files under `RAG_Content/`, then inspect and run sync/indexing
-through the API or UI.
+```text
+http://127.0.0.1:8051/         Sovushka Lite chat
+http://127.0.0.1:8051/classic  legacy NiceGUI chat
+http://127.0.0.1:8051/les      admin console
+```
 
-Example:
+## Индексация Документов
+
+Положите файлы в `RAG_Content/`, затем проверьте smart plan:
 
 ```bash
 curl -s http://127.0.0.1:8050/api/rag/smart-plan | python3 -m json.tool
 ```
 
-The indexing helpers are intentionally conservative: they process small batches,
-respect memory guards, and keep job state visible through `/api/jobs`.
+Sync/indexing helpers намеренно консервативны: обрабатывают малые batches,
+уважают memory guards и держат job state видимым через `/api/jobs`.
 
-## Development
-
-Run focused tests:
+## Разработка
 
 ```bash
-uv run python -m pytest tests/test_document_router.py tests/test_retrieval_service.py
+uv run pytest -q
+uv run python -m py_compile proxy_server.py mlx_host.py sovushka_ng.py
 ```
 
-Run syntax checks for operational scripts and services:
+Focused examples:
 
 ```bash
-uv run python -m py_compile \
-  backend/document_router.py \
-  proxy/services/retrieval_service.py \
-  tools/qwen_index_until_done.py
+uv run pytest -q tests/test_document_router.py tests/test_retrieval_service.py
+uv run pytest -q tests/test_sovushka_lite_chat.py
 ```
 
-## Security Notes
+## Public / Private Boundary
 
-This repository is a development project, not a managed service. Before exposing
-it outside a local machine or private network, review authentication, trusted
-network settings, reverse-proxy headers, firewall rules, secrets, and document
-retention policies.
+Не коммитьте в public repo:
 
-Do not commit private datasets, `.env` files, generated indexes, logs, or local
-database files.
+- `.env`, API keys, passwords, local certificates;
+- `data/`, Qdrant storage, SQLite runtime databases;
+- `storage/`, uploaded datasets, generated Parquet artifacts;
+- logs, launchd local overrides, screenshots с приватными документами.
 
-## Status
-
-The codebase is under active development. Interfaces, configuration keys, and
-operational scripts may change between commits.
+Полный production/runtime контур лучше держать в private repository или внутри
+private network. Public repo предназначен для кода, архитектуры, документации и
+безопасно обезличенных иллюстраций.

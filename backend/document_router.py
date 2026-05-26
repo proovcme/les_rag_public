@@ -265,7 +265,9 @@ def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
     if doc_type == "EMAIL" or probe.suffix in EMAIL_SUFFIXES:
         return "MAIL"
 
-    if any(token in name for token in ("гкрф", "градостроительный кодекс", "постановление 87", "пп 87")):
+    if any(token in name for token in ("гкрф", "градостроительный кодекс", "постановление 87", "пп 87", "pp87")):
+        return "GKRF"
+    if "постановление 87" in text and "градостро" in text:
         return "GKRF"
     if (
         ("постановление 87" in text or "пп 87" in text)
