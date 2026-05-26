@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 EMBED_BATCH  = int(os.getenv("RAG_EMBED_BATCH", "32"))      # чанков за один запрос к MLX embeddings
 MIN_CHUNK    = int(os.getenv("RAG_MIN_CHUNK_CHARS", "20"))  # символов — короче не индексируем
 UPSERT_BATCH = int(os.getenv("RAG_UPSERT_BATCH", "100"))    # точек за один upsert в Qdrant
+CHUNK_HASH_CACHE = os.getenv("RAG_CHUNK_HASH_CACHE", "true").lower() in {"1", "true", "yes", "on"}
 RAG_CHUNK_SIZE = rag_chunk_size()
 RAG_CHUNK_OVERLAP = rag_chunk_overlap()
 ALLOW_UNBOUNDED_PARSE = "ALLOW_UNBOUNDED_PARSE"
@@ -604,6 +605,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             "embed_sec": 0.0,
             "upsert_sec": 0.0,
             "count_sec": 0.0,
+            "cache_sec": 0.0,
             "db_sec": 0.0,
         }
 
@@ -656,6 +658,8 @@ class QdrantLlamaIndexAdapter(RAGBackend):
 
             total_chunks = 0
             errors       = 0
+            embedding_cache_hits = 0
+            embedded_chunks = 0
 
             for i, file_path in enumerate(files_to_parse, 1):
                 file_key = file_path.relative_to(data_dir).as_posix()
@@ -663,6 +667,14 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 if i % 50 == 0 or i == total:
                     logger.info(f"[PARSE] {i}/{total} ({_t.time()-t0:.0f}с)")
                 try:
+                    phase_start = _t.time()
+                    existing_vectors = (
+                        self._sync_existing_file_vectors_by_hash(sync_qdrant, dataset_id, file_key)
+                        if CHUNK_HASH_CACHE and hasattr(self, "_sync_existing_file_vectors_by_hash")
+                        else {}
+                    )
+                    _add_timing("cache_sec", phase_start)
+
                     # Удаляем старые точки файла до переиндексации. Если удаление
                     # не удалось, нельзя честно подтвердить итоговый point count.
                     phase_start = _t.time()
@@ -730,16 +742,35 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     points = []
                     for batch_start in range(0, len(file_nodes), EMBED_BATCH):
                         batch = file_nodes[batch_start:batch_start + EMBED_BATCH]
-                        texts = [n["text"] for n in batch]
-                        phase_start = _t.time()
-                        vectors = self.embed.encode_sync(texts)
-                        _add_timing("embed_sec", phase_start)
-                        if len(vectors) != len(batch):
-                            raise RuntimeError(
-                                f"embedding count mismatch: got {len(vectors)}, expected {len(batch)}"
-                            )
+                        batch_vectors: list[list[float] | None] = [None] * len(batch)
+                        miss_indexes: list[int] = []
+                        miss_texts: list[str] = []
+                        for local_idx, node in enumerate(batch):
+                            payload = node.get("payload") or {}
+                            content_hash = str(payload.get("content_hash") or _content_hash(str(node["text"])))
+                            cached_vector = existing_vectors.get(content_hash)
+                            if cached_vector is not None:
+                                batch_vectors[local_idx] = cached_vector
+                                embedding_cache_hits += 1
+                            else:
+                                miss_indexes.append(local_idx)
+                                miss_texts.append(str(node["text"]))
 
-                        for node, vec in zip(batch, vectors):
+                        if miss_texts:
+                            phase_start = _t.time()
+                            vectors = self.embed.encode_sync(miss_texts)
+                            _add_timing("embed_sec", phase_start)
+                            if len(vectors) != len(miss_texts):
+                                raise RuntimeError(
+                                    f"embedding count mismatch: got {len(vectors)}, expected {len(miss_texts)}"
+                                )
+                            embedded_chunks += len(vectors)
+                            for local_idx, vec in zip(miss_indexes, vectors):
+                                batch_vectors[local_idx] = vec
+
+                        for node, vec in zip(batch, batch_vectors):
+                            if vec is None:
+                                raise RuntimeError("missing embedding vector after cache/embed merge")
                             payload = dict(node.get("payload") or {})
                             payload.update({
                                 "text":       node["text"],
@@ -808,6 +839,8 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 "files_skipped": total_all - total,
                 "remaining_pending": remaining_pending,
                 "errors":       errors,
+                "embedding_cache_hits": embedding_cache_hits,
+                "embedded_chunks": embedded_chunks,
                 "elapsed_sec":  round(elapsed, 1),
                 "timings":      timings,
             }
@@ -854,6 +887,46 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             exact=True,
         )
         return int(result.count)
+
+    def _sync_existing_file_vectors_by_hash(
+        self,
+        sync_qdrant: qdrant_client.QdrantClient,
+        dataset_id: str,
+        file_key: str,
+    ) -> dict[str, list[float]]:
+        vectors: dict[str, list[float]] = {}
+        offset = None
+        try:
+            while True:
+                points, offset = sync_qdrant.scroll(
+                    collection_name=self.collection_name,
+                    scroll_filter=self._file_filter(dataset_id, file_key),
+                    limit=256,
+                    offset=offset,
+                    with_payload=True,
+                    with_vectors=True,
+                )
+                for point in points:
+                    payload = getattr(point, "payload", None) or {}
+                    text = str(payload.get("text") or "")
+                    content_hash = str(payload.get("content_hash") or _content_hash(text))
+                    vector = self._extract_point_vector(point)
+                    if content_hash and vector is not None:
+                        vectors.setdefault(content_hash, vector)
+                if offset is None:
+                    break
+        except Exception as error:
+            logger.warning("[PARSE] chunk hash cache unavailable for %s: %s", file_key, error)
+        return vectors
+
+    @staticmethod
+    def _extract_point_vector(point: Any) -> list[float] | None:
+        vector = getattr(point, "vector", None)
+        if isinstance(vector, dict):
+            vector = vector.get("") or vector.get("default") or next(iter(vector.values()), None)
+        if isinstance(vector, list) and vector and all(isinstance(item, (int, float)) for item in vector):
+            return [float(item) for item in vector]
+        return None
 
     def _apply_context_metadata(self, file_nodes: list[dict], dataset_id: str, file_key: str) -> None:
         _apply_context_metadata_to_nodes(file_nodes, dataset_id, file_key)

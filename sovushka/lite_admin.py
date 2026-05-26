@@ -82,6 +82,18 @@ def _pid_running(pid: int) -> bool:
         os.kill(pid, 0)
     except OSError:
         return False
+    try:
+        status = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "stat="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        ).stdout.strip()
+        if status.startswith("Z"):
+            return False
+    except Exception:
+        pass
     return True
 
 
@@ -129,6 +141,10 @@ def start_guarded_reindex() -> dict[str, Any]:
 
     stamp = time.strftime("%Y%m%d_%H%M%S")
     log_path = paths["artifacts"] / f"one_click_hvac_fire_{stamp}.out"
+    min_free_gb = os.getenv("LES_REINDEX_MIN_FREE_GB", "4")
+    post_min_free_gb = os.getenv("LES_REINDEX_POST_MIN_FREE_GB", "3")
+    max_swap_pct = os.getenv("LES_REINDEX_MAX_SWAP_PCT", "85")
+    post_max_swap_pct = os.getenv("LES_REINDEX_POST_MAX_SWAP_PCT", max_swap_pct)
     cmd = [
         sys.executable,
         "tools/reindex_datasets_guarded.py",
@@ -138,13 +154,13 @@ def start_guarded_reindex() -> dict[str, Any]:
         "--parse-method",
         "scheduler",
         "--min-free-gb",
-        "10",
+        min_free_gb,
         "--max-swap-pct",
-        "100",
+        max_swap_pct,
         "--post-min-free-gb",
-        "6",
+        post_min_free_gb,
         "--post-max-swap-pct",
-        "100",
+        post_max_swap_pct,
         "--memory-wait-sec",
         "86400",
         "--memory-poll-sec",

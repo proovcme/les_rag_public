@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from sovushka import lite_admin
 from sovushka.lite_admin import lite_admin_html, local_runtime_action_allowed
 
@@ -19,6 +21,17 @@ def test_lite_admin_html_uses_static_admin_shell():
 def test_lite_admin_runtime_actions_are_loopback_only():
     assert local_runtime_action_allowed(is_loopback=True)
     assert not local_runtime_action_allowed(is_loopback=False)
+
+
+def test_pid_running_treats_zombie_as_stopped(monkeypatch):
+    monkeypatch.setattr(lite_admin.os, "kill", lambda pid, signal: None)
+    monkeypatch.setattr(
+        lite_admin.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(stdout="Z\n"),
+    )
+
+    assert not lite_admin._pid_running(123)
 
 
 def test_guarded_reindex_status_reads_state(tmp_path, monkeypatch):

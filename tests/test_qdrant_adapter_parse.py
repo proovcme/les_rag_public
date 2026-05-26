@@ -87,9 +87,61 @@ def test_sync_parse_updates_legacy_pending_file_name(tmp_path, monkeypatch):
         "embed_sec",
         "upsert_sec",
         "count_sec",
+        "cache_sec",
         "db_sec",
     }
     assert db.updated == [("ds-1", "doc.md", "INDEXED", 1)]
+
+
+def test_sync_parse_reuses_existing_vector_by_content_hash(tmp_path, monkeypatch):
+    text = "content with enough text for a chunk"
+    dataset_dir = tmp_path / "ds-1"
+    dataset_dir.mkdir()
+    (dataset_dir / "doc.md").write_text(text)
+    db = LegacyNamePendingDB()
+    vector = [0.25] * 1024
+    embedded = {"calls": 0}
+    upserts = []
+
+    adapter = SimpleNamespace(
+        content_dir=tmp_path,
+        db=db,
+        qdrant_url="http://127.0.0.1:6333",
+        collection_name="les_rag",
+        embed=SimpleNamespace(
+            encode_sync=lambda texts: embedded.__setitem__("calls", embedded["calls"] + 1) or []
+        ),
+        _sync_delete_file_points=lambda *args: None,
+        _sync_count_file_points=lambda *args: 1,
+        _sync_markdown_nodes=lambda *args: [
+            {"text": text, "doc_id": "doc-1", "payload": {}}
+        ],
+    )
+    adapter._file_filter = QdrantLlamaIndexAdapter._file_filter.__get__(adapter)
+    adapter._extract_point_vector = QdrantLlamaIndexAdapter._extract_point_vector
+    adapter._sync_existing_file_vectors_by_hash = (
+        QdrantLlamaIndexAdapter._sync_existing_file_vectors_by_hash.__get__(adapter)
+    )
+
+    class FakeQdrant:
+        def __init__(self, url):
+            self.url = url
+
+        def scroll(self, **kwargs):
+            return [SimpleNamespace(payload={"text": text}, vector=vector)], None
+
+        def upsert(self, collection_name, points):
+            upserts.extend(points)
+
+    monkeypatch.setattr("backend.qdrant_adapter.qdrant_client.QdrantClient", FakeQdrant)
+
+    result = QdrantLlamaIndexAdapter._sync_parse(adapter, "ds-1", limit=1)
+
+    assert result["files_parsed"] == 1
+    assert result["embedding_cache_hits"] == 1
+    assert result["embedded_chunks"] == 0
+    assert embedded["calls"] == 0
+    assert upserts[0].vector == vector
 
 
 def test_pending_files_are_ordered_by_size(tmp_path):
