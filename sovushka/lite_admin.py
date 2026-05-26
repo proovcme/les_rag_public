@@ -10,8 +10,6 @@ import asyncio
 import json
 import os
 import subprocess
-import sys
-import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable
@@ -128,69 +126,6 @@ def guarded_reindex_status_payload() -> dict[str, Any]:
         "last_log": pid_info.get("log_path"),
         "last_started_at": pid_info.get("started_at"),
     }
-
-
-def start_guarded_reindex() -> dict[str, Any]:
-    paths = _reindex_paths()
-    paths["artifacts"].mkdir(parents=True, exist_ok=True)
-    status = guarded_reindex_status_payload()
-    if status["running"]:
-        return {"status": "already_running", **status}
-
-    stamp = time.strftime("%Y%m%d_%H%M%S")
-    log_path = paths["artifacts"] / f"one_click_hvac_fire_{stamp}.out"
-    min_free_gb = os.getenv("LES_REINDEX_MIN_FREE_GB", "4")
-    post_min_free_gb = os.getenv("LES_REINDEX_POST_MIN_FREE_GB", "3")
-    max_swap_pct = os.getenv("LES_REINDEX_MAX_SWAP_PCT", "85")
-    post_max_swap_pct = os.getenv("LES_REINDEX_POST_MAX_SWAP_PCT", max_swap_pct)
-    cmd = [
-        sys.executable,
-        "tools/reindex_datasets_guarded.py",
-        "--datasets",
-        "NTD_HVAC_Index",
-        "NTD_FIRE_Index",
-        "--parse-method",
-        "scheduler",
-        "--min-free-gb",
-        min_free_gb,
-        "--max-swap-pct",
-        max_swap_pct,
-        "--post-min-free-gb",
-        post_min_free_gb,
-        "--post-max-swap-pct",
-        post_max_swap_pct,
-        "--memory-wait-sec",
-        "86400",
-        "--memory-poll-sec",
-        "30",
-        "--cooldown-sec",
-        "90",
-        "--parse-timeout",
-        "3600",
-        "--auth-smoke-after",
-    ]
-    env = os.environ.copy()
-    env["PYTHONUNBUFFERED"] = "1"
-    with log_path.open("ab") as output:
-        process = subprocess.Popen(
-            cmd,
-            cwd=_repo_root(),
-            stdout=output,
-            stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL,
-            start_new_session=True,
-            close_fds=True,
-            env=env,
-        )
-    pid_info = {
-        "pid": process.pid,
-        "cmd": cmd,
-        "log_path": str(log_path),
-        "state_file": str(paths["state"]),
-        "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-    }
-    paths["pid"].write_text(json.dumps(pid_info, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return {"status": "started", **guarded_reindex_status_payload()}
 
 
 async def lite_runtime_status(request: Request) -> JSONResponse:
@@ -463,35 +398,38 @@ def lite_admin_html() -> str:
 
   <main class="layout">
     <section class="grid">
-      <div class="panel">
-        <div class="title">Файлы</div>
-        <div id="filesValue" class="value">...</div>
-        <div id="filesHint" class="hint"></div>
+      <div class="panel panel-wide">
+        <div class="title">Dispatcher / Reindex</div>
+        <div id="campaignValue" class="value">...</div>
+        <div id="campaignHint" class="hint"></div>
+        <div class="actions">
+          <button id="startReindexBtn" type="button" class="safe">START</button>
+          <button id="pauseReindexBtn" type="button">PAUSE</button>
+          <button id="resumeReindexBtn" type="button">RESUME</button>
+          <button id="refreshBtn" type="button">REFRESH</button>
+        </div>
+        <div id="dispatcherList" class="hint"></div>
       </div>
-      <div class="panel">
-        <div class="title">Chunks</div>
-        <div id="chunksValue" class="value">...</div>
-        <div id="qdrantHint" class="hint"></div>
+
+      <div class="panel panel-wide">
+        <div class="title">Watcher</div>
+        <div id="watcherValue" class="value">...</div>
+        <div id="watcherHint" class="hint"></div>
+        <div id="watcherGroups" class="hint"></div>
       </div>
-      <div class="panel">
-        <div class="title">Память</div>
+
+      <div class="panel panel-wide">
+        <div class="title">Memory</div>
         <div id="memoryValue" class="value">...</div>
         <div id="memoryHint" class="hint"></div>
-      </div>
-
-      <div class="panel panel-wide">
-        <div class="title">Pending / Errors</div>
-        <div id="pendingList" class="hint">Загрузка...</div>
-      </div>
-
-      <div class="panel panel-wide">
-        <div class="title">Datasets</div>
-        <div id="datasetList" class="hint">Загрузка...</div>
-      </div>
-
-      <div class="panel panel-wide">
-        <div class="title">Jobs</div>
-        <div id="jobsList" class="hint">Загрузка...</div>
+        <div class="actions">
+          <button id="unloadMlxBtn" type="button">UNLOAD MLX</button>
+          <a class="linkbtn" href="/">ЧАТ</a>
+          <a class="linkbtn" href="/classic">CLASSIC CHAT</a>
+          <a class="linkbtn" href="/les/classic">CLASSIC ADMIN</a>
+        </div>
+        <div id="memoryRecommendations" class="hint"></div>
+        <div id="memoryConsumers" class="hint"></div>
       </div>
     </section>
 
@@ -499,50 +437,7 @@ def lite_admin_html() -> str:
       <div class="panel">
         <div class="title">Runtime</div>
         <div id="runtimeList" class="hint">Локальный статус доступен только с localhost.</div>
-        <div class="actions">
-          <button id="refreshBtn" type="button">ОБНОВИТЬ</button>
-          <a class="linkbtn" href="/">ЧАТ</a>
-          <a class="linkbtn" href="/classic">CLASSIC CHAT</a>
-          <a class="linkbtn" href="/les/classic">CLASSIC ADMIN</a>
-        </div>
       </div>
-
-      <div class="panel">
-        <div class="title">Memory Actions</div>
-        <div class="actions">
-          <button id="chatModeBtn" type="button" class="safe">CHAT MODE</button>
-          <button id="indexModeBtn" type="button">INDEX LIGHT</button>
-          <button id="parseOneBtn" type="button">PARSE 1</button>
-        </div>
-        <div class="hint">`PARSE 1` запускает один guarded batch. Heavy PDF всё равно должен идти через ручной профиль.</div>
-      </div>
-
-      <div class="panel">
-        <div class="title">Memory Consumers</div>
-        <div id="memoryConsumers" class="hint">Загрузка...</div>
-      </div>
-
-      <div class="panel">
-        <div class="title">Guarded Reindex</div>
-        <div id="reindexStatus" class="hint">Загрузка...</div>
-        <div class="actions">
-          <button id="startReindexBtn" type="button" class="safe">HVAC/FIRE AUTO</button>
-          <button id="pauseReindexBtn" type="button">PAUSE</button>
-          <button id="resumeReindexBtn" type="button">RESUME</button>
-        </div>
-      </div>
-
-      <div class="panel">
-        <div class="title">Local Launchd</div>
-        <div class="actions">
-          <button data-runtime="stop_indexer" type="button" class="danger">STOP INDEXER</button>
-          <button data-runtime="start_indexer" type="button">START INDEXER</button>
-          <button data-runtime="restart_proxy" type="button">RESTART PROXY</button>
-          <button data-runtime="restart_mlx" type="button">RESTART MLX</button>
-          <button data-runtime="restart_qdrant" type="button">RESTART QDRANT</button>
-        </div>
-      </div>
-
       <div class="panel">
         <div class="title">Log</div>
         <div id="log" class="log"></div>
@@ -640,12 +535,36 @@ def lite_admin_html() -> str:
       return Number(n || 0).toLocaleString("ru-RU");
     }
 
-    function row(name, meta, badge, cls = "") {
-      return `<div class="row"><div class="row-main"><div class="row-name">${escapeHtml(name)}</div><div class="row-meta">${escapeHtml(meta || "")}</div></div><span class="chip ${cls}">${escapeHtml(badge || "")}</span></div>`;
+    function chipNode(text, cls = "") {
+      const node = document.createElement("span");
+      node.className = "chip" + (cls ? " " + cls : "");
+      node.textContent = text || "";
+      return node;
     }
 
-    function escapeHtml(value) {
-      return String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[ch]));
+    function rowNode(name, meta, badge, cls = "") {
+      const row = document.createElement("div");
+      row.className = "row";
+      const main = document.createElement("div");
+      main.className = "row-main";
+      const title = document.createElement("div");
+      title.className = "row-name";
+      title.textContent = name || "";
+      const detail = document.createElement("div");
+      detail.className = "row-meta";
+      detail.textContent = meta || "";
+      main.append(title, detail);
+      row.append(main, chipNode(badge || "", cls));
+      return row;
+    }
+
+    function setRows(id, rows, emptyText = "Нет данных") {
+      const node = el(id);
+      if (!rows.length) {
+        node.replaceChildren(chipNode(emptyText, "ok"));
+        return;
+      }
+      node.replaceChildren(...rows);
     }
 
     async function login() {
@@ -678,20 +597,17 @@ def lite_admin_html() -> str:
 
     async function refreshAll() {
       try {
-        const [status, mode, jobs, pending, datasets, dispatcher] = await Promise.all([
-          request("/api/health"),
+        const [mode, dispatcher, watcher, routePlan] = await Promise.all([
           request("/api/indexing-mode"),
-          request("/api/jobs/summary"),
-          request("/api/rag/documents?status=PENDING&limit=10"),
-          request("/api/rag/datasets"),
           request("/api/runtime/dispatcher/status"),
+          request("/api/rag/watch/status?source_root=RAG_Content&limit=20"),
+          request("/api/rag/watch/reindex-plan?source_root=RAG_Content&limit=50"),
         ]);
         showAuth(false);
-        renderStatus(status, mode, dispatcher);
-        renderJobs(jobs);
-        renderPending(pending);
-        renderDatasets(datasets);
+        renderHeader(mode, dispatcher);
         renderDispatcher(dispatcher);
+        renderWatcher(watcher, routePlan);
+        renderMemory(dispatcher);
         log("refresh ok");
       } catch (error) {
         if (error.status === 401 && !state.key) {
@@ -711,13 +627,9 @@ def lite_admin_html() -> str:
       }
     }
 
-    function renderStatus(status, mode, dispatcher) {
-      const rag = status.rag || {};
-      const totals = rag.totals || {};
-      const qdrant = rag.qdrant || {};
+    function renderHeader(mode, dispatcher) {
       const dispatcherMemory = dispatcher?.memory?.pressure || {};
       const memory = dispatcherMemory.state ? dispatcherMemory : (mode.memory_state || {});
-      const mem = memory.memory || {};
       const admission = mode.chat_admission || {};
       const profile = dispatcher?.runtime_profile || mode.runtime_profile || "?";
       const memState = memory.state || "?";
@@ -725,85 +637,79 @@ def lite_admin_html() -> str:
       chip("profileChip", profile, admission.allowed === false ? "err" : "ok");
       chip("memoryChip", memState, memState === "GREEN" ? "ok" : memState === "YELLOW" ? "warn" : "err");
       chip("jobsChip", (admission.active_jobs || 0) + " JOBS", admission.active_jobs ? "warn" : "ok");
-      el("filesValue").textContent = fmt(totals.indexed_files) + " / " + fmt(totals.files);
-      el("filesHint").textContent = `pending=${fmt(totals.pending_files)} errors=${fmt(totals.error_files)} status=${rag.status || status.status || "?"}`;
-      el("chunksValue").textContent = fmt(totals.chunks);
-      el("qdrantHint").textContent = `qdrant=${fmt(qdrant.points)} match=${qdrant.points_match_sqlite_chunks !== false}`;
-      el("memoryValue").textContent = `${mem.ram_free_gb ?? "?"} GB`;
-      el("memoryHint").textContent = memory.reason || `swap=${mem.swap_pct ?? "?"}%`;
-    }
-
-    function renderPending(data) {
-      const docs = data.documents || [];
-      if (!docs.length) {
-        el("pendingList").innerHTML = '<span class="chip ok">NO PENDING</span>';
-        return;
-      }
-      el("pendingList").innerHTML = docs.map((doc) => row(
-        doc.file_name,
-        `${doc.dataset_name} | ${doc.doc_type || ""} | ${doc.complexity || ""} | ${(doc.file_size / 1024 / 1024).toFixed(1)} MB`,
-        doc.status,
-        doc.complexity === "heavy" ? "warn" : ""
-      )).join("");
-    }
-
-    function renderDatasets(items) {
-      const rows = (items || []).slice().sort((a, b) => (b.chunk_count || 0) - (a.chunk_count || 0));
-      el("datasetList").innerHTML = rows.map((ds) => row(
-        ds.name,
-        `${fmt(ds.doc_count)} files | ${fmt(ds.chunk_count)} chunks`,
-        ds.status,
-        ds.status === "COMPLETED" ? "ok" : ds.status === "IDLE" ? "warn" : "err"
-      )).join("");
-    }
-
-    function renderJobs(data) {
-      const jobs = (data.jobs || []).slice(0, 8);
-      if (!jobs.length) {
-        el("jobsList").innerHTML = '<span class="chip ok">NO JOBS</span>';
-        return;
-      }
-      el("jobsList").innerHTML = jobs.map((job) => row(
-        `${job.type || "job"} ${job.id || ""}`,
-        job.message || "",
-        job.status || "",
-        job.status === "completed" ? "ok" : job.status === "failed" ? "err" : "warn"
-      )).join("");
     }
 
     function renderDispatcher(data) {
       const services = data.services || [];
-      el("runtimeList").innerHTML = services.length ? services.map((svc) => row(
+      setRows("runtimeList", services.map((svc) => rowNode(
         svc.title || svc.key || "service",
         `${svc.label || ""} | pid ${svc.pid || svc.port_pid || "-"} | :${svc.port || "-"}`,
         svc.health || (svc.running ? "UP" : "DOWN"),
         svc.running && svc.health === "ok" ? "ok" : svc.running ? "warn" : "err"
-      )).join("") : "Нет данных о launchd.";
-
-      const preflight = data.memory?.preflight || {};
-      const top = (preflight.top_processes || []).slice(0, 6);
-      el("memoryConsumers").innerHTML = top.length ? top.map((proc) => row(
-        `pid ${proc.pid} · ${Number(proc.rss_mb || 0).toFixed(0)} MB`,
-        `${proc.les_owned ? "LES | " : ""}${proc.protected ? "protected | " : ""}${proc.command || ""}`,
-        proc.les_owned ? "LES" : proc.protected ? "SYS" : "APP",
-        proc.les_owned ? "ok" : proc.protected ? "warn" : ""
-      )).join("") : "Нет списка процессов.";
+      )), "NO SERVICES");
 
       const reindex = data.reindex || {};
       const cls = reindex.running ? "warn" : reindex.remaining === 0 && reindex.total ? "ok" : "";
       const label = reindex.running ? "RUNNING" : reindex.paused ? "PAUSED" : reindex.complete ? "DONE" : "IDLE";
-      el("reindexStatus").innerHTML = row(
-        label,
-        `completed=${fmt(reindex.completed)} remaining=${fmt(reindex.remaining)} updated=${reindex.updated_at || "-"} log=${reindex.last_log || "-"}`,
-        reindex.running ? "ACTIVE" : `${fmt(reindex.completed)}/${fmt(reindex.total)}`,
-        cls
-      );
+      el("campaignValue").textContent = `${fmt(reindex.completed)} / ${fmt(reindex.total || 0)}`;
+      el("campaignHint").textContent =
+        `${label} | remaining=${fmt(reindex.remaining)} | pid=${reindex.pid || "-"} | ${reindex.last_log || ""}`;
+      setRows("dispatcherList", [
+        rowNode(label, `updated=${reindex.updated_at || "-"} | current=${reindex.current_doc?.event || reindex.last_event?.event || "-"}`, reindex.running ? "ACTIVE" : "IDLE", cls),
+        rowNode("Guard", `min_free=${reindex.guard?.min_free_gb ?? "?"}GB | max_swap=${reindex.guard?.max_swap_pct ?? "?"}%`, reindex.supports_pause ? "PAUSABLE" : "LEGACY", reindex.supports_pause ? "ok" : "warn"),
+      ]);
 
       const actions = data.actions || {};
       el("startReindexBtn").disabled = !actions.can_start;
       el("pauseReindexBtn").disabled = !actions.can_pause;
       el("resumeReindexBtn").disabled = !actions.can_resume;
       if (actions.blocked_reason) log("dispatcher block: " + actions.blocked_reason);
+    }
+
+    function renderWatcher(watcher, routePlan) {
+      const counts = watcher.counts || {};
+      el("watcherValue").textContent =
+        `${fmt(counts.new)} new / ${fmt(counts.changed)} changed / ${fmt(counts.route_changed)} route`;
+      el("watcherHint").textContent =
+        `source=${watcher.source_root || "RAG_Content"} | pending=${fmt(watcher.pending_changes)} | route_changes=${fmt(routePlan.pending_route_changes)}`;
+      const groupRows = (routePlan.groups || []).map((group) => rowNode(
+        `${group.current_dataset_name || "?"} -> ${group.target_dataset_name || "?"}`,
+        `${fmt(group.files)} files | ${(Number(group.bytes || 0) / 1024 / 1024).toFixed(1)} MB`,
+        "ROUTE",
+        "warn"
+      ));
+      const sampleRows = (watcher.samples || []).slice(0, 8).map((sample) => rowNode(
+        sample.relative_path || "",
+        `${sample.state} | ${sample.current?.dataset_name || "new"} -> ${sample.dataset_name || ""}`,
+        sample.state || "",
+        sample.state === "route_changed" ? "warn" : sample.state === "new" ? "ok" : ""
+      ));
+      setRows("watcherGroups", [...groupRows, ...sampleRows], "NO CHANGES");
+    }
+
+    function renderMemory(data) {
+      const pressure = data.memory?.pressure || {};
+      const mem = pressure.memory || {};
+      el("memoryValue").textContent = `${mem.ram_free_gb ?? "?"} GB free`;
+      el("memoryHint").textContent = pressure.reason || `swap=${mem.swap_pct ?? "?"}%`;
+
+      const recommendations = data.memory?.recommendations || {};
+      const actions = (recommendations.actions || []).map((action) => rowNode(
+        action.label || action.kind || "recommendation",
+        action.reason || "",
+        action.kind || "INFO",
+        action.kind === "wait" ? "warn" : ""
+      ));
+      setRows("memoryRecommendations", actions, "NO RECOMMENDATIONS");
+
+      const preflight = data.memory?.preflight || {};
+      const top = (preflight.top_processes || []).slice(0, 10);
+      setRows("memoryConsumers", top.map((proc) => rowNode(
+        `pid ${proc.pid} · ${Number(proc.rss_mb || 0).toFixed(0)} MB`,
+        `${proc.les_owned ? "LES | " : ""}${proc.protected ? "protected | " : ""}${proc.command || ""}`,
+        proc.les_owned ? "LES" : proc.protected ? "SYS" : "APP",
+        proc.les_owned ? "ok" : proc.protected ? "warn" : ""
+      )), "NO PROCESSES");
     }
 
     async function post(path, body) {
@@ -838,30 +744,18 @@ def lite_admin_html() -> str:
       await refreshAll();
     }
 
+    async function unloadMlx() {
+      const data = await post("/api/runtime/dispatcher/mlx/unload", {});
+      log("mlx unload -> " + (data.status || "ok"));
+      await refreshAll();
+    }
+
     el("refreshBtn").addEventListener("click", refreshAll);
     el("loginBtn").addEventListener("click", login);
     el("keyInput").addEventListener("keydown", (event) => { if (event.key === "Enter") login(); });
-    el("chatModeBtn").addEventListener("click", async () => {
-      await post("/api/indexing-mode", { enabled: false, reason: "lite admin", unload_models: true });
-      await refreshAll();
-    });
-    el("indexModeBtn").addEventListener("click", async () => {
-      await post("/api/indexing-mode", { enabled: true, reason: "lite admin", unload_models: true });
-      await refreshAll();
-    });
-    el("parseOneBtn").addEventListener("click", async () => {
-      await post("/api/rag/parse-scheduler", {
-        batch_limit: 1,
-        max_batches: 1,
-        cooldown_sec: 0,
-        unload_before_start: true,
-        unload_between_batches: true,
-        unload_after_finish: true,
-        warm_embedder: false,
-        stop_on_error: true,
-        background: true
-      });
-      await refreshAll();
+    el("unloadMlxBtn").addEventListener("click", async () => {
+      try { await unloadMlx(); }
+      catch (error) { log("mlx unload error: " + error.message); }
     });
     el("startReindexBtn").addEventListener("click", async () => {
       try { await startReindex(); }
@@ -875,13 +769,6 @@ def lite_admin_html() -> str:
       try { await resumeReindex(); }
       catch (error) { log("dispatcher resume error: " + error.message); }
     });
-    for (const button of document.querySelectorAll("[data-runtime]")) {
-      button.addEventListener("click", async () => {
-        try { await runtimeAction(button.dataset.runtime); }
-        catch (error) { log(button.dataset.runtime + " error: " + error.message); }
-      });
-    }
-
     refreshAll();
     setInterval(refreshAll, 20000);
   </script>

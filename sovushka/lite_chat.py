@@ -451,6 +451,7 @@ def lite_chat_html() -> str:
         const message = payload.detail || payload.error || ("HTTP " + response.status);
         const error = new Error(typeof message === "string" ? message : JSON.stringify(message));
         error.status = response.status;
+        error.payload = payload;
         throw error;
       }
       return payload;
@@ -604,7 +605,8 @@ def lite_chat_html() -> str:
         });
       } catch (error) {
         placeholder.remove();
-        addMessage("Ошибка: " + error.message, "msg-sys");
+        const prefix = error.status === 409 ? "Индексирование активно: " : "Ошибка: ";
+        addMessage(prefix + error.message, "msg-sys");
         if (error.status === 401 || error.status === 403) showAuth(true, error.message);
       } finally {
         clearInterval(timer);

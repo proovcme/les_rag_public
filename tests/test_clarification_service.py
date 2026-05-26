@@ -69,6 +69,7 @@ async def test_chat_returns_clarification_before_retrieval():
 
     assert response["crag_status"] == "NEEDS_CLARIFICATION"
     assert response["sources"] == []
+    assert response["effective_dataset_filter"] is None
     assert response["clarifying_questions"] == response["clarification"]["questions"]
     assert response["suggested_filters"] == ["NTD", "TABLE_SMETA", "GKRF"]
 
@@ -184,3 +185,55 @@ async def test_chat_generation_paused_during_dispatcher_reindex(monkeypatch):
 
     assert exc.value.status_code == 409
     assert "active_jobs=1" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_chat_returns_effective_dataset_filter_on_no_data(monkeypatch):
+    class EmptyBackend:
+        collection_name = "test_collection"
+
+        async def list_datasets(self):
+            return [SimpleNamespace(id="fire-id", name="NTD_FIRE_Index")]
+
+        async def retrieve(self, *args, **kwargs):
+            return []
+
+    class FakeDispatcher:
+        def __init__(self, **kwargs):
+            pass
+
+        def reindex_status_payload(self):
+            return {"running": False}
+
+    monkeypatch.setattr(chat_router, "RuntimeDispatcher", FakeDispatcher)
+    chat_router.set_chat_state(
+        chat_router.ChatRouterState(
+            rag_backend=EmptyBackend(),
+            llm_semaphore=SimpleNamespace(_value=1),
+            crag_stats={"verified": 0, "no_data": 0, "hallucination": 0},
+            chat_metrics={
+                "latency_search": [],
+                "latency_gen": [],
+                "tokens": [],
+                "crag_pass": 0,
+                "crag_fail": 0,
+            },
+            reranker_available=False,
+            reranker_cls=None,
+            current_mode={"mode": "chat"},
+            metrics_cache={"ram_free_gb": 12.0, "swap_pct": 0.0},
+        )
+    )
+
+    response = await chat_router.chat(
+        chat_router.ChatRequest(
+            question="Какая ширина путей эвакуации?",
+            dataset_filter="NTD_FIRE",
+            semantic_cache_enabled=False,
+        ),
+        _user=object(),
+    )
+
+    assert response["crag_status"] == "NO_DATA"
+    assert response["effective_dataset_filter"] == "NTD_FIRE"
+    assert response["query_route"]["dataset_filter"] == "NTD_FIRE"

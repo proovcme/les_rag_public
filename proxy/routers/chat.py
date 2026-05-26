@@ -178,6 +178,7 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
             "answer": clarification.answer,
             "crag_status": "NEEDS_CLARIFICATION",
             "sources": [],
+            "effective_dataset_filter": clarification.classification.dataset_filter,
             "clarification": clarification.payload(),
             "clarifying_questions": clarification.questions,
             "suggested_filters": clarification.suggested_filters,
@@ -263,6 +264,7 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                         "answer": cache_hit.answer,
                         "crag_status": "VERIFIED",
                         "sources": cache_hit.sources,
+                        "effective_dataset_filter": effective_dataset_filter,
                         "query_route": {
                             "channel": query_intent.channel,
                             "reason": query_intent.reason,
@@ -321,6 +323,7 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
             "answer": "Найденные источники слишком разнородны. Уточните область или датасет, чтобы я не смешал требования.",
             "crag_status": "NEEDS_CLARIFICATION",
             "sources": source_names(chunks),
+            "effective_dataset_filter": effective_dataset_filter,
             "query_route": {
                 "channel": query_intent.channel,
                 "reason": query_intent.reason,
@@ -370,6 +373,7 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                 "answer": session_hit.answer,
                 "crag_status": "UNVALIDATED",
                 "sources": session_hit.sources,
+                "effective_dataset_filter": effective_dataset_filter,
                 "query_route": {
                     "channel": query_intent.channel,
                     "reason": query_intent.reason,
@@ -411,6 +415,7 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
             "answer": table_result.answer,
             "crag_status": "VERIFIED",
             "sources": table_result.sources,
+            "effective_dataset_filter": effective_dataset_filter,
             "query_route": {
                 "channel": query_intent.channel,
                 "reason": query_intent.reason,
@@ -433,6 +438,7 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
             "answer": "Нет данных в выбранных источниках.",
             "crag_status": "NO_DATA",
             "sources": [],
+            "effective_dataset_filter": effective_dataset_filter,
             "query_route": {
                 "channel": query_intent.channel,
                 "reason": query_intent.reason,
@@ -451,6 +457,15 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
     )
     llm_chunks = context_windows.chunks
     retrieval_trace["context_window"] = context_windows.payload()
+    validation_context_windows = expand_context_windows(
+        chunks,
+        collection=getattr(rag_backend, "collection_name", ""),
+        logger=logger,
+        max_chunks=_env_int("RAG_VALIDATION_CONTEXT_MAX_CHUNKS", 10),
+        max_chars_per_chunk=_env_int("RAG_VALIDATION_CONTEXT_WINDOW_CHARS", 2600),
+        radius=_env_int("RAG_VALIDATION_CONTEXT_RADIUS", 1),
+    )
+    retrieval_trace["validation_context_window"] = validation_context_windows.payload()
 
     llm_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
     llm_model = os.getenv("LLM_MODEL", "qwen3:14b")
@@ -553,8 +568,8 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                     if use_validation:
                         try:
                             validation_context = build_validation_context(
-                                ctx_chunks,
-                                max_chars=8000,
+                                validation_context_windows.chunks,
+                                max_chars=_env_int("RAG_VALIDATION_CONTEXT_CHARS", 12000),
                                 include_metadata=True,
                             )
                             val_resp = await client.post(
@@ -651,6 +666,7 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                     "answer": answer,
                     "crag_status": crag_status,
                     "sources": sources_list,
+                    "effective_dataset_filter": effective_dataset_filter,
                     "query_route": {
                         "channel": query_intent.channel,
                         "reason": query_intent.reason,

@@ -541,6 +541,17 @@ MAIL_IMAP_CHECKPOINT_DIR=data/mail_imap_checkpoints
 MAIL_IMAP_STORAGE_ROOT=RAG_Content/MAIL/IMAP
 ```
 
+IMAP smoke после заполнения `.env`:
+
+```bash
+uv run python tools/ezhik_imap_smoke.py --max-messages 5
+```
+
+Если IMAP credentials не заданы, smoke возвращает `skipped` и ничего не
+импортирует. При настроенном IMAP он проверяет `/api/mail/status`, вызывает
+`POST /api/mail/import-imap` с `parse=false` и подтверждает регистрацию писем в
+`MAIL_Index`.
+
 Qwen-native индексирование идёт в отдельную коллекцию, чтобы не смешивать векторы разных embedding-моделей:
 `LES_EMBED_PROFILE=qwen`, `EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B`,
 `RAG_COLLECTION_NAME=les_rag_qwen3_06b`, `RAG_META_DB_PATH=./data/les_meta_qwen.db`,

@@ -740,13 +740,25 @@ async function sendChat() {
     bot.classList.remove('typing-cursor'); bot.innerText='';
     let i=0;
     const iv=setInterval(()=>{
-      bot.innerHTML+=ans.charAt(i); i++; hist.scrollTop=hist.scrollHeight;
+      bot.textContent+=ans.charAt(i); i++; hist.scrollTop=hist.scrollHeight;
       if(i>=ans.length){
         clearInterval(iv); btn.disabled=false;
         if(srcs.length||crag){
           const sd=document.createElement('div'); sd.className='msg-srcs';
-          sd.innerHTML=srcs.map(s=>`<span class="src-tag">${s.file||s}</span>`).join('')
-            +(crag?`<span class="src-tag" style="border-color:var(--accent);color:var(--accent);">Т.О.С.К.А.: ${crag}</span>`:'');
+          srcs.forEach((s)=>{
+            const tag=document.createElement('span');
+            tag.className='src-tag';
+            tag.textContent=s.file||s;
+            sd.appendChild(tag);
+          });
+          if(crag){
+            const tag=document.createElement('span');
+            tag.className='src-tag';
+            tag.style.borderColor='var(--accent)';
+            tag.style.color='var(--accent)';
+            tag.textContent='Т.О.С.К.А.: '+crag;
+            sd.appendChild(tag);
+          }
           bot.appendChild(sd);
         }
         addLog(`[AI] Готово. CRAG: ${crag||'N/A'} | src: ${srcs.length}`);

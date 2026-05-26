@@ -10,6 +10,8 @@ def test_lite_chat_html_uses_static_shell_and_local_bridge():
     assert 'path.replace(/^\\/api(?=\\/)/, "")' in html
     assert "/api/chat" in html
     assert "/classic" in html
+    assert "Индексирование активно:" in html
+    assert "bot.innerHTML" not in html
 
 
 def test_bridge_allows_auth_verify_without_existing_key():

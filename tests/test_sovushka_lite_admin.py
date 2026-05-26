@@ -11,12 +11,18 @@ def test_lite_admin_html_uses_static_admin_shell():
     assert "без NiceGUI client state" in html
     assert "/les/classic" in html
     assert "/api/indexing-mode" in html
-    assert "/api/rag/parse-scheduler" in html
+    assert "/api/rag/watch/status" in html
+    assert "/api/rag/watch/reindex-plan" in html
     assert "/api/runtime/dispatcher/status" in html
     assert "/api/runtime/dispatcher/reindex/start" in html
     assert "/api/runtime/dispatcher/reindex/pause" in html
     assert "/api/runtime/dispatcher/reindex/resume" in html
-    assert "HVAC/FIRE AUTO" in html
+    assert "/api/runtime/dispatcher/mlx/unload" in html
+    assert "Dispatcher / Reindex" in html
+    assert "Watcher" in html
+    assert "Memory" in html
+    assert "Local Launchd" not in html
+    assert ".innerHTML" not in html
     assert "start_guarded_reindex" not in html
 
 
