@@ -43,3 +43,4 @@ qdrant_visualizer/data.js
 # Local runtime artifacts
 artifacts/
 .qdrant-initialized
+snapshots/

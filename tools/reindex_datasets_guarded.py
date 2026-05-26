@@ -69,6 +69,49 @@ def emit(log_path: Path | None, event: str, **fields: Any) -> None:
             fh.write(line + "\n")
 
 
+def compact_rag(rag: Any) -> Any:
+    if not isinstance(rag, dict):
+        return rag
+    datasets = []
+    for item in rag.get("datasets") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("pending_files") or item.get("error_files"):
+            datasets.append(item)
+    return {
+        "status": rag.get("status"),
+        "totals": rag.get("totals"),
+        "qdrant": rag.get("qdrant"),
+        "active_datasets": datasets,
+    }
+
+
+def completed_doc_ids_from_log(log_path: str) -> set[str]:
+    path = Path(log_path)
+    if not path.exists():
+        raise FileNotFoundError(f"resume log does not exist: {path}")
+    completed: set[str] = set()
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if item.get("event") != "doc_parse":
+                continue
+            current = item.get("current") or {}
+            result = ((item.get("result") or {}).get("result") or {})
+            if (
+                isinstance(current, dict)
+                and current.get("id")
+                and current.get("status") == "INDEXED"
+                and isinstance(result, dict)
+                and int(result.get("errors") or 0) == 0
+            ):
+                completed.add(str(current["id"]))
+    return completed
+
+
 def request(
     method: str,
     url: str,
@@ -380,6 +423,63 @@ def parse_batch(proxy_url: str, doc: TargetDoc, timeout: float, api_key: str) ->
     return data
 
 
+def parse_scheduler_once(
+    proxy_url: str,
+    doc: TargetDoc,
+    timeout: float,
+    api_key: str,
+    *,
+    dataset_names: list[str],
+    min_free_gb: float,
+    max_swap_pct: float,
+    post_min_free_gb: float,
+    post_max_swap_pct: float,
+) -> dict[str, Any]:
+    payload = {
+        "batch_limit": 1,
+        "max_batches": 1,
+        "cooldown_sec": 0,
+        "unload_before_start": False,
+        "unload_between_batches": False,
+        "unload_after_finish": False,
+        "warm_embedder": False,
+        "min_free_gb": min_free_gb,
+        "max_swap_pct": max_swap_pct,
+        "post_batch_min_free_gb": post_min_free_gb,
+        "post_batch_max_swap_pct": post_max_swap_pct,
+        "background": False,
+        "stop_on_error": True,
+        "dataset_priority_order": dataset_names,
+    }
+    status, body = request(
+        "POST",
+        f"{proxy_url}/api/rag/parse-scheduler",
+        payload=payload,
+        timeout=timeout,
+        api_key=api_key,
+    )
+    data = require_json_dict(status, body, "parse scheduler")
+    batches = data.get("batches") or []
+    if not isinstance(batches, list) or not batches:
+        raise RuntimeError(f"parse scheduler did not run a batch: {data}")
+    batch = batches[0]
+    if not isinstance(batch, dict):
+        raise RuntimeError(f"parse scheduler batch is not JSON object: {data}")
+    if batch.get("dataset_id") != doc.dataset_id:
+        raise RuntimeError(
+            f"parse scheduler selected wrong dataset: {batch.get('dataset_name')} "
+            f"for target {doc.dataset_name}"
+        )
+    result = batch.get("result")
+    if not isinstance(result, dict):
+        raise RuntimeError(f"parse scheduler result is not JSON object: {data}")
+    if result.get("status") != "completed" or int(result.get("errors") or 0) > 0:
+        raise RuntimeError(f"parse scheduler failed: {result}")
+    if int(result.get("files_parsed") or 0) < 1:
+        raise RuntimeError(f"parse scheduler did not parse a file: {result}")
+    return data
+
+
 def auth_smoke(proxy_url: str, auth_db_path: str, timeout: float) -> dict[str, Any]:
     keys = active_keys_by_role(auth_db_path)
     results: list[dict[str, Any]] = []
@@ -461,6 +561,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--health-timeout", type=float, default=20.0)
     parser.add_argument("--parse-timeout", type=float, default=1800.0)
     parser.add_argument("--snapshot-timeout", type=float, default=120.0)
+    parser.add_argument("--parse-method", choices=["scheduler", "batch"], default="scheduler")
+    parser.add_argument("--resume-log", default="")
     parser.add_argument("--require-qdrant-snapshot", action="store_true")
     parser.add_argument("--allow-active-jobs", action="store_true")
     parser.add_argument("--auth-smoke-after", action=argparse.BooleanOptionalAction, default=True)
@@ -506,7 +608,21 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     targets = load_target_docs(args.db_path, args.datasets, args.max_docs)
-    emit(log_path, "plan", summaries=summaries_before, target_docs=len(targets))
+    skipped_completed = 0
+    if args.resume_log:
+        completed_ids = completed_doc_ids_from_log(args.resume_log)
+        before_count = len(targets)
+        targets = [doc for doc in targets if doc.id not in completed_ids]
+        skipped_completed = before_count - len(targets)
+    emit(
+        log_path,
+        "plan",
+        summaries=summaries_before,
+        target_docs=len(targets),
+        skipped_completed=skipped_completed,
+        resume_log=args.resume_log,
+        parse_method=args.parse_method,
+    )
     if not targets:
         emit(log_path, "done", detail="no indexed target docs")
         return 0
@@ -533,7 +649,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         health = health_snapshot(args.proxy_url, args.health_timeout, admin_key)
-        emit(log_path, "pre_health", rag=health.get("rag"))
+        emit(log_path, "pre_health", rag=compact_rag(health.get("rag")))
         before_memory = mlx_memory(args.mlx_url, args.health_timeout)
         assert_memory(before_memory, args.min_free_gb, args.max_swap_pct)
         emit(log_path, "pre_memory", memory=before_memory)
@@ -557,7 +673,20 @@ def main(argv: list[str] | None = None) -> int:
             mark_doc_pending(args.db_path, doc)
             started = time.time()
             try:
-                parse_result = parse_batch(args.proxy_url, doc, args.parse_timeout, admin_key)
+                if args.parse_method == "batch":
+                    parse_result = parse_batch(args.proxy_url, doc, args.parse_timeout, admin_key)
+                else:
+                    parse_result = parse_scheduler_once(
+                        args.proxy_url,
+                        doc,
+                        args.parse_timeout,
+                        admin_key,
+                        dataset_names=args.datasets,
+                        min_free_gb=args.min_free_gb,
+                        max_swap_pct=args.max_swap_pct,
+                        post_min_free_gb=args.post_min_free_gb,
+                        post_max_swap_pct=args.post_max_swap_pct,
+                    )
             except Exception:
                 current = load_doc(args.db_path, doc.id)
                 if current and current.get("status") == "PENDING":
@@ -572,7 +701,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise RuntimeError(f"document did not return to INDEXED: {doc.file_name}: {current}")
 
             after_health = health_snapshot(args.proxy_url, args.health_timeout, admin_key)
-            emit(log_path, "doc_health", index=idx, rag=after_health.get("rag"))
+            emit(log_path, "doc_health", index=idx, rag=compact_rag(after_health.get("rag")))
             unload_result = unload_all(args.mlx_url, args.health_timeout)
             emit(log_path, "doc_unload", index=idx, result=unload_result)
             after_memory = mlx_memory(args.mlx_url, args.health_timeout)
@@ -584,7 +713,7 @@ def main(argv: list[str] | None = None) -> int:
 
         final_health = health_snapshot(args.proxy_url, args.health_timeout, admin_key)
         final_summaries = dataset_summaries(args.db_path, args.datasets)
-        emit(log_path, "final_health", rag=final_health.get("rag"))
+        emit(log_path, "final_health", rag=compact_rag(final_health.get("rag")))
         emit(log_path, "final_summary", summaries=final_summaries)
         if args.auth_smoke_after:
             smoke = auth_smoke(args.proxy_url, args.auth_db_path, args.health_timeout)

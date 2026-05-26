@@ -1,3 +1,4 @@
+import json
 import sqlite3
 
 from tools import reindex_datasets_guarded as guarded
@@ -113,3 +114,44 @@ def test_active_keys_by_role_uses_active_keys_only(tmp_path):
     keys = guarded.active_keys_by_role(str(db_path))
     assert keys["admin"]["key_value"] == "admin-secret"
     assert keys["user"]["key_value"] == "user-secret"
+
+
+def test_completed_doc_ids_from_log(tmp_path):
+    log_path = tmp_path / "reindex.jsonl"
+    rows = [
+        {"event": "doc_start", "doc": {"id": "not-yet"}},
+        {
+            "event": "doc_parse",
+            "current": {"id": "done-a", "status": "INDEXED"},
+            "result": {"result": {"errors": 0}},
+        },
+        {
+            "event": "doc_parse",
+            "current": {"id": "failed", "status": "ERROR"},
+            "result": {"result": {"errors": 1}},
+        },
+    ]
+    log_path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+
+    assert guarded.completed_doc_ids_from_log(str(log_path)) == {"done-a"}
+
+
+def test_compact_rag_keeps_totals_qdrant_and_problem_datasets():
+    compact = guarded.compact_rag(
+        {
+            "status": "degraded",
+            "totals": {"pending_files": 1},
+            "qdrant": {"points_match_sqlite_chunks": True},
+            "datasets": [
+                {"name": "ok", "pending_files": 0, "error_files": 0},
+                {"name": "pending", "pending_files": 1, "error_files": 0},
+            ],
+        }
+    )
+
+    assert compact == {
+        "status": "degraded",
+        "totals": {"pending_files": 1},
+        "qdrant": {"points_match_sqlite_chunks": True},
+        "active_datasets": [{"name": "pending", "pending_files": 1, "error_files": 0}],
+    }
