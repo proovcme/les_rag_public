@@ -536,7 +536,7 @@ MAIL_IMAP_HOST=imap.example.com
 MAIL_IMAP_PORT=993
 MAIL_IMAP_SSL=true
 MAIL_IMAP_LOGIN=mail@example.com
-MAIL_IMAP_PASSWORD=app-password
+MAIL_IMAP_PASSWORD=change_me_to_app_password
 MAIL_IMAP_FOLDERS=INBOX
 MAIL_IMAP_CHECKPOINT_DIR=data/mail_imap_checkpoints
 MAIL_IMAP_STORAGE_ROOT=RAG_Content/MAIL/IMAP
@@ -565,6 +565,13 @@ curl -s 'http://127.0.0.1:8050/api/mail/messages?participant=ivan@example.com' |
 `References`; если технических заголовков нет, используется нормализованная
 тема без `Re:/Fwd:`. Lite Chat показывает этот слой отдельной кнопкой
 `Е.Ж.И.К. Почта -> ЦЕПОЧКИ`, не смешивая переписку с обычной RAG-выдачей.
+
+Следующий почтовый слой — отдельный mail-vector profile. Для писем важно
+векторизовать не только тело, но и контекст коммуникации: `from/to/cc`, роли
+участников, направление "кто кому", `thread_key`, дату, тему, вложения,
+признаки важности и OCR/VLM-текст из картинок. Картинка во вложении может быть
+главным содержанием письма, поэтому attachment OCR/VLM должен стать отдельной
+политикой ingestion, а не побочным эффектом обычного email parsing.
 
 Qwen-native индексирование идёт в отдельную коллекцию, чтобы не смешивать векторы разных embedding-моделей:
 `LES_EMBED_PROFILE=qwen`, `EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B`,
@@ -692,6 +699,7 @@ MIT — используй, форкай, улучшай.
 - [x] Е.Ж.И.К. v0 — локальный импорт EML/MSG в `MAIL_Index`
 - [x] Е.Ж.И.К. v1 — IMAP коннектор для почты
 - [x] Е.Ж.И.К. v2 — отдельная выдача писем: who-to-whom, snippets, thread chains
+- [ ] Е.Ж.И.К. v3 — mail-vector profile: участники, направление, importance, OCR/VLM вложений
 - [ ] VLM pipeline — анализ PDF-чертежей
 
 ### Backlog ускорения и оптимизации

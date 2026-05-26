@@ -1,6 +1,6 @@
 # LES RAG Modernization Plan
 
-Updated: 25.05.2026
+Updated: 26.05.2026
 
 This plan starts only after the current Qwen indexing run reaches zero pending files and Qdrant/SQLite counts are verified. The current index is treated as a valuable artifact: no full reindex is allowed unless a step explicitly proves it is necessary.
 
@@ -61,6 +61,27 @@ The current K.O.T. behavior is only a draft embedded in `query_router.py`, `clar
    - document -> topic/domain
    - project artifact -> normative requirement
 4. Do not run full GraphRAG over the whole corpus until the lighter graph proves value on the golden set.
+
+## Phase 4.5: Е.Ж.И.К. Mail Vector Profile
+
+Mail is not just another document type. Retrieval must preserve communication
+context, otherwise the system can find the right words but miss who committed
+to what, who received it, and how the thread evolved.
+
+1. Build mail-specific embedding text:
+   `subject`, `from`, `to`, `cc`, normalized participants, direction
+   "who-to-whom", `thread_key`, date, attachment names, importance markers and
+   body snippet/full body.
+2. Store mail metadata in Qdrant payload and SQLite side tables so retrieval can
+   filter by person, domain, thread, date range and attachment presence.
+3. Add thread-aware retrieval: retrieve matching messages, then expand to the
+   whole thread or nearest parent/reply window before generation.
+4. Treat image attachments as first-class evidence. Add OCR/VLM extraction for
+   screenshots, scans, photos and image-only PDFs; store attachment text with
+   `attachment_id` and link it back to the parent message.
+5. Add mail golden set cases for "who promised what", "who received this",
+   "latest reply in thread", "attachment contains evidence", and ambiguous
+   person/name queries.
 
 ## Phase 5: Small Model Policy
 
