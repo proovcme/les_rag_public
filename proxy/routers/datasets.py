@@ -24,9 +24,10 @@ from backend.smart_index import SKIP_DIRS, build_smart_plan, should_index_source
 from proxy.config import max_upload_bytes, mlx_url, rag_upload_suffixes
 from proxy.security import require_admin, require_user
 from proxy.services.context_expander_service import expand_context_windows
-from proxy.services.resource_governor import active_parse_priority_order
+from proxy.services.resource_governor import active_parse_priority_order, current_runtime_profile
+from proxy.services.runtime_admission import evaluate_memory_pressure
 from proxy.services.retrieval_service import classify_query, resolve_dataset_ids, retrieve_chat_chunks
-from proxy.storage.file_storage import save_upload_tmp, safe_upload_name, validate_source_folder
+from proxy.storage.file_storage import save_upload_tmp, safe_dataset_storage_dir, safe_upload_name, validate_source_folder
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,7 @@ async def parse_memory_state() -> dict[str, Any]:
     return {
         "ram_free_gb": float(ram_free if ram_free is not None else 0),
         "swap_pct": float(swap if swap is not None else 100),
+        "state": evaluate_memory_pressure(memory).state,
         "raw": memory,
     }
 
@@ -312,6 +314,7 @@ async def run_parse_scheduler(
 
     result = {
         "status": status,
+        "runtime_profile": current_runtime_profile(state.current_mode),
         "batch_limit": req.batch_limit,
         "max_batches": req.max_batches,
         "dataset_priority_order": priority_order,
@@ -350,6 +353,7 @@ async def run_parse_scheduler(
 
 @router.delete("/datasets/{dataset_id}")
 async def delete_dataset(dataset_id: str, _admin=Depends(require_admin)):
+    ds_dir = safe_dataset_storage_dir(dataset_id)
     errors = []
 
     try:
@@ -371,7 +375,6 @@ async def delete_dataset(dataset_id: str, _admin=Depends(require_admin)):
     except Exception as e:
         errors.append(f"SQLite: {e}")
 
-    ds_dir = Path(f"./storage/datasets/{dataset_id}")
     if ds_dir.exists():
         await asyncio.to_thread(shutil.rmtree, ds_dir)
 

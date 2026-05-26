@@ -82,7 +82,9 @@ async def test_indexing_mode_sets_priority_and_pauses_chat(runtime_state):
     )
 
     assert response["active"] is True
+    assert response["runtime_profile"] == "INDEX_LIGHT"
     assert runtime_state["mode"] == "indexing"
+    assert runtime_state["runtime_profile"] == "INDEX_LIGHT"
     assert runtime_state["chat_generation"] == "paused"
     assert response["dataset_priority_order"] == ["NTD_FIRE_Index", "NTD_OTHER_Index"]
 
@@ -100,7 +102,9 @@ async def test_indexing_mode_can_return_to_chat(runtime_state):
     )
 
     assert response["active"] is False
+    assert response["runtime_profile"] == "CHAT"
     assert runtime_state["mode"] == "chat"
+    assert runtime_state["runtime_profile"] == "CHAT"
     assert runtime_state["chat_generation"] == "allowed"
 
 
@@ -112,6 +116,7 @@ async def test_indexing_mode_reports_runtime_admission(runtime_state):
 
     assert response["chat_generation_allowed"] is False
     assert response["chat_admission"]["status_code"] == 503
+    assert response["memory_state"]["state"] == "CRITICAL"
     assert "swap_pct=86.0 > 60.0" in response["chat_generation_reason"]
 
 
@@ -128,3 +133,5 @@ async def test_status_includes_chat_admission(runtime_state):
     response = await runtime.get_status()
 
     assert response["chat_admission"]["allowed"] is True
+    assert response["runtime_profile"] == "CHAT"
+    assert response["memory_state"]["state"] in {"UNKNOWN", "GREEN"}

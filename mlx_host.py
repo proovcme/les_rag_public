@@ -7,7 +7,7 @@ FastAPI сервер на порту 8080.
 Движки:
   main_engine  — MLX_MODEL     (RAG, TTL 300с)
   val_engine   — MLX_VAL_MODEL (Т.О.С.К.А. v2, TTL 120с)
-  embedder     — BGE-M3        (sentence-transformers + MPS, lazy load)
+  embedder     — EMBEDDING_MODEL / BGE_MODEL (sentence-transformers + MPS, lazy load)
 """
 
 import asyncio

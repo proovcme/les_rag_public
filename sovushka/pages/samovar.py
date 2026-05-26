@@ -757,6 +757,8 @@ def build_samovar():
             )[0] if scheduler_candidates else None
             mode_state = indexing_mode.get("mode", {}) if isinstance(indexing_mode.get("mode"), dict) else {}
             mode_name = mode_state.get("mode") or ("indexing" if indexing_mode.get("active") else "chat")
+            profile_name = indexing_mode.get("runtime_profile") or mode_state.get("runtime_profile") or "CHAT"
+            memory_state = indexing_mode.get("memory_state", {}) if isinstance(indexing_mode.get("memory_state"), dict) else {}
             chat_allowed = indexing_mode.get("chat_generation_allowed", True)
             runtime_banner.set_text(
                 " · ".join(
@@ -764,6 +766,8 @@ def build_samovar():
                         f"proxy: {proxy_status}",
                         f"rag: {rag_status}",
                         f"mode: {mode_name}",
+                        f"profile: {profile_name}",
+                        f"memory: {memory_state.get('state', 'UNKNOWN')}",
                         f"chat: {'allowed' if chat_allowed else 'paused'}",
                         "parse: paused (Qdrant/API health)" if parse_blocked else "parse: available",
                     ]

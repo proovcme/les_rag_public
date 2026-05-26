@@ -122,6 +122,8 @@ def test_source_names_are_unique_and_ordered():
 def test_final_answer_for_status_blocks_unknown_statuses():
     assert final_answer_for_status("answer", "VERIFIED") == ("answer", "VERIFIED")
     assert final_answer_for_status("answer", "UNVALIDATED") == ("answer", "UNVALIDATED")
+    assert final_answer_for_status("answer", "UNKNOWN") != ("answer", "UNKNOWN")
+    assert final_answer_for_status("answer", "SKIP")[1] == "UNKNOWN"
     answer, status = final_answer_for_status("answer", "BOGUS")
 
     assert status == "UNKNOWN"

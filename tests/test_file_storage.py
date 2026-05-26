@@ -3,7 +3,12 @@ from io import BytesIO
 import pytest
 from fastapi import HTTPException, UploadFile
 
-from proxy.storage.file_storage import safe_upload_name, save_upload_tmp, validate_source_folder
+from proxy.storage.file_storage import (
+    safe_dataset_storage_dir,
+    safe_upload_name,
+    save_upload_tmp,
+    validate_source_folder,
+)
 
 
 def _upload(filename: str, content: bytes) -> UploadFile:
@@ -24,6 +29,17 @@ def test_validate_source_folder_rejects_traversal(tmp_path):
 
     with pytest.raises(HTTPException) as exc:
         validate_source_folder("../outside", base=base)
+    assert exc.value.status_code == 400
+
+
+def test_safe_dataset_storage_dir_rejects_traversal(tmp_path):
+    base = tmp_path / "storage" / "datasets"
+    base.mkdir(parents=True)
+
+    assert safe_dataset_storage_dir("ds-1", base=base) == (base / "ds-1").resolve()
+
+    with pytest.raises(HTTPException) as exc:
+        safe_dataset_storage_dir("../outside", base=base)
     assert exc.value.status_code == 400
 
 

@@ -114,16 +114,31 @@ Until that pipeline exists:
 3. Use one tracked job only.
 4. Stop immediately if `ram_free_gb < 8` or `swap_pct > 60`.
 
+The launchd auto-index loop must treat a heavy-only pending queue as manual
+admission work: log `heavy_pending_only`, do not start a parse job, and restore
+`CHAT` mode before exiting.
+
 ## Operator Defaults
 
 Safe startup:
 
 ```bash
+uv run python tools/les_runtime_control.py memory-preflight --offer-kill
 uv run python tools/les_runtime_control.py start qdrant
 uv run python tools/les_runtime_control.py start mlx
 uv run python tools/les_runtime_control.py start proxy
 uv run python tools/les_runtime_control.py start ui
 ```
+
+`start_les.command` runs the same memory preflight automatically before
+`start-core`. It prints the largest resident processes and, only in an
+interactive terminal, asks which non-LES, non-protected candidates should receive
+`SIGTERM`. Press Enter to skip. It never kills foreign processes without an
+explicit selection.
+
+Runtime status checks must use lightweight health endpoints. For Sovushka UI,
+use `/healthz`; probing `/` or `/les` renders a NiceGUI page and can create large
+server-side client state.
 
 Safe session close:
 
@@ -154,6 +169,19 @@ UI should show the active profile and memory state directly:
 
 The UI must not present runtime pause as indexing unless the active profile is
 actually an indexing profile.
+
+## Runtime API Surface
+
+The proxy exposes the active profile and memory state through the same admission
+path used by chat/runtime controls:
+
+- `/api/status` returns `runtime_profile`, `memory_state`, and
+  `chat_admission.runtime_profile`;
+- `/api/indexing-mode` returns `runtime_profile`, `memory_state`, and the full
+  `chat_admission` payload;
+- parse scheduler results include the active `runtime_profile`;
+- `GREEN/YELLOW/RED/CRITICAL` thresholds are centralized in
+  `proxy/services/runtime_admission.py`.
 
 ## Implementation Target
 

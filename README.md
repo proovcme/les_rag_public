@@ -1,105 +1,194 @@
-# 🌲 Л.Е.С. — Локальная Единая Система
+# Л.Е.С. — локальная RAG-машина для Apple Silicon
 
-**Локальная RAG-система для работы с нормативной документацией.**  
-Работает полностью офлайн на Apple Silicon (Mac Mini M4). Никакие данные не покидают локальную сеть.
+**Л.Е.С.** превращает приватный архив PDF, DOCX, таблиц и переписки в локальную базу знаний с ответами по источникам. Это self-hosted RAG appliance для Mac на Apple Silicon: Qdrant, MLX-модели, proxy, UI и метаданные работают на вашей машине или в вашей private network, без обязательного облака.
 
-**Актуальный статус: 25.05.2026.** С.О.В.У.Ш.К.А. разделена на лёгкий чат и админку: `https://<your-domain>/` открывает премиальный чат с выезжающей историей и панелью артефактов, `https://<your-domain>/les` открывает админский контур. Runtime переведён в **no-Docker режим**: Qdrant запускается локальным бинарём через LaunchAgent `me.ovc.les.qdrant`, `les-proxy`, SQLite, MLX Host и UI также работают на host через launchd. Docker Desktop/OrbStack удалены из runtime и не требуются для штатной работы. Активный embedding-профиль переведён на Qwen/Qwen3-Embedding-0.6B в отдельной коллекции `les_rag_qwen3_06b`; BGE-M3 сохранён как legacy baseline в `les_rag`. Индексация идёт guarded batch=1 через `me.ovc.les.qwen-index-until-done`.
+**Публичное позиционирование:** локальная RAG-машина для инженерных, нормативных и корпоративных архивов на Apple Silicon. Фокус: приватность, воспроизводимость, наблюдаемость, безопасная индексация и ответы с проверяемыми источниками.
+
+**Актуальный статус: 26.05.2026.** Референсный контур работает на Mac Mini M4 / 24 GB в no-Docker runtime: Qdrant local binary, MLX Host, FastAPI proxy и NiceGUI UI запускаются через launchd. Активный embedding-профиль — `Qwen/Qwen3-Embedding-0.6B` в коллекции `les_rag_qwen3_06b`; legacy BGE-M3 сохранён отдельно. Текущий публичный baseline: `801/802` файлов проиндексировано, `264307` чанков, Qdrant points совпадают с SQLite; один тяжёлый book-PDF оставлен за ручным admission guard.
 
 ---
 
-## Что это
+## Что это даёт
 
-Л.Е.С. — это система для поиска и анализа технических норм, СП, ГОСТ, проектной документации. Задаёшь вопрос на русском языке — получаешь ответ со ссылками на источники и оценкой достоверности.
+| Задача | Как выглядит для пользователя | Что делает система |
+|---|---|---|
+| Найти норму | «Минимальная ширина пути эвакуации по СП 1.13130?» | Ищет релевантные chunks, собирает ответ, показывает источники |
+| Проверить ответ | Ответ помечается `VERIFIED`, `NO_DATA` или блокируется как неподтверждённый | Т.О.С.К.А. валидирует ответ отдельной локальной моделью |
+| Загрузить архив | PDF/DOCX/XLSX/CSV/EML/MSG/JSON/MD/TXT | Smart intake классифицирует файлы, выбирает pipeline и индекс |
+| Работать с таблицами | «Сумма по разделу X», «сколько позиций…» | XLSX/CSV превращаются в row-level chunks и Parquet artifacts |
+| Эксплуатировать локально | Запуск одной командой, UI для диагностики, health/status API | launchd-сервисы, memory profiles, jobs, smoke tests |
 
-```
+Пример ответа:
+
+```text
 Вопрос: "Минимальная ширина пути эвакуации по СП 1.13130?"
 Ответ:  "Не менее 1,2 м (п. 4.3.4 СП 1.13130.2022). [VERIFIED]"
-         └── Источник: СП 1.13130.2022.pdf, стр. 12
+Источник: СП 1.13130.2022.pdf, стр. 12
 ```
 
 ---
 
-## Архитектура
+## Иллюстрация Контура
 
+```mermaid
+flowchart LR
+    User[Пользователь<br/>браузер] --> UI[С.О.В.У.Ш.К.А.<br/>NiceGUI :8051]
+    UI --> Proxy[les-proxy<br/>FastAPI :8050]
+    Proxy --> Auth[В.О.Л.К.<br/>RBAC + API keys]
+    Proxy --> RAG[С.А.М.О.В.А.Р.<br/>retrieval + routing]
+    RAG --> Qdrant[(Qdrant<br/>vectors :6333)]
+    RAG --> Meta[(SQLite<br/>datasets/jobs/cache)]
+    Proxy --> MLX[MLX Host :8080<br/>chat + validation + embeddings]
+    MLX --> Main[Qwen chat model<br/>lazy lease]
+    MLX --> Val[Qwen validator<br/>sequential]
+    MLX --> Embed[Qwen3 Embedding<br/>0.6B]
+
+    Public[Optional public HTTPS<br/>Caddy VPS relay] -. ZeroTier/SSH .-> UI
+    Public -. /api .-> Proxy
 ```
-Интернет → <your-domain>
-                │
-┌───────────────▼─────────────────────────────────┐
-│  VPS П.А.У.К. (Debian 13, <public-vps-ip>)       │
-│                                                 │
-│  Caddy :443  (Let's Encrypt, <your-domain>)        │
-│       ├── /api/* → <app-host-vpn-ip>:8050           │
-│       └── /*     → <app-host-vpn-ip>:8051           │
-│       fallback: 127.0.0.1:8050/8051 через SSH   │
-│             ├── /     → AI ЧАТ + история        │
-│             └── /les  → админка Л.Е.С.          │
-│                                                 │
-│  Только HTTPS-релей. RAG/SQLite/UI/LLM не живут │
-│  на VPS; вся механика работает на Mac Mini.     │
-└─────────────────────────────────────────────────┘
-         │  ZeroTier `<vpn-network-id>`
-┌────────▼────────────────────────────────────────┐
-│  Mac Mini M4 / 24 GB (Ж.А.Б.А.)                │
-│                                                 │
-│  С.О.В.У.Ш.К.А.  (NiceGUI UI, порт 8051)       │
-│  les-proxy        (FastAPI host, порт 8050)      │
-│       ├── proxy_server.py → proxy.app           │
-│       ├── proxy/security.py (server-side RBAC)  │
-│       ├── RAG pipeline  (С.А.М.О.В.А.Р.)        │
-│       ├── Т.О.С.К.А.    (SafeRAG валидация)     │
-│       └── В.О.Л.К.      (ключи, SQLite)         │
-│                                                 │
-│  MLX Native Host  (порт 8080)                   │
-│       ├── Qwen3-14B-4bit     (LLM, Metal)        │
-│       ├── Qwen3-4B-4bit      (валидатор)         │
-│       └── Qwen3-Embedding-0.6B (эмбеддинги, MPS)│
-│                                                 │
-│  Qdrant  (local binary + LaunchAgent, порт 6333)│
-└─────────────────────────────────────────────────┘
+
+```mermaid
+flowchart TD
+    Q[Вопрос] --> C{Clarification gate}
+    C -->|широкий запрос| Ask[Уточняющие вопросы<br/>без LLM generation]
+    C -->|достаточно узкий| Ret[Dense retrieval<br/>Qwen3 embeddings + Qdrant]
+    Ret --> Rerank{Реранкер включён?}
+    Rerank -->|да| RR[Qwen validator model<br/>cross-encoder scoring]
+    Rerank -->|нет| Ctx[Top chunks]
+    RR --> Ctx
+    Ctx --> Table{Table query?}
+    Table -->|Parquet найден| Exact[Детерминированный табличный ответ]
+    Table -->|нет| Gen[MLX chat model]
+    Exact --> Judge[Т.О.С.К.А. validation]
+    Gen --> Judge
+    Judge -->|VERIFIED| Answer[Ответ + источники]
+    Judge -->|NO_DATA/HALLUCINATION| Safe[Safe fallback<br/>не выдавать как факт]
 ```
 
 ---
 
-## Модули системы
+## Функции
 
-| Аббревиатура | Расшифровка | Роль |
-|---|---|---|
-| **Л.Е.С.** | Локальная Единая Система | Оркестратор, API Gateway |
-| **Ж.А.Б.А.** | Жёсткая Аппаратная База Аналитики | Mac Mini (хост) |
-| **С.А.М.О.В.А.Р.** | Система Автономной Машинной Обработки Внутренних Архивов RAG | RAG / Qdrant |
-| **Т.О.С.К.А.** | Терминал Оценки, Самопроверки и Контроля Архитектуры | CRAG валидатор |
-| **С.О.В.У.Ш.К.А.** | Система Обработки и Выдачи: Умная, Шаблонизированная, Классифицированная, Автоматизированная | UI (NiceGUI) |
-| **П.Р.О.Р.А.Б.** | Программа Регулярной Оценки Работы Автономной Базы | Метрики / диагностика |
-| **Д.И.А.Г.Н.О.З.** | Диспетчер Инфраструктурного Анализа Готовности, Нагрузки, Ошибок и Здоровья | Живая диагностика контура |
-| **К.О.Т.** | Куратор Отраслевой Терминологии | Семантический фильтр |
-| **В.О.Л.К.** | Внутренний Охранный Локальный Контур | Auth / RBAC |
-| **П.А.У.К.** | Периметровый Автономный Узел Коммуникаций | VPS relay |
-| **С.У.Х.А.Р.И.К.** | Система Управления Холодными Архивами и Резервными Источниками Комплекса | Снапшоты / бэкапы |
-| **Е.Ж.И.К.** | *(расшифровка уточняется)* | IMAP / почта |
+| Блок | Возможности |
+|---|---|
+| RAG-чат | Ответы на русском языке с источниками, dataset filter, clarification gate, history drawer |
+| SafeRAG | Post-generation validator, статусы `VERIFIED / NO_DATA / HALLUCINATION`, safe fallback |
+| Индексация | Smart plan/sync/upload, deterministic routing, batch scheduler, guarded micro-indexing |
+| Документы | PDF, DOCX, DOC, XLSX, XLS, CSV, EML, MSG, JSON, JSONL, MD, TXT |
+| Таблицы | Row-level chunks, Parquet artifacts, прямые суммы/количества без LLM |
+| UI | Чат, история, панель артефактов, админка, метрики, jobs, runtime controls |
+| Диагностика | `/api/health`, `/api/status`, `/api/metrics`, `/api/diag`, smoke/browser/golden tests |
+| Внешний доступ | Опциональный HTTPS relay через Caddy + private VPN/ZeroTier; RAG и модели остаются на Mac |
+
+---
+
+## Безопасность
+
+| Риск | Защита в Л.Е.С. |
+|---|---|
+| Утечка документов в облако | Штатный runtime полностью локальный; внешняя публикация — только relay до локального хоста |
+| Публичный доступ к админке | Server-side RBAC, роли `admin/user`, API keys, trusted network только opt-in |
+| Подмена trusted headers | `TRUSTED_PROXY_NETWORKS` ограничивает, от кого принимаются forwarded/trusted headers |
+| Path traversal и удаление чужих файлов | Storage helpers проверяют dataset paths и границы storage root |
+| Неподтверждённые ответы | SafeRAG не отдаёт validator timeout/error как нормальный факт |
+| Отравление кэша | Semantic cache сохраняет только `VERIFIED` ответы и инвалидируется по dataset scope |
+| Агрессивное завершение процессов | Memory preflight только предлагает кандидатов; чужие процессы получают SIGTERM только после явного выбора оператора |
+
+---
+
+## Стабильность
+
+| Механизм | Что решает |
+|---|---|
+| No-Docker host runtime | Убирает Docker VM overhead на 16-24 GB Mac; Qdrant/proxy/MLX/UI живут как launchd jobs |
+| Runtime profiles | `CHAT`, `CHAT_VALIDATED`, `INDEX_LIGHT`, `INDEX_HEAVY_PDF`, `MAINTENANCE` разделяют режимы нагрузки |
+| Memory states | `GREEN/YELLOW/RED/CRITICAL` централизуют admission для chat/index/warmup |
+| Model leases | Модели грузятся лениво; validator и embedder не должны конфликтовать с chat/index без admission |
+| Heavy PDF guard | Тяжёлые book-PDF не идут в auto-index loop; нужен ручной `INDEX_HEAVY_PDF` или streaming pipeline |
+| Lightweight UI health | Sovushka отвечает `/healthz`; runtime status не рендерит тяжёлую NiceGUI страницу |
+| Durable jobs | `/api/jobs` объединяет SQLite job history и live jobs |
+| Regression suite | На 26.05.2026: `218 passed`, включая auth, storage, runtime admission, SafeRAG и indexer guards |
+
+Подробная модель памяти описана в [RUNTIME_MEMORY_PROFILES.md](RUNTIME_MEMORY_PROFILES.md).
 
 ---
 
 ## Стек
 
-| Компонент | Технология |
+| Слой | Технологии |
 |---|---|
-| LLM | `mlx-community/Qwen3-14B-4bit` via MLX |
-| Валидатор | `mlx-community/Qwen3-4B-4bit` (CRAG: VERIFIED / NO_DATA / HALLUCINATION) |
-| Эмбеддинги | [BGE-M3](https://huggingface.co/BAAI/bge-m3) via sentence-transformers + MPS |
-| Векторная база | [Qdrant](https://qdrant.tech/) |
-| Backend | FastAPI + LlamaIndex |
-| Frontend | [NiceGUI](https://nicegui.io/) v5.0 |
-| Auth | В.О.Л.К. — server-side API guards, API-ключи + SQLite, trusted local/configured private-network contour, trusted-proxy boundary для forwarded headers |
-| Внешний доступ | Caddy + Let's Encrypt + ZeroTier mesh; SSH tunnel только резерв |
-| Форматы документов | PDF, DOCX, XLSX, CSV, EML, MSG, JSON, MD, TXT |
-| Артефакты | Таблицы/JSON/Mermaid/SVG в правой панели чата, XLSX/CSV ingestion и Parquet artifacts |
+| Host | macOS + Apple Silicon, launchd, `uv`, Python 3.12 |
+| LLM runtime | MLX / `mlx-lm`, OpenAI-compatible local host on `:8080` |
+| Chat model | Safe 24 GB default: `mlx-community/Qwen3.5-4B-OptiQ-4bit`; quality profile: `mlx-community/Qwen3-14B-4bit` |
+| Validator/reranker | `mlx-community/Qwen3-4B-Instruct-2507-4bit` или compatible `Qwen3-4B` profile |
+| Embeddings | Active: `Qwen/Qwen3-Embedding-0.6B`; legacy baseline: `BAAI/bge-m3` |
+| Vector DB | Qdrant local binary + per-profile collections |
+| Backend | FastAPI, httpx, SQLite, LlamaIndex-compatible backend interfaces |
+| Frontend | NiceGUI / С.О.В.У.Ш.К.А. |
+| Storage | Local filesystem + SQLite metadata, Parquet artifacts for tables |
+| Public relay | Optional Caddy + Let's Encrypt + ZeroTier/private network |
+
+Model references: [Qwen3 Embedding 0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B), [Qwen3.5-4B OptiQ MLX](https://huggingface.co/mlx-community/Qwen3.5-4B-OptiQ-4bit), [Qwen3-4B Instruct 2507 MLX](https://huggingface.co/mlx-community/Qwen3-4B-Instruct-2507-4bit), [Qwen MLX docs](https://qwen.readthedocs.io/en/latest/run_locally/mlx-lm.html).
+
+---
+
+## Масштабируемость
+
+```mermaid
+flowchart LR
+    A[Single Mac<br/>16-24 GB] --> B[24-64 GB Mac<br/>larger model/context]
+    B --> C[Split services<br/>QDRANT_URL / MLX_URL / UI / proxy]
+    C --> D[Public private relay<br/>Caddy + VPN]
+    A --> E[Corpus scale<br/>separate collections<br/>per embedding profile]
+    E --> F[Quality scale<br/>golden set + reranker<br/>hybrid retrieval roadmap]
+```
+
+| Направление | Как масштабировать |
+|---|---|
+| RAM/модели | 16 GB — малые модели; 24 GB — стабильный локальный RAG; 32-64 GB — больше контекст и 14B+ профили |
+| Корпус | Раздельные Qdrant collections на embedding profile; SQLite metadata; batch scheduler |
+| Индексация | `batch_limit=1`, post-batch memory guard, heavy PDFs только через manual admission |
+| Пользователи | Public UI можно вынести за VPS relay; RAG/LLM остаются на локальном Mac |
+| Качество | Golden set, retrieval-debug, optional reranker, будущий hybrid dense+sparse/RRF |
+| Сервисы | `MLX_URL`, `QDRANT_URL`, `PROXY_URL` позволяют разнести компоненты без смены UX |
+
+---
+
+## Рекомендуемые Модели
+
+| Машина | Chat model | Validator / reranker | Embeddings | Комментарий |
+|---|---|---|---|---|
+| Apple Silicon 16 GB | `mlx-community/Qwen3.5-4B-OptiQ-4bit` | выключить по умолчанию или запускать строго последовательно | `Qwen/Qwen3-Embedding-0.6B` | Лёгкий RAG, небольшие контексты, без параллельной индексации |
+| Apple Silicon 24 GB | `mlx-community/Qwen3.5-4B-OptiQ-4bit` | `mlx-community/Qwen3-4B-Instruct-2507-4bit` | `Qwen/Qwen3-Embedding-0.6B` | Текущий безопасный default: UI + chat + retrieval с запасом памяти |
+| Apple Silicon 24 GB, quality run | `mlx-community/Qwen3-14B-4bit` | только sequential validation | `Qwen/Qwen3-Embedding-0.6B` | Лучше для сложной аналитики, но не совмещать с heavy indexing |
+| Apple Silicon 32-64 GB | `Qwen3-14B` и более крупные MLX/GGUF профили после golden-set проверки | Qwen3 reranker/validator 4B или 8B | Qwen3 Embedding 0.6B/4B | Имеет смысл, если вырос corpus или нужен длинный контекст |
+
+Правило эксплуатации: на 24 GB не держать одновременно chat model, validator, embedder и тяжёлый PDF parser. Сначала профиль, потом admission, затем job.
+
+---
+
+## Модули Системы
+
+| Аббревиатура | Расшифровка | Роль |
+|---|---|---|
+| **Л.Е.С.** | Локальная Единая Система | Оркестратор, API Gateway |
+| **Ж.А.Б.А.** | Жёсткая Аппаратная База Аналитики | Apple Silicon host |
+| **С.А.М.О.В.А.Р.** | Система Автономной Машинной Обработки Внутренних Архивов RAG | RAG / Qdrant |
+| **Т.О.С.К.А.** | Терминал Оценки, Самопроверки и Контроля Архитектуры | SafeRAG validator |
+| **С.О.В.У.Ш.К.А.** | Система Обработки и Выдачи: Умная, Шаблонизированная, Классифицированная, Автоматизированная | NiceGUI UI |
+| **П.Р.О.Р.А.Б.** | Программа Регулярной Оценки Работы Автономной Базы | Метрики / диагностика |
+| **Д.И.А.Г.Н.О.З.** | Диспетчер Инфраструктурного Анализа Готовности, Нагрузки, Ошибок и Здоровья | Живая диагностика |
+| **К.О.Т.** | Куратор Отраслевой Терминологии | Семантический фильтр |
+| **В.О.Л.К.** | Внутренний Охранный Локальный Контур | Auth / RBAC |
+| **П.А.У.К.** | Периметровый Автономный Узел Коммуникаций | Optional VPS relay |
+| **С.У.Х.А.Р.И.К.** | Система Управления Холодными Архивами и Резервными Источниками Комплекса | Snapshots / backup |
 
 ---
 
 ## Быстрый старт
 
 ### Требования
-- Mac с Apple Silicon (M1/M2/M4) и минимум 16 GB RAM (рекомендуется 24 GB)
+- Mac с Apple Silicon (M1/M2/M3/M4) и минимум 16 GB RAM; комфортный профиль — 24 GB+
 - Локальный Qdrant binary `/Users/ovc/.local/bin/qdrant`; Docker не требуется
 - [uv](https://docs.astral.sh/uv/) (`brew install uv`)
 - Python 3.12+
@@ -107,18 +196,18 @@
 ### Установка
 
 ```bash
-git clone https://github.com/yourname/les-rag-public
-cd les-rag-public
+git clone https://github.com/proovcme/les_rag.git
+cd les_rag
 
 # Зависимости
 uv sync
 
 # Конфигурация
 cp env.example .env
-# Отредактируй .env — укажи модели и пароль
+# Отредактируй .env — укажи пароль, trusted networks и модельный профиль
 
-# Аварийный запуск всего контура через launchd:
-# Qdrant/proxy/MLX/UI + guarded Qwen indexer
+# Запуск host-runtime через launchd:
+# memory preflight + Qdrant + MLX + proxy + UI + guarded indexer
 ./start_les.command
 ```
 
@@ -161,7 +250,7 @@ Clarification gate
       └── узкий запрос → retrieval
       │
       ▼
-Векторный поиск (BGE-M3 + Qdrant)  top-8 чанков
+Векторный поиск (Qwen3-Embedding-0.6B + Qdrant; BGE-M3 legacy)  top-8 чанков
       │
       ▼ [опционально, включается в UI]
 Реранкер (Qwen3-4B batch) → top-5 релевантных чанков
@@ -175,10 +264,10 @@ Table query gate
 Промпт = системный + контекст + вопрос
       │
       ▼
-Qwen3-14B (MLX, Metal)
+Qwen3.5-4B OptiQ или Qwen3-14B (MLX, Metal)
       │  ответ
       ▼
-Т.О.С.К.А. валидация (Qwen3-4B)
+Т.О.С.К.А. валидация (Qwen3-4B, sequential lease)
       │  VERIFIED / NO_DATA / HALLUCINATION
       ▼
 Ответ пользователю + источники
@@ -235,23 +324,33 @@ Reverse proxy может помечать запросы из выбранног
 
 ## Управление памятью
 
-Система оптимизирована под ограниченную RAM Mac Mini:
+Система рассчитана на реальные ограничения unified memory Apple Silicon: macOS, GPU/Metal, UI, Qdrant, proxy, embedding и LLM делят один общий бюджет. Поэтому LES использует admission profiles, lazy model leases и guarded indexing.
 
-| Процесс | RAM |
-|---------|-----|
-| MLX (Qwen3-14B) | зависит от квантования |
-| MLX (Qwen3-4B val) | зависит от квантования |
-| les-proxy (host LaunchAgent) | Python-процесс, без Docker VM |
-| Qdrant (local binary LaunchAgent) | ~1.5 GB |
-| **Итого** | **~10 GB** |
+| Компонент | Типичный режим |
+|---|---|
+| Qdrant local binary | ~1.5-2.0 GB RSS на текущем индексе |
+| Sovushka UI | ~1-3 GB после lightweight `/healthz`; не использовать `/les` как health probe |
+| les-proxy | сотни MB, без Docker VM |
+| MLX Host idle | сотни MB; модели не resident до запроса |
+| Chat model | lazy load на время ответа; размер зависит от модели и квантования |
+| Validator | sequential lease после ответа; не держать параллельно с heavy indexing |
+| Embedder | lazy lease для retrieval/index batch |
 
 В штатном режиме Docker/OrbStack отсутствуют. Qdrant, proxy, MLX и UI запускаются на host через launchd; `docker-compose.yml` и `Dockerfile.proxy` оставлены как legacy-артефакты репозитория, не как runtime.
 
-`start_les.command` использует `tools/les_runtime_control.py` и поднимает Qdrant, MLX, `les-proxy`,
-guarded Qwen indexer и С.О.В.У.Ш.К.А. как host LaunchAgents. `les.command` оставлен как
-ручной legacy-диспетчер.
+`start_les.command` использует `tools/les_runtime_control.py`: сначала делает memory preflight, показывает крупнейшие RSS-процессы, затем поднимает Qdrant, MLX, `les-proxy`, guarded Qwen indexer и С.О.В.У.Ш.К.А. как host LaunchAgents. Если запуск интерактивный, оператор может явно выбрать чужие процессы для `SIGTERM`; автоматически LES не убивает процессы вне своего контура.
 
 `mlx_host.py` читает `.env` самостоятельно при старте — не зависит от оболочки запуска.
+
+Профили runtime:
+
+| Профиль | Назначение |
+|---|---|
+| `CHAT` | основной рабочий чат; индексация и validator concurrency запрещены без admission |
+| `CHAT_VALIDATED` | чат + последовательная Т.О.С.К.А. валидация |
+| `INDEX_LIGHT` | обычные документы, batch=1, post-batch memory guard |
+| `INDEX_HEAVY_PDF` | только ручной режим; UI/chat/validator выключаются |
+| `MAINTENANCE` | диагностика, lexical index, миграции, snapshots |
 
 ### Performance flags
 
@@ -290,8 +389,16 @@ DOC_ROUTER_SAMPLE_PAGES=3
 - **Resource Governor v1:** `/api/indexing-mode` разделяет рабочий чат и индексацию, ставит chat generation на паузу, управляет unload MLX и приоритетом индексов.
 - **Parse scheduler v2:** приоритет `NTD_FIRE → GKRF → NTD_ELECTRICAL → NTD_STRUCTURAL → TABLE_SMETA → NTD_OTHER`, post-batch memory hysteresis, `warm_embedder`, phase timings.
 - **BGE/chunk knobs:** `BGE_BATCH_SIZE`, `RAG_EMBED_BATCH`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP`, `RAG_PARSE_POST_MAX_SWAP_PCT`.
-- **Финальное состояние сессии:** `indexed_files=9`, `pending_files=792`, `chunks=850`, Qdrant points `850`, `points_match_sqlite_chunks=true`, `errors=0`.
-- **Проверки:** `uv run pytest` → `107 passed`; `git diff --check` → OK.
+- **Состояние индекса на 26.05.2026:** `indexed_files=801`, `pending_files=1`, `chunks=264307`, Qdrant points `264307`, `points_match_sqlite_chunks=true`, `errors=0`.
+- **Проверки на 26.05.2026:** `uv run pytest -q` → `218 passed`; `git diff --check` → OK.
+
+### Новое в релизе 26.05.2026
+
+- **Runtime memory profiles:** `/api/status` и `/api/indexing-mode` показывают активный `runtime_profile` и `memory_state`.
+- **Startup memory preflight:** `start_les.command` перед стартом показывает крупнейшие процессы и предлагает ручной `SIGTERM` только безопасным кандидатам.
+- **Heavy PDF guard:** автоиндексатор не запускает parse job, если pending очередь состоит только из тяжёлых book-PDF; runtime возвращается в `CHAT`.
+- **Sovushka `/healthz`:** runtime health check больше не рендерит страницу `/les`, чтобы не создавать тяжёлый NiceGUI client state.
+- **Launchd hardening:** `start_service` делает `launchctl enable` перед bootstrap/kickstart; disabled labels не ломают восстановление контура.
 
 ### Следующая сессия
 
@@ -430,7 +537,7 @@ Browser smoke проверяет admin-вкладки, user-вкладки, от
 ## Структура репозитория (публичная версия)
 
 ```
-les-rag-public/
+les_rag/
 ├── README.md
 ├── pyproject.toml
 ├── .env.example

@@ -37,7 +37,7 @@ from proxy.routers.runtime import RuntimeRouterState, router as runtime_router, 
 from proxy.routers.settings import router as settings_router
 from proxy.routers.status_page import StatusPageState, router as status_page_router, set_status_page_state
 from proxy.services.job_service import JobService
-from proxy.services.resource_governor import CHAT_MODE
+from proxy.services.resource_governor import CHAT_MODE, PROFILE_CHAT
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -65,6 +65,7 @@ job_tracker = {}
 job_service = JobService()
 current_mode = {
     "mode": CHAT_MODE,
+    "runtime_profile": PROFILE_CHAT,
     "model": os.getenv("LLM_MODEL", "mlx-community/Qwen3-14B-4bit"),
     "chat_generation": "allowed",
 }

@@ -312,6 +312,7 @@ def build_prorab():
         def _render_fuses(status_data: dict, metrics_data: dict):
             admission = status_data.get("chat_admission") if isinstance(status_data.get("chat_admission"), dict) else {}
             mode = status_data.get("mode") if isinstance(status_data.get("mode"), dict) else {}
+            pressure = status_data.get("memory_state") if isinstance(status_data.get("memory_state"), dict) else {}
             system = metrics_data.get("system") if isinstance(metrics_data.get("system"), dict) else {}
             queue = metrics_data.get("queue") if isinstance(metrics_data.get("queue"), dict) else {}
 
@@ -322,7 +323,8 @@ def build_prorab():
             swap_pct = memory.get("swap_pct", system.get("swap_pct"))
             active_jobs = admission.get("active_jobs", 0)
             llm_waiting = queue.get("llm_waiting", 0)
-            mode_name = str(mode.get("mode") or "chat").upper()
+            profile_name = str(admission.get("runtime_profile") or status_data.get("runtime_profile") or "CHAT").upper()
+            memory_state = str(admission.get("memory_state") or pressure.get("state") or "UNKNOWN").upper()
 
             state_cls = "tag-ok" if allowed else "tag-err"
             state_text = "SHIELD OPEN" if allowed else "SHIELD LOCKED"
@@ -347,13 +349,14 @@ def build_prorab():
             except (TypeError, ValueError):
                 llm_waiting_i = 0
 
-            mode_ok = mode_name in {"CHAT", "RAG"}
+            mode_ok = profile_name in {"CHAT", "CHAT_VALIDATED"}
             ram_ok = ram_free_f >= 8.0
             swap_ok = swap_f <= 60.0
             jobs_ok = active_jobs_i == 0
             llm_ok = llm_waiting_i == 0
             items = [
-                _fuse_item("MODE", mode_name, "chat lane" if mode_ok else "paused lane", _fuse_level(mode_ok)),
+                _fuse_item("PROFILE", profile_name, "chat lane" if mode_ok else "guarded lane", _fuse_level(mode_ok)),
+                _fuse_item("MEM STATE", memory_state, pressure.get("reason", ""), _fuse_level(memory_state in {"GREEN", "YELLOW"}, memory_state == "RED")),
                 _fuse_item("RAM FREE", f"{ram_free_f:.1f} GB", "min 8.0 GB", _fuse_level(ram_ok, ram_free_f >= 6.0)),
                 _fuse_item("SWAP", f"{swap_f:.1f}%", "max 60%", _fuse_level(swap_ok, swap_f <= 75.0)),
                 _fuse_item("JOBS", str(active_jobs_i), "active schedulers", _fuse_level(jobs_ok)),

@@ -8,7 +8,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/bin/python3</string>
+        <string>/Users/ovc/Projects/LES_v2/.venv/bin/python3</string>
         <string>/Users/ovc/Projects/LES_v2/sovushka_ng.py</string>
     </array>
 

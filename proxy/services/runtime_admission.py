@@ -6,10 +6,23 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from proxy.services.resource_governor import chat_generation_allowed
+from proxy.services.resource_governor import chat_generation_allowed, current_runtime_profile
 
 
 ACTIVE_JOB_STATUSES = {"QUEUED", "PARSING", "RUNNING"}
+
+MEMORY_UNKNOWN = "UNKNOWN"
+MEMORY_GREEN = "GREEN"
+MEMORY_YELLOW = "YELLOW"
+MEMORY_RED = "RED"
+MEMORY_CRITICAL = "CRITICAL"
+MEMORY_STATE_RANK = {
+    MEMORY_UNKNOWN: -1,
+    MEMORY_GREEN: 0,
+    MEMORY_YELLOW: 1,
+    MEMORY_RED: 2,
+    MEMORY_CRITICAL: 3,
+}
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -53,12 +66,55 @@ def chat_memory_guard_enabled() -> bool:
     return _env_bool("LES_CHAT_MEMORY_GUARD", True)
 
 
+def memory_green_min_free_gb() -> float:
+    return _env_float("LES_MEMORY_GREEN_MIN_FREE_GB", 12.0)
+
+
+def memory_red_min_free_gb() -> float:
+    return _env_float("LES_MEMORY_RED_MIN_FREE_GB", 8.0)
+
+
+def memory_critical_min_free_gb() -> float:
+    return _env_float("LES_MEMORY_CRITICAL_MIN_FREE_GB", 6.0)
+
+
+def memory_green_max_swap_pct() -> float:
+    return _env_float("LES_MEMORY_GREEN_MAX_SWAP_PCT", 40.0)
+
+
+def memory_red_max_swap_pct() -> float:
+    return _env_float("LES_MEMORY_RED_MAX_SWAP_PCT", 60.0)
+
+
+def memory_critical_max_swap_pct() -> float:
+    return _env_float("LES_MEMORY_CRITICAL_MAX_SWAP_PCT", 75.0)
+
+
+@dataclass(frozen=True)
+class MemoryPressure:
+    state: str
+    reason: str
+    memory: dict[str, Any]
+    stale_swap_allocation: bool = False
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "state": self.state,
+            "reason": self.reason,
+            "memory": self.memory,
+            "stale_swap_allocation": self.stale_swap_allocation,
+        }
+
+
 @dataclass(frozen=True)
 class ChatAdmission:
     allowed: bool
     reason: str
     failures: tuple[str, ...]
     memory: dict[str, Any]
+    memory_state: str
+    memory_reason: str
+    runtime_profile: str
     active_jobs: int
     mode_allowed: bool
     mode_reason: str
@@ -70,6 +126,9 @@ class ChatAdmission:
             "reason": self.reason,
             "failures": list(self.failures),
             "memory": self.memory,
+            "memory_state": self.memory_state,
+            "memory_reason": self.memory_reason,
+            "runtime_profile": self.runtime_profile,
             "active_jobs": self.active_jobs,
             "mode_allowed": self.mode_allowed,
             "mode_reason": self.mode_reason,
@@ -98,6 +157,82 @@ def memory_snapshot(metrics_cache: dict[str, Any] | None) -> dict[str, Any]:
         "swap_used_gb": swap_used,
         "swap_pct": swap_pct,
     }
+
+
+def _worse_state(left: str, right: str) -> str:
+    return left if MEMORY_STATE_RANK[left] >= MEMORY_STATE_RANK[right] else right
+
+
+def _state_from_free_memory(ram_free: float) -> tuple[str, str]:
+    critical_min = memory_critical_min_free_gb()
+    red_min = memory_red_min_free_gb()
+    green_min = memory_green_min_free_gb()
+    if ram_free < critical_min:
+        return MEMORY_CRITICAL, f"ram_free_gb={ram_free:.1f} < {critical_min:.1f}"
+    if ram_free < red_min:
+        return MEMORY_RED, f"ram_free_gb={ram_free:.1f} < {red_min:.1f}"
+    if ram_free < green_min:
+        return MEMORY_YELLOW, f"ram_free_gb={ram_free:.1f} < {green_min:.1f}"
+    return MEMORY_GREEN, f"ram_free_gb={ram_free:.1f} >= {green_min:.1f}"
+
+
+def _state_from_swap_pct(swap_pct: float) -> tuple[str, str]:
+    critical_max = memory_critical_max_swap_pct()
+    red_max = memory_red_max_swap_pct()
+    green_max = memory_green_max_swap_pct()
+    if swap_pct > critical_max:
+        return MEMORY_CRITICAL, f"swap_pct={swap_pct:.1f} > {critical_max:.1f}"
+    if swap_pct > red_max:
+        return MEMORY_RED, f"swap_pct={swap_pct:.1f} > {red_max:.1f}"
+    if swap_pct > green_max:
+        return MEMORY_YELLOW, f"swap_pct={swap_pct:.1f} > {green_max:.1f}"
+    return MEMORY_GREEN, f"swap_pct={swap_pct:.1f} <= {green_max:.1f}"
+
+
+def evaluate_memory_pressure(
+    metrics_cache: dict[str, Any] | None,
+    *,
+    max_stale_swap_used_gb: float | None = None,
+    stale_swap_relief_free_gb: float | None = None,
+) -> MemoryPressure:
+    memory = memory_snapshot(metrics_cache)
+    if not memory["known"]:
+        return MemoryPressure(MEMORY_UNKNOWN, "memory telemetry unavailable", memory)
+
+    ram_free = memory.get("ram_free_gb")
+    swap_used = memory.get("swap_used_gb")
+    swap_pct = memory.get("swap_pct")
+    max_swap_used = chat_max_swap_used_gb() if max_stale_swap_used_gb is None else max_stale_swap_used_gb
+    swap_relief_free = (
+        chat_swap_relief_free_gb() if stale_swap_relief_free_gb is None else stale_swap_relief_free_gb
+    )
+    stale_swap_allocation = (
+        ram_free is not None
+        and swap_used is not None
+        and swap_pct is not None
+        and swap_pct > memory_red_max_swap_pct()
+        and ram_free >= swap_relief_free
+        and swap_used <= max_swap_used
+    )
+
+    state = MEMORY_GREEN
+    reasons: list[str] = []
+    if ram_free is not None:
+        ram_state, ram_reason = _state_from_free_memory(ram_free)
+        state = _worse_state(state, ram_state)
+        reasons.append(ram_reason)
+    if swap_pct is not None and not stale_swap_allocation:
+        swap_state, swap_reason = _state_from_swap_pct(swap_pct)
+        state = _worse_state(state, swap_state)
+        reasons.append(swap_reason)
+    elif stale_swap_allocation:
+        reasons.append(
+            f"swap_pct={swap_pct:.1f} treated as stale allocation "
+            f"(swap_used_gb={swap_used:.1f}, ram_free_gb={ram_free:.1f})"
+        )
+
+    reason = "; ".join(reasons) if reasons else f"memory state {state}"
+    return MemoryPressure(state, reason, memory, stale_swap_allocation)
 
 
 def _coerce_float(value: Any) -> float | None:
@@ -160,6 +295,12 @@ def evaluate_chat_admission(
 
     mode_allowed, mode_reason = chat_generation_allowed(current_mode)
     memory = memory_snapshot(metrics_cache)
+    memory_pressure = evaluate_memory_pressure(
+        metrics_cache,
+        max_stale_swap_used_gb=max_swap_used,
+        stale_swap_relief_free_gb=swap_relief_free,
+    )
+    runtime_profile = current_runtime_profile(current_mode)
     failures: list[str] = []
     status_code = 200
 
@@ -204,6 +345,9 @@ def evaluate_chat_admission(
         reason=reason,
         failures=tuple(failures),
         memory=memory,
+        memory_state=memory_pressure.state,
+        memory_reason=memory_pressure.reason,
+        runtime_profile=runtime_profile,
         active_jobs=active_jobs,
         mode_allowed=mode_allowed,
         mode_reason=mode_reason,

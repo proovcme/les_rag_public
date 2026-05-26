@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from backend.metrics_collector import DB_PATH, heartbeats
@@ -21,11 +21,13 @@ from proxy.config import docker_control_enabled, mlx_url
 from proxy.security import require_admin
 from proxy.services.resource_governor import (
     active_parse_priority_order,
+    current_runtime_profile,
     enter_chat_mode,
     enter_indexing_mode,
     is_indexing_mode,
+    normalize_runtime_profile,
 )
-from proxy.services.runtime_admission import count_active_jobs, evaluate_chat_admission
+from proxy.services.runtime_admission import count_active_jobs, evaluate_chat_admission, evaluate_memory_pressure
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,7 @@ router = APIRouter(prefix="/api", tags=["runtime"])
 class ModeRequest(BaseModel):
     mode: str
     model: str
+    runtime_profile: str | None = None
 
 
 class IndexingModeRequest(BaseModel):
@@ -109,6 +112,10 @@ async def health():
 
 @router.post("/warmup")
 async def warmup_models(_admin=Depends(require_admin)):
+    state = get_runtime_state()
+    admission = chat_admission_for_state(state)
+    if not admission.allowed:
+        raise HTTPException(status_code=admission.status_code, detail=admission.reason)
     mlx_url = os.getenv("MLX_URL", "http://127.0.0.1:8080").rstrip("/")
     results = {}
     async with httpx.AsyncClient(timeout=120.0) as client:
@@ -145,6 +152,8 @@ async def set_mode(req: ModeRequest, _admin=Depends(require_admin)):
     state = get_runtime_state()
     state.current_mode["mode"] = req.mode
     state.current_mode["model"] = req.model
+    if req.runtime_profile:
+        state.current_mode["runtime_profile"] = normalize_runtime_profile(req.runtime_profile)
     logger.info("[MODE] Switched to %s / %s", req.mode, req.model)
     return state.current_mode
 
@@ -177,9 +186,12 @@ async def _host_memory() -> dict[str, Any]:
 async def get_indexing_mode():
     state = get_runtime_state()
     admission = chat_admission_for_state(state)
+    memory_pressure = evaluate_memory_pressure(state.metrics_cache)
     return {
         "active": is_indexing_mode(state.current_mode),
         "mode": state.current_mode,
+        "runtime_profile": current_runtime_profile(state.current_mode),
+        "memory_state": memory_pressure.payload(),
         "chat_generation_allowed": admission.allowed,
         "chat_generation_reason": admission.reason,
         "chat_admission": admission.payload(),
@@ -203,10 +215,13 @@ async def set_indexing_mode(req: IndexingModeRequest, _admin=Depends(require_adm
         enter_chat_mode(state.current_mode, reason=req.reason)
 
     memory = await _host_memory()
+    memory_state = evaluate_memory_pressure(memory).payload()
     logger.info("[RESOURCE] indexing_mode=%s reason=%s", req.enabled, req.reason)
     return {
         "active": is_indexing_mode(state.current_mode),
         "mode": state.current_mode,
+        "runtime_profile": current_runtime_profile(state.current_mode),
+        "memory_state": memory_state,
         "unload": unload,
         "memory": memory,
         "dataset_priority_order": active_parse_priority_order(state.current_mode),
@@ -260,8 +275,11 @@ async def get_status():
             logger.warning("Docker ps error: %s", e)
 
     admission = chat_admission_for_state(state)
+    memory_pressure = evaluate_memory_pressure(state.metrics_cache)
     return {
         "mode": state.current_mode,
+        "runtime_profile": current_runtime_profile(state.current_mode),
+        "memory_state": memory_pressure.payload(),
         "mlx": {"models": loaded_models, "count": len(loaded_models)},
         "containers": containers,
         "proxy": {

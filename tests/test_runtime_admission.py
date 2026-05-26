@@ -1,8 +1,10 @@
 from proxy.services.runtime_admission import (
     count_active_jobs,
     evaluate_chat_admission,
+    evaluate_memory_pressure,
     memory_snapshot,
 )
+from proxy.services.resource_governor import current_runtime_profile, enter_chat_mode, enter_indexing_mode
 
 
 def test_memory_snapshot_prefers_explicit_free_memory():
@@ -34,6 +36,8 @@ def test_chat_admission_blocks_high_swap_and_low_free_memory():
     assert result.status_code == 503
     assert "ram_free_gb=5.0 < 8.0" in result.reason
     assert "swap_pct=86.0 > 60.0" in result.reason
+    assert result.memory_state == "CRITICAL"
+    assert result.runtime_profile == "CHAT"
 
 
 def test_chat_admission_allows_stale_macos_swap_when_ram_is_plentiful():
@@ -47,6 +51,7 @@ def test_chat_admission_allows_stale_macos_swap_when_ram_is_plentiful():
     )
 
     assert result.allowed is True
+    assert result.memory_state == "GREEN"
 
 
 def test_chat_admission_blocks_indexing_mode_before_memory_checks():
@@ -76,6 +81,23 @@ def test_chat_admission_blocks_active_jobs_and_busy_llm():
     assert result.status_code == 429
     assert "active_jobs=2" in result.reason
     assert "llm_generation_slots=0" in result.reason
+
+
+def test_memory_pressure_profiles_green_yellow_red_critical():
+    assert evaluate_memory_pressure({"ram_free_gb": 16.0, "swap_pct": 5.0}).state == "GREEN"
+    assert evaluate_memory_pressure({"ram_free_gb": 10.0, "swap_pct": 5.0}).state == "YELLOW"
+    assert evaluate_memory_pressure({"ram_free_gb": 7.0, "swap_pct": 5.0}).state == "RED"
+    assert evaluate_memory_pressure({"ram_free_gb": 5.0, "swap_pct": 5.0}).state == "CRITICAL"
+    assert evaluate_memory_pressure({"ram_free_gb": 16.0, "swap_pct": 80.0}).state == "CRITICAL"
+
+
+def test_runtime_profile_is_carried_by_mode_transitions():
+    state = {}
+    enter_indexing_mode(state, reason="batch")
+    assert current_runtime_profile(state) == "INDEX_LIGHT"
+
+    enter_chat_mode(state, reason="done")
+    assert current_runtime_profile(state) == "CHAT"
 
 
 def test_active_job_count_deduplicates_durable_and_memory_jobs():

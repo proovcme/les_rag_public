@@ -105,6 +105,32 @@ def pending_files(proxy_url: str) -> int:
     return int(totals.get("pending_files") or 0)
 
 
+def pending_documents(proxy_url: str, limit: int = 500) -> list[dict[str, Any]]:
+    payload = request("GET", f"{proxy_url}/api/rag/documents?status=PENDING&limit={limit}", timeout=30)
+    if not isinstance(payload, dict):
+        return []
+    docs = payload.get("documents") or []
+    return [doc for doc in docs if isinstance(doc, dict)]
+
+
+def is_heavy_document(doc: dict[str, Any]) -> bool:
+    doc_type = str(doc.get("doc_type") or "").upper()
+    complexity = str(doc.get("complexity") or "").lower()
+    pipeline = str(doc.get("pipeline") or "").lower()
+    file_name = str(doc.get("file_name") or "").lower()
+    size = int(doc.get("file_size") or 0)
+    return (
+        doc_type == "BOOK"
+        or complexity == "heavy"
+        or "pdf_tables" in pipeline
+        or (file_name.endswith(".pdf") and size >= 30 * 1024 * 1024)
+    )
+
+
+def light_pending_documents(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [doc for doc in docs if not is_heavy_document(doc)]
+
+
 def active_scheduler_jobs(proxy_url: str) -> list[tuple[str, dict[str, Any]]]:
     payload = request("GET", f"{proxy_url}/api/jobs/summary?active_only=true&limit=50", timeout=30)
     if isinstance(payload, dict) and isinstance(payload.get("jobs"), list):
@@ -152,6 +178,19 @@ def set_indexing_mode(proxy_url: str) -> None:
     }
     result = request("POST", f"{proxy_url}/api/indexing-mode", payload)
     log("indexing_mode", result=result)
+
+
+def set_chat_mode(proxy_url: str, reason: str) -> None:
+    payload = {"enabled": False, "reason": reason, "unload_models": False}
+    result = request("POST", f"{proxy_url}/api/indexing-mode", payload)
+    log("chat_mode", result=result)
+
+
+def restore_chat_mode(proxy_url: str, reason: str) -> None:
+    try:
+        set_chat_mode(proxy_url, reason)
+    except RuntimeError as error:
+        log("chat_mode_restore_failed", reason=reason, error=str(error))
 
 
 def start_wave(proxy_url: str, args: argparse.Namespace) -> str:
@@ -220,7 +259,31 @@ def main(argv: list[str] | None = None) -> int:
 
         log("snapshot", pending_files=pending)
         if pending <= 0:
+            restore_chat_mode(proxy_url, "qwen index done")
             log("done")
+            return 0
+
+        try:
+            docs = pending_documents(proxy_url)
+        except RuntimeError as error:
+            log("pending_docs_check_failed", error=str(error))
+            docs = []
+        if docs and not light_pending_documents(docs):
+            restore_chat_mode(proxy_url, "heavy pending requires manual admission")
+            log(
+                "heavy_pending_only",
+                pending_files=pending,
+                documents=[
+                    {
+                        "dataset": doc.get("dataset_name"),
+                        "file": doc.get("file_name"),
+                        "size": doc.get("file_size"),
+                        "complexity": doc.get("complexity"),
+                        "pipeline": doc.get("pipeline"),
+                    }
+                    for doc in docs[:10]
+                ],
+            )
             return 0
 
         try:

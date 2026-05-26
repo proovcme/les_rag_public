@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from proxy.config import META_DB_PATH
+from proxy.config import ADMIN_ROLE, META_DB_PATH, USER_ROLE
 from proxy.security import require_admin
 
 logger = logging.getLogger(__name__)
@@ -133,6 +133,8 @@ async def auth_list_keys(_admin=Depends(require_admin)):
 async def auth_create_key(req: AuthKeyCreate, _admin=Depends(require_admin)):
     if not req.key_value.strip():
         raise HTTPException(400, "key_value не может быть пустым")
+    if req.role not in {USER_ROLE, ADMIN_ROLE}:
+        raise HTTPException(400, "Недопустимая роль ключа")
     expires_at = None
     if req.expires_days > 0:
         expires_at = (datetime.now() + timedelta(days=req.expires_days)).strftime(

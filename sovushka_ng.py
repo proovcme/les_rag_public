@@ -37,6 +37,11 @@ app.add_static_files("/static", "static")
 register_login_page()
 
 
+@app.get("/healthz")
+async def healthz():
+    return {"status": "ok", "service": "sovushka"}
+
+
 def _start_qdrant_visualizer() -> None:
     """Serve the static Qdrant visualizer on its own local port."""
     with contextlib.suppress(OSError):

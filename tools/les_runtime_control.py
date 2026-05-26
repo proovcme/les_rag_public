@@ -13,12 +13,13 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, TextIO
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,6 +62,27 @@ class ActionResult:
     status: ServiceStatus | None = None
     stdout: str = ""
     stderr: str = ""
+
+
+@dataclass(frozen=True)
+class MemoryProcess:
+    pid: int
+    user: str
+    rss_mb: float
+    command: str
+    les_owned: bool
+    protected: bool
+
+
+@dataclass(frozen=True)
+class MemoryPreflight:
+    ram_free_gb: float | None
+    ram_total_gb: float | None
+    swap_pct: float | None
+    top_processes: list[MemoryProcess]
+    kill_candidates: list[MemoryProcess]
+    min_free_gb: float
+    min_rss_mb: float
 
 
 SERVICES: dict[str, ServiceDef] = {
@@ -109,17 +131,211 @@ SERVICES: dict[str, ServiceDef] = {
         repo_plist="sovushka_launchd.plist",
         agent_plist="com.les.sovushka.plist",
         port=8051,
-        health_url="http://127.0.0.1:8051/les",
+        health_url="http://127.0.0.1:8051/healthz",
         process_tokens=("sovushka_ng.py",),
     ),
 }
 
 START_ORDER = ("qdrant", "mlx", "proxy", "indexer")
 STOP_ORDER = ("indexer", "proxy", "mlx", "qdrant")
+PROTECTED_PROCESS_NAMES = {
+    "kernel_task",
+    "launchd",
+    "WindowServer",
+    "loginwindow",
+    "sysmond",
+    "powerd",
+    "mDNSResponder",
+    "securityd",
+    "opendirectoryd",
+    "trustd",
+    "cfprefsd",
+}
 
 
 def _run(args: list[str], timeout: int = 20) -> subprocess.CompletedProcess[str]:
     return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+
+
+def _host_memory() -> tuple[float | None, float | None, float | None]:
+    try:
+        import psutil
+
+        vm = psutil.virtual_memory()
+        sw = psutil.swap_memory()
+        return round(vm.available / 1e9, 1), round(vm.total / 1e9, 1), round(sw.percent, 1)
+    except Exception:
+        return None, None, None
+
+
+def _process_name(command: str) -> str:
+    first = command.strip().split(maxsplit=1)[0] if command.strip() else ""
+    return Path(first).name or first
+
+
+def _is_les_owned_process(command: str) -> bool:
+    tokens = [token for service in SERVICES.values() for token in service.process_tokens]
+    tokens.extend(service.label for service in SERVICES.values())
+    tokens.append(str(ROOT))
+    return any(token and token in command for token in tokens)
+
+
+def _is_protected_process(command: str) -> bool:
+    name = _process_name(command)
+    if name in PROTECTED_PROCESS_NAMES:
+        return True
+    return any(f"/{protected}" in command for protected in PROTECTED_PROCESS_NAMES)
+
+
+def _parse_ps_memory_processes(output: str) -> list[MemoryProcess]:
+    processes: list[MemoryProcess] = []
+    for line in output.splitlines():
+        parts = line.strip().split(None, 3)
+        if len(parts) < 4:
+            continue
+        pid_raw, rss_raw, user, command = parts
+        if not pid_raw.isdigit():
+            continue
+        try:
+            rss_mb = int(rss_raw) / 1024
+        except ValueError:
+            continue
+        pid = int(pid_raw)
+        processes.append(
+            MemoryProcess(
+                pid=pid,
+                user=user,
+                rss_mb=round(rss_mb, 1),
+                command=command,
+                les_owned=_is_les_owned_process(command),
+                protected=_is_protected_process(command) or pid == os.getpid(),
+            )
+        )
+    return sorted(processes, key=lambda item: item.rss_mb, reverse=True)
+
+
+def memory_processes(limit: int = 10) -> list[MemoryProcess]:
+    result = _run(["ps", "-axo", "pid=,rss=,user=,command="], timeout=8)
+    if result.returncode != 0:
+        return []
+    return _parse_ps_memory_processes(result.stdout)[:limit]
+
+
+def build_memory_preflight(
+    *,
+    limit: int = 10,
+    min_rss_mb: float = 700.0,
+    min_free_gb: float = 12.0,
+) -> MemoryPreflight:
+    ram_free_gb, ram_total_gb, swap_pct = _host_memory()
+    top_processes = memory_processes(limit=limit)
+    candidates = [
+        process
+        for process in top_processes
+        if process.rss_mb >= min_rss_mb and not process.les_owned and not process.protected
+    ]
+    return MemoryPreflight(
+        ram_free_gb=ram_free_gb,
+        ram_total_gb=ram_total_gb,
+        swap_pct=swap_pct,
+        top_processes=top_processes,
+        kill_candidates=candidates,
+        min_free_gb=min_free_gb,
+        min_rss_mb=min_rss_mb,
+    )
+
+
+def _short_command(command: str, max_len: int = 90) -> str:
+    command = " ".join(command.split())
+    return command if len(command) <= max_len else command[: max_len - 1] + "…"
+
+
+def print_memory_preflight(preflight: MemoryPreflight, *, stream: TextIO | None = None) -> None:
+    stream = stream or sys.stderr
+    free = "?" if preflight.ram_free_gb is None else f"{preflight.ram_free_gb:.1f} GB"
+    total = "?" if preflight.ram_total_gb is None else f"{preflight.ram_total_gb:.1f} GB"
+    swap = "?" if preflight.swap_pct is None else f"{preflight.swap_pct:.1f}%"
+    print(f"[MEM] RAM free {free} / {total}, swap {swap}", file=stream)
+    if preflight.ram_free_gb is not None and preflight.ram_free_gb >= preflight.min_free_gb:
+        print(f"[MEM] Free memory is OK for startup threshold {preflight.min_free_gb:.1f} GB.", file=stream)
+    elif preflight.ram_free_gb is not None:
+        print(f"[MEM] Free memory is below startup comfort threshold {preflight.min_free_gb:.1f} GB.", file=stream)
+
+    if not preflight.top_processes:
+        print("[MEM] Process list unavailable.", file=stream)
+        return
+
+    print("[MEM] Top resident memory processes:", file=stream)
+    for index, process in enumerate(preflight.top_processes, 1):
+        flags = []
+        if process.les_owned:
+            flags.append("LES")
+        if process.protected:
+            flags.append("protected")
+        suffix = f" [{' '.join(flags)}]" if flags else ""
+        print(
+            f"  {index:>2}. pid={process.pid:<6} rss={process.rss_mb:>7.1f} MB "
+            f"user={process.user:<10} {_short_command(process.command)}{suffix}",
+            file=stream,
+        )
+
+
+def select_memory_processes(answer: str, candidates: list[MemoryProcess]) -> list[MemoryProcess]:
+    selected: list[MemoryProcess] = []
+    by_number = {str(index): process for index, process in enumerate(candidates, 1)}
+    by_pid = {str(process.pid): process for process in candidates}
+    for token in answer.replace(",", " ").split():
+        process = by_number.get(token) or by_pid.get(token)
+        if process and process not in selected:
+            selected.append(process)
+    return selected
+
+
+def terminate_memory_processes(processes: list[MemoryProcess]) -> list[dict[str, str | int | bool]]:
+    results: list[dict[str, str | int | bool]] = []
+    for process in processes:
+        current = _process_command(process.pid)
+        if current != process.command:
+            results.append({"pid": process.pid, "ok": False, "message": "process changed; skipped"})
+            continue
+        try:
+            os.kill(process.pid, signal.SIGTERM)
+            results.append({"pid": process.pid, "ok": True, "message": "SIGTERM sent"})
+        except ProcessLookupError:
+            results.append({"pid": process.pid, "ok": True, "message": "already exited"})
+        except PermissionError:
+            results.append({"pid": process.pid, "ok": False, "message": "permission denied"})
+    return results
+
+
+def offer_memory_kill(preflight: MemoryPreflight, *, stream: TextIO | None = None) -> list[dict[str, str | int | bool]]:
+    stream = stream or sys.stderr
+    candidates = preflight.kill_candidates
+    if not candidates:
+        print("[MEM] No safe kill candidates above threshold.", file=stream)
+        return []
+    if not sys.stdin.isatty():
+        print("[MEM] Non-interactive session: skip kill prompt.", file=stream)
+        return []
+
+    print("[MEM] Kill candidates (SIGTERM only, explicit selection required):", file=stream)
+    for index, process in enumerate(candidates, 1):
+        print(
+            f"  {index:>2}. pid={process.pid:<6} rss={process.rss_mb:>7.1f} MB "
+            f"{_short_command(process.command)}",
+            file=stream,
+        )
+    answer = input("[MEM] Enter numbers or PIDs to terminate, or Enter to skip: ").strip()
+    selected = select_memory_processes(answer, candidates)
+    if not selected:
+        print("[MEM] Nothing selected.", file=stream)
+        return []
+    results = terminate_memory_processes(selected)
+    for result in results:
+        mark = "ok" if result["ok"] else "skip"
+        print(f"[MEM] {mark}: pid={result['pid']} {result['message']}", file=stream)
+    time.sleep(1)
+    return results
 
 
 def _agent_path(service: ServiceDef) -> Path:
@@ -142,6 +358,10 @@ def _install(service: ServiceDef) -> None:
 
 def _launchctl_print(service: ServiceDef) -> subprocess.CompletedProcess[str]:
     return _run(["launchctl", "print", f"{GUI_DOMAIN}/{service.label}"], timeout=8)
+
+
+def _enable(service: ServiceDef) -> subprocess.CompletedProcess[str]:
+    return _run(["launchctl", "enable", f"{GUI_DOMAIN}/{service.label}"], timeout=8)
 
 
 def _loaded(service: ServiceDef) -> bool:
@@ -258,6 +478,11 @@ def start_service(service_key: str, wait: bool = True) -> ActionResult:
     except Exception as error:
         return ActionResult("start", service.key, False, str(error), before)
 
+    enable = _enable(service)
+    if enable.returncode != 0:
+        after_enable = status(service_key)
+        return ActionResult("start", service.key, False, "launchctl enable failed", after_enable, enable.stdout, enable.stderr)
+
     agent = str(_agent_path(service))
     if before.loaded:
         result = _run(["launchctl", "kickstart", f"{GUI_DOMAIN}/{service.label}"], timeout=15)
@@ -364,10 +589,21 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("status")
+    mem = sub.add_parser("memory-preflight")
+    mem.add_argument("--limit", type=int, default=10)
+    mem.add_argument("--min-rss-mb", type=float, default=700.0)
+    mem.add_argument("--min-free-gb", type=float, default=12.0)
+    mem.add_argument("--offer-kill", action="store_true")
+
     start = sub.add_parser("start-core")
     start.add_argument("--include-ui", action="store_true")
     start.add_argument("--no-indexer", action="store_true")
     start.add_argument("--open-ui", action="store_true")
+    start.add_argument("--memory-preflight", action="store_true")
+    start.add_argument("--offer-kill", action="store_true")
+    start.add_argument("--memory-limit", type=int, default=10)
+    start.add_argument("--memory-min-rss-mb", type=float, default=700.0)
+    start.add_argument("--memory-min-free-gb", type=float, default=12.0)
 
     stop = sub.add_parser("stop-core")
     stop.add_argument("--include-ui", action="store_true")
@@ -384,7 +620,27 @@ def main() -> int:
     if args.command == "status":
         _print_json(all_statuses())
         return 0
+    if args.command == "memory-preflight":
+        preflight = build_memory_preflight(
+            limit=args.limit,
+            min_rss_mb=args.min_rss_mb,
+            min_free_gb=args.min_free_gb,
+        )
+        print_memory_preflight(preflight)
+        if args.offer_kill:
+            offer_memory_kill(preflight)
+        _print_json(preflight)
+        return 0
     if args.command == "start-core":
+        if args.memory_preflight:
+            preflight = build_memory_preflight(
+                limit=args.memory_limit,
+                min_rss_mb=args.memory_min_rss_mb,
+                min_free_gb=args.memory_min_free_gb,
+            )
+            print_memory_preflight(preflight)
+            if args.offer_kill:
+                offer_memory_kill(preflight)
         result = start_core(include_ui=args.include_ui, include_indexer=not args.no_indexer)
         _print_json(result)
         if args.open_ui:
