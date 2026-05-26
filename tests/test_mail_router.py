@@ -1,0 +1,126 @@
+import asyncio
+from collections import deque
+from dataclasses import dataclass
+from email.message import EmailMessage
+
+import pytest
+
+from proxy.routers import datasets, mail
+
+
+@dataclass
+class Dataset:
+    id: str
+    name: str
+    status: str = "IDLE"
+    doc_count: int = 0
+    chunk_count: int = 0
+
+
+class FakeBackend:
+    def __init__(self):
+        self.datasets: list[Dataset] = []
+        self.uploads = []
+        self.parses = []
+
+    async def list_datasets(self):
+        return self.datasets
+
+    async def create_dataset(self, name):
+        dataset_id = f"ds-{len(self.datasets) + 1}"
+        self.datasets.append(Dataset(dataset_id, name))
+        return dataset_id
+
+    async def upload_file(self, dataset_id, file_path, relative_path=None):
+        self.uploads.append((dataset_id, file_path.name, relative_path))
+        return f"doc-{len(self.uploads)}"
+
+    async def parse_dataset(self, dataset_id, limit=None):
+        self.parses.append((dataset_id, limit))
+        return {"status": "completed", "chunks": 1, "remaining_pending": 0, "errors": 0}
+
+    async def health(self):
+        return True
+
+
+class FakeJobService:
+    def create(self, *args, **kwargs):
+        return {"id": "job-1", "started_at": "2026-05-26T00:00:00"}
+
+    def update(self, *args, **kwargs):
+        return {}
+
+
+@pytest.fixture()
+def mail_state():
+    previous = datasets._state
+    backend = FakeBackend()
+    datasets.set_dataset_state(
+        datasets.DatasetRouterState(
+            rag_backend=backend,
+            job_service=FakeJobService(),
+            job_tracker={},
+            log_history=deque(maxlen=10),
+            parse_semaphore=asyncio.Semaphore(1),
+            sync_parse_semaphore=asyncio.Semaphore(1),
+        )
+    )
+    yield backend
+    datasets._state = previous
+
+
+def _write_eml(path):
+    msg = EmailMessage()
+    msg["Subject"] = "Письмо по проекту"
+    msg["From"] = "author@example.com"
+    msg["To"] = "les@example.com"
+    msg.set_content("Прошу проверить вложения.")
+    path.write_bytes(msg.as_bytes())
+
+
+@pytest.mark.asyncio
+async def test_mail_status_reports_missing_mail_dataset(mail_state):
+    status = await mail.mail_status(_user=object())
+
+    assert status["component"] == "Е.Ж.И.К."
+    assert status["status"] == "not_created"
+    assert status["dataset_name"] == "MAIL_Index"
+
+
+@pytest.mark.asyncio
+async def test_import_local_mail_creates_mail_dataset_and_registers_files(tmp_path, monkeypatch, mail_state):
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "RAG_Content" / "MAIL" / "ProjectA"
+    source.mkdir(parents=True)
+    _write_eml(source / "letter.eml")
+
+    result = await mail.import_local_mail(
+        mail.MailLocalImportRequest(source_folder="MAIL", parse=False),
+        _admin=object(),
+    )
+
+    assert result["status"] == "registered"
+    assert result["dataset_name"] == "MAIL_Index"
+    assert result["dataset_created"] is True
+    assert result["files"] == 1
+    assert mail_state.uploads == [("ds-1", "letter.eml", "MAIL/ProjectA/letter.eml")]
+    assert result["summaries"][0]["subject"] == "Письмо по проекту"
+    assert result["parse_started"] is False
+
+
+@pytest.mark.asyncio
+async def test_import_local_mail_defers_parse_during_indexing_mode(tmp_path, monkeypatch, mail_state):
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "RAG_Content" / "MAIL"
+    source.mkdir(parents=True)
+    _write_eml(source / "letter.eml")
+    datasets.get_dataset_state().current_mode = {"mode": "indexing"}
+
+    result = await mail.import_local_mail(
+        mail.MailLocalImportRequest(source_folder="MAIL", parse=True),
+        _admin=object(),
+    )
+
+    assert result["parse_started"] is False
+    assert result["parse_blocked"] == "indexing mode active"
+    assert mail_state.parses == []

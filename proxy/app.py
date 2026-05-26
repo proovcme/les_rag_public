@@ -26,6 +26,7 @@ from proxy.routers.datasets import DatasetRouterState, router as datasets_router
 from proxy.routers.diagnostics import DiagnosticsRouterState, router as diagnostics_router, set_diagnostics_state
 from proxy.routers.jobs import JobsRouterState, router as jobs_router, set_jobs_state
 from proxy.routers.logs import LogsRouterState, router as logs_router, set_logs_state
+from proxy.routers.mail import router as mail_router
 from proxy.routers.rerank import (
     RERANKER_AVAILABLE,
     Reranker,
@@ -313,6 +314,7 @@ def create_app():
     fastapi_app.include_router(diagnostics_router)
     fastapi_app.include_router(jobs_router)
     fastapi_app.include_router(logs_router)
+    fastapi_app.include_router(mail_router)
     fastapi_app.include_router(rerank_router)
     fastapi_app.include_router(status_page_router)
     fastapi_app.include_router(chat_router)
