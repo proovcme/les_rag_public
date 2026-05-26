@@ -17,6 +17,9 @@ network.
 
 ## Скриншоты
 
+Актуальные Lite UI скриншоты показывают memory-safe chat shell и отдельный
+почтовый блок Е.Ж.И.К. для цепочек писем.
+
 <p>
   <img src="docs/assets/sovushka-lite-desktop.png" alt="Sovushka Lite desktop chat shell" width="100%">
 </p>
@@ -218,6 +221,12 @@ curl -s 'http://127.0.0.1:8050/api/mail/messages?participant=ivan@example.com' |
 Она показывает `who_to_whom`, тему, snippet, участников и цепочки по
 `Message-ID / In-Reply-To / References`; если технических заголовков нет,
 цепочка группируется по нормализованной теме.
+
+Следующий mail-RAG слой — отдельный mail-vector profile: в embedding должны
+попадать `from/to/cc`, направление "кто кому", thread, дата, тема, признаки
+важности, имена вложений и OCR/VLM-текст картинок. В письмах важное содержание
+часто живёт во вложенном изображении, поэтому attachment OCR/VLM должен быть
+явной политикой ingestion.
 
 API smoke после заполнения `.env`:
 
