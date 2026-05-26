@@ -141,3 +141,46 @@ async def test_chat_generation_paused_under_memory_pressure():
     assert exc.value.status_code == 503
     assert "ram_free_gb=5.0 < 8.0" in exc.value.detail
     assert "swap_pct=86.0 > 60.0" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_chat_generation_paused_during_dispatcher_reindex(monkeypatch):
+    class BackendThatMustNotRun:
+        async def retrieve(self, *args, **kwargs):
+            raise AssertionError("retrieve should not run while guarded reindex is active")
+
+    class FakeDispatcher:
+        def __init__(self, **kwargs):
+            pass
+
+        def reindex_status_payload(self):
+            return {"running": True}
+
+    monkeypatch.setattr(chat_router, "RuntimeDispatcher", FakeDispatcher)
+    chat_router.set_chat_state(
+        chat_router.ChatRouterState(
+            rag_backend=BackendThatMustNotRun(),
+            llm_semaphore=SimpleNamespace(_value=1),
+            crag_stats={"verified": 0, "no_data": 0, "hallucination": 0},
+            chat_metrics={
+                "latency_search": [],
+                "latency_gen": [],
+                "tokens": [],
+                "crag_pass": 0,
+                "crag_fail": 0,
+            },
+            reranker_available=False,
+            reranker_cls=None,
+            current_mode={"mode": "chat"},
+            metrics_cache={"ram_free_gb": 12.0, "swap_pct": 0.0},
+        )
+    )
+
+    with pytest.raises(chat_router.HTTPException) as exc:
+        await chat_router.chat(
+            chat_router.ChatRequest(question="ширина путей эвакуации", dataset_filter="NTD_FIRE"),
+            _user=object(),
+        )
+
+    assert exc.value.status_code == 409
+    assert "active_jobs=1" in exc.value.detail

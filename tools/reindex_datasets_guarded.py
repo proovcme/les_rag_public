@@ -185,6 +185,19 @@ def import_completed_logs_into_state(state: dict[str, Any], resume_logs: list[st
     return len(completed) - before
 
 
+def stop_requested(stop_file: str) -> dict[str, Any] | None:
+    if not stop_file:
+        return None
+    path = Path(stop_file)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as error:
+        return {"reason": "stop_file_present", "error": str(error)}
+    return data if isinstance(data, dict) else {"reason": "stop_file_present"}
+
+
 def record_completed_doc(
     state_path: Path,
     state: dict[str, Any],
@@ -690,6 +703,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--parse-method", choices=["scheduler", "batch"], default="scheduler")
     parser.add_argument("--resume-log", action="append", default=[])
     parser.add_argument("--state-file", default="", help="Persistent campaign state JSON; defaults to artifacts dir")
+    parser.add_argument("--stop-file", default="", help="Safe pause request file checked between documents")
     parser.add_argument("--reset-state", action="store_true", help="Start a fresh campaign state for these datasets")
     parser.add_argument("--no-state", action="store_true", help="Disable persistent campaign resume state")
     parser.add_argument("--memory-wait-sec", type=float, default=60.0)
@@ -729,6 +743,11 @@ def main(argv: list[str] | None = None) -> int:
             )
             save_campaign_state(state_path, state)
         completed_from_state = completed_doc_ids_from_state(state)
+    if args.stop_file and not args.dry_run:
+        try:
+            Path(args.stop_file).unlink(missing_ok=True)
+        except Exception:
+            pass
 
     admin_key = args.api_key
     if not admin_key and Path(args.auth_db_path).exists():
@@ -833,6 +852,17 @@ def main(argv: list[str] | None = None) -> int:
         emit(log_path, "indexing_mode", mode=mode)
 
         for idx, doc in enumerate(targets, 1):
+            stop = stop_requested(args.stop_file)
+            if stop:
+                emit(
+                    log_path,
+                    "paused",
+                    index=idx,
+                    remaining=len(targets) - idx + 1,
+                    stop_file=args.stop_file,
+                    request=stop,
+                )
+                return 0
             emit(log_path, "doc_start", index=idx, total=len(targets), doc=asdict(doc))
             before_doc_memory = wait_for_memory(
                 args.mlx_url,
@@ -902,6 +932,18 @@ def main(argv: list[str] | None = None) -> int:
                 index=idx,
             )
             emit(log_path, "doc_memory_post", index=idx, memory=after_memory)
+
+            stop = stop_requested(args.stop_file)
+            if stop:
+                emit(
+                    log_path,
+                    "paused",
+                    index=idx,
+                    remaining=max(0, len(targets) - idx),
+                    stop_file=args.stop_file,
+                    request=stop,
+                )
+                return 0
 
             if idx < len(targets) and args.cooldown_sec > 0:
                 time.sleep(args.cooldown_sec)

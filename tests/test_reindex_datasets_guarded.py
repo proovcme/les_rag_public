@@ -176,6 +176,15 @@ def test_import_completed_logs_into_state_is_idempotent(tmp_path):
     assert guarded.completed_doc_ids_from_state(state) == {"done-a"}
 
 
+def test_stop_requested_reads_pause_file(tmp_path):
+    stop_file = tmp_path / "stop.json"
+    assert guarded.stop_requested(str(stop_file)) is None
+
+    stop_file.write_text('{"reason":"operator"}', encoding="utf-8")
+
+    assert guarded.stop_requested(str(stop_file)) == {"reason": "operator"}
+
+
 def test_compact_rag_keeps_totals_qdrant_and_problem_datasets():
     compact = guarded.compact_rag(
         {

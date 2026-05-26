@@ -13,7 +13,7 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.metrics_collector import DB_PATH, heartbeats
 from backend.rag_config import rag_meta_db_path, rag_runtime_config
@@ -28,6 +28,7 @@ from proxy.services.resource_governor import (
     normalize_runtime_profile,
 )
 from proxy.services.runtime_admission import count_active_jobs, evaluate_chat_admission, evaluate_memory_pressure
+from proxy.services.runtime_dispatcher import DEFAULT_DATASETS, DispatcherError, RuntimeDispatcher
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,24 @@ class IndexingModeRequest(BaseModel):
     reason: str = "manual"
     unload_models: bool = True
     dataset_priority_order: list[str] | None = None
+
+
+class DispatcherReindexRequest(BaseModel):
+    datasets: list[str] = Field(default_factory=lambda: list(DEFAULT_DATASETS), min_length=1, max_length=20)
+    parse_method: str = Field(default="scheduler", pattern="^(scheduler|batch)$")
+    min_free_gb: float = Field(default=4.0, ge=0.5, le=64.0)
+    max_swap_pct: float = Field(default=85.0, ge=0.0, le=100.0)
+    post_min_free_gb: float = Field(default=3.0, ge=0.5, le=64.0)
+    post_max_swap_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    memory_wait_sec: float = Field(default=86400.0, ge=0.0, le=604800.0)
+    memory_poll_sec: float = Field(default=30.0, ge=1.0, le=3600.0)
+    cooldown_sec: float = Field(default=90.0, ge=0.0, le=3600.0)
+    parse_timeout: float = Field(default=3600.0, ge=60.0, le=86400.0)
+    auth_smoke_after: bool = True
+
+
+class DispatcherPauseRequest(BaseModel):
+    reason: str = Field(default="operator", max_length=200)
 
 
 @dataclass
@@ -81,12 +100,28 @@ def get_runtime_state() -> RuntimeRouterState:
 
 
 def chat_admission_for_state(state: RuntimeRouterState):
+    active_reindex_jobs = 0
+    try:
+        active_reindex_jobs = 1 if dispatcher_for_state(state).reindex_status_payload().get("running") else 0
+    except Exception:
+        active_reindex_jobs = 0
     return evaluate_chat_admission(
         current_mode=state.current_mode,
         metrics_cache=state.metrics_cache,
-        active_jobs=count_active_jobs(state.job_service, state.job_tracker),
+        active_jobs=count_active_jobs(state.job_service, state.job_tracker) + active_reindex_jobs,
         llm_available=getattr(state.llm_semaphore, "_value", 1) > 0,
     )
+
+
+def dispatcher_for_state(state: RuntimeRouterState) -> RuntimeDispatcher:
+    return RuntimeDispatcher(current_mode=state.current_mode, metrics_cache=state.metrics_cache)
+
+
+def _dispatcher_error(error: DispatcherError) -> HTTPException:
+    detail: Any = {"message": error.detail}
+    if error.payload:
+        detail["dispatcher"] = error.payload
+    return HTTPException(status_code=error.status_code, detail=detail)
 
 
 @router.get("/health")
@@ -226,6 +261,78 @@ async def set_indexing_mode(req: IndexingModeRequest, _admin=Depends(require_adm
         "memory": memory,
         "dataset_priority_order": active_parse_priority_order(state.current_mode),
     }
+
+
+@router.get("/runtime/dispatcher/status")
+async def runtime_dispatcher_status(_admin=Depends(require_admin)):
+    state = get_runtime_state()
+    dispatcher = dispatcher_for_state(state)
+    return await asyncio.to_thread(dispatcher.status_payload)
+
+
+@router.post("/runtime/dispatcher/reindex/start")
+async def runtime_dispatcher_reindex_start(req: DispatcherReindexRequest, _admin=Depends(require_admin)):
+    state = get_runtime_state()
+    dispatcher = dispatcher_for_state(state)
+    try:
+        return await asyncio.to_thread(
+            dispatcher.start_reindex,
+            datasets=req.datasets,
+            parse_method=req.parse_method,
+            min_free_gb=req.min_free_gb,
+            max_swap_pct=req.max_swap_pct,
+            post_min_free_gb=req.post_min_free_gb,
+            post_max_swap_pct=req.post_max_swap_pct,
+            memory_wait_sec=req.memory_wait_sec,
+            memory_poll_sec=req.memory_poll_sec,
+            cooldown_sec=req.cooldown_sec,
+            parse_timeout=req.parse_timeout,
+            auth_smoke_after=req.auth_smoke_after,
+        )
+    except DispatcherError as error:
+        raise _dispatcher_error(error) from error
+
+
+@router.post("/runtime/dispatcher/reindex/pause")
+async def runtime_dispatcher_reindex_pause(req: DispatcherPauseRequest, _admin=Depends(require_admin)):
+    state = get_runtime_state()
+    dispatcher = dispatcher_for_state(state)
+    try:
+        return await asyncio.to_thread(dispatcher.pause_reindex, reason=req.reason)
+    except DispatcherError as error:
+        raise _dispatcher_error(error) from error
+
+
+@router.post("/runtime/dispatcher/reindex/resume")
+async def runtime_dispatcher_reindex_resume(req: DispatcherReindexRequest, _admin=Depends(require_admin)):
+    state = get_runtime_state()
+    dispatcher = dispatcher_for_state(state)
+    try:
+        return await asyncio.to_thread(
+            dispatcher.resume_reindex,
+            datasets=req.datasets,
+            parse_method=req.parse_method,
+            min_free_gb=req.min_free_gb,
+            max_swap_pct=req.max_swap_pct,
+            post_min_free_gb=req.post_min_free_gb,
+            post_max_swap_pct=req.post_max_swap_pct,
+            memory_wait_sec=req.memory_wait_sec,
+            memory_poll_sec=req.memory_poll_sec,
+            cooldown_sec=req.cooldown_sec,
+            parse_timeout=req.parse_timeout,
+            auth_smoke_after=req.auth_smoke_after,
+        )
+    except DispatcherError as error:
+        raise _dispatcher_error(error) from error
+
+
+@router.post("/runtime/dispatcher/mlx/unload")
+async def runtime_dispatcher_mlx_unload(_admin=Depends(require_admin)):
+    unload = await _unload_mlx_models()
+    state = get_runtime_state()
+    dispatcher = dispatcher_for_state(state)
+    status = await asyncio.to_thread(dispatcher.status_payload)
+    return {"status": "ok" if unload.get("ok") else "error", "unload": unload, "dispatcher": status}
 
 
 @router.get("/status")

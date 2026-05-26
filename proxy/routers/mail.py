@@ -21,6 +21,7 @@ from proxy.routers.datasets import (
     get_dataset_state,
 )
 from proxy.security import require_admin, require_user
+from proxy.services.runtime_dispatcher import RuntimeDispatcher
 
 
 router = APIRouter(prefix="/api/mail", tags=["mail"])
@@ -90,6 +91,8 @@ async def import_local_mail(req: MailLocalImportRequest, _admin=Depends(require_
         current_mode = state.current_mode or {}
         if current_mode.get("mode") == "indexing":
             parse_blocked = "indexing mode active"
+        elif RuntimeDispatcher(current_mode=current_mode).reindex_status_payload().get("running"):
+            parse_blocked = "guarded reindex active"
         elif active:
             job_id, job = active
             parse_blocked = f"parse scheduler active: {job_id} {job.get('status', '')}"

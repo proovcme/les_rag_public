@@ -23,6 +23,7 @@ from proxy.services.lexical_index_service import retrieval_fingerprint
 from proxy.services.query_router import route_query
 from proxy.services.retrieval_service import resolve_dataset_ids, retrieve_chat_chunks
 from proxy.services.runtime_admission import count_active_jobs, evaluate_chat_admission
+from proxy.services.runtime_dispatcher import RuntimeDispatcher
 from proxy.services.saferag_service import (
     SAFE_FALLBACK,
     build_context,
@@ -96,6 +97,17 @@ def get_chat_state() -> ChatRouterState:
     if _state is None:
         raise RuntimeError("chat router state is not configured")
     return _state
+
+
+def _active_dispatcher_reindex_jobs(state: ChatRouterState) -> int:
+    try:
+        status = RuntimeDispatcher(
+            current_mode=state.current_mode or {},
+            metrics_cache=state.metrics_cache or {},
+        ).reindex_status_payload()
+    except Exception:
+        return 0
+    return 1 if status.get("running") else 0
 
 
 def chat_validation_enabled() -> bool:
@@ -174,7 +186,7 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
     admission = evaluate_chat_admission(
         current_mode=state.current_mode,
         metrics_cache=state.metrics_cache,
-        active_jobs=count_active_jobs(state.job_service, state.job_tracker),
+        active_jobs=count_active_jobs(state.job_service, state.job_tracker) + _active_dispatcher_reindex_jobs(state),
         llm_available=getattr(state.llm_semaphore, "_value", 1) > 0,
     )
     if not admission.allowed:

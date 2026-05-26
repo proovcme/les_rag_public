@@ -29,7 +29,6 @@ LOCAL_RUNTIME_ACTIONS = {
     "restart_mlx",
     "restart_qdrant",
     "restart_ui",
-    "start_guarded_reindex",
 }
 
 
@@ -56,7 +55,6 @@ def _runtime_action(name: str) -> Callable[[], Any]:
         "restart_mlx": lambda: les_runtime_control.restart_service("mlx"),
         "restart_qdrant": lambda: les_runtime_control.restart_service("qdrant"),
         "restart_ui": lambda: les_runtime_control.restart_service("ui", False),
-        "start_guarded_reindex": start_guarded_reindex,
     }
     return actions[name]
 
@@ -520,10 +518,17 @@ def lite_admin_html() -> str:
       </div>
 
       <div class="panel">
+        <div class="title">Memory Consumers</div>
+        <div id="memoryConsumers" class="hint">Загрузка...</div>
+      </div>
+
+      <div class="panel">
         <div class="title">Guarded Reindex</div>
         <div id="reindexStatus" class="hint">Загрузка...</div>
         <div class="actions">
-          <button data-runtime="start_guarded_reindex" type="button" class="safe">HVAC/FIRE AUTO</button>
+          <button id="startReindexBtn" type="button" class="safe">HVAC/FIRE AUTO</button>
+          <button id="pauseReindexBtn" type="button">PAUSE</button>
+          <button id="resumeReindexBtn" type="button">RESUME</button>
         </div>
       </div>
 
@@ -673,20 +678,20 @@ def lite_admin_html() -> str:
 
     async function refreshAll() {
       try {
-        const [status, mode, jobs, pending, datasets] = await Promise.all([
+        const [status, mode, jobs, pending, datasets, dispatcher] = await Promise.all([
           request("/api/health"),
           request("/api/indexing-mode"),
           request("/api/jobs/summary"),
           request("/api/rag/documents?status=PENDING&limit=10"),
           request("/api/rag/datasets"),
+          request("/api/runtime/dispatcher/status"),
         ]);
         showAuth(false);
-        renderStatus(status, mode);
+        renderStatus(status, mode, dispatcher);
         renderJobs(jobs);
         renderPending(pending);
         renderDatasets(datasets);
-        await refreshLocalRuntime();
-        await refreshReindexStatus();
+        renderDispatcher(dispatcher);
         log("refresh ok");
       } catch (error) {
         if (error.status === 401 && !state.key) {
@@ -706,14 +711,15 @@ def lite_admin_html() -> str:
       }
     }
 
-    function renderStatus(status, mode) {
+    function renderStatus(status, mode, dispatcher) {
       const rag = status.rag || {};
       const totals = rag.totals || {};
       const qdrant = rag.qdrant || {};
-      const memory = mode.memory_state || {};
+      const dispatcherMemory = dispatcher?.memory?.pressure || {};
+      const memory = dispatcherMemory.state ? dispatcherMemory : (mode.memory_state || {});
       const mem = memory.memory || {};
       const admission = mode.chat_admission || {};
-      const profile = mode.runtime_profile || "?";
+      const profile = dispatcher?.runtime_profile || mode.runtime_profile || "?";
       const memState = memory.state || "?";
       chip("authChip", state.key ? (state.role || "KEY") : "TRUSTED", "ok");
       chip("profileChip", profile, admission.allowed === false ? "err" : "ok");
@@ -765,37 +771,39 @@ def lite_admin_html() -> str:
       )).join("");
     }
 
-    async function refreshLocalRuntime() {
-      try {
-        const response = await fetch("/lite-runtime/status");
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || "runtime unavailable");
-        el("runtimeList").innerHTML = (data.services || []).map((svc) => row(
-          svc.title || svc.key,
-          `${svc.label || ""} | pid ${svc.pid || svc.port_pid || "-"} | :${svc.port || "-"}`,
-          svc.health || (svc.running ? "UP" : "DOWN"),
-          svc.running && svc.health === "ok" ? "ok" : svc.running ? "warn" : "err"
-        )).join("");
-      } catch (error) {
-        el("runtimeList").textContent = error.message;
-      }
-    }
+    function renderDispatcher(data) {
+      const services = data.services || [];
+      el("runtimeList").innerHTML = services.length ? services.map((svc) => row(
+        svc.title || svc.key || "service",
+        `${svc.label || ""} | pid ${svc.pid || svc.port_pid || "-"} | :${svc.port || "-"}`,
+        svc.health || (svc.running ? "UP" : "DOWN"),
+        svc.running && svc.health === "ok" ? "ok" : svc.running ? "warn" : "err"
+      )).join("") : "Нет данных о launchd.";
 
-    async function refreshReindexStatus() {
-      try {
-        const response = await fetch("/lite-runtime/reindex-status");
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || "reindex unavailable");
-        const cls = data.running ? "warn" : data.remaining === 0 ? "ok" : "";
-        el("reindexStatus").innerHTML = row(
-          data.running ? "RUNNING" : "IDLE",
-          `completed=${fmt(data.completed)} remaining=${fmt(data.remaining)} updated=${data.updated_at || "-"} log=${data.last_log || "-"}`,
-          data.running ? "ACTIVE" : `${fmt(data.completed)}/${fmt(data.total)}`,
-          cls
-        );
-      } catch (error) {
-        el("reindexStatus").textContent = error.message;
-      }
+      const preflight = data.memory?.preflight || {};
+      const top = (preflight.top_processes || []).slice(0, 6);
+      el("memoryConsumers").innerHTML = top.length ? top.map((proc) => row(
+        `pid ${proc.pid} · ${Number(proc.rss_mb || 0).toFixed(0)} MB`,
+        `${proc.les_owned ? "LES | " : ""}${proc.protected ? "protected | " : ""}${proc.command || ""}`,
+        proc.les_owned ? "LES" : proc.protected ? "SYS" : "APP",
+        proc.les_owned ? "ok" : proc.protected ? "warn" : ""
+      )).join("") : "Нет списка процессов.";
+
+      const reindex = data.reindex || {};
+      const cls = reindex.running ? "warn" : reindex.remaining === 0 && reindex.total ? "ok" : "";
+      const label = reindex.running ? "RUNNING" : reindex.paused ? "PAUSED" : reindex.complete ? "DONE" : "IDLE";
+      el("reindexStatus").innerHTML = row(
+        label,
+        `completed=${fmt(reindex.completed)} remaining=${fmt(reindex.remaining)} updated=${reindex.updated_at || "-"} log=${reindex.last_log || "-"}`,
+        reindex.running ? "ACTIVE" : `${fmt(reindex.completed)}/${fmt(reindex.total)}`,
+        cls
+      );
+
+      const actions = data.actions || {};
+      el("startReindexBtn").disabled = !actions.can_start;
+      el("pauseReindexBtn").disabled = !actions.can_pause;
+      el("resumeReindexBtn").disabled = !actions.can_resume;
+      if (actions.blocked_reason) log("dispatcher block: " + actions.blocked_reason);
     }
 
     async function post(path, body) {
@@ -809,7 +817,25 @@ def lite_admin_html() -> str:
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "runtime action failed");
       log(action + " -> " + JSON.stringify(data.result?.message || data.result?.ok || data.result).slice(0, 180));
-      await refreshLocalRuntime();
+      await refreshAll();
+    }
+
+    async function startReindex() {
+      const data = await post("/api/runtime/dispatcher/reindex/start", {});
+      log("dispatcher reindex -> " + (data.status || data.reindex?.running || "ok"));
+      await refreshAll();
+    }
+
+    async function pauseReindex() {
+      const data = await post("/api/runtime/dispatcher/reindex/pause", { reason: "lite admin" });
+      log("dispatcher pause -> " + (data.status || "requested"));
+      await refreshAll();
+    }
+
+    async function resumeReindex() {
+      const data = await post("/api/runtime/dispatcher/reindex/resume", {});
+      log("dispatcher resume -> " + (data.status || "ok"));
+      await refreshAll();
     }
 
     el("refreshBtn").addEventListener("click", refreshAll);
@@ -836,6 +862,18 @@ def lite_admin_html() -> str:
         background: true
       });
       await refreshAll();
+    });
+    el("startReindexBtn").addEventListener("click", async () => {
+      try { await startReindex(); }
+      catch (error) { log("dispatcher start error: " + error.message); }
+    });
+    el("pauseReindexBtn").addEventListener("click", async () => {
+      try { await pauseReindex(); }
+      catch (error) { log("dispatcher pause error: " + error.message); }
+    });
+    el("resumeReindexBtn").addEventListener("click", async () => {
+      try { await resumeReindex(); }
+      catch (error) { log("dispatcher resume error: " + error.message); }
     });
     for (const button of document.querySelectorAll("[data-runtime]")) {
       button.addEventListener("click", async () => {

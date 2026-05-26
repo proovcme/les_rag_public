@@ -124,3 +124,29 @@ async def test_import_local_mail_defers_parse_during_indexing_mode(tmp_path, mon
     assert result["parse_started"] is False
     assert result["parse_blocked"] == "indexing mode active"
     assert mail_state.parses == []
+
+
+@pytest.mark.asyncio
+async def test_import_local_mail_defers_parse_during_guarded_reindex(tmp_path, monkeypatch, mail_state):
+    class FakeDispatcher:
+        def __init__(self, **kwargs):
+            pass
+
+        def reindex_status_payload(self):
+            return {"running": True}
+
+    monkeypatch.setattr(mail, "RuntimeDispatcher", FakeDispatcher)
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "RAG_Content" / "MAIL"
+    source.mkdir(parents=True)
+    _write_eml(source / "letter.eml")
+    datasets.get_dataset_state().current_mode = {"mode": "chat"}
+
+    result = await mail.import_local_mail(
+        mail.MailLocalImportRequest(source_folder="MAIL", parse=True),
+        _admin=object(),
+    )
+
+    assert result["parse_started"] is False
+    assert result["parse_blocked"] == "guarded reindex active"
+    assert mail_state.parses == []

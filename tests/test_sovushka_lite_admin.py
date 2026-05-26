@@ -12,10 +12,12 @@ def test_lite_admin_html_uses_static_admin_shell():
     assert "/les/classic" in html
     assert "/api/indexing-mode" in html
     assert "/api/rag/parse-scheduler" in html
-    assert "/lite-runtime/status" in html
-    assert "/lite-runtime/reindex-status" in html
+    assert "/api/runtime/dispatcher/status" in html
+    assert "/api/runtime/dispatcher/reindex/start" in html
+    assert "/api/runtime/dispatcher/reindex/pause" in html
+    assert "/api/runtime/dispatcher/reindex/resume" in html
     assert "HVAC/FIRE AUTO" in html
-    assert "start_guarded_reindex" in html
+    assert "start_guarded_reindex" not in html
 
 
 def test_lite_admin_runtime_actions_are_loopback_only():
@@ -50,17 +52,5 @@ def test_guarded_reindex_status_reads_state(tmp_path, monkeypatch):
     assert status["running"] is False
 
 
-def test_start_guarded_reindex_returns_existing_process(tmp_path, monkeypatch):
-    monkeypatch.setattr(lite_admin, "_repo_root", lambda: tmp_path)
-    state_dir = tmp_path / "artifacts" / "reindex_runs"
-    state_dir.mkdir(parents=True)
-    (state_dir / "guarded_reindex_hvac_fire.pid.json").write_text(
-        '{"pid":123,"log_path":"run.out","started_at":"now"}',
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(lite_admin, "_pid_running", lambda pid: pid == 123)
-
-    result = lite_admin.start_guarded_reindex()
-
-    assert result["status"] == "already_running"
-    assert result["pid"] == 123
+def test_guarded_reindex_is_not_a_local_runtime_action():
+    assert "start_guarded_reindex" not in lite_admin.LOCAL_RUNTIME_ACTIONS

@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+from fastapi import HTTPException
 
 from proxy.routers import runtime
 
@@ -129,9 +130,78 @@ async def test_status_includes_embedding_trace(runtime_state):
 
 
 @pytest.mark.asyncio
-async def test_status_includes_chat_admission(runtime_state):
+async def test_status_includes_chat_admission(runtime_state, monkeypatch):
+    class FakeDispatcher:
+        def reindex_status_payload(self):
+            return {"running": False}
+
+    monkeypatch.setattr(runtime, "dispatcher_for_state", lambda state: FakeDispatcher())
+
     response = await runtime.get_status()
 
     assert response["chat_admission"]["allowed"] is True
     assert response["runtime_profile"] == "CHAT"
     assert response["memory_state"]["state"] in {"UNKNOWN", "GREEN"}
+
+
+@pytest.mark.asyncio
+async def test_chat_admission_counts_active_dispatcher_reindex(runtime_state, monkeypatch):
+    class FakeDispatcher:
+        def reindex_status_payload(self):
+            return {"running": True}
+
+    monkeypatch.setattr(runtime, "dispatcher_for_state", lambda state: FakeDispatcher())
+
+    admission = runtime.chat_admission_for_state(runtime.get_runtime_state())
+
+    assert admission.allowed is False
+    assert admission.active_jobs == 1
+    assert admission.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_status_endpoint_uses_dispatcher(runtime_state, monkeypatch):
+    class FakeDispatcher:
+        def status_payload(self):
+            return {"component": "runtime_dispatcher", "actions": {"can_start": True}}
+
+    monkeypatch.setattr(runtime, "dispatcher_for_state", lambda state: FakeDispatcher())
+
+    response = await runtime.runtime_dispatcher_status(_admin=object())
+
+    assert response["component"] == "runtime_dispatcher"
+    assert response["actions"]["can_start"] is True
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_start_endpoint_returns_payload(runtime_state, monkeypatch):
+    class FakeDispatcher:
+        def start_reindex(self, **kwargs):
+            return {"status": "started", "datasets": kwargs["datasets"]}
+
+    monkeypatch.setattr(runtime, "dispatcher_for_state", lambda state: FakeDispatcher())
+
+    response = await runtime.runtime_dispatcher_reindex_start(
+        runtime.DispatcherReindexRequest(datasets=["NTD_FIRE_Index"]),
+        _admin=object(),
+    )
+
+    assert response == {"status": "started", "datasets": ["NTD_FIRE_Index"]}
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_pause_endpoint_maps_dispatcher_error(runtime_state, monkeypatch):
+    class FakeDispatcher:
+        def pause_reindex(self, **kwargs):
+            raise runtime.DispatcherError(409, "not running")
+
+    monkeypatch.setattr(runtime, "dispatcher_for_state", lambda state: FakeDispatcher())
+
+    with pytest.raises(HTTPException) as exc:
+        await runtime.runtime_dispatcher_reindex_pause(
+            runtime.DispatcherPauseRequest(),
+            _admin=object(),
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["message"] == "not running"

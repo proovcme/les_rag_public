@@ -1,0 +1,447 @@
+"""Runtime dispatcher for memory-aware guarded reindex control."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import time
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any, Callable
+
+from backend.rag_config import rag_collection_name, rag_meta_db_path
+from proxy.services.resource_governor import current_runtime_profile, is_indexing_mode
+from proxy.services.runtime_admission import evaluate_memory_pressure
+from tools import les_runtime_control
+from tools import reindex_datasets_guarded as guarded
+
+
+ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_DATASETS = ["NTD_HVAC_Index", "NTD_FIRE_Index"]
+DEFAULT_PID_FILE = "guarded_reindex_hvac_fire.pid.json"
+DEFAULT_STOP_FILE = "guarded_reindex_hvac_fire.stop.json"
+
+
+class DispatcherError(RuntimeError):
+    def __init__(self, status_code: int, detail: str, payload: dict[str, Any] | None = None):
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+        self.payload = payload or {}
+
+
+def _json_default(value: Any) -> Any:
+    try:
+        return asdict(value)
+    except TypeError:
+        return str(value)
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as error:
+        return {"error": str(error)}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _pid_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    try:
+        status = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "stat="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        ).stdout.strip()
+        if status.startswith("Z"):
+            return False
+    except Exception:
+        pass
+    return True
+
+
+def _tail_json_events(path: Path, *, max_bytes: int = 256_000) -> list[dict[str, Any]]:
+    if not path.exists() or not path.is_file():
+        return []
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - max_bytes))
+            raw = handle.read().decode("utf-8", errors="replace")
+    except Exception:
+        return []
+    events: list[dict[str, Any]] = []
+    for line in raw.splitlines():
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            events.append(item)
+    return events
+
+
+class RuntimeDispatcher:
+    """Small source of truth for runtime memory and guarded reindex state."""
+
+    def __init__(
+        self,
+        *,
+        root: Path | None = None,
+        current_mode: dict[str, Any] | None = None,
+        metrics_cache: dict[str, Any] | None = None,
+        memory_preflight_fn: Callable[..., Any] = les_runtime_control.build_memory_preflight,
+        service_status_fn: Callable[..., Any] = les_runtime_control.all_statuses,
+        popen_factory: Callable[..., Any] = subprocess.Popen,
+        pid_running_fn: Callable[[int], bool] = _pid_running,
+    ):
+        self.root = root or ROOT
+        self.current_mode = current_mode or {}
+        self.metrics_cache = metrics_cache or {}
+        self.memory_preflight_fn = memory_preflight_fn
+        self.service_status_fn = service_status_fn
+        self.popen_factory = popen_factory
+        self.pid_running_fn = pid_running_fn
+
+    @property
+    def artifacts_dir(self) -> Path:
+        return self.root / "artifacts" / "reindex_runs"
+
+    @property
+    def pid_file(self) -> Path:
+        return self.artifacts_dir / DEFAULT_PID_FILE
+
+    @property
+    def stop_file(self) -> Path:
+        return self.artifacts_dir / DEFAULT_STOP_FILE
+
+    def state_file(self, datasets: list[str] | None = None) -> Path:
+        return guarded.default_state_file(str(self.artifacts_dir), datasets or DEFAULT_DATASETS)
+
+    def status_payload(
+        self,
+        *,
+        datasets: list[str] | None = None,
+        min_free_gb: float = 4.0,
+        max_swap_pct: float = 85.0,
+        include_services: bool = True,
+    ) -> dict[str, Any]:
+        datasets = datasets or DEFAULT_DATASETS
+        preflight = self._memory_preflight(min_free_gb=min_free_gb)
+        memory_decision = self._memory_decision(preflight, min_free_gb=min_free_gb, max_swap_pct=max_swap_pct)
+        pressure = evaluate_memory_pressure(self._metrics_for_pressure(preflight))
+        reindex = self._reindex_status(datasets=datasets, min_free_gb=min_free_gb, max_swap_pct=max_swap_pct)
+        services = self._services_status() if include_services else []
+        actions = {
+            "can_start": (not reindex["running"]) and memory_decision["allowed"],
+            "can_pause": bool(reindex["running"] and reindex.get("supports_pause")),
+            "can_resume": bool((not reindex["running"]) and reindex["state_exists"] and reindex["remaining"] > 0),
+            "can_unload_mlx": True,
+            "blocked_reason": "" if memory_decision["allowed"] else memory_decision["reason"],
+        }
+        return {
+            "component": "runtime_dispatcher",
+            "policy": "wait_only",
+            "mode": self.current_mode,
+            "runtime_profile": current_runtime_profile(self.current_mode),
+            "indexing_mode": is_indexing_mode(self.current_mode),
+            "memory": {
+                "pressure": pressure.payload(),
+                "preflight": asdict(preflight),
+                "decision": memory_decision,
+            },
+            "services": services,
+            "reindex": reindex,
+            "actions": actions,
+        }
+
+    def reindex_status_payload(
+        self,
+        *,
+        datasets: list[str] | None = None,
+        min_free_gb: float = 4.0,
+        max_swap_pct: float = 85.0,
+    ) -> dict[str, Any]:
+        return self._reindex_status(
+            datasets=datasets or DEFAULT_DATASETS,
+            min_free_gb=min_free_gb,
+            max_swap_pct=max_swap_pct,
+        )
+
+    def start_reindex(
+        self,
+        *,
+        datasets: list[str] | None = None,
+        min_free_gb: float = 4.0,
+        max_swap_pct: float = 85.0,
+        post_min_free_gb: float = 3.0,
+        post_max_swap_pct: float | None = None,
+        memory_wait_sec: float = 86400.0,
+        memory_poll_sec: float = 30.0,
+        cooldown_sec: float = 90.0,
+        parse_timeout: float = 3600.0,
+        parse_method: str = "scheduler",
+        auth_smoke_after: bool = True,
+        resume: bool = False,
+    ) -> dict[str, Any]:
+        datasets = datasets or DEFAULT_DATASETS
+        post_max_swap_pct = max_swap_pct if post_max_swap_pct is None else post_max_swap_pct
+        status = self.status_payload(
+            datasets=datasets,
+            min_free_gb=min_free_gb,
+            max_swap_pct=max_swap_pct,
+            include_services=False,
+        )
+        if status["reindex"]["running"]:
+            status["status"] = "already_running"
+            return status
+        if resume and not status["reindex"]["state_exists"]:
+            raise DispatcherError(409, "no guarded reindex state exists to resume", status)
+        if not status["memory"]["decision"]["allowed"]:
+            raise DispatcherError(503, status["memory"]["decision"]["reason"], status)
+
+        self.artifacts_dir.mkdir(parents=True, exist_ok=True)
+        if self.stop_file.exists():
+            self.stop_file.unlink()
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        log_path = self.artifacts_dir / f"one_click_hvac_fire_{stamp}.out"
+        state_path = self.state_file(datasets)
+        cmd = [
+            sys.executable,
+            "tools/reindex_datasets_guarded.py",
+            "--datasets",
+            *datasets,
+            "--parse-method",
+            parse_method,
+            "--state-file",
+            str(state_path),
+            "--stop-file",
+            str(self.stop_file),
+            "--min-free-gb",
+            str(min_free_gb),
+            "--max-swap-pct",
+            str(max_swap_pct),
+            "--post-min-free-gb",
+            str(post_min_free_gb),
+            "--post-max-swap-pct",
+            str(post_max_swap_pct),
+            "--memory-wait-sec",
+            str(memory_wait_sec),
+            "--memory-poll-sec",
+            str(memory_poll_sec),
+            "--cooldown-sec",
+            str(cooldown_sec),
+            "--parse-timeout",
+            str(parse_timeout),
+        ]
+        cmd.append("--auth-smoke-after" if auth_smoke_after else "--no-auth-smoke-after")
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        with log_path.open("ab") as output:
+            process = self.popen_factory(
+                cmd,
+                cwd=self.root,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+                close_fds=True,
+                env=env,
+            )
+        _write_json(
+            self.pid_file,
+            {
+                "pid": int(process.pid),
+                "cmd": cmd,
+                "log_path": str(log_path),
+                "state_file": str(state_path),
+                "stop_file": str(self.stop_file),
+                "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "datasets": datasets,
+                "dispatcher": "v0",
+            },
+        )
+        result = self.status_payload(
+            datasets=datasets,
+            min_free_gb=min_free_gb,
+            max_swap_pct=max_swap_pct,
+            include_services=False,
+        )
+        result["status"] = "resumed" if resume else "started"
+        return result
+
+    def pause_reindex(self, *, reason: str = "operator") -> dict[str, Any]:
+        status = self.status_payload(include_services=False)
+        reindex = status["reindex"]
+        if not reindex["running"]:
+            raise DispatcherError(409, "guarded reindex is not running", status)
+        if not reindex.get("supports_pause"):
+            raise DispatcherError(
+                409,
+                "active guarded reindex was started before dispatcher pause support",
+                status,
+            )
+        _write_json(
+            self.stop_file,
+            {
+                "requested_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "reason": reason,
+                "policy": "safe_boundary",
+            },
+        )
+        result = self.status_payload(include_services=False)
+        result["status"] = "pause_requested"
+        return result
+
+    def resume_reindex(self, **kwargs: Any) -> dict[str, Any]:
+        return self.start_reindex(resume=True, **kwargs)
+
+    def _memory_preflight(self, *, min_free_gb: float) -> Any:
+        return self.memory_preflight_fn(limit=10, min_rss_mb=700.0, min_free_gb=min_free_gb)
+
+    def _metrics_for_pressure(self, preflight: Any) -> dict[str, Any]:
+        metrics = dict(self.metrics_cache or {})
+        if metrics.get("ram_free_gb") in (None, 0, 0.0):
+            metrics["ram_free_gb"] = getattr(preflight, "ram_free_gb", None)
+        metrics.setdefault("ram_total_gb", getattr(preflight, "ram_total_gb", None))
+        metrics.setdefault("swap_pct", getattr(preflight, "swap_pct", None))
+        return metrics
+
+    def _memory_decision(self, preflight: Any, *, min_free_gb: float, max_swap_pct: float) -> dict[str, Any]:
+        reasons: list[str] = []
+        ram_free = getattr(preflight, "ram_free_gb", None)
+        swap_pct = getattr(preflight, "swap_pct", None)
+        if ram_free is not None and ram_free < min_free_gb:
+            reasons.append(f"ram_free_gb={ram_free:.1f} < {min_free_gb:.1f}")
+        if swap_pct is not None and swap_pct > max_swap_pct:
+            reasons.append(f"swap_pct={swap_pct:.1f} > {max_swap_pct:.1f}")
+        return {
+            "allowed": not reasons,
+            "reason": "; ".join(reasons),
+            "min_free_gb": min_free_gb,
+            "max_swap_pct": max_swap_pct,
+        }
+
+    def _services_status(self) -> list[dict[str, Any]]:
+        try:
+            statuses = self.service_status_fn(["qdrant", "mlx", "proxy", "indexer", "ui"])
+        except Exception as error:
+            return [{"error": str(error)}]
+        return [json.loads(json.dumps(item, default=_json_default)) for item in statuses]
+
+    def _reindex_status(
+        self,
+        *,
+        datasets: list[str],
+        min_free_gb: float,
+        max_swap_pct: float,
+    ) -> dict[str, Any]:
+        pid_info = _read_json(self.pid_file)
+        pid = int(pid_info.get("pid") or 0)
+        running = self.pid_running_fn(pid)
+        state_path = Path(pid_info.get("state_file") or self.state_file(datasets))
+        if not state_path.is_absolute():
+            state_path = self.root / state_path
+        state = _read_json(state_path)
+        state_exists = state_path.exists() and "error" not in state
+        state_datasets = [str(item) for item in (state.get("datasets") or datasets)]
+        completed = state.get("completed") if isinstance(state.get("completed"), dict) else {}
+        completed_count = len(completed or {})
+        total = self._total_docs(state_datasets, state, completed_count) if state_exists else 0
+        remaining = max(0, total - completed_count) if total else 0
+        raw_log_path = str(pid_info.get("log_path") or "")
+        log_path = Path(raw_log_path) if raw_log_path else None
+        if log_path is not None and not log_path.is_absolute():
+            log_path = self.root / log_path
+        events = _tail_json_events(log_path) if log_path is not None else []
+        last_event = events[-1] if events else {}
+        last_doc = self._last_doc_event(events)
+        auth_smoke = self._last_named_event(events, "auth_smoke")
+        done = self._last_named_event(events, "done")
+        stop_exists = self.stop_file.exists()
+        cmd = [str(item) for item in (pid_info.get("cmd") or [])]
+        supports_pause = "--stop-file" in cmd
+        complete = bool((done or (total and completed_count >= total)) and not running)
+        paused = bool(stop_exists and not running and not complete)
+        auth_smoke_required = bool(complete and not auth_smoke)
+        return {
+            "running": running,
+            "pid": pid if running else None,
+            "stale_pid": bool(pid and not running),
+            "pid_file": str(self.pid_file),
+            "state_file": str(state_path),
+            "state_exists": state_exists,
+            "stop_file": str(self.stop_file),
+            "pause_requested": bool(stop_exists and running),
+            "paused": paused,
+            "supports_pause": supports_pause,
+            "completed": completed_count,
+            "total": total,
+            "remaining": remaining,
+            "datasets": state_datasets,
+            "updated_at": state.get("updated_at") if isinstance(state, dict) else None,
+            "runs": len(state.get("runs") or []) if isinstance(state, dict) else 0,
+            "last_log": str(log_path) if log_path is not None else "",
+            "last_started_at": pid_info.get("started_at"),
+            "last_event": last_event,
+            "current_doc": last_doc,
+            "complete": complete,
+            "auth_smoke_required": auth_smoke_required,
+            "auth_smoke": auth_smoke,
+            "guard": {"min_free_gb": min_free_gb, "max_swap_pct": max_swap_pct},
+        }
+
+    def _total_docs(self, datasets: list[str], state: dict[str, Any], completed_count: int) -> int:
+        db_path = str(state.get("db_path") or rag_meta_db_path())
+        try:
+            summaries = guarded.dataset_summaries(db_path, datasets)
+            total = sum(int(item.get("total_files") or 0) for item in summaries)
+            if total:
+                return total
+        except Exception:
+            pass
+        plan = self._last_named_event_from_pid_log("plan")
+        if plan:
+            return int(plan.get("target_docs") or 0) + int(plan.get("completed_in_state") or completed_count)
+        return completed_count
+
+    def _last_named_event_from_pid_log(self, name: str) -> dict[str, Any]:
+        pid_info = _read_json(self.pid_file)
+        raw_log_path = str(pid_info.get("log_path") or "")
+        if not raw_log_path:
+            return {}
+        log_path = Path(raw_log_path)
+        if not log_path.is_absolute():
+            log_path = self.root / log_path
+        return self._last_named_event(_tail_json_events(log_path), name)
+
+    @staticmethod
+    def _last_named_event(events: list[dict[str, Any]], name: str) -> dict[str, Any]:
+        for item in reversed(events):
+            if item.get("event") == name:
+                return item
+        return {}
+
+    @staticmethod
+    def _last_doc_event(events: list[dict[str, Any]]) -> dict[str, Any]:
+        for item in reversed(events):
+            if item.get("event") in {"doc_start", "doc_memory_pre", "doc_parse", "doc_health", "campaign_progress"}:
+                return item
+        return {}
