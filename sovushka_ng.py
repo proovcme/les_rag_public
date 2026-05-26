@@ -16,19 +16,9 @@ from sovushka.config import QDRANT_VISUALIZER_PORT, STORAGE_SECRET, UI_PORT
 from sovushka.state import bg_loop
 from sovushka.styles import CUSTOM_CSS, theme_vars_css
 from sovushka.auth import register_login_page, get_auth
+from sovushka.lite_admin import register_lite_admin_routes
 from sovushka.lite_chat import register_lite_chat_routes
 from sovushka.trust import trusted_role_for_request
-
-from sovushka.components.header import build_header
-from sovushka.components.logterm import build_log_terminal
-
-from sovushka.pages.overview import build_overview
-from sovushka.pages.samovar import build_samovar
-from sovushka.pages.prorab import build_prorab
-from sovushka.pages.chat import build_chat
-from sovushka.pages.history import build_history
-from sovushka.pages.diag import build_diag
-from sovushka.pages.volk import build_volk
 
 
 # ── Статические файлы ──
@@ -37,6 +27,7 @@ app.add_static_files("/static", "static")
 # Регистрируем /login (отдельная страница, без обвязки main_page)
 register_login_page()
 register_lite_chat_routes()
+register_lite_admin_routes()
 
 
 @app.get("/healthz")
@@ -108,6 +99,10 @@ def _resolve_auth(request: Request):
 
 @ui.page("/classic")
 async def classic_chat_page(request: Request):
+    from sovushka.components.header import build_header
+    from sovushka.pages.chat import build_chat
+    from sovushka.pages.history import build_history
+
     allowed, role, holder, is_admin = _resolve_auth(request)
     if not allowed:
         return RedirectResponse("/login")
@@ -151,9 +146,17 @@ async def classic_chat_page(request: Request):
         tabs.set_value(_target)
 
 
-@ui.page("/les")
-@ui.page("/les/")
-async def admin_page(request: Request):
+@ui.page("/les/classic")
+@ui.page("/les/classic/")
+async def classic_admin_page(request: Request):
+    from sovushka.components.header import build_header
+    from sovushka.components.logterm import build_log_terminal
+    from sovushka.pages.diag import build_diag
+    from sovushka.pages.overview import build_overview
+    from sovushka.pages.prorab import build_prorab
+    from sovushka.pages.samovar import build_samovar
+    from sovushka.pages.volk import build_volk
+
     allowed, role, holder, is_admin = _resolve_auth(request)
     if not allowed:
         return RedirectResponse("/login")

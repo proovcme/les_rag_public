@@ -70,7 +70,7 @@ Ollama не является основным runtime. Использовать 
 |---|---:|---|---|
 | `me.ovc.les.qdrant` | 6333/6334 | Qdrant local binary, storage `data/qdrant/` | active |
 | `me.ovc.les.proxy` | 8050 | FastAPI ядро, RAG, CRAG, auth, metrics | active |
-| `com.les.sovushka` | 8051/8066 | Sovushka Lite chat + NiceGUI admin/Qdrant visualizer | active |
+| `com.les.sovushka` | 8051/8066 | Sovushka Lite chat/admin + NiceGUI classic/Qdrant visualizer | active |
 | `me.ovc.les.mlx` | 8080 | MLX LLM/validator/embedder | active |
 | `me.ovc.les.qwen-index-until-done` | — | guarded qwen indexing loop (`batch_limit=1`) | active while pending |
 | `me.ovc.les.pauk` | — | SSH tunnel fallback | loaded, normally stopped |
@@ -81,10 +81,12 @@ Ollama не является основным runtime. Использовать 
 | `https://les.ovc.me/api/*` | API proxy | `localhost:8050` |
 | `https://les.ovc.me/` | Sovushka Lite chat shell | `localhost:8051` |
 | `https://les.ovc.me/classic` | Legacy NiceGUI chat shell | `localhost:8051` |
-| `https://les.ovc.me/les` | Admin shell | `localhost:8051` |
+| `https://les.ovc.me/les` | Sovushka Lite Admin shell | `localhost:8051` |
+| `https://les.ovc.me/les/classic` | Legacy NiceGUI Admin shell | `localhost:8051` |
 
 Чат и админка разделены на уровне routes. Основной `/` отдаёт статический Lite-shell
-без NiceGUI client state; rich NiceGUI chat сохранён на `/classic`, админка на `/les`.
+без NiceGUI client state; `/les` отдаёт статический Lite Admin. Rich NiceGUI chat
+сохранён на `/classic`, rich NiceGUI admin — на `/les/classic`.
 
 **Зависимости Proxy (`requirements.txt`):**
 FastAPI, Uvicorn, Pydantic v2, LlamaIndex, Qdrant-client, `pymupdf4llm`, `mammoth`, `extract-msg`, `pandas`, `sse-starlette`, `psutil`.
