@@ -342,6 +342,38 @@ def assert_memory(memory: dict[str, Any], min_free_gb: float, max_swap_pct: floa
         raise RuntimeError(f"memory guard failed: swap_pct={swap} > {max_swap_pct}")
 
 
+def wait_for_memory(
+    mlx_url: str,
+    timeout: float,
+    *,
+    min_free_gb: float,
+    max_swap_pct: float,
+    wait_sec: float,
+    poll_sec: float,
+    log_path: Path | None,
+    event: str,
+    index: int | None = None,
+) -> dict[str, Any]:
+    deadline = time.time() + max(0.0, wait_sec)
+    attempt = 0
+    last_memory: dict[str, Any] | None = None
+    while True:
+        attempt += 1
+        memory = mlx_memory(mlx_url, timeout)
+        last_memory = memory
+        try:
+            assert_memory(memory, min_free_gb, max_swap_pct)
+            if attempt > 1:
+                emit(log_path, event, index=index, attempt=attempt, status="ok", memory=memory)
+            return memory
+        except RuntimeError as error:
+            if time.time() >= deadline:
+                emit(log_path, event, index=index, attempt=attempt, status="failed", error=str(error), memory=memory)
+                raise
+            emit(log_path, event, index=index, attempt=attempt, status="waiting", error=str(error), memory=memory)
+            time.sleep(max(0.5, poll_sec))
+
+
 def unload_all(mlx_url: str, timeout: float) -> dict[str, Any] | list[Any] | str:
     status, body = request("POST", f"{mlx_url}/api/unload_all", payload={}, timeout=timeout)
     if status != 200:
@@ -562,7 +594,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--parse-timeout", type=float, default=1800.0)
     parser.add_argument("--snapshot-timeout", type=float, default=120.0)
     parser.add_argument("--parse-method", choices=["scheduler", "batch"], default="scheduler")
-    parser.add_argument("--resume-log", default="")
+    parser.add_argument("--resume-log", action="append", default=[])
+    parser.add_argument("--memory-wait-sec", type=float, default=60.0)
+    parser.add_argument("--memory-poll-sec", type=float, default=5.0)
     parser.add_argument("--require-qdrant-snapshot", action="store_true")
     parser.add_argument("--allow-active-jobs", action="store_true")
     parser.add_argument("--auth-smoke-after", action=argparse.BooleanOptionalAction, default=True)
@@ -610,7 +644,9 @@ def main(argv: list[str] | None = None) -> int:
     targets = load_target_docs(args.db_path, args.datasets, args.max_docs)
     skipped_completed = 0
     if args.resume_log:
-        completed_ids = completed_doc_ids_from_log(args.resume_log)
+        completed_ids: set[str] = set()
+        for resume_log in args.resume_log:
+            completed_ids.update(completed_doc_ids_from_log(resume_log))
         before_count = len(targets)
         targets = [doc for doc in targets if doc.id not in completed_ids]
         skipped_completed = before_count - len(targets)
@@ -650,8 +686,16 @@ def main(argv: list[str] | None = None) -> int:
     try:
         health = health_snapshot(args.proxy_url, args.health_timeout, admin_key)
         emit(log_path, "pre_health", rag=compact_rag(health.get("rag")))
-        before_memory = mlx_memory(args.mlx_url, args.health_timeout)
-        assert_memory(before_memory, args.min_free_gb, args.max_swap_pct)
+        before_memory = wait_for_memory(
+            args.mlx_url,
+            args.health_timeout,
+            min_free_gb=args.min_free_gb,
+            max_swap_pct=args.max_swap_pct,
+            wait_sec=args.memory_wait_sec,
+            poll_sec=args.memory_poll_sec,
+            log_path=log_path,
+            event="pre_memory_wait",
+        )
         emit(log_path, "pre_memory", memory=before_memory)
         emit(log_path, "pre_unload", result=unload_all(args.mlx_url, args.health_timeout))
         mode = set_indexing_mode(
@@ -666,8 +710,17 @@ def main(argv: list[str] | None = None) -> int:
 
         for idx, doc in enumerate(targets, 1):
             emit(log_path, "doc_start", index=idx, total=len(targets), doc=asdict(doc))
-            before_doc_memory = mlx_memory(args.mlx_url, args.health_timeout)
-            assert_memory(before_doc_memory, args.min_free_gb, args.max_swap_pct)
+            before_doc_memory = wait_for_memory(
+                args.mlx_url,
+                args.health_timeout,
+                min_free_gb=args.min_free_gb,
+                max_swap_pct=args.max_swap_pct,
+                wait_sec=args.memory_wait_sec,
+                poll_sec=args.memory_poll_sec,
+                log_path=log_path,
+                event="doc_memory_pre_wait",
+                index=idx,
+            )
             emit(log_path, "doc_memory_pre", index=idx, memory=before_doc_memory)
 
             mark_doc_pending(args.db_path, doc)
@@ -704,8 +757,17 @@ def main(argv: list[str] | None = None) -> int:
             emit(log_path, "doc_health", index=idx, rag=compact_rag(after_health.get("rag")))
             unload_result = unload_all(args.mlx_url, args.health_timeout)
             emit(log_path, "doc_unload", index=idx, result=unload_result)
-            after_memory = mlx_memory(args.mlx_url, args.health_timeout)
-            assert_memory(after_memory, args.post_min_free_gb, args.post_max_swap_pct)
+            after_memory = wait_for_memory(
+                args.mlx_url,
+                args.health_timeout,
+                min_free_gb=args.post_min_free_gb,
+                max_swap_pct=args.post_max_swap_pct,
+                wait_sec=args.memory_wait_sec,
+                poll_sec=args.memory_poll_sec,
+                log_path=log_path,
+                event="doc_memory_post_wait",
+                index=idx,
+            )
             emit(log_path, "doc_memory_post", index=idx, memory=after_memory)
 
             if idx < len(targets) and args.cooldown_sec > 0:
