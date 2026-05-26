@@ -78,7 +78,7 @@ flowchart TD
 |---|---|
 | RAG-чат | Ответы на русском языке с источниками, dataset filter, clarification gate, history drawer |
 | SafeRAG | Post-generation validator, статусы `VERIFIED / NO_DATA / HALLUCINATION`, safe fallback |
-| Индексация | Smart plan/sync/upload, deterministic routing, batch scheduler, guarded micro-indexing |
+| Индексация | Smart plan/sync/upload, Folder Watcher status/scan, deterministic routing, batch scheduler, guarded micro-indexing |
 | Документы | PDF, DOCX, DOC, XLSX, XLS, CSV, EML, MSG, JSON, JSONL, MD, TXT |
 | Таблицы | Row-level chunks, Parquet artifacts, прямые суммы/количества без LLM |
 | UI | Lite-чат и Lite Admin без NiceGUI client state, classic NiceGUI fallback, метрики, jobs, runtime controls |
@@ -113,7 +113,7 @@ flowchart TD
 | Lightweight chat/admin shell | `/` и `/les` отдают статические Lite-страницы без NiceGUI client state; `/classic` и `/les/classic` сохраняют rich fallback |
 | Lightweight UI health | Sovushka отвечает `/healthz`; runtime status не рендерит тяжёлую NiceGUI страницу |
 | Durable jobs | `/api/jobs` объединяет SQLite job history и live jobs |
-| Regression suite | На 26.05.2026: `224 passed`, включая auth, storage, runtime admission, SafeRAG, Lite UI и indexer guards |
+| Regression suite | На 26.05.2026: `262 passed`, включая auth, storage, runtime admission, SafeRAG, Lite UI и indexer guards |
 
 Подробная модель памяти описана в [RUNTIME_MEMORY_PROFILES.md](RUNTIME_MEMORY_PROFILES.md).
 
@@ -237,6 +237,15 @@ curl -s http://localhost:8050/api/rag/smart-plan | python3 -m json.tool
 curl -X POST http://localhost:8050/api/rag/sync-smart \
   -H 'Content-Type: application/json' \
   -d '{"source_root":"RAG_Content","parse":false}'
+
+# Folder Watcher: показать новые/изменённые файлы без запуска parse
+curl -s 'http://localhost:8050/api/rag/watch/status?source_root=RAG_Content' \
+  | python3 -m json.tool
+
+# Зарегистрировать только new/changed файлы; parse запускается отдельно через guarded reindex
+curl -X POST http://localhost:8050/api/rag/watch/scan \
+  -H 'Content-Type: application/json' \
+  -d '{"source_root":"RAG_Content","limit":20}'
 
 # Smart upload одного файла: индекс выбирается автоматически
 curl -X POST http://localhost:8050/api/rag/upload-smart \
@@ -399,7 +408,7 @@ DOC_ROUTER_SAMPLE_PAGES=3
 - **Е.Ж.И.К. v1:** `/api/mail/status`, `/api/mail/import-local` и `/api/mail/import-imap` регистрируют локальные `.eml/.msg` и новые IMAP-письма в `MAIL_Index`; IMAP credentials читаются только из `.env`, checkpoint UID хранится локально.
 - **BGE/chunk knobs:** `BGE_BATCH_SIZE`, `RAG_EMBED_BATCH`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP`, `RAG_PARSE_POST_MAX_SWAP_PCT`.
 - **Состояние индекса на 26.05.2026:** `indexed_files=801`, `pending_files=1`, `chunks=264307`, Qdrant points `264307`, `points_match_sqlite_chunks=true`, `errors=0`.
-- **Проверки на 26.05.2026:** `uv run pytest -q` → `224 passed`; `git diff --check` → OK.
+- **Проверки на 26.05.2026:** `uv run pytest -q` → `262 passed`; `git diff --check` → OK.
 
 ### Новое в релизе 26.05.2026
 
@@ -410,6 +419,7 @@ DOC_ROUTER_SAMPLE_PAGES=3
 - **Sovushka Lite Admin:** `/les` теперь статическая memory-first админка; прежняя rich NiceGUI admin доступна на `/les/classic`.
 - **Runtime Dispatcher v0:** `/api/runtime/dispatcher/status` объединяет память, launchd-сервисы и guarded reindex; chat admission учитывает активный reindex даже после рестарта proxy.
 - **Е.Ж.И.К. IMAP v1:** `/api/mail/import-imap` забирает новые письма через IMAP, сохраняет raw `.eml` в `RAG_Content/MAIL/IMAP`, регистрирует их в `MAIL_Index` и уважает dispatcher/reindex guard.
+- **Folder Watcher v0:** `/api/rag/watch/status` сравнивает smart-plan с SQLite metadata, а `/api/rag/watch/scan` регистрирует только `new/changed` файлы без parse; дальше их забирает guarded reindex.
 - **Sovushka `/healthz`:** runtime health check больше не рендерит страницу `/les`, чтобы не создавать тяжёлый NiceGUI client state.
 - **Launchd hardening:** `start_service` делает `launchctl enable` перед bootstrap/kickstart; disabled labels не ломают восстановление контура.
 
@@ -636,7 +646,8 @@ MIT — используй, форкай, улучшай.
 - [x] Performance: semantic cache для VERIFIED ответов с dataset-scope invalidation
 - [ ] Performance backlog: streaming validation, embedder TTL/offload, MLX tuning
 - [x] Indexing mode + parse scheduler — приоритетные батчи pending файлов с memory hysteresis
-- [ ] Folder Watcher — автосинк новых файлов
+- [x] Folder Watcher v0 — status/scan новых и изменённых файлов без немедленного parse
+- [ ] Folder Watcher v1 — фоновое расписание scans через dispatcher/admission
 - [x] Parquet pipeline для XLSX/XLS/CSV — row-level chunks + `.parquet` artifacts
 - [x] Experimental PDF tables → Parquet — PyMuPDF first, pdfplumber fallback, `needs_ocr` marker
 - [x] Table query MVP — суммы/количества из Parquet по `parquet_path` без LLM

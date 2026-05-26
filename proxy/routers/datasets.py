@@ -70,6 +70,11 @@ class SmartSyncRequest(BaseModel):
     parse_limit_per_dataset: int = Field(default=DEFAULT_PARSE_BATCH_LIMIT, ge=1, le=25)
 
 
+class FolderWatchRequest(BaseModel):
+    source_root: str = "RAG_Content"
+    limit: int = Field(default=20, ge=1, le=200)
+
+
 class ParseSchedulerRequest(BaseModel):
     batch_limit: int = Field(default=DEFAULT_PARSE_SCHEDULER_BATCH_LIMIT, ge=1, le=25)
     max_batches: int = Field(default=DEFAULT_PARSE_SCHEDULER_MAX_BATCHES, ge=1, le=500)
@@ -648,14 +653,157 @@ async def smart_plan(details: bool = False, _user=Depends(require_user)):
     return {key: value for key, value in plan.items() if key not in {"plan", "rejected"}}
 
 
+def _safe_source_root(source_root: str) -> Path:
+    root = Path(source_root)
+    if root.is_absolute() or ".." in root.parts:
+        raise HTTPException(status_code=400, detail=f"unsafe source root: {source_root}")
+    if not root.exists():
+        raise HTTPException(status_code=404, detail=f"source root not found: {root}")
+    return root
+
+
+def _known_docs_by_dataset_path() -> dict[tuple[str, str], dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    try:
+        with sqlite3.connect(rag_meta_db_path()) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = [
+                dict(row)
+                for row in conn.execute(
+                    """
+                    SELECT d.name AS dataset_name,
+                           doc.file_name,
+                           doc.status,
+                           COALESCE(doc.file_mtime, 0) AS file_mtime,
+                           COALESCE(doc.file_size, 0) AS file_size,
+                           COALESCE(doc.chunk_count, 0) AS chunk_count,
+                           COALESCE(doc.last_error, '') AS last_error
+                    FROM documents doc
+                    JOIN datasets d ON d.id=doc.dataset_id
+                    """
+                ).fetchall()
+            ]
+    except sqlite3.Error:
+        return {}
+    return {(row["dataset_name"], row["file_name"]): row for row in rows}
+
+
+def _folder_watch_inventory(root: Path, *, limit: int = 20) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    plan = build_smart_plan(root)
+    known = _known_docs_by_dataset_path()
+    samples: list[dict[str, Any]] = []
+    changes: list[dict[str, Any]] = []
+    counts = {"new": 0, "changed": 0, "unchanged": 0}
+    for dataset_name, items in plan["plan"].items():
+        for item in items:
+            key = (dataset_name, item["relative_path"])
+            current = known.get(key)
+            state = "new"
+            if current:
+                size_changed = int(current.get("file_size") or 0) != int(item.get("size_bytes") or 0)
+                try:
+                    mtime_changed = abs(float(current.get("file_mtime") or 0) - Path(item["path"]).stat().st_mtime) > 1.0
+                except OSError:
+                    mtime_changed = False
+                state = "changed" if size_changed or mtime_changed else "unchanged"
+            counts[state] += 1
+            if state != "unchanged" and len(samples) < limit:
+                samples.append(
+                    {
+                        "state": state,
+                        "dataset_name": dataset_name,
+                        "relative_path": item["relative_path"],
+                        "size_bytes": item.get("size_bytes", 0),
+                        "route": item.get("route", {}),
+                        "current": current,
+                    }
+                )
+            if state != "unchanged":
+                changes.append(
+                    {
+                        "state": state,
+                        "dataset_name": dataset_name,
+                        "item": item,
+                        "current": current,
+                    }
+                )
+    return {
+        "status": "ok",
+        "source_root": root.as_posix(),
+        "counts": counts,
+        "pending_changes": counts["new"] + counts["changed"],
+        "samples": samples,
+        "plan_summary": plan["datasets"],
+        "errors": plan["errors"],
+    }, changes
+
+
+def build_folder_watch_status(root: Path, *, limit: int = 20) -> dict[str, Any]:
+    status, _changes = _folder_watch_inventory(root, limit=limit)
+    return status
+
+
+@router.get("/watch/status")
+async def folder_watch_status(source_root: str = "RAG_Content", limit: int = 20, _user=Depends(require_user)):
+    root = _safe_source_root(source_root)
+    return await asyncio.to_thread(build_folder_watch_status, root, limit=limit)
+
+
+@router.post("/watch/scan")
+async def folder_watch_scan(req: FolderWatchRequest, _admin=Depends(require_admin)):
+    state = get_dataset_state()
+    root = _safe_source_root(req.source_root)
+    before, changes = await asyncio.to_thread(_folder_watch_inventory, root, limit=req.limit)
+    ds_list = await state.backend.list_datasets()
+    dataset_ids = {dataset.name: dataset.id for dataset in ds_list}
+    registered_by_dataset: dict[str, dict[str, Any]] = {}
+    for change in changes:
+        dataset_name = change["dataset_name"]
+        item = change["item"]
+        dataset_id = dataset_ids.get(dataset_name)
+        if dataset_id is None:
+            dataset_id = await state.backend.create_dataset(dataset_name)
+            dataset_ids[dataset_name] = dataset_id
+        await state.backend.upload_file(
+            dataset_id,
+            Path(item["path"]),
+            relative_path=item["relative_path"],
+        )
+        record = registered_by_dataset.setdefault(
+            dataset_name,
+            {
+                "dataset_id": dataset_id,
+                "dataset_name": dataset_name,
+                "pending_files": 0,
+                "new": 0,
+                "changed": 0,
+            },
+        )
+        record["pending_files"] += 1
+        record[change["state"]] += 1
+    after = await asyncio.to_thread(build_folder_watch_status, root, limit=req.limit)
+    return {
+        "status": "registered",
+        "source_root": root.as_posix(),
+        "before": before,
+        "sync": {
+            "status": "registered",
+            "source_root": root.as_posix(),
+            "datasets": list(registered_by_dataset.values()),
+            "files": len(changes),
+            "parse_started": False,
+            "parse_results": [],
+            "plan_summary": before["plan_summary"],
+            "errors": before["errors"],
+        },
+        "after": after,
+    }
+
+
 @router.post("/sync-smart")
 async def sync_smart(req: SmartSyncRequest, _admin=Depends(require_admin)):
     state = get_dataset_state()
-    root = Path(req.source_root)
-    if root.is_absolute() or ".." in root.parts:
-        raise HTTPException(status_code=400, detail=f"unsafe source root: {req.source_root}")
-    if not root.exists():
-        raise HTTPException(status_code=404, detail=f"source root not found: {root}")
+    root = _safe_source_root(req.source_root)
 
     plan = await asyncio.to_thread(build_smart_plan, root)
     ds_list = await state.backend.list_datasets()

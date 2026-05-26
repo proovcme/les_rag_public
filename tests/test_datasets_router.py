@@ -254,6 +254,138 @@ async def test_sync_smart_registers_files_in_routed_datasets(tmp_path, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_folder_watch_status_reports_new_files(tmp_path, monkeypatch, dataset_state):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RAG_META_DB_PATH", str(tmp_path / "data" / "les_meta.db"))
+    source = tmp_path / "RAG_Content" / "mixed"
+    source.mkdir(parents=True)
+    (source / "fire.txt").write_text("СП 1.13130 пожарная безопасность эвакуация", encoding="utf-8")
+
+    result = await datasets.folder_watch_status(_user=object())
+
+    assert result["status"] == "ok"
+    assert result["counts"]["new"] == 1
+    assert result["pending_changes"] == 1
+    assert result["samples"][0]["state"] == "new"
+    assert result["samples"][0]["relative_path"] == "mixed/fire.txt"
+    assert result["samples"][0]["dataset_name"] == "NTD_FIRE_Index"
+
+
+@pytest.mark.asyncio
+async def test_folder_watch_status_marks_known_files_unchanged(tmp_path, monkeypatch, dataset_state):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RAG_META_DB_PATH", str(tmp_path / "data" / "les_meta.db"))
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    source = tmp_path / "RAG_Content" / "mixed"
+    source.mkdir(parents=True)
+    file_path = source / "fire.txt"
+    file_path.write_text("СП 1.13130 пожарная безопасность эвакуация", encoding="utf-8")
+    stat = file_path.stat()
+    with sqlite3.connect(data_dir / "les_meta.db") as conn:
+        conn.execute("CREATE TABLE datasets (id TEXT PRIMARY KEY, name TEXT)")
+        conn.execute(
+            """
+            CREATE TABLE documents (
+                id TEXT PRIMARY KEY,
+                dataset_id TEXT,
+                file_name TEXT,
+                status TEXT,
+                file_mtime REAL,
+                file_size INTEGER,
+                chunk_count INTEGER DEFAULT 0,
+                last_error TEXT DEFAULT ''
+            )
+            """
+        )
+        conn.execute("INSERT INTO datasets (id, name) VALUES ('ds-fire', 'NTD_FIRE_Index')")
+        conn.execute(
+            """
+            INSERT INTO documents (id, dataset_id, file_name, status, file_mtime, file_size, chunk_count)
+            VALUES ('doc-fire', 'ds-fire', 'mixed/fire.txt', 'INDEXED', ?, ?, 12)
+            """,
+            (stat.st_mtime, stat.st_size),
+        )
+
+    result = await datasets.folder_watch_status(_user=object())
+
+    assert result["counts"] == {"new": 0, "changed": 0, "unchanged": 1}
+    assert result["pending_changes"] == 0
+    assert result["samples"] == []
+
+
+@pytest.mark.asyncio
+async def test_folder_watch_scan_registers_without_parsing(tmp_path, monkeypatch, dataset_state):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RAG_META_DB_PATH", str(tmp_path / "data" / "les_meta.db"))
+    source = tmp_path / "RAG_Content" / "mixed"
+    source.mkdir(parents=True)
+    (source / "pp87.txt").write_text("Постановление 87 градостроительный кодекс", encoding="utf-8")
+
+    result = await datasets.folder_watch_scan(datasets.FolderWatchRequest(), _admin=object())
+
+    assert result["status"] == "registered"
+    assert result["before"]["pending_changes"] == 1
+    assert result["sync"]["files"] == 1
+    assert result["sync"]["parse_started"] is False
+    assert dataset_state.uploads == [("ds-2", "pp87.txt", "mixed/pp87.txt")]
+    assert dataset_state.parses == []
+
+
+@pytest.mark.asyncio
+async def test_folder_watch_scan_skips_unchanged_files(tmp_path, monkeypatch, dataset_state):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RAG_META_DB_PATH", str(tmp_path / "data" / "les_meta.db"))
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    source = tmp_path / "RAG_Content" / "mixed"
+    source.mkdir(parents=True)
+    indexed_file = source / "indexed_fire.txt"
+    new_file = source / "new_fire.txt"
+    indexed_file.write_text("СП 1.13130 пожарная безопасность эвакуация", encoding="utf-8")
+    new_file.write_text("СП 2.13130 пожарная безопасность огнестойкость", encoding="utf-8")
+    stat = indexed_file.stat()
+    with sqlite3.connect(data_dir / "les_meta.db") as conn:
+        conn.execute("CREATE TABLE datasets (id TEXT PRIMARY KEY, name TEXT)")
+        conn.execute(
+            """
+            CREATE TABLE documents (
+                id TEXT PRIMARY KEY,
+                dataset_id TEXT,
+                file_name TEXT,
+                status TEXT,
+                file_mtime REAL,
+                file_size INTEGER,
+                chunk_count INTEGER DEFAULT 0,
+                last_error TEXT DEFAULT ''
+            )
+            """
+        )
+        conn.execute("INSERT INTO datasets (id, name) VALUES ('ds-fire', 'NTD_FIRE_Index')")
+        conn.execute(
+            """
+            INSERT INTO documents (id, dataset_id, file_name, status, file_mtime, file_size)
+            VALUES ('doc-fire', 'ds-fire', 'mixed/indexed_fire.txt', 'INDEXED', ?, ?)
+            """,
+            (stat.st_mtime, stat.st_size),
+        )
+
+    result = await datasets.folder_watch_scan(datasets.FolderWatchRequest(), _admin=object())
+
+    assert result["before"]["counts"] == {"new": 1, "changed": 0, "unchanged": 1}
+    assert result["sync"]["files"] == 1
+    assert dataset_state.uploads == [("ds-2", "new_fire.txt", "mixed/new_fire.txt")]
+
+
+@pytest.mark.asyncio
+async def test_folder_watch_rejects_unsafe_source_root(dataset_state):
+    with pytest.raises(datasets.HTTPException) as exc:
+        await datasets.folder_watch_status(source_root="../RAG_Content", _user=object())
+
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_sync_folder_rejects_claude_source(tmp_path, monkeypatch, dataset_state):
     monkeypatch.chdir(tmp_path)
     source = tmp_path / "RAG_Content" / "CLAUDE"
