@@ -64,7 +64,10 @@ def auth_db() -> sqlite3.Connection:
 
 
 def seed_admin_key() -> None:
-    admin_key = os.getenv("ADMIN_PASSWORD", "change_me_admin_key")
+    admin_key = os.getenv("ADMIN_PASSWORD", "")
+    if not admin_key:
+        logger.warning("[В.О.Л.К.] ADMIN_PASSWORD is not set; admin key seed skipped")
+        return
     conn = auth_db()
     try:
         exists = conn.execute("SELECT 1 FROM auth_keys WHERE role='admin' LIMIT 1").fetchone()
