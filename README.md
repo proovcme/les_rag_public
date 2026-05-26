@@ -17,8 +17,10 @@ network.
 
 ## Скриншоты
 
-Актуальные Lite UI скриншоты показывают memory-safe chat shell и отдельный
-почтовый блок Е.Ж.И.К. для цепочек писем.
+Актуальные Lite UI скриншоты показывают memory-safe chat shell, отдельный
+почтовый блок Е.Ж.И.К. для цепочек писем и memory-first Lite Admin.
+
+### Lite Chat
 
 <p>
   <img src="docs/assets/sovushka-lite-desktop.png" alt="Sovushka Lite desktop chat shell" width="100%">
@@ -26,6 +28,16 @@ network.
 
 <p>
   <img src="docs/assets/sovushka-lite-mobile.png" alt="Sovushka Lite mobile chat shell" width="360">
+</p>
+
+### Lite Admin
+
+<p>
+  <img src="docs/assets/sovushka-lite-admin-desktop.png" alt="Sovushka Lite Admin desktop memory-first console" width="100%">
+</p>
+
+<p>
+  <img src="docs/assets/sovushka-lite-admin-mobile.png" alt="Sovushka Lite Admin mobile memory-first console" width="360">
 </p>
 
 ## Что Это Даёт
