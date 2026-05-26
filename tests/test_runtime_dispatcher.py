@@ -212,6 +212,23 @@ def test_dispatcher_resume_uses_existing_state_and_clears_stop_file(tmp_path):
     assert "--stop-file" in calls[0][0]
 
 
+def test_dispatcher_default_reindex_post_swap_gate_is_stricter(tmp_path):
+    calls = []
+
+    def fake_popen(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return SimpleNamespace(pid=456)
+
+    dispatcher = _dispatcher(tmp_path, popen=fake_popen)
+
+    result = dispatcher.start_reindex()
+
+    cmd = calls[0][0]
+    post_swap = cmd[cmd.index("--post-max-swap-pct") + 1]
+    assert result["status"] == "started"
+    assert post_swap == "80.0"
+
+
 def test_dispatcher_route_change_start_defaults_to_dry_run(tmp_path):
     calls = []
 
@@ -229,6 +246,8 @@ def test_dispatcher_route_change_start_defaults_to_dry_run(tmp_path):
     assert "tools/reindex_route_changes_guarded.py" in calls[0][0]
     assert "--dry-run" in calls[0][0]
     assert "--stop-file" in calls[0][0]
+    cmd = calls[0][0]
+    assert cmd[cmd.index("--post-max-swap-pct") + 1] == "80.0"
 
 
 def test_dispatcher_route_change_apply_waits_for_standard_reindex(tmp_path):

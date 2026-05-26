@@ -142,6 +142,13 @@ and `/les` is the static Sovushka Lite Admin shell. Do not use `/classic` or
 `/les/classic` as health probes because those routes render NiceGUI pages and
 can create large server-side client state.
 
+Guarded reindex uses two swap thresholds. The start gate is intentionally broad
+(`swap_pct < 85`) so a long operator-approved campaign can resume after normal
+macOS swap allocation. The post-document gate is stricter by default
+(`swap_pct <= 80`) so the runner unloads models and waits between documents
+instead of steadily increasing swap pressure. Operators may override these
+thresholds per run, but the dispatcher default favors stability over throughput.
+
 Safe session close:
 
 ```bash

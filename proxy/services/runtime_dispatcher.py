@@ -20,6 +20,8 @@ from tools import reindex_datasets_guarded as guarded
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATASETS = ["NTD_HVAC_Index", "NTD_FIRE_Index"]
+DEFAULT_REINDEX_MAX_SWAP_PCT = 85.0
+DEFAULT_REINDEX_POST_MAX_SWAP_PCT = 80.0
 DEFAULT_PID_FILE = "guarded_reindex_hvac_fire.pid.json"
 DEFAULT_STOP_FILE = "guarded_reindex_hvac_fire.stop.json"
 ROUTE_CHANGE_PID_FILE = "guarded_reindex_route_changes.pid.json"
@@ -155,7 +157,7 @@ class RuntimeDispatcher:
         *,
         datasets: list[str] | None = None,
         min_free_gb: float = 4.0,
-        max_swap_pct: float = 85.0,
+        max_swap_pct: float = DEFAULT_REINDEX_MAX_SWAP_PCT,
         include_services: bool = True,
     ) -> dict[str, Any]:
         datasets = datasets or DEFAULT_DATASETS
@@ -193,7 +195,7 @@ class RuntimeDispatcher:
         *,
         datasets: list[str] | None = None,
         min_free_gb: float = 4.0,
-        max_swap_pct: float = 85.0,
+        max_swap_pct: float = DEFAULT_REINDEX_MAX_SWAP_PCT,
     ) -> dict[str, Any]:
         return self._reindex_status(
             datasets=datasets or DEFAULT_DATASETS,
@@ -206,7 +208,7 @@ class RuntimeDispatcher:
         *,
         datasets: list[str] | None = None,
         min_free_gb: float = 4.0,
-        max_swap_pct: float = 85.0,
+        max_swap_pct: float = DEFAULT_REINDEX_MAX_SWAP_PCT,
         post_min_free_gb: float = 3.0,
         post_max_swap_pct: float | None = None,
         memory_wait_sec: float = 86400.0,
@@ -218,7 +220,11 @@ class RuntimeDispatcher:
         resume: bool = False,
     ) -> dict[str, Any]:
         datasets = datasets or DEFAULT_DATASETS
-        post_max_swap_pct = max_swap_pct if post_max_swap_pct is None else post_max_swap_pct
+        post_max_swap_pct = (
+            min(max_swap_pct, DEFAULT_REINDEX_POST_MAX_SWAP_PCT)
+            if post_max_swap_pct is None
+            else post_max_swap_pct
+        )
         status = self.status_payload(
             datasets=datasets,
             min_free_gb=min_free_gb,
@@ -374,9 +380,9 @@ class RuntimeDispatcher:
         dry_run: bool = True,
         max_docs: int = 0,
         min_free_gb: float = 4.0,
-        max_swap_pct: float = 85.0,
+        max_swap_pct: float = DEFAULT_REINDEX_MAX_SWAP_PCT,
         post_min_free_gb: float = 3.0,
-        post_max_swap_pct: float = 85.0,
+        post_max_swap_pct: float = DEFAULT_REINDEX_POST_MAX_SWAP_PCT,
         memory_wait_sec: float = 86400.0,
         memory_poll_sec: float = 30.0,
         cooldown_sec: float = 90.0,
