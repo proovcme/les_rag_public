@@ -309,9 +309,96 @@ async def test_folder_watch_status_marks_known_files_unchanged(tmp_path, monkeyp
 
     result = await datasets.folder_watch_status(_user=object())
 
-    assert result["counts"] == {"new": 0, "changed": 0, "unchanged": 1}
+    assert result["counts"] == {"new": 0, "changed": 0, "route_changed": 0, "unchanged": 1}
     assert result["pending_changes"] == 0
     assert result["samples"] == []
+
+
+@pytest.mark.asyncio
+async def test_folder_watch_status_accepts_legacy_basename_match(tmp_path, monkeypatch, dataset_state):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RAG_META_DB_PATH", str(tmp_path / "data" / "les_meta.db"))
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    source = tmp_path / "RAG_Content" / "mixed"
+    source.mkdir(parents=True)
+    file_path = source / "fire.txt"
+    file_path.write_text("СП 1.13130 пожарная безопасность эвакуация", encoding="utf-8")
+    stat = file_path.stat()
+    with sqlite3.connect(data_dir / "les_meta.db") as conn:
+        conn.execute("CREATE TABLE datasets (id TEXT PRIMARY KEY, name TEXT)")
+        conn.execute(
+            """
+            CREATE TABLE documents (
+                id TEXT PRIMARY KEY,
+                dataset_id TEXT,
+                file_name TEXT,
+                status TEXT,
+                file_mtime REAL,
+                file_size INTEGER,
+                chunk_count INTEGER DEFAULT 0,
+                last_error TEXT DEFAULT ''
+            )
+            """
+        )
+        conn.execute("INSERT INTO datasets (id, name) VALUES ('ds-fire', 'NTD_FIRE_Index')")
+        conn.execute(
+            """
+            INSERT INTO documents (id, dataset_id, file_name, status, file_mtime, file_size)
+            VALUES ('doc-fire', 'ds-fire', 'fire.txt', 'INDEXED', ?, ?)
+            """,
+            (stat.st_mtime, stat.st_size),
+        )
+
+    result = await datasets.folder_watch_status(_user=object())
+
+    assert result["counts"] == {"new": 0, "changed": 0, "route_changed": 0, "unchanged": 1}
+    assert result["samples"] == []
+
+
+@pytest.mark.asyncio
+async def test_folder_watch_status_reports_route_changed_files(tmp_path, monkeypatch, dataset_state):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RAG_META_DB_PATH", str(tmp_path / "data" / "les_meta.db"))
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    source = tmp_path / "RAG_Content" / "mixed"
+    source.mkdir(parents=True)
+    file_path = source / "fire.txt"
+    file_path.write_text("СП 1.13130 пожарная безопасность эвакуация", encoding="utf-8")
+    stat = file_path.stat()
+    with sqlite3.connect(data_dir / "les_meta.db") as conn:
+        conn.execute("CREATE TABLE datasets (id TEXT PRIMARY KEY, name TEXT)")
+        conn.execute(
+            """
+            CREATE TABLE documents (
+                id TEXT PRIMARY KEY,
+                dataset_id TEXT,
+                file_name TEXT,
+                status TEXT,
+                file_mtime REAL,
+                file_size INTEGER,
+                chunk_count INTEGER DEFAULT 0,
+                last_error TEXT DEFAULT ''
+            )
+            """
+        )
+        conn.execute("INSERT INTO datasets (id, name) VALUES ('ds-old', 'NTD_STRUCTURAL_Index')")
+        conn.execute(
+            """
+            INSERT INTO documents (id, dataset_id, file_name, status, file_mtime, file_size)
+            VALUES ('doc-fire', 'ds-old', 'mixed/fire.txt', 'INDEXED', ?, ?)
+            """,
+            (stat.st_mtime, stat.st_size),
+        )
+
+    result = await datasets.folder_watch_status(_user=object())
+
+    assert result["counts"] == {"new": 0, "changed": 0, "route_changed": 1, "unchanged": 0}
+    assert result["pending_changes"] == 1
+    assert result["samples"][0]["state"] == "route_changed"
+    assert result["samples"][0]["dataset_name"] == "NTD_FIRE_Index"
+    assert result["samples"][0]["current"]["dataset_name"] == "NTD_STRUCTURAL_Index"
 
 
 @pytest.mark.asyncio
@@ -372,7 +459,7 @@ async def test_folder_watch_scan_skips_unchanged_files(tmp_path, monkeypatch, da
 
     result = await datasets.folder_watch_scan(datasets.FolderWatchRequest(), _admin=object())
 
-    assert result["before"]["counts"] == {"new": 1, "changed": 0, "unchanged": 1}
+    assert result["before"]["counts"] == {"new": 1, "changed": 0, "route_changed": 0, "unchanged": 1}
     assert result["sync"]["files"] == 1
     assert dataset_state.uploads == [("ds-2", "new_fire.txt", "mixed/new_fire.txt")]
 

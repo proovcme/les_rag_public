@@ -662,7 +662,7 @@ def _safe_source_root(source_root: str) -> Path:
     return root
 
 
-def _known_docs_by_dataset_path() -> dict[tuple[str, str], dict[str, Any]]:
+def _known_docs_inventory() -> dict[str, dict[Any, dict[str, Any]]]:
     rows: list[dict[str, Any]] = []
     try:
         with sqlite3.connect(rag_meta_db_path()) as conn:
@@ -684,20 +684,47 @@ def _known_docs_by_dataset_path() -> dict[tuple[str, str], dict[str, Any]]:
                 ).fetchall()
             ]
     except sqlite3.Error:
-        return {}
-    return {(row["dataset_name"], row["file_name"]): row for row in rows}
+        rows = []
+    by_dataset_path = {(row["dataset_name"], row["file_name"]): row for row in rows}
+    by_path: dict[str, dict[str, Any]] = {}
+    by_basename: dict[str, dict[str, Any]] = {}
+    basename_counts: dict[str, int] = {}
+    for row in rows:
+        file_name = str(row.get("file_name") or "")
+        if file_name:
+            by_path.setdefault(file_name, row)
+            basename = Path(file_name).name
+            basename_counts[basename] = basename_counts.get(basename, 0) + 1
+            by_basename.setdefault(basename, row)
+    by_basename = {
+        basename: row
+        for basename, row in by_basename.items()
+        if basename_counts.get(basename) == 1
+    }
+    return {
+        "by_dataset_path": by_dataset_path,
+        "by_path": by_path,
+        "by_basename": by_basename,
+    }
 
 
 def _folder_watch_inventory(root: Path, *, limit: int = 20) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     plan = build_smart_plan(root)
-    known = _known_docs_by_dataset_path()
+    known = _known_docs_inventory()
     samples: list[dict[str, Any]] = []
     changes: list[dict[str, Any]] = []
-    counts = {"new": 0, "changed": 0, "unchanged": 0}
+    counts = {"new": 0, "changed": 0, "route_changed": 0, "unchanged": 0}
     for dataset_name, items in plan["plan"].items():
         for item in items:
             key = (dataset_name, item["relative_path"])
-            current = known.get(key)
+            current = known["by_dataset_path"].get(key)
+            if current is None:
+                path_current = known["by_path"].get(item["relative_path"])
+                basename_current = known["by_basename"].get(Path(item["relative_path"]).name)
+                if path_current is not None:
+                    current = path_current
+                elif basename_current is not None and basename_current.get("dataset_name") == dataset_name:
+                    current = basename_current
             state = "new"
             if current:
                 size_changed = int(current.get("file_size") or 0) != int(item.get("size_bytes") or 0)
@@ -705,7 +732,11 @@ def _folder_watch_inventory(root: Path, *, limit: int = 20) -> tuple[dict[str, A
                     mtime_changed = abs(float(current.get("file_mtime") or 0) - Path(item["path"]).stat().st_mtime) > 1.0
                 except OSError:
                     mtime_changed = False
-                state = "changed" if size_changed or mtime_changed else "unchanged"
+                route_changed = current.get("dataset_name") != dataset_name
+                if route_changed:
+                    state = "route_changed"
+                else:
+                    state = "changed" if size_changed or mtime_changed else "unchanged"
             counts[state] += 1
             if state != "unchanged" and len(samples) < limit:
                 samples.append(
@@ -731,7 +762,7 @@ def _folder_watch_inventory(root: Path, *, limit: int = 20) -> tuple[dict[str, A
         "status": "ok",
         "source_root": root.as_posix(),
         "counts": counts,
-        "pending_changes": counts["new"] + counts["changed"],
+        "pending_changes": counts["new"] + counts["changed"] + counts["route_changed"],
         "samples": samples,
         "plan_summary": plan["datasets"],
         "errors": plan["errors"],
@@ -777,6 +808,7 @@ async def folder_watch_scan(req: FolderWatchRequest, _admin=Depends(require_admi
                 "pending_files": 0,
                 "new": 0,
                 "changed": 0,
+                "route_changed": 0,
             },
         )
         record["pending_files"] += 1
