@@ -113,7 +113,7 @@ flowchart TD
 | No-Docker host runtime | Меньше overhead на 16-24 GB Mac, особенно под MLX/Metal |
 | Runtime profiles | `CHAT`, `CHAT_VALIDATED`, `INDEX_LIGHT`, `INDEX_HEAVY_PDF`, `MAINTENANCE` |
 | Memory states | `GREEN/YELLOW/RED/CRITICAL` для admission chat/index/warmup |
-| Runtime Dispatcher | Proxy-side status/start/pause/resume для guarded reindex; duplicate start guard; wait-only memory recommendations |
+| Runtime Dispatcher | Proxy-side status/start/pause/resume для guarded reindex; duplicate start guard; wait-only memory recommendations; separate start/post swap gates |
 | Wait-only policy | LES показывает top memory consumers, но не убивает пользовательские процессы автоматически |
 | Model leases | Модели грузятся лениво и выгружаются после операции под давлением памяти |
 | Heavy PDF guard | Большие book-PDF не попадают в auto-index loop без ручного admission |
@@ -151,6 +151,11 @@ curl -s http://127.0.0.1:8050/api/runtime/dispatcher/status \
 возвращает понятную причину. Если кампания уже идёт, повторный start не создаёт
 дубликат. Pause/resume работают через state/log/pid runner'а; v0 не добавляет
 отдельный daemon.
+
+Для длинных one-click кампаний dispatcher разделяет два порога: старт/резюм
+разрешён до `swap_pct < 85`, а после каждого документа runner ждёт
+`swap_pct <= 80` по умолчанию. Это сохраняет режим "нажал и ушёл", но не даёт
+длинной индексации бесконечно накачивать swap.
 
 Folder Watcher v0 помогает перед индексацией понять, что реально изменилось в
 `RAG_Content/`:

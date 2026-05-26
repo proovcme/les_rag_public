@@ -137,9 +137,17 @@ interactive terminal, asks which non-LES, non-protected candidates should receiv
 explicit selection.
 
 Runtime status checks must use lightweight health endpoints. For Sovushka UI,
-use `/healthz`. The default `/` route is the static Sovushka Lite chat shell;
-do not use `/classic` or `/les` as health probes because those routes render
-NiceGUI pages and can create large server-side client state.
+use `/healthz`. The default `/` route is the static Sovushka Lite chat shell,
+and `/les` is the static Sovushka Lite Admin shell. Do not use `/classic` or
+`/les/classic` as health probes because those routes render NiceGUI pages and
+can create large server-side client state.
+
+Guarded reindex uses two swap thresholds. The start gate is intentionally broad
+(`swap_pct < 85`) so a long operator-approved campaign can resume after normal
+macOS swap allocation. The post-document gate is stricter by default
+(`swap_pct <= 80`) so the runner unloads models and waits between documents
+instead of steadily increasing swap pressure. Operators may override these
+thresholds per run, but the dispatcher default favors stability over throughput.
 
 Safe session close:
 
