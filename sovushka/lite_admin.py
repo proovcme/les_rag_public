@@ -7,7 +7,13 @@ The richer NiceGUI console remains available at /les/classic.
 from __future__ import annotations
 
 import asyncio
+import json
+import os
+import subprocess
+import sys
+import time
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import Request
@@ -23,6 +29,7 @@ LOCAL_RUNTIME_ACTIONS = {
     "restart_mlx",
     "restart_qdrant",
     "restart_ui",
+    "start_guarded_reindex",
 }
 
 
@@ -49,8 +56,127 @@ def _runtime_action(name: str) -> Callable[[], Any]:
         "restart_mlx": lambda: les_runtime_control.restart_service("mlx"),
         "restart_qdrant": lambda: les_runtime_control.restart_service("qdrant"),
         "restart_ui": lambda: les_runtime_control.restart_service("ui", False),
+        "start_guarded_reindex": start_guarded_reindex,
     }
     return actions[name]
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _reindex_paths() -> dict[str, Path]:
+    root = _repo_root()
+    artifacts = root / "artifacts" / "reindex_runs"
+    return {
+        "artifacts": artifacts,
+        "state": artifacts / "reindex_state_ntd_fire_index__ntd_hvac_index.json",
+        "pid": artifacts / "guarded_reindex_hvac_fire.pid.json",
+    }
+
+
+def _pid_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def guarded_reindex_status_payload() -> dict[str, Any]:
+    paths = _reindex_paths()
+    pid_info: dict[str, Any] = {}
+    if paths["pid"].exists():
+        try:
+            pid_info = json.loads(paths["pid"].read_text(encoding="utf-8"))
+        except Exception:
+            pid_info = {}
+    pid = int(pid_info.get("pid") or 0)
+    running = _pid_running(pid)
+
+    state: dict[str, Any] = {}
+    if paths["state"].exists():
+        try:
+            state = json.loads(paths["state"].read_text(encoding="utf-8"))
+        except Exception as error:
+            state = {"error": str(error)}
+
+    completed = state.get("completed") if isinstance(state, dict) else {}
+    completed_count = len(completed) if isinstance(completed, dict) else 0
+    return {
+        "running": running,
+        "pid": pid if running else None,
+        "pid_file": str(paths["pid"]),
+        "state_file": str(paths["state"]),
+        "completed": completed_count,
+        "total": 194,
+        "remaining": max(0, 194 - completed_count),
+        "updated_at": state.get("updated_at") if isinstance(state, dict) else None,
+        "runs": len(state.get("runs") or []) if isinstance(state, dict) else 0,
+        "last_log": pid_info.get("log_path"),
+        "last_started_at": pid_info.get("started_at"),
+    }
+
+
+def start_guarded_reindex() -> dict[str, Any]:
+    paths = _reindex_paths()
+    paths["artifacts"].mkdir(parents=True, exist_ok=True)
+    status = guarded_reindex_status_payload()
+    if status["running"]:
+        return {"status": "already_running", **status}
+
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    log_path = paths["artifacts"] / f"one_click_hvac_fire_{stamp}.out"
+    cmd = [
+        sys.executable,
+        "tools/reindex_datasets_guarded.py",
+        "--datasets",
+        "NTD_HVAC_Index",
+        "NTD_FIRE_Index",
+        "--parse-method",
+        "scheduler",
+        "--min-free-gb",
+        "10",
+        "--max-swap-pct",
+        "100",
+        "--post-min-free-gb",
+        "6",
+        "--post-max-swap-pct",
+        "100",
+        "--memory-wait-sec",
+        "86400",
+        "--memory-poll-sec",
+        "30",
+        "--cooldown-sec",
+        "90",
+        "--parse-timeout",
+        "3600",
+        "--auth-smoke-after",
+    ]
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    with log_path.open("ab") as output:
+        process = subprocess.Popen(
+            cmd,
+            cwd=_repo_root(),
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+            env=env,
+        )
+    pid_info = {
+        "pid": process.pid,
+        "cmd": cmd,
+        "log_path": str(log_path),
+        "state_file": str(paths["state"]),
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    paths["pid"].write_text(json.dumps(pid_info, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return {"status": "started", **guarded_reindex_status_payload()}
 
 
 async def lite_runtime_status(request: Request) -> JSONResponse:
@@ -64,6 +190,12 @@ async def lite_runtime_status(request: Request) -> JSONResponse:
         ["qdrant", "mlx", "proxy", "indexer", "ui"],
     )
     return JSONResponse({"services": _runtime_result_payload(statuses)})
+
+
+async def lite_reindex_status(request: Request) -> JSONResponse:
+    if not local_runtime_action_allowed(is_loopback=_client_is_loopback(request)):
+        return JSONResponse({"detail": "Local reindex status requires loopback access"}, status_code=403)
+    return JSONResponse(guarded_reindex_status_payload())
 
 
 async def lite_runtime_action(action: str, request: Request) -> JSONResponse:
@@ -372,6 +504,14 @@ def lite_admin_html() -> str:
       </div>
 
       <div class="panel">
+        <div class="title">Guarded Reindex</div>
+        <div id="reindexStatus" class="hint">Загрузка...</div>
+        <div class="actions">
+          <button data-runtime="start_guarded_reindex" type="button" class="safe">HVAC/FIRE AUTO</button>
+        </div>
+      </div>
+
+      <div class="panel">
         <div class="title">Local Launchd</div>
         <div class="actions">
           <button data-runtime="stop_indexer" type="button" class="danger">STOP INDEXER</button>
@@ -530,6 +670,7 @@ def lite_admin_html() -> str:
         renderPending(pending);
         renderDatasets(datasets);
         await refreshLocalRuntime();
+        await refreshReindexStatus();
         log("refresh ok");
       } catch (error) {
         if (error.status === 401 && !state.key) {
@@ -624,6 +765,23 @@ def lite_admin_html() -> str:
       }
     }
 
+    async function refreshReindexStatus() {
+      try {
+        const response = await fetch("/lite-runtime/reindex-status");
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "reindex unavailable");
+        const cls = data.running ? "warn" : data.remaining === 0 ? "ok" : "";
+        el("reindexStatus").innerHTML = row(
+          data.running ? "RUNNING" : "IDLE",
+          `completed=${fmt(data.completed)} remaining=${fmt(data.remaining)} updated=${data.updated_at || "-"} log=${data.last_log || "-"}`,
+          data.running ? "ACTIVE" : `${fmt(data.completed)}/${fmt(data.total)}`,
+          cls
+        );
+      } catch (error) {
+        el("reindexStatus").textContent = error.message;
+      }
+    }
+
     async function post(path, body) {
       const data = await request(path, { method: "POST", body: JSON.stringify(body || {}) });
       log(path + " -> ok");
@@ -688,6 +846,10 @@ def register_lite_admin_routes() -> None:
     @app.get("/lite-runtime/status")
     async def lite_runtime_status_page(request: Request):
         return await lite_runtime_status(request)
+
+    @app.get("/lite-runtime/reindex-status")
+    async def lite_reindex_status_page(request: Request):
+        return await lite_reindex_status(request)
 
     @app.post("/lite-runtime/action/{action}")
     async def lite_runtime_action_page(action: str, request: Request):
