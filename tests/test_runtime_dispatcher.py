@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from proxy.services.runtime_dispatcher import DEFAULT_DATASETS, DispatcherError, RuntimeDispatcher
-from tools.les_runtime_control import MemoryPreflight, ServiceStatus
+from tools.les_runtime_control import MemoryPreflight, MemoryProcess, ServiceStatus
 
 
 def _preflight(ram_free=8.0, swap_pct=10.0):
@@ -90,6 +90,7 @@ def test_dispatcher_status_without_campaign(tmp_path):
     assert status["reindex"]["state_exists"] is False
     assert status["actions"]["can_start"] is True
     assert status["services"][0]["key"] == "proxy"
+    assert status["memory"]["recommendations"]["policy"] == "wait_only"
 
 
 def test_dispatcher_public_reindex_status_payload(tmp_path):
@@ -149,6 +150,44 @@ def test_dispatcher_blocks_start_when_memory_guard_fails(tmp_path):
     assert exc.value.status_code == 503
     assert "ram_free_gb=2.0 < 4.0" in exc.value.detail
     assert "swap_pct=90.0 > 85.0" in exc.value.detail
+
+
+def test_dispatcher_memory_recommendations_report_manual_candidates(tmp_path):
+    preflight = MemoryPreflight(
+        ram_free_gb=5.0,
+        ram_total_gb=24.0,
+        swap_pct=90.0,
+        top_processes=[
+            MemoryProcess(
+                pid=100,
+                user="ovc",
+                rss_mb=1200.0,
+                command="/Applications/DaVinci Resolve.app/Contents/MacOS/Resolve",
+                les_owned=False,
+                protected=False,
+            ),
+            MemoryProcess(
+                pid=101,
+                user="ovc",
+                rss_mb=650.0,
+                command="/Users/ovc/Projects/LES_v2/.venv/bin/python3 mlx_host.py",
+                les_owned=True,
+                protected=False,
+            ),
+        ],
+        kill_candidates=[],
+        min_free_gb=4.0,
+        min_rss_mb=700.0,
+    )
+    dispatcher = _dispatcher(tmp_path, preflight=preflight)
+
+    status = dispatcher.status_payload(max_swap_pct=85.0)
+    action_kinds = [action["kind"] for action in status["memory"]["recommendations"]["actions"]]
+
+    assert "unload_mlx" in action_kinds
+    assert "manual_quit_candidates" in action_kinds
+    manual = next(action for action in status["memory"]["recommendations"]["actions"] if action["kind"] == "manual_quit_candidates")
+    assert manual["processes"][0]["pid"] == 100
 
 
 def test_dispatcher_resume_uses_existing_state_and_clears_stop_file(tmp_path):

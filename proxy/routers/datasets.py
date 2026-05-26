@@ -672,6 +672,8 @@ def _known_docs_inventory() -> dict[str, dict[Any, dict[str, Any]]]:
                 for row in conn.execute(
                     """
                     SELECT d.name AS dataset_name,
+                           d.id AS dataset_id,
+                           doc.id AS doc_id,
                            doc.file_name,
                            doc.status,
                            COALESCE(doc.file_mtime, 0) AS file_mtime,
@@ -774,10 +776,76 @@ def build_folder_watch_status(root: Path, *, limit: int = 20) -> dict[str, Any]:
     return status
 
 
+def build_folder_reindex_plan(root: Path, *, limit: int = 50) -> dict[str, Any]:
+    status, changes = _folder_watch_inventory(root, limit=limit)
+    route_changes = [change for change in changes if change["state"] == "route_changed"]
+    groups: dict[tuple[str, str], dict[str, Any]] = {}
+    samples: list[dict[str, Any]] = []
+    for change in route_changes:
+        item = change["item"]
+        current = change.get("current") or {}
+        target_dataset = str(change["dataset_name"])
+        current_dataset = str(current.get("dataset_name") or "")
+        key = (current_dataset, target_dataset)
+        record = groups.setdefault(
+            key,
+            {
+                "current_dataset_name": current_dataset,
+                "current_dataset_id": current.get("dataset_id", ""),
+                "target_dataset_name": target_dataset,
+                "files": 0,
+                "bytes": 0,
+                "samples": [],
+            },
+        )
+        doc = {
+            "current_doc_id": current.get("doc_id", ""),
+            "current_dataset_id": current.get("dataset_id", ""),
+            "current_dataset_name": current_dataset,
+            "target_dataset_name": target_dataset,
+            "relative_path": item["relative_path"],
+            "source_path": item["path"],
+            "size_bytes": item.get("size_bytes", 0),
+            "current_status": current.get("status", ""),
+            "current_chunk_count": current.get("chunk_count", 0),
+            "route": item.get("route", {}),
+        }
+        record["files"] += 1
+        record["bytes"] += int(item.get("size_bytes") or 0)
+        if len(record["samples"]) < 5:
+            record["samples"].append(doc)
+        if len(samples) < limit:
+            samples.append(doc)
+
+    return {
+        "status": "ok",
+        "source_root": root.as_posix(),
+        "kind": "route_changed",
+        "pending_route_changes": len(route_changes),
+        "groups": sorted(
+            groups.values(),
+            key=lambda group: (-int(group["files"]), group["current_dataset_name"], group["target_dataset_name"]),
+        ),
+        "samples": samples,
+        "watch_counts": status["counts"],
+        "apply_supported": False,
+        "safe_next_step": (
+            "Use this as a dry-run plan. Route-change apply must delete old Qdrant points "
+            "and move SQLite/storage rows under a guarded runner; ordinary watch scan skips it."
+        ),
+    }
+
+
 @router.get("/watch/status")
 async def folder_watch_status(source_root: str = "RAG_Content", limit: int = 20, _user=Depends(require_user)):
     root = _safe_source_root(source_root)
     return await asyncio.to_thread(build_folder_watch_status, root, limit=limit)
+
+
+@router.get("/watch/reindex-plan")
+async def folder_reindex_plan(source_root: str = "RAG_Content", limit: int = 50, _user=Depends(require_user)):
+    root = _safe_source_root(source_root)
+    return await asyncio.to_thread(build_folder_reindex_plan, root, limit=limit)
 
 
 @router.post("/watch/scan")
@@ -785,10 +853,12 @@ async def folder_watch_scan(req: FolderWatchRequest, _admin=Depends(require_admi
     state = get_dataset_state()
     root = _safe_source_root(req.source_root)
     before, changes = await asyncio.to_thread(_folder_watch_inventory, root, limit=req.limit)
+    route_changed = [change for change in changes if change["state"] == "route_changed"]
+    register_changes = [change for change in changes if change["state"] in {"new", "changed"}]
     ds_list = await state.backend.list_datasets()
     dataset_ids = {dataset.name: dataset.id for dataset in ds_list}
     registered_by_dataset: dict[str, dict[str, Any]] = {}
-    for change in changes:
+    for change in register_changes:
         dataset_name = change["dataset_name"]
         item = change["item"]
         dataset_id = dataset_ids.get(dataset_name)
@@ -822,7 +892,8 @@ async def folder_watch_scan(req: FolderWatchRequest, _admin=Depends(require_admi
             "status": "registered",
             "source_root": root.as_posix(),
             "datasets": list(registered_by_dataset.values()),
-            "files": len(changes),
+            "files": len(register_changes),
+            "skipped_route_changed": len(route_changed),
             "parse_started": False,
             "parse_results": [],
             "plan_summary": before["plan_summary"],

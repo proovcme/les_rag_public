@@ -166,6 +166,7 @@ class RuntimeDispatcher:
                 "pressure": pressure.payload(),
                 "preflight": asdict(preflight),
                 "decision": memory_decision,
+                "recommendations": self._memory_recommendations(preflight, pressure.payload(), memory_decision, reindex),
             },
             "services": services,
             "reindex": reindex,
@@ -345,6 +346,100 @@ class RuntimeDispatcher:
         except Exception as error:
             return [{"error": str(error)}]
         return [json.loads(json.dumps(item, default=_json_default)) for item in statuses]
+
+    def _memory_recommendations(
+        self,
+        preflight: Any,
+        pressure: dict[str, Any],
+        decision: dict[str, Any],
+        reindex: dict[str, Any],
+    ) -> dict[str, Any]:
+        top = list(getattr(preflight, "top_processes", []) or [])
+        user_heavy = [
+            process
+            for process in top
+            if not getattr(process, "les_owned", False)
+            and not getattr(process, "protected", False)
+            and float(getattr(process, "rss_mb", 0.0) or 0.0) >= 500.0
+        ]
+        les_heavy = [
+            process
+            for process in top
+            if getattr(process, "les_owned", False)
+            and float(getattr(process, "rss_mb", 0.0) or 0.0) >= 300.0
+        ]
+        actions: list[dict[str, Any]] = []
+        notes = [
+            "wait_only policy: dispatcher never kills Safari, IDEs, browsers, media apps, or other user processes automatically",
+            "swap can stay allocated after memory pressure falls; prefer pressure trend and active workload over a single swap number",
+        ]
+        if reindex.get("running") and not decision.get("allowed"):
+            actions.append(
+                {
+                    "kind": "wait",
+                    "label": "Let guarded reindex wait at its memory boundary",
+                    "reason": decision.get("reason", ""),
+                }
+            )
+        if les_heavy:
+            actions.append(
+                {
+                    "kind": "unload_mlx",
+                    "label": "Unload LES-owned MLX models before more indexing or chat",
+                    "endpoint": "/api/runtime/dispatcher/mlx/unload",
+                    "reason": "MLX/model memory is the safest reclaim target because it is owned by LES",
+                }
+            )
+        if user_heavy:
+            actions.append(
+                {
+                    "kind": "manual_quit_candidates",
+                    "label": "Consider quitting these user apps manually before heavy model/index work",
+                    "reason": "They are outside LES ownership; dispatcher reports them only as recommendations",
+                    "processes": [self._process_summary(process) for process in user_heavy[:5]],
+                }
+            )
+        ui_processes = [
+            process
+            for process in top
+            if getattr(process, "les_owned", False)
+            and "sovushka" in str(getattr(process, "command", "")).lower()
+            and float(getattr(process, "rss_mb", 0.0) or 0.0) >= 400.0
+        ]
+        if ui_processes:
+            actions.append(
+                {
+                    "kind": "restart_ui",
+                    "label": "Restart Sovushka UI or stay on Lite Admin before indexing",
+                    "reason": "Classic NiceGUI pages can retain client state and grow RSS",
+                    "processes": [self._process_summary(process) for process in ui_processes[:3]],
+                }
+            )
+        if pressure.get("state") in {"RED", "CRITICAL"} and not actions:
+            actions.append(
+                {
+                    "kind": "idle_or_restart_later",
+                    "label": "Leave the machine idle; if swap does not fall after jobs finish, do a normal macOS restart",
+                    "reason": pressure.get("reason", ""),
+                }
+            )
+        return {
+            "policy": "wait_only",
+            "state": pressure.get("state"),
+            "actions": actions,
+            "notes": notes,
+        }
+
+    @staticmethod
+    def _process_summary(process: Any) -> dict[str, Any]:
+        command = " ".join(str(getattr(process, "command", "") or "").split())
+        return {
+            "pid": getattr(process, "pid", None),
+            "rss_mb": getattr(process, "rss_mb", None),
+            "user": getattr(process, "user", ""),
+            "command": command if len(command) <= 140 else command[:139] + "…",
+            "les_owned": bool(getattr(process, "les_owned", False)),
+        }
 
     def _reindex_status(
         self,
