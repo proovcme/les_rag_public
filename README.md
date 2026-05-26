@@ -85,12 +85,12 @@ flowchart TD
 
 | Блок | Возможности |
 |---|---|
-| RAG chat | Русскоязычные ответы с источниками, dataset filter, clarification gate |
-| SafeRAG | Post-generation validation, статусы `VERIFIED / NO_DATA / HALLUCINATION` |
+| RAG chat | Русскоязычные ответы с источниками, effective dataset filter, clarification gate |
+| SafeRAG | Post-generation validation, retrieval-window context, статусы `VERIFIED / NO_DATA / HALLUCINATION` |
 | Индексация | Smart plan/sync/upload, Folder Watcher status/scan/reindex-plan, Runtime Dispatcher guarded reindex |
 | Документы | PDF, DOCX, DOC, XLSX, XLS, CSV, EML, MSG, IMAP `.eml`, JSON, JSONL, MD, TXT |
 | Таблицы | Row-level chunks, Parquet artifacts, прямые суммы/количества без LLM |
-| UI | Sovushka Lite chat/admin, legacy NiceGUI fallback, metrics, jobs, runtime controls |
+| UI | Sovushka Lite chat/admin, memory-first admin, legacy NiceGUI fallback, metrics, jobs, runtime controls |
 | Диагностика | `/api/health`, `/api/status`, `/api/metrics`, `/api/diag`, smoke/golden tests |
 | Доступ | Localhost/private network by default; optional reverse proxy behind VPN |
 
@@ -105,6 +105,7 @@ flowchart TD
 | Неподтверждённые ответы | SafeRAG не отдаёт validator timeout/error как нормальный факт |
 | Отравление кэша | Semantic cache сохраняет только verified answers и инвалидируется по scope |
 | Агрессивный memory cleanup | Guards выгружают LES-owned models/jobs; чужие процессы только по решению оператора |
+| XSS в ответах/источниках | Lite UI пишет активный чат и source chips через text nodes, без raw HTML |
 
 ## Стабильность
 
@@ -177,6 +178,25 @@ curl -s 'http://127.0.0.1:8050/api/rag/watch/reindex-plan?source_root=RAG_Conten
 Обычный `/api/rag/watch/scan` регистрирует только `new/changed`; route changes
 не применяются молча, чтобы не оставлять старые Qdrant points в прежнем dataset.
 
+Lite Admin v2 на `/les` сжимает операторский экран до трёх блоков:
+`Dispatcher / Reindex`, `Watcher`, `Memory`. Он показывает campaign progress,
+start/pause/resume, route-change drilldown и top memory consumers как
+рекомендации. Kill actions для пользовательских процессов в v0 нет.
+
+## Post-Index Q&A Hardening
+
+После индексации важны не только новые chunks, но и предсказуемое поведение
+чата:
+
+- `409 indexing mode` отображается в UI как штатная блокировка, а не как
+  непонятная ошибка;
+- `/api/chat` возвращает `effective_dataset_filter`, чтобы клиент и логи
+  видели фактический scope ответа;
+- validator получает расширенный context window вокруг retrieval hits;
+- reranker/validator держатся под общим LLM semaphore, чтобы не спорить за
+  Metal/unified memory с основной моделью;
+- golden set покрывает FIRE, HVAC, ARCH/urban, STRUCTURAL и ambiguous queries.
+
 ## Е.Ж.И.К. Mail Intake
 
 Е.Ж.И.К. импортирует локальные `.eml/.msg` и новые письма через IMAP в
@@ -187,6 +207,16 @@ curl -s 'http://127.0.0.1:8050/api/rag/watch/reindex-plan?source_root=RAG_Conten
 curl -s http://127.0.0.1:8050/api/mail/status | python3 -m json.tool
 curl -X POST http://127.0.0.1:8050/api/mail/import-imap
 ```
+
+API smoke после заполнения `.env`:
+
+```bash
+uv run python tools/ezhik_imap_smoke.py --max-messages 5
+```
+
+Если IMAP credentials не заданы, smoke возвращает `skipped` и ничего не
+импортирует. Вложения и OCR остаются отдельной политикой, чтобы не смешивать
+mail intake с тяжёлым document parsing.
 
 ## Масштабируемость
 
@@ -277,6 +307,7 @@ Focused examples:
 ```bash
 uv run pytest -q tests/test_document_router.py tests/test_retrieval_service.py
 uv run pytest -q tests/test_sovushka_lite_chat.py
+uv run pytest -q tests/test_rag_golden_set.py
 ```
 
 ## Public / Private Boundary
