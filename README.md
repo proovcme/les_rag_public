@@ -87,7 +87,7 @@ flowchart TD
 |---|---|
 | RAG chat | Русскоязычные ответы с источниками, dataset filter, clarification gate |
 | SafeRAG | Post-generation validation, статусы `VERIFIED / NO_DATA / HALLUCINATION` |
-| Индексация | Smart plan/sync/upload, Folder Watcher status/scan, Runtime Dispatcher guarded reindex |
+| Индексация | Smart plan/sync/upload, Folder Watcher status/scan/reindex-plan, Runtime Dispatcher guarded reindex |
 | Документы | PDF, DOCX, DOC, XLSX, XLS, CSV, EML, MSG, IMAP `.eml`, JSON, JSONL, MD, TXT |
 | Таблицы | Row-level chunks, Parquet artifacts, прямые суммы/количества без LLM |
 | UI | Sovushka Lite chat/admin, legacy NiceGUI fallback, metrics, jobs, runtime controls |
@@ -113,7 +113,7 @@ flowchart TD
 | No-Docker host runtime | Меньше overhead на 16-24 GB Mac, особенно под MLX/Metal |
 | Runtime profiles | `CHAT`, `CHAT_VALIDATED`, `INDEX_LIGHT`, `INDEX_HEAVY_PDF`, `MAINTENANCE` |
 | Memory states | `GREEN/YELLOW/RED/CRITICAL` для admission chat/index/warmup |
-| Runtime Dispatcher | Proxy-side status/start/pause/resume для guarded reindex; duplicate start guard |
+| Runtime Dispatcher | Proxy-side status/start/pause/resume для guarded reindex; duplicate start guard; wait-only memory recommendations |
 | Wait-only policy | LES показывает top memory consumers, но не убивает пользовательские процессы автоматически |
 | Model leases | Модели грузятся лениво и выгружаются после операции под давлением памяти |
 | Heavy PDF guard | Большие book-PDF не попадают в auto-index loop без ручного admission |
@@ -163,6 +163,14 @@ curl -s 'http://127.0.0.1:8050/api/rag/watch/status?source_root=RAG_Content' \
 Ответ разделяет `new`, `changed`, `route_changed` и `unchanged`. `route_changed`
 означает, что документ уже был в базе, но новые правила routing отправляют его
 в другой dataset, то есть нужен аккуратный reindex по новым правилам.
+
+```bash
+curl -s 'http://127.0.0.1:8050/api/rag/watch/reindex-plan?source_root=RAG_Content' \
+  | python3 -m json.tool
+```
+
+Обычный `/api/rag/watch/scan` регистрирует только `new/changed`; route changes
+не применяются молча, чтобы не оставлять старые Qdrant points в прежнем dataset.
 
 ## Е.Ж.И.К. Mail Intake
 
