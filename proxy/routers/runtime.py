@@ -66,6 +66,20 @@ class DispatcherPauseRequest(BaseModel):
     reason: str = Field(default="operator", max_length=200)
 
 
+class DispatcherRouteChangeRequest(BaseModel):
+    source_root: str = "RAG_Content"
+    dry_run: bool = True
+    max_docs: int = Field(default=0, ge=0, le=500)
+    min_free_gb: float = Field(default=4.0, ge=0.5, le=64.0)
+    max_swap_pct: float = Field(default=85.0, ge=0.0, le=100.0)
+    post_min_free_gb: float = Field(default=3.0, ge=0.5, le=64.0)
+    post_max_swap_pct: float = Field(default=85.0, ge=0.0, le=100.0)
+    memory_wait_sec: float = Field(default=86400.0, ge=0.0, le=604800.0)
+    memory_poll_sec: float = Field(default=30.0, ge=1.0, le=3600.0)
+    cooldown_sec: float = Field(default=90.0, ge=0.0, le=3600.0)
+    parse_timeout: float = Field(default=3600.0, ge=60.0, le=86400.0)
+
+
 @dataclass
 class RuntimeRouterState:
     rag_backend: Any
@@ -322,6 +336,46 @@ async def runtime_dispatcher_reindex_resume(req: DispatcherReindexRequest, _admi
             parse_timeout=req.parse_timeout,
             auth_smoke_after=req.auth_smoke_after,
         )
+    except DispatcherError as error:
+        raise _dispatcher_error(error) from error
+
+
+@router.get("/runtime/dispatcher/route-changes/status")
+async def runtime_dispatcher_route_changes_status(_admin=Depends(require_admin)):
+    state = get_runtime_state()
+    dispatcher = dispatcher_for_state(state)
+    return await asyncio.to_thread(dispatcher.route_change_status_payload)
+
+
+@router.post("/runtime/dispatcher/route-changes/start")
+async def runtime_dispatcher_route_changes_start(req: DispatcherRouteChangeRequest, _admin=Depends(require_admin)):
+    state = get_runtime_state()
+    dispatcher = dispatcher_for_state(state)
+    try:
+        return await asyncio.to_thread(
+            dispatcher.start_route_change_reindex,
+            source_root=req.source_root,
+            dry_run=req.dry_run,
+            max_docs=req.max_docs,
+            min_free_gb=req.min_free_gb,
+            max_swap_pct=req.max_swap_pct,
+            post_min_free_gb=req.post_min_free_gb,
+            post_max_swap_pct=req.post_max_swap_pct,
+            memory_wait_sec=req.memory_wait_sec,
+            memory_poll_sec=req.memory_poll_sec,
+            cooldown_sec=req.cooldown_sec,
+            parse_timeout=req.parse_timeout,
+        )
+    except DispatcherError as error:
+        raise _dispatcher_error(error) from error
+
+
+@router.post("/runtime/dispatcher/route-changes/pause")
+async def runtime_dispatcher_route_changes_pause(req: DispatcherPauseRequest, _admin=Depends(require_admin)):
+    state = get_runtime_state()
+    dispatcher = dispatcher_for_state(state)
+    try:
+        return await asyncio.to_thread(dispatcher.pause_route_change_reindex, reason=req.reason)
     except DispatcherError as error:
         raise _dispatcher_error(error) from error
 

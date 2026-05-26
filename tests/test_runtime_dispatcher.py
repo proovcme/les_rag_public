@@ -210,3 +210,50 @@ def test_dispatcher_resume_uses_existing_state_and_clears_stop_file(tmp_path):
     assert "--state-file" in calls[0][0]
     assert str(state_path) in calls[0][0]
     assert "--stop-file" in calls[0][0]
+
+
+def test_dispatcher_route_change_start_defaults_to_dry_run(tmp_path):
+    calls = []
+
+    def fake_popen(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return SimpleNamespace(pid=789)
+
+    dispatcher = _dispatcher(tmp_path, popen=fake_popen, pid_running=lambda pid: pid == 789)
+
+    result = dispatcher.start_route_change_reindex()
+
+    assert result["status"] == "dry_run_started"
+    assert result["running"] is True
+    assert calls
+    assert "tools/reindex_route_changes_guarded.py" in calls[0][0]
+    assert "--dry-run" in calls[0][0]
+    assert "--stop-file" in calls[0][0]
+
+
+def test_dispatcher_route_change_apply_waits_for_standard_reindex(tmp_path):
+    state_path, log_path = _write_state(tmp_path, completed=1, total=3)
+    pid_file = tmp_path / "artifacts" / "reindex_runs" / "guarded_reindex_hvac_fire.pid.json"
+    pid_file.write_text(
+        json.dumps({"pid": 123, "state_file": str(state_path), "log_path": str(log_path)}),
+        encoding="utf-8",
+    )
+    dispatcher = _dispatcher(tmp_path, pid_running=lambda pid: pid == 123)
+
+    with pytest.raises(DispatcherError) as exc:
+        dispatcher.start_route_change_reindex(dry_run=False)
+
+    assert exc.value.status_code == 409
+    assert "route-change apply must wait" in exc.value.detail
+
+
+def test_dispatcher_route_change_pause_writes_stop_file(tmp_path):
+    pid_file = tmp_path / "artifacts" / "reindex_runs" / "guarded_reindex_route_changes.pid.json"
+    pid_file.parent.mkdir(parents=True)
+    pid_file.write_text(json.dumps({"pid": 555}), encoding="utf-8")
+    dispatcher = _dispatcher(tmp_path, pid_running=lambda pid: pid == 555)
+
+    result = dispatcher.pause_route_change_reindex(reason="test")
+
+    assert result["status"] == "pause_requested"
+    assert dispatcher.route_change_stop_file.exists()

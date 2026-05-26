@@ -205,3 +205,32 @@ async def test_dispatcher_pause_endpoint_maps_dispatcher_error(runtime_state, mo
 
     assert exc.value.status_code == 409
     assert exc.value.detail["message"] == "not running"
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_route_changes_status_endpoint(runtime_state, monkeypatch):
+    class FakeDispatcher:
+        def route_change_status_payload(self):
+            return {"running": False, "total": 3}
+
+    monkeypatch.setattr(runtime, "dispatcher_for_state", lambda state: FakeDispatcher())
+
+    response = await runtime.runtime_dispatcher_route_changes_status(_admin=object())
+
+    assert response == {"running": False, "total": 3}
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_route_changes_start_endpoint(runtime_state, monkeypatch):
+    class FakeDispatcher:
+        def start_route_change_reindex(self, **kwargs):
+            return {"status": "dry_run_started", "dry_run": kwargs["dry_run"], "source_root": kwargs["source_root"]}
+
+    monkeypatch.setattr(runtime, "dispatcher_for_state", lambda state: FakeDispatcher())
+
+    response = await runtime.runtime_dispatcher_route_changes_start(
+        runtime.DispatcherRouteChangeRequest(source_root="RAG_Content", dry_run=True),
+        _admin=object(),
+    )
+
+    assert response == {"status": "dry_run_started", "dry_run": True, "source_root": "RAG_Content"}

@@ -113,7 +113,7 @@ flowchart TD
 | Lightweight chat/admin shell | `/` и `/les` отдают статические Lite-страницы без NiceGUI client state; `/classic` и `/les/classic` сохраняют rich fallback |
 | Lightweight UI health | Sovushka отвечает `/healthz`; runtime status не рендерит тяжёлую NiceGUI страницу |
 | Durable jobs | `/api/jobs` объединяет SQLite job history и live jobs |
-| Regression suite | На 26.05.2026: `267 passed`, включая auth, storage, runtime admission, SafeRAG, Lite UI и indexer guards |
+| Regression suite | На 26.05.2026: `276 passed`, включая auth, storage, runtime admission, SafeRAG, Lite UI и indexer guards |
 
 Подробная модель памяти описана в [RUNTIME_MEMORY_PROFILES.md](RUNTIME_MEMORY_PROFILES.md).
 
@@ -250,6 +250,11 @@ curl -X POST http://localhost:8050/api/rag/watch/scan \
 # План selective reindex для документов, которые новые правила routing отправляют в другой dataset
 curl -s 'http://localhost:8050/api/rag/watch/reindex-plan?source_root=RAG_Content' \
   | python3 -m json.tool
+
+# Dispatcher-controlled dry-run для route_changed runner; apply требует dry_run=false
+curl -X POST http://localhost:8050/api/runtime/dispatcher/route-changes/start \
+  -H 'Content-Type: application/json' \
+  -d '{"source_root":"RAG_Content","dry_run":true}'
 
 # Smart upload одного файла: индекс выбирается автоматически
 curl -X POST http://localhost:8050/api/rag/upload-smart \
@@ -412,7 +417,7 @@ DOC_ROUTER_SAMPLE_PAGES=3
 - **Е.Ж.И.К. v1:** `/api/mail/status`, `/api/mail/import-local` и `/api/mail/import-imap` регистрируют локальные `.eml/.msg` и новые IMAP-письма в `MAIL_Index`; IMAP credentials читаются только из `.env`, checkpoint UID хранится локально.
 - **BGE/chunk knobs:** `BGE_BATCH_SIZE`, `RAG_EMBED_BATCH`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP`, `RAG_PARSE_POST_MAX_SWAP_PCT`.
 - **Состояние индекса на 26.05.2026:** `indexed_files=801`, `pending_files=1`, `chunks=264307`, Qdrant points `264307`, `points_match_sqlite_chunks=true`, `errors=0`.
-- **Проверки на 26.05.2026:** `uv run pytest -q` → `267 passed`; `git diff --check` → OK.
+- **Проверки на 26.05.2026:** `uv run pytest -q` → `276 passed`; `git diff --check` → OK.
 
 ### Новое в релизе 26.05.2026
 
@@ -424,6 +429,7 @@ DOC_ROUTER_SAMPLE_PAGES=3
 - **Runtime Dispatcher v0:** `/api/runtime/dispatcher/status` объединяет память, launchd-сервисы, guarded reindex и wait-only memory recommendations; chat admission учитывает активный reindex даже после рестарта proxy.
 - **Е.Ж.И.К. IMAP v1:** `/api/mail/import-imap` забирает новые письма через IMAP, сохраняет raw `.eml` в `RAG_Content/MAIL/IMAP`, регистрирует их в `MAIL_Index` и уважает dispatcher/reindex guard.
 - **Folder Watcher v0:** `/api/rag/watch/status` сравнивает smart-plan с SQLite metadata, `/api/rag/watch/scan` регистрирует только `new/changed` файлы без parse, а `/api/rag/watch/reindex-plan` строит dry-run план для `route_changed`.
+- **Route-change guarded runner:** `tools/reindex_route_changes_guarded.py` и `/api/runtime/dispatcher/route-changes/*` готовят безопасный selective reindex для `route_changed`; apply блокируется, пока идёт стандартный guarded reindex.
 - **Sovushka `/healthz`:** runtime health check больше не рендерит страницу `/les`, чтобы не создавать тяжёлый NiceGUI client state.
 - **Launchd hardening:** `start_service` делает `launchctl enable` перед bootstrap/kickstart; disabled labels не ломают восстановление контура.
 

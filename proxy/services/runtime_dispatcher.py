@@ -22,6 +22,9 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATASETS = ["NTD_HVAC_Index", "NTD_FIRE_Index"]
 DEFAULT_PID_FILE = "guarded_reindex_hvac_fire.pid.json"
 DEFAULT_STOP_FILE = "guarded_reindex_hvac_fire.stop.json"
+ROUTE_CHANGE_PID_FILE = "guarded_reindex_route_changes.pid.json"
+ROUTE_CHANGE_STOP_FILE = "guarded_reindex_route_changes.stop.json"
+ROUTE_CHANGE_STATE_FILE = "reindex_state_route_changes.json"
 
 
 class DispatcherError(RuntimeError):
@@ -131,6 +134,18 @@ class RuntimeDispatcher:
     @property
     def stop_file(self) -> Path:
         return self.artifacts_dir / DEFAULT_STOP_FILE
+
+    @property
+    def route_change_pid_file(self) -> Path:
+        return self.artifacts_dir / ROUTE_CHANGE_PID_FILE
+
+    @property
+    def route_change_stop_file(self) -> Path:
+        return self.artifacts_dir / ROUTE_CHANGE_STOP_FILE
+
+    @property
+    def route_change_state_file(self) -> Path:
+        return self.artifacts_dir / ROUTE_CHANGE_STATE_FILE
 
     def state_file(self, datasets: list[str] | None = None) -> Path:
         return guarded.default_state_file(str(self.artifacts_dir), datasets or DEFAULT_DATASETS)
@@ -313,6 +328,154 @@ class RuntimeDispatcher:
 
     def resume_reindex(self, **kwargs: Any) -> dict[str, Any]:
         return self.start_reindex(resume=True, **kwargs)
+
+    def route_change_status_payload(self) -> dict[str, Any]:
+        pid_info = _read_json(self.route_change_pid_file)
+        pid = int(pid_info.get("pid") or 0)
+        running = self.pid_running_fn(pid)
+        state_path = Path(pid_info.get("state_file") or self.route_change_state_file)
+        if not state_path.is_absolute():
+            state_path = self.root / state_path
+        state = _read_json(state_path)
+        completed = state.get("completed") if isinstance(state.get("completed"), dict) else {}
+        log_path_raw = str(pid_info.get("log_path") or "")
+        log_path = Path(log_path_raw) if log_path_raw else None
+        if log_path is not None and not log_path.is_absolute():
+            log_path = self.root / log_path
+        events = _tail_json_events(log_path) if log_path is not None else []
+        last_event = events[-1] if events else {}
+        plan = self._last_named_event(events, "plan")
+        total = int(plan.get("total") or 0) + int(plan.get("completed_in_state") or 0) if plan else len(completed or {})
+        done = self._last_named_event(events, "done")
+        complete = bool((done or (total and len(completed or {}) >= total)) and not running)
+        return {
+            "running": running,
+            "pid": pid if running else None,
+            "stale_pid": bool(pid and not running),
+            "pid_file": str(self.route_change_pid_file),
+            "state_file": str(state_path),
+            "state_exists": state_path.exists() and "error" not in state,
+            "stop_file": str(self.route_change_stop_file),
+            "pause_requested": bool(self.route_change_stop_file.exists() and running),
+            "supports_pause": True,
+            "completed": len(completed or {}),
+            "total": total,
+            "remaining": max(0, total - len(completed or {})) if total else 0,
+            "last_log": str(log_path) if log_path is not None else "",
+            "last_started_at": pid_info.get("started_at"),
+            "last_event": last_event,
+            "complete": complete,
+        }
+
+    def start_route_change_reindex(
+        self,
+        *,
+        source_root: str = "RAG_Content",
+        dry_run: bool = True,
+        max_docs: int = 0,
+        min_free_gb: float = 4.0,
+        max_swap_pct: float = 85.0,
+        post_min_free_gb: float = 3.0,
+        post_max_swap_pct: float = 85.0,
+        memory_wait_sec: float = 86400.0,
+        memory_poll_sec: float = 30.0,
+        cooldown_sec: float = 90.0,
+        parse_timeout: float = 3600.0,
+    ) -> dict[str, Any]:
+        route_status = self.route_change_status_payload()
+        if route_status["running"]:
+            route_status["status"] = "already_running"
+            return route_status
+        active_reindex = self.reindex_status_payload()
+        if active_reindex.get("running") and not dry_run:
+            raise DispatcherError(
+                409,
+                "standard guarded reindex is running; route-change apply must wait for baseline",
+                {"reindex": active_reindex, "route_changes": route_status},
+            )
+        status = self.status_payload(min_free_gb=min_free_gb, max_swap_pct=max_swap_pct, include_services=False)
+        if not dry_run and not status["memory"]["decision"]["allowed"]:
+            raise DispatcherError(503, status["memory"]["decision"]["reason"], status)
+
+        self.artifacts_dir.mkdir(parents=True, exist_ok=True)
+        self.route_change_stop_file.unlink(missing_ok=True)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        log_path = self.artifacts_dir / f"route_changes_{stamp}.out"
+        cmd = [
+            sys.executable,
+            "tools/reindex_route_changes_guarded.py",
+            "--source-root",
+            source_root,
+            "--state-file",
+            str(self.route_change_state_file),
+            "--stop-file",
+            str(self.route_change_stop_file),
+            "--min-free-gb",
+            str(min_free_gb),
+            "--max-swap-pct",
+            str(max_swap_pct),
+            "--post-min-free-gb",
+            str(post_min_free_gb),
+            "--post-max-swap-pct",
+            str(post_max_swap_pct),
+            "--memory-wait-sec",
+            str(memory_wait_sec),
+            "--memory-poll-sec",
+            str(memory_poll_sec),
+            "--cooldown-sec",
+            str(cooldown_sec),
+            "--parse-timeout",
+            str(parse_timeout),
+        ]
+        if max_docs > 0:
+            cmd.extend(["--max-docs", str(max_docs)])
+        if dry_run:
+            cmd.append("--dry-run")
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        with log_path.open("ab") as output:
+            process = self.popen_factory(
+                cmd,
+                cwd=self.root,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+                close_fds=True,
+                env=env,
+            )
+        _write_json(
+            self.route_change_pid_file,
+            {
+                "pid": int(process.pid),
+                "cmd": cmd,
+                "log_path": str(log_path),
+                "state_file": str(self.route_change_state_file),
+                "stop_file": str(self.route_change_stop_file),
+                "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "dispatcher": "route_changes_v0",
+                "dry_run": dry_run,
+            },
+        )
+        result = self.route_change_status_payload()
+        result["status"] = "dry_run_started" if dry_run else "started"
+        return result
+
+    def pause_route_change_reindex(self, *, reason: str = "operator") -> dict[str, Any]:
+        status = self.route_change_status_payload()
+        if not status["running"]:
+            raise DispatcherError(409, "route-change reindex is not running", {"route_changes": status})
+        _write_json(
+            self.route_change_stop_file,
+            {
+                "requested_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "reason": reason,
+                "policy": "safe_boundary",
+            },
+        )
+        result = self.route_change_status_payload()
+        result["status"] = "pause_requested"
+        return result
 
     def _memory_preflight(self, *, min_free_gb: float) -> Any:
         return self.memory_preflight_fn(limit=10, min_rss_mb=700.0, min_free_gb=min_free_gb)
