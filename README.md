@@ -428,6 +428,7 @@ DOC_ROUTER_SAMPLE_PAGES=3
 - **Sovushka Lite Admin:** `/les` теперь статическая memory-first админка; прежняя rich NiceGUI admin доступна на `/les/classic`.
 - **Runtime Dispatcher v0:** `/api/runtime/dispatcher/status` объединяет память, launchd-сервисы, guarded reindex и wait-only memory recommendations; chat admission учитывает активный reindex даже после рестарта proxy. One-click reindex может стартовать до `swap_pct < 85`, но post-document gate по умолчанию ждёт снижения до `<= 80`, чтобы длинные кампании не накачивали swap без пауз.
 - **Е.Ж.И.К. IMAP v1:** `/api/mail/import-imap` забирает новые письма через IMAP, сохраняет raw `.eml` в `RAG_Content/MAIL/IMAP`, регистрирует их в `MAIL_Index` и уважает dispatcher/reindex guard.
+- **Е.Ж.И.К. threads v1:** `/api/mail/messages`, `/api/mail/threads` и `/api/mail/threads/{thread_key}` дают отдельную почтовую выдачу: кто кому писал, о чём письмо, участники и цепочки по `Message-ID / In-Reply-To / References` с fallback по теме.
 - **Folder Watcher v0:** `/api/rag/watch/status` сравнивает smart-plan с SQLite metadata, `/api/rag/watch/scan` регистрирует только `new/changed` файлы без parse, а `/api/rag/watch/reindex-plan` строит dry-run план для `route_changed`.
 - **Route-change guarded runner:** `tools/reindex_route_changes_guarded.py` и `/api/runtime/dispatcher/route-changes/*` готовят безопасный selective reindex для `route_changed`; apply блокируется, пока идёт стандартный guarded reindex.
 - **Sovushka `/healthz`:** runtime health check больше не рендерит страницу `/les`, чтобы не создавать тяжёлый NiceGUI client state.
@@ -551,6 +552,19 @@ uv run python tools/ezhik_imap_smoke.py --max-messages 5
 импортирует. При настроенном IMAP он проверяет `/api/mail/status`, вызывает
 `POST /api/mail/import-imap` с `parse=false` и подтверждает регистрацию писем в
 `MAIL_Index`.
+
+Отдельная почтовая выдача работает поверх сохранённых `.eml/.msg`, поэтому не
+требует переиндексации:
+
+```bash
+curl -s 'http://127.0.0.1:8050/api/mail/threads?limit=20' | python3 -m json.tool
+curl -s 'http://127.0.0.1:8050/api/mail/messages?participant=ivan@example.com' | python3 -m json.tool
+```
+
+`/api/mail/threads` группирует письма по `Message-ID`, `In-Reply-To` и
+`References`; если технических заголовков нет, используется нормализованная
+тема без `Re:/Fwd:`. Lite Chat показывает этот слой отдельной кнопкой
+`Е.Ж.И.К. Почта -> ЦЕПОЧКИ`, не смешивая переписку с обычной RAG-выдачей.
 
 Qwen-native индексирование идёт в отдельную коллекцию, чтобы не смешивать векторы разных embedding-моделей:
 `LES_EMBED_PROFILE=qwen`, `EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B`,
@@ -677,6 +691,7 @@ MIT — используй, форкай, улучшай.
 - [ ] Field Intake — внешние формы загрузки в карантинный `FIELD_Index`
 - [x] Е.Ж.И.К. v0 — локальный импорт EML/MSG в `MAIL_Index`
 - [x] Е.Ж.И.К. v1 — IMAP коннектор для почты
+- [x] Е.Ж.И.К. v2 — отдельная выдача писем: who-to-whom, snippets, thread chains
 - [ ] VLM pipeline — анализ PDF-чертежей
 
 ### Backlog ускорения и оптимизации

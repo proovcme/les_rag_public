@@ -79,6 +79,21 @@ def _write_eml(path):
     path.write_bytes(msg.as_bytes())
 
 
+def _write_thread_eml(path, *, subject, sender, to, message_id, body, date, in_reply_to="", references=""):
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = sender
+    msg["To"] = to
+    msg["Date"] = date
+    msg["Message-ID"] = message_id
+    if in_reply_to:
+        msg["In-Reply-To"] = in_reply_to
+    if references:
+        msg["References"] = references
+    msg.set_content(body)
+    path.write_bytes(msg.as_bytes())
+
+
 @pytest.mark.asyncio
 async def test_mail_status_reports_missing_mail_dataset(mail_state):
     status = await mail.mail_status(_user=object())
@@ -202,3 +217,85 @@ async def test_import_imap_mail_registers_fetched_eml(tmp_path, monkeypatch, mai
     assert mail_state.uploads == [
         ("ds-1", "0000000001_test.eml", "MAIL/IMAP/mail@example.com/INBOX/0000000001_test.eml")
     ]
+
+
+@pytest.mark.asyncio
+async def test_mail_threads_endpoint_returns_who_to_whom_and_chain(tmp_path, mail_state):
+    content_dir = tmp_path / "storage" / "datasets"
+    mail_state.content_dir = content_dir
+    mail_state.datasets.append(Dataset("mail-ds", "MAIL_Index"))
+    root = content_dir / "mail-ds" / "MAIL"
+    root.mkdir(parents=True)
+    _write_thread_eml(
+        root / "01.eml",
+        subject="Проект Б: письмо",
+        sender="Alice <alice@example.com>",
+        to="Bob <bob@example.com>",
+        message_id="<b1@example.com>",
+        body="Кто кому что отправил.",
+        date="Tue, 26 May 2026 09:00:00 +0300",
+    )
+    _write_thread_eml(
+        root / "02.eml",
+        subject="Re: Проект Б: письмо",
+        sender="Bob <bob@example.com>",
+        to="Alice <alice@example.com>",
+        message_id="<b2@example.com>",
+        in_reply_to="<b1@example.com>",
+        references="<b1@example.com>",
+        body="Ответ по цепочке.",
+        date="Tue, 26 May 2026 10:00:00 +0300",
+    )
+
+    result = await mail.list_mail_threads(
+        q="Проект Б",
+        participant="",
+        limit=10,
+        max_files=100,
+        _user=object(),
+    )
+
+    assert result["total_threads"] == 1
+    assert result["total_messages"] == 2
+    thread = result["threads"][0]
+    assert thread["subject"] == "Проект Б: письмо"
+    assert thread["who_to_whom"]["from"] == "Bob <bob@example.com>"
+    assert thread["who_to_whom"]["to"] == ["Alice <alice@example.com>"]
+    assert thread["what"]["snippet"] == "Ответ по цепочке."
+
+    detail = await mail.get_mail_thread(thread["thread_key"], max_files=100, _user=object())
+    assert [message["sender"] for message in detail["messages"]] == [
+        "Alice <alice@example.com>",
+        "Bob <bob@example.com>",
+    ]
+    assert detail["edges"] == [{"from_message_id": "b1@example.com", "to_message_id": "b2@example.com"}]
+
+
+@pytest.mark.asyncio
+async def test_mail_messages_endpoint_filters_by_participant(tmp_path, mail_state):
+    content_dir = tmp_path / "storage" / "datasets"
+    mail_state.content_dir = content_dir
+    mail_state.datasets.append(Dataset("mail-ds", "MAIL_Index"))
+    root = content_dir / "mail-ds"
+    root.mkdir(parents=True)
+    _write_thread_eml(
+        root / "01.eml",
+        subject="Фильтр",
+        sender="Alice <alice@example.com>",
+        to="Bob <bob@example.com>",
+        message_id="<f1@example.com>",
+        body="Письмо для поиска.",
+        date="Tue, 26 May 2026 09:00:00 +0300",
+    )
+
+    result = await mail.list_mail_messages(
+        q="",
+        participant="bob@example.com",
+        thread_key="",
+        limit=10,
+        max_files=100,
+        _user=object(),
+    )
+
+    assert result["total"] == 1
+    assert result["messages"][0]["who_to_whom"]["to"] == ["Bob <bob@example.com>"]

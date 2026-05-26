@@ -377,6 +377,13 @@ def lite_chat_html() -> str:
           <input id="dataset" type="text" placeholder="dataset filter, optional">
         </div>
         <div class="section">
+          <div class="section-title">Е.Ж.И.К. Почта</div>
+          <input id="mailQuery" type="text" placeholder="поиск: тема, участник, фраза">
+          <div style="height:8px"></div>
+          <button id="mailThreadsBtn" type="button">ЦЕПОЧКИ</button>
+          <div id="mailText" class="hint">Кто кому что писал и цепочки писем.</div>
+        </div>
+        <div class="section">
           <div class="section-title">Сессия</div>
           <div id="sessionText" class="hint"></div>
           <button id="newSessionBtn" type="button">НОВАЯ СЕССИЯ</button>
@@ -616,7 +623,46 @@ def lite_chat_html() -> str:
       }
     }
 
+    function formatMailThreads(data) {
+      const lines = [
+        "Е.Ж.И.К.: " + (data.total_threads || 0) + " цепочек / " + (data.total_messages || 0) + " писем"
+      ];
+      const threads = (data.threads || []).slice(0, 8);
+      if (!threads.length) {
+        lines.push("Ничего не найдено.");
+        return lines.join("\n");
+      }
+      threads.forEach((thread, idx) => {
+        const who = thread.who_to_whom || {};
+        const what = thread.what || {};
+        const to = (who.to || []).join(", ") || "?";
+        lines.push("");
+        lines.push((idx + 1) + ". " + (thread.subject || "(без темы)") + " [" + (thread.message_count || 0) + "]");
+        lines.push((thread.last_date || "") + " | " + (who.from || "?") + " -> " + to);
+        if (what.snippet) lines.push(what.snippet);
+        lines.push("thread=" + thread.thread_key);
+      });
+      return lines.join("\n");
+    }
+
+    async function showMailThreads() {
+      const q = el("mailQuery").value.trim();
+      el("mailThreadsBtn").disabled = true;
+      try {
+        const query = q ? "&q=" + encodeURIComponent(q) : "";
+        const data = await request("/api/mail/threads?limit=8" + query, { method: "GET" });
+        addMessage(formatMailThreads(data), "msg-ai", { crag: "MAIL" });
+        el("mailText").textContent = "Найдено: " + (data.total_threads || 0) + " цепочек.";
+      } catch (error) {
+        addMessage("Почта: " + error.message, "msg-sys");
+        if (error.status === 401 || error.status === 403) showAuth(true, error.message);
+      } finally {
+        el("mailThreadsBtn").disabled = false;
+      }
+    }
+
     el("sendBtn").addEventListener("click", send);
+    el("mailThreadsBtn").addEventListener("click", showMailThreads);
     el("loginBtn").addEventListener("click", login);
     el("keyInput").addEventListener("keydown", (event) => { if (event.key === "Enter") login(); });
     el("question").addEventListener("keydown", (event) => {

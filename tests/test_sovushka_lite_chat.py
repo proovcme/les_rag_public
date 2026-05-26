@@ -9,6 +9,8 @@ def test_lite_chat_html_uses_static_shell_and_local_bridge():
     assert "/lite-api" in html
     assert 'path.replace(/^\\/api(?=\\/)/, "")' in html
     assert "/api/chat" in html
+    assert "/api/mail/threads" in html
+    assert "Е.Ж.И.К. Почта" in html
     assert "/classic" in html
     assert "Индексирование активно:" in html
     assert "bot.innerHTML" not in html
