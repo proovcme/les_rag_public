@@ -208,6 +208,17 @@ curl -s http://127.0.0.1:8050/api/mail/status | python3 -m json.tool
 curl -X POST http://127.0.0.1:8050/api/mail/import-imap
 ```
 
+Отдельная почтовая выдача не смешивает письма с обычными документами:
+
+```bash
+curl -s 'http://127.0.0.1:8050/api/mail/threads?limit=20' | python3 -m json.tool
+curl -s 'http://127.0.0.1:8050/api/mail/messages?participant=ivan@example.com' | python3 -m json.tool
+```
+
+Она показывает `who_to_whom`, тему, snippet, участников и цепочки по
+`Message-ID / In-Reply-To / References`; если технических заголовков нет,
+цепочка группируется по нормализованной теме.
+
 API smoke после заполнения `.env`:
 
 ```bash
