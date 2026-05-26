@@ -39,3 +39,7 @@ Thumbs.db
 
 # Generated local workbench exports
 qdrant_visualizer/data.js
+
+# Local runtime artifacts
+artifacts/
+.qdrant-initialized

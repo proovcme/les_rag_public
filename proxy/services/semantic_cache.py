@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+from backend.rag_config import rag_meta_db_path
+
 
 _WS_RE = re.compile(r"\s+")
 
@@ -21,6 +23,7 @@ class SemanticCacheHit:
     answer: str
     sources: list[str]
     similarity: float
+    cache_type: str = "verified_semantic"
 
 
 def semantic_cache_enabled() -> bool:
@@ -83,8 +86,8 @@ async def embed_question(rag_backend: Any, question: str) -> Optional[list[float
 
 
 class SemanticCache:
-    def __init__(self, db_path: str = "./data/les_meta.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: str | None = None):
+        self.db_path = db_path or rag_meta_db_path()
 
     def _connect(self) -> sqlite3.Connection:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -106,6 +109,26 @@ class SemanticCache:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_semantic_cache_scope "
             "ON semantic_answer_cache(scope_key, crag_status, created_at)"
+        )
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS session_answer_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                normalized_question TEXT NOT NULL,
+                scope_key TEXT NOT NULL,
+                retrieval_fingerprint TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                answer TEXT NOT NULL,
+                sources_json TEXT NOT NULL,
+                crag_status TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                expires_at REAL NOT NULL,
+                hit_count INTEGER DEFAULT 0,
+                last_hit_at REAL DEFAULT NULL
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_session_answer_cache_exact "
+            "ON session_answer_cache(session_id, normalized_question, scope_key, retrieval_fingerprint, expires_at)"
         )
         return conn
 
@@ -182,5 +205,82 @@ class SemanticCache:
                     json.dumps(sources, ensure_ascii=False),
                     crag_status,
                     time.time(),
+                ),
+            )
+
+    def lookup_session_unvalidated(
+        self,
+        question: str,
+        scope_key: str,
+        retrieval_fingerprint: str,
+        session_id: str | None,
+    ) -> Optional[SemanticCacheHit]:
+        if not session_id or not retrieval_fingerprint:
+            return None
+        now = time.time()
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, answer, sources_json
+                FROM session_answer_cache
+                WHERE session_id=?
+                  AND normalized_question=?
+                  AND scope_key=?
+                  AND retrieval_fingerprint=?
+                  AND crag_status='UNVALIDATED'
+                  AND expires_at>?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (session_id, normalize_question(question), scope_key, retrieval_fingerprint, now),
+            ).fetchone()
+            if not row:
+                return None
+            conn.execute(
+                "UPDATE session_answer_cache SET hit_count=hit_count+1, last_hit_at=? WHERE id=?",
+                (now, row[0]),
+            )
+            try:
+                sources = json.loads(row[2])
+            except Exception:
+                sources = []
+            return SemanticCacheHit(
+                answer=row[1],
+                sources=sources,
+                similarity=1.0,
+                cache_type="session_unvalidated",
+            )
+
+    def store_session_unvalidated(
+        self,
+        question: str,
+        scope_key: str,
+        retrieval_fingerprint: str,
+        answer: str,
+        sources: list[str],
+        crag_status: str,
+        session_id: str | None,
+        ttl_sec: int = 86400,
+    ) -> None:
+        if crag_status != "UNVALIDATED" or not session_id or not retrieval_fingerprint:
+            return
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO session_answer_cache
+                (normalized_question, scope_key, retrieval_fingerprint, session_id, answer, sources_json, crag_status, created_at, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    normalize_question(question),
+                    scope_key,
+                    retrieval_fingerprint,
+                    session_id,
+                    answer,
+                    json.dumps(sources, ensure_ascii=False),
+                    crag_status,
+                    now,
+                    now + ttl_sec,
                 ),
             )

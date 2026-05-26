@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from proxy.config import META_DB_PATH
 from proxy.security import require_admin
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ class AuthKeyDelete(BaseModel):
 
 
 def auth_db() -> sqlite3.Connection:
-    conn = sqlite3.connect("./data/les_meta.db", check_same_thread=False)
+    conn = sqlite3.connect(META_DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute(
         """

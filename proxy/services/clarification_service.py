@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Optional
 
+from proxy.services.kot_service import analyze_question
 from proxy.services.retrieval_service import classify_query
 
 
@@ -16,6 +17,7 @@ class QueryClassification:
     intent: str
     scope: str
     reasons: list[str]
+    kot: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -113,9 +115,14 @@ def classify_for_clarification(
     q = question.casefold().strip()
     words = [word for word in q.replace("\n", " ").split(" ") if word]
     route = classify_query(question)
+    kot = analyze_question(question, dataset_filter=dataset_filter, dataset_ids=dataset_ids)
     explicit_scope = bool(dataset_ids or dataset_filter)
 
-    domains = _domains(q)
+    domains = (
+        [(match.dataset_filter, match.label) for match in kot.matched_domains]
+        if kot.matched_domains
+        else _domains(q)
+    )
     intent = _intent(q)
     scope = "explicit" if explicit_scope else ("mentioned" if any(token in q for token in SCOPE_TOKENS) else "missing")
 
@@ -125,6 +132,8 @@ def classify_for_clarification(
             reasons.append("broad_review_without_domain")
         if route.dataset_filter is None and len(words) <= 4:
             reasons.append("short_unrouted_query")
+        if kot.ambiguous:
+            reasons.append("ambiguous_kot_match")
         if len({filter_name for filter_name, _domain in domains}) > 1 and intent == "broad_review":
             reasons.append("multi_domain_review")
         if intent == "broad_review" and scope == "missing":
@@ -137,6 +146,7 @@ def classify_for_clarification(
         intent=intent,
         scope=scope,
         reasons=_dedupe(reasons),
+        kot=kot.payload(),
     )
 
 

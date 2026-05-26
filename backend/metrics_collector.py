@@ -46,20 +46,23 @@ def init_db():
             swap_used        REAL,
             disk_used        REAL,
             disk_total       REAL,
-            ollama_ram       REAL,
+            llm_ram          REAL,
             network_ok       INTEGER,
             heartbeat_collector REAL,
             heartbeat_sse    REAL
         )
     """)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(metrics)").fetchall()}
+    if "llm_ram" not in columns:
+        conn.execute("ALTER TABLE metrics ADD COLUMN llm_ram REAL DEFAULT 0")
     conn.commit()
     conn.close()
     _db_initialized = True
     logger.info("[METRICS] DB инициализирована")
 
 
-async def _get_ollama_ram() -> float:
-    """Асинхронно запрашивает RAM занятый Ollama/MLX моделями."""
+async def _get_llm_ram() -> float:
+    """Асинхронно запрашивает RAM, занятый загруженными MLX моделями."""
     try:
         async with httpx.AsyncClient(timeout=2.0) as c:
             r = await c.get(f"{MLX_HOST}/api/ps")
@@ -87,7 +90,7 @@ def _write_metrics(row: tuple):
     conn.execute("""
         INSERT INTO metrics
           (timestamp, cpu, ram_used, ram_total, swap_used,
-           disk_used, disk_total, ollama_ram, network_ok,
+           disk_used, disk_total, llm_ram, network_ok,
            heartbeat_collector, heartbeat_sse)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, row)
@@ -111,7 +114,7 @@ async def metrics_loop():
             disk = psutil.disk_usage("/")
             cpu  = psutil.cpu_percent()
 
-            ollama_ram = await _get_ollama_ram()
+            llm_ram = await _get_llm_ram()
             network_ok = await _get_network_ok()
 
             heartbeats["collector"] = time.time()
@@ -122,7 +125,7 @@ async def metrics_loop():
                 vm.used / 1e9, vm.total / 1e9,
                 sw.used / 1e9,
                 disk.used / 1e9, disk.total / 1e9,
-                ollama_ram, network_ok,
+                llm_ram, network_ok,
                 heartbeats["collector"],
                 heartbeats["sse_emitter"],
             )

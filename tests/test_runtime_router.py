@@ -43,7 +43,11 @@ def runtime_state(request):
 
 @pytest.mark.asyncio
 async def test_health_uses_configured_backend(runtime_state):
-    assert await runtime.health() == {"status": "ok", "backend": "qdrant_llama"}
+    response = await runtime.health()
+
+    assert response["status"] == "ok"
+    assert response["backend"] == "qdrant_llama"
+    assert response["embedding"]["collection"]
 
 
 @pytest.mark.asyncio
@@ -98,3 +102,29 @@ async def test_indexing_mode_can_return_to_chat(runtime_state):
     assert response["active"] is False
     assert runtime_state["mode"] == "chat"
     assert runtime_state["chat_generation"] == "allowed"
+
+
+@pytest.mark.asyncio
+async def test_indexing_mode_reports_runtime_admission(runtime_state):
+    runtime.get_runtime_state().metrics_cache.update({"ram_free_gb": 5.0, "swap_pct": 86.0})
+
+    response = await runtime.get_indexing_mode()
+
+    assert response["chat_generation_allowed"] is False
+    assert response["chat_admission"]["status_code"] == 503
+    assert "swap_pct=86.0 > 60.0" in response["chat_generation_reason"]
+
+
+@pytest.mark.asyncio
+async def test_status_includes_embedding_trace(runtime_state):
+    response = await runtime.get_status()
+
+    assert response["embedding"]["profile"]
+    assert response["embedding"]["meta_db"]
+
+
+@pytest.mark.asyncio
+async def test_status_includes_chat_admission(runtime_state):
+    response = await runtime.get_status()
+
+    assert response["chat_admission"]["allowed"] is True

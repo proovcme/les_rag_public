@@ -54,5 +54,36 @@ def test_semantic_cache_ignores_non_verified_entries(tmp_path):
     assert cache.lookup("q", "scope", [1.0], threshold=0.1) is None
 
 
+def test_unvalidated_session_cache_is_exact_and_session_scoped(tmp_path):
+    cache = SemanticCache(str(tmp_path / "data" / "les_meta.db"))
+    cache.store_session_unvalidated(
+        "q",
+        "scope",
+        "fp",
+        "draft answer",
+        ["doc"],
+        "UNVALIDATED",
+        "session-a",
+    )
+
+    hit = cache.lookup_session_unvalidated("q", "scope", "fp", "session-a")
+
+    assert hit is not None
+    assert hit.answer == "draft answer"
+    assert hit.cache_type == "session_unvalidated"
+    assert cache.lookup_session_unvalidated("q", "scope", "fp", "session-b") is None
+    assert cache.lookup("q", "scope", [1.0], threshold=0.1) is None
+
+
+def test_semantic_cache_default_uses_active_meta_db_path(tmp_path, monkeypatch):
+    db_path = tmp_path / "data" / "les_meta_qwen.db"
+    monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+
+    cache = SemanticCache()
+    cache.store("q", "scope", [1.0], "answer", [], "VERIFIED")
+
+    assert db_path.exists()
+
+
 def test_cosine_similarity_handles_zero_vectors():
     assert cosine_similarity([0.0], [1.0]) == 0.0

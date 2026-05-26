@@ -1,5 +1,5 @@
 """
-С.О.В.У.Ш.К.А. v5.0 — Вкладка 🔬 ДИАГНОСТИКА
+С.О.В.У.Ш.К.А. v5.0 — вкладка Д.И.А.Г.Н.О.З.
 """
 from __future__ import annotations
 
@@ -9,25 +9,183 @@ from nicegui import ui
 
 from sovushka.state import state, api_get, add_log
 from sovushka.config import MLX_URL
-from sovushka.components.charts import _html
+from sovushka.components.charts import _html, esc
+
+
+def _build_diag_map_html(results: list) -> str:
+    """Строит компактную HTML-карту контура с живыми статусами узлов."""
+    result_map = {r["name"]: r for r in results}
+
+    def st(*names: str) -> str:
+        for name in names:
+            if name in result_map:
+                return result_map[name].get("status", "idle")
+        return "idle"
+
+    def safe_status(value: str) -> str:
+        return value if value in {"ok", "warn", "err", "idle"} else "idle"
+
+    def node(title: str, subtitle: str, status: str, *, hub: bool = False) -> str:
+        status = safe_status(status)
+        label = {"ok": "OK", "warn": "WARN", "err": "ERR", "idle": "WAIT"}[status]
+        hub_cls = " diag-node-hub" if hub else ""
+        return (
+            f'<div class="diag-node diag-node-{status}{hub_cls}">'
+            f'  <div class="diag-node-head">'
+            f'    <span class="diag-node-dot"></span>'
+            f'    <span class="diag-node-title">{esc(title)}</span>'
+            f'    <span class="diag-node-state">{label}</span>'
+            f'  </div>'
+            f'  <div class="diag-node-sub">{esc(subtitle)}</div>'
+            f'</div>'
+        )
+
+    def group(title: str, items: list[str]) -> str:
+        return (
+            '<div class="diag-map-group">'
+            f'  <div class="diag-map-group-title">{esc(title)}</div>'
+            f'  <div class="diag-map-group-body">{"".join(items)}</div>'
+            '</div>'
+        )
+
+    ingress = [
+        node("Сеть", "интернет / доступы", st("Интернет", "Сеть (интернет)")),
+        node("С.О.В.У.Ш.К.А.", "NiceGUI :8051", "ok"),
+    ]
+    proxy = node("les-proxy", "FastAPI :8050", st("les-proxy :8050"), hub=True)
+    groups = [
+        group("RAG-память", [
+            node("Qdrant", "векторы :6333", st("Qdrant :6333")),
+            node("Qwen index", "chunks = points", st("Qdrant индекс", "Qdrant :6333")),
+            node("SQLite", "метабаза", st("SQLite метабаза")),
+        ]),
+        group("Модели", [
+            node("MLX Host", "локальный inference :8080", st("MLX Backend", "MLX Host :8080")),
+            node("Latency", "health / chat", st("MLX latency", "Chat latency (тест)")),
+            node("Т.О.С.К.А.", "quality gate", st("Т.О.С.К.А. статистика")),
+        ]),
+        group("Хост", [
+            node("RAM", "память", st("RAM")),
+            node("CPU", "нагрузка", st("CPU")),
+            node("Диск", "свободное место", st("Диск")),
+            node("Docker", "runtime отсутствует", st("Docker runtime", "Docker")),
+        ]),
+    ]
+
+    return (
+        '<div class="diag-live-map">'
+        f'  <div class="diag-map-stack">{"".join(ingress)}</div>'
+        '  <div class="diag-map-arrow" aria-hidden="true"></div>'
+        f'  <div class="diag-map-proxy">{proxy}</div>'
+        '  <div class="diag-map-arrow" aria-hidden="true"></div>'
+        f'  <div class="diag-map-groups">{"".join(groups)}</div>'
+        '</div>'
+    )
+
+
+def _build_acronym_glossary_html() -> str:
+    """Возвращает компактный словарь системных сокращений."""
+    items = [
+        ("Л.Е.С.", "Локальная Единая Система", "ядро и рабочий контур"),
+        ("С.О.В.У.Ш.К.А.", "Система Обработки и Выдачи: Умная, Шаблонизированная, Классифицированная, Автоматизированная", "интерфейс"),
+        ("С.А.М.О.В.А.Р.", "Система Автономной Машинной Обработки Внутренних Архивов RAG", "индекс знаний"),
+        ("П.Р.О.Р.А.Б.", "Программа Регулярной Оценки Работы Автономной Базы", "метрики"),
+        ("Д.И.А.Г.Н.О.З.", "Диспетчер Инфраструктурного Анализа Готовности, Нагрузки, Ошибок и Здоровья", "проверки"),
+        ("Т.О.С.К.А.", "Терминал Оценки, Самопроверки и Контроля Архитектуры", "валидация"),
+        ("В.О.Л.К.", "Внутренний Охранный Локальный Контур", "доступ"),
+        ("RAG", "Retrieval-Augmented Generation", "ответ с поиском по источникам"),
+        ("CRAG", "Corrective RAG", "контроль достоверности ответа"),
+        ("MLX", "Apple MLX / Metal runtime", "локальные модели"),
+    ]
+    cards = []
+    for code, full, role in items:
+        cards.append(
+            '<div class="diag-acronym-item">'
+            f'  <div class="diag-acronym-code">{esc(code)}</div>'
+            f'  <div class="diag-acronym-full">{esc(full)}</div>'
+            f'  <div class="diag-acronym-role">{esc(role)}</div>'
+            '</div>'
+        )
+    return '<div class="diag-acronym-grid">' + "".join(cards) + "</div>"
+
+
+def _normalize_diag_payload(payload: dict) -> dict:
+    """Сглаживает старый контракт /api/diag под no-Docker runtime без рестарта proxy."""
+    normalized = dict(payload or {})
+    raw_checks = list((payload or {}).get("checks", []))
+    mlx_health_ok = any(
+        raw.get("name") == "MLX latency" and "MLX health OK" in str(raw.get("message", ""))
+        for raw in raw_checks
+    )
+    checks = []
+    for raw in raw_checks:
+        item = dict(raw)
+        name = item.get("name", "")
+        value_msg = f"{item.get('value', '')} {item.get('message', '')}".lower()
+        docker_missing = (
+            name == "Docker"
+            and item.get("status") == "err"
+            and ("no such file" in value_msg or "not found" in value_msg or "docker" in value_msg)
+        )
+        if docker_missing:
+            item.update(
+                name="Docker runtime",
+                status="ok",
+                value="removed",
+                expected="no Docker",
+                message="Qdrant/proxy/UI/MLX run on host LaunchAgents",
+            )
+        elif name == "MLX Backend" and item.get("status") == "err" and mlx_health_ok:
+            item.update(
+                status="warn",
+                value="main idle",
+                expected="health OK",
+                message="MLX health отвечает; основная модель загружается лениво",
+            )
+        elif (
+            name == "Т.О.С.К.А. статистика"
+            and item.get("status") == "err"
+            and str(item.get("value", "")).startswith("V:0 N:0 H:0")
+        ):
+            item.update(
+                status="warn",
+                expected="first validation sample",
+                message="статистики валидации ещё нет",
+            )
+        checks.append(item)
+
+    ok_count = sum(1 for result in checks if result.get("status") == "ok")
+    warn_count = sum(1 for result in checks if result.get("status") == "warn")
+    err_count = sum(1 for result in checks if result.get("status") == "err")
+    normalized.update(
+        checks=checks,
+        ok_count=ok_count,
+        warn_count=warn_count,
+        err_count=err_count,
+        overall="ok" if err_count == 0 and warn_count <= 1 else ("warn" if err_count == 0 else "err"),
+    )
+    return normalized
 
 
 def build_diag():
-    """Строит содержимое вкладки 🔬 ДИАГНОСТИКА. Вызывать внутри with ui.tab_panel(tab_diag)."""
-    with ui.column().classes("w-full max-w-5xl mx-auto p-4 gap-4"):
+    """Строит содержимое вкладки Д.И.А.Г.Н.О.З. Вызывать внутри with ui.tab_panel(tab_diag)."""
+    with ui.column().classes("w-full max-w-6xl mx-auto p-4 gap-4"):
 
         # ── Заголовок и кнопка ──────────────────
         with ui.row().classes("items-center justify-between w-full"):
             with ui.column().classes("gap-0"):
-                ui.label("🔬 ДИАГНОСТИКА СИСТЕМЫ").style(
+                ui.label("Д.И.А.Г.Н.О.З.").style(
                     "font-size:1rem;font-weight:900;letter-spacing:1px;"
+                )
+                ui.label("Диспетчер Инфраструктурного Анализа Готовности, Нагрузки, Ошибок и Здоровья").style(
+                    "font-size:.62rem;color:var(--dim);"
                 )
                 diag_ts_lbl = ui.label("Последний прогон: —").style(
                     "font-size:.6rem;color:var(--dim);"
                 )
             with ui.row().classes("gap-2"):
                 diag_run_btn = ui.button(
-                    "▶ ЗАПУСТИТЬ ДИАГНОСТИКУ",
+                    "▶ ЗАПУСТИТЬ ПРОВЕРКУ",
                     on_click=lambda: asyncio.create_task(run_diag())
                 ).props("no-caps").style(
                     "background:rgba(59,130,246,.15);border:1px solid var(--accent);"
@@ -50,24 +208,21 @@ def build_diag():
             diag_err_kpi  = _diag_kpi_box("—", "ОШИБОК",      "var(--err)")
             diag_time_kpi = _diag_kpi_box("—", "ВРЕМЯ (мс)",  "var(--dim)")
 
-        # ── Визуализация — карточки чеков ────────
-        diag_cards = ui.grid(columns=2).classes("w-full gap-3")
-
-        # ── Mermaid-схема состояния ───────────────
+        # ── Живая схема состояния ────────────────
         with ui.card().classes("card-les w-full"):
             with ui.row().classes("items-center justify-between mb-2"):
-                _html('<div class="section-title">ТОПОЛОГИЯ // СТАТУС УЗЛОВ</div>')
-                ui.label("Обновляется после диагностики").style("font-size:.6rem;color:var(--dim);")
-            diag_mermaid = ui.mermaid(
-                "graph LR\n"
-                "  UI([С.О.В.У.Ш.К.А.\n:8051]) --> P[les-proxy\n:8050]\n"
-                "  P --> Q[(Qdrant\n:6333)]\n"
-                "  P --> M[MLX Host\n:8080]\n"
-                "  P --> O[Ollama\n:11434]\n"
-                "  M --> B[bge-m3\nEmbeddings]\n"
-                "  M --> L[Qwen3-14B\nLLM]\n"
-                "  M --> V[Qwen3-4B\nValidator]"
-            ).classes("w-full")
+                _html('<div class="section-title">ЖИВАЯ КАРТА КОНТУРА</div>')
+                ui.label("Цвет узла = результат последнего прогона").style("font-size:.6rem;color:var(--dim);")
+            with ui.element("div").classes("diag-map-wrap"):
+                diag_map = _html(_build_diag_map_html([])).classes("w-full")
+
+        # ── Словарь сокращений ───────────────────
+        with ui.card().classes("card-les w-full"):
+            _html('<div class="section-title" style="margin-bottom:8px;">СЛОВАРЬ АКРОНИМОВ</div>')
+            _html(_build_acronym_glossary_html()).classes("w-full")
+
+        # ── Визуализация — карточки чеков ────────
+        diag_cards = ui.grid(columns=2).classes("w-full gap-3")
 
         # ── Лог диагностики ───────────────────────
         with ui.card().classes("card-les w-full"):
@@ -115,55 +270,6 @@ def build_diag():
                         "font-size:.6rem;color:var(--border-hl, #4a5568);margin-top:4px;"
                     )
 
-    def _build_diag_mermaid(results: list) -> str:
-        """Строит Mermaid-диаграмму с цветами по статусу каждого узла."""
-        node_map = {
-            "Qdrant :6333":          ("QD", "Qdrant\n:6333"),
-            "Qdrant индекс":         ("QI", "Qdrant\nindex"),
-            "MLX Host :8080":        ("ML", "MLX Host\n:8080"),
-            "Ollama :11434":         ("OL", "Ollama\n:11434"),
-            "RAM":                   ("RAM", "RAM"),
-            "CPU":                   ("CPU", "CPU"),
-            "Диск":                  ("DSK", "Диск"),
-            "Docker":                ("DK", "Docker"),
-            "Chat latency (тест)":   ("CH", "Chat\nlatency"),
-            "Сеть (интернет)":       ("NET", "Интернет"),
-        }
-        status_style = {"ok": "fill:#10b981,color:#fff", "warn": "fill:#f59e0b,color:#000", "err": "fill:#ef4444,color:#fff"}
-
-        result_map = {r["name"]: r["status"] for r in results}
-
-        lines = ["graph LR"]
-        styles = []
-
-        lines.append('  UI([С.О.В.У.Ш.К.А.\n:8051])')
-        lines.append('  P[les-proxy\n:8050]')
-        lines.append('  UI --> P')
-
-        for name, (nid, label) in node_map.items():
-            st = result_map.get(name, "idle")
-            shape_open, shape_close = "[", "]"
-            if nid in ("QD", "QI"):
-                shape_open, shape_close = "[(", ")]"
-            elif nid in ("RAM", "CPU", "DSK"):
-                shape_open, shape_close = "{{", "}}"
-            elif nid == "NET":
-                shape_open, shape_close = "([", "])"
-            lines.append(f'  {nid}{shape_open}"{label}"{shape_close}')
-            if st in status_style:
-                styles.append(f'  style {nid} {status_style[st]}')
-
-        lines += [
-            "  P --> QD", "  QD --> QI",
-            "  P --> ML", "  ML --> OL",
-            "  P --> CH",
-            "  P --> RAM", "  P --> CPU", "  P --> DSK",
-            "  UI --> NET",
-            "  DK --> P", "  DK --> QD",
-        ]
-        lines += styles
-        return "\n".join(lines)
-
     async def run_diag():
         if state["diag_running"]:
             ui.notify("Диагностика уже запущена", type="warning")
@@ -183,6 +289,8 @@ def build_diag():
             if d is None:
                 diag_log_el.push("> [WARN] /api/diag не найден — запуск встроенной диагностики")
                 d = await _run_local_diag()
+            else:
+                d = _normalize_diag_payload(d)
 
             state["diag_results"] = d.get("checks", [])
             overall = d.get("overall", "warn")
@@ -207,8 +315,7 @@ def build_diag():
 
             _render_diag_cards()
 
-            mermaid_code = _build_diag_mermaid(state["diag_results"])
-            diag_mermaid.set_content(mermaid_code)
+            diag_map.set_content(_build_diag_map_html(state["diag_results"]))
 
             for r in state["diag_results"]:
                 icon = STATUS_ICON.get(r["status"], "?")
@@ -230,10 +337,10 @@ def build_diag():
         finally:
             state["diag_running"] = False
             diag_run_btn.props(remove="disabled")
-            diag_run_btn.set_text("▶ ЗАПУСТИТЬ ДИАГНОСТИКУ")
+            diag_run_btn.set_text("▶ ЗАПУСТИТЬ ПРОВЕРКУ")
 
     async def _run_local_diag() -> dict:
-        """Встроенная диагностика — имена чеков соответствуют node_map в _build_diag_mermaid."""
+        """Встроенная диагностика — имена чеков соответствуют карте в _build_diag_map_html."""
         results = []
         t0 = time.time()
 
@@ -294,29 +401,22 @@ def build_diag():
             return ("ok" if ok_flag else "warn"), f"{len(indexed)}/{total} indexed", "≥1", ""
         await _chk("Qdrant индекс", chk_qdrant_idx())
 
-        # ── Ollama ──
-        async def chk_ollama():
+        # ── MLX loaded models ──
+        async def chk_mlx_models():
             r = await api_get("/api/status")
             if not r:
-                return "warn", "—", "UP", "status недоступен"
-            ol = r.get("ollama", {})
-            models = ol.get("models", [])
+                return "warn", "—", "status", "status недоступен"
+            mlx = r.get("mlx", {})
+            models = mlx.get("models", [])
             if models:
-                return "ok", f"{len(models)} models", "≥1", ""
-            return "warn", "0 models", "≥1", "Нет загруженных моделей"
-        await _chk("Ollama :11434", chk_ollama())
+                return "ok", f"{len(models)} loaded", "0+ guarded", ""
+            return "ok", "0 loaded", "0+ guarded", "Модели выгружены до запроса"
+        await _chk("MLX loaded models", chk_mlx_models())
 
-        # ── Docker ──
-        async def chk_docker():
-            r = await api_get("/api/status")
-            if not r:
-                return "warn", "—", "UP", "status недоступен"
-            containers = r.get("containers", [])
-            if not containers:
-                return "warn", "0 containers", "≥1", ""
-            all_ok = all(c.get("ok") for c in containers)
-            return ("ok" if all_ok else "err"), f"{len(containers)} containers", "all UP", ""
-        await _chk("Docker", chk_docker())
+        # ── Docker intentionally absent in the current host-launchd runtime ──
+        async def chk_no_docker():
+            return "ok", "removed", "no Docker", "Qdrant/proxy/UI/MLX run on host LaunchAgents"
+        await _chk("Docker runtime", chk_no_docker())
 
         # ── RAM / CPU / Диск из метрик ──
         metrics_data = state.get("metrics", {})

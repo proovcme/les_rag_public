@@ -9,10 +9,19 @@ import re
 import time
 from typing import Optional
 
-from nicegui import ui
+from nicegui import context, ui
 
 from sovushka.components.charts import _html, esc
-from sovushka.state import add_log, api_get, api_post, refresh_indexing_mode, refresh_samovar, state
+from sovushka.safe_markup import sanitize_svg
+from sovushka.state import (
+    add_log,
+    api_get,
+    api_post,
+    last_api_error_text,
+    refresh_indexing_mode,
+    refresh_samovar,
+    state,
+)
 
 
 OUTPUT_FORMATS = {
@@ -55,7 +64,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     _html('<div class="sov-chat-subtitle">нормативный RAG-диспетчер</div>')
                 with ui.row().classes("items-center gap-2"):
                     mode_chip = ui.label("RAG").classes("sov-chip")
-                    _html('<span class="sov-chip sov-chip-soft">CRAG</span>')
+                    validation_chip = ui.label("CRAG ON").classes("sov-chip")
                     ui.button(icon="o_delete_sweep", on_click=lambda: _clear_chat()).props(
                         "flat round dense"
                     ).classes("sov-icon-btn")
@@ -74,6 +83,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     placeholder="Спросить по нормативам, проекту или базе знаний..."
                 ).classes("sov-composer-input").props("rows=2 autogrow borderless")
                 with ui.row().classes("sov-composer-actions"):
+                    with ui.row().classes("sov-guard-controls"):
+                        validation_sw = ui.switch("Т.О.С.К.А.", value=True).props("dense")
+                        validation_state = ui.label("ON").classes("sov-chip")
                     advanced_btn = ui.button(
                         "Расширенный запрос",
                         icon="o_tune",
@@ -311,35 +323,108 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         history_drawer.set_visibility(False)
         chat_scroll.scroll_to(percent=1)
 
+    def _source_label(source) -> str:
+        if isinstance(source, dict):
+            return str(source.get("file") or source.get("name") or source)
+        return str(source)
+
+    def _render_source_tags(srcs: list, crag: str = "", meta: dict | None = None):
+        if not srcs and not crag and not meta:
+            return
+        with ui.row().classes("msg-srcs"):
+            for source in srcs:
+                ui.label(_source_label(source)).classes("src-tag")
+            if crag:
+                if crag == "VERIFIED":
+                    cls = "src-tag"
+                    label = "Т.О.С.К.А.: VERIFIED"
+                elif crag == "UNVALIDATED":
+                    cls = "src-tag src-tag-warn"
+                    label = "Т.О.С.К.А.: OFF"
+                else:
+                    cls = "src-tag src-tag-err"
+                    label = f"Т.О.С.К.А.: {crag}"
+                ui.label(label).classes(cls)
+            if meta:
+                query_route = meta.get("query_route") if isinstance(meta.get("query_route"), dict) else {}
+                kot = query_route.get("kot") if isinstance(query_route.get("kot"), dict) else {}
+                trace = meta.get("retrieval_trace") if isinstance(meta.get("retrieval_trace"), dict) else {}
+                cache = meta.get("cache") or "miss"
+                validation = meta.get("validation") if isinstance(meta.get("validation"), dict) else {}
+                if kot:
+                    kdf = kot.get("dataset_filter") or "AUTO"
+                    conf = kot.get("confidence", 0)
+                    ui.label(f"KOT {kdf} {conf}").classes("src-tag")
+                if trace:
+                    mode = str(trace.get("mode") or "vector").upper()
+                    quality = trace.get("quality_status") or trace.get("quality", {}).get("status") or "?"
+                    ui.label(f"{mode} {quality}").classes("src-tag")
+                    context_window = trace.get("context_window") if isinstance(trace.get("context_window"), dict) else {}
+                    if context_window:
+                        expanded = context_window.get("expanded_count", 0)
+                        total = context_window.get("input_count", 0)
+                        cls = "src-tag" if expanded else "src-tag src-tag-warn"
+                        ui.label(f"CTX {expanded}/{total}").classes(cls)
+                ui.label(f"CACHE {str(cache).upper()}").classes("src-tag")
+                if validation:
+                    ui.label("VALIDATOR ON" if validation.get("enabled") else "VALIDATOR OFF").classes(
+                        "src-tag" if validation.get("enabled") else "src-tag src-tag-warn"
+                    )
+
+    def _render_chat_bubble(
+        text: str,
+        class_name: str,
+        srcs: list | None = None,
+        crag: str = "",
+        meta: dict | None = None,
+    ):
+        with ui.element("div").classes(class_name) as bubble:
+            ui.label(str(text or "")).classes("sov-chat-message-text")
+            _render_source_tags(srcs or [], crag, meta)
+        return bubble
+
+    def _render_ai_placeholder(text: str):
+        with ui.element("div").classes("chat-msg-ai typing") as bubble:
+            label = ui.label(text).classes("sov-chat-message-text")
+        return bubble, label
+
+    def _finish_ai_placeholder(
+        bubble,
+        label,
+        text: str,
+        srcs: list | None = None,
+        crag: str = "",
+        error: bool = False,
+        meta: dict | None = None,
+    ):
+        bubble.classes(remove="typing")
+        if error:
+            bubble.classes(add="chat-msg-error")
+        label.set_text(str(text or ""))
+        with bubble:
+            _render_source_tags(srcs or [], crag, meta)
+
     def _render_msg(msg):
         if msg.get("role") == "user":
-            _html(f'<div class="chat-msg-user">{esc(msg.get("text", ""))}</div>')
+            _render_chat_bubble(msg.get("text", ""), "chat-msg-user")
             return
-        ans = msg.get("text", "")
-        srcs = msg.get("srcs", [])
-        crag = msg.get("crag", "")
-        srcs_html = ""
-        if srcs:
-            tags = "".join(
-                f'<span class="src-tag">{esc(s.get("file", s) if isinstance(s, dict) else s)}</span>'
-                for s in srcs
-            )
-            srcs_html = f'<div class="msg-srcs">{tags}</div>'
-        if crag:
-            cls = "src-tag" if crag == "VERIFIED" else "src-tag src-tag-err"
-            srcs_html += f'<span class="{cls}">Т.О.С.К.А.: {esc(crag)}</span>'
-        safe_ans = esc(ans).replace(chr(10), "<br>")
-        _html(f'<div class="chat-msg-ai">{safe_ans}{srcs_html}</div>')
+        _render_chat_bubble(
+            msg.get("text", ""),
+            "chat-msg-ai",
+            msg.get("srcs", []),
+            msg.get("crag", ""),
+            msg.get("meta"),
+        )
 
     def _render_chat_history(system_msg: str = "История загружена."):
         chat_column.clear()
         with chat_column:
-            _html(f'<div class="chat-msg-sys">{esc(system_msg)}</div>')
+            _render_chat_bubble(system_msg, "chat-msg-sys")
             for msg in state.get("chat_history", []):
                 _render_msg(msg)
             if state.get("chat_pending"):
                 pending_q = state["chat_pending"].get("question", "")
-                _html(f'<div class="chat-msg-ai typing">Запрос выполняется: {esc(pending_q[:80])}</div>')
+                _render_chat_bubble(f"Запрос выполняется: {pending_q[:80]}", "chat-msg-ai typing")
 
     async def _load_history():
         if state.get("load_session_id"):
@@ -506,6 +591,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         errors = totals.get("error_files", "—")
         chunks = totals.get("chunks", "—")
         reason = data.get("chat_generation_reason") or "Индексация активна."
+        if not data.get("active"):
+            return f"Чат временно заблокирован защитой runtime. {reason}"
         return (
             f"Индексация активна: чат заблокирован. "
             f"indexed={indexed} · pending={pending} · errors={errors} · chunks={chunks}. "
@@ -523,7 +610,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             composer_box.classes(add="sov-composer-blocked")
             indexing_banner.set_text(reason)
             indexing_banner.set_visibility(True)
-            mode_chip.set_text("INDEXING")
+            mode_chip.set_text("PAUSED")
             mode_chip.classes(add="sov-chip-soft")
             return
         if not _sending["v"]:
@@ -535,6 +622,19 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         indexing_banner.set_visibility(False)
         mode_chip.set_text("RAG")
         mode_chip.classes(remove="sov-chip-soft")
+
+    def _sync_validation_ui():
+        enabled = bool(validation_sw.value)
+        validation_chip.set_text("CRAG ON" if enabled else "CRAG OFF")
+        validation_state.set_text("ON" if enabled else "OFF")
+        if enabled:
+            validation_chip.classes(remove="sov-chip-warn")
+            validation_state.classes(remove="sov-chip-warn")
+        else:
+            validation_chip.classes(add="sov-chip-warn")
+            validation_state.classes(add="sov-chip-warn")
+
+    validation_sw.on("update:model-value", lambda _e: _sync_validation_ui())
 
     async def _refresh_resource_gate() -> bool:
         data = await refresh_indexing_mode()
@@ -550,7 +650,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             msg = _resource_blocked["reason"] or "Индексация активна: чат временно заблокирован."
             ui.notify(msg, type="warning")
             with chat_column:
-                _html(f'<div class="chat-msg-sys">{esc(msg)}</div>')
+                _render_chat_bubble(msg, "chat-msg-sys")
             chat_scroll.scroll_to(percent=1)
             return
         _sending["v"] = True
@@ -564,8 +664,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         state["chat_pending"] = {"question": question, "started_at": time.time()}
 
         with chat_column:
-            _html(f'<div class="chat-msg-user">{esc(question)}</div>')
-            ai_placeholder = _html('<div class="chat-msg-ai typing">Генерирую... 0с</div>')
+            _render_chat_bubble(question, "chat-msg-user")
+            ai_placeholder, ai_placeholder_label = _render_ai_placeholder("Генерирую... 0с")
         chat_scroll.scroll_to(percent=1)
         _render_artifact_loading(out_mode, question)
         add_log(f'[AI] Запрос: "{question[:60]}"')
@@ -574,6 +674,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         payload = {
             "question": question + extra_prompt,
             "reranker_enabled": reranker_sw.value,
+            "validation_enabled": bool(validation_sw.value),
             "session_id": state.get("session_id"),
         }
         if detail_dataset.value and detail_dataset.value != "(все датасеты)":
@@ -585,7 +686,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         async def _tick():
             while not _stop_tick["v"]:
                 elapsed = int(time.monotonic() - _t0)
-                ai_placeholder.set_content(f'<div class="chat-msg-ai typing">Генерирую... {elapsed}с</div>')
+                ai_placeholder_label.set_text(f"Генерирую... {elapsed}с")
                 await asyncio.sleep(1)
 
         _tick_task = asyncio.create_task(_tick())
@@ -598,16 +699,26 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 ans = d.get("answer", d.get("response", "Нет ответа"))
                 srcs = d.get("sources", [])
                 crag = d.get("crag_status", "")
-                state["chat_history"].append({"role": "ai", "text": ans, "srcs": srcs, "crag": crag})
-                ai_placeholder.set_content(_message_html(ans, srcs, crag))
+                meta = {
+                    "query_route": d.get("query_route") or {},
+                    "retrieval_trace": d.get("retrieval_trace") or {},
+                    "cache": d.get("cache", "miss"),
+                    "validation": d.get("validation") or {"enabled": bool(validation_sw.value)},
+                }
+                state["chat_history"].append({"role": "ai", "text": ans, "srcs": srcs, "crag": crag, "meta": meta})
+                _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, ans, srcs, crag, meta=meta)
                 _render_result(ans, out_mode, artifact_panel)
                 add_log(f"[AI] Формат:{out_mode} CRAG:{crag or 'N/A'} src:{len(srcs)}")
             else:
-                ai_placeholder.set_content('<div class="chat-msg-ai" style="color:var(--err);">Ошибка запроса</div>')
-                _render_artifact_error("Ошибка запроса")
+                err = state.get("last_api_error") or {}
+                message = last_api_error_text("Ошибка запроса")
+                if err.get("status_code") == 409:
+                    await _refresh_resource_gate()
+                _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, message, error=True)
+                _render_artifact_error(message)
         except Exception as ex:
             completed = True
-            ai_placeholder.set_content(f'<div class="chat-msg-ai" style="color:var(--err);">Ошибка: {esc(str(ex))}</div>')
+            _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, f"Ошибка: {ex}", error=True)
             _render_artifact_error(str(ex))
         finally:
             if completed:
@@ -635,19 +746,6 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         chat_input.value = ""
         _update_prompt_preview()
         await _do_send(q)
-
-    def _message_html(ans: str, srcs: list, crag: str) -> str:
-        srcs_html = ""
-        if srcs:
-            tags = "".join(
-                f'<span class="src-tag">{esc(s.get("file", s) if isinstance(s, dict) else s)}</span>'
-                for s in srcs
-            )
-            srcs_html = f'<div class="msg-srcs">{tags}</div>'
-        if crag:
-            cls = "src-tag" if crag == "VERIFIED" else "src-tag src-tag-err"
-            srcs_html += f'<span class="{cls}">Т.О.С.К.А.: {esc(crag)}</span>'
-        return f'<div class="chat-msg-ai">{esc(ans).replace(chr(10), "<br>")}{srcs_html}</div>'
 
     def _html_set_artifact_mode(label: str, hint: str):
         artifact_panel.clear()
@@ -774,9 +872,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
     def _parse_svg_from_ai(text: str) -> Optional[str]:
         match = re.search(r"```svg\s*(.*?)```", text, re.DOTALL)
         if match:
-            return match.group(1).strip()
+            return sanitize_svg(match.group(1).strip())
         match = re.search(r"(<svg[\s\S]*?</svg>)", text, re.IGNORECASE)
-        return match.group(1).strip() if match else None
+        return sanitize_svg(match.group(1).strip()) if match else None
 
     def _render_table(data: list[dict]):
         keys = list(data[0].keys()) if data else []
@@ -809,7 +907,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
 
     select_format("text")
     asyncio.create_task(_refresh_resource_gate())
-    ui.timer(5.0, lambda: asyncio.create_task(_refresh_resource_gate()))
+    resource_gate_timer = ui.timer(5.0, lambda: asyncio.create_task(_refresh_resource_gate()))
+    context.client.on_disconnect(lambda *_: resource_gate_timer.cancel())
     chat_input.on(
         "keydown.enter.prevent",
         lambda e: asyncio.create_task(send_chat()) if not (e.args or {}).get("shiftKey") and not _resource_blocked["v"] else None,

@@ -26,7 +26,13 @@ from proxy.routers.datasets import DatasetRouterState, router as datasets_router
 from proxy.routers.diagnostics import DiagnosticsRouterState, router as diagnostics_router, set_diagnostics_state
 from proxy.routers.jobs import JobsRouterState, router as jobs_router, set_jobs_state
 from proxy.routers.logs import LogsRouterState, router as logs_router, set_logs_state
-from proxy.routers.rerank import RERANKER_AVAILABLE, Reranker, router as rerank_router
+from proxy.routers.rerank import (
+    RERANKER_AVAILABLE,
+    Reranker,
+    RerankRouterState,
+    router as rerank_router,
+    set_rerank_state,
+)
 from proxy.routers.runtime import RuntimeRouterState, router as runtime_router, set_runtime_state
 from proxy.routers.settings import router as settings_router
 from proxy.routers.status_page import StatusPageState, router as status_page_router, set_status_page_state
@@ -52,7 +58,7 @@ LLM_CONCURRENCY = int(os.getenv("LLM_CONCURRENCY", "1"))
 parse_semaphore = asyncio.Semaphore(PARSE_CONCURRENCY)
 sync_parse_semaphore = asyncio.Semaphore(SYNC_PARSE_CONCURRENCY)
 llm_semaphore = asyncio.Semaphore(LLM_CONCURRENCY)
-crag_stats = {"verified": 0, "no_data": 0, "hallucination": 0}
+crag_stats = {"verified": 0, "no_data": 0, "hallucination": 0, "unvalidated": 0}
 proxy_start = time.time()
 rag_backend = None
 job_tracker = {}
@@ -70,11 +76,16 @@ chat_metrics = {
     "tokens": [],
     "crag_pass": 0,
     "crag_fail": 0,
+    "cache_hit": 0,
+    "cache_miss": 0,
+    "retrieval_good": 0,
+    "retrieval_weak": 0,
 }
 
 metrics_cache = {
     "cpu": 0.0,
     "ram_used": 0.0,
+    "ram_free_gb": 0.0,
     "ram_total": 1.0,
     "datasets": 0,
     "files_processed": 0,
@@ -132,6 +143,10 @@ async def metrics_collector_loop():
             except Exception:
                 pass
 
+            ram_total_gb = float(host_mem.get("ram_total_gb", vm.total / 1e9))
+            ram_free_gb = float(host_mem.get("ram_free_gb", vm.available / 1e9))
+            ram_used_gb = max(0.0, ram_total_gb - ram_free_gb) if host_mem else vm.used / 1e9
+
             chunks = 0
             ds_count = 0
             if rag_backend:
@@ -147,8 +162,9 @@ async def metrics_collector_loop():
             metrics_cache.update(
                 {
                     "cpu": cpu,
-                    "ram_used": host_mem.get("ram_free_gb", vm.used / (1024**3)),
-                    "ram_total": host_mem.get("ram_total_gb", vm.total / (1024**3)),
+                    "ram_used": ram_used_gb,
+                    "ram_free_gb": ram_free_gb,
+                    "ram_total": ram_total_gb,
                     "swap_used_gb": host_mem.get("swap_used_gb", 0),
                     "swap_total_gb": host_mem.get("swap_total_gb", 0),
                     "swap_pct": host_mem.get("swap_pct", 0),
@@ -160,6 +176,7 @@ async def metrics_collector_loop():
                     "avg_speed_fps": parse_stats.avg_speed(),
                     "crag_verified": crag_stats["verified"],
                     "crag_no_data": crag_stats["no_data"],
+                    "crag_unvalidated": crag_stats["unvalidated"],
                 }
             )
         except Exception:
@@ -175,7 +192,7 @@ async def startup():
     if interrupted_jobs:
         logger.info("[INIT] Marked %s stale active job(s) as interrupted", interrupted_jobs)
     try:
-        conn = sqlite3.connect("./data/les_meta.db", check_same_thread=False)
+        conn = sqlite3.connect(rag_meta_db_path(), check_same_thread=False)
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS chat_history (
@@ -245,6 +262,8 @@ def configure_router_state() -> None:
             llm_semaphore=llm_semaphore,
             llm_concurrency=LLM_CONCURRENCY,
             proxy_start=proxy_start,
+            job_service=job_service,
+            job_tracker=job_tracker,
         )
     )
     set_diagnostics_state(DiagnosticsRouterState(crag_stats=crag_stats, proxy_start=proxy_start))
@@ -260,8 +279,12 @@ def configure_router_state() -> None:
             reranker_available=RERANKER_AVAILABLE,
             reranker_cls=Reranker,
             current_mode=current_mode,
+            metrics_cache=metrics_cache,
+            job_service=job_service,
+            job_tracker=job_tracker,
         )
     )
+    set_rerank_state(RerankRouterState(llm_semaphore=llm_semaphore, current_mode=current_mode))
 
 
 _app: FastAPI | None = None

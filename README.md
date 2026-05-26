@@ -3,7 +3,7 @@
 **Локальная RAG-система для работы с нормативной документацией.**  
 Работает полностью офлайн на Apple Silicon (Mac Mini M4). Никакие данные не покидают локальную сеть.
 
-**Актуальный статус: 23.05.2026.** С.О.В.У.Ш.К.А. разделена на лёгкий чат и админку: `https://<your-domain>/` открывает премиальный чат с выезжающей историей и панелью артефактов, `https://<your-domain>/les` открывает админский контур. Runtime стабилизирован: Qdrant живёт в OrbStack/Docker, `les-proxy` и SQLite работают на host через LaunchAgent `me.ovc.les.proxy`, MLX Host обслуживает LLM/validator/embedder. Активный embedding-профиль переведён на Qwen/Qwen3-Embedding-0.6B в отдельной коллекции `les_rag_qwen3_06b`; BGE-M3 сохранён как legacy baseline в `les_rag`. Intake/RAG усилен smart validation, deterministic routing, clarification gate, smart upload, micro-indexing и первым parquet-backed table query слоем.
+**Актуальный статус: 25.05.2026.** С.О.В.У.Ш.К.А. разделена на лёгкий чат и админку: `https://<your-domain>/` открывает премиальный чат с выезжающей историей и панелью артефактов, `https://<your-domain>/les` открывает админский контур. Runtime переведён в **no-Docker режим**: Qdrant запускается локальным бинарём через LaunchAgent `me.ovc.les.qdrant`, `les-proxy`, SQLite, MLX Host и UI также работают на host через launchd. Docker Desktop/OrbStack удалены из runtime и не требуются для штатной работы. Активный embedding-профиль переведён на Qwen/Qwen3-Embedding-0.6B в отдельной коллекции `les_rag_qwen3_06b`; BGE-M3 сохранён как legacy baseline в `les_rag`. Индексация идёт guarded batch=1 через `me.ovc.les.qwen-index-until-done`.
 
 ---
 
@@ -54,7 +54,7 @@
 │       ├── Qwen3-4B-4bit      (валидатор)         │
 │       └── Qwen3-Embedding-0.6B (эмбеддинги, MPS)│
 │                                                 │
-│  Qdrant  (OrbStack/Docker, порт 6333)           │
+│  Qdrant  (local binary + LaunchAgent, порт 6333)│
 └─────────────────────────────────────────────────┘
 ```
 
@@ -66,10 +66,11 @@
 |---|---|---|
 | **Л.Е.С.** | Локальная Единая Система | Оркестратор, API Gateway |
 | **Ж.А.Б.А.** | Жёсткая Аппаратная База Аналитики | Mac Mini (хост) |
-| **С.А.М.О.В.А.Р.** | Система Автономная Машинной Обработки Внутренних Архивов РАГ | RAG / Qdrant |
+| **С.А.М.О.В.А.Р.** | Система Автономной Машинной Обработки Внутренних Архивов RAG | RAG / Qdrant |
 | **Т.О.С.К.А.** | Терминал Оценки, Самопроверки и Контроля Архитектуры | CRAG валидатор |
 | **С.О.В.У.Ш.К.А.** | Система Обработки и Выдачи: Умная, Шаблонизированная, Классифицированная, Автоматизированная | UI (NiceGUI) |
 | **П.Р.О.Р.А.Б.** | Программа Регулярной Оценки Работы Автономной Базы | Метрики / диагностика |
+| **Д.И.А.Г.Н.О.З.** | Диспетчер Инфраструктурного Анализа Готовности, Нагрузки, Ошибок и Здоровья | Живая диагностика контура |
 | **К.О.Т.** | Куратор Отраслевой Терминологии | Семантический фильтр |
 | **В.О.Л.К.** | Внутренний Охранный Локальный Контур | Auth / RBAC |
 | **П.А.У.К.** | Периметровый Автономный Узел Коммуникаций | VPS relay |
@@ -99,7 +100,7 @@
 
 ### Требования
 - Mac с Apple Silicon (M1/M2/M4) и минимум 16 GB RAM (рекомендуется 24 GB)
-- OrbStack или Docker Desktop; штатно используется только Qdrant-контейнер
+- Локальный Qdrant binary `/Users/ovc/.local/bin/qdrant`; Docker не требуется
 - [uv](https://docs.astral.sh/uv/) (`brew install uv`)
 - Python 3.12+
 
@@ -116,11 +117,16 @@ uv sync
 cp env.example .env
 # Отредактируй .env — укажи модели и пароль
 
-# Запуск всего контура: Qdrant в OrbStack/Docker, proxy/MLX/UI на host
-./les.command start
+# Аварийный запуск всего контура через launchd:
+# Qdrant/proxy/MLX/UI + guarded Qwen indexer
+./start_les.command
 ```
 
 Открой `http://localhost:8051` для чата или `http://localhost:8051/les` для админки.
+
+На рабочем столе есть аварийный ярлык `Запуск_ЛЕС.command`: он вызывает `start_les.command`,
+поднимает launchd-сервисы и открывает С.О.В.У.Ш.К.А. Управлять контуром можно и из админки:
+`/les → П.Р.О.Р.А.Б. → АВАРИЙНОЕ УПРАВЛЕНИЕ`.
 
 ### Добавление документов
 
@@ -236,12 +242,14 @@ Reverse proxy может помечать запросы из выбранног
 | MLX (Qwen3-14B) | зависит от квантования |
 | MLX (Qwen3-4B val) | зависит от квантования |
 | les-proxy (host LaunchAgent) | Python-процесс, без Docker VM |
-| les-qdrant (OrbStack/Docker) | ≤ 1 GB |
+| Qdrant (local binary LaunchAgent) | ~1.5 GB |
 | **Итого** | **~10 GB** |
 
-В штатном режиме Docker/OrbStack держит только Qdrant. Docker-proxy оставлен как opt-in profile `docker-proxy`, чтобы SQLite работал напрямую на host, а не через bind mount VM.
+В штатном режиме Docker/OrbStack отсутствуют. Qdrant, proxy, MLX и UI запускаются на host через launchd; `docker-compose.yml` и `Dockerfile.proxy` оставлены как legacy-артефакты репозитория, не как runtime.
 
-`les.command` поднимает Qdrant через OrbStack, а `les-proxy` — как host LaunchAgent `me.ovc.les.proxy`.
+`start_les.command` использует `tools/les_runtime_control.py` и поднимает Qdrant, MLX, `les-proxy`,
+guarded Qwen indexer и С.О.В.У.Ш.К.А. как host LaunchAgents. `les.command` оставлен как
+ручной legacy-диспетчер.
 
 `mlx_host.py` читает `.env` самостоятельно при старте — не зависит от оболочки запуска.
 
@@ -274,10 +282,11 @@ DOC_ROUTER_SAMPLE_PAGES=3
 - **Smart upload:** `/api/rag/upload-smart` сохраняет файл потоково, классифицирует через Document Router, сам выбирает/создаёт `*_Index` и запускает guarded parse `limit=1`.
 - **Clarification gate:** `/api/chat` возвращает `NEEDS_CLARIFICATION` и уточняющие вопросы до retrieval/LLM, если запрос слишком широкий.
 - **Table query MVP:** `proxy/services/table_query_service.py` читает `.parquet` по `parquet_path` из payload и считает суммы/количества без генерации LLM.
-- **OrbStack runtime:** Docker/OrbStack держит только `les-qdrant`; `les-proxy` вынесен на host LaunchAgent `me.ovc.les.proxy`, SQLite больше не работает через VM bind mount.
+- **No-Docker runtime:** Qdrant local binary, `les-proxy`, MLX Host и UI работают на host LaunchAgents; Docker Desktop/OrbStack не требуются.
 - **Micro-indexing:** safe loop `tools/rag_safe_parse_loop.py` индексирует по одному файлу, проверяет RAM/swap и `points_match_sqlite_chunks`.
 - **Memory guard fix:** `swap_pct=0.0` больше не превращается в `100.0` в safe-loop и server-side parse admission.
 - **Startup hardening:** `les.command` стартует Qdrant, MLX, host-proxy и UI без дублирования уже живых listener-процессов.
+- **Sovushka emergency control:** П.Р.О.Р.А.Б. получил локальные launchd-кнопки start/stop/restart для Qdrant, MLX, proxy, UI и guarded indexer; управление не зависит от работоспособности proxy.
 - **Resource Governor v1:** `/api/indexing-mode` разделяет рабочий чат и индексацию, ставит chat generation на паузу, управляет unload MLX и приоритетом индексов.
 - **Parse scheduler v2:** приоритет `NTD_FIRE → GKRF → NTD_ELECTRICAL → NTD_STRUCTURAL → TABLE_SMETA → NTD_OTHER`, post-batch memory hysteresis, `warm_embedder`, phase timings.
 - **BGE/chunk knobs:** `BGE_BATCH_SIZE`, `RAG_EMBED_BATCH`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP`, `RAG_PARSE_POST_MAX_SWAP_PCT`.
@@ -425,8 +434,10 @@ les-rag-public/
 ├── README.md
 ├── pyproject.toml
 ├── .env.example
-├── docker-compose.yml
-├── Dockerfile.proxy
+├── qdrant_launchd.plist
+├── qwen_index_launchd.plist
+├── docker-compose.yml        ← legacy/archived Docker fallback
+├── Dockerfile.proxy          ← legacy Docker proxy image
 ├── proxy/                    ← Proxy v3: app, security, services, storage
 │   ├── app.py                ← create_app(), startup, middleware, router wiring
 │   ├── legacy_app.py         ← compatibility shim for old imports
@@ -487,7 +498,7 @@ MIT — используй, форкай, улучшай.
 - [x] SafeRAG error handling — таймаут/ошибка валидатора → safe fallback, неподтверждённый ответ не отдаётся как нормальный
 - [x] Rate limiting (≤ 2 параллельных LLM-запроса), защита от prompt injection, path traversal
 - [x] `les.command` — единый скрипт управления (start/stop/restart/status)
-- [x] Startup hardening — ожидание Docker daemon перед запуском proxy/Qdrant
+- [x] Startup hardening — host LaunchAgents для Qdrant/proxy/MLX/UI без Docker daemon
 - [x] Proxy modularization — активные endpoints вынесены в routers/services, `legacy_app.py` оставлен shim
 - [x] Stabilization: runtime smoke для локального/VPS post-deploy контура
 - [x] Stabilization: browser smoke UI admin/user сценариев

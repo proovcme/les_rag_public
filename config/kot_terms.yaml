@@ -1,0 +1,124 @@
+version: 1
+confidence:
+  confident: 0.62
+  ambiguous_gap: 0.12
+domains:
+  - id: NTD_FIRE
+    label: fire_safety
+    dataset_filter: NTD_FIRE
+    terms:
+      - эвакуац
+      - пожар
+      - огнестойк
+      - противодым
+      - спс
+      - апс
+      - сигнализац
+      - 13130
+      - 123-фз
+      - 59638
+    synonyms:
+      пожарка: пожар
+      противодымка: противодым
+  - id: NTD_ELECTRICAL
+    label: electrical
+    dataset_filter: NTD_ELECTRICAL
+    terms:
+      - пуэ
+      - электр
+      - кабел
+      - заземл
+      - молниезащит
+      - освещен
+      - напряжен
+      - электроприемник
+      - электроприёмник
+  - id: NTD_STRUCTURAL
+    label: structural
+    dataset_filter: NTD_STRUCTURAL
+    terms:
+      - конструкц
+      - нагрузк
+      - фундамент
+      - основан
+      - железобетон
+      - арматур
+  - id: NTD_SPDS
+    label: spds
+    dataset_filter: NTD_SPDS
+    terms:
+      - спдс
+      - рабочая документац
+      - проектная документац
+      - гост 21
+      - основная надпись
+  - id: GKRF
+    label: gkrf
+    dataset_filter: GKRF
+    terms:
+      - постановлени
+      - постановление 87
+      - пп 87
+      - 87
+      - градостроительн
+      - гкрф
+      - раздел проектн
+  - id: TABLE_SMETA
+    label: smeta
+    dataset_filter: TABLE
+    terms:
+      - смет
+      - ведомост
+      - спецификац
+      - расценк
+      - кс-2
+      - кс2
+      - количеств
+      - сколько
+  - id: NTD_GEOTECH
+    label: geotech
+    dataset_filter: NTD_GEOTECH
+    terms:
+      - грунт
+      - геотех
+      - сейсми
+      - землетряс
+      - основания и фундаменты
+  - id: NTD_HVAC
+    label: hvac
+    dataset_filter: NTD_HVAC
+    terms:
+      - отоп
+      - вентиля
+      - кондицион
+      - теплов
+      - акуст
+      - шум
+  - id: NTD_WATER
+    label: water
+    dataset_filter: NTD_WATER
+    terms:
+      - водоснаб
+      - водоотвед
+      - канализац
+      - гидротех
+  - id: NTD_GENERAL
+    label: normative
+    dataset_filter: NTD
+    terms:
+      - сп
+      - снип
+      - гост
+      - норматив
+      - требован
+      - допускается
+      - запрещается
+norm_refs:
+  - name: sp
+    pattern: "\\bсп\\s*\\d+(?:\\.\\d+)*(?:-\\d+)?"
+  - name: gost
+    pattern: "\\bгост\\s*(?:р\\s*)?\\d+(?:[.-]\\d+)*"
+  - name: pp87
+    pattern: "\\b(?:пп|постановление)\\s*87\\b"
+  - name: pue
+    pattern: "\\bпуэ\\b"

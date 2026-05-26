@@ -8,6 +8,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends
 
+from backend.rag_config import rag_meta_db_path
 from proxy.security import require_user
 
 logger = logging.getLogger(__name__)
@@ -19,7 +20,7 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 async def get_chat_history(limit: int = 40, session_id: Optional[str] = None, _user=Depends(require_user)):
     """Return recent chat messages, optionally scoped to a session."""
     try:
-        with sqlite3.connect("./data/les_meta.db") as conn:
+        with sqlite3.connect(rag_meta_db_path()) as conn:
             if session_id:
                 rows = conn.execute(
                     "SELECT question, answer, sources, crag_status FROM chat_history "
@@ -50,7 +51,7 @@ async def get_chat_history(limit: int = 40, session_id: Optional[str] = None, _u
 async def get_chat_sessions(limit: int = 50, _user=Depends(require_user)):
     """Return chat sessions ordered by last activity."""
     try:
-        with sqlite3.connect("./data/les_meta.db") as conn:
+        with sqlite3.connect(rag_meta_db_path()) as conn:
             rows = conn.execute(
                 """
                 SELECT

@@ -229,6 +229,8 @@ def _classify_doc_type(probe: DocumentProbe) -> str:
     name = probe.path.name.lower()
     if probe.suffix in EMAIL_SUFFIXES:
         return "EMAIL"
+    if _looks_like_book(probe):
+        return "BOOK"
     normative_name_prefixes = ("гост", "сп ", "снип", "санпин", "постановление", "приказ")
     if name.startswith(normative_name_prefixes):
         return "NORMATIVE"
@@ -264,8 +266,12 @@ def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
 
     if doc_type == "EMAIL" or probe.suffix in EMAIL_SUFFIXES:
         return "MAIL"
+    if doc_type == "BOOK" or _looks_like_book(probe):
+        return "BOOKS"
 
-    if any(token in name for token in ("гкрф", "градостроительный кодекс", "постановление 87", "пп 87")):
+    if any(token in name for token in ("гкрф", "градостроительный кодекс", "постановление 87", "пп 87", "pp87")):
+        return "GKRF"
+    if "постановление 87" in text and "градостро" in text:
         return "GKRF"
     if (
         ("постановление 87" in text or "пп 87" in text)
@@ -616,6 +622,19 @@ def _is_ntd_source(probe: DocumentProbe) -> bool:
     return any(part.casefold() == "ntd" for part in probe.path.parts)
 
 
+def _is_books_source(probe: DocumentProbe) -> bool:
+    return any(part.casefold() == "books" for part in probe.path.parts)
+
+
+def _looks_like_book(probe: DocumentProbe) -> bool:
+    name = probe.path.name.casefold()
+    return _is_books_source(probe) or (
+        probe.suffix in PDF_SUFFIXES
+        and probe.page_count >= 200
+        and any(token in name for token in ("рук-во", "руководство", "пособие", "справочник", "учебник", "book"))
+    )
+
+
 def _is_industrial_chimney_norm(text: str, name: str) -> bool:
     haystack = f"{name}\n{text}"
     chimney_phrases = (
@@ -640,6 +659,8 @@ def _classify_content_type(probe: DocumentProbe) -> str:
         return "scan"
     if probe.suffix in TABLE_SUFFIXES:
         return "table"
+    if probe.suffix in PDF_SUFFIXES and _looks_like_book(probe):
+        return "mixed"
     if probe.suffix in PDF_SUFFIXES and probe.has_tables:
         return "mixed"
     return "text"

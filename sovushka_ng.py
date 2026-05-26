@@ -26,7 +26,6 @@ from sovushka.pages.samovar import build_samovar
 from sovushka.pages.prorab import build_prorab
 from sovushka.pages.chat import build_chat
 from sovushka.pages.history import build_history
-from sovushka.pages.mermaid_page import build_mermaid
 from sovushka.pages.diag import build_diag
 from sovushka.pages.volk import build_volk
 
@@ -175,7 +174,6 @@ async def admin_page(request: Request):
         tab_overview = tr.get("overview")
         tab_samovar  = tr.get("samovar")
         tab_prorab   = tr.get("prorab")
-        tab_mermaid  = tr.get("mermaid")
         tab_qdrant_viz = tr.get("qdrant_viz")
         tab_diag     = tr.get("diag")
         tab_volk     = tr.get("volk")
@@ -201,8 +199,6 @@ async def admin_page(request: Request):
                 build_samovar()
             with ui.tab_panel(tab_prorab):
                 build_prorab()
-            with ui.tab_panel(tab_mermaid):
-                build_mermaid()
             with ui.tab_panel(tab_qdrant_viz):
                 _build_qdrant_visualizer_panel(visualizer_url)
             with ui.tab_panel(tab_diag):
@@ -219,8 +215,8 @@ async def admin_page(request: Request):
         "ОБЗОР":          tab_overview,
         "С.А.М.О.В.А.Р.": tab_samovar,
         "П.Р.О.Р.А.Б.":   tab_prorab,
-        "ГРАФ":            tab_mermaid,
         "КВАДРАНТ":        tab_qdrant_viz,
+        "Д.И.А.Г.Н.О.З.": tab_diag,
         "🔬 ДИАГН":        tab_diag,
         "В.О.Л.К.":       tab_volk,
     }

@@ -120,6 +120,23 @@ class JobService:
         rows = self._with_retry(_list)
         return {row["id"]: self._row_to_job(row) for row in rows}
 
+    def list_active_ids(self, limit: int = 500) -> list[str]:
+        def _list():
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT id FROM jobs
+                    WHERE finished_at IS NULL
+                      AND upper(status) IN ('QUEUED', 'PARSING', 'RUNNING')
+                    ORDER BY updated_at DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+                return [str(row[0]) for row in rows]
+
+        return self._with_retry(_list)
+
     def mark_interrupted_active_jobs(self, reason: str) -> int:
         """Mark durable active jobs as interrupted after process restart."""
         now = datetime.now().isoformat()
@@ -138,7 +155,7 @@ class JobService:
                         updated_at=?,
                         finished_at=?
                     WHERE finished_at IS NULL
-                      AND lower(status) IN ('queued', 'running')
+                      AND lower(status) IN ('queued', 'parsing', 'running')
                     """,
                     (message, message, now, now),
                 )

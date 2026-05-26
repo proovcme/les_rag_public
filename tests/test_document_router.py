@@ -63,6 +63,25 @@ def test_route_scan_pdf_to_needs_ocr():
     assert route.metadata["needs_ocr"] is True
 
 
+def test_book_folder_pdf_routes_to_books_index_with_rich_pipeline():
+    probe = DocumentProbe(
+        path=Path("RAG_Content/BOOKS/Рук-во по устройству ЭУ 2019.pdf"),
+        suffix=".pdf",
+        size_bytes=38_000_000,
+        page_count=596,
+        text_sample="Руководство по устройству электроустановок. Таблица 1.",
+    )
+
+    route = classify_document(probe)
+
+    assert route.doc_type == "BOOK"
+    assert route.domain == "BOOKS"
+    assert route.dataset_name == "BOOKS_Index"
+    assert route.content_type == "mixed"
+    assert route.complexity == "heavy"
+    assert route.pipeline == "markdown_pdf_tables"
+
+
 def test_route_metadata_is_added_to_table_payload(tmp_path):
     data_dir = tmp_path / "dataset"
     data_dir.mkdir()

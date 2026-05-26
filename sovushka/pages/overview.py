@@ -55,9 +55,8 @@ def build_overview(tabs, is_admin: bool):
             ui.label("СТЕК").classes("section-title mb-3")
             stack_items = [
                 ("Mac Mini M4 / 24 GB",                                   "HOST"),
-                ("Docker: les-proxy :8050 · les-qdrant :6333",            "DOCKER"),
-                ("MLX Host :8080 · Qwen3-14B + Qwen3-4B + bge-m3",       "MLX"),
-                ("Ollama :11434 · qwen3:14b + bge-m3 (резерв)",           "OLLAMA"),
+                ("LaunchAgents: les-proxy :8050 · Qdrant :6333 · UI :8051", "HOST"),
+                ("MLX Host :8080 · Qwen3.5-4B OptiQ + validator optional + Qwen embeddings", "MLX"),
             ]
             for text, tag in stack_items:
                 with ui.row().classes("items-center gap-3 py-1"):

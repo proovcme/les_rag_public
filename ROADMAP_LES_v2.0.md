@@ -22,12 +22,12 @@
 - **Модельный стек:** `qwen3:14b` (RAG/чат), `qwen2.5-coder:14b` (код), `bge-m3:latest` (эмбеддинги). Ollama-оркестрация с лимитами RAM.
 - **ConverterRouter:** Lightweight-парсинг без нейросетей. `pymupdf4llm` (PDF/каталоги), `mammoth` (DOCX), `extract-msg` (EML/MSG), `pandas` (XLSX/CSV).
 - **Structure-Aware Chunking:** Нарезка по заголовкам и структуре документов (MarkdownNodeParser + SentenceSplitter). Сохранение контекста ГОСТ/СП.
-- **Метаданные и хранение:** SQLite (`les_meta.db`) вместо MySQL. UUID-датасеты в `storage/datasets/`. Исходники в `RAG_Content/`. Persistence через Docker volumes.
+- **Метаданные и хранение:** SQLite (`les_meta.db`) вместо MySQL. UUID-датасеты в `storage/datasets/`. Исходники в `RAG_Content/`. Qdrant persistence в `data/qdrant/` без Docker volumes.
 - **Т.О.С.К.А. v2.0:** Нативный CRAG-пайплайн в прокси. Pre-Check → Retrieval → Generation → Post-Check. Прозрачная валидация без чёрных ящиков.
 - **Мониторинг и UI:** SSE-стрим, Chart.js графики, real-time метрики (CPU/RAM/latency/CRAG/очередь/скорость), фильтры логов.
 - **Управление датасетами:** Вкладка UI с маппингом `Источник → Индекс`, кнопка `🔄 Загрузить в индекс`, автообновление статусов, `/api/rag/sources`, `/api/rag/sync/{folder}`.
 - **Устойчивость:** `asyncio.Semaphore(2)` для индексации, защита Ollama от concurrency storm, строгая Pydantic-валидация чата.
-- **Ресурсная эффективность:** 2 контейнера, RAM ~14–16 ГБ, стабильная работа на Mac M4 / 24 GB без свопа.
+- **Ресурсная эффективность:** no-Docker host runtime, Qdrant/proxy/MLX/UI через LaunchAgents, guarded indexing `batch_limit=1`.
 
 ## 🛠 Запланировано в v2.1 (Краткосрочно)
 - **Retry-логика в прокси:** graceful fallback при занятости MLX/Ollama reserve, автоматические повторы с экспоненциальной задержкой.
@@ -48,16 +48,21 @@
 - **Proxy/WebSocket диагностика:** если чат всё ещё срывается около 60 секунд, проверять внешний proxy/websocket timeout или рестарт процесса Совушки.
 
 ## ⚡ Backlog ускорения и оптимизации
+- **GUI visibility для индексации:** в админке нужен детальный список файлов по датасетам с фильтрами по `dataset/status`, показом `last_error`, `chunk_count`, pipeline/route metadata и быстрыми действиями для `ERROR`/`PENDING` (retry, очистка ошибки, просмотр пути). Счётчики датасета должны раскрывать конкретные файлы, чтобы ошибка индексации не оставалась только числом в панели.
 - **Семантическое кэширование:** базовый слой внедрён для `VERIFIED` ответов с dataset-scope invalidation по snapshot датасетов.
 - **Динамическая выгрузка эмбеддера:** агрессивный TTL для `bge-m3` после retrieval, чтобы освобождать память под основную LLM во время генерации.
 - **Параллельная валидация:** асинхронная проверка streaming-чанков вместо ожидания полного ответа перед запуском валидатора.
 - **Аппаратный тюнинг MLX:** бенчмарки Flash Attention на длинном контексте и смешанного квантования 14B модели.
 - **Embed pipeline tuning:** после завершения qwen-индексации отдельно разобрать `embed_sec` как главный bottleneck. Идеи для проработки: увеличить `RAG_EMBED_BATCH` при стабильной RAM/MPS, проверить adaptive chunking для тяжёлых СП/ГОСТ, сравнить скорость/качество Qwen embeddings и BGE-M3 на golden set, ввести режим быстрой первичной индексации и последующей качественной переиндексации.
+- **Post-indexing Q&A hardening:** после завершения индексации пройти тракт `/api/chat` без нагрузки на индексатор: корректно показывать `409 indexing mode` в UI, заменить `innerHTML`-рендер ответов/источников на безопасный DOM, протащить фактический inferred `dataset_filter` в ответ API, расширить контекст Т.О.С.К.А. для валидации и держать reranker под общим LLM semaphore.
+- **Small-model preprocessing policy:** сейчас малая модель используется как Т.О.С.К.А.-валидатор и опциональный reranker, а препроцессинг вопроса выполняется deterministic router/clarification gate. После индексации решить, стоит ли включать малую модель перед retrieval для query rewrite, intent classification и multi-hop decomposition, с явным memory budget и fallback на rule-based роутинг.
+- **К.О.Т. semantic terminology filter:** после индексации оформить текущие hardcoded правила `query_router`/`clarification_service`/`retrieval_service` в отдельный настраиваемый слой К.О.Т.: taxonomy доменов, словарь терминов/синонимов, YAML/SQLite-конфиг с UI-редактором, trace в `/api/chat` (`route_reason`, inferred `dataset_filter`, clarification reasons) и golden-set тесты на инженерные формулировки.
+- **RAG modernization plan:** после завершения индексации выполнять по `RAG_MODERNIZATION_PLAN.md`: baseline golden set, batch/chunk benchmark, query instructions, hybrid dense+sparse/RRF, retrieval evaluator, conditional reranker, RAPTOR-lite и GraphRAG-lite только после доказанной пользы.
 - **Adaptive chunking + GUI profiles:** вынести в админку профили чанкинга (`default`, `normative`, `table`, `pdf_ocr`, `email`) с настройками `chunk_size`, `chunk_overlap`, min/max chunk size, склейкой коротких пунктов, запретом разрыва нумерованных пунктов и таблиц. Добавить preview chunking по выбранному файлу и явную кнопку reindex affected documents; изменение настроек должно помечать документы как требующие переиндексации, а не смешивать старые и новые чанки молча.
 - **Parquet для таблиц:** базовый XLSX/XLS/CSV ingestion внедрён: row-level chunks для Qdrant + `.parquet` artifacts рядом с датасетом. Для PDF добавлен экспериментальный PyMuPDF-first слой с pdfplumber fallback и `needs_ocr` marker. Следующий шаг — table-aware retrieval и расширение схем смет/спецификаций.
 - **Document Router:** добавлен быстрый deterministic probe/classify/complexity слой перед ingestion, чтобы выбирать `markdown`, `parquet`, `markdown_pdf_tables` или `markdown_needs_ocr` и писать rich metadata в Qdrant payload.
 
-📅 **Документ актуализирован:** 22.05.2026 — split UI + premium chat/artifacts + cache/router/parquet stabilization
+📅 **Документ актуализирован:** 25.05.2026 — no-Docker host runtime, local Qdrant LaunchAgent, guarded qwen indexing watch
 
 
 ## 🚀 Выполнено в v2.0 Core (Факт на 10.05.2026)

@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Optional
 
+from proxy.services.kot_service import analyze_question
+
 
 QueryChannel = Literal["table", "rag"]
 
@@ -103,5 +105,11 @@ def route_query(
         return QueryIntent("table", "TABLE", "table_aggregate_context")
     if any(token in q for token in ("смет", "спецификац", "ведомост", "кс-2", "кс2")):
         return QueryIntent("table", "TABLE", "table_document_keyword")
+
+    kot = analyze_question(question)
+    if kot.dataset_filter == "TABLE":
+        return QueryIntent("table", "TABLE", kot.reason)
+    if kot.dataset_filter:
+        return QueryIntent("rag", kot.dataset_filter, kot.reason)
 
     return QueryIntent("rag", None, "default_rag")

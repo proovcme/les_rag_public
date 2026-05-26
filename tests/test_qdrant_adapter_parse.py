@@ -106,6 +106,17 @@ def test_pending_files_are_ordered_by_size(tmp_path):
     assert db.get_pending_files(dataset_id, limit=2) == ["small.md", "large.md"]
 
 
+def test_recover_interrupted_parsing_resets_dataset_status(tmp_path):
+    db = MetaDB(str(tmp_path / "meta.db"))
+    dataset_id = db.create_dataset("BOOKS_Index")
+    db.update_dataset_status(dataset_id, "PARSING")
+
+    assert db.recover_interrupted_parsing() == 1
+
+    [dataset] = db.list_datasets()
+    assert dataset.status == "IDLE"
+
+
 @pytest.mark.asyncio
 async def test_parse_dataset_rejects_unbounded_parse_by_default(monkeypatch):
     monkeypatch.delenv("ALLOW_UNBOUNDED_PARSE", raising=False)
@@ -130,3 +141,21 @@ def test_adapter_uses_configured_collection_and_vector_size(monkeypatch, tmp_pat
     assert adapter.collection_name == "les_rag_qwen3_06b"
     assert adapter.vector_size == 1024
     assert adapter.embed.model == "qwen3-embedding-0.6b"
+
+
+def test_adapter_adds_parent_and_neighbor_context_metadata():
+    adapter = QdrantLlamaIndexAdapter.__new__(QdrantLlamaIndexAdapter)
+    nodes = [
+        {"text": "## Глава 1\nПервый фрагмент про таблицу.", "payload": {"type": "markdown"}},
+        {"text": "Второй фрагмент с продолжением.", "payload": {"type": "markdown"}},
+    ]
+
+    adapter._apply_context_metadata(nodes, "ds-1", "book.pdf")
+
+    first = nodes[0]["payload"]
+    second = nodes[1]["payload"]
+    assert first["chunk_ord"] == 0
+    assert first["parent_id"] == second["parent_id"]
+    assert first["context_after"] == "Второй фрагмент с продолжением."
+    assert second["context_before"].startswith("## Глава 1")
+    assert first["context_kind"] == "markdown_window"

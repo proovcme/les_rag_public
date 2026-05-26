@@ -19,12 +19,13 @@ from pydantic import BaseModel, Field
 
 from backend.interface import DatasetInfo
 from backend.document_router import route_document
-from backend.rag_config import rag_collection_name, rag_meta_db_path
+from backend.rag_config import rag_collection_name, rag_meta_db_path, rag_runtime_config
 from backend.smart_index import SKIP_DIRS, build_smart_plan, should_index_source_file, verify_source_file
 from proxy.config import max_upload_bytes, mlx_url, rag_upload_suffixes
 from proxy.security import require_admin, require_user
+from proxy.services.context_expander_service import expand_context_windows
 from proxy.services.resource_governor import active_parse_priority_order
-from proxy.services.retrieval_service import classify_query, resolve_dataset_ids
+from proxy.services.retrieval_service import classify_query, resolve_dataset_ids, retrieve_chat_chunks
 from proxy.storage.file_storage import save_upload_tmp, safe_upload_name, validate_source_folder
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,7 @@ DEFAULT_PARSE_SCHEDULER_MAX_BATCHES = int(os.getenv("RAG_PARSE_SCHEDULER_MAX_BAT
 PARSE_MIN_FREE_GB = float(os.getenv("RAG_PARSE_MIN_FREE_GB", "8"))
 PARSE_MAX_SWAP_PCT = float(os.getenv("RAG_PARSE_MAX_SWAP_PCT", "45"))
 PARSE_POST_MAX_SWAP_PCT = float(os.getenv("RAG_PARSE_POST_MAX_SWAP_PCT", "60"))
+ACTIVE_PARSE_SCHEDULER_STATUSES = {"QUEUED", "PARSING", "RUNNING"}
 
 
 @dataclass
@@ -191,6 +193,22 @@ async def pending_parse_datasets(
             item["dataset_name"],
         ),
     )
+
+
+def active_parse_scheduler_job(state: DatasetRouterState) -> tuple[str, dict[str, Any]] | None:
+    for job_id, job in state.job_tracker.items():
+        status = str(job.get("status", "")).upper()
+        if status not in ACTIVE_PARSE_SCHEDULER_STATUSES:
+            continue
+        message = str(job.get("message", ""))
+        is_scheduler = (
+            job.get("type") == "rag_parse_scheduler"
+            or "Parse scheduler" in message
+            or message.startswith("Batch ")
+        )
+        if is_scheduler:
+            return job_id, job
+    return None
 
 
 async def run_parse_scheduler(
@@ -400,6 +418,7 @@ async def list_datasets(_user=Depends(require_user)):
 async def list_documents(
     dataset_id: str | None = None,
     status: str | None = Query(default=None, pattern="^(PENDING|INDEXED|ERROR)$"),
+    q: str | None = Query(default=None, max_length=200),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     _user=Depends(require_user),
@@ -409,33 +428,59 @@ async def list_documents(
         dataset_id = None
     if not isinstance(status, str):
         status = None
+    if not isinstance(q, str):
+        q = None
     if not isinstance(limit, int):
         limit = 100
     if not isinstance(offset, int):
         offset = 0
 
-    where = []
-    params: list[Any] = []
+    base_where = []
+    base_params: list[Any] = []
     if dataset_id:
-        where.append("doc.dataset_id=?")
-        params.append(dataset_id)
+        base_where.append("doc.dataset_id=?")
+        base_params.append(dataset_id)
+    q = q.strip() if q else None
+    if q:
+        pattern = f"%{q.lower()}%"
+        base_where.append(
+            "("
+            "LOWER(doc.file_name) LIKE ? OR "
+            "LOWER(COALESCE(ds.name, '')) LIKE ? OR "
+            "LOWER(COALESCE(doc.domain, '')) LIKE ? OR "
+            "LOWER(COALESCE(doc.route_dataset, '')) LIKE ? OR "
+            "LOWER(COALESCE(doc.last_error, '')) LIKE ?"
+            ")"
+        )
+        base_params.extend([pattern, pattern, pattern, pattern, pattern])
+    row_where = list(base_where)
+    row_params = list(base_params)
     if status:
-        where.append("doc.status=?")
-        params.append(status)
-    where_sql = "WHERE " + " AND ".join(where) if where else ""
+        row_where.append("doc.status=?")
+        row_params.append(status)
+    summary_where_sql = "WHERE " + " AND ".join(base_where) if base_where else ""
+    where_sql = "WHERE " + " AND ".join(row_where) if row_where else ""
 
     with sqlite3.connect(rag_meta_db_path()) as conn:
         conn.row_factory = sqlite3.Row
         summary_rows = conn.execute(
-            """
-            SELECT status, COUNT(*) AS files, COALESCE(SUM(chunk_count),0) AS chunks
-            FROM documents
-            GROUP BY status
-            """
+            f"""
+            SELECT doc.status AS status, COUNT(*) AS files, COALESCE(SUM(doc.chunk_count),0) AS chunks
+            FROM documents doc
+            LEFT JOIN datasets ds ON ds.id = doc.dataset_id
+            {summary_where_sql}
+            GROUP BY doc.status
+            """,
+            base_params,
         ).fetchall()
         total = conn.execute(
-            f"SELECT COUNT(*) FROM documents doc {where_sql}",
-            params,
+            f"""
+            SELECT COUNT(*)
+            FROM documents doc
+            LEFT JOIN datasets ds ON ds.id = doc.dataset_id
+            {where_sql}
+            """,
+            row_params,
         ).fetchone()[0]
         rows = conn.execute(
             f"""
@@ -448,6 +493,7 @@ async def list_documents(
                 COALESCE(doc.file_size, 0) AS file_size,
                 COALESCE(doc.chunk_count, 0) AS chunk_count,
                 COALESCE(doc.domain, '') AS domain,
+                COALESCE(doc.route_dataset, '') AS route_dataset,
                 COALESCE(doc.doc_type, '') AS doc_type,
                 COALESCE(doc.content_type, '') AS content_type,
                 COALESCE(doc.complexity, '') AS complexity,
@@ -467,7 +513,7 @@ async def list_documents(
                 doc.file_name
             LIMIT ? OFFSET ?
             """,
-            [*params, limit, offset],
+            [*row_params, limit, offset],
         ).fetchall()
 
     return {
@@ -493,15 +539,38 @@ async def retrieve_debug(req: RetrievalDebugRequest, _user=Depends(require_user)
         logger,
         question=req.question,
     )
-    chunks = await state.backend.retrieve(query_route.expanded_query, dataset_ids=dataset_ids, top_k=req.top_k)
+    retrieval = await retrieve_chat_chunks(
+        question=req.question,
+        dataset_ids=dataset_ids,
+        rag_backend=state.backend,
+        reranker_enabled=False,
+        reranker_available=False,
+        reranker_cls=None,
+        mlx_url=mlx_url(),
+        logger=logger,
+        return_trace=True,
+    )
+    chunks = retrieval.chunks[: req.top_k]
+    context_windows = expand_context_windows(
+        chunks,
+        collection=getattr(state.backend, "collection_name", ""),
+        logger=logger,
+        max_chunks=req.top_k,
+    )
+    retrieval_trace = retrieval.payload()
+    retrieval_trace["context_window"] = context_windows.payload()
+    expanded_chunks = list(context_windows.chunks)
     return {
         "question": req.question,
         "query_route": {
             "dataset_filter": req.dataset_filter or query_route.dataset_filter,
             "reason": query_route.reason,
             "expanded": query_route.expanded_query != req.question,
+            "kot": retrieval.kot.payload(),
         },
         "dataset_ids": dataset_ids,
+        "embedding": rag_runtime_config(),
+        "retrieval_trace": retrieval_trace,
         "top_k": req.top_k,
         "chunks": [
             {
@@ -511,7 +580,21 @@ async def retrieve_debug(req: RetrievalDebugRequest, _user=Depends(require_user)
                 "doc_id": getattr(chunk, "doc_id", ""),
                 "doc_type": (getattr(chunk, "meta", {}) or {}).get("doc_type"),
                 "content_type": (getattr(chunk, "meta", {}) or {}).get("content_type"),
+                "rrf_rank": (getattr(chunk, "meta", {}) or {}).get("rrf_rank"),
+                "rrf_score": (getattr(chunk, "meta", {}) or {}).get("rrf_score"),
+                "retrieval_sources": (getattr(chunk, "meta", {}) or {}).get("retrieval_sources"),
+                "context_expanded": (getattr(expanded_chunks[index], "meta", {}) or {}).get(
+                    "context_expanded",
+                    False,
+                )
+                if index < len(expanded_chunks)
+                else False,
                 "preview": getattr(chunk, "content", "")[:500],
+                "expanded_preview": getattr(
+                    expanded_chunks[index] if index < len(expanded_chunks) else chunk,
+                    "content",
+                    getattr(chunk, "content", ""),
+                )[:700],
             }
             for index, chunk in enumerate(chunks)
         ],
@@ -811,6 +894,21 @@ async def parse_dataset_batch(
 @router.post("/parse-scheduler")
 async def parse_scheduler(req: ParseSchedulerRequest, _admin=Depends(require_admin)):
     state = get_dataset_state()
+    active_job = active_parse_scheduler_job(state)
+    if active_job:
+        job_id, job = active_job
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Parse scheduler already active: {job_id} "
+                f"{job.get('status', '')} {job.get('message', '')}"
+            ),
+        )
+
+    min_free_gb = req.min_free_gb if req.min_free_gb is not None else PARSE_MIN_FREE_GB
+    max_swap_pct = req.max_swap_pct if req.max_swap_pct is not None else PARSE_MAX_SWAP_PCT
+    await assert_parse_admission(state, min_free_gb=min_free_gb, max_swap_pct=max_swap_pct)
+
     if not req.background:
         return await run_parse_scheduler(state, req)
 
@@ -823,6 +921,7 @@ async def parse_scheduler(req: ParseSchedulerRequest, _admin=Depends(require_adm
     )
     job_id = job["id"]
     state.job_tracker[job_id] = {
+        "type": "rag_parse_scheduler",
         "status": "QUEUED",
         "total": req.max_batches,
         "processed": 0,

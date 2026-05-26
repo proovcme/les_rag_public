@@ -57,9 +57,8 @@ def build_header(
                 tab_refs["chat"]     = ui.tab("AI ЧАТ",         icon="o_forum")
                 tab_refs["history"]  = ui.tab("ИСТОРИЯ",        icon="o_history")
             if show_admin_tabs:
-                tab_refs["mermaid"]  = ui.tab("ГРАФ",           icon="o_account_tree")
                 tab_refs["qdrant_viz"] = ui.tab("КВАДРАНТ",      icon="o_scatter_plot")
-                tab_refs["diag"]     = ui.tab("🔬 ДИАГН",       icon="o_medical_services")
+                tab_refs["diag"]     = ui.tab("Д.И.А.Г.Н.О.З.", icon="o_health_and_safety")
                 tab_refs["volk"]     = ui.tab("В.О.Л.К.",       icon="o_vpn_key")
 
         # ── Контролы (справа) ─────────────────────────────────────────────────

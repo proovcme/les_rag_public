@@ -1,6 +1,6 @@
 # 🦉 Л.Е.С. — Локальная Единая Система v2.0 Core
 
-> **Актуализация 22.05.2026:** документ сохранён как historical v2.0 snapshot, но ниже отражает текущий runtime: MLX Host вместо Ollama в основном контуре, split UI (`/` чат, `/les` админка), premium chat/artifacts, semantic cache, document router и Parquet artifacts.
+> **Актуализация 25.05.2026:** документ сохранён как historical v2.0 snapshot, но текущий runtime уже no-Docker: Qdrant/proxy/MLX/UI работают на host через launchd, Docker Desktop/OrbStack не требуются. MLX Host заменил Ollama в основном контуре; активны split UI (`/` чат, `/les` админка), premium chat/artifacts, semantic cache, document router, Parquet artifacts и guarded qwen indexing.
 
 ## Описание
 Л.Е.С. v2.0 — суверенный инженерный RAG-стек для работы с нормативной документацией (ГОСТ/СП), проектной перепиской, каталогами и BIM-данными. Построен на принципах **Fully Local / Zero-Cloud / Lightweight**.  
@@ -15,7 +15,7 @@
 - **Т.О.С.К.А. (CRAG):** Нативный Python-пайплайн в прокси (Pre-Check → Retrieval → Generation → Post-Check).
 - **UI:** С.О.В.У.Ш.К.А. на NiceGUI: `/` — премиальный AI-чат с drawer-историей и правой панелью артефактов, `/les` — админка.
 - **Управление датасетами:** UI-вкладка с маппингом `Источник → Индекс`, кнопка `🔄 Загрузить в индекс`, автообновление статусов.
-- **Ресурсы:** 2 контейнера (Qdrant + Proxy) + MLX host process. Запуск на Mac M4 / 24 GB без облака.
+- **Ресурсы:** host LaunchAgents для Qdrant, proxy, MLX и UI. Docker-контейнеры в штатном runtime отсутствуют.
 - **Документы и таблицы:** Document Router выбирает маршрут ingestion; XLSX/CSV пишутся row-level chunks и `.parquet` artifacts.
 - **Ускорение:** semantic cache кэширует только `VERIFIED` ответы с invalidation по dataset scope.
 
@@ -32,21 +32,20 @@
 
 ## 🚀 Инструкция по запуску
 ### Предварительные требования
-- Docker Desktop / Docker Engine + Compose
-- MLX Host на хосте (порт 8080) с Qwen3/BGE-M3; Ollama опционален как резерв
+- Локальный Qdrant binary `/Users/ovc/.local/bin/qdrant` (порт 6333)
+- MLX Host на хосте (порт 8080) с Qwen3/Qwen embeddings; Ollama опционален как резерв
 - Mac M4 / 24 GB RAM (или аналог)
 
 ### Быстрый старт
 ```bash
-# 1. Запуск стека
-docker compose up -d
-./start_mlx.command
+# 1. Запуск host-runtime через launchd/команды проекта
+launchctl kickstart -k gui/$(id -u)/me.ovc.les.qdrant
+launchctl kickstart -k gui/$(id -u)/me.ovc.les.proxy
+launchctl kickstart -k gui/$(id -u)/me.ovc.les.mlx
 
 # 2. Проверка статуса
+curl http://localhost:6333/healthz
 curl http://localhost:8050/api/health
-
-# 3. Пересборка прокси (при изменениях кода)
-docker compose build proxy && docker compose up -d proxy
 ```
 
 ### Доступ к сервисам
@@ -70,8 +69,10 @@ docker compose build proxy && docker compose up -d proxy
 ```
 LES_v2/
 ├── proxy_server.py           # FastAPI ядро, роуты, CRAG, SSE, метрики
-├── docker-compose.yml        # Qdrant + Proxy (volumes: data, storage, frontend, backend)
-├── Dockerfile.proxy          # Сборка контейнера
+├── qdrant_launchd.plist      # Qdrant local binary :6333
+├── proxy_launchd.plist       # FastAPI proxy :8050
+├── docker-compose.yml        # legacy/archived Docker fallback, не штатный runtime
+├── Dockerfile.proxy          # legacy Docker proxy image
 ├── requirements.txt          # Зависимости (FastAPI, LlamaIndex, Qdrant, pymupdf4llm...)
 ├── .env                      # Конфиг моделей и путей
 │
@@ -123,7 +124,7 @@ LES_v2/
 ### ✅ Работает:
 - Полный пайплайн: Файл → ConverterRouter → Structure-Aware Chunking → `bge-m3` → Qdrant → Retrieval → `qwen3` → CRAG → Ответ.
 - Поддержка PDF (`pymupdf4llm`), DOCX (`mammoth`), EML/MSG, XLSX/CSV.
-- SQLite-метаданные, UUID-датасеты в `storage/datasets/`, persistence через Docker volumes.
+- SQLite-метаданные, UUID-датасеты в `storage/datasets/`, Qdrant persistence в `data/qdrant/`.
 - SSE-логи, Chart.js графики, real-time метрики, фильтры логов.
 - Вкладка **Датасеты**: маппинг `Источник → Индекс`, кнопка `🔄 Загрузить в индекс`, автообновление статусов.
 - Concurrency control: `asyncio.Semaphore(2)` для индексации, защита Ollama от перегрузки.
@@ -142,7 +143,7 @@ LES_v2/
 
 ## 📊 Фактический статус системы (Аудит 17.05.2026)
 ✅ Подтверждено работой в production:
-- Uvicorn запущен без `--reload`. Hot-reload отключён для стабильности Docker.
+- Uvicorn запущен без `--reload`. Hot-reload отключён для стабильности host-runtime.
 - Метрики собираются фоновым async-циклом каждые 3 сек. HTTP-запросы не блокируются.
 - Delta-Sync (size+mtime) + идемпотентная регистрация в SQLite исключают дубли.
 - Рекурсивный обход папок (`rglob`) видит вложенные файлы любой глубины.
@@ -154,5 +155,5 @@ LES_v2/
 Для локальных правок кода и документации интегрирован Aider + Ollama (`qwen2.5-coder:14b`).
 - **Путь:** `/Users/ovc/Library/Python/3.9/bin/aider`
 - **Запуск:** `cd ~/Projects/LES_v2 && /Users/ovc/Library/Python/3.9/bin/aider --model ollama_chat/qwen2.5-coder:14b --openai-api-base http://localhost:11434/v1 --yes-always <файлы> --message "задача"`
-- **Правила:** Указывать ≤3–4 файла. Для кода — EN промпт, для доков — RU. Лимит контекста ~32k токенов. После правок `.py` → `docker compose restart proxy`.
+- **Правила:** Указывать ≤3–4 файла. Для кода — EN промпт, для доков — RU. Лимит контекста ~32k токенов. После правок `.py` → `launchctl kickstart -k gui/$(id -u)/me.ovc.les.proxy`.
 - **Откаты:** `git status` перед стартом. Откат: `git checkout <commit> -- <file>`.

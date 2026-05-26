@@ -105,3 +105,39 @@ async def test_chat_generation_paused_in_indexing_mode():
 
     assert exc.value.status_code == 409
     assert "Indexing mode is active" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_chat_generation_paused_under_memory_pressure():
+    class BackendThatMustNotRun:
+        async def retrieve(self, *args, **kwargs):
+            raise AssertionError("retrieve should not run while memory guard is closed")
+
+    chat_router.set_chat_state(
+        chat_router.ChatRouterState(
+            rag_backend=BackendThatMustNotRun(),
+            llm_semaphore=SimpleNamespace(_value=1),
+            crag_stats={"verified": 0, "no_data": 0, "hallucination": 0},
+            chat_metrics={
+                "latency_search": [],
+                "latency_gen": [],
+                "tokens": [],
+                "crag_pass": 0,
+                "crag_fail": 0,
+            },
+            reranker_available=False,
+            reranker_cls=None,
+            current_mode={"mode": "chat"},
+            metrics_cache={"ram_free_gb": 5.0, "swap_pct": 86.0},
+        )
+    )
+
+    with pytest.raises(chat_router.HTTPException) as exc:
+        await chat_router.chat(
+            chat_router.ChatRequest(question="ширина путей эвакуации", dataset_filter="NTD_FIRE"),
+            _user=object(),
+        )
+
+    assert exc.value.status_code == 503
+    assert "ram_free_gb=5.0 < 8.0" in exc.value.detail
+    assert "swap_pct=86.0 > 60.0" in exc.value.detail

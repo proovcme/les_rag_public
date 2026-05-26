@@ -14,7 +14,6 @@ import asyncio
 import gc
 import logging
 import os
-import signal
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -48,6 +47,7 @@ MAIN_MODEL = os.getenv("MLX_MODEL",     "mlx-community/Qwen3-14B-4bit")
 VAL_MODEL  = os.getenv("MLX_VAL_MODEL", "mlx-community/Qwen3-4B-4bit")
 BGE_MODEL  = embedding_model_id()
 BGE_BATCH_SIZE = int(os.getenv("BGE_BATCH_SIZE", "32"))
+KEEP_SINGLE_LLM_LOADED = os.getenv("MLX_KEEP_SINGLE_LLM_LOADED", "true").lower() in {"1", "true", "yes", "on"}
 
 main_engine = MLXMemoryManager(model_path=MAIN_MODEL, ttl_seconds=300)
 val_engine  = MLXMemoryManager(model_path=VAL_MODEL,  ttl_seconds=120)
@@ -96,56 +96,26 @@ embedder = SentenceTransformersEmbedder()
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 
-# Процессы которые нельзя убивать (substring match по cmdline)
-_PROC_WHITELIST = (
-    "python3", "python", "uvicorn",
-    "docker", "com.docker", "containerd",
-    "qdrant",
-    "kernel_task", "launchd", "WindowServer",
-    "loginwindow", "ssh", "sshd", "zsh", "bash",
-    "Finder", "SystemUIServer", "Dock",
-)
-
 # Порог свопа при котором выгружаем val-модель (%)
 SWAP_WARN_PCT  = 70
-# Порог при котором убиваем сторонние процессы (%)
+# Порог критического давления: выгружаем только собственные модели.
 SWAP_KILL_PCT  = 85
 
 
-def _kill_nonessential() -> list[str]:
-    """Убивает процессы не из whitelist. Возвращает список убитых."""
-    import psutil
-    killed = []
-    for proc in psutil.process_iter(["pid", "name", "cmdline"]):
-        try:
-            cmdline = " ".join(proc.info["cmdline"] or [])
-            name    = proc.info["name"] or ""
-            if proc.pid == os.getpid():
-                continue
-            if any(w.lower() in cmdline.lower() or w.lower() in name.lower()
-                   for w in _PROC_WHITELIST):
-                continue
-            proc.send_signal(signal.SIGTERM)
-            killed.append(name)
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
-    return killed
-
-
 async def memory_guard_loop():
-    """Мониторит swap каждые 30с. При давлении — выгружает val, при критическом — убивает лишние процессы."""
+    """Мониторит swap каждые 30с и освобождает только память, занятую MLX Host."""
     import psutil
     await asyncio.sleep(30)  # даём системе стабилизироваться при старте
     while True:
         try:
             sw = psutil.swap_memory()
             if sw.percent >= SWAP_KILL_PCT:
-                logger.warning(f"[MEM] Swap {sw.percent:.0f}% >= {SWAP_KILL_PCT}% — выгружаю val + убиваю посторонние")
+                logger.warning(f"[MEM] Swap {sw.percent:.0f}% >= {SWAP_KILL_PCT}% — выгружаю модели MLX Host")
+                if main_engine.model is not None:
+                    main_engine._unload_model()
                 if val_engine.model is not None:
                     val_engine._unload_model()
-                killed = await asyncio.to_thread(_kill_nonessential)
-                if killed:
-                    logger.warning(f"[MEM] Убито: {', '.join(set(killed))}")
+                embedder.force_unload()
             elif sw.percent >= SWAP_WARN_PCT:
                 logger.warning(f"[MEM] Swap {sw.percent:.0f}% >= {SWAP_WARN_PCT}% — выгружаю val-модель")
                 if val_engine.model is not None:
@@ -251,6 +221,19 @@ def _get_engine(model_name: str) -> "MLXMemoryManager":
     return main_engine
 
 
+def _unload_peer_for(engine: "MLXMemoryManager") -> list[str]:
+    if not KEEP_SINGLE_LLM_LOADED:
+        return []
+    unloaded: list[str] = []
+    if engine is main_engine and val_engine.model is not None:
+        val_engine._unload_model()
+        unloaded.append("val")
+    elif engine is val_engine and main_engine.model is not None:
+        main_engine._unload_model()
+        unloaded.append("main")
+    return unloaded
+
+
 def _messages_to_prompt(messages: List[OAIMessage], engine: "MLXMemoryManager", enable_thinking: bool = False) -> str:
     """
     Строит промпт через chat_template токенизатора движка.
@@ -309,6 +292,9 @@ async def health():
             "profile": embed_profile_name(),
             "loaded": embedder._model is not None,
             "batch_size": int(os.getenv("BGE_BATCH_SIZE", str(BGE_BATCH_SIZE))),
+        },
+        "policy": {
+            "keep_single_llm_loaded": KEEP_SINGLE_LLM_LOADED,
         },
         "memory": {
             "ram_free_gb":  round(vm.available / 1e9, 1),
@@ -420,6 +406,7 @@ async def list_models():
 async def generate_ollama(req: GenerateRequest):
     """Ollama-совместимый endpoint для обратной совместимости."""
     engine = _get_engine(req.model)
+    _unload_peer_for(engine)
     answer = _strip_think_tags(await engine.generate_text(prompt=req.prompt, max_tokens=req.max_tokens))
     return {"model": req.model, "response": answer, "eval_count": len(answer.split())}
 
@@ -428,6 +415,7 @@ async def generate_ollama(req: GenerateRequest):
 async def chat_completions(req: OAIChatRequest):
     """OpenAI-совместимый — основной для прокси и Roo Code."""
     engine = _get_engine(req.model or MAIN_MODEL)
+    _unload_peer_for(engine)
     prompt = _messages_to_prompt(req.messages, engine)
     try:
         answer = _strip_think_tags(await engine.generate_text(
@@ -445,6 +433,7 @@ async def chat_completions(req: OAIChatRequest):
 async def validate_answer(req: ValidateRequest):
     """Проверка ответа через Qwen3-4B. Возвращает VERIFIED / NO_DATA / HALLUCINATION."""
     # enable_thinking=False — валидатору не нужен <think> блок, нужен мгновенный ответ
+    unloaded_peer = _unload_peer_for(val_engine)
     prompt = val_engine.apply_chat_template([{
         "role": "system",
         "content": (
@@ -471,7 +460,7 @@ async def validate_answer(req: ValidateRequest):
         elif "HALLUCINATION" in raw: status = "HALLUCINATION"
         else:                        status = "UNKNOWN"
         logger.info(f"[VALIDATE] → {status}")
-        return {"status": status, "raw": raw}
+        return {"status": status, "raw": raw, "unloaded_peer": unloaded_peer}
     except Exception as e:
         logger.warning(f"[VALIDATE] Ошибка: {e}")
         return {"status": "SKIP", "error": str(e)}

@@ -137,6 +137,7 @@ async def test_list_documents_returns_file_status_rows(tmp_path, monkeypatch, da
                 file_size INTEGER,
                 chunk_count INTEGER DEFAULT 0,
                 domain TEXT DEFAULT '',
+                route_dataset TEXT DEFAULT '',
                 doc_type TEXT DEFAULT '',
                 content_type TEXT DEFAULT '',
                 complexity TEXT DEFAULT '',
@@ -149,17 +150,18 @@ async def test_list_documents_returns_file_status_rows(tmp_path, monkeypatch, da
         conn.execute(
             """
             INSERT INTO documents
-            (id, dataset_id, file_name, status, file_size, chunk_count, domain, doc_type, content_type, complexity, pipeline)
-            VALUES ('doc-1', 'ds-1', 'NTD/SP.docx', 'INDEXED', 2048, 12, 'NTD_FIRE', 'NORMATIVE', 'text', 'simple', 'markdown')
+            (id, dataset_id, file_name, status, file_size, chunk_count, domain, route_dataset, doc_type, content_type, complexity, pipeline)
+            VALUES ('doc-1', 'ds-1', 'NTD/SP.docx', 'INDEXED', 2048, 12, 'NTD_FIRE', 'NTD_FIRE_Index', 'NORMATIVE', 'text', 'simple', 'markdown')
             """
         )
 
-    result = await datasets.list_documents(status="INDEXED", _user=object())
+    result = await datasets.list_documents(status="INDEXED", q="fire", _user=object())
 
     assert result["total"] == 1
     assert result["summary"]["INDEXED"] == {"files": 1, "chunks": 12}
     assert result["documents"][0]["dataset_name"] == "NTD_FIRE_Index"
     assert result["documents"][0]["file_name"] == "NTD/SP.docx"
+    assert result["documents"][0]["route_dataset"] == "NTD_FIRE_Index"
     assert result["documents"][0]["chunk_count"] == 12
 
 
@@ -199,6 +201,8 @@ async def test_retrieve_debug_returns_ranked_chunks_and_inferred_dataset(dataset
 
     assert result["dataset_ids"] == ["ds-1"]
     assert result["query_route"]["dataset_filter"] == "NTD_FIRE"
+    assert result["embedding"]["collection"]
+    assert result["embedding"]["meta_db"]
     assert result["chunks"][0]["doc_name"] == "СП 3.13130.docx"
     assert result["chunks"][0]["doc_type"] == "NORMATIVE"
 
@@ -360,6 +364,47 @@ async def test_parse_scheduler_runs_pending_batches(monkeypatch, dataset_state):
     assert result["stop_reason"] == ""
     assert dataset_state.parses == [("ds-1", 2), ("ds-1", 2)]
     assert len(unloads) == 2
+
+
+@pytest.mark.asyncio
+async def test_parse_scheduler_background_rejects_before_queueing(monkeypatch, dataset_state):
+    async def _reject(state, **kwargs):
+        raise datasets.HTTPException(status_code=503, detail="Qdrant is not healthy")
+
+    monkeypatch.setattr(datasets, "assert_parse_admission", _reject)
+
+    with pytest.raises(datasets.HTTPException) as exc:
+        await datasets.parse_scheduler(
+            datasets.ParseSchedulerRequest(background=True),
+            _admin=object(),
+        )
+
+    assert exc.value.status_code == 503
+    assert datasets.get_dataset_state().job_tracker == {}
+    assert dataset_state.parses == []
+
+
+@pytest.mark.asyncio
+async def test_parse_scheduler_rejects_duplicate_active_job(monkeypatch, dataset_state):
+    state = datasets.get_dataset_state()
+    state.job_tracker["active-job"] = {
+        "type": "rag_parse_scheduler",
+        "status": "PARSING",
+        "message": "Batch 1/25: NTD pending=10",
+    }
+
+    async def _admit(*args, **kwargs):
+        pytest.fail("duplicate scheduler should be rejected before admission")
+
+    monkeypatch.setattr(datasets, "assert_parse_admission", _admit)
+
+    with pytest.raises(datasets.HTTPException) as exc:
+        await datasets.parse_scheduler(
+            datasets.ParseSchedulerRequest(background=True),
+            _admin=object(),
+        )
+
+    assert exc.value.status_code == 409
 
 
 @pytest.mark.asyncio

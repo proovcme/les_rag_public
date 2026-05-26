@@ -16,16 +16,16 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from backend.metrics_collector import DB_PATH, heartbeats
-from backend.rag_config import embed_profile_name, embedding_model_id, rag_meta_db_path
+from backend.rag_config import rag_meta_db_path, rag_runtime_config
 from proxy.config import docker_control_enabled, mlx_url
 from proxy.security import require_admin
 from proxy.services.resource_governor import (
     active_parse_priority_order,
-    chat_generation_allowed,
     enter_chat_mode,
     enter_indexing_mode,
     is_indexing_mode,
 )
+from proxy.services.runtime_admission import count_active_jobs, evaluate_chat_admission
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,8 @@ class RuntimeRouterState:
     llm_semaphore: asyncio.Semaphore
     llm_concurrency: int
     proxy_start: float
+    job_service: Any = None
+    job_tracker: dict[str, Any] | None = None
 
     @property
     def backend(self):
@@ -75,6 +77,15 @@ def get_runtime_state() -> RuntimeRouterState:
     return _state
 
 
+def chat_admission_for_state(state: RuntimeRouterState):
+    return evaluate_chat_admission(
+        current_mode=state.current_mode,
+        metrics_cache=state.metrics_cache,
+        active_jobs=count_active_jobs(state.job_service, state.job_tracker),
+        llm_available=getattr(state.llm_semaphore, "_value", 1) > 0,
+    )
+
+
 @router.get("/health")
 async def health():
     backend = get_runtime_state().backend
@@ -92,6 +103,7 @@ async def health():
         except Exception as error:
             logger.warning("[HEALTH] RAG snapshot failed: %s", error)
             response["rag"] = {"status": "unknown", "error": str(error)}
+    response["embedding"] = rag_runtime_config()
     return response
 
 
@@ -164,12 +176,13 @@ async def _host_memory() -> dict[str, Any]:
 @router.get("/indexing-mode")
 async def get_indexing_mode():
     state = get_runtime_state()
-    allowed, reason = chat_generation_allowed(state.current_mode)
+    admission = chat_admission_for_state(state)
     return {
         "active": is_indexing_mode(state.current_mode),
         "mode": state.current_mode,
-        "chat_generation_allowed": allowed,
-        "chat_generation_reason": reason,
+        "chat_generation_allowed": admission.allowed,
+        "chat_generation_reason": admission.reason,
+        "chat_admission": admission.payload(),
         "dataset_priority_order": active_parse_priority_order(state.current_mode),
     }
 
@@ -205,13 +218,13 @@ async def get_status():
     state = get_runtime_state()
     mlx_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
 
-    models = []
+    loaded_models = []
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
             response = await client.get(f"{mlx_url}/api/ps")
             if response.status_code == 200:
                 for model in response.json().get("models", []):
-                    models.append(
+                    loaded_models.append(
                         {
                             "name": model.get("name", "?"),
                             "size_gb": round(model.get("size", 0) / (1024**3), 1),
@@ -220,7 +233,7 @@ async def get_status():
                         }
                     )
     except Exception as e:
-        logger.warning("Ollama /api/ps error: %s", e)
+        logger.warning("MLX /api/ps error: %s", e)
 
     containers = []
     if docker_control_enabled():
@@ -246,9 +259,10 @@ async def get_status():
         except Exception as e:
             logger.warning("Docker ps error: %s", e)
 
+    admission = chat_admission_for_state(state)
     return {
         "mode": state.current_mode,
-        "ollama": {"models": models, "count": len(models)},
+        "mlx": {"models": loaded_models, "count": len(loaded_models)},
         "containers": containers,
         "proxy": {
             "uptime_sec": int(time.time() - state.proxy_start),
@@ -257,6 +271,8 @@ async def get_status():
             "llm_url": os.getenv("MLX_URL", "http://127.0.0.1:8080"),
             "llm_model": os.getenv("LLM_MODEL", "qwen3:14b"),
         },
+        "chat_admission": admission.payload(),
+        "embedding": rag_runtime_config(),
     }
 
 
@@ -285,38 +301,50 @@ async def get_metrics():
         rag_stats["status"] = "error"
 
     crag_total = max(1, sum(state.crag_stats.values()))
+    crag_verified = state.crag_stats.get("verified", 0)
+    crag_no_data = state.crag_stats.get("no_data", 0)
+    crag_hallucination = state.crag_stats.get("hallucination", 0)
+    crag_unvalidated = state.crag_stats.get("unvalidated", 0)
+    cache_total = max(1, state.chat_metrics.get("cache_hit", 0) + state.chat_metrics.get("cache_miss", 0))
+    retrieval_total = max(1, state.chat_metrics.get("retrieval_good", 0) + state.chat_metrics.get("retrieval_weak", 0))
+    ram_used = rows[0]["ram_used"] if rows else 0
+    ram_total = state.metrics_cache.get("ram_total", rows[0]["ram_total"] if rows else 0)
+    ram_free = state.metrics_cache.get("ram_free_gb")
+    if ram_free is None:
+        ram_free = max(0, ram_total - ram_used)
+    latest = rows[0] if rows else {}
+    latest_keys = set(latest.keys()) if hasattr(latest, "keys") else set()
+    llm_ram = latest["llm_ram"] if "llm_ram" in latest_keys else 0
     return {
         "system": {
-            "cpu": rows[0]["cpu"] if rows else 0,
-            "ram_used": rows[0]["ram_used"] if rows else 0,
-            "ram_total": state.metrics_cache.get("ram_total", rows[0]["ram_total"] if rows else 0),
-            "swap_used": state.metrics_cache.get("swap_used_gb", rows[0]["swap_used"] if rows else 0),
+            "cpu": latest["cpu"] if rows else 0,
+            "ram_used": ram_used,
+            "ram_free_gb": ram_free,
+            "ram_total": ram_total,
+            "swap_used": state.metrics_cache.get("swap_used_gb", latest["swap_used"] if rows else 0),
             "swap_total": state.metrics_cache.get("swap_total_gb", 0),
             "swap_pct": state.metrics_cache.get("swap_pct", 0),
-            "disk_used": rows[0]["disk_used"] if rows else 0,
-            "disk_total": rows[0]["disk_total"] if rows else 0,
-            "ollama_ram": rows[0]["ollama_ram"] if rows else 0,
-            "network_ok": rows[0]["network_ok"] if rows else 0,
+            "disk_used": latest["disk_used"] if rows else 0,
+            "disk_total": latest["disk_total"] if rows else 0,
+            "llm_ram": llm_ram,
+            "network_ok": latest["network_ok"] if rows else 0,
         },
         "pipeline": {
             "latency_search": state.chat_metrics["latency_search"][-10:],
             "latency_gen": state.chat_metrics["latency_gen"][-10:],
             "tokens": state.chat_metrics["tokens"][-10:],
-            "crag_pass_rate": state.crag_stats["verified"] / crag_total,
-            "crag_verified_rate": state.crag_stats["verified"] / crag_total,
-            "crag_nodata_rate": state.crag_stats["no_data"] / crag_total,
-            "crag_halluc_rate": state.crag_stats["hallucination"] / crag_total,
+            "crag_pass_rate": crag_verified / crag_total,
+            "crag_verified_rate": crag_verified / crag_total,
+            "crag_nodata_rate": crag_no_data / crag_total,
+            "crag_halluc_rate": crag_hallucination / crag_total,
+            "crag_unvalidated_rate": crag_unvalidated / crag_total,
+            "cache_hit_rate": state.chat_metrics.get("cache_hit", 0) / cache_total,
+            "retrieval_good_rate": state.chat_metrics.get("retrieval_good", 0) / retrieval_total,
             "total_requests": sum(state.crag_stats.values()),
         },
         "queue": {"llm_waiting": max(0, state.llm_concurrency - state.llm_semaphore._value)},
         "errors": dict(state.error_counts),
         "heartbeats": heartbeats,
         "rag": rag_stats,
-        "embedding": {
-            "profile": embed_profile_name(),
-            "model": embedding_model_id(),
-            "meta_db": rag_meta_db_path(),
-            "collection": getattr(state.backend, "collection_name", ""),
-            "vector_size": getattr(state.backend, "vector_size", 0),
-        },
+        "embedding": rag_runtime_config(),
     }

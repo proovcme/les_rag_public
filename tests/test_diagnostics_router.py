@@ -38,4 +38,6 @@ async def test_run_diagnostics_aggregates_check_statuses(monkeypatch, diagnostic
     crag = next(check for check in result["checks"] if check["name"] == "Т.О.С.К.А. статистика")
     assert crag["status"] == "ok"
     assert "V:7 N:2 H:1" in crag["value"]
+    assert result["embedding"]["profile"]
+    assert result["embedding"]["collection"]
     assert result["ok_count"] >= 1

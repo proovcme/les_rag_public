@@ -2,6 +2,7 @@ import sqlite3
 
 import pytest
 
+from proxy.routers.chat import save_chat_history
 from proxy.routers.chat_history import get_chat_history, get_chat_sessions
 
 
@@ -36,9 +37,10 @@ def _init_chat_history(path):
 
 @pytest.mark.asyncio
 async def test_get_chat_history_returns_recent_messages_in_chronological_order(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
     (tmp_path / "data").mkdir()
-    _init_chat_history(tmp_path / "data" / "les_meta.db")
+    db_path = tmp_path / "data" / "les_meta_qwen.db"
+    monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+    _init_chat_history(db_path)
 
     messages = await get_chat_history(limit=2, _user=object())
 
@@ -52,9 +54,10 @@ async def test_get_chat_history_returns_recent_messages_in_chronological_order(t
 
 @pytest.mark.asyncio
 async def test_get_chat_history_filters_by_session(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
     (tmp_path / "data").mkdir()
-    _init_chat_history(tmp_path / "data" / "les_meta.db")
+    db_path = tmp_path / "data" / "les_meta_qwen.db"
+    monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+    _init_chat_history(db_path)
 
     messages = await get_chat_history(session_id="s1", _user=object())
 
@@ -63,9 +66,10 @@ async def test_get_chat_history_filters_by_session(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_get_chat_sessions_summarizes_sessions(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
     (tmp_path / "data").mkdir()
-    _init_chat_history(tmp_path / "data" / "les_meta.db")
+    db_path = tmp_path / "data" / "les_meta_qwen.db"
+    monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+    _init_chat_history(db_path)
 
     sessions = await get_chat_sessions(_user=object())
 
@@ -73,3 +77,28 @@ async def test_get_chat_sessions_summarizes_sessions(tmp_path, monkeypatch):
         "s1": 2,
         "s2": 1,
     }
+
+
+def test_save_chat_history_uses_active_meta_db_path(tmp_path, monkeypatch):
+    (tmp_path / "data").mkdir()
+    db_path = tmp_path / "data" / "les_meta_qwen.db"
+    monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+    _init_chat_history(db_path)
+
+    save_chat_history(
+        question="q4",
+        answer="a4",
+        sources=["doc-a", "doc-b"],
+        crag_status="VERIFIED",
+        latency_sec=1.25,
+        tokens=42,
+        session_id="s3",
+    )
+
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT question, answer, sources, crag_status, latency_sec, tokens, session_id "
+            "FROM chat_history WHERE session_id='s3'"
+        ).fetchone()
+
+    assert row == ("q4", "a4", "doc-a,doc-b", "VERIFIED", 1.25, 42, "s3")

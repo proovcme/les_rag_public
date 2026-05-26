@@ -40,6 +40,7 @@ class GoldenCase:
     id: str
     question: str
     dataset_filter: str = ""
+    reference_answer: str = ""
     top_k: int = 8
     min_chunks: int = 1
     min_top_score: float = 0.0
@@ -96,6 +97,7 @@ def _case_from_dict(raw: dict[str, Any]) -> GoldenCase:
         id=str(raw["id"]),
         question=str(raw["question"]),
         dataset_filter=str(raw.get("dataset_filter") or ""),
+        reference_answer=str(raw.get("reference_answer") or ""),
         top_k=int(raw.get("top_k") or 8),
         min_chunks=int(raw.get("min_chunks") or 1),
         min_top_score=float(raw.get("min_top_score") or 0.0),
