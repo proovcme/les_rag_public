@@ -136,6 +136,46 @@ def test_completed_doc_ids_from_log(tmp_path):
     assert guarded.completed_doc_ids_from_log(str(log_path)) == {"done-a"}
 
 
+def test_campaign_state_records_completed_doc(tmp_path):
+    state_path = tmp_path / "state.json"
+    doc = guarded.TargetDoc(
+        id="doc-a",
+        dataset_id="ds-fire",
+        dataset_name="NTD_FIRE_Index",
+        file_name="a.pdf",
+        file_size=100,
+        chunk_count=7,
+    )
+    state = guarded.empty_campaign_state(["NTD_FIRE_Index"], "rag.db")
+
+    guarded.record_completed_doc(state_path, state, doc, {"chunk_count": 5}, tmp_path / "run")
+    loaded = guarded.load_campaign_state(state_path, ["NTD_FIRE_Index"], "rag.db")
+
+    assert guarded.completed_doc_ids_from_state(loaded) == {"doc-a"}
+    assert loaded["completed"]["doc-a"]["old_chunk_count"] == 7
+    assert loaded["completed"]["doc-a"]["new_chunk_count"] == 5
+
+
+def test_import_completed_logs_into_state_is_idempotent(tmp_path):
+    log_path = tmp_path / "reindex.jsonl"
+    log_path.write_text(
+        json.dumps(
+            {
+                "event": "doc_parse",
+                "current": {"id": "done-a", "status": "INDEXED"},
+                "result": {"result": {"errors": 0}},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    state = guarded.empty_campaign_state(["NTD_FIRE_Index"], "rag.db")
+
+    assert guarded.import_completed_logs_into_state(state, [str(log_path)]) == 1
+    assert guarded.import_completed_logs_into_state(state, [str(log_path)]) == 0
+    assert guarded.completed_doc_ids_from_state(state) == {"done-a"}
+
+
 def test_compact_rag_keeps_totals_qdrant_and_problem_datasets():
     compact = guarded.compact_rag(
         {

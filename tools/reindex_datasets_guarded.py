@@ -60,6 +60,15 @@ def run_stamp() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
+def campaign_slug(dataset_names: list[str]) -> str:
+    raw = "__".join(sorted(dataset_names))
+    return "".join(ch.lower() if ch.isalnum() else "_" for ch in raw).strip("_")
+
+
+def default_state_file(artifacts_dir: str, dataset_names: list[str]) -> Path:
+    return Path(artifacts_dir) / f"reindex_state_{campaign_slug(dataset_names)}.json"
+
+
 def emit(log_path: Path | None, event: str, **fields: Any) -> None:
     item = {"ts": timestamp(), "event": event, **fields}
     line = json.dumps(item, ensure_ascii=False, sort_keys=True)
@@ -110,6 +119,91 @@ def completed_doc_ids_from_log(log_path: str) -> set[str]:
             ):
                 completed.add(str(current["id"]))
     return completed
+
+
+def empty_campaign_state(dataset_names: list[str], db_path: str) -> dict[str, Any]:
+    return {
+        "version": 1,
+        "datasets": list(dataset_names),
+        "db_path": db_path,
+        "created_at": timestamp(),
+        "updated_at": timestamp(),
+        "completed": {},
+        "runs": [],
+    }
+
+
+def load_campaign_state(path: Path, dataset_names: list[str], db_path: str) -> dict[str, Any]:
+    if not path.exists():
+        return empty_campaign_state(dataset_names, db_path)
+    with path.open("r", encoding="utf-8") as fh:
+        state = json.load(fh)
+    if not isinstance(state, dict):
+        raise RuntimeError(f"campaign state is not JSON object: {path}")
+    if sorted(state.get("datasets") or []) != sorted(dataset_names):
+        raise RuntimeError(
+            f"campaign state datasets mismatch: {state.get('datasets')} != {dataset_names}"
+        )
+    if "completed" not in state or not isinstance(state["completed"], dict):
+        state["completed"] = {}
+    if "runs" not in state or not isinstance(state["runs"], list):
+        state["runs"] = []
+    return state
+
+
+def save_campaign_state(path: Path, state: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    state["updated_at"] = timestamp()
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(
+        json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    tmp_path.replace(path)
+
+
+def completed_doc_ids_from_state(state: dict[str, Any]) -> set[str]:
+    completed = state.get("completed") or {}
+    if not isinstance(completed, dict):
+        return set()
+    return {str(doc_id) for doc_id in completed}
+
+
+def import_completed_logs_into_state(state: dict[str, Any], resume_logs: list[str]) -> int:
+    completed = state.setdefault("completed", {})
+    before = len(completed)
+    for resume_log in resume_logs:
+        for doc_id in completed_doc_ids_from_log(resume_log):
+            completed.setdefault(
+                doc_id,
+                {
+                    "source": "resume_log",
+                    "resume_log": resume_log,
+                    "completed_at": timestamp(),
+                },
+            )
+    return len(completed) - before
+
+
+def record_completed_doc(
+    state_path: Path,
+    state: dict[str, Any],
+    doc: TargetDoc,
+    current: dict[str, Any],
+    run_dir: Path,
+) -> None:
+    completed = state.setdefault("completed", {})
+    completed[doc.id] = {
+        "dataset_id": doc.dataset_id,
+        "dataset_name": doc.dataset_name,
+        "file_name": doc.file_name,
+        "file_size": doc.file_size,
+        "old_chunk_count": doc.chunk_count,
+        "new_chunk_count": current.get("chunk_count"),
+        "completed_at": timestamp(),
+        "run_dir": str(run_dir),
+    }
+    save_campaign_state(state_path, state)
 
 
 def request(
@@ -595,6 +689,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--snapshot-timeout", type=float, default=120.0)
     parser.add_argument("--parse-method", choices=["scheduler", "batch"], default="scheduler")
     parser.add_argument("--resume-log", action="append", default=[])
+    parser.add_argument("--state-file", default="", help="Persistent campaign state JSON; defaults to artifacts dir")
+    parser.add_argument("--reset-state", action="store_true", help="Start a fresh campaign state for these datasets")
+    parser.add_argument("--no-state", action="store_true", help="Disable persistent campaign resume state")
     parser.add_argument("--memory-wait-sec", type=float, default=60.0)
     parser.add_argument("--memory-poll-sec", type=float, default=5.0)
     parser.add_argument("--require-qdrant-snapshot", action="store_true")
@@ -613,6 +710,25 @@ def main(argv: list[str] | None = None) -> int:
     run_dir = Path(args.artifacts_dir) / f"reindex_{run_stamp()}"
     run_dir.mkdir(parents=True, exist_ok=True)
     log_path = run_dir / "reindex.jsonl"
+    state_path = Path(args.state_file) if args.state_file else default_state_file(args.artifacts_dir, args.datasets)
+    state: dict[str, Any] | None = None
+    completed_from_state: set[str] = set()
+    imported_from_logs = 0
+    if not args.no_state:
+        if args.reset_state and state_path.exists() and not args.dry_run:
+            state_path.unlink()
+        state = load_campaign_state(state_path, args.datasets, args.db_path)
+        imported_from_logs = import_completed_logs_into_state(state, args.resume_log)
+        if not args.dry_run:
+            state.setdefault("runs", []).append(
+                {
+                    "run_dir": str(run_dir),
+                    "started_at": timestamp(),
+                    "resume_logs": args.resume_log,
+                }
+            )
+            save_campaign_state(state_path, state)
+        completed_from_state = completed_doc_ids_from_state(state)
 
     admin_key = args.api_key
     if not admin_key and Path(args.auth_db_path).exists():
@@ -626,6 +742,7 @@ def main(argv: list[str] | None = None) -> int:
         auth_db_path=args.auth_db_path,
         collection=args.collection,
         run_dir=str(run_dir),
+        state_file="" if args.no_state else str(state_path),
         dry_run=args.dry_run,
         admin_key=mask_key(admin_key),
     )
@@ -650,12 +767,19 @@ def main(argv: list[str] | None = None) -> int:
         before_count = len(targets)
         targets = [doc for doc in targets if doc.id not in completed_ids]
         skipped_completed = before_count - len(targets)
+    if completed_from_state:
+        before_count = len(targets)
+        targets = [doc for doc in targets if doc.id not in completed_from_state]
+        skipped_completed += before_count - len(targets)
     emit(
         log_path,
         "plan",
         summaries=summaries_before,
         target_docs=len(targets),
         skipped_completed=skipped_completed,
+        completed_in_state=len(completed_from_state),
+        imported_from_logs=imported_from_logs,
+        state_file="" if args.no_state else str(state_path),
         resume_log=args.resume_log,
         parse_method=args.parse_method,
     )
@@ -752,6 +876,15 @@ def main(argv: list[str] | None = None) -> int:
             emit(log_path, "doc_parse", index=idx, sec=parsed_sec, result=parse_result, current=current)
             if not current or current.get("status") != "INDEXED":
                 raise RuntimeError(f"document did not return to INDEXED: {doc.file_name}: {current}")
+            if state is not None:
+                record_completed_doc(state_path, state, doc, current, run_dir)
+                emit(
+                    log_path,
+                    "campaign_progress",
+                    completed=len(completed_doc_ids_from_state(state)),
+                    remaining=max(0, len(targets) - idx),
+                    state_file=str(state_path),
+                )
 
             after_health = health_snapshot(args.proxy_url, args.health_timeout, admin_key)
             emit(log_path, "doc_health", index=idx, rag=compact_rag(after_health.get("rag")))
