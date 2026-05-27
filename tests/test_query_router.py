@@ -21,6 +21,18 @@ def test_normative_cable_question_routes_to_rag_electrical():
     assert route.reason == "electrical_keyword"
 
 
+def test_hvac_normative_question_routes_to_hvac_before_generic_normative():
+    intent = route_query("Где смотреть требования к микроклимату помещений?")
+    route = classify_query("Где смотреть требования к микроклимату помещений?")
+
+    assert intent.channel == "rag"
+    assert intent.dataset_filter == "NTD_HVAC"
+    assert intent.reason == "hvac_keyword"
+    assert route.dataset_filter == "NTD_HVAC"
+    assert route.reason == "hvac_keyword"
+    assert "СП 60.13330" in route.expanded_query
+
+
 def test_table_document_keywords_route_to_table():
     intent = route_query("Покажи позиции из спецификации по светильникам")
 
@@ -28,14 +40,26 @@ def test_table_document_keywords_route_to_table():
     assert intent.dataset_filter == "TABLE"
 
 
+def test_mail_question_routes_to_mail_channel():
+    intent = route_query("Найди письма про Dropbox")
+    route = classify_query("Найди письма про Dropbox")
+
+    assert intent.channel == "mail"
+    assert intent.dataset_filter == "MAIL"
+    assert route.dataset_filter == "MAIL"
+
+
 def test_explicit_filters_override_heuristics():
     table_intent = route_query("Какие требования к кабелю?", dataset_filter="TABLE_SMETA")
     rag_intent = route_query("Сколько кабеля в проекте?", dataset_filter="NTD_ELECTRICAL")
+    mail_intent = route_query("Покажи последние", dataset_filter="MAIL")
 
     assert table_intent.channel == "table"
     assert table_intent.dataset_filter == "TABLE_SMETA"
     assert rag_intent.channel == "rag"
     assert rag_intent.dataset_filter == "NTD_ELECTRICAL"
+    assert mail_intent.channel == "mail"
+    assert mail_intent.dataset_filter == "MAIL"
 
 
 def test_explicit_dataset_ids_keep_rag_path():

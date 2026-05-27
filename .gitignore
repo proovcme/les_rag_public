@@ -1,19 +1,13 @@
 # Данные и Секреты (НИКОГДА не пушить)
 .env
-.env.*
-!.env.example
 data/
 storage/
 RAG_Content/
 logs/
-artifacts/
-.qdrant-initialized
 .claude/
 .nicegui/
 
 # Python
-.venv/
-.pytest_cache/
 __pycache__/
 *.py[cod]
 *$py.class
@@ -43,14 +37,10 @@ Thumbs.db
 *.log
 .aider*
 
-# Local databases and credentials
-*.db
-*.sqlite
-*.sqlite3
-*.pem
-*.key
-*.crt
-*.p12
-
 # Generated local workbench exports
 qdrant_visualizer/data.js
+
+# Local runtime artifacts
+artifacts/
+.qdrant-initialized
+snapshots/

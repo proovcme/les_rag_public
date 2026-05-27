@@ -32,6 +32,7 @@ DEFAULT_RAG_UPLOAD_SUFFIXES = (
     ".docx",
     ".doc",
     ".eml",
+    ".emlx",
     ".msg",
     ".xlsx",
     ".xls",

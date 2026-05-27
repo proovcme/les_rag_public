@@ -12,20 +12,23 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
 from backend.metrics_collector import DB_PATH, heartbeats
-from backend.rag_config import embed_profile_name, embedding_model_id, rag_meta_db_path
+from backend.rag_config import rag_meta_db_path, rag_runtime_config
 from proxy.config import docker_control_enabled, mlx_url
 from proxy.security import require_admin
 from proxy.services.resource_governor import (
     active_parse_priority_order,
-    chat_generation_allowed,
+    current_runtime_profile,
     enter_chat_mode,
     enter_indexing_mode,
     is_indexing_mode,
+    normalize_runtime_profile,
 )
+from proxy.services.runtime_admission import count_active_jobs, evaluate_chat_admission, evaluate_memory_pressure
+from proxy.services.runtime_dispatcher import DEFAULT_DATASETS, DispatcherError, RuntimeDispatcher
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +38,7 @@ router = APIRouter(prefix="/api", tags=["runtime"])
 class ModeRequest(BaseModel):
     mode: str
     model: str
+    runtime_profile: str | None = None
 
 
 class IndexingModeRequest(BaseModel):
@@ -42,6 +46,40 @@ class IndexingModeRequest(BaseModel):
     reason: str = "manual"
     unload_models: bool = True
     dataset_priority_order: list[str] | None = None
+
+
+class DispatcherReindexRequest(BaseModel):
+    datasets: list[str] = Field(default_factory=lambda: list(DEFAULT_DATASETS), min_length=1, max_length=20)
+    parse_method: str = Field(default="scheduler", pattern="^(scheduler|batch)$")
+    min_free_gb: float = Field(default=4.0, ge=0.5, le=64.0)
+    max_swap_pct: float = Field(default=85.0, ge=0.0, le=100.0)
+    post_min_free_gb: float = Field(default=3.0, ge=0.5, le=64.0)
+    post_max_swap_pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    memory_wait_sec: float = Field(default=86400.0, ge=0.0, le=604800.0)
+    memory_poll_sec: float = Field(default=30.0, ge=1.0, le=3600.0)
+    cooldown_sec: float = Field(default=90.0, ge=0.0, le=3600.0)
+    parse_timeout: float = Field(default=3600.0, ge=60.0, le=86400.0)
+    unload_between_docs: bool = True
+    auth_smoke_after: bool = True
+    reset_state: bool = False
+
+
+class DispatcherPauseRequest(BaseModel):
+    reason: str = Field(default="operator", max_length=200)
+
+
+class DispatcherRouteChangeRequest(BaseModel):
+    source_root: str = "RAG_Content"
+    dry_run: bool = True
+    max_docs: int = Field(default=0, ge=0, le=500)
+    min_free_gb: float = Field(default=4.0, ge=0.5, le=64.0)
+    max_swap_pct: float = Field(default=85.0, ge=0.0, le=100.0)
+    post_min_free_gb: float = Field(default=3.0, ge=0.5, le=64.0)
+    post_max_swap_pct: float = Field(default=85.0, ge=0.0, le=100.0)
+    memory_wait_sec: float = Field(default=86400.0, ge=0.0, le=604800.0)
+    memory_poll_sec: float = Field(default=30.0, ge=1.0, le=3600.0)
+    cooldown_sec: float = Field(default=90.0, ge=0.0, le=3600.0)
+    parse_timeout: float = Field(default=3600.0, ge=60.0, le=86400.0)
 
 
 @dataclass
@@ -55,6 +93,8 @@ class RuntimeRouterState:
     llm_semaphore: asyncio.Semaphore
     llm_concurrency: int
     proxy_start: float
+    job_service: Any = None
+    job_tracker: dict[str, Any] | None = None
 
     @property
     def backend(self):
@@ -75,6 +115,31 @@ def get_runtime_state() -> RuntimeRouterState:
     return _state
 
 
+def chat_admission_for_state(state: RuntimeRouterState):
+    active_reindex_jobs = 0
+    try:
+        active_reindex_jobs = 1 if dispatcher_for_state(state).reindex_status_payload().get("running") else 0
+    except Exception:
+        active_reindex_jobs = 0
+    return evaluate_chat_admission(
+        current_mode=state.current_mode,
+        metrics_cache=state.metrics_cache,
+        active_jobs=count_active_jobs(state.job_service, state.job_tracker) + active_reindex_jobs,
+        llm_available=getattr(state.llm_semaphore, "_value", 1) > 0,
+    )
+
+
+def dispatcher_for_state(state: RuntimeRouterState) -> RuntimeDispatcher:
+    return RuntimeDispatcher(current_mode=state.current_mode, metrics_cache=state.metrics_cache)
+
+
+def _dispatcher_error(error: DispatcherError) -> HTTPException:
+    detail: Any = {"message": error.detail}
+    if error.payload:
+        detail["dispatcher"] = error.payload
+    return HTTPException(status_code=error.status_code, detail=detail)
+
+
 @router.get("/health")
 async def health():
     backend = get_runtime_state().backend
@@ -92,11 +157,16 @@ async def health():
         except Exception as error:
             logger.warning("[HEALTH] RAG snapshot failed: %s", error)
             response["rag"] = {"status": "unknown", "error": str(error)}
+    response["embedding"] = rag_runtime_config()
     return response
 
 
 @router.post("/warmup")
 async def warmup_models(_admin=Depends(require_admin)):
+    state = get_runtime_state()
+    admission = chat_admission_for_state(state)
+    if not admission.allowed:
+        raise HTTPException(status_code=admission.status_code, detail=admission.reason)
     mlx_url = os.getenv("MLX_URL", "http://127.0.0.1:8080").rstrip("/")
     results = {}
     async with httpx.AsyncClient(timeout=120.0) as client:
@@ -133,6 +203,8 @@ async def set_mode(req: ModeRequest, _admin=Depends(require_admin)):
     state = get_runtime_state()
     state.current_mode["mode"] = req.mode
     state.current_mode["model"] = req.model
+    if req.runtime_profile:
+        state.current_mode["runtime_profile"] = normalize_runtime_profile(req.runtime_profile)
     logger.info("[MODE] Switched to %s / %s", req.mode, req.model)
     return state.current_mode
 
@@ -164,12 +236,16 @@ async def _host_memory() -> dict[str, Any]:
 @router.get("/indexing-mode")
 async def get_indexing_mode():
     state = get_runtime_state()
-    allowed, reason = chat_generation_allowed(state.current_mode)
+    admission = chat_admission_for_state(state)
+    memory_pressure = evaluate_memory_pressure(state.metrics_cache)
     return {
         "active": is_indexing_mode(state.current_mode),
         "mode": state.current_mode,
-        "chat_generation_allowed": allowed,
-        "chat_generation_reason": reason,
+        "runtime_profile": current_runtime_profile(state.current_mode),
+        "memory_state": memory_pressure.payload(),
+        "chat_generation_allowed": admission.allowed,
+        "chat_generation_reason": admission.reason,
+        "chat_admission": admission.payload(),
         "dataset_priority_order": active_parse_priority_order(state.current_mode),
     }
 
@@ -190,14 +266,133 @@ async def set_indexing_mode(req: IndexingModeRequest, _admin=Depends(require_adm
         enter_chat_mode(state.current_mode, reason=req.reason)
 
     memory = await _host_memory()
+    memory_state = evaluate_memory_pressure(memory).payload()
     logger.info("[RESOURCE] indexing_mode=%s reason=%s", req.enabled, req.reason)
     return {
         "active": is_indexing_mode(state.current_mode),
         "mode": state.current_mode,
+        "runtime_profile": current_runtime_profile(state.current_mode),
+        "memory_state": memory_state,
         "unload": unload,
         "memory": memory,
         "dataset_priority_order": active_parse_priority_order(state.current_mode),
     }
+
+
+@router.get("/runtime/dispatcher/status")
+async def runtime_dispatcher_status(_admin=Depends(require_admin)):
+    state = get_runtime_state()
+    dispatcher = dispatcher_for_state(state)
+    return await asyncio.to_thread(dispatcher.status_payload)
+
+
+@router.post("/runtime/dispatcher/reindex/start")
+async def runtime_dispatcher_reindex_start(req: DispatcherReindexRequest, _admin=Depends(require_admin)):
+    state = get_runtime_state()
+    dispatcher = dispatcher_for_state(state)
+    try:
+        return await asyncio.to_thread(
+            dispatcher.start_reindex,
+            datasets=req.datasets,
+            parse_method=req.parse_method,
+            min_free_gb=req.min_free_gb,
+            max_swap_pct=req.max_swap_pct,
+            post_min_free_gb=req.post_min_free_gb,
+            post_max_swap_pct=req.post_max_swap_pct,
+            memory_wait_sec=req.memory_wait_sec,
+            memory_poll_sec=req.memory_poll_sec,
+            cooldown_sec=req.cooldown_sec,
+            parse_timeout=req.parse_timeout,
+            unload_between_docs=req.unload_between_docs,
+            auth_smoke_after=req.auth_smoke_after,
+            reset_state=req.reset_state,
+        )
+    except DispatcherError as error:
+        raise _dispatcher_error(error) from error
+
+
+@router.post("/runtime/dispatcher/reindex/pause")
+async def runtime_dispatcher_reindex_pause(req: DispatcherPauseRequest, _admin=Depends(require_admin)):
+    state = get_runtime_state()
+    dispatcher = dispatcher_for_state(state)
+    try:
+        return await asyncio.to_thread(dispatcher.pause_reindex, reason=req.reason)
+    except DispatcherError as error:
+        raise _dispatcher_error(error) from error
+
+
+@router.post("/runtime/dispatcher/reindex/resume")
+async def runtime_dispatcher_reindex_resume(req: DispatcherReindexRequest, _admin=Depends(require_admin)):
+    state = get_runtime_state()
+    dispatcher = dispatcher_for_state(state)
+    try:
+        return await asyncio.to_thread(
+            dispatcher.resume_reindex,
+            datasets=req.datasets,
+            parse_method=req.parse_method,
+            min_free_gb=req.min_free_gb,
+            max_swap_pct=req.max_swap_pct,
+            post_min_free_gb=req.post_min_free_gb,
+            post_max_swap_pct=req.post_max_swap_pct,
+            memory_wait_sec=req.memory_wait_sec,
+            memory_poll_sec=req.memory_poll_sec,
+            cooldown_sec=req.cooldown_sec,
+            parse_timeout=req.parse_timeout,
+            unload_between_docs=req.unload_between_docs,
+            auth_smoke_after=req.auth_smoke_after,
+            reset_state=req.reset_state,
+        )
+    except DispatcherError as error:
+        raise _dispatcher_error(error) from error
+
+
+@router.get("/runtime/dispatcher/route-changes/status")
+async def runtime_dispatcher_route_changes_status(_admin=Depends(require_admin)):
+    state = get_runtime_state()
+    dispatcher = dispatcher_for_state(state)
+    return await asyncio.to_thread(dispatcher.route_change_status_payload)
+
+
+@router.post("/runtime/dispatcher/route-changes/start")
+async def runtime_dispatcher_route_changes_start(req: DispatcherRouteChangeRequest, _admin=Depends(require_admin)):
+    state = get_runtime_state()
+    dispatcher = dispatcher_for_state(state)
+    try:
+        return await asyncio.to_thread(
+            dispatcher.start_route_change_reindex,
+            source_root=req.source_root,
+            dry_run=req.dry_run,
+            max_docs=req.max_docs,
+            min_free_gb=req.min_free_gb,
+            max_swap_pct=req.max_swap_pct,
+            post_min_free_gb=req.post_min_free_gb,
+            post_max_swap_pct=req.post_max_swap_pct,
+            memory_wait_sec=req.memory_wait_sec,
+            memory_poll_sec=req.memory_poll_sec,
+            cooldown_sec=req.cooldown_sec,
+            parse_timeout=req.parse_timeout,
+        )
+    except DispatcherError as error:
+        raise _dispatcher_error(error) from error
+
+
+@router.post("/runtime/dispatcher/route-changes/pause")
+async def runtime_dispatcher_route_changes_pause(req: DispatcherPauseRequest, _admin=Depends(require_admin)):
+    state = get_runtime_state()
+    dispatcher = dispatcher_for_state(state)
+    try:
+        return await asyncio.to_thread(dispatcher.pause_route_change_reindex, reason=req.reason)
+    except DispatcherError as error:
+        raise _dispatcher_error(error) from error
+
+
+@router.post("/runtime/dispatcher/mlx/unload")
+async def runtime_dispatcher_mlx_unload(_admin=Depends(require_admin)):
+    unload = await _unload_mlx_models()
+    state = get_runtime_state()
+    dispatcher = dispatcher_for_state(state)
+    status = await asyncio.to_thread(dispatcher.status_payload)
+    return {"status": "ok" if unload.get("ok") else "error", "unload": unload, "dispatcher": status}
 
 
 @router.get("/status")
@@ -205,13 +400,13 @@ async def get_status():
     state = get_runtime_state()
     mlx_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
 
-    models = []
+    loaded_models = []
     try:
         async with httpx.AsyncClient(timeout=3.0) as client:
             response = await client.get(f"{mlx_url}/api/ps")
             if response.status_code == 200:
                 for model in response.json().get("models", []):
-                    models.append(
+                    loaded_models.append(
                         {
                             "name": model.get("name", "?"),
                             "size_gb": round(model.get("size", 0) / (1024**3), 1),
@@ -220,7 +415,7 @@ async def get_status():
                         }
                     )
     except Exception as e:
-        logger.warning("Ollama /api/ps error: %s", e)
+        logger.warning("MLX /api/ps error: %s", e)
 
     containers = []
     if docker_control_enabled():
@@ -246,9 +441,13 @@ async def get_status():
         except Exception as e:
             logger.warning("Docker ps error: %s", e)
 
+    admission = chat_admission_for_state(state)
+    memory_pressure = evaluate_memory_pressure(state.metrics_cache)
     return {
         "mode": state.current_mode,
-        "ollama": {"models": models, "count": len(models)},
+        "runtime_profile": current_runtime_profile(state.current_mode),
+        "memory_state": memory_pressure.payload(),
+        "mlx": {"models": loaded_models, "count": len(loaded_models)},
         "containers": containers,
         "proxy": {
             "uptime_sec": int(time.time() - state.proxy_start),
@@ -257,6 +456,8 @@ async def get_status():
             "llm_url": os.getenv("MLX_URL", "http://127.0.0.1:8080"),
             "llm_model": os.getenv("LLM_MODEL", "qwen3:14b"),
         },
+        "chat_admission": admission.payload(),
+        "embedding": rag_runtime_config(),
     }
 
 
@@ -285,38 +486,50 @@ async def get_metrics():
         rag_stats["status"] = "error"
 
     crag_total = max(1, sum(state.crag_stats.values()))
+    crag_verified = state.crag_stats.get("verified", 0)
+    crag_no_data = state.crag_stats.get("no_data", 0)
+    crag_hallucination = state.crag_stats.get("hallucination", 0)
+    crag_unvalidated = state.crag_stats.get("unvalidated", 0)
+    cache_total = max(1, state.chat_metrics.get("cache_hit", 0) + state.chat_metrics.get("cache_miss", 0))
+    retrieval_total = max(1, state.chat_metrics.get("retrieval_good", 0) + state.chat_metrics.get("retrieval_weak", 0))
+    ram_used = rows[0]["ram_used"] if rows else 0
+    ram_total = state.metrics_cache.get("ram_total", rows[0]["ram_total"] if rows else 0)
+    ram_free = state.metrics_cache.get("ram_free_gb")
+    if ram_free is None:
+        ram_free = max(0, ram_total - ram_used)
+    latest = rows[0] if rows else {}
+    latest_keys = set(latest.keys()) if hasattr(latest, "keys") else set()
+    llm_ram = latest["llm_ram"] if "llm_ram" in latest_keys else 0
     return {
         "system": {
-            "cpu": rows[0]["cpu"] if rows else 0,
-            "ram_used": rows[0]["ram_used"] if rows else 0,
-            "ram_total": state.metrics_cache.get("ram_total", rows[0]["ram_total"] if rows else 0),
-            "swap_used": state.metrics_cache.get("swap_used_gb", rows[0]["swap_used"] if rows else 0),
+            "cpu": latest["cpu"] if rows else 0,
+            "ram_used": ram_used,
+            "ram_free_gb": ram_free,
+            "ram_total": ram_total,
+            "swap_used": state.metrics_cache.get("swap_used_gb", latest["swap_used"] if rows else 0),
             "swap_total": state.metrics_cache.get("swap_total_gb", 0),
             "swap_pct": state.metrics_cache.get("swap_pct", 0),
-            "disk_used": rows[0]["disk_used"] if rows else 0,
-            "disk_total": rows[0]["disk_total"] if rows else 0,
-            "ollama_ram": rows[0]["ollama_ram"] if rows else 0,
-            "network_ok": rows[0]["network_ok"] if rows else 0,
+            "disk_used": latest["disk_used"] if rows else 0,
+            "disk_total": latest["disk_total"] if rows else 0,
+            "llm_ram": llm_ram,
+            "network_ok": latest["network_ok"] if rows else 0,
         },
         "pipeline": {
             "latency_search": state.chat_metrics["latency_search"][-10:],
             "latency_gen": state.chat_metrics["latency_gen"][-10:],
             "tokens": state.chat_metrics["tokens"][-10:],
-            "crag_pass_rate": state.crag_stats["verified"] / crag_total,
-            "crag_verified_rate": state.crag_stats["verified"] / crag_total,
-            "crag_nodata_rate": state.crag_stats["no_data"] / crag_total,
-            "crag_halluc_rate": state.crag_stats["hallucination"] / crag_total,
+            "crag_pass_rate": crag_verified / crag_total,
+            "crag_verified_rate": crag_verified / crag_total,
+            "crag_nodata_rate": crag_no_data / crag_total,
+            "crag_halluc_rate": crag_hallucination / crag_total,
+            "crag_unvalidated_rate": crag_unvalidated / crag_total,
+            "cache_hit_rate": state.chat_metrics.get("cache_hit", 0) / cache_total,
+            "retrieval_good_rate": state.chat_metrics.get("retrieval_good", 0) / retrieval_total,
             "total_requests": sum(state.crag_stats.values()),
         },
         "queue": {"llm_waiting": max(0, state.llm_concurrency - state.llm_semaphore._value)},
         "errors": dict(state.error_counts),
         "heartbeats": heartbeats,
         "rag": rag_stats,
-        "embedding": {
-            "profile": embed_profile_name(),
-            "model": embedding_model_id(),
-            "meta_db": rag_meta_db_path(),
-            "collection": getattr(state.backend, "collection_name", ""),
-            "vector_size": getattr(state.backend, "vector_size", 0),
-        },
+        "embedding": rag_runtime_config(),
     }

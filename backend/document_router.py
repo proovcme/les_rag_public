@@ -14,7 +14,7 @@ from typing import Any
 
 TABLE_SUFFIXES = {".xlsx", ".xls", ".csv"}
 PDF_SUFFIXES = {".pdf"}
-EMAIL_SUFFIXES = {".eml", ".msg"}
+EMAIL_SUFFIXES = {".eml", ".emlx", ".msg"}
 
 
 @dataclass
@@ -197,7 +197,10 @@ def _probe_docx(path: Path, size_bytes: int) -> DocumentProbe:
             ]
             samples = []
             for name in xml_names:
-                root = ElementTree.fromstring(docx.read(name))
+                raw_xml = docx.read(name)
+                if name == "word/document.xml":
+                    probe.table_count_hint = len(re.findall(rb"<w:tbl(?:\s|>)", raw_xml))
+                root = ElementTree.fromstring(raw_xml)
                 for node in root.iter():
                     if node.tag.endswith("}t") and node.text:
                         samples.append(node.text)
@@ -207,7 +210,7 @@ def _probe_docx(path: Path, size_bytes: int) -> DocumentProbe:
                     break
             probe.text_sample = " ".join(samples)[:6000]
             probe.has_text_layer = bool(probe.text_sample.strip())
-            probe.has_tables = _text_has_table_signals(probe.text_sample)
+            probe.has_tables = probe.table_count_hint > 0 or _text_has_table_signals(probe.text_sample)
     except Exception as e:
         probe.signals["probe_error"] = str(e)
         return _probe_text_like(path, size_bytes)
@@ -229,8 +232,12 @@ def _classify_doc_type(probe: DocumentProbe) -> str:
     name = probe.path.name.lower()
     if probe.suffix in EMAIL_SUFFIXES:
         return "EMAIL"
+    if _looks_like_book(probe):
+        return "BOOK"
     normative_name_prefixes = ("гост", "сп ", "снип", "санпин", "постановление", "приказ")
     if name.startswith(normative_name_prefixes):
+        return "NORMATIVE"
+    if probe.suffix not in TABLE_SUFFIXES and _has_strong_normative_signal(text):
         return "NORMATIVE"
     has_price_amount = any(token in text for token in ("цена", "сумма", "стоимость", "расценка"))
     has_position_qty = (
@@ -258,12 +265,20 @@ def _classify_doc_type(probe: DocumentProbe) -> str:
     return "DOCUMENT"
 
 
+def _has_strong_normative_signal(text: str) -> bool:
+    if any(token in text for token in ("национальный стандарт", "межгосударственный стандарт", "свод правил")):
+        return True
+    return bool(re.search(r"\b(гост|гост\s*р|сп|снип|санпин)\s*(?:iec|iso|р)?\s*\d", text))
+
+
 def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
     text = f"{' '.join(probe.path.parts)}\n{probe.text_sample}".casefold()
     name = probe.path.name.casefold()
 
     if doc_type == "EMAIL" or probe.suffix in EMAIL_SUFFIXES:
         return "MAIL"
+    if doc_type == "BOOK" or _looks_like_book(probe):
+        return "BOOKS"
 
     if any(token in name for token in ("гкрф", "градостроительный кодекс", "постановление 87", "пп 87", "pp87")):
         return "GKRF"
@@ -285,33 +300,60 @@ def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
     if _is_industrial_chimney_norm(text, name):
         return "NTD_STRUCTURAL"
 
-    if _has_any(name, _FIRE_TOKENS) or _has_any(text, _FIRE_TEXT_TOKENS):
+    if _has_any(name, _FIRE_TOKENS):
         return "NTD_FIRE"
-    if _has_any(name, _ELECTRICAL_TOKENS) or _has_any(text, _ELECTRICAL_TEXT_TOKENS):
+    if _has_any(name, _ELECTRICAL_TOKENS):
         return "NTD_ELECTRICAL"
     if _is_spds_norm(name, text):
         return "NTD_SPDS"
-    if _has_any(name, _GEOTECH_TOKENS) or _has_any(text, _GEOTECH_TEXT_TOKENS):
+    if _has_any(name, _GEOTECH_TOKENS):
         return "NTD_GEOTECH"
-    if _has_any(name, _TRANSPORT_TOKENS) or _has_any(text, _TRANSPORT_TEXT_TOKENS):
+    if _has_any(name, _TRANSPORT_TOKENS):
         return "NTD_TRANSPORT"
-    if _has_any(name, _HVAC_TOKENS) or _has_any(text, _HVAC_TEXT_TOKENS):
+    if _has_any(name, _HVAC_TOKENS):
         return "NTD_HVAC"
-    if _has_any(name, _WATER_TOKENS) or _has_any(text, _WATER_TEXT_TOKENS):
+    if _has_any(name, _WATER_TOKENS):
         return "NTD_WATER"
-    if _has_any(name, _PIPELINE_TOKENS) or _has_any(text, _PIPELINE_TEXT_TOKENS):
+    if _has_any(name, _PIPELINE_TOKENS):
         return "NTD_PIPELINES"
-    if _has_any(name, _BIM_OPERATION_TOKENS) or _has_any(text, _BIM_OPERATION_TEXT_TOKENS):
+    if _has_any(name, _BIM_OPERATION_TOKENS):
         return "NTD_BIM_OPERATION"
-    if _has_any(name, _CONSTRUCTION_TOKENS) or _has_any(text, _CONSTRUCTION_TEXT_TOKENS):
+    if _has_any(name, _CONSTRUCTION_TOKENS):
         return "NTD_CONSTRUCTION"
-    if _has_any(name, _MATERIALS_TOKENS) or _has_any(text, _MATERIALS_TEXT_TOKENS):
+    if _has_any(name, _MATERIALS_TOKENS):
         return "NTD_MATERIALS"
-    if _has_any(name, _ARCH_URBAN_TOKENS) or _has_any(text, _ARCH_URBAN_TEXT_TOKENS):
+    if _has_any(name, _ARCH_URBAN_TOKENS):
         return "NTD_ARCH_URBAN"
-    if _has_any(name, _SAFETY_TOKENS) or _has_any(text, _SAFETY_TEXT_TOKENS):
+    if _has_any(name, _SAFETY_TOKENS):
         return "NTD_SAFETY"
-    if _has_any(name, _STRUCTURAL_TOKENS) or _has_any(text, _STRUCTURAL_TEXT_TOKENS):
+    if _has_any(name, _STRUCTURAL_TOKENS):
+        return "NTD_STRUCTURAL"
+
+    if _has_any(text, _FIRE_TEXT_TOKENS):
+        return "NTD_FIRE"
+    if _has_any(text, _ELECTRICAL_TEXT_TOKENS):
+        return "NTD_ELECTRICAL"
+    if _has_any(text, _GEOTECH_TEXT_TOKENS):
+        return "NTD_GEOTECH"
+    if _has_any(text, _TRANSPORT_TEXT_TOKENS):
+        return "NTD_TRANSPORT"
+    if _has_any(text, _HVAC_TEXT_TOKENS):
+        return "NTD_HVAC"
+    if _has_any(text, _WATER_TEXT_TOKENS):
+        return "NTD_WATER"
+    if _has_any(text, _PIPELINE_TEXT_TOKENS):
+        return "NTD_PIPELINES"
+    if _has_any(text, _BIM_OPERATION_TEXT_TOKENS):
+        return "NTD_BIM_OPERATION"
+    if _has_any(text, _CONSTRUCTION_TEXT_TOKENS):
+        return "NTD_CONSTRUCTION"
+    if _has_any(text, _MATERIALS_TEXT_TOKENS):
+        return "NTD_MATERIALS"
+    if _has_any(text, _ARCH_URBAN_TEXT_TOKENS):
+        return "NTD_ARCH_URBAN"
+    if _has_any(text, _SAFETY_TEXT_TOKENS):
+        return "NTD_SAFETY"
+    if _has_any(text, _STRUCTURAL_TEXT_TOKENS):
         return "NTD_STRUCTURAL"
 
     # Backward-compatible broad buckets kept for older abbreviated filenames.
@@ -387,6 +429,10 @@ def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
 
 _FIRE_TOKENS = (
     "13130",
+    "59637",
+    "59638",
+    "59639",
+    "59640",
     "пожар",
     "пожаротуш",
     "огнев",
@@ -610,12 +656,28 @@ def _has_any(haystack: str, tokens: tuple[str, ...]) -> bool:
 
 
 def _is_spds_norm(name: str, text: str) -> bool:
-    haystack = f"{name}\n{text}"
-    return _has_any(haystack, _SPDS_TOKENS)
+    if _has_any(name, ("гост 21.", "гост р 21.", "спдс")):
+        return True
+    if _has_any(name, ("система проектной документации", "проектной документации для строитель")):
+        return True
+    return "гост 21" in text and _has_any(text, _SPDS_TOKENS)
 
 
 def _is_ntd_source(probe: DocumentProbe) -> bool:
     return any(part.casefold() == "ntd" for part in probe.path.parts)
+
+
+def _is_books_source(probe: DocumentProbe) -> bool:
+    return any(part.casefold() == "books" for part in probe.path.parts)
+
+
+def _looks_like_book(probe: DocumentProbe) -> bool:
+    name = probe.path.name.casefold()
+    return _is_books_source(probe) or (
+        probe.suffix in PDF_SUFFIXES
+        and probe.page_count >= 200
+        and any(token in name for token in ("рук-во", "руководство", "пособие", "справочник", "учебник", "book"))
+    )
 
 
 def _is_industrial_chimney_norm(text: str, name: str) -> bool:
@@ -642,7 +704,11 @@ def _classify_content_type(probe: DocumentProbe) -> str:
         return "scan"
     if probe.suffix in TABLE_SUFFIXES:
         return "table"
+    if probe.suffix in PDF_SUFFIXES and _looks_like_book(probe):
+        return "mixed"
     if probe.suffix in PDF_SUFFIXES and probe.has_tables:
+        return "mixed"
+    if probe.suffix == ".docx" and probe.has_tables:
         return "mixed"
     return "text"
 

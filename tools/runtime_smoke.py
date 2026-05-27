@@ -21,6 +21,7 @@ from typing import Any, Iterable
 
 DEFAULT_PROXY_URL = "http://localhost:8050"
 DEFAULT_UI_URL = "http://localhost:8051"
+DEFAULT_QDRANT_URL = "http://localhost:6333"
 
 
 @dataclass(frozen=True)
@@ -114,21 +115,30 @@ def _html_check(name: str, url: str, timeout: float) -> CheckResult:
         return CheckResult(name, False, str(exc), time.time() - started)
 
 
-def _question_payload(question: str, dataset_filter: str = "") -> dict[str, Any]:
+def _question_payload(
+    question: str,
+    dataset_filter: str = "",
+    *,
+    semantic_cache_enabled: bool | None = None,
+) -> dict[str, Any]:
     payload: dict[str, Any] = {"question": question}
     if dataset_filter:
         payload["dataset_filter"] = dataset_filter
+    if semantic_cache_enabled is not None:
+        payload["semantic_cache_enabled"] = semantic_cache_enabled
     return payload
 
 
 def run_smoke(args: argparse.Namespace) -> list[CheckResult]:
     proxy = SmokeClient(args.proxy_url, args.timeout)
+    qdrant = SmokeClient(args.qdrant_url, args.timeout)
     checks: list[CheckResult] = []
 
+    checks.append(_json_check("qdrant collections", qdrant.request("GET", "/collections"), [200], ["result", "status"]))
     checks.append(_json_check("proxy health", proxy.request("GET", "/api/health"), [200], ["status", "backend"]))
     checks.append(_json_check("runtime status", proxy.request("GET", "/api/status"), [200], ["proxy", "mode"]))
     checks.append(_json_check("metrics", proxy.request("GET", "/api/metrics"), [200], ["system", "pipeline", "rag"]))
-    checks.append(_json_check("diagnostics", proxy.request("GET", "/api/diag"), [200], ["checks"]))
+    checks.append(_json_check("diagnostics", proxy.request("GET", "/api/diag", api_key=args.admin_key), [200], ["checks"]))
     checks.append(_html_check("ui shell", args.ui_url, args.timeout))
 
     if args.expect_external_auth:
@@ -176,6 +186,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run LES post-deploy runtime smoke checks.")
     parser.add_argument("--proxy-url", default=os.getenv("LES_PROXY_URL", DEFAULT_PROXY_URL))
     parser.add_argument("--ui-url", default=os.getenv("LES_UI_URL", DEFAULT_UI_URL))
+    parser.add_argument("--qdrant-url", default=os.getenv("QDRANT_URL", DEFAULT_QDRANT_URL))
     parser.add_argument("--admin-key", default=os.getenv("LES_ADMIN_KEY", os.getenv("ADMIN_PASSWORD", "")))
     parser.add_argument("--user-key", default=os.getenv("LES_USER_KEY", ""))
     parser.add_argument("--dataset-filter", default=os.getenv("LES_SMOKE_DATASET", ""))
@@ -199,14 +210,18 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     args.proxy_url = args.proxy_url.rstrip("/")
     args.ui_url = args.ui_url.rstrip("/")
+    args.qdrant_url = args.qdrant_url.rstrip("/")
     if not urllib.parse.urlparse(args.proxy_url).scheme:
         print(f"Invalid --proxy-url: {args.proxy_url}", file=sys.stderr)
         return 2
     if not urllib.parse.urlparse(args.ui_url).scheme:
         print(f"Invalid --ui-url: {args.ui_url}", file=sys.stderr)
         return 2
+    if not urllib.parse.urlparse(args.qdrant_url).scheme:
+        print(f"Invalid --qdrant-url: {args.qdrant_url}", file=sys.stderr)
+        return 2
 
-    print(f"LES runtime smoke: proxy={args.proxy_url} ui={args.ui_url}")
+    print(f"LES runtime smoke: proxy={args.proxy_url} ui={args.ui_url} qdrant={args.qdrant_url}")
     checks = run_smoke(args)
     failed = 0
     for check in checks:

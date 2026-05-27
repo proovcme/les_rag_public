@@ -7,7 +7,6 @@ import logging
 import os
 import socket
 import sqlite3
-import subprocess
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -16,8 +15,8 @@ import httpx
 import psutil
 from fastapi import APIRouter, Depends
 
-from backend.rag_config import rag_collection_name, rag_meta_db_path
-from proxy.security import require_internal
+from backend.rag_config import rag_collection_name, rag_meta_db_path, rag_runtime_config
+from proxy.security import require_internal_or_admin
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +44,7 @@ def get_diagnostics_state() -> DiagnosticsRouterState:
 
 
 @router.get("/diag")
-async def run_diagnostics(_internal=Depends(require_internal)):
+async def run_diagnostics(_internal=Depends(require_internal_or_admin)):
     """Read-only diagnostics for Sovushka."""
     state = get_diagnostics_state()
     results = []
@@ -137,20 +136,10 @@ async def run_diagnostics(_internal=Depends(require_internal)):
 
     await _check("Диск", _chk_disk())
 
-    async def _chk_docker():
-        result = await asyncio.to_thread(
-            subprocess.run,
-            ["docker", "ps", "--format", "{{.Names}}:{{.Status}}"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        lines = [line for line in result.stdout.strip().splitlines() if line]
-        running = [line for line in lines if "Up" in line]
-        status = "ok" if len(running) >= 2 else ("warn" if running else "err")
-        return status, f"{len(running)}/{len(lines)} Up", ">=2", " | ".join(running[:3])
+    async def _chk_no_docker():
+        return "ok", "removed", "no Docker", "Qdrant/proxy/UI/MLX run on host LaunchAgents"
 
-    await _check("Docker", _chk_docker())
+    await _check("Docker runtime", _chk_no_docker())
 
     async def _chk_sqlite():
         def _query():
@@ -193,12 +182,13 @@ async def run_diagnostics(_internal=Depends(require_internal)):
 
     async def _chk_crag():
         total = max(1, sum(state.crag_stats.values()))
-        verified = state.crag_stats["verified"]
-        no_data = state.crag_stats["no_data"]
-        hallucination = state.crag_stats["hallucination"]
+        verified = state.crag_stats.get("verified", 0)
+        no_data = state.crag_stats.get("no_data", 0)
+        hallucination = state.crag_stats.get("hallucination", 0)
+        unvalidated = state.crag_stats.get("unvalidated", 0)
         pct = verified / total * 100
         status = "ok" if pct >= 70 else ("warn" if pct >= 40 else "err")
-        return status, f"V:{verified} N:{no_data} H:{hallucination} ({pct:.0f}% verified)", ">=70%", ""
+        return status, f"V:{verified} N:{no_data} H:{hallucination} U:{unvalidated} ({pct:.0f}% verified)", ">=70%", ""
 
     await _check("Т.О.С.К.А. статистика", _chk_crag())
 
@@ -216,5 +206,6 @@ async def run_diagnostics(_internal=Depends(require_internal)):
         "err_count": err_count,
         "total_ms": total_ms,
         "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "embedding": rag_runtime_config(),
         "checks": results,
     }

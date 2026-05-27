@@ -16,20 +16,10 @@ from sovushka.config import QDRANT_VISUALIZER_PORT, STORAGE_SECRET, UI_PORT
 from sovushka.state import bg_loop
 from sovushka.styles import CUSTOM_CSS, theme_vars_css
 from sovushka.auth import register_login_page, get_auth
+from sovushka.lite_admin import register_lite_admin_routes
 from sovushka.lite_chat import register_lite_chat_routes
+from sovushka.m5_display import register_m5_display_routes
 from sovushka.trust import trusted_role_for_request
-
-from sovushka.components.header import build_header
-from sovushka.components.logterm import build_log_terminal
-
-from sovushka.pages.overview import build_overview
-from sovushka.pages.samovar import build_samovar
-from sovushka.pages.prorab import build_prorab
-from sovushka.pages.chat import build_chat
-from sovushka.pages.history import build_history
-from sovushka.pages.mermaid_page import build_mermaid
-from sovushka.pages.diag import build_diag
-from sovushka.pages.volk import build_volk
 
 
 # ── Статические файлы ──
@@ -38,6 +28,8 @@ app.add_static_files("/static", "static")
 # Регистрируем /login (отдельная страница, без обвязки main_page)
 register_login_page()
 register_lite_chat_routes()
+register_lite_admin_routes()
+register_m5_display_routes()
 
 
 @app.get("/healthz")
@@ -109,6 +101,10 @@ def _resolve_auth(request: Request):
 
 @ui.page("/classic")
 async def classic_chat_page(request: Request):
+    from sovushka.components.header import build_header
+    from sovushka.pages.chat import build_chat
+    from sovushka.pages.history import build_history
+
     allowed, role, holder, is_admin = _resolve_auth(request)
     if not allowed:
         return RedirectResponse("/login")
@@ -152,9 +148,17 @@ async def classic_chat_page(request: Request):
         tabs.set_value(_target)
 
 
-@ui.page("/les")
-@ui.page("/les/")
-async def admin_page(request: Request):
+@ui.page("/les/classic")
+@ui.page("/les/classic/")
+async def classic_admin_page(request: Request):
+    from sovushka.components.header import build_header
+    from sovushka.components.logterm import build_log_terminal
+    from sovushka.pages.diag import build_diag
+    from sovushka.pages.overview import build_overview
+    from sovushka.pages.prorab import build_prorab
+    from sovushka.pages.samovar import build_samovar
+    from sovushka.pages.volk import build_volk
+
     allowed, role, holder, is_admin = _resolve_auth(request)
     if not allowed:
         return RedirectResponse("/login")
@@ -182,7 +186,6 @@ async def admin_page(request: Request):
         tab_overview = tr.get("overview")
         tab_samovar  = tr.get("samovar")
         tab_prorab   = tr.get("prorab")
-        tab_mermaid  = tr.get("mermaid")
         tab_qdrant_viz = tr.get("qdrant_viz")
         tab_diag     = tr.get("diag")
         tab_volk     = tr.get("volk")
@@ -208,8 +211,6 @@ async def admin_page(request: Request):
                 build_samovar()
             with ui.tab_panel(tab_prorab):
                 build_prorab()
-            with ui.tab_panel(tab_mermaid):
-                build_mermaid()
             with ui.tab_panel(tab_qdrant_viz):
                 _build_qdrant_visualizer_panel(visualizer_url)
             with ui.tab_panel(tab_diag):
@@ -226,8 +227,8 @@ async def admin_page(request: Request):
         "ОБЗОР":          tab_overview,
         "С.А.М.О.В.А.Р.": tab_samovar,
         "П.Р.О.Р.А.Б.":   tab_prorab,
-        "ГРАФ":            tab_mermaid,
         "КВАДРАНТ":        tab_qdrant_viz,
+        "Д.И.А.Г.Н.О.З.": tab_diag,
         "🔬 ДИАГН":        tab_diag,
         "В.О.Л.К.":       tab_volk,
     }

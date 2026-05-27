@@ -2,10 +2,12 @@
 converter.py — конвертация документов в Markdown для RAG.
 
 Поддерживаемые форматы:
-  PDF, DOCX, EML, MSG, XLSX/XLS/CSV, JSON/JSONL, MD, TXT
+  PDF, DOCX, EML/EMLX, MSG, XLSX/XLS/CSV, JSON/JSONL, MD, TXT
 """
-import logging
 import json
+import logging
+import os
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -13,10 +15,12 @@ logger = logging.getLogger(__name__)
 
 # Лимит текста на файл — защита от огромных документов
 MAX_FILE_CHARS = 500_000  # ~125k токенов
+PDF_MAX_FILE_CHARS = 2_000_000
+BOOK_PDF_MIN_PAGES = 200
 
 SUPPORTED = {
     ".pdf", ".docx", ".doc",
-    ".eml", ".msg",
+    ".eml", ".emlx", ".msg",
     ".xlsx", ".xls", ".csv",
     ".json", ".jsonl",
     ".md", ".txt",
@@ -35,7 +39,7 @@ def convert_to_markdown(file_path: Path) -> Optional[str]:
             result = _parse_pdf(file_path)
         elif suffix in (".docx", ".doc"):
             result = _parse_docx(file_path)
-        elif suffix in (".eml", ".msg"):
+        elif suffix in (".eml", ".emlx", ".msg"):
             result = _parse_email(file_path)
         elif suffix in (".xlsx", ".xls", ".csv"):
             result = _parse_spreadsheet(file_path)
@@ -46,9 +50,10 @@ def convert_to_markdown(file_path: Path) -> Optional[str]:
         else:
             return None
 
-        if result and len(result) > MAX_FILE_CHARS:
-            logger.warning(f"[CONVERT] {file_path.name}: обрезан до {MAX_FILE_CHARS} символов")
-            result = result[:MAX_FILE_CHARS]
+        max_chars = _max_file_chars(file_path)
+        if result and len(result) > max_chars:
+            logger.warning(f"[CONVERT] {file_path.name}: обрезан до {max_chars} символов")
+            result = result[:max_chars]
 
         return result if result and result.strip() else None
 
@@ -60,7 +65,15 @@ def convert_to_markdown(file_path: Path) -> Optional[str]:
 def _parse_pdf(path: Path) -> str:
     try:
         import pymupdf4llm
-        md = pymupdf4llm.to_markdown(str(path), pages=None, write_images=False)
+        image_dir = _pdf_image_dir(path) if _pdf_image_extraction_enabled(path) else None
+        md = pymupdf4llm.to_markdown(
+            str(path),
+            pages=None,
+            write_images=image_dir is not None,
+            image_path=str(image_dir) if image_dir is not None else "",
+            image_format=os.getenv("PDF_IMAGE_FORMAT", "png"),
+            show_progress=False,
+        )
         if md and md.strip():
             return md
         logger.warning(f"[CONVERT] pymupdf4llm вернул пустоту для {path.name}, fallback")
@@ -79,6 +92,46 @@ def _parse_pdf(path: Path) -> str:
     return "\n\n".join(pages) or f"[WARN] {path.name}: текст не извлечён (сканированный PDF?)"
 
 
+def _max_file_chars(path: Path) -> int:
+    if path.suffix.lower() == ".pdf" and _pdf_page_count(path) >= BOOK_PDF_MIN_PAGES:
+        default = PDF_MAX_FILE_CHARS
+    else:
+        default = MAX_FILE_CHARS
+    env_name = "RAG_PDF_MAX_FILE_CHARS" if path.suffix.lower() == ".pdf" else "RAG_MAX_FILE_CHARS"
+    try:
+        return max(1, int(os.getenv(env_name, str(default))))
+    except ValueError:
+        return default
+
+
+def _pdf_image_extraction_enabled(path: Path) -> bool:
+    raw = os.getenv("PDF_IMAGE_EXTRACTION_ENABLED")
+    if raw is not None:
+        return raw.lower() in {"1", "true", "yes", "on"}
+    return _pdf_page_count(path) >= BOOK_PDF_MIN_PAGES
+
+
+def _pdf_page_count(path: Path) -> int:
+    try:
+        import fitz
+
+        with fitz.open(str(path)) as doc:
+            return int(doc.page_count)
+    except Exception:
+        return 0
+
+
+def _pdf_image_dir(path: Path) -> Path:
+    image_dir = path.parent / f"{_safe_pdf_asset_stem(path)}_images"
+    image_dir.mkdir(parents=True, exist_ok=True)
+    return image_dir
+
+
+def _safe_pdf_asset_stem(path: Path) -> str:
+    stem = re.sub(r"[^\w.-]+", "_", path.stem, flags=re.UNICODE).strip("._-")
+    return stem or "pdf"
+
+
 def _parse_docx(path: Path) -> str:
     import mammoth
     with open(path, "rb") as f:
@@ -90,62 +143,10 @@ def _parse_docx(path: Path) -> str:
 
 
 def _parse_email(path: Path) -> str:
-    if path.suffix.lower() == ".msg":
-        import extract_msg
-        msg = extract_msg.Message(str(path))
-        parts = [
-            f"# {msg.subject or '(без темы)'}",
-            f"От: {msg.sender}",
-            f"Кому: {getattr(msg, 'to', '') or '?'}",
-            f"Копия: {getattr(msg, 'cc', '') or ''}",
-            f"Дата: {msg.date}",
-            "",
-            msg.body or "",
-        ]
-        return "\n".join(parts)
-    else:
-        import email
-        from email import policy
-        with open(path, "rb") as f:
-            msg = email.message_from_binary_file(f, policy=policy.default)
-        body_parts = []
-        attachments = []
-        if msg.is_multipart():
-            for part in msg.walk():
-                ct = part.get_content_type()
-                disposition = (part.get_content_disposition() or "").lower()
-                filename = part.get_filename()
-                if filename or disposition == "attachment":
-                    attachments.append(filename or "(без имени)")
-                    continue
-                if ct == "text/plain":
-                    try:
-                        body_parts.append(part.get_content())
-                    except Exception:
-                        pass
-                elif ct == "text/html" and not body_parts:
-                    try:
-                        body_parts.append(part.get_content())
-                    except Exception:
-                        pass
-        else:
-            try:
-                body_parts.append(msg.get_content())
-            except Exception:
-                pass
-        body = "\n".join(body_parts)
-        attachments_md = ""
-        if attachments:
-            attachments_md = "\n\nВложения:\n" + "\n".join(f"- {name}" for name in attachments)
-        return (
-            f"# {msg.get('Subject', '(без темы)')}\n"
-            f"От: {msg.get('From', '?')}\n"
-            f"Кому: {msg.get('To', '?')}\n"
-            f"Копия: {msg.get('Cc', '')}\n"
-            f"Дата: {msg.get('Date', '?')}\n\n"
-            f"{body}"
-            f"{attachments_md}"
-        )
+    from .mail_profile import build_mail_vector_profile
+
+    profile = build_mail_vector_profile(path)
+    return profile.message_embedding_text(include_attachment_text=True)
 
 
 def _parse_spreadsheet(path: Path) -> str:

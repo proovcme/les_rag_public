@@ -48,6 +48,9 @@ class MLXMemoryManager:
             if self.model is not None:
                 idle = time.time() - self.last_used
                 if idle > self.ttl_seconds:
+                    if self.is_busy():
+                        logger.debug(f"[TTL] {self.model_path} busy, unload postponed")
+                        continue
                     logger.info(f"[TTL] Выгрузка {self.model_path} (idle {idle:.0f}s)")
                     self._unload_model()
 
@@ -56,6 +59,9 @@ class MLXMemoryManager:
         self.model = None
         gc.collect()
         logger.info(f"[TTL] Память Metal освобождена: {self.model_path}")
+
+    def is_busy(self) -> bool:
+        return bool(self._lock is not None and self._lock.locked())
 
     def force_unload(self):
         """Полная выгрузка включая токенизатор (при смене модели)."""

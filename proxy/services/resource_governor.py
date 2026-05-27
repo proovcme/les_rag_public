@@ -14,6 +14,45 @@ CHAT_MODE = "chat"
 INDEXING_MODE = "indexing"
 MAINTENANCE_MODE = "maintenance"
 
+PROFILE_STOPPED = "STOPPED"
+PROFILE_CORE_IDLE = "CORE_IDLE"
+PROFILE_OBSERVE_UI = "OBSERVE_UI"
+PROFILE_RETRIEVAL = "RETRIEVAL"
+PROFILE_CHAT = "CHAT"
+PROFILE_CHAT_VALIDATED = "CHAT_VALIDATED"
+PROFILE_INDEX_LIGHT = "INDEX_LIGHT"
+PROFILE_INDEX_HEAVY_PDF = "INDEX_HEAVY_PDF"
+PROFILE_MAINTENANCE = "MAINTENANCE"
+
+RUNTIME_PROFILES = {
+    PROFILE_STOPPED,
+    PROFILE_CORE_IDLE,
+    PROFILE_OBSERVE_UI,
+    PROFILE_RETRIEVAL,
+    PROFILE_CHAT,
+    PROFILE_CHAT_VALIDATED,
+    PROFILE_INDEX_LIGHT,
+    PROFILE_INDEX_HEAVY_PDF,
+    PROFILE_MAINTENANCE,
+}
+
+PROFILE_ALIASES = {
+    "RAG": PROFILE_CHAT,
+    "CHAT": PROFILE_CHAT,
+    "VALIDATED": PROFILE_CHAT_VALIDATED,
+    "INDEXING": PROFILE_INDEX_LIGHT,
+    "INDEX": PROFILE_INDEX_LIGHT,
+    "HEAVY_PDF": PROFILE_INDEX_HEAVY_PDF,
+    "HEAVY": PROFILE_INDEX_HEAVY_PDF,
+    "MAINT": PROFILE_MAINTENANCE,
+}
+
+MODE_PROFILE_MAP = {
+    CHAT_MODE: PROFILE_CHAT,
+    INDEXING_MODE: PROFILE_INDEX_LIGHT,
+    MAINTENANCE_MODE: PROFILE_MAINTENANCE,
+}
+
 DEFAULT_PARSE_PRIORITY_ORDER = (
     "NTD_FIRE_Index",
     "GKRF_Index",
@@ -50,6 +89,21 @@ def normalize_mode(mode: str | None) -> str:
     return value
 
 
+def normalize_runtime_profile(profile: str | None) -> str:
+    value = (profile or "").strip().upper()
+    if not value:
+        return PROFILE_CHAT
+    return PROFILE_ALIASES.get(value, value if value in RUNTIME_PROFILES else PROFILE_CHAT)
+
+
+def current_runtime_profile(current_mode: dict[str, Any] | None) -> str:
+    if current_mode:
+        explicit = current_mode.get("runtime_profile") or current_mode.get("profile")
+        if explicit:
+            return normalize_runtime_profile(str(explicit))
+    return MODE_PROFILE_MAP.get(current_resource_mode(current_mode), PROFILE_CHAT)
+
+
 def current_resource_mode(current_mode: dict[str, Any] | None) -> str:
     if not current_mode:
         return CHAT_MODE
@@ -66,6 +120,9 @@ def chat_generation_allowed(current_mode: dict[str, Any] | None) -> tuple[bool, 
         return False, "Indexing mode is active: chat generation is paused to protect MLX memory."
     if mode == MAINTENANCE_MODE:
         return False, "Maintenance mode is active: chat generation is paused."
+    profile = current_runtime_profile(current_mode)
+    if profile not in {PROFILE_CHAT, PROFILE_CHAT_VALIDATED}:
+        return False, f"Runtime profile {profile} does not allow chat generation."
     return True, "chat generation allowed"
 
 
@@ -90,6 +147,7 @@ def enter_indexing_mode(
     current_mode.update(
         {
             "mode": INDEXING_MODE,
+            "runtime_profile": PROFILE_INDEX_LIGHT,
             "model": "embedder",
             "reason": reason,
             "chat_generation": "paused",
@@ -106,6 +164,7 @@ def enter_chat_mode(current_mode: dict[str, Any], *, reason: str = "manual") -> 
     current_mode.update(
         {
             "mode": CHAT_MODE,
+            "runtime_profile": PROFILE_CHAT,
             "model": os.getenv("LLM_MODEL", "mlx-community/Qwen3-14B-4bit"),
             "reason": reason,
             "chat_generation": "allowed",

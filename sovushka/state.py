@@ -25,6 +25,7 @@ state = {
     "mode_model": "mlx-community/Qwen3-14B-4bit",
     "metrics": {},
     "status": {},
+    "proxy_health": {},
     "mlx_health": {},
     "datasets": [],
     "rag_health": {},
@@ -33,6 +34,7 @@ state = {
     "proxy_logs": [],
     "sources": [],
     "jobs": {},
+    "jobs_summary": {},
     "chat_history": [],        # list of {role, text, srcs, crag}
     "session_id": _new_session_id(),  # UUID текущей сессии чата
     "chat_pending": None,      # {question, started_at} для восстановления UI после реконнекта
@@ -252,6 +254,7 @@ def _local_rag_documents(limit: int = 120) -> dict:
                     COALESCE(doc.file_size, 0) AS file_size,
                     COALESCE(doc.chunk_count, 0) AS chunk_count,
                     COALESCE(doc.domain, '') AS domain,
+                    COALESCE(doc.route_dataset, '') AS route_dataset,
                     COALESCE(doc.doc_type, '') AS doc_type,
                     COALESCE(doc.content_type, '') AS content_type,
                     COALESCE(doc.complexity, '') AS complexity,
@@ -299,6 +302,7 @@ async def refresh_samovar():
     if ds is not None:
         state["datasets"] = ds
     if isinstance(health, dict):
+        state["proxy_health"] = health
         state["rag_health"] = health.get("rag", {})
     # The proxy owns the active RAG profile (collection/meta DB). Use the API
     # first so Qwen/BGE profile switches do not show stale legacy SQLite rows.
@@ -309,9 +313,14 @@ async def refresh_samovar():
         docs["source"] = "api_active_profile"
     if isinstance(docs, dict):
         state["rag_documents"] = docs
-    j = await api_get("/api/jobs")
-    if j:
-        state["jobs"] = j
+    j = await api_get("/api/jobs/summary?limit=120")
+    if isinstance(j, dict):
+        state["jobs_summary"] = j
+        state["jobs"] = {
+            str(item.get("id") or ""): item
+            for item in (j.get("jobs") or [])
+            if isinstance(item, dict) and item.get("id")
+        }
     await refresh_proxy_logs(120)
     # Логируем только при изменении количества источников
     now_count = len(state["sources"])

@@ -121,6 +121,41 @@ async def test_api_key_roles_and_admin_guard(auth_db):
 
 
 @pytest.mark.asyncio
+async def test_internal_or_admin_guard_allows_admin_key_and_internal(auth_db):
+    public_admin = await security.require_internal_or_admin(
+        _request("203.0.113.10"),
+        x_api_key="admin-key",
+        authorization=None,
+    )
+    local_internal = await security.require_internal_or_admin(
+        _request("127.0.0.1"),
+        x_api_key=None,
+        authorization=None,
+    )
+
+    assert public_admin.role == "admin"
+    assert public_admin.source == "api_key"
+    assert local_internal.role == "admin"
+    assert local_internal.holder == "internal"
+
+    with pytest.raises(HTTPException) as user_key:
+        await security.require_internal_or_admin(
+            _request("203.0.113.10"),
+            x_api_key="user-key",
+            authorization=None,
+        )
+    with pytest.raises(HTTPException) as no_key:
+        await security.require_internal_or_admin(
+            _request("203.0.113.10"),
+            x_api_key=None,
+            authorization=None,
+        )
+
+    assert user_key.value.status_code == 403
+    assert no_key.value.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_disabled_and_expired_keys_are_unauthorized(auth_db):
     with pytest.raises(HTTPException) as disabled:
         await security.get_request_user(_request("203.0.113.10"), x_api_key="disabled-key")

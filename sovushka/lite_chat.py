@@ -14,6 +14,7 @@ from fastapi import Request, Response
 from starlette.responses import HTMLResponse, JSONResponse
 
 from sovushka.config import PROXY_URL
+from sovushka.trust import trusted_role_for_request
 
 
 BRIDGE_PUBLIC_PATHS = {"/api/auth/verify"}
@@ -27,9 +28,15 @@ def _client_is_loopback(request: Request) -> bool:
         return False
 
 
-def bridge_request_allowed(path: str, *, has_key: bool, is_loopback: bool) -> bool:
+def bridge_request_allowed(
+    path: str,
+    *,
+    has_key: bool,
+    is_loopback: bool,
+    is_trusted_network: bool = False,
+) -> bool:
     target_path = f"/api/{path.strip('/')}"
-    return has_key or is_loopback or target_path in BRIDGE_PUBLIC_PATHS
+    return has_key or is_loopback or is_trusted_network or target_path in BRIDGE_PUBLIC_PATHS
 
 
 def _forward_headers(request: Request) -> dict[str, str]:
@@ -49,7 +56,13 @@ def _forward_headers(request: Request) -> dict[str, str]:
 async def bridge_proxy_request(path: str, request: Request) -> Response:
     has_key = bool(request.headers.get("x-api-key") or request.headers.get("authorization"))
     is_loopback = _client_is_loopback(request)
-    if not bridge_request_allowed(path, has_key=has_key, is_loopback=is_loopback):
+    is_trusted_network = bool(trusted_role_for_request(request))
+    if not bridge_request_allowed(
+        path,
+        has_key=has_key,
+        is_loopback=is_loopback,
+        is_trusted_network=is_trusted_network,
+    ):
         return JSONResponse({"detail": "Authentication required"}, status_code=401)
 
     target_path = f"/api/{path.strip('/')}"
@@ -57,7 +70,7 @@ async def bridge_proxy_request(path: str, request: Request) -> Response:
     target_url = f"{PROXY_URL.rstrip('/')}{target_path}{query}"
     body = await request.body()
     try:
-        async with httpx.AsyncClient(timeout=180.0) as client:
+        async with httpx.AsyncClient(timeout=600.0) as client:
             proxied = await client.request(
                 request.method,
                 target_url,
@@ -228,6 +241,36 @@ def lite_chat_html() -> str:
       padding: 2px 6px;
       font-size: .58rem;
     }
+    .feedback {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      margin-top: 8px;
+      flex-wrap: wrap;
+    }
+    .feedback button {
+      width: 30px;
+      min-height: 28px;
+      padding: 0;
+      border-radius: 6px;
+      font-size: .62rem;
+      line-height: 1;
+    }
+    .feedback button:disabled { cursor: default; opacity: .75; }
+    .feedback button.bad-answer {
+      width: auto;
+      min-width: 116px;
+      padding: 0 10px;
+      color: var(--err);
+      border-color: rgba(239, 68, 68, .55);
+      background: rgba(239, 68, 68, .1);
+      font-weight: 700;
+    }
+    .feedback-status {
+      color: var(--muted);
+      font-size: .58rem;
+      min-width: 80px;
+    }
     .composer {
       border-top: 1px solid var(--line);
       background: rgba(16, 22, 29, .96);
@@ -377,6 +420,13 @@ def lite_chat_html() -> str:
           <input id="dataset" type="text" placeholder="dataset filter, optional">
         </div>
         <div class="section">
+          <div class="section-title">Е.Ж.И.К. Почта</div>
+          <input id="mailQuery" type="text" placeholder="поиск: тема, участник, фраза">
+          <div style="height:8px"></div>
+          <button id="mailThreadsBtn" type="button">ЦЕПОЧКИ</button>
+          <div id="mailText" class="hint">Кто кому что писал и цепочки писем.</div>
+        </div>
+        <div class="section">
           <div class="section-title">Сессия</div>
           <div id="sessionText" class="hint"></div>
           <button id="newSessionBtn" type="button">НОВАЯ СЕССИЯ</button>
@@ -410,7 +460,7 @@ def lite_chat_html() -> str:
   </div>
 
   <script>
-    const isLocalUi = ["localhost", "127.0.0.1", "::1"].includes(location.hostname) && location.port === "8051";
+    const isLocalUi = location.port === "8051";
     const API_BASE = isLocalUi ? "/lite-api" : "";
     const KEY_STORAGE = "les_lite_api_key";
     const HOLDER_STORAGE = "les_lite_holder";
@@ -451,6 +501,7 @@ def lite_chat_html() -> str:
         const message = payload.detail || payload.error || ("HTTP " + response.status);
         const error = new Error(typeof message === "string" ? message : JSON.stringify(message));
         error.status = response.status;
+        error.payload = payload;
         throw error;
       }
       return payload;
@@ -482,6 +533,27 @@ def lite_chat_html() -> str:
       el("authError").textContent = message;
     }
 
+    async function saveFeedback(historyId, feedback, button, statusNode) {
+      if (!historyId || !button) return;
+      const previous = button.textContent;
+      button.disabled = true;
+      button.textContent = "...";
+      if (statusNode) statusNode.textContent = "";
+      try {
+        await request("/api/chat/history/" + encodeURIComponent(historyId) + "/feedback", {
+          method: "POST",
+          body: JSON.stringify({ feedback }),
+        });
+        button.textContent = "OK";
+        if (statusNode) statusNode.textContent = "сохранено";
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = previous;
+        if (statusNode) statusNode.textContent = error.message;
+        if (error.status === 401 || error.status === 403) showAuth(true, error.message);
+      }
+    }
+
     function addMessage(text, type, meta = {}) {
       const wrap = document.createElement("div");
       wrap.className = "msg " + type;
@@ -504,6 +576,27 @@ def lite_chat_html() -> str:
           line.appendChild(item);
         }
         wrap.appendChild(line);
+      }
+      if (meta.history_id) {
+        const feedback = document.createElement("div");
+        feedback.className = "feedback";
+        const status = document.createElement("span");
+        status.className = "feedback-status";
+        const makeButton = (label, title, value, className = "") => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.textContent = label;
+          button.title = title;
+          button.setAttribute("aria-label", title);
+          if (className) button.className = className;
+          button.addEventListener("click", () => saveFeedback(meta.history_id, value, button, status));
+          return button;
+        };
+        feedback.appendChild(makeButton("✓", "Ответ корректен", "correct"));
+        feedback.appendChild(makeButton("Плохой ответ", "Плохой ответ: сохранить для разбора", "bad_answer", "bad-answer"));
+        feedback.appendChild(makeButton("DS", "Источник не из того датасета", "wrong_dataset"));
+        feedback.appendChild(status);
+        wrap.appendChild(feedback);
       }
       el("messages").appendChild(wrap);
       el("messages").scrollTop = el("messages").scrollHeight;
@@ -601,10 +694,12 @@ def lite_chat_html() -> str:
         addMessage(data.answer || data.response || "Нет ответа", "msg-ai", {
           crag: data.crag_status || "",
           sources: data.sources || [],
+          history_id: data.history_id || null,
         });
       } catch (error) {
         placeholder.remove();
-        addMessage("Ошибка: " + error.message, "msg-sys");
+        const prefix = error.status === 409 ? "Индексирование активно: " : "Ошибка: ";
+        addMessage(prefix + error.message, "msg-sys");
         if (error.status === 401 || error.status === 403) showAuth(true, error.message);
       } finally {
         clearInterval(timer);
@@ -614,7 +709,46 @@ def lite_chat_html() -> str:
       }
     }
 
+    function formatMailThreads(data) {
+      const lines = [
+        "Е.Ж.И.К.: " + (data.total_threads || 0) + " цепочек / " + (data.total_messages || 0) + " писем"
+      ];
+      const threads = (data.threads || []).slice(0, 8);
+      if (!threads.length) {
+        lines.push("Ничего не найдено.");
+        return lines.join("\n");
+      }
+      threads.forEach((thread, idx) => {
+        const who = thread.who_to_whom || {};
+        const what = thread.what || {};
+        const to = (who.to || []).join(", ") || "?";
+        lines.push("");
+        lines.push((idx + 1) + ". " + (thread.subject || "(без темы)") + " [" + (thread.message_count || 0) + "]");
+        lines.push((thread.last_date || "") + " | " + (who.from || "?") + " -> " + to);
+        if (what.snippet) lines.push(what.snippet);
+        lines.push("thread=" + thread.thread_key);
+      });
+      return lines.join("\n");
+    }
+
+    async function showMailThreads() {
+      const q = el("mailQuery").value.trim();
+      el("mailThreadsBtn").disabled = true;
+      try {
+        const query = q ? "&q=" + encodeURIComponent(q) : "";
+        const data = await request("/api/mail/threads?limit=8" + query, { method: "GET" });
+        addMessage(formatMailThreads(data), "msg-ai", { crag: "MAIL" });
+        el("mailText").textContent = "Найдено: " + (data.total_threads || 0) + " цепочек.";
+      } catch (error) {
+        addMessage("Почта: " + error.message, "msg-sys");
+        if (error.status === 401 || error.status === 403) showAuth(true, error.message);
+      } finally {
+        el("mailThreadsBtn").disabled = false;
+      }
+    }
+
     el("sendBtn").addEventListener("click", send);
+    el("mailThreadsBtn").addEventListener("click", showMailThreads);
     el("loginBtn").addEventListener("click", login);
     el("keyInput").addEventListener("keydown", (event) => { if (event.key === "Enter") login(); });
     el("question").addEventListener("keydown", (event) => {

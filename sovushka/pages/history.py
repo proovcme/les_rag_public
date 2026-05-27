@@ -48,16 +48,14 @@ def build_history(tabs=None, tab_chat=None):
                 card.style("cursor:pointer;")
                 with ui.row().classes("w-full items-start justify-between gap-2"):
                     with ui.column().classes("flex-1 gap-1"):
-                        _html(
-                            f'<div style="font-size:.8rem;color:var(--text);font-weight:600;">'
-                            f'{first_q[:100]}{"…" if len(first_q)>100 else ""}'
-                            f'</div>'
+                        ui.label(f'{first_q[:100]}{"…" if len(first_q)>100 else ""}').style(
+                            "font-size:.8rem;color:var(--text);font-weight:600;"
                         )
-                        _html(
-                            f'<div style="font-size:.68rem;color:var(--dim);">'
-                            f'{started_at} &nbsp;·&nbsp; {msg_count} сообщ.'
-                            f'{"&nbsp;·&nbsp;последнее " + last_at if last_at != started_at else ""}'
-                            f'</div>'
+                        meta = f"{started_at} · {msg_count} сообщ."
+                        if last_at != started_at:
+                            meta += f" · последнее {last_at}"
+                        ui.label(meta).style(
+                            "font-size:.68rem;color:var(--dim);"
                         )
                     open_btn = ui.button("Открыть →").props("flat dense").classes("text-xs self-center")
                     open_btn.style("color:var(--accent);font-size:.68rem;")

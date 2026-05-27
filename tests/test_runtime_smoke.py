@@ -47,6 +47,13 @@ def test_question_payload_adds_dataset_filter_only_when_present():
     }
 
 
+def test_question_payload_can_disable_semantic_cache():
+    assert runtime_smoke._question_payload("вопрос", semantic_cache_enabled=False) == {
+        "question": "вопрос",
+        "semantic_cache_enabled": False,
+    }
+
+
 def test_parse_args_reads_external_auth_flag_from_env(monkeypatch):
     monkeypatch.setenv("LES_EXPECT_EXTERNAL_AUTH", "true")
 
@@ -54,3 +61,9 @@ def test_parse_args_reads_external_auth_flag_from_env(monkeypatch):
 
     assert isinstance(args, argparse.Namespace)
     assert args.expect_external_auth is True
+
+
+def test_parse_args_accepts_qdrant_url():
+    args = runtime_smoke.parse_args(["--qdrant-url", "http://127.0.0.1:6333"])
+
+    assert args.qdrant_url == "http://127.0.0.1:6333"

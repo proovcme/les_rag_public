@@ -34,6 +34,8 @@ def request(method: str, url: str, payload: dict[str, Any] | None = None, timeou
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"{method} {url} -> HTTP {exc.code}: {body[:500]}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"{method} {url} -> {exc}") from exc
     return json.loads(body or "{}")
 
 
@@ -46,6 +48,56 @@ def health(proxy_url: str) -> dict[str, Any]:
     return request("GET", f"{proxy_url}/api/health")
 
 
+def mlx_memory(mlx_url: str) -> dict[str, Any]:
+    data = request("GET", f"{mlx_url}/api/health", timeout=10)
+    memory = data.get("memory") or {}
+    return {
+        "ram_free_gb": float(memory.get("ram_free_gb") or 0),
+        "swap_pct": float(memory.get("swap_pct") if memory.get("swap_pct") is not None else 100),
+        "raw": memory,
+    }
+
+
+def memory_ok(memory: dict[str, Any], args: argparse.Namespace) -> tuple[bool, str]:
+    ram_free_gb = float(memory.get("ram_free_gb") or 0)
+    swap_pct = float(memory.get("swap_pct") if memory.get("swap_pct") is not None else 100)
+    if ram_free_gb < args.min_free_gb:
+        return False, f"ram_free_gb={ram_free_gb} < {args.min_free_gb}"
+    if swap_pct > args.max_swap_pct:
+        return False, f"swap_pct={swap_pct} > {args.max_swap_pct}"
+    return True, f"ram_free_gb={ram_free_gb}, swap_pct={swap_pct}"
+
+
+def unload_all(mlx_url: str) -> Any:
+    return request("POST", f"{mlx_url}/api/unload_all", {}, timeout=20)
+
+
+def wait_for_memory(args: argparse.Namespace) -> None:
+    unloaded = False
+    while True:
+        try:
+            memory = mlx_memory(args.mlx_url.rstrip("/"))
+        except RuntimeError as error:
+            log("memory_check_failed", error=str(error), retry_sec=args.proxy_retry_sec)
+            time.sleep(args.proxy_retry_sec)
+            continue
+
+        ok, detail = memory_ok(memory, args)
+        if ok:
+            log("memory_ok", detail=detail)
+            return
+
+        if args.unload_on_memory_guard and not unloaded:
+            try:
+                log("memory_guard_unload", detail=detail, result=unload_all(args.mlx_url.rstrip("/")))
+            except RuntimeError as error:
+                log("memory_guard_unload_failed", detail=detail, error=str(error))
+            unloaded = True
+
+        log("memory_wait", detail=detail, retry_sec=args.memory_cooldown_sec, memory=memory)
+        time.sleep(args.memory_cooldown_sec)
+
+
 def pending_files(proxy_url: str) -> int:
     data = health(proxy_url)
     rag = data.get("rag") or {}
@@ -53,10 +105,40 @@ def pending_files(proxy_url: str) -> int:
     return int(totals.get("pending_files") or 0)
 
 
-def active_scheduler_jobs(proxy_url: str) -> list[tuple[str, dict[str, Any]]]:
-    jobs = request("GET", f"{proxy_url}/api/jobs", timeout=30)
-    if not isinstance(jobs, dict):
+def pending_documents(proxy_url: str, limit: int = 500) -> list[dict[str, Any]]:
+    payload = request("GET", f"{proxy_url}/api/rag/documents?status=PENDING&limit={limit}", timeout=30)
+    if not isinstance(payload, dict):
         return []
+    docs = payload.get("documents") or []
+    return [doc for doc in docs if isinstance(doc, dict)]
+
+
+def is_heavy_document(doc: dict[str, Any]) -> bool:
+    doc_type = str(doc.get("doc_type") or "").upper()
+    complexity = str(doc.get("complexity") or "").lower()
+    pipeline = str(doc.get("pipeline") or "").lower()
+    file_name = str(doc.get("file_name") or "").lower()
+    size = int(doc.get("file_size") or 0)
+    return (
+        doc_type == "BOOK"
+        or complexity == "heavy"
+        or "pdf_tables" in pipeline
+        or (file_name.endswith(".pdf") and size >= 30 * 1024 * 1024)
+    )
+
+
+def light_pending_documents(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [doc for doc in docs if not is_heavy_document(doc)]
+
+
+def active_scheduler_jobs(proxy_url: str) -> list[tuple[str, dict[str, Any]]]:
+    payload = request("GET", f"{proxy_url}/api/jobs/summary?active_only=true&limit=50", timeout=30)
+    if isinstance(payload, dict) and isinstance(payload.get("jobs"), list):
+        jobs = {str(job.get("id") or ""): job for job in payload["jobs"] if isinstance(job, dict)}
+    else:
+        jobs = request("GET", f"{proxy_url}/api/jobs", timeout=30)
+        if not isinstance(jobs, dict):
+            return []
     active: list[tuple[str, dict[str, Any]]] = []
     for job_id, job in jobs.items():
         if not isinstance(job, dict):
@@ -98,6 +180,19 @@ def set_indexing_mode(proxy_url: str) -> None:
     log("indexing_mode", result=result)
 
 
+def set_chat_mode(proxy_url: str, reason: str) -> None:
+    payload = {"enabled": False, "reason": reason, "unload_models": False}
+    result = request("POST", f"{proxy_url}/api/indexing-mode", payload)
+    log("chat_mode", result=result)
+
+
+def restore_chat_mode(proxy_url: str, reason: str) -> None:
+    try:
+        set_chat_mode(proxy_url, reason)
+    except RuntimeError as error:
+        log("chat_mode_restore_failed", reason=reason, error=str(error))
+
+
 def start_wave(proxy_url: str, args: argparse.Namespace) -> str:
     payload = {
         "batch_limit": 1,
@@ -125,6 +220,7 @@ def start_wave(proxy_url: str, args: argparse.Namespace) -> str:
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--proxy-url", default="http://127.0.0.1:8050")
+    parser.add_argument("--mlx-url", default="http://127.0.0.1:8080")
     parser.add_argument("--wave-batches", type=int, default=MAX_WAVE_BATCHES)
     parser.add_argument("--poll-sec", type=float, default=60)
     parser.add_argument("--cooldown-sec", type=float, default=0)
@@ -132,6 +228,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--max-swap-pct", type=float, default=80)
     parser.add_argument("--post-batch-min-free-gb", type=float, default=3)
     parser.add_argument("--post-batch-max-swap-pct", type=float, default=80)
+    parser.add_argument("--memory-cooldown-sec", type=float, default=300)
+    parser.add_argument("--proxy-retry-sec", type=float, default=30)
+    parser.add_argument("--unload-on-memory-guard", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args(argv)
 
 
@@ -142,16 +241,58 @@ def main(argv: list[str] | None = None) -> int:
         args.wave_batches = MAX_WAVE_BATCHES
 
     proxy_url = args.proxy_url.rstrip("/")
-    set_indexing_mode(proxy_url)
+    while True:
+        try:
+            set_indexing_mode(proxy_url)
+            break
+        except RuntimeError as error:
+            log("proxy_wait", step="indexing_mode", error=str(error), retry_sec=args.proxy_retry_sec)
+            time.sleep(args.proxy_retry_sec)
 
     while True:
-        pending = pending_files(proxy_url)
+        try:
+            pending = pending_files(proxy_url)
+        except RuntimeError as error:
+            log("proxy_wait", step="health", error=str(error), retry_sec=args.proxy_retry_sec)
+            time.sleep(args.proxy_retry_sec)
+            continue
+
         log("snapshot", pending_files=pending)
         if pending <= 0:
+            restore_chat_mode(proxy_url, "qwen index done")
             log("done")
             return 0
 
-        active = active_scheduler_jobs(proxy_url)
+        try:
+            docs = pending_documents(proxy_url)
+        except RuntimeError as error:
+            log("pending_docs_check_failed", error=str(error))
+            docs = []
+        if docs and not light_pending_documents(docs):
+            restore_chat_mode(proxy_url, "heavy pending requires manual admission")
+            log(
+                "heavy_pending_only",
+                pending_files=pending,
+                documents=[
+                    {
+                        "dataset": doc.get("dataset_name"),
+                        "file": doc.get("file_name"),
+                        "size": doc.get("file_size"),
+                        "complexity": doc.get("complexity"),
+                        "pipeline": doc.get("pipeline"),
+                    }
+                    for doc in docs[:10]
+                ],
+            )
+            return 0
+
+        try:
+            active = active_scheduler_jobs(proxy_url)
+        except RuntimeError as error:
+            log("proxy_wait", step="jobs", error=str(error), retry_sec=args.proxy_retry_sec)
+            time.sleep(args.proxy_retry_sec)
+            continue
+
         if active:
             for job_id, job in active:
                 log(
@@ -165,7 +306,13 @@ def main(argv: list[str] | None = None) -> int:
             time.sleep(args.poll_sec)
             continue
 
-        start_wave(proxy_url, args)
+        wait_for_memory(args)
+        try:
+            start_wave(proxy_url, args)
+        except RuntimeError as error:
+            log("wave_start_failed", error=str(error), retry_sec=args.proxy_retry_sec)
+            time.sleep(args.proxy_retry_sec)
+            continue
         time.sleep(args.poll_sec)
 
 

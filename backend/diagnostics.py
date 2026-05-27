@@ -53,10 +53,8 @@ def parse_vmstat():
 
 async def run_diagnostics():
     vm = parse_vmstat()
-    dock, _ = run_cmd(["docker", "ps", "--format", "table {{.Names}}\t{{.Status}}\t{{.Ports}}"])
-    stats, _ = run_cmd(["docker", "stats", "--no-stream", "--format", "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}"])
-    oll_ps, _ = run_cmd(["ollama", "ps"])
     mlx = _mlx_processes()
+    mlx_health, _ = run_cmd(["curl", "-s", "http://localhost:8080/api/health"])
     qdrant, _ = run_cmd(["curl", "-s", f"http://localhost:6333/collections/{rag_collection_name()}"])
     health, _ = run_cmd(["curl", "-s", "http://localhost:8050/api/health"])
     rag_files = _count_files(Path("./RAG_Content"))
@@ -65,9 +63,8 @@ async def run_diagnostics():
     report = {
         'timestamp': datetime.now().isoformat(),
         'macos_memory': vm,
-        'docker_processes': dock,
-        'docker_stats': stats,
-        'ollama_ps': oll_ps or 'Empty',
+        'docker_runtime': 'removed; Qdrant/proxy/UI/MLX run on host LaunchAgents',
+        'mlx_health_raw': mlx_health,
         'mlx_processes': mlx or 'None',
         'qdrant_raw': qdrant,
         'health_raw': health,

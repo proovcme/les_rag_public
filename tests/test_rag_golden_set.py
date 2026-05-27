@@ -27,7 +27,8 @@ def test_evaluate_response_passes_when_terms_and_source_match():
             {
                 "score": 0.73,
                 "doc_name": "СП 1.13130.2020.docx",
-                "preview": "Минимальная ширина эвакуационных путей назначается по таблице.",
+                "preview": "Минимальная ширина назначается по таблице.",
+                "expanded_preview": "Минимальная ширина эвакуационных путей назначается по таблице.",
             }
         ]
     }
@@ -44,12 +45,16 @@ def test_evaluate_response_reports_missing_expected_evidence():
     case = golden.GoldenCase(
         id="pp87",
         question="разделы",
+        expected_route_filter="GKRF",
         min_chunks=2,
         min_top_score=0.6,
         must_find=("раздел", "проект"),
         source_any=("87",),
+        source_top_any=("Постановление",),
+        source_top_k=2,
     )
     response = {
+        "query_route": {"dataset_filter": "NTD"},
         "chunks": [
             {
                 "score": 0.41,
@@ -66,6 +71,8 @@ def test_evaluate_response_reports_missing_expected_evidence():
     assert "top_score=0.410 < 0.600" in result.detail
     assert "missing terms: раздел, проект" in result.detail
     assert "missing source hint: 87" in result.detail
+    assert "missing top-2 source hint: Постановление" in result.detail
+    assert "route=NTD != GKRF" in result.detail
 
 
 def test_load_cases_accepts_cases_object(tmp_path):
@@ -78,8 +85,11 @@ def test_load_cases_accepts_cases_object(tmp_path):
                         "id": "c1",
                         "question": "q",
                         "dataset_filter": "NTD",
+                        "expected_route_filter": "NTD_FIRE",
                         "must_find": ["term"],
                         "source_any": ["source"],
+                        "source_top_any": ["top-source"],
+                        "source_top_k": 2,
                     }
                 ]
             }
@@ -94,7 +104,10 @@ def test_load_cases_accepts_cases_object(tmp_path):
             id="c1",
             question="q",
             dataset_filter="NTD",
+            expected_route_filter="NTD_FIRE",
             must_find=("term",),
             source_any=("source",),
+            source_top_any=("top-source",),
+            source_top_k=2,
         )
     ]

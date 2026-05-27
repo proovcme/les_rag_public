@@ -4,6 +4,12 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 
 
 @dataclass(frozen=True)
@@ -106,3 +112,16 @@ def rag_chunk_size() -> int:
 
 def rag_chunk_overlap() -> int:
     return int(os.getenv("RAG_CHUNK_OVERLAP", str(embed_profile().chunk_overlap)))
+
+
+def rag_runtime_config() -> dict[str, str | int]:
+    return {
+        "profile": embed_profile_name(),
+        "embedding_model": embedding_model_id(),
+        "embedding_api_model": embedding_api_model(),
+        "collection": rag_collection_name(),
+        "meta_db": rag_meta_db_path(),
+        "vector_size": rag_vector_size(),
+        "chunk_size": rag_chunk_size(),
+        "chunk_overlap": rag_chunk_overlap(),
+    }

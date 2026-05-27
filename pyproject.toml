@@ -46,5 +46,8 @@ dependencies = [
 
 [dependency-groups]
 dev = []
+coreml = [
+    "coremltools>=9.0",                 # Core ML / Neural Engine embedding probes
+]
 
 [tool.uv]

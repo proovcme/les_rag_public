@@ -12,8 +12,10 @@ qdrant_adapter.py — RAG бэкенд: SQLite метабаза + Qdrant век�
   8. _ensure_collection: race condition при параллельных startup вызовах → asyncio.Lock
 """
 import asyncio
+import hashlib
 import logging
 import os
+import re
 import shutil
 import sqlite3
 import uuid
@@ -29,6 +31,7 @@ from qdrant_client import models
 from .converter import convert_to_markdown
 from .document_router import DocumentRoute, route_document
 from .interface import Chunk, DatasetInfo, RAGBackend
+from .mail_profile import build_mail_vector_profile, deterministic_mail_node_id
 from .parquet_writer import TableNormalizer
 from .rag_config import (
     rag_chunk_overlap,
@@ -43,9 +46,106 @@ logger = logging.getLogger(__name__)
 EMBED_BATCH  = int(os.getenv("RAG_EMBED_BATCH", "32"))      # чанков за один запрос к MLX embeddings
 MIN_CHUNK    = int(os.getenv("RAG_MIN_CHUNK_CHARS", "20"))  # символов — короче не индексируем
 UPSERT_BATCH = int(os.getenv("RAG_UPSERT_BATCH", "100"))    # точек за один upsert в Qdrant
+CHUNK_HASH_CACHE = os.getenv("RAG_CHUNK_HASH_CACHE", "true").lower() in {"1", "true", "yes", "on"}
 RAG_CHUNK_SIZE = rag_chunk_size()
 RAG_CHUNK_OVERLAP = rag_chunk_overlap()
 ALLOW_UNBOUNDED_PARSE = "ALLOW_UNBOUNDED_PARSE"
+
+
+def _content_hash(text: str) -> str:
+    return hashlib.sha1(text.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _embedding_cache_descriptor() -> dict[str, str]:
+    backend = os.getenv("EMBED_BACKEND", "sentence_transformers").strip().lower()
+    descriptor = {
+        "backend": backend,
+        "model_id": os.getenv("EMBEDDING_MODEL") or os.getenv("EMBED_MODEL", ""),
+        "profile": os.getenv("LES_EMBED_PROFILE", ""),
+        "vector_size": str(rag_vector_size()),
+    }
+    if backend == "coreml":
+        descriptor.update(
+            {
+                "coreml_model": os.getenv("COREML_EMBED_MODEL", ""),
+                "coreml_seq_len": os.getenv("COREML_EMBED_SEQ_LEN", ""),
+                "coreml_compute_units": os.getenv("COREML_EMBED_COMPUTE_UNITS", ""),
+                "coreml_fallback": os.getenv("COREML_EMBED_FALLBACK", ""),
+            }
+        )
+    return descriptor
+
+
+def _embedding_cache_fingerprint(descriptor: dict[str, str] | None = None) -> str:
+    data = descriptor or _embedding_cache_descriptor()
+    stable = "\n".join(f"{key}={data.get(key, '')}" for key in sorted(data))
+    return hashlib.sha1(stable.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _section_heading(text: str) -> str:
+    for line in text.splitlines():
+        line = line.strip(" #\t")
+        if 4 <= len(line) <= 160:
+            return line
+    return ""
+
+
+def _compact_text(text: str, limit: int = 1200) -> str:
+    compact = re.sub(r"\s+", " ", text).strip()
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 1].rstrip() + "…"
+
+
+def _apply_context_metadata_to_nodes(file_nodes: list[dict], dataset_id: str, file_key: str) -> None:
+    if not file_nodes:
+        return
+
+    grouped: dict[str, list[int]] = {}
+    try:
+        window_size = max(1, int(os.getenv("RAG_PARENT_WINDOW_CHUNKS", "4")))
+    except ValueError:
+        window_size = 4
+    for chunk_ord, file_node in enumerate(file_nodes):
+        payload = file_node.setdefault("payload", {})
+        text = str(file_node.get("text") or "")
+        payload.setdefault("chunk_ord", chunk_ord)
+        payload.setdefault("child_ord", chunk_ord)
+        payload.setdefault("content_hash", _content_hash(text))
+        payload.setdefault("section_heading", _section_heading(text))
+
+        source_page = payload.get("source_page") or payload.get("page") or payload.get("page_number")
+        table_index = payload.get("table_index")
+        if source_page is not None:
+            group_key = f"page:{source_page}:table:{table_index or ''}"
+            context_kind = "table_page" if payload.get("type") == "table_row" else "pdf_page"
+        else:
+            group_key = f"window:{chunk_ord // window_size}"
+            context_kind = "markdown_window"
+        grouped.setdefault(group_key, []).append(chunk_ord)
+        payload.setdefault("context_kind", context_kind)
+
+    for parent_ord, (group_key, indexes) in enumerate(grouped.items()):
+        parent_id = _content_hash(f"{dataset_id}:{file_key}:{group_key}")[:24]
+        heading = ""
+        for idx in indexes:
+            candidate = str(file_nodes[idx].get("payload", {}).get("section_heading") or "")
+            if candidate:
+                heading = candidate
+                break
+        for idx in indexes:
+            payload = file_nodes[idx].setdefault("payload", {})
+            payload.setdefault("parent_id", parent_id)
+            payload.setdefault("parent_ord", parent_ord)
+            payload.setdefault("parent_heading", heading)
+
+    for idx, file_node in enumerate(file_nodes):
+        payload = file_node.setdefault("payload", {})
+        parent_id = payload.get("parent_id")
+        if idx > 0 and file_nodes[idx - 1].get("payload", {}).get("parent_id") == parent_id:
+            payload.setdefault("context_before", _compact_text(str(file_nodes[idx - 1].get("text") or "")))
+        if idx + 1 < len(file_nodes) and file_nodes[idx + 1].get("payload", {}).get("parent_id") == parent_id:
+            payload.setdefault("context_after", _compact_text(str(file_nodes[idx + 1].get("text") or "")))
 # ── Прямой клиент эмбеддингов (httpx, без llama-index) ───────────────────────
 
 class EmbedClient:
@@ -161,6 +261,11 @@ class MetaDB:
             conn.execute(
                 "UPDATE datasets SET status=? WHERE id=?", (status, dataset_id)
             )
+
+    def recover_interrupted_parsing(self) -> int:
+        with self._get_conn() as conn:
+            cur = conn.execute("UPDATE datasets SET status='IDLE' WHERE status='PARSING'")
+            return int(cur.rowcount or 0)
 
     def list_datasets(self) -> List[DatasetInfo]:
         with self._get_conn() as conn:
@@ -394,6 +499,9 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         self.content_dir     = Path(content_dir)
         self.content_dir.mkdir(parents=True, exist_ok=True)
         self.db              = MetaDB()
+        recovered = self.db.recover_interrupted_parsing()
+        if recovered:
+            logger.info("[INIT] Recovered %s interrupted parsing dataset(s)", recovered)
         self.aclient         = qdrant_client.AsyncQdrantClient(url=qdrant_url)
         self.qdrant_url      = qdrant_url
         self.embed           = EmbedClient(mlx_url, model=embed_model_name.replace(":latest", ""))
@@ -524,6 +632,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             "embed_sec": 0.0,
             "upsert_sec": 0.0,
             "count_sec": 0.0,
+            "cache_sec": 0.0,
             "db_sec": 0.0,
         }
 
@@ -576,6 +685,10 @@ class QdrantLlamaIndexAdapter(RAGBackend):
 
             total_chunks = 0
             errors       = 0
+            embedding_cache_hits = 0
+            embedded_chunks = 0
+            embedding_descriptor = _embedding_cache_descriptor()
+            embedding_fingerprint = _embedding_cache_fingerprint(embedding_descriptor)
 
             for i, file_path in enumerate(files_to_parse, 1):
                 file_key = file_path.relative_to(data_dir).as_posix()
@@ -583,6 +696,19 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 if i % 50 == 0 or i == total:
                     logger.info(f"[PARSE] {i}/{total} ({_t.time()-t0:.0f}с)")
                 try:
+                    phase_start = _t.time()
+                    existing_vectors = (
+                        self._sync_existing_file_vectors_by_hash(
+                            sync_qdrant,
+                            dataset_id,
+                            file_key,
+                            embedding_fingerprint,
+                        )
+                        if CHUNK_HASH_CACHE and hasattr(self, "_sync_existing_file_vectors_by_hash")
+                        else {}
+                    )
+                    _add_timing("cache_sec", phase_start)
+
                     # Удаляем старые точки файла до переиндексации. Если удаление
                     # не удалось, нельзя честно подтвердить итоговый point count.
                     phase_start = _t.time()
@@ -603,7 +729,11 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                         route.pipeline,
                     )
 
-                    if route.pipeline == "parquet":
+                    if route.doc_type == "EMAIL":
+                        file_nodes = self._sync_mail_nodes(
+                            file_path, data_dir, file_key, dataset_id, splitter, route, timings
+                        )
+                    elif route.pipeline == "parquet":
                         try:
                             file_nodes = self._sync_table_nodes(file_path, data_dir, dataset_id, route, timings)
                         except Exception as table_err:
@@ -635,6 +765,15 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                         file_nodes = self._sync_markdown_nodes(
                             file_path, file_key, dataset_id, md_parser, splitter, route, timings
                         )
+                        if QdrantLlamaIndexAdapter._docx_table_extraction_enabled(file_path, route):
+                            try:
+                                file_nodes.extend(self._sync_table_nodes(file_path, data_dir, dataset_id, route, timings))
+                            except Exception as table_err:
+                                logger.warning(
+                                    "[DOCX_TABLE] table extraction skipped for %s: %s",
+                                    file_key,
+                                    table_err,
+                                )
 
                     if not file_nodes:
                         phase_start = _t.time()
@@ -642,28 +781,57 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                         _add_timing("db_sec", phase_start)
                         continue
 
+                    _apply_context_metadata_to_nodes(file_nodes, dataset_id, file_key)
+
                     # Батч-эмбеддинги по EMBED_BATCH чанков. Upsert начинаем только
                     # после успешного embedding всех чанков файла, чтобы не оставлять
                     # частичный индекс при сбое середины документа.
                     points = []
                     for batch_start in range(0, len(file_nodes), EMBED_BATCH):
                         batch = file_nodes[batch_start:batch_start + EMBED_BATCH]
-                        texts = [n["text"] for n in batch]
-                        phase_start = _t.time()
-                        vectors = self.embed.encode_sync(texts)
-                        _add_timing("embed_sec", phase_start)
-                        if len(vectors) != len(batch):
-                            raise RuntimeError(
-                                f"embedding count mismatch: got {len(vectors)}, expected {len(batch)}"
-                            )
+                        batch_vectors: list[list[float] | None] = [None] * len(batch)
+                        miss_indexes: list[int] = []
+                        miss_texts: list[str] = []
+                        for local_idx, node in enumerate(batch):
+                            payload = node.get("payload") or {}
+                            content_hash = str(payload.get("content_hash") or _content_hash(str(node["text"])))
+                            cached_vector = existing_vectors.get(content_hash)
+                            if cached_vector is not None:
+                                batch_vectors[local_idx] = cached_vector
+                                embedding_cache_hits += 1
+                            else:
+                                miss_indexes.append(local_idx)
+                                miss_texts.append(str(node["text"]))
 
-                        for node, vec in zip(batch, vectors):
+                        if miss_texts:
+                            phase_start = _t.time()
+                            vectors = self.embed.encode_sync(miss_texts)
+                            _add_timing("embed_sec", phase_start)
+                            if len(vectors) != len(miss_texts):
+                                raise RuntimeError(
+                                    f"embedding count mismatch: got {len(vectors)}, expected {len(miss_texts)}"
+                                )
+                            embedded_chunks += len(vectors)
+                            for local_idx, vec in zip(miss_indexes, vectors):
+                                batch_vectors[local_idx] = vec
+
+                        for node, vec in zip(batch, batch_vectors):
+                            if vec is None:
+                                raise RuntimeError("missing embedding vector after cache/embed merge")
                             payload = dict(node.get("payload") or {})
                             payload.update({
                                 "text":       node["text"],
                                 "dataset_id": dataset_id,
                                 "doc_id":     node.get("doc_id") or str(uuid.uuid4()),
                                 "file_name":  file_key,
+                                "embedding_fingerprint": embedding_fingerprint,
+                                "embedding_backend": embedding_descriptor.get("backend", ""),
+                                "embedding_model_id": embedding_descriptor.get("model_id", ""),
+                                "embedding_profile": embedding_descriptor.get("profile", ""),
+                                "embedding_coreml_model": embedding_descriptor.get("coreml_model", ""),
+                                "embedding_coreml_seq_len": embedding_descriptor.get("coreml_seq_len", ""),
+                                "embedding_coreml_compute_units": embedding_descriptor.get("coreml_compute_units", ""),
+                                "embedding_coreml_fallback": embedding_descriptor.get("coreml_fallback", ""),
                             })
                             points.append(models.PointStruct(
                                 id=str(uuid.uuid4()),
@@ -726,6 +894,8 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 "files_skipped": total_all - total,
                 "remaining_pending": remaining_pending,
                 "errors":       errors,
+                "embedding_cache_hits": embedding_cache_hits,
+                "embedded_chunks": embedded_chunks,
                 "elapsed_sec":  round(elapsed, 1),
                 "timings":      timings,
             }
@@ -772,6 +942,52 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             exact=True,
         )
         return int(result.count)
+
+    def _sync_existing_file_vectors_by_hash(
+        self,
+        sync_qdrant: qdrant_client.QdrantClient,
+        dataset_id: str,
+        file_key: str,
+        embedding_fingerprint: str,
+    ) -> dict[str, list[float]]:
+        vectors: dict[str, list[float]] = {}
+        offset = None
+        try:
+            while True:
+                points, offset = sync_qdrant.scroll(
+                    collection_name=self.collection_name,
+                    scroll_filter=self._file_filter(dataset_id, file_key),
+                    limit=256,
+                    offset=offset,
+                    with_payload=True,
+                    with_vectors=True,
+                )
+                for point in points:
+                    payload = getattr(point, "payload", None) or {}
+                    if str(payload.get("embedding_fingerprint") or "") != embedding_fingerprint:
+                        continue
+                    text = str(payload.get("text") or "")
+                    content_hash = str(payload.get("content_hash") or _content_hash(text))
+                    vector = self._extract_point_vector(point)
+                    if content_hash and vector is not None:
+                        vectors.setdefault(content_hash, vector)
+                if offset is None:
+                    break
+        except Exception as error:
+            logger.warning("[PARSE] chunk hash cache unavailable for %s: %s", file_key, error)
+        return vectors
+
+    @staticmethod
+    def _extract_point_vector(point: Any) -> list[float] | None:
+        vector = getattr(point, "vector", None)
+        if isinstance(vector, dict):
+            vector = vector.get("") or vector.get("default") or next(iter(vector.values()), None)
+        if isinstance(vector, list) and vector and all(isinstance(item, (int, float)) for item in vector):
+            return [float(item) for item in vector]
+        return None
+
+    def _apply_context_metadata(self, file_nodes: list[dict], dataset_id: str, file_key: str) -> None:
+        _apply_context_metadata_to_nodes(file_nodes, dataset_id, file_key)
 
     def _sync_markdown_nodes(
         self,
@@ -822,6 +1038,102 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             timings["chunk_sec"] = timings.get("chunk_sec", 0.0) + (_t.time() - phase_start)
         return file_nodes
 
+    def _sync_mail_nodes(
+        self,
+        file_path: Path,
+        data_dir: Path,
+        file_key: str,
+        dataset_id: str,
+        splitter: SentenceSplitter,
+        route: DocumentRoute | None = None,
+        timings: dict[str, float] | None = None,
+    ) -> list[dict]:
+        import time as _t
+
+        phase_start = _t.time()
+        profile = build_mail_vector_profile(file_path, source_dir=data_dir)
+        if timings is not None:
+            timings["convert_sec"] = timings.get("convert_sec", 0.0) + (_t.time() - phase_start)
+
+        phase_start = _t.time()
+        nodes: list[dict] = []
+        message_payload = profile.payload()
+        message_payload.update({
+            "type": "mail_message",
+            "mail_node_kind": "message",
+        })
+        nodes.extend(
+            self._split_profile_text_nodes(
+                profile.message_embedding_text(include_attachment_text=False),
+                dataset_id,
+                file_key,
+                splitter,
+                self._route_payload(route, message_payload),
+                "message",
+            )
+        )
+
+        for attachment in profile.attachments:
+            attachment_payload = profile.payload()
+            attachment_payload.update({
+                "type": "mail_attachment",
+                "mail_node_kind": "attachment",
+                "mail_attachment_id": attachment.attachment_id,
+                "mail_attachment_filename": attachment.filename,
+                "mail_attachment_content_type": attachment.content_type,
+                "mail_attachment_kind": attachment.kind,
+                "mail_attachment_extraction": attachment.extraction,
+                "mail_attachment_needs_ocr": attachment.needs_ocr,
+                "mail_attachment_needs_vlm": attachment.needs_vlm,
+                "mail_attachment_has_text": attachment.has_text,
+                "mail_attachment_error": attachment.error,
+            })
+            nodes.extend(
+                self._split_profile_text_nodes(
+                    attachment.embedding_text(profile),
+                    dataset_id,
+                    file_key,
+                    splitter,
+                    self._route_payload(route, attachment_payload),
+                    f"attachment:{attachment.attachment_id}",
+                )
+            )
+
+        if timings is not None:
+            timings["chunk_sec"] = timings.get("chunk_sec", 0.0) + (_t.time() - phase_start)
+        return nodes
+
+    def _split_profile_text_nodes(
+        self,
+        text: str,
+        dataset_id: str,
+        file_key: str,
+        splitter: SentenceSplitter,
+        payload: dict[str, Any],
+        node_key: str,
+    ) -> list[dict]:
+        value = str(text or "").strip()
+        if len(value) < MIN_CHUNK:
+            return []
+        if len(value) <= 2000:
+            return [{
+                "text": value,
+                "doc_id": deterministic_mail_node_id(dataset_id, file_key, node_key),
+                "payload": dict(payload),
+            }]
+
+        doc = Document(text=value, metadata={"file_name": file_key, "dataset_id": dataset_id})
+        split_nodes = splitter.get_nodes_from_documents([doc])
+        return [
+            {
+                "text": split_node.text,
+                "doc_id": deterministic_mail_node_id(dataset_id, file_key, f"{node_key}:{idx}"),
+                "payload": dict(payload),
+            }
+            for idx, split_node in enumerate(split_nodes)
+            if len(split_node.text) >= MIN_CHUNK
+        ]
+
     def _sync_table_nodes(
         self,
         file_path: Path,
@@ -834,7 +1146,10 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         parquet_dir = data_dir / "_parquet" / file_path.relative_to(data_dir).parent
         normalizer = TableNormalizer(parquet_dir=str(parquet_dir), use_llm=False)
         phase_start = _t.time()
-        result = asyncio.run(normalizer.process(str(file_path), dataset_id=dataset_id))
+        doc_type_override = "TABLE" if route and not route.domain.startswith("TABLE_") else None
+        result = asyncio.run(
+            normalizer.process(str(file_path), dataset_id=dataset_id, doc_type_override=doc_type_override)
+        )
         if timings is not None:
             timings["convert_sec"] = timings.get("convert_sec", 0.0) + (_t.time() - phase_start)
         parquet_path = result.get("parquet_path") or ""
@@ -856,6 +1171,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 "type": "table_row",
                 "parquet_path": parquet_rel,
                 "table_row": i,
+                "table_kind": self._table_kind(route),
             })
             nodes.append({
                 "text": text,
@@ -873,6 +1189,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 "needs_ocr": True,
                 "scanned_pages": scanned_pages,
                 "parquet_path": "",
+                "table_kind": self._table_kind(route),
             }
             nodes.append({
                 "text": text,
@@ -883,11 +1200,31 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             timings["chunk_sec"] = timings.get("chunk_sec", 0.0) + (_t.time() - phase_start)
         return nodes
 
+    @staticmethod
+    def _docx_table_extraction_enabled(file_path: Path, route: DocumentRoute | None) -> bool:
+        if file_path.suffix.lower() != ".docx":
+            return False
+        if os.getenv("DOCX_TABLE_EXTRACTION_ENABLED", "false").lower() not in ("1", "true", "yes"):
+            return False
+        if route is None:
+            return True
+        return route.domain.startswith("NTD_") or route.domain in {"GKRF", "BOOKS"}
+
+    @staticmethod
+    def _table_kind(route: DocumentRoute | None) -> str:
+        if route is None:
+            return "table"
+        if route.domain.startswith("TABLE_"):
+            return "cost"
+        if route.domain.startswith("NTD_") or route.domain in {"GKRF", "BOOKS"}:
+            return "normative"
+        return "table"
+
     def _route_payload(self, route: DocumentRoute | None, payload: dict) -> dict:
         if route is None:
             return payload
-        merged = dict(route.metadata)
-        merged.update(payload)
+        merged = dict(payload)
+        merged.update(route.metadata)
         return merged
 
     async def retrieve(
@@ -928,4 +1265,44 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 meta=p.payload,
             )
             for p in results.points
+        ]
+
+    async def retrieve_table_rows(
+        self,
+        dataset_ids: Optional[List[str]] = None,
+        limit: int = 64,
+    ) -> List[Chunk]:
+        await self._ensure_collection()
+
+        must = [
+            models.FieldCondition(
+                key="type",
+                match=models.MatchValue(value="table_row"),
+            )
+        ]
+        if dataset_ids:
+            must.append(
+                models.FieldCondition(
+                    key="dataset_id",
+                    match=models.MatchAny(any=dataset_ids),
+                )
+            )
+
+        points, _next_page = await self.aclient.scroll(
+            collection_name=self.collection_name,
+            scroll_filter=models.Filter(must=must),
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+
+        return [
+            Chunk(
+                content=point.payload.get("text", ""),
+                doc_id=point.payload.get("doc_id", ""),
+                doc_name=point.payload.get("file_name", "unknown"),
+                score=1.0,
+                meta=point.payload,
+            )
+            for point in points
         ]

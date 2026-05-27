@@ -40,11 +40,15 @@ class GoldenCase:
     id: str
     question: str
     dataset_filter: str = ""
+    expected_route_filter: str = ""
+    reference_answer: str = ""
     top_k: int = 8
     min_chunks: int = 1
     min_top_score: float = 0.0
     must_find: tuple[str, ...] = ()
     source_any: tuple[str, ...] = ()
+    source_top_any: tuple[str, ...] = ()
+    source_top_k: int = 3
 
 
 @dataclass(frozen=True)
@@ -96,11 +100,15 @@ def _case_from_dict(raw: dict[str, Any]) -> GoldenCase:
         id=str(raw["id"]),
         question=str(raw["question"]),
         dataset_filter=str(raw.get("dataset_filter") or ""),
+        expected_route_filter=str(raw.get("expected_route_filter") or ""),
+        reference_answer=str(raw.get("reference_answer") or ""),
         top_k=int(raw.get("top_k") or 8),
         min_chunks=int(raw.get("min_chunks") or 1),
         min_top_score=float(raw.get("min_top_score") or 0.0),
         must_find=tuple(str(item) for item in raw.get("must_find", [])),
         source_any=tuple(str(item) for item in raw.get("source_any", [])),
+        source_top_any=tuple(str(item) for item in raw.get("source_top_any", [])),
+        source_top_k=int(raw.get("source_top_k") or 3),
     )
 
 
@@ -148,6 +156,7 @@ def evaluate_response(case: GoldenCase, response: dict[str, Any], elapsed: float
     evidence = _norm(
         "\n".join(
             f"{chunk.get('doc_name', '')}\n{chunk.get('preview', '')}"
+            f"\n{chunk.get('expanded_preview', '')}"
             for chunk in chunks
             if isinstance(chunk, dict)
         )
@@ -173,6 +182,20 @@ def evaluate_response(case: GoldenCase, response: dict[str, Any], elapsed: float
         source_text = _norm("\n".join(sources))
         if not any(_contains(source_text, hint) for hint in case.source_any):
             failures.append("missing source hint: " + " | ".join(case.source_any))
+
+    if case.source_top_any:
+        top_sources = sources[: max(1, case.source_top_k)]
+        top_source_text = _norm("\n".join(top_sources))
+        if not any(_contains(top_source_text, hint) for hint in case.source_top_any):
+            failures.append(
+                f"missing top-{case.source_top_k} source hint: "
+                + " | ".join(case.source_top_any)
+            )
+
+    if case.expected_route_filter:
+        route_filter = str((response.get("query_route") or {}).get("dataset_filter") or "")
+        if route_filter != case.expected_route_filter:
+            failures.append(f"route={route_filter or '-'} != {case.expected_route_filter}")
 
     if failures:
         return GoldenResult(case.id, False, "; ".join(failures), elapsed, len(chunks), top_score, sources)

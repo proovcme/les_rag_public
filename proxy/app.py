@@ -20,18 +20,25 @@ from backend.qdrant_adapter import QdrantLlamaIndexAdapter
 from backend.rag_config import embedding_api_model, rag_meta_db_path
 from proxy.config import CORS_ALLOWED_ORIGINS
 from proxy.routers.auth import router as auth_router, seed_admin_key
-from proxy.routers.chat import ChatRouterState, router as chat_router, set_chat_state
+from proxy.routers.chat import ChatRouterState, ensure_chat_history_schema, router as chat_router, set_chat_state
 from proxy.routers.chat_history import router as chat_history_router
 from proxy.routers.datasets import DatasetRouterState, router as datasets_router, set_dataset_state
 from proxy.routers.diagnostics import DiagnosticsRouterState, router as diagnostics_router, set_diagnostics_state
 from proxy.routers.jobs import JobsRouterState, router as jobs_router, set_jobs_state
 from proxy.routers.logs import LogsRouterState, router as logs_router, set_logs_state
-from proxy.routers.rerank import RERANKER_AVAILABLE, Reranker, router as rerank_router
+from proxy.routers.mail import router as mail_router
+from proxy.routers.rerank import (
+    RERANKER_AVAILABLE,
+    Reranker,
+    RerankRouterState,
+    router as rerank_router,
+    set_rerank_state,
+)
 from proxy.routers.runtime import RuntimeRouterState, router as runtime_router, set_runtime_state
 from proxy.routers.settings import router as settings_router
 from proxy.routers.status_page import StatusPageState, router as status_page_router, set_status_page_state
 from proxy.services.job_service import JobService
-from proxy.services.resource_governor import CHAT_MODE
+from proxy.services.resource_governor import CHAT_MODE, PROFILE_CHAT
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -52,13 +59,14 @@ LLM_CONCURRENCY = int(os.getenv("LLM_CONCURRENCY", "1"))
 parse_semaphore = asyncio.Semaphore(PARSE_CONCURRENCY)
 sync_parse_semaphore = asyncio.Semaphore(SYNC_PARSE_CONCURRENCY)
 llm_semaphore = asyncio.Semaphore(LLM_CONCURRENCY)
-crag_stats = {"verified": 0, "no_data": 0, "hallucination": 0}
+crag_stats = {"verified": 0, "no_data": 0, "hallucination": 0, "unvalidated": 0}
 proxy_start = time.time()
 rag_backend = None
 job_tracker = {}
 job_service = JobService()
 current_mode = {
     "mode": CHAT_MODE,
+    "runtime_profile": PROFILE_CHAT,
     "model": os.getenv("LLM_MODEL", "mlx-community/Qwen3-14B-4bit"),
     "chat_generation": "allowed",
 }
@@ -70,11 +78,16 @@ chat_metrics = {
     "tokens": [],
     "crag_pass": 0,
     "crag_fail": 0,
+    "cache_hit": 0,
+    "cache_miss": 0,
+    "retrieval_good": 0,
+    "retrieval_weak": 0,
 }
 
 metrics_cache = {
     "cpu": 0.0,
     "ram_used": 0.0,
+    "ram_free_gb": 0.0,
     "ram_total": 1.0,
     "datasets": 0,
     "files_processed": 0,
@@ -132,6 +145,10 @@ async def metrics_collector_loop():
             except Exception:
                 pass
 
+            ram_total_gb = float(host_mem.get("ram_total_gb", vm.total / 1e9))
+            ram_free_gb = float(host_mem.get("ram_free_gb", vm.available / 1e9))
+            ram_used_gb = max(0.0, ram_total_gb - ram_free_gb) if host_mem else vm.used / 1e9
+
             chunks = 0
             ds_count = 0
             if rag_backend:
@@ -147,8 +164,9 @@ async def metrics_collector_loop():
             metrics_cache.update(
                 {
                     "cpu": cpu,
-                    "ram_used": host_mem.get("ram_free_gb", vm.used / (1024**3)),
-                    "ram_total": host_mem.get("ram_total_gb", vm.total / (1024**3)),
+                    "ram_used": ram_used_gb,
+                    "ram_free_gb": ram_free_gb,
+                    "ram_total": ram_total_gb,
                     "swap_used_gb": host_mem.get("swap_used_gb", 0),
                     "swap_total_gb": host_mem.get("swap_total_gb", 0),
                     "swap_pct": host_mem.get("swap_pct", 0),
@@ -160,6 +178,7 @@ async def metrics_collector_loop():
                     "avg_speed_fps": parse_stats.avg_speed(),
                     "crag_verified": crag_stats["verified"],
                     "crag_no_data": crag_stats["no_data"],
+                    "crag_unvalidated": crag_stats["unvalidated"],
                 }
             )
         except Exception:
@@ -175,26 +194,8 @@ async def startup():
     if interrupted_jobs:
         logger.info("[INIT] Marked %s stale active job(s) as interrupted", interrupted_jobs)
     try:
-        conn = sqlite3.connect("./data/les_meta.db", check_same_thread=False)
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS chat_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                question TEXT,
-                answer TEXT,
-                sources TEXT,
-                crag_status TEXT,
-                latency_sec REAL,
-                tokens INTEGER,
-                session_id TEXT DEFAULT NULL
-            )
-        """
-        )
-        cols = [r[1] for r in conn.execute("PRAGMA table_info(chat_history)").fetchall()]
-        if "session_id" not in cols:
-            conn.execute("ALTER TABLE chat_history ADD COLUMN session_id TEXT DEFAULT NULL")
-            logger.info("[INIT] chat_history: добавлен session_id")
+        conn = sqlite3.connect(rag_meta_db_path(), check_same_thread=False)
+        ensure_chat_history_schema(conn)
         conn.commit()
         conn.close()
     except Exception as e:
@@ -245,6 +246,8 @@ def configure_router_state() -> None:
             llm_semaphore=llm_semaphore,
             llm_concurrency=LLM_CONCURRENCY,
             proxy_start=proxy_start,
+            job_service=job_service,
+            job_tracker=job_tracker,
         )
     )
     set_diagnostics_state(DiagnosticsRouterState(crag_stats=crag_stats, proxy_start=proxy_start))
@@ -260,8 +263,12 @@ def configure_router_state() -> None:
             reranker_available=RERANKER_AVAILABLE,
             reranker_cls=Reranker,
             current_mode=current_mode,
+            metrics_cache=metrics_cache,
+            job_service=job_service,
+            job_tracker=job_tracker,
         )
     )
+    set_rerank_state(RerankRouterState(llm_semaphore=llm_semaphore, current_mode=current_mode))
 
 
 _app: FastAPI | None = None
@@ -289,6 +296,7 @@ def create_app():
     fastapi_app.include_router(diagnostics_router)
     fastapi_app.include_router(jobs_router)
     fastapi_app.include_router(logs_router)
+    fastapi_app.include_router(mail_router)
     fastapi_app.include_router(rerank_router)
     fastapi_app.include_router(status_page_router)
     fastapi_app.include_router(chat_router)

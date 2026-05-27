@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import os
 import re
 import shutil
 import sqlite3
+import threading
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -19,13 +22,15 @@ from pydantic import BaseModel, Field
 
 from backend.interface import DatasetInfo
 from backend.document_router import route_document
-from backend.rag_config import rag_collection_name, rag_meta_db_path
+from backend.rag_config import rag_collection_name, rag_meta_db_path, rag_runtime_config
 from backend.smart_index import SKIP_DIRS, build_smart_plan, should_index_source_file, verify_source_file
 from proxy.config import max_upload_bytes, mlx_url, rag_upload_suffixes
 from proxy.security import require_admin, require_user
-from proxy.services.resource_governor import active_parse_priority_order
-from proxy.services.retrieval_service import classify_query, resolve_dataset_ids
-from proxy.storage.file_storage import save_upload_tmp, safe_upload_name, validate_source_folder
+from proxy.services.context_expander_service import expand_context_windows
+from proxy.services.resource_governor import active_parse_priority_order, current_runtime_profile
+from proxy.services.runtime_admission import evaluate_memory_pressure
+from proxy.services.retrieval_service import classify_query, resolve_dataset_ids, retrieve_chat_chunks
+from proxy.storage.file_storage import save_upload_tmp, safe_dataset_storage_dir, safe_upload_name, validate_source_folder
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +42,11 @@ DEFAULT_PARSE_SCHEDULER_MAX_BATCHES = int(os.getenv("RAG_PARSE_SCHEDULER_MAX_BAT
 PARSE_MIN_FREE_GB = float(os.getenv("RAG_PARSE_MIN_FREE_GB", "8"))
 PARSE_MAX_SWAP_PCT = float(os.getenv("RAG_PARSE_MAX_SWAP_PCT", "45"))
 PARSE_POST_MAX_SWAP_PCT = float(os.getenv("RAG_PARSE_POST_MAX_SWAP_PCT", "60"))
+ACTIVE_PARSE_SCHEDULER_STATUSES = {"QUEUED", "PARSING", "RUNNING"}
+FOLDER_WATCH_CACHE_TTL_SEC = float(os.getenv("RAG_WATCH_CACHE_TTL_SEC", "15"))
+FOLDER_WATCH_CACHE_SAMPLE_LIMIT = int(os.getenv("RAG_WATCH_CACHE_SAMPLE_LIMIT", "200"))
+_folder_watch_cache_lock = threading.Lock()
+_folder_watch_cache: dict[str, tuple[float, dict[str, Any], list[dict[str, Any]]]] = {}
 
 
 @dataclass
@@ -65,6 +75,11 @@ class SmartSyncRequest(BaseModel):
     source_root: str = "RAG_Content"
     parse: bool = False
     parse_limit_per_dataset: int = Field(default=DEFAULT_PARSE_BATCH_LIMIT, ge=1, le=25)
+
+
+class FolderWatchRequest(BaseModel):
+    source_root: str = "RAG_Content"
+    limit: int = Field(default=20, ge=1, le=200)
 
 
 class ParseSchedulerRequest(BaseModel):
@@ -112,6 +127,7 @@ async def parse_memory_state() -> dict[str, Any]:
     return {
         "ram_free_gb": float(ram_free if ram_free is not None else 0),
         "swap_pct": float(swap if swap is not None else 100),
+        "state": evaluate_memory_pressure(memory).state,
         "raw": memory,
     }
 
@@ -191,6 +207,22 @@ async def pending_parse_datasets(
             item["dataset_name"],
         ),
     )
+
+
+def active_parse_scheduler_job(state: DatasetRouterState) -> tuple[str, dict[str, Any]] | None:
+    for job_id, job in state.job_tracker.items():
+        status = str(job.get("status", "")).upper()
+        if status not in ACTIVE_PARSE_SCHEDULER_STATUSES:
+            continue
+        message = str(job.get("message", ""))
+        is_scheduler = (
+            job.get("type") == "rag_parse_scheduler"
+            or "Parse scheduler" in message
+            or message.startswith("Batch ")
+        )
+        if is_scheduler:
+            return job_id, job
+    return None
 
 
 async def run_parse_scheduler(
@@ -294,6 +326,7 @@ async def run_parse_scheduler(
 
     result = {
         "status": status,
+        "runtime_profile": current_runtime_profile(state.current_mode),
         "batch_limit": req.batch_limit,
         "max_batches": req.max_batches,
         "dataset_priority_order": priority_order,
@@ -332,6 +365,7 @@ async def run_parse_scheduler(
 
 @router.delete("/datasets/{dataset_id}")
 async def delete_dataset(dataset_id: str, _admin=Depends(require_admin)):
+    ds_dir = safe_dataset_storage_dir(dataset_id)
     errors = []
 
     try:
@@ -353,7 +387,6 @@ async def delete_dataset(dataset_id: str, _admin=Depends(require_admin)):
     except Exception as e:
         errors.append(f"SQLite: {e}")
 
-    ds_dir = Path(f"./storage/datasets/{dataset_id}")
     if ds_dir.exists():
         await asyncio.to_thread(shutil.rmtree, ds_dir)
 
@@ -400,6 +433,7 @@ async def list_datasets(_user=Depends(require_user)):
 async def list_documents(
     dataset_id: str | None = None,
     status: str | None = Query(default=None, pattern="^(PENDING|INDEXED|ERROR)$"),
+    q: str | None = Query(default=None, max_length=200),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     _user=Depends(require_user),
@@ -409,33 +443,59 @@ async def list_documents(
         dataset_id = None
     if not isinstance(status, str):
         status = None
+    if not isinstance(q, str):
+        q = None
     if not isinstance(limit, int):
         limit = 100
     if not isinstance(offset, int):
         offset = 0
 
-    where = []
-    params: list[Any] = []
+    base_where = []
+    base_params: list[Any] = []
     if dataset_id:
-        where.append("doc.dataset_id=?")
-        params.append(dataset_id)
+        base_where.append("doc.dataset_id=?")
+        base_params.append(dataset_id)
+    q = q.strip() if q else None
+    if q:
+        pattern = f"%{q.lower()}%"
+        base_where.append(
+            "("
+            "LOWER(doc.file_name) LIKE ? OR "
+            "LOWER(COALESCE(ds.name, '')) LIKE ? OR "
+            "LOWER(COALESCE(doc.domain, '')) LIKE ? OR "
+            "LOWER(COALESCE(doc.route_dataset, '')) LIKE ? OR "
+            "LOWER(COALESCE(doc.last_error, '')) LIKE ?"
+            ")"
+        )
+        base_params.extend([pattern, pattern, pattern, pattern, pattern])
+    row_where = list(base_where)
+    row_params = list(base_params)
     if status:
-        where.append("doc.status=?")
-        params.append(status)
-    where_sql = "WHERE " + " AND ".join(where) if where else ""
+        row_where.append("doc.status=?")
+        row_params.append(status)
+    summary_where_sql = "WHERE " + " AND ".join(base_where) if base_where else ""
+    where_sql = "WHERE " + " AND ".join(row_where) if row_where else ""
 
     with sqlite3.connect(rag_meta_db_path()) as conn:
         conn.row_factory = sqlite3.Row
         summary_rows = conn.execute(
-            """
-            SELECT status, COUNT(*) AS files, COALESCE(SUM(chunk_count),0) AS chunks
-            FROM documents
-            GROUP BY status
-            """
+            f"""
+            SELECT doc.status AS status, COUNT(*) AS files, COALESCE(SUM(doc.chunk_count),0) AS chunks
+            FROM documents doc
+            LEFT JOIN datasets ds ON ds.id = doc.dataset_id
+            {summary_where_sql}
+            GROUP BY doc.status
+            """,
+            base_params,
         ).fetchall()
         total = conn.execute(
-            f"SELECT COUNT(*) FROM documents doc {where_sql}",
-            params,
+            f"""
+            SELECT COUNT(*)
+            FROM documents doc
+            LEFT JOIN datasets ds ON ds.id = doc.dataset_id
+            {where_sql}
+            """,
+            row_params,
         ).fetchone()[0]
         rows = conn.execute(
             f"""
@@ -448,6 +508,7 @@ async def list_documents(
                 COALESCE(doc.file_size, 0) AS file_size,
                 COALESCE(doc.chunk_count, 0) AS chunk_count,
                 COALESCE(doc.domain, '') AS domain,
+                COALESCE(doc.route_dataset, '') AS route_dataset,
                 COALESCE(doc.doc_type, '') AS doc_type,
                 COALESCE(doc.content_type, '') AS content_type,
                 COALESCE(doc.complexity, '') AS complexity,
@@ -467,7 +528,7 @@ async def list_documents(
                 doc.file_name
             LIMIT ? OFFSET ?
             """,
-            [*params, limit, offset],
+            [*row_params, limit, offset],
         ).fetchall()
 
     return {
@@ -493,15 +554,38 @@ async def retrieve_debug(req: RetrievalDebugRequest, _user=Depends(require_user)
         logger,
         question=req.question,
     )
-    chunks = await state.backend.retrieve(query_route.expanded_query, dataset_ids=dataset_ids, top_k=req.top_k)
+    retrieval = await retrieve_chat_chunks(
+        question=req.question,
+        dataset_ids=dataset_ids,
+        rag_backend=state.backend,
+        reranker_enabled=False,
+        reranker_available=False,
+        reranker_cls=None,
+        mlx_url=mlx_url(),
+        logger=logger,
+        return_trace=True,
+    )
+    chunks = retrieval.chunks[: req.top_k]
+    context_windows = expand_context_windows(
+        chunks,
+        collection=getattr(state.backend, "collection_name", ""),
+        logger=logger,
+        max_chunks=req.top_k,
+    )
+    retrieval_trace = retrieval.payload()
+    retrieval_trace["context_window"] = context_windows.payload()
+    expanded_chunks = list(context_windows.chunks)
     return {
         "question": req.question,
         "query_route": {
             "dataset_filter": req.dataset_filter or query_route.dataset_filter,
             "reason": query_route.reason,
             "expanded": query_route.expanded_query != req.question,
+            "kot": retrieval.kot.payload(),
         },
         "dataset_ids": dataset_ids,
+        "embedding": rag_runtime_config(),
+        "retrieval_trace": retrieval_trace,
         "top_k": req.top_k,
         "chunks": [
             {
@@ -511,7 +595,21 @@ async def retrieve_debug(req: RetrievalDebugRequest, _user=Depends(require_user)
                 "doc_id": getattr(chunk, "doc_id", ""),
                 "doc_type": (getattr(chunk, "meta", {}) or {}).get("doc_type"),
                 "content_type": (getattr(chunk, "meta", {}) or {}).get("content_type"),
+                "rrf_rank": (getattr(chunk, "meta", {}) or {}).get("rrf_rank"),
+                "rrf_score": (getattr(chunk, "meta", {}) or {}).get("rrf_score"),
+                "retrieval_sources": (getattr(chunk, "meta", {}) or {}).get("retrieval_sources"),
+                "context_expanded": (getattr(expanded_chunks[index], "meta", {}) or {}).get(
+                    "context_expanded",
+                    False,
+                )
+                if index < len(expanded_chunks)
+                else False,
                 "preview": getattr(chunk, "content", "")[:500],
+                "expanded_preview": getattr(
+                    expanded_chunks[index] if index < len(expanded_chunks) else chunk,
+                    "content",
+                    getattr(chunk, "content", ""),
+                )[:700],
             }
             for index, chunk in enumerate(chunks)
         ],
@@ -562,14 +660,299 @@ async def smart_plan(details: bool = False, _user=Depends(require_user)):
     return {key: value for key, value in plan.items() if key not in {"plan", "rejected"}}
 
 
+def _safe_source_root(source_root: str) -> Path:
+    root = Path(source_root)
+    if root.is_absolute() or ".." in root.parts:
+        raise HTTPException(status_code=400, detail=f"unsafe source root: {source_root}")
+    if not root.exists():
+        raise HTTPException(status_code=404, detail=f"source root not found: {root}")
+    return root
+
+
+def _known_docs_inventory() -> dict[str, dict[Any, dict[str, Any]]]:
+    rows: list[dict[str, Any]] = []
+    try:
+        with sqlite3.connect(rag_meta_db_path()) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = [
+                dict(row)
+                for row in conn.execute(
+                    """
+                    SELECT d.name AS dataset_name,
+                           d.id AS dataset_id,
+                           doc.id AS doc_id,
+                           doc.file_name,
+                           doc.status,
+                           COALESCE(doc.file_mtime, 0) AS file_mtime,
+                           COALESCE(doc.file_size, 0) AS file_size,
+                           COALESCE(doc.chunk_count, 0) AS chunk_count,
+                           COALESCE(doc.last_error, '') AS last_error
+                    FROM documents doc
+                    JOIN datasets d ON d.id=doc.dataset_id
+                    """
+                ).fetchall()
+            ]
+    except sqlite3.Error:
+        rows = []
+    by_dataset_path = {(row["dataset_name"], row["file_name"]): row for row in rows}
+    by_path: dict[str, dict[str, Any]] = {}
+    by_basename: dict[str, dict[str, Any]] = {}
+    basename_counts: dict[str, int] = {}
+    for row in rows:
+        file_name = str(row.get("file_name") or "")
+        if file_name:
+            by_path.setdefault(file_name, row)
+            basename = Path(file_name).name
+            basename_counts[basename] = basename_counts.get(basename, 0) + 1
+            by_basename.setdefault(basename, row)
+    by_basename = {
+        basename: row
+        for basename, row in by_basename.items()
+        if basename_counts.get(basename) == 1
+    }
+    return {
+        "by_dataset_path": by_dataset_path,
+        "by_path": by_path,
+        "by_basename": by_basename,
+    }
+
+
+def _folder_watch_inventory(root: Path, *, limit: int = 20) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    plan = build_smart_plan(root)
+    known = _known_docs_inventory()
+    samples: list[dict[str, Any]] = []
+    changes: list[dict[str, Any]] = []
+    counts = {"new": 0, "changed": 0, "route_changed": 0, "unchanged": 0}
+    for dataset_name, items in plan["plan"].items():
+        for item in items:
+            key = (dataset_name, item["relative_path"])
+            current = known["by_dataset_path"].get(key)
+            if current is None:
+                path_current = known["by_path"].get(item["relative_path"])
+                basename_current = known["by_basename"].get(Path(item["relative_path"]).name)
+                if path_current is not None:
+                    current = path_current
+                elif basename_current is not None and basename_current.get("dataset_name") == dataset_name:
+                    current = basename_current
+            state = "new"
+            if current:
+                size_changed = int(current.get("file_size") or 0) != int(item.get("size_bytes") or 0)
+                try:
+                    mtime_changed = abs(float(current.get("file_mtime") or 0) - Path(item["path"]).stat().st_mtime) > 1.0
+                except OSError:
+                    mtime_changed = False
+                route_changed = current.get("dataset_name") != dataset_name
+                if route_changed:
+                    state = "route_changed"
+                else:
+                    state = "changed" if size_changed or mtime_changed else "unchanged"
+            counts[state] += 1
+            if state != "unchanged" and len(samples) < limit:
+                samples.append(
+                    {
+                        "state": state,
+                        "dataset_name": dataset_name,
+                        "relative_path": item["relative_path"],
+                        "size_bytes": item.get("size_bytes", 0),
+                        "route": item.get("route", {}),
+                        "current": current,
+                    }
+                )
+            if state != "unchanged":
+                changes.append(
+                    {
+                        "state": state,
+                        "dataset_name": dataset_name,
+                        "item": item,
+                        "current": current,
+                    }
+                )
+    return {
+        "status": "ok",
+        "source_root": root.as_posix(),
+        "counts": counts,
+        "pending_changes": counts["new"] + counts["changed"] + counts["route_changed"],
+        "samples": samples,
+        "plan_summary": plan["datasets"],
+        "errors": plan["errors"],
+    }, changes
+
+
+def _folder_watch_cache_key(root: Path) -> str:
+    try:
+        return root.resolve().as_posix()
+    except OSError:
+        return root.as_posix()
+
+
+def clear_folder_watch_cache(root: Path | None = None) -> None:
+    with _folder_watch_cache_lock:
+        if root is None:
+            _folder_watch_cache.clear()
+            return
+        _folder_watch_cache.pop(_folder_watch_cache_key(root), None)
+
+
+def _trim_folder_watch_status(status: dict[str, Any], *, limit: int) -> dict[str, Any]:
+    result = copy.deepcopy(status)
+    result["samples"] = list(result.get("samples") or [])[:limit]
+    return result
+
+
+def _folder_watch_inventory_cached(root: Path, *, limit: int = 20) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    key = _folder_watch_cache_key(root)
+    now = time.monotonic()
+    with _folder_watch_cache_lock:
+        cached = _folder_watch_cache.get(key)
+        if cached and now - cached[0] <= FOLDER_WATCH_CACHE_TTL_SEC:
+            status, changes = cached[1], cached[2]
+            return _trim_folder_watch_status(status, limit=limit), copy.deepcopy(changes)
+
+        status, changes = _folder_watch_inventory(
+            root,
+            limit=max(limit, FOLDER_WATCH_CACHE_SAMPLE_LIMIT),
+        )
+        _folder_watch_cache[key] = (time.monotonic(), copy.deepcopy(status), copy.deepcopy(changes))
+        return _trim_folder_watch_status(status, limit=limit), copy.deepcopy(changes)
+
+
+def build_folder_watch_status(root: Path, *, limit: int = 20) -> dict[str, Any]:
+    status, _changes = _folder_watch_inventory_cached(root, limit=limit)
+    return status
+
+
+def build_folder_reindex_plan(root: Path, *, limit: int = 50) -> dict[str, Any]:
+    status, changes = _folder_watch_inventory_cached(root, limit=limit)
+    route_changes = [change for change in changes if change["state"] == "route_changed"]
+    groups: dict[tuple[str, str], dict[str, Any]] = {}
+    samples: list[dict[str, Any]] = []
+    for change in route_changes:
+        item = change["item"]
+        current = change.get("current") or {}
+        target_dataset = str(change["dataset_name"])
+        current_dataset = str(current.get("dataset_name") or "")
+        key = (current_dataset, target_dataset)
+        record = groups.setdefault(
+            key,
+            {
+                "current_dataset_name": current_dataset,
+                "current_dataset_id": current.get("dataset_id", ""),
+                "target_dataset_name": target_dataset,
+                "files": 0,
+                "bytes": 0,
+                "samples": [],
+            },
+        )
+        doc = {
+            "current_doc_id": current.get("doc_id", ""),
+            "current_dataset_id": current.get("dataset_id", ""),
+            "current_dataset_name": current_dataset,
+            "target_dataset_name": target_dataset,
+            "relative_path": item["relative_path"],
+            "source_path": item["path"],
+            "size_bytes": item.get("size_bytes", 0),
+            "current_status": current.get("status", ""),
+            "current_chunk_count": current.get("chunk_count", 0),
+            "route": item.get("route", {}),
+        }
+        record["files"] += 1
+        record["bytes"] += int(item.get("size_bytes") or 0)
+        if len(record["samples"]) < 5:
+            record["samples"].append(doc)
+        if len(samples) < limit:
+            samples.append(doc)
+
+    return {
+        "status": "ok",
+        "source_root": root.as_posix(),
+        "kind": "route_changed",
+        "pending_route_changes": len(route_changes),
+        "groups": sorted(
+            groups.values(),
+            key=lambda group: (-int(group["files"]), group["current_dataset_name"], group["target_dataset_name"]),
+        ),
+        "samples": samples,
+        "watch_counts": status["counts"],
+        "apply_supported": False,
+        "safe_next_step": (
+            "Use this as a dry-run plan. Route-change apply must delete old Qdrant points "
+            "and move SQLite/storage rows under a guarded runner; ordinary watch scan skips it."
+        ),
+    }
+
+
+@router.get("/watch/status")
+async def folder_watch_status(source_root: str = "RAG_Content", limit: int = 20, _user=Depends(require_user)):
+    root = _safe_source_root(source_root)
+    return await asyncio.to_thread(build_folder_watch_status, root, limit=limit)
+
+
+@router.get("/watch/reindex-plan")
+async def folder_reindex_plan(source_root: str = "RAG_Content", limit: int = 50, _user=Depends(require_user)):
+    root = _safe_source_root(source_root)
+    return await asyncio.to_thread(build_folder_reindex_plan, root, limit=limit)
+
+
+@router.post("/watch/scan")
+async def folder_watch_scan(req: FolderWatchRequest, _admin=Depends(require_admin)):
+    state = get_dataset_state()
+    root = _safe_source_root(req.source_root)
+    clear_folder_watch_cache(root)
+    before, changes = await asyncio.to_thread(_folder_watch_inventory, root, limit=req.limit)
+    route_changed = [change for change in changes if change["state"] == "route_changed"]
+    register_changes = [change for change in changes if change["state"] in {"new", "changed"}]
+    ds_list = await state.backend.list_datasets()
+    dataset_ids = {dataset.name: dataset.id for dataset in ds_list}
+    registered_by_dataset: dict[str, dict[str, Any]] = {}
+    for change in register_changes:
+        dataset_name = change["dataset_name"]
+        item = change["item"]
+        dataset_id = dataset_ids.get(dataset_name)
+        if dataset_id is None:
+            dataset_id = await state.backend.create_dataset(dataset_name)
+            dataset_ids[dataset_name] = dataset_id
+        await state.backend.upload_file(
+            dataset_id,
+            Path(item["path"]),
+            relative_path=item["relative_path"],
+        )
+        record = registered_by_dataset.setdefault(
+            dataset_name,
+            {
+                "dataset_id": dataset_id,
+                "dataset_name": dataset_name,
+                "pending_files": 0,
+                "new": 0,
+                "changed": 0,
+                "route_changed": 0,
+            },
+        )
+        record["pending_files"] += 1
+        record[change["state"]] += 1
+    after = await asyncio.to_thread(build_folder_watch_status, root, limit=req.limit)
+    return {
+        "status": "registered",
+        "source_root": root.as_posix(),
+        "before": before,
+        "sync": {
+            "status": "registered",
+            "source_root": root.as_posix(),
+            "datasets": list(registered_by_dataset.values()),
+            "files": len(register_changes),
+            "skipped_route_changed": len(route_changed),
+            "parse_started": False,
+            "parse_results": [],
+            "plan_summary": before["plan_summary"],
+            "errors": before["errors"],
+        },
+        "after": after,
+    }
+
+
 @router.post("/sync-smart")
 async def sync_smart(req: SmartSyncRequest, _admin=Depends(require_admin)):
     state = get_dataset_state()
-    root = Path(req.source_root)
-    if root.is_absolute() or ".." in root.parts:
-        raise HTTPException(status_code=400, detail=f"unsafe source root: {req.source_root}")
-    if not root.exists():
-        raise HTTPException(status_code=404, detail=f"source root not found: {root}")
+    root = _safe_source_root(req.source_root)
 
     plan = await asyncio.to_thread(build_smart_plan, root)
     ds_list = await state.backend.list_datasets()
@@ -811,6 +1194,21 @@ async def parse_dataset_batch(
 @router.post("/parse-scheduler")
 async def parse_scheduler(req: ParseSchedulerRequest, _admin=Depends(require_admin)):
     state = get_dataset_state()
+    active_job = active_parse_scheduler_job(state)
+    if active_job:
+        job_id, job = active_job
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Parse scheduler already active: {job_id} "
+                f"{job.get('status', '')} {job.get('message', '')}"
+            ),
+        )
+
+    min_free_gb = req.min_free_gb if req.min_free_gb is not None else PARSE_MIN_FREE_GB
+    max_swap_pct = req.max_swap_pct if req.max_swap_pct is not None else PARSE_MAX_SWAP_PCT
+    await assert_parse_admission(state, min_free_gb=min_free_gb, max_swap_pct=max_swap_pct)
+
     if not req.background:
         return await run_parse_scheduler(state, req)
 
@@ -823,6 +1221,7 @@ async def parse_scheduler(req: ParseSchedulerRequest, _admin=Depends(require_adm
     )
     job_id = job["id"]
     state.job_tracker[job_id] = {
+        "type": "rag_parse_scheduler",
         "status": "QUEUED",
         "total": req.max_batches,
         "processed": 0,

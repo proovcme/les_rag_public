@@ -59,6 +59,7 @@ def test_table_query_sums_filtered_parquet_rows(tmp_path):
     assert result.count == 1
     assert result.sources == ["smeta.csv"]
     assert "1 200" in result.answer
+    assert result.payload()["rows"][0]["amount_mat"] is None
 
 
 def test_table_query_lists_matching_rows(tmp_path):
@@ -77,6 +78,26 @@ def test_table_query_lists_matching_rows(tmp_path):
 
     assert result is not None
     assert result.operation == "list"
+    assert result.count == 2
+    assert "Монтаж кабеля" in result.answer
+
+
+def test_table_query_compare_is_table_query(tmp_path):
+    storage_root, dataset_id = _build_smeta_parquet(tmp_path)
+    chunk = Chunk(
+        content="Монтаж",
+        doc_name="smeta.csv",
+        meta={"dataset_id": dataset_id, "parquet_path": "_parquet/smeta.parquet"},
+    )
+
+    result = maybe_answer_table_query(
+        "сравни позиции монтаж кабеля и монтаж лотка",
+        [chunk],
+        storage_root=storage_root,
+    )
+
+    assert result is not None
+    assert result.operation == "compare"
     assert result.count == 2
 
 

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from proxy.config import ADMIN_ROLE, META_DB_PATH, USER_ROLE
 from proxy.security import require_admin
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ class AuthKeyDelete(BaseModel):
 
 
 def auth_db() -> sqlite3.Connection:
-    conn = sqlite3.connect("./data/les_meta.db", check_same_thread=False)
+    conn = sqlite3.connect(META_DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute(
         """
@@ -64,10 +65,7 @@ def auth_db() -> sqlite3.Connection:
 
 
 def seed_admin_key() -> None:
-    admin_key = os.getenv("ADMIN_PASSWORD", "")
-    if not admin_key:
-        logger.warning("[В.О.Л.К.] ADMIN_PASSWORD is not set; admin key seed skipped")
-        return
+    admin_key = os.getenv("ADMIN_PASSWORD", "admin123")
     conn = auth_db()
     try:
         exists = conn.execute("SELECT 1 FROM auth_keys WHERE role='admin' LIMIT 1").fetchone()
@@ -135,6 +133,8 @@ async def auth_list_keys(_admin=Depends(require_admin)):
 async def auth_create_key(req: AuthKeyCreate, _admin=Depends(require_admin)):
     if not req.key_value.strip():
         raise HTTPException(400, "key_value не может быть пустым")
+    if req.role not in {USER_ROLE, ADMIN_ROLE}:
+        raise HTTPException(400, "Недопустимая роль ключа")
     expires_at = None
     if req.expires_days > 0:
         expires_at = (datetime.now() + timedelta(days=req.expires_days)).strftime(
