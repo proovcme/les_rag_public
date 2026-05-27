@@ -19,7 +19,7 @@
 - `MAIL_Index` закрыт: `200 indexed`, `0 pending`, `475 chunks`.
 - Table query MVP читает Parquet row-level artifacts напрямую для сумм, количеств и строк без LLM.
 - Е.Ж.И.К. умеет deterministic mail questions по `.eml/.msg`, участникам и thread metadata.
-- Chat history пишет route/retrieval/dataset trace; user feedback сохраняется через `/api/chat/history/{id}/feedback`; `/api/chat/learning` отдаёт успешные/подтверждённые кейсы для будущих эвристик.
+- Chat history пишет route/retrieval/dataset trace; user feedback сохраняется через `/api/chat/history/{id}/feedback`. Видимая кнопка `Плохой ответ` пишет статус `bad_answer` в SQLite, `logs/chat_feedback.jsonl` и `[CHAT_FEEDBACK]` warning в `logs/proxy.log`; `/api/chat/learning` отдаёт успешные/подтверждённые/размеченные кейсы для будущих эвристик.
 
 ## External Access
 
@@ -38,7 +38,8 @@
 
 ## Verification
 
-- `uv run pytest -q` -> `339 passed`.
+- `uv run pytest -q` -> `344 passed`.
+- Live feedback smoke через `https://les.ovc.me/api/chat/history/{id}/feedback` -> `bad_answer` записан в `logs/chat_feedback.jsonl` и `logs/proxy.log`.
 - `tools/runtime_smoke.py` через `https://les.ovc.me` -> `12/12 OK`.
 - Direct public table query “посчитай общую стоимость по всем строкам сметы” -> `VERIFIED`, `deterministic_table`, `42 580`.
 - `uv lock --check` -> OK.

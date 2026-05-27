@@ -11,6 +11,8 @@ def test_lite_chat_html_uses_static_shell_and_local_bridge():
     assert "/api/chat" in html
     assert "/api/chat/history/" in html
     assert "history_id: data.history_id || null" in html
+    assert "Плохой ответ" in html
+    assert "bad_answer" in html
     assert "Источник не из того датасета" in html
     assert "/api/mail/threads" in html
     assert "Е.Ж.И.К. Почта" in html

@@ -155,8 +155,11 @@ def test_save_chat_history_uses_active_meta_db_path(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_save_chat_feedback_updates_history_row(tmp_path, monkeypatch):
     (tmp_path / "data").mkdir()
+    (tmp_path / "logs").mkdir()
     db_path = tmp_path / "data" / "les_meta_qwen.db"
+    feedback_log = tmp_path / "logs" / "chat_feedback.jsonl"
     monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+    monkeypatch.setenv("CHAT_FEEDBACK_LOG_PATH", str(feedback_log))
     _init_chat_history(db_path)
     history_id = save_chat_history(
         question="q",
@@ -189,13 +192,53 @@ async def test_save_chat_feedback_updates_history_row(tmp_path, monkeypatch):
             (history_id,),
         ).fetchone()
     assert row == ("wrong_dataset", "answer came from mail, not NTD", "MAIL", "tester")
+    event = json.loads(feedback_log.read_text(encoding="utf-8").strip())
+    assert event["event"] == "chat_feedback"
+    assert event["feedback"] == "wrong_dataset"
+    assert event["history_id"] == history_id
+    assert event["question"] == "q"
+
+
+@pytest.mark.asyncio
+async def test_bad_answer_feedback_is_allowed_and_logged(tmp_path, monkeypatch, caplog):
+    (tmp_path / "data").mkdir()
+    db_path = tmp_path / "data" / "les_meta_qwen.db"
+    feedback_log = tmp_path / "logs" / "chat_feedback.jsonl"
+    monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+    monkeypatch.setenv("CHAT_FEEDBACK_LOG_PATH", str(feedback_log))
+    _init_chat_history(db_path)
+    history_id = save_chat_history(
+        question="bad q",
+        answer="bad a",
+        sources=["doc"],
+        crag_status="VERIFIED",
+        latency_sec=0.1,
+        tokens=1,
+        session_id="feedback-session",
+    )
+
+    with caplog.at_level("WARNING"):
+        result = await save_chat_feedback(
+            history_id,
+            ChatFeedbackRequest(feedback="bad_answer", comment="missed clause"),
+            _user=SimpleNamespace(holder="tester", source="api_key"),
+        )
+
+    assert result["feedback"] == "bad_answer"
+    assert "CHAT_FEEDBACK" in caplog.text
+    event = json.loads(feedback_log.read_text(encoding="utf-8").strip())
+    assert event["feedback"] == "bad_answer"
+    assert event["answer_preview"] == "bad a"
 
 
 @pytest.mark.asyncio
 async def test_get_learning_history_returns_success_and_confirmed_dataset_trace(tmp_path, monkeypatch):
     (tmp_path / "data").mkdir()
+    (tmp_path / "logs").mkdir()
     db_path = tmp_path / "data" / "les_meta_qwen.db"
+    feedback_log = tmp_path / "logs" / "chat_feedback.jsonl"
     monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+    monkeypatch.setenv("CHAT_FEEDBACK_LOG_PATH", str(feedback_log))
     _init_chat_history(db_path)
     save_chat_history(
         question="verified question",

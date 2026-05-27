@@ -402,9 +402,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                         on_click=lambda: asyncio.create_task(_feedback("correct")),
                     ).props("flat dense round").tooltip("Ответ корректен")
                     ui.button(
+                        "Плохой ответ",
                         icon="thumb_down",
-                        on_click=lambda: asyncio.create_task(_feedback("incorrect")),
-                    ).props("flat dense round").tooltip("Ответ некорректен")
+                        on_click=lambda: asyncio.create_task(_feedback("bad_answer")),
+                    ).props("flat dense").tooltip("Плохой ответ: сохранить для разбора")
                     ui.button(
                         icon="travel_explore",
                         on_click=lambda: asyncio.create_task(_feedback("wrong_dataset")),

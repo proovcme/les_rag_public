@@ -206,8 +206,11 @@ Accepted order after mail stabilization:
 2. Capture confirmed chat outcomes before adding smarter routing: every
    successful `/api/chat` answer now stores route/retrieval/dataset trace in
    `chat_history`, user feedback is written through
-   `/api/chat/history/{id}/feedback`, and `/api/chat/learning` exposes
-   confirmed/successful cases for routing and dataset-cleanup heuristics.
+   `/api/chat/history/{id}/feedback`, including the visible `Плохой ответ`
+   (`bad_answer`) action. Feedback is durable in SQLite, mirrored to
+   `logs/chat_feedback.jsonl`, and negative statuses emit `[CHAT_FEEDBACK]`
+   warnings in `logs/proxy.log`; `/api/chat/learning` exposes
+   confirmed/marked cases for routing and dataset-cleanup heuristics.
 3. Verify validator context quality with real examples from
    `validation_context_windows`; fix source/window selection only if the audit
    shows bad evidence.

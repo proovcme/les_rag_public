@@ -99,6 +99,7 @@ FastAPI, Uvicorn, Pydantic v2, LlamaIndex, Qdrant-client, `pymupdf4llm`, `mammot
 - `./data/qdrant/` → Qdrant local storage
 - `./data/les_meta.db` → SQLite метаданные датасетов/документов
 - `./data/les_metrics.db` → SQLite time-series метрики П.Р.О.Р.А.Б.
+- `./logs/chat_feedback.jsonl` → JSONL-журнал пользовательской разметки ответов; негативные статусы также видны как `[CHAT_FEEDBACK]` в `./logs/proxy.log`
 - `./storage/datasets/` → Физические UUID-папки загруженных файлов
 - `./RAG_Content/` → Исходники (NTD, BIM, MAIL) для загрузки
 - `./frontend/`, `./backend/` → Hot-reload кода без пересборки

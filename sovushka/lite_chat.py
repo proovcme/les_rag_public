@@ -246,6 +246,7 @@ def lite_chat_html() -> str:
       align-items: center;
       gap: 5px;
       margin-top: 8px;
+      flex-wrap: wrap;
     }
     .feedback button {
       width: 30px;
@@ -256,6 +257,15 @@ def lite_chat_html() -> str:
       line-height: 1;
     }
     .feedback button:disabled { cursor: default; opacity: .75; }
+    .feedback button.bad-answer {
+      width: auto;
+      min-width: 116px;
+      padding: 0 10px;
+      color: var(--err);
+      border-color: rgba(239, 68, 68, .55);
+      background: rgba(239, 68, 68, .1);
+      font-weight: 700;
+    }
     .feedback-status {
       color: var(--muted);
       font-size: .58rem;
@@ -572,17 +582,18 @@ def lite_chat_html() -> str:
         feedback.className = "feedback";
         const status = document.createElement("span");
         status.className = "feedback-status";
-        const makeButton = (label, title, value) => {
+        const makeButton = (label, title, value, className = "") => {
           const button = document.createElement("button");
           button.type = "button";
           button.textContent = label;
           button.title = title;
           button.setAttribute("aria-label", title);
+          if (className) button.className = className;
           button.addEventListener("click", () => saveFeedback(meta.history_id, value, button, status));
           return button;
         };
         feedback.appendChild(makeButton("✓", "Ответ корректен", "correct"));
-        feedback.appendChild(makeButton("×", "Ответ некорректен", "incorrect"));
+        feedback.appendChild(makeButton("Плохой ответ", "Плохой ответ: сохранить для разбора", "bad_answer", "bad-answer"));
         feedback.appendChild(makeButton("DS", "Источник не из того датасета", "wrong_dataset"));
         feedback.appendChild(status);
         wrap.appendChild(feedback);

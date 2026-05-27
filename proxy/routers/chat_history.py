@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 import json
+import os
 import sqlite3
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -18,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
+NEGATIVE_FEEDBACK = {"bad_answer", "incorrect", "wrong_dataset", "bad_source"}
+
 
 class ChatFeedbackRequest(BaseModel):
     feedback: str
@@ -29,7 +33,7 @@ class ChatFeedbackRequest(BaseModel):
     @classmethod
     def feedback_allowed(cls, value: str) -> str:
         normalized = value.strip().lower()
-        allowed = {"correct", "incorrect", "partial", "wrong_dataset", "bad_source"}
+        allowed = {"correct", "bad_answer", "incorrect", "partial", "wrong_dataset", "bad_source"}
         if normalized not in allowed:
             raise ValueError(f"feedback must be one of: {', '.join(sorted(allowed))}")
         return normalized
@@ -51,6 +55,22 @@ def _json_object(raw: str | None) -> dict:
         return {}
 
 
+def _feedback_log_path() -> Path:
+    return Path(os.getenv("CHAT_FEEDBACK_LOG_PATH", "logs/chat_feedback.jsonl"))
+
+
+def _preview(text: str | None, limit: int = 500) -> str:
+    value = " ".join(str(text or "").split())
+    return value[:limit]
+
+
+def _append_feedback_event(event: dict) -> None:
+    path = _feedback_log_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+
+
 @router.get("/history")
 async def get_chat_history(limit: int = 40, session_id: Optional[str] = None, _user=Depends(require_user)):
     """Return recent chat messages, optionally scoped to a session."""
@@ -60,35 +80,49 @@ async def get_chat_history(limit: int = 40, session_id: Optional[str] = None, _u
             if session_id:
                 rows = conn.execute(
                     "SELECT id, question, answer, sources, crag_status, query_route_json, "
-                    "retrieval_trace_json, cache_type, validation_enabled FROM chat_history "
+                    "retrieval_trace_json, cache_type, validation_enabled, feedback_status FROM chat_history "
                     "WHERE session_id=? ORDER BY id ASC",
                     (session_id,),
                 ).fetchall()
             else:
                 rows = conn.execute(
                     "SELECT id, question, answer, sources, crag_status, query_route_json, "
-                    "retrieval_trace_json, cache_type, validation_enabled FROM chat_history "
+                    "retrieval_trace_json, cache_type, validation_enabled, feedback_status FROM chat_history "
                     "ORDER BY id DESC LIMIT ?",
                     (limit,),
                 ).fetchall()
                 rows = list(reversed(rows))
         messages = []
-        for history_id, question, answer, sources_text, crag_status, route, trace, cache_type, validation_enabled in rows:
+        for (
+            history_id,
+            question,
+            answer,
+            sources_text,
+            crag_status,
+            route,
+            trace,
+            cache_type,
+            validation_enabled,
+            feedback_status,
+        ) in rows:
             sources = [source for source in (sources_text or "").split(",") if source]
             messages.append({"role": "user", "text": question})
+            meta = {
+                "history_id": history_id,
+                "query_route": _json_object(route),
+                "retrieval_trace": _json_object(trace),
+                "cache": cache_type or "miss",
+                "validation": {"enabled": bool(validation_enabled)},
+            }
+            if feedback_status:
+                meta["feedback"] = feedback_status
             messages.append(
                 {
                     "role": "ai",
                     "text": answer,
                     "srcs": sources,
                     "crag": crag_status or "",
-                    "meta": {
-                        "history_id": history_id,
-                        "query_route": _json_object(route),
-                        "retrieval_trace": _json_object(trace),
-                        "cache": cache_type or "miss",
-                        "validation": {"enabled": bool(validation_enabled)},
-                    },
+                    "meta": meta,
                 }
             )
         return messages
@@ -137,6 +171,7 @@ async def get_chat_sessions(limit: int = 50, _user=Depends(require_user)):
 async def save_chat_feedback(history_id: int, req: ChatFeedbackRequest, _user=Depends(require_user)):
     """Store user confirmation/correction for a chat answer."""
     try:
+        feedback_user = getattr(_user, "holder", "") or getattr(_user, "source", "")
         with sqlite3.connect(rag_meta_db_path()) as conn:
             ensure_chat_history_schema(conn)
             cur = conn.execute(
@@ -155,7 +190,7 @@ async def save_chat_feedback(history_id: int, req: ChatFeedbackRequest, _user=De
                     req.comment or "",
                     req.correct_answer or "",
                     req.correct_dataset_filter or "",
-                    getattr(_user, "holder", "") or getattr(_user, "source", ""),
+                    feedback_user,
                     history_id,
                 ),
             )
@@ -163,11 +198,57 @@ async def save_chat_feedback(history_id: int, req: ChatFeedbackRequest, _user=De
                 raise HTTPException(status_code=404, detail="chat history row not found")
             row = conn.execute(
                 """
-                SELECT id, feedback_status, feedback_comment, feedback_correct_dataset_filter, feedback_at
+                SELECT
+                    id, feedback_status, feedback_comment, feedback_correct_dataset_filter, feedback_at,
+                    question, answer, sources, crag_status, requested_dataset_filter,
+                    effective_dataset_filter, source_dataset_names, source_dataset_mismatch,
+                    route_channel, route_reason, retrieval_quality, cache_type, validation_enabled
                 FROM chat_history WHERE id=?
                 """,
                 (history_id,),
             ).fetchone()
+        event = {
+            "event": "chat_feedback",
+            "history_id": row[0],
+            "feedback": row[1],
+            "comment": row[2] or "",
+            "correct_dataset_filter": row[3] or "",
+            "feedback_at": row[4],
+            "user": feedback_user,
+            "question": _preview(row[5], 500),
+            "answer_preview": _preview(row[6], 700),
+            "sources": [source for source in (row[7] or "").split(",") if source],
+            "crag_status": row[8] or "",
+            "requested_dataset_filter": row[9] or "",
+            "effective_dataset_filter": row[10] or "",
+            "source_dataset_names": _json_list(row[11]),
+            "source_dataset_mismatch": bool(row[12]),
+            "route_channel": row[13] or "",
+            "route_reason": row[14] or "",
+            "retrieval_quality": row[15] or "",
+            "cache_type": row[16] or "",
+            "validation_enabled": bool(row[17]),
+        }
+        _append_feedback_event(event)
+        log_message = (
+            "[CHAT_FEEDBACK] feedback=%s history_id=%s user=%s crag=%s route=%s/%s "
+            "effective_filter=%s sources=%s question=%r"
+        )
+        log_args = (
+            event["feedback"],
+            event["history_id"],
+            event["user"],
+            event["crag_status"],
+            event["route_channel"],
+            event["route_reason"],
+            event["effective_dataset_filter"],
+            ",".join(event["sources"]),
+            event["question"],
+        )
+        if event["feedback"] in NEGATIVE_FEEDBACK:
+            logger.warning(log_message, *log_args)
+        else:
+            logger.info(log_message, *log_args)
         return {
             "status": "saved",
             "history_id": row[0],
@@ -175,6 +256,7 @@ async def save_chat_feedback(history_id: int, req: ChatFeedbackRequest, _user=De
             "comment": row[2],
             "correct_dataset_filter": row[3],
             "feedback_at": row[4],
+            "log": str(_feedback_log_path()),
         }
     except HTTPException:
         raise
@@ -197,7 +279,7 @@ async def get_learning_history(
             if confirmed_only:
                 where = "feedback_status='correct'"
             else:
-                where = "success=1 OR feedback_status IN ('correct', 'partial', 'wrong_dataset', 'bad_source')"
+                where = "success=1 OR feedback_status IN ('correct', 'partial', 'bad_answer', 'incorrect', 'wrong_dataset', 'bad_source')"
             rows = conn.execute(
                 f"""
                 SELECT
