@@ -181,6 +181,32 @@ def plan_summary(docs: list[RouteChangeDoc]) -> dict[str, Any]:
     }
 
 
+def _csv_filter(value: str) -> set[str]:
+    return {item.strip() for item in value.split(",") if item.strip()}
+
+
+def filter_route_changes(
+    docs: list[RouteChangeDoc],
+    *,
+    from_datasets: str = "",
+    to_datasets: str = "",
+    path_contains: str = "",
+) -> list[RouteChangeDoc]:
+    from_names = _csv_filter(from_datasets)
+    to_names = _csv_filter(to_datasets)
+    path_hint = path_contains.casefold().strip()
+    result: list[RouteChangeDoc] = []
+    for doc in docs:
+        if from_names and doc.current_dataset_name not in from_names:
+            continue
+        if to_names and doc.target_dataset_name not in to_names:
+            continue
+        if path_hint and path_hint not in doc.target_file_name.casefold():
+            continue
+        result.append(doc)
+    return result
+
+
 def load_state(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {"version": 1, "completed": {}, "runs": [], "created_at": guarded.timestamp()}
@@ -341,6 +367,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--state-file", default="")
     parser.add_argument("--stop-file", default="")
     parser.add_argument("--max-docs", type=int, default=0)
+    parser.add_argument("--from-dataset", default="", help="Comma-separated current dataset names to include")
+    parser.add_argument("--to-dataset", default="", help="Comma-separated target dataset names to include")
+    parser.add_argument("--path-contains", default="", help="Only include route changes whose target path contains this text")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--min-free-gb", type=float, default=4.0)
     parser.add_argument("--max-swap-pct", type=float, default=85.0)
@@ -376,7 +405,12 @@ def main(argv: list[str] | None = None) -> int:
         guarded.emit(log_path, "error", detail="admin API key is required")
         return 2
 
-    docs = route_changes(args.db_path, args.source_root)
+    docs = filter_route_changes(
+        route_changes(args.db_path, args.source_root),
+        from_datasets=args.from_dataset,
+        to_datasets=args.to_dataset,
+        path_contains=args.path_contains,
+    )
     completed = set(state.get("completed") or {})
     docs = [doc for doc in docs if doc.current_doc_id not in completed]
     if args.max_docs > 0:

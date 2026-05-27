@@ -238,6 +238,56 @@ def _query_route_payload(query_intent: Any, effective_dataset_filter: str | None
     }
 
 
+SOURCE_LOOKUP_MARKERS = (
+    "где смотреть",
+    "где посмотреть",
+    "какие нормы",
+    "какая норма",
+    "какой норматив",
+    "каким норматив",
+    "какие норматив",
+    "нормы регулиру",
+    "нормы примен",
+    "требования примен",
+)
+
+
+def _is_source_lookup_question(question: str) -> bool:
+    q = question.casefold().replace("ё", "е")
+    return any(marker in q for marker in SOURCE_LOOKUP_MARKERS)
+
+
+def _preview_text(text: str, limit: int = 220) -> str:
+    return " ".join(str(text or "").split())[:limit].strip()
+
+
+def _source_lookup_answer(question: str, chunks: list[Any], *, max_sources: int = 3) -> str | None:
+    if not _is_source_lookup_question(question) or not chunks:
+        return None
+
+    lines = ["Смотреть прежде всего в этих источниках из базы:"]
+    seen: set[str] = set()
+    source_count = 0
+    for chunk in chunks:
+        doc_name = str(getattr(chunk, "doc_name", "") or "").strip()
+        if not doc_name or doc_name in seen:
+            continue
+        seen.add(doc_name)
+        source_count += 1
+        title = Path(doc_name).name
+        preview = _preview_text(getattr(chunk, "content", ""), 260)
+        if preview:
+            lines.append(f"{source_count}. {title} — {preview}")
+        else:
+            lines.append(f"{source_count}. {title}")
+        if source_count >= max_sources:
+            break
+
+    if source_count == 0:
+        return None
+    return "\n".join(lines)
+
+
 def save_chat_history(
     *,
     question: str,
@@ -647,6 +697,82 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                 dataset_name_by_id=dataset_name_by_id,
                 query_route_payload=query_route_payload,
             )
+
+    if query_intent.channel == "rag" and _dataset_ids and _is_source_lookup_question(req.question):
+        t_source_start = time.time()
+        try:
+            retrieval = await retrieve_chat_chunks(
+                question=req.question,
+                dataset_ids=_dataset_ids,
+                rag_backend=rag_backend,
+                reranker_enabled=False,
+                reranker_available=False,
+                reranker_cls=None,
+                mlx_url=os.getenv("MLX_URL", "http://127.0.0.1:8080"),
+                logger=logger,
+                return_trace=True,
+            )
+            source_chunks = concentrate_sources(
+                rank_chunks_for_question(req.question, retrieval.chunks),
+                max_docs=3,
+                min_score=0.35,
+                max_chunks=8,
+            )
+            source_answer = _source_lookup_answer(req.question, source_chunks)
+        except Exception as source_err:
+            logger.warning("[SOURCE_LOOKUP] deterministic source answer skipped: %s", source_err)
+            source_answer = None
+            source_chunks = []
+            retrieval = None
+        if source_answer:
+            t_source = time.time() - t_source_start
+            source_trace = retrieval.payload() if retrieval else {}
+            source_trace["quality_status"] = "deterministic_source_lookup"
+            source_dataset_ids = _dataset_ids_from_chunks(source_chunks)
+            source_dataset_names = _names_for_dataset_ids(source_dataset_ids, dataset_name_by_id)
+            sources_list = source_names(source_chunks)
+            state.crag_stats["verified"] += 1
+            state.chat_metrics["crag_pass"] += 1
+            state.chat_metrics["latency_search"].append(t_source)
+            state.chat_metrics["latency_gen"].append(0.0)
+            state.chat_metrics["tokens"].append(0)
+            for key in ("latency_search", "latency_gen", "tokens"):
+                state.chat_metrics[key] = state.chat_metrics[key][-100:]
+            history_id = None
+            try:
+                history_id = save_chat_history(
+                    question=req.question,
+                    answer=source_answer,
+                    sources=sources_list,
+                    crag_status="VERIFIED",
+                    latency_sec=t_source,
+                    tokens=0,
+                    session_id=req.session_id,
+                    requested_dataset_filter=req.dataset_filter,
+                    effective_dataset_filter=effective_dataset_filter,
+                    resolved_dataset_ids=_dataset_ids,
+                    resolved_dataset_names=resolved_dataset_names,
+                    source_dataset_ids=source_dataset_ids,
+                    source_dataset_names=source_dataset_names,
+                    query_route=query_route_payload,
+                    retrieval_trace=source_trace,
+                    cache_type="deterministic_source_lookup",
+                    validation_enabled=False,
+                    success=1,
+                )
+            except Exception as db_err:
+                logger.warning("[CHAT] History save error: %s", db_err)
+            return {
+                "answer": source_answer,
+                "crag_status": "VERIFIED",
+                "sources": sources_list,
+                "effective_dataset_filter": effective_dataset_filter,
+                "query_route": query_route_payload,
+                "retrieval_trace": source_trace,
+                "cache": "deterministic_source_lookup",
+                "validation": {"enabled": False, "reason": "deterministic_source_lookup"},
+                "history_id": history_id,
+            }
 
     admission = evaluate_chat_admission(
         current_mode=state.current_mode,

@@ -166,7 +166,8 @@ launchctl kickstart -k gui/$(id -u)/me.ovc.les.proxy
 | 22.05.2026 | Основной runtime зафиксирован на MLX Host; Ollama переведён в резерв. |
 | 22.05.2026 | Разделены UI routes: `/` чат, `/les` админка. |
 | 22.05.2026 | `restart_sovushka.command` запускает `.venv/bin/python3` и пишет реальный PID. |
-| 27.05.2026 | Core ML embedder/validator включены как guarded local default; индекс закрыт `1003/1003`, Qdrant match `true`, внешний `les.ovc.me` smoke зелёный. |
+| 27.05.2026 | Core ML embedder/validator включены как guarded local default; индекс закрыт `1003/1003`, `248917` chunks, Qdrant match `true`, внешний `les.ovc.me` smoke зелёный. |
+| 27.05.2026 | FIRE/HVAC route hardening: selective HVAC route-change reindex, lexical rebuild, `golden/domain_fire_hvac_set.json` `16/16`, deterministic source lookup для “где смотреть/какие нормы”. |
 
 📅 **Документация актуальна на:** 27.05.2026
 

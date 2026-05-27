@@ -4,7 +4,7 @@
 
 **Публичное позиционирование:** локальная RAG-машина для инженерных, нормативных и корпоративных архивов на Apple Silicon. Фокус: приватность, воспроизводимость, наблюдаемость, безопасная индексация и ответы с проверяемыми источниками.
 
-**Актуальный статус: 27.05.2026.** Референсный контур работает на Mac Mini M4 / 24 GB в no-Docker runtime: Qdrant local binary, MLX Host, FastAPI proxy и Sovushka Lite chat/admin запускаются через launchd; rich NiceGUI UI сохранён как fallback. Активный embedding-профиль — `Qwen/Qwen3-Embedding-0.6B` в коллекции `les_rag_qwen3_06b`; embedding и validator по умолчанию идут через Core ML worker-процессы. Текущий публичный baseline: `1003/1003` файлов проиндексировано, `0` pending, `0` errors, `247890` чанков, Qdrant points совпадают с SQLite. Внешний контур `https://les.ovc.me` поднят через П.А.У.К. reverse tunnel и В.О.Л.К. API keys.
+**Актуальный статус: 27.05.2026.** Референсный контур работает на Mac Mini M4 / 24 GB в no-Docker runtime: Qdrant local binary, MLX Host, FastAPI proxy и Sovushka Lite chat/admin запускаются через launchd; rich NiceGUI UI сохранён как fallback. Активный embedding-профиль — `Qwen/Qwen3-Embedding-0.6B` в коллекции `les_rag_qwen3_06b`; embedding и validator по умолчанию идут через Core ML worker-процессы. Текущий публичный baseline: `1003/1003` файлов проиндексировано, `0` pending, `0` errors, `248917` чанков, Qdrant points совпадают с SQLite. Внешний контур `https://les.ovc.me` поднят через П.А.У.К. reverse tunnel и В.О.Л.К. API keys.
 
 ---
 
@@ -114,7 +114,7 @@ flowchart TD
 | Lightweight chat/admin shell | `/`, `/les` и `/m5` отдают статические Lite-страницы без NiceGUI client state; `/classic` и `/les/classic` сохраняют rich fallback |
 | Lightweight UI health | Sovushka отвечает `/healthz`; runtime status не рендерит тяжёлую NiceGUI страницу |
 | Durable jobs | `/api/jobs` объединяет SQLite job history и live jobs |
-| Regression suite | На 27.05.2026: `344 passed`, включая auth, storage, runtime admission, SafeRAG, Lite UI, mail profile/query, Core ML guards и indexer guards |
+| Regression suite | На 27.05.2026: `352 passed`, включая auth, storage, runtime admission, SafeRAG, Lite UI, mail profile/query, Core ML guards, FIRE/HVAC retrieval acceptance и indexer guards |
 
 Подробная модель памяти описана в [RUNTIME_MEMORY_PROFILES.md](RUNTIME_MEMORY_PROFILES.md).
 
@@ -442,14 +442,15 @@ DOC_ROUTER_SAMPLE_PAGES=3
 
 - **Почта:** живой IMAP job `743b1517-841` завершился `completed`; подтянуто 50 новых писем. В `RAG_Content/MAIL/IMAP` и storage лежит по `200` `.eml`; follow-up Core ML parse добил остаток. `MAIL_Index` теперь `200 indexed`, `0 pending`, `475 chunks`; Qdrant points match SQLite chunks.
 - **BOOKS_Index:** последний тяжёлый pending PDF (`Рук-во по устройству ЭУ 2019.pdf`) проиндексирован guarded batch run: `1 indexed`, `0 pending`, `0 errors`, `2845 chunks`.
-- **Система:** active jobs `0`; Qdrant, MLX Host, proxy, Sovushka Lite UI и П.А.У.К. external tunnel running. MLX Host слушает только `127.0.0.1:8080`; финальный proxy health: `1003 indexed`, `0 pending`, `0 errors`, `247890 chunks`, Qdrant match `true`.
+- **Система:** active jobs `0`; Qdrant, MLX Host, proxy, Sovushka Lite UI и П.А.У.К. external tunnel running. MLX Host слушает только `127.0.0.1:8080`; финальный proxy health: `1003 indexed`, `0 pending`, `0 errors`, `248917 chunks`, Qdrant match `true`.
 - **Core ML embeddings:** локальный `.env` переведён на guarded default `EMBED_BACKEND=coreml`, `COREML_EMBED_COMPUTE_UNITS=cpu_and_gpu`, `COREML_EMBED_ISOLATE_PROCESS=true`, `COREML_EMBED_MODEL=artifacts/coreml/qwen3_embedding_06b_b1_s512_static.mlpackage`. MLX Host отдаёт fallback/status counters, проверяет vector norm (`COREML_EMBED_MIN_NORM/MAX_NORM`) и открывает short circuit (`COREML_EMBED_MAX_FAILURES`, `COREML_EMBED_FAILURE_COOLDOWN_SEC`) при повторных native/quality failures. `cpu_only`/ANE canaries для старых пакетов оставлены как диагностическая история; текущий production path — `cpu_and_gpu` worker, fallback disabled.
 - **Validator backend:** MLX Host поддерживает `VALIDATOR_BACKEND=mlx|coreml|rules`; текущий локальный `.env` и launchd включены на `VALIDATOR_BACKEND=coreml` + `COREML_VALIDATOR_ISOLATE_PROCESS=true` + `COREML_VALIDATOR_FALLBACK=false`. Core ML candidate: `MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli` → `artifacts/coreml/validator_minilm_l6_b1_s512.mlpackage`, `attention_mask_rank=4`, `context_mode=windows`, `pair_mode=answer`, labels `entailment,neutral,contradiction`, `cpu_only`. `/api/health` раскрывает `validator_backend`, `active_model_id`, `active_model_version`, `coreml_model_exists`, labels, confidence threshold, worker counters/circuit и fallback state.
 - **Validator golden:** старый 8-case synthetic set признан недостаточным. Новый frozen real-window seed/materialized set: `golden/validator_real_window_seed.json` → `golden/validator_real_window_set.json`, `33` кейса, баланс `11 VERIFIED / 11 NO_DATA / 11 HALLUCINATION`, contexts из настоящих `validation_context_windows`, audit report `artifacts/validator/validator_real_window_rules_audit.json`.
 - **Validator measurements:** на `golden/validator_real_window_set.json` single-pass Core ML был слабым (`0.3333`), но windowed Core ML policy дал accuracy `0.5152`, mean latency `~0.04-0.05s`; MLX NLI baseline на том же set дал сопоставимую accuracy при заметно большей latency; rules audit: accuracy `0.3030`. Live `/api/validate` smoke на Core ML прошёл, fallback inactive.
 - **Learning trace:** `/api/chat` сохраняет `history_id` для успешных и неуспешных ответов вместе с route/retrieval/dataset metadata. Пользователь может подтвердить ответ, нажать `Плохой ответ` (`bad_answer`) или пометить wrong-dataset/bad-source через `/api/chat/history/{id}/feedback`; feedback пишется в SQLite, `logs/chat_feedback.jsonl`, а негативные статусы дают `[CHAT_FEEDBACK]` warning в `logs/proxy.log`. `/api/chat/learning` отдаёт подтверждённые и размеченные кейсы для будущих эвристик routing/clean-up.
 - **K.O.T. + Е.Ж.И.К.:** К.О.Т. расширен инженерными сокращениями (`ОВ`, `ВК`, `ЭОМ`, `КЖ`, `АУПТ`, `СКС`, etc.) и отдельным `MAIL` route. Почтовые вопросы вида “найди письма/цепочку/кто кому” идут в deterministic Е.Ж.И.К. answer path из сохранённых `.eml/.msg`, без vector retrieval и LLM, если вопрос явно почтовый.
-- **Проверки:** общий `uv run pytest -q` зелёный (`344 passed`); внешний `tools/runtime_smoke.py` через `https://les.ovc.me` прошёл `12/12`; прямой публичный table query “посчитай общую стоимость по всем строкам сметы” вернул `VERIFIED`, `deterministic_table`, `42 580`; live feedback smoke через `https://les.ovc.me/api/chat/history/{id}/feedback` записал `bad_answer` в `logs/chat_feedback.jsonl` и `[CHAT_FEEDBACK]` в `logs/proxy.log`; `uv lock --check`, `git diff --check` OK.
+- **FIRE/HVAC hardening:** routing priority, K.O.T. terms and query expansion now keep `NTD_FIRE` and `NTD_HVAC` out of generic/noisy routes. Ten HVAC documents were selectively moved into `NTD_HVAC_Index` by guarded route-change reindex, lexical index was rebuilt, and `golden/domain_fire_hvac_set.json` passes `16/16`. Source-lookup questions such as “где смотреть/какие нормы” now return deterministic source lists (`deterministic_source_lookup`) instead of spending an LLM/validator cycle on simple normative navigation.
+- **Проверки:** общий `uv run pytest -q` зелёный (`352 passed`); FIRE/HVAC golden set `16/16`; внешний `tools/runtime_smoke.py` через `https://les.ovc.me` прошёл `12/12`; прямой публичный table query “посчитай общую стоимость по всем строкам сметы” вернул `VERIFIED`, `deterministic_table`, `42 580`; live feedback smoke через `https://les.ovc.me/api/chat/history/{id}/feedback` записал `bad_answer` в `logs/chat_feedback.jsonl` и `[CHAT_FEEDBACK]` в `logs/proxy.log`; `uv lock --check`, `git diff --check` OK.
 
 ### Следующая сессия
 
@@ -507,6 +508,14 @@ uv run python tools/rag_golden_set.py \
 ```
 
 Golden set использует `/api/rag/retrieve-debug`, поэтому проверяет качество найденных источников без запуска LLM. Базовые NTD-кейсы лежат в `golden/ntd_golden_set.json`; после каждого блока micro-indexing команда должна проходить без падений и показывать ожидаемые source/content hints.
+
+Для FIRE/HVAC quality gate:
+
+```bash
+uv run python tools/rag_golden_set.py --cases golden/domain_fire_hvac_set.json
+```
+
+Этот set проверяет не только source hints, но и `dataset_filter` route, top-N source presence и expanded query evidence. Текущий baseline: `16/16`.
 
 ### Indexing mode
 
@@ -733,7 +742,7 @@ MIT — используй, форкай, улучшай.
 - [x] Proxy modularization — активные endpoints вынесены в routers/services, `legacy_app.py` оставлен shim
 - [x] Stabilization: runtime smoke для локального/VPS post-deploy контура
 - [x] Stabilization: browser smoke UI admin/user сценариев
-- [ ] RAG quality hardening: golden set, validator-context audit, K.O.T. expansion, FTS5/BM25+RRF audit, trace/audit
+- [x] RAG quality hardening v1: FIRE/HVAC golden set, validator-context audit seed, K.O.T. expansion, FTS5/BM25+RRF trace/audit
 - [x] RAG intake hardening: smart-plan, source verification, size guard, excluded dirs
 - [x] Chat clarification gate — broad запросы получают уточняющие вопросы до retrieval/LLM
 - [x] Performance: semantic cache для VERIFIED ответов с dataset-scope invalidation
@@ -753,16 +762,16 @@ MIT — используй, форкай, улучшай.
 - [x] Е.Ж.И.К. v2 — отдельная выдача писем: who-to-whom, snippets, thread chains
 - [x] Е.Ж.И.К. v3 — mail-vector profile: участники, направление, importance, OCR/VLM вложений
 - [ ] Е.Ж.И.К. stabilization — PDF subprocess и IMAP job/progress внедрены; дальше OCR/VLM image-only вложений, mail golden set и thread-aware retrieval validation
-- [ ] RAG quality analysis — сначала golden set и validator-context audit; затем Qwen query prefix A/B, K.O.T. expansion, FTS5/BM25+RRF audit; HyDE/contextual/4B только как поздние гипотезы
+- [ ] RAG quality analysis — FIRE/HVAC acceptance уже закрыт; дальше расширять golden по живым вопросам, Qwen query prefix A/B, hybrid audit и dataset-cleanup heuristics; HyDE/contextual/4B только как поздние гипотезы
 - [ ] VLM pipeline — анализ PDF-чертежей
 
 ### Backlog ускорения и оптимизации
 
 - **Стабилизация почты:** PDF-вложения через `PyMuPDF/fitz` уже вынесены в отдельный процесс с таймаутом; при ошибке attachment получает `pdf_needs_ocr_vlm`. IMAP import получил background job/progress. Дальше: двухфазный IMAP checkpoint после durable registration, parse-progress внутри job, перевод local import/index на background job, image-only PDF сценарии, OCR/VLM-disabled режим, OCR/VLM картинок и mail golden set.
-- **Golden set first:** 30-50 вопросов с ожидаемыми документами/пунктами, top-k hit, latency и RAM. Это линейка для Qwen/BGE, query prefix, K.O.T., hybrid, HyDE и contextual retrieval.
+- **Golden set first:** FIRE/HVAC seed уже даёт 16 проверок route/source/top-N. Дальше расширять до 30-50 живых вопросов с ожидаемыми документами/пунктами, top-k hit, latency и RAM. Это линейка для Qwen/BGE, query prefix, K.O.T., hybrid, HyDE и contextual retrieval.
 - **Validator-context audit:** `validation_context_windows` уже есть; `tools/coreml_validator_probe.py compare --use-rag-context-windows` материализует реальные окна, сравнивает `rules/coreml/mlx`, считает accuracy/latency и threshold sweep для Core ML score.
 - **Qwen query prefix A/B:** проверить query-side instruction prefix без переиндексации. Включать только если golden metrics улучшаются без ухудшения latency/RAM.
-- **K.O.T. expansion:** `config/kot_terms.yaml` существует, но словарь ещё тонкий. Расширить `ОВ`, `ВК`, `ЭОМ`, `КЖ`, `АУПТ`, `СКС`, смешанные написания и покрыть golden/unit tests.
+- **K.O.T. expansion:** `config/kot_terms.yaml` уже покрывает инженерные сокращения и первый FIRE/HVAC словарь (`СП 60`, `воздухообмен`, `микроклимат`, `противодым`, `СП 7.13130`). Дальше добавлять смешанные написания, реальные опечатки и dataset-cleanup эвристики только через golden/unit tests.
 - **Hybrid retrieval audit:** hybrid уже реализован как SQLite FTS5/BM25 + dense retrieval + RRF. Проверить полноту и свежесть lexical index, вклад BM25 в ссылки на СП/ГОСТ, номера пунктов, таблицы и сокращения; только потом решать про Qdrant-native sparse/FastEmbed.
 - **HyDE/contextual retrieval hypothesis:** HyDE проверять только для коротких семантических вопросов при достаточной памяти; contextual retrieval только на ограниченном нормативном корпусе перед любой полной переиндексацией.
 - **Qwen3-Embedding-4B hypothesis:** на 24 GB это только отдельный quality-run профиль без chat/validator/heavy indexing, не default.

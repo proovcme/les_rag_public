@@ -217,6 +217,46 @@ def test_smoke_control_still_routes_to_fire():
     assert route.domain == "NTD_FIRE"
 
 
+def test_hvac_name_beats_generic_fire_safety_text():
+    route = classify_document(
+        DocumentProbe(
+            path=Path("СП 60.13330.2020. Отопление, вентиляция и кондиционирование.docx"),
+            suffix=".docx",
+            size_bytes=100_000,
+            text_sample="Общие требования пожарной безопасности учитываются при проектировании.",
+        )
+    )
+
+    assert route.domain == "NTD_HVAC"
+    assert route.dataset_name == "NTD_HVAC_Index"
+
+
+def test_fire_design_guide_number_beats_generic_spds_text():
+    route = classify_document(
+        DocumentProbe(
+            path=Path("ГОСТ Р 59638-2021. Системы противопожарной защиты.docx"),
+            suffix=".docx",
+            size_bytes=100_000,
+            text_sample="Руководство по проектированию систем пожарной сигнализации.",
+        )
+    )
+
+    assert route.domain == "NTD_FIRE"
+
+
+def test_hvac_design_norm_does_not_route_to_spds_by_project_word():
+    route = classify_document(
+        DocumentProbe(
+            path=Path("СП 347.1325800.2017. Внутренние системы отопления.docx"),
+            suffix=".docx",
+            size_bytes=100_000,
+            text_sample="Правила проектирования внутренних систем отопления.",
+        )
+    )
+
+    assert route.domain == "NTD_HVAC"
+
+
 def test_email_routes_to_mail_index(tmp_path):
     path = tmp_path / "site-letter.eml"
     path.write_text(

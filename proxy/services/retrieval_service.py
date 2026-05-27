@@ -72,7 +72,7 @@ def classify_query(question: str) -> QueryRoute:
 
     kot = analyze_question(question)
     if kot.dataset_filter:
-        expanded = _expand_gkrf_query(question) if kot.dataset_filter == "GKRF" else question
+        expanded = _expand_query_for_dataset(question, kot.dataset_filter)
         return QueryRoute(kot.dataset_filter, expanded, _kot_reason_alias(kot.dataset_filter, kot.reason))
 
     q = question.casefold()
@@ -85,7 +85,7 @@ def classify_query(question: str) -> QueryRoute:
     ):
         return QueryRoute("GKRF", _expand_gkrf_query(question), "gkrf_keyword")
     if any(token in q for token in ("эвакуац", "пожар", "огнестойк", "противодым", "дымоудал", "13130")):
-        return QueryRoute("NTD_FIRE", question, "fire_safety_keyword")
+        return QueryRoute("NTD_FIRE", _expand_fire_query(question), "fire_safety_keyword")
     if any(token in q for token in ("пуэ", "электр", "кабел", "заземл", "молниезащит", "освещен", "напряжен")):
         return QueryRoute("NTD_ELECTRICAL", question, "electrical_keyword")
     if any(token in q for token in ("конструкц", "нагрузк", "фундамент", "основан", "железобетон")):
@@ -96,8 +96,24 @@ def classify_query(question: str) -> QueryRoute:
         return QueryRoute("NTD_GEOTECH", question, "geotech_keyword")
     if any(token in q for token in ("дорог", "мост", "тоннел", "железн", "аэродром", "транспорт")):
         return QueryRoute("NTD_TRANSPORT", question, "transport_keyword")
-    if any(token in q for token in ("отоп", "вентиля", "кондицион", "теплов", "шум", "акуст")):
-        return QueryRoute("NTD_HVAC", question, "hvac_keyword")
+    if any(
+        token in q
+        for token in (
+            "отоп",
+            "вентиля",
+            "кондицион",
+            "теплов",
+            "шум",
+            "акуст",
+            "воздухообмен",
+            "расход воздуха",
+            "микроклимат",
+            "холодопроизвод",
+            "сп 60",
+            "60.13330",
+        )
+    ):
+        return QueryRoute("NTD_HVAC", _expand_hvac_query(question), "hvac_keyword")
     if any(token in q for token in ("водоснаб", "водоотвед", "канализац", "гидротех", "мелиоратив")):
         return QueryRoute("NTD_WATER", question, "water_keyword")
     if any(token in q for token in ("трубопровод", "газопровод", "нефтепровод", "магистральн")):
@@ -153,6 +169,60 @@ def _expand_gkrf_query(question: str) -> str:
             "Состав разделов проектной документации на линейные объекты."
         )
     return question
+
+
+def _expand_query_for_dataset(question: str, dataset_filter: str) -> str:
+    if dataset_filter == "GKRF":
+        return _expand_gkrf_query(question)
+    if dataset_filter == "NTD_FIRE":
+        return _expand_fire_query(question)
+    if dataset_filter == "NTD_HVAC":
+        return _expand_hvac_query(question)
+    return question
+
+
+def _append_query_hints(question: str, hints: list[str]) -> str:
+    q = question.casefold()
+    unique = [hint for hint in dict.fromkeys(hints) if hint and hint.casefold() not in q]
+    if not unique:
+        return question
+    return question + "\n" + " ".join(unique[:24])
+
+
+def _expand_fire_query(question: str) -> str:
+    q = question.casefold()
+    hints: list[str] = []
+    if "7.13130" in q or "дымоудал" in q or "противодым" in q:
+        hints.extend(["СП 7.13130", "противодымная вентиляция", "дымоудаление", "не предусматривать"])
+    if "соуэ" in q or "оповещ" in q or ("управлен" in q and "эвакуац" in q):
+        hints.extend(["СП 3.13130", "ГОСТ Р 59639", "система оповещения и управления эвакуацией"])
+    if "спс" in q or "сигнализац" in q:
+        hints.extend(["СП 484.1311500", "ГОСТ Р 59638", "системы пожарной сигнализации"])
+    if "эвакуац" in q:
+        hints.extend(["СП 1.13130", "эвакуационные пути", "эвакуационные выходы"])
+    if "огнестойк" in q:
+        hints.extend(["СП 2.13130", "предел огнестойкости"])
+    if "проезд" in q and "пожар" in q:
+        hints.extend(["СП 4.13130", "проезды пожарных автомобилей"])
+    return _append_query_hints(question, hints)
+
+
+def _expand_hvac_query(question: str) -> str:
+    q = question.casefold()
+    hints: list[str] = []
+    if any(token in q for token in ("сп 60", "60.13330", "отоп", "вентиля", "воздухообмен", "микроклимат", "расход воздуха")):
+        hints.extend(["СП 60.13330", "отопление вентиляция кондиционирование", "воздухообмен", "микроклимат"])
+    if "теплов" in q and "сет" in q:
+        hints.extend(["СП 124.13330", "тепловые сети"])
+    if "шумоглуш" in q:
+        hints.extend(["СП 271.1325800", "системы шумоглушения воздуховодов"])
+    if "шум" in q or "акуст" in q:
+        hints.extend(["СП 51.13330", "СП 353.1325800", "защита от шума"])
+    if "изоляц" in q:
+        hints.extend(["СП 61.13330", "тепловая изоляция оборудования трубопроводов"])
+    if "холодопроизвод" in q or "кондиционер" in q:
+        hints.extend(["ГОСТ 26963", "кондиционер", "холодопроизводительность"])
+    return _append_query_hints(question, hints)
 
 
 def _dataset_name_candidates(dataset_filter: str) -> list[str]:

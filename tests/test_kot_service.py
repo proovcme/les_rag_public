@@ -26,6 +26,7 @@ def test_kot_extracts_exact_norm_refs():
 def test_kot_routes_engineering_abbreviations():
     assert analyze_question("Какие требования по ЭОМ?").dataset_filter == "NTD_ELECTRICAL"
     assert analyze_question("Нормы по ОВ для вентиляции").dataset_filter == "NTD_HVAC"
+    assert analyze_question("Найди требования СП 60.13330").dataset_filter == "NTD_HVAC"
     assert analyze_question("Что проверить по ВК и канализации?").dataset_filter == "NTD_WATER"
     assert analyze_question("Армирование плиты КЖ").dataset_filter == "NTD_STRUCTURAL"
 

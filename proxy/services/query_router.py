@@ -89,6 +89,21 @@ FIRE_SAFETY_TOKENS = (
     "13130",
 )
 
+HVAC_TOKENS = (
+    "отоп",
+    "вентиля",
+    "кондицион",
+    "теплов",
+    "акуст",
+    "шум",
+    "воздухообмен",
+    "расход воздуха",
+    "микроклимат",
+    "холодопроизвод",
+    "сп 60",
+    "60.13330",
+)
+
 RAG_QUESTION_TOKENS = (
     "какие",
     "какой",
@@ -123,6 +138,8 @@ def route_query(
         return QueryIntent("mail", "MAIL", "mail_keyword")
     if any(token in q for token in FIRE_SAFETY_TOKENS):
         return QueryIntent("rag", "NTD_FIRE", "fire_safety_keyword")
+    if any(token in q for token in HVAC_TOKENS):
+        return QueryIntent("rag", "NTD_HVAC", "hvac_keyword")
 
     has_normative = any(token in q for token in NORMATIVE_TOKENS)
     has_rag_form = any(token in q for token in RAG_QUESTION_TOKENS)

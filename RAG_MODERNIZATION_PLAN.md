@@ -2,7 +2,7 @@
 
 Updated: 27.05.2026
 
-This plan starts after the current Qwen indexing run reaches zero pending files and Qdrant/SQLite counts are verified. As of 2026-05-27 closeout the active index is `1003/1003` indexed, `0` pending, `0` errors, `247890` chunks, and Qdrant points match SQLite chunks. The current index is treated as a valuable artifact: no full reindex is allowed unless a step explicitly proves it is necessary.
+This plan starts after the current Qwen indexing run reaches zero pending files and Qdrant/SQLite counts are verified. As of 2026-05-27 closeout the active index is `1003/1003` indexed, `0` pending, `0` errors, `248917` chunks, and Qdrant points match SQLite chunks. The current index is treated as a valuable artifact: no full reindex is allowed unless a step explicitly proves it is necessary.
 
 ## Current Constraint
 
@@ -13,6 +13,9 @@ This plan starts after the current Qwen indexing run reaches zero pending files 
   FTS5/BM25 + dense vector retrieval with RRF merge. The next question is
   coverage, freshness and quality versus Qdrant-native sparse vectors, not
   whether hybrid exists at all.
+- FIRE/HVAC are now handled as measured domain routes, not one-off answer
+  patches: `golden/domain_fire_hvac_set.json` checks route filters, top
+  evidence and source hints, and currently passes `16/16`.
 - Validator context windows already exist through `validation_context_windows`.
   The next step is to verify whether the selected windows are the right
   evidence, not to blindly expand the prompt.
@@ -203,6 +206,10 @@ Mixture-of-specialists direction:
 Accepted order after mail stabilization:
 
 1. Use the golden set as the measuring stick for every retrieval change.
+   Status 2026-05-27: `golden/domain_fire_hvac_set.json` is the first domain
+   acceptance gate for live engineering use. It covers 8 FIRE and 8 HVAC
+   questions, checks `dataset_filter`, expected source presence in top-N, and
+   expanded query evidence. Current result: `16/16`.
 2. Capture confirmed chat outcomes before adding smarter routing: every
    successful `/api/chat` answer now stores route/retrieval/dataset trace in
    `chat_history`, user feedback is written through
@@ -220,9 +227,12 @@ Accepted order after mail stabilization:
 5. Expand K.O.T. terminology before LLM query rewriting: engineering
    abbreviations, mixed Russian/Latin spelling, common typos and dataset
    routing. Status 2026-05-27: the first expansion is live for exact
-   engineering abbreviations (`ОВ`, `ВК`, `ЭОМ`, `КЖ`, `АУПТ`, `СКС`, etc.)
-   and `MAIL`; mail-shaped chat questions now use a deterministic Е.Ж.И.К.
-   path over stored `.eml/.msg` before vector retrieval or generation.
+   engineering abbreviations (`ОВ`, `ВК`, `ЭОМ`, `КЖ`, `АУПТ`, `СКС`, etc.),
+   `MAIL`, and FIRE/HVAC anchors (`СП 7.13130`, `противодым`,
+   `дымоудаление`, `СП 60`, `60.13330`, `воздухообмен`, `микроклимат`,
+   `холодопроизводительность`). Mail-shaped chat questions now use a
+   deterministic Е.Ж.И.К. path over stored `.eml/.msg` before vector retrieval
+   or generation.
 6. Audit the current FTS5/BM25 + RRF hybrid layer: confirm the lexical index is
    complete, fresh and actually contributing to normative references, clause
    numbers, tables and abbreviations. Only then decide whether Qdrant-native
@@ -230,6 +240,10 @@ Accepted order after mail stabilization:
 7. Add a retrieval evaluator before generation only after the deterministic
    path is measured: if top results are weak, conflicting, or too broad,
    rewrite/expand the query and retrieve again.
+   Status 2026-05-27: simple normative navigation questions (`где смотреть`,
+   `какие нормы`, `каким нормативом`) can return a deterministic source list
+   through `deterministic_source_lookup`, which avoids LLM/validator failures
+   for source-discovery questions and still records history/trace.
 8. Add conditional reranking only for uncertain retrieval, not for every
    request. Prefer a specialized Qwen3 reranker over prompt-reranking through
    the validator model.

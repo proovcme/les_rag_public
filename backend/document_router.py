@@ -300,33 +300,60 @@ def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
     if _is_industrial_chimney_norm(text, name):
         return "NTD_STRUCTURAL"
 
-    if _has_any(name, _FIRE_TOKENS) or _has_any(text, _FIRE_TEXT_TOKENS):
+    if _has_any(name, _FIRE_TOKENS):
         return "NTD_FIRE"
-    if _has_any(name, _ELECTRICAL_TOKENS) or _has_any(text, _ELECTRICAL_TEXT_TOKENS):
+    if _has_any(name, _ELECTRICAL_TOKENS):
         return "NTD_ELECTRICAL"
     if _is_spds_norm(name, text):
         return "NTD_SPDS"
-    if _has_any(name, _GEOTECH_TOKENS) or _has_any(text, _GEOTECH_TEXT_TOKENS):
+    if _has_any(name, _GEOTECH_TOKENS):
         return "NTD_GEOTECH"
-    if _has_any(name, _TRANSPORT_TOKENS) or _has_any(text, _TRANSPORT_TEXT_TOKENS):
+    if _has_any(name, _TRANSPORT_TOKENS):
         return "NTD_TRANSPORT"
-    if _has_any(name, _HVAC_TOKENS) or _has_any(text, _HVAC_TEXT_TOKENS):
+    if _has_any(name, _HVAC_TOKENS):
         return "NTD_HVAC"
-    if _has_any(name, _WATER_TOKENS) or _has_any(text, _WATER_TEXT_TOKENS):
+    if _has_any(name, _WATER_TOKENS):
         return "NTD_WATER"
-    if _has_any(name, _PIPELINE_TOKENS) or _has_any(text, _PIPELINE_TEXT_TOKENS):
+    if _has_any(name, _PIPELINE_TOKENS):
         return "NTD_PIPELINES"
-    if _has_any(name, _BIM_OPERATION_TOKENS) or _has_any(text, _BIM_OPERATION_TEXT_TOKENS):
+    if _has_any(name, _BIM_OPERATION_TOKENS):
         return "NTD_BIM_OPERATION"
-    if _has_any(name, _CONSTRUCTION_TOKENS) or _has_any(text, _CONSTRUCTION_TEXT_TOKENS):
+    if _has_any(name, _CONSTRUCTION_TOKENS):
         return "NTD_CONSTRUCTION"
-    if _has_any(name, _MATERIALS_TOKENS) or _has_any(text, _MATERIALS_TEXT_TOKENS):
+    if _has_any(name, _MATERIALS_TOKENS):
         return "NTD_MATERIALS"
-    if _has_any(name, _ARCH_URBAN_TOKENS) or _has_any(text, _ARCH_URBAN_TEXT_TOKENS):
+    if _has_any(name, _ARCH_URBAN_TOKENS):
         return "NTD_ARCH_URBAN"
-    if _has_any(name, _SAFETY_TOKENS) or _has_any(text, _SAFETY_TEXT_TOKENS):
+    if _has_any(name, _SAFETY_TOKENS):
         return "NTD_SAFETY"
-    if _has_any(name, _STRUCTURAL_TOKENS) or _has_any(text, _STRUCTURAL_TEXT_TOKENS):
+    if _has_any(name, _STRUCTURAL_TOKENS):
+        return "NTD_STRUCTURAL"
+
+    if _has_any(text, _FIRE_TEXT_TOKENS):
+        return "NTD_FIRE"
+    if _has_any(text, _ELECTRICAL_TEXT_TOKENS):
+        return "NTD_ELECTRICAL"
+    if _has_any(text, _GEOTECH_TEXT_TOKENS):
+        return "NTD_GEOTECH"
+    if _has_any(text, _TRANSPORT_TEXT_TOKENS):
+        return "NTD_TRANSPORT"
+    if _has_any(text, _HVAC_TEXT_TOKENS):
+        return "NTD_HVAC"
+    if _has_any(text, _WATER_TEXT_TOKENS):
+        return "NTD_WATER"
+    if _has_any(text, _PIPELINE_TEXT_TOKENS):
+        return "NTD_PIPELINES"
+    if _has_any(text, _BIM_OPERATION_TEXT_TOKENS):
+        return "NTD_BIM_OPERATION"
+    if _has_any(text, _CONSTRUCTION_TEXT_TOKENS):
+        return "NTD_CONSTRUCTION"
+    if _has_any(text, _MATERIALS_TEXT_TOKENS):
+        return "NTD_MATERIALS"
+    if _has_any(text, _ARCH_URBAN_TEXT_TOKENS):
+        return "NTD_ARCH_URBAN"
+    if _has_any(text, _SAFETY_TEXT_TOKENS):
+        return "NTD_SAFETY"
+    if _has_any(text, _STRUCTURAL_TEXT_TOKENS):
         return "NTD_STRUCTURAL"
 
     # Backward-compatible broad buckets kept for older abbreviated filenames.
@@ -402,6 +429,10 @@ def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
 
 _FIRE_TOKENS = (
     "13130",
+    "59637",
+    "59638",
+    "59639",
+    "59640",
     "пожар",
     "пожаротуш",
     "огнев",
@@ -625,8 +656,11 @@ def _has_any(haystack: str, tokens: tuple[str, ...]) -> bool:
 
 
 def _is_spds_norm(name: str, text: str) -> bool:
-    haystack = f"{name}\n{text}"
-    return _has_any(haystack, _SPDS_TOKENS)
+    if _has_any(name, ("гост 21.", "гост р 21.", "спдс")):
+        return True
+    if _has_any(name, ("система проектной документации", "проектной документации для строитель")):
+        return True
+    return "гост 21" in text and _has_any(text, _SPDS_TOKENS)
 
 
 def _is_ntd_source(probe: DocumentProbe) -> bool:

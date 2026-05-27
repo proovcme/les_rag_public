@@ -103,6 +103,16 @@ def test_expand_retrieval_query_for_pp87_section_list():
     assert "линейные объекты" in expanded
 
 
+def test_expand_retrieval_query_for_fire_and_hvac_normative_anchors():
+    fire = expand_retrieval_query("В каких случаях допускается не выполнять систему дымоудаления?")
+    hvac = expand_retrieval_query("Где смотреть требования к воздухообмену и расходу воздуха?")
+
+    assert "СП 7.13130" in fire
+    assert "противодымная вентиляция" in fire
+    assert "СП 60.13330" in hvac
+    assert "воздухообмен" in hvac
+
+
 @pytest.mark.asyncio
 async def test_resolve_dataset_ids_infers_filter_from_question():
     backend = FakeBackend()

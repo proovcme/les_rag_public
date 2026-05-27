@@ -86,6 +86,22 @@ def test_plan_summary_groups_moves(tmp_path, monkeypatch):
     assert summary["groups"][0]["chunks"] == 9
 
 
+def test_filter_route_changes_limits_current_target_and_path(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    db_path = tmp_path / "rag.db"
+    _init_db(db_path)
+    _insert_doc(db_path)
+    changes = route_guard.route_changes(str(db_path), "RAG_Content")
+
+    assert route_guard.filter_route_changes(
+        changes,
+        from_datasets="NTD_STRUCTURAL_Index",
+        to_datasets="NTD_FIRE_Index",
+        path_contains="fire",
+    ) == changes
+    assert route_guard.filter_route_changes(changes, to_datasets="NTD_HVAC_Index") == []
+
+
 def test_move_doc_to_target_updates_sqlite_and_storage(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     db_path = tmp_path / "rag.db"

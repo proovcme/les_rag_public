@@ -21,6 +21,18 @@ def test_normative_cable_question_routes_to_rag_electrical():
     assert route.reason == "electrical_keyword"
 
 
+def test_hvac_normative_question_routes_to_hvac_before_generic_normative():
+    intent = route_query("Где смотреть требования к микроклимату помещений?")
+    route = classify_query("Где смотреть требования к микроклимату помещений?")
+
+    assert intent.channel == "rag"
+    assert intent.dataset_filter == "NTD_HVAC"
+    assert intent.reason == "hvac_keyword"
+    assert route.dataset_filter == "NTD_HVAC"
+    assert route.reason == "hvac_keyword"
+    assert "СП 60.13330" in route.expanded_query
+
+
 def test_table_document_keywords_route_to_table():
     intent = route_query("Покажи позиции из спецификации по светильникам")
 
