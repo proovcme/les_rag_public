@@ -222,6 +222,25 @@
       <div class="field-hint">Для MLX-сервера: http://host.docker.internal:8080</div>
     </div>
 
+    <div class="field" style="border:1px solid var(--border);border-radius:6px;padding:12px;">
+      <label>Е.Ж.И.К. IMAP</label>
+      <div style="display:grid;grid-template-columns:minmax(0,1fr) 110px 72px;gap:8px;align-items:end;">
+        <input type="text" id="set-mail-host" placeholder="imap.yandex.ru">
+        <input type="number" id="set-mail-port" min="1" max="65535" step="1" placeholder="993">
+        <label style="display:flex;align-items:center;gap:6px;color:var(--text-dim);font-size:.68rem;">
+          <input type="checkbox" id="set-mail-ssl" style="width:auto;"> SSL
+        </label>
+      </div>
+      <input type="text" id="set-mail-login" placeholder="mail@yandex.ru" style="margin-top:8px;">
+      <input type="password" id="set-mail-password" placeholder="пароль приложения" style="margin-top:8px;">
+      <input type="text" id="set-mail-folders" placeholder="INBOX" style="margin-top:8px;">
+      <label style="display:flex;align-items:center;gap:6px;color:var(--text-dim);font-size:.68rem;margin-top:8px;">
+        <input type="checkbox" id="set-mail-ocr" style="width:auto;"> OCR вложений
+      </label>
+      <button class="btn" type="button" onclick="applyYandexMailPreset()" style="margin-top:8px;">Yandex preset</button>
+      <div class="field-hint">Для Яндекса нужен пароль приложения и включённый IMAP-доступ.</div>
+    </div>
+
     <div style="border:1px solid var(--err);border-radius:6px;padding:14px;display:flex;flex-direction:column;gap:10px;">
       <div style="font-size:.65rem;font-weight:900;text-transform:uppercase;color:var(--err);letter-spacing:.4px;">⚠ Опасная зона</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;">
@@ -924,7 +943,16 @@ async function openSettings() {
     if (!models.includes(d.embed_model))
       embedSel.innerHTML = `<option value="${d.embed_model}" selected>${d.embed_model}</option>` + embedSel.innerHTML;
     document.getElementById('set-llm-custom').value = '';
-    document.getElementById('set-ollama-url').value = d.ollama_url || '';
+    document.getElementById('set-ollama-url').value = d.mlx_url || d.ollama_url || '';
+    const mail = d.mail || {};
+    document.getElementById('set-mail-host').value = mail.imap_host || '';
+    document.getElementById('set-mail-port').value = mail.imap_port || 993;
+    document.getElementById('set-mail-ssl').checked = mail.imap_ssl !== false;
+    document.getElementById('set-mail-login').value = mail.imap_login || '';
+    document.getElementById('set-mail-password').value = '';
+    document.getElementById('set-mail-password').placeholder = mail.imap_password_set ? 'пароль уже задан; оставь пустым, чтобы не менять' : 'пароль приложения';
+    document.getElementById('set-mail-folders').value = mail.imap_folders || 'INBOX';
+    document.getElementById('set-mail-ocr').checked = mail.attachment_ocr_enabled !== false;
     const srcR = await fetch(API + '/api/rag/sources');
     const sources = await srcR.json();
     const dsSel = document.getElementById('reset-dataset-select');
@@ -937,6 +965,13 @@ async function openSettings() {
 function closeSettings() { document.getElementById('settings-modal').classList.remove('open'); }
 function closeSettingsOutside(e) { if (e.target.id==='settings-modal') closeSettings(); }
 function syncCustomField() { document.getElementById('set-llm-custom').value = ''; }
+function applyYandexMailPreset() {
+  document.getElementById('set-mail-host').value = 'imap.yandex.ru';
+  document.getElementById('set-mail-port').value = 993;
+  document.getElementById('set-mail-ssl').checked = true;
+  if (!document.getElementById('set-mail-folders').value.trim())
+    document.getElementById('set-mail-folders').value = 'INBOX';
+}
 
 async function saveSettings() {
   const btn = document.getElementById('save-settings-btn');
@@ -944,11 +979,24 @@ async function saveSettings() {
   const llm = custom || document.getElementById('set-llm-model').value;
   const embed = document.getElementById('set-embed-model').value;
   const url = document.getElementById('set-ollama-url').value.trim();
+  const mailPassword = document.getElementById('set-mail-password').value.trim();
+  const payload = {
+    llm_model: llm,
+    embed_model: embed,
+    mlx_url: url,
+    mail_imap_host: document.getElementById('set-mail-host').value.trim(),
+    mail_imap_port: Number(document.getElementById('set-mail-port').value || 993),
+    mail_imap_ssl: document.getElementById('set-mail-ssl').checked,
+    mail_imap_login: document.getElementById('set-mail-login').value.trim(),
+    mail_imap_folders: document.getElementById('set-mail-folders').value.trim() || 'INBOX',
+    mail_attachment_ocr_enabled: document.getElementById('set-mail-ocr').checked,
+  };
+  if (mailPassword) payload.mail_imap_password = mailPassword;
   btn.textContent = '⌛ Сохраняю...'; btn.disabled = true;
   try {
     await fetch(API + '/api/settings', {
       method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ llm_model: llm, embed_model: embed, ollama_url: url })
+      body: JSON.stringify(payload)
     });
     addLog(`[SETTINGS] Сохранено: LLM=${llm} EMBED=${embed}`);
     addLog('[SETTINGS] Прокси перезапускается...');

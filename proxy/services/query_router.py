@@ -8,7 +8,7 @@ from typing import Literal, Optional
 from proxy.services.kot_service import analyze_question
 
 
-QueryChannel = Literal["table", "rag"]
+QueryChannel = Literal["table", "mail", "rag"]
 
 
 @dataclass(frozen=True)
@@ -66,6 +66,20 @@ NORMATIVE_TOKENS = (
     "максимальн",
 )
 
+MAIL_TOKENS = (
+    "почт",
+    "письм",
+    "email",
+    "e-mail",
+    "переписк",
+    "вложени",
+    "кто кому",
+    "цепочк",
+    "thread",
+    "отправил",
+    "получил",
+)
+
 RAG_QUESTION_TOKENS = (
     "какие",
     "какой",
@@ -89,8 +103,13 @@ def route_query(
     if dataset_filter:
         if dataset_filter.startswith("TABLE"):
             return QueryIntent("table", dataset_filter, "explicit_table_filter")
+        if dataset_filter == "MAIL":
+            return QueryIntent("mail", dataset_filter, "explicit_mail_filter")
         if dataset_filter.startswith("NTD") or dataset_filter == "GKRF":
             return QueryIntent("rag", dataset_filter, "explicit_rag_filter")
+
+    if any(token in q for token in MAIL_TOKENS):
+        return QueryIntent("mail", "MAIL", "mail_keyword")
 
     has_normative = any(token in q for token in NORMATIVE_TOKENS)
     has_rag_form = any(token in q for token in RAG_QUESTION_TOKENS)
@@ -109,6 +128,8 @@ def route_query(
     kot = analyze_question(question)
     if kot.dataset_filter == "TABLE":
         return QueryIntent("table", "TABLE", kot.reason)
+    if kot.dataset_filter == "MAIL":
+        return QueryIntent("mail", "MAIL", kot.reason)
     if kot.dataset_filter:
         return QueryIntent("rag", kot.dataset_filter, kot.reason)
 

@@ -67,6 +67,8 @@ def classify_query(question: str) -> QueryRoute:
     intent = route_query(question)
     if intent.channel == "table":
         return QueryRoute(intent.dataset_filter or "TABLE", question, intent.reason)
+    if intent.channel == "mail":
+        return QueryRoute(intent.dataset_filter or "MAIL", question, intent.reason)
 
     kot = analyze_question(question)
     if kot.dataset_filter:

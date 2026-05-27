@@ -28,14 +28,26 @@ def test_table_document_keywords_route_to_table():
     assert intent.dataset_filter == "TABLE"
 
 
+def test_mail_question_routes_to_mail_channel():
+    intent = route_query("Найди письма про Dropbox")
+    route = classify_query("Найди письма про Dropbox")
+
+    assert intent.channel == "mail"
+    assert intent.dataset_filter == "MAIL"
+    assert route.dataset_filter == "MAIL"
+
+
 def test_explicit_filters_override_heuristics():
     table_intent = route_query("Какие требования к кабелю?", dataset_filter="TABLE_SMETA")
     rag_intent = route_query("Сколько кабеля в проекте?", dataset_filter="NTD_ELECTRICAL")
+    mail_intent = route_query("Покажи последние", dataset_filter="MAIL")
 
     assert table_intent.channel == "table"
     assert table_intent.dataset_filter == "TABLE_SMETA"
     assert rag_intent.channel == "rag"
     assert rag_intent.dataset_filter == "NTD_ELECTRICAL"
+    assert mail_intent.channel == "mail"
+    assert mail_intent.dataset_filter == "MAIL"
 
 
 def test_explicit_dataset_ids_keep_rag_path():

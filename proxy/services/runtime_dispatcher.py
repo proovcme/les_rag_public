@@ -216,7 +216,9 @@ class RuntimeDispatcher:
         cooldown_sec: float = 90.0,
         parse_timeout: float = 3600.0,
         parse_method: str = "scheduler",
+        unload_between_docs: bool = True,
         auth_smoke_after: bool = True,
+        reset_state: bool = False,
         resume: bool = False,
     ) -> dict[str, Any]:
         datasets = datasets or DEFAULT_DATASETS
@@ -273,7 +275,10 @@ class RuntimeDispatcher:
             "--parse-timeout",
             str(parse_timeout),
         ]
+        cmd.append("--unload-between-docs" if unload_between_docs else "--no-unload-between-docs")
         cmd.append("--auth-smoke-after" if auth_smoke_after else "--no-auth-smoke-after")
+        if reset_state and not resume:
+            cmd.append("--reset-state")
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
         with log_path.open("ab") as output:

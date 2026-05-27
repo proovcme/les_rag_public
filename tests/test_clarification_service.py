@@ -35,6 +35,14 @@ def test_explicit_filter_allows_broad_review():
     assert classification.scope == "explicit"
 
 
+def test_table_query_does_not_need_clarification():
+    decision = build_clarification_decision("посчитай общую стоимость по всем строкам сметы")
+
+    assert decision.needs_clarification is False
+    assert decision.classification.dataset_filter == "TABLE"
+    assert decision.classification.reasons == []
+
+
 @pytest.mark.asyncio
 async def test_chat_returns_clarification_before_retrieval():
     class BackendThatMustNotRun:

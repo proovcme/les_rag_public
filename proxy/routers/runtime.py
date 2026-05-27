@@ -59,7 +59,9 @@ class DispatcherReindexRequest(BaseModel):
     memory_poll_sec: float = Field(default=30.0, ge=1.0, le=3600.0)
     cooldown_sec: float = Field(default=90.0, ge=0.0, le=3600.0)
     parse_timeout: float = Field(default=3600.0, ge=60.0, le=86400.0)
+    unload_between_docs: bool = True
     auth_smoke_after: bool = True
+    reset_state: bool = False
 
 
 class DispatcherPauseRequest(BaseModel):
@@ -301,7 +303,9 @@ async def runtime_dispatcher_reindex_start(req: DispatcherReindexRequest, _admin
             memory_poll_sec=req.memory_poll_sec,
             cooldown_sec=req.cooldown_sec,
             parse_timeout=req.parse_timeout,
+            unload_between_docs=req.unload_between_docs,
             auth_smoke_after=req.auth_smoke_after,
+            reset_state=req.reset_state,
         )
     except DispatcherError as error:
         raise _dispatcher_error(error) from error
@@ -334,7 +338,9 @@ async def runtime_dispatcher_reindex_resume(req: DispatcherReindexRequest, _admi
             memory_poll_sec=req.memory_poll_sec,
             cooldown_sec=req.cooldown_sec,
             parse_timeout=req.parse_timeout,
+            unload_between_docs=req.unload_between_docs,
             auth_smoke_after=req.auth_smoke_after,
+            reset_state=req.reset_state,
         )
     except DispatcherError as error:
         raise _dispatcher_error(error) from error

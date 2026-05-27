@@ -30,9 +30,11 @@ import logging
 import os
 import re
 import time
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+from xml.etree import ElementTree
 
 logger = logging.getLogger("les.parquet")
 
@@ -547,6 +549,65 @@ def read_pdf_tables(file_path: str) -> dict:
     }
 
 
+def _docx_max_tables() -> int:
+    try:
+        return max(1, int(os.getenv("DOCX_TABLE_MAX_TABLES", "80")))
+    except ValueError:
+        return 80
+
+
+def _docx_cell_text(cell: ElementTree.Element, ns: dict[str, str]) -> str:
+    paragraphs: list[str] = []
+    for paragraph in cell.findall(".//w:p", ns):
+        parts = [text.text or "" for text in paragraph.findall(".//w:t", ns)]
+        if parts:
+            paragraphs.append("".join(parts))
+    return _WS_RE.sub(" ", " ".join(part.strip() for part in paragraphs if part.strip())).strip()
+
+
+def read_docx_tables(file_path: str) -> dict:
+    """Извлекает обычные DOCX tables без внешних зависимостей."""
+    t0 = time.time()
+    max_tables = _docx_max_tables()
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    sheets: list[dict] = []
+    try:
+        with zipfile.ZipFile(file_path) as archive:
+            xml = archive.read("word/document.xml")
+    except Exception as error:
+        logger.warning("[DOCX_TABLE] %s: cannot read document.xml: %s", Path(file_path).name, error)
+        return {"sheets": [], "needs_ocr": False, "scanned_pages": [], "extractor": "", "elapsed_sec": round(time.time() - t0, 3)}
+
+    root = ElementTree.fromstring(xml)
+    for table_idx, table in enumerate(root.findall(".//w:tbl", ns), 1):
+        raw_rows: list[list[str]] = []
+        for tr in table.findall("./w:tr", ns):
+            cells = [_docx_cell_text(tc, ns) for tc in tr.findall("./w:tc", ns)]
+            if any(cells):
+                raw_rows.append(cells)
+        headers, rows = _clean_pdf_table(raw_rows)
+        if not _table_is_usable(headers, rows):
+            continue
+        sheets.append({
+            "sheet_name": f"docx_table_{table_idx}",
+            "headers": headers,
+            "rows": rows,
+            "header_row": 1,
+            "table_index": table_idx,
+            "extractor": "docx_xml",
+        })
+        if len(sheets) >= max_tables:
+            break
+
+    return {
+        "sheets": sheets,
+        "needs_ocr": False,
+        "scanned_pages": [],
+        "extractor": "docx_xml" if sheets else "",
+        "elapsed_sec": round(time.time() - t0, 3),
+    }
+
+
 # ─────────────────────────────────────────
 # НОРМАЛИЗАТОР СТРОК
 # ─────────────────────────────────────────
@@ -770,7 +831,7 @@ class TableNormalizer:
         self.parquet_dir.mkdir(parents=True, exist_ok=True)
         self.use_llm = use_llm
 
-    async def process(self, file_path: str, dataset_id: str = "") -> dict:
+    async def process(self, file_path: str, dataset_id: str = "", doc_type_override: str | None = None) -> dict:
         """
         Обрабатывает один файл XLSX/CSV.
         Возвращает {"chunks": list, "parquet_path": str, "rows": int, "doc_type": str, "sheets": int}
@@ -785,6 +846,9 @@ class TableNormalizer:
             sheets = read_csv(str(fpath))
         elif ext == ".pdf":
             pdf_meta = read_pdf_tables(str(fpath))
+            sheets = pdf_meta["sheets"]
+        elif ext == ".docx":
+            pdf_meta = read_docx_tables(str(fpath))
             sheets = pdf_meta["sheets"]
         else:
             raise ValueError(f"Неподдерживаемый формат: {ext}")
@@ -827,7 +891,7 @@ class TableNormalizer:
                     "mapping": _map_columns_simple(headers),
                 }
 
-            doc_type = mapping_result.get("doc_type", "TABLE")
+            doc_type = doc_type_override or mapping_result.get("doc_type", "TABLE")
             mapping = mapping_result.get("mapping", {})
             doc_type_final = doc_type
 

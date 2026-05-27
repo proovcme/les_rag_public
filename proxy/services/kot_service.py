@@ -12,7 +12,7 @@ from typing import Any
 import yaml
 
 
-DEFAULT_CONFIG_PATH = Path("config/kot_terms.yaml")
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "kot_terms.yaml"
 
 
 @dataclass(frozen=True)
@@ -76,6 +76,18 @@ def normalize_question(question: str) -> str:
     return q.strip()
 
 
+def _term_matches(term: str, question: str) -> bool:
+    if not term:
+        return False
+    if " " in term:
+        return term in question
+    if len(term) <= 3:
+        return bool(re.search(rf"(?<![a-zа-я0-9]){re.escape(term)}(?![a-zа-я0-9])", question, flags=re.IGNORECASE))
+    if len(term) == 4:
+        return bool(re.search(rf"(?<![a-zа-я0-9]){re.escape(term)}[a-zа-я0-9-]*", question, flags=re.IGNORECASE))
+    return term in question
+
+
 def extract_norm_refs(question: str) -> tuple[str, ...]:
     cfg = load_kot_config()
     q = normalize_question(question)
@@ -110,23 +122,34 @@ def analyze_question(
 
     for domain in cfg.get("domains", []):
         terms = [str(term).casefold().replace("ё", "е") for term in domain.get("terms", [])]
+        patterns = [str(pattern) for pattern in domain.get("patterns", []) if str(pattern or "").strip()]
         synonyms = {
             str(alias).casefold().replace("ё", "е"): str(value).casefold().replace("ё", "е")
             for alias, value in (domain.get("synonyms") or {}).items()
         }
         found: list[str] = []
+        pattern_found = False
         for term in terms:
-            if term and term in q:
+            if _term_matches(term, q):
                 found.append(term)
         for alias, canonical in synonyms.items():
-            if alias and alias in q:
+            if _term_matches(alias, q):
                 found.append(canonical or alias)
+        for pattern in patterns:
+            try:
+                if re.search(pattern, q, flags=re.IGNORECASE):
+                    pattern_found = True
+                    found.append(str(domain.get("id") or domain.get("dataset_filter") or "pattern").casefold())
+            except re.error:
+                continue
         if not found:
             continue
         unique_terms = tuple(dict.fromkeys(found))
         matched_terms.extend(unique_terms)
         score = min(1.0, 0.38 + len(unique_terms) * 0.18)
         if any(term.isdigit() or "-" in term for term in unique_terms):
+            score = min(1.0, score + 0.12)
+        if pattern_found:
             score = min(1.0, score + 0.12)
         domain_matches.append(
             KotDomainMatch(

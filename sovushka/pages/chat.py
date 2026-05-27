@@ -36,6 +36,24 @@ OUTPUT_FORMATS = {
 }
 
 
+def should_skip_chat_resource_gate(question: str, dataset_filter: str | None = None) -> bool:
+    selected_filter = dataset_filter if dataset_filter and dataset_filter != "(все датасеты)" else None
+    try:
+        from proxy.services.kot_service import analyze_question
+        from proxy.services.query_router import route_query
+
+        intent = route_query(question, dataset_filter=selected_filter)
+        kot = analyze_question(question)
+        effective_filter = selected_filter or intent.dataset_filter or kot.dataset_filter
+        return intent.channel in {"mail", "table"} or effective_filter in {"MAIL", "TABLE"}
+    except Exception:
+        q = question.casefold()
+        table_hint = any(token in q for token in ("смет", "таблиц", "строк", "стоимост", "итого"))
+        aggregate_hint = any(token in q for token in ("посчитай", "сумм", "сколько", "покажи"))
+        mail_hint = any(token in q for token in ("почт", "письм", "email", "mail", "dropbox"))
+        return mail_hint or (table_hint and aggregate_hint)
+
+
 def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
     """Строит автономный экран чата: история слева, чат по центру, артефакты справа."""
 
@@ -370,6 +388,27 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     ui.label("VALIDATOR ON" if validation.get("enabled") else "VALIDATOR OFF").classes(
                         "src-tag" if validation.get("enabled") else "src-tag src-tag-warn"
                     )
+                history_id = meta.get("history_id")
+                if history_id:
+                    async def _feedback(status: str):
+                        result = await api_post(f"/api/chat/history/{history_id}/feedback", {"feedback": status})
+                        if result:
+                            ui.notify("Оценка сохранена", type="positive")
+                        else:
+                            ui.notify(last_api_error_text("Не удалось сохранить оценку"), type="warning")
+
+                    ui.button(
+                        icon="thumb_up",
+                        on_click=lambda: asyncio.create_task(_feedback("correct")),
+                    ).props("flat dense round").tooltip("Ответ корректен")
+                    ui.button(
+                        icon="thumb_down",
+                        on_click=lambda: asyncio.create_task(_feedback("incorrect")),
+                    ).props("flat dense round").tooltip("Ответ некорректен")
+                    ui.button(
+                        icon="travel_explore",
+                        on_click=lambda: asyncio.create_task(_feedback("wrong_dataset")),
+                    ).props("flat dense round").tooltip("Источник не из того датасета")
 
     def _render_chat_bubble(
         text: str,
@@ -603,10 +642,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         _resource_blocked["v"] = blocked
         _resource_blocked["reason"] = reason
         if blocked:
-            send_btn.props("disabled")
-            apply_btn.props("disabled")
             advanced_btn.props("disabled")
-            chat_input.props("disabled")
+            if not _sending["v"]:
+                send_btn.props(remove="disabled")
+                apply_btn.props(remove="disabled")
+                chat_input.props(remove="disabled")
             composer_box.classes(add="sov-composer-blocked")
             indexing_banner.set_text(reason)
             indexing_banner.set_visibility(True)
@@ -646,13 +686,16 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
     async def _do_send(question: str):
         if _sending["v"]:
             return
-        if not await _refresh_resource_gate():
-            msg = _resource_blocked["reason"] or "Индексация активна: чат временно заблокирован."
-            ui.notify(msg, type="warning")
-            with chat_column:
-                _render_chat_bubble(msg, "chat-msg-sys")
-            chat_scroll.scroll_to(percent=1)
-            return
+        selected_dataset_filter = (
+            detail_dataset.value
+            if detail_dataset.value and detail_dataset.value != "(все датасеты)"
+            else None
+        )
+        skip_resource_gate = should_skip_chat_resource_gate(question, selected_dataset_filter)
+        if skip_resource_gate:
+            _set_chat_blocked(False)
+        else:
+            await _refresh_resource_gate()
         _sending["v"] = True
         send_btn.props("disabled")
         apply_btn.props("disabled")
@@ -670,7 +713,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         _render_artifact_loading(out_mode, question)
         add_log(f'[AI] Запрос: "{question[:60]}"')
 
-        extra_prompt = _build_extra_prompt(question)
+        extra_prompt = "" if skip_resource_gate else _build_extra_prompt(question)
         payload = {
             "question": question + extra_prompt,
             "reranker_enabled": reranker_sw.value,
@@ -704,6 +747,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     "retrieval_trace": d.get("retrieval_trace") or {},
                     "cache": d.get("cache", "miss"),
                     "validation": d.get("validation") or {"enabled": bool(validation_sw.value)},
+                    "history_id": d.get("history_id"),
                 }
                 state["chat_history"].append({"role": "ai", "text": ans, "srcs": srcs, "crag": crag, "meta": meta})
                 _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, ans, srcs, crag, meta=meta)

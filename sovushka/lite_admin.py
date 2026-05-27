@@ -18,6 +18,7 @@ from fastapi import Request
 from starlette.responses import HTMLResponse, JSONResponse
 
 from sovushka.lite_chat import _client_is_loopback
+from sovushka.trust import trusted_role_for_request
 
 
 LOCAL_RUNTIME_ACTIONS = {
@@ -30,8 +31,15 @@ LOCAL_RUNTIME_ACTIONS = {
 }
 
 
-def local_runtime_action_allowed(*, is_loopback: bool) -> bool:
-    return is_loopback
+def local_runtime_action_allowed(*, is_loopback: bool, is_trusted_network: bool = False) -> bool:
+    return is_loopback or is_trusted_network
+
+
+def _local_runtime_request_allowed(request: Request) -> bool:
+    return local_runtime_action_allowed(
+        is_loopback=_client_is_loopback(request),
+        is_trusted_network=bool(trusted_role_for_request(request)),
+    )
 
 
 def _runtime_result_payload(value: Any) -> Any:
@@ -129,8 +137,8 @@ def guarded_reindex_status_payload() -> dict[str, Any]:
 
 
 async def lite_runtime_status(request: Request) -> JSONResponse:
-    if not local_runtime_action_allowed(is_loopback=_client_is_loopback(request)):
-        return JSONResponse({"detail": "Local runtime status requires loopback access"}, status_code=403)
+    if not _local_runtime_request_allowed(request):
+        return JSONResponse({"detail": "Local runtime status requires trusted local access"}, status_code=403)
 
     from tools import les_runtime_control
 
@@ -142,16 +150,16 @@ async def lite_runtime_status(request: Request) -> JSONResponse:
 
 
 async def lite_reindex_status(request: Request) -> JSONResponse:
-    if not local_runtime_action_allowed(is_loopback=_client_is_loopback(request)):
-        return JSONResponse({"detail": "Local reindex status requires loopback access"}, status_code=403)
+    if not _local_runtime_request_allowed(request):
+        return JSONResponse({"detail": "Local reindex status requires trusted local access"}, status_code=403)
     return JSONResponse(guarded_reindex_status_payload())
 
 
 async def lite_runtime_action(action: str, request: Request) -> JSONResponse:
     if action not in LOCAL_RUNTIME_ACTIONS:
         return JSONResponse({"detail": f"Unknown action: {action}"}, status_code=404)
-    if not local_runtime_action_allowed(is_loopback=_client_is_loopback(request)):
-        return JSONResponse({"detail": "Local runtime actions require loopback access"}, status_code=403)
+    if not _local_runtime_request_allowed(request):
+        return JSONResponse({"detail": "Local runtime actions require trusted local access"}, status_code=403)
 
     result = await asyncio.to_thread(_runtime_action(action))
     return JSONResponse({"action": action, "result": _runtime_result_payload(result)})
@@ -187,7 +195,7 @@ def lite_admin_html() -> str:
       color: var(--text);
       font-family: var(--font);
     }
-    button, input { font: inherit; }
+    button, input, select { font: inherit; }
     .topbar {
       min-height: 58px;
       display: flex;
@@ -359,7 +367,7 @@ def lite_admin_html() -> str:
       background: var(--panel);
       padding: 18px;
     }
-    input {
+    input, select {
       width: 100%;
       border: 1px solid var(--line);
       border-radius: 7px;
@@ -369,6 +377,22 @@ def lite_admin_html() -> str:
       outline: none;
       font-size: .76rem;
     }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .form-grid .wide { grid-column: span 3; }
+    .checkline {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--dim);
+      font-size: .68rem;
+      font-weight: 800;
+    }
+    .checkline input { width: auto; }
     @media (max-width: 1020px) {
       .layout { grid-template-columns: 1fr; }
       .side { position: static; }
@@ -419,6 +443,36 @@ def lite_admin_html() -> str:
       </div>
 
       <div class="panel panel-wide">
+        <div class="title">Е.Ж.И.К. Mail</div>
+        <div id="mailHint" class="hint">IMAP параметры ещё не загружены.</div>
+        <div class="form-grid">
+          <input id="mailHost" type="text" placeholder="imap.yandex.ru">
+          <input id="mailPort" type="number" min="1" max="65535" step="1" placeholder="993">
+          <select id="mailSsl">
+            <option value="true">SSL</option>
+            <option value="false">NO SSL</option>
+          </select>
+          <input id="mailLogin" class="wide" type="text" placeholder="mail@yandex.ru">
+          <input id="mailPassword" class="wide" type="password" placeholder="пароль приложения">
+          <input id="mailFolders" class="wide" type="text" placeholder="INBOX">
+          <input id="mailCount" type="number" min="1" max="200" step="1" value="50" title="MAIL COUNT">
+          <label class="checkline wide"><input id="mailOcr" type="checkbox"> OCR вложений</label>
+        </div>
+        <div class="actions">
+          <button id="mailYandexBtn" type="button">YANDEX PRESET</button>
+          <button id="mailSaveBtn" type="button" class="safe">SAVE MAIL</button>
+          <button id="mailImportBtn" type="button">IMPORT+INDEX</button>
+          <button id="mailAppleBtn" type="button">APPLE MAIL 10</button>
+        </div>
+      </div>
+
+      <div class="panel panel-wide">
+        <div class="title">Jobs</div>
+        <div id="jobsValue" class="value">...</div>
+        <div id="jobsList" class="hint"></div>
+      </div>
+
+      <div class="panel panel-wide">
         <div class="title">Memory</div>
         <div id="memoryValue" class="value">...</div>
         <div id="memoryHint" class="hint"></div>
@@ -436,7 +490,7 @@ def lite_admin_html() -> str:
     <aside class="side">
       <div class="panel">
         <div class="title">Runtime</div>
-        <div id="runtimeList" class="hint">Локальный статус доступен только с localhost.</div>
+        <div id="runtimeList" class="hint">Локальный статус доступен с localhost или trusted-сети.</div>
       </div>
       <div class="panel">
         <div class="title">Log</div>
@@ -448,7 +502,7 @@ def lite_admin_html() -> str:
   <div id="authPanel" class="auth">
     <div class="auth-card">
       <div class="brand-title">В.О.Л.К.</div>
-      <div class="hint">Введите admin key. На localhost trusted-доступ может открыться без ключа.</div>
+      <div class="hint">Введите admin key. На localhost или trusted-сети доступ может открыться без ключа.</div>
       <div style="height:12px"></div>
       <input id="keyInput" type="password" placeholder="les_xxxxxxxxxxxxxxxx">
       <div style="height:10px"></div>
@@ -458,7 +512,7 @@ def lite_admin_html() -> str:
   </div>
 
   <script>
-    const isLocalUi = ["localhost", "127.0.0.1", "::1"].includes(location.hostname) && location.port === "8051";
+    const isLocalUi = location.port === "8051";
     const API_BASE = isLocalUi ? "/lite-api" : "";
     const KEY_STORAGE = "les_lite_api_key";
     const ROLE_STORAGE = "les_lite_role";
@@ -468,6 +522,8 @@ def lite_admin_html() -> str:
       role: localStorage.getItem(ROLE_STORAGE) || "",
       holder: localStorage.getItem(HOLDER_STORAGE) || "",
       busy: false,
+      mailDirty: false,
+      mailPasswordSet: false,
     };
     const el = (id) => document.getElementById(id);
 
@@ -597,16 +653,20 @@ def lite_admin_html() -> str:
 
     async function refreshAll() {
       try {
-        const [mode, dispatcher, watcher, routePlan] = await Promise.all([
+        const [mode, dispatcher, watcher, routePlan, settings, jobs] = await Promise.all([
           request("/api/indexing-mode"),
           request("/api/runtime/dispatcher/status"),
           request("/api/rag/watch/status?source_root=RAG_Content&limit=20"),
           request("/api/rag/watch/reindex-plan?source_root=RAG_Content&limit=50"),
+          request("/api/settings"),
+          request("/api/jobs/summary?limit=8"),
         ]);
         showAuth(false);
         renderHeader(mode, dispatcher);
         renderDispatcher(dispatcher);
         renderWatcher(watcher, routePlan);
+        renderMailSettings(settings);
+        renderJobs(jobs);
         renderMemory(dispatcher);
         log("refresh ok");
       } catch (error) {
@@ -687,6 +747,42 @@ def lite_admin_html() -> str:
       setRows("watcherGroups", [...groupRows, ...sampleRows], "NO CHANGES");
     }
 
+    function renderJobs(data) {
+      const jobs = data.jobs || [];
+      el("jobsValue").textContent = `${fmt(data.active_count || 0)} active / ${fmt(data.count || jobs.length)} shown`;
+      setRows("jobsList", jobs.map((job) => rowNode(
+        `${job.type || "job"} ${job.id || ""}`,
+        `${job.processed || 0}/${job.total || 0} | ${job.message || job.dataset_name || ""}`,
+        job.status || "",
+        String(job.status || "").toLowerCase() === "completed" ? "ok" : String(job.status || "").toLowerCase() === "failed" ? "err" : "warn"
+      )), "NO JOBS");
+    }
+
+    function setMailValue(id, value) {
+      const node = el(id);
+      if (document.activeElement === node) return;
+      node.value = value == null ? "" : String(value);
+    }
+
+    function renderMailSettings(settings) {
+      if (state.mailDirty) return;
+      const mail = settings.mail || {};
+      state.mailPasswordSet = Boolean(mail.imap_password_set);
+      setMailValue("mailHost", mail.imap_host || "");
+      setMailValue("mailPort", mail.imap_port || 993);
+      setMailValue("mailSsl", mail.imap_ssl === false ? "false" : "true");
+      setMailValue("mailLogin", mail.imap_login || "");
+      setMailValue("mailPassword", "");
+      el("mailPassword").placeholder = mail.imap_password_set
+        ? "пароль уже задан; оставь пустым, чтобы не менять"
+        : "пароль приложения";
+      setMailValue("mailFolders", mail.imap_folders || "INBOX");
+      el("mailOcr").checked = mail.attachment_ocr_enabled !== false;
+      el("mailHint").textContent = mail.imap_host
+        ? `IMAP ${mail.imap_host}:${mail.imap_port || 993} | login=${mail.imap_login || "-"} | password=${mail.imap_password_set ? "set" : "missing"}`
+        : "IMAP не настроен. Для Яндекса используйте пароль приложения и включенный IMAP-доступ.";
+    }
+
     function renderMemory(data) {
       const pressure = data.memory?.pressure || {};
       const mem = pressure.memory || {};
@@ -750,9 +846,90 @@ def lite_admin_html() -> str:
       await refreshAll();
     }
 
+    function applyYandexMailPreset() {
+      el("mailHost").value = "imap.yandex.ru";
+      el("mailPort").value = "993";
+      el("mailSsl").value = "true";
+      if (!el("mailFolders").value.trim()) el("mailFolders").value = "INBOX";
+      state.mailDirty = true;
+      el("mailHint").textContent = "Yandex preset: imap.yandex.ru:993 SSL. Введите login и пароль приложения.";
+    }
+
+    function validateMailSettings() {
+      const host = el("mailHost").value.trim();
+      const login = el("mailLogin").value.trim();
+      const password = el("mailPassword").value.trim();
+      if (!host) throw new Error("Укажите IMAP host. Для Яндекса нажмите YANDEX PRESET.");
+      if (!login) throw new Error("Укажите IMAP login.");
+      if (!password && !state.mailPasswordSet) throw new Error("Укажите пароль приложения.");
+    }
+
+    async function saveMailSettings() {
+      validateMailSettings();
+      const password = el("mailPassword").value.trim();
+      const payload = {
+        mail_imap_host: el("mailHost").value.trim(),
+        mail_imap_port: Number(el("mailPort").value || 993),
+        mail_imap_ssl: el("mailSsl").value !== "false",
+        mail_imap_login: el("mailLogin").value.trim(),
+        mail_imap_folders: el("mailFolders").value.trim() || "INBOX",
+        mail_attachment_ocr_enabled: el("mailOcr").checked,
+      };
+      if (password) payload.mail_imap_password = password;
+      const data = await post("/api/settings", payload);
+      state.mailDirty = false;
+      el("mailPassword").value = "";
+      state.mailPasswordSet = true;
+      log("mail settings -> " + Object.keys(data.updated || {}).join(", "));
+      await refreshAll();
+    }
+
+    async function importMail() {
+      if (state.mailDirty) await saveMailSettings();
+      else validateMailSettings();
+      const maxMessages = Math.min(200, Math.max(1, Number(el("mailCount").value || 50)));
+      el("mailCount").value = String(maxMessages);
+      const parseLimit = 25;
+      const parseBatches = Math.min(20, Math.max(1, Math.ceil(maxMessages / parseLimit)));
+      const data = await post("/api/mail/import-imap", {
+        background: true,
+        max_messages: maxMessages,
+        parse: true,
+        parse_limit: parseLimit,
+        parse_batches: parseBatches,
+      });
+      const parsed = data.parse_result?.files_parsed ?? 0;
+      const chunks = data.parse_result?.chunks ?? 0;
+      log("mail import -> " + (data.status || "ok") + " job=" + (data.job_id || "-") + " files=" + (data.files || 0) + " parsed=" + parsed + " chunks=" + chunks);
+      await refreshAll();
+    }
+
+    async function importAppleMail() {
+      const data = await post("/api/mail/import-apple-mail", { max_messages: 10, parse: false });
+      log("apple mail import -> " + (data.status || "ok") + " files=" + (data.files || 0));
+      await refreshAll();
+    }
+
     el("refreshBtn").addEventListener("click", refreshAll);
     el("loginBtn").addEventListener("click", login);
     el("keyInput").addEventListener("keydown", (event) => { if (event.key === "Enter") login(); });
+    ["mailHost", "mailPort", "mailSsl", "mailLogin", "mailPassword", "mailFolders", "mailOcr"].forEach((id) => {
+      el(id).addEventListener("input", () => { state.mailDirty = true; });
+      el(id).addEventListener("change", () => { state.mailDirty = true; });
+    });
+    el("mailYandexBtn").addEventListener("click", applyYandexMailPreset);
+    el("mailSaveBtn").addEventListener("click", async () => {
+      try { await saveMailSettings(); }
+      catch (error) { log("mail settings error: " + error.message); }
+    });
+    el("mailImportBtn").addEventListener("click", async () => {
+      try { await importMail(); }
+      catch (error) { log("mail import error: " + error.message); }
+    });
+    el("mailAppleBtn").addEventListener("click", async () => {
+      try { await importAppleMail(); }
+      catch (error) { log("apple mail import error: " + error.message); }
+    });
     el("unloadMlxBtn").addEventListener("click", async () => {
       try { await unloadMlx(); }
       catch (error) { log("mlx unload error: " + error.message); }

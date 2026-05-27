@@ -20,7 +20,7 @@ from backend.qdrant_adapter import QdrantLlamaIndexAdapter
 from backend.rag_config import embedding_api_model, rag_meta_db_path
 from proxy.config import CORS_ALLOWED_ORIGINS
 from proxy.routers.auth import router as auth_router, seed_admin_key
-from proxy.routers.chat import ChatRouterState, router as chat_router, set_chat_state
+from proxy.routers.chat import ChatRouterState, ensure_chat_history_schema, router as chat_router, set_chat_state
 from proxy.routers.chat_history import router as chat_history_router
 from proxy.routers.datasets import DatasetRouterState, router as datasets_router, set_dataset_state
 from proxy.routers.diagnostics import DiagnosticsRouterState, router as diagnostics_router, set_diagnostics_state
@@ -195,25 +195,7 @@ async def startup():
         logger.info("[INIT] Marked %s stale active job(s) as interrupted", interrupted_jobs)
     try:
         conn = sqlite3.connect(rag_meta_db_path(), check_same_thread=False)
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS chat_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                question TEXT,
-                answer TEXT,
-                sources TEXT,
-                crag_status TEXT,
-                latency_sec REAL,
-                tokens INTEGER,
-                session_id TEXT DEFAULT NULL
-            )
-        """
-        )
-        cols = [r[1] for r in conn.execute("PRAGMA table_info(chat_history)").fetchall()]
-        if "session_id" not in cols:
-            conn.execute("ALTER TABLE chat_history ADD COLUMN session_id TEXT DEFAULT NULL")
-            logger.info("[INIT] chat_history: добавлен session_id")
+        ensure_chat_history_schema(conn)
         conn.commit()
         conn.close()
     except Exception as e:

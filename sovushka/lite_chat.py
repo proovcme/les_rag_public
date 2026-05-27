@@ -14,6 +14,7 @@ from fastapi import Request, Response
 from starlette.responses import HTMLResponse, JSONResponse
 
 from sovushka.config import PROXY_URL
+from sovushka.trust import trusted_role_for_request
 
 
 BRIDGE_PUBLIC_PATHS = {"/api/auth/verify"}
@@ -27,9 +28,15 @@ def _client_is_loopback(request: Request) -> bool:
         return False
 
 
-def bridge_request_allowed(path: str, *, has_key: bool, is_loopback: bool) -> bool:
+def bridge_request_allowed(
+    path: str,
+    *,
+    has_key: bool,
+    is_loopback: bool,
+    is_trusted_network: bool = False,
+) -> bool:
     target_path = f"/api/{path.strip('/')}"
-    return has_key or is_loopback or target_path in BRIDGE_PUBLIC_PATHS
+    return has_key or is_loopback or is_trusted_network or target_path in BRIDGE_PUBLIC_PATHS
 
 
 def _forward_headers(request: Request) -> dict[str, str]:
@@ -49,7 +56,13 @@ def _forward_headers(request: Request) -> dict[str, str]:
 async def bridge_proxy_request(path: str, request: Request) -> Response:
     has_key = bool(request.headers.get("x-api-key") or request.headers.get("authorization"))
     is_loopback = _client_is_loopback(request)
-    if not bridge_request_allowed(path, has_key=has_key, is_loopback=is_loopback):
+    is_trusted_network = bool(trusted_role_for_request(request))
+    if not bridge_request_allowed(
+        path,
+        has_key=has_key,
+        is_loopback=is_loopback,
+        is_trusted_network=is_trusted_network,
+    ):
         return JSONResponse({"detail": "Authentication required"}, status_code=401)
 
     target_path = f"/api/{path.strip('/')}"
@@ -57,7 +70,7 @@ async def bridge_proxy_request(path: str, request: Request) -> Response:
     target_url = f"{PROXY_URL.rstrip('/')}{target_path}{query}"
     body = await request.body()
     try:
-        async with httpx.AsyncClient(timeout=180.0) as client:
+        async with httpx.AsyncClient(timeout=600.0) as client:
             proxied = await client.request(
                 request.method,
                 target_url,
@@ -227,6 +240,26 @@ def lite_chat_html() -> str:
       border-radius: 5px;
       padding: 2px 6px;
       font-size: .58rem;
+    }
+    .feedback {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      margin-top: 8px;
+    }
+    .feedback button {
+      width: 30px;
+      min-height: 28px;
+      padding: 0;
+      border-radius: 6px;
+      font-size: .62rem;
+      line-height: 1;
+    }
+    .feedback button:disabled { cursor: default; opacity: .75; }
+    .feedback-status {
+      color: var(--muted);
+      font-size: .58rem;
+      min-width: 80px;
     }
     .composer {
       border-top: 1px solid var(--line);
@@ -417,7 +450,7 @@ def lite_chat_html() -> str:
   </div>
 
   <script>
-    const isLocalUi = ["localhost", "127.0.0.1", "::1"].includes(location.hostname) && location.port === "8051";
+    const isLocalUi = location.port === "8051";
     const API_BASE = isLocalUi ? "/lite-api" : "";
     const KEY_STORAGE = "les_lite_api_key";
     const HOLDER_STORAGE = "les_lite_holder";
@@ -490,6 +523,27 @@ def lite_chat_html() -> str:
       el("authError").textContent = message;
     }
 
+    async function saveFeedback(historyId, feedback, button, statusNode) {
+      if (!historyId || !button) return;
+      const previous = button.textContent;
+      button.disabled = true;
+      button.textContent = "...";
+      if (statusNode) statusNode.textContent = "";
+      try {
+        await request("/api/chat/history/" + encodeURIComponent(historyId) + "/feedback", {
+          method: "POST",
+          body: JSON.stringify({ feedback }),
+        });
+        button.textContent = "OK";
+        if (statusNode) statusNode.textContent = "сохранено";
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = previous;
+        if (statusNode) statusNode.textContent = error.message;
+        if (error.status === 401 || error.status === 403) showAuth(true, error.message);
+      }
+    }
+
     function addMessage(text, type, meta = {}) {
       const wrap = document.createElement("div");
       wrap.className = "msg " + type;
@@ -512,6 +566,26 @@ def lite_chat_html() -> str:
           line.appendChild(item);
         }
         wrap.appendChild(line);
+      }
+      if (meta.history_id) {
+        const feedback = document.createElement("div");
+        feedback.className = "feedback";
+        const status = document.createElement("span");
+        status.className = "feedback-status";
+        const makeButton = (label, title, value) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.textContent = label;
+          button.title = title;
+          button.setAttribute("aria-label", title);
+          button.addEventListener("click", () => saveFeedback(meta.history_id, value, button, status));
+          return button;
+        };
+        feedback.appendChild(makeButton("✓", "Ответ корректен", "correct"));
+        feedback.appendChild(makeButton("×", "Ответ некорректен", "incorrect"));
+        feedback.appendChild(makeButton("DS", "Источник не из того датасета", "wrong_dataset"));
+        feedback.appendChild(status);
+        wrap.appendChild(feedback);
       }
       el("messages").appendChild(wrap);
       el("messages").scrollTop = el("messages").scrollHeight;
@@ -609,6 +683,7 @@ def lite_chat_html() -> str:
         addMessage(data.answer || data.response || "Нет ответа", "msg-ai", {
           crag: data.crag_status || "",
           sources: data.sources || [],
+          history_id: data.history_id || null,
         });
       } catch (error) {
         placeholder.remove();

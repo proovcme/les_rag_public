@@ -2,10 +2,11 @@ import asyncio
 from collections import deque
 from dataclasses import dataclass
 from email.message import EmailMessage
+from types import SimpleNamespace
 
 import pytest
 
-from backend.mail_ingest import ImapFetchedFile
+from backend.mail_ingest import AppleMailImportedFile, ImapFetchedFile
 from proxy.routers import datasets, mail
 
 
@@ -45,11 +46,17 @@ class FakeBackend:
 
 
 class FakeJobService:
+    def __init__(self):
+        self.created = []
+        self.updates = []
+
     def create(self, *args, **kwargs):
+        self.created.append((args, kwargs))
         return {"id": "job-1", "started_at": "2026-05-26T00:00:00"}
 
-    def update(self, *args, **kwargs):
-        return {}
+    def update(self, job_id, **kwargs):
+        self.updates.append((job_id, kwargs))
+        return {"id": job_id, **kwargs}
 
 
 @pytest.fixture()
@@ -189,6 +196,10 @@ async def test_import_imap_mail_registers_fetched_eml(tmp_path, monkeypatch, mai
     monkeypatch.setenv("MAIL_IMAP_HOST", "imap.example.com")
     monkeypatch.setenv("MAIL_IMAP_LOGIN", "mail@example.com")
     monkeypatch.setenv("MAIL_IMAP_PASSWORD", "secret")
+    async def allow_parse(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(mail, "assert_parse_admission", allow_parse)
     source = tmp_path / "RAG_Content" / "MAIL" / "IMAP" / "mail@example.com" / "INBOX"
     source.mkdir(parents=True)
     eml = source / "0000000001_test.eml"
@@ -216,6 +227,129 @@ async def test_import_imap_mail_registers_fetched_eml(tmp_path, monkeypatch, mai
     assert result["files"] == 1
     assert mail_state.uploads == [
         ("ds-1", "0000000001_test.eml", "MAIL/IMAP/mail@example.com/INBOX/0000000001_test.eml")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_import_imap_mail_background_returns_job_and_completes(tmp_path, monkeypatch, mail_state):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MAIL_IMAP_HOST", "imap.example.com")
+    monkeypatch.setenv("MAIL_IMAP_LOGIN", "mail@example.com")
+    monkeypatch.setenv("MAIL_IMAP_PASSWORD", "secret")
+    source = tmp_path / "RAG_Content" / "MAIL" / "IMAP" / "mail@example.com" / "INBOX"
+    source.mkdir(parents=True)
+    eml = source / "0000000001_test.eml"
+    _write_eml(eml)
+    scheduled = []
+
+    def fake_create_task(coro):
+        scheduled.append(coro)
+        return SimpleNamespace(done=lambda: False)
+
+    def fake_fetch(settings, *, max_messages, progress_callback=None):
+        if progress_callback:
+            progress_callback({"stage": "fetching", "folder": "INBOX", "uid": 1, "fetched": 1, "max_messages": max_messages})
+        return [
+            ImapFetchedFile(
+                path=eml,
+                relative_path="MAIL/IMAP/mail@example.com/INBOX/0000000001_test.eml",
+                folder="INBOX",
+                uid=1,
+                subject="Письмо по проекту",
+                message_id="<m1>",
+            )
+        ]
+
+    monkeypatch.setattr(mail.asyncio, "create_task", fake_create_task)
+    monkeypatch.setattr(mail, "fetch_imap_eml_files", fake_fetch)
+
+    async def allow_parse(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(mail, "assert_parse_admission", allow_parse)
+
+    result = await mail.import_imap_mail(
+        mail.MailImapImportRequest(max_messages=50, parse=True, parse_limit=25, parse_batches=2, background=True),
+        _admin=object(),
+    )
+    await scheduled[0]
+
+    job_service = datasets.get_dataset_state().job_service
+    assert result["status"] == "job_started"
+    assert result["job_id"] == "job-1"
+    assert result["max_messages"] == 50
+    assert result["parse_batches"] == 2
+    assert mail_state.uploads == [
+        ("ds-1", "0000000001_test.eml", "MAIL/IMAP/mail@example.com/INBOX/0000000001_test.eml")
+    ]
+    assert mail_state.parses == [("ds-1", 25)]
+    assert job_service.created[0][0] == ("mail_imap_import",)
+    assert any(update["message"] == "Fetching INBOX UID 1" for _, update in job_service.updates)
+    assert job_service.updates[-1][1]["status"] == "completed"
+    assert job_service.updates[-1][1]["result"]["files"] == 1
+
+
+@pytest.mark.asyncio
+async def test_import_imap_mail_background_failure_redacts_password(tmp_path, monkeypatch, mail_state):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MAIL_IMAP_HOST", "imap.example.com")
+    monkeypatch.setenv("MAIL_IMAP_LOGIN", "mail@example.com")
+    monkeypatch.setenv("MAIL_IMAP_PASSWORD", "secret")
+    scheduled = []
+
+    def fake_create_task(coro):
+        scheduled.append(coro)
+        return SimpleNamespace(done=lambda: False)
+
+    def fake_fetch(settings, *, max_messages, progress_callback=None):
+        raise RuntimeError("bad password secret")
+
+    monkeypatch.setattr(mail.asyncio, "create_task", fake_create_task)
+    monkeypatch.setattr(mail, "fetch_imap_eml_files", fake_fetch)
+
+    result = await mail.import_imap_mail(
+        mail.MailImapImportRequest(max_messages=50, background=True),
+        _admin=object(),
+    )
+    await scheduled[0]
+
+    job_service = datasets.get_dataset_state().job_service
+    assert result["status"] == "job_started"
+    assert job_service.updates[-1][1]["status"] == "failed"
+    assert "secret" not in job_service.updates[-1][1]["message"]
+    assert "secret" not in job_service.updates[-1][1]["result"]["error"]
+    assert "[redacted]" in job_service.updates[-1][1]["result"]["error"]
+
+
+@pytest.mark.asyncio
+async def test_import_apple_mail_registers_converted_eml(tmp_path, monkeypatch, mail_state):
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "RAG_Content" / "MAIL" / "AppleMail" / "local"
+    source.mkdir(parents=True)
+    eml = source / "apple_test.eml"
+    _write_eml(eml)
+
+    monkeypatch.setattr(
+        mail,
+        "import_apple_mail_eml_files",
+        lambda mail_root, max_messages: [
+            AppleMailImportedFile(
+                path=eml,
+                relative_path="MAIL/AppleMail/local/apple_test.eml",
+                source_path="/Users/ovc/Library/Mail/V10/test.emlx",
+                subject="Письмо по проекту",
+                message_id="<apple-1>",
+            )
+        ],
+    )
+
+    result = await mail.import_apple_mail(mail.MailAppleImportRequest(parse=False), _admin=object())
+
+    assert result["status"] == "registered"
+    assert result["dataset_name"] == "MAIL_Index"
+    assert result["files"] == 1
+    assert mail_state.uploads == [
+        ("ds-1", "apple_test.eml", "MAIL/AppleMail/local/apple_test.eml")
     ]
 
 

@@ -708,6 +708,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--no-state", action="store_true", help="Disable persistent campaign resume state")
     parser.add_argument("--memory-wait-sec", type=float, default=60.0)
     parser.add_argument("--memory-poll-sec", type=float, default=5.0)
+    parser.add_argument("--unload-between-docs", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--require-qdrant-snapshot", action="store_true")
     parser.add_argument("--allow-active-jobs", action="store_true")
     parser.add_argument("--auth-smoke-after", action=argparse.BooleanOptionalAction, default=True)
@@ -918,7 +919,11 @@ def main(argv: list[str] | None = None) -> int:
 
             after_health = health_snapshot(args.proxy_url, args.health_timeout, admin_key)
             emit(log_path, "doc_health", index=idx, rag=compact_rag(after_health.get("rag")))
-            unload_result = unload_all(args.mlx_url, args.health_timeout)
+            unload_result = (
+                unload_all(args.mlx_url, args.health_timeout)
+                if args.unload_between_docs
+                else {"ok": True, "skipped": "unload_between_docs=false"}
+            )
             emit(log_path, "doc_unload", index=idx, result=unload_result)
             after_memory = wait_for_memory(
                 args.mlx_url,

@@ -2,7 +2,7 @@
 converter.py — конвертация документов в Markdown для RAG.
 
 Поддерживаемые форматы:
-  PDF, DOCX, EML, MSG, XLSX/XLS/CSV, JSON/JSONL, MD, TXT
+  PDF, DOCX, EML/EMLX, MSG, XLSX/XLS/CSV, JSON/JSONL, MD, TXT
 """
 import json
 import logging
@@ -20,7 +20,7 @@ BOOK_PDF_MIN_PAGES = 200
 
 SUPPORTED = {
     ".pdf", ".docx", ".doc",
-    ".eml", ".msg",
+    ".eml", ".emlx", ".msg",
     ".xlsx", ".xls", ".csv",
     ".json", ".jsonl",
     ".md", ".txt",
@@ -39,7 +39,7 @@ def convert_to_markdown(file_path: Path) -> Optional[str]:
             result = _parse_pdf(file_path)
         elif suffix in (".docx", ".doc"):
             result = _parse_docx(file_path)
-        elif suffix in (".eml", ".msg"):
+        elif suffix in (".eml", ".emlx", ".msg"):
             result = _parse_email(file_path)
         elif suffix in (".xlsx", ".xls", ".csv"):
             result = _parse_spreadsheet(file_path)
@@ -143,62 +143,10 @@ def _parse_docx(path: Path) -> str:
 
 
 def _parse_email(path: Path) -> str:
-    if path.suffix.lower() == ".msg":
-        import extract_msg
-        msg = extract_msg.Message(str(path))
-        parts = [
-            f"# {msg.subject or '(без темы)'}",
-            f"От: {msg.sender}",
-            f"Кому: {getattr(msg, 'to', '') or '?'}",
-            f"Копия: {getattr(msg, 'cc', '') or ''}",
-            f"Дата: {msg.date}",
-            "",
-            msg.body or "",
-        ]
-        return "\n".join(parts)
-    else:
-        import email
-        from email import policy
-        with open(path, "rb") as f:
-            msg = email.message_from_binary_file(f, policy=policy.default)
-        body_parts = []
-        attachments = []
-        if msg.is_multipart():
-            for part in msg.walk():
-                ct = part.get_content_type()
-                disposition = (part.get_content_disposition() or "").lower()
-                filename = part.get_filename()
-                if filename or disposition == "attachment":
-                    attachments.append(filename or "(без имени)")
-                    continue
-                if ct == "text/plain":
-                    try:
-                        body_parts.append(part.get_content())
-                    except Exception:
-                        pass
-                elif ct == "text/html" and not body_parts:
-                    try:
-                        body_parts.append(part.get_content())
-                    except Exception:
-                        pass
-        else:
-            try:
-                body_parts.append(msg.get_content())
-            except Exception:
-                pass
-        body = "\n".join(body_parts)
-        attachments_md = ""
-        if attachments:
-            attachments_md = "\n\nВложения:\n" + "\n".join(f"- {name}" for name in attachments)
-        return (
-            f"# {msg.get('Subject', '(без темы)')}\n"
-            f"От: {msg.get('From', '?')}\n"
-            f"Кому: {msg.get('To', '?')}\n"
-            f"Копия: {msg.get('Cc', '')}\n"
-            f"Дата: {msg.get('Date', '?')}\n\n"
-            f"{body}"
-            f"{attachments_md}"
-        )
+    from .mail_profile import build_mail_vector_profile
+
+    profile = build_mail_vector_profile(path)
+    return profile.message_embedding_text(include_attachment_text=True)
 
 
 def _parse_spreadsheet(path: Path) -> str:

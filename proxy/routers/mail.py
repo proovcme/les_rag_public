@@ -12,8 +12,10 @@ from pydantic import BaseModel, Field
 
 from backend.mail_ingest import (
     MAIL_DATASET_NAME,
+    apple_mail_public_payload,
     fetch_imap_eml_files,
     imap_settings_from_env,
+    import_apple_mail_eml_files,
     iter_mail_files,
     resolve_mail_source_folder,
     summarize_mail_files,
@@ -40,6 +42,15 @@ class MailLocalImportRequest(BaseModel):
 
 
 class MailImapImportRequest(BaseModel):
+    max_messages: int = Field(default=25, ge=1, le=200)
+    parse: bool = False
+    parse_limit: int = Field(default=DEFAULT_PARSE_BATCH_LIMIT, ge=1, le=25)
+    parse_batches: int = Field(default=1, ge=1, le=20)
+    background: bool = False
+
+
+class MailAppleImportRequest(BaseModel):
+    mail_root: str = ""
     max_messages: int = Field(default=25, ge=1, le=200)
     parse: bool = False
     parse_limit: int = Field(default=DEFAULT_PARSE_BATCH_LIMIT, ge=1, le=25)
@@ -103,6 +114,140 @@ async def _maybe_parse_mail_dataset(state: Any, dataset_id: str, *, parse: bool,
     return True, "", parse_result
 
 
+async def _upload_fetched_mail(state: Any, fetched: list[Any]) -> tuple[str, bool, list[dict[str, Any]]]:
+    dataset_id, created = await _mail_dataset_id(state)
+    uploaded: list[dict[str, Any]] = []
+    for item in fetched:
+        doc_id = await state.backend.upload_file(
+            dataset_id,
+            item.path,
+            relative_path=item.relative_path,
+        )
+        uploaded.append({"doc_id": doc_id, **item.payload()})
+    return dataset_id, created, uploaded
+
+
+async def _run_imap_import_job(state: Any, job_id: str, req: MailImapImportRequest, settings: Any) -> None:
+    def update_job(**updates: Any) -> None:
+        try:
+            state.job_service.update(job_id, **updates)
+        except Exception:
+            pass
+
+    def progress(payload: dict[str, Any]) -> None:
+        fetched_count = int(payload.get("fetched") or 0)
+        folder = str(payload.get("folder") or "")
+        uid = payload.get("uid")
+        update_job(
+            status="running",
+            processed=fetched_count,
+            total=req.max_messages,
+            message=f"Fetching {folder} UID {uid}" if uid else "Fetching IMAP mail",
+            result={"stage": "fetching", **payload},
+        )
+
+    try:
+        update_job(status="running", total=req.max_messages, processed=0, message="Fetching IMAP mail")
+        fetched = await asyncio.to_thread(
+            fetch_imap_eml_files,
+            settings,
+            max_messages=req.max_messages,
+            progress_callback=progress,
+        )
+        if not fetched:
+            update_job(
+                status="completed",
+                processed=0,
+                total=req.max_messages,
+                message="No new IMAP mail",
+                result={
+                    "status": "no_new_mail",
+                    "dataset_name": MAIL_DATASET_NAME,
+                    "files": 0,
+                    "uploaded": [],
+                    "parse_started": False,
+                    "parse_blocked": "",
+                    "parse_result": None,
+                },
+            )
+            return
+
+        update_job(
+            status="running",
+            processed=len(fetched),
+            total=req.max_messages,
+            message=f"Registering {len(fetched)} IMAP messages",
+            result={"stage": "registering", "files": len(fetched)},
+        )
+        dataset_id, created, uploaded = await _upload_fetched_mail(state, fetched)
+
+        parse_started = False
+        parse_blocked = ""
+        parse_results: list[dict[str, Any]] = []
+        if req.parse:
+            for batch_index in range(max(1, req.parse_batches)):
+                update_job(
+                    status="running",
+                    processed=len(fetched),
+                    total=req.max_messages,
+                    message=f"Parsing mail batch {batch_index + 1}/{req.parse_batches}",
+                    dataset_id=dataset_id,
+                    dataset_name=MAIL_DATASET_NAME,
+                    result={"stage": "parsing", "batch": batch_index + 1, "files": len(fetched)},
+                )
+                started, blocked, parse_result = await _maybe_parse_mail_dataset(
+                    state,
+                    dataset_id,
+                    parse=True,
+                    parse_limit=req.parse_limit,
+                )
+                parse_started = parse_started or started
+                parse_blocked = blocked
+                if parse_result:
+                    parse_results.append(parse_result)
+                    if int(parse_result.get("remaining_pending") or 0) <= 0:
+                        break
+                if blocked:
+                    break
+
+        result = {
+            "status": "registered",
+            "dataset_id": dataset_id,
+            "dataset_name": MAIL_DATASET_NAME,
+            "dataset_created": created,
+            "files": len(fetched),
+            "uploaded": uploaded,
+            "parse_started": parse_started,
+            "parse_blocked": parse_blocked,
+            "parse_results": parse_results,
+            "parse_result": parse_results[-1] if parse_results else None,
+        }
+        update_job(
+            status="completed",
+            processed=len(fetched),
+            total=req.max_messages,
+            message=f"Imported {len(fetched)} IMAP messages",
+            dataset_id=dataset_id,
+            dataset_name=MAIL_DATASET_NAME,
+            result=result,
+        )
+    except Exception as error:
+        detail = _redact_imap_error(error, settings)
+        update_job(
+            status="failed",
+            message=f"IMAP import failed: {detail}",
+            result={"status": "failed", "error": detail, "dataset_name": MAIL_DATASET_NAME},
+        )
+
+
+def _redact_imap_error(error: Exception, settings: Any) -> str:
+    detail = str(error)
+    for secret in (getattr(settings, "password", ""),):
+        if secret:
+            detail = detail.replace(str(secret), "[redacted]")
+    return detail
+
+
 @router.get("/status")
 async def mail_status(_user=Depends(require_user)):
     state = get_dataset_state()
@@ -114,8 +259,9 @@ async def mail_status(_user=Depends(require_user)):
         "status": "ready" if dataset else "not_created",
         "dataset_name": MAIL_DATASET_NAME,
         "dataset": asdict(dataset) if dataset else None,
-        "supported": [".eml", ".msg"],
+        "supported": [".eml", ".emlx", ".msg"],
         "imap": imap_settings.public_payload(),
+        "apple_mail": apple_mail_public_payload(),
     }
 
 
@@ -251,6 +397,27 @@ async def import_imap_mail(req: MailImapImportRequest, _admin=Depends(require_ad
             status_code=400,
             detail="MAIL_IMAP_HOST, MAIL_IMAP_LOGIN and MAIL_IMAP_PASSWORD are required",
         )
+    if req.background:
+        job = state.job_service.create(
+            "mail_imap_import",
+            source="imap",
+            dataset_name=MAIL_DATASET_NAME,
+            total=req.max_messages,
+            status="running",
+            message="IMAP import queued",
+        )
+        job_id = str(job.get("id") or "")
+        asyncio.create_task(_run_imap_import_job(state, job_id, req, settings))
+        return {
+            "status": "job_started",
+            "component": "Е.Ж.И.К.",
+            "job_id": job_id,
+            "dataset_name": MAIL_DATASET_NAME,
+            "max_messages": req.max_messages,
+            "parse": req.parse,
+            "parse_limit": req.parse_limit,
+            "parse_batches": req.parse_batches,
+        }
     try:
         fetched = await asyncio.to_thread(
             fetch_imap_eml_files,
@@ -273,9 +440,62 @@ async def import_imap_mail(req: MailImapImportRequest, _admin=Depends(require_ad
             "parse_result": None,
         }
 
+    dataset_id, created, uploaded = await _upload_fetched_mail(state, fetched)
+
+    parse_started, parse_blocked, parse_result = await _maybe_parse_mail_dataset(
+        state,
+        dataset_id,
+        parse=req.parse,
+        parse_limit=req.parse_limit,
+    )
+    return {
+        "status": "registered",
+        "component": "Е.Ж.И.К.",
+        "dataset_id": dataset_id,
+        "dataset_name": MAIL_DATASET_NAME,
+        "dataset_created": created,
+        "imap": settings.public_payload(),
+        "files": len(fetched),
+        "uploaded": uploaded,
+        "parse_started": parse_started,
+        "parse_blocked": parse_blocked,
+        "parse_result": parse_result,
+    }
+
+
+@router.post("/import-apple-mail")
+async def import_apple_mail(req: MailAppleImportRequest, _admin=Depends(require_admin)):
+    state = get_dataset_state()
+    root = Path(req.mail_root).expanduser() if req.mail_root.strip() else None
+    try:
+        imported = await asyncio.to_thread(
+            import_apple_mail_eml_files,
+            mail_root=root,
+            max_messages=req.max_messages,
+        )
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=f"Apple Mail import failed: {error}") from error
+
+    if not imported:
+        return {
+            "status": "no_local_mail",
+            "component": "Е.Ж.И.К.",
+            "dataset_name": MAIL_DATASET_NAME,
+            "apple_mail": apple_mail_public_payload(),
+            "files": 0,
+            "uploaded": [],
+            "parse_started": False,
+            "parse_blocked": "",
+            "parse_result": None,
+        }
+
     dataset_id, created = await _mail_dataset_id(state)
     uploaded: list[dict[str, Any]] = []
-    for item in fetched:
+    for item in imported:
         doc_id = await state.backend.upload_file(
             dataset_id,
             item.path,
@@ -295,8 +515,8 @@ async def import_imap_mail(req: MailImapImportRequest, _admin=Depends(require_ad
         "dataset_id": dataset_id,
         "dataset_name": MAIL_DATASET_NAME,
         "dataset_created": created,
-        "imap": settings.public_payload(),
-        "files": len(fetched),
+        "apple_mail": apple_mail_public_payload(),
+        "files": len(imported),
         "uploaded": uploaded,
         "parse_started": parse_started,
         "parse_blocked": parse_blocked,

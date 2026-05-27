@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import os
 import re
 import shutil
 import sqlite3
+import threading
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -40,6 +43,10 @@ PARSE_MIN_FREE_GB = float(os.getenv("RAG_PARSE_MIN_FREE_GB", "8"))
 PARSE_MAX_SWAP_PCT = float(os.getenv("RAG_PARSE_MAX_SWAP_PCT", "45"))
 PARSE_POST_MAX_SWAP_PCT = float(os.getenv("RAG_PARSE_POST_MAX_SWAP_PCT", "60"))
 ACTIVE_PARSE_SCHEDULER_STATUSES = {"QUEUED", "PARSING", "RUNNING"}
+FOLDER_WATCH_CACHE_TTL_SEC = float(os.getenv("RAG_WATCH_CACHE_TTL_SEC", "15"))
+FOLDER_WATCH_CACHE_SAMPLE_LIMIT = int(os.getenv("RAG_WATCH_CACHE_SAMPLE_LIMIT", "200"))
+_folder_watch_cache_lock = threading.Lock()
+_folder_watch_cache: dict[str, tuple[float, dict[str, Any], list[dict[str, Any]]]] = {}
 
 
 @dataclass
@@ -771,13 +778,51 @@ def _folder_watch_inventory(root: Path, *, limit: int = 20) -> tuple[dict[str, A
     }, changes
 
 
+def _folder_watch_cache_key(root: Path) -> str:
+    try:
+        return root.resolve().as_posix()
+    except OSError:
+        return root.as_posix()
+
+
+def clear_folder_watch_cache(root: Path | None = None) -> None:
+    with _folder_watch_cache_lock:
+        if root is None:
+            _folder_watch_cache.clear()
+            return
+        _folder_watch_cache.pop(_folder_watch_cache_key(root), None)
+
+
+def _trim_folder_watch_status(status: dict[str, Any], *, limit: int) -> dict[str, Any]:
+    result = copy.deepcopy(status)
+    result["samples"] = list(result.get("samples") or [])[:limit]
+    return result
+
+
+def _folder_watch_inventory_cached(root: Path, *, limit: int = 20) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    key = _folder_watch_cache_key(root)
+    now = time.monotonic()
+    with _folder_watch_cache_lock:
+        cached = _folder_watch_cache.get(key)
+        if cached and now - cached[0] <= FOLDER_WATCH_CACHE_TTL_SEC:
+            status, changes = cached[1], cached[2]
+            return _trim_folder_watch_status(status, limit=limit), copy.deepcopy(changes)
+
+        status, changes = _folder_watch_inventory(
+            root,
+            limit=max(limit, FOLDER_WATCH_CACHE_SAMPLE_LIMIT),
+        )
+        _folder_watch_cache[key] = (time.monotonic(), copy.deepcopy(status), copy.deepcopy(changes))
+        return _trim_folder_watch_status(status, limit=limit), copy.deepcopy(changes)
+
+
 def build_folder_watch_status(root: Path, *, limit: int = 20) -> dict[str, Any]:
-    status, _changes = _folder_watch_inventory(root, limit=limit)
+    status, _changes = _folder_watch_inventory_cached(root, limit=limit)
     return status
 
 
 def build_folder_reindex_plan(root: Path, *, limit: int = 50) -> dict[str, Any]:
-    status, changes = _folder_watch_inventory(root, limit=limit)
+    status, changes = _folder_watch_inventory_cached(root, limit=limit)
     route_changes = [change for change in changes if change["state"] == "route_changed"]
     groups: dict[tuple[str, str], dict[str, Any]] = {}
     samples: list[dict[str, Any]] = []
@@ -852,6 +897,7 @@ async def folder_reindex_plan(source_root: str = "RAG_Content", limit: int = 50,
 async def folder_watch_scan(req: FolderWatchRequest, _admin=Depends(require_admin)):
     state = get_dataset_state()
     root = _safe_source_root(req.source_root)
+    clear_folder_watch_cache(root)
     before, changes = await asyncio.to_thread(_folder_watch_inventory, root, limit=req.limit)
     route_changed = [change for change in changes if change["state"] == "route_changed"]
     register_changes = [change for change in changes if change["state"] in {"new", "changed"}]

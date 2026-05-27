@@ -21,14 +21,29 @@ def test_lite_admin_html_uses_static_admin_shell():
     assert "Dispatcher / Reindex" in html
     assert "Watcher" in html
     assert "Memory" in html
+    assert "Е.Ж.И.К. Mail" in html
+    assert "trusted-сети" in html
+    assert "IMPORT+INDEX" in html
+    assert "mailCount" in html
+    assert 'value="50"' in html
+    assert "mailHost" in html
+    assert "/api/mail/import-imap" in html
+    assert "background: true" in html
+    assert "max_messages: maxMessages" in html
+    assert "parse_limit: parseLimit" in html
+    assert "parse_batches: parseBatches" in html
+    assert "/api/jobs/summary?limit=8" in html
+    assert "/api/mail/import-apple-mail" in html
+    assert 'const isLocalUi = location.port === "8051";' in html
     assert "Local Launchd" not in html
     assert ".innerHTML" not in html
     assert "start_guarded_reindex" not in html
 
 
-def test_lite_admin_runtime_actions_are_loopback_only():
+def test_lite_admin_runtime_actions_allow_loopback_or_trusted_network():
     assert local_runtime_action_allowed(is_loopback=True)
     assert not local_runtime_action_allowed(is_loopback=False)
+    assert local_runtime_action_allowed(is_loopback=False, is_trusted_network=True)
 
 
 def test_pid_running_treats_zombie_as_stopped(monkeypatch):

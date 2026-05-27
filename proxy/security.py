@@ -151,3 +151,16 @@ async def require_internal(request: Request) -> RequestUser:
     if ip.is_loopback or _trusted_network_role(ip_value) == ADMIN_ROLE:
         return RequestUser(role=ADMIN_ROLE, holder="internal", source=ip_value)
     raise HTTPException(status_code=403, detail="Internal network required")
+
+
+async def require_internal_or_admin(
+    request: Request,
+    x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
+    authorization: Optional[str] = Header(default=None, alias="Authorization"),
+) -> RequestUser:
+    if _extract_key(x_api_key, authorization):
+        user = await get_request_user(request, x_api_key=x_api_key, authorization=authorization)
+        if user.role == ADMIN_ROLE:
+            return user
+        raise HTTPException(status_code=403, detail="Admin role or internal network required")
+    return await require_internal(request)

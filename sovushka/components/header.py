@@ -115,7 +115,7 @@ def build_header(
 
                 # Настройки
                 with ui.dialog() as settings_dialog, ui.card().style(
-                    "background:var(--bg-panel);border:1px solid var(--border);min-width:480px;padding:24px;"
+                    "background:var(--bg-panel);border:1px solid var(--border);min-width:640px;padding:24px;"
                 ):
                     ui.label("⚙ НАСТРОЙКИ Л.Е.С.").style(
                         "font-size:.95rem;font-weight:900;margin-bottom:16px;"
@@ -123,6 +123,27 @@ def build_header(
                     set_llm   = ui.input("LLM Модель",        value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
                     set_embed = ui.input("Embedding Модель",  value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
                     set_url   = ui.input("MLX URL",  value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    ui.separator().style("border-color:var(--border);margin:12px 0;")
+                    ui.label("Е.Ж.И.К. IMAP").style("color:var(--dim);font-size:.65rem;font-weight:900;text-transform:uppercase;")
+                    with ui.row().classes("w-full gap-2"):
+                        set_mail_host = ui.input("IMAP Host", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);flex:1;")
+                        set_mail_port = ui.number("Port", value=993, min=1, max=65535, step=1, format="%.0f").style("background:var(--bg);color:var(--text);font-family:var(--font);width:120px;")
+                        set_mail_ssl = ui.checkbox("SSL", value=True).style("color:var(--text);font-family:var(--font);")
+                    set_mail_login = ui.input("Login", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_mail_password = ui.input("Password / app password", value="", password=True, password_toggle_button=True).style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_mail_folders = ui.input("Folders", value="INBOX").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_mail_ocr = ui.checkbox("OCR вложений", value=True).style("color:var(--text);font-family:var(--font);")
+
+                    def _yandex_mail_preset():
+                        set_mail_host.set_value("imap.yandex.ru")
+                        set_mail_port.set_value(993)
+                        set_mail_ssl.set_value(True)
+                        if not set_mail_folders.value:
+                            set_mail_folders.set_value("INBOX")
+
+                    ui.button("Yandex preset", on_click=_yandex_mail_preset).props("no-caps flat").style(
+                        "border:1px solid var(--border);color:var(--accent);background:transparent;"
+                    )
 
                     async def _load_settings():
                         from sovushka.state import api_get
@@ -131,6 +152,17 @@ def build_header(
                             set_llm.set_value(d.get("llm_model", ""))
                             set_embed.set_value(d.get("embed_model", ""))
                             set_url.set_value(d.get("mlx_url", ""))
+                            mail = d.get("mail") or {}
+                            set_mail_host.set_value(mail.get("imap_host", ""))
+                            set_mail_port.set_value(mail.get("imap_port", 993))
+                            set_mail_ssl.set_value(bool(mail.get("imap_ssl", True)))
+                            set_mail_login.set_value(mail.get("imap_login", ""))
+                            set_mail_password.set_value("")
+                            set_mail_password.props(
+                                f"placeholder=\"{'пароль уже задан; оставь пустым, чтобы не менять' if mail.get('imap_password_set') else 'пароль приложения Яндекс'}\""
+                            )
+                            set_mail_folders.set_value(mail.get("imap_folders", "INBOX"))
+                            set_mail_ocr.set_value(bool(mail.get("attachment_ocr_enabled", True)))
 
                     asyncio.create_task(_load_settings())
                     ui.separator().style("border-color:var(--border);margin:12px 0;")
@@ -155,10 +187,17 @@ def build_header(
 
                         async def save_settings():
                             from sovushka.state import api_post, add_log
-                            d = await api_post("/api/settings?restart=true", {
+                            d = await api_post("/api/settings", {
                                 "llm_model":   set_llm.value,
                                 "embed_model": set_embed.value,
                                 "mlx_url":     set_url.value,
+                                "mail_imap_host": set_mail_host.value or "",
+                                "mail_imap_port": int(set_mail_port.value or 993),
+                                "mail_imap_ssl": bool(set_mail_ssl.value),
+                                "mail_imap_login": set_mail_login.value or "",
+                                "mail_imap_password": set_mail_password.value or None,
+                                "mail_imap_folders": set_mail_folders.value or "INBOX",
+                                "mail_attachment_ocr_enabled": bool(set_mail_ocr.value),
                             })
                             if d:
                                 add_log(f"[SETTINGS] Сохранено: LLM={set_llm.value}")

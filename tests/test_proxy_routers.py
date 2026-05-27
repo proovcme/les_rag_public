@@ -126,6 +126,39 @@ async def test_save_settings_updates_env_file_and_process_env(tmp_path, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_save_settings_updates_mail_imap_without_exposing_password(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    env_path.write_text("MAIL_IMAP_HOST=old.example.com\nMAIL_IMAP_PASSWORD=old-secret\n")
+    monkeypatch.setattr(settings, "ENV_PATH", env_path)
+    monkeypatch.setenv("MAIL_IMAP_PASSWORD", "old-secret")
+
+    result = await settings.save_settings(
+        settings.SettingsRequest(
+            mail_imap_host="imap.yandex.ru",
+            mail_imap_port=993,
+            mail_imap_ssl=True,
+            mail_imap_login="mail@yandex.ru",
+            mail_imap_password="app-secret",
+            mail_imap_folders="INBOX,Sent",
+            mail_attachment_ocr_enabled=True,
+        ),
+        restart=False,
+        _admin=object(),
+    )
+
+    assert result["updated"]["MAIL_IMAP_HOST"] == "imap.yandex.ru"
+    assert result["updated"]["MAIL_IMAP_PASSWORD"] == "***"
+    text = env_path.read_text()
+    assert "MAIL_IMAP_HOST=imap.yandex.ru" in text
+    assert "MAIL_IMAP_PASSWORD=app-secret" in text
+    assert os.environ["MAIL_IMAP_LOGIN"] == "mail@yandex.ru"
+
+    payload = await settings.get_settings(_user=object())
+    assert payload["mail"]["imap_password_set"] is True
+    assert "password" not in payload["mail"]
+
+
+@pytest.mark.asyncio
 async def test_save_settings_rejects_unsafe_values(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "ENV_PATH", tmp_path / ".env")
 

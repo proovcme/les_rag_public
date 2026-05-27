@@ -14,9 +14,10 @@ from email.parser import BytesParser
 from pathlib import Path
 from typing import Any
 
+from .mail_emlx import emlx_to_eml_bytes, read_email_message_bytes
 
 MAIL_DATASET_NAME = "MAIL_Index"
-MAIL_SUFFIXES = {".eml", ".msg"}
+MAIL_SUFFIXES = {".eml", ".emlx", ".msg"}
 SAFE_SOURCE_PART_RE = re.compile(r"^[\w .@()+\-=]+$", re.UNICODE)
 SAFE_FILE_PART_RE = re.compile(r"[^A-Za-z0-9_.@()+\-=]+")
 
@@ -50,6 +51,7 @@ class ImapSettings:
     folders: list[str]
     checkpoint_dir: Path
     storage_root: Path
+    timeout_sec: float = 45.0
 
     @property
     def configured(self) -> bool:
@@ -65,6 +67,7 @@ class ImapSettings:
             "login": mask_mail_login(self.login),
             "folders": self.folders,
             "checkpoint_dir": self.checkpoint_dir.as_posix(),
+            "timeout_sec": self.timeout_sec,
         }
 
 
@@ -83,6 +86,24 @@ class ImapFetchedFile:
             "relative_path": self.relative_path,
             "folder": self.folder,
             "uid": self.uid,
+            "subject": self.subject,
+            "message_id": self.message_id,
+        }
+
+
+@dataclass(frozen=True)
+class AppleMailImportedFile:
+    path: Path
+    relative_path: str
+    source_path: str
+    subject: str = ""
+    message_id: str = ""
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "path": self.path.as_posix(),
+            "relative_path": self.relative_path,
+            "source_path": self.source_path,
             "subject": self.subject,
             "message_id": self.message_id,
         }
@@ -115,7 +136,37 @@ def imap_settings_from_env() -> ImapSettings:
         folders=folders or ["INBOX"],
         checkpoint_dir=Path(os.getenv("MAIL_IMAP_CHECKPOINT_DIR", "data/mail_imap_checkpoints")),
         storage_root=Path(os.getenv("MAIL_IMAP_STORAGE_ROOT", "RAG_Content/MAIL/IMAP")),
+        timeout_sec=float(os.getenv("MAIL_IMAP_TIMEOUT_SEC", "45") or "45"),
     )
+
+
+def apple_mail_root_from_env() -> Path:
+    return Path(os.getenv("MAIL_APPLE_ROOT", "~/Library/Mail")).expanduser()
+
+
+def apple_mail_storage_root_from_env() -> Path:
+    return Path(os.getenv("MAIL_APPLE_STORAGE_ROOT", "RAG_Content/MAIL/AppleMail"))
+
+
+def apple_mail_public_payload() -> dict[str, Any]:
+    root = apple_mail_root_from_env()
+    exists = root.exists()
+    accessible = False
+    error = ""
+    if exists:
+        try:
+            next(iter(root.iterdir()), None)
+            accessible = True
+        except Exception as exc:
+            error = str(exc)
+    return {
+        "root": root.as_posix(),
+        "exists": exists,
+        "accessible": accessible,
+        "status": "ready" if exists and accessible else ("permission_denied" if exists else "not_found"),
+        "error": error,
+        "storage_root": apple_mail_storage_root_from_env().as_posix(),
+    }
 
 
 def resolve_mail_source_folder(source_folder: str, *, base: Path = Path("./RAG_Content")) -> Path:
@@ -152,7 +203,7 @@ def iter_mail_files(source_dir: Path, *, max_files: int = 500) -> list[Path]:
 
 def summarize_mail_file(path: Path, source_dir: Path) -> MailFileSummary:
     suffix = path.suffix.lower()
-    if suffix == ".eml":
+    if suffix in {".eml", ".emlx"}:
         return _summarize_eml(path, source_dir)
     return _summarize_msg(path, source_dir)
 
@@ -166,6 +217,7 @@ def fetch_imap_eml_files(
     *,
     max_messages: int = 25,
     client_factory: Any | None = None,
+    progress_callback: Any | None = None,
 ) -> list[ImapFetchedFile]:
     """Fetch new IMAP messages into RAG_Content as raw .eml files."""
     if not settings.configured:
@@ -210,6 +262,16 @@ def fetch_imap_eml_files(
                 item = _save_imap_eml(settings, folder=folder, uid=uid, raw=raw)
                 fetched.append(item)
                 fetched_by_folder[folder] = max(fetched_by_folder.get(folder, last_uid), uid)
+                if progress_callback:
+                    progress_callback(
+                        {
+                            "stage": "fetching",
+                            "folder": folder,
+                            "uid": uid,
+                            "fetched": len(fetched),
+                            "max_messages": limit,
+                        }
+                    )
         for folder, uid in fetched_by_folder.items():
             _set_imap_checkpoint(checkpoint, folder, uid)
         if fetched_by_folder:
@@ -222,9 +284,43 @@ def fetch_imap_eml_files(
     return fetched
 
 
+def import_apple_mail_eml_files(
+    *,
+    mail_root: Path | None = None,
+    storage_root: Path | None = None,
+    max_messages: int = 25,
+) -> list[AppleMailImportedFile]:
+    root = (mail_root or apple_mail_root_from_env()).expanduser()
+    storage = storage_root or apple_mail_storage_root_from_env()
+    limit = max(1, int(max_messages))
+    if not root.exists() or not root.is_dir():
+        raise FileNotFoundError(f"Apple Mail storage not found: {root}")
+    try:
+        candidates = [path for path in root.rglob("*.emlx") if path.is_file()]
+    except PermissionError as error:
+        raise PermissionError(
+            f"Apple Mail storage is not readable: {root}. "
+            "Grant Full Disk Access to the terminal/Codex process."
+        ) from error
+
+    def _mtime(path: Path) -> float:
+        try:
+            return path.stat().st_mtime
+        except Exception:
+            return 0.0
+
+    imported: list[AppleMailImportedFile] = []
+    for source_path in sorted(candidates, key=_mtime, reverse=True)[:limit]:
+        raw = emlx_to_eml_bytes(source_path)
+        if not raw.strip():
+            continue
+        item = _save_apple_mail_eml(storage, source_path=source_path, raw=raw)
+        imported.append(item)
+    return imported
+
+
 def _summarize_eml(path: Path, source_dir: Path) -> MailFileSummary:
-    with path.open("rb") as handle:
-        msg = BytesParser(policy=policy.default).parse(handle)
+    msg = BytesParser(policy=policy.default).parsebytes(read_email_message_bytes(path))
     attachments: list[str] = []
     if msg.is_multipart():
         for part in msg.walk():
@@ -235,7 +331,7 @@ def _summarize_eml(path: Path, source_dir: Path) -> MailFileSummary:
     return MailFileSummary(
         path=path.as_posix(),
         relative_path=path.relative_to(source_dir).as_posix(),
-        suffix=".eml",
+        suffix=path.suffix.lower(),
         size_bytes=path.stat().st_size,
         subject=str(msg.get("Subject", "")),
         sender=str(msg.get("From", "")),
@@ -283,9 +379,10 @@ def _hidden_path(path: Path, root: Path) -> bool:
 def _open_imap_client(settings: ImapSettings, *, client_factory: Any | None = None):
     if client_factory is not None:
         return client_factory(settings.host, settings.port)
+    timeout = max(1.0, float(settings.timeout_sec or 45.0))
     if settings.ssl:
-        return imaplib.IMAP4_SSL(settings.host, settings.port)
-    return imaplib.IMAP4(settings.host, settings.port)
+        return imaplib.IMAP4_SSL(settings.host, settings.port, timeout=timeout)
+    return imaplib.IMAP4(settings.host, settings.port, timeout=timeout)
 
 
 def _quote_imap_folder(folder: str) -> str:
@@ -359,6 +456,30 @@ def _save_imap_eml(settings: ImapSettings, *, folder: str, uid: int, raw: bytes)
         relative_path=relative_path,
         folder=folder,
         uid=uid,
+        subject=subject,
+        message_id=message_id,
+    )
+
+
+def _save_apple_mail_eml(storage_root: Path, *, source_path: Path, raw: bytes) -> AppleMailImportedFile:
+    msg = BytesParser(policy=policy.default).parsebytes(raw)
+    subject = _decode_header_value(str(msg.get("Subject", "")))
+    message_id = str(msg.get("Message-ID", "")).strip()
+    digest = hashlib.sha1(raw).hexdigest()[:12]
+    stem_subject = _safe_path_part(subject)[:50] or "message"
+    file_name = f"{digest}_{stem_subject}.eml"
+    target_dir = storage_root / "local"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    path = target_dir / file_name
+    path.write_bytes(raw)
+    try:
+        relative_path = path.relative_to(Path("RAG_Content")).as_posix()
+    except ValueError:
+        relative_path = f"MAIL/AppleMail/local/{file_name}"
+    return AppleMailImportedFile(
+        path=path,
+        relative_path=relative_path,
+        source_path=source_path.as_posix(),
         subject=subject,
         message_id=message_id,
     )

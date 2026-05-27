@@ -31,6 +31,7 @@ from qdrant_client import models
 from .converter import convert_to_markdown
 from .document_router import DocumentRoute, route_document
 from .interface import Chunk, DatasetInfo, RAGBackend
+from .mail_profile import build_mail_vector_profile, deterministic_mail_node_id
 from .parquet_writer import TableNormalizer
 from .rag_config import (
     rag_chunk_overlap,
@@ -53,6 +54,32 @@ ALLOW_UNBOUNDED_PARSE = "ALLOW_UNBOUNDED_PARSE"
 
 def _content_hash(text: str) -> str:
     return hashlib.sha1(text.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _embedding_cache_descriptor() -> dict[str, str]:
+    backend = os.getenv("EMBED_BACKEND", "sentence_transformers").strip().lower()
+    descriptor = {
+        "backend": backend,
+        "model_id": os.getenv("EMBEDDING_MODEL") or os.getenv("EMBED_MODEL", ""),
+        "profile": os.getenv("LES_EMBED_PROFILE", ""),
+        "vector_size": str(rag_vector_size()),
+    }
+    if backend == "coreml":
+        descriptor.update(
+            {
+                "coreml_model": os.getenv("COREML_EMBED_MODEL", ""),
+                "coreml_seq_len": os.getenv("COREML_EMBED_SEQ_LEN", ""),
+                "coreml_compute_units": os.getenv("COREML_EMBED_COMPUTE_UNITS", ""),
+                "coreml_fallback": os.getenv("COREML_EMBED_FALLBACK", ""),
+            }
+        )
+    return descriptor
+
+
+def _embedding_cache_fingerprint(descriptor: dict[str, str] | None = None) -> str:
+    data = descriptor or _embedding_cache_descriptor()
+    stable = "\n".join(f"{key}={data.get(key, '')}" for key in sorted(data))
+    return hashlib.sha1(stable.encode("utf-8", errors="ignore")).hexdigest()
 
 
 def _section_heading(text: str) -> str:
@@ -660,6 +687,8 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             errors       = 0
             embedding_cache_hits = 0
             embedded_chunks = 0
+            embedding_descriptor = _embedding_cache_descriptor()
+            embedding_fingerprint = _embedding_cache_fingerprint(embedding_descriptor)
 
             for i, file_path in enumerate(files_to_parse, 1):
                 file_key = file_path.relative_to(data_dir).as_posix()
@@ -669,7 +698,12 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 try:
                     phase_start = _t.time()
                     existing_vectors = (
-                        self._sync_existing_file_vectors_by_hash(sync_qdrant, dataset_id, file_key)
+                        self._sync_existing_file_vectors_by_hash(
+                            sync_qdrant,
+                            dataset_id,
+                            file_key,
+                            embedding_fingerprint,
+                        )
                         if CHUNK_HASH_CACHE and hasattr(self, "_sync_existing_file_vectors_by_hash")
                         else {}
                     )
@@ -695,7 +729,11 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                         route.pipeline,
                     )
 
-                    if route.pipeline == "parquet":
+                    if route.doc_type == "EMAIL":
+                        file_nodes = self._sync_mail_nodes(
+                            file_path, data_dir, file_key, dataset_id, splitter, route, timings
+                        )
+                    elif route.pipeline == "parquet":
                         try:
                             file_nodes = self._sync_table_nodes(file_path, data_dir, dataset_id, route, timings)
                         except Exception as table_err:
@@ -727,6 +765,15 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                         file_nodes = self._sync_markdown_nodes(
                             file_path, file_key, dataset_id, md_parser, splitter, route, timings
                         )
+                        if QdrantLlamaIndexAdapter._docx_table_extraction_enabled(file_path, route):
+                            try:
+                                file_nodes.extend(self._sync_table_nodes(file_path, data_dir, dataset_id, route, timings))
+                            except Exception as table_err:
+                                logger.warning(
+                                    "[DOCX_TABLE] table extraction skipped for %s: %s",
+                                    file_key,
+                                    table_err,
+                                )
 
                     if not file_nodes:
                         phase_start = _t.time()
@@ -777,6 +824,14 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                                 "dataset_id": dataset_id,
                                 "doc_id":     node.get("doc_id") or str(uuid.uuid4()),
                                 "file_name":  file_key,
+                                "embedding_fingerprint": embedding_fingerprint,
+                                "embedding_backend": embedding_descriptor.get("backend", ""),
+                                "embedding_model_id": embedding_descriptor.get("model_id", ""),
+                                "embedding_profile": embedding_descriptor.get("profile", ""),
+                                "embedding_coreml_model": embedding_descriptor.get("coreml_model", ""),
+                                "embedding_coreml_seq_len": embedding_descriptor.get("coreml_seq_len", ""),
+                                "embedding_coreml_compute_units": embedding_descriptor.get("coreml_compute_units", ""),
+                                "embedding_coreml_fallback": embedding_descriptor.get("coreml_fallback", ""),
                             })
                             points.append(models.PointStruct(
                                 id=str(uuid.uuid4()),
@@ -893,6 +948,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         sync_qdrant: qdrant_client.QdrantClient,
         dataset_id: str,
         file_key: str,
+        embedding_fingerprint: str,
     ) -> dict[str, list[float]]:
         vectors: dict[str, list[float]] = {}
         offset = None
@@ -908,6 +964,8 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 )
                 for point in points:
                     payload = getattr(point, "payload", None) or {}
+                    if str(payload.get("embedding_fingerprint") or "") != embedding_fingerprint:
+                        continue
                     text = str(payload.get("text") or "")
                     content_hash = str(payload.get("content_hash") or _content_hash(text))
                     vector = self._extract_point_vector(point)
@@ -980,6 +1038,102 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             timings["chunk_sec"] = timings.get("chunk_sec", 0.0) + (_t.time() - phase_start)
         return file_nodes
 
+    def _sync_mail_nodes(
+        self,
+        file_path: Path,
+        data_dir: Path,
+        file_key: str,
+        dataset_id: str,
+        splitter: SentenceSplitter,
+        route: DocumentRoute | None = None,
+        timings: dict[str, float] | None = None,
+    ) -> list[dict]:
+        import time as _t
+
+        phase_start = _t.time()
+        profile = build_mail_vector_profile(file_path, source_dir=data_dir)
+        if timings is not None:
+            timings["convert_sec"] = timings.get("convert_sec", 0.0) + (_t.time() - phase_start)
+
+        phase_start = _t.time()
+        nodes: list[dict] = []
+        message_payload = profile.payload()
+        message_payload.update({
+            "type": "mail_message",
+            "mail_node_kind": "message",
+        })
+        nodes.extend(
+            self._split_profile_text_nodes(
+                profile.message_embedding_text(include_attachment_text=False),
+                dataset_id,
+                file_key,
+                splitter,
+                self._route_payload(route, message_payload),
+                "message",
+            )
+        )
+
+        for attachment in profile.attachments:
+            attachment_payload = profile.payload()
+            attachment_payload.update({
+                "type": "mail_attachment",
+                "mail_node_kind": "attachment",
+                "mail_attachment_id": attachment.attachment_id,
+                "mail_attachment_filename": attachment.filename,
+                "mail_attachment_content_type": attachment.content_type,
+                "mail_attachment_kind": attachment.kind,
+                "mail_attachment_extraction": attachment.extraction,
+                "mail_attachment_needs_ocr": attachment.needs_ocr,
+                "mail_attachment_needs_vlm": attachment.needs_vlm,
+                "mail_attachment_has_text": attachment.has_text,
+                "mail_attachment_error": attachment.error,
+            })
+            nodes.extend(
+                self._split_profile_text_nodes(
+                    attachment.embedding_text(profile),
+                    dataset_id,
+                    file_key,
+                    splitter,
+                    self._route_payload(route, attachment_payload),
+                    f"attachment:{attachment.attachment_id}",
+                )
+            )
+
+        if timings is not None:
+            timings["chunk_sec"] = timings.get("chunk_sec", 0.0) + (_t.time() - phase_start)
+        return nodes
+
+    def _split_profile_text_nodes(
+        self,
+        text: str,
+        dataset_id: str,
+        file_key: str,
+        splitter: SentenceSplitter,
+        payload: dict[str, Any],
+        node_key: str,
+    ) -> list[dict]:
+        value = str(text or "").strip()
+        if len(value) < MIN_CHUNK:
+            return []
+        if len(value) <= 2000:
+            return [{
+                "text": value,
+                "doc_id": deterministic_mail_node_id(dataset_id, file_key, node_key),
+                "payload": dict(payload),
+            }]
+
+        doc = Document(text=value, metadata={"file_name": file_key, "dataset_id": dataset_id})
+        split_nodes = splitter.get_nodes_from_documents([doc])
+        return [
+            {
+                "text": split_node.text,
+                "doc_id": deterministic_mail_node_id(dataset_id, file_key, f"{node_key}:{idx}"),
+                "payload": dict(payload),
+            }
+            for idx, split_node in enumerate(split_nodes)
+            if len(split_node.text) >= MIN_CHUNK
+        ]
+
     def _sync_table_nodes(
         self,
         file_path: Path,
@@ -992,7 +1146,10 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         parquet_dir = data_dir / "_parquet" / file_path.relative_to(data_dir).parent
         normalizer = TableNormalizer(parquet_dir=str(parquet_dir), use_llm=False)
         phase_start = _t.time()
-        result = asyncio.run(normalizer.process(str(file_path), dataset_id=dataset_id))
+        doc_type_override = "TABLE" if route and not route.domain.startswith("TABLE_") else None
+        result = asyncio.run(
+            normalizer.process(str(file_path), dataset_id=dataset_id, doc_type_override=doc_type_override)
+        )
         if timings is not None:
             timings["convert_sec"] = timings.get("convert_sec", 0.0) + (_t.time() - phase_start)
         parquet_path = result.get("parquet_path") or ""
@@ -1014,6 +1171,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 "type": "table_row",
                 "parquet_path": parquet_rel,
                 "table_row": i,
+                "table_kind": self._table_kind(route),
             })
             nodes.append({
                 "text": text,
@@ -1031,6 +1189,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 "needs_ocr": True,
                 "scanned_pages": scanned_pages,
                 "parquet_path": "",
+                "table_kind": self._table_kind(route),
             }
             nodes.append({
                 "text": text,
@@ -1041,11 +1200,31 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             timings["chunk_sec"] = timings.get("chunk_sec", 0.0) + (_t.time() - phase_start)
         return nodes
 
+    @staticmethod
+    def _docx_table_extraction_enabled(file_path: Path, route: DocumentRoute | None) -> bool:
+        if file_path.suffix.lower() != ".docx":
+            return False
+        if os.getenv("DOCX_TABLE_EXTRACTION_ENABLED", "false").lower() not in ("1", "true", "yes"):
+            return False
+        if route is None:
+            return True
+        return route.domain.startswith("NTD_") or route.domain in {"GKRF", "BOOKS"}
+
+    @staticmethod
+    def _table_kind(route: DocumentRoute | None) -> str:
+        if route is None:
+            return "table"
+        if route.domain.startswith("TABLE_"):
+            return "cost"
+        if route.domain.startswith("NTD_") or route.domain in {"GKRF", "BOOKS"}:
+            return "normative"
+        return "table"
+
     def _route_payload(self, route: DocumentRoute | None, payload: dict) -> dict:
         if route is None:
             return payload
-        merged = dict(route.metadata)
-        merged.update(payload)
+        merged = dict(payload)
+        merged.update(route.metadata)
         return merged
 
     async def retrieve(
@@ -1086,4 +1265,44 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 meta=p.payload,
             )
             for p in results.points
+        ]
+
+    async def retrieve_table_rows(
+        self,
+        dataset_ids: Optional[List[str]] = None,
+        limit: int = 64,
+    ) -> List[Chunk]:
+        await self._ensure_collection()
+
+        must = [
+            models.FieldCondition(
+                key="type",
+                match=models.MatchValue(value="table_row"),
+            )
+        ]
+        if dataset_ids:
+            must.append(
+                models.FieldCondition(
+                    key="dataset_id",
+                    match=models.MatchAny(any=dataset_ids),
+                )
+            )
+
+        points, _next_page = await self.aclient.scroll(
+            collection_name=self.collection_name,
+            scroll_filter=models.Filter(must=must),
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+
+        return [
+            Chunk(
+                content=point.payload.get("text", ""),
+                doc_id=point.payload.get("doc_id", ""),
+                doc_name=point.payload.get("file_name", "unknown"),
+                score=1.0,
+                meta=point.payload,
+            )
+            for point in points
         ]

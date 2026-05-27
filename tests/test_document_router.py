@@ -1,4 +1,5 @@
 from pathlib import Path
+from zipfile import ZipFile
 
 from backend.document_router import DocumentProbe, classify_document, probe_document, route_document
 from backend.qdrant_adapter import QdrantLlamaIndexAdapter
@@ -61,6 +62,22 @@ def test_route_scan_pdf_to_needs_ocr():
     assert route.complexity == "needs_ocr"
     assert route.pipeline == "markdown_needs_ocr"
     assert route.metadata["needs_ocr"] is True
+
+
+def test_docx_probe_counts_tables(tmp_path):
+    path = tmp_path / "СП 1.13130.docx"
+    xml = """<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Показатель</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body>
+</w:document>"""
+    with ZipFile(path, "w") as archive:
+        archive.writestr("word/document.xml", xml)
+
+    probe = probe_document(path)
+    route = classify_document(probe)
+
+    assert probe.has_tables is True
+    assert probe.table_count_hint == 1
+    assert route.content_type == "mixed"
 
 
 def test_book_folder_pdf_routes_to_books_index_with_rich_pipeline():
@@ -133,6 +150,23 @@ def test_normative_name_wins_over_table_price_words():
 
     assert route.doc_type == "NORMATIVE"
     assert route.domain == "NTD_MATERIALS"
+
+
+def test_strong_gost_signal_wins_over_smeta_word_in_normative_doc():
+    route = classify_document(
+        DocumentProbe(
+            path=Path("Здания и фрагменты зданий. Метод натурных огневых испытаний.docx"),
+            suffix=".docx",
+            size_bytes=10_000,
+            text_sample=(
+                "ГОСТ Р 53309-2009 Национальный стандарт Российской Федерации. "
+                "В программе испытаний указывается смета затрат."
+            ),
+        )
+    )
+
+    assert route.doc_type == "NORMATIVE"
+    assert route.domain == "NTD_FIRE"
 
 
 def test_iec_and_fire_protection_names_route_to_specific_domains():

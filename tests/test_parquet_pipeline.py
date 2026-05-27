@@ -1,10 +1,12 @@
 import asyncio
+from zipfile import ZipFile
 
 import backend.parquet_writer as parquet_writer
 from backend.parquet_writer import (
     TableNormalizer,
     _clean_pdf_table,
     _map_columns_simple,
+    read_docx_tables,
     row_to_chunk_text,
 )
 from backend.qdrant_adapter import QdrantLlamaIndexAdapter
@@ -138,6 +140,36 @@ def test_pdf_table_normalizer_reports_needs_ocr(tmp_path, monkeypatch):
     assert result["chunks"] == []
     assert result["needs_ocr"] is True
     assert result["scanned_pages"] == [1, 2]
+
+
+def test_docx_table_reader_extracts_row_tables(tmp_path):
+    docx_path = tmp_path / "sp_tables.docx"
+    xml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:tbl>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>Позиция</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>Наименование</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>Кол-во</w:t></w:r></w:p></w:tc>
+      </w:tr>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>1</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>Клапан противопожарный</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>2</w:t></w:r></w:p></w:tc>
+      </w:tr>
+    </w:tbl>
+  </w:body>
+</w:document>
+"""
+    with ZipFile(docx_path, "w") as archive:
+        archive.writestr("word/document.xml", xml)
+
+    result = read_docx_tables(str(docx_path))
+
+    assert result["extractor"] == "docx_xml"
+    assert result["sheets"][0]["headers"] == ["Позиция", "Наименование", "Кол-во"]
+    assert result["sheets"][0]["rows"][0]["Наименование"] == "Клапан противопожарный"
 
 
 def test_qdrant_adapter_builds_needs_ocr_marker(tmp_path, monkeypatch):

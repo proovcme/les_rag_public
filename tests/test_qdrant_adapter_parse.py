@@ -1,8 +1,11 @@
 from types import SimpleNamespace
+from email.message import EmailMessage
 
 import pytest
+from llama_index.core.node_parser import SentenceSplitter
 
-from backend.qdrant_adapter import MetaDB, QdrantLlamaIndexAdapter
+from backend.qdrant_adapter import MetaDB, QdrantLlamaIndexAdapter, _embedding_cache_fingerprint
+from backend.document_router import route_document
 
 
 class EmptyPendingDB:
@@ -128,7 +131,12 @@ def test_sync_parse_reuses_existing_vector_by_content_hash(tmp_path, monkeypatch
             self.url = url
 
         def scroll(self, **kwargs):
-            return [SimpleNamespace(payload={"text": text}, vector=vector)], None
+            return [
+                SimpleNamespace(
+                    payload={"text": text, "embedding_fingerprint": _embedding_cache_fingerprint()},
+                    vector=vector,
+                )
+            ], None
 
         def upsert(self, collection_name, points):
             upserts.extend(points)
@@ -142,6 +150,66 @@ def test_sync_parse_reuses_existing_vector_by_content_hash(tmp_path, monkeypatch
     assert result["embedded_chunks"] == 0
     assert embedded["calls"] == 0
     assert upserts[0].vector == vector
+    assert upserts[0].payload["embedding_fingerprint"] == _embedding_cache_fingerprint()
+
+
+def test_sync_parse_ignores_cached_vector_with_different_embedding_fingerprint(tmp_path, monkeypatch):
+    text = "content with enough text for a chunk"
+    dataset_dir = tmp_path / "ds-1"
+    dataset_dir.mkdir()
+    (dataset_dir / "doc.md").write_text(text)
+    db = LegacyNamePendingDB()
+    old_vector = [0.25] * 1024
+    new_vector = [0.5] * 1024
+    embedded = {"calls": 0}
+    upserts = []
+
+    def encode_sync(texts):
+        embedded["calls"] += 1
+        return [new_vector for _ in texts]
+
+    adapter = SimpleNamespace(
+        content_dir=tmp_path,
+        db=db,
+        qdrant_url="http://127.0.0.1:6333",
+        collection_name="les_rag",
+        embed=SimpleNamespace(encode_sync=encode_sync),
+        _sync_delete_file_points=lambda *args: None,
+        _sync_count_file_points=lambda *args: 1,
+        _sync_markdown_nodes=lambda *args: [
+            {"text": text, "doc_id": "doc-1", "payload": {}}
+        ],
+    )
+    adapter._file_filter = QdrantLlamaIndexAdapter._file_filter.__get__(adapter)
+    adapter._extract_point_vector = QdrantLlamaIndexAdapter._extract_point_vector
+    adapter._sync_existing_file_vectors_by_hash = (
+        QdrantLlamaIndexAdapter._sync_existing_file_vectors_by_hash.__get__(adapter)
+    )
+
+    class FakeQdrant:
+        def __init__(self, url):
+            self.url = url
+
+        def scroll(self, **kwargs):
+            return [
+                SimpleNamespace(
+                    payload={"text": text, "embedding_fingerprint": "old-fingerprint"},
+                    vector=old_vector,
+                )
+            ], None
+
+        def upsert(self, collection_name, points):
+            upserts.extend(points)
+
+    monkeypatch.setattr("backend.qdrant_adapter.qdrant_client.QdrantClient", FakeQdrant)
+
+    result = QdrantLlamaIndexAdapter._sync_parse(adapter, "ds-1", limit=1)
+
+    assert result["files_parsed"] == 1
+    assert result["embedding_cache_hits"] == 0
+    assert result["embedded_chunks"] == 1
+    assert embedded["calls"] == 1
+    assert upserts[0].vector == new_vector
 
 
 def test_pending_files_are_ordered_by_size(tmp_path):
@@ -211,3 +279,43 @@ def test_adapter_adds_parent_and_neighbor_context_metadata():
     assert first["context_after"] == "Второй фрагмент с продолжением."
     assert second["context_before"].startswith("## Глава 1")
     assert first["context_kind"] == "markdown_window"
+
+
+def test_adapter_builds_mail_profile_nodes_with_attachment_payload(tmp_path, monkeypatch):
+    monkeypatch.setenv("MAIL_ATTACHMENT_OCR_ENABLED", "false")
+    data_dir = tmp_path / "ds-1"
+    data_dir.mkdir()
+    msg = EmailMessage()
+    msg["Subject"] = "Важное письмо с картинкой"
+    msg["From"] = "Alice <alice@example.com>"
+    msg["To"] = "Bob <bob@example.com>"
+    msg["Message-ID"] = "<mail-image@example.com>"
+    msg["Importance"] = "high"
+    msg.set_content("На картинке замечание по узлу.")
+    msg.add_attachment(b"image-bytes", maintype="image", subtype="png", filename="remark.png")
+    path = data_dir / "letter.eml"
+    path.write_bytes(msg.as_bytes())
+
+    adapter = QdrantLlamaIndexAdapter.__new__(QdrantLlamaIndexAdapter)
+    route = route_document(path)
+    nodes = adapter._sync_mail_nodes(
+        path,
+        data_dir,
+        "letter.eml",
+        "ds-1",
+        SentenceSplitter(chunk_size=1400, chunk_overlap=100),
+        route,
+    )
+
+    payloads = [node["payload"] for node in nodes]
+    assert {payload["type"] for payload in payloads} == {"mail_message", "mail_attachment"}
+    message_payload = next(payload for payload in payloads if payload["type"] == "mail_message")
+    attachment_payload = next(payload for payload in payloads if payload["type"] == "mail_attachment")
+    assert message_payload["mail_importance"] == "high"
+    assert message_payload["mail_from"] == "Alice <alice@example.com>"
+    assert message_payload["mail_to"] == ["Bob <bob@example.com>"]
+    assert message_payload["mail_thread_key"].startswith("msg_")
+    assert attachment_payload["mail_attachment_filename"] == "remark.png"
+    assert attachment_payload["mail_attachment_needs_ocr"] is True
+    assert attachment_payload["mail_attachment_needs_vlm"] is True
+    assert any("требует OCR/VLM" in node["text"] for node in nodes)

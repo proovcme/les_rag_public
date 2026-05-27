@@ -18,6 +18,7 @@ from sovushka.styles import CUSTOM_CSS, theme_vars_css
 from sovushka.auth import register_login_page, get_auth
 from sovushka.lite_admin import register_lite_admin_routes
 from sovushka.lite_chat import register_lite_chat_routes
+from sovushka.m5_display import register_m5_display_routes
 from sovushka.trust import trusted_role_for_request
 
 
@@ -28,6 +29,7 @@ app.add_static_files("/static", "static")
 register_login_page()
 register_lite_chat_routes()
 register_lite_admin_routes()
+register_m5_display_routes()
 
 
 @app.get("/healthz")

@@ -182,7 +182,7 @@ async def test_dispatcher_start_endpoint_returns_payload(runtime_state, monkeypa
     monkeypatch.setattr(runtime, "dispatcher_for_state", lambda state: FakeDispatcher())
 
     response = await runtime.runtime_dispatcher_reindex_start(
-        runtime.DispatcherReindexRequest(datasets=["NTD_FIRE_Index"]),
+        runtime.DispatcherReindexRequest(datasets=["NTD_FIRE_Index"], unload_between_docs=False),
         _admin=object(),
     )
 

@@ -16,7 +16,7 @@ import psutil
 from fastapi import APIRouter, Depends
 
 from backend.rag_config import rag_collection_name, rag_meta_db_path, rag_runtime_config
-from proxy.security import require_internal
+from proxy.security import require_internal_or_admin
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ def get_diagnostics_state() -> DiagnosticsRouterState:
 
 
 @router.get("/diag")
-async def run_diagnostics(_internal=Depends(require_internal)):
+async def run_diagnostics(_internal=Depends(require_internal_or_admin)):
     """Read-only diagnostics for Sovushka."""
     state = get_diagnostics_state()
     results = []

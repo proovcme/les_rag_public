@@ -16,6 +16,7 @@ from email.utils import getaddresses, parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
+from .mail_emlx import read_email_message_bytes
 from .mail_ingest import MAIL_SUFFIXES
 
 
@@ -205,8 +206,7 @@ def parse_mail_message(path: Path, source_dir: Path) -> MailMessageRecord:
 
 
 def _parse_eml(path: Path, source_dir: Path) -> MailMessageRecord:
-    with path.open("rb") as handle:
-        msg = BytesParser(policy=policy.default).parse(handle)
+    msg = BytesParser(policy=policy.default).parsebytes(read_email_message_bytes(path))
     subject = str(msg.get("Subject", "") or "")
     sender_values = _format_addresses(str(msg.get("From", "") or ""))
     sender = sender_values[0] if sender_values else str(msg.get("From", "") or "")

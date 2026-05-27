@@ -14,7 +14,7 @@ from typing import Any
 
 TABLE_SUFFIXES = {".xlsx", ".xls", ".csv"}
 PDF_SUFFIXES = {".pdf"}
-EMAIL_SUFFIXES = {".eml", ".msg"}
+EMAIL_SUFFIXES = {".eml", ".emlx", ".msg"}
 
 
 @dataclass
@@ -197,7 +197,10 @@ def _probe_docx(path: Path, size_bytes: int) -> DocumentProbe:
             ]
             samples = []
             for name in xml_names:
-                root = ElementTree.fromstring(docx.read(name))
+                raw_xml = docx.read(name)
+                if name == "word/document.xml":
+                    probe.table_count_hint = len(re.findall(rb"<w:tbl(?:\s|>)", raw_xml))
+                root = ElementTree.fromstring(raw_xml)
                 for node in root.iter():
                     if node.tag.endswith("}t") and node.text:
                         samples.append(node.text)
@@ -207,7 +210,7 @@ def _probe_docx(path: Path, size_bytes: int) -> DocumentProbe:
                     break
             probe.text_sample = " ".join(samples)[:6000]
             probe.has_text_layer = bool(probe.text_sample.strip())
-            probe.has_tables = _text_has_table_signals(probe.text_sample)
+            probe.has_tables = probe.table_count_hint > 0 or _text_has_table_signals(probe.text_sample)
     except Exception as e:
         probe.signals["probe_error"] = str(e)
         return _probe_text_like(path, size_bytes)
@@ -234,6 +237,8 @@ def _classify_doc_type(probe: DocumentProbe) -> str:
     normative_name_prefixes = ("гост", "сп ", "снип", "санпин", "постановление", "приказ")
     if name.startswith(normative_name_prefixes):
         return "NORMATIVE"
+    if probe.suffix not in TABLE_SUFFIXES and _has_strong_normative_signal(text):
+        return "NORMATIVE"
     has_price_amount = any(token in text for token in ("цена", "сумма", "стоимость", "расценка"))
     has_position_qty = (
         any(token in text for token in ("позиция", "поз.", "поз,", "поз "))
@@ -258,6 +263,12 @@ def _classify_doc_type(probe: DocumentProbe) -> str:
     if probe.suffix in TABLE_SUFFIXES:
         return "TABLE"
     return "DOCUMENT"
+
+
+def _has_strong_normative_signal(text: str) -> bool:
+    if any(token in text for token in ("национальный стандарт", "межгосударственный стандарт", "свод правил")):
+        return True
+    return bool(re.search(r"\b(гост|гост\s*р|сп|снип|санпин)\s*(?:iec|iso|р)?\s*\d", text))
 
 
 def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
@@ -662,6 +673,8 @@ def _classify_content_type(probe: DocumentProbe) -> str:
     if probe.suffix in PDF_SUFFIXES and _looks_like_book(probe):
         return "mixed"
     if probe.suffix in PDF_SUFFIXES and probe.has_tables:
+        return "mixed"
+    if probe.suffix == ".docx" and probe.has_tables:
         return "mixed"
     return "text"
 

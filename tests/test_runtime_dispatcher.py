@@ -227,6 +227,37 @@ def test_dispatcher_default_reindex_post_swap_gate_is_stricter(tmp_path):
     post_swap = cmd[cmd.index("--post-max-swap-pct") + 1]
     assert result["status"] == "started"
     assert post_swap == "80.0"
+    assert "--unload-between-docs" in cmd
+
+
+def test_dispatcher_can_keep_embedder_warm_between_docs(tmp_path):
+    calls = []
+
+    def fake_popen(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return SimpleNamespace(pid=456)
+
+    dispatcher = _dispatcher(tmp_path, popen=fake_popen)
+
+    result = dispatcher.start_reindex(unload_between_docs=False)
+
+    assert result["status"] == "started"
+    assert "--no-unload-between-docs" in calls[0][0]
+
+
+def test_dispatcher_can_reset_reindex_state(tmp_path):
+    calls = []
+
+    def fake_popen(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return SimpleNamespace(pid=456)
+
+    dispatcher = _dispatcher(tmp_path, popen=fake_popen)
+
+    result = dispatcher.start_reindex(reset_state=True)
+
+    assert result["status"] == "started"
+    assert "--reset-state" in calls[0][0]
 
 
 def test_dispatcher_route_change_start_defaults_to_dry_run(tmp_path):

@@ -4,7 +4,7 @@
 
 **Публичное позиционирование:** локальная RAG-машина для инженерных, нормативных и корпоративных архивов на Apple Silicon. Фокус: приватность, воспроизводимость, наблюдаемость, безопасная индексация и ответы с проверяемыми источниками.
 
-**Актуальный статус: 26.05.2026.** Референсный контур работает на Mac Mini M4 / 24 GB в no-Docker runtime: Qdrant local binary, MLX Host, FastAPI proxy и Sovushka Lite chat/admin запускаются через launchd; rich NiceGUI UI сохранён как fallback. Активный embedding-профиль — `Qwen/Qwen3-Embedding-0.6B` в коллекции `les_rag_qwen3_06b`; legacy BGE-M3 сохранён отдельно. Текущий публичный baseline: `801/802` файлов проиндексировано, `264307` чанков, Qdrant points совпадают с SQLite; один тяжёлый book-PDF оставлен за ручным admission guard.
+**Актуальный статус: 27.05.2026.** Референсный контур работает на Mac Mini M4 / 24 GB в no-Docker runtime: Qdrant local binary, MLX Host, FastAPI proxy и Sovushka Lite chat/admin запускаются через launchd; rich NiceGUI UI сохранён как fallback. Активный embedding-профиль — `Qwen/Qwen3-Embedding-0.6B` в коллекции `les_rag_qwen3_06b`; embedding и validator по умолчанию идут через Core ML worker-процессы. Текущий публичный baseline: `1003/1003` файлов проиндексировано, `0` pending, `0` errors, `247890` чанков, Qdrant points совпадают с SQLite. Внешний контур `https://les.ovc.me` поднят через П.А.У.К. reverse tunnel и В.О.Л.К. API keys.
 
 ---
 
@@ -44,8 +44,8 @@ flowchart LR
     RAG --> Meta[(SQLite<br/>datasets/jobs/cache)]
     Proxy --> MLX[MLX Host :8080<br/>chat + validation + embeddings]
     MLX --> Main[Qwen chat model<br/>lazy lease]
-    MLX --> Val[Qwen validator<br/>sequential]
-    MLX --> Embed[Qwen3 Embedding<br/>0.6B]
+    MLX --> Val[Core ML NLI validator<br/>worker]
+    MLX --> Embed[Core ML Qwen3 Embedding<br/>0.6B worker]
 
     Public[Optional public HTTPS<br/>Caddy VPS relay] -. / .-> Lite
     Public -. /les .-> AdminLite
@@ -58,13 +58,13 @@ flowchart TD
     C -->|широкий запрос| Ask[Уточняющие вопросы<br/>без LLM generation]
     C -->|достаточно узкий| Ret[Dense retrieval<br/>Qwen3 embeddings + Qdrant]
     Ret --> Rerank{Реранкер включён?}
-    Rerank -->|да| RR[Qwen validator model<br/>cross-encoder scoring]
+    Rerank -->|да| RR[measured reranker<br/>cross-encoder scoring]
     Rerank -->|нет| Ctx[Top chunks]
     RR --> Ctx
     Ctx --> Table{Table query?}
     Table -->|Parquet найден| Exact[Детерминированный табличный ответ]
     Table -->|нет| Gen[MLX chat model]
-    Exact --> Judge[Т.О.С.К.А. validation]
+    Exact --> Answer
     Gen --> Judge
     Judge -->|VERIFIED| Answer[Ответ + источники]
     Judge -->|NO_DATA/HALLUCINATION| Safe[Safe fallback<br/>не выдавать как факт]
@@ -76,7 +76,7 @@ flowchart TD
 
 | Блок | Возможности |
 |---|---|
-| RAG-чат | Ответы на русском языке с источниками, dataset filter, clarification gate, history drawer |
+| RAG-чат | Ответы на русском языке с источниками, dataset filter, clarification gate, history drawer, user feedback |
 | SafeRAG | Post-generation validator, статусы `VERIFIED / NO_DATA / HALLUCINATION`, safe fallback |
 | Индексация | Smart plan/sync/upload, Folder Watcher status/scan, deterministic routing, batch scheduler, guarded micro-indexing |
 | Документы | PDF, DOCX, DOC, XLSX, XLS, CSV, EML, MSG, JSON, JSONL, MD, TXT |
@@ -96,6 +96,7 @@ flowchart TD
 | Подмена trusted headers | `TRUSTED_PROXY_NETWORKS` ограничивает, от кого принимаются forwarded/trusted headers |
 | Path traversal и удаление чужих файлов | Storage helpers проверяют dataset paths и границы storage root |
 | Неподтверждённые ответы | SafeRAG не отдаёт validator timeout/error как нормальный факт |
+| Ошибки маршрутизации и мусор в датасетах | `chat_history` пишет успешные ответы, dataset trace и user feedback; подтверждения превращаются в эвристический learning trace |
 | Отравление кэша | Semantic cache сохраняет только `VERIFIED` ответы и инвалидируется по dataset scope |
 | Агрессивное завершение процессов | Memory preflight только предлагает кандидатов; чужие процессы получают SIGTERM только после явного выбора оператора |
 
@@ -110,10 +111,10 @@ flowchart TD
 | Memory states | `GREEN/YELLOW/RED/CRITICAL` централизуют admission для chat/index/warmup |
 | Model leases | Модели грузятся лениво; validator и embedder не должны конфликтовать с chat/index без admission |
 | Heavy PDF guard | Тяжёлые book-PDF не идут в auto-index loop; нужен ручной `INDEX_HEAVY_PDF` или streaming pipeline |
-| Lightweight chat/admin shell | `/` и `/les` отдают статические Lite-страницы без NiceGUI client state; `/classic` и `/les/classic` сохраняют rich fallback |
+| Lightweight chat/admin shell | `/`, `/les` и `/m5` отдают статические Lite-страницы без NiceGUI client state; `/classic` и `/les/classic` сохраняют rich fallback |
 | Lightweight UI health | Sovushka отвечает `/healthz`; runtime status не рендерит тяжёлую NiceGUI страницу |
 | Durable jobs | `/api/jobs` объединяет SQLite job history и live jobs |
-| Regression suite | На 26.05.2026: `276 passed`, включая auth, storage, runtime admission, SafeRAG, Lite UI и indexer guards |
+| Regression suite | На 27.05.2026: `339 passed`, включая auth, storage, runtime admission, SafeRAG, Lite UI, mail profile/query, Core ML guards и indexer guards |
 
 Подробная модель памяти описана в [RUNTIME_MEMORY_PROFILES.md](RUNTIME_MEMORY_PROFILES.md).
 
@@ -126,15 +127,15 @@ flowchart TD
 | Host | macOS + Apple Silicon, launchd, `uv`, Python 3.12 |
 | LLM runtime | MLX / `mlx-lm`, OpenAI-compatible local host on `:8080` |
 | Chat model | Safe 24 GB default: `mlx-community/Qwen3.5-4B-OptiQ-4bit`; quality profile: `mlx-community/Qwen3-14B-4bit` |
-| Validator/reranker | `mlx-community/Qwen3-4B-Instruct-2507-4bit` или compatible `Qwen3-4B` profile |
-| Embeddings | Active: `Qwen/Qwen3-Embedding-0.6B`; legacy baseline: `BAAI/bge-m3` |
+| Validator/reranker | Active validator: Core ML `MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli` (`validator_minilm_l6_b1_s512`, `cpu_only`); MLX/rules backends kept for compare and deterministic smoke |
+| Embeddings | Active: Core ML `Qwen/Qwen3-Embedding-0.6B` (`qwen3_embedding_06b_b1_s512_static`, `cpu_and_gpu`); legacy BGE-M3 only for old-baseline recovery |
 | Vector DB | Qdrant local binary + per-profile collections |
 | Backend | FastAPI, httpx, SQLite, LlamaIndex-compatible backend interfaces |
 | Frontend | Sovushka Lite static chat/admin + optional NiceGUI classic / С.О.В.У.Ш.К.А. |
 | Storage | Local filesystem + SQLite metadata, Parquet artifacts for tables |
 | Public relay | Optional Caddy + Let's Encrypt + ZeroTier/private network |
 
-Model references: [Qwen3 Embedding 0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B), [Qwen3.5-4B OptiQ MLX](https://huggingface.co/mlx-community/Qwen3.5-4B-OptiQ-4bit), [Qwen3-4B Instruct 2507 MLX](https://huggingface.co/mlx-community/Qwen3-4B-Instruct-2507-4bit), [Qwen MLX docs](https://qwen.readthedocs.io/en/latest/run_locally/mlx-lm.html).
+Model references: [Qwen3 Embedding 0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B), [Qwen3.5-4B OptiQ MLX](https://huggingface.co/mlx-community/Qwen3.5-4B-OptiQ-4bit), [mDeBERTa/MiniLM multilingual MNLI/XNLI family](https://huggingface.co/MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli), [Qwen MLX docs](https://qwen.readthedocs.io/en/latest/run_locally/mlx-lm.html).
 
 ---
 
@@ -164,12 +165,12 @@ flowchart LR
 
 | Машина | Chat model | Validator / reranker | Embeddings | Комментарий |
 |---|---|---|---|---|
-| Apple Silicon 16 GB | `mlx-community/Qwen3.5-4B-OptiQ-4bit` | выключить по умолчанию или запускать строго последовательно | `Qwen/Qwen3-Embedding-0.6B` | Лёгкий RAG, небольшие контексты, без параллельной индексации |
-| Apple Silicon 24 GB | `mlx-community/Qwen3.5-4B-OptiQ-4bit` | `mlx-community/Qwen3-4B-Instruct-2507-4bit` | `Qwen/Qwen3-Embedding-0.6B` | Текущий безопасный default: UI + chat + retrieval с запасом памяти |
-| Apple Silicon 24 GB, quality run | `mlx-community/Qwen3-14B-4bit` | только sequential validation | `Qwen/Qwen3-Embedding-0.6B` | Лучше для сложной аналитики, но не совмещать с heavy indexing |
-| Apple Silicon 32-64 GB | `Qwen3-14B` и более крупные MLX/GGUF профили после golden-set проверки | Qwen3 reranker/validator 4B или 8B | Qwen3 Embedding 0.6B/4B | Имеет смысл, если вырос corpus или нужен длинный контекст |
+| Apple Silicon 16 GB | `mlx-community/Qwen3.5-4B-OptiQ-4bit` | `rules` или Core ML MiniLM при строгом admission | Core ML `Qwen/Qwen3-Embedding-0.6B` | Лёгкий RAG, небольшие контексты, без параллельной индексации |
+| Apple Silicon 24 GB | `mlx-community/Qwen3.5-4B-OptiQ-4bit` | Core ML MiniLM NLI (`cpu_only`) | Core ML `Qwen/Qwen3-Embedding-0.6B` (`cpu_and_gpu`) | Текущий безопасный default: UI + chat + retrieval с запасом памяти |
+| Apple Silicon 24 GB, quality run | `mlx-community/Qwen3-14B-4bit` | Core ML MiniLM или sequential MLX compare | `Qwen/Qwen3-Embedding-0.6B` | Лучше для сложной аналитики, но не совмещать с heavy indexing |
+| Apple Silicon 32-64 GB | `Qwen3-14B` и более крупные MLX/GGUF профили после golden-set проверки | measured reranker/validator 4B или 8B | Qwen3 Embedding 0.6B/4B | Имеет смысл, если вырос corpus или нужен длинный контекст |
 
-Правило эксплуатации: на 24 GB не держать одновременно chat model, validator, embedder и тяжёлый PDF parser. Сначала профиль, потом admission, затем job.
+Правило эксплуатации: на 24 GB не держать одновременно chat model и тяжёлый PDF parser. Validator/embedder работают через Core ML worker-процессы, но всё равно проходят admission, health counters и fallback/circuit checks.
 
 ---
 
@@ -217,7 +218,7 @@ cp env.example .env
 ./start_les.command
 ```
 
-Открой `http://localhost:8051` для Lite-чата, `http://localhost:8051/les` для Lite Admin, `http://localhost:8051/classic` для прежнего NiceGUI-чата или `http://localhost:8051/les/classic` для rich-админки.
+Открой `http://localhost:8051` для Lite-чата, `http://localhost:8051/les` для Lite Admin, `http://localhost:8051/m5` для 1280×720 Wokyis M5-дисплея, `http://localhost:8051/classic` для прежнего NiceGUI-чата или `http://localhost:8051/les/classic` для rich-админки.
 
 На рабочем столе есть аварийный ярлык `Запуск_ЛЕС.command`: он вызывает `start_les.command`,
 поднимает launchd-сервисы и открывает С.О.В.У.Ш.К.А. Управлять контуром можно и из админки:
@@ -281,7 +282,7 @@ Clarification gate
       │
       ▼
 Table query gate
-      ├── найден parquet_path + табличный вопрос → точный VERIFIED ответ из Parquet
+      ├── найден parquet_path в retrieval/context-window + табличный вопрос → точный VERIFIED ответ из Parquet
       └── нет табличного ответа → LLM
       │
       ▼
@@ -343,6 +344,7 @@ Reverse proxy может помечать запросы из выбранног
 Публичные маршруты UI:
 - `https://<your-domain>/` — Lite-чатовый контур, не монтирует NiceGUI client state.
 - `https://<your-domain>/les` — Lite Admin: индекс, память, jobs, runtime controls без NiceGUI client state.
+- `https://<your-domain>/m5` — фиксированный 1280×720 retro-Apple status display для Wokyis M5 / малого второго экрана.
 - `https://<your-domain>/classic` — прежний rich NiceGUI chat для локальной работы.
 - `https://<your-domain>/les/classic` — rich NiceGUI admin fallback, доступен только admin/trusted.
 
@@ -395,7 +397,7 @@ DOC_ROUTER_SAMPLE_PAGES=3
 ### Новое в релизе 22.05.2026
 
 - Чат Совушки отделён от админки: меньше фоновых UI-зависимостей на основном рабочем экране.
-- `reconnect_timeout=180` и `chat_pending` помогают переживать долгие RAG-запросы и реконнекты.
+- `reconnect_timeout=180`, длинный `/lite-api` bridge timeout и `chat_pending` помогают переживать долгие RAG-запросы, mail-import/index и реконнекты.
 - Premium chat layout: нижний composer, левая drawer-история, правая панель артефактов.
 - `restart_sovushka.command` запускает UI через `.venv/bin/python3`, чтобы не сваливаться в системный Python 3.9.
 - Добавлены semantic cache, document router, Parquet/XLSX/CSV pipeline и тесты для них.
@@ -406,7 +408,7 @@ DOC_ROUTER_SAMPLE_PAGES=3
 - **Smart plan/sync:** `/api/rag/smart-plan` и `/api/rag/sync-smart` строят deterministic route по имени, пути, типу, размеру и probes без LLM.
 - **Smart upload:** `/api/rag/upload-smart` сохраняет файл потоково, классифицирует через Document Router, сам выбирает/создаёт `*_Index` и запускает guarded parse `limit=1`.
 - **Clarification gate:** `/api/chat` возвращает `NEEDS_CLARIFICATION` и уточняющие вопросы до retrieval/LLM, если запрос слишком широкий.
-- **Table query MVP:** `proxy/services/table_query_service.py` читает `.parquet` по `parquet_path` из payload и считает суммы/количества без генерации LLM.
+- **Table query MVP:** `proxy/services/table_query_service.py` читает `.parquet` по `parquet_path` из retrieval/context-window payload и считает суммы/количества/строки без генерации LLM.
 - **No-Docker runtime:** Qdrant local binary, `les-proxy`, MLX Host и UI работают на host LaunchAgents; Docker Desktop/OrbStack не требуются.
 - **Micro-indexing:** safe loop `tools/rag_safe_parse_loop.py` индексирует по одному файлу, проверяет RAM/swap и `points_match_sqlite_chunks`.
 - **Memory guard fix:** `swap_pct=0.0` больше не превращается в `100.0` в safe-loop и server-side parse admission.
@@ -426,17 +428,39 @@ DOC_ROUTER_SAMPLE_PAGES=3
 - **Heavy PDF guard:** автоиндексатор не запускает parse job, если pending очередь состоит только из тяжёлых book-PDF; runtime возвращается в `CHAT`.
 - **Sovushka Lite:** `/` теперь статический чатовый shell без NiceGUI client state; прежний rich chat доступен на `/classic`.
 - **Sovushka Lite Admin:** `/les` теперь статическая memory-first админка; прежняя rich NiceGUI admin доступна на `/les/classic`.
+- **Sovushka M5 Display:** `/m5` и `/display/m5` дают 1280×720 статусный экран под Wokyis M5 с ретро-Mac визуалом, mail/RAG/memory telemetry и тем же `/lite-api` bridge.
 - **Runtime Dispatcher v0:** `/api/runtime/dispatcher/status` объединяет память, launchd-сервисы, guarded reindex и wait-only memory recommendations; chat admission учитывает активный reindex даже после рестарта proxy. One-click reindex может стартовать до `swap_pct < 85`, но post-document gate по умолчанию ждёт снижения до `<= 80`, чтобы длинные кампании не накачивали swap без пауз.
 - **Е.Ж.И.К. IMAP v1:** `/api/mail/import-imap` забирает новые письма через IMAP, сохраняет raw `.eml` в `RAG_Content/MAIL/IMAP`, регистрирует их в `MAIL_Index` и уважает dispatcher/reindex guard.
+- **Е.Ж.И.К. IMAP job/progress:** Lite Admin запускает IMAP import как durable job, показывает `job_id`, message-level progress по UID/fetched count и ограничивает indexing через `parse_batches`.
 - **Е.Ж.И.К. threads v1:** `/api/mail/messages`, `/api/mail/threads` и `/api/mail/threads/{thread_key}` дают отдельную почтовую выдачу: кто кому писал, о чём письмо, участники и цепочки по `Message-ID / In-Reply-To / References` с fallback по теме.
 - **Folder Watcher v0:** `/api/rag/watch/status` сравнивает smart-plan с SQLite metadata, `/api/rag/watch/scan` регистрирует только `new/changed` файлы без parse, а `/api/rag/watch/reindex-plan` строит dry-run план для `route_changed`.
 - **Route-change guarded runner:** `tools/reindex_route_changes_guarded.py` и `/api/runtime/dispatcher/route-changes/*` готовят безопасный selective reindex для `route_changed`; apply блокируется, пока идёт стандартный guarded reindex.
 - **Sovushka `/healthz`:** runtime health check больше не рендерит страницу `/les`, чтобы не создавать тяжёлый NiceGUI client state.
 - **Launchd hardening:** `start_service` делает `launchctl enable` перед bootstrap/kickstart; disabled labels не ломают восстановление контура.
 
+### Состояние после сессии 27.05.2026
+
+- **Почта:** живой IMAP job `743b1517-841` завершился `completed`; подтянуто 50 новых писем. В `RAG_Content/MAIL/IMAP` и storage лежит по `200` `.eml`; follow-up Core ML parse добил остаток. `MAIL_Index` теперь `200 indexed`, `0 pending`, `475 chunks`; Qdrant points match SQLite chunks.
+- **BOOKS_Index:** последний тяжёлый pending PDF (`Рук-во по устройству ЭУ 2019.pdf`) проиндексирован guarded batch run: `1 indexed`, `0 pending`, `0 errors`, `2845 chunks`.
+- **Система:** active jobs `0`; Qdrant, MLX Host, proxy, Sovushka Lite UI и П.А.У.К. external tunnel running. MLX Host слушает только `127.0.0.1:8080`; финальный proxy health: `1003 indexed`, `0 pending`, `0 errors`, `247890 chunks`, Qdrant match `true`.
+- **Core ML embeddings:** локальный `.env` переведён на guarded default `EMBED_BACKEND=coreml`, `COREML_EMBED_COMPUTE_UNITS=cpu_and_gpu`, `COREML_EMBED_ISOLATE_PROCESS=true`, `COREML_EMBED_MODEL=artifacts/coreml/qwen3_embedding_06b_b1_s512_static.mlpackage`. MLX Host отдаёт fallback/status counters, проверяет vector norm (`COREML_EMBED_MIN_NORM/MAX_NORM`) и открывает short circuit (`COREML_EMBED_MAX_FAILURES`, `COREML_EMBED_FAILURE_COOLDOWN_SEC`) при повторных native/quality failures. `cpu_only`/ANE canaries для старых пакетов оставлены как диагностическая история; текущий production path — `cpu_and_gpu` worker, fallback disabled.
+- **Validator backend:** MLX Host поддерживает `VALIDATOR_BACKEND=mlx|coreml|rules`; текущий локальный `.env` и launchd включены на `VALIDATOR_BACKEND=coreml` + `COREML_VALIDATOR_ISOLATE_PROCESS=true` + `COREML_VALIDATOR_FALLBACK=false`. Core ML candidate: `MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli` → `artifacts/coreml/validator_minilm_l6_b1_s512.mlpackage`, `attention_mask_rank=4`, `context_mode=windows`, `pair_mode=answer`, labels `entailment,neutral,contradiction`, `cpu_only`. `/api/health` раскрывает `validator_backend`, `active_model_id`, `active_model_version`, `coreml_model_exists`, labels, confidence threshold, worker counters/circuit и fallback state.
+- **Validator golden:** старый 8-case synthetic set признан недостаточным. Новый frozen real-window seed/materialized set: `golden/validator_real_window_seed.json` → `golden/validator_real_window_set.json`, `33` кейса, баланс `11 VERIFIED / 11 NO_DATA / 11 HALLUCINATION`, contexts из настоящих `validation_context_windows`, audit report `artifacts/validator/validator_real_window_rules_audit.json`.
+- **Validator measurements:** на `golden/validator_real_window_set.json` single-pass Core ML был слабым (`0.3333`), но windowed Core ML policy дал accuracy `0.5152`, mean latency `~0.04-0.05s`; MLX NLI baseline на том же set дал сопоставимую accuracy при заметно большей latency; rules audit: accuracy `0.3030`. Live `/api/validate` smoke на Core ML прошёл, fallback inactive.
+- **Learning trace:** `/api/chat` сохраняет `history_id` для успешных и неуспешных ответов вместе с route/retrieval/dataset metadata. Пользователь может подтвердить ответ или пометить wrong-dataset/bad-source через `/api/chat/history/{id}/feedback`; `/api/chat/learning` отдаёт подтверждённые и успешные кейсы для будущих эвристик routing/clean-up.
+- **K.O.T. + Е.Ж.И.К.:** К.О.Т. расширен инженерными сокращениями (`ОВ`, `ВК`, `ЭОМ`, `КЖ`, `АУПТ`, `СКС`, etc.) и отдельным `MAIL` route. Почтовые вопросы вида “найди письма/цепочку/кто кому” идут в deterministic Е.Ж.И.К. answer path из сохранённых `.eml/.msg`, без vector retrieval и LLM, если вопрос явно почтовый.
+- **Проверки:** общий `uv run pytest -q` зелёный (`339 passed`); внешний `tools/runtime_smoke.py` через `https://les.ovc.me` прошёл `12/12`; прямой публичный table query “посчитай общую стоимость по всем строкам сметы” вернул `VERIFIED`, `deterministic_table`, `42 580`; `uv lock --check`, `git diff --check` OK.
+
 ### Следующая сессия
 
-Начать с независимой оценки архитектуры: пройти runtime/resource-governor/indexing/RAG-quality как внешний reviewer, не продолжая кодинг до формулировки рисков, границ и приоритетов.
+Начать не с нового runtime, а с живой эксплуатации: давать вопросы через `les.ovc.me`, сохранять подтверждения пользователя и расширять golden set реальными удачными/ошибочными ответами. Validator compare уже доступен как контрольный инструмент:
+
+```bash
+uv run python tools/coreml_validator_probe.py compare \
+  --cases golden/validator_real_window_set.json \
+  --backends rules,coreml,mlx \
+  --output artifacts/validator/coreml_validator_compare_minilm_windows_coreml_cpu.json
+```
 
 ---
 
@@ -532,14 +556,31 @@ RAG_EMBED_BATCH=16             # чанков за один HTTP-запрос к
 RAG_CHUNK_SIZE=900             # больше chunk = меньше embedding-вызовов
 RAG_CHUNK_OVERLAP=80
 RAG_PARSE_POST_MAX_SWAP_PCT=60 # auto-stop после batch
+MLX_HOST_BIND=127.0.0.1        # direct MLX host is local-only by default
+MLX_RAM_WARN_FREE_GB=8         # early warning before swap pressure
+MLX_RAM_KILL_FREE_GB=6         # unload idle MLX models under critical RAM
+MLX_VALIDATE_CONTEXT_CHARS=8000
+MLX_EMBED_TTL_SEC=300
 MAIL_IMAP_HOST=imap.example.com
 MAIL_IMAP_PORT=993
 MAIL_IMAP_SSL=true
 MAIL_IMAP_LOGIN=mail@example.com
 MAIL_IMAP_PASSWORD=change_me_to_app_password
 MAIL_IMAP_FOLDERS=INBOX
+MAIL_IMAP_TIMEOUT_SEC=45
 MAIL_IMAP_CHECKPOINT_DIR=data/mail_imap_checkpoints
 MAIL_IMAP_STORAGE_ROOT=RAG_Content/MAIL/IMAP
+MAIL_APPLE_ROOT=~/Library/Mail
+MAIL_APPLE_STORAGE_ROOT=RAG_Content/MAIL/AppleMail
+MAIL_ATTACHMENT_PDF_SUBPROCESS_ENABLED=true
+MAIL_ATTACHMENT_PDF_TIMEOUT_SEC=30
+MAIL_ATTACHMENT_PDF_MAX_PAGES=20
+MAIL_ATTACHMENT_OCR_ENABLED=true
+MAIL_TESSERACT_BIN=tesseract
+MAIL_OCR_LANG=rus+eng
+MAIL_ATTACHMENT_VLM_ENABLED=false
+MAIL_VLM_URL=
+MAIL_VLM_MODEL=
 ```
 
 IMAP smoke после заполнения `.env`:
@@ -552,6 +593,12 @@ uv run python tools/ezhik_imap_smoke.py --max-messages 5
 импортирует. При настроенном IMAP он проверяет `/api/mail/status`, вызывает
 `POST /api/mail/import-imap` с `parse=false` и подтверждает регистрацию писем в
 `MAIL_Index`.
+
+Локальная почта Apple Mail тоже поддерживается: `/api/mail/import-apple-mail`
+читает `.emlx` из `MAIL_APPLE_ROOT`, конвертирует их в `.eml` внутри
+`RAG_Content/MAIL/AppleMail` и регистрирует в `MAIL_Index`. macOS защищает
+`~/Library/Mail`; если endpoint возвращает permission denied, дайте Full Disk
+Access приложению/терминалу, из которого запущен Л.Е.С.
 
 Отдельная почтовая выдача работает поверх сохранённых `.eml/.msg`, поэтому не
 требует переиндексации:
@@ -566,12 +613,16 @@ curl -s 'http://127.0.0.1:8050/api/mail/messages?participant=ivan@example.com' |
 тема без `Re:/Fwd:`. Lite Chat показывает этот слой отдельной кнопкой
 `Е.Ж.И.К. Почта -> ЦЕПОЧКИ`, не смешивая переписку с обычной RAG-выдачей.
 
-Следующий почтовый слой — отдельный mail-vector profile. Для писем важно
-векторизовать не только тело, но и контекст коммуникации: `from/to/cc`, роли
-участников, направление "кто кому", `thread_key`, дату, тему, вложения,
-признаки важности и OCR/VLM-текст из картинок. Картинка во вложении может быть
-главным содержанием письма, поэтому attachment OCR/VLM должен стать отдельной
-политикой ingestion, а не побочным эффектом обычного email parsing.
+Mail-vector profile v3 индексирует письма не как обычный Markdown-документ, а
+как почтовое evidence: `from/to/cc/bcc`, участники, направление "кто кому",
+`thread_key`, `Message-ID`, дата, тема, importance, вложения и attachment
+evidence попадают в embedding text и Qdrant payload. Для каждого письма
+создаётся `mail_message` node, а для каждого вложения отдельный
+`mail_attachment` node с `mail_attachment_id`, ссылкой на родительское письмо и
+OCR/VLM статусом. Текстовые/PDF/DOCX вложения извлекаются сразу, картинки
+проходят через локальный `tesseract` при наличии; если OCR/VLM недоступен,
+в индекс попадает явный marker `needs_ocr_vlm`, чтобы важное письмо с картинкой
+не считалось полноценно покрытым.
 
 Qwen-native индексирование идёт в отдельную коллекцию, чтобы не смешивать векторы разных embedding-моделей:
 `LES_EMBED_PROFILE=qwen`, `EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B`,
@@ -682,7 +733,7 @@ MIT — используй, форкай, улучшай.
 - [x] Proxy modularization — активные endpoints вынесены в routers/services, `legacy_app.py` оставлен shim
 - [x] Stabilization: runtime smoke для локального/VPS post-deploy контура
 - [x] Stabilization: browser smoke UI admin/user сценариев
-- [ ] RAG quality hardening: hybrid retrieval (dense + exact/sparse), расширение golden set, trace/audit
+- [ ] RAG quality hardening: golden set, validator-context audit, K.O.T. expansion, FTS5/BM25+RRF audit, trace/audit
 - [x] RAG intake hardening: smart-plan, source verification, size guard, excluded dirs
 - [x] Chat clarification gate — broad запросы получают уточняющие вопросы до retrieval/LLM
 - [x] Performance: semantic cache для VERIFIED ответов с dataset-scope invalidation
@@ -692,25 +743,36 @@ MIT — используй, форкай, улучшай.
 - [ ] Folder Watcher v1 — фоновое расписание scans через dispatcher/admission
 - [x] Parquet pipeline для XLSX/XLS/CSV — row-level chunks + `.parquet` artifacts
 - [x] Experimental PDF tables → Parquet — PyMuPDF first, pdfplumber fallback, `needs_ocr` marker
-- [x] Table query MVP — суммы/количества из Parquet по `parquet_path` без LLM
+- [x] DOCX нормативные таблицы → Parquet sidecar — row-level points внутри исходного `NTD_*`/`GKRF`/`BOOKS` датасета с `table_kind=normative`
+- [x] Table query MVP — суммы/количества/строки из Parquet по `parquet_path` без LLM
 - [x] Document Router — быстрый probe/classify/complexity перед выбором ingestion pipeline
 - [ ] XLS/CSV export — выдача табличных результатов как готовых файлов
 - [ ] Field Intake — внешние формы загрузки в карантинный `FIELD_Index`
 - [x] Е.Ж.И.К. v0 — локальный импорт EML/MSG в `MAIL_Index`
 - [x] Е.Ж.И.К. v1 — IMAP коннектор для почты
 - [x] Е.Ж.И.К. v2 — отдельная выдача писем: who-to-whom, snippets, thread chains
-- [ ] Е.Ж.И.К. v3 — mail-vector profile: участники, направление, importance, OCR/VLM вложений
+- [x] Е.Ж.И.К. v3 — mail-vector profile: участники, направление, importance, OCR/VLM вложений
+- [ ] Е.Ж.И.К. stabilization — PDF subprocess и IMAP job/progress внедрены; дальше OCR/VLM image-only вложений, mail golden set и thread-aware retrieval validation
+- [ ] RAG quality analysis — сначала golden set и validator-context audit; затем Qwen query prefix A/B, K.O.T. expansion, FTS5/BM25+RRF audit; HyDE/contextual/4B только как поздние гипотезы
 - [ ] VLM pipeline — анализ PDF-чертежей
 
 ### Backlog ускорения и оптимизации
 
+- **Стабилизация почты:** PDF-вложения через `PyMuPDF/fitz` уже вынесены в отдельный процесс с таймаутом; при ошибке attachment получает `pdf_needs_ocr_vlm`. IMAP import получил background job/progress. Дальше: двухфазный IMAP checkpoint после durable registration, parse-progress внутри job, перевод local import/index на background job, image-only PDF сценарии, OCR/VLM-disabled режим, OCR/VLM картинок и mail golden set.
+- **Golden set first:** 30-50 вопросов с ожидаемыми документами/пунктами, top-k hit, latency и RAM. Это линейка для Qwen/BGE, query prefix, K.O.T., hybrid, HyDE и contextual retrieval.
+- **Validator-context audit:** `validation_context_windows` уже есть; `tools/coreml_validator_probe.py compare --use-rag-context-windows` материализует реальные окна, сравнивает `rules/coreml/mlx`, считает accuracy/latency и threshold sweep для Core ML score.
+- **Qwen query prefix A/B:** проверить query-side instruction prefix без переиндексации. Включать только если golden metrics улучшаются без ухудшения latency/RAM.
+- **K.O.T. expansion:** `config/kot_terms.yaml` существует, но словарь ещё тонкий. Расширить `ОВ`, `ВК`, `ЭОМ`, `КЖ`, `АУПТ`, `СКС`, смешанные написания и покрыть golden/unit tests.
+- **Hybrid retrieval audit:** hybrid уже реализован как SQLite FTS5/BM25 + dense retrieval + RRF. Проверить полноту и свежесть lexical index, вклад BM25 в ссылки на СП/ГОСТ, номера пунктов, таблицы и сокращения; только потом решать про Qdrant-native sparse/FastEmbed.
+- **HyDE/contextual retrieval hypothesis:** HyDE проверять только для коротких семантических вопросов при достаточной памяти; contextual retrieval только на ограниченном нормативном корпусе перед любой полной переиндексацией.
+- **Qwen3-Embedding-4B hypothesis:** на 24 GB это только отдельный quality-run профиль без chat/validator/heavy indexing, не default.
 - **Семантическое кэширование:** базовый слой внедрён для `VERIFIED` ответов. Ключ учитывает semantic similarity и snapshot датасетов (`chunk_count`), чтобы переиндексация инвалидировала старые ответы.
-- **Динамическая выгрузка эмбеддера:** держать `bge-m3` в памяти только во время retrieval/warm path, затем выгружать по агрессивному TTL, освобождая RAM/MPS для основной LLM.
+- **Динамическая выгрузка эмбеддера:** MLX Host уже поддерживает `MLX_EMBED_TTL_SEC` и выгружает idle embedder; следующий шаг — согласовать это с warm-embedder режимом индексатора и runtime UI.
 - **Параллельная валидация:** перейти от post-factum проверки полного ответа к асинхронной проверке чанков по мере streaming generation, чтобы снизить time-to-first-token в UI.
 - **Аппаратный тюнинг MLX:** проверить Flash Attention на длинном контексте и смешанное квантование 14B модели: критичные слои в 8 bit, остальные в 4 bit.
 - **Embed pipeline tuning:** после завершения qwen-индексации отдельно разобрать `embed_sec` как главный bottleneck. Идеи для проработки: увеличить `RAG_EMBED_BATCH` при стабильной RAM/MPS, проверить adaptive chunking для тяжёлых СП/ГОСТ, сравнить скорость/качество Qwen embeddings и BGE-M3 на golden set, ввести режим быстрой первичной индексации и последующей качественной переиндексации.
 - **Swap governor:** dispatcher уже разделяет start gate (`swap_pct < 85`) и post-document gate (`swap_pct <= 80`). Следующий шаг — adaptive cooldown: при `swap_pct > 75` увеличивать паузу между документами, при `swap_pct > 85` ждать без новых parse job и показывать оператору только wait/unload/manual-quit рекомендации.
 - **Adaptive chunking + GUI profiles:** вынести в админку профили чанкинга (`default`, `normative`, `table`, `pdf_ocr`, `email`) с настройками `chunk_size`, `chunk_overlap`, min/max chunk size, склейкой коротких пунктов, запретом разрыва нумерованных пунктов и таблиц. Добавить preview chunking по выбранному файлу и явную кнопку reindex affected documents; изменение настроек должно помечать документы как требующие переиндексации, а не смешивать старые и новые чанки молча.
-- **Табличный контур:** базовый Parquet ingestion внедрён для XLSX/XLS/CSV. PDF tables слой добавлен как экспериментальный `PDF_TABLE_EXTRACTION_ENABLED`: PyMuPDF `find_tables()` first, pdfplumber fallback, сканы помечаются `needs_ocr`. Первый query слой уже читает parquet напрямую для сумм/количеств; следующий шаг — фильтры, группировки, сравнение смет и UI-таблица `table_query.rows`.
+- **Табличный контур:** базовый Parquet ingestion внедрён для XLSX/XLS/CSV. PDF tables слой добавлен как экспериментальный `PDF_TABLE_EXTRACTION_ENABLED`: PyMuPDF `find_tables()` first, pdfplumber fallback, сканы помечаются `needs_ocr`. DOCX-таблицы из СП/ГОСТ включаются отдельно через `DOCX_TABLE_EXTRACTION_ENABLED` и сохраняются как normative sidecar rows без смешивания со сметами. Первый query слой уже читает parquet напрямую для сумм/количеств/строк; следующий шаг — фильтры, группировки, сравнение смет и UI-таблица `table_query.rows`.
 - **Полевой загрузчик:** внешняя форма через П.А.У.К. для загрузки актов, фотоотчётов, предписаний и комментариев в изолированный карантинный датасет `FIELD_Index`, без смешивания с нормативной базой.
 - **Выдача XLS/CSV:** экспорт табличных ответов и AG Grid результатов в цифровой артефакт для смет, ведомостей и рабочей документации.

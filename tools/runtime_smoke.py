@@ -138,7 +138,7 @@ def run_smoke(args: argparse.Namespace) -> list[CheckResult]:
     checks.append(_json_check("proxy health", proxy.request("GET", "/api/health"), [200], ["status", "backend"]))
     checks.append(_json_check("runtime status", proxy.request("GET", "/api/status"), [200], ["proxy", "mode"]))
     checks.append(_json_check("metrics", proxy.request("GET", "/api/metrics"), [200], ["system", "pipeline", "rag"]))
-    checks.append(_json_check("diagnostics", proxy.request("GET", "/api/diag"), [200], ["checks"]))
+    checks.append(_json_check("diagnostics", proxy.request("GET", "/api/diag", api_key=args.admin_key), [200], ["checks"]))
     checks.append(_html_check("ui shell", args.ui_url, args.timeout))
 
     if args.expect_external_auth:
