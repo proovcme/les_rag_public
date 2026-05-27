@@ -24,6 +24,26 @@ def test_routed_lookup_goes_straight_to_retrieval():
     assert decision.questions == []
 
 
+def test_normative_conditions_question_goes_straight_to_retrieval():
+    decision = build_clarification_decision(
+        "В каких случаях допускается не выполнять систему дымоудаления"
+    )
+
+    assert decision.needs_clarification is False
+    assert decision.classification.dataset_filter == "NTD_FIRE"
+    assert decision.classification.intent == "lookup"
+
+
+def test_scoped_smoke_control_question_goes_straight_to_retrieval():
+    decision = build_clarification_decision(
+        "Область: противодымная вентиляция. Для каких помещений и проектных ситуаций допускается не предусматривать противодымную вентиляцию"
+    )
+
+    assert decision.needs_clarification is False
+    assert decision.classification.dataset_filter == "NTD_FIRE"
+    assert decision.classification.intent == "lookup"
+
+
 def test_explicit_filter_allows_broad_review():
     classification = classify_for_clarification(
         "проверь документы на нарушения",

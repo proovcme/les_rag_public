@@ -68,14 +68,23 @@ BROAD_INTENT_TOKENS = (
 LOOKUP_INTENT_TOKENS = (
     "найди",
     "покажи",
+    "дай",
     "какой",
     "какая",
     "какие",
+    "в каких",
+    "для каких",
     "сколько",
     "где написано",
+    "допускается",
+    "допускаются",
+    "допускается ли",
+    "не предусматривать",
+    "не выполнять",
     "требован",
     "норма",
     "список",
+    "перечисли",
 )
 
 COMPARE_INTENT_TOKENS = ("сравни", "отлич", "разниц", "верси")
@@ -132,7 +141,7 @@ def classify_for_clarification(
             reasons.append("broad_review_without_domain")
         if route.dataset_filter is None and len(words) <= 4:
             reasons.append("short_unrouted_query")
-        if kot.ambiguous:
+        if kot.ambiguous and intent not in ("lookup", "compare") and route.dataset_filter is None:
             reasons.append("ambiguous_kot_match")
         if len({filter_name for filter_name, _domain in domains}) > 1 and intent == "broad_review":
             reasons.append("multi_domain_review")

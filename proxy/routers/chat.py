@@ -18,6 +18,7 @@ from pydantic import BaseModel, field_validator
 from backend.rag_config import rag_meta_db_path
 from proxy.security import require_user
 from proxy.services.clarification_service import build_clarification_decision
+from proxy.services.clause_lookup_service import maybe_answer_clause_lookup
 from proxy.services.context_expander_service import expand_context_windows
 from proxy.services.kot_service import analyze_question
 from proxy.services.lexical_index_service import retrieval_fingerprint
@@ -372,6 +373,76 @@ def _table_query_response(
     }
 
 
+def _clause_lookup_response(
+    *,
+    state: ChatRouterState,
+    question: str,
+    clause_result: Any,
+    t_search: float,
+    session_id: str | None,
+    requested_dataset_filter: str | None,
+    effective_dataset_filter: str | None,
+    resolved_dataset_ids: list[str],
+    resolved_dataset_names: list[str],
+    dataset_name_by_id: dict[str, str],
+    query_route_payload: dict[str, Any],
+) -> dict[str, Any]:
+    trace = {
+        "mode": "deterministic_clause",
+        "vector_count": 0,
+        "lexical_count": 1,
+        "merged_count": 1,
+        "retry_count": 0,
+        "quality_status": "deterministic_clause",
+        "clause_lookup": clause_result.payload(),
+    }
+    state.crag_stats["verified"] += 1
+    state.chat_metrics["latency_search"].append(t_search)
+    state.chat_metrics["latency_gen"].append(0.0)
+    state.chat_metrics["tokens"].append(0)
+    state.chat_metrics["crag_pass"] += 1
+    for key in ("latency_search", "latency_gen", "tokens"):
+        state.chat_metrics[key] = state.chat_metrics[key][-100:]
+    source_dataset_ids = [clause_result.dataset_id] if clause_result.dataset_id else []
+    source_dataset_names = _names_for_dataset_ids(source_dataset_ids, dataset_name_by_id)
+    history_id = None
+    try:
+        history_id = save_chat_history(
+            question=question,
+            answer=clause_result.answer,
+            sources=clause_result.sources,
+            crag_status="VERIFIED",
+            latency_sec=t_search,
+            tokens=0,
+            session_id=session_id,
+            requested_dataset_filter=requested_dataset_filter,
+            effective_dataset_filter=effective_dataset_filter,
+            resolved_dataset_ids=resolved_dataset_ids,
+            resolved_dataset_names=resolved_dataset_names,
+            source_dataset_ids=source_dataset_ids,
+            source_dataset_names=source_dataset_names,
+            query_route=query_route_payload,
+            retrieval_trace=trace,
+            cache_type="deterministic_clause",
+            validation_enabled=False,
+            success=1,
+        )
+    except Exception as db_err:
+        logger.warning("[CHAT] History save error: %s", db_err)
+    return {
+        "answer": clause_result.answer,
+        "crag_status": "VERIFIED",
+        "sources": clause_result.sources,
+        "effective_dataset_filter": effective_dataset_filter,
+        "query_route": query_route_payload,
+        "retrieval_trace": trace,
+        "cache": "deterministic_clause",
+        "validation": {"enabled": False, "reason": "deterministic_clause"},
+        "clause_lookup": clause_result.payload(),
+        "history_id": history_id,
+    }
+
+
 @router.post("/chat")
 async def chat(req: ChatRequest, _user=Depends(require_user)):
     state = get_chat_state()
@@ -549,6 +620,32 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                 retrieval_trace=table_trace,
                 cache_marker="deterministic_table",
                 use_validation=False,
+            )
+
+    if query_intent.channel == "rag" and _dataset_ids:
+        t_clause_start = time.time()
+        try:
+            clause_result = maybe_answer_clause_lookup(
+                req.question,
+                collection=getattr(rag_backend, "collection_name", ""),
+                dataset_ids=_dataset_ids,
+            )
+        except Exception as clause_err:
+            logger.warning("[CLAUSE] deterministic clause lookup skipped: %s", clause_err)
+            clause_result = None
+        if clause_result:
+            return _clause_lookup_response(
+                state=state,
+                question=req.question,
+                clause_result=clause_result,
+                t_search=time.time() - t_clause_start,
+                session_id=req.session_id,
+                requested_dataset_filter=req.dataset_filter,
+                effective_dataset_filter=effective_dataset_filter,
+                resolved_dataset_ids=_dataset_ids,
+                resolved_dataset_names=resolved_dataset_names,
+                dataset_name_by_id=dataset_name_by_id,
+                query_route_payload=query_route_payload,
             )
 
     admission = evaluate_chat_admission(

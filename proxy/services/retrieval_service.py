@@ -84,7 +84,7 @@ def classify_query(question: str) -> QueryRoute:
         or "гкрф" in q
     ):
         return QueryRoute("GKRF", _expand_gkrf_query(question), "gkrf_keyword")
-    if any(token in q for token in ("эвакуац", "пожар", "огнестойк", "противодым", "13130")):
+    if any(token in q for token in ("эвакуац", "пожар", "огнестойк", "противодым", "дымоудал", "13130")):
         return QueryRoute("NTD_FIRE", question, "fire_safety_keyword")
     if any(token in q for token in ("пуэ", "электр", "кабел", "заземл", "молниезащит", "освещен", "напряжен")):
         return QueryRoute("NTD_ELECTRICAL", question, "electrical_keyword")

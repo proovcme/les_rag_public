@@ -80,10 +80,21 @@ MAIL_TOKENS = (
     "получил",
 )
 
+FIRE_SAFETY_TOKENS = (
+    "эвакуац",
+    "пожар",
+    "огнестойк",
+    "противодым",
+    "дымоудал",
+    "13130",
+)
+
 RAG_QUESTION_TOKENS = (
     "какие",
     "какой",
     "какая",
+    "в каких",
+    "для каких",
     "как ",
     "можно ли",
     "допускается ли",
@@ -110,6 +121,8 @@ def route_query(
 
     if any(token in q for token in MAIL_TOKENS):
         return QueryIntent("mail", "MAIL", "mail_keyword")
+    if any(token in q for token in FIRE_SAFETY_TOKENS):
+        return QueryIntent("rag", "NTD_FIRE", "fire_safety_keyword")
 
     has_normative = any(token in q for token in NORMATIVE_TOKENS)
     has_rag_form = any(token in q for token in RAG_QUESTION_TOKENS)
