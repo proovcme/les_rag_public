@@ -164,7 +164,7 @@ def evaluate_response(case: GoldenCase, response: dict[str, Any], elapsed: float
     scores = [
         float(chunk.get("score") or 0.0)
         for chunk in chunks
-        if isinstance(chunk, dict) and isinstance(chunk.get("score"), int | float)
+        if isinstance(chunk, dict) and isinstance(chunk.get("score"), (int, float))
     ]
     top_score = max(scores, default=0.0)
 

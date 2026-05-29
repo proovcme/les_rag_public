@@ -533,3 +533,109 @@ async def get_metrics():
         "rag": rag_stats,
         "embedding": rag_runtime_config(),
     }
+
+
+@router.get("/backup/status")
+async def get_backup_status(_admin=Depends(require_admin)):
+    """
+    Returns lists of existing SQLite backups and Qdrant snapshots.
+    """
+    from datetime import datetime
+    from pathlib import Path
+    from backend.rag_config import embed_profile_name, rag_collection_name
+    from qdrant_client import QdrantClient
+    
+    # 1. SQLite backups
+    profile = embed_profile_name()
+    backup_dir = Path("storage/backups")
+    sqlite_backups = []
+    if backup_dir.exists():
+        pattern = f"les_meta_{profile}_*.db"
+        for p in sorted(backup_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True):
+            sqlite_backups.append({
+                "name": p.name,
+                "path": str(p),
+                "size_bytes": p.stat().st_size,
+                "created_at": datetime.fromtimestamp(p.stat().st_mtime).isoformat(),
+            })
+
+    # 2. Qdrant snapshots
+    qdrant_snapshots = []
+    collection_name = rag_collection_name()
+    try:
+        qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
+        client = QdrantClient(url=qdrant_url, timeout=5.0)
+        if client.collection_exists(collection_name):
+            snaps = client.list_snapshots(collection_name)
+            # Sort newest first
+            snaps_sorted = sorted(snaps, key=lambda s: s.creation_time or "", reverse=True)
+            for s in snaps_sorted:
+                qdrant_snapshots.append({
+                    "name": s.name,
+                    "size_bytes": s.size,
+                    "created_at": s.creation_time,
+                })
+    except Exception as e:
+        logger.warning("Failed to list Qdrant snapshots for status: %s", e)
+
+    return {
+        "sqlite_backups": sqlite_backups,
+        "qdrant_snapshots": qdrant_snapshots,
+        "collection_name": collection_name,
+        "profile": profile,
+    }
+
+
+class BackupDeleteRequest(BaseModel):
+    type: str  # "sqlite" or "qdrant"
+    name: str
+
+
+@router.post("/backup/create")
+async def create_backup(_admin=Depends(require_admin)):
+    """
+    Triggers both SQLite and Qdrant backups.
+    """
+    from tools.backup_suharik import run_sqlite_backup, run_qdrant_backup
+    
+    def _run():
+        sqlite_ok, sqlite_res = run_sqlite_backup()
+        qdrant_ok, qdrant_res = run_qdrant_backup()
+        return sqlite_ok, sqlite_res, qdrant_ok, qdrant_res
+
+    sqlite_ok, sqlite_res, qdrant_ok, qdrant_res = await asyncio.to_thread(_run)
+    return {
+        "sqlite": {"ok": sqlite_ok, "result": sqlite_res},
+        "qdrant": {"ok": qdrant_ok, "result": qdrant_res},
+    }
+
+
+@router.post("/backup/delete")
+async def delete_backup(req: BackupDeleteRequest, _admin=Depends(require_admin)):
+    """
+    Deletes a specific SQLite backup file or Qdrant snapshot.
+    """
+    from pathlib import Path
+    if req.type == "sqlite":
+        backup_dir = Path("storage/backups")
+        target_path = (backup_dir / req.name).resolve()
+        # Security check: must be inside backup_dir
+        if not str(target_path).startswith(str(backup_dir.resolve())):
+            raise HTTPException(status_code=400, detail="Invalid backup file path")
+        if target_path.exists():
+            target_path.unlink()
+            return {"status": "ok", "message": f"SQLite backup {req.name} deleted"}
+        raise HTTPException(status_code=404, detail="SQLite backup not found")
+    elif req.type == "qdrant":
+        from backend.rag_config import rag_collection_name
+        from qdrant_client import QdrantClient
+        collection_name = rag_collection_name()
+        qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
+        client = QdrantClient(url=qdrant_url, timeout=10.0)
+        try:
+            client.delete_snapshot(collection_name, req.name)
+            return {"status": "ok", "message": f"Qdrant snapshot {req.name} deleted"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to delete Qdrant snapshot: {e}")
+    else:
+        raise HTTPException(status_code=400, detail="Invalid backup type")

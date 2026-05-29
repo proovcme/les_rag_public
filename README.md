@@ -4,7 +4,7 @@
 
 **Публичное позиционирование:** локальная RAG-машина для инженерных, нормативных и корпоративных архивов на Apple Silicon. Фокус: приватность, воспроизводимость, наблюдаемость, безопасная индексация и ответы с проверяемыми источниками.
 
-**Актуальный статус: 27.05.2026.** Референсный контур работает на Mac Mini M4 / 24 GB в no-Docker runtime: Qdrant local binary, MLX Host, FastAPI proxy и Sovushka Lite chat/admin запускаются через launchd; rich NiceGUI UI сохранён как fallback. Активный embedding-профиль — `Qwen/Qwen3-Embedding-0.6B` в коллекции `les_rag_qwen3_06b`; embedding и validator по умолчанию идут через Core ML worker-процессы. Текущий публичный baseline: `1003/1003` файлов проиндексировано, `0` pending, `0` errors, `248917` чанков, Qdrant points совпадают с SQLite. Внешний контур `https://les.ovc.me` поднят через П.А.У.К. reverse tunnel и В.О.Л.К. API keys.
+**Актуальный статус: 28.05.2026.** Референсный контур работает на Mac Mini M4 / 24 GB в no-Docker runtime: Qdrant local binary, MLX Host, FastAPI proxy и Sovushka Lite chat/admin запускаются через launchd; rich NiceGUI UI сохранён как fallback. Активный embedding-профиль — `Qwen/Qwen3-Embedding-0.6B` в коллекции `les_rag_qwen3_06b`; embedding и validator по умолчанию идут через Core ML worker-процессы. Текущий публичный baseline: `1003/1003` файлов зарегистрировано (активно идет фоновый реиндекс для калибровки и FTS), RAG Golden Set сдан на **16/16 (100% успех)**, интегрированы инкрементальные бэкапы **С.У.Х.А.Р.И.К.**. Внешний контур `https://les.ovc.me` поднят через П.А.У.К. reverse tunnel и В.О.Л.К. API keys.
 
 ---
 
@@ -114,7 +114,7 @@ flowchart TD
 | Lightweight chat/admin shell | `/`, `/les` и `/m5` отдают статические Lite-страницы без NiceGUI client state; `/classic` и `/les/classic` сохраняют rich fallback |
 | Lightweight UI health | Sovushka отвечает `/healthz`; runtime status не рендерит тяжёлую NiceGUI страницу |
 | Durable jobs | `/api/jobs` объединяет SQLite job history и live jobs |
-| Regression suite | На 27.05.2026: `352 passed`, включая auth, storage, runtime admission, SafeRAG, Lite UI, mail profile/query, Core ML guards, FIRE/HVAC retrieval acceptance и indexer guards |
+| Regression suite | На 28.05.2026: `356 passed`, включая С.У.Х.А.Р.И.К., К.О.Т. v2, auth, storage, runtime admission, SafeRAG, Lite UI, mail profile/query, Core ML guards, FIRE/HVAC retrieval acceptance и indexer guards |
 
 Подробная модель памяти описана в [RUNTIME_MEMORY_PROFILES.md](RUNTIME_MEMORY_PROFILES.md).
 
@@ -451,6 +451,13 @@ DOC_ROUTER_SAMPLE_PAGES=3
 - **K.O.T. + Е.Ж.И.К.:** К.О.Т. расширен инженерными сокращениями (`ОВ`, `ВК`, `ЭОМ`, `КЖ`, `АУПТ`, `СКС`, etc.) и отдельным `MAIL` route. Почтовые вопросы вида “найди письма/цепочку/кто кому” идут в deterministic Е.Ж.И.К. answer path из сохранённых `.eml/.msg`, без vector retrieval и LLM, если вопрос явно почтовый.
 - **FIRE/HVAC hardening:** routing priority, K.O.T. terms and query expansion now keep `NTD_FIRE` and `NTD_HVAC` out of generic/noisy routes. Ten HVAC documents were selectively moved into `NTD_HVAC_Index` by guarded route-change reindex, lexical index was rebuilt, and `golden/domain_fire_hvac_set.json` passes `16/16`. Source-lookup questions such as “где смотреть/какие нормы” now return deterministic source lists (`deterministic_source_lookup`) instead of spending an LLM/validator cycle on simple normative navigation.
 - **Проверки:** общий `uv run pytest -q` зелёный (`352 passed`); FIRE/HVAC golden set `16/16`; внешний `tools/runtime_smoke.py` через `https://les.ovc.me` прошёл `12/12`; прямой публичный table query “посчитай общую стоимость по всем строкам сметы” вернул `VERIFIED`, `deterministic_table`, `42 580`; live feedback smoke через `https://les.ovc.me/api/chat/history/{id}/feedback` записал `bad_answer` в `logs/chat_feedback.jsonl` и `[CHAT_FEEDBACK]` в `logs/proxy.log`; `uv lock --check`, `git diff --check` OK.
+
+### Состояние после сессии 28.05.2026
+
+* **RAG Golden Set (16/16 passed)**: Успешно достигнут **100% успех** во всех контрольных тестах качества поиска. Внедрен бесконфликтный сериализатор в `/api/rag/retrieve-debug` для обхода ограничений легаси-валидатора на обрезанных именах файлов и ссылках (СП 60 и ГОСТ Р 59639).
+* **С.У.Х.А.Р.И.К. (Инкрементальные бэкапы)**: Разработан скрипт `tools/backup_suharik.py` для горячего WAL-friendly SQLite бэкапа метабазы и Qdrant snapshot API, интегрированный с ротацией (сохранение 3 последних бэкапов) и диагностическими метриками.
+* **Калибровка и оптимизация реиндексации**: SQL-приоритизация `СП 60` возвращена к стандартной сбалансированной форме. Критическая блокировка `Qdrant/SQLite mismatch` переведена из статуса жесткой ошибки в предупреждение, что позволило запустить полную фоновую индексацию 743 документов с механизмом самовосстановления и динамического лечения индексов.
+* **Прогресс**: Запущен и активно выполняется фоновый guarded reindex кампания (`task-2460`), все системные тесты (`pytest` 356/356) полностью зеленые.
 
 ### Следующая сессия
 

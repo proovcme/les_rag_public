@@ -88,7 +88,7 @@ COREML_EMBED_MODEL = os.getenv(
 )
 COREML_EMBED_SEQ_LEN = _env_int("COREML_EMBED_SEQ_LEN", 1024)
 COREML_EMBED_BATCH_SIZE = _env_int("COREML_EMBED_BATCH_SIZE", 1)
-COREML_EMBED_COMPUTE_UNITS = os.getenv("COREML_EMBED_COMPUTE_UNITS", "cpu_and_gpu").strip().lower()
+COREML_EMBED_COMPUTE_UNITS = os.getenv("COREML_EMBED_COMPUTE_UNITS", "cpu_only").strip().lower()
 COREML_EMBED_ISOLATE_PROCESS = _env_bool("COREML_EMBED_ISOLATE_PROCESS", True)
 COREML_EMBED_WORKER_TIMEOUT_SEC = _env_float("COREML_EMBED_WORKER_TIMEOUT_SEC", 120.0)
 COREML_EMBED_MIN_NORM = _env_float("COREML_EMBED_MIN_NORM", 0.5)
@@ -235,6 +235,7 @@ class CoreMLEmbedder:
         self._request_counter = 0
         self._circuit_open_until = 0.0
         self.last_used = 0.0
+        self.is_busy = False
 
     def _compute_unit(self):
         import coremltools as ct
@@ -335,7 +336,9 @@ class CoreMLEmbedder:
             if rc != 0:
                 self.worker_failure_count += 1
                 self._maybe_open_circuit()
-            logger.warning("[EMBED] isolated Core ML worker exited rc=%s", rc)
+                logger.warning("[EMBED] isolated Core ML worker exited with error rc=%s", rc)
+            else:
+                logger.info("[EMBED] isolated Core ML worker exited rc=%s (idle/expected)", rc)
         return rc
 
     def _start_worker(self):
@@ -395,53 +398,62 @@ class CoreMLEmbedder:
         if self._worker is None or self._worker.stdout is None:
             raise RuntimeError("Core ML embed worker stdout is not available")
         fd = self._worker.stdout.fileno()
-        ready, _, _ = select.select([fd], [], [], self.worker_timeout_sec)
-        if not ready:
-            raise TimeoutError(f"Core ML embed worker timed out after {self.worker_timeout_sec:.1f}s")
-        line = self._worker.stdout.readline()
-        if not line:
-            rc = self._worker.poll()
-            raise RuntimeError(f"Core ML embed worker exited without response rc={rc}")
-        return line
+        while True:
+            ready, _, _ = select.select([fd], [], [], self.worker_timeout_sec)
+            if not ready:
+                raise TimeoutError(f"Core ML embed worker timed out after {self.worker_timeout_sec:.1f}s")
+            line = self._worker.stdout.readline()
+            if not line:
+                rc = self._worker.poll()
+                raise RuntimeError(f"Core ML embed worker exited without response rc={rc}")
+            stripped = line.strip()
+            if stripped.startswith("{") and stripped.endswith("}"):
+                return line
+            else:
+                logger.warning("[EMBED] Ignored non-JSON worker stdout line: %r", line)
 
     def _encode_worker(self, texts: List[str]) -> List[List[float]]:
         with self._worker_lock:
-            self._start_worker()
-            if self._worker is None or self._worker.stdin is None:
-                raise RuntimeError("Core ML embed worker stdin is not available")
-
-            self._request_counter += 1
-            request_id = str(self._request_counter)
-            payload = {"id": request_id, "texts": list(texts)}
+            self.is_busy = True
             try:
-                self._worker.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
-                self._worker.stdin.flush()
-                line = self._read_worker_line()
-                response = json.loads(line)
-            except Exception as exc:
-                self.worker_failure_count += 1
-                self.last_worker_error = str(exc)
-                self._terminate_worker()
-                raise
+                self._start_worker()
+                if self._worker is None or self._worker.stdin is None:
+                    raise RuntimeError("Core ML embed worker stdin is not available")
 
-            if response.get("id") != request_id:
-                self.worker_failure_count += 1
-                self.last_worker_error = f"worker response id mismatch: {response.get('id')!r} != {request_id!r}"
-                self._terminate_worker()
-                raise RuntimeError(self.last_worker_error)
-            if response.get("error"):
-                self.worker_failure_count += 1
-                self.last_worker_error = str(response["error"])
-                raise RuntimeError(f"Core ML embed worker error: {response['error']}")
+                self._request_counter += 1
+                request_id = str(self._request_counter)
+                payload = {"id": request_id, "texts": list(texts)}
+                try:
+                    self._worker.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
+                    self._worker.stdin.flush()
+                    line = self._read_worker_line()
+                    response = json.loads(line)
+                except Exception as exc:
+                    self.worker_failure_count += 1
+                    self.last_worker_error = str(exc)
+                    self._terminate_worker()
+                    raise
 
-            vectors = response.get("vectors")
-            if not isinstance(vectors, list):
-                self.worker_failure_count += 1
-                self.last_worker_error = "worker response missing vectors"
-                raise RuntimeError(self.last_worker_error)
-            self.last_worker_error = ""
-            self.last_used = time.time()
-            return vectors
+                if response.get("id") != request_id:
+                    self.worker_failure_count += 1
+                    self.last_worker_error = f"worker response id mismatch: {response.get('id')!r} != {request_id!r}"
+                    self._terminate_worker()
+                    raise RuntimeError(self.last_worker_error)
+                if response.get("error"):
+                    self.worker_failure_count += 1
+                    self.last_worker_error = str(response["error"])
+                    raise RuntimeError(f"Core ML embed worker error: {response['error']}")
+
+                vectors = response.get("vectors")
+                if not isinstance(vectors, list):
+                    self.worker_failure_count += 1
+                    self.last_worker_error = "worker response missing vectors"
+                    raise RuntimeError(self.last_worker_error)
+                self.last_worker_error = ""
+                self.last_used = time.time()
+                return vectors
+            finally:
+                self.is_busy = False
 
     @staticmethod
     def _normalize(vecs):
@@ -468,6 +480,7 @@ class CoreMLEmbedder:
                 norm_sq += numeric * numeric
             norm = math.sqrt(norm_sq)
             if norm < COREML_EMBED_MIN_NORM or norm > COREML_EMBED_MAX_NORM:
+                logger.error("[EMBED] Invalid norm for text: %r", texts[index])
                 raise ValueError(
                     f"Core ML returned invalid vector norm at index {index}: "
                     f"{norm:.6f} not in [{COREML_EMBED_MIN_NORM}, {COREML_EMBED_MAX_NORM}]"
@@ -501,13 +514,28 @@ class CoreMLEmbedder:
         return [v.tolist() for v in np.concatenate(vectors, axis=0)]
 
     def encode(self, texts: List[str]) -> List[List[float]]:
+        if not texts:
+            return []
+        original_texts = list(texts)
+        import re
+        sanitized = []
+        for t in texts:
+            s = str(t or "")
+            s = re.sub(r'\!\[.*?\]\(data:image\/[a-zA-Z0-9+\/=;,:_\-\s]*\)?', '', s)
+            s = s.replace("\n", " ").replace("\r", " ").strip()
+            if not s:
+                s = "документ документ"
+            elif len(s) < 10:
+                s = s + " документ документ"
+            sanitized.append(s)
+        texts = sanitized
         if self.isolate_process and self.circuit_open():
             message = f"Core ML embed circuit open for {self.circuit_remaining_sec():.0f}s"
             if self.fallback is None:
                 raise RuntimeError(message)
             self.fallback_active = True
             self.last_fallback_error = message
-            vectors = self.fallback.encode(texts)
+            vectors = self.fallback.encode(original_texts)
             self.last_used = time.time()
             return vectors
         try:
@@ -534,7 +562,7 @@ class CoreMLEmbedder:
             self.fallback_active = True
             self.last_fallback_error = str(exc)
             logger.error("[EMBED] Core ML failed, fallback to sentence-transformers: %s", exc, exc_info=True)
-            vectors = self.fallback.encode(texts)
+            vectors = self.fallback.encode(original_texts)
             self.last_used = time.time()
             return vectors
 
@@ -970,6 +998,7 @@ class CoreMLValidatorWorker:
         self._worker_exit_observed = False
         self._request_counter = 0
         self._circuit_open_until = 0.0
+        self.is_busy = False
 
     def _worker_command(self) -> list[str]:
         if self.worker_cmd is not None:
@@ -1045,10 +1074,12 @@ class CoreMLValidatorWorker:
             self.worker_exit_count += 1
             self.worker_last_returncode = rc
             self.last_worker_error = f"worker exited rc={rc}"
-            if rc != 0:
+            if rc != 0 and getattr(self, "is_busy", False):
                 self.worker_failure_count += 1
                 self._maybe_open_circuit()
-            logger.warning("[VALIDATE] isolated Core ML validator worker exited rc=%s", rc)
+                logger.warning("[VALIDATE] isolated Core ML validator worker exited with error rc=%s while busy", rc)
+            else:
+                logger.info("[VALIDATE] isolated Core ML validator worker exited rc=%s (idle/expected)", rc)
         return rc
 
     @staticmethod
@@ -1120,47 +1151,51 @@ class CoreMLValidatorWorker:
         if self.circuit_open():
             raise RuntimeError(f"Core ML validator circuit open for {self.circuit_remaining_sec():.0f}s")
         with self._worker_lock:
-            self._start_worker()
-            if self._worker is None or self._worker.stdin is None:
-                raise RuntimeError("Core ML validator worker stdin is not available")
-            self._request_counter += 1
-            request_id = str(self._request_counter)
-            payload = {
-                "id": request_id,
-                "question": req.question,
-                "answer": req.answer,
-                "context": req.context,
-            }
+            self.is_busy = True
             try:
-                self._worker.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
-                self._worker.stdin.flush()
-                response = json.loads(self._read_worker_line())
-            except Exception as exc:
-                self.worker_failure_count += 1
-                self.last_worker_error = str(exc)
-                self._maybe_open_circuit()
-                self._terminate_worker()
-                raise
+                self._start_worker()
+                if self._worker is None or self._worker.stdin is None:
+                    raise RuntimeError("Core ML validator worker stdin is not available")
+                self._request_counter += 1
+                request_id = str(self._request_counter)
+                payload = {
+                    "id": request_id,
+                    "question": req.question,
+                    "answer": req.answer,
+                    "context": req.context,
+                }
+                try:
+                    self._worker.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
+                    self._worker.stdin.flush()
+                    response = json.loads(self._read_worker_line())
+                except Exception as exc:
+                    self.worker_failure_count += 1
+                    self.last_worker_error = str(exc)
+                    self._maybe_open_circuit()
+                    self._terminate_worker()
+                    raise
 
-            if response.get("id") != request_id:
-                self.worker_failure_count += 1
-                self.last_worker_error = f"worker response id mismatch: {response.get('id')!r} != {request_id!r}"
-                self._maybe_open_circuit()
-                self._terminate_worker()
-                raise RuntimeError(self.last_worker_error)
-            if response.get("error"):
-                self.worker_failure_count += 1
-                self.last_worker_error = str(response["error"])
-                self._maybe_open_circuit()
-                raise RuntimeError(f"Core ML validator worker error: {response['error']}")
-            result = response.get("result")
-            if not isinstance(result, dict):
-                self.worker_failure_count += 1
-                self.last_worker_error = "worker response missing result"
-                self._maybe_open_circuit()
-                raise RuntimeError(self.last_worker_error)
-            self.last_worker_error = ""
-            return result
+                if response.get("id") != request_id:
+                    self.worker_failure_count += 1
+                    self.last_worker_error = f"worker response id mismatch: {response.get('id')!r} != {request_id!r}"
+                    self._maybe_open_circuit()
+                    self._terminate_worker()
+                    raise RuntimeError(self.last_worker_error)
+                if response.get("error"):
+                    self.worker_failure_count += 1
+                    self.last_worker_error = str(response["error"])
+                    self._maybe_open_circuit()
+                    raise RuntimeError(f"Core ML validator worker error: {response['error']}")
+                result = response.get("result")
+                if not isinstance(result, dict):
+                    self.worker_failure_count += 1
+                    self.last_worker_error = "worker response missing result"
+                    self._maybe_open_circuit()
+                    raise RuntimeError(self.last_worker_error)
+                self.last_worker_error = ""
+                return result
+            finally:
+                self.is_busy = False
 
     def force_unload(self):
         self._terminate_worker()
@@ -1567,6 +1602,72 @@ async def chat_completions(req: OAIChatRequest):
     """OpenAI-совместимый — основной для прокси и Roo Code."""
     engine = _get_engine(req.model or MAIN_MODEL)
     prompt = _messages_to_prompt(req.messages, engine)
+    
+    if req.stream:
+        from fastapi.responses import StreamingResponse
+        
+        async def stream_generator():
+            try:
+                answer, _ = await _generate_with_llm_policy(
+                    engine,
+                    prompt=prompt,
+                    max_tokens=req.max_tokens or 2048,
+                )
+            except Exception as e:
+                err_data = {"error": {"message": str(e), "type": "server_error", "code": 500}}
+                yield f"data: {json.dumps(err_data, ensure_ascii=False)}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+
+            req_id = f"chatcmpl-les-{int(time.time())}"
+            created_time = int(time.time())
+            model_path = engine.model_path
+
+            # 1. Роль
+            chunk_role = {
+                "id": req_id,
+                "object": "chat.completion.chunk",
+                "created": created_time,
+                "model": model_path,
+                "choices": [{
+                    "index": 0,
+                    "delta": {"role": "assistant", "content": ""},
+                    "finish_reason": None
+                }]
+            }
+            yield f"data: {json.dumps(chunk_role, ensure_ascii=False)}\n\n"
+
+            # 2. Контент целиком (имитируем выдачу стрима)
+            chunk_content = {
+                "id": req_id,
+                "object": "chat.completion.chunk",
+                "created": created_time,
+                "model": model_path,
+                "choices": [{
+                    "index": 0,
+                    "delta": {"content": answer},
+                    "finish_reason": None
+                }]
+            }
+            yield f"data: {json.dumps(chunk_content, ensure_ascii=False)}\n\n"
+
+            # 3. Завершение
+            chunk_stop = {
+                "id": req_id,
+                "object": "chat.completion.chunk",
+                "created": created_time,
+                "model": model_path,
+                "choices": [{
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": "stop"
+                }]
+            }
+            yield f"data: {json.dumps(chunk_stop, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(stream_generator(), media_type="text/event-stream")
+
     try:
         answer, _ = await _generate_with_llm_policy(
             engine,
@@ -1642,32 +1743,122 @@ def _normalize_rule_text(text: str) -> str:
 
 
 def _extract_rule_numbers(text: str) -> set[str]:
-    return {match.group(0).replace(",", ".") for match in re.finditer(r"\d+(?:[,.]\d+)?", text)}
+    # Normalize text
+    cleaned = text.lower()
+    
+    # 1. Remove dates like 16.02.2008 or 09.04.2021
+    cleaned = re.sub(r'\b\d{1,2}[.,/]\d{1,2}[.,/]\d{2,4}\b', '', cleaned)
+    
+    # 2. Remove standalone year numbers (like 2008, 2021, 2019, 2012)
+    cleaned = re.sub(r'\b(?:19|20)\d{2}\b', '', cleaned)
+    
+    # 3. Clean line-by-line list numbers (like "1. ", "2. ", "10) ")
+    lines = []
+    for line in cleaned.split('\n'):
+        line = re.sub(r'^\s*\d+[\s.)-]', '', line)
+        lines.append(line)
+    cleaned = ' '.join(lines)
+    
+    # 4. Remove typical document prefixes and section references
+    # including "n", "N", "no", "№", "п.", "пункт", "раздел", "постановление", "сп", "гост"
+    prefix_pat = r'(?:раздел|п\.|пункт[ы]?|постановлени[ея]|№|от|n|рис|рисунок|таблиц[аы]|табл\.|стр\.)\s*\d+(?:[-–—]\d+)?'
+    cleaned = re.sub(prefix_pat, '', cleaned)
+    
+    # 5. Extract all numbers and filter them:
+    # Keep if:
+    # - It has a decimal point (like 1.2 or 0.5)
+    # - It is followed by a unit of measurement within 8 characters (like "м", "мм", "мин", "EI")
+    # - Or it is a larger number (e.g. >= 100)
+    found = set()
+    for match in re.finditer(r"\b\d+(?:[,.]\d+)?\b", cleaned):
+        num_str = match.group(0).replace(",", ".")
+        start_idx = match.start()
+        end_idx = match.end()
+        
+        # Check if it has decimal point
+        if "." in num_str:
+            found.add(num_str)
+            continue
+            
+        # Check context after number for units of measurement
+        suffix = cleaned[end_idx : end_idx + 8].strip()
+        if re.match(r'^(?:м\b|мм\b|см\b|мин\b|ч\b|сек\b|кг\b|°|ei|re|r\b|еи\b|квт\b|вт\b|чел\b|г\b|литр|куб)', suffix):
+            found.add(num_str)
+            continue
+            
+        # Check if number is large (>= 100)
+        try:
+            val = float(num_str)
+            if val >= 100:
+                found.add(num_str)
+        except ValueError:
+            pass
+            
+    return found
+
+
+def _rules_lexical_overlap(answer: str, context: str, min_token_len: int = 4) -> float:
+    """Return fraction of meaningful answer tokens found in context (0.0–1.0)."""
+    _STOPWORDS_RU = {
+        "что", "это", "как", "так", "при", "для", "или", "над", "под",
+        "если", "есть", "нужно", "нужен", "должна", "должен", "должно",
+        "должны", "может", "могут", "более", "менее", "также", "либо",
+        "иные", "иной", "иная", "такой", "такая", "такие", "через",
+        "между", "после", "перед", "очень", "весь", "вся", "всех",
+        "всем", "одного", "одной", "одним", "любом", "любой", "любых",
+    }
+    norm_ctx = _normalize_rule_text(context)
+    tokens = re.findall(r"[а-яёa-z0-9]{%d,}" % min_token_len, answer.lower())
+    meaningful = [t for t in tokens if t not in _STOPWORDS_RU]
+    if not meaningful:
+        return 0.0
+    hits = sum(1 for t in meaningful if t in norm_ctx)
+    return hits / len(meaningful)
 
 
 def _validate_with_rules(req: ValidateRequest) -> dict:
+    """
+    Детерминированный rules-валидатор с лексическим перекрытием.
+
+    Логика:
+      1. Пустой контекст → NO_DATA.
+      2. Ответ буквально входит в контекст → VERIFIED (быстрый путь).
+      3. Числа из ответа нарушают контекст → HALLUCINATION.
+      4. Лексическое перекрытие ≥ LEX_THRESHOLD → VERIFIED.
+      5. Иначе → NO_DATA (не смогли подтвердить, но не галлюцинация).
+    """
+    LEX_THRESHOLD = float(os.getenv("RULES_LEX_THRESHOLD", "0.35"))
+
     context = req.context or ""
     answer = req.answer or ""
+
     if not context.strip():
-        status = "NO_DATA"
-        raw = "empty_context"
-    elif answer.strip() and _normalize_rule_text(answer) in _normalize_rule_text(context):
-        status = "VERIFIED"
-        raw = "answer_text_found_in_context"
-    else:
-        answer_numbers = _extract_rule_numbers(answer)
-        context_numbers = _extract_rule_numbers(context)
-        if answer_numbers and context_numbers and not answer_numbers.issubset(context_numbers):
-            status = "HALLUCINATION"
-            raw = "answer_numeric_claim_not_in_context"
-        else:
-            status = "NO_DATA"
-            raw = "rules_cannot_verify"
+        return {"status": "NO_DATA", "raw": "empty_context", "backend": "rules", "unloaded_peer": []}
+
+    if answer.strip() and _normalize_rule_text(answer) in _normalize_rule_text(context):
+        return {"status": "VERIFIED", "raw": "answer_text_found_in_context", "backend": "rules", "unloaded_peer": []}
+
+    answer_numbers = _extract_rule_numbers(answer)
+    context_numbers = _extract_rule_numbers(context)
+    if answer_numbers and context_numbers and not answer_numbers.issubset(context_numbers):
+        return {"status": "HALLUCINATION", "raw": "answer_numeric_claim_not_in_context", "backend": "rules", "unloaded_peer": []}
+
+    overlap = _rules_lexical_overlap(answer, context)
+    if overlap >= LEX_THRESHOLD:
+        return {
+            "status": "VERIFIED",
+            "raw": f"lexical_overlap_{overlap:.2f}",
+            "backend": "rules",
+            "unloaded_peer": [],
+            "lexical_overlap": overlap,
+        }
+
     return {
-        "status": status,
-        "raw": raw,
+        "status": "NO_DATA",
+        "raw": f"rules_cannot_verify_overlap_{overlap:.2f}",
         "backend": "rules",
         "unloaded_peer": [],
+        "lexical_overlap": overlap,
     }
 
 
@@ -1696,12 +1887,28 @@ async def _validate_with_coreml(req: ValidateRequest) -> dict:
 async def _validate_by_backend(req: ValidateRequest) -> dict:
     backend = _validator_backend_name()
     if backend == "mlx":
-        return await _validate_with_mlx(req)
-    if backend == "coreml":
-        return await _validate_with_coreml(req)
-    if backend == "rules":
-        return _validate_with_rules(req)
-    raise ValueError("VALIDATOR_BACKEND must be one of: mlx, coreml, rules")
+        result = await _validate_with_mlx(req)
+    elif backend == "coreml":
+        result = await _validate_with_coreml(req)
+    elif backend == "rules":
+        result = _validate_with_rules(req)
+    else:
+        raise ValueError("VALIDATOR_BACKEND must be one of: mlx, coreml, rules")
+
+    # --- HYBRID SAFETY DE-ESCALATION RULES CONFLICT MITIGATION ---
+    if result.get("status") == "HALLUCINATION":
+        rules_res = _validate_with_rules(req)
+        if rules_res.get("status") == "NO_DATA":
+            logger.info(
+                "[VALIDATE:%s] Demoting HALLUCINATION -> NO_DATA because numeric rules are satisfied (no claim violation)",
+                result.get("backend", backend)
+            )
+            result["status"] = "NO_DATA"
+            result["raw"] = f"DEMOTED_BY_NUMERIC_RULES_{result.get('raw', '')}"
+    # -------------------------------------------------------------
+
+    return result
+
 
 
 @app.post("/api/validate")

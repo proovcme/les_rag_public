@@ -92,6 +92,20 @@ class CoreMLEmbeddingWorker:
     def encode(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
+        # Systemic safeguard: sanitize newlines (which trigger CoreML CPU zero-norm bugs),
+        # strip base64 embedded images, and pad short/empty strings to at least 10 characters (preventing CPU AMX optimization bugs).
+        import re
+        safe_texts = []
+        for t in texts:
+            s = str(t or "")
+            s = re.sub(r'\!\[.*?\]\(data:image\/[a-zA-Z0-9+\/=;,:_\-\s]*\)?', '', s)
+            s = s.replace("\n", " ").replace("\r", " ").strip()
+            if not s:
+                s = "документ документ"
+            elif len(s) < 10:
+                s = s + " документ документ"
+            safe_texts.append(s)
+        texts = safe_texts
         with redirect_stdout(sys.stderr):
             import numpy as np
 

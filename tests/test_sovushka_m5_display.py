@@ -12,6 +12,6 @@ def test_m5_display_html_targets_wokyis_screen_and_lite_bridge():
     assert "/api/rag/watch/status?source_root=RAG_Content&limit=6" in html
     assert "/api/mail/status" in html
     assert "les_lite_api_key" in html
-    assert "owlCanvas" in html
+    assert "asciiScreen" in html
     assert 'const isLocalUi = location.port === "8051";' in html
     assert ".innerHTML" not in html

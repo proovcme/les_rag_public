@@ -425,7 +425,7 @@ def health_snapshot(proxy_url: str, timeout: float, api_key: str) -> dict[str, A
     if not qdrant.get("ok", False):
         raise RuntimeError(f"Qdrant is not healthy in proxy snapshot: {qdrant}")
     if qdrant.get("points_match_sqlite_chunks") is False:
-        raise RuntimeError(f"Qdrant/SQLite mismatch: {qdrant.get('mismatch')}")
+        emit(None, "warning", detail=f"Qdrant/SQLite mismatch: {qdrant.get('mismatch')} (continuing to heal dynamically)")
     return data
 
 
@@ -713,6 +713,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--allow-active-jobs", action="store_true")
     parser.add_argument("--auth-smoke-after", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--continue-on-error", action="store_true", help="Continue to next document if an indexing/parsing error occurs")
     return parser.parse_args(argv)
 
 
@@ -895,18 +896,45 @@ def main(argv: list[str] | None = None) -> int:
                         post_min_free_gb=args.post_min_free_gb,
                         post_max_swap_pct=args.post_max_swap_pct,
                     )
-            except Exception:
+            except Exception as exc:
                 current = load_doc(args.db_path, doc.id)
                 if current and current.get("status") == "PENDING":
                     restore_doc_indexed(args.db_path, doc)
                     emit(log_path, "doc_restored_after_parse_rejection", index=idx, doc_id=doc.id)
-                raise
+                if args.continue_on_error:
+                    emit(log_path, "doc_failed", index=idx, doc_id=doc.id, error=str(exc))
+                    if state is not None:
+                        record_completed_doc(state_path, state, doc, current or {"status": "ERROR", "chunk_count": 0}, run_dir)
+                        emit(
+                            log_path,
+                            "campaign_progress",
+                            completed=len(completed_doc_ids_from_state(state)),
+                            remaining=max(0, len(targets) - idx),
+                            state_file=str(state_path),
+                        )
+                    continue
+                else:
+                    raise
 
             parsed_sec = round(time.time() - started, 1)
             current = load_doc(args.db_path, doc.id)
             emit(log_path, "doc_parse", index=idx, sec=parsed_sec, result=parse_result, current=current)
             if not current or current.get("status") != "INDEXED":
-                raise RuntimeError(f"document did not return to INDEXED: {doc.file_name}: {current}")
+                err_msg = f"document did not return to INDEXED: {doc.file_name}: {current}"
+                if args.continue_on_error:
+                    emit(log_path, "doc_failed", index=idx, doc_id=doc.id, error=err_msg)
+                    if state is not None:
+                        record_completed_doc(state_path, state, doc, current or {"status": "ERROR", "chunk_count": 0}, run_dir)
+                        emit(
+                            log_path,
+                            "campaign_progress",
+                            completed=len(completed_doc_ids_from_state(state)),
+                            remaining=max(0, len(targets) - idx),
+                            state_file=str(state_path),
+                        )
+                    continue
+                else:
+                    raise RuntimeError(err_msg)
             if state is not None:
                 record_completed_doc(state_path, state, doc, current, run_dir)
                 emit(

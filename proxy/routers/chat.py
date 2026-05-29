@@ -895,12 +895,20 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
             "cache": cache_marker,
         }
 
+    is_structured = any(word in req.question.casefold() for word in ("перечен", "состав", "список", "разделы", "все разделы", "перечисли"))
+    is_technical_or_legal = bool(effective_dataset_filter and effective_dataset_filter != "MAIL")
+
+    focus_max_chunks = 24 if (is_structured or is_technical_or_legal) else _env_int("RAG_CHAT_FOCUS_MAX_CHUNKS", 8)
+    context_max_chunks = 24 if (is_structured or is_technical_or_legal) else _env_int("RAG_CONTEXT_MAX_CHUNKS", 6)
+    context_chars_limit = 32000 if (is_structured or is_technical_or_legal) else _env_int("RAG_CHAT_CONTEXT_CHARS", 9000)
+    context_radius = 0 if is_structured else None
+
     chunks = rank_chunks_for_question(req.question, chunks)
     chunks = concentrate_sources(
         chunks,
         max_docs=_env_int("RAG_CHAT_FOCUS_MAX_DOCS", 3),
         min_score=_env_float("RAG_CHAT_FOCUS_MIN_SCORE", 0.35),
-        max_chunks=_env_int("RAG_CHAT_FOCUS_MAX_CHUNKS", 8),
+        max_chunks=focus_max_chunks,
     )
     logger.info(
         "[FOCUS] После концентрации: %s чанков из %s источников",
@@ -1024,7 +1032,8 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
         chunks,
         collection=getattr(rag_backend, "collection_name", ""),
         logger=logger,
-        max_chunks=_env_int("RAG_CONTEXT_MAX_CHUNKS", 6),
+        max_chunks=context_max_chunks,
+        radius=context_radius,
     )
     llm_chunks = context_windows.chunks
     retrieval_trace["context_window"] = context_windows.payload()
@@ -1092,7 +1101,7 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
     t_gen_start = time.time()
     async with state.llm_semaphore:
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with httpx.AsyncClient(timeout=300.0) as client:
                 answer = ""
                 crag_status = "UNKNOWN"
                 tokens = 0
@@ -1120,7 +1129,7 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                         ctx_chunks = llm_chunks
                         context = build_context(
                             ctx_chunks,
-                            _env_int("RAG_CHAT_CONTEXT_CHARS", 9000),
+                            context_chars_limit,
                             include_metadata=True,
                         )
                         sys_msg = sys_normal

@@ -42,7 +42,6 @@ def m5_display_html() -> str:
       display: grid;
       place-items: center;
     }
-    button, input, textarea { font: inherit; }
     .stage {
       width: min(100vw, calc(100vh * 16 / 9));
       aspect-ratio: 16 / 9;
@@ -133,9 +132,9 @@ def m5_display_html() -> str:
     .desk {
       min-height: 0;
       display: grid;
-      grid-template-columns: 330px minmax(0, 1fr) 292px;
-      gap: 10px;
-      padding: 10px;
+      grid-template-columns: 1fr;
+      padding: 12px;
+      place-items: center;
     }
     .window {
       min-width: 0;
@@ -173,190 +172,20 @@ def m5_display_html() -> str:
       background: var(--paper-2);
       margin-left: 4px;
     }
-    .owl-window {
-      padding: 12px;
-      display: grid;
-      grid-template-rows: auto 1fr auto;
-      gap: 10px;
-      min-height: 0;
-    }
-    .owl-bezel {
+    .ascii-window {
       width: 100%;
-      aspect-ratio: 1 / 1;
-      border: 4px solid var(--line);
-      background:
-        radial-gradient(circle at 50% 38%, rgba(255,255,255,.8), transparent 0 62%, rgba(0,0,0,.08) 63%),
-        #ddd7c9;
-      display: grid;
-      place-items: center;
-      image-rendering: pixelated;
-    }
-    #owlCanvas {
-      width: 232px;
-      height: 232px;
-      image-rendering: pixelated;
-    }
-    .owl-meta {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 8px;
-      align-items: center;
-      border-top: 2px solid var(--line);
-      padding-top: 8px;
-      font-size: 13px;
-      font-weight: 900;
-      min-height: 42px;
-    }
-    .mood {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .blink {
-      width: 16px;
-      height: 16px;
-      border: 2px solid var(--line);
-      background: var(--green);
-      box-shadow: inset 0 0 0 3px #fff;
-    }
-    .screen[data-mood="busy"] .blink { background: var(--amber); }
-    .screen[data-mood="offline"] .blink { background: var(--red); }
-    .core {
-      min-height: 0;
-      display: grid;
-      grid-template-rows: 210px 1fr 150px;
-      gap: 10px;
-    }
-    .big-panel {
-      padding: 14px;
-      display: grid;
-      grid-template-rows: auto 1fr auto;
-      gap: 8px;
-    }
-    .label {
-      font-size: 12px;
-      line-height: 1;
-      font-weight: 900;
-      text-transform: uppercase;
-      color: #3d3a35;
-      display: flex;
-      justify-content: space-between;
-      gap: 10px;
-    }
-    .value {
-      align-self: center;
-      font-size: 52px;
-      line-height: 1;
-      font-weight: 900;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .hint {
-      min-height: 18px;
-      font-size: 12px;
-      line-height: 1.25;
-      color: #3f3b35;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .progress {
-      height: 18px;
-      border: 2px solid var(--line);
-      background:
-        repeating-linear-gradient(90deg, #fff 0 8px, #d2cab9 8px 16px);
-      overflow: hidden;
-    }
-    .fill {
       height: 100%;
-      width: 0%;
-      background: var(--green);
-      border-right: 2px solid var(--line);
-      transition: width .35s ease;
     }
-    .tiles {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
-      min-height: 0;
-    }
-    .tile {
-      padding: 12px;
-      display: grid;
-      grid-template-rows: auto 1fr auto;
-      gap: 8px;
-    }
-    .tile .num {
-      align-self: center;
-      font-size: 31px;
-      line-height: 1;
-      font-weight: 900;
-      white-space: nowrap;
+    .ascii-pre {
+      margin: 0;
+      padding: 16px 24px;
+      background: var(--paper-2);
+      color: var(--ink);
+      font-family: var(--font);
+      font-size: 14px;
+      line-height: 1.4;
       overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .list-panel {
-      padding: 10px;
-      min-height: 0;
-      display: grid;
-      grid-template-rows: auto minmax(0, 1fr);
-      gap: 8px;
-    }
-    .rows {
-      min-height: 0;
-      overflow: hidden;
-      display: grid;
-      align-content: start;
-      gap: 6px;
-    }
-    .row {
-      min-height: 42px;
-      border: 2px solid var(--line);
-      background: #fffdf4;
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 8px;
-      align-items: center;
-      padding: 6px 8px;
-    }
-    .row-title {
-      font-size: 12px;
-      line-height: 1.1;
-      font-weight: 900;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .row-detail {
-      margin-top: 3px;
-      font-size: 10px;
-      line-height: 1.1;
-      color: #47433d;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .mini-badge {
-      height: 23px;
-      min-width: 48px;
-      display: grid;
-      place-items: center;
-      border: 2px solid var(--line);
-      padding: 0 6px;
-      font-size: 10px;
-      line-height: 1;
-      font-weight: 900;
-      background: #e9e4d7;
-    }
-    .mini-badge.ok { color: var(--green); }
-    .mini-badge.warn { color: var(--amber); }
-    .mini-badge.err { color: var(--red); }
-    .rail {
-      min-height: 0;
-      display: grid;
-      grid-template-rows: 1fr 1fr;
-      gap: 10px;
+      white-space: pre;
     }
     .ticker {
       height: 28px;
@@ -399,7 +228,7 @@ def m5_display_html() -> str:
           <span>S.O.V.U.S.H.K.A M5</span>
         </div>
         <div class="menu">
-          <span>Finder</span><span>RAG</span><span>Memory</span><span>Mail</span><span>1280x720</span>
+          <span>Finder</span><span>RAG</span><span>Memory</span><span>Models</span><span>1280x720</span>
         </div>
         <div class="status-strip">
           <span id="apiBadge" class="badge warn">BOOT</span>
@@ -409,68 +238,16 @@ def m5_display_html() -> str:
       </header>
 
       <main class="desk">
-        <section class="window">
+        <section class="window ascii-window">
           <div class="titlebar">
             <span class="box-icon"></span>
-            <span>СОВУШКА.SYSTEM</span>
+            <span>С.О.В.У.Ш.К.А. M5 // SYSTEM MONITOR</span>
             <span class="zoom-icon"></span>
           </div>
-          <div class="owl-window">
-            <div class="label"><span>RETRO OWL</span><span id="owlCode">INIT</span></div>
-            <div class="owl-bezel">
-              <canvas id="owlCanvas" width="96" height="96" aria-label="pixel owl"></canvas>
-            </div>
-            <div class="owl-meta">
-              <div id="owlMood" class="mood">загрузка датчиков...</div>
-              <div class="blink" aria-hidden="true"></div>
-            </div>
-          </div>
+          <pre id="asciiScreen" class="ascii-pre">
+[Телеметрия загружается...]
+          </pre>
         </section>
-
-        <section class="core">
-          <section class="window big-panel">
-            <div class="label"><span>GUARDED REINDEX</span><span id="reindexState">WAIT</span></div>
-            <div id="reindexValue" class="value">-- / --</div>
-            <div>
-              <div class="progress"><div id="reindexFill" class="fill"></div></div>
-              <div id="reindexHint" class="hint">ожидание runtime dispatcher</div>
-            </div>
-          </section>
-
-          <section class="tiles">
-            <div class="window tile">
-              <div class="label"><span>MEMORY</span><span id="memoryState">?</span></div>
-              <div id="memoryValue" class="num">-- GB</div>
-              <div id="memoryHint" class="hint">swap --%</div>
-            </div>
-            <div class="window tile">
-              <div class="label"><span>WATCHER</span><span id="watcherState">RAG</span></div>
-              <div id="watcherValue" class="num">--</div>
-              <div id="watcherHint" class="hint">RAG_Content</div>
-            </div>
-            <div class="window tile">
-              <div class="label"><span>MAIL</span><span id="mailState">ЕЖИК</span></div>
-              <div id="mailValue" class="num">--</div>
-              <div id="mailHint" class="hint">IMAP / Apple Mail</div>
-            </div>
-          </section>
-
-          <section class="window list-panel">
-            <div class="label"><span>RAG QUEUE</span><span id="queueState">SCAN</span></div>
-            <div id="queueRows" class="rows"></div>
-          </section>
-        </section>
-
-        <aside class="rail">
-          <section class="window list-panel">
-            <div class="label"><span>SERVICES</span><span id="serviceState">LOCAL</span></div>
-            <div id="serviceRows" class="rows"></div>
-          </section>
-          <section class="window list-panel">
-            <div class="label"><span>MAIL LAYER</span><span id="mailLayerState">PROFILE</span></div>
-            <div id="mailRows" class="rows"></div>
-          </section>
-        </aside>
       </main>
 
       <footer class="ticker">
@@ -516,21 +293,11 @@ def m5_display_html() -> str:
       return payload;
     }
 
-    function setText(id, text) {
-      const node = el(id);
-      if (node) node.textContent = text == null ? "" : String(text);
-    }
-
     function setBadge(id, text, tone = "") {
       const node = el(id);
       if (!node) return;
       node.textContent = text || "";
       node.className = "badge" + (tone ? " " + tone : "");
-    }
-
-    function setMiniBadge(node, text, tone = "") {
-      node.textContent = text || "";
-      node.className = "mini-badge" + (tone ? " " + tone : "");
     }
 
     function fmt(n) {
@@ -546,41 +313,6 @@ def m5_display_html() -> str:
       return num.toFixed(1);
     }
 
-    function rowNode(titleText, detailText, badgeText, tone = "") {
-      const row = document.createElement("div");
-      row.className = "row";
-      const text = document.createElement("div");
-      const title = document.createElement("div");
-      const detail = document.createElement("div");
-      const badge = document.createElement("div");
-      title.className = "row-title";
-      detail.className = "row-detail";
-      title.textContent = titleText || "";
-      detail.textContent = detailText || "";
-      setMiniBadge(badge, badgeText || "", tone);
-      text.append(title, detail);
-      row.append(text, badge);
-      return row;
-    }
-
-    function setRows(id, rows, emptyTitle = "NO DATA", emptyDetail = "") {
-      const node = el(id);
-      if (!node) return;
-      if (!rows.length) {
-        node.replaceChildren(rowNode(emptyTitle, emptyDetail, "OK", "ok"));
-        return;
-      }
-      node.replaceChildren(...rows);
-    }
-
-    function toneForState(value) {
-      const stateName = String(value || "").toUpperCase();
-      if (["GREEN", "OK", "READY", "DONE", "UP"].includes(stateName)) return "ok";
-      if (["YELLOW", "WARN", "WAIT", "RUNNING", "PAUSED", "BUSY"].includes(stateName)) return "warn";
-      if (["RED", "CRITICAL", "ERROR", "DOWN", "OFFLINE"].includes(stateName)) return "err";
-      return "";
-    }
-
     function settled(result) {
       return result && result.status === "fulfilled" ? result.value : null;
     }
@@ -590,62 +322,17 @@ def m5_display_html() -> str:
       return failed ? failed.reason : null;
     }
 
-    function drawPixelOwl(mood) {
-      const canvas = el("owlCanvas");
-      const ctx = canvas.getContext("2d");
-      ctx.imageSmoothingEnabled = false;
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const palette = {
-        ".": "#ece8dc",
-        "B": "#111111",
-        "G": "#6e685e",
-        "W": "#fffdf4",
-        "Y": "#f2c230",
-        "O": "#f07c24",
-        "R": "#d93f38",
-        "E": mood === "offline" ? "#a7332f" : mood === "busy" ? "#b86b18" : "#237a4b",
-      };
-      const art = [
-        "........................",
-        ".........BBBBBB.........",
-        ".......BBGGGGGGBB.......",
-        "......BGGGGGGGGGGB......",
-        ".....BGGBBGBBGBBGGB.....",
-        "....BGGWWBGGGGBWWGGB....",
-        "...BGGGWEBGGGGBEWGGGB...",
-        "...BGGGWWGGYGGGWWGGGB...",
-        "..BGGGGGGGYOYGGGGGGGB...",
-        "..BGGGBGGGYYYGGGBGGGB...",
-        "..BGGGBBGGGYGGGBBGGGB...",
-        "...BGGGGBGGGGGBGGGGB....",
-        "...BGGGGGBBBBBGGGGGB....",
-        "....BGGGGGGGGGGGGGB.....",
-        ".....BGGGBBBBBGGGB......",
-        "......BBGGRRRRGGBB......",
-        ".......BGRRRRRRGB.......",
-        "........BBGGGGBB........",
-        ".........BGGGGB.........",
-        "........BGB..BGB........",
-        ".......BB....BB.........",
-        "........................",
-        "........................",
-        "........................",
-      ];
-      const cell = 4;
-      for (let y = 0; y < art.length; y++) {
-        for (let x = 0; x < art[y].length; x++) {
-          ctx.fillStyle = palette[art[y][x]] || palette["."];
-          ctx.fillRect(x * cell, y * cell, cell, cell);
-        }
-      }
-      if (mood === "busy" && state.frame % 2 === 0) {
-        ctx.fillStyle = "#f07c24";
-        ctx.fillRect(43, 21, 10, 6);
-        ctx.fillRect(67, 21, 10, 6);
-      }
+    function _n(v) {
+      if (!v) return "—";
+      return typeof v === "object" ? (v.path || v.name || "—") : String(v);
     }
 
-    function renderTelemetry(mode, dispatcher, watcher, mail, apiError) {
+    function _l(v, def = false) {
+      if (!v) return def;
+      return typeof v === "object" ? (v.loaded !== false) : def;
+    }
+
+    function renderTelemetry(statusData, dispatcher, watcher, mail, apiError) {
       const screen = document.querySelector(".screen");
       const reindex = dispatcher?.reindex || {};
       const completed = Number(reindex.completed || 0);
@@ -654,94 +341,118 @@ def m5_display_html() -> str:
       const percent = total > 0 ? Math.max(0, Math.min(100, Math.round((completed / total) * 100))) : 0;
       const reindexLabel = reindex.running ? "RUNNING" : reindex.paused ? "PAUSED" : reindex.complete ? "DONE" : "IDLE";
 
-      const pressure = dispatcher?.memory?.pressure || mode?.memory_state || {};
+      const pressure = statusData?.memory_state || dispatcher?.memory?.pressure || {};
       const memory = pressure.memory || dispatcher?.memory?.preflight || {};
       const memoryState = pressure.state || "UNKNOWN";
-      const admission = mode?.chat_admission || {};
-      const profile = dispatcher?.runtime_profile || mode?.runtime_profile || "UNKNOWN";
-      const watcherCounts = watcher?.counts || {};
-      const mailDataset = mail?.dataset || {};
-      const mailStatus = mail?.status || "unknown";
-      const imap = mail?.imap || {};
-      const appleMail = mail?.apple_mail || {};
+      const admission = statusData?.chat_admission || {};
+      const profile = statusData?.runtime_profile || "UNKNOWN";
 
-      const isOffline = Boolean(apiError) && !dispatcher && !mode;
-      const isBusy = Boolean(reindex.running || mode?.active || admission.active_jobs);
+      const isOffline = Boolean(apiError) && !dispatcher && !statusData;
+      const isBusy = Boolean(reindex.running || statusData?.mode?.mode === "indexing" || admission.active_jobs);
       const mood = isOffline ? "offline" : isBusy ? "busy" : "ready";
       screen.dataset.mood = mood;
-      drawPixelOwl(mood);
 
       setBadge("apiBadge", isOffline ? "OFFLINE" : "LIVE", isOffline ? "err" : "ok");
       setBadge("profileBadge", profile, admission.allowed === false ? "err" : "ok");
-      setText("owlCode", mood.toUpperCase());
-      setText("owlMood", isOffline ? "нет связи с LES runtime" : isBusy ? "индексирую и берегу память" : "дежурю на маленьком экране");
 
-      setText("reindexState", reindexLabel);
-      setText("reindexValue", `${fmt(completed)} / ${fmt(total)}`);
-      el("reindexFill").style.width = percent + "%";
-      setText(
-        "reindexHint",
-        `remaining=${fmt(remaining)} | pid=${reindex.pid || "--"} | ${reindex.current_doc?.event || reindex.last_event?.event || reindex.last_log || "idle"}`
-      );
+      // Extract systemStatus
+      const systemStatus = isOffline ? "OFFLINE ✗" : "ONLINE ✓";
 
-      setText("memoryState", memoryState);
-      setText("memoryValue", `${oneDecimal(memory.ram_free_gb)} GB`);
-      setText("memoryHint", `swap=${oneDecimal(memory.swap_pct)}% | ${pressure.reason || "memory guard"}`);
+      // Services status from dispatcher
+      let servicesList = "—";
+      if (dispatcher?.services) {
+        servicesList = dispatcher.services.map(s => {
+          const run = s.running ? "UP" : "DOWN";
+          return `${s.title}=${run}`;
+        }).join(" | ");
+      }
 
-      const pending = Number(watcher?.pending_changes ?? 0);
-      const changed = Number(watcherCounts.changed || 0);
-      const routeChanged = Number(watcherCounts.route_changed || 0);
-      setText("watcherState", pending ? "DIRTY" : "CLEAN");
-      setText("watcherValue", `${fmt(pending)} pending`);
-      setText("watcherHint", `new=${fmt(watcherCounts.new || 0)} | changed=${fmt(changed)} | route=${fmt(routeChanged)}`);
+      // Reindex current file & log
+      const file = reindex.current_doc?.file_name || "—";
+      const displayFile = file.length > 50 ? "..." + file.slice(-47) : file;
+      const logText = reindex.last_log || "—";
+      const displayLog = logText.length > 50 ? logText.slice(0, 47) + "..." : logText;
 
-      setText("mailState", mailStatus === "ready" ? "READY" : "WAIT");
-      setText("mailValue", mailDataset.doc_count != null ? `${fmt(mailDataset.doc_count)} docs` : mailStatus.toUpperCase());
-      setText(
-        "mailHint",
-        `imap=${imap.enabled ? "on" : "off"} | apple=${appleMail.status || "--"} | ${imap.host || "no host"}`
-      );
+      // Extract models status
+      const mlx = statusData?.mlx || {};
+      const modelMain = `${_n(mlx.main_model || mlx.model)} [${_l(mlx.main_model || mlx.model, true) ? "LIVE" : "IDLE"}]`;
+      const modelVal = mlx.val_model ? `${_n(mlx.val_model)} [${_l(mlx.val_model, false) ? "LIVE" : "IDLE"}]` : "— [IDLE]";
+      const modelEmbed = `${_n(mlx.embed_model || mlx.embedding_model || statusData?.embedding?.embedding_model)} [LIVE]`;
 
-      const samples = (watcher?.samples || []).slice(0, 3).map((item) => rowNode(
-        item.relative_path || "RAG_Content",
-        `${item.state || "changed"} | ${item.current?.dataset_name || "new"} -> ${item.dataset_name || "--"}`,
-        item.state || "FILE",
-        item.state === "route_changed" ? "warn" : "ok"
-      ));
-      setRows("queueRows", samples, "QUEUE CLEAN", "RAG watcher has no pending samples");
+      const ramFree = oneDecimal(memory.ram_free_gb);
+      const ramTotal = oneDecimal(memory.ram_total_gb);
+      const swapPct = oneDecimal(memory.swap_pct);
 
-      const services = (dispatcher?.services || []).slice(0, 4).map((svc) => rowNode(
-        svc.title || svc.key || "service",
-        `${svc.label || ""} | pid ${svc.pid || svc.port_pid || "--"} | :${svc.port || "--"}`,
-        svc.running ? (svc.health || "UP") : "DOWN",
-        svc.running && svc.health === "ok" ? "ok" : svc.running ? "warn" : "err"
-      ));
-      setRows("serviceRows", services, "NO SERVICES", "runtime dispatcher did not return services");
+      function pad(str, len, char = " ") {
+        const s = String(str || "");
+        if (s.length >= len) return s.slice(0, len);
+        return s + char.repeat(len - s.length);
+      }
 
-      const mailRows = [
-        rowNode("IMAP", `${imap.host || "not configured"} | folders ${(imap.folders || []).join(", ") || "INBOX"}`, imap.enabled ? "ON" : "OFF", imap.enabled ? "ok" : "warn"),
-        rowNode("Apple Mail", `${appleMail.root || "~/Library/Mail"}`, appleMail.status || "WAIT", toneForState(appleMail.status === "ready" ? "READY" : appleMail.status)),
-        rowNode("Attachments", "OCR/VLM layer feeds mail-vector profile", "OCR", "ok"),
+      const midWidth = 72;
+      const systemTitle = " [ СИСТЕМА ] " + "═".repeat(midWidth - 13);
+      const systemLine1 = `Состояние:       ${systemStatus}`;
+      const systemLine2 = `Свободная RAM:   ${ramFree} GB / ${ramTotal} GB (Swap: ${swapPct}%)`;
+      const systemLine3 = `Текущий профиль: ${profile} [ ${memoryState} ]`;
+      const systemLine4 = `Службы launchd:  ${servicesList}`;
+
+      const indexTitle = " [ ИНДЕКСАЦИЯ RAG ] " + "═".repeat(midWidth - 20);
+      const indexLine1 = `Кампания:        ${completed} / ${total} файлов (${percent}%)`;
+      const indexLine2 = `Состояние:       ${reindexLabel}`;
+      const indexLine3 = `Осталось:        ${remaining} файлов`;
+      const indexLine4 = `Текущий файл:    ${displayFile}`;
+      const indexLine5 = `Лог-трек:        ${displayLog}`;
+
+      const modelsTitle = " [ АКТИВНЫЕ МОДЕЛИ MLX ] " + "═".repeat(midWidth - 25);
+      const modelsLine1 = `MAIN  [Языковая]:  ${modelMain}`;
+      const modelsLine2 = `VAL   [Валидатор]: ${modelVal}`;
+      const modelsLine3 = `EMBED [Вектор]:    ${modelEmbed}`;
+
+      const lines = [
+        `╔═════════╗  ${pad("═════════[ С.О.В.У.Ш.К.А. SYSTEM MONITOR ]═════════", midWidth)}  ╔═════════╗`,
+        `║ /\\_ _/\\ ║  ${pad("", midWidth)}  ║ /\\_ _/\\ ║`,
+        `║(  o o  )║  ${pad(systemTitle, midWidth)}  ║(  o o  )║`,
+        `║(  =V=  )║  ${pad("  " + systemLine1, midWidth)}  ║(  =V=  )║`,
+        `║(_______)║  ${pad("  " + systemLine2, midWidth)}  ║(_______)║`,
+        `║-"-----"-║  ${pad("  " + systemLine3, midWidth)}  ║-"-----"-║`,
+        `║         ║  ${pad("  " + systemLine4, midWidth)}  ║         ║`,
+        `║         ║  ${pad("", midWidth)}  ║         ║`,
+        `║         ║  ${pad(indexTitle, midWidth)}  ║         ║`,
+        `║         ║  ${pad("  " + indexLine1, midWidth)}  ║         ║`,
+        `║         ║  ${pad("  " + indexLine2, midWidth)}  ║         ║`,
+        `║         ║  ${pad("  " + indexLine3, midWidth)}  ║         ║`,
+        `║         ║  ${pad("  " + indexLine4, midWidth)}  ║         ║`,
+        `║         ║  ${pad("  " + indexLine5, midWidth)}  ║         ║`,
+        `║         ║  ${pad("", midWidth)}  ║         ║`,
+        `║         ║  ${pad(modelsTitle, midWidth)}  ║         ║`,
+        `║         ║  ${pad("  " + modelsLine1, midWidth)}  ║         ║`,
+        `║         ║  ${pad("  " + modelsLine2, midWidth)}  ║         ║`,
+        `║         ║  ${pad("  " + modelsLine3, midWidth)}  ║         ║`,
+        `║-"-----"-║  ${pad("", midWidth)}  ║-"-----"-║`,
+        `║(_______)║  ${pad("═".repeat(midWidth), midWidth, "═")}  ║(_______)║`,
+        `║(  =V=  )║  ${pad("                      OS VERSION: MAC", midWidth)}  ║(  =V=  )║`,
+        `║(  o o  )║  ${pad("                   UPTIME TELEMETRY: OK", midWidth)}  ║(  o o  )║`,
+        `║ /\\_ _/\\ ║  ${pad("", midWidth)}  ║ /\\_ _/\\ ║`,
+        `╚═════════╝  ${pad("════════════════════════════════════════════════", midWidth, "═")}  ╚═════════╝`
       ];
-      setRows("mailRows", mailRows);
 
-      const serviceState = services.some((node) => node.textContent.includes("DOWN")) ? "CHECK" : "LOCAL";
-      setText("serviceState", serviceState);
-      setText("queueState", pending ? "WORK" : "SCAN");
-      setText("mailLayerState", mailStatus === "ready" ? "PROFILE" : "SETUP");
+      const asciiScreen = el("asciiScreen");
+      if (asciiScreen) {
+        asciiScreen.textContent = lines.join("\n");
+      }
 
       const err = apiError ? ` | ${apiError.message || apiError}` : "";
       state.lastOk = isOffline ? state.lastOk : new Date().toLocaleTimeString("ru-RU");
       setText(
         "tickerText",
-        `M5 1280x720 // ${reindexLabel} ${fmt(completed)}/${fmt(total)} // MEM ${memoryState} ${oneDecimal(memory.ram_free_gb)}GB // MAIL ${mailStatus.toUpperCase()} // updated ${state.lastOk || "--"}${err}`
+        `M5 1280x720 // ${reindexLabel} ${fmt(completed)}/${fmt(total)} // MEM ${memoryState} ${ramFree}GB // updated ${state.lastOk || "--"}${err}`
       );
     }
 
     async function refresh() {
       state.frame += 1;
       const results = await Promise.allSettled([
-        request("/api/indexing-mode"),
+        request("/api/status"),
         request("/api/runtime/dispatcher/status"),
         request("/api/rag/watch/status?source_root=RAG_Content&limit=6"),
         request("/api/mail/status"),
@@ -756,10 +467,15 @@ def m5_display_html() -> str:
     }
 
     function tickClock() {
-      setText("clock", new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }));
+      const node = el("clock");
+      if (node) node.textContent = new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
     }
 
-    drawPixelOwl("boot");
+    function setText(id, text) {
+      const node = el(id);
+      if (node) node.textContent = text == null ? "" : String(text);
+    }
+
     tickClock();
     refresh();
     setInterval(tickClock, 1000);

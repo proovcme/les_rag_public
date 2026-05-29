@@ -70,7 +70,153 @@ def clear_kot_config_cache() -> None:
     load_kot_config.cache_clear()
 
 
+def transform_query(raw_text: str) -> str:
+    """Preprocessor for queries: layout correction, typo correction, and fail-safe fallback."""
+    try:
+        if not raw_text or not raw_text.strip():
+            return raw_text
+
+        # Lowercase layout mapping dictionary
+        ENG_TO_RUS = {
+            'q': 'й', 'w': 'ц', 'e': 'у', 'r': 'к', 't': 'е', 'y': 'н', 'u': 'г', 'i': 'ш', 'o': 'щ', 'p': 'з',
+            '[': 'х', ']': 'ъ', 'a': 'ф', 's': 'ы', 'd': 'в', 'f': 'а', 'g': 'п', 'h': 'р', 'j': 'о', 'k': 'л',
+            'l': 'д', ';': 'ж', "'": 'э', 'z': 'я', 'x': 'ч', 'c': 'с', 'v': 'м', 'b': 'и', 'n': 'т', 'm': 'ь',
+            ',': 'б', '.': 'ю', '/': '.'
+        }
+
+        # Normalize layout mistakes containing punctuation first
+        raw_text = re.sub(r"\'jv", "эом", raw_text, flags=re.IGNORECASE)
+        raw_text = re.sub(r"'jv", "эом", raw_text, flags=re.IGNORECASE)
+
+        LAYOUT_MISTAKES = {
+            "cj": "сп",
+            "ujcn": "гост",
+            "jdb": "ов",
+            "dr": "вк",
+            "\'jv": "эом",
+            "rj": "кж",
+            "feu": "аупт",
+            "cnye": "соуэ",
+            "gmt": "пуэ",
+        }
+
+        CORRECTION_TARGETS = {
+            "эвакуация", "пожарный", "пожарная", "пожаротушение", "огнестойкость", "противодымная",
+            "сигнализация", "водоснабжение", "водоотведение", "канализация", "электрооборудование",
+            "электроосвещение", "силовые", "железобетонные", "армирование", "отопление",
+            "вентиляция", "кондиционирование", "воздухообмен", "конструкция", "нагрузка",
+            "фундамент", "основание", "железобетон", "арматура", "перекрытие", "смета",
+            "спецификация", "расценка", "объем", "объём", "безопасность", "документация",
+            "требования"
+        }
+
+        EXCLUDED_FROM_CORRECTION = {
+            "гост", "сп", "снип", "пуэ", "пп", "ов", "вк", "эом", "кж", "км", "кр", "аупт",
+            "соуэ", "апс", "спс", "мгн", "иги", "пос", "ппр", "сс", "скс", "эм", "нвк"
+        }
+
+        def translate_word(word: str) -> str:
+            translated = []
+            for char in word.lower():
+                translated.append(ENG_TO_RUS.get(char, char))
+            return "".join(translated)
+
+        def get_closest_match(word: str) -> str:
+            word_lower = word.lower()
+            if word_lower in EXCLUDED_FROM_CORRECTION or word_lower in CORRECTION_TARGETS or len(word_lower) < 4:
+                return word
+            
+            best_match = word
+            min_dist = 999
+            
+            for target in CORRECTION_TARGETS:
+                if abs(len(target) - len(word_lower)) > 2:
+                    continue
+                
+                dist = levenshtein_distance(word_lower, target)
+                if dist < min_dist:
+                    min_dist = dist
+                    best_match = target
+            
+            # Acceptance thresholds
+            if len(word_lower) <= 6 and min_dist == 1:
+                if word.isupper():
+                    return best_match.upper()
+                if word[0].isupper():
+                    return best_match.capitalize()
+                return best_match
+            elif len(word_lower) >= 7 and min_dist <= 2:
+                if word.isupper():
+                    return best_match.upper()
+                if word[0].isupper():
+                    return best_match.capitalize()
+                return best_match
+                
+            return word
+
+        def levenshtein_distance(s1: str, s2: str) -> int:
+            if len(s1) < len(s2):
+                return levenshtein_distance(s2, s1)
+            if len(s2) == 0:
+                return len(s1)
+            
+            previous_row = list(range(len(s2) + 1))
+            for i, c1 in enumerate(s1):
+                current_row = [i + 1]
+                for j, c2 in enumerate(s2):
+                    insertions = previous_row[j + 1] + 1
+                    deletions = current_row[j] + 1
+                    substitutions = previous_row[j] + (c1 != c2)
+                    current_row.append(min(insertions, deletions, substitutions))
+                previous_row = current_row
+            return previous_row[-1]
+
+        # Process text token by token, keeping non-alphanumeric separators intact
+        tokens = re.split(r"(\W+)", raw_text)
+        new_tokens = []
+        for token in tokens:
+            if not token or not token.strip() or not token[0].isalnum():
+                new_tokens.append(token)
+                continue
+            
+            # 1. Layout Correction
+            token_lower = token.lower()
+            if token_lower in LAYOUT_MISTAKES:
+                corrected_token = LAYOUT_MISTAKES[token_lower]
+                if token.isupper():
+                    corrected_token = corrected_token.upper()
+                elif token[0].isupper():
+                    corrected_token = corrected_token.capitalize()
+                new_tokens.append(corrected_token)
+                continue
+                
+            # Check if it consists of letters that are purely QWERTY layout mistake
+            if re.match(r"^[a-zA-Z\[\]\\;',./]+$", token):
+                if token_lower not in {"bim", "tim", "email", "mail", "dropbox", "hvac", "aec", "cad"}:
+                    translated = translate_word(token)
+                    translated_match = get_closest_match(translated)
+                    if translated_match != translated or translated in CORRECTION_TARGETS:
+                        if token.isupper():
+                            translated_match = translated_match.upper()
+                        elif token[0].isupper():
+                            translated_match = translated_match.capitalize()
+                        new_tokens.append(translated_match)
+                        continue
+            # 2. Typo Correction (only for alphabetic words)
+            if token.isalpha():
+                corrected = get_closest_match(token)
+                new_tokens.append(corrected)
+            else:
+                new_tokens.append(token)
+            
+        return "".join(new_tokens)
+        
+    except Exception:
+        return raw_text
+
+
 def normalize_question(question: str) -> str:
+    question = transform_query(question)
     q = question.casefold().replace("ё", "е")
     q = re.sub(r"\s+", " ", q)
     return q.strip()
@@ -89,6 +235,7 @@ def _term_matches(term: str, question: str) -> bool:
 
 
 def extract_norm_refs(question: str) -> tuple[str, ...]:
+    question = transform_query(question)
     cfg = load_kot_config()
     q = normalize_question(question)
     refs: list[str] = []
@@ -110,6 +257,7 @@ def analyze_question(
     dataset_filter: str | None = None,
     dataset_ids: list[str] | None = None,
 ) -> KotDecision:
+    question = transform_query(question)
     if dataset_ids:
         return KotDecision(dataset_filter, (), (), extract_norm_refs(question), 1.0, "explicit_dataset_ids")
     if dataset_filter:
@@ -190,3 +338,37 @@ def analyze_question(
         reason,
         ambiguous=ambiguous,
     )
+
+
+def expand_query_synonyms(question: str) -> str:
+    """Dynamically expand any terms in the question using the synonyms dictionary from kot_terms.yaml."""
+    try:
+        cfg = load_kot_config()
+        q_norm = normalize_question(question)
+        words = re.findall(r"[a-zа-яё0-9-]+", q_norm, flags=re.IGNORECASE)
+        
+        # Build a global mapping of lowercase alias -> list of synonyms
+        syn_map = {}
+        for domain in cfg.get("domains", []):
+            synonyms = domain.get("synonyms") or {}
+            for alias, val in synonyms.items():
+                alias_clean = alias.casefold().replace("ё", "е").strip()
+                vals = [v.strip().casefold().replace("ё", "е") for v in val.split(",") if v.strip()]
+                all_group = list(dict.fromkeys([alias_clean, *vals]))
+                for term in all_group:
+                    syn_map[term] = all_group
+                    
+        # Find any matching words in the query and gather expansions
+        expansions = []
+        for word in words:
+            word_clean = word.casefold().replace("ё", "е")
+            if word_clean in syn_map:
+                for syn in syn_map[word_clean]:
+                    if syn not in q_norm and syn not in expansions:
+                        expansions.append(syn)
+                        
+        if expansions:
+            return question + "\n" + " ".join(expansions)
+        return question
+    except Exception:
+        return question

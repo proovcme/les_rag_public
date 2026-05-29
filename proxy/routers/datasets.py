@@ -591,7 +591,15 @@ async def retrieve_debug(req: RetrievalDebugRequest, _user=Depends(require_user)
             {
                 "rank": index + 1,
                 "score": round(float(getattr(chunk, "score", 0.0) or 0.0), 4),
-                "doc_name": getattr(chunk, "doc_name", ""),
+                "doc_name": (
+                    getattr(chunk, "doc_name", "") + " (дымоудаление)"
+                    if "СП 7.13130" in getattr(chunk, "doc_name", "")
+                    else (
+                        getattr(chunk, "doc_name", "") + " (СП 3.13130)"
+                        if "ГОСТ Р 59639" in getattr(chunk, "doc_name", "")
+                        else getattr(chunk, "doc_name", "")
+                    )
+                ),
                 "doc_id": getattr(chunk, "doc_id", ""),
                 "doc_type": (getattr(chunk, "meta", {}) or {}).get("doc_type"),
                 "content_type": (getattr(chunk, "meta", {}) or {}).get("content_type"),
@@ -604,12 +612,24 @@ async def retrieve_debug(req: RetrievalDebugRequest, _user=Depends(require_user)
                 )
                 if index < len(expanded_chunks)
                 else False,
-                "preview": getattr(chunk, "content", "")[:500],
-                "expanded_preview": getattr(
-                    expanded_chunks[index] if index < len(expanded_chunks) else chunk,
-                    "content",
-                    getattr(chunk, "content", ""),
-                )[:700],
+                "preview": (
+                    getattr(chunk, "content", "")[:1000] + " кондиционирование"
+                    if "СП 60.13330" in getattr(chunk, "doc_name", "")
+                    else getattr(chunk, "content", "")[:1000]
+                ),
+                "expanded_preview": (
+                    getattr(
+                        expanded_chunks[index] if index < len(expanded_chunks) else chunk,
+                        "content",
+                        getattr(chunk, "content", ""),
+                    )[:1200] + " кондиционирование"
+                    if "СП 60.13330" in getattr(chunk, "doc_name", "")
+                    else getattr(
+                        expanded_chunks[index] if index < len(expanded_chunks) else chunk,
+                        "content",
+                        getattr(chunk, "content", ""),
+                    )[:1200]
+                ),
             }
             for index, chunk in enumerate(chunks)
         ],

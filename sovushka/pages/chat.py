@@ -411,6 +411,64 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                         on_click=lambda: asyncio.create_task(_feedback("wrong_dataset")),
                     ).props("flat dense round").tooltip("Источник не из того датасета")
 
+    def _render_suggestions(meta: dict | None):
+        if not meta:
+            return
+        questions = meta.get("clarifying_questions") or []
+        filters = meta.get("suggested_filters") or []
+        if not questions and not filters:
+            return
+
+        with ui.column().classes("w-full gap-2 mt-2 pt-2 border-t border-dashed border-gray-700"):
+            ui.label("Подсказки для уточнения:").classes("text-xs font-semibold text-gray-400 uppercase tracking-wider")
+
+            if filters:
+                with ui.row().classes("gap-2 items-center flex-wrap"):
+                    ui.label("Выбрать датасет:").classes("text-xs text-gray-500")
+                    for f in filters:
+                        f_name = f
+                        if f == "NTD_FIRE":
+                            f_name = "🔥 Пожарная безопасность"
+                        elif f == "NTD_ELECTRICAL":
+                            f_name = "⚡ Электрика"
+                        elif f == "NTD_STRUCTURAL":
+                            f_name = "🏗️ Конструкции"
+                        elif f == "TABLE_SMETA":
+                            f_name = "📊 Сметы"
+                        elif f == "GKRF":
+                            f_name = "⚖️ Постановление 87 / ГК РФ"
+                        elif f == "NTD":
+                            f_name = "📚 Стандарты (СП/ГОСТ)"
+
+                        def _make_click_filter(f_code=f, name=f_name):
+                            async def click_filter():
+                                if f_code in detail_dataset.options:
+                                    detail_dataset.value = f_code
+                                elif name in detail_dataset.options:
+                                    detail_dataset.value = name
+                                else:
+                                    matched = [opt for opt in detail_dataset.options if f_code in opt or f_code.lower() in opt.lower()]
+                                    if matched:
+                                        detail_dataset.value = matched[0]
+                                ui.notify(f"Выбран датасет: {name}", type="info")
+                                _update_prompt_preview()
+                            return click_filter
+
+                        ui.button(f_name, on_click=_make_click_filter(f, f_name)).props("outline dense size=sm").classes("text-xs text-white border-blue-500")
+
+            if questions:
+                with ui.row().classes("gap-2 items-center flex-wrap"):
+                    ui.label("Уточнить вопрос:").classes("text-xs text-gray-500")
+                    for q in questions:
+                        def _make_click_question(q_val=q):
+                            async def click_question():
+                                chat_input.value = q_val
+                                _update_prompt_preview()
+                                await send_chat()
+                            return click_question
+
+                        ui.button(q, on_click=_make_click_question(q)).props("outline dense size=sm color=primary").classes("text-xs text-left normal-case")
+
     def _render_chat_bubble(
         text: str,
         class_name: str,
@@ -421,6 +479,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         with ui.element("div").classes(class_name) as bubble:
             ui.label(str(text or "")).classes("sov-chat-message-text")
             _render_source_tags(srcs or [], crag, meta)
+            if meta:
+                _render_suggestions(meta)
         return bubble
 
     def _render_ai_placeholder(text: str):
@@ -443,6 +503,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         label.set_text(str(text or ""))
         with bubble:
             _render_source_tags(srcs or [], crag, meta)
+            if meta:
+                _render_suggestions(meta)
 
     def _render_msg(msg):
         if msg.get("role") == "user":
@@ -749,10 +811,13 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     "cache": d.get("cache", "miss"),
                     "validation": d.get("validation") or {"enabled": bool(validation_sw.value)},
                     "history_id": d.get("history_id"),
+                    "table_query": d.get("table_query"),
+                    "clarifying_questions": d.get("clarifying_questions") or [],
+                    "suggested_filters": d.get("suggested_filters") or [],
                 }
                 state["chat_history"].append({"role": "ai", "text": ans, "srcs": srcs, "crag": crag, "meta": meta})
                 _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, ans, srcs, crag, meta=meta)
-                _render_result(ans, out_mode, artifact_panel)
+                _render_result(ans, out_mode, artifact_panel, table_query=d.get("table_query"))
                 add_log(f"[AI] Формат:{out_mode} CRAG:{crag or 'N/A'} src:{len(srcs)}")
             else:
                 err = state.get("last_api_error") or {}
@@ -832,18 +897,20 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 '</div>'
             )
 
-    def _render_result(ans: str, mode: str, container):
+    def _render_result(ans: str, mode: str, container, table_query: dict | None = None):
         container.clear()
         with container:
             with ui.card().classes("sov-artifact-card"):
-                label = OUTPUT_FORMATS.get(mode, ("Ответ", ""))[0]
+                label = "Интерактивная таблица" if table_query else OUTPUT_FORMATS.get(mode, ("Ответ", ""))[0]
                 with ui.row().classes("w-full items-center justify-between"):
                     _html(f'<div class="sov-panel-title">{esc(label)}</div>')
                     ui.button("Копировать", icon="o_content_copy", on_click=lambda: ui.clipboard.write(ans)).props(
                         "no-caps flat dense"
                     )
 
-                if mode == "text":
+                if table_query:
+                    _render_table_query(table_query)
+                elif mode == "text":
                     ui.markdown(ans).classes("sov-artifact-markdown")
                 elif mode == "spec":
                     data = _parse_table_from_ai(ans)
@@ -930,6 +997,86 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             icon="o_content_copy",
             on_click=lambda d=data: ui.clipboard.write(json.dumps(d, ensure_ascii=False, indent=2)),
         ).props("no-caps flat dense")
+
+    def _render_table_query(table_query: dict):
+        try:
+            rows = table_query.get("rows") or []
+            if not rows:
+                ui.markdown("_Нет данных для отображения в таблице_").classes("sov-artifact-markdown")
+                return
+            
+            # Curate keys: hide internal ones and map to pretty labels
+            sample = rows[0]
+            visible_keys = [k for k in sample.keys() if not k.startswith("_") and k != "raw_row"]
+            
+            pretty_labels = {
+                "pos": "№",
+                "code": "Код",
+                "name": "Наименование работ",
+                "work_name": "Наименование работ",
+                "unit": "Ед. изм.",
+                "qty": "Кол-во",
+                "price": "Цена",
+                "amount": "Сумма",
+                "amount_mat": "Материалы",
+                "amount_work": "Работы",
+                "work_done": "Выполнено",
+                "weight_total": "Масса"
+            }
+            
+            # Generate column definitions for AG Grid
+            column_defs = []
+            for k in visible_keys:
+                label = pretty_labels.get(k.lower(), k)
+                column_defs.append({
+                    "headerName": label,
+                    "field": k,
+                    "filter": True,
+                    "sortable": True,
+                    "resizable": True
+                })
+                
+            aggrid_options = {
+                "columnDefs": column_defs,
+                "rowData": rows,
+                "pagination": True,
+                "paginationPageSize": 10,
+                "domLayout": "autoHeight"
+            }
+            
+            # UI elements for table query
+            operation = table_query.get("operation") or "list"
+            total = table_query.get("total")
+            count = table_query.get("count", 0)
+            
+            with ui.column().classes("w-full gap-2"):
+                # Summary label
+                summary_text = f"**Операция:** {operation.upper()}"
+                if total is not None:
+                    summary_text += f" | **Итого:** {total:,.2f}".replace(",", " ")
+                summary_text += f" | **Строк:** {count}"
+                ui.markdown(summary_text)
+                
+                # Render AG Grid
+                ui.aggrid(aggrid_options).classes("w-full").style("margin-top: 5px;")
+                
+                # Export actions
+                with ui.row().classes("gap-2"):
+                    ui.button("Копировать JSON", icon="o_content_copy", on_click=lambda: ui.clipboard.write(json.dumps(rows, ensure_ascii=False, indent=2))).props("no-caps flat dense")
+                    
+        except Exception as e:
+            logger.error(f"Error rendering AG Grid table query: {e}")
+            try:
+                markdown_lines = []
+                sample = rows[0]
+                cols = [k for k in sample.keys() if not k.startswith("_") and k != "raw_row"]
+                markdown_lines.append("| " + " | ".join(cols) + " |")
+                markdown_lines.append("| " + " | ".join(["---"] * len(cols)) + " |")
+                for r in rows:
+                    markdown_lines.append("| " + " | ".join(str(r.get(c) or "") for c in cols) + " |")
+                ui.markdown("\n".join(markdown_lines)).classes("sov-artifact-markdown")
+            except Exception:
+                ui.markdown("_Ошибка отображения таблицы. Данные повреждены._").classes("sov-artifact-markdown")
 
     def _render_tree(data, level: int = 0):
         if isinstance(data, dict):

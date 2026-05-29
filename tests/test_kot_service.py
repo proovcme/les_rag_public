@@ -45,3 +45,45 @@ def test_kot_short_terms_do_not_match_inside_words():
     assert decision.matched_domains[0].dataset_filter == "TABLE"
     assert "мост" not in decision.matched_terms
     assert "пос" not in decision.matched_terms
+
+
+def test_kot_layout_and_typo_preprocessing():
+    from proxy.services.kot_service import transform_query
+
+    # 1. Keyboard Layout corrections
+    assert transform_query("cj 60") == "сп 60"
+    assert transform_query("ujcn 12.1.019") == "гост 12.1.019"
+    assert transform_query("требования jdb") == "требования ов"
+    assert transform_query("проектирование dr") == "проектирование вк"
+    assert transform_query("монтаж \'jv") == "монтаж эом"
+    assert transform_query("расчет rj") == "расчет кж"
+    assert transform_query("система feu") == "система аупт"
+    assert transform_query("динамики cnye") == "динамики соуэ"
+    assert transform_query("правила gmt") == "правила пуэ"
+
+    # 2. Typo Corrections (Cyrillic words >= 4 chars, distance <= 2)
+    assert transform_query("пожарнй") == "пожарный"
+    assert transform_query("вентиляцыя") == "вентиляция"
+    assert transform_query("эвакуацы") == "эвакуация"
+    assert transform_query("армировани") == "армирование"
+    assert transform_query("электроосвещен") == "электроосвещение"
+    assert transform_query("отоплене") == "отопление"
+    assert transform_query("кондицеонирование") == "кондиционирование"
+    assert transform_query("воздухообменн") == "воздухообмен"
+    assert transform_query("нагрузк") == "нагрузка"
+    assert transform_query("фундаминт") == "фундамент"
+    assert transform_query("оснавание") == "основание"
+    assert transform_query("железобитон") == "железобетон"
+    assert transform_query("перекрыте") == "перекрытие"
+
+    # 3. Preserves English terms
+    assert transform_query("модели BIM") == "модели BIM"
+    assert transform_query("отправь email") == "отправь email"
+    assert transform_query("папка Dropbox") == "папка Dropbox"
+    assert transform_query("проектирование HVAC") == "проектирование HVAC"
+
+    # 4. Mixed integration queries
+    assert analyze_question("Какие требования по cj 60.13330?").dataset_filter == "NTD_HVAC"
+    assert analyze_question("Какие требования по \'jv?").dataset_filter == "NTD_ELECTRICAL"
+    assert "пожар" in analyze_question("пожарнй вентиляцыя").matched_terms
+

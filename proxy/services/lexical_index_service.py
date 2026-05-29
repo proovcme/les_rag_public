@@ -117,6 +117,35 @@ def _row_to_chunk(row: sqlite3.Row, *, score: float = 0.0, extra_meta: dict[str,
     )
 
 
+NO_STEM_WORDS = {
+    "какие", "какой", "какая", "какое", "каких", "каким", "какими",
+    "где", "смотреть", "требования", "нормы", "норма", "требование",
+    "найти", "пункт", "раздел", "свод", "правил", "гост", "сп",
+    "случаях", "случае", "случай", "выполнять", "выполнение", "делать",
+    "допускается", "допускать", "почему", "зачем", "что", "кто", "как",
+    "когда", "куда", "откуда",
+    "нужно", "должно", "следует", "необходимо", "быть", "может", "можно", "ли",
+    "или", "для", "при", "под", "над", "все", "всех", "всеми", "чем", "тем", "только"
+}
+
+
+def stem_russian_word(word: str) -> str:
+    """A simple, robust Russian stemmer to handle common inflections."""
+    if not re.match(r"^[а-яё]+$", word):
+        return word
+    endings = (
+        "иями", "ям", "ыми", "ейший", "ейшая", "ейшее", "ейшие", "ейших",
+        "ого", "его", "ому", "ему", "ыми", "ими", "ых", "их", "ою", "ею",
+        "ая", "яя", "ое", "ее", "ые", "ие", "ым", "им", "ом", "ем", "ах", "ях",
+        "ов", "ев", "ей", "ам", "ям", "ит", "ет", "ут", "ют", "ат", "ят", "ти",
+        "а", "ев", "ов", "е", "и", "й", "о", "у", "ы", "ь", "я", "ю", "ию"
+    )
+    for ending in endings:
+        if word.endswith(ending) and len(word) - len(ending) >= 4:
+            return word[:-len(ending)]
+    return word
+
+
 def _fts_quote(term: str) -> str:
     return '"' + term.replace('"', '""') + '"'
 
@@ -135,7 +164,35 @@ def build_fts_query(question: str) -> str:
             terms.append(normalized)
     if not terms:
         return ""
-    return " OR ".join(_fts_quote(term) for term in terms[:16])
+    
+    body_terms = []
+    ref_terms = []
+    for term in terms:
+        is_ref = term in refs or any(c.isdigit() or c in " ." for c in term)
+        if is_ref:
+            ref_terms.append(_fts_quote(term))
+        elif term in NO_STEM_WORDS:
+            # Completely skip common stop words to prevent them from dominating search ranks
+            continue
+        elif len(term) >= 4:
+            stemmed = stem_russian_word(term)
+            if len(stemmed) >= 3 and stemmed.isalpha():
+                body_terms.append(f'"{stemmed}"*')
+            else:
+                body_terms.append(_fts_quote(term))
+        else:
+            body_terms.append(_fts_quote(term))
+            
+    clauses = []
+    if body_terms:
+        # Restrict standard content terms to the body 'text' column
+        # to avoid matching filenames and getting short tables boosted
+        clauses.append(f"text : ({' OR '.join(body_terms[:12])})")
+    if ref_terms:
+        # References can match either text or doc_name
+        clauses.append(f"({' OR '.join(ref_terms[:6])})")
+        
+    return " OR ".join(clauses)
 
 
 class LexicalIndex:
@@ -415,7 +472,7 @@ def merge_rrf(
             bonus = 0.0
             haystack = f"{getattr(chunk, 'doc_name', '')}\n{getattr(chunk, 'content', '')}".casefold()
             if refs and any(ref.casefold() in haystack for ref in refs):
-                bonus = 0.04
+                bonus = 0.12
             scores[key] = scores.get(key, 0.0) + weight / (k + rank) + bonus
             if key not in chosen or source == "vector":
                 chosen[key] = chunk

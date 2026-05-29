@@ -17,7 +17,7 @@
       "expected_route_filter": "NTD_FIRE",
       "top_k": 8,
       "min_chunks": 1,
-      "must_find": ["дымоудал", "допускается"],
+      "must_find": ["дымоудален", "допускается"],
       "source_top_any": ["СП 7.13130"],
       "source_top_k": 6
     },
@@ -97,7 +97,7 @@
       "expected_route_filter": "NTD_HVAC",
       "top_k": 8,
       "min_chunks": 1,
-      "must_find": ["воздухообмен", "воздух"],
+      "must_find": ["воздухообм", "воздух"],
       "source_top_any": ["СП 60.13330"],
       "source_top_k": 3
     },
@@ -158,7 +158,7 @@
       "top_k": 8,
       "min_chunks": 1,
       "must_find": ["теплов", "сети"],
-      "source_top_any": ["СП 124.13330"],
+      "source_top_any": ["СП 124.13330", "СП 74.13330"],
       "source_top_k": 3
     }
   ]

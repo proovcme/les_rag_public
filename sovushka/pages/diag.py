@@ -216,6 +216,26 @@ def build_diag():
             with ui.element("div").classes("diag-map-wrap"):
                 diag_map = _html(_build_diag_map_html([])).classes("w-full")
 
+        # ── С.У.Х.А.Р.И.К. Резервные копии ────────
+        with ui.card().classes("card-les w-full"):
+            with ui.row().classes("items-center justify-between w-full mb-2"):
+                with ui.column().classes("gap-0"):
+                    _html('<div class="section-title">С.У.Х.А.Р.И.К. — РЕЗЕРВНЫЕ КОПИИ</div>')
+                    ui.label("Управление снапшотами Qdrant и SQLite метабазой (ротация 3 копии)").style(
+                        "font-size:.62rem;color:var(--dim);"
+                    )
+                with ui.row().classes("gap-2"):
+                    backup_create_btn = ui.button(
+                        "⚡ СОЗДАТЬ БЭКАП",
+                        on_click=lambda: asyncio.create_task(create_backup())
+                    ).props("no-caps").style(
+                        "background:rgba(16,185,129,.15);border:1px solid var(--ok);"
+                        "color:var(--ok);font-family:var(--font);font-weight:900;font-size:.75rem;"
+                    )
+
+            # Контейнер для списков
+            backup_lists_el = ui.column().classes("w-full gap-3")
+
         # ── Словарь сокращений ───────────────────
         with ui.card().classes("card-les w-full"):
             _html('<div class="section-title" style="margin-bottom:8px;">СЛОВАРЬ АКРОНИМОВ</div>')
@@ -232,11 +252,93 @@ def build_diag():
                 "font-size:.68rem;height:160px;border:none;"
             )
 
+        # Таймер для начальной загрузки бэкапов
+        ui.timer(0.1, lambda: asyncio.create_task(load_backups()), once=True)
+
     # ── Вспомогательные функции диагностики ──────────
 
     STATUS_ICON  = {"ok": "✓", "warn": "⚠", "err": "✗"}
     STATUS_COLOR = {"ok": "var(--ok)", "warn": "var(--warn)", "err": "var(--err)"}
     STATUS_TAG   = {"ok": "tag-ok", "warn": "tag-warn", "err": "tag-err"}
+
+    async def load_backups():
+        data = await api_get("/api/backup/status")
+        backup_lists_el.clear()
+        if not data:
+            with backup_lists_el:
+                ui.label("Не удалось загрузить статус бэкапов").style("color:var(--err);font-size:.75rem;")
+            return
+
+        sqlite_backups = data.get("sqlite_backups", [])
+        qdrant_snapshots = data.get("qdrant_snapshots", [])
+        profile = data.get("profile", "unknown")
+        collection = data.get("collection_name", "unknown")
+
+        with backup_lists_el:
+            with ui.row().classes("w-full gap-3"):
+                # Столбец SQLite
+                with ui.column().classes("flex-1 gap-2"):
+                    ui.label(f"SQLite Метабаза ({profile})").style("font-size:.75rem;font-weight:900;color:var(--accent);")
+                    if not sqlite_backups:
+                        ui.label("Нет доступных копий SQLite").style("font-size:.7rem;color:var(--dim);")
+                    for b in sqlite_backups:
+                        size_mb = b['size_bytes'] / (1024 * 1024)
+                        dt = b['created_at'].split('.')[0].replace('T', ' ')
+                        with ui.row().classes("items-center justify-between w-full p-2 rounded").style(
+                            "background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);"
+                        ):
+                            with ui.column().classes("gap-0"):
+                                ui.label(b['name']).style("font-size:.7rem;font-weight:700;color:var(--text);")
+                                ui.label(f"{size_mb:.1f} MB | {dt}").style("font-size:.6rem;color:var(--dim);")
+                            ui.button(
+                                "✗",
+                                on_click=lambda _, name=b['name']: asyncio.create_task(delete_backup_item("sqlite", name))
+                            ).props("flat dense").style("color:var(--err);font-weight:900;")
+
+                # Столбец Qdrant
+                with ui.column().classes("flex-1 gap-2"):
+                    ui.label(f"Qdrant Снапшоты ({collection})").style("font-size:.75rem;font-weight:900;color:var(--accent);")
+                    if not qdrant_snapshots:
+                        ui.label("Нет доступных снапшотов Qdrant").style("font-size:.7rem;color:var(--dim);")
+                    for s in qdrant_snapshots:
+                        size_mb = s['size_bytes'] / (1024 * 1024)
+                        dt = s['created_at'].split('.')[0].replace('T', ' ')
+                        with ui.row().classes("items-center justify-between w-full p-2 rounded").style(
+                            "background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);"
+                        ):
+                            with ui.column().classes("gap-0"):
+                                ui.label(s['name']).style("font-size:.7rem;font-weight:700;color:var(--text);")
+                                ui.label(f"{size_mb:.1f} MB | {dt}").style("font-size:.6rem;color:var(--dim);")
+                            ui.button(
+                                "✗",
+                                on_click=lambda _, name=s['name']: asyncio.create_task(delete_backup_item("qdrant", name))
+                            ).props("flat dense").style("color:var(--err);font-weight:900;")
+
+    async def create_backup():
+        backup_create_btn.props("disabled")
+        backup_create_btn.set_text("⌛ Создание...")
+        ui.notify("Запущено создание резервной копии SQLite & Qdrant...", type="info")
+        res = await api_post("/api/backup/create")
+        backup_create_btn.props(remove="disabled")
+        backup_create_btn.set_text("⚡ СОЗДАТЬ БЭКАП")
+        if res:
+            sqlite_ok = res.get("sqlite", {}).get("ok")
+            qdrant_ok = res.get("qdrant", {}).get("ok")
+            if sqlite_ok and qdrant_ok:
+                ui.notify("Резервная копия SQLite и Qdrant успешно создана", type="positive")
+            else:
+                ui.notify("Создание бэкапа завершилось с ошибками", type="warning")
+            await load_backups()
+        else:
+            ui.notify("Ошибка при создании резервной копии", type="negative")
+
+    async def delete_backup_item(type_str: str, name: str):
+        res = await api_post("/api/backup/delete", {"type": type_str, "name": name})
+        if res and res.get("status") == "ok":
+            ui.notify(f"Удалено успешно: {name}", type="positive")
+            await load_backups()
+        else:
+            ui.notify(f"Ошибка при удалении {name}", type="negative")
 
     def _render_diag_cards():
         results = state.get("diag_results", [])

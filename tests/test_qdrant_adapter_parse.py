@@ -70,7 +70,7 @@ def test_sync_parse_updates_legacy_pending_file_name(tmp_path, monkeypatch):
     )
 
     class FakeQdrant:
-        def __init__(self, url):
+        def __init__(self, url, **kwargs):
             self.url = url
 
         def upsert(self, collection_name, points):
@@ -127,7 +127,7 @@ def test_sync_parse_reuses_existing_vector_by_content_hash(tmp_path, monkeypatch
     )
 
     class FakeQdrant:
-        def __init__(self, url):
+        def __init__(self, url, **kwargs):
             self.url = url
 
         def scroll(self, **kwargs):
@@ -187,7 +187,7 @@ def test_sync_parse_ignores_cached_vector_with_different_embedding_fingerprint(t
     )
 
     class FakeQdrant:
-        def __init__(self, url):
+        def __init__(self, url, **kwargs):
             self.url = url
 
         def scroll(self, **kwargs):

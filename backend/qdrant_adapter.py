@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 import qdrant_client
 from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
-from llama_index.core.schema import Document
+from llama_index.core.schema import Document, TextNode
 from qdrant_client import models
 
 from .converter import convert_to_markdown
@@ -42,6 +42,173 @@ from .rag_config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class StructureAwareSplitter:
+    """Structure-aware chunking for SP and GOST documents.
+    Preserves numbered clauses (e.g. 5.2.1) as single indivisible blocks.
+    Fits chunks within a target character length, and implements sentence-bounded overlap.
+    """
+    def __init__(self, chunk_size: int, chunk_overlap: int):
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+        self.fallback = SentenceSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        
+        # Regex to detect lines that start a new numbered section or markdown header
+        self.boundary_pattern = re.compile(
+            r"^(?:#{1,6}\s+|"
+            r"(?:Пункт|Раздел|Статья|п\.|§)\s*\d+(?:\.\d+)+|"
+            r"\d+(?:\.\d+)+(?:\s+|\.|$))",
+            re.IGNORECASE
+        )
+
+    def _split_into_atomic_blocks(self, text: str) -> list[str]:
+        lines = text.split("\n")
+        blocks = []
+        current_block_lines = []
+        
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                if current_block_lines:
+                    current_block_lines.append(line)
+                continue
+                
+            if self.boundary_pattern.match(stripped):
+                if current_block_lines:
+                    blocks.append("\n".join(current_block_lines).strip())
+                    current_block_lines = []
+            
+            current_block_lines.append(line)
+            
+        if current_block_lines:
+            blocks.append("\n".join(current_block_lines).strip())
+            
+        return [b for b in blocks if b]
+
+    def _get_sentence_overlap(self, text_prev: str, max_overlap: int) -> str:
+        if not text_prev or max_overlap <= 0:
+            return ""
+        sentences = re.split(r'(?<=[.!?])\s+', text_prev)
+        overlap_sentences = []
+        current_len = 0
+        for s in reversed(sentences):
+            s = s.strip()
+            if not s:
+                continue
+            if current_len + len(s) + 1 <= max_overlap:
+                overlap_sentences.append(s)
+                current_len += len(s) + 1
+            else:
+                if not overlap_sentences:
+                    return s[-max_overlap:]
+                break
+        if not overlap_sentences:
+            return ""
+        return " ".join(reversed(overlap_sentences)) + " "
+
+    def _split_large_block(self, text: str, max_chars: int, overlap_chars: int) -> list[str]:
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+        chunks = []
+        current_chunk = []
+        current_len = 0
+        
+        for s in sentences:
+            s = s.strip()
+            if not s:
+                continue
+            s_len = len(s)
+            
+            if s_len > max_chars:
+                if current_chunk:
+                    chunks.append(" ".join(current_chunk))
+                    current_chunk = []
+                    current_len = 0
+                i = 0
+                while i < s_len:
+                    chunks.append(s[i:i + max_chars])
+                    i += max_chars - overlap_chars
+                    if i + overlap_chars >= s_len:
+                        if i < s_len:
+                            chunks.append(s[i:])
+                        break
+            else:
+                separator_len = 1 if current_chunk else 0
+                if current_len + separator_len + s_len <= max_chars:
+                    current_chunk.append(s)
+                    current_len += separator_len + s_len
+                else:
+                    chunks.append(" ".join(current_chunk))
+                    overlap_prefix = self._get_sentence_overlap(chunks[-1], overlap_chars)
+                    current_chunk = []
+                    current_len = 0
+                    if overlap_prefix:
+                        current_chunk.append(overlap_prefix.strip())
+                        current_len = len(overlap_prefix.strip())
+                    
+                    separator_len = 1 if current_chunk else 0
+                    current_chunk.append(s)
+                    current_len += separator_len + s_len
+                    
+        if current_chunk:
+            chunks.append(" ".join(current_chunk))
+        return chunks
+
+    def get_nodes_from_documents(self, documents: list) -> list:
+        all_nodes = []
+        for doc in documents:
+            text = doc.text
+            metadata = doc.metadata or {}
+            doc_id = doc.node_id if hasattr(doc, "node_id") else doc.id_
+            
+            atomic_blocks = self._split_into_atomic_blocks(text)
+            
+            chunks = []
+            current_chunk_blocks = []
+            current_chunk_len = 0
+            
+            for block in atomic_blocks:
+                block_len = len(block)
+                
+                if block_len > self.chunk_size:
+                    if current_chunk_blocks:
+                        chunks.append("\n\n".join(current_chunk_blocks))
+                        current_chunk_blocks = []
+                        current_chunk_len = 0
+                    
+                    sub_chunks = self._split_large_block(block, self.chunk_size, self.chunk_overlap)
+                    chunks.extend(sub_chunks)
+                else:
+                    separator_len = 2 if current_chunk_blocks else 0
+                    if current_chunk_len + separator_len + block_len <= self.chunk_size:
+                        current_chunk_blocks.append(block)
+                        current_chunk_len += separator_len + block_len
+                    else:
+                        chunks.append("\n\n".join(current_chunk_blocks))
+                        overlap_prefix = self._get_sentence_overlap(chunks[-1], self.chunk_overlap)
+                        
+                        current_chunk_blocks = []
+                        current_chunk_len = 0
+                        if overlap_prefix:
+                            current_chunk_blocks.append(overlap_prefix.strip())
+                            current_chunk_len = len(overlap_prefix.strip())
+                            
+                        separator_len = 2 if current_chunk_blocks else 0
+                        current_chunk_blocks.append(block)
+                        current_chunk_len += separator_len + block_len
+            
+            if current_chunk_blocks:
+                chunks.append("\n\n".join(current_chunk_blocks))
+                
+            for idx, chunk_text in enumerate(chunks):
+                node = TextNode(
+                    text=chunk_text,
+                    id_=f"{doc_id}_chunk_{idx}",
+                    metadata=metadata
+                )
+                all_nodes.append(node)
+                
+        return all_nodes
 
 EMBED_BATCH  = int(os.getenv("RAG_EMBED_BATCH", "32"))      # чанков за один запрос к MLX embeddings
 MIN_CHUNK    = int(os.getenv("RAG_MIN_CHUNK_CHARS", "20"))  # символов — короче не индексируем
@@ -502,7 +669,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         recovered = self.db.recover_interrupted_parsing()
         if recovered:
             logger.info("[INIT] Recovered %s interrupted parsing dataset(s)", recovered)
-        self.aclient         = qdrant_client.AsyncQdrantClient(url=qdrant_url)
+        self.aclient         = qdrant_client.AsyncQdrantClient(url=qdrant_url, timeout=60.0)
         self.qdrant_url      = qdrant_url
         self.embed           = EmbedClient(mlx_url, model=embed_model_name.replace(":latest", ""))
         self.collection_name = rag_collection_name()
@@ -644,7 +811,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             return {"status": "error", "msg": "dir missing"}
 
         md_parser = MarkdownNodeParser()
-        splitter  = SentenceSplitter(chunk_size=RAG_CHUNK_SIZE, chunk_overlap=RAG_CHUNK_OVERLAP)
+        splitter  = StructureAwareSplitter(chunk_size=RAG_CHUNK_SIZE, chunk_overlap=RAG_CHUNK_OVERLAP)
 
         try:
             pending_names = set(self.db.get_pending_files(dataset_id, limit=limit))
@@ -665,7 +832,8 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 }
 
             sync_qdrant = qdrant_client.QdrantClient(
-                url=self.qdrant_url
+                url=self.qdrant_url,
+                timeout=60.0
             )
 
             # Матчинг по относительному пути и по имени файла для совместимости
@@ -1256,6 +1424,26 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             with_payload=True,
         )
 
+        def _is_binary_garbage(text: str) -> bool:
+            """Detect base64-encoded or binary garbage chunks."""
+            if not text or len(text) < 40:
+                return False
+            lines = text.split("\n")
+            long_dense_lines = sum(
+                1 for line in lines
+                if len(line) > 60 and " " not in line and "/" in line + "=" in line
+            )
+            if long_dense_lines >= 2:
+                return True
+            # Check if text has no Cyrillic at all and looks like base64
+            sample = text[:200].replace("\n", "")
+            if len(sample) > 80:
+                cyrillic = sum(1 for c in sample if "\u0400" <= c <= "\u04ff")
+                spaces = sample.count(" ")
+                if cyrillic == 0 and spaces < 3:
+                    return True
+            return False
+
         return [
             Chunk(
                 content=p.payload.get("text", ""),
@@ -1265,6 +1453,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 meta=p.payload,
             )
             for p in results.points
+            if not _is_binary_garbage(p.payload.get("text", ""))
         ]
 
     async def retrieve_table_rows(

@@ -48,8 +48,8 @@ EMBEDDING_PROFILES: dict[str, EmbeddingProfile] = {
         api_model="qwen3-embedding-0.6b",
         collection="les_rag_qwen3_06b",
         vector_size=1024,
-        chunk_size=1400,
-        chunk_overlap=100,
+        chunk_size=1550,
+        chunk_overlap=70,
     ),
     "fast": EmbeddingProfile(
         name="fast",

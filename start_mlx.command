@@ -33,7 +33,7 @@ fi
 
 # Создаём/обновляем .venv если нужно (первый раз ~2 мин, потом секунды)
 echo "[MLX] Синхронизация окружения..."
-if ! uv sync --quiet; then
+if ! uv sync --quiet --group coreml; then
     echo "[MLX] uv sync не удался; запуск остановлен"
     exit 1
 fi

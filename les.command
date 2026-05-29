@@ -170,7 +170,7 @@ _launch_mlx() {
 _launch_proxy() {
     source ~/.zprofile 2>/dev/null; source ~/.zshrc 2>/dev/null
     _load_env
-    uv sync --quiet --project "$DIR"
+    uv sync --quiet --group coreml --project "$DIR"
     if [ -f "$DIR/proxy_launchd.plist" ]; then
         cp "$DIR/proxy_launchd.plist" "$HOME/Library/LaunchAgents/me.ovc.les.proxy.plist"
         launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/me.ovc.les.proxy.plist" >/dev/null 2>&1 || true
@@ -281,7 +281,7 @@ do_start() {
         echo "$MLX_LISTENER" > "$LOGS/mlx_host.pid"
         _inf "MLX уже слушает :8080 (PID $MLX_LISTENER)"
     else
-        uv sync --quiet --project "$DIR"
+        uv sync --quiet --group coreml --project "$DIR"
         _launch_mlx
         sleep 3
         curl -sf http://127.0.0.1:8080/api/health > /dev/null \

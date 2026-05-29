@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from proxy.services.kot_service import analyze_question
+from proxy.services.kot_service import analyze_question, extract_norm_refs
 from proxy.services.lexical_index_service import LexicalIndex, RetrievalTrace, lexical_enabled, merge_rrf
 from proxy.services.query_router import route_query
 from proxy.services.retrieval_quality_service import (
@@ -140,7 +140,9 @@ def infer_dataset_filter(question: str) -> Optional[str]:
 
 
 def expand_retrieval_query(question: str) -> str:
-    return classify_query(question).expanded_query
+    from proxy.services.kot_service import expand_query_synonyms
+    expanded = classify_query(question).expanded_query
+    return expand_query_synonyms(expanded)
 
 
 def _expand_gkrf_query(question: str) -> str:
@@ -153,20 +155,30 @@ def _expand_gkrf_query(question: str) -> str:
         return (
             f"{question}\n"
             "Положение устанавливает состав разделов проектной документации. "
-            "Проектная документация на объекты капитального строительства состоит из 12 разделов. "
-            "Раздел 1 Пояснительная записка. "
-            "Раздел 2 Схема планировочной организации земельного участка. "
-            "Раздел 3 Архитектурные решения. "
-            "Раздел 4 Конструктивные и объемно-планировочные решения. "
-            "Раздел 5 Сведения об инженерном оборудовании, сетях инженерно-технического обеспечения. "
-            "Раздел 6 Проект организации строительства. "
-            "Раздел 7 Проект организации работ по сносу или демонтажу. "
-            "Раздел 8 Перечень мероприятий по охране окружающей среды. "
-            "Раздел 9 Мероприятия по обеспечению пожарной безопасности. "
-            "Раздел 10 Мероприятия по обеспечению доступа инвалидов. "
-            "Раздел 11 Смета на строительство. "
-            "Раздел 12 Иная документация. "
-            "Состав разделов проектной документации на линейные объекты."
+            "Проектная документация на объекты капитального строительства состоит из 12 разделов: "
+            "Раздел 1: Пояснительная записка. "
+            "Раздел 2: Схема планировочной организации земельного участка. "
+            "Раздел 3: Архитектурные решения. "
+            "Раздел 4: Конструктивные и объемно-планировочные решения. "
+            "Раздел 5: Сведения об инженерном оборудовании, о сетях инженерно-технического обеспечения, перечень инженерно-технических мероприятий, содержание технологических решений. "
+            "Раздел 6: Проект организации строительства. "
+            "Раздел 7: Проект организации работ по сносу или демонтажу объектов капитального строительства. "
+            "Раздел 8: Перечень мероприятий по охране окружающей среды. "
+            "Раздел 9: Мероприятия по обеспечению пожарной безопасности. "
+            "Раздел 10: Мероприятия по обеспечению доступа инвалидов. "
+            "Раздел 11: Смета на строительство объектов капитального строительства. "
+            "Раздел 12: Иная документация в случаях, предусмотренных федеральными законами.\n"
+            "Проектная документация на линейные объекты состоит из 10 разделов: "
+            "Раздел 1: Пояснительная записка. "
+            "Раздел 2: Проект полосы отвода. "
+            "Раздел 3: Технологические и конструктивные решения линейного объекта. Искусственные сооружения. "
+            "Раздел 4: Здания, строения и сооружения, входящие в инфраструктуру линейного объекта. "
+            "Раздел 5: Проект организации строительства. "
+            "Раздел 6: Проект организации работ по сносу (демонтажу) линейного объекта. "
+            "Раздел 7: Мероприятия по охране окружающей среды. "
+            "Раздел 8: Мероприятия по обеспечению пожарной безопасности. "
+            "Раздел 9: Смета на строительство. "
+            "Раздел 10: Иная документация в случаях, предусмотренных федеральными законами."
         )
     return question
 
@@ -193,7 +205,7 @@ def _expand_fire_query(question: str) -> str:
     q = question.casefold()
     hints: list[str] = []
     if "7.13130" in q or "дымоудал" in q or "противодым" in q:
-        hints.extend(["СП 7.13130", "противодымная вентиляция", "дымоудаление", "не предусматривать"])
+        hints.extend(["СП 7.13130", "противодымная вентиляция", "дымоудаление", "не предусматривать", "допускается не оборудовать", "вытяжной"])
     if "соуэ" in q or "оповещ" in q or ("управлен" in q and "эвакуац" in q):
         hints.extend(["СП 3.13130", "ГОСТ Р 59639", "система оповещения и управления эвакуацией"])
     if "спс" in q or "сигнализац" in q:
@@ -210,18 +222,29 @@ def _expand_fire_query(question: str) -> str:
 def _expand_hvac_query(question: str) -> str:
     q = question.casefold()
     hints: list[str] = []
-    if any(token in q for token in ("сп 60", "60.13330", "отоп", "вентиля", "воздухообмен", "микроклимат", "расход воздуха")):
-        hints.extend(["СП 60.13330", "отопление вентиляция кондиционирование", "воздухообмен", "микроклимат"])
-    if "теплов" in q and "сет" in q:
-        hints.extend(["СП 124.13330", "тепловые сети"])
-    if "шумоглуш" in q:
+    # Основные HVAC-запросы: отопление / вентиляция / кондиционирование / воздухообмен / микроклимат
+    if any(token in q for token in ("сп 60", "60.13330", "отоп", "вентиля", "воздухообмен", "микроклимат", "расход воздуха", "кондициониров")):
+        hints.extend([
+            "СП 60.13330",
+            "СП 60.13330.2020 Отопление вентиляция и кондиционирование воздуха",
+            "отопление вентиляция кондиционирование",
+            "воздухообмен микроклимат нормируемые параметры",
+        ])
+    # Тепловые сети
+    if ("теплов" in q and "сет" in q) or "тепловые сети" in q or "124.13330" in q:
+        hints.extend(["СП 124.13330", "СП 74.13330", "тепловые сети теплоснабжение"])
+    # Шумоглушение воздуховодов (только если явно упомянуто)
+    if "шумоглуш" in q or "271.1325800" in q:
         hints.extend(["СП 271.1325800", "системы шумоглушения воздуховодов"])
-    if "шум" in q or "акуст" in q:
+    # Защита от шума (только если явно упомянуто)
+    if "защит" in q and "шум" in q or "акуст" in q or "51.13330" in q or "353.1325800" in q:
         hints.extend(["СП 51.13330", "СП 353.1325800", "защита от шума"])
-    if "изоляц" in q:
+    # Тепловая изоляция (только если явно упомянуто)
+    if ("тепл" in q and "изоляц" in q) or "61.13330" in q:
         hints.extend(["СП 61.13330", "тепловая изоляция оборудования трубопроводов"])
-    if "холодопроизвод" in q or "кондиционер" in q:
-        hints.extend(["ГОСТ 26963", "кондиционер", "холодопроизводительность"])
+    # Холодопроизводительность / кондиционер (только если явно упомянуто)
+    if "холодопроизвод" in q or "кондиционер" in q or "26963" in q:
+        hints.extend(["ГОСТ 26963", "кондиционер холодопроизводительность"])
     return _append_query_hints(question, hints)
 
 
@@ -378,16 +401,28 @@ async def retrieve_chat_chunks(
         trace.quality_detail = quality.detail
         return RetrievalResult(raw_chunks, trace, kot, quality)
 
-    vector_top_k = RERANK_POOL_K if return_trace and lexical_enabled() else CHAT_TOP_K
+
+    # Dynamic top-k scaling for structured, legal, or technical queries
+    is_structured = any(word in question.casefold() for word in ("перечен", "состав", "список", "разделы", "все разделы", "перечисли"))
+    effective_filter = dataset_ids or classify_query(question).dataset_filter
+    is_technical_or_legal = bool(effective_filter and "MAIL" not in str(effective_filter))
+    
+    merged_top_k = CHAT_TOP_K
+    if is_structured or is_technical_or_legal:
+        merged_top_k = 24
+        
+    has_refs = bool(extract_norm_refs(question) or extract_norm_refs(retrieval_query))
+    pool_k = max(36, merged_top_k * 2) if has_refs or is_structured or is_technical_or_legal else RERANK_POOL_K
+    vector_top_k = pool_k if return_trace and lexical_enabled() else merged_top_k
     vector_chunks = await rag_backend.retrieve(retrieval_query, dataset_ids=dataset_ids, top_k=vector_top_k)
-    chunks, trace = _hybrid_merge(question, vector_chunks, dataset_ids, rag_backend, logger)
+    chunks, trace = _hybrid_merge(question, vector_chunks, dataset_ids, rag_backend, logger, retrieval_query=retrieval_query, pool_k=pool_k, limit=merged_top_k)
     quality = evaluate_retrieval_quality(question=question, chunks=chunks, trace=trace, kot=kot)
 
     if return_trace and quality.status == "weak":
         retry_query = expanded_quality_query(question, kot)
         if retry_query != question:
             retry_vector = await rag_backend.retrieve(retry_query, dataset_ids=dataset_ids, top_k=vector_top_k)
-            retry_chunks, retry_trace = _hybrid_merge(retry_query, retry_vector, dataset_ids, rag_backend, logger)
+            retry_chunks, retry_trace = _hybrid_merge(retry_query, retry_vector, dataset_ids, rag_backend, logger, retrieval_query=retry_query, pool_k=pool_k, limit=merged_top_k)
             retry_trace.retry_count = 1
             retry_quality = evaluate_retrieval_quality(question=question, chunks=retry_chunks, trace=retry_trace, kot=kot)
             if retry_quality.status != "weak" or len(retry_chunks) >= len(chunks):
@@ -406,6 +441,10 @@ def _hybrid_merge(
     dataset_ids: Optional[list[str]],
     rag_backend,
     logger: logging.Logger,
+    *,
+    retrieval_query: str = "",
+    pool_k: int = RERANK_POOL_K,
+    limit: int = CHAT_TOP_K,
 ) -> tuple[list[Any], RetrievalTrace]:
     if not lexical_enabled():
         trace = RetrievalTrace(
@@ -415,7 +454,7 @@ def _hybrid_merge(
             merged_count=len(vector_chunks),
             fallback_reason="hybrid_disabled",
         )
-        return vector_chunks[:CHAT_TOP_K], trace
+        return vector_chunks[:limit], trace
 
     collection = getattr(rag_backend, "collection_name", "")
     if not collection:
@@ -426,18 +465,18 @@ def _hybrid_merge(
             merged_count=len(vector_chunks),
             fallback_reason="missing_collection_name",
         )
-        return vector_chunks[:CHAT_TOP_K], trace
+        return vector_chunks[:limit], trace
     lexical_chunks: list[Any] = []
     try:
         index = LexicalIndex()
         status = index.status(collection)
         if status.get("ready") and not status.get("stale"):
-            lexical_chunks = index.search(question, collection=collection, dataset_ids=dataset_ids, limit=RERANK_POOL_K)
+            lexical_chunks = index.search(retrieval_query or question, collection=collection, dataset_ids=dataset_ids, limit=pool_k)
         elif status.get("stale"):
             logger.info("[HYBRID] lexical index stale for %s: %s", collection, status)
     except Exception as error:
         logger.warning("[HYBRID] lexical fallback: %s", error)
-    merged, trace = merge_rrf(vector_chunks, lexical_chunks, question=question, limit=CHAT_TOP_K)
+    merged, trace = merge_rrf(vector_chunks, lexical_chunks, question=retrieval_query or question, limit=limit)
     if not lexical_chunks and not trace.fallback_reason:
         trace.fallback_reason = "lexical_index_empty_or_unavailable"
     return merged, trace
