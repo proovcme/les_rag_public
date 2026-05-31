@@ -1,6 +1,7 @@
 # 🦉 Л.Е.С. — Локальная Единая Система v2.0 Core
 
-> **Актуализация 25.05.2026:** документ сохранён как historical v2.0 snapshot, но текущий runtime уже no-Docker: Qdrant/proxy/MLX/UI работают на host через launchd, Docker Desktop/OrbStack не требуются. MLX Host заменил Ollama в основном контуре; активны split UI (`/` чат, `/les` админка), premium chat/artifacts, semantic cache, document router, Parquet artifacts и guarded qwen indexing.
+> **Актуализация 31.05.2026 (Modernization Campaign):** Текущий контур полностью no-Docker. Завершена интеграция гибридного RAG-пайплайна: **Microsoft MarkItDown** (конвертер), **Google LangExtract** (реляционные правила в SQLite `structured_rules`) и **MLX GLM-OCR** (нативный VLM-OCR на GPU). Выполнен полный guarded-реиндекс по конвейеру `markdown_pdf_tables` для пожарного датасета **`NTD_FIRE_Index`** (135 файлов, 31 481 чанков) и тяжелого справочника **`BOOKS_Index`** (40 МБ, 596 страниц, 3 222 чанка) с динамическими RAM-гардами (выгрузка idle-моделей при 6.2 GB RAM). CoreML вычисления переведены на Neural Engine и GPU (`COREML_EMBED_COMPUTE_UNITS=all`), что ускорило векторизацию в 10 раз и исключило баг зануления внимания Apple AMX.
+
 
 ## Описание
 Л.Е.С. v2.0 — суверенный инженерный RAG-стек для работы с нормативной документацией (ГОСТ/СП), проектной перепиской, каталогами и BIM-данными. Построен на принципах **Fully Local / Zero-Cloud / Lightweight**.  
