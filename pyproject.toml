@@ -7,7 +7,11 @@ requires-python = ">=3.12"
 dependencies = [
     # ── MLX / Metal ──────────────────────────────────────────────
     "mlx-lm>=0.22.0",
+    "mlx-vlm>=0.3.11",
     "sentence-transformers>=3.0.0",     # BGE-M3, использует MPS на Apple Silicon
+    "torch>=2.2.0",
+    "torchvision>=0.17.0",
+    "coremltools>=9.0",
 
     # ── API сервер ───────────────────────────────────────────────
     "fastapi>=0.115.0",
@@ -35,6 +39,9 @@ dependencies = [
     "pyarrow>=16.0.0",
     "extract-msg>=0.48.0",
     "pdfplumber>=0.11.0",
+    "Pillow>=10.0.0",
+    "markitdown>=0.0.1",
+    "langextract>=1.1.0",
 
     # ── UI ───────────────────────────────────────────────────────
     "nicegui>=2.0.0",
@@ -46,8 +53,5 @@ dependencies = [
 
 [dependency-groups]
 dev = []
-coreml = [
-    "coremltools>=9.0",                 # Core ML / Neural Engine embedding probes
-]
 
 [tool.uv]

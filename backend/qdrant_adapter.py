@@ -391,6 +391,29 @@ class MetaDB:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_docs_dataset ON documents(dataset_id)"
             )
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS structured_rules (
+                    id          TEXT PRIMARY KEY,
+                    document_id TEXT NOT NULL,
+                    file_key    TEXT NOT NULL,
+                    chunk_id    TEXT NOT NULL,
+                    subject     TEXT NOT NULL,
+                    parameter   TEXT NOT NULL,
+                    operator    TEXT NOT NULL,
+                    value       REAL NOT NULL,
+                    unit        TEXT NOT NULL,
+                    condition   TEXT,
+                    char_start  INTEGER NOT NULL,
+                    char_end    INTEGER NOT NULL,
+                    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_rules_doc ON structured_rules(document_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_rules_file ON structured_rules(file_key)"
+            )
             # Миграция существующих БД
             for col, typedef in [
                 ("file_hash",   "TEXT"),
@@ -651,6 +674,35 @@ class MetaDB:
         if any(dataset["status"] not in ("COMPLETED", "IDLE") for dataset in datasets):
             return "degraded"
         return "ready"
+
+    def insert_structured_rules(self, rules: List[Dict[str, Any]]) -> None:
+        if not rules:
+            return
+        with self._get_conn() as conn:
+            conn.executemany("""
+                INSERT OR REPLACE INTO structured_rules (
+                    id, document_id, file_key, chunk_id, subject, parameter, operator, value, unit, condition, char_start, char_end
+                ) VALUES (
+                    :id, :document_id, :file_key, :chunk_id, :subject, :parameter, :operator, :value, :unit, :condition, :char_start, :char_end
+                )
+            """, rules)
+
+    def get_structured_rules(self, document_id: Optional[str] = None, file_key: Optional[str] = None) -> List[sqlite3.Row]:
+        query = "SELECT * FROM structured_rules WHERE 1=1"
+        params = []
+        if document_id:
+            query += " AND document_id = ?"
+            params.append(document_id)
+        if file_key:
+            query += " AND file_key = ?"
+            params.append(file_key)
+        
+        with self._get_conn() as conn:
+            return conn.execute(query, params).fetchall()
+
+    def clear_structured_rules(self, file_key: str) -> None:
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM structured_rules WHERE file_key = ?", (file_key,))
 
 
 # ── Основной адаптер ──────────────────────────────────────────────────────────
@@ -951,6 +1003,31 @@ class QdrantLlamaIndexAdapter(RAGBackend):
 
                     _apply_context_metadata_to_nodes(file_nodes, dataset_id, file_key)
 
+                    # Стираем старые правила для этого файла перед переиндексацией
+                    self.db.clear_structured_rules(file_key)
+
+                    # Извлекаем структурированные правила для нормативных и сложных документов
+                    if route and route.doc_type in ("NORMATIVE", "SPEC"):
+                        try:
+                            from .rules_extractor import StructuredRulesExtractor
+                            extractor = StructuredRulesExtractor()
+                            extracted_rules = []
+                            for node in file_nodes:
+                                chunk_rules = extractor.extract_rules(
+                                    text=node["text"],
+                                    document_id=dataset_id,
+                                    file_key=file_key,
+                                    chunk_id=node["doc_id"]
+                                )
+                                if chunk_rules:
+                                    extracted_rules.extend(chunk_rules)
+
+                            if extracted_rules:
+                                self.db.insert_structured_rules(extracted_rules)
+                                logger.info(f"[OCR_RULES] Извлечено структурированных правил из {file_key}: {len(extracted_rules)}")
+                        except Exception as rule_err:
+                            logger.error(f"[OCR_RULES] Ошибка извлечения структурированных правил для {file_key}: {rule_err}", exc_info=True)
+
                     # Батч-эмбеддинги по EMBED_BATCH чанков. Upsert начинаем только
                     # после успешного embedding всех чанков файла, чтобы не оставлять
                     # частичный индекс при сбое середины документа.
@@ -1169,7 +1246,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
     ) -> list[dict]:
         import time as _t
         phase_start = _t.time()
-        md_content = convert_to_markdown(file_path)
+        md_content = convert_to_markdown(file_path, route=route)
         if timings is not None:
             timings["convert_sec"] = timings.get("convert_sec", 0.0) + (_t.time() - phase_start)
         if not md_content:

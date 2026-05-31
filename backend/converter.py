@@ -22,12 +22,26 @@ SUPPORTED = {
     ".pdf", ".docx", ".doc",
     ".eml", ".emlx", ".msg",
     ".xlsx", ".xls", ".csv",
+    ".pptx",
     ".json", ".jsonl",
     ".md", ".txt",
 }
 
 
-def convert_to_markdown(file_path: Path) -> Optional[str]:
+def _parse_with_markitdown(file_path: Path) -> Optional[str]:
+    """Конвертация с использованием универсального конвертера Microsoft MarkItDown."""
+    try:
+        from markitdown import MarkItDown
+        md = MarkItDown()
+        result = md.convert(str(file_path))
+        if result and result.text_content:
+            return result.text_content
+    except Exception as e:
+        logger.warning(f"[CONVERT] MarkItDown failed for {file_path.name}: {e}")
+    return None
+
+
+def convert_to_markdown(file_path: Path, route=None) -> Optional[str]:
     suffix = file_path.suffix.lower()
     if suffix not in SUPPORTED:
         logger.warning(f"[CONVERT] Неподдерживаемый формат: {suffix} ({file_path.name})")
@@ -36,13 +50,15 @@ def convert_to_markdown(file_path: Path) -> Optional[str]:
     logger.info(f"[CONVERT] {file_path.name} ({suffix}, {file_path.stat().st_size // 1024} KB)")
     try:
         if suffix == ".pdf":
-            result = _parse_pdf(file_path)
+            result = _parse_pdf(file_path, route=route)
         elif suffix in (".docx", ".doc"):
-            result = _parse_docx(file_path)
+            result = _parse_with_markitdown(file_path) or _parse_docx(file_path)
         elif suffix in (".eml", ".emlx", ".msg"):
             result = _parse_email(file_path)
         elif suffix in (".xlsx", ".xls", ".csv"):
-            result = _parse_spreadsheet(file_path)
+            result = _parse_with_markitdown(file_path) or _parse_spreadsheet(file_path)
+        elif suffix == ".pptx":
+            result = _parse_with_markitdown(file_path)
         elif suffix in (".json", ".jsonl"):
             result = _parse_json(file_path)
         elif suffix in (".md", ".txt"):
@@ -62,11 +78,34 @@ def convert_to_markdown(file_path: Path) -> Optional[str]:
         return None
 
 
-def _parse_pdf(path: Path) -> str:
+def _parse_pdf(path: Path, route=None) -> str:
+    # Проверяем настройки OCR из переменных окружения
+    ocr_enabled = os.getenv("RAG_OCR_ENABLED", "true").lower() in ("true", "1", "yes", "on")
+    ocr_model = os.getenv("RAG_OCR_MODEL", "mlx-community/GLM-OCR-4bit")
+    ocr_dpi = int(os.getenv("RAG_OCR_DPI", "150"))
+
+    force_ocr = False
+    if route and getattr(route, "pipeline", None) == "markdown_needs_ocr":
+        force_ocr = True
+
+    # 1. Если роутер явно сказал делать OCR, делаем его сразу
+    if force_ocr and ocr_enabled:
+        logger.info(f"[CONVERT] Запуск OCR конвейера для {path.name} по требованию роутера")
+        try:
+            from .ocr_parser import MLXVisualOCRParser
+            parser = MLXVisualOCRParser(model_id=ocr_model)
+            md = parser.parse_pdf(path, dpi=ocr_dpi)
+            if md and md.strip():
+                return md
+        except Exception as ocr_err:
+            logger.error(f"[CONVERT] Ошибка OCR для {path.name}: {ocr_err}", exc_info=True)
+
+    # 2. Пытаемся извлечь стандартный текстовый слой
+    md_content = ""
     try:
         import pymupdf4llm
         image_dir = _pdf_image_dir(path) if _pdf_image_extraction_enabled(path) else None
-        md = pymupdf4llm.to_markdown(
+        md_content = pymupdf4llm.to_markdown(
             str(path),
             pages=None,
             write_images=image_dir is not None,
@@ -74,22 +113,46 @@ def _parse_pdf(path: Path) -> str:
             image_format=os.getenv("PDF_IMAGE_FORMAT", "png"),
             show_progress=False,
         )
-        if md and md.strip():
-            return md
-        logger.warning(f"[CONVERT] pymupdf4llm вернул пустоту для {path.name}, fallback")
+        if md_content and md_content.strip():
+            # Если текст слишком короткий, возможно это скан с парой символов мусора
+            if len(md_content.strip()) < 100 and ocr_enabled:
+                logger.warning(f"[CONVERT] Текст слишком короткий ({len(md_content)} симв.), подозрение на скан. Пробуем OCR.")
+                force_ocr = True
+            else:
+                return md_content
     except Exception as e:
-        logger.warning(f"[CONVERT] pymupdf4llm failed ({e}), fallback to fitz")
+        logger.warning(f"[CONVERT] pymupdf4llm failed ({e}), пробуем fitз fallback")
 
-    # Fallback — базовый fitz
-    import fitz
-    doc = fitz.open(str(path))
-    pages = []
-    for i, page in enumerate(doc):
-        text = page.get_text()
-        if text.strip():
-            pages.append(f"## Стр. {i+1}\n{text}")
-    doc.close()
-    return "\n\n".join(pages) or f"[WARN] {path.name}: текст не извлечён (сканированный PDF?)"
+    # 3. Fallback на базовый fitz, если мы ещё не решили делать OCR
+    if not force_ocr:
+        try:
+            import fitz
+            doc = fitz.open(str(path))
+            pages = []
+            for i, page in enumerate(doc):
+                text = page.get_text()
+                if text.strip():
+                    pages.append(f"## Стр. {i+1}\n{text}")
+            doc.close()
+            extracted = "\n\n".join(pages)
+            if extracted.strip() and len(extracted.strip()) > 100:
+                return extracted
+        except Exception as e:
+            logger.warning(f"[CONVERT] fitz fallback failed: {e}")
+
+    # 4. Если обычный текст пустой или мусорный, и включен OCR — запускаем распознавание
+    if ocr_enabled:
+        logger.info(f"[CONVERT] Обнаружен пустой или отсканированный PDF: {path.name}. Запуск OCR...")
+        try:
+            from .ocr_parser import MLXVisualOCRParser
+            parser = MLXVisualOCRParser(model_id=ocr_model)
+            md = parser.parse_pdf(path, dpi=ocr_dpi)
+            if md and md.strip():
+                return md
+        except Exception as ocr_err:
+            logger.error(f"[CONVERT] Ошибка фонового OCR для {path.name}: {ocr_err}", exc_info=True)
+
+    return f"[WARN] {path.name}: текст не извлечён (сканированный PDF?)"
 
 
 def _max_file_chars(path: Path) -> int:

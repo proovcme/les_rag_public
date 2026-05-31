@@ -4,7 +4,7 @@
 
 **Публичное позиционирование:** локальная RAG-машина для инженерных, нормативных и корпоративных архивов на Apple Silicon. Фокус: приватность, воспроизводимость, наблюдаемость, безопасная индексация и ответы с проверяемыми источниками.
 
-**Актуальный статус: 28.05.2026.** Референсный контур работает на Mac Mini M4 / 24 GB в no-Docker runtime: Qdrant local binary, MLX Host, FastAPI proxy и Sovushka Lite chat/admin запускаются через launchd; rich NiceGUI UI сохранён как fallback. Активный embedding-профиль — `Qwen/Qwen3-Embedding-0.6B` в коллекции `les_rag_qwen3_06b`; embedding и validator по умолчанию идут через Core ML worker-процессы. Текущий публичный baseline: `1003/1003` файлов зарегистрировано (активно идет фоновый реиндекс для калибровки и FTS), RAG Golden Set сдан на **16/16 (100% успех)**, интегрированы инкрементальные бэкапы **С.У.Х.А.Р.И.К.**. Внешний контур `https://les.ovc.me` поднят через П.А.У.К. reverse tunnel и В.О.Л.К. API keys.
+**Актуальный статус: 31.05.2026.** Референсный контур находится в спящем режиме (все фоновые RAG-сервисы и launchd-агенты безопасно остановлены и выгружены по команде оператора). На локальном Mac Mini M4 / 24 GB развернута новейшая инфраструктура гибридной структурно-семантической разметки: интегрирован локальный MLX-native VLM конвейер **GLM-OCR (0.9B)** для распознавания сканов и таблиц, универсальный офисный конвертер **Microsoft MarkItDown** (с поддержкой `.pptx` и fallbacks), и экстрактор **Google LangExtract**, наполняющий SQLite-базу `structured_rules` точными заземленными требованиями (char offsets). Baseline `1003/1003` документов полностью готов к селективному переиндексированию и сдаче Golden Set. Внешний контур `https://les.ovc.me` поднят через П.А.У.К. reverse tunnel и В.О.Л.К. API keys.
 
 ---
 
@@ -79,7 +79,7 @@ flowchart TD
 | RAG-чат | Ответы на русском языке с источниками, dataset filter, clarification gate, history drawer, user feedback |
 | SafeRAG | Post-generation validator, статусы `VERIFIED / NO_DATA / HALLUCINATION`, safe fallback |
 | Индексация | Smart plan/sync/upload, Folder Watcher status/scan, deterministic routing, batch scheduler, guarded micro-indexing |
-| Документы | PDF, DOCX, DOC, XLSX, XLS, CSV, EML, MSG, JSON, JSONL, MD, TXT |
+| Документы | PDF (с автодетектом сканов и MLX GLM-OCR), DOCX, DOC, XLSX, XLS, PPTX, XML, CSV, EML, MSG, JSON, JSONL, MD, TXT (офисные форматы обрабатываются через Microsoft MarkItDown с mammoth/pandas fallbacks) |
 | Таблицы | Row-level chunks, Parquet artifacts, прямые суммы/количества без LLM |
 | UI | Lite-чат и Lite Admin без NiceGUI client state, classic NiceGUI fallback, метрики, jobs, runtime controls |
 | Диагностика | `/api/health`, `/api/status`, `/api/metrics`, `/api/diag`, smoke/browser/golden tests |
@@ -92,6 +92,7 @@ flowchart TD
 | Риск | Защита в Л.Е.С. |
 |---|---|
 | Утечка документов в облако | Штатный runtime полностью локальный; внешняя публикация — только relay до локального хоста |
+| Неконтролируемая отправка данных при OCR/структурировании | Все процессы (GLM-OCR и LangExtract в локальном режиме) выполняются локально на GPU/CPU через MLX без внешних API |
 | Публичный доступ к админке | Server-side RBAC, роли `admin/user`, API keys, trusted network только opt-in |
 | Подмена trusted headers | `TRUSTED_PROXY_NETWORKS` ограничивает, от кого принимаются forwarded/trusted headers |
 | Path traversal и удаление чужих файлов | Storage helpers проверяют dataset paths и границы storage root |
@@ -112,7 +113,7 @@ flowchart TD
 | Model leases | Модели грузятся лениво; validator и embedder не должны конфликтовать с chat/index без admission |
 | Heavy PDF guard | Тяжёлые book-PDF не идут в auto-index loop; нужен ручной `INDEX_HEAVY_PDF` или streaming pipeline |
 | Lightweight chat/admin shell | `/`, `/les` и `/m5` отдают статические Lite-страницы без NiceGUI client state; `/classic` и `/les/classic` сохраняют rich fallback |
-| Lightweight UI health | Sovushka отвечает `/healthz`; runtime status не рендерит тяжёлую NiceGUI страницу |
+| Lightweight UI health | Sovushka отвечает `/healthz`; runtime status не реняет тяжёлую NiceGUI страницу |
 | Durable jobs | `/api/jobs` объединяет SQLite job history и live jobs |
 | Regression suite | На 28.05.2026: `356 passed`, включая С.У.Х.А.Р.И.К., К.О.Т. v2, auth, storage, runtime admission, SafeRAG, Lite UI, mail profile/query, Core ML guards, FIRE/HVAC retrieval acceptance и indexer guards |
 
@@ -130,6 +131,9 @@ flowchart TD
 | Validator/reranker | Active validator: Core ML `MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli` (`validator_minilm_l6_b1_s512`, `cpu_only`); MLX/rules backends kept for compare and deterministic smoke |
 | Embeddings | Active: Core ML `Qwen/Qwen3-Embedding-0.6B` (`qwen3_embedding_06b_b1_s512_static`, `cpu_and_gpu`); legacy BGE-M3 only for old-baseline recovery |
 | Vector DB | Qdrant local binary + per-profile collections |
+| Office Ingestion | **Microsoft MarkItDown** с автоматическими mammoth/pandas fallbacks (поддержка `.docx`, `.xlsx`, `.pptx`, `.xml`) |
+| Visual OCR / VLM | MLX-native **GLM-OCR** (модель `mlx-community/GLM-OCR-4bit` с DPI=150 и очисткой кэша Metal GPU через `mlx.core.metal.clear_cache()`) |
+| Structured Rules | **Google LangExtract** для извлечения нормативных правил (`EngineeringRule` Pydantic schema) в SQLite `structured_rules` |
 | Backend | FastAPI, httpx, SQLite, LlamaIndex-compatible backend interfaces |
 | Frontend | Sovushka Lite static chat/admin + optional NiceGUI classic / С.О.В.У.Ш.К.А. |
 | Storage | Local filesystem + SQLite metadata, Parquet artifacts for tables |
@@ -770,7 +774,8 @@ MIT — используй, форкай, улучшай.
 - [x] Е.Ж.И.К. v3 — mail-vector profile: участники, направление, importance, OCR/VLM вложений
 - [ ] Е.Ж.И.К. stabilization — PDF subprocess и IMAP job/progress внедрены; дальше OCR/VLM image-only вложений, mail golden set и thread-aware retrieval validation
 - [ ] RAG quality analysis — FIRE/HVAC acceptance уже закрыт; дальше расширять golden по живым вопросам, Qwen query prefix A/B, hybrid audit и dataset-cleanup heuristics; HyDE/contextual/4B только как поздние гипотезы
-- [ ] VLM pipeline — анализ PDF-чертежей
+- [x] VLM pipeline — локальное распознавание сканов и чертежей на базе MLX-native GLM-OCR (0.9B) с динамической выгрузкой моделей и очисткой кэша Metal GPU
+- [x] Structured Rules Ingestion — извлечение правил по схеме через Google LangExtract с точным source grounding (offsets) в SQLite базу знаний structured_rules
 
 ### Backlog ускорения и оптимизации
 
