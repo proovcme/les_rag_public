@@ -11,6 +11,12 @@
         <string>/Users/ovc/Projects/LES_v2/start_pauk.command</string>
     </array>
 
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>LES_ENABLE_SSH_TUNNEL</key>
+        <string>1</string>
+    </dict>
+
     <key>RunAtLoad</key>
     <true/>
 

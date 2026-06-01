@@ -15,7 +15,7 @@ Current production posture:
 - Sovushka Lite UI/admin: `http://127.0.0.1:8051`, `/les`
 - MLX Host: `http://127.0.0.1:8080`
 - Qdrant: `http://127.0.0.1:6333`
-- External: `https://les.ovc.me` through P.A.U.K. reverse SSH tunnel and V.O.L.K. API keys; on 2026-06-01 external smoke returns `502`, so verify/restart tunnel before sharing access.
+- External: `https://les.ovc.me` through P.A.U.K. reverse SSH tunnel and V.O.L.K. API keys; on 2026-06-01 external smoke passes `12/12`.
 
 ## First Checks
 

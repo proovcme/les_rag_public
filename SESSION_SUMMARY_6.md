@@ -82,4 +82,4 @@
 - Core ML embedder: `Qwen/Qwen3-Embedding-0.6B`, package `qwen3_embedding_06b_b1_s512_static`, `compute_units=all`, ANE/GPU eligible.
 - Core ML embedder выдержал guarded indexing closeout без worker failures/fallback; в конце может быть unloaded/idle, что не является failure.
 - Full pytest green after modernization fixes: `357 passed` (2 SWIG deprecation warnings). Закрыты исторические 7 падений: test doubles для `structured_rules`, env isolation для memory admission, retrieval top-k/PP87 expectations.
-- Внешний `les.ovc.me` оставлен на финальный smoke; last-known state до проверки — `502`.
+- Внешний `les.ovc.me` поднят через П.А.У.К. reverse SSH tunnel. VPS Caddy оставлен без перезапуска и правок; соседний tunnel `127.0.0.1:22020` не тронут. Public smoke: `12/12`, live RAG question через внешний контур: `VERIFIED`, `sources=3`.

@@ -3,7 +3,7 @@
 **Статус:** 🟢 Активна, local consistency closed | **Обновлено:** 01.06.2026 | **Версия:** 4.1 hybrid structural-semantic runtime
 **Архитектура:** Headless Mac Mini M4 / 24 GB + ZeroTier P2P + host LaunchAgents (Qdrant + Proxy + UI + optional indexer + П.А.У.К.) + MLX Native Host with Core ML embedder and rules/Core ML validation paths. Docker Desktop/OrbStack удалены из штатного контура. Ollama сохранён как резерв.
 
-**Live baseline 01.06.2026:** local proxy health `ok`: `1211` files, `1211 indexed`, `0 pending`, `0 errors`, `142193` SQLite chunks, `142193` Qdrant points, `points_match_sqlite_chunks=true`. Closeout выполнен под SQLite/Qdrant backup, stale Qdrant points удалены, duplicate-basename pending selection исправлен. FIRE/HVAC acceptance gate проходит `16/16`, full pytest `357 passed`. External `https://les.ovc.me` оставлен на финальный smoke; last-known state до проверки — `502`.
+**Live baseline 01.06.2026:** local proxy health `ok`: `1211` files, `1211 indexed`, `0 pending`, `0 errors`, `142193` SQLite chunks, `142193` Qdrant points, `points_match_sqlite_chunks=true`. Closeout выполнен под SQLite/Qdrant backup, stale Qdrant points удалены, duplicate-basename pending selection исправлен. FIRE/HVAC acceptance gate проходит `16/16`, full pytest `357 passed`. External `https://les.ovc.me` поднят через П.А.У.К. reverse SSH tunnel: `/`, `/les`, `/api/health` `200`, public smoke `12/12`, no-key admin denied `401`.
 
 ## 📋 Узлы сети (ZeroTier)
 | Устройство | Роль | IP-адрес | Доступ | ОС |
@@ -77,7 +77,7 @@ Ollama не является основным runtime. Использовать 
 | `com.les.sovushka` | 8051/8066 | Sovushka Lite chat/admin + NiceGUI classic/Qdrant visualizer | active |
 | `me.ovc.les.mlx` | 8080 | MLX LLM/validator/embedder | active |
 | `me.ovc.les.qwen-index-until-done` | — | guarded qwen indexing loop (`batch_limit=1`) | normally stopped between planned reindex waves |
-| `me.ovc.les.pauk` | — | SSH reverse tunnel for `les.ovc.me` | needs check: external smoke returns `502` on 01.06.2026 |
+| `me.ovc.les.pauk` | — | SSH reverse tunnel for `les.ovc.me` (`127.0.0.1:8050/8051` on VPS) | enabled; script exits after spawning ssh tunnel, so launchd state can be `not running` while tunnel PID is alive |
 
 ## 🌐 П.А.У.К. / публичный контур
 | Маршрут | Назначение | Backend |
@@ -175,6 +175,7 @@ launchctl kickstart -k gui/$(id -u)/me.ovc.les.proxy
 | 27.05.2026 | FIRE/HVAC route hardening: selective HVAC route-change reindex, lexical rebuild, `golden/domain_fire_hvac_set.json` `16/16`, deterministic source lookup для “где смотреть/какие нормы”. |
 | 31.05.2026 | Hybrid structural-semantic runtime: MarkItDown, GLM-OCR, LangExtract schema, FIRE/BOOKS guarded reindex, Core ML embedding `compute_units=all`. |
 | 01.06.2026 | Local consistency closeout: `1211/1211` indexed, `0 pending`, `0 errors`, `142193` SQLite chunks = `142193` Qdrant points, stale Qdrant repair under backup/snapshot, duplicate-basename parser fix, validator live default `rules`, `structured_rules` schema ready but `0` rows before targeted population. |
+| 01.06.2026 | External contour restored: VPS Caddy left intact, LES reverse tunnel publishes Mac `8050/8051` to VPS `127.0.0.1:8050/8051`, neighbour tunnel `127.0.0.1:22020` untouched, public smoke `12/12`. |
 
 📅 **Документация актуальна на:** 01.06.2026
 
