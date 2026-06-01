@@ -1,13 +1,13 @@
 # LES RAG Modernization Plan
 
-Updated: 27.05.2026
+Updated: 01.06.2026
 
-This plan starts after the current Qwen indexing run reaches zero pending files and Qdrant/SQLite counts are verified. As of 2026-05-27 closeout the active index is `1003/1003` indexed, `0` pending, `0` errors, `248917` chunks, and Qdrant points match SQLite chunks. The current index is treated as a valuable artifact: no full reindex is allowed unless a step explicitly proves it is necessary.
+This plan now tracks the 01.06.2026 local consistency baseline. The authoritative corpus has expanded to `1211` files and is closed locally: `1211 indexed`, `0 pending`, `0 errors`, `142193` SQLite chunks, `142193` Qdrant points, and `points_match_sqlite_chunks=true`. The closeout included SQLite/Qdrant backup, stale Qdrant point removal, and a duplicate-basename pending-selection fix. External `les.ovc.me` is intentionally left for a final smoke; last-known state before that check was `502`.
 
 ## Current Constraint
 
 - The active bottleneck is embeddings, not Qdrant, conversion, or chunking: recent parse batches show about 99% of elapsed time in `embed_sec`.
-- Core ML is now the local default for embedding and validator, with isolated worker processes and explicit health/fallback state.
+- Core ML is now the local default for embedding (`compute_units=all`, ANE/GPU eligible). The live validator default is deterministic `rules`; Core ML MiniLM remains installed for measured compare/probe and should only become default after a golden-threshold decision.
 - The small validator/reranker path is measured infrastructure, not a mandatory query preprocessor for every simple question.
 - Hybrid retrieval is no longer missing: the current implementation is SQLite
   FTS5/BM25 + dense vector retrieval with RRF merge. The next question is
@@ -16,6 +16,7 @@ This plan starts after the current Qwen indexing run reaches zero pending files 
 - FIRE/HVAC are now handled as measured domain routes, not one-off answer
   patches: `golden/domain_fire_hvac_set.json` checks route filters, top
   evidence and source hints, and currently passes `16/16`.
+- Structured Rules/LangExtract is schema/code-ready, but active `data/les_meta_qwen.db` has `0` `structured_rules` rows until a targeted `NORMATIVE`/`SPEC` reindex populates it.
 - Validator context windows already exist through `validation_context_windows`.
   The next step is to verify whether the selected windows are the right
   evidence, not to blindly expand the prompt.
@@ -29,6 +30,12 @@ This plan starts after the current Qwen indexing run reaches zero pending files 
    top-k hit, latency and memory. Start small: 30-50 questions with expected
    documents/clauses are enough to compare Qwen/BGE, query prefixes, K.O.T.,
    hybrid and later HyDE/contextual retrieval.
+
+Status 2026-06-01: items 1-3 are complete for the local corpus. Current
+baseline is `1211 indexed / 0 pending / 0 errors`, `142193` SQLite chunks =
+`142193` Qdrant points. The backup/snapshot and stale-point repair log live in
+`artifacts/consistency_20260601_130603/`. FIRE/HVAC golden currently passes
+`16/16`; full pytest passes `357` tests.
 
 ## Phase 1: Fix Cheap Runtime Issues
 
@@ -169,9 +176,9 @@ Mixture-of-specialists direction:
   failures. The current production posture is Core ML first with fallback disabled,
   so a hidden model-cache download cannot mask failures.
 - Validator runtime step 2026-05-27: MLX Host now has
-  `VALIDATOR_BACKEND=mlx|coreml|rules`. `coreml` is the local default,
-  `rules` is deterministic and test-friendly, and `mlx` remains a measured
-  comparison backend rather than an always-on fallback. Core ML is wired for a
+  `VALIDATOR_BACKEND=mlx|coreml|rules`. `rules` is the current live default,
+  `coreml` is the measured candidate, and `mlx` remains a comparison backend
+  rather than an always-on fallback. Core ML is wired for a
   fixed-shape NLI/cross-encoder package that receives `(question, context,
   answer)` as premise/hypothesis and returns `VERIFIED / NO_DATA /
   HALLUCINATION`. The first converted candidate is
@@ -195,14 +202,15 @@ Mixture-of-specialists direction:
   `0.6`, margin `0.05`) reached `0.5152` accuracy at `0.0433s` mean latency.
   MLX NLI reached comparable accuracy at higher latency; the older Qwen causal
   validator measurement was slower and is now a historical quality reference, not
-  the runtime default. The local validator runtime is switched to
-  `VALIDATOR_BACKEND=coreml`; keep collecting real validator traces before
-  broadening public/default exposure. Do not convert a large causal validator as
+  the runtime default. As of 01.06.2026 the live validator runtime is
+  `VALIDATOR_BACKEND=rules` after local index consistency closeout; keep
+  Core ML MiniLM available for focused compare/probe and only switch it after
+  golden accuracy, latency and threshold gates are clean. Do not convert a large causal validator as
   the first Core ML validator path; use larger models only as offline quality
   
 ## Phase 2.5: Hybrid Structural-Semantic Ingestion & Extraction (NEW, 31.05.2026)
 
-**Статус:** ✅ Структурно реализовано и верифицировано синтетическими тестами.
+**Статус:** ✅ Структурно реализовано и верифицировано синтетическими тестами; corpus population pending targeted reindex.
 
 Мы внедрили гибридный структурно-семантический конвейер, который совмещает классический векторный RAG с реляционной базой нормативных правил в SQLite для абсолютного заземления ответов и борьбы с галлюцинациями.
 
@@ -220,7 +228,7 @@ Mixture-of-specialists direction:
 * **Суть:** Внедрен в `backend/rules_extractor.py` и `backend/qdrant_adapter.py`. Для документов типа `NORMATIVE` и `SPEC` (нормативные и проектные акты) текстовые чанки при индексации пропускаются через извлекатель правил.
 * **Схема правил:** Строгая Pydantic-модель `EngineeringRule` (субъект, параметр, математический оператор, численное значение, единица измерения, дополнительные условия).
 * **Grounding (Заземление):** Извлекаются точные символьные offsets (`char_start`/`char_end`) в тексте чанка, указывающие, из какого фрагмента текста получено каждое правило.
-* **Хранение:** Правила записываются в SQLite таблицу `structured_rules` с реляционными индексами, связывая их с `chunk_id` и `file_key`.
+* **Хранение:** Правила записываются в SQLite таблицу `structured_rules` с реляционными индексами, связывая их с `chunk_id` и `file_key`. На 01.06.2026 активная таблица пуста (`0` rows), что ожидаемо до targeted reindex нормативных документов с включённым extractor.
 * **Режимы работы:** Локальный режим (Qwen-Instruct) для полной приватности, либо высокоточный облачный режим (Gemini 1.5 Flash/Pro) при наличии ключа `GEMINI_API_KEY` в `.env`.
 
 ### 4. Верификационные скрипты в песочнице (`scratch/`)

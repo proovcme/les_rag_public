@@ -99,7 +99,7 @@ def test_expand_retrieval_query_for_pp87_section_list():
     expanded = expand_retrieval_query("список разделов проектной документации по постановлению 87")
 
     assert "Проектная документация на объекты капитального строительства состоит из 12 разделов" in expanded
-    assert "Раздел 1 Пояснительная записка" in expanded
+    assert "Раздел 1: Пояснительная записка" in expanded
     assert "линейные объекты" in expanded
 
 
@@ -143,8 +143,8 @@ async def test_retrieve_chat_chunks_uses_plain_retrieval_when_reranker_disabled(
         logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
     )
 
-    assert len(chunks) == 8
-    assert backend.calls == [{"question": "q", "dataset_ids": ["ds-1"], "top_k": 8}]
+    assert len(chunks) == 24
+    assert backend.calls == [{"question": "q", "dataset_ids": ["ds-1"], "top_k": 24}]
 
 
 @pytest.mark.asyncio

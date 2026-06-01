@@ -4,12 +4,21 @@
 - **Microsoft MarkItDown**: Интегрирован универсальный офисный парсер для презентаций (`.pptx`), Word-документов (`.docx`, `.doc`), таблиц (`.xlsx`, `.xls`) и XML-схем с автоматическим mammoth/pandas fallbacks.
 - **MLX GLM-OCR (Visual RAG)**: Нативный визуальный OCR на базе мультимодальной VLM-модели `mlx-community/GLM-OCR-4bit` для отсканированных или пустых PDF. Интегрирован механизм агрессивной очистки Metal GPU памяти (`mlx.core.metal.clear_cache()`) и сборщика мусора Python после каждого пакета страниц.
 - **Google LangExtract**: Построен механизм извлечения строгих требований по Pydantic-схеме `EngineeringRule` (субъект, параметр, оператор, численное значение, единица измерения, дополнительные условия) с привязкой к точным символьным координатам в тексте чанка.
-- **SQLite Таблица `structured_rules`**: Интегрировано реляционное хранилище извлеченных требований в SQLite метабазу с индексами по документам и файлам для быстрого структурированного поиска.
+- **SQLite Таблица `structured_rules`**: Интегрировано реляционное хранилище извлеченных требований в SQLite метабазу с индексами по документам и файлам. На 01.06.2026 это schema/code-ready состояние; активная база ещё не наполнена правилами (`0` rows) до targeted reindex нормативных документов.
 - **Изолированные тесты**: Написаны верификационные тесты в песочнице `scratch/` для MarkItDown, LangExtract и GLM-OCR.
 - **Завершение кампаний переиндексации (Факт)**:
   * **`NTD_FIRE_Index`**: Успешно переиндексировано **135 файлов из 135** (31 481 чанк в Qdrant). Последний errored-файл `СП 2.13130 .docx` полностью исцелен и доиндексирован (303 чанка).
   * **`BOOKS_Index`**: Успешно переиндексирован тяжелый 596-страничный справочник Schneider Electric (40 МБ, 3 222 векторных чанка) за 7.7 минут.
   * **Neural Engine (ANE) & GPU Routing**: Обход бага зануления внимания M-чипов при FP16 вычислениях на CPU (за счет переключения compute units на `all`).
+
+## 🟢 Live baseline 01.06.2026 — local consistency closed
+- **Корпус:** authoritative live corpus расширен до `1211` файлов.
+- **Индекс:** `1211 indexed / 0 pending / 0 errors`, `142193` SQLite chunks.
+- **Qdrant:** `142193` points, `points_match_sqlite_chunks=true`; stale Qdrant points удалены после backup/snapshot.
+- **Validator:** live default `rules`; Core ML MiniLM package сохранён для measured compare/probe.
+- **Embeddings:** Core ML Qwen3 Embedding `0.6B`, `compute_units=all`, ANE/GPU eligible.
+- **Quality gate:** FIRE/HVAC retrieval acceptance `golden/domain_fire_hvac_set.json` проходит `16/16`.
+- **Regression gate:** full `uv run pytest -q` проходит `357 passed` (2 SWIG deprecation warnings).
 
 
 ## ✅ Выполнено в v3.3 Stabilization / Premium Chat (22.05.2026)
@@ -74,7 +83,7 @@
 - **Parquet для таблиц:** базовый XLSX/XLS/CSV ingestion внедрён: row-level chunks для Qdrant + `.parquet` artifacts рядом с датасетом. Для PDF добавлен экспериментальный PyMuPDF-first слой с pdfplumber fallback и `needs_ocr` marker. Следующий шаг — table-aware retrieval и расширение схем смет/спецификаций.
 - **Document Router:** добавлен быстрый deterministic probe/classify/complexity слой перед ingestion, чтобы выбирать `markdown`, `parquet`, `markdown_pdf_tables` или `markdown_needs_ocr` и писать rich metadata в Qdrant payload.
 
-📅 **Документ актуализирован:** 25.05.2026 — no-Docker host runtime, local Qdrant LaunchAgent, guarded qwen indexing watch
+📅 **Документ актуализирован:** 01.06.2026 — local consistency baseline, Core ML ANE/GPU embedding, rules validator default, structured_rules pre-population state
 
 
 ## 🚀 Выполнено в v2.0 Core (Факт на 10.05.2026)

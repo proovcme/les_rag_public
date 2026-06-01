@@ -890,10 +890,16 @@ class QdrantLlamaIndexAdapter(RAGBackend):
 
             # Матчинг по относительному пути и по имени файла для совместимости
             # со старыми записями БД где хранится только f.name.
+            exact_pending_names = {
+                str(f.relative_to(data_dir))
+                for f in all_files
+                if str(f.relative_to(data_dir)) in pending_names
+            }
+            legacy_pending_names = pending_names - exact_pending_names
             files_to_parse = [
                 f for f in all_files
                 if str(f.relative_to(data_dir)) in pending_names
-                or f.name in pending_names
+                or f.name in legacy_pending_names
             ]
 
             total     = len(files_to_parse)

@@ -4,7 +4,7 @@
 
 **Публичное позиционирование:** локальная RAG-машина для инженерных, нормативных и корпоративных архивов на Apple Silicon. Фокус: приватность, воспроизводимость, наблюдаемость, безопасная индексация и ответы с проверяемыми источниками.
 
-**Актуальный статус: 31.05.2026.** Референсный контур находится в спящем режиме (все фоновые RAG-сервисы и launchd-агенты безопасно остановлены и выгружены по команде оператора). На локальном Mac Mini M4 / 24 GB развернута новейшая инфраструктура гибридной структурно-семантической разметки: интегрирован локальный MLX-native VLM конвейер **GLM-OCR (0.9B)** для распознавания сканов и таблиц, универсальный офисный конвертер **Microsoft MarkItDown** (с поддержкой `.pptx` и fallbacks), и экстрактор **Google LangExtract**, наполняющий SQLite-базу `structured_rules` точными заземленными требованиями (char offsets). Baseline `1003/1003` документов полностью готов к селективному переиндексированию и сдаче Golden Set. Внешний контур `https://les.ovc.me` поднят через П.А.У.К. reverse tunnel и В.О.Л.К. API keys.
+**Актуальный статус: 01.06.2026.** Референсный локальный контур закрыт по consistency: корпус `1211` файлов, `1211 indexed / 0 pending / 0 errors`, `142193` SQLite chunks, `142193` Qdrant points, `points_match_sqlite_chunks=true`, local `/api/health` = `ok`. Во время closeout удалены stale Qdrant points под backup/snapshot (`artifacts/consistency_20260601_130603`) и исправлен edge-case duplicate basename при выборе pending-файлов. FIRE/HVAC acceptance: `golden/domain_fire_hvac_set.json` проходит `16/16`; full regression suite: `357 passed`. На Mac Mini M4 / 24 GB интегрированы **MLX GLM-OCR (0.9B)**, **Microsoft MarkItDown** и **Google LangExtract**; `structured_rules` schema/code готовы, активная таблица пока не наполнена (`0` rows) до отдельного targeted reindex. Активный validator default сейчас `rules`; Core ML MiniLM validator package сохранён для measured compare/probe. Embedding работает через Core ML `compute_units=all` с доступом к ANE/GPU, guarded indexing stress прошёл без worker failures/fallback. Внешний контур `https://les.ovc.me` оставлен на финальный smoke; last-known state до проверки — `502`.
 
 ---
 
@@ -44,8 +44,8 @@ flowchart LR
     RAG --> Meta[(SQLite<br/>datasets/jobs/cache)]
     Proxy --> MLX[MLX Host :8080<br/>chat + validation + embeddings]
     MLX --> Main[Qwen chat model<br/>lazy lease]
-    MLX --> Val[Core ML NLI validator<br/>worker]
-    MLX --> Embed[Core ML Qwen3 Embedding<br/>0.6B worker]
+    MLX --> Val[Rules validator default<br/>Core ML NLI optional]
+    MLX --> Embed[Core ML Qwen3 Embedding<br/>0.6B ANE/GPU worker]
 
     Public[Optional public HTTPS<br/>Caddy VPS relay] -. / .-> Lite
     Public -. /les .-> AdminLite
@@ -115,7 +115,7 @@ flowchart TD
 | Lightweight chat/admin shell | `/`, `/les` и `/m5` отдают статические Lite-страницы без NiceGUI client state; `/classic` и `/les/classic` сохраняют rich fallback |
 | Lightweight UI health | Sovushka отвечает `/healthz`; runtime status не реняет тяжёлую NiceGUI страницу |
 | Durable jobs | `/api/jobs` объединяет SQLite job history и live jobs |
-| Regression suite | На 28.05.2026: `356 passed`, включая С.У.Х.А.Р.И.К., К.О.Т. v2, auth, storage, runtime admission, SafeRAG, Lite UI, mail profile/query, Core ML guards, FIRE/HVAC retrieval acceptance и indexer guards |
+| Regression suite | На 01.06.2026 full `uv run pytest -q`: `357 passed` (2 SWIG deprecation warnings); FIRE/HVAC golden gate отдельно проходит `16/16` |
 
 Подробная модель памяти описана в [RUNTIME_MEMORY_PROFILES.md](RUNTIME_MEMORY_PROFILES.md).
 
@@ -127,13 +127,13 @@ flowchart TD
 |---|---|
 | Host | macOS + Apple Silicon, launchd, `uv`, Python 3.12 |
 | LLM runtime | MLX / `mlx-lm`, OpenAI-compatible local host on `:8080` |
-| Chat model | Safe 24 GB default: `mlx-community/Qwen3.5-4B-OptiQ-4bit`; quality profile: `mlx-community/Qwen3-14B-4bit` |
-| Validator/reranker | Active validator: Core ML `MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli` (`validator_minilm_l6_b1_s512`, `cpu_only`); MLX/rules backends kept for compare and deterministic smoke |
-| Embeddings | Active: Core ML `Qwen/Qwen3-Embedding-0.6B` (`qwen3_embedding_06b_b1_s512_static`, `cpu_and_gpu`); legacy BGE-M3 only for old-baseline recovery |
+| Chat model | Live 24 GB default: `mlx-community/Qwen3.5-4B-MLX-4bit`; quality profile remains separate and must not run with heavy indexing |
+| Validator/reranker | Active validator: deterministic `rules`; Core ML MiniLM package `validator_minilm_l6_b1_s512` is installed for measured compare/probe and threshold calibration, not production default yet |
+| Embeddings | Active: Core ML `Qwen/Qwen3-Embedding-0.6B` (`qwen3_embedding_06b_b1_s512_static`, `compute_units=all`, ANE/GPU eligible); legacy BGE-M3 only for old-baseline recovery |
 | Vector DB | Qdrant local binary + per-profile collections |
 | Office Ingestion | **Microsoft MarkItDown** с автоматическими mammoth/pandas fallbacks (поддержка `.docx`, `.xlsx`, `.pptx`, `.xml`) |
 | Visual OCR / VLM | MLX-native **GLM-OCR** (модель `mlx-community/GLM-OCR-4bit` с DPI=150 и очисткой кэша Metal GPU через `mlx.core.metal.clear_cache()`) |
-| Structured Rules | **Google LangExtract** для извлечения нормативных правил (`EngineeringRule` Pydantic schema) в SQLite `structured_rules` |
+| Structured Rules | **Google LangExtract** для извлечения нормативных правил (`EngineeringRule` Pydantic schema) в SQLite `structured_rules`; schema/code ready, active DB population pending targeted reindex |
 | Backend | FastAPI, httpx, SQLite, LlamaIndex-compatible backend interfaces |
 | Frontend | Sovushka Lite static chat/admin + optional NiceGUI classic / С.О.В.У.Ш.К.А. |
 | Storage | Local filesystem + SQLite metadata, Parquet artifacts for tables |
@@ -170,7 +170,7 @@ flowchart LR
 | Машина | Chat model | Validator / reranker | Embeddings | Комментарий |
 |---|---|---|---|---|
 | Apple Silicon 16 GB | `mlx-community/Qwen3.5-4B-OptiQ-4bit` | `rules` или Core ML MiniLM при строгом admission | Core ML `Qwen/Qwen3-Embedding-0.6B` | Лёгкий RAG, небольшие контексты, без параллельной индексации |
-| Apple Silicon 24 GB | `mlx-community/Qwen3.5-4B-OptiQ-4bit` | Core ML MiniLM NLI (`cpu_only`) | Core ML `Qwen/Qwen3-Embedding-0.6B` (`cpu_and_gpu`) | Текущий безопасный default: UI + chat + retrieval с запасом памяти |
+| Apple Silicon 24 GB | `mlx-community/Qwen3.5-4B-MLX-4bit` | `rules` live default; Core ML MiniLM only for measured compare/probe | Core ML `Qwen/Qwen3-Embedding-0.6B` (`compute_units=all`) | Текущий live default для локального chat/retrieval; guarded indexing запускается отдельно |
 | Apple Silicon 24 GB, quality run | `mlx-community/Qwen3-14B-4bit` | Core ML MiniLM или sequential MLX compare | `Qwen/Qwen3-Embedding-0.6B` | Лучше для сложной аналитики, но не совмещать с heavy indexing |
 | Apple Silicon 32-64 GB | `Qwen3-14B` и более крупные MLX/GGUF профили после golden-set проверки | measured reranker/validator 4B или 8B | Qwen3 Embedding 0.6B/4B | Имеет смысл, если вырос corpus или нужен длинный контекст |
 
@@ -442,13 +442,13 @@ DOC_ROUTER_SAMPLE_PAGES=3
 - **Sovushka `/healthz`:** runtime health check больше не рендерит страницу `/les`, чтобы не создавать тяжёлый NiceGUI client state.
 - **Launchd hardening:** `start_service` делает `launchctl enable` перед bootstrap/kickstart; disabled labels не ломают восстановление контура.
 
-### Состояние после сессии 27.05.2026
+### Исторический срез после сессии 27.05.2026
 
 - **Почта:** живой IMAP job `743b1517-841` завершился `completed`; подтянуто 50 новых писем. В `RAG_Content/MAIL/IMAP` и storage лежит по `200` `.eml`; follow-up Core ML parse добил остаток. `MAIL_Index` теперь `200 indexed`, `0 pending`, `475 chunks`; Qdrant points match SQLite chunks.
 - **BOOKS_Index:** последний тяжёлый pending PDF (`Рук-во по устройству ЭУ 2019.pdf`) проиндексирован guarded batch run: `1 indexed`, `0 pending`, `0 errors`, `2845 chunks`.
 - **Система:** active jobs `0`; Qdrant, MLX Host, proxy, Sovushka Lite UI и П.А.У.К. external tunnel running. MLX Host слушает только `127.0.0.1:8080`; финальный proxy health: `1003 indexed`, `0 pending`, `0 errors`, `248917 chunks`, Qdrant match `true`.
 - **Core ML embeddings:** локальный `.env` переведён на guarded default `EMBED_BACKEND=coreml`, `COREML_EMBED_COMPUTE_UNITS=cpu_and_gpu`, `COREML_EMBED_ISOLATE_PROCESS=true`, `COREML_EMBED_MODEL=artifacts/coreml/qwen3_embedding_06b_b1_s512_static.mlpackage`. MLX Host отдаёт fallback/status counters, проверяет vector norm (`COREML_EMBED_MIN_NORM/MAX_NORM`) и открывает short circuit (`COREML_EMBED_MAX_FAILURES`, `COREML_EMBED_FAILURE_COOLDOWN_SEC`) при повторных native/quality failures. `cpu_only`/ANE canaries для старых пакетов оставлены как диагностическая история; текущий production path — `cpu_and_gpu` worker, fallback disabled.
-- **Validator backend:** MLX Host поддерживает `VALIDATOR_BACKEND=mlx|coreml|rules`; текущий локальный `.env` и launchd включены на `VALIDATOR_BACKEND=coreml` + `COREML_VALIDATOR_ISOLATE_PROCESS=true` + `COREML_VALIDATOR_FALLBACK=false`. Core ML candidate: `MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli` → `artifacts/coreml/validator_minilm_l6_b1_s512.mlpackage`, `attention_mask_rank=4`, `context_mode=windows`, `pair_mode=answer`, labels `entailment,neutral,contradiction`, `cpu_only`. `/api/health` раскрывает `validator_backend`, `active_model_id`, `active_model_version`, `coreml_model_exists`, labels, confidence threshold, worker counters/circuit и fallback state.
+- **Validator backend:** MLX Host поддерживает `VALIDATOR_BACKEND=mlx|coreml|rules`; в той итерации Core ML validator был подключён как measured candidate с `COREML_VALIDATOR_ISOLATE_PROCESS=true` и `COREML_VALIDATOR_FALLBACK=false`. Core ML candidate: `MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli` → `artifacts/coreml/validator_minilm_l6_b1_s512.mlpackage`, `attention_mask_rank=4`, `context_mode=windows`, `pair_mode=answer`, labels `entailment,neutral,contradiction`, `cpu_only`. `/api/health` раскрывает `validator_backend`, `active_model_id`, `active_model_version`, `coreml_model_exists`, labels, confidence threshold, worker counters/circuit и fallback state.
 - **Validator golden:** старый 8-case synthetic set признан недостаточным. Новый frozen real-window seed/materialized set: `golden/validator_real_window_seed.json` → `golden/validator_real_window_set.json`, `33` кейса, баланс `11 VERIFIED / 11 NO_DATA / 11 HALLUCINATION`, contexts из настоящих `validation_context_windows`, audit report `artifacts/validator/validator_real_window_rules_audit.json`.
 - **Validator measurements:** на `golden/validator_real_window_set.json` single-pass Core ML был слабым (`0.3333`), но windowed Core ML policy дал accuracy `0.5152`, mean latency `~0.04-0.05s`; MLX NLI baseline на том же set дал сопоставимую accuracy при заметно большей latency; rules audit: accuracy `0.3030`. Live `/api/validate` smoke на Core ML прошёл, fallback inactive.
 - **Learning trace:** `/api/chat` сохраняет `history_id` для успешных и неуспешных ответов вместе с route/retrieval/dataset metadata. Пользователь может подтвердить ответ, нажать `Плохой ответ` (`bad_answer`) или пометить wrong-dataset/bad-source через `/api/chat/history/{id}/feedback`; feedback пишется в SQLite, `logs/chat_feedback.jsonl`, а негативные статусы дают `[CHAT_FEEDBACK]` warning в `logs/proxy.log`. `/api/chat/learning` отдаёт подтверждённые и размеченные кейсы для будущих эвристик routing/clean-up.
@@ -456,18 +456,18 @@ DOC_ROUTER_SAMPLE_PAGES=3
 - **FIRE/HVAC hardening:** routing priority, K.O.T. terms and query expansion now keep `NTD_FIRE` and `NTD_HVAC` out of generic/noisy routes. Ten HVAC documents were selectively moved into `NTD_HVAC_Index` by guarded route-change reindex, lexical index was rebuilt, and `golden/domain_fire_hvac_set.json` passes `16/16`. Source-lookup questions such as “где смотреть/какие нормы” now return deterministic source lists (`deterministic_source_lookup`) instead of spending an LLM/validator cycle on simple normative navigation.
 - **Проверки:** общий `uv run pytest -q` зелёный (`352 passed`); FIRE/HVAC golden set `16/16`; внешний `tools/runtime_smoke.py` через `https://les.ovc.me` прошёл `12/12`; прямой публичный table query “посчитай общую стоимость по всем строкам сметы” вернул `VERIFIED`, `deterministic_table`, `42 580`; live feedback smoke через `https://les.ovc.me/api/chat/history/{id}/feedback` записал `bad_answer` в `logs/chat_feedback.jsonl` и `[CHAT_FEEDBACK]` в `logs/proxy.log`; `uv lock --check`, `git diff --check` OK.
 
-### Состояние после сессии 28.05.2026
+### Исторический срез после сессии 28.05.2026
 
 * **RAG Golden Set (16/16 passed)**: Успешно достигнут **100% успех** во всех контрольных тестах качества поиска. Внедрен бесконфликтный сериализатор в `/api/rag/retrieve-debug` для обхода ограничений легаси-валидатора на обрезанных именах файлов и ссылках (СП 60 и ГОСТ Р 59639).
 * **С.У.Х.А.Р.И.К. (Инкрементальные бэкапы)**: Разработан скрипт `tools/backup_suharik.py` для горячего WAL-friendly SQLite бэкапа метабазы и Qdrant snapshot API, интегрированный с ротацией (сохранение 3 последних бэкапов) и диагностическими метриками.
 * **Калибровка и оптимизация реиндексации**: SQL-приоритизация `СП 60` возвращена к стандартной сбалансированной форме. Критическая блокировка `Qdrant/SQLite mismatch` переведена из статуса жесткой ошибки в предупреждение, что позволило запустить полную фоновую индексацию 743 документов с механизмом самовосстановления и динамического лечения индексов.
 * **Прогресс**: Запущен и активно выполняется фоновый guarded reindex кампания (`task-2460`), все системные тесты (`pytest` 356/356) полностью зеленые.
 
-### Состояние после сессии 31.05.2026 (Modernization Campaign)
+### Состояние после сессии 31.05.2026 и live-уточнение 01.06.2026 (Modernization Campaign)
 
 * **Гибридная структурно-семантическая индексация**:
   * **Microsoft MarkItDown**: Успешно интегрирован как универсальный офисный конвертер (`.docx`, `.xlsx`, `.pptx`, `.zip`, `.xml`) с плавной fallback-маршрутизацией.
-  * **Google LangExtract**: Извлекает точные нормативные требования в реляционную таблицу `structured_rules` базы данных SQLite с идеальным символьным заземлением.
+  * **Google LangExtract**: интегрирован как извлекатель точных нормативных требований в реляционную таблицу `structured_rules` с символьным заземлением. На 01.06.2026 schema/code готовы, но активная `data/les_meta_qwen.db` ещё не наполнена правилами (`0` rows); нужен targeted reindex `NORMATIVE`/`SPEC` документов с включённым извлечением.
   * **MLX GLM-OCR**: Нативно распознает отсканированные чертежи и PDF-документы без текстового слоя на GPU с динамической выгрузкой моделей и очисткой Metal.
 * **BOOKS_Index (Schneider Electric PDF) — 100% Успешно!**:
   * Тяжелый PDF-справочник (40 МБ, 596 страниц) успешно переиндексирован по конвейеру `markdown_pdf_tables`. Выделено **3 222 векторных чанка** за **465.4 секунды** (7.7 минут) с 0 ошибок!
@@ -475,10 +475,11 @@ DOC_ROUTER_SAMPLE_PAGES=3
 * **NTD_FIRE_Index (Пожарная безопасность) — 100% Успешно!**:
   * Переиндексировано **135 файлов из 135**, сгенерировано **31 481 чанк**!
   * Успешно долечен и доиндексирован последний файл с ошибкой `СП 2.13130 .docx` (303 чанка), доведя долю успешных файлов до 100%.
-* **Прокси-статистика**: Все фоновые сервисы запущены. Итоговый статус proxy health: **1003 indexed, 0 pending, 0 errors, 79 580 chunks, Qdrant match true**.
-* **Neural Engine (ANE/GPU) Routing**: Для устранения аппаратного бага Apple AMX (зануление FP16 attention weights на специфических русских последовательностях) все CoreML вычисления переведены на `all` (routing на ANE/GPU). Это сделало векторизацию в 10 раз быстрее и на 100% математически точной.
-* **Validator & SafeRAG Calibration**: Откалибрована строгость SafeRAG для исключения ложных противоречий (отсечены служебные номера разделов, глав, пунктов, лет и дат), что полностью решило проблему ложных блокировок (например, по Постановлению 87) при сохранении абсолютной числовой безопасности.
-* **Golden Set Search Quality**: 8 из 8 тестов пожарной безопасности (`Fire Safety`) в тестовой сюите прошли с абсолютным статусом `[OK]`!
+* **Live proxy baseline 01.06.2026**: локальный контур закрыт по consistency: **1211 files, 1211 indexed, 0 pending, 0 errors, 142193 SQLite chunks, 142193 Qdrant points, Qdrant match true**, local `/api/health` = `ok`. Closeout включал backup SQLite/Qdrant snapshot, удаление stale Qdrant pairs и исправление duplicate-basename выбора pending-файлов.
+* **Neural Engine (ANE/GPU) Routing**: Для устранения аппаратного бага Apple AMX (зануление FP16 attention weights на специфических русских последовательностях) Core ML embedding переведён на `compute_units=all` (routing на ANE/GPU/CPU по планировщику Core ML). Это live-настройка embedder path; большой guarded indexing run прошёл без Core ML worker failures и без fallback.
+* **Validator & SafeRAG Calibration**: Откалибрована строгость SafeRAG для исключения ложных противоречий (отсечены служебные номера разделов, глав, пунктов, лет и дат). Текущий live default на 01.06.2026 — deterministic `rules`; Core ML MiniLM package сохранён для probe/compare и может включаться после прохождения golden accuracy/latency/threshold gates.
+* **Golden Set Search Quality**: FIRE/HVAC acceptance set (`golden/domain_fire_hvac_set.json`) проходит `16/16`.
+* **Regression status 01.06.2026**: общий `uv run pytest -q` зелёный: `357 passed` (2 SWIG deprecation warnings). Исторические 7 падений после modernization закрыты через обновление test doubles `structured_rules`, env isolation для memory admission и новые retrieval/admission expectations.
 
 
 ---
@@ -782,7 +783,7 @@ MIT — используй, форкай, улучшай.
 - [ ] Е.Ж.И.К. stabilization — PDF subprocess и IMAP job/progress внедрены; дальше OCR/VLM image-only вложений, mail golden set и thread-aware retrieval validation
 - [ ] RAG quality analysis — FIRE/HVAC acceptance уже закрыт; дальше расширять golden по живым вопросам, Qwen query prefix A/B, hybrid audit и dataset-cleanup heuristics; HyDE/contextual/4B только как поздние гипотезы
 - [x] VLM pipeline — локальное распознавание сканов и чертежей на базе MLX-native GLM-OCR (0.9B) с динамической выгрузкой моделей и очисткой кэша Metal GPU
-- [x] Structured Rules Ingestion — извлечение правил по схеме через Google LangExtract с точным source grounding (offsets) в SQLite базу знаний structured_rules
+- [x] Structured Rules Ingestion schema — извлечение правил по схеме через Google LangExtract с точным source grounding (offsets) интегрировано; массовое наполнение `structured_rules` ещё pending targeted reindex
 
 ### Backlog ускорения и оптимизации
 

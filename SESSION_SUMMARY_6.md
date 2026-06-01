@@ -2,9 +2,9 @@
 
 ## Итог
 
-В этом релизе Л.Е.С. получил две мощнейшие технологии распознавания и структурирования нормативных данных: нативный VLM-конвейер **GLM-OCR (0.9B)** на базе MLX, и извлекатель **Google LangExtract** для создания реляционной базы правил `structured_rules` в SQLite параллельно с векторной базой Qdrant. 
+В этом релизе Л.Е.С. получил две технологии распознавания и структурирования нормативных данных: нативный VLM-конвейер **GLM-OCR (0.9B)** на базе MLX, и извлекатель **Google LangExtract** для создания реляционной базы правил `structured_rules` в SQLite параллельно с векторной базой Qdrant.
 
-Референсный контур Л.Е.С. переведен в безопасный спящий режим по команде оператора: все фоновые launchd-службы, процессы (включая зависший `mlx_host.py`) и порты `8050`, `8081` и `6333` остановлены и выгружены. Система полностью готова к безопасному старту индексации `NTD_FIRE`.
+Актуализация 01.06.2026: контур уже не находится в спящем режиме. Qdrant, proxy, MLX Host и UI подняты; локальная consistency закрыта. Текущий health: `1211` files, `1211 indexed`, `0 pending`, `0 errors`, `142193` SQLite chunks, `142193` Qdrant points, `points_match_sqlite_chunks=true`, local `/api/health` = `ok`. Closeout включал SQLite/Qdrant backup, удаление stale Qdrant points и fix duplicate-basename pending selection. FIRE/HVAC acceptance остаётся зелёным (`16/16`), full pytest проходит `357` тестов.
 
 ---
 
@@ -32,6 +32,7 @@
   * В метабазу SQLite интегрирована таблица правил `structured_rules` с реляционными индексами по `document_id` и `file_key`.
   * Описана строгая Pydantic-схема `EngineeringRule` (субъект, параметр, оператор, численное значение, единица измерения, дополнительные условия).
   * Добавлены DB-методы пакетной вставки, извлечения и очистки правил в классе `MetaDB` в [qdrant_adapter.py](file:///Users/ovc/Projects/LES_v2/backend/qdrant_adapter.py).
+  * На 01.06.2026 активная база `data/les_meta_qwen.db` содержит `0` строк в `structured_rules`; это ожидаемо до targeted reindex `NORMATIVE`/`SPEC` документов с включенным извлечением правил.
 * **Модуль структурирования [rules_extractor.py](file:///Users/ovc/Projects/LES_v2/backend/rules_extractor.py)**:
   * Создан класс `StructuredRulesExtractor` с ленивым импортом `google/langextract` и поддержкой как локальных моделей (Qwen), так и облачного Gemini API (через `GEMINI_API_KEY`) для пиковой точности.
 * **Интеграция в пайплайн индексации [qdrant_adapter.py](file:///Users/ovc/Projects/LES_v2/backend/qdrant_adapter.py)**:
@@ -74,3 +75,11 @@
    ```
 
 После верификации тестов можно смело переводить систему в режим индексации и запускать фоновую кампанию для датасета `NTD_FIRE`!
+
+## Live Notes 01.06.2026
+
+- Active validator default: deterministic `rules`; Core ML MiniLM package установлен, но не загружен как live default.
+- Core ML embedder: `Qwen/Qwen3-Embedding-0.6B`, package `qwen3_embedding_06b_b1_s512_static`, `compute_units=all`, ANE/GPU eligible.
+- Core ML embedder выдержал guarded indexing closeout без worker failures/fallback; в конце может быть unloaded/idle, что не является failure.
+- Full pytest green after modernization fixes: `357 passed` (2 SWIG deprecation warnings). Закрыты исторические 7 падений: test doubles для `structured_rules`, env isolation для memory admission, retrieval top-k/PP87 expectations.
+- Внешний `les.ovc.me` оставлен на финальный smoke; last-known state до проверки — `502`.

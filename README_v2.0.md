@@ -1,6 +1,6 @@
 # 🦉 Л.Е.С. — Локальная Единая Система v2.0 Core
 
-> **Актуализация 31.05.2026 (Modernization Campaign):** Текущий контур полностью no-Docker. Завершена интеграция гибридного RAG-пайплайна: **Microsoft MarkItDown** (конвертер), **Google LangExtract** (реляционные правила в SQLite `structured_rules`) и **MLX GLM-OCR** (нативный VLM-OCR на GPU). Выполнен полный guarded-реиндекс по конвейеру `markdown_pdf_tables` для пожарного датасета **`NTD_FIRE_Index`** (135 файлов, 31 481 чанков) и тяжелого справочника **`BOOKS_Index`** (40 МБ, 596 страниц, 3 222 чанка) с динамическими RAM-гардами (выгрузка idle-моделей при 6.2 GB RAM). CoreML вычисления переведены на Neural Engine и GPU (`COREML_EMBED_COMPUTE_UNITS=all`), что ускорило векторизацию в 10 раз и исключило баг зануления внимания Apple AMX.
+> **Актуализация 01.06.2026 (Local Consistency Baseline):** Текущий контур полностью no-Docker и закрыт по локальной consistency: `1211` files, `1211 indexed`, `0 pending`, `0 errors`, `142193` SQLite chunks, `142193` Qdrant points, `points_match_sqlite_chunks=true`, local `/api/health` = `ok`. Closeout включал Qdrant/SQLite backup, удаление stale points и fix duplicate-basename pending selection. Интегрированы **Microsoft MarkItDown** (конвертер), **Google LangExtract** (schema/code для `structured_rules`) и **MLX GLM-OCR** (нативный VLM-OCR на GPU). FIRE/HVAC golden gate проходит `16/16`; full `uv run pytest -q` = `357 passed`. Core ML embedding работает с `compute_units=all` (ANE/GPU eligible), guarded indexing stress прошёл без worker failures/fallback. Live validator default — deterministic `rules`; Core ML validator package готов для compare/probe, но пока не является production default.
 
 
 ## Описание
@@ -9,10 +9,10 @@
 
 ## 🔑 Ключевые изменения v2.0 → текущий runtime
 - **Ядро:** FastAPI Proxy + Qdrant (векторный поиск) + LlamaIndex (оркестрация).
-- **Модели:** основной контур переведён на MLX Host (`mlx-community/Qwen3-14B-4bit`, `Qwen3-4B-4bit`, `bge-m3`); Ollama остаётся резервом.
+- **Модели:** основной контур переведён на MLX Host (`mlx-community/Qwen3.5-4B-MLX-4bit` live default); Ollama остаётся резервом.
 - **Конвертация:** Lightweight ConverterRouter (`pymupdf4llm`, `mammoth`, `extract-msg`, `pandas`). Без Docling/нейросетей на этапе парсинга.
 - **Чанкинг:** Structure-Aware (MarkdownNodeParser + SentenceSplitter). Нарезка по заголовкам ГОСТ/СП, а не по токенам.
-- **Метаданные:** SQLite (`les_meta.db`) вместо MySQL. UUID-датасеты в `storage/datasets/`.
+- **Метаданные:** SQLite (`les_meta_qwen.db` для live Qwen-профиля) вместо MySQL. UUID-датасеты в `storage/datasets/`.
 - **Т.О.С.К.А. (CRAG):** Нативный Python-пайплайн в прокси (Pre-Check → Retrieval → Generation → Post-Check).
 - **UI:** С.О.В.У.Ш.К.А. на NiceGUI: `/` — премиальный AI-чат с drawer-историей и правой панелью артефактов, `/les` — админка.
 - **Управление датасетами:** UI-вкладка с маппингом `Источник → Индекс`, кнопка `🔄 Загрузить в индекс`, автообновление статусов.
@@ -24,7 +24,7 @@
 | Модуль | Расшифровка | Роль | Реализация v2.0 |
 |---|---|---|---|
 | Л.Е.С. | Локальная Единая Система | Оркестратор, API Gateway | `proxy_server.py` (FastAPI) |
-| С.А.М.О.В.А.Р. | Система Автономная Машинной Обработки Внутренних Архивов РАГ | Ядро RAG и поиска | Qdrant + LlamaIndex + `bge-m3` |
+| С.А.М.О.В.А.Р. | Система Автономная Машинной Обработки Внутренних Архивов РАГ | Ядро RAG и поиска | Qdrant + Qwen3 embeddings + LlamaIndex-compatible adapter |
 | Т.О.С.К.А. | Терминал Оценки, Самопроверки и Контроля Архитектуры | CRAG-валидация, фильтр галлюцинаций | Native Python pipeline в прокси |
 | В.О.Л.К. | Внутренний Охранный Локальный Контур | RBAC, аутентификация | JWT-токены, SQLite, middleware (в разработке) |
 | С.О.В.У.Ш.К.А. | Система Обработки и Выдачи... | Интеллектуальный UI | `sovushka_ng.py` (`/` чат, `/les` админка) |
@@ -74,7 +74,7 @@ LES_v2/
 ├── proxy_launchd.plist       # FastAPI proxy :8050
 ├── docker-compose.yml        # legacy/archived Docker fallback, не штатный runtime
 ├── Dockerfile.proxy          # legacy Docker proxy image
-├── requirements.txt          # Зависимости (FastAPI, LlamaIndex, Qdrant, pymupdf4llm...)
+├── pyproject.toml            # Зависимости (FastAPI, Qdrant, MLX/Core ML, MarkItDown, OCR...)
 ├── .env                      # Конфиг моделей и путей
 │
 ├── backend/
@@ -96,7 +96,7 @@ LES_v2/
 │
 ├── data/
 │   ├── qdrant/               # Volume Qdrant
-│   ├── les_meta.db           # SQLite метаданные датасетов/документов
+│   ├── les_meta_qwen.db      # Активная SQLite метабаза Qwen-профиля
 │   └── les_metrics.db        # SQLite метрики П.Р.О.Р.А.Б.
 │
 └── tests/
@@ -123,7 +123,7 @@ LES_v2/
 
 ## 🛠 Текущее состояние v2.0
 ### ✅ Работает:
-- Полный пайплайн: Файл → ConverterRouter → Structure-Aware Chunking → `bge-m3` → Qdrant → Retrieval → `qwen3` → CRAG → Ответ.
+- Полный пайплайн: Файл → ConverterRouter/MarkItDown/OCR fallback → Structure-Aware Chunking → Core ML Qwen3 embeddings → Qdrant → Retrieval → MLX Qwen → SafeRAG/rules validator → Ответ.
 - Поддержка PDF (`pymupdf4llm`), DOCX (`mammoth`), EML/MSG, XLSX/CSV.
 - SQLite-метаданные, UUID-датасеты в `storage/datasets/`, Qdrant persistence в `data/qdrant/`.
 - SSE-логи, Chart.js графики, real-time метрики, фильтры логов.
@@ -132,14 +132,15 @@ LES_v2/
 - Healthcheck, строгая Pydantic-валидация чата, обработка ошибок Ollama.
 
 ### ⏳ В работе / Бэклог:
-- Полная загрузка папки NTD и валидация на тяжёлых ГОСТ/СП/каталогах.
+- Core ML validator measured promotion: расширить golden до устойчивого набора, прогнать `rules/coreml/mlx`, зафиксировать thresholds и только затем включать production default.
+- Targeted population of `structured_rules` для `NORMATIVE`/`SPEC` документов: schema/code готовы, активная таблица пока пуста.
 - Retry-логика в прокси для устойчивости к занятости Ollama.
 - RBAC v2.0 (JWT), маскирование `.env`, ролевые бейджи.
 - С.У.Х.А.Р.И.К. v2.0: снапшоты Qdrant, инкрементальные бэкапы `storage/`.
 - Folder Watcher для автоматической синхронизации новых файлов.
 - Deep BIM Linking, сравнение версий нормативов, multi-project support.
 
-📅 **Документация актуализирована:** 22.05.2026 — split UI, premium chat/artifacts, semantic cache, document router, Parquet pipeline
+📅 **Документация актуализирована:** 01.06.2026 — local consistency baseline, MarkItDown/GLM-OCR/LangExtract integration, Core ML ANE/GPU embedding, rules validator default
 
 
 ## 📊 Фактический статус системы (Аудит 17.05.2026)

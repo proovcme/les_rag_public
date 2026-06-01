@@ -137,7 +137,10 @@ async def test_chat_generation_paused_in_indexing_mode():
 
 
 @pytest.mark.asyncio
-async def test_chat_generation_paused_under_memory_pressure():
+async def test_chat_generation_paused_under_memory_pressure(monkeypatch):
+    monkeypatch.setenv("LES_CHAT_MIN_FREE_GB", "8.0")
+    monkeypatch.setenv("LES_CHAT_MAX_SWAP_PCT", "60.0")
+
     class BackendThatMustNotRun:
         async def retrieve(self, *args, **kwargs):
             raise AssertionError("retrieve should not run while memory guard is closed")

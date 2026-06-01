@@ -110,7 +110,9 @@ async def test_indexing_mode_can_return_to_chat(runtime_state):
 
 
 @pytest.mark.asyncio
-async def test_indexing_mode_reports_runtime_admission(runtime_state):
+async def test_indexing_mode_reports_runtime_admission(runtime_state, monkeypatch):
+    monkeypatch.setenv("LES_CHAT_MIN_FREE_GB", "8.0")
+    monkeypatch.setenv("LES_CHAT_MAX_SWAP_PCT", "60.0")
     runtime.get_runtime_state().metrics_cache.update({"ram_free_gb": 5.0, "swap_pct": 86.0})
 
     response = await runtime.get_indexing_mode()

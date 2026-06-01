@@ -26,6 +26,12 @@ class LegacyNamePendingDB:
     def update_dataset_chunk_count(self, dataset_id):
         pass
 
+    def clear_structured_rules(self, file_key):
+        pass
+
+    def insert_structured_rules(self, rules):
+        pass
+
 
 def test_sync_parse_does_not_parse_all_files_when_no_pending(tmp_path):
     dataset_dir = tmp_path / "ds-1"
@@ -93,6 +99,45 @@ def test_sync_parse_updates_legacy_pending_file_name(tmp_path, monkeypatch):
         "cache_sec",
         "db_sec",
     }
+    assert db.updated == [("ds-1", "doc.md", "INDEXED", 1)]
+
+
+def test_sync_parse_prefers_exact_relative_path_over_legacy_basename(tmp_path, monkeypatch):
+    dataset_dir = tmp_path / "ds-1"
+    nested_dir = dataset_dir / "nested"
+    nested_dir.mkdir(parents=True)
+    (dataset_dir / "doc.md").write_text("root content with enough text for a chunk")
+    (nested_dir / "doc.md").write_text("nested content with enough text for a chunk")
+    db = LegacyNamePendingDB()
+    parsed = []
+    adapter = SimpleNamespace(
+        content_dir=tmp_path,
+        db=db,
+        qdrant_url="http://127.0.0.1:6333",
+        collection_name="les_rag",
+        embed=SimpleNamespace(encode_sync=lambda texts: [[0.0] * 1024 for _ in texts]),
+        _sync_delete_file_points=lambda *args: None,
+        _sync_count_file_points=lambda *args: 1,
+        _sync_markdown_nodes=lambda file_path, *args: parsed.append(
+            file_path.relative_to(dataset_dir).as_posix()
+        )
+        or [{"text": "content with enough text for a chunk", "doc_id": "doc-1", "payload": {}}],
+    )
+
+    class FakeQdrant:
+        def __init__(self, url, **kwargs):
+            self.url = url
+
+        def upsert(self, collection_name, points):
+            return None
+
+    monkeypatch.setattr("backend.qdrant_adapter.qdrant_client.QdrantClient", FakeQdrant)
+
+    result = QdrantLlamaIndexAdapter._sync_parse(adapter, "ds-1", limit=1)
+
+    assert result["files_parsed"] == 1
+    assert result["files_skipped"] == 1
+    assert parsed == ["doc.md"]
     assert db.updated == [("ds-1", "doc.md", "INDEXED", 1)]
 
 
