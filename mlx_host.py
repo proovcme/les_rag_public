@@ -1253,7 +1253,7 @@ async def memory_guard_loop():
                 )
                 _unload_engine_if_idle(main_engine, "main")
                 _unload_engine_if_idle(val_engine, "val")
-                embedder.force_unload()
+                _unload_engine_if_idle(embedder, "embedder")
             elif warning:
                 logger.warning(
                     "[MEM] pressure warning: ram_free=%.1fGB, swap=%.0f%% — выгружаю idle val-модель",
