@@ -64,6 +64,37 @@ def test_route_scan_pdf_to_needs_ocr():
     assert route.metadata["needs_ocr"] is True
 
 
+def test_route_cad_bim_folder_to_cad_bim_index():
+    probe = DocumentProbe(
+        path=Path("RAG_Content/CAD_BIM/exports/cad_bim_speckle_abc.md"),
+        suffix=".md",
+        size_bytes=2000,
+        text_sample="CAD/BIM Speckle projection\nLayer: A-WALL\nCategory: Walls",
+    )
+
+    route = classify_document(probe)
+
+    assert route.doc_type == "CAD_BIM"
+    assert route.domain == "CAD_BIM"
+    assert route.dataset_name == "CAD_BIM_Index"
+    assert route.content_type == "cad_bim"
+    assert route.pipeline == "speckle_projection"
+
+
+def test_route_raw_ifc_to_cad_bim_index():
+    probe = DocumentProbe(
+        path=Path("RAG_Content/CAD_BIM/IFC/model.ifc"),
+        suffix=".ifc",
+        size_bytes=2000,
+        text_sample="",
+    )
+
+    route = classify_document(probe)
+
+    assert route.doc_type == "CAD_BIM"
+    assert route.dataset_name == "CAD_BIM_Index"
+
+
 def test_docx_probe_counts_tables(tmp_path):
     path = tmp_path / "СП 1.13130.docx"
     xml = """<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">

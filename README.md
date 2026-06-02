@@ -589,6 +589,17 @@ MLX_RAM_WARN_FREE_GB=8         # early warning before swap pressure
 MLX_RAM_KILL_FREE_GB=6         # unload idle MLX models under critical RAM
 MLX_VALIDATE_CONTEXT_CHARS=8000
 MLX_EMBED_TTL_SEC=300
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_MODEL=
+OPENROUTER_API_KEY=            # задается через GUI; GET /api/settings не раскрывает секрет
+OPENAI_BASE_URL=               # OpenAI-compatible endpoint
+OPENAI_MODEL=
+OPENAI_API_KEY=                # задается через GUI; GET /api/settings не раскрывает секрет
+SPECKLE_ENABLED=true
+SPECKLE_BASE_URL=https://speckle.ovc.me
+SPECKLE_GRAPHQL_URL=https://speckle.ovc.me/graphql
+SPECKLE_API_TOKEN=             # задается через GUI; GET /api/settings не раскрывает секрет
+SPECKLE_WAKE_TIMEOUT_SEC=5     # Speckle может спать; probe не должен вешать GUI
 MAIL_IMAP_HOST=imap.example.com
 MAIL_IMAP_PORT=993
 MAIL_IMAP_SSL=true
@@ -610,6 +621,15 @@ MAIL_ATTACHMENT_VLM_ENABLED=false
 MAIL_VLM_URL=
 MAIL_VLM_MODEL=
 ```
+
+Speckle bridge используется как внешний BIM/CAD контур для DWG/RVT/IFC и табличных данных Speckle/Excel/Power BI. LES хранит endpoint/token в `.env`, показывает статус через `/api/speckle/status` и допускает `.dwg`, `.rvt`, `.ifc`, `.ifczip` на upload boundary. Минимальный pipeline:
+
+1. DWG/RVT/IFC загружается или конвертируется в Speckle.
+2. Speckle object graph или Excel/Power BI rows/properties экспортируются в `RAG_Content/CAD_BIM/Speckle/*.json|*.jsonl` или запрашиваются через `/api/speckle/import`.
+3. LES нормализует объекты в SQLite `data/cad_bim_graph.db`, связи `contains`, свойства/параметры в `cad_bim_properties` и markdown projection `RAG_Content/CAD_BIM/exports/cad_bim_speckle_<id>.md`.
+4. `SYNC CAD/BIM` в Lite Admin регистрирует projection в `CAD_BIM_Index`; тяжелый parse/embedding запускается отдельно через обычный guarded scheduler.
+
+`IMPORT SPECKLE` в Lite Admin поддерживает профиль источника `AUTO`, `AutoCAD/DWG`, `Revit/RVT`, `IFC`, `Excel/Power BI` или `Generic`; профиль влияет на текстовую проекцию и сохранение layer/category/family/level/material/table properties. Это не заменяет Speckle connectors: полноценная DWG/RVT/IFC конвертация остается на стороне Speckle, а LES индексирует уже извлеченный объектный граф, свойства и текстовые проекции.
 
 IMAP smoke после заполнения `.env`:
 

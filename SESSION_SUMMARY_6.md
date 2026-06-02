@@ -83,3 +83,13 @@
 - Core ML embedder выдержал guarded indexing closeout без worker failures/fallback; в конце может быть unloaded/idle, что не является failure.
 - Full pytest green after modernization fixes: `357 passed` (2 SWIG deprecation warnings). Закрыты исторические 7 падений: test doubles для `structured_rules`, env isolation для memory admission, retrieval top-k/PP87 expectations.
 - Внешний `les.ovc.me` поднят через П.А.У.К. reverse SSH tunnel. VPS Caddy оставлен без перезапуска и правок; соседний tunnel `127.0.0.1:22020` не тронут. Public smoke: `12/12`, live RAG question через внешний контур: `VERIFIED`, `sources=3`.
+
+## Live Notes 02.06.2026
+
+- Добавлен Speckle BIM/CAD bridge для DWG/RVT/IFC: `SPECKLE_BASE_URL=https://speckle.ovc.me`, `SPECKLE_GRAPHQL_URL=https://speckle.ovc.me/graphql`, `SPECKLE_ENABLED=true`, `SPECKLE_WAKE_TIMEOUT_SEC=5`.
+- `/api/settings` и Lite/Classical GUI управляют Speckle endpoint/token; token маскируется как `api_token_set`/`***`.
+- `/api/speckle/status` выполняет легкий probe и классифицирует `502/503/504` как `sleeping`. Live check 02.06.2026: `https://speckle.ovc.me` возвращает `502`, LES status route возвращает `status=sleeping`, `http_status=502`.
+- Upload boundary расширен под `.dwg`, `.rvt`, `.ifc`, `.ifczip`; полноценная модельная конвертация остается на стороне Speckle/connectors.
+- Добавлен профильный CAD/BIM pipeline: `/api/speckle/import` принимает inline payload, latest/local `RAG_Content/CAD_BIM/Speckle/*.json|*.jsonl` или Speckle `stream_id+object_id`, нормализует объектный граф в `data/cad_bim_graph.db`, свойства/параметры в `cad_bim_properties`, пишет markdown projection в `RAG_Content/CAD_BIM/exports/`, а `SYNC CAD/BIM` регистрирует projections в `CAD_BIM_Index` без автоматического heavy parse.
+- Lite Admin `IMPORT SPECKLE` управляет source profile из GUI: `AUTO`, `AutoCAD/DWG`, `Revit/RVT`, `IFC`, `Excel/Power BI`, `Generic`. Это покрывает Speckle connector/plugin сценарии: DWG/RVT/IFC модельные объекты и Excel/Power BI табличные rows/properties индексируются как единая CAD/BIM проекция.
+- Verification: full pytest `365 passed` (2 SWIG warnings), local health `ok`, `1211 indexed / 0 pending / 0 errors`, Qdrant points match SQLite chunks, `les.ovc.me` `/` и `/api/health` возвращают `200`.

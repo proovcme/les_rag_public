@@ -1,9 +1,9 @@
 # 🖥️ Инфраструктура Л.Е.С. v2.0+ (Mac Mini M4 + host LaunchAgents + MLX)
 
-**Статус:** 🟢 Активна, local consistency closed | **Обновлено:** 01.06.2026 | **Версия:** 4.1 hybrid structural-semantic runtime
+**Статус:** 🟢 Активна, local consistency closed | **Обновлено:** 02.06.2026 | **Версия:** 4.2 hybrid structural-semantic runtime + Speckle BIM/CAD bridge
 **Архитектура:** Headless Mac Mini M4 / 24 GB + ZeroTier P2P + host LaunchAgents (Qdrant + Proxy + UI + optional indexer + П.А.У.К.) + MLX Native Host with Core ML embedder and rules/Core ML validation paths. Docker Desktop/OrbStack удалены из штатного контура. Ollama сохранён как резерв.
 
-**Live baseline 01.06.2026:** local proxy health `ok`: `1211` files, `1211 indexed`, `0 pending`, `0 errors`, `142193` SQLite chunks, `142193` Qdrant points, `points_match_sqlite_chunks=true`. Closeout выполнен под SQLite/Qdrant backup, stale Qdrant points удалены, duplicate-basename pending selection исправлен. FIRE/HVAC acceptance gate проходит `16/16`, full pytest `357 passed`. External `https://les.ovc.me` поднят через П.А.У.К. reverse SSH tunnel: `/`, `/les`, `/api/health` `200`, public smoke `12/12`, no-key admin denied `401`.
+**Live baseline 02.06.2026:** local proxy health `ok`: `1211` files, `1211 indexed`, `0 pending`, `0 errors`, `142193` SQLite chunks, `142193` Qdrant points, `points_match_sqlite_chunks=true`. Closeout выполнен под SQLite/Qdrant backup, stale Qdrant points удалены, duplicate-basename pending selection исправлен. FIRE/HVAC acceptance gate проходит `16/16`; latest full pytest `365 passed`. External `https://les.ovc.me` отвечает `/` и `/api/health` `200`. Speckle bridge настроен на `https://speckle.ovc.me`; текущий probe классифицирует `502` как `sleeping`, что ожидаемо для спящего BIM/CAD сервера. CAD/BIM import поддерживает профили AutoCAD/DWG, Revit/RVT, IFC и Excel/Power BI properties через `data/cad_bim_graph.db`.
 
 ## 📋 Узлы сети (ZeroTier)
 | Устройство | Роль | IP-адрес | Доступ | ОС |

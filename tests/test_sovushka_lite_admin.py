@@ -21,6 +21,28 @@ def test_lite_admin_html_uses_static_admin_shell():
     assert "Dispatcher / Reindex" in html
     assert "Watcher" in html
     assert "Memory" in html
+    assert "Speckle BIM/CAD" in html
+    assert "speckleBaseUrl" in html
+    assert "speckleGraphqlUrl" in html
+    assert "speckleToken" in html
+    assert "speckleSourceType" in html
+    assert "Excel / Power BI" in html
+    assert "source_type" in html
+    assert "SAVE SPECKLE" in html
+    assert "CHECK SPECKLE" in html
+    assert "IMPORT SPECKLE" in html
+    assert "SYNC CAD/BIM" in html
+    assert "/api/speckle/status" in html
+    assert "/api/speckle/import" in html
+    assert "RAG_Content/CAD_BIM" in html
+    assert "External Providers" in html
+    assert "openrouterBaseUrl" in html
+    assert "openrouterKey" in html
+    assert "openaiBaseUrl" in html
+    assert "openaiKey" in html
+    assert "SAVE PROVIDERS" in html
+    assert "openrouter_api_key_clear" in html
+    assert "openai_api_key_clear" in html
     assert "Е.Ж.И.К. Mail" in html
     assert "trusted-сети" in html
     assert "IMPORT+INDEX" in html

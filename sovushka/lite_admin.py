@@ -443,6 +443,52 @@ def lite_admin_html() -> str:
       </div>
 
       <div class="panel panel-wide">
+        <div class="title">Speckle BIM/CAD</div>
+        <div id="speckleHint" class="hint">Speckle параметры ещё не загружены.</div>
+        <div class="form-grid">
+          <input id="speckleBaseUrl" class="wide" type="url" placeholder="https://speckle.ovc.me">
+          <input id="speckleGraphqlUrl" class="wide" type="url" placeholder="https://speckle.ovc.me/graphql">
+          <input id="speckleToken" class="wide" type="password" placeholder="Speckle API token">
+          <input id="speckleSourcePath" class="wide" type="text" placeholder="RAG_Content/CAD_BIM/Speckle/model.json">
+          <select id="speckleSourceType">
+            <option value="">AUTO</option>
+            <option value="autocad">AutoCAD / DWG</option>
+            <option value="revit">Revit / RVT</option>
+            <option value="ifc">IFC</option>
+            <option value="excel">Excel / Power BI</option>
+            <option value="generic">Generic</option>
+          </select>
+          <input id="speckleTimeout" type="number" min="0.5" max="60" step="0.5" value="5" title="WAKE TIMEOUT">
+          <label class="checkline"><input id="speckleEnabled" type="checkbox"> enabled</label>
+          <label class="checkline wide"><input id="speckleClear" type="checkbox"> сбросить Speckle token</label>
+        </div>
+        <div class="actions">
+          <button id="speckleSaveBtn" type="button" class="safe">SAVE SPECKLE</button>
+          <button id="speckleCheckBtn" type="button">CHECK SPECKLE</button>
+          <button id="speckleImportBtn" type="button">IMPORT SPECKLE</button>
+          <button id="cadBimSyncBtn" type="button">SYNC CAD/BIM</button>
+        </div>
+      </div>
+
+      <div class="panel panel-wide">
+        <div class="title">External Providers</div>
+        <div id="providerHint" class="hint">OpenRouter и OpenAI-compatible параметры ещё не загружены.</div>
+        <div class="form-grid">
+          <input id="openrouterBaseUrl" class="wide" type="url" placeholder="https://openrouter.ai/api/v1">
+          <input id="openrouterModel" class="wide" type="text" placeholder="openrouter model id">
+          <input id="openrouterKey" class="wide" type="password" placeholder="OpenRouter API key">
+          <label class="checkline wide"><input id="openrouterClear" type="checkbox"> сбросить OpenRouter key</label>
+          <input id="openaiBaseUrl" class="wide" type="url" placeholder="OpenAI-compatible base URL">
+          <input id="openaiModel" class="wide" type="text" placeholder="OpenAI-compatible model id">
+          <input id="openaiKey" class="wide" type="password" placeholder="OpenAI-compatible API key">
+          <label class="checkline wide"><input id="openaiClear" type="checkbox"> сбросить OpenAI-compatible key</label>
+        </div>
+        <div class="actions">
+          <button id="providerSaveBtn" type="button" class="safe">SAVE PROVIDERS</button>
+        </div>
+      </div>
+
+      <div class="panel panel-wide">
         <div class="title">Е.Ж.И.К. Mail</div>
         <div id="mailHint" class="hint">IMAP параметры ещё не загружены.</div>
         <div class="form-grid">
@@ -524,6 +570,11 @@ def lite_admin_html() -> str:
       busy: false,
       mailDirty: false,
       mailPasswordSet: false,
+      providerDirty: false,
+      openrouterKeySet: false,
+      openaiKeySet: false,
+      speckleDirty: false,
+      speckleTokenSet: false,
     };
     const el = (id) => document.getElementById(id);
 
@@ -665,6 +716,8 @@ def lite_admin_html() -> str:
         renderHeader(mode, dispatcher);
         renderDispatcher(dispatcher);
         renderWatcher(watcher, routePlan);
+        renderSpeckleSettings(settings);
+        renderProviderSettings(settings);
         renderMailSettings(settings);
         renderJobs(jobs);
         renderMemory(dispatcher);
@@ -764,6 +817,62 @@ def lite_admin_html() -> str:
       node.value = value == null ? "" : String(value);
     }
 
+    function setProviderValue(id, value) {
+      const node = el(id);
+      if (document.activeElement === node) return;
+      node.value = value == null ? "" : String(value);
+    }
+
+    function setSpeckleValue(id, value) {
+      const node = el(id);
+      if (document.activeElement === node) return;
+      node.value = value == null ? "" : String(value);
+    }
+
+    function renderSpeckleSettings(settings) {
+      if (state.speckleDirty) return;
+      const speckle = settings.speckle || {};
+      state.speckleTokenSet = Boolean(speckle.api_token_set);
+      setSpeckleValue("speckleBaseUrl", speckle.base_url || "https://speckle.ovc.me");
+      setSpeckleValue("speckleGraphqlUrl", speckle.graphql_url || "https://speckle.ovc.me/graphql");
+      setSpeckleValue("speckleToken", "");
+      setSpeckleValue("speckleSourcePath", "");
+      setSpeckleValue("speckleSourceType", "");
+      el("speckleToken").placeholder = speckle.api_token_set
+        ? "token уже задан; оставь пустым, чтобы не менять"
+        : "Speckle API token";
+      setSpeckleValue("speckleTimeout", speckle.wake_timeout_sec || 5);
+      el("speckleEnabled").checked = speckle.enabled !== false;
+      el("speckleClear").checked = false;
+      el("speckleHint").textContent =
+        `Speckle ${speckle.base_url || "https://speckle.ovc.me"} | token=${speckle.api_token_set ? "set" : "missing"} | formats=DWG/RVT/IFC`;
+    }
+
+    function renderProviderSettings(settings) {
+      if (state.providerDirty) return;
+      const providers = settings.providers || {};
+      const openrouter = providers.openrouter || {};
+      const openai = providers.openai_compatible || {};
+      state.openrouterKeySet = Boolean(openrouter.api_key_set);
+      state.openaiKeySet = Boolean(openai.api_key_set);
+      setProviderValue("openrouterBaseUrl", openrouter.base_url || "https://openrouter.ai/api/v1");
+      setProviderValue("openrouterModel", openrouter.model || "");
+      setProviderValue("openrouterKey", "");
+      el("openrouterKey").placeholder = openrouter.api_key_set
+        ? "key уже задан; оставь пустым, чтобы не менять"
+        : "OpenRouter API key";
+      el("openrouterClear").checked = false;
+      setProviderValue("openaiBaseUrl", openai.base_url || "");
+      setProviderValue("openaiModel", openai.model || "");
+      setProviderValue("openaiKey", "");
+      el("openaiKey").placeholder = openai.api_key_set
+        ? "key уже задан; оставь пустым, чтобы не менять"
+        : "OpenAI-compatible API key";
+      el("openaiClear").checked = false;
+      el("providerHint").textContent =
+        `OpenRouter key=${openrouter.api_key_set ? "set" : "missing"} | OpenAI-compatible key=${openai.api_key_set ? "set" : "missing"}`;
+    }
+
     function renderMailSettings(settings) {
       if (state.mailDirty) return;
       const mail = settings.mail || {};
@@ -846,6 +955,82 @@ def lite_admin_html() -> str:
       await refreshAll();
     }
 
+    async function checkSpeckle() {
+      const data = await request("/api/speckle/status");
+      const status = data.status || "unknown";
+      el("speckleHint").textContent =
+        `Speckle ${status} | http=${data.http_status ?? "-"} | ${data.base_url || ""} | ${data.elapsed_ms ?? "?"} ms`;
+      log("speckle status -> " + status + " http=" + (data.http_status ?? "-"));
+    }
+
+    async function saveSpeckleSettings() {
+      const token = el("speckleToken").value.trim();
+      const payload = {
+        speckle_enabled: el("speckleEnabled").checked,
+        speckle_base_url: validateProviderUrl(el("speckleBaseUrl").value, "Speckle URL"),
+        speckle_graphql_url: validateProviderUrl(el("speckleGraphqlUrl").value, "Speckle GraphQL URL"),
+        speckle_api_token_clear: el("speckleClear").checked,
+        speckle_wake_timeout_sec: Number(el("speckleTimeout").value || 5),
+      };
+      if (token) payload.speckle_api_token = token;
+      const data = await post("/api/settings", payload);
+      state.speckleDirty = false;
+      el("speckleToken").value = "";
+      log("speckle settings -> " + Object.keys(data.updated || {}).join(", "));
+      await refreshAll();
+    }
+
+    async function importSpeckleGraph() {
+      const sourcePath = el("speckleSourcePath").value.trim();
+      const payload = { max_objects: 5000 };
+      if (sourcePath) payload.source_path = sourcePath;
+      const sourceType = el("speckleSourceType").value.trim();
+      if (sourceType) payload.source_type = sourceType;
+      const data = await post("/api/speckle/import", payload);
+      log("speckle import -> profile=" + (data.profile || "auto") + " elements=" + (data.elements || 0) + " relations=" + (data.relations || 0) + " properties=" + (data.properties || 0));
+      el("speckleHint").textContent =
+        `Imported ${data.profile || "auto"} | ${data.elements || 0} elements / ${data.relations || 0} relations / ${data.properties || 0} properties | ${data.projection_path || ""}`;
+    }
+
+    async function syncCadBim() {
+      const data = await post("/api/rag/sync-smart", {
+        source_root: "RAG_Content/CAD_BIM",
+        parse: false,
+        parse_limit_per_dataset: 1,
+      });
+      log("cad/bim sync -> files=" + (data.files || 0) + " datasets=" + (data.datasets || []).length);
+      await refreshAll();
+    }
+
+    function validateProviderUrl(value, label) {
+      const url = value.trim();
+      if (url && !url.startsWith("http://") && !url.startsWith("https://")) {
+        throw new Error(label + " должен начинаться с http:// или https://");
+      }
+      return url;
+    }
+
+    async function saveProviderSettings() {
+      const openrouterKey = el("openrouterKey").value.trim();
+      const openaiKey = el("openaiKey").value.trim();
+      const payload = {
+        openrouter_base_url: validateProviderUrl(el("openrouterBaseUrl").value, "OpenRouter URL"),
+        openrouter_model: el("openrouterModel").value.trim(),
+        openrouter_api_key_clear: el("openrouterClear").checked,
+        openai_base_url: validateProviderUrl(el("openaiBaseUrl").value, "OpenAI-compatible URL"),
+        openai_model: el("openaiModel").value.trim(),
+        openai_api_key_clear: el("openaiClear").checked,
+      };
+      if (openrouterKey) payload.openrouter_api_key = openrouterKey;
+      if (openaiKey) payload.openai_api_key = openaiKey;
+      const data = await post("/api/settings", payload);
+      state.providerDirty = false;
+      el("openrouterKey").value = "";
+      el("openaiKey").value = "";
+      log("provider settings -> " + Object.keys(data.updated || {}).join(", "));
+      await refreshAll();
+    }
+
     function applyYandexMailPreset() {
       el("mailHost").value = "imap.yandex.ru";
       el("mailPort").value = "993";
@@ -916,6 +1101,34 @@ def lite_admin_html() -> str:
     ["mailHost", "mailPort", "mailSsl", "mailLogin", "mailPassword", "mailFolders", "mailOcr"].forEach((id) => {
       el(id).addEventListener("input", () => { state.mailDirty = true; });
       el(id).addEventListener("change", () => { state.mailDirty = true; });
+    });
+    ["openrouterBaseUrl", "openrouterModel", "openrouterKey", "openrouterClear", "openaiBaseUrl", "openaiModel", "openaiKey", "openaiClear"].forEach((id) => {
+      el(id).addEventListener("input", () => { state.providerDirty = true; });
+      el(id).addEventListener("change", () => { state.providerDirty = true; });
+    });
+    ["speckleBaseUrl", "speckleGraphqlUrl", "speckleToken", "speckleSourcePath", "speckleSourceType", "speckleTimeout", "speckleEnabled", "speckleClear"].forEach((id) => {
+      el(id).addEventListener("input", () => { state.speckleDirty = true; });
+      el(id).addEventListener("change", () => { state.speckleDirty = true; });
+    });
+    el("speckleSaveBtn").addEventListener("click", async () => {
+      try { await saveSpeckleSettings(); }
+      catch (error) { log("speckle settings error: " + error.message); }
+    });
+    el("speckleCheckBtn").addEventListener("click", async () => {
+      try { await checkSpeckle(); }
+      catch (error) { log("speckle status error: " + error.message); }
+    });
+    el("speckleImportBtn").addEventListener("click", async () => {
+      try { await importSpeckleGraph(); }
+      catch (error) { log("speckle import error: " + error.message); }
+    });
+    el("cadBimSyncBtn").addEventListener("click", async () => {
+      try { await syncCadBim(); }
+      catch (error) { log("cad/bim sync error: " + error.message); }
+    });
+    el("providerSaveBtn").addEventListener("click", async () => {
+      try { await saveProviderSettings(); }
+      catch (error) { log("provider settings error: " + error.message); }
     });
     el("mailYandexBtn").addEventListener("click", applyYandexMailPreset);
     el("mailSaveBtn").addEventListener("click", async () => {

@@ -124,6 +124,24 @@ def build_header(
                     set_embed = ui.input("Embedding Модель",  value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
                     set_url   = ui.input("MLX URL",  value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
                     ui.separator().style("border-color:var(--border);margin:12px 0;")
+                    ui.label("Speckle BIM/CAD").style("color:var(--dim);font-size:.65rem;font-weight:900;text-transform:uppercase;")
+                    set_speckle_enabled = ui.checkbox("Speckle enabled", value=True).style("color:var(--text);font-family:var(--font);")
+                    set_speckle_url = ui.input("Speckle Base URL", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_speckle_graphql = ui.input("Speckle GraphQL URL", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_speckle_token = ui.input("Speckle API Token", value="", password=True, password_toggle_button=True).style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_speckle_clear = ui.checkbox("Сбросить Speckle token", value=False).style("color:var(--text);font-family:var(--font);")
+                    set_speckle_timeout = ui.number("Wake timeout sec", value=5, min=0.5, max=60, step=0.5, format="%.1f").style("background:var(--bg);color:var(--text);font-family:var(--font);width:180px;")
+                    ui.separator().style("border-color:var(--border);margin:12px 0;")
+                    ui.label("External providers").style("color:var(--dim);font-size:.65rem;font-weight:900;text-transform:uppercase;")
+                    set_openrouter_url = ui.input("OpenRouter Base URL", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_openrouter_model = ui.input("OpenRouter Model", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_openrouter_key = ui.input("OpenRouter API Key", value="", password=True, password_toggle_button=True).style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_openrouter_clear = ui.checkbox("Сбросить OpenRouter key", value=False).style("color:var(--text);font-family:var(--font);")
+                    set_openai_url = ui.input("OpenAI-compatible Base URL", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_openai_model = ui.input("OpenAI-compatible Model", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_openai_key = ui.input("OpenAI-compatible API Key", value="", password=True, password_toggle_button=True).style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_openai_clear = ui.checkbox("Сбросить OpenAI-compatible key", value=False).style("color:var(--text);font-family:var(--font);")
+                    ui.separator().style("border-color:var(--border);margin:12px 0;")
                     ui.label("Е.Ж.И.К. IMAP").style("color:var(--dim);font-size:.65rem;font-weight:900;text-transform:uppercase;")
                     with ui.row().classes("w-full gap-2"):
                         set_mail_host = ui.input("IMAP Host", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);flex:1;")
@@ -152,6 +170,33 @@ def build_header(
                             set_llm.set_value(d.get("llm_model", ""))
                             set_embed.set_value(d.get("embed_model", ""))
                             set_url.set_value(d.get("mlx_url", ""))
+                            speckle = d.get("speckle") or {}
+                            set_speckle_enabled.set_value(bool(speckle.get("enabled", True)))
+                            set_speckle_url.set_value(speckle.get("base_url", "https://speckle.ovc.me"))
+                            set_speckle_graphql.set_value(speckle.get("graphql_url", "https://speckle.ovc.me/graphql"))
+                            set_speckle_token.set_value("")
+                            set_speckle_token.props(
+                                f"placeholder=\"{'token уже задан; оставь пустым, чтобы не менять' if speckle.get('api_token_set') else 'Speckle API token'}\""
+                            )
+                            set_speckle_clear.set_value(False)
+                            set_speckle_timeout.set_value(float(speckle.get("wake_timeout_sec", 5) or 5))
+                            providers = d.get("providers") or {}
+                            openrouter = providers.get("openrouter") or {}
+                            openai = providers.get("openai_compatible") or {}
+                            set_openrouter_url.set_value(openrouter.get("base_url", "https://openrouter.ai/api/v1"))
+                            set_openrouter_model.set_value(openrouter.get("model", ""))
+                            set_openrouter_key.set_value("")
+                            set_openrouter_key.props(
+                                f"placeholder=\"{'key уже задан; оставь пустым, чтобы не менять' if openrouter.get('api_key_set') else 'OpenRouter API key'}\""
+                            )
+                            set_openrouter_clear.set_value(False)
+                            set_openai_url.set_value(openai.get("base_url", ""))
+                            set_openai_model.set_value(openai.get("model", ""))
+                            set_openai_key.set_value("")
+                            set_openai_key.props(
+                                f"placeholder=\"{'key уже задан; оставь пустым, чтобы не менять' if openai.get('api_key_set') else 'OpenAI-compatible API key'}\""
+                            )
+                            set_openai_clear.set_value(False)
                             mail = d.get("mail") or {}
                             set_mail_host.set_value(mail.get("imap_host", ""))
                             set_mail_port.set_value(mail.get("imap_port", 993))
@@ -187,10 +232,24 @@ def build_header(
 
                         async def save_settings():
                             from sovushka.state import api_post, add_log
-                            d = await api_post("/api/settings", {
+                            payload = {
                                 "llm_model":   set_llm.value,
                                 "embed_model": set_embed.value,
                                 "mlx_url":     set_url.value,
+                                "speckle_enabled": bool(set_speckle_enabled.value),
+                                "speckle_base_url": set_speckle_url.value or "",
+                                "speckle_graphql_url": set_speckle_graphql.value or "",
+                                "speckle_api_token": set_speckle_token.value or None,
+                                "speckle_api_token_clear": bool(set_speckle_clear.value),
+                                "speckle_wake_timeout_sec": float(set_speckle_timeout.value or 5),
+                                "openrouter_base_url": set_openrouter_url.value or "",
+                                "openrouter_model": set_openrouter_model.value or "",
+                                "openrouter_api_key": set_openrouter_key.value or None,
+                                "openrouter_api_key_clear": bool(set_openrouter_clear.value),
+                                "openai_base_url": set_openai_url.value or "",
+                                "openai_model": set_openai_model.value or "",
+                                "openai_api_key": set_openai_key.value or None,
+                                "openai_api_key_clear": bool(set_openai_clear.value),
                                 "mail_imap_host": set_mail_host.value or "",
                                 "mail_imap_port": int(set_mail_port.value or 993),
                                 "mail_imap_ssl": bool(set_mail_ssl.value),
@@ -198,7 +257,8 @@ def build_header(
                                 "mail_imap_password": set_mail_password.value or None,
                                 "mail_imap_folders": set_mail_folders.value or "INBOX",
                                 "mail_attachment_ocr_enabled": bool(set_mail_ocr.value),
-                            })
+                            }
+                            d = await api_post("/api/settings", payload)
                             if d:
                                 add_log(f"[SETTINGS] Сохранено: LLM={set_llm.value}")
                                 ui.notify("Настройки сохранены", type="positive")

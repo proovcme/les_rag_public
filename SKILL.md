@@ -16,6 +16,7 @@ Current production posture:
 - MLX Host: `http://127.0.0.1:8080`
 - Qdrant: `http://127.0.0.1:6333`
 - External: `https://les.ovc.me` through P.A.U.K. reverse SSH tunnel and V.O.L.K. API keys; on 2026-06-01 external smoke passes `12/12`.
+- Speckle BIM/CAD bridge: `https://speckle.ovc.me`, GraphQL `https://speckle.ovc.me/graphql`, managed by `/api/settings` and `/api/speckle/status`; `502/503/504` means `sleeping`, not LES failure.
 
 ## First Checks
 
@@ -38,6 +39,7 @@ Live baseline on 2026-06-01:
 - Visual OCR: MLX-native `mlx-community/GLM-OCR-4bit` (via `mlx-vlm`, lazy-loaded with explicit Metal cache clearing after processing).
 - Office Ingestion: Microsoft MarkItDown with graceful fallbacks to mammoth/pandas.
 - Structured Rules: Google LangExtract schema extraction to SQLite `structured_rules` table with exact character offsets; active table is expected to be empty until targeted `NORMATIVE`/`SPEC` reindex populates it.
+- Speckle bridge is configured for DWG/RVT/IFC and Excel/Power BI handoff. LES admits `.dwg`, `.rvt`, `.ifc`, `.ifczip` at upload boundary, but full BIM/CAD conversion remains in Speckle/connectors. `/api/speckle/import` supports source profiles `AUTO`, `AutoCAD/DWG`, `Revit/RVT`, `IFC`, `Excel/Power BI`, `Generic`, builds `data/cad_bim_graph.db`, stores properties in `cad_bim_properties`, and writes markdown projections under `RAG_Content/CAD_BIM/exports/`; Lite Admin `SYNC CAD/BIM` registers those projections in `CAD_BIM_Index` without auto-running heavy parse.
 
 ## Guardrails
 

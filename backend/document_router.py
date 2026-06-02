@@ -15,6 +15,7 @@ from typing import Any
 TABLE_SUFFIXES = {".xlsx", ".xls", ".csv"}
 PDF_SUFFIXES = {".pdf"}
 EMAIL_SUFFIXES = {".eml", ".emlx", ".msg"}
+CAD_BIM_SUFFIXES = {".dwg", ".rvt", ".ifc", ".ifczip"}
 
 
 @dataclass
@@ -230,6 +231,8 @@ def _probe_text_like(path: Path, size_bytes: int) -> DocumentProbe:
 def _classify_doc_type(probe: DocumentProbe) -> str:
     text = f"{probe.path.name}\n{probe.text_sample}".lower()
     name = probe.path.name.lower()
+    if _is_cad_bim_source(probe):
+        return "CAD_BIM"
     if probe.suffix in EMAIL_SUFFIXES:
         return "EMAIL"
     if _looks_like_book(probe):
@@ -274,6 +277,9 @@ def _has_strong_normative_signal(text: str) -> bool:
 def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
     text = f"{' '.join(probe.path.parts)}\n{probe.text_sample}".casefold()
     name = probe.path.name.casefold()
+
+    if doc_type == "CAD_BIM" or _is_cad_bim_source(probe):
+        return "CAD_BIM"
 
     if doc_type == "EMAIL" or probe.suffix in EMAIL_SUFFIXES:
         return "MAIL"
@@ -698,6 +704,8 @@ def _is_industrial_chimney_norm(text: str, name: str) -> bool:
 
 
 def _classify_content_type(probe: DocumentProbe) -> str:
+    if _is_cad_bim_source(probe):
+        return "cad_bim"
     if probe.suffix in EMAIL_SUFFIXES:
         return "email"
     if probe.needs_ocr:
@@ -726,11 +734,18 @@ def _classify_complexity(probe: DocumentProbe, content_type: str) -> str:
 def _select_pipeline(probe: DocumentProbe, content_type: str, complexity: str) -> str:
     if complexity == "needs_ocr":
         return "markdown_needs_ocr"
+    if content_type == "cad_bim":
+        return "speckle_projection"
     if probe.suffix in TABLE_SUFFIXES:
         return "parquet"
     if probe.suffix in PDF_SUFFIXES and content_type == "mixed":
         return "markdown_pdf_tables"
     return "markdown"
+
+
+def _is_cad_bim_source(probe: DocumentProbe) -> bool:
+    parts = {part.casefold() for part in probe.path.parts}
+    return probe.suffix in CAD_BIM_SUFFIXES or "cad_bim" in parts
 
 
 def _text_has_table_signals(text: str) -> bool:

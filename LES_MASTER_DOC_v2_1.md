@@ -808,7 +808,9 @@ systemctl restart les_proxy.service
 - Без ключа допускаются только IP из `TRUSTED_NETWORKS`; роль задаёт `TRUSTED_NETWORK_ROLE`.
 - `user` имеет доступ к чату, истории, чтению статуса/метрик/датасетов; destructive/admin endpoints требуют `admin`.
 - `/api/auth/keys`, `/api/auth/keys/toggle`, `/api/auth/keys/reset-device`, `/api/auth/keys/delete` требуют admin. Старый `DELETE /api/auth/keys/{key_value}` оставлен только для совместимости; UI использует body endpoint, чтобы не класть ключ в URL.
-- `/api/settings` принимает `llm_model`, `embed_model`, `mlx_url`; рестарт только при `POST /api/settings?restart=true`.
+- `/api/settings` принимает `llm_model`, `embed_model`, `mlx_url`, Speckle BIM/CAD endpoint/token, OpenRouter/OpenAI-compatible base URL/model/API key настройки и IMAP-параметры. Секреты возвращаются только как `*_set`/`***`; рестарт только при `POST /api/settings?restart=true`.
+- `/api/speckle/status` выполняет легкий probe Speckle (`SPECKLE_BASE_URL`, default `https://speckle.ovc.me`) и классифицирует `502/503/504` как sleeping, чтобы спящий BIM/CAD сервер не считался отказом LES.
+- `/api/speckle/import` нормализует Speckle object graph в SQLite `data/cad_bim_graph.db`, свойства/параметры в `cad_bim_properties` и markdown projection `RAG_Content/CAD_BIM/exports/`. Поддерживаются source profiles `AUTO`, `AutoCAD/DWG`, `Revit/RVT`, `IFC`, `Excel/Power BI`, `Generic`; Lite Admin `SYNC CAD/BIM` регистрирует projections в `CAD_BIM_Index` через guarded RAG sync.
 
 #### POST /api/chat — расширенное
 ```json
@@ -1213,7 +1215,7 @@ async def validate_with_consistency(question, answer, context, n=3):
 - **Proxy v3 package** — добавлен пакет `proxy/`; `proxy_server.py` сокращён до entrypoint, контейнер монтирует `./proxy:/app/proxy`.
 - **В.О.Л.К. server-side** — admin endpoints защищены на уровне FastAPI dependencies: `/api/auth/keys*`, destructive `/api/rag/*`, `/api/settings`, `/api/warmup`, `/api/rerank`.
 - **С.О.В.У.Ш.К.А. → Proxy auth** — UI API-клиент передаёт `X-API-Key` из `app.storage.user`; local/configured trusted bypass даёт роль `admin` без ключа.
-- **Settings safety** — `/api/settings` принимает только allowlisted поля, валидирует `MLX_URL`, рестарт только явно через `?restart=true`.
+- **Settings safety** — `/api/settings` принимает только allowlisted поля, валидирует `MLX_URL`, Speckle URLs и external provider URLs, маскирует пароли/API keys/tokens, рестарт только явно через `?restart=true`.
 - **SafeRAG UNKNOWN policy** — timeout/500 валидатора больше не пропускает неподтверждённый ответ пользователю.
 - **Diagnostics safety** — `/api/diag` проверяет MLX health вместо вызова `/api/chat`.
 - **Relative paths in RAG** — `backend/qdrant_adapter.py` принимает `relative_path`; sync не схлопывает вложенные папки.
