@@ -76,6 +76,27 @@ async def test_public_ip_without_key_is_unauthorized(auth_db):
 
 
 @pytest.mark.asyncio
+async def test_trusted_network_falls_back_when_browser_keeps_stale_key(auth_db):
+    trusted = await security.get_request_user(
+        _request("10.10.10.98"),
+        x_api_key="stale-browser-key",
+        authorization=None,
+    )
+
+    assert trusted.role == "admin"
+    assert trusted.holder == "trusted-network"
+    assert trusted.source == "10.10.10.98"
+
+    with pytest.raises(HTTPException) as exc:
+        await security.get_request_user(
+            _request("203.0.113.10"),
+            x_api_key="stale-browser-key",
+            authorization=None,
+        )
+    assert exc.value.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_forwarded_headers_only_trusted_from_proxy_network(auth_db):
     spoofed = _request("203.0.113.10", {"x-forwarded-for": "10.10.10.98"})
     with pytest.raises(HTTPException) as exc:

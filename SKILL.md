@@ -17,6 +17,7 @@ Current production posture:
 - Qdrant: `http://127.0.0.1:6333`
 - External: `https://les.ovc.me` through P.A.U.K. reverse SSH tunnel and V.O.L.K. API keys; on 2026-06-01 external smoke passes `12/12`.
 - Speckle BIM/CAD bridge: `https://speckle.ovc.me`, GraphQL `https://speckle.ovc.me/graphql`, managed by `/api/settings` and `/api/speckle/status`; live after token setup on 2026-06-02 is `status=ok`, `http_status=200`, `api_token_set=true`; `502/503/504` means `sleeping`, not LES failure.
+- ZeroTier trusted GUI/API access: `TRUSTED_NETWORKS=127.0.0.0/8,::1/128,10.195.146.0/24`, `TRUSTED_NETWORK_ROLE=admin`. Trusted clients should open `/les` and `/lite-api/*` without a key; stale browser keys fallback to `trusted-network`, while public clients still receive `401`.
 
 ## First Checks
 

@@ -15,6 +15,8 @@
 **Параметры сети:**
 Network ID: `8d1c312afa249de4` | Подсеть: `10.195.146.0/24` | Транспорт: P2P (UDP 9993)
 
+**Trusted GUI access:** `TRUSTED_NETWORKS=127.0.0.0/8,::1/128,10.195.146.0/24`, role `admin`. Proxy fallback allows trusted ZeroTier clients even if the browser still sends a stale saved API key; public clients with the same stale key remain `401`.
+
 ## 🍎 Базовая настройка Mac Mini M4
 | Параметр | Команда / Значение | Назначение |
 |---|---|---|

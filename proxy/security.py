@@ -73,6 +73,16 @@ def _trusted_proxy_asserts_network(request: Request) -> bool:
     return value.lower() in {"1", "true", "yes", "on", TRUSTED_NETWORK_ROLE}
 
 
+def _trusted_request_user(request: Request, ip_value: str) -> Optional[RequestUser]:
+    if _trusted_proxy_asserts_network(request):
+        return RequestUser(role=TRUSTED_NETWORK_ROLE, holder="trusted-proxy", source=ip_value)
+
+    trusted_role = _trusted_network_role(ip_value)
+    if trusted_role:
+        return RequestUser(role=trusted_role, holder="trusted-network", source=ip_value)
+    return None
+
+
 def _extract_key(api_key: Optional[str], authorization: Optional[str]) -> str:
     if api_key:
         return api_key.strip()
@@ -105,12 +115,19 @@ async def get_request_user(
     x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
     authorization: Optional[str] = Header(default=None, alias="Authorization"),
 ) -> RequestUser:
+    ip_value = _client_ip(request)
     key_value = _extract_key(x_api_key, authorization)
     if key_value:
         row = _load_key(key_value)
         if not row:
+            trusted_user = _trusted_request_user(request, ip_value)
+            if trusted_user:
+                return trusted_user
             raise HTTPException(status_code=401, detail="Invalid or disabled API key")
         if _is_expired(row["expires_at"]):
+            trusted_user = _trusted_request_user(request, ip_value)
+            if trusted_user:
+                return trusted_user
             raise HTTPException(status_code=401, detail="API key expired")
         return RequestUser(
             role=row["role"],
@@ -119,13 +136,9 @@ async def get_request_user(
             source="api_key",
         )
 
-    ip_value = _client_ip(request)
-    if _trusted_proxy_asserts_network(request):
-        return RequestUser(role=TRUSTED_NETWORK_ROLE, holder="trusted-proxy", source=ip_value)
-
-    trusted_role = _trusted_network_role(ip_value)
-    if trusted_role:
-        return RequestUser(role=trusted_role, holder="trusted-network", source=ip_value)
+    trusted_user = _trusted_request_user(request, ip_value)
+    if trusted_user:
+        return trusted_user
 
     raise HTTPException(status_code=401, detail="Authentication required")
 
