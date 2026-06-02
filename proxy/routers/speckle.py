@@ -16,11 +16,13 @@ from proxy.services.cad_bim_graph import (
     CAD_BIM_ROOT,
     graph_summary,
     import_payload,
+    latest_cad_bim_json_source,
     latest_speckle_source,
     load_source_payload,
 )
 
 router = APIRouter(prefix="/api/speckle", tags=["speckle"])
+cad_bim_router = APIRouter(prefix="/api/cad-bim", tags=["cad-bim"])
 
 
 class SpeckleImportRequest(BaseModel):
@@ -84,7 +86,7 @@ async def speckle_status(_user=Depends(require_user)):
             "base_url": base_url,
             "graphql_url": _graphql_url(base_url),
             "api_token_set": bool(token),
-            "supported_formats": ["dwg", "rvt", "ifc"],
+            "supported_formats": ["json", "jsonl", "dwg", "dxf", "rvt", "ifc"],
             "elapsed_ms": elapsed_ms,
         }
     except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError) as error:
@@ -96,7 +98,7 @@ async def speckle_status(_user=Depends(require_user)):
             "base_url": base_url,
             "graphql_url": _graphql_url(base_url),
             "api_token_set": bool(token),
-            "supported_formats": ["dwg", "rvt", "ifc"],
+            "supported_formats": ["json", "jsonl", "dwg", "dxf", "rvt", "ifc"],
             "elapsed_ms": elapsed_ms,
             "detail": error.__class__.__name__,
         }
@@ -104,6 +106,11 @@ async def speckle_status(_user=Depends(require_user)):
 
 @router.get("/graph/summary")
 async def speckle_graph_summary(_user=Depends(require_user)):
+    return graph_summary()
+
+
+@cad_bim_router.get("/graph/summary")
+async def cad_bim_graph_summary(_user=Depends(require_user)):
     return graph_summary()
 
 
@@ -149,18 +156,51 @@ async def speckle_import(req: SpeckleImportRequest, _admin=Depends(require_admin
     )
 
 
+@cad_bim_router.post("/import")
+async def cad_bim_import(req: SpeckleImportRequest, _admin=Depends(require_admin)):
+    if req.payload is not None:
+        result = await _import_payload(
+            req.payload,
+            source="inline_payload",
+            max_objects=req.max_objects,
+            profile=req.profile or req.source_type,
+            source_kind="json",
+        )
+        return {"status": "imported", **result}
+
+    source_path = _safe_cad_bim_source(req.source_path) if req.source_path else latest_cad_bim_json_source()
+    if source_path is None:
+        raise HTTPException(
+            400,
+            "Укажите source_path или inline payload; либо положите JSON/JSONL в RAG_Content/CAD_BIM/JSON",
+        )
+
+    payload = await _load_payload_async(source_path)
+    result = await _import_payload(
+        payload,
+        source=source_path.as_posix(),
+        max_objects=req.max_objects,
+        profile=req.profile or req.source_type,
+        source_kind="json",
+    )
+    return {"status": "imported", **result}
+
+
 def _safe_cad_bim_source(raw_path: str) -> Path:
     path = Path(raw_path)
     if not path.is_absolute():
-        path = CAD_BIM_ROOT / "Speckle" / raw_path
+        direct = CAD_BIM_ROOT / raw_path
+        json_path = CAD_BIM_ROOT / "JSON" / raw_path
+        speckle_path = CAD_BIM_ROOT / "Speckle" / raw_path
+        path = direct if direct.exists() else json_path if json_path.exists() else speckle_path
     resolved = path.resolve()
     root = CAD_BIM_ROOT.resolve()
     if root != resolved and root not in resolved.parents:
-        raise HTTPException(400, "Speckle source должен лежать внутри RAG_Content/CAD_BIM")
+        raise HTTPException(400, "CAD/BIM JSON source должен лежать внутри RAG_Content/CAD_BIM")
     if resolved.suffix.lower() not in {".json", ".jsonl"}:
-        raise HTTPException(400, "Speckle source должен быть .json или .jsonl")
+        raise HTTPException(400, "CAD/BIM source должен быть .json или .jsonl")
     if not resolved.exists() or not resolved.is_file():
-        raise HTTPException(404, "Speckle source not found")
+        raise HTTPException(404, "CAD/BIM source not found")
     return resolved
 
 
@@ -168,15 +208,23 @@ async def _load_payload_async(source_path: Path) -> Any:
     try:
         return await __import__("asyncio").to_thread(load_source_payload, source_path)
     except Exception as error:
-        raise HTTPException(400, f"Speckle source parse failed: {error}") from error
+        raise HTTPException(400, f"CAD/BIM source parse failed: {error}") from error
 
 
-async def _import_payload(payload: Any, *, source: str, max_objects: int, profile: str | None = None) -> dict[str, Any]:
+async def _import_payload(
+    payload: Any,
+    *,
+    source: str,
+    max_objects: int,
+    profile: str | None = None,
+    source_kind: str = "speckle",
+) -> dict[str, Any]:
     try:
         result = await __import__("asyncio").to_thread(
             import_payload,
             payload,
             source=source,
+            source_kind=source_kind,
             max_objects=max_objects,
             profile=profile,
         )

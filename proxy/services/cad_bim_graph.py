@@ -50,7 +50,7 @@ class CadBimImportResult:
 
 
 def ensure_cad_bim_dirs(root: Path = CAD_BIM_ROOT) -> None:
-    for child in ("DWG", "RVT", "IFC", "Speckle", "exports", "renders", "notes"):
+    for child in ("JSON", "DWG", "RVT", "IFC", "Speckle", "exports", "renders", "notes"):
         (root / child).mkdir(parents=True, exist_ok=True)
 
 
@@ -136,14 +136,22 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, typedef: s
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {typedef}")
 
 
-def latest_speckle_source(root: Path = CAD_BIM_ROOT) -> Path | None:
-    source_dir = root / "Speckle"
-    if not source_dir.exists():
-        return None
-    candidates = [p for p in source_dir.rglob("*") if p.suffix.lower() in {".json", ".jsonl"} and p.is_file()]
+def latest_cad_bim_json_source(root: Path = CAD_BIM_ROOT) -> Path | None:
+    source_dirs = [root / name for name in ("JSON", "Speckle", "IFC", "DWG", "RVT")]
+    candidates = [
+        p
+        for source_dir in source_dirs
+        if source_dir.exists()
+        for p in source_dir.rglob("*")
+        if p.suffix.lower() in {".json", ".jsonl"} and p.is_file()
+    ]
     if not candidates:
         return None
     return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
+def latest_speckle_source(root: Path = CAD_BIM_ROOT) -> Path | None:
+    return latest_cad_bim_json_source(root)
 
 
 def load_source_payload(source_path: Path) -> Any:
@@ -158,7 +166,7 @@ def load_source_payload(source_path: Path) -> Any:
         return rows
     if suffix == ".json":
         return json.loads(source_path.read_text(encoding="utf-8"))
-    raise ValueError(f"unsupported Speckle source suffix: {suffix}")
+    raise ValueError(f"unsupported CAD/BIM JSON source suffix: {suffix}")
 
 
 def import_payload(
@@ -188,9 +196,10 @@ def import_payload(
         properties=properties,
         max_objects=max_objects,
     )
-    projection_path = root / "exports" / f"cad_bim_speckle_{import_id}.md"
+    projection_prefix = "cad_bim_speckle" if source_kind == "speckle" else "cad_bim_json"
+    projection_path = root / "exports" / f"{projection_prefix}_{import_id}.md"
     projection_path.write_text(
-        render_projection(import_id, source, resolved_profile, elements, relations, properties),
+        render_projection(import_id, source, resolved_profile, elements, relations, properties, source_kind=source_kind),
         encoding="utf-8",
     )
 
@@ -356,6 +365,7 @@ def render_projection(
     elements: list[dict[str, str]],
     relations: list[dict[str, str]],
     properties: list[dict[str, str]] | None = None,
+    source_kind: str = "json",
 ) -> str:
     relation_counts: dict[str, int] = {}
     for relation in relations:
@@ -365,14 +375,17 @@ def render_projection(
     for prop in properties or []:
         properties_by_source.setdefault(prop["source_id"], []).append(prop)
 
+    title_kind = "Speckle" if source_kind == "speckle" else "JSON"
     lines = [
-        f"# CAD/BIM Speckle projection ({profile})",
+        f"# CAD/BIM {title_kind} projection ({profile})",
         "",
         f"Import ID: {import_id}",
         f"Source: {source}",
+        f"Source kind: {source_kind}",
         f"Profile: {profile}",
         "Domain: CAD_BIM",
-        "Formats: DWG, RVT, IFC, Excel/Power BI",
+        "Canonical format: cad_bim_graph.json",
+        "Source formats: DWG, DXF, RVT, IFC, Excel/Power BI, Speckle",
         "",
     ]
     for element in elements:
@@ -498,6 +511,9 @@ def _walk_payload(
     for key, child in value.items():
         if key in SKIP_KEYS:
             continue
+        if key == "relations" and isinstance(child, list):
+            relations.extend(_explicit_relations_payload(child))
+            continue
         if key in CHILD_KEYS or isinstance(child, (list, dict)):
             _walk_payload(
                 child,
@@ -581,6 +597,26 @@ def _properties_payload(value: dict[str, Any], import_id: str, element_id: str, 
             }
         )
     return properties
+
+
+def _explicit_relations_payload(items: list[Any]) -> list[dict[str, str]]:
+    relations: list[dict[str, str]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        source_id = item.get("source_id") or item.get("sourceId") or item.get("from")
+        target_id = item.get("target_id") or item.get("targetId") or item.get("to")
+        if not source_id or not target_id:
+            continue
+        relations.append(
+            {
+                "id": str(item.get("id") or uuid.uuid4().hex),
+                "source_id": str(source_id),
+                "target_id": str(target_id),
+                "relation_type": str(item.get("relation_type") or item.get("relationType") or item.get("type") or "related"),
+            }
+        )
+    return relations
 
 
 def _iter_property_items(value: dict[str, Any]) -> list[tuple[str, Any]]:

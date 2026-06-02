@@ -188,7 +188,7 @@ def _speckle_settings_payload() -> dict[str, object]:
         "graphql_url": _speckle_default_graphql_url(base_url),
         "api_token_set": bool(os.getenv("SPECKLE_API_TOKEN", "")),
         "wake_timeout_sec": float(os.getenv("SPECKLE_WAKE_TIMEOUT_SEC", "5") or "5"),
-        "supported_formats": ["dwg", "rvt", "ifc"],
+        "supported_formats": ["json", "jsonl", "dwg", "dxf", "rvt", "ifc"],
     }
 
 

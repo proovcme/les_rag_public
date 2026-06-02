@@ -21,7 +21,7 @@ def test_lite_admin_html_uses_static_admin_shell():
     assert "Dispatcher / Reindex" in html
     assert "Watcher" in html
     assert "Memory" in html
-    assert "Speckle BIM/CAD" in html
+    assert "CAD/BIM JSON" in html
     assert "speckleBaseUrl" in html
     assert "speckleGraphqlUrl" in html
     assert "speckleToken" in html
@@ -30,10 +30,10 @@ def test_lite_admin_html_uses_static_admin_shell():
     assert "source_type" in html
     assert "SAVE SPECKLE" in html
     assert "CHECK SPECKLE" in html
-    assert "IMPORT SPECKLE" in html
+    assert "IMPORT JSON GRAPH" in html
     assert "SYNC CAD/BIM" in html
     assert "/api/speckle/status" in html
-    assert "/api/speckle/import" in html
+    assert "/api/cad-bim/import" in html
     assert "RAG_Content/CAD_BIM" in html
     assert "External Providers" in html
     assert "openrouterBaseUrl" in html

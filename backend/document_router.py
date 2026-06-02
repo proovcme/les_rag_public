@@ -735,7 +735,7 @@ def _select_pipeline(probe: DocumentProbe, content_type: str, complexity: str) -
     if complexity == "needs_ocr":
         return "markdown_needs_ocr"
     if content_type == "cad_bim":
-        return "speckle_projection"
+        return "json_graph_projection"
     if probe.suffix in TABLE_SUFFIXES:
         return "parquet"
     if probe.suffix in PDF_SUFFIXES and content_type == "mixed":

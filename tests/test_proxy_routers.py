@@ -230,7 +230,7 @@ async def test_save_settings_updates_speckle_without_exposing_token(tmp_path, mo
 
     payload = await settings.get_settings(_user=object())
     assert payload["speckle"]["api_token_set"] is True
-    assert payload["speckle"]["supported_formats"] == ["dwg", "rvt", "ifc"]
+    assert payload["speckle"]["supported_formats"] == ["json", "jsonl", "dwg", "dxf", "rvt", "ifc"]
     assert "api_token" not in payload["speckle"]
 
     cleared = await settings.save_settings(
@@ -398,3 +398,29 @@ async def test_speckle_import_uses_latest_local_source(tmp_path, monkeypatch):
     assert result["status"] == "imported"
     assert result["elements"] == 1
     assert result["projection_path"].startswith("RAG_Content/CAD_BIM/exports/")
+
+
+@pytest.mark.asyncio
+async def test_cad_bim_import_uses_json_inbox_and_json_projection(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    source_dir = tmp_path / "RAG_Content" / "CAD_BIM" / "JSON"
+    source_dir.mkdir(parents=True)
+    (source_dir / "model.json").write_text(
+        '{"id":"model-1","type":"Model","elements":[{"id":"ifc-wall-1","type":"IfcWall","name":"IFC wall","propertySets":{"Pset_WallCommon":{"FireRating":{"value":"EI 60"}}}}],"relations":[{"source_id":"model-1","target_id":"ifc-wall-1","relation_type":"contains"}]}',
+        encoding="utf-8",
+    )
+
+    result = await speckle.cad_bim_import(
+        speckle.SpeckleImportRequest(source_type="ifc"),
+        _admin=object(),
+    )
+
+    assert result["status"] == "imported"
+    assert result["profile"] == "ifc"
+    assert result["elements"] == 2
+    assert result["relations"] == 2
+    assert result["properties"] == 1
+    assert "/cad_bim_json_" in result["projection_path"]
+    text = (tmp_path / result["projection_path"]).read_text(encoding="utf-8")
+    assert "CAD/BIM JSON projection" in text
+    assert "EI 60" in text

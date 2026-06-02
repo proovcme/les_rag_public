@@ -623,14 +623,14 @@ MAIL_VLM_URL=
 MAIL_VLM_MODEL=
 ```
 
-Speckle bridge используется как внешний BIM/CAD контур для уже извлеченных BIM/CAD объектных графов и табличных данных Speckle/Excel/Power BI. LES хранит endpoint/token в `.env`, показывает статус через `/api/speckle/status` и допускает `.dwg`, `.rvt`, `.ifc`, `.ifczip` на upload boundary, но сам не конвертирует DWG/RVT. Минимальный pipeline:
+CAD/BIM bridge теперь работает как JSON-first контур для уже извлеченных BIM/CAD объектных графов и табличных данных. LES хранит Speckle endpoint/token в `.env` только как optional source, показывает статус через `/api/speckle/status` и допускает `.json`, `.jsonl`, `.dwg`, `.dxf`, `.rvt`, `.ifc`, `.ifczip` на upload boundary, но сам не конвертирует raw DWG/RVT. Минимальный pipeline:
 
-1. Модель загружается или конвертируется в Speckle/cloud/connector/IFC path, после чего доступен object graph или табличные properties.
-2. Speckle object graph или Excel/Power BI rows/properties экспортируются в `RAG_Content/CAD_BIM/Speckle/*.json|*.jsonl` или запрашиваются через `/api/speckle/import`.
-3. LES нормализует объекты в SQLite `data/cad_bim_graph.db`, связи `contains`, свойства/параметры в `cad_bim_properties` и markdown projection `RAG_Content/CAD_BIM/exports/cad_bim_speckle_<id>.md`.
+1. RVT/DWG/DXF/IFC/Speckle/Excel exporter приводит данные к `cad_bim_graph.json` или `.jsonl`.
+2. JSON складывается в `RAG_Content/CAD_BIM/JSON/`; профильные исходники могут лежать рядом в `IFC/`, `DWG/`, `RVT/` или `Speckle/`.
+3. `IMPORT JSON GRAPH` в Lite Admin или `/api/cad-bim/import` нормализует объекты в SQLite `data/cad_bim_graph.db`, связи `contains/related`, свойства/параметры в `cad_bim_properties` и markdown projection `RAG_Content/CAD_BIM/exports/cad_bim_json_<id>.md`.
 4. `SYNC CAD/BIM` в Lite Admin регистрирует projection в `CAD_BIM_Index`; тяжелый parse/embedding запускается отдельно через обычный guarded scheduler.
 
-`IMPORT SPECKLE` в Lite Admin поддерживает профиль источника `AUTO`, `AutoCAD/DWG`, `Revit/RVT`, `IFC`, `Excel/Power BI` или `Generic`; профиль влияет на текстовую проекцию и сохранение layer/category/family/level/material/table properties. Это не заменяет Speckle connectors: полноценная DWG/RVT/IFC конвертация остается на стороне Speckle, а LES индексирует уже извлеченный объектный граф, свойства и текстовые проекции.
+`IMPORT JSON GRAPH` в Lite Admin поддерживает профиль источника `AUTO`, `AutoCAD/DWG`, `Revit/RVT`, `IFC`, `Excel/Power BI` или `Generic`; профиль влияет на текстовую проекцию и сохранение layer/category/family/level/material/table properties. Контракт JSON описан в `dev/CAD_BIM_JSON_CONTRACT.md`. Legacy `/api/speckle/import` сохранен для Speckle object graph, но предпочтительный endpoint теперь `/api/cad-bim/import`.
 
 AutoCAD connector `3.22.0` uses the hosted DUI from `https://dui.speckle.systems`, which can be newer than the self-hosted server schema. On 02.06.2026 `speckle.ovc.me` was updated to Speckle `2.31.5/custom` and patched with schema compatibility fields `Workspace.logoUrl`, `ModelPermissionChecks.canCreateIngestion`, and `WorkspacePermissionChecks.canAccessHelpCenter`; workspaces remain disabled, but `activeUser.workspaces` returns an empty collection instead of throwing. This only keeps the DUI query surface alive. It does not make V3 connector publishing compatible with the community self-hosted server: current V3 connectors require workspace-based projects, while enabling `FF_WORKSPACES_MODULE_ENABLED` on this server fails with `InvalidLicenseError`. AutoCAD `3.22.0` publish tests on 02.06.2026 produced only DUI/Desktop Service ping and bridge-init logs, with no object/blob/version/commit traffic. Direct Speckle web upload infrastructure accepts presigned PUT through `https://speckle.ovc.me/speckle-server/...`, but the local self-hosted importer rejects DWG/DXF as unsupported; use IFC or an already extracted Speckle object graph for LES ingestion.
 

@@ -443,13 +443,13 @@ def lite_admin_html() -> str:
       </div>
 
       <div class="panel panel-wide">
-        <div class="title">Speckle BIM/CAD</div>
-        <div id="speckleHint" class="hint">Speckle параметры ещё не загружены.</div>
+        <div class="title">CAD/BIM JSON</div>
+        <div id="speckleHint" class="hint">CAD/BIM JSON параметры ещё не загружены.</div>
         <div class="form-grid">
           <input id="speckleBaseUrl" class="wide" type="url" placeholder="https://speckle.ovc.me">
           <input id="speckleGraphqlUrl" class="wide" type="url" placeholder="https://speckle.ovc.me/graphql">
           <input id="speckleToken" class="wide" type="password" placeholder="Speckle API token">
-          <input id="speckleSourcePath" class="wide" type="text" placeholder="RAG_Content/CAD_BIM/Speckle/model.json">
+          <input id="speckleSourcePath" class="wide" type="text" placeholder="RAG_Content/CAD_BIM/JSON/model.json">
           <select id="speckleSourceType">
             <option value="">AUTO</option>
             <option value="autocad">AutoCAD / DWG</option>
@@ -465,7 +465,7 @@ def lite_admin_html() -> str:
         <div class="actions">
           <button id="speckleSaveBtn" type="button" class="safe">SAVE SPECKLE</button>
           <button id="speckleCheckBtn" type="button">CHECK SPECKLE</button>
-          <button id="speckleImportBtn" type="button">IMPORT SPECKLE</button>
+          <button id="speckleImportBtn" type="button">IMPORT JSON GRAPH</button>
           <button id="cadBimSyncBtn" type="button">SYNC CAD/BIM</button>
         </div>
       </div>
@@ -845,7 +845,7 @@ def lite_admin_html() -> str:
       el("speckleEnabled").checked = speckle.enabled !== false;
       el("speckleClear").checked = false;
       el("speckleHint").textContent =
-        `Speckle ${speckle.base_url || "https://speckle.ovc.me"} | token=${speckle.api_token_set ? "set" : "missing"} | formats=DWG/RVT/IFC`;
+        `CAD/BIM JSON first | Speckle ${speckle.base_url || "https://speckle.ovc.me"} | token=${speckle.api_token_set ? "set" : "missing"} | sources=JSON/DWG/DXF/RVT/IFC`;
     }
 
     function renderProviderSettings(settings) {
@@ -986,8 +986,8 @@ def lite_admin_html() -> str:
       if (sourcePath) payload.source_path = sourcePath;
       const sourceType = el("speckleSourceType").value.trim();
       if (sourceType) payload.source_type = sourceType;
-      const data = await post("/api/speckle/import", payload);
-      log("speckle import -> profile=" + (data.profile || "auto") + " elements=" + (data.elements || 0) + " relations=" + (data.relations || 0) + " properties=" + (data.properties || 0));
+      const data = await post("/api/cad-bim/import", payload);
+      log("cad/bim json import -> profile=" + (data.profile || "auto") + " elements=" + (data.elements || 0) + " relations=" + (data.relations || 0) + " properties=" + (data.properties || 0));
       el("speckleHint").textContent =
         `Imported ${data.profile || "auto"} | ${data.elements || 0} elements / ${data.relations || 0} relations / ${data.properties || 0} properties | ${data.projection_path || ""}`;
     }
