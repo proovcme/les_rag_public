@@ -7,11 +7,11 @@ import os
 import sqlite3
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from proxy.config import ADMIN_ROLE, META_DB_PATH, USER_ROLE
-from proxy.security import require_admin
+from proxy.security import require_admin, trust_diagnostics
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +113,11 @@ async def auth_verify(req: AuthVerifyReq):
         return {"role": row["role"], "holder": row["holder_name"]}
     finally:
         conn.close()
+
+
+@router.get("/trust")
+async def auth_trust(request: Request):
+    return trust_diagnostics(request)
 
 
 @router.get("/keys")

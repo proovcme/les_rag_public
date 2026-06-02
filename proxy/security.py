@@ -83,6 +83,26 @@ def _trusted_request_user(request: Request, ip_value: str) -> Optional[RequestUs
     return None
 
 
+def trust_diagnostics(request: Request) -> dict[str, object]:
+    peer_ip = request.client.host if request.client else ""
+    ip_value = _client_ip(request)
+    trusted_user = _trusted_request_user(request, ip_value)
+    return {
+        "peer_ip": peer_ip,
+        "client_ip": ip_value,
+        "x_forwarded_for": request.headers.get("x-forwarded-for", ""),
+        "x_real_ip": request.headers.get("x-real-ip", ""),
+        "trusted_proxy_peer": _ip_in_networks(peer_ip, TRUSTED_PROXY_NETWORKS),
+        "trusted_proxy_header": request.headers.get(TRUSTED_PROXY_HEADER, ""),
+        "trusted": trusted_user is not None,
+        "role": trusted_user.role if trusted_user else "",
+        "holder": trusted_user.holder if trusted_user else "",
+        "source": trusted_user.source if trusted_user else ip_value,
+        "trusted_networks": list(TRUSTED_NETWORKS),
+        "trusted_proxy_networks": list(TRUSTED_PROXY_NETWORKS),
+    }
+
+
 def _extract_key(api_key: Optional[str], authorization: Optional[str]) -> str:
     if api_key:
         return api_key.strip()

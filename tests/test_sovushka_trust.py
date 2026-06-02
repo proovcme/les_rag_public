@@ -27,3 +27,15 @@ def test_trusted_proxy_header_requires_trusted_proxy_peer(monkeypatch):
 
     assert trust.trusted_role_for_request(_request("203.0.113.1", {"x-les-trusted-network": "1"})) is None
     assert trust.trusted_role_for_request(_request("127.0.0.1", {"x-les-trusted-network": "1"})) == "admin"
+
+
+def test_trust_diagnostics_reports_source(monkeypatch):
+    monkeypatch.setattr(trust, "TRUSTED_NETWORKS", ("127.0.0.0/8", "10.10.10.0/24"))
+    monkeypatch.setattr(trust, "TRUSTED_PROXY_NETWORKS", ("127.0.0.0/8",))
+    monkeypatch.setattr(trust, "TRUSTED_NETWORK_ROLE", "admin")
+
+    diag = trust.trust_diagnostics(_request("127.0.0.1", {"x-forwarded-for": "10.10.10.98"}))
+
+    assert diag["trusted"] is True
+    assert diag["client_ip"] == "10.10.10.98"
+    assert diag["role"] == "admin"

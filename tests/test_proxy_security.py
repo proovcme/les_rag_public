@@ -121,6 +121,11 @@ async def test_trusted_proxy_header_only_trusted_from_proxy_network(auth_db):
     assert user.role == "admin"
     assert user.holder == "trusted-proxy"
 
+    diag = security.trust_diagnostics(proxied)
+    assert diag["trusted"] is True
+    assert diag["holder"] == "trusted-proxy"
+    assert diag["client_ip"] == "203.0.113.10"
+
 
 @pytest.mark.asyncio
 async def test_api_key_roles_and_admin_guard(auth_db):

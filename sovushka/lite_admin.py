@@ -607,6 +607,29 @@ def lite_admin_html() -> str:
       return payload;
     }
 
+    async function bootstrapTrustedAccess() {
+      try {
+        const trust = await request("/api/auth/trust");
+        if (trust.trusted) {
+          if (state.key) {
+            localStorage.removeItem(KEY_STORAGE);
+            localStorage.removeItem(ROLE_STORAGE);
+            localStorage.removeItem(HOLDER_STORAGE);
+          }
+          state.key = "";
+          state.role = trust.role || "admin";
+          state.holder = trust.holder || "trusted-network";
+          showAuth(false);
+          chip("authChip", "TRUSTED", "ok");
+          log("trusted access -> " + (trust.client_ip || trust.source || "?"));
+        } else {
+          log("trust miss -> peer=" + (trust.peer_ip || "-") + " client=" + (trust.client_ip || "-"));
+        }
+      } catch (error) {
+        log("trust check error: " + error.message);
+      }
+    }
+
     function fingerprint() {
       const items = [
         navigator.userAgent || "",
@@ -1159,8 +1182,11 @@ def lite_admin_html() -> str:
       try { await resumeReindex(); }
       catch (error) { log("dispatcher resume error: " + error.message); }
     });
-    refreshAll();
-    setInterval(refreshAll, 20000);
+    (async () => {
+      await bootstrapTrustedAccess();
+      await refreshAll();
+      setInterval(refreshAll, 20000);
+    })();
   </script>
 </body>
 </html>"""

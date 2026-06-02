@@ -13,15 +13,15 @@ import httpx
 from fastapi import Request, Response
 from starlette.responses import HTMLResponse, JSONResponse
 
-from sovushka.config import PROXY_URL
-from sovushka.trust import trusted_role_for_request
+from sovushka.config import PROXY_URL, TRUSTED_NETWORK_ROLE, TRUSTED_PROXY_HEADER
+from sovushka.trust import client_ip_from_request, trust_diagnostics, trusted_role_for_request
 
 
-BRIDGE_PUBLIC_PATHS = {"/api/auth/verify"}
+BRIDGE_PUBLIC_PATHS = {"/api/auth/verify", "/api/auth/trust"}
 
 
 def _client_is_loopback(request: Request) -> bool:
-    host = request.client.host if request.client else "127.0.0.1"
+    host = client_ip_from_request(request)
     try:
         return ipaddress.ip_address(host).is_loopback
     except ValueError:
@@ -50,10 +50,18 @@ def _forward_headers(request: Request) -> dict[str, str]:
         headers["X-API-Key"] = api_key
     if authorization:
         headers["Authorization"] = authorization
+    trusted_role = trusted_role_for_request(request)
+    if trusted_role:
+        headers[TRUSTED_PROXY_HEADER] = trusted_role or TRUSTED_NETWORK_ROLE
+        headers["X-Forwarded-For"] = client_ip_from_request(request)
     return headers
 
 
 async def bridge_proxy_request(path: str, request: Request) -> Response:
+    target_path = f"/api/{path.strip('/')}"
+    if target_path == "/api/auth/trust":
+        return JSONResponse(trust_diagnostics(request))
+
     has_key = bool(request.headers.get("x-api-key") or request.headers.get("authorization"))
     is_loopback = _client_is_loopback(request)
     is_trusted_network = bool(trusted_role_for_request(request))
@@ -65,7 +73,6 @@ async def bridge_proxy_request(path: str, request: Request) -> Response:
     ):
         return JSONResponse({"detail": "Authentication required"}, status_code=401)
 
-    target_path = f"/api/{path.strip('/')}"
     query = f"?{request.url.query}" if request.url.query else ""
     target_url = f"{PROXY_URL.rstrip('/')}{target_path}{query}"
     body = await request.body()
@@ -507,6 +514,26 @@ def lite_chat_html() -> str:
       return payload;
     }
 
+    async function bootstrapTrustedAccess() {
+      try {
+        const trust = await request("/api/auth/trust");
+        if (trust.trusted) {
+          if (state.key) {
+            localStorage.removeItem(KEY_STORAGE);
+            localStorage.removeItem(ROLE_STORAGE);
+            localStorage.removeItem(HOLDER_STORAGE);
+          }
+          state.key = "";
+          state.role = trust.role || "admin";
+          state.holder = trust.holder || "trusted-network";
+          showAuth(false);
+          setChip("authChip", "TRUSTED", "chip-ok");
+        }
+      } catch (_) {
+        // Non-fatal: normal key auth still works outside trusted networks.
+      }
+    }
+
     function fingerprint() {
       const items = [
         navigator.userAgent || "",
@@ -763,8 +790,11 @@ def lite_chat_html() -> str:
 
     updateSessionText();
     addMessage("Lite chat готов. Ctrl/⌘+Enter отправляет вопрос.", "msg-sys");
-    refreshRuntime();
-    setInterval(refreshRuntime, 15000);
+    (async () => {
+      await bootstrapTrustedAccess();
+      await refreshRuntime();
+      setInterval(refreshRuntime, 15000);
+    })();
   </script>
 </body>
 </html>"""

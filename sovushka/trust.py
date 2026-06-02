@@ -61,3 +61,23 @@ def trusted_role_for_request(request: Request) -> str | None:
     if _trusted_proxy_asserts_network(request):
         return TRUSTED_NETWORK_ROLE
     return trusted_role_for_ip(client_ip_from_request(request))
+
+
+def trust_diagnostics(request: Request) -> dict[str, object]:
+    peer_ip = _peer_ip(request)
+    client_ip = client_ip_from_request(request)
+    role = trusted_role_for_request(request)
+    return {
+        "peer_ip": peer_ip,
+        "client_ip": client_ip,
+        "x_forwarded_for": request.headers.get("x-forwarded-for", ""),
+        "x_real_ip": request.headers.get("x-real-ip", ""),
+        "trusted_proxy_peer": _ip_in_networks(peer_ip, TRUSTED_PROXY_NETWORKS),
+        "trusted_proxy_header": request.headers.get(TRUSTED_PROXY_HEADER, ""),
+        "trusted": bool(role),
+        "role": role or "",
+        "holder": "trusted-network" if role else "",
+        "source": client_ip,
+        "trusted_networks": list(TRUSTED_NETWORKS),
+        "trusted_proxy_networks": list(TRUSTED_PROXY_NETWORKS),
+    }
