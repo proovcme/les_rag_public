@@ -480,6 +480,7 @@ def lite_chat_html() -> str:
       key: localStorage.getItem(KEY_STORAGE) || "",
       holder: localStorage.getItem(HOLDER_STORAGE) || "",
       role: localStorage.getItem(ROLE_STORAGE) || "",
+      trusted: false,
       pending: false,
       sessionId: localStorage.getItem(SESSION_STORAGE) || crypto.randomUUID(),
     };
@@ -539,11 +540,15 @@ def lite_chat_html() -> str:
           state.key = "";
           state.role = trust.role || "admin";
           state.holder = trust.holder || "trusted-network";
+          state.trusted = true;
           showAuth(false);
           setChip("authChip", "TRUSTED", "chip-ok");
+        } else {
+          state.trusted = false;
         }
       } catch (_) {
         // Non-fatal: normal key auth still works outside trusted networks.
+        state.trusted = false;
       }
     }
 
@@ -655,7 +660,7 @@ def lite_chat_html() -> str:
         const memory = data.memory_state || {};
         const memState = memory.state || "?";
         const allowed = data.chat_generation_allowed !== false;
-        setChip("authChip", state.key ? (state.role || "KEY") : "TRUSTED", "chip-ok");
+        setChip("authChip", state.key ? (state.role || "KEY") : (state.trusted ? "TRUSTED" : "PUBLIC"), state.trusted || state.key ? "chip-ok" : "chip-warn");
         setChip("profileChip", profile, allowed ? "chip-ok" : "chip-err");
         setChip("memoryChip", memState, memState === "GREEN" ? "chip-ok" : (memState === "YELLOW" ? "chip-warn" : "chip-err"));
         setChip("jobsChip", (data.chat_admission?.active_jobs || 0) + " JOBS", data.chat_admission?.active_jobs ? "chip-warn" : "chip-ok");
@@ -829,7 +834,10 @@ def register_lite_chat_routes() -> None:
 
     @app.get("/")
     async def lite_chat_page():
-        return HTMLResponse(lite_chat_html())
+        return HTMLResponse(
+            lite_chat_html(),
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+        )
 
     @app.api_route("/lite-api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
     async def lite_api_bridge(path: str, request: Request):

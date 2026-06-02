@@ -1198,7 +1198,10 @@ def register_lite_admin_routes() -> None:
     @app.get("/les")
     @app.get("/les/")
     async def lite_admin_page():
-        return HTMLResponse(lite_admin_html())
+        return HTMLResponse(
+            lite_admin_html(),
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+        )
 
     @app.get("/lite-runtime/status")
     async def lite_runtime_status_page(request: Request):
