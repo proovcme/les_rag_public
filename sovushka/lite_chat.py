@@ -473,6 +473,7 @@ def lite_chat_html() -> str:
     const HOLDER_STORAGE = "les_lite_holder";
     const ROLE_STORAGE = "les_lite_role";
     const SESSION_STORAGE = "les_lite_session_id";
+    const REQUEST_TIMEOUT_MS = 12000;
 
     const el = (id) => document.getElementById(id);
     const state = {
@@ -497,21 +498,33 @@ def lite_chat_html() -> str:
     }
 
     async function request(path, options = {}) {
-      const response = await fetch(apiPath(path), {
-        ...options,
-        headers: { ...headers(options.body !== undefined), ...(options.headers || {}) },
-      });
-      let payload = null;
-      const text = await response.text();
-      try { payload = text ? JSON.parse(text) : {}; } catch (_) { payload = { detail: text }; }
-      if (!response.ok) {
-        const message = payload.detail || payload.error || ("HTTP " + response.status);
-        const error = new Error(typeof message === "string" ? message : JSON.stringify(message));
-        error.status = response.status;
-        error.payload = payload;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      try {
+        const response = await fetch(apiPath(path), {
+          ...options,
+          signal: options.signal || controller.signal,
+          headers: { ...headers(options.body !== undefined), ...(options.headers || {}) },
+        });
+        let payload = null;
+        const text = await response.text();
+        try { payload = text ? JSON.parse(text) : {}; } catch (_) { payload = { detail: text }; }
+        if (!response.ok) {
+          const message = payload.detail || payload.error || ("HTTP " + response.status);
+          const error = new Error(typeof message === "string" ? message : JSON.stringify(message));
+          error.status = response.status;
+          error.payload = payload;
+          throw error;
+        }
+        return payload;
+      } catch (error) {
+        if (error.name === "AbortError") {
+          throw new Error("API timeout: " + apiPath(path));
+        }
         throw error;
+      } finally {
+        clearTimeout(timeout);
       }
-      return payload;
     }
 
     async function bootstrapTrustedAccess() {
@@ -791,9 +804,20 @@ def lite_chat_html() -> str:
     updateSessionText();
     addMessage("Lite chat готов. Ctrl/⌘+Enter отправляет вопрос.", "msg-sys");
     (async () => {
-      await bootstrapTrustedAccess();
-      await refreshRuntime();
-      setInterval(refreshRuntime, 15000);
+      const runtimeWatchdog = setTimeout(() => {
+        if (el("runtimeText").textContent.includes("Проверяю runtime")) {
+          setChip("profileChip", "WAIT", "chip-warn");
+          el("runtimeText").textContent = "runtime check timeout; повторяю проверку API";
+          refreshRuntime();
+        }
+      }, REQUEST_TIMEOUT_MS + 1000);
+      try {
+        await bootstrapTrustedAccess();
+        await refreshRuntime();
+      } finally {
+        clearTimeout(runtimeWatchdog);
+        setInterval(refreshRuntime, 15000);
+      }
     })();
   </script>
 </body>
