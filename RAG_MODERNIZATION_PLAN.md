@@ -1,8 +1,8 @@
 # LES RAG Modernization Plan
 
-Updated: 01.06.2026
+Updated: 02.06.2026
 
-This plan now tracks the 01.06.2026 local + external baseline. The authoritative corpus has expanded to `1211` files and is closed locally: `1211 indexed`, `0 pending`, `0 errors`, `142193` SQLite chunks, `142193` Qdrant points, and `points_match_sqlite_chunks=true`. The closeout included SQLite/Qdrant backup, stale Qdrant point removal, and a duplicate-basename pending-selection fix. External `les.ovc.me` is live through the P.A.U.K. reverse SSH tunnel; public smoke passes `12/12`.
+This plan now tracks the 02.06.2026 local + external baseline. The authoritative corpus has expanded to `1212` files and is closed locally: `1212 indexed`, `0 pending`, `0 errors`, `143150` SQLite chunks, `143150` Qdrant points, and `points_match_sqlite_chunks=true`. The closeout included SQLite/Qdrant backup, stale Qdrant point removal, and a duplicate-basename pending-selection fix. External `les.ovc.me` is live through the P.A.U.K. reverse SSH tunnel; public smoke passes `12/12`.
 
 ## Current Constraint
 
