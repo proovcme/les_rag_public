@@ -16,7 +16,7 @@ Current production posture:
 - MLX Host: `http://127.0.0.1:8080`
 - Qdrant: `http://127.0.0.1:6333`
 - External: `https://les.ovc.me` through P.A.U.K. reverse SSH tunnel and V.O.L.K. API keys; on 2026-06-01 external smoke passes `12/12`.
-- Speckle BIM/CAD bridge: `https://speckle.ovc.me`, GraphQL `https://speckle.ovc.me/graphql`, managed by `/api/settings` and `/api/speckle/status`; `502/503/504` means `sleeping`, not LES failure.
+- Speckle BIM/CAD bridge: `https://speckle.ovc.me`, GraphQL `https://speckle.ovc.me/graphql`, managed by `/api/settings` and `/api/speckle/status`; live after wake on 2026-06-02 is `status=ok`, `http_status=200`, `api_token_set=false`; `502/503/504` means `sleeping`, not LES failure.
 
 ## First Checks
 
