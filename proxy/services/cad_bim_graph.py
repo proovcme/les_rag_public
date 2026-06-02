@@ -35,6 +35,7 @@ SKIP_KEYS = {
     "transform",
     "displayStyle",
 }
+PROPERTY_CONTAINER_KEYS = {"parameters", "properties", "propertySets", "property_sets", "info", "cells", "data"}
 
 
 @dataclass(frozen=True)
@@ -196,6 +197,7 @@ def import_payload(
         properties=properties,
         max_objects=max_objects,
     )
+    relations = _dedupe_relations(relations)
     projection_prefix = "cad_bim_speckle" if source_kind == "speckle" else "cad_bim_json"
     projection_path = root / "exports" / f"{projection_prefix}_{import_id}.md"
     projection_path.write_text(
@@ -511,6 +513,8 @@ def _walk_payload(
     for key, child in value.items():
         if key in SKIP_KEYS:
             continue
+        if key in PROPERTY_CONTAINER_KEYS:
+            continue
         if key == "relations" and isinstance(child, list):
             relations.extend(_explicit_relations_payload(child))
             continue
@@ -619,9 +623,21 @@ def _explicit_relations_payload(items: list[Any]) -> list[dict[str, str]]:
     return relations
 
 
+def _dedupe_relations(relations: list[dict[str, str]]) -> list[dict[str, str]]:
+    seen: set[tuple[str, str, str]] = set()
+    out: list[dict[str, str]] = []
+    for relation in relations:
+        key = (relation["source_id"], relation["target_id"], relation["relation_type"])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(relation)
+    return out
+
+
 def _iter_property_items(value: dict[str, Any]) -> list[tuple[str, Any]]:
     items: list[tuple[str, Any]] = []
-    for container_key in ("parameters", "properties", "propertySets", "property_sets", "info", "cells", "data"):
+    for container_key in PROPERTY_CONTAINER_KEYS:
         container = value.get(container_key)
         if isinstance(container, dict):
             for key, item in container.items():

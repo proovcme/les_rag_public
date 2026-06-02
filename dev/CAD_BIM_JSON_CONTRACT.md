@@ -77,3 +77,28 @@ curl -X POST http://127.0.0.1:8050/api/cad-bim/import \
 
 The legacy `/api/speckle/import` endpoint remains for compatibility, but the
 preferred path is `/api/cad-bim/import`.
+
+## DWG Node Workflow
+
+Python does not reliably parse proprietary DWG directly in the local LES stack.
+Use AutoCAD as the converter, then let LES ingest DXF-derived JSON:
+
+1. Open the DWG node in AutoCAD.
+2. Run `DXFOUT` or `SAVEAS` and save the node as `.dxf`.
+3. Put the DXF anywhere accessible to the Mac, for example:
+   `RAG_Content/CAD_BIM/DWG/my_node.dxf`.
+4. Extract and import:
+
+```bash
+uv run python tools/cad_bim_extract_dxf.py \
+  RAG_Content/CAD_BIM/DWG/my_node.dxf \
+  --import-to-les
+```
+
+The command writes:
+
+- `RAG_Content/CAD_BIM/JSON/my_node.cad_bim_graph.json`
+- `RAG_Content/CAD_BIM/exports/cad_bim_json_<id>.md`
+
+Then use `SYNC CAD/BIM` in Lite Admin to register the projection in
+`CAD_BIM_Index`.

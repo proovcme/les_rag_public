@@ -418,7 +418,7 @@ async def test_cad_bim_import_uses_json_inbox_and_json_projection(tmp_path, monk
     assert result["status"] == "imported"
     assert result["profile"] == "ifc"
     assert result["elements"] == 2
-    assert result["relations"] == 2
+    assert result["relations"] == 1
     assert result["properties"] == 1
     assert "/cad_bim_json_" in result["projection_path"]
     text = (tmp_path / result["projection_path"]).read_text(encoding="utf-8")
