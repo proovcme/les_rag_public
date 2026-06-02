@@ -16,7 +16,7 @@ Current production posture:
 - MLX Host: `http://127.0.0.1:8080`
 - Qdrant: `http://127.0.0.1:6333`
 - External: `https://les.ovc.me` through P.A.U.K. reverse SSH tunnel and V.O.L.K. API keys; on 2026-06-01 external smoke passes `12/12`.
-- Speckle BIM/CAD bridge: `https://speckle.ovc.me`, GraphQL `https://speckle.ovc.me/graphql`, managed by `/api/settings` and `/api/speckle/status`; live after wake on 2026-06-02 is `status=ok`, `http_status=200`, `api_token_set=false`; `502/503/504` means `sleeping`, not LES failure.
+- Speckle BIM/CAD bridge: `https://speckle.ovc.me`, GraphQL `https://speckle.ovc.me/graphql`, managed by `/api/settings` and `/api/speckle/status`; live after token setup on 2026-06-02 is `status=ok`, `http_status=200`, `api_token_set=true`; `502/503/504` means `sleeping`, not LES failure.
 
 ## First Checks
 
@@ -31,15 +31,15 @@ launchctl list | grep -E 'les|sovushka|qdrant|mlx'
 
 Live baseline on 2026-06-01:
 
-- Local consistency is closed: `1211` files, `1211` indexed, `0` pending, `0` errors.
-- `142193` SQLite chunks match `142193` Qdrant points; `points_match_sqlite_chunks=true`, local proxy health is `ok`.
+- Local consistency is closed: `1212` files, `1212` indexed, `0` pending, `0` errors.
+- `143150` SQLite chunks match `143150` Qdrant points; `points_match_sqlite_chunks=true`, local proxy health is `ok`.
 - Main model: `mlx-community/Qwen3.5-4B-MLX-4bit`.
 - Embedder: Core ML `Qwen/Qwen3-Embedding-0.6B`, `qwen3_embedding_06b_b1_s512_static.mlpackage`, `compute_units=all`, isolated worker, fallback disabled.
 - Validator live default: deterministic `rules`. Core ML `MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli` package exists for measured compare/probe, not current production default.
 - Visual OCR: MLX-native `mlx-community/GLM-OCR-4bit` (via `mlx-vlm`, lazy-loaded with explicit Metal cache clearing after processing).
 - Office Ingestion: Microsoft MarkItDown with graceful fallbacks to mammoth/pandas.
 - Structured Rules: Google LangExtract schema extraction to SQLite `structured_rules` table with exact character offsets; active table is expected to be empty until targeted `NORMATIVE`/`SPEC` reindex populates it.
-- Speckle bridge is configured for DWG/RVT/IFC and Excel/Power BI handoff. LES admits `.dwg`, `.rvt`, `.ifc`, `.ifczip` at upload boundary, but full BIM/CAD conversion remains in Speckle/connectors. `/api/speckle/import` supports source profiles `AUTO`, `AutoCAD/DWG`, `Revit/RVT`, `IFC`, `Excel/Power BI`, `Generic`, builds `data/cad_bim_graph.db`, stores properties in `cad_bim_properties`, and writes markdown projections under `RAG_Content/CAD_BIM/exports/`; Lite Admin `SYNC CAD/BIM` registers those projections in `CAD_BIM_Index` without auto-running heavy parse.
+- Speckle bridge is configured for DWG/RVT/IFC and Excel/Power BI handoff. LES admits `.dwg`, `.rvt`, `.ifc`, `.ifczip` at upload boundary, but full BIM/CAD conversion remains in Speckle/connectors. `/api/speckle/import` supports source profiles `AUTO`, `AutoCAD/DWG`, `Revit/RVT`, `IFC`, `Excel/Power BI`, `Generic`, builds `data/cad_bim_graph.db`, stores properties in `cad_bim_properties`, and writes markdown projections under `RAG_Content/CAD_BIM/exports/`; Lite Admin `SYNC CAD/BIM` registers those projections in `CAD_BIM_Index`. Current imported model: Speckle project `36`, model `шпалерная 36_отсоединено_oleg`, import `432aa0b18f2a`, `956` graph elements, `955` relations, `44` properties, `957` indexed chunks.
 
 ## Guardrails
 

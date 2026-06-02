@@ -4,7 +4,7 @@
 
 В этом релизе Л.Е.С. получил две технологии распознавания и структурирования нормативных данных: нативный VLM-конвейер **GLM-OCR (0.9B)** на базе MLX, и извлекатель **Google LangExtract** для создания реляционной базы правил `structured_rules` в SQLite параллельно с векторной базой Qdrant.
 
-Актуализация 01.06.2026: контур уже не находится в спящем режиме. Qdrant, proxy, MLX Host и UI подняты; локальная consistency закрыта. Текущий health: `1211` files, `1211 indexed`, `0 pending`, `0 errors`, `142193` SQLite chunks, `142193` Qdrant points, `points_match_sqlite_chunks=true`, local `/api/health` = `ok`. Closeout включал SQLite/Qdrant backup, удаление stale Qdrant points и fix duplicate-basename pending selection. FIRE/HVAC acceptance остаётся зелёным (`16/16`), full pytest проходит `357` тестов.
+Актуализация 02.06.2026: контур уже не находится в спящем режиме. Qdrant, proxy, MLX Host и UI подняты; локальная consistency закрыта после CAD/BIM импорта. Текущий health: `1212` files, `1212 indexed`, `0 pending`, `0 errors`, `143150` SQLite chunks, `143150` Qdrant points, `points_match_sqlite_chunks=true`, local `/api/health` = `ok`. Closeout включал SQLite/Qdrant backup, удаление stale Qdrant points, fix duplicate-basename pending selection и индексирование Speckle CAD/BIM projection. FIRE/HVAC acceptance остаётся зелёным (`16/16`), full pytest проходит `365` тестов.
 
 ---
 
@@ -88,8 +88,9 @@
 
 - Добавлен Speckle BIM/CAD bridge для DWG/RVT/IFC: `SPECKLE_BASE_URL=https://speckle.ovc.me`, `SPECKLE_GRAPHQL_URL=https://speckle.ovc.me/graphql`, `SPECKLE_ENABLED=true`, `SPECKLE_WAKE_TIMEOUT_SEC=5`.
 - `/api/settings` и Lite/Classical GUI управляют Speckle endpoint/token; token маскируется как `api_token_set`/`***`.
-- `/api/speckle/status` выполняет легкий probe и классифицирует `502/503/504` как `sleeping`, если BIM/CAD сервер снова уснет. Live check 02.06.2026 после wake: `https://speckle.ovc.me` отвечает `200`, LES status route возвращает `status=ok`, `http_status=200`, `api_token_set=false`.
+- `/api/speckle/status` выполняет легкий probe и классифицирует `502/503/504` как `sleeping`, если BIM/CAD сервер снова уснет. Live check 02.06.2026 после token setup: `https://speckle.ovc.me` отвечает `200`, LES status route возвращает `status=ok`, `http_status=200`, `api_token_set=true`.
 - Upload boundary расширен под `.dwg`, `.rvt`, `.ifc`, `.ifczip`; полноценная модельная конвертация остается на стороне Speckle/connectors.
 - Добавлен профильный CAD/BIM pipeline: `/api/speckle/import` принимает inline payload, latest/local `RAG_Content/CAD_BIM/Speckle/*.json|*.jsonl` или Speckle `stream_id+object_id`, нормализует объектный граф в `data/cad_bim_graph.db`, свойства/параметры в `cad_bim_properties`, пишет markdown projection в `RAG_Content/CAD_BIM/exports/`, а `SYNC CAD/BIM` регистрирует projections в `CAD_BIM_Index` без автоматического heavy parse.
 - Lite Admin `IMPORT SPECKLE` управляет source profile из GUI: `AUTO`, `AutoCAD/DWG`, `Revit/RVT`, `IFC`, `Excel/Power BI`, `Generic`. Это покрывает Speckle connector/plugin сценарии: DWG/RVT/IFC модельные объекты и Excel/Power BI табличные rows/properties индексируются как единая CAD/BIM проекция.
-- Verification: full pytest `365 passed` (2 SWIG warnings), local health `ok`, `1211 indexed / 0 pending / 0 errors`, Qdrant points match SQLite chunks, `les.ovc.me` `/` и `/api/health` возвращают `200`.
+- Speckle private project `36`, model `шпалерная 36_отсоединено_oleg`, object `8b6c73a095776fcd872f7f5f3bfbbf80` импортирован как `432aa0b18f2a`: `956` graph elements, `955` relations, `44` properties. Projection `RAG_Content/CAD_BIM/exports/cad_bim_speckle_432aa0b18f2a.md` проиндексирован в `CAD_BIM_Index`: `957` chunks, retrieval-debug возвращает chunks из этого projection.
+- Verification: full pytest `365 passed` (2 SWIG warnings), local health `ok`, `1212 indexed / 0 pending / 0 errors`, Qdrant points match SQLite chunks (`143150 / 143150`), `les.ovc.me` `/` и `/api/health` возвращают `200`.
