@@ -32,6 +32,10 @@ def test_lite_admin_html_uses_static_admin_shell():
     assert "CHECK SPECKLE" in html
     assert "IMPORT JSON GRAPH" in html
     assert "SYNC CAD/BIM" in html
+    assert "CAD/BIM Viewer" in html
+    assert "cadBimCanvas" in html
+    assert "VIEW JSON" in html
+    assert "/api/cad-bim/source" in html
     assert "/api/speckle/status" in html
     assert "/api/cad-bim/import" in html
     assert "RAG_Content/CAD_BIM" in html

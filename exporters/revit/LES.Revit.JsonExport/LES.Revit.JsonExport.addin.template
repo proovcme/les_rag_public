@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <AddIn Type="Application">
+    <Name>LES CAD/BIM Exporter</Name>
+    <Assembly>__INSTALL_DIR__\LES.Revit.JsonExport.dll</Assembly>
+    <AddInId>B94B4B90-B896-4C68-9007-99BF98CA87DE</AddInId>
+    <FullClassName>LES.Revit.JsonExport.LesJsonApplication</FullClassName>
+    <VendorId>LES</VendorId>
+    <VendorDescription>LES CAD/BIM JSON exporter</VendorDescription>
+  </AddIn>
+  <AddIn Type="Command">
+    <Name>LES JSON Export</Name>
+    <Assembly>__INSTALL_DIR__\LES.Revit.JsonExport.dll</Assembly>
+    <AddInId>9E7949B8-40EC-4CF6-BFC1-013EE651419E</AddInId>
+    <FullClassName>LES.Revit.JsonExport.LesJsonExportCommand</FullClassName>
+    <VendorId>LES</VendorId>
+    <VendorDescription>LES CAD/BIM JSON exporter</VendorDescription>
+    <Text>LES JSON Export</Text>
+    <Description>Export active Revit model to LES cad_bim_graph.json.</Description>
+  </AddIn>
+  <AddIn Type="Command">
+    <Name>LES JSON Push</Name>
+    <Assembly>__INSTALL_DIR__\LES.Revit.JsonExport.dll</Assembly>
+    <AddInId>71847DCE-C59B-4787-9FDF-705D7D0E8E53</AddInId>
+    <FullClassName>LES.Revit.JsonExport.LesJsonPushCommand</FullClassName>
+    <VendorId>LES</VendorId>
+    <VendorDescription>LES CAD/BIM JSON exporter</VendorDescription>
+    <Text>LES JSON Push</Text>
+    <Description>Export active Revit model and upload it to LES.</Description>
+  </AddIn>
+</RevitAddIns>

@@ -5,10 +5,10 @@ from __future__ import annotations
 import os
 import time
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from proxy.security import require_admin, require_user
@@ -114,6 +114,25 @@ async def cad_bim_graph_summary(_user=Depends(require_user)):
     return graph_summary()
 
 
+@cad_bim_router.get("/source")
+async def cad_bim_source(
+    source_path: Annotated[str | None, Query()] = None,
+    max_elements: Annotated[int, Query(ge=1, le=50000)] = 5000,
+    _user=Depends(require_user),
+):
+    source = _safe_cad_bim_source(source_path) if source_path else latest_cad_bim_json_source()
+    if source is None:
+        raise HTTPException(404, "CAD/BIM JSON source not found")
+    payload = await _load_payload_async(source)
+    trimmed, element_count, truncated = _trim_viewer_payload(payload, max_elements=max_elements)
+    return {
+        "source": source.as_posix(),
+        "payload": trimmed,
+        "element_count": element_count,
+        "truncated": truncated,
+    }
+
+
 @router.post("/import")
 async def speckle_import(req: SpeckleImportRequest, _admin=Depends(require_admin)):
     if req.payload is not None:
@@ -209,6 +228,31 @@ async def _load_payload_async(source_path: Path) -> Any:
         return await __import__("asyncio").to_thread(load_source_payload, source_path)
     except Exception as error:
         raise HTTPException(400, f"CAD/BIM source parse failed: {error}") from error
+
+
+def _trim_viewer_payload(payload: Any, *, max_elements: int) -> tuple[Any, int, bool]:
+    if isinstance(payload, dict) and isinstance(payload.get("elements"), list):
+        total = len(payload["elements"])
+        if total <= max_elements:
+            return payload, total, False
+        trimmed = dict(payload)
+        trimmed["elements"] = payload["elements"][:max_elements]
+        relation_ids = {str(item.get("id")) for item in trimmed["elements"] if isinstance(item, dict)}
+        relation_ids.add(str(trimmed.get("id") or ""))
+        relations = payload.get("relations")
+        if isinstance(relations, list):
+            trimmed["relations"] = [
+                item
+                for item in relations
+                if isinstance(item, dict)
+                and str(item.get("source_id") or item.get("sourceId") or item.get("from") or "") in relation_ids
+                and str(item.get("target_id") or item.get("targetId") or item.get("to") or "") in relation_ids
+            ]
+        return trimmed, total, True
+    if isinstance(payload, list):
+        total = len(payload)
+        return payload[:max_elements], total, total > max_elements
+    return payload, 1 if isinstance(payload, dict) else 0, False
 
 
 async def _import_payload(

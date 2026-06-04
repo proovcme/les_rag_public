@@ -424,3 +424,21 @@ async def test_cad_bim_import_uses_json_inbox_and_json_projection(tmp_path, monk
     text = (tmp_path / result["projection_path"]).read_text(encoding="utf-8")
     assert "CAD/BIM JSON projection" in text
     assert "EI 60" in text
+
+
+@pytest.mark.asyncio
+async def test_cad_bim_source_returns_latest_json_for_viewer(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    source_dir = tmp_path / "RAG_Content" / "CAD_BIM" / "JSON"
+    source_dir.mkdir(parents=True)
+    (source_dir / "viewer.json").write_text(
+        '{"id":"dwg:viewer","type":"DWGModel","elements":[{"id":"line-1","type":"LINE","layer":"A-DETAIL","properties":{"start":[0,0,0],"end":[10,0,0]}}],"relations":[{"source_id":"dwg:viewer","target_id":"line-1","relation_type":"contains"}]}',
+        encoding="utf-8",
+    )
+
+    result = await speckle.cad_bim_source(_user=object())
+
+    assert result["source"].endswith("viewer.json")
+    assert result["element_count"] == 1
+    assert result["truncated"] is False
+    assert result["payload"]["elements"][0]["layer"] == "A-DETAIL"

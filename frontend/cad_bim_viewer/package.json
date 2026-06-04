@@ -1,0 +1,22 @@
+{
+  "name": "les-cad-bim-viewer",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc && vite build",
+    "preview": "vite preview --host 127.0.0.1"
+  },
+  "dependencies": {
+    "@thatopen/components": "~3.2.0",
+    "@thatopen/components-front": "~3.2.0",
+    "@thatopen/ui": "~3.2.0",
+    "three": "0.175.0"
+  },
+  "devDependencies": {
+    "@types/three": "0.175.0",
+    "typescript": "5.2.2",
+    "vite": "^7.1.5"
+  }
+}

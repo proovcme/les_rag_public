@@ -78,15 +78,98 @@ curl -X POST http://127.0.0.1:8050/api/cad-bim/import \
 The legacy `/api/speckle/import` endpoint remains for compatibility, but the
 preferred path is `/api/cad-bim/import`.
 
+## Viewer API
+
+Lite Admin `CAD/BIM Viewer` reads canonical payloads without importing them:
+
+```bash
+curl 'http://127.0.0.1:8050/api/cad-bim/source?source_path=RAG_Content/CAD_BIM/JSON/model.json&max_elements=5000'
+```
+
+When `source_path` is omitted, LES uses the newest JSON/JSONL source under the
+CAD/BIM inboxes. The API returns the payload, total element count and a
+`truncated` flag. The Lite Admin inline preview renders compact 2D previews
+from `start/end`, `points_preview`, `center/radius`, `insert` and
+`bbox_min/bbox_max`; if no drawable geometry exists, it falls back to a relation
+graph view.
+
+The standalone OBC/WebGL viewer is served from:
+
+```text
+http://127.0.0.1:8051/les/cad-bim-viewer
+```
+
+It uses `/lite-api/cad-bim/source`, supports `source_path`, `source`,
+`highlight` and `focus` query parameters, and renders CAD/BIM JSON back into an
+inspectable scene with layers, stats and selected element properties. This is a
+round-trip QA path for exporters: if `DWG/RVT/IFC -> cad_bim_graph.json` can be
+drawn back into recognizable geometry, the payload is suitable for object-level
+RAG indexing and source highlighting.
+
+The 04.06.2026 DWG node sample `Узлы установки оросителей розеткой вниз`
+round-tripped as `2534` elements, `2457` drawable objects and `2534` relations
+after removing a UTF-8 BOM from the copied JSON source. Exporters and loaders
+should prefer BOM-free UTF-8 JSON.
+
+## AutoCAD Exporter Workflow
+
+Use the AutoCAD .NET exporter in `exporters/autocad/LES.AutoCAD.JsonExport` as
+the primary DWG path:
+
+1. Build the plugin on a Windows workstation with AutoCAD installed.
+2. Load `LES.AutoCAD.JsonExport.dll` with AutoCAD `NETLOAD`.
+3. Run `LESJSONEXPORT`.
+4. Save `<drawing>.cad_bim_graph.json` into `RAG_Content/CAD_BIM/JSON/`.
+5. Run `IMPORT JSON GRAPH` in Lite Admin or call `/api/cad-bim/import` with
+   `source_type:"autocad"`.
+
+The exporter writes entity handles, layers, blocks/block attributes, text,
+annotation metadata and compact geometry previews. It intentionally avoids heavy
+meshes and full geometric reconstruction.
+
+Installed AutoCAD bundles create a ribbon tab `LES` with buttons for local
+export and direct push. `LESJSONPUSH` tries the Mac ZeroTier endpoint first
+(`http://10.195.146.98:8050`) and `https://les.ovc.me` second, then saves a
+fallback JSON file if upload fails.
+
+## Revit Exporter Workflow
+
+Use the Revit addin in `exporters/revit/LES.Revit.JsonExport` as the primary RVT
+path:
+
+1. Build the addin on a Windows workstation with Revit installed.
+2. Install a manifest based on `LES.Revit.JsonExport.addin.template`.
+3. Run `LES JSON Export` from Revit.
+4. Save `<project>.cad_bim_graph.json` into `RAG_Content/CAD_BIM/JSON/`.
+5. Run `IMPORT JSON GRAPH` in Lite Admin or call `/api/cad-bim/import` with
+   `source_type:"revit"`.
+
+The exporter writes stable Revit ids, categories, families/types, levels,
+materials, bounding-box previews and parameter values. It does not post to LES
+unless the `Push to LES` ribbon button is used.
+
 ## DWG Node Workflow
 
 Python does not reliably parse proprietary DWG directly in the local LES stack.
-Use AutoCAD as the converter, then let LES ingest DXF-derived JSON:
+Use this DXF route only as a fallback when the AutoCAD `LESJSONEXPORT` plugin is
+not available:
 
 1. Open the DWG node in AutoCAD.
 2. Run `DXFOUT` or `SAVEAS` and save the node as `.dxf`.
 3. Put the DXF anywhere accessible to the Mac, for example:
    `RAG_Content/CAD_BIM/DWG/my_node.dxf`.
+
+## Next IFC Work
+
+IFC is the next CAD/BIM focus after AutoCAD/Revit JSON exporters and viewer
+smoke. The target is the same canonical contract:
+
+1. Extract IFC product ids, classes, names, storeys, materials, property sets and
+   bounding boxes into `cad_bim_graph.json`.
+2. Preserve `contains`, `spatial`, `system` and `connects` relations where the
+   IFC graph exposes them.
+3. Keep geometry previews lightweight enough for RAG and viewer source
+   highlighting; full mesh conversion remains optional.
 4. Extract and import:
 
 ```bash

@@ -473,7 +473,7 @@ def lite_chat_html() -> str:
     const HOLDER_STORAGE = "les_lite_holder";
     const ROLE_STORAGE = "les_lite_role";
     const SESSION_STORAGE = "les_lite_session_id";
-    const REQUEST_TIMEOUT_MS = 12000;
+    const REQUEST_TIMEOUT_MS = 90000;
 
     const el = (id) => document.getElementById(id);
     const state = {

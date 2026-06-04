@@ -15,7 +15,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import Request
-from starlette.responses import HTMLResponse, JSONResponse
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse
+from starlette.staticfiles import StaticFiles
 
 from sovushka.lite_chat import _client_is_loopback
 from sovushka.trust import trusted_role_for_request
@@ -310,6 +311,7 @@ def lite_admin_html() -> str:
       flex-wrap: wrap;
       margin-top: 8px;
     }
+    .actions select { width: auto; min-width: 120px; }
     button, .linkbtn {
       min-height: 32px;
       border: 1px solid rgba(56,189,248,.45);
@@ -393,11 +395,40 @@ def lite_admin_html() -> str:
       font-weight: 800;
     }
     .checkline input { width: auto; }
+    .viewer-shell {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 260px;
+      gap: 10px;
+      margin-top: 10px;
+      align-items: stretch;
+    }
+    .viewer-canvas-wrap {
+      min-height: 360px;
+      border: 1px solid rgba(38,55,72,.65);
+      border-radius: 7px;
+      background: #05070a;
+      overflow: hidden;
+    }
+    #cadBimCanvas {
+      width: 100%;
+      height: 360px;
+      display: block;
+    }
+    .viewer-side {
+      min-height: 360px;
+      border: 1px solid rgba(38,55,72,.65);
+      border-radius: 7px;
+      background: rgba(7,9,12,.48);
+      padding: 8px;
+      overflow: auto;
+    }
     @media (max-width: 1020px) {
       .layout { grid-template-columns: 1fr; }
       .side { position: static; }
       .grid { grid-template-columns: 1fr; }
       .panel-wide { grid-column: span 1; }
+      .viewer-shell { grid-template-columns: 1fr; }
+      .viewer-side { min-height: 180px; }
     }
     @media (max-width: 640px) {
       .topbar { align-items: flex-start; flex-direction: column; }
@@ -467,6 +498,29 @@ def lite_admin_html() -> str:
           <button id="speckleCheckBtn" type="button">CHECK SPECKLE</button>
           <button id="speckleImportBtn" type="button">IMPORT JSON GRAPH</button>
           <button id="cadBimSyncBtn" type="button">SYNC CAD/BIM</button>
+        </div>
+      </div>
+
+      <div class="panel panel-wide">
+        <div class="title">CAD/BIM Viewer</div>
+        <div id="cadBimViewerHint" class="hint">JSON graph не загружен.</div>
+        <div class="actions">
+          <select id="cadBimViewMode" title="VIEW MODE">
+            <option value="auto">AUTO</option>
+            <option value="geometry">2D</option>
+            <option value="graph">GRAPH</option>
+          </select>
+          <button id="cadBimViewBtn" type="button">VIEW JSON</button>
+          <button id="cadBimObcViewBtn" type="button">OPEN OBC VIEWER</button>
+        </div>
+        <div class="viewer-shell">
+          <div class="viewer-canvas-wrap">
+            <canvas id="cadBimCanvas" width="960" height="360"></canvas>
+          </div>
+          <div class="viewer-side">
+            <div id="cadBimViewerStats" class="hint"></div>
+            <div id="cadBimViewerLayers" class="hint"></div>
+          </div>
         </div>
       </div>
 
@@ -575,6 +629,7 @@ def lite_admin_html() -> str:
       openaiKeySet: false,
       speckleDirty: false,
       speckleTokenSet: false,
+      cadBimViewerPayload: null,
     };
     const el = (id) => document.getElementById(id);
 
@@ -1015,6 +1070,225 @@ def lite_admin_html() -> str:
         `Imported ${data.profile || "auto"} | ${data.elements || 0} elements / ${data.relations || 0} relations / ${data.properties || 0} properties | ${data.projection_path || ""}`;
     }
 
+    async function loadCadBimViewer() {
+      const sourcePath = el("speckleSourcePath").value.trim();
+      const params = new URLSearchParams({ max_elements: "5000" });
+      if (sourcePath) params.set("source_path", sourcePath);
+      const data = await request("/api/cad-bim/source?" + params.toString());
+      state.cadBimViewerPayload = data.payload || null;
+      renderCadBimViewer(data);
+      log("cad/bim viewer -> " + (data.source || "latest") + " elements=" + (data.element_count || 0));
+    }
+
+    function openCadBimObcViewer() {
+      const sourcePath = el("speckleSourcePath").value.trim();
+      const params = new URLSearchParams();
+      if (sourcePath) params.set("source_path", sourcePath);
+      const query = params.toString();
+      window.open("/les/cad-bim-viewer/" + (query ? "?" + query : ""), "_blank", "noopener");
+    }
+
+    function renderCadBimViewer(data) {
+      const payload = data.payload || state.cadBimViewerPayload || {};
+      const mode = el("cadBimViewMode").value || "auto";
+      const elements = graphElements(payload);
+      const relations = graphRelations(payload);
+      const drawables = elements.map(drawableFromElement).filter(Boolean);
+      const layers = layerCounts(elements);
+      const useGraph = mode === "graph" || (mode === "auto" && drawables.length === 0);
+      drawCadBimCanvas(useGraph ? [] : drawables, useGraph ? elements : [], relations);
+      el("cadBimViewerHint").textContent =
+        `${useGraph ? "GRAPH" : "2D"} | source=${data.source || "-"} | elements=${fmt(data.element_count || elements.length)}${data.truncated ? " | truncated" : ""}`;
+      setRows("cadBimViewerStats", [
+        rowNode("Elements", fmt(elements.length), "JSON", "ok"),
+        rowNode("Drawable", fmt(drawables.length), useGraph ? "GRAPH" : "2D", drawables.length ? "ok" : "warn"),
+        rowNode("Relations", fmt(relations.length), "LINKS", relations.length ? "ok" : ""),
+      ]);
+      setRows("cadBimViewerLayers", Object.entries(layers).slice(0, 24).map(([name, count]) => (
+        rowNode(name || "-", fmt(count) + " elements", "LAYER", "")
+      )), "NO LAYERS");
+    }
+
+    function graphElements(payload) {
+      if (Array.isArray(payload)) return payload.filter((item) => item && typeof item === "object");
+      if (!payload || typeof payload !== "object") return [];
+      const root = payload.id ? [payload] : [];
+      const elements = Array.isArray(payload.elements) ? payload.elements : [];
+      return root.concat(elements).filter((item) => item && typeof item === "object");
+    }
+
+    function graphRelations(payload) {
+      if (!payload || typeof payload !== "object" || !Array.isArray(payload.relations)) return [];
+      return payload.relations.filter((item) => item && typeof item === "object");
+    }
+
+    function layerCounts(elements) {
+      const out = {};
+      for (const element of elements) {
+        if (isModelRoot(element)) continue;
+        const layer = element.layer || element.category || element.level || element.family || "default";
+        out[layer] = (out[layer] || 0) + 1;
+      }
+      return out;
+    }
+
+    function isModelRoot(element) {
+      const type = String(element.type || element.object_type || "").toLowerCase();
+      return type.endsWith("model") || Boolean(element.source_format && Array.isArray(element.elements));
+    }
+
+    function drawableFromElement(element) {
+      if (!element || isModelRoot(element)) return null;
+      const props = element.properties || {};
+      const layer = element.layer || element.category || element.level || "default";
+      const name = element.name || element.type || element.id || "";
+      const common = { id: element.id || "", layer, name, type: element.type || element.object_type || "" };
+      if (point2(props.start) && point2(props.end)) return { ...common, kind: "line", start: point2(props.start), end: point2(props.end) };
+      if (Array.isArray(props.points_preview) && props.points_preview.length) {
+        return { ...common, kind: "polyline", points: props.points_preview.map(point2).filter(Boolean), closed: Boolean(props.closed) };
+      }
+      if (point2(props.center) && Number(props.radius) > 0) {
+        return { ...common, kind: "circle", center: point2(props.center), radius: Number(props.radius), startAngle: Number(props.start_angle), endAngle: Number(props.end_angle) };
+      }
+      if (point2(props.insert)) return { ...common, kind: "point", point: point2(props.insert), text: props.text || name };
+      if (point2(props.bbox_min) && point2(props.bbox_max)) return { ...common, kind: "bbox", min: point2(props.bbox_min), max: point2(props.bbox_max) };
+      return null;
+    }
+
+    function point2(value) {
+      if (!Array.isArray(value) || value.length < 2) return null;
+      const x = Number(value[0]);
+      const y = Number(value[1]);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+      return [x, y];
+    }
+
+    function drawableBounds(drawables) {
+      const xs = [];
+      const ys = [];
+      const add = (point) => { xs.push(point[0]); ys.push(point[1]); };
+      for (const item of drawables) {
+        if (item.kind === "line") { add(item.start); add(item.end); }
+        else if (item.kind === "polyline") item.points.forEach(add);
+        else if (item.kind === "circle") { add([item.center[0] - item.radius, item.center[1] - item.radius]); add([item.center[0] + item.radius, item.center[1] + item.radius]); }
+        else if (item.kind === "bbox") { add(item.min); add(item.max); }
+        else if (item.kind === "point") add(item.point);
+      }
+      if (!xs.length) return null;
+      return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
+    }
+
+    function drawCadBimCanvas(drawables, graphNodes, relations) {
+      const canvas = el("cadBimCanvas");
+      const ctx = canvas.getContext("2d");
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = Math.max(320, Math.floor(rect.width * dpr));
+      canvas.height = Math.max(240, Math.floor(rect.height * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const width = canvas.width / dpr;
+      const height = canvas.height / dpr;
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = "#05070a";
+      ctx.fillRect(0, 0, width, height);
+      drawGrid(ctx, width, height);
+      if (drawables.length) drawGeometry(ctx, drawables, width, height);
+      else drawGraph(ctx, graphNodes, relations, width, height);
+    }
+
+    function drawGrid(ctx, width, height) {
+      ctx.strokeStyle = "rgba(38,55,72,.35)";
+      ctx.lineWidth = 1;
+      for (let x = 0; x < width; x += 40) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
+      }
+      for (let y = 0; y < height; y += 40) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
+      }
+    }
+
+    function layerColor(layer) {
+      const palette = ["#38bdf8", "#22c55e", "#f59e0b", "#ef4444", "#a78bfa", "#14b8a6", "#f97316", "#e879f9"];
+      let hash = 0;
+      const text = String(layer || "");
+      for (let i = 0; i < text.length; i++) hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+      return palette[Math.abs(hash) % palette.length];
+    }
+
+    function drawGeometry(ctx, drawables, width, height) {
+      const bounds = drawableBounds(drawables);
+      if (!bounds) return;
+      const margin = 28;
+      const spanX = Math.max(1, bounds.maxX - bounds.minX);
+      const spanY = Math.max(1, bounds.maxY - bounds.minY);
+      const scale = Math.min((width - margin * 2) / spanX, (height - margin * 2) / spanY);
+      const tx = (point) => margin + (point[0] - bounds.minX) * scale;
+      const ty = (point) => height - margin - (point[1] - bounds.minY) * scale;
+      ctx.font = "11px ui-monospace, monospace";
+      for (const item of drawables) {
+        ctx.strokeStyle = layerColor(item.layer);
+        ctx.fillStyle = layerColor(item.layer);
+        ctx.lineWidth = 1.6;
+        if (item.kind === "line") {
+          ctx.beginPath(); ctx.moveTo(tx(item.start), ty(item.start)); ctx.lineTo(tx(item.end), ty(item.end)); ctx.stroke();
+        } else if (item.kind === "polyline") {
+          ctx.beginPath();
+          item.points.forEach((point, index) => index ? ctx.lineTo(tx(point), ty(point)) : ctx.moveTo(tx(point), ty(point)));
+          if (item.closed) ctx.closePath();
+          ctx.stroke();
+        } else if (item.kind === "circle") {
+          ctx.beginPath(); ctx.arc(tx(item.center), ty(item.center), Math.max(2, item.radius * scale), 0, Math.PI * 2); ctx.stroke();
+        } else if (item.kind === "bbox") {
+          const x = tx(item.min);
+          const y = ty(item.max);
+          ctx.strokeRect(x, y, Math.max(2, (item.max[0] - item.min[0]) * scale), Math.max(2, (item.max[1] - item.min[1]) * scale));
+        } else if (item.kind === "point") {
+          const x = tx(item.point);
+          const y = ty(item.point);
+          ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
+          if (item.text) ctx.fillText(String(item.text).slice(0, 42), x + 5, y - 5);
+        }
+      }
+    }
+
+    function drawGraph(ctx, nodes, relations, width, height) {
+      const visible = nodes.slice(0, 160);
+      if (!visible.length) {
+        ctx.fillStyle = "#9fb0c1";
+        ctx.font = "12px ui-monospace, monospace";
+        ctx.fillText("NO CAD/BIM JSON", 24, 34);
+        return;
+      }
+      const ids = new Map();
+      visible.forEach((node, index) => ids.set(String(node.id || index), index));
+      const centerX = width / 2;
+      const centerY = height / 2;
+      const radius = Math.max(60, Math.min(width, height) * .36);
+      const pos = visible.map((node, index) => {
+        if (index === 0) return [centerX, centerY];
+        const angle = ((index - 1) / Math.max(1, visible.length - 1)) * Math.PI * 2;
+        return [centerX + Math.cos(angle) * radius, centerY + Math.sin(angle) * radius];
+      });
+      ctx.strokeStyle = "rgba(159,176,193,.34)";
+      ctx.lineWidth = 1;
+      for (const rel of relations.slice(0, 400)) {
+        const source = ids.get(String(rel.source_id || rel.sourceId || rel.from || ""));
+        const target = ids.get(String(rel.target_id || rel.targetId || rel.to || ""));
+        if (source == null || target == null) continue;
+        ctx.beginPath(); ctx.moveTo(pos[source][0], pos[source][1]); ctx.lineTo(pos[target][0], pos[target][1]); ctx.stroke();
+      }
+      ctx.font = "10px ui-monospace, monospace";
+      visible.forEach((node, index) => {
+        const category = node.layer || node.category || node.level || node.family || node.type || "node";
+        ctx.fillStyle = layerColor(category);
+        ctx.beginPath(); ctx.arc(pos[index][0], pos[index][1], index === 0 ? 7 : 4, 0, Math.PI * 2); ctx.fill();
+        if (index < 30) {
+          ctx.fillStyle = "#cbd5e1";
+          ctx.fillText(String(node.name || node.type || node.id || "").slice(0, 28), pos[index][0] + 6, pos[index][1] - 6);
+        }
+      });
+    }
+
     async function syncCadBim() {
       const data = await post("/api/rag/sync-smart", {
         source_root: "RAG_Content/CAD_BIM",
@@ -1149,6 +1423,17 @@ def lite_admin_html() -> str:
       try { await syncCadBim(); }
       catch (error) { log("cad/bim sync error: " + error.message); }
     });
+    el("cadBimViewBtn").addEventListener("click", async () => {
+      try { await loadCadBimViewer(); }
+      catch (error) { log("cad/bim viewer error: " + error.message); }
+    });
+    el("cadBimObcViewBtn").addEventListener("click", () => {
+      try { openCadBimObcViewer(); }
+      catch (error) { log("cad/bim obc viewer error: " + error.message); }
+    });
+    el("cadBimViewMode").addEventListener("change", () => {
+      if (state.cadBimViewerPayload) renderCadBimViewer({ payload: state.cadBimViewerPayload });
+    });
     el("providerSaveBtn").addEventListener("click", async () => {
       try { await saveProviderSettings(); }
       catch (error) { log("provider settings error: " + error.message); }
@@ -1195,11 +1480,54 @@ def lite_admin_html() -> str:
 def register_lite_admin_routes() -> None:
     from nicegui import app
 
+    viewer_dist = _repo_root() / "frontend" / "cad_bim_viewer" / "dist"
+    app.mount(
+        "/les/cad-bim-viewer/assets",
+        StaticFiles(directory=viewer_dist / "assets", check_dir=False),
+        name="les_cad_bim_viewer_assets",
+    )
+
     @app.get("/les")
     @app.get("/les/")
     async def lite_admin_page():
         return HTMLResponse(
             lite_admin_html(),
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+        )
+
+    @app.get("/les/cad-bim-viewer")
+    @app.get("/les/cad-bim-viewer/")
+    async def cad_bim_viewer_page():
+        index = viewer_dist / "index.html"
+        if index.exists():
+            return FileResponse(
+                index,
+                media_type="text/html",
+                headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+            )
+        return HTMLResponse(
+            """<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LES CAD/BIM Viewer</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #07090c; color: #f4f7fb; font: 14px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    main { width: min(680px, calc(100vw - 32px)); border: 1px solid #263748; border-radius: 8px; background: #10161d; padding: 22px; }
+    h1 { margin: 0 0 10px; font-size: 18px; }
+    p { color: #9fb0c1; line-height: 1.55; }
+    code { color: #38bdf8; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>LES CAD/BIM Viewer не собран</h1>
+    <p>Соберите frontend bundle:</p>
+    <p><code>cd frontend/cad_bim_viewer && npm install && npm run build</code></p>
+  </main>
+</body>
+</html>""",
             headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
         )
 

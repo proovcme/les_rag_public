@@ -1,0 +1,44 @@
+{
+  "id": "dwg:node-a",
+  "type": "DWGModel",
+  "name": "node-a",
+  "source_format": "dwg",
+  "source_path": "C:/Projects/node-a.dwg",
+  "extracted_at": "2026-06-02T10:00:00Z",
+  "properties": {
+    "entity_count": 2,
+    "layers": ["A-DETAIL", "A-TEXT"]
+  },
+  "elements": [
+    {
+      "id": "2A7",
+      "type": "LINE",
+      "name": "LINE",
+      "layer": "A-DETAIL",
+      "category": "Geometry",
+      "properties": {
+        "handle": "2A7",
+        "entity_type": "LINE",
+        "start": [0, 0, 0],
+        "end": [10, 0, 0]
+      }
+    },
+    {
+      "id": "2A8",
+      "type": "TEXT",
+      "name": "Узел УК-1",
+      "layer": "A-TEXT",
+      "category": "Annotation",
+      "properties": {
+        "handle": "2A8",
+        "entity_type": "TEXT",
+        "text": "Узел УК-1",
+        "height": 2.5
+      }
+    }
+  ],
+  "relations": [
+    {"source_id": "dwg:node-a", "target_id": "2A7", "relation_type": "contains"},
+    {"source_id": "dwg:node-a", "target_id": "2A8", "relation_type": "contains"}
+  ]
+}
