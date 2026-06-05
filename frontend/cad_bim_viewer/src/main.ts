@@ -16,6 +16,21 @@ import type {
 type LayerRow = { name: string; count: number; visible: boolean };
 type QuickSource = { id: string; label: string; source: string; ifc?: never } | { id: string; label: string; ifc: string; source?: never };
 type StructureModel = { id: string; label: string; elements: CadBimElement[] };
+type LesChatResponse = {
+  answer?: string;
+  crag_status?: string;
+  effective_dataset_filter?: string;
+  history_id?: number | string | null;
+  cache?: string;
+  sources?: unknown[];
+  retrieval_trace?: {
+    mode?: string;
+    vector_count?: number;
+    lexical_count?: number;
+    merged_count?: number;
+    quality_status?: string;
+  };
+};
 type DefaultModelResponse = {
   found?: boolean;
   name?: string;
@@ -897,7 +912,9 @@ function renderLesContext(node: HTMLElement, context: CadBimElementContext): voi
     </div>
     <div class="tool-grid rag-actions">
       <button type="button" id="copy-rag-prompt">Копировать вопрос</button>
+      <button type="button" id="ask-les-rag">Спросить LES</button>
     </div>
+    <div id="les-rag-answer" class="rag-answer empty">Ответ появится здесь.</div>
     <div class="list props-list compact">
       ${rows.map(([key, value]) => propLine(key, value)).join("")}
     </div>
@@ -905,6 +922,91 @@ function renderLesContext(node: HTMLElement, context: CadBimElementContext): voi
   document.getElementById("copy-rag-prompt")?.addEventListener("click", () => {
     void copyText(context.rag_prompt);
   });
+  document.getElementById("ask-les-rag")?.addEventListener("click", () => {
+    void askLesForElement(context);
+  });
+}
+
+async function askLesForElement(context: CadBimElementContext): Promise<void> {
+  const answerNode = document.getElementById("les-rag-answer");
+  const button = document.getElementById("ask-les-rag") as HTMLButtonElement | null;
+  if (!answerNode) return;
+  const previousLabel = button?.textContent || "Спросить LES";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Спрашиваю...";
+  }
+  answerNode.classList.remove("error");
+  answerNode.classList.add("empty");
+  answerNode.textContent = "LES ищет контекст и готовит ответ...";
+  try {
+    const response = await fetch("/lite-api/chat", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        question: context.rag_prompt,
+        dataset_filter: "CAD_BIM",
+      }),
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(response.status === 401 ? "нужен LES trusted/key доступ" : `chat ${response.status}: ${text.slice(0, 220)}`);
+    }
+    const data = JSON.parse(text) as LesChatResponse;
+    renderLesAnswer(answerNode, data);
+    setStatus("LES ответил по выбранному элементу");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    answerNode.classList.add("error");
+    answerNode.classList.remove("empty");
+    answerNode.innerHTML = `<strong>Ошибка LES</strong><div>${escapeHtml(message)}</div>`;
+    setStatus("LES/RAG вопрос не выполнен", true);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = previousLabel;
+    }
+  }
+}
+
+function renderLesAnswer(node: HTMLElement, data: LesChatResponse): void {
+  const trace = data.retrieval_trace || {};
+  const meta = [
+    data.crag_status ? `CRAG: ${data.crag_status}` : "",
+    data.effective_dataset_filter ? `filter: ${data.effective_dataset_filter}` : "",
+    trace.mode ? `mode: ${trace.mode}` : "",
+    typeof trace.merged_count === "number" ? `chunks: ${trace.merged_count}` : "",
+  ].filter(Boolean);
+  node.classList.remove("empty", "error");
+  node.innerHTML = `
+    <div class="rag-answer-head">
+      <strong>Ответ LES</strong>
+      ${meta.length ? `<span>${escapeHtml(meta.join(" / "))}</span>` : ""}
+    </div>
+    <div class="rag-answer-text">${escapeHtml(data.answer || "LES не вернул текст ответа.")}</div>
+    ${renderLesSources(data.sources || [])}
+  `;
+}
+
+function renderLesSources(sources: unknown[]): string {
+  if (!sources.length) return "";
+  const items = sources.slice(0, 6).map((source) => {
+    if (typeof source === "string") return source;
+    if (source && typeof source === "object") {
+      const item = source as Record<string, unknown>;
+      return String(item.title || item.name || item.source || item.filename || item.doc_name || JSON.stringify(item));
+    }
+    return String(source);
+  });
+  return `
+    <div class="rag-sources">
+      <span>Источники</span>
+      ${items.map((item) => `<div>${escapeHtml(item)}</div>`).join("")}
+    </div>
+  `;
 }
 
 async function copyText(value: string): Promise<void> {
