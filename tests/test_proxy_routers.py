@@ -1,3 +1,4 @@
+import json
 import os
 
 import pytest
@@ -424,6 +425,54 @@ async def test_cad_bim_import_uses_json_inbox_and_json_projection(tmp_path, monk
     text = (tmp_path / result["projection_path"]).read_text(encoding="utf-8")
     assert "CAD/BIM JSON projection" in text
     assert "EI 60" in text
+
+
+@pytest.mark.asyncio
+async def test_cad_bim_element_context_returns_rag_prompt_by_source_id(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    source_dir = tmp_path / "RAG_Content" / "CAD_BIM" / "JSON"
+    source_dir.mkdir(parents=True)
+    (source_dir / "ifc_model.json").write_text(
+        json.dumps(
+            {
+                "id": "ifc:model",
+                "type": "IFCModel",
+                "source_format": "ifc",
+                "elements": [
+                    {
+                        "id": "0J$u4Qbqf7A9h1vBM9EA01",
+                        "type": "IFCWALL",
+                        "name": "Wall A",
+                        "category": "Wall",
+                        "level": "Level 01",
+                        "propertySets": {
+                            "Pset_WallCommon": {
+                                "FireRating": {"value": "EI 60", "value_type": "label"},
+                            }
+                        },
+                    }
+                ],
+                "relations": [
+                    {"source_id": "ifc:model", "target_id": "0J$u4Qbqf7A9h1vBM9EA01", "relation_type": "contains"}
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    await speckle.cad_bim_import(
+        speckle.SpeckleImportRequest(source_path="ifc_model.json", source_type="ifc"),
+        _admin=object(),
+    )
+
+    result = await speckle.cad_bim_element_context("0J$u4Qbqf7A9h1vBM9EA01", _user=object())
+
+    assert result["found"] is True
+    assert result["source_id"] == "0J$u4Qbqf7A9h1vBM9EA01"
+    assert result["element"]["profile"] == "ifc"
+    assert result["properties"][0]["name"] == "FireRating"
+    assert "EI 60" in result["rag_prompt"]
+    assert "Source ID / GlobalId" in result["rag_prompt"]
 
 
 @pytest.mark.asyncio

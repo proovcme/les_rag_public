@@ -503,7 +503,7 @@ def lite_admin_html() -> str:
       </div>
 
       <div class="panel panel-wide">
-        <div class="title">CAD/BIM Viewer</div>
+        <div class="title">VIZOR</div>
         <div id="cadBimViewerHint" class="hint">JSON graph не загружен.</div>
         <div class="actions">
           <select id="cadBimViewMode" title="VIEW MODE">
@@ -1530,7 +1530,7 @@ def register_lite_admin_routes() -> None:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>LES CAD/BIM Viewer</title>
+  <title>LES VIZOR</title>
   <style>
     body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #07090c; color: #f4f7fb; font: 14px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     main { width: min(680px, calc(100vw - 32px)); border: 1px solid #263748; border-radius: 8px; background: #10161d; padding: 22px; }
@@ -1541,7 +1541,7 @@ def register_lite_admin_routes() -> None:
 </head>
 <body>
   <main>
-    <h1>LES CAD/BIM Viewer не собран</h1>
+    <h1>LES VIZOR не собран</h1>
     <p>Соберите frontend bundle:</p>
     <p><code>cd frontend/cad_bim_viewer && npm install && npm run build</code></p>
   </main>

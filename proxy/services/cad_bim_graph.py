@@ -329,6 +329,149 @@ def graph_summary(db_path: Path = CAD_BIM_DB_PATH) -> dict[str, Any]:
     return {"db_path": db_path.as_posix(), "totals": totals, "imports": imports}
 
 
+def lookup_element_context(
+    source_id: str,
+    *,
+    import_id: str | None = None,
+    db_path: Path = CAD_BIM_DB_PATH,
+    relation_limit: int = 24,
+    property_limit: int = 80,
+) -> dict[str, Any] | None:
+    """Return RAG-ready CAD/BIM context for a stable element source id.
+
+    `source_id` is the external object id from the source graph. For IFC this is
+    the GlobalId, which is the value the OBC viewer can recover from selection.
+    """
+
+    normalized_source_id = str(source_id or "").strip()
+    if not normalized_source_id:
+        return None
+    init_graph_db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        params: list[Any] = [normalized_source_id]
+        import_filter = ""
+        if import_id:
+            import_filter = " AND e.import_id = ?"
+            params.append(import_id)
+        element = conn.execute(
+            f"""
+            SELECT
+              e.id, e.import_id, e.source_id, e.speckle_type, e.object_type, e.name,
+              e.layer, e.category, e.family, e.level, e.material, e.attributes_json,
+              e.source_path, i.source, i.source_kind, i.profile, i.created_at,
+              i.projection_path
+            FROM cad_bim_elements e
+            JOIN cad_bim_imports i ON i.id = e.import_id
+            WHERE e.source_id = ?{import_filter}
+            ORDER BY i.created_at DESC
+            LIMIT 1
+            """,
+            params,
+        ).fetchone()
+        if not element:
+            return None
+        properties = [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT name, value, value_type, unit, property_set
+                FROM cad_bim_properties
+                WHERE element_id = ?
+                ORDER BY property_set, name
+                LIMIT ?
+                """,
+                (element["id"], property_limit),
+            ).fetchall()
+        ]
+        relations = [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT source_id, target_id, relation_type
+                FROM cad_bim_relations
+                WHERE import_id = ? AND (source_id = ? OR target_id = ?)
+                ORDER BY relation_type, source_id, target_id
+                LIMIT ?
+                """,
+                (element["import_id"], normalized_source_id, normalized_source_id, relation_limit),
+            ).fetchall()
+        ]
+
+    attrs = _safe_json_dict(element["attributes_json"])
+    item = dict(element)
+    item["attributes"] = attrs
+    item.pop("attributes_json", None)
+    title = item.get("name") or item.get("object_type") or item.get("speckle_type") or item["source_id"]
+    prompt = _rag_prompt_for_element(item, properties, relations)
+    return {
+        "found": True,
+        "source_id": normalized_source_id,
+        "element": item,
+        "properties": properties,
+        "relations": relations,
+        "rag_prompt": prompt,
+        "summary": {
+            "title": title,
+            "import_id": item["import_id"],
+            "profile": item["profile"],
+            "source": item["source"],
+            "projection_path": item["projection_path"],
+            "properties": len(properties),
+            "relations": len(relations),
+        },
+    }
+
+
+def _safe_json_dict(text: str) -> dict[str, Any]:
+    try:
+        value = json.loads(text or "{}")
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _rag_prompt_for_element(
+    element: dict[str, Any],
+    properties: list[dict[str, str]],
+    relations: list[dict[str, str]],
+) -> str:
+    title = element.get("name") or element.get("object_type") or element.get("speckle_type") or element.get("source_id")
+    descriptors = [
+        f"Source ID / GlobalId: {element.get('source_id')}",
+        f"Profile: {element.get('profile')}",
+        f"Type: {element.get('object_type') or element.get('speckle_type') or '-'}",
+        f"Category: {element.get('category') or '-'}",
+        f"Family: {element.get('family') or '-'}",
+        f"Level: {element.get('level') or '-'}",
+        f"Material: {element.get('material') or '-'}",
+        f"Source: {element.get('source') or '-'}",
+    ]
+    prop_lines = []
+    for prop in properties[:16]:
+        unit = f" {prop['unit']}" if prop.get("unit") else ""
+        group = f" ({prop['property_set']})" if prop.get("property_set") else ""
+        prop_lines.append(f"- {prop['name']}{group}: {prop['value']}{unit}")
+    relation_lines = [
+        f"- {relation['source_id']} --{relation['relation_type']}--> {relation['target_id']}"
+        for relation in relations[:12]
+    ]
+    return "\n".join(
+        [
+            f"Расскажи по BIM/CAD элементу `{title}`.",
+            "Используй CAD/BIM индекс LES и связанные документы. Проверь назначение, параметры, связи, возможные замечания и что важно инженеру.",
+            "",
+            *descriptors,
+            "",
+            "Known properties:",
+            *(prop_lines or ["- нет сохранённых свойств"]),
+            "",
+            "Known graph relations:",
+            *(relation_lines or ["- нет связей"]),
+        ]
+    )
+
+
 def normalize_profile(profile: str | None) -> str:
     value = str(profile or "").strip().casefold().replace("-", "_")
     aliases = {

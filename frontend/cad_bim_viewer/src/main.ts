@@ -3,6 +3,7 @@ import { CadBimViewer } from "./viewer-core";
 import type { ClipAxis, ClipDirection } from "./viewer-core";
 import type {
   CadBimElement,
+  CadBimElementContext,
   CadBimGraph,
   CadBimSourceResponse,
   IfcModelSource,
@@ -84,8 +85,8 @@ app.innerHTML = `
   <main class="shell" data-tab="inspect">
     <header class="topbar">
       <div class="brand">
-        <strong>LES CAD/BIM</strong>
-        <span>Revit JSON / IFC</span>
+        <strong>LES VIZOR</strong>
+        <span>IFC / JSON / RAG</span>
       </div>
       <form class="toolbar" id="load-form">
         <input id="source-path" placeholder="Путь к источнику" autocomplete="off" />
@@ -280,6 +281,7 @@ let currentStats: ViewerStats | null = null;
 let selectedElement: CadBimElement | null = null;
 let currentModels: ViewerModelRecord[] = [];
 let measureEnabled = false;
+let selectionContextToken = 0;
 const semanticByGlobalId = new Map<string, CadBimElement>();
 const structureModels = new Map<string, StructureModel>();
 
@@ -681,11 +683,13 @@ function renderStructure(): void {
 
 function renderSelected(element: CadBimElement | null): void {
   selectedElement = element;
+  const token = ++selectionContextToken;
   renderToolSelectionInfo(element);
   if (!element) {
     selectedNode.innerHTML = `<div class="empty">Ничего не выбрано</div>`;
     return;
   }
+  const sourceId = selectionSourceId(element);
   const props = flattenProperties(element.properties || {});
   const meshStats = flattenProperties(element.geometry?.stats || {}, "mesh").slice(0, 4);
   const baseRows: [string, unknown][] = [
@@ -722,11 +726,14 @@ function renderSelected(element: CadBimElement | null): void {
         )
         .join("")}
     </div>
+    ${renderLesContextShell(sourceId)}
   `;
+  void hydrateLesContext(sourceId, token);
 }
 
 function renderIfcSelected(selection: IfcSelection | null): void {
   selectedElement = null;
+  const token = ++selectionContextToken;
   toolSelectionInfoNode.textContent = selection ? `${selection.globalId || selection.modelId}:${selection.localId}` : "IFC-элемент не выбран";
   if (!selection) {
     selectedNode.innerHTML = `<div class="empty">IFC-элемент не выбран</div>`;
@@ -768,7 +775,135 @@ function renderIfcSelected(selection: IfcSelection | null): void {
         )
         .join("")}
     </div>
+    ${renderLesContextShell(selection.globalId)}
   `;
+  void hydrateLesContext(selection.globalId, token);
+}
+
+function selectionSourceId(element: CadBimElement): string {
+  const props = element.properties || {};
+  const parameters = props.parameters as Record<string, unknown> | undefined;
+  return String(
+    element.id ||
+      props.global_id ||
+      props.GlobalId ||
+      props.IfcGUID ||
+      parameters?.IfcGUID ||
+      parameters?.GlobalId ||
+      "",
+  );
+}
+
+function renderLesContextShell(sourceId: string): string {
+  if (!sourceId) {
+    return `<article class="rag-card"><strong>LES/RAG</strong><div class="empty">У элемента нет стабильного id для поиска в graph DB.</div></article>`;
+  }
+  if (isStandaloneViewer) {
+    return `
+      <article class="rag-card">
+        <div class="selection-head">
+          <span class="swatch large" style="--swatch:#38bdf8"></span>
+          <div>
+            <strong>LES/RAG</strong>
+            <span>source_id: ${escapeHtml(sourceId)}</span>
+          </div>
+        </div>
+        <div class="empty">Standalone не обращается к LES. Открой viewer из LES, чтобы получить RAG-контекст выбранного элемента.</div>
+      </article>
+    `;
+  }
+  return `
+    <article class="rag-card" id="les-rag-context" data-source-id="${escapeHtml(sourceId)}">
+      <div class="selection-head">
+        <span class="swatch large" style="--swatch:#38bdf8"></span>
+        <div>
+          <strong>LES/RAG</strong>
+          <span>source_id: ${escapeHtml(sourceId)}</span>
+        </div>
+      </div>
+      <div class="empty">ищу элемент в graph DB...</div>
+    </article>
+  `;
+}
+
+async function hydrateLesContext(sourceId: string, token: number): Promise<void> {
+  if (!sourceId || isStandaloneViewer) return;
+  const node = document.getElementById("les-rag-context");
+  if (!node) return;
+  try {
+    const context = await requestElementContext(sourceId);
+    if (token !== selectionContextToken) return;
+    renderLesContext(node, context);
+  } catch (error) {
+    if (token !== selectionContextToken) return;
+    const message = error instanceof Error ? error.message : String(error);
+    node.innerHTML = `
+      <div class="selection-head">
+        <span class="swatch large" style="--swatch:#ef4444"></span>
+        <div>
+          <strong>LES/RAG</strong>
+          <span>source_id: ${escapeHtml(sourceId)}</span>
+        </div>
+      </div>
+      <div class="empty error">${escapeHtml(message)}</div>
+    `;
+  }
+}
+
+async function requestElementContext(sourceId: string): Promise<CadBimElementContext> {
+  const query = new URLSearchParams({ source_id: sourceId });
+  const response = await fetch(`/lite-api/cad-bim/element?${query.toString()}`, {
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(response.status === 404 ? "элемент не найден в LES graph DB" : `LES/RAG ${response.status}: ${text.slice(0, 180)}`);
+  }
+  return (await response.json()) as CadBimElementContext;
+}
+
+function renderLesContext(node: HTMLElement, context: CadBimElementContext): void {
+  const element = context.element;
+  const rows: [string, unknown][] = [
+    ["import_id", context.summary.import_id],
+    ["profile", context.summary.profile],
+    ["source", context.summary.source],
+    ["projection", context.summary.projection_path],
+    ["type", element.object_type || element.speckle_type || ""],
+    ["category", element.category || ""],
+    ["family", element.family || ""],
+    ["level", element.level || ""],
+    ["material", element.material || ""],
+    ["properties", context.summary.properties],
+    ["relations", context.summary.relations],
+  ];
+  node.innerHTML = `
+    <div class="selection-head">
+      <span class="swatch large" style="--swatch:#38bdf8"></span>
+      <div>
+        <strong>LES/RAG найден</strong>
+        <span>${escapeHtml(context.summary.title || context.source_id)}</span>
+      </div>
+    </div>
+    <div class="tool-grid rag-actions">
+      <button type="button" id="copy-rag-prompt">Копировать вопрос</button>
+    </div>
+    <div class="list props-list compact">
+      ${rows.map(([key, value]) => propLine(key, value)).join("")}
+    </div>
+  `;
+  document.getElementById("copy-rag-prompt")?.addEventListener("click", () => {
+    void copyText(context.rag_prompt);
+  });
+}
+
+async function copyText(value: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(value);
+    setStatus("RAG-вопрос скопирован");
+  } catch {
+    window.prompt("Скопируй RAG-вопрос", value);
+  }
 }
 
 function renderHud(data: CadBimSourceResponse, stats: ViewerStats): void {

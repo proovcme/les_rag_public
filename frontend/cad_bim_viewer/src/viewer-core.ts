@@ -110,9 +110,9 @@ export class CadBimViewer {
     this.viewport = viewport;
     this.components = components;
     this.world = world;
-    this.root.name = "LES CAD/BIM JSON";
+    this.root.name = "LES VIZOR JSON";
     this.ifcRoot.name = "LES IFC fragments";
-    this.measurementRoot.name = "LES CAD/BIM measurements";
+    this.measurementRoot.name = "LES VIZOR measurements";
     this.world.scene.three.add(this.root);
     this.world.scene.three.add(this.ifcRoot);
     this.world.scene.three.add(this.measurementRoot);
@@ -134,7 +134,7 @@ export class CadBimViewer {
     const components = new OBC.Components();
     const worlds = components.get(OBC.Worlds);
     const world = worlds.create<OBC.SimpleScene, OBC.OrthoPerspectiveCamera, OBC.SimpleRenderer>();
-    world.name = "LES CAD/BIM";
+    world.name = "LES VIZOR";
     world.scene = new OBC.SimpleScene(components);
     world.scene.setup();
     world.scene.three.background = new THREE.Color(0x07090c);

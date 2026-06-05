@@ -442,6 +442,25 @@ button {
   background: linear-gradient(135deg, rgba(250, 204, 21, 0.12), rgba(56, 189, 248, 0.08));
 }
 
+.rag-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid rgba(56, 189, 248, 0.34);
+  border-radius: 8px;
+  background: rgba(14, 23, 32, 0.86);
+}
+
+.rag-actions {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.props-list.compact .prop-row {
+  padding: 6px 8px;
+}
+
 .selection-head {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);

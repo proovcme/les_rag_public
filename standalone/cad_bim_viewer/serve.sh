@@ -57,6 +57,6 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-print(f"LES CAD/BIM standalone: http://0.0.0.0:{PORT}/")
+print(f"VIZOR Standalone: http://0.0.0.0:{PORT}/")
 server.serve_forever()
 PY

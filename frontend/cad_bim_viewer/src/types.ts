@@ -58,6 +58,51 @@ export interface CadBimSourceResponse {
   truncated?: boolean;
 }
 
+export interface CadBimElementContext {
+  found: boolean;
+  source_id: string;
+  element: {
+    id: string;
+    import_id: string;
+    source_id: string;
+    speckle_type?: string;
+    object_type?: string;
+    name?: string;
+    layer?: string;
+    category?: string;
+    family?: string;
+    level?: string;
+    material?: string;
+    source?: string;
+    source_kind?: string;
+    profile?: string;
+    projection_path?: string;
+    attributes?: Record<string, unknown>;
+  };
+  properties: {
+    name: string;
+    value: string;
+    value_type?: string;
+    unit?: string;
+    property_set?: string;
+  }[];
+  relations: {
+    source_id: string;
+    target_id: string;
+    relation_type: string;
+  }[];
+  rag_prompt: string;
+  summary: {
+    title: string;
+    import_id: string;
+    profile: string;
+    source: string;
+    projection_path: string;
+    properties: number;
+    relations: number;
+  };
+}
+
 export interface ViewerStats {
   elements: number;
   drawable: number;

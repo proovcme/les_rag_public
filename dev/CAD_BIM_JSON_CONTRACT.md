@@ -107,7 +107,7 @@ preferred path is `/api/cad-bim/import`.
 
 ## Viewer API
 
-Lite Admin `CAD/BIM Viewer` reads canonical payloads without importing them:
+Lite Admin `VIZOR` (Visual IFC/JSON Object RAG) reads canonical payloads without importing them:
 
 ```bash
 curl 'http://127.0.0.1:8050/api/cad-bim/source?source_path=RAG_Content/CAD_BIM/JSON/model.json&max_elements=5000'
@@ -120,16 +120,29 @@ from `start/end`, `points_preview`, `center/radius`, `insert` and
 `bbox_min/bbox_max`; if no drawable geometry exists, it falls back to a relation
 graph view.
 
+VIZOR can also ask LES for object-level RAG context by stable source id. For IFC
+this id is the selected element `GlobalId`; for JSON it is the canonical element
+`id` or exported `global_id`:
+
+```bash
+curl 'http://127.0.0.1:8050/api/cad-bim/element?source_id=0J$u4Qbqf7A9h1vBM9EA01'
+```
+
+The response includes the latest matching graph DB element, saved properties,
+nearby relations and a ready `rag_prompt`. Mounted VIZOR uses the same route via
+`/lite-api/cad-bim/element` after viewer selection.
+
 The standalone OBC/WebGL viewer is served from:
 
 ```text
 http://127.0.0.1:8051/les/cad-bim-viewer
 ```
 
-It uses `/lite-api/cad-bim/source` when mounted inside LES, supports
+It uses `/lite-api/cad-bim/source` and `/lite-api/cad-bim/element` when mounted inside LES, supports
 `source_path`, `source`, `highlight` and `focus` query parameters, and renders
 CAD/BIM JSON back into an inspectable scene with models, structure, layers,
-stats, clipping, basic distance measurements and selected element properties.
+stats, clipping, basic distance measurements, selected element properties and
+LES/RAG context cards.
 For RVT JSON it reads lightweight per-element `geometry.mesh` arrays directly
 from source JSON; LES import skips these heavy arrays when writing RAG
 projections. This is a round-trip QA path for exporters: if

@@ -22,6 +22,7 @@ from proxy.services.cad_bim_graph import (
     latest_cad_bim_json_source,
     latest_speckle_source,
     load_source_payload,
+    lookup_element_context,
 )
 
 router = APIRouter(prefix="/api/speckle", tags=["speckle"])
@@ -134,6 +135,22 @@ async def cad_bim_source(
         "element_count": element_count,
         "truncated": truncated,
     }
+
+
+@cad_bim_router.get("/element")
+async def cad_bim_element_context(
+    source_id: Annotated[str, Query(min_length=1, max_length=256)],
+    import_id: Annotated[str | None, Query(max_length=64)] = None,
+    _user=Depends(require_user),
+):
+    context = await __import__("asyncio").to_thread(
+        lookup_element_context,
+        source_id,
+        import_id=import_id,
+    )
+    if context is None:
+        raise HTTPException(404, "CAD/BIM element not found")
+    return context
 
 
 @router.post("/import")
