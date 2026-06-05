@@ -26,9 +26,9 @@ type DefaultModelResponse = {
 
 const isStandaloneViewer = !location.pathname.includes("/les/cad-bim-viewer");
 const standaloneDefaultSource = viewerAssetUrl("models/demo.cad_bim_graph.json");
-const exportersGithubUrl = "https://github.com/proovcme/les_rag_public/tree/codex/les-closeout-20260527/exporters";
+const exportersGithubUrl = "https://github.com/proovcme/les_rag_public/tree/main/exporters";
 
-const BUILDING_IFC_MODELS: IfcModelSource[] = [
+const BUILDINGSMART_DEMO_MODELS: IfcModelSource[] = [
   {
     id: "Building-Hvac",
     label: "Здание ОВ",
@@ -53,6 +53,26 @@ const BUILDING_IFC_MODELS: IfcModelSource[] = [
     url: viewerAssetUrl("ifc-sample/Building-Landscaping.ifc"),
     jsonSourcePath: "JSON/Building-Landscaping.cad_bim_graph.json",
   },
+  {
+    id: "Infra-Bridge",
+    label: "Инфра мост",
+    url: viewerAssetUrl("ifc-sample/Infra-Bridge.ifc"),
+  },
+  {
+    id: "Infra-Plumbing",
+    label: "Инфра сети",
+    url: viewerAssetUrl("ifc-sample/Infra-Plumbing.ifc"),
+  },
+  {
+    id: "Infra-Rail",
+    label: "Инфра рельсы",
+    url: viewerAssetUrl("ifc-sample/Infra-Rail.ifc"),
+  },
+  {
+    id: "Infra-Road",
+    label: "Инфра дорога",
+    url: viewerAssetUrl("ifc-sample/Infra-Road.ifc"),
+  },
 ];
 
 const QUICK_SOURCES: QuickSource[] = [
@@ -62,19 +82,9 @@ const QUICK_SOURCES: QuickSource[] = [
     source: isStandaloneViewer ? standaloneDefaultSource : "",
   },
   {
-    id: "revit-hvac",
-    label: "Revit ОВ",
-    source: "JSON/revit_push_20260605_084304_22e25ada_hvac_mesh.cad_bim_graph.json",
-  },
-  {
-    id: "revit-full",
-    label: "Revit все",
-    source: "JSON/revit_push_20260605_084304_22e25ada.cad_bim_graph.json",
-  },
-  {
-    id: "building-ifc",
-    label: "IFC здание",
-    ifc: "building",
+    id: "demo-ifc",
+    label: "Демо",
+    ifc: "demo",
   },
 ];
 
@@ -1132,9 +1142,9 @@ function buildStructure(elements: CadBimElement[]): Map<string, Map<string, numb
 
 function ifcModelsFromSelection(selection: string): IfcModelSource[] {
   const normalized = selection.trim();
-  if (!normalized || normalized === "building") return BUILDING_IFC_MODELS;
-  if (normalized === "hvac") return [BUILDING_IFC_MODELS[0]];
-  const byId = BUILDING_IFC_MODELS.find((model) => model.id === normalized || `${model.id}.ifc` === normalized);
+  if (!normalized || normalized === "demo" || normalized === "building") return BUILDINGSMART_DEMO_MODELS;
+  if (normalized === "hvac") return BUILDINGSMART_DEMO_MODELS.filter((model) => model.id === "Building-Hvac");
+  const byId = BUILDINGSMART_DEMO_MODELS.find((model) => model.id === normalized || `${model.id}.ifc` === normalized);
   if (byId) return [byId];
   const label = normalized.split("/").pop() || normalized;
   return [{ id: label.replace(/\.ifc$/i, ""), label, url: directIfcUrl(normalized) }];
@@ -1193,14 +1203,13 @@ form.addEventListener("submit", async (event) => {
   await loadGraph(sourceInput.value.trim());
 });
 
-document.getElementById("building-ifc-btn")?.addEventListener("click", () => loadIfcModels(BUILDING_IFC_MODELS));
 document.getElementById("load-default-model")?.addEventListener("click", () => {
   void loadDefaultModel();
 });
 document.getElementById("fit-btn")?.addEventListener("click", () => viewer.fit());
 document.getElementById("reload-btn")?.addEventListener("click", () => {
   if (currentMode === "ifc") {
-    void loadIfcModels(BUILDING_IFC_MODELS);
+    void loadIfcModels(BUILDINGSMART_DEMO_MODELS);
   } else {
     void loadGraph(latestSource);
   }

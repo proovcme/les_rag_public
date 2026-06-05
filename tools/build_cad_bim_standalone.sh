@@ -8,7 +8,7 @@ OUT="$ROOT/standalone/cad_bim_viewer"
 PRESERVE_DIR="$(mktemp -d)"
 trap 'rm -rf "$PRESERVE_DIR"' EXIT
 if [[ -d "$OUT" ]]; then
-  for item in INSTALL_FOR_LOCIA.cmd install_for_locia.ps1 JSON ifc-sample; do
+  for item in INSTALL_FOR_LOCIA.cmd install_for_locia.ps1 JSON ifc-sample favicon.svg; do
     if [[ -e "$OUT/$item" ]]; then
       cp -R "$OUT/$item" "$PRESERVE_DIR/"
     fi
@@ -31,7 +31,8 @@ cat > "$OUT/index.html" <<'HTML'
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>LES CAD/BIM Вьюер</title>
+    <title>VIZOR Standalone</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="assets/index.css" />
   </head>
   <body>
@@ -49,8 +50,11 @@ cp "$VIEWER/standalone/serve.ps1" "$OUT/serve.ps1"
 chmod +x "$OUT/serve.sh"
 cp "$VIEWER/standalone/README.md" "$OUT/README.md"
 cp "$VIEWER/standalone/models/"*.json "$OUT/models/"
+if [[ -f "$VIEWER/standalone/favicon.svg" ]]; then
+  cp "$VIEWER/standalone/favicon.svg" "$OUT/favicon.svg"
+fi
 
-for item in INSTALL_FOR_LOCIA.cmd install_for_locia.ps1 JSON ifc-sample; do
+for item in INSTALL_FOR_LOCIA.cmd install_for_locia.ps1 JSON ifc-sample favicon.svg; do
   if [[ -e "$PRESERVE_DIR/$item" ]]; then
     cp -R "$PRESERVE_DIR/$item" "$OUT/"
   fi

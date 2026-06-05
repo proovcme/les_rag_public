@@ -146,7 +146,7 @@ button {
   border-color: var(--accent-2);
 }
 
-.quickbar button[data-source-id="revit-hvac"] {
+.quickbar button[data-source-id="demo-ifc"] {
   border-color: rgba(250, 204, 21, 0.46);
 }
 
