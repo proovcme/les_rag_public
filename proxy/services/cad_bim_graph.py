@@ -28,6 +28,7 @@ CHILD_KEYS = {
 }
 SKIP_KEYS = {
     "bbox",
+    "geometry",
     "vertices",
     "faces",
     "colors",

@@ -111,3 +111,12 @@
 - Added source QA tests for `/api/cad-bim/source`, Lite Admin viewer route/static assets, and exporter contract/installers. Focused verification: `uv run pytest -q tests/test_sovushka_lite_admin.py tests/test_static_assets.py` -> `6 passed`; `git diff --check` clean.
 - Gemma 4 12B is recorded only as a future benchmark candidate for local multimodal CAD/BIM visual QA and OCR/schema comparison; it does not replace current Qwen/GLM-OCR production RAG.
 - Next session priority: IFC. Target: IFC -> `cad_bim_graph.json` with products/classes/storeys/property sets/materials/bounding boxes and lightweight viewer previews; preserve spatial/system/connectivity relations for RAG source highlighting.
+
+## Live Notes 05.06.2026 CAD/BIM Viewer Standalone
+
+- Revit exporter now writes lightweight per-element display meshes into `geometry.mesh`; inline import persists pushed JSON source files while skipping heavy geometry arrays in RAG/SQLite projections.
+- OBC/WebGL CAD/BIM viewer gained a Russian working UI with model registry, add-file flow, federated model controls, structure tree, layers, selected-object actions, clipping and basic distance measurement.
+- The viewer can run both mounted in LES at `/les/cad-bim-viewer` and as an offline-ready standalone package under `standalone/cad_bim_viewer/`.
+- Standalone package contents are intentionally minimal: `index.html`, bundled `assets/index.js/css`, `fragments/worker.mjs`, browser `web-ifc.wasm`, `serve.sh`, `serve.ps1`, and `models/demo.cad_bim_graph.json`. It does not require `npm install`, LES backend, or internet access on the target machine.
+- Windows offline smoke path: `powershell -ExecutionPolicy Bypass -File .\serve.ps1 -Port 8095`, open `http://127.0.0.1:8095/`, load `models/demo.cad_bim_graph.json`.
+- Verification: standalone browser smoke on `http://127.0.0.1:8095/?source=models/demo.cad_bim_graph.json` loaded `2` demo elements with canvas and no UI errors; focused CAD/BIM pytest remained green.

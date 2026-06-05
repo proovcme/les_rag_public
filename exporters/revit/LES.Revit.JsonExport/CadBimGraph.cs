@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace LES.Revit.JsonExport;
@@ -42,6 +43,25 @@ public sealed class CadBimElement
     public string Material { get; set; } = string.Empty;
 
     public Dictionary<string, object?> Properties { get; set; } = new();
+
+    public CadBimGeometry? Geometry { get; set; }
+}
+
+public sealed class CadBimGeometry
+{
+    public string Type { get; set; } = "mesh";
+
+    public string Units { get; set; } = "revit_internal_ft";
+
+    public double[] Vertices { get; set; } = Array.Empty<double>();
+
+    public int[] Faces { get; set; } = Array.Empty<int>();
+
+    public Dictionary<string, object?> Material { get; set; } = new();
+
+    public Dictionary<string, object?> Stats { get; set; } = new();
+
+    public bool Truncated { get; set; }
 }
 
 public sealed class CadBimRelation

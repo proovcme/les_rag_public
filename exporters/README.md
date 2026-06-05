@@ -32,6 +32,8 @@ with `NETLOAD`. Use the `LES` ribbon tab, or run commands manually:
 - Buttons: `Export JSON`, `Push to LES`
 - Output: `<project>.cad_bim_graph.json`
 - Default source profile for LES import: `revit`
+- Geometry: lightweight per-element `geometry.mesh` display meshes for WebGL
+  viewer QA; LES import skips the heavy arrays when writing RAG projections.
 
 Build on a Windows workstation with Revit installed:
 
@@ -63,6 +65,27 @@ curl -X POST http://127.0.0.1:8050/api/cad-bim/import \
 
 Use `source_type:"revit"` for Revit exports. DXF extraction remains a fallback
 only; Speckle V3 is not part of the critical exporter path.
+
+## Offline Viewer QA
+
+For a workstation with little or no network access, ship the ready folder:
+
+```text
+standalone/cad_bim_viewer/
+```
+
+It contains the WebGL viewer bundle, OBC fragments worker, browser
+`web-ifc.wasm`, Windows PowerShell server, macOS/Linux server script and a demo
+model. No `npm install` or LES backend is required to open exporter JSON:
+
+```powershell
+cd standalone\cad_bim_viewer
+powershell -ExecutionPolicy Bypass -File .\serve.ps1 -Port 8095
+```
+
+Then open `http://127.0.0.1:8095/` and use `Добавить` to load the exported
+`*.cad_bim_graph.json` or IFC file. To smoke-test the install without project
+data, enter `models/demo.cad_bim_graph.json` and press `Загрузить`.
 
 ## Direct Upload
 

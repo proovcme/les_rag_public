@@ -76,6 +76,25 @@ internal static class LesJsonWriter
             writer.Property("layer", element.Layer);
             writer.Property("material", element.Material);
             writer.Property("properties", element.Properties);
+            if (element.Geometry != null)
+            {
+                writer.PropertyName("geometry");
+                WriteGeometry(writer, element.Geometry);
+            }
+        });
+    }
+
+    private static void WriteGeometry(Writer writer, CadBimGeometry geometry)
+    {
+        writer.Object(() =>
+        {
+            writer.Property("type", geometry.Type);
+            writer.Property("units", geometry.Units);
+            writer.Property("vertices", geometry.Vertices);
+            writer.Property("faces", geometry.Faces);
+            writer.Property("material", geometry.Material);
+            writer.Property("stats", geometry.Stats);
+            writer.Property("truncated", geometry.Truncated);
         });
     }
 

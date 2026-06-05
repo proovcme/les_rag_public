@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import os
 import time
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -178,9 +181,14 @@ async def speckle_import(req: SpeckleImportRequest, _admin=Depends(require_admin
 @cad_bim_router.post("/import")
 async def cad_bim_import(req: SpeckleImportRequest, _admin=Depends(require_admin)):
     if req.payload is not None:
+        source_path = await __import__("asyncio").to_thread(
+            _persist_inline_cad_bim_payload,
+            req.payload,
+            profile=req.profile or req.source_type,
+        )
         result = await _import_payload(
             req.payload,
-            source="inline_payload",
+            source=source_path.as_posix(),
             max_objects=req.max_objects,
             profile=req.profile or req.source_type,
             source_kind="json",
@@ -203,6 +211,15 @@ async def cad_bim_import(req: SpeckleImportRequest, _admin=Depends(require_admin
         source_kind="json",
     )
     return {"status": "imported", **result}
+
+
+def _persist_inline_cad_bim_payload(payload: dict[str, Any] | list[Any], *, profile: str | None) -> Path:
+    (CAD_BIM_ROOT / "JSON").mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    safe_profile = "".join(ch if ch.isalnum() else "_" for ch in (profile or "generic").lower()).strip("_") or "generic"
+    path = CAD_BIM_ROOT / "JSON" / f"{safe_profile}_push_{timestamp}_{uuid.uuid4().hex[:8]}.cad_bim_graph.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
 
 
 def _safe_cad_bim_source(raw_path: str) -> Path:

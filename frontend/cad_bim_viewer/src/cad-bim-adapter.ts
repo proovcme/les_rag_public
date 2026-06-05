@@ -124,7 +124,10 @@ function createElementObject(element: CadBimElement, highlighted: boolean): THRE
   const color = elementColor(layer, highlighted);
   const group = new THREE.Group();
 
-  if (point3(props.start) && point3(props.end)) {
+  if (element.geometry?.type === "mesh") {
+    const mesh = createMesh(element, color, highlighted);
+    if (mesh) group.add(mesh);
+  } else if (point3(props.start) && point3(props.end)) {
     group.add(createLine(point3(props.start)!, point3(props.end)!, color, highlighted));
   } else if (Array.isArray(props.points_preview) && props.points_preview.length > 1) {
     const points = props.points_preview.map(point3).filter((point): point is Vec => Boolean(point));
@@ -150,6 +153,51 @@ function createElementObject(element: CadBimElement, highlighted: boolean): THRE
   }
 
   return group.children.length ? group : null;
+}
+
+function createMesh(element: CadBimElement, fallbackColor: THREE.Color, highlighted: boolean): THREE.Mesh | null {
+  const geometry = element.geometry;
+  const vertices = geometry?.vertices;
+  const faces = geometry?.faces;
+  if (!Array.isArray(vertices) || vertices.length < 9 || !Array.isArray(faces) || faces.length < 3) {
+    return null;
+  }
+
+  const positions: number[] = [];
+  const scale = geometryScale(geometry?.units);
+  for (const index of faces) {
+    const offset = Number(index) * 3;
+    if (offset < 0 || offset + 2 >= vertices.length) continue;
+    const point = toWorldScaled([Number(vertices[offset]), Number(vertices[offset + 1]), Number(vertices[offset + 2])], scale);
+    positions.push(point.x, point.y, point.z);
+  }
+  if (positions.length < 9) return null;
+
+  const buffer = new THREE.BufferGeometry();
+  buffer.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  buffer.computeVertexNormals();
+
+  const materialColor = highlighted
+    ? new THREE.Color(0xfacc15)
+    : colorFromString(geometry?.material?.color) || fallbackColor;
+  const opacity = highlighted ? 0.98 : (numberOrNull(geometry?.material?.opacity) ?? 0.86);
+  const material = new THREE.MeshStandardMaterial({
+    color: materialColor,
+    metalness: 0.05,
+    roughness: 0.72,
+    transparent: opacity < 1,
+    opacity,
+    side: THREE.DoubleSide,
+  });
+  const mesh = new THREE.Mesh(buffer, material);
+  if (highlighted) {
+    const edges = new THREE.LineSegments(
+      new THREE.EdgesGeometry(buffer, 22),
+      new THREE.LineBasicMaterial({ color: 0xfacc15, depthTest: false }),
+    );
+    mesh.add(edges);
+  }
+  return mesh;
 }
 
 function createLine(start: Vec, end: Vec, color: THREE.Color, highlighted: boolean): THREE.Mesh {
@@ -252,6 +300,10 @@ function toWorld(point: Vec): THREE.Vector3 {
   return new THREE.Vector3(point[0] * UNIT_SCALE, (point[2] || 0) * UNIT_SCALE, -point[1] * UNIT_SCALE);
 }
 
+function toWorldScaled(point: Vec, scale: number): THREE.Vector3 {
+  return new THREE.Vector3(point[0] * scale, (point[2] || 0) * scale, -point[1] * scale);
+}
+
 function point3(value: unknown): Vec | null {
   if (!Array.isArray(value) || value.length < 2) return null;
   const x = Number(value[0]);
@@ -259,6 +311,26 @@ function point3(value: unknown): Vec | null {
   const z = Number(value[2] || 0);
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null;
   return [x, y, z];
+}
+
+function colorFromString(value: unknown): THREE.Color | null {
+  if (typeof value !== "string" || !/^#[0-9a-f]{6}$/i.test(value.trim())) {
+    return null;
+  }
+  return new THREE.Color(value.trim());
+}
+
+function geometryScale(units: unknown): number {
+  if (units === "revit_internal_ft" || units === "ft" || units === "feet") {
+    return 0.3048;
+  }
+  if (units === "m" || units === "meter" || units === "meters") {
+    return 1;
+  }
+  if (units === "mm" || units === "millimeter" || units === "millimeters") {
+    return 0.001;
+  }
+  return UNIT_SCALE;
 }
 
 function numberOrNull(value: unknown): number | null {

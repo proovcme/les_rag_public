@@ -66,6 +66,33 @@ Large geometry arrays should stay out of the JSON graph by default. Store
 renders, thumbnails or heavy meshes separately under `renders/` and keep only
 references/properties in the graph.
 
+For source highlighting and Speckle-like viewer QA, exporters may attach a
+compact display mesh to an element. This geometry is for the viewer, not for RAG
+projection text:
+
+```json
+{
+  "id": "revit-unique-id",
+  "type": "Duct",
+  "category": "Воздуховоды",
+  "properties": {"IfcGUID": "0d0tDHz$j7se2rce6G0lyf"},
+  "geometry": {
+    "type": "mesh",
+    "units": "revit_internal_ft",
+    "vertices": [0, 0, 0, 1, 0, 0, 0, 1, 0],
+    "faces": [0, 1, 2],
+    "material": {"name": "Galvanized", "color": "#f97316", "opacity": 0.86},
+    "stats": {"triangles": 1, "vertices": 3, "source": "revit_geometry"},
+    "truncated": false
+  }
+}
+```
+
+LES import skips heavy `geometry/vertices/faces` arrays when building SQLite and
+markdown projections. The standalone WebGL viewer reads them directly from the
+source JSON to render real meshes; old `bbox_min/bbox_max` remains the fallback
+preview.
+
 ## Import API
 
 ```bash
@@ -99,12 +126,30 @@ The standalone OBC/WebGL viewer is served from:
 http://127.0.0.1:8051/les/cad-bim-viewer
 ```
 
-It uses `/lite-api/cad-bim/source`, supports `source_path`, `source`,
-`highlight` and `focus` query parameters, and renders CAD/BIM JSON back into an
-inspectable scene with layers, stats and selected element properties. This is a
-round-trip QA path for exporters: if `DWG/RVT/IFC -> cad_bim_graph.json` can be
-drawn back into recognizable geometry, the payload is suitable for object-level
-RAG indexing and source highlighting.
+It uses `/lite-api/cad-bim/source` when mounted inside LES, supports
+`source_path`, `source`, `highlight` and `focus` query parameters, and renders
+CAD/BIM JSON back into an inspectable scene with models, structure, layers,
+stats, clipping, basic distance measurements and selected element properties.
+For RVT JSON it reads lightweight per-element `geometry.mesh` arrays directly
+from source JSON; LES import skips these heavy arrays when writing RAG
+projections. This is a round-trip QA path for exporters: if
+`DWG/RVT/IFC -> cad_bim_graph.json` can be drawn back into recognizable
+geometry, the payload is suitable for object-level RAG indexing and source
+highlighting.
+
+An offline-ready install package is generated under:
+
+```text
+standalone/cad_bim_viewer/
+```
+
+That folder has no `npm` runtime dependency and no LES backend requirement. It
+ships `assets/index.js`, `assets/index.css`, `fragments/worker.mjs`, browser
+`web-ifc.wasm`, `serve.sh`, `serve.ps1` and `models/demo.cad_bim_graph.json`.
+Run `serve.ps1` on a bare Windows workstation or `serve.sh` on macOS/Linux, then
+open `http://127.0.0.1:8095/`. Direct JSON paths like
+`models/demo.cad_bim_graph.json` are loaded without `/lite-api`; IFC files can
+be added through the `Добавить` file picker.
 
 The 04.06.2026 DWG node sample `Узлы установки оросителей розеткой вниз`
 round-tripped as `2534` elements, `2457` drawable objects and `2534` relations
@@ -145,8 +190,9 @@ path:
    `source_type:"revit"`.
 
 The exporter writes stable Revit ids, categories, families/types, levels,
-materials, bounding-box previews and parameter values. It does not post to LES
-unless the `Push to LES` ribbon button is used.
+materials, bounding-box previews, parameter values and optional lightweight
+display meshes under `geometry`. It does not post to LES unless the `Push to
+LES` ribbon button is used.
 
 ## DWG Node Workflow
 

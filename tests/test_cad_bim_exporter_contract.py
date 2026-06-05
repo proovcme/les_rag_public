@@ -37,3 +37,5 @@ def test_revit_export_payload_imports_parameters_and_levels(tmp_path, monkeypatc
     assert "CAD/BIM JSON projection (revit)" in text
     assert "Level 01" in text
     assert "EI 60" in text
+    assert "vertices" not in text
+    assert "faces" not in text

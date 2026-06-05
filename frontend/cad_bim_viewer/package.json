@@ -6,13 +6,17 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc && vite build",
+    "build:standalone": "../../tools/build_cad_bim_standalone.sh",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
     "@thatopen/components": "~3.2.0",
     "@thatopen/components-front": "~3.2.0",
+    "@thatopen/fragments": "~3.2.0",
     "@thatopen/ui": "~3.2.0",
-    "three": "0.175.0"
+    "@thatopen/ui-obc": "~3.2.0",
+    "three": "0.175.0",
+    "web-ifc": "0.0.72"
   },
   "devDependencies": {
     "@types/three": "0.175.0",

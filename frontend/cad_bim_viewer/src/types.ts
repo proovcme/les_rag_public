@@ -22,6 +22,21 @@ export interface CadBimElement {
   layer?: string;
   material?: string;
   properties?: Record<string, unknown>;
+  geometry?: CadBimGeometry;
+}
+
+export interface CadBimGeometry {
+  type?: string;
+  units?: string;
+  vertices?: number[];
+  faces?: number[];
+  material?: {
+    color?: string;
+    opacity?: number;
+    name?: string;
+  };
+  stats?: Record<string, unknown>;
+  truncated?: boolean;
 }
 
 export interface CadBimGraph {
@@ -49,4 +64,36 @@ export interface ViewerStats {
   relations: number;
   layers: Map<string, number>;
   types: Map<string, number>;
+}
+
+export type ViewerModelKind = "json" | "ifc";
+
+export interface ViewerModelRecord {
+  id: string;
+  label: string;
+  kind: ViewerModelKind;
+  source?: string;
+  visible: boolean;
+  elements: number;
+  drawable: number;
+  relations: number;
+}
+
+export interface IfcModelSource {
+  id: string;
+  label: string;
+  url: string;
+  jsonSourcePath?: string;
+}
+
+export interface IfcSelection {
+  modelId: string;
+  localId: number;
+  globalId: string;
+  rows: [string, unknown][];
+}
+
+export interface IfcRenderResult {
+  models: IfcModelSource[];
+  loaded: number;
 }

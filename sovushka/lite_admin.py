@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import mimetypes
 import os
 import subprocess
 from dataclasses import asdict
@@ -1480,11 +1481,29 @@ def lite_admin_html() -> str:
 def register_lite_admin_routes() -> None:
     from nicegui import app
 
+    mimetypes.add_type("application/wasm", ".wasm")
+    mimetypes.add_type("text/javascript", ".mjs")
     viewer_dist = _repo_root() / "frontend" / "cad_bim_viewer" / "dist"
+    ifc_sample_dir = _repo_root() / "ifc_sample"
     app.mount(
         "/les/cad-bim-viewer/assets",
         StaticFiles(directory=viewer_dist / "assets", check_dir=False),
         name="les_cad_bim_viewer_assets",
+    )
+    app.mount(
+        "/les/cad-bim-viewer/web-ifc",
+        StaticFiles(directory=viewer_dist / "web-ifc", check_dir=False),
+        name="les_cad_bim_viewer_web_ifc",
+    )
+    app.mount(
+        "/les/cad-bim-viewer/fragments",
+        StaticFiles(directory=viewer_dist / "fragments", check_dir=False),
+        name="les_cad_bim_viewer_fragments",
+    )
+    app.mount(
+        "/les/cad-bim-viewer/ifc-sample",
+        StaticFiles(directory=ifc_sample_dir, check_dir=False),
+        name="les_cad_bim_viewer_ifc_sample",
     )
 
     @app.get("/les")

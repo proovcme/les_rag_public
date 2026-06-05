@@ -630,7 +630,23 @@ CAD/BIM bridge теперь работает как JSON-first контур дл
 3. `IMPORT JSON GRAPH` в Lite Admin или `/api/cad-bim/import` нормализует объекты в SQLite `data/cad_bim_graph.db`, связи `contains/related`, свойства/параметры в `cad_bim_properties` и markdown projection `RAG_Content/CAD_BIM/exports/cad_bim_json_<id>.md`.
 4. `SYNC CAD/BIM` в Lite Admin регистрирует projection в `CAD_BIM_Index`; тяжелый parse/embedding запускается отдельно через обычный guarded scheduler.
 
-`IMPORT JSON GRAPH` в Lite Admin поддерживает профиль источника `AUTO`, `AutoCAD/DWG`, `Revit/RVT`, `IFC`, `Excel/Power BI` или `Generic`; профиль влияет на текстовую проекцию и сохранение layer/category/family/level/material/table properties. В Lite Admin также есть `CAD/BIM Viewer`: `VIEW JSON` дает быстрый inline 2D preview, а `OPEN OBC VIEWER` открывает standalone OBC/WebGL viewer на `/les/cad-bim-viewer`. Viewer читает latest или указанный `cad_bim_graph.json` через `/api/cad-bim/source`/`/lite-api/cad-bim/source`, рисует line/polyline/arc/text/bbox geometry, показывает слои, счетчики и выбранный объект; для metadata-only payloads inline preview переключается в graph view по relations. Контракт JSON описан в `dev/CAD_BIM_JSON_CONTRACT.md`. Legacy `/api/speckle/import` сохранен для Speckle object graph, но предпочтительный endpoint теперь `/api/cad-bim/import`.
+`IMPORT JSON GRAPH` в Lite Admin поддерживает профиль источника `AUTO`, `AutoCAD/DWG`, `Revit/RVT`, `IFC`, `Excel/Power BI` или `Generic`; профиль влияет на текстовую проекцию и сохранение layer/category/family/level/material/table properties. В Lite Admin также есть `CAD/BIM Viewer`: `VIEW JSON` дает быстрый inline 2D preview, а `OPEN OBC VIEWER` открывает OBC/WebGL viewer на `/les/cad-bim-viewer`. Viewer читает latest или указанный `cad_bim_graph.json` через `/api/cad-bim/source`/`/lite-api/cad-bim/source`, рисует line/polyline/arc/text/bbox/Revit mesh geometry, показывает русскоязычный UI, модели, структуру, слои, сечения, замеры и выбранный объект; для metadata-only payloads inline preview переключается в graph view по relations. Контракт JSON описан в `dev/CAD_BIM_JSON_CONTRACT.md`. Legacy `/api/speckle/import` сохранен для Speckle object graph, но предпочтительный endpoint теперь `/api/cad-bim/import`.
+
+Отдельный offline-ready пакет лежит в `standalone/cad_bim_viewer/`. Он не требует LES backend, `npm install` или сети: в папке уже есть bundled JS/CSS, `fragments/worker.mjs`, один браузерный `web-ifc.wasm`, demo JSON и launch scripts. На Windows почти с нуля:
+
+```powershell
+cd standalone\cad_bim_viewer
+powershell -ExecutionPolicy Bypass -File .\serve.ps1 -Port 8095
+```
+
+На macOS/Linux:
+
+```bash
+cd standalone/cad_bim_viewer
+./serve.sh 8095
+```
+
+Открыть `http://127.0.0.1:8095/`, для проверки загрузить `models/demo.cad_bim_graph.json`. Для обновления пакета из исходников: пересобрать `frontend/cad_bim_viewer/dist`, затем выполнить `tools/build_cad_bim_standalone.sh`.
 
 Основной DWG-путь: собрать `exporters/autocad/LES.AutoCAD.JsonExport`, установить bundle и использовать ribbon tab `LES` в AutoCAD. Кнопка/команда `LESJSONEXPORT` сохраняет JSON, `LESJSONPUSH` отправляет JSON прямо в LES. Основной RVT-путь: собрать `exporters/revit/LES.Revit.JsonExport`, установить `.addin` manifest и использовать ribbon tab `LES` в Revit: `Export JSON` сохраняет файл, `Push to LES` отправляет модель напрямую. Direct upload сначала пробует Mac по ZeroTier `http://10.195.146.98:8050`, затем public tunnel `https://les.ovc.me`; при отказе сохраняет fallback JSON в Documents.
 

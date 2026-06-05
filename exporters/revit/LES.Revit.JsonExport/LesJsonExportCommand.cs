@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -14,6 +15,9 @@ namespace LES.Revit.JsonExport;
 [Regeneration(RegenerationOption.Manual)]
 public sealed class LesJsonExportCommand : IExternalCommand
 {
+    private const int MaxMeshTrianglesPerElement = 1200;
+    private const int MaxMeshVerticesPerElement = 3600;
+
     public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
     {
         var document = commandData.Application.ActiveUIDocument?.Document;
@@ -69,6 +73,9 @@ public sealed class LesJsonExportCommand : IExternalCommand
                 ["revit_title"] = document.Title,
                 ["project_number"] = document.ProjectInformation?.Number ?? string.Empty,
                 ["project_name"] = document.ProjectInformation?.Name ?? string.Empty,
+                ["geometry_format"] = "mesh",
+                ["geometry_units"] = "revit_internal_ft",
+                ["geometry_max_triangles_per_element"] = MaxMeshTrianglesPerElement,
             },
         };
 
@@ -94,6 +101,7 @@ public sealed class LesJsonExportCommand : IExternalCommand
         }
 
         graph.Properties["element_count"] = graph.Elements.Count;
+        graph.Properties["geometry_element_count"] = graph.Elements.Count(e => e.Geometry != null);
         graph.Properties["categories"] = graph.Elements.Select(e => e.Category).Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().OrderBy(v => v).ToArray();
         return graph;
     }
@@ -119,6 +127,7 @@ public sealed class LesJsonExportCommand : IExternalCommand
         var elementType = document.GetElement(element.GetTypeId()) as ElementType;
         var family = FamilyName(element, elementType);
         var properties = ElementProperties(document, element, elementType);
+        var geometry = ElementGeometry(document, element);
         var graphElement = new CadBimElement
         {
             Id = !string.IsNullOrWhiteSpace(element.UniqueId) ? element.UniqueId : element.Id.IntegerValue.ToString(),
@@ -129,8 +138,178 @@ public sealed class LesJsonExportCommand : IExternalCommand
             Level = LevelName(document, element),
             Material = MaterialNames(document, element),
             Properties = properties,
+            Geometry = geometry,
         };
         return graphElement;
+    }
+
+    private static CadBimGeometry? ElementGeometry(Document document, Element element)
+    {
+        if (element.Category?.CategoryType != CategoryType.Model)
+        {
+            return null;
+        }
+
+        try
+        {
+            var options = new Options
+            {
+                ComputeReferences = false,
+                DetailLevel = ViewDetailLevel.Medium,
+                IncludeNonVisibleObjects = false,
+            };
+            var geometryElement = element.get_Geometry(options);
+            if (geometryElement == null)
+            {
+                return null;
+            }
+
+            var builder = new MeshBuilder(MaxMeshTrianglesPerElement, MaxMeshVerticesPerElement);
+            AddGeometryElement(document, geometryElement, Transform.Identity, builder);
+            if (builder.TriangleCount == 0)
+            {
+                return null;
+            }
+
+            return new CadBimGeometry
+            {
+                Type = "mesh",
+                Units = "revit_internal_ft",
+                Vertices = builder.Vertices.ToArray(),
+                Faces = builder.Faces.ToArray(),
+                Material = MeshMaterial(document, element),
+                Stats = new Dictionary<string, object?>
+                {
+                    ["triangles"] = builder.TriangleCount,
+                    ["vertices"] = builder.VertexCount,
+                    ["source"] = "revit_geometry",
+                },
+                Truncated = builder.Truncated,
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void AddGeometryElement(Document document, GeometryElement geometryElement, Transform transform, MeshBuilder builder)
+    {
+        foreach (var child in geometryElement)
+        {
+            if (child is GeometryObject childObject)
+            {
+                AddGeometryObject(document, childObject, transform, builder);
+            }
+        }
+    }
+
+    private static void AddGeometryObject(Document document, GeometryObject geometryObject, Transform transform, MeshBuilder builder)
+    {
+        if (builder.IsFull)
+        {
+            return;
+        }
+
+        switch (geometryObject)
+        {
+            case GeometryInstance instance:
+                var instanceTransform = transform.Multiply(instance.Transform);
+                AddGeometryElement(document, instance.GetSymbolGeometry(), instanceTransform, builder);
+                break;
+            case Solid solid:
+                if (solid.Volume <= 0 || solid.Faces.Size == 0)
+                {
+                    return;
+                }
+
+                foreach (Face face in solid.Faces)
+                {
+                    AddMesh(face.Triangulate(), transform, builder);
+                    if (builder.IsFull)
+                    {
+                        return;
+                    }
+                }
+                break;
+            case Mesh mesh:
+                AddMesh(mesh, transform, builder);
+                break;
+        }
+    }
+
+    private static void AddMesh(Mesh mesh, Transform transform, MeshBuilder builder)
+    {
+        for (var index = 0; index < mesh.NumTriangles; index++)
+        {
+            if (builder.IsFull)
+            {
+                builder.Truncated = true;
+                return;
+            }
+
+            var triangle = mesh.get_Triangle(index);
+            var a = transform.OfPoint(triangle.get_Vertex(0));
+            var b = transform.OfPoint(triangle.get_Vertex(1));
+            var c = transform.OfPoint(triangle.get_Vertex(2));
+            builder.AddTriangle(a, b, c);
+        }
+    }
+
+    private static Dictionary<string, object?> MeshMaterial(Document document, Element element)
+    {
+        var materialName = MaterialNames(document, element);
+        var material = FirstMaterial(document, element);
+        var color = material?.Color;
+        return new Dictionary<string, object?>
+        {
+            ["name"] = materialName,
+            ["color"] = color == null ? CategoryColor(element.Category?.Name ?? element.GetType().Name) : ColorHex(color),
+            ["opacity"] = 0.86,
+        };
+    }
+
+    private static Material? FirstMaterial(Document document, Element element)
+    {
+        try
+        {
+            return element.GetMaterialIds(false)
+                .Select(id => document.GetElement(id))
+                .OfType<Material>()
+                .FirstOrDefault();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string ColorHex(Autodesk.Revit.DB.Color color)
+    {
+        return $"#{color.Red:X2}{color.Green:X2}{color.Blue:X2}";
+    }
+
+    private static string CategoryColor(string category)
+    {
+        var hash = 0;
+        foreach (var ch in category)
+        {
+            hash = unchecked(hash * 31 + ch);
+        }
+
+        var palette = new[]
+        {
+            "#38bdf8",
+            "#22c55e",
+            "#f59e0b",
+            "#ef4444",
+            "#a78bfa",
+            "#14b8a6",
+            "#f97316",
+            "#e879f9",
+            "#84cc16",
+        };
+        return palette[Math.Abs(hash % palette.Length)];
     }
 
     private static Dictionary<string, object?> ElementProperties(Document document, Element element, ElementType? elementType)
@@ -269,6 +448,69 @@ public sealed class LesJsonExportCommand : IExternalCommand
     private static double[] Point(XYZ point)
     {
         return new[] { Math.Round(point.X, 6), Math.Round(point.Y, 6), Math.Round(point.Z, 6) };
+    }
+
+    private sealed class MeshBuilder
+    {
+        private readonly int _maxTriangles;
+        private readonly int _maxVertices;
+        private readonly Dictionary<string, int> _vertexIndex = new();
+
+        public MeshBuilder(int maxTriangles, int maxVertices)
+        {
+            _maxTriangles = maxTriangles;
+            _maxVertices = maxVertices;
+        }
+
+        public List<double> Vertices { get; } = new();
+
+        public List<int> Faces { get; } = new();
+
+        public int TriangleCount => Faces.Count / 3;
+
+        public int VertexCount => Vertices.Count / 3;
+
+        public bool Truncated { get; set; }
+
+        public bool IsFull => TriangleCount >= _maxTriangles || VertexCount >= _maxVertices;
+
+        public void AddTriangle(XYZ a, XYZ b, XYZ c)
+        {
+            if (IsFull)
+            {
+                Truncated = true;
+                return;
+            }
+
+            Faces.Add(AddVertex(a));
+            Faces.Add(AddVertex(b));
+            Faces.Add(AddVertex(c));
+        }
+
+        private int AddVertex(XYZ point)
+        {
+            var x = Math.Round(point.X, 6);
+            var y = Math.Round(point.Y, 6);
+            var z = Math.Round(point.Z, 6);
+            var key = $"{x.ToString(CultureInfo.InvariantCulture)},{y.ToString(CultureInfo.InvariantCulture)},{z.ToString(CultureInfo.InvariantCulture)}";
+            if (_vertexIndex.TryGetValue(key, out var existing))
+            {
+                return existing;
+            }
+
+            if (VertexCount >= _maxVertices)
+            {
+                Truncated = true;
+                return Math.Max(0, VertexCount - 1);
+            }
+
+            var index = VertexCount;
+            _vertexIndex[key] = index;
+            Vertices.Add(x);
+            Vertices.Add(y);
+            Vertices.Add(z);
+            return index;
+        }
     }
 
     internal static string SafeStem(string? value, string fallback)

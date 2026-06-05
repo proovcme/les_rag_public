@@ -26,6 +26,15 @@
           "Fire Rating": {"value": "EI 60", "group": "Identity Data"},
           "Length": {"value": 8.2, "displayValue": "8.20 m", "unit": "meters"}
         }
+      },
+      "geometry": {
+        "type": "mesh",
+        "units": "revit_internal_ft",
+        "vertices": [0, 0, 0, 1, 0, 0, 0, 1, 0],
+        "faces": [0, 1, 2],
+        "material": {"name": "Concrete", "color": "#94a3b8", "opacity": 0.9},
+        "stats": {"triangles": 1, "vertices": 3, "source": "fixture"},
+        "truncated": false
       }
     }
   ],
