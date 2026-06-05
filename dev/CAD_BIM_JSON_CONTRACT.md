@@ -173,9 +173,10 @@ annotation metadata and compact geometry previews. It intentionally avoids heavy
 meshes and full geometric reconstruction.
 
 Installed AutoCAD bundles create a ribbon tab `LES` with buttons for local
-export and direct push. `LESJSONPUSH` tries the Mac ZeroTier endpoint first
-(`http://10.195.146.98:8050`) and `https://les.ovc.me` second, then saves a
-fallback JSON file if upload fails.
+export and direct push. `LESJSONPUSH` reads the shared destination config at
+`%APPDATA%\LES\cad_bim_exporter_settings.json`: `les_urls` are treated as LES
+base URLs, `custom_urls` can be exact POST endpoints or arbitrary import
+addresses, and `local_output_dir` controls offline fallback saves.
 
 ## Revit Exporter Workflow
 
@@ -192,7 +193,47 @@ path:
 The exporter writes stable Revit ids, categories, families/types, levels,
 materials, bounding-box previews, parameter values and optional lightweight
 display meshes under `geometry`. It does not post to LES unless the `Push to
-LES` ribbon button is used.
+LES` ribbon button is used. The Revit `Config` button creates/opens the same
+shared destination config as AutoCAD.
+
+## Navisworks Exporter Workflow
+
+Use the Navisworks add-in in `exporters/navisworks/LES.Navisworks.JsonExport`
+when coordination models (`.nwd`/`.nwf`) are the source of truth:
+
+1. Build the plugin on a Windows workstation with Navisworks Manage installed.
+2. Install through `LES.CadBimExporterInstaller.exe` or copy the DLL to:
+   `%APPDATA%\Autodesk Navisworks Manage <year>\Plugins\LES.Navisworks.JsonExport\`.
+3. Run the `LES JSON Export`, `LES JSON Push` or `LES JSON Config` Add-Ins
+   plugin.
+4. Import the resulting JSON with `source_type:"navisworks"`.
+
+The initial Navisworks exporter is metadata-first: it traverses the model tree,
+uses item instance GUIDs where available, writes property category values and
+adds bounding-box preview geometry. Full mesh extraction is a later Windows
+smoke-test item and should preserve the same `cad_bim_graph.json` shape.
+
+## Universal Exporter Destinations
+
+All Autodesk-side plugins share one config:
+
+```json
+{
+  "les_urls": ["http://10.195.146.98:8050", "https://les.ovc.me"],
+  "custom_urls": ["http://127.0.0.1:8050/api/cad-bim/import"],
+  "local_output_dir": "%USERPROFILE%\\Documents\\LES CAD BIM",
+  "api_key": "",
+  "timeout_sec": 60
+}
+```
+
+Destination rules:
+
+- `les_urls`: base LES addresses; exporters POST to `<base>/api/cad-bim/import`.
+- `custom_urls`: exact addresses stay exact; empty-path base URLs get
+  `/api/cad-bim/import` appended.
+- `local_output_dir`: fallback folder and intentional offline drop folder.
+- `api_key`: sent as `X-API-Key` when public LES requires admin auth.
 
 ## DWG Node Workflow
 

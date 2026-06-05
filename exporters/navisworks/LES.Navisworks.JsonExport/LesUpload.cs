@@ -6,7 +6,7 @@ using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace LES.Revit.JsonExport;
+namespace LES.Navisworks.JsonExport;
 
 internal sealed class LesUploadSettings
 {

@@ -14,5 +14,6 @@
   <ItemGroup>
     <EmbeddedResource Include="$(ExporterPayloadDir)/LES.AutoCAD.JsonExport.dll" Condition="Exists('$(ExporterPayloadDir)/LES.AutoCAD.JsonExport.dll')" LogicalName="payload.LES.AutoCAD.JsonExport.dll" />
     <EmbeddedResource Include="$(ExporterPayloadDir)/LES.Revit.JsonExport.dll" Condition="Exists('$(ExporterPayloadDir)/LES.Revit.JsonExport.dll')" LogicalName="payload.LES.Revit.JsonExport.dll" />
+    <EmbeddedResource Include="$(ExporterPayloadDir)/LES.Navisworks.JsonExport.dll" Condition="Exists('$(ExporterPayloadDir)/LES.Navisworks.JsonExport.dll')" LogicalName="payload.LES.Navisworks.JsonExport.dll" />
   </ItemGroup>
 </Project>

@@ -1,8 +1,10 @@
 param(
   [string]$AutoCADInstallDir = "C:\Program Files\Autodesk\AutoCAD 2025",
   [string]$RevitInstallDir = "C:\Program Files\Autodesk\Revit 2025",
+  [string]$NavisworksInstallDir = "C:\Program Files\Autodesk\Navisworks Manage 2025",
   [string]$AutoCADYear = "2025",
   [string]$RevitYear = "2025",
+  [string]$NavisworksYear = "2025",
   [string]$Configuration = "Release"
 )
 
@@ -25,8 +27,14 @@ dotnet build (Join-Path $ExportersRoot "revit\LES.Revit.JsonExport\LES.Revit.Jso
   -p:RevitInstallDir="$RevitInstallDir"
 if ($LASTEXITCODE -ne 0) { throw "Revit exporter build failed with exit code $LASTEXITCODE" }
 
+dotnet build (Join-Path $ExportersRoot "navisworks\LES.Navisworks.JsonExport\LES.Navisworks.JsonExport.csproj") `
+  -c $Configuration `
+  -p:NavisworksInstallDir="$NavisworksInstallDir"
+if ($LASTEXITCODE -ne 0) { throw "Navisworks exporter build failed with exit code $LASTEXITCODE" }
+
 Copy-Item (Join-Path $ExportersRoot "autocad\LES.AutoCAD.JsonExport\bin\$Configuration\net48\LES.AutoCAD.JsonExport.dll") $Payload -Force
 Copy-Item (Join-Path $ExportersRoot "revit\LES.Revit.JsonExport\bin\$Configuration\net48\LES.Revit.JsonExport.dll") $Payload -Force
+Copy-Item (Join-Path $ExportersRoot "navisworks\LES.Navisworks.JsonExport\bin\$Configuration\net48\LES.Navisworks.JsonExport.dll") $Payload -Force
 
 dotnet publish (Join-Path $ExportersRoot "installer\LES.CadBimExporterInstaller\LES.CadBimExporterInstaller.csproj") `
   -c $Configuration `
@@ -39,13 +47,14 @@ if ($LASTEXITCODE -ne 0) { throw "Installer publish failed with exit code $LASTE
 
 Copy-Item (Join-Path $Payload "LES.AutoCAD.JsonExport.dll") $Out -Force
 Copy-Item (Join-Path $Payload "LES.Revit.JsonExport.dll") $Out -Force
+Copy-Item (Join-Path $Payload "LES.Navisworks.JsonExport.dll") $Out -Force
 
 $Readme = @"
 LES CAD/BIM Exporters
 =====================
 
 Run:
-  .\LES.CadBimExporterInstaller.exe --autocad-year $AutoCADYear --revit-year $RevitYear
+  .\LES.CadBimExporterInstaller.exe --autocad-year $AutoCADYear --revit-year $RevitYear --navisworks-year $NavisworksYear
 
 The installer embeds the exporter DLL payload. DLL copies are also included
 next to the installer for manual loading/debugging.
@@ -54,7 +63,11 @@ After install:
   AutoCAD ribbon tab: LES
   AutoCAD commands: LESJSONEXPORT, LESJSONPUSH, LESJSONCONFIG
   Revit ribbon tab: LES
-  Revit buttons: Export JSON, Push to LES
+  Revit buttons: Export JSON, Push to LES, Config
+  Navisworks Add-Ins: LES JSON Export
+
+Shared destinations config:
+  %APPDATA%\LES\cad_bim_exporter_settings.json
 "@
 $Readme | Set-Content -Path (Join-Path $Out "README.txt") -Encoding UTF8
 

@@ -29,11 +29,27 @@ internal static class LesJsonWriter
         return writer.ToString();
     }
 
+    public static string Serialize(LesUploadSettings settings)
+    {
+        var writer = new Writer();
+        writer.Object(() =>
+        {
+            writer.Property("les_urls", settings.LesUrls);
+            writer.Property("custom_urls", settings.CustomUrls);
+            writer.Property("local_output_dir", settings.LocalOutputDir);
+            writer.Property("api_key", settings.ApiKey);
+            writer.Property("timeout_sec", settings.TimeoutSec);
+        });
+        return writer.ToString();
+    }
+
     public static LesUploadSettings DeserializeSettings(string json)
     {
         var settings = new LesUploadSettings
         {
             LesUrls = ExtractStringArray(json, "les_urls"),
+            CustomUrls = ExtractStringArray(json, "custom_urls"),
+            LocalOutputDir = ExtractString(json, "local_output_dir") ?? string.Empty,
             ApiKey = ExtractString(json, "api_key") ?? string.Empty,
             TimeoutSec = ExtractInt(json, "timeout_sec") ?? 60,
         };

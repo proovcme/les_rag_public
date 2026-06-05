@@ -49,6 +49,19 @@ public sealed class LesJsonApplication : IExternalApplication
                 LargeImage = LesRibbonIcons.PushToLes(),
             };
             panel.AddItem(pushButton);
+
+            var configButton = new PushButtonData(
+                "LES_JSON_CONFIG",
+                "Config",
+                assemblyPath,
+                typeof(LesJsonConfigCommand).FullName
+            )
+            {
+                ToolTip = "Open LES exporter destination config.",
+                Image = LesRibbonIcons.PushToLes(),
+                LargeImage = LesRibbonIcons.PushToLes(),
+            };
+            panel.AddItem(configButton);
             return Result.Succeeded;
         }
         catch

@@ -8,6 +8,7 @@ internal static class Program
 {
     private const string AutoCadDll = "LES.AutoCAD.JsonExport.dll";
     private const string RevitDll = "LES.Revit.JsonExport.dll";
+    private const string NavisworksDll = "LES.Navisworks.JsonExport.dll";
 
     private static int Main(string[] args)
     {
@@ -18,9 +19,11 @@ internal static class Program
             var payloadDir = options.PayloadDir ?? AppContext.BaseDirectory;
             InstallAutoCad(payloadDir, options.AutoCadYear);
             InstallRevit(payloadDir, options.RevitYear);
+            InstallNavisworks(payloadDir, options.NavisworksYear);
             Console.WriteLine("LES CAD/BIM exporters installed.");
             Console.WriteLine("AutoCAD: restart AutoCAD and use ribbon tab LES, or run LESJSONEXPORT / LESJSONPUSH.");
             Console.WriteLine("Revit: restart Revit and use ribbon tab LES.");
+            Console.WriteLine("Navisworks: restart Navisworks and use the Add-Ins plugin LES JSON Export.");
             return 0;
         }
         catch (Exception error)
@@ -33,7 +36,7 @@ internal static class Program
 
             Console.Error.WriteLine();
             Console.Error.WriteLine("Usage:");
-            Console.Error.WriteLine("  LES.CadBimExporterInstaller.exe [--payload-dir <dir>] [--autocad-year 2025] [--revit-year 2025] [--pause]");
+            Console.Error.WriteLine("  LES.CadBimExporterInstaller.exe [--payload-dir <dir>] [--autocad-year 2025] [--revit-year 2025] [--navisworks-year 2025] [--pause]");
             return 1;
         }
         finally
@@ -85,6 +88,20 @@ internal static class Program
         File.Copy(sourceDll, targetDll, overwrite: true);
         File.WriteAllText(Path.Combine(addinsDir, "LES.Revit.JsonExport.addin"), RevitAddin(targetDll), Encoding.UTF8);
         Console.WriteLine("Revit exporter installed: " + addinsDir);
+    }
+
+    private static void InstallNavisworks(string payloadDir, string year)
+    {
+        var sourceDll = ResolvePayloadFile(payloadDir, NavisworksDll);
+        var pluginDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "Autodesk Navisworks Manage " + year,
+            "Plugins",
+            "LES.Navisworks.JsonExport"
+        );
+        Directory.CreateDirectory(pluginDir);
+        File.Copy(sourceDll, Path.Combine(pluginDir, NavisworksDll), overwrite: true);
+        Console.WriteLine("Navisworks exporter installed: " + pluginDir);
     }
 
     private static string ResolvePayloadFile(string payloadDir, string fileName)
@@ -186,6 +203,16 @@ internal static class Program
     <Text>LES JSON Push</Text>
     <Description>Export active Revit model and upload it to LES.</Description>
   </AddIn>
+  <AddIn Type="Command">
+    <Name>LES JSON Config</Name>
+    <Assembly>{targetDll}</Assembly>
+    <AddInId>6C4EA062-DDF6-49DB-9714-A4F018B2EFB3</AddInId>
+    <FullClassName>LES.Revit.JsonExport.LesJsonConfigCommand</FullClassName>
+    <VendorId>LES</VendorId>
+    <VendorDescription>LES CAD/BIM JSON exporter</VendorDescription>
+    <Text>LES JSON Config</Text>
+    <Description>Open LES CAD/BIM exporter destination config.</Description>
+  </AddIn>
 </RevitAddIns>
 """;
     }
@@ -205,12 +232,13 @@ internal static class Program
     }
 }
 
-internal sealed record InstallOptions(string AutoCadYear, string RevitYear, string? PayloadDir)
+internal sealed record InstallOptions(string AutoCadYear, string RevitYear, string NavisworksYear, string? PayloadDir)
 {
     public static InstallOptions Parse(string[] args)
     {
         string? autocadYear = null;
         string? revitYear = null;
+        string? navisworksYear = null;
         string? payloadDir = null;
         for (var i = 0; i < args.Length; i++)
         {
@@ -221,6 +249,9 @@ internal sealed record InstallOptions(string AutoCadYear, string RevitYear, stri
                     break;
                 case "--revit-year":
                     revitYear = RequireValue(args, ref i, "--revit-year");
+                    break;
+                case "--navisworks-year":
+                    navisworksYear = RequireValue(args, ref i, "--navisworks-year");
                     break;
                 case "--payload-dir":
                     payloadDir = RequireValue(args, ref i, "--payload-dir");
@@ -238,8 +269,9 @@ internal sealed record InstallOptions(string AutoCadYear, string RevitYear, stri
 
         autocadYear ??= DetectAutoCadYear() ?? "2025";
         revitYear ??= DetectRevitYear() ?? "2025";
+        navisworksYear ??= DetectNavisworksYear() ?? "2025";
 
-        return new InstallOptions(autocadYear, revitYear, payloadDir);
+        return new InstallOptions(autocadYear, revitYear, navisworksYear, payloadDir);
     }
 
     private static string RequireValue(string[] args, ref int index, string name)
@@ -287,6 +319,29 @@ internal sealed record InstallOptions(string AutoCadYear, string RevitYear, stri
     private static string? DetectRevitYear()
     {
         using var root = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Autodesk\Revit");
+        if (root is null)
+        {
+            return null;
+        }
+
+        var years = new List<int>();
+        foreach (var keyName in root.GetSubKeyNames())
+        {
+            foreach (var token in keyName.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (int.TryParse(token, out var parsed) && parsed >= 2020 && parsed <= 2035)
+                {
+                    years.Add(parsed);
+                }
+            }
+        }
+
+        return years.Count == 0 ? null : years.Max().ToString();
+    }
+
+    private static string? DetectNavisworksYear()
+    {
+        using var root = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Autodesk\Navisworks");
         if (root is null)
         {
             return null;

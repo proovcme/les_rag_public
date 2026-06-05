@@ -45,7 +45,9 @@ public sealed class LesJsonPushCommand : IExternalCommand
 
     private static string FallbackOutputPath(Document document)
     {
-        var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        var settings = LesUploadSettings.Load();
+        var documents = settings.ResolveLocalOutputDir();
+        Directory.CreateDirectory(documents);
         var stem = LesJsonExportCommand.SafeStem(document.Title, "revit_model");
         return Path.Combine(documents, $"{stem}.cad_bim_graph.json");
     }

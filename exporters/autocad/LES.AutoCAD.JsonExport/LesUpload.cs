@@ -18,6 +18,10 @@ internal sealed class LesUploadSettings
 
     public List<string> LesUrls { get; set; } = DefaultUrls();
 
+    public List<string> CustomUrls { get; set; } = new();
+
+    public string LocalOutputDir { get; set; } = string.Empty;
+
     public string ApiKey { get; set; } = string.Empty;
 
     public int TimeoutSec { get; set; } = 60;
@@ -34,7 +38,7 @@ internal sealed class LesUploadSettings
             if (File.Exists(ConfigPath))
             {
                 var settings = LesJsonWriter.DeserializeSettings(File.ReadAllText(ConfigPath, Encoding.UTF8));
-                if (settings.LesUrls.Count > 0)
+                if (settings.HasAnyDestination())
                 {
                     return settings;
                 }
@@ -46,6 +50,20 @@ internal sealed class LesUploadSettings
         }
 
         return new LesUploadSettings();
+    }
+
+    public bool HasAnyDestination()
+    {
+        return LesUrls.Any(url => !string.IsNullOrWhiteSpace(url))
+            || CustomUrls.Any(url => !string.IsNullOrWhiteSpace(url))
+            || !string.IsNullOrWhiteSpace(LocalOutputDir);
+    }
+
+    public string ResolveLocalOutputDir()
+    {
+        return string.IsNullOrWhiteSpace(LocalOutputDir)
+            ? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
+            : Environment.ExpandEnvironmentVariables(LocalOutputDir);
     }
 
     public void Save()
@@ -76,9 +94,8 @@ internal static class LesUploader
     public static async Task<LesUploadResult> UploadAsync(CadBimGraph graph, string sourceType, LesUploadSettings settings)
     {
         var errors = new List<string>();
-        foreach (var baseUrl in settings.LesUrls.Where(url => !string.IsNullOrWhiteSpace(url)))
+        foreach (var endpoint in Endpoints(settings))
         {
-            var endpoint = baseUrl.TrimEnd('/') + "/api/cad-bim/import";
             try
             {
                 var response = await PostAsync(endpoint, graph, sourceType, settings).ConfigureAwait(false);
@@ -91,6 +108,32 @@ internal static class LesUploader
         }
 
         return new LesUploadResult(false, string.Empty, string.Empty, string.Join("; ", errors));
+    }
+
+    private static IEnumerable<string> Endpoints(LesUploadSettings settings)
+    {
+        foreach (var baseUrl in settings.LesUrls.Where(url => !string.IsNullOrWhiteSpace(url)))
+        {
+            yield return baseUrl.TrimEnd('/') + "/api/cad-bim/import";
+        }
+
+        foreach (var url in settings.CustomUrls.Where(url => !string.IsNullOrWhiteSpace(url)))
+        {
+            yield return EndpointFromCustomUrl(url);
+        }
+    }
+
+    private static string EndpointFromCustomUrl(string value)
+    {
+        var text = value.Trim();
+        if (!Uri.TryCreate(text, UriKind.Absolute, out var uri))
+        {
+            return text;
+        }
+
+        return string.IsNullOrWhiteSpace(uri.AbsolutePath) || uri.AbsolutePath == "/"
+            ? text.TrimEnd('/') + "/api/cad-bim/import"
+            : text;
     }
 
     private static async Task<string> PostAsync(string endpoint, CadBimGraph graph, string sourceType, LesUploadSettings settings)

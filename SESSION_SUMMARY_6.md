@@ -120,3 +120,21 @@
 - Standalone package contents are intentionally minimal: `index.html`, bundled `assets/index.js/css`, `fragments/worker.mjs`, browser `web-ifc.wasm`, `serve.sh`, `serve.ps1`, and `models/demo.cad_bim_graph.json`. It does not require `npm install`, LES backend, or internet access on the target machine.
 - Windows offline smoke path: `powershell -ExecutionPolicy Bypass -File .\serve.ps1 -Port 8095`, open `http://127.0.0.1:8095/`, load `models/demo.cad_bim_graph.json`.
 - Verification: standalone browser smoke on `http://127.0.0.1:8095/?source=models/demo.cad_bim_graph.json` loaded `2` demo elements with canvas and no UI errors; focused CAD/BIM pytest remained green.
+
+## Live Notes 05.06.2026 Universal Autodesk Destinations
+
+- AutoCAD/Revit exporters now share a universal destination config:
+  `%APPDATA%\LES\cad_bim_exporter_settings.json`.
+- Config fields: `les_urls` for LES base addresses, `custom_urls` for exact or
+  base POST addresses, `local_output_dir` for offline/fallback JSON drops,
+  `api_key` for public LES admin auth and `timeout_sec`.
+- AutoCAD `LESJSONCONFIG` edits LES URLs, custom URLs and local folder from the
+  command line. Revit gained a `Config` ribbon button that creates/opens the
+  same JSON config.
+- Added first Navisworks exporter project
+  `exporters/navisworks/LES.Navisworks.JsonExport`: metadata-first tree
+  traversal, item properties, instance GUIDs where available and bbox preview
+  geometry into canonical `cad_bim_graph.json`.
+- Windows installer/build flow now includes AutoCAD, Revit and Navisworks DLLs;
+  Navisworks installs under
+  `%APPDATA%\Autodesk Navisworks Manage <year>\Plugins\LES.Navisworks.JsonExport\`.

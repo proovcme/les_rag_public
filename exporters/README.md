@@ -1,7 +1,9 @@
 # LES CAD/BIM JSON Exporters
 
 This folder contains Autodesk-side exporters that write LES canonical
-`cad_bim_graph.json` payloads directly from source models.
+`cad_bim_graph.json` payloads directly from source models. The exporters share
+one destination config, so the same plugin can save locally, push to local LES,
+push to public LES or POST to a custom address.
 
 ## AutoCAD
 
@@ -22,14 +24,14 @@ Install the bundle with the installer EXE or load the compiled DLL in AutoCAD
 with `NETLOAD`. Use the `LES` ribbon tab, or run commands manually:
 
 - `LESJSONEXPORT`: save JSON locally.
-- `LESJSONPUSH`: export and POST to LES.
-- `LESJSONCONFIG`: set upload URLs.
+- `LESJSONPUSH`: export and POST to configured destinations.
+- `LESJSONCONFIG`: set LES URLs, custom POST URLs and local fallback folder.
 
 ## Revit
 
 - Project: `revit/LES.Revit.JsonExport`
 - Ribbon tab: `LES`
-- Buttons: `Export JSON`, `Push to LES`
+- Buttons: `Export JSON`, `Push to LES`, `Config`
 - Output: `<project>.cad_bim_graph.json`
 - Default source profile for LES import: `revit`
 - Geometry: lightweight per-element `geometry.mesh` display meshes for WebGL
@@ -50,7 +52,27 @@ folder, then place the manifest in:
 %APPDATA%\Autodesk\Revit\Addins\2025\
 ```
 
-The addin creates a Revit ribbon tab named `LES`.
+The addin creates a Revit ribbon tab named `LES`. `Config` creates/opens the
+shared destination JSON file.
+
+## Navisworks
+
+- Project: `navisworks/LES.Navisworks.JsonExport`
+- Add-Ins plugins: `LES JSON Export`, `LES JSON Push`, `LES JSON Config`
+- Output: `<model>.cad_bim_graph.json`
+- Default source profile for LES import: `navisworks`
+
+Build on a Windows workstation with Navisworks Manage installed:
+
+```powershell
+cd exporters\navisworks\LES.Navisworks.JsonExport
+dotnet build -c Release -p:NavisworksInstallDir="C:\Program Files\Autodesk\Navisworks Manage 2025"
+```
+
+The first Navisworks exporter is metadata-first: it traverses the model tree,
+copies item properties, stable instance GUIDs where available and bounding-box
+preview geometry. Full triangulated geometry extraction is intentionally left
+for a Windows/Navisworks smoke pass.
 
 ## LES Import
 
@@ -63,8 +85,9 @@ curl -X POST http://127.0.0.1:8050/api/cad-bim/import \
   -d '{"source_path":"RAG_Content/CAD_BIM/JSON/model.cad_bim_graph.json","source_type":"autocad"}'
 ```
 
-Use `source_type:"revit"` for Revit exports. DXF extraction remains a fallback
-only; Speckle V3 is not part of the critical exporter path.
+Use `source_type:"revit"` or `source_type:"navisworks"` for those exporters.
+DXF extraction remains a fallback only; Speckle V3 is not part of the critical
+exporter path.
 
 ## Offline Viewer QA
 
@@ -89,16 +112,19 @@ data, enter `models/demo.cad_bim_graph.json` and press `Загрузить`.
 
 ## Direct Upload
 
-`LESJSONPUSH` and Revit `Push to LES` try these URLs by default:
+`LESJSONPUSH`, Revit `Push to LES` and Navisworks `push` try these LES base URLs
+by default:
 
 ```text
 http://10.195.146.98:8050
 https://les.ovc.me
 ```
 
-The first URL is the Mac over ZeroTier; the second is the public tunnel. If both
-uploads fail, the exporter saves a fallback JSON file under the user's Documents
-folder. Optional settings live here:
+The first URL is the Mac over ZeroTier; the second is the public tunnel. Custom
+addresses can be exact POST endpoints or base URLs; base URLs receive
+`/api/cad-bim/import` automatically. If uploads fail, the exporter saves a
+fallback JSON file under `local_output_dir` or the user's Documents folder.
+Optional settings live here:
 
 ```text
 %APPDATA%\LES\cad_bim_exporter_settings.json
@@ -108,6 +134,18 @@ Public `https://les.ovc.me` uploads need an admin API key in that settings file;
 trusted ZeroTier can work without a key when LES trusted-network auth accepts
 the Legion subnet.
 
+Example:
+
+```json
+{
+  "les_urls": ["http://10.195.146.98:8050", "https://les.ovc.me"],
+  "custom_urls": ["http://127.0.0.1:8050/api/cad-bim/import"],
+  "local_output_dir": "%USERPROFILE%\\Documents\\LES CAD BIM",
+  "api_key": "",
+  "timeout_sec": 60
+}
+```
+
 ## Installer EXE
 
 Build the DLL payload and a Windows installer EXE from a Windows workstation:
@@ -116,7 +154,8 @@ Build the DLL payload and a Windows installer EXE from a Windows workstation:
 cd exporters
 .\build-exporters-windows.ps1 `
   -AutoCADInstallDir "C:\Program Files\Autodesk\AutoCAD 2025" `
-  -RevitInstallDir "C:\Program Files\Autodesk\Revit 2025"
+  -RevitInstallDir "C:\Program Files\Autodesk\Revit 2025" `
+  -NavisworksInstallDir "C:\Program Files\Autodesk\Navisworks Manage 2025"
 ```
 
 The output folder is:
@@ -130,9 +169,10 @@ Ship these files together:
 - `LES.CadBimExporterInstaller.exe`
 - `LES.AutoCAD.JsonExport.dll`
 - `LES.Revit.JsonExport.dll`
+- `LES.Navisworks.JsonExport.dll`
 
 Then run:
 
 ```powershell
-.\LES.CadBimExporterInstaller.exe --autocad-year 2025 --revit-year 2025
+.\LES.CadBimExporterInstaller.exe --autocad-year 2025 --revit-year 2025 --navisworks-year 2025
 ```

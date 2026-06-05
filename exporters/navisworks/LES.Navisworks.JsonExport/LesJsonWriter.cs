@@ -5,7 +5,7 @@ using System.Globalization;
 using System.Linq;
 using System.Text;
 
-namespace LES.AutoCAD.JsonExport;
+namespace LES.Navisworks.JsonExport;
 
 internal static class LesJsonWriter
 {
@@ -45,12 +45,14 @@ internal static class LesJsonWriter
 
     public static LesUploadSettings DeserializeSettings(string json)
     {
-        var settings = new LesUploadSettings();
-        settings.LesUrls = ExtractStringArray(json, "les_urls");
-        settings.CustomUrls = ExtractStringArray(json, "custom_urls");
-        settings.LocalOutputDir = ExtractString(json, "local_output_dir") ?? string.Empty;
-        settings.ApiKey = ExtractString(json, "api_key") ?? string.Empty;
-        settings.TimeoutSec = ExtractInt(json, "timeout_sec") ?? 60;
+        var settings = new LesUploadSettings
+        {
+            LesUrls = ExtractStringArray(json, "les_urls"),
+            CustomUrls = ExtractStringArray(json, "custom_urls"),
+            LocalOutputDir = ExtractString(json, "local_output_dir") ?? string.Empty,
+            ApiKey = ExtractString(json, "api_key") ?? string.Empty,
+            TimeoutSec = ExtractInt(json, "timeout_sec") ?? 60,
+        };
         if (settings.LesUrls.Count == 0)
         {
             settings.LesUrls = LesUploadSettings.DefaultUrls();
@@ -90,6 +92,25 @@ internal static class LesJsonWriter
             writer.Property("layer", element.Layer);
             writer.Property("material", element.Material);
             writer.Property("properties", element.Properties);
+            if (element.Geometry != null)
+            {
+                writer.PropertyName("geometry");
+                WriteGeometry(writer, element.Geometry);
+            }
+        });
+    }
+
+    private static void WriteGeometry(Writer writer, CadBimGeometry geometry)
+    {
+        writer.Object(() =>
+        {
+            writer.Property("type", geometry.Type);
+            writer.Property("units", geometry.Units);
+            writer.Property("vertices", geometry.Vertices);
+            writer.Property("faces", geometry.Faces);
+            writer.Property("material", geometry.Material);
+            writer.Property("stats", geometry.Stats);
+            writer.Property("truncated", geometry.Truncated);
         });
     }
 
@@ -107,48 +128,23 @@ internal static class LesJsonWriter
     {
         var marker = "\"" + name + "\"";
         var pos = json.IndexOf(marker, StringComparison.Ordinal);
-        if (pos < 0)
-        {
-            return null;
-        }
-
+        if (pos < 0) return null;
         pos = json.IndexOf(':', pos);
-        if (pos < 0)
-        {
-            return null;
-        }
-
+        if (pos < 0) return null;
         pos = SkipWhitespace(json, pos + 1);
-        if (pos >= json.Length || json[pos] != '"')
-        {
-            return null;
-        }
-
-        return ReadString(json, pos, out _);
+        return pos < json.Length && json[pos] == '"' ? ReadString(json, pos, out _) : null;
     }
 
     private static int? ExtractInt(string json, string name)
     {
         var marker = "\"" + name + "\"";
         var pos = json.IndexOf(marker, StringComparison.Ordinal);
-        if (pos < 0)
-        {
-            return null;
-        }
-
+        if (pos < 0) return null;
         pos = json.IndexOf(':', pos);
-        if (pos < 0)
-        {
-            return null;
-        }
-
+        if (pos < 0) return null;
         pos = SkipWhitespace(json, pos + 1);
         var end = pos;
-        while (end < json.Length && char.IsDigit(json[end]))
-        {
-            end++;
-        }
-
+        while (end < json.Length && char.IsDigit(json[end])) end++;
         return int.TryParse(json.Substring(pos, end - pos), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)
             ? value
             : null;
@@ -159,40 +155,18 @@ internal static class LesJsonWriter
         var values = new List<string>();
         var marker = "\"" + name + "\"";
         var pos = json.IndexOf(marker, StringComparison.Ordinal);
-        if (pos < 0)
-        {
-            return values;
-        }
-
+        if (pos < 0) return values;
         pos = json.IndexOf('[', pos);
-        if (pos < 0)
-        {
-            return values;
-        }
-
+        if (pos < 0) return values;
         pos++;
         while (pos < json.Length)
         {
             pos = SkipWhitespace(json, pos);
-            if (pos >= json.Length || json[pos] == ']')
-            {
-                break;
-            }
-
-            if (json[pos] == '"')
-            {
-                values.Add(ReadString(json, pos, out pos));
-            }
-            else
-            {
-                pos++;
-            }
-
+            if (pos >= json.Length || json[pos] == ']') break;
+            if (json[pos] == '"') values.Add(ReadString(json, pos, out pos));
+            else pos++;
             pos = SkipWhitespace(json, pos);
-            if (pos < json.Length && json[pos] == ',')
-            {
-                pos++;
-            }
+            if (pos < json.Length && json[pos] == ',') pos++;
         }
 
         return values;
@@ -200,11 +174,7 @@ internal static class LesJsonWriter
 
     private static int SkipWhitespace(string text, int pos)
     {
-        while (pos < text.Length && char.IsWhiteSpace(text[pos]))
-        {
-            pos++;
-        }
-
+        while (pos < text.Length && char.IsWhiteSpace(text[pos])) pos++;
         return pos;
     }
 
@@ -251,10 +221,7 @@ internal static class LesJsonWriter
         private readonly Stack<bool> _first = new();
         private int _indent;
 
-        public override string ToString()
-        {
-            return _builder.ToString();
-        }
+        public override string ToString() => _builder.ToString();
 
         public void Object(Action body)
         {
@@ -298,7 +265,7 @@ internal static class LesJsonWriter
             _builder.Append(": ");
         }
 
-        public void Value(object? value)
+        private void Value(object? value)
         {
             switch (value)
             {
@@ -315,15 +282,6 @@ internal static class LesJsonWriter
                     _builder.Append(Convert.ToString(value, CultureInfo.InvariantCulture));
                     break;
                 case IDictionary<string, object?> dictionary:
-                    Object(() =>
-                    {
-                        foreach (var pair in dictionary.OrderBy(item => item.Key, StringComparer.Ordinal))
-                        {
-                            Property(pair.Key, pair.Value);
-                        }
-                    });
-                    break;
-                case IDictionary<string, string> dictionary:
                     Object(() =>
                     {
                         foreach (var pair in dictionary.OrderBy(item => item.Key, StringComparer.Ordinal))
@@ -356,11 +314,7 @@ internal static class LesJsonWriter
         private void BeforeValue()
         {
             var isFirst = _first.Pop();
-            if (!isFirst)
-            {
-                _builder.Append(',');
-            }
-
+            if (!isFirst) _builder.Append(',');
             _first.Push(false);
             NewLine();
         }

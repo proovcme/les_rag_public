@@ -623,7 +623,7 @@ MAIL_VLM_URL=
 MAIL_VLM_MODEL=
 ```
 
-CAD/BIM bridge теперь работает как JSON-first контур для уже извлеченных BIM/CAD объектных графов и табличных данных. LES хранит Speckle endpoint/token в `.env` только как optional source, показывает статус через `/api/speckle/status` и допускает `.json`, `.jsonl`, `.dwg`, `.dxf`, `.rvt`, `.ifc`, `.ifczip` на upload boundary, но сам не конвертирует raw DWG/RVT. Внешние exporter-проекты лежат в `exporters/`: AutoCAD command `LESJSONEXPORT` и Revit addin `LES JSON Export` сразу пишут canonical `cad_bim_graph.json`. Минимальный pipeline:
+CAD/BIM bridge теперь работает как JSON-first контур для уже извлеченных BIM/CAD объектных графов и табличных данных. LES хранит Speckle endpoint/token в `.env` только как optional source, показывает статус через `/api/speckle/status` и допускает `.json`, `.jsonl`, `.dwg`, `.dxf`, `.rvt`, `.ifc`, `.ifczip` на upload boundary, но сам не конвертирует raw DWG/RVT. Внешние exporter-проекты лежат в `exporters/`: AutoCAD, Revit и Navisworks plugins пишут canonical `cad_bim_graph.json` и используют общий destination config для LES/local/custom address. Минимальный pipeline:
 
 1. AutoCAD/Revit/IFC/Speckle/Excel exporter приводит данные к `cad_bim_graph.json` или `.jsonl`.
 2. JSON складывается в `RAG_Content/CAD_BIM/JSON/`; профильные исходники могут лежать рядом в `IFC/`, `DWG/`, `RVT/` или `Speckle/`.
@@ -648,7 +648,21 @@ cd standalone/cad_bim_viewer
 
 Открыть `http://127.0.0.1:8095/`, для проверки загрузить `models/demo.cad_bim_graph.json`. Для обновления пакета из исходников: пересобрать `frontend/cad_bim_viewer/dist`, затем выполнить `tools/build_cad_bim_standalone.sh`.
 
-Основной DWG-путь: собрать `exporters/autocad/LES.AutoCAD.JsonExport`, установить bundle и использовать ribbon tab `LES` в AutoCAD. Кнопка/команда `LESJSONEXPORT` сохраняет JSON, `LESJSONPUSH` отправляет JSON прямо в LES. Основной RVT-путь: собрать `exporters/revit/LES.Revit.JsonExport`, установить `.addin` manifest и использовать ribbon tab `LES` в Revit: `Export JSON` сохраняет файл, `Push to LES` отправляет модель напрямую. Direct upload сначала пробует Mac по ZeroTier `http://10.195.146.98:8050`, затем public tunnel `https://les.ovc.me`; при отказе сохраняет fallback JSON в Documents.
+Основной DWG-путь: собрать `exporters/autocad/LES.AutoCAD.JsonExport`, установить bundle и использовать ribbon tab `LES` в AutoCAD. Кнопка/команда `LESJSONEXPORT` сохраняет JSON, `LESJSONPUSH` отправляет JSON в настроенные назначения, `LESJSONCONFIG` правит общий конфиг. Основной RVT-путь: собрать `exporters/revit/LES.Revit.JsonExport`, установить `.addin` manifest и использовать ribbon tab `LES` в Revit: `Export JSON` сохраняет файл, `Push to LES` отправляет модель напрямую, `Config` открывает общий конфиг. Navisworks-путь: `exporters/navisworks/LES.Navisworks.JsonExport` ставится в `%APPDATA%\Autodesk Navisworks Manage <year>\Plugins\LES.Navisworks.JsonExport\` и экспортирует дерево модели/properties/GUID/bbox в тот же JSON. Direct upload сначала пробует Mac по ZeroTier `http://10.195.146.98:8050`, затем public tunnel `https://les.ovc.me`, затем `custom_urls`; при отказе сохраняет fallback JSON в `local_output_dir` или Documents.
+
+Общий конфиг Autodesk exporters:
+
+```json
+{
+  "les_urls": ["http://10.195.146.98:8050", "https://les.ovc.me"],
+  "custom_urls": ["http://127.0.0.1:8050/api/cad-bim/import"],
+  "local_output_dir": "%USERPROFILE%\\Documents\\LES CAD BIM",
+  "api_key": "",
+  "timeout_sec": 60
+}
+```
+
+Путь на Windows: `%APPDATA%\LES\cad_bim_exporter_settings.json`. `les_urls` можно задавать как base URL, `/api/cad-bim/import` добавится автоматически; `custom_urls` могут быть exact webhook/import endpoint.
 
 DXF fallback остаётся временным: открыть DWG в AutoCAD, сделать `DXFOUT`/Save As DXF, положить `.dxf` в `RAG_Content/CAD_BIM/DWG/` и выполнить `uv run python tools/cad_bim_extract_dxf.py RAG_Content/CAD_BIM/DWG/<file>.dxf --import-to-les`. Скрипт пишет canonical JSON в `RAG_Content/CAD_BIM/JSON/` и импортирует его в `/api/cad-bim/import`; после этого `SYNC CAD/BIM` регистрирует projection в `CAD_BIM_Index`.
 

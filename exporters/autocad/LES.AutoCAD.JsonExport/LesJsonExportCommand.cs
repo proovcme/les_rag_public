@@ -97,27 +97,40 @@ public sealed class LesJsonExportCommand
         var settings = LesUploadSettings.Load();
         var editor = document.Editor;
         editor.WriteMessage($"\nCurrent LES URLs: {string.Join(",", settings.LesUrls)}");
-        var prompt = new PromptStringOptions("\nLES URLs, comma-separated")
-        {
-            AllowSpaces = true,
-        };
-        var urls = editor.GetString(prompt);
-        if (urls.Status != PromptStatus.OK)
+        if (!PromptUrls(editor, "\nLES base URLs, comma-separated", settings.LesUrls, out var lesUrls))
         {
             editor.WriteMessage("\nLESJSONCONFIG cancelled.");
             return;
         }
 
-        settings.LesUrls = urls.StringResult.Split(',')
-            .Select(item => item.Trim())
-            .Where(item => item.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || item.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        settings.LesUrls = lesUrls;
         if (settings.LesUrls.Count == 0)
         {
             settings.LesUrls = LesUploadSettings.DefaultUrls();
         }
 
+        editor.WriteMessage($"\nCurrent custom POST URLs: {string.Join(",", settings.CustomUrls)}");
+        if (!PromptUrls(editor, "\nCustom POST URLs or bases, comma-separated", settings.CustomUrls, out var customUrls))
+        {
+            editor.WriteMessage("\nLESJSONCONFIG cancelled.");
+            return;
+        }
+
+        settings.CustomUrls = customUrls;
+
+        editor.WriteMessage($"\nCurrent local output dir: {settings.ResolveLocalOutputDir()}");
+        var localPrompt = new PromptStringOptions("\nLocal output dir, blank for Documents")
+        {
+            AllowSpaces = true,
+        };
+        var local = editor.GetString(localPrompt);
+        if (local.Status != PromptStatus.OK)
+        {
+            editor.WriteMessage("\nLESJSONCONFIG cancelled.");
+            return;
+        }
+
+        settings.LocalOutputDir = local.StringResult.Trim();
         settings.Save();
         editor.WriteMessage($"\nLES exporter config saved: {LesUploadSettings.ConfigPath}");
     }
@@ -345,8 +358,33 @@ public sealed class LesJsonExportCommand
 
     private static string FallbackOutputPath(Database database)
     {
-        var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        var settings = LesUploadSettings.Load();
+        var documents = settings.ResolveLocalOutputDir();
+        Directory.CreateDirectory(documents);
         var stem = SafeStem(database.Filename, "autocad_model");
         return Path.Combine(documents, $"{stem}.cad_bim_graph.json");
+    }
+
+    private static bool PromptUrls(Editor editor, string message, IReadOnlyCollection<string> current, out List<string> values)
+    {
+        var prompt = new PromptStringOptions(message)
+        {
+            AllowSpaces = true,
+            DefaultValue = string.Join(",", current),
+            UseDefaultValue = current.Count > 0,
+        };
+        var result = editor.GetString(prompt);
+        if (result.Status != PromptStatus.OK)
+        {
+            values = new List<string>();
+            return false;
+        }
+
+        values = result.StringResult.Split(',')
+            .Select(item => item.Trim())
+            .Where(item => item.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || item.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return true;
     }
 }
