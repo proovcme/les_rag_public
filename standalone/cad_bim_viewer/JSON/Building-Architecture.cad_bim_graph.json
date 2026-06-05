@@ -1,0 +1,1056 @@
+{
+  "id": "ifc:Building-Architecture",
+  "type": "IFCModel",
+  "name": "Building-Architecture",
+  "source_format": "ifc",
+  "source_path": "ifc-sample/Building-Architecture.ifc",
+  "extracted_at": "2026-06-05T07:52:32.633407+00:00",
+  "properties": {
+    "schema": "IFC4",
+    "source_file": "Building-Architecture.ifc",
+    "product_count": 23,
+    "step_record_count": 444
+  },
+  "elements": [
+    {
+      "id": "2Ndyd$OSX7s9A04nc4lyye",
+      "type": "IFCPROJECT",
+      "name": "ifc silly sample scene - project",
+      "category": "Project",
+      "family": "",
+      "material": "",
+      "properties": {
+        "global_id": "2Ndyd$OSX7s9A04nc4lyye",
+        "ifc_ref": "#13",
+        "ifc_class": "IFCPROJECT",
+        "Description": "Demystifying IFC with a playful scene using diverse building elements and compositions."
+      },
+      "source_path": "Building-Architecture.ifc"
+    },
+    {
+      "id": "23sFQGRy90RxVbRHD9iSE2",
+      "type": "IFCSITE",
+      "name": "environment - site",
+      "category": "Site",
+      "family": "",
+      "material": "",
+      "properties": {
+        "global_id": "23sFQGRy90RxVbRHD9iSE2",
+        "ifc_ref": "#20",
+        "ifc_class": "IFCSITE",
+        "Description": "A sample scene environment, showcasing the surrounding landscape."
+      },
+      "source_path": "Building-Architecture.ifc"
+    },
+    {
+      "id": "1Pbuu0tu59NfhrTsztVBK1",
+      "type": "IFCSITE",
+      "name": "house - site",
+      "category": "Site",
+      "family": "",
+      "material": "",
+      "properties": {
+        "global_id": "1Pbuu0tu59NfhrTsztVBK1",
+        "ifc_ref": "#23",
+        "ifc_class": "IFCSITE",
+        "Description": "Smoke curls from a friendly chimney, promising warmth within this idyllic hilltop house."
+      },
+      "source_path": "Building-Architecture.ifc"
+    },
+    {
+      "id": "0c$N1CTon2BB2Sp89385G8",
+      "type": "IFCBUILDING",
+      "name": "Single-family house",
+      "category": "Building",
+      "family": "",
+      "material": "",
+      "properties": {
+        "global_id": "0c$N1CTon2BB2Sp89385G8",
+        "ifc_ref": "#30",
+        "ifc_class": "IFCBUILDING",
+        "Description": "The main building structure, providing shelter and space.",
+        "Tag": "house - building"
+      },
+      "source_path": "Building-Architecture.ifc",
+      "propertySets": {
+        "Pset_BuildingCommon": {
+          "ConstructionMethod": {
+            "value": "new construction",
+            "value_type": "label"
+          }
+        }
+      }
+    },
+    {
+      "id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "type": "IFCBUILDINGSTOREY",
+      "name": "00 groundfloor",
+      "category": "Buildingstorey",
+      "family": "",
+      "material": "",
+      "properties": {
+        "global_id": "1Ano2ZUxnEIvVQ_beukl8b",
+        "ifc_ref": "#43",
+        "ifc_class": "IFCBUILDINGSTOREY",
+        "Description": "The ground floor, forming the base level of the building."
+      },
+      "source_path": "Building-Architecture.ifc"
+    },
+    {
+      "id": "3zR0BOEcLADRKln4HYporH",
+      "type": "IFCSLAB",
+      "name": "floor",
+      "category": "Slab",
+      "family": "house - groundfloor",
+      "material": "concrete_reinforced_in-situ",
+      "properties": {
+        "global_id": "3zR0BOEcLADRKln4HYporH",
+        "ifc_ref": "#52",
+        "ifc_class": "IFCSLAB",
+        "Description": "A solid, site-cast concrete floor, providing a strong foundation.",
+        "ObjectType": "slab on grade",
+        "Tag": "454425.1027891.979946.932083.920025",
+        "Type": "house - groundfloor",
+        "Material": "concrete_reinforced_in-situ"
+      },
+      "source_path": "Building-Architecture.ifc",
+      "propertySets": {
+        "Pset_SlabCommon": {
+          "IsExternal": {
+            "value": true,
+            "value_type": "boolean"
+          },
+          "LoadBearing": {
+            "value": false,
+            "value_type": "boolean"
+          },
+          "FireRating": {
+            "value": "REI30",
+            "value_type": "label"
+          },
+          "AcousticRating": {
+            "value": "29dB Rw",
+            "value_type": "label"
+          }
+        },
+        "Qto_SlabBaseQuantities": {}
+      }
+    },
+    {
+      "id": "0xY$LvXaDEswJDk_VU74C_",
+      "type": "IFCSPACE",
+      "name": "living room",
+      "category": "Space",
+      "family": "house - living room",
+      "material": "",
+      "properties": {
+        "global_id": "0xY$LvXaDEswJDk_VU74C_",
+        "ifc_ref": "#89",
+        "ifc_class": "IFCSPACE",
+        "Description": "A cozy space, perfect for relaxation and family gatherings.",
+        "ObjectType": "living area",
+        "Tag": "living room",
+        "Type": "house - living room"
+      },
+      "source_path": "Building-Architecture.ifc",
+      "propertySets": {
+        "Pset_SpaceCommon": {
+          "IsExternal": {
+            "value": false,
+            "value_type": "boolean"
+          },
+          "GrossPlannedArea": {
+            "value": 18.5,
+            "value_type": "areameasure"
+          },
+          "NetPlannedArea": {
+            "value": 18.5,
+            "value_type": "areameasure"
+          },
+          "PubliclyAccessible": {
+            "value": false,
+            "value_type": "boolean"
+          },
+          "HandicapAccessible": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "id": "2e9pghUJbBqR4jTInsONQT",
+      "type": "IFCFURNITURE",
+      "name": "kitchen",
+      "category": "Furniture",
+      "family": "house - kitchen",
+      "material": "wood_mdf_plate",
+      "properties": {
+        "global_id": "2e9pghUJbBqR4jTInsONQT",
+        "ifc_ref": "#176",
+        "ifc_class": "IFCFURNITURE",
+        "Description": "The heart of the home, where meals are prepared and shared.",
+        "ObjectType": "kitchen",
+        "Tag": "454425.1027891.979946.932083.920029.919427.2003222",
+        "Type": "house - kitchen",
+        "Material": "wood_mdf_plate"
+      },
+      "source_path": "Building-Architecture.ifc"
+    },
+    {
+      "id": "1wADrO19H3w980h1wUyXLk",
+      "type": "IFCBUILDINGELEMENTPROXY",
+      "name": "Group#18",
+      "category": "Buildingelementproxy",
+      "family": "",
+      "material": "Default",
+      "properties": {
+        "global_id": "1wADrO19H3w980h1wUyXLk",
+        "ifc_ref": "#193",
+        "ifc_class": "IFCBUILDINGELEMENTPROXY",
+        "Tag": "454425.1027891.979946.932083.920029.919427.2037909",
+        "Material": "Default"
+      },
+      "source_path": "Building-Architecture.ifc"
+    },
+    {
+      "id": "18QhMtUIXBvQktPHXXxs7H",
+      "type": "IFCSPACE",
+      "name": "entry hall",
+      "category": "Space",
+      "family": "house - entry hall",
+      "material": "",
+      "properties": {
+        "global_id": "18QhMtUIXBvQktPHXXxs7H",
+        "ifc_ref": "#203",
+        "ifc_class": "IFCSPACE",
+        "Description": "A welcoming entry hall, the first impression of the home.",
+        "ObjectType": "hallway",
+        "Tag": "entry hall",
+        "Type": "house - entry hall"
+      },
+      "source_path": "Building-Architecture.ifc",
+      "propertySets": {
+        "Pset_SpaceCommon": {
+          "IsExternal": {
+            "value": false,
+            "value_type": "boolean"
+          },
+          "GrossPlannedArea": {
+            "value": 6.08,
+            "value_type": "areameasure"
+          },
+          "NetPlannedArea": {
+            "value": 6.08,
+            "value_type": "areameasure"
+          },
+          "PubliclyAccessible": {
+            "value": false,
+            "value_type": "boolean"
+          },
+          "HandicapAccessible": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "id": "1AQAupaRP1txwK1AGiN61V",
+      "type": "IFCWALL",
+      "name": "house - outer wall - house right front",
+      "category": "Wall",
+      "family": "house - outer wall - house right front",
+      "material": "stone_sand-lime",
+      "properties": {
+        "global_id": "1AQAupaRP1txwK1AGiN61V",
+        "ifc_ref": "#262",
+        "ifc_class": "IFCWALL",
+        "Description": "A solid outer wall, forming the right front side of the house.",
+        "ObjectType": "solidwall",
+        "Tag": "454425.1027891.979946.932083.920023",
+        "Type": "house - outer wall - house right front",
+        "Material": "stone_sand-lime"
+      },
+      "source_path": "Building-Architecture.ifc",
+      "propertySets": {
+        "Pset_WallCommon": {
+          "IsExternal": {
+            "value": true,
+            "value_type": "boolean"
+          },
+          "LoadBearing": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        "Qto_WallBaseQuantities": {}
+      }
+    },
+    {
+      "id": "3wdauVJT5Fx9drrREiDqA$",
+      "type": "IFCWALL",
+      "name": "house - outer wall - house right back",
+      "category": "Wall",
+      "family": "house - outer wall - house right back",
+      "material": "stone_sand-lime",
+      "properties": {
+        "global_id": "3wdauVJT5Fx9drrREiDqA$",
+        "ifc_ref": "#291",
+        "ifc_class": "IFCWALL",
+        "Description": "A solid outer wall, forming the right back side of the house.",
+        "ObjectType": "solidwall",
+        "Tag": "454425.1027891.979946.932083.920031",
+        "Type": "house - outer wall - house right back",
+        "Material": "stone_sand-lime"
+      },
+      "source_path": "Building-Architecture.ifc",
+      "propertySets": {
+        "Pset_WallCommon": {
+          "IsExternal": {
+            "value": true,
+            "value_type": "boolean"
+          },
+          "LoadBearing": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        "Qto_WallBaseQuantities": {}
+      }
+    },
+    {
+      "id": "0OfZwWc8j9QP5uX8xPTxDH",
+      "type": "IFCWALL",
+      "name": "house - outer wall - house left",
+      "category": "Wall",
+      "family": "house - outer wall - house left",
+      "material": "stone_sand-lime",
+      "properties": {
+        "global_id": "0OfZwWc8j9QP5uX8xPTxDH",
+        "ifc_ref": "#315",
+        "ifc_class": "IFCWALL",
+        "Description": "A solid outer wall, forming the left side of the house.",
+        "ObjectType": "solidwall",
+        "Tag": "454425.1027891.979946.932083.920032",
+        "Type": "house - outer wall - house left",
+        "Material": "stone_sand-lime"
+      },
+      "source_path": "Building-Architecture.ifc",
+      "propertySets": {
+        "Pset_WallCommon": {
+          "IsExternal": {
+            "value": true,
+            "value_type": "boolean"
+          },
+          "LoadBearing": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        "Qto_WallBaseQuantities": {}
+      }
+    },
+    {
+      "id": "3dkFAzOGrAIuOzY_RdrdVv",
+      "type": "IFCCHIMNEY",
+      "name": "house - chimney",
+      "category": "Chimney",
+      "family": "house - chimney",
+      "material": "stone_sand-lime",
+      "properties": {
+        "global_id": "3dkFAzOGrAIuOzY_RdrdVv",
+        "ifc_ref": "#339",
+        "ifc_class": "IFCCHIMNEY",
+        "Description": "A chimney, standing tall and proud, guiding smoke away from the home.",
+        "ObjectType": "flue",
+        "Tag": "454425.1027891.979946.932083.2023772",
+        "Type": "house - chimney",
+        "Material": "stone_sand-lime"
+      },
+      "source_path": "Building-Architecture.ifc"
+    },
+    {
+      "id": "0bo7_K6az7AA$4RxkSNVNM",
+      "type": "IFCBUILDINGELEMENTPROXY",
+      "name": "Group#19",
+      "category": "Buildingelementproxy",
+      "family": "",
+      "material": "Default",
+      "properties": {
+        "global_id": "0bo7_K6az7AA$4RxkSNVNM",
+        "ifc_ref": "#345",
+        "ifc_class": "IFCBUILDINGELEMENTPROXY",
+        "Tag": "454425.1027891.979946.932083.2037918",
+        "Material": "Default"
+      },
+      "source_path": "Building-Architecture.ifc"
+    },
+    {
+      "id": "1uS5vfZPn9R8PlAaVd73on",
+      "type": "IFCWALL",
+      "name": "plumbing wall",
+      "category": "Wall",
+      "family": "plumbing wall",
+      "material": "gypsum_fiber-board_panel",
+      "properties": {
+        "global_id": "1uS5vfZPn9R8PlAaVd73on",
+        "ifc_ref": "#353",
+        "ifc_class": "IFCWALL",
+        "Description": "A wall designed to house and protect plumbing systems, keeping the pipes snug and secure.",
+        "ObjectType": "plumbingwall",
+        "Tag": "454425.1027891.979946.932083.2037918.920027",
+        "Type": "plumbing wall",
+        "Material": "gypsum_fiber-board_panel"
+      },
+      "source_path": "Building-Architecture.ifc",
+      "propertySets": {
+        "Pset_WallCommon": {
+          "IsExternal": {
+            "value": false,
+            "value_type": "boolean"
+          },
+          "LoadBearing": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        "Qto_WallBaseQuantities": {}
+      }
+    },
+    {
+      "id": "2iPwJwpPDCSgMheXwk9cBT",
+      "type": "IFCROOF",
+      "name": "house - roof",
+      "category": "Roof",
+      "family": "house - roof",
+      "material": "",
+      "properties": {
+        "global_id": "2iPwJwpPDCSgMheXwk9cBT",
+        "ifc_ref": "#382",
+        "ifc_class": "IFCROOF",
+        "Description": "A sturdy roof, sheltering the house from the elements.",
+        "ObjectType": "gable_roof",
+        "Tag": "454425.1027891.979946.932084",
+        "Type": "house - roof"
+      },
+      "source_path": "Building-Architecture.ifc",
+      "propertySets": {
+        "Pset_RoofCommon": {
+          "IsExternal": {
+            "value": true,
+            "value_type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "id": "0ZTBBPo6f6bxqV2K7Oelrq",
+      "type": "IFCSLAB",
+      "name": "house - roof - slab left",
+      "category": "Slab",
+      "family": "house - roof - slab left",
+      "material": "composite_element_roof",
+      "properties": {
+        "global_id": "0ZTBBPo6f6bxqV2K7Oelrq",
+        "ifc_ref": "#395",
+        "ifc_class": "IFCSLAB",
+        "Description": "A roof slab that\\X\\27s got it all covered",
+        "ObjectType": "roof",
+        "Tag": "454425.1027891.979946.932084.902510",
+        "Type": "house - roof - slab left",
+        "Material": "composite_element_roof"
+      },
+      "source_path": "Building-Architecture.ifc",
+      "propertySets": {
+        "Pset_SlabCommon": {
+          "PitchAngle": {
+            "value": 45.0,
+            "value_type": "planeanglemeasure"
+          },
+          "IsExternal": {
+            "value": true,
+            "value_type": "boolean"
+          },
+          "LoadBearing": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        "Qto_SlabBaseQuantities": {}
+      }
+    },
+    {
+      "id": "12UVOn4wvAJPMUExKdZLb8",
+      "type": "IFCSLAB",
+      "name": "house - roof - slab right",
+      "category": "Slab",
+      "family": "house - roof - slab right",
+      "material": "composite_element_roof",
+      "properties": {
+        "global_id": "12UVOn4wvAJPMUExKdZLb8",
+        "ifc_ref": "#425",
+        "ifc_class": "IFCSLAB",
+        "Description": "A roof slab that\\X\\27s got it all covered",
+        "ObjectType": "roof",
+        "Tag": "454425.1027891.979946.932084.902511",
+        "Type": "house - roof - slab right",
+        "Material": "composite_element_roof"
+      },
+      "source_path": "Building-Architecture.ifc",
+      "propertySets": {
+        "Pset_SlabCommon": {
+          "IsExternal": {
+            "value": true,
+            "value_type": "boolean"
+          },
+          "LoadBearing": {
+            "value": false,
+            "value_type": "boolean"
+          }
+        },
+        "Qto_SlabBaseQuantities": {}
+      }
+    },
+    {
+      "id": "1yP7NInQz5uQzbiOpVFFJr",
+      "type": "IFCSPATIALZONE",
+      "name": "house - gross volume",
+      "category": "Spatialzone",
+      "family": "house - gross volume",
+      "material": "",
+      "properties": {
+        "global_id": "1yP7NInQz5uQzbiOpVFFJr",
+        "ifc_ref": "#448",
+        "ifc_class": "IFCSPATIALZONE",
+        "ObjectType": "gross volume",
+        "Type": "house - gross volume"
+      },
+      "source_path": "Building-Architecture.ifc"
+    },
+    {
+      "id": "3_4VN63S96DfWiJjgG8j1C",
+      "type": "IFCBUILDINGELEMENTPROXY",
+      "name": "sand bedding",
+      "category": "Buildingelementproxy",
+      "family": "sand bedding",
+      "material": "bulk-material_sand-coarse_generic",
+      "properties": {
+        "global_id": "3_4VN63S96DfWiJjgG8j1C",
+        "ifc_ref": "#464",
+        "ifc_class": "IFCBUILDINGELEMENTPROXY",
+        "Description": "A layer of ground floor sand bedding, providing a stable base.",
+        "ObjectType": "subgrade",
+        "Tag": "454425.1027891.979946.932086",
+        "Type": "sand bedding",
+        "Material": "bulk-material_sand-coarse_generic"
+      },
+      "source_path": "Building-Architecture.ifc"
+    },
+    {
+      "id": "2F44QMqSH3TOkM$SZoqCBe",
+      "type": "IFCBUILDINGELEMENTPROXY",
+      "name": "origin",
+      "category": "Buildingelementproxy",
+      "family": "origin",
+      "material": "virtual_white",
+      "properties": {
+        "global_id": "2F44QMqSH3TOkM$SZoqCBe",
+        "ifc_ref": "#482",
+        "ifc_class": "IFCBUILDINGELEMENTPROXY",
+        "Description": "The local position for coordination of aspect models.",
+        "ObjectType": "origin",
+        "Tag": "454425.1027891.1032757",
+        "Type": "origin",
+        "Material": "virtual_white"
+      },
+      "source_path": "Building-Architecture.ifc"
+    },
+    {
+      "id": "3Fit2Fad92zf2f6aWdJtF5",
+      "type": "IFCBUILDINGELEMENTPROXY",
+      "name": "geo-reference",
+      "category": "Buildingelementproxy",
+      "family": "geo-reference",
+      "material": "virtual_black",
+      "properties": {
+        "global_id": "3Fit2Fad92zf2f6aWdJtF5",
+        "ifc_ref": "#501",
+        "ifc_class": "IFCBUILDINGELEMENTPROXY",
+        "Description": "The reference point for transforming the local engineering coordinate system into the coordinate reference system of the underlying map.",
+        "ObjectType": "origin",
+        "Tag": "454425.1032696",
+        "Type": "geo-reference",
+        "Material": "virtual_black"
+      },
+      "source_path": "Building-Architecture.ifc"
+    }
+  ],
+  "relations": [
+    {
+      "source_id": "ifc:Building-Architecture",
+      "target_id": "2Ndyd$OSX7s9A04nc4lyye",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Architecture",
+      "target_id": "23sFQGRy90RxVbRHD9iSE2",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Architecture",
+      "target_id": "1Pbuu0tu59NfhrTsztVBK1",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Architecture",
+      "target_id": "0c$N1CTon2BB2Sp89385G8",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Architecture",
+      "target_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Architecture",
+      "target_id": "3zR0BOEcLADRKln4HYporH",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Architecture",
+      "target_id": "0xY$LvXaDEswJDk_VU74C_",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Architecture",
+      "target_id": "2e9pghUJbBqR4jTInsONQT",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Architecture",
+      "target_id": "1wADrO19H3w980h1wUyXLk",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Architecture",
+      "target_id": "18QhMtUIXBvQktPHXXxs7H",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Architecture",
+      "target_id": "1AQAupaRP1txwK1AGiN61V",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Architecture",
+      "target_id": "3wdauVJT5Fx9drrREiDqA$",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Architecture",
+      "target_id": "0OfZwWc8j9QP5uX8xPTxDH",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Architecture",
+      "target_id": "3dkFAzOGrAIuOzY_RdrdVv",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Architecture",
+      "target_id": "0bo7_K6az7AA$4RxkSNVNM",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Architecture",
+      "target_id": "1uS5vfZPn9R8PlAaVd73on",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Architecture",
+      "target_id": "2iPwJwpPDCSgMheXwk9cBT",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Architecture",
+      "target_id": "0ZTBBPo6f6bxqV2K7Oelrq",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Architecture",
+      "target_id": "12UVOn4wvAJPMUExKdZLb8",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Architecture",
+      "target_id": "1yP7NInQz5uQzbiOpVFFJr",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Architecture",
+      "target_id": "3_4VN63S96DfWiJjgG8j1C",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Architecture",
+      "target_id": "2F44QMqSH3TOkM$SZoqCBe",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Architecture",
+      "target_id": "3Fit2Fad92zf2f6aWdJtF5",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "2Ndyd$OSX7s9A04nc4lyye",
+      "target_id": "23sFQGRy90RxVbRHD9iSE2",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "23sFQGRy90RxVbRHD9iSE2",
+      "target_id": "1Pbuu0tu59NfhrTsztVBK1",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "1Pbuu0tu59NfhrTsztVBK1",
+      "target_id": "0c$N1CTon2BB2Sp89385G8",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "0c$N1CTon2BB2Sp89385G8",
+      "target_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "3zR0BOEcLADRKln4HYporH",
+      "target_id": "house - groundfloor",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "target_id": "3zR0BOEcLADRKln4HYporH",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "target_id": "1AQAupaRP1txwK1AGiN61V",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "target_id": "3wdauVJT5Fx9drrREiDqA$",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "target_id": "0OfZwWc8j9QP5uX8xPTxDH",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "target_id": "3dkFAzOGrAIuOzY_RdrdVv",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "target_id": "0bo7_K6az7AA$4RxkSNVNM",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "target_id": "1uS5vfZPn9R8PlAaVd73on",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "0xY$LvXaDEswJDk_VU74C_",
+      "target_id": "house - living room",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "target_id": "0xY$LvXaDEswJDk_VU74C_",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "target_id": "18QhMtUIXBvQktPHXXxs7H",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "2e9pghUJbBqR4jTInsONQT",
+      "target_id": "house - kitchen",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "0xY$LvXaDEswJDk_VU74C_",
+      "target_id": "2e9pghUJbBqR4jTInsONQT",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "0xY$LvXaDEswJDk_VU74C_",
+      "target_id": "1wADrO19H3w980h1wUyXLk",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "18QhMtUIXBvQktPHXXxs7H",
+      "target_id": "house - entry hall",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "1AQAupaRP1txwK1AGiN61V",
+      "target_id": "house - outer wall - house right front",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "3wdauVJT5Fx9drrREiDqA$",
+      "target_id": "house - outer wall - house right back",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "0OfZwWc8j9QP5uX8xPTxDH",
+      "target_id": "house - outer wall - house left",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "3dkFAzOGrAIuOzY_RdrdVv",
+      "target_id": "house - chimney",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "1uS5vfZPn9R8PlAaVd73on",
+      "target_id": "plumbing wall",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "2iPwJwpPDCSgMheXwk9cBT",
+      "target_id": "house - roof",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "0c$N1CTon2BB2Sp89385G8",
+      "target_id": "2iPwJwpPDCSgMheXwk9cBT",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "0c$N1CTon2BB2Sp89385G8",
+      "target_id": "1yP7NInQz5uQzbiOpVFFJr",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "0c$N1CTon2BB2Sp89385G8",
+      "target_id": "3_4VN63S96DfWiJjgG8j1C",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "0ZTBBPo6f6bxqV2K7Oelrq",
+      "target_id": "house - roof - slab left",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "2iPwJwpPDCSgMheXwk9cBT",
+      "target_id": "0ZTBBPo6f6bxqV2K7Oelrq",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "2iPwJwpPDCSgMheXwk9cBT",
+      "target_id": "12UVOn4wvAJPMUExKdZLb8",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "12UVOn4wvAJPMUExKdZLb8",
+      "target_id": "house - roof - slab right",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "1yP7NInQz5uQzbiOpVFFJr",
+      "target_id": "house - gross volume",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "3_4VN63S96DfWiJjgG8j1C",
+      "target_id": "sand bedding",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "2F44QMqSH3TOkM$SZoqCBe",
+      "target_id": "origin",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "1Pbuu0tu59NfhrTsztVBK1",
+      "target_id": "2F44QMqSH3TOkM$SZoqCBe",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "3Fit2Fad92zf2f6aWdJtF5",
+      "target_id": "geo-reference",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "23sFQGRy90RxVbRHD9iSE2",
+      "target_id": "3Fit2Fad92zf2f6aWdJtF5",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "0c$N1CTon2BB2Sp89385G8",
+      "target_id": "Pset_BuildingCommon",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "3zR0BOEcLADRKln4HYporH",
+      "target_id": "Pset_SlabCommon",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "3zR0BOEcLADRKln4HYporH",
+      "target_id": "concrete_reinforced_in-situ",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "3zR0BOEcLADRKln4HYporH",
+      "target_id": "Qto_SlabBaseQuantities",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "0xY$LvXaDEswJDk_VU74C_",
+      "target_id": "Pset_SpaceCommon",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "2e9pghUJbBqR4jTInsONQT",
+      "target_id": "wood_mdf_plate",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "1wADrO19H3w980h1wUyXLk",
+      "target_id": "Default",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "0bo7_K6az7AA$4RxkSNVNM",
+      "target_id": "Default",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "18QhMtUIXBvQktPHXXxs7H",
+      "target_id": "Pset_SpaceCommon",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "1AQAupaRP1txwK1AGiN61V",
+      "target_id": "Pset_WallCommon",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "1AQAupaRP1txwK1AGiN61V",
+      "target_id": "stone_sand-lime",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "3wdauVJT5Fx9drrREiDqA$",
+      "target_id": "stone_sand-lime",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "0OfZwWc8j9QP5uX8xPTxDH",
+      "target_id": "stone_sand-lime",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "3dkFAzOGrAIuOzY_RdrdVv",
+      "target_id": "stone_sand-lime",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "1AQAupaRP1txwK1AGiN61V",
+      "target_id": "Qto_WallBaseQuantities",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "3wdauVJT5Fx9drrREiDqA$",
+      "target_id": "Pset_WallCommon",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "3wdauVJT5Fx9drrREiDqA$",
+      "target_id": "Qto_WallBaseQuantities",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "0OfZwWc8j9QP5uX8xPTxDH",
+      "target_id": "Pset_WallCommon",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "0OfZwWc8j9QP5uX8xPTxDH",
+      "target_id": "Qto_WallBaseQuantities",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "1uS5vfZPn9R8PlAaVd73on",
+      "target_id": "Pset_WallCommon",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "1uS5vfZPn9R8PlAaVd73on",
+      "target_id": "gypsum_fiber-board_panel",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "1uS5vfZPn9R8PlAaVd73on",
+      "target_id": "Qto_WallBaseQuantities",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "2iPwJwpPDCSgMheXwk9cBT",
+      "target_id": "Pset_RoofCommon",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "0ZTBBPo6f6bxqV2K7Oelrq",
+      "target_id": "Pset_SlabCommon",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "0ZTBBPo6f6bxqV2K7Oelrq",
+      "target_id": "composite_element_roof",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "12UVOn4wvAJPMUExKdZLb8",
+      "target_id": "composite_element_roof",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "0ZTBBPo6f6bxqV2K7Oelrq",
+      "target_id": "Qto_SlabBaseQuantities",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "12UVOn4wvAJPMUExKdZLb8",
+      "target_id": "Pset_SlabCommon",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "12UVOn4wvAJPMUExKdZLb8",
+      "target_id": "Qto_SlabBaseQuantities",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "3_4VN63S96DfWiJjgG8j1C",
+      "target_id": "bulk-material_sand-coarse_generic",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "2F44QMqSH3TOkM$SZoqCBe",
+      "target_id": "virtual_white",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "3Fit2Fad92zf2f6aWdJtF5",
+      "target_id": "virtual_black",
+      "relation_type": "has_material"
+    }
+  ]
+}

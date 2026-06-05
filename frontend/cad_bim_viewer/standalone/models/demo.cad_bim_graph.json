@@ -1,0 +1,83 @@
+{
+  "id": "standalone-demo",
+  "type": "Model",
+  "name": "Standalone demo",
+  "source_format": "demo",
+  "elements": [
+    {
+      "id": "demo-duct-001",
+      "type": "RevitElement",
+      "name": "Demo duct",
+      "category": "Воздуховоды",
+      "family": "Rectangular duct",
+      "level": "Этаж 1",
+      "material": "Galvanized steel",
+      "properties": {
+        "system": "Supply air",
+        "width_mm": 600,
+        "height_mm": 300
+      },
+      "geometry": {
+        "type": "mesh",
+        "units": "m",
+        "vertices": [
+          -2, -0.25, 0,
+          2, -0.25, 0,
+          2, 0.25, 0,
+          -2, 0.25, 0,
+          -2, -0.25, 0.45,
+          2, -0.25, 0.45,
+          2, 0.25, 0.45,
+          -2, 0.25, 0.45
+        ],
+        "faces": [
+          0, 1, 2,
+          0, 2, 3,
+          4, 6, 5,
+          4, 7, 6,
+          0, 4, 5,
+          0, 5, 1,
+          1, 5, 6,
+          1, 6, 2,
+          2, 6, 7,
+          2, 7, 3,
+          3, 7, 4,
+          3, 4, 0
+        ],
+        "material": {
+          "color": "#f97316",
+          "opacity": 0.9,
+          "name": "Demo orange"
+        },
+        "stats": {
+          "vertices": 8,
+          "triangles": 12
+        }
+      }
+    },
+    {
+      "id": "demo-pipe-001",
+      "type": "Polyline",
+      "name": "Demo pipe",
+      "category": "Трубопроводы",
+      "level": "Этаж 1",
+      "properties": {
+        "start": [-1800, 900, 150],
+        "end": [1800, 900, 150],
+        "diameter_mm": 80
+      }
+    }
+  ],
+  "relations": [
+    {
+      "source_id": "standalone-demo",
+      "target_id": "demo-duct-001",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "standalone-demo",
+      "target_id": "demo-pipe-001",
+      "relation_type": "contains"
+    }
+  ]
+}

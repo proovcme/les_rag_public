@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="440" viewBox="0 0 1280 440" role="img" aria-labelledby="title desc">
+  <title id="title">CAD BIM JSON pipeline</title>
+  <desc id="desc">DWG, RVT and IFC move through exporters or parser into cad_bim_graph JSON, then into LES and VIZOR.</desc>
+  <rect width="1280" height="440" rx="0" fill="#0b1118"/>
+  <g font-family="Inter, Segoe UI, Arial, sans-serif">
+    <text x="60" y="72" fill="#f8fafc" font-size="34" font-weight="800">CAD/BIM -> JSON -> RAG</text>
+    <text x="60" y="108" fill="#94a3b8" font-size="20">The viewer is not a screenshot tool. It is a geometry/data sanity check for the graph used by retrieval.</text>
+  </g>
+  <g transform="translate(70 160)" font-family="Inter, Segoe UI, Arial, sans-serif">
+    <g>
+      <rect width="210" height="126" rx="18" fill="#111827" stroke="#334155"/>
+      <text x="24" y="46" fill="#facc15" font-size="22" font-weight="700">DWG / DXF</text>
+      <text x="24" y="78" fill="#cbd5e1" font-size="18">lines, arcs, text</text>
+      <text x="24" y="104" fill="#cbd5e1" font-size="18">layers, handles</text>
+    </g>
+    <g transform="translate(260 0)">
+      <rect width="210" height="126" rx="18" fill="#111827" stroke="#334155"/>
+      <text x="24" y="46" fill="#facc15" font-size="22" font-weight="700">RVT</text>
+      <text x="24" y="78" fill="#cbd5e1" font-size="18">elements, params</text>
+      <text x="24" y="104" fill="#cbd5e1" font-size="18">display meshes</text>
+    </g>
+    <g transform="translate(520 0)">
+      <rect width="210" height="126" rx="18" fill="#111827" stroke="#334155"/>
+      <text x="24" y="46" fill="#facc15" font-size="22" font-weight="700">IFC</text>
+      <text x="24" y="78" fill="#cbd5e1" font-size="18">GlobalId, psets</text>
+      <text x="24" y="104" fill="#cbd5e1" font-size="18">spatial structure</text>
+    </g>
+    <path d="M760 63H835" stroke="#38bdf8" stroke-width="5" stroke-linecap="round"/>
+    <path d="M828 49l20 14-20 14" fill="none" stroke="#38bdf8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <g transform="translate(870 -8)">
+      <rect width="252" height="142" rx="22" fill="#0f172a" stroke="#38bdf8"/>
+      <text x="26" y="48" fill="#f8fafc" font-size="25" font-weight="800">cad_bim_graph</text>
+      <text x="26" y="82" fill="#cbd5e1" font-size="18">elements[]</text>
+      <text x="26" y="108" fill="#cbd5e1" font-size="18">relations[] + props</text>
+    </g>
+  </g>
+  <g transform="translate(258 328)" font-family="Inter, Segoe UI, Arial, sans-serif">
+    <rect width="220" height="58" rx="18" fill="#18202b" stroke="#334155"/>
+    <text x="28" y="38" fill="#e2e8f0" font-size="21">LES import</text>
+    <path d="M235 29H360" stroke="#facc15" stroke-width="5" stroke-linecap="round"/>
+    <path d="M352 15l20 14-20 14" fill="none" stroke="#facc15" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="390" width="220" height="58" rx="18" fill="#18202b" stroke="#334155"/>
+    <text x="420" y="38" fill="#e2e8f0" font-size="21">RAG answer</text>
+    <path d="M625 29H750" stroke="#facc15" stroke-width="5" stroke-linecap="round"/>
+    <path d="M742 15l20 14-20 14" fill="none" stroke="#facc15" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="780" width="220" height="58" rx="18" fill="#18202b" stroke="#334155"/>
+    <text x="810" y="38" fill="#e2e8f0" font-size="21">VIZOR highlight</text>
+  </g>
+</svg>

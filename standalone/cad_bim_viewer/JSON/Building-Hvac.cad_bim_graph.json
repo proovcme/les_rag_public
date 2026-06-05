@@ -1,0 +1,385 @@
+{
+  "id": "ifc:Building-Hvac",
+  "type": "IFCModel",
+  "name": "Building-Hvac",
+  "source_format": "ifc",
+  "source_path": "ifc-sample/Building-Hvac.ifc",
+  "extracted_at": "2026-06-05T07:52:32.725561+00:00",
+  "properties": {
+    "schema": "IFC4",
+    "source_file": "Building-Hvac.ifc",
+    "product_count": 11,
+    "step_record_count": 156
+  },
+  "elements": [
+    {
+      "id": "2Ndyd$OSX7s9A04nc4lyye",
+      "type": "IFCPROJECT",
+      "name": "ifc silly sample scene - project",
+      "category": "Project",
+      "family": "",
+      "material": "",
+      "properties": {
+        "global_id": "2Ndyd$OSX7s9A04nc4lyye",
+        "ifc_ref": "#13",
+        "ifc_class": "IFCPROJECT",
+        "Description": "Demystifying IFC with a playful scene using diverse building elements and compositions."
+      },
+      "source_path": "Building-Hvac.ifc"
+    },
+    {
+      "id": "23sFQGRy90RxVbRHD9iSE2",
+      "type": "IFCSITE",
+      "name": "environment - site",
+      "category": "Site",
+      "family": "",
+      "material": "",
+      "properties": {
+        "global_id": "23sFQGRy90RxVbRHD9iSE2",
+        "ifc_ref": "#20",
+        "ifc_class": "IFCSITE",
+        "Description": "A sample scene environment, showcasing the surrounding landscape."
+      },
+      "source_path": "Building-Hvac.ifc"
+    },
+    {
+      "id": "1Pbuu0tu59NfhrTsztVBK1",
+      "type": "IFCSITE",
+      "name": "house - site",
+      "category": "Site",
+      "family": "",
+      "material": "",
+      "properties": {
+        "global_id": "1Pbuu0tu59NfhrTsztVBK1",
+        "ifc_ref": "#23",
+        "ifc_class": "IFCSITE",
+        "Description": "Smoke curls from a friendly chimney, promising warmth within this idyllic hilltop house."
+      },
+      "source_path": "Building-Hvac.ifc"
+    },
+    {
+      "id": "0c$N1CTon2BB2Sp89385G8",
+      "type": "IFCBUILDING",
+      "name": "Single-family house",
+      "category": "Building",
+      "family": "",
+      "material": "",
+      "properties": {
+        "global_id": "0c$N1CTon2BB2Sp89385G8",
+        "ifc_ref": "#30",
+        "ifc_class": "IFCBUILDING",
+        "Description": "The main building structure, providing shelter and space.",
+        "Tag": "house - building"
+      },
+      "source_path": "Building-Hvac.ifc",
+      "propertySets": {
+        "Pset_BuildingCommon": {
+          "ConstructionMethod": {
+            "value": "new construction",
+            "value_type": "label"
+          }
+        }
+      }
+    },
+    {
+      "id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "type": "IFCBUILDINGSTOREY",
+      "name": "00 groundfloor",
+      "category": "Buildingstorey",
+      "family": "",
+      "material": "",
+      "properties": {
+        "global_id": "1Ano2ZUxnEIvVQ_beukl8b",
+        "ifc_ref": "#43",
+        "ifc_class": "IFCBUILDINGSTOREY",
+        "Description": "The ground floor, forming the base level of the building."
+      },
+      "source_path": "Building-Hvac.ifc"
+    },
+    {
+      "id": "3dkFAzOGrAIuOzY_RdrdVv",
+      "type": "IFCCHIMNEY",
+      "name": "house - chimney",
+      "category": "Chimney",
+      "family": "house - chimney",
+      "material": "stone_sand-lime",
+      "properties": {
+        "global_id": "3dkFAzOGrAIuOzY_RdrdVv",
+        "ifc_ref": "#52",
+        "ifc_class": "IFCCHIMNEY",
+        "Description": "A chimney, standing tall and proud, guiding smoke away from the home.",
+        "ObjectType": "flue",
+        "Tag": "454425.1027891.979946.932083.2023772",
+        "Type": "house - chimney",
+        "Material": "stone_sand-lime"
+      },
+      "source_path": "Building-Hvac.ifc"
+    },
+    {
+      "id": "23uPJWDfXEcwHH3kdFgV9c",
+      "type": "IFCAIRTERMINAL",
+      "name": "chimney cover",
+      "category": "Airterminal",
+      "family": "chimney cover",
+      "material": "metal_steel_generic_coated-anthracitegrey",
+      "properties": {
+        "global_id": "23uPJWDfXEcwHH3kdFgV9c",
+        "ifc_ref": "#67",
+        "ifc_class": "IFCAIRTERMINAL",
+        "Description": "A sturdy cover, protecting the chimney from the elements.",
+        "ObjectType": "chimney cover",
+        "Tag": "454425.1027891.979946.932083.2023772.884510.880033",
+        "Type": "chimney cover",
+        "Material": "metal_steel_generic_coated-anthracitegrey"
+      },
+      "source_path": "Building-Hvac.ifc"
+    },
+    {
+      "id": "38WbwIGD90nB_3T2BTU5Ed",
+      "type": "IFCDUCTSEGMENT",
+      "name": "building element",
+      "category": "Ductsegment",
+      "family": "building element",
+      "material": "metal_steel-galvanized",
+      "properties": {
+        "global_id": "38WbwIGD90nB_3T2BTU5Ed",
+        "ifc_ref": "#85",
+        "ifc_class": "IFCDUCTSEGMENT",
+        "ObjectType": "rigidsegment",
+        "Tag": "454425.1027891.979946.932083.2023772.884510.880032",
+        "Type": "building element",
+        "Material": "metal_steel-galvanized"
+      },
+      "source_path": "Building-Hvac.ifc"
+    },
+    {
+      "id": "34Y6EIt3nDCAS1k$kPGOKm",
+      "type": "IFCAIRTERMINAL",
+      "name": "house fireplace cap",
+      "category": "Airterminal",
+      "family": "house fireplace cap",
+      "material": "concrete_reinforced_prefab",
+      "properties": {
+        "global_id": "34Y6EIt3nDCAS1k$kPGOKm",
+        "ifc_ref": "#103",
+        "ifc_class": "IFCAIRTERMINAL",
+        "Description": "A hidden concrete cap, secretly keeping the fireplace safe and sound.",
+        "ObjectType": "fireplace cap",
+        "Tag": "454425.1027891.979946.932083.2023772.884510.880034",
+        "Type": "house fireplace cap",
+        "Material": "concrete_reinforced_prefab"
+      },
+      "source_path": "Building-Hvac.ifc"
+    },
+    {
+      "id": "2F44QMqSH3TOkM$SZoqCBe",
+      "type": "IFCBUILDINGELEMENTPROXY",
+      "name": "origin",
+      "category": "Buildingelementproxy",
+      "family": "origin",
+      "material": "virtual_white",
+      "properties": {
+        "global_id": "2F44QMqSH3TOkM$SZoqCBe",
+        "ifc_ref": "#121",
+        "ifc_class": "IFCBUILDINGELEMENTPROXY",
+        "Description": "The local position for coordination of aspect models.",
+        "ObjectType": "origin",
+        "Tag": "454425.1027891.1032757",
+        "Type": "origin",
+        "Material": "virtual_white"
+      },
+      "source_path": "Building-Hvac.ifc"
+    },
+    {
+      "id": "3Fit2Fad92zf2f6aWdJtF5",
+      "type": "IFCBUILDINGELEMENTPROXY",
+      "name": "geo-reference",
+      "category": "Buildingelementproxy",
+      "family": "geo-reference",
+      "material": "virtual_black",
+      "properties": {
+        "global_id": "3Fit2Fad92zf2f6aWdJtF5",
+        "ifc_ref": "#140",
+        "ifc_class": "IFCBUILDINGELEMENTPROXY",
+        "Description": "The reference point for transforming the local engineering coordinate system into the coordinate reference system of the underlying map.",
+        "ObjectType": "origin",
+        "Tag": "454425.1032696",
+        "Type": "geo-reference",
+        "Material": "virtual_black"
+      },
+      "source_path": "Building-Hvac.ifc"
+    }
+  ],
+  "relations": [
+    {
+      "source_id": "ifc:Building-Hvac",
+      "target_id": "2Ndyd$OSX7s9A04nc4lyye",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Hvac",
+      "target_id": "23sFQGRy90RxVbRHD9iSE2",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Hvac",
+      "target_id": "1Pbuu0tu59NfhrTsztVBK1",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Hvac",
+      "target_id": "0c$N1CTon2BB2Sp89385G8",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Hvac",
+      "target_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Hvac",
+      "target_id": "3dkFAzOGrAIuOzY_RdrdVv",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Hvac",
+      "target_id": "23uPJWDfXEcwHH3kdFgV9c",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Hvac",
+      "target_id": "38WbwIGD90nB_3T2BTU5Ed",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Hvac",
+      "target_id": "34Y6EIt3nDCAS1k$kPGOKm",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Hvac",
+      "target_id": "2F44QMqSH3TOkM$SZoqCBe",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Hvac",
+      "target_id": "3Fit2Fad92zf2f6aWdJtF5",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "2Ndyd$OSX7s9A04nc4lyye",
+      "target_id": "23sFQGRy90RxVbRHD9iSE2",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "23sFQGRy90RxVbRHD9iSE2",
+      "target_id": "1Pbuu0tu59NfhrTsztVBK1",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "1Pbuu0tu59NfhrTsztVBK1",
+      "target_id": "0c$N1CTon2BB2Sp89385G8",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "0c$N1CTon2BB2Sp89385G8",
+      "target_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "3dkFAzOGrAIuOzY_RdrdVv",
+      "target_id": "house - chimney",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "target_id": "3dkFAzOGrAIuOzY_RdrdVv",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "target_id": "23uPJWDfXEcwHH3kdFgV9c",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "target_id": "38WbwIGD90nB_3T2BTU5Ed",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "target_id": "34Y6EIt3nDCAS1k$kPGOKm",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "23uPJWDfXEcwHH3kdFgV9c",
+      "target_id": "chimney cover",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "38WbwIGD90nB_3T2BTU5Ed",
+      "target_id": "building element",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "34Y6EIt3nDCAS1k$kPGOKm",
+      "target_id": "house fireplace cap",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "2F44QMqSH3TOkM$SZoqCBe",
+      "target_id": "origin",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "1Pbuu0tu59NfhrTsztVBK1",
+      "target_id": "2F44QMqSH3TOkM$SZoqCBe",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "3Fit2Fad92zf2f6aWdJtF5",
+      "target_id": "geo-reference",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "23sFQGRy90RxVbRHD9iSE2",
+      "target_id": "3Fit2Fad92zf2f6aWdJtF5",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "0c$N1CTon2BB2Sp89385G8",
+      "target_id": "Pset_BuildingCommon",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "3dkFAzOGrAIuOzY_RdrdVv",
+      "target_id": "stone_sand-lime",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "23uPJWDfXEcwHH3kdFgV9c",
+      "target_id": "metal_steel_generic_coated-anthracitegrey",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "38WbwIGD90nB_3T2BTU5Ed",
+      "target_id": "metal_steel-galvanized",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "34Y6EIt3nDCAS1k$kPGOKm",
+      "target_id": "concrete_reinforced_prefab",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "2F44QMqSH3TOkM$SZoqCBe",
+      "target_id": "virtual_white",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "3Fit2Fad92zf2f6aWdJtF5",
+      "target_id": "virtual_black",
+      "relation_type": "has_material"
+    }
+  ]
+}

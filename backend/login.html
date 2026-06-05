@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>В.О.Л.К. // Доступ</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #08090b; font-family: 'Courier New', monospace; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+.card { background: #12151a; border: 1px solid #2d3748; border-radius: 12px; padding: 40px; width: 380px; text-align: center; }
+.logo { font-size: 2.5rem; font-weight: 900; color: #3b82f6; letter-spacing: 4px; margin-bottom: 6px; }
+.sub { font-size: .65rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+.divider { border: none; border-top: 1px solid #2d3748; margin: 20px 0; }
+.quote { color: #94a3b8; font-size: .75rem; font-style: italic; min-height: 36px; margin-bottom: 24px; transition: opacity .4s; }
+.label { font-size: .6rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; text-align: left; margin-bottom: 6px; }
+input { width: 100%; background: #08090b; border: 1px solid #2d3748; color: #fff; font-family: 'Courier New', monospace; font-size: .85rem; padding: 10px 14px; border-radius: 4px; outline: none; margin-bottom: 12px; }
+input:focus { border-color: #3b82f6; }
+button { width: 100%; background: transparent; border: 1px solid #3b82f6; color: #3b82f6; font-family: 'Courier New', monospace; font-weight: 900; font-size: .8rem; padding: 12px; border-radius: 4px; cursor: pointer; letter-spacing: 1px; }
+button:hover { background: rgba(59,130,246,.15); }
+button:disabled { opacity: .5; cursor: default; }
+.err { color: #ef4444; font-size: .7rem; margin-top: 10px; min-height: 20px; }
+.foot { color: #2d3748; font-size: .6rem; margin-top: 24px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">В.О.Л.К.</div>
+  <div class="sub">Внутренний Охранный Локальный Контур</div>
+  <div class="sub">Л.Е.С. · Система контроля доступа</div>
+  <hr class="divider">
+  <div class="quote" id="q"></div>
+  <div class="label">Ключ доступа</div>
+  <input id="key" type="password" placeholder="les_xxxxxxxxxxxxxxxx" onkeydown="if(event.key==='Enter')login()">
+  <button id="btn" onclick="login()">▶ ВОЙТИ В СИСТЕМУ</button>
+  <div class="err" id="err"></div>
+  <div class="foot">localhost · Л.Е.С. · доступ только по ключу</div>
+</div>
+<script>
+const qs = [
+  "Лес помнит каждый шаг.",
+  "В лесу свои правила. Входи или уходи.",
+  "Я помню всех, кто входил.",
+  "Зубы не нужны, если знаешь пароль."
+];
+let qi = Math.floor(Math.random() * qs.length);
+const qEl = document.getElementById('q');
+function showQ() {
+  qEl.style.opacity = 0;
+  setTimeout(() => { qEl.textContent = '«' + qs[qi] + '»'; qEl.style.opacity = 1; qi = (qi+1) % qs.length; }, 400);
+}
+showQ(); setInterval(showQ, 4500);
+document.getElementById('key').focus();
+
+async function login() {
+  const key = document.getElementById('key').value.trim();
+  const err = document.getElementById('err');
+  const btn = document.getElementById('btn');
+  if (!key) { err.textContent = 'Введите ключ доступа'; return; }
+  btn.disabled = true; btn.textContent = '...'; err.textContent = '';
+  try {
+    const r = await fetch('/api/auth/verify', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({key}) });
+    if (r.ok) { window.location.href = '/'; }
+    else { const d = await r.json().catch(()=>{}); err.textContent = d?.detail || 'Неверный ключ'; btn.disabled=false; btn.textContent='▶ ВОЙТИ В СИСТЕМУ'; }
+  } catch(e) { err.textContent = 'Ошибка соединения'; btn.disabled=false; btn.textContent='▶ ВОЙТИ В СИСТЕМУ'; }
+}
+</script>
+</body>
+</html>

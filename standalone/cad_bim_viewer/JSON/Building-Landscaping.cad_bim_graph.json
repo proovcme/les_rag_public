@@ -1,0 +1,353 @@
+{
+  "id": "ifc:Building-Landscaping",
+  "type": "IFCModel",
+  "name": "Building-Landscaping",
+  "source_format": "ifc",
+  "source_path": "ifc-sample/Building-Landscaping.ifc",
+  "extracted_at": "2026-06-05T07:52:32.965654+00:00",
+  "properties": {
+    "schema": "IFC4",
+    "source_file": "Building-Landscaping.ifc",
+    "product_count": 10,
+    "step_record_count": 158
+  },
+  "elements": [
+    {
+      "id": "2Ndyd$OSX7s9A04nc4lyye",
+      "type": "IFCPROJECT",
+      "name": "ifc silly sample scene - project",
+      "category": "Project",
+      "family": "",
+      "material": "",
+      "properties": {
+        "global_id": "2Ndyd$OSX7s9A04nc4lyye",
+        "ifc_ref": "#13",
+        "ifc_class": "IFCPROJECT",
+        "Description": "Demystifying IFC with a playful scene using diverse building elements and compositions."
+      },
+      "source_path": "Building-Landscaping.ifc"
+    },
+    {
+      "id": "23sFQGRy90RxVbRHD9iSE2",
+      "type": "IFCSITE",
+      "name": "environment - site",
+      "category": "Site",
+      "family": "",
+      "material": "",
+      "properties": {
+        "global_id": "23sFQGRy90RxVbRHD9iSE2",
+        "ifc_ref": "#20",
+        "ifc_class": "IFCSITE",
+        "Description": "A sample scene environment, showcasing the surrounding landscape."
+      },
+      "source_path": "Building-Landscaping.ifc"
+    },
+    {
+      "id": "1Pbuu0tu59NfhrTsztVBK1",
+      "type": "IFCSITE",
+      "name": "house - site",
+      "category": "Site",
+      "family": "",
+      "material": "",
+      "properties": {
+        "global_id": "1Pbuu0tu59NfhrTsztVBK1",
+        "ifc_ref": "#23",
+        "ifc_class": "IFCSITE",
+        "Description": "Smoke curls from a friendly chimney, promising warmth within this idyllic hilltop house."
+      },
+      "source_path": "Building-Landscaping.ifc"
+    },
+    {
+      "id": "3rjfgVlxX47xval0xizSlT",
+      "type": "IFCGEOGRAPHICELEMENT",
+      "name": "house - site - grass",
+      "category": "Geographicelement",
+      "family": "house - site - grass",
+      "material": "vegetation_grass",
+      "properties": {
+        "global_id": "3rjfgVlxX47xval0xizSlT",
+        "ifc_ref": "#32",
+        "ifc_class": "IFCGEOGRAPHICELEMENT",
+        "Description": "A lush grassland, a green carpet that stretches to the horizon.",
+        "ObjectType": "vegetation",
+        "Tag": "454425.1027891.979947",
+        "Type": "house - site - grass",
+        "Material": "vegetation_grass"
+      },
+      "source_path": "Building-Landscaping.ifc"
+    },
+    {
+      "id": "1tnCBP2MXBYgVII_I4SNlD",
+      "type": "IFCGEOGRAPHICELEMENT",
+      "name": "house - site - soil",
+      "category": "Geographicelement",
+      "family": "house - site - soil",
+      "material": "bulk-material_topsoil_generic",
+      "properties": {
+        "global_id": "1tnCBP2MXBYgVII_I4SNlD",
+        "ifc_ref": "#51",
+        "ifc_class": "IFCGEOGRAPHICELEMENT",
+        "Description": "Rich, fertile topsoil, the foundation of thriving landscapes.",
+        "ObjectType": "terrain",
+        "Tag": "454425.1027891.979948",
+        "Type": "house - site - soil",
+        "Material": "bulk-material_topsoil_generic"
+      },
+      "source_path": "Building-Landscaping.ifc"
+    },
+    {
+      "id": "2pVtmJZNb8zwPoLLLgilXw",
+      "type": "IFCGEOGRAPHICELEMENT",
+      "name": "house - site - underground",
+      "category": "Geographicelement",
+      "family": "house - site - underground",
+      "material": "bulk-material_soil_generic",
+      "properties": {
+        "global_id": "2pVtmJZNb8zwPoLLLgilXw",
+        "ifc_ref": "#69",
+        "ifc_class": "IFCGEOGRAPHICELEMENT",
+        "Description": "Layers of subsurface strata, holding the secrets of the earth.",
+        "ObjectType": "terrain",
+        "Tag": "454425.1027891.979949",
+        "Type": "house - site - underground",
+        "Material": "bulk-material_soil_generic"
+      },
+      "source_path": "Building-Landscaping.ifc"
+    },
+    {
+      "id": "2F44QMqSH3TOkM$SZoqCBe",
+      "type": "IFCBUILDINGELEMENTPROXY",
+      "name": "origin",
+      "category": "Buildingelementproxy",
+      "family": "origin",
+      "material": "virtual_white",
+      "properties": {
+        "global_id": "2F44QMqSH3TOkM$SZoqCBe",
+        "ifc_ref": "#87",
+        "ifc_class": "IFCBUILDINGELEMENTPROXY",
+        "Description": "The local position for coordination of aspect models.",
+        "ObjectType": "origin",
+        "Tag": "454425.1027891.1032757",
+        "Type": "origin",
+        "Material": "virtual_white"
+      },
+      "source_path": "Building-Landscaping.ifc"
+    },
+    {
+      "id": "2n2Nw9YVPDWRM5Ya5dKpj4",
+      "type": "IFCBUILDINGELEMENTPROXY",
+      "name": "Group#17",
+      "category": "Buildingelementproxy",
+      "family": "",
+      "material": "Default",
+      "properties": {
+        "global_id": "2n2Nw9YVPDWRM5Ya5dKpj4",
+        "ifc_ref": "#103",
+        "ifc_class": "IFCBUILDINGELEMENTPROXY",
+        "Tag": "454425.1027891.2037904",
+        "Material": "Default"
+      },
+      "source_path": "Building-Landscaping.ifc"
+    },
+    {
+      "id": "2zxheXkSbCUgmJF8PPqK6F",
+      "type": "IFCGEOGRAPHICELEMENT",
+      "name": "tree",
+      "category": "Geographicelement",
+      "family": "tree",
+      "material": "vegetation_generic",
+      "properties": {
+        "global_id": "2zxheXkSbCUgmJF8PPqK6F",
+        "ifc_ref": "#113",
+        "ifc_class": "IFCGEOGRAPHICELEMENT",
+        "Description": "A fruitful apple tree, providing delicious apples, nature\\X\\27s candy store.",
+        "ObjectType": "vegetation",
+        "Tag": "454425.1027891.2037904.2037903",
+        "Type": "tree",
+        "Material": "vegetation_generic"
+      },
+      "source_path": "Building-Landscaping.ifc"
+    },
+    {
+      "id": "3Fit2Fad92zf2f6aWdJtF5",
+      "type": "IFCBUILDINGELEMENTPROXY",
+      "name": "geo-reference",
+      "category": "Buildingelementproxy",
+      "family": "geo-reference",
+      "material": "virtual_black",
+      "properties": {
+        "global_id": "3Fit2Fad92zf2f6aWdJtF5",
+        "ifc_ref": "#142",
+        "ifc_class": "IFCBUILDINGELEMENTPROXY",
+        "Description": "The reference point for transforming the local engineering coordinate system into the coordinate reference system of the underlying map.",
+        "ObjectType": "origin",
+        "Tag": "454425.1032696",
+        "Type": "geo-reference",
+        "Material": "virtual_black"
+      },
+      "source_path": "Building-Landscaping.ifc"
+    }
+  ],
+  "relations": [
+    {
+      "source_id": "ifc:Building-Landscaping",
+      "target_id": "2Ndyd$OSX7s9A04nc4lyye",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Landscaping",
+      "target_id": "23sFQGRy90RxVbRHD9iSE2",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Landscaping",
+      "target_id": "1Pbuu0tu59NfhrTsztVBK1",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Landscaping",
+      "target_id": "3rjfgVlxX47xval0xizSlT",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Landscaping",
+      "target_id": "1tnCBP2MXBYgVII_I4SNlD",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Landscaping",
+      "target_id": "2pVtmJZNb8zwPoLLLgilXw",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Landscaping",
+      "target_id": "2F44QMqSH3TOkM$SZoqCBe",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Landscaping",
+      "target_id": "2n2Nw9YVPDWRM5Ya5dKpj4",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Landscaping",
+      "target_id": "2zxheXkSbCUgmJF8PPqK6F",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Landscaping",
+      "target_id": "3Fit2Fad92zf2f6aWdJtF5",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "2Ndyd$OSX7s9A04nc4lyye",
+      "target_id": "23sFQGRy90RxVbRHD9iSE2",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "23sFQGRy90RxVbRHD9iSE2",
+      "target_id": "1Pbuu0tu59NfhrTsztVBK1",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "3rjfgVlxX47xval0xizSlT",
+      "target_id": "house - site - grass",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "1Pbuu0tu59NfhrTsztVBK1",
+      "target_id": "3rjfgVlxX47xval0xizSlT",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "1Pbuu0tu59NfhrTsztVBK1",
+      "target_id": "1tnCBP2MXBYgVII_I4SNlD",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "1Pbuu0tu59NfhrTsztVBK1",
+      "target_id": "2pVtmJZNb8zwPoLLLgilXw",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "1Pbuu0tu59NfhrTsztVBK1",
+      "target_id": "2F44QMqSH3TOkM$SZoqCBe",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "1Pbuu0tu59NfhrTsztVBK1",
+      "target_id": "2n2Nw9YVPDWRM5Ya5dKpj4",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "1Pbuu0tu59NfhrTsztVBK1",
+      "target_id": "2zxheXkSbCUgmJF8PPqK6F",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "1tnCBP2MXBYgVII_I4SNlD",
+      "target_id": "house - site - soil",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "2pVtmJZNb8zwPoLLLgilXw",
+      "target_id": "house - site - underground",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "2F44QMqSH3TOkM$SZoqCBe",
+      "target_id": "origin",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "2zxheXkSbCUgmJF8PPqK6F",
+      "target_id": "tree",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "3Fit2Fad92zf2f6aWdJtF5",
+      "target_id": "geo-reference",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "23sFQGRy90RxVbRHD9iSE2",
+      "target_id": "3Fit2Fad92zf2f6aWdJtF5",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "3rjfgVlxX47xval0xizSlT",
+      "target_id": "vegetation_grass",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "1tnCBP2MXBYgVII_I4SNlD",
+      "target_id": "bulk-material_topsoil_generic",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "2pVtmJZNb8zwPoLLLgilXw",
+      "target_id": "bulk-material_soil_generic",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "2F44QMqSH3TOkM$SZoqCBe",
+      "target_id": "virtual_white",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "2n2Nw9YVPDWRM5Ya5dKpj4",
+      "target_id": "Default",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "2zxheXkSbCUgmJF8PPqK6F",
+      "target_id": "vegetation_generic",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "3Fit2Fad92zf2f6aWdJtF5",
+      "target_id": "virtual_black",
+      "relation_type": "has_material"
+    }
+  ]
+}

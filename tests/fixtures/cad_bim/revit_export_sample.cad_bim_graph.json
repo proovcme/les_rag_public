@@ -1,0 +1,44 @@
+{
+  "id": "rvt:project-a",
+  "type": "RVTModel",
+  "name": "project-a",
+  "source_format": "rvt",
+  "source_path": "C:/Projects/project-a.rvt",
+  "extracted_at": "2026-06-02T10:00:00Z",
+  "properties": {
+    "project_number": "36",
+    "element_count": 1
+  },
+  "elements": [
+    {
+      "id": "a1b2c3-0001",
+      "type": "Wall",
+      "name": "Basic Wall: 200mm",
+      "category": "Walls",
+      "family": "Basic Wall",
+      "level": "Level 01",
+      "material": "Concrete",
+      "properties": {
+        "element_id": 12345,
+        "unique_id": "a1b2c3-0001",
+        "type_name": "200mm",
+        "parameters": {
+          "Fire Rating": {"value": "EI 60", "group": "Identity Data"},
+          "Length": {"value": 8.2, "displayValue": "8.20 m", "unit": "meters"}
+        }
+      },
+      "geometry": {
+        "type": "mesh",
+        "units": "revit_internal_ft",
+        "vertices": [0, 0, 0, 1, 0, 0, 0, 1, 0],
+        "faces": [0, 1, 2],
+        "material": {"name": "Concrete", "color": "#94a3b8", "opacity": 0.9},
+        "stats": {"triangles": 1, "vertices": 3, "source": "fixture"},
+        "truncated": false
+      }
+    }
+  ],
+  "relations": [
+    {"source_id": "rvt:project-a", "target_id": "a1b2c3-0001", "relation_type": "contains"}
+  ]
+}

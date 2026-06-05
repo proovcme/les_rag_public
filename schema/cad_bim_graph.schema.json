@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/proovcme/les_rag_public/schema/cad_bim_graph.schema.json",
+  "title": "LES cad_bim_graph",
+  "description": "Canonical CAD/BIM object graph used by LES import and VIZOR viewer QA.",
+  "type": "object",
+  "required": ["schema_version", "source", "elements"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "examples": ["1.0"]
+    },
+    "source": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "examples": ["autocad", "revit", "ifc", "navisworks"]
+        },
+        "path": { "type": "string" },
+        "name": { "type": "string" },
+        "units": { "type": "string" },
+        "exporter": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "elements": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/element" }
+    },
+    "relations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/relation" },
+      "default": []
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "element": {
+      "type": "object",
+      "required": ["id", "type"],
+      "properties": {
+        "id": { "type": "string" },
+        "source_id": { "type": "string" },
+        "global_id": {
+          "type": "string",
+          "description": "Stable IFC GlobalId or source GUID where available."
+        },
+        "handle": {
+          "type": "string",
+          "description": "AutoCAD-style object handle where available."
+        },
+        "type": { "type": "string" },
+        "category": { "type": "string" },
+        "layer": { "type": "string" },
+        "name": { "type": "string" },
+        "level": { "type": "string" },
+        "bbox": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 6,
+          "items": { "type": "number" },
+          "description": "[minX, minY, minZ, maxX, maxY, maxZ]"
+        },
+        "geometry": {
+          "type": "object",
+          "description": "Display or QA geometry. It is not intended to replace authoring-kernel geometry.",
+          "additionalProperties": true
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "relation": {
+      "type": "object",
+      "required": ["from", "to", "type"],
+      "properties": {
+        "from": { "type": "string" },
+        "to": { "type": "string" },
+        "type": {
+          "type": "string",
+          "examples": ["contains", "connects_to", "defines", "located_on"]
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

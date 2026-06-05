@@ -1,0 +1,1079 @@
+{
+  "id": "ifc:Building-Structural",
+  "type": "IFCModel",
+  "name": "Building-Structural",
+  "source_format": "ifc",
+  "source_path": "ifc-sample/Building-Structural.ifc",
+  "extracted_at": "2026-06-05T07:52:33.061600+00:00",
+  "properties": {
+    "schema": "IFC4",
+    "source_file": "Building-Structural.ifc",
+    "product_count": 23,
+    "step_record_count": 407
+  },
+  "elements": [
+    {
+      "id": "2Ndyd$OSX7s9A04nc4lyye",
+      "type": "IFCPROJECT",
+      "name": "ifc silly sample scene - project",
+      "category": "Project",
+      "family": "",
+      "material": "",
+      "properties": {
+        "global_id": "2Ndyd$OSX7s9A04nc4lyye",
+        "ifc_ref": "#13",
+        "ifc_class": "IFCPROJECT",
+        "Description": "Demystifying IFC with a playful scene using diverse building elements and compositions."
+      },
+      "source_path": "Building-Structural.ifc"
+    },
+    {
+      "id": "23sFQGRy90RxVbRHD9iSE2",
+      "type": "IFCSITE",
+      "name": "environment - site",
+      "category": "Site",
+      "family": "",
+      "material": "",
+      "properties": {
+        "global_id": "23sFQGRy90RxVbRHD9iSE2",
+        "ifc_ref": "#20",
+        "ifc_class": "IFCSITE",
+        "Description": "A sample scene environment, showcasing the surrounding landscape."
+      },
+      "source_path": "Building-Structural.ifc"
+    },
+    {
+      "id": "1Pbuu0tu59NfhrTsztVBK1",
+      "type": "IFCSITE",
+      "name": "house - site",
+      "category": "Site",
+      "family": "",
+      "material": "",
+      "properties": {
+        "global_id": "1Pbuu0tu59NfhrTsztVBK1",
+        "ifc_ref": "#23",
+        "ifc_class": "IFCSITE",
+        "Description": "Smoke curls from a friendly chimney, promising warmth within this idyllic hilltop house."
+      },
+      "source_path": "Building-Structural.ifc"
+    },
+    {
+      "id": "0c$N1CTon2BB2Sp89385G8",
+      "type": "IFCBUILDING",
+      "name": "Single-family house",
+      "category": "Building",
+      "family": "",
+      "material": "",
+      "properties": {
+        "global_id": "0c$N1CTon2BB2Sp89385G8",
+        "ifc_ref": "#30",
+        "ifc_class": "IFCBUILDING",
+        "Description": "The main building structure, providing shelter and space.",
+        "Tag": "house - building"
+      },
+      "source_path": "Building-Structural.ifc",
+      "propertySets": {
+        "Pset_BuildingCommon": {
+          "ConstructionMethod": {
+            "value": "new construction",
+            "value_type": "label"
+          }
+        }
+      }
+    },
+    {
+      "id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "type": "IFCBUILDINGSTOREY",
+      "name": "00 groundfloor",
+      "category": "Buildingstorey",
+      "family": "",
+      "material": "",
+      "properties": {
+        "global_id": "1Ano2ZUxnEIvVQ_beukl8b",
+        "ifc_ref": "#43",
+        "ifc_class": "IFCBUILDINGSTOREY",
+        "Description": "The ground floor, forming the base level of the building."
+      },
+      "source_path": "Building-Structural.ifc"
+    },
+    {
+      "id": "0pFmhV8oD1dB40_b4pscr8",
+      "type": "IFCFOOTING",
+      "name": "house - foundation",
+      "category": "Footing",
+      "family": "house - foundation",
+      "material": "concrete_reinforced_in-situ",
+      "properties": {
+        "global_id": "0pFmhV8oD1dB40_b4pscr8",
+        "ifc_ref": "#52",
+        "ifc_class": "IFCFOOTING",
+        "Description": "A house strip footing, ensuring stability and support.",
+        "ObjectType": "strip_footing",
+        "Tag": "454425.1027891.979946.932083.920028",
+        "Type": "house - foundation",
+        "Material": "concrete_reinforced_in-situ"
+      },
+      "source_path": "Building-Structural.ifc"
+    },
+    {
+      "id": "0DyViLJJ175RvWQi1rE7a6",
+      "type": "IFCWALL",
+      "name": "house - outer wall - house back",
+      "category": "Wall",
+      "family": "house - outer wall - house back",
+      "material": "stone_sand-lime",
+      "properties": {
+        "global_id": "0DyViLJJ175RvWQi1rE7a6",
+        "ifc_ref": "#71",
+        "ifc_class": "IFCWALL",
+        "Description": "A solid outer wall, forming the back of the house.",
+        "ObjectType": "solidwall",
+        "Tag": "454425.1027891.979946.932083.920030",
+        "Type": "house - outer wall - house back",
+        "Material": "stone_sand-lime"
+      },
+      "source_path": "Building-Structural.ifc",
+      "propertySets": {
+        "Pset_WallCommon": {
+          "IsExternal": {
+            "value": true,
+            "value_type": "boolean"
+          },
+          "LoadBearing": {
+            "value": true,
+            "value_type": "boolean"
+          }
+        },
+        "Qto_WallBaseQuantities": {}
+      }
+    },
+    {
+      "id": "3SGBcf7Lv0r80vKtUCgOpf",
+      "type": "IFCWALL",
+      "name": "house - outer wall - house front",
+      "category": "Wall",
+      "family": "house - outer wall - house front",
+      "material": "stone_sand-lime",
+      "properties": {
+        "global_id": "3SGBcf7Lv0r80vKtUCgOpf",
+        "ifc_ref": "#101",
+        "ifc_class": "IFCWALL",
+        "Description": "A solid outer wall, forming the front of the house.",
+        "ObjectType": "solidwall",
+        "Tag": "454425.1027891.979946.932083.920035",
+        "Type": "house - outer wall - house front",
+        "Material": "stone_sand-lime"
+      },
+      "source_path": "Building-Structural.ifc",
+      "propertySets": {
+        "Pset_WallCommon": {
+          "IsExternal": {
+            "value": true,
+            "value_type": "boolean"
+          },
+          "LoadBearing": {
+            "value": true,
+            "value_type": "boolean"
+          }
+        },
+        "Qto_WallBaseQuantities": {}
+      }
+    },
+    {
+      "id": "3oNJ9yHi5FJuFnK8yg68Yt",
+      "type": "IFCWALL",
+      "name": "house - outer wall - house front right",
+      "category": "Wall",
+      "family": "house - outer wall - house front right",
+      "material": "stone_sand-lime",
+      "properties": {
+        "global_id": "3oNJ9yHi5FJuFnK8yg68Yt",
+        "ifc_ref": "#125",
+        "ifc_class": "IFCWALL",
+        "Description": "A solid outer wall, forming the front right side of the house.",
+        "ObjectType": "solidwall",
+        "Tag": "454425.1027891.979946.932083.920036",
+        "Type": "house - outer wall - house front right",
+        "Material": "stone_sand-lime"
+      },
+      "source_path": "Building-Structural.ifc",
+      "propertySets": {
+        "Pset_WallCommon": {
+          "IsExternal": {
+            "value": true,
+            "value_type": "boolean"
+          }
+        },
+        "Qto_WallBaseQuantities": {}
+      }
+    },
+    {
+      "id": "3dkFAzOGrAIuOzY_RdrdVv",
+      "type": "IFCCHIMNEY",
+      "name": "house - chimney",
+      "category": "Chimney",
+      "family": "house - chimney",
+      "material": "stone_sand-lime",
+      "properties": {
+        "global_id": "3dkFAzOGrAIuOzY_RdrdVv",
+        "ifc_ref": "#148",
+        "ifc_class": "IFCCHIMNEY",
+        "Description": "A chimney, standing tall and proud, guiding smoke away from the home.",
+        "ObjectType": "flue",
+        "Tag": "454425.1027891.979946.932083.2023772",
+        "Type": "house - chimney",
+        "Material": "stone_sand-lime"
+      },
+      "source_path": "Building-Structural.ifc"
+    },
+    {
+      "id": "1CjP_CWub368bZVuVHeHs3",
+      "type": "IFCBUILDINGELEMENTPROXY",
+      "name": "Group#21",
+      "category": "Buildingelementproxy",
+      "family": "",
+      "material": "Default",
+      "properties": {
+        "global_id": "1CjP_CWub368bZVuVHeHs3",
+        "ifc_ref": "#162",
+        "ifc_class": "IFCBUILDINGELEMENTPROXY",
+        "Tag": "454425.1027891.979946.932083.2037932",
+        "Material": "Default"
+      },
+      "source_path": "Building-Structural.ifc"
+    },
+    {
+      "id": "2gTJhghMT81QThk15l2VwR",
+      "type": "IFCWALL",
+      "name": "house - inner wall",
+      "category": "Wall",
+      "family": "house - inner wall",
+      "material": "stone_sand-lime",
+      "properties": {
+        "global_id": "2gTJhghMT81QThk15l2VwR",
+        "ifc_ref": "#172",
+        "ifc_class": "IFCWALL",
+        "Description": "A solid inner wall, providing structural support within the house.",
+        "ObjectType": "solidwall",
+        "Tag": "454425.1027891.979946.932083.2037932.920033",
+        "Type": "house - inner wall",
+        "Material": "stone_sand-lime"
+      },
+      "source_path": "Building-Structural.ifc",
+      "propertySets": {
+        "Pset_WallCommon": {
+          "IsExternal": {
+            "value": false,
+            "value_type": "boolean"
+          },
+          "LoadBearing": {
+            "value": true,
+            "value_type": "boolean"
+          }
+        },
+        "Qto_WallBaseQuantities": {}
+      }
+    },
+    {
+      "id": "2iPwJwpPDCSgMheXwk9cBT",
+      "type": "IFCROOF",
+      "name": "house - roof",
+      "category": "Roof",
+      "family": "house - roof",
+      "material": "",
+      "properties": {
+        "global_id": "2iPwJwpPDCSgMheXwk9cBT",
+        "ifc_ref": "#196",
+        "ifc_class": "IFCROOF",
+        "Description": "A sturdy roof, sheltering the house from the elements.",
+        "ObjectType": "gable_roof",
+        "Tag": "454425.1027891.979946.932084",
+        "Type": "house - roof"
+      },
+      "source_path": "Building-Structural.ifc",
+      "propertySets": {
+        "Pset_RoofCommon": {
+          "IsExternal": {
+            "value": true,
+            "value_type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "id": "0fqX614OH1YO1Njdxms2$Q",
+      "type": "IFCBEAM",
+      "name": "girder",
+      "category": "Beam",
+      "family": "house - girder",
+      "material": "wood_spruce_beam",
+      "properties": {
+        "global_id": "0fqX614OH1YO1Njdxms2$Q",
+        "ifc_ref": "#209",
+        "ifc_class": "IFCBEAM",
+        "Description": "A strong girder, providing essential support for structures.",
+        "ObjectType": "girder_segment",
+        "Tag": "454425.1027891.979946.932084.902513",
+        "Type": "house - girder",
+        "Material": "wood_spruce_beam"
+      },
+      "source_path": "Building-Structural.ifc",
+      "propertySets": {
+        "Pset_BeamCommon": {
+          "IsExternal": {
+            "value": false,
+            "value_type": "boolean"
+          },
+          "LoadBearing": {
+            "value": true,
+            "value_type": "boolean"
+          }
+        },
+        "Qto_BeamBaseQuantities": {}
+      }
+    },
+    {
+      "id": "0rh7bRO0L9fg1NzgGKU$Ut",
+      "type": "IFCBEAM",
+      "name": "girder",
+      "category": "Beam",
+      "family": "house - girder",
+      "material": "wood_spruce_beam",
+      "properties": {
+        "global_id": "0rh7bRO0L9fg1NzgGKU$Ut",
+        "ifc_ref": "#236",
+        "ifc_class": "IFCBEAM",
+        "Description": "A strong girder, providing essential support for structures.",
+        "ObjectType": "girder_segment",
+        "Tag": "454425.1027891.979946.932084.902515",
+        "Type": "house - girder",
+        "Material": "wood_spruce_beam"
+      },
+      "source_path": "Building-Structural.ifc",
+      "propertySets": {
+        "Pset_BeamCommon": {
+          "IsExternal": {
+            "value": false,
+            "value_type": "boolean"
+          },
+          "LoadBearing": {
+            "value": true,
+            "value_type": "boolean"
+          }
+        },
+        "Qto_BeamBaseQuantities": {}
+      }
+    },
+    {
+      "id": "3roxUKbVv98xiUcl22_T07",
+      "type": "IFCBEAM",
+      "name": "girder",
+      "category": "Beam",
+      "family": "house - girder",
+      "material": "wood_spruce_beam",
+      "properties": {
+        "global_id": "3roxUKbVv98xiUcl22_T07",
+        "ifc_ref": "#257",
+        "ifc_class": "IFCBEAM",
+        "Description": "A strong girder, providing essential support for structures.",
+        "ObjectType": "girder_segment",
+        "Tag": "454425.1027891.979946.932084.902519",
+        "Type": "house - girder",
+        "Material": "wood_spruce_beam"
+      },
+      "source_path": "Building-Structural.ifc",
+      "propertySets": {
+        "Pset_BeamCommon": {
+          "IsExternal": {
+            "value": false,
+            "value_type": "boolean"
+          },
+          "LoadBearing": {
+            "value": true,
+            "value_type": "boolean"
+          }
+        },
+        "Qto_BeamBaseQuantities": {}
+      }
+    },
+    {
+      "id": "0Lvk$Qa81D5et3l3a4S9Vk",
+      "type": "IFCBEAM",
+      "name": "girder",
+      "category": "Beam",
+      "family": "house - girder",
+      "material": "wood_spruce_beam",
+      "properties": {
+        "global_id": "0Lvk$Qa81D5et3l3a4S9Vk",
+        "ifc_ref": "#278",
+        "ifc_class": "IFCBEAM",
+        "Description": "A strong girder, providing essential support for structures.",
+        "ObjectType": "girder_segment",
+        "Tag": "454425.1027891.979946.932084.902516",
+        "Type": "house - girder",
+        "Material": "wood_spruce_beam"
+      },
+      "source_path": "Building-Structural.ifc",
+      "propertySets": {
+        "Pset_BeamCommon": {
+          "IsExternal": {
+            "value": false,
+            "value_type": "boolean"
+          },
+          "LoadBearing": {
+            "value": true,
+            "value_type": "boolean"
+          }
+        },
+        "Qto_BeamBaseQuantities": {}
+      }
+    },
+    {
+      "id": "2ddLgAnQf4mBfh5IpUp54U",
+      "type": "IFCBEAM",
+      "name": "girder",
+      "category": "Beam",
+      "family": "house - girder",
+      "material": "wood_spruce_beam",
+      "properties": {
+        "global_id": "2ddLgAnQf4mBfh5IpUp54U",
+        "ifc_ref": "#299",
+        "ifc_class": "IFCBEAM",
+        "Description": "A strong girder, providing essential support for structures.",
+        "ObjectType": "girder_segment",
+        "Tag": "454425.1027891.979946.932084.902517",
+        "Type": "house - girder",
+        "Material": "wood_spruce_beam"
+      },
+      "source_path": "Building-Structural.ifc",
+      "propertySets": {
+        "Pset_BeamCommon": {
+          "IsExternal": {
+            "value": false,
+            "value_type": "boolean"
+          },
+          "LoadBearing": {
+            "value": true,
+            "value_type": "boolean"
+          }
+        },
+        "Qto_BeamBaseQuantities": {}
+      }
+    },
+    {
+      "id": "2fjJuPht9EIQaZQYZfC1Op",
+      "type": "IFCBEAM",
+      "name": "girder",
+      "category": "Beam",
+      "family": "house - girder",
+      "material": "wood_spruce_beam",
+      "properties": {
+        "global_id": "2fjJuPht9EIQaZQYZfC1Op",
+        "ifc_ref": "#320",
+        "ifc_class": "IFCBEAM",
+        "Description": "A strong girder, providing essential support for structures.",
+        "ObjectType": "girder_segment",
+        "Tag": "454425.1027891.979946.932084.902512",
+        "Type": "house - girder",
+        "Material": "wood_spruce_beam"
+      },
+      "source_path": "Building-Structural.ifc",
+      "propertySets": {
+        "Pset_BeamCommon": {
+          "IsExternal": {
+            "value": false,
+            "value_type": "boolean"
+          },
+          "LoadBearing": {
+            "value": true,
+            "value_type": "boolean"
+          }
+        },
+        "Qto_BeamBaseQuantities": {}
+      }
+    },
+    {
+      "id": "2r_8UEywH9_RLHe8z$Xa8J",
+      "type": "IFCDISCRETEACCESSORY",
+      "name": "beam shoe",
+      "category": "Discreteaccessory",
+      "family": "beam shoe",
+      "material": "metal_steel-galvanized",
+      "properties": {
+        "global_id": "2r_8UEywH9_RLHe8z$Xa8J",
+        "ifc_ref": "#343",
+        "ifc_class": "IFCDISCRETEACCESSORY",
+        "Description": "A robust shoe, providing stable support for beams.",
+        "ObjectType": "shoe",
+        "Tag": "454425.1027891.979946.932084.2037920.2037925",
+        "Type": "beam shoe",
+        "Material": "metal_steel-galvanized"
+      },
+      "source_path": "Building-Structural.ifc"
+    },
+    {
+      "id": "2cc4uJUVv5BevbidUpn1H3",
+      "type": "IFCDISCRETEACCESSORY",
+      "name": "beam shoe",
+      "category": "Discreteaccessory",
+      "family": "beam shoe",
+      "material": "metal_steel-galvanized",
+      "properties": {
+        "global_id": "2cc4uJUVv5BevbidUpn1H3",
+        "ifc_ref": "#359",
+        "ifc_class": "IFCDISCRETEACCESSORY",
+        "Description": "A robust shoe, providing stable support for beams.",
+        "ObjectType": "shoe",
+        "Tag": "454425.1027891.979946.932084.2037920.2037924",
+        "Type": "beam shoe",
+        "Material": "metal_steel-galvanized"
+      },
+      "source_path": "Building-Structural.ifc"
+    },
+    {
+      "id": "2F44QMqSH3TOkM$SZoqCBe",
+      "type": "IFCBUILDINGELEMENTPROXY",
+      "name": "origin",
+      "category": "Buildingelementproxy",
+      "family": "origin",
+      "material": "virtual_white",
+      "properties": {
+        "global_id": "2F44QMqSH3TOkM$SZoqCBe",
+        "ifc_ref": "#372",
+        "ifc_class": "IFCBUILDINGELEMENTPROXY",
+        "Description": "The local position for coordination of aspect models.",
+        "ObjectType": "origin",
+        "Tag": "454425.1027891.1032757",
+        "Type": "origin",
+        "Material": "virtual_white"
+      },
+      "source_path": "Building-Structural.ifc"
+    },
+    {
+      "id": "3Fit2Fad92zf2f6aWdJtF5",
+      "type": "IFCBUILDINGELEMENTPROXY",
+      "name": "geo-reference",
+      "category": "Buildingelementproxy",
+      "family": "geo-reference",
+      "material": "virtual_black",
+      "properties": {
+        "global_id": "3Fit2Fad92zf2f6aWdJtF5",
+        "ifc_ref": "#391",
+        "ifc_class": "IFCBUILDINGELEMENTPROXY",
+        "Description": "The reference point for transforming the local engineering coordinate system into the coordinate reference system of the underlying map.",
+        "ObjectType": "origin",
+        "Tag": "454425.1032696",
+        "Type": "geo-reference",
+        "Material": "virtual_black"
+      },
+      "source_path": "Building-Structural.ifc"
+    }
+  ],
+  "relations": [
+    {
+      "source_id": "ifc:Building-Structural",
+      "target_id": "2Ndyd$OSX7s9A04nc4lyye",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Structural",
+      "target_id": "23sFQGRy90RxVbRHD9iSE2",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Structural",
+      "target_id": "1Pbuu0tu59NfhrTsztVBK1",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Structural",
+      "target_id": "0c$N1CTon2BB2Sp89385G8",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Structural",
+      "target_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Structural",
+      "target_id": "0pFmhV8oD1dB40_b4pscr8",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Structural",
+      "target_id": "0DyViLJJ175RvWQi1rE7a6",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Structural",
+      "target_id": "3SGBcf7Lv0r80vKtUCgOpf",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Structural",
+      "target_id": "3oNJ9yHi5FJuFnK8yg68Yt",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Structural",
+      "target_id": "3dkFAzOGrAIuOzY_RdrdVv",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Structural",
+      "target_id": "1CjP_CWub368bZVuVHeHs3",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Structural",
+      "target_id": "2gTJhghMT81QThk15l2VwR",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Structural",
+      "target_id": "2iPwJwpPDCSgMheXwk9cBT",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Structural",
+      "target_id": "0fqX614OH1YO1Njdxms2$Q",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Structural",
+      "target_id": "0rh7bRO0L9fg1NzgGKU$Ut",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Structural",
+      "target_id": "3roxUKbVv98xiUcl22_T07",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Structural",
+      "target_id": "0Lvk$Qa81D5et3l3a4S9Vk",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Structural",
+      "target_id": "2ddLgAnQf4mBfh5IpUp54U",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Structural",
+      "target_id": "2fjJuPht9EIQaZQYZfC1Op",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Structural",
+      "target_id": "2r_8UEywH9_RLHe8z$Xa8J",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Structural",
+      "target_id": "2cc4uJUVv5BevbidUpn1H3",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Structural",
+      "target_id": "2F44QMqSH3TOkM$SZoqCBe",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "ifc:Building-Structural",
+      "target_id": "3Fit2Fad92zf2f6aWdJtF5",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "2Ndyd$OSX7s9A04nc4lyye",
+      "target_id": "23sFQGRy90RxVbRHD9iSE2",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "23sFQGRy90RxVbRHD9iSE2",
+      "target_id": "1Pbuu0tu59NfhrTsztVBK1",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "1Pbuu0tu59NfhrTsztVBK1",
+      "target_id": "0c$N1CTon2BB2Sp89385G8",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "0c$N1CTon2BB2Sp89385G8",
+      "target_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "0pFmhV8oD1dB40_b4pscr8",
+      "target_id": "house - foundation",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "target_id": "0pFmhV8oD1dB40_b4pscr8",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "target_id": "0DyViLJJ175RvWQi1rE7a6",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "target_id": "3SGBcf7Lv0r80vKtUCgOpf",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "target_id": "3oNJ9yHi5FJuFnK8yg68Yt",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "target_id": "3dkFAzOGrAIuOzY_RdrdVv",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "target_id": "1CjP_CWub368bZVuVHeHs3",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "1Ano2ZUxnEIvVQ_beukl8b",
+      "target_id": "2gTJhghMT81QThk15l2VwR",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "0DyViLJJ175RvWQi1rE7a6",
+      "target_id": "house - outer wall - house back",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "3SGBcf7Lv0r80vKtUCgOpf",
+      "target_id": "house - outer wall - house front",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "3oNJ9yHi5FJuFnK8yg68Yt",
+      "target_id": "house - outer wall - house front right",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "3dkFAzOGrAIuOzY_RdrdVv",
+      "target_id": "house - chimney",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "2gTJhghMT81QThk15l2VwR",
+      "target_id": "house - inner wall",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "2iPwJwpPDCSgMheXwk9cBT",
+      "target_id": "house - roof",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "0c$N1CTon2BB2Sp89385G8",
+      "target_id": "2iPwJwpPDCSgMheXwk9cBT",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "0fqX614OH1YO1Njdxms2$Q",
+      "target_id": "house - girder",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "0rh7bRO0L9fg1NzgGKU$Ut",
+      "target_id": "house - girder",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "3roxUKbVv98xiUcl22_T07",
+      "target_id": "house - girder",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "0Lvk$Qa81D5et3l3a4S9Vk",
+      "target_id": "house - girder",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "2ddLgAnQf4mBfh5IpUp54U",
+      "target_id": "house - girder",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "2fjJuPht9EIQaZQYZfC1Op",
+      "target_id": "house - girder",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "2iPwJwpPDCSgMheXwk9cBT",
+      "target_id": "0fqX614OH1YO1Njdxms2$Q",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "2iPwJwpPDCSgMheXwk9cBT",
+      "target_id": "0rh7bRO0L9fg1NzgGKU$Ut",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "2iPwJwpPDCSgMheXwk9cBT",
+      "target_id": "3roxUKbVv98xiUcl22_T07",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "2iPwJwpPDCSgMheXwk9cBT",
+      "target_id": "0Lvk$Qa81D5et3l3a4S9Vk",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "2iPwJwpPDCSgMheXwk9cBT",
+      "target_id": "2ddLgAnQf4mBfh5IpUp54U",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "2iPwJwpPDCSgMheXwk9cBT",
+      "target_id": "2fjJuPht9EIQaZQYZfC1Op",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "2iPwJwpPDCSgMheXwk9cBT",
+      "target_id": "2r_8UEywH9_RLHe8z$Xa8J",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "2iPwJwpPDCSgMheXwk9cBT",
+      "target_id": "2cc4uJUVv5BevbidUpn1H3",
+      "relation_type": "contains"
+    },
+    {
+      "source_id": "2r_8UEywH9_RLHe8z$Xa8J",
+      "target_id": "beam shoe",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "2cc4uJUVv5BevbidUpn1H3",
+      "target_id": "beam shoe",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "2F44QMqSH3TOkM$SZoqCBe",
+      "target_id": "origin",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "1Pbuu0tu59NfhrTsztVBK1",
+      "target_id": "2F44QMqSH3TOkM$SZoqCBe",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "3Fit2Fad92zf2f6aWdJtF5",
+      "target_id": "geo-reference",
+      "relation_type": "type"
+    },
+    {
+      "source_id": "23sFQGRy90RxVbRHD9iSE2",
+      "target_id": "3Fit2Fad92zf2f6aWdJtF5",
+      "relation_type": "spatial"
+    },
+    {
+      "source_id": "0c$N1CTon2BB2Sp89385G8",
+      "target_id": "Pset_BuildingCommon",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "0pFmhV8oD1dB40_b4pscr8",
+      "target_id": "concrete_reinforced_in-situ",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "0DyViLJJ175RvWQi1rE7a6",
+      "target_id": "Pset_WallCommon",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "0DyViLJJ175RvWQi1rE7a6",
+      "target_id": "stone_sand-lime",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "3SGBcf7Lv0r80vKtUCgOpf",
+      "target_id": "stone_sand-lime",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "3oNJ9yHi5FJuFnK8yg68Yt",
+      "target_id": "stone_sand-lime",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "3dkFAzOGrAIuOzY_RdrdVv",
+      "target_id": "stone_sand-lime",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "2gTJhghMT81QThk15l2VwR",
+      "target_id": "stone_sand-lime",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "0DyViLJJ175RvWQi1rE7a6",
+      "target_id": "Qto_WallBaseQuantities",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "3SGBcf7Lv0r80vKtUCgOpf",
+      "target_id": "Pset_WallCommon",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "3SGBcf7Lv0r80vKtUCgOpf",
+      "target_id": "Qto_WallBaseQuantities",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "3oNJ9yHi5FJuFnK8yg68Yt",
+      "target_id": "Pset_WallCommon",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "3oNJ9yHi5FJuFnK8yg68Yt",
+      "target_id": "Qto_WallBaseQuantities",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "1CjP_CWub368bZVuVHeHs3",
+      "target_id": "Default",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "2gTJhghMT81QThk15l2VwR",
+      "target_id": "Pset_WallCommon",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "2gTJhghMT81QThk15l2VwR",
+      "target_id": "Qto_WallBaseQuantities",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "2iPwJwpPDCSgMheXwk9cBT",
+      "target_id": "Pset_RoofCommon",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "0fqX614OH1YO1Njdxms2$Q",
+      "target_id": "Pset_BeamCommon",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "0fqX614OH1YO1Njdxms2$Q",
+      "target_id": "wood_spruce_beam",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "0rh7bRO0L9fg1NzgGKU$Ut",
+      "target_id": "wood_spruce_beam",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "3roxUKbVv98xiUcl22_T07",
+      "target_id": "wood_spruce_beam",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "0Lvk$Qa81D5et3l3a4S9Vk",
+      "target_id": "wood_spruce_beam",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "2ddLgAnQf4mBfh5IpUp54U",
+      "target_id": "wood_spruce_beam",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "2fjJuPht9EIQaZQYZfC1Op",
+      "target_id": "wood_spruce_beam",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "0fqX614OH1YO1Njdxms2$Q",
+      "target_id": "Qto_BeamBaseQuantities",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "0rh7bRO0L9fg1NzgGKU$Ut",
+      "target_id": "Pset_BeamCommon",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "0rh7bRO0L9fg1NzgGKU$Ut",
+      "target_id": "Qto_BeamBaseQuantities",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "3roxUKbVv98xiUcl22_T07",
+      "target_id": "Pset_BeamCommon",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "3roxUKbVv98xiUcl22_T07",
+      "target_id": "Qto_BeamBaseQuantities",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "0Lvk$Qa81D5et3l3a4S9Vk",
+      "target_id": "Pset_BeamCommon",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "0Lvk$Qa81D5et3l3a4S9Vk",
+      "target_id": "Qto_BeamBaseQuantities",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "2ddLgAnQf4mBfh5IpUp54U",
+      "target_id": "Pset_BeamCommon",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "2ddLgAnQf4mBfh5IpUp54U",
+      "target_id": "Qto_BeamBaseQuantities",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "2fjJuPht9EIQaZQYZfC1Op",
+      "target_id": "Pset_BeamCommon",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "2fjJuPht9EIQaZQYZfC1Op",
+      "target_id": "Qto_BeamBaseQuantities",
+      "relation_type": "has_properties"
+    },
+    {
+      "source_id": "2r_8UEywH9_RLHe8z$Xa8J",
+      "target_id": "metal_steel-galvanized",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "2cc4uJUVv5BevbidUpn1H3",
+      "target_id": "metal_steel-galvanized",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "2F44QMqSH3TOkM$SZoqCBe",
+      "target_id": "virtual_white",
+      "relation_type": "has_material"
+    },
+    {
+      "source_id": "3Fit2Fad92zf2f6aWdJtF5",
+      "target_id": "virtual_black",
+      "relation_type": "has_material"
+    }
+  ]
+}
