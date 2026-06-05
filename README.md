@@ -1,6 +1,6 @@
 # LES RAG Public
 
-![LES and VIZOR overview](assets/readme/les-vizor-hero.svg)
+![LES and VIZOR overview](assets/readme/les-vizor-hero.png)
 
 **RU:** LES - локальная инженерная RAG-система. Она превращает документы, таблицы и CAD/BIM-модели в проверяемую базу знаний: ответ должен ссылаться не на "примерно страницу", а на источник, фрагмент, объект чертежа или BIM-элемент.
 
@@ -16,7 +16,7 @@ LES состоит из трех частей:
 2. **CAD/BIM JSON bridge** - экспортеры для AutoCAD, Revit и Navisworks плюс IFC/DXF extractors. Их задача - превратить инженерную модель в `cad_bim_graph.json`.
 3. **VIZOR** - WebGL-смотрелка для `*.cad_bim_graph.json` и IFC. Она нужна не для красоты ради красоты, а для контроля: если JSON можно нарисовать обратно, значит данные не умерли по дороге в RAG.
 
-![CAD/BIM pipeline](assets/readme/cad-bim-pipeline.svg)
+![CAD/BIM pipeline](assets/readme/cad-bim-pipeline.png)
 
 ### Зачем это нужно
 
