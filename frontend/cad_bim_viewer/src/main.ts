@@ -97,7 +97,7 @@ app.innerHTML = `
         ${QUICK_SOURCES.map((item) => `<button type="button" data-source-id="${item.id}">${escapeHtml(item.label)}</button>`).join("")}
       </nav>
       <div class="toolstrip" aria-label="Управление сценой">
-        <button type="button" id="load-default-model" title="Загрузить самый свежий IFC/JSON из папки models">Загрузить модель по умолчанию</button>
+        <button type="button" id="load-default-model" class="default-model-btn" title="Загрузить модель по умолчанию из папки models">Модель</button>
         <button type="button" id="fit-btn" title="Вписать сцену">Вписать</button>
         <button type="button" id="reload-btn" title="Перезагрузить текущий источник">Обновить</button>
         <a href="${exportersGithubUrl}" target="_blank" rel="noopener noreferrer" title="Открыть JSON exporters на GitHub">Экспортеры JSON</a>

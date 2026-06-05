@@ -150,6 +150,18 @@ button {
   border-color: rgba(250, 204, 21, 0.46);
 }
 
+.toolstrip .default-model-btn {
+  border-color: rgba(250, 204, 21, 0.42);
+  color: var(--accent);
+  background: rgba(250, 204, 21, 0.1);
+  max-width: 92px;
+}
+
+.toolstrip .default-model-btn:hover {
+  border-color: rgba(250, 204, 21, 0.72);
+  background: rgba(250, 204, 21, 0.16);
+}
+
 .tabs {
   flex-wrap: wrap;
   padding: 10px 12px 0;
@@ -759,9 +771,13 @@ button {
   .toolstrip {
     grid-column: 2;
     display: grid;
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 6px;
     justify-self: stretch;
+  }
+
+  .toolstrip .default-model-btn {
+    max-width: none;
   }
 
   .status {
