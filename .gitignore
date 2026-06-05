@@ -51,6 +51,7 @@ artifacts/
 snapshots/
 
 # Local CAD/BIM deliverables and private samples
+local_private_archive/
 deliverables/
 outputs/
 exporters.zip
