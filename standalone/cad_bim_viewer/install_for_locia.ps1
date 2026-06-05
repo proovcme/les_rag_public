@@ -50,9 +50,31 @@ function Copy-ViewerFiles([string]$SourceRoot, [string]$TargetRoot) {
   }
 
   New-Item -ItemType Directory -Force -Path $TargetRoot | Out-Null
-  & robocopy $SourceRoot $TargetRoot /MIR /NFL /NDL /NJH /NJS /NP | Out-Host
-  if ($LASTEXITCODE -gt 7) {
-    throw "robocopy failed with code $LASTEXITCODE"
+  $targetModels = Join-Path $TargetRoot "models"
+  $modelsBackup = $null
+  if (Test-Path -LiteralPath $targetModels) {
+    $modelsBackup = Join-Path ([System.IO.Path]::GetTempPath()) ("locia-tim-viewer2-models-" + [Guid]::NewGuid().ToString("N"))
+    Move-Item -LiteralPath $targetModels -Destination $modelsBackup -Force
+  }
+
+  try {
+    & robocopy $SourceRoot $TargetRoot /MIR /NFL /NDL /NJH /NJS /NP | Out-Host
+    if ($LASTEXITCODE -gt 7) {
+      throw "robocopy failed with code $LASTEXITCODE"
+    }
+
+    if ($modelsBackup) {
+      if (Test-Path -LiteralPath $targetModels) {
+        Remove-Item -LiteralPath $targetModels -Recurse -Force
+      }
+      Move-Item -LiteralPath $modelsBackup -Destination $targetModels -Force
+      Write-Host "Existing models folder preserved: $targetModels"
+    }
+  } catch {
+    if ($modelsBackup -and -not (Test-Path -LiteralPath $targetModels)) {
+      Move-Item -LiteralPath $modelsBackup -Destination $targetModels -Force
+    }
+    throw
   }
 }
 
