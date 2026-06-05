@@ -1,15 +1,17 @@
 param(
-  [int]$Port = 8095
+  [int]$Port = 8095,
+  [string]$Bind = "+"
 )
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Prefix = "http://127.0.0.1:$Port/"
+$Prefix = "http://$Bind`:$Port/"
 $Listener = [System.Net.HttpListener]::new()
 $Listener.Prefixes.Add($Prefix)
 $Listener.Start()
 
 Write-Host "LES CAD/BIM standalone: $Prefix"
+Write-Host "For LAN clients set Locia TIM_VIEWER_2_URL to http://SERVER:$Port/"
 Write-Host "Press Ctrl+C to stop."
 
 function Get-MimeType([string]$Path) {
