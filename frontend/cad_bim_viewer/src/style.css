@@ -118,6 +118,7 @@ button {
 .toolbar button,
 .quickbar button,
 .toolstrip button,
+.toolstrip a,
 .layer-tools button,
 .chips-row button,
 .tabs button {
@@ -129,10 +130,15 @@ button {
   padding: 0 11px;
   cursor: pointer;
   white-space: nowrap;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .quickbar button:hover,
 .toolstrip button:hover,
+.toolstrip a:hover,
 .toolbar button:hover,
 .layer-tools button:hover,
 .chips-row button:hover,
@@ -729,7 +735,8 @@ button {
   .toolbar input,
   .toolbar button,
   .quickbar button,
-  .toolstrip button {
+  .toolstrip button,
+  .toolstrip a {
     height: 30px;
     border-radius: 6px;
     padding: 0 8px;

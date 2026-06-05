@@ -18,6 +18,7 @@ type StructureModel = { id: string; label: string; elements: CadBimElement[] };
 
 const isStandaloneViewer = !location.pathname.includes("/les/cad-bim-viewer");
 const standaloneDefaultSource = viewerAssetUrl("models/demo.cad_bim_graph.json");
+const exportersGithubUrl = "https://github.com/proovcme/les_rag_public/tree/codex/les-closeout-20260527/exporters";
 
 const BUILDING_IFC_MODELS: IfcModelSource[] = [
   {
@@ -91,6 +92,7 @@ app.innerHTML = `
       <div class="toolstrip" aria-label="Управление сценой">
         <button type="button" id="fit-btn" title="Вписать сцену">Вписать</button>
         <button type="button" id="reload-btn" title="Перезагрузить текущий источник">Обновить</button>
+        <a href="${exportersGithubUrl}" target="_blank" rel="noopener noreferrer" title="Открыть JSON exporters на GitHub">Экспортеры JSON</a>
       </div>
       <div class="status" id="status">запуск...</div>
     </header>

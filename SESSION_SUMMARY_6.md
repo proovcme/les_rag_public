@@ -128,6 +128,9 @@
   `models/demo.cad_bim_graph.json` instead of calling `/lite-api`, `Последний`
   maps to the demo JSON, mobile topbar is compacted, and `/vv` static assets
   use cache-busting query plus `Cache-Control: no-store`.
+- `/vv` now exposes a visible `Экспортеры JSON` link to the public GitHub
+  exporters folder:
+  `https://github.com/proovcme/les_rag_public/tree/codex/les-closeout-20260527/exporters`.
 
 ## Live Notes 05.06.2026 Universal Autodesk Destinations
 
