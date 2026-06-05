@@ -40,7 +40,12 @@ export class IfcEngine {
 
   async loadModels(models: IfcModelSource[], onProgress?: (message: string) => void, replace = true): Promise<IfcRenderResult> {
     if (replace) this.clear();
-    await this.ensureReady();
+    try {
+      onProgress?.("подготовка IFC runtime...");
+      await this.ensureReady();
+    } catch (error) {
+      throw new Error(`IFC runtime: ${error instanceof Error ? error.message : String(error)}`);
+    }
     let loaded = 0;
     for (const model of models) {
       onProgress?.(`загрузка ${model.label}...`);
@@ -121,7 +126,7 @@ export class IfcEngine {
   async ensureReady(): Promise<void> {
     if (this.ready) return;
     this.fragments = this.components.get((OBC as any).FragmentsManager);
-    this.fragments.init(`${viewerBase()}fragments/worker.mjs`);
+    this.fragments.init(viewerAssetUrl("fragments/worker.mjs"));
     (this.world.camera as any).controls.addEventListener("rest", () => this.fragments?.core?.update?.(true));
     (this.world.camera as any).projection.onChanged.add(() => {
       for (const [, model] of this.fragments.list) model.useCamera(this.world.camera.three);
@@ -137,7 +142,7 @@ export class IfcEngine {
     this.ifcLoader = this.components.get((OBC as any).IfcLoader);
     await this.ifcLoader.setup({
       autoSetWasm: false,
-      wasm: { absolute: true, path: `${window.location.origin}${viewerBase()}web-ifc/` },
+      wasm: { absolute: true, path: viewerAssetUrl("web-ifc/") },
     });
 
     this.highlighter = this.components.get(OBF.Highlighter);
@@ -158,10 +163,15 @@ export class IfcEngine {
   }
 
   private async fetchBytes(url: string): Promise<Uint8Array> {
-    const response = await fetch(url, { headers: { Accept: "application/octet-stream" } });
+    let response: Response;
+    try {
+      response = await fetch(url, { headers: { Accept: "application/octet-stream" } });
+    } catch (error) {
+      throw new Error(`IFC fetch ${url}: ${error instanceof Error ? error.message : String(error)}`);
+    }
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`IFC ${response.status}: ${text.slice(0, 180)}`);
+      throw new Error(`IFC fetch ${url} ${response.status}: ${text.slice(0, 180)}`);
     }
     return new Uint8Array(await response.arrayBuffer());
   }
@@ -192,6 +202,10 @@ function viewerBase(): string {
   const meta = import.meta as unknown as { env?: { BASE_URL?: string } };
   const base = meta.env?.BASE_URL || viewerRuntimeBase();
   return base.endsWith("/") ? base : `${base}/`;
+}
+
+function viewerAssetUrl(path: string): string {
+  return new URL(path, new URL(viewerBase(), window.location.href)).toString();
 }
 
 function viewerRuntimeBase(): string {

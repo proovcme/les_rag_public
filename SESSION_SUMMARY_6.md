@@ -137,6 +137,13 @@
   `Revit все` loaded `2483` elements / `1689` drawable objects with canvas and
   no console errors. Local copies are ignored in git to avoid committing heavy
   deployment payloads.
+- `/vv` IFC runtime hotfix: standalone now ships the full web-ifc wasm set
+  (`web-ifc.wasm`, `web-ifc-mt.wasm`, `web-ifc-node.wasm`), resolves wasm and
+  fragments worker paths via `new URL(..., runtimeBase)` instead of duplicating
+  `window.location.origin`, normalizes direct `?ifc=ifc-sample/...` URLs, and
+  uses camera `fitToSphere` for IFC scenes. Browser smoke loaded all three
+  `000_4-10_*_R24.ifc` files and BuildingSmart `building`; screenshots showed
+  visible geometry after fit.
 
 ## Live Notes 05.06.2026 Universal Autodesk Destinations
 

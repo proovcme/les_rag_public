@@ -632,7 +632,7 @@ CAD/BIM bridge теперь работает как JSON-first контур дл
 
 `IMPORT JSON GRAPH` в Lite Admin поддерживает профиль источника `AUTO`, `AutoCAD/DWG`, `Revit/RVT`, `IFC`, `Excel/Power BI` или `Generic`; профиль влияет на текстовую проекцию и сохранение layer/category/family/level/material/table properties. В Lite Admin также есть `CAD/BIM Viewer`: `VIEW JSON` дает быстрый inline 2D preview, а `OPEN OBC VIEWER` открывает OBC/WebGL viewer на `/les/cad-bim-viewer`. Viewer читает latest или указанный `cad_bim_graph.json` через `/api/cad-bim/source`/`/lite-api/cad-bim/source`, рисует line/polyline/arc/text/bbox/Revit mesh geometry, показывает русскоязычный UI, модели, структуру, слои, сечения, замеры и выбранный объект; для metadata-only payloads inline preview переключается в graph view по relations. Контракт JSON описан в `dev/CAD_BIM_JSON_CONTRACT.md`. Legacy `/api/speckle/import` сохранен для Speckle object graph, но предпочтительный endpoint теперь `/api/cad-bim/import`.
 
-Отдельный offline-ready пакет лежит в `standalone/cad_bim_viewer/`. Он не требует LES backend, `npm install` или сети: в папке уже есть bundled JS/CSS, `fragments/worker.mjs`, один браузерный `web-ifc.wasm`, demo JSON и launch scripts. На Windows почти с нуля:
+Отдельный offline-ready пакет лежит в `standalone/cad_bim_viewer/`. Он не требует LES backend, `npm install` или сети: в папке уже есть bundled JS/CSS, `fragments/worker.mjs`, полный браузерный комплект `web-ifc.wasm` / `web-ifc-mt.wasm` / `web-ifc-node.wasm`, demo JSON и launch scripts. На Windows почти с нуля:
 
 ```powershell
 cd standalone\cad_bim_viewer
@@ -652,6 +652,9 @@ cd standalone/cad_bim_viewer
 `https://les.ovc.me/vv/`. Caddy отдает ее напрямую из `/var/www/vv`; `/vv`
 редиректит на `/vv/`, чтобы относительные `assets/`, `web-ifc/` и `models/`
 разрешались корректно. Это не admin route и не требует регистрации/API key.
+Для IFC runtime важно не склеивать `window.location.origin` вручную: viewer
+строит `fragments/worker.mjs` и `web-ifc/` через `new URL(..., runtimeBase)`,
+иначе public mount получает невалидный двойной origin.
 
 Основной DWG-путь: собрать `exporters/autocad/LES.AutoCAD.JsonExport`, установить bundle и использовать ribbon tab `LES` в AutoCAD. Кнопка/команда `LESJSONEXPORT` сохраняет JSON, `LESJSONPUSH` отправляет JSON в настроенные назначения, `LESJSONCONFIG` правит общий конфиг. Основной RVT-путь: собрать `exporters/revit/LES.Revit.JsonExport`, установить `.addin` manifest и использовать ribbon tab `LES` в Revit: `Export JSON` сохраняет файл, `Push to LES` отправляет модель напрямую, `Config` открывает общий конфиг. Navisworks-путь: `exporters/navisworks/LES.Navisworks.JsonExport` ставится в `%APPDATA%\Autodesk Navisworks Manage <year>\Plugins\LES.Navisworks.JsonExport\` и экспортирует дерево модели/properties/GUID/bbox в тот же JSON. Direct upload сначала пробует Mac по ZeroTier `http://10.195.146.98:8050`, затем public tunnel `https://les.ovc.me`, затем `custom_urls`; при отказе сохраняет fallback JSON в `local_output_dir` или Documents.
 

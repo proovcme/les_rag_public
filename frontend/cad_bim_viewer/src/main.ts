@@ -937,7 +937,21 @@ function ifcModelsFromSelection(selection: string): IfcModelSource[] {
   const byId = BUILDING_IFC_MODELS.find((model) => model.id === normalized || `${model.id}.ifc` === normalized);
   if (byId) return [byId];
   const label = normalized.split("/").pop() || normalized;
-  return [{ id: label.replace(/\.ifc$/i, ""), label, url: normalized }];
+  return [{ id: label.replace(/\.ifc$/i, ""), label, url: directIfcUrl(normalized) }];
+}
+
+function directIfcUrl(path: string): string {
+  const normalized = path.trim();
+  if (
+    /^https?:\/\//i.test(normalized) ||
+    normalized.startsWith("blob:") ||
+    normalized.startsWith("/") ||
+    normalized.startsWith("./") ||
+    normalized.startsWith("../")
+  ) {
+    return normalized;
+  }
+  return viewerAssetUrl(normalized);
 }
 
 function viewerAssetUrl(path: string): string {

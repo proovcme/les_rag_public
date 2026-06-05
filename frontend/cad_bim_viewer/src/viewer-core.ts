@@ -468,17 +468,8 @@ export class CadBimViewer {
     const sphere = new THREE.Sphere();
     box.getBoundingSphere(sphere);
     if (!Number.isFinite(sphere.radius) || sphere.radius <= 0) return;
-    const radius = Math.max(0.4, sphere.radius * 1.7);
-    const center = sphere.center;
-    (this.world.camera as any)?.controls?.setLookAt(
-      center.x + radius * 0.35,
-      center.y + radius * 1.15,
-      center.z + radius * 0.75,
-      center.x,
-      center.y,
-      center.z,
-      false,
-    );
+    sphere.radius = Math.max(0.25, sphere.radius * 1.15);
+    void (this.world.camera as any)?.controls?.fitToSphere?.(sphere, true);
     this.requestRender();
   }
 
