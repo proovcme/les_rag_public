@@ -28,6 +28,7 @@ export interface RenderResult {
 }
 
 export type ClipAxis = "x" | "y" | "z";
+export type ClipDirection = 1 | -1;
 
 export interface RenderOptions {
   id?: string;
@@ -80,10 +81,10 @@ export class CadBimViewer {
 
   private lineHighlightMaterial = new THREE.LineBasicMaterial({ color: 0xfacc15, linewidth: 3, depthTest: false });
 
-  private readonly clipSettings = new Map<ClipAxis, { enabled: boolean; offset: number }>([
-    ["x", { enabled: false, offset: 0.5 }],
-    ["y", { enabled: false, offset: 0.5 }],
-    ["z", { enabled: false, offset: 0.5 }],
+  private readonly clipSettings = new Map<ClipAxis, { enabled: boolean; offset: number; direction: ClipDirection }>([
+    ["x", { enabled: false, offset: 0.5, direction: 1 }],
+    ["y", { enabled: false, offset: 0.5, direction: 1 }],
+    ["z", { enabled: false, offset: 0.5, direction: 1 }],
   ]);
 
   private readonly ifcEngine: IfcEngine;
@@ -437,8 +438,12 @@ export class CadBimViewer {
     this.requestRender();
   }
 
-  setClipPlane(axis: ClipAxis, enabled: boolean, offset: number): void {
-    this.clipSettings.set(axis, { enabled, offset: Math.max(0, Math.min(1, offset)) });
+  setClipPlane(axis: ClipAxis, enabled: boolean, offset: number, direction: ClipDirection): void {
+    this.clipSettings.set(axis, {
+      enabled,
+      offset: Math.max(0, Math.min(1, offset)),
+      direction,
+    });
     this.updateClippingPlanes();
     this.requestRender();
   }
@@ -451,11 +456,11 @@ export class CadBimViewer {
     this.requestRender();
   }
 
-  clipState(): Record<ClipAxis, { enabled: boolean; offset: number }> {
+  clipState(): Record<ClipAxis, { enabled: boolean; offset: number; direction: ClipDirection }> {
     return {
-      x: { ...(this.clipSettings.get("x") || { enabled: false, offset: 0.5 }) },
-      y: { ...(this.clipSettings.get("y") || { enabled: false, offset: 0.5 }) },
-      z: { ...(this.clipSettings.get("z") || { enabled: false, offset: 0.5 }) },
+      x: { ...(this.clipSettings.get("x") || { enabled: false, offset: 0.5, direction: 1 as ClipDirection }) },
+      y: { ...(this.clipSettings.get("y") || { enabled: false, offset: 0.5, direction: 1 as ClipDirection }) },
+      z: { ...(this.clipSettings.get("z") || { enabled: false, offset: 0.5, direction: 1 as ClipDirection }) },
     };
   }
 
@@ -755,7 +760,8 @@ export class CadBimViewer {
       if (!setting.enabled) continue;
       const range = axes[axis];
       const value = range.min + (range.max - range.min) * setting.offset;
-      planes.push(new THREE.Plane(range.normal, -value));
+      const normal = range.normal.clone().multiplyScalar(setting.direction);
+      planes.push(new THREE.Plane(normal, -value * setting.direction));
     }
     this.world.renderer.three.clippingPlanes = planes;
     (this.world.renderer.three as THREE.WebGLRenderer).localClippingEnabled = true;

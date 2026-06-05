@@ -1,6 +1,6 @@
 import "./style.css";
 import { CadBimViewer } from "./viewer-core";
-import type { ClipAxis } from "./viewer-core";
+import type { ClipAxis, ClipDirection } from "./viewer-core";
 import type {
   CadBimElement,
   CadBimGraph,
@@ -161,6 +161,13 @@ app.innerHTML = `
             </select>
           </label>
           <label class="control-row">
+            <span>Направление</span>
+            <select id="clip-direction">
+              <option value="1">+X вправо</option>
+              <option value="-1">-X влево</option>
+            </select>
+          </label>
+          <label class="control-row">
             <span>Позиция</span>
             <input id="clip-offset" type="range" min="0" max="100" value="50" />
           </label>
@@ -240,6 +247,7 @@ const layerSolosNode = document.getElementById("layer-solos")!;
 const toolSelectionInfoNode = document.getElementById("tool-selection-info")!;
 const clipEnabledInput = document.getElementById("clip-enabled") as HTMLInputElement;
 const clipAxisInput = document.getElementById("clip-axis") as HTMLSelectElement;
+const clipDirectionInput = document.getElementById("clip-direction") as HTMLSelectElement;
 const clipOffsetInput = document.getElementById("clip-offset") as HTMLInputElement;
 const clipInfoNode = document.getElementById("clip-info")!;
 const measureInfoNode = document.getElementById("measure-info")!;
@@ -808,17 +816,33 @@ function renderToolSelectionInfo(element: CadBimElement | null): void {
 
 function applyClip(): void {
   const axis = clipAxisInput.value as ClipAxis;
+  const direction = Number(clipDirectionInput.value) === -1 ? -1 : 1;
   const offset = Number(clipOffsetInput.value) / 100;
-  viewer.setClipPlane(axis, clipEnabledInput.checked, offset);
+  viewer.setClipPlane(axis, clipEnabledInput.checked, offset, direction as ClipDirection);
   renderClipInfo();
 }
 
 function renderClipInfo(): void {
   const state = viewer.clipState();
-  const active = (Object.entries(state) as [ClipAxis, { enabled: boolean; offset: number }][])
+  const active = (Object.entries(state) as [ClipAxis, { enabled: boolean; offset: number; direction: ClipDirection }][])
     .filter(([, value]) => value.enabled)
-    .map(([axis, value]) => `${axis.toUpperCase()} ${Math.round(value.offset * 100)}%`);
+    .map(([axis, value]) => `${axis.toUpperCase()}${value.direction > 0 ? "+" : "-"} ${Math.round(value.offset * 100)}%`);
   clipInfoNode.textContent = active.length ? active.join(" / ") : "Сечение выключено";
+}
+
+function updateClipDirectionOptions(): void {
+  const axis = clipAxisInput.value as ClipAxis;
+  const labels: Record<ClipAxis, [string, string]> = {
+    x: ["+X вправо", "-X влево"],
+    y: ["+Y вверх", "-Y вниз"],
+    z: ["+Z вперёд", "-Z назад"],
+  };
+  const current = clipDirectionInput.value === "-1" ? "-1" : "1";
+  clipDirectionInput.innerHTML = `
+    <option value="1">${labels[axis][0]}</option>
+    <option value="-1">${labels[axis][1]}</option>
+  `;
+  clipDirectionInput.value = current;
 }
 
 function statCard(label: string, value: number): string {
@@ -1028,7 +1052,11 @@ document.getElementById("measure-distance")?.addEventListener("click", () => {
 });
 document.getElementById("measure-clear")?.addEventListener("click", () => viewer.clearMeasurements());
 clipEnabledInput.addEventListener("change", applyClip);
-clipAxisInput.addEventListener("change", applyClip);
+clipAxisInput.addEventListener("change", () => {
+  updateClipDirectionOptions();
+  applyClip();
+});
+clipDirectionInput.addEventListener("change", applyClip);
 clipOffsetInput.addEventListener("input", applyClip);
 document.getElementById("clip-clear")?.addEventListener("click", () => {
   clipEnabledInput.checked = false;
@@ -1082,6 +1110,7 @@ document.getElementById("models-show-all")?.addEventListener("click", () => {
 document.getElementById("models-fit-all")?.addEventListener("click", () => viewer.fit());
 structureFilterInput.addEventListener("input", renderStructure);
 
+updateClipDirectionOptions();
 boot().catch((error) => {
   setStatus(error instanceof Error ? error.message : String(error), true);
 });

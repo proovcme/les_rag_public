@@ -144,6 +144,9 @@
   uses camera `fitToSphere` for IFC scenes. Browser smoke loaded all three
   `000_4-10_*_R24.ifc` files and BuildingSmart `building`; screenshots showed
   visible geometry after fit.
+- Viewer clipping controls now include per-axis direction selection (`X+/-`,
+  `Y+/-`, `Z+/-`), so sections can cut from either side instead of only along
+  the default positive axis normal.
 
 ## Live Notes 05.06.2026 Universal Autodesk Destinations
 
