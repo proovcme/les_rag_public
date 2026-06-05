@@ -68,6 +68,15 @@ function Copy-ViewerFiles([string]$SourceRoot, [string]$TargetRoot) {
         Remove-Item -LiteralPath $targetModels -Recurse -Force
       }
       Move-Item -LiteralPath $modelsBackup -Destination $targetModels -Force
+      $hasSupportedModels = Get-ChildItem -LiteralPath $targetModels -File -ErrorAction SilentlyContinue |
+        Where-Object { @(".ifc", ".ifczip", ".json") -contains $_.Extension.ToLowerInvariant() } |
+        Select-Object -First 1
+      if (-not $hasSupportedModels) {
+        $sourceDemo = Join-Path $SourceRoot "models\demo.cad_bim_graph.json"
+        if (Test-Path -LiteralPath $sourceDemo) {
+          Copy-Item -LiteralPath $sourceDemo -Destination $targetModels -Force
+        }
+      }
       Write-Host "Existing models folder preserved: $targetModels"
     }
   } catch {
