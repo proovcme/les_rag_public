@@ -1,7 +1,14 @@
 {
+  "schema_version": "1.0",
   "id": "standalone-demo",
   "type": "Model",
   "name": "Standalone demo",
+  "source": {
+    "type": "demo",
+    "name": "Standalone demo",
+    "units": "m",
+    "exporter": "LES VIZOR demo"
+  },
   "source_format": "demo",
   "elements": [
     {
@@ -70,11 +77,17 @@
   ],
   "relations": [
     {
+      "from": "standalone-demo",
+      "to": "demo-duct-001",
+      "type": "contains",
       "source_id": "standalone-demo",
       "target_id": "demo-duct-001",
       "relation_type": "contains"
     },
     {
+      "from": "standalone-demo",
+      "to": "demo-pipe-001",
+      "type": "contains",
       "source_id": "standalone-demo",
       "target_id": "demo-pipe-001",
       "relation_type": "contains"
