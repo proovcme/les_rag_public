@@ -49,3 +49,13 @@ qdrant_visualizer/data.js
 artifacts/
 .qdrant-initialized
 snapshots/
+
+# Local CAD/BIM deliverables and private samples
+deliverables/
+outputs/
+exporters.zip
+rag_engineer_v3.pptx
+ARTICLE_CAD_BIM_RAG.md
+scratch/check_retrieved.py
+scratch/check_retrieved_output.txt
+ifc_sample/*.ifc

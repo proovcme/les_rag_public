@@ -132,7 +132,7 @@ The response includes the latest matching graph DB element, saved properties,
 nearby relations and a ready `rag_prompt`. Mounted VIZOR uses the same route via
 `/lite-api/cad-bim/element` after viewer selection.
 
-The standalone OBC/WebGL viewer is served from:
+The LES-mounted OBC/WebGL viewer is served from:
 
 ```text
 http://127.0.0.1:8051/les/cad-bim-viewer
@@ -158,8 +158,9 @@ standalone/cad_bim_viewer/
 
 That folder has no `npm` runtime dependency and no LES backend requirement. It
 ships `assets/index.js`, `assets/index.css`, `fragments/worker.mjs`, browser
-`web-ifc.wasm`, `web-ifc-mt.wasm`, `web-ifc-node.wasm`, `serve.sh`, `serve.ps1`
-and `models/demo.cad_bim_graph.json`.
+`web-ifc.wasm`, `web-ifc-mt.wasm`, `web-ifc-node.wasm`, any Vite
+`assets/worker-*.mjs` files required by the bundled runtime, `serve.sh`,
+`serve.ps1` and `models/demo.cad_bim_graph.json`.
 Run `serve.ps1` on a bare Windows workstation or `serve.sh` on macOS/Linux, then
 open `http://127.0.0.1:8095/`. Direct JSON paths like
 `models/demo.cad_bim_graph.json` are loaded without `/lite-api`; IFC files can

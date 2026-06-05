@@ -65,6 +65,7 @@ INSTALL_FOR_LOCIA.cmd
 index.html
 assets/index.js
 assets/index.css
+assets/worker-*.mjs
 fragments/worker.mjs
 web-ifc/web-ifc.wasm
 web-ifc/web-ifc-mt.wasm

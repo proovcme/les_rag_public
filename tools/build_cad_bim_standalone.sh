@@ -43,6 +43,8 @@ cat > "$OUT/index.html" <<'HTML'
 HTML
 cp "$JS_ASSET" "$OUT/assets/index.js"
 cp "$CSS_ASSET" "$OUT/assets/index.css"
+find "$VIEWER/dist/assets" -maxdepth 1 -type f -name 'worker-*.mjs' -exec cp {} "$OUT/assets/" \;
+perl -pi -e 's/[ \t]+$//; s/^ +\t/\t/' "$OUT/assets/"*.js "$OUT/assets/"*.mjs
 cp "$VIEWER/dist/fragments/worker.mjs" "$OUT/fragments/worker.mjs"
 cp "$VIEWER/dist/web-ifc/"*.wasm "$OUT/web-ifc/"
 cp "$VIEWER/standalone/serve.sh" "$OUT/serve.sh"
