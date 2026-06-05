@@ -648,6 +648,11 @@ cd standalone/cad_bim_viewer
 
 Открыть `http://127.0.0.1:8095/`, для проверки загрузить `models/demo.cad_bim_graph.json`. Для обновления пакета из исходников: пересобрать `frontend/cad_bim_viewer/dist`, затем выполнить `tools/build_cad_bim_standalone.sh`.
 
+Публичная no-login копия standalone viewer развернута на VPS как
+`https://les.ovc.me/vv/`. Caddy отдает ее напрямую из `/var/www/vv`; `/vv`
+редиректит на `/vv/`, чтобы относительные `assets/`, `web-ifc/` и `models/`
+разрешались корректно. Это не admin route и не требует регистрации/API key.
+
 Основной DWG-путь: собрать `exporters/autocad/LES.AutoCAD.JsonExport`, установить bundle и использовать ribbon tab `LES` в AutoCAD. Кнопка/команда `LESJSONEXPORT` сохраняет JSON, `LESJSONPUSH` отправляет JSON в настроенные назначения, `LESJSONCONFIG` правит общий конфиг. Основной RVT-путь: собрать `exporters/revit/LES.Revit.JsonExport`, установить `.addin` manifest и использовать ribbon tab `LES` в Revit: `Export JSON` сохраняет файл, `Push to LES` отправляет модель напрямую, `Config` открывает общий конфиг. Navisworks-путь: `exporters/navisworks/LES.Navisworks.JsonExport` ставится в `%APPDATA%\Autodesk Navisworks Manage <year>\Plugins\LES.Navisworks.JsonExport\` и экспортирует дерево модели/properties/GUID/bbox в тот же JSON. Direct upload сначала пробует Mac по ZeroTier `http://10.195.146.98:8050`, затем public tunnel `https://les.ovc.me`, затем `custom_urls`; при отказе сохраняет fallback JSON в `local_output_dir` или Documents.
 
 Общий конфиг Autodesk exporters:

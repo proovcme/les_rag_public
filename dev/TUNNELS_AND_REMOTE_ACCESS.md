@@ -333,6 +333,8 @@ timeout/refused              = порт/firewall/DNS проблема
 speckle.ovc.me -> HTTPS OK, backend отвечает
 les.ovc.me     -> HTTPS OK, backend отвечает через П.А.У.К. reverse tunnel на Mac Mini;
                   внешний runtime smoke прошёл 12/12
+les.ovc.me/vv  -> HTTPS OK, standalone CAD/BIM viewer отдается Caddy напрямую
+                  из /var/www/vv на VPS, без регистрации и без LES auth
 ```
 
 ## Быстрый чек-лист аварийного доступа

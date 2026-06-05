@@ -86,6 +86,7 @@ Ollama не является основным runtime. Использовать 
 |---|---|---|
 | `https://les.ovc.me/api/*` | API proxy | `localhost:8050` |
 | `https://les.ovc.me/` | Sovushka Lite chat shell | `localhost:8051` |
+| `https://les.ovc.me/vv` | Public standalone CAD/BIM viewer | VPS static `/var/www/vv` |
 | `https://les.ovc.me/classic` | Legacy NiceGUI chat shell | `localhost:8051` |
 | `https://les.ovc.me/les` | Sovushka Lite Admin shell | `localhost:8051` |
 | `https://les.ovc.me/les/classic` | Legacy NiceGUI Admin shell | `localhost:8051` |

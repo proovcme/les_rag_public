@@ -120,6 +120,10 @@
 - Standalone package contents are intentionally minimal: `index.html`, bundled `assets/index.js/css`, `fragments/worker.mjs`, browser `web-ifc.wasm`, `serve.sh`, `serve.ps1`, and `models/demo.cad_bim_graph.json`. It does not require `npm install`, LES backend, or internet access on the target machine.
 - Windows offline smoke path: `powershell -ExecutionPolicy Bypass -File .\serve.ps1 -Port 8095`, open `http://127.0.0.1:8095/`, load `models/demo.cad_bim_graph.json`.
 - Verification: standalone browser smoke on `http://127.0.0.1:8095/?source=models/demo.cad_bim_graph.json` loaded `2` demo elements with canvas and no UI errors; focused CAD/BIM pytest remained green.
+- VPS public no-login viewer deployed at `https://les.ovc.me/vv/`: files synced
+  to `/var/www/vv`, Caddy route `/vv -> /vv/` plus static `handle /vv/*`,
+  browser smoke loaded `models/demo.cad_bim_graph.json` with `2` elements,
+  canvas present and no console errors.
 
 ## Live Notes 05.06.2026 Universal Autodesk Destinations
 
