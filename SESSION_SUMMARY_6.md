@@ -124,6 +124,10 @@
   to `/var/www/vv`, Caddy route `/vv -> /vv/` plus static `handle /vv/*`,
   browser smoke loaded `models/demo.cad_bim_graph.json` with `2` elements,
   canvas present and no console errors.
+- Mobile `/vv` hotfix: standalone mode now defaults to
+  `models/demo.cad_bim_graph.json` instead of calling `/lite-api`, `Последний`
+  maps to the demo JSON, mobile topbar is compacted, and `/vv` static assets
+  use cache-busting query plus `Cache-Control: no-store`.
 
 ## Live Notes 05.06.2026 Universal Autodesk Destinations
 

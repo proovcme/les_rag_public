@@ -16,6 +16,9 @@ type LayerRow = { name: string; count: number; visible: boolean };
 type QuickSource = { id: string; label: string; source: string; ifc?: never } | { id: string; label: string; ifc: string; source?: never };
 type StructureModel = { id: string; label: string; elements: CadBimElement[] };
 
+const isStandaloneViewer = !location.pathname.includes("/les/cad-bim-viewer");
+const standaloneDefaultSource = viewerAssetUrl("models/demo.cad_bim_graph.json");
+
 const BUILDING_IFC_MODELS: IfcModelSource[] = [
   {
     id: "Building-Hvac",
@@ -47,7 +50,7 @@ const QUICK_SOURCES: QuickSource[] = [
   {
     id: "latest",
     label: "Последний",
-    source: "",
+    source: isStandaloneViewer ? standaloneDefaultSource : "",
   },
   {
     id: "revit-hvac",
@@ -240,7 +243,7 @@ const clipInfoNode = document.getElementById("clip-info")!;
 const measureInfoNode = document.getElementById("measure-info")!;
 
 const params = new URLSearchParams(window.location.search);
-const initialSource = params.get("source_path") || params.get("source") || "";
+const initialSource = params.get("source_path") || params.get("source") || (isStandaloneViewer ? standaloneDefaultSource : "");
 const initialIfc = params.get("ifc") || params.get("ifc_path") || "";
 const highlightIds = new Set(
   (params.get("highlight") || "")
@@ -411,6 +414,10 @@ async function loadSemanticModels(models: IfcModelSource[]): Promise<void> {
 }
 
 async function requestCadBimSource(sourcePath: string): Promise<CadBimSourceResponse> {
+  if (!sourcePath.trim() && isStandaloneViewer) {
+    return requestDirectJsonSource(standaloneDefaultSource);
+  }
+
   if (isDirectJsonSource(sourcePath)) {
     return requestDirectJsonSource(sourcePath);
   }

@@ -697,18 +697,75 @@ button {
 @media (max-width: 860px) {
   .shell {
     grid-template-columns: 1fr;
-    grid-template-rows: auto minmax(0, 1fr) 300px;
+    grid-template-rows: auto minmax(260px, 46vh) minmax(260px, 1fr);
   }
 
   .topbar {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: stretch;
+    gap: 7px;
+    padding: 7px 9px;
   }
 
-  .toolbar,
-  .quickbar,
+  .brand {
+    grid-column: 1;
+  }
+
+  .brand strong {
+    font-size: 12px;
+  }
+
+  .brand span {
+    display: none;
+  }
+
+  .toolbar {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 6px;
+  }
+
+  .toolbar input,
+  .toolbar button,
+  .quickbar button,
+  .toolstrip button {
+    height: 30px;
+    border-radius: 6px;
+    padding: 0 8px;
+    font-size: 12px;
+  }
+
+  .quickbar {
+    grid-column: 1;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .quickbar button {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
   .toolstrip {
-    flex-wrap: wrap;
+    grid-column: 2;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 6px;
+    justify-self: stretch;
+  }
+
+  .status {
+    grid-column: 1 / -1;
+    grid-row: auto;
+    font-size: 10px;
+    min-height: 14px;
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
   }
 
   .side {
@@ -718,5 +775,32 @@ button {
 
   .panel-hero {
     position: static;
+  }
+
+  .panel {
+    padding: 10px;
+  }
+
+  .tabs {
+    padding: 8px 9px 0;
+    gap: 6px;
+  }
+
+  .tabs button {
+    height: 31px;
+    flex-basis: calc(33.333% - 6px);
+    font-size: 12px;
+  }
+
+  .stats {
+    gap: 6px;
+  }
+
+  .stat {
+    padding: 7px;
+  }
+
+  .stat strong {
+    font-size: 15px;
   }
 }
