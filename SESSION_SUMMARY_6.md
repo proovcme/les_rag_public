@@ -138,3 +138,8 @@
 - Windows installer/build flow now includes AutoCAD, Revit and Navisworks DLLs;
   Navisworks installs under
   `%APPDATA%\Autodesk Navisworks Manage <year>\Plugins\LES.Navisworks.JsonExport\`.
+- Installer flow now emits one universal offline setup:
+  `exporters\artifacts\cad-bim-exporters\LES.CadBimPluginsSetup.exe`, a
+  self-contained `win-x64` EXE with embedded AutoCAD/Revit/Navisworks payloads.
+  It supports `--only`, `--skip` and config seeding flags (`--les-url`,
+  `--custom-url`, `--local-output-dir`, `--api-key`, `--timeout-sec`).

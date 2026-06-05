@@ -146,9 +146,10 @@ Example:
 }
 ```
 
-## Installer EXE
+## Universal Plugin Setup EXE
 
-Build the DLL payload and a Windows installer EXE from a Windows workstation:
+Build the DLL payload and a universal Windows setup EXE from a Windows
+workstation with Autodesk products installed:
 
 ```powershell
 cd exporters
@@ -164,15 +165,36 @@ The output folder is:
 exporters\artifacts\cad-bim-exporters\
 ```
 
-Ship these files together:
+Main artifact:
 
-- `LES.CadBimExporterInstaller.exe`
-- `LES.AutoCAD.JsonExport.dll`
-- `LES.Revit.JsonExport.dll`
-- `LES.Navisworks.JsonExport.dll`
+- `LES.CadBimPluginsSetup.exe`
 
-Then run:
+It is a self-contained `win-x64` EXE and embeds AutoCAD, Revit and Navisworks
+plugin DLL payloads. The loose DLL copies are still placed next to it only for
+manual debug/loading. For offline transfer, use the generated zip:
+
+```text
+exporters\artifacts\LES_CAD_BIM_plugins_universal_<timestamp>.zip
+```
+
+Install all plugins:
 
 ```powershell
-.\LES.CadBimExporterInstaller.exe --autocad-year 2025 --revit-year 2025 --navisworks-year 2025
+.\LES.CadBimPluginsSetup.exe --autocad-year 2025 --revit-year 2025 --navisworks-year 2025
+```
+
+Install only one product or skip one:
+
+```powershell
+.\LES.CadBimPluginsSetup.exe --only revit
+.\LES.CadBimPluginsSetup.exe --skip navisworks
+```
+
+Seed the shared destination config during install:
+
+```powershell
+.\LES.CadBimPluginsSetup.exe `
+  --les-url http://10.195.146.98:8050 `
+  --custom-url http://127.0.0.1:8050/api/cad-bim/import `
+  --local-output-dir "%USERPROFILE%\Documents\LES CAD BIM"
 ```

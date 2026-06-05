@@ -664,6 +664,15 @@ cd standalone/cad_bim_viewer
 
 Путь на Windows: `%APPDATA%\LES\cad_bim_exporter_settings.json`. `les_urls` можно задавать как base URL, `/api/cad-bim/import` добавится автоматически; `custom_urls` могут быть exact webhook/import endpoint.
 
+Универсальный Windows installer для Autodesk plugins собирается из `exporters/`
+командой `.\build-exporters-windows.ps1` на машине с установленными
+AutoCAD/Revit/Navisworks API DLL. Главный offline-артефакт:
+`exporters\artifacts\cad-bim-exporters\LES.CadBimPluginsSetup.exe`; он
+self-contained `win-x64` и встраивает payload DLL для AutoCAD, Revit и
+Navisworks. Режимы установки: `--only revit`, `--skip navisworks`, явное
+создание destination config через `--les-url`, `--custom-url`,
+`--local-output-dir`, `--api-key`, `--timeout-sec`.
+
 DXF fallback остаётся временным: открыть DWG в AutoCAD, сделать `DXFOUT`/Save As DXF, положить `.dxf` в `RAG_Content/CAD_BIM/DWG/` и выполнить `uv run python tools/cad_bim_extract_dxf.py RAG_Content/CAD_BIM/DWG/<file>.dxf --import-to-les`. Скрипт пишет canonical JSON в `RAG_Content/CAD_BIM/JSON/` и импортирует его в `/api/cad-bim/import`; после этого `SYNC CAD/BIM` регистрирует projection в `CAD_BIM_Index`.
 
 04.06.2026 OBC viewer smoke на DWG sample `Узлы установки оросителей розеткой вниз` подтвердил обратимость `DWG -> cad_bim_graph.json -> viewer`: `2534` elements, `2457` drawable objects, `2534` relations. Для блог/демо материалов сохранены локальные screenshots under `outputs/cad_bim_viewer/blog/`; они не являются runtime dependency. Gemma 4 12B отмечена как future benchmark-кандидат для local multimodal CAD/BIM visual QA, но не заменяет текущий Qwen/GLM-OCR RAG контур. Следующий критический CAD/BIM фронт: IFC import/export path.

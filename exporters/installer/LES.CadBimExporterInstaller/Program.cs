@@ -17,13 +17,38 @@ internal static class Program
         {
             var options = InstallOptions.Parse(args);
             var payloadDir = options.PayloadDir ?? AppContext.BaseDirectory;
-            InstallAutoCad(payloadDir, options.AutoCadYear);
-            InstallRevit(payloadDir, options.RevitYear);
-            InstallNavisworks(payloadDir, options.NavisworksYear);
+            EnsureSharedConfig(options);
+            if (options.InstallAutoCad)
+            {
+                InstallAutoCad(payloadDir, options.AutoCadYear);
+            }
+
+            if (options.InstallRevit)
+            {
+                InstallRevit(payloadDir, options.RevitYear);
+            }
+
+            if (options.InstallNavisworks)
+            {
+                InstallNavisworks(payloadDir, options.NavisworksYear);
+            }
+
             Console.WriteLine("LES CAD/BIM exporters installed.");
-            Console.WriteLine("AutoCAD: restart AutoCAD and use ribbon tab LES, or run LESJSONEXPORT / LESJSONPUSH.");
-            Console.WriteLine("Revit: restart Revit and use ribbon tab LES.");
-            Console.WriteLine("Navisworks: restart Navisworks and use the Add-Ins plugin LES JSON Export.");
+            if (options.InstallAutoCad)
+            {
+                Console.WriteLine("AutoCAD: restart AutoCAD and use ribbon tab LES, or run LESJSONEXPORT / LESJSONPUSH.");
+            }
+
+            if (options.InstallRevit)
+            {
+                Console.WriteLine("Revit: restart Revit and use ribbon tab LES.");
+            }
+
+            if (options.InstallNavisworks)
+            {
+                Console.WriteLine("Navisworks: restart Navisworks and use the Add-Ins plugin LES JSON Export.");
+            }
+
             return 0;
         }
         catch (Exception error)
@@ -36,7 +61,9 @@ internal static class Program
 
             Console.Error.WriteLine();
             Console.Error.WriteLine("Usage:");
-            Console.Error.WriteLine("  LES.CadBimExporterInstaller.exe [--payload-dir <dir>] [--autocad-year 2025] [--revit-year 2025] [--navisworks-year 2025] [--pause]");
+            Console.Error.WriteLine("  LES.CadBimPluginsSetup.exe [--only autocad,revit,navisworks] [--skip navisworks]");
+            Console.Error.WriteLine("    [--payload-dir <dir>] [--autocad-year 2025] [--revit-year 2025] [--navisworks-year 2025]");
+            Console.Error.WriteLine("    [--les-url <url>] [--custom-url <url>] [--local-output-dir <dir>] [--api-key <key>] [--timeout-sec 60]");
             return 1;
         }
         finally
@@ -55,6 +82,83 @@ internal static class Program
                 }
             }
         }
+    }
+
+    private static void EnsureSharedConfig(InstallOptions options)
+    {
+        var configPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "LES",
+            "cad_bim_exporter_settings.json"
+        );
+        if (File.Exists(configPath) && !options.HasConfigOverrides)
+        {
+            Console.WriteLine("Shared destination config already exists: " + configPath);
+            return;
+        }
+
+        var lesUrls = options.LesUrls.Count == 0
+            ? new List<string> { "http://10.195.146.98:8050", "https://les.ovc.me" }
+            : options.LesUrls;
+        var localOutputDir = string.IsNullOrWhiteSpace(options.LocalOutputDir)
+            ? @"%USERPROFILE%\Documents\LES CAD BIM"
+            : options.LocalOutputDir;
+
+        Directory.CreateDirectory(Path.GetDirectoryName(configPath)!);
+        File.WriteAllText(
+            configPath,
+            SharedConfigJson(lesUrls, options.CustomUrls, localOutputDir, options.ApiKey, options.TimeoutSec),
+            Encoding.UTF8
+        );
+        Console.WriteLine("Shared destination config written: " + configPath);
+    }
+
+    private static string SharedConfigJson(
+        IReadOnlyCollection<string> lesUrls,
+        IReadOnlyCollection<string> customUrls,
+        string localOutputDir,
+        string apiKey,
+        int timeoutSec
+    )
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("{");
+        builder.Append("  \"les_urls\": ");
+        AppendStringArray(builder, lesUrls);
+        builder.AppendLine(",");
+        builder.Append("  \"custom_urls\": ");
+        AppendStringArray(builder, customUrls);
+        builder.AppendLine(",");
+        builder.AppendLine("  \"local_output_dir\": \"" + Escape(localOutputDir) + "\",");
+        builder.AppendLine("  \"api_key\": \"" + Escape(apiKey) + "\",");
+        builder.AppendLine("  \"timeout_sec\": " + Math.Max(5, timeoutSec));
+        builder.AppendLine("}");
+        return builder.ToString();
+    }
+
+    private static void AppendStringArray(StringBuilder builder, IReadOnlyCollection<string> values)
+    {
+        builder.Append('[');
+        var first = true;
+        foreach (var value in values.Where(item => !string.IsNullOrWhiteSpace(item)).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (!first)
+            {
+                builder.Append(", ");
+            }
+
+            builder.Append('"');
+            builder.Append(Escape(value));
+            builder.Append('"');
+            first = false;
+        }
+
+        builder.Append(']');
+    }
+
+    private static string Escape(string value)
+    {
+        return value.Replace("\\", "\\\\").Replace("\"", "\\\"");
     }
 
     private static void InstallAutoCad(string payloadDir, string year)
@@ -232,7 +336,21 @@ internal static class Program
     }
 }
 
-internal sealed record InstallOptions(string AutoCadYear, string RevitYear, string NavisworksYear, string? PayloadDir)
+internal sealed record InstallOptions(
+    string AutoCadYear,
+    string RevitYear,
+    string NavisworksYear,
+    string? PayloadDir,
+    bool InstallAutoCad,
+    bool InstallRevit,
+    bool InstallNavisworks,
+    List<string> LesUrls,
+    List<string> CustomUrls,
+    string LocalOutputDir,
+    string ApiKey,
+    int TimeoutSec,
+    bool HasConfigOverrides
+)
 {
     public static InstallOptions Parse(string[] args)
     {
@@ -240,6 +358,15 @@ internal sealed record InstallOptions(string AutoCadYear, string RevitYear, stri
         string? revitYear = null;
         string? navisworksYear = null;
         string? payloadDir = null;
+        var installAutoCad = true;
+        var installRevit = true;
+        var installNavisworks = true;
+        var lesUrls = new List<string>();
+        var customUrls = new List<string>();
+        var localOutputDir = string.Empty;
+        var apiKey = string.Empty;
+        var timeoutSec = 60;
+        var hasConfigOverrides = false;
         for (var i = 0; i < args.Length; i++)
         {
             switch (args[i])
@@ -256,6 +383,39 @@ internal sealed record InstallOptions(string AutoCadYear, string RevitYear, stri
                 case "--payload-dir":
                     payloadDir = RequireValue(args, ref i, "--payload-dir");
                     break;
+                case "--only":
+                    (installAutoCad, installRevit, installNavisworks) = TargetSelection(RequireValue(args, ref i, "--only"), only: true);
+                    break;
+                case "--skip":
+                    var skipped = TargetSelection(RequireValue(args, ref i, "--skip"), only: false);
+                    installAutoCad = installAutoCad && skipped.AutoCad;
+                    installRevit = installRevit && skipped.Revit;
+                    installNavisworks = installNavisworks && skipped.Navisworks;
+                    break;
+                case "--les-url":
+                    lesUrls.AddRange(SplitCsv(RequireValue(args, ref i, "--les-url")));
+                    hasConfigOverrides = true;
+                    break;
+                case "--custom-url":
+                    customUrls.AddRange(SplitCsv(RequireValue(args, ref i, "--custom-url")));
+                    hasConfigOverrides = true;
+                    break;
+                case "--local-output-dir":
+                    localOutputDir = RequireValue(args, ref i, "--local-output-dir");
+                    hasConfigOverrides = true;
+                    break;
+                case "--api-key":
+                    apiKey = RequireValue(args, ref i, "--api-key");
+                    hasConfigOverrides = true;
+                    break;
+                case "--timeout-sec":
+                    if (!int.TryParse(RequireValue(args, ref i, "--timeout-sec"), out timeoutSec))
+                    {
+                        throw new InvalidOperationException("--timeout-sec requires an integer value");
+                    }
+
+                    hasConfigOverrides = true;
+                    break;
                 case "--pause":
                 case "--no-pause":
                     break;
@@ -271,7 +431,74 @@ internal sealed record InstallOptions(string AutoCadYear, string RevitYear, stri
         revitYear ??= DetectRevitYear() ?? "2025";
         navisworksYear ??= DetectNavisworksYear() ?? "2025";
 
-        return new InstallOptions(autocadYear, revitYear, navisworksYear, payloadDir);
+        if (!installAutoCad && !installRevit && !installNavisworks)
+        {
+            throw new InvalidOperationException("No installer targets selected");
+        }
+
+        return new InstallOptions(
+            autocadYear,
+            revitYear,
+            navisworksYear,
+            payloadDir,
+            installAutoCad,
+            installRevit,
+            installNavisworks,
+            CleanUrls(lesUrls),
+            CleanUrls(customUrls),
+            localOutputDir,
+            apiKey,
+            timeoutSec,
+            hasConfigOverrides
+        );
+    }
+
+    private static (bool AutoCad, bool Revit, bool Navisworks) TargetSelection(string value, bool only)
+    {
+        var autoCad = !only;
+        var revit = !only;
+        var navisworks = !only;
+        foreach (var token in SplitCsv(value).Select(item => item.ToLowerInvariant()))
+        {
+            switch (token)
+            {
+                case "all":
+                    autoCad = only;
+                    revit = only;
+                    navisworks = only;
+                    break;
+                case "autocad":
+                case "dwg":
+                    autoCad = only;
+                    break;
+                case "revit":
+                case "rvt":
+                    revit = only;
+                    break;
+                case "navisworks":
+                case "nwd":
+                case "nwf":
+                    navisworks = only;
+                    break;
+                default:
+                    throw new InvalidOperationException("Unknown installer target: " + token);
+            }
+        }
+
+        return (autoCad, revit, navisworks);
+    }
+
+    private static List<string> SplitCsv(string value)
+    {
+        return value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+    }
+
+    private static List<string> CleanUrls(IEnumerable<string> urls)
+    {
+        return urls
+            .Where(url => url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private static string RequireValue(string[] args, ref int index, string name)

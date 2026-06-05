@@ -74,3 +74,22 @@ def test_navisworks_exporter_is_in_installer_payload():
     assert "LES.Navisworks.JsonConfig" in navisworks_plugin
     assert "LES.Navisworks.JsonExport.dll" in installer.read_text(encoding="utf-8")
     assert "NavisworksInstallDir" in build.read_text(encoding="utf-8")
+
+
+def test_universal_plugin_setup_exe_contract_is_documented():
+    root = Path(__file__).resolve().parents[1]
+    installer_source = (
+        root / "exporters" / "installer" / "LES.CadBimExporterInstaller" / "Program.cs"
+    ).read_text(encoding="utf-8")
+    build_source = (root / "exporters" / "build-exporters-windows.ps1").read_text(encoding="utf-8")
+    readme = (root / "exporters" / "README.md").read_text(encoding="utf-8")
+
+    assert "--only" in installer_source
+    assert "--skip" in installer_source
+    assert "--les-url" in installer_source
+    assert "--custom-url" in installer_source
+    assert "--local-output-dir" in installer_source
+    assert "SharedConfigJson" in installer_source
+    assert "LES.CadBimPluginsSetup.exe" in build_source
+    assert "LES_CAD_BIM_plugins_universal_" in build_source
+    assert "LES.CadBimPluginsSetup.exe" in readme

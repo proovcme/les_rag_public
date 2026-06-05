@@ -45,6 +45,9 @@ dotnet publish (Join-Path $ExportersRoot "installer\LES.CadBimExporterInstaller\
   -o $Out
 if ($LASTEXITCODE -ne 0) { throw "Installer publish failed with exit code $LASTEXITCODE" }
 
+$UniversalExe = Join-Path $Out "LES.CadBimPluginsSetup.exe"
+Copy-Item (Join-Path $Out "LES.CadBimExporterInstaller.exe") $UniversalExe -Force
+
 Copy-Item (Join-Path $Payload "LES.AutoCAD.JsonExport.dll") $Out -Force
 Copy-Item (Join-Path $Payload "LES.Revit.JsonExport.dll") $Out -Force
 Copy-Item (Join-Path $Payload "LES.Navisworks.JsonExport.dll") $Out -Force
@@ -54,10 +57,15 @@ LES CAD/BIM Exporters
 =====================
 
 Run:
-  .\LES.CadBimExporterInstaller.exe --autocad-year $AutoCADYear --revit-year $RevitYear --navisworks-year $NavisworksYear
+  .\LES.CadBimPluginsSetup.exe --autocad-year $AutoCADYear --revit-year $RevitYear --navisworks-year $NavisworksYear
 
-The installer embeds the exporter DLL payload. DLL copies are also included
-next to the installer for manual loading/debugging.
+The setup EXE is self-contained and embeds all exporter DLL payloads. DLL copies
+are also included next to the installer for manual loading/debugging.
+
+Useful modes:
+  .\LES.CadBimPluginsSetup.exe --only revit
+  .\LES.CadBimPluginsSetup.exe --skip navisworks
+  .\LES.CadBimPluginsSetup.exe --les-url http://10.195.146.98:8050 --local-output-dir "%USERPROFILE%\Documents\LES CAD BIM"
 
 After install:
   AutoCAD ribbon tab: LES
@@ -71,5 +79,15 @@ Shared destinations config:
 "@
 $Readme | Set-Content -Path (Join-Path $Out "README.txt") -Encoding UTF8
 
+$ZipPath = Join-Path $ExportersRoot ("artifacts\LES_CAD_BIM_plugins_universal_{0}.zip" -f (Get-Date -Format "yyyyMMdd_HHmmss"))
+Compress-Archive `
+  -Path $UniversalExe, (Join-Path $Out "README.txt") `
+  -DestinationPath $ZipPath `
+  -Force
+
 Write-Host "Built exporter installer package:"
 Write-Host "  $Out"
+Write-Host "Universal setup:"
+Write-Host "  $UniversalExe"
+Write-Host "Zip:"
+Write-Host "  $ZipPath"
