@@ -131,6 +131,12 @@
 - `/vv` now exposes a visible `Экспортеры JSON` link to the public GitHub
   exporters folder:
   `https://github.com/proovcme/les_rag_public/tree/codex/les-closeout-20260527/exporters`.
+- `/vv` sample payloads were added on VPS under `/var/www/vv/JSON/` and
+  `/var/www/vv/ifc-sample/` so quick buttons can load real Revit JSON and
+  BuildingSmart IFC files. Browser smoke for `Revit ОВ` loaded `487` elements;
+  `Revit все` loaded `2483` elements / `1689` drawable objects with canvas and
+  no console errors. Local copies are ignored in git to avoid committing heavy
+  deployment payloads.
 
 ## Live Notes 05.06.2026 Universal Autodesk Destinations
 

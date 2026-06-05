@@ -6,6 +6,8 @@ RAG_Content/
 logs/
 .claude/
 .nicegui/
+standalone/cad_bim_viewer/JSON/
+standalone/cad_bim_viewer/ifc-sample/
 
 # Python
 __pycache__/
