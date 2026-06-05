@@ -97,6 +97,12 @@ uv run python mlx_host.py
 uv run uvicorn proxy_server:app --host 127.0.0.1 --port 8050
 ```
 
+В третьем терминале можно запустить Совушку:
+
+```bash
+uv run python sovushka_ng.py
+```
+
 Проверить:
 
 ```bash
@@ -114,7 +120,16 @@ http://127.0.0.1:8050/api/cad-bim/import
 http://127.0.0.1:8050/api/mail/threads
 ```
 
-Полный Sovushka UI runner в public snapshot не упакован как one-click entrypoint. UI-компоненты и lite shell code есть в `sovushka/`, но самый надежный готовый визуальный путь в этом репозитории - standalone VIZOR.
+Совушка после запуска:
+
+```text
+http://127.0.0.1:8051/             lite chat
+http://127.0.0.1:8051/les          lite admin
+http://127.0.0.1:8051/classic      classic chat
+http://127.0.0.1:8051/les/classic  classic admin
+```
+
+Это dev/local UI entrypoint. Он не включает приватные launchd scripts, production tunnel config, keys, corpora или готовые индексы.
 
 ### Индексация данных
 
@@ -287,6 +302,12 @@ Start LES proxy in another terminal:
 uv run uvicorn proxy_server:app --host 127.0.0.1 --port 8050
 ```
 
+Optionally start Sovushka in a third terminal:
+
+```bash
+uv run python sovushka_ng.py
+```
+
 Check:
 
 ```bash
@@ -304,7 +325,16 @@ http://127.0.0.1:8050/api/cad-bim/import
 http://127.0.0.1:8050/api/mail/threads
 ```
 
-The full Sovushka UI runner is not packaged in the public snapshot as a one-click entrypoint. UI components and lite shell code are present in `sovushka/`, but the reliable ready-to-run visual path in this repository is standalone VIZOR.
+Sovushka URLs:
+
+```text
+http://127.0.0.1:8051/             lite chat
+http://127.0.0.1:8051/les          lite admin
+http://127.0.0.1:8051/classic      classic chat
+http://127.0.0.1:8051/les/classic  classic admin
+```
+
+This is a dev/local UI entrypoint. It does not include private launchd scripts, production tunnel config, keys, corpora or ready-made indexes.
 
 ### Data indexing
 

@@ -77,6 +77,7 @@ flowchart LR
 backend/                  document parsing, indexing helpers, adapters
 proxy/                    FastAPI proxy, retrieval and CAD/BIM import services
 sovushka/                 local admin/chat UI components
+sovushka_ng.py            Sovushka NiceGUI entrypoint: / chat, /les admin
 frontend/cad_bim_viewer/  VIZOR source app
 standalone/cad_bim_viewer/ready-to-run offline VIZOR bundle
 exporters/                AutoCAD, Revit, Navisworks JSON exporters
@@ -218,6 +219,7 @@ sequenceDiagram
 backend/                  document parsing, indexing helpers, adapters
 proxy/                    FastAPI proxy, retrieval and CAD/BIM import services
 sovushka/                 local admin/chat UI components
+sovushka_ng.py            Sovushka NiceGUI entrypoint: / chat, /les admin
 frontend/cad_bim_viewer/  VIZOR source app
 standalone/cad_bim_viewer/ready-to-run offline VIZOR bundle
 exporters/                AutoCAD, Revit, Navisworks JSON exporters
