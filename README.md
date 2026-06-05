@@ -6,7 +6,7 @@
 
 **EN:** LES is a local-first engineering RAG system. It turns documents, tables and CAD/BIM models into a verifiable knowledge base: an answer should point back to a source, a chunk, a drawing object or a BIM element.
 
-[Live VIZOR viewer](https://les.ovc.me/vv/) · [CAD/BIM JSON exporters](exporters/) · [Standalone viewer](standalone/cad_bim_viewer/) · [JSON schema](schema/cad_bim_graph.schema.json)
+[Live VIZOR viewer](https://les.ovc.me/vv/) · [Install](INSTALL.md) · [CAD/BIM JSON exporters](exporters/) · [Standalone viewer](standalone/cad_bim_viewer/) · [JSON schema](schema/cad_bim_graph.schema.json)
 
 ## RU - что это
 
@@ -17,6 +17,17 @@ LES состоит из трех частей:
 3. **VIZOR** - WebGL-смотрелка для `*.cad_bim_graph.json` и IFC. Она нужна не для красоты ради красоты, а для контроля: если JSON можно нарисовать обратно, значит данные не умерли по дороге в RAG.
 
 ![CAD/BIM pipeline](assets/readme/cad-bim-pipeline.png)
+
+### Что умеет кроме CAD/BIM
+
+CAD/BIM - самый заметный кусок, но не единственный. В public snapshot также есть:
+
+- **Документы:** PDF, DOCX, DOC, Markdown, TXT, базовая маршрутизация документов по типу и домену.
+- **Таблицы:** XLSX, XLS, CSV, табличный канал запросов, отдельная логика для смет, спецификаций и ведомостей.
+- **Почта:** `.eml`, `.emlx`, `.msg`, Apple Mail import, IMAP import, цепочки писем, участники, вложения, OCR вложений.
+- **Гибридный retrieval:** vector search + lexical FTS + RRF merge, rerank where available, context windows around chunks.
+- **Безопасность runtime:** режимы `CHAT`, `INDEX_LIGHT`, `INDEX_HEAVY_PDF`, `MAINTENANCE`, memory pressure states, admission control, блокировка генерации во время тяжелой индексации.
+- **Взрослый chunking/router:** deterministic document routing, domain datasets, chunk metadata, parent/child/order anchors, route-change reindex utilities.
 
 ### Зачем это нужно
 
@@ -75,6 +86,15 @@ schema/                   public cad_bim_graph JSON schema
 examples/                 small public JSON sample
 ```
 
+### Как поставить
+
+Коротко: **VIZOR ставится просто**, полный LES runtime ставится как developer/local stack.
+
+- Для viewer без LES: смотри [`standalone/cad_bim_viewer/`](standalone/cad_bim_viewer/).
+- Для полного runtime: смотри [`INSTALL.md`](INSTALL.md).
+
+Публичный репозиторий не содержит приватные индексы, корпуса, model weights, Core ML artifacts, ключи и production deployment state. Поэтому после установки нужно отдельно скачать модели, поднять Qdrant и проиндексировать свои данные.
+
 ### Быстрый запуск VIZOR без LES
 
 macOS/Linux:
@@ -132,6 +152,8 @@ curl -X POST http://127.0.0.1:8050/api/cad-bim/import \
 - IFC parsing зависит от размера и качества модели; некоторые тяжелые infra samples могут требовать отдельного timeout/fragment pipeline.
 - Геометрия в `cad_bim_graph.json` используется для viewer QA и RAG anchors. Это не замена точной геометрии авторского CAD/BIM-ядра.
 - Speckle не является обязательной частью этого публичного пути. Основной путь - JSON-first.
+- Почтовый контур требует собственные учетные данные IMAP или локальный Apple Mail store; секреты не хранятся в репозитории.
+- Полный LES runtime рассчитан на локальную/dev установку. Это не one-click SaaS installer.
 - Лицензия пока не назначена. Если нужен production/commercial use, свяжитесь с владельцем репозитория.
 
 ## EN - what this is
@@ -141,6 +163,17 @@ LES has three main parts:
 1. **RAG runtime** - backend/proxy, indexing, retrieval, query routing and source-grounded answer generation.
 2. **CAD/BIM JSON bridge** - AutoCAD, Revit and Navisworks exporters plus IFC/DXF extraction tools. Their job is to produce `cad_bim_graph.json`.
 3. **VIZOR** - a WebGL viewer for `*.cad_bim_graph.json` and IFC. It is not only a viewer. It is a sanity check: if JSON can be drawn back into a scene, the RAG layer is working with real source objects, not a dead export.
+
+### Beyond CAD/BIM
+
+CAD/BIM is the most visible part, but LES is broader:
+
+- **Documents:** PDF, DOCX, DOC, Markdown, TXT and deterministic document routing.
+- **Tables:** XLSX, XLS, CSV, table query channel, estimates, specifications and schedules.
+- **Mail:** `.eml`, `.emlx`, `.msg`, Apple Mail import, IMAP import, conversation threads, participants, attachments and attachment OCR.
+- **Hybrid retrieval:** vector search + lexical FTS + RRF merge, optional reranking and context windows around chunks.
+- **Runtime safety:** `CHAT`, `INDEX_LIGHT`, `INDEX_HEAVY_PDF`, `MAINTENANCE`, memory pressure states, admission control and chat blocking during heavy indexing.
+- **Chunking/router:** document routing, domain datasets, chunk metadata, parent/child/order anchors and guarded route-change reindex tools.
 
 ### Why it exists
 
@@ -193,6 +226,15 @@ tests/                    regression tests for core contracts
 schema/                   public cad_bim_graph JSON schema
 examples/                 small public JSON sample
 ```
+
+### Installation
+
+Short version: **VIZOR is ready to run**, the full LES runtime is a developer/local stack.
+
+- Viewer without LES: see [`standalone/cad_bim_viewer/`](standalone/cad_bim_viewer/).
+- Full runtime: see [`INSTALL.md`](INSTALL.md).
+
+The public repository does not include private indexes, corpora, model weights, Core ML artifacts, secrets or production deployment state. After installation you still need to download models, start Qdrant and index your own data.
 
 ### Run VIZOR without LES
 
@@ -250,5 +292,6 @@ This is a public snapshot, not a production dump.
 - IFC parsing depends on model size and quality; some heavy infrastructure samples may need a longer timeout or a fragment-first pipeline.
 - Geometry in `cad_bim_graph.json` is display/QA geometry for viewer and RAG anchors. It does not replace exact authoring-kernel geometry.
 - Speckle is not required for the public JSON-first workflow.
+- Mail ingestion requires your own IMAP credentials or local Apple Mail store. Secrets are not committed.
+- The full LES runtime is a local/developer installation, not a one-click SaaS installer.
 - No license has been assigned yet. For production or commercial use, contact the repository owner.
-
