@@ -91,6 +91,8 @@ $required = @(
   "assets\index.css",
   "fragments\worker.mjs",
   "web-ifc\web-ifc.wasm",
+  "web-ifc\web-ifc-mt.wasm",
+  "web-ifc\web-ifc-node.wasm",
   "models\demo.cad_bim_graph.json",
   "serve.ps1"
 )

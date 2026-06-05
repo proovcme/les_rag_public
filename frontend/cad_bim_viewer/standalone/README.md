@@ -5,7 +5,8 @@
 - JSON/Revit/DWG/IFC-derived `cad_bim_graph.json` добавляется кнопкой `Добавить`;
 - IFC добавляется кнопкой `Добавить` и грузится через локальный `web-ifc.wasm`;
 - несколько моделей можно держать в одной сцене, скрывать, изолировать, вписывать и выгружать;
-- для прямой загрузки JSON можно указать URL или путь вроде `models/demo.cad_bim_graph.json`.
+- для прямой загрузки JSON можно указать URL или путь вроде `models/demo.cad_bim_graph.json`;
+- кнопка `Загрузить модель по умолчанию` берёт самый свежий файл `.ifc`, `.ifczip` или `.json` из папки `models`.
 
 ## Запуск
 
@@ -34,8 +35,8 @@ http://127.0.0.1:8095/
 ## Быстрая проверка без сети
 
 1. Запусти локальный server.
-2. В поле источника введи `models/demo.cad_bim_graph.json`.
-3. Нажми `Загрузить`.
+2. Положи нужный `.ifc`, `.ifczip` или `.json` в папку `models`.
+3. Нажми `Загрузить модель по умолчанию`.
 4. Проверь вкладки `Модели`, `Структура`, `Слои`, `Инструменты`.
 
 ## Состав
@@ -46,13 +47,15 @@ assets/index.js
 assets/index.css
 fragments/worker.mjs
 web-ifc/web-ifc.wasm
+web-ifc/web-ifc-mt.wasm
+web-ifc/web-ifc-node.wasm
 models/
 models/demo.cad_bim_graph.json
 serve.sh
 serve.ps1
 ```
 
-Runtime-зависимости минимальные: современный браузер и один локальный static server. Для Windows server уже включен в папку как PowerShell-скрипт; для macOS/Linux используется системный `python3 -m http.server`. `npm install` для запуска этой папки не нужен.
+Runtime-зависимости минимальные: современный браузер и один локальный server. Для Windows server уже включен в папку как PowerShell-скрипт; для macOS/Linux используется системный `python3`. `npm install` для запуска этой папки не нужен.
 
 ## Обновление сборки из LES repo
 

@@ -15,6 +15,13 @@ import type {
 type LayerRow = { name: string; count: number; visible: boolean };
 type QuickSource = { id: string; label: string; source: string; ifc?: never } | { id: string; label: string; ifc: string; source?: never };
 type StructureModel = { id: string; label: string; elements: CadBimElement[] };
+type DefaultModelResponse = {
+  found?: boolean;
+  name?: string;
+  kind?: "json" | "ifc";
+  url?: string;
+  message?: string;
+};
 
 const isStandaloneViewer = !location.pathname.includes("/les/cad-bim-viewer");
 const standaloneDefaultSource = viewerAssetUrl("models/demo.cad_bim_graph.json");
@@ -90,6 +97,7 @@ app.innerHTML = `
         ${QUICK_SOURCES.map((item) => `<button type="button" data-source-id="${item.id}">${escapeHtml(item.label)}</button>`).join("")}
       </nav>
       <div class="toolstrip" aria-label="Управление сценой">
+        <button type="button" id="load-default-model" title="Загрузить самый свежий IFC/JSON из папки models">Загрузить модель по умолчанию</button>
         <button type="button" id="fit-btn" title="Вписать сцену">Вписать</button>
         <button type="button" id="reload-btn" title="Перезагрузить текущий источник">Обновить</button>
         <a href="${exportersGithubUrl}" target="_blank" rel="noopener noreferrer" title="Открыть JSON exporters на GitHub">Экспортеры JSON</a>
@@ -347,6 +355,39 @@ async function loadIfcModels(models: IfcModelSource[]): Promise<void> {
     renderIfcHud(result);
     renderIfcSource(result);
     setStatus(`IFC-сцена | загружено моделей: ${result.loaded}/${result.models.length}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    setStatus(message, true);
+    selectedNode.innerHTML = `<div class="empty error">${escapeHtml(message)}</div>`;
+  }
+}
+
+async function loadDefaultModel(): Promise<void> {
+  setStatus("поиск модели по умолчанию...");
+  try {
+    const response = await fetch(viewerAssetUrl("api/default-model"), {
+      headers: { Accept: "application/json" },
+    });
+    const data = (await response.json().catch(() => null)) as DefaultModelResponse | null;
+    if (!response.ok || !data?.found || !data.url || !data.kind) {
+      throw new Error(data?.message || `Модель по умолчанию не найдена (${response.status})`);
+    }
+
+    const sourceUrl = viewerAssetUrl(data.url);
+    const label = data.name || "Модель по умолчанию";
+    sourceInput.value = data.url;
+    if (data.kind === "json") {
+      await loadGraph(sourceUrl);
+      return;
+    }
+
+    await loadIfcModels([
+      {
+        id: uniqueModelId(label),
+        label,
+        url: sourceUrl,
+      },
+    ]);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     setStatus(message, true);
@@ -1018,6 +1059,9 @@ form.addEventListener("submit", async (event) => {
 });
 
 document.getElementById("building-ifc-btn")?.addEventListener("click", () => loadIfcModels(BUILDING_IFC_MODELS));
+document.getElementById("load-default-model")?.addEventListener("click", () => {
+  void loadDefaultModel();
+});
 document.getElementById("fit-btn")?.addEventListener("click", () => viewer.fit());
 document.getElementById("reload-btn")?.addEventListener("click", () => {
   if (currentMode === "ifc") {
