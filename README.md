@@ -71,6 +71,64 @@ flowchart LR
 6. LES строит graph store и текстовые проекции для RAG.
 7. Ответ возвращает не только текст, но и anchors, которые можно открыть в viewer.
 
+### Безопасность памяти и runtime
+
+LES рассчитан на локальную машину, где LLM, embeddings, OCR, парсинг PDF и UI могут конкурировать за одну память. Поэтому runtime устроен не по принципу "запускаем всё сразу".
+
+```mermaid
+flowchart LR
+  M["Memory telemetry"] --> P["Memory pressure"]
+  J["Active jobs"] --> A["Admission control"]
+  P --> A
+  R["Runtime profile"] --> A
+  A -->|allowed| C["Chat / retrieval"]
+  A -->|blocked| B["Pause generation"]
+  A -->|indexing| I["Parse queue"]
+```
+
+В коде есть:
+
+- runtime profiles: `CHAT`, `CHAT_VALIDATED`, `INDEX_LIGHT`, `INDEX_HEAVY_PDF`, `MAINTENANCE`;
+- memory states: `GREEN`, `YELLOW`, `RED`, `CRITICAL`;
+- пороги свободной RAM и swap pressure;
+- блокировка chat generation во время тяжелой индексации;
+- ограничение parse concurrency;
+- guarded reindex и route-change reindex;
+- MLX memory telemetry и unload hooks.
+
+Это не магия и не замена нормальному sizing машины. Это защита от типичной локальной аварии: "индексатор, OCR и модель одновременно съели память, после чего всё стало медленным или умерло".
+
+### Chunking, routing, retrieval
+
+LES не сводит ingestion к одному splitter на все случаи. Сначала документ маршрутизируется, потом выбирается подходящий pipeline и metadata.
+
+```mermaid
+flowchart LR
+  F["File"] --> R["Document router"]
+  R --> D["Domain dataset"]
+  D --> P["Parser / table / mail / CAD-BIM pipeline"]
+  P --> C["Metadata-rich chunks"]
+  C --> V["Vector index"]
+  C --> L["Lexical FTS"]
+  V --> H["Hybrid merge"]
+  L --> H
+  H --> W["Context windows"]
+  W --> A["Answer with sources"]
+```
+
+Ключевые детали:
+
+- deterministic document routing по типу, домену и признакам содержимого;
+- отдельные каналы для нормативки, таблиц, почты и CAD/BIM;
+- chunk metadata: dataset, filename, order, section, parent/child anchors;
+- vector retrieval + lexical FTS;
+- RRF merge для объединения результатов;
+- optional reranking;
+- context windows вокруг найденных chunk-ов;
+- route-change utilities, чтобы переиндексировать только документы, у которых изменился маршрут.
+
+Практический смысл простой: вопрос по смете не должен искать как вопрос по СП, письмо не должно теряться среди PDF, а ответ по BIM-элементу должен иметь объектный anchor.
+
 ### Что лежит в public snapshot
 
 ```text
@@ -212,6 +270,64 @@ sequenceDiagram
   RAG->>VIZOR: Return answer anchors
   VIZOR->>Source: Highlight the referenced object
 ```
+
+### Memory safety and runtime
+
+LES is designed for local machines where LLM, embeddings, OCR, PDF parsing and UI can compete for the same memory. The runtime does not blindly run everything at once.
+
+```mermaid
+flowchart LR
+  M["Memory telemetry"] --> P["Memory pressure"]
+  J["Active jobs"] --> A["Admission control"]
+  P --> A
+  R["Runtime profile"] --> A
+  A -->|allowed| C["Chat / retrieval"]
+  A -->|blocked| B["Pause generation"]
+  A -->|indexing| I["Parse queue"]
+```
+
+The public code includes:
+
+- runtime profiles: `CHAT`, `CHAT_VALIDATED`, `INDEX_LIGHT`, `INDEX_HEAVY_PDF`, `MAINTENANCE`;
+- memory states: `GREEN`, `YELLOW`, `RED`, `CRITICAL`;
+- free-RAM and swap-pressure thresholds;
+- chat generation blocking during heavy indexing;
+- parse concurrency limits;
+- guarded reindex and route-change reindex;
+- MLX memory telemetry and unload hooks.
+
+This is not magic and not a substitute for proper hardware sizing. It protects against a common local failure mode: indexing, OCR and model inference trying to consume unified memory at the same time.
+
+### Chunking, routing, retrieval
+
+LES does not use one flat splitter for every input. It routes the document first, then chooses the right pipeline and metadata.
+
+```mermaid
+flowchart LR
+  F["File"] --> R["Document router"]
+  R --> D["Domain dataset"]
+  D --> P["Parser / table / mail / CAD-BIM pipeline"]
+  P --> C["Metadata-rich chunks"]
+  C --> V["Vector index"]
+  C --> L["Lexical FTS"]
+  V --> H["Hybrid merge"]
+  L --> H
+  H --> W["Context windows"]
+  W --> A["Answer with sources"]
+```
+
+Core ideas:
+
+- deterministic routing by file type, domain and content signals;
+- specialized channels for normative documents, tables, mail and CAD/BIM;
+- chunk metadata: dataset, filename, order, section, parent/child anchors;
+- vector retrieval + lexical FTS;
+- RRF merge;
+- optional reranking;
+- context windows around retrieved chunks;
+- route-change utilities to reindex only documents whose route changed.
+
+The practical point is simple: an estimate query should not behave like a building-code query, mail should not disappear inside generic PDFs, and a BIM answer should carry an object anchor.
 
 ### Included
 
