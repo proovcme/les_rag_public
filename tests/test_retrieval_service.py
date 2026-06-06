@@ -44,6 +44,19 @@ class FakeBackend:
         return [Chunk(f"text-{i}", f"doc-{i}", 1.0 - i * 0.01) for i in range(top_k)]
 
 
+class EmptyBackend:
+    def __init__(self):
+        self.calls = []
+        self.collection_name = "empty_collection"
+
+    async def list_datasets(self):
+        return []
+
+    async def retrieve(self, question, dataset_ids=None, top_k=5):
+        self.calls.append({"question": question, "dataset_ids": dataset_ids, "top_k": top_k})
+        raise AssertionError("empty retrieval should not call backend.retrieve")
+
+
 class FakeReranker:
     def __init__(self, mlx_url, mode):
         self.mlx_url = mlx_url
@@ -126,6 +139,43 @@ async def test_resolve_dataset_ids_infers_filter_from_question():
     )
 
     assert resolved == ["ds-3"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_dataset_ids_returns_empty_scope_when_no_datasets():
+    backend = EmptyBackend()
+
+    resolved = await resolve_dataset_ids(
+        backend,
+        None,
+        None,
+        SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+        question="smoke",
+    )
+
+    assert resolved == []
+
+
+@pytest.mark.asyncio
+async def test_retrieve_chat_chunks_returns_empty_without_backend_call():
+    backend = EmptyBackend()
+
+    result = await retrieve_chat_chunks(
+        question="smoke",
+        dataset_ids=[],
+        rag_backend=backend,
+        reranker_enabled=False,
+        reranker_available=False,
+        reranker_cls=None,
+        mlx_url="http://mlx",
+        logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+        return_trace=True,
+    )
+
+    assert result.chunks == []
+    assert result.trace.mode == "empty"
+    assert result.trace.fallback_reason == "no_datasets"
+    assert backend.calls == []
 
 
 @pytest.mark.asyncio
