@@ -135,8 +135,16 @@ Before a boxed release:
 
 ## Immediate Next Work
 
-1. Add ARTEL `FamilyLearningCase` import contract.
-2. Run destructive Mac reinstall stress on a backed-up host. Non-destructive clean-room smoke passed on 2026-06-06 with `server-remote-model`, focused installer tests and `linux-docker` artifact build.
-3. Add actual Linux systemd Qdrant/model unit templates.
-4. Add Windows service wrapper after Docker/lite smoke on a real Windows host.
-5. Add hub repository README for LES / АТЛАС / АРТЕЛЬ.
+1. Smoke `les-v0.1.0-linux-docker.tar.gz` on a real Docker host.
+2. Smoke Windows Docker/lite artifacts on a real Windows workstation.
+3. Add a small public-safe demo corpus/index flow so a fresh runtime can show
+   non-empty `/api/search` without full private reindex.
+4. Add actual Linux systemd Qdrant/model unit templates.
+5. Add ARTEL `FamilyLearningCase` import contract.
+6. Add hub repository README for LES / АТЛАС / АРТЕЛЬ.
+
+Completed on 2026-06-06:
+
+- destructive Mac reinstall stress from fresh clone;
+- private `v0.1.0` boxed release;
+- public `v0.1.2-public-boxed-install` snapshot release.
