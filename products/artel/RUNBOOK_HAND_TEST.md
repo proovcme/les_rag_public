@@ -43,6 +43,22 @@ http://127.0.0.1:5057/
 
 Если LES после переустановки пустой, это не блокер для ручного UI-теста. Но для продуктового теста `LES context` должен идти по `dataset_filter="ARTEL"` и возвращать не пустой result после seed-команды выше.
 
+## Seed Revit Family Methodology
+
+Для продуктового теста семейств загрузите Autodesk guide и ARTEL quality basis:
+
+```bash
+python3 tools/seed_artel_family_guides.py \
+  --guide-pdf /path/to/revit_family_creation_guide_autodesk_2017.pdf \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --verify-search
+```
+
+Ожидаемый результат: `ARTEL_Index` содержит `FAMILY_GUIDE`, `FOP_PROFILE` и
+`LEARNING_CASE`. После этого АРТЕЛЬ может просить LES дать требования к
+созданию/качеству Revit-семейств и точные ФОП/ADSK параметры.
+
 Если backend запущен на другой машине и ходит в LES по ZeroTier/LAN, `GET /api/integrations/les/status` может быть `ok`, а `POST /api/tasks/task_0241/rag-context` может вернуть `status: "upstream_error"` с `httpStatus: 401`, если для LES `/api/search` нужен API key. Это проверяет, что цепочка АРТЕЛЬ -> LES работает до auth boundary. Для содержательного retrieval используйте локальный `LES_BASE_URL=http://127.0.0.1:8050`, trusted network или задайте `LES_API_KEY`.
 
 ## Быстрый smoke

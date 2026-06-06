@@ -139,18 +139,31 @@ This gives АРТЕЛЬ retrieval over:
 Family guide seed:
 
 ```bash
-mkdir -p RAG_Content/ARTEL/family_guides
-cp /path/to/revit_family_creation_guide_autodesk_2017.pdf \
-  RAG_Content/ARTEL/family_guides/
-curl -fsS -X POST http://127.0.0.1:8050/api/rag/sync/ARTEL
+python3 tools/seed_artel_family_guides.py \
+  --guide-pdf /path/to/revit_family_creation_guide_autodesk_2017.pdf \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --verify-search
 ```
 
-LES routes files under `RAG_Content/ARTEL/family_guides/` as `FAMILY_GUIDE`.
-This keeps Autodesk/Revit family methodology separate from `FOP_PROFILE`
-shared-parameter files and `LEARNING_CASE` accepted family cases.
+The tool copies the PDF to `RAG_Content/ARTEL/family_guides/`, writes a
+structured ARTEL quality requirements projection, syncs only `ARTEL_Index`, and
+verifies retrieval. LES routes those files as `FAMILY_GUIDE`. This keeps
+Autodesk/Revit family methodology separate from `FOP_PROFILE` shared-parameter
+files and `LEARNING_CASE` accepted family cases.
 If the official Autodesk attachment rejects non-browser downloads, use a
 browser-downloaded local PDF or a curated markdown projection with the source
 URL, outline, rules, checklist and retrieval hints.
+
+Operational skill:
+
+```text
+products/artel/skills/revit-family/SKILL.md
+```
+
+The skill instructs agents to retrieve `FAMILY_GUIDE`, `FOP_PROFILE`, and
+`LEARNING_CASE` evidence from LES before producing a family specification,
+validation checklist, catalog card, or acceptance decision.
 
 ## Configuration
 
