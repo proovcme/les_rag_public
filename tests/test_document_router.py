@@ -126,6 +126,28 @@ def test_route_artel_fop_profile_to_artel_index():
     assert route.pipeline == "markdown"
 
 
+def test_route_artel_family_guide_to_artel_index():
+    probe = DocumentProbe(
+        path=Path("RAG_Content/ARTEL/family_guides/revit_family_creation_guide_autodesk_2017.pdf"),
+        suffix=".pdf",
+        size_bytes=2_000_000,
+        page_count=45,
+        text_sample=(
+            "РУКОВОДСТВО ПО СОЗДАНИЮ СЕМЕЙСТВ Autodesk Revit\n"
+            "Требования к семействам. Процедура создания семейств."
+        ),
+        has_text_layer=True,
+    )
+
+    route = classify_document(probe)
+
+    assert route.doc_type == "FAMILY_GUIDE"
+    assert route.domain == "ARTEL"
+    assert route.dataset_name == "ARTEL_Index"
+    assert route.content_type == "text"
+    assert route.pipeline == "markdown"
+
+
 def test_route_raw_ifc_to_cad_bim_index():
     probe = DocumentProbe(
         path=Path("RAG_Content/CAD_BIM/IFC/model.ifc"),
