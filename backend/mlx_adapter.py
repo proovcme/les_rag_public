@@ -1,13 +1,14 @@
 """
 MLXMemoryManager — управление памятью Metal для LLM.
 
-Токенизатор грузится один раз при старте (лёгкий, ~10MB).
-Веса модели — лениво при первом запросе, выгружаются по TTL.
+Токенизатор и веса модели грузятся лениво при первом запросе, выгружаются по TTL.
+Для старого eager-поведения можно задать MLX_PRELOAD_TOKENIZERS=true.
 Глобальный metal_semaphore — один движок на Metal в любой момент.
 """
 import asyncio
 import gc
 import logging
+import os
 import time
 
 from mlx_lm import load, generate
@@ -34,12 +35,15 @@ class MLXMemoryManager:
     def start(self):
         """Вызывается внутри lifespan когда event loop уже запущен."""
         self._lock = asyncio.Lock()
-        try:
-            logger.info(f"[TOKENIZER] Загрузка {self.model_path}...")
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
-            logger.info(f"[TOKENIZER] Готов.")
-        except Exception as e:
-            logger.warning(f"[TOKENIZER] Не удалось загрузить: {e}")
+        if os.getenv("MLX_PRELOAD_TOKENIZERS", "").lower() in {"1", "true", "yes", "on"}:
+            try:
+                logger.info(f"[TOKENIZER] Загрузка {self.model_path}...")
+                self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
+                logger.info(f"[TOKENIZER] Готов.")
+            except Exception as e:
+                logger.warning(f"[TOKENIZER] Не удалось загрузить: {e}")
+        else:
+            logger.info(f"[TOKENIZER] Lazy preload enabled for {self.model_path}")
         self._cleanup_task = asyncio.create_task(self._auto_unload_loop())
 
     async def _auto_unload_loop(self):
