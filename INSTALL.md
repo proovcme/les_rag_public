@@ -24,6 +24,9 @@ uv run lesctl init --profile mac-native
 uv run lesctl install --profile mac-native
 ```
 
+`lesctl install` подготавливает директории, `.env` и зависимости. launchd-сервисы
+регистрируются при первом `lesctl start`.
+
 После этого отредактируйте `.env`:
 
 - замените `JWT_SECRET`, `ADMIN_PASSWORD`, `SOVUSHKA_STORAGE_SECRET`;
@@ -42,7 +45,7 @@ macOS wrapper:
 Через новый CLI entrypoint после `uv sync`:
 
 ```bash
-uv run lesctl start --include-ui --memory-preflight
+uv run lesctl start --profile mac-native --include-ui --memory-preflight
 ```
 
 Для Linux Docker profile:
@@ -88,7 +91,15 @@ uv run lesctl init --profile mac-native
 uv run lesctl status
 curl -fsS http://127.0.0.1:8050/api/health | python3 -m json.tool
 curl -fsS http://127.0.0.1:8080/api/health | python3 -m json.tool
+curl -fsS http://127.0.0.1:8051/healthz | python3 -m json.tool
+curl -fsS -X POST http://127.0.0.1:8050/api/search \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"smoke","top_k":1,"include_trace":true}' | python3 -m json.tool
 ```
+
+На пустом fresh install `/api/health` может вернуть HTTP 200 со
+`status=degraded`, `rag.status=empty`, `datasets=0`, `chunks=0`. Это означает,
+что runtime поднят, но корпус еще не загружен.
 
 ## Остановка
 
