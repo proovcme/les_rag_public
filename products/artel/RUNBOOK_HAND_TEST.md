@@ -228,10 +228,12 @@ cd C:\Users\Oleg\AppData\Local\Temp\artel-current-autorun
 
 Этот launcher включает `ARTEL_AUTORUN_VALIDATE_PATH`, запускает Revit, ждет
 `validation_*.json` или `autorun_error_*.json` и печатает JSON-результат.
-Удаленный запуск через OpenSSH/Scheduled Task на Legion 2026-06-06 создал
-нулевые Revit journals и зависшие `Revit.exe` без report; для доказательного
-smoke нужен интерактивный desktop или уже открытый Revit с ручным запуском
-`External Tools -> ARTEL Family Validate`.
+Перед запуском Legion должен быть разблокирован: launcher проверяет
+`LogonUI.exe` и останавливается, если Windows находится на lock screen.
+Удаленный запуск через OpenSSH/Scheduled Task на Legion 2026-06-06 при
+заблокированном desktop создал нулевые Revit journals и `Revit.exe` без report;
+для доказательного smoke нужен разблокированный интерактивный desktop или уже
+открытый Revit с ручным запуском `External Tools -> ARTEL Family Validate`.
 
 Если Revit и ARTEL backend находятся на одной машине, `ARTEL Family Validate`
 сам отправляет report в backend. Если submit не был включен или backend был

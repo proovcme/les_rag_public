@@ -141,9 +141,11 @@ cd products\artel
 
 The script sets `ARTEL_AUTORUN_VALIDATE_PATH`, starts Revit, waits for
 `%APPDATA%\ARTEL\family_factory\validation_*.json`, and exits non-zero if only
-`autorun_error_*.json` or no report appears. Remote OpenSSH/Scheduled Task
-launches on Legion did not reach normal Revit journal/report creation on
-2026-06-06; run this from the interactive Windows desktop for the proof smoke.
+`autorun_error_*.json` or no report appears. It also refuses to start if
+`LogonUI.exe` is running, because that means Windows is on the lock screen.
+Remote OpenSSH/Scheduled Task launches on locked Legion did not reach normal
+Revit journal/report creation on 2026-06-06; unlock the Windows desktop before
+the proof smoke.
 
 ## Data Rules
 

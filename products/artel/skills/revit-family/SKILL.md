@@ -189,6 +189,10 @@ cd products\artel
   -TimeoutSec 420
 ```
 
+If this exits with a `LogonUI.exe`/lock-screen error, unlock the Legion Windows
+desktop first; Revit API autorun does not produce validation reports from the
+lock screen.
+
 Ingest a Revit add-in validation report into ARTEL backend and LES:
 
 ```bash

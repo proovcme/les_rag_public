@@ -12,6 +12,7 @@ param(
     [bool]$RequireProjectChecks = $true,
     [bool]$ExitRevit = $true,
     [int]$TimeoutSec = 420,
+    [switch]$SkipLockScreenCheck,
     [switch]$KeepExistingReports
 )
 
@@ -28,6 +29,10 @@ function Set-BoolEnv([string]$Name, [bool]$Value) {
 $revitExe = Join-Path $RevitInstallDir "Revit.exe"
 if (-not (Test-Path $revitExe)) {
     throw "Revit.exe not found: $revitExe"
+}
+
+if (-not $SkipLockScreenCheck -and (Get-Process LogonUI -ErrorAction SilentlyContinue)) {
+    throw "Windows desktop appears locked: LogonUI.exe is running. Unlock Legion before ARTEL Revit autorun smoke."
 }
 
 $resolvedFamilyPath = (Resolve-Path $FamilyPath).Path

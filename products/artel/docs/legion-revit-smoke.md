@@ -257,8 +257,8 @@ After proxy restart, trust diagnostics from Legion returned:
 
 The backend/RAG path is ready. The remaining Revit-side test needs an
 interactive Revit desktop session because `RevitCoreConsole.exe` is not
-present and OpenSSH/Scheduled Task launch on 2026-06-06 stalled before normal
-journal/report creation.
+present and OpenSSH/Scheduled Task launch on 2026-06-06 hit the Windows lock
+screen before normal journal/report creation.
 
 1. Open Revit 2025 on Legion.
 2. Start from `Metric Casework.rft` or `Metric Electrical Equipment.rft`.
@@ -307,7 +307,8 @@ Observed remote limits:
 
 - direct OpenSSH `Start-Process Revit.exe` exited without a report;
 - interactive `schtasks /IT` started Revit processes in console session 1, but
-  produced zero-byte `journal.0131.txt`/`journal.0132.txt` and no
+- desktop screenshot showed the Windows lock screen with `LogonUI.exe` running;
+- locked-desktop launches produced zero-byte journals and no
   `%APPDATA%\ARTEL\family_factory` output;
 - the test processes were stopped after diagnosis.
 
