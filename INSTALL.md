@@ -7,7 +7,8 @@ This repository has two very different installation paths:
 
 ARTEL / АРТЕЛЬ is described in the README as the Revit-family workflow layer
 that should call LES APIs. The public snapshot does not ship a production ARTEL
-installer or private RFA/catalog data.
+installer or private RFA/catalog data, but it does include a public-safe
+`FamilyLearningCase` schema/example and a seed tool for `ARTEL_Index`.
 
 ## RU - быстрый выбор
 
@@ -160,6 +161,20 @@ cad_bim_graph.json
 ```
 
 Через exporters или IFC/DXF tools, а потом импортировать в LES.
+
+### АРТЕЛЬ seed
+
+Для проверки Revit-family learning loop без приватных RFA данных:
+
+```bash
+uv run python tools/seed_artel_learning_cases.py --verify-search
+```
+
+Ожидаемый результат:
+
+- файл `RAG_Content/ARTEL/family_learning_cases/demo_metal_cabinet_001.md`;
+- dataset `ARTEL_Index`;
+- `/api/search` с `dataset_filter="ARTEL"` возвращает хотя бы один chunk.
 
 ### Почта
 

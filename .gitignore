@@ -10,7 +10,7 @@ build/
 .env.*
 !.env.example
 data/
-storage/
+/storage/
 RAG_Content/
 outputs/
 exporters/artifacts/

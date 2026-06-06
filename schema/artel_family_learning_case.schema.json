@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://les.ovc.me/schema/artel_family_learning_case.schema.json",
+  "title": "ARTEL FamilyLearningCase",
+  "description": "Public-safe structured learning case for Revit family tasks indexed by LES as ARTEL knowledge.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "case_id",
+    "product",
+    "task",
+    "specification",
+    "parameter_profile",
+    "validation_report",
+    "catalog_card",
+    "acceptance"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "artel.family_learning_case.v1"
+    },
+    "case_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_.-]{2,80}$"
+    },
+    "product": {
+      "type": "string",
+      "const": "ARTEL"
+    },
+    "visibility": {
+      "type": "string",
+      "enum": ["public_demo", "internal", "private"],
+      "default": "public_demo"
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "family_category", "family_name", "goal", "constraints"],
+      "properties": {
+        "title": { "type": "string", "minLength": 3 },
+        "family_category": { "type": "string", "minLength": 2 },
+        "family_name": { "type": "string", "minLength": 2 },
+        "goal": { "type": "string", "minLength": 10 },
+        "constraints": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "source_summaries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "summary"],
+        "properties": {
+          "kind": { "type": "string" },
+          "summary": { "type": "string" }
+        }
+      }
+    },
+    "specification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["types", "geometry", "materials", "parameters"],
+      "properties": {
+        "types": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "geometry": { "type": "string" },
+        "materials": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "parameters": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "value_or_rule"],
+            "properties": {
+              "name": { "type": "string" },
+              "value_or_rule": { "type": "string" },
+              "group": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "parameter_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fop_profile", "required_shared_parameters"],
+      "properties": {
+        "fop_profile": { "type": "string" },
+        "required_shared_parameters": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "validation_report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "checks", "known_failures", "fixes"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["accepted", "accepted_with_notes", "rejected"]
+        },
+        "checks": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "known_failures": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "fixes": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "catalog_card": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["display_name", "category", "tags", "search_terms"],
+      "properties": {
+        "display_name": { "type": "string" },
+        "category": { "type": "string" },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "search_terms": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome", "accepted_by_role", "notes"],
+      "properties": {
+        "outcome": {
+          "type": "string",
+          "enum": ["accepted", "accepted_with_notes", "rejected"]
+        },
+        "accepted_by_role": { "type": "string" },
+        "notes": { "type": "string" }
+      }
+    }
+  }
+}

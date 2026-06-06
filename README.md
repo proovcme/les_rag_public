@@ -6,7 +6,7 @@
 
 **EN:** LES is a local-first engineering RAG system and the core of the **LES / ATLAS / ARTEL** ecosystem. It turns documents, tables, mail and CAD/BIM models into a verifiable knowledge base: an answer should point back to a source, a chunk, a drawing object, a BIM element or a Revit family lifecycle record.
 
-[Live ATLAS viewer](https://les.ovc.me/vv/) · [Install](INSTALL.md) · [CAD/BIM JSON exporters](exporters/) · [Standalone viewer](standalone/cad_bim_viewer/) · [JSON schema](schema/cad_bim_graph.schema.json)
+[Live ATLAS viewer](https://les.ovc.me/vv/) · [Install](INSTALL.md) · [CAD/BIM JSON exporters](exporters/) · [Standalone viewer](standalone/cad_bim_viewer/) · [CAD/BIM schema](schema/cad_bim_graph.schema.json) · [ARTEL schema](schema/artel_family_learning_case.schema.json)
 
 ![LES ecosystem](assets/readme/les-ecosystem.svg)
 
@@ -20,7 +20,7 @@
 | **АТЛАС** | CAD/BIM viewer | открывает IFC и `cad_bim_graph.json`, проверяет геометрию/объекты, может использовать LES context |
 | **АРТЕЛЬ** | Revit family workflow | задания, спецификации, проверка RFA, каталог, learning loop; backend ходит в LES за RAG-контекстом |
 
-В этом public snapshot основной код - LES и АТЛАС. АРТЕЛЬ описана как продуктовый контур и интеграционный следующий слой: Revit-плагин должен ходить в backend АРТЕЛИ, а backend АРТЕЛИ - в LES `/api/search`. Так не появляется второй RAG, и вся память качества остается в одном инженерном ядре.
+В этом public snapshot основной код - LES и АТЛАС. АРТЕЛЬ описана как продуктовый контур и интеграционный следующий слой: Revit-плагин должен ходить в backend АРТЕЛИ, а backend АРТЕЛИ - в LES `/api/search`. Так не появляется второй RAG, и вся память качества остается в одном инженерном ядре. Для проверки есть public-safe `FamilyLearningCase` seed, который индексируется в `ARTEL_Index`.
 
 Технически LES состоит из трех слоев:
 
@@ -153,8 +153,8 @@ standalone/cad_bim_viewer/готовый offline bundle АТЛАС
 exporters/                AutoCAD, Revit, Navisworks JSON exporters
 tools/                    smoke, extraction and build utilities
 tests/                    regression tests for core contracts
-schema/                   public cad_bim_graph JSON schema
-examples/                 small public JSON sample
+schema/                   public CAD/BIM and ARTEL JSON schemas
+examples/                 small public CAD/BIM and ARTEL JSON samples
 ```
 
 ### Где здесь АРТЕЛЬ
@@ -186,6 +186,16 @@ flowchart LR
 - RFA/CAD/BIM-derived JSON summaries.
 
 Это превращает разработку семейств в learning loop: каждое принятое семейство улучшает следующую постановку задачи и проверку.
+
+Public-safe проверка без приватных RFA данных:
+
+```bash
+uv run python tools/seed_artel_learning_cases.py --verify-search
+```
+
+Команда создает markdown-проекцию из [`examples/artel/family_learning_case.metal_cabinet.json`](examples/artel/family_learning_case.metal_cabinet.json),
+запускает только `/api/rag/sync/ARTEL` и проверяет non-empty `/api/search`
+с `dataset_filter="ARTEL"`.
 
 ### Как поставить
 
