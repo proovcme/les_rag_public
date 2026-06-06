@@ -46,15 +46,21 @@ GET /api/tasks/{taskId}/learning-case
 GET /api/validation-reports/{reportId}/learning-case
 ```
 
-После этого кейс индексируется в LES:
+Операторский путь от JSON-отчета Revit add-in до LES:
 
 ```bash
-python3 tools/seed_artel_learning_cases.py \
-  --case-url http://127.0.0.1:5057/api/tasks/task_0241/learning-case \
+python3 tools/ingest_artel_validation_report.py \
+  --report 'local_private_archive/artel_validation_reports/validation_*.json' \
+  --artel-url http://127.0.0.1:5057 \
+  --task-id task_0241 \
   --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
   --proxy-url http://127.0.0.1:8050 \
   --verify-search
 ```
+
+Скрипт нормализует report, делает `POST /api/revit/tasks/{taskId}/validation-reports`,
+забирает `GET /api/validation-reports/{reportId}/learning-case`, пишет markdown
+projection в `RAG_Content/ARTEL/family_learning_cases/` и запускает LES sync.
 
 Это закрывает минимальную петлю:
 

@@ -263,5 +263,21 @@ or add-in automation because `RevitCoreConsole.exe` is not present:
 3. Open one standard cabinet family from the Base Cabinets folder.
 4. Verify required shared/catalog parameters against the ARTEL task:
    `ADSK_Наименование`, `ADSK_КодИзделия`, `ADSK_Марка`, `ADSK_Примечание`.
-5. Export a small public-safe validation summary into a future
-   `FamilyLearningCase`.
+5. Run `External Tools -> ARTEL Family Validate`.
+6. Copy the latest `%APPDATA%\ARTEL\family_factory\validation_*.json` from
+   Legion into `local_private_archive/artel_validation_reports/`.
+7. Ingest the report into ARTEL backend and LES:
+
+```bash
+python3 tools/ingest_artel_validation_report.py \
+  --report 'local_private_archive/artel_validation_reports/validation_*.json' \
+  --artel-url http://127.0.0.1:5057 \
+  --task-id task_0241 \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --verify-search
+```
+
+This should create a report-specific `FamilyLearningCase` projection under
+`RAG_Content/ARTEL/family_learning_cases/` and make it searchable in
+`ARTEL_Index`.

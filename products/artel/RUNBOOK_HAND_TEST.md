@@ -215,11 +215,24 @@ $env:ARTEL_REQUIRE_PROJECT_CHECKS = "true"
 GET /api/tasks/task_0241/learning-case
 ```
 
-Скормить полученный learning case в LES:
+Если Revit и ARTEL backend находятся на одной машине, `ARTEL Family Validate`
+сам отправляет report в backend. Если submit не был включен или backend был
+недоступен, скопировать последний JSON-отчет с Legion:
 
 ```bash
-python3 tools/seed_artel_learning_cases.py \
-  --case-url http://127.0.0.1:5057/api/tasks/task_0241/learning-case \
+mkdir -p local_private_archive/artel_validation_reports
+scp 'legion:C:/Users/Oleg/AppData/Roaming/ARTEL/family_factory/validation_*.json' \
+  local_private_archive/artel_validation_reports/
+```
+
+Скормить validation report в ARTEL backend, получить `FamilyLearningCase` и
+синхронизировать его в LES:
+
+```bash
+python3 tools/ingest_artel_validation_report.py \
+  --report 'local_private_archive/artel_validation_reports/validation_*.json' \
+  --artel-url http://127.0.0.1:5057 \
+  --task-id task_0241 \
   --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
   --proxy-url http://127.0.0.1:8050 \
   --verify-search
