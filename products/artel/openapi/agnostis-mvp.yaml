@@ -245,6 +245,40 @@ paths:
                 $ref: "#/components/schemas/ValidationReport"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/tasks/{taskId}/learning-case:
+    get:
+      summary: Export the latest task validation as an ARTEL learning case
+      operationId: getTaskLearningCase
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          description: ARTEL FamilyLearningCase JSON
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FamilyLearningCase"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/validation-reports/{reportId}/learning-case:
+    get:
+      summary: Export a validation report as an ARTEL learning case
+      operationId: getValidationReportLearningCase
+      parameters:
+        - name: reportId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ARTEL FamilyLearningCase JSON
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FamilyLearningCase"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/catalog:
     get:
       summary: Search catalog
@@ -902,6 +936,49 @@ components:
             createdAt:
               type: string
               format: date-time
+    FamilyLearningCase:
+      type: object
+      description: ARTEL learning case exported from accepted validation evidence. Matches artel.family_learning_case.v1.
+      required:
+        - schema_version
+        - case_id
+        - product
+        - task
+        - specification
+        - parameter_profile
+        - validation_report
+        - catalog_card
+        - acceptance
+      additionalProperties: true
+      properties:
+        schema_version:
+          type: string
+          const: artel.family_learning_case.v1
+        case_id:
+          type: string
+        product:
+          type: string
+          const: ARTEL
+        visibility:
+          type: string
+        task:
+          type: object
+          additionalProperties: true
+        specification:
+          type: object
+          additionalProperties: true
+        parameter_profile:
+          type: object
+          additionalProperties: true
+        validation_report:
+          type: object
+          additionalProperties: true
+        catalog_card:
+          type: object
+          additionalProperties: true
+        acceptance:
+          type: object
+          additionalProperties: true
     ValidationIssue:
       type: object
       required:

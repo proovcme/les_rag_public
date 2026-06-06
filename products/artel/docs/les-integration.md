@@ -207,6 +207,45 @@ python3 tools/seed_artel_revit_factory_sources.py \
 If the workstation has no CHM extractor, extract the CHM to HTML first and use
 `--sdk-html-dir /path/to/extracted/RevitAPI`.
 
+If the host has no `RevitAPI.chm`, selected SDK/API pages can be seeded by URL:
+
+```bash
+python3 tools/seed_artel_revit_factory_sources.py \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --sdk-url https://www.revitapidocs.com/2023/1cc4fe6c-0e9f-7439-0021-32d2e06f4c33.htm \
+  --verify-search
+```
+
+Current Legion status: Revit 2024/2025 are installed, but `RevitAPI.chm` and
+`RevitCoreConsole.exe` were not found in the standard Autodesk install folders.
+Use URL/HTML seeding for SDK knowledge and the `ARTEL.Revit.FamilyFactory`
+add-in for the Revit execution loop.
+
+## Validation Reports To LES Learning Cases
+
+ARTEL backend exposes validation reports as LES-ready learning cases:
+
+```http
+GET /api/tasks/{taskId}/learning-case
+GET /api/validation-reports/{reportId}/learning-case
+```
+
+To seed the latest task report back into LES:
+
+```bash
+python3 tools/seed_artel_learning_cases.py \
+  --case-url http://127.0.0.1:5057/api/tasks/task_0241/learning-case \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --verify-search
+```
+
+The generated case carries task, specification, FOP/profile hints, validation
+status, issues, actions and catalog tags. Accepted reports become
+`LEARNING_CASE`; failed reports are still useful as validation memory, but
+should stay private until curated.
+
 Operational skill:
 
 ```text

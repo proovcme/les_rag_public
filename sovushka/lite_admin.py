@@ -621,7 +621,7 @@ def lite_admin_html() -> str:
   </div>
 
   <script>
-    const isLocalUi = location.port === "8051";
+    const isLocalUi = location.hostname === "127.0.0.1" || location.hostname === "localhost" || location.port === "8051" || location.port === "8061";
     const API_BASE = isLocalUi ? "/lite-api" : "";
     const KEY_STORAGE = "les_lite_api_key";
     const ROLE_STORAGE = "les_lite_role";

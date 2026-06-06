@@ -23,7 +23,7 @@ from typing import Iterable, TextIO
 
 ROOT = Path(__file__).resolve().parents[1]
 LAUNCH_AGENTS = Path.home() / "Library" / "LaunchAgents"
-GUI_DOMAIN = f"gui/{os.getuid()}"
+GUI_DOMAIN = f"gui/{os.getuid()}" if hasattr(os, "getuid") else "gui/0"
 LEGACY_ROOT_PLACEHOLDER = "/Users/ovc/Projects/LES_v2"
 ROOT_PLACEHOLDER = "__LES_ROOT__"
 

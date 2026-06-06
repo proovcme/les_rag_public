@@ -37,6 +37,8 @@ Endpoints:
 - `GET /api/revit/tasks`
 - `GET /api/revit/tasks/{taskId}/package`
 - `POST /api/revit/tasks/{taskId}/validation-reports`
+- `GET /api/tasks/{taskId}/learning-case`
+- `GET /api/validation-reports/{reportId}/learning-case`
 - `GET /api/catalog`
 - `GET /api/catalog/{catalogItemId}`
 - `GET /api/catalog/{catalogItemId}/versions`

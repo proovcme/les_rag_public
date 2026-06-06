@@ -129,6 +129,39 @@ def chat_admission_for_state(state: RuntimeRouterState):
     )
 
 
+def _provider_status() -> dict[str, str]:
+    provider = os.getenv("LES_LLM_PROVIDER", "mlx").strip().lower() or "mlx"
+    if provider == "openrouter":
+        return {
+            "provider": provider,
+            "base_url": os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+            "model": os.getenv("OPENROUTER_MODEL", ""),
+        }
+    if provider in {"openai", "openai-compatible", "openai_compatible"}:
+        return {
+            "provider": provider,
+            "base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+            "model": os.getenv("OPENAI_MODEL", ""),
+        }
+    if provider == "ollama":
+        return {
+            "provider": provider,
+            "base_url": os.getenv("OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")),
+            "model": os.getenv("OLLAMA_MODEL", ""),
+        }
+    if provider == "lemonade":
+        return {
+            "provider": provider,
+            "base_url": os.getenv("LEMONADE_BASE_URL", "http://127.0.0.1:13305/api/v1"),
+            "model": os.getenv("LEMONADE_MODEL", ""),
+        }
+    return {
+        "provider": "mlx",
+        "base_url": os.getenv("MLX_URL", "http://127.0.0.1:8080"),
+        "model": os.getenv("LLM_MODEL", "qwen3:14b"),
+    }
+
+
 def dispatcher_for_state(state: RuntimeRouterState) -> RuntimeDispatcher:
     return RuntimeDispatcher(current_mode=state.current_mode, metrics_cache=state.metrics_cache)
 
@@ -455,6 +488,7 @@ async def get_status():
             "port": 8050,
             "llm_url": os.getenv("MLX_URL", "http://127.0.0.1:8080"),
             "llm_model": os.getenv("LLM_MODEL", "qwen3:14b"),
+            "llm_provider": _provider_status(),
         },
         "chat_admission": admission.payload(),
         "embedding": rag_runtime_config(),

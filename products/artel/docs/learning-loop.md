@@ -31,6 +31,37 @@
 - историю версий;
 - факты использования: скачивания, проекты, повторные обновления.
 
+## Текущий API-контур
+
+Backend MVP уже умеет принимать validation report от Revit add-in:
+
+```http
+POST /api/revit/tasks/{taskId}/validation-reports
+```
+
+И отдавать LES-ready learning case:
+
+```http
+GET /api/tasks/{taskId}/learning-case
+GET /api/validation-reports/{reportId}/learning-case
+```
+
+После этого кейс индексируется в LES:
+
+```bash
+python3 tools/seed_artel_learning_cases.py \
+  --case-url http://127.0.0.1:5057/api/tasks/task_0241/learning-case \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --verify-search
+```
+
+Это закрывает минимальную петлю:
+
+```text
+Revit family validation -> ARTEL report -> LES LEARNING_CASE -> retrieval
+```
+
 ## Как система улучшается
 
 ### 1. Reference Library

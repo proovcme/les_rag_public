@@ -41,6 +41,15 @@ class SettingsRequest(BaseModel):
     openai_model: Optional[str] = None
     openai_api_key: Optional[str] = None
     openai_api_key_clear: Optional[bool] = None
+    llm_provider: Optional[str] = None
+    ollama_base_url: Optional[str] = None
+    ollama_model: Optional[str] = None
+    ollama_api_key: Optional[str] = None
+    ollama_api_key_clear: Optional[bool] = None
+    lemonade_base_url: Optional[str] = None
+    lemonade_model: Optional[str] = None
+    lemonade_api_key: Optional[str] = None
+    lemonade_api_key_clear: Optional[bool] = None
     mail_imap_host: Optional[str] = None
     mail_imap_port: Optional[int] = None
     mail_imap_ssl: Optional[bool] = None
@@ -110,6 +119,8 @@ async def save_settings(req: SettingsRequest, restart: bool = False, _admin=Depe
         (req.speckle_graphql_url, "SPECKLE_GRAPHQL_URL"),
         (req.openrouter_base_url, "OPENROUTER_BASE_URL"),
         (req.openai_base_url, "OPENAI_BASE_URL"),
+        (req.ollama_base_url, "OLLAMA_BASE_URL"),
+        (req.lemonade_base_url, "LEMONADE_BASE_URL"),
     ):
         if field and not field.startswith(("http://", "https://")):
             raise HTTPException(400, f"{env_key} должен начинаться с http:// или https://")
@@ -194,6 +205,7 @@ def _speckle_settings_payload() -> dict[str, object]:
 
 def _provider_settings_payload() -> dict[str, object]:
     return {
+        "active": os.getenv("LES_LLM_PROVIDER", "mlx"),
         "openrouter": {
             "base_url": os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
             "model": os.getenv("OPENROUTER_MODEL", ""),
@@ -203,6 +215,16 @@ def _provider_settings_payload() -> dict[str, object]:
             "base_url": os.getenv("OPENAI_BASE_URL", ""),
             "model": os.getenv("OPENAI_MODEL", ""),
             "api_key_set": bool(os.getenv("OPENAI_API_KEY", "")),
+        },
+        "ollama": {
+            "base_url": os.getenv("OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")),
+            "model": os.getenv("OLLAMA_MODEL", ""),
+            "api_key_set": bool(os.getenv("OLLAMA_API_KEY", "")),
+        },
+        "lemonade": {
+            "base_url": os.getenv("LEMONADE_BASE_URL", "http://127.0.0.1:13305/api/v1"),
+            "model": os.getenv("LEMONADE_MODEL", ""),
+            "api_key_set": bool(os.getenv("LEMONADE_API_KEY", "")),
         },
     }
 
@@ -252,10 +274,15 @@ def _provider_updates(req: SettingsRequest) -> dict[str, str]:
     fields = req.model_fields_set
     updates: dict[str, str] = {}
     string_map = {
+        "llm_provider": "LES_LLM_PROVIDER",
         "openrouter_base_url": "OPENROUTER_BASE_URL",
         "openrouter_model": "OPENROUTER_MODEL",
         "openai_base_url": "OPENAI_BASE_URL",
         "openai_model": "OPENAI_MODEL",
+        "ollama_base_url": "OLLAMA_BASE_URL",
+        "ollama_model": "OLLAMA_MODEL",
+        "lemonade_base_url": "LEMONADE_BASE_URL",
+        "lemonade_model": "LEMONADE_MODEL",
     }
     for field, env_key in string_map.items():
         if field in fields:
@@ -270,6 +297,16 @@ def _provider_updates(req: SettingsRequest) -> dict[str, str]:
         updates["OPENAI_API_KEY"] = req.openai_api_key.strip()
     if req.openai_api_key_clear:
         updates["OPENAI_API_KEY"] = ""
+
+    if "ollama_api_key" in fields and req.ollama_api_key:
+        updates["OLLAMA_API_KEY"] = req.ollama_api_key.strip()
+    if req.ollama_api_key_clear:
+        updates["OLLAMA_API_KEY"] = ""
+
+    if "lemonade_api_key" in fields and req.lemonade_api_key:
+        updates["LEMONADE_API_KEY"] = req.lemonade_api_key.strip()
+    if req.lemonade_api_key_clear:
+        updates["LEMONADE_API_KEY"] = ""
 
     return updates
 

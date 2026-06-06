@@ -467,7 +467,7 @@ def lite_chat_html() -> str:
   </div>
 
   <script>
-    const isLocalUi = location.port === "8051";
+    const isLocalUi = location.hostname === "127.0.0.1" || location.hostname === "localhost" || location.port === "8051" || location.port === "8061";
     const API_BASE = isLocalUi ? "/lite-api" : "";
     const KEY_STORAGE = "les_lite_api_key";
     const HOLDER_STORAGE = "les_lite_holder";

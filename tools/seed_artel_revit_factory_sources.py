@@ -27,6 +27,7 @@ DEFAULT_RHINO_MODEL_GUIDE_URL = (
 DEFAULT_REVIT_API_SYMBOL_MAP_URL = (
     "https://raw.githubusercontent.com/chuongmep/RevitAPIDocGen/master/RevitAPI2023.json"
 )
+DEFAULT_URL_TIMEOUT_SEC = 30.0
 
 
 class _HTMLToText(HTMLParser):
@@ -76,11 +77,22 @@ def is_url(value: str) -> bool:
     return value.startswith("http://") or value.startswith("https://")
 
 
-def read_source_text(source: str) -> str:
+def read_source_text(source: str, timeout_sec: float = DEFAULT_URL_TIMEOUT_SEC) -> str:
     if is_url(source):
         req = urllib.request.Request(source, headers={"User-Agent": "LES ARTEL seed tool"})
-        with urllib.request.urlopen(req, timeout=60) as response:
-            raw = response.read()
+        last_error: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                with urllib.request.urlopen(req, timeout=timeout_sec) as response:
+                    raw = response.read()
+                break
+            except (TimeoutError, OSError, urllib.error.URLError) as exc:
+                last_error = exc
+                if attempt == 3:
+                    raise
+                time.sleep(attempt * 2)
+        else:
+            raise RuntimeError(f"Failed to read {source}") from last_error
     else:
         raw = Path(source).read_bytes()
     for encoding in ("utf-8-sig", "utf-8", "cp1251", "latin-1"):
@@ -280,6 +292,16 @@ def write_sdk_html_file(path: Path, runtime_root: Path, source_root: Path | None
     return target
 
 
+def write_sdk_html_url(source: str, runtime_root: Path, timeout_sec: float = DEFAULT_URL_TIMEOUT_SEC) -> Path:
+    html = read_source_text(source, timeout_sec=timeout_sec)
+    title, body = html_to_markdown(source_basename(source), html)
+    safe = safe_name(source_basename(source), "sdk_url")
+    target = target_dir(runtime_root, "revit_api_sdk_docs") / f"{safe}.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(render_sdk_doc(source, title, body), encoding="utf-8")
+    return target
+
+
 def write_sdk_html_dir(html_dir: Path, runtime_root: Path, max_pages: int = 0) -> list[Path]:
     if not html_dir.is_dir():
         raise FileNotFoundError(f"SDK HTML directory not found: {html_dir}")
@@ -363,6 +385,9 @@ def main() -> int:
     parser.add_argument("--model-guide", action="append", default=[], help="Markdown URL/path with Revit data model guide.")
     parser.add_argument("--symbol-map", action="append", default=[], help="JSON/CSV URL/path with Revit API symbol map.")
     parser.add_argument("--sdk-html-dir", type=Path, action="append", default=[], help="Directory with extracted Revit API SDK HTML files.")
+    parser.add_argument("--sdk-url", action="append", default=[], help="Revit API SDK/RevitAPIDocs/RVTDocs HTML URL to index as REVIT_API_SDK_DOC.")
+    parser.add_argument("--url-timeout-sec", type=float, default=DEFAULT_URL_TIMEOUT_SEC, help="Per-attempt timeout for URL reads.")
+    parser.add_argument("--allow-fetch-errors", action="store_true", help="Continue when an --sdk-url cannot be fetched.")
     parser.add_argument("--chm", type=Path, action="append", default=[], help="RevitAPI.chm path; requires 7z/7zz/unar/chmlib.")
     parser.add_argument("--seed-defaults", action="store_true", help="Seed public Rhino model guide and RevitAPIDocGen 2023 symbol map.")
     parser.add_argument("--max-symbols", type=int, default=0, help="Limit symbol entries; 0 means all.")
@@ -375,7 +400,7 @@ def main() -> int:
 
     model_guides = list(args.model_guide)
     symbol_maps = list(args.symbol_map)
-    if args.seed_defaults or not (model_guides or symbol_maps or args.sdk_html_dir or args.chm):
+    if args.seed_defaults or not (model_guides or symbol_maps or args.sdk_html_dir or args.sdk_url or args.chm):
         model_guides.append(DEFAULT_RHINO_MODEL_GUIDE_URL)
         symbol_maps.append(DEFAULT_REVIT_API_SYMBOL_MAP_URL)
 
@@ -392,6 +417,16 @@ def main() -> int:
         for target in write_sdk_html_dir(html_dir, args.runtime_root, max_pages=args.max_sdk_pages):
             written.append(target)
         print(f"sdk_html_dir={html_dir} written_count={len(written)}")
+    for source in args.sdk_url:
+        try:
+            target = write_sdk_html_url(source, args.runtime_root, timeout_sec=args.url_timeout_sec)
+        except Exception as exc:
+            if not args.allow_fetch_errors:
+                raise
+            print(f"fetch_error={source} error={exc}", flush=True)
+            continue
+        written.append(target)
+        print(f"written={target}", flush=True)
     for chm_path in args.chm:
         extracted = extract_chm(chm_path)
         try:

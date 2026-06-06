@@ -66,6 +66,46 @@ systemctl --user start les-proxy les-ui
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\installers\windows\install.ps1 -Profile windows-lite -InitEnv -Sync
+powershell -ExecutionPolicy Bypass -File .\installers\windows\start-light.ps1 -Provider lemonade -StartQdrant
+```
+
+`windows-lite` не ставит MLX/CoreML и не требует локальную Apple Silicon
+модель. Это легкий профиль для Windows/Revit host: Qdrant + LES proxy + UI,
+а генерация уходит в OpenAI-compatible provider.
+
+Поддерживаемые provider presets:
+
+- `lemonade`: `LEMONADE_BASE_URL=http://127.0.0.1:13305/api/v1`
+- `ollama`: `OLLAMA_BASE_URL=http://127.0.0.1:11434`
+- `openrouter`: `OPENROUTER_BASE_URL=https://openrouter.ai/api/v1`
+- `openai`: `OPENAI_BASE_URL=https://api.openai.com/v1`
+- `openai-compatible`: любой совместимый `OPENAI_BASE_URL`
+
+Примеры:
+
+```powershell
+# Lemonade local server
+.\installers\windows\start-light.ps1 -Provider lemonade -Model "your-model" -StartQdrant
+
+# Ollama OpenAI-compatible endpoint
+.\installers\windows\start-light.ps1 -Provider ollama -Model "qwen3:8b" -StartQdrant
+
+# OpenRouter
+$env:OPENROUTER_API_KEY = "..."
+.\installers\windows\start-light.ps1 -Provider openrouter -Model "openai/gpt-4.1-mini" -StartQdrant
+
+# OpenAI
+$env:OPENAI_API_KEY = "..."
+.\installers\windows\start-light.ps1 -Provider openai -Model "gpt-4.1-mini" -StartQdrant
+```
+
+Важно: `start-light.ps1` удобен для ручного smoke. Для постоянной эксплуатации
+на Windows нужен service/scheduled-task wrapper; короткая SSH-сессия может
+завершить дочерние процессы после выхода.
+
+Docker profile остается отдельным вариантом:
+
+```powershell
 powershell -ExecutionPolicy Bypass -File .\installers\windows\install.ps1 -Profile windows-docker -Start
 ```
 
@@ -81,6 +121,10 @@ powershell -ExecutionPolicy Bypass -File .\installers\windows\install.ps1 -Profi
 - Lite Admin: `http://127.0.0.1:8051/les`
 - FastAPI health: `http://127.0.0.1:8050/api/health`
 - MLX health: `http://127.0.0.1:8080/api/health`
+
+На Windows light MLX health не ожидается: вместо него проверяйте
+`GET /api/settings`, поле `providers.active`, и `GET /api/status`, поле
+`proxy.llm_provider`.
 
 ## Проверка
 

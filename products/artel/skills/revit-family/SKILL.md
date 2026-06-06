@@ -55,7 +55,10 @@ If LES is unavailable, read [family-quality-requirements.md](references/family-q
    - validation checklist;
    - catalog metadata.
 8. Validate or review the RFA against the quality gates.
-9. Save accepted outcomes as `LEARNING_CASE` so LES improves future work.
+9. For Revit-side checks, use `ARTEL.Revit.FamilyFactory` on the Windows/Revit
+   host to extract metadata and produce validation reports.
+10. Save accepted and curated rejected outcomes as `LEARNING_CASE` so LES
+    improves future work.
 
 ## Quality Gates
 
@@ -128,5 +131,33 @@ python3 tools/seed_artel_revit_factory_sources.py \
   --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
   --proxy-url http://127.0.0.1:8050 \
   --chm /path/to/RevitAPI.chm \
+  --verify-search
+```
+
+Seed selected SDK/API pages when no local CHM is available:
+
+```bash
+python3 tools/seed_artel_revit_factory_sources.py \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --sdk-url https://www.revitapidocs.com/2023/1cc4fe6c-0e9f-7439-0021-32d2e06f4c33.htm \
+  --verify-search
+```
+
+Build/install the Revit add-in on Legion/Revit 2025:
+
+```powershell
+cd products\artel
+.\build-family-factory-revit.ps1 `
+  -RevitInstallDir "C:\Program Files\Autodesk\Revit 2025"
+```
+
+Seed validation report exported by ARTEL backend:
+
+```bash
+python3 tools/seed_artel_learning_cases.py \
+  --case-url http://127.0.0.1:5057/api/tasks/task_0241/learning-case \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
   --verify-search
 ```

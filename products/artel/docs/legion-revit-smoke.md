@@ -20,6 +20,8 @@ test loop with standard Revit family/template content and LES retrieval.
   - `C:\Program Files\Autodesk\Revit 2024\Revit.exe`
   - `C:\Program Files\Autodesk\Revit 2025\Revit.exe`
 - `RevitCoreConsole.exe` was not found under Revit 2024/2025 install folders.
+- `RevitAPI.chm` was not found under common Autodesk/Revit folders or
+  `C:\Users\Oleg`.
 
 ## Standard Content Inventory
 
@@ -136,6 +138,53 @@ Compact RAG result:
   "Quality": "good"
 }
 ```
+
+## ARTEL FamilyFactory Add-In Build
+
+Source:
+
+```text
+products/artel/ARTEL.Revit.FamilyFactory
+```
+
+Build/install command:
+
+```powershell
+cd products\artel
+.\build-family-factory-revit.ps1 `
+  -RevitInstallDir "C:\Program Files\Autodesk\Revit 2025"
+```
+
+Result:
+
+- build succeeded on Legion;
+- installed to
+  `C:\Users\Oleg\AppData\Roaming\Autodesk\Revit\Addins\2025\ARTEL.FamilyFactory`;
+- `.addin` manifest written to
+  `C:\Users\Oleg\AppData\Roaming\Autodesk\Revit\Addins\2025\ARTEL.Revit.FamilyFactory.addin`.
+
+Commands exposed in Revit:
+
+- `ARTEL Family Extract`;
+- `ARTEL Family Validate`.
+
+Expected output folder:
+
+```text
+C:\Users\Oleg\AppData\Roaming\ARTEL\family_factory
+```
+
+Optional submit environment:
+
+```powershell
+$env:ARTEL_BASE_URL = "http://127.0.0.1:5057"
+$env:ARTEL_TASK_ID = "task_0241"
+$env:ARTEL_API_KEY = ""
+```
+
+Current limitation: Revit GUI execution has not yet been manually clicked in
+this smoke. The code/build/install path is ready; open/flex/load/tag/schedule
+acceptance still needs a hands-on Revit pass.
 
 ## Issue Found
 

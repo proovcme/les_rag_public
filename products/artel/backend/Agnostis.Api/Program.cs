@@ -335,6 +335,59 @@ app.MapPost("/api/revit/tasks/{taskId}/validation-reports", (string taskId, Vali
     return Results.Created($"/api/validation-reports/{report.Id}", report);
 });
 
+app.MapGet("/api/validation-reports/{reportId}/learning-case", (string reportId) =>
+{
+    if (!store.ValidationReports.TryGetValue(reportId, out var report))
+    {
+        return Results.NotFound(ApiError.Create("validation_report_not_found", "Validation report was not found."));
+    }
+
+    if (!store.Tasks.TryGetValue(report.TaskId, out var task))
+    {
+        return Results.NotFound(ApiError.Create("task_not_found", "Task was not found."));
+    }
+
+    if (!store.Specifications.TryGetValue(report.TaskId, out var specification))
+    {
+        return Results.NotFound(ApiError.Create("specification_not_found", "Specification was not found."));
+    }
+
+    var catalogItem = store.Catalog.Values.FirstOrDefault(item =>
+        string.Equals(item.Name, specification.FamilyName, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(item.Category, specification.RevitCategory, StringComparison.OrdinalIgnoreCase));
+
+    return Results.Ok(BuildLearningCase(task, specification, report, catalogItem));
+});
+
+app.MapGet("/api/tasks/{taskId}/learning-case", (string taskId) =>
+{
+    if (!store.Tasks.TryGetValue(taskId, out var task))
+    {
+        return Results.NotFound(ApiError.Create("task_not_found", "Task was not found."));
+    }
+
+    if (!store.Specifications.TryGetValue(taskId, out var specification))
+    {
+        return Results.NotFound(ApiError.Create("specification_not_found", "Specification was not found."));
+    }
+
+    var report = store.ValidationReports.Values
+        .Where(item => item.TaskId == taskId)
+        .OrderByDescending(item => item.CreatedAt)
+        .FirstOrDefault();
+
+    if (report is null)
+    {
+        return Results.NotFound(ApiError.Create("validation_report_not_found", "No validation report exists for this task."));
+    }
+
+    var catalogItem = store.Catalog.Values.FirstOrDefault(item =>
+        string.Equals(item.Name, specification.FamilyName, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(item.Category, specification.RevitCategory, StringComparison.OrdinalIgnoreCase));
+
+    return Results.Ok(BuildLearningCase(task, specification, report, catalogItem));
+});
+
 app.MapGet("/api/catalog", (string? query) =>
 {
     var items = store.Catalog.Values
@@ -502,6 +555,126 @@ static string BuildDefaultLesQuestion(FamilyTask task, FamilySpecification? spec
         $"Задание: {task.Number} {task.Title}. Категория: {task.RevitCategory ?? "не указана"}. " +
         $"Параметры спецификации: {parameterNames}. " +
         "Нужны релевантные образцы, параметры, risks и checklist для приемки.";
+}
+
+static JsonObject BuildLearningCase(
+    FamilyTask task,
+    FamilySpecification specification,
+    ValidationReport report,
+    CatalogItem? catalogItem)
+{
+    var parameters = new JsonArray();
+    foreach (var parameter in specification.Parameters)
+    {
+        parameters.Add(new JsonObject
+        {
+            ["name"] = parameter.Name,
+            ["value_or_rule"] = parameter.DefaultValue ?? parameter.Formula ?? parameter.Notes ?? (parameter.IsRequired ? "required" : "optional"),
+            ["group"] = parameter.Group
+        });
+    }
+
+    var checks = new JsonArray();
+    foreach (var item in specification.AcceptanceChecklist)
+    {
+        checks.Add(item);
+    }
+    foreach (var issue in report.Issues)
+    {
+        checks.Add($"{issue.Severity}: {issue.Code} - {issue.Title}");
+    }
+
+    var knownFailures = new JsonArray();
+    foreach (var issue in report.Issues.Where(issue => !string.Equals(issue.Severity, "info", StringComparison.OrdinalIgnoreCase)))
+    {
+        knownFailures.Add($"{issue.Code}: {issue.Description}");
+    }
+
+    var fixes = new JsonArray();
+    foreach (var action in report.Actions)
+    {
+        fixes.Add($"{action.Type} {action.Target}: {action.Status}{(string.IsNullOrWhiteSpace(action.Message) ? "" : " - " + action.Message)}");
+    }
+
+    return new JsonObject
+    {
+        ["schema_version"] = "artel.family_learning_case.v1",
+        ["case_id"] = $"validation_{report.Id}",
+        ["product"] = "ARTEL",
+        ["visibility"] = "private_runtime",
+        ["task"] = new JsonObject
+        {
+            ["title"] = task.Title,
+            ["family_category"] = specification.RevitCategory,
+            ["family_name"] = specification.FamilyName,
+            ["goal"] = task.Description ?? task.Title,
+            ["constraints"] = ToJsonArray(specification.AcceptanceChecklist)
+        },
+        ["source_summaries"] = new JsonArray
+        {
+            new JsonObject
+            {
+                ["kind"] = "validation_report",
+                ["summary"] = report.Summary
+            }
+        },
+        ["specification"] = new JsonObject
+        {
+            ["types"] = ToJsonArray(specification.Types.Select(type => type.Name)),
+            ["geometry"] = "See approved ARTEL specification and Revit validation report.",
+            ["materials"] = ToJsonArray(specification.Materials.Select(material => $"{material.Name}: {material.DefaultValue ?? material.ParameterName ?? "not specified"}")),
+            ["parameters"] = parameters
+        },
+        ["parameter_profile"] = new JsonObject
+        {
+            ["fop_profile"] = specification.SharedParameterProfileId ?? "not specified",
+            ["required_shared_parameters"] = ToJsonArray(specification.Parameters
+                .Where(parameter => parameter.Source.Contains("shared", StringComparison.OrdinalIgnoreCase) || parameter.SharedParameterGuid is not null)
+                .Select(parameter => string.IsNullOrWhiteSpace(parameter.SharedParameterGuid)
+                    ? parameter.Name
+                    : $"{parameter.Name} ({parameter.SharedParameterGuid})"))
+        },
+        ["validation_report"] = new JsonObject
+        {
+            ["status"] = report.Status,
+            ["checks"] = checks,
+            ["known_failures"] = knownFailures,
+            ["fixes"] = fixes
+        },
+        ["catalog_card"] = new JsonObject
+        {
+            ["display_name"] = catalogItem?.Name ?? specification.FamilyName,
+            ["category"] = catalogItem?.Category ?? specification.RevitCategory,
+            ["tags"] = ToJsonArray(catalogItem?.Tags ?? [specification.RevitCategory, "revit-family"]),
+            ["search_terms"] = ToJsonArray(new[]
+            {
+                specification.FamilyName,
+                specification.RevitCategory,
+                task.Number,
+                "RFA",
+                "ARTEL"
+            })
+        },
+        ["acceptance"] = new JsonObject
+        {
+            ["outcome"] = report.Status,
+            ["accepted_by_role"] = "ARTEL validation workflow",
+            ["notes"] = report.Summary
+        }
+    };
+}
+
+static JsonArray ToJsonArray(IEnumerable<string> values)
+{
+    var array = new JsonArray();
+    foreach (var value in values)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            array.Add(value);
+        }
+    }
+    return array;
 }
 
 static class TaskStatuses

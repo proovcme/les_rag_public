@@ -23,6 +23,19 @@ def load_case(path: Path) -> dict[str, Any]:
         return json.load(fh)
 
 
+def load_case_url(url: str, api_key: str = "") -> dict[str, Any]:
+    headers = {"Accept": "application/json"}
+    if api_key:
+        headers["X-API-Key"] = api_key
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"GET {url} failed: HTTP {exc.code}: {body}") from exc
+
+
 def validate_case(case: dict[str, Any]) -> list[str]:
     required = [
         "schema_version",
@@ -235,6 +248,8 @@ def build_default_query(case: dict[str, Any]) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Seed ARTEL FamilyLearningCase into LES ARTEL_Index.")
     parser.add_argument("--case", type=Path, default=DEFAULT_CASE, help="FamilyLearningCase JSON path.")
+    parser.add_argument("--case-url", help="FamilyLearningCase JSON URL, for example ARTEL /api/tasks/{taskId}/learning-case.")
+    parser.add_argument("--case-api-key", default=os.getenv("ARTEL_API_KEY", ""), help="Optional API key for --case-url.")
     parser.add_argument("--runtime-root", type=Path, default=Path.cwd(), help="LES runtime root that owns RAG_Content.")
     parser.add_argument("--proxy-url", default=DEFAULT_PROXY_URL, help="LES proxy URL.")
     parser.add_argument("--api-key", default=os.getenv("LES_ADMIN_KEY", ""), help="LES admin API key; localhost trusted access can omit it.")
@@ -245,7 +260,7 @@ def main() -> int:
     parser.add_argument("--top-k", type=int, default=8, help="Search top_k for verification.")
     args = parser.parse_args()
 
-    case = load_case(args.case)
+    case = load_case_url(args.case_url, api_key=args.case_api_key) if args.case_url else load_case(args.case)
     errors = validate_case(case)
     if errors:
         raise SystemExit("Invalid FamilyLearningCase: " + "; ".join(errors))
