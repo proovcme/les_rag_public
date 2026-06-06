@@ -40,7 +40,7 @@
 |---|---|---|
 | `POST` | `/api/search` | Retrieval-only поиск без LLM generation |
 
-`/api/search` предназначен для VIZOR, Agnostis и других UI, которым нужен быстрый ranked context без запуска chat model.
+`/api/search` предназначен для АТЛАС, АРТЕЛЬ и других UI, которым нужен быстрый ranked context без запуска chat model.
 
 Request:
 
@@ -126,7 +126,7 @@ curl -X POST http://127.0.0.1:8050/api/chat \
 | Метод | Путь | Назначение |
 |---|---|---|
 | `POST` | `/api/cad-bim/import` | Импорт canonical `cad_bim_graph.json` |
-| `GET` | `/api/cad-bim/source` | Источник для VIZOR viewer |
+| `GET` | `/api/cad-bim/source` | Источник для АТЛАС viewer |
 | `GET` | `/api/speckle/status` | Speckle bridge status |
 | `GET` | `/api/speckle/graph/summary` | Сводка Speckle graph |
 | `POST` | `/api/speckle/import` | Legacy Speckle object graph import |

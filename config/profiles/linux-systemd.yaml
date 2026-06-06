@@ -1,0 +1,15 @@
+name: linux-systemd
+platform: linux
+service_manager: systemd
+model_provider: openai_compatible
+embedding_provider: sentence_transformers_or_remote
+qdrant: native_or_remote
+storage_root: /var/lib/les
+ports:
+  qdrant: 6333
+  model_host: 8080
+  proxy: 8050
+  ui: 8051
+notes:
+  - For hosts where Docker is not desired.
+  - Requires separate systemd unit templates.

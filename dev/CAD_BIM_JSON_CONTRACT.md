@@ -107,7 +107,7 @@ preferred path is `/api/cad-bim/import`.
 
 ## Viewer API
 
-Lite Admin `VIZOR` (Visual IFC/JSON Object RAG) reads canonical payloads without importing them:
+Lite Admin `АТЛАС` reads canonical payloads without importing them:
 
 ```bash
 curl 'http://127.0.0.1:8050/api/cad-bim/source?source_path=RAG_Content/CAD_BIM/JSON/model.json&max_elements=5000'
@@ -120,7 +120,7 @@ from `start/end`, `points_preview`, `center/radius`, `insert` and
 `bbox_min/bbox_max`; if no drawable geometry exists, it falls back to a relation
 graph view.
 
-VIZOR can also ask LES for object-level RAG context by stable source id. For IFC
+АТЛАС can also ask LES for object-level RAG context by stable source id. For IFC
 this id is the selected element `GlobalId`; for JSON it is the canonical element
 `id` or exported `global_id`:
 
@@ -129,7 +129,7 @@ curl 'http://127.0.0.1:8050/api/cad-bim/element?source_id=0J$u4Qbqf7A9h1vBM9EA01
 ```
 
 The response includes the latest matching graph DB element, saved properties,
-nearby relations and a ready `rag_prompt`. Mounted VIZOR uses the same route via
+nearby relations and a ready `rag_prompt`. Mounted АТЛАС uses the same route via
 `/lite-api/cad-bim/element` after viewer selection.
 
 The LES-mounted OBC/WebGL viewer is served from:

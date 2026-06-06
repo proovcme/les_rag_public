@@ -1,4 +1,4 @@
-# VIZOR Standalone
+# АТЛАС Standalone
 
 Минимальная standalone-сборка WebGL CAD/BIM viewer. Она работает без LES backend и без `npm install`:
 

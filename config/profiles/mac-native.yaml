@@ -1,0 +1,15 @@
+name: mac-native
+platform: macos
+service_manager: launchd
+model_provider: local_mlx_coreml
+embedding_provider: coreml_qwen
+qdrant: local_binary
+storage_root: .
+ports:
+  qdrant: 6333
+  model_host: 8080
+  proxy: 8050
+  ui: 8051
+notes:
+  - Current reference profile.
+  - Requires Apple Silicon for MLX/Core ML production mode.

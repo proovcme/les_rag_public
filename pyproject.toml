@@ -59,6 +59,7 @@ dev = []
 [project.scripts]
 les-install = "tools.install_les:main"
 les-runtime = "tools.les_runtime_control:main"
+lesctl = "tools.lesctl:main"
 
 [build-system]
 requires = ["hatchling"]

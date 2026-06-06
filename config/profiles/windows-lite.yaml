@@ -1,0 +1,13 @@
+name: windows-lite
+platform: windows
+service_manager: powershell
+model_provider: remote_or_openrouter
+embedding_provider: remote
+qdrant: remote_or_docker_named_volume
+storage_root: "%ProgramData%\\LES"
+ports:
+  proxy: 8050
+  ui: 8051
+notes:
+  - No local heavy model requirement.
+  - Best first Windows profile for ARTEL/Revit testing.

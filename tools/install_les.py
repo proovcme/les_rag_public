@@ -13,6 +13,14 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SUPPORTED_PROFILES = {
+    "mac-native",
+    "linux-docker",
+    "linux-systemd",
+    "windows-docker",
+    "windows-lite",
+    "server-remote-model",
+}
 REQUIRED_DIRS = (
     "data",
     "storage",
@@ -51,11 +59,12 @@ def _command_version(command: str, *args: str) -> str | None:
 
 
 def build_checks() -> list[Check]:
+    system = platform.system()
     checks = [
         Check(
             "platform",
-            platform.system() == "Darwin",
-            f"{platform.system()} {platform.machine()}",
+            system in {"Darwin", "Linux", "Windows"},
+            f"{system} {platform.machine()}",
             required=False,
         ),
         Check(
@@ -88,6 +97,26 @@ def build_checks() -> list[Check]:
             required=False,
         )
     )
+    return checks
+
+
+def build_profile_checks(profile: str) -> list[Check]:
+    checks = build_checks()
+    system = platform.system()
+    checks.append(Check("profile", profile in SUPPORTED_PROFILES, profile))
+    if profile == "mac-native":
+        checks.append(Check("mac-native", system == "Darwin", f"requires Darwin, got {system}"))
+        checks.append(Check("launchctl", shutil.which("launchctl") is not None, "launchctl available"))
+    elif profile in {"linux-docker", "windows-docker"}:
+        docker_version = _command_version("docker", "--version")
+        checks.append(Check("docker", docker_version is not None, docker_version or "not found"))
+    elif profile == "linux-systemd":
+        checks.append(Check("linux-systemd", system == "Linux", f"requires Linux, got {system}"))
+        checks.append(Check("systemctl", shutil.which("systemctl") is not None, "systemctl available"))
+    elif profile == "windows-lite":
+        checks.append(Check("windows-lite", system == "Windows", f"requires Windows, got {system}", required=False))
+    elif profile == "server-remote-model":
+        checks.append(Check("remote-model", True, "requires configured OpenAI-compatible provider"))
     return checks
 
 
@@ -125,7 +154,7 @@ def _print_human(checks: list[Check], actions: dict[str, object]) -> None:
         print(f"[ACTION] {name}: {value}")
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Prepare and check a local LES installation.")
     parser.add_argument("--check", action="store_true", help="run dependency and platform checks")
     parser.add_argument("--init-env", action="store_true", help="create .env from env.example if missing")
@@ -134,7 +163,8 @@ def main() -> int:
     parser.add_argument("--sync", action="store_true", help="run uv sync")
     parser.add_argument("--all", action="store_true", help="create dirs, init env, run checks and uv sync")
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON")
-    args = parser.parse_args()
+    parser.add_argument("--profile", choices=sorted(SUPPORTED_PROFILES), default=None, help="platform install profile")
+    args = parser.parse_args(argv)
 
     if args.all:
         args.check = args.init_env = args.create_dirs = args.sync = True
@@ -142,7 +172,7 @@ def main() -> int:
     if not any((args.check, args.init_env, args.force_env, args.create_dirs, args.sync)):
         args.check = True
 
-    checks = build_checks() if args.check else []
+    checks = (build_profile_checks(args.profile) if args.profile else build_checks()) if args.check else []
     actions: dict[str, object] = {}
 
     if args.create_dirs:

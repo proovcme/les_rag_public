@@ -1,14 +1,16 @@
 # Установка Л.Е.С.
 
-Л.Е.С. рассчитан на локальный host-runtime на macOS Apple Silicon. Базовый контур: Qdrant `:6333`, MLX Host `:8080`, FastAPI proxy `:8050`, Sovushka Lite UI `:8051`.
+Л.Е.С. сейчас имеет референсный локальный host-runtime на macOS Apple Silicon, но упаковка переводится в профильную модель для macOS, Linux и Windows. Базовый контур: Qdrant `:6333`, model host `:8080`, FastAPI proxy `:8050`, Sovushka Lite UI `:8051`.
 
 ## Требования
 
-- macOS на Apple Silicon, Python `3.12+`
+- Python `3.12+`
 - `uv`
-- локальный Qdrant binary `~/.local/bin/qdrant` или fallback через Docker/OrbStack
+- Qdrant: локальный binary, Docker/named volume или remote Qdrant
 - 16 GB RAM минимум, 24 GB+ комфортно
 - Node/npm нужны только для пересборки `frontend/cad_bim_viewer`
+
+Платформенные профили описаны в `docs/PLATFORMS.md`, план коробочной упаковки — в `docs/PACKAGING.md`.
 
 ## Быстрый старт
 
@@ -17,7 +19,8 @@ git clone git@github.com:proovcme/les_rag.git
 cd les_rag
 
 uv sync
-uv run python tools/install_les.py --create-dirs --init-env --check
+uv run lesctl doctor --profile mac-native
+uv run lesctl install --profile mac-native --init-env
 ```
 
 После этого отредактируйте `.env`:
@@ -32,7 +35,7 @@ uv run python tools/install_les.py --create-dirs --init-env --check
 Через новый CLI entrypoint после `uv sync`:
 
 ```bash
-uv run les-runtime start-core --include-ui --memory-preflight
+uv run lesctl start --include-ui --memory-preflight
 ```
 
 Через существующий launch helper:
@@ -52,7 +55,8 @@ uv run les-runtime start-core --include-ui --memory-preflight
 
 ```bash
 uv run les-install --check
-uv run les-runtime status
+uv run lesctl doctor --profile mac-native
+uv run lesctl status
 curl -fsS http://127.0.0.1:8050/api/health | python3 -m json.tool
 curl -fsS http://127.0.0.1:8080/api/health | python3 -m json.tool
 ```
@@ -60,7 +64,7 @@ curl -fsS http://127.0.0.1:8080/api/health | python3 -m json.tool
 ## Остановка
 
 ```bash
-uv run les-runtime stop-core --include-ui
+uv run lesctl stop --include-ui
 ```
 
 или:
@@ -110,7 +114,7 @@ cd standalone/cad_bim_viewer
 ```bash
 git pull
 uv sync
-uv run les-runtime restart-core --include-ui
+uv run lesctl restart --include-ui
 ```
 
 После изменений в зависимостях:

@@ -584,7 +584,7 @@ def _print_json(value) -> None:
     print(json.dumps(value, ensure_ascii=False, indent=2, default=_json_default))
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Control LES launchd runtime services.")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -616,7 +616,7 @@ def main() -> int:
         p = sub.add_parser(name)
         p.add_argument("service", choices=sorted(SERVICES))
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.command == "status":
         _print_json(all_statuses())
         return 0

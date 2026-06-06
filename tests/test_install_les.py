@@ -30,3 +30,10 @@ def test_init_env_can_create_env(tmp_path, monkeypatch):
 
     assert result == ".env created from env.example"
     assert (tmp_path / ".env").read_text(encoding="utf-8") == "ADMIN_PASSWORD=example\n"
+
+
+def test_profile_checks_include_profile_result():
+    checks = install_les.build_profile_checks("server-remote-model")
+
+    assert any(check.name == "profile" and check.ok for check in checks)
+    assert any(check.name == "remote-model" and check.ok for check in checks)

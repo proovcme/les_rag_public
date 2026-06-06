@@ -10,7 +10,7 @@ $Listener = [System.Net.HttpListener]::new()
 $Listener.Prefixes.Add($Prefix)
 $Listener.Start()
 
-Write-Host "VIZOR Standalone: $Prefix"
+Write-Host "АТЛАС Standalone: $Prefix"
 Write-Host "For LAN clients set Locia TIM_VIEWER_2_URL to http://SERVER:$Port/"
 Write-Host "Press Ctrl+C to stop."
 

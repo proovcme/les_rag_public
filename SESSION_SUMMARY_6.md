@@ -93,7 +93,7 @@
 - Добавлен профильный CAD/BIM pipeline: `/api/speckle/import` принимает inline payload, latest/local `RAG_Content/CAD_BIM/Speckle/*.json|*.jsonl` или Speckle `stream_id+object_id`, нормализует объектный граф в `data/cad_bim_graph.db`, свойства/параметры в `cad_bim_properties`, пишет markdown projection в `RAG_Content/CAD_BIM/exports/`, а `SYNC CAD/BIM` регистрирует projections в `CAD_BIM_Index` без автоматического heavy parse.
 - CAD/BIM ingestion переведен в JSON-first модель: preferred inbox `RAG_Content/CAD_BIM/JSON/`, preferred endpoint `/api/cad-bim/import`, projection `cad_bim_json_<id>.md`, JSON contract `dev/CAD_BIM_JSON_CONTRACT.md`. Speckle остается optional/legacy source через `/api/speckle/import`.
 - Добавлены Autodesk-side JSON exporters как следующий основной путь: AutoCAD `.NET` plugin `exporters/autocad/LES.AutoCAD.JsonExport` с ribbon tab `LES` и командами `LESJSONEXPORT`/`LESJSONPUSH`/`LESJSONCONFIG`, Revit addin `exporters/revit/LES.Revit.JsonExport` с ribbon tab `LES` и кнопками `Export JSON`/`Push to LES`. Direct upload пробует Mac ZeroTier `http://10.195.146.98:8050`, затем `https://les.ovc.me`, при отказе сохраняет fallback JSON; DXF extractor остается fallback.
-- Добавлен Lite Admin `VIZOR` (Visual IFC/JSON Object RAG) и read-only endpoint `/api/cad-bim/source`: viewer читает latest или указанный `cad_bim_graph.json`, рисует 2D preview по CAD geometry/bbox и fallback graph view по relations. Формат не Speckle-only; Speckle остается только optional source.
+- Добавлен Lite Admin `АТЛАС` и read-only endpoint `/api/cad-bim/source`: viewer читает latest или указанный `cad_bim_graph.json`, рисует 2D preview по CAD geometry/bbox и fallback graph view по relations. Формат не Speckle-only; Speckle остается только optional source.
 - Lite Admin `IMPORT JSON GRAPH` управляет source profile из GUI: `AUTO`, `AutoCAD/DWG`, `Revit/RVT`, `IFC`, `Excel/Power BI`, `Generic`. Это покрывает уже извлеченные Speckle object graph/plugin payloads: DWG/RVT/IFC модельные объекты и Excel/Power BI табличные rows/properties индексируются как единая CAD/BIM проекция.
 - Speckle private project `36`, model `шпалерная 36_отсоединено_oleg`, object `8b6c73a095776fcd872f7f5f3bfbbf80` импортирован как `432aa0b18f2a`: `956` graph elements, `955` relations, `44` properties. Projection `RAG_Content/CAD_BIM/exports/cad_bim_speckle_432aa0b18f2a.md` проиндексирован в `CAD_BIM_Index`: `957` chunks, retrieval-debug возвращает chunks из этого projection.
 - Speckle server на Lenovo Legion обновлен до `2.31.5/custom` с backup Postgres `C:\SPKL\backups\speckle-pre-2.31.5-20260602101617.dump`. Для текущего AutoCAD DUI/connector `3.22.0` добавлен compatibility shim: `Workspace.logoUrl`, `ModelPermissionChecks.canCreateIngestion`, `WorkspacePermissionChecks.canAccessHelpCenter`, а disabled workspaces возвращают пустой `activeUser.workspaces` collection вместо ошибки. Проверено через внешний `https://speckle.ovc.me/graphql`: introspection видит `canAccessHelpCenter`, replay `WorkspaceListQuery` возвращает `errors=null`. Повторный AutoCAD Publish 02.06.2026 не создал object/blob/version/commit traffic; клиентские логи содержат только DUI bridge init и Desktop Service `/ping`. Root cause: V3 connectors require workspace-based projects, а community self-hosted Speckle не имеет workspace module без лицензии (`FF_WORKSPACES_MODULE_ENABLED=true` приводит к `InvalidLicenseError`). Direct presigned upload route через ingress исправлен и принимает PUT, но self-hosted file importer rejects DWG/DXF as unsupported; рабочий путь для LES сейчас IFC или уже извлеченный Speckle object graph.
@@ -147,12 +147,12 @@
 - Viewer clipping controls now include per-axis direction selection (`X+/-`,
   `Y+/-`, `Z+/-`), so sections can cut from either side instead of only along
   the default positive axis normal.
-- CAD/BIM viewer product name is now `VIZOR` = Visual IFC/JSON Object RAG:
-  mounted LES mode is branded `LES VIZOR`, offline package is `VIZOR
+- CAD/BIM viewer product name is now `АТЛАС`:
+  mounted LES mode is branded `LES АТЛАС`, offline package is `АТЛАС
   Standalone`.
 - First selection-to-RAG bridge added: `/api/cad-bim/element` looks up graph DB
   context by stable `source_id` / IFC `GlobalId`, returns saved properties,
-  relations and a ready `rag_prompt`; VIZOR renders this LES/RAG context card
+  relations and a ready `rag_prompt`; АТЛАС renders this LES/RAG context card
   for selected JSON/IFC elements when running with LES backend.
 
 ## Live Notes 05.06.2026 Universal Autodesk Destinations

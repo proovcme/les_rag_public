@@ -110,7 +110,7 @@ app.innerHTML = `
   <main class="shell" data-tab="inspect">
     <header class="topbar">
       <div class="brand">
-        <strong>LES VIZOR</strong>
+        <strong>LES АТЛАС</strong>
         <span>IFC / JSON / RAG</span>
       </div>
       <form class="toolbar" id="load-form">

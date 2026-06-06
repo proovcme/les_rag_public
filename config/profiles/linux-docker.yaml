@@ -1,0 +1,15 @@
+name: linux-docker
+platform: linux
+service_manager: docker_compose
+model_provider: openai_compatible
+embedding_provider: sentence_transformers_or_remote
+qdrant: docker_named_volume
+storage_root: /var/lib/les
+ports:
+  qdrant: 6333
+  model_host: 8080
+  proxy: 8050
+  ui: 8051
+notes:
+  - Primary boxed server target.
+  - Model files are mounted/downloaded at install time, not baked into images.
