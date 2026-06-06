@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-label="LES ecosystem diagram">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#f7f8fa"/>
+      <stop offset="1" stop-color="#e8edf2"/>
+    </linearGradient>
+    <style>
+      .title{font:700 38px system-ui,-apple-system,Segoe UI,sans-serif;fill:#1f2529}
+      .subtitle{font:400 18px system-ui,-apple-system,Segoe UI,sans-serif;fill:#53606b}
+      .card{fill:#fff;stroke:#cbd4dd;stroke-width:2}
+      .head{font:700 25px system-ui,-apple-system,Segoe UI,sans-serif;fill:#1f2529}
+      .body{font:400 17px system-ui,-apple-system,Segoe UI,sans-serif;fill:#4e5963}
+      .tag{font:700 14px system-ui,-apple-system,Segoe UI,sans-serif;fill:#315b8a}
+      .arrow{stroke:#315b8a;stroke-width:4;fill:none;marker-end:url(#arrow)}
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M0,0 L12,6 L0,12 z" fill="#315b8a"/>
+    </marker>
+  </defs>
+  <rect width="1280" height="720" fill="url(#bg)"/>
+  <text x="70" y="80" class="title">LES ecosystem</text>
+  <text x="70" y="112" class="subtitle">Local engineering RAG core, CAD/BIM viewer and Revit family workflow</text>
+
+  <rect x="70" y="170" width="330" height="260" rx="10" class="card"/>
+  <text x="100" y="220" class="head">LES</text>
+  <text x="100" y="252" class="tag">local knowledge core</text>
+  <text x="100" y="292" class="body">RAG, indexing, Qdrant/SQLite</text>
+  <text x="100" y="326" class="body">hybrid retrieval, routing</text>
+  <text x="100" y="360" class="body">CAD/BIM JSON import</text>
+  <text x="100" y="394" class="body">runtime safety and API</text>
+
+  <rect x="490" y="170" width="330" height="260" rx="10" class="card"/>
+  <text x="520" y="220" class="head">ATLAS / АТЛАС</text>
+  <text x="520" y="252" class="tag">standalone CAD/BIM viewer</text>
+  <text x="520" y="292" class="body">IFC and cad_bim_graph.json</text>
+  <text x="520" y="326" class="body">object selection and QA</text>
+  <text x="520" y="360" class="body">offline workstation package</text>
+  <text x="520" y="394" class="body">optional LES context lookup</text>
+
+  <rect x="910" y="170" width="330" height="260" rx="10" class="card"/>
+  <text x="940" y="220" class="head">ARTEL / АРТЕЛЬ</text>
+  <text x="940" y="252" class="tag">Revit family workflow</text>
+  <text x="940" y="292" class="body">tasks and specifications</text>
+  <text x="940" y="326" class="body">validation reports</text>
+  <text x="940" y="360" class="body">catalog and learning cases</text>
+  <text x="940" y="394" class="body">backend calls LES search</text>
+
+  <path d="M400 300 C440 300 450 300 490 300" class="arrow"/>
+  <path d="M910 300 C870 300 860 300 820 300" class="arrow"/>
+
+  <rect x="150" y="510" width="980" height="92" rx="10" fill="#23313a"/>
+  <text x="190" y="552" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-size="22" font-weight="700" fill="#edf8f4">Shared contract</text>
+  <text x="190" y="585" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-size="17" fill="#dbe6ec">/api/search · /api/chat · /api/cad-bim/import · cad_bim_graph.json · source anchors · no private corpora in public snapshot</text>
+</svg>

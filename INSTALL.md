@@ -5,6 +5,10 @@ This repository has two very different installation paths:
 - **ATLAS / АТЛАС standalone viewer:** ready-to-run, offline-friendly, no Python, no LES backend.
 - **Full LES runtime:** developer/local stack with Python 3.12, Qdrant, MLX/OpenAI-compatible models and your own indexed data.
 
+ARTEL / АРТЕЛЬ is described in the README as the Revit-family workflow layer
+that should call LES APIs. The public snapshot does not ship a production ARTEL
+installer or private RFA/catalog data.
+
 ## RU - быстрый выбор
 
 Если нужно просто открыть `cad_bim_graph.json` или IFC:

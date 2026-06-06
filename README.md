@@ -2,15 +2,27 @@
 
 ![LES and ATLAS overview](assets/readme/les-atlas-hero.png)
 
-**RU:** LES - локальная инженерная RAG-система. Она превращает документы, таблицы и CAD/BIM-модели в проверяемую базу знаний: ответ должен ссылаться не на "примерно страницу", а на источник, фрагмент, объект чертежа или BIM-элемент.
+**RU:** LES - локальная инженерная RAG-система и основа экосистемы **LES / АТЛАС / АРТЕЛЬ**. Она превращает документы, таблицы, почту и CAD/BIM-модели в проверяемую базу знаний: ответ должен ссылаться не на "примерно страницу", а на источник, фрагмент, объект чертежа, BIM-элемент или карточку жизненного цикла Revit-семейства.
 
-**EN:** LES is a local-first engineering RAG system. It turns documents, tables and CAD/BIM models into a verifiable knowledge base: an answer should point back to a source, a chunk, a drawing object or a BIM element.
+**EN:** LES is a local-first engineering RAG system and the core of the **LES / ATLAS / ARTEL** ecosystem. It turns documents, tables, mail and CAD/BIM models into a verifiable knowledge base: an answer should point back to a source, a chunk, a drawing object, a BIM element or a Revit family lifecycle record.
 
 [Live ATLAS viewer](https://les.ovc.me/vv/) · [Install](INSTALL.md) · [CAD/BIM JSON exporters](exporters/) · [Standalone viewer](standalone/cad_bim_viewer/) · [JSON schema](schema/cad_bim_graph.schema.json)
 
+![LES ecosystem](assets/readme/les-ecosystem.svg)
+
 ## RU - что это
 
-LES состоит из трех частей:
+Экосистема состоит из трех продуктов, которые могут жить отдельно, но говорят через одни контракты:
+
+| Продукт | Роль | Что делает |
+|---|---|---|
+| **LES** | локальное ядро знаний | ingestion, индексация, Qdrant/SQLite, hybrid retrieval, runtime safety, API |
+| **АТЛАС** | CAD/BIM viewer | открывает IFC и `cad_bim_graph.json`, проверяет геометрию/объекты, может использовать LES context |
+| **АРТЕЛЬ** | Revit family workflow | задания, спецификации, проверка RFA, каталог, learning loop; backend ходит в LES за RAG-контекстом |
+
+В этом public snapshot основной код - LES и АТЛАС. АРТЕЛЬ описана как продуктовый контур и интеграционный следующий слой: Revit-плагин должен ходить в backend АРТЕЛИ, а backend АРТЕЛИ - в LES `/api/search`. Так не появляется второй RAG, и вся память качества остается в одном инженерном ядре.
+
+Технически LES состоит из трех слоев:
 
 1. **RAG runtime** - backend/proxy, индексация, retrieval, маршрутизация запросов, безопасная выдача ответа с источниками.
 2. **CAD/BIM JSON bridge** - экспортеры для AutoCAD, Revit и Navisworks плюс IFC/DXF extractors. Их задача - превратить инженерную модель в `cad_bim_graph.json`.
@@ -145,6 +157,36 @@ schema/                   public cad_bim_graph JSON schema
 examples/                 small public JSON sample
 ```
 
+### Где здесь АРТЕЛЬ
+
+АРТЕЛЬ - отдельный продуктовый слой для разработки Revit-семейств. В private LES repo она уже упаковывается как MVP hand-test surface: UI prototype, ASP.NET backend skeleton, OpenAPI и runbook. Public snapshot фиксирует архитектуру и LES-контракты, но не публикует внутренний Revit workflow как готовый production add-in.
+
+Плановая схема:
+
+```mermaid
+flowchart LR
+  T["Family task"] --> S["ARTEL specification"]
+  S --> R["Revit add-in workflow"]
+  R --> V["Validation report"]
+  V --> C["Catalog card"]
+  C --> L["LES-indexed learning case"]
+  L --> S
+  S --> Q["LES /api/search"]
+  Q --> S
+```
+
+Что LES должен индексировать для АРТЕЛИ:
+
+- accepted family metadata;
+- task specifications;
+- shared parameter / FOP patterns;
+- validation reports;
+- catalog cards;
+- known failure patterns;
+- RFA/CAD/BIM-derived JSON summaries.
+
+Это превращает разработку семейств в learning loop: каждое принятое семейство улучшает следующую постановку задачи и проверку.
+
 ### Как поставить
 
 Коротко: **АТЛАС ставится просто**, полный LES runtime ставится как developer/local stack.
@@ -213,11 +255,23 @@ curl -X POST http://127.0.0.1:8050/api/cad-bim/import \
 - Speckle не является обязательной частью этого публичного пути. Основной путь - JSON-first.
 - Почтовый контур требует собственные учетные данные IMAP или локальный Apple Mail store; секреты не хранятся в репозитории.
 - Полный LES runtime рассчитан на локальную/dev установку. Это не one-click SaaS installer.
+- АРТЕЛЬ в public snapshot описана архитектурно; production Revit add-in/installer и внутренние RFA данные не публикуются.
 - Лицензия пока не назначена. Если нужен production/commercial use, свяжитесь с владельцем репозитория.
 
 ## EN - what this is
 
-LES has three main parts:
+The ecosystem has three products:
+
+| Product | Role | Owns |
+|---|---|---|
+| **LES** | local knowledge core | ingestion, indexing, Qdrant/SQLite, hybrid retrieval, runtime safety and API |
+| **ATLAS** | CAD/BIM viewer | IFC and `cad_bim_graph.json` visualization, object QA and optional LES context lookup |
+| **ARTEL** | Revit family workflow | tasks, specifications, validation reports, catalog and learning cases |
+
+This public snapshot primarily ships LES and ATLAS. ARTEL is the product layer
+that should call LES instead of building a second RAG system.
+
+LES has three technical layers:
 
 1. **RAG runtime** - backend/proxy, indexing, retrieval, query routing and source-grounded answer generation.
 2. **CAD/BIM JSON bridge** - AutoCAD, Revit and Navisworks exporters plus IFC/DXF extraction tools. Their job is to produce `cad_bim_graph.json`.
