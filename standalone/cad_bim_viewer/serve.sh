@@ -57,6 +57,6 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-print(f"VIZOR Standalone: http://0.0.0.0:{PORT}/")
+print(f"АТЛАС Standalone: http://0.0.0.0:{PORT}/")
 server.serve_forever()
 PY

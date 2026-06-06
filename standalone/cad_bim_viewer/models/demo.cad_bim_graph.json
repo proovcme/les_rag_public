@@ -7,7 +7,7 @@
     "type": "demo",
     "name": "Standalone demo",
     "units": "m",
-    "exporter": "LES VIZOR demo"
+    "exporter": "LES ATLAS demo"
   },
   "source_format": "demo",
   "elements": [

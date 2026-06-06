@@ -71,6 +71,14 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def _cad_bim_ifc_sample_dir(root: Path) -> Path:
+    ifc_sample_dir = root / "ifc_sample"
+    standalone_ifc_sample_dir = root / "standalone" / "cad_bim_viewer" / "ifc-sample"
+    if not ifc_sample_dir.exists() and standalone_ifc_sample_dir.exists():
+        return standalone_ifc_sample_dir
+    return ifc_sample_dir
+
+
 def _reindex_paths() -> dict[str, Path]:
     root = _repo_root()
     artifacts = root / "artifacts" / "reindex_runs"
@@ -503,7 +511,7 @@ def lite_admin_html() -> str:
       </div>
 
       <div class="panel panel-wide">
-        <div class="title">VIZOR</div>
+        <div class="title">АТЛАС</div>
         <div id="cadBimViewerHint" class="hint">JSON graph не загружен.</div>
         <div class="actions">
           <select id="cadBimViewMode" title="VIEW MODE">
@@ -1483,8 +1491,9 @@ def register_lite_admin_routes() -> None:
 
     mimetypes.add_type("application/wasm", ".wasm")
     mimetypes.add_type("text/javascript", ".mjs")
-    viewer_dist = _repo_root() / "frontend" / "cad_bim_viewer" / "dist"
-    ifc_sample_dir = _repo_root() / "ifc_sample"
+    repo_root = _repo_root()
+    viewer_dist = repo_root / "frontend" / "cad_bim_viewer" / "dist"
+    ifc_sample_dir = _cad_bim_ifc_sample_dir(repo_root)
     app.mount(
         "/les/cad-bim-viewer/assets",
         StaticFiles(directory=viewer_dist / "assets", check_dir=False),
@@ -1530,7 +1539,7 @@ def register_lite_admin_routes() -> None:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>LES VIZOR</title>
+  <title>LES АТЛАС</title>
   <style>
     body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #07090c; color: #f4f7fb; font: 14px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     main { width: min(680px, calc(100vw - 32px)); border: 1px solid #263748; border-radius: 8px; background: #10161d; padding: 22px; }
@@ -1541,7 +1550,7 @@ def register_lite_admin_routes() -> None:
 </head>
 <body>
   <main>
-    <h1>LES VIZOR не собран</h1>
+    <h1>LES АТЛАС не собран</h1>
     <p>Соберите frontend bundle:</p>
     <p><code>cd frontend/cad_bim_viewer && npm install && npm run build</code></p>
   </main>

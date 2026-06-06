@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/proovcme/les_rag_public/schema/cad_bim_graph.schema.json",
   "title": "LES cad_bim_graph",
-  "description": "Canonical CAD/BIM object graph used by LES import and VIZOR viewer QA.",
+  "description": "Canonical CAD/BIM object graph used by LES import and ATLAS viewer QA.",
   "type": "object",
   "required": ["schema_version", "source", "elements"],
   "properties": {

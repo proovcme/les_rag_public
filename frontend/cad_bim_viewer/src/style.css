@@ -454,7 +454,61 @@ button {
 }
 
 .rag-actions {
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.rag-actions button:disabled {
+  opacity: .55;
+  cursor: wait;
+}
+
+.rag-answer {
+  padding: 9px;
+  border: 1px solid rgba(125, 145, 166, .22);
+  border-radius: 7px;
+  background: rgba(7, 10, 14, .46);
+  color: var(--dim);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.rag-answer.error {
+  border-color: rgba(239, 68, 68, .42);
+  color: var(--err);
+}
+
+.rag-answer-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+
+.rag-answer-head strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.rag-answer-head span,
+.rag-sources span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.rag-answer-text {
+  white-space: pre-wrap;
+  color: var(--text);
+  line-height: 1.45;
+}
+
+.rag-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(125, 145, 166, .18);
 }
 
 .props-list.compact .prop-row {

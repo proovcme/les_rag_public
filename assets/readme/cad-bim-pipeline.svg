@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="440" viewBox="0 0 1280 440" role="img" aria-labelledby="title desc">
   <title id="title">CAD BIM JSON pipeline</title>
-  <desc id="desc">DWG, RVT and IFC move through exporters or parser into cad_bim_graph JSON, then into LES and VIZOR.</desc>
+  <desc id="desc">DWG, RVT and IFC move through exporters or parser into cad_bim_graph JSON, then into LES and ATLAS.</desc>
   <rect width="1280" height="440" rx="0" fill="#0b1118"/>
   <g font-family="Inter, Segoe UI, Arial, sans-serif">
     <text x="60" y="72" fill="#f8fafc" font-size="34" font-weight="800">CAD/BIM -> JSON -> RAG</text>
@@ -44,6 +44,6 @@
     <path d="M625 29H750" stroke="#facc15" stroke-width="5" stroke-linecap="round"/>
     <path d="M742 15l20 14-20 14" fill="none" stroke="#facc15" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
     <rect x="780" width="220" height="58" rx="18" fill="#18202b" stroke="#334155"/>
-    <text x="810" y="38" fill="#e2e8f0" font-size="21">VIZOR highlight</text>
+    <text x="810" y="38" fill="#e2e8f0" font-size="21">ATLAS highlight</text>
   </g>
 </svg>

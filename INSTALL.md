@@ -2,7 +2,7 @@
 
 This repository has two very different installation paths:
 
-- **VIZOR standalone viewer:** ready-to-run, offline-friendly, no Python, no LES backend.
+- **ATLAS / АТЛАС standalone viewer:** ready-to-run, offline-friendly, no Python, no LES backend.
 - **Full LES runtime:** developer/local stack with Python 3.12, Qdrant, MLX/OpenAI-compatible models and your own indexed data.
 
 ## RU - быстрый выбор

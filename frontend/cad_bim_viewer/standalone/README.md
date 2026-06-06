@@ -1,4 +1,4 @@
-# VIZOR Standalone
+# АТЛАС Standalone
 
 Минимальная standalone-сборка WebGL CAD/BIM viewer. Она работает без LES backend и без `npm install`:
 
@@ -65,6 +65,7 @@ INSTALL_FOR_LOCIA.cmd
 index.html
 assets/index.js
 assets/index.css
+assets/worker-*.mjs
 fragments/worker.mjs
 web-ifc/web-ifc.wasm
 web-ifc/web-ifc-mt.wasm

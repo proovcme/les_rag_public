@@ -1,12 +1,12 @@
 # LES RAG Public
 
-![LES and VIZOR overview](assets/readme/les-vizor-hero.png)
+![LES and ATLAS overview](assets/readme/les-atlas-hero.png)
 
 **RU:** LES - локальная инженерная RAG-система. Она превращает документы, таблицы и CAD/BIM-модели в проверяемую базу знаний: ответ должен ссылаться не на "примерно страницу", а на источник, фрагмент, объект чертежа или BIM-элемент.
 
 **EN:** LES is a local-first engineering RAG system. It turns documents, tables and CAD/BIM models into a verifiable knowledge base: an answer should point back to a source, a chunk, a drawing object or a BIM element.
 
-[Live VIZOR viewer](https://les.ovc.me/vv/) · [Install](INSTALL.md) · [CAD/BIM JSON exporters](exporters/) · [Standalone viewer](standalone/cad_bim_viewer/) · [JSON schema](schema/cad_bim_graph.schema.json)
+[Live ATLAS viewer](https://les.ovc.me/vv/) · [Install](INSTALL.md) · [CAD/BIM JSON exporters](exporters/) · [Standalone viewer](standalone/cad_bim_viewer/) · [JSON schema](schema/cad_bim_graph.schema.json)
 
 ## RU - что это
 
@@ -14,7 +14,7 @@ LES состоит из трех частей:
 
 1. **RAG runtime** - backend/proxy, индексация, retrieval, маршрутизация запросов, безопасная выдача ответа с источниками.
 2. **CAD/BIM JSON bridge** - экспортеры для AutoCAD, Revit и Navisworks плюс IFC/DXF extractors. Их задача - превратить инженерную модель в `cad_bim_graph.json`.
-3. **VIZOR** - WebGL-смотрелка для `*.cad_bim_graph.json` и IFC. Она нужна не для красоты ради красоты, а для контроля: если JSON можно нарисовать обратно, значит данные не умерли по дороге в RAG.
+3. **АТЛАС** - WebGL-смотрелка для `*.cad_bim_graph.json` и IFC. Она нужна не для красоты ради красоты, а для контроля: если JSON можно нарисовать обратно, значит данные не умерли по дороге в RAG.
 
 ![CAD/BIM pipeline](assets/readme/cad-bim-pipeline.png)
 
@@ -46,7 +46,7 @@ LES делает другой путь:
 cad_bim_graph.json = elements[] + relations[] + properties + display geometry
 ```
 
-После этого RAG может искать не только по тексту, но и по инженерным объектам. Ответ можно привязать к конкретному слою, handle, `GlobalId`, категории или связи. VIZOR может подсветить источник ответа в модели.
+После этого RAG может искать не только по тексту, но и по инженерным объектам. Ответ можно привязать к конкретному слою, handle, `GlobalId`, категории или связи. АТЛАС может подсветить источник ответа в модели.
 
 ### Как работает поток CAD/BIM RAG
 
@@ -58,7 +58,7 @@ flowchart LR
   D --> E["Graph DB + text projections"]
   E --> F["Hybrid retrieval"]
   F --> G["Answer with source anchors"]
-  G --> H["VIZOR highlight"]
+  G --> H["подсветка в АТЛАС"]
 ```
 
 Алгоритм в упрощенном виде:
@@ -136,8 +136,8 @@ backend/                  document parsing, indexing helpers, adapters
 proxy/                    FastAPI proxy, retrieval and CAD/BIM import services
 sovushka/                 local admin/chat UI components
 sovushka_ng.py            Sovushka NiceGUI entrypoint: / chat, /les admin
-frontend/cad_bim_viewer/  VIZOR source app
-standalone/cad_bim_viewer/ready-to-run offline VIZOR bundle
+frontend/cad_bim_viewer/  исходники АТЛАС
+standalone/cad_bim_viewer/готовый offline bundle АТЛАС
 exporters/                AutoCAD, Revit, Navisworks JSON exporters
 tools/                    smoke, extraction and build utilities
 tests/                    regression tests for core contracts
@@ -147,14 +147,14 @@ examples/                 small public JSON sample
 
 ### Как поставить
 
-Коротко: **VIZOR ставится просто**, полный LES runtime ставится как developer/local stack.
+Коротко: **АТЛАС ставится просто**, полный LES runtime ставится как developer/local stack.
 
 - Для viewer без LES: смотри [`standalone/cad_bim_viewer/`](standalone/cad_bim_viewer/).
 - Для полного runtime: смотри [`INSTALL.md`](INSTALL.md).
 
 Публичный репозиторий не содержит приватные индексы, корпуса, model weights, Core ML artifacts, ключи и production deployment state. Поэтому после установки нужно отдельно скачать модели, поднять Qdrant и проиндексировать свои данные.
 
-### Быстрый запуск VIZOR без LES
+### Быстрый запуск АТЛАС без LES
 
 macOS/Linux:
 
@@ -221,7 +221,7 @@ LES has three main parts:
 
 1. **RAG runtime** - backend/proxy, indexing, retrieval, query routing and source-grounded answer generation.
 2. **CAD/BIM JSON bridge** - AutoCAD, Revit and Navisworks exporters plus IFC/DXF extraction tools. Their job is to produce `cad_bim_graph.json`.
-3. **VIZOR** - a WebGL viewer for `*.cad_bim_graph.json` and IFC. It is not only a viewer. It is a sanity check: if JSON can be drawn back into a scene, the RAG layer is working with real source objects, not a dead export.
+3. **ATLAS** - a WebGL viewer for `*.cad_bim_graph.json` and IFC. It is not only a viewer. It is a sanity check: if JSON can be drawn back into a scene, the RAG layer is working with real source objects, not a dead export.
 
 ### Beyond CAD/BIM
 
@@ -251,7 +251,7 @@ The result is one canonical graph:
 cad_bim_graph.json = elements[] + relations[] + properties + display geometry
 ```
 
-RAG can then search across engineering objects, not only plain text. Answers can carry object anchors. VIZOR can use those anchors to show or highlight the source element.
+RAG can then search across engineering objects, not only plain text. Answers can carry object anchors. ATLAS can use those anchors to show or highlight the source element.
 
 ### CAD/BIM RAG flow
 
@@ -262,13 +262,13 @@ sequenceDiagram
   participant Graph as cad_bim_graph.json
   participant LES as LES import
   participant RAG as Retrieval
-  participant VIZOR as VIZOR
+  participant ATLAS as ATLAS
   Source->>Exporter: Extract objects, properties, geometry
   Exporter->>Graph: Normalize to canonical JSON
   Graph->>LES: Import elements and relations
   LES->>RAG: Build graph store and text projections
-  RAG->>VIZOR: Return answer anchors
-  VIZOR->>Source: Highlight the referenced object
+  RAG->>ATLAS: Return answer anchors
+  ATLAS->>Source: Highlight the referenced object
 ```
 
 ### Memory safety and runtime
@@ -336,8 +336,8 @@ backend/                  document parsing, indexing helpers, adapters
 proxy/                    FastAPI proxy, retrieval and CAD/BIM import services
 sovushka/                 local admin/chat UI components
 sovushka_ng.py            Sovushka NiceGUI entrypoint: / chat, /les admin
-frontend/cad_bim_viewer/  VIZOR source app
-standalone/cad_bim_viewer/ready-to-run offline VIZOR bundle
+frontend/cad_bim_viewer/  ATLAS source app
+standalone/cad_bim_viewer/ready-to-run offline ATLAS bundle
 exporters/                AutoCAD, Revit, Navisworks JSON exporters
 tools/                    smoke, extraction and build utilities
 tests/                    regression tests for core contracts
@@ -347,14 +347,14 @@ examples/                 small public JSON sample
 
 ### Installation
 
-Short version: **VIZOR is ready to run**, the full LES runtime is a developer/local stack.
+Short version: **ATLAS is ready to run**, the full LES runtime is a developer/local stack.
 
 - Viewer without LES: see [`standalone/cad_bim_viewer/`](standalone/cad_bim_viewer/).
 - Full runtime: see [`INSTALL.md`](INSTALL.md).
 
 The public repository does not include private indexes, corpora, model weights, Core ML artifacts, secrets or production deployment state. After installation you still need to download models, start Qdrant and index your own data.
 
-### Run VIZOR without LES
+### Run ATLAS without LES
 
 macOS/Linux:
 
