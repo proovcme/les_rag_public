@@ -19,9 +19,14 @@ curl -fsS -X POST http://127.0.0.1:8050/api/search \
 Expected ARTEL source classes:
 
 - `FAMILY_GUIDE`: Revit family methodology and ARTEL quality requirements.
+- `REVIT_MODEL_GUIDE`: Revit data-model concepts: Element, Parameter,
+  Category, Family, Type, Document, Subcategory and stable ids.
 - `REVIT_API_REFERENCE`: Revit API implementation basis for add-ins,
   family/template extraction, `FamilyManager`, collectors, transactions,
   shared parameters and connectors.
+- `REVIT_API_SYMBOL_MAP`: exact API symbols, namespaces, member kinds and
+  documentation ids/links.
+- `REVIT_API_SDK_DOC`: detailed local SDK/CHM pages converted to markdown.
 - `FOP_PROFILE`: exact ADSK/shared parameter names, GUIDs, types and flags.
 - `LEARNING_CASE`: accepted family examples, known failures and fixes.
 
@@ -32,10 +37,14 @@ If LES is unavailable, read [family-quality-requirements.md](references/family-q
 1. Determine family category, Revit template, discipline, project stage, LOD,
    host/room behavior and expected schedules/tags.
 2. Retrieve `FAMILY_GUIDE` chunks for creation and quality rules.
-3. Retrieve `REVIT_API_REFERENCE` chunks when writing add-in code, extractor
+3. Retrieve `REVIT_MODEL_GUIDE` chunks when normalizing user requests into
+   Revit concepts, catalog JSON fields or validation criteria.
+4. Retrieve `REVIT_API_REFERENCE` chunks when writing add-in code, extractor
    logic, validation automation, or Revit API implementation plans.
-4. Retrieve `FOP_PROFILE` chunks for required ADSK/shared parameters.
-5. Produce a family specification:
+5. Retrieve `REVIT_API_SYMBOL_MAP` and `REVIT_API_SDK_DOC` chunks for exact API
+   symbols, member names, namespaces and detailed SDK behavior.
+6. Retrieve `FOP_PROFILE` chunks for required ADSK/shared parameters.
+7. Produce a family specification:
    - category/template;
    - geometry and reference skeleton;
    - type/instance parameters;
@@ -45,8 +54,8 @@ If LES is unavailable, read [family-quality-requirements.md](references/family-q
    - type catalog decision;
    - validation checklist;
    - catalog metadata.
-6. Validate or review the RFA against the quality gates.
-7. Save accepted outcomes as `LEARNING_CASE` so LES improves future work.
+8. Validate or review the RFA against the quality gates.
+9. Save accepted outcomes as `LEARNING_CASE` so LES improves future work.
 
 ## Quality Gates
 
@@ -99,5 +108,25 @@ Seed Revit API reference:
 python3 tools/seed_artel_revit_api_reference.py \
   --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
   --proxy-url http://127.0.0.1:8050 \
+  --verify-search
+```
+
+Seed family factory sources:
+
+```bash
+python3 tools/seed_artel_revit_factory_sources.py \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --seed-defaults \
+  --verify-search
+```
+
+Seed local Revit SDK/CHM docs:
+
+```bash
+python3 tools/seed_artel_revit_factory_sources.py \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --chm /path/to/RevitAPI.chm \
   --verify-search
 ```

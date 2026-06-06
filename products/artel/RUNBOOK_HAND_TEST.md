@@ -75,6 +75,38 @@ python3 tools/seed_artel_revit_api_reference.py \
 `FilteredElementCollector`, транзакциям, shared parameters, connector extraction
 и batch JSON extraction для `.rfa`/`.rft`.
 
+## Seed Family Factory Sources
+
+Для подготовки фабрики семейств посадите модель Revit и API symbol map:
+
+```bash
+python3 tools/seed_artel_revit_factory_sources.py \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --seed-defaults \
+  --verify-search
+```
+
+Ожидаемый результат: `ARTEL_Index` содержит:
+
+- `REVIT_MODEL_GUIDE` для понятий Element/Parameter/Category/Family/Type;
+- `REVIT_API_SYMBOL_MAP` для поиска точных API классов, методов, свойств,
+  namespace и документационных GUID/link ids.
+
+Для полной SDK-базы на Windows/Revit host используйте локальный `RevitAPI.chm`
+или извлеченный HTML:
+
+```bash
+python3 tools/seed_artel_revit_factory_sources.py \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --chm /path/to/RevitAPI.chm \
+  --verify-search
+```
+
+Autodesk SDK/CHM хранить как runtime/private RAG data, не как public repo
+content.
+
 Если backend запущен на другой машине и ходит в LES по ZeroTier/LAN, `GET /api/integrations/les/status` может быть `ok`, а `POST /api/tasks/task_0241/rag-context` может вернуть `status: "upstream_error"` с `httpStatus: 401`, если для LES `/api/search` нужен API key. Это проверяет, что цепочка АРТЕЛЬ -> LES работает до auth boundary. Для содержательного retrieval используйте локальный `LES_BASE_URL=http://127.0.0.1:8050`, trusted network или задайте `LES_API_KEY`.
 
 ## Быстрый smoke

@@ -170,6 +170,71 @@ def test_route_artel_revit_api_reference_to_artel_index():
     assert route.pipeline == "markdown"
 
 
+def test_route_artel_revit_model_guide_to_artel_index():
+    probe = DocumentProbe(
+        path=Path("RAG_Content/ARTEL/revit_model_guides/rhino_inside_revit_data_model.md"),
+        suffix=".md",
+        size_bytes=12_000,
+        text_sample=(
+            "# ARTEL Revit Model Guide\n"
+            "Document type: REVIT_MODEL_GUIDE\n"
+            "Understanding Revit's data model. Categories, Families, Types, Parameters."
+        ),
+    )
+
+    route = classify_document(probe)
+
+    assert route.doc_type == "REVIT_MODEL_GUIDE"
+    assert route.domain == "ARTEL"
+    assert route.dataset_name == "ARTEL_Index"
+    assert route.content_type == "text"
+    assert route.pipeline == "markdown"
+
+
+def test_route_artel_revit_api_symbol_map_to_artel_index():
+    probe = DocumentProbe(
+        path=Path("RAG_Content/ARTEL/revit_api_symbol_map/revit_api_2023_symbol_map.md"),
+        suffix=".md",
+        size_bytes=50_000,
+        text_sample=(
+            "# ARTEL Revit API Symbol Map\n"
+            "Document type: REVIT_API_SYMBOL_MAP\n"
+            "Schema: artel.revit_api_symbol_map.v1\n"
+            "Autodesk.Revit.DB.FamilyManager method property namespace"
+        ),
+    )
+
+    route = classify_document(probe)
+
+    assert route.doc_type == "REVIT_API_SYMBOL_MAP"
+    assert route.domain == "ARTEL"
+    assert route.dataset_name == "ARTEL_Index"
+    assert route.content_type == "text"
+    assert route.pipeline == "markdown"
+
+
+def test_route_artel_revit_api_sdk_doc_to_artel_index():
+    probe = DocumentProbe(
+        path=Path("RAG_Content/ARTEL/revit_api_sdk_docs/autodesk_revit_db_familymanager.md"),
+        suffix=".md",
+        size_bytes=30_000,
+        text_sample=(
+            "# ARTEL Revit API SDK Doc\n"
+            "Document type: REVIT_API_SDK_DOC\n"
+            "Source kind: Revit SDK CHM\n"
+            "FamilyManager class members methods properties"
+        ),
+    )
+
+    route = classify_document(probe)
+
+    assert route.doc_type == "REVIT_API_SDK_DOC"
+    assert route.domain == "ARTEL"
+    assert route.dataset_name == "ARTEL_Index"
+    assert route.content_type == "text"
+    assert route.pipeline == "markdown"
+
+
 def test_route_raw_ifc_to_cad_bim_index():
     probe = DocumentProbe(
         path=Path("RAG_Content/CAD_BIM/IFC/model.ifc"),

@@ -108,6 +108,8 @@ Important: raw RVT/RFA/DWG/IFC should be exported to canonical JSON/JSONL before
 
 ## Relevance to RFA generation
 
+Factory architecture note: [family-factory.md](family-factory.md).
+
 For АРТЕЛЬ, LES should index:
 
 - accepted family metadata;
@@ -171,13 +173,48 @@ add-ins, family/template JSON extraction, `FamilyManager`, `FilteredElementColle
 transactions, shared parameters, connectors, loading/reloading families, or
 Windows/Legion implementation planning.
 
+Family factory sources seed:
+
+```bash
+python3 tools/seed_artel_revit_factory_sources.py \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --seed-defaults \
+  --verify-search
+```
+
+The tool writes:
+
+- `RAG_Content/ARTEL/revit_model_guides/` as `REVIT_MODEL_GUIDE`;
+- `RAG_Content/ARTEL/revit_api_symbol_map/` as `REVIT_API_SYMBOL_MAP`;
+- `RAG_Content/ARTEL/revit_api_sdk_docs/` as `REVIT_API_SDK_DOC` when given
+  extracted SDK HTML or `RevitAPI.chm`.
+
+Default public inputs are the Rhino.Inside Revit data-model guide and
+RevitAPIDocGen 2023 symbol map. Autodesk SDK/CHM content should stay local or
+private: use it as LES runtime data, not as public repository content.
+
+Legion/Revit SDK flow:
+
+```bash
+python3 tools/seed_artel_revit_factory_sources.py \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --chm /path/to/RevitAPI.chm \
+  --verify-search
+```
+
+If the workstation has no CHM extractor, extract the CHM to HTML first and use
+`--sdk-html-dir /path/to/extracted/RevitAPI`.
+
 Operational skill:
 
 ```text
 products/artel/skills/revit-family/SKILL.md
 ```
 
-The skill instructs agents to retrieve `FAMILY_GUIDE`, `REVIT_API_REFERENCE`,
+The skill instructs agents to retrieve `FAMILY_GUIDE`, `REVIT_MODEL_GUIDE`,
+`REVIT_API_REFERENCE`, `REVIT_API_SYMBOL_MAP`, `REVIT_API_SDK_DOC`,
 `FOP_PROFILE`, and `LEARNING_CASE` evidence from LES before producing a family
 specification, API implementation plan, validation checklist, catalog card, or
 acceptance decision.

@@ -233,6 +233,12 @@ def _classify_doc_type(probe: DocumentProbe) -> str:
     name = probe.path.name.lower()
     if _is_artel_fop_source(probe):
         return "FOP_PROFILE"
+    if _is_artel_revit_model_guide_source(probe):
+        return "REVIT_MODEL_GUIDE"
+    if _is_artel_revit_api_symbol_map_source(probe):
+        return "REVIT_API_SYMBOL_MAP"
+    if _is_artel_revit_api_sdk_source(probe):
+        return "REVIT_API_SDK_DOC"
     if _is_artel_revit_api_source(probe):
         return "REVIT_API_REFERENCE"
     if _is_artel_family_guide_source(probe):
@@ -287,7 +293,16 @@ def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
     name = probe.path.name.casefold()
 
     if (
-        doc_type in {"LEARNING_CASE", "FOP_PROFILE", "FAMILY_GUIDE", "REVIT_API_REFERENCE"}
+        doc_type
+        in {
+            "LEARNING_CASE",
+            "FOP_PROFILE",
+            "FAMILY_GUIDE",
+            "REVIT_API_REFERENCE",
+            "REVIT_MODEL_GUIDE",
+            "REVIT_API_SYMBOL_MAP",
+            "REVIT_API_SDK_DOC",
+        }
         or _is_artel_source(probe)
         or _is_artel_fop_source(probe)
     ):
@@ -809,6 +824,40 @@ def _is_artel_revit_api_source(probe: DocumentProbe) -> bool:
         or "artel revit api reference" in text
         or ("document type: revit_api_reference" in text)
         or ("revit api" in text and "familymanager" in text and "filteredElementCollector".casefold() in text)
+    )
+
+
+def _is_artel_revit_model_guide_source(probe: DocumentProbe) -> bool:
+    parts = {part.casefold() for part in probe.path.parts}
+    text = f"{probe.path.name}\n{probe.text_sample}".casefold()
+    return (
+        "revit_model_guides" in parts
+        or "artel revit model guide" in text
+        or ("document type: revit_model_guide" in text)
+        or ("understanding revit's data model" in text and "categories, families" in text)
+    )
+
+
+def _is_artel_revit_api_symbol_map_source(probe: DocumentProbe) -> bool:
+    parts = {part.casefold() for part in probe.path.parts}
+    text = f"{probe.path.name}\n{probe.text_sample}".casefold()
+    return (
+        "revit_api_symbol_map" in parts
+        or "artel revit api symbol map" in text
+        or ("document type: revit_api_symbol_map" in text)
+        or ("schema: artel.revit_api_symbol_map" in text)
+    )
+
+
+def _is_artel_revit_api_sdk_source(probe: DocumentProbe) -> bool:
+    parts = {part.casefold() for part in probe.path.parts}
+    text = f"{probe.path.name}\n{probe.text_sample}".casefold()
+    return (
+        "revit_api_sdk" in parts
+        or "revit_api_sdk_docs" in parts
+        or "artel revit api sdk doc" in text
+        or ("document type: revit_api_sdk_doc" in text)
+        or ("source kind: revit sdk chm" in text)
     )
 
 
