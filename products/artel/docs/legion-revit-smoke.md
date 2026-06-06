@@ -344,7 +344,10 @@ can otherwise break quoted paths and localized `quser` output.
 Before spending a real unlocked Revit run, the orchestrator checks ARTEL
 backend `/health` when ingest or add-in submit is enabled. If `127.0.0.1:5057`
 is not running, it returns `status: "artel_backend_unavailable"` with exit code
-`3`; use `--no-ingest` for diagnosis-only checks.
+`3`; use `--diagnose-only` for diagnosis-only checks.
+Use `--wait-for-interactive --wait-timeout-sec 1800` to start the command
+before unlocking Legion and let it continue automatically once the desktop
+diagnostic becomes `interactive`.
 
 On 2026-06-07 the managed backend-only path was verified without touching
 Revit:

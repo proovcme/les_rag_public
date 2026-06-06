@@ -95,6 +95,28 @@ def diagnose_legion(host: str, remote_root: str, timeout: float) -> dict[str, An
     return parse_json_object(result.stdout)
 
 
+def wait_for_interactive(args: argparse.Namespace, summary: dict[str, Any]) -> dict[str, Any]:
+    deadline = time.monotonic() + args.wait_timeout_sec
+    attempts = 0
+    latest: dict[str, Any] = {}
+    while True:
+        attempts += 1
+        latest = diagnose_legion(args.ssh_host, args.remote_root, args.diagnose_timeout_sec)
+        if latest.get("status") == "interactive" or not args.wait_for_interactive:
+            break
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(args.wait_poll_sec)
+    if args.wait_for_interactive:
+        summary["wait_for_interactive"] = {
+            "attempts": attempts,
+            "timeout_sec": args.wait_timeout_sec,
+            "poll_sec": args.wait_poll_sec,
+            "final_status": latest.get("status"),
+        }
+    return latest
+
+
 def revit_artel_url(args: argparse.Namespace) -> str:
     if args.use_legion_artel_backend:
         return args.legion_artel_backend_url
@@ -344,6 +366,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--les-api-key", default=os.getenv("LES_ADMIN_KEY", ""))
     parser.add_argument("--required-shared-parameters", default="ADSK_Наименование")
     parser.add_argument("--diagnose-timeout-sec", type=float, default=30.0)
+    parser.add_argument("--diagnose-only", action="store_true", help="Only diagnose Legion/Revit readiness; do not start Revit.")
+    parser.add_argument("--wait-for-interactive", action="store_true", help="Poll Legion until desktop becomes interactive before continuing.")
+    parser.add_argument("--wait-timeout-sec", type=float, default=1800.0)
+    parser.add_argument("--wait-poll-sec", type=float, default=10.0)
     parser.add_argument("--artel-health-timeout-sec", type=float, default=5.0)
     parser.add_argument("--revit-timeout-sec", type=int, default=420)
     parser.add_argument("--search-timeout-sec", type=float, default=120.0)
@@ -382,7 +408,7 @@ def main() -> int:
                 print(json.dumps(summary, ensure_ascii=False, indent=2))
                 return 0 if artel_health["ok"] else 3
 
-        diagnosis = diagnose_legion(args.ssh_host, args.remote_root, args.diagnose_timeout_sec)
+        diagnosis = wait_for_interactive(args, summary)
         summary["diagnosis"] = {
             "status": diagnosis.get("status"),
             "lockScreen": diagnosis.get("lockScreen"),
@@ -390,6 +416,11 @@ def main() -> int:
             "artelAddin": diagnosis.get("artelAddin"),
             "reportDir": diagnosis.get("reportDir"),
         }
+        if args.diagnose_only:
+            summary["status"] = "interactive" if diagnosis.get("status") == "interactive" else "locked"
+            print(json.dumps(summary, ensure_ascii=False, indent=2))
+            return 0 if diagnosis.get("status") == "interactive" else 2
+
         if diagnosis.get("status") != "interactive" and not args.skip_lock_screen_check:
             summary["status"] = "locked"
             summary["message"] = "Legion desktop is not interactive; unlock Windows before Revit autorun."

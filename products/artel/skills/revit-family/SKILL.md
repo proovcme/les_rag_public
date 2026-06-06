@@ -214,7 +214,9 @@ python3 tools/run_artel_legion_revit_validation.py \
   --verify-search
 ```
 
-Use `--no-ingest` for a diagnostic-only Legion check.
+Use `--diagnose-only` for a diagnostic-only Legion check.
+Use `--wait-for-interactive` when you want the command to poll until Legion is
+unlocked before continuing to Revit autorun.
 Use `--backend-only-smoke --use-legion-artel-backend` to verify the managed
 Legion backend/tunnel without touching Revit.
 

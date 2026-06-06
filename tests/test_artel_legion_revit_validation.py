@@ -56,6 +56,36 @@ def test_diagnose_legion_uses_remote_script(monkeypatch):
     assert decoded == r"& 'C:\remote\diagnose-family-factory-revit-session.ps1'"
 
 
+def test_wait_for_interactive_polls_until_interactive(monkeypatch):
+    calls = []
+    responses = [
+        {"status": "locked"},
+        {"status": "interactive"},
+    ]
+    args = argparse.Namespace(
+        ssh_host="legion",
+        remote_root=r"C:\remote",
+        diagnose_timeout_sec=3,
+        wait_for_interactive=True,
+        wait_timeout_sec=30,
+        wait_poll_sec=0.1,
+    )
+    summary = {}
+
+    def fake_diagnose(host, root, timeout):
+        calls.append((host, root, timeout))
+        return responses.pop(0)
+
+    monkeypatch.setattr(runner, "diagnose_legion", fake_diagnose)
+    monkeypatch.setattr(runner.time, "sleep", lambda seconds: None)
+
+    diagnosis = runner.wait_for_interactive(args, summary)
+
+    assert diagnosis == {"status": "interactive"}
+    assert len(calls) == 2
+    assert summary["wait_for_interactive"]["final_status"] == "interactive"
+
+
 def test_copy_report_uses_scp_windows_path(monkeypatch, tmp_path):
     calls = []
 

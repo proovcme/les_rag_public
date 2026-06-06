@@ -263,7 +263,19 @@ python3 tools/run_artel_legion_revit_validation.py \
 code `2`. После разблокировки тот же скрипт запускает Revit autorun, копирует
 `validation_*.json` в `local_private_archive/artel_validation_reports/`,
 отправляет report в ARTEL backend и синхронизирует `LEARNING_CASE` в LES.
-Для одной диагностики Legion без backend используйте `--no-ingest`.
+Для одной диагностики Legion без backend используйте `--diagnose-only`.
+Чтобы заранее запустить команду и дождаться разблокировки Legion:
+
+```bash
+python3 tools/run_artel_legion_revit_validation.py \
+  --wait-for-interactive \
+  --wait-timeout-sec 1800 \
+  --use-legion-artel-backend \
+  --task-id task_0241 \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --verify-search
+```
 
 Проверить только управляемый backend/tunnel без запуска Revit:
 

@@ -187,7 +187,7 @@ def run_legion_check(args: argparse.Namespace, *, backend_only: bool) -> dict[st
     if backend_only:
         command.append("--backend-only-smoke")
     else:
-        command.append("--no-ingest")
+        command.append("--diagnose-only")
     result = run_command(command, timeout=args.legion_timeout_sec)
     payload = parse_json_object(result.stdout)
     return {

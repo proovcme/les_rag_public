@@ -99,7 +99,10 @@ def test_learning_case_projection_check_classifies_demo_smoke_and_real_candidate
 
 
 def test_run_legion_check_accepts_locked_for_readiness(monkeypatch):
+    commands = []
+
     def fake_run(command, *, timeout):
+        commands.append(command)
         return subprocess.CompletedProcess(command, 2, stdout='{"status":"locked"}', stderr="")
 
     monkeypatch.setattr(smoke, "run_command", fake_run)
@@ -109,6 +112,8 @@ def test_run_legion_check_accepts_locked_for_readiness(monkeypatch):
 
     assert result["ok"] is True
     assert result["status"] == "locked"
+    assert "--diagnose-only" in commands[0]
+    assert "--no-ingest" not in commands[0]
 
 
 def test_run_legion_check_requires_zero_for_backend_only(monkeypatch):
