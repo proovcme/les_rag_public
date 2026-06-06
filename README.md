@@ -87,6 +87,10 @@ flowchart LR
 
 LES рассчитан на локальную машину, где LLM, embeddings, OCR, парсинг PDF и UI могут конкурировать за одну память. Поэтому runtime устроен не по принципу "запускаем всё сразу".
 
+Это одна из главных инженерных частей LES. Индексация не должна быть рулеткой:
+если памяти мало, система должна остановить parse, выгрузить модели, оставить
+dataset в понятном состоянии и продолжить позже, а не убить локальный runtime.
+
 ```mermaid
 flowchart LR
   M["Memory telemetry"] --> P["Memory pressure"]
@@ -105,8 +109,22 @@ flowchart LR
 - пороги свободной RAM и swap pressure;
 - блокировка chat generation во время тяжелой индексации;
 - ограничение parse concurrency;
+- batch parsing и resumable parse queue;
 - guarded reindex и route-change reindex;
 - MLX memory telemetry и unload hooks.
+
+Что проверяется в health/status:
+
+- сколько файлов `INDEXED`, `PENDING`, `ERROR`;
+- сколько chunks создано по dataset/domain/doc_type;
+- совпадают ли SQLite chunks и Qdrant points;
+- не идет ли активная parse job;
+- почему admission control разрешил или запретил действие.
+
+Практический эффект: LES может спокойно принимать большие structured sources,
+резать их на сотни chunks, держать pending/error счетчики и не терять
+согласованность между SQLite и Qdrant. Если memory guard закрыт, это нормальная
+защита, а не поломка.
 
 Это не магия и не замена нормальному sizing машины. Это защита от типичной локальной аварии: "индексатор, OCR и модель одновременно съели память, после чего всё стало медленным или умерло".
 
@@ -139,7 +157,11 @@ flowchart LR
 - context windows вокруг найденных chunk-ов;
 - route-change utilities, чтобы переиндексировать только документы, у которых изменился маршрут.
 
-Практический смысл простой: вопрос по смете не должен искать как вопрос по СП, письмо не должно теряться среди PDF, а ответ по BIM-элементу должен иметь объектный anchor.
+Практический смысл простой: вопрос по смете не должен искать как вопрос по СП,
+письмо не должно теряться среди PDF, а ответ по BIM-элементу должен иметь
+объектный anchor. Для инженерных корпусов это важнее красивого демо: качество
+ответа начинается не в LLM, а в том, как документ был распознан, распилен,
+помечен и потом найден.
 
 ### Что лежит в public snapshot
 
@@ -339,6 +361,11 @@ sequenceDiagram
 
 LES is designed for local machines where LLM, embeddings, OCR, PDF parsing and UI can compete for the same memory. The runtime does not blindly run everything at once.
 
+This is one of the core engineering pieces of LES. Indexing should not be a
+lottery: when memory is tight, the system should reject or pause parsing, unload
+models, keep datasets in a visible state and continue later instead of killing
+the local runtime.
+
 ```mermaid
 flowchart LR
   M["Memory telemetry"] --> P["Memory pressure"]
@@ -357,8 +384,22 @@ The public code includes:
 - free-RAM and swap-pressure thresholds;
 - chat generation blocking during heavy indexing;
 - parse concurrency limits;
+- batch parsing and resumable parse queues;
 - guarded reindex and route-change reindex;
 - MLX memory telemetry and unload hooks.
+
+Health/status surfaces show:
+
+- how many files are `INDEXED`, `PENDING` or `ERROR`;
+- how many chunks exist by dataset, domain and document type;
+- whether SQLite chunks and Qdrant points match;
+- whether a parse job is active;
+- why admission control allowed or rejected an action.
+
+The practical result is that LES can accept large structured sources, split them
+into hundreds of chunks, keep pending/error counters visible and preserve
+SQLite/Qdrant consistency. A closed memory guard is treated as a safety decision,
+not as an ingestion failure.
 
 This is not magic and not a substitute for proper hardware sizing. It protects against a common local failure mode: indexing, OCR and model inference trying to consume unified memory at the same time.
 
@@ -391,7 +432,11 @@ Core ideas:
 - context windows around retrieved chunks;
 - route-change utilities to reindex only documents whose route changed.
 
-The practical point is simple: an estimate query should not behave like a building-code query, mail should not disappear inside generic PDFs, and a BIM answer should carry an object anchor.
+The practical point is simple: an estimate query should not behave like a
+building-code query, mail should not disappear inside generic PDFs, and a BIM
+answer should carry an object anchor. For engineering corpora, answer quality
+starts before the LLM: it starts with how the source was routed, split, labeled
+and retrieved.
 
 ### Included
 
