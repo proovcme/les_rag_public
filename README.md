@@ -200,6 +200,8 @@ flowchart LR
 
 ## Быстрый старт
 
+Подробная установка вынесена в [INSTALL.md](INSTALL.md), API-контракт — в [docs/API.md](docs/API.md).
+
 ### Требования
 - Mac с Apple Silicon (M1/M2/M3/M4) и минимум 16 GB RAM; комфортный профиль — 24 GB+
 - Локальный Qdrant binary `/Users/ovc/.local/bin/qdrant`; Docker не требуется
@@ -214,6 +216,7 @@ cd les_rag
 
 # Зависимости
 uv sync
+uv run les-install --check
 
 # Конфигурация
 cp env.example .env
@@ -221,8 +224,10 @@ cp env.example .env
 
 # Запуск host-runtime через launchd:
 # memory preflight + Qdrant + MLX + proxy + UI + guarded indexer
-./start_les.command
+uv run les-runtime start-core --include-ui --memory-preflight
 ```
+
+Legacy-ярлык `./start_les.command` сохранён и вызывает тот же host-runtime control layer.
 
 Открой `http://localhost:8051` для Lite-чата, `http://localhost:8051/les` для Lite Admin, `http://localhost:8051/m5` для 1280×720 Wokyis M5-дисплея, `http://localhost:8051/classic` для прежнего NiceGUI-чата или `http://localhost:8051/les/classic` для rich-админки.
 

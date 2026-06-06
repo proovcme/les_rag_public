@@ -1,1 +1,1 @@
-"""Local operational tools for LES."""
+"""LES operator tools."""

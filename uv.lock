@@ -1505,7 +1505,7 @@ wheels = [
 [[package]]
 name = "les-v2"
 version = "2.2.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
     { name = "coremltools" },

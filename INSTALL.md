@@ -1,0 +1,134 @@
+# Установка Л.Е.С.
+
+Л.Е.С. рассчитан на локальный host-runtime на macOS Apple Silicon. Базовый контур: Qdrant `:6333`, MLX Host `:8080`, FastAPI proxy `:8050`, Sovushka Lite UI `:8051`.
+
+## Требования
+
+- macOS на Apple Silicon, Python `3.12+`
+- `uv`
+- локальный Qdrant binary `~/.local/bin/qdrant` или fallback через Docker/OrbStack
+- 16 GB RAM минимум, 24 GB+ комфортно
+- Node/npm нужны только для пересборки `frontend/cad_bim_viewer`
+
+## Быстрый старт
+
+```bash
+git clone git@github.com:proovcme/les_rag.git
+cd les_rag
+
+uv sync
+uv run python tools/install_les.py --create-dirs --init-env --check
+```
+
+После этого отредактируйте `.env`:
+
+- замените `JWT_SECRET`, `ADMIN_PASSWORD`, `SOVUSHKA_STORAGE_SECRET`;
+- оставьте `TRUSTED_NETWORKS=127.0.0.0/8,::1/128` для локального старта;
+- добавляйте VPN/LAN CIDR только если понимаете, кто получит admin-доступ;
+- не коммитьте `.env` и реальные API keys.
+
+## Запуск
+
+Через новый CLI entrypoint после `uv sync`:
+
+```bash
+uv run les-runtime start-core --include-ui --memory-preflight
+```
+
+Через существующий launch helper:
+
+```bash
+./start_les.command
+```
+
+Открыть:
+
+- Lite chat: `http://127.0.0.1:8051/`
+- Lite Admin: `http://127.0.0.1:8051/les`
+- FastAPI health: `http://127.0.0.1:8050/api/health`
+- MLX health: `http://127.0.0.1:8080/api/health`
+
+## Проверка
+
+```bash
+uv run les-install --check
+uv run les-runtime status
+curl -fsS http://127.0.0.1:8050/api/health | python3 -m json.tool
+curl -fsS http://127.0.0.1:8080/api/health | python3 -m json.tool
+```
+
+## Остановка
+
+```bash
+uv run les-runtime stop-core --include-ui
+```
+
+или:
+
+```bash
+./stop_les.command
+```
+
+## Индексация документов
+
+Положите документы в `RAG_Content/` и сначала посмотрите dry-run:
+
+```bash
+curl -fsS 'http://127.0.0.1:8050/api/rag/smart-plan?source_root=RAG_Content' \
+  | python3 -m json.tool
+```
+
+Регистрация и guarded indexing:
+
+```bash
+curl -X POST http://127.0.0.1:8050/api/rag/sync-smart \
+  -H 'Content-Type: application/json' \
+  -d '{"source_root":"RAG_Content","parse":false}'
+
+curl -X POST http://127.0.0.1:8050/api/runtime/dispatcher/reindex/start \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+Не запускайте полный reindex без причины: на рабочем корпусе это эксплуатационная операция, а не часть установки.
+
+## CAD/BIM
+
+LES принимает CAD/BIM как JSON-first pipeline. Raw IFC/DWG/RVT/DXF допускаются на upload boundary, но надежный путь для индексации: exporter -> canonical `cad_bim_graph.json` -> `/api/cad-bim/import`.
+
+Standalone viewer лежит в `standalone/cad_bim_viewer/`. Он не требует LES backend, npm или сети:
+
+```bash
+cd standalone/cad_bim_viewer
+./serve.sh 8095
+```
+
+Открыть: `http://127.0.0.1:8095/?source=models/demo.cad_bim_graph.json`.
+
+## Обновление
+
+```bash
+git pull
+uv sync
+uv run les-runtime restart-core --include-ui
+```
+
+После изменений в зависимостях:
+
+```bash
+uv lock --check
+uv run pytest -q
+```
+
+## Что не входит в git
+
+Локальные данные, индексы, runtime-логи и private samples не должны попадать в commit:
+
+- `data/`
+- `storage/`
+- `RAG_Content/`
+- `logs/`
+- `artifacts/`
+- `snapshots/`
+- `local_private_archive/`
+- `standalone/cad_bim_viewer/ifc-sample/`

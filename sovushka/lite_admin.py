@@ -71,6 +71,14 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def _cad_bim_ifc_sample_dir(root: Path) -> Path:
+    ifc_sample_dir = root / "ifc_sample"
+    standalone_ifc_sample_dir = root / "standalone" / "cad_bim_viewer" / "ifc-sample"
+    if not ifc_sample_dir.exists() and standalone_ifc_sample_dir.exists():
+        return standalone_ifc_sample_dir
+    return ifc_sample_dir
+
+
 def _reindex_paths() -> dict[str, Path]:
     root = _repo_root()
     artifacts = root / "artifacts" / "reindex_runs"
@@ -1483,8 +1491,9 @@ def register_lite_admin_routes() -> None:
 
     mimetypes.add_type("application/wasm", ".wasm")
     mimetypes.add_type("text/javascript", ".mjs")
-    viewer_dist = _repo_root() / "frontend" / "cad_bim_viewer" / "dist"
-    ifc_sample_dir = _repo_root() / "ifc_sample"
+    repo_root = _repo_root()
+    viewer_dist = repo_root / "frontend" / "cad_bim_viewer" / "dist"
+    ifc_sample_dir = _cad_bim_ifc_sample_dir(repo_root)
     app.mount(
         "/les/cad-bim-viewer/assets",
         StaticFiles(directory=viewer_dist / "assets", check_dir=False),

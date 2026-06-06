@@ -101,3 +101,19 @@ def test_guarded_reindex_status_reads_state(tmp_path, monkeypatch):
 
 def test_guarded_reindex_is_not_a_local_runtime_action():
     assert "start_guarded_reindex" not in lite_admin.LOCAL_RUNTIME_ACTIONS
+
+
+def test_cad_bim_ifc_sample_dir_falls_back_to_standalone(tmp_path):
+    standalone = tmp_path / "standalone" / "cad_bim_viewer" / "ifc-sample"
+    standalone.mkdir(parents=True)
+
+    assert lite_admin._cad_bim_ifc_sample_dir(tmp_path) == standalone
+
+
+def test_cad_bim_ifc_sample_dir_prefers_root_sample_dir(tmp_path):
+    root_sample = tmp_path / "ifc_sample"
+    standalone = tmp_path / "standalone" / "cad_bim_viewer" / "ifc-sample"
+    root_sample.mkdir()
+    standalone.mkdir(parents=True)
+
+    assert lite_admin._cad_bim_ifc_sample_dir(tmp_path) == root_sample

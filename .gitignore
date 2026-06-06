@@ -44,6 +44,7 @@ Thumbs.db
 
 # Generated local workbench exports
 qdrant_visualizer/data.js
+scratch/
 
 # Local runtime artifacts
 artifacts/
@@ -57,6 +58,4 @@ outputs/
 exporters.zip
 rag_engineer_v3.pptx
 ARTICLE_CAD_BIM_RAG.md
-scratch/check_retrieved.py
-scratch/check_retrieved_output.txt
 ifc_sample/*.ifc
