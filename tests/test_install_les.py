@@ -8,7 +8,9 @@ def test_ensure_dirs_creates_required_layout(tmp_path, monkeypatch):
 
     assert "data" in created
     assert "RAG_Content" in created
+    assert "static" in created
     assert (tmp_path / "data" / "mail_imap_checkpoints").exists()
+    assert (tmp_path / "static").exists()
 
 
 def test_init_env_does_not_overwrite_existing_env(tmp_path, monkeypatch):

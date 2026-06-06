@@ -24,6 +24,7 @@ SUPPORTED_PROFILES = {
 REQUIRED_DIRS = (
     "data",
     "storage",
+    "static",
     "logs",
     "RAG_Content",
     "artifacts",

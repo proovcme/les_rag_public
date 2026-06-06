@@ -23,7 +23,9 @@ from sovushka.trust import trusted_role_for_request
 
 
 # ── Статические файлы ──
-app.add_static_files("/static", "static")
+static_dir = Path(__file__).resolve().parent / "static"
+if static_dir.exists():
+    app.add_static_files("/static", str(static_dir))
 
 # Регистрируем /login (отдельная страница, без обвязки main_page)
 register_login_page()
