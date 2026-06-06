@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net.Http.Json;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.FileProviders;
 
@@ -35,6 +36,8 @@ if (Directory.Exists(appRoot))
 }
 
 var store = SeedData.Create();
+var validationReportArchive = ValidationReportArchive.FromConfiguration(builder.Configuration, app.Environment.ContentRootPath);
+validationReportArchive.LoadInto(store.ValidationReports);
 
 app.MapGet("/health", () => Results.Ok(new HealthResponse("ok", DateTimeOffset.UtcNow)));
 
@@ -332,7 +335,18 @@ app.MapPost("/api/revit/tasks/{taskId}/validation-reports", (string taskId, Vali
         CreatedAt: DateTimeOffset.UtcNow);
 
     store.ValidationReports[report.Id] = report;
+    validationReportArchive.Save(report);
     return Results.Created($"/api/validation-reports/{report.Id}", report);
+});
+
+app.MapGet("/api/validation-reports", (string? taskId) =>
+{
+    var reports = store.ValidationReports.Values
+        .Where(report => string.IsNullOrWhiteSpace(taskId) || report.TaskId == taskId)
+        .OrderByDescending(report => report.CreatedAt)
+        .ToArray();
+
+    return Results.Ok(reports);
 });
 
 app.MapGet("/api/validation-reports/{reportId}/learning-case", (string reportId) =>
@@ -937,6 +951,69 @@ record AppStore(
     ConcurrentDictionary<string, ValidationReport> ValidationReports,
     ConcurrentDictionary<string, CatalogItem> Catalog,
     ConcurrentDictionary<string, FamilyVersion> FamilyVersions);
+
+sealed class ValidationReportArchive
+{
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = true
+    };
+
+    private readonly string _reportsDir;
+
+    private ValidationReportArchive(string reportsDir)
+    {
+        _reportsDir = reportsDir;
+    }
+
+    public static ValidationReportArchive FromConfiguration(IConfiguration configuration, string contentRootPath)
+    {
+        var dataRoot = configuration["ARTEL_DATA_DIR"];
+        if (string.IsNullOrWhiteSpace(dataRoot))
+        {
+            dataRoot = Path.Combine(contentRootPath, "artel_data");
+        }
+
+        return new ValidationReportArchive(Path.Combine(dataRoot, "validation_reports"));
+    }
+
+    public void LoadInto(ConcurrentDictionary<string, ValidationReport> target)
+    {
+        if (!Directory.Exists(_reportsDir))
+        {
+            return;
+        }
+
+        foreach (var path in Directory.EnumerateFiles(_reportsDir, "*.json", SearchOption.TopDirectoryOnly))
+        {
+            try
+            {
+                var report = JsonSerializer.Deserialize<ValidationReport>(File.ReadAllText(path), JsonOptions);
+                if (report is not null && !string.IsNullOrWhiteSpace(report.Id))
+                {
+                    target[report.Id] = report;
+                }
+            }
+            catch
+            {
+                // Keep serving valid reports even if one archived file is corrupt.
+            }
+        }
+    }
+
+    public void Save(ValidationReport report)
+    {
+        Directory.CreateDirectory(_reportsDir);
+        var path = Path.Combine(_reportsDir, $"{report.Id}.json");
+        var tmpPath = path + ".tmp";
+        File.WriteAllText(tmpPath, JsonSerializer.Serialize(report, JsonOptions));
+        if (File.Exists(path))
+        {
+            File.Delete(path);
+        }
+        File.Move(tmpPath, path);
+    }
+}
 
 static class SeedData
 {

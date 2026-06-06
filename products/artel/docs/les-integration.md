@@ -227,6 +227,7 @@ add-in for the Revit execution loop.
 ARTEL backend exposes validation reports as LES-ready learning cases:
 
 ```http
+GET /api/validation-reports?taskId={taskId}
 GET /api/tasks/{taskId}/learning-case
 GET /api/validation-reports/{reportId}/learning-case
 ```
@@ -248,6 +249,10 @@ The generated case carries task, specification, FOP/profile hints, validation
 status, issues, actions and catalog tags. Accepted reports become
 `LEARNING_CASE`; failed reports are still useful as validation memory, but
 should stay private until curated.
+
+Validation reports are persisted under `ARTEL_DATA_DIR/validation_reports/`
+and reloaded when the backend starts, so accepted and rejected Revit checks can
+accumulate across backend restarts before they are curated into LES projections.
 
 Operational skill:
 

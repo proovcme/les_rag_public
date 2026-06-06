@@ -37,6 +37,7 @@ Endpoints:
 - `GET /api/revit/tasks`
 - `GET /api/revit/tasks/{taskId}/package`
 - `POST /api/revit/tasks/{taskId}/validation-reports`
+- `GET /api/validation-reports`
 - `GET /api/tasks/{taskId}/learning-case`
 - `GET /api/validation-reports/{reportId}/learning-case`
 - `GET /api/catalog`
@@ -69,6 +70,24 @@ open http://127.0.0.1:5057/
 
 Manual test runbook: [`../RUNBOOK_HAND_TEST.md`](../RUNBOOK_HAND_TEST.md).
 
+## Runtime data
+
+Validation reports are persisted to disk and reloaded on backend startup. By
+default the backend writes to:
+
+```text
+backend/Agnostis.Api/artel_data/validation_reports/
+```
+
+Override the root with:
+
+```bash
+ARTEL_DATA_DIR=/path/to/artel_data dotnet run --project backend/Agnostis.Api
+```
+
+`GET /api/validation-reports` returns archived reports newest first; add
+`?taskId=task_0241` to filter a task.
+
 ## Проверка
 
 На текущей машине `dotnet` отсутствует, поэтому сборка backend skeleton здесь не выполнялась. Код и contract подготовлены для проверки в окружении с .NET SDK 8.
@@ -87,6 +106,15 @@ Manual test runbook: [`../RUNBOOK_HAND_TEST.md`](../RUNBOOK_HAND_TEST.md).
 - `POST /api/catalog/catalog_001/update-task`
 
 Результат: build без предупреждений и ошибок, `/health` вернул `{"status":"ok"}`, AI-analysis endpoint вернул `provider: "openrouter"`, catalog endpoints вернули detail/versions, publish создал версию, update-task создал задание `FAM-0002`.
+
+Persistence smoke на `legion` выполнен 2026-06-06:
+
+- `ARTEL_DATA_DIR=C:\Users\Oleg\AppData\Local\Temp\artel-backend-persist\runtime-data`
+- `POST /api/revit/tasks/task_0241/validation-reports`
+- создан архивный файл `validation_reports/report_*.json`
+- backend остановлен и запущен снова
+- `GET /api/validation-reports?taskId=task_0241` вернул восстановленный report
+- `GET /api/validation-reports/{reportId}/learning-case` вернул `case_id = validation_{reportId}`
 
 LES smoke через ZeroTier:
 

@@ -245,6 +245,25 @@ paths:
                 $ref: "#/components/schemas/ValidationReport"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/validation-reports:
+    get:
+      summary: List archived validation reports
+      operationId: listValidationReports
+      parameters:
+        - name: taskId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Validation reports, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ValidationReport"
   /api/tasks/{taskId}/learning-case:
     get:
       summary: Export the latest task validation as an ARTEL learning case

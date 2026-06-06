@@ -37,6 +37,7 @@ Backend MVP уже умеет принимать validation report от Revit ad
 
 ```http
 POST /api/revit/tasks/{taskId}/validation-reports
+GET /api/validation-reports?taskId={taskId}
 ```
 
 И отдавать LES-ready learning case:
@@ -61,6 +62,8 @@ python3 tools/ingest_artel_validation_report.py \
 Скрипт нормализует report, делает `POST /api/revit/tasks/{taskId}/validation-reports`,
 забирает `GET /api/validation-reports/{reportId}/learning-case`, пишет markdown
 projection в `RAG_Content/ARTEL/family_learning_cases/` и запускает LES sync.
+Backend сохраняет reports в `ARTEL_DATA_DIR/validation_reports/` и поднимает
+их обратно после restart, чтобы learning loop не терял историю приемки.
 
 Это закрывает минимальную петлю:
 
