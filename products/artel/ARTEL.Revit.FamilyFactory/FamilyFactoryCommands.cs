@@ -8,8 +8,127 @@ using System.Web.Script.Serialization;
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using Autodesk.Revit.UI.Events;
 
 namespace ARTEL.Revit.FamilyFactory;
+
+public sealed class ArtelFamilyFactoryApplication : IExternalApplication
+{
+    private UIControlledApplication? _application;
+    private bool _autorunStarted;
+
+    public Result OnStartup(UIControlledApplication application)
+    {
+        _application = application;
+        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ARTEL_AUTORUN_VALIDATE_PATH")))
+        {
+            application.Idling += OnIdling;
+        }
+        return Result.Succeeded;
+    }
+
+    public Result OnShutdown(UIControlledApplication application)
+    {
+        application.Idling -= OnIdling;
+        return Result.Succeeded;
+    }
+
+    private void OnIdling(object? sender, IdlingEventArgs args)
+    {
+        if (_autorunStarted || _application is null)
+        {
+            return;
+        }
+
+        _autorunStarted = true;
+        _application.Idling -= OnIdling;
+
+        var uiApp = sender as UIApplication;
+        if (uiApp is null)
+        {
+            FamilyFactoryPaths.WriteJson("autorun_error", new Dictionary<string, object?>
+            {
+                ["schema"] = "artel.revit_family_autorun_error.v1",
+                ["status"] = "fail",
+                ["error"] = "Idling sender is not UIApplication.",
+                ["created_at"] = DateTimeOffset.UtcNow.ToString("O")
+            });
+            return;
+        }
+
+        RunAutorun(uiApp);
+    }
+
+    private static void RunAutorun(UIApplication uiApp)
+    {
+        var path = Environment.GetEnvironmentVariable("ARTEL_AUTORUN_VALIDATE_PATH") ?? "";
+        try
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            {
+                throw new FileNotFoundException("ARTEL_AUTORUN_VALIDATE_PATH does not point to an existing file.", path);
+            }
+
+            var uidoc = uiApp.OpenAndActivateDocument(path);
+            var options = ArtelOptions.Load();
+            var package = string.IsNullOrWhiteSpace(options.TaskId)
+                ? null
+                : ArtelClient.TryGetTaskPackage(options);
+
+            var validation = FamilyFactoryValidator.Validate(
+                uidoc.Document,
+                uiApp.Application,
+                uiApp.Application.VersionNumber,
+                package,
+                options);
+            validation["autorun"] = new Dictionary<string, object?>
+            {
+                ["source_path"] = path,
+                ["opened_document"] = uidoc.Document.PathName,
+                ["started_by"] = "ARTEL_AUTORUN_VALIDATE_PATH",
+                ["completed_at"] = DateTimeOffset.UtcNow.ToString("O")
+            };
+            var reportPath = FamilyFactoryPaths.WriteJson("validation", validation);
+
+            string submitMessage;
+            if (!string.IsNullOrWhiteSpace(options.TaskId) && !string.IsNullOrWhiteSpace(options.ArtelBaseUrl))
+            {
+                submitMessage = ArtelClient.TrySubmitValidationReport(options, validation);
+            }
+            else
+            {
+                submitMessage = "Submission skipped: set ARTEL_TASK_ID and ARTEL_BASE_URL environment variables.";
+            }
+
+            FamilyFactoryPaths.WriteJson("autorun", new Dictionary<string, object?>
+            {
+                ["schema"] = "artel.revit_family_autorun.v1",
+                ["status"] = validation["status"],
+                ["source_path"] = path,
+                ["validation_report"] = reportPath,
+                ["submit"] = submitMessage,
+                ["completed_at"] = DateTimeOffset.UtcNow.ToString("O")
+            });
+
+            if (ArtelOptions.EnvBool("ARTEL_AUTORUN_EXIT", false))
+            {
+                uiApp.PostCommand(RevitCommandId.LookupPostableCommandId(PostableCommand.ExitRevit));
+            }
+        }
+        catch (Exception error)
+        {
+            FamilyFactoryPaths.WriteJson("autorun_error", new Dictionary<string, object?>
+            {
+                ["schema"] = "artel.revit_family_autorun_error.v1",
+                ["status"] = "fail",
+                ["source_path"] = path,
+                ["error_type"] = error.GetType().Name,
+                ["error"] = error.Message,
+                ["created_at"] = DateTimeOffset.UtcNow.ToString("O")
+            });
+        }
+    }
+}
 
 [Transaction(TransactionMode.Manual)]
 public sealed class ArtelFamilyExtractCommand : IExternalCommand
@@ -510,7 +629,7 @@ internal sealed class ArtelOptions
             .ToArray();
     }
 
-    private static bool EnvBool(string name, bool defaultValue)
+    public static bool EnvBool(string name, bool defaultValue)
     {
         var raw = Environment.GetEnvironmentVariable(name);
         if (string.IsNullOrWhiteSpace(raw))

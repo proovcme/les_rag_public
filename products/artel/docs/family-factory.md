@@ -126,6 +126,25 @@ When `ARTEL_TASK_ID` is set, `ARTEL Family Validate` posts the report to:
 POST /api/revit/tasks/{taskId}/validation-reports
 ```
 
+## Autorun Smoke
+
+For a repeatable Revit-side smoke from an unlocked Legion desktop session:
+
+```powershell
+cd products\artel
+.\run-family-factory-revit-autorun.ps1 `
+  -FamilyPath "C:\Program Files\Autodesk\Revit 2025\Samples\rac_basic_sample_family.rfa" `
+  -TaskId "" `
+  -ArtelBaseUrl "" `
+  -TimeoutSec 420
+```
+
+The script sets `ARTEL_AUTORUN_VALIDATE_PATH`, starts Revit, waits for
+`%APPDATA%\ARTEL\family_factory\validation_*.json`, and exits non-zero if only
+`autorun_error_*.json` or no report appears. Remote OpenSSH/Scheduled Task
+launches on Legion did not reach normal Revit journal/report creation on
+2026-06-06; run this from the interactive Windows desktop for the proof smoke.
+
 ## Data Rules
 
 - Keep Autodesk SDK/CHM derived content local/private.

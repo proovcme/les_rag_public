@@ -178,6 +178,17 @@ $env:ARTEL_RUN_LOAD_TEST = "false"
 $env:ARTEL_REQUIRE_PROJECT_CHECKS = "true"
 ```
 
+Autorun Revit validation from an unlocked Legion desktop:
+
+```powershell
+cd products\artel
+.\run-family-factory-revit-autorun.ps1 `
+  -FamilyPath "C:\Program Files\Autodesk\Revit 2025\Samples\rac_basic_sample_family.rfa" `
+  -TaskId "" `
+  -ArtelBaseUrl "" `
+  -TimeoutSec 420
+```
+
 Ingest a Revit add-in validation report into ARTEL backend and LES:
 
 ```bash

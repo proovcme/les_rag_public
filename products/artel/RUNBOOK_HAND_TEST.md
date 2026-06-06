@@ -215,6 +215,24 @@ $env:ARTEL_REQUIRE_PROJECT_CHECKS = "true"
 GET /api/tasks/task_0241/learning-case
 ```
 
+Альтернатива без ручного клика из открытого desktop-сеанса Legion:
+
+```powershell
+cd C:\Users\Oleg\AppData\Local\Temp\artel-current-autorun
+.\run-family-factory-revit-autorun.ps1 `
+  -FamilyPath "C:\Program Files\Autodesk\Revit 2025\Samples\rac_basic_sample_family.rfa" `
+  -TaskId "" `
+  -ArtelBaseUrl "" `
+  -TimeoutSec 420
+```
+
+Этот launcher включает `ARTEL_AUTORUN_VALIDATE_PATH`, запускает Revit, ждет
+`validation_*.json` или `autorun_error_*.json` и печатает JSON-результат.
+Удаленный запуск через OpenSSH/Scheduled Task на Legion 2026-06-06 создал
+нулевые Revit journals и зависшие `Revit.exe` без report; для доказательного
+smoke нужен интерактивный desktop или уже открытый Revit с ручным запуском
+`External Tools -> ARTEL Family Validate`.
+
 Если Revit и ARTEL backend находятся на одной машине, `ARTEL Family Validate`
 сам отправляет report в backend. Если submit не был включен или backend был
 недоступен, скопировать последний JSON-отчет с Legion:

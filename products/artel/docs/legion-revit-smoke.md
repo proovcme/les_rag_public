@@ -255,8 +255,10 @@ After proxy restart, trust diagnostics from Legion returned:
 
 ## Remaining Manual Revit Test
 
-The backend/RAG path is ready. The remaining Revit-side test needs GUI/manual
-or add-in automation because `RevitCoreConsole.exe` is not present:
+The backend/RAG path is ready. The remaining Revit-side test needs an
+interactive Revit desktop session because `RevitCoreConsole.exe` is not
+present and OpenSSH/Scheduled Task launch on 2026-06-06 stalled before normal
+journal/report creation.
 
 1. Open Revit 2025 on Legion.
 2. Start from `Metric Casework.rft` or `Metric Electrical Equipment.rft`.
@@ -281,3 +283,34 @@ python3 tools/ingest_artel_validation_report.py \
 This should create a report-specific `FamilyLearningCase` projection under
 `RAG_Content/ARTEL/family_learning_cases/` and make it searchable in
 `ARTEL_Index`.
+
+## Autorun Attempt 2026-06-06
+
+Added `ARTEL_AUTORUN_VALIDATE_PATH` support to
+`ARTEL.Revit.FamilyFactory` and installed it on Legion. The add-in build passed
+with the existing two `System.Drawing` warnings and zero errors. The installed
+manifest now includes both command entries and
+`ARTEL.Revit.FamilyFactory.ArtelFamilyFactoryApplication`.
+
+The intended unlocked-desktop smoke command is:
+
+```powershell
+cd products\artel
+.\run-family-factory-revit-autorun.ps1 `
+  -FamilyPath "C:\Program Files\Autodesk\Revit 2025\Samples\rac_basic_sample_family.rfa" `
+  -TaskId "" `
+  -ArtelBaseUrl "" `
+  -TimeoutSec 420
+```
+
+Observed remote limits:
+
+- direct OpenSSH `Start-Process Revit.exe` exited without a report;
+- interactive `schtasks /IT` started Revit processes in console session 1, but
+  produced zero-byte `journal.0131.txt`/`journal.0132.txt` and no
+  `%APPDATA%\ARTEL\family_factory` output;
+- the test processes were stopped after diagnosis.
+
+Next proof step: run the autorun command from the visible Legion desktop, or
+open Revit and click `External Tools -> ARTEL Family Validate`, then ingest the
+resulting `validation_*.json` with `tools/ingest_artel_validation_report.py`.

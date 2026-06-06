@@ -1,5 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <RevitAddIns>
+  <AddIn Type="Application">
+    <Name>ARTEL FamilyFactory Autorun</Name>
+    <Assembly>__INSTALL_DIR__\ARTEL.Revit.FamilyFactory.dll</Assembly>
+    <AddInId>2D6C42A9-893A-4DB2-B26E-1E4415D77633</AddInId>
+    <FullClassName>ARTEL.Revit.FamilyFactory.ArtelFamilyFactoryApplication</FullClassName>
+    <VendorId>ARTEL</VendorId>
+    <VendorDescription>ARTEL Revit family factory</VendorDescription>
+  </AddIn>
   <AddIn Type="Command">
     <Name>ARTEL Family Extract</Name>
     <Assembly>__INSTALL_DIR__\ARTEL.Revit.FamilyFactory.dll</Assembly>
