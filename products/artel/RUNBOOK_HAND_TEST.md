@@ -291,6 +291,19 @@ python3 tools/smoke_artel_expert_loop.py \
 `REVIT_API_SDK_DOC`, `FOP_PROFILE` и `LEARNING_CASE`, managed backend/tunnel
 работает, но Revit desktop еще locked.
 
+Финальный acceptance gate после реального Revit-прогона:
+
+```bash
+python3 tools/smoke_artel_expert_loop.py \
+  --require-real-revit-learning-case \
+  --backend-only-smoke \
+  --check-legion
+```
+
+До появления настоящего Revit-derived `validation_*.json` этот gate должен
+падать: текущие `LEARNING_CASE` projections классифицируются как `demo` и
+`smoke_or_pending`, а не как реальный Revit validation case.
+
 Если Revit и ARTEL backend находятся на одной машине, `ARTEL Family Validate`
 сам отправляет report в backend. Если submit не был включен или backend был
 недоступен, скопировать последний JSON-отчет с Legion:

@@ -379,8 +379,23 @@ On 2026-06-07 it returned `ready_except_revit_locked`. Evidence:
   `REVIT_API_SDK_DOC`, `LEARNING_CASE`;
 - retrieval returned expected evidence for `REVIT_API_SDK_DOC`, `FOP_PROFILE`
   and `LEARNING_CASE`;
+- learning-case projections were explicitly classified as `demo` and
+  `smoke_or_pending`; no real Revit-derived learning case exists yet;
 - managed Legion backend/tunnel smoke passed;
 - Legion Revit diagnostic still returned `status = locked`.
+
+The final acceptance gate after a real Revit report is:
+
+```bash
+python3 tools/smoke_artel_expert_loop.py \
+  --require-real-revit-learning-case \
+  --backend-only-smoke \
+  --check-legion
+```
+
+This gate is expected to fail until a non-demo, non-smoke
+`validation_*.json` from Revit is ingested and projected back into
+`RAG_Content/ARTEL/family_learning_cases/`.
 
 ## Backend Archive Bulk Smoke 2026-06-06
 

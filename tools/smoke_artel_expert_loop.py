@@ -15,6 +15,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PROXY_URL = "http://127.0.0.1:8050"
+DEFAULT_RUNTIME_ROOT = Path(os.getenv("LES_RUNTIME_ROOT", "/Users/ovc/Projects/LES_v2_reinstall_stress"))
 
 SEARCH_CASES = [
     {
@@ -133,6 +134,48 @@ def search_case(proxy_url: str, case: dict[str, str], *, timeout: float, top_k: 
     }
 
 
+def classify_learning_case(text: str) -> str:
+    lowered = text.lower()
+    if "visibility: public_demo" in lowered or "case id: demo_" in lowered:
+        return "demo"
+    smoke_markers = [
+        "smoke validation report",
+        "synthetic report",
+        "persistence smoke",
+        "manual_check",
+        "open family in revit",
+    ]
+    if any(marker in lowered for marker in smoke_markers):
+        return "smoke_or_pending"
+    if "validation_report:" in lowered and "## validation report" in lowered:
+        return "candidate_real_revit"
+    return "unknown"
+
+
+def learning_case_projection_check(runtime_root: Path) -> dict[str, Any]:
+    case_dir = runtime_root / "RAG_Content" / "ARTEL" / "family_learning_cases"
+    files = sorted(case_dir.glob("*.md")) if case_dir.exists() else []
+    classified = []
+    for path in files:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        classified.append(
+            {
+                "file": str(path),
+                "name": path.name,
+                "kind": classify_learning_case(text),
+            }
+        )
+    real_candidates = [item for item in classified if item["kind"] == "candidate_real_revit"]
+    return {
+        "ok": bool(real_candidates),
+        "case_dir": str(case_dir),
+        "count": len(classified),
+        "real_candidate_count": len(real_candidates),
+        "by_kind": {kind: sum(1 for item in classified if item["kind"] == kind) for kind in sorted({item["kind"] for item in classified})},
+        "cases": classified,
+    }
+
+
 def run_legion_check(args: argparse.Namespace, *, backend_only: bool) -> dict[str, Any]:
     command = [
         sys.executable,
@@ -159,6 +202,7 @@ def run_legion_check(args: argparse.Namespace, *, backend_only: bool) -> dict[st
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Audit LES/ARTEL Revit expert loop readiness.")
     parser.add_argument("--proxy-url", default=os.getenv("LES_PROXY_URL", DEFAULT_PROXY_URL))
+    parser.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT)
     parser.add_argument("--timeout-sec", type=float, default=30.0)
     parser.add_argument("--top-k", type=int, default=8)
     parser.add_argument("--check-legion", action="store_true")
@@ -166,6 +210,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--legion-timeout-sec", type=float, default=60.0)
     parser.add_argument("--artel-health-timeout-sec", type=float, default=20.0)
     parser.add_argument("--require-interactive-revit", action="store_true")
+    parser.add_argument("--require-real-revit-learning-case", action="store_true")
     return parser
 
 
@@ -181,12 +226,15 @@ def main() -> int:
             search_case(args.proxy_url, case, timeout=args.timeout_sec, top_k=args.top_k)
             for case in SEARCH_CASES
         ]
+        summary["learning_case_projections"] = learning_case_projection_check(args.runtime_root)
         if args.backend_only_smoke:
             summary["backend_only_smoke"] = run_legion_check(args, backend_only=True)
         if args.check_legion:
             summary["legion_revit"] = run_legion_check(args, backend_only=False)
 
         checks_ok = summary["health"]["ok"] and all(item["ok"] for item in summary["search"])
+        if args.require_real_revit_learning_case:
+            checks_ok = checks_ok and summary["learning_case_projections"]["ok"]
         if args.backend_only_smoke:
             checks_ok = checks_ok and summary["backend_only_smoke"]["ok"]
         if args.check_legion:
