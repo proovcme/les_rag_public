@@ -1,0 +1,306 @@
+<Window x:Class="MyVeras.UI.MyVerasWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:MyVeras.UI.ViewModels"
+        mc:Ignorable="d"
+        Title="MyVeras AI Rendering" 
+        Height="700" Width="900"
+        WindowStartupLocation="CenterScreen"
+        Background="#2D2D30"
+        AllowsTransparency="False"
+        ResizeMode="CanResize">
+    
+    <Window.DataContext>
+        <vm:MainViewModel/>
+    </Window.DataContext>
+    
+    <Window.Resources>
+        <Style x:Key="ModernButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="#007ACC"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#007ACC"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="12,8"/>
+            <Setter Property="Margin" Value="5"/>
+            <Setter Property="FontWeight" Value="Medium"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" 
+                                            VerticalAlignment="Center"
+                                            Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#005A9E"/>
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                    <Setter Property="Background" Value="#004578"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        
+        <Style x:Key="SuccessButtonStyle" TargetType="Button" BasedOn="{StaticResource ModernButtonStyle}">
+            <Setter Property="Background" Value="#28A745"/>
+            <Setter Property="BorderBrush" Value="#28A745"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#218838"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        
+        <Style x:Key="GroupBoxStyle" TargetType="GroupBox">
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#3F3F46"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="15"/>
+            <Setter Property="Margin" Value="0,0,0,15"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="GroupBox">
+                        <Border Background="#252526"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
+                                <ContentPresenter Grid.Row="1" 
+                                              Margin="{TemplateBinding Padding}"
+                                              ContentSource="Content"/>
+                                <TextBlock Grid.Row="0" 
+                                           Text="{TemplateBinding Header}"
+                                           Foreground="White"
+                                           FontWeight="SemiBold"
+                                           Margin="10,10,0,5"/>
+                            </Grid>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+    
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,20">
+            <TextBlock Text="🎨 MyVeras AI Rendering" 
+                       FontSize="24" 
+                       FontWeight="Bold" 
+                       Foreground="White"
+                       HorizontalAlignment="Center"/>
+            <TextBlock Text="Профессиональный AI рендеринг для Revit" 
+                       FontSize="14" 
+                       Foreground="#CCCCCC"
+                       HorizontalAlignment="Center"
+                       Margin="0,5,0,0"/>
+        </StackPanel>
+        
+        <!-- Main Content -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                
+                <!-- API Settings -->
+                <GroupBox Header="🔑 Настройки API" Style="{StaticResource GroupBoxStyle}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        
+                        <Label Content="Провайдер:" 
+                               Foreground="White" 
+                               Grid.Row="0" Grid.Column="0"
+                               VerticalAlignment="Center"
+                               Margin="0,0,10,0"/>
+                        
+                        <ComboBox ItemsSource="{Binding ApiProviders}"
+                                  SelectedItem="{Binding ApiProvider}"
+                                  Grid.Row="0" Grid.Column="1"
+                                  Height="32"
+                                  Margin="0,5,10,5"
+                                  Background="#3C3C3C"
+                                  Foreground="White"
+                                  BorderBrush="#555555"/>
+                        
+                        <Label Content="API ключ:" 
+                               Foreground="White" 
+                               Grid.Row="1" Grid.Column="0"
+                               VerticalAlignment="Center"
+                               Margin="0,10,10,0"/>
+                        
+                        <PasswordBox x:Name="ApiKeyPasswordBox"
+                                     Grid.Row="1" Grid.Column="1"
+                                     Height="32"
+                                     Margin="0,10,10,5"
+                                     Background="#3C3C3C"
+                                     Foreground="White"
+                                     BorderBrush="#555555"
+                                     PasswordChanged="ApiKeyPasswordBox_PasswordChanged"/>
+                        
+                        <Button Content="🔗 Проверить" 
+                                Grid.Row="1" Grid.Column="2"
+                                Width="100" Height="32"
+                                Margin="0,10,0,5"
+                                Style="{StaticResource ModernButtonStyle}"
+                                Click="TestApiButton_Click"/>
+                    </Grid>
+                </GroupBox>
+                
+                <!-- View Selection -->
+                <GroupBox Header="👁️ Выбор 3D вида" Style="{StaticResource GroupBoxStyle}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        
+                        <Label Content="Доступные виды:" 
+                               Foreground="White" 
+                               Grid.Row="0" Grid.Column="0"
+                               VerticalAlignment="Center"
+                               Margin="0,0,10,0"/>
+                        
+                        <ComboBox ItemsSource="{Binding AvailableViews}"
+                                  SelectedItem="{Binding SelectedViewName}"
+                                  Grid.Row="0" Grid.Column="0"
+                                  Height="32"
+                                  Margin="0,5,10,5"
+                                  Background="#3C3C3C"
+                                  Foreground="White"
+                                  BorderBrush="#555555"/>
+                        
+                        <Button Content="🔄 Обновить" 
+                                Grid.Row="0" Grid.Column="1"
+                                Width="100" Height="32"
+                                Margin="0,5,0,5"
+                                Style="{StaticResource ModernButtonStyle}"
+                                Click="RefreshViewsButton_Click"/>
+                    </Grid>
+                </GroupBox>
+                
+                <!-- Export Settings -->
+                <GroupBox Header="📁 Папка выгрузки" Style="{StaticResource GroupBoxStyle}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        
+                        <Label Content="Папка для результатов:" 
+                               Foreground="White" 
+                               Grid.Row="0" Grid.Column="0"
+                               VerticalAlignment="Center"
+                               Margin="0,0,10,0"/>
+                        
+                        <TextBox Text="{Binding ExportFolderPath, Mode=OneWay}"
+                                 IsReadOnly="True"
+                                 Grid.Row="0" Grid.Column="0"
+                                 Height="32"
+                                 Margin="0,5,10,5"
+                                 Background="#3C3C3C"
+                                 Foreground="White"
+                                 BorderBrush="#555555"/>
+                        
+                        <Button Content="📂 Обзор" 
+                                Grid.Row="0" Grid.Column="1"
+                                Width="80" Height="32"
+                                Margin="0,5,5,5"
+                                Style="{StaticResource ModernButtonStyle}"
+                                Click="BrowseFolderButton_Click"/>
+                        
+                        <Button Content="📂 Открыть" 
+                                Grid.Row="0" Grid.Column="2"
+                                Width="80" Height="32"
+                                Margin="0,5,0,5"
+                                Style="{StaticResource ModernButtonStyle}"
+                                Click="OpenFolderButton_Click"/>
+                    </Grid>
+                </GroupBox>
+                
+                <!-- Rendering -->
+                <GroupBox Header="🚀 Рендеринг" Style="{StaticResource GroupBoxStyle}">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        
+                        <Button Content="🎨 ЗАПУСТИТЬ ИИ РЕНДЕР" 
+                                Grid.Row="0"
+                                Height="60"
+                                Margin="0,10,0,15"
+                                FontSize="16"
+                                FontWeight="Bold"
+                                Style="{StaticResource SuccessButtonStyle}"
+                                Click="StartRenderButton_Click"/>
+                        
+                        <ProgressBar Grid.Row="1"
+                                     Height="20"
+                                     Minimum="0"
+                                     Maximum="100"
+                                     Value="{Binding ProgressPercentage}"
+                                     Margin="0,0,0,10"
+                                     Background="#3C3C3C"
+                                     Foreground="#007ACC"
+                                     BorderThickness="1"
+                                     BorderBrush="#555555"/>
+                        
+                        <TextBlock Text="{Binding Status}"
+                                   Grid.Row="1"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   Foreground="White"
+                                   FontSize="12"
+                                   Margin="0,0,0,10"/>
+                    </Grid>
+                </GroupBox>
+                
+            </StackPanel>
+        </ScrollViewer>
+        
+        <!-- Footer -->
+        <StackPanel Grid.Row="2" 
+                    Orientation="Horizontal" 
+                    HorizontalAlignment="Right"
+                    Margin="0,15,0,0">
+            <Button Content="❌ Закрыть" 
+                    Width="100" Height="35"
+                    Margin="0,0,10,0"
+                    Background="#DC3545"
+                    Style="{StaticResource ModernButtonStyle}"
+                    Click="CloseButton_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

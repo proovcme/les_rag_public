@@ -1,0 +1,82 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Platforms>x64</Platforms>
+    <Nullable>disable</Nullable>
+    <AssemblyVersion>1.1.0.0</AssemblyVersion>
+    <FileVersion>1.1.0.0</FileVersion>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <NoWarn>$(NoWarn);MSB3277</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Net.Http" Version="4.3.4" />
+    <PackageReference Include="System.Drawing.Common" Version="8.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="RevitAPI">
+      <HintPath>C:\Program Files\Autodesk\Revit 2025\RevitAPI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="RevitAPIUI">
+      <HintPath>C:\Program Files\Autodesk\Revit 2025\RevitAPIUI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="AdWindows">
+      <HintPath>C:\Program Files\Autodesk\Revit 2025\AdWindows.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Resources\**\*.png" />
+    <Resource Include="Resources\**\*.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MyVeras.UI\MyVeras.UI.csproj" />
+    <ProjectReference Include="..\MyVeras.Core\MyVeras.Core.csproj" />
+    <ProjectReference Include="..\MyVeras.Models\MyVeras.Models.csproj" />
+    <ProjectReference Include="..\MyVeras.Settings\MyVeras.Settings.csproj" />
+    <ProjectReference Include="..\MyVeras.Engines\MyVeras.Engines.csproj" />
+  </ItemGroup>
+
+  <!-- Post-Build Event: Копирование всех DLL в папку плагина Revit -->
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <Exec Command="echo Копирование файлов плагина в Revit Addins folder..." />
+    <!-- Копируем DLL из всех проектов -->
+    <Exec Command="xcopy &quot;$(ProjectDir)..\MyVeras.Core\bin\$(Configuration)\net8.0-windows\*.dll&quot; &quot;%AppData%\Autodesk\Revit\Addins\2025\MyVeras\&quot; /Y /I" />
+    <Exec Command="xcopy &quot;$(ProjectDir)..\MyVeras.Models\bin\$(Configuration)\net8.0-windows\*.dll&quot; &quot;%AppData%\Autodesk\Revit\Addins\2025\MyVeras\&quot; /Y /I" />
+    <Exec Command="xcopy &quot;$(ProjectDir)..\MyVeras.Settings\bin\$(Configuration)\net8.0-windows\*.dll&quot; &quot;%AppData%\Autodesk\Revit\Addins\2025\MyVeras\&quot; /Y /I" />
+    <Exec Command="xcopy &quot;$(ProjectDir)..\MyVeras.Engines\bin\$(Configuration)\net8.0-windows\*.dll&quot; &quot;%AppData%\Autodesk\Revit\Addins\2025\MyVeras\&quot; /Y /I" />
+    <Exec Command="xcopy &quot;$(ProjectDir)..\MyVeras.UI\bin\$(Configuration)\net8.0-windows\*.dll&quot; &quot;%AppData%\Autodesk\Revit\Addins\2025\MyVeras\&quot; /Y /I" />
+    <!-- Копируем основную DLL и конфиг -->
+    <Exec Command="xcopy &quot;$(OutDir)*.dll&quot; &quot;%AppData%\Autodesk\Revit\Addins\2025\MyVeras\&quot; /Y /I" />
+    <Exec Command="xcopy &quot;$(OutDir)*.config&quot; &quot;%AppData%\Autodesk\Revit\Addins\2025\MyVeras\&quot; /Y /I" />
+    <Exec Command="echo Плагин успешно скопирован в Revit!" />
+  </Target>
+
+  <Target Name="GenerateRevitAddIn" AfterTargets="AfterBuild">
+    <PropertyGroup>
+      <AddInFile>$(AppData)\Autodesk\Revit\Addins\2025\MyVeras.addin</AddInFile>
+      <AddInContent>
+<![CDATA[<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <AddIn Type="Application">
+    <Name>MyVeras AI</Name>
+    <Assembly>$(TargetDir)$(TargetName).dll</Assembly>
+    <FullClassName>MyVeras.RevitAPI.App</FullClassName>
+    <AddInId>EB269B56-5B8F-4B8F-B994-39967967AF87</AddInId>
+    <VendorId>OlegCher</VendorId>
+    <VendorDescription>AI Engineering</VendorDescription>
+  </AddIn>
+</RevitAddIns>]]>
+    </AddInContent>
+  </PropertyGroup>
+  <WriteLinesToFile File="$(AddInFile)" Lines="$(AddInContent)" Overwrite="true" Encoding="utf-8" />
+</Target>
+
+</Project>

@@ -119,6 +119,16 @@ uv run python tools/build_release_artifacts.py --profile windows-docker
 uv run python tools/build_release_artifacts.py --profile windows-lite
 ```
 
+Build АТЛАС standalone artifact with:
+
+```bash
+npm ci --prefix frontend/cad_bim_viewer
+npm run build --prefix frontend/cad_bim_viewer
+npm run build:standalone --prefix frontend/cad_bim_viewer
+uv run python tools/smoke_atlas_standalone.py
+uv run python tools/build_atlas_release.py
+```
+
 ## Acceptance Gates
 
 Before a boxed release:
@@ -132,6 +142,7 @@ Before a boxed release:
 - Qdrant data is stored in the correct profile path/volume;
 - docs for that platform are current;
 - no `.env`, corpora, logs, snapshots or private samples are in the artifact.
+- АТЛАС zip contains `ATLAS_MANIFEST.json` and excludes private `JSON/` and `ifc-sample/` folders.
 
 ## Immediate Next Work
 
@@ -142,9 +153,12 @@ Before a boxed release:
 4. Add actual Linux systemd Qdrant/model unit templates.
 5. Add ARTEL `FamilyLearningCase` import contract.
 6. Add hub repository README for LES / АТЛАС / АРТЕЛЬ.
+7. Add ARTEL MVP artifact builder once the backend/prototype rename plan is complete.
 
 Completed on 2026-06-06:
 
 - destructive Mac reinstall stress from fresh clone;
 - private `v0.1.0` boxed release;
 - public `v0.1.2-public-boxed-install` snapshot release.
+- LES umbrella product layout with `products/atlas` and `products/artel`;
+- repeatable `atlas-standalone.zip` build and smoke scripts.

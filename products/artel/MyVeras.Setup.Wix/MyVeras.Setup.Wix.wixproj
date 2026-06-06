@@ -1,0 +1,20 @@
+<Project Sdk="WixToolset.Sdk/4.0.0">
+
+  <PropertyGroup>
+    <OutputType>Package</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <OutputName>MyVeras-AI-Rendering-Setup</OutputName>
+    <PackageCompressionLevel>High</PackageCompressionLevel>
+    <Platform>x64</Platform>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.UI.wixext" Version="4.0.0" />
+    <PackageReference Include="WixToolset.Util.wixext" Version="4.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MyVeras.Setup\MyVeras.Setup.csproj" />
+  </ItemGroup>
+
+</Project>

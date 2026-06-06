@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Id="*" 
+           Name="MyVeras AI Rendering" 
+           Language="1049" 
+           Version="1.0.0.0" 
+           Manufacturer="Cascade AI" 
+           UpgradeCode="12345678-1234-5678-9ABC-123456789ABC">
+    
+    <SummaryInformation Description="AI-powered rendering plugin for Revit 2025" />
+    
+    <MajorUpgrade DowngradeErrorMessage="A newer version of MyVeras is already installed." />
+    
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Features -->
+    <Feature Id="ProductFeature" Title="MyVeras AI Rendering" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+      <ComponentRef Id="ApplicationShortcut" />
+      <ComponentRef Id="DesktopShortcut" />
+    </Feature>
+
+    <!-- Directories -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="MyVeras">
+        <Component Id="MainExecutable" Guid="*">
+          <File Id="MyVerasSetupExe" 
+                Source="$(var.MyVeras.Setup.TargetPath)MyVeras.Setup.exe" 
+                KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    
+    <!-- Start Menu -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="MyVeras"/>
+    </StandardDirectory>
+    
+    <!-- Desktop -->
+    <StandardDirectory Id="DesktopFolder" />
+
+    <!-- Shortcuts -->
+    <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+      <Component Id="ApplicationShortcut" Guid="*">
+        <Shortcut Id="ApplicationStartMenuShortcut"
+                  Name="MyVeras AI Rendering"
+                  Description="AI-powered rendering plugin for Revit 2025"
+                  Target="[#MyVerasSetupExe]"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RemoveFolder Id="ApplicationProgramsFolder" On="uninstall"/>
+        <RegistryValue Root="HKCU" 
+                       Key="Software\MyVeras" 
+                       Name="installed" 
+                       Type="integer" 
+                       Value="1" 
+                       KeyPath="yes"/>
+      </Component>
+
+      <Component Id="DesktopShortcut" Guid="*">
+        <Shortcut Id="ApplicationDesktopShortcut"
+                  Name="MyVeras AI Rendering"
+                  Description="AI-powered rendering plugin for Revit 2025"
+                  Target="[#MyVerasSetupExe]"
+                  WorkingDirectory="INSTALLFOLDER" 
+                  Directory="DesktopFolder"/>
+        <RegistryValue Root="HKCU" 
+                       Key="Software\MyVeras" 
+                       Name="desktop" 
+                       Type="integer" 
+                       Value="1" 
+                       KeyPath="yes"/>
+      </Component>
+    </ComponentGroup>
+
+  </Package>
+</Wix>

@@ -1,0 +1,1106 @@
+openapi: 3.1.0
+info:
+  title: АРТЕЛЬ MVP API
+  version: 0.1.0
+  summary: API contract for АРТЕЛЬ MVP.
+  description: >
+    MVP API for managing Revit family development tasks, specifications,
+    Revit add-in packages, validation reports, submissions, and catalog items.
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+servers:
+  - url: https://api.agnostis.internal
+    description: MVP API endpoint placeholder
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      summary: Health check
+      operationId: getHealth
+      security: []
+      responses:
+        "200":
+          description: Service status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /api/integrations/les/status:
+    get:
+      summary: Check LES integration status
+      operationId: getLesIntegrationStatus
+      responses:
+        "200":
+          description: LES status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LesStatusResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/tasks:
+    get:
+      summary: List family development tasks
+      operationId: listTasks
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/TaskStatus"
+      responses:
+        "200":
+          description: Task summaries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TaskSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      summary: Create family development task
+      operationId: createTask
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTaskRequest"
+      responses:
+        "201":
+          description: Created task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FamilyTask"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/tasks/{taskId}:
+    get:
+      summary: Get task
+      operationId: getTask
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          description: Task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FamilyTask"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/tasks/{taskId}/specification:
+    get:
+      summary: Get task specification
+      operationId: getSpecification
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          description: Family specification
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FamilySpecification"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      summary: Replace task specification
+      operationId: putSpecification
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FamilySpecification"
+      responses:
+        "200":
+          description: Updated specification
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FamilySpecification"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/tasks/{taskId}/ai-analysis:
+    post:
+      summary: Run AI analysis for task package
+      operationId: runTaskAIAnalysis
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AIAnalysisRequest"
+      responses:
+        "202":
+          description: AI analysis accepted or completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AIAnalysisResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/tasks/{taskId}/rag-context:
+    post:
+      summary: Retrieve LES search context for task
+      operationId: getTaskRagContext
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LesRagContextRequest"
+      responses:
+        "200":
+          description: LES RAG context result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LesRagContextResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/tasks/{taskId}/specification/approve:
+    post:
+      summary: Approve task specification
+      operationId: approveSpecification
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          description: Approved specification
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FamilySpecification"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/revit/tasks:
+    get:
+      summary: List tasks available to Revit add-in
+      operationId: listRevitTasks
+      responses:
+        "200":
+          description: Revit task summaries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TaskSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/revit/tasks/{taskId}/package:
+    get:
+      summary: Get approved task package for Revit add-in
+      operationId: getRevitTaskPackage
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          description: Task package
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevitTaskPackage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/revit/tasks/{taskId}/validation-reports:
+    post:
+      summary: Submit validation report from Revit add-in
+      operationId: createValidationReport
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ValidationReportRequest"
+      responses:
+        "201":
+          description: Created validation report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationReport"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/catalog:
+    get:
+      summary: Search catalog
+      operationId: searchCatalog
+      parameters:
+        - name: query
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Catalog items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CatalogItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/catalog/{catalogItemId}:
+    get:
+      summary: Get catalog item detail
+      operationId: getCatalogItem
+      parameters:
+        - $ref: "#/components/parameters/CatalogItemId"
+      responses:
+        "200":
+          description: Catalog item detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CatalogItemDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/catalog/{catalogItemId}/versions:
+    get:
+      summary: List catalog item versions
+      operationId: listCatalogVersions
+      parameters:
+        - $ref: "#/components/parameters/CatalogItemId"
+      responses:
+        "200":
+          description: Family versions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FamilyVersion"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/catalog/{catalogItemId}/publish:
+    post:
+      summary: Publish new catalog version
+      operationId: publishCatalogVersion
+      parameters:
+        - $ref: "#/components/parameters/CatalogItemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublishCatalogVersionRequest"
+      responses:
+        "201":
+          description: Published family version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FamilyVersion"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/catalog/{catalogItemId}/update-task:
+    post:
+      summary: Create update task from catalog item
+      operationId: createCatalogUpdateTask
+      parameters:
+        - $ref: "#/components/parameters/CatalogItemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCatalogUpdateTaskRequest"
+      responses:
+        "201":
+          description: Created update task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CatalogUpdateTaskResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    TaskId:
+      name: taskId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: task_0241
+    CatalogItemId:
+      name: catalogItemId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: catalog_001
+  responses:
+    Unauthorized:
+      description: Missing or invalid access token
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+    TooManyRequests:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - checkedAt
+      properties:
+        status:
+          type: string
+          example: ok
+        checkedAt:
+          type: string
+          format: date-time
+    ApiError:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+    LesStatusResponse:
+      type: object
+      required:
+        - status
+        - baseUrl
+        - httpStatus
+        - checkedAt
+      properties:
+        status:
+          type: string
+          enum:
+            - ok
+            - unhealthy
+            - unreachable
+            - timeout
+        baseUrl:
+          type: string
+        httpStatus:
+          type: integer
+        health:
+          type:
+            - object
+            - array
+            - string
+            - "null"
+        checkedAt:
+          type: string
+          format: date-time
+    TaskStatus:
+      type: string
+      enum:
+        - draft
+        - ready_for_ai_analysis
+        - specification_review
+        - ready_for_development
+        - in_development
+        - submitted_for_review
+        - accepted
+        - rejected
+        - published
+    SpecificationStatus:
+      type: string
+      enum:
+        - draft
+        - approved
+    CreateTaskRequest:
+      type: object
+      required:
+        - title
+      properties:
+        title:
+          type: string
+        description:
+          type:
+            - string
+            - "null"
+        revitCategory:
+          type:
+            - string
+            - "null"
+        assignedTo:
+          type:
+            - string
+            - "null"
+        dueDate:
+          type:
+            - string
+            - "null"
+          format: date
+    FamilyTask:
+      type: object
+      required:
+        - id
+        - number
+        - title
+        - status
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        number:
+          type: string
+        title:
+          type: string
+        description:
+          type:
+            - string
+            - "null"
+        status:
+          $ref: "#/components/schemas/TaskStatus"
+        revitCategory:
+          type:
+            - string
+            - "null"
+        assignedTo:
+          type:
+            - string
+            - "null"
+        dueDate:
+          type:
+            - string
+            - "null"
+          format: date
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    TaskSummary:
+      type: object
+      required:
+        - id
+        - number
+        - title
+        - status
+      properties:
+        id:
+          type: string
+        number:
+          type: string
+        title:
+          type: string
+        status:
+          $ref: "#/components/schemas/TaskStatus"
+        revitCategory:
+          type:
+            - string
+            - "null"
+        assignedTo:
+          type:
+            - string
+            - "null"
+        dueDate:
+          type:
+            - string
+            - "null"
+          format: date
+    SourceFile:
+      type: object
+      required:
+        - id
+        - taskId
+        - name
+        - kind
+        - downloadUrl
+      properties:
+        id:
+          type: string
+        taskId:
+          type: string
+        name:
+          type: string
+        kind:
+          type: string
+        downloadUrl:
+          type: string
+    AIAnalysisRequest:
+      type: object
+      required:
+        - sourceFileIds
+      properties:
+        sourceFileIds:
+          type: array
+          items:
+            type: string
+        sharedParameterProfileId:
+          type:
+            - string
+            - "null"
+        templateFileId:
+          type:
+            - string
+            - "null"
+        model:
+          type:
+            - string
+            - "null"
+          description: OpenRouter model ID.
+    AIAnalysisResult:
+      type: object
+      required:
+        - provider
+        - status
+        - specification
+        - warnings
+      properties:
+        provider:
+          type: string
+          const: openrouter
+        model:
+          type:
+            - string
+            - "null"
+        status:
+          type: string
+          enum:
+            - queued
+            - running
+            - completed
+            - failed
+        specification:
+          $ref: "#/components/schemas/FamilySpecification"
+        warnings:
+          type: array
+          items:
+            type: string
+    LesRagContextRequest:
+      type: object
+      properties:
+        question:
+          type:
+            - string
+            - "null"
+        datasetFilter:
+          type:
+            - string
+            - "null"
+          default: CAD_BIM
+        topK:
+          type:
+            - integer
+            - "null"
+          minimum: 1
+          maximum: 50
+          default: 8
+        includeTrace:
+          type:
+            - boolean
+            - "null"
+          default: false
+        validationEnabled:
+          deprecated: true
+          description: Legacy chat flag retained for request compatibility. The MVP backend now calls LES /api/search.
+          type:
+            - boolean
+            - "null"
+        rerankerEnabled:
+          deprecated: true
+          description: Legacy chat flag retained for request compatibility. The MVP backend now calls LES /api/search.
+          type:
+            - boolean
+            - "null"
+        semanticCacheEnabled:
+          deprecated: true
+          description: Legacy chat flag retained for request compatibility. The MVP backend now calls LES /api/search.
+          type:
+            - boolean
+            - "null"
+    LesRagContextResult:
+      type: object
+      required:
+        - status
+        - taskId
+        - datasetFilter
+        - question
+        - lesBaseUrl
+        - httpStatus
+        - createdAt
+      properties:
+        status:
+          type: string
+          enum:
+            - ok
+            - upstream_error
+            - unreachable
+            - timeout
+        taskId:
+          type: string
+        datasetFilter:
+          type: string
+        question:
+          type: string
+        lesBaseUrl:
+          type: string
+        httpStatus:
+          type: integer
+        response:
+          type:
+            - object
+            - array
+            - string
+            - "null"
+        createdAt:
+          type: string
+          format: date-time
+    FamilySpecification:
+      type: object
+      required:
+        - id
+        - taskId
+        - status
+        - familyName
+        - revitCategory
+        - parameters
+        - types
+        - materials
+        - acceptanceChecklist
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        taskId:
+          type: string
+        status:
+          $ref: "#/components/schemas/SpecificationStatus"
+        familyName:
+          type: string
+        revitCategory:
+          type: string
+        templateFileId:
+          type:
+            - string
+            - "null"
+        sharedParameterProfileId:
+          type:
+            - string
+            - "null"
+        parameters:
+          type: array
+          items:
+            $ref: "#/components/schemas/SpecificationParameter"
+        types:
+          type: array
+          items:
+            $ref: "#/components/schemas/SpecificationType"
+        materials:
+          type: array
+          items:
+            $ref: "#/components/schemas/SpecificationMaterial"
+        acceptanceChecklist:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    SpecificationParameter:
+      type: object
+      required:
+        - id
+        - name
+        - source
+        - dataType
+        - group
+        - isInstance
+        - isRequired
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        source:
+          type: string
+          enum:
+            - shared_parameter
+            - family_parameter
+            - built_in
+        sharedParameterGuid:
+          type:
+            - string
+            - "null"
+        dataType:
+          type: string
+        group:
+          type: string
+        isInstance:
+          type: boolean
+        isRequired:
+          type: boolean
+        defaultValue:
+          type:
+            - string
+            - "null"
+        formula:
+          type:
+            - string
+            - "null"
+        notes:
+          type:
+            - string
+            - "null"
+    SpecificationType:
+      type: object
+      required:
+        - id
+        - name
+        - values
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        values:
+          type: object
+          additionalProperties: true
+        notes:
+          type:
+            - string
+            - "null"
+    SpecificationMaterial:
+      type: object
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        parameterName:
+          type:
+            - string
+            - "null"
+        defaultValue:
+          type:
+            - string
+            - "null"
+    RevitTaskPackage:
+      type: object
+      required:
+        - task
+        - specification
+        - files
+      properties:
+        task:
+          $ref: "#/components/schemas/TaskSummary"
+        specification:
+          $ref: "#/components/schemas/FamilySpecification"
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceFile"
+    ValidationReportRequest:
+      type: object
+      required:
+        - status
+        - summary
+        - issues
+        - actions
+      properties:
+        status:
+          type: string
+          enum:
+            - pass
+            - warning
+            - fail
+        summary:
+          type: string
+        issues:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidationIssue"
+        actions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidationAction"
+    ValidationReport:
+      allOf:
+        - $ref: "#/components/schemas/ValidationReportRequest"
+        - type: object
+          required:
+            - id
+            - taskId
+            - createdAt
+          properties:
+            id:
+              type: string
+            taskId:
+              type: string
+            createdAt:
+              type: string
+              format: date-time
+    ValidationIssue:
+      type: object
+      required:
+        - severity
+        - code
+        - title
+        - description
+      properties:
+        severity:
+          type: string
+          enum:
+            - info
+            - warning
+            - error
+        code:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        revitElementId:
+          type:
+            - string
+            - "null"
+        suggestedFix:
+          type:
+            - string
+            - "null"
+    ValidationAction:
+      type: object
+      required:
+        - type
+        - target
+        - status
+      properties:
+        type:
+          type: string
+        target:
+          type: string
+        status:
+          type: string
+          enum:
+            - success
+            - skipped
+            - failed
+        message:
+          type:
+            - string
+            - "null"
+    CatalogItem:
+      type: object
+      required:
+        - id
+        - name
+        - category
+        - description
+        - status
+        - currentVersion
+        - revitCompatibility
+        - fileSize
+        - tags
+        - updatedAt
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum:
+            - active
+            - needs_review
+            - deprecated
+        currentVersion:
+          type: string
+        currentVersionId:
+          type:
+            - string
+            - "null"
+        currentRfaFileId:
+          type:
+            - string
+            - "null"
+        revitCompatibility:
+          type: string
+        fileSize:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        updatedAt:
+          type: string
+          format: date-time
+    CatalogItemDetail:
+      type: object
+      required:
+        - item
+        - versions
+      properties:
+        item:
+          $ref: "#/components/schemas/CatalogItem"
+        versions:
+          type: array
+          items:
+            $ref: "#/components/schemas/FamilyVersion"
+    FamilyVersion:
+      type: object
+      required:
+        - id
+        - catalogItemId
+        - version
+        - rfaFileId
+        - status
+        - submittedAt
+      properties:
+        id:
+          type: string
+        catalogItemId:
+          type: string
+        taskId:
+          type:
+            - string
+            - "null"
+        version:
+          type: string
+        rfaFileId:
+          type: string
+        status:
+          type: string
+          enum:
+            - submitted
+            - accepted
+            - published
+            - rejected
+            - archived
+        changelog:
+          type:
+            - string
+            - "null"
+        submittedBy:
+          type:
+            - string
+            - "null"
+        submittedAt:
+          type: string
+          format: date-time
+    PublishCatalogVersionRequest:
+      type: object
+      required:
+        - version
+        - rfaFileId
+      properties:
+        version:
+          type: string
+        rfaFileId:
+          type: string
+        taskId:
+          type:
+            - string
+            - "null"
+        changelog:
+          type:
+            - string
+            - "null"
+        submittedBy:
+          type:
+            - string
+            - "null"
+    CreateCatalogUpdateTaskRequest:
+      type: object
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+        assignedTo:
+          type:
+            - string
+            - "null"
+        dueDate:
+          type:
+            - string
+            - "null"
+          format: date
+    CatalogUpdateTaskResult:
+      type: object
+      required:
+        - taskId
+        - taskNumber
+        - catalogItemId
+      properties:
+        taskId:
+          type: string
+        taskNumber:
+          type: string
+        catalogItemId:
+          type: string

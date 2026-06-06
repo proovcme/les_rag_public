@@ -108,12 +108,17 @@ Recommended datasets:
 5. Let АТЛАС use `/api/search` for selected object context when generation is not needed.
 6. Package each product separately while keeping LES as the integration spine.
 
-## GitHub Layout
+## Repository Layout
 
-Keep the ecosystem in one GitHub account, not one monorepo:
+LES is now the umbrella repository for the boxed ecosystem. External product
+repositories can stay as public/demo mirrors, but the private LES repo owns the
+release source of truth:
 
-- `proovcme/les_rag` private LES core;
-- `proovcme/les_rag_public` public LES docs/contracts/exporters snapshot;
-- `proovcme/bim-ifc-viewers` АТЛАС and viewer packages;
-- `proovcme/Agnostis` product repository until the mechanical rename to АРТЕЛЬ;
-- future hub repo for release matrix, roadmap and cross-product install links.
+- repository root: LES runtime, API, installers and packaging;
+- `products/atlas`: АТЛАС product notes and release surface;
+- `frontend/cad_bim_viewer`: АТЛАС source viewer;
+- `standalone/cad_bim_viewer`: АТЛАС offline-ready runtime folder;
+- `products/artel`: curated АРТЕЛЬ source snapshot, backend/OpenAPI/docs and legacy Revit add-in source.
+
+Generated build output, local corpora, private IFC/RFA samples, runtime indexes,
+logs and nested repository metadata stay out of git.

@@ -37,6 +37,8 @@ def test_release_artifact_excludes_private_runtime_paths():
         ROOT / ".qdrant-initialized",
         ROOT / "legacy" / "data" / "les_metrics.db.bak",
         ROOT / "exporters" / "artifacts" / "exporters.zip",
+        ROOT / "products" / "artel" / "MyVeras.Core" / "obj" / "project.assets.json",
+        ROOT / "products" / "artel" / "MyVeras.Core" / "bin" / "Release" / "x.dll",
     ]
 
     for path in excluded:

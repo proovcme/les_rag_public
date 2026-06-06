@@ -1,0 +1,43 @@
+<Window x:Class="MyVeras.UI.Windows.RenderWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="AI Rendering" Height="500" Width="600"
+        WindowStartupLocation="CenterScreen">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        
+        <TextBlock Grid.Row="0" Text="Prompt:" FontWeight="Bold" Margin="0,0,0,5"/>
+        <TextBox Grid.Row="1" Name="PromptTextBox" Height="60" TextWrapping="Wrap" Margin="0,0,0,20"/>
+        
+        <Border Grid.Row="2" BorderBrush="Gray" BorderThickness="1" Margin="0,0,0,20">
+            <Grid>
+                <TextBlock Name="PlaceholderTextBlock" Text="Generated image will appear here" 
+                          HorizontalAlignment="Center" VerticalAlignment="Center" 
+                          Foreground="Gray" FontSize="14"/>
+                <Image Name="GeneratedImage" Stretch="Uniform" Visibility="Collapsed"/>
+            </Grid>
+        </Border>
+        
+        <StackPanel Grid.Row="3" Orientation="Vertical" Margin="0,0,0,20">
+            <TextBlock Text="Quality:" FontWeight="Bold" Margin="0,0,0,5"/>
+            <Slider Name="QualitySlider" Minimum="1" Maximum="100" Value="50" Margin="0,0,0,10"/>
+            <TextBlock Text="Style:" FontWeight="Bold" Margin="0,0,0,5"/>
+            <StackPanel Orientation="Horizontal">
+                <RadioButton Name="RealisticRadio" Content="Realistic" IsChecked="True" Margin="0,0,20,0"/>
+                <RadioButton Name="ArtisticRadio" Content="Artistic" Margin="0,0,20,0"/>
+                <RadioButton Name="ConceptualRadio" Content="Conceptual"/>
+            </StackPanel>
+        </StackPanel>
+        
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Name="GenerateButton" Content="Generate" Width="100" Height="30" Margin="0,0,10,0" Click="GenerateButton_Click"/>
+            <Button Name="CancelButton" Content="Cancel" Width="80" Height="30" Click="CancelButton_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>
