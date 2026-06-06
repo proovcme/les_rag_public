@@ -231,6 +231,8 @@ def _probe_text_like(path: Path, size_bytes: int) -> DocumentProbe:
 def _classify_doc_type(probe: DocumentProbe) -> str:
     text = f"{probe.path.name}\n{probe.text_sample}".lower()
     name = probe.path.name.lower()
+    if _is_artel_source(probe):
+        return "LEARNING_CASE"
     if _is_cad_bim_source(probe):
         return "CAD_BIM"
     if probe.suffix in EMAIL_SUFFIXES:
@@ -277,6 +279,9 @@ def _has_strong_normative_signal(text: str) -> bool:
 def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
     text = f"{' '.join(probe.path.parts)}\n{probe.text_sample}".casefold()
     name = probe.path.name.casefold()
+
+    if doc_type == "LEARNING_CASE" or _is_artel_source(probe):
+        return "ARTEL"
 
     if doc_type == "CAD_BIM" or _is_cad_bim_source(probe):
         return "CAD_BIM"
@@ -704,6 +709,8 @@ def _is_industrial_chimney_norm(text: str, name: str) -> bool:
 
 
 def _classify_content_type(probe: DocumentProbe) -> str:
+    if _is_artel_source(probe):
+        return "text"
     if _is_cad_bim_source(probe):
         return "cad_bim"
     if probe.suffix in EMAIL_SUFFIXES:
@@ -746,6 +753,17 @@ def _select_pipeline(probe: DocumentProbe, content_type: str, complexity: str) -
 def _is_cad_bim_source(probe: DocumentProbe) -> bool:
     parts = {part.casefold() for part in probe.path.parts}
     return probe.suffix in CAD_BIM_SUFFIXES or "cad_bim" in parts
+
+
+def _is_artel_source(probe: DocumentProbe) -> bool:
+    parts = {part.casefold() for part in probe.path.parts}
+    text = f"{probe.path.name}\n{probe.text_sample}".casefold()
+    return (
+        "artel" in parts
+        or "artel familylearningcase" in text
+        or "artel.family_learning_case.v1" in text
+        or ("familylearningcase" in text and ("rfa" in text or "revit" in text))
+    )
 
 
 def _text_has_table_signals(text: str) -> bool:

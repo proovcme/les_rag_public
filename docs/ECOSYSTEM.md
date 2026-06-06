@@ -88,6 +88,16 @@ Recommended datasets:
 - `VALIDATION_MEMORY_Index` for common validation failures and fixes;
 - `CAD_BIM_Index` for canonical object graphs and viewer context.
 
+Fresh installs can seed the public-safe demo case without private RFA data:
+
+```bash
+uv run python tools/seed_artel_learning_cases.py --verify-search
+```
+
+The tool writes a markdown projection under `RAG_Content/ARTEL/family_learning_cases/`,
+calls only `/api/rag/sync/ARTEL`, and verifies that `/api/search` with
+`dataset_filter="ARTEL"` returns a non-empty result.
+
 ## АТЛАС Data LES Should Index
 
 АТЛАС should keep the viewer standalone, but LES-side context should store:
@@ -103,8 +113,8 @@ Recommended datasets:
 
 1. Stabilize `/api/search` as the shared retrieval-only contract.
 2. Keep АРТЕЛЬ backend on `/api/search` for `rag-context`.
-3. Add an АРТЕЛЬ structured import contract for `FamilyLearningCase`.
-4. Add dataset routing for АРТЕЛЬ/RFA/validation memory.
+3. Keep the АРТЕЛЬ structured import contract for `FamilyLearningCase` public-safe.
+4. Add richer dataset routing for RFA recipes and validation memory when those corpora exist.
 5. Keep АТЛАС on `/api/search` for selected object context when generation is not needed.
 6. Package each product separately while keeping LES as the integration spine.
 7. Add public-safe seed data so a fresh LES install can return non-empty ARTEL context.

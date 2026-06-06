@@ -43,3 +43,9 @@ Build АРТЕЛЬ MVP hand-test package with:
 ```bash
 uv run python tools/build_artel_release.py
 ```
+
+Seed a fresh LES runtime with a public-safe АРТЕЛЬ learning case:
+
+```bash
+uv run python tools/seed_artel_learning_cases.py --verify-search
+```

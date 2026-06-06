@@ -81,6 +81,29 @@ def test_route_cad_bim_folder_to_cad_bim_index():
     assert route.pipeline == "json_graph_projection"
 
 
+def test_route_artel_learning_case_to_artel_index():
+    probe = DocumentProbe(
+        path=Path("RAG_Content/ARTEL/family_learning_cases/demo_metal_cabinet_001.md"),
+        suffix=".md",
+        size_bytes=3000,
+        text_sample=(
+            "# ARTEL FamilyLearningCase\n"
+            "Family name: ARTEL_DEMO_MetalCabinet\n"
+            "ADSK_Наименование: Шкаф управления металлический\n"
+            "RFA catalog validation FOP shared parameters"
+        ),
+        has_tables=True,
+    )
+
+    route = classify_document(probe)
+
+    assert route.doc_type == "LEARNING_CASE"
+    assert route.domain == "ARTEL"
+    assert route.dataset_name == "ARTEL_Index"
+    assert route.content_type == "text"
+    assert route.pipeline == "markdown"
+
+
 def test_route_raw_ifc_to_cad_bim_index():
     probe = DocumentProbe(
         path=Path("RAG_Content/CAD_BIM/IFC/model.ifc"),

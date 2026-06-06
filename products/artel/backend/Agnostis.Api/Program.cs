@@ -198,7 +198,7 @@ app.MapPost("/api/tasks/{taskId}/rag-context", async (
     lesRequest.Content = JsonContent.Create(new
     {
         query = question,
-        dataset_filter = request.DatasetFilter ?? "CAD_BIM",
+        dataset_filter = request.DatasetFilter ?? "ARTEL",
         top_k = request.TopK ?? 8,
         include_trace = request.IncludeTrace ?? false
     });
@@ -212,7 +212,7 @@ app.MapPost("/api/tasks/{taskId}/rag-context", async (
         return Results.Ok(new LesRagContextResult(
             Status: response.IsSuccessStatusCode ? "ok" : "upstream_error",
             TaskId: taskId,
-            DatasetFilter: request.DatasetFilter ?? "CAD_BIM",
+            DatasetFilter: request.DatasetFilter ?? "ARTEL",
             Question: question,
             LesBaseUrl: options.BaseUrl,
             HttpStatus: (int)response.StatusCode,
@@ -224,7 +224,7 @@ app.MapPost("/api/tasks/{taskId}/rag-context", async (
         return Results.Ok(new LesRagContextResult(
             Status: "unreachable",
             TaskId: taskId,
-            DatasetFilter: request.DatasetFilter ?? "CAD_BIM",
+            DatasetFilter: request.DatasetFilter ?? "ARTEL",
             Question: question,
             LesBaseUrl: options.BaseUrl,
             HttpStatus: 0,
@@ -236,7 +236,7 @@ app.MapPost("/api/tasks/{taskId}/rag-context", async (
         return Results.Ok(new LesRagContextResult(
             Status: "timeout",
             TaskId: taskId,
-            DatasetFilter: request.DatasetFilter ?? "CAD_BIM",
+            DatasetFilter: request.DatasetFilter ?? "ARTEL",
             Question: question,
             LesBaseUrl: options.BaseUrl,
             HttpStatus: 0,
@@ -498,7 +498,7 @@ static string BuildDefaultLesQuestion(FamilyTask task, FamilySpecification? spec
         : string.Join(", ", specification.Parameters.Select(parameter => parameter.Name));
 
     return
-        $"Найди похожие BIM/RFA/CAD_BIM кейсы и типовые ошибки для разработки Revit-семейства. " +
+        $"Найди похожие ARTEL/RFA кейсы и типовые ошибки для разработки Revit-семейства. " +
         $"Задание: {task.Number} {task.Title}. Категория: {task.RevitCategory ?? "не указана"}. " +
         $"Параметры спецификации: {parameterNames}. " +
         "Нужны релевантные образцы, параметры, risks и checklist для приемки.";

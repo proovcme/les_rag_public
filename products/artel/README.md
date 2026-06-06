@@ -92,6 +92,13 @@ http://127.0.0.1:5057/
 
 Подробный сценарий: [RUNBOOK_HAND_TEST.md](RUNBOOK_HAND_TEST.md).
 
+Для содержательного LES retrieval после clean install сначала посадить demo
+`FamilyLearningCase` в `ARTEL_Index` из корня LES:
+
+```bash
+uv run python tools/seed_artel_learning_cases.py --verify-search
+```
+
 Статический прототип без backend все еще можно открыть отдельно:
 
 ```bash

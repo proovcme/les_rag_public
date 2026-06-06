@@ -93,7 +93,7 @@ The stable product APIs are:
 ### Stage 5: Product Integration
 
 - АТЛАС uses `/api/search`, `/api/cad-bim/source`, `/api/cad-bim/element`, `/api/chat` only for optional Ask LES.
-- АРТЕЛЬ uses `/api/search` for task context and future structured import for `FamilyLearningCase`.
+- АРТЕЛЬ uses `/api/search` for task context and public-safe `FamilyLearningCase` seed/import into `ARTEL_Index`.
 - Revit add-ins call АРТЕЛЬ, not LES directly.
 
 ### Stage 6: Release Artifacts
@@ -157,12 +157,12 @@ Before a boxed release:
 
 1. Smoke `les-v0.1.0-linux-docker.tar.gz` on a real Docker host.
 2. Smoke Windows Docker/lite artifacts on a real Windows workstation.
-3. Add a small public-safe demo corpus/index flow so a fresh runtime can show
-   non-empty `/api/search` without full private reindex.
+3. Keep the public-safe ARTEL seed flow green on every fresh runtime:
+   `uv run python tools/seed_artel_learning_cases.py --verify-search`.
 4. Add actual Linux systemd Qdrant/model unit templates.
-5. Add ARTEL `FamilyLearningCase` import contract.
+5. Extend ARTEL `FamilyLearningCase` import from demo seed to accepted internal cases.
 6. Add hub repository README for LES / АТЛАС / АРТЕЛЬ.
-7. Add a public-safe ARTEL `FamilyLearningCase` seed corpus and import flow.
+7. Add Windows hand-test evidence for ARTEL seeded retrieval.
 
 Completed on 2026-06-06:
 
@@ -172,3 +172,4 @@ Completed on 2026-06-06:
 - LES umbrella product layout with `products/atlas` and `products/artel`;
 - repeatable `atlas-standalone.zip` build and smoke scripts.
 - repeatable `artel-mvp.zip` hand-test build script.
+- public-safe ARTEL `FamilyLearningCase` schema/example and targeted `ARTEL_Index` seed tool.

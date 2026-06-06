@@ -1176,7 +1176,7 @@ async function requestRagContext(taskId) {
   renderDetails();
   try {
     const result = await apiPost(`/api/tasks/${taskId}/rag-context`, {
-      datasetFilter: "CAD_BIM",
+      datasetFilter: "ARTEL",
       topK: 5,
       includeTrace: true,
     });

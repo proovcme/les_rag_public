@@ -250,6 +250,20 @@ async def test_search_marks_explicit_dataset_filter(dataset_state):
 
 
 @pytest.mark.asyncio
+async def test_search_resolves_artel_filter_to_artel_index(dataset_state):
+    dataset_state.datasets = [Dataset("artel", "ARTEL_Index", doc_count=1, chunk_count=1)]
+
+    result = await datasets.search(
+        datasets.SearchRequest(query="металлический шкаф управления ADSK_Наименование", dataset_filter="ARTEL", top_k=3),
+        _user=object(),
+    )
+
+    assert result["dataset_filter"] == "ARTEL"
+    assert result["dataset_ids"] == ["artel"]
+    assert result["route"]["reason"] == "explicit_filter"
+
+
+@pytest.mark.asyncio
 async def test_search_requires_query_or_question(dataset_state):
     with pytest.raises(datasets.HTTPException) as exc:
         await datasets.search(datasets.SearchRequest(), _user=object())

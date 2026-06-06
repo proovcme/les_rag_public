@@ -643,7 +643,7 @@ components:
           type:
             - string
             - "null"
-          default: CAD_BIM
+          default: ARTEL
         topK:
           type:
             - integer

@@ -8,8 +8,21 @@
 - увидеть live Backend API status;
 - увидеть live LES status;
 - увидеть seed data из backend;
-- запросить LES RAG context по заданию `task_0241`;
+- запросить LES RAG context по заданию `task_0241` через `ARTEL_Index`;
 - проверить catalog/task endpoints через `curl`.
+
+## LES seed перед тестом
+
+Если LES установлен с нуля и индекс пустой, посадить public-safe учебный кейс:
+
+```bash
+cd ../..
+uv run python tools/seed_artel_learning_cases.py --verify-search
+```
+
+Команда пишет markdown-проекцию в `RAG_Content/ARTEL/family_learning_cases/`,
+запускает только `/api/rag/sync/ARTEL` и проверяет, что `/api/search` с
+`dataset_filter="ARTEL"` вернул хотя бы один chunk.
 
 ## Запуск
 
@@ -28,7 +41,7 @@ dotnet run --project backend/Agnostis.Api --urls http://127.0.0.1:5057
 http://127.0.0.1:5057/
 ```
 
-Если LES после переустановки пустой, это не блокер для ручного UI-теста. В этом случае `LES context` должен вернуть успешный backend response с пустым retrieval result.
+Если LES после переустановки пустой, это не блокер для ручного UI-теста. Но для продуктового теста `LES context` должен идти по `dataset_filter="ARTEL"` и возвращать не пустой result после seed-команды выше.
 
 Если backend запущен на другой машине и ходит в LES по ZeroTier/LAN, `GET /api/integrations/les/status` может быть `ok`, а `POST /api/tasks/task_0241/rag-context` может вернуть `status: "upstream_error"` с `httpStatus: 401`, если для LES `/api/search` нужен API key. Это проверяет, что цепочка АРТЕЛЬ -> LES работает до auth boundary. Для содержательного retrieval используйте локальный `LES_BASE_URL=http://127.0.0.1:8050`, trusted network или задайте `LES_API_KEY`.
 
@@ -64,4 +77,4 @@ python3 tools/smoke_artel_hand_test.py --base-url http://127.0.0.1:5057
 - Данные in-memory, после restart изменения сбрасываются.
 - OpenRouter endpoint пока contract placeholder.
 - Revit add-in остается legacy source snapshot.
-- LES может быть `degraded/empty` после clean install; для полноценного RAG нужна seed-база `FamilyLearningCase`.
+- LES может быть `degraded/empty` после clean install; минимальная seed-база `FamilyLearningCase` уже есть, но реальные accepted RFA cases нужно добавлять отдельно.

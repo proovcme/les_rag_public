@@ -78,12 +78,15 @@ Default LES payload:
 
 ```json
 {
-  "query": "Найди похожие BIM/RFA/CAD_BIM кейсы...",
-  "dataset_filter": "CAD_BIM",
+  "query": "Найди похожие ARTEL/RFA кейсы...",
+  "dataset_filter": "ARTEL",
   "top_k": 8,
   "include_trace": false
 }
 ```
+
+For CAD/BIM object context АРТЕЛЬ can explicitly request `dataset_filter="CAD_BIM"`,
+but the default task/family context is `ARTEL`.
 
 ## CAD/BIM ingestion path
 
@@ -114,6 +117,16 @@ For АРТЕЛЬ, LES should index:
 - RFA-derived JSON summaries;
 - recipes and archetypes;
 - CAD/BIM object graphs where relevant.
+
+Public-safe seed:
+
+```bash
+uv run python tools/seed_artel_learning_cases.py --verify-search
+```
+
+This creates `RAG_Content/ARTEL/family_learning_cases/demo_metal_cabinet_001.md`,
+syncs only `ARTEL_Index`, and verifies non-empty `/api/search` for
+`dataset_filter="ARTEL"`.
 
 This gives АРТЕЛЬ retrieval over:
 
