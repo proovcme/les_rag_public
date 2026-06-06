@@ -323,6 +323,23 @@ Next proof step: run the autorun command from the visible Legion desktop, or
 open Revit and click `External Tools -> ARTEL Family Validate`, then ingest the
 resulting `validation_*.json` with `tools/ingest_artel_validation_report.py`.
 
+The macOS-side orchestrator for that proof is:
+
+```bash
+python3 tools/run_artel_legion_revit_validation.py \
+  --artel-url http://127.0.0.1:5057 \
+  --task-id task_0241 \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --verify-search
+```
+
+On 2026-06-06 this command was smoke-tested against the locked Legion desktop.
+It returned `status: "locked"`, confirmed Revit 2025 and the ARTEL add-in
+exist, and stopped before starting Revit. The implementation uses
+PowerShell `-EncodedCommand` and tolerant stdout decoding because Windows SSH
+can otherwise break quoted paths and localized `quser` output.
+
 ## Backend Archive Bulk Smoke 2026-06-06
 
 The Revit desktop was still locked, so no real `validation_*.json` could be

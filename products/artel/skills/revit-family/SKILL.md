@@ -198,6 +198,19 @@ If this exits with a `LogonUI.exe`/lock-screen error, unlock the Legion Windows
 desktop first; Revit API autorun does not produce validation reports from the
 lock screen.
 
+Run the full Legion autorun/copy/ingest path from macOS. This first diagnoses
+the Legion desktop and exits with `status: "locked"` if Revit cannot be
+started interactively:
+
+```bash
+python3 tools/run_artel_legion_revit_validation.py \
+  --artel-url http://127.0.0.1:5057 \
+  --task-id task_0241 \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --verify-search
+```
+
 Ingest a Revit add-in validation report into ARTEL backend and LES:
 
 ```bash
