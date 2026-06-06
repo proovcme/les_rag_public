@@ -76,6 +76,13 @@ python3 tools/seed_artel_backend_reports.py \
   --verify-search
 ```
 
+Smoke 2026-06-06: архивный backend report на Legion был отдан через
+`GET /api/validation-reports`, превращен backend endpoint
+`GET /api/validation-reports/{reportId}/learning-case` в
+`FamilyLearningCase`, затем `tools/seed_artel_backend_reports.py --no-sync`
+записал LES markdown projection во временный runtime. Live `ARTEL_Index` при
+этом не загрязнялся синтетическим report.
+
 Это закрывает минимальную петлю:
 
 ```text

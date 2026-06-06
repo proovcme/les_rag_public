@@ -322,3 +322,29 @@ Observed remote limits:
 Next proof step: run the autorun command from the visible Legion desktop, or
 open Revit and click `External Tools -> ARTEL Family Validate`, then ingest the
 resulting `validation_*.json` with `tools/ingest_artel_validation_report.py`.
+
+## Backend Archive Bulk Smoke 2026-06-06
+
+The Revit desktop was still locked, so no real `validation_*.json` could be
+created from Revit. The backend archive side of the loop was verified with the
+synthetic persistence report already stored on Legion:
+
+- foreground backend command:
+  `dotnet .\Agnostis.Api.dll` from
+  `%TEMP%\artel-backend-persist\backend\Agnostis.Api\bin\Release\net8.0`;
+- environment:
+  `ARTEL_DATA_DIR=%TEMP%\artel-backend-persist\runtime-data`,
+  `ASPNETCORE_URLS=http://127.0.0.1:5070`;
+- SSH tunnel:
+  `127.0.0.1:15070 -> legion:127.0.0.1:5070`;
+- `GET /health` returned `ok`;
+- `GET /api/validation-reports?taskId=task_0241` returned the archived report
+  `report_1dd96d4690ac4eee9c78b8605cfaac89`;
+- `GET /api/validation-reports/{reportId}/learning-case` returned
+  `case_id = validation_report_1dd96d4690ac4eee9c78b8605cfaac89`;
+- local `tools/seed_artel_backend_reports.py --no-sync --limit 1` wrote a
+  markdown projection to a temporary runtime under
+  `RAG_Content/ARTEL/family_learning_cases/`.
+
+This proves the archived-report-to-learning-case bridge. It does not replace
+the remaining real Revit proof because the source report was synthetic.

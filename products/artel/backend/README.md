@@ -127,6 +127,23 @@ Persistence smoke на `legion` выполнен 2026-06-06:
 - `GET /api/validation-reports?taskId=task_0241` вернул восстановленный report
 - `GET /api/validation-reports/{reportId}/learning-case` вернул `case_id = validation_{reportId}`
 
+Bulk seed smoke на `legion` выполнен 2026-06-06 через SSH tunnel:
+
+- backend запущен из собранного `Agnostis.Api.dll` с `ARTEL_DATA_DIR` на архив
+  persistence smoke;
+- локальный tunnel `127.0.0.1:15070 -> legion:127.0.0.1:5070` вернул
+  `/health` и `GET /api/validation-reports?taskId=task_0241`;
+- `tools/seed_artel_backend_reports.py --no-sync --limit 1` написал
+  `RAG_Content/ARTEL/family_learning_cases/validation_report_*.md` во временный
+  runtime;
+- live `ARTEL_Index` не менялся: проверка осталась на `67` files и `28258`
+  chunks, Qdrant points match SQLite chunks.
+
+Операционный нюанс: одноразовый `dotnet run`/`Start-Process` из короткой SSH
+команды на Legion может завершиться после первого health-check. Для удаленного
+smoke либо держите `dotnet Agnostis.Api.dll` в foreground SSH-сессии, либо
+ставьте backend как нормальный Windows service/scheduled process.
+
 LES smoke через ZeroTier:
 
 - `LES_BASE_URL=http://10.195.146.98:8050`
