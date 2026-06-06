@@ -212,6 +212,20 @@ def load_learning_case_for_report(
     )
 
 
+def attach_projection_metadata(case: dict[str, Any], *, report_path: Path, raw_report: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(case)
+    metadata = dict(enriched.get("projection_metadata") or {})
+    metadata.update(
+        {
+            "projection_source": "revit_addin_validation_report",
+            "validation_report_path": str(report_path),
+            "validation_report_schema": _as_string(_get(raw_report, "schema"), "unknown"),
+        }
+    )
+    enriched["projection_metadata"] = metadata
+    return enriched
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Post an ARTEL Revit validation JSON report and seed the resulting FamilyLearningCase into LES."
@@ -236,7 +250,8 @@ def main() -> int:
 
     report_path = resolve_report_path(args.report)
     print(f"report={report_path}")
-    payload = normalize_validation_report(load_report(report_path))
+    raw_report = load_report(report_path)
+    payload = normalize_validation_report(raw_report)
     print(f"normalized_status={payload['status']}")
     print(f"normalized_issues={len(payload['issues'])}")
     print(f"normalized_actions={len(payload['actions'])}")
@@ -257,6 +272,7 @@ def main() -> int:
     if errors:
         raise SystemExit("Invalid FamilyLearningCase from ARTEL backend: " + "; ".join(errors))
 
+    case = attach_projection_metadata(case, report_path=report_path, raw_report=raw_report)
     written = learning_cases.write_projection(case, args.runtime_root)
     print(f"projection={written}")
 

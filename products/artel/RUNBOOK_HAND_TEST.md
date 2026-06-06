@@ -303,6 +303,9 @@ python3 tools/smoke_artel_expert_loop.py \
 До появления настоящего Revit-derived `validation_*.json` этот gate должен
 падать: текущие `LEARNING_CASE` projections классифицируются как `demo` и
 `smoke_or_pending`, а не как реальный Revit validation case.
+Реальный case определяется не по общим словам, а по projection metadata,
+которую ставит `tools/ingest_artel_validation_report.py`:
+`Projection source: revit_addin_validation_report`.
 
 Если Revit и ARTEL backend находятся на одной машине, `ARTEL Family Validate`
 сам отправляет report в backend. Если submit не был включен или backend был

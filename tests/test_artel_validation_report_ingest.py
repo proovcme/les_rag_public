@@ -91,3 +91,22 @@ def test_resolve_report_path_picks_newest_glob_match(tmp_path):
     os.utime(new_report, (2, 2))
 
     assert ingest.resolve_report_path(str(tmp_path / "validation_*.json")) == new_report
+
+
+def test_attach_projection_metadata_marks_revit_addin_report(tmp_path):
+    report = tmp_path / "validation_001.json"
+    case = {"case_id": "case_001", "projection_metadata": {"existing": "kept"}}
+
+    enriched = ingest.attach_projection_metadata(
+        case,
+        report_path=report,
+        raw_report={"schema": "artel.revit_family_validation_report.v1"},
+    )
+
+    assert enriched["projection_metadata"] == {
+        "existing": "kept",
+        "projection_source": "revit_addin_validation_report",
+        "validation_report_path": str(report),
+        "validation_report_schema": "artel.revit_family_validation_report.v1",
+    }
+    assert "projection_metadata" not in case or case["projection_metadata"] == {"existing": "kept"}

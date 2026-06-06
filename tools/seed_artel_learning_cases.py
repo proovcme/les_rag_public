@@ -103,6 +103,15 @@ def render_learning_case_markdown(case: dict[str, Any]) -> str:
         if summary:
             source_lines.append(f"{kind}: {summary}")
 
+    metadata = case.get("projection_metadata") or {}
+    metadata_lines = []
+    if isinstance(metadata, dict):
+        for key in sorted(metadata):
+            value = metadata.get(key)
+            if value is not None and str(value).strip():
+                label = str(key).replace("_", " ").capitalize()
+                metadata_lines.append(f"{label}: {value}")
+
     sections = [
         "# ARTEL FamilyLearningCase",
         "",
@@ -120,6 +129,9 @@ def render_learning_case_markdown(case: dict[str, Any]) -> str:
         "",
         "## Source Summaries",
         _bullet_lines(source_lines),
+        "",
+        "## Projection Metadata",
+        _bullet_lines(metadata_lines),
         "",
         "## Approved Specification",
         "Types:",

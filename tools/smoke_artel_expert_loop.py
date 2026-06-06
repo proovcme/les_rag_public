@@ -136,6 +136,8 @@ def search_case(proxy_url: str, case: dict[str, str], *, timeout: float, top_k: 
 
 def classify_learning_case(text: str) -> str:
     lowered = text.lower()
+    if "projection source: revit_addin_validation_report" in lowered:
+        return "candidate_real_revit"
     if "visibility: public_demo" in lowered or "case id: demo_" in lowered:
         return "demo"
     smoke_markers = [
@@ -147,8 +149,6 @@ def classify_learning_case(text: str) -> str:
     ]
     if any(marker in lowered for marker in smoke_markers):
         return "smoke_or_pending"
-    if "validation_report:" in lowered and "## validation report" in lowered:
-        return "candidate_real_revit"
     return "unknown"
 
 

@@ -80,7 +80,11 @@ def test_learning_case_projection_check_classifies_demo_smoke_and_real_candidate
     case_dir.mkdir(parents=True)
     (case_dir / "demo.md").write_text("Case ID: demo_1\nVisibility: public_demo\n", encoding="utf-8")
     (case_dir / "smoke.md").write_text("Source: smoke validation report\nOpen family in Revit\n", encoding="utf-8")
-    (case_dir / "real.md").write_text("validation_report: Revit output\n## Validation Report\nStatus: pass\n", encoding="utf-8")
+    (case_dir / "real.md").write_text(
+        "## Projection Metadata\n- Projection source: revit_addin_validation_report\n"
+        "## Validation Report\nStatus: pass\n",
+        encoding="utf-8",
+    )
 
     result = smoke.learning_case_projection_check(tmp_path)
 

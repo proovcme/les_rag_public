@@ -395,7 +395,9 @@ python3 tools/smoke_artel_expert_loop.py \
 
 This gate is expected to fail until a non-demo, non-smoke
 `validation_*.json` from Revit is ingested and projected back into
-`RAG_Content/ARTEL/family_learning_cases/`.
+`RAG_Content/ARTEL/family_learning_cases/`. The strict classifier looks for
+the explicit projection metadata written by `tools/ingest_artel_validation_report.py`:
+`Projection source: revit_addin_validation_report`.
 
 ## Backend Archive Bulk Smoke 2026-06-06
 

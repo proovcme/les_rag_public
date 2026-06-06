@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_artel_learning_case_projection_contains_retrieval_terms():
     case = seed.load_case(ROOT / "examples" / "artel" / "family_learning_case.metal_cabinet.json")
+    case["projection_metadata"] = {"projection_source": "test_source", "validation_report_schema": "test.schema"}
     markdown = seed.render_learning_case_markdown(case)
 
     assert "ARTEL FamilyLearningCase" in markdown
@@ -16,6 +17,8 @@ def test_artel_learning_case_projection_contains_retrieval_terms():
     assert "Known failures:" in markdown
     assert "FOP profile: ARTEL_DEMO_FOP_v1" in markdown
     assert "Шкаф управления металлический" in markdown
+    assert "Projection source: test_source" in markdown
+    assert "Validation report schema: test.schema" in markdown
 
 
 def test_artel_learning_case_projection_writes_under_artel_rag_content(tmp_path):
