@@ -245,7 +245,9 @@ cd C:\Users\Oleg\AppData\Local\Temp\artel-current-autorun
 
 С Mac можно запустить весь Legion -> report -> ingest контур одной командой.
 Скрипт сначала проверяет lock screen и не стартует Revit, если desktop не
-interactive:
+interactive. Для полного ingest перед запуском должен отвечать ARTEL backend
+`/health`; если backend недоступен, скрипт выйдет со
+`status: "artel_backend_unavailable"` и code `3`, не тратя Revit-прогон:
 
 ```bash
 python3 tools/run_artel_legion_revit_validation.py \
@@ -260,6 +262,7 @@ python3 tools/run_artel_legion_revit_validation.py \
 code `2`. После разблокировки тот же скрипт запускает Revit autorun, копирует
 `validation_*.json` в `local_private_archive/artel_validation_reports/`,
 отправляет report в ARTEL backend и синхронизирует `LEARNING_CASE` в LES.
+Для одной диагностики Legion без backend используйте `--no-ingest`.
 
 Если Revit и ARTEL backend находятся на одной машине, `ARTEL Family Validate`
 сам отправляет report в backend. Если submit не был включен или backend был

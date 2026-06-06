@@ -200,7 +200,9 @@ lock screen.
 
 Run the full Legion autorun/copy/ingest path from macOS. This first diagnoses
 the Legion desktop and exits with `status: "locked"` if Revit cannot be
-started interactively:
+started interactively. If ingest or add-in submit is enabled, it also checks
+ARTEL backend `/health` before starting Revit and exits with
+`status: "artel_backend_unavailable"` when the backend is down:
 
 ```bash
 python3 tools/run_artel_legion_revit_validation.py \
@@ -210,6 +212,8 @@ python3 tools/run_artel_legion_revit_validation.py \
   --proxy-url http://127.0.0.1:8050 \
   --verify-search
 ```
+
+Use `--no-ingest` for a diagnostic-only Legion check.
 
 Ingest a Revit add-in validation report into ARTEL backend and LES:
 

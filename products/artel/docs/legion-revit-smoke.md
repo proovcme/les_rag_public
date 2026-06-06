@@ -340,6 +340,11 @@ exist, and stopped before starting Revit. The implementation uses
 PowerShell `-EncodedCommand` and tolerant stdout decoding because Windows SSH
 can otherwise break quoted paths and localized `quser` output.
 
+Before spending a real unlocked Revit run, the orchestrator checks ARTEL
+backend `/health` when ingest or add-in submit is enabled. If `127.0.0.1:5057`
+is not running, it returns `status: "artel_backend_unavailable"` with exit code
+`3`; use `--no-ingest` for diagnosis-only checks.
+
 ## Backend Archive Bulk Smoke 2026-06-06
 
 The Revit desktop was still locked, so no real `validation_*.json` could be

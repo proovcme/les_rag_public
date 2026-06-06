@@ -9,6 +9,8 @@ import os
 import shlex
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -110,6 +112,29 @@ def run_autorun(args: argparse.Namespace) -> dict[str, Any]:
     return parse_json_object(result.stdout)
 
 
+def check_artel_backend(artel_url: str, *, timeout: float) -> dict[str, Any]:
+    url = f"{artel_url.rstrip('/')}/health"
+    request = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read().decode("utf-8", errors="replace")
+    except (OSError, TimeoutError, urllib.error.URLError) as exc:
+        return {"ok": False, "url": url, "error": str(exc)}
+    payload: dict[str, Any] = {}
+    if body.strip():
+        try:
+            decoded = json.loads(body)
+            if isinstance(decoded, dict):
+                payload = decoded
+        except json.JSONDecodeError:
+            payload = {"raw": body[:500]}
+    return {
+        "ok": payload.get("status") == "ok",
+        "url": url,
+        "response": payload,
+    }
+
+
 def copy_report(host: str, remote_report: str, local_dir: Path) -> Path:
     local_dir.mkdir(parents=True, exist_ok=True)
     source = f"{host}:{windows_path_for_scp(remote_report)}"
@@ -170,6 +195,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--les-api-key", default=os.getenv("LES_ADMIN_KEY", ""))
     parser.add_argument("--required-shared-parameters", default="ADSK_Наименование")
     parser.add_argument("--diagnose-timeout-sec", type=float, default=30.0)
+    parser.add_argument("--artel-health-timeout-sec", type=float, default=5.0)
     parser.add_argument("--revit-timeout-sec", type=int, default=420)
     parser.add_argument("--search-timeout-sec", type=float, default=120.0)
     parser.add_argument("--poll-sec", type=float, default=5.0)
@@ -178,6 +204,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--skip-lock-screen-check", action="store_true", help="Pass through to the Revit autorun script.")
     parser.add_argument("--keep-existing-reports", action="store_true")
     parser.add_argument("--no-ingest", action="store_true", help="Copy the report only; do not POST it to ARTEL/LES.")
+    parser.add_argument("--skip-artel-health-check", action="store_true")
     parser.add_argument("--no-sync", action="store_true", help="Pass through to ingest script.")
     parser.add_argument("--verify-search", action="store_true", help="Verify report projection through LES search after sync.")
     return parser
@@ -204,6 +231,15 @@ def main() -> int:
             summary["message"] = "Legion desktop is not interactive; unlock Windows before Revit autorun."
             print(json.dumps(summary, ensure_ascii=False, indent=2))
             return 2
+
+        if (args.submit_to_artel or not args.no_ingest) and not args.skip_artel_health_check:
+            artel_health = check_artel_backend(args.artel_url, timeout=args.artel_health_timeout_sec)
+            summary["artel_backend"] = artel_health
+            if not artel_health["ok"]:
+                summary["status"] = "artel_backend_unavailable"
+                summary["message"] = "ARTEL backend is not healthy; start backend before Revit autorun/ingest."
+                print(json.dumps(summary, ensure_ascii=False, indent=2))
+                return 3
 
         autorun = run_autorun(args)
         summary["autorun"] = autorun

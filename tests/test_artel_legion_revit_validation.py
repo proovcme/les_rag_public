@@ -1,5 +1,6 @@
 import base64
 import subprocess
+import urllib.error
 
 from tools import run_artel_legion_revit_validation as runner
 
@@ -72,3 +73,43 @@ def test_copy_report_uses_scp_windows_path(monkeypatch, tmp_path):
             str(tmp_path / "validation_1.json"),
         ]
     ]
+
+
+def test_check_artel_backend_accepts_ok_health(monkeypatch):
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b'{"status":"ok"}'
+
+    def fake_urlopen(request, timeout):
+        assert request.full_url == "http://127.0.0.1:5057/health"
+        assert timeout == 2
+        return FakeResponse()
+
+    monkeypatch.setattr(runner.urllib.request, "urlopen", fake_urlopen)
+
+    health = runner.check_artel_backend("http://127.0.0.1:5057", timeout=2)
+
+    assert health == {
+        "ok": True,
+        "url": "http://127.0.0.1:5057/health",
+        "response": {"status": "ok"},
+    }
+
+
+def test_check_artel_backend_reports_connection_error(monkeypatch):
+    def fake_urlopen(request, timeout):
+        raise urllib.error.URLError("connection refused")
+
+    monkeypatch.setattr(runner.urllib.request, "urlopen", fake_urlopen)
+
+    health = runner.check_artel_backend("http://127.0.0.1:5057", timeout=2)
+
+    assert health["ok"] is False
+    assert health["url"] == "http://127.0.0.1:5057/health"
+    assert "connection refused" in health["error"]
