@@ -10,7 +10,6 @@ import argparse
 import json
 import os
 import re
-import shutil
 import signal
 import subprocess
 import sys
@@ -25,6 +24,8 @@ from typing import Iterable, TextIO
 ROOT = Path(__file__).resolve().parents[1]
 LAUNCH_AGENTS = Path.home() / "Library" / "LaunchAgents"
 GUI_DOMAIN = f"gui/{os.getuid()}"
+LEGACY_ROOT_PLACEHOLDER = "/Users/ovc/Projects/LES_v2"
+ROOT_PLACEHOLDER = "__LES_ROOT__"
 
 
 @dataclass(frozen=True)
@@ -346,14 +347,21 @@ def _repo_plist_path(service: ServiceDef) -> Path:
     return ROOT / service.repo_plist
 
 
+def _render_plist_template(src: Path) -> str:
+    text = src.read_text(encoding="utf-8")
+    root = str(ROOT)
+    return text.replace(ROOT_PLACEHOLDER, root).replace(LEGACY_ROOT_PLACEHOLDER, root)
+
+
 def _install(service: ServiceDef) -> None:
     src = _repo_plist_path(service)
     if not src.exists():
         raise FileNotFoundError(f"missing plist template: {src}")
     LAUNCH_AGENTS.mkdir(parents=True, exist_ok=True)
     dst = _agent_path(service)
-    if not dst.exists() or src.read_bytes() != dst.read_bytes():
-        shutil.copy2(src, dst)
+    rendered = _render_plist_template(src).encode("utf-8")
+    if not dst.exists() or rendered != dst.read_bytes():
+        dst.write_bytes(rendered)
 
 
 def _launchctl_print(service: ServiceDef) -> subprocess.CompletedProcess[str]:
