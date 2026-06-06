@@ -1,9 +1,11 @@
 # 🖥️ Инфраструктура Л.Е.С. v2.0+ (Mac Mini M4 + host LaunchAgents + MLX)
 
-**Статус:** 🟢 Активна, local consistency closed | **Обновлено:** 02.06.2026 | **Версия:** 4.2 hybrid structural-semantic runtime + Speckle BIM/CAD bridge
+**Статус:** 🟢 Активна, local consistency closed | **Обновлено:** 07.06.2026 | **Версия:** 4.3 hybrid structural-semantic runtime + CAD/BIM + ARTEL Revit family loop
 **Архитектура:** Headless Mac Mini M4 / 24 GB + ZeroTier P2P + host LaunchAgents (Qdrant + Proxy + UI + optional indexer + П.А.У.К.) + MLX Native Host with Core ML embedder and rules/Core ML validation paths. Docker Desktop/OrbStack удалены из штатного контура. Ollama сохранён как резерв.
 
 **Live baseline 02.06.2026:** local proxy health `ok`: `1212` files, `1212 indexed`, `0 pending`, `0 errors`, `143150` SQLite chunks, `143150` Qdrant points, `points_match_sqlite_chunks=true`. Closeout выполнен под SQLite/Qdrant backup, stale Qdrant points удалены, duplicate-basename pending selection исправлен, Speckle CAD/BIM projection проиндексирован. FIRE/HVAC acceptance gate проходит `16/16`; latest full pytest `365 passed`. External `https://les.ovc.me` отвечает `/` и `/api/health` `200`. Speckle bridge настроен на `https://speckle.ovc.me`; после token setup live probe отвечает `status=ok`, `http_status=200`, `api_token_set=true`, а `502/503/504` остаются классификацией sleeping для будущего сна сервера. Speckle server на Lenovo Legion обновлен до `2.31.5/custom` и patched только для текущего DUI schema compatibility: `Workspace.logoUrl`, `ModelPermissionChecks.canCreateIngestion`, `WorkspacePermissionChecks.canAccessHelpCenter`, disabled-workspaces empty fallback. AutoCAD/Revit/Navisworks V3 connector publish не считается рабочим путем на community self-hosted сервере: V3 connectors требуют workspace-based projects, а open-source/self-hosted workspace module здесь недоступен. CAD/BIM import поддерживает профили AutoCAD/DWG, Revit/RVT, IFC и Excel/Power BI properties через `data/cad_bim_graph.db`, если объектный граф уже извлечен; project `36` / model `шпалерная 36_отсоединено_oleg` импортирован как `432aa0b18f2a` и проиндексирован в `CAD_BIM_Index`.
+
+**ARTEL/Revit baseline 07.06.2026:** `ARTEL_Index` чистый после загрузки family guides, FOP/shared parameters, Revit model/API docs, Revit 2025 SDK/CHM HTML shards and learning cases: `67` files, `28258` chunks, `0` pending, `0` errors, Qdrant points match SQLite chunks. На Legion установлен Revit 2025 и `ARTEL.Revit.FamilyFactory` add-in; backend-only managed tunnel smoke проходит через `127.0.0.1:15057 -> legion:127.0.0.1:5057`. Текущий readiness status: `ready_except_revit_locked`. До разблокировки Windows desktop не запускать Revit autorun как доказательство: locked session produces no validation report.
 
 ## 📋 Узлы сети (ZeroTier)
 | Устройство | Роль | IP-адрес | Доступ | ОС |
@@ -150,6 +152,23 @@ launchctl kickstart -k gui/$(id -u)/me.ovc.les.proxy
 Через UI С.О.В.У.Ш.К.А. → вкладка **Датасеты** → кнопка `🔄 Загрузить в индекс` напротив нужной папки.
 Или через API: `POST /api/rag/sync/NTD`
 
+### 5. ARTEL/Revit readiness
+```bash
+python3 tools/smoke_artel_expert_loop.py \
+  --backend-only-smoke \
+  --check-legion
+```
+
+Нормальный статус до ручной разблокировки Legion: `ready_except_revit_locked`.
+После получения настоящего Revit report финальный gate:
+
+```bash
+python3 tools/smoke_artel_expert_loop.py \
+  --require-real-revit-learning-case \
+  --backend-only-smoke \
+  --check-legion
+```
+
 ## 🛡️ Безопасность
 | Уровень | Мера | Статус |
 |---|---|---|
@@ -180,8 +199,9 @@ launchctl kickstart -k gui/$(id -u)/me.ovc.les.proxy
 | 01.06.2026 | Local consistency closeout: `1211/1211` indexed, `0 pending`, `0 errors`, `142193` SQLite chunks = `142193` Qdrant points, stale Qdrant repair under backup/snapshot, duplicate-basename parser fix, validator live default `rules`, `structured_rules` schema ready but `0` rows before targeted population. |
 | 01.06.2026 | External contour restored: VPS Caddy left intact, LES reverse tunnel publishes Mac `8050/8051` to VPS `127.0.0.1:8050/8051`, neighbour tunnel `127.0.0.1:22020` untouched, public smoke `12/12`. |
 | 02.06.2026 | Speckle `speckle.ovc.me` updated to `2.31.5/custom`; DUI compatibility shim added for `logoUrl`, `canCreateIngestion`, `canAccessHelpCenter`, and disabled workspace list fallback. External GraphQL introspection and `WorkspaceListQuery` return `errors=null`, but V3 connector publish remains blocked by missing workspace-enabled server support. Direct presigned upload route through ingress works; local self-hosted importer rejects DWG/DXF, so IFC/extracted object graph is the supported LES path. |
+| 07.06.2026 | ARTEL/Revit family loop documented as ready except locked Legion desktop: `ARTEL_Index` health clean, SDK/CHM shards indexed, managed Legion backend/tunnel smoke green, strict real Revit learning-case gate pending real `validation_*.json`. |
 
-📅 **Документация актуальна на:** 02.06.2026
+📅 **Документация актуальна на:** 07.06.2026
 
 
 ## 🧭 Host runtime v4.1 (Обновлено 01.06.2026)

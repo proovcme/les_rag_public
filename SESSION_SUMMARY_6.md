@@ -177,3 +177,74 @@
   self-contained `win-x64` EXE with embedded AutoCAD/Revit/Navisworks payloads.
   It supports `--only`, `--skip` and config seeding flags (`--les-url`,
   `--custom-url`, `--local-output-dir`, `--api-key`, `--timeout-sec`).
+
+## Live Notes 07.06.2026 ARTEL/Revit Closeout
+
+Сессия закрыта как documentation/git closeout, без попытки протащить еще один
+Revit-прогон через заблокированный Legion desktop.
+
+Сделано:
+
+- LES подготовлен как Revit/RFA retrieval-база для АРТЕЛИ: `ARTEL_Index`
+  содержит `FAMILY_GUIDE`, `FOP_PROFILE`, `REVIT_MODEL_GUIDE`,
+  `REVIT_API_REFERENCE`, `REVIT_API_SYMBOL_MAP`, `REVIT_API_SDK_DOC` и
+  `LEARNING_CASE`.
+- Индекс чистый: `67` files, `28258` chunks, `0` pending, `0` errors; Qdrant
+  points match SQLite chunks.
+- Revit API 2025 CHM/HTML из локального/private `ADN-DevTech/revit-api-chms`
+  indexed как SDK markdown shards, а не как 28k отдельных файлов.
+- `ARTEL.Revit.FamilyFactory` установлен на Legion/Revit 2025 и готов к
+  validation flow: extract, required shared/FOP parameters, Revit warnings,
+  rollback flex test, optional scratch-project load test.
+- ARTEL backend persistence/report archive path проверен; bulk seed из backend
+  reports в LES работает для archived/synthetic report.
+- `tools/run_artel_legion_revit_validation.py` умеет диагностировать lock
+  screen, ждать `--wait-for-interactive`, поднимать managed ARTEL backend на
+  Legion, открывать tunnel `127.0.0.1:15057 -> legion:127.0.0.1:5057`,
+  проверять backend `/health`, копировать report и запускать ingest.
+- `tools/smoke_artel_expert_loop.py --backend-only-smoke --check-legion`
+  возвращает ожидаемый здоровый статус до разблокировки: `ready_except_revit_locked`.
+- Strict gate
+  `tools/smoke_artel_expert_loop.py --require-real-revit-learning-case ...`
+  намеренно не должен проходить до настоящего Revit-derived
+  `validation_*.json`; classifier ищет projection metadata
+  `Projection source: revit_addin_validation_report`.
+- Добавлен Windows-side helper
+  `products/artel/wait-family-factory-revit-autorun.ps1`: он ждет исчезновения
+  `LogonUI.exe`, затем запускает `run-family-factory-revit-autorun.ps1`;
+  если desktop не стал interactive, возвращает `status = locked_timeout`.
+- Обновлены README, infrastructure, modernization plan, ARTEL runbook,
+  Legion smoke doc, repo skill и локальный Codex skill.
+
+Не сделано:
+
+- Не получен настоящий Revit `validation_*.json`: Legion desktop оставался
+  locked, а locked OpenSSH/Scheduled Task launches уже доказанно не создают
+  нормальный report.
+- Не закрыт strict acceptance gate `--require-real-revit-learning-case`.
+- Не исправлялась возможная оптимизация XLSX/openpyxl parser через
+  `iter_rows(values_only=True)`: это отдельная задача, ее надо делать после
+  точного поиска функции и regression test на большой `.xlsx`.
+- Не делался новый public release и не менялись сайты в этом closeout.
+
+Завтрашний старт после разблокировки Legion:
+
+```bash
+python3 tools/run_artel_legion_revit_validation.py \
+  --wait-for-interactive \
+  --wait-timeout-sec 1800 \
+  --use-legion-artel-backend \
+  --task-id task_0241 \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --verify-search
+```
+
+Финальная приемка после ingest настоящего report:
+
+```bash
+python3 tools/smoke_artel_expert_loop.py \
+  --require-real-revit-learning-case \
+  --backend-only-smoke \
+  --check-legion
+```

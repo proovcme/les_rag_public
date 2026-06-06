@@ -349,6 +349,21 @@ Use `--wait-for-interactive --wait-timeout-sec 1800` to start the command
 before unlocking Legion and let it continue automatically once the desktop
 diagnostic becomes `interactive`.
 
+A Windows-side waiter was also copied to the current Legion autorun folder for
+the same purpose:
+
+```powershell
+cd C:\Users\Oleg\AppData\Local\Temp\artel-current-autorun
+.\wait-family-factory-revit-autorun.ps1 `
+  -FamilyPath "C:\Program Files\Autodesk\Revit 2025\Samples\rac_basic_sample_family.rfa" `
+  -WaitTimeoutSec 1800 `
+  -RevitTimeoutSec 420
+```
+
+It does not bypass the lock screen. It only prevents a premature Revit launch:
+while `LogonUI.exe` is present it waits, and if the desktop never becomes
+interactive it exits with `status = locked_timeout`.
+
 On 2026-06-07 the managed backend-only path was verified without touching
 Revit:
 

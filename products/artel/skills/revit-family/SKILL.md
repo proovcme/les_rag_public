@@ -198,6 +198,16 @@ If this exits with a `LogonUI.exe`/lock-screen error, unlock the Legion Windows
 desktop first; Revit API autorun does not produce validation reports from the
 lock screen.
 
+Optional Windows-side wait-then-autorun helper:
+
+```powershell
+cd C:\Users\Oleg\AppData\Local\Temp\artel-current-autorun
+.\wait-family-factory-revit-autorun.ps1 `
+  -FamilyPath "C:\Program Files\Autodesk\Revit 2025\Samples\rac_basic_sample_family.rfa" `
+  -WaitTimeoutSec 1800 `
+  -RevitTimeoutSec 420
+```
+
 Run the full Legion autorun/copy/ingest path from macOS. This first diagnoses
 the Legion desktop and exits with `status: "locked"` if Revit cannot be
 started interactively. If ingest or add-in submit is enabled, it also checks

@@ -277,6 +277,21 @@ python3 tools/run_artel_legion_revit_validation.py \
   --verify-search
 ```
 
+Если удобнее запускать ожидание на самой Windows-машине, рядом с autorun
+launcher есть локальный waiter:
+
+```powershell
+cd C:\Users\Oleg\AppData\Local\Temp\artel-current-autorun
+.\wait-family-factory-revit-autorun.ps1 `
+  -FamilyPath "C:\Program Files\Autodesk\Revit 2025\Samples\rac_basic_sample_family.rfa" `
+  -WaitTimeoutSec 1800 `
+  -RevitTimeoutSec 420
+```
+
+Он проверяет `LogonUI.exe`, ждёт interactive desktop и только после этого
+вызывает `run-family-factory-revit-autorun.ps1`. Если Legion остается locked до
+таймаута, результат будет `status: "locked_timeout"` и exit code `2`.
+
 Проверить только управляемый backend/tunnel без запуска Revit:
 
 ```bash

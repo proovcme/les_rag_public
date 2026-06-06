@@ -1,8 +1,18 @@
 # LES RAG Modernization Plan
 
-Updated: 02.06.2026
+Updated: 07.06.2026
 
 This plan now tracks the 02.06.2026 local + external baseline. The authoritative corpus has expanded to `1212` files and is closed locally: `1212 indexed`, `0 pending`, `0 errors`, `143150` SQLite chunks, `143150` Qdrant points, and `points_match_sqlite_chunks=true`. The closeout included SQLite/Qdrant backup, stale Qdrant point removal, and a duplicate-basename pending-selection fix. External `les.ovc.me` is live through the P.A.U.K. reverse SSH tunnel; public smoke passes `12/12`.
+
+07.06.2026 ARTEL/Revit update: LES is now seeded as a Revit/RFA retrieval base
+for the family factory, not yet as a fully proven Revit execution expert.
+`ARTEL_Index` contains family guides, FOP/shared-parameter profiles, Revit data
+model notes, Revit API references, Revit API symbol maps, Revit API SDK/CHM
+markdown shards and learning-case projections. The latest ARTEL readiness audit
+returns `ready_except_revit_locked`: index health is clean, managed Legion
+backend/tunnel smoke passes, but the strict real Revit learning-case gate is
+expected to fail until a validation report from an unlocked Revit desktop is
+ingested.
 
 ## Current Constraint
 
@@ -20,6 +30,11 @@ This plan now tracks the 02.06.2026 local + external baseline. The authoritative
 - Validator context windows already exist through `validation_context_windows`.
   The next step is to verify whether the selected windows are the right
   evidence, not to blindly expand the prompt.
+- ARTEL's remaining hard constraint is not retrieval. It is the Revit GUI
+  execution loop on Legion: `RevitCoreConsole.exe` is absent, OpenSSH/Scheduled
+  Task runs hit the Windows lock screen, and a real `validation_*.json` must be
+  produced from an interactive Revit 2025 session before the expert loop can be
+  called complete.
 
 ## Phase 0: Freeze And Verify
 
