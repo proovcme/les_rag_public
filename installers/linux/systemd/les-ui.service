@@ -1,0 +1,16 @@
+[Unit]
+Description=LES Sovushka Lite UI
+After=network-online.target les-proxy.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__LES_ROOT__
+EnvironmentFile=__LES_ROOT__/.env
+ExecStart=__LES_ROOT__/.venv/bin/python sovushka_ng.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+

@@ -107,3 +107,13 @@ Recommended datasets:
 4. Add dataset routing for АРТЕЛЬ/RFA/validation memory.
 5. Let АТЛАС use `/api/search` for selected object context when generation is not needed.
 6. Package each product separately while keeping LES as the integration spine.
+
+## GitHub Layout
+
+Keep the ecosystem in one GitHub account, not one monorepo:
+
+- `proovcme/les_rag` private LES core;
+- `proovcme/les_rag_public` public LES docs/contracts/exporters snapshot;
+- `proovcme/bim-ifc-viewers` АТЛАС and viewer packages;
+- `proovcme/Agnostis` product repository until the mechanical rename to АРТЕЛЬ;
+- future hub repo for release matrix, roadmap and cross-product install links.

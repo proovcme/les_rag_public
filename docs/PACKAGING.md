@@ -26,6 +26,14 @@ Goal: turn LES into a boxed solution for macOS, Linux and Windows while keeping 
 
 Current command entrypoints are `les-install` and `les-runtime`; the next step is to expose a single `lesctl` facade.
 
+Current boxed entrypoints:
+
+```text
+installers/linux/install.sh
+installers/windows/install.ps1
+tools/build_release_artifacts.py
+```
+
 ### Stage 2: Platform Profiles
 
 Add config profiles:
@@ -99,6 +107,15 @@ artel-mvp.zip
 
 Model files and private corpora are not shipped inside these archives.
 
+Build LES artifacts with:
+
+```bash
+uv run python tools/build_release_artifacts.py --profile linux-docker
+uv run python tools/build_release_artifacts.py --profile linux-systemd
+uv run python tools/build_release_artifacts.py --profile windows-docker
+uv run python tools/build_release_artifacts.py --profile windows-lite
+```
+
 ## Acceptance Gates
 
 Before a boxed release:
@@ -115,8 +132,8 @@ Before a boxed release:
 
 ## Immediate Next Work
 
-1. Add `lesctl` as the single facade over install/runtime commands.
-2. Add platform profile files.
-3. Add Linux Docker Compose profile with named volumes.
-4. Add Windows PowerShell `doctor` and `start` wrappers.
-5. Add ARTEL `FamilyLearningCase` import contract.
+1. Add ARTEL `FamilyLearningCase` import contract.
+2. Add release smoke for generated archives.
+3. Add actual Linux systemd Qdrant/model unit templates.
+4. Add Windows service wrapper after Docker/lite smoke on a real Windows host.
+5. Add hub repository README for LES / АТЛАС / АРТЕЛЬ.

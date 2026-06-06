@@ -38,6 +38,27 @@ uv run lesctl install --profile mac-native --init-env
 uv run lesctl start --include-ui --memory-preflight
 ```
 
+Для Linux Docker profile:
+
+```bash
+./installers/linux/install.sh --profile linux-docker --init-env --sync
+./installers/linux/install.sh --profile linux-docker --start
+```
+
+Для Linux systemd user units:
+
+```bash
+./installers/linux/install.sh --profile linux-systemd --init-env --sync --install-units
+systemctl --user start les-proxy les-ui
+```
+
+Для Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\installers\windows\install.ps1 -Profile windows-lite -InitEnv -Sync
+powershell -ExecutionPolicy Bypass -File .\installers\windows\install.ps1 -Profile windows-docker -Start
+```
+
 Через существующий launch helper:
 
 ```bash
@@ -123,6 +144,18 @@ uv run lesctl restart --include-ui
 uv lock --check
 uv run pytest -q
 ```
+
+## Release artifacts
+
+Коробочные архивы собираются без локальных данных, `.env`, логов, snapshots,
+Qdrant storage, private samples и `RAG_Content`:
+
+```bash
+uv run python tools/build_release_artifacts.py --profile linux-docker
+uv run python tools/build_release_artifacts.py --profile windows-docker
+```
+
+Результат пишется в `dist/`.
 
 ## Что не входит в git
 

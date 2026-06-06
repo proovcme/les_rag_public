@@ -58,3 +58,18 @@ curl -fsS http://127.0.0.1:8050/api/search \
 ```
 
 For profiles without local generation, `/api/chat` may be disabled or routed to a configured provider, but `/api/search` must remain available.
+
+## Installer Entrypoints
+
+| Profile | Installer |
+|---|---|
+| `mac-native` | `uv run lesctl install --profile mac-native` |
+| `linux-docker` | `installers/linux/install.sh --profile linux-docker` |
+| `linux-systemd` | `installers/linux/install.sh --profile linux-systemd --install-units` |
+| `windows-docker` | `installers/windows/install.ps1 -Profile windows-docker` |
+| `windows-lite` | `installers/windows/install.ps1 -Profile windows-lite` |
+| `server-remote-model` | `uv run lesctl install --profile server-remote-model` |
+
+Docker profiles use `installers/<platform>/docker-compose.yml` and a named
+Qdrant volume. Systemd profile installs user units for `les-proxy` and `les-ui`;
+Qdrant/model runtime remain explicit operator choices for now.
