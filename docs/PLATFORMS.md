@@ -63,7 +63,7 @@ For profiles without local generation, `/api/chat` may be disabled or routed to 
 
 | Profile | Installer |
 |---|---|
-| `mac-native` | `uv run lesctl install --profile mac-native` |
+| `mac-native` | `installers/macos/install.sh --init-env` or `uv run lesctl install --profile mac-native` |
 | `linux-docker` | `installers/linux/install.sh --profile linux-docker` |
 | `linux-systemd` | `installers/linux/install.sh --profile linux-systemd --install-units` |
 | `windows-docker` | `installers/windows/install.ps1 -Profile windows-docker` |
@@ -73,3 +73,7 @@ For profiles without local generation, `/api/chat` may be disabled or routed to 
 Docker profiles use `installers/<platform>/docker-compose.yml` and a named
 Qdrant volume. Systemd profile installs user units for `les-proxy` and `les-ui`;
 Qdrant/model runtime remain explicit operator choices for now.
+
+Mac reinstall stress is documented in `docs/MAC_REINSTALL_STRESS.md`; the
+uninstall script is dry-run by default and requires explicit confirmation before
+removing launchd services or runtime data.

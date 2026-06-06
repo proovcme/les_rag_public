@@ -37,3 +37,16 @@ powershell -ExecutionPolicy Bypass -File .\installers\windows\install.ps1 -Profi
 Windows Docker uses named volumes for Qdrant and regular bind mounts for repository
 content. Keep production corpora outside git and mount/copy them explicitly.
 
+## macOS Reinstall Stress
+
+```bash
+uv run python tools/clean_install_smoke.py --profile server-remote-model --run-tests --build-artifact
+./installers/macos/uninstall.sh
+./installers/macos/install.sh --init-env
+```
+
+The uninstall script is dry-run by default. Actual service removal requires
+`--confirm`; runtime/corpus deletion also requires `--confirm-purge-data`.
+
+See `docs/MAC_REINSTALL_STRESS.md`.
+

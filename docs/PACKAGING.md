@@ -29,9 +29,12 @@ Current command entrypoints are `les-install` and `les-runtime`; the next step i
 Current boxed entrypoints:
 
 ```text
+installers/macos/install.sh
+installers/macos/uninstall.sh
 installers/linux/install.sh
 installers/windows/install.ps1
 tools/build_release_artifacts.py
+tools/clean_install_smoke.py
 ```
 
 ### Stage 2: Platform Profiles
@@ -133,7 +136,7 @@ Before a boxed release:
 ## Immediate Next Work
 
 1. Add ARTEL `FamilyLearningCase` import contract.
-2. Add release smoke for generated archives.
+2. Run destructive Mac reinstall stress on a backed-up host.
 3. Add actual Linux systemd Qdrant/model unit templates.
 4. Add Windows service wrapper after Docker/lite smoke on a real Windows host.
 5. Add hub repository README for LES / АТЛАС / АРТЕЛЬ.

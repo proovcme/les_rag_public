@@ -30,6 +30,12 @@ uv run lesctl install --profile mac-native --init-env
 - добавляйте VPN/LAN CIDR только если понимаете, кто получит admin-доступ;
 - не коммитьте `.env` и реальные API keys.
 
+macOS wrapper:
+
+```bash
+./installers/macos/install.sh --init-env
+```
+
 ## Запуск
 
 Через новый CLI entrypoint после `uv sync`:
@@ -93,6 +99,22 @@ uv run lesctl stop --include-ui
 ```bash
 ./stop_les.command
 ```
+
+## Переустановка на Mac с нуля
+
+Перед настоящим сносом сначала прогоните safe smoke в temp-копии:
+
+```bash
+uv run python tools/clean_install_smoke.py --profile server-remote-model --run-tests --build-artifact
+```
+
+Dry-run uninstall:
+
+```bash
+./installers/macos/uninstall.sh
+```
+
+Настоящий destructive сценарий описан в [docs/MAC_REINSTALL_STRESS.md](docs/MAC_REINSTALL_STRESS.md).
 
 ## Индексация документов
 
