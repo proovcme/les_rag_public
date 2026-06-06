@@ -11,10 +11,10 @@ ROOT = Path(".")
 ENV_PATH = ROOT / ".env"
 load_dotenv(ENV_PATH, override=False)
 
-PROXY_URL = "http://localhost:8050"
-MLX_URL   = "http://127.0.0.1:8080"   # именно 127.0.0.1, не localhost!
-UI_PORT   = 8051
-QDRANT_VISUALIZER_PORT = 8066
+PROXY_URL = os.getenv("PROXY_URL", "http://localhost:8050")
+MLX_URL   = os.getenv("MLX_URL", "http://127.0.0.1:8080")   # именно 127.0.0.1, не localhost!
+UI_PORT   = int(os.getenv("SOVUSHKA_UI_PORT", "8051"))
+QDRANT_VISUALIZER_PORT = int(os.getenv("QDRANT_VISUALIZER_PORT", "8066"))
 TRUSTED_NETWORKS = tuple(
     item.strip()
     for item in os.getenv(

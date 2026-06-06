@@ -66,6 +66,13 @@ def chat_memory_guard_enabled() -> bool:
     return _env_bool("LES_CHAT_MEMORY_GUARD", True)
 
 
+def chat_memory_guard_for_provider() -> bool:
+    provider = os.getenv("LES_LLM_PROVIDER", "mlx").strip().lower() or "mlx"
+    if provider not in {"mlx", "local-mlx", "local_mlx"}:
+        return _env_bool("LES_CHAT_MEMORY_GUARD", False)
+    return chat_memory_guard_enabled()
+
+
 def memory_green_min_free_gb() -> float:
     return _env_float("LES_MEMORY_GREEN_MIN_FREE_GB", 12.0)
 
@@ -291,7 +298,7 @@ def evaluate_chat_admission(
     max_swap_used = chat_max_swap_used_gb() if max_swap_used_gb is None else max_swap_used_gb
     swap_relief_free = chat_swap_relief_free_gb() if swap_relief_free_gb is None else swap_relief_free_gb
     block_jobs = chat_block_active_jobs() if block_active_jobs is None else block_active_jobs
-    guard_memory = chat_memory_guard_enabled() if memory_guard is None else memory_guard
+    guard_memory = chat_memory_guard_for_provider() if memory_guard is None else memory_guard
 
     mode_allowed, mode_reason = chat_generation_allowed(current_mode)
     memory = memory_snapshot(metrics_cache)

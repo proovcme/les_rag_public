@@ -1,453 +1,233 @@
-# LES Installation Notes
+# Установка Л.Е.С.
 
-This repository has two very different installation paths:
+Л.Е.С. имеет несколько профилей запуска. Базовый контур: Qdrant `:6333`,
+model/provider endpoint, FastAPI proxy `:8050`, Sovushka Lite UI `:8051`.
 
-- **ATLAS / АТЛАС standalone viewer:** ready-to-run, offline-friendly, no Python, no LES backend.
-- **Full LES runtime:** developer/local stack with Python 3.12, Qdrant, MLX/OpenAI-compatible models and your own indexed data.
+## Требования
 
-ARTEL / АРТЕЛЬ is described in the README as the Revit-family workflow layer
-that should call LES APIs. The public snapshot does not ship a production ARTEL
-installer or private RFA/catalog data, but it does include a public-safe
-`FamilyLearningCase` schema/example and a seed tool for `ARTEL_Index`.
+- Python `3.12+`
+- `uv`
+- Qdrant: локальный binary, Docker/named volume или remote Qdrant
+- 16 GB RAM минимум, 24 GB+ комфортно
+- Node/npm нужны только для пересборки `frontend/cad_bim_viewer`
 
-## RU - быстрый выбор
+## Быстрый старт
 
-Если нужно просто открыть `cad_bim_graph.json` или IFC:
+```bash
+git clone https://github.com/proovcme/les_rag_public.git
+cd les_rag_public
+
+uv sync
+uv run lesctl doctor --profile mac-native
+uv run lesctl init --profile mac-native
+uv run lesctl install --profile mac-native --init-env
+```
+
+`lesctl install` подготавливает директории, `.env` и зависимости. launchd-сервисы
+регистрируются при первом `lesctl start`.
+
+После этого отредактируйте `.env`:
+
+- замените `JWT_SECRET`, `ADMIN_PASSWORD`, `SOVUSHKA_STORAGE_SECRET`;
+- оставьте `TRUSTED_NETWORKS=127.0.0.0/8,::1/128` для локального старта;
+- добавляйте VPN/LAN CIDR только если понимаете, кто получит admin-доступ;
+- не коммитьте `.env` и реальные API keys.
+
+macOS wrapper, если он есть в выбранном snapshot:
+
+```bash
+./installers/macos/install.sh --init-env
+```
+
+## Запуск
+
+Через новый CLI entrypoint после `uv sync`:
+
+```bash
+uv run lesctl start --profile mac-native --include-ui --memory-preflight
+```
+
+Для Linux Docker profile, если Docker/installers включены в snapshot:
+
+```bash
+./installers/linux/install.sh --profile linux-docker --init-env --sync
+./installers/linux/install.sh --profile linux-docker --start
+```
+
+Для Linux systemd user units:
+
+```bash
+./installers/linux/install.sh --profile linux-systemd --init-env --sync --install-units
+systemctl --user start les-proxy les-ui
+```
+
+Для Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\installers\windows\install.ps1 -Profile windows-lite -InitEnv -Sync
+powershell -ExecutionPolicy Bypass -File .\installers\windows\start-light.ps1 -Provider lemonade -StartQdrant
+```
+
+`windows-lite` не ставит MLX/CoreML и не требует локальную Apple Silicon
+модель. Это легкий профиль для Windows/Revit host: Qdrant + LES proxy + UI,
+а генерация уходит в OpenAI-compatible provider.
+
+Поддерживаемые provider presets:
+
+- `lemonade`: `LEMONADE_BASE_URL=http://127.0.0.1:13305/api/v1`
+- `ollama`: `OLLAMA_BASE_URL=http://127.0.0.1:11434`
+- `openrouter`: `OPENROUTER_BASE_URL=https://openrouter.ai/api/v1`
+- `openai`: `OPENAI_BASE_URL=https://api.openai.com/v1`
+- `openai-compatible`: любой совместимый `OPENAI_BASE_URL`
+
+Примеры:
+
+```powershell
+# Lemonade local server
+.\installers\windows\start-light.ps1 -Provider lemonade -Model "your-model" -StartQdrant
+
+# Ollama OpenAI-compatible endpoint
+.\installers\windows\start-light.ps1 -Provider ollama -Model "qwen3:8b" -StartQdrant
+
+# OpenRouter
+$env:OPENROUTER_API_KEY = "..."
+.\installers\windows\start-light.ps1 -Provider openrouter -Model "openai/gpt-4.1-mini" -StartQdrant
+
+# OpenAI
+$env:OPENAI_API_KEY = "..."
+.\installers\windows\start-light.ps1 -Provider openai -Model "gpt-4.1-mini" -StartQdrant
+```
+
+Важно: `start-light.ps1` удобен для ручного smoke. Для постоянной эксплуатации
+на Windows нужен service/scheduled-task wrapper; короткая SSH-сессия может
+завершить дочерние процессы после выхода.
+
+Docker profile остается отдельным вариантом:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\installers\windows\install.ps1 -Profile windows-docker -Start
+```
+
+Через существующий launch helper:
+
+```bash
+./start_les.command
+```
+
+Открыть:
+
+- Lite chat: `http://127.0.0.1:8051/`
+- Lite Admin: `http://127.0.0.1:8051/les`
+- FastAPI health: `http://127.0.0.1:8050/api/health`
+- MLX health: `http://127.0.0.1:8080/api/health`
+
+На Windows light MLX health не ожидается: вместо него проверяйте
+`GET /api/settings`, поле `providers.active`, и `GET /api/status`, поле
+`proxy.llm_provider`.
+
+## Проверка
+
+```bash
+uv run les-install --check
+uv run lesctl doctor --profile mac-native
+uv run lesctl init --profile mac-native
+uv run lesctl status
+curl -fsS http://127.0.0.1:8050/api/health | python3 -m json.tool
+curl -fsS http://127.0.0.1:8080/api/health | python3 -m json.tool
+curl -fsS http://127.0.0.1:8051/healthz | python3 -m json.tool
+curl -fsS -X POST http://127.0.0.1:8050/api/search \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"smoke","top_k":1,"include_trace":true}' | python3 -m json.tool
+```
+
+На пустом fresh install `/api/health` может вернуть HTTP 200 со
+`status=degraded`, `rag.status=empty`, `datasets=0`, `chunks=0`. Это означает,
+что runtime поднят, но корпус еще не загружен.
+
+## Остановка
+
+```bash
+uv run lesctl stop --include-ui
+```
+
+или:
+
+```bash
+./stop_les.command
+```
+
+## Индексация документов
+
+Положите документы в `RAG_Content/` и сначала посмотрите dry-run:
+
+```bash
+curl -fsS 'http://127.0.0.1:8050/api/rag/smart-plan?source_root=RAG_Content' \
+  | python3 -m json.tool
+```
+
+Регистрация и guarded indexing:
+
+```bash
+curl -X POST http://127.0.0.1:8050/api/rag/sync-smart \
+  -H 'Content-Type: application/json' \
+  -d '{"source_root":"RAG_Content","parse":false}'
+
+curl -X POST http://127.0.0.1:8050/api/runtime/dispatcher/reindex/start \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+Не запускайте полный reindex без причины: на рабочем корпусе это эксплуатационная операция, а не часть установки.
+
+## CAD/BIM
+
+LES принимает CAD/BIM как JSON-first pipeline. Raw IFC/DWG/RVT/DXF допускаются на upload boundary, но надежный путь для индексации: exporter -> canonical `cad_bim_graph.json` -> `/api/cad-bim/import`.
+
+Standalone viewer лежит в `standalone/cad_bim_viewer/`. Он не требует LES backend, npm или сети:
 
 ```bash
 cd standalone/cad_bim_viewer
 ./serve.sh 8095
 ```
 
-Windows:
+Открыть: `http://127.0.0.1:8095/?source=models/demo.cad_bim_graph.json`.
 
-```powershell
-cd standalone\cad_bim_viewer
-powershell -ExecutionPolicy Bypass -File .\serve.ps1 -Port 8095
-```
-
-Потом открыть:
-
-```text
-http://127.0.0.1:8095/
-```
-
-Это самый надежный путь для почти голой машины. В папке уже лежат bundled JS/CSS, `web-ifc.wasm`, fragments worker и demo models. Интернет и LES backend не нужны.
-
-## RU - полный LES runtime
-
-### Требования
-
-- macOS/Linux для runtime; Apple Silicon предпочтителен для MLX.
-- Python 3.12.
-- `uv` для Python dependencies.
-- Docker или локальный Qdrant.
-- Достаточно памяти для выбранной LLM/embedding модели.
-- Собственные данные для индексации.
-
-### Установка
+## Обновление
 
 ```bash
-git clone https://github.com/proovcme/les_rag_public.git
-cd les_rag_public
-cp env.example .env
-```
-
-Если `uv` не установлен:
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-Отредактировать `.env` минимум:
-
-```text
-JWT_SECRET=replace_with_random_string
-ADMIN_PASSWORD=replace_with_strong_password
-SOVUSHKA_STORAGE_SECRET=replace_with_random_string
-QDRANT_URL=http://127.0.0.1:6333
-MLX_URL=http://127.0.0.1:8080
-```
-
-Для первого запуска без локальных Core ML artifacts проще переключить embeddings на обычный backend:
-
-```text
-EMBED_BACKEND=sentence_transformers
-COREML_EMBED_LOCAL_FILES_ONLY=false
-COREML_VALIDATOR_LOCAL_FILES_ONLY=false
-VALIDATOR_BACKEND=rules
-```
-
-Установить зависимости:
-
-```bash
+git pull
 uv sync
+uv run lesctl restart --include-ui
 ```
 
-Поднять Qdrant:
+После изменений в зависимостях:
 
 ```bash
-docker compose up -d qdrant
+uv lock --check
+uv run pytest -q
 ```
 
-Запустить MLX host:
+## Release artifacts
+
+Коробочные архивы собираются без локальных данных, `.env`, логов, snapshots,
+Qdrant storage, private samples и `RAG_Content`:
 
 ```bash
-uv run python mlx_host.py
+uv run python tools/build_release_artifacts.py --profile linux-docker
+uv run python tools/build_release_artifacts.py --profile windows-docker
 ```
 
-В другом терминале запустить LES proxy:
-
-```bash
-uv run uvicorn proxy_server:app --host 127.0.0.1 --port 8050
-```
-
-В третьем терминале можно запустить Совушку:
-
-```bash
-uv run python sovushka_ng.py
-```
-
-Проверить:
-
-```bash
-curl http://127.0.0.1:8050/api/health
-curl http://127.0.0.1:8080/api/health
-```
-
-После этого доступен backend/API слой:
-
-```text
-http://127.0.0.1:8050/api/health
-http://127.0.0.1:8050/api/status
-http://127.0.0.1:8050/api/chat
-http://127.0.0.1:8050/api/cad-bim/import
-http://127.0.0.1:8050/api/mail/threads
-```
-
-Совушка после запуска:
-
-```text
-http://127.0.0.1:8051/             lite chat
-http://127.0.0.1:8051/les          lite admin
-http://127.0.0.1:8051/classic      classic chat
-http://127.0.0.1:8051/les/classic  classic admin
-```
-
-Это dev/local UI entrypoint. Он не включает приватные launchd scripts, production tunnel config, keys, corpora или готовые индексы.
-
-### Индексация данных
-
-Создай локальную папку:
-
-```bash
-mkdir -p RAG_Content
-```
-
-Клади туда документы, таблицы, почту и CAD/BIM JSON. Public snapshot поддерживает эти входы:
-
-```text
-PDF, DOCX, DOC, MD, TXT
-XLSX, XLS, CSV
-EML, EMLX, MSG
-JSON, JSONL
-DWG, DXF, RVT, IFC, IFCZIP at upload boundary
-```
-
-Важно: raw DWG/RVT/IFC лучше сначала переводить в canonical JSON:
-
-```text
-cad_bim_graph.json
-```
-
-Через exporters или IFC/DXF tools, а потом импортировать в LES.
-
-### АРТЕЛЬ seed
-
-Для проверки Revit-family learning loop без приватных RFA данных:
-
-```bash
-uv run python tools/seed_artel_learning_cases.py --verify-search
-```
-
-Ожидаемый результат:
-
-- файл `RAG_Content/ARTEL/family_learning_cases/demo_metal_cabinet_001.md`;
-- dataset `ARTEL_Index`;
-- `/api/search` с `dataset_filter="ARTEL"` возвращает хотя бы один chunk.
-
-### Почта
-
-Mail pipeline умеет:
-
-- локальные `.eml`, `.emlx`, `.msg`;
-- Apple Mail import;
-- IMAP import;
-- threads / participants / who-to-whom profile;
-- attachment text extraction;
-- OCR вложений при включенной настройке.
-
-Секреты почты не хранятся в репозитории. Настройки берутся из `.env` или UI/API:
-
-```text
-MAIL_IMAP_HOST=
-MAIL_IMAP_PORT=993
-MAIL_IMAP_SSL=true
-MAIL_IMAP_LOGIN=
-MAIL_IMAP_PASSWORD=
-MAIL_IMAP_FOLDERS=INBOX
-MAIL_APPLE_ROOT=~/Library/Mail
-```
-
-### Runtime safety
-
-LES не пытается одновременно делать всё любой ценой. В public code есть:
-
-- runtime profiles: `CHAT`, `CHAT_VALIDATED`, `INDEX_LIGHT`, `INDEX_HEAVY_PDF`, `MAINTENANCE`;
-- memory pressure states: `GREEN`, `YELLOW`, `RED`, `CRITICAL`;
-- chat admission control;
-- блокировка генерации при активной тяжелой индексации;
-- parse concurrency limits;
-- guarded reindex tools;
-- MLX memory telemetry and unload hooks.
-
-Это особенно важно на локальных Apple Silicon машинах, где LLM, OCR, embeddings и parsing делят одну память. Закрытый memory guard означает "подождать или освободить память", а не "индекс сломан".
-
-Проверять состояние:
-
-```bash
-curl -fsS http://127.0.0.1:8050/api/health | python3 -m json.tool
-```
-
-Смотрите `indexed_files`, `pending_files`, `error_files`, `chunks` и
-`points_match_sqlite_chunks`.
-
-### Chunking and retrieval
-
-LES использует не один плоский splitter:
-
-- deterministic document router;
-- domain datasets;
-- metadata-rich chunks;
-- table/mail/CAD-BIM specialized channels;
-- vector retrieval + lexical FTS;
-- RRF merge;
-- optional reranking;
-- context windows around retrieved chunks;
-- route-change reindex utilities.
-
-Это не делает public snapshot production-ready автоматически, но показывает архитектуру, на которой можно собрать нормальную локальную инженерную базу знаний.
-
-## EN - quick choice
-
-If you only need to open `cad_bim_graph.json` or IFC:
-
-```bash
-cd standalone/cad_bim_viewer
-./serve.sh 8095
-```
-
-Windows:
-
-```powershell
-cd standalone\cad_bim_viewer
-powershell -ExecutionPolicy Bypass -File .\serve.ps1 -Port 8095
-```
-
-Open:
-
-```text
-http://127.0.0.1:8095/
-```
-
-This is the reliable path for an almost bare workstation. The folder already ships bundled JS/CSS, `web-ifc.wasm`, the fragments worker and demo models. No internet or LES backend is required.
-
-## EN - full LES runtime
-
-### Requirements
-
-- macOS/Linux for runtime; Apple Silicon is preferred for MLX.
-- Python 3.12.
-- `uv` for Python dependencies.
-- Docker or local Qdrant.
-- Enough memory for the selected LLM/embedding model.
-- Your own data to index.
-
-### Setup
-
-```bash
-git clone https://github.com/proovcme/les_rag_public.git
-cd les_rag_public
-cp env.example .env
-```
-
-If `uv` is not installed:
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-Edit `.env` at least:
-
-```text
-JWT_SECRET=replace_with_random_string
-ADMIN_PASSWORD=replace_with_strong_password
-SOVUSHKA_STORAGE_SECRET=replace_with_random_string
-QDRANT_URL=http://127.0.0.1:6333
-MLX_URL=http://127.0.0.1:8080
-```
-
-For the first run without local Core ML artifacts, use the simpler embedding/validator path:
-
-```text
-EMBED_BACKEND=sentence_transformers
-COREML_EMBED_LOCAL_FILES_ONLY=false
-COREML_VALIDATOR_LOCAL_FILES_ONLY=false
-VALIDATOR_BACKEND=rules
-```
-
-Install dependencies:
-
-```bash
-uv sync
-```
-
-Start Qdrant:
-
-```bash
-docker compose up -d qdrant
-```
-
-Start MLX host:
-
-```bash
-uv run python mlx_host.py
-```
-
-Start LES proxy in another terminal:
-
-```bash
-uv run uvicorn proxy_server:app --host 127.0.0.1 --port 8050
-```
-
-Optionally start Sovushka in a third terminal:
-
-```bash
-uv run python sovushka_ng.py
-```
-
-Check:
-
-```bash
-curl http://127.0.0.1:8050/api/health
-curl http://127.0.0.1:8080/api/health
-```
-
-After that the backend/API layer is available:
-
-```text
-http://127.0.0.1:8050/api/health
-http://127.0.0.1:8050/api/status
-http://127.0.0.1:8050/api/chat
-http://127.0.0.1:8050/api/cad-bim/import
-http://127.0.0.1:8050/api/mail/threads
-```
-
-Sovushka URLs:
-
-```text
-http://127.0.0.1:8051/             lite chat
-http://127.0.0.1:8051/les          lite admin
-http://127.0.0.1:8051/classic      classic chat
-http://127.0.0.1:8051/les/classic  classic admin
-```
-
-This is a dev/local UI entrypoint. It does not include private launchd scripts, production tunnel config, keys, corpora or ready-made indexes.
-
-### Data indexing
-
-Create a local content folder:
-
-```bash
-mkdir -p RAG_Content
-```
-
-Supported public inputs:
-
-```text
-PDF, DOCX, DOC, MD, TXT
-XLSX, XLS, CSV
-EML, EMLX, MSG
-JSON, JSONL
-DWG, DXF, RVT, IFC, IFCZIP at upload boundary
-```
-
-For CAD/BIM, the preferred path is JSON-first:
-
-```text
-cad_bim_graph.json
-```
-
-Use exporters or IFC/DXF tools, then import the JSON into LES.
-
-### Mail
-
-The mail pipeline supports:
-
-- local `.eml`, `.emlx`, `.msg`;
-- Apple Mail import;
-- IMAP import;
-- threads, participants and who-to-whom profile;
-- attachment text extraction;
-- attachment OCR when enabled.
-
-Mail secrets are not committed. Configure them through `.env` or UI/API:
-
-```text
-MAIL_IMAP_HOST=
-MAIL_IMAP_PORT=993
-MAIL_IMAP_SSL=true
-MAIL_IMAP_LOGIN=
-MAIL_IMAP_PASSWORD=
-MAIL_IMAP_FOLDERS=INBOX
-MAIL_APPLE_ROOT=~/Library/Mail
-```
-
-### Runtime safety
-
-LES does not try to do everything at once at any cost. The public code includes:
-
-- runtime profiles: `CHAT`, `CHAT_VALIDATED`, `INDEX_LIGHT`, `INDEX_HEAVY_PDF`, `MAINTENANCE`;
-- memory pressure states: `GREEN`, `YELLOW`, `RED`, `CRITICAL`;
-- chat admission control;
-- chat blocking during heavy indexing;
-- parse concurrency limits;
-- guarded reindex tools;
-- MLX memory telemetry and unload hooks.
-
-This matters on local Apple Silicon machines where LLM, OCR, embeddings and parsing share unified memory. A closed memory guard means "wait or free memory", not "the index is broken".
-
-Check runtime state with:
-
-```bash
-curl -fsS http://127.0.0.1:8050/api/health | python3 -m json.tool
-```
-
-Watch `indexed_files`, `pending_files`, `error_files`, `chunks` and
-`points_match_sqlite_chunks`.
-
-### Chunking and retrieval
-
-LES is not just a flat splitter:
-
-- deterministic document router;
-- domain datasets;
-- metadata-rich chunks;
-- table/mail/CAD-BIM specialized channels;
-- vector retrieval + lexical FTS;
-- RRF merge;
-- optional reranking;
-- context windows around retrieved chunks;
-- route-change reindex utilities.
-
-The public snapshot is not automatically production-ready, but it shows the architecture needed for a serious local engineering knowledge base.
+Результат пишется в `dist/`.
+
+## Что не входит в git
+
+Локальные данные, индексы, runtime-логи и private samples не должны попадать в commit:
+
+- `data/`
+- `storage/`
+- `RAG_Content/`
+- `logs/`
+- `artifacts/`
+- `snapshots/`
+- `local_private_archive/`
+- `standalone/cad_bim_viewer/ifc-sample/`

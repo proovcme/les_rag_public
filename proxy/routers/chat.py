@@ -131,6 +131,51 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+@dataclass(frozen=True)
+class LlmRuntime:
+    provider: str
+    base_url: str
+    chat_url: str
+    model: str
+    api_key: str
+    supports_validation: bool
+
+
+def _join_openai_path(base_url: str, path: str) -> str:
+    base = base_url.rstrip("/")
+    if base.endswith("/v1") or base.endswith("/api/v1"):
+        return f"{base}{path}"
+    return f"{base}/v1{path}"
+
+
+def _llm_runtime() -> LlmRuntime:
+    provider = os.getenv("LES_LLM_PROVIDER", "mlx").strip().lower() or "mlx"
+    if provider == "openrouter":
+        base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip()
+        model = os.getenv("OPENROUTER_MODEL", "").strip() or os.getenv("LLM_MODEL", "")
+        api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+        return LlmRuntime(provider, base_url, _join_openai_path(base_url, "/chat/completions"), model, api_key, False)
+    if provider in {"openai", "openai-compatible", "openai_compatible"}:
+        base_url = os.getenv("OPENAI_BASE_URL", "").strip() or "https://api.openai.com/v1"
+        model = os.getenv("OPENAI_MODEL", "").strip() or os.getenv("LLM_MODEL", "")
+        api_key = os.getenv("OPENAI_API_KEY", "").strip()
+        return LlmRuntime(provider, base_url, _join_openai_path(base_url, "/chat/completions"), model, api_key, False)
+    if provider == "ollama":
+        base_url = os.getenv("OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")).strip()
+        model = os.getenv("OLLAMA_MODEL", "").strip() or os.getenv("LLM_MODEL", "")
+        api_key = os.getenv("OLLAMA_API_KEY", "").strip()
+        return LlmRuntime(provider, base_url, _join_openai_path(base_url, "/chat/completions"), model, api_key, False)
+    if provider == "lemonade":
+        base_url = os.getenv("LEMONADE_BASE_URL", "http://127.0.0.1:13305/api/v1").strip()
+        model = os.getenv("LEMONADE_MODEL", "").strip() or os.getenv("LLM_MODEL", "")
+        api_key = os.getenv("LEMONADE_API_KEY", "lemonade").strip()
+        return LlmRuntime(provider, base_url, _join_openai_path(base_url, "/chat/completions"), model, api_key, False)
+
+    base_url = os.getenv("MLX_URL", "http://127.0.0.1:8080").strip()
+    model = os.getenv("LLM_MODEL", "qwen3:14b").strip()
+    return LlmRuntime("mlx", base_url, _join_openai_path(base_url, "/chat/completions"), model, "", True)
+
+
 CHAT_HISTORY_EXTRA_COLUMNS = {
     "route_channel": "TEXT DEFAULT ''",
     "route_reason": "TEXT DEFAULT ''",
@@ -1071,9 +1116,14 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
     )
     retrieval_trace["validation_context_window"] = validation_context_windows.payload()
 
-    llm_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
-    llm_model = os.getenv("LLM_MODEL", "qwen3:14b")
-    val_url = llm_url.rstrip("/")
+    llm_runtime = _llm_runtime()
+    llm_model = llm_runtime.model
+    val_url = llm_runtime.base_url.rstrip("/")
+    if not llm_model:
+        raise HTTPException(503, f"LLM model is not configured for provider {llm_runtime.provider}")
+    if use_validation and not llm_runtime.supports_validation:
+        logger.info("[TOSKA] validation disabled: provider=%s has no LES /api/validate endpoint", llm_runtime.provider)
+        use_validation = False
 
     sys_normal = (
         "Ты — технический эксперт системы Л.Е.С. "
@@ -1148,8 +1198,12 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                         },
                     ]
 
+                    headers = {}
+                    if llm_runtime.api_key:
+                        headers["Authorization"] = f"Bearer {llm_runtime.api_key}"
                     resp = await client.post(
-                        f"{llm_url.rstrip('/')}/v1/chat/completions",
+                        llm_runtime.chat_url,
+                        headers=headers,
                         json={
                             "model": llm_model,
                             "messages": messages,
@@ -1167,7 +1221,13 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                             continue
                         raise ValueError(f"Пустой ответ LLM: {rj}")
                     tokens = rj.get("usage", {}).get("completion_tokens", 0)
-                    logger.info("[CHAT] attempt=%s model=%s tokens=%s", attempt, llm_model, tokens)
+                    logger.info(
+                        "[CHAT] attempt=%s provider=%s model=%s tokens=%s",
+                        attempt,
+                        llm_runtime.provider,
+                        llm_model,
+                        tokens,
+                    )
 
                     if use_validation:
                         try:

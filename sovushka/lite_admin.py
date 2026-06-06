@@ -486,8 +486,8 @@ def lite_admin_html() -> str:
         <div class="title">CAD/BIM JSON</div>
         <div id="speckleHint" class="hint">CAD/BIM JSON параметры ещё не загружены.</div>
         <div class="form-grid">
-          <input id="speckleBaseUrl" class="wide" type="url" placeholder="https://speckle.example.com">
-          <input id="speckleGraphqlUrl" class="wide" type="url" placeholder="https://speckle.example.com/graphql">
+          <input id="speckleBaseUrl" class="wide" type="url" placeholder="https://speckle.ovc.me">
+          <input id="speckleGraphqlUrl" class="wide" type="url" placeholder="https://speckle.ovc.me/graphql">
           <input id="speckleToken" class="wide" type="password" placeholder="Speckle API token">
           <input id="speckleSourcePath" class="wide" type="text" placeholder="RAG_Content/CAD_BIM/JSON/model.json">
           <select id="speckleSourceType">
@@ -621,7 +621,7 @@ def lite_admin_html() -> str:
   </div>
 
   <script>
-    const isLocalUi = location.port === "8051";
+    const isLocalUi = location.hostname === "127.0.0.1" || location.hostname === "localhost" || location.port === "8051" || location.port === "8061";
     const API_BASE = isLocalUi ? "/lite-api" : "";
     const KEY_STORAGE = "les_lite_api_key";
     const ROLE_STORAGE = "les_lite_role";
@@ -920,8 +920,8 @@ def lite_admin_html() -> str:
       if (state.speckleDirty) return;
       const speckle = settings.speckle || {};
       state.speckleTokenSet = Boolean(speckle.api_token_set);
-      setSpeckleValue("speckleBaseUrl", speckle.base_url || "https://speckle.example.com");
-      setSpeckleValue("speckleGraphqlUrl", speckle.graphql_url || "https://speckle.example.com/graphql");
+      setSpeckleValue("speckleBaseUrl", speckle.base_url || "https://speckle.ovc.me");
+      setSpeckleValue("speckleGraphqlUrl", speckle.graphql_url || "https://speckle.ovc.me/graphql");
       setSpeckleValue("speckleToken", "");
       setSpeckleValue("speckleSourcePath", "");
       setSpeckleValue("speckleSourceType", "");
@@ -932,7 +932,7 @@ def lite_admin_html() -> str:
       el("speckleEnabled").checked = speckle.enabled !== false;
       el("speckleClear").checked = false;
       el("speckleHint").textContent =
-        `CAD/BIM JSON first | Speckle ${speckle.base_url || "https://speckle.example.com"} | token=${speckle.api_token_set ? "set" : "missing"} | sources=JSON/DWG/DXF/RVT/IFC`;
+        `CAD/BIM JSON first | Speckle ${speckle.base_url || "https://speckle.ovc.me"} | token=${speckle.api_token_set ? "set" : "missing"} | sources=JSON/DWG/DXF/RVT/IFC`;
     }
 
     function renderProviderSettings(settings) {
