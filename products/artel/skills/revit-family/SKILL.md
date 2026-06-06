@@ -182,6 +182,11 @@ Autorun Revit validation from an unlocked Legion desktop:
 
 ```powershell
 cd products\artel
+.\diagnose-family-factory-revit-session.ps1 -Screenshot
+```
+
+```powershell
+cd products\artel
 .\run-family-factory-revit-autorun.ps1 `
   -FamilyPath "C:\Program Files\Autodesk\Revit 2025\Samples\rac_basic_sample_family.rfa" `
   -TaskId "" `

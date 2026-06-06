@@ -296,6 +296,13 @@ The intended unlocked-desktop smoke command is:
 
 ```powershell
 cd products\artel
+.\diagnose-family-factory-revit-session.ps1 -Screenshot
+```
+
+Run autorun only when the diagnostic status is `interactive`:
+
+```powershell
+cd products\artel
 .\run-family-factory-revit-autorun.ps1 `
   -FamilyPath "C:\Program Files\Autodesk\Revit 2025\Samples\rac_basic_sample_family.rfa" `
   -TaskId "" `

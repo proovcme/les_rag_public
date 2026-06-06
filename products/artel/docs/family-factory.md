@@ -132,6 +132,13 @@ For a repeatable Revit-side smoke from an unlocked Legion desktop session:
 
 ```powershell
 cd products\artel
+.\diagnose-family-factory-revit-session.ps1 -Screenshot
+```
+
+Proceed only when the diagnostic JSON returns `status: "interactive"`.
+
+```powershell
+cd products\artel
 .\run-family-factory-revit-autorun.ps1 `
   -FamilyPath "C:\Program Files\Autodesk\Revit 2025\Samples\rac_basic_sample_family.rfa" `
   -TaskId "" `
