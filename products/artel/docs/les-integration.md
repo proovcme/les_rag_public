@@ -254,6 +254,17 @@ Validation reports are persisted under `ARTEL_DATA_DIR/validation_reports/`
 and reloaded when the backend starts, so accepted and rejected Revit checks can
 accumulate across backend restarts before they are curated into LES projections.
 
+Bulk seed archived backend reports into LES:
+
+```bash
+python3 tools/seed_artel_backend_reports.py \
+  --artel-url http://127.0.0.1:5057 \
+  --task-id task_0241 \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --verify-search
+```
+
 Operational skill:
 
 ```text

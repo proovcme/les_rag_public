@@ -65,6 +65,17 @@ projection в `RAG_Content/ARTEL/family_learning_cases/` и запускает L
 Backend сохраняет reports в `ARTEL_DATA_DIR/validation_reports/` и поднимает
 их обратно после restart, чтобы learning loop не терял историю приемки.
 
+Чтобы посадить в LES все накопленные backend reports:
+
+```bash
+python3 tools/seed_artel_backend_reports.py \
+  --artel-url http://127.0.0.1:5057 \
+  --task-id task_0241 \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --verify-search
+```
+
 Это закрывает минимальную петлю:
 
 ```text

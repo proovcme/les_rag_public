@@ -88,6 +88,17 @@ ARTEL_DATA_DIR=/path/to/artel_data dotnet run --project backend/Agnostis.Api
 `GET /api/validation-reports` returns archived reports newest first; add
 `?taskId=task_0241` to filter a task.
 
+To seed archived backend reports into LES:
+
+```bash
+python3 tools/seed_artel_backend_reports.py \
+  --artel-url http://127.0.0.1:5057 \
+  --task-id task_0241 \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --verify-search
+```
+
 ## Проверка
 
 На текущей машине `dotnet` отсутствует, поэтому сборка backend skeleton здесь не выполнялась. Код и contract подготовлены для проверки в окружении с .NET SDK 8.
