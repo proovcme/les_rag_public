@@ -327,6 +327,7 @@ The macOS-side orchestrator for that proof is:
 
 ```bash
 python3 tools/run_artel_legion_revit_validation.py \
+  --use-legion-artel-backend \
   --artel-url http://127.0.0.1:5057 \
   --task-id task_0241 \
   --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
@@ -344,6 +345,22 @@ Before spending a real unlocked Revit run, the orchestrator checks ARTEL
 backend `/health` when ingest or add-in submit is enabled. If `127.0.0.1:5057`
 is not running, it returns `status: "artel_backend_unavailable"` with exit code
 `3`; use `--no-ingest` for diagnosis-only checks.
+
+On 2026-06-07 the managed backend-only path was verified without touching
+Revit:
+
+```bash
+python3 tools/run_artel_legion_revit_validation.py \
+  --backend-only-smoke \
+  --use-legion-artel-backend \
+  --artel-health-timeout-sec 20
+```
+
+It started `Agnostis.Api.dll` on Legion, opened
+`127.0.0.1:15057 -> legion:127.0.0.1:5057`, received `/health = ok`, then
+closed the tunnel and stopped only the new ARTEL backend process. A follow-up
+process check showed no Revit process and no remaining ARTEL backend `dotnet`
+process; the unrelated ConvertAPI MCP `dotnet` process was left untouched.
 
 ## Backend Archive Bulk Smoke 2026-06-06
 

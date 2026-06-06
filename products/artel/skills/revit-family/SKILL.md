@@ -206,6 +206,7 @@ ARTEL backend `/health` before starting Revit and exits with
 
 ```bash
 python3 tools/run_artel_legion_revit_validation.py \
+  --use-legion-artel-backend \
   --artel-url http://127.0.0.1:5057 \
   --task-id task_0241 \
   --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
@@ -214,6 +215,8 @@ python3 tools/run_artel_legion_revit_validation.py \
 ```
 
 Use `--no-ingest` for a diagnostic-only Legion check.
+Use `--backend-only-smoke --use-legion-artel-backend` to verify the managed
+Legion backend/tunnel without touching Revit.
 
 Ingest a Revit add-in validation report into ARTEL backend and LES:
 
