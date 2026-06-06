@@ -59,6 +59,22 @@ python3 tools/seed_artel_family_guides.py \
 `LEARNING_CASE`. После этого АРТЕЛЬ может просить LES дать требования к
 созданию/качеству Revit-семейств и точные ФОП/ADSK параметры.
 
+## Seed Revit API Reference
+
+Для ручного теста Revit add-in/extractor посадите API-базу:
+
+```bash
+python3 tools/seed_artel_revit_api_reference.py \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --verify-search
+```
+
+Ожидаемый результат: `ARTEL_Index` содержит `REVIT_API_REFERENCE`. После этого
+АРТЕЛЬ может просить LES дать API-контекст по `FamilyManager`,
+`FilteredElementCollector`, транзакциям, shared parameters, connector extraction
+и batch JSON extraction для `.rfa`/`.rft`.
+
 Если backend запущен на другой машине и ходит в LES по ZeroTier/LAN, `GET /api/integrations/les/status` может быть `ok`, а `POST /api/tasks/task_0241/rag-context` может вернуть `status: "upstream_error"` с `httpStatus: 401`, если для LES `/api/search` нужен API key. Это проверяет, что цепочка АРТЕЛЬ -> LES работает до auth boundary. Для содержательного retrieval используйте локальный `LES_BASE_URL=http://127.0.0.1:8050`, trusted network или задайте `LES_API_KEY`.
 
 ## Быстрый smoke

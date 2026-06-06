@@ -148,6 +148,28 @@ def test_route_artel_family_guide_to_artel_index():
     assert route.pipeline == "markdown"
 
 
+def test_route_artel_revit_api_reference_to_artel_index():
+    probe = DocumentProbe(
+        path=Path("RAG_Content/ARTEL/revit_api/revit_api_family_automation_reference.md"),
+        suffix=".md",
+        size_bytes=12_000,
+        text_sample=(
+            "# ARTEL Revit API Reference\n"
+            "Document type: REVIT_API_REFERENCE\n"
+            "FamilyManager FilteredElementCollector Transaction NewFamilyDocument"
+        ),
+        has_tables=True,
+    )
+
+    route = classify_document(probe)
+
+    assert route.doc_type == "REVIT_API_REFERENCE"
+    assert route.domain == "ARTEL"
+    assert route.dataset_name == "ARTEL_Index"
+    assert route.content_type == "text"
+    assert route.pipeline == "markdown"
+
+
 def test_route_raw_ifc_to_cad_bim_index():
     probe = DocumentProbe(
         path=Path("RAG_Content/CAD_BIM/IFC/model.ifc"),

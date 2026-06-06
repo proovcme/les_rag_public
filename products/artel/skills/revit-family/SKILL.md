@@ -19,6 +19,9 @@ curl -fsS -X POST http://127.0.0.1:8050/api/search \
 Expected ARTEL source classes:
 
 - `FAMILY_GUIDE`: Revit family methodology and ARTEL quality requirements.
+- `REVIT_API_REFERENCE`: Revit API implementation basis for add-ins,
+  family/template extraction, `FamilyManager`, collectors, transactions,
+  shared parameters and connectors.
 - `FOP_PROFILE`: exact ADSK/shared parameter names, GUIDs, types and flags.
 - `LEARNING_CASE`: accepted family examples, known failures and fixes.
 
@@ -29,8 +32,10 @@ If LES is unavailable, read [family-quality-requirements.md](references/family-q
 1. Determine family category, Revit template, discipline, project stage, LOD,
    host/room behavior and expected schedules/tags.
 2. Retrieve `FAMILY_GUIDE` chunks for creation and quality rules.
-3. Retrieve `FOP_PROFILE` chunks for required ADSK/shared parameters.
-4. Produce a family specification:
+3. Retrieve `REVIT_API_REFERENCE` chunks when writing add-in code, extractor
+   logic, validation automation, or Revit API implementation plans.
+4. Retrieve `FOP_PROFILE` chunks for required ADSK/shared parameters.
+5. Produce a family specification:
    - category/template;
    - geometry and reference skeleton;
    - type/instance parameters;
@@ -40,8 +45,8 @@ If LES is unavailable, read [family-quality-requirements.md](references/family-q
    - type catalog decision;
    - validation checklist;
    - catalog metadata.
-5. Validate or review the RFA against the quality gates.
-6. Save accepted outcomes as `LEARNING_CASE` so LES improves future work.
+6. Validate or review the RFA against the quality gates.
+7. Save accepted outcomes as `LEARNING_CASE` so LES improves future work.
 
 ## Quality Gates
 
@@ -83,6 +88,15 @@ Seed FOP/shared parameters:
 ```bash
 python3 tools/seed_artel_fop_profiles.py \
   --fop /path/to/FOP2021.txt \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --verify-search
+```
+
+Seed Revit API reference:
+
+```bash
+python3 tools/seed_artel_revit_api_reference.py \
   --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
   --proxy-url http://127.0.0.1:8050 \
   --verify-search

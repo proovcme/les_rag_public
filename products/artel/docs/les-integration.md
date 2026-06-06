@@ -155,15 +155,32 @@ If the official Autodesk attachment rejects non-browser downloads, use a
 browser-downloaded local PDF or a curated markdown projection with the source
 URL, outline, rules, checklist and retrieval hints.
 
+Revit API reference seed:
+
+```bash
+python3 tools/seed_artel_revit_api_reference.py \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --verify-search
+```
+
+The tool writes `RAG_Content/ARTEL/revit_api/revit_api_family_automation_reference.md`,
+syncs only `ARTEL_Index`, and verifies retrieval. LES routes it as
+`REVIT_API_REFERENCE`. Use it when АРТЕЛЬ needs API-level context for Revit
+add-ins, family/template JSON extraction, `FamilyManager`, `FilteredElementCollector`,
+transactions, shared parameters, connectors, loading/reloading families, or
+Windows/Legion implementation planning.
+
 Operational skill:
 
 ```text
 products/artel/skills/revit-family/SKILL.md
 ```
 
-The skill instructs agents to retrieve `FAMILY_GUIDE`, `FOP_PROFILE`, and
-`LEARNING_CASE` evidence from LES before producing a family specification,
-validation checklist, catalog card, or acceptance decision.
+The skill instructs agents to retrieve `FAMILY_GUIDE`, `REVIT_API_REFERENCE`,
+`FOP_PROFILE`, and `LEARNING_CASE` evidence from LES before producing a family
+specification, API implementation plan, validation checklist, catalog card, or
+acceptance decision.
 
 ## Configuration
 

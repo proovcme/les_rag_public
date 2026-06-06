@@ -233,6 +233,8 @@ def _classify_doc_type(probe: DocumentProbe) -> str:
     name = probe.path.name.lower()
     if _is_artel_fop_source(probe):
         return "FOP_PROFILE"
+    if _is_artel_revit_api_source(probe):
+        return "REVIT_API_REFERENCE"
     if _is_artel_family_guide_source(probe):
         return "FAMILY_GUIDE"
     if _is_artel_learning_case_source(probe):
@@ -284,7 +286,11 @@ def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
     text = f"{' '.join(probe.path.parts)}\n{probe.text_sample}".casefold()
     name = probe.path.name.casefold()
 
-    if doc_type in {"LEARNING_CASE", "FOP_PROFILE", "FAMILY_GUIDE"} or _is_artel_source(probe) or _is_artel_fop_source(probe):
+    if (
+        doc_type in {"LEARNING_CASE", "FOP_PROFILE", "FAMILY_GUIDE", "REVIT_API_REFERENCE"}
+        or _is_artel_source(probe)
+        or _is_artel_fop_source(probe)
+    ):
         return "ARTEL"
 
     if doc_type == "CAD_BIM" or _is_cad_bim_source(probe):
@@ -792,6 +798,17 @@ def _is_artel_fop_source(probe: DocumentProbe) -> bool:
         "fop_profiles" in parts
         or ("artel fop shared parameter profile" in text)
         or ("revit shared parameter file" in text and ("adsk_" in text or "фоп" in text))
+    )
+
+
+def _is_artel_revit_api_source(probe: DocumentProbe) -> bool:
+    parts = {part.casefold() for part in probe.path.parts}
+    text = f"{probe.path.name}\n{probe.text_sample}".casefold()
+    return (
+        "revit_api" in parts
+        or "artel revit api reference" in text
+        or ("document type: revit_api_reference" in text)
+        or ("revit api" in text and "familymanager" in text and "filteredElementCollector".casefold() in text)
     )
 
 
