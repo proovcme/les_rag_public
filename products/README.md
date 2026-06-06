@@ -24,7 +24,7 @@ The LES repository may contain product source, contracts, docs and reproducible 
 ```text
 les-*.tar.gz / les-*.zip      LES boxed runtime profiles
 atlas-standalone.zip          offline/field viewer package
-artel-mvp.zip                 future ARTEL API/prototype package
+artel-mvp.zip                 ARTEL backend/UI/OpenAPI hand-test package
 ```
 
 Build АТЛАС with:
@@ -34,6 +34,12 @@ npm ci --prefix frontend/cad_bim_viewer
 npm run build --prefix frontend/cad_bim_viewer
 npm run build:standalone --prefix frontend/cad_bim_viewer
 uv run python tools/smoke_atlas_standalone.py
+uv run python tools/check_atlas_bundle_budget.py
 uv run python tools/build_atlas_release.py
 ```
 
+Build АРТЕЛЬ MVP hand-test package with:
+
+```bash
+uv run python tools/build_artel_release.py
+```

@@ -14,6 +14,7 @@ npm ci --prefix frontend/cad_bim_viewer
 npm run build --prefix frontend/cad_bim_viewer
 npm run build:standalone --prefix frontend/cad_bim_viewer
 uv run python tools/smoke_atlas_standalone.py
+uv run python tools/check_atlas_bundle_budget.py
 uv run python tools/build_atlas_release.py
 ```
 
@@ -49,3 +50,21 @@ Ignored private folders such as `standalone/cad_bim_viewer/JSON` and `standalone
 
 Browser-level smoke should still be run before a public release when the viewer UI changes.
 
+## Bundle Budget
+
+АТЛАС intentionally carries a large WebGL/IFC runtime. The current release gate
+does not pretend this is small; it makes the budget explicit:
+
+```bash
+uv run python tools/check_atlas_bundle_budget.py
+```
+
+Current budget:
+
+- `assets/index.js` <= 8 MB;
+- `assets/index.css` <= 64 KB;
+- `fragments/worker.mjs` <= 16 MB;
+- `web-ifc/web-ifc.wasm` <= 16 MB.
+
+If a dependency upgrade exceeds this, the release must either justify the new
+budget in this README or split the viewer runtime.

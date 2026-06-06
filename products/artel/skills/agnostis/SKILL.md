@@ -7,12 +7,16 @@ description: Use when working on the АРТЕЛЬ repository, Revit family devel
 
 ## Workspace
 
-Use `/Users/ovc/Projects/Agnosis` as the АРТЕЛЬ project root.
+Use `/Users/ovc/Projects/LES_v2/products/artel` as the АРТЕЛЬ product root inside LES.
+
+The legacy standalone repository still exists at `/Users/ovc/Projects/Agnosis`.
+Treat LES `products/artel` as the current boxed source of truth unless the user
+explicitly asks to update the standalone mirror.
 
 Primary public surfaces:
 
-- GitHub: `https://github.com/proovcme/Agnostis`
-- GitHub Pages UI: `https://proovcme.github.io/Agnostis/`
+- GitHub mirror: `https://github.com/proovcme/Agnostis`
+- GitHub Pages UI mirror: `https://proovcme.github.io/Agnostis/`
 - Backend skeleton: `backend/Agnostis.Api`
 - OpenAPI contract: `openapi/agnostis-mvp.yaml`
 
@@ -53,7 +57,7 @@ Core rule: Revit add-in calls АРТЕЛЬ; АРТЕЛЬ calls LES/OpenRouter. R
 Before non-trivial work, inspect the relevant files:
 
 ```bash
-cd /Users/ovc/Projects/Agnosis
+cd /Users/ovc/Projects/LES_v2/products/artel
 sed -n '1,220p' README.md
 sed -n '1,220p' docs/about.md
 sed -n '1,220p' docs/technical-stack.md
@@ -136,9 +140,9 @@ node --check app/app.js
 If local `dotnet` is unavailable, build backend on Legion:
 
 ```bash
-COPYFILE_DISABLE=1 tar -czf /tmp/agnostis-build.tgz backend openapi docs README.md
-scp /tmp/agnostis-build.tgz legion:agnostis-build.tgz
-ssh legion 'powershell -NoProfile -Command "$archive = Join-Path $env:USERPROFILE ''agnostis-build.tgz''; $dest = Join-Path $env:TEMP ''agnostis-build''; if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }; New-Item -ItemType Directory -Path $dest | Out-Null; tar -xzf $archive -C $dest; dotnet build (Join-Path $dest ''backend/Agnostis.Api/Agnostis.Api.csproj'') --configuration Release"'
+COPYFILE_DISABLE=1 tar -czf /tmp/artel-build.tgz backend openapi docs README.md RUNBOOK_HAND_TEST.md app
+scp /tmp/artel-build.tgz legion:artel-build.tgz
+ssh legion 'powershell -NoProfile -Command "$archive = Join-Path $env:USERPROFILE ''artel-build.tgz''; $dest = Join-Path $env:TEMP ''artel-build''; if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }; New-Item -ItemType Directory -Path $dest | Out-Null; tar -xzf $archive -C $dest; dotnet build (Join-Path $dest ''backend/Agnostis.Api/Agnostis.Api.csproj'') --configuration Release"'
 ```
 
 After pushing, check GitHub Pages:

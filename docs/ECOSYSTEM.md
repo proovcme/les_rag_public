@@ -102,11 +102,12 @@ Recommended datasets:
 ## Practical Build Order
 
 1. Stabilize `/api/search` as the shared retrieval-only contract.
-2. Update АРТЕЛЬ backend to prefer `/api/search` for `rag-context`.
+2. Keep АРТЕЛЬ backend on `/api/search` for `rag-context`.
 3. Add an АРТЕЛЬ structured import contract for `FamilyLearningCase`.
 4. Add dataset routing for АРТЕЛЬ/RFA/validation memory.
-5. Let АТЛАС use `/api/search` for selected object context when generation is not needed.
+5. Keep АТЛАС on `/api/search` for selected object context when generation is not needed.
 6. Package each product separately while keeping LES as the integration spine.
+7. Add public-safe seed data so a fresh LES install can return non-empty ARTEL context.
 
 ## Repository Layout
 
