@@ -104,6 +104,28 @@ def test_route_artel_learning_case_to_artel_index():
     assert route.pipeline == "markdown"
 
 
+def test_route_artel_fop_profile_to_artel_index():
+    probe = DocumentProbe(
+        path=Path("RAG_Content/ARTEL/fop_profiles/FOP2021.md"),
+        suffix=".md",
+        size_bytes=10_000,
+        text_sample=(
+            "# ARTEL FOP Shared Parameter Profile\n"
+            "ФОП shared parameters Revit GUID\n"
+            "ADSK_Наименование GUID=11111111-1111-1111-1111-111111111111"
+        ),
+        has_tables=True,
+    )
+
+    route = classify_document(probe)
+
+    assert route.doc_type == "FOP_PROFILE"
+    assert route.domain == "ARTEL"
+    assert route.dataset_name == "ARTEL_Index"
+    assert route.content_type == "text"
+    assert route.pipeline == "markdown"
+
+
 def test_route_raw_ifc_to_cad_bim_index():
     probe = DocumentProbe(
         path=Path("RAG_Content/CAD_BIM/IFC/model.ifc"),

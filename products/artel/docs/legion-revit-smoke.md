@@ -56,6 +56,38 @@ Example families found there:
 - `M_Base Cabinet-Single Door.rfa`
 - `M_Vanity Cabinet-Double Door & 4 Drawer.rfa`
 
+## FOP / Shared Parameters Found
+
+Real Revit shared-parameter/FOP files found on Legion:
+
+```text
+C:\Users\Oleg\Downloads\fop (2)\ФОП\ФОП2019.txt
+C:\Users\Oleg\Downloads\fop (2)\ФОП\ФОП2021.txt
+```
+
+Both files have the standard Revit shared parameter structure:
+
+```text
+# This is a Revit shared parameter file.
+*META
+*GROUP
+*PARAM
+```
+
+The preferred LES ingestion path is not raw `.txt` upload, but a normalized
+ARTEL markdown projection:
+
+```bash
+python3 tools/seed_artel_fop_profiles.py \
+  --fop /path/to/FOP2021.txt \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --verify-search
+```
+
+The tool writes projections to `RAG_Content/ARTEL/fop_profiles/`, syncs only
+`ARTEL_Index`, and verifies retrieval for FOP/shared parameter queries.
+
 ## ARTEL Backend Smoke
 
 Copied current ARTEL mirror payload to:

@@ -65,6 +65,12 @@ python3 tools/smoke_artel_hand_test.py --base-url http://127.0.0.1:5057
 Для Windows/Revit host `legion` есть отдельный результат smoke:
 [docs/legion-revit-smoke.md](docs/legion-revit-smoke.md).
 
+Для загрузки найденного ФОП/shared parameters в LES используйте:
+
+```bash
+python3 tools/seed_artel_fop_profiles.py --fop /path/to/FOP2021.txt --verify-search
+```
+
 ## Ручной сценарий
 
 1. Открыть `/`.
