@@ -50,6 +50,7 @@ Every platform profile must pass:
 
 ```bash
 lesctl doctor --profile <profile>
+lesctl init --profile <profile>
 lesctl start --profile <profile>
 curl -fsS http://127.0.0.1:8050/api/health
 curl -fsS http://127.0.0.1:8050/api/search \
@@ -63,7 +64,7 @@ For profiles without local generation, `/api/chat` may be disabled or routed to 
 
 | Profile | Installer |
 |---|---|
-| `mac-native` | `installers/macos/install.sh --init-env` or `uv run lesctl install --profile mac-native` |
+| `mac-native` | `uv run lesctl init --profile mac-native` then `installers/macos/install.sh` or `uv run lesctl install --profile mac-native` |
 | `linux-docker` | `installers/linux/install.sh --profile linux-docker` |
 | `linux-systemd` | `installers/linux/install.sh --profile linux-systemd --install-units` |
 | `windows-docker` | `installers/windows/install.ps1 -Profile windows-docker` |

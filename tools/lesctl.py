@@ -77,6 +77,11 @@ def main(argv: list[str] | None = None) -> int:
     install.add_argument("--force-env", action="store_true")
     install.add_argument("--json", action="store_true")
 
+    init = sub.add_parser("init", help="initialize local runtime directories and .env")
+    init.add_argument("--profile", choices=sorted(install_les.SUPPORTED_PROFILES), default=None)
+    init.add_argument("--force-env", action="store_true")
+    init.add_argument("--json", action="store_true")
+
     status = sub.add_parser("status", help="show LES service status")
     status.add_argument("--profile", choices=sorted(install_les.SUPPORTED_PROFILES), default=None)
 
@@ -116,6 +121,15 @@ def main(argv: list[str] | None = None) -> int:
             command.append("--sync")
         if args.init_env:
             command.append("--init-env")
+        if args.force_env:
+            command.append("--force-env")
+        if args.json:
+            command.append("--json")
+        return install_les.main(command)
+    if args.command == "init":
+        command = ["--check", "--create-dirs", "--init-env"]
+        if args.profile:
+            command.extend(["--profile", args.profile])
         if args.force_env:
             command.append("--force-env")
         if args.json:

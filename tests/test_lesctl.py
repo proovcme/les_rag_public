@@ -10,6 +10,15 @@ def test_lesctl_doctor_delegates_to_install(monkeypatch):
     assert calls == [["--check", "--profile", "server-remote-model", "--json"]]
 
 
+def test_lesctl_init_creates_dirs_and_env(monkeypatch):
+    calls = []
+    monkeypatch.setattr(lesctl.install_les, "main", lambda argv: calls.append(argv) or 0)
+
+    assert lesctl.main(["init", "--profile", "server-remote-model", "--json"]) == 0
+
+    assert calls == [["--check", "--create-dirs", "--init-env", "--profile", "server-remote-model", "--json"]]
+
+
 def test_lesctl_status_delegates_to_runtime(monkeypatch):
     calls = []
     monkeypatch.setattr(lesctl.les_runtime_control, "main", lambda argv: calls.append(argv) or 0)

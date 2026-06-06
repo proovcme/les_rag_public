@@ -42,11 +42,11 @@ content. Keep production corpora outside git and mount/copy them explicitly.
 ```bash
 uv run python tools/clean_install_smoke.py --profile server-remote-model --run-tests --build-artifact
 ./installers/macos/uninstall.sh
-./installers/macos/install.sh --init-env
+uv run lesctl init --profile mac-native
+./installers/macos/install.sh
 ```
 
 The uninstall script is dry-run by default. Actual service removal requires
 `--confirm`; runtime/corpus deletion also requires `--confirm-purge-data`.
 
 See `docs/MAC_REINSTALL_STRESS.md`.
-

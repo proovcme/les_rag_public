@@ -28,6 +28,10 @@ Expected result:
 - focused installer tests pass;
 - release archive can be built without private runtime data.
 
+Latest non-destructive result: 2026-06-06 passed on macOS arm64 with
+`server-remote-model`, focused installer tests `14 passed`, and
+`les-linux-docker-clean-smoke.tar.gz` artifact build inside the temporary copy.
+
 ## 2. Pre-Destructive Backup
 
 Before removing the real Mac runtime:
@@ -91,7 +95,9 @@ From a fresh clone:
 git clone git@github.com:proovcme/les_rag.git
 cd les_rag
 git checkout codex/les-closeout-20260527
-./installers/macos/install.sh --init-env
+uv sync
+uv run lesctl init --profile mac-native
+./installers/macos/install.sh
 ```
 
 Edit `.env` and set at least:
@@ -121,4 +127,3 @@ The reinstall stress test passes when:
 - `/api/health` returns `ok`;
 - Lite UI opens at `http://127.0.0.1:8051/`;
 - no private corpus or local archive appears in git status or release artifacts.
-

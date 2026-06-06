@@ -24,7 +24,7 @@ Goal: turn LES into a boxed solution for macOS, Linux and Windows while keeping 
 - `lesctl status`
 - `lesctl smoke`
 
-Current command entrypoints are `les-install` and `les-runtime`; the next step is to expose a single `lesctl` facade.
+Current command entrypoint is the `lesctl` facade. Legacy helper entrypoints `les-install` and `les-runtime` remain available for direct checks and launchd control.
 
 Current boxed entrypoints:
 
@@ -136,7 +136,7 @@ Before a boxed release:
 ## Immediate Next Work
 
 1. Add ARTEL `FamilyLearningCase` import contract.
-2. Run destructive Mac reinstall stress on a backed-up host.
+2. Run destructive Mac reinstall stress on a backed-up host. Non-destructive clean-room smoke passed on 2026-06-06 with `server-remote-model`, focused installer tests and `linux-docker` artifact build.
 3. Add actual Linux systemd Qdrant/model unit templates.
 4. Add Windows service wrapper after Docker/lite smoke on a real Windows host.
 5. Add hub repository README for LES / АТЛАС / АРТЕЛЬ.

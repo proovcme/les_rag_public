@@ -20,7 +20,8 @@ cd les_rag
 
 uv sync
 uv run lesctl doctor --profile mac-native
-uv run lesctl install --profile mac-native --init-env
+uv run lesctl init --profile mac-native
+uv run lesctl install --profile mac-native
 ```
 
 После этого отредактируйте `.env`:
@@ -83,6 +84,7 @@ powershell -ExecutionPolicy Bypass -File .\installers\windows\install.ps1 -Profi
 ```bash
 uv run les-install --check
 uv run lesctl doctor --profile mac-native
+uv run lesctl init --profile mac-native
 uv run lesctl status
 curl -fsS http://127.0.0.1:8050/api/health | python3 -m json.tool
 curl -fsS http://127.0.0.1:8080/api/health | python3 -m json.tool
