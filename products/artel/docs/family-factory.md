@@ -75,8 +75,21 @@ The validator currently checks:
 - active document is a family document;
 - category exists;
 - family types exist;
-- required shared/FOP parameter `ADSK_Наименование` exists and is shared;
+- required shared/FOP parameters exist and are shared;
 - Revit warnings are captured as validation warnings.
+- family types can be flexed by switching `FamilyManager.CurrentType` and
+  calling `Document.Regenerate()` inside a rollback transaction;
+- optional scratch-project load test through `Document.LoadFamily`;
+- manual project acceptance is still required for insert/tag/schedule checks.
+
+Validator environment knobs:
+
+```powershell
+$env:ARTEL_REQUIRED_SHARED_PARAMETERS = "ADSK_Наименование,ADSK_КодИзделия"
+$env:ARTEL_RUN_FLEX_TEST = "true"
+$env:ARTEL_RUN_LOAD_TEST = "false"
+$env:ARTEL_REQUIRE_PROJECT_CHECKS = "true"
+```
 
 Build and install on Legion/Revit 2025:
 
@@ -160,6 +173,31 @@ python3 tools/seed_artel_revit_factory_sources.py \
   --chm /path/to/RevitAPI.chm \
   --verify-search
 ```
+
+If `RevitAPI.chm` has already been extracted into HTML, seed it directly. The
+tool writes SDK docs as markdown shards by default, so a full Revit 2025 CHM
+HTML tree becomes tens of runtime documents instead of tens of thousands of
+tiny files:
+
+```bash
+python3 tools/seed_artel_revit_factory_sources.py \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --seed-defaults \
+  --sdk-html-dir local_private_archive/revit_api_sdk/revit-api-chms/html/2025 \
+  --sdk-shard-pages auto \
+  --verify-search
+```
+
+Current local source used for Revit 2025 SDK docs:
+
+```text
+local_private_archive/revit_api_sdk/revit-api-chms/html/2025
+```
+
+The upstream repository is `ADN-DevTech/revit-api-chms`, which stores Revit API
+CHM files and extracted HTML snippets. Keep this clone and all CHM-derived
+runtime projections private/local.
 
 If the local Revit install has no `RevitAPI.chm`, seed selected SDK/API pages by
 URL as private runtime knowledge:

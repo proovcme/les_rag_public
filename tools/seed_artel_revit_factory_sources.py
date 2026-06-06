@@ -281,6 +281,31 @@ def render_sdk_doc(source: str, title: str, body: str) -> str:
     )
 
 
+def render_sdk_shard(source: str, shard_index: int, page_count: int, pages: list[tuple[str, str, str]]) -> str:
+    titles = [title for _, title, _ in pages]
+    return (
+        "# ARTEL Revit API SDK Doc Shard\n\n"
+        "Product: ARTEL\n"
+        "Document type: REVIT_API_SDK_DOC\n"
+        "Source kind: Revit SDK CHM/HTML shard\n"
+        f"Source: {source}\n"
+        f"Shard: {shard_index}\n"
+        f"Page count: {page_count}\n\n"
+        "## Retrieval Hints\n\n"
+        "Revit API SDK documentation CHM HTML Autodesk.Revit.DB Autodesk.Revit.UI "
+        "FamilyManager Transaction Document LoadFamily FilteredElementCollector ARTEL RFA family factory.\n\n"
+        "## Page Titles\n\n"
+        + "\n".join(f"- {title}" for title in titles)
+        + "\n\n## SDK Content\n\n"
+        + "\n\n".join(
+            f"### {title}\n\nSource page: {page_source}\n\n{body.strip()}"
+            for page_source, title, body in pages
+            if body.strip()
+        )
+        + "\n"
+    )
+
+
 def write_sdk_html_file(path: Path, runtime_root: Path, source_root: Path | None = None) -> Path:
     html = path.read_text(encoding="utf-8", errors="ignore")
     rel = path.relative_to(source_root) if source_root else Path(path.name)
@@ -290,6 +315,40 @@ def write_sdk_html_file(path: Path, runtime_root: Path, source_root: Path | None
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(render_sdk_doc(str(path), title, body), encoding="utf-8")
     return target
+
+
+def write_sdk_html_shards(html_dir: Path, runtime_root: Path, shard_pages: int, max_pages: int = 0) -> list[Path]:
+    if shard_pages <= 0:
+        raise ValueError("shard_pages must be greater than 0")
+    if not html_dir.is_dir():
+        raise FileNotFoundError(f"SDK HTML directory not found: {html_dir}")
+    html_files = sorted(
+        path
+        for path in html_dir.rglob("*")
+        if path.is_file() and path.suffix.casefold() in {".htm", ".html"}
+    )
+    if max_pages > 0:
+        html_files = html_files[:max_pages]
+    root_name = safe_name("_".join(html_dir.parts[-3:]), "sdk_html")
+    targets: list[Path] = []
+    target_root = target_dir(runtime_root, "revit_api_sdk_docs")
+    target_root.mkdir(parents=True, exist_ok=True)
+    for index in range(0, len(html_files), shard_pages):
+        selected = html_files[index : index + shard_pages]
+        pages: list[tuple[str, str, str]] = []
+        for path in selected:
+            html = path.read_text(encoding="utf-8", errors="ignore")
+            rel = path.relative_to(html_dir)
+            title, body = html_to_markdown(path.name, html)
+            pages.append((rel.as_posix(), title, body))
+        shard_no = len(targets) + 1
+        target = target_root / f"{root_name}_shard_{shard_no:04d}.md"
+        target.write_text(
+            render_sdk_shard(str(html_dir), shard_no, len(selected), pages),
+            encoding="utf-8",
+        )
+        targets.append(target)
+    return targets
 
 
 def write_sdk_html_url(source: str, runtime_root: Path, timeout_sec: float = DEFAULT_URL_TIMEOUT_SEC) -> Path:
@@ -313,6 +372,16 @@ def write_sdk_html_dir(html_dir: Path, runtime_root: Path, max_pages: int = 0) -
     if max_pages > 0:
         html_files = html_files[:max_pages]
     return [write_sdk_html_file(path, runtime_root, source_root=html_dir) for path in html_files]
+
+
+def count_sdk_html_files(html_dir: Path) -> int:
+    if not html_dir.is_dir():
+        raise FileNotFoundError(f"SDK HTML directory not found: {html_dir}")
+    return sum(
+        1
+        for path in html_dir.rglob("*")
+        if path.is_file() and path.suffix.casefold() in {".htm", ".html"}
+    )
 
 
 def extract_chm(chm_path: Path) -> Path:
@@ -377,6 +446,19 @@ def wait_for_search(proxy_url: str, timeout_sec: float, poll_sec: float, api_key
     raise RuntimeError(f"ARTEL factory search did not return factory sources after {timeout_sec:.0f}s: {last}")
 
 
+def resolve_sdk_shard_pages(value: str, html_page_count: int, threshold: int) -> int:
+    raw = value.strip().casefold()
+    if raw == "auto":
+        return 500 if html_page_count > threshold else 0
+    try:
+        pages = int(raw)
+    except ValueError as exc:
+        raise ValueError("--sdk-shard-pages must be 'auto', 0, or a positive integer") from exc
+    if pages < 0:
+        raise ValueError("--sdk-shard-pages must be 'auto', 0, or a positive integer")
+    return pages
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Seed ARTEL Revit family factory knowledge sources into LES.")
     parser.add_argument("--runtime-root", type=Path, default=Path.cwd(), help="LES runtime root that owns RAG_Content.")
@@ -392,6 +474,8 @@ def main() -> int:
     parser.add_argument("--seed-defaults", action="store_true", help="Seed public Rhino model guide and RevitAPIDocGen 2023 symbol map.")
     parser.add_argument("--max-symbols", type=int, default=0, help="Limit symbol entries; 0 means all.")
     parser.add_argument("--max-sdk-pages", type=int, default=0, help="Limit SDK HTML pages; 0 means all.")
+    parser.add_argument("--sdk-shard-pages", default="auto", help="Pages per SDK markdown shard; 'auto' shards large HTML trees, 0 writes one markdown file per page.")
+    parser.add_argument("--sdk-shard-threshold", type=int, default=1000, help="HTML page count above which --sdk-shard-pages=auto enables sharding.")
     parser.add_argument("--no-sync", action="store_true", help="Only write files; do not call LES sync.")
     parser.add_argument("--verify-search", action="store_true", help="Poll /api/search until factory chunks are returned.")
     parser.add_argument("--timeout-sec", type=float, default=180.0)
@@ -414,9 +498,22 @@ def main() -> int:
         written.append(target)
         print(f"written={target}")
     for html_dir in args.sdk_html_dir:
-        for target in write_sdk_html_dir(html_dir, args.runtime_root, max_pages=args.max_sdk_pages):
-            written.append(target)
-        print(f"sdk_html_dir={html_dir} written_count={len(written)}")
+        html_page_count = count_sdk_html_files(html_dir)
+        shard_pages = resolve_sdk_shard_pages(args.sdk_shard_pages, html_page_count, args.sdk_shard_threshold)
+        if shard_pages > 0:
+            targets = write_sdk_html_shards(
+                html_dir,
+                args.runtime_root,
+                shard_pages=shard_pages,
+                max_pages=args.max_sdk_pages,
+            )
+        else:
+            targets = write_sdk_html_dir(html_dir, args.runtime_root, max_pages=args.max_sdk_pages)
+        written.extend(targets)
+        print(
+            f"sdk_html_dir={html_dir} html_page_count={html_page_count} "
+            f"sdk_shard_pages={shard_pages} written_count={len(targets)}"
+        )
     for source in args.sdk_url:
         try:
             target = write_sdk_html_url(source, args.runtime_root, timeout_sec=args.url_timeout_sec)

@@ -74,6 +74,8 @@ FamilyLearningCase =
   source summaries
   approved specification
   shared parameter profile refs
+  Revit model/API guide refs
+  Revit API CHM/HTML shard refs
   Revit action log
   validation report
   catalog card
@@ -97,6 +99,25 @@ uv run python tools/seed_artel_learning_cases.py --verify-search
 The tool writes a markdown projection under `RAG_Content/ARTEL/family_learning_cases/`,
 calls only `/api/rag/sync/ARTEL`, and verifies that `/api/search` with
 `dataset_filter="ARTEL"` returns a non-empty result.
+
+For Revit API SDK/CHM knowledge, keep the upstream clone and generated markdown
+private/local. Preferred current source:
+
+```text
+local_private_archive/revit_api_sdk/revit-api-chms/html/2025
+```
+
+Preferred ingestion command:
+
+```bash
+python3 tools/seed_artel_revit_factory_sources.py \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --seed-defaults \
+  --sdk-html-dir local_private_archive/revit_api_sdk/revit-api-chms/html/2025 \
+  --sdk-shard-pages auto \
+  --verify-search
+```
 
 ## АТЛАС Data LES Should Index
 

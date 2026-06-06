@@ -23,6 +23,16 @@ test loop with standard Revit family/template content and LES retrieval.
 - `RevitAPI.chm` was not found under common Autodesk/Revit folders or
   `C:\Users\Oleg`.
 
+The Revit API CHM gap is covered by the local/private clone:
+
+```text
+local_private_archive/revit_api_sdk/revit-api-chms
+```
+
+The source repository is `ADN-DevTech/revit-api-chms`; it contains Revit API
+CHM files and extracted HTML snippets. LES indexes the Revit 2025 HTML tree as
+`REVIT_API_SDK_DOC` markdown shards, not as public repository content.
+
 ## Standard Content Inventory
 
 RVT 2024:
@@ -158,6 +168,10 @@ cd products\artel
 Result:
 
 - build succeeded on Legion;
+- latest verification: 2026-06-06 after adding flex/load validation checks;
+- warnings: `2` (`MSB3277` System.Drawing 4.0/8.0 reference conflict from
+  Revit 2025/.NET assemblies);
+- errors: `0`;
 - installed to
   `C:\Users\Oleg\AppData\Roaming\Autodesk\Revit\Addins\2025\ARTEL.FamilyFactory`;
 - `.addin` manifest written to
@@ -167,6 +181,15 @@ Commands exposed in Revit:
 
 - `ARTEL Family Extract`;
 - `ARTEL Family Validate`.
+
+Validator behavior now includes:
+
+- family document/category/type checks;
+- required shared/FOP parameters from `ARTEL_REQUIRED_SHARED_PARAMETERS`;
+- Revit warnings copied into validation issues;
+- rollback flex test over all family types by default;
+- optional scratch metric project load test when `ARTEL_RUN_LOAD_TEST=true`;
+- manual project acceptance warning for insert/tag/schedule checks.
 
 Expected output folder:
 
@@ -180,11 +203,15 @@ Optional submit environment:
 $env:ARTEL_BASE_URL = "http://127.0.0.1:5057"
 $env:ARTEL_TASK_ID = "task_0241"
 $env:ARTEL_API_KEY = ""
+$env:ARTEL_REQUIRED_SHARED_PARAMETERS = "ADSK_Наименование,ADSK_КодИзделия"
+$env:ARTEL_RUN_FLEX_TEST = "true"
+$env:ARTEL_RUN_LOAD_TEST = "false"
+$env:ARTEL_REQUIRE_PROJECT_CHECKS = "true"
 ```
 
 Current limitation: Revit GUI execution has not yet been manually clicked in
-this smoke. The code/build/install path is ready; open/flex/load/tag/schedule
-acceptance still needs a hands-on Revit pass.
+this smoke. The code/build/install path is ready; actual open/flex/load
+execution and insert/tag/schedule acceptance still need a hands-on Revit pass.
 
 ## Issue Found
 

@@ -47,7 +47,12 @@ public sealed class ArtelFamilyValidateCommand : IExternalCommand
             ? null
             : ArtelClient.TryGetTaskPackage(options);
 
-        var validation = FamilyFactoryValidator.Validate(document, commandData.Application.Application.VersionNumber, package);
+        var validation = FamilyFactoryValidator.Validate(
+            document,
+            commandData.Application.Application,
+            commandData.Application.Application.VersionNumber,
+            package,
+            options);
         var path = FamilyFactoryPaths.WriteJson("validation", validation);
 
         string submitMessage;
@@ -152,12 +157,12 @@ internal static class FamilyFactoryExporter
 
 internal static class FamilyFactoryValidator
 {
-    private static readonly string[] RequiredSharedParameters =
-    {
-        "ADSK_Наименование"
-    };
-
-    public static Dictionary<string, object?> Validate(Document document, string revitVersion, Dictionary<string, object?>? taskPackage)
+    public static Dictionary<string, object?> Validate(
+        Document document,
+        Autodesk.Revit.ApplicationServices.Application application,
+        string revitVersion,
+        Dictionary<string, object?>? taskPackage,
+        ArtelOptions options)
     {
         var export = FamilyFactoryExporter.Export(document, revitVersion);
         var issues = new List<Dictionary<string, object?>>();
@@ -180,7 +185,7 @@ internal static class FamilyFactoryValidator
             AddIssue(issues, "warning", "ARF-TYPE-001", "No family types found", "Create at least one type or document the type catalog workflow.");
         }
 
-        foreach (var required in RequiredSharedParameters)
+        foreach (var required in options.RequiredSharedParameters)
         {
             var exists = parameters.Any(parameter =>
                 string.Equals(Convert.ToString(parameter["name"]), required, StringComparison.OrdinalIgnoreCase)
@@ -194,6 +199,42 @@ internal static class FamilyFactoryValidator
         foreach (var warning in document.GetWarnings())
         {
             AddIssue(issues, "warning", "ARF-REVIT-WARNING", "Revit warning", warning.GetDescriptionText());
+        }
+
+        if (options.RunFlexTest)
+        {
+            RunFlexTest(document, issues, actions);
+        }
+        else
+        {
+            AddIssue(issues, "warning", "ARF-FLEX-000", "Flex test not executed", "Set ARTEL_RUN_FLEX_TEST=true before acceptance.");
+            AddAction(actions, "flex", Convert.ToString(export["family_name"]) ?? document.Title, "skipped", "Flex test disabled by ARTEL_RUN_FLEX_TEST.");
+        }
+
+        if (options.RunLoadTest)
+        {
+            RunLoadTest(document, application, issues, actions);
+        }
+        else
+        {
+            AddIssue(issues, "warning", "ARF-LOAD-000", "Load test not executed", "Set ARTEL_RUN_LOAD_TEST=true to load the family into a scratch project document.");
+            AddAction(actions, "load", Convert.ToString(export["family_name"]) ?? document.Title, "skipped", "Scratch project load test disabled by ARTEL_RUN_LOAD_TEST.");
+        }
+
+        if (options.RequireProjectAcceptanceChecks)
+        {
+            AddIssue(
+                issues,
+                "warning",
+                "ARF-PROJECT-001",
+                "Project acceptance checks are pending",
+                "Before acceptance, verify insert, tag and schedule behavior in a representative project/template.");
+            AddAction(
+                actions,
+                "project_acceptance",
+                Convert.ToString(export["family_name"]) ?? document.Title,
+                "pending",
+                "Manual/project-template insert, tag and schedule checks are required before acceptance.");
         }
 
         actions.Add(new Dictionary<string, object?>
@@ -233,10 +274,121 @@ internal static class FamilyFactoryValidator
         });
     }
 
+    private static void AddAction(List<Dictionary<string, object?>> actions, string type, string target, string status, string message)
+    {
+        actions.Add(new Dictionary<string, object?>
+        {
+            ["type"] = type,
+            ["target"] = target,
+            ["status"] = status,
+            ["message"] = message
+        });
+    }
+
+    private static void RunFlexTest(Document document, List<Dictionary<string, object?>> issues, List<Dictionary<string, object?>> actions)
+    {
+        if (!document.IsFamilyDocument)
+        {
+            AddAction(actions, "flex", document.Title, "skipped", "Document is not a family document.");
+            return;
+        }
+
+        var familyManager = document.FamilyManager;
+        var types = familyManager.Types.Cast<FamilyType>().ToList();
+        if (types.Count == 0)
+        {
+            AddAction(actions, "flex", document.Title, "skipped", "No family types to flex.");
+            return;
+        }
+
+        Transaction? transaction = null;
+        try
+        {
+            transaction = new Transaction(document, "ARTEL flex family types");
+            transaction.Start();
+            foreach (var type in types)
+            {
+                familyManager.CurrentType = type;
+                document.Regenerate();
+            }
+            transaction.RollBack();
+            AddAction(actions, "flex", document.Title, "completed", $"Flexed {types.Count} family type(s) with document.Regenerate().");
+        }
+        catch (Exception error)
+        {
+            if (transaction is not null && transaction.HasStarted())
+            {
+                transaction.RollBack();
+            }
+            AddIssue(issues, "error", "ARF-FLEX-001", "Family type flex failed", $"{error.GetType().Name}: {error.Message}");
+            AddAction(actions, "flex", document.Title, "failed", $"{error.GetType().Name}: {error.Message}");
+        }
+    }
+
+    private static void RunLoadTest(
+        Document document,
+        Autodesk.Revit.ApplicationServices.Application application,
+        List<Dictionary<string, object?>> issues,
+        List<Dictionary<string, object?>> actions)
+    {
+        if (!document.IsFamilyDocument)
+        {
+            AddAction(actions, "load", document.Title, "skipped", "Document is not a family document.");
+            return;
+        }
+
+        Document? projectDocument = null;
+        try
+        {
+            projectDocument = application.NewProjectDocument(UnitSystem.Metric);
+            var loadedFamily = document.LoadFamily(projectDocument, new ArtelFamilyLoadOptions());
+            if (loadedFamily is null)
+            {
+                AddIssue(issues, "error", "ARF-LOAD-001", "Family did not load into scratch project", "Document.LoadFamily returned null.");
+                AddAction(actions, "load", document.Title, "failed", "Document.LoadFamily returned null.");
+                return;
+            }
+
+            AddAction(actions, "load", document.Title, "completed", $"Family loaded into a scratch metric project document as {loadedFamily.Name}.");
+        }
+        catch (Exception error)
+        {
+            AddIssue(issues, "error", "ARF-LOAD-002", "Scratch project load test failed", $"{error.GetType().Name}: {error.Message}");
+            AddAction(actions, "load", document.Title, "failed", $"{error.GetType().Name}: {error.Message}");
+        }
+        finally
+        {
+            if (projectDocument is not null)
+            {
+                projectDocument.Close(false);
+            }
+        }
+    }
+
     private static string BuildSummary(Dictionary<string, object?> export, string status, int issueCount, Dictionary<string, object?>? taskPackage)
     {
         var taskInfo = taskPackage is null ? "without approved ARTEL package" : "against approved ARTEL package";
         return $"Validated {export["family_name"]} ({export["category"]}) {taskInfo}: status={status}, issues={issueCount}.";
+    }
+}
+
+internal sealed class ArtelFamilyLoadOptions : IFamilyLoadOptions
+{
+    public bool OnFamilyFound(bool familyInUse, out bool overwriteParameterValues)
+    {
+        overwriteParameterValues = true;
+        return true;
+    }
+
+    public bool OnSharedFamilyFound(
+        Family sharedFamily,
+        bool familyInUse,
+        out FamilySource source,
+        out bool overwriteParameterValues)
+    {
+        source = FamilySource.Family;
+        overwriteParameterValues = true;
+        return true;
     }
 }
 
@@ -299,22 +451,76 @@ internal static class ArtelClient
 internal sealed class ArtelOptions
 {
     public ArtelOptions(string artelBaseUrl, string taskId, string apiKey)
+        : this(
+            artelBaseUrl,
+            taskId,
+            apiKey,
+            RequiredSharedParameters: new[] { "ADSK_Наименование" },
+            RunFlexTest: true,
+            RunLoadTest: false,
+            RequireProjectAcceptanceChecks: true)
+    {
+    }
+
+    public ArtelOptions(
+        string artelBaseUrl,
+        string taskId,
+        string apiKey,
+        IReadOnlyList<string> RequiredSharedParameters,
+        bool RunFlexTest,
+        bool RunLoadTest,
+        bool RequireProjectAcceptanceChecks)
     {
         ArtelBaseUrl = artelBaseUrl;
         TaskId = taskId;
         ApiKey = apiKey;
+        this.RequiredSharedParameters = RequiredSharedParameters;
+        this.RunFlexTest = RunFlexTest;
+        this.RunLoadTest = RunLoadTest;
+        this.RequireProjectAcceptanceChecks = RequireProjectAcceptanceChecks;
     }
 
     public string ArtelBaseUrl { get; }
     public string TaskId { get; }
     public string ApiKey { get; }
+    public IReadOnlyList<string> RequiredSharedParameters { get; }
+    public bool RunFlexTest { get; }
+    public bool RunLoadTest { get; }
+    public bool RequireProjectAcceptanceChecks { get; }
 
     public static ArtelOptions Load()
     {
         return new ArtelOptions(
             Environment.GetEnvironmentVariable("ARTEL_BASE_URL") ?? "http://127.0.0.1:5057",
             Environment.GetEnvironmentVariable("ARTEL_TASK_ID") ?? "",
-            Environment.GetEnvironmentVariable("ARTEL_API_KEY") ?? "");
+            Environment.GetEnvironmentVariable("ARTEL_API_KEY") ?? "",
+            RequiredSharedParameters: RequiredParametersFromEnvironment(),
+            RunFlexTest: EnvBool("ARTEL_RUN_FLEX_TEST", true),
+            RunLoadTest: EnvBool("ARTEL_RUN_LOAD_TEST", false),
+            RequireProjectAcceptanceChecks: EnvBool("ARTEL_REQUIRE_PROJECT_CHECKS", true));
+    }
+
+    private static IReadOnlyList<string> RequiredParametersFromEnvironment()
+    {
+        var raw = Environment.GetEnvironmentVariable("ARTEL_REQUIRED_SHARED_PARAMETERS") ?? "ADSK_Наименование";
+        return raw.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(value => value.Trim())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static bool EnvBool(string name, bool defaultValue)
+    {
+        var raw = Environment.GetEnvironmentVariable(name);
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return defaultValue;
+        }
+        return raw.Equals("1", StringComparison.OrdinalIgnoreCase)
+            || raw.Equals("true", StringComparison.OrdinalIgnoreCase)
+            || raw.Equals("yes", StringComparison.OrdinalIgnoreCase)
+            || raw.Equals("on", StringComparison.OrdinalIgnoreCase);
     }
 }
 

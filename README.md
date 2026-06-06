@@ -8,6 +8,8 @@
 
 **CAD/BIM viewer baseline: 06.06.2026.** `frontend/cad_bim_viewer` builds with Homebrew Node `v26.0.0` / npm `11.12.1`. ThatOpen runtime is pinned to `3.4.x`, `three` to `0.184.0`, `web-ifc` to `0.0.77`; `npm audit --audit-level=moderate` reports `0 vulnerabilities`. Standalone АТЛАС is rebuilt from that stack and includes the extra Vite worker asset required by the new fragments runtime.
 
+**АРТЕЛЬ baseline: 06.06.2026.** АРТЕЛЬ живёт в `products/artel` как Revit/RFA family-factory слой поверх LES. `ARTEL_Index` принимает `FAMILY_GUIDE`, `FOP_PROFILE`, `REVIT_MODEL_GUIDE`, `REVIT_API_REFERENCE`, `REVIT_API_SYMBOL_MAP`, `REVIT_API_SDK_DOC` и `LEARNING_CASE`. Revit API 2025 CHM/HTML из локального/private `ADN-DevTech/revit-api-chms` clone индексируется в LES как markdown shards, а не как 28k отдельных документов. `ARTEL.Revit.FamilyFactory` собирается на Legion против Revit 2025, устанавливается в Revit add-ins и валидирует семейства через extract, shared/FOP parameter checks, Revit warnings, rollback flex test и optional scratch-project load test.
+
 ---
 
 ## Что это даёт

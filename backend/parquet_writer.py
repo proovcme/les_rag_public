@@ -264,8 +264,12 @@ def _find_header_row(ws, max_scan: int = 20) -> int:
     """
     best_row = 0
     best_score = 0
-    for row_idx in range(1, min(max_scan, ws.max_row) + 1):
-        row = [ws.cell(row_idx, c).value for c in range(1, ws.max_column + 1)]
+    max_row = ws.max_row or max_scan
+    scan_rows = min(max_scan, max_row)
+    for row_idx, row in enumerate(
+        ws.iter_rows(min_row=1, max_row=scan_rows, values_only=True),
+        start=1,
+    ):
         non_empty = sum(1 for v in row if v is not None and str(v).strip())
         text_cells = sum(1 for v in row if v is not None and isinstance(v, str) and len(str(v).strip()) > 1)
         score = text_cells * 2 + non_empty
@@ -290,7 +294,7 @@ def read_xlsx_sheets(file_path: str) -> list:
 
     for sheet_name in wb.sheetnames:
         ws = wb[sheet_name]
-        if ws.max_row is None or ws.max_row < 2:
+        if ws.max_row is not None and ws.max_row < 2:
             continue
 
         header_row_idx = _find_header_row(ws)
@@ -298,15 +302,20 @@ def read_xlsx_sheets(file_path: str) -> list:
             continue
 
         # Заголовки
-        headers = []
-        for c in range(1, ws.max_column + 1):
-            v = ws.cell(header_row_idx, c).value
-            headers.append(str(v).strip() if v is not None else f"col_{c}")
+        header_values = next(
+            ws.iter_rows(min_row=header_row_idx, max_row=header_row_idx, values_only=True),
+            (),
+        )
+        headers = [
+            str(v).strip() if v is not None and str(v).strip() else f"col_{idx}"
+            for idx, v in enumerate(header_values, start=1)
+        ]
+        if not headers:
+            continue
 
         # Строки данных
         rows = []
-        for row_idx in range(header_row_idx + 1, ws.max_row + 1):
-            row_vals = [ws.cell(row_idx, c).value for c in range(1, ws.max_column + 1)]
+        for row_vals in ws.iter_rows(min_row=header_row_idx + 1, values_only=True):
             # Пропускаем полностью пустые строки
             if all(v is None or str(v).strip() == "" for v in row_vals):
                 continue

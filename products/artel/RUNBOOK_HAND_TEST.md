@@ -107,6 +107,32 @@ python3 tools/seed_artel_revit_factory_sources.py \
 Autodesk SDK/CHM хранить как runtime/private RAG data, не как public repo
 content.
 
+Если CHM уже распакован в HTML, используйте шардированный режим. Это текущий
+рабочий путь для найденного источника `ADN-DevTech/revit-api-chms`:
+
+```bash
+python3 tools/seed_artel_revit_factory_sources.py \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --seed-defaults \
+  --sdk-html-dir local_private_archive/revit_api_sdk/revit-api-chms/html/2025 \
+  --sdk-shard-pages auto \
+  --verify-search
+```
+
+Ожидаемый результат для Revit 2025 HTML: 57 `REVIT_API_SDK_DOC` markdown
+shards вместо 28k+ отдельных runtime-документов. После sync добить pending до
+нуля:
+
+```bash
+python3 tools/qwen_index_until_done.py \
+  --proxy-url http://127.0.0.1:8050 \
+  --mlx-url http://127.0.0.1:8080 \
+  --wave-batches 25 \
+  --min-free-gb 1 \
+  --post-batch-min-free-gb 1
+```
+
 Если `RevitAPI.chm` на Windows-хосте не найден, можно посадить выбранные SDK/API
 страницы по URL:
 
@@ -169,6 +195,10 @@ cd products\artel
 $env:ARTEL_BASE_URL = "http://127.0.0.1:5057"
 $env:ARTEL_TASK_ID = "task_0241"
 $env:ARTEL_API_KEY = ""
+$env:ARTEL_REQUIRED_SHARED_PARAMETERS = "ADSK_Наименование"
+$env:ARTEL_RUN_FLEX_TEST = "true"
+$env:ARTEL_RUN_LOAD_TEST = "false"
+$env:ARTEL_REQUIRE_PROJECT_CHECKS = "true"
 ```
 
 В Revit 2025:
@@ -176,8 +206,10 @@ $env:ARTEL_API_KEY = ""
 1. Открыть стандартное `.rfa` или создать семейство из `Metric Casework.rft`.
 2. Запустить `External Tools -> ARTEL Family Extract`.
 3. Запустить `External Tools -> ARTEL Family Validate`.
-4. Проверить JSON в `%APPDATA%\ARTEL\family_factory\`.
-5. Если `ARTEL_TASK_ID` задан, проверить backend:
+4. Убедиться, что validation report содержит `flex` action. Если включен
+   `ARTEL_RUN_LOAD_TEST=true`, проверить также `load` action.
+5. Проверить JSON в `%APPDATA%\ARTEL\family_factory\`.
+6. Если `ARTEL_TASK_ID` задан, проверить backend:
 
 ```http
 GET /api/tasks/task_0241/learning-case

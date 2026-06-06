@@ -134,6 +134,23 @@ python3 tools/seed_artel_revit_factory_sources.py \
   --verify-search
 ```
 
+Seed extracted Revit API CHM HTML as markdown shards. This is the preferred
+path for the local/private `ADN-DevTech/revit-api-chms` clone:
+
+```bash
+python3 tools/seed_artel_revit_factory_sources.py \
+  --runtime-root /Users/ovc/Projects/LES_v2_reinstall_stress \
+  --proxy-url http://127.0.0.1:8050 \
+  --seed-defaults \
+  --sdk-html-dir local_private_archive/revit_api_sdk/revit-api-chms/html/2025 \
+  --sdk-shard-pages auto \
+  --verify-search
+```
+
+Do not index full CHM HTML as one markdown file per page unless explicitly
+debugging `--max-sdk-pages`; Revit 2025 has 28k+ HTML pages and should be
+sharded before LES sync.
+
 Seed selected SDK/API pages when no local CHM is available:
 
 ```bash
@@ -150,6 +167,15 @@ Build/install the Revit add-in on Legion/Revit 2025:
 cd products\artel
 .\build-family-factory-revit.ps1 `
   -RevitInstallDir "C:\Program Files\Autodesk\Revit 2025"
+```
+
+Useful validation environment:
+
+```powershell
+$env:ARTEL_REQUIRED_SHARED_PARAMETERS = "ADSK_Наименование"
+$env:ARTEL_RUN_FLEX_TEST = "true"
+$env:ARTEL_RUN_LOAD_TEST = "false"
+$env:ARTEL_REQUIRE_PROJECT_CHECKS = "true"
 ```
 
 Seed validation report exported by ARTEL backend:
