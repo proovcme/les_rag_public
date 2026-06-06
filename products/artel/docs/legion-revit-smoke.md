@@ -362,6 +362,26 @@ closed the tunnel and stopped only the new ARTEL backend process. A follow-up
 process check showed no Revit process and no remaining ARTEL backend `dotnet`
 process; the unrelated ConvertAPI MCP `dotnet` process was left untouched.
 
+The full readiness audit command is:
+
+```bash
+python3 tools/smoke_artel_expert_loop.py \
+  --backend-only-smoke \
+  --check-legion
+```
+
+On 2026-06-07 it returned `ready_except_revit_locked`. Evidence:
+
+- `ARTEL_Index`: `67` files, `28258` chunks, `0` pending, `0` errors;
+- Qdrant points matched SQLite chunks;
+- required doc types present: `FAMILY_GUIDE`, `FOP_PROFILE`,
+  `REVIT_MODEL_GUIDE`, `REVIT_API_REFERENCE`, `REVIT_API_SYMBOL_MAP`,
+  `REVIT_API_SDK_DOC`, `LEARNING_CASE`;
+- retrieval returned expected evidence for `REVIT_API_SDK_DOC`, `FOP_PROFILE`
+  and `LEARNING_CASE`;
+- managed Legion backend/tunnel smoke passed;
+- Legion Revit diagnostic still returned `status = locked`.
+
 ## Backend Archive Bulk Smoke 2026-06-06
 
 The Revit desktop was still locked, so no real `validation_*.json` could be

@@ -218,6 +218,17 @@ Use `--no-ingest` for a diagnostic-only Legion check.
 Use `--backend-only-smoke --use-legion-artel-backend` to verify the managed
 Legion backend/tunnel without touching Revit.
 
+Run the complete readiness audit:
+
+```bash
+python3 tools/smoke_artel_expert_loop.py \
+  --backend-only-smoke \
+  --check-legion
+```
+
+Before the Legion desktop is unlocked, the expected healthy status is
+`ready_except_revit_locked`.
+
 Ingest a Revit add-in validation report into ARTEL backend and LES:
 
 ```bash

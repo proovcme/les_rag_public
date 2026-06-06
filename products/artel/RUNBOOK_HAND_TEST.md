@@ -278,6 +278,19 @@ python3 tools/run_artel_legion_revit_validation.py \
 `127.0.0.1:15057 -> legion:127.0.0.1:5057`, проверяет `/health` и в `finally`
 останавливает только новые ARTEL backend PIDs.
 
+Единый audit готовности LES/ARTEL expert loop:
+
+```bash
+python3 tools/smoke_artel_expert_loop.py \
+  --backend-only-smoke \
+  --check-legion
+```
+
+Ожидаемый статус до разблокировки Legion — `ready_except_revit_locked`: LES
+готов, `ARTEL_Index` содержит все нужные doc types, retrieval возвращает
+`REVIT_API_SDK_DOC`, `FOP_PROFILE` и `LEARNING_CASE`, managed backend/tunnel
+работает, но Revit desktop еще locked.
+
 Если Revit и ARTEL backend находятся на одной машине, `ARTEL Family Validate`
 сам отправляет report в backend. Если submit не был включен или backend был
 недоступен, скопировать последний JSON-отчет с Legion:
