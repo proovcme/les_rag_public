@@ -22,7 +22,7 @@ from proxy.config import CORS_ALLOWED_ORIGINS
 from proxy.routers.auth import router as auth_router, seed_admin_key
 from proxy.routers.chat import ChatRouterState, ensure_chat_history_schema, router as chat_router, set_chat_state
 from proxy.routers.chat_history import router as chat_history_router
-from proxy.routers.datasets import DatasetRouterState, router as datasets_router, set_dataset_state
+from proxy.routers.datasets import DatasetRouterState, router as datasets_router, search_router, set_dataset_state
 from proxy.routers.diagnostics import DiagnosticsRouterState, router as diagnostics_router, set_diagnostics_state
 from proxy.routers.jobs import JobsRouterState, router as jobs_router, set_jobs_state
 from proxy.routers.logs import LogsRouterState, router as logs_router, set_logs_state
@@ -295,6 +295,7 @@ def create_app():
     fastapi_app.include_router(cad_bim_router)
     fastapi_app.include_router(chat_history_router)
     fastapi_app.include_router(datasets_router)
+    fastapi_app.include_router(search_router)
     fastapi_app.include_router(runtime_router)
     fastapi_app.include_router(diagnostics_router)
     fastapi_app.include_router(jobs_router)

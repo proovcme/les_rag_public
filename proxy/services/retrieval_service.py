@@ -293,6 +293,7 @@ async def resolve_dataset_ids(
     question: str = "",
 ) -> Optional[list[str]]:
     effective_filter = dataset_filter
+    ds_list = None
     if not effective_filter and not dataset_ids:
         route = classify_query(question)
         effective_filter = route.dataset_filter
@@ -311,8 +312,17 @@ async def resolve_dataset_ids(
                 logger.info("[CHAT] dataset_filter='%s' -> ids=%s", effective_filter, ids)
                 return ids
             logger.warning("[CHAT] dataset_filter='%s' not found", effective_filter)
+            return []
         except Exception as e:
             logger.warning("[CHAT] dataset_filter resolve error: %s", e)
+    if dataset_ids is None and ds_list is None:
+        try:
+            ds_list = await rag_backend.list_datasets()
+            if not ds_list:
+                logger.info("[CHAT] no datasets available for retrieval")
+                return []
+        except Exception as e:
+            logger.warning("[CHAT] dataset list error: %s", e)
     return dataset_ids
 
 
@@ -331,6 +341,14 @@ async def retrieve_chat_chunks(
 ):
     kot = analyze_question(question)
     retrieval_query = expand_retrieval_query(question)
+    if dataset_ids == []:
+        trace = RetrievalTrace(mode="empty", fallback_reason="no_datasets")
+        quality = evaluate_retrieval_quality(question=question, chunks=[], trace=trace, kot=kot)
+        trace.quality_status = quality.status
+        trace.quality_detail = quality.detail
+        if return_trace:
+            return RetrievalResult([], trace, kot, quality)
+        return []
     if reranker_available and reranker_enabled:
         raw_chunks = await rag_backend.retrieve(retrieval_query, dataset_ids=dataset_ids, top_k=RERANK_POOL_K)
         if raw_chunks and len(raw_chunks) > RERANK_TOP_K:

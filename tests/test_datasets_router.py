@@ -208,6 +208,71 @@ async def test_retrieve_debug_returns_ranked_chunks_and_inferred_dataset(dataset
 
 
 @pytest.mark.asyncio
+async def test_search_returns_ranked_chunks_without_generation(dataset_state):
+    result = await datasets.search(
+        datasets.SearchRequest(query="ширина путей эвакуации", top_k=3, include_trace=True),
+        _user=object(),
+    )
+
+    assert result["query"] == "ширина путей эвакуации"
+    assert result["dataset_filter"] == "NTD_FIRE"
+    assert result["dataset_ids"] == ["ds-1"]
+    assert result["count"] == 1
+    assert result["chunks"][0]["rank"] == 1
+    assert result["chunks"][0]["doc_name"] == "СП 3.13130.docx"
+    assert result["chunks"][0]["content"].startswith("ширина путей эвакуации")
+    assert "СП 1.13130" in result["chunks"][0]["content"]
+    assert result["chunks"][0]["metadata"]["doc_type"] == "NORMATIVE"
+    assert result["retrieval_trace"]
+    assert result["embedding"]["collection"]
+
+
+@pytest.mark.asyncio
+async def test_search_accepts_question_alias(dataset_state):
+    result = await datasets.search(
+        datasets.SearchRequest(question="ширина путей эвакуации", top_k=3),
+        _user=object(),
+    )
+
+    assert result["query"] == "ширина путей эвакуации"
+    assert result["chunks"][0]["doc_id"] == "doc-1"
+
+
+@pytest.mark.asyncio
+async def test_search_marks_explicit_dataset_filter(dataset_state):
+    result = await datasets.search(
+        datasets.SearchRequest(query="ширина путей эвакуации", dataset_filter="NTD", top_k=3),
+        _user=object(),
+    )
+
+    assert result["dataset_filter"] == "NTD"
+    assert result["route"]["reason"] == "explicit_filter"
+
+
+@pytest.mark.asyncio
+async def test_search_resolves_artel_filter_to_artel_index(dataset_state):
+    dataset_state.datasets = [Dataset("artel", "ARTEL_Index", doc_count=1, chunk_count=1)]
+
+    result = await datasets.search(
+        datasets.SearchRequest(query="металлический шкаф управления ADSK_Наименование", dataset_filter="ARTEL", top_k=3),
+        _user=object(),
+    )
+
+    assert result["dataset_filter"] == "ARTEL"
+    assert result["dataset_ids"] == ["artel"]
+    assert result["route"]["reason"] == "explicit_filter"
+
+
+@pytest.mark.asyncio
+async def test_search_requires_query_or_question(dataset_state):
+    with pytest.raises(datasets.HTTPException) as exc:
+        await datasets.search(datasets.SearchRequest(), _user=object())
+
+    assert exc.value.status_code == 400
+    assert "query or question" in exc.value.detail
+
+
+@pytest.mark.asyncio
 async def test_pending_parse_datasets_uses_priority_before_pending_count(dataset_state):
     dataset_state.datasets = [
         Dataset("other", "NTD_OTHER_Index"),
