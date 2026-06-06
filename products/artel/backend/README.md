@@ -57,6 +57,16 @@ dotnet run --project backend/Agnostis.Api
 curl http://localhost:5000/health
 ```
 
+Backend also serves the ARTEL UI prototype from `/` when launched from this
+repository layout:
+
+```bash
+dotnet run --project backend/Agnostis.Api --urls http://127.0.0.1:5057
+open http://127.0.0.1:5057/
+```
+
+Manual test runbook: [`../RUNBOOK_HAND_TEST.md`](../RUNBOOK_HAND_TEST.md).
+
 ## Проверка
 
 На текущей машине `dotnet` отсутствует, поэтому сборка backend skeleton здесь не выполнялась. Код и contract подготовлены для проверки в окружении с .NET SDK 8.

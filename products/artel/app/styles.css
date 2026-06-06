@@ -617,6 +617,74 @@ h3 {
   gap: 8px;
 }
 
+.runtime-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-soft);
+}
+
+.runtime-row,
+.runtime-rag {
+  display: grid;
+  gap: 3px;
+}
+
+.runtime-row {
+  grid-template-columns: minmax(92px, 0.7fr) minmax(0, 1fr);
+  align-items: center;
+}
+
+.runtime-row span,
+.runtime-rag span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.runtime-row strong,
+.runtime-rag strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.runtime-row strong.ready {
+  color: var(--green);
+}
+
+.runtime-row strong.review {
+  color: var(--amber);
+}
+
+.runtime-row strong.blocked {
+  color: var(--red);
+}
+
+.runtime-rag p {
+  margin: 0;
+  color: var(--muted-strong);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.runtime-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.runtime-error {
+  padding: 8px;
+  border: 1px solid var(--red-soft);
+  border-radius: var(--radius);
+  background: var(--red-soft);
+  color: var(--red);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .source-row,
 .check-row,
 .catalog-row,

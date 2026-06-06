@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.FileProviders;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -19,6 +20,19 @@ builder.Services.AddHttpClient();
 var app = builder.Build();
 
 app.UseCors();
+
+var appRoot = ResolveAppRoot(app.Environment.ContentRootPath);
+if (Directory.Exists(appRoot))
+{
+    app.UseDefaultFiles(new DefaultFilesOptions
+    {
+        FileProvider = new PhysicalFileProvider(appRoot)
+    });
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new PhysicalFileProvider(appRoot)
+    });
+}
 
 var store = SeedData.Create();
 
@@ -426,6 +440,29 @@ static HttpRequestMessage CreateLesRequest(HttpMethod method, LesOptions options
     }
 
     return request;
+}
+
+static string ResolveAppRoot(string contentRootPath)
+{
+    var candidates = new[]
+    {
+        Path.Combine(contentRootPath, "app"),
+        Path.Combine(contentRootPath, "products", "artel", "app"),
+        Path.Combine(contentRootPath, "..", "app"),
+        Path.Combine(contentRootPath, "..", "..", "app"),
+        Path.Combine(contentRootPath, "..", "..", "..", "app"),
+        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "app"),
+    };
+
+    foreach (var candidate in candidates.Select(Path.GetFullPath))
+    {
+        if (Directory.Exists(candidate) && File.Exists(Path.Combine(candidate, "index.html")))
+        {
+            return candidate;
+        }
+    }
+
+    return Path.GetFullPath(Path.Combine(contentRootPath, "app"));
 }
 
 static JsonNode? TryParseJson(string body)

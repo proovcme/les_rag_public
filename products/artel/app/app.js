@@ -295,6 +295,15 @@ const state = {
   selectedTab: "sources",
   filter: "all",
   search: "",
+  runtime: {
+    api: "checking",
+    les: "checking",
+    taskCount: null,
+    catalogCount: null,
+    rag: null,
+    error: null,
+    checkedAt: null,
+  },
 };
 
 const statusClass = {
@@ -550,7 +559,72 @@ function renderActions(task) {
       </button>
     `,
     )
-    .join("");
+    .join("") + renderRuntimePanel(task);
+}
+
+function renderRuntimePanel(task) {
+  const runtime = state.runtime;
+  const rag = runtime.rag;
+  const apiClass = runtime.api === "ok" ? "ready" : runtime.api === "checking" ? "review" : "blocked";
+  const lesClass = runtime.les === "ok" ? "ready" : runtime.les === "checking" ? "review" : "blocked";
+  const ragStatus = rag ? `${rag.status} · HTTP ${rag.httpStatus}` : "не запускали";
+  const ragCount = extractRagCount(rag?.response);
+  const ragText = rag
+    ? `dataset ${rag.datasetFilter}; найдено ${ragCount}; вопрос: ${rag.question}`
+    : "Запросит LES /api/search через backend АРТЕЛИ по выбранному заданию.";
+
+  return `
+    <div class="runtime-panel">
+      <div class="runtime-row">
+        <span>Backend API</span>
+        <strong class="${apiClass}">${runtime.api}</strong>
+      </div>
+      <div class="runtime-row">
+        <span>LES</span>
+        <strong class="${lesClass}">${runtime.les}</strong>
+      </div>
+      <div class="runtime-row">
+        <span>Seed data</span>
+        <strong>${runtime.taskCount ?? "-"} заданий · ${runtime.catalogCount ?? "-"} каталог</strong>
+      </div>
+      <div class="runtime-rag">
+        <span>RAG context</span>
+        <strong>${ragStatus}</strong>
+        <p>${ragText}</p>
+      </div>
+      <div class="runtime-actions">
+        <button class="compact-button" type="button" data-runtime-action="refresh">
+          <i data-lucide="refresh-cw"></i>
+          <span>API smoke</span>
+        </button>
+        <button class="compact-button" type="button" data-runtime-action="rag" data-backend-task-id="${backendTaskId(task)}">
+          <i data-lucide="database-zap"></i>
+          <span>LES context</span>
+        </button>
+      </div>
+      ${runtime.error ? `<div class="runtime-error">${runtime.error}</div>` : ""}
+    </div>
+  `;
+}
+
+function backendTaskId(task) {
+  return task.id.toLowerCase().replace("fam-", "task_");
+}
+
+function extractRagCount(response) {
+  if (!response || typeof response !== "object") {
+    return 0;
+  }
+  if (typeof response.count === "number") {
+    return response.count;
+  }
+  if (Array.isArray(response.results)) {
+    return response.results.length;
+  }
+  if (Array.isArray(response.matches)) {
+    return response.matches.length;
+  }
+  return 0;
 }
 
 function renderTab(task) {
@@ -1043,6 +1117,14 @@ document.addEventListener("click", (event) => {
       .forEach((button) => button.classList.toggle("is-selected", button === filterButton));
     renderTasks();
   }
+
+  const runtimeAction = event.target.closest("[data-runtime-action]");
+  if (runtimeAction?.dataset.runtimeAction === "refresh") {
+    refreshRuntimeStatus();
+  }
+  if (runtimeAction?.dataset.runtimeAction === "rag") {
+    requestRagContext(runtimeAction.dataset.backendTaskId);
+  }
 });
 
 document.addEventListener("input", (event) => {
@@ -1058,4 +1140,80 @@ document.addEventListener("input", (event) => {
   }
 });
 
+async function refreshRuntimeStatus() {
+  state.runtime = { ...state.runtime, api: "checking", les: "checking", error: null };
+  renderDetails();
+  try {
+    const [health, les, apiTasks, apiCatalog] = await Promise.all([
+      apiGet("/health"),
+      apiGet("/api/integrations/les/status"),
+      apiGet("/api/tasks"),
+      apiGet("/api/catalog"),
+    ]);
+    state.runtime = {
+      ...state.runtime,
+      api: health.status === "ok" ? "ok" : "unhealthy",
+      les: les.status || "unknown",
+      taskCount: Array.isArray(apiTasks) ? apiTasks.length : 0,
+      catalogCount: Array.isArray(apiCatalog) ? apiCatalog.length : 0,
+      checkedAt: new Date().toISOString(),
+      error: null,
+    };
+  } catch (error) {
+    state.runtime = {
+      ...state.runtime,
+      api: "static",
+      les: "unknown",
+      error: "Backend недоступен. Статический прототип открыт без API.",
+    };
+  }
+  renderDetails();
+  refreshIcons();
+}
+
+async function requestRagContext(taskId) {
+  state.runtime = { ...state.runtime, rag: { status: "loading", httpStatus: 0 }, error: null };
+  renderDetails();
+  try {
+    const result = await apiPost(`/api/tasks/${taskId}/rag-context`, {
+      datasetFilter: "CAD_BIM",
+      topK: 5,
+      includeTrace: true,
+    });
+    state.runtime = { ...state.runtime, rag: result, error: null };
+  } catch (error) {
+    state.runtime = {
+      ...state.runtime,
+      rag: null,
+      error: `RAG context не получен: ${error.message}`,
+    };
+  }
+  renderDetails();
+  refreshIcons();
+}
+
+async function apiGet(path) {
+  const response = await fetch(path, { headers: { Accept: "application/json" } });
+  if (!response.ok) {
+    throw new Error(`${path} returned HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+async function apiPost(path, payload) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(`${path} returned HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
 renderApp();
+refreshRuntimeStatus();
