@@ -200,7 +200,7 @@ flowchart LR
 
 ## Быстрый старт
 
-Подробная установка вынесена в [INSTALL.md](INSTALL.md), API-контракт — в [docs/API.md](docs/API.md).
+Подробная установка вынесена в [INSTALL.md](INSTALL.md), API-контракт — в [docs/API.md](docs/API.md), границы экосистемы LES/VIZOR/Agnostis — в [docs/ECOSYSTEM.md](docs/ECOSYSTEM.md).
 
 ### Требования
 - Mac с Apple Silicon (M1/M2/M3/M4) и минимум 16 GB RAM; комфортный профиль — 24 GB+

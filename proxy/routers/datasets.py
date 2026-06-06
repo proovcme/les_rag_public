@@ -35,6 +35,7 @@ from proxy.storage.file_storage import save_upload_tmp, safe_dataset_storage_dir
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/rag", tags=["rag"])
+search_router = APIRouter(prefix="/api", tags=["search"])
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 DEFAULT_PARSE_BATCH_LIMIT = int(os.getenv("RAG_PARSE_BATCH_LIMIT", "5"))
 DEFAULT_PARSE_SCHEDULER_BATCH_LIMIT = int(os.getenv("RAG_PARSE_SCHEDULER_BATCH_LIMIT", "1"))
@@ -69,6 +70,21 @@ class RetrievalDebugRequest(BaseModel):
     dataset_ids: list[str] | None = None
     dataset_filter: str | None = None
     top_k: int = Field(default=8, ge=1, le=20)
+
+
+class SearchRequest(BaseModel):
+    query: str | None = Field(default=None, min_length=1, max_length=4000)
+    question: str | None = Field(default=None, min_length=1, max_length=4000)
+    dataset_ids: list[str] | None = None
+    dataset_filter: str | None = None
+    top_k: int = Field(default=8, ge=1, le=50)
+    max_chars: int = Field(default=1600, ge=200, le=8000)
+    include_trace: bool = False
+    include_context: bool = False
+
+    def effective_query(self) -> str:
+        value = self.query or self.question or ""
+        return value.strip()
 
 
 class SmartSyncRequest(BaseModel):
@@ -113,6 +129,34 @@ def get_dataset_state() -> DatasetRouterState:
     return _state
 
 
+def _chunk_payload(chunk: Any, *, rank: int, max_chars: int, expanded_chunk: Any | None = None) -> dict[str, Any]:
+    meta = dict(getattr(chunk, "meta", {}) or {})
+    content = str(getattr(chunk, "content", "") or "")
+    expanded_content = str(getattr(expanded_chunk, "content", "") or "") if expanded_chunk is not None else ""
+    return {
+        "rank": rank,
+        "score": round(float(getattr(chunk, "score", 0.0) or 0.0), 4),
+        "doc_id": getattr(chunk, "doc_id", ""),
+        "doc_name": getattr(chunk, "doc_name", ""),
+        "content": content[:max_chars],
+        "content_truncated": len(content) > max_chars,
+        "metadata": meta,
+        "doc_type": meta.get("doc_type"),
+        "content_type": meta.get("content_type"),
+        "source_id": meta.get("source_id") or meta.get("GlobalId") or meta.get("global_id"),
+        "retrieval_sources": meta.get("retrieval_sources"),
+        "rrf_rank": meta.get("rrf_rank"),
+        "rrf_score": meta.get("rrf_score"),
+        "context": {
+            "content": expanded_content[:max_chars],
+            "content_truncated": len(expanded_content) > max_chars,
+            "metadata": dict(getattr(expanded_chunk, "meta", {}) or {}) if expanded_chunk is not None else {},
+        }
+        if expanded_chunk is not None
+        else None,
+    }
+
+
 async def parse_memory_state() -> dict[str, Any]:
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -130,6 +174,77 @@ async def parse_memory_state() -> dict[str, Any]:
         "state": evaluate_memory_pressure(memory).state,
         "raw": memory,
     }
+
+
+@search_router.post("/search")
+async def search(req: SearchRequest, _user=Depends(require_user)):
+    state = get_dataset_state()
+    query = req.effective_query()
+    if not query:
+        raise HTTPException(status_code=400, detail="query or question is required")
+
+    query_route = classify_query(query)
+    effective_dataset_filter = req.dataset_filter or query_route.dataset_filter
+    dataset_ids = await resolve_dataset_ids(
+        state.backend,
+        req.dataset_ids,
+        effective_dataset_filter,
+        logger,
+        question=query,
+    )
+    retrieval = await retrieve_chat_chunks(
+        question=query,
+        dataset_ids=dataset_ids,
+        rag_backend=state.backend,
+        reranker_enabled=False,
+        reranker_available=False,
+        reranker_cls=None,
+        mlx_url=mlx_url(),
+        logger=logger,
+        return_trace=True,
+    )
+    chunks = retrieval.chunks[: req.top_k]
+    expanded_chunks: list[Any] = []
+    context_payload: dict[str, Any] | None = None
+    if req.include_context:
+        context_windows = expand_context_windows(
+            chunks,
+            collection=getattr(state.backend, "collection_name", ""),
+            logger=logger,
+            max_chunks=req.top_k,
+        )
+        expanded_chunks = list(context_windows.chunks)
+        context_payload = context_windows.payload()
+
+    result: dict[str, Any] = {
+        "query": query,
+        "dataset_filter": effective_dataset_filter,
+        "dataset_ids": dataset_ids,
+        "top_k": req.top_k,
+        "count": len(chunks),
+        "route": {
+            "dataset_filter": effective_dataset_filter,
+            "reason": "explicit_filter" if req.dataset_filter else query_route.reason,
+            "expanded": query_route.expanded_query != query,
+            "kot": retrieval.kot.payload(),
+        },
+        "chunks": [
+            _chunk_payload(
+                chunk,
+                rank=index + 1,
+                max_chars=req.max_chars,
+                expanded_chunk=expanded_chunks[index] if index < len(expanded_chunks) else None,
+            )
+            for index, chunk in enumerate(chunks)
+        ],
+    }
+    if req.include_trace:
+        trace = retrieval.payload()
+        if context_payload is not None:
+            trace["context_window"] = context_payload
+        result["retrieval_trace"] = trace
+        result["embedding"] = rag_runtime_config()
+    return result
 
 
 async def assert_parse_admission(

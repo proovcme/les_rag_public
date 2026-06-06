@@ -34,6 +34,56 @@
 | `POST` | `/api/runtime/dispatcher/reindex/resume` | Возобновить guarded reindex |
 | `POST` | `/api/runtime/dispatcher/mlx/unload` | Выгрузить MLX модели |
 
+## Search
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| `POST` | `/api/search` | Retrieval-only поиск без LLM generation |
+
+`/api/search` предназначен для VIZOR, Agnostis и других UI, которым нужен быстрый ranked context без запуска chat model.
+
+Request:
+
+```json
+{
+  "query": "Найди похожие BIM/RFA/CAD_BIM кейсы для шкафа",
+  "dataset_filter": "CAD_BIM",
+  "top_k": 8,
+  "max_chars": 1600,
+  "include_trace": false,
+  "include_context": false
+}
+```
+
+`question` принимается как alias к `query` для совместимости с существующими chat-oriented clients.
+
+Response:
+
+```json
+{
+  "query": "Найди похожие BIM/RFA/CAD_BIM кейсы для шкафа",
+  "dataset_filter": "CAD_BIM",
+  "dataset_ids": ["..."],
+  "top_k": 8,
+  "count": 1,
+  "route": {
+    "dataset_filter": "CAD_BIM",
+    "reason": "explicit_filter"
+  },
+  "chunks": [
+    {
+      "rank": 1,
+      "score": 0.81,
+      "doc_id": "...",
+      "doc_name": "cad_bim_json_....md",
+      "content": "...",
+      "metadata": {},
+      "source_id": "..."
+    }
+  ]
+}
+```
+
 ## Chat
 
 | Метод | Путь | Назначение |
