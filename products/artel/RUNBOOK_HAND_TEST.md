@@ -62,6 +62,9 @@ python3 tools/smoke_artel_hand_test.py --base-url http://127.0.0.1:5057
 - `/api/tasks/task_0241/rag-context`;
 - `/api/catalog`.
 
+Для Windows/Revit host `legion` есть отдельный результат smoke:
+[docs/legion-revit-smoke.md](docs/legion-revit-smoke.md).
+
 ## Ручной сценарий
 
 1. Открыть `/`.
