@@ -140,14 +140,17 @@ Family guide seed:
 
 ```bash
 mkdir -p RAG_Content/ARTEL/family_guides
-curl -L "https://www.autodesk.com/akn-aknsite-article-attachments/1858ea62-e6ba-4782-a7d6-aca350219b7c.pdf" \
-  -o RAG_Content/ARTEL/family_guides/revit_family_creation_guide_autodesk_2017.pdf
+cp /path/to/revit_family_creation_guide_autodesk_2017.pdf \
+  RAG_Content/ARTEL/family_guides/
 curl -fsS -X POST http://127.0.0.1:8050/api/rag/sync/ARTEL
 ```
 
 LES routes files under `RAG_Content/ARTEL/family_guides/` as `FAMILY_GUIDE`.
 This keeps Autodesk/Revit family methodology separate from `FOP_PROFILE`
 shared-parameter files and `LEARNING_CASE` accepted family cases.
+If the official Autodesk attachment rejects non-browser downloads, use a
+browser-downloaded local PDF or a curated markdown projection with the source
+URL, outline, rules, checklist and retrieval hints.
 
 ## Configuration
 
