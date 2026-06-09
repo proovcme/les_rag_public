@@ -1,0 +1,95 @@
+# CODE_MAP — карта кода Л.Е.С. (LES_v2)
+
+Навигатор по коду для агентов и людей: где что лежит и как связано. Архитектура/инфраструктура подробно — в [INFRASTRUCTURE_v2.0.md](../INFRASTRUCTURE_v2.0.md), [PROXY_ARCHITECTURE.md](../PROXY_ARCHITECTURE.md), [LES_MASTER_DOC_v2_1.md](../LES_MASTER_DOC_v2_1.md), [RAG_MODERNIZATION_PLAN.md](../RAG_MODERNIZATION_PLAN.md), [MLX_GUIDE.md](../MLX_GUIDE.md), термины — в [DICTIONARY_LES_v2.0.md](../DICTIONARY_LES_v2.0.md). Рантайм-операции и доступы — в корневом [SKILL.md](../SKILL.md). Здесь — структура и связи кода.
+
+## Стек
+
+Python **3.12**, менеджер **uv** (`uv.lock`), сборка hatchling. Локальная экспертная RAG-система: **FastAPI** (proxy + MLX-host) + **NiceGUI** (UI «Совушка») + **Qdrant** (вектора) + **llama-index** + **MLX/Core ML** (инференс и эмбеддинги на Apple Silicon). Запуск как набор сервисов (launchd-плисты / docker-compose).
+
+## Рантайм-топология (три яруса + UI)
+
+```
+Браузер / les.ovc.me (через P.A.U.K. SSH-туннель, V.O.L.K. ключи)
+   │
+   ▼
+Совушка UI  :8051  (NiceGUI)  ── /classic (чат), /les/classic (админ), /m5, /login
+   │  ├─ Qdrant-визуализатор :8066 (iframe, three.js)
+   ▼
+Proxy       :8050  (FastAPI)  ── /api/chat, /api/datasets, /api/runtime, /api/speckle …
+   ├──────────────► MLX-host :8080 (FastAPI)  ── /v1/embeddings, /v1/chat/completions, /api/validate
+   └──────────────► Qdrant   :6333            ── коллекции les_rag_*, MAIL_Index
+```
+Доверенные сети (ZeroTier `10.195.146.0/24` + loopback) → доступ без ключа, роль admin. Точные порты/доступы — [SKILL.md](../SKILL.md).
+
+## Точки входа
+
+| Файл | Порт | Роль |
+|---|---|---|
+| [proxy_server.py](../proxy_server.py) | 8050 | API-шлюз: `from proxy.app import create_app()` |
+| [sovushka_ng.py](../sovushka_ng.py) | 8051 | NiceGUI-приложение (UI/админка), монтирует static, поднимает визуализатор |
+| [mlx_host.py](../mlx_host.py) | 8080 | Инференс: main/validator движки + эмбеддер (Core ML / sentence-transformers), TTL-выгрузка, memory-guard |
+| Консольные ([pyproject.toml](../pyproject.toml)) | — | `lesctl` / `les-runtime` / `les-install` → `tools/` |
+
+## Поток запроса (чат) и индексации
+
+**Запрос:** `POST /api/chat` → `runtime_admission` (очередь/режим) → `query_router` (mail/table/clause/generic) → `retrieval_service` (semantic_cache → Qdrant) → `saferag_service` (C-RAG: контекст + валидация фактов через MLX `/api/validate`) → `runtime_dispatcher` (MLX `/v1/chat/completions`, стрим) → ответ + источники + статус валидации.
+
+**Индексация:** `POST /api/datasets/{id}/upload` → `document_router.route_document()` → `converter.convert_to_markdown()` (pdf/docx/xlsx/eml/dxf/ifc) → `StructureAwareSplitter` (бережёт нумерованные пункты ГОСТ/СП) → батч-эмбеддинг через MLX `/v1/embeddings` → `upsert` в Qdrant → метаданные в SQLite (`data/les_meta_qwen.db`).
+
+## Пакеты
+
+### `proxy/` — API-шлюз и оркестрация
+- [proxy/app.py](../proxy/app.py) — `create_app()`, CORS, регистрация роутеров, инъекция общего состояния в роутеры на старте.
+- **routers/** (~13): `chat`, `datasets` (CRUD/upload/reindex), `runtime` (health/metrics/mode), `auth`, `mail`, `speckle` (BIM-мост), `rerank`, `diagnostics`, `jobs`, `logs`, `settings`, `chat_history`, `status_page`.
+- **services/** (~19): `retrieval_service`, `saferag_service` (C-RAG), `semantic_cache`, `runtime_dispatcher`/`runtime_admission` (очередь к MLX), `query_router`, `table_query_service` (Parquet/Excel), `mail_query_service`, `clause_lookup_service`, `clarification_service`, `context_expander_service`, `rerank`, `resource_governor`, `job_service`, `cad_bim_graph` (Speckle→markdown).
+- **storage/** (file_storage), **workers/** (фоновая индексация), **clients/**, **repositories/**, [proxy/config.py](../proxy/config.py), [proxy/security.py](../proxy/security.py).
+
+### `backend/` — RAG-движок и конвертация (~21 модуль)
+- **Ядро RAG:** [backend/qdrant_adapter.py](../backend/qdrant_adapter.py) (`QdrantLlamaIndexAdapter`, `EmbedClient`→MLX, `MetaDB` SQLite, `StructureAwareSplitter`), [backend/rag_config.py](../backend/rag_config.py) (профили эмбеддингов), [backend/interface.py](../backend/interface.py) (`RAGBackend`, `Chunk`), [backend/reranker.py](../backend/reranker.py) (кросс-энкодер через MLX), [backend/mlx_adapter.py](../backend/mlx_adapter.py) (`MLXMemoryManager`: TTL-выгрузка, metal-семафор).
+- **Конвертация:** `converter.py` (MarkItDown: pdf/docx/xlsx/email), `document_router.py`, `ocr_parser.py` (MLX VLM OCR), `parquet_writer.py` (таблицы→Parquet).
+- **Почта (Е.Ж.И.К.):** `mail_ingest.py` (IMAP/Apple Mail), `mail_threads.py`, `mail_profile.py`, `mail_emlx.py`, `pst_reader.py`.
+- **Прочее:** `smart_index.py` (план индексации), `metrics_collector.py`, `diagnostics.py`, `rules_extractor.py`, `auth.py`/`auth_login_route.py` (В.О.Л.К.).
+
+### `sovushka/` — UI (NiceGUI) + статика
+- Ядро: `config.py`, `state.py`, `auth.py`, `trust.py` (доверенные сети), `safe_markup.py` (санитайз SVG), `styles.py`.
+- **pages/**: `overview` (ОБЗОР), `samovar` (С.А.М.О.В.А.Р. — датасеты), `prorab` (П.Р.О.Р.А.Б. — метрики), `chat` (AI ЧАТ), `history`, `volk` (auth), `diag`. **components/**: `header`, `charts`, `logterm`.
+- Лёгкие шеллы: `lite_chat.py` (`/`, мост `/lite-api/*`→proxy), `lite_admin.py` (`/les`, рестарты сервисов), `m5_display.py` (экран Wokyis M5).
+- Статика: [frontend/](../frontend/) (legacy `sovushka.html`; `cad_bim_viewer/` — TS+Vite+three.js+web-ifc), [qdrant_visualizer/](../qdrant_visualizer/) (three.js + клиентский PCA), `static/fonts/`.
+
+### `tools/` (~48) — установка, сборка, ML, smoke, индексация
+Группы: рантайм-контроль (`install_les`, `les_runtime_control`, `lesctl`) · релизы (`build_*_release`, `build_release_artifacts`, `check_*_budget`) · CAD/BIM экстракторы (`cad_bim_extract_dxf/ifc`) · Core ML/эмбеддинги (`coreml_*`) · smoke (`browser_smoke`, `chat_format_smoke`, `clean_install_smoke`, `runtime_smoke`) · индексация/eval (`build_lexical_index`, `reindex_*_guarded`, `rag_golden_set`, `rag_eval_report`) · сиды (`seed_artel_*`).
+
+## Данные и конфиг
+
+- **Env:** [env.example](../env.example) (~190 ключей) — модели (`MLX_MODEL`, `LES_EMBED_PROFILE`, `EMBEDDING_MODEL`), Qdrant (`QDRANT_URL`, `RAG_COLLECTION_NAME`, `RAG_VECTOR_SIZE`), чанкинг (`RAG_CHUNK_SIZE/OVERLAP/BATCH`), Core ML (`COREML_*`), почта (`MAIL_*`), безопасность (`JWT_SECRET`, `ADMIN_PASSWORD`, `TRUSTED_NETWORKS`). Профили эмбеддингов: `qwen|legacy|fast|quality` → разные коллекции/размерности.
+- **config/** — профили развёртывания (`profiles/*.yaml`), `kot_terms.yaml`. **schema/** — JSON-схемы (artel learning case).
+- **SQLite-метабаза** (`data/les_meta_qwen.db`): `datasets`, `documents` (статусы PENDING/INDEXED), `structured_rules` (извлечённые нормы). **Qdrant-коллекции:** `les_rag_*`, `MAIL_Index`.
+- **golden/** — эталонные наборы для тестов/eval (validator/domain/ntd sets). **exporters/** — CAD/BIM-экспортеры (.NET артефакты, тяжёлые). **products/** (artel, atlas), **examples/**.
+
+## Сборка / деплой / тесты / гейт
+
+- **Гейт:** `make verify` → `compileall` (синтаксис) + `pytest --collect-only` (импорт-смоук всех 455 тестов, офлайн, без сервисов). Полная сюита: `make test` (часть тестов требует живых Qdrant/MLX).
+- **Тесты:** [tests/](../tests/) — 75 файлов / 455 тестов, `pytest-asyncio`; ~25 требуют живых сервисов/сети. Конфиг [pytest.ini](../pytest.ini) (`testpaths=tests`).
+- **Сборка/деплой:** hatchling (wheel: backend/proxy/sovushka/tools), [docker-compose.yml](../docker-compose.yml) (Qdrant+Proxy), [Dockerfile.proxy](../Dockerfile.proxy), `installers/{macos,linux,windows}/`, `deploy/pauk/`, `standalone/cad_bim_viewer/`.
+- **CI:** нет (намеренно — локальная система).
+
+## Сквозные механизмы
+
+- **Доступ/доверенные сети:** `sovushka/trust.py` + `proxy/security.py` — loopback/ZeroTier → роль admin без ключа; публичные клиенты → API-ключ (V.O.L.K.). Внешний вход через P.A.U.K. (reverse SSH).
+- **Управление памятью MLX:** `backend/mlx_adapter.py` — TTL-выгрузка моделей, metal-семафор (один движок к Metal), RAM-гарды.
+- **Сервисы (launchd):** `*_launchd.plist` (qdrant/mlx/proxy/sovushka/pauk/qwen-index) + `*.command`. **Агент НЕ должен рестартить сервисы без явной нужды.**
+
+## «Где искать что»
+
+| Хочу… | Смотреть |
+|---|---|
+| Поток чата/ответа | `proxy/routers/chat.py` → services (`retrieval`, `saferag`, `runtime_dispatcher`) |
+| Индексацию/эмбеддинги | `backend/qdrant_adapter.py` + `backend/rag_config.py` (профили) |
+| Память/выгрузку моделей | `backend/mlx_adapter.py`, `mlx_host.py` |
+| UI/страницы | `sovushka/pages/*` + `sovushka_ng.py` (роуты) |
+| Доступ/доверие/ключи | `sovushka/trust.py`, `proxy/security.py`, [SKILL.md](../SKILL.md) |
+| Запуск/рестарт сервисов | `tools/les_runtime_control.py`, `lesctl.py`, `*_launchd.plist` (осторожно) |
+| Конфиг/модели/коллекции | [env.example](../env.example), `config/`, [MLX_GUIDE.md](../MLX_GUIDE.md) |
+| Проверить перед готовностью | `make verify` |
+
+> Карта собрана из кода (5 параллельных read-only проходов) и отражает состояние на момент написания. Источник истины — код; обновляйте карту при крупных структурных правках.
