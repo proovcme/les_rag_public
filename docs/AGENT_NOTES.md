@@ -3,7 +3,7 @@
 Памятка к [AGENTS.md](../AGENTS.md). Меньше токенов, меньше риска, больше точности.
 
 ## Тяжёлое — НЕ открывать целиком
-- `.venv/` (виртуальное окружение), `data/` (SQLite-метабазы, логи парсинга, индексы), `logs/`.
+- `.venv/` (виртуальное окружение), `data/` (SQLite-метабазы, логи парсинга, индексы), `storage/`, `RAG_Content/`, `logs/`.
 - `dist/`, собранные бандлы `frontend/cad_bim_viewer/dist/**`, `standalone/**` артефакты.
 - `exporters/**/artifacts` (скомпилированные .NET, десятки МБ), `*.parquet`, большие `golden/*.json`.
 - `.pytest_cache/`, `.nicegui/`, `.aider.tags.cache.v4/`, `.qdrant-initialized`, `qdrant_storage`/данные Qdrant.
@@ -19,6 +19,7 @@
 
 ## Рантайм — осторожно
 - Живые сервисы (launchd: qdrant/mlx/proxy/sovushka/pauk). **Не рестартить** без явной нужды; управление — `tools/les_runtime_control.py`, `lesctl.py`.
+- **Не удалять данные** (Guardrails в `SKILL.md`): `data/qdrant/`, `data/les_meta_qwen.db`, `storage/`, `RAG_Content/`; не запускать полный реиндекс без явной просьбы; беречь таблицу `structured_rules`.
 - `uv`-проект: запуск через `uv run`; `uv add`/`uv sync --upgrade` меняют `uv.lock` — только с одобрения.
 - Тесты частично интеграционные (Qdrant/MLX/сеть): быстрый офлайн-сигнал — `make verify` (импорт-смоук), не полный `pytest`.
 
