@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "description": "W0.3 (LES3_PLAN): АРТЕЛЬ — точечный поиск по ФОП-параметрам и справочникам. Приёмка W6.3 (параметрические чанки ФОП: чанк на параметр с GUID). Baseline до W6.3: профиль индексируется одним куском — точечные вопросы могут проваливаться.",
+  "cases": [
+    {
+      "id": "artel_fop_adsk_name_guid",
+      "question": "Какой GUID у общего параметра ADSK_Наименование?",
+      "dataset_filter": "ARTEL",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["ADSK_Наименование"]
+    },
+    {
+      "id": "artel_fop_required_params",
+      "question": "Какие общие параметры обязательны для семейства по ФОП?",
+      "dataset_filter": "ARTEL",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["параметр"]
+    },
+    {
+      "id": "artel_family_validation_checks",
+      "question": "Какие проверки проходит семейство при валидации ARTEL?",
+      "dataset_filter": "ARTEL",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["валидац"]
+    },
+    {
+      "id": "artel_learning_case_metal_cabinet",
+      "question": "Какие ошибки были при создании семейства металлического шкафа и как их исправили?",
+      "dataset_filter": "ARTEL",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["шкаф"]
+    }
+  ]
+}

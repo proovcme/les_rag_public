@@ -91,10 +91,8 @@
 
 - [x] **W0.2 CI офлайн-гейт** · S — 2026-06-10, `.github/workflows/verify.yml` (uv sync --frozen + make verify, macos-latest; локально гейт зелёный — 455 тестов собрано). Матрица Win — W4.3.
 
-- [ ] **W0.3 Расширить golden sets** · M `[live]`
-  Файлы: `golden/`, [tools/rag_golden_set.py](../tools/rag_golden_set.py).
-  Сделать: наборы «пункты с подпунктами» (7.2 → включает 7.2.x), BIM-вопросы (этаж/система), АРТЕЛЬ (ФОП-параметры). Базовый 16/16 не трогать.
-  Приёмка: новые наборы зафиксированы с текущими (возможно плохими) результатами — это baseline.
+- [x] **W0.3 Расширить golden sets** · M — 2026-06-10 (кейсы); `[live]`-baseline ждёт окна. Три набора: `golden/clause_subclauses_set.json` (пункты с подпунктами — приёмка W2.6), `golden/bim_questions_set.json` (этажи/категории/агрегаты — приёмка W6.1), `golden/artel_fop_set.json` (ФОП/GUID/learning cases — приёмка W6.3). Базовый 16/16 не тронут; лоадер проверен.
+  **Остаток:** один прогон на живом рантайме (`uv run python tools/rag_golden_set.py --cases golden/<set>.json`) — зафиксировать baseline-результаты в этом файле.
 
 ## Волна 1 — Стабильность индексации
 

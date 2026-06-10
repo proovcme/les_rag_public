@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "description": "W0.3 (LES3_PLAN): BIM-вопросы по этажам/категориям/системам — приёмка W6.1 (агрегатные чанки). Baseline до W6.1: ожидаемы провалы на агрегирующих вопросах (элементы индексируются поодиночке). Текущая модель в CAD_BIM_Index: Speckle 'шпалерная 36'.",
+  "cases": [
+    {
+      "id": "bim_elements_by_category",
+      "question": "Какие категории элементов есть в модели?",
+      "dataset_filter": "CAD_BIM",
+      "top_k": 12,
+      "min_chunks": 1
+    },
+    {
+      "id": "bim_elements_on_level",
+      "question": "Какие элементы расположены на первом уровне модели?",
+      "dataset_filter": "CAD_BIM",
+      "top_k": 12,
+      "min_chunks": 1,
+      "must_find": ["уровень"]
+    },
+    {
+      "id": "bim_element_properties",
+      "question": "Какие свойства у несущих элементов модели?",
+      "dataset_filter": "CAD_BIM",
+      "top_k": 12,
+      "min_chunks": 1
+    },
+    {
+      "id": "bim_aggregate_count",
+      "question": "Сколько всего элементов каждой категории в модели?",
+      "dataset_filter": "CAD_BIM",
+      "top_k": 12,
+      "min_chunks": 1,
+      "comment": "Агрегирующий вопрос — до W6.1 ретрив не может ответить корректно; кейс фиксирует целевое поведение"
+    }
+  ]
+}
