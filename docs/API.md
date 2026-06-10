@@ -133,6 +133,16 @@ curl -X POST http://127.0.0.1:8050/api/chat \
 
 Предпочтительный CAD/BIM путь: exporter -> JSON graph -> `/api/cad-bim/import` -> `SYNC CAD/BIM` в Lite Admin.
 
+## ВОР (ведомости объёмов работ)
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| `GET` | `/api/bor/{dataset_id}/preview` | Свод ВОР в JSON (`?limit=50`) |
+| `POST` | `/api/bor/{dataset_id}/generate` | Генерация xlsx в `storage/datasets/{id}/_bor/` |
+| `GET` | `/api/bor/{dataset_id}/download` | Последний сгенерированный xlsx |
+
+ВОР строится детерминированно (ADR-11, без LLM) из Parquet-строк спецификаций/ведомостей (`_parquet/`): группировка «раздел × наименование × код × марка × ед.изм.», суммирование количеств, нормализация единиц.
+
 ## Mail
 
 | Метод | Путь | Назначение |
