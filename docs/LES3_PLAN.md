@@ -92,10 +92,7 @@
   Сделать: фазы retrieval / rerank / model_load / generation / validation отдельными метриками + лог-строка `[METRICS] phases=...`.
   Приёмка: в `/api/metrics` видны все фазы; `make verify`.
 
-- [ ] **W0.2 CI офлайн-гейт** · S
-  Файлы: новый `.github/workflows/verify.yml`.
-  Сделать: `make verify` + юнит-тесты без живых сервисов на push; матрица macos+windows появится в W4.3.
-  Приёмка: workflow зелёный на текущем main.
+- [x] **W0.2 CI офлайн-гейт** · S — 2026-06-10, `.github/workflows/verify.yml` (uv sync --frozen + make verify, macos-latest; локально гейт зелёный — 455 тестов собрано). Матрица Win — W4.3.
 
 - [ ] **W0.3 Расширить golden sets** · M `[live]`
   Файлы: `golden/`, [tools/rag_golden_set.py](../tools/rag_golden_set.py).

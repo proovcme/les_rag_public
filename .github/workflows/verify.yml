@@ -1,0 +1,31 @@
+# W0.2 (LES3_PLAN): офлайн-гейт на push/PR. Без живых Qdrant/MLX —
+# только compileall + импорт-смоук тестов, ровно как `make verify`.
+# Матрица macos+windows появится в W4.3 после кроссплатформенных правок.
+name: verify
+
+on:
+  push:
+    branches: ["main", "feat/**", "chore/**", "fix/**"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  verify:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies (frozen lock)
+        run: uv sync --frozen
+
+      - name: make verify (compileall + pytest collect-only)
+        run: make verify
