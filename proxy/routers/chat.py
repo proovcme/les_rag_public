@@ -1073,6 +1073,7 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
             "history_id": history_id,
         }
 
+    t_ctx_start = time.time()
     context_windows = expand_context_windows(
         chunks,
         collection=getattr(rag_backend, "collection_name", ""),
@@ -1115,6 +1116,7 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
         radius=_env_int("RAG_VALIDATION_CONTEXT_RADIUS", 1),
     )
     retrieval_trace["validation_context_window"] = validation_context_windows.payload()
+    t_ctx = time.time() - t_ctx_start
 
     llm_runtime = _llm_runtime()
     llm_model = llm_runtime.model
@@ -1149,6 +1151,8 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
         raise HTTPException(429, "Сервер занят — идёт генерация, попробуй через несколько секунд")
 
     t_gen_start = time.time()
+    t_llm = 0.0  # W0.1: чистое время LLM-вызовов (включая загрузку модели на стороне MLX)
+    t_val = 0.0  # W0.1: чистое время /api/validate
     async with state.llm_semaphore:
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:
@@ -1201,6 +1205,7 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                     headers = {}
                     if llm_runtime.api_key:
                         headers["Authorization"] = f"Bearer {llm_runtime.api_key}"
+                    t_llm_call = time.time()
                     resp = await client.post(
                         llm_runtime.chat_url,
                         headers=headers,
@@ -1212,6 +1217,7 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                             "max_tokens": 2048,
                         },
                     )
+                    t_llm += time.time() - t_llm_call
                     resp.raise_for_status()
                     rj = resp.json()
                     answer = rj.get("choices", [{}])[0].get("message", {}).get("content", "")
@@ -1236,11 +1242,13 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                                 max_chars=_env_int("RAG_VALIDATION_CONTEXT_CHARS", 12000),
                                 include_metadata=True,
                             )
+                            t_val_call = time.time()
                             val_resp = await client.post(
                                 f"{val_url}/api/validate",
                                 json={"question": req.question, "answer": answer, "context": validation_context},
                                 timeout=90.0,
                             )
+                            t_val += time.time() - t_val_call
                             crag_status = (
                                 val_resp.json().get("status", "UNKNOWN")
                                 if val_resp.status_code == 200
@@ -1282,7 +1290,17 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                 state.chat_metrics["latency_search"].append(t_search)
                 state.chat_metrics["latency_gen"].append(t_gen)
                 state.chat_metrics["tokens"].append(tokens)
-                for key in ("latency_search", "latency_gen", "tokens"):
+                # W0.1: пофазная латентность; overhead = очередь семафора + сборка промпта внутри t_gen
+                phases = {
+                    "retrieval": round(t_search, 3),
+                    "context": round(t_ctx, 3),
+                    "generation": round(t_llm, 3),
+                    "validation": round(t_val, 3),
+                    "overhead": round(max(0.0, t_gen - t_llm - t_val), 3),
+                }
+                state.chat_metrics.setdefault("latency_phases", []).append(phases)
+                logger.info("[METRICS] phases=%s", phases)
+                for key in ("latency_search", "latency_gen", "tokens", "latency_phases"):
                     state.chat_metrics[key] = state.chat_metrics[key][-100:]
 
                 sources_list = source_names(chunks)

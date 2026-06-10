@@ -87,10 +87,7 @@
 
 ## Волна 0 — Измеримость (делается первой, всё остальное принимается через неё)
 
-- [ ] **W0.1 Пофазные метрики латентности** · S
-  Файлы: [proxy/routers/chat.py:1282](../proxy/routers/chat.py) (сейчас только `latency_search`/`latency_gen`).
-  Сделать: фазы retrieval / rerank / model_load / generation / validation отдельными метриками + лог-строка `[METRICS] phases=...`.
-  Приёмка: в `/api/metrics` видны все фазы; `make verify`.
+- [x] **W0.1 Пофазные метрики латентности** · S — 2026-06-10. Фазы `retrieval/context/generation/validation/overhead` в `chat_metrics.latency_phases` + лог `[METRICS] phases=...`; в `/api/metrics.pipeline` — последние 10 и средние (`summarize_phases`, runtime.py). Тесты tests/test_metrics_phases.py. Фаза rerank появится с новым реранкером в W2.2 (внутри retrieval-сервиса, не трогали — без доменного гейта).
 
 - [x] **W0.2 CI офлайн-гейт** · S — 2026-06-10, `.github/workflows/verify.yml` (uv sync --frozen + make verify, macos-latest; локально гейт зелёный — 455 тестов собрано). Матрица Win — W4.3.
 

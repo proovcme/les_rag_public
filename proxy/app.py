@@ -76,6 +76,7 @@ error_counts = defaultdict(int)
 chat_metrics = {
     "latency_search": [],
     "latency_gen": [],
+    "latency_phases": [],  # W0.1: per-request dict {retrieval, context, generation, validation, overhead}
     "tokens": [],
     "crag_pass": 0,
     "crag_fail": 0,

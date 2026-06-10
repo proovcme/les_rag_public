@@ -35,6 +35,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["runtime"])
 
 
+def summarize_phases(phases: list[dict]) -> dict[str, float]:
+    """W0.1: среднее по каждой фазе латентности за накопленные запросы."""
+    if not phases:
+        return {}
+    totals: dict[str, float] = {}
+    counts: dict[str, int] = {}
+    for entry in phases:
+        for key, value in entry.items():
+            if isinstance(value, (int, float)):
+                totals[key] = totals.get(key, 0.0) + float(value)
+                counts[key] = counts.get(key, 0) + 1
+    return {key: round(totals[key] / counts[key], 3) for key in totals}
+
+
 class ModeRequest(BaseModel):
     mode: str
     model: str
@@ -551,6 +565,8 @@ async def get_metrics():
         "pipeline": {
             "latency_search": state.chat_metrics["latency_search"][-10:],
             "latency_gen": state.chat_metrics["latency_gen"][-10:],
+            "latency_phases": state.chat_metrics.get("latency_phases", [])[-10:],
+            "latency_phases_avg": summarize_phases(state.chat_metrics.get("latency_phases", [])),
             "tokens": state.chat_metrics["tokens"][-10:],
             "crag_pass_rate": crag_verified / crag_total,
             "crag_verified_rate": crag_verified / crag_total,
