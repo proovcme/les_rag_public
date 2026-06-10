@@ -213,6 +213,7 @@ class StructureAwareSplitter:
 EMBED_BATCH  = int(os.getenv("RAG_EMBED_BATCH", "32"))      # чанков за один запрос к MLX embeddings
 MIN_CHUNK    = int(os.getenv("RAG_MIN_CHUNK_CHARS", "20"))  # символов — короче не индексируем
 UPSERT_BATCH = int(os.getenv("RAG_UPSERT_BATCH", "100"))    # точек за один upsert в Qdrant
+VERIFY_POINTS_EVERY = max(1, int(os.getenv("RAG_VERIFY_POINTS_EVERY", "10")))  # W1.2: exact-count каждый N-й файл
 CHUNK_HASH_CACHE = os.getenv("RAG_CHUNK_HASH_CACHE", "true").lower() in {"1", "true", "yes", "on"}
 RAG_CHUNK_SIZE = rag_chunk_size()
 RAG_CHUNK_OVERLAP = rag_chunk_overlap()
@@ -1100,13 +1101,16 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                         _add_timing("upsert_sec", phase_start)
 
                     file_chunk_count = len(file_nodes)
-                    phase_start = _t.time()
-                    indexed_points = self._sync_count_file_points(sync_qdrant, dataset_id, file_key)
-                    _add_timing("count_sec", phase_start)
-                    if indexed_points != file_chunk_count:
-                        raise RuntimeError(
-                            f"qdrant point count mismatch: got {indexed_points}, expected {file_chunk_count}"
-                        )
+                    # W1.2: exact-count в Qdrant — дорогая проверка; выборочно (каждый N-й файл
+                    # и последний), а не после каждого. Upsert-ошибки и так поднимают исключение.
+                    if i % VERIFY_POINTS_EVERY == 0 or i == total:
+                        phase_start = _t.time()
+                        indexed_points = self._sync_count_file_points(sync_qdrant, dataset_id, file_key)
+                        _add_timing("count_sec", phase_start)
+                        if indexed_points != file_chunk_count:
+                            raise RuntimeError(
+                                f"qdrant point count mismatch: got {indexed_points}, expected {file_chunk_count}"
+                            )
                     total_chunks    += file_chunk_count
                     phase_start = _t.time()
                     self.db.update_document_status(

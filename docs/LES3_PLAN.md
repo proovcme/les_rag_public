@@ -98,15 +98,10 @@
 
 ## Волна 1 — Стабильность индексации
 
-- [ ] **W1.1 Конфиг-твики без реиндекса** · S
-  Файлы: [env.example](../env.example), [backend/qdrant_adapter.py:213-215](../backend/qdrant_adapter.py).
-  Сделать: `RAG_EMBED_BATCH` 32→64; `RAG_UPSERT_BATCH` 100→256; `COREML_EMBED_BATCH_SIZE` 1→4 (замерить RAM); `MLX_EMBED_TTL_SEC` 300→1800. По одному параметру с замером.
-  Приёмка: время индексации тестового датасета −30% или откат параметра; `make verify`.
+- [ ] **W1.1 Конфиг-твики без реиндекса** · S — **частично 2026-06-10**: целевые значения и предупреждения внесены в env.example. ВАЖНО: `COREML_EMBED_BATCH_SIZE` зашит в fixed-shape .mlpackage (`b1_s512`) — поднятие батча = регенерация артефакта `tools/coreml_embedding_probe.py` (b4_s512), не правка числа. Остаток задачи: замер на живом рантайме (окно с оператором): `RAG_EMBED_BATCH` 16→64, `RAG_UPSERT_BATCH` 100→256, `MLX_EMBED_TTL_SEC` 300→1800, по одному с контролем RAM.
+  Приёмка остатка: время индексации тестового датасета −30% или откат параметра.
 
-- [ ] **W1.2 SQLite и верификация точек** · S
-  Файлы: [backend/qdrant_adapter.py:1104](../backend/qdrant_adapter.py) (`_sync_count_file_points` после каждого файла), :1112 (статус после каждого файла).
-  Сделать: пересчёт точек — раз в N файлов; статусы — батчевым UPDATE.
-  Приёмка: тесты индексации проходят; время на многофайловом датасете снижено.
+- [x] **W1.2 Верификация точек выборочно** · S — 2026-06-10. Exact-count в Qdrant — каждый N-й файл и последний (`RAG_VERIFY_POINTS_EVERY=10`), вместо каждого ([qdrant_adapter.py](../backend/qdrant_adapter.py)). **Решение:** батч-UPDATE статусов НЕ делаем — по-файловая запись нужна resume-семантике W1.4; цена ~мс на файл, реальной экономией был count.
 
 - [ ] **W1.3 PDF-препроцессор** · M
   Файлы: новые `tools/pdf_preprocess.py`, `tests/test_pdf_preprocess.py`; интеграция в [tools/qwen_index_until_done.py](../tools/qwen_index_until_done.py).
