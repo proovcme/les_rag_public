@@ -108,6 +108,14 @@ curl -fsS -X POST http://127.0.0.1:8050/api/bor/<dataset_id>/generate | python3 
 # preview: GET /api/bor/<dataset_id>/preview?limit=50 · download: GET /api/bor/<dataset_id>/download
 ```
 
+Diff two CAD/BIM imports or two document revisions (deterministic, no LLM):
+
+```bash
+curl -fsS "http://127.0.0.1:8050/api/diff/cad-bim?import_a=<id1>&import_b=<id2>" | python3 -m json.tool
+# import ids: sqlite3 data/cad_bim_graph.db "SELECT id, source, created_at FROM cad_bim_imports"
+# text revisions: POST /api/diff/text {"text_a": ..., "text_b": ...}
+```
+
 ## Documentation
 
 When closing a LES session, update at least:
