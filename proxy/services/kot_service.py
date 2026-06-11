@@ -358,12 +358,29 @@ def expand_query_synonyms(question: str) -> str:
                 for term in all_group:
                     syn_map[term] = all_group
                     
-        # Find any matching words in the query and gather expansions
+        # Find any matching words in the query and gather expansions.
+        # W2.7: помимо точного совпадения — префиксное (≥5 общих символов):
+        # «дымоудалениЮ» находит ключ «дымоудаление», «приточкИ» → «приточка».
+        def _lookup(word_clean: str):
+            hit = syn_map.get(word_clean)
+            if hit:
+                return hit
+            if len(word_clean) < 5:
+                return None
+            for alias, group in syn_map.items():
+                if len(alias) >= 5 and (
+                    word_clean.startswith(alias[: max(5, len(alias) - 3)])
+                    or alias.startswith(word_clean[: max(5, len(word_clean) - 3)])
+                ):
+                    return group
+            return None
+
         expansions = []
         for word in words:
             word_clean = word.casefold().replace("ё", "е")
-            if word_clean in syn_map:
-                for syn in syn_map[word_clean]:
+            group = _lookup(word_clean)
+            if group:
+                for syn in group:
                     if syn not in q_norm and syn not in expansions:
                         expansions.append(syn)
                         

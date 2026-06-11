@@ -87,3 +87,19 @@ def test_kot_layout_and_typo_preprocessing():
     assert analyze_question("Какие требования по \'jv?").dataset_filter == "NTD_ELECTRICAL"
     assert "пожар" in analyze_question("пожарнй вентиляцыя").matched_terms
 
+
+
+# ── W2.7: словарная ступень — префиксное сопоставление словоформ ──
+
+def test_expand_synonyms_matches_word_forms():
+    from proxy.services.kot_service import expand_query_synonyms
+
+    expanded = expand_query_synonyms("Требования к дымоудалению в коридорах")
+    assert "противодымная" in expanded
+
+
+def test_expand_synonyms_no_false_expansion():
+    from proxy.services.kot_service import expand_query_synonyms
+
+    q = "Сколько стоит молоко"
+    assert expand_query_synonyms(q) == q
