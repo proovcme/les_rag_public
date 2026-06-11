@@ -110,6 +110,14 @@ curl -fsS -X POST http://127.0.0.1:8050/api/bor/<dataset_id>/generate | python3 
 # preview: GET /api/bor/<dataset_id>/preview?limit=50 · download: GET /api/bor/<dataset_id>/download
 ```
 
+Preprocess heavy PDFs before indexing (clean + split >40MB; originals go to `_originals/`, idempotent via state file):
+
+```bash
+uv run python tools/pdf_preprocess.py RAG_Content/<folder>/ --dry-run   # сначала посмотреть
+uv run python tools/pdf_preprocess.py RAG_Content/<folder>/             # выполнить
+# или вместе с индексацией: uv run python tools/qwen_index_until_done.py --preprocess-dirs RAG_Content/<folder>
+```
+
 Switch the chat LLM (provider/model) — **no restart needed**, applies per-request:
 
 - GUI: `http://127.0.0.1:8051/les` → panel **LLM Provider** → выбрать mlx / ollama / openrouter / openai, указать модель → SAVE PROVIDERS. Хинт показывает активный провайдер; валидация Т.О.С.К.А. работает только на MLX, остальные дают UNVALIDATED.

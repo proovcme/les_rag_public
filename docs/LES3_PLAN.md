@@ -103,10 +103,7 @@
 
 - [x] **W1.2 Верификация точек выборочно** · S — 2026-06-10. Exact-count в Qdrant — каждый N-й файл и последний (`RAG_VERIFY_POINTS_EVERY=10`), вместо каждого ([qdrant_adapter.py](../backend/qdrant_adapter.py)). **Решение:** батч-UPDATE статусов НЕ делаем — по-файловая запись нужна resume-семантике W1.4; цена ~мс на файл, реальной экономией был count.
 
-- [ ] **W1.3 PDF-препроцессор** · M
-  Файлы: новые `tools/pdf_preprocess.py`, `tests/test_pdf_preprocess.py`; интеграция в [tools/qwen_index_until_done.py](../tools/qwen_index_until_done.py).
-  Сделать: по спеке 2026-06-07 **с четырьмя обязательными правками** (Приложение А): архив оригиналов вместо удаления; state-файл идемпотентности (метабаза следит за mtime/size — qdrant_adapter.py:386); сплит по границам секций/закладок с жадной упаковкой по байтам; `part_index/part_total/original_name` в payload частей.
-  Приёмка: тест-план спеки (~13 тестов) зелёный + тесты на 4 правки; `make verify`.
+- [x] **W1.3 PDF-препроцессор** · M — 2026-06-11. `tools/pdf_preprocess.py`: clean (garbage=4+deflate, оригинал в `_originals/`), split (равные доли по байтам + подтяжка границ к закладкам верхнего уровня, метаданные части в PDF subject, бисекция-страховка, атомарный tmp→rename с откатом), идемпотентность через `.pdf_preprocess_state.json` (mtime+size), CLI (exit 0/1/2, --dry-run, --delete-originals), JSON-лог. Интеграция: `qwen_index_until_done.py --preprocess-dirs <папки>` — до первого sync. 20 тестов (18 unit + 2 интеграционных). **Остаток `[live]`:** прогон по реальному АТ-РД-ОВ2-С-00-П1.pdf (67 МБ) с оператором.
 
 - [ ] **W1.4 Конвейер стадий с resume** · L
   Файлы: [backend/qdrant_adapter.py:919-1110](../backend/qdrant_adapter.py) (`_sync_parse` — монолит), метабаза (новые статусы стадий).

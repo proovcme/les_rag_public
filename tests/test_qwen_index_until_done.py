@@ -64,3 +64,38 @@ def test_main_restores_chat_mode_when_no_pending_files(monkeypatch, capsys):
         ("chat", "http://proxy", "qwen index done"),
     ]
     assert '"event": "done"' in output
+
+
+def test_preprocess_called_before_indexing(monkeypatch, tmp_path):
+    """W1.3: preprocess_dir вызывается для указанных каталогов ДО перевода в indexing-режим."""
+    order = []
+
+    import tools.pdf_preprocess as pp
+
+    monkeypatch.setattr(pp, "preprocess_dir", lambda directory, **kw: order.append(("preprocess", str(directory))) or [])
+    monkeypatch.setattr(indexer, "set_indexing_mode", lambda proxy_url: order.append(("mode", proxy_url)))
+    monkeypatch.setattr(indexer, "set_chat_mode", lambda proxy_url, reason: None)
+    monkeypatch.setattr(indexer, "pending_files", lambda proxy_url: 0)
+
+    result = indexer.main([
+        "--proxy-url", "http://proxy", "--poll-sec", "0", "--proxy-retry-sec", "0",
+        "--preprocess-dirs", str(tmp_path),
+    ])
+
+    assert result == 0
+    assert order[0] == ("preprocess", str(tmp_path))
+    assert order[1][0] == "mode"
+
+
+def test_preprocess_skipped_without_dirs(monkeypatch):
+    """Без --preprocess-dirs препроцессор не трогается."""
+    import tools.pdf_preprocess as pp
+
+    called = []
+    monkeypatch.setattr(pp, "preprocess_dir", lambda *a, **kw: called.append(1) or [])
+    monkeypatch.setattr(indexer, "set_indexing_mode", lambda proxy_url: None)
+    monkeypatch.setattr(indexer, "set_chat_mode", lambda proxy_url, reason: None)
+    monkeypatch.setattr(indexer, "pending_files", lambda proxy_url: 0)
+
+    assert indexer.main(["--proxy-url", "http://proxy", "--poll-sec", "0", "--proxy-retry-sec", "0"]) == 0
+    assert not called
