@@ -1,5 +1,7 @@
 import pytest
 
+pytest.importorskip("mlx_lm", reason="optional extra mac-mlx (нет на офлайн-CI)")
+
 from backend import mlx_adapter
 
 

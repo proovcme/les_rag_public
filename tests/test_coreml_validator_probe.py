@@ -1,6 +1,10 @@
 import json
 from argparse import Namespace
 
+import pytest
+
+pytest.importorskip("torch", reason="optional extra mac-mlx/coreml (нет на офлайн-CI)")
+
 from tools import coreml_validator_probe as probe
 
 
