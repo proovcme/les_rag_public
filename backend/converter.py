@@ -100,19 +100,34 @@ def _parse_pdf(path: Path, route=None) -> str:
         except Exception as ocr_err:
             logger.error(f"[CONVERT] Ошибка OCR для {path.name}: {ocr_err}", exc_info=True)
 
-    # 2. Пытаемся извлечь стандартный текстовый слой
+    # 2. Пытаемся извлечь стандартный текстовый слой.
+    # W1.4: большие PDF конвертируются постраничными батчами — ограничивает пик памяти
+    # и даёт прогресс в логе (лечение причины таймаутов на 60+ МБ комплектах).
     md_content = ""
     try:
         import pymupdf4llm
         image_dir = _pdf_image_dir(path) if _pdf_image_extraction_enabled(path) else None
-        md_content = pymupdf4llm.to_markdown(
-            str(path),
-            pages=None,
+        kwargs = dict(
             write_images=image_dir is not None,
             image_path=str(image_dir) if image_dir is not None else "",
             image_format=os.getenv("PDF_IMAGE_FORMAT", "png"),
             show_progress=False,
         )
+        page_count = _pdf_page_count(path)
+        paged_threshold = int(os.getenv("RAG_PDF_PAGED_THRESHOLD", "80"))
+        page_batch = max(10, int(os.getenv("RAG_PDF_PAGE_BATCH", "40")))
+        if page_count > paged_threshold:
+            parts = []
+            for start in range(0, page_count, page_batch):
+                batch_pages = list(range(start, min(start + page_batch, page_count)))
+                parts.append(pymupdf4llm.to_markdown(str(path), pages=batch_pages, **kwargs))
+                logger.info(
+                    "[CONVERT] %s: страницы %s-%s из %s",
+                    path.name, batch_pages[0] + 1, batch_pages[-1] + 1, page_count,
+                )
+            md_content = "\n\n".join(parts)
+        else:
+            md_content = pymupdf4llm.to_markdown(str(path), pages=None, **kwargs)
         if md_content and md_content.strip():
             # Если текст слишком короткий, возможно это скан с парой символов мусора
             if len(md_content.strip()) < 100 and ocr_enabled:

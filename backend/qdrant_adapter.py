@@ -19,6 +19,7 @@ import re
 import shutil
 import sqlite3
 import uuid
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -214,6 +215,10 @@ EMBED_BATCH  = int(os.getenv("RAG_EMBED_BATCH", "32"))      # чанков за 
 MIN_CHUNK    = int(os.getenv("RAG_MIN_CHUNK_CHARS", "20"))  # символов — короче не индексируем
 UPSERT_BATCH = int(os.getenv("RAG_UPSERT_BATCH", "100"))    # точек за один upsert в Qdrant
 VERIFY_POINTS_EVERY = max(1, int(os.getenv("RAG_VERIFY_POINTS_EVERY", "10")))  # W1.2: exact-count каждый N-й файл
+# W1.4: конвейер — конвертация следующего файла параллельно с эмбеддингом текущего,
+# per-file таймаут конвертации (зависший файл помечается ERROR, индексация продолжается).
+PARSE_PREFETCH = os.getenv("RAG_PARSE_PREFETCH", "true").lower() == "true"
+PARSE_FILE_TIMEOUT = float(os.getenv("RAG_PARSE_FILE_TIMEOUT_SEC", "1800"))
 CHUNK_HASH_CACHE = os.getenv("RAG_CHUNK_HASH_CACHE", "true").lower() in {"1", "true", "yes", "on"}
 RAG_CHUNK_SIZE = rag_chunk_size()
 RAG_CHUNK_OVERLAP = rag_chunk_overlap()
@@ -428,6 +433,7 @@ class MetaDB:
                 ("complexity",   "TEXT DEFAULT ''"),
                 ("pipeline",     "TEXT DEFAULT ''"),
                 ("last_error",   "TEXT DEFAULT ''"),
+                ("stage",        "TEXT DEFAULT ''"),  # W1.4: текущая стадия конвейера (CONVERT/EMBED/UPSERT)
             ]:
                 try:
                     conn.execute(f"ALTER TABLE documents ADD COLUMN {col} {typedef}")
@@ -518,7 +524,7 @@ class MetaDB:
         last_error: str = "",
     ):
         with self._get_conn() as conn:
-            fields = ["status=?", "chunk_count=?", "last_error=?"]
+            fields = ["status=?", "chunk_count=?", "last_error=?", "stage=''"]
             values: list[Any] = [status, chunk_count, last_error[:2000]]
             if route is not None:
                 fields.extend([
@@ -548,6 +554,14 @@ class MetaDB:
                     f"document status update affected {cur.rowcount} rows "
                     f"for dataset_id={dataset_id}, file_name={file_name}"
                 )
+
+    def update_document_stage(self, dataset_id: str, file_name: str, stage: str) -> None:
+        """W1.4: текущая стадия конвейера файла (CONVERT/EMBED/UPSERT) — для прогресса/диагностики."""
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE documents SET stage=? WHERE dataset_id=? AND file_name=?",
+                (stage, dataset_id, file_name),
+            )
 
     def update_document_route(self, dataset_id: str, file_name: str, route: DocumentRoute):
         with self._get_conn() as conn:
@@ -917,12 +931,70 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             embedding_descriptor = _embedding_cache_descriptor()
             embedding_fingerprint = _embedding_cache_fingerprint(embedding_descriptor)
 
+            # W1.4: конвейер — пока текущий файл эмбеддится/апсертится, следующий конвертируется
+            # в фоновом потоке. OCR-файлы конвертируются в основном потоке (VLM не гоняем
+            # параллельно с эмбеддером).
+            convert_pool = (
+                ThreadPoolExecutor(max_workers=1, thread_name_prefix="les-convert")
+                if PARSE_PREFETCH and total > 1
+                else None
+            )
+            _set_stage = getattr(self.db, "update_document_stage", None)
+
+            def _stage(db_key: str, stage: str) -> None:
+                if _set_stage is None:
+                    return
+                try:
+                    _set_stage(dataset_id, db_key, stage)
+                except Exception:
+                    pass
+
+            def _submit_convert(index: int):
+                f = files_to_parse[index]
+                fk = f.relative_to(data_dir).as_posix()
+                local_timings: dict = {}
+                future = convert_pool.submit(
+                    QdrantLlamaIndexAdapter._convert_file, self, f, data_dir, fk, dataset_id,
+                    md_parser, splitter, local_timings, False,
+                )
+                return future, local_timings
+
+            next_convert = _submit_convert(0) if convert_pool else None
+
             for i, file_path in enumerate(files_to_parse, 1):
                 file_key = file_path.relative_to(data_dir).as_posix()
                 db_file_key = file_key if file_key in pending_names else file_path.name
                 if i % 50 == 0 or i == total:
                     logger.info(f"[PARSE] {i}/{total} ({_t.time()-t0:.0f}с)")
                 try:
+                    _stage(db_file_key, "CONVERT")
+                    if next_convert is not None:
+                        future, local_timings = next_convert
+                        try:
+                            route, file_nodes = future.result(timeout=PARSE_FILE_TIMEOUT)
+                        except FuturesTimeoutError:
+                            # Зависший конвертер бросаем вместе с пулом; индексация продолжается.
+                            convert_pool.shutdown(wait=False, cancel_futures=True)
+                            convert_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="les-convert")
+                            raise RuntimeError(
+                                f"convert timeout: >{PARSE_FILE_TIMEOUT:.0f}s (поток конвертации брошен)"
+                            )
+                        finally:
+                            for key, val in local_timings.items():
+                                timings[key] = timings.get(key, 0.0) + val
+                            next_convert = _submit_convert(i) if i < total else None
+                        if file_nodes is None:
+                            # OCR-конвейер: конвертируем синхронно в основном потоке.
+                            route, file_nodes = QdrantLlamaIndexAdapter._convert_file(
+                                self, file_path, data_dir, file_key, dataset_id,
+                                md_parser, splitter, timings, True,
+                            )
+                    else:
+                        route, file_nodes = QdrantLlamaIndexAdapter._convert_file(
+                            self, file_path, data_dir, file_key, dataset_id,
+                            md_parser, splitter, timings, True,
+                        )
+
                     phase_start = _t.time()
                     existing_vectors = (
                         self._sync_existing_file_vectors_by_hash(
@@ -936,71 +1008,11 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     )
                     _add_timing("cache_sec", phase_start)
 
-                    # Удаляем старые точки файла до переиндексации. Если удаление
-                    # не удалось, нельзя честно подтвердить итоговый point count.
+                    # W1.4: старые точки удаляем ПОСЛЕ успешной конвертации — сбой
+                    # конвертации больше не оставляет файл без старого индекса.
                     phase_start = _t.time()
                     self._sync_delete_file_points(sync_qdrant, dataset_id, file_key)
                     _add_timing("delete_sec", phase_start)
-
-                    phase_start = _t.time()
-                    route = route_document(file_path)
-                    _add_timing("route_sec", phase_start)
-                    logger.info(
-                        "[DOC_ROUTE] %s domain=%s dataset=%s type=%s content=%s complexity=%s pipeline=%s",
-                        file_key,
-                        route.domain,
-                        route.dataset_name,
-                        route.doc_type,
-                        route.content_type,
-                        route.complexity,
-                        route.pipeline,
-                    )
-
-                    if route.doc_type == "EMAIL":
-                        file_nodes = self._sync_mail_nodes(
-                            file_path, data_dir, file_key, dataset_id, splitter, route, timings
-                        )
-                    elif route.pipeline == "parquet":
-                        try:
-                            file_nodes = self._sync_table_nodes(file_path, data_dir, dataset_id, route, timings)
-                        except Exception as table_err:
-                            logger.warning(
-                                "[PARQUET] fallback to markdown for %s: %s",
-                                file_key,
-                                table_err,
-                            )
-                            file_nodes = self._sync_markdown_nodes(
-                                file_path, file_key, dataset_id, md_parser, splitter, route, timings
-                            )
-                    elif route.pipeline in ("markdown_pdf_tables", "markdown_needs_ocr"):
-                        file_nodes = self._sync_markdown_nodes(
-                            file_path, file_key, dataset_id, md_parser, splitter, route, timings
-                        )
-                        if (
-                            route.pipeline == "markdown_pdf_tables"
-                            and os.getenv("PDF_TABLE_EXTRACTION_ENABLED", "false").lower() == "true"
-                        ):
-                            try:
-                                file_nodes.extend(self._sync_table_nodes(file_path, data_dir, dataset_id, route, timings))
-                            except Exception as table_err:
-                                logger.warning(
-                                    "[PDF_TABLE] table extraction skipped for %s: %s",
-                                    file_key,
-                                    table_err,
-                                )
-                    else:
-                        file_nodes = self._sync_markdown_nodes(
-                            file_path, file_key, dataset_id, md_parser, splitter, route, timings
-                        )
-                        if QdrantLlamaIndexAdapter._docx_table_extraction_enabled(file_path, route):
-                            try:
-                                file_nodes.extend(self._sync_table_nodes(file_path, data_dir, dataset_id, route, timings))
-                            except Exception as table_err:
-                                logger.warning(
-                                    "[DOCX_TABLE] table extraction skipped for %s: %s",
-                                    file_key,
-                                    table_err,
-                                )
 
                     if not file_nodes:
                         phase_start = _t.time()
@@ -1035,6 +1047,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                         except Exception as rule_err:
                             logger.error(f"[OCR_RULES] Ошибка извлечения структурированных правил для {file_key}: {rule_err}", exc_info=True)
 
+                    _stage(db_file_key, "EMBED")
                     # Батч-эмбеддинги по EMBED_BATCH чанков. Upsert начинаем только
                     # после успешного embedding всех чанков файла, чтобы не оставлять
                     # частичный индекс при сбое середины документа.
@@ -1091,6 +1104,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                                 payload=payload,
                             ))
 
+                    _stage(db_file_key, "UPSERT")
                     # Upsert батчами после успешного embedding всего файла.
                     for point_start in range(0, len(points), UPSERT_BATCH):
                         phase_start = _t.time()
@@ -1131,6 +1145,9 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     _add_timing("db_sec", phase_start)
                     errors += 1
 
+            if convert_pool is not None:
+                convert_pool.shutdown(wait=False, cancel_futures=True)
+
             phase_start = _t.time()
             self.db.update_dataset_chunk_count(dataset_id)
             remaining_pending = len(self.db.get_pending_files(dataset_id))
@@ -1158,6 +1175,91 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         except Exception as e:
             logger.error(f"[PARSE] FATAL: {e}", exc_info=True)
             return {"status": "failed", "error": str(e)}
+
+    def _convert_file(
+        self,
+        file_path: Path,
+        data_dir: Path,
+        file_key: str,
+        dataset_id: str,
+        md_parser,
+        splitter,
+        timings: dict,
+        allow_ocr: bool = True,
+    ):
+        """W1.4: стадия конвертации (route + nodes), вынесена для префетча в фоне.
+
+        allow_ocr=False (префетч): OCR-файлы не конвертируем в фоне — возвращаем
+        (route, None), основной поток выполнит конвертацию синхронно.
+        """
+        import time as _t
+
+        def _add_timing(key: str, started: float) -> None:
+            timings[key] = timings.get(key, 0.0) + (_t.time() - started)
+
+        phase_start = _t.time()
+        route = route_document(file_path)
+        _add_timing("route_sec", phase_start)
+        logger.info(
+            "[DOC_ROUTE] %s domain=%s dataset=%s type=%s content=%s complexity=%s pipeline=%s",
+            file_key,
+            route.domain,
+            route.dataset_name,
+            route.doc_type,
+            route.content_type,
+            route.complexity,
+            route.pipeline,
+        )
+
+        if route.pipeline == "markdown_needs_ocr" and not allow_ocr:
+            return route, None
+
+        if route.doc_type == "EMAIL":
+            file_nodes = self._sync_mail_nodes(
+                file_path, data_dir, file_key, dataset_id, splitter, route, timings
+            )
+        elif route.pipeline == "parquet":
+            try:
+                file_nodes = self._sync_table_nodes(file_path, data_dir, dataset_id, route, timings)
+            except Exception as table_err:
+                logger.warning(
+                    "[PARQUET] fallback to markdown for %s: %s",
+                    file_key,
+                    table_err,
+                )
+                file_nodes = self._sync_markdown_nodes(
+                    file_path, file_key, dataset_id, md_parser, splitter, route, timings
+                )
+        elif route.pipeline in ("markdown_pdf_tables", "markdown_needs_ocr"):
+            file_nodes = self._sync_markdown_nodes(
+                file_path, file_key, dataset_id, md_parser, splitter, route, timings
+            )
+            if (
+                route.pipeline == "markdown_pdf_tables"
+                and os.getenv("PDF_TABLE_EXTRACTION_ENABLED", "false").lower() == "true"
+            ):
+                try:
+                    file_nodes.extend(self._sync_table_nodes(file_path, data_dir, dataset_id, route, timings))
+                except Exception as table_err:
+                    logger.warning(
+                        "[PDF_TABLE] table extraction skipped for %s: %s",
+                        file_key,
+                        table_err,
+                    )
+        else:
+            file_nodes = self._sync_markdown_nodes(
+                file_path, file_key, dataset_id, md_parser, splitter, route, timings
+            )
+            if QdrantLlamaIndexAdapter._docx_table_extraction_enabled(file_path, route):
+                try:
+                    file_nodes.extend(self._sync_table_nodes(file_path, data_dir, dataset_id, route, timings))
+                except Exception as table_err:
+                    logger.warning(
+                        "[DOCX_TABLE] table extraction skipped for %s: %s",
+                        file_key,
+                        table_err,
+                    )
+        return route, file_nodes
 
     def _file_filter(self, dataset_id: str, file_key: str) -> models.Filter:
         return models.Filter(must=[

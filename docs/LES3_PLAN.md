@@ -105,10 +105,8 @@
 
 - [x] **W1.3 PDF-препроцессор** · M — 2026-06-11. `tools/pdf_preprocess.py`: clean (garbage=4+deflate, оригинал в `_originals/`), split (равные доли по байтам + подтяжка границ к закладкам верхнего уровня, метаданные части в PDF subject, бисекция-страховка, атомарный tmp→rename с откатом), идемпотентность через `.pdf_preprocess_state.json` (mtime+size), CLI (exit 0/1/2, --dry-run, --delete-originals), JSON-лог. Интеграция: `qwen_index_until_done.py --preprocess-dirs <папки>` — до первого sync. 20 тестов (18 unit + 2 интеграционных). **Остаток `[live]`:** прогон по реальному АТ-РД-ОВ2-С-00-П1.pdf (67 МБ) с оператором.
 
-- [ ] **W1.4 Конвейер стадий с resume** · L
-  Файлы: [backend/qdrant_adapter.py:919-1110](../backend/qdrant_adapter.py) (`_sync_parse` — монолит), метабаза (новые статусы стадий).
-  Сделать: явные стадии preprocess→convert→chunk→embed→upsert со статусом per-file; рестарт продолжает с места падения; конвертация следующего файла параллельно с эмбеддингом текущего; per-file таймаут с постраничной батч-конвертацией PDF.
-  Приёмка: kill -9 посреди индексации → повторный запуск доводит датасет без дублей точек; время датасета −30%+.
+- [x] **W1.4 Конвейер стадий с resume** · L — 2026-06-11. (1) Стадии per-file: колонка `documents.stage` (CONVERT/EMBED/UPSERT, чистится при INDEXED/ERROR) — видимость для прогресса W5.2. (2) **Префетч**: конвертация следующего файла в фоновом потоке параллельно с эмбеддингом текущего (`RAG_PARSE_PREFETCH`, OCR-файлы — синхронно, VLM не гоняем рядом с эмбеддером). (3) Per-file таймаут конвертации (`RAG_PARSE_FILE_TIMEOUT_SEC=1800`): зависший файл → ERROR, пул пересоздаётся, индексация продолжается. (4) Постраничная батч-конвертация больших PDF (converter.py: `RAG_PDF_PAGED_THRESHOLD=80`, `RAG_PDF_PAGE_BATCH=40`) — лечение причины таймаутов 60+ МБ. (5) Бонус: delete старых точек перенесён ПОСЛЕ конвертации — сбой конвертации больше не оставляет файл без старого индекса. Resume-тест: kill посреди файла → повторный прогон доводит без дублей (delete перед upsert). 7 тестов (test_parse_pipeline_w14.py), старые 15 зелёные без правок.
+  **Остаток `[live]`:** замер −30% на реальном датасете с оператором.
 
 - [ ] **W1.5 Layout-aware парсер (Docling/MinerU)** · M `[dep]`
   Файлы: [backend/converter.py](../backend/converter.py), [backend/document_router.py](../backend/document_router.py) (выбор pipeline).
