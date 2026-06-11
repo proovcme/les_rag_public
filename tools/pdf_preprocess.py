@@ -110,6 +110,15 @@ def clean_pdf(src: Path, archive_dir: Path | None = None) -> CleanResult:
         doc.save(tmp, garbage=4, deflate=True, deflate_images=True)
     finally:
         doc.close()
+    # Перекодирование изображений изредка РАЗДУВАЕТ файл (видено вживую: 38→107 МБ) —
+    # тогда оставляем оригинал как есть.
+    inflated_bytes = tmp.stat().st_size
+    if inflated_bytes >= original_bytes:
+        tmp.unlink()
+        log("clean_kept_original", file=src.name,
+            before_mb=round(original_bytes / 2**20, 1),
+            inflated_mb=round(inflated_bytes / 2**20, 1))
+        return CleanResult(path=src, original_bytes=original_bytes, new_bytes=original_bytes)
     tmp.replace(src)
     return CleanResult(path=src, original_bytes=original_bytes, new_bytes=src.stat().st_size)
 

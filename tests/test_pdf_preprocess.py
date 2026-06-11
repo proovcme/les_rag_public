@@ -215,3 +215,43 @@ def test_cli_exit_2_on_partial_errors(tmp_path):
 def test_cli_exit_0_clean_run(tmp_path):
     _make_pdf(tmp_path / "good.pdf", pages=2)
     assert main([str(tmp_path), "--max-mb", "10"]) == 0
+
+
+def test_clean_pdf_keeps_original_when_inflated(tmp_path, monkeypatch):
+    """Очистка, раздувшая файл (перекодирование картинок), не сохраняется."""
+    pdf = _make_pdf(tmp_path / "a.pdf", pages=2)
+    original = pdf.read_bytes()
+
+    import fitz as _fitz
+    import tools.pdf_preprocess as pp
+
+    real_open = _fitz.open
+
+    class InflatingDoc:
+        def __init__(self, doc):
+            self._doc = doc
+
+        def save(self, path, **kw):
+            self._doc.save(path)
+            with open(path, "ab") as fh:
+                fh.write(b"%" + b"x" * (len(original) * 2))  # раздуваем
+
+        def close(self):
+            self._doc.close()
+
+    monkeypatch.setattr(pp, "fitz", None, raising=False)
+    import builtins
+    orig_import = builtins.__import__
+
+    def fake_import(name, *a, **kw):
+        module = orig_import(name, *a, **kw)
+        return module
+
+    result = None
+    monkeypatch.setattr(_fitz, "open", lambda p: InflatingDoc(real_open(p)))
+    try:
+        result = pp.clean_pdf(pdf)
+    finally:
+        monkeypatch.setattr(_fitz, "open", real_open)
+    assert pdf.read_bytes() == original  # файл не тронут
+    assert result.new_bytes == result.original_bytes
