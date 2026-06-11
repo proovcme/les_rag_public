@@ -969,9 +969,33 @@ def lite_admin_html() -> str:
         ? "key уже задан; оставь пустым, чтобы не менять"
         : "OpenAI-compatible API key";
       el("openaiClear").checked = false;
-      const validationNote = active === "mlx" ? "валидация Т.О.С.К.А. активна" : "валидация недоступна (только MLX), ответы UNVALIDATED";
+      const answeringModel = {
+        mlx: settings.llm_model || "(LLM_MODEL из .env)",
+        ollama: ollama.model || "⚠ модель не задана",
+        openrouter: openrouter.model || "⚠ модель не задана",
+        openai: openai.model || "⚠ модель не задана",
+      }[active] || "?";
+      const validationNote = active === "mlx" ? "валидация Т.О.С.К.А. активна" : "без валидации (UNVALIDATED)";
       el("providerHint").textContent =
-        `АКТИВНЫЙ ПРОВАЙДЕР: ${active.toUpperCase()} (${validationNote}) | ollama model=${ollama.model || "-"} | OpenRouter key=${openrouter.api_key_set ? "set" : "missing"} | OpenAI key=${openai.api_key_set ? "set" : "missing"}. Применяется сразу, без рестарта.`;
+        `СЕЙЧАС ОТВЕЧАЕТ: ${active.toUpperCase()} → ${answeringModel} (${validationNote}). ` +
+        `Поля других провайдеров — заготовки, отвечает только выбранный в селекторе. Применяется сразу, без рестарта.`;
+      updateProviderEmphasis(active);
+    }
+
+    const PROVIDER_FIELD_GROUPS = {
+      ollama: ["ollamaBaseUrl", "ollamaModel"],
+      openrouter: ["openrouterBaseUrl", "openrouterModel", "openrouterKey", "openrouterClear"],
+      openai: ["openaiBaseUrl", "openaiModel", "openaiKey", "openaiClear"],
+    };
+
+    function updateProviderEmphasis(active) {
+      Object.entries(PROVIDER_FIELD_GROUPS).forEach(([provider, ids]) => {
+        const dim = provider !== active;
+        ids.forEach((id) => {
+          const node = el(id);
+          if (node) node.style.opacity = dim ? "0.45" : "1";
+        });
+      });
     }
 
     function renderMailSettings(settings) {
@@ -1425,6 +1449,7 @@ def lite_admin_html() -> str:
       el(id).addEventListener("input", () => { state.mailDirty = true; });
       el(id).addEventListener("change", () => { state.mailDirty = true; });
     });
+    el("llmProvider").addEventListener("change", () => updateProviderEmphasis(el("llmProvider").value));
     ["llmProvider", "ollamaBaseUrl", "ollamaModel", "openrouterBaseUrl", "openrouterModel", "openrouterKey", "openrouterClear", "openaiBaseUrl", "openaiModel", "openaiKey", "openaiClear"].forEach((id) => {
       el(id).addEventListener("input", () => { state.providerDirty = true; });
       el(id).addEventListener("change", () => { state.providerDirty = true; });

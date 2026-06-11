@@ -131,6 +131,12 @@ curl -fsS -X POST http://127.0.0.1:8050/api/normcontrol/<dataset_id>/run | pytho
 # report: GET /api/normcontrol/<dataset_id>/download
 ```
 
+Check ZeroTier access from any ZT device (each line = endpoint probe; non-200 → что именно «не пускает»):
+
+```bash
+python3 tools/zerotier_access_smoke.py --host 10.195.146.98
+```
+
 Diff two CAD/BIM imports or two document revisions (deterministic, no LLM):
 
 ```bash

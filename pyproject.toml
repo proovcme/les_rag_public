@@ -54,6 +54,9 @@ mac-mlx = [
     "torchvision>=0.17.0",
     "coremltools>=9.0",
 ]
+parsers = [
+    "docling>=2.101.0",
+]
 
 [dependency-groups]
 dev = []

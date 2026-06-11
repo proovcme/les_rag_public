@@ -100,6 +100,18 @@ def _parse_pdf(path: Path, route=None) -> str:
         except Exception as ocr_err:
             logger.error(f"[CONVERT] Ошибка OCR для {path.name}: {ocr_err}", exc_info=True)
 
+    # 1.5 (W1.5, ADR-5): опциональный layout-aware парсер Docling — таблицы через
+    # TableFormer. Включается RAG_PDF_PARSER=docling (нужен extra: uv sync --extra parsers).
+    # Любой сбой → тихий fallback на штатный pymupdf-путь ниже.
+    if os.getenv("RAG_PDF_PARSER", "pymupdf").strip().lower() == "docling":
+        try:
+            md = _docling_pdf_markdown(path)
+            if md and len(md.strip()) > 100:
+                return md
+            logger.warning("[CONVERT] docling вернул слишком мало текста для %s — fallback pymupdf", path.name)
+        except Exception as docling_err:
+            logger.warning("[CONVERT] docling failed для %s (%s) — fallback pymupdf", path.name, docling_err)
+
     # 2. Пытаемся извлечь стандартный текстовый слой.
     # W1.4: большие PDF конвертируются постраничными батчами — ограничивает пик памяти
     # и даёт прогресс в логе (лечение причины таймаутов на 60+ МБ комплектах).
@@ -168,6 +180,21 @@ def _parse_pdf(path: Path, route=None) -> str:
             logger.error(f"[CONVERT] Ошибка фонового OCR для {path.name}: {ocr_err}", exc_info=True)
 
     return f"[WARN] {path.name}: текст не извлечён (сканированный PDF?)"
+
+
+_docling_converter = None  # ленивая инициализация: тяжёлые layout-модели грузятся один раз
+
+
+def _docling_pdf_markdown(path: Path) -> str:
+    """W1.5: PDF → markdown через Docling (layout-aware, TableFormer для таблиц)."""
+    global _docling_converter
+    if _docling_converter is None:
+        from docling.document_converter import DocumentConverter
+
+        _docling_converter = DocumentConverter()
+        logger.info("[CONVERT] docling инициализирован (первый вызов грузит модели)")
+    result = _docling_converter.convert(str(path))
+    return result.document.export_to_markdown()
 
 
 def _max_file_chars(path: Path) -> int:
