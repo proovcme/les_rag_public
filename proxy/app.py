@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.metrics_collector import init_db, metrics_loop
 from backend.qdrant_adapter import QdrantLlamaIndexAdapter
 from backend.rag_config import embedding_api_model, rag_meta_db_path
-from proxy.config import CORS_ALLOWED_ORIGINS
+from proxy.config import CORS_ALLOWED_ORIGIN_REGEX, CORS_ALLOWED_ORIGINS
 from proxy.routers.auth import router as auth_router, seed_admin_key
 from proxy.routers.bor import router as bor_router
 from proxy.routers.diff import router as diff_router
@@ -290,6 +290,7 @@ def create_app():
     fastapi_app.add_middleware(
         CORSMiddleware,
         allow_origins=list(CORS_ALLOWED_ORIGINS),
+        allow_origin_regex=CORS_ALLOWED_ORIGIN_REGEX,
         allow_methods=["*"],
         allow_headers=["*"],
     )
