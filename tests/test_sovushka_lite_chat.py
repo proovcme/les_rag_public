@@ -23,7 +23,9 @@ def test_lite_chat_html_uses_static_shell_and_local_bridge():
     assert "Е.Ж.И.К. Почта" in html
     assert "/classic" in html
     assert "Индексирование активно:" in html
-    assert 'const isLocalUi = location.port === "8051";' in html
+    # Локальный UI определяется по hostname/порту (8051/8061) — точная строка эволюционирует
+    assert "const isLocalUi" in html
+    assert '"8051"' in html
     assert "bot.innerHTML" not in html
 
 

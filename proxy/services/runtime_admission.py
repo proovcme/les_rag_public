@@ -66,11 +66,17 @@ def chat_memory_guard_enabled() -> bool:
     return _env_bool("LES_CHAT_MEMORY_GUARD", True)
 
 
+# Память этой машины едят только ЛОКАЛЬНЫЕ провайдеры — для них guard обязателен
+# (кейс Gemma 12B: ollama выел RAM до swap 86%). Облачные (openrouter/openai)
+# RAM не требуют — admission по памяти снимается (решение оператора 2026-06-13).
+LOCAL_LLM_PROVIDERS = {"mlx", "local-mlx", "local_mlx", "ollama", "lemonade"}
+
+
 def chat_memory_guard_for_provider() -> bool:
     provider = os.getenv("LES_LLM_PROVIDER", "mlx").strip().lower() or "mlx"
-    if provider not in {"mlx", "local-mlx", "local_mlx"}:
-        return _env_bool("LES_CHAT_MEMORY_GUARD", False)
-    return chat_memory_guard_enabled()
+    if provider in LOCAL_LLM_PROVIDERS:
+        return chat_memory_guard_enabled()
+    return _env_bool("LES_CHAT_MEMORY_GUARD", False)
 
 
 def memory_green_min_free_gb() -> float:

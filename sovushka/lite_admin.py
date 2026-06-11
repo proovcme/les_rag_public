@@ -976,8 +976,10 @@ def lite_admin_html() -> str:
         openai: openai.model || "⚠ модель не задана",
       }[active] || "?";
       const validationNote = active === "mlx" ? "валидация Т.О.С.К.А. активна" : "без валидации (UNVALIDATED)";
+      const isCloud = active === "openrouter" || active === "openai";
+      const memoryNote = isCloud ? "блок по памяти СНЯТ (облако)" : "блок по памяти активен (локальная модель)";
       el("providerHint").textContent =
-        `СЕЙЧАС ОТВЕЧАЕТ: ${active.toUpperCase()} → ${answeringModel} (${validationNote}). ` +
+        `СЕЙЧАС ОТВЕЧАЕТ: ${active.toUpperCase()} → ${answeringModel} (${validationNote}; ${memoryNote}). ` +
         `Поля других провайдеров — заготовки, отвечает только выбранный в селекторе. Применяется сразу, без рестарта.`;
       updateProviderEmphasis(active);
     }

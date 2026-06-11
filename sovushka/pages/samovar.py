@@ -117,7 +117,8 @@ def build_samovar():
               <q-btn v-if="props.row.can_sync" flat dense size="xs" color="negative" icon="delete_sweep"
                      @click="$parent.$emit('reset', props.row)"
                      style="font-size:.6rem;padding:2px 6px;margin-left:4px;">↺ СБРОС</q-btn>
-              <span v-if="!props.row.can_sync" style="color:#94a3b8;font-size:.65rem;">—</span>
+              <span v-if="!props.row.can_sync" :title="props.row.sync_reason"
+                    style="color:#94a3b8;font-size:.65rem;cursor:help;border-bottom:1px dotted #94a3b8;">нет синка</span>
             </q-td>""")
         sam_grid.on("inspect", lambda e: asyncio.create_task(_open_index_dialog(e.args)))
         sam_grid.on("sync",  lambda e: asyncio.create_task(_sync_row(e.args)))
@@ -227,17 +228,20 @@ def build_samovar():
                       <span v-else style="color:#64748b;">—</span>
                     </q-td>""")
 
-        # Поле ручного синка
+        # Синк папки-источника: выпадающий список известных папок (+ ручной ввод для новых)
         with ui.row().classes("gap-3 w-full"):
-            sync_folder_input = ui.input(
-                placeholder="Имя папки для синка..."
-            ).style(
+            sync_folder_input = ui.select(
+                options=[],
+                with_input=True,
+                new_value_mode="add-unique",
+                label="Папка-источник для синка",
+            ).props("dense outlined use-input").style(
                 "background:var(--bg);border:1px solid var(--border);color:var(--text);"
                 "font-family:var(--font);border-radius:4px;padding:6px 10px;font-size:.75rem;flex:1;"
             ).classes("flex-1")
 
             async def do_sync():
-                folder = sync_folder_input.value.strip()
+                folder = (sync_folder_input.value or "").strip()
                 if not folder:
                     ui.notify("Укажи имя папки", type="warning")
                     return
@@ -310,11 +314,14 @@ def build_samovar():
                             ui.notify(last_api_error_text("Ошибка запуска scheduler"), type="negative")
 
                     start_scheduler_btn = ui.button(
-                        "▶ START",
+                        "▶ СТАРТ ИНДЕКСАЦИИ",
                         on_click=run_scheduler,
                     ).props("no-caps").style(
                         "background:rgba(245,158,11,.15);border:1px solid var(--warn);"
                         "color:var(--warn);font-size:.7rem;font-weight:900;"
+                    )
+                    scheduler_live_label = ui.label("○ статус загружается…").style(
+                        "color:var(--dim);font-size:.7rem;font-weight:700;"
                     )
 
         # Live proxy log
@@ -699,6 +706,7 @@ def build_samovar():
                     "status":     status,
                     "job_info":   job_info,
                     "can_sync":    not parse_blocked,
+                    "sync_reason": "парсинг сейчас заблокирован (идёт другая задача)" if parse_blocked else "",
                 })
 
             for ds in datasets:
@@ -726,6 +734,7 @@ def build_samovar():
                     "status":     ds.get("status", ""),
                     "job_info":   "",
                     "can_sync":    False,
+                    "sync_reason": "нет папки-источника в RAG_Content — датасет наполняется загрузкой файлов",
                 })
 
             if totals:
@@ -784,6 +793,23 @@ def build_samovar():
             )
             sam_grid.rows = rows
             sam_grid.update()
+
+            # Опции синка: известные папки-источники (где синк возможен)
+            sync_folder_input.options = sorted({r["folder"] for r in rows if r.get("can_sync")})
+            sync_folder_input.update()
+
+            # Живость шедулера: активные parse-задачи рядом с кнопкой START
+            active_jobs = [j for j in jobs.values() if str(j.get("status", "")).upper() in ("RUNNING", "QUEUED", "STARTED")]
+            if active_jobs:
+                current = active_jobs[0]
+                scheduler_live_label.set_text(
+                    f"● РАБОТАЕТ: {current.get('dataset_name', '?')} {current.get('processed', 0)}/{current.get('total', 0)}"
+                    + (f" (+{len(active_jobs) - 1} в очереди)" if len(active_jobs) > 1 else "")
+                )
+                scheduler_live_label.style("color:var(--ok);font-size:.7rem;font-weight:700;")
+            else:
+                scheduler_live_label.set_text("○ не запущен")
+                scheduler_live_label.style("color:var(--dim);font-size:.7rem;font-weight:700;")
 
             # Jobs
             job_rows = []
