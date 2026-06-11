@@ -39,7 +39,9 @@ def test_lite_admin_html_uses_static_admin_shell():
     assert "/api/speckle/status" in html
     assert "/api/cad-bim/import" in html
     assert "RAG_Content/CAD_BIM" in html
-    assert "External Providers" in html
+    assert "LLM Provider" in html
+    assert 'id="llmProvider"' in html
+    assert 'id="ollamaModel"' in html
     assert "openrouterBaseUrl" in html
     assert "openrouterKey" in html
     assert "openaiBaseUrl" in html
@@ -60,7 +62,9 @@ def test_lite_admin_html_uses_static_admin_shell():
     assert "parse_batches: parseBatches" in html
     assert "/api/jobs/summary?limit=8" in html
     assert "/api/mail/import-apple-mail" in html
-    assert 'const isLocalUi = location.port === "8051";' in html
+    # Локальный UI определяется по hostname/порту (8051/8061) — точная строка эволюционирует
+    assert "const isLocalUi" in html
+    assert '"8051"' in html
     assert "Local Launchd" not in html
     assert ".innerHTML" not in html
     assert "start_guarded_reindex" not in html

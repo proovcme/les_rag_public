@@ -534,9 +534,17 @@ def lite_admin_html() -> str:
       </div>
 
       <div class="panel panel-wide">
-        <div class="title">External Providers</div>
-        <div id="providerHint" class="hint">OpenRouter и OpenAI-compatible параметры ещё не загружены.</div>
+        <div class="title">LLM Provider</div>
+        <div id="providerHint" class="hint">Параметры провайдеров ещё не загружены.</div>
         <div class="form-grid">
+          <select id="llmProvider" class="wide">
+            <option value="mlx">MLX — локальный (валидация Т.О.С.К.А. доступна)</option>
+            <option value="ollama">Ollama — локальный (Gemma 4, Qwen и др.)</option>
+            <option value="openrouter">OpenRouter — облако (любая модель)</option>
+            <option value="openai">OpenAI-compatible — облако/совместимый сервер</option>
+          </select>
+          <input id="ollamaBaseUrl" class="wide" type="url" placeholder="http://127.0.0.1:11434">
+          <input id="ollamaModel" class="wide" type="text" placeholder="ollama model id, например gemma4:12b">
           <input id="openrouterBaseUrl" class="wide" type="url" placeholder="https://openrouter.ai/api/v1">
           <input id="openrouterModel" class="wide" type="text" placeholder="openrouter model id">
           <input id="openrouterKey" class="wide" type="password" placeholder="OpenRouter API key">
@@ -938,6 +946,11 @@ def lite_admin_html() -> str:
     function renderProviderSettings(settings) {
       if (state.providerDirty) return;
       const providers = settings.providers || {};
+      const active = (providers.active || "mlx").toLowerCase();
+      const ollama = providers.ollama || {};
+      setProviderValue("llmProvider", ["mlx", "ollama", "openrouter", "openai"].includes(active) ? active : "mlx");
+      setProviderValue("ollamaBaseUrl", ollama.base_url || "http://127.0.0.1:11434");
+      setProviderValue("ollamaModel", ollama.model || "");
       const openrouter = providers.openrouter || {};
       const openai = providers.openai_compatible || {};
       state.openrouterKeySet = Boolean(openrouter.api_key_set);
@@ -956,8 +969,9 @@ def lite_admin_html() -> str:
         ? "key уже задан; оставь пустым, чтобы не менять"
         : "OpenAI-compatible API key";
       el("openaiClear").checked = false;
+      const validationNote = active === "mlx" ? "валидация Т.О.С.К.А. активна" : "валидация недоступна (только MLX), ответы UNVALIDATED";
       el("providerHint").textContent =
-        `OpenRouter key=${openrouter.api_key_set ? "set" : "missing"} | OpenAI-compatible key=${openai.api_key_set ? "set" : "missing"}`;
+        `АКТИВНЫЙ ПРОВАЙДЕР: ${active.toUpperCase()} (${validationNote}) | ollama model=${ollama.model || "-"} | OpenRouter key=${openrouter.api_key_set ? "set" : "missing"} | OpenAI key=${openai.api_key_set ? "set" : "missing"}. Применяется сразу, без рестарта.`;
     }
 
     function renderMailSettings(settings) {
@@ -1320,6 +1334,9 @@ def lite_admin_html() -> str:
       const openrouterKey = el("openrouterKey").value.trim();
       const openaiKey = el("openaiKey").value.trim();
       const payload = {
+        llm_provider: el("llmProvider").value,
+        ollama_base_url: validateProviderUrl(el("ollamaBaseUrl").value, "Ollama URL"),
+        ollama_model: el("ollamaModel").value.trim(),
         openrouter_base_url: validateProviderUrl(el("openrouterBaseUrl").value, "OpenRouter URL"),
         openrouter_model: el("openrouterModel").value.trim(),
         openrouter_api_key_clear: el("openrouterClear").checked,
@@ -1408,7 +1425,7 @@ def lite_admin_html() -> str:
       el(id).addEventListener("input", () => { state.mailDirty = true; });
       el(id).addEventListener("change", () => { state.mailDirty = true; });
     });
-    ["openrouterBaseUrl", "openrouterModel", "openrouterKey", "openrouterClear", "openaiBaseUrl", "openaiModel", "openaiKey", "openaiClear"].forEach((id) => {
+    ["llmProvider", "ollamaBaseUrl", "ollamaModel", "openrouterBaseUrl", "openrouterModel", "openrouterKey", "openrouterClear", "openaiBaseUrl", "openaiModel", "openaiKey", "openaiClear"].forEach((id) => {
       el(id).addEventListener("input", () => { state.providerDirty = true; });
       el(id).addEventListener("change", () => { state.providerDirty = true; });
     });
