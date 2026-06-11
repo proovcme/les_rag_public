@@ -64,6 +64,69 @@ def build_samovar():
             "border-radius:6px;padding:8px 10px;font-size:.68rem;font-family:var(--font);"
         )
 
+        # Parse scheduler
+        with ui.card().classes("card-les w-full"):
+            with ui.row().classes("items-center justify-between w-full gap-3"):
+                with ui.column().classes("gap-0"):
+                    ui.label("ИНДЕКСАЦИЯ // НАСТРОЙКИ И ЗАПУСК").classes("section-title")
+                    scheduler_status = ui.label("ожидают: — · job: —").style(
+                        "font-size:.65rem;color:var(--dim);"
+                    )
+                with ui.row().classes("items-center gap-2"):
+                    batch_limit_input = ui.number("batch", value=1, min=1, max=25, step=1).props("dense outlined").style(
+                        "width:86px;font-size:.7rem;"
+                    )
+                    max_batches_input = ui.number("max", value=25, min=1, max=500, step=1).props("dense outlined").style(
+                        "width:86px;font-size:.7rem;"
+                    )
+                    cooldown_input = ui.number("cooldown", value=20, min=0, max=600, step=5).props("dense outlined").style(
+                        "width:112px;font-size:.7rem;"
+                    )
+                    min_free_input = ui.number("min GB", value=8, min=1, max=64, step=1).props("dense outlined").style(
+                        "width:92px;font-size:.7rem;"
+                    )
+                    max_swap_input = ui.number("swap %", value=45, min=0, max=100, step=5).props("dense outlined").style(
+                        "width:92px;font-size:.7rem;"
+                    )
+
+                    async def run_scheduler():
+                        payload = {
+                            "batch_limit": int(batch_limit_input.value or 5),
+                            "max_batches": int(max_batches_input.value or 25),
+                            "cooldown_sec": float(cooldown_input.value or 0),
+                            "unload_between_batches": True,
+                            "unload_before_start": True,
+                            "min_free_gb": float(min_free_input.value or 8),
+                            "max_swap_pct": float(max_swap_input.value or 45),
+                            "background": True,
+                        }
+                        add_log(
+                            f"[PARSE_SCHEDULER] batch={payload['batch_limit']} "
+                            f"max={payload['max_batches']} cooldown={payload['cooldown_sec']}"
+                        )
+                        start_scheduler_btn.props("loading")
+                        d = await api_post("/api/rag/parse-scheduler", payload)
+                        start_scheduler_btn.props(remove="loading")
+                        if d:
+                            ui.notify(f"Scheduler запущен: job {d.get('job_id','?')}", type="positive")
+                            add_log(f"[PARSE_SCHEDULER] job {d.get('job_id')} queued")
+                            await asyncio.sleep(1)
+                            await refresh_and_render()
+                        else:
+                            ui.notify(last_api_error_text("Ошибка запуска scheduler"), type="negative")
+
+                    start_scheduler_btn = ui.button(
+                        "▶ СТАРТ ИНДЕКСАЦИИ",
+                        on_click=run_scheduler,
+                    ).props("no-caps").style(
+                        "background:rgba(245,158,11,.15);border:1px solid var(--warn);"
+                        "color:var(--warn);font-size:.7rem;font-weight:900;"
+                    )
+                    scheduler_live_label = ui.label("○ статус загружается…").style(
+                        "color:var(--dim);font-size:.7rem;font-weight:700;"
+                    )
+
+
         # Таблица датасетов
         sam_tbl_cols = [
             {"name": "folder",   "label": "Папка",    "field": "folder",   "align": "left",   "sortable": True},
@@ -113,7 +176,7 @@ def build_samovar():
             <q-td :props="props" auto-width>
               <q-btn v-if="props.row.can_sync" flat dense size="xs" color="primary" icon="sync"
                      @click="$parent.$emit('sync', props.row)"
-                     style="font-size:.6rem;padding:2px 6px;">SYNC</q-btn>
+                     style="font-size:.6rem;padding:2px 6px;">СИНК</q-btn>
               <q-btn v-if="props.row.can_sync" flat dense size="xs" color="negative" icon="delete_sweep"
                      @click="$parent.$emit('reset', props.row)"
                      style="font-size:.6rem;padding:2px 6px;margin-left:4px;">↺ СБРОС</q-btn>
@@ -188,7 +251,7 @@ def build_samovar():
                         on_click=lambda: asyncio.create_task(_quick_index_status("ERROR")),
                     ).props("flat round dense").tooltip("Только ERROR")
 
-                index_docs_status = ui.label("shown: —").style("font-size:.65rem;color:var(--dim);")
+                index_docs_status = ui.label("показано: —").style("font-size:.65rem;color:var(--dim);")
                 index_docs_cols = [
                     {"name": "status", "label": "Статус", "field": "status", "align": "left", "sortable": True},
                     {"name": "file", "label": "Файл", "field": "file", "align": "left", "sortable": True},
@@ -262,72 +325,10 @@ def build_samovar():
                 "border-color:var(--accent);color:var(--accent);font-size:.7rem;"
             )
 
-        # Parse scheduler
-        with ui.card().classes("card-les w-full"):
-            with ui.row().classes("items-center justify-between w-full gap-3"):
-                with ui.column().classes("gap-0"):
-                    ui.label("INDEXING MODE // PARSE SCHEDULER").classes("section-title")
-                    scheduler_status = ui.label("pending: — · job: —").style(
-                        "font-size:.65rem;color:var(--dim);"
-                    )
-                with ui.row().classes("items-center gap-2"):
-                    batch_limit_input = ui.number("batch", value=1, min=1, max=25, step=1).props("dense outlined").style(
-                        "width:86px;font-size:.7rem;"
-                    )
-                    max_batches_input = ui.number("max", value=25, min=1, max=500, step=1).props("dense outlined").style(
-                        "width:86px;font-size:.7rem;"
-                    )
-                    cooldown_input = ui.number("cooldown", value=20, min=0, max=600, step=5).props("dense outlined").style(
-                        "width:112px;font-size:.7rem;"
-                    )
-                    min_free_input = ui.number("min GB", value=8, min=1, max=64, step=1).props("dense outlined").style(
-                        "width:92px;font-size:.7rem;"
-                    )
-                    max_swap_input = ui.number("swap %", value=45, min=0, max=100, step=5).props("dense outlined").style(
-                        "width:92px;font-size:.7rem;"
-                    )
-
-                    async def run_scheduler():
-                        payload = {
-                            "batch_limit": int(batch_limit_input.value or 5),
-                            "max_batches": int(max_batches_input.value or 25),
-                            "cooldown_sec": float(cooldown_input.value or 0),
-                            "unload_between_batches": True,
-                            "unload_before_start": True,
-                            "min_free_gb": float(min_free_input.value or 8),
-                            "max_swap_pct": float(max_swap_input.value or 45),
-                            "background": True,
-                        }
-                        add_log(
-                            f"[PARSE_SCHEDULER] batch={payload['batch_limit']} "
-                            f"max={payload['max_batches']} cooldown={payload['cooldown_sec']}"
-                        )
-                        start_scheduler_btn.props("loading")
-                        d = await api_post("/api/rag/parse-scheduler", payload)
-                        start_scheduler_btn.props(remove="loading")
-                        if d:
-                            ui.notify(f"Scheduler запущен: job {d.get('job_id','?')}", type="positive")
-                            add_log(f"[PARSE_SCHEDULER] job {d.get('job_id')} queued")
-                            await asyncio.sleep(1)
-                            await refresh_and_render()
-                        else:
-                            ui.notify(last_api_error_text("Ошибка запуска scheduler"), type="negative")
-
-                    start_scheduler_btn = ui.button(
-                        "▶ СТАРТ ИНДЕКСАЦИИ",
-                        on_click=run_scheduler,
-                    ).props("no-caps").style(
-                        "background:rgba(245,158,11,.15);border:1px solid var(--warn);"
-                        "color:var(--warn);font-size:.7rem;font-weight:900;"
-                    )
-                    scheduler_live_label = ui.label("○ статус загружается…").style(
-                        "color:var(--dim);font-size:.7rem;font-weight:700;"
-                    )
-
         # Live proxy log
         with ui.card().classes("card-les w-full"):
             with ui.row().classes("items-center justify-between w-full"):
-                ui.label("LIVE LOG // PROXY + INDEXER").classes("section-title")
+                ui.label("ЖИВОЙ ЛОГ // PROXY + ИНДЕКСАТОР").classes("section-title")
                 live_log_status = ui.label("waiting").style("font-size:.65rem;color:var(--dim);")
             live_log_box = ui.html("", sanitize=False).classes("sov-live-log")
 
@@ -509,8 +510,8 @@ def build_samovar():
             summary_chunks = sum(int(value.get("chunks") or 0) for value in summary.values() if isinstance(value, dict))
             index_kpi["chunks"].set_text(str(summary_chunks or row.get("chunks", 0)))
             index_docs_status.set_text(
-                f"shown: {len(doc_rows)}/{docs.get('total', len(doc_rows))} · "
-                f"filter: {index_status_select.value or 'ALL'} · q: {(index_query_input.value or '').strip() or '—'}"
+                f"показано: {len(doc_rows)}/{docs.get('total', len(doc_rows))} · "
+                f"фильтр: {index_status_select.value or 'ВСЕ'} · поиск: {(index_query_input.value or '').strip() or '—'}"
             )
             index_docs_grid.rows = doc_rows
             index_docs_grid.update()
@@ -523,7 +524,7 @@ def build_samovar():
                 return
             selected_index["row"] = dict(row)
             name = row.get("folder") or row.get("dataset_id") or "index"
-            index_title.set_text(f"INDEX // {name}")
+            index_title.set_text(f"ИНДЕКС // {name}")
             index_subtitle.set_text(
                 " · ".join(
                     part
@@ -586,16 +587,19 @@ def build_samovar():
             ds_id     = row.get("dataset_id", "") if isinstance(row, dict) else ""
             if not folder:
                 return
-            ok = await ui.run_javascript(f"confirm('Удалить индекс {folder} и запустить переиндексацию?')")
+            chunks_count = row.get("chunks", 0) if isinstance(row, dict) else 0
+            ok = await ui.run_javascript(
+                f"confirm('СБРОС {folder}: удалить индекс ({chunks_count} чанков) и переиндексировать с нуля?')"
+            )
             if not ok:
                 return
-            add_log(f"[СБРОС] {folder}: удаление датасета {ds_id}")
+            add_log(f"[СБРОС] {folder}: удаление датасета {ds_id} ({chunks_count} чанков)")
             if ds_id:
                 d_del = await api_delete(f"/api/rag/datasets/{quote(ds_id, safe='')}")
                 if not d_del:
                     ui.notify(last_api_error_text(f"Ошибка удаления датасета {folder}"), type="negative")
                     return
-            ui.notify(f"↺ Датасет {folder} удалён — запускаю полную переиндексацию", type="warning")
+            ui.notify(f"↺ {folder}: индекс удалён ({chunks_count} чанков) — запускаю полную переиндексацию", type="warning")
             await asyncio.sleep(0.5)
             d = await api_post(f"/api/rag/sync/{quote(folder, safe='')}")
             if d:
