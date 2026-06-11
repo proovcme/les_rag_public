@@ -35,6 +35,7 @@ from .interface import Chunk, DatasetInfo, RAGBackend
 from .mail_profile import build_mail_vector_profile, deterministic_mail_node_id
 from .parquet_writer import TableNormalizer
 from .rag_config import (
+    chunking_config,
     rag_chunk_overlap,
     rag_chunk_size,
     rag_collection_name,
@@ -50,9 +51,14 @@ class StructureAwareSplitter:
     Preserves numbered clauses (e.g. 5.2.1) as single indivisible blocks.
     Fits chunks within a target character length, and implements sentence-bounded overlap.
     """
-    def __init__(self, chunk_size: int, chunk_overlap: int):
+    def __init__(self, chunk_size: int, chunk_overlap: int, len_fn=None):
+        # W2.1 (ADR-7): len_fn — счётчик размера (токены эмбеддера); None = символы.
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
+        self._len = len_fn or len
+        # Жёсткая нарезка патологически длинных предложений — всегда в символах:
+        # при токенном режиме берём ~3 символа на токен (русский текст).
+        self._hard_slice_chars = chunk_size if len_fn is None else chunk_size * 3
         self.fallback = SentenceSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         
         # Regex to detect lines that start a new numbered section or markdown header
@@ -97,12 +103,12 @@ class StructureAwareSplitter:
             s = s.strip()
             if not s:
                 continue
-            if current_len + len(s) + 1 <= max_overlap:
+            if current_len + self._len(s) + 1 <= max_overlap:
                 overlap_sentences.append(s)
-                current_len += len(s) + 1
+                current_len += self._len(s) + 1
             else:
                 if not overlap_sentences:
-                    return s[-max_overlap:]
+                    return s[-max_overlap * (1 if self._len is len else 3):]
                 break
         if not overlap_sentences:
             return ""
@@ -118,19 +124,22 @@ class StructureAwareSplitter:
             s = s.strip()
             if not s:
                 continue
-            s_len = len(s)
-            
+            s_len = self._len(s)
+
             if s_len > max_chars:
                 if current_chunk:
                     chunks.append(" ".join(current_chunk))
                     current_chunk = []
                     current_len = 0
+                hard_max = self._hard_slice_chars
+                hard_overlap = min(overlap_chars * (1 if self._len is len else 3), hard_max // 4)
+                raw_len = len(s)
                 i = 0
-                while i < s_len:
-                    chunks.append(s[i:i + max_chars])
-                    i += max_chars - overlap_chars
-                    if i + overlap_chars >= s_len:
-                        if i < s_len:
+                while i < raw_len:
+                    chunks.append(s[i:i + hard_max])
+                    i += hard_max - hard_overlap
+                    if i + hard_overlap >= raw_len:
+                        if i < raw_len:
                             chunks.append(s[i:])
                         break
             else:
@@ -145,8 +154,8 @@ class StructureAwareSplitter:
                     current_len = 0
                     if overlap_prefix:
                         current_chunk.append(overlap_prefix.strip())
-                        current_len = len(overlap_prefix.strip())
-                    
+                        current_len = self._len(overlap_prefix.strip())
+
                     separator_len = 1 if current_chunk else 0
                     current_chunk.append(s)
                     current_len += separator_len + s_len
@@ -169,7 +178,7 @@ class StructureAwareSplitter:
             current_chunk_len = 0
             
             for block in atomic_blocks:
-                block_len = len(block)
+                block_len = self._len(block)
                 
                 if block_len > self.chunk_size:
                     if current_chunk_blocks:
@@ -192,7 +201,7 @@ class StructureAwareSplitter:
                         current_chunk_len = 0
                         if overlap_prefix:
                             current_chunk_blocks.append(overlap_prefix.strip())
-                            current_chunk_len = len(overlap_prefix.strip())
+                            current_chunk_len = self._len(overlap_prefix.strip())
                             
                         separator_len = 2 if current_chunk_blocks else 0
                         current_chunk_blocks.append(block)
@@ -212,7 +221,7 @@ class StructureAwareSplitter:
         return all_nodes
 
 EMBED_BATCH  = int(os.getenv("RAG_EMBED_BATCH", "32"))      # чанков за один запрос к MLX embeddings
-MIN_CHUNK    = int(os.getenv("RAG_MIN_CHUNK_CHARS", "20"))  # символов — короче не индексируем
+MIN_CHUNK    = int(os.getenv("RAG_MIN_CHUNK_CHARS", "100"))  # W2.5: <100 симв — шум («Приложение», «А»), не индексируем
 UPSERT_BATCH = int(os.getenv("RAG_UPSERT_BATCH", "100"))    # точек за один upsert в Qdrant
 VERIFY_POINTS_EVERY = max(1, int(os.getenv("RAG_VERIFY_POINTS_EVERY", "10")))  # W1.2: exact-count каждый N-й файл
 # W1.4: конвейер — конвертация следующего файла параллельно с эмбеддингом текущего,
@@ -255,7 +264,30 @@ def _embedding_cache_fingerprint(descriptor: dict[str, str] | None = None) -> st
     return hashlib.sha1(stable.encode("utf-8", errors="ignore")).hexdigest()
 
 
+_MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.{2,160})$")
+_NUM_HEADING_RE = re.compile(r"^(\d+(?:\.\d+){0,4})[.\s]+([А-ЯЁA-Z].{1,150})$")
+
+
+def _section_heading_info(text: str) -> tuple[str, int]:
+    """W2.5: (заголовок, уровень). Уровень: # → 1..6; «5.2.1 Текст» → глубина номера; 0 — нет."""
+    for line in text.splitlines()[:6]:
+        line = line.strip()
+        if not line:
+            continue
+        md = _MD_HEADING_RE.match(line)
+        if md:
+            return md.group(2).strip(), len(md.group(1))
+        num = _NUM_HEADING_RE.match(line)
+        if num:
+            return f"{num.group(1)} {num.group(2).strip()}", num.group(1).count(".") + 1
+    return "", 0
+
+
 def _section_heading(text: str) -> str:
+    heading, _ = _section_heading_info(text)
+    if heading:
+        return heading
+    # Старое поведение как fallback: первая осмысленная строка.
     for line in text.splitlines():
         line = line.strip(" #\t")
         if 4 <= len(line) <= 160:
@@ -279,13 +311,27 @@ def _apply_context_metadata_to_nodes(file_nodes: list[dict], dataset_id: str, fi
         window_size = max(1, int(os.getenv("RAG_PARENT_WINDOW_CHUNKS", "4")))
     except ValueError:
         window_size = 4
+    last_heading = ""
+    last_level = 0
     for chunk_ord, file_node in enumerate(file_nodes):
         payload = file_node.setdefault("payload", {})
         text = str(file_node.get("text") or "")
         payload.setdefault("chunk_ord", chunk_ord)
         payload.setdefault("child_ord", chunk_ord)
         payload.setdefault("content_hash", _content_hash(text))
-        payload.setdefault("section_heading", _section_heading(text))
+        # W2.5: настоящий заголовок (markdown/нумерованный) с уровнем; чанки-продолжения
+        # наследуют последний найденный заголовок раздела.
+        heading, level = _section_heading_info(text)
+        if heading:
+            last_heading, last_level = heading, level
+            payload.setdefault("section_heading", heading)
+            payload.setdefault("heading_level", level)
+        elif last_heading:
+            payload.setdefault("section_heading", last_heading)
+            payload.setdefault("heading_level", last_level)
+            payload.setdefault("heading_inherited", True)
+        else:
+            payload.setdefault("section_heading", _section_heading(text))
 
         source_page = payload.get("source_page") or payload.get("page") or payload.get("page_number")
         table_index = payload.get("table_index")
@@ -878,7 +924,17 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             return {"status": "error", "msg": "dir missing"}
 
         md_parser = MarkdownNodeParser()
-        splitter  = StructureAwareSplitter(chunk_size=RAG_CHUNK_SIZE, chunk_overlap=RAG_CHUNK_OVERLAP)
+        # W2.1 (ADR-7): чанкинг в токенах эмбеддера (RAG_CHUNK_UNIT=chars вернёт символы).
+        _chunking = chunking_config()
+        splitter = StructureAwareSplitter(
+            chunk_size=_chunking["chunk_size"],
+            chunk_overlap=_chunking["chunk_overlap"],
+            len_fn=_chunking["len_fn"],
+        )
+        logger.info(
+            "[CHUNK] unit=%s size=%s overlap=%s",
+            _chunking["unit"], _chunking["chunk_size"], _chunking["chunk_overlap"],
+        )
 
         try:
             pending_names = set(self.db.get_pending_files(dataset_id, limit=limit))
