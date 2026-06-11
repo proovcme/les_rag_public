@@ -7,7 +7,9 @@ description: Use when working on the local LES_v2 repository, LES runtime, Core 
 
 ## Workspace
 
-Use `/Users/ovc/Projects/LES_v2` as the project root.
+Use `/Users/ovc/Projects/LES_v2` as the project root for development.
+
+**Runtime clone:** launchd services (proxy/sovushka) run from `/Users/ovc/Projects/LES_v2_reinstall_stress` (see `WorkingDirectory` in `~/Library/LaunchAgents/me.ovc.les.*.plist`). Deploy flow: commit+push in LES_v2 → `git pull` in the runtime clone → `launchctl kickstart -k ...`. Editing LES_v2 alone does NOT change the live system.
 
 Current production posture:
 
@@ -107,6 +109,12 @@ Generate a bill of quantities (ВОР) from indexed specifications (deterministi
 curl -fsS -X POST http://127.0.0.1:8050/api/bor/<dataset_id>/generate | python3 -m json.tool
 # preview: GET /api/bor/<dataset_id>/preview?limit=50 · download: GET /api/bor/<dataset_id>/download
 ```
+
+Switch the chat LLM (provider/model) — **no restart needed**, applies per-request:
+
+- GUI: `http://127.0.0.1:8051/les` → panel **LLM Provider** → выбрать mlx / ollama / openrouter / openai, указать модель → SAVE PROVIDERS. Хинт показывает активный провайдер; валидация Т.О.С.К.А. работает только на MLX, остальные дают UNVALIDATED.
+- CLI: `curl -X POST http://127.0.0.1:8050/api/settings -H 'Content-Type: application/json' -d '{"llm_provider":"ollama","ollama_model":"gemma4:12b"}'` (персистится в .env runtime-клона). Вернуться: `-d '{"llm_provider":"mlx"}'`.
+- Local models live in Ollama (`ollama list`); Gemma 4 12B = `gemma4:12b`. Cloud = openrouter/openai + API key (поля в той же панели).
 
 Run formal normcontrol checks (NK-01 sheet formats, NK-02 scans, NK-03 cipher, NK-04 ведомость↔files; deterministic, no LLM):
 
