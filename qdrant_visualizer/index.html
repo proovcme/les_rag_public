@@ -1,209 +1,322 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title data-i18n="doc-title">3D Визуализатор Базы Знаний Qdrant</title>
-    <link rel="stylesheet" href="styles.css?v=20260523-doc-clouds-5">
-    <script type="importmap">
-    {
-        "imports": {
-            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-            "three/examples/jsm/controls/OrbitControls.js": "https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js"
-        }
-    }
-    </script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Л.Е.С. — граф знаний</title>
+<style>
+  :root {
+    --bg: #0a0d13; --panel: rgba(15,19,28,.86); --border: #1d2533;
+    --text: #cdd6e4; --dim: #5d6b80; --accent: #4f8cff;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; overflow: hidden; background: var(--bg); }
+  body { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; color: var(--text); }
+  #graph { position: fixed; inset: 0; cursor: grab; }
+  #graph.dragging { cursor: grabbing; }
+
+  .hud { position: fixed; z-index: 5; }
+  #topbar { top: 14px; left: 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  #topbar .brand { font-size: 13px; font-weight: 800; letter-spacing: 1.5px; color: var(--text);
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; backdrop-filter: blur(6px); }
+  #search { background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 8px;
+    padding: 8px 12px; font: inherit; font-size: 12px; width: 230px; outline: none; backdrop-filter: blur(6px); }
+  #search:focus { border-color: var(--accent); }
+  .btn { background: var(--panel); border: 1px solid var(--border); color: var(--dim); border-radius: 8px;
+    padding: 8px 11px; font: inherit; font-size: 11px; cursor: pointer; text-decoration: none; backdrop-filter: blur(6px); }
+  .btn:hover { color: var(--text); border-color: var(--accent); }
+
+  #status { bottom: 14px; left: 14px; font-size: 11px; color: var(--dim);
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 7px 11px; backdrop-filter: blur(6px); }
+  #legend { top: 14px; right: 14px; max-width: 240px; max-height: 60vh; overflow: auto;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+    font-size: 11px; backdrop-filter: blur(6px); }
+  #legend .item { display: flex; gap: 7px; align-items: center; padding: 2.5px 0; cursor: pointer; opacity: .9; }
+  #legend .item:hover { opacity: 1; }
+  #legend .item.off { opacity: .3; }
+  #legend .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; box-shadow: 0 0 6px currentColor; }
+
+  #tip { position: fixed; z-index: 9; pointer-events: none; display: none; max-width: 340px;
+    background: rgba(10,13,19,.95); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: 8px; padding: 9px 12px; font-size: 11px; line-height: 1.55; }
+  #tip .t-name { color: var(--text); font-weight: 700; word-break: break-all; }
+  #tip .t-meta { color: var(--dim); margin-top: 3px; }
+</style>
 </head>
 <body>
-    <!-- Background Space Grid -->
-    <div class="bg-grid"></div>
+<canvas id="graph"></canvas>
 
-    <!-- Three.js Canvas Container -->
-    <div id="canvas-container"></div>
+<div class="hud" id="topbar">
+  <span class="brand">Л.Е.С. // ГРАФ ЗНАНИЙ</span>
+  <input id="search" type="search" placeholder="поиск по документам…" autocomplete="off">
+  <button class="btn" id="reload">⟳ обновить</button>
+  <a class="btn" href="legacy.html" title="старый 3D PCA-визуализатор">3D PCA</a>
+</div>
+<div class="hud" id="legend"></div>
+<div class="hud" id="status">загрузка…</div>
+<div id="tip"></div>
 
-    <!-- LEFT: Database and Controls Panel -->
-    <aside id="control-panel" class="glass-panel">
-        <!-- 1. LES Data Section -->
-        <section class="panel-section">
-            <div class="section-title" data-i18n="section-conn">Данные Л.Е.С.</div>
-            <button id="load-les-btn" class="btn" data-i18n="load-les-btn">Обновить из Qdrant</button>
-            <a id="snapshot-download" class="btn btn-secondary disabled-link" href="#" download="data.js" data-i18n="snapshot-download">Скачать слепок data.js</a>
-            <button id="load-snapshot-btn" class="btn btn-secondary" data-i18n="load-snapshot-btn">Загрузить слепок data.js</button>
-            <div class="source-note" data-i18n="source-note">Источник: локальный Qdrant Л.Е.С. · загрузка только по кнопке</div>
-        </section>
+<script>
+"use strict";
+// Л.Е.С. граф знаний — force-directed визуализация индекса в стиле Obsidian.
+// Красивая, но необязательная часть системы (W5.7): датасеты — хабы,
+// документы — узлы вокруг. Без зависимостей: canvas 2D + своя физика.
 
-        <!-- 2. Collection Statistics -->
-        <section class="panel-section">
-            <div class="section-title" data-i18n="section-stats">Статистика коллекции</div>
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-label" data-i18n="stat-points">Векторных точек</div>
-                    <div id="total-points" class="stat-val cyan">0</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label" data-i18n="stat-dims">Размерность</div>
-                    <div id="vector-dim" class="stat-val green">0</div>
-                </div>
-            </div>
-            <div style="font-size: 0.75rem; display: flex; justify-content: space-between; padding: 2px 5px; background: rgba(0,0,0,0.2); border-radius: 4px;">
-                <span data-i18n="stat-pca-label">Статус PCA:</span>
-                <span id="pca-status" style="font-family: var(--font-mono); color: var(--neon-cyan); font-weight: 700;">ОЖИДАНИЕ</span>
-            </div>
-        </section>
+const canvas = document.getElementById("graph");
+const ctx = canvas.getContext("2d");
+const tip = document.getElementById("tip");
+const statusEl = document.getElementById("status");
+const legendEl = document.getElementById("legend");
+const searchEl = document.getElementById("search");
 
-        <!-- 3. Realtime Search / Filter -->
-        <section class="panel-section">
-            <div class="section-title" data-i18n="section-search">Поиск по контенту</div>
-            <div class="form-group">
-                <input type="text" id="search-input" placeholder="Поиск текста или документа..." data-i18n-placeholder="search-placeholder">
-            </div>
-        </section>
+const PROXY = `http://${location.hostname || "127.0.0.1"}:8050`;
+const MAX_DOCS = 1500;
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
 
-        <!-- 4. Rendering & Effects Adjuster -->
-        <section class="panel-section">
-            <div class="section-title" data-i18n="section-tuning">Визуальная настройка</div>
-            
-            <div class="slider-container">
-                <div class="slider-header">
-                    <span data-i18n="tune-scale">Масштаб точек</span>
-                    <span id="node-size-val" class="slider-val">1.0</span>
-                </div>
-                <input type="range" id="node-size" min="0.5" max="4.0" step="0.1" value="1.0">
-            </div>
+const view = { x: 0, y: 0, scale: 1 };
+let nodes = [], edges = [], byId = new Map();
+let hover = null, focus = null, dragNode = null, panning = false;
+let alpha = 1, query = "";
+const hiddenDatasets = new Set();
 
-            <div class="slider-container">
-                <div class="slider-header">
-                    <span data-i18n="tune-glow">Яркость свечения</span>
-                    <span id="glow-intensity-val" class="slider-val">0.7</span>
-                </div>
-                <input type="range" id="glow-intensity" min="0.1" max="3.0" step="0.1" value="0.7">
-            </div>
+// ── палитра: золотое сечение по тону, мягкие неоновые цвета ──
+function colorFor(i) { return `hsl(${(i * 137.508 + 210) % 360} 75% 64%)`; }
 
-            <div class="slider-container">
-                <div class="slider-header">
-                    <span data-i18n="tune-constellation">Связи созвездия</span>
-                    <span id="neighbors-val" class="slider-val">2</span>
-                </div>
-                <input type="range" id="constellation-neighbors" min="1" max="5" step="1" value="2">
-            </div>
+// ── загрузка данных из proxy ──
+async function loadData() {
+  statusEl.textContent = "загрузка индекса…";
+  const dsResp = await fetch(`${PROXY}/api/rag/datasets`).then(r => r.json());
+  const datasets = Array.isArray(dsResp) ? dsResp : (dsResp.datasets || []);
+  const docs = [];
+  for (let offset = 0; docs.length < MAX_DOCS; offset += 500) {
+    const d = await fetch(`${PROXY}/api/rag/documents?limit=500&offset=${offset}`).then(r => r.json());
+    const page = d.documents || [];
+    docs.push(...page);
+    if (page.length < 500 || docs.length >= (d.total || 0)) break;
+  }
+  buildGraph(datasets, docs.slice(0, MAX_DOCS));
+  statusEl.textContent = `${datasets.length} датасетов · ${docs.length} документов · ${docs.reduce((s, d) => s + (d.chunk_count || 0), 0)} чанков`;
+}
 
-            <div class="slider-container">
-                <div class="slider-header">
-                    <span data-i18n="tune-spread">Разлипание точек</span>
-                    <span id="spread-val" class="slider-val">2.2</span>
-                </div>
-                <input type="range" id="spread-strength" min="0" max="3.0" step="0.1" value="2.2">
-            </div>
+function buildGraph(datasets, docs) {
+  nodes = []; edges = []; byId.clear(); legendEl.innerHTML = "";
+  const W = canvas.width / DPR, H = canvas.height / DPR;
+  const dsIndex = new Map();
 
-            <div class="slider-container">
-                <div class="slider-header">
-                    <span data-i18n="tune-doc-spread">Разнос документов</span>
-                    <span id="doc-spread-val" class="slider-val">1.4</span>
-                </div>
-                <input type="range" id="doc-spread-strength" min="0" max="3.0" step="0.1" value="1.4">
-            </div>
-        </section>
+  datasets.forEach((ds, i) => {
+    const id = `ds:${ds.id}`;
+    const angle = (i / Math.max(1, datasets.length)) * Math.PI * 2;
+    const node = {
+      id, kind: "hub", label: ds.name || ds.id, color: colorFor(i), dataset: ds.name || ds.id,
+      x: W / 2 + Math.cos(angle) * 260, y: H / 2 + Math.sin(angle) * 260,
+      vx: 0, vy: 0, r: 13 + Math.min(9, Math.sqrt(ds.doc_count || ds.files || 1)),
+      chunks: ds.chunk_count || ds.chunks || 0, status: ds.status || "",
+    };
+    nodes.push(node); byId.set(id, node); dsIndex.set(ds.id, node);
+    const item = document.createElement("div");
+    item.className = "item"; item.dataset.ds = ds.id;
+    item.innerHTML = `<span class="dot" style="color:${node.color};background:${node.color}"></span>` +
+      `<span>${node.label}</span>`;
+    item.onclick = () => { toggleDataset(ds.id, item); };
+    legendEl.appendChild(item);
+  });
 
-        <!-- 5. Display Toggles -->
-        <section class="panel-section">
-            <div class="section-title" data-i18n="section-toggles">Отображение</div>
-            <div style="display: flex; flex-direction: column; gap: 10px; font-size: 0.8rem;">
-                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;">
-                    <input type="checkbox" id="toggle-grid" checked style="accent-color: var(--neon-cyan);"> <span data-i18n="toggle-grid">Сетка на полу</span>
-                </label>
-                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;">
-                    <input type="checkbox" id="toggle-constellation" checked style="accent-color: var(--neon-cyan);"> <span data-i18n="toggle-constellation">Линии созвездия</span>
-                </label>
-                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;">
-                    <input type="checkbox" id="toggle-rotate" checked style="accent-color: var(--neon-cyan);"> <span data-i18n="toggle-rotate">Вращение камеры</span>
-                </label>
-            </div>
-        </section>
+  docs.forEach(doc => {
+    const hub = dsIndex.get(doc.dataset_id);
+    if (!hub) return;
+    const id = `doc:${doc.dataset_id}:${doc.file_name}`;
+    const jitter = () => (Math.random() - 0.5) * 180;
+    const node = {
+      id, kind: "doc", label: doc.file_name || "?", color: hub.color, dataset: hub.label, dsId: doc.dataset_id,
+      x: hub.x + jitter(), y: hub.y + jitter(), vx: 0, vy: 0,
+      r: 2.5 + Math.min(7, Math.sqrt((doc.chunk_count || 1) / 3)),
+      chunks: doc.chunk_count || 0, status: doc.status || "", hub,
+    };
+    nodes.push(node); byId.set(id, node);
+    edges.push({ a: hub, b: node });
+  });
+  alpha = 1;
+}
 
-        <!-- 6. File Metadata Checklist Filter -->
-        <section class="panel-section">
-            <div class="section-title" data-i18n="section-isolate">Подсветка документов</div>
-            <div id="file-filter-list" class="file-filter-list">
-                <!-- populated dynamically -->
-            </div>
-        </section>
-    </aside>
+function toggleDataset(dsId, item) {
+  if (hiddenDatasets.has(dsId)) hiddenDatasets.delete(dsId); else hiddenDatasets.add(dsId);
+  item.classList.toggle("off", hiddenDatasets.has(dsId));
+  alpha = Math.max(alpha, 0.25);
+}
+const visible = n => !(n.dsId && hiddenDatasets.has(n.dsId)) && !(n.kind === "hub" && hiddenDatasets.has(n.id.slice(3)));
 
-    <!-- RIGHT: Selected Node Metadata Details -->
-    <aside id="detail-panel" class="glass-panel">
-        <div class="meta-header">
-            <div>
-                <div class="meta-title" data-i18n="inspect-title">Инспекция точки</div>
-                <div class="meta-subtitle" data-i18n="inspect-subtitle">Данные выбранного вектора</div>
-            </div>
-            <button id="close-detail" class="close-btn">&times;</button>
-        </div>
+// ── физика: сетка-репульсия + пружины к хабу + гравитация к центру ──
+function step() {
+  if (alpha < 0.012) return;
+  const W = canvas.width / DPR, H = canvas.height / DPR;
+  const cell = 60, grid = new Map();
+  const live = nodes.filter(visible);
+  for (const n of live) {
+    const key = `${(n.x / cell) | 0}:${(n.y / cell) | 0}`;
+    (grid.get(key) || grid.set(key, []).get(key)).push(n);
+  }
+  for (const n of live) {
+    const gx = (n.x / cell) | 0, gy = (n.y / cell) | 0;
+    for (let ix = gx - 1; ix <= gx + 1; ix++) for (let iy = gy - 1; iy <= gy + 1; iy++) {
+      const bucket = grid.get(`${ix}:${iy}`);
+      if (!bucket) continue;
+      for (const m of bucket) {
+        if (m === n) continue;
+        let dx = n.x - m.x, dy = n.y - m.y;
+        let d2 = dx * dx + dy * dy;
+        if (d2 < 1) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d2 = 1; }
+        if (d2 > cell * cell * 4) continue;
+        const f = (n.kind === "hub" || m.kind === "hub" ? 900 : 240) / d2 * alpha;
+        const d = Math.sqrt(d2);
+        n.vx += (dx / d) * f; n.vy += (dy / d) * f;
+      }
+    }
+    // гравитация к центру (хабы сильнее держат форму созвездия)
+    n.vx += (W / 2 - n.x) * (n.kind === "hub" ? 0.004 : 0.0006) * alpha;
+    n.vy += (H / 2 - n.y) * (n.kind === "hub" ? 0.004 : 0.0006) * alpha;
+  }
+  for (const e of edges) {
+    if (!visible(e.b)) continue;
+    const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y;
+    const d = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+    const want = 70 + e.a.r * 3;
+    const f = (d - want) * 0.012 * alpha;
+    e.b.vx -= (dx / d) * f * 1.6; e.b.vy -= (dy / d) * f * 1.6;
+    e.a.vx += (dx / d) * f * 0.25; e.a.vy += (dy / d) * f * 0.25;
+  }
+  for (const n of live) {
+    if (n === dragNode) { n.vx = 0; n.vy = 0; continue; }
+    n.vx *= 0.86; n.vy *= 0.86;
+    n.x += n.vx; n.y += n.vy;
+  }
+  alpha *= 0.995;
+}
 
-        <div class="meta-card">
-            <div class="meta-field">
-                <div class="meta-field-label" data-i18n="inspect-uuid">UUID точки</div>
-                <div id="meta-id" class="meta-field-value" style="color: var(--neon-cyan);">N/A</div>
-            </div>
-            
-            <div class="meta-field">
-                <div class="meta-field-label" data-i18n="inspect-file">Исходный документ</div>
-                <div id="meta-file" class="meta-field-value" style="font-family: var(--font-sans); font-weight: 500;">N/A</div>
-            </div>
+// ── отрисовка ──
+function neighborsOf(node) {
+  const set = new Set([node]);
+  for (const e of edges) { if (e.a === node) set.add(e.b); if (e.b === node) set.add(e.a); }
+  return set;
+}
+function matchesQuery(n) { return query && n.label.toLowerCase().includes(query); }
 
-            <div class="meta-field">
-                <div class="meta-field-label" data-i18n="inspect-dochash">Хэш / ID документа</div>
-                <div id="meta-docid" class="meta-field-value">N/A</div>
-            </div>
+function draw() {
+  const W = canvas.width / DPR, H = canvas.height / DPR;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  const g = ctx.createRadialGradient(W / 2, H / 2, 80, W / 2, H / 2, Math.max(W, H) * 0.75);
+  g.addColorStop(0, "#0d1119"); g.addColorStop(1, "#070a0f");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
 
-            <div class="meta-field">
-                <div class="meta-field-label" data-i18n="inspect-coords">3D координаты (PCA)</div>
-                <div id="meta-coords" class="meta-field-value" style="color: var(--neon-magenta);">N/A</div>
-            </div>
-        </div>
+  ctx.translate(view.x, view.y); ctx.scale(view.scale, view.scale);
+  const sel = focus || hover;
+  const hood = sel ? neighborsOf(sel) : null;
+  const dimmed = n => (hood && !hood.has(n)) || (query && !matchesQuery(n) && n.kind !== "hub");
 
-        <div class="panel-section">
-            <div class="section-title" data-i18n="inspect-payload">Текст чанка (Payload)</div>
-            <div id="meta-text" class="meta-text-box">Выберите точку на графике, чтобы просмотреть её смысловое текстовое содержимое...</div>
-        </div>
-    </aside>
+  for (const e of edges) {
+    if (!visible(e.b)) continue;
+    const lit = hood ? (hood.has(e.a) && hood.has(e.b)) : false;
+    ctx.strokeStyle = lit ? e.a.color : "rgba(110,130,165,0.10)";
+    ctx.globalAlpha = lit ? 0.55 : (hood || query ? 0.35 : 1);
+    ctx.lineWidth = (lit ? 1.1 : 0.5) / view.scale;
+    ctx.beginPath(); ctx.moveTo(e.a.x, e.a.y); ctx.lineTo(e.b.x, e.b.y); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
 
-    <!-- BOTTOM: User Guide Instructions Overlay -->
-    <button id="help-toggle" class="help-toggle glass-panel" type="button" aria-expanded="false">Управление</button>
-    <footer id="instructions-bar" class="glass-panel is-collapsed">
-        <div class="instruction-item">
-            <span class="key-badge" data-i18n="help-rotate-key">ЛКМ + Перетаскивание</span> <span data-i18n="help-rotate-val">Вращение сцены</span>
-        </div>
-        <div class="instruction-item">
-            <span class="key-badge" data-i18n="help-zoom-key">Колесо мыши</span> <span data-i18n="help-zoom-val">Масштаб</span>
-        </div>
-        <div class="instruction-item">
-            <span class="key-badge" data-i18n="help-pan-key">ПКМ + Перетаскивание</span> <span data-i18n="help-pan-val">Панорама</span>
-        </div>
-        <div class="instruction-item">
-            <span class="key-badge" data-i18n="help-inspect-key">Клик по точке</span> <span data-i18n="help-inspect-val">Инспекция точки</span>
-        </div>
-    </footer>
+  for (const n of nodes) {
+    if (!visible(n)) continue;
+    const dim = dimmed(n);
+    const r = n.r * (n === sel ? 1.35 : 1);
+    ctx.globalAlpha = dim ? 0.16 : 1;
+    ctx.shadowColor = n.color; ctx.shadowBlur = dim ? 0 : (n.kind === "hub" ? 26 : 12) * view.scale;
+    ctx.fillStyle = n.color;
+    ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+    if (!dim && n.status === "ERROR") {
+      ctx.strokeStyle = "#ff5560"; ctx.lineWidth = 1.6 / view.scale;
+      ctx.beginPath(); ctx.arc(n.x, n.y, r + 3 / view.scale, 0, Math.PI * 2); ctx.stroke();
+    } else if (!dim && n.status === "PENDING") {
+      ctx.strokeStyle = "#f5b54a"; ctx.lineWidth = 1.2 / view.scale;
+      ctx.beginPath(); ctx.arc(n.x, n.y, r + 3 / view.scale, 0, Math.PI * 2); ctx.stroke();
+    }
+    const showLabel = n.kind === "hub" || n === sel || matchesQuery(n) || view.scale > 2.2;
+    if (showLabel && !dim) {
+      ctx.font = `${(n.kind === "hub" ? 12 : 10) / view.scale}px ui-monospace, monospace`;
+      ctx.fillStyle = n.kind === "hub" ? "#dfe7f3" : "rgba(205,214,228,0.85)";
+      ctx.textAlign = "center";
+      const label = n.label.length > 42 ? n.label.slice(0, 40) + "…" : n.label;
+      ctx.fillText(label, n.x, n.y - r - 6 / view.scale);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
 
-    <!-- LOADER SCREEN (Diagnostic console overlay) -->
-    <div id="loader-overlay" class="hidden">
-        <div class="loader-container">
-            <div class="spinner-outer">
-                <div class="spinner-inner">
-                    <div class="spinner-core"></div>
-                </div>
-            </div>
-            <div>
-                <div class="loader-title" data-i18n="loader-title">3D Нейровизуализатор</div>
-                <div id="loader-status" style="text-align: center; margin-top: 5px;">ПОДКЛЮЧЕНИЕ...</div>
-            </div>
-            <!-- Interactive Diagnostic Terminal Console logs -->
-            <div id="loader-console" class="loader-console"></div>
-            
-            <div style="font-size:0.7rem; color:var(--text-dim); text-align:center; max-width: 350px;" data-i18n="loader-note">Загрузка данных запускается только вручную.</div>
-        </div>
-    </div>
+function frame() { step(); draw(); requestAnimationFrame(frame); }
 
-    <!-- Application Script Engine Modules -->
-    <script type="module" src="visualizer.js?v=20260523-doc-clouds-5"></script>
+// ── интеракции ──
+function toWorld(px, py) { return { x: (px - view.x) / view.scale, y: (py - view.y) / view.scale }; }
+function pick(px, py) {
+  const p = toWorld(px, py);
+  let best = null, bestD = 1e9;
+  for (const n of nodes) {
+    if (!visible(n)) continue;
+    const d = Math.hypot(n.x - p.x, n.y - p.y);
+    if (d < Math.max(n.r + 6, 10) / Math.sqrt(view.scale) && d < bestD) { best = n; bestD = d; }
+  }
+  return best;
+}
+
+canvas.addEventListener("pointerdown", e => {
+  const n = pick(e.clientX, e.clientY);
+  if (n) { dragNode = n; alpha = Math.max(alpha, 0.3); }
+  else { panning = true; }
+  canvas.classList.add("dragging");
+  canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener("pointermove", e => {
+  if (dragNode) {
+    const p = toWorld(e.clientX, e.clientY);
+    dragNode.x = p.x; dragNode.y = p.y; alpha = Math.max(alpha, 0.25);
+  } else if (panning) {
+    view.x += e.movementX; view.y += e.movementY;
+  } else {
+    hover = pick(e.clientX, e.clientY);
+    if (hover) {
+      tip.style.display = "block";
+      tip.style.left = Math.min(e.clientX + 16, innerWidth - 360) + "px";
+      tip.style.top = Math.min(e.clientY + 16, innerHeight - 110) + "px";
+      tip.innerHTML = `<div class="t-name">${hover.label}</div>` +
+        `<div class="t-meta">${hover.kind === "hub" ? "датасет" : "документ · " + hover.dataset}` +
+        ` · ${hover.chunks} чанков${hover.status ? " · " + hover.status : ""}</div>`;
+    } else tip.style.display = "none";
+  }
+});
+canvas.addEventListener("pointerup", e => {
+  if (dragNode && Math.abs(e.movementX) + Math.abs(e.movementY) < 2) focus = (focus === dragNode) ? null : dragNode;
+  if (!dragNode && panning && Math.abs(e.movementX) + Math.abs(e.movementY) < 2) focus = null;
+  dragNode = null; panning = false;
+  canvas.classList.remove("dragging");
+});
+canvas.addEventListener("wheel", e => {
+  e.preventDefault();
+  const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+  const next = Math.min(8, Math.max(0.25, view.scale * factor));
+  const p = toWorld(e.clientX, e.clientY);
+  view.x = e.clientX - p.x * next; view.y = e.clientY - p.y * next;
+  view.scale = next;
+}, { passive: false });
+
+searchEl.addEventListener("input", () => { query = searchEl.value.trim().toLowerCase(); });
+document.getElementById("reload").onclick = () => loadData().catch(err => statusEl.textContent = "ошибка: " + err.message);
+
+function resize() {
+  canvas.width = innerWidth * DPR; canvas.height = innerHeight * DPR;
+  canvas.style.width = innerWidth + "px"; canvas.style.height = innerHeight + "px";
+}
+addEventListener("resize", resize);
+resize();
+loadData().catch(err => { statusEl.textContent = "ошибка загрузки: " + err.message + " (proxy :8050 доступен?)"; });
+frame();
+</script>
 </body>
 </html>
