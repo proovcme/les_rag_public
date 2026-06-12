@@ -118,21 +118,31 @@ def build_header(
                     "background:var(--bg-panel);border:1px solid var(--border);min-width:640px;padding:24px;"
                 ):
                     ui.label("⚙ НАСТРОЙКИ Л.Е.С.").style(
-                        "font-size:.95rem;font-weight:900;margin-bottom:16px;"
+                        "font-size:.95rem;font-weight:900;margin-bottom:8px;"
                     )
-                    set_llm   = ui.input("LLM Модель",        value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    # Однозначный ответ «какая модель отвечает» — всегда наверху диалога.
+                    answering_label = ui.label("СЕЙЧАС ОТВЕЧАЕТ: …").style(
+                        "font-size:.8rem;font-weight:900;color:var(--ok);border:1px solid var(--border);"
+                        "border-left:3px solid var(--ok);border-radius:6px;padding:8px 12px;width:100%;"
+                        "background:var(--bg);margin-bottom:12px;"
+                    )
+                    set_provider = ui.select(
+                        {
+                            "mlx": "MLX — локальный (валидация Т.О.С.К.А.; блок по памяти активен)",
+                            "ollama": "Ollama — локальный (без валидации; блок по памяти активен)",
+                            "openrouter": "OpenRouter — ОБЛАКО (без валидации; блок по памяти снят)",
+                            "openai": "OpenAI-compatible — ОБЛАКО (без валидации; блок по памяти снят)",
+                        },
+                        label="Активный LLM-провайдер",
+                        value="mlx",
+                    ).style("width:100%;font-family:var(--font);")
+                    set_llm   = ui.input("LLM Модель (MLX)",   value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
                     set_embed = ui.input("Embedding Модель",  value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
                     set_url   = ui.input("MLX URL",  value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_ollama_url = ui.input("Ollama URL", value="http://127.0.0.1:11434").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_ollama_model = ui.input("Ollama Model (например gemma4:12b)", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
                     ui.separator().style("border-color:var(--border);margin:12px 0;")
-                    ui.label("Speckle BIM/CAD").style("color:var(--dim);font-size:.65rem;font-weight:900;text-transform:uppercase;")
-                    set_speckle_enabled = ui.checkbox("Speckle enabled", value=True).style("color:var(--text);font-family:var(--font);")
-                    set_speckle_url = ui.input("Speckle Base URL", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
-                    set_speckle_graphql = ui.input("Speckle GraphQL URL", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
-                    set_speckle_token = ui.input("Speckle API Token", value="", password=True, password_toggle_button=True).style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
-                    set_speckle_clear = ui.checkbox("Сбросить Speckle token", value=False).style("color:var(--text);font-family:var(--font);")
-                    set_speckle_timeout = ui.number("Wake timeout sec", value=5, min=0.5, max=60, step=0.5, format="%.1f").style("background:var(--bg);color:var(--text);font-family:var(--font);width:180px;")
-                    ui.separator().style("border-color:var(--border);margin:12px 0;")
-                    ui.label("External providers").style("color:var(--dim);font-size:.65rem;font-weight:900;text-transform:uppercase;")
+                    ui.label("Облачные провайдеры").style("color:var(--dim);font-size:.65rem;font-weight:900;text-transform:uppercase;")
                     set_openrouter_url = ui.input("OpenRouter Base URL", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
                     set_openrouter_model = ui.input("OpenRouter Model", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
                     set_openrouter_key = ui.input("OpenRouter API Key", value="", password=True, password_toggle_button=True).style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
@@ -163,6 +173,23 @@ def build_header(
                         "border:1px solid var(--border);color:var(--accent);background:transparent;"
                     )
 
+                    def _refresh_answering(d: dict) -> None:
+                        providers = d.get("providers") or {}
+                        active = (providers.get("active") or "mlx").lower()
+                        model_by_provider = {
+                            "mlx": d.get("llm_model") or "(LLM_MODEL из .env)",
+                            "ollama": (providers.get("ollama") or {}).get("model") or "⚠ модель не задана",
+                            "openrouter": (providers.get("openrouter") or {}).get("model") or "⚠ модель не задана",
+                            "openai": (providers.get("openai_compatible") or {}).get("model") or "⚠ модель не задана",
+                        }
+                        is_cloud = active in ("openrouter", "openai")
+                        kind = "ОБЛАКО" if is_cloud else "ЛОКАЛЬНО"
+                        answering_label.set_text(
+                            f"СЕЙЧАС ОТВЕЧАЕТ: {active.upper()} ({kind}) → {model_by_provider.get(active, '?')}"
+                        )
+                        color = "var(--warn)" if is_cloud else "var(--ok)"
+                        answering_label.style(f"color:{color};border-left:3px solid {color};")
+
                     async def _load_settings():
                         from sovushka.state import api_get
                         d = await api_get("/api/settings")
@@ -170,17 +197,13 @@ def build_header(
                             set_llm.set_value(d.get("llm_model", ""))
                             set_embed.set_value(d.get("embed_model", ""))
                             set_url.set_value(d.get("mlx_url", ""))
-                            speckle = d.get("speckle") or {}
-                            set_speckle_enabled.set_value(bool(speckle.get("enabled", True)))
-                            set_speckle_url.set_value(speckle.get("base_url", "https://speckle.ovc.me"))
-                            set_speckle_graphql.set_value(speckle.get("graphql_url", "https://speckle.ovc.me/graphql"))
-                            set_speckle_token.set_value("")
-                            set_speckle_token.props(
-                                f"placeholder=\"{'token уже задан; оставь пустым, чтобы не менять' if speckle.get('api_token_set') else 'Speckle API token'}\""
-                            )
-                            set_speckle_clear.set_value(False)
-                            set_speckle_timeout.set_value(float(speckle.get("wake_timeout_sec", 5) or 5))
                             providers = d.get("providers") or {}
+                            _refresh_answering(d)
+                            active = (providers.get("active") or "mlx").lower()
+                            set_provider.set_value(active if active in ("mlx", "ollama", "openrouter", "openai") else "mlx")
+                            ollama = providers.get("ollama") or {}
+                            set_ollama_url.set_value(ollama.get("base_url", "http://127.0.0.1:11434"))
+                            set_ollama_model.set_value(ollama.get("model", ""))
                             openrouter = providers.get("openrouter") or {}
                             openai = providers.get("openai_compatible") or {}
                             set_openrouter_url.set_value(openrouter.get("base_url", "https://openrouter.ai/api/v1"))
@@ -236,12 +259,9 @@ def build_header(
                                 "llm_model":   set_llm.value,
                                 "embed_model": set_embed.value,
                                 "mlx_url":     set_url.value,
-                                "speckle_enabled": bool(set_speckle_enabled.value),
-                                "speckle_base_url": set_speckle_url.value or "",
-                                "speckle_graphql_url": set_speckle_graphql.value or "",
-                                "speckle_api_token": set_speckle_token.value or None,
-                                "speckle_api_token_clear": bool(set_speckle_clear.value),
-                                "speckle_wake_timeout_sec": float(set_speckle_timeout.value or 5),
+                                "llm_provider": set_provider.value or "mlx",
+                                "ollama_base_url": set_ollama_url.value or "",
+                                "ollama_model": set_ollama_model.value or "",
                                 "openrouter_base_url": set_openrouter_url.value or "",
                                 "openrouter_model": set_openrouter_model.value or "",
                                 "openrouter_api_key": set_openrouter_key.value or None,
@@ -260,8 +280,9 @@ def build_header(
                             }
                             d = await api_post("/api/settings", payload)
                             if d:
-                                add_log(f"[SETTINGS] Сохранено: LLM={set_llm.value}")
-                                ui.notify("Настройки сохранены", type="positive")
+                                add_log(f"[SETTINGS] Сохранено: провайдер={set_provider.value}, LLM={set_llm.value}")
+                                ui.notify(f"Сохранено. Отвечает: {str(set_provider.value).upper()} — применяется сразу", type="positive")
+                                await _load_settings()  # обновить строку «СЕЙЧАС ОТВЕЧАЕТ»
                                 settings_dialog.close()
                             else:
                                 ui.notify(last_api_error_text("Ошибка сохранения настроек"), type="negative")

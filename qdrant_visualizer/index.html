@@ -126,16 +126,17 @@ async function ragAsk(question) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ question, top_k: 12 }),
     }).then(r => r.json());
+    // doc_name выдачи может нести аннотацию «… (дымоудаление)» — нормализуем хвост в скобках.
+    const norm = s => String(s || "").replace(/\s*\([^)]*\)\s*$/, "").trim().toLowerCase();
+    const byLabel = new Map();
+    for (const n of nodes) if (n.kind === "doc") byLabel.set(norm(n.label), n);
     ragScores = new Map();
     let best = 0;
     for (const c of d.chunks || []) {
-      const docName = c.doc_name || "";
-      for (const n of nodes) {
-        if (n.kind === "doc" && (n.label === docName || docName.endsWith(n.label) || n.label.endsWith(docName))) {
-          const s = Math.max(ragScores.get(n) || 0, c.score || 0);
-          ragScores.set(n, s); best = Math.max(best, s);
-        }
-      }
+      const n = byLabel.get(norm(c.doc_name));
+      if (!n) continue;
+      const s = Math.max(ragScores.get(n) || 0, c.score || 0);
+      ragScores.set(n, s); best = Math.max(best, s);
     }
     for (const [n, s] of ragScores) ragScores.set(n, best ? s / best : 1);
     statusEl.textContent = `RAG: ${ragScores.size} документов в выдаче (top score ${best.toFixed(3)}) — Esc сбросить`;

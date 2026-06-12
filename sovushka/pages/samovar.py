@@ -180,12 +180,17 @@ def build_samovar():
               <q-btn v-if="props.row.can_sync" flat dense size="xs" color="negative" icon="delete_sweep"
                      @click="$parent.$emit('reset', props.row)"
                      style="font-size:.6rem;padding:2px 6px;margin-left:4px;">↺ СБРОС</q-btn>
-              <span v-if="!props.row.can_sync" :title="props.row.sync_reason"
+              <q-btn v-if="!props.row.can_sync && props.row.dataset_id" flat dense size="xs" color="primary" icon="sync"
+                     :title="props.row.sync_reason"
+                     @click="$parent.$emit('parse', props.row)"
+                     style="font-size:.6rem;padding:2px 6px;">СИНК</q-btn>
+              <span v-if="!props.row.can_sync && !props.row.dataset_id" :title="props.row.sync_reason"
                     style="color:#94a3b8;font-size:.65rem;cursor:help;border-bottom:1px dotted #94a3b8;">нет синка</span>
             </q-td>""")
         sam_grid.on("inspect", lambda e: asyncio.create_task(_open_index_dialog(e.args)))
         sam_grid.on("sync",  lambda e: asyncio.create_task(_sync_row(e.args)))
         sam_grid.on("reset", lambda e: asyncio.create_task(_reset_row(e.args)))
+        sam_grid.on("parse", lambda e: asyncio.create_task(_parse_row(e.args)))
 
         selected_index = {"row": {}}
         with ui.dialog() as index_dialog:
@@ -581,6 +586,25 @@ def build_samovar():
                 await refresh_and_render()
             else:
                 ui.notify(last_api_error_text(f"Ошибка SYNC {folder}"), type="negative")
+
+        async def _parse_row(row):
+            """СИНК для датасета без папки-источника: допарсить его PENDING-файлы."""
+            ds_id = row.get("dataset_id", "") if isinstance(row, dict) else ""
+            folder = row.get("folder", "?") if isinstance(row, dict) else "?"
+            if not ds_id:
+                return
+            pending = row.get("pending", 0) if isinstance(row, dict) else 0
+            if not pending:
+                ui.notify(f"{folder}: PENDING-файлов нет — всё уже в индексе", type="info")
+                return
+            add_log(f"[СИНК] {folder}: допарсинг {pending} PENDING")
+            d = await api_post(f"/api/rag/parse-batch/{quote(ds_id, safe='')}")
+            if d:
+                ui.notify(f"✓ {folder}: парсинг запущен ({pending} файлов)", type="positive")
+                await asyncio.sleep(2)
+                await refresh_and_render()
+            else:
+                ui.notify(last_api_error_text(f"Ошибка парсинга {folder}"), type="negative")
 
         async def _reset_row(row):
             folder    = row.get("folder", "") if isinstance(row, dict) else str(row)
