@@ -146,7 +146,7 @@ def _parse_pdf(path: Path, route=None) -> str:
                 logger.warning(f"[CONVERT] Текст слишком короткий ({len(md_content)} симв.), подозрение на скан. Пробуем OCR.")
                 force_ocr = True
             else:
-                return md_content
+                return strip_legal_boilerplate(md_content)
     except Exception as e:
         logger.warning(f"[CONVERT] pymupdf4llm failed ({e}), пробуем fitз fallback")
 
@@ -163,7 +163,7 @@ def _parse_pdf(path: Path, route=None) -> str:
             doc.close()
             extracted = "\n\n".join(pages)
             if extracted.strip() and len(extracted.strip()) > 100:
-                return extracted
+                return strip_legal_boilerplate(extracted)
         except Exception as e:
             logger.warning(f"[CONVERT] fitz fallback failed: {e}")
 
@@ -180,6 +180,28 @@ def _parse_pdf(path: Path, route=None) -> str:
             logger.error(f"[CONVERT] Ошибка фонового OCR для {path.name}: {ocr_err}", exc_info=True)
 
     return f"[WARN] {path.name}: текст не извлечён (сканированный PDF?)"
+
+
+# Колонтитулы правовых систем («КонсультантПлюс … Страница N из M») превращаются
+# конвертацией в заголовки-чанки и засоряют выдачу с высокими скорами (кейс
+# Постановления 87, 2026-06-14). Чистим детерминированно (ADR-11).
+_BOILERPLATE_LINE_RE = re.compile(
+    r"^\s*#{0,6}\s*\**\s*("
+    r"КонсультантПлюс|www\.consultant\.ru|consultant\.ru|"
+    r"Страница\s+\d+\s+из\s+\d+|"
+    r"надежная правовая поддержка|"
+    r"Документ предоставлен КонсультантПлюс"
+    r")[\s.*]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def strip_legal_boilerplate(md: str) -> str:
+    """Удаляет строки-колонтитулы правовых систем из markdown."""
+    if not md:
+        return md
+    cleaned = _BOILERPLATE_LINE_RE.sub("", md)
+    return re.sub(r"\n{4,}", "\n\n\n", cleaned)
 
 
 _docling_converter = None  # ленивая инициализация: тяжёлые layout-модели грузятся один раз
