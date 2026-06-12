@@ -137,6 +137,13 @@ Check ZeroTier access from any ZT device (each line = endpoint probe; non-200 �
 python3 tools/zerotier_access_smoke.py --host 10.195.146.98
 ```
 
+Map an existing file archive without indexing it (metadata only, no LLM; then index selectively):
+
+```bash
+curl -fsS -X POST http://127.0.0.1:8050/api/filemap/scan -H 'Content-Type: application/json' -d '{"path":"/Volumes/Archive"}' | python3 -m json.tool
+# поиск: GET /api/filemap/search?q=СП+60 · обзор: GET /api/filemap/stats
+```
+
 Diff two CAD/BIM imports or two document revisions (deterministic, no LLM):
 
 ```bash
