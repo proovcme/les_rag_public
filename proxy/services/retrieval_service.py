@@ -349,76 +349,8 @@ async def retrieve_chat_chunks(
         if return_trace:
             return RetrievalResult([], trace, kot, quality)
         return []
-    if reranker_available and reranker_enabled:
-        raw_chunks = await rag_backend.retrieve(retrieval_query, dataset_ids=dataset_ids, top_k=RERANK_POOL_K)
-        if raw_chunks and len(raw_chunks) > RERANK_TOP_K:
-            try:
-                reranker = reranker_cls(mlx_url=mlx_url, mode="batch")
-                rerank_input = [
-                    {
-                        "text": chunk.content,
-                        "metadata": {"doc_name": chunk.doc_name},
-                        "score": getattr(chunk, "score", 0.0),
-                    }
-                    for chunk in raw_chunks
-                ]
-                if llm_semaphore is None:
-                    ranked = await reranker.rerank(question, rerank_input, top_k=RERANK_TOP_K)
-                else:
-                    async with llm_semaphore:
-                        ranked = await reranker.rerank(question, rerank_input, top_k=RERANK_TOP_K)
-                chunks = []
-                for ranked_chunk in ranked:
-                    match = next(
-                        (chunk for chunk in raw_chunks if chunk.content == ranked_chunk.text),
-                        None,
-                    )
-                    if match:
-                        chunks.append(match)
-                    else:
-                        chunks.append(
-                            RerankedStub(
-                                content=ranked_chunk.text,
-                                doc_name=ranked_chunk.metadata.get("doc_name", "?"),
-                            )
-                        )
-                logger.info("[RERANKER] %s -> %s чанков", len(raw_chunks), len(chunks))
-                if not return_trace:
-                    return chunks
-                trace = RetrievalTrace(
-                    mode="reranker",
-                    vector_count=len(raw_chunks),
-                    lexical_count=0,
-                    merged_count=len(chunks),
-                )
-                quality = evaluate_retrieval_quality(question=question, chunks=chunks, trace=trace, kot=kot)
-                trace.quality_status = quality.status
-                trace.quality_detail = quality.detail
-                return RetrievalResult(chunks, trace, kot, quality)
-            except Exception as rerank_error:
-                logger.warning("[RERANKER] Ошибка, fallback: %s", rerank_error)
-                chunks = raw_chunks[:RERANK_TOP_K]
-                if not return_trace:
-                    return chunks
-                trace = RetrievalTrace(
-                    mode="vector",
-                    vector_count=len(raw_chunks),
-                    lexical_count=0,
-                    merged_count=len(chunks),
-                    fallback_reason="reranker_error",
-                )
-                quality = evaluate_retrieval_quality(question=question, chunks=chunks, trace=trace, kot=kot)
-                trace.quality_status = quality.status
-                trace.quality_detail = quality.detail
-                return RetrievalResult(chunks, trace, kot, quality)
-        if not return_trace:
-            return raw_chunks
-        trace = RetrievalTrace(mode="vector", vector_count=len(raw_chunks), merged_count=len(raw_chunks))
-        quality = evaluate_retrieval_quality(question=question, chunks=raw_chunks, trace=trace, kot=kot)
-        trace.quality_status = quality.status
-        trace.quality_detail = quality.detail
-        return RetrievalResult(raw_chunks, trace, kot, quality)
-
+    # W2.3 (ADR-3): ранней реранк-ветки больше нет — реранкер работает ПОВЕРХ
+    # гибридного пула (vector + lexical → RRF → rerank), а не вместо него.
 
     # Dynamic top-k scaling for structured, legal, or technical queries
     is_structured = any(word in question.casefold() for word in ("перечен", "состав", "список", "разделы", "все разделы", "перечисли"))
@@ -445,6 +377,44 @@ async def retrieve_chat_chunks(
             retry_quality = evaluate_retrieval_quality(question=question, chunks=retry_chunks, trace=retry_trace, kot=kot)
             if retry_quality.status != "weak" or len(retry_chunks) >= len(chunks):
                 chunks, trace, quality = retry_chunks, retry_trace, retry_quality
+
+    # W2.3: cross-encoder реранк гибридного пула — переупорядочивает, не режет
+    # (downstream-фокусировка сама сузит). Сопоставление по индексу через
+    # metadata._idx (не по тексту). Сбой → исходный гибридный порядок.
+    if reranker_available and reranker_enabled and len(chunks) > 3:
+        try:
+            reranker = reranker_cls(mlx_url=mlx_url, mode="batch")
+            rerank_input = [
+                {
+                    "text": chunk.content,
+                    "metadata": {"doc_name": chunk.doc_name, "_idx": idx},
+                    "score": getattr(chunk, "score", 0.0),
+                }
+                for idx, chunk in enumerate(chunks)
+            ]
+            # Семафор нужен только LLM-реранкеру (держит Metal); cross-encoder — нет.
+            needs_semaphore = llm_semaphore is not None and reranker_cls.__name__ == "Reranker"
+            if needs_semaphore:
+                async with llm_semaphore:
+                    ranked = await reranker.rerank(question, rerank_input, top_k=len(chunks))
+            else:
+                ranked = await reranker.rerank(question, rerank_input, top_k=len(chunks))
+            reordered = []
+            seen = set()
+            for ranked_chunk in ranked:
+                idx = ranked_chunk.metadata.get("_idx")
+                if isinstance(idx, int) and 0 <= idx < len(chunks) and idx not in seen:
+                    seen.add(idx)
+                    reordered.append(chunks[idx])
+            for idx, chunk in enumerate(chunks):  # хвост, не вернувшийся из реранка
+                if idx not in seen:
+                    reordered.append(chunk)
+            chunks = reordered
+            trace.mode = f"{trace.mode}+rerank"
+            logger.info("[RERANK-CE] гибридный пул %s переупорядочен", len(chunks))
+        except Exception as rerank_error:
+            logger.warning("[RERANKER] Ошибка, гибридный порядок без реранка: %s", rerank_error)
+            trace.fallback_reason = trace.fallback_reason or "rerank_error"
 
     trace.quality_status = quality.status
     trace.quality_detail = quality.detail

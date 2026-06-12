@@ -312,6 +312,82 @@ class Reranker:
 # ─────────────────────────────────────────
 # ТЕСТ
 # ─────────────────────────────────────────
+class CrossEncoderReranker:
+    """W2.2 (ADR-3): клиент cross-encoder реранка MLX Host /v1/rerank.
+
+    Тот же интерфейс, что у LLM-реранкера (mlx_url/model/mode/timeout +
+    .rerank(query, chunks, top_k) → list[RankedChunk]) — подключается в
+    retrieval_service без правок вызывающего кода. Score — сырой логит
+    cross-encoder (НЕ 0-10); сортировка корректна, абсолютная шкала иная.
+    """
+
+    def __init__(
+        self,
+        mlx_url: str = "http://127.0.0.1:8080",
+        model: str = "",          # модель задаётся на стороне mlx_host (RERANK_MODEL)
+        mode: str = "batch",      # совместимость сигнатуры; не используется
+        timeout: float = 30.0,
+        max_chunk_len: int = 1600,
+    ):
+        self.mlx_url = mlx_url.rstrip("/")
+        self.model = model
+        self.mode = mode
+        self.timeout = timeout
+        self.max_chunk_len = max_chunk_len
+
+    async def rerank(self, query: str, chunks: list, top_k: int = 5) -> list:
+        import httpx
+
+        if not chunks:
+            return []
+        if len(chunks) <= top_k:
+            return [
+                RankedChunk(
+                    text=c.get("text", ""),
+                    score=float(c.get("score", 0.0)),
+                    original_score=c.get("score", 0.0),
+                    metadata=c.get("metadata", {}),
+                    rank=i + 1,
+                )
+                for i, c in enumerate(chunks)
+            ]
+
+        documents = [str(c.get("text", ""))[: self.max_chunk_len] for c in chunks]
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.post(
+                f"{self.mlx_url}/v1/rerank",
+                json={"query": query, "documents": documents, "top_k": top_k},
+            )
+            resp.raise_for_status()
+            results = resp.json().get("results", [])
+
+        ranked: list[RankedChunk] = []
+        for rank, item in enumerate(results[:top_k], start=1):
+            idx = int(item.get("index", -1))
+            if not 0 <= idx < len(chunks):
+                continue
+            chunk = chunks[idx]
+            ranked.append(RankedChunk(
+                text=chunk.get("text", ""),
+                score=float(item.get("score", 0.0)),
+                original_score=chunk.get("score", 0.0),
+                metadata=chunk.get("metadata", {}),
+                rank=rank,
+            ))
+        if not ranked:
+            raise RuntimeError("cross-encoder rerank вернул пустой результат")
+        logger.info("[RERANK-CE] %s → %s чанков", len(chunks), len(ranked))
+        return ranked
+
+
+def select_reranker_cls():
+    """ADR-3: cross_encoder — дефолт; llm — устаревший путь на время миграции."""
+    import os
+
+    backend = os.getenv("RERANKER_BACKEND", "cross_encoder").strip().lower()
+    return Reranker if backend == "llm" else CrossEncoderReranker
+
+
 if __name__ == "__main__":
     import asyncio
     import logging

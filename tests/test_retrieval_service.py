@@ -212,8 +212,11 @@ async def test_retrieve_chat_chunks_reranks_pool_when_available():
         logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
     )
 
-    assert [chunk.content for chunk in chunks] == ["text-2", "text-0"]
-    assert backend.calls[0]["top_k"] == 12
+    # W2.3: реранкер переупорядочивает гибридный пул, не режет его:
+    # топ — порядок реранкера (metadata._idx), хвост — исходный порядок.
+    assert [c.content for c in chunks[:2]] == ["text-2", "text-0"]
+    assert len(chunks) == 8  # merged_top_k (CHAT_TOP_K) — без усечения
+    assert backend.calls[0]["top_k"] == 8
 
 
 @pytest.mark.asyncio
@@ -256,14 +259,15 @@ async def test_retrieve_chat_chunks_runs_reranker_inside_llm_budget():
         llm_semaphore=budget,
     )
 
-    assert [chunk.content for chunk in chunks] == ["text-0"]
-    assert budget.entered is True
-    assert budget.seen_inside is True
-    assert budget.active is False
+    # W2.3: семафор держит только LLM-реранкер (cls.__name__ == "Reranker");
+    # cross-encoder и прочие — нет (Metal не занят). Порядок: топ от реранкера, хвост исходный.
+    assert chunks[0].content == "text-0"
+    assert len(chunks) == 8
+    assert budget.entered is False
 
 
 @pytest.mark.asyncio
-async def test_retrieve_chat_chunks_falls_back_to_top_five_on_reranker_error():
+async def test_retrieve_chat_chunks_keeps_hybrid_order_on_reranker_error():
     backend = FakeBackend()
 
     chunks = await retrieve_chat_chunks(
@@ -277,7 +281,8 @@ async def test_retrieve_chat_chunks_falls_back_to_top_five_on_reranker_error():
         logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
     )
 
-    assert [chunk.content for chunk in chunks] == [f"text-{i}" for i in range(6)]
+    # W2.3: сбой реранкера → исходный гибридный порядок без усечения.
+    assert [chunk.content for chunk in chunks] == [f"text-{i}" for i in range(8)]
 
 
 @pytest.mark.asyncio

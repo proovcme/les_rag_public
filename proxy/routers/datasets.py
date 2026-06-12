@@ -669,13 +669,23 @@ async def retrieve_debug(req: RetrievalDebugRequest, _user=Depends(require_user)
         logger,
         question=req.question,
     )
+    # W2.3: retrieve-debug идёт ТЕМ ЖЕ путём, что чат (гибрид → реранк) —
+    # иначе гейты и граф «куда смотрит RAG» видят не то, что пользователь.
+    try:
+        from backend.reranker import select_reranker_cls
+
+        _rr_cls = select_reranker_cls()
+        _rr_available = True
+    except ImportError:
+        _rr_cls, _rr_available = None, False
+    _rr_enabled = os.getenv("RERANKER_ENABLED", "true").lower() == "true"
     retrieval = await retrieve_chat_chunks(
         question=req.question,
         dataset_ids=dataset_ids,
         rag_backend=state.backend,
-        reranker_enabled=False,
-        reranker_available=False,
-        reranker_cls=None,
+        reranker_enabled=_rr_enabled,
+        reranker_available=_rr_available,
+        reranker_cls=_rr_cls,
         mlx_url=mlx_url(),
         logger=logger,
         return_trace=True,

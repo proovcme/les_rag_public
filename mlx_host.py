@@ -187,6 +187,52 @@ class SentenceTransformersEmbedder:
         return time.time() - self.last_used
 
 
+class CrossEncoderReranker:
+    """W2.2 (ADR-3): lazy cross-encoder реранкер (bge-reranker-v2-m3).
+
+    Не трогает Metal-семафор MLX: torch/MPS живёт отдельно. TTL-выгрузка —
+    в общем memory_guard_loop, по образцу эмбеддера.
+    """
+
+    def __init__(self, model_id: str | None = None, ttl_seconds: int | None = None):
+        self.model_id = model_id or os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
+        self.ttl_seconds = int(ttl_seconds or os.getenv("RERANK_TTL_SEC", "600"))
+        self._model = None
+        self.last_used = 0.0
+
+    def _load(self):
+        if self._model is not None:
+            return
+        from sentence_transformers import CrossEncoder
+
+        logger.info("[RERANK] Загрузка %s...", self.model_id)
+        t0 = time.time()
+        self._model = CrossEncoder(self.model_id, max_length=int(os.getenv("RERANK_MAX_LENGTH", "1024")))
+        logger.info("[RERANK] модель готова за %.1fs", time.time() - t0)
+
+    def score(self, query: str, documents: List[str]) -> List[float]:
+        self._load()
+        pairs = [(query, doc) for doc in documents]
+        scores = self._model.predict(pairs, show_progress_bar=False, batch_size=int(os.getenv("RERANK_BATCH", "8")))
+        self.last_used = time.time()
+        return [float(s) for s in scores]
+
+    def force_unload(self):
+        if self._model is None:
+            return
+        self._model = None
+        gc.collect()
+        logger.info("[RERANK] модель выгружена.")
+
+    def idle_seconds(self) -> float:
+        if self._model is None or self.last_used <= 0:
+            return 0.0
+        return time.time() - self.last_used
+
+
+reranker_engine = CrossEncoderReranker()
+
+
 class CoreMLEmbedder:
     """Core ML embedding backend for fixed-shape Qwen3 embedding packages."""
 
@@ -1243,6 +1289,11 @@ async def memory_guard_loop():
                 logger.info("[MEM] Embedder idle %.0fs >= %ss — выгружаю", embed_idle, embedder.ttl_seconds)
                 embedder.force_unload()
 
+            rerank_idle = reranker_engine.idle_seconds()
+            if rerank_idle >= reranker_engine.ttl_seconds and rerank_idle > 0:
+                logger.info("[MEM] Reranker idle %.0fs >= %ss — выгружаю", rerank_idle, reranker_engine.ttl_seconds)
+                reranker_engine.force_unload()
+
             critical = sw.percent >= SWAP_KILL_PCT or ram_free_gb < RAM_KILL_FREE_GB
             warning = sw.percent >= SWAP_WARN_PCT or ram_free_gb < RAM_WARN_FREE_GB
             if critical:
@@ -1333,6 +1384,12 @@ class OAIChatRequest(BaseModel):
 class OAIEmbeddingRequest(BaseModel):
     input: Union[str, List[str]]
     model: str = "bge-m3"
+
+
+class RerankRequest(BaseModel):
+    query: str
+    documents: List[str]
+    top_k: int | None = None  # None — оценки всех документов
 
 
 class ValidateRequest(BaseModel):
@@ -1958,6 +2015,23 @@ async def embeddings_openai(req: OAIEmbeddingRequest):
         "data":   [{"object": "embedding", "embedding": v, "index": i} for i, v in enumerate(vectors)],
         "model":  req.model,
         "usage":  {"prompt_tokens": total_tokens, "total_tokens": total_tokens},
+    }
+
+
+@app.post("/v1/rerank")
+async def rerank_endpoint(req: RerankRequest):
+    """W2.2 (ADR-3): cross-encoder реранк. Возвращает оценки и порядок документов."""
+    if not req.documents:
+        return {"model": reranker_engine.model_id, "results": []}
+    if len(req.documents) > 64:
+        raise HTTPException(400, "слишком много документов для реранка (максимум 64)")
+    scores = await asyncio.to_thread(reranker_engine.score, req.query, req.documents)
+    order = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+    if req.top_k:
+        order = order[: req.top_k]
+    return {
+        "model": reranker_engine.model_id,
+        "results": [{"index": i, "score": scores[i]} for i in order],
     }
 
 

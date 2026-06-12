@@ -37,6 +37,18 @@ from proxy.routers.rerank import (
     router as rerank_router,
     set_rerank_state,
 )
+
+
+def _select_reranker_cls():
+    """W2.2 (ADR-3): cross-encoder по умолчанию, RERANKER_BACKEND=llm — старый путь."""
+    try:
+        from backend.reranker import select_reranker_cls
+
+        return select_reranker_cls()
+    except ImportError:
+        return Reranker
+
+
 from proxy.routers.runtime import RuntimeRouterState, router as runtime_router, set_runtime_state
 from proxy.routers.settings import router as settings_router
 from proxy.routers.speckle import cad_bim_router, router as speckle_router
@@ -266,7 +278,7 @@ def configure_router_state() -> None:
             crag_stats=crag_stats,
             chat_metrics=chat_metrics,
             reranker_available=RERANKER_AVAILABLE,
-            reranker_cls=Reranker,
+            reranker_cls=_select_reranker_cls(),
             current_mode=current_mode,
             metrics_cache=metrics_cache,
             job_service=job_service,
