@@ -93,7 +93,7 @@
 
 - [x] **W0.2 CI офлайн-гейт** · S — 2026-06-10, `.github/workflows/verify.yml` (uv sync --frozen + make verify, macos-latest; локально гейт зелёный — 455 тестов собрано). Матрица Win — W4.3.
 
-- [x] **W0.3 Расширить golden sets** · M — 2026-06-10 (кейсы); `[live]`-baseline ждёт окна. Три набора: `golden/clause_subclauses_set.json` (пункты с подпунктами — приёмка W2.6), `golden/bim_questions_set.json` (этажи/категории/агрегаты — приёмка W6.1), `golden/artel_fop_set.json` (ФОП/GUID/learning cases — приёмка W6.3). Базовый 16/16 не тронут; лоадер проверен.
+- [x] **W0.3 Расширить golden sets** · M — 2026-06-10 (кейсы); **baseline 2026-06-13** (после реиндекса 1285 файлов / 169K чанков, токенный чанкинг): `clause_subclauses` **4/4** ✅ (приёмка W2.6 пройдена — подпункты и приложения работают); `artel_fop` 3/4 (провал: family_validation_checks — нет терма «валидац» в топе); `bim_questions` 0/4 — **CAD_BIM_Index пуст в новом корпусе** (chunks=0): нужен ре-импорт Speckle-модели до W6.1. Доменный гейт: **15/16** — fire_truck_access: СП 4.13130 проиндексирован (608 чанков), но тонет среди отраслевых СП — целевой кейс для реранкера W2.2/W2.3. Три набора: `golden/clause_subclauses_set.json` (пункты с подпунктами — приёмка W2.6), `golden/bim_questions_set.json` (этажи/категории/агрегаты — приёмка W6.1), `golden/artel_fop_set.json` (ФОП/GUID/learning cases — приёмка W6.3). Базовый 16/16 не тронут; лоадер проверен.
   **Остаток:** один прогон на живом рантайме (`uv run python tools/rag_golden_set.py --cases golden/<set>.json`) — зафиксировать baseline-результаты в этом файле.
 
 ## Волна 1 — Стабильность индексации
