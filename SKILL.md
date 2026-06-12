@@ -124,6 +124,8 @@ Switch the chat LLM (provider/model) — **no restart needed**, applies per-requ
 - CLI: `curl -X POST http://127.0.0.1:8050/api/settings -H 'Content-Type: application/json' -d '{"llm_provider":"ollama","ollama_model":"gemma4:12b"}'` (персистится в .env runtime-клона). Вернуться: `-d '{"llm_provider":"mlx"}'`.
 - Local models live in Ollama (`ollama list`); Gemma 4 12B = `gemma4:12b`. Cloud = openrouter/openai + API key (поля в той же панели).
 
+Task tracker from chat (deterministic regex+SQL, no LLM, works even under memory-guard): «поставь задачу …» / «что по задачам?» / «задача N готова». API: `POST/GET /api/tasks`, `PATCH /api/tasks/{id}`.
+
 Run formal normcontrol checks (NK-01 sheet formats, NK-02 scans, NK-03 cipher, NK-04 ведомость↔files; deterministic, no LLM):
 
 ```bash
