@@ -290,6 +290,15 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         names = [s.get("folder", "") for s in state["sources"]]
         detail_dataset.options = ["(все датасеты)"] + names
         detail_dataset.value = "(все датасеты)"
+        # W5.7-v2: переход из графа знаний — /classic?dataset=<папка> предвыбирает фильтр.
+        try:
+            preset = (context.client.request.query_params.get("dataset") or "").strip()
+            if preset and preset in names:
+                detail_dataset.value = preset
+                ui.notify(f"Фильтр из графа: {preset}", type="info")
+        except Exception:
+            pass
+        detail_dataset.update()
 
     asyncio.create_task(_load_datasets_select())
 

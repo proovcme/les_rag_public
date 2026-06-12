@@ -48,8 +48,9 @@
 
 <div class="hud" id="topbar">
   <span class="brand">Л.Е.С. // ГРАФ ЗНАНИЙ</span>
-  <input id="search" type="search" placeholder="поиск по документам…" autocomplete="off">
+  <input id="search" type="search" placeholder="фильтр… (Enter — спросить RAG)" autocomplete="off">
   <button class="btn" id="reload">⟳ обновить</button>
+  <button class="btn" id="edgesToggle" title="рёбра перекрёстных ссылок между нормативами">⛓ связи НТД</button>
   <a class="btn" href="legacy.html" title="старый 3D PCA-визуализатор">3D PCA</a>
 </div>
 <div class="hud" id="legend"></div>
@@ -78,6 +79,8 @@ const DPR = Math.min(window.devicePixelRatio || 1, 2);
 
 const view = { x: 0, y: 0, scale: 1 };
 let nodes = [], edges = [], byId = new Map();
+let refEdges = [], showRefEdges = false;          // W5.7-v2: рёбра-ссылки НТД
+let ragScores = null;                              // W5.7-v2: подсветка выдачи RAG (doc_name → score)
 let hover = null, focus = null, dragNode = null, panning = false;
 let alpha = 1, query = "";
 const hiddenDatasets = new Set();
@@ -99,6 +102,46 @@ async function loadData() {
   }
   buildGraph(datasets, docs.slice(0, MAX_DOCS));
   statusEl.textContent = `${datasets.length} датасетов · ${docs.length} документов · ${docs.reduce((s, d) => s + (d.chunk_count || 0), 0)} чанков`;
+  loadRefEdges().catch(() => {});
+}
+
+// W5.7-v2: рёбра перекрёстных ссылок «СП ↔ ГОСТ» из текстов (FTS, без LLM).
+async function loadRefEdges() {
+  const d = await fetch(`${API}/rag/graph/edges`).then(r => r.json());
+  refEdges = [];
+  for (const e of d.edges || []) {
+    const a = byId.get("doc:" + e.source), b = byId.get("doc:" + e.target);
+    if (a && b && a !== b) refEdges.push({ a, b, w: e.weight });
+  }
+  document.getElementById("edgesToggle").textContent = `⛓ связи НТД (${refEdges.length})`;
+}
+
+// W5.7-v2: «куда смотрит RAG» — Enter в поиске шлёт вопрос в retrieve-debug
+// и подсвечивает документы выдачи с яркостью по score.
+async function ragAsk(question) {
+  statusEl.textContent = "RAG ищет…";
+  try {
+    const d = await fetch(`${API}/rag/retrieve-debug`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, top_k: 12 }),
+    }).then(r => r.json());
+    ragScores = new Map();
+    let best = 0;
+    for (const c of d.chunks || []) {
+      const docName = c.doc_name || "";
+      for (const n of nodes) {
+        if (n.kind === "doc" && (n.label === docName || docName.endsWith(n.label) || n.label.endsWith(docName))) {
+          const s = Math.max(ragScores.get(n) || 0, c.score || 0);
+          ragScores.set(n, s); best = Math.max(best, s);
+        }
+      }
+    }
+    for (const [n, s] of ragScores) ragScores.set(n, best ? s / best : 1);
+    statusEl.textContent = `RAG: ${ragScores.size} документов в выдаче (top score ${best.toFixed(3)}) — Esc сбросить`;
+  } catch (err) {
+    statusEl.textContent = "RAG-запрос не удался: " + err.message;
+  }
 }
 
 function buildGraph(datasets, docs) {
@@ -214,7 +257,25 @@ function draw() {
   ctx.translate(view.x, view.y); ctx.scale(view.scale, view.scale);
   const sel = focus || hover;
   const hood = sel ? neighborsOf(sel) : null;
-  const dimmed = n => (hood && !hood.has(n)) || (query && !matchesQuery(n) && n.kind !== "hub");
+  const dimmed = n =>
+    (ragScores && n.kind === "doc" && !ragScores.has(n)) ||
+    (hood && !hood.has(n)) ||
+    (query && !ragScores && !matchesQuery(n) && n.kind !== "hub");
+
+  // Рёбра-ссылки между нормативами (вкл. кнопкой или при фокусе на документе)
+  if (refEdges.length && (showRefEdges || (sel && sel.kind === "doc"))) {
+    for (const e of refEdges) {
+      if (!visible(e.a) || !visible(e.b)) continue;
+      if (!showRefEdges && sel && e.a !== sel && e.b !== sel) continue;
+      const lit = sel && (e.a === sel || e.b === sel);
+      ctx.strokeStyle = lit ? "#e8c66a" : "rgba(160,170,200,0.10)";
+      ctx.globalAlpha = Math.min(1, 0.25 + e.w * 0.05) * (lit ? 1 : 0.7);
+      ctx.lineWidth = (lit ? 1.3 : 0.6) / view.scale;
+      const mx = (e.a.x + e.b.x) / 2, my = (e.a.y + e.b.y) / 2 - 24 / view.scale;
+      ctx.beginPath(); ctx.moveTo(e.a.x, e.a.y); ctx.quadraticCurveTo(mx, my, e.b.x, e.b.y); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
 
   for (const e of edges) {
     if (!visible(e.b)) continue;
@@ -229,9 +290,11 @@ function draw() {
   for (const n of nodes) {
     if (!visible(n)) continue;
     const dim = dimmed(n);
-    const r = n.r * (n === sel ? 1.35 : 1);
+    const ragBoost = ragScores && ragScores.get(n);  // 0..1 — яркость по score выдачи
+    const r = n.r * (n === sel ? 1.35 : 1) * (ragBoost ? 1 + ragBoost * 0.8 : 1);
     ctx.globalAlpha = dim ? 0.16 : 1;
-    ctx.shadowColor = n.color; ctx.shadowBlur = dim ? 0 : (n.kind === "hub" ? 26 : 12) * view.scale;
+    ctx.shadowColor = ragBoost ? "#ffd166" : n.color;
+    ctx.shadowBlur = dim ? 0 : ((n.kind === "hub" ? 26 : 12) + (ragBoost ? ragBoost * 30 : 0)) * view.scale;
     ctx.fillStyle = n.color;
     ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2); ctx.fill();
     ctx.shadowBlur = 0;
@@ -288,9 +351,12 @@ canvas.addEventListener("pointermove", e => {
       tip.style.display = "block";
       tip.style.left = Math.min(e.clientX + 16, innerWidth - 360) + "px";
       tip.style.top = Math.min(e.clientY + 16, innerHeight - 110) + "px";
+      const refsN = refEdges.reduce((s, e) => s + (e.a === hover || e.b === hover ? 1 : 0), 0);
       tip.innerHTML = `<div class="t-name">${hover.label}</div>` +
         `<div class="t-meta">${hover.kind === "hub" ? "датасет" : "документ · " + hover.dataset}` +
-        ` · ${hover.chunks} чанков${hover.status ? " · " + hover.status : ""}</div>`;
+        ` · ${hover.chunks} чанков${hover.status ? " · " + hover.status : ""}` +
+        `${refsN ? " · ссылок: " + refsN : ""}</div>` +
+        `<div class="t-meta">клик — соседи · 2×клик — спросить в чате</div>`;
     } else tip.style.display = "none";
   }
 });
@@ -310,7 +376,25 @@ canvas.addEventListener("wheel", e => {
 }, { passive: false });
 
 searchEl.addEventListener("input", () => { query = searchEl.value.trim().toLowerCase(); });
+searchEl.addEventListener("keydown", e => {
+  if (e.key === "Enter" && searchEl.value.trim().length > 3) ragAsk(searchEl.value.trim());
+  if (e.key === "Escape") { ragScores = null; query = ""; searchEl.value = ""; statusEl.textContent = "RAG-подсветка сброшена"; }
+});
+addEventListener("keydown", e => { if (e.key === "Escape") { ragScores = null; focus = null; } });
+document.getElementById("edgesToggle").onclick = function () {
+  showRefEdges = !showRefEdges;
+  this.style.color = showRefEdges ? "#e8c66a" : "";
+};
 document.getElementById("reload").onclick = () => loadData().catch(err => statusEl.textContent = "ошибка: " + err.message);
+
+// W5.7-v2: двойной клик по узлу — в чат с предвыбранным датасетом.
+canvas.addEventListener("dblclick", e => {
+  const n = pick(e.clientX, e.clientY);
+  if (!n) return;
+  const ds = n.kind === "hub" ? n.label : n.dataset;
+  if (SAME_ORIGIN) window.open(`/classic?dataset=${encodeURIComponent(ds)}`, "_blank");
+  else window.open(`http://${location.hostname}:8051/classic?dataset=${encodeURIComponent(ds)}`, "_blank");
+});
 
 function resize() {
   canvas.width = innerWidth * DPR; canvas.height = innerHeight * DPR;

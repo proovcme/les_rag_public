@@ -757,6 +757,18 @@ async def create_dataset(name: str, _admin=Depends(require_admin)):
     return {"id": await state.backend.create_dataset(name), "name": name}
 
 
+@router.get("/graph/edges")
+async def graph_reference_edges(_user=Depends(require_user)):
+    """W5.7-v2: рёбра «документ → документ» по упоминаниям номеров НТД (FTS, без LLM)."""
+    import asyncio as _asyncio
+
+    from proxy.services.graph_edges_service import build_reference_edges
+
+    state = get_dataset_state()
+    collection = getattr(state.backend, "collection_name", "")
+    return await _asyncio.to_thread(build_reference_edges, collection)
+
+
 @router.get("/sources")
 async def list_sources(_user=Depends(require_user)):
     state = get_dataset_state()
