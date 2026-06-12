@@ -586,6 +586,20 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
     if not req.question.strip():
         raise HTTPException(400, "Empty question")
 
+    # W16.2: команды задачника — детерминированно (regex+SQL, без LLM и до admission:
+    # «поставь задачу…» обязана работать даже при memory-guard).
+    from proxy.services.task_service import maybe_handle_task_command
+
+    task_reply = maybe_handle_task_command(req.question, dataset_filter=req.dataset_filter or "")
+    if task_reply is not None:
+        return {
+            "answer": task_reply["answer"],
+            "crag_status": "DETERMINISTIC",
+            "sources": [],
+            "query_route": {"channel": "tasks", "operation": task_reply.get("operation")},
+            "validation": {"enabled": False, "reason": "deterministic_task_command"},
+        }
+
     rag_backend = state.backend
     clarification = build_clarification_decision(
         req.question,
