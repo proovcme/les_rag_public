@@ -20,6 +20,7 @@ from proxy.security import require_user
 from proxy.services.clarification_service import build_clarification_decision
 from proxy.services.clause_lookup_service import maybe_answer_clause_lookup
 from proxy.services.context_expander_service import expand_context_windows
+from proxy.services.memory_service import recall_context
 from proxy.services.kot_service import analyze_question
 from proxy.services.lexical_index_service import retrieval_fingerprint
 from proxy.services.mail_query_service import maybe_answer_mail_query
@@ -586,18 +587,24 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
     if not req.question.strip():
         raise HTTPException(400, "Empty question")
 
-    # W16.2: команды задачника — детерминированно (regex+SQL, без LLM и до admission:
-    # «поставь задачу…» обязана работать даже при memory-guard).
+    # W16.2/W16.3: команды задачника и заметок — детерминированно (regex+SQL, без LLM
+    # и до admission: «поставь задачу…»/«запомни…» обязаны работать даже при memory-guard).
+    from proxy.services.memory_service import maybe_handle_memory_command
     from proxy.services.task_service import maybe_handle_task_command
 
     task_reply = maybe_handle_task_command(req.question, dataset_filter=req.dataset_filter or "")
-    if task_reply is not None:
+    memory_reply = None if task_reply is not None else maybe_handle_memory_command(
+        req.question, dataset_filter=req.dataset_filter or ""
+    )
+    if task_reply is not None or memory_reply is not None:
+        reply = task_reply if task_reply is not None else memory_reply
+        channel = "tasks" if task_reply is not None else "memory"
         return {
-            "answer": task_reply["answer"],
+            "answer": reply["answer"],
             "crag_status": "DETERMINISTIC",
             "sources": [],
-            "query_route": {"channel": "tasks", "operation": task_reply.get("operation")},
-            "validation": {"enabled": False, "reason": "deterministic_task_command"},
+            "query_route": {"channel": channel, "operation": reply.get("operation")},
+            "validation": {"enabled": False, "reason": f"deterministic_{channel}_command"},
         }
 
     rag_backend = state.backend
@@ -1223,6 +1230,16 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                 tokens = 0
 
                 max_attempts = 2
+                # W16.1/W16.3: рабочая память — релевантные заметки оператора и прошлые
+                # удачные ответы (лексический recall, без LLM). Пустая строка — нет совпадений.
+                try:
+                    memory_block = recall_context(req.question)
+                except Exception as err:
+                    logger.warning("[MEMORY] recall failed: %s", err)
+                    memory_block = ""
+                if memory_block:
+                    logger.info("[MEMORY] подмешано %s символов рабочей памяти", len(memory_block))
+
                 for attempt in range(1, max_attempts + 1):
                     if attempt == 2:
                         strict_chunks = concentrate_sources(
@@ -1256,7 +1273,8 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                             "role": "user",
                             "content": (
                                 f"Контекст:\n{context}\n\n"
-                                f"Вопрос: {req.question}\n\n"
+                                + (f"{memory_block}\n\n" if memory_block else "")
+                                + f"Вопрос: {req.question}\n\n"
                                 "/no_think\n"
                                 "Ответь сразу итоговым ответом без скрытых рассуждений. "
                                 "Не используй знания вне контекста."
@@ -1304,6 +1322,10 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                                 max_chars=_env_int("RAG_VALIDATION_CONTEXT_CHARS", 12000),
                                 include_metadata=True,
                             )
+                            # Рабочая память видна и валидатору — иначе ответ по заметке
+                            # оператора ловил бы ложный HALLUCINATION.
+                            if memory_block:
+                                validation_context = f"{validation_context}\n\n{memory_block}"
                             t_val_call = time.time()
                             if validate_via_llm:
                                 crag_status = await _validate_via_provider(
