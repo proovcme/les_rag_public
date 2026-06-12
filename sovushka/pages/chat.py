@@ -537,12 +537,23 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 pending_q = state["chat_pending"].get("question", "")
                 _render_chat_bubble(f"Запрос выполняется: {pending_q[:80]}", "chat-msg-ai typing")
 
+    def _apply_loaded_session() -> bool:
+        """Подхват сессии, выбранной в ИСТОРИИ. Вызывается и при построении,
+        и хуком из вкладки истории (фикс «чат из истории не открывается»)."""
+        if not state.get("load_session_id"):
+            return False
+        state["session_id"] = state["load_session_id"]
+        state["load_session_id"] = None
+        _render_chat_history("Сессия загружена из истории.")
+        chat_scroll.scroll_to(percent=1)
+        return True
+
+    # Хук для вкладки ИСТОРИЯ: после выбора сессии чат перерисовывается сразу,
+    # а не «при следующем рендере» (которого без хука не наступало).
+    state["chat_reload_hook"] = _apply_loaded_session
+
     async def _load_history():
-        if state.get("load_session_id"):
-            state["session_id"] = state["load_session_id"]
-            state["load_session_id"] = None
-            _render_chat_history("Сессия загружена из истории.")
-            chat_scroll.scroll_to(percent=1)
+        if _apply_loaded_session():
             return
         if not state.get("chat_history"):
             hist = await api_get("/api/chat/history?limit=40")

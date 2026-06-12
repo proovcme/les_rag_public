@@ -77,9 +77,15 @@ def build_history(tabs=None, tab_chat=None):
             state["chat_history"] = msgs
             state["load_session_id"] = session_id
             add_log(f"[ИСТОРИЯ] Загружено {len(msgs)//2} сообщений")
-            # Переключаем на вкладку чата
+            # Переключаем на вкладку чата и просим её перерисоваться СЕЙЧАС
             if tabs and tab_chat:
                 tabs.set_value(tab_chat)
+            reload_hook = state.get("chat_reload_hook")
+            if callable(reload_hook):
+                try:
+                    reload_hook()
+                except Exception as hook_err:
+                    add_log(f"[ИСТОРИЯ] Хук перерисовки чата: {hook_err}")
 
         refresh_btn.on("click", lambda: asyncio.create_task(_load_sessions()))
 
