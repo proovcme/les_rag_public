@@ -10,7 +10,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from fastapi import Request
 from nicegui import app, ui
-from starlette.responses import RedirectResponse
+from starlette.responses import HTMLResponse, RedirectResponse
 
 from sovushka.config import QDRANT_VISUALIZER_PORT, STORAGE_SECRET, UI_PORT
 from sovushka.state import bg_loop
@@ -57,6 +57,15 @@ def _start_qdrant_visualizer() -> None:
     server = ThreadingHTTPServer(("0.0.0.0", QDRANT_VISUALIZER_PORT), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+
+
+@app.get("/graph")
+async def knowledge_graph_page():
+    """W5.7: граф знаний same-origin — данные ходят через /lite-api без CORS."""
+    graph_file = Path(__file__).resolve().parent / "qdrant_visualizer" / "index.html"
+    if not graph_file.exists():
+        return RedirectResponse(f"http://127.0.0.1:{QDRANT_VISUALIZER_PORT}/")
+    return HTMLResponse(graph_file.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
 
 
 def _build_qdrant_visualizer_panel(visualizer_url: str) -> None:
@@ -172,8 +181,8 @@ async def classic_admin_page(request: Request):
 
     # Layout: Header (со встроенными табами) + Content + Footer
     with ui.column().classes("w-full h-screen no-wrap gap-0"):
-        visualizer_host = request.url.hostname or "127.0.0.1"
-        visualizer_url = f"http://{visualizer_host}:{QDRANT_VISUALIZER_PORT}/"
+        # W5.7: граф знаний same-origin (/graph → /lite-api, без CORS); :8066 — legacy/прямой доступ
+        visualizer_url = "/graph"
 
         # Единая полоса: лого + табы + контролы
         tabs, tr = build_header(

@@ -1559,8 +1559,17 @@ def register_lite_admin_routes() -> None:
         name="les_cad_bim_viewer_ifc_sample",
     )
 
+    # W5.5 (решение оператора): /les ведёт в NiceGUI-админку. Лайт-админка
+    # доступна на /les/lite до переноса её панелей (LLM Provider, Speckle, Mail).
     @app.get("/les")
     @app.get("/les/")
+    async def lite_admin_redirect():
+        from starlette.responses import RedirectResponse
+
+        return RedirectResponse("/les/classic", status_code=307)
+
+    @app.get("/les/lite")
+    @app.get("/les/lite/")
     async def lite_admin_page():
         return HTMLResponse(
             lite_admin_html(),

@@ -69,7 +69,10 @@ const statusEl = document.getElementById("status");
 const legendEl = document.getElementById("legend");
 const searchEl = document.getElementById("search");
 
-const PROXY = `http://${location.hostname || "127.0.0.1"}:8050`;
+// На :8051/:8061 граф отдан Совушкой → данные через same-origin мост /lite-api
+// (CORS не нужен). На :8066 (статик-сервер) — напрямую в proxy :8050.
+const SAME_ORIGIN = location.port === "8051" || location.port === "8061";
+const API = SAME_ORIGIN ? "/lite-api" : `http://${location.hostname || "127.0.0.1"}:8050/api`;
 const MAX_DOCS = 1500;
 const DPR = Math.min(window.devicePixelRatio || 1, 2);
 
@@ -85,11 +88,11 @@ function colorFor(i) { return `hsl(${(i * 137.508 + 210) % 360} 75% 64%)`; }
 // ── загрузка данных из proxy ──
 async function loadData() {
   statusEl.textContent = "загрузка индекса…";
-  const dsResp = await fetch(`${PROXY}/api/rag/datasets`).then(r => r.json());
+  const dsResp = await fetch(`${API}/rag/datasets`).then(r => r.json());
   const datasets = Array.isArray(dsResp) ? dsResp : (dsResp.datasets || []);
   const docs = [];
   for (let offset = 0; docs.length < MAX_DOCS; offset += 500) {
-    const d = await fetch(`${PROXY}/api/rag/documents?limit=500&offset=${offset}`).then(r => r.json());
+    const d = await fetch(`${API}/rag/documents?limit=500&offset=${offset}`).then(r => r.json());
     const page = d.documents || [];
     docs.push(...page);
     if (page.length < 500 || docs.length >= (d.total || 0)) break;
@@ -315,7 +318,7 @@ function resize() {
 }
 addEventListener("resize", resize);
 resize();
-loadData().catch(err => { statusEl.textContent = "ошибка загрузки: " + err.message + " (proxy :8050 доступен?)"; });
+loadData().catch(err => { statusEl.textContent = "ошибка загрузки: " + err.message + (SAME_ORIGIN ? "" : " (proxy :8050 доступен? CORS?)"); });
 frame();
 </script>
 </body>
