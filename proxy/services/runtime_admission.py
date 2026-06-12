@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -70,6 +71,24 @@ def chat_memory_guard_enabled() -> bool:
 # (кейс Gemma 12B: ollama выел RAM до swap 86%). Облачные (openrouter/openai)
 # RAM не требуют — admission по памяти снимается (решение оператора 2026-06-13).
 LOCAL_LLM_PROVIDERS = {"mlx", "local-mlx", "local_mlx", "ollama", "lemonade"}
+
+# Облако не конкурирует за Metal — параллелизм отдельным семафором (медленная
+# облачная генерация не должна блокировать чат «slots=0», кейс 2026-06-14).
+_CLOUD_LLM_CONCURRENCY = int(os.getenv("LES_CLOUD_LLM_CONCURRENCY", "4") or "4")
+cloud_llm_semaphore = asyncio.Semaphore(max(1, _CLOUD_LLM_CONCURRENCY))
+
+
+def active_llm_provider() -> str:
+    return os.getenv("LES_LLM_PROVIDER", "mlx").strip().lower() or "mlx"
+
+
+def llm_provider_is_cloud() -> bool:
+    return active_llm_provider() not in LOCAL_LLM_PROVIDERS
+
+
+def generation_semaphore(local_semaphore):
+    """Семафор генерации для активного провайдера: локальный Metal-слот или облачный пул."""
+    return cloud_llm_semaphore if llm_provider_is_cloud() else local_semaphore
 
 
 def chat_memory_guard_for_provider() -> bool:

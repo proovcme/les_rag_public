@@ -25,7 +25,7 @@ from proxy.services.lexical_index_service import retrieval_fingerprint
 from proxy.services.mail_query_service import maybe_answer_mail_query
 from proxy.services.query_router import route_query
 from proxy.services.retrieval_service import resolve_dataset_ids, retrieve_chat_chunks
-from proxy.services.runtime_admission import count_active_jobs, evaluate_chat_admission
+from proxy.services.runtime_admission import count_active_jobs, evaluate_chat_admission, generation_semaphore
 from proxy.services.runtime_dispatcher import RuntimeDispatcher
 from proxy.services.saferag_service import (
     SAFE_FALLBACK,
@@ -174,6 +174,43 @@ def _llm_runtime() -> LlmRuntime:
     base_url = os.getenv("MLX_URL", "http://127.0.0.1:8080").strip()
     model = os.getenv("LLM_MODEL", "qwen3:14b").strip()
     return LlmRuntime("mlx", base_url, _join_openai_path(base_url, "/chat/completions"), model, "", True)
+
+
+async def _validate_via_provider(client, llm_runtime, headers, *, question: str, answer: str, context: str) -> str:
+    """W3.4-частично: вердикт Т.О.С.К.А. той же (в т.ч. облачной) моделью.
+
+    Компактный промпт со строгим однословным ответом; парсинг — поиск одного
+    из трёх статусов в начале ответа. Любой сбой → UNKNOWN (как у MLX-пути).
+    """
+    system = (
+        "Ты — строгий проверяющий фактов (валидатор RAG). Сравни ОТВЕТ с КОНТЕКСТОМ. "
+        "Верни РОВНО ОДНО СЛОВО без пояснений: "
+        "VERIFIED — все ключевые факты ответа подтверждаются контекстом; "
+        "HALLUCINATION — в ответе есть утверждения, противоречащие контексту или отсутствующие в нём; "
+        "NO_DATA — контекст не содержит информации для ответа на вопрос."
+    )
+    user = f"КОНТЕКСТ:\n{context[:9000]}\n\nВОПРОС: {question}\n\nОТВЕТ:\n{answer[:4000]}\n\nВердикт (одно слово):"
+    resp = await client.post(
+        llm_runtime.chat_url,
+        headers=headers,
+        json={
+            "model": llm_runtime.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "stream": False,
+            "temperature": 0,
+            "max_tokens": 6,
+        },
+        timeout=90.0,
+    )
+    resp.raise_for_status()
+    text = (resp.json().get("choices", [{}])[0].get("message", {}).get("content") or "").upper()
+    for status in ("VERIFIED", "HALLUCINATION", "NO_DATA"):
+        if status in text:
+            return status
+    return "UNKNOWN"
 
 
 CHAT_HISTORY_EXTRA_COLUMNS = {
@@ -819,11 +856,12 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                 "history_id": history_id,
             }
 
+    _gen_semaphore = generation_semaphore(state.llm_semaphore)
     admission = evaluate_chat_admission(
         current_mode=state.current_mode,
         metrics_cache=state.metrics_cache,
         active_jobs=count_active_jobs(state.job_service, state.job_tracker) + _active_dispatcher_reindex_jobs(state),
-        llm_available=getattr(state.llm_semaphore, "_value", 1) > 0,
+        llm_available=getattr(_gen_semaphore, "_value", 1) > 0,
     )
     if not admission.allowed:
         raise HTTPException(status_code=admission.status_code, detail=admission.reason)
@@ -1123,9 +1161,12 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
     val_url = llm_runtime.base_url.rstrip("/")
     if not llm_model:
         raise HTTPException(503, f"LLM model is not configured for provider {llm_runtime.provider}")
-    if use_validation and not llm_runtime.supports_validation:
-        logger.info("[TOSKA] validation disabled: provider=%s has no LES /api/validate endpoint", llm_runtime.provider)
-        use_validation = False
+    # W3.4-частично (вопрос оператора 2026-06-14 «почему не валидируем облаком?»):
+    # у не-MLX провайдеров нет /api/validate — валидируем ТОЙ ЖЕ моделью
+    # компактным промптом-вердиктом (VERIFIED/HALLUCINATION/NO_DATA).
+    validate_via_llm = bool(use_validation and not llm_runtime.supports_validation)
+    if validate_via_llm:
+        logger.info("[TOSKA] validation via provider=%s (no LES /api/validate)", llm_runtime.provider)
 
     sys_normal = (
         "Ты — технический эксперт системы Л.Е.С. "
@@ -1147,13 +1188,15 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
         "Не придумывай факты. Отвечай на русском языке."
     )
 
-    if state.llm_semaphore._value == 0:
+    # Облако не держит локальный Metal-слот: отдельный пул (LES_CLOUD_LLM_CONCURRENCY).
+    gen_semaphore = generation_semaphore(state.llm_semaphore)
+    if gen_semaphore._value == 0:
         raise HTTPException(429, "Сервер занят — идёт генерация, попробуй через несколько секунд")
 
     t_gen_start = time.time()
     t_llm = 0.0  # W0.1: чистое время LLM-вызовов (включая загрузку модели на стороне MLX)
     t_val = 0.0  # W0.1: чистое время /api/validate
-    async with state.llm_semaphore:
+    async with gen_semaphore:
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:
                 answer = ""
@@ -1243,18 +1286,24 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                                 include_metadata=True,
                             )
                             t_val_call = time.time()
-                            val_resp = await client.post(
-                                f"{val_url}/api/validate",
-                                json={"question": req.question, "answer": answer, "context": validation_context},
-                                timeout=90.0,
-                            )
+                            if validate_via_llm:
+                                crag_status = await _validate_via_provider(
+                                    client, llm_runtime, headers,
+                                    question=req.question, answer=answer, context=validation_context,
+                                )
+                            else:
+                                val_resp = await client.post(
+                                    f"{val_url}/api/validate",
+                                    json={"question": req.question, "answer": answer, "context": validation_context},
+                                    timeout=90.0,
+                                )
+                                crag_status = (
+                                    val_resp.json().get("status", "UNKNOWN")
+                                    if val_resp.status_code == 200
+                                    else "UNKNOWN"
+                                )
                             t_val += time.time() - t_val_call
-                            crag_status = (
-                                val_resp.json().get("status", "UNKNOWN")
-                                if val_resp.status_code == 200
-                                else "UNKNOWN"
-                            )
-                            logger.info("[TOSKA] attempt=%s → %s", attempt, crag_status)
+                            logger.info("[TOSKA] attempt=%s → %s%s", attempt, crag_status, " (via provider)" if validate_via_llm else "")
                         except Exception as ve:
                             logger.warning("[TOSKA] Validate skip: %s", ve)
                             crag_status = "UNKNOWN"
