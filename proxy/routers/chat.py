@@ -201,13 +201,18 @@ async def _validate_via_provider(client, llm_runtime, headers, *, question: str,
             ],
             "stream": False,
             "temperature": 0,
-            "max_tokens": 6,
+            # Reasoning-модели тратят токены на скрытое рассуждение — даём запас,
+            # иначе видимый контент пуст и вердикт теряется (кейс tencent/hy3).
+            "max_tokens": 400,
         },
         timeout=90.0,
     )
     resp.raise_for_status()
-    text = (resp.json().get("choices", [{}])[0].get("message", {}).get("content") or "").upper()
-    for status in ("VERIFIED", "HALLUCINATION", "NO_DATA"):
+    message = resp.json().get("choices", [{}])[0].get("message", {})
+    text = f"{message.get('content') or ''}\n{message.get('reasoning') or ''}".upper()
+    # HALLUCINATION проверяем первым: «NOT VERIFIED»/рассуждения могут содержать
+    # слово VERIFIED в отрицательном контексте — порядок важен.
+    for status in ("HALLUCINATION", "NO_DATA", "VERIFIED"):
         if status in text:
             return status
     return "UNKNOWN"
