@@ -102,6 +102,12 @@ chat_metrics = {
     "cache_miss": 0,
     "retrieval_good": 0,
     "retrieval_weak": 0,
+    # W3.3: учёт расходов облака (накопительно за аптайм proxy)
+    "cloud_requests": 0,
+    "cloud_prompt_tokens": 0,
+    "cloud_completion_tokens": 0,
+    "cloud_cost_usd": 0.0,
+    "cloud_cost_by_model": {},
 }
 
 metrics_cache = {

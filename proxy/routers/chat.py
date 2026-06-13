@@ -10,7 +10,7 @@ import time
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Iterable, List, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -20,6 +20,13 @@ from backend.rag_config import rag_meta_db_path
 from proxy.security import require_user
 from proxy.services.clarification_service import build_clarification_decision
 from backend.inference.validator import rules_pre_verdict
+from backend.inference.routing import (
+    decide_provider,
+    estimate_cost_usd,
+    is_cloud_provider,
+    load_price_table_from_env,
+    memory_aware_provider,
+)
 from proxy.services.cad_bim_highlight import extract_highlight, set_highlight
 from proxy.services.clause_lookup_service import maybe_answer_clause_lookup
 from proxy.services.context_expander_service import expand_context_windows
@@ -135,6 +142,13 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class LlmRuntime:
     provider: str
@@ -175,9 +189,53 @@ def _llm_runtime() -> LlmRuntime:
         api_key = os.getenv("LEMONADE_API_KEY", "lemonade").strip()
         return LlmRuntime(provider, base_url, _join_openai_path(base_url, "/chat/completions"), model, api_key, False)
 
+    return _mlx_runtime()
+
+
+def _mlx_runtime() -> LlmRuntime:
+    """Локальный MLX-провайдер — он же fallback политики маршрутизации (W3.3)."""
     base_url = os.getenv("MLX_URL", "http://127.0.0.1:8080").strip()
     model = os.getenv("LLM_MODEL", "qwen3:14b").strip()
     return LlmRuntime("mlx", base_url, _join_openai_path(base_url, "/chat/completions"), model, "", True)
+
+
+def _dataset_sensitivities(dataset_ids: Iterable[str]) -> list[str]:
+    """Уровни чувствительности (P0/P1/P2) задействованных датасетов из метабазы.
+
+    Fail-closed: БД/колонка недоступны или хоть один датасет не найден → P0
+    (приватно), чтобы политика W3.3 никогда не открыла облако по ошибке чтения.
+    """
+    ids = [str(d).strip() for d in dataset_ids if str(d).strip()]
+    if not ids:
+        return []
+    try:
+        with sqlite3.connect(rag_meta_db_path()) as conn:
+            placeholders = ",".join("?" for _ in ids)
+            rows = conn.execute(
+                f"SELECT sensitivity FROM datasets WHERE id IN ({placeholders})",
+                ids,
+            ).fetchall()
+        levels = [r[0] for r in rows]
+        if len(levels) < len(ids):  # неизвестный датасет → считаем приватным
+            levels.append("P0")
+        return levels or ["P0"]
+    except Exception as exc:  # noqa: BLE001 — любая ошибка чтения → приватно
+        logger.warning("[ROUTE] sensitivity read failed (%s) — fail-closed P0", exc)
+        return ["P0"]
+
+
+def _record_cloud_cost(state: "ChatRouterState", model: str, usage: dict[str, Any]) -> None:
+    """Учёт расходов облака (токены → $) в метриках. Локальные вызовы сюда не идут."""
+    prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+    completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+    cost = estimate_cost_usd(model, prompt_tokens, completion_tokens, load_price_table_from_env())
+    metrics = state.chat_metrics
+    metrics["cloud_requests"] = metrics.get("cloud_requests", 0) + 1
+    metrics["cloud_prompt_tokens"] = metrics.get("cloud_prompt_tokens", 0) + prompt_tokens
+    metrics["cloud_completion_tokens"] = metrics.get("cloud_completion_tokens", 0) + completion_tokens
+    metrics["cloud_cost_usd"] = round(metrics.get("cloud_cost_usd", 0.0) + cost, 6)
+    by_model = metrics.setdefault("cloud_cost_by_model", {})
+    by_model[model] = round(by_model.get(model, 0.0) + cost, 6)
 
 
 async def _validate_via_provider(client, llm_runtime, headers, *, question: str, answer: str, context: str) -> str:
@@ -1273,7 +1331,37 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
     retrieval_trace["validation_context_window"] = validation_context_windows.payload()
     t_ctx = time.time() - t_ctx_start
 
-    llm_runtime = _llm_runtime()
+    configured_runtime = _llm_runtime()
+    # W3.3 (ADR-9): гейт чувствительности. P0-данные физически не уходят в облако;
+    # P2 — только при явном LES_CLOUD_CONSENT; иначе принудительный fallback на MLX.
+    _source_ds = set(_dataset_ids_from_chunks(chunks)) | {str(d) for d in (_dataset_ids or [])}
+    _route = decide_provider(
+        configured_runtime.provider,
+        _dataset_sensitivities(_source_ds),
+        consent=_env_bool("LES_CLOUD_CONSENT", False),
+    )
+    if _route.downgraded:
+        logger.warning("[ROUTE] %s (датасеты: %s)", _route.reason, sorted(_source_ds))
+        llm_runtime = _mlx_runtime()
+    else:
+        # W3.3 memory-aware: локальный конкурент MLX за RAM (ollama/lemonade) на тесной
+        # памяти сводится к MLX (защита от swap — полевой вывод 2026-06-11).
+        _avail_gb = (state.metrics_cache or {}).get("ram_free_gb") if state.metrics_cache else None
+        _mem_provider, _mem_reason = memory_aware_provider(
+            configured_runtime.provider,
+            available_gb=_avail_gb,
+            threshold_gb=_env_float("LES_LOCAL_PROVIDER_MIN_FREE_GB", 6.0),
+        )
+        llm_runtime = _mlx_runtime() if _mem_reason else configured_runtime
+        if _mem_reason:
+            logger.warning("[ROUTE] %s", _mem_reason)
+    retrieval_trace["routing"] = {
+        "configured_provider": configured_runtime.provider,
+        "effective_provider": llm_runtime.provider,
+        "sensitivity": _route.sensitivity,
+        "downgraded": llm_runtime.provider != configured_runtime.provider,
+        "is_cloud": is_cloud_provider(llm_runtime.provider),
+    }
     llm_model = llm_runtime.model
     val_url = llm_runtime.base_url.rstrip("/")
     if not llm_model:
@@ -1372,20 +1460,41 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                     headers = {}
                     if llm_runtime.api_key:
                         headers["Authorization"] = f"Bearer {llm_runtime.api_key}"
+                    chat_body = {
+                        "messages": messages,
+                        "stream": False,
+                        "temperature": _env_float("CHAT_TEMPERATURE", 0.2),
+                        "max_tokens": 2048,
+                    }
                     t_llm_call = time.time()
-                    resp = await client.post(
-                        llm_runtime.chat_url,
-                        headers=headers,
-                        json={
-                            "model": llm_model,
-                            "messages": messages,
-                            "stream": False,
-                            "temperature": _env_float("CHAT_TEMPERATURE", 0.2),
-                            "max_tokens": 2048,
-                        },
-                    )
+                    try:
+                        resp = await client.post(
+                            llm_runtime.chat_url, headers=headers, json={**chat_body, "model": llm_model}
+                        )
+                        resp.raise_for_status()
+                    except (httpx.TransportError, httpx.TimeoutException) as net_err:
+                        # W3.3/ADR-9: облако недоступно → деградация на локальный MLX,
+                        # не отказ. HTTP-ошибки (raise_for_status) сюда НЕ попадают —
+                        # это «облако ответило ошибкой», другой случай (502 как раньше).
+                        if not is_cloud_provider(llm_runtime.provider):
+                            raise
+                        logger.warning(
+                            "[ROUTE] облако %s недоступно (%s) — fallback на локальный MLX",
+                            llm_runtime.provider, type(net_err).__name__,
+                        )
+                        llm_runtime = _mlx_runtime()
+                        llm_model = llm_runtime.model
+                        val_url = llm_runtime.base_url.rstrip("/")
+                        validate_via_llm = bool(use_validation and not llm_runtime.supports_validation)
+                        headers = {}
+                        retrieval_trace.setdefault("routing", {}).update(
+                            {"cloud_fallback": type(net_err).__name__, "effective_provider": "mlx", "is_cloud": False}
+                        )
+                        resp = await client.post(
+                            llm_runtime.chat_url, headers=headers, json={**chat_body, "model": llm_model}
+                        )
+                        resp.raise_for_status()
                     t_llm += time.time() - t_llm_call
-                    resp.raise_for_status()
                     rj = resp.json()
                     answer = rj.get("choices", [{}])[0].get("message", {}).get("content", "")
                     if not answer:
@@ -1393,7 +1502,11 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                             logger.warning("[CHAT] empty LLM answer on attempt=%s — retrying strict", attempt)
                             continue
                         raise ValueError(f"Пустой ответ LLM: {rj}")
-                    tokens = rj.get("usage", {}).get("completion_tokens", 0)
+                    usage = rj.get("usage", {}) or {}
+                    tokens = usage.get("completion_tokens", 0)
+                    # W3.3: учёт расходов облака (токены → $). Локальные вызовы не считаем.
+                    if is_cloud_provider(llm_runtime.provider):
+                        _record_cloud_cost(state, llm_model, usage)
                     logger.info(
                         "[CHAT] attempt=%s provider=%s model=%s tokens=%s",
                         attempt,

@@ -20,6 +20,7 @@ class DatasetInfo:
     status:      str
     doc_count:   int
     chunk_count: int
+    sensitivity: str = "P0"  # W3.3 (ADR-9): P0 local-only / P1 cloud-ok / P2 cloud-с-согласия
 
 
 class RAGBackend(ABC):

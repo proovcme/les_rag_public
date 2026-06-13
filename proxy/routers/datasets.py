@@ -767,6 +767,16 @@ async def create_dataset(name: str, _admin=Depends(require_admin)):
     return {"id": await state.backend.create_dataset(name), "name": name}
 
 
+@router.patch("/datasets/{dataset_id}/sensitivity")
+async def set_dataset_sensitivity(dataset_id: str, sensitivity: str, _admin=Depends(require_admin)):
+    """W3.3 (ADR-9): пометить чувствительность датасета — P0 local-only / P1 / P2."""
+    level = (sensitivity or "").strip().upper()
+    if level not in ("P0", "P1", "P2"):
+        raise HTTPException(400, "sensitivity must be P0, P1 or P2")
+    await get_dataset_state().backend.set_dataset_sensitivity(dataset_id, level)
+    return {"id": dataset_id, "sensitivity": level}
+
+
 @router.get("/graph/edges")
 async def graph_reference_edges(_user=Depends(require_user)):
     """W5.7-v2: рёбра «документ → документ» по упоминаниям номеров НТД (FTS, без LLM)."""

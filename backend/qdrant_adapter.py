@@ -489,6 +489,13 @@ class MetaDB:
                 conn.execute("ALTER TABLE datasets ADD COLUMN chunk_count INTEGER DEFAULT 0")
             except Exception:
                 pass
+            # W3.3 (ADR-9): чувствительность данных датасета для маршрутизации
+            # локал/облако. Дефолт P0 (local-only) — fail-closed: немаркированный
+            # датасет в облако не уходит, пока оператор явно не пометит P1/P2.
+            try:
+                conn.execute("ALTER TABLE datasets ADD COLUMN sensitivity TEXT DEFAULT 'P0'")
+            except Exception:
+                pass
 
     def create_dataset(self, name: str) -> str:
         ds_id = str(uuid.uuid4())
@@ -514,6 +521,7 @@ class MetaDB:
         with self._get_conn() as conn:
             rows = conn.execute("""
                 SELECT d.id, d.name, d.status, d.chunk_count,
+                       COALESCE(d.sensitivity, 'P0') AS sensitivity,
                        SUM(CASE WHEN doc.status='INDEXED' THEN 1 ELSE 0 END) as indexed_count
                 FROM datasets d
                 LEFT JOIN documents doc ON d.id = doc.dataset_id
@@ -524,9 +532,20 @@ class MetaDB:
                 id=r["id"], name=r["name"], status=r["status"],
                 doc_count=r["indexed_count"] or 0,
                 chunk_count=r["chunk_count"] or 0,
+                sensitivity=r["sensitivity"] or "P0",
             )
             for r in rows
         ]
+
+    def set_dataset_sensitivity(self, dataset_id: str, sensitivity: str) -> None:
+        """W3.3 (ADR-9): пометить чувствительность датасета (P0/P1/P2)."""
+        level = str(sensitivity or "").strip().upper()
+        if level not in ("P0", "P1", "P2"):
+            raise ValueError(f"sensitivity must be P0/P1/P2, got {sensitivity!r}")
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE datasets SET sensitivity=? WHERE id=?", (level, dataset_id)
+            )
 
     def add_document(
         self, dataset_id: str, file_name: str,
@@ -845,6 +864,9 @@ class QdrantLlamaIndexAdapter(RAGBackend):
 
     async def create_dataset(self, name: str) -> str:
         return self.db.create_dataset(name)
+
+    async def set_dataset_sensitivity(self, dataset_id: str, sensitivity: str) -> None:
+        self.db.set_dataset_sensitivity(dataset_id, sensitivity)
 
     async def upload_file(self, dataset_id: str, file_path: Path, relative_path: Optional[str] = None) -> str:
         dest_dir  = self.content_dir / dataset_id

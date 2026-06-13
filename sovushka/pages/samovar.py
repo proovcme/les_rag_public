@@ -13,6 +13,7 @@ from sovushka.state import (
     state,
     api_get,
     api_post,
+    api_patch,
     api_delete,
     add_log,
     refresh_proxy_logs,
@@ -136,6 +137,7 @@ def build_samovar():
             {"name": "errors",   "label": "Ошибки",   "field": "errors",   "align": "center", "sortable": True},
             {"name": "chunks",   "label": "Чанков",   "field": "chunks",   "align": "center", "sortable": True},
             {"name": "status",   "label": "Статус",   "field": "status",   "align": "left"},
+            {"name": "sensitivity", "label": "Данные", "field": "sensitivity", "align": "center"},
             {"name": "job_info", "label": "Job",      "field": "job_info", "align": "left"},
             {"name": "actions",  "label": "",          "field": "folder",   "align": "center"},
         ]
@@ -187,10 +189,23 @@ def build_samovar():
               <span v-if="!props.row.can_sync && !props.row.dataset_id" :title="props.row.sync_reason"
                     style="color:#94a3b8;font-size:.65rem;cursor:help;border-bottom:1px dotted #94a3b8;">нет синка</span>
             </q-td>""")
+        # W3.3 (ADR-9): чувствительность данных датасета — гейт локал/облако.
+        # P0 (зелёный) только локально; P1 (синий) можно в облако; P2 (жёлтый) — с согласия.
+        sam_grid.add_slot("body-cell-sensitivity", """
+            <q-td :props="props" auto-width>
+              <q-select v-if="props.row.dataset_id" dense borderless options-dense emit-value map-options
+                        v-model="props.row.sensitivity" :options="['P0','P1','P2']"
+                        @update:model-value="val => $parent.$emit('setsens', {dataset_id: props.row.dataset_id, folder: props.row.folder, level: val})"
+                        :style="{fontSize:'.64rem',fontWeight:'900',color: props.row.sensitivity==='P0' ? '#10b981' : props.row.sensitivity==='P2' ? '#f59e0b' : '#38bdf8'}"
+                        :title="props.row.sensitivity==='P0' ? 'P0 — только локально (почта, договоры, ПДн)' : props.row.sensitivity==='P1' ? 'P1 — можно в облако (нормативка)' : 'P2 — облако с согласия (проекты)'">
+              </q-select>
+              <span v-else style="color:#64748b;font-size:.6rem;cursor:help;" title="нет датасета — пометка появится после индексации">—</span>
+            </q-td>""")
         sam_grid.on("inspect", lambda e: asyncio.create_task(_open_index_dialog(e.args)))
         sam_grid.on("sync",  lambda e: asyncio.create_task(_sync_row(e.args)))
         sam_grid.on("reset", lambda e: asyncio.create_task(_reset_row(e.args)))
         sam_grid.on("parse", lambda e: asyncio.create_task(_parse_row(e.args)))
+        sam_grid.on("setsens", lambda e: asyncio.create_task(_set_sensitivity(e.args)))
 
         selected_index = {"row": {}}
         with ui.dialog() as index_dialog:
@@ -665,6 +680,22 @@ def build_samovar():
             doc_status_select.update()
             await refresh_documents_only()
 
+        async def _set_sensitivity(payload):
+            """W3.3 (ADR-9): пометить чувствительность датасета (гейт локал/облако)."""
+            if not isinstance(payload, dict):
+                return
+            ds_id = str(payload.get("dataset_id", "") or "")
+            level = str(payload.get("level", "") or "")
+            if not ds_id or level not in ("P0", "P1", "P2"):
+                return
+            res = await api_patch(f"/api/rag/datasets/{quote(ds_id, safe='')}/sensitivity?sensitivity={level}")
+            folder = payload.get("folder", "")
+            if res is not None:
+                ui.notify(f"✓ {folder}: данные → {level}", type="positive")
+                add_log(f"[ДАННЫЕ] {folder or ds_id} → чувствительность {level}")
+            else:
+                ui.notify(last_api_error_text("Не удалось изменить чувствительность"), type="negative")
+
         async def _sync_row(row):
             folder = row.get("folder", "") if isinstance(row, dict) else str(row)
             if not folder:
@@ -827,6 +858,7 @@ def build_samovar():
                     "errors":     errors,
                     "chunks":     chunks,
                     "status":     status,
+                    "sensitivity": (ds_map.get(src.get("dataset_id", "")) or {}).get("sensitivity", "P0"),
                     "job_info":   job_info,
                     "can_sync":    not parse_blocked,
                     "sync_reason": "парсинг сейчас заблокирован (идёт другая задача)" if parse_blocked else "",
@@ -855,6 +887,7 @@ def build_samovar():
                     "errors":     errors,
                     "chunks":     chunks,
                     "status":     ds.get("status", ""),
+                    "sensitivity": ds.get("sensitivity", "P0"),
                     "job_info":   "",
                     "can_sync":    False,
                     "sync_reason": "нет папки-источника в RAG_Content — датасет наполняется загрузкой файлов",

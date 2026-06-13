@@ -49,7 +49,7 @@ Proxy       :8050  (FastAPI)  ── /api/chat, /api/datasets, /api/runtime, /ap
 - **Конвертация:** `converter.py` (MarkItDown: pdf/docx/xlsx/email), `document_router.py`, `ocr_parser.py` (MLX VLM OCR), `parquet_writer.py` (таблицы→Parquet).
 - **Почта (Е.Ж.И.К.):** `mail_ingest.py` (IMAP/Apple Mail), `mail_threads.py`, `mail_profile.py`, `mail_emlx.py`, `pst_reader.py`.
 - **Прочее:** `smart_index.py` (план индексации), `metrics_collector.py`, `diagnostics.py`, `rules_extractor.py`, `auth.py`/`auth_login_route.py` (В.О.Л.К.).
-- **`backend/inference/` (W3.1/W2.4):** `providers.py` (протоколы ChatProvider/EmbedProvider/ValidatorProvider/RerankProvider/OCRProvider), `validator.py` (общий rules-валидатор, каскад rules→LLM), `bm25_sparse.py` (BM25/IDF sparse для гибрида, W2.4), `sparse_embed.py` (BGE-M3 learned-sparse — задел, не в активном пути).
+- **`backend/inference/` (W3.1/W2.4/W3.3):** `providers.py` (протоколы ChatProvider/EmbedProvider/ValidatorProvider/RerankProvider/OCRProvider), `validator.py` (общий rules-валидатор, каскад rules→LLM), `bm25_sparse.py` (BM25/IDF sparse для гибрида, W2.4), `sparse_embed.py` (BGE-M3 learned-sparse — задел, не в активном пути), `routing.py` (W3.3: политика локал/облако по чувствительности P0/P1/P2 — `decide_provider`/`memory_aware_provider`/`estimate_cost_usd`, pure-функции; гейт в `chat.py` — P0 не уходит в облако).
 
 ### `sovushka/` — UI (NiceGUI) + статика
 - Ядро: `config.py`, `state.py`, `auth.py`, `trust.py` (доверенные сети), `safe_markup.py` (санитайз SVG), `styles.py`.

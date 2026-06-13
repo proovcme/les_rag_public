@@ -587,6 +587,14 @@ async def get_metrics():
         "heartbeats": heartbeats,
         "rag": rag_stats,
         "embedding": rag_runtime_config(),
+        # W3.3: расходы облака накопительно за аптайм proxy (токены/$).
+        "cost": {
+            "cloud_requests": state.chat_metrics.get("cloud_requests", 0),
+            "cloud_prompt_tokens": state.chat_metrics.get("cloud_prompt_tokens", 0),
+            "cloud_completion_tokens": state.chat_metrics.get("cloud_completion_tokens", 0),
+            "cloud_cost_usd": round(state.chat_metrics.get("cloud_cost_usd", 0.0), 4),
+            "cloud_cost_by_model": dict(state.chat_metrics.get("cloud_cost_by_model", {})),
+        },
     }
 
 
