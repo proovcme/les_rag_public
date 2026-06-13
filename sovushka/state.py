@@ -118,6 +118,21 @@ async def api_post(path: str, data: Optional[dict] = None, base: Optional[str] =
         return None
 
 
+async def api_patch(path: str, data: Optional[dict] = None, base: Optional[str] = None) -> Optional[dict]:
+    from sovushka.config import PROXY_URL
+    if base is None:
+        base = PROXY_URL
+    try:
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            r = await client.patch(f"{base}{path}", json=data or {}, headers=_auth_headers())
+            r.raise_for_status()
+            state["last_api_error"] = None
+            return r.json()
+    except Exception as e:
+        _api_error("PATCH", path, e)
+        return None
+
+
 async def api_delete(path: str, base: Optional[str] = None) -> Optional[dict]:
     from sovushka.config import PROXY_URL
     if base is None:

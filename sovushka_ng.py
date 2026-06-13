@@ -169,6 +169,7 @@ async def classic_admin_page(request: Request):
     from sovushka.pages.prorab import build_prorab
     from sovushka.pages.samovar import build_samovar
     from sovushka.pages.volk import build_volk
+    from sovushka.pages.zadachi import build_zadachi
 
     allowed, role, holder, is_admin = _resolve_auth(request)
     if not allowed:
@@ -198,6 +199,7 @@ async def classic_admin_page(request: Request):
         tab_samovar  = tr.get("samovar")
         tab_prorab   = tr.get("prorab")
         tab_qdrant_viz = tr.get("qdrant_viz")
+        tab_zadachi  = tr.get("zadachi")
         tab_diag     = tr.get("diag")
         tab_volk     = tr.get("volk")
 
@@ -224,6 +226,8 @@ async def classic_admin_page(request: Request):
                 build_prorab()
             with ui.tab_panel(tab_qdrant_viz):
                 _build_qdrant_visualizer_panel(visualizer_url)
+            with ui.tab_panel(tab_zadachi):
+                build_zadachi()
             with ui.tab_panel(tab_diag):
                 build_diag()
             with ui.tab_panel(tab_volk):
@@ -239,6 +243,7 @@ async def classic_admin_page(request: Request):
         "С.А.М.О.В.А.Р.": tab_samovar,
         "П.Р.О.Р.А.Б.":   tab_prorab,
         "КВАДРАНТ":        tab_qdrant_viz,
+        "ЗАДАЧИ":          tab_zadachi,
         "Д.И.А.Г.Н.О.З.": tab_diag,
         "🔬 ДИАГН":        tab_diag,
         "В.О.Л.К.":       tab_volk,

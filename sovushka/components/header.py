@@ -58,6 +58,7 @@ def build_header(
                 tab_refs["history"]  = ui.tab("ИСТОРИЯ",        icon="o_history")
             if show_admin_tabs:
                 tab_refs["qdrant_viz"] = ui.tab("КВАДРАНТ",      icon="o_scatter_plot")
+                tab_refs["zadachi"]  = ui.tab("ЗАДАЧИ",         icon="o_checklist")
                 tab_refs["diag"]     = ui.tab("Д.И.А.Г.Н.О.З.", icon="o_health_and_safety")
                 tab_refs["volk"]     = ui.tab("В.О.Л.К.",       icon="o_vpn_key")
 
