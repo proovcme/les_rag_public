@@ -866,16 +866,21 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             if d:
                 completed = True
                 _apply_chat_result(d)
-            elif stream_state["error"]:
+            elif stream_state["got_token"]:
+                # Токены пришли, но финал потерян (обрыв середины стрима) —
+                # не перегенерируем (дорого), показываем честную ошибку.
                 completed = True
-                err = stream_state["error"]
-                message = f"{err.get('status', '')}: {err.get('detail', 'Ошибка запроса')}".strip(": ")
+                err = stream_state["error"] or {}
+                message = (
+                    f"{err.get('status', '')}: {err.get('detail', '')}".strip(": ")
+                    or last_api_error_text("Соединение прервано — ответ получен не полностью")
+                )
                 if err.get("status") == 409:
                     await _refresh_resource_gate()
                 _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, message, error=True)
                 _render_artifact_error(message)
-            elif not stream_state["got_token"]:
-                # Стрим не стартовал (эндпоинт недоступен/обрыв до первого токена) —
+            else:
+                # Ни одного токена (стрим-эндпоинт недоступен/ошибка до первого токена) —
                 # безопасный откат на нестриминговый /api/chat.
                 d = await api_post("/api/chat", payload)
                 completed = True
@@ -883,17 +888,14 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     _apply_chat_result(d)
                 else:
                     err = state.get("last_api_error") or {}
-                    message = last_api_error_text("Ошибка запроса")
-                    if err.get("status_code") == 409:
+                    serr = stream_state["error"] or {}
+                    message = last_api_error_text(
+                        serr.get("detail") or "Ошибка запроса"
+                    )
+                    if err.get("status_code") == 409 or serr.get("status") == 409:
                         await _refresh_resource_gate()
                     _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, message, error=True)
                     _render_artifact_error(message)
-            else:
-                # Токены пришли, но финал потерян (обрыв середины стрима).
-                completed = True
-                message = last_api_error_text("Соединение прервано — ответ получен не полностью")
-                _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, message, error=True)
-                _render_artifact_error(message)
         except Exception as ex:
             completed = True
             _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, f"Ошибка: {ex}", error=True)

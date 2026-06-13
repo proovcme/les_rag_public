@@ -1476,8 +1476,11 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     мере генерации), иначе — обычный POST (поведение неизменно).
                     Возвращает (answer_text, usage_dict)."""
                     if token_sink is not None:
-                        sbody = {**body, "model": model, "stream": True,
-                                 "stream_options": {"include_usage": True}}
+                        sbody = {**body, "model": model, "stream": True}
+                        # include_usage нужен только облаку (учёт $); MLX/локальные —
+                        # не шлём, чтобы не рисковать 400 на незнакомом поле.
+                        if is_cloud_provider(runtime.provider):
+                            sbody["stream_options"] = {"include_usage": True}
                         acc: list[str] = []
                         usage_d: dict = {}
                         async with client.stream("POST", runtime.chat_url, headers=hdrs, json=sbody) as sresp:
