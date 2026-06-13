@@ -147,6 +147,7 @@ curl -X POST http://127.0.0.1:8050/api/chat \
 
 | Метод | Путь | Назначение |
 |---|---|---|
+| `GET` | `/api/diff/cad-bim/imports` | Список импортов модели (id/source/created_at) для выбора ревизий в UI |
 | `GET` | `/api/diff/cad-bim?import_a=..&import_b=..` | Дифф двух CAD/BIM-импортов: добавлено/удалено/изменено по `source_id` (поля + свойства) |
 | `POST` | `/api/diff/text` | Структурный дифф двух текстов: `{text_a, text_b, label_a?, label_b?}` — сопоставление по пунктам ГОСТ/СП + difflib |
 

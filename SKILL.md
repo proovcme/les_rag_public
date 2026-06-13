@@ -103,6 +103,8 @@ launchctl kickstart -k gui/$(id -u)/com.les.sovushka
 
 If external `les.ovc.me` returns 502 while local services are healthy, check or restart P.A.U.K. reverse tunnel with the project runbook in `dev/TUNNELS_AND_REMOTE_ACCESS.md`.
 
+**GUI-first:** ВОР, нормоконтроль и дифф доступны из админки → вкладка **ИНСТРУМЕНТЫ** (выбор датасета/импортов, кнопки, скачивание xlsx прямо в браузер). CLI-формы ниже — для скриптов/диагностики.
+
 Generate a bill of quantities (ВОР) from indexed specifications (deterministic, no LLM; needs proxy restart after first deploy):
 
 ```bash

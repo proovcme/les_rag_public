@@ -52,7 +52,7 @@ Proxy       :8050  (FastAPI)  ── /api/chat, /api/datasets, /api/runtime, /ap
 
 ### `sovushka/` — UI (NiceGUI) + статика
 - Ядро: `config.py`, `state.py`, `auth.py`, `trust.py` (доверенные сети), `safe_markup.py` (санитайз SVG), `styles.py`.
-- **pages/**: `overview` (ОБЗОР), `samovar` (С.А.М.О.В.А.Р. — датасеты), `prorab, zadachi (задачник+заметки, W16)` (П.Р.О.Р.А.Б. — метрики), `chat` (AI ЧАТ), `history`, `volk` (auth), `diag`. **components/**: `header`, `charts`, `logterm`.
+- **pages/**: `overview` (ОБЗОР), `samovar` (С.А.М.О.В.А.Р. — датасеты), `prorab, zadachi (задачник+заметки, W16), instrumenty (ВОР/нормоконтроль/дифф в GUI, W11.2)` (П.Р.О.Р.А.Б. — метрики), `chat` (AI ЧАТ), `history`, `volk` (auth), `diag`. **components/**: `header`, `charts`, `logterm`.
 - Лёгкие шеллы: `lite_chat.py` (`/`, мост `/lite-api/*`→proxy), `lite_admin.py` (`/les`, рестарты сервисов), `m5_display.py` (экран Wokyis M5).
 - Статика: [frontend/](../frontend/) (legacy `sovushka.html`; `cad_bim_viewer/` — TS+Vite+three.js+web-ifc), [qdrant_visualizer/](../qdrant_visualizer/) (three.js + клиентский PCA), `static/fonts/`.
 
