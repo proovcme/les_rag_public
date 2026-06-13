@@ -18,7 +18,6 @@ Current production posture:
 - MLX Host: `http://127.0.0.1:8080`
 - Qdrant: `http://127.0.0.1:6333`
 - External: `https://les.ovc.me` through P.A.U.K. reverse SSH tunnel and V.O.L.K. API keys; on 2026-06-01 external smoke passes `12/12`.
-- Speckle BIM/CAD bridge: `https://speckle.ovc.me`, GraphQL `https://speckle.ovc.me/graphql`, managed by `/api/settings` and `/api/speckle/status`; live after token setup on 2026-06-02 is `status=ok`, `http_status=200`, `api_token_set=true`; `502/503/504` means `sleeping`, not LES failure.
 - ZeroTier trusted GUI/API access: `TRUSTED_NETWORKS=127.0.0.0/8,::1/128,10.195.146.0/24`, `TRUSTED_NETWORK_ROLE=admin`. Trusted clients should open `/classic`, `/les/classic` and `/lite-api/*` without a key; stale browser keys fallback to `trusted-network`, while public clients still receive `401`.
 
 ## First Checks
@@ -44,7 +43,7 @@ Live baseline on 2026-06-01:
 - Visual OCR: MLX-native `mlx-community/GLM-OCR-4bit` (via `mlx-vlm`, lazy-loaded with explicit Metal cache clearing after processing).
 - Office Ingestion: Microsoft MarkItDown with graceful fallbacks to mammoth/pandas.
 - Structured Rules: Google LangExtract schema extraction to SQLite `structured_rules` table with exact character offsets; active table is expected to be empty until targeted `NORMATIVE`/`SPEC` reindex populates it.
-- Speckle bridge is configured for DWG/RVT/IFC and Excel/Power BI handoff. LES admits `.dwg`, `.rvt`, `.ifc`, `.ifczip` at upload boundary, but full BIM/CAD conversion remains in Speckle/connectors. `/api/speckle/import` supports source profiles `AUTO`, `AutoCAD/DWG`, `Revit/RVT`, `IFC`, `Excel/Power BI`, `Generic`, builds `data/cad_bim_graph.db`, stores properties in `cad_bim_properties`, and writes markdown projections under `RAG_Content/CAD_BIM/exports/`; Lite Admin `SYNC CAD/BIM` registers those projections in `CAD_BIM_Index`. Current imported model: Speckle project `36`, model `шпалерная 36_отсоединено_oleg`, import `432aa0b18f2a`, `956` graph elements, `955` relations, `44` properties, `957` indexed chunks.
+- CAD/BIM импорт — из локального JSON/JSONL (внешний Speckle-коннектор удалён 2026-06-14). `POST /api/cad-bim/import` принимает inline payload или `source_path` из `RAG_Content/CAD_BIM/JSON`, профили `AUTO/AutoCAD(DWG)/Revit(RVT)/IFC/Excel/Generic`, строит `data/cad_bim_graph.db` (свойства в `cad_bim_properties`) и markdown-проекции в `RAG_Content/CAD_BIM/exports/`; они индексируются в `CAD_BIM_Index`. Вьювер АТЛАС (`/les/cad-bim-viewer`, W5.7), граф и подсветка в чате (`/api/cad-bim/highlight`, W6.7) — работают поверх этого. `.dwg/.rvt/.ifc` конвертируются внешними коннекторами в JSON до импорта.
 
 ## Guardrails
 
@@ -132,7 +131,7 @@ uv run python tools/pdf_preprocess.py RAG_Content/<folder>/             # вып
 
 Switch the chat LLM (provider/model) — **no restart needed**, applies per-request:
 
-- GUI: `http://127.0.0.1:8051/les/classic` → шапка **⚙** (диалог настроек) → **LLM Provider** → выбрать mlx / ollama / openrouter / openai, указать модель → **💾 Сохранить**. Строка «СЕЙЧАС ОТВЕЧАЕТ» показывает активный провайдер/модель; валидация Т.О.С.К.А. работает только на MLX, остальные дают UNVALIDATED. (Там же — Mail/IMAP и CAD/BIM JSON (Speckle).)
+- GUI: `http://127.0.0.1:8051/les/classic` → шапка **⚙** (диалог настроек) → **LLM Provider** → выбрать mlx / ollama / openrouter / openai, указать модель → **💾 Сохранить**. Строка «СЕЙЧАС ОТВЕЧАЕТ» показывает активный провайдер/модель; валидация Т.О.С.К.А. работает только на MLX, остальные дают UNVALIDATED. (Там же — Mail/IMAP.)
 - CLI: `curl -X POST http://127.0.0.1:8050/api/settings -H 'Content-Type: application/json' -d '{"llm_provider":"ollama","ollama_model":"gemma4:12b"}'` (персистится в .env runtime-клона). Вернуться: `-d '{"llm_provider":"mlx"}'`.
 - Local models live in Ollama (`ollama list`); Gemma 4 12B = `gemma4:12b`. Cloud = openrouter/openai + API key (поля в той же панели).
 

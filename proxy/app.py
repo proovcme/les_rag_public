@@ -54,7 +54,7 @@ def _select_reranker_cls():
 
 from proxy.routers.runtime import RuntimeRouterState, router as runtime_router, set_runtime_state
 from proxy.routers.settings import router as settings_router
-from proxy.routers.speckle import cad_bim_router, router as speckle_router
+from proxy.routers.speckle import cad_bim_router
 from proxy.routers.status_page import StatusPageState, router as status_page_router, set_status_page_state
 from proxy.services.job_service import JobService
 from proxy.services.resource_governor import CHAT_MODE, PROFILE_CHAT
@@ -324,7 +324,6 @@ def create_app():
     fastapi_app.include_router(field_router)
     fastapi_app.include_router(normcontrol_router)
     fastapi_app.include_router(settings_router)
-    fastapi_app.include_router(speckle_router)
     fastapi_app.include_router(cad_bim_router)
     fastapi_app.include_router(chat_history_router)
     fastapi_app.include_router(datasets_router)

@@ -127,11 +127,10 @@ curl -X POST http://127.0.0.1:8050/api/chat \
 |---|---|---|
 | `POST` | `/api/cad-bim/import` | Импорт canonical `cad_bim_graph.json` |
 | `GET` | `/api/cad-bim/source` | Источник для АТЛАС viewer |
-| `GET` | `/api/speckle/status` | Speckle bridge status |
-| `GET` | `/api/speckle/graph/summary` | Сводка Speckle graph |
-| `POST` | `/api/speckle/import` | Legacy Speckle object graph import |
+| `GET` | `/api/cad-bim/graph/summary` | Сводка CAD/BIM graph |
+| `GET`/`POST` | `/api/cad-bim/highlight` | Последняя подсветка элементов (W6.7) |
 
-Предпочтительный CAD/BIM путь: exporter -> JSON graph -> `/api/cad-bim/import` -> `SYNC CAD/BIM` в Lite Admin.
+Внешний Speckle-коннектор (`/api/speckle/*`) удалён 2026-06-14. Путь CAD/BIM: exporter -> JSON graph -> `/api/cad-bim/import` -> `SYNC CAD/BIM` в САМОВАРе.
 
 ## ВОР (ведомости объёмов работ)
 
@@ -212,6 +211,6 @@ curl -X POST http://127.0.0.1:8050/api/chat \
 | Метод | Путь | Назначение |
 |---|---|---|
 | `GET` | `/api/settings` | Runtime/provider settings без секретов |
-| `POST` | `/api/settings` | Обновить provider/Speckle settings |
+| `POST` | `/api/settings` | Обновить provider/mail settings |
 
 `GET /api/settings` не должен раскрывать реальные API keys. Секреты задаются через `.env` или write-only settings payload.
