@@ -84,6 +84,67 @@ def build_instrumenty():
                 bor_tbl.rows = prev.get("lines", [])
                 bor_tbl.update()
 
+        # ───────────────────── ПЛАН/ФАКТ (W11.2) ─────────────────────
+        with ui.card().classes("card-les w-full"):
+            ui.label("ПЛАН/ФАКТ — ВОР ↔ ЖУРНАЛ ПОЛЕВЫХ ОБЪЁМОВ").classes("section-title")
+            with ui.row().classes("w-full gap-2 items-center"):
+                pf_ds = ui.select(options={}, label="Датасет со спецификациями (план)").props(
+                    "dense outlined"
+                ).classes("flex-1")
+                pf_zah = ui.input(label="Захватка (необяз.)").props("dense outlined").style("max-width:170px;")
+                ui.button("СФОРМИРОВАТЬ", on_click=lambda: asyncio.create_task(_pf_generate())).props("dense no-caps")
+                ui.button("СКАЧАТЬ XLSX", on_click=lambda: asyncio.create_task(
+                    _download(f"/api/bor/{pf_ds.value}/plan-fact/download")
+                )).props("dense flat no-caps")
+            pf_summary = ui.label("План — из ВОР (спецификации), факт — confirmed-записи журнала ОБЪЁМЫ. Числа: SQL/Parquet, 0 LLM.").style(
+                "font-size:.7rem;color:var(--dim);"
+            )
+            pf_tbl = ui.table(
+                columns=[
+                    {"name": "name", "label": "Наименование", "field": "name", "align": "left"},
+                    {"name": "unit", "label": "Ед.", "field": "unit", "align": "center"},
+                    {"name": "plan_qty", "label": "План", "field": "plan_qty", "align": "right"},
+                    {"name": "fact_qty", "label": "Факт", "field": "fact_qty", "align": "right"},
+                    {"name": "remaining", "label": "Остаток", "field": "remaining", "align": "right"},
+                    {"name": "done_pct", "label": "Готово,%", "field": "done_pct", "align": "right"},
+                    {"name": "status", "label": "Статус", "field": "status", "align": "center"},
+                ],
+                rows=[], row_key="name",
+            ).classes("w-full").style("font-size:.72rem;")
+            pf_tbl.add_slot("body-cell-status", """
+                <q-td :props="props">
+                  <span :style="{fontWeight:'800', color:
+                    props.value==='over' ? '#ef4444' :
+                    props.value==='matched' ? '#10b981' :
+                    props.value==='plan_only' ? '#f59e0b' : '#38bdf8'}">
+                    {{ {over:'перевыполн.', matched:'в работе', plan_only:'не начато', fact_only:'вне плана'}[props.value] || props.value }}
+                  </span>
+                </q-td>""")
+
+            async def _pf_generate():
+                if not pf_ds.value:
+                    ui.notify("Выбери датасет", type="warning")
+                    return
+                add_log(f"[ПЛАН/ФАКТ] generate {pf_ds.value}")
+                zah = (pf_zah.value or "").strip()
+                zq = f"?zahvatka={zah}" if zah else ""
+                d = await api_post(f"/api/bor/{pf_ds.value}/plan-fact/generate{zq}")
+                if not d:
+                    ui.notify(last_api_error_text("План/факт: нет данных (нужны ВОР и журнал)"), type="negative")
+                    return
+                t = d.get("totals", {})
+                pf_summary.text = (
+                    f"Строк: {t.get('lines',0)} · в работе {t.get('matched',0)} · "
+                    f"перевыполн. {t.get('over',0)} · не начато {t.get('plan_only',0)} · "
+                    f"вне плана {t.get('fact_only',0)}"
+                )
+                prev = await api_get(
+                    f"/api/bor/{pf_ds.value}/plan-fact?limit=300" + (f"&zahvatka={zah}" if zah else "")
+                ) or {}
+                pf_tbl.rows = prev.get("rows", [])
+                pf_tbl.update()
+                ui.notify(pf_summary.text, type="positive")
+
         # ───────────────────────── НОРМОКОНТРОЛЬ ─────────────────────────
         with ui.card().classes("card-les w-full"):
             ui.label("ФОРМАЛЬНЫЙ НОРМОКОНТРОЛЬ (NK-01…NK-04, ГОСТ)").classes("section-title")
@@ -191,8 +252,10 @@ def build_instrumenty():
             opts = _ds_options(ds_list)
             bor_ds.options = opts
             nc_ds.options = opts
+            pf_ds.options = opts
             bor_ds.update()
             nc_ds.update()
+            pf_ds.update()
             imports = (await api_get("/api/diff/cad-bim/imports") or {}).get("imports", [])
             imp_opts = {
                 i["id"]: f"{i.get('source','?')} · {i.get('element_count',0)}эл · {str(i.get('created_at',''))[:16]}"
