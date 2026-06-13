@@ -330,6 +330,101 @@ def build_samovar():
                 "border-color:var(--accent);color:var(--accent);font-size:.7rem;"
             )
 
+        # ── Карта архива → выборочная индексация (W15.1/W15.2) ──
+        with ui.card().classes("card-les w-full"):
+            with ui.row().classes("items-center justify-between w-full"):
+                ui.label("КАРТА АРХИВА // ИНДЕКСАЦИЯ ИЗ ФАЙЛОПОМОЙКИ").classes("section-title")
+                map_stats_label = ui.label("—").style("font-size:.65rem;color:var(--dim);")
+
+            with ui.row().classes("gap-2 w-full items-center"):
+                scan_path_input = ui.input(
+                    placeholder="/путь/к/архиву для сканирования"
+                ).props("dense outlined").classes("flex-1").style(
+                    "background:var(--bg);font-size:.75rem;"
+                )
+
+                async def do_scan():
+                    path = (scan_path_input.value or "").strip()
+                    if not path:
+                        ui.notify("Укажи путь к архиву", type="warning")
+                        return
+                    add_log(f"[FILEMAP] scan {path}")
+                    d = await api_post("/api/filemap/scan", {"path": path})
+                    if d:
+                        ui.notify(
+                            f"Скан: {d.get('files',0)} файлов, {d.get('total_gb',0)} ГБ "
+                            f"(+{d.get('added',0)}/~{d.get('updated',0)}/-{d.get('removed',0)}) "
+                            f"за {d.get('elapsed_sec',0)}с",
+                            type="positive",
+                        )
+                        await refresh_map()
+                    else:
+                        ui.notify(last_api_error_text("Ошибка скана"), type="negative")
+
+                ui.button("СКАНИРОВАТЬ", on_click=do_scan).props("no-caps outline").style(
+                    "border-color:var(--accent);color:var(--accent);font-size:.7rem;"
+                )
+
+            ui.label("Папки-кандидаты (где найдены шифры НТД/комплектов):").style(
+                "font-size:.65rem;color:var(--dim);margin-top:6px;"
+            )
+            candidates_box = ui.column().classes("w-full gap-1")
+
+            async def index_selection(*, dataset_name, root="", path_prefix="", cipher="", ext="", parse=True):
+                if not dataset_name:
+                    ui.notify("Укажи имя датасета", type="warning")
+                    return
+                add_log(f"[FILEMAP] index → {dataset_name}")
+                d = await api_post("/api/filemap/index", {
+                    "dataset_name": dataset_name, "root": root, "path_prefix": path_prefix,
+                    "cipher": cipher, "ext": ext, "parse": parse,
+                })
+                if d and d.get("status") == "indexed":
+                    ui.notify(
+                        f"«{d['dataset_name']}»: +{d['registered']} файлов "
+                        f"(из {d['selected']}){' · парсинг запущен' if d.get('parse_started') else ''}",
+                        type="positive",
+                    )
+                    await refresh_and_render()
+                elif d and d.get("status") == "nothing_supported":
+                    ui.notify(f"Нет поддерживаемых файлов (отклонено: {d.get('rejected')})", type="warning")
+                else:
+                    ui.notify(last_api_error_text("Ошибка индексации"), type="negative")
+
+            async def refresh_map():
+                stats = await api_get("/api/filemap/stats") or {}
+                roots = stats.get("roots", [])
+                if roots:
+                    total = sum(r.get("file_count", 0) for r in roots)
+                    map_stats_label.text = (
+                        f"{len(roots)} корн., {total} файлов, шифров: {stats.get('files_with_cipher', 0)}"
+                    )
+                else:
+                    map_stats_label.text = "карта пуста — отсканируй архив"
+                cands = (await api_get("/api/filemap/candidates?limit=25") or {}).get("candidates", [])
+                candidates_box.clear()
+                with candidates_box:
+                    if not cands:
+                        ui.label("кандидатов нет").style("font-size:.7rem;color:var(--dim);")
+                    for c in cands:
+                        folder = c.get("folder") or "(корень)"
+                        ciphers = ", ".join(c.get("ciphers", [])[:4])
+                        ds_default = (folder.rsplit("/", 1)[-1] or "Archive") + "_Index"
+                        with ui.row().classes("w-full items-center gap-2").style(
+                            "border-bottom:1px dashed var(--dim);padding:2px 0;"
+                        ):
+                            ui.label(f"{folder}").classes("flex-1").style("font-size:.72rem;").tooltip(c.get("root", ""))
+                            ui.label(f"{c['ciphered']}/{c['files']} · {ciphers}").style(
+                                "font-size:.62rem;color:var(--dim);"
+                            )
+                            ui.button(
+                                "ИНДЕКС",
+                                on_click=lambda c=c, ds=ds_default: asyncio.create_task(
+                                    index_selection(dataset_name=ds, root=c.get("root", ""),
+                                                    path_prefix=c.get("folder", ""))
+                                ),
+                            ).props("dense flat no-caps").style("color:var(--accent);font-size:.65rem;")
+
         # Live proxy log
         with ui.card().classes("card-les w-full"):
             with ui.row().classes("items-center justify-between w-full"):
@@ -885,5 +980,6 @@ def build_samovar():
         # Загружаем при входе без одноразового timer, чтобы обновление не
         # прилетало в уже удалённый slot при быстрой навигации.
         asyncio.create_task(refresh_and_render())
+        asyncio.create_task(refresh_map())
         live_logs_timer = ui.timer(3.0, lambda: asyncio.create_task(refresh_live_logs()))
         context.client.on_disconnect(lambda *_: live_logs_timer.cancel())

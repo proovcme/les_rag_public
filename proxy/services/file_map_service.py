@@ -195,6 +195,98 @@ def search_map(
     return [dict(row) for row in rows]
 
 
+def resolve_selection(
+    *,
+    root: str = "",
+    rel_paths: list[str] | None = None,
+    path_prefix: str = "",
+    q: str = "",
+    ext: str = "",
+    cipher: str = "",
+    limit: int = 5000,
+    db_path: Path = FILE_MAP_DB,
+) -> list[dict[str, Any]]:
+    """Из карты → конкретные абсолютные пути для индексации (W15.2).
+
+    Два режима: явный список `rel_paths` (в пределах `root`) или фильтр
+    (`path_prefix`/`q`/`ext`/`cipher`). Контент не читаем — только метаданные.
+    """
+    where, params = ["1=1"], []
+    if root:
+        where.append("r.path = ?")
+        params.append(root)
+    if rel_paths:
+        where.append(f"f.rel_path IN ({','.join('?' * len(rel_paths))})")
+        params += list(rel_paths)
+    if path_prefix:
+        where.append("f.rel_path LIKE ?")
+        params.append(f"{path_prefix.rstrip('/')}/%" if path_prefix not in ("", "/") else "%")
+    if q:
+        where.append("(f.name LIKE ? OR f.rel_path LIKE ? OR f.cipher LIKE ?)")
+        like = f"%{q}%"
+        params += [like, like, like]
+    if ext:
+        where.append("f.ext = ?")
+        params.append(ext.lower().lstrip("."))
+    if cipher:
+        where.append("f.cipher LIKE ?")
+        params.append(f"%{cipher}%")
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT r.path AS root, f.rel_path, f.name, f.size, f.cipher
+            FROM file_map f JOIN scan_roots r ON r.id = f.root_id
+            WHERE {' AND '.join(where)}
+            ORDER BY f.rel_path LIMIT ?
+            """,
+            (*params, min(limit, 20000)),
+        ).fetchall()
+    out = []
+    for row in rows:
+        out.append({
+            "abs_path": str(Path(row["root"]) / row["rel_path"]),
+            "root": row["root"],
+            "rel_path": row["rel_path"],
+            "name": row["name"],
+            "size": row["size"],
+            "cipher": row["cipher"],
+        })
+    return out
+
+
+def suggest_index_candidates(limit: int = 40, db_path: Path = FILE_MAP_DB) -> list[dict[str, Any]]:
+    """Папки-кандидаты на индексацию: где лежат файлы с распознанными шифрами НТД/комплектов.
+
+    Группируем по каталогу (родитель rel_path), считаем все файлы и из них —
+    шифрованные. Сортируем по числу шифров: где их больше, там вероятнее НТД.
+    """
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT r.path AS root, f.root_id, f.rel_path, f.cipher
+            FROM file_map f JOIN scan_roots r ON r.id = f.root_id
+            """
+        ).fetchall()
+    folders: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        rel = row["rel_path"]
+        parent = rel.rsplit("/", 1)[0] if "/" in rel else ""
+        key = (row["root"], parent)
+        agg = folders.setdefault(key, {"root": row["root"], "folder": parent, "files": 0, "ciphered": 0, "ciphers": set()})
+        agg["files"] += 1
+        if row["cipher"]:
+            agg["ciphered"] += 1
+            if len(agg["ciphers"]) < 6:
+                agg["ciphers"].add(row["cipher"])
+    out = [
+        {**agg, "ciphers": sorted(agg["ciphers"])}
+        for agg in folders.values()
+        if agg["ciphered"] > 0
+    ]
+    out.sort(key=lambda a: (-a["ciphered"], -a["files"]))
+    return out[:limit]
+
+
 def map_stats(db_path: Path = FILE_MAP_DB) -> dict[str, Any]:
     with _connect(db_path) as conn:
         roots = [dict(row) for row in conn.execute("SELECT * FROM scan_roots ORDER BY path")]

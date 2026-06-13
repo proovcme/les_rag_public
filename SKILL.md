@@ -145,7 +145,10 @@ Map an existing file archive without indexing it (metadata only, no LLM; then in
 
 ```bash
 curl -fsS -X POST http://127.0.0.1:8050/api/filemap/scan -H 'Content-Type: application/json' -d '{"path":"/Volumes/Archive"}' | python3 -m json.tool
-# поиск: GET /api/filemap/search?q=СП+60 · обзор: GET /api/filemap/stats
+# поиск: GET /api/filemap/search?q=СП+60 · обзор: GET /api/filemap/stats · кандидаты: GET /api/filemap/candidates
+# проиндексировать ветку из карты (без копирования файлов вручную):
+curl -fsS -X POST http://127.0.0.1:8050/api/filemap/index -H 'Content-Type: application/json' -d '{"dataset_name":"Архив_ОВ","path_prefix":"Проект/ОВ","parse":true}' | python3 -m json.tool
+# UI: вкладка С.А.М.О.В.А.Р. → блок «КАРТА АРХИВА» (скан + папки-кандидаты с кнопкой ИНДЕКС)
 ```
 
 Diff two CAD/BIM imports or two document revisions (deterministic, no LLM):
