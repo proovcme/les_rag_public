@@ -16,8 +16,10 @@ import urllib.error
 import urllib.request
 
 MATRIX = [
-    ("UI: лайт-чат",          "http://{h}:8051/"),
-    ("UI: лайт-админка",      "http://{h}:8051/les"),
+    # W5.4/5.5: лайт-шеллы удалены — / и /les редиректят в NiceGUI (urlopen
+    # следует за 307, итог 200 на trusted-сети). Мост /lite-api/* сохранён.
+    ("UI: корень → /classic",  "http://{h}:8051/"),
+    ("UI: /les → /les/classic","http://{h}:8051/les"),
     ("UI: NiceGUI чат",       "http://{h}:8051/classic"),
     ("UI: NiceGUI админка",   "http://{h}:8051/les/classic"),
     ("UI: M5",                "http://{h}:8051/m5"),

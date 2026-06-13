@@ -54,7 +54,9 @@ Proxy       :8050  (FastAPI)  ── /api/chat, /api/datasets, /api/runtime, /ap
 ### `sovushka/` — UI (NiceGUI) + статика
 - Ядро: `config.py`, `state.py`, `auth.py`, `trust.py` (доверенные сети), `safe_markup.py` (санитайз SVG), `styles.py`.
 - **pages/**: `overview` (ОБЗОР), `samovar` (С.А.М.О.В.А.Р. — датасеты), `prorab, zadachi (задачник+заметки, W16), instrumenty (ВОР/нормоконтроль/дифф в GUI, W11.2), obyomy (журнал полевых объёмов, W8)` (П.Р.О.Р.А.Б. — метрики), `chat` (AI ЧАТ), `history`, `volk` (auth), `diag`. **components/**: `header`, `charts`, `logterm`.
-- Лёгкие шеллы: `lite_chat.py` (`/`, мост `/lite-api/*`→proxy), `lite_admin.py` (`/les`, рестарты сервисов), `m5_display.py` (экран Wokyis M5).
+- Единственный UI — NiceGUI: `/classic` чат, `/les/classic` админка (W5.4/5.5). HTML-шеллы lite_chat/lite_admin удалены; `/`, `/les`, `/les/lite` редиректят в NiceGUI.
+- `lite_bridge.py` (`register_lite_bridge_routes`): мост `/lite-api/*`→proxy (контур les.ovc.me/M5/smoke 12/12/вьювер), `/lite-runtime/*` (рестарты сервисов, loopback/trusted), статика+страница вьювера CAD/BIM, редиректы шеллов. `m5_display.py` (экран Wokyis M5) — отдельно.
+- Чат: нестриминговый `POST /api/chat` + SSE `POST /api/chat/stream` (W5.1, токены по мере генерации); push-канал `GET /api/live` (W5.2, метрики/статус/индексация одним SSE).
 - Статика: [frontend/](../frontend/) (legacy `sovushka.html`; `cad_bim_viewer/` — TS+Vite+three.js+web-ifc), [qdrant_visualizer/](../qdrant_visualizer/) (three.js + клиентский PCA), `static/fonts/`.
 
 ### `tools/` (~48) — установка, сборка, ML, smoke, индексация

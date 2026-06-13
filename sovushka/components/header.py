@@ -187,6 +187,59 @@ def build_header(
                         "border:1px solid var(--border);color:var(--accent);background:transparent;"
                     )
 
+                    # W5.5: CAD/BIM JSON (Speckle) — порт уникальной панели из удалённого
+                    # лайт-админа. Настройки сохраняются общим «💾 Сохранить»; проверка
+                    # и импорт графа — отдельными кнопками.
+                    ui.separator().style("border-color:var(--border);margin:10px 0;")
+                    ui.label("CAD/BIM JSON (Speckle)").style("color:var(--accent);font-size:.65rem;font-weight:900;text-transform:uppercase;")
+                    _spk_style = "background:var(--bg);color:var(--text);font-family:var(--font);width:100%;"
+                    set_speckle_url = ui.input("Speckle Base URL", value="").style(_spk_style)
+                    set_speckle_graphql = ui.input("Speckle GraphQL URL", value="").style(_spk_style)
+                    set_speckle_token = ui.input("Speckle API token", value="", password=True, password_toggle_button=True).style(_spk_style)
+                    set_speckle_clear = ui.checkbox("Сбросить Speckle token", value=False).style("color:var(--text);font-family:var(--font);")
+                    with ui.row().classes("items-center gap-2"):
+                        set_speckle_timeout = ui.number("Wake timeout, с", value=5, min=0.5, max=60, step=0.5).style("background:var(--bg);color:var(--text);font-family:var(--font);width:160px;")
+                        set_speckle_enabled = ui.checkbox("enabled", value=True).style("color:var(--text);font-family:var(--font);")
+                    set_speckle_source_path = ui.input("Source path (импорт)", value="").props('placeholder="RAG_Content/CAD_BIM/JSON/model.json"').style(_spk_style)
+                    set_speckle_source_type = ui.select(
+                        {"": "AUTO", "autocad": "AutoCAD / DWG", "revit": "Revit / RVT", "ifc": "IFC", "excel": "Excel / Power BI", "generic": "Generic"},
+                        value="",
+                    ).props("dense outlined").style(_spk_style)
+                    speckle_hint = ui.label("CAD/BIM JSON параметры ещё не загружены.").style("color:var(--dim);font-size:.62rem;")
+
+                    async def _check_speckle():
+                        from sovushka.state import api_get
+                        d = await api_get("/api/speckle/status") or {}
+                        speckle_hint.set_text(
+                            f"Speckle {d.get('status', 'unknown')} | http={d.get('http_status', '-')} "
+                            f"| {d.get('base_url', '')} | {d.get('elapsed_ms', '?')} ms"
+                        )
+
+                    async def _import_speckle():
+                        from sovushka.state import api_post, add_log
+                        payload = {"max_objects": 5000}
+                        if (set_speckle_source_path.value or "").strip():
+                            payload["source_path"] = set_speckle_source_path.value.strip()
+                        if (set_speckle_source_type.value or "").strip():
+                            payload["source_type"] = set_speckle_source_type.value.strip()
+                        d = await api_post("/api/cad-bim/import", payload)
+                        if d:
+                            speckle_hint.set_text(
+                                f"Импорт {d.get('profile', 'auto')} | {d.get('elements', 0)} элем. / "
+                                f"{d.get('relations', 0)} связей / {d.get('properties', 0)} свойств"
+                            )
+                            add_log(f"[CAD/BIM] импорт: profile={d.get('profile','auto')} elements={d.get('elements',0)}")
+                        else:
+                            ui.notify(last_api_error_text("Ошибка импорта CAD/BIM JSON"), type="negative")
+
+                    with ui.row().classes("gap-2"):
+                        ui.button("Проверить Speckle", on_click=_check_speckle).props("no-caps flat").style(
+                            "border:1px solid var(--border);color:var(--accent);background:transparent;"
+                        )
+                        ui.button("Импорт JSON-графа", on_click=_import_speckle).props("no-caps flat").style(
+                            "border:1px solid var(--border);color:var(--accent);background:transparent;"
+                        )
+
                     def _refresh_answering(d: dict) -> None:
                         providers = d.get("providers") or {}
                         active = (providers.get("active") or "mlx").lower()
@@ -245,6 +298,20 @@ def build_header(
                             )
                             set_mail_folders.set_value(mail.get("imap_folders", "INBOX"))
                             set_mail_ocr.set_value(bool(mail.get("attachment_ocr_enabled", True)))
+                            speckle = d.get("speckle") or {}
+                            set_speckle_url.set_value(speckle.get("base_url", "https://speckle.ovc.me"))
+                            set_speckle_graphql.set_value(speckle.get("graphql_url", "https://speckle.ovc.me/graphql"))
+                            set_speckle_token.set_value("")
+                            set_speckle_token.props(
+                                f"placeholder=\"{'token уже задан; оставь пустым, чтобы не менять' if speckle.get('api_token_set') else 'Speckle API token'}\""
+                            )
+                            set_speckle_clear.set_value(False)
+                            set_speckle_timeout.set_value(speckle.get("wake_timeout_sec", 5))
+                            set_speckle_enabled.set_value(speckle.get("enabled", True) is not False)
+                            speckle_hint.set_text(
+                                f"Speckle {speckle.get('base_url', 'https://speckle.ovc.me')} | "
+                                f"token={'set' if speckle.get('api_token_set') else 'missing'} | sources=JSON/DWG/RVT/IFC"
+                            )
 
                     asyncio.create_task(_load_settings())
                     ui.separator().style("border-color:var(--border);margin:12px 0;")
@@ -291,6 +358,12 @@ def build_header(
                                 "mail_imap_password": set_mail_password.value or None,
                                 "mail_imap_folders": set_mail_folders.value or "INBOX",
                                 "mail_attachment_ocr_enabled": bool(set_mail_ocr.value),
+                                "speckle_enabled": bool(set_speckle_enabled.value),
+                                "speckle_base_url": set_speckle_url.value or "",
+                                "speckle_graphql_url": set_speckle_graphql.value or "",
+                                "speckle_api_token": set_speckle_token.value or None,
+                                "speckle_api_token_clear": bool(set_speckle_clear.value),
+                                "speckle_wake_timeout_sec": float(set_speckle_timeout.value or 5),
                             }
                             d = await api_post("/api/settings", payload)
                             if d:

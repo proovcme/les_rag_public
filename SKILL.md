@@ -14,12 +14,12 @@ Use `/Users/ovc/Projects/LES_v2` as the project root for development.
 Current production posture:
 
 - Proxy: `http://127.0.0.1:8050`
-- Sovushka Lite UI/admin: `http://127.0.0.1:8051`, `/les`
+- Sovushka UI (NiceGUI): `http://127.0.0.1:8051` → `/classic` (чат), `/les/classic` (админка). HTML-шеллы lite удалены (W5.4/5.5): `/` и `/les` редиректят в NiceGUI; мост `/lite-api/*` сохранён.
 - MLX Host: `http://127.0.0.1:8080`
 - Qdrant: `http://127.0.0.1:6333`
 - External: `https://les.ovc.me` through P.A.U.K. reverse SSH tunnel and V.O.L.K. API keys; on 2026-06-01 external smoke passes `12/12`.
 - Speckle BIM/CAD bridge: `https://speckle.ovc.me`, GraphQL `https://speckle.ovc.me/graphql`, managed by `/api/settings` and `/api/speckle/status`; live after token setup on 2026-06-02 is `status=ok`, `http_status=200`, `api_token_set=true`; `502/503/504` means `sleeping`, not LES failure.
-- ZeroTier trusted GUI/API access: `TRUSTED_NETWORKS=127.0.0.0/8,::1/128,10.195.146.0/24`, `TRUSTED_NETWORK_ROLE=admin`. Trusted clients should open `/les` and `/lite-api/*` without a key; stale browser keys fallback to `trusted-network`, while public clients still receive `401`.
+- ZeroTier trusted GUI/API access: `TRUSTED_NETWORKS=127.0.0.0/8,::1/128,10.195.146.0/24`, `TRUSTED_NETWORK_ROLE=admin`. Trusted clients should open `/classic`, `/les/classic` and `/lite-api/*` without a key; stale browser keys fallback to `trusted-network`, while public clients still receive `401`.
 
 ## First Checks
 
@@ -132,7 +132,7 @@ uv run python tools/pdf_preprocess.py RAG_Content/<folder>/             # вып
 
 Switch the chat LLM (provider/model) — **no restart needed**, applies per-request:
 
-- GUI: `http://127.0.0.1:8051/les` → panel **LLM Provider** → выбрать mlx / ollama / openrouter / openai, указать модель → SAVE PROVIDERS. Хинт показывает активный провайдер; валидация Т.О.С.К.А. работает только на MLX, остальные дают UNVALIDATED.
+- GUI: `http://127.0.0.1:8051/les/classic` → шапка **⚙** (диалог настроек) → **LLM Provider** → выбрать mlx / ollama / openrouter / openai, указать модель → **💾 Сохранить**. Строка «СЕЙЧАС ОТВЕЧАЕТ» показывает активный провайдер/модель; валидация Т.О.С.К.А. работает только на MLX, остальные дают UNVALIDATED. (Там же — Mail/IMAP и CAD/BIM JSON (Speckle).)
 - CLI: `curl -X POST http://127.0.0.1:8050/api/settings -H 'Content-Type: application/json' -d '{"llm_provider":"ollama","ollama_model":"gemma4:12b"}'` (персистится в .env runtime-клона). Вернуться: `-d '{"llm_provider":"mlx"}'`.
 - Local models live in Ollama (`ollama list`); Gemma 4 12B = `gemma4:12b`. Cloud = openrouter/openai + API key (поля в той же панели).
 

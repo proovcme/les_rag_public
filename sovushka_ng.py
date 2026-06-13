@@ -16,8 +16,7 @@ from sovushka.config import QDRANT_VISUALIZER_PORT, STORAGE_SECRET, UI_PORT
 from sovushka.state import bg_loop
 from sovushka.styles import CUSTOM_CSS, theme_vars_css
 from sovushka.auth import register_login_page, get_auth
-from sovushka.lite_admin import register_lite_admin_routes
-from sovushka.lite_chat import register_lite_chat_routes
+from sovushka.lite_bridge import register_lite_bridge_routes
 from sovushka.m5_display import register_m5_display_routes
 from sovushka.trust import trusted_role_for_request
 
@@ -29,8 +28,10 @@ if static_dir.exists():
 
 # Регистрируем /login (отдельная страница, без обвязки main_page)
 register_login_page()
-register_lite_chat_routes()
-register_lite_admin_routes()
+# W5.4/5.5: HTML-шеллы lite_chat/lite_admin удалены — мост, рантайм-роуты,
+# статика вьювера CAD/BIM и редиректы (`/`→`/classic`, `/les`→`/les/classic`)
+# живут в lite_bridge. M5-экран сохранён.
+register_lite_bridge_routes()
 register_m5_display_routes()
 
 
