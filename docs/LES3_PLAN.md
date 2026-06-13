@@ -254,10 +254,10 @@
     (loopback/trusted), монтирование статики вьювера CAD/BIM + `/les/cad-bim-viewer`, редиректы `/`→`/classic`,
     `/les`+`/les/lite`→`/les/classic`. M5-экран (`m5_display.py`) сохранён.
   - **Сверка панелей:** LLM Provider (с «СЕЙЧАС ОТВЕЧАЕТ») и Mail/IMAP **уже были** в NiceGUI (диалог настроек
-    в `components/header.py`); dispatcher/реиндекс/выгрузка — в САМОВАРе/ПРОРАБе. Единственный пробел —
-    **Speckle/CAD-BIM JSON** — портирован в диалог настроек (поля base/graphql/token/timeout/enabled +
-    source path/type, кнопки «Проверить Speckle» `/api/speckle/status` и «Импорт JSON-графа» `/api/cad-bim/import`,
-    сохранение общим 💾).
+    в `components/header.py`); dispatcher/реиндекс/выгрузка — в САМОВАРе/ПРОРАБе. (Пробел Speckle/CAD-BIM
+    сначала портировал в диалог настроек, затем по решению оператора 2026-06-14 **внешний Speckle-коннектор
+    `/api/speckle/*` + настройки SPECKLE_* удалены целиком**; CAD/BIM-вьювер/граф/импорт-из-JSON/подсветка/
+    АТЛАС W5.7 сохранены — деплой+проверка: `/api/speckle/status`→404, `/api/cad-bim/*`→200.)
   - Тесты: `test_sovushka_lite_chat.py`/`test_sovushka_lite_admin.py` удалены; их юнит-тесты моста/доверия/рантайма
     перенесены в `tests/test_lite_bridge.py` (14, без HTML-ассертов) + тест-инвентаризация маршрутов (мост/рантайм/
     вьювер/редиректы живы на app). `zerotier_access_smoke` — ярлыки `/`,`/les` отражают редирект (urlopen следует
