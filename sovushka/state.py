@@ -118,6 +118,26 @@ async def api_post(path: str, data: Optional[dict] = None, base: Optional[str] =
         return None
 
 
+async def api_get_bytes(path: str, base: Optional[str] = None) -> Optional[tuple[bytes, str]]:
+    """GET бинарного файла (xlsx-отчёты и т.п.) → (содержимое, имя файла) или None."""
+    from sovushka.config import PROXY_URL
+    if base is None:
+        base = PROXY_URL
+    try:
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            r = await client.get(f"{base}{path}", headers=_auth_headers())
+            r.raise_for_status()
+            disp = r.headers.get("content-disposition", "")
+            fname = ""
+            if "filename=" in disp:
+                fname = disp.split("filename=", 1)[1].strip('"; ')
+            state["last_api_error"] = None
+            return r.content, (fname or path.rsplit("/", 1)[-1])
+    except Exception as e:
+        _api_error("GET", path, e)
+        return None
+
+
 async def api_patch(path: str, data: Optional[dict] = None, base: Optional[str] = None) -> Optional[dict]:
     from sovushka.config import PROXY_URL
     if base is None:

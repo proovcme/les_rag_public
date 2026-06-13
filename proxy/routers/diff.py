@@ -14,6 +14,23 @@ from proxy.services.diff_service import diff_cad_imports, diff_texts
 router = APIRouter(prefix="/api/diff", tags=["diff"])
 
 
+@router.get("/cad-bim/imports")
+async def cad_bim_imports(_user=Depends(require_user)):
+    """Список импортов модели для выбора в UI (дифф двух ревизий)."""
+    if not CAD_BIM_DB_PATH.exists():
+        return {"imports": []}
+    try:
+        with sqlite3.connect(CAD_BIM_DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT id, source, source_kind, created_at, element_count "
+                "FROM cad_bim_imports ORDER BY created_at DESC LIMIT 100"
+            ).fetchall()
+    except sqlite3.Error as db_err:
+        raise HTTPException(500, f"Граф CAD/BIM недоступен: {db_err}")
+    return {"imports": [dict(row) for row in rows]}
+
+
 @router.get("/cad-bim")
 async def cad_bim_diff(import_a: str, import_b: str, _user=Depends(require_user)):
     """Сравнение двух импортов модели: добавлено/удалено/изменено по source_id."""
