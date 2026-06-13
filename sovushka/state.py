@@ -32,6 +32,7 @@ state = {
     "rag_health": {},
     "rag_documents": {},
     "indexing_mode": {},
+    "reindex": {},          # W5.2: прогресс реиндекса из push-канала /api/live
     "proxy_logs": [],
     "sources": [],
     "jobs": {},
@@ -452,24 +453,100 @@ async def refresh_samovar():
         add_log(f"[С.А.М.О.В.А.Р.] Источников: {prev_count} → {now_count}")
 
 
-async def bg_loop():
-    """Главный фоновый цикл опроса.
+def _apply_live_snapshot(snap: dict) -> None:
+    """W5.2: применяет push-снимок /api/live в state — зеркалит логику
+    refresh_metrics/status/indexing_mode/samovar(jobs), но без HTTP."""
+    m = snap.get("metrics")
+    if isinstance(m, dict) and "error" not in m:
+        state["metrics"] = m
+    s = snap.get("status")
+    if isinstance(s, dict) and "error" not in s:
+        state["status"] = s
+        mode = s.get("mode", {})
+        if isinstance(mode, dict) and mode.get("mode"):
+            state["mode"] = mode["mode"]
+    im = snap.get("indexing_mode")
+    if isinstance(im, dict) and "error" not in im:
+        state["indexing_mode"] = im
+    rx = snap.get("reindex")
+    if isinstance(rx, dict) and "error" not in rx:
+        state["reindex"] = rx
+    j = snap.get("jobs_summary")
+    if isinstance(j, dict) and "error" not in j:
+        state["jobs_summary"] = j
+        state["jobs"] = {
+            str(item.get("id") or ""): item
+            for item in (j.get("jobs") or [])
+            if isinstance(item, dict) and item.get("id")
+        }
 
-    Расписание (интервал тика = 10с):
-      - metrics:  каждые 10с
-      - status:   каждые 20с  (tick % 2)
-      - mlx:      каждые 30с  (tick % 3)
-      - samovar:  каждые 60с  (tick % 6)
-    """
+
+async def live_subscribe() -> bool:
+    """W5.2: подписка на /api/live (SSE) — единый push вместо частого поллинга.
+    Обновляет state на каждый снимок. Возвращает при штатном завершении/обрыве —
+    bg_loop переподключает. True, если соединение открывалось успешно."""
+    from sovushka.config import PROXY_URL
+
+    opened = False
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=None)) as client:
+            async with client.stream("GET", f"{PROXY_URL}/api/live", headers=_auth_headers()) as r:
+                if r.status_code != 200:
+                    return False
+                opened = True
+                _api_success()
+                event: Optional[str] = None
+                data_buf: list[str] = []
+                async for line in r.aiter_lines():
+                    if line == "":
+                        if event == "snapshot" and data_buf:
+                            try:
+                                snap = json.loads("\n".join(data_buf))
+                            except json.JSONDecodeError:
+                                snap = None
+                            if isinstance(snap, dict):
+                                _apply_live_snapshot(snap)
+                        event, data_buf = None, []
+                        continue
+                    if line.startswith("event:"):
+                        event = line[6:].strip()
+                    elif line.startswith("data:"):
+                        data_buf.append(line[5:].lstrip())
+        return opened
+    except (httpx.TimeoutException, httpx.TransportError):
+        state["proxy_online"] = False
+        state["proxy_offline_reason"] = "offline"
+        return opened
+    except Exception:
+        return opened
+
+
+async def bg_loop():
+    """Главный фоновый цикл (W5.2: push-first).
+
+    Высокочастотное (metrics/status/indexing/jobs) приходит push-каналом
+    `live_subscribe()` одним долгоживущим SSE-соединением. Здесь остаётся только
+    редкое и тяжёлое (mlx-health 30с, samovar 60с) + переподключение push при
+    обрыве. Если push недоступен — деградация на прежний поллинг, чтобы UI не
+    «застывал»."""
+    live_task: Optional[asyncio.Task] = None
     tick = 0
     while True:
+        # Поднять/переподнять push-канал, если он не жив.
+        if live_task is None or live_task.done():
+            live_task = asyncio.create_task(live_subscribe())
+            await asyncio.sleep(1.0)  # дать снимку прийти до первого фолбэка
+
         await asyncio.sleep(10)
         tick += 1
+        push_alive = live_task is not None and not live_task.done()
         try:
-            await refresh_metrics()
-            if tick % 2 == 0:
-                await refresh_status()
-                await refresh_indexing_mode()
+            if not push_alive:
+                # Фолбэк-поллинг, пока push лежит.
+                await refresh_metrics()
+                if tick % 2 == 0:
+                    await refresh_status()
+                    await refresh_indexing_mode()
             if tick % 3 == 0:
                 await refresh_mlx()
             if tick % 6 == 0:

@@ -222,10 +222,16 @@
   кадр SSE, порядок token→final, error-событие, reset, клиентский парсер, non-200).
   Остаток `[live]`: браузерная приёмка «первый токен < 2с» на MLX.
 
-- [ ] **W5.2 Push `/api/live` вместо поллинга** · M
-  Файлы: [sovushka/state.py:331-354](../sovushka/state.py) (bg_loop), таймеры [samovar.py:834](../sovushka/pages/samovar.py), [prorab.py:513](../sovushka/pages/prorab.py), [chat.py:1102](../sovushka/pages/chat.py).
-  Сделать: один SSE-канал (метрики, статусы job, прогресс «документ 37/120»); таймеры — на подписку.
-  Приёмка: ≤ 2 фоновых HTTP-запроса/мин на открытую вкладку (было десятки); прогресс-бар индексации в САМОВАРе.
+- [x] **W5.2 Push `/api/live` вместо поллинга** · M — 2026-06-14. Бэкенд: `GET /api/live`
+  (`runtime.py`, SSE) каждые `LES_LIVE_INTERVAL_SEC` (деф. 3с) шлёт событие `snapshot` со сводкой
+  `metrics/status/indexing_mode/jobs_summary/reindex` — переиспользует существующие билдеры payload'ов
+  (`_live_snapshot`, устойчив к сбою отдельной ветки). Клиент: `state.live_subscribe()` (один долгоживущий
+  SSE) + `_apply_live_snapshot()` обновляют `state`; `bg_loop` стал **push-first** — высокочастотный
+  поллинг (metrics 6/мин, status 3/мин) убран, остаётся редкое (mlx 30с, samovar 60с) + переподключение
+  push при обрыве (+ фолбэк-поллинг, если push лёг). ПРОРАБ рендерит из `state` (HTTP не делает),
+  лог-таймер САМОВАРа читает локальный `proxy.log` (не HTTP). **Прогресс-бар реиндекса** в САМОВАРе
+  из `state["reindex"]` (документ N/M + текущий файл), обновляется на 3с-таймере без HTTP.
+  5 офлайн-тестов (`tests/test_live_push_w52.py`). Остаток `[live]`: браузерный замер «≤2 HTTP/мин».
 
 - [~] **W5.3 Quick wins UI** · S — **частично 2026-06-14** (3 из 5, безопасные state-слой):
   ✅ **TTL-кэш `api_get`** (`api_get_cached`, ttl-окно; `refresh_metrics` дедупит /api/metrics на 2с — гасит

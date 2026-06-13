@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import sqlite3
@@ -13,6 +14,7 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from backend.metrics_collector import DB_PATH, heartbeats
@@ -300,6 +302,55 @@ async def get_indexing_mode():
         "chat_admission": admission.payload(),
         "dataset_priority_order": active_parse_priority_order(state.current_mode),
     }
+
+
+async def _live_snapshot() -> dict:
+    """W5.2: единый снимок для push-канала — то, что раньше опрашивалось
+    отдельными поллерами (metrics/status/indexing/jobs) + прогресс реиндекса
+    для прогресс-бара САМОВАРа. Любой сбой ветки не роняет снимок целиком."""
+    from proxy.routers.jobs import get_jobs_summary
+
+    snap: dict = {}
+    for key, coro in (
+        ("metrics", get_metrics()),
+        ("status", get_status()),
+        ("indexing_mode", get_indexing_mode()),
+        ("jobs_summary", get_jobs_summary(limit=120, active_only=False, _user=None)),
+    ):
+        try:
+            snap[key] = await coro
+        except Exception as err:  # noqa: BLE001
+            snap[key] = {"error": str(err)}
+    try:
+        state = get_runtime_state()
+        snap["reindex"] = await asyncio.to_thread(dispatcher_for_state(state).reindex_status_payload)
+    except Exception as err:  # noqa: BLE001
+        snap["reindex"] = {"error": str(err)}
+    return snap
+
+
+@router.get("/live")
+async def live_stream():
+    """W5.2: push-канал (SSE). Каждые LES_LIVE_INTERVAL_SEC секунд (деф. 3)
+    шлёт событие `snapshot` со сводкой метрик/статуса/индексации/задач — заменяет
+    частый поллинг bg_loop одним долгоживущим соединением. Доступность совпадает
+    с /metrics и /status (открыт на localhost, key-gated через лайт-мост)."""
+    try:
+        interval = max(1.0, float(os.getenv("LES_LIVE_INTERVAL_SEC", "3")))
+    except ValueError:
+        interval = 3.0
+
+    async def gen():
+        while True:
+            snap = await _live_snapshot()
+            yield f"event: snapshot\ndata: {json.dumps(snap, ensure_ascii=False)}\n\n"
+            await asyncio.sleep(interval)
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+    )
 
 
 @router.post("/indexing-mode")

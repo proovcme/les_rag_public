@@ -126,6 +126,13 @@ def build_samovar():
                     scheduler_live_label = ui.label("○ статус загружается…").style(
                         "color:var(--dim);font-size:.7rem;font-weight:700;"
                     )
+                    # W5.2: прогресс реиндекса из push-канала /api/live (state["reindex"]).
+                    reindex_progress = ui.linear_progress(value=0.0, show_value=False, size="8px").props(
+                        "instant-feedback color=orange"
+                    ).style("width:220px;display:none;")
+                    reindex_progress_label = ui.label("").style(
+                        "color:var(--dim);font-size:.66rem;"
+                    )
 
 
         # Таблица датасетов
@@ -766,9 +773,30 @@ def build_samovar():
             _render()
             _render_live_logs()
 
+        def _render_reindex_progress():
+            """W5.2: прогресс реиндекса из push-снимка state["reindex"] (без HTTP)."""
+            rx = state.get("reindex", {}) if isinstance(state.get("reindex"), dict) else {}
+            rx_total = int(rx.get("total") or 0)
+            rx_done = int(rx.get("completed") or 0)
+            if rx.get("running") and rx_total > 0:
+                reindex_progress.set_value(min(1.0, rx_done / rx_total))
+                reindex_progress.style("width:220px;display:block;")
+                cur = rx.get("current_doc") or {}
+                cur_name = cur.get("doc") or cur.get("file") or cur.get("name") or ""
+                reindex_progress_label.set_text(
+                    f"реиндекс: {rx_done}/{rx_total}" + (f" · {cur_name[:48]}" if cur_name else "")
+                )
+            elif rx.get("paused"):
+                reindex_progress.style("width:220px;display:block;")
+                reindex_progress_label.set_text(f"⏸ пауза: {rx_done}/{rx_total}")
+            else:
+                reindex_progress.style("width:220px;display:none;")
+                reindex_progress_label.set_text("")
+
         async def refresh_live_logs():
             await refresh_proxy_logs(140)
             _render_live_logs()
+            _render_reindex_progress()  # W5.2: прогресс из push-снимка (без HTTP)
 
         def _render_live_logs():
             lines = list(state.get("proxy_logs") or state.get("logs") or [])[-140:]
@@ -966,6 +994,8 @@ def build_samovar():
             else:
                 scheduler_live_label.set_text("○ не запущен")
                 scheduler_live_label.style("color:var(--dim);font-size:.7rem;font-weight:700;")
+
+            _render_reindex_progress()
 
             # Jobs
             job_rows = []
