@@ -58,6 +58,16 @@ def test_extract_handles_globalid_form_and_blanks():
     assert ids == ["2O2Fr$t4X7Zf8NOew3FLOH"]
 
 
+def test_extract_from_flattened_chunk():
+    # Как в индексированном чанке: переводы строк схлопнуты в ` - `, source_id — токен без пробелов.
+    text = (
+        "## Element Element - Source ID: 40afab92-819a-4715-9c7d-ec20a89abad9-00081981 "
+        "- Speckle type: - - Object type: Element - Category: Осевая линия - Level: Этаж 01"
+    )
+    ids, _ = extract_highlight([text])
+    assert ids == ["40afab92-819a-4715-9c7d-ec20a89abad9-00081981"]
+
+
 def test_extract_ignores_non_cad_chunks():
     ids, import_id = extract_highlight(["СП 4.13130 п. 8.1 — проезд пожарной техники", ""])
     assert ids == []

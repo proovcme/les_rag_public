@@ -19,8 +19,10 @@ import time
 from typing import Any, Iterable
 
 # `- Source ID: <id>` (проекция) и `Source ID / GlobalId: <id>` (карточка элемента).
-_SOURCE_ID_RE = re.compile(r"Source ID(?:\s*/\s*GlobalId)?\s*:\s*([^\n]+)", re.IGNORECASE)
-_IMPORT_ID_RE = re.compile(r"Import ID\s*:\s*([^\n]+)", re.IGNORECASE)
+# В индексированном чанке переводы строк схлопнуты (`...: X - Speckle type: ...`), а сам
+# source_id — токен без пробелов (Revit unique_id / IfcGUID / path-хеш), поэтому `\S+`.
+_SOURCE_ID_RE = re.compile(r"Source ID(?:\s*/\s*GlobalId)?\s*:\s*(\S+)", re.IGNORECASE)
+_IMPORT_ID_RE = re.compile(r"Import ID\s*:\s*(\S+)", re.IGNORECASE)
 _BLANKS = {"", "-", "—", "–", "none", "null"}
 
 
