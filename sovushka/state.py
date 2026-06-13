@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import httpx
+import json
 import os
 import sqlite3
 import uuid
@@ -136,6 +137,49 @@ async def api_post(path: str, data: Optional[dict] = None, base: Optional[str] =
     except Exception as e:
         _api_error("POST", path, e)
         return None
+
+
+async def api_post_stream(path: str, data: Optional[dict], on_event, base: Optional[str] = None) -> bool:
+    """W5.1: POST с чтением Server-Sent Events. Для каждого события вызывает
+    `on_event(event: str, payload)` — payload уже распарсен из JSON (для `token`
+    это строка-кусок ответа, для `final`/`error` — dict, для `reset` — "").
+    Возвращает True, если получено событие `final` (ответ дошёл целиком)."""
+    from sovushka.config import PROXY_URL
+    if base is None:
+        base = PROXY_URL
+    got_final = False
+    try:
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            async with client.stream(
+                "POST", f"{base}{path}", json=data or {}, headers=_auth_headers()
+            ) as r:
+                if r.status_code != 200:
+                    body = (await r.aread()).decode("utf-8", "replace")
+                    raise httpx.HTTPStatusError(body[:300], request=r.request, response=r)
+                _api_success()
+                event: Optional[str] = None
+                data_buf: list[str] = []
+                async for line in r.aiter_lines():
+                    if line == "":  # конец события — диспатчим накопленное
+                        if event is not None and data_buf:
+                            raw = "\n".join(data_buf)
+                            try:
+                                payload = json.loads(raw)
+                            except json.JSONDecodeError:
+                                payload = raw
+                            on_event(event, payload)
+                            if event == "final":
+                                got_final = True
+                        event, data_buf = None, []
+                        continue
+                    if line.startswith("event:"):
+                        event = line[6:].strip()
+                    elif line.startswith("data:"):
+                        data_buf.append(line[5:].lstrip())
+        return got_final
+    except Exception as e:
+        _api_error("POST", path, e)
+        return False
 
 
 async def api_get_bytes(path: str, base: Optional[str] = None) -> Optional[tuple[bytes, str]]:

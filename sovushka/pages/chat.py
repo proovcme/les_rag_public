@@ -17,6 +17,7 @@ from sovushka.state import (
     add_log,
     api_get,
     api_post,
+    api_post_stream,
     last_api_error_text,
     refresh_indexing_mode,
     refresh_samovar,
@@ -817,33 +818,80 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
 
         _tick_task = asyncio.create_task(_tick())
 
+        def _apply_chat_result(d: dict) -> None:
+            """Применяет финальный payload (общий для стрима и нестриминга):
+            форматированный ответ, источники, вердикт, артефакт."""
+            ans = d.get("answer", d.get("response", "Нет ответа"))
+            srcs = d.get("sources", [])
+            crag = d.get("crag_status", "")
+            meta = {
+                "query_route": d.get("query_route") or {},
+                "retrieval_trace": d.get("retrieval_trace") or {},
+                "cache": d.get("cache", "miss"),
+                "validation": d.get("validation") or {"enabled": bool(validation_sw.value)},
+                "history_id": d.get("history_id"),
+                "table_query": d.get("table_query"),
+                "clarifying_questions": d.get("clarifying_questions") or [],
+                "suggested_filters": d.get("suggested_filters") or [],
+            }
+            state["chat_history"].append({"role": "ai", "text": ans, "srcs": srcs, "crag": crag, "meta": meta})
+            _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, ans, srcs, crag, meta=meta)
+            _render_result(ans, out_mode, artifact_panel, table_query=d.get("table_query"))
+            add_log(f"[AI] Формат:{out_mode} CRAG:{crag or 'N/A'} src:{len(srcs)}")
+
+        # W5.1: SSE-стрим — токены в пузырь по мере генерации; финальное событие
+        # несёт авторитетный payload (вердикт валидации в crag_status).
+        stream_state = {"text": "", "got_token": False, "final": None, "error": None}
+
+        def _on_sse(event: str, payload) -> None:
+            if event == "token":
+                if not stream_state["got_token"]:
+                    stream_state["got_token"] = True
+                    _stop_tick["v"] = True  # глушим тикер «Генерирую… Nс»
+                stream_state["text"] += payload if isinstance(payload, str) else ""
+                ai_placeholder_label.set_text(stream_state["text"])
+            elif event == "reset":
+                stream_state["text"] = ""
+                ai_placeholder_label.set_text("")
+            elif event == "final":
+                stream_state["final"] = payload if isinstance(payload, dict) else {}
+            elif event == "error":
+                stream_state["error"] = payload if isinstance(payload, dict) else {"detail": str(payload)}
+
         completed = False
         try:
-            d = await api_post("/api/chat", payload)
-            completed = True
+            await api_post_stream("/api/chat/stream", payload, _on_sse)
+            _stop_tick["v"] = True
+            d = stream_state["final"]
             if d:
-                ans = d.get("answer", d.get("response", "Нет ответа"))
-                srcs = d.get("sources", [])
-                crag = d.get("crag_status", "")
-                meta = {
-                    "query_route": d.get("query_route") or {},
-                    "retrieval_trace": d.get("retrieval_trace") or {},
-                    "cache": d.get("cache", "miss"),
-                    "validation": d.get("validation") or {"enabled": bool(validation_sw.value)},
-                    "history_id": d.get("history_id"),
-                    "table_query": d.get("table_query"),
-                    "clarifying_questions": d.get("clarifying_questions") or [],
-                    "suggested_filters": d.get("suggested_filters") or [],
-                }
-                state["chat_history"].append({"role": "ai", "text": ans, "srcs": srcs, "crag": crag, "meta": meta})
-                _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, ans, srcs, crag, meta=meta)
-                _render_result(ans, out_mode, artifact_panel, table_query=d.get("table_query"))
-                add_log(f"[AI] Формат:{out_mode} CRAG:{crag or 'N/A'} src:{len(srcs)}")
-            else:
-                err = state.get("last_api_error") or {}
-                message = last_api_error_text("Ошибка запроса")
-                if err.get("status_code") == 409:
+                completed = True
+                _apply_chat_result(d)
+            elif stream_state["error"]:
+                completed = True
+                err = stream_state["error"]
+                message = f"{err.get('status', '')}: {err.get('detail', 'Ошибка запроса')}".strip(": ")
+                if err.get("status") == 409:
                     await _refresh_resource_gate()
+                _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, message, error=True)
+                _render_artifact_error(message)
+            elif not stream_state["got_token"]:
+                # Стрим не стартовал (эндпоинт недоступен/обрыв до первого токена) —
+                # безопасный откат на нестриминговый /api/chat.
+                d = await api_post("/api/chat", payload)
+                completed = True
+                if d:
+                    _apply_chat_result(d)
+                else:
+                    err = state.get("last_api_error") or {}
+                    message = last_api_error_text("Ошибка запроса")
+                    if err.get("status_code") == 409:
+                        await _refresh_resource_gate()
+                    _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, message, error=True)
+                    _render_artifact_error(message)
+            else:
+                # Токены пришли, но финал потерян (обрыв середины стрима).
+                completed = True
+                message = last_api_error_text("Соединение прервано — ответ получен не полностью")
                 _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, message, error=True)
                 _render_artifact_error(message)
         except Exception as ex:

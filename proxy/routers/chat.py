@@ -14,6 +14,7 @@ from typing import Any, Iterable, List, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 
 from backend.rag_config import rag_meta_db_path
@@ -642,8 +643,70 @@ def _clause_lookup_response(
     }
 
 
+def _sse_event(event: str, data: Any) -> str:
+    """Кадр SSE: `event:` + одно `data:` с JSON-телом. Юникод не эскейпим —
+    клиент читает UTF-8."""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
 @router.post("/chat")
 async def chat(req: ChatRequest, _user=Depends(require_user)):
+    """W5.1: нестриминговый эндпоинт — поведение неизменно (M5, смоуки, АРТЕЛЬ,
+    chat_format_smoke). token_sink=None → путь stream:False, как раньше."""
+    return await _run_chat(req)
+
+
+@router.post("/chat/stream")
+async def chat_stream(req: ChatRequest, _user=Depends(require_user)):
+    """W5.1: SSE-стриминг. События:
+      • `token` — кусок ответа по мере генерации (только generic-LLM путь);
+      • `reset` — очистить накопленный текст (ретрай/деградация на MLX);
+      • `final` — полный payload (sources + вердикт валидации в `crag_status`);
+      • `error` — {status, detail}.
+    Детерминированные/кэш/clarification ветки токенов не шлют — приходит сразу `final`."""
+    if not req.question.strip():
+        raise HTTPException(400, "Empty question")
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def sink(ev: dict) -> None:
+        await queue.put(ev)
+
+    async def runner() -> None:
+        try:
+            result = await _run_chat(req, token_sink=sink)
+            await queue.put({"event": "final", "data": result})
+        except HTTPException as he:
+            await queue.put({"event": "error", "data": {"status": he.status_code, "detail": he.detail}})
+        except Exception as e:  # noqa: BLE001 — любую ошибку доносим клиенту как событие
+            logger.error("[CHAT/STREAM] %s", e)
+            await queue.put({"event": "error", "data": {"status": 500, "detail": f"{type(e).__name__}: {e}"}})
+        finally:
+            await queue.put(None)
+
+    async def event_source():
+        task = asyncio.create_task(runner())
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                yield _sse_event(item["event"], item.get("data", ""))
+        finally:
+            if not task.done():
+                task.cancel()
+
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+    )
+
+
+async def _run_chat(req: ChatRequest, token_sink=None):
+    """Ядро чата. token_sink=None — обычный ответ (dict). Если задан — корутина
+    `await token_sink({"event":..., "data":...})` получает события стриминга по
+    мере генерации; итог всё равно возвращается dict'ом (его шлёт `chat_stream`
+    финальным событием)."""
     state = get_chat_state()
     if not req.question.strip():
         raise HTTPException(400, "Empty question")
@@ -1408,6 +1471,43 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                 crag_status = "UNKNOWN"
                 tokens = 0
 
+                async def _post_llm(runtime, model, hdrs, body):
+                    """Один вызов LLM. token_sink задан → стрим (токены клиенту по
+                    мере генерации), иначе — обычный POST (поведение неизменно).
+                    Возвращает (answer_text, usage_dict)."""
+                    if token_sink is not None:
+                        sbody = {**body, "model": model, "stream": True,
+                                 "stream_options": {"include_usage": True}}
+                        acc: list[str] = []
+                        usage_d: dict = {}
+                        async with client.stream("POST", runtime.chat_url, headers=hdrs, json=sbody) as sresp:
+                            sresp.raise_for_status()
+                            async for line in sresp.aiter_lines():
+                                if not line or not line.startswith("data:"):
+                                    continue
+                                payload = line[5:].strip()
+                                if payload == "[DONE]":
+                                    break
+                                try:
+                                    chunk = json.loads(payload)
+                                except json.JSONDecodeError:
+                                    continue
+                                choices = chunk.get("choices") or []
+                                piece = (choices[0].get("delta", {}).get("content") or "") if choices else ""
+                                if piece:
+                                    acc.append(piece)
+                                    await token_sink({"event": "token", "data": piece})
+                                if chunk.get("usage"):
+                                    usage_d = chunk["usage"]
+                        return "".join(acc), usage_d
+                    r = await client.post(runtime.chat_url, headers=hdrs, json={**body, "model": model})
+                    r.raise_for_status()
+                    rj = r.json()
+                    return (
+                        rj.get("choices", [{}])[0].get("message", {}).get("content", ""),
+                        rj.get("usage", {}) or {},
+                    )
+
                 max_attempts = 2
                 for attempt in range(1, max_attempts + 1):
                     if attempt == 2:
@@ -1466,12 +1566,13 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                         "temperature": _env_float("CHAT_TEMPERATURE", 0.2),
                         "max_tokens": 2048,
                     }
+                    # При стриминге ретрай (строгий промпт) шлёт уже новый текст —
+                    # просим клиент очистить накопленное от прошлой попытки.
+                    if token_sink is not None and attempt > 1:
+                        await token_sink({"event": "reset", "data": ""})
                     t_llm_call = time.time()
                     try:
-                        resp = await client.post(
-                            llm_runtime.chat_url, headers=headers, json={**chat_body, "model": llm_model}
-                        )
-                        resp.raise_for_status()
+                        answer, usage = await _post_llm(llm_runtime, llm_model, headers, chat_body)
                     except (httpx.TransportError, httpx.TimeoutException) as net_err:
                         # W3.3/ADR-9: облако недоступно → деградация на локальный MLX,
                         # не отказ. HTTP-ошибки (raise_for_status) сюда НЕ попадают —
@@ -1490,19 +1591,16 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                         retrieval_trace.setdefault("routing", {}).update(
                             {"cloud_fallback": type(net_err).__name__, "effective_provider": "mlx", "is_cloud": False}
                         )
-                        resp = await client.post(
-                            llm_runtime.chat_url, headers=headers, json={**chat_body, "model": llm_model}
-                        )
-                        resp.raise_for_status()
+                        # Возможный частичный вывод облака до обрыва — отбросить.
+                        if token_sink is not None:
+                            await token_sink({"event": "reset", "data": ""})
+                        answer, usage = await _post_llm(llm_runtime, llm_model, headers, chat_body)
                     t_llm += time.time() - t_llm_call
-                    rj = resp.json()
-                    answer = rj.get("choices", [{}])[0].get("message", {}).get("content", "")
                     if not answer:
                         if attempt < max_attempts:
                             logger.warning("[CHAT] empty LLM answer on attempt=%s — retrying strict", attempt)
                             continue
-                        raise ValueError(f"Пустой ответ LLM: {rj}")
-                    usage = rj.get("usage", {}) or {}
+                        raise ValueError(f"Пустой ответ LLM (stream={token_sink is not None})")
                     tokens = usage.get("completion_tokens", 0)
                     # W3.3: учёт расходов облака (токены → $). Локальные вызовы не считаем.
                     if is_cloud_provider(llm_runtime.provider):

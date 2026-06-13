@@ -210,10 +210,17 @@
 
 ## Волна 5 — Стриминг и UI
 
-- [ ] **W5.1 SSE-стриминг чата end-to-end** · L `[live]`
-  Файлы: [proxy/routers/chat.py:1210](../proxy/routers/chat.py) (`stream: False`), новый `/api/chat/stream`; [sovushka/lite_chat.py](../sovushka/lite_chat.py), [sovushka/pages/chat.py](../sovushka/pages/chat.py).
-  Сделать: токены клиенту по мере генерации; вердикт валидации — финальным SSE-событием. Старый нестриминговый `/api/chat` сохранить (M5, смоуки, АРТЕЛЬ не трогаются).
-  Приёмка: первый токен в UI < 2 с от отправки; `chat_format_smoke` зелёный на старом эндпоинте.
+- [x] **W5.1 SSE-стриминг чата end-to-end** · L — 2026-06-14. Тело `chat()` вынесено в ядро
+  `_run_chat(req, token_sink=None)`; старый `@router.post("/chat")` — тонкая обёртка `token_sink=None`,
+  путь `stream:False` неизменен (M5/смоуки/АРТЕЛЬ/`chat_format_smoke` зелёны по построению). Новый
+  `@router.post("/chat/stream")` → `StreamingResponse` (`text/event-stream`), события **token / reset /
+  final / error**; финальное событие несёт авторитетный payload (вердикт валидации в `crag_status`).
+  Стримит только generic-LLM путь (`_post_llm` с `stream:True`); детерминированные/кэш/clarification
+  ветки шлют сразу `final`. Ретрай строгого промпта и деградация на MLX → событие `reset`.
+  Клиент: `state.api_post_stream` (парсер SSE) + инкрементальный `label.set_text` в `pages/chat.py`,
+  безопасный откат на `/api/chat` если стрим не стартовал. 6 офлайн-тестов (`tests/test_chat_stream_w51.py`:
+  кадр SSE, порядок token→final, error-событие, reset, клиентский парсер, non-200).
+  Остаток `[live]`: браузерная приёмка «первый токен < 2с» на MLX.
 
 - [ ] **W5.2 Push `/api/live` вместо поллинга** · M
   Файлы: [sovushka/state.py:331-354](../sovushka/state.py) (bg_loop), таймеры [samovar.py:834](../sovushka/pages/samovar.py), [prorab.py:513](../sovushka/pages/prorab.py), [chat.py:1102](../sovushka/pages/chat.py).
