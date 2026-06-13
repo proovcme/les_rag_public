@@ -19,6 +19,7 @@ from pydantic import BaseModel, field_validator
 from backend.rag_config import rag_meta_db_path
 from proxy.security import require_user
 from proxy.services.clarification_service import build_clarification_decision
+from backend.inference.validator import rules_pre_verdict
 from proxy.services.cad_bim_highlight import extract_highlight, set_highlight
 from proxy.services.clause_lookup_service import maybe_answer_clause_lookup
 from proxy.services.context_expander_service import expand_context_windows
@@ -1414,10 +1415,18 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                                 validation_context = f"{validation_context}\n\n{memory_block}"
                             t_val_call = time.time()
                             if validate_via_llm:
-                                crag_status = await _validate_via_provider(
-                                    client, llm_runtime, headers,
-                                    question=req.question, answer=answer, context=validation_context,
-                                )
+                                # W3.4: каскад rules→LLM. Дешёвый детерминированный отсев
+                                # ДО облачного вызова — числовой guard и пустой контекст
+                                # ловятся без LLM (у облака нет своего /api/validate).
+                                pre = rules_pre_verdict(req.question, answer, validation_context)
+                                if pre is not None:
+                                    crag_status = pre
+                                    logger.info("[TOSKA] rules short-circuit → %s (provider=%s)", pre, llm_runtime.provider)
+                                else:
+                                    crag_status = await _validate_via_provider(
+                                        client, llm_runtime, headers,
+                                        question=req.question, answer=answer, context=validation_context,
+                                    )
                             else:
                                 val_resp = await client.post(
                                     f"{val_url}/api/validate",

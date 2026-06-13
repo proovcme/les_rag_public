@@ -1795,128 +1795,16 @@ async def _validate_with_mlx(req: ValidateRequest) -> dict:
     }
 
 
-def _normalize_rule_text(text: str) -> str:
-    return " ".join(re.sub(r"[^\w]+", " ", text.lower(), flags=re.UNICODE).split())
-
-
-def _extract_rule_numbers(text: str) -> set[str]:
-    # Normalize text
-    cleaned = text.lower()
-    
-    # 1. Remove dates like 16.02.2008 or 09.04.2021
-    cleaned = re.sub(r'\b\d{1,2}[.,/]\d{1,2}[.,/]\d{2,4}\b', '', cleaned)
-    
-    # 2. Remove standalone year numbers (like 2008, 2021, 2019, 2012)
-    cleaned = re.sub(r'\b(?:19|20)\d{2}\b', '', cleaned)
-    
-    # 3. Clean line-by-line list numbers (like "1. ", "2. ", "10) ")
-    lines = []
-    for line in cleaned.split('\n'):
-        line = re.sub(r'^\s*\d+[\s.)-]', '', line)
-        lines.append(line)
-    cleaned = ' '.join(lines)
-    
-    # 4. Remove typical document prefixes and section references
-    # including "n", "N", "no", "№", "п.", "пункт", "раздел", "постановление", "сп", "гост"
-    prefix_pat = r'(?:раздел|п\.|пункт[ы]?|постановлени[ея]|№|от|n|рис|рисунок|таблиц[аы]|табл\.|стр\.)\s*\d+(?:[-–—]\d+)?'
-    cleaned = re.sub(prefix_pat, '', cleaned)
-    
-    # 5. Extract all numbers and filter them:
-    # Keep if:
-    # - It has a decimal point (like 1.2 or 0.5)
-    # - It is followed by a unit of measurement within 8 characters (like "м", "мм", "мин", "EI")
-    # - Or it is a larger number (e.g. >= 100)
-    found = set()
-    for match in re.finditer(r"\b\d+(?:[,.]\d+)?\b", cleaned):
-        num_str = match.group(0).replace(",", ".")
-        start_idx = match.start()
-        end_idx = match.end()
-        
-        # Check if it has decimal point
-        if "." in num_str:
-            found.add(num_str)
-            continue
-            
-        # Check context after number for units of measurement
-        suffix = cleaned[end_idx : end_idx + 8].strip()
-        if re.match(r'^(?:м\b|мм\b|см\b|мин\b|ч\b|сек\b|кг\b|°|ei|re|r\b|еи\b|квт\b|вт\b|чел\b|г\b|литр|куб)', suffix):
-            found.add(num_str)
-            continue
-            
-        # Check if number is large (>= 100)
-        try:
-            val = float(num_str)
-            if val >= 100:
-                found.add(num_str)
-        except ValueError:
-            pass
-            
-    return found
-
-
-def _rules_lexical_overlap(answer: str, context: str, min_token_len: int = 4) -> float:
-    """Return fraction of meaningful answer tokens found in context (0.0–1.0)."""
-    _STOPWORDS_RU = {
-        "что", "это", "как", "так", "при", "для", "или", "над", "под",
-        "если", "есть", "нужно", "нужен", "должна", "должен", "должно",
-        "должны", "может", "могут", "более", "менее", "также", "либо",
-        "иные", "иной", "иная", "такой", "такая", "такие", "через",
-        "между", "после", "перед", "очень", "весь", "вся", "всех",
-        "всем", "одного", "одной", "одним", "любом", "любой", "любых",
-    }
-    norm_ctx = _normalize_rule_text(context)
-    tokens = re.findall(r"[а-яёa-z0-9]{%d,}" % min_token_len, answer.lower())
-    meaningful = [t for t in tokens if t not in _STOPWORDS_RU]
-    if not meaningful:
-        return 0.0
-    hits = sum(1 for t in meaningful if t in norm_ctx)
-    return hits / len(meaningful)
-
-
 def _validate_with_rules(req: ValidateRequest) -> dict:
+    """Детерминированный rules-валидатор (W3.1: общий код с proxy).
+
+    Логика вынесена в `backend.inference.validator.rules_validate` (DRY),
+    чтобы тот же rules→LLM каскад работал в proxy для облачных провайдеров.
+    Поведение бит-в-бит прежнее: VERIFIED/HALLUCINATION/NO_DATA.
     """
-    Детерминированный rules-валидатор с лексическим перекрытием.
+    from backend.inference.validator import rules_validate
 
-    Логика:
-      1. Пустой контекст → NO_DATA.
-      2. Ответ буквально входит в контекст → VERIFIED (быстрый путь).
-      3. Числа из ответа нарушают контекст → HALLUCINATION.
-      4. Лексическое перекрытие ≥ LEX_THRESHOLD → VERIFIED.
-      5. Иначе → NO_DATA (не смогли подтвердить, но не галлюцинация).
-    """
-    LEX_THRESHOLD = float(os.getenv("RULES_LEX_THRESHOLD", "0.35"))
-
-    context = req.context or ""
-    answer = req.answer or ""
-
-    if not context.strip():
-        return {"status": "NO_DATA", "raw": "empty_context", "backend": "rules", "unloaded_peer": []}
-
-    if answer.strip() and _normalize_rule_text(answer) in _normalize_rule_text(context):
-        return {"status": "VERIFIED", "raw": "answer_text_found_in_context", "backend": "rules", "unloaded_peer": []}
-
-    answer_numbers = _extract_rule_numbers(answer)
-    context_numbers = _extract_rule_numbers(context)
-    if answer_numbers and context_numbers and not answer_numbers.issubset(context_numbers):
-        return {"status": "HALLUCINATION", "raw": "answer_numeric_claim_not_in_context", "backend": "rules", "unloaded_peer": []}
-
-    overlap = _rules_lexical_overlap(answer, context)
-    if overlap >= LEX_THRESHOLD:
-        return {
-            "status": "VERIFIED",
-            "raw": f"lexical_overlap_{overlap:.2f}",
-            "backend": "rules",
-            "unloaded_peer": [],
-            "lexical_overlap": overlap,
-        }
-
-    return {
-        "status": "NO_DATA",
-        "raw": f"rules_cannot_verify_overlap_{overlap:.2f}",
-        "backend": "rules",
-        "unloaded_peer": [],
-        "lexical_overlap": overlap,
-    }
+    return rules_validate(req.question or "", req.answer or "", req.context or "")
 
 
 async def _validate_with_coreml(req: ValidateRequest) -> dict:

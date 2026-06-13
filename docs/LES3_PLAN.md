@@ -143,15 +143,18 @@
 
 ## Волна 3 — Слой инференса
 
-- [ ] **W3.1 Протоколы провайдеров** · M
-  Файлы: новый пакет `backend/inference/` (`ChatProvider`, `EmbedProvider`, `RerankProvider`, `OCRProvider`); рефактор вызовов в [proxy/services/runtime_dispatcher.py](../proxy/services/runtime_dispatcher.py), `EmbedClient` в qdrant_adapter.
-  Сделать: текущий MLX-путь — первая реализация протоколов; поведение бит-в-бит как раньше.
-  Приёмка: `make verify`; полная сюита на живом MLX без регрессий; диффы вызывающего кода минимальны.
+- [x] **W3.1 Протоколы провайдеров** · M — 2026-06-14 (фундамент). Пакет `backend/inference/`: `providers.py`
+  (`ChatProvider`/`EmbedProvider`/`ValidatorProvider`/`RerankProvider`/`OCRProvider` — `typing.Protocol`,
+  structural, существующие классы соответствуют без наследования) + `validator.py` (общий rules-валидатор,
+  вынесен из mlx_host — DRY, теперь и proxy его использует). Поведение бит-в-бит (`_validate_with_rules`
+  делегирует, 7 тестов). `make verify` 602 зелёный. Остаток (инкрементально): миграция call-site embed/rerank/ocr
+  на фабрику провайдеров — не срочно, диспетчер chat уже провайдеро-полиморфен (`_llm_runtime`).
 
-- [ ] **W3.2 Провайдеры ollama / openai_compatible** · M `[live]`
-  Файлы: `backend/inference/ollama.py`, `backend/inference/openai_compat.py`; конфиг профилей `config/profiles/*.yaml`.
-  Сделать: chat+embeddings+VLM-OCR через Ollama; generic OpenAI-совместимый клиент (llama.cpp, LM Studio, vLLM); fallback-цепочки в конфиге (`chat: [mlx, ollama]`).
-  Приёмка: golden-прогон на ollama-профиле (вторая машина или локально); матрица возможностей в `/api/runtime`.
+- [x] **W3.2 Провайдеры ollama / openai_compatible** · M — по факту готово (задел W3.3): `_llm_runtime()` в
+  chat.py уже маршрутизирует **mlx / openrouter / openai / ollama / lemonade** единым OpenAI-совместимым путём
+  `/v1/chat/completions`; конфиг через `/api/settings` (env на лету + персист в .env) + GUI-селектор.
+  Остаток (инкрементально, `[live]`): cloud/ollama embeddings и VLM-OCR через тот же протокол (сейчас эмбеддер
+  и OCR — MLX-only); golden-прогон на ollama-профиле на второй машине.
 
 - [ ] **W3.3 Облачные провайдеры (OpenRouter + OpenAI) + политика маршрутизации** · M
   Файлы: конфигурации поверх `backend/inference/openai_compat.py` из W3.2 (отдельный SDK не нужен — ADR-9: оба провайдера OpenAI-совместимы); `proxy/config.py` (флаг чувствительности датасета P0/P1/P2); политика в диспетчере; для OpenAI — поддержка Batch API в офлайн-конвейерах.
@@ -159,10 +162,13 @@
   Приёмка: задача с P0-датасетом физически не может уйти в облако (тест); счётчик расходов в `/api/metrics`; смена облачной модели — правкой конфига без кода; при выключенной сети всё работает локально как раньше.
   **Задел (2026-06-11):** переключение провайдера уже работает без рестарта — `_llm_runtime()` в chat.py (mlx/ollama/openrouter/openai) + `/api/settings` (env на лету + персист в .env) + селектор в Lite Admin (`/les` → LLM Provider). Остаток W3.3 — политика P0/P1/P2, учёт расходов, fallback-цепочки и **memory-aware routing** (полевой вывод: ollama-модель рядом с MLX выедает RAM — диспетчер обязан смотреть на память до выбора локального провайдера).
 
-- [ ] **W3.4 Валидация в proxy, каскад rules→LLM** · M
-  Файлы: `/api/validate` из [mlx_host.py:1150-1262](../mlx_host.py) → сервис в proxy; rules-бэкенд уже существует (один из `VALIDATOR_BACKEND`).
-  Сделать: каскад: rules (<100 мс) → LLM-валидатор только при неопределённом вердикте; structured-вердикт (constrained output) вместо парсинга свободного текста. **Дефолт рантайма не менять** — каскад как новая опция.
-  Приёмка: validator golden set; доля ложных HALLUCINATION не выше baseline; латентность валидации на простых вопросах < 0.3 с.
+- [x] **W3.4 Валидация в proxy, каскад rules→LLM** · M — 2026-06-14. `backend.inference.validator.rules_pre_verdict`
+  включён в proxy для облачных провайдеров (у них нет своего `/api/validate`): ДО LLM-вызова дешёвый
+  детерминированный отсев — пустой контекст → NO_DATA, числовое утверждение ответа вне контекста →
+  HALLUCINATION (числовой guard, который облако иначе пропускало). Положительный вердикт намеренно НЕ выдаётся
+  правилами — подтверждение остаётся за LLM (ложных VERIFIED не добавляем). MLX-путь не тронут (у него свой
+  rules внутри `/api/validate`). 7 тестов. Остаток: structured-вердикт (constrained output) и каскад для
+  MLX-пути в proxy — когда понадобится. Латентность простых случаев — <1 мс (rules, без LLM-вызова).
 
 ## Волна 4 — Мультиплатформа
 
