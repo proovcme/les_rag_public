@@ -58,7 +58,7 @@ Proxy       :8050  (FastAPI)  ── /api/chat, /api/datasets, /api/runtime, /ap
 - Статика: [frontend/](../frontend/) (legacy `sovushka.html`; `cad_bim_viewer/` — TS+Vite+three.js+web-ifc), [qdrant_visualizer/](../qdrant_visualizer/) (three.js + клиентский PCA), `static/fonts/`.
 
 ### `tools/` (~48) — установка, сборка, ML, smoke, индексация
-Группы: рантайм-контроль (`install_les`, `les_runtime_control`, `lesctl`, `les_doctor` — W7.2 health-отчёт: порты/RAM/диск/GPU/инференс/провайдеры/коллекции, офлайн-безопасный, переиспользует `les_runtime_control`) · релизы (`build_*_release`, `build_release_artifacts`, `check_*_budget`) · CAD/BIM экстракторы (`cad_bim_extract_dxf/ifc`) · Core ML/эмбеддинги (`coreml_*`) · smoke (`browser_smoke`, `chat_format_smoke`, `clean_install_smoke`, `runtime_smoke`) · индексация/eval (`build_lexical_index`, `reindex_*_guarded`, `rag_golden_set`, `rag_eval_report`) · сиды (`seed_artel_*`).
+Группы: рантайм-контроль (`install_les`, `les_runtime_control`, `lesctl`, `les_doctor` — W7.2 health-отчёт: порты/RAM/диск/GPU/инференс/провайдеры/коллекции, офлайн-безопасный, переиспользует `les_runtime_control`) · релизы (`build_*_release`, `build_release_artifacts`, `check_*_budget`) · CAD/BIM экстракторы (`cad_bim_extract_dxf/ifc`) · Core ML/эмбеддинги (`coreml_*`) · smoke (`browser_smoke`, `chat_format_smoke`, `clean_install_smoke`, `runtime_smoke`) · индексация/eval (`build_lexical_index`, `reindex_*_guarded`, `rag_golden_set`, `rag_eval_report`, `measure_weak_retry` — W2.7: доля weak, закрываемой словарём, на golden → go/no-go по LLM-ступени) · сиды (`seed_artel_*`).
 
 ## Данные и конфиг
 
