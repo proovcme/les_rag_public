@@ -23,6 +23,8 @@ type LesChatResponse = {
   history_id?: number | string | null;
   cache?: string;
   sources?: unknown[];
+  source_ids?: string[];
+  cad_bim?: { import_id?: string | null; source_ids?: string[] };
   retrieval_trace?: {
     mode?: string;
     vector_count?: number;
@@ -957,7 +959,8 @@ async function askLesForElement(context: CadBimElementContext): Promise<void> {
     }
     const data = JSON.parse(text) as LesChatResponse;
     renderLesAnswer(answerNode, data);
-    setStatus("LES ответил по выбранному элементу");
+    const highlighted = highlightFromAnswer(data, "LES");
+    setStatus(highlighted ? "LES ответил и подсветил элементы" : "LES ответил по выбранному элементу");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     answerNode.classList.add("error");
@@ -1008,6 +1011,47 @@ function renderLesSources(sources: unknown[]): string {
     </div>
   `;
 }
+
+// W6.7: применить подсветку из ответа чата к загруженной модели.
+function highlightFromAnswer(data: LesChatResponse, who: string): boolean {
+  const ids = data.source_ids || data.cad_bim?.source_ids || [];
+  if (!ids.length) return false;
+  const matched = viewer.applyHighlight(ids);
+  if (matched > 0) {
+    viewer.focusElement(ids[0]);
+    setStatus(`${who} подсветил элементов: ${matched}`);
+    return true;
+  }
+  return false;
+}
+
+// W6.7: кросс-вкладка — вьювер поллит последнюю подсветку из proxy. Любой клиент
+// (чат Совушки, lite, внешний контур) задаёт source_ids → АТЛАС перекрашивает.
+let lastHighlightSeq = -1;
+async function pollHighlight(): Promise<void> {
+  try {
+    const response = await fetch("/lite-api/cad-bim/highlight", { headers: { Accept: "application/json" } });
+    if (!response.ok) return;
+    const data = (await response.json()) as { seq?: number; source_ids?: string[] };
+    const seq = Number(data.seq || 0);
+    if (lastHighlightSeq < 0) {
+      lastHighlightSeq = seq; // базовый уровень при загрузке — не реагируем на старый снимок
+      return;
+    }
+    if (seq <= lastHighlightSeq) return;
+    lastHighlightSeq = seq;
+    const ids = Array.isArray(data.source_ids) ? data.source_ids : [];
+    if (ids.length && viewer.applyHighlight(ids) > 0) {
+      viewer.focusElement(ids[0]);
+      setStatus(`Чат подсветил элементов: ${ids.length}`);
+    }
+  } catch {
+    /* поллинг подсветки не должен мешать вьюверу */
+  }
+}
+window.setInterval(() => {
+  void pollHighlight();
+}, 2500);
 
 async function copyText(value: string): Promise<void> {
   try {

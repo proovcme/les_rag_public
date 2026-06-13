@@ -291,6 +291,41 @@ export class CadBimViewer {
     return this.ifcEngine.highlightByGuids(globalIds);
   }
 
+  /**
+   * W6.7: подсветить JSON/CAD-элементы загруженной модели по source_id (== element.id)
+   * без перерендера и без сброса камеры. Перекрашивает материалы по userData.elementId;
+   * исходный цвет запоминается в userData.baseColorHex для снятия подсветки.
+   * Для IFC-моделей делегирует в highlightByGuids. Возвращает число совпавших элементов.
+   */
+  applyHighlight(ids: Iterable<string>): number {
+    const set = new Set<string>();
+    for (const id of ids) {
+      const value = String(id ?? "").trim();
+      if (value) set.add(value);
+    }
+    if (this.renderMode === "ifc") {
+      void this.ifcEngine.highlightByGuids([...set]);
+      this.requestRender();
+      return set.size;
+    }
+    let matched = 0;
+    this.root.traverse((child) => {
+      const elementId = String(child.userData.elementId || "");
+      if (!elementId || !("material" in child)) return;
+      const mesh = child as THREE.Mesh;
+      const target = (child.userData.originalMaterial as THREE.Material | THREE.Material[] | undefined) || mesh.material;
+      if (child.userData.baseColorHex === undefined) {
+        child.userData.baseColorHex = readMaterialColor(target);
+      }
+      const highlighted = set.has(elementId);
+      if (highlighted) matched += 1;
+      const hex = highlighted ? 0xfacc15 : child.userData.baseColorHex;
+      if (typeof hex === "number") writeMaterialColor(target, hex);
+    });
+    this.requestRender();
+    return matched;
+  }
+
   setLayerVisible(layer: string, visible: boolean): void {
     const groups = this.layerGroups.get(layer);
     groups?.forEach((group) => {
@@ -805,5 +840,21 @@ export class CadBimViewer {
 function mergeCounts(target: Map<string, number>, source: Map<string, number>): void {
   for (const [key, value] of source) {
     target.set(key, (target.get(key) || 0) + value);
+  }
+}
+
+function hasColor(material: unknown): material is { color: THREE.Color } {
+  return Boolean(material) && (material as { color?: unknown }).color instanceof THREE.Color;
+}
+
+function readMaterialColor(material: THREE.Material | THREE.Material[]): number | undefined {
+  const first = Array.isArray(material) ? material.find(hasColor) : material;
+  return hasColor(first) ? first.color.getHex() : undefined;
+}
+
+function writeMaterialColor(material: THREE.Material | THREE.Material[], hex: number): void {
+  const list = Array.isArray(material) ? material : [material];
+  for (const item of list) {
+    if (hasColor(item)) item.color.setHex(hex);
   }
 }

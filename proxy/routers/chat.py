@@ -18,6 +18,7 @@ from pydantic import BaseModel, field_validator
 from backend.rag_config import rag_meta_db_path
 from proxy.security import require_user
 from proxy.services.clarification_service import build_clarification_decision
+from proxy.services.cad_bim_highlight import extract_highlight, set_highlight
 from proxy.services.clause_lookup_service import maybe_answer_clause_lookup
 from proxy.services.context_expander_service import expand_context_windows
 from proxy.services.memory_service import recall_context
@@ -1458,7 +1459,7 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                     except Exception as cache_err:
                         logger.warning("[SESSION_CACHE] store skipped: %s", cache_err)
 
-                return {
+                response: dict[str, Any] = {
                     "answer": answer,
                     "crag_status": crag_status,
                     "sources": sources_list,
@@ -1469,6 +1470,24 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                     "validation": {"enabled": use_validation},
                     "history_id": history_id,
                 }
+
+                # W6.7: source_id CAD/BIM-элементов из текста чанков → ответ + снимок
+                # подсветки. Вьювер АТЛАС поллит /api/cad-bim/highlight и перекрашивает.
+                cad_bim_ids, cad_bim_import_id = extract_highlight(
+                    getattr(chunk, "content", "") or "" for chunk in chunks
+                )
+                if cad_bim_ids:
+                    response["source_ids"] = cad_bim_ids
+                    response["cad_bim"] = {
+                        "import_id": cad_bim_import_id,
+                        "source_ids": cad_bim_ids,
+                    }
+                    try:
+                        set_highlight(cad_bim_ids, import_id=cad_bim_import_id, question=req.question)
+                    except Exception as hl_err:  # подсветка не должна ронять ответ
+                        logger.warning("[CHAT] highlight store skipped: %s", hl_err)
+
+                return response
 
         except httpx.TimeoutException as e:
             logger.error("[CHAT] LLM TIMEOUT: %s", e)

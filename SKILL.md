@@ -161,6 +161,14 @@ curl -fsS "http://127.0.0.1:8050/api/diff/cad-bim?import_a=<id1>&import_b=<id2>"
 # text revisions: POST /api/diff/text {"text_a": ..., "text_b": ...}
 ```
 
+Viewer↔chat highlight (W6.7): a chat answer over CAD/BIM chunks fills the "last highlight"
+snapshot; the ATLAS viewer polls it and recolors elements (no manual selection, no LLM).
+
+```bash
+curl -fsS "http://127.0.0.1:8050/api/cad-bim/highlight" | python3 -m json.tool   # {seq, source_ids, import_id, question}
+# manual drive (other UIs/tests): POST /api/cad-bim/highlight {"source_ids": ["ELEM-1"], "import_id": "<id>"}
+```
+
 ## Documentation
 
 When closing a LES session, update at least:

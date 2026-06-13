@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from proxy.security import require_admin, require_user
+from proxy.services.cad_bim_highlight import get_highlight, set_highlight
 from proxy.services.cad_bim_graph import (
     CAD_BIM_ROOT,
     graph_summary,
@@ -151,6 +152,25 @@ async def cad_bim_element_context(
     if context is None:
         raise HTTPException(404, "CAD/BIM element not found")
     return context
+
+
+class HighlightRequest(BaseModel):
+    source_ids: list[str] = Field(default_factory=list)
+    import_id: str | None = None
+    question: str = ""
+
+
+@cad_bim_router.get("/highlight")
+async def cad_bim_get_highlight(_user=Depends(require_user)):
+    """Последняя подсветка (W6.7): вьювер поллит и перекрашивает элементы по seq."""
+    return get_highlight()
+
+
+@cad_bim_router.post("/highlight")
+async def cad_bim_set_highlight(req: HighlightRequest, _user=Depends(require_user)):
+    """Задать подсветку вручную (другие UI / тесты); пустой список не меняет снимок."""
+    snapshot = set_highlight(req.source_ids, import_id=req.import_id, question=req.question)
+    return snapshot or get_highlight()
 
 
 @router.post("/import")
