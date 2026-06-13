@@ -607,6 +607,17 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
             "validation": {"enabled": False, "reason": f"deterministic_{channel}_command"},
         }
 
+    # W16.1/W16.3: рабочая память — релевантные заметки оператора и прошлые удачные
+    # ответы (лексический recall, без LLM). Считается до clarification: проектные
+    # вопросы («корпус Б») часто режутся уточнением, а заметка как раз про них.
+    try:
+        memory_block = recall_context(req.question)
+    except Exception as err:
+        logger.warning("[MEMORY] recall failed: %s", err)
+        memory_block = ""
+    if memory_block:
+        logger.info("[MEMORY] подмешано %s символов рабочей памяти", len(memory_block))
+
     rag_backend = state.backend
     clarification = build_clarification_decision(
         req.question,
@@ -620,8 +631,11 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
             clarification.classification.route_reason,
             clarification.classification.dataset_filter,
         )
+        clar_answer = clarification.answer
+        if memory_block:
+            clar_answer = f"{clar_answer}\n\n{memory_block}"
         return {
-            "answer": clarification.answer,
+            "answer": clar_answer,
             "crag_status": "NEEDS_CLARIFICATION",
             "sources": [],
             "effective_dataset_filter": clarification.classification.dataset_filter,
@@ -995,7 +1009,8 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
 
     if retrieval.quality.status == "needs_clarification":
         return {
-            "answer": "Найденные источники слишком разнородны. Уточните область или датасет, чтобы я не смешал требования.",
+            "answer": "Найденные источники слишком разнородны. Уточните область или датасет, чтобы я не смешал требования."
+            + (f"\n\n{memory_block}" if memory_block else ""),
             "crag_status": "NEEDS_CLARIFICATION",
             "sources": source_names(chunks),
             "effective_dataset_filter": effective_dataset_filter,
@@ -1230,16 +1245,6 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                 tokens = 0
 
                 max_attempts = 2
-                # W16.1/W16.3: рабочая память — релевантные заметки оператора и прошлые
-                # удачные ответы (лексический recall, без LLM). Пустая строка — нет совпадений.
-                try:
-                    memory_block = recall_context(req.question)
-                except Exception as err:
-                    logger.warning("[MEMORY] recall failed: %s", err)
-                    memory_block = ""
-                if memory_block:
-                    logger.info("[MEMORY] подмешано %s символов рабочей памяти", len(memory_block))
-
                 for attempt in range(1, max_attempts + 1):
                     if attempt == 2:
                         strict_chunks = concentrate_sources(
