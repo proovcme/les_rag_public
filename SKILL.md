@@ -84,6 +84,14 @@ uv run python tools/runtime_smoke.py \
 
 ## Common Runtime Actions
 
+One-shot runtime health report (W7.2 — ports/RAM/disk/GPU/inference/embedder/cloud-providers/Qdrant collections; offline-safe, names the cause when a service is down; exit 1 on any FAIL):
+
+```bash
+uv run lesctl doctor          # human report with [OK]/[WARN]/[FAIL]
+uv run lesctl doctor --json   # machine-readable
+# legacy platform/profile install checks: uv run lesctl doctor --profile-check
+```
+
 Restart proxy after backend changes:
 
 ```bash
@@ -160,6 +168,16 @@ Diff two CAD/BIM imports or two document revisions (deterministic, no LLM):
 curl -fsS "http://127.0.0.1:8050/api/diff/cad-bim?import_a=<id1>&import_b=<id2>" | python3 -m json.tool
 # import ids: sqlite3 data/cad_bim_graph.db "SELECT id, source, created_at FROM cad_bim_imports"
 # text revisions: POST /api/diff/text {"text_a": ..., "text_b": ...}
+```
+
+Field volume journal (W8.1/W8.4): CRUD + SQL aggregations + xlsx; numbers are SQL, not LLM. Chat: «запиши объём 50 м3 монолитная плита захватка 3» records; «сколько монолитная плита выполнено за июнь 2026?» answers from confirmed entries.
+
+```bash
+curl -fsS -X POST http://127.0.0.1:8050/api/field -H 'Content-Type: application/json' \
+  -d '{"position":"монолитная плита","volume":50,"unit":"м3","zahvatka":"3","entry_date":"2026-06-10"}'
+curl -fsS "http://127.0.0.1:8050/api/field/summary?zahvatka=3&date_from=2026-06-01&date_to=2026-06-30" | python3 -m json.tool
+curl -fsS -X POST http://127.0.0.1:8050/api/field/export && curl -fsSJO http://127.0.0.1:8050/api/field/download  # xlsx
+# GUI: вкладка ОБЪЁМЫ (ввод/свод/журнал/экспорт)
 ```
 
 Viewer↔chat highlight (W6.7): a chat answer over CAD/BIM chunks fills the "last highlight"

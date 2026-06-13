@@ -7,7 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from tools import install_les, les_runtime_control
+from tools import install_les, les_doctor, les_runtime_control
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,9 +66,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="LES boxed runtime control.")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    doctor = sub.add_parser("doctor", help="run platform/profile checks")
+    doctor = sub.add_parser(
+        "doctor",
+        help="одношаговый отчёт о здоровье рантайма (порты/RAM/диск/GPU/провайдеры/коллекции)",
+    )
     doctor.add_argument("--profile", choices=sorted(install_les.SUPPORTED_PROFILES), default=None)
     doctor.add_argument("--json", action="store_true")
+    doctor.add_argument(
+        "--profile-check",
+        action="store_true",
+        help="вместо health-отчёта прогнать платформенные/профильные проверки установки",
+    )
 
     install = sub.add_parser("install", help="prepare local directories, .env and dependencies")
     install.add_argument("--profile", choices=sorted(install_les.SUPPORTED_PROFILES), default=None)
@@ -107,12 +115,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "doctor":
-        command = ["--check"]
-        if args.profile:
-            command.extend(["--profile", args.profile])
-        if args.json:
-            command.append("--json")
-        return install_les.main(command)
+        if args.profile_check:
+            command = ["--check"]
+            if args.profile:
+                command.extend(["--profile", args.profile])
+            if args.json:
+                command.append("--json")
+            return install_les.main(command)
+        doctor_args = ["--json"] if args.json else []
+        return les_doctor.main(doctor_args)
     if args.command == "install":
         command = ["--check", "--create-dirs"]
         if args.profile:

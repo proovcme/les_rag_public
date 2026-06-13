@@ -60,6 +60,7 @@ def build_header(
                 tab_refs["qdrant_viz"] = ui.tab("КВАДРАНТ",      icon="o_scatter_plot")
                 tab_refs["instrumenty"] = ui.tab("ИНСТРУМЕНТЫ", icon="o_build")
                 tab_refs["zadachi"]  = ui.tab("ЗАДАЧИ",         icon="o_checklist")
+                tab_refs["obyomy"]   = ui.tab("ОБЪЁМЫ",         icon="o_straighten")
                 tab_refs["diag"]     = ui.tab("Д.И.А.Г.Н.О.З.", icon="o_health_and_safety")
                 tab_refs["volk"]     = ui.tab("В.О.Л.К.",       icon="o_vpn_key")
 

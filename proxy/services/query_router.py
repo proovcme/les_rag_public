@@ -8,7 +8,7 @@ from typing import Literal, Optional
 from proxy.services.kot_service import analyze_question
 
 
-QueryChannel = Literal["table", "mail", "rag"]
+QueryChannel = Literal["table", "mail", "field", "rag"]
 
 
 @dataclass(frozen=True)
@@ -65,6 +65,24 @@ NORMATIVE_TOKENS = (
     "минимальн",
     "максимальн",
 )
+
+# Журнал полевых объёмов (W8.4): сильные сигналы + «глагол выполнения + объём».
+FIELD_STRONG_TOKENS = (
+    "захватк",
+    "журнал объ",
+    "полевы",
+    "полевой журнал",
+)
+FIELD_WORK_VERBS = (
+    "выполнен",
+    "смонтирован",
+    "уложен",
+    "залит",
+    "забетонирован",
+    "вывезен",
+    "освоен",
+)
+FIELD_VOLUME_TOKENS = ("объем", "объём", "сколько", "итого", "сумм", "освоен")
 
 MAIL_TOKENS = (
     "почт",
@@ -136,6 +154,11 @@ def route_query(
 
     if any(token in q for token in MAIL_TOKENS):
         return QueryIntent("mail", "MAIL", "mail_keyword")
+    if any(token in q for token in FIELD_STRONG_TOKENS) or (
+        any(verb in q for verb in FIELD_WORK_VERBS)
+        and any(token in q for token in FIELD_VOLUME_TOKENS)
+    ):
+        return QueryIntent("field", "FIELD", "field_volume_keyword")
     if any(token in q for token in FIRE_SAFETY_TOKENS):
         return QueryIntent("rag", "NTD_FIRE", "fire_safety_keyword")
     if any(token in q for token in HVAC_TOKENS):

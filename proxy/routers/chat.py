@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sqlite3
@@ -592,14 +593,18 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
     # и до admission: «поставь задачу…»/«запомни…» обязаны работать даже при memory-guard).
     from proxy.services.memory_service import maybe_handle_memory_command
     from proxy.services.task_service import maybe_handle_task_command
+    from proxy.services.field_intake_service import maybe_handle_field_command
 
     task_reply = maybe_handle_task_command(req.question, dataset_filter=req.dataset_filter or "")
-    memory_reply = None if task_reply is not None else maybe_handle_memory_command(
-        req.question, dataset_filter=req.dataset_filter or ""
+    field_reply = None if task_reply is not None else maybe_handle_field_command(req.question)
+    memory_reply = (
+        None
+        if task_reply is not None or field_reply is not None
+        else maybe_handle_memory_command(req.question, dataset_filter=req.dataset_filter or "")
     )
-    if task_reply is not None or memory_reply is not None:
-        reply = task_reply if task_reply is not None else memory_reply
-        channel = "tasks" if task_reply is not None else "memory"
+    if task_reply is not None or field_reply is not None or memory_reply is not None:
+        reply = task_reply or field_reply or memory_reply
+        channel = "tasks" if task_reply is not None else ("field" if field_reply is not None else "memory")
         return {
             "answer": reply["answer"],
             "crag_status": "DETERMINISTIC",
@@ -745,6 +750,75 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                 "cache": "deterministic_mail",
                 "validation": {"enabled": False, "reason": "deterministic_mail"},
                 "mail_query": mail_result.payload(),
+                "history_id": history_id,
+            }
+
+    if query_intent.channel == "field":
+        from proxy.services.field_intake_service import maybe_answer_field_volume_query
+
+        t_field_start = time.time()
+        try:
+            field_result = await asyncio.to_thread(maybe_answer_field_volume_query, req.question)
+        except Exception as field_err:
+            logger.warning("[FIELD] deterministic field answer skipped: %s", field_err)
+            field_result = None
+        if field_result is not None:
+            t_field = time.time() - t_field_start
+            status = "VERIFIED" if field_result["total_entries"] > 0 else "NO_DATA"
+            if status == "VERIFIED":
+                state.crag_stats["verified"] += 1
+                state.chat_metrics["crag_pass"] += 1
+            else:
+                state.crag_stats["no_data"] += 1
+                state.chat_metrics["crag_fail"] += 1
+            state.chat_metrics["latency_search"].append(t_field)
+            state.chat_metrics["latency_gen"].append(0.0)
+            state.chat_metrics["tokens"].append(0)
+            for key in ("latency_search", "latency_gen", "tokens"):
+                state.chat_metrics[key] = state.chat_metrics[key][-100:]
+            field_trace = {
+                "mode": "field",
+                "vector_count": 0,
+                "lexical_count": 0,
+                "merged_count": field_result["total_entries"],
+                "retry_count": 0,
+                "quality_status": "deterministic_field",
+                "field": {"period": field_result["period"], "groups": len(field_result["rows"])},
+            }
+            history_id = None
+            try:
+                history_id = save_chat_history(
+                    question=req.question,
+                    answer=field_result["answer"],
+                    sources=["журнал полевых объёмов"],
+                    crag_status=status,
+                    latency_sec=t_field,
+                    tokens=0,
+                    session_id=req.session_id,
+                    requested_dataset_filter=req.dataset_filter,
+                    effective_dataset_filter="FIELD",
+                    resolved_dataset_ids=[],
+                    resolved_dataset_names=[],
+                    source_dataset_ids=[],
+                    source_dataset_names=[],
+                    query_route=query_route_payload,
+                    retrieval_trace=field_trace,
+                    cache_type="deterministic_field",
+                    validation_enabled=False,
+                    success=1 if status == "VERIFIED" else 0,
+                )
+            except Exception as db_err:
+                logger.warning("[CHAT] History save error: %s", db_err)
+            return {
+                "answer": field_result["answer"],
+                "crag_status": status,
+                "sources": ["журнал полевых объёмов"],
+                "effective_dataset_filter": "FIELD",
+                "query_route": query_route_payload,
+                "retrieval_trace": field_trace,
+                "cache": "deterministic_field",
+                "validation": {"enabled": False, "reason": "deterministic_field"},
+                "field_query": {"period": field_result["period"], "rows": field_result["rows"]},
                 "history_id": history_id,
             }
 

@@ -171,6 +171,7 @@ async def classic_admin_page(request: Request):
     from sovushka.pages.volk import build_volk
     from sovushka.pages.zadachi import build_zadachi
     from sovushka.pages.instrumenty import build_instrumenty
+    from sovushka.pages.obyomy import build_obyomy
 
     allowed, role, holder, is_admin = _resolve_auth(request)
     if not allowed:
@@ -202,6 +203,7 @@ async def classic_admin_page(request: Request):
         tab_qdrant_viz = tr.get("qdrant_viz")
         tab_instrumenty = tr.get("instrumenty")
         tab_zadachi  = tr.get("zadachi")
+        tab_obyomy   = tr.get("obyomy")
         tab_diag     = tr.get("diag")
         tab_volk     = tr.get("volk")
 
@@ -232,6 +234,8 @@ async def classic_admin_page(request: Request):
                 build_instrumenty()
             with ui.tab_panel(tab_zadachi):
                 build_zadachi()
+            with ui.tab_panel(tab_obyomy):
+                build_obyomy()
             with ui.tab_panel(tab_diag):
                 build_diag()
             with ui.tab_panel(tab_volk):
