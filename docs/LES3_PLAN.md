@@ -128,10 +128,15 @@
   **Приёмка:** golden FIRE/HVAC **16/16** не хуже baseline (лучше — fire_truck_access прошёл); 3 живых кейса
   через rerank: fire_truck_access ✅, ширина эвакуации ✅, разделы ПД-87 (ПП №87, маршрут GKRF, топ 0.76-0.84) ✅.
 
-- [ ] **W2.4 Sparse-вектора в Qdrant** · M `[reindex]`
-  Файлы: [backend/qdrant_adapter.py](../backend/qdrant_adapter.py) (создание коллекции, upsert, retrieve), [mlx_host.py](../mlx_host.py) (sparse-выход эмбеддера).
-  Сделать: named sparse vector (BGE-M3 sparse) рядом с dense; в ретриве — Qdrant hybrid query вместо самописного FTS-стеммера; FTS остаётся для clause lookup.
-  Приёмка: запросы с точными терминами/артикулами (новый golden-поднабор) лучше baseline; зависимость W2.1 (общее окно реиндекса).
+- [x] **W2.4 Sparse-вектора в Qdrant** · M — 2026-06-14. Qdrant-native гибрид: dense (Qwen) + named sparse
+  через **sparse-сайдкар** `les_rag_qwen3_06b_sparse` (sparse-only коллекция, те же point id, основная коллекция
+  НЕ тронута — нулевой риск, свап не нужен). `retrieve_sparse` фьюзит dense+sparse по RRF в `_hybrid_merge`
+  (`mode=hybrid+sparse+rerank`), за флагом `RAG_SPARSE_ENABLED`. **Решение по модели sparse:** BGE-M3 learned-sparse
+  доказан без FlagEmbedding (`backend/inference/sparse_embed.py`), НО на 169k реальных чанков (~450 токенов) это
+  ~9 ч MPS — непрактично. Выбран **BM25/IDF** (`backend/inference/bm25_sparse.py`: токены+стем как у FTS → TF,
+  IDF считает Qdrant `modifier=Idf`): реиндекс 169k за **36 с** на CPU, ноль Metal. `tools/reindex_sparse_bge_m3.py`.
+  **Приёмка:** доменный гейт **16/16** на hybrid+sparse (без регрессии), sparse-сигнал активен (sparse-доминантные
+  скоры на лексических кейсах). Сайдкар 169546 точек. Откат — флаг off + рестарт. BGE-M3-путь оставлен на будущее.
 
 - [x] **W2.5 Обогащение чанков** · S `[reindex]` — 2026-06-11. `_section_heading_info`: настоящие заголовки (markdown #N / нумерованные «5.2.1 Текст» с заглавной) + `heading_level`; чанки-продолжения наследуют последний заголовок (`heading_inherited=true`); старое поведение — fallback. `parent_id` не трогали: он уже детерминирован от dataset:file:window (стабилен при реиндексе того же файла). В одном окне реиндекса с W2.1.
 
