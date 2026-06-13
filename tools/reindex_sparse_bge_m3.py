@@ -1,15 +1,14 @@
-"""W2.4: гибридная коллекция (dense Qwen + BGE-M3 sparse) миграцией.
+"""W2.4: BM25/IDF sparse-сайдкар рядом с основной коллекцией.
 
-Qdrant 1.18 НЕ умеет добавлять sparse-вектор к существующей коллекции, поэтому
-создаём новую `{src}_hybrid` с безымянным dense (как у источника) + named sparse
-`bge_m3_sparse` и копируем точки: dense ПЕРЕИСПОЛЬЗУЕМ из источника (не
-перембеддим — он даёт 16/16), sparse считаем из payload['text'] через BGE-M3.
-Старая коллекция остаётся нетронутой (бэкап до свапа RAG_COLLECTION_NAME).
+Строим ОТДЕЛЬНУЮ sparse-only коллекцию `{src}_sparse` с теми же point id
+(vectors_config={}, только named sparse `bm25_sparse` с modifier=Idf). Для каждой
+точки храним TF термов (токенизация+стемминг как в FTS); IDF Qdrant считает сам.
+Ретрив фьюзит dense (основная коллекция) + sparse (сайдкар) по id. Основную
+коллекцию не трогаем (нулевой риск, свап не нужен). Без нейромодели — индексация
+за минуты на CPU (ноль нагрузки на Metal).
 
-Идемпотентно по точкам (upsert по id). При падении — перезапуск с --resume-offset
-или просто заново (перезапишет).
-
-Запуск:  uv run python tools/reindex_sparse_bge_m3.py [--batch 24] [--limit N]
+Идемпотентно (upsert по id). Запуск:
+    uv run python tools/reindex_sparse_bge_m3.py [--batch 1000] [--limit N] [--recreate]
 """
 
 from __future__ import annotations
@@ -20,79 +19,83 @@ import time
 
 from qdrant_client import QdrantClient, models
 
-from backend.inference.sparse_embed import SPARSE_VECTOR_NAME as SPARSE_NAME, encode_sparse
+from backend.inference.bm25_sparse import SPARSE_VECTOR_NAME as SPARSE_NAME, encode_bm25
+
+_PAYLOAD_FIELDS = ["text", "dataset_id", "doc_id", "file_name"]
 
 
-def ensure_target(client: QdrantClient, src: str, dst: str) -> None:
-    src_info = client.get_collection(src)
-    dense = src_info.config.params.vectors  # безымянный VectorParams
+def ensure_sidecar(client: QdrantClient, dst: str, recreate: bool) -> None:
+    if recreate and client.collection_exists(dst):
+        client.delete_collection(dst)
+        print(f"[sparse] пересоздаю {dst}")
     if client.collection_exists(dst):
-        print(f"[mig] целевая {dst} уже существует — дополняем")
+        print(f"[sparse] сайдкар {dst} существует — дополняем")
         return
     client.create_collection(
         dst,
-        vectors_config=models.VectorParams(size=dense.size, distance=dense.distance),
-        sparse_vectors_config={SPARSE_NAME: models.SparseVectorParams()},
+        vectors_config={},  # sparse-only
+        sparse_vectors_config={SPARSE_NAME: models.SparseVectorParams(modifier=models.Modifier.IDF)},
     )
-    print(f"[mig] создана {dst}: dense {dense.size}/{dense.distance} + sparse '{SPARSE_NAME}'")
+    try:
+        client.create_payload_index(dst, field_name="dataset_id", field_schema=models.PayloadSchemaType.KEYWORD)
+    except Exception:
+        pass
+    print(f"[sparse] создан BM25-сайдкар {dst} (modifier=Idf)")
 
 
-def migrate(src: str, dst: str, *, batch: int, limit: int | None) -> None:
+def build(src: str, dst: str, *, batch: int, limit: int | None, recreate: bool) -> None:
     url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
     client = QdrantClient(url=url, timeout=180.0)
-    ensure_target(client, src, dst)
-
+    ensure_sidecar(client, dst, recreate)
     total = client.count(src, exact=False).count
-    print(f"[mig] {src} → {dst}, точек≈{total}, url={url}")
+    print(f"[sparse] {src} → {dst}, точек≈{total}, url={url}")
 
-    done = 0
-    empty = 0
+    done = empty = 0
     offset = None
     t0 = time.time()
     while True:
         points, offset = client.scroll(
-            src, limit=batch, offset=offset, with_payload=True, with_vectors=True,
+            src, limit=batch, offset=offset, with_payload=_PAYLOAD_FIELDS, with_vectors=False,
         )
         if not points:
             break
-        texts = [(p.payload or {}).get("text", "") or "" for p in points]
-        sparse_vecs = encode_sparse(texts, batch_size=batch)
         out = []
-        for p, sv in zip(points, sparse_vecs):
-            dense = p.vector if isinstance(p.vector, list) else (p.vector or {}).get("")
-            if dense is None:
-                continue
-            vec: dict = {"": dense}
-            if sv:
-                vec[SPARSE_NAME] = models.SparseVector(indices=list(sv.keys()), values=list(sv.values()))
-            else:
+        for p in points:
+            vec = encode_bm25((p.payload or {}).get("text", "") or "")
+            if not vec:
                 empty += 1
-            out.append(models.PointStruct(id=p.id, vector=vec, payload=p.payload))
+                continue
+            out.append(models.PointStruct(
+                id=p.id,
+                vector={SPARSE_NAME: models.SparseVector(indices=list(vec.keys()), values=list(vec.values()))},
+                payload={k: (p.payload or {}).get(k) for k in _PAYLOAD_FIELDS},
+            ))
         if out:
             client.upsert(dst, points=out, wait=False)
         done += len(points)
-        if done % (batch * 20) == 0 or offset is None:
+        if done % (batch * 5) == 0 or offset is None:
             rate = done / max(0.1, time.time() - t0)
             eta = (total - done) / max(1.0, rate)
-            print(f"[mig] {done}/{total} ({rate:.0f}/с, ~{eta/60:.1f} мин, sparse-пустых {empty})", flush=True)
+            print(f"[sparse] {done}/{total} ({rate:.0f}/с, ~{eta/60:.1f} мин, пустых {empty})", flush=True)
         if limit and done >= limit:
-            print(f"[mig] --limit {limit} достигнут")
+            print(f"[sparse] --limit {limit} достигнут")
             break
         if offset is None:
             break
     final = client.count(dst, exact=True).count
-    print(f"[mig] ГОТОВО: {done} обработано, в {dst} точек {final}, за {(time.time()-t0)/60:.1f} мин")
+    print(f"[sparse] ГОТОВО: {done} обработано, в {dst} точек {final}, за {(time.time()-t0)/60:.1f} мин")
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Миграция в гибридную dense+sparse коллекцию (W2.4).")
+    ap = argparse.ArgumentParser(description="BM25/IDF sparse-сайдкар для гибрида (W2.4).")
     ap.add_argument("--src", default=os.getenv("RAG_COLLECTION_NAME", "les_rag_qwen3_06b"))
     ap.add_argument("--dst", default="")
-    ap.add_argument("--batch", type=int, default=24)
+    ap.add_argument("--batch", type=int, default=1000)
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--recreate", action="store_true", help="пересоздать сайдкар с нуля")
     args = ap.parse_args(argv)
-    dst = args.dst or f"{args.src}_hybrid"
-    migrate(args.src, dst, batch=args.batch, limit=args.limit or None)
+    dst = args.dst or f"{args.src}_sparse"
+    build(args.src, dst, batch=args.batch, limit=args.limit or None, recreate=args.recreate)
     return 0
 
 

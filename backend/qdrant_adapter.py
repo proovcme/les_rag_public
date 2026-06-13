@@ -1712,12 +1712,12 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         Возвращает Chunk-и той же формы, что `retrieve`. Пустой sparse-запрос или
         отсутствие sparse-вектора в коллекции → [] (гибрид молча падает на dense+FTS).
         """
-        import asyncio as _asyncio
+        from backend.inference.bm25_sparse import SPARSE_VECTOR_NAME, encode_bm25
 
-        from backend.inference.sparse_embed import SPARSE_VECTOR_NAME, encode_one
-
-        await self._ensure_collection()
-        sv = await _asyncio.to_thread(encode_one, query)
+        # Sparse-сайдкар: отдельная коллекция {main}_sparse (те же id), dense не дублируем.
+        # BM25/IDF (W2.4): TF термов, IDF считает Qdrant (modifier=Idf). Токенизация — CPU.
+        sparse_collection = os.getenv("RAG_SPARSE_COLLECTION", "").strip() or f"{self.collection_name}_sparse"
+        sv = encode_bm25(query)
         if not sv:
             return []
 
@@ -1728,7 +1728,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             ])
 
         results = await self.aclient.query_points(
-            collection_name=self.collection_name,
+            collection_name=sparse_collection,
             query=models.SparseVector(indices=list(sv.keys()), values=list(sv.values())),
             using=SPARSE_VECTOR_NAME,
             query_filter=query_filter,
