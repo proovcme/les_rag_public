@@ -153,10 +153,7 @@ def recall_context(
         )
     if not parts:
         return ""
-    return (
-        "Рабочая память (заметки оператора и прошлые решения; используй как контекст, "
-        "но нормативные утверждения бери только из документов):\n" + "\n".join(parts)
-    )
+    return "Рабочая память (заметки оператора и прошлые решения):\n" + "\n".join(parts)
 
 
 def maybe_handle_memory_command(question: str, dataset_filter: str = "") -> dict[str, Any] | None:

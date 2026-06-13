@@ -1278,7 +1278,13 @@ async def chat(req: ChatRequest, _user=Depends(require_user)):
                             "role": "user",
                             "content": (
                                 f"Контекст:\n{context}\n\n"
-                                + (f"{memory_block}\n\n" if memory_block else "")
+                                + (
+                                    f"{memory_block}\n"
+                                    "(Рабочую память используй как фон; нормативные утверждения "
+                                    "бери только из контекста документов.)\n\n"
+                                    if memory_block
+                                    else ""
+                                )
                                 + f"Вопрос: {req.question}\n\n"
                                 "/no_think\n"
                                 "Ответь сразу итоговым ответом без скрытых рассуждений. "
