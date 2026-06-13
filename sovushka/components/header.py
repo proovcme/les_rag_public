@@ -80,7 +80,7 @@ def build_header(
 
             # Обновить
             ui.button("↻", on_click=lambda: asyncio.create_task(_full_refresh())
-            ).props("flat dense").style("color:var(--dim);font-size:.85rem;")
+            ).props('flat dense aria-label="Обновить данные"').style("color:var(--dim);font-size:.85rem;")
 
             # Тема
             _dark_init = app.storage.user.get("dark_theme", True)
@@ -103,7 +103,7 @@ def build_header(
 
             theme_btn = ui.button(
                 "🌙" if _dark_init else "☀", on_click=_toggle_theme
-            ).props("flat dense").style("color:var(--dim);font-size:.85rem;")
+            ).props('flat dense aria-label="Переключить тему"').style("color:var(--dim);font-size:.85rem;")
 
             if not _dark_init:
                 ui.run_javascript("if(window.Quasar){Quasar.Dark.set(false);}")
@@ -305,7 +305,7 @@ def build_header(
                             "border:1px solid var(--accent);color:var(--accent);background:transparent;"
                         )
 
-                ui.button("⚙", on_click=lambda: settings_dialog.open()).props("flat dense").style("color:var(--dim);")
+                ui.button("⚙", on_click=lambda: settings_dialog.open()).props('flat dense aria-label="Настройки"').style("color:var(--dim);")
 
             # Пользователь / выход
             badge_text = f"{'👑' if is_admin else '👤'} {auth_holder or auth_role}"

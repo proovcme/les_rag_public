@@ -69,7 +69,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             with ui.row().classes("w-full items-center justify-between"):
                 _html('<div class="sov-panel-title">История</div>')
                 ui.button(icon="o_close", on_click=lambda: history_drawer.set_visibility(False)).props(
-                    "flat round dense"
+                    'flat round dense aria-label="Закрыть историю"'
                 ).classes("sov-icon-btn")
             sessions_col = ui.column().classes("w-full gap-2 sov-history-list")
 
@@ -77,7 +77,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             with ui.row().classes("sov-chat-topbar"):
                 with ui.row().classes("items-center gap-2"):
                     ui.button(icon="o_history", on_click=lambda: _toggle_history()).props(
-                        "flat round dense"
+                        'flat round dense aria-label="История чата"'
                     ).classes("sov-icon-btn")
                     _html('<div class="sov-chat-title">С.О.В.У.Ш.К.А.</div>')
                     _html('<div class="sov-chat-subtitle">нормативный RAG-диспетчер</div>')
@@ -85,7 +85,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     mode_chip = ui.label("RAG").classes("sov-chip")
                     validation_chip = ui.label("CRAG ON").classes("sov-chip")
                     ui.button(icon="o_delete_sweep", on_click=lambda: _clear_chat()).props(
-                        "flat round dense"
+                        'flat round dense aria-label="Очистить чат"'
                     ).classes("sov-icon-btn")
 
             chat_scroll = ui.scroll_area().classes("sov-chat-scroll")
@@ -135,7 +135,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 with ui.column().classes("gap-0"):
                     _html('<div class="sov-panel-title">Расширенный запрос</div>')
                     _html('<div class="sov-muted">формат, датасет, стиль и образец выдачи</div>')
-                ui.button(icon="o_close", on_click=advanced_dialog.close).props("flat round dense").classes("sov-icon-btn")
+                ui.button(icon="o_close", on_click=advanced_dialog.close).props('flat round dense aria-label="Закрыть"').classes("sov-icon-btn")
 
             with ui.scroll_area().classes("sov-advanced-scroll"):
                 with ui.column().classes("w-full gap-3"):

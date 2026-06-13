@@ -91,6 +91,9 @@ def _apply_theme() -> None:
     _dark = app.storage.user.get("dark_theme", True)
     ui.add_head_html(theme_vars_css(_dark))
     ui.add_head_html(CUSTOM_CSS)
+    # WCAG 3.1.1 Language of Page: интерфейс и контент русские — помечаем
+    # документ lang=ru, иначе скринридеры читают кириллицу как английский.
+    ui.add_head_html("<script>document.documentElement.lang='ru'</script>")
     ui.query("body").style("background:var(--bg);color:var(--text);margin:0;")
     ui.query(".nicegui-content").classes("p-0 m-0 w-full").style("max-width:none;")
 

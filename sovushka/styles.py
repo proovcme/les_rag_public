@@ -982,5 +982,43 @@ input::placeholder {
 .q-table td {
   color: var(--text) !important;
 }
+/* ─── Доступность (WCAG) ─────────────────────────────────────────── */
+/* 2.4.7 Focus Visible: явный фокус-индикатор для клавиатуры. Только
+   :focus-visible — мышиный клик контур не показывает, разметку не двигает. */
+a:focus-visible,
+button:focus-visible,
+[tabindex]:focus-visible,
+[role="button"]:focus-visible,
+.q-btn:focus-visible,
+.q-tab:focus-visible,
+.q-toggle:focus-visible,
+.q-checkbox:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+.q-field__native:focus-visible,
+.sov-session-card:focus-visible,
+.sov-format-btn:focus-visible,
+.les-map-preset:focus-visible,
+.mode-rag:focus-visible,
+.mode-code:focus-visible {
+  outline: 2px solid var(--accent) !important;
+  outline-offset: 2px !important;
+  border-radius: 4px;
+}
+/* Контраст самого индикатора фокуса на тёмном фоне — двойная обводка. */
+.q-btn:focus-visible,
+.q-tab:focus-visible {
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent) !important;
+}
+/* 2.3.3 Animation from Interactions: уважать prefers-reduced-motion. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
 </style>
 """
