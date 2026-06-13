@@ -115,15 +115,18 @@
 
 - [x] **W2.1 Чанкинг в токенах** · M `[reindex]` — 2026-06-11. `RAG_CHUNK_UNIT=tokens` (дефолт): 430+50 токенов в бюджет seq_len 512−32; токенизатор модели эмбеддингов лениво, кламп-страховка, откат на chars при недоступности transformers. `StructureAwareSplitter(len_fn=...)`; жёсткая нарезка патологических предложений — в символах с коэффициентом ×3. MIN_CHUNK 20→100. **Окно реиндекса открыто 2026-06-11** (совмещено с восстановлением корпуса из карантина: 1009 файлов, 20 датасетов, индексация фоном). Приёмка golden 16/16 — после завершения FIRE+HVAC.
 
-- [ ] **W2.2 Cross-encoder реранкер (замена LLM-реранкера)** · M `[dep]` `[live]`
-  Файлы: [backend/reranker.py](../backend/reranker.py) (заменяется), [proxy/services/retrieval_service.py:352-420](../proxy/services/retrieval_service.py), [mlx_host.py](../mlx_host.py) (хостинг модели) или ONNX в proxy.
-  Сделать: bge-reranker-v2-m3 или Qwen3-Reranker-0.6B как сервис `/v1/rerank`; LLM-реранкер удалить (ADR-3). Сопоставление результатов по `doc_id`/`chunk_ord`, не по равенству текста.
-  Приёмка: латентность реранка 12 чанков < 0.5 с (было 2-6 с); golden не хуже; реранк не держит `llm_semaphore`.
+- [x] **W2.2 Cross-encoder реранкер (замена LLM-реранкера)** · M — 2026-06-14. `bge-reranker-v2-m3` как
+  сервис `POST /v1/rerank` (mlx_host `CrossEncoderReranker`, ленивая загрузка, TTL 600 с, отдельный поток —
+  НЕ держит `llm_semaphore`/Metal). Сопоставление по индексу документа. **Приёмка пройдена:** тёплая латентность
+  **~60 мс на 8 чанков** (цель <0.5 с — с запасом ×8; было 2-6 с у LLM-реранкера), холодная загрузка ~9 с разово.
+  Доменный гейт **16/16** через rerank-путь (был 15/16): `fire_truck_access` починен — СП 4.13130 поднят в топ.
+  ⚠️ **Загрузка модели:** оригинальный HF `cdn-lfs` недоступен (гео/троттл) — `model.safetensors` (2.27 ГБ) и
+  `sentencepiece.bpe.model` (5 МБ) дотянуты с зеркала `hf-mirror.com` в HF-кэш (см. SKILL «Reranker»).
 
-- [ ] **W2.3 Гибрид + реранкер вместе** · M
-  Файлы: [proxy/services/retrieval_service.py:352-420](../proxy/services/retrieval_service.py) (ранний return ветки реранкера минует `_hybrid_merge`).
-  Сделать: единый путь: vector + sparse/lexical → RRF → пул 24-36 → rerank → top 6. Удалить ветвление «реранкер ИЛИ гибрид».
-  Приёмка: `retrieval_trace.mode == "hybrid+rerank"`; golden + новые наборы W0.3 не хуже baseline.
+- [x] **W2.3 Гибрид + реранкер вместе** · M — 2026-06-14. Единый путь подтверждён на живом рантайме:
+  `retrieval_trace.mode == "hybrid+rerank"`, vector 48 + lexical 48 → RRF merged 24 → rerank → top.
+  **Приёмка:** golden FIRE/HVAC **16/16** не хуже baseline (лучше — fire_truck_access прошёл); 3 живых кейса
+  через rerank: fire_truck_access ✅, ширина эвакуации ✅, разделы ПД-87 (ПП №87, маршрут GKRF, топ 0.76-0.84) ✅.
 
 - [ ] **W2.4 Sparse-вектора в Qdrant** · M `[reindex]`
   Файлы: [backend/qdrant_adapter.py](../backend/qdrant_adapter.py) (создание коллекции, upsert, retrieve), [mlx_host.py](../mlx_host.py) (sparse-выход эмбеддера).

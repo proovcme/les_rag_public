@@ -39,6 +39,7 @@ Live baseline on 2026-06-01:
 - Main model: `mlx-community/Qwen3.5-4B-MLX-4bit`.
 - Embedder: Core ML `Qwen/Qwen3-Embedding-0.6B`, `qwen3_embedding_06b_b1_s512_static.mlpackage`, `compute_units=all`, isolated worker, fallback disabled.
 - Validator live default: deterministic `rules`. Core ML `MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli` package exists for measured compare/probe, not current production default.
+- Reranker (W2.2): cross-encoder `BAAI/bge-reranker-v2-m3` via `POST /v1/rerank` (mlx_host, lazy, TTL 600s, separate from `llm_semaphore`). Warm latency ~60ms/8 docs; domain gate 16/16 via rerank path. **Download note:** HF `cdn-lfs` is blocked here — fetch LFS files from the `hf-mirror.com` mirror into the HF cache (`model.safetensors` ~2.27GB, `sentencepiece.bpe.model` ~5MB). Recovery: `curl -sL -C - -o <file> https://hf-mirror.com/BAAI/bge-reranker-v2-m3/resolve/main/<file>` into `~/.cache/huggingface/hub/models--BAAI--bge-reranker-v2-m3/snapshots/<commit>/` (snapshot already holds config/tokenizer). Validate: `safe_open(...).keys()` → 393 tensors.
 - Visual OCR: MLX-native `mlx-community/GLM-OCR-4bit` (via `mlx-vlm`, lazy-loaded with explicit Metal cache clearing after processing).
 - Office Ingestion: Microsoft MarkItDown with graceful fallbacks to mammoth/pandas.
 - Structured Rules: Google LangExtract schema extraction to SQLite `structured_rules` table with exact character offsets; active table is expected to be empty until targeted `NORMATIVE`/`SPEC` reindex populates it.
