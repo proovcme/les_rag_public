@@ -9,7 +9,7 @@ from nicegui import app, ui
 
 from backend.auth import logout
 from sovushka.components.charts import _html
-from sovushka.state import last_api_error_text
+from sovushka.state import last_api_error_text, proxy_online
 from sovushka.styles import _DARK_THEME, _LIGHT_THEME
 
 
@@ -66,6 +66,17 @@ def build_header(
 
         # ── Контролы (справа) ─────────────────────────────────────────────────
         with ui.row().classes("items-center gap-1").style("flex-shrink:0;margin-left:8px;"):
+
+            # W5.3: индикатор доступности proxy (зелёный — на связи, красный — нет)
+            proxy_dot = ui.icon("circle").style("font-size:.6rem;color:#10b981;margin:0 2px;")
+            proxy_dot.tooltip("связь с proxy")
+
+            def _upd_proxy_dot():
+                proxy_dot.style(
+                    f"font-size:.6rem;color:{'#10b981' if proxy_online() else '#ef4444'};margin:0 2px;"
+                )
+
+            ui.timer(3.0, _upd_proxy_dot)
 
             # Обновить
             ui.button("↻", on_click=lambda: asyncio.create_task(_full_refresh())

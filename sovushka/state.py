@@ -45,6 +45,9 @@ state = {
     "diag_results": [],
     "diag_running": False,
     "last_api_error": None,
+    # W5.3: индикатор «proxy недоступен» — поднимается при connect/timeout-сбоях.
+    "proxy_online": True,
+    "proxy_offline_reason": "",
 }
 
 # ─────────────────────────────────────────
@@ -69,6 +72,13 @@ def _auth_headers() -> dict:
     return {"X-API-Key": key} if key else {}
 
 
+def _api_success() -> None:
+    """Успешный ответ proxy → сброс ошибки и индикатора недоступности (W5.3)."""
+    state["last_api_error"] = None
+    state["proxy_online"] = True
+    state["proxy_offline_reason"] = ""
+
+
 def _api_error(method: str, path: str, exc: Exception) -> None:
     detail = str(exc)
     status_code = None
@@ -79,6 +89,16 @@ def _api_error(method: str, path: str, exc: Exception) -> None:
             detail = body.get("detail", detail) if isinstance(body, dict) else str(body)
         except Exception:
             detail = exc.response.text or detail
+    # W5.3: честное сообщение и индикатор «proxy недоступен» — отличаем сетевую
+    # недоступность/таймаут (proxy не отвечает) от прикладной HTTP-ошибки.
+    elif isinstance(exc, httpx.TimeoutException):
+        detail = "превышено время ожидания ответа (proxy перегружен или не отвечает)"
+        state["proxy_online"] = False
+        state["proxy_offline_reason"] = "timeout"
+    elif isinstance(exc, httpx.TransportError):
+        detail = "proxy недоступен (нет соединения) — проверь, запущен ли сервис :8050"
+        state["proxy_online"] = False
+        state["proxy_offline_reason"] = "offline"
     state["last_api_error"] = {
         "method": method,
         "path": path,
@@ -96,7 +116,7 @@ async def api_get(path: str, base: Optional[str] = None) -> Optional[Union[dict,
         async with httpx.AsyncClient(timeout=180.0) as client:
             r = await client.get(f"{base}{path}", headers=_auth_headers())
             r.raise_for_status()
-            state["last_api_error"] = None
+            _api_success()
             return r.json()
     except Exception as e:
         _api_error("GET", path, e)
@@ -111,7 +131,7 @@ async def api_post(path: str, data: Optional[dict] = None, base: Optional[str] =
         async with httpx.AsyncClient(timeout=180.0) as client:
             r = await client.post(f"{base}{path}", json=data or {}, headers=_auth_headers())
             r.raise_for_status()
-            state["last_api_error"] = None
+            _api_success()
             return r.json()
     except Exception as e:
         _api_error("POST", path, e)
@@ -131,7 +151,7 @@ async def api_get_bytes(path: str, base: Optional[str] = None) -> Optional[tuple
             fname = ""
             if "filename=" in disp:
                 fname = disp.split("filename=", 1)[1].strip('"; ')
-            state["last_api_error"] = None
+            _api_success()
             return r.content, (fname or path.rsplit("/", 1)[-1])
     except Exception as e:
         _api_error("GET", path, e)
@@ -146,7 +166,7 @@ async def api_patch(path: str, data: Optional[dict] = None, base: Optional[str] 
         async with httpx.AsyncClient(timeout=180.0) as client:
             r = await client.patch(f"{base}{path}", json=data or {}, headers=_auth_headers())
             r.raise_for_status()
-            state["last_api_error"] = None
+            _api_success()
             return r.json()
     except Exception as e:
         _api_error("PATCH", path, e)
@@ -161,7 +181,7 @@ async def api_delete(path: str, base: Optional[str] = None) -> Optional[dict]:
         async with httpx.AsyncClient(timeout=180.0) as client:
             r = await client.delete(f"{base}{path}", headers=_auth_headers())
             r.raise_for_status()
-            state["last_api_error"] = None
+            _api_success()
             return r.json()
     except Exception as e:
         _api_error("DELETE", path, e)
@@ -173,6 +193,30 @@ def last_api_error_text(default: str = "Ошибка API") -> str:
     status = err.get("status_code")
     detail = err.get("detail") or default
     return f"{status}: {detail}" if status else detail
+
+
+def proxy_online() -> bool:
+    """W5.3: доступен ли proxy по последним запросам (для индикатора в шапке)."""
+    return bool(state.get("proxy_online", True))
+
+
+# W5.3: TTL-кэш GET-ответов — гасит дубль-запросы одинаковых путей с разных
+# таймеров/вкладок в окне ttl. Кэш per-процесс; None (ошибка) не кэшируется.
+_GET_CACHE: dict[str, tuple[float, Union[dict, list]]] = {}
+
+
+async def api_get_cached(path: str, ttl: float = 2.0, base: Optional[str] = None) -> Optional[Union[dict, list]]:
+    import time as _time
+
+    key = f"{base or ''}{path}"
+    hit = _GET_CACHE.get(key)
+    now = _time.monotonic()
+    if hit and now - hit[0] < ttl:
+        return hit[1]
+    data = await api_get(path, base=base)
+    if data is not None:
+        _GET_CACHE[key] = (now, data)
+    return data
 
 
 # ─────────────────────────────────────────
@@ -194,7 +238,8 @@ def add_log(msg: str):
 # ─────────────────────────────────────────
 
 async def refresh_metrics():
-    d = await api_get("/api/metrics")
+    # W5.3: TTL-кэш гасит дубль-опрос /api/metrics с разных вкладок/таймеров в окне 2с.
+    d = await api_get_cached("/api/metrics", ttl=2.0)
     if d:
         state["metrics"] = d
         # Не логируем каждый тик — только молча обновляем state
