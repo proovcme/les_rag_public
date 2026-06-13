@@ -1701,6 +1701,52 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             if not _is_binary_garbage(p.payload.get("text", ""))
         ]
 
+    async def retrieve_sparse(
+        self,
+        query:       str,
+        dataset_ids: Optional[List[str]] = None,
+        top_k:       int = 5,
+    ) -> List[Chunk]:
+        """W2.4: поиск по BGE-M3 learned-sparse вектору (Qdrant-native), параллельно dense.
+
+        Возвращает Chunk-и той же формы, что `retrieve`. Пустой sparse-запрос или
+        отсутствие sparse-вектора в коллекции → [] (гибрид молча падает на dense+FTS).
+        """
+        import asyncio as _asyncio
+
+        from backend.inference.sparse_embed import SPARSE_VECTOR_NAME, encode_one
+
+        await self._ensure_collection()
+        sv = await _asyncio.to_thread(encode_one, query)
+        if not sv:
+            return []
+
+        query_filter = None
+        if dataset_ids:
+            query_filter = models.Filter(must=[
+                models.FieldCondition(key="dataset_id", match=models.MatchAny(any=dataset_ids))
+            ])
+
+        results = await self.aclient.query_points(
+            collection_name=self.collection_name,
+            query=models.SparseVector(indices=list(sv.keys()), values=list(sv.values())),
+            using=SPARSE_VECTOR_NAME,
+            query_filter=query_filter,
+            limit=top_k,
+            with_payload=True,
+        )
+        return [
+            Chunk(
+                content=p.payload.get("text", ""),
+                doc_id=p.payload.get("doc_id", ""),
+                doc_name=p.payload.get("file_name", "unknown"),
+                score=p.score,
+                meta=p.payload,
+            )
+            for p in results.points
+            if len(p.payload.get("text", "")) >= 1
+        ]
+
     async def retrieve_table_rows(
         self,
         dataset_ids: Optional[List[str]] = None,

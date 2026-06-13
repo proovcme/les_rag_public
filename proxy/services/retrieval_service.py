@@ -365,14 +365,18 @@ async def retrieve_chat_chunks(
     pool_k = max(36, merged_top_k * 2) if has_refs or is_structured or is_technical_or_legal else RERANK_POOL_K
     vector_top_k = pool_k if return_trace and lexical_enabled() else merged_top_k
     vector_chunks = await rag_backend.retrieve(retrieval_query, dataset_ids=dataset_ids, top_k=vector_top_k)
-    chunks, trace = _hybrid_merge(question, vector_chunks, dataset_ids, rag_backend, logger, retrieval_query=retrieval_query, pool_k=pool_k, limit=merged_top_k)
+    # W2.4: BGE-M3 learned-sparse рядом с dense (Qdrant-native гибрид). За флагом
+    # RAG_SPARSE_ENABLED; при сбое/пустом sparse — молча падаем на dense+FTS.
+    sparse_chunks = await _retrieve_sparse_safe(rag_backend, retrieval_query, dataset_ids, pool_k, logger)
+    chunks, trace = _hybrid_merge(question, vector_chunks, dataset_ids, rag_backend, logger, retrieval_query=retrieval_query, pool_k=pool_k, limit=merged_top_k, sparse_chunks=sparse_chunks)
     quality = evaluate_retrieval_quality(question=question, chunks=chunks, trace=trace, kot=kot)
 
     if return_trace and quality.status == "weak":
         retry_query = expanded_quality_query(question, kot)
         if retry_query != question:
             retry_vector = await rag_backend.retrieve(retry_query, dataset_ids=dataset_ids, top_k=vector_top_k)
-            retry_chunks, retry_trace = _hybrid_merge(retry_query, retry_vector, dataset_ids, rag_backend, logger, retrieval_query=retry_query, pool_k=pool_k, limit=merged_top_k)
+            retry_sparse = await _retrieve_sparse_safe(rag_backend, retry_query, dataset_ids, pool_k, logger)
+            retry_chunks, retry_trace = _hybrid_merge(retry_query, retry_vector, dataset_ids, rag_backend, logger, retrieval_query=retry_query, pool_k=pool_k, limit=merged_top_k, sparse_chunks=retry_sparse)
             retry_trace.retry_count = 1
             retry_quality = evaluate_retrieval_quality(question=question, chunks=retry_chunks, trace=retry_trace, kot=kot)
             if retry_quality.status != "weak" or len(retry_chunks) >= len(chunks):
@@ -423,6 +427,21 @@ async def retrieve_chat_chunks(
     return chunks
 
 
+def sparse_enabled() -> bool:
+    """W2.4: BGE-M3 learned-sparse в гибриде (флаг; включается после миграции коллекции)."""
+    return os.getenv("RAG_SPARSE_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+async def _retrieve_sparse_safe(rag_backend, query: str, dataset_ids, pool_k: int, logger: logging.Logger) -> list[Any]:
+    if not sparse_enabled() or not hasattr(rag_backend, "retrieve_sparse"):
+        return []
+    try:
+        return await rag_backend.retrieve_sparse(query, dataset_ids=dataset_ids, top_k=pool_k)
+    except Exception as error:
+        logger.warning("[HYBRID] sparse fallback: %s", error)
+        return []
+
+
 def _hybrid_merge(
     question: str,
     vector_chunks: list[Any],
@@ -433,7 +452,15 @@ def _hybrid_merge(
     retrieval_query: str = "",
     pool_k: int = RERANK_POOL_K,
     limit: int = CHAT_TOP_K,
+    sparse_chunks: Optional[list[Any]] = None,
 ) -> tuple[list[Any], RetrievalTrace]:
+    # W2.4: learned-sparse (BGE-M3) ЗАМЕНЯЕТ самописный FTS в гибриде (план: FTS
+    # остаётся для clause lookup). Если sparse пуст/выключен — падаем на FTS.
+    if sparse_chunks:
+        merged, trace = merge_rrf(vector_chunks, sparse_chunks, question=retrieval_query or question, limit=limit)
+        trace.mode = "hybrid+sparse"
+        return merged, trace
+
     if not lexical_enabled():
         trace = RetrievalTrace(
             mode="vector",
