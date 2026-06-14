@@ -45,10 +45,36 @@ uv run python tools/artel_family_action_plan.py \
   металлический» = `Agnostis.Api` `spec_0241`).
 
 The plan is an ordered batch of operations — `add_shared_parameter` (GUID resolved
-against the FOP reference), `add_family_parameter`, `set_formula`, `create_type`,
-`assign_material` — plus `manual_work[]` (geometry/skeleton/connectors that the spec
-cannot encode) and `diagnostics[]` (`ARF-PLAN-*`). `status: "error"` means the plan
-must not be issued to Revit.
+against the FOP reference), `add_family_parameter`, `set_formula`, `create_extrusion`
+(geometry), `create_type`, `assign_material` — plus `manual_work[]` and
+`diagnostics[]` (`ARF-PLAN-*`). `status: "error"` means the plan must not be issued
+to Revit.
+
+### Parametric geometry (archetype layer)
+
+Geometry is generated, not hand-built. The split is three layers, so a vision model
+never invents geometry directly (fragile); it only classifies + binds:
+
+```text
+source (datasheet/drawing/image)
+  -> vision: classify shape into an ARCHETYPE + bind dimensions   (family_geometry.v1, W10.1)
+  -> deterministic: archetype -> create_extrusion ops bound to params  (tools/artel_family_geometry.py, W10.2)
+  -> Revit add-in executes; geometry flexes with the parameters     (W10.3, Legion)
+```
+
+- Recipe schema: `schema/family_geometry.schema.json` (`family_geometry.v1` —
+  `archetype`, `bindings` dimension→parameter, `features`, `source`/`confidence`).
+- Archetype library: `tools/artel_family_geometry.py` (`rect_cabinet`, `panel`; door
+  feature). A shape not in the library → `manual_work` + a candidate to grow the
+  library via the learning loop.
+- `create_extrusion` carries `profile`/`extrusion` dimensions as `{parameter: …}`
+  refs, so the family flexes. When a recipe compiles, generic manual geometry work
+  collapses to a single `geometry_review` step.
+- CLI: `--geometry geom.json` (or put the recipe on `spec.geometry`).
+
+Reliability rule for the vision step: photo → shape class (reliable),
+datasheet table/text → dimensions (reliable), photo → exact dimensions (NOT
+reliable → flag for the operator at the approve gate).
 
 `family_action_plan.v1` is the contract between the compiler and the Windows side.
 **Remaining (Legion/Revit session):** a C# `ArtelFamilyGenerateCommand` in

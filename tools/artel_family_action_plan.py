@@ -33,9 +33,11 @@ from typing import Any
 # Reuse the existing Revit shared-parameter file parser (groups + params w/ GUID).
 try:  # pragma: no cover - import shim for both `python tools/...` and `from tools import`
     from tools import seed_artel_fop_profiles as fop_seed
+    from tools import artel_family_geometry as geometry_lib
 except ImportError:  # pragma: no cover
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from tools import seed_artel_fop_profiles as fop_seed
+    from tools import artel_family_geometry as geometry_lib
 
 SCHEMA_VERSION = "artel.family_action_plan.v1"
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schema" / "family_action_plan.schema.json"
@@ -118,8 +120,13 @@ def _safe_plan_id(value: str) -> str:
 def compile_action_plan(
     spec: dict[str, Any],
     fop_index: dict[str, dict[str, str]] | None = None,
+    geometry: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compile a FamilySpecification dict into a family_action_plan.v1 dict.
+
+    ``geometry`` is an optional family_geometry.v1 recipe (else read from
+    ``spec['geometry']``). When present, parametric geometry is compiled into the
+    plan and the generic manual geometry work is replaced by a review step.
 
     Deterministic and offline: identical inputs yield byte-identical output
     (no clock, no LLM, no randomness).
@@ -240,7 +247,17 @@ def compile_action_plan(
     # Pass 2: formulas (after every parameter exists) ------------------------------
     operations.extend(formula_ops)
 
-    # Pass 3: types ----------------------------------------------------------------
+    # Pass 3: geometry (after parameters exist, so dimensions can bind to them) -----
+    geometry_recipe = geometry if geometry is not None else _get(spec, "geometry")
+    geometry_manual: list[dict[str, Any]] = []
+    geometry_compiled = False
+    if geometry_recipe:
+        geometry_ops = geometry_lib.compile_geometry(
+            geometry_recipe, declared, diagnostics, geometry_manual)
+        geometry_compiled = bool(geometry_ops)
+        operations.extend(geometry_ops)
+
+    # Pass 4: types ----------------------------------------------------------------
     for family_type in _get(spec, "types", default=[]) or []:
         type_name = str(_get(family_type, "name", default="")).strip()
         if not type_name:
@@ -273,7 +290,7 @@ def compile_action_plan(
             values.append({"parameter": param_name, "value": value})
         operations.append({"op": "create_type", "name": type_name, "values": values})
 
-    # Pass 4: materials ------------------------------------------------------------
+    # Pass 5: materials ------------------------------------------------------------
     for material in _get(spec, "materials", default=[]) or []:
         material_name = str(_get(material, "name", default="")).strip()
         if not material_name:
@@ -289,7 +306,7 @@ def compile_action_plan(
             "default_value": _get(material, "defaultValue", "default_value"),
         })
 
-    manual_work = _manual_work(category)
+    manual_work = _manual_work(category, geometry_compiled) + geometry_manual
 
     has_error = any(d["severity"] == "error" for d in diagnostics)
     plan_id = _safe_plan_id(str(spec_id or task_id or family_name or "family_action_plan"))
@@ -314,16 +331,29 @@ def compile_action_plan(
     }
 
 
-def _manual_work(category: str) -> list[dict[str, Any]]:
-    """Deterministic geometry/skeleton work that the spec cannot encode."""
-    work = [
-        {"kind": "reference_skeleton",
-         "description": "Создать опорные плоскости и связать их с габаритными параметрами."},
-        {"kind": "geometry",
-         "description": "Построить твердотельную геометрию по опорным плоскостям; задать видимость по LOD."},
-        {"kind": "subcategories",
-         "description": "Назначить подкатегории и графику элементов геометрии."},
-    ]
+def _manual_work(category: str, geometry_compiled: bool) -> list[dict[str, Any]]:
+    """Manual work that the plan cannot compile.
+
+    When a geometry recipe compiled, geometry is generated (not hand-built), so
+    the only manual step is reviewing it against the source; otherwise the full
+    skeleton/geometry/subcategory work stays manual.
+    """
+    if geometry_compiled:
+        work = [
+            {"kind": "geometry_review",
+             "description": "Сверить сгенерированную геометрию с техничкой/чертежом; проверить флекс типоразмеров."},
+            {"kind": "subcategories",
+             "description": "Назначить подкатегории и графику элементов геометрии."},
+        ]
+    else:
+        work = [
+            {"kind": "reference_skeleton",
+             "description": "Создать опорные плоскости и связать их с габаритными параметрами."},
+            {"kind": "geometry",
+             "description": "Построить твердотельную геометрию по опорным плоскостям; задать видимость по LOD."},
+            {"kind": "subcategories",
+             "description": "Назначить подкатегории и графику элементов геометрии."},
+        ]
     lowered = category.lower()
     if any(hint in lowered for hint in _MEP_CATEGORY_HINTS):
         work.append({"kind": "connectors",
@@ -343,13 +373,15 @@ def _main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Compile an ARTEL family spec into a Revit action plan (W10.2).")
     parser.add_argument("--spec", required=True, type=Path, help="FamilySpecification JSON.")
     parser.add_argument("--fop", type=Path, help="Revit shared-parameter (.txt) FOP reference for GUID resolution.")
+    parser.add_argument("--geometry", type=Path, help="family_geometry.v1 recipe JSON (else read from spec.geometry).")
     parser.add_argument("--out", type=Path, help="Write the plan JSON here (default: stdout).")
     parser.add_argument("--no-validate", action="store_true", help="Skip schema validation.")
     args = parser.parse_args(argv)
 
     spec = json.loads(args.spec.read_text(encoding="utf-8"))
     fop_index = build_fop_index(fop_seed.read_text(args.fop)) if args.fop else {}
-    plan = compile_action_plan(spec, fop_index)
+    geometry = json.loads(args.geometry.read_text(encoding="utf-8")) if args.geometry else None
+    plan = compile_action_plan(spec, fop_index, geometry)
     if not args.no_validate:
         validate_plan(plan)
 

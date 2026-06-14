@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://les.ovc.me/schema/family_geometry.schema.json",
+  "title": "ARTEL FamilyGeometryRecipe",
+  "description": "Parametric geometry recipe for a Revit family (W10.2 geometry layer). A vision/extraction model (W10.1) reads the source (datasheet/drawing/image) and produces this recipe: it classifies the shape into a known parametric archetype and binds the archetype's dimensions to family parameters. The recipe never encodes raw Revit geometry — the archetype -> Revit API operations mapping is deterministic code.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "archetype", "bindings"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "artel.family_geometry.v1" },
+    "archetype": {
+      "type": "string",
+      "description": "Key into the archetype library, e.g. rect_cabinet, panel.",
+      "pattern": "^[a-z][a-z0-9_]{1,40}$"
+    },
+    "bindings": {
+      "type": "object",
+      "description": "archetype dimension name -> family parameter name.",
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    },
+    "features": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind"],
+        "properties": {
+          "kind": { "type": "string", "minLength": 1 },
+          "bindings": {
+            "type": "object",
+            "additionalProperties": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "description": "Provenance from the extraction step (vision). Drives confidence/HITL.",
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "type": "string", "enum": ["datasheet", "drawing", "image", "description"] },
+        "ref": { "type": ["string", "null"] },
+        "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+      }
+    },
+    "notes": { "type": ["string", "null"] }
+  }
+}

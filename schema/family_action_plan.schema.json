@@ -75,7 +75,7 @@
         "properties": {
           "kind": {
             "type": "string",
-            "enum": ["reference_skeleton", "geometry", "subcategories", "connectors", "lod", "other"]
+            "enum": ["reference_skeleton", "geometry", "geometry_review", "subcategories", "connectors", "lod", "other"]
           },
           "description": { "type": "string", "minLength": 1 }
         }
@@ -100,6 +100,26 @@
     "storage_type": {
       "type": "string",
       "enum": ["String", "Double", "Integer", "ElementId"]
+    },
+    "dimension_ref": {
+      "description": "A geometry dimension, either driven by a family parameter (flexes) or a constant.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["parameter"],
+          "properties": { "parameter": { "type": "string", "minLength": 1 } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["constant", "unit"],
+          "properties": {
+            "constant": { "type": "number" },
+            "unit": { "type": "string" }
+          }
+        }
+      ]
     },
     "operation": {
       "oneOf": [
@@ -171,6 +191,28 @@
             "name": { "type": "string", "minLength": 1 },
             "parameter": { "type": ["string", "null"] },
             "default_value": { "type": ["string", "null"] }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "id", "role", "sketch_plane", "profile", "extrusion"],
+          "properties": {
+            "op": { "type": "string", "const": "create_extrusion" },
+            "id": { "type": "string", "minLength": 1 },
+            "role": { "type": "string", "minLength": 1 },
+            "sketch_plane": { "type": "string", "minLength": 1 },
+            "profile": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["shape", "width", "depth"],
+              "properties": {
+                "shape": { "type": "string", "enum": ["rectangle"] },
+                "width": { "$ref": "#/$defs/dimension_ref" },
+                "depth": { "$ref": "#/$defs/dimension_ref" }
+              }
+            },
+            "extrusion": { "$ref": "#/$defs/dimension_ref" }
           }
         }
       ]
