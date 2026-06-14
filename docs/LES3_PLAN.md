@@ -381,9 +381,24 @@
   Сделать: приоритизация при импорте (типы+агрегаты раньше инстансов), фильтр по категориям/этажам в API, лог «обработано X из Y». Делать ПОСЛЕ W6.1 (иначе 100k плоских чанков ухудшат ретрив).
   Приёмка: импорт 100k-модели даёт осмысленное покрытие, отбрасывание залогировано.
 
-- [ ] **W6.3 АРТЕЛЬ: чанки и версионирование** · M
+- [ ] **W6.3 АРТЕЛЬ: чанки и версионирование** · M — **отдельной сессией** (решение оператора 2026-06-14; самый
+  крупный сабсистем, делать с чистой головой, не хвостом).
   Файлы: [tools/seed_artel_fop_profiles.py](../tools/seed_artel_fop_profiles.py) (чанк на параметр), [tools/seed_artel_revit_factory_sources.py](../tools/seed_artel_revit_factory_sources.py) (шардирование SDK), [schema/artel_family_learning_case.schema.json](../schema/artel_family_learning_case.schema.json) (`version/supersedes/deprecated_at`), batch-seed (`--batch-dir`, один sync).
   Приёмка: тесты `test_artel_*`; смоук `tools/smoke_artel_expert_loop.py`; АРТЕЛЬ-набор из W0.3.
+  **Разведка 2026-06-14 (старт отсюда):**
+  - *Чанк-на-параметр:* `render_markdown` (seed_artel_fop_profiles.py:60) сейчас даёт `### группа` + bullet на
+    параметр → structure-aware сплиттер склеивает группу в ОДИН чанк. Фикс: каждый параметр → своя секция-заголовок
+    (`#### {name}` с GUID/type/group/description), чтобы ретрив возвращал конкретный параметр. Эффект — после re-seed+реиндекса.
+  - *Версионирование:* схема `artel_family_learning_case.schema.json` сейчас `additionalProperties:false`, required =
+    schema_version/case_id/product/task/specification/parameter_profile/validation_report/catalog_card/acceptance.
+    Добавить опц. `version`/`supersedes`/`deprecated_at` в properties; обработать в `seed_artel_learning_cases.py`.
+  - *Batch-seed:* `--batch-dir` (папка кейсов/профилей) → один `/api/rag/sync/ARTEL` в конце (сейчас sync на каждый).
+  - *SDK-шардинг:* seed_artel_revit_factory_sources.py (555 строк) — вчитаться.
+  - ⚠ **Golden-загвоздка:** провальный кейс `family_validation_checks` («нет терма валидац в топе») — про ретрив
+    **проверок из `validation_report` learning-кейсов**, НЕ про ФОП-параметры. Чанк-на-параметр его сам по себе
+    может НЕ починить — нужна отдельная работа: проекция validation_report.checks в отдельные/заголовочные чанки
+    (как в seed_artel_learning_cases) + термин «валидация/проверка» в retrieval hints. Это узкое место приёмки 4/4.
+  - *`[live]`-приёмка:* re-seed + реиндекс ARTEL (28 258 чанков, ~минуты) → `smoke_artel_expert_loop` + golden 3/4→4/4.
 
 - [ ] **W6.4 Визуальный индекс сканов (ColPali/ColQwen)** · L `[dep]` `[live]`
   Файлы: новая коллекция Qdrant (мультивекторы), новый pipeline в [backend/document_router.py](../backend/document_router.py) для `needs_ocr`-документов, ретрив-ветка в retrieval_service.
