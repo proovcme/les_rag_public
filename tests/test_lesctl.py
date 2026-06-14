@@ -1,11 +1,27 @@
 from tools import lesctl
 
 
-def test_lesctl_doctor_delegates_to_install(monkeypatch):
+def test_lesctl_doctor_runs_health_report(monkeypatch):
+    # W7.2: `doctor` по умолчанию запускает health-отчёт (les_doctor), НЕ install_les.
+    doctor_calls = []
+    install_calls = []
+    monkeypatch.setattr(lesctl.les_doctor, "main", lambda argv: doctor_calls.append(argv) or 0)
+    monkeypatch.setattr(lesctl.install_les, "main", lambda argv: install_calls.append(argv) or 0)
+
+    assert lesctl.main(["doctor", "--json"]) == 0
+
+    assert doctor_calls == [["--json"]]
+    assert install_calls == []  # без --profile-check в install не делегирует
+
+
+def test_lesctl_doctor_profile_check_delegates_to_install(monkeypatch):
+    # Старая платформенная проверка профиля доступна как `doctor --profile-check`.
     calls = []
     monkeypatch.setattr(lesctl.install_les, "main", lambda argv: calls.append(argv) or 0)
 
-    assert lesctl.main(["doctor", "--profile", "server-remote-model", "--json"]) == 0
+    assert lesctl.main(
+        ["doctor", "--profile-check", "--profile", "server-remote-model", "--json"]
+    ) == 0
 
     assert calls == [["--check", "--profile", "server-remote-model", "--json"]]
 

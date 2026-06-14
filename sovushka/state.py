@@ -8,6 +8,7 @@ import httpx
 import json
 import os
 import sqlite3
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -489,20 +490,29 @@ def _apply_live_snapshot(snap: dict) -> None:
         }
 
 
+# W5.2/фикс: время последнего применённого снимка — для детекта «висящего»
+# (открытого, но молчащего) SSE-соединения в bg_loop.
+_LIVE_HEARTBEAT = {"ts": 0.0}
+
+
 async def live_subscribe() -> bool:
     """W5.2: подписка на /api/live (SSE) — единый push вместо частого поллинга.
     Обновляет state на каждый снимок. Возвращает при штатном завершении/обрыве —
-    bg_loop переподключает. True, если соединение открывалось успешно."""
+    bg_loop переподключает. True, если соединение открывалось успешно.
+    read-таймаут ограничен (не None): молчащий >read сервер → обрыв → реконнект."""
     from sovushka.config import PROXY_URL
 
     opened = False
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=None)) as client:
+        # read больше серверного интервала снимков (LES_LIVE_INTERVAL_SEC, деф. 3с),
+        # но конечен — иначе half-open соединение висит вечно и UI замирает.
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=20.0)) as client:
             async with client.stream("GET", f"{PROXY_URL}/api/live", headers=_auth_headers()) as r:
                 if r.status_code != 200:
                     return False
                 opened = True
                 _api_success()
+                _LIVE_HEARTBEAT["ts"] = time.monotonic()
                 event: Optional[str] = None
                 data_buf: list[str] = []
                 async for line in r.aiter_lines():
@@ -514,6 +524,10 @@ async def live_subscribe() -> bool:
                                 snap = None
                             if isinstance(snap, dict):
                                 _apply_live_snapshot(snap)
+                                # Каждый снимок переутверждает, что proxy жив (иначе
+                                # индикатор W5.3 застревал бы offline при долгом SSE).
+                                _api_success()
+                                _LIVE_HEARTBEAT["ts"] = time.monotonic()
                         event, data_buf = None, []
                         continue
                     if line.startswith("event:"):
@@ -539,15 +553,26 @@ async def bg_loop():
     «застывал»."""
     live_task: Optional[asyncio.Task] = None
     tick = 0
+    # Открытый, но молчащий >этого времени SSE считаем мёртвым (висящий сокет):
+    # реконнект + фолбэк-поллинг, иначе UI замирает без признаков обрыва.
+    stale_after = 30.0
     while True:
-        # Поднять/переподнять push-канал, если он не жив.
-        if live_task is None or live_task.done():
+        # Push мёртв если: задачи нет / завершилась / соединение открыто, но
+        # снимки давно не приходят (heartbeat протух).
+        snapshot_stale = (time.monotonic() - _LIVE_HEARTBEAT["ts"]) > stale_after
+        if live_task is None or live_task.done() or snapshot_stale:
+            if live_task is not None and not live_task.done():
+                live_task.cancel()  # висящий сокет — рвём принудительно
             live_task = asyncio.create_task(live_subscribe())
             await asyncio.sleep(1.0)  # дать снимку прийти до первого фолбэка
 
         await asyncio.sleep(10)
         tick += 1
-        push_alive = live_task is not None and not live_task.done()
+        push_alive = (
+            live_task is not None
+            and not live_task.done()
+            and (time.monotonic() - _LIVE_HEARTBEAT["ts"]) <= stale_after
+        )
         try:
             if not push_alive:
                 # Фолбэк-поллинг, пока push лежит.

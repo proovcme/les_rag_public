@@ -115,7 +115,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                         data = await api_get("/api/projects") or {}
                         opts = {0: "— весь RAG —"}
                         for p in (data.get("projects") or []):
-                            if p.get("status") != "archived":
+                            if p.get("id") and p.get("status") != "archived":
                                 opts[int(p["id"])] = f"🏗 {p.get('name', 'объект')}"
                         project_select.set_options(opts, value=project_state["id"] or 0)
 

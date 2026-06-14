@@ -695,6 +695,9 @@ async def chat_stream(req: ChatRequest, _user=Depends(require_user)):
         finally:
             if not task.done():
                 task.cancel()
+                # Дождаться раскрутки отмены (освобождение семафора генерации,
+                # закрытие httpx-стрима) до возврата из генератора.
+                await asyncio.gather(task, return_exceptions=True)
 
     return StreamingResponse(
         event_source(),
@@ -1817,7 +1820,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             raise HTTPException(502, detail)
         except httpx.ConnectError as e:
             logger.error("[CHAT] LLM CONNECT ERROR: %s", e)
-            raise HTTPException(503, f"LLM недоступен ({llm_url}) — проверь MLX Host.")
+            raise HTTPException(503, f"LLM недоступен ({llm_runtime.base_url}) — проверь MLX Host.")
         except Exception as e:
             import traceback
 
