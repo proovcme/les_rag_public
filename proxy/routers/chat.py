@@ -772,18 +772,24 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     from proxy.services.memory_service import maybe_handle_memory_command
     from proxy.services.task_service import maybe_handle_task_command
     from proxy.services.field_intake_service import maybe_handle_field_command
+    from proxy.services.decision_service import maybe_handle_decision_command
 
-    pid = req.project_id or 0  # Q3: режим объекта → задачи/объёмы/заметки привязываются к нему
+    pid = req.project_id or 0  # Q3: режим объекта → задачи/объёмы/заметки/решения привязываются к нему
     task_reply = maybe_handle_task_command(req.question, dataset_filter=req.dataset_filter or "", project_id=pid)
     field_reply = None if task_reply is not None else maybe_handle_field_command(req.question, project_id=pid)
+    decision_reply = (
+        None if task_reply is not None or field_reply is not None
+        else maybe_handle_decision_command(req.question, project_id=pid)  # W17.4
+    )
     memory_reply = (
         None
-        if task_reply is not None or field_reply is not None
+        if task_reply is not None or field_reply is not None or decision_reply is not None
         else maybe_handle_memory_command(req.question, dataset_filter=req.dataset_filter or "", project_id=pid)
     )
-    if task_reply is not None or field_reply is not None or memory_reply is not None:
-        reply = task_reply or field_reply or memory_reply
-        channel = "tasks" if task_reply is not None else ("field" if field_reply is not None else "memory")
+    if task_reply is not None or field_reply is not None or decision_reply is not None or memory_reply is not None:
+        reply = task_reply or field_reply or decision_reply or memory_reply
+        channel = ("tasks" if task_reply is not None else "field" if field_reply is not None
+                   else "decision" if decision_reply is not None else "memory")
         return {
             "answer": reply["answer"],
             "crag_status": "DETERMINISTIC",

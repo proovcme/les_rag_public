@@ -514,6 +514,18 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     ).style("margin-top:8px;")
                     for r in (vol.get("by_position") or [])[:10]:
                         ui.label(f"• {r.get('position')}: {r.get('total')} {r.get('unit', '')}").style("font-size:.7rem;")
+                    # W17.4 — решения проекта (RFI-стиль)
+                    decisions = d.get("decisions") or []
+                    if decisions:
+                        ui.label(f"Решения по объекту ({d.get('decisions_count', len(decisions))})").classes(
+                            "section-title"
+                        ).style("margin-top:8px;")
+                        _dmark = {"open": "◌", "decided": "●", "superseded": "⊘"}
+                        for dec in decisions[:10]:
+                            line = f"{_dmark.get(dec.get('status'), '·')} #{dec.get('id')} {dec.get('decision', '')[:140]}"
+                            ui.label(line).style("font-size:.7rem;")
+                            if dec.get("rationale"):
+                                ui.label(f"   ↳ {dec['rationale'][:160]}").style("font-size:.64rem;color:var(--dim);")
                     ui.label(
                         f"Связи: {d.get('edges_count', 0)} · Заметки: {d.get('notes_count', 0)}"
                     ).classes("section-title").style("margin-top:8px;")

@@ -209,6 +209,13 @@ def build_dossier(project_id: int) -> dict[str, Any] | None:
     notes = list_notes(50, project_id=project_id)
     edges = list_edges(5000)
 
+    # W17.4 — решения проекта (RFI-стиль), строго по объекту (Q3).
+    try:
+        from proxy.services.decision_service import list_decisions
+        decisions = list_decisions(project_id=project_id, limit=50)
+    except Exception:
+        decisions = []
+
     bim = None
     try:
         from proxy.services.cad_bim_graph import graph_summary
@@ -253,6 +260,12 @@ def build_dossier(project_id: int) -> dict[str, Any] | None:
         },
         "notes_count": len(notes),
         "edges_count": len(edges),
+        "decisions": [  # W17.4 — решения по объекту (последние)
+            {"id": d.get("id"), "decision": d.get("decision"), "status": d.get("status"),
+             "rationale": d.get("rationale")}
+            for d in decisions[:20]
+        ],
+        "decisions_count": len(decisions),
         "bim": bim,
         "classification": classification,  # W17.3 хребет (своды по этажам/системам)
         "cde": cde,  # W17.3 контейнеры по состояниям WIP/Shared/Published/Archived
