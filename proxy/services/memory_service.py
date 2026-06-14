@@ -69,6 +69,11 @@ def create_note(text: str, dataset_filter: str = "") -> dict[str, Any]:
         conn.commit()
         note_id = cur.lastrowid
     logger.info("[MEMORY] заметка #%s: %s", note_id, text[:80])
+    try:  # W17.2: детерминированные рёбра из текста заметки (НТД/[[вики]]/элемент), 0 LLM
+        from proxy.services.edge_service import derive_edges_from_text
+        derive_edges_from_text("note", str(note_id), text, provenance=f"note#{note_id}")
+    except Exception as edge_err:
+        logger.warning("[EDGES] derive note#%s skipped: %s", note_id, edge_err)
     return {"id": note_id, "text": text.strip(), "dataset_filter": dataset_filter, "created_at": now}
 
 

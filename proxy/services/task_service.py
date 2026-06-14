@@ -66,6 +66,11 @@ def create_task(title: str, details: str = "", dataset_filter: str = "", link: s
         conn.commit()
         task_id = cur.lastrowid
     logger.info("[TASKS] создана #%s: %s", task_id, title[:80])
+    try:  # W17.2: детерминированные рёбра из задачи (НТД/[[вики]]/элемент), 0 LLM
+        from proxy.services.edge_service import derive_edges_from_text
+        derive_edges_from_text("task", str(task_id), f"{title}\n{details}", provenance=f"task#{task_id}")
+    except Exception as edge_err:
+        logger.warning("[EDGES] derive task#%s skipped: %s", task_id, edge_err)
     return get_task(task_id)
 
 
