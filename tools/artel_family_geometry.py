@@ -144,6 +144,55 @@ def _compile_panel(
     }]
 
 
+def _compile_bar_profile(
+    bindings: dict[str, str],
+    features: list[dict[str, Any]],
+    declared: set[str],
+    diagnostics: list[dict[str, Any]],
+    manual_work: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Linear bar/beam: a section (width×height) extruded along its length."""
+    width = _resolve_dim("bar_profile", "width", bindings, declared, diagnostics)
+    height = _resolve_dim("bar_profile", "height", bindings, declared, diagnostics)
+    length = _resolve_dim("bar_profile", "length", bindings, declared, diagnostics)
+    if not (width and height and length):
+        return []
+    manual_work.append({
+        "kind": "geometry",
+        "description": "Заменить габаритный прямоугольник сечения на реальный профиль (L/I/U), если требуется.",
+    })
+    return [{
+        "op": "create_extrusion",
+        "id": "body",
+        "role": "body",
+        "sketch_plane": "section",
+        "profile": {"shape": "rectangle", "width": width, "depth": height},
+        "extrusion": length,
+    }]
+
+
+def _compile_cylinder_revolve(
+    bindings: dict[str, str],
+    features: list[dict[str, Any]],
+    declared: set[str],
+    diagnostics: list[dict[str, Any]],
+    manual_work: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Round body: a circle (diameter) extruded by height (a straight cylinder)."""
+    diameter = _resolve_dim("cylinder_revolve", "diameter", bindings, declared, diagnostics)
+    height = _resolve_dim("cylinder_revolve", "height", bindings, declared, diagnostics)
+    if not (diameter and height):
+        return []
+    return [{
+        "op": "create_extrusion",
+        "id": "body",
+        "role": "body",
+        "sketch_plane": "ref_level",
+        "profile": {"shape": "circle", "diameter": diameter},
+        "extrusion": height,
+    }]
+
+
 # Archetype library: key -> {label, dimensions (required), compile}.
 ArchetypeCompiler = Callable[
     [dict[str, str], list[dict[str, Any]], set[str], list[dict[str, Any]], list[dict[str, Any]]],
@@ -162,6 +211,18 @@ ARCHETYPES: dict[str, dict[str, Any]] = {
         "dimensions": ["width", "height"],
         "features": [],
         "compile": _compile_panel,
+    },
+    "bar_profile": {
+        "label": "Линейный профиль / балка",
+        "dimensions": ["width", "height", "length"],
+        "features": [],
+        "compile": _compile_bar_profile,
+    },
+    "cylinder_revolve": {
+        "label": "Цилиндр / тело вращения",
+        "dimensions": ["diameter", "height"],
+        "features": [],
+        "compile": _compile_cylinder_revolve,
     },
 }
 

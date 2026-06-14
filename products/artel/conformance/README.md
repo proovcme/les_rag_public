@@ -13,10 +13,19 @@ inputs/
   fop_reference.txt      Revit shared-parameter file (GUID source)
   shkaf.spec.json        approved FamilySpecification (camelCase, as from Agnostis.Api)
   shkaf.geometry.json    family_geometry.v1 recipe (rect_cabinet + door)
+  column.spec.json       round column spec
+  column.geometry.json   cylinder_revolve recipe (circle profile)
+  beam.spec.json         I-beam spec
+  beam.geometry.json     bar_profile recipe (section extruded along length)
 expected/
   shkaf_base.plan.json       compile(spec, fop)            -> family_action_plan.v1
-  shkaf_geometry.plan.json   compile(spec, fop, geometry)  -> family_action_plan.v1
+  shkaf_geometry.plan.json   compile(spec, fop, geometry)  -> rect_cabinet + door
+  column_geometry.plan.json  compile(spec, fop, geometry)  -> cylinder_revolve
+  beam_geometry.plan.json    compile(spec, fop, geometry)  -> bar_profile
 ```
+
+Covered archetypes: `rect_cabinet`, `cylinder_revolve` (circle profile),
+`bar_profile`. Regenerate any case the same way (swap the `--spec`/`--geometry`).
 
 ## Regenerate (reference oracle)
 

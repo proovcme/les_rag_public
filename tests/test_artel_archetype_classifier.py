@@ -90,9 +90,11 @@ def test_coverage_report_ranks_and_prioritizes():
     assert report["ranking"][-1]["archetype"] == "unknown"
 
     # write_first = highest-coverage archetypes that are not yet implemented.
-    assert "flanged_fitting" in report["write_first"]
-    assert "cylinder_revolve" in report["write_first"]
-    assert "rect_cabinet" not in report["write_first"]  # already implemented
+    # rect_cabinet/panel/bar_profile/cylinder_revolve are in the geometry library;
+    # only flanged_fitting (needs sweep+connectors) remains to author.
+    assert report["write_first"] == ["flanged_fitting"]
+    assert "rect_cabinet" not in report["write_first"]
+    assert "cylinder_revolve" not in report["write_first"]
     assert "unknown" not in report["write_first"]
 
 

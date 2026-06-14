@@ -121,6 +121,30 @@
         }
       ]
     },
+    "extrusion_profile": {
+      "description": "Sketch profile for an extrusion: rectangle (width×depth) or circle (diameter).",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["shape", "width", "depth"],
+          "properties": {
+            "shape": { "type": "string", "const": "rectangle" },
+            "width": { "$ref": "#/$defs/dimension_ref" },
+            "depth": { "$ref": "#/$defs/dimension_ref" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["shape", "diameter"],
+          "properties": {
+            "shape": { "type": "string", "const": "circle" },
+            "diameter": { "$ref": "#/$defs/dimension_ref" }
+          }
+        }
+      ]
+    },
     "operation": {
       "oneOf": [
         {
@@ -202,16 +226,7 @@
             "id": { "type": "string", "minLength": 1 },
             "role": { "type": "string", "minLength": 1 },
             "sketch_plane": { "type": "string", "minLength": 1 },
-            "profile": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["shape", "width", "depth"],
-              "properties": {
-                "shape": { "type": "string", "enum": ["rectangle"] },
-                "width": { "$ref": "#/$defs/dimension_ref" },
-                "depth": { "$ref": "#/$defs/dimension_ref" }
-              }
-            },
+            "profile": { "$ref": "#/$defs/extrusion_profile" },
             "extrusion": { "$ref": "#/$defs/dimension_ref" }
           }
         }

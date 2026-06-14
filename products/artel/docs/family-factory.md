@@ -64,12 +64,13 @@ source (datasheet/drawing/image)
 
 - Recipe schema: `schema/family_geometry.schema.json` (`family_geometry.v1` —
   `archetype`, `bindings` dimension→parameter, `features`, `source`/`confidence`).
-- Archetype library: `tools/artel_family_geometry.py` (`rect_cabinet`, `panel`; door
-  feature). A shape not in the library → `manual_work` + a candidate to grow the
-  library via the learning loop.
-- `create_extrusion` carries `profile`/`extrusion` dimensions as `{parameter: …}`
-  refs, so the family flexes. When a recipe compiles, generic manual geometry work
-  collapses to a single `geometry_review` step.
+- Archetype library: `tools/artel_family_geometry.py` (`rect_cabinet` + door,
+  `panel`, `bar_profile`, `cylinder_revolve`). A shape not in the library →
+  `manual_work` + a candidate to grow the library via the learning loop.
+- `create_extrusion` carries a `profile` (rectangle `width`×`depth` or circle
+  `diameter`) and `extrusion` dimension as `{parameter: …}` refs, so the family
+  flexes. When a recipe compiles, generic manual geometry work collapses to a
+  single `geometry_review` step.
 - CLI: `--geometry geom.json` (or put the recipe on `spec.geometry`).
 
 Reliability rule for the vision step: photo → shape class (reliable),
@@ -90,11 +91,12 @@ nomenclature:
 uv run python tools/artel_archetype_classifier.py 'dump/*.json'
 ```
 
-The report ranks archetype coverage, marks implemented (`rect_cabinet`, `panel`)
-vs `todo`, and lists `write_first` — the highest-coverage archetypes not yet
-authored. Candidate taxonomy today: `rect_cabinet`, `panel`, `bar_profile`,
-`cylinder_revolve`, `flanged_fitting`; a family matching none is `unknown` — a
-candidate for a new archetype. Tests: `tests/test_artel_archetype_classifier.py`.
+The report ranks archetype coverage, marks implemented vs `todo`, and lists
+`write_first` — the highest-coverage archetypes not yet authored. Candidate
+taxonomy today: `rect_cabinet`, `panel`, `bar_profile`, `cylinder_revolve`
+(implemented) and `flanged_fitting` (todo — needs sweep-along-path + connectors,
+Revit-side); a family matching none is `unknown` — a candidate for a new
+archetype. Tests: `tests/test_artel_archetype_classifier.py`.
 
 `family_action_plan.v1` is the contract between the compiler and the Windows side.
 **Remaining (Legion/Revit session):** a C# `ArtelFamilyGenerateCommand` in

@@ -1,0 +1,102 @@
+{
+  "schema_version": "artel.family_action_plan.v1",
+  "plan_id": "spec_beam01",
+  "task_id": "task_beam01",
+  "spec_id": "spec_beam01",
+  "status": "ok",
+  "compiled_at": null,
+  "generator": {
+    "mode": "deterministic",
+    "llm_used": false,
+    "tool": "artel_family_action_plan"
+  },
+  "family": {
+    "name": "Балка двутавр",
+    "category": "Structural Framing",
+    "template_file_id": null,
+    "shared_parameter_profile_id": "fop_2026"
+  },
+  "operations": [
+    {
+      "op": "add_shared_parameter",
+      "name": "ADSK_Наименование",
+      "guid": "4f5cb6a1-0000-0000-0000-000000000000",
+      "data_type": "Text",
+      "storage_type": "String",
+      "group": "Identity Data",
+      "is_instance": false,
+      "is_required": true
+    },
+    {
+      "op": "add_family_parameter",
+      "name": "Ширина сечения",
+      "data_type": "Length",
+      "storage_type": "Double",
+      "group": "Dimensions",
+      "is_instance": false
+    },
+    {
+      "op": "add_family_parameter",
+      "name": "Высота сечения",
+      "data_type": "Length",
+      "storage_type": "Double",
+      "group": "Dimensions",
+      "is_instance": false
+    },
+    {
+      "op": "add_family_parameter",
+      "name": "Длина",
+      "data_type": "Length",
+      "storage_type": "Double",
+      "group": "Dimensions",
+      "is_instance": true
+    },
+    {
+      "op": "create_extrusion",
+      "id": "body",
+      "role": "body",
+      "sketch_plane": "section",
+      "profile": {
+        "shape": "rectangle",
+        "width": {
+          "parameter": "Ширина сечения"
+        },
+        "depth": {
+          "parameter": "Высота сечения"
+        }
+      },
+      "extrusion": {
+        "parameter": "Длина"
+      }
+    },
+    {
+      "op": "create_type",
+      "name": "Двутавр 200x100",
+      "values": [
+        {
+          "parameter": "Ширина сечения",
+          "value": 100
+        },
+        {
+          "parameter": "Высота сечения",
+          "value": 200
+        }
+      ]
+    }
+  ],
+  "manual_work": [
+    {
+      "kind": "geometry_review",
+      "description": "Сверить сгенерированную геометрию с техничкой/чертежом; проверить флекс типоразмеров."
+    },
+    {
+      "kind": "subcategories",
+      "description": "Назначить подкатегории и графику элементов геометрии."
+    },
+    {
+      "kind": "geometry",
+      "description": "Заменить габаритный прямоугольник сечения на реальный профиль (L/I/U), если требуется."
+    }
+  ],
+  "diagnostics": []
+}

@@ -1,0 +1,6 @@
+{
+  "schema_version": "artel.family_geometry.v1",
+  "archetype": "bar_profile",
+  "bindings": {"width": "Ширина сечения", "height": "Высота сечения", "length": "Длина"},
+  "source": {"kind": "datasheet", "confidence": 0.9}
+}

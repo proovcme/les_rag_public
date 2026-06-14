@@ -143,6 +143,49 @@ def test_panel_archetype_single_extrusion():
     compiler.validate_plan(plan)
 
 
+def _spec_with_params(param_names):
+    spec = copy.deepcopy(SHKAF_SPEC)
+    spec["types"] = []
+    spec["parameters"] = [SHKAF_SPEC["parameters"][0]] + [
+        {"id": f"p_{n}", "name": n, "source": "family_parameter", "dataType": "Length",
+         "group": "Dimensions", "isInstance": False, "isRequired": True}
+        for n in param_names
+    ]
+    return spec
+
+
+def test_bar_profile_extrudes_section_along_length():
+    spec = _spec_with_params(["Ширина сечения", "Высота сечения", "Длина"])
+    recipe = {"schema_version": geometry.GEOMETRY_SCHEMA_VERSION, "archetype": "bar_profile",
+              "bindings": {"width": "Ширина сечения", "height": "Высота сечения", "length": "Длина"}}
+    plan = compiler.compile_action_plan(spec, _fop_index(), recipe)
+    assert plan["status"] == "ok"
+    body = next(op for op in plan["operations"] if op.get("op") == "create_extrusion")
+    assert body["profile"] == {
+        "shape": "rectangle",
+        "width": {"parameter": "Ширина сечения"},
+        "depth": {"parameter": "Высота сечения"},
+    }
+    assert body["extrusion"] == {"parameter": "Длина"}
+    compiler.validate_plan(plan)
+
+
+def test_cylinder_revolve_circle_extrusion():
+    spec = _spec_with_params(["Диаметр", "Высота"])
+    recipe = {"schema_version": geometry.GEOMETRY_SCHEMA_VERSION, "archetype": "cylinder_revolve",
+              "bindings": {"diameter": "Диаметр", "height": "Высота"}}
+    plan = compiler.compile_action_plan(spec, _fop_index(), recipe)
+    assert plan["status"] == "ok"
+    body = next(op for op in plan["operations"] if op.get("op") == "create_extrusion")
+    assert body["profile"] == {"shape": "circle", "diameter": {"parameter": "Диаметр"}}
+    assert body["extrusion"] == {"parameter": "Высота"}
+    compiler.validate_plan(plan)
+
+
+def test_new_archetypes_are_in_the_library():
+    assert {"rect_cabinet", "panel", "bar_profile", "cylinder_revolve"} <= set(geometry.ARCHETYPES)
+
+
 def test_no_recipe_keeps_full_manual_geometry():
     # Backward-compat: without a recipe, geometry stays manual.
     plan = compiler.compile_action_plan(SHKAF_SPEC, _fop_index())
