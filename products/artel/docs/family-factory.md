@@ -76,6 +76,26 @@ Reliability rule for the vision step: photo → shape class (reliable),
 datasheet table/text → dimensions (reliable), photo → exact dimensions (NOT
 reliable → flag for the operator at the approve gate).
 
+### Which archetypes to author first
+
+`tools/artel_archetype_classifier.py` classifies extracted families
+(`artel.revit_family_catalog.v1`) into a candidate archetype using cheap
+deterministic features — **no model** (category + a dimension-role synonym
+dictionary + counts; bounding-box aspect ratio and solid count are optional
+boosts the geometry extractor will add later). Run it over a RAG dump of the
+Revit OOTB library plus accepted families to see which archetypes cover the most
+nomenclature:
+
+```bash
+uv run python tools/artel_archetype_classifier.py 'dump/*.json'
+```
+
+The report ranks archetype coverage, marks implemented (`rect_cabinet`, `panel`)
+vs `todo`, and lists `write_first` — the highest-coverage archetypes not yet
+authored. Candidate taxonomy today: `rect_cabinet`, `panel`, `bar_profile`,
+`cylinder_revolve`, `flanged_fitting`; a family matching none is `unknown` — a
+candidate for a new archetype. Tests: `tests/test_artel_archetype_classifier.py`.
+
 `family_action_plan.v1` is the contract between the compiler and the Windows side.
 **Remaining (Legion/Revit session):** a C# `ArtelFamilyGenerateCommand` in
 `ARTEL.Revit.FamilyFactory` that executes `operations[]` as a batch and writes a
