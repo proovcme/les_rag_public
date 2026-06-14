@@ -11,6 +11,8 @@ Use `/Users/ovc/Projects/LES_v2` as the project root for development.
 
 **Runtime clone:** launchd services (proxy/sovushka) run from `/Users/ovc/Projects/LES_v2_reinstall_stress` (see `WorkingDirectory` in `~/Library/LaunchAgents/me.ovc.les.*.plist`). Deploy flow: commit+push in LES_v2 → `git pull` in the runtime clone → `launchctl kickstart -k ...`. Editing LES_v2 alone does NOT change the live system.
 
+> ⚠️ **`uv sync` в рантайм-клоне ОБЯЗАТЕЛЬНО с `--extra mac-mlx`** (`uv sync --extra mac-mlx`). `mlx-lm`/`mlx-vlm` — в опциональной группе `mac-mlx` (`[project.optional-dependencies]`); голый `uv sync` (например, после `uv add`) **выкашивает их из venv → MLX-host падает на `ModuleNotFoundError: No module named 'mlx_lm'`** и весь RAG/эмбеддер ложатся. Симптом: `[WARNING] MLX /api/ps error: All connection attempts failed`, ретрив → HTTP 500. Лечение: `uv sync --extra mac-mlx` в клоне + `launchctl kickstart -k gui/$(id -u)/me.ovc.les.mlx`. (Инцидент 2026-06-14.)
+
 Current production posture:
 
 - Proxy: `http://127.0.0.1:8050`
