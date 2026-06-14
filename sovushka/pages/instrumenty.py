@@ -247,6 +247,70 @@ def build_instrumenty():
                     out.append(f"<div style='color:var(--err)'>− п.{_h.escape(r.get('clause',''))}</div>")
                 diff_out.content = "".join(out)
 
+        # ──────────────────── ФОРМЫ ДОКУМЕНТОВ (W11.3/W19) ────────────────────
+        with ui.card().classes("card-les w-full"):
+            ui.label("ФОРМЫ ДОКУМЕНТОВ — ЗАПОЛНЕНИЕ ИЗ ОБЪЕКТА (0 LLM)").classes("section-title")
+            ui.label(
+                "Дескриптор формы + данные объекта (W17) → документ. Числа/значения — детерминированно; "
+                "ИИ при заполнении не участвует. docx — с фирменным образцом или без него."
+            ).style("font-size:.66rem;color:var(--dim);")
+            with ui.row().classes("w-full gap-2 items-center"):
+                fm_form = ui.select(options={}, label="Форма").props("dense outlined").classes("flex-1")
+                fm_proj = ui.select(options={}, label="Объект").props("dense outlined").classes("flex-1")
+                fm_fmt = ui.select(options={"docx": "docx", "xlsx": "xlsx", "html": "html (превью)"},
+                                   value="docx", label="Формат").props("dense outlined").style("max-width:150px;")
+                ui.button("ПОЛЯ", on_click=lambda: asyncio.create_task(_fm_fields())).props("dense flat no-caps")
+                ui.button("СГЕНЕРИРОВАТЬ", on_click=lambda: asyncio.create_task(_fm_generate())).props("dense no-caps")
+            fm_legal = ui.label("").style("font-size:.64rem;color:var(--dim);")
+            fm_inputs_box = ui.column().classes("w-full gap-1")
+            fm_preview = ui.html("").style("font-size:.74rem;font-family:var(--font);")
+            fm_state: dict = {"inputs": {}}
+
+            async def _fm_fields():
+                if not fm_form.value:
+                    ui.notify("Выбери форму", type="warning")
+                    return
+                pid = fm_proj.value
+                pq = f"?project_id={pid}" if pid else ""
+                d = await api_get(f"/api/forms/{fm_form.value}/fields{pq}")
+                if not isinstance(d, dict):
+                    ui.notify(last_api_error_text("Поля не загружены"), type="negative")
+                    return
+                fm_legal.text = d.get("legal_basis", "")
+                fm_inputs_box.clear()
+                fm_state["inputs"] = {}
+                with fm_inputs_box:
+                    for f in d.get("fields", []):
+                        if f.get("source") == "manual":
+                            inp = ui.input(label=f["label"], value=f.get("value", "")).props(
+                                "dense outlined"
+                            ).classes("w-full")
+                            if f.get("needs_input"):
+                                inp.props('bg-color="amber-1"')
+                            fm_state["inputs"][f["key"]] = inp
+                        else:
+                            ui.label(f"• {f['label']}: {f.get('value') or '—'}  "
+                                     f"[{f.get('source')}]").style("font-size:.7rem;")
+
+            async def _fm_generate():
+                if not fm_form.value:
+                    ui.notify("Выбери форму", type="warning")
+                    return
+                manual = {k: (inp.value or "") for k, inp in fm_state["inputs"].items()}
+                body = {"project_id": fm_proj.value or None, "fmt": fm_fmt.value, "manual": manual}
+                add_log(f"[ФОРМЫ] generate {fm_form.value} → {fm_fmt.value}")
+                d = await api_post(f"/api/forms/{fm_form.value}/generate", body)
+                if not isinstance(d, dict):
+                    ui.notify(last_api_error_text("Генерация не удалась"), type="negative")
+                    return
+                if d.get("html"):
+                    fm_preview.content = d["html"]
+                    ui.notify("Превью готово", type="positive")
+                elif d.get("download"):
+                    fm_preview.content = ""
+                    await _download(d["download"])
+                    ui.notify("Документ сгенерирован", type="positive")
+
         async def _refresh():
             ds_list = await _datasets()
             opts = _ds_options(ds_list)
@@ -256,6 +320,12 @@ def build_instrumenty():
             bor_ds.update()
             nc_ds.update()
             pf_ds.update()
+            forms = (await api_get("/api/forms") or {}).get("forms", [])
+            fm_form.options = {f["id"]: f.get("title", f["id"]) for f in forms}
+            fm_form.update()
+            projects = (await api_get("/api/projects") or {}).get("projects", [])
+            fm_proj.options = {p["id"]: p.get("name", p["id"]) for p in projects}
+            fm_proj.update()
             imports = (await api_get("/api/diff/cad-bim/imports") or {}).get("imports", [])
             imp_opts = {
                 i["id"]: f"{i.get('source','?')} · {i.get('element_count',0)}эл · {str(i.get('created_at',''))[:16]}"

@@ -1,0 +1,17 @@
+# Дескриптор типовой формы — Акт освидетельствования скрытых работ (АОСР).
+# W19/W20: машиночитаемый контракт формы. Поля резолвятся из данных объекта (W17)
+# детерминированно (0 LLM); шаблон-вёрстка — отдельным файлом в templates/.
+id: aosr
+title: Акт освидетельствования скрытых работ
+legal_basis: Приказ Минстроя России № 344/пр от 16.05.2023, Приложение 3
+# xsd:  { version: "2024-05-21", path: config/forms/xsd/aosr.xsd }   # для XML-рендера (W19.3)
+templates:
+  docx: config/forms/templates/aosr_obrazec.docx   # если файла нет — рендер без шаблона
+fields:
+  - { key: object_name,    label: Наименование объекта капитального строительства, type: str,  source: "project.name" }
+  - { key: object_address, label: Адрес объекта,                                    type: str,  source: "project.address" }
+  - { key: act_date,       label: Дата составления акта,                            type: str,  source: "date.today" }
+  - { key: work_name,      label: Наименование скрытых работ,                       type: str,  source: "manual" }
+  - { key: volume,         label: Предъявлено к освидетельствованию (объём),        type: num,  source: "field.total" }
+  - { key: ntd_refs,       label: Работы выполнены по проектной документации/НТД,   type: list, source: "edges.references_ntd" }
+  - { key: permit_next,    label: Разрешается производство последующих работ,       type: str,  source: "manual" }
