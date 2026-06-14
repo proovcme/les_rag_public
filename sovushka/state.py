@@ -275,7 +275,15 @@ def add_log(msg: str):
     if len(state["logs"]) > 200:
         state["logs"] = state["logs"][-200:]
     if log_element is not None:
-        log_element.push(line)
+        # log_element — глобальный на процесс, но в NiceGUI элемент привязан к
+        # клиенту. Если он принадлежит отключённому клиенту (реконнект, рестарт,
+        # фоновый таск без контекста), push кидает RuntimeError «client/parent
+        # slot deleted» и рушит сборку страницы/таск. Логгер не должен ронять
+        # приложение — глушим (строка уже в state["logs"]).
+        try:
+            log_element.push(line)
+        except Exception:
+            pass
 
 
 # ─────────────────────────────────────────
