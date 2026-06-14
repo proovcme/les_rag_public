@@ -29,10 +29,12 @@ class SettingsRequest(BaseModel):
     mlx_url: Optional[str] = None
     openrouter_base_url: Optional[str] = None
     openrouter_model: Optional[str] = None
+    openrouter_models: Optional[str] = None  # цепочка фолбэка (через запятую)
     openrouter_api_key: Optional[str] = None
     openrouter_api_key_clear: Optional[bool] = None
     openai_base_url: Optional[str] = None
     openai_model: Optional[str] = None
+    openai_models: Optional[str] = None  # цепочка фолбэка (через запятую)
     openai_api_key: Optional[str] = None
     openai_api_key_clear: Optional[bool] = None
     llm_provider: Optional[str] = None
@@ -176,11 +178,13 @@ def _provider_settings_payload() -> dict[str, object]:
         "openrouter": {
             "base_url": os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
             "model": os.getenv("OPENROUTER_MODEL", ""),
+            "models": os.getenv("OPENROUTER_MODELS", ""),
             "api_key_set": bool(os.getenv("OPENROUTER_API_KEY", "")),
         },
         "openai_compatible": {
             "base_url": os.getenv("OPENAI_BASE_URL", ""),
             "model": os.getenv("OPENAI_MODEL", ""),
+            "models": os.getenv("OPENAI_MODELS", ""),
             "api_key_set": bool(os.getenv("OPENAI_API_KEY", "")),
         },
         "ollama": {
@@ -223,8 +227,10 @@ def _provider_updates(req: SettingsRequest) -> dict[str, str]:
         "llm_provider": "LES_LLM_PROVIDER",
         "openrouter_base_url": "OPENROUTER_BASE_URL",
         "openrouter_model": "OPENROUTER_MODEL",
+        "openrouter_models": "OPENROUTER_MODELS",
         "openai_base_url": "OPENAI_BASE_URL",
         "openai_model": "OPENAI_MODEL",
+        "openai_models": "OPENAI_MODELS",
         "ollama_base_url": "OLLAMA_BASE_URL",
         "ollama_model": "OLLAMA_MODEL",
         "lemonade_base_url": "LEMONADE_BASE_URL",

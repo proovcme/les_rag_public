@@ -201,6 +201,30 @@ def _mlx_runtime() -> LlmRuntime:
     return LlmRuntime("mlx", base_url, _join_openai_path(base_url, "/chat/completions"), model, "", True)
 
 
+def cloud_fallback_models(runtime: LlmRuntime) -> list[str]:
+    """Цепочка моделей облачного фолбэка: primary (`*_MODEL`) первым, затем
+    `OPENROUTER_MODELS`/`OPENAI_MODELS` (через запятую). Зависшая/ошибившаяся
+    модель → следующая (см. cloud_model_timeout). Не-облако → одна модель."""
+    if runtime.provider == "openrouter":
+        env = os.getenv("OPENROUTER_MODELS", "")
+    elif runtime.provider in ("openai", "openai-compatible"):
+        env = os.getenv("OPENAI_MODELS", "")
+    else:
+        return [runtime.model]
+    chain: list[str] = [runtime.model] if runtime.model else []
+    for m in env.split(","):
+        m = m.strip()
+        if m and m not in chain:
+            chain.append(m)
+    return chain or [runtime.model]
+
+
+def cloud_model_timeout() -> float:
+    """Конечный таймаут на одну облачную модель — зависший провайдер не держит
+    запрос 300с, а быстро уступает следующей модели / локальному MLX."""
+    return _env_float("LES_CLOUD_MODEL_TIMEOUT_SEC", 45.0)
+
+
 def _dataset_sensitivities(dataset_ids: Iterable[str]) -> list[str]:
     """Уровни чувствительности (P0/P1/P2) задействованных датасетов из метабазы.
 
@@ -1536,6 +1560,32 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                         rj.get("usage", {}) or {},
                     )
 
+                async def _post_cloud_fallback(runtime, hdrs, body):
+                    """Облако: перебор цепочки моделей с конечным таймаутом на модель.
+                    Зависла/ошиблась/пустой ответ → следующая. Возвращает
+                    (answer, usage, used_model); все упали → последняя ошибка."""
+                    models = cloud_fallback_models(runtime)
+                    per_model = cloud_model_timeout()
+                    last_err: Exception = ValueError("облако: цепочка моделей пуста")
+                    for i, m in enumerate(models):
+                        # частичный вывод прошлой модели в стриме — отбросить
+                        if token_sink is not None and i > 0:
+                            await token_sink({"event": "reset", "data": ""})
+                        try:
+                            ans, usage_m = await asyncio.wait_for(
+                                _post_llm(runtime, m, hdrs, body), timeout=per_model
+                            )
+                            if ans:
+                                if i > 0:
+                                    logger.warning("[ROUTE] облако: модель %s сработала после %s", m, models[:i])
+                                return ans, usage_m, m
+                            last_err = ValueError(f"пустой ответ от {m}")
+                            logger.warning("[ROUTE] облако: %s дала пустой ответ — следующая модель", m)
+                        except (asyncio.TimeoutError, httpx.TransportError, httpx.TimeoutException, httpx.HTTPStatusError) as e:
+                            last_err = e
+                            logger.warning("[ROUTE] облако: %s не ответила (%s) — следующая модель", m, type(e).__name__)
+                    raise last_err
+
                 max_attempts = 2
                 for attempt in range(1, max_attempts + 1):
                     if attempt == 2:
@@ -1600,15 +1650,18 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                         await token_sink({"event": "reset", "data": ""})
                     t_llm_call = time.time()
                     try:
-                        answer, usage = await _post_llm(llm_runtime, llm_model, headers, chat_body)
-                    except (httpx.TransportError, httpx.TimeoutException) as net_err:
-                        # W3.3/ADR-9: облако недоступно → деградация на локальный MLX,
-                        # не отказ. HTTP-ошибки (raise_for_status) сюда НЕ попадают —
-                        # это «облако ответило ошибкой», другой случай (502 как раньше).
+                        if is_cloud_provider(llm_runtime.provider):
+                            # Облако: цепочка моделей с таймаутом на модель (зависла → следующая).
+                            answer, usage, llm_model = await _post_cloud_fallback(llm_runtime, headers, chat_body)
+                        else:
+                            answer, usage = await _post_llm(llm_runtime, llm_model, headers, chat_body)
+                    except (httpx.TransportError, httpx.TimeoutException, asyncio.TimeoutError, httpx.HTTPStatusError) as net_err:
+                        # W3.3/ADR-9: все облачные модели не ответили → деградация на
+                        # локальный MLX. Для не-облака (MLX) ошибку прокидываем как раньше.
                         if not is_cloud_provider(llm_runtime.provider):
                             raise
                         logger.warning(
-                            "[ROUTE] облако %s недоступно (%s) — fallback на локальный MLX",
+                            "[ROUTE] облако %s исчерпало модели (%s) — fallback на локальный MLX",
                             llm_runtime.provider, type(net_err).__name__,
                         )
                         llm_runtime = _mlx_runtime()
