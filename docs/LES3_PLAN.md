@@ -515,9 +515,11 @@
 > HTML/JS — только в sandboxed `<iframe>` (allow-scripts, без same-origin) + CSP. Выход для W17.5/W17.6
 > (досье/граф открывают документы-источники и структуры).
 
-- [ ] **W18.1 Файл-вьювер** · M `[gui]` — `ui.codemirror` (read-only, подсветка) для текста/кода; `ui.image`
-  для картинок; **PDF.js** (iframe) для PDF; office (docx/xlsx) — серверной конверсией (уже в RAG-пайплайне) →
-  PDF/HTML. Открытие файла по источнику ответа / из RAG_Content в панели артефактов.
+- [x] **W18.1 Файл-вьювер** · M — 2026-06-14. `proxy/routers/files.py` (`/api/rag/tree`, `/file/text`, `/file/raw`,
+  строгий path-guard, 7 тестов). Фронт: drawer «Файлы» в чат-шелле (кнопка `o_folder_open`, взаимоисключим
+  с история/задачи) — нативный `ui.tree` (дерево RAG_Content) + вьювер: `ui.codemirror` (текст/код, readonly),
+  `ui.image` (картинки), iframe (PDF через `/lite-api/rag/file/raw`). **Проверено вживую:** дерево рендерится,
+  PDF Градкодекса отдаётся (200). Остаток: office (docx/xlsx) — серверная конверсия; открытие по источнику ответа.
 - [ ] **W18.2 Файл-структуры** · S `[gui]` — `ui.tree` (нативный QTree, lazy-load) для дерева датасета/объекта/
   директории; Unicode-дерево в `ui.code` для инлайна в чате.
 - [ ] **W18.3 Схемы** · M — Mermaid (есть, `securityLevel:'sandbox'`) для LLM-диаграмм (модели нативно эмитят);
