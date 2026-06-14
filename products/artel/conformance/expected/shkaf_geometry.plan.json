@@ -1,0 +1,127 @@
+{
+  "schema_version": "artel.family_action_plan.v1",
+  "plan_id": "spec_0241",
+  "task_id": "task_0241",
+  "spec_id": "spec_0241",
+  "status": "ok",
+  "compiled_at": null,
+  "generator": {
+    "mode": "deterministic",
+    "llm_used": false,
+    "tool": "artel_family_action_plan"
+  },
+  "family": {
+    "name": "Шкаф архивный металлический",
+    "category": "Furniture",
+    "template_file_id": "file_template_001",
+    "shared_parameter_profile_id": "fop_2026"
+  },
+  "operations": [
+    {
+      "op": "add_shared_parameter",
+      "name": "ADSK_Наименование",
+      "guid": "4f5cb6a1-0000-0000-0000-000000000000",
+      "data_type": "Text",
+      "storage_type": "String",
+      "group": "Identity Data",
+      "is_instance": false,
+      "is_required": true
+    },
+    {
+      "op": "add_family_parameter",
+      "name": "Ширина",
+      "data_type": "Length",
+      "storage_type": "Double",
+      "group": "Dimensions",
+      "is_instance": false
+    },
+    {
+      "op": "add_family_parameter",
+      "name": "Глубина",
+      "data_type": "Length",
+      "storage_type": "Double",
+      "group": "Dimensions",
+      "is_instance": false
+    },
+    {
+      "op": "add_family_parameter",
+      "name": "Высота",
+      "data_type": "Length",
+      "storage_type": "Double",
+      "group": "Dimensions",
+      "is_instance": false
+    },
+    {
+      "op": "create_extrusion",
+      "id": "body",
+      "role": "body",
+      "sketch_plane": "ref_level",
+      "profile": {
+        "shape": "rectangle",
+        "width": {
+          "parameter": "Ширина"
+        },
+        "depth": {
+          "parameter": "Глубина"
+        }
+      },
+      "extrusion": {
+        "parameter": "Высота"
+      }
+    },
+    {
+      "op": "create_extrusion",
+      "id": "door",
+      "role": "door",
+      "sketch_plane": "front",
+      "profile": {
+        "shape": "rectangle",
+        "width": {
+          "parameter": "Ширина"
+        },
+        "depth": {
+          "parameter": "Высота"
+        }
+      },
+      "extrusion": {
+        "constant": 18.0,
+        "unit": "mm"
+      }
+    },
+    {
+      "op": "create_type",
+      "name": "Шкаф 800x400x1800",
+      "values": [
+        {
+          "parameter": "Ширина",
+          "value": 800
+        },
+        {
+          "parameter": "Глубина",
+          "value": 400
+        },
+        {
+          "parameter": "Высота",
+          "value": 1800
+        }
+      ]
+    },
+    {
+      "op": "assign_material",
+      "name": "Материал корпуса",
+      "parameter": "Материал корпуса",
+      "default_value": "RAL 7035"
+    }
+  ],
+  "manual_work": [
+    {
+      "kind": "geometry_review",
+      "description": "Сверить сгенерированную геометрию с техничкой/чертежом; проверить флекс типоразмеров."
+    },
+    {
+      "kind": "subcategories",
+      "description": "Назначить подкатегории и графику элементов геометрии."
+    }
+  ],
+  "diagnostics": []
+}

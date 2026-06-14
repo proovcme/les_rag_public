@@ -25,9 +25,18 @@ Known naming debt:
 - Several technical paths, namespaces and legacy projects still use `Agnostis`, `Agnosis` or `MyVeras`.
 - Rename this mechanically only after the LES/ARTEL integration contracts are stable.
 
-Current LES boundary:
+Product boundary (revised 2026-06-14):
 
-- ARTEL backend calls LES `/api/search` for retrieval context.
-- Revit add-ins should call ARTEL backend, not LES directly.
-- LES should index structured `FamilyLearningCase` records, validation reports and catalog cards rather than raw RFA binaries alone.
+- **АРТЕЛЬ is a standalone Windows product and must work fully without LES.** LES
+  is an optional enrichment API, not a dependency. See
+  [docs/les-integration.md](docs/les-integration.md) for the degradation ladder.
+- The deterministic core (FOP resolution, archetype geometry, action-plan
+  compiler, archetype classifier) runs offline with no LES and no model. It is
+  specified/conformance-tested in Python in the LES repo (`tools/artel_family_*`,
+  `tools/artel_archetype_classifier`, golden plans in `conformance/`) and ported
+  to C# inside `Agnostis.Api` for the shipped package.
+- Revit add-ins call the local ARTEL backend, never LES directly.
+- When reachable, ARTEL backend calls LES `/api/search` (best-effort) for
+  cross-project retrieval; LES should index `FamilyLearningCase` records,
+  validation reports and catalog cards rather than raw RFA binaries alone.
 

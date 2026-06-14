@@ -1,0 +1,7 @@
+{
+  "schema_version": "artel.family_geometry.v1",
+  "archetype": "rect_cabinet",
+  "bindings": {"width": "Ширина", "depth": "Глубина", "height": "Высота"},
+  "features": [{"kind": "door"}],
+  "source": {"kind": "datasheet", "confidence": 0.9}
+}

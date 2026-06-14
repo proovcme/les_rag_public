@@ -1,36 +1,54 @@
 # LES Integration
 
-## Decision
+## Decision (revised 2026-06-14)
 
-АРТЕЛЬ should use LES as the retrieval and local knowledge layer.
+**АРТЕЛЬ is a standalone Windows product. It must work fully without LES. LES is
+an optional enrichment API, not a dependency.**
 
-АРТЕЛЬ remains responsible for:
+АРТЕЛЬ owns everything needed to generate a family on its own:
 
-- tasks;
-- family specifications;
-- catalog;
+- tasks, family specifications, catalog, acceptance;
 - Revit add-in workflow;
-- OpenRouter orchestration;
-- validation reports and acceptance.
+- **local FOP/shared-parameter reference** (a `.txt` file, not a LES call);
+- **local archetype library** and the deterministic spec→plan→geometry compiler;
+- **local learning/catalog store** (`ARTEL_DATA_DIR`, JSON/SQLite);
+- model access **directly** to a local model (Ollama on the box) or cloud
+  (OpenRouter/OpenAI) — not routed through LES.
 
-LES remains responsible for:
+LES is an **optional adapter** that, when reachable, enriches АРТЕЛЬ with:
 
-- local RAG;
-- Qdrant/SQLite retrieval;
-- CAD/BIM JSON ingestion;
-- object-level CAD/BIM context;
-- local model runtime;
-- dataset routing and validation.
+- cross-project retrieval over `ARTEL_Index` (similar learning cases, FAMILY_GUIDE);
+- object-level CAD/BIM context (`CAD_BIM_Index`).
+
+## Degradation ladder
+
+Each layer is optional above the local base; АРТЕЛЬ never fails because a higher
+layer is absent:
+
+```text
+local FOP + archetypes + learning store   (always — generation works offline)
+  └─ optional: LES /api/search             (cross-project memory)
+       └─ optional: cloud/local LLM        (spec drafting, vision)
+```
+
+Every LES call is best-effort with a timeout; on unreachable/timeout АРТЕЛЬ falls
+back to its local store. The skeleton already leans this way: `Agnostis.Api`
+returns `status: unreachable/timeout` instead of crashing, and the add-in's
+`ArtelClient` swallows LES errors and continues.
 
 ## Why
 
-Building another RAG layer inside АРТЕЛЬ would duplicate LES.
+The product value is the **generator on Windows+Revit**, which must run on a
+client machine that may have no LES, no network, or no permission to reach it.
+Hard-coupling generation to a LES RAG would make the product undeliverable there.
+The deterministic core (compiler, geometry archetypes, classifier) needs no
+retrieval at all; richer context only *improves* drafts, it is never required.
 
-The correct architecture is:
-
-```text
-АРТЕЛЬ product workflow + LES retrieval/runtime
-```
+Implementation note: the deterministic core is specified and conformance-tested
+in Python in the LES repo (the oracle, under `make verify`), and **ported to C#
+inside `Agnostis.Api`** so the shipped Windows package carries zero Python/LES
+runtime dependency. The C# port must reproduce the golden plans in
+`products/artel/conformance/`.
 
 ## LES runtime baseline
 
@@ -325,12 +343,15 @@ Expected behavior:
 
 ## Integration rule
 
-Revit add-in should not call LES directly in MVP.
-
-Flow:
+The Revit add-in talks only to the local АРТЕЛЬ backend; the backend is
+self-sufficient and reaches LES only as an optional enrichment step.
 
 ```text
-Revit add-in -> АРТЕЛЬ backend -> LES
+Revit add-in -> АРТЕЛЬ backend (self-sufficient) -> [optional] LES, cloud
 ```
 
-This keeps auth, logging, task context and product decisions centralized in АРТЕЛЬ.
+This keeps auth, logging, task context and product decisions centralized in
+АРТЕЛЬ, and keeps generation working when LES is absent. The seed tools below
+(FOP, learning cases, family guides, API refs) populate `ARTEL_Index` for the
+*optional* retrieval path; the same sources should also land in АРТЕЛЬ's local
+store so they are available offline.
