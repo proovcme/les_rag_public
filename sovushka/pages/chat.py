@@ -73,11 +73,30 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 ).classes("sov-icon-btn")
             sessions_col = ui.column().classes("w-full gap-2 sov-history-list")
 
+        # Задачи/объёмы прямо в чат-шелле: ввод — командами чата («поставь задачу…»,
+        # «запиши объём…»), просмотр — здесь, рядом, без ухода в админ-консоль.
+        work_drawer = ui.element("aside").classes("sov-history-drawer")
+        work_drawer.set_visibility(False)
+        with work_drawer:
+            with ui.row().classes("w-full items-center justify-between"):
+                _html('<div class="sov-panel-title">Задачи и объёмы</div>')
+                ui.button(icon="o_close", on_click=lambda: work_drawer.set_visibility(False)).props(
+                    'flat round dense aria-label="Закрыть"'
+                ).classes("sov-icon-btn")
+            _html(
+                '<div class="sov-muted" style="font-size:.64rem;line-height:1.4;">'
+                'Ввод — командами в чате: «поставь задачу…», «запиши объём…». Здесь — просмотр.</div>'
+            )
+            work_body = ui.column().classes("w-full gap-1 sov-history-list")
+
         with ui.element("main").classes("sov-chat-main"):
             with ui.row().classes("sov-chat-topbar"):
                 with ui.row().classes("items-center gap-2"):
                     ui.button(icon="o_history", on_click=lambda: _toggle_history()).props(
                         'flat round dense aria-label="История чата"'
+                    ).classes("sov-icon-btn")
+                    ui.button(icon="o_checklist", on_click=lambda: _toggle_work()).props(
+                        'flat round dense aria-label="Задачи и объёмы"'
                     ).classes("sov-icon-btn")
                     _html('<div class="sov-chat-title">С.О.В.У.Ш.К.А.</div>')
                     _html('<div class="sov-chat-subtitle">нормативный RAG-диспетчер</div>')
@@ -304,9 +323,46 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
     asyncio.create_task(_load_datasets_select())
 
     def _toggle_history():
+        work_drawer.set_visibility(False)
         history_drawer.set_visibility(not history_drawer.visible)
         if history_drawer.visible:
             asyncio.create_task(_load_sessions())
+
+    def _toggle_work():
+        history_drawer.set_visibility(False)
+        work_drawer.set_visibility(not work_drawer.visible)
+        if work_drawer.visible:
+            asyncio.create_task(_refresh_work())
+
+    async def _refresh_work():
+        """Просмотр задач/объёмов в чат-шелле. Данные те же, что у чат-команд и
+        вкладок ЗАДАЧИ/ОБЪЁМЫ (/api/tasks, /api/field) — без LLM."""
+        tdata = await api_get("/api/tasks?limit=100") or {}
+        tasks = [t for t in (tdata.get("tasks") or []) if t.get("status") in ("open", "in_progress")]
+        fdata = await api_get("/api/field?limit=50") or {}
+        entries = [e for e in (fdata.get("entries") or []) if e.get("status") == "confirmed"][:20]
+        work_body.clear()
+        with work_body:
+            ui.label("Открытые задачи").classes("section-title")
+            if not tasks:
+                ui.label("нет открытых задач").style("font-size:.68rem;color:var(--dim);")
+            for t in tasks[:30]:
+                with ui.row().classes("w-full items-center gap-2").style(
+                    "border-bottom:1px dashed var(--border);padding:3px 0;"
+                ):
+                    ui.label(f"#{t.get('id','?')} {t.get('title', '—')}").classes("flex-1").style("font-size:.74rem;")
+                    ui.label(str(t.get("status", ""))).style("font-size:.62rem;color:var(--dim);width:90px;flex-shrink:0;")
+            ui.label("Объёмы (подтверждённые)").classes("section-title").style("margin-top:12px;")
+            if not entries:
+                ui.label("журнал пуст").style("font-size:.68rem;color:var(--dim);")
+            for e in entries:
+                with ui.row().classes("w-full items-center gap-2").style(
+                    "border-bottom:1px dashed var(--border);padding:3px 0;"
+                ):
+                    ui.label(f"#{e.get('id','?')} {e.get('position', '—')}").classes("flex-1").style("font-size:.72rem;")
+                    ui.label(f"{e.get('volume', '')} {e.get('unit', '')}").style(
+                        "font-size:.72rem;font-weight:700;width:110px;text-align:right;flex-shrink:0;"
+                    )
 
     async def _load_sessions():
         sessions_col.clear()
@@ -838,6 +894,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, ans, srcs, crag, meta=meta)
             _render_result(ans, out_mode, artifact_panel, table_query=d.get("table_query"))
             add_log(f"[AI] Формат:{out_mode} CRAG:{crag or 'N/A'} src:{len(srcs)}")
+            # Команда задачника/журнала могла изменить данные — обновим открытую панель.
+            if work_drawer.visible:
+                asyncio.create_task(_refresh_work())
 
         # W5.1: SSE-стрим — токены в пузырь по мере генерации; финальное событие
         # несёт авторитетный payload (вердикт валидации в crag_status).
