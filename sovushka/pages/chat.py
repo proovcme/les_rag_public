@@ -522,6 +522,32 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                         ui.label("BIM: " + ", ".join(f"{k}={v}" for k, v in list(bim.items())[:4])).style(
                             "font-size:.66rem;color:var(--dim);"
                         )
+                    # W17.3 — классификационный хребет (Floor→System→Category)
+                    clf = d.get("classification") or {}
+                    clf_tot = clf.get("totals") or {}
+                    if clf_tot.get("elements"):
+                        ui.label(
+                            f"Классификационный хребет: {clf_tot.get('elements', 0)} элементов · "
+                            f"этажей {clf_tot.get('floors', 0)} · систем {clf_tot.get('systems', 0)} · "
+                            f"категорий {clf_tot.get('categories', 0)}"
+                        ).classes("section-title").style("margin-top:8px;")
+                        for f in (clf.get("top_floors") or [])[:6]:
+                            systems = ", ".join(f.get("top_systems") or []) or "—"
+                            ui.label(f"• {f.get('floor')} ({f.get('elements', 0)}): {systems}").style("font-size:.7rem;")
+                    # W17.3 — состояния документов CDE (ISO 19650)
+                    cde = d.get("cde") or {}
+                    if any(cde.values()):
+                        ui.label(
+                            "Документы (CDE): " + " · ".join(f"{k} {cde.get(k, 0)}" for k in ("WIP", "Shared", "Published", "Archived"))
+                        ).classes("section-title").style("margin-top:8px;")
+                    # W17.3 — захватки (LBS-хабы) из журнала объёмов
+                    lbs = d.get("lbs") or []
+                    if lbs:
+                        ui.label("Захватки (факт. объёмы)").classes("section-title").style("margin-top:8px;")
+                        for h in lbs[:10]:
+                            ui.label(
+                                f"• {h.get('zahvatka')}: {h.get('total', 0)} ({h.get('entries', 0)} записей)"
+                            ).style("font-size:.7rem;")
         dlg.open()
 
     async def _load_sessions():
