@@ -56,15 +56,19 @@ def _connect() -> sqlite3.Connection:
         )
         """
     )
+    try:  # Q3: партиционирование по объекту (project_id=0 — без объекта/глобально)
+        conn.execute("ALTER TABLE les_notes ADD COLUMN project_id INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
     return conn
 
 
-def create_note(text: str, dataset_filter: str = "") -> dict[str, Any]:
+def create_note(text: str, dataset_filter: str = "", project_id: int = 0) -> dict[str, Any]:
     now = time.time()
     with _connect() as conn:
         cur = conn.execute(
-            "INSERT INTO les_notes(text, dataset_filter, created_at) VALUES (?,?,?)",
-            (text.strip(), dataset_filter, now),
+            "INSERT INTO les_notes(text, dataset_filter, project_id, created_at) VALUES (?,?,?,?)",
+            (text.strip(), dataset_filter, int(project_id), now),
         )
         conn.commit()
         note_id = cur.lastrowid
@@ -74,12 +78,19 @@ def create_note(text: str, dataset_filter: str = "") -> dict[str, Any]:
         derive_edges_from_text("note", str(note_id), text, provenance=f"note#{note_id}")
     except Exception as edge_err:
         logger.warning("[EDGES] derive note#%s skipped: %s", note_id, edge_err)
-    return {"id": note_id, "text": text.strip(), "dataset_filter": dataset_filter, "created_at": now}
+    return {"id": note_id, "text": text.strip(), "dataset_filter": dataset_filter,
+            "project_id": int(project_id), "created_at": now}
 
 
-def list_notes(limit: int = 50) -> list[dict[str, Any]]:
+def list_notes(limit: int = 50, project_id: int | None = None) -> list[dict[str, Any]]:
     with _connect() as conn:
-        rows = conn.execute("SELECT * FROM les_notes ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        if project_id is not None:  # Q3: фильтр по объекту (None → все)
+            rows = conn.execute(
+                "SELECT * FROM les_notes WHERE project_id=? ORDER BY id DESC LIMIT ?",
+                (int(project_id), limit),
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM les_notes ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
     return [dict(row) for row in rows]
 
 
@@ -161,13 +172,14 @@ def recall_context(
     return "Рабочая память (заметки оператора и прошлые решения):\n" + "\n".join(parts)
 
 
-def maybe_handle_memory_command(question: str, dataset_filter: str = "") -> dict[str, Any] | None:
-    """Детерминированный обработчик команд заметок из чата (ADR-11: без LLM)."""
+def maybe_handle_memory_command(question: str, dataset_filter: str = "", project_id: int = 0) -> dict[str, Any] | None:
+    """Детерминированный обработчик команд заметок из чата (ADR-11: без LLM).
+    В режиме объекта (project_id>0) заметки создаются и перечисляются в рамках объекта."""
     text = question.strip()
 
     match = REMEMBER_RE.match(text)
     if match:
-        note = create_note(match.group("text").strip().rstrip("."), dataset_filter=dataset_filter or "")
+        note = create_note(match.group("text").strip().rstrip("."), dataset_filter=dataset_filter or "", project_id=project_id)
         return {
             "answer": f"✎ Запомнил (заметка #{note['id']}): {note['text']}\nЗабыть: «забудь заметку {note['id']}»",
             "operation": "note_create",
@@ -187,7 +199,7 @@ def maybe_handle_memory_command(question: str, dataset_filter: str = "") -> dict
 
     match = LIST_NOTES_RE.match(text)
     if match:
-        notes = list_notes(limit=30)
+        notes = list_notes(limit=30, project_id=project_id or None)
         if not notes:
             answer = "Заметок пока нет. Создать: «запомни: …»"
         else:

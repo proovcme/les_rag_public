@@ -195,17 +195,18 @@ def build_dossier(project_id: int) -> dict[str, Any] | None:
     from proxy.services.field_intake_service import aggregate_volumes
     from proxy.services.edge_service import list_edges
 
-    all_tasks = list_tasks("", 500)
+    # Q3: оперативные данные партиционированы по объекту — досье строго в рамках объекта.
+    all_tasks = list_tasks("", 500, project_id=project_id)
     open_tasks = [t for t in all_tasks if t.get("status") in ("open", "in_progress")]
     closed = sum(1 for t in all_tasks if t.get("status") in ("done", "dropped", "closed"))
 
     try:
-        vol_rows = aggregate_volumes(status="confirmed")
+        vol_rows = aggregate_volumes(status="confirmed", project_id=project_id)
     except Exception:
         vol_rows = []
     vol_total = sum(float(r.get("total") or 0) for r in vol_rows)
 
-    notes = list_notes(50)
+    notes = list_notes(50, project_id=project_id)
     edges = list_edges(5000)
 
     bim = None
@@ -231,7 +232,7 @@ def build_dossier(project_id: int) -> dict[str, Any] | None:
             ],
         }
         cde = cde_summary(project_id)
-        lbs = lbs_hubs()
+        lbs = lbs_hubs(project_id=project_id)
     except Exception:
         pass
 

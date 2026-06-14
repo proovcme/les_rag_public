@@ -73,6 +73,10 @@ def _connect() -> sqlite3.Connection:
         )
         """
     )
+    try:  # Q3: партиционирование по объекту (project_id=0 — без объекта/глобально)
+        conn.execute("ALTER TABLE les_field_entries ADD COLUMN project_id INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
     return conn
 
 
@@ -98,6 +102,7 @@ def create_entry(
     author: str = "",
     status: str = "confirmed",
     notes: str = "",
+    project_id: int = 0,
 ) -> dict[str, Any]:
     if status not in FIELD_STATUSES:
         raise ValueError(f"status must be one of {FIELD_STATUSES}")
@@ -105,8 +110,8 @@ def create_entry(
     with _connect() as conn:
         cur = conn.execute(
             "INSERT INTO les_field_entries"
-            "(entry_date, position, zahvatka, volume, unit, doc_id, element_id, author, status, notes, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "(entry_date, position, zahvatka, volume, unit, doc_id, element_id, author, status, notes, project_id, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 (entry_date or _today()).strip(),
                 position.strip(),
@@ -118,6 +123,7 @@ def create_entry(
                 author.strip(),
                 status,
                 notes.strip(),
+                int(project_id),
                 now,
                 now,
             ),
@@ -267,9 +273,13 @@ def aggregate_volumes(
     position: str = "",
     date_from: str = "",
     date_to: str = "",
+    project_id: int | None = None,
 ) -> list[dict[str, Any]]:
     """Свод SUM(volume) GROUP BY (position, unit) — числа считает SQL, не LLM."""
     clauses, params = ["status=?"], [status]
+    if project_id is not None:  # Q3: фильтр по объекту (None → все)
+        clauses.append("project_id=?")
+        params.append(int(project_id))
     if zahvatka:
         clauses.append("zahvatka LIKE ?")
         params.append(f"%{zahvatka}%")
@@ -336,8 +346,9 @@ def maybe_answer_field_volume_query(question: str) -> dict[str, Any] | None:
 
 # ── Чат-команда записи (W8.1, regex, без LLM) ──
 
-def maybe_handle_field_command(question: str, author: str = "") -> dict[str, Any] | None:
-    """«запиши объём 50 м3 монолитная плита захватка 3» → запись в журнал."""
+def maybe_handle_field_command(question: str, author: str = "", project_id: int = 0) -> dict[str, Any] | None:
+    """«запиши объём 50 м3 монолитная плита захватка 3» → запись в журнал.
+    В режиме объекта (project_id>0) запись привязывается к объекту."""
     match = RECORD_RE.match(question.strip())
     if not match:
         return None
@@ -353,7 +364,7 @@ def maybe_handle_field_command(question: str, author: str = "") -> dict[str, Any
         zahvatka = zm.group("z")
         rest = _ZAHVATKA_RE.sub("", rest).strip(" ,;—-")
     position = rest or "без позиции"
-    entry = create_entry(position, volume, unit, zahvatka=zahvatka, author=author)
+    entry = create_entry(position, volume, unit, zahvatka=zahvatka, author=author, project_id=project_id)
     where = f" (захватка {zahvatka})" if zahvatka else ""
     return {
         "answer": f"✓ Записано #{entry['id']}: {position} — {_fmt_qty(volume)} {unit}{where}.\n"

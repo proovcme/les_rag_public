@@ -52,16 +52,20 @@ def _connect() -> sqlite3.Connection:
         )
         """
     )
+    try:  # Q3: партиционирование по объекту (project_id=0 — без объекта/глобально)
+        conn.execute("ALTER TABLE les_tasks ADD COLUMN project_id INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
     return conn
 
 
-def create_task(title: str, details: str = "", dataset_filter: str = "", link: str = "") -> dict[str, Any]:
+def create_task(title: str, details: str = "", dataset_filter: str = "", link: str = "", project_id: int = 0) -> dict[str, Any]:
     now = time.time()
     with _connect() as conn:
         cur = conn.execute(
-            "INSERT INTO les_tasks(title, details, status, dataset_filter, link, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (title.strip(), details.strip(), "open", dataset_filter, link, now, now),
+            "INSERT INTO les_tasks(title, details, status, dataset_filter, link, project_id, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (title.strip(), details.strip(), "open", dataset_filter, link, int(project_id), now, now),
         )
         conn.commit()
         task_id = cur.lastrowid
@@ -80,17 +84,19 @@ def get_task(task_id: int) -> dict[str, Any]:
     return dict(row) if row else {}
 
 
-def list_tasks(status: str = "", limit: int = 50) -> list[dict[str, Any]]:
+def list_tasks(status: str = "", limit: int = 50, project_id: int | None = None) -> list[dict[str, Any]]:
+    clauses, params = [], []
+    if status:
+        clauses.append("status=?")
+        params.append(status)
+    if project_id is not None:  # Q3: фильтр по объекту (None → все)
+        clauses.append("project_id=?")
+        params.append(int(project_id))
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    order = ("ORDER BY id DESC" if status else
+             "ORDER BY CASE status WHEN 'open' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END, id DESC")
     with _connect() as conn:
-        if status:
-            rows = conn.execute(
-                "SELECT * FROM les_tasks WHERE status=? ORDER BY id DESC LIMIT ?", (status, limit)
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM les_tasks ORDER BY CASE status WHEN 'open' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END, id DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+        rows = conn.execute(f"SELECT * FROM les_tasks{where} {order} LIMIT ?", (*params, limit)).fetchall()
     return [dict(row) for row in rows]
 
 
@@ -122,16 +128,17 @@ def _format_task_line(task: dict[str, Any]) -> str:
     return f"{marker} #{task['id']} {task['title']}" + (f" [{task['dataset_filter']}]" if task["dataset_filter"] else "")
 
 
-def maybe_handle_task_command(question: str, dataset_filter: str = "") -> dict[str, Any] | None:
+def maybe_handle_task_command(question: str, dataset_filter: str = "", project_id: int = 0) -> dict[str, Any] | None:
     """Детерминированный обработчик команд задачника из чата (ADR-11: без LLM).
 
     Возвращает готовый chat-ответ или None (не команда задачника).
+    В режиме объекта (project_id>0) задачи создаются и перечисляются в рамках объекта.
     """
     text = question.strip()
 
     match = LIST_TASKS_RE.match(text)
     if match:
-        tasks = list_tasks(limit=30)
+        tasks = list_tasks(limit=30, project_id=project_id or None)
         active = [t for t in tasks if t["status"] in ("open", "in_progress")]
         done_recent = [t for t in tasks if t["status"] == "done"][:5]
         if not tasks:
@@ -161,7 +168,7 @@ def maybe_handle_task_command(question: str, dataset_filter: str = "") -> dict[s
     match = CREATE_TASK_RE.match(text)
     if match:
         title = match.group("title").strip().rstrip(".")
-        task = create_task(title, dataset_filter=dataset_filter or "")
+        task = create_task(title, dataset_filter=dataset_filter or "", project_id=project_id)
         return {
             "answer": f"○ Задача #{task['id']} создана: {task['title']}\nЗакрыть: «задача {task['id']} готова»",
             "operation": "task_create",

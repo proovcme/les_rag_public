@@ -320,18 +320,24 @@ def cde_summary(project_id: int | None = None) -> dict[str, int]:
 
 # ── Захватка-хаб (LBS) — лёгкая свёрстка журнала объёмов (W8) ─────────
 
-def lbs_hubs(status: str = "confirmed") -> list[dict[str, Any]]:
+def lbs_hubs(status: str = "confirmed", project_id: int | None = None) -> list[dict[str, Any]]:
     """Захватки как LBS-хабы: своды журнала объёмов по захваткам (0 LLM, SQL).
-    Захватка без имени — под ключом «—» (общеплощадочные работы)."""
+    Захватка без имени — под ключом «—» (общеплощадочные работы).
+    project_id (Q3): фильтр по объекту (None → все)."""
     hubs: list[dict[str, Any]] = []
+    clauses, params = ["status=?"], [status]
+    if project_id is not None:
+        clauses.append("project_id=?")
+        params.append(int(project_id))
+    where = " AND ".join(clauses)
     try:
         conn = sqlite3.connect(rag_meta_db_path())
         conn.row_factory = sqlite3.Row
         with conn:
             rows = conn.execute(
                 "SELECT COALESCE(NULLIF(TRIM(zahvatka),''),'—') z, COUNT(*) n, "
-                "SUM(volume) total FROM les_field_entries WHERE status=? GROUP BY z ORDER BY total DESC",
-                (status,),
+                f"SUM(volume) total FROM les_field_entries WHERE {where} GROUP BY z ORDER BY total DESC",
+                params,
             ).fetchall()
         for r in rows:
             hubs.append({"zahvatka": r["z"], "entries": r["n"], "total": round(float(r["total"] or 0), 2)})
