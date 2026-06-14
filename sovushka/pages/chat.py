@@ -633,6 +633,37 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
 
                         ui.button(q, on_click=_make_click_question(q)).props("outline dense size=sm color=primary").classes("text-xs text-left normal-case")
 
+    def _render_excerpts(meta: dict | None):
+        """Конкретные фрагменты норм/документов, на которые опёрся ответ — «вот это
+        место». Раскрываемо; ссылка «открыть» ведёт в файл (W18.1) если есть путь."""
+        if not meta:
+            return
+        excerpts = meta.get("source_excerpts") or []
+        if not excerpts:
+            return
+        from urllib.parse import quote
+        with ui.expansion(f"Цитаты из источников ({len(excerpts)})", icon="format_quote").props(
+            "dense"
+        ).classes("w-full mt-2").style("font-size:.66rem;"):
+            for ex in excerpts:
+                doc = ex.get("doc", "") or ""
+                with ui.column().classes("w-full gap-1").style(
+                    "border-left:2px solid var(--accent);padding:3px 0 8px 10px;margin-top:6px;"
+                ):
+                    with ui.row().classes("w-full items-center gap-2"):
+                        ui.label(doc.rsplit("/", 1)[-1] or "источник").style(
+                            "font-size:.64rem;color:var(--accent);font-weight:700;word-break:break-all;"
+                        )
+                        if ex.get("score") is not None:
+                            ui.label(f"score {ex['score']}").style("font-size:.56rem;color:var(--dim);")
+                        if "/" in doc:
+                            ui.link("открыть", f"/lite-api/rag/file/raw?path={quote(doc)}").props(
+                                "target=_blank"
+                            ).style("font-size:.58rem;color:var(--ok);margin-left:auto;")
+                    ui.label(ex.get("text", "")).style(
+                        "font-size:.7rem;line-height:1.5;color:var(--text);white-space:pre-wrap;"
+                    )
+
     def _render_chat_bubble(
         text: str,
         class_name: str,
@@ -645,6 +676,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             _render_source_tags(srcs or [], crag, meta)
             if meta:
                 _render_suggestions(meta)
+                _render_excerpts(meta)
         return bubble
 
     def _render_ai_placeholder(text: str):
@@ -669,6 +701,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             _render_source_tags(srcs or [], crag, meta)
             if meta:
                 _render_suggestions(meta)
+                _render_excerpts(meta)
 
     def _render_msg(msg):
         if msg.get("role") == "user":
@@ -989,6 +1022,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 "table_query": d.get("table_query"),
                 "clarifying_questions": d.get("clarifying_questions") or [],
                 "suggested_filters": d.get("suggested_filters") or [],
+                "source_excerpts": d.get("source_excerpts") or [],
             }
             state["chat_history"].append({"role": "ai", "text": ans, "srcs": srcs, "crag": crag, "meta": meta})
             _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, ans, srcs, crag, meta=meta)

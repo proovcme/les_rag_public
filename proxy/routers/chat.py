@@ -225,6 +225,34 @@ def cloud_model_timeout() -> float:
     return _env_float("LES_CLOUD_MODEL_TIMEOUT_SEC", 45.0)
 
 
+def source_excerpts(chunks, *, max_n: int = 6, max_chars: int = 700) -> list[dict[str, Any]]:
+    """Конкретные фрагменты источников (текст, а не только имя файла) — чтобы
+    показать «вот это место в норме» под ответом. Дедуп по (документ, начало)."""
+    out: list[dict[str, Any]] = []
+    seen: set = set()
+    for ch in chunks or []:
+        content = (getattr(ch, "content", "") or "").strip()
+        if not content:
+            continue
+        doc = getattr(ch, "doc_name", "") or ""
+        key = (doc, content[:80])
+        if key in seen:
+            continue
+        seen.add(key)
+        if len(content) > max_chars:
+            content = content[:max_chars].rsplit(" ", 1)[0].rstrip() + " …"
+        meta = getattr(ch, "meta", {}) or {}
+        out.append({
+            "doc": doc,
+            "text": content,
+            "score": round(float(getattr(ch, "score", 0.0) or 0.0), 3),
+            "dataset_id": meta.get("dataset_id", "") if isinstance(meta, dict) else "",
+        })
+        if len(out) >= max_n:
+            break
+    return out
+
+
 def _dataset_sensitivities(dataset_ids: Iterable[str]) -> list[str]:
     """Уровни чувствительности (P0/P1/P2) задействованных датасетов из метабазы.
 
@@ -1844,6 +1872,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     "cache": cache_marker,
                     "validation": {"enabled": use_validation},
                     "history_id": history_id,
+                    "source_excerpts": source_excerpts(chunks),
                 }
 
                 # W6.7: source_id CAD/BIM-элементов из текста чанков → ответ + снимок
