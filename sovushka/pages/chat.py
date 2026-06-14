@@ -60,6 +60,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
 
     out_mode_val = {"v": "text"}
     selected_session_card = {"el": None}
+    project_state = {"id": None}  # W17.1: активный объект (None = обычный RAG по всему)
 
     with ui.element("div").classes("sov-chat-shell"):
         history_drawer = ui.element("aside").classes("sov-history-drawer")
@@ -101,6 +102,24 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     _html('<div class="sov-chat-title">С.О.В.У.Ш.К.А.</div>')
                     _html('<div class="sov-chat-subtitle">нормативный RAG-диспетчер</div>')
                 with ui.row().classes("items-center gap-2"):
+                    # W17.1: режим объекта — сужает ретрив к датасетам проекта; «— весь RAG —» = обычный поиск.
+                    project_select = ui.select({0: "— весь RAG —"}, value=0).props(
+                        'dense outlined options-dense aria-label="Объект (режим проекта)"'
+                    ).style("min-width:150px;font-size:.66rem;background:var(--input-bg);")
+                    project_select.on(
+                        "update:model-value",
+                        lambda e: project_state.__setitem__("id", project_select.value or None),
+                    )
+
+                    async def _load_projects():
+                        data = await api_get("/api/projects") or {}
+                        opts = {0: "— весь RAG —"}
+                        for p in (data.get("projects") or []):
+                            if p.get("status") != "archived":
+                                opts[int(p["id"])] = f"🏗 {p.get('name', 'объект')}"
+                        project_select.set_options(opts, value=project_state["id"] or 0)
+
+                    asyncio.create_task(_load_projects())
                     mode_chip = ui.label("RAG").classes("sov-chip")
                     validation_chip = ui.label("CRAG ON").classes("sov-chip")
                     ui.button(icon="o_delete_sweep", on_click=lambda: _clear_chat()).props(
@@ -862,6 +881,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         }
         if detail_dataset.value and detail_dataset.value != "(все датасеты)":
             payload["dataset_filter"] = detail_dataset.value
+        if project_state["id"]:  # W17.1: режим объекта — сузить ретрив к датасетам проекта
+            payload["project_id"] = project_state["id"]
 
         _t0 = time.monotonic()
         _stop_tick = {"v": False}

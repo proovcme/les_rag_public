@@ -24,6 +24,7 @@ from proxy.routers.bor import router as bor_router
 from proxy.routers.diff import router as diff_router
 from proxy.routers.filemap import router as filemap_router
 from proxy.routers.tasks import notes_router, router as tasks_router
+from proxy.routers.projects import router as projects_router
 from proxy.routers.field import router as field_router
 from proxy.routers.normcontrol import router as normcontrol_router
 from proxy.routers.chat import ChatRouterState, ensure_chat_history_schema, router as chat_router, set_chat_state
@@ -320,6 +321,7 @@ def create_app():
     fastapi_app.include_router(diff_router)
     fastapi_app.include_router(filemap_router)
     fastapi_app.include_router(tasks_router)
+    fastapi_app.include_router(projects_router)
     fastapi_app.include_router(notes_router)
     fastapi_app.include_router(field_router)
     fastapi_app.include_router(normcontrol_router)
