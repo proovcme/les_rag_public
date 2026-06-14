@@ -90,6 +90,21 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             )
             work_body = ui.column().classes("w-full gap-1 sov-history-list")
 
+        # W18.1: файл-вьювер — дерево RAG_Content + просмотр (текст/код/картинка/PDF).
+        files_drawer = ui.element("aside").classes("sov-history-drawer")
+        files_drawer.set_visibility(False)
+        with files_drawer:
+            with ui.row().classes("w-full items-center justify-between"):
+                _html('<div class="sov-panel-title">Файлы</div>')
+                ui.button(icon="o_close", on_click=lambda: files_drawer.set_visibility(False)).props(
+                    'flat round dense aria-label="Закрыть"'
+                ).classes("sov-icon-btn")
+            files_tree_box = ui.column().classes("w-full gap-0").style("max-height:38%;overflow:auto;")
+            ui.separator().style("border-color:var(--border);margin:6px 0;")
+            files_view_box = ui.column().classes("w-full gap-1 sov-history-list")
+            with files_view_box:
+                _html('<div class="sov-muted" style="font-size:.62rem;">Выбери файл в дереве для просмотра.</div>')
+
         with ui.element("main").classes("sov-chat-main"):
             with ui.row().classes("sov-chat-topbar"):
                 with ui.row().classes("items-center gap-2"):
@@ -98,6 +113,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     ).classes("sov-icon-btn")
                     ui.button(icon="o_checklist", on_click=lambda: _toggle_work()).props(
                         'flat round dense aria-label="Задачи и объёмы"'
+                    ).classes("sov-icon-btn")
+                    ui.button(icon="o_folder_open", on_click=lambda: _toggle_files()).props(
+                        'flat round dense aria-label="Файлы"'
                     ).classes("sov-icon-btn")
                     _html('<div class="sov-chat-title">С.О.В.У.Ш.К.А.</div>')
                     _html('<div class="sov-chat-subtitle">нормативный RAG-диспетчер</div>')
@@ -343,12 +361,14 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
 
     def _toggle_history():
         work_drawer.set_visibility(False)
+        files_drawer.set_visibility(False)
         history_drawer.set_visibility(not history_drawer.visible)
         if history_drawer.visible:
             asyncio.create_task(_load_sessions())
 
     def _toggle_work():
         history_drawer.set_visibility(False)
+        files_drawer.set_visibility(False)
         work_drawer.set_visibility(not work_drawer.visible)
         if work_drawer.visible:
             asyncio.create_task(_refresh_work())
@@ -382,6 +402,65 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     ui.label(f"{e.get('volume', '')} {e.get('unit', '')}").style(
                         "font-size:.72rem;font-weight:700;width:110px;text-align:right;flex-shrink:0;"
                     )
+
+    # W18.1: файл-вьювер (дерево RAG_Content + просмотр текст/код/картинка/PDF).
+    def _toggle_files():
+        history_drawer.set_visibility(False)
+        work_drawer.set_visibility(False)
+        files_drawer.set_visibility(not files_drawer.visible)
+        if files_drawer.visible:
+            asyncio.create_task(_load_file_tree())
+
+    async def _load_file_tree():
+        files_tree_box.clear()
+        data = await api_get("/api/rag/tree?depth=2")
+        if not isinstance(data, dict):
+            with files_tree_box:
+                _html('<div class="sov-muted" style="font-size:.62rem;">Не удалось загрузить дерево файлов.</div>')
+            return
+        is_dir: dict[str, bool] = {}
+
+        def _to_nodes(node: dict) -> dict:
+            path = node.get("path") or "/"
+            is_dir[path] = bool(node.get("dir"))
+            n = {"id": path, "label": node.get("name", "?")}
+            kids = node.get("children")
+            if kids:
+                n["children"] = [_to_nodes(c) for c in kids]
+            return n
+
+        root = _to_nodes(data)
+        with files_tree_box:
+            tree = ui.tree([root], label_key="label", node_key="id",
+                           on_select=lambda e: _on_file_select(e.value, is_dir))
+            tree.expand([root["id"]])
+
+    def _on_file_select(path, is_dir: dict) -> None:
+        if path and not is_dir.get(path, False):
+            asyncio.create_task(_view_file(path))
+
+    async def _view_file(path: str) -> None:
+        from urllib.parse import quote
+        files_view_box.clear()
+        ext = ("." + path.rsplit(".", 1)[-1].lower()) if "." in path else ""
+        url = f"/lite-api/rag/file/raw?path={quote(path)}"
+        with files_view_box:
+            ui.label(path).style("font-size:.62rem;color:var(--accent);font-weight:700;word-break:break-all;")
+            if ext in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
+                ui.image(url).style("width:100%;border:1px solid var(--border);border-radius:6px;")
+            elif ext == ".pdf":
+                _html(f'<iframe src="{url}" style="width:100%;height:520px;border:1px solid var(--border);border-radius:6px;"></iframe>')
+            elif ext in (".txt", ".md", ".json", ".jsonl", ".csv", ".tsv", ".xml", ".yaml",
+                         ".yml", ".log", ".html", ".svg", ".py", ".ini", ".cfg", ".sql"):
+                d = await api_get(f"/api/rag/file/text?path={quote(path)}")
+                if isinstance(d, dict):
+                    ui.codemirror(d.get("content", ""), language=None).props("readonly").style(
+                        "width:100%;height:480px;"
+                    )
+                else:
+                    _html('<div class="sov-muted">Не удалось прочитать файл (или он бинарный).</div>')
+            else:
+                ui.link("Скачать файл", url).props("target=_blank").style("font-size:.72rem;color:var(--accent);")
 
     async def _load_sessions():
         sessions_col.clear()
