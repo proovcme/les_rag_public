@@ -29,6 +29,33 @@ user task
   -> accepted LEARNING_CASE back into LES
 ```
 
+## Action Plan Compiler (W10.2)
+
+An approved `FamilySpecification` is compiled **deterministically, without an LLM**
+(ADR-11) into a Revit build plan before any Revit work:
+
+```bash
+uv run python tools/artel_family_action_plan.py \
+  --spec spec.json --fop FOP2021.txt --out plan.json
+```
+
+- Schema: `schema/family_action_plan.schema.json` (`family_action_plan.v1`).
+- Compiler: `tools/artel_family_action_plan.py` (importable + CLI).
+- Tests: `tests/test_artel_family_action_plan.py` (golden «Шкаф архивный
+  металлический» = `Agnostis.Api` `spec_0241`).
+
+The plan is an ordered batch of operations — `add_shared_parameter` (GUID resolved
+against the FOP reference), `add_family_parameter`, `set_formula`, `create_type`,
+`assign_material` — plus `manual_work[]` (geometry/skeleton/connectors that the spec
+cannot encode) and `diagnostics[]` (`ARF-PLAN-*`). `status: "error"` means the plan
+must not be issued to Revit.
+
+`family_action_plan.v1` is the contract between the compiler and the Windows side.
+**Remaining (Legion/Revit session):** a C# `ArtelFamilyGenerateCommand` in
+`ARTEL.Revit.FamilyFactory` that executes `operations[]` as a batch and writes a
+validation report, and `Agnostis.Api` serving the compiled plan from
+`/api/revit/tasks/{taskId}/package`.
+
 ## Generation Contract
 
 Every generated family task must produce:

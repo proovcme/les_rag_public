@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://les.ovc.me/schema/family_action_plan.schema.json",
+  "title": "ARTEL FamilyActionPlan",
+  "description": "Deterministically compiled Revit family build plan (W10.2). An approved FamilySpecification is compiled, without an LLM, into an ordered batch of Revit API operations plus an explicit list of manual geometry work. The ARTEL Revit add-in executes operations[] and writes a validation report.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "plan_id",
+    "status",
+    "family",
+    "operations",
+    "manual_work",
+    "diagnostics",
+    "generator"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "artel.family_action_plan.v1"
+    },
+    "plan_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_.-]{2,80}$"
+    },
+    "task_id": {
+      "type": ["string", "null"]
+    },
+    "spec_id": {
+      "type": ["string", "null"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["ok", "error"],
+      "description": "error when any diagnostic has severity error; the plan must not be issued to Revit."
+    },
+    "compiled_at": {
+      "type": ["string", "null"],
+      "description": "RFC3339 timestamp; null when compiled deterministically without a clock."
+    },
+    "generator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "llm_used"],
+      "properties": {
+        "mode": { "type": "string", "const": "deterministic" },
+        "llm_used": { "type": "boolean", "const": false },
+        "tool": { "type": "string" }
+      }
+    },
+    "family": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "category"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "category": { "type": "string" },
+        "template_file_id": { "type": ["string", "null"] },
+        "shared_parameter_profile_id": { "type": ["string", "null"] }
+      }
+    },
+    "operations": {
+      "type": "array",
+      "description": "Ordered, deterministic Revit API operations. Parameters first, then formulas, then types, then materials.",
+      "items": { "$ref": "#/$defs/operation" }
+    },
+    "manual_work": {
+      "type": "array",
+      "description": "Work that cannot be compiled deterministically from the spec (geometry, reference skeleton, connectors). Flagged for a human in Revit.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "description"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["reference_skeleton", "geometry", "subcategories", "connectors", "lod", "other"]
+          },
+          "description": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "code", "message"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["error", "warning", "info"] },
+          "code": { "type": "string", "pattern": "^ARF-PLAN-[A-Z0-9-]+$" },
+          "message": { "type": "string", "minLength": 1 },
+          "target": { "type": ["string", "null"] }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "storage_type": {
+      "type": "string",
+      "enum": ["String", "Double", "Integer", "ElementId"]
+    },
+    "operation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "name", "guid", "data_type", "storage_type", "group", "is_instance", "is_required"],
+          "properties": {
+            "op": { "type": "string", "const": "add_shared_parameter" },
+            "name": { "type": "string", "minLength": 1 },
+            "guid": { "type": "string", "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" },
+            "data_type": { "type": "string" },
+            "storage_type": { "$ref": "#/$defs/storage_type" },
+            "group": { "type": "string" },
+            "is_instance": { "type": "boolean" },
+            "is_required": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "name", "data_type", "storage_type", "group", "is_instance"],
+          "properties": {
+            "op": { "type": "string", "const": "add_family_parameter" },
+            "name": { "type": "string", "minLength": 1 },
+            "data_type": { "type": "string" },
+            "storage_type": { "$ref": "#/$defs/storage_type" },
+            "group": { "type": "string" },
+            "is_instance": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "parameter", "formula"],
+          "properties": {
+            "op": { "type": "string", "const": "set_formula" },
+            "parameter": { "type": "string", "minLength": 1 },
+            "formula": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "name", "values"],
+          "properties": {
+            "op": { "type": "string", "const": "create_type" },
+            "name": { "type": "string", "minLength": 1 },
+            "values": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["parameter", "value"],
+                "properties": {
+                  "parameter": { "type": "string", "minLength": 1 },
+                  "value": {}
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["op", "name"],
+          "properties": {
+            "op": { "type": "string", "const": "assign_material" },
+            "name": { "type": "string", "minLength": 1 },
+            "parameter": { "type": ["string", "null"] },
+            "default_value": { "type": ["string", "null"] }
+          }
+        }
+      ]
+    }
+  }
+}
