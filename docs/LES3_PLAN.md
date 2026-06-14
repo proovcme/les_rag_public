@@ -492,7 +492,14 @@
 > (`/api/rag/graph/edges`), `cad_bim_highlight`, `les_notes/les_tasks/les_field_entries`.
 
 - [x] **W17.1 Сущность объекта + двойной режим** · M — 2026-06-14. `project_service.py` (`les_projects`+`les_project_links`, CRUD+привязки+`project_dataset_ids`, 7 тестов, 0 LLM); `/api/projects` (list/create/get/patch/delete/links); `chat.py` двойной режим (`ChatRequest.project_id`→`effective_dataset_ids`, default-RAG неизменён, явный выбор приоритетнее); GUI-селектор объекта в топбаре чата. **Проверено вживую:** объект+привязка NTD_SPDS → запрос с project_id сузил источники к ГОСТ 21.5xx (СПДС), без — широко. Скоупинг v1 — по привязанным датасетам (без реиндекса Qdrant); chunk-level `project_id` payload + norm `scope=global` — рефайнмент (W17.x).
-- [ ] **W17.2 Хранилище типизированных рёбер + детерм. вывод** · L — `les_edges` (provenance+confidence); вывод: НТД (FTS), `[[вики]]`, BIM source_id, ВОР↔журнал (W11.2), захватка. Write-time + backfill. 0 LLM.
+- [x] **W17.2 Хранилище типизированных рёбер + детерм. вывод** · L — 2026-06-14. `edge_service.py`: `les_edges`
+  (src/dst kind+id, edge_type, method, confidence, provenance, UNIQUE). Экстракторы 0 LLM: `extract_ntd_refs`
+  (СП/ГОСТ/СНиП + нормализация регистра), `extract_wiki_links`, `extract_element_refs` (идиома `cad_bim_highlight`).
+  `derive_edges_from_text` → references_ntd/wiki_link/mentions_element, идемпотентно. `edges_for` — бэклинки в обе
+  стороны. Детерм=trusted / LLM=candidate. Write-time в create_note/create_task (fail-safe) + `/api/edges`
+  (list/for/backfill). 10 тестов. **Проверено вживую:** «запомни: …СП 4.13130…Source ID: wall-77…[[корпус Б]]»
+  → 4 ребра авто; backfill 2 заметки+2 задачи → 5 рёбер. Остаток (рефайнмент): ВОР↔журнал-рёбра + захватка +
+  резолв wiki/ntd-целей в реальные сущности (W17.3+).
 - [ ] **W17.3 Доменная онтология: классификационный хребет + состояния CDE** · L — Element→System→Space→Floor (коды Uniclass-style); Захватка-LBS-хаб; состояние документов WIP/Shared/Published/Archived + `supersedes`.
 - [ ] **W17.4 Слой решений (память проекта)** · M — `les_notes`→`DecisionRecord` (структура+теги) с веером рёбер (concerns/at/justified_by/references/supersedes), RFI-стиль; бэклинки по типу ребра.
 - [ ] **W17.5 КАРТА ОБЪЕКТА (досье)** · M `[gui]` — `/api/project/{id}/dossier` (нормативы/решения/задачи/%объёмов/BIM/почта, 0 LLM) + экран; PARA-корзины из статусов. **Первый видимый payload.**
