@@ -507,6 +507,30 @@
 - [ ] **W17.7 Норматив→элемент (полнота/соответствие)** · M `[gate:dict→llm]` — `NormClause` requires_property/constrains; проверка полноты; LLM-парсинг пункта только где словарь бессилен (candidate+заземление).
 - [ ] **W17.8 LLM-синтез** · S `[gate]` — «суммируй решения / что не закрыто перед сдачей», community-сводки; только после детерм. слоя, candidate в карантине, трассировка к источникам.
 
+## Волна 18 — Чат-визуалайзер (файлы, структуры, схемы — «как Claude artifacts»)
+
+> Запрос оператора 2026-06-14. Исследование готовых решений: **NiceGUI уже несёт `ui.codemirror` (вьювер
+> кода с подсветкой), `ui.tree` (QTree — дерево файлов), `ui.mermaid` (схемы), `ui.code/ui.image`** — первый
+> срез почти без новых зависимостей. Добавлять минимум пермиссивных JS-модулей через `ui.html`; исполняемый
+> HTML/JS — только в sandboxed `<iframe>` (allow-scripts, без same-origin) + CSP. Выход для W17.5/W17.6
+> (досье/граф открывают документы-источники и структуры).
+
+- [ ] **W18.1 Файл-вьювер** · M `[gui]` — `ui.codemirror` (read-only, подсветка) для текста/кода; `ui.image`
+  для картинок; **PDF.js** (iframe) для PDF; office (docx/xlsx) — серверной конверсией (уже в RAG-пайплайне) →
+  PDF/HTML. Открытие файла по источнику ответа / из RAG_Content в панели артефактов.
+- [ ] **W18.2 Файл-структуры** · S `[gui]` — `ui.tree` (нативный QTree, lazy-load) для дерева датасета/объекта/
+  директории; Unicode-дерево в `ui.code` для инлайна в чате.
+- [ ] **W18.3 Схемы** · M — Mermaid (есть, `securityLevel:'sandbox'`) для LLM-диаграмм (модели нативно эмитят);
+  **+Graphviz DOT** (viz.js WASM) для плотных графов; **svg-pan-zoom** для навигации больших схем.
+- [ ] **W18.4 Безопасность артефактов** · S `[sec]` — исполняемый HTML/JS только в sandboxed iframe+CSP;
+  **DOMPurify** клиентский как авторитетный гейт SVG (текущий `safe_markup.sanitize_svg` — серверный первый
+  проход; агент-ревью пометил самописный allowlist как слабое место — mutation-XSS). Mermaid `securityLevel:sandbox`.
+- [ ] **W18.5 (опц.) Интерактив** · M — Cytoscape.js (запросимые граф-сети) / draw.io-embed (редактируемый холст) —
+  только если понадобится сверх статичных Mermaid/SVG. Excalidraw/Monaco — React/тяжёлые, не наш стек.
+
+  Новые зависимости (все пермиссивные, активные): PDF.js (Apache), viz.js (MIT), svg-pan-zoom (BSD), DOMPurify (MPL).
+  Всё остальное — уже в NiceGUI.
+
 ## Волна 7 — Установка и релиз
 
 > **Детальный разбор:** [docs/INSTALLERS_MULTIPLATFORM_PLAN.md](INSTALLERS_MULTIPLATFORM_PLAN.md) (W7.1 install-одной-командой, W7.3 сборка/подпись релиза).

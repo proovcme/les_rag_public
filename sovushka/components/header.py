@@ -165,6 +165,16 @@ def build_header(
                     set_openai_model = ui.input("OpenAI-compatible Model", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
                     set_openai_key = ui.input("OpenAI-compatible API Key", value="", password=True, password_toggle_button=True).style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
                     set_openai_clear = ui.checkbox("Сбросить OpenAI-compatible key", value=False).style("color:var(--text);font-family:var(--font);")
+                    # W3.3/ADR-9: данные по чувствительности. P0 — только локально (MLX),
+                    # P1 — можно в облако, P2 — облако ТОЛЬКО при этом согласии. Уровень
+                    # датасета ставится в САМОВАРе (колонка «Данные»).
+                    set_cloud_consent = ui.checkbox("Разрешить облако для данных P2 (согласие)", value=False).style(
+                        "color:var(--warn);font-family:var(--font);font-weight:700;"
+                    )
+                    _html(
+                        '<div class="sov-muted" style="font-size:.6rem;line-height:1.4;">P0 (приватные: НТД по умолчанию, '
+                        'почта, договоры) всегда локально на MLX. Уровень датасета — в САМОВАРе → «Данные».</div>'
+                    )
                     ui.separator().style("border-color:var(--border);margin:12px 0;")
                     ui.label("Е.Ж.И.К. IMAP").style("color:var(--dim);font-size:.65rem;font-weight:900;text-transform:uppercase;")
                     with ui.row().classes("w-full gap-2"):
@@ -234,6 +244,7 @@ def build_header(
                                 f"placeholder=\"{'key уже задан; оставь пустым, чтобы не менять' if openai.get('api_key_set') else 'OpenAI-compatible API key'}\""
                             )
                             set_openai_clear.set_value(False)
+                            set_cloud_consent.set_value(bool(d.get("cloud_consent")))
                             mail = d.get("mail") or {}
                             set_mail_host.set_value(mail.get("imap_host", ""))
                             set_mail_port.set_value(mail.get("imap_port", 993))
@@ -291,6 +302,7 @@ def build_header(
                                 "mail_imap_password": set_mail_password.value or None,
                                 "mail_imap_folders": set_mail_folders.value or "INBOX",
                                 "mail_attachment_ocr_enabled": bool(set_mail_ocr.value),
+                                "cloud_consent": bool(set_cloud_consent.value),
                             }
                             d = await api_post("/api/settings", payload)
                             if d:

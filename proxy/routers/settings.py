@@ -27,6 +27,7 @@ class SettingsRequest(BaseModel):
     llm_model: Optional[str] = None
     embed_model: Optional[str] = None
     mlx_url: Optional[str] = None
+    cloud_consent: Optional[bool] = None  # W3.3: согласие на облако для данных P2
     openrouter_base_url: Optional[str] = None
     openrouter_model: Optional[str] = None
     openrouter_models: Optional[str] = None  # цепочка фолбэка (через запятую)
@@ -80,6 +81,7 @@ async def get_settings(_user=Depends(require_user)):
             "embed_model": os.getenv("EMBED_MODEL", "bge-m3:latest"),
             "mlx_url": mlx_url,
             "available_models": available,
+            "cloud_consent": _env_bool("LES_CLOUD_CONSENT", "false"),
             "providers": _provider_settings_payload(),
             "mail": _mail_settings_payload(),
         }
@@ -259,6 +261,9 @@ def _provider_updates(req: SettingsRequest) -> dict[str, str]:
         updates["LEMONADE_API_KEY"] = req.lemonade_api_key.strip()
     if req.lemonade_api_key_clear:
         updates["LEMONADE_API_KEY"] = ""
+
+    if "cloud_consent" in fields:
+        updates["LES_CLOUD_CONSENT"] = "true" if req.cloud_consent else "false"
 
     return updates
 
