@@ -491,7 +491,7 @@
 > паттерн, «искать везде» — opt-in); нормативы `scope=global`. Переиспускает W5.7, `cad_bim_graph`, FTS-НТД
 > (`/api/rag/graph/edges`), `cad_bim_highlight`, `les_notes/les_tasks/les_field_entries`.
 
-- [ ] **W17.1 Сущность объекта + двойной режим** · M — `les_projects`+`les_project_links`; payload `project_id`/`scope` в Qdrant; project-scope фильтр в `chat.py` (default — проект, тумблер «везде»); чат-команда «проект: …». **Фундамент — разблокирует всё.**
+- [x] **W17.1 Сущность объекта + двойной режим** · M — 2026-06-14. `project_service.py` (`les_projects`+`les_project_links`, CRUD+привязки+`project_dataset_ids`, 7 тестов, 0 LLM); `/api/projects` (list/create/get/patch/delete/links); `chat.py` двойной режим (`ChatRequest.project_id`→`effective_dataset_ids`, default-RAG неизменён, явный выбор приоритетнее); GUI-селектор объекта в топбаре чата. **Проверено вживую:** объект+привязка NTD_SPDS → запрос с project_id сузил источники к ГОСТ 21.5xx (СПДС), без — широко. Скоупинг v1 — по привязанным датасетам (без реиндекса Qdrant); chunk-level `project_id` payload + norm `scope=global` — рефайнмент (W17.x).
 - [ ] **W17.2 Хранилище типизированных рёбер + детерм. вывод** · L — `les_edges` (provenance+confidence); вывод: НТД (FTS), `[[вики]]`, BIM source_id, ВОР↔журнал (W11.2), захватка. Write-time + backfill. 0 LLM.
 - [ ] **W17.3 Доменная онтология: классификационный хребет + состояния CDE** · L — Element→System→Space→Floor (коды Uniclass-style); Захватка-LBS-хаб; состояние документов WIP/Shared/Published/Archived + `supersedes`.
 - [ ] **W17.4 Слой решений (память проекта)** · M — `les_notes`→`DecisionRecord` (структура+теги) с веером рёбер (concerns/at/justified_by/references/supersedes), RFI-стиль; бэклинки по типу ребра.
