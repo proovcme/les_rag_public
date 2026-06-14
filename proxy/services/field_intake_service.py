@@ -147,12 +147,16 @@ def list_entries(
     position: str = "",
     date_from: str = "",
     date_to: str = "",
+    project_id: int | None = None,
     limit: int = 200,
 ) -> list[dict[str, Any]]:
     clauses, params = [], []
     if status:
         clauses.append("status=?")
         params.append(status)
+    if project_id is not None:  # Q3: фильтр по объекту
+        clauses.append("project_id=?")
+        params.append(int(project_id))
     if zahvatka:
         clauses.append("zahvatka LIKE ?")
         params.append(f"%{zahvatka}%")

@@ -504,6 +504,67 @@ def detect_profile(payload: Any, source: str = "") -> str:
     return "generic"
 
 
+def _aggregate_projection_lines(
+    elements: list[dict[str, str]],
+    properties_by_source: dict[str, list[dict[str, str]]],
+) -> list[str]:
+    """W6.1 — сводные чанки «этаж × система × категория» поверх поэлементных.
+    Отвечает на агрегатные вопросы («какие воздуховоды на 3 этаже», «сколько…»),
+    на которые поэлементный ретрив слаб. 0 LLM: группировка + словарь системы."""
+    if not elements:
+        return []
+    try:  # система — детерминированно (словарь категории), ленивый импорт против цикла
+        from proxy.services.ontology_service import derive_system
+    except Exception:
+        def derive_system(category, object_type, family, system_prop=""):
+            return category or "—"
+
+    # системное свойство элемента (если есть) → точнее, чем словарь
+    sys_prop_names = {"system", "система", "system name", "имя системы", "system type", "тип системы"}
+    groups: dict[tuple[str, str, str], list[dict[str, str]]] = {}
+    floor_counts: dict[str, int] = {}
+    for el in elements:
+        floor = (el.get("level") or "").strip() or "—"
+        category = (el.get("category") or "").strip() or "—"
+        sprop = ""
+        for p in properties_by_source.get(el.get("source_id", ""), []):
+            if (p.get("name") or "").strip().lower() in sys_prop_names and (p.get("value") or "").strip():
+                sprop = p["value"].strip()
+                break
+        system = derive_system(el.get("category", ""), el.get("object_type", ""), el.get("family", ""), sprop)
+        groups.setdefault((floor, system, category), []).append(el)
+        floor_counts[floor] = floor_counts.get(floor, 0) + 1
+
+    systems = {k[1] for k in groups}
+    categories = {k[2] for k in groups}
+    lines = [
+        "## BIM summary (aggregate)",
+        "",
+        f"- Elements: {len(elements)} · Floors: {len(floor_counts)} · Systems: {len(systems)} · Categories: {len(categories)}",
+        "- By floor: " + ", ".join(f"{f} ({n})" for f, n in sorted(floor_counts.items(), key=lambda kv: -kv[1])[:20]),
+        "",
+    ]
+    for (floor, system, category), els in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+        names = [e.get("name") or e.get("object_type") or e.get("source_id") for e in els]
+        lines.append(f"## Aggregate {floor} / {system} / {category}")
+        lines.append("")
+        lines.append(f"- Floor/Этаж: {floor}")
+        lines.append(f"- System/Система: {system}")
+        lines.append(f"- Category/Категория: {category}")
+        lines.append(f"- Count/Количество: {len(els)}")
+        lines.append("- Elements/Элементы: " + ", ".join(str(n) for n in names[:40]) + (" …" if len(names) > 40 else ""))
+        # общие свойства (одинаковое значение у всех элементов группы)
+        common: dict[str, set] = {}
+        for e in els:
+            for p in properties_by_source.get(e.get("source_id", ""), []):
+                common.setdefault(p["name"], set()).add(p.get("value", ""))
+        shared = [(n, next(iter(v))) for n, v in common.items() if len(v) == 1 and next(iter(v))]
+        if shared:
+            lines.append("- Common properties/Общие свойства: " + ", ".join(f"{n}={v}" for n, v in shared[:8]))
+        lines.append("")
+    return lines
+
+
 def render_projection(
     import_id: str,
     source: str,
@@ -534,6 +595,8 @@ def render_projection(
         "Source formats: DWG, DXF, RVT, IFC, Excel/Power BI, Speckle",
         "",
     ]
+    # W6.1 — агрегатные сводки (этаж×система×категория) перед поэлементными чанками
+    lines.extend(_aggregate_projection_lines(elements, properties_by_source))
     for element in elements:
         title = element["name"] or element["object_type"] or element["speckle_type"] or element["source_id"]
         lines.extend(_profile_projection_lines(profile, element, relation_counts.get(element["source_id"], 0)))
