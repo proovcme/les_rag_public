@@ -215,6 +215,26 @@ def build_dossier(project_id: int) -> dict[str, Any] | None:
     except Exception:
         bim = None
 
+    # W17.3 — онтология: хребет (своды), состояния CDE контейнеров, LBS-захватки.
+    classification = None
+    cde = None
+    lbs: list[dict[str, Any]] = []
+    try:
+        from proxy.services.ontology_service import classification_backbone, cde_summary, lbs_hubs
+        backbone = classification_backbone()
+        classification = {
+            "totals": backbone.get("totals", {}),
+            "top_floors": [
+                {"floor": f["floor"], "elements": f["elements"],
+                 "top_systems": [s["system"] for s in f.get("systems", [])[:5]]}
+                for f in backbone.get("floors", [])[:6]
+            ],
+        }
+        cde = cde_summary(project_id)
+        lbs = lbs_hubs()
+    except Exception:
+        pass
+
     return {
         "project": {k: project.get(k) for k in ("id", "name", "code", "address", "status", "created_at")},
         "datasets_in_scope": datasets,
@@ -233,6 +253,9 @@ def build_dossier(project_id: int) -> dict[str, Any] | None:
         "notes_count": len(notes),
         "edges_count": len(edges),
         "bim": bim,
+        "classification": classification,  # W17.3 хребет (своды по этажам/системам)
+        "cde": cde,  # W17.3 контейнеры по состояниям WIP/Shared/Published/Archived
+        "lbs": lbs,  # W17.3 захватки-хабы (своды журнала объёмов)
         # PARA-корзины из статусов (не ручные папки): активные задачи / нормативы / закрытое.
         "para": {"active": len(open_tasks), "resources": len(datasets), "archive": closed},
     }
