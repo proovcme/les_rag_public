@@ -148,3 +148,91 @@ def project_dataset_ids(project_id: int) -> list[str]:
     """Датасеты, привязанные к объекту — область ретрива в режиме проекта.
     Пусто → проект без своей области (chat не сужает, остаётся обычный RAG)."""
     return [link["ref"] for link in list_links(project_id, kind="dataset")]
+
+
+def _datasets_in_scope(dataset_ids: list[str]) -> list[dict[str, Any]]:
+    """Имена/счётчики привязанных датасетов из метабазы (нормативы в области)."""
+    if not dataset_ids:
+        return []
+    out: list[dict[str, Any]] = []
+    try:  # datasets/documents — таблицы RAG-бэкенда; в свежей метабазе их может не быть
+        with _connect() as conn:
+            qmarks = ",".join("?" * len(dataset_ids))
+            rows = conn.execute(
+                f"SELECT id, name, chunk_count FROM datasets WHERE id IN ({qmarks})", dataset_ids
+            ).fetchall()
+            for r in rows:
+                try:
+                    files = conn.execute(
+                        "SELECT COUNT(*) FROM documents WHERE dataset_id=?", (r["id"],)
+                    ).fetchone()[0]
+                except Exception:
+                    files = 0
+                out.append({"id": r["id"], "name": r["name"], "files": files, "chunks": r["chunk_count"]})
+    except Exception:
+        # таблицы нет → вернём хотя бы id-привязки (имена подтянутся на живой системе)
+        out = [{"id": did, "name": did, "files": 0, "chunks": 0} for did in dataset_ids]
+    return out
+
+
+def build_dossier(project_id: int) -> dict[str, Any] | None:
+    """W17.5 КАРТА ОБЪЕКТА: паспорт объекта одним собранным ответом — нормативы в
+    области, решения/задачи, объёмы по захваткам, BIM, связи. Всё детерминированно
+    (SQL + существующие сервисы), 0 LLM. PARA-корзины выводятся из статусов."""
+    project = get_project(project_id)
+    if project is None:
+        return None
+    by_kind: dict[str, list[str]] = {}
+    for link in project.get("links", []):
+        by_kind.setdefault(link["kind"], []).append(link["ref"])
+
+    datasets = _datasets_in_scope(by_kind.get("dataset", []))
+
+    # Оперативные данные. Прим.: задачи/объёмы/заметки пока глобальны (партиционирование
+    # по объекту — рефайнмент); привязанные явно — в links_by_kind.
+    from proxy.services.task_service import list_tasks
+    from proxy.services.memory_service import list_notes
+    from proxy.services.field_intake_service import aggregate_volumes
+    from proxy.services.edge_service import list_edges
+
+    all_tasks = list_tasks("", 500)
+    open_tasks = [t for t in all_tasks if t.get("status") in ("open", "in_progress")]
+    closed = sum(1 for t in all_tasks if t.get("status") in ("done", "dropped", "closed"))
+
+    try:
+        vol_rows = aggregate_volumes(status="confirmed")
+    except Exception:
+        vol_rows = []
+    vol_total = sum(float(r.get("total") or 0) for r in vol_rows)
+
+    notes = list_notes(50)
+    edges = list_edges(5000)
+
+    bim = None
+    try:
+        from proxy.services.cad_bim_graph import graph_summary
+        bim = graph_summary()
+    except Exception:
+        bim = None
+
+    return {
+        "project": {k: project.get(k) for k in ("id", "name", "code", "address", "status", "created_at")},
+        "datasets_in_scope": datasets,
+        "links_by_kind": {k: len(v) for k, v in by_kind.items()},
+        "open_tasks": [
+            {"id": t.get("id"), "title": t.get("title"), "status": t.get("status")} for t in open_tasks[:50]
+        ],
+        "volumes": {
+            "groups": len(vol_rows),
+            "total": round(vol_total, 2),
+            "by_position": [
+                {"position": r.get("position"), "unit": r.get("unit"), "total": r.get("total")}
+                for r in vol_rows[:20]
+            ],
+        },
+        "notes_count": len(notes),
+        "edges_count": len(edges),
+        "bim": bim,
+        # PARA-корзины из статусов (не ручные папки): активные задачи / нормативы / закрытое.
+        "para": {"active": len(open_tasks), "resources": len(datasets), "archive": closed},
+    }

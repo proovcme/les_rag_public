@@ -49,6 +49,15 @@ async def projects_get(project_id: int, _user=Depends(require_user)):
     return project
 
 
+@router.get("/{project_id}/dossier")
+async def projects_dossier(project_id: int, _user=Depends(require_user)):
+    """W17.5 КАРТА ОБЪЕКТА — паспорт объекта (нормативы/задачи/объёмы/BIM/связи), 0 LLM."""
+    dossier = await asyncio.to_thread(project_service.build_dossier, project_id)
+    if dossier is None:
+        raise HTTPException(404, "Объект не найден")
+    return dossier
+
+
 @router.patch("/{project_id}")
 async def projects_status(project_id: int, req: ProjectStatus, _admin=Depends(require_admin)):
     try:

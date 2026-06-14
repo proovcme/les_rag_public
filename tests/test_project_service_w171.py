@@ -85,3 +85,28 @@ def test_empty_scope_means_no_narrowing(svc):
     """Объект без привязанных датасетов → пустая область → chat остаётся обычным RAG."""
     p = svc.create_project("Объект без области")
     assert svc.project_dataset_ids(p["id"]) == []
+
+
+def test_build_dossier_structure(svc):
+    """W17.5: досье собирается детерминированно из сервисов (0 LLM)."""
+    p = svc.create_project("ЖК Тестовый", code="T-1")
+    pid = p["id"]
+    svc.link_entity(pid, "dataset", "ds-fire")
+    svc.link_entity(pid, "cad_bim_import", "imp-1")
+    d = svc.build_dossier(pid)
+    assert d is not None
+    assert d["project"]["name"] == "ЖК Тестовый"
+    assert d["project"]["code"] == "T-1"
+    # привязки посчитаны
+    assert d["links_by_kind"]["dataset"] == 1
+    assert d["links_by_kind"]["cad_bim_import"] == 1
+    # датасет в области (имя=id, т.к. таблиц RAG нет в tmp-метабазе)
+    assert len(d["datasets_in_scope"]) == 1 and d["datasets_in_scope"][0]["id"] == "ds-fire"
+    # секции присутствуют (0 LLM)
+    for key in ("open_tasks", "volumes", "notes_count", "edges_count", "para"):
+        assert key in d
+    assert "active" in d["para"] and "resources" in d["para"] and "archive" in d["para"]
+
+
+def test_build_dossier_missing_project(svc):
+    assert svc.build_dossier(999999) is None

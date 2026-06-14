@@ -138,6 +138,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                         project_select.set_options(opts, value=project_state["id"] or 0)
 
                     asyncio.create_task(_load_projects())
+                    # W17.5: КАРТА ОБЪЕКТА — паспорт выбранного объекта.
+                    ui.button(icon="o_dashboard", on_click=lambda: _open_dossier()).props(
+                        'flat round dense aria-label="Карта объекта"'
+                    ).classes("sov-icon-btn")
                     mode_chip = ui.label("RAG").classes("sov-chip")
                     validation_chip = ui.label("CRAG ON").classes("sov-chip")
                     ui.button(icon="o_delete_sweep", on_click=lambda: _clear_chat()).props(
@@ -461,6 +465,64 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     _html('<div class="sov-muted">Не удалось прочитать файл (или он бинарный).</div>')
             else:
                 ui.link("Скачать файл", url).props("target=_blank").style("font-size:.72rem;color:var(--accent);")
+
+    # W17.5: КАРТА ОБЪЕКТА — паспорт объекта (досье), собирается из /api/projects/{id}/dossier (0 LLM).
+    async def _open_dossier():
+        pid = project_state["id"]
+        if not pid:
+            ui.notify("Сначала выбери объект в селекторе сверху", type="info")
+            return
+        d = await api_get(f"/api/projects/{pid}/dossier")
+        if not isinstance(d, dict):
+            ui.notify(last_api_error_text("Не удалось загрузить карту объекта"), type="negative")
+            return
+        with ui.dialog() as dlg, ui.card().classes("sov-advanced-dialog"):
+            proj = d.get("project", {})
+            with ui.row().classes("w-full items-center justify-between"):
+                ui.label(f"КАРТА ОБЪЕКТА — {proj.get('name', '')}").classes("sov-panel-title")
+                ui.button(icon="o_close", on_click=dlg.close).props(
+                    'flat round dense aria-label="Закрыть"'
+                ).classes("sov-icon-btn")
+            ui.label(f"{proj.get('code') or ''} · {proj.get('address') or ''} · статус: {proj.get('status') or ''}").style(
+                "font-size:.62rem;color:var(--dim);"
+            )
+            with ui.scroll_area().classes("sov-advanced-scroll"):
+                with ui.column().classes("w-full gap-2"):
+                    para = d.get("para", {})
+                    with ui.row().classes("gap-2"):
+                        for lbl, val in (("активные задачи", para.get("active", 0)),
+                                         ("нормативы", para.get("resources", 0)),
+                                         ("в архиве", para.get("archive", 0))):
+                            with ui.column().classes("kpi-box").style("min-width:auto;padding:8px 14px;"):
+                                ui.label(str(val)).classes("kpi-val").style("font-size:1.2rem;")
+                                ui.label(lbl).classes("kpi-lbl")
+                    ui.label("Нормативы в области").classes("section-title").style("margin-top:8px;")
+                    ds = d.get("datasets_in_scope", [])
+                    if not ds:
+                        ui.label("датасеты не привязаны — привяжи в режиме объекта").style("font-size:.66rem;color:var(--dim);")
+                    for x in ds:
+                        ui.label(f"• {x.get('name')} — {x.get('files', 0)} файлов / {x.get('chunks', 0)} чанков").style("font-size:.7rem;")
+                    ui.label("Открытые задачи").classes("section-title").style("margin-top:8px;")
+                    tasks = d.get("open_tasks", [])
+                    if not tasks:
+                        ui.label("нет").style("font-size:.66rem;color:var(--dim);")
+                    for t in tasks[:20]:
+                        ui.label(f"#{t.get('id')} {t.get('title')} [{t.get('status')}]").style("font-size:.7rem;")
+                    vol = d.get("volumes", {})
+                    ui.label(f"Объёмы (подтв.): {vol.get('groups', 0)} позиций · всего {vol.get('total', 0)}").classes(
+                        "section-title"
+                    ).style("margin-top:8px;")
+                    for r in (vol.get("by_position") or [])[:10]:
+                        ui.label(f"• {r.get('position')}: {r.get('total')} {r.get('unit', '')}").style("font-size:.7rem;")
+                    ui.label(
+                        f"Связи: {d.get('edges_count', 0)} · Заметки: {d.get('notes_count', 0)}"
+                    ).classes("section-title").style("margin-top:8px;")
+                    bim = d.get("bim")
+                    if isinstance(bim, dict) and bim:
+                        ui.label("BIM: " + ", ".join(f"{k}={v}" for k, v in list(bim.items())[:4])).style(
+                            "font-size:.66rem;color:var(--dim);"
+                        )
+        dlg.open()
 
     async def _load_sessions():
         sessions_col.clear()
