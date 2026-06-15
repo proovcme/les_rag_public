@@ -41,16 +41,14 @@ public sealed class ArtelFamilyFactoryApplication : IExternalApplication
             catch { /* tab already exists across reloads */ }
 
             var panel = application.CreateRibbonPanel(tab, "Фабрика семейств");
-            var large = LoadImage("ARTEL.Revit.FamilyFactory.Resources.artel32.png");
-            var small = LoadImage("ARTEL.Revit.FamilyFactory.Resources.artel16.png");
 
             panel.AddItem(new PushButtonData(
                 "ArtelGenerate", "Сгенерировать", assembly,
                 "ARTEL.Revit.FamilyFactory.ArtelFamilyGenerateCommand")
             {
                 ToolTip = "Выбрать план действий (family_action_plan.v1) и исполнить его в активном семействе.",
-                LargeImage = large,
-                Image = small
+                LargeImage = LoadImage("ARTEL.Revit.FamilyFactory.Resources.gen32.png"),
+                Image = LoadImage("ARTEL.Revit.FamilyFactory.Resources.gen16.png")
             });
             panel.AddSeparator();
             panel.AddItem(new PushButtonData(
@@ -58,16 +56,16 @@ public sealed class ArtelFamilyFactoryApplication : IExternalApplication
                 "ARTEL.Revit.FamilyFactory.ArtelFamilyValidateCommand")
             {
                 ToolTip = "Проверить активное семейство и при настройке отправить отчёт в бэкенд ARTEL.",
-                LargeImage = large,
-                Image = small
+                LargeImage = LoadImage("ARTEL.Revit.FamilyFactory.Resources.val32.png"),
+                Image = LoadImage("ARTEL.Revit.FamilyFactory.Resources.val16.png")
             });
             panel.AddItem(new PushButtonData(
                 "ArtelExtract", "Экспорт", assembly,
                 "ARTEL.Revit.FamilyFactory.ArtelFamilyExtractCommand")
             {
                 ToolTip = "Экспортировать метаданные активного семейства в ARTEL JSON.",
-                LargeImage = large,
-                Image = small
+                LargeImage = LoadImage("ARTEL.Revit.FamilyFactory.Resources.ext32.png"),
+                Image = LoadImage("ARTEL.Revit.FamilyFactory.Resources.ext16.png")
             });
         }
         catch

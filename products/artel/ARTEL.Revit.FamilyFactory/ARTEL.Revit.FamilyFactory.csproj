@@ -23,7 +23,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Resources\artel32.png" />
-    <EmbeddedResource Include="Resources\artel16.png" />
+    <EmbeddedResource Include="Resources\gen32.png" />
+    <EmbeddedResource Include="Resources\gen16.png" />
+    <EmbeddedResource Include="Resources\val32.png" />
+    <EmbeddedResource Include="Resources\val16.png" />
+    <EmbeddedResource Include="Resources\ext32.png" />
+    <EmbeddedResource Include="Resources\ext16.png" />
   </ItemGroup>
 </Project>

@@ -36,34 +36,16 @@ public sealed class ArtelFamilyGenerateCommand : IExternalCommand
             return Result.Failed;
         }
 
-        // Plan file: env override, else interactive picker (no console needed).
-        var planPath = Environment.GetEnvironmentVariable("ARTEL_PLAN_PATH");
-        if (string.IsNullOrWhiteSpace(planPath) || !File.Exists(planPath))
+        // Plugin-owned picker (not the OS file dialog): choose plan + FOP.
+        var picked = ArtelPlanPicker.Pick();
+        if (picked is null)
         {
-            var dlg = new Microsoft.Win32.OpenFileDialog
-            {
-                Title = "ARTEL: выберите план действий (family_action_plan.v1)",
-                Filter = "ARTEL action plan (*.json)|*.json|Все файлы (*.*)|*.*"
-            };
-            if (dlg.ShowDialog() != true)
-            {
-                return Result.Cancelled;
-            }
-            planPath = dlg.FileName;
+            return Result.Cancelled;
         }
-
-        // Shared-parameter (FOP) file: env override, else optional picker.
-        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ARTEL_SHARED_PARAMS_FILE")))
+        var planPath = picked.PlanPath;
+        if (!string.IsNullOrWhiteSpace(picked.SharedParamsPath))
         {
-            var fop = new Microsoft.Win32.OpenFileDialog
-            {
-                Title = "ARTEL: файл ФОП (shared parameters) — Отмена, если не нужен",
-                Filter = "Revit shared parameters (*.txt)|*.txt|Все файлы (*.*)|*.*"
-            };
-            if (fop.ShowDialog() == true)
-            {
-                Environment.SetEnvironmentVariable("ARTEL_SHARED_PARAMS_FILE", fop.FileName);
-            }
+            Environment.SetEnvironmentVariable("ARTEL_SHARED_PARAMS_FILE", picked.SharedParamsPath);
         }
 
         Dictionary<string, object?> report;
@@ -267,8 +249,9 @@ internal static class FamilyPlanExecutor
             var profile = Prop(op, "profile");
             var shape = Str(profile, "shape");
             var sketchPlane = SketchPlane.Create(document, Plane.CreateByNormalAndOrigin(XYZ.BasisZ, XYZ.Zero));
-            var endFeet = NominalFeet(Prop(op, "extrusion"), familyManager, 1000);
+            var height = NominalFeet(Prop(op, "extrusion"), familyManager, 1000);
 
+            double halfW = 0, halfD = 0;
             var loop = new CurveArray();
             if (shape == "circle")
             {
@@ -277,43 +260,129 @@ internal static class FamilyPlanExecutor
             }
             else
             {
-                var x = NominalFeet(Prop(profile, "width"), familyManager, 1000) / 2.0;
-                var y = NominalFeet(Prop(profile, "depth"), familyManager, 1000) / 2.0;
-                var p0 = new XYZ(-x, -y, 0);
-                var p1 = new XYZ(x, -y, 0);
-                var p2 = new XYZ(x, y, 0);
-                var p3 = new XYZ(-x, y, 0);
-                loop.Append(Line.CreateBound(p0, p1));
-                loop.Append(Line.CreateBound(p1, p2));
-                loop.Append(Line.CreateBound(p2, p3));
-                loop.Append(Line.CreateBound(p3, p0));
+                halfW = NominalFeet(Prop(profile, "width"), familyManager, 1000) / 2.0;
+                halfD = NominalFeet(Prop(profile, "depth"), familyManager, 1000) / 2.0;
+                loop.Append(Line.CreateBound(new XYZ(-halfW, -halfD, 0), new XYZ(halfW, -halfD, 0)));
+                loop.Append(Line.CreateBound(new XYZ(halfW, -halfD, 0), new XYZ(halfW, halfD, 0)));
+                loop.Append(Line.CreateBound(new XYZ(halfW, halfD, 0), new XYZ(-halfW, halfD, 0)));
+                loop.Append(Line.CreateBound(new XYZ(-halfW, halfD, 0), new XYZ(-halfW, -halfD, 0)));
             }
             var profiles = new CurveArrArray();
             profiles.Append(loop);
 
-            var extrusion = document.FamilyCreate.NewExtrusion(true, profiles, sketchPlane, endFeet);
+            var extrusion = document.FamilyCreate.NewExtrusion(true, profiles, sketchPlane, height);
             document.Regenerate();
 
-            var flex = "height nominal";
-            var extrusionRef = Prop(op, "extrusion");
-            if (extrusionRef.ValueKind == JsonValueKind.Object
-                && extrusionRef.TryGetProperty("parameter", out var heightName)
-                && heightName.ValueKind == JsonValueKind.String)
+            var flex = new List<string>();
+
+            // Height: associate the extrusion end to the height parameter.
+            var heightName = ParamName(Prop(op, "extrusion"));
+            if (heightName != null)
             {
-                var heightParam = familyManager.get_Parameter(heightName.GetString());
+                var heightParam = familyManager.get_Parameter(heightName);
                 var endParam = extrusion.get_Parameter(BuiltInParameter.EXTRUSION_END_PARAM);
                 if (heightParam != null && endParam != null)
                 {
                     familyManager.AssociateElementParameterToFamilyParameter(endParam, heightParam);
-                    flex = $"height→{heightName.GetString()}";
+                    flex.Add($"высота→{heightName}");
                 }
             }
+
+            // Width/depth: label dimensions across the box faces so the profile flexes.
+            if (shape != "circle")
+            {
+                var view = PlanView(document);
+                if (view != null)
+                {
+                    var faces = CollectPlanarFaces(extrusion);
+                    var margin = UnitUtils.ConvertToInternalUnits(150, UnitTypeId.Millimeters);
+                    TryDimension(document, familyManager, view, faces, XYZ.BasisX,
+                        new XYZ(0, -halfD - margin, 0), halfW + margin, ParamName(Prop(profile, "width")), "ширина", flex);
+                    TryDimension(document, familyManager, view, faces, XYZ.BasisY,
+                        new XYZ(halfW + margin, 0, 0), halfD + margin, ParamName(Prop(profile, "depth")), "глубина", flex);
+                    document.Regenerate();
+                }
+            }
+
             return Record("create_extrusion", id, "ok",
-                $"Extrusion '{shape}' created ({flex}; профиль width/depth — номинал, flex-привязка следующим шагом).");
+                $"Корпус '{shape}' построен ({(flex.Count > 0 ? string.Join(", ", flex) : "номинал")}).");
         }
         catch (Exception error)
         {
             return Record("create_extrusion", id, "failed", $"{error.GetType().Name}: {error.Message}");
+        }
+    }
+
+    private static string? ParamName(JsonElement dimRef)
+    {
+        return dimRef.ValueKind == JsonValueKind.Object
+               && dimRef.TryGetProperty("parameter", out var p)
+               && p.ValueKind == JsonValueKind.String
+            ? p.GetString()
+            : null;
+    }
+
+    private static View? PlanView(Document document)
+    {
+        return new FilteredElementCollector(document)
+            .OfClass(typeof(ViewPlan))
+            .Cast<ViewPlan>()
+            .FirstOrDefault(v => !v.IsTemplate);
+    }
+
+    private static List<PlanarFace> CollectPlanarFaces(Extrusion extrusion)
+    {
+        var faces = new List<PlanarFace>();
+        var options = new Options { ComputeReferences = true };
+        foreach (var geometry in extrusion.get_Geometry(options))
+        {
+            if (geometry is Solid solid)
+            {
+                foreach (Face face in solid.Faces)
+                {
+                    if (face is PlanarFace planar)
+                    {
+                        faces.Add(planar);
+                    }
+                }
+            }
+        }
+        return faces;
+    }
+
+    private static void TryDimension(
+        Document document, FamilyManager familyManager, View view, List<PlanarFace> faces,
+        XYZ normal, XYZ offset, double halfLength, string? paramName, string label, List<string> flex)
+    {
+        if (paramName is null)
+        {
+            return;
+        }
+        try
+        {
+            var pos = faces.FirstOrDefault(f => f.FaceNormal.IsAlmostEqualTo(normal));
+            var neg = faces.FirstOrDefault(f => f.FaceNormal.IsAlmostEqualTo(normal.Negate()));
+            if (pos is null || neg is null)
+            {
+                return;
+            }
+            var references = new ReferenceArray();
+            references.Append(neg.Reference);
+            references.Append(pos.Reference);
+            var dimension = document.FamilyCreate.NewDimension(
+                view,
+                Line.CreateBound(offset.Subtract(normal.Multiply(halfLength)), offset.Add(normal.Multiply(halfLength))),
+                references);
+            var parameter = familyManager.get_Parameter(paramName);
+            if (parameter != null)
+            {
+                dimension.FamilyLabel = parameter;
+                flex.Add($"{label}→{paramName}");
+            }
+        }
+        catch
+        {
+            // Dimensioning is best-effort; the solid is already created.
         }
     }
 
