@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Text;
 using System.Web.Script.Serialization;
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
@@ -18,13 +17,17 @@ namespace ARTEL.Revit.FamilyFactory;
 // geometry (create_extrusion) is recorded for the next iteration (flex labelling is
 // built live in Revit). Every operation is best-effort and reported per-op so the
 // build/run loop on Legion sees exactly what landed.
+//
+// Plan JSON is parsed with JavaScriptSerializer, which yields Dictionary<string,object>
+// for objects and object[] for arrays; navigation therefore goes through the
+// non-generic IDictionary/IEnumerable to stay tolerant. The output report uses
+// Dictionary<string, object?> to match FamilyFactoryPaths.WriteJson.
 [Transaction(TransactionMode.Manual)]
 public sealed class ArtelFamilyGenerateCommand : IExternalCommand
 {
     public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
     {
-        var uidoc = commandData.Application.ActiveUIDocument;
-        var document = uidoc?.Document;
+        var document = commandData.Application.ActiveUIDocument?.Document;
         if (document is null)
         {
             message = "No active Revit document.";
@@ -43,10 +46,11 @@ public sealed class ArtelFamilyGenerateCommand : IExternalCommand
             return Result.Failed;
         }
 
-        Dictionary<string, object?> plan;
+        IDictionary plan;
         try
         {
-            plan = new JavaScriptSerializer().Deserialize<Dictionary<string, object?>>(File.ReadAllText(planPath));
+            plan = new JavaScriptSerializer().DeserializeObject(File.ReadAllText(planPath)) as IDictionary
+                   ?? new Dictionary<string, object>();
         }
         catch (Exception error)
         {
@@ -66,22 +70,21 @@ internal static class FamilyPlanExecutor
 {
     public static Dictionary<string, object?> Execute(
         Document document,
-        Dictionary<string, object?> plan,
+        IDictionary plan,
         Autodesk.Revit.ApplicationServices.Application application)
     {
         var results = new List<Dictionary<string, object?>>();
-        var operations = AsList(plan.GetValueOrDefault("operations")).Select(AsDict).ToList();
+        var operations = AsList(Get(plan, "operations")).Select(AsDict).ToList();
         var familyManager = document.FamilyManager;
 
         using var transaction = new Transaction(document, "ARTEL execute family action plan");
         transaction.Start();
         try
         {
-            // Two passes so types/formulas/materials can reference parameters created first.
-            var paramOps = new[] { "add_shared_parameter", "add_family_parameter" };
-            foreach (var op in operations.Where(o => paramOps.Contains(Str(o, "op"))))
+            // Ordered passes so types/formulas/materials can reference parameters created first.
+            foreach (var op in operations.Where(o => Str(o, "op") is "add_shared_parameter" or "add_family_parameter"))
             {
-                results.Add(RunParameter(op, familyManager, application, document));
+                results.Add(RunParameter(op, familyManager, application));
             }
             foreach (var op in operations.Where(o => Str(o, "op") == "set_formula"))
             {
@@ -89,7 +92,7 @@ internal static class FamilyPlanExecutor
             }
             foreach (var op in operations.Where(o => Str(o, "op") == "create_type"))
             {
-                results.Add(RunCreateType(op, familyManager, document));
+                results.Add(RunCreateType(op, familyManager));
             }
             foreach (var op in operations.Where(o => Str(o, "op") == "assign_material"))
             {
@@ -98,7 +101,7 @@ internal static class FamilyPlanExecutor
             foreach (var op in operations.Where(o => Str(o, "op") == "create_extrusion"))
             {
                 // Geometry execution (solid + flex labelling) is built live in Revit (next iteration).
-                results.Add(Record(Str(op, "op"), Str(op, "id"), "deferred",
+                results.Add(Record("create_extrusion", Str(op, "id"), "deferred",
                     "Создание геометрии и привязка размеров к параметрам — следующая итерация (W10.3 geom)."));
             }
 
@@ -120,7 +123,7 @@ internal static class FamilyPlanExecutor
         {
             ["schema"] = "artel.revit_family_generate_report.v1",
             ["status"] = failed > 0 ? "fail" : "pass",
-            ["plan_id"] = plan.GetValueOrDefault("plan_id"),
+            ["plan_id"] = Get(plan, "plan_id"),
             ["operation_count"] = operations.Count,
             ["executed_count"] = executed,
             ["failed_count"] = failed,
@@ -130,10 +133,9 @@ internal static class FamilyPlanExecutor
     }
 
     private static Dictionary<string, object?> RunParameter(
-        Dictionary<string, object?> op,
+        IDictionary op,
         FamilyManager familyManager,
-        Autodesk.Revit.ApplicationServices.Application application,
-        Document document)
+        Autodesk.Revit.ApplicationServices.Application application)
     {
         var name = Str(op, "name");
         try
@@ -163,7 +165,7 @@ internal static class FamilyPlanExecutor
         }
     }
 
-    private static Dictionary<string, object?> RunFormula(Dictionary<string, object?> op, FamilyManager familyManager)
+    private static Dictionary<string, object?> RunFormula(IDictionary op, FamilyManager familyManager)
     {
         var name = Str(op, "parameter");
         try
@@ -182,24 +184,20 @@ internal static class FamilyPlanExecutor
         }
     }
 
-    private static Dictionary<string, object?> RunCreateType(
-        Dictionary<string, object?> op,
-        FamilyManager familyManager,
-        Document document)
+    private static Dictionary<string, object?> RunCreateType(IDictionary op, FamilyManager familyManager)
     {
         var typeName = Str(op, "name");
         try
         {
             familyManager.NewType(typeName);
-            foreach (var value in AsList(op.GetValueOrDefault("values")).Select(AsDict))
+            foreach (var value in AsList(Get(op, "values")).Select(AsDict))
             {
-                var parameterName = Str(value, "parameter");
-                var parameter = familyManager.get_Parameter(parameterName);
+                var parameter = familyManager.get_Parameter(Str(value, "parameter"));
                 if (parameter is null)
                 {
                     continue;
                 }
-                SetParameterValue(familyManager, parameter, value.GetValueOrDefault("value"));
+                SetParameterValue(familyManager, parameter, Get(value, "value"));
             }
             return Record("create_type", typeName, "ok", "Type created and values set.");
         }
@@ -209,7 +207,7 @@ internal static class FamilyPlanExecutor
         }
     }
 
-    private static Dictionary<string, object?> RunMaterial(Dictionary<string, object?> op, Document document)
+    private static Dictionary<string, object?> RunMaterial(IDictionary op, Document document)
     {
         var name = Str(op, "name");
         try
@@ -240,9 +238,8 @@ internal static class FamilyPlanExecutor
         {
             case StorageType.Double:
                 var number = Convert.ToDouble(raw, CultureInfo.InvariantCulture);
-                // Plan dimensions are millimetres; convert to Revit internal units when the spec is a length.
-                var internalValue = UnitUtils.ConvertToInternalUnits(number, UnitTypeId.Millimeters);
-                familyManager.Set(parameter, internalValue);
+                // Plan dimensions are millimetres; convert to Revit internal units.
+                familyManager.Set(parameter, UnitUtils.ConvertToInternalUnits(number, UnitTypeId.Millimeters));
                 break;
             case StorageType.Integer:
                 familyManager.Set(parameter, Convert.ToInt32(raw, CultureInfo.InvariantCulture));
@@ -296,8 +293,6 @@ internal static class FamilyPlanExecutor
             case "number": return SpecTypeId.Number;
             case "integer": return SpecTypeId.Int.Integer;
             case "yesno": return SpecTypeId.Boolean.YesNo;
-            case "text":
-            case "string":
             default: return SpecTypeId.String.Text;
         }
     }
@@ -327,29 +322,33 @@ internal static class FamilyPlanExecutor
         };
     }
 
+    private static object? Get(IDictionary dict, string key)
+    {
+        return dict != null && dict.Contains(key) ? dict[key] : null;
+    }
+
     private static IEnumerable<object?> AsList(object? value)
     {
-        return value switch
+        if (value is string || value is null)
         {
-            IEnumerable<object?> typed => typed,
-            IEnumerable untyped and not string => untyped.Cast<object?>(),
-            _ => Enumerable.Empty<object?>()
-        };
+            return Enumerable.Empty<object?>();
+        }
+        return value is IEnumerable enumerable ? enumerable.Cast<object?>() : Enumerable.Empty<object?>();
     }
 
-    private static Dictionary<string, object?> AsDict(object? value)
+    private static IDictionary AsDict(object? value)
     {
-        return value as Dictionary<string, object?> ?? new Dictionary<string, object?>();
+        return value as IDictionary ?? new Dictionary<string, object>();
     }
 
-    private static string Str(Dictionary<string, object?> dict, string key)
+    private static string Str(IDictionary dict, string key)
     {
-        return Convert.ToString(dict.GetValueOrDefault(key), CultureInfo.InvariantCulture) ?? "";
+        var value = Get(dict, key);
+        return value is null ? "" : Convert.ToString(value, CultureInfo.InvariantCulture) ?? "";
     }
 
-    private static bool Bool(Dictionary<string, object?> dict, string key)
+    private static bool Bool(IDictionary dict, string key)
     {
-        var value = dict.GetValueOrDefault(key);
-        return value is bool flag && flag;
+        return Get(dict, key) is bool flag && flag;
     }
 }
