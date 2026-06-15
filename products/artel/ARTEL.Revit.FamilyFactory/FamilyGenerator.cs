@@ -150,14 +150,16 @@ internal static class FamilyPlanExecutor
 
             if (Str(op, "op") == "add_shared_parameter")
             {
-                var external = FindExternalDefinition(application, name, Str(op, "guid"));
+                var guid = Str(op, "guid");
+                var external = EnsureSharedDefinition(application, name, guid, Str(op, "data_type"), out var source);
                 if (external is null)
                 {
                     return Record("add_shared_parameter", name, "failed",
-                        "Shared definition not found; set ARTEL_SHARED_PARAMS_FILE to the FOP .txt.");
+                        "Не удалось получить/создать shared-определение (нет GUID и нет ФОП-файла).");
                 }
                 familyManager.AddParameter(external, groupType, isInstance);
-                return Record("add_shared_parameter", name, "ok", "Shared parameter added.");
+                return Record("add_shared_parameter", name, "ok",
+                    $"Shared-параметр добавлен (GUID {external.GUID}, источник: {source}).");
             }
 
             var specType = SpecTypeFor(Str(op, "data_type"));
@@ -432,23 +434,64 @@ internal static class FamilyPlanExecutor
         }
     }
 
-    private static ExternalDefinition? FindExternalDefinition(
+    // Guarantee a shared-parameter definition bound to the plan's GUID. Prefer the
+    // configured FOP file; if the GUID/name is absent there, create the definition with
+    // the EXACT GUID from the plan in an ARTEL shared-parameter file. This is what makes
+    // the family carry the canonical ADSK_*/FOP shared parameters with the right GUID.
+    private static ExternalDefinition? EnsureSharedDefinition(
         Autodesk.Revit.ApplicationServices.Application application,
-        string name,
-        string guid)
+        string name, string guid, string dataType, out string source)
     {
-        var sharedFile = Environment.GetEnvironmentVariable("ARTEL_SHARED_PARAMS_FILE");
-        if (!string.IsNullOrWhiteSpace(sharedFile) && File.Exists(sharedFile))
+        source = "не найдено";
+
+        // 1) Configured FOP file (real ФОП) — match by name or GUID.
+        var fopFile = Environment.GetEnvironmentVariable("ARTEL_SHARED_PARAMS_FILE");
+        if (!string.IsNullOrWhiteSpace(fopFile) && File.Exists(fopFile))
         {
-            application.SharedParametersFilename = sharedFile;
+            application.SharedParametersFilename = fopFile;
+            var fromFop = FindInFile(application.OpenSharedParameterFile(), name, guid);
+            if (fromFop is not null)
+            {
+                source = "ФОП-файл";
+                return fromFop;
+            }
         }
 
+        // 2) Create the definition with the exact GUID from the plan in an ARTEL file.
+        if (!Guid.TryParse(guid, out var parsedGuid))
+        {
+            return null;
+        }
+        var artelFile = Path.Combine(Path.GetTempPath(), "ARTEL", "artel_shared_params.txt");
+        Directory.CreateDirectory(Path.GetDirectoryName(artelFile)!);
+        if (!File.Exists(artelFile))
+        {
+            File.WriteAllText(artelFile, "# ARTEL shared parameters\n");
+        }
+        application.SharedParametersFilename = artelFile;
         var definitionFile = application.OpenSharedParameterFile();
         if (definitionFile is null)
         {
             return null;
         }
+        var existing = FindInFile(definitionFile, name, guid);
+        if (existing is not null)
+        {
+            source = "ARTEL-файл";
+            return existing;
+        }
+        var group = definitionFile.Groups.get_Item("ARTEL") ?? definitionFile.Groups.Create("ARTEL");
+        var options = new ExternalDefinitionCreationOptions(name, SpecTypeFor(dataType)) { GUID = parsedGuid };
+        source = "создан с GUID плана";
+        return group.Definitions.Create(options) as ExternalDefinition;
+    }
 
+    private static ExternalDefinition? FindInFile(DefinitionFile? definitionFile, string name, string guid)
+    {
+        if (definitionFile is null)
+        {
+            return null;
+        }
         foreach (DefinitionGroup group in definitionFile.Groups)
         {
             foreach (Definition definition in group.Definitions)
