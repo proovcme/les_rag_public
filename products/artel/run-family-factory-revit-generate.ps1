@@ -7,7 +7,7 @@ param(
 
     [string]$SharedParamsFile = "",
     [string]$SaveRfa = "",
-    [string]$RevitInstallDir = "C:\Program Files\Autodesk\Revit 2024",
+    [string]$RevitInstallDir = "C:\Program Files\Autodesk\Revit 2025",
     [bool]$ExitRevit = $true,
     [int]$TimeoutSec = 420,
     [switch]$SkipLockScreenCheck,
