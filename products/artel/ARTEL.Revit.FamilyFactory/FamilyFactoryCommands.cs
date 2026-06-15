@@ -20,12 +20,50 @@ public sealed class ArtelFamilyFactoryApplication : IExternalApplication
     public Result OnStartup(UIControlledApplication application)
     {
         _application = application;
+        BuildRibbon(application);
         if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ARTEL_AUTORUN_VALIDATE_PATH"))
             || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ARTEL_AUTORUN_GENERATE_PLAN")))
         {
             application.Idling += OnIdling;
         }
         return Result.Succeeded;
+    }
+
+    private static void BuildRibbon(UIControlledApplication application)
+    {
+        const string tab = "ARTEL";
+        var assembly = typeof(ArtelFamilyFactoryApplication).Assembly.Location;
+        try
+        {
+            try { application.CreateRibbonTab(tab); }
+            catch { /* tab already exists across reloads */ }
+
+            var panel = application.CreateRibbonPanel(tab, "Фабрика семейств");
+
+            panel.AddItem(new PushButtonData(
+                "ArtelGenerate", "Сгенерировать", assembly,
+                "ARTEL.Revit.FamilyFactory.ArtelFamilyGenerateCommand")
+            {
+                ToolTip = "Исполнить план действий (family_action_plan.v1) из ARTEL_PLAN_PATH в активном семействе."
+            });
+            panel.AddSeparator();
+            panel.AddItem(new PushButtonData(
+                "ArtelValidate", "Проверить", assembly,
+                "ARTEL.Revit.FamilyFactory.ArtelFamilyValidateCommand")
+            {
+                ToolTip = "Проверить активное семейство и при настройке отправить отчёт в бэкенд ARTEL."
+            });
+            panel.AddItem(new PushButtonData(
+                "ArtelExtract", "Экспорт", assembly,
+                "ARTEL.Revit.FamilyFactory.ArtelFamilyExtractCommand")
+            {
+                ToolTip = "Экспортировать метаданные активного семейства в ARTEL JSON."
+            });
+        }
+        catch
+        {
+            // Never fail add-in startup because of ribbon construction.
+        }
     }
 
     public Result OnShutdown(UIControlledApplication application)
