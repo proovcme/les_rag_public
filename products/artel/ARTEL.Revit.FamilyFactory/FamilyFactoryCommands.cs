@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -20,7 +21,8 @@ public sealed class ArtelFamilyFactoryApplication : IExternalApplication
     public Result OnStartup(UIControlledApplication application)
     {
         _application = application;
-        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ARTEL_AUTORUN_VALIDATE_PATH")))
+        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ARTEL_AUTORUN_VALIDATE_PATH"))
+            || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ARTEL_AUTORUN_GENERATE_PLAN")))
         {
             application.Idling += OnIdling;
         }
@@ -61,6 +63,12 @@ public sealed class ArtelFamilyFactoryApplication : IExternalApplication
 
     private static void RunAutorun(UIApplication uiApp)
     {
+        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ARTEL_AUTORUN_GENERATE_PLAN")))
+        {
+            RunGenerateAutorun(uiApp);
+            return;
+        }
+
         var path = Environment.GetEnvironmentVariable("ARTEL_AUTORUN_VALIDATE_PATH") ?? "";
         try
         {
@@ -122,6 +130,64 @@ public sealed class ArtelFamilyFactoryApplication : IExternalApplication
                 ["schema"] = "artel.revit_family_autorun_error.v1",
                 ["status"] = "fail",
                 ["source_path"] = path,
+                ["error_type"] = error.GetType().Name,
+                ["error"] = error.Message,
+                ["created_at"] = DateTimeOffset.UtcNow.ToString("O")
+            });
+        }
+    }
+
+    private static void RunGenerateAutorun(UIApplication uiApp)
+    {
+        var planPath = Environment.GetEnvironmentVariable("ARTEL_AUTORUN_GENERATE_PLAN") ?? "";
+        try
+        {
+            if (string.IsNullOrWhiteSpace(planPath) || !File.Exists(planPath))
+            {
+                throw new FileNotFoundException("ARTEL_AUTORUN_GENERATE_PLAN does not point to an existing file.", planPath);
+            }
+            var templatePath = Environment.GetEnvironmentVariable("ARTEL_AUTORUN_TEMPLATE") ?? "";
+            if (string.IsNullOrWhiteSpace(templatePath) || !File.Exists(templatePath))
+            {
+                throw new FileNotFoundException("Set ARTEL_AUTORUN_TEMPLATE to a family template (.rft).", templatePath);
+            }
+
+            var document = uiApp.Application.NewFamilyDocument(templatePath);
+            var plan = new System.Web.Script.Serialization.JavaScriptSerializer()
+                           .DeserializeObject(File.ReadAllText(planPath)) as IDictionary
+                       ?? new Dictionary<string, object>();
+            var report = FamilyPlanExecutor.Execute(document, plan, uiApp.Application);
+
+            var savePath = Environment.GetEnvironmentVariable("ARTEL_AUTORUN_SAVE_RFA");
+            var saved = "not saved";
+            if (!string.IsNullOrWhiteSpace(savePath))
+            {
+                document.SaveAs(savePath, new SaveAsOptions { OverwriteExistingFile = true });
+                saved = savePath;
+            }
+
+            report["autorun"] = new Dictionary<string, object?>
+            {
+                ["plan_path"] = planPath,
+                ["template"] = templatePath,
+                ["saved_rfa"] = saved,
+                ["completed_at"] = DateTimeOffset.UtcNow.ToString("O")
+            };
+            FamilyFactoryPaths.WriteJson("generate_autorun", report);
+            document.Close(false);
+
+            if (ArtelOptions.EnvBool("ARTEL_AUTORUN_EXIT", false))
+            {
+                uiApp.PostCommand(RevitCommandId.LookupPostableCommandId(PostableCommand.ExitRevit));
+            }
+        }
+        catch (Exception error)
+        {
+            FamilyFactoryPaths.WriteJson("generate_autorun_error", new Dictionary<string, object?>
+            {
+                ["schema"] = "artel.revit_family_generate_autorun_error.v1",
+                ["status"] = "fail",
+                ["plan_path"] = planPath,
                 ["error_type"] = error.GetType().Name,
                 ["error"] = error.Message,
                 ["created_at"] = DateTimeOffset.UtcNow.ToString("O")
