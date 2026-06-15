@@ -25,7 +25,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "dotnet build failed with exit code $LASTEXITCODE"
 }
 
-$outputDir = Join-Path $root "ARTEL.Revit.FamilyFactory\bin\$Configuration\net48"
+$outputDir = Join-Path $root "ARTEL.Revit.FamilyFactory\bin\$Configuration\net8.0-windows"
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 Copy-Item (Join-Path $outputDir "ARTEL.Revit.FamilyFactory.dll") $InstallDir -Force
 
