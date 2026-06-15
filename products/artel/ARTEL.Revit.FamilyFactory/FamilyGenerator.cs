@@ -1,10 +1,9 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Web.Script.Serialization;
+using System.Text.Json;
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
@@ -18,10 +17,8 @@ namespace ARTEL.Revit.FamilyFactory;
 // built live in Revit). Every operation is best-effort and reported per-op so the
 // build/run loop on Legion sees exactly what landed.
 //
-// Plan JSON is parsed with JavaScriptSerializer, which yields Dictionary<string,object>
-// for objects and object[] for arrays; navigation therefore goes through the
-// non-generic IDictionary/IEnumerable to stay tolerant. The output report uses
-// Dictionary<string, object?> to match FamilyFactoryPaths.WriteJson.
+// Targets Revit 2025 (.NET 8): the plan is parsed with System.Text.Json and navigated
+// through JsonElement; the report uses Dictionary<string, object?> for WriteJson.
 [Transaction(TransactionMode.Manual)]
 public sealed class ArtelFamilyGenerateCommand : IExternalCommand
 {
@@ -46,19 +43,18 @@ public sealed class ArtelFamilyGenerateCommand : IExternalCommand
             return Result.Failed;
         }
 
-        IDictionary plan;
+        Dictionary<string, object?> report;
         try
         {
-            plan = new JavaScriptSerializer().DeserializeObject(File.ReadAllText(planPath)) as IDictionary
-                   ?? new Dictionary<string, object>();
+            using var planDoc = JsonDocument.Parse(File.ReadAllText(planPath));
+            report = FamilyPlanExecutor.Execute(document, planDoc.RootElement, commandData.Application.Application);
         }
         catch (Exception error)
         {
-            message = $"Failed to read plan JSON: {error.Message}";
+            message = $"Failed to read/execute plan JSON: {error.Message}";
             return Result.Failed;
         }
 
-        var report = FamilyPlanExecutor.Execute(document, plan, commandData.Application.Application);
         var reportPath = FamilyFactoryPaths.WriteJson("generate", report);
         TaskDialog.Show("ARTEL Family Generate",
             $"Status: {report["status"]}\nExecuted: {report["executed_count"]}/{report["operation_count"]}\nReport:\n{reportPath}");
@@ -70,11 +66,11 @@ internal static class FamilyPlanExecutor
 {
     public static Dictionary<string, object?> Execute(
         Document document,
-        IDictionary plan,
+        JsonElement plan,
         Autodesk.Revit.ApplicationServices.Application application)
     {
         var results = new List<Dictionary<string, object?>>();
-        var operations = AsList(Get(plan, "operations")).Select(AsDict).ToList();
+        var operations = Items(Prop(plan, "operations")).ToList();
         var familyManager = document.FamilyManager;
 
         using var transaction = new Transaction(document, "ARTEL execute family action plan");
@@ -117,13 +113,13 @@ internal static class FamilyPlanExecutor
             results.Add(Record("transaction", "", "failed", $"{error.GetType().Name}: {error.Message}"));
         }
 
-        var executed = results.Count(r => Str(r, "status") == "ok");
-        var failed = results.Count(r => Str(r, "status") == "failed");
+        var executed = results.Count(r => Convert.ToString(r["status"]) == "ok");
+        var failed = results.Count(r => Convert.ToString(r["status"]) == "failed");
         return new Dictionary<string, object?>
         {
             ["schema"] = "artel.revit_family_generate_report.v1",
             ["status"] = failed > 0 ? "fail" : "pass",
-            ["plan_id"] = Get(plan, "plan_id"),
+            ["plan_id"] = Str(plan, "plan_id"),
             ["operation_count"] = operations.Count,
             ["executed_count"] = executed,
             ["failed_count"] = failed,
@@ -133,7 +129,7 @@ internal static class FamilyPlanExecutor
     }
 
     private static Dictionary<string, object?> RunParameter(
-        IDictionary op,
+        JsonElement op,
         FamilyManager familyManager,
         Autodesk.Revit.ApplicationServices.Application application)
     {
@@ -165,7 +161,7 @@ internal static class FamilyPlanExecutor
         }
     }
 
-    private static Dictionary<string, object?> RunFormula(IDictionary op, FamilyManager familyManager)
+    private static Dictionary<string, object?> RunFormula(JsonElement op, FamilyManager familyManager)
     {
         var name = Str(op, "parameter");
         try
@@ -184,20 +180,20 @@ internal static class FamilyPlanExecutor
         }
     }
 
-    private static Dictionary<string, object?> RunCreateType(IDictionary op, FamilyManager familyManager)
+    private static Dictionary<string, object?> RunCreateType(JsonElement op, FamilyManager familyManager)
     {
         var typeName = Str(op, "name");
         try
         {
             familyManager.NewType(typeName);
-            foreach (var value in AsList(Get(op, "values")).Select(AsDict))
+            foreach (var value in Items(Prop(op, "values")))
             {
                 var parameter = familyManager.get_Parameter(Str(value, "parameter"));
                 if (parameter is null)
                 {
                     continue;
                 }
-                SetParameterValue(familyManager, parameter, Get(value, "value"));
+                SetParameterValue(familyManager, parameter, Prop(value, "value"));
             }
             return Record("create_type", typeName, "ok", "Type created and values set.");
         }
@@ -207,7 +203,7 @@ internal static class FamilyPlanExecutor
         }
     }
 
-    private static Dictionary<string, object?> RunMaterial(IDictionary op, Document document)
+    private static Dictionary<string, object?> RunMaterial(JsonElement op, Document document)
     {
         var name = Str(op, "name");
         try
@@ -228,24 +224,23 @@ internal static class FamilyPlanExecutor
         }
     }
 
-    private static void SetParameterValue(FamilyManager familyManager, FamilyParameter parameter, object? raw)
+    private static void SetParameterValue(FamilyManager familyManager, FamilyParameter parameter, JsonElement raw)
     {
-        if (raw is null)
+        if (raw.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
         {
             return;
         }
         switch (parameter.StorageType)
         {
             case StorageType.Double:
-                var number = Convert.ToDouble(raw, CultureInfo.InvariantCulture);
                 // Plan dimensions are millimetres; convert to Revit internal units.
-                familyManager.Set(parameter, UnitUtils.ConvertToInternalUnits(number, UnitTypeId.Millimeters));
+                familyManager.Set(parameter, UnitUtils.ConvertToInternalUnits(raw.GetDouble(), UnitTypeId.Millimeters));
                 break;
             case StorageType.Integer:
-                familyManager.Set(parameter, Convert.ToInt32(raw, CultureInfo.InvariantCulture));
+                familyManager.Set(parameter, raw.GetInt32());
                 break;
             case StorageType.String:
-                familyManager.Set(parameter, Convert.ToString(raw, CultureInfo.InvariantCulture));
+                familyManager.Set(parameter, raw.GetString());
                 break;
         }
     }
@@ -322,33 +317,33 @@ internal static class FamilyPlanExecutor
         };
     }
 
-    private static object? Get(IDictionary dict, string key)
+    private static JsonElement Prop(JsonElement element, string name)
     {
-        return dict != null && dict.Contains(key) ? dict[key] : null;
+        return element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value)
+            ? value
+            : default;
     }
 
-    private static IEnumerable<object?> AsList(object? value)
+    private static IEnumerable<JsonElement> Items(JsonElement element)
     {
-        if (value is string || value is null)
+        return element.ValueKind == JsonValueKind.Array ? element.EnumerateArray() : Enumerable.Empty<JsonElement>();
+    }
+
+    private static string Str(JsonElement element, string name)
+    {
+        var value = Prop(element, name);
+        return value.ValueKind switch
         {
-            return Enumerable.Empty<object?>();
-        }
-        return value is IEnumerable enumerable ? enumerable.Cast<object?>() : Enumerable.Empty<object?>();
+            JsonValueKind.String => value.GetString() ?? "",
+            JsonValueKind.Number => value.GetRawText(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            _ => ""
+        };
     }
 
-    private static IDictionary AsDict(object? value)
+    private static bool Bool(JsonElement element, string name)
     {
-        return value as IDictionary ?? new Dictionary<string, object>();
-    }
-
-    private static string Str(IDictionary dict, string key)
-    {
-        var value = Get(dict, key);
-        return value is null ? "" : Convert.ToString(value, CultureInfo.InvariantCulture) ?? "";
-    }
-
-    private static bool Bool(IDictionary dict, string key)
-    {
-        return Get(dict, key) is bool flag && flag;
+        return Prop(element, name).ValueKind == JsonValueKind.True;
     }
 }

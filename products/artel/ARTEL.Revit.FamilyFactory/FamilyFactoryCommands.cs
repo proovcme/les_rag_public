@@ -1,11 +1,10 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
-using System.Web.Script.Serialization;
+using System.Text.Json;
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
@@ -153,10 +152,8 @@ public sealed class ArtelFamilyFactoryApplication : IExternalApplication
             }
 
             var document = uiApp.Application.NewFamilyDocument(templatePath);
-            var plan = new System.Web.Script.Serialization.JavaScriptSerializer()
-                           .DeserializeObject(File.ReadAllText(planPath)) as IDictionary
-                       ?? new Dictionary<string, object>();
-            var report = FamilyPlanExecutor.Execute(document, plan, uiApp.Application);
+            using var planDoc = JsonDocument.Parse(File.ReadAllText(planPath));
+            var report = FamilyPlanExecutor.Execute(document, planDoc.RootElement, uiApp.Application);
 
             var savePath = Environment.GetEnvironmentVariable("ARTEL_AUTORUN_SAVE_RFA");
             var saved = "not saved";
@@ -579,7 +576,10 @@ internal sealed class ArtelFamilyLoadOptions : IFamilyLoadOptions
 
 internal static class ArtelClient
 {
-    private static readonly JavaScriptSerializer Serializer = new();
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
 
     public static Dictionary<string, object?>? TryGetTaskPackage(ArtelOptions options)
     {
@@ -587,7 +587,7 @@ internal static class ArtelClient
         {
             using var client = CreateClient(options);
             var json = client.GetStringAsync($"{options.ArtelBaseUrl.TrimEnd('/')}/api/revit/tasks/{options.TaskId}/package").GetAwaiter().GetResult();
-            return Serializer.Deserialize<Dictionary<string, object?>>(json);
+            return JsonSerializer.Deserialize<Dictionary<string, object?>>(json);
         }
         catch
         {
@@ -606,7 +606,7 @@ internal static class ArtelClient
                 ["issues"] = validation["issues"],
                 ["actions"] = validation["actions"]
             };
-            var json = Serializer.Serialize(payload);
+            var json = JsonSerializer.Serialize(payload, JsonOptions);
             using var client = CreateClient(options);
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
             var response = client.PostAsync($"{options.ArtelBaseUrl.TrimEnd('/')}/api/revit/tasks/{options.TaskId}/validation-reports", content).GetAwaiter().GetResult();
@@ -711,7 +711,10 @@ internal sealed class ArtelOptions
 
 internal static class FamilyFactoryPaths
 {
-    private static readonly JavaScriptSerializer Serializer = new();
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
 
     public static string WriteJson(string prefix, Dictionary<string, object?> payload)
     {
@@ -721,7 +724,7 @@ internal static class FamilyFactoryPaths
             "family_factory");
         Directory.CreateDirectory(root);
         var path = Path.Combine(root, $"{prefix}_{DateTime.UtcNow:yyyyMMdd_HHmmss}.json");
-        File.WriteAllText(path, Serializer.Serialize(payload), Encoding.UTF8);
+        File.WriteAllText(path, JsonSerializer.Serialize(payload, JsonOptions), Encoding.UTF8);
         return path;
     }
 }
