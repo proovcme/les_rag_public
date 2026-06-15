@@ -5,6 +5,8 @@ using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
@@ -39,30 +41,61 @@ public sealed class ArtelFamilyFactoryApplication : IExternalApplication
             catch { /* tab already exists across reloads */ }
 
             var panel = application.CreateRibbonPanel(tab, "Фабрика семейств");
+            var large = LoadImage("ARTEL.Revit.FamilyFactory.Resources.artel32.png");
+            var small = LoadImage("ARTEL.Revit.FamilyFactory.Resources.artel16.png");
 
             panel.AddItem(new PushButtonData(
                 "ArtelGenerate", "Сгенерировать", assembly,
                 "ARTEL.Revit.FamilyFactory.ArtelFamilyGenerateCommand")
             {
-                ToolTip = "Исполнить план действий (family_action_plan.v1) из ARTEL_PLAN_PATH в активном семействе."
+                ToolTip = "Выбрать план действий (family_action_plan.v1) и исполнить его в активном семействе.",
+                LargeImage = large,
+                Image = small
             });
             panel.AddSeparator();
             panel.AddItem(new PushButtonData(
                 "ArtelValidate", "Проверить", assembly,
                 "ARTEL.Revit.FamilyFactory.ArtelFamilyValidateCommand")
             {
-                ToolTip = "Проверить активное семейство и при настройке отправить отчёт в бэкенд ARTEL."
+                ToolTip = "Проверить активное семейство и при настройке отправить отчёт в бэкенд ARTEL.",
+                LargeImage = large,
+                Image = small
             });
             panel.AddItem(new PushButtonData(
                 "ArtelExtract", "Экспорт", assembly,
                 "ARTEL.Revit.FamilyFactory.ArtelFamilyExtractCommand")
             {
-                ToolTip = "Экспортировать метаданные активного семейства в ARTEL JSON."
+                ToolTip = "Экспортировать метаданные активного семейства в ARTEL JSON.",
+                LargeImage = large,
+                Image = small
             });
         }
         catch
         {
             // Never fail add-in startup because of ribbon construction.
+        }
+    }
+
+    private static ImageSource? LoadImage(string resourceName)
+    {
+        try
+        {
+            using var stream = typeof(ArtelFamilyFactoryApplication).Assembly.GetManifestResourceStream(resourceName);
+            if (stream is null)
+            {
+                return null;
+            }
+            var image = new BitmapImage();
+            image.BeginInit();
+            image.StreamSource = stream;
+            image.CacheOption = BitmapCacheOption.OnLoad;
+            image.EndInit();
+            image.Freeze();
+            return image;
+        }
+        catch
+        {
+            return null;
         }
     }
 

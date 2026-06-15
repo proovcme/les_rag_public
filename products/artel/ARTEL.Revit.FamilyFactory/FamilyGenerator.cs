@@ -36,11 +36,34 @@ public sealed class ArtelFamilyGenerateCommand : IExternalCommand
             return Result.Failed;
         }
 
+        // Plan file: env override, else interactive picker (no console needed).
         var planPath = Environment.GetEnvironmentVariable("ARTEL_PLAN_PATH");
         if (string.IsNullOrWhiteSpace(planPath) || !File.Exists(planPath))
         {
-            message = "Set ARTEL_PLAN_PATH to a family_action_plan.v1 JSON file.";
-            return Result.Failed;
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "ARTEL: выберите план действий (family_action_plan.v1)",
+                Filter = "ARTEL action plan (*.json)|*.json|Все файлы (*.*)|*.*"
+            };
+            if (dlg.ShowDialog() != true)
+            {
+                return Result.Cancelled;
+            }
+            planPath = dlg.FileName;
+        }
+
+        // Shared-parameter (FOP) file: env override, else optional picker.
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ARTEL_SHARED_PARAMS_FILE")))
+        {
+            var fop = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "ARTEL: файл ФОП (shared parameters) — Отмена, если не нужен",
+                Filter = "Revit shared parameters (*.txt)|*.txt|Все файлы (*.*)|*.*"
+            };
+            if (fop.ShowDialog() == true)
+            {
+                Environment.SetEnvironmentVariable("ARTEL_SHARED_PARAMS_FILE", fop.FileName);
+            }
         }
 
         Dictionary<string, object?> report;
@@ -94,11 +117,15 @@ internal static class FamilyPlanExecutor
             {
                 results.Add(RunMaterial(op, document));
             }
+            // Sizing geometry from the first type's nominal values where available.
+            var firstType = familyManager.Types.Cast<FamilyType>().FirstOrDefault();
+            if (firstType != null)
+            {
+                familyManager.CurrentType = firstType;
+            }
             foreach (var op in operations.Where(o => Str(o, "op") == "create_extrusion"))
             {
-                // Geometry execution (solid + flex labelling) is built live in Revit (next iteration).
-                results.Add(Record("create_extrusion", Str(op, "id"), "deferred",
-                    "Создание геометрии и привязка размеров к параметрам — следующая итерация (W10.3 geom)."));
+                results.Add(RunExtrusion(op, document, familyManager));
             }
 
             document.Regenerate();
@@ -222,6 +249,89 @@ internal static class FamilyPlanExecutor
         {
             return Record("assign_material", name, "failed", $"{error.GetType().Name}: {error.Message}");
         }
+    }
+
+    private static Dictionary<string, object?> RunExtrusion(JsonElement op, Document document, FamilyManager familyManager)
+    {
+        var id = Str(op, "id");
+        try
+        {
+            var profile = Prop(op, "profile");
+            var shape = Str(profile, "shape");
+            var sketchPlane = SketchPlane.Create(document, Plane.CreateByNormalAndOrigin(XYZ.BasisZ, XYZ.Zero));
+            var endFeet = NominalFeet(Prop(op, "extrusion"), familyManager, 1000);
+
+            var loop = new CurveArray();
+            if (shape == "circle")
+            {
+                var radius = NominalFeet(Prop(profile, "diameter"), familyManager, 300) / 2.0;
+                loop.Append(Arc.Create(XYZ.Zero, radius, 0, 2 * Math.PI, XYZ.BasisX, XYZ.BasisY));
+            }
+            else
+            {
+                var x = NominalFeet(Prop(profile, "width"), familyManager, 1000) / 2.0;
+                var y = NominalFeet(Prop(profile, "depth"), familyManager, 1000) / 2.0;
+                var p0 = new XYZ(-x, -y, 0);
+                var p1 = new XYZ(x, -y, 0);
+                var p2 = new XYZ(x, y, 0);
+                var p3 = new XYZ(-x, y, 0);
+                loop.Append(Line.CreateBound(p0, p1));
+                loop.Append(Line.CreateBound(p1, p2));
+                loop.Append(Line.CreateBound(p2, p3));
+                loop.Append(Line.CreateBound(p3, p0));
+            }
+            var profiles = new CurveArrArray();
+            profiles.Append(loop);
+
+            var extrusion = document.FamilyCreate.NewExtrusion(true, profiles, sketchPlane, endFeet);
+            document.Regenerate();
+
+            var flex = "height nominal";
+            var extrusionRef = Prop(op, "extrusion");
+            if (extrusionRef.ValueKind == JsonValueKind.Object
+                && extrusionRef.TryGetProperty("parameter", out var heightName)
+                && heightName.ValueKind == JsonValueKind.String)
+            {
+                var heightParam = familyManager.get_Parameter(heightName.GetString());
+                var endParam = extrusion.get_Parameter(BuiltInParameter.EXTRUSION_END_PARAM);
+                if (heightParam != null && endParam != null)
+                {
+                    familyManager.AssociateElementParameterToFamilyParameter(endParam, heightParam);
+                    flex = $"height→{heightName.GetString()}";
+                }
+            }
+            return Record("create_extrusion", id, "ok",
+                $"Extrusion '{shape}' created ({flex}; профиль width/depth — номинал, flex-привязка следующим шагом).");
+        }
+        catch (Exception error)
+        {
+            return Record("create_extrusion", id, "failed", $"{error.GetType().Name}: {error.Message}");
+        }
+    }
+
+    private static double NominalFeet(JsonElement dimRef, FamilyManager familyManager, double defaultMm)
+    {
+        if (dimRef.ValueKind == JsonValueKind.Object)
+        {
+            if (dimRef.TryGetProperty("constant", out var constant) && constant.ValueKind == JsonValueKind.Number)
+            {
+                return UnitUtils.ConvertToInternalUnits(constant.GetDouble(), UnitTypeId.Millimeters);
+            }
+            if (dimRef.TryGetProperty("parameter", out var name) && name.ValueKind == JsonValueKind.String)
+            {
+                var parameter = familyManager.get_Parameter(name.GetString());
+                var currentType = familyManager.CurrentType;
+                if (parameter != null && currentType != null)
+                {
+                    var value = currentType.AsDouble(parameter);
+                    if (value.HasValue && value.Value > 0)
+                    {
+                        return value.Value;
+                    }
+                }
+            }
+        }
+        return UnitUtils.ConvertToInternalUnits(defaultMm, UnitTypeId.Millimeters);
     }
 
     private static void SetParameterValue(FamilyManager familyManager, FamilyParameter parameter, JsonElement raw)
