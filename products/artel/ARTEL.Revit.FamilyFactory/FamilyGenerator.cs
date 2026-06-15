@@ -256,6 +256,14 @@ internal static class FamilyPlanExecutor
         var id = Str(op, "id");
         try
         {
+            // Build the primary body solid cleanly first; secondary features (door, etc.)
+            // need their own placed planes — handled in a later iteration.
+            if (Str(op, "role") != "body" && id != "body")
+            {
+                return Record("create_extrusion", id, "skipped",
+                    "Доп. элемент геометрии (дверь и т.п.) — в работе; пока строим только корпус.");
+            }
+
             var profile = Prop(op, "profile");
             var shape = Str(profile, "shape");
             var sketchPlane = SketchPlane.Create(document, Plane.CreateByNormalAndOrigin(XYZ.BasisZ, XYZ.Zero));
