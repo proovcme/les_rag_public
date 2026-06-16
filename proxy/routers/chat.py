@@ -870,6 +870,37 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     )
     dataset_name_by_id = await _dataset_name_map(rag_backend)
     resolved_dataset_names = _names_for_dataset_ids(_dataset_ids, dataset_name_by_id)
+
+    # Состав/перечень разделов документа: семантика не собирает структуру (заголовки
+    # размазаны по чанкам, единого чанка нет). Детерминированно извлекаем нумерованную
+    # структуру из полного текста документа — 0 LLM. Additive: не вышло → обычный RAG.
+    from proxy.services.document_outline_service import (
+        is_outline_query, fetch_doc_text, parse_outline, format_outline,
+    )
+    if is_outline_query(req.question) and len(resolved_dataset_names) == 1:
+        try:
+            _ds = resolved_dataset_names[0]
+            _txt, _doc = await asyncio.to_thread(
+                fetch_doc_text, _ds,
+                qdrant_url=os.getenv("QDRANT_URL", "http://127.0.0.1:6333"),
+                collection=os.getenv("RAG_COLLECTION_NAME", "les_rag_qwen3_06b"),
+            )
+            _items = parse_outline(_txt, capital_only=True)
+            if len(_items) >= 3:
+                _ans = format_outline(_items, _doc)
+                if memory_block:
+                    _ans = f"{_ans}\n\n{memory_block}"
+                logger.info("[OUTLINE] детерминированная структура %s: %s пунктов", _doc, len(_items))
+                return {
+                    "answer": _ans,
+                    "crag_status": "DETERMINISTIC",
+                    "sources": [{"doc_name": _doc, "dataset_name": _ds}],
+                    "query_route": {"channel": "outline", "operation": "document_outline"},
+                    "validation": {"enabled": False, "reason": "deterministic_document_outline"},
+                }
+        except Exception as _outline_err:
+            logger.warning("[OUTLINE] fallback to RAG: %s", _outline_err)
+
     query_route_payload = _query_route_payload(query_intent, effective_dataset_filter, kot_decision)
     cache = SemanticCache()
     cache_embedding = None
