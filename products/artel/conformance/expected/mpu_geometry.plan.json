@@ -1,0 +1,246 @@
+{
+  "schema_version": "artel.family_action_plan.v1",
+  "plan_id": "spec_mpu",
+  "task_id": "task_mpu",
+  "spec_id": "spec_mpu",
+  "status": "ok",
+  "compiled_at": null,
+  "generator": {
+    "mode": "deterministic",
+    "llm_used": false,
+    "tool": "artel_family_action_plan"
+  },
+  "family": {
+    "name": "Мини-приточная установка KORF MPU",
+    "category": "Mechanical Equipment",
+    "template_file_id": null,
+    "shared_parameter_profile_id": "fop_2026"
+  },
+  "operations": [
+    {
+      "op": "add_shared_parameter",
+      "name": "ADSK_Наименование",
+      "guid": "4f5cb6a1-0000-0000-0000-000000000000",
+      "data_type": "Text",
+      "storage_type": "String",
+      "group": "Identity Data",
+      "is_instance": false,
+      "is_required": true
+    },
+    {
+      "op": "add_family_parameter",
+      "name": "Длина",
+      "data_type": "Length",
+      "storage_type": "Double",
+      "group": "Dimensions",
+      "is_instance": false
+    },
+    {
+      "op": "add_family_parameter",
+      "name": "Глубина",
+      "data_type": "Length",
+      "storage_type": "Double",
+      "group": "Dimensions",
+      "is_instance": false
+    },
+    {
+      "op": "add_family_parameter",
+      "name": "Высота",
+      "data_type": "Length",
+      "storage_type": "Double",
+      "group": "Dimensions",
+      "is_instance": false
+    },
+    {
+      "op": "create_extrusion",
+      "id": "body",
+      "role": "body",
+      "sketch_plane": "ref_level",
+      "placement": {
+        "plane": "level",
+        "z_fraction": 0.0
+      },
+      "profile": {
+        "shape": "rectangle",
+        "width": {
+          "parameter": "Длина"
+        },
+        "depth": {
+          "parameter": "Глубина"
+        }
+      },
+      "extrusion": {
+        "parameter": "Высота"
+      }
+    },
+    {
+      "op": "create_extrusion",
+      "id": "door",
+      "role": "door",
+      "sketch_plane": "front",
+      "placement": {
+        "plane": "front"
+      },
+      "profile": {
+        "shape": "rectangle",
+        "width": {
+          "parameter": "Длина"
+        },
+        "depth": {
+          "parameter": "Высота"
+        }
+      },
+      "extrusion": {
+        "constant": 18.0,
+        "unit": "mm"
+      }
+    },
+    {
+      "op": "create_type",
+      "name": "MPU 400 V RG",
+      "values": [
+        {
+          "parameter": "Длина",
+          "value": 1075
+        },
+        {
+          "parameter": "Глубина",
+          "value": 525
+        },
+        {
+          "parameter": "Высота",
+          "value": 975
+        }
+      ]
+    },
+    {
+      "op": "create_type",
+      "name": "MPU 700 V RG",
+      "values": [
+        {
+          "parameter": "Длина",
+          "value": 1075
+        },
+        {
+          "parameter": "Глубина",
+          "value": 600
+        },
+        {
+          "parameter": "Высота",
+          "value": 1100
+        }
+      ]
+    },
+    {
+      "op": "create_type",
+      "name": "MPU 1100 V RG",
+      "values": [
+        {
+          "parameter": "Длина",
+          "value": 1250
+        },
+        {
+          "parameter": "Глубина",
+          "value": 675
+        },
+        {
+          "parameter": "Высота",
+          "value": 1115
+        }
+      ]
+    },
+    {
+      "op": "create_type",
+      "name": "MPU 1600 V RG",
+      "values": [
+        {
+          "parameter": "Длина",
+          "value": 1580
+        },
+        {
+          "parameter": "Глубина",
+          "value": 725
+        },
+        {
+          "parameter": "Высота",
+          "value": 1165
+        }
+      ]
+    },
+    {
+      "op": "create_type",
+      "name": "MPU 2200 V RG",
+      "values": [
+        {
+          "parameter": "Длина",
+          "value": 1500
+        },
+        {
+          "parameter": "Глубина",
+          "value": 815
+        },
+        {
+          "parameter": "Высота",
+          "value": 1255
+        }
+      ]
+    },
+    {
+      "op": "create_type",
+      "name": "MPU 2900 V RG",
+      "values": [
+        {
+          "parameter": "Длина",
+          "value": 1800
+        },
+        {
+          "parameter": "Глубина",
+          "value": 915
+        },
+        {
+          "parameter": "Высота",
+          "value": 1355
+        }
+      ]
+    },
+    {
+      "op": "create_type",
+      "name": "MPU 3800 V RG",
+      "values": [
+        {
+          "parameter": "Длина",
+          "value": 1755
+        },
+        {
+          "parameter": "Глубина",
+          "value": 1015
+        },
+        {
+          "parameter": "Высота",
+          "value": 1455
+        }
+      ]
+    },
+    {
+      "op": "assign_material",
+      "name": "Оцинкованная сталь",
+      "parameter": "Материал корпуса",
+      "default_value": "Сталь оцинкованная"
+    }
+  ],
+  "manual_work": [
+    {
+      "kind": "geometry_review",
+      "description": "Сверить сгенерированную геометрию с техничкой/чертежом; проверить флекс типоразмеров."
+    },
+    {
+      "kind": "subcategories",
+      "description": "Назначить подкатегории и графику элементов геометрии."
+    },
+    {
+      "kind": "connectors",
+      "description": "Добавить MEP-коннекторы для категории 'Mechanical Equipment'."
+    }
+  ],
+  "diagnostics": []
+}

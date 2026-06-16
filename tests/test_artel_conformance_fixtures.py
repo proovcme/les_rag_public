@@ -24,6 +24,8 @@ CASES = [
     ("shkaf_geometry.plan.json", "shkaf.spec.json", "shkaf.geometry.json"),
     ("column_geometry.plan.json", "column.spec.json", "column.geometry.json"),
     ("beam_geometry.plan.json", "beam.spec.json", "beam.geometry.json"),
+    # Реальное изделие из техлиста KORF MPU: вентустановка-короб с 7 типоразмерами.
+    ("mpu_geometry.plan.json", "mpu.spec.json", "mpu.geometry.json"),
 ]
 
 

@@ -27,6 +27,16 @@ expected/
 Covered archetypes: `rect_cabinet`, `cylinder_revolve` (circle profile),
 `bar_profile`. Regenerate any case the same way (swap the `--spec`/`--geometry`).
 
+## Реальные изделия (из техлистов)
+
+- `mpu.spec.json` / `mpu.geometry.json` → `mpu_geometry.plan.json` — **KORF MPU**,
+  мини-приточная вентустановка (Mechanical Equipment), **7 типоразмеров** 400–3800
+  из техлиста (А×Б×В). Короб = `rect_cabinet`; круглые/прямоугольные присоединения
+  (ø200–315 / 500×250…600×300) — MEP-коннекторы, доделать вручную.
+- `verstak.spec.json` — **Верстак Expert (№224)** (metbiz), 2000×700×1870, нагрузка
+  2000 кг. Композит (столешница + 2 тумбы + экран) — спец захвачена; геометрия ждёт
+  архетип `workbench` (столешница + экран + тумбы), не `rect_cabinet`.
+
 ## Regenerate (reference oracle)
 
 ```bash

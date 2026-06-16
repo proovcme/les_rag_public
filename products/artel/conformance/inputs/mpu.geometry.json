@@ -1,0 +1,10 @@
+{
+  "schema_version": "artel.family_geometry.v1",
+  "archetype": "rect_cabinet",
+  "bindings": {"width": "Длина", "depth": "Глубина", "height": "Высота"},
+  "features": [
+    {"kind": "door"}
+  ],
+  "source": {"kind": "datasheet", "ref": "KORF MPU 16.10.2024", "confidence": 0.95},
+  "notes": "Корпус вентустановки; круглые/прямоугольные присоединения (ø200-315 / 500x250..600x300) — MEP-коннекторы, доделать вручную (нет в архетипе)."
+}
