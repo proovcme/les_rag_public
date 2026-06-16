@@ -56,6 +56,10 @@
       "id": "body",
       "role": "body",
       "sketch_plane": "ref_level",
+      "placement": {
+        "plane": "level",
+        "z_fraction": 0.0
+      },
       "profile": {
         "shape": "rectangle",
         "width": {
@@ -74,6 +78,9 @@
       "id": "door",
       "role": "door",
       "sketch_plane": "front",
+      "placement": {
+        "plane": "front"
+      },
       "profile": {
         "shape": "rectangle",
         "width": {
@@ -85,6 +92,97 @@
       },
       "extrusion": {
         "constant": 18.0,
+        "unit": "mm"
+      }
+    },
+    {
+      "op": "create_extrusion",
+      "id": "shelf_1",
+      "role": "shelf",
+      "sketch_plane": "ref_level",
+      "placement": {
+        "plane": "level",
+        "z_fraction": 0.25
+      },
+      "profile": {
+        "shape": "rectangle",
+        "width": {
+          "parameter": "Ширина"
+        },
+        "depth": {
+          "parameter": "Глубина"
+        }
+      },
+      "extrusion": {
+        "constant": 18.0,
+        "unit": "mm"
+      }
+    },
+    {
+      "op": "create_extrusion",
+      "id": "shelf_2",
+      "role": "shelf",
+      "sketch_plane": "ref_level",
+      "placement": {
+        "plane": "level",
+        "z_fraction": 0.5
+      },
+      "profile": {
+        "shape": "rectangle",
+        "width": {
+          "parameter": "Ширина"
+        },
+        "depth": {
+          "parameter": "Глубина"
+        }
+      },
+      "extrusion": {
+        "constant": 18.0,
+        "unit": "mm"
+      }
+    },
+    {
+      "op": "create_extrusion",
+      "id": "shelf_3",
+      "role": "shelf",
+      "sketch_plane": "ref_level",
+      "placement": {
+        "plane": "level",
+        "z_fraction": 0.75
+      },
+      "profile": {
+        "shape": "rectangle",
+        "width": {
+          "parameter": "Ширина"
+        },
+        "depth": {
+          "parameter": "Глубина"
+        }
+      },
+      "extrusion": {
+        "constant": 18.0,
+        "unit": "mm"
+      }
+    },
+    {
+      "op": "create_extrusion",
+      "id": "back",
+      "role": "back",
+      "sketch_plane": "back",
+      "placement": {
+        "plane": "back"
+      },
+      "profile": {
+        "shape": "rectangle",
+        "width": {
+          "parameter": "Ширина"
+        },
+        "depth": {
+          "parameter": "Высота"
+        }
+      },
+      "extrusion": {
+        "constant": 4.0,
         "unit": "mm"
       }
     },

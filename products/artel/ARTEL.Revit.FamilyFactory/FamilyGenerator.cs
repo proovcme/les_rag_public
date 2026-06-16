@@ -105,9 +105,12 @@ internal static class FamilyPlanExecutor
             {
                 familyManager.CurrentType = firstType;
             }
+            // Контекст корпуса (halfW, halfD, height в футах) — фичи (дверь/полки/задняя
+            // стенка) размещаются относительно него. Корпус компилятор эмитит первым.
+            var body = new double[] { 0, 0, 0 };
             foreach (var op in operations.Where(o => Str(o, "op") == "create_extrusion"))
             {
-                results.Add(RunExtrusion(op, document, familyManager));
+                results.Add(RunExtrusion(op, document, familyManager, body));
             }
 
             document.Regenerate();
@@ -235,49 +238,85 @@ internal static class FamilyPlanExecutor
         }
     }
 
-    private static Dictionary<string, object?> RunExtrusion(JsonElement op, Document document, FamilyManager familyManager)
+    private static Dictionary<string, object?> RunExtrusion(
+        JsonElement op, Document document, FamilyManager familyManager, double[] body)
     {
         var id = Str(op, "id");
         try
         {
-            // Build the primary body solid cleanly first; secondary features (door, etc.)
-            // need their own placed planes — handled in a later iteration.
-            if (Str(op, "role") != "body" && id != "body")
+            var isBody = Str(op, "role") == "body" || id == "body";
+            var placement = Prop(op, "placement");
+            var plane = Str(placement, "plane");
+            if (string.IsNullOrEmpty(plane))
             {
-                return Record("create_extrusion", id, "skipped",
-                    "Доп. элемент геометрии (дверь и т.п.) — в работе; пока строим только корпус.");
+                plane = "level";
             }
-
+            if (!isBody && body[2] <= 0)
+            {
+                return Record("create_extrusion", id, "skipped", "Нет корпуса для размещения элемента.");
+            }
             var profile = Prop(op, "profile");
             var shape = Str(profile, "shape");
-            var sketchPlane = SketchPlane.Create(document, Plane.CreateByNormalAndOrigin(XYZ.BasisZ, XYZ.Zero));
-            var height = NominalFeet(Prop(op, "extrusion"), familyManager, 1000);
 
+            // Вертикальная панель на передней/задней грани корпуса (дверь, задняя стенка).
+            if (plane == "front" || plane == "back")
+            {
+                var panelW = NominalFeet(Prop(profile, "width"), familyManager, 1000);
+                var panelH = NominalFeet(Prop(profile, "depth"), familyManager, 1800); // depth-поле = высота
+                var thickness = NominalFeet(Prop(op, "extrusion"), familyManager, 18);
+                var y = plane == "front" ? -body[1] : body[1];
+                var sp = SketchPlane.Create(document, Plane.CreateByNormalAndOrigin(XYZ.BasisY, new XYZ(0, y, 0)));
+                var hw = panelW / 2.0;
+                var loop = new CurveArray();
+                loop.Append(Line.CreateBound(new XYZ(-hw, y, 0), new XYZ(hw, y, 0)));
+                loop.Append(Line.CreateBound(new XYZ(hw, y, 0), new XYZ(hw, y, panelH)));
+                loop.Append(Line.CreateBound(new XYZ(hw, y, panelH), new XYZ(-hw, y, panelH)));
+                loop.Append(Line.CreateBound(new XYZ(-hw, y, panelH), new XYZ(-hw, y, 0)));
+                var profiles = new CurveArrArray();
+                profiles.Append(loop);
+                var end = plane == "front" ? -thickness : thickness; // наружу грани
+                document.FamilyCreate.NewExtrusion(true, profiles, sp, end);
+                document.Regenerate();
+                return Record("create_extrusion", id, "ok",
+                    $"{(plane == "front" ? "Дверь" : "Задняя стенка")} построена на {plane}-грани корпуса.");
+            }
+
+            // Горизонтальная плоскость: корпус (z=0) или полка (z=доля·высота).
+            var z = isBody ? 0.0 : NumOr(Prop(placement, "z_fraction"), 0.0) * body[2];
+            var sketchPlane = SketchPlane.Create(document, Plane.CreateByNormalAndOrigin(XYZ.BasisZ, new XYZ(0, 0, z)));
             double halfW = 0, halfD = 0;
-            var loop = new CurveArray();
+            var loopL = new CurveArray();
             if (shape == "circle")
             {
                 var radius = NominalFeet(Prop(profile, "diameter"), familyManager, 300) / 2.0;
-                loop.Append(Arc.Create(XYZ.Zero, radius, 0, 2 * Math.PI, XYZ.BasisX, XYZ.BasisY));
+                loopL.Append(Arc.Create(new XYZ(0, 0, z), radius, 0, 2 * Math.PI, XYZ.BasisX, XYZ.BasisY));
             }
             else
             {
                 halfW = NominalFeet(Prop(profile, "width"), familyManager, 1000) / 2.0;
                 halfD = NominalFeet(Prop(profile, "depth"), familyManager, 1000) / 2.0;
-                loop.Append(Line.CreateBound(new XYZ(-halfW, -halfD, 0), new XYZ(halfW, -halfD, 0)));
-                loop.Append(Line.CreateBound(new XYZ(halfW, -halfD, 0), new XYZ(halfW, halfD, 0)));
-                loop.Append(Line.CreateBound(new XYZ(halfW, halfD, 0), new XYZ(-halfW, halfD, 0)));
-                loop.Append(Line.CreateBound(new XYZ(-halfW, halfD, 0), new XYZ(-halfW, -halfD, 0)));
+                loopL.Append(Line.CreateBound(new XYZ(-halfW, -halfD, z), new XYZ(halfW, -halfD, z)));
+                loopL.Append(Line.CreateBound(new XYZ(halfW, -halfD, z), new XYZ(halfW, halfD, z)));
+                loopL.Append(Line.CreateBound(new XYZ(halfW, halfD, z), new XYZ(-halfW, halfD, z)));
+                loopL.Append(Line.CreateBound(new XYZ(-halfW, halfD, z), new XYZ(-halfW, -halfD, z)));
             }
-            var profiles = new CurveArrArray();
-            profiles.Append(loop);
-
-            var extrusion = document.FamilyCreate.NewExtrusion(true, profiles, sketchPlane, height);
+            var profilesL = new CurveArrArray();
+            profilesL.Append(loopL);
+            var thickOrHeight = NominalFeet(Prop(op, "extrusion"), familyManager, isBody ? 1000 : 18);
+            var extrusion = document.FamilyCreate.NewExtrusion(true, profilesL, sketchPlane, thickOrHeight);
             document.Regenerate();
 
-            var flex = new List<string>();
+            if (!isBody)
+            {
+                return Record("create_extrusion", id, "ok",
+                    $"Полка построена (z={Math.Round(NumOr(Prop(placement, "z_fraction"), 0.0), 2)}·H).");
+            }
 
-            // Height: associate the extrusion end to the height parameter.
+            // Корпус: запомнить габариты + флекс высоты/ширины/глубины.
+            body[0] = halfW;
+            body[1] = halfD;
+            body[2] = thickOrHeight;
+            var flex = new List<string>();
             var heightName = ParamName(Prop(op, "extrusion"));
             if (heightName != null)
             {
@@ -289,8 +328,6 @@ internal static class FamilyPlanExecutor
                     flex.Add($"высота→{heightName}");
                 }
             }
-
-            // Width/depth: label dimensions across the box faces so the profile flexes.
             if (shape != "circle")
             {
                 var view = PlanView(document);
@@ -305,7 +342,6 @@ internal static class FamilyPlanExecutor
                     document.Regenerate();
                 }
             }
-
             return Record("create_extrusion", id, "ok",
                 $"Корпус '{shape}' построен ({(flex.Count > 0 ? string.Join(", ", flex) : "номинал")}).");
         }
@@ -313,6 +349,11 @@ internal static class FamilyPlanExecutor
         {
             return Record("create_extrusion", id, "failed", $"{error.GetType().Name}: {error.Message}");
         }
+    }
+
+    private static double NumOr(JsonElement element, double fallback)
+    {
+        return element.ValueKind == JsonValueKind.Number ? element.GetDouble() : fallback;
     }
 
     private static string? ParamName(JsonElement dimRef)

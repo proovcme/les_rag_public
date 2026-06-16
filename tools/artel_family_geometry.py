@@ -28,6 +28,8 @@ GEOMETRY_SCHEMA_VERSION = "artel.family_geometry.v1"
 # the recipe terse: vision only has to identify the archetype + main dimensions.
 _DEFAULT_DOOR_THICKNESS_MM = 18.0
 _DEFAULT_PANEL_THICKNESS_MM = 18.0
+_DEFAULT_BACK_THICKNESS_MM = 4.0
+_DEFAULT_SHELF_THICKNESS_MM = 18.0
 
 
 def _param_ref(name: str) -> dict[str, Any]:
@@ -74,7 +76,12 @@ def _compile_rect_cabinet(
     diagnostics: list[dict[str, Any]],
     manual_work: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Rectangular body extruded up; optional front door."""
+    """Rectangular body extruded up; optional door (front face), back panel, shelves.
+
+    Каждый элемент — отдельное тело со своим `placement` относительно корпуса:
+    body/shelf — на горизонтальной плоскости (доля высоты), door/back — на вертикальной
+    передней/задней грани. C#-исполнитель строит их по габаритам корпуса.
+    """
     width = _resolve_dim("rect_cabinet", "width", bindings, declared, diagnostics)
     depth = _resolve_dim("rect_cabinet", "depth", bindings, declared, diagnostics)
     height = _resolve_dim("rect_cabinet", "height", bindings, declared, diagnostics)
@@ -86,6 +93,7 @@ def _compile_rect_cabinet(
         "id": "body",
         "role": "body",
         "sketch_plane": "ref_level",
+        "placement": {"plane": "level", "z_fraction": 0.0},
         "profile": {"shape": "rectangle", "width": width, "depth": depth},
         "extrusion": height,
     }]
@@ -96,18 +104,34 @@ def _compile_rect_cabinet(
         if kind == "door":
             door_w = _resolve_dim("door", "width", fb, declared, diagnostics, required=False) or width
             door_h = _resolve_dim("door", "height", fb, declared, diagnostics, required=False) or height
-            thickness = (
-                _resolve_dim("door", "thickness", fb, declared, diagnostics, required=False)
-                or _const_ref(_DEFAULT_DOOR_THICKNESS_MM)
-            )
+            thickness = (_resolve_dim("door", "thickness", fb, declared, diagnostics, required=False)
+                         or _const_ref(_DEFAULT_DOOR_THICKNESS_MM))
             ops.append({
-                "op": "create_extrusion",
-                "id": "door",
-                "role": "door",
-                "sketch_plane": "front",
+                "op": "create_extrusion", "id": "door", "role": "door",
+                "sketch_plane": "front", "placement": {"plane": "front"},
                 "profile": {"shape": "rectangle", "width": door_w, "depth": door_h},
                 "extrusion": thickness,
             })
+        elif kind == "back":
+            thickness = (_resolve_dim("back", "thickness", fb, declared, diagnostics, required=False)
+                         or _const_ref(_DEFAULT_BACK_THICKNESS_MM))
+            ops.append({
+                "op": "create_extrusion", "id": "back", "role": "back",
+                "sketch_plane": "back", "placement": {"plane": "back"},
+                "profile": {"shape": "rectangle", "width": width, "depth": height},
+                "extrusion": thickness,
+            })
+        elif kind in ("shelf", "shelves"):
+            count = max(1, int(feature.get("count") or 1))
+            thickness = _const_ref(_DEFAULT_SHELF_THICKNESS_MM)
+            for i in range(1, count + 1):
+                ops.append({
+                    "op": "create_extrusion", "id": f"shelf_{i}", "role": "shelf",
+                    "sketch_plane": "ref_level",
+                    "placement": {"plane": "level", "z_fraction": round(i / (count + 1), 4)},
+                    "profile": {"shape": "rectangle", "width": width, "depth": depth},
+                    "extrusion": thickness,
+                })
         else:
             diagnostics.append({
                 "severity": "warning", "code": "ARF-PLAN-GEOM-004",

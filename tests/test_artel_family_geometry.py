@@ -90,6 +90,23 @@ def test_door_feature_adds_second_extrusion():
     assert door["profile"]["width"] == {"parameter": "Ширина"}
 
 
+def test_full_cabinet_door_shelves_back():
+    recipe = copy.deepcopy(CABINET_RECIPE)
+    recipe["features"] = [{"kind": "door"}, {"kind": "shelves", "count": 3}, {"kind": "back"}]
+    plan = compiler.compile_action_plan(_shkaf_with_depth(), _fop_index(), recipe)
+    assert plan["status"] == "ok"
+    extrusions = [op for op in plan["operations"] if op.get("op") == "create_extrusion"]
+    # корпус + дверь + 3 полки + задняя стенка = 6 тел
+    assert [op["id"] for op in extrusions] == ["body", "door", "shelf_1", "shelf_2", "shelf_3", "back"]
+    by_role = {op["id"]: op for op in extrusions}
+    assert by_role["body"]["placement"] == {"plane": "level", "z_fraction": 0.0}
+    assert by_role["door"]["placement"] == {"plane": "front"}
+    assert by_role["back"]["placement"] == {"plane": "back"}
+    # полки распределены по высоте: 1/4, 2/4, 3/4
+    assert [by_role[f"shelf_{i}"]["placement"]["z_fraction"] for i in (1, 2, 3)] == [0.25, 0.5, 0.75]
+    compiler.validate_plan(plan)
+
+
 def test_unknown_archetype_is_blocking_error_and_falls_back_to_manual():
     recipe = {"schema_version": geometry.GEOMETRY_SCHEMA_VERSION,
               "archetype": "blob", "bindings": {}}

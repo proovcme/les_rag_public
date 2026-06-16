@@ -227,7 +227,16 @@
             "role": { "type": "string", "minLength": 1 },
             "sketch_plane": { "type": "string", "minLength": 1 },
             "profile": { "$ref": "#/$defs/extrusion_profile" },
-            "extrusion": { "$ref": "#/$defs/dimension_ref" }
+            "extrusion": { "$ref": "#/$defs/dimension_ref" },
+            "placement": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Where the solid sits relative to the body box: level (XY, extrude +Z, at z_fraction of body height), front/back (vertical face, extrude in ∓Y).",
+              "properties": {
+                "plane": { "type": "string", "enum": ["level", "front", "back"] },
+                "z_fraction": { "type": "number", "minimum": 0, "maximum": 1 }
+              }
+            }
           }
         }
       ]
