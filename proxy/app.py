@@ -246,9 +246,32 @@ async def startup():
         logger.info("[INIT] Backend initialized successfully")
         asyncio.create_task(metrics_collector_loop())
         asyncio.create_task(metrics_loop())
+        asyncio.create_task(_warmup_models())  # №2: убрать холодный старт первого запроса
     except Exception as e:
         logger.error("[INIT] Backend initialization failed: %s", e)
         raise
+
+async def _warmup_models():
+    """№2 латентность: прогрев эмбеддера (Core ML) и реранкера (MLX) на старте.
+    Первый запрос лениво грузил обе модели → 25-30с. Фоном, не блокирует старт."""
+    import httpx
+
+    await asyncio.sleep(3)  # дать бэкенду/MLX-хосту подняться
+    try:
+        await rag_backend.retrieve("прогрев системы при запуске", dataset_ids=None, top_k=2)
+        logger.info("[WARMUP] эмбеддер/ретрив прогрет")
+    except Exception as exc:
+        logger.warning("[WARMUP] embed: %s", exc)
+    try:
+        mlx = os.getenv("MLX_URL", "http://127.0.0.1:8080")
+        async with httpx.AsyncClient(timeout=120) as client:
+            await client.post(
+                f"{mlx}/v1/rerank",
+                json={"query": "прогрев", "documents": ["прогрев первый документ", "прогрев второй документ"], "top_k": 1},
+            )
+        logger.info("[WARMUP] реранкер прогрет")
+    except Exception as exc:
+        logger.warning("[WARMUP] rerank: %s", exc)
 
 
 async def track_errors(request: Request, call_next):
