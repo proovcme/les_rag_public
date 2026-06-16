@@ -143,3 +143,33 @@ def get_job(job_id: int):
     if not rec:
         raise HTTPException(404, "Задание не найдено")
     return rec
+
+
+@app.post("/api/revit/jobs/{job_id}/accept")
+def accept_job(job_id: int):
+    """Принять успешный результат → карточка каталога."""
+    try:
+        return service.accept_job(job_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+# ── Каталог принятых семейств + learning store ──────────────────────────────
+
+@app.get("/api/catalog")
+def catalog(query: Optional[str] = None):
+    return service.list_catalog(query)
+
+
+@app.get("/api/catalog/{catalog_id}")
+def catalog_item(catalog_id: int):
+    rec = service.get_catalog(catalog_id)
+    if not rec:
+        raise HTTPException(404, "Карточка каталога не найдена")
+    return rec
+
+
+@app.get("/api/learning")
+def learning(spec_id: Optional[int] = None):
+    """Кейсы обучения (known_failures/fixes) — питают генератор."""
+    return service.list_learning(spec_id)

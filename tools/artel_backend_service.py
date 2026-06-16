@@ -72,6 +72,32 @@ def _connect() -> sqlite3.Connection:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS artel_catalog (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            spec_id INTEGER NOT NULL,
+            job_id INTEGER,
+            name TEXT NOT NULL DEFAULT '',
+            category TEXT NOT NULL DEFAULT '',
+            archetype TEXT NOT NULL DEFAULT '',
+            rfa_path TEXT,
+            created_at REAL NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS artel_learning (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            spec_id INTEGER NOT NULL,
+            job_id INTEGER,
+            outcome TEXT NOT NULL DEFAULT '',
+            case_json TEXT NOT NULL DEFAULT '{}',
+            created_at REAL NOT NULL
+        )
+        """
+    )
     return conn
 
 
@@ -192,15 +218,108 @@ def next_job() -> dict[str, Any] | None:
 
 
 def submit_report(job_id: int, report: dict[str, Any]) -> dict[str, Any]:
-    """Плагин шлёт validation/generate report; задание done/failed по статусу отчёта."""
+    """Плагин шлёт validation/generate report; задание done/failed по статусу отчёта.
+
+    Каждый отчёт пишется в learning store: known_failures из упавших операций — топливо
+    петли обучения (W6.3), passed-кейсы — принятый рецепт. 0 LLM."""
     status = JOB_FAILED if str(report.get("status", "")).lower() in ("fail", "failed", "error") else JOB_DONE
     with _connect() as conn:
+        job = _job_row(conn, int(job_id))
         conn.execute(
             "UPDATE artel_jobs SET status=?, report_json=?, updated_at=? WHERE id=?",
             (status, json.dumps(report, ensure_ascii=False), time.time(), int(job_id)),
         )
+        if job:
+            spec_rec = _spec_row(conn, int(job.get("spec_id") or 0))
+            case = _build_learning_case(spec_rec, job.get("plan") or {}, report)
+            conn.execute(
+                "INSERT INTO artel_learning(spec_id, job_id, outcome, case_json, created_at) VALUES (?,?,?,?,?)",
+                (int(job.get("spec_id") or 0), int(job_id), case["outcome"],
+                 json.dumps(case, ensure_ascii=False), time.time()),
+            )
         conn.commit()
         return _job_row(conn, int(job_id))
+
+
+def _build_learning_case(spec_rec: dict[str, Any], plan: dict[str, Any], report: dict[str, Any]) -> dict[str, Any]:
+    """Компактная проекция кейса обучения (artel.family_learning_case.v1). 0 LLM."""
+    results = report.get("results") or []
+    failures = [f"{r.get('op')}/{r.get('target')}: {r.get('message')}"
+                for r in results if str(r.get("status")) == "failed"]
+    deferred = [f"{r.get('op')}/{r.get('target')}"
+                for r in results if str(r.get("status")) in ("deferred", "skipped")]
+    geometry = spec_rec.get("geometry") or {}
+    return {
+        "schema_version": "artel.family_learning_case.v1",
+        "product": "ARTEL",
+        "family_name": spec_rec.get("name", ""),
+        "category": spec_rec.get("category", ""),
+        "archetype": geometry.get("archetype", ""),
+        "outcome": str(report.get("status", "")),
+        "operation_count": report.get("operation_count"),
+        "executed_count": report.get("executed_count"),
+        "known_failures": failures,
+        "deferred": deferred,
+    }
+
+
+# ── Каталог принятых семейств + learning store ──────────────────────────────
+
+def accept_job(job_id: int) -> dict[str, Any]:
+    """Принять успешный результат → карточка каталога (семейство опубликовано)."""
+    with _connect() as conn:
+        job = _job_row(conn, int(job_id))
+        if not job:
+            raise ValueError(f"job {job_id} не найден")
+        if str(job.get("status")) != JOB_DONE:
+            raise ValueError("принять можно только успешно завершённое задание (done)")
+        spec_rec = _spec_row(conn, int(job.get("spec_id") or 0))
+        report = job.get("report") or {}
+        rfa = report.get("autorun", {}).get("saved_rfa") if isinstance(report.get("autorun"), dict) else None
+        geometry = spec_rec.get("geometry") or {}
+        cur = conn.execute(
+            """INSERT INTO artel_catalog(spec_id, job_id, name, category, archetype, rfa_path, created_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (int(job.get("spec_id") or 0), int(job_id), spec_rec.get("name", ""),
+             spec_rec.get("category", ""), geometry.get("archetype", ""), rfa, time.time()),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM artel_catalog WHERE id=?", (int(cur.lastrowid),)).fetchone()
+        return dict(row)
+
+
+def list_catalog(query: str | None = None) -> list[dict[str, Any]]:
+    """Каталог принятых семейств (поиск по имени/категории/архетипу)."""
+    with _connect() as conn:
+        rows = conn.execute("SELECT * FROM artel_catalog ORDER BY id DESC").fetchall()
+    items = [dict(r) for r in rows]
+    needle = (query or "").strip().lower()
+    if needle:
+        items = [it for it in items
+                 if needle in " ".join(str(it.get(k, "")) for k in ("name", "category", "archetype")).lower()]
+    return items
+
+
+def get_catalog(catalog_id: int) -> dict[str, Any]:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM artel_catalog WHERE id=?", (int(catalog_id),)).fetchone()
+    return dict(row) if row else {}
+
+
+def list_learning(spec_id: int | None = None) -> list[dict[str, Any]]:
+    """Кейсы обучения (опц. по спецификации). Источник known_failures/fixes для генератора."""
+    with _connect() as conn:
+        if spec_id is not None:
+            rows = conn.execute(
+                "SELECT * FROM artel_learning WHERE spec_id=? ORDER BY id DESC", (int(spec_id),)).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM artel_learning ORDER BY id DESC").fetchall()
+    out = []
+    for r in rows:
+        item = dict(r)
+        item["case"] = json.loads(item.pop("case_json") or "{}")
+        out.append(item)
+    return out
 
 
 def _job_row(conn: sqlite3.Connection, job_id: int) -> dict[str, Any]:

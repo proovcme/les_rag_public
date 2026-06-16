@@ -84,3 +84,49 @@ def test_list_specs_and_jobs(svc):
     svc.approve_spec(a["id"])
     svc.create_job(a["id"])
     assert len(svc.list_jobs()) == 1
+
+
+def test_report_writes_learning_case_with_failures(svc):
+    rec = svc.extract_spec_from_table(KORF_TABLE, "KORF MPU", "Mechanical Equipment")
+    svc.approve_spec(rec["id"])
+    job = svc.create_job(rec["id"])
+    svc.next_job()
+    svc.submit_report(job["id"], {
+        "status": "fail", "operation_count": 3, "executed_count": 1,
+        "results": [
+            {"op": "add_family_parameter", "target": "Длина", "status": "failed", "message": "already in use"},
+            {"op": "create_extrusion", "target": "body", "status": "deferred", "message": "geom"},
+            {"op": "assign_material", "target": "Корпус", "status": "ok", "message": "ok"},
+        ],
+    })
+    cases = svc.list_learning(rec["id"])
+    assert len(cases) == 1
+    case = cases[0]["case"]
+    assert case["outcome"] == "fail"
+    assert "add_family_parameter/Длина: already in use" in case["known_failures"]
+    assert "create_extrusion/body" in case["deferred"]
+
+
+def test_accept_job_creates_catalog_entry(svc):
+    rec = svc.extract_spec_from_table(KORF_TABLE, "KORF MPU", "Mechanical Equipment")
+    svc.update_spec(rec["id"], geometry={
+        "schema_version": "artel.family_geometry.v1", "archetype": "rect_cabinet",
+        "bindings": {"width": "Длина", "depth": "Глубина", "height": "Высота"}})
+    svc.approve_spec(rec["id"])
+    job = svc.create_job(rec["id"])
+    svc.next_job()
+
+    # нельзя принять незавершённое
+    with pytest.raises(ValueError):
+        svc.accept_job(job["id"])
+
+    svc.submit_report(job["id"], {"status": "pass", "executed_count": 8,
+                                  "autorun": {"saved_rfa": "C:/tmp/mpu.rfa"}})
+    entry = svc.accept_job(job["id"])
+    assert entry["name"] == "KORF MPU"
+    assert entry["archetype"] == "rect_cabinet"
+    assert entry["rfa_path"] == "C:/tmp/mpu.rfa"
+
+    found = svc.list_catalog("korf")
+    assert len(found) == 1 and found[0]["id"] == entry["id"]
+    assert svc.list_catalog("несуществует") == []
