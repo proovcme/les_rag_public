@@ -33,6 +33,28 @@
         }
       }
     },
+    "connectors": {
+      "type": "array",
+      "description": "MEP-присоединения изделия. diameter/width/height — имя параметра (строка/{parameter}) или число (мм).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["domain", "shape"],
+        "properties": {
+          "id": { "type": "string" },
+          "domain": { "type": "string" },
+          "shape": { "type": "string" },
+          "host_face": { "type": "string" },
+          "face": { "type": "string" },
+          "system": { "type": "string" },
+          "system_classification": { "type": "string" },
+          "flow": { "type": "string" },
+          "diameter": { "type": ["string", "number", "object"] },
+          "width": { "type": ["string", "number", "object"] },
+          "height": { "type": ["string", "number", "object"] }
+        }
+      }
+    },
     "source": {
       "type": "object",
       "description": "Provenance from the extraction step (vision). Drives confidence/HITL.",

@@ -238,6 +238,24 @@
               }
             }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "MEP connector on a host face. The C# executor places a Revit ConnectorElement of the given domain/shape, sized by the dimension refs (flexes with the family parameter).",
+          "required": ["op", "id", "domain", "shape", "host_face"],
+          "properties": {
+            "op": { "type": "string", "const": "add_connector" },
+            "id": { "type": "string", "minLength": 1 },
+            "domain": { "type": "string", "enum": ["hvac", "piping", "electrical", "cabletray", "conduit"] },
+            "shape": { "type": "string", "enum": ["round", "rectangular", "oval"] },
+            "host_face": { "type": "string", "minLength": 1 },
+            "system_classification": { "type": "string" },
+            "flow": { "type": "string" },
+            "diameter": { "$ref": "#/$defs/dimension_ref" },
+            "width": { "$ref": "#/$defs/dimension_ref" },
+            "height": { "$ref": "#/$defs/dimension_ref" }
+          }
         }
       ]
     }

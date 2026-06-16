@@ -217,6 +217,98 @@ def _compile_cylinder_revolve(
     }]
 
 
+# MEP-коннекторы: домены и формы присоединений (Revit ConnectorProfileType / Domain).
+_CONN_DOMAINS = {"hvac", "piping", "electrical", "cabletray", "conduit"}
+_CONN_SHAPES = {"round", "rectangular", "oval"}
+
+
+def _resolve_conn_dim(
+    value: Any, declared: set[str], diagnostics: list[dict[str, Any]], conn_id: str, dim: str,
+) -> dict[str, Any] | None:
+    """Размер коннектора: имя параметра (строка/{parameter}) → param ref; число/{constant} → const."""
+    if value is None:
+        diagnostics.append({
+            "severity": "error", "code": "ARF-PLAN-CONN-002",
+            "message": f"Connector '{conn_id}' missing dimension '{dim}'.", "target": conn_id,
+        })
+        return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return _const_ref(float(value))
+    if isinstance(value, dict):
+        if value.get("parameter"):
+            param = str(value["parameter"])
+        elif "constant" in value:
+            return {"constant": float(value["constant"]), "unit": str(value.get("unit", "mm"))}
+        else:
+            param = ""
+    else:
+        param = str(value).strip()
+    if not param:
+        diagnostics.append({
+            "severity": "error", "code": "ARF-PLAN-CONN-002",
+            "message": f"Connector '{conn_id}' dimension '{dim}' is empty.", "target": conn_id,
+        })
+        return None
+    if param not in declared:
+        diagnostics.append({
+            "severity": "error", "code": "ARF-PLAN-CONN-003",
+            "message": f"Connector '{conn_id}' binds '{dim}' to undeclared parameter '{param}'.",
+            "target": param,
+        })
+        return None
+    return _param_ref(param)
+
+
+def _compile_connectors(
+    connectors: list[dict[str, Any]], declared: set[str], diagnostics: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """MEP-присоединения изделия → `add_connector` ops (флексятся по присоед. размеру).
+
+    Машина задаёт размер/тип/грань/систему из техлиста; форму и факт постановки коннектора
+    в Revit делает C#-исполнитель (Revit это умеет, но требует точности — флаг проверки)."""
+    ops: list[dict[str, Any]] = []
+    for index, conn in enumerate(connectors, 1):
+        conn_id = str(conn.get("id") or f"conn_{index}")
+        domain = str(conn.get("domain") or "hvac").strip().lower()
+        if domain not in _CONN_DOMAINS:
+            diagnostics.append({
+                "severity": "warning", "code": "ARF-PLAN-CONN-001",
+                "message": f"Connector '{conn_id}': unknown domain '{domain}', defaulting to hvac.",
+                "target": conn_id,
+            })
+            domain = "hvac"
+        shape = str(conn.get("shape") or "round").strip().lower()
+        if shape not in _CONN_SHAPES:
+            diagnostics.append({
+                "severity": "error", "code": "ARF-PLAN-CONN-004",
+                "message": f"Connector '{conn_id}': unknown shape '{shape}'.", "target": conn_id,
+            })
+            continue
+        op: dict[str, Any] = {
+            "op": "add_connector",
+            "id": conn_id,
+            "domain": domain,
+            "shape": shape,
+            "host_face": str(conn.get("host_face") or conn.get("face") or "top"),
+            "system_classification": str(conn.get("system") or conn.get("system_classification") or ""),
+            "flow": str(conn.get("flow") or ""),
+        }
+        if shape == "round":
+            diameter = _resolve_conn_dim(conn.get("diameter"), declared, diagnostics, conn_id, "diameter")
+            if diameter is None:
+                continue
+            op["diameter"] = diameter
+        else:
+            width = _resolve_conn_dim(conn.get("width"), declared, diagnostics, conn_id, "width")
+            height = _resolve_conn_dim(conn.get("height"), declared, diagnostics, conn_id, "height")
+            if width is None or height is None:
+                continue
+            op["width"] = width
+            op["height"] = height
+        ops.append(op)
+    return ops
+
+
 # Archetype library: key -> {label, dimensions (required), compile}.
 ArchetypeCompiler = Callable[
     [dict[str, str], list[dict[str, Any]], set[str], list[dict[str, Any]], list[dict[str, Any]]],
@@ -282,4 +374,10 @@ def compile_geometry(
     bindings = {str(k): str(v) for k, v in (recipe.get("bindings") or {}).items()}
     features = list(recipe.get("features") or [])
     compiler: ArchetypeCompiler = spec["compile"]
-    return compiler(bindings, features, declared_parameters, diagnostics, manual_work)
+    ops = compiler(bindings, features, declared_parameters, diagnostics, manual_work)
+
+    # MEP-коннекторы — отдельный слой рецепта (любой архетип может их нести).
+    connectors = list(recipe.get("connectors") or [])
+    if connectors:
+        ops = ops + _compile_connectors(connectors, declared_parameters, diagnostics)
+    return ops

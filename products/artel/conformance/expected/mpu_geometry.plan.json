@@ -52,6 +52,14 @@
       "is_instance": false
     },
     {
+      "op": "add_family_parameter",
+      "name": "Присоединение_D",
+      "data_type": "Length",
+      "storage_type": "Double",
+      "group": "Mechanical",
+      "is_instance": false
+    },
+    {
       "op": "create_extrusion",
       "id": "body",
       "role": "body",
@@ -96,6 +104,54 @@
       }
     },
     {
+      "op": "add_connector",
+      "id": "supply_in",
+      "domain": "hvac",
+      "shape": "round",
+      "host_face": "left",
+      "system_classification": "SupplyAir",
+      "flow": "in",
+      "diameter": {
+        "parameter": "Присоединение_D"
+      }
+    },
+    {
+      "op": "add_connector",
+      "id": "supply_out",
+      "domain": "hvac",
+      "shape": "round",
+      "host_face": "top",
+      "system_classification": "SupplyAir",
+      "flow": "out",
+      "diameter": {
+        "parameter": "Присоединение_D"
+      }
+    },
+    {
+      "op": "add_connector",
+      "id": "exhaust_in",
+      "domain": "hvac",
+      "shape": "round",
+      "host_face": "right",
+      "system_classification": "ExhaustAir",
+      "flow": "in",
+      "diameter": {
+        "parameter": "Присоединение_D"
+      }
+    },
+    {
+      "op": "add_connector",
+      "id": "exhaust_out",
+      "domain": "hvac",
+      "shape": "round",
+      "host_face": "back",
+      "system_classification": "ExhaustAir",
+      "flow": "out",
+      "diameter": {
+        "parameter": "Присоединение_D"
+      }
+    },
+    {
       "op": "create_type",
       "name": "MPU 400 V RG",
       "values": [
@@ -110,6 +166,10 @@
         {
           "parameter": "Высота",
           "value": 975
+        },
+        {
+          "parameter": "Присоединение_D",
+          "value": 200
         }
       ]
     },
@@ -128,6 +188,10 @@
         {
           "parameter": "Высота",
           "value": 1100
+        },
+        {
+          "parameter": "Присоединение_D",
+          "value": 200
         }
       ]
     },
@@ -146,6 +210,10 @@
         {
           "parameter": "Высота",
           "value": 1115
+        },
+        {
+          "parameter": "Присоединение_D",
+          "value": 250
         }
       ]
     },
@@ -164,6 +232,10 @@
         {
           "parameter": "Высота",
           "value": 1165
+        },
+        {
+          "parameter": "Присоединение_D",
+          "value": 315
         }
       ]
     },
@@ -182,6 +254,10 @@
         {
           "parameter": "Высота",
           "value": 1255
+        },
+        {
+          "parameter": "Присоединение_D",
+          "value": 500
         }
       ]
     },
@@ -200,6 +276,10 @@
         {
           "parameter": "Высота",
           "value": 1355
+        },
+        {
+          "parameter": "Присоединение_D",
+          "value": 500
         }
       ]
     },
@@ -218,6 +298,10 @@
         {
           "parameter": "Высота",
           "value": 1455
+        },
+        {
+          "parameter": "Присоединение_D",
+          "value": 600
         }
       ]
     },

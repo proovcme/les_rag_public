@@ -203,6 +203,67 @@ def test_new_archetypes_are_in_the_library():
     assert {"rect_cabinet", "panel", "bar_profile", "cylinder_revolve"} <= set(geometry.ARCHETYPES)
 
 
+def test_connectors_round_and_rectangular_compile():
+    spec = _spec_with_params(["Диаметр присоединения"])
+    recipe = {
+        "schema_version": geometry.GEOMETRY_SCHEMA_VERSION, "archetype": "cylinder_revolve",
+        "bindings": {"diameter": "Диаметр присоединения", "height": "Диаметр присоединения"},
+        "connectors": [
+            {"id": "supply_in", "domain": "hvac", "shape": "round",
+             "diameter": "Диаметр присоединения", "host_face": "front", "system": "SupplyAir", "flow": "in"},
+            {"id": "exhaust_out", "domain": "hvac", "shape": "rectangular",
+             "width": 500, "height": 250, "host_face": "back", "system": "ExhaustAir", "flow": "out"},
+        ],
+    }
+    plan = compiler.compile_action_plan(spec, _fop_index(), recipe)
+    assert plan["status"] == "ok"
+    conns = [op for op in plan["operations"] if op.get("op") == "add_connector"]
+    assert [c["id"] for c in conns] == ["supply_in", "exhaust_out"]
+    assert conns[0]["diameter"] == {"parameter": "Диаметр присоединения"}
+    assert conns[0]["system_classification"] == "SupplyAir"
+    assert conns[1]["width"] == {"constant": 500.0, "unit": "mm"}
+    assert conns[1]["height"] == {"constant": 250.0, "unit": "mm"}
+    compiler.validate_plan(plan)
+
+
+def test_connector_undeclared_parameter_is_error():
+    spec = _spec_with_params(["Высота"])
+    recipe = {
+        "schema_version": geometry.GEOMETRY_SCHEMA_VERSION, "archetype": "cylinder_revolve",
+        "bindings": {"diameter": "Высота", "height": "Высота"},
+        "connectors": [{"domain": "hvac", "shape": "round", "diameter": "НетТакого", "host_face": "top"}],
+    }
+    plan = compiler.compile_action_plan(spec, _fop_index(), recipe)
+    assert plan["status"] == "error"
+    assert any(d["code"] == "ARF-PLAN-CONN-003" for d in plan["diagnostics"])
+
+
+def test_connector_unknown_shape_is_error():
+    spec = _spec_with_params(["Высота"])
+    recipe = {
+        "schema_version": geometry.GEOMETRY_SCHEMA_VERSION, "archetype": "cylinder_revolve",
+        "bindings": {"diameter": "Высота", "height": "Высота"},
+        "connectors": [{"domain": "hvac", "shape": "triangle", "diameter": 100, "host_face": "top"}],
+    }
+    plan = compiler.compile_action_plan(spec, _fop_index(), recipe)
+    assert plan["status"] == "error"
+    assert any(d["code"] == "ARF-PLAN-CONN-004" for d in plan["diagnostics"])
+
+
+def test_connector_unknown_domain_warns_defaults_hvac():
+    spec = _spec_with_params(["Высота"])
+    recipe = {
+        "schema_version": geometry.GEOMETRY_SCHEMA_VERSION, "archetype": "cylinder_revolve",
+        "bindings": {"diameter": "Высота", "height": "Высота"},
+        "connectors": [{"domain": "magic", "shape": "round", "diameter": 200, "host_face": "top"}],
+    }
+    plan = compiler.compile_action_plan(spec, _fop_index(), recipe)
+    assert plan["status"] == "ok"  # warning, not blocking
+    assert any(d["code"] == "ARF-PLAN-CONN-001" for d in plan["diagnostics"])
+    conn = next(op for op in plan["operations"] if op.get("op") == "add_connector")
+    assert conn["domain"] == "hvac"
+
+
 def test_no_recipe_keeps_full_manual_geometry():
     # Backward-compat: without a recipe, geometry stays manual.
     plan = compiler.compile_action_plan(SHKAF_SPEC, _fop_index())
