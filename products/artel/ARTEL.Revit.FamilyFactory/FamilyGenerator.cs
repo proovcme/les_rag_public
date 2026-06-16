@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
@@ -105,6 +106,17 @@ internal static class FamilyPlanExecutor
             {
                 familyManager.CurrentType = firstType;
             }
+            // Идемпотентность геометрии: снести ранее сгенерированные тела, чтобы повторный
+            // запуск не множил солиды (иначе при каждом «Сгенерировать» геометрия стопкой).
+            if (operations.Any(o => Str(o, "op") == "create_extrusion"))
+            {
+                var priorSolids = new FilteredElementCollector(document).OfClass(typeof(GenericForm)).ToElementIds();
+                if (priorSolids.Count > 0)
+                {
+                    document.Delete(priorSolids);
+                    results.Add(Record("clear_geometry", "", "ok", $"Снесено ранее сгенерированных тел: {priorSolids.Count}."));
+                }
+            }
             // Контекст корпуса (halfW, halfD, height в футах) — фичи (дверь/полки/задняя
             // стенка) размещаются относительно него. Корпус компилятор эмитит первым.
             var body = new double[] { 0, 0, 0 };
@@ -122,11 +134,12 @@ internal static class FamilyPlanExecutor
             {
                 transaction.RollBack();
             }
-            results.Add(Record("transaction", "", "failed", $"{error.GetType().Name}: {error.Message}"));
+            results.Add(Record("transaction", "", "failed", $"{error.GetType().Name}: {error.Message}", error));
         }
 
         var executed = results.Count(r => Convert.ToString(r["status"]) == "ok");
         var failed = results.Count(r => Convert.ToString(r["status"]) == "failed");
+        try { WriteLog(Str(plan, "plan_id"), results, failed); } catch { /* лог best-effort */ }
         return new Dictionary<string, object?>
         {
             ["schema"] = "artel.revit_family_generate_report.v1",
@@ -140,6 +153,25 @@ internal static class FamilyPlanExecutor
         };
     }
 
+    // Человекочитаемый rolling-лог рядом с отчётами (%APPDATA%\ARTEL\family_factory\artel_generate.log).
+    // Со стектрейсами по упавшим операциям — чтобы диагностировать, не дёргая оператора.
+    private static void WriteLog(string planId, List<Dictionary<string, object?>> results, int failed)
+    {
+        var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ARTEL", "family_factory");
+        Directory.CreateDirectory(dir);
+        var sb = new StringBuilder();
+        sb.AppendLine($"[{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss}] plan={planId} {(failed > 0 ? "FAIL" : "PASS")} ops={results.Count} failed={failed}");
+        foreach (var r in results)
+        {
+            sb.AppendLine($"  {Convert.ToString(r.GetValueOrDefault("status")),-8} {Convert.ToString(r.GetValueOrDefault("op"))}/{Convert.ToString(r.GetValueOrDefault("target"))}: {Convert.ToString(r.GetValueOrDefault("message"))}");
+            if (r.TryGetValue("detail", out var detail) && detail != null)
+            {
+                sb.AppendLine("      " + Convert.ToString(detail)?.Replace("\n", "\n      "));
+            }
+        }
+        File.AppendAllText(Path.Combine(dir, "artel_generate.log"), sb.ToString() + "\n", Encoding.UTF8);
+    }
+
     private static Dictionary<string, object?> RunParameter(
         JsonElement op,
         FamilyManager familyManager,
@@ -150,9 +182,20 @@ internal static class FamilyPlanExecutor
         {
             var groupType = GroupTypeFor(Str(op, "group"));
             var isInstance = Bool(op, "is_instance");
+            var existing = familyManager.get_Parameter(name);
 
             if (Str(op, "op") == "add_shared_parameter")
             {
+                // Идемпотентно + параметр обязан быть ОБЩИМ: уже shared — пропускаем;
+                // существует как НЕ shared (отсюда «параметры не общие») — снимаем и пересоздаём.
+                if (existing != null)
+                {
+                    if (existing.IsShared)
+                    {
+                        return Record("add_shared_parameter", name, "ok", "Уже есть как shared (идемпотентно).");
+                    }
+                    familyManager.RemoveParameter(existing);
+                }
                 var guid = Str(op, "guid");
                 var external = EnsureSharedDefinition(application, name, guid, Str(op, "data_type"), out var source);
                 if (external is null)
@@ -162,16 +205,21 @@ internal static class FamilyPlanExecutor
                 }
                 familyManager.AddParameter(external, groupType, isInstance);
                 return Record("add_shared_parameter", name, "ok",
-                    $"Shared-параметр добавлен (GUID {external.GUID}, источник: {source}).");
+                    $"Shared-параметр {(existing != null ? "пересоздан как общий" : "добавлен")} (GUID {external.GUID}, источник: {source}).");
             }
 
+            // family parameter — идемпотентно
+            if (existing != null)
+            {
+                return Record("add_family_parameter", name, "ok", "Уже есть (идемпотентно).");
+            }
             var specType = SpecTypeFor(Str(op, "data_type"));
             familyManager.AddParameter(name, groupType, specType, isInstance);
             return Record("add_family_parameter", name, "ok", $"Family parameter added ({Str(op, "data_type")}).");
         }
         catch (Exception error)
         {
-            return Record(Str(op, "op"), name, "failed", $"{error.GetType().Name}: {error.Message}");
+            return Record(Str(op, "op"), name, "failed", $"{error.GetType().Name}: {error.Message}", error);
         }
     }
 
@@ -190,7 +238,7 @@ internal static class FamilyPlanExecutor
         }
         catch (Exception error)
         {
-            return Record("set_formula", name, "failed", $"{error.GetType().Name}: {error.Message}");
+            return Record("set_formula", name, "failed", $"{error.GetType().Name}: {error.Message}", error);
         }
     }
 
@@ -199,7 +247,16 @@ internal static class FamilyPlanExecutor
         var typeName = Str(op, "name");
         try
         {
-            familyManager.NewType(typeName);
+            // Идемпотентно: тип уже есть — выбираем и обновляем значения; иначе создаём.
+            var existing = familyManager.Types.Cast<FamilyType>().FirstOrDefault(t => t.Name == typeName);
+            if (existing != null)
+            {
+                familyManager.CurrentType = existing;
+            }
+            else
+            {
+                familyManager.NewType(typeName);
+            }
             foreach (var value in Items(Prop(op, "values")))
             {
                 var parameter = familyManager.get_Parameter(Str(value, "parameter"));
@@ -209,11 +266,12 @@ internal static class FamilyPlanExecutor
                 }
                 SetParameterValue(familyManager, parameter, Prop(value, "value"));
             }
-            return Record("create_type", typeName, "ok", "Type created and values set.");
+            return Record("create_type", typeName, "ok",
+                existing != null ? "Тип обновлён (идемпотентно)." : "Тип создан, значения заданы.");
         }
         catch (Exception error)
         {
-            return Record("create_type", typeName, "failed", $"{error.GetType().Name}: {error.Message}");
+            return Record("create_type", typeName, "failed", $"{error.GetType().Name}: {error.Message}", error);
         }
     }
 
@@ -234,7 +292,7 @@ internal static class FamilyPlanExecutor
         }
         catch (Exception error)
         {
-            return Record("assign_material", name, "failed", $"{error.GetType().Name}: {error.Message}");
+            return Record("assign_material", name, "failed", $"{error.GetType().Name}: {error.Message}", error);
         }
     }
 
@@ -347,7 +405,7 @@ internal static class FamilyPlanExecutor
         }
         catch (Exception error)
         {
-            return Record("create_extrusion", id, "failed", $"{error.GetType().Name}: {error.Message}");
+            return Record("create_extrusion", id, "failed", $"{error.GetType().Name}: {error.Message}", error);
         }
     }
 
@@ -577,15 +635,20 @@ internal static class FamilyPlanExecutor
         }
     }
 
-    private static Dictionary<string, object?> Record(string op, string target, string status, string message)
+    private static Dictionary<string, object?> Record(string op, string target, string status, string message, Exception? error = null)
     {
-        return new Dictionary<string, object?>
+        var rec = new Dictionary<string, object?>
         {
             ["op"] = op,
             ["target"] = target,
             ["status"] = status,
             ["message"] = message
         };
+        if (error != null)
+        {
+            rec["detail"] = error.ToString();  // полный стектрейс — в лог
+        }
+        return rec;
     }
 
     private static JsonElement Prop(JsonElement element, string name)
