@@ -1314,7 +1314,11 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     else:
         state.chat_metrics["retrieval_weak"] = state.chat_metrics.get("retrieval_weak", 0) + 1
 
-    if retrieval.quality.status == "needs_clarification":
+    # «Заставь отвечать»: не хард-режем разнородность, если есть сильный сигнал —
+    # пользователь задал датасет (уже сузил) ИЛИ топ-совпадение хорошее (есть, что
+    # отвечать). Гейт остаётся только для реально широких безскоповых слабых запросов.
+    strong_signal = bool(effective_dataset_filter) or (retrieval.quality.top_score >= 0.5)
+    if retrieval.quality.status == "needs_clarification" and not strong_signal:
         return {
             "answer": "Найденные источники слишком разнородны. Уточните область или датасет, чтобы я не смешал требования."
             + (f"\n\n{memory_block}" if memory_block else ""),
