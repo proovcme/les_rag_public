@@ -13,6 +13,7 @@
     <nav>
       <button class="tab active" data-tab="specs">Спецификации</button>
       <button class="tab" data-tab="jobs">Задания</button>
+      <button class="tab" data-tab="catalog">Каталог</button>
       <button class="tab" data-tab="settings">Настройки</button>
     </nav>
     <div class="status" id="backend-status">бэкенд…</div>
@@ -38,6 +39,15 @@
         <ul id="job-list" class="list"></ul>
         <div id="job-detail" class="detail"><p class="muted">Выберите задание слева.</p></div>
       </div>
+    </section>
+
+    <!-- Каталог -->
+    <section id="tab-catalog" class="tabpane">
+      <div class="toolbar">
+        <input id="catalog-search" type="text" placeholder="Поиск по имени / категории / архетипу" />
+        <button id="btn-refresh-catalog">Обновить</button>
+      </div>
+      <ul id="catalog-list" class="list"></ul>
     </section>
 
     <!-- Настройки -->

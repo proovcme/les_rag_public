@@ -55,9 +55,14 @@ button:disabled { opacity: 0.5; cursor: default; }
 
 .badge { font-size: 11px; padding: 2px 8px; border-radius: 20px; margin-left: 8px;
   background: var(--bg); color: var(--muted); }
-.badge.approved, .badge.done { background: #e1f5ee; color: var(--teal-d); }
-.badge.pending, .badge.running { background: #faeeda; color: #854f0b; }
+.badge.approved, .badge.done, .badge.ok { background: #e1f5ee; color: var(--teal-d); }
+.badge.pending, .badge.running, .badge.deferred, .badge.skipped { background: #faeeda; color: #854f0b; }
 .badge.failed { background: #fcebeb; color: #a32d2d; }
+
+table.results { border-collapse: collapse; width: 100%; margin-top: 6px; }
+table.results th, table.results td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); font-size: 12px; vertical-align: top; }
+table.results tr.failed { background: #fcebeb; }
+table.results tr.deferred, table.results tr.skipped { background: #faeeda40; }
 
 .muted { color: var(--muted); }
 .off { color: #a32d2d; }

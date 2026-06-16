@@ -43,6 +43,7 @@ document.querySelectorAll(".tab").forEach((btn) => {
     document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
     if (btn.dataset.tab === "specs") loadSpecs();
     if (btn.dataset.tab === "jobs") loadJobs();
+    if (btn.dataset.tab === "catalog") loadCatalog();
   });
 });
 
@@ -144,16 +145,68 @@ async function loadJobs() {
   });
 }
 
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+
 async function openJob(id) {
   const j = await api("/api/revit/jobs/" + id);
-  const report = j.report
-    ? `<pre>${JSON.stringify(j.report, null, 2)}</pre>`
-    : "<p class='muted'>Отчёта пока нет — ждём Revit.</p>";
-  document.getElementById("job-detail").innerHTML =
-    `<h2>Задание #${j.id}</h2><div class="muted">статус: ${j.status}</div><h3>Отчёт</h3>${report}`;
+  const detail = document.getElementById("job-detail");
+  let report;
+  if (!j.report) {
+    report = "<p class='muted'>Отчёта пока нет — ждём Revit.</p>";
+  } else {
+    const r = j.report;
+    const rows = (r.results || [])
+      .map((o) => `<tr class="${o.status}"><td><span class="badge ${o.status}">${o.status}</span></td>`
+        + `<td>${esc(o.op)}${o.target ? " / " + esc(o.target) : ""}</td><td>${esc(o.message)}</td></tr>`)
+      .join("");
+    report = `<div class="muted">операций: ${r.operation_count ?? "?"} · ok: ${r.executed_count ?? "?"} · фейлов: ${r.failed_count ?? 0}</div>`
+      + (rows ? `<table class="results"><tr><th></th><th>Операция</th><th>Сообщение</th></tr>${rows}</table>`
+              : `<pre>${esc(JSON.stringify(r, null, 2))}</pre>`);
+  }
+  const canAccept = j.status === "done";
+  detail.innerHTML =
+    `<h2>Задание #${j.id}</h2><div class="muted">статус: ${j.status}</div>`
+    + (canAccept ? `<div class="actions"><button id="btn-accept" class="primary">Принять в каталог</button></div>` : "")
+    + `<h3>Отчёт</h3>${report}<div id="job-msg" class="muted"></div>`;
+
+  if (canAccept) {
+    document.getElementById("btn-accept").onclick = async () => {
+      try {
+        const c = await api("/api/revit/jobs/" + id + "/accept", { method: "POST" });
+        document.getElementById("job-msg").textContent = `Принято в каталог: ${c.name} (#${c.id}).`;
+      } catch (e) {
+        document.getElementById("job-msg").textContent = "Ошибка: " + e.message;
+      }
+    };
+  }
+}
+
+// ── Каталог ──────────────────────────────────────────────────────
+async function loadCatalog() {
+  const list = document.getElementById("catalog-list");
+  const query = (document.getElementById("catalog-search").value || "").trim();
+  list.innerHTML = "";
+  try {
+    const items = await api("/api/catalog" + (query ? "?query=" + encodeURIComponent(query) : ""));
+    if (!items.length) { list.innerHTML = "<li class='muted'>Каталог пуст. Принимайте успешные задания.</li>"; return; }
+    items.forEach((c) => {
+      list.appendChild(el(
+        `<li><b>${esc(c.name) || "(без имени)"}</b><span class="badge">${esc(c.archetype)}</span>`
+        + `<div class="sub">${esc(c.category)}${c.rfa_path ? " · " + esc(c.rfa_path) : ""}</div></li>`));
+    });
+  } catch (e) {
+    list.innerHTML = `<li class='off'>Ошибка: ${esc(e.message)}</li>`;
+  }
 }
 
 document.getElementById("btn-refresh-jobs").onclick = loadJobs;
+document.getElementById("btn-refresh-catalog").onclick = loadCatalog;
+document.getElementById("catalog-search").addEventListener("input", () => {
+  clearTimeout(window._catTimer);
+  window._catTimer = setTimeout(loadCatalog, 250);
+});
 
 // ── Настройки ────────────────────────────────────────────────────
 const urlInput = document.getElementById("backend-url");
