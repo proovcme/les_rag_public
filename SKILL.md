@@ -123,6 +123,16 @@ curl -fsS -X POST http://127.0.0.1:8050/api/bor/<dataset_id>/generate | python3 
 # preview: GET /api/bor/<dataset_id>/preview?limit=50 · download: GET /api/bor/<dataset_id>/download
 ```
 
+Index an external folder **by reference** (in-place, sources NOT copied; path must be inside `LES_EXTERNAL_SOURCE_ROOTS`):
+
+```bash
+curl -fsS -X POST http://127.0.0.1:8050/api/rag/index-external -H 'content-type: application/json' \
+  -d '{"path":"/abs/external/folder","dataset_id":"<id>","parse":true}' | python3 -m json.tool
+# only Qdrant/Parquet/meta land in LES; originals stay external (copied_to_storage=false)
+```
+
+Сводка/сумма по табличному датасету (сметы/ВОР/КС-2) — **детерминированная SUM по полному Parquet, не LLM** (ADR-11). Через чат с `dataset_filter=TABLE_SMETA`, напр. «суммарный метраж кабеля 3х1,5 по всем ведомостям» → `route=table`, ответ «полная выгрузка Parquet». Поле выбирается по запросу (метраж/объём → qty, стоимость → amount); `.xls` читаются через `xlrd`+конвертацию в `parquet_writer`. Типизированный ретрив норм — за флагом `LES_TYPED_RETRIEVAL` (LLM-роутер по каталогу + кэш `doc_router_cache`).
+
 Preprocess heavy PDFs before indexing (clean + split >40MB; originals go to `_originals/`, idempotent via state file):
 
 ```bash
@@ -135,7 +145,8 @@ Switch the chat LLM (provider/model) — **no restart needed**, applies per-requ
 
 - GUI: `http://127.0.0.1:8051/les/classic` → шапка **⚙** (диалог настроек) → **LLM Provider** → выбрать mlx / ollama / openrouter / openai, указать модель → **💾 Сохранить**. Строка «СЕЙЧАС ОТВЕЧАЕТ» показывает активный провайдер/модель; валидация Т.О.С.К.А. работает только на MLX, остальные дают UNVALIDATED. (Там же — Mail/IMAP.)
 - CLI: `curl -X POST http://127.0.0.1:8050/api/settings -H 'Content-Type: application/json' -d '{"llm_provider":"ollama","ollama_model":"gemma4:12b"}'` (персистится в .env runtime-клона). Вернуться: `-d '{"llm_provider":"mlx"}'`.
-- Local models live in Ollama (`ollama list`); Gemma 4 12B = `gemma4:12b`. Cloud = openrouter/openai + API key (поля в той же панели).
+- Локальная RAG-модель — `MLX_MODEL=mlx-community/Qwen3.5-9B-MLX-4bit` (4B залипал в повторы; OptiQ-квант медленный + скрытый `<think>`). Gemma 4 12B в Ollama (`gemma4:12b`) — vision/грязный вход.
+- Облако: **из РФ Cloudflare и OpenRouter режутся** → используем OpenAI-совместимый `proxyapi.ru` (`OPENAI_BASE_URL=https://openai.api.proxyapi.ru/v1`, `OPENAI_MODEL=gpt-4.1`, `LES_LLM_PROVIDER=openai`). `LES_CLOUD_MODEL_TIMEOUT_SEC=8` чтобы мёртвое облако не висело.
 
 Task tracker from chat (deterministic regex+SQL, no LLM, works even under memory-guard): «поставь задачу …» / «что по задачам?» / «задача N готова». API: `POST/GET /api/tasks`, `PATCH /api/tasks/{id}`.
 
