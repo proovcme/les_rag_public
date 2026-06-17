@@ -279,6 +279,22 @@ def _find_header_row(ws, max_scan: int = 20) -> int:
     return best_row
 
 
+def _xls_to_xlsx_tmp(xls_path: str) -> str:
+    """openpyxl не читает старый .xls — конвертируем в .xlsx через pandas/xlrd
+    (вычисленные значения, без формул) и дальше используем штатный openpyxl-конвейер."""
+    import tempfile
+    import re as _re
+    import pandas as pd
+    sheets = pd.read_excel(xls_path, sheet_name=None, header=None)  # engine=xlrd для .xls
+    tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
+    tmp.close()
+    with pd.ExcelWriter(tmp.name, engine="openpyxl") as writer:
+        for idx, (name, df) in enumerate(sheets.items()):
+            safe = _re.sub(r"[\[\]:*?/\\]", "_", str(name))[:31] or f"s{idx}"
+            df.to_excel(writer, sheet_name=safe, header=False, index=False)
+    return tmp.name
+
+
 def read_xlsx_sheets(file_path: str) -> list:
     """
     Читает XLSX и возвращает list[dict] — один элемент на лист:
@@ -288,6 +304,9 @@ def read_xlsx_sheets(file_path: str) -> list:
         import openpyxl
     except ImportError:
         raise RuntimeError("openpyxl не установлен: pip install openpyxl --break-system-packages")
+
+    if str(file_path).lower().endswith(".xls"):
+        file_path = _xls_to_xlsx_tmp(file_path)
 
     wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
     sheets = []
