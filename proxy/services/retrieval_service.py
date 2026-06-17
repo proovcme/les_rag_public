@@ -76,10 +76,14 @@ def classify_query(question: str) -> QueryRoute:
         return QueryRoute(kot.dataset_filter, expanded, _kot_reason_alias(kot.dataset_filter, kot.reason))
 
     q = question.casefold()
+    # Нормализуем разделители, чтобы ловить ПП87 в любом написании: «пп87», «пп 87»,
+    # «пп-87», «пп. 87», «пп №87». Иначе «пп87» слитно промахивался мимо «пп 87» и
+    # каноничный перечень разделов (через _expand_gkrf_query) не подставлялся.
+    q_compact = q.replace(" ", "").replace("-", "").replace(".", "").replace("№", "")
     if (
         "постановлени" in q
-        or "пп 87" in q
-        or "постановление 87" in q
+        or "пп87" in q_compact
+        or "постановление87" in q_compact
         or "градостроительн" in q
         or "гкрф" in q
     ):
@@ -364,10 +368,24 @@ async def retrieve_chat_chunks(
     has_refs = bool(extract_norm_refs(question) or extract_norm_refs(retrieval_query))
     pool_k = max(36, merged_top_k * 2) if has_refs or is_structured or is_technical_or_legal else RERANK_POOL_K
     vector_top_k = pool_k if return_trace and lexical_enabled() else merged_top_k
-    vector_chunks = await rag_backend.retrieve(retrieval_query, dataset_ids=dataset_ids, top_k=vector_top_k)
+    # ADR-12 стадия-1: для технических/правовых классов сначала маршрутизируем запрос
+    # к документам-узлам (LLM-роутер по каталогу, см. doc_router), затем стадия-2 ищет
+    # ТОЛЬКО в них. За флагом LES_TYPED_RETRIEVAL; пусто/сбой → плоский поиск.
+    doc_filter = None
+    if os.getenv("LES_TYPED_RETRIEVAL", "false").strip().lower() == "true" and is_technical_or_legal:
+        try:
+            from proxy.services.doc_router import route_documents
+            doc_filter = await route_documents(
+                question=question, expanded_query=retrieval_query,
+                dataset_ids=dataset_ids, rag_backend=rag_backend,
+            ) or None
+        except Exception as _route_err:  # noqa: BLE001 — роутинг best-effort
+            logger.warning("[DOC_ROUTER] fallback на плоский поиск: %s", _route_err)
+            doc_filter = None
+    vector_chunks = await rag_backend.retrieve(retrieval_query, dataset_ids=dataset_ids, top_k=vector_top_k, doc_filter=doc_filter)
     # W2.4: BGE-M3 learned-sparse рядом с dense (Qdrant-native гибрид). За флагом
     # RAG_SPARSE_ENABLED; при сбое/пустом sparse — молча падаем на dense+FTS.
-    sparse_chunks = await _retrieve_sparse_safe(rag_backend, retrieval_query, dataset_ids, pool_k, logger)
+    sparse_chunks = await _retrieve_sparse_safe(rag_backend, retrieval_query, dataset_ids, pool_k, logger, doc_filter=doc_filter)
     chunks, trace = _hybrid_merge(question, vector_chunks, dataset_ids, rag_backend, logger, retrieval_query=retrieval_query, pool_k=pool_k, limit=merged_top_k, sparse_chunks=sparse_chunks)
     quality = evaluate_retrieval_quality(question=question, chunks=chunks, trace=trace, kot=kot)
 
@@ -432,11 +450,11 @@ def sparse_enabled() -> bool:
     return os.getenv("RAG_SPARSE_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
-async def _retrieve_sparse_safe(rag_backend, query: str, dataset_ids, pool_k: int, logger: logging.Logger) -> list[Any]:
+async def _retrieve_sparse_safe(rag_backend, query: str, dataset_ids, pool_k: int, logger: logging.Logger, doc_filter=None) -> list[Any]:
     if not sparse_enabled() or not hasattr(rag_backend, "retrieve_sparse"):
         return []
     try:
-        return await rag_backend.retrieve_sparse(query, dataset_ids=dataset_ids, top_k=pool_k)
+        return await rag_backend.retrieve_sparse(query, dataset_ids=dataset_ids, top_k=pool_k, doc_filter=doc_filter)
     except Exception as error:
         logger.warning("[HYBRID] sparse fallback: %s", error)
         return []

@@ -1667,6 +1667,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         query:       str,
         dataset_ids: Optional[List[str]] = None,
         top_k:       int = 5,
+        doc_filter:  Optional[List[str]] = None,
     ) -> List[Chunk]:
         await self._ensure_collection()
 
@@ -1674,14 +1675,14 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         vecs = await self.embed.encode_async([query])
         query_vec = vecs[0]
 
-        query_filter = None
+        # ADR-12 стадия-2: doc_filter сужает поиск до выбранных документов-узлов
+        # (file_name), а не по всему датасету. Пусто → прежнее поведение (плоско по датасету).
+        must = []
         if dataset_ids:
-            query_filter = models.Filter(must=[
-                models.FieldCondition(
-                    key="dataset_id",
-                    match=models.MatchAny(any=dataset_ids),
-                )
-            ])
+            must.append(models.FieldCondition(key="dataset_id", match=models.MatchAny(any=dataset_ids)))
+        if doc_filter:
+            must.append(models.FieldCondition(key="file_name", match=models.MatchAny(any=doc_filter)))
+        query_filter = models.Filter(must=must) if must else None
 
         results = await self.aclient.query_points(
             collection_name=self.collection_name,
@@ -1728,6 +1729,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         query:       str,
         dataset_ids: Optional[List[str]] = None,
         top_k:       int = 5,
+        doc_filter:  Optional[List[str]] = None,
     ) -> List[Chunk]:
         """W2.4: поиск по BGE-M3 learned-sparse вектору (Qdrant-native), параллельно dense.
 
@@ -1743,11 +1745,12 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         if not sv:
             return []
 
-        query_filter = None
+        must = []
         if dataset_ids:
-            query_filter = models.Filter(must=[
-                models.FieldCondition(key="dataset_id", match=models.MatchAny(any=dataset_ids))
-            ])
+            must.append(models.FieldCondition(key="dataset_id", match=models.MatchAny(any=dataset_ids)))
+        if doc_filter:
+            must.append(models.FieldCondition(key="file_name", match=models.MatchAny(any=doc_filter)))
+        query_filter = models.Filter(must=must) if must else None
 
         results = await self.aclient.query_points(
             collection_name=sparse_collection,
