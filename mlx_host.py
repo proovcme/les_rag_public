@@ -130,8 +130,14 @@ MLX_HOST_BIND = os.getenv("MLX_HOST_BIND", "127.0.0.1")
 RAM_WARN_FREE_GB = _env_float("MLX_RAM_WARN_FREE_GB", 8.0)
 RAM_KILL_FREE_GB = _env_float("MLX_RAM_KILL_FREE_GB", 6.0)
 EMBED_TTL_SEC = _env_int("MLX_EMBED_TTL_SEC", 300)
+# TTL основной LLM. Дефолт 300с выгружал модель после 5 мин простоя → следующий запрос
+# платил ХОЛОДНУЮ загрузку (~12 ток/с эффективно + время загрузки, выбросы 100-190с).
+# Один оператор на M4/24GB — держим тёплой (MLX_MAIN_TTL_SEC велик); тёплый декод ~27 ток/с.
+# ВАЖНО: MLX_VAL_MODEL не должна равняться MLX_MODEL — иначе _get_engine() маршрутит все
+# chat-запросы на val-движок (ttl 120) вместо main, и модель циклически выгружается.
+MAIN_TTL_SEC = _env_int("MLX_MAIN_TTL_SEC", 300)
 
-main_engine = MLXMemoryManager(model_path=MAIN_MODEL, ttl_seconds=300)
+main_engine = MLXMemoryManager(model_path=MAIN_MODEL, ttl_seconds=MAIN_TTL_SEC)
 val_engine  = MLXMemoryManager(model_path=VAL_MODEL,  ttl_seconds=120)
 _llm_policy_lock: asyncio.Lock | None = None
 _llm_policy_lock_loop: asyncio.AbstractEventLoop | None = None

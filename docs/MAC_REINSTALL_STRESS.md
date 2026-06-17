@@ -239,3 +239,49 @@ curl -fsS -X POST http://127.0.0.1:8050/api/search \
   -d '{"query":"smoke","top_k":1,"include_trace":true}'
 # HTTP 200, elapsed 0.045s, count=0, retrieval_trace.mode=empty
 ```
+
+## 9. 2026-06-17 Стабилизация латентности и валидации (M4/24GB)
+
+Свежий перенесённый клон работал, но на **медленных fallback-путях** (нет предсобранных
+Core ML артефактов) и с **неоптимальным квантом**. Симптом — ответы 89-190с, таймауты. Все
+причины — конфиг/артефакты переноса, не дефекты архитектуры.
+
+**Корень латентности — холодные перезагрузки модели, НЕ медленный декод.** `mlx_host._get_engine()`
+отдаёт val-движок (TTL 120с), если `model_name == VAL_MODEL`. Если `MLX_VAL_MODEL == MLX_MODEL`,
+все chat-запросы уходят на val-движок → модель выгружается каждые ~2 мин → первый запрос после
+паузы платит холодную загрузку (100-190с). Тёплый декод в хосте ~27 t/s (норма; standalone ~36).
+
+**Что собрано/изменено в коде (в репо):**
+- `mlx_host.py`: `MLX_MAIN_TTL_SEC` (env) для TTL основной LLM.
+- `proxy/app.py`: прогрев основной LLM на старте (`_warmup_models`) — убирает разовый холодный старт.
+- `proxy/routers/chat.py`: контекст ∝ направлению генерации (облако 32K / локаль 12K); валидация
+  облачных ответов через локальный coreml (`local_val_url`); fail-open для coreml-HALLUCINATION.
+
+**Артефакты Core ML (НЕ в гите, `artifacts/coreml/`, собрать на новом клоне):**
+```bash
+# валидатор ТОСКА (MiniLM-NLI) — 12с → 0.1с
+.venv/bin/python3 tools/coreml_validator_probe.py convert \
+  --model-id MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli \
+  --output artifacts/coreml/validator_minilm_l6_b1_s512.mlpackage \
+  --seq-len 512 --batch-size 1 --attention-mask-rank 4 --compute-precision float16
+# эмбеддер (убирает sentence-transformers fallback)
+.venv/bin/python3 tools/coreml_embedding_probe.py convert-qwen \
+  --model-id Qwen/Qwen3-Embedding-0.6B \
+  --output artifacts/coreml/qwen3_embedding_06b_b1_s512_static.mlpackage \
+  --seq-len 512 --batch-size 1
+```
+
+**Требуемые .env (НЕ в гите):**
+```
+MLX_MODEL=mlx-community/Qwen3.5-4B-MLX-4bit      # НЕ OptiQ: тот медленный + раздувает <think>
+LLM_MODEL=mlx-community/Qwen3.5-4B-MLX-4bit
+MLX_VAL_MODEL=mlx-community/Qwen3.5-4B-OptiQ-4bit # ВАЖНО: ≠ MLX_MODEL (иначе chat → val-движок ttl120)
+MLX_MAIN_TTL_SEC=86400                            # держать LLM тёплой (один оператор)
+VALIDATOR_BACKEND=coreml                          # NLI cross-encoder, ~0.1с (было 6-12с)
+COREML_VALIDATOR_ENTAILMENT_THRESHOLD=0.7
+COREML_VALIDATOR_CONTRADICTION_THRESHOLD=0.9      # fail-safe: не блокировать при неуверенности
+# TOSKA_FAIL_OPEN=true (дефолт) — coreml-HALLUCINATION → UNVALIDATED (ответ виден)
+```
+
+**Открыто на след. сессию:** точность coreml-валидатора низкая (golden ~25%, ложные HALLUCINATION;
+fail-open это обезвреживает, но штамп VERIFIED ненадёжен) — тюнить пороги/режимы NLI или модель.

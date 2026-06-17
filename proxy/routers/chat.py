@@ -1333,9 +1333,25 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     is_structured = any(word in req.question.casefold() for word in ("перечен", "состав", "список", "разделы", "все разделы", "перечисли"))
     is_technical_or_legal = bool(effective_dataset_filter and effective_dataset_filter != "MAIL")
 
-    focus_max_chunks = 24 if (is_structured or is_technical_or_legal) else _env_int("RAG_CHAT_FOCUS_MAX_CHUNKS", 8)
-    context_max_chunks = 24 if (is_structured or is_technical_or_legal) else _env_int("RAG_CONTEXT_MAX_CHUNKS", 6)
-    context_chars_limit = 32000 if (is_structured or is_technical_or_legal) else _env_int("RAG_CHAT_CONTEXT_CHARS", 9000)
+    # Размер контекста зависит от того, КУДА пойдёт генерация. Облако ест большой контекст
+    # быстро; локальная 4B (P0-данные форсят MLX по ADR-9) захлёбывается на префилле 32K
+    # символов — генерация ~1 tok/s. Поэтому большой контекст — только для облака.
+    try:
+        _cfg_provider = _llm_runtime().provider
+        _route_preview = decide_provider(
+            _cfg_provider,
+            _dataset_sensitivities([str(d) for d in (_dataset_ids or [])]),
+            consent=_env_bool("LES_CLOUD_CONSENT", False),
+        )
+        will_be_cloud = is_cloud_provider(_cfg_provider) and not _route_preview.downgraded
+    except Exception:
+        will_be_cloud = False
+    big_context = (is_structured or is_technical_or_legal) and will_be_cloud
+    local_big = (is_structured or is_technical_or_legal) and not will_be_cloud
+
+    focus_max_chunks = 24 if big_context else (12 if local_big else _env_int("RAG_CHAT_FOCUS_MAX_CHUNKS", 8))
+    context_max_chunks = 24 if big_context else (10 if local_big else _env_int("RAG_CONTEXT_MAX_CHUNKS", 6))
+    context_chars_limit = 32000 if big_context else (12000 if local_big else _env_int("RAG_CHAT_CONTEXT_CHARS", 9000))
     context_radius = 0 if is_structured else None
 
     chunks = rank_chunks_for_question(req.question, chunks)
@@ -1541,6 +1557,9 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     }
     llm_model = llm_runtime.model
     val_url = llm_runtime.base_url.rstrip("/")
+    # Локальный MLX-хост всегда держит /api/validate (coreml NLI, ~0.1с). Облачные ответы
+    # валидируем им же, а не повторным промптом в облако (это давало 3-11с на P1-ответ).
+    local_val_url = _mlx_runtime().base_url.rstrip("/")
     if not llm_model:
         raise HTTPException(503, f"LLM model is not configured for provider {llm_runtime.provider}")
     # W3.4-частично (вопрос оператора 2026-06-14 «почему не валидируем облаком?»):
@@ -1776,18 +1795,27 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                             if memory_block:
                                 validation_context = f"{validation_context}\n\n{memory_block}"
                             t_val_call = time.time()
+                            verdict_source = "coreml"
                             if validate_via_llm:
-                                # W3.4: каскад rules→LLM. Дешёвый детерминированный отсев
-                                # ДО облачного вызова — числовой guard и пустой контекст
-                                # ловятся без LLM (у облака нет своего /api/validate).
+                                # W3.4: каскад rules→coreml. Дешёвый детерминированный отсев
+                                # (числовой guard, пустой контекст) ДО валидатора.
                                 pre = rules_pre_verdict(req.question, answer, validation_context)
                                 if pre is not None:
                                     crag_status = pre
+                                    verdict_source = "rules"
                                     logger.info("[TOSKA] rules short-circuit → %s (provider=%s)", pre, llm_runtime.provider)
                                 else:
-                                    crag_status = await _validate_via_provider(
-                                        client, llm_runtime, headers,
-                                        question=req.question, answer=answer, context=validation_context,
+                                    # Облачный ответ валидируем ЛОКАЛЬНЫМ coreml (~0.1с),
+                                    # а не повторным промптом в облако (было 3-11с).
+                                    val_resp = await client.post(
+                                        f"{local_val_url}/api/validate",
+                                        json={"question": req.question, "answer": answer, "context": validation_context},
+                                        timeout=90.0,
+                                    )
+                                    crag_status = (
+                                        val_resp.json().get("status", "UNKNOWN")
+                                        if val_resp.status_code == 200
+                                        else "UNKNOWN"
                                     )
                             else:
                                 val_resp = await client.post(
@@ -1801,6 +1829,19 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                                     else "UNKNOWN"
                                 )
                             t_val += time.time() - t_val_call
+                            # Fail-open: coreml-валидатор быстрый, но неточный (golden ~25%,
+                            # вживую ложно блокировал реальные ответы). Он НЕ должен прятать
+                            # ответ за заглушкой — его HALLUCINATION понижаем до UNVALIDATED
+                            # (ответ виден, но помечен «не подтверждён»). Жёсткий блок
+                            # остаётся только за детерминированными rules. Отключается
+                            # TOSKA_FAIL_OPEN=false.
+                            if (
+                                crag_status == "HALLUCINATION"
+                                and verdict_source == "coreml"
+                                and _env_bool("TOSKA_FAIL_OPEN", True)
+                            ):
+                                logger.info("[TOSKA] fail-open: coreml HALLUCINATION → UNVALIDATED (ответ показан)")
+                                crag_status = "UNVALIDATED"
                             logger.info("[TOSKA] attempt=%s → %s%s", attempt, crag_status, " (via provider)" if validate_via_llm else "")
                         except Exception as ve:
                             logger.warning("[TOSKA] Validate skip: %s", ve)
