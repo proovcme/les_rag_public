@@ -1,26 +1,30 @@
-# Л.Е.С. — локальная RAG-машина для Apple Silicon
+# Л.Е.С. — Единый центр информации о строительном проекте
 
-**Л.Е.С.** превращает приватный архив PDF, DOCX, таблиц и переписки в локальную базу знаний с ответами по источникам. Это self-hosted RAG appliance для Mac на Apple Silicon: Qdrant, MLX-модели, proxy, UI и метаданные работают на вашей машине или в вашей private network, без обязательного облака.
+**Л.Е.С.** — это **ИИ-среда общих данных (СОД)** и **агент-помощник руководителя проекта (РП) и главного инженера проекта (ГИП)**. Он собирает всю информацию по строительному проекту — нормативы (НТД), проектную документацию по разделам, переписку, договоры, сметы, BIM/CAD-модели — в **единый локальный центр**, отвечает на вопросы со ссылками на конкретные пункты, проверяет соответствие нормам и ведёт проект рядом с человеком.
 
-**Публичное позиционирование:** локальная RAG-машина для инженерных, нормативных и корпоративных архивов на Apple Silicon. Фокус: приватность, воспроизводимость, наблюдаемость, безопасная индексация и ответы с проверяемыми источниками.
+**Local-first.** Qdrant, локальные модели (MLX / Core ML / Gemma), метаданные и UI работают на вашей машине или в вашей сети. Облако (OpenAI-совместимое) — опционально, для качества; данные проекта остаются приватными. Self-hosted appliance для Apple Silicon.
 
-**Актуальный статус: 07.06.2026.** Референсный локальный контур закрыт по consistency: корпус `1212` файлов, `1212 indexed / 0 pending / 0 errors`, `143150` SQLite chunks, `143150` Qdrant points, `points_match_sqlite_chunks=true`, local `/api/health` = `ok`. Во время closeout удалены stale Qdrant points под backup/snapshot (`artifacts/consistency_20260601_130603`) и исправлен edge-case duplicate basename при выборе pending-файлов. FIRE/HVAC acceptance: `golden/domain_fire_hvac_set.json` проходит `16/16`; full regression suite: `365 passed`. На Mac Mini M4 / 24 GB интегрированы **MLX GLM-OCR (0.9B)**, **Microsoft MarkItDown** и **Google LangExtract**; `structured_rules` schema/code готовы, активная таблица пока не наполнена (`0` rows) до отдельного targeted reindex. Активный validator default сейчас `rules`; Core ML MiniLM validator package сохранён для measured compare/probe. Embedding работает через Core ML `compute_units=all` с доступом к ANE/GPU, guarded indexing stress прошёл без worker failures/fallback. Внешний контур `https://les.ovc.me` поднят через П.А.У.К. reverse SSH tunnel: `/`, `/les`, `/api/health` дают `200`, no-key admin access отклоняется `401`. ZeroTier subnet `10.195.146.0/24` настроен как trusted admin; stale browser API key больше не блокирует trusted GUI. Speckle BIM/CAD bridge настроен на `https://speckle.ovc.me`, live status `ok/200`, token set через GUI/settings; Speckle project `36` / model `шпалерная 36_отсоединено_oleg` импортирован в `data/cad_bim_graph.db` и проиндексирован в `CAD_BIM_Index`. Speckle server `2.31.5/custom` patched only for current DUI schema compatibility (`Workspace.logoUrl`, `ModelPermissionChecks.canCreateIngestion`, `WorkspacePermissionChecks.canAccessHelpCenter`, disabled-workspaces empty fallback). AutoCAD/Revit/Navisworks V3 connector publish is not a reliable path on this community self-hosted server because V3 connectors require workspace-based projects, while open-source/self-hosted workspace features are unavailable here.
+## Для кого
 
-**CAD/BIM viewer baseline: 06.06.2026.** `frontend/cad_bim_viewer` builds with Homebrew Node `v26.0.0` / npm `11.12.1`. ThatOpen runtime is pinned to `3.4.x`, `three` to `0.184.0`, `web-ifc` to `0.0.77`; `npm audit --audit-level=moderate` reports `0 vulnerabilities`. Standalone АТЛАС is rebuilt from that stack and includes the extra Vite worker asset required by the new fragments runtime.
+- **РП — руководитель проекта.** Единая картина объекта: статус по разделам, задачи, объёмы работ, переписка, договоры, формы и досье объекта.
+- **ГИП — главный инженер проекта.** Требования НТД по разделам, нормоконтроль, проверка проектных решений, генерация семейств Revit (модуль АРТЕЛЬ).
 
-**АРТЕЛЬ baseline: 07.06.2026.** АРТЕЛЬ живёт в `products/artel` как Revit/RFA family-factory слой поверх LES. `ARTEL_Index` принимает `FAMILY_GUIDE`, `FOP_PROFILE`, `REVIT_MODEL_GUIDE`, `REVIT_API_REFERENCE`, `REVIT_API_SYMBOL_MAP`, `REVIT_API_SDK_DOC` и `LEARNING_CASE`. Revit API 2025 CHM/HTML из локального/private `ADN-DevTech/revit-api-chms` clone индексируется в LES как markdown shards, а не как 28k отдельных документов. Текущий ARTEL expert-loop audit возвращает `ready_except_revit_locked`: `ARTEL_Index` содержит `67` файлов, `28258` chunks, `0` pending/errors, Qdrant points совпадают с SQLite chunks, managed Legion backend/tunnel smoke проходит. `ARTEL.Revit.FamilyFactory` собирается на Legion против Revit 2025, устанавливается в Revit add-ins и валидирует семейства через extract, shared/FOP parameter checks, Revit warnings, rollback flex test и optional scratch-project load test. Финальный строгий gate `--require-real-revit-learning-case` намеренно падает до первого настоящего `validation_*.json` из разблокированного Revit desktop.
+> Подробный технический статус контура, baseline CAD/BIM-вьювера и АРТЕЛЬ перенесены в [CHANGELOG](CHANGELOG.md) / историю релизов ниже — здесь только продукт.
 
 ---
 
-## Что это даёт
+## Что умеет
 
-| Задача | Как выглядит для пользователя | Что делает система |
+| Задача РП/ГИП | Вопрос | Что делает система |
 |---|---|---|
-| Найти норму | «Минимальная ширина пути эвакуации по СП 1.13130?» | Ищет релевантные chunks, собирает ответ, показывает источники |
-| Проверить ответ | Ответ помечается `VERIFIED`, `NO_DATA` или блокируется как неподтверждённый | Т.О.С.К.А. валидирует ответ отдельной локальной моделью |
-| Загрузить архив | PDF/DOCX/XLSX/CSV/EML/MSG/JSON/MD/TXT | Smart intake классифицирует файлы, выбирает pipeline и индекс |
-| Работать с таблицами | «Сумма по разделу X», «сколько позиций…» | XLSX/CSV превращаются в row-level chunks и Parquet artifacts |
-| Эксплуатировать локально | Запуск одной командой, UI для диагностики, health/status API | launchd-сервисы, memory profiles, jobs, smoke tests |
+| Найти норму | «Минимальная ширина пути эвакуации по СП 1.13130?» | Находит пункт, отвечает со ссылкой на источник, помечает `VERIFIED` |
+| Собрать требования по теме | «Все требования пожарной безопасности к серверным» | Маршрутизирует к управляющим СП, собирает требования с пунктами |
+| Нормоконтроль | «Проверь раздел на соответствие ГОСТ Р 21.101» | Сверяет документ с нормами, выдаёт замечания (без LLM-арифметики) |
+| Проект по разделам | «Что в разделе ОВ по объекту X» | Ищет в нужном объекте и разделе РД (АР/КР/ОВ/ВК/ЭОМ…) |
+| Объёмы и сметы | «Сумма по разделу», «остаток по позиции» | Считает по таблицам (SQL/Parquet) — числа считает код, не модель |
+| Семейства Revit | техничка/чертёж → семейство `.rfa` | АРТЕЛЬ: классификация архетипа → план → исполнение в Revit |
+| Единая база проекта (СОД) | PDF/DOCX/XLSX/EML/DWG/IFC | Классифицирует по типу, индексирует, отвечает со ссылками |
+| Проверка ответа | `VERIFIED` / `NO_DATA` / блок неподтверждённого | Т.О.С.К.А. валидирует ответ локальной моделью |
 
 Пример ответа:
 

@@ -55,6 +55,26 @@ def test_explicit_filter_allows_broad_review():
     assert classification.scope == "explicit"
 
 
+def test_enumeration_pp87_query_is_lookup_not_blocked():
+    # Регрессия: «Перечень разделов проектной документации по ПП87» — каноничный
+    # перечислительный запрос. Слово «документации» (токен broad-обзора «документац»)
+    # НЕ должно утягивать его в broad_review и блокировать через NEEDS_CLARIFICATION.
+    decision = build_clarification_decision("Перечень разделов проектной документации по ПП87")
+
+    assert decision.needs_clarification is False
+    assert decision.classification.intent == "lookup"
+    assert decision.classification.reasons == []
+
+
+def test_enumeration_intent_wins_over_broad_document_token():
+    # «перечень/состав/список/перечисли …» определяет lookup даже рядом с «документац».
+    for q in (
+        "перечисли разделы проектной документации",
+        "список разделов рабочей документации по объекту",
+    ):
+        assert classify_for_clarification(q).intent == "lookup", q
+
+
 def test_table_query_does_not_need_clarification():
     decision = build_clarification_decision("посчитай общую стоимость по всем строкам сметы")
 

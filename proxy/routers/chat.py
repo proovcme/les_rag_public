@@ -891,12 +891,34 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 if memory_block:
                     _ans = f"{_ans}\n\n{memory_block}"
                 logger.info("[OUTLINE] детерминированная структура %s: %s пунктов", _doc, len(_items))
+                # Детерминированный ответ — тоже ответ: пишем в историю (раньше outline-роут
+                # возвращался мимо хвоста save_chat_history → «история не пишется»).
+                _outline_history_id = None
+                try:
+                    _outline_history_id = save_chat_history(
+                        question=req.question,
+                        answer=_ans,
+                        sources=[_doc],
+                        crag_status="DETERMINISTIC",
+                        latency_sec=0.0,
+                        tokens=0,
+                        session_id=req.session_id,
+                        requested_dataset_filter=req.dataset_filter,
+                        resolved_dataset_ids=_dataset_ids,
+                        resolved_dataset_names=resolved_dataset_names,
+                        source_dataset_names=[_ds],
+                        query_route={"channel": "outline", "operation": "document_outline"},
+                        validation_enabled=False,
+                    )
+                except Exception as _hist_err:
+                    logger.warning("[OUTLINE] history save error: %s", _hist_err)
                 return {
                     "answer": _ans,
                     "crag_status": "DETERMINISTIC",
                     "sources": [{"doc_name": _doc, "dataset_name": _ds}],
                     "query_route": {"channel": "outline", "operation": "document_outline"},
                     "validation": {"enabled": False, "reason": "deterministic_document_outline"},
+                    "history_id": _outline_history_id,
                 }
         except Exception as _outline_err:
             logger.warning("[OUTLINE] fallback to RAG: %s", _outline_err)
