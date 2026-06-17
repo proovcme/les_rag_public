@@ -24,7 +24,7 @@ class TableRefChunk:
 
 
 NUMERIC_FIELDS = {
-    "amount": ("стоимост", "руб", "затрат"),
+    "amount": ("сумм", "стоимост", "итого", "руб", "затрат"),
     "qty": ("колич", "кол-во", "объем", "объём", "сколько", "метраж", "метр", "длин", "погон"),
     "price": ("цен", "расцен"),
     "amount_mat": ("материал",),
@@ -189,10 +189,11 @@ def maybe_answer_table_query(
 
     field = _select_numeric_field(question)
     operation = _select_operation(question)
-    if operation == "sum":
-        # Полная детерминированная агрегация: суммируем по ВСЕМ parquet задействованных
-        # датасетов, а не только по retrieved top-k чанкам (иначе сумма частична — кейс
-        # кабель 3х1,5: 5900 вместо 15030.72). ADR-11: числа считает код, не LLM.
+    subject_kw = _query_keywords(question)
+    if operation == "sum" and subject_kw:
+        # Полная детерминированная агрегация ПО ПРЕДМЕТУ: суммируем по ВСЕМ parquet
+        # задействованных датасетов, а не только по retrieved top-k (иначе сумма частична —
+        # кейс кабель 3х1,5: 5900 вместо 15030.72). ADR-11: числа считает код, не LLM.
         ds_ids = [
             d for d in _dedupe(
                 str((getattr(c, "meta", {}) or {}).get("dataset_id") or "") for c in table_chunks
@@ -203,6 +204,9 @@ def maybe_answer_table_query(
             question, full_refs or table_chunks, storage_root=storage_root, max_rows=10 ** 9
         )
     else:
+        # sum без предмета — не суммируем всю таблицу вслепую, отвечаем списком.
+        if operation == "sum":
+            operation = "list"
         rows = _load_relevant_rows(question, table_chunks, storage_root=storage_root, max_rows=max_rows)
     if not rows:
         return None
@@ -211,8 +215,11 @@ def maybe_answer_table_query(
     parquet_paths = _dedupe(str(row.get("_parquet_path") or "") for row in rows)
 
     if operation == "sum":
-        values = [_as_float(row.get(field)) for row in rows]
-        numbers = [value for value in values if value is not None]
+        numbers = [v for v in (_as_float(row.get(field)) for row in rows) if v is not None]
+        # Data-aware fallback: колонки нет/пуста ИЛИ все нули (напр. ВОР с amount=0) → qty.
+        if (not numbers or sum(numbers) == 0.0) and field != "qty":
+            field = "qty"
+            numbers = [v for v in (_as_float(row.get("qty")) for row in rows) if v is not None]
         if not numbers:
             return None
         total = sum(numbers)
@@ -249,12 +256,19 @@ def _looks_like_table_query(question: str) -> bool:
 
 def _select_numeric_field(question: str) -> str:
     q = question.casefold()
+    # Явная единица количества (метраж/объём/сколько/…) имеет ПРИОРИТЕТ над денежными
+    # словами: «суммарный метраж кабеля» = qty, а не amount (даже если есть «сумм»).
+    if any(token in q for token in NUMERIC_FIELDS["qty"]):
+        return "qty"
     scores = {
         field: sum(1 for token in tokens if token in q)
         for field, tokens in NUMERIC_FIELDS.items()
     }
     best = max(scores, key=scores.get)
-    return best if scores[best] > 0 else "amount"
+    if scores[best] > 0:
+        return best
+    # Нет явного поля: деньги → amount, иначе → qty (для ВОР/смет объём — основное).
+    return "amount" if any(m in q for m in ("стоимост", "руб", "затрат", "цен")) else "qty"
 
 
 def _select_operation(question: str) -> str:
@@ -454,7 +468,10 @@ def _sum_answer(field: str, total: float, count: int, sources: list[str]) -> str
         "weight_total": "Масса",
     }.get(field, field)
     source_text = f" Источник: {', '.join(sources)}." if sources else ""
-    return f"{label} по найденным строкам: {_format_number(total)}. Строк учтено: {count}.{source_text}"
+    return (
+        f"{label} по найденным строкам (полная выгрузка Parquet): {_format_number(total)}. "
+        f"Строк учтено: {count}.{source_text}"
+    )
 
 
 def _list_answer(rows: list[dict[str, Any]], sources: list[str]) -> str:

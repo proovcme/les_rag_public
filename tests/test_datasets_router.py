@@ -68,7 +68,7 @@ class FakeBackend:
             ]
         }
 
-    async def retrieve(self, question, dataset_ids=None, top_k=5):
+    async def retrieve(self, question, dataset_ids=None, top_k=5, doc_filter=None):
         return [
             Chunk(
                 content=f"{question} result",
@@ -142,6 +142,7 @@ async def test_list_documents_returns_file_status_rows(tmp_path, monkeypatch, da
                 content_type TEXT DEFAULT '',
                 complexity TEXT DEFAULT '',
                 pipeline TEXT DEFAULT '',
+                source_path TEXT DEFAULT '',
                 last_error TEXT DEFAULT ''
             )
             """
@@ -150,8 +151,8 @@ async def test_list_documents_returns_file_status_rows(tmp_path, monkeypatch, da
         conn.execute(
             """
             INSERT INTO documents
-            (id, dataset_id, file_name, status, file_size, chunk_count, domain, route_dataset, doc_type, content_type, complexity, pipeline)
-            VALUES ('doc-1', 'ds-1', 'NTD/SP.docx', 'INDEXED', 2048, 12, 'NTD_FIRE', 'NTD_FIRE_Index', 'NORMATIVE', 'text', 'simple', 'markdown')
+            (id, dataset_id, file_name, status, file_size, chunk_count, domain, route_dataset, doc_type, content_type, complexity, pipeline, source_path)
+            VALUES ('doc-1', 'ds-1', 'NTD/SP.docx', 'INDEXED', 2048, 12, 'NTD_FIRE', 'NTD_FIRE_Index', 'NORMATIVE', 'text', 'simple', 'markdown', '/ext/NTD/SP.docx')
             """
         )
 
@@ -163,6 +164,7 @@ async def test_list_documents_returns_file_status_rows(tmp_path, monkeypatch, da
     assert result["documents"][0]["file_name"] == "NTD/SP.docx"
     assert result["documents"][0]["route_dataset"] == "NTD_FIRE_Index"
     assert result["documents"][0]["chunk_count"] == 12
+    assert result["documents"][0]["source_path"] == "/ext/NTD/SP.docx"
 
 
 @pytest.mark.asyncio

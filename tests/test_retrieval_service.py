@@ -39,7 +39,7 @@ class FakeBackend:
             Dataset("ds-3", "GKRF_Index"),
         ]
 
-    async def retrieve(self, question, dataset_ids=None, top_k=5):
+    async def retrieve(self, question, dataset_ids=None, top_k=5, doc_filter=None):
         self.calls.append({"question": question, "dataset_ids": dataset_ids, "top_k": top_k})
         return [Chunk(f"text-{i}", f"doc-{i}", 1.0 - i * 0.01) for i in range(top_k)]
 
@@ -52,7 +52,7 @@ class EmptyBackend:
     async def list_datasets(self):
         return []
 
-    async def retrieve(self, question, dataset_ids=None, top_k=5):
+    async def retrieve(self, question, dataset_ids=None, top_k=5, doc_filter=None):
         self.calls.append({"question": question, "dataset_ids": dataset_ids, "top_k": top_k})
         raise AssertionError("empty retrieval should not call backend.retrieve")
 
