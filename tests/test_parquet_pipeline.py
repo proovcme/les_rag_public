@@ -93,7 +93,7 @@ def test_qdrant_adapter_builds_table_nodes_with_parquet_payload(tmp_path):
     )
 
     adapter = QdrantLlamaIndexAdapter.__new__(QdrantLlamaIndexAdapter)
-    nodes = adapter._sync_table_nodes(csv_path, data_dir, "ds-1")
+    nodes = adapter._sync_table_nodes(csv_path, data_dir, "spec.csv", "ds-1")
 
     assert len(nodes) == 1
     assert "Щит распределительный" in nodes[0]["text"]
@@ -208,7 +208,7 @@ def test_qdrant_adapter_builds_needs_ocr_marker(tmp_path, monkeypatch):
     })
 
     adapter = QdrantLlamaIndexAdapter.__new__(QdrantLlamaIndexAdapter)
-    nodes = adapter._sync_table_nodes(pdf_path, data_dir, "ds-1")
+    nodes = adapter._sync_table_nodes(pdf_path, data_dir, "scan.pdf", "ds-1")
 
     assert len(nodes) == 1
     assert nodes[0]["payload"]["type"] == "pdf_needs_ocr"

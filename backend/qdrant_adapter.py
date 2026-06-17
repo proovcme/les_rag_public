@@ -480,6 +480,7 @@ class MetaDB:
                 ("pipeline",     "TEXT DEFAULT ''"),
                 ("last_error",   "TEXT DEFAULT ''"),
                 ("stage",        "TEXT DEFAULT ''"),  # W1.4: текущая стадия конвейера (CONVERT/EMBED/UPSERT)
+                ("source_path",  "TEXT DEFAULT ''"),  # внешний in-place источник (абсолютный путь, без копии в storage)
             ]:
                 try:
                     conn.execute(f"ALTER TABLE documents ADD COLUMN {col} {typedef}")
@@ -550,8 +551,13 @@ class MetaDB:
     def add_document(
         self, dataset_id: str, file_name: str,
         file_mtime: float = 0.0, file_size: int = 0,
+        source_path: str = "",
     ) -> tuple:
-        """Возвращает (doc_id, is_new, needs_reindex)."""
+        """Возвращает (doc_id, is_new, needs_reindex).
+
+        source_path != "" — внешний in-place источник (абсолютный путь). Документ
+        не копируется в storage, а читается из source_path при парсинге.
+        """
         with self._get_conn() as conn:
             existing = conn.execute(
                 "SELECT id, file_mtime, file_size FROM documents "
@@ -566,16 +572,22 @@ class MetaDB:
                 )
                 if changed:
                     conn.execute(
-                        "UPDATE documents SET status='PENDING', file_mtime=?, file_size=? WHERE id=?",
-                        (file_mtime, file_size, doc_id),
+                        "UPDATE documents SET status='PENDING', file_mtime=?, file_size=?, source_path=? WHERE id=?",
+                        (file_mtime, file_size, source_path, doc_id),
                     )
                     return doc_id, False, True
+                # Содержимое не изменилось, но абсолютный источник мог переехать — обновим.
+                if source_path:
+                    conn.execute(
+                        "UPDATE documents SET source_path=? WHERE id=?",
+                        (source_path, doc_id),
+                    )
                 return doc_id, False, False
             doc_id = str(uuid.uuid4())
             conn.execute(
-                "INSERT INTO documents (id, dataset_id, file_name, status, file_mtime, file_size) "
-                "VALUES (?, ?, ?, 'PENDING', ?, ?)",
-                (doc_id, dataset_id, file_name, file_mtime, file_size),
+                "INSERT INTO documents (id, dataset_id, file_name, status, file_mtime, file_size, source_path) "
+                "VALUES (?, ?, ?, 'PENDING', ?, ?, ?)",
+                (doc_id, dataset_id, file_name, file_mtime, file_size, source_path),
             )
             return doc_id, True, True
 
@@ -669,6 +681,27 @@ class MetaDB:
         with self._get_conn() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [r["file_name"] for r in rows]
+
+    def get_pending_files_with_paths(
+        self, dataset_id: str, limit: int | None = None
+    ) -> List[tuple]:
+        """Как get_pending_files, но (file_name, source_path).
+
+        source_path != "" — внешний in-place источник; _sync_parse читает его по
+        абсолютному пути вместо storage/datasets/{id}/{file_name}.
+        """
+        sql = (
+            "SELECT file_name, COALESCE(source_path, '') AS source_path FROM documents "
+            "WHERE dataset_id=? AND status='PENDING' "
+            "ORDER BY COALESCE(NULLIF(file_size, 0), 9223372036854775807), file_name"
+        )
+        params: list[Any] = [dataset_id]
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(max(0, int(limit)))
+        with self._get_conn() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [(r["file_name"], r["source_path"]) for r in rows]
 
     def health_snapshot(self) -> Dict[str, Any]:
         with self._get_conn() as conn:
@@ -899,6 +932,37 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             logger.warning("[DOC_ROUTE] upload classification skipped for %s: %s", rel_path.as_posix(), error)
         return doc_id
 
+    async def register_external_file(self, dataset_id: str, source_path: Path, file_name: str) -> str:
+        """Регистрирует внешний файл как источник БЕЗ копии в storage.
+
+        Документ остаётся в своей папке; в storage/datasets/{id} попадают только
+        производные (Parquet/_parquet). file_name — ключ дока (rel-путь под корнем),
+        source_path — абсолютный путь, по которому _sync_parse прочитает файл.
+        """
+        rel = Path(file_name)
+        if rel.is_absolute() or ".." in rel.parts:
+            raise ValueError(f"unsafe file_name: {file_name}")
+        # Каталог датасета нужен для производных (Parquet) и для прохода _sync_parse.
+        (self.content_dir / dataset_id).mkdir(parents=True, exist_ok=True)
+
+        src = Path(source_path)
+        stat = src.stat() if src.exists() else None
+        mtime = stat.st_mtime if stat else 0.0
+        size = stat.st_size if stat else 0
+
+        doc_id, _, needs_reindex = self.db.add_document(
+            dataset_id, rel.as_posix(), file_mtime=mtime, file_size=size, source_path=str(src),
+        )
+        try:
+            route = route_document(src)
+            if needs_reindex:
+                self.db.update_document_status(dataset_id, rel.as_posix(), "PENDING", 0, route=route)
+            else:
+                self.db.update_document_route(dataset_id, rel.as_posix(), route)
+        except Exception as error:
+            logger.warning("[EXT_DOC] classification skipped for %s: %s", rel.as_posix(), error)
+        return doc_id
+
     async def parse_dataset(self, dataset_id: str, limit: int | None = None) -> Dict[str, Any]:
         if limit is None and os.getenv(ALLOW_UNBOUNDED_PARSE, "").lower() not in ("1", "true", "yes"):
             return {
@@ -959,7 +1023,16 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         )
 
         try:
-            pending_names = set(self.db.get_pending_files(dataset_id, limit=limit))
+            # source_path != "" → внешний in-place источник (читается по абсолютному
+            # пути, без копии в storage). get_pending_files_with_paths опционален —
+            # старые/стабовые БД дают только имена (всё внутреннее).
+            get_pairs = getattr(self.db, "get_pending_files_with_paths", None)
+            if get_pairs is not None:
+                pending_pairs = list(get_pairs(dataset_id, limit=limit))
+            else:
+                pending_pairs = [(name, "") for name in self.db.get_pending_files(dataset_id, limit=limit)]
+            pending_names = {name for name, _ in pending_pairs}
+            external_sources = {name: src for name, src in pending_pairs if src}
             all_files     = [
                 f for f in data_dir.rglob("*")
                 if f.is_file() and "_parquet" not in f.relative_to(data_dir).parts
@@ -981,23 +1054,34 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 timeout=60.0
             )
 
-            # Матчинг по относительному пути и по имени файла для совместимости
-            # со старыми записями БД где хранится только f.name.
+            # Внутренние (скопированные в storage) файлы: матчинг по относительному
+            # пути и по имени файла для совместимости со старыми записями БД (f.name).
+            internal_pending = pending_names - set(external_sources)
             exact_pending_names = {
                 str(f.relative_to(data_dir))
                 for f in all_files
-                if str(f.relative_to(data_dir)) in pending_names
+                if str(f.relative_to(data_dir)) in internal_pending
             }
-            legacy_pending_names = pending_names - exact_pending_names
-            files_to_parse = [
-                f for f in all_files
-                if str(f.relative_to(data_dir)) in pending_names
-                or f.name in legacy_pending_names
-            ]
+            legacy_pending_names = internal_pending - exact_pending_names
+            # Единый список к индексации: (путь, file_key, db_file_key). file_key — ключ
+            # в Qdrant/правилах/контексте; db_file_key — ключ строки documents.file_name.
+            files_to_parse: list[tuple[Path, str, str]] = []
+            for f in all_files:
+                rel = f.relative_to(data_dir).as_posix()
+                if rel in internal_pending:
+                    files_to_parse.append((f, rel, rel))
+                elif f.name in legacy_pending_names:
+                    files_to_parse.append((f, rel, f.name))
+            internal_count = len(files_to_parse)
+            # Внешние источники — по абсолютному пути; file_key == db_file_key == имя дока.
+            for name, src in external_sources.items():
+                files_to_parse.append((Path(src), name, name))
 
             total     = len(files_to_parse)
             total_all = len(all_files)
-            logger.info(f"[PARSE] {total}/{total_all} файлов к индексации")
+            logger.info(
+                f"[PARSE] {total}/{total_all} файлов к индексации (внешних in-place: {len(external_sources)})"
+            )
 
             if total == 0:
                 return {"status": "completed", "chunks": 0, "skipped": total_all}
@@ -1028,8 +1112,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     pass
 
             def _submit_convert(index: int):
-                f = files_to_parse[index]
-                fk = f.relative_to(data_dir).as_posix()
+                f, fk, _dbk = files_to_parse[index]
                 local_timings: dict = {}
                 future = convert_pool.submit(
                     QdrantLlamaIndexAdapter._convert_file, self, f, data_dir, fk, dataset_id,
@@ -1039,9 +1122,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
 
             next_convert = _submit_convert(0) if convert_pool else None
 
-            for i, file_path in enumerate(files_to_parse, 1):
-                file_key = file_path.relative_to(data_dir).as_posix()
-                db_file_key = file_key if file_key in pending_names else file_path.name
+            for i, (file_path, file_key, db_file_key) in enumerate(files_to_parse, 1):
                 if i % 50 == 0 or i == total:
                     logger.info(f"[PARSE] {i}/{total} ({_t.time()-t0:.0f}с)")
                 try:
@@ -1241,7 +1322,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 "status":       "completed",
                 "chunks":       total_chunks,
                 "files_parsed": total,
-                "files_skipped": total_all - total,
+                "files_skipped": max(0, total_all - internal_count),
                 "remaining_pending": remaining_pending,
                 "errors":       errors,
                 "embedding_cache_hits": embedding_cache_hits,
@@ -1298,7 +1379,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             )
         elif route.pipeline == "parquet":
             try:
-                file_nodes = self._sync_table_nodes(file_path, data_dir, dataset_id, route, timings)
+                file_nodes = self._sync_table_nodes(file_path, data_dir, file_key, dataset_id, route, timings)
             except Exception as table_err:
                 logger.warning(
                     "[PARQUET] fallback to markdown for %s: %s",
@@ -1317,7 +1398,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 and os.getenv("PDF_TABLE_EXTRACTION_ENABLED", "false").lower() == "true"
             ):
                 try:
-                    file_nodes.extend(self._sync_table_nodes(file_path, data_dir, dataset_id, route, timings))
+                    file_nodes.extend(self._sync_table_nodes(file_path, data_dir, file_key, dataset_id, route, timings))
                 except Exception as table_err:
                     logger.warning(
                         "[PDF_TABLE] table extraction skipped for %s: %s",
@@ -1330,7 +1411,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             )
             if QdrantLlamaIndexAdapter._docx_table_extraction_enabled(file_path, route):
                 try:
-                    file_nodes.extend(self._sync_table_nodes(file_path, data_dir, dataset_id, route, timings))
+                    file_nodes.extend(self._sync_table_nodes(file_path, data_dir, file_key, dataset_id, route, timings))
                 except Exception as table_err:
                     logger.warning(
                         "[DOCX_TABLE] table extraction skipped for %s: %s",
@@ -1573,12 +1654,15 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         self,
         file_path: Path,
         data_dir: Path,
+        file_key: str,
         dataset_id: str,
         route: DocumentRoute | None = None,
         timings: dict[str, float] | None = None,
     ) -> list[dict]:
         import time as _t
-        parquet_dir = data_dir / "_parquet" / file_path.relative_to(data_dir).parent
+        # Производный Parquet кладём в storage по file_key (а не относительно file_path):
+        # внешний in-place источник лежит вне data_dir, но дериватив остаётся в storage.
+        parquet_dir = data_dir / "_parquet" / Path(file_key).parent
         normalizer = TableNormalizer(parquet_dir=str(parquet_dir), use_llm=False)
         phase_start = _t.time()
         doc_type_override = "TABLE" if route and not route.domain.startswith("TABLE_") else None

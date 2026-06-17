@@ -25,6 +25,47 @@ def validate_source_folder(folder: str, base: Path = Path("./RAG_Content")) -> P
     return src_dir
 
 
+def validate_external_source(path: str) -> Path:
+    """Принять абсолютный путь ТОЛЬКО если он внутри одобренного корня.
+
+    Корни — LES_EXTERNAL_SOURCE_ROOTS (см. proxy.config.external_source_roots).
+    resolve(strict=True) снимает симлинки и требует существования: ссылка/`..`
+    наружу резолвится в реальную цель и отклоняется, если она вне корней.
+    Возвращает существующую директорию внутри allowlist; иначе HTTPException.
+    """
+    from proxy.config import external_source_roots
+
+    raw = (path or "").strip()
+    if not raw:
+        raise HTTPException(400, "path обязателен")
+    roots = external_source_roots()
+    if not roots:
+        raise HTTPException(403, "внешняя индексация выключена: LES_EXTERNAL_SOURCE_ROOTS пуст")
+    try:
+        candidate = Path(raw).expanduser().resolve(strict=True)
+    except FileNotFoundError as error:
+        raise HTTPException(404, f"путь не найден: {raw}") from error
+    except (OSError, RuntimeError) as error:
+        raise HTTPException(400, f"некорректный путь: {raw}") from error
+    if not any(candidate == root or root in candidate.parents for root in roots):
+        raise HTTPException(403, f"путь вне одобренных корней (LES_EXTERNAL_SOURCE_ROOTS): {candidate}")
+    if not candidate.is_dir():
+        raise HTTPException(400, "path должен быть директорией")
+    return candidate
+
+
+def is_within_external_root(path: Path, root: Path) -> bool:
+    """True, если resolve(path) (снят симлинк) лежит внутри уже одобренного root.
+
+    Защита при обходе папки: симлинк на файл, указывающий наружу корня, отбрасывается.
+    """
+    try:
+        resolved = path.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return False
+    return resolved == root or root in resolved.parents
+
+
 def safe_upload_name(filename: str, allowed_suffixes: set[str] | None = None) -> str:
     name = Path(filename or "upload.bin").name
     if name in ("", ".", ".."):

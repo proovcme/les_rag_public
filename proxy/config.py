@@ -105,6 +105,29 @@ def rag_upload_suffixes() -> set[str]:
     return {item.strip().lower() for item in raw.split(",") if item.strip()}
 
 
+def external_source_roots() -> list[Path]:
+    """Одобренные внешние корни для in-place индексации.
+
+    LES_EXTERNAL_SOURCE_ROOTS — список абсолютных путей через запятую. Пусто →
+    внешняя индексация выключена (fail-closed). Каждый корень резолвится (снимая
+    симлинки) — валидатор в proxy.storage.file_storage пускает абсолютный путь
+    ТОЛЬКО если он внутри одного из этих корней.
+    """
+    raw = os.getenv("LES_EXTERNAL_SOURCE_ROOTS", "")
+    roots: list[Path] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            resolved = Path(part).expanduser().resolve(strict=False)
+        except (OSError, RuntimeError):
+            continue
+        if resolved.is_absolute() and resolved not in roots:
+            roots.append(resolved)
+    return roots
+
+
 def max_upload_bytes() -> int:
     return int(os.getenv("MAX_UPLOAD_MB", "100")) * 1024 * 1024
 

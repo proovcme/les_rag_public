@@ -296,7 +296,7 @@ def test_route_metadata_is_added_to_table_payload(tmp_path):
 
     route = route_document(csv_path)
     adapter = QdrantLlamaIndexAdapter.__new__(QdrantLlamaIndexAdapter)
-    nodes = adapter._sync_table_nodes(csv_path, data_dir, "ds-1", route)
+    nodes = adapter._sync_table_nodes(csv_path, data_dir, "smeta.csv", "ds-1", route)
 
     assert nodes[0]["payload"]["doc_type"] == "SMETA"
     assert nodes[0]["payload"]["domain"] == "TABLE_SMETA"

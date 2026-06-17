@@ -37,6 +37,15 @@ class RAGBackend(ABC):
     async def upload_file(self, dataset_id: str, file_path: Path, relative_path: Optional[str] = None) -> str: ...
 
     @abstractmethod
+    async def register_external_file(self, dataset_id: str, source_path: Path, file_name: str) -> str:
+        """Регистрирует внешний файл как источник БЕЗ копирования в storage.
+
+        В storage остаются только производные (Parquet/_parquet); сам документ
+        читается из source_path при парсинге. file_name — ключ дока (rel-путь).
+        """
+        ...
+
+    @abstractmethod
     async def parse_dataset(self, dataset_id: str, limit: Optional[int] = None) -> Dict[str, Any]: ...
 
     @abstractmethod

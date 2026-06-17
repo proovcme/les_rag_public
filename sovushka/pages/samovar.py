@@ -282,6 +282,7 @@ def build_samovar():
                 index_docs_cols = [
                     {"name": "status", "label": "Статус", "field": "status", "align": "left", "sortable": True},
                     {"name": "file", "label": "Файл", "field": "file", "align": "left", "sortable": True},
+                    {"name": "source", "label": "Источник (in-place)", "field": "source", "align": "left"},
                     {"name": "chunks", "label": "Чанков", "field": "chunks", "align": "center", "sortable": True},
                     {"name": "size", "label": "Размер", "field": "size", "align": "right", "sortable": True},
                     {"name": "domain", "label": "Domain", "field": "domain", "align": "left", "sortable": True},
@@ -309,6 +310,13 @@ def build_samovar():
                       <div :title="props.value" style="max-width:460px;white-space:normal;word-break:break-word;font-family:var(--font-chat);font-size:.68rem;">
                         {{ props.value }}
                       </div>
+                    </q-td>""")
+                index_docs_grid.add_slot("body-cell-source", """
+                    <q-td :props="props">
+                      <span v-if="props.value" :title="props.value" style="color:#10b981;white-space:normal;word-break:break-all;font-size:.62rem;font-family:var(--font-chat);">
+                        ⤵ {{ props.value }}
+                      </span>
+                      <span v-else style="color:#64748b;">— storage</span>
                     </q-td>""")
                 index_docs_grid.add_slot("body-cell-error", """
                     <q-td :props="props">
@@ -351,6 +359,94 @@ def build_samovar():
             ui.button("↻ SYNC", on_click=do_sync).props("no-caps outline").style(
                 "border-color:var(--accent);color:var(--accent);font-size:.7rem;"
             )
+
+        # ── Внешняя папка → in-place индексация без копии в storage ──
+        with ui.card().classes("card-les w-full"):
+            with ui.row().classes("items-center justify-between w-full"):
+                ui.label("ВНЕШНЯЯ ПАПКА // IN-PLACE (БЕЗ КОПИИ В STORAGE)").classes("section-title")
+                ui.label("/api/rag/index-external · только корни LES_EXTERNAL_SOURCE_ROOTS").style(
+                    "font-size:.6rem;color:var(--dim);"
+                )
+            ui.label(
+                "Исходники остаются в своей папке; в LES попадают только производное "
+                "(Qdrant-векторы, Parquet, метаданные). Путь обязан быть внутри одобренного корня."
+            ).style("font-size:.64rem;color:var(--dim);margin-bottom:4px;")
+
+            with ui.row().classes("gap-2 w-full items-center"):
+                ext_path_input = ui.input(
+                    placeholder="/Users/ovc/RAG/CONTS/Документы/АМК ВОР 1901"
+                ).props("dense outlined clearable").classes("flex-1").style(
+                    "background:var(--bg);font-size:.75rem;"
+                )
+                ext_limit_input = ui.number("parse", value=25, min=1, max=500, step=5).props(
+                    "dense outlined"
+                ).style("width:96px;font-size:.7rem;").tooltip("Сколько файлов распарсить сразу")
+
+            with ui.row().classes("gap-2 w-full items-center"):
+                ext_dataset_select = ui.select(
+                    options={},
+                    label="Существующий датасет",
+                ).props("dense outlined emit-value map-options clearable").classes("flex-1").style(
+                    "font-size:.7rem;"
+                )
+                ext_new_ds_input = ui.input(
+                    placeholder="…или имя нового датасета"
+                ).props("dense outlined clearable").classes("flex-1").style(
+                    "background:var(--bg);font-size:.75rem;"
+                )
+
+                async def do_index_external():
+                    path = (ext_path_input.value or "").strip()
+                    if not path:
+                        ui.notify("Укажи путь к внешней папке", type="warning")
+                        return
+                    ds_id = (ext_dataset_select.value or "").strip()
+                    new_name = (ext_new_ds_input.value or "").strip()
+                    if new_name:
+                        created = await api_post(f"/api/rag/datasets?name={quote(new_name, safe='')}")
+                        if not created or not created.get("id"):
+                            ui.notify(last_api_error_text("Не удалось создать датасет"), type="negative")
+                            return
+                        ds_id = created["id"]
+                        add_log(f"[EXT_INDEX] создан датасет «{new_name}» → {ds_id}")
+                    if not ds_id:
+                        ui.notify("Выбери датасет или укажи имя нового", type="warning")
+                        return
+                    payload = {
+                        "path": path,
+                        "dataset_id": ds_id,
+                        "parse": True,
+                        "parse_limit": int(ext_limit_input.value or 25),
+                    }
+                    add_log(f"[EXT_INDEX] {path} → {ds_id}")
+                    ext_index_btn.props("loading")
+                    d = await api_post("/api/rag/index-external", payload)
+                    ext_index_btn.props(remove="loading")
+                    if d and d.get("status") == "registered":
+                        ui.notify(
+                            f"In-place: +{d.get('registered_files', 0)} файлов из "
+                            f"«{d.get('source_root', '')}» (без копии)"
+                            f"{' · парсинг запущен' if d.get('parse_started') else ''}",
+                            type="positive",
+                        )
+                        add_log(
+                            f"[EXT_INDEX] +{d.get('registered_files', 0)} файлов · "
+                            f"пропущено типов {d.get('skipped_unsupported', 0)} · "
+                            f"вне корня {d.get('skipped_outside_root', 0)}"
+                        )
+                        ext_new_ds_input.value = ""
+                        await asyncio.sleep(2)
+                        await refresh_and_render()
+                    else:
+                        ui.notify(last_api_error_text("Ошибка in-place индексации"), type="negative")
+
+                ext_index_btn = ui.button(
+                    "⤵ ИНДЕКСИРОВАТЬ IN-PLACE",
+                    on_click=do_index_external,
+                ).props("no-caps").style(
+                    "background:rgba(16,185,129,.15);border:1px solid var(--ok);"
+                    "color:var(--ok);font-size:.7rem;font-weight:900;"
+                )
 
         # ── Карта архива → выборочная индексация (W15.1/W15.2) ──
         with ui.card().classes("card-les w-full"):
@@ -589,6 +685,7 @@ def build_samovar():
                 "chunks": item.get("chunk_count", 0),
                 "size": _format_size(int(item.get("file_size") or 0)),
                 "file": item.get("file_name", ""),
+                "source": item.get("source_path", ""),
                 "pipeline": item.get("pipeline", ""),
                 "error": item.get("last_error", ""),
             }
@@ -835,6 +932,18 @@ def build_samovar():
                 if doc_dataset_select.value not in dataset_options:
                     doc_dataset_select.value = ""
                 doc_dataset_select.update()
+
+            # Селектор существующих датасетов для in-place индексации внешней папки.
+            ext_ds_options = {
+                d.get("id", ""): d.get("name", d.get("id", ""))
+                for d in datasets
+                if d.get("id")
+            }
+            if ext_dataset_select.options != ext_ds_options:
+                ext_dataset_select.options = ext_ds_options
+                if ext_dataset_select.value not in ext_ds_options:
+                    ext_dataset_select.value = None
+                ext_dataset_select.update()
 
             tot_src = tot_idx = tot_pending = tot_errors = tot_chunks = 0
             rows = []

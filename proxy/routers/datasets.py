@@ -30,7 +30,14 @@ from proxy.services.context_expander_service import expand_context_windows
 from proxy.services.resource_governor import active_parse_priority_order, current_runtime_profile
 from proxy.services.runtime_admission import evaluate_memory_pressure
 from proxy.services.retrieval_service import classify_query, resolve_dataset_ids, retrieve_chat_chunks
-from proxy.storage.file_storage import save_upload_tmp, safe_dataset_storage_dir, safe_upload_name, validate_source_folder
+from proxy.storage.file_storage import (
+    is_within_external_root,
+    safe_dataset_storage_dir,
+    safe_upload_name,
+    save_upload_tmp,
+    validate_external_source,
+    validate_source_folder,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +103,13 @@ class SmartSyncRequest(BaseModel):
 class FolderWatchRequest(BaseModel):
     source_root: str = "RAG_Content"
     limit: int = Field(default=20, ge=1, le=200)
+
+
+class IndexExternalRequest(BaseModel):
+    path: str = Field(min_length=1)
+    dataset_id: str = Field(min_length=1)
+    parse: bool = True
+    parse_limit: int = Field(default=25, ge=1, le=500)
 
 
 class ParseSchedulerRequest(BaseModel):
@@ -628,6 +642,7 @@ async def list_documents(
                 COALESCE(doc.content_type, '') AS content_type,
                 COALESCE(doc.complexity, '') AS complexity,
                 COALESCE(doc.pipeline, '') AS pipeline,
+                COALESCE(doc.source_path, '') AS source_path,
                 COALESCE(doc.last_error, '') AS last_error
             FROM documents doc
             LEFT JOIN datasets ds ON ds.id = doc.dataset_id
@@ -1160,6 +1175,75 @@ async def sync_smart(req: SmartSyncRequest, _admin=Depends(require_admin)):
         "parse_results": parse_results,
         "plan_summary": plan["datasets"],
         "errors": plan["errors"],
+    }
+
+
+@router.post("/index-external")
+async def index_external(req: IndexExternalRequest, _admin=Depends(require_admin)):
+    """In-place индексация одобренной внешней папки.
+
+    Исходники НЕ копируются в storage — в LES попадают только производные
+    (Qdrant-векторы, Parquet, метаданные). Путь обязан быть внутри
+    LES_EXTERNAL_SOURCE_ROOTS (resolve снимает симлинки → ссылка/`..` наружу
+    отклоняется). Каждый файл дополнительно проверяется на выход за корень.
+    """
+    state = get_dataset_state()
+    root = validate_external_source(req.path)
+
+    ds_list = await state.backend.list_datasets()
+    dataset = next((dataset for dataset in ds_list if dataset.id == req.dataset_id), None)
+    if dataset is None:
+        raise HTTPException(404, f"dataset_id не найден: {req.dataset_id} (создайте датасет заранее)")
+
+    suffixes = rag_upload_suffixes()
+    registered = 0
+    skipped_unsupported = 0
+    skipped_outside_root = 0
+    samples: list[str] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        # Анти-traversal: симлинк внутри папки, указывающий наружу корня, отбрасываем.
+        if not is_within_external_root(path, root):
+            skipped_outside_root += 1
+            continue
+        resolved = path.resolve()
+        if resolved.suffix.lower() not in suffixes:
+            skipped_unsupported += 1
+            continue
+        # file_name — путь относительно родителя корня: "<папка>/rel" (читаемо и уникально).
+        file_name = resolved.relative_to(root.parent).as_posix()
+        await state.backend.register_external_file(req.dataset_id, resolved, file_name)
+        registered += 1
+        if len(samples) < 10:
+            samples.append(file_name)
+
+    if registered == 0:
+        raise HTTPException(400, f"в папке нет поддерживаемых документов: {root}")
+
+    parse_started = False
+    if req.parse:
+        async def _parse():
+            async with state.parse_semaphore:
+                await assert_parse_admission(state)
+                await state.backend.parse_dataset(req.dataset_id, limit=req.parse_limit)
+
+        asyncio.create_task(_parse())
+        parse_started = True
+
+    return {
+        "status": "registered",
+        "source_root": root.as_posix(),
+        "dataset_id": req.dataset_id,
+        "dataset_name": dataset.name,
+        "registered_files": registered,
+        "skipped_unsupported": skipped_unsupported,
+        "skipped_outside_root": skipped_outside_root,
+        "in_place": True,
+        "copied_to_storage": False,
+        "parse_started": parse_started,
+        "parse_limit": req.parse_limit,
+        "samples": samples,
     }
 
 
