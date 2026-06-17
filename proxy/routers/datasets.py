@@ -1448,10 +1448,16 @@ async def upload_file(dataset_id: str, file: UploadFile = File(...), _admin=Depe
     doc_id = await state.backend.upload_file(dataset_id, temp_path, relative_path=original_name)
 
     async def _parse():
+        # Дренаж очереди: один upload разгребает батч PENDING (а не 1 док — иначе
+        # пачка аплоадов оставляет хвост висеть, см. фикс индексатора 2026-06-17).
+        try:
+            limit = int(os.getenv("LES_UPLOAD_PARSE_LIMIT", "25"))
+        except ValueError:
+            limit = 25
         try:
             async with state.parse_semaphore:
                 await assert_parse_admission(state)
-                await state.backend.parse_dataset(dataset_id, limit=1)
+                await state.backend.parse_dataset(dataset_id, limit=limit)
         finally:
             temp_path.unlink(missing_ok=True)
 
