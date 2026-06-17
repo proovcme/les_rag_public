@@ -27,8 +27,67 @@ public sealed class ArtelFamilyFactoryApplication : IExternalApplication
             || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ARTEL_AUTORUN_GENERATE_PLAN")))
         {
             application.Idling += OnIdling;
+            // Headless-устойчивость: на «замусоренном» Revit (чужие аддины) старт упирается в
+            // модальные диалоги (напр. «External Tools Duplicate ClientId», предупреждения загрузки),
+            // которые в автономном запуске некому закрыть — Revit не доходит до Idling и автозапуск не
+            // стреляет. Пока ждём автозапуск, сами гасим всплывающие диалоги. Только в autorun-режиме —
+            // обычный интерактив (ручные кнопки ленты) не трогаем.
+            application.DialogBoxShowing += OnDialogBoxShowing;
         }
         return Result.Succeeded;
+    }
+
+    // Best-effort авто-закрытие модальных диалогов в режиме автозапуска. Логируем, что погасили,
+    // рядом с отчётами — чтобы было видно, какие диалоги мешали headless-старту.
+    private void OnDialogBoxShowing(object? sender, DialogBoxShowingEventArgs args)
+    {
+        try
+        {
+            string id;
+            switch (args)
+            {
+                case TaskDialogShowingEventArgs taskDialog:
+                    id = taskDialog.DialogId ?? "TaskDialog";
+                    // Close=8 закрывает информационные стартовые диалоги; если кнопки Close нет,
+                    // Cancel=2/Ok=1 как запасной — Revit игнорирует невалидный id, поэтому шлём по очереди.
+                    if (!taskDialog.OverrideResult((int)TaskDialogResult.Close))
+                    {
+                        if (!taskDialog.OverrideResult((int)TaskDialogResult.Cancel))
+                        {
+                            taskDialog.OverrideResult((int)TaskDialogResult.Ok);
+                        }
+                    }
+                    break;
+                case MessageBoxShowingEventArgs messageBox:
+                    id = "MessageBox:" + messageBox.Message;
+                    messageBox.OverrideResult(1); // IDOK
+                    break;
+                default:
+                    id = args.DialogId ?? args.GetType().Name;
+                    args.OverrideResult(1);
+                    break;
+            }
+            AppendAutorunLog($"[dialog-dismiss] {id}");
+        }
+        catch
+        {
+            // Подавление диалога — best-effort; никогда не валим старт из-за этого.
+        }
+    }
+
+    private static void AppendAutorunLog(string line)
+    {
+        try
+        {
+            var dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ARTEL", "family_factory");
+            Directory.CreateDirectory(dir);
+            File.AppendAllText(
+                Path.Combine(dir, "artel_generate.log"),
+                $"[{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss}] {line}\n",
+                Encoding.UTF8);
+        }
+        catch { /* лог best-effort */ }
     }
 
     private static void BuildRibbon(UIControlledApplication application)
@@ -100,6 +159,7 @@ public sealed class ArtelFamilyFactoryApplication : IExternalApplication
     public Result OnShutdown(UIControlledApplication application)
     {
         application.Idling -= OnIdling;
+        application.DialogBoxShowing -= OnDialogBoxShowing;
         return Result.Succeeded;
     }
 
