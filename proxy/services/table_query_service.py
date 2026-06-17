@@ -24,8 +24,8 @@ class TableRefChunk:
 
 
 NUMERIC_FIELDS = {
-    "amount": ("сумм", "стоимост", "итого", "руб"),
-    "qty": ("колич", "кол-во", "объем", "объём", "сколько"),
+    "amount": ("стоимост", "руб", "затрат"),
+    "qty": ("колич", "кол-во", "объем", "объём", "сколько", "метраж", "метр", "длин", "погон"),
     "price": ("цен", "расцен"),
     "amount_mat": ("материал",),
     "amount_work": ("работ", "зп", "труд"),
@@ -104,6 +104,10 @@ STOPWORDS = {
     "или",
     "руб",
     "рублей",
+    "ведомость", "ведомости", "ведомостям", "ведомостей", "вор",
+    "объём", "объем", "объёма", "объема", "объёмов", "объемов",
+    "метраж", "метр", "метра", "метров", "длина", "длину", "длины",
+    "количество", "количества", "штук", "штука", "число", "погонн",
 }
 
 
@@ -185,7 +189,21 @@ def maybe_answer_table_query(
 
     field = _select_numeric_field(question)
     operation = _select_operation(question)
-    rows = _load_relevant_rows(question, table_chunks, storage_root=storage_root, max_rows=max_rows)
+    if operation == "sum":
+        # Полная детерминированная агрегация: суммируем по ВСЕМ parquet задействованных
+        # датасетов, а не только по retrieved top-k чанкам (иначе сумма частична — кейс
+        # кабель 3х1,5: 5900 вместо 15030.72). ADR-11: числа считает код, не LLM.
+        ds_ids = [
+            d for d in _dedupe(
+                str((getattr(c, "meta", {}) or {}).get("dataset_id") or "") for c in table_chunks
+            ) if d
+        ]
+        full_refs = parquet_ref_chunks_for_datasets(ds_ids, storage_root=storage_root)
+        rows = _load_relevant_rows(
+            question, full_refs or table_chunks, storage_root=storage_root, max_rows=10 ** 9
+        )
+    else:
+        rows = _load_relevant_rows(question, table_chunks, storage_root=storage_root, max_rows=max_rows)
     if not rows:
         return None
 
@@ -359,7 +377,19 @@ def _read_parquet_rows(path: Path) -> list[dict[str, Any]]:
 
 def _query_keywords(question: str) -> list[str]:
     tokens = re.findall(r"[0-9A-Za-zА-Яа-яЁё_.-]{3,}", question.casefold())
-    return [token for token in tokens if token not in STOPWORDS and not token.isdigit()]
+    out: list[str] = []
+    for token in tokens:
+        if token.isdigit():
+            continue
+        # Лёгкий стем: чисто кириллическое слово >5 → 5-симв. префикс (кабеля/кабель→кабел),
+        # чтобы морфология не мешала substring-матчу. Токены с цифрами/спецсимволами
+        # (3х1,5, марки) — как есть.
+        stem = token[:5] if (len(token) > 5 and token.isalpha()) else token
+        # Стоп-слово ловим и по полной форме, и по стему (суммарный→сумма∈STOPWORDS).
+        if token in STOPWORDS or stem in STOPWORDS:
+            continue
+        out.append(stem)
+    return out
 
 
 def _row_matches(row: dict[str, Any], keywords: list[str]) -> bool:
