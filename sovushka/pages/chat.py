@@ -17,6 +17,7 @@ from sovushka.state import (
     add_log,
     api_get,
     api_post,
+    api_post_file,
     api_post_stream,
     last_api_error_text,
     refresh_indexing_mode,
@@ -157,14 +158,64 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             indexing_banner = ui.label("").classes("sov-indexing-banner")
             indexing_banner.set_visibility(False)
 
+            # Скрепка чата: прикрепить документ — быстрая сверка / индексация (W11.8)
+            attach_state = {"id": None, "name": "", "mode": ""}
+            with ui.dialog() as attach_dialog, ui.card().classes("sov-control-card").style("min-width:360px"):
+                _html('<div class="section-title">Прикрепить документ</div>')
+                attach_mode = ui.toggle(
+                    {"quick": "Быстрая сверка (таблицы)", "index": "Индексация (в базу)"},
+                    value="quick",
+                ).props("no-caps")
+                ui.label(
+                    "Быстрая сверка: парс таблиц без векторов — сразу можно «сверь с ВОР». "
+                    "Индексация: документ войдёт в базу знаний (поиск в чате)."
+                ).style("font-size:.66rem;color:var(--dim);")
+                ui.upload(
+                    auto_upload=True,
+                    on_upload=lambda e: asyncio.create_task(_do_attach(e)),
+                ).props("flat accept=.xlsx,.xls,.csv,.pdf,.docx").classes("w-full")
+                attach_status = ui.label("").style("font-size:.7rem;color:var(--ok);")
+
+            async def _do_attach(e):
+                try:
+                    content = e.content.read()
+                except Exception:
+                    ui.notify("Не удалось прочитать файл", type="negative")
+                    return
+                attach_status.text = f"Загрузка «{e.name}»…"
+                add_log(f"[СКРЕПКА] {e.name} mode={attach_mode.value}")
+                d = await api_post_file("/api/rag/attach", content, e.name, params={"mode": attach_mode.value})
+                if not isinstance(d, dict):
+                    ui.notify(last_api_error_text("Не удалось прикрепить файл"), type="negative")
+                    attach_status.text = ""
+                    return
+                attach_state.update({"id": d.get("attachment_id"), "name": d.get("name", e.name), "mode": d.get("mode")})
+                if d.get("mode") == "quick":
+                    msg = f"📎 {d.get('name')} — {d.get('rows', 0)} строк, готово к сверке"
+                else:
+                    msg = f"📎 {d.get('name')} — индексируется в «{d.get('dataset_name', 'базу')}»"
+                attach_chip.text = msg
+                attach_chip.visible = True
+                attach_status.text = "Готово"
+                attach_dialog.close()
+                ui.notify(msg, type="positive")
+                if d.get("mode") == "quick":
+                    ui.notify("Спроси «сверь это с ВОР» — файл уже участвует в сверке", type="info")
+
             with ui.element("div").classes("sov-composer") as composer_box:
                 chat_input = ui.textarea(
                     placeholder="Спросить по нормативам, проекту или базе знаний..."
                 ).classes("sov-composer-input").props("rows=2 autogrow borderless")
+                attach_chip = ui.label("").style("font-size:.7rem;color:var(--accent);font-weight:700;")
+                attach_chip.visible = False
                 with ui.row().classes("sov-composer-actions"):
                     with ui.row().classes("sov-guard-controls"):
                         validation_sw = ui.switch("Т.О.С.К.А.", value=True).props("dense")
                         validation_state = ui.label("ON").classes("sov-chip")
+                    ui.button(
+                        icon="o_attach_file",
+                        on_click=lambda: attach_dialog.open(),
+                    ).props("no-caps flat round").tooltip("Прикрепить документ")
                     advanced_btn = ui.button(
                         "Расширенный запрос",
                         icon="o_tune",

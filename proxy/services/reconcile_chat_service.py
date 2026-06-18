@@ -122,7 +122,18 @@ def answer_reconcile_query(
     if not ids:
         return None
 
-    result = reconcile_datasets(ids, storage_root=storage_root, by=by, dataset_names=dataset_names)
+    # Ярлыки: переданные имена + имя файла вложения из _name.txt (скрепка чата).
+    names = dict(dataset_names or {})
+    for i in ids:
+        if i not in names:
+            name_file = storage_root / i / "_name.txt"
+            if name_file.exists():
+                try:
+                    names[i] = name_file.read_text(encoding="utf-8").strip() or i
+                except OSError:
+                    pass
+
+    result = reconcile_datasets(ids, storage_root=storage_root, by=by, dataset_names=names)
     if not result["rows"]:
         return None
 

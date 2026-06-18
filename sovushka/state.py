@@ -141,6 +141,30 @@ async def api_post(path: str, data: Optional[dict] = None, base: Optional[str] =
         return None
 
 
+async def api_post_file(
+    path: str, content: bytes, filename: str,
+    params: Optional[dict] = None, base: Optional[str] = None,
+) -> Optional[dict]:
+    """Multipart-загрузка файла на proxy (скрепка чата). Возвращает JSON или None."""
+    from sovushka.config import PROXY_URL
+    if base is None:
+        base = PROXY_URL
+    try:
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            r = await client.post(
+                f"{base}{path}",
+                files={"file": (filename, content)},
+                params=params or {},
+                headers=_auth_headers(),
+            )
+            r.raise_for_status()
+            _api_success()
+            return r.json()
+    except Exception as e:
+        _api_error("POST", path, e)
+        return None
+
+
 async def api_post_stream(path: str, data: Optional[dict], on_event, base: Optional[str] = None) -> bool:
     """W5.1: POST с чтением Server-Sent Events. Для каждого события вызывает
     `on_event(event: str, payload)` — payload уже распарсен из JSON (для `token`

@@ -1549,6 +1549,86 @@ async def upload_file(dataset_id: str, file: UploadFile = File(...), _admin=Depe
     return {"doc_id": doc_id, "status": "queued"}
 
 
+# ── Скрепка чата: прикрепить документ (W11.8) ──
+
+_CHAT_ATTACH_DATASET_NAME = "Вложения чата"
+_QUICK_ATTACH_PREFIX = "attach_"
+_ATTACH_STORAGE_ROOT = Path("storage/datasets")
+
+
+async def _ensure_chat_attach_dataset(state) -> str:
+    for d in await state.backend.list_datasets():
+        if d.name == _CHAT_ATTACH_DATASET_NAME:
+            return d.id
+    return await state.backend.create_dataset(_CHAT_ATTACH_DATASET_NAME)
+
+
+def _cleanup_quick_attachments(root: Path, max_age_sec: int = 6 * 3600) -> None:
+    """Устаревшие быстрые вложения (parquet-only) удаляем, чтобы не копились в сверке."""
+    if not root.exists():
+        return
+    for d in root.glob(f"{_QUICK_ATTACH_PREFIX}*"):
+        try:
+            if d.is_dir() and (time.time() - d.stat().st_mtime) > max_age_sec:
+                shutil.rmtree(d, ignore_errors=True)
+        except OSError:
+            pass
+
+
+@router.post("/attach")
+async def attach_chat_file(
+    file: UploadFile = File(...),
+    mode: str = Query("quick"),
+    _admin=Depends(require_admin),
+):
+    """Скрепка чата. ``mode=quick`` — быстрый парс таблиц в Parquet (без векторов),
+    сразу доступно сверке/таблицам; ``mode=index`` — полная индексация в датасет
+    «Вложения чата» (вектора в Qdrant). На парсе таблиц LLM не участвует (ADR-11)."""
+    from uuid import uuid4
+
+    state = get_dataset_state()
+    original_name = safe_upload_name(file.filename or "upload.bin", rag_upload_suffixes())
+    temp_path = await save_upload_tmp(file, allowed_suffixes=rag_upload_suffixes(), max_bytes=max_upload_bytes())
+
+    if mode == "index":
+        ds_id = await _ensure_chat_attach_dataset(state)
+        doc_id = await state.backend.upload_file(ds_id, temp_path, relative_path=original_name)
+
+        async def _parse():
+            try:
+                async with state.parse_semaphore:
+                    await assert_parse_admission(state)
+                    await state.backend.parse_dataset(ds_id, limit=25)
+            finally:
+                temp_path.unlink(missing_ok=True)
+
+        asyncio.create_task(_parse())
+        return {"attachment_id": ds_id, "mode": "index", "name": original_name,
+                "dataset_name": _CHAT_ATTACH_DATASET_NAME, "doc_id": doc_id, "status": "queued"}
+
+    # quick: парс таблиц в Parquet-«датасет», который сверка обнаружит автоматически
+    from backend.parquet_writer import TableNormalizer
+
+    _cleanup_quick_attachments(_ATTACH_STORAGE_ROOT)
+    attach_id = f"{_QUICK_ATTACH_PREFIX}{uuid4().hex[:12]}"
+    attach_dir = _ATTACH_STORAGE_ROOT / attach_id
+    try:
+        norm = TableNormalizer(use_llm=False, parquet_dir=str(attach_dir / "_parquet"))
+        res = await norm.process(str(temp_path), dataset_id=attach_id)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+    if not res.get("rows"):
+        shutil.rmtree(attach_dir, ignore_errors=True)
+        raise HTTPException(
+            422, f"В файле «{original_name}» не найдено табличных строк для быстрой сверки. "
+                 "Для текстовых документов используй режим индексации.",
+        )
+    (attach_dir / "_name.txt").write_text(original_name, encoding="utf-8")
+    return {"attachment_id": attach_id, "mode": "quick", "name": original_name,
+            "rows": res["rows"], "doc_type": res.get("doc_type", "")}
+
+
 @router.post("/upload-smart")
 async def upload_file_smart(
     file: UploadFile = File(...),
