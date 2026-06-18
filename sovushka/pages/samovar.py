@@ -528,6 +528,36 @@ def build_samovar():
                 ).style("background:rgba(16,185,129,.15);border:1px solid var(--ok);color:var(--ok);font-size:.7rem;font-weight:900;")
             mail_status = ui.label("").style("font-size:.7rem;color:var(--dim);")
 
+            ui.separator().style("margin:6px 0;")
+            ui.label(
+                "Архив Outlook: .olm (Outlook для Mac) или .pst (Outlook Windows). Путь — внутри "
+                "LES_EXTERNAL_SOURCE_ROOTS. Отдельные .msg-письма индексируются как обычные файлы "
+                "(Скрепка в чате / загрузка в Самовар). .pst требует libpff (см. подсказку при ошибке)."
+            ).style("font-size:.62rem;color:var(--dim);")
+            with ui.row().classes("gap-2 w-full items-center"):
+                arch_path = ui.input(placeholder="/Users/ovc/RAG/.../archive.olm").props(
+                    "dense outlined clearable"
+                ).classes("flex-1").style("font-size:.72rem;")
+                ui.button("⤵ ИМПОРТ АРХИВА", on_click=lambda: asyncio.create_task(_archive_import())).props(
+                    "no-caps"
+                ).style("background:rgba(16,185,129,.15);border:1px solid var(--ok);color:var(--ok);font-size:.7rem;font-weight:900;")
+            arch_status = ui.label("").style("font-size:.7rem;color:var(--dim);")
+
+            async def _archive_import():
+                if not (arch_path.value or "").strip():
+                    ui.notify("Укажи путь к .olm/.pst", type="warning")
+                    return
+                arch_status.text = "Импорт архива…"
+                add_log(f"[OUTLOOK ARCH] {arch_path.value}")
+                d = await api_post("/api/mail/import-archive", {"path": arch_path.value.strip(), "parse": True})
+                if not isinstance(d, dict):
+                    ui.notify(last_api_error_text("Импорт архива не удался (для .pst нужен libpff)"), type="negative")
+                    arch_status.text = ""
+                    return
+                arch_status.text = (f"Импортировано писем: {d.get('messages', 0)} "
+                                    f"({d.get('format', '')}) → {d.get('dataset_name', 'MAIL')}")
+                ui.notify(arch_status.text, type="positive")
+
             def _apply_preset():
                 if mail_preset.value == "office365":
                     mail_host.value, mail_port.value = "outlook.office365.com", 993

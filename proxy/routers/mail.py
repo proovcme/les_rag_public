@@ -57,6 +57,13 @@ class MailImapImportRequest(BaseModel):
     folders: list[str] | None = None
 
 
+class MailArchiveImportRequest(BaseModel):
+    path: str
+    max_messages: int = Field(default=2000, ge=1, le=50000)
+    parse: bool = False
+    parse_limit: int = Field(default=DEFAULT_PARSE_BATCH_LIMIT, ge=1, le=25)
+
+
 class MailAppleImportRequest(BaseModel):
     mail_root: str = ""
     max_messages: int = Field(default=25, ge=1, le=200)
@@ -393,6 +400,102 @@ async def import_local_mail(req: MailLocalImportRequest, _admin=Depends(require_
         "parse_started": parse_started,
         "parse_blocked": parse_blocked,
         "parse_result": parse_result,
+    }
+
+
+def _validate_archive_path(path: str) -> Path:
+    """Путь к .olm/.pst внутри одобренных корней (LES_EXTERNAL_SOURCE_ROOTS)."""
+    from proxy.config import external_source_roots
+
+    raw = (path or "").strip()
+    if not raw:
+        raise HTTPException(400, "path обязателен")
+    try:
+        p = Path(raw).expanduser().resolve(strict=True)
+    except FileNotFoundError as error:
+        raise HTTPException(404, f"файл не найден: {raw}") from error
+    except (OSError, RuntimeError) as error:
+        raise HTTPException(400, f"некорректный путь: {raw}") from error
+    if not p.is_file():
+        raise HTTPException(400, "path должен быть файлом архива (.olm/.pst)")
+    if p.suffix.lower() not in (".olm", ".pst"):
+        raise HTTPException(400, "поддерживаются только .olm (Outlook для Mac) и .pst (Outlook Windows)")
+    roots = external_source_roots()
+    if roots and not any(p == r or r in p.parents for r in roots):
+        raise HTTPException(403, f"архив вне одобренных корней LES_EXTERNAL_SOURCE_ROOTS: {p}")
+    return p
+
+
+def _extract_pst_to_eml(archive: Path, out_dir: Path, max_messages: int) -> list[Path]:
+    try:
+        import pypff  # noqa: F401
+    except ImportError as error:
+        raise RuntimeError(
+            "PST требует libpff+pypff (не установлены). Установка (нужно одобрение): "
+            "brew install libpff && uv add pypff. Либо экспортируй ящик в .olm/.eml."
+        ) from error
+    from email.message import EmailMessage
+
+    from backend.pst_reader import PSTReader
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+    for idx, msg in enumerate(PSTReader(str(archive)).iter_messages(), 1):
+        if idx > max_messages:
+            break
+        em = EmailMessage()
+        em["Subject"] = getattr(msg, "subject", "") or "(без темы)"
+        if getattr(msg, "sender", ""):
+            em["From"] = msg.sender
+        if getattr(msg, "recipients", ""):
+            em["To"] = msg.recipients
+        if getattr(msg, "date", ""):
+            em["Date"] = msg.date
+        em.set_content(getattr(msg, "body", "") or "")
+        eml = out_dir / f"pst_{idx:05d}.eml"
+        eml.write_bytes(em.as_bytes())
+        written.append(eml)
+    return written
+
+
+@router.post("/import-archive")
+async def import_mail_archive(req: MailArchiveImportRequest, _admin=Depends(require_admin)):
+    """Импорт почтового архива Outlook: .olm (Mac, stdlib) или .pst (Windows, нужен libpff).
+
+    Извлекает письма → .eml → индексация в MAIL_Index (P0). Путь — внутри LES_EXTERNAL_SOURCE_ROOTS.
+    """
+    state = get_dataset_state()
+    archive = _validate_archive_path(req.path)
+    out_dir = Path("RAG_Content/MAIL") / archive.suffix.lstrip(".").upper() / archive.stem
+
+    if archive.suffix.lower() == ".olm":
+        from backend.olm_reader import extract_olm_to_eml
+        eml_paths = await asyncio.to_thread(extract_olm_to_eml, archive, out_dir)
+    else:
+        try:
+            eml_paths = await asyncio.to_thread(_extract_pst_to_eml, archive, out_dir, req.max_messages)
+        except RuntimeError as error:
+            raise HTTPException(status_code=501, detail=str(error)) from error
+
+    eml_paths = eml_paths[: req.max_messages]
+    if not eml_paths:
+        raise HTTPException(422, f"в архиве {archive.name} не найдено писем")
+
+    dataset_id, created = await _mail_dataset_id(state)
+    uploaded: list[dict[str, Any]] = []
+    for eml in eml_paths:
+        doc_id = await state.backend.upload_file(dataset_id, eml, relative_path=f"{archive.stem}/{eml.name}")
+        uploaded.append({"doc_id": doc_id, "relative_path": eml.name})
+
+    parse_started, parse_blocked, parse_result = await _maybe_parse_mail_dataset(
+        state, dataset_id, parse=req.parse, parse_limit=req.parse_limit,
+    )
+    return {
+        "status": "registered", "component": "Е.Ж.И.К.",
+        "archive": archive.name, "format": archive.suffix.lstrip("."),
+        "dataset_id": dataset_id, "dataset_name": MAIL_DATASET_NAME, "dataset_created": created,
+        "messages": len(eml_paths), "parse_started": parse_started,
+        "parse_blocked": parse_blocked, "parse_result": parse_result,
     }
 
 
