@@ -1247,6 +1247,51 @@ async def index_external(req: IndexExternalRequest, _admin=Depends(require_admin
     }
 
 
+def _count_dir_files(d: Path) -> int:
+    """Быстрый счёт файлов в папке (только непосредственные дети) — для подсказки в браузере."""
+    try:
+        return sum(1 for x in d.iterdir() if x.is_file() and not x.name.startswith("."))
+    except OSError:
+        return 0
+
+
+@router.get("/browse-external")
+async def browse_external(path: str = "", _admin=Depends(require_admin)):
+    """Серверный браузер папок для выбора внешней папки кликами (без печати пути).
+
+    Ограничен корнями LES_EXTERNAL_SOURCE_ROOTS (как и индексация). Пустой `path` →
+    список корней; иначе — подпапки текущей директории + ссылка «вверх».
+    """
+    from proxy.config import external_source_roots
+
+    roots = external_source_roots()
+    if not roots:
+        raise HTTPException(403, "внешняя индексация выключена: LES_EXTERNAL_SOURCE_ROOTS пуст")
+
+    if not (path or "").strip():
+        return {
+            "path": "", "parent": None,
+            "roots": [str(r) for r in roots],
+            "dirs": [{"name": r.name or str(r), "path": str(r), "file_count": _count_dir_files(r)} for r in roots],
+        }
+
+    current = validate_external_source(path)  # внутри корней, существует, директория
+    dirs = []
+    for child in sorted(current.iterdir(), key=lambda p: p.name.lower()):
+        try:
+            if child.is_dir() and not child.name.startswith("."):
+                dirs.append({"name": child.name, "path": str(child), "file_count": _count_dir_files(child)})
+        except OSError:
+            continue
+    is_root = any(current == r for r in roots)
+    return {
+        "path": str(current),
+        "parent": None if is_root else str(current.parent),
+        "roots": [str(r) for r in roots],
+        "dirs": dirs,
+    }
+
+
 @router.post("/sync/{folder}")
 async def sync_folder(folder: str, _admin=Depends(require_admin)):
     state = get_dataset_state()

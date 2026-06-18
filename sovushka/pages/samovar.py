@@ -372,12 +372,59 @@ def build_samovar():
                 "(Qdrant-векторы, Parquet, метаданные). Путь обязан быть внутри одобренного корня."
             ).style("font-size:.64rem;color:var(--dim);margin-bottom:4px;")
 
+            # Серверный браузер папок — выбрать внешнюю папку кликами, без печати пути.
+            browse_state = {"path": ""}
+            with ui.dialog() as folder_dialog, ui.card().style("min-width:520px;max-width:92vw"):
+                ui.label("ВЫБОР ПАПКИ // корни LES_EXTERNAL_SOURCE_ROOTS").classes("section-title")
+                fb_path_lbl = ui.label("Корни").style(
+                    "font-size:.72rem;color:var(--accent);word-break:break-all;font-weight:700;"
+                )
+                fb_list = ui.column().classes("w-full gap-1").style("max-height:340px;overflow:auto;")
+                with ui.row().classes("w-full justify-end gap-2"):
+                    ui.button("Отмена", on_click=folder_dialog.close).props("flat no-caps")
+                    fb_select_btn = ui.button("✓ Выбрать эту папку", on_click=lambda: _pick_folder()).props("no-caps")
+
+            async def _browse_folder(path=""):
+                d = await api_get(f"/api/rag/browse-external?path={quote(path, safe='')}")
+                if not isinstance(d, dict):
+                    ui.notify(last_api_error_text("Не удалось открыть папку"), type="negative")
+                    return
+                browse_state["path"] = d.get("path", "")
+                fb_path_lbl.text = d.get("path", "") or "Корни (выбери папку ниже)"
+                fb_list.clear()
+                with fb_list:
+                    if d.get("path"):
+                        ui.button("↑ Вверх", icon="o_arrow_upward",
+                                  on_click=lambda u=d.get("parent"): asyncio.create_task(_browse_folder(u or ""))
+                                  ).props("flat dense no-caps").classes("w-full")
+                    for entry in d.get("dirs", []):
+                        ui.button(f"{entry['name']}   ·  {entry.get('file_count', 0)} файл(ов)", icon="o_folder",
+                                  on_click=lambda p=entry["path"]: asyncio.create_task(_browse_folder(p))
+                                  ).props("flat dense no-caps align=left").classes("w-full")
+                    if not d.get("dirs") and d.get("path"):
+                        ui.label("Подпапок нет — можно выбрать эту папку.").style(
+                            "font-size:.66rem;color:var(--dim);")
+                fb_select_btn.set_enabled(bool(d.get("path")))
+
+            def _pick_folder():
+                if browse_state["path"]:
+                    ext_path_input.value = browse_state["path"]
+                    folder_dialog.close()
+                    ui.notify(f"Папка: {browse_state['path']}", type="positive")
+
+            def _open_folder_browser():
+                folder_dialog.open()
+                asyncio.create_task(_browse_folder(""))
+
             with ui.row().classes("gap-2 w-full items-center"):
                 ext_path_input = ui.input(
                     placeholder="/Users/ovc/RAG/CONTS/Документы/АМК ВОР 1901"
                 ).props("dense outlined clearable").classes("flex-1").style(
                     "background:var(--bg);font-size:.75rem;"
                 )
+                ui.button("Обзор…", icon="o_folder_open", on_click=_open_folder_browser).props(
+                    "dense no-caps flat"
+                ).tooltip("Выбрать папку кликами, без печати пути")
                 ext_limit_input = ui.number("parse", value=25, min=1, max=500, step=5).props(
                     "dense outlined"
                 ).style("width:96px;font-size:.7rem;").tooltip("Сколько файлов распарсить сразу")
