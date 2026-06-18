@@ -996,6 +996,59 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 "spec_to_bor": spec_trace["spec_to_bor"], "history_id": history_id,
             }
 
+    # W11.15: «дай сводку проекта» — стадия + ТЭП + состав документов, детерминированно. 0 LLM.
+    from proxy.services.project_summary_service import (
+        build_project_summary, format_project_summary, is_project_summary_query,
+    )
+    if is_project_summary_query(req.question) and _dataset_ids:
+        t_sum = time.time()
+        try:
+            summ = await asyncio.to_thread(
+                build_project_summary, _dataset_ids, storage_root=Path("./storage/datasets")
+            )
+        except Exception as sum_err:
+            logger.warning("[PROJ_SUMMARY] skipped: %s", sum_err)
+            summ = None
+        if summ and (summ["tep"] or summ["documents"]):
+            label = ", ".join(resolved_dataset_names[:3])
+            answer = format_project_summary(summ, label=label)
+            if memory_block:
+                answer = f"{answer}\n\n{memory_block}"
+            state.crag_stats["verified"] += 1
+            state.chat_metrics["crag_pass"] += 1
+            sum_trace = {
+                "mode": "deterministic_project_summary", "vector_count": 0, "lexical_count": 0,
+                "merged_count": summ["document_count"], "retry_count": 0,
+                "quality_status": "deterministic_project_summary",
+                "project_summary": {"stage": summ["stage"], "tep": len(summ["tep"]),
+                                    "documents": summ["document_count"]},
+            }
+            history_id = None
+            try:
+                history_id = save_chat_history(
+                    question=req.question, answer=answer,
+                    sources=resolved_dataset_names or _dataset_ids,
+                    crag_status="VERIFIED", latency_sec=time.time() - t_sum, tokens=0,
+                    session_id=req.session_id, requested_dataset_filter=req.dataset_filter,
+                    effective_dataset_filter=effective_dataset_filter,
+                    resolved_dataset_ids=_dataset_ids, resolved_dataset_names=resolved_dataset_names,
+                    source_dataset_ids=_dataset_ids, source_dataset_names=resolved_dataset_names,
+                    query_route={"channel": "project_summary", "operation": "project_summary"},
+                    retrieval_trace=sum_trace, cache_type="deterministic_project_summary",
+                    validation_enabled=False, success=1,
+                )
+            except Exception as db_err:
+                logger.warning("[CHAT] History save error: %s", db_err)
+            return {
+                "answer": answer, "crag_status": "VERIFIED",
+                "sources": resolved_dataset_names or _dataset_ids,
+                "effective_dataset_filter": effective_dataset_filter,
+                "query_route": {"channel": "project_summary", "operation": "project_summary"},
+                "retrieval_trace": sum_trace, "cache": "deterministic_project_summary",
+                "validation": {"enabled": False, "reason": "deterministic_project_summary"},
+                "project_summary": sum_trace["project_summary"], "history_id": history_id,
+            }
+
     # Состав/перечень разделов документа: семантика не собирает структуру (заголовки
     # размазаны по чанкам, единого чанка нет). Детерминированно извлекаем нумерованную
     # структуру из полного текста документа — 0 LLM. Additive: не вышло → обычный RAG.
