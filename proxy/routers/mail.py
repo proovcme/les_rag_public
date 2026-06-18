@@ -445,13 +445,18 @@ def _extract_pst_to_eml(archive: Path, out_dir: Path, max_messages: int) -> list
             break
         em = EmailMessage()
         em["Subject"] = getattr(msg, "subject", "") or "(без темы)"
-        if getattr(msg, "sender", ""):
-            em["From"] = msg.sender
-        if getattr(msg, "recipients", ""):
-            em["To"] = msg.recipients
+        if getattr(msg, "from_addr", ""):
+            em["From"] = msg.from_addr
+        to_addrs = getattr(msg, "to_addrs", None) or []
+        cc_addrs = getattr(msg, "cc_addrs", None) or []
+        if to_addrs:
+            em["To"] = ", ".join(to_addrs)
+        if cc_addrs:
+            em["Cc"] = ", ".join(cc_addrs)
         if getattr(msg, "date", ""):
             em["Date"] = msg.date
-        em.set_content(getattr(msg, "body", "") or "")
+        body = getattr(msg, "body_text", "") or getattr(msg, "body_html", "") or ""
+        em.set_content(body)
         eml = out_dir / f"pst_{idx:05d}.eml"
         eml.write_bytes(em.as_bytes())
         written.append(eml)
@@ -474,8 +479,10 @@ async def import_mail_archive(req: MailArchiveImportRequest, _admin=Depends(requ
     else:
         try:
             eml_paths = await asyncio.to_thread(_extract_pst_to_eml, archive, out_dir, req.max_messages)
-        except RuntimeError as error:
+        except RuntimeError as error:  # нет libpff/pypff
             raise HTTPException(status_code=501, detail=str(error)) from error
+        except Exception as error:  # битый/нечитаемый PST
+            raise HTTPException(status_code=422, detail=f"не удалось прочитать .pst: {error}") from error
 
     eml_paths = eml_paths[: req.max_messages]
     if not eml_paths:

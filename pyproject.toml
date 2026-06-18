@@ -55,6 +55,10 @@ mac-mlx = [
 parsers = [
     "docling>=2.101.0",
 ]
+mail-pst = [
+    # Архивы Outlook .pst (Windows). C-сборка libpff (self-contained, нужен компилятор).
+    "libpff-python>=20231205",
+]
 
 [dependency-groups]
 dev = []

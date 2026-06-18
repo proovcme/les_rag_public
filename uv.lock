@@ -1803,6 +1803,9 @@ mac-mlx = [
     { name = "torch" },
     { name = "torchvision" },
 ]
+mail-pst = [
+    { name = "libpff-python" },
+]
 parsers = [
     { name = "docling" },
 ]
@@ -1817,6 +1820,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "langextract", specifier = ">=1.1.0" },
+    { name = "libpff-python", marker = "extra == 'mail-pst'", specifier = ">=20231205" },
     { name = "llama-index-core", specifier = ">=0.10.0" },
     { name = "llama-index-embeddings-ollama", specifier = ">=0.1.0" },
     { name = "llama-index-embeddings-openai", specifier = ">=0.1.0" },
@@ -1847,10 +1851,19 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0" },
     { name = "xlrd", specifier = ">=2.0.1" },
 ]
-provides-extras = ["mac-mlx", "parsers"]
+provides-extras = ["mac-mlx", "parsers", "mail-pst"]
 
 [package.metadata.requires-dev]
 dev = []
+
+[[package]]
+name = "libpff-python"
+version = "20231205"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/0b/a3/826777491832478f5e1555a16bc9de794ef0264eac53d213340dddae5bd4/libpff-python-20231205.tar.gz", hash = "sha256:06c218be51321b16dc3b835185ee1cd2fa5c2a1ca856e0390c1d6e4ddf329250", size = 2141621, upload-time = "2023-12-05T15:42:22.945Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/72/65/cd71e93d23c4caa1b0079e9ead9715b3bda12189c10cc48096d29fca62b7/libpff_python-20231205-cp312-cp312-macosx_12_0_x86_64.whl", hash = "sha256:aee688ca5063abd35a067cf36d949e0b3623ce3a61135e3dad76068c3b647635", size = 679693, upload-time = "2023-12-06T19:03:20.731Z" },
+]
 
 [[package]]
 name = "llama-index-core"
