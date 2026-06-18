@@ -867,9 +867,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         effective_dataset_filter,
     )
     # ADR-12: мультикласс через диалог — чипы-варианты для прочих распознанных классов.
+    # (retrieval_trace тут ещё не инициализирован — пишем класс-метки в трейс ниже, после retrieve.)
     class_suggestions = build_class_suggestions(req.question, primary_filter=effective_dataset_filter)
-    if class_suggestions:
-        retrieval_trace["class_suggestions"] = [s["class"] for s in class_suggestions]
 
     _dataset_ids = await resolve_dataset_ids(
         rag_backend, effective_dataset_ids, effective_dataset_filter, logger, question=req.question
@@ -1625,6 +1624,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     # ADR-12 слой 2: форму ответа диктует интент вопроса (детерминированно, до генерации).
     answer_form = classify_answer_form(req.question)
     retrieval_trace["answer_form"] = {"intent": answer_form.intent, "max_tokens": answer_form.max_tokens}
+    if class_suggestions:
+        retrieval_trace["class_suggestions"] = [s["class"] for s in class_suggestions]
 
     # Облако не держит локальный Metal-слот: отдельный пул (LES_CLOUD_LLM_CONCURRENCY).
     gen_semaphore = generation_semaphore(state.llm_semaphore)
