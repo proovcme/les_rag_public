@@ -8,6 +8,7 @@
 ## Старт (читать ПЕРВЫМ — экономит токены)
 - **[docs/CODE_MAP.md](docs/CODE_MAP.md)** — карта кода: топология, поток чата/индексации, пакеты, «где искать что». Сначала карта → точечный поиск → исходники.
 - **[SKILL.md](SKILL.md)** — рантайм-знание оператора (порты, доступы, доверенные сети, P.A.U.K./V.O.L.K., внешний `les.ovc.me`). НЕ дублировать сюда.
+- **Алгоритм-доки** (детерминированные ядра, 0 LLM — читать перед правкой соответствующего сервиса): [docs/ALGO-table-query.md](docs/ALGO-table-query.md) (счёт по ячейкам таблиц), [docs/ALGO-spec-to-bor.md](docs/ALGO-spec-to-bor.md) (спецификация Ф9 → ВОР).
 - Архитектура: [INFRASTRUCTURE_v2.0.md](INFRASTRUCTURE_v2.0.md) · [PROXY_ARCHITECTURE.md](PROXY_ARCHITECTURE.md) · [LES_MASTER_DOC_v2_1.md](LES_MASTER_DOC_v2_1.md) · [RAG_MODERNIZATION_PLAN.md](RAG_MODERNIZATION_PLAN.md) · [MLX_GUIDE.md](MLX_GUIDE.md) · термины [DICTIONARY_LES_v2.0.md](DICTIONARY_LES_v2.0.md) · «не читать» [docs/AGENT_NOTES.md](docs/AGENT_NOTES.md).
 
 ## Гейт проверки

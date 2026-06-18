@@ -2,6 +2,13 @@
 
 Навигатор по коду для агентов и людей: где что лежит и как связано. Архитектура/инфраструктура подробно — в [INFRASTRUCTURE_v2.0.md](../INFRASTRUCTURE_v2.0.md), [PROXY_ARCHITECTURE.md](../PROXY_ARCHITECTURE.md), [LES_MASTER_DOC_v2_1.md](../LES_MASTER_DOC_v2_1.md), [RAG_MODERNIZATION_PLAN.md](../RAG_MODERNIZATION_PLAN.md), [MLX_GUIDE.md](../MLX_GUIDE.md), термины — в [DICTIONARY_LES_v2.0.md](../DICTIONARY_LES_v2.0.md). Рантайм-операции и доступы — в корневом [SKILL.md](../SKILL.md). Здесь — структура и связи кода.
 
+## Алгоритм-доки (детерминированные ядра, 0 LLM)
+
+Канон логики, которую LLM не трогает (числа/преобразования считает код, ADR-11). Читать
+перед правкой соответствующего сервиса:
+- **[ALGO-table-query.md](ALGO-table-query.md)** — счёт по ячейкам таблиц (суммы/кол-ва): типизация в Parquet → детерминированная агрегация по полному набору строк. Сервис `proxy/services/table_query_service.py`.
+- **[ALGO-spec-to-bor.md](ALGO-spec-to-bor.md)** — спецификация (форма 9, ГОСТ 21.110) → ВОР работ (глагол по словарю). Сервис `proxy/services/spec_to_bor_service.py`.
+
 ## Стек
 
 Python **3.12**, менеджер **uv** (`uv.lock`), сборка hatchling. Локальная экспертная RAG-система: **FastAPI** (proxy + MLX-host) + **NiceGUI** (UI «Совушка») + **Qdrant** (вектора) + **llama-index** + **MLX/Core ML** (инференс и эмбеддинги на Apple Silicon). Запуск как набор сервисов (launchd-плисты / docker-compose).
