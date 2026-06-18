@@ -31,6 +31,36 @@ def _add_history(question, answer, crag="VERIFIED", feedback="", success=1):
         conn.commit()
 
 
+def _add_session(session_id, question, answer):
+    with ms._connect() as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS chat_history ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, question TEXT, answer TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO chat_history(session_id, question, answer) VALUES (?,?,?)",
+            (session_id, question, answer),
+        )
+        conn.commit()
+
+
+# ── память диалога (запоминать всё) ──
+
+def test_session_memory_returns_dialogue():
+    _add_session("s1", "Как зовут объект?", "Объект — БЦ Банкрот.")
+    _add_session("s1", "А кто прораб?", "Прораб — Иван.")
+    _add_session("other", "Левый вопрос", "Левый ответ")
+    block = ms.session_memory("s1")
+    assert "БЦ Банкрот" in block and "Иван" in block
+    assert "Левый" not in block  # чужая сессия не подмешивается
+    assert block.index("Банкрот") < block.index("Иван")  # хронологический порядок
+
+
+def test_session_memory_empty_without_session():
+    assert ms.session_memory("") == ""
+    assert ms.session_memory("nope") == ""
+
+
 # ── чат-команды ──
 
 def test_remember_and_list():

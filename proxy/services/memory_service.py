@@ -172,6 +172,38 @@ def recall_context(
     return "Рабочая память (заметки оператора и прошлые решения):\n" + "\n".join(parts)
 
 
+def session_memory(session_id: str, *, max_turns: int = 6, max_chars: int = 2000) -> str:
+    """Память диалога: последние реплики ТЕКУЩЕЙ сессии для контекста («помни всё»).
+
+    Чат потурно безсостоятельный — без этого ЛЕС не помнит, о чём шла речь выше.
+    Детерминированно: просто последние Q/A сессии из chat_history. Без LLM.
+    """
+    if not (session_id or "").strip():
+        return ""
+    try:
+        with _connect() as conn:
+            rows = conn.execute(
+                "SELECT question, answer FROM chat_history WHERE session_id=? "
+                "ORDER BY id DESC LIMIT ?",
+                (session_id.strip(), max_turns),
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return ""
+    rows = list(reversed(rows))
+    if not rows:
+        return ""
+    parts: list[str] = []
+    for row in rows:
+        q = " ".join(str(row["question"] or "").split())[:300]
+        a = " ".join(str(row["answer"] or "").split())[:400]
+        if q:
+            parts.append(f"Пользователь: {q}")
+        if a:
+            parts.append(f"Л.Е.С.: {a}")
+    block = "Предыдущий разговор в этой сессии (помни контекст диалога):\n" + "\n".join(parts)
+    return block[:max_chars]
+
+
 def maybe_handle_memory_command(question: str, dataset_filter: str = "", project_id: int = 0) -> dict[str, Any] | None:
     """Детерминированный обработчик команд заметок из чата (ADR-11: без LLM).
     В режиме объекта (project_id>0) заметки создаются и перечисляются в рамках объекта."""
