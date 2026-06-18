@@ -20,6 +20,7 @@ from pydantic import BaseModel, field_validator
 from backend.rag_config import rag_meta_db_path
 from proxy.security import require_user
 from proxy.services.answer_form_service import classify_answer_form
+from proxy.services.class_router_service import build_class_suggestions
 from proxy.services.clarification_service import build_clarification_decision
 from backend.inference.validator import rules_pre_verdict
 from backend.inference.routing import (
@@ -865,6 +866,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         query_intent.reason,
         effective_dataset_filter,
     )
+    # ADR-12: мультикласс через диалог — чипы-варианты для прочих распознанных классов.
+    class_suggestions = build_class_suggestions(req.question, primary_filter=effective_dataset_filter)
+    if class_suggestions:
+        retrieval_trace["class_suggestions"] = [s["class"] for s in class_suggestions]
 
     _dataset_ids = await resolve_dataset_ids(
         rag_backend, effective_dataset_ids, effective_dataset_filter, logger, question=req.question
@@ -1985,6 +1990,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     "validation": {"enabled": use_validation},
                     "history_id": history_id,
                     "source_excerpts": source_excerpts(chunks),
+                    "class_suggestions": class_suggestions,
                 }
 
                 # W6.7: source_id CAD/BIM-элементов из текста чанков → ответ + снимок

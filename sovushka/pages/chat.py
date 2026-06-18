@@ -680,11 +680,36 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             return
         questions = meta.get("clarifying_questions") or []
         filters = meta.get("suggested_filters") or []
-        if not questions and not filters:
+        class_suggestions = meta.get("class_suggestions") or []
+        if not questions and not filters and not class_suggestions:
             return
 
         with ui.column().classes("w-full gap-2 mt-2 pt-2 border-t border-dashed border-gray-700"):
             ui.label("Подсказки для уточнения:").classes("text-xs font-semibold text-gray-400 uppercase tracking-wider")
+
+            # ADR-12 мультикласс: вопрос задел несколько классов — предложим переспрос в их области.
+            if class_suggestions:
+                with ui.row().classes("gap-2 items-center flex-wrap"):
+                    ui.label("Посмотреть как:").classes("text-xs text-gray-500")
+                    for cs in class_suggestions:
+                        def _make_click_class(query=cs.get("query", ""), filt=cs.get("dataset_filter")):
+                            async def click_class():
+                                if filt and detail_dataset.options:
+                                    if filt in detail_dataset.options:
+                                        detail_dataset.value = filt
+                                    else:
+                                        matched = [o for o in detail_dataset.options
+                                                   if filt.lower() in str(o).lower()]
+                                        if matched:
+                                            detail_dataset.value = matched[0]
+                                chat_input.value = query
+                                _update_prompt_preview()
+                                await send_chat()
+                            return click_class
+
+                        ui.button(cs.get("label", "?"), on_click=_make_click_class()).props(
+                            "outline dense size=sm color=secondary"
+                        ).classes("text-xs normal-case")
 
             if filters:
                 with ui.row().classes("gap-2 items-center flex-wrap"):
@@ -1122,6 +1147,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 "table_query": d.get("table_query"),
                 "clarifying_questions": d.get("clarifying_questions") or [],
                 "suggested_filters": d.get("suggested_filters") or [],
+                "class_suggestions": d.get("class_suggestions") or [],
                 "source_excerpts": d.get("source_excerpts") or [],
             }
             state["chat_history"].append({"role": "ai", "text": ans, "srcs": srcs, "crag": crag, "meta": meta})
