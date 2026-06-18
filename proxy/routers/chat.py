@@ -19,6 +19,7 @@ from pydantic import BaseModel, field_validator
 
 from backend.rag_config import rag_meta_db_path
 from proxy.security import require_user
+from proxy.services.answer_form_service import classify_answer_form
 from proxy.services.clarification_service import build_clarification_decision
 from backend.inference.validator import rules_pre_verdict
 from backend.inference.routing import (
@@ -1616,6 +1617,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         "Не придумывай факты. Отвечай на русском языке."
     )
 
+    # ADR-12 слой 2: форму ответа диктует интент вопроса (детерминированно, до генерации).
+    answer_form = classify_answer_form(req.question)
+    retrieval_trace["answer_form"] = {"intent": answer_form.intent, "max_tokens": answer_form.max_tokens}
+
     # Облако не держит локальный Metal-слот: отдельный пул (LES_CLOUD_LLM_CONCURRENCY).
     gen_semaphore = generation_semaphore(state.llm_semaphore)
     if gen_semaphore._value == 0:
@@ -1723,7 +1728,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                             context_chars_limit,
                             include_metadata=True,
                         )
-                        sys_msg = sys_normal
+                        # ADR-12 §2: каркас формы под интент добавляем к нормальному промпту.
+                        sys_msg = sys_normal + (f" {answer_form.instruction}" if answer_form.instruction else "")
 
                     messages = [
                         {"role": "system", "content": sys_msg},
@@ -1753,7 +1759,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                         "messages": messages,
                         "stream": False,
                         "temperature": _env_float("CHAT_TEMPERATURE", 0.2),
-                        "max_tokens": 2048,
+                        # Потолок токенов под форму (attempt 1); строгий ретрай — дефолт.
+                        "max_tokens": answer_form.max_tokens if attempt == 1 else 2048,
                     }
                     # При стриминге ретрай (строгий промпт) шлёт уже новый текст —
                     # просим клиент очистить накопленное от прошлой попытки.
