@@ -81,7 +81,6 @@ def convert_to_markdown(file_path: Path, route=None) -> Optional[str]:
 def _parse_pdf(path: Path, route=None) -> str:
     # Проверяем настройки OCR из переменных окружения
     ocr_enabled = os.getenv("RAG_OCR_ENABLED", "true").lower() in ("true", "1", "yes", "on")
-    ocr_model = os.getenv("RAG_OCR_MODEL", "mlx-community/GLM-OCR-4bit")
     ocr_dpi = int(os.getenv("RAG_OCR_DPI", "150"))
 
     force_ocr = False
@@ -92,8 +91,8 @@ def _parse_pdf(path: Path, route=None) -> str:
     if force_ocr and ocr_enabled:
         logger.info(f"[CONVERT] Запуск OCR конвейера для {path.name} по требованию роутера")
         try:
-            from .ocr_parser import MLXVisualOCRParser
-            parser = MLXVisualOCRParser(model_id=ocr_model)
+            from .ocr_parser import make_ocr_parser
+            parser = make_ocr_parser()
             md = parser.parse_pdf(path, dpi=ocr_dpi)
             if md and md.strip():
                 return md
@@ -171,8 +170,8 @@ def _parse_pdf(path: Path, route=None) -> str:
     if ocr_enabled:
         logger.info(f"[CONVERT] Обнаружен пустой или отсканированный PDF: {path.name}. Запуск OCR...")
         try:
-            from .ocr_parser import MLXVisualOCRParser
-            parser = MLXVisualOCRParser(model_id=ocr_model)
+            from .ocr_parser import make_ocr_parser
+            parser = make_ocr_parser()
             md = parser.parse_pdf(path, dpi=ocr_dpi)
             if md and md.strip():
                 return md

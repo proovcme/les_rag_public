@@ -1,13 +1,49 @@
 """
-ocr_parser.py — Визуальное распознавание документов через MLX (GLM-OCR).
+ocr_parser.py — Визуальное распознавание документов (скан-OCR).
+
+Два бэкенда:
+- ``mlx``    — MLXVisualOCRParser (исторический GLM-OCR / любой MLX-VLM, оффлайн на Metal);
+- ``ollama`` — OllamaVisualOCRParser: OpenAI-совместимый vision-эндпоинт (ollama/llama.cpp),
+  по умолчанию модель ``gemma4:12b`` (локальный vision-кандидат, ADR-9).
+
+GLM-OCR-модель удалена из рантайма → дефолтный бэкенд скан-OCR — ``ollama`` (gemma4:12b).
+Бэкенд и модель выбираются через env (см. ``make_ocr_parser``); при отсутствии конфигурации
+парсер деградирует мягко (пустой результат + лог), не роняя индексацию.
 """
 import os
 import gc
+import base64
 import logging
 from pathlib import Path
 from typing import List, Optional
 
 logger = logging.getLogger(__name__)
+
+# Дефолтный локальный vision для скан-OCR после удаления GLM-OCR (ADR-9).
+DEFAULT_OCR_MODEL = "gemma4:12b"
+_OCR_PROMPT = (
+    "Перепиши весь текст с этой страницы документа дословно и полностью, сохраняя структуру: "
+    "заголовки, списки, таблицы (как текст со столбцами). Только распознанный текст, без "
+    "комментариев и пояснений."
+)
+
+
+def render_pdf_to_images(pdf_path: Path, dpi: int = 150) -> List["PIL.Image.Image"]:
+    """PDF → список PIL-изображений (pypdfium2). Общий рендер для всех бэкендов."""
+    logger.info(f"[OCR] Рендеринг PDF в изображения: {pdf_path.name}")
+    import pypdfium2 as pdfium
+
+    doc = pdfium.PdfDocument(str(pdf_path))
+    images = []
+    try:
+        for page_idx in range(len(doc)):
+            page = doc[page_idx]
+            bitmap = page.render(scale=dpi / 72.0)
+            images.append(bitmap.to_pil())
+    finally:
+        doc.close()
+    logger.info(f"[OCR] Успешно отрендерено страниц: {len(images)}")
+    return images
 
 
 class MLXVisualOCRParser:
@@ -52,23 +88,7 @@ class MLXVisualOCRParser:
 
     def pdf_to_images(self, pdf_path: Path, dpi: int = 150) -> List["PIL.Image.Image"]:
         """Convert PDF pages to PIL Images using pypdfium2."""
-        logger.info(f"[OCR] Рендеринг PDF в изображения: {pdf_path.name}")
-        import pypdfium2 as pdfium
-        from PIL import Image
-
-        doc = pdfium.PdfDocument(str(pdf_path))
-        images = []
-        try:
-            for page_idx in range(len(doc)):
-                page = doc[page_idx]
-                scale = dpi / 72.0
-                bitmap = page.render(scale=scale)
-                pil_img = bitmap.to_pil()
-                images.append(pil_img)
-        finally:
-            doc.close()
-        logger.info(f"[OCR] Успешно отрендерено страниц: {len(images)}")
-        return images
+        return render_pdf_to_images(pdf_path, dpi=dpi)
 
     def ocr_page(self, image: "PIL.Image.Image", prompt: str = "Text Recognition:") -> str:
         """Run OCR on a single PIL Image."""
@@ -113,3 +133,93 @@ class MLXVisualOCRParser:
             return "\n\n".join(pages_md)
         finally:
             self.unload_model()
+
+
+def _pil_to_png_b64(image) -> str:
+    """PIL Image → base64 PNG для data-URL в vision-запросе."""
+    import io
+
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def build_vlm_ocr_body(model: str, image_b64: str, *, prompt: str = _OCR_PROMPT,
+                       max_tokens: int = 1536, mime: str = "image/png") -> dict:
+    """Тело OpenAI-совместимого vision-запроса (одна страница). Вынесено для тестируемости."""
+    return {
+        "model": model,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{image_b64}"}},
+                ],
+            }
+        ],
+        "temperature": 0.0,
+        "max_tokens": max_tokens,
+    }
+
+
+class OllamaVisualOCRParser:
+    """Скан-OCR через OpenAI-совместимый vision-эндпоинт (ollama/llama.cpp), напр. gemma4:12b.
+
+    Зеркалит mail-VLM путь (`backend/mail_profile._vlm_image_bytes`): POST
+    `{base_url}/v1/chat/completions` с image_url(data-url). База/модель — из env.
+    """
+
+    def __init__(self, model_id: str = DEFAULT_OCR_MODEL, base_url: str = "",
+                 *, prompt: str = _OCR_PROMPT, max_tokens: int = 1536, timeout: float = 120.0):
+        self.model_id = model_id
+        self.base_url = (base_url or os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")).rstrip("/")
+        self.api_key = os.getenv("OLLAMA_API_KEY", "").strip()
+        self.prompt = prompt
+        self.max_tokens = max_tokens
+        self.timeout = timeout
+
+    def ocr_page(self, image) -> str:
+        import httpx
+
+        body = build_vlm_ocr_body(self.model_id, _pil_to_png_b64(image),
+                                  prompt=self.prompt, max_tokens=self.max_tokens)
+        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        try:
+            resp = httpx.post(f"{self.base_url}/v1/chat/completions", json=body,
+                              headers=headers, timeout=self.timeout)
+            resp.raise_for_status()
+            content = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+            return str(content or "").strip()
+        except Exception as e:
+            logger.error(f"[OCR] Ошибка vision-OCR ({self.model_id} @ {self.base_url}): {e}")
+            return f"[Ошибка распознавания страницы: {e}]"
+
+    def parse_pdf(self, pdf_path: Path, prompt: Optional[str] = None, dpi: int = 150) -> str:
+        if prompt:
+            self.prompt = prompt
+        images = render_pdf_to_images(pdf_path, dpi=dpi)
+        if not images:
+            return ""
+        pages_md = []
+        for idx, img in enumerate(images, 1):
+            logger.info(f"[OCR] Стр. {idx}/{len(images)} ({pdf_path.name}) → {self.model_id}")
+            pages_md.append(f"## Стр. {idx}\n\n{self.ocr_page(img)}")
+        return "\n\n".join(pages_md)
+
+
+def make_ocr_parser(model_id: Optional[str] = None):
+    """Фабрика скан-OCR парсера по env. Бэкенд: ``RAG_OCR_BACKEND`` (ollama|mlx).
+
+    Дефолт — ``ollama`` с моделью gemma4:12b (GLM-OCR удалён). MLX-путь оставлен
+    для оффлайн-Metal сценариев (``RAG_OCR_BACKEND=mlx`` + MLX-VLM модель).
+    """
+    backend = os.getenv("RAG_OCR_BACKEND", "ollama").strip().lower()
+    model = model_id or os.getenv("RAG_OCR_MODEL", DEFAULT_OCR_MODEL)
+    if backend in ("mlx", "mlx-vlm"):
+        # Историческая GLM-OCR модель удалена — для MLX-пути нужна явная MLX-VLM модель.
+        return MLXVisualOCRParser(model_id=model if model != DEFAULT_OCR_MODEL else "mlx-community/GLM-OCR-4bit")
+    return OllamaVisualOCRParser(
+        model_id=model if model != "mlx-community/GLM-OCR-4bit" else DEFAULT_OCR_MODEL,
+        base_url=os.getenv("RAG_OCR_URL", ""),
+    )
