@@ -828,6 +828,59 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         except Exception as proj_err:
             logger.warning("[PROJECT] scope resolve failed: %s", proj_err)
 
+    # W11.4b: сверка ВОР↔КС-2↔смета↔ИД — задача чата, не кнопка. До clarification,
+    # иначе «проверь соответствие…» перехватит уточняющий гейт (broad_review). 0 LLM.
+    from proxy.services.reconcile_chat_service import answer_reconcile_query, is_reconcile_query
+    from proxy.services.reconcile_service import doc_type_label
+    if is_reconcile_query(req.question):
+        t_rec_start = time.time()
+        try:
+            rec = await asyncio.to_thread(
+                answer_reconcile_query, req.question, dataset_ids=effective_dataset_ids
+            )
+        except Exception as rec_err:
+            logger.warning("[RECONCILE] deterministic answer skipped: %s", rec_err)
+            rec = None
+        if rec is not None:
+            t_rec = time.time() - t_rec_start
+            status = "VERIFIED"
+            state.crag_stats["verified"] += 1
+            state.chat_metrics["crag_pass"] += 1
+            rec_answer = rec["answer"] + (f"\n\n{memory_block}" if memory_block else "")
+            rec_trace = {
+                "mode": "deterministic_reconcile",
+                "vector_count": 0, "lexical_count": 0,
+                "merged_count": rec["totals"]["lines"], "retry_count": 0,
+                "quality_status": "deterministic_reconcile",
+                "reconcile": {"totals": rec["totals"], "doc_types": rec["doc_types"]},
+            }
+            history_id = None
+            try:
+                history_id = save_chat_history(
+                    question=req.question, answer=rec_answer,
+                    sources=[doc_type_label(dt) for dt in rec["doc_types"]],
+                    crag_status=status, latency_sec=t_rec, tokens=0,
+                    session_id=req.session_id, requested_dataset_filter=req.dataset_filter,
+                    effective_dataset_filter="RECONCILE",
+                    resolved_dataset_ids=rec["dataset_ids"], resolved_dataset_names=[],
+                    source_dataset_ids=rec["dataset_ids"], source_dataset_names=[],
+                    query_route={"channel": "reconcile", "operation": "reconcile"},
+                    retrieval_trace=rec_trace, cache_type="deterministic_reconcile",
+                    validation_enabled=False, success=1,
+                )
+            except Exception as db_err:
+                logger.warning("[CHAT] History save error: %s", db_err)
+            return {
+                "answer": rec_answer, "crag_status": status,
+                "sources": [doc_type_label(dt) for dt in rec["doc_types"]],
+                "effective_dataset_filter": "RECONCILE",
+                "query_route": {"channel": "reconcile", "operation": "reconcile"},
+                "retrieval_trace": rec_trace, "cache": "deterministic_reconcile",
+                "validation": {"enabled": False, "reason": "deterministic_reconcile"},
+                "reconcile": {"totals": rec["totals"], "doc_types": rec["doc_types"]},
+                "history_id": history_id,
+            }
+
     clarification = build_clarification_decision(
         req.question,
         dataset_ids=effective_dataset_ids,
