@@ -10,10 +10,61 @@ from fastapi.responses import FileResponse
 from proxy.security import require_user
 from proxy.services.bor_service import build_bor, collect_spec_rows, generate_bor
 from proxy.services.plan_fact_service import generate_plan_fact
+from proxy.services.reconcile_service import reconcile_datasets
 
 router = APIRouter(prefix="/api/bor", tags=["bor"])
 
 _STORAGE_ROOT = Path("storage/datasets")
+_RECONCILE_DIR = Path("storage/reconcile")
+
+
+def _parse_datasets(datasets: str) -> list[str]:
+    ids = [d.strip() for d in (datasets or "").split(",") if d.strip()]
+    if not ids:
+        raise HTTPException(400, "Укажи датасеты для сверки: ?datasets=id1,id2,...")
+    return ids
+
+
+# ── Сверка ВОР↔КС-2↔смета↔ИД по позициям (W11.4) ──
+# Объявлены ДО параметрических /{dataset_id}/* — иначе FastAPI сматчит dataset_id="reconcile".
+
+@router.get("/reconcile")
+async def reconcile_preview(datasets: str, limit: int = 500, _user=Depends(require_user)):
+    """Сверка количеств между документами разных типов (Parquet) в JSON. Без LLM.
+
+    `datasets` — список id датасетов через запятую; типы документов авто-группируются.
+    """
+    ids = _parse_datasets(datasets)
+    result = reconcile_datasets(ids, storage_root=_STORAGE_ROOT)
+    if not result["rows"]:
+        raise HTTPException(404, "Нет табличных позиций для сверки в указанных датасетах (нужен _parquet)")
+    result["rows"] = result["rows"][:limit]
+    return result
+
+
+@router.post("/reconcile/generate")
+async def reconcile_generate(datasets: str, _user=Depends(require_user)):
+    """Генерация xlsx-сверки в storage/reconcile/."""
+    ids = _parse_datasets(datasets)
+    result = reconcile_datasets(ids, storage_root=_STORAGE_ROOT, output_dir=_RECONCILE_DIR)
+    if not result["rows"]:
+        raise HTTPException(404, "Нет табличных позиций для сверки в указанных датасетах (нужен _parquet)")
+    result.pop("rows", None)  # полный список — через GET /reconcile
+    return result
+
+
+@router.get("/reconcile/download")
+async def reconcile_download(_user=Depends(require_user)):
+    """Последний сгенерированный xlsx-файл сверки."""
+    files = sorted(_RECONCILE_DIR.glob("reconcile_*.xlsx")) if _RECONCILE_DIR.exists() else []
+    if not files:
+        raise HTTPException(404, "Сверка ещё не генерировалась — вызови POST /api/bor/reconcile/generate")
+    latest = files[-1]
+    return FileResponse(
+        latest,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=latest.name,
+    )
 
 
 @router.get("/{dataset_id}/preview")

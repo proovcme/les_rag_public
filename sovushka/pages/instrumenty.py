@@ -145,6 +145,90 @@ def build_instrumenty():
                 pf_tbl.update()
                 ui.notify(pf_summary.text, type="positive")
 
+        # ──────────────── СВЕРКА ВОР↔КС-2↔СМЕТА↔ИД (W11.4) ────────────────
+        with ui.card().classes("card-les w-full"):
+            ui.label("СВЕРКА КОЛИЧЕСТВ МЕЖДУ ДОКУМЕНТАМИ (ВОР ↔ КС-2 ↔ СМЕТА ↔ ИД)").classes("section-title")
+            ui.label(
+                "Выбери датасеты с табличными документами — типы (смета/КС-2/спецификация/ИД) "
+                "группируются автоматически. Количества по позициям сравниваются: расхождения и пробелы "
+                "помечаются. Числа — Parquet, 0 LLM."
+            ).style("font-size:.66rem;color:var(--dim);")
+            with ui.row().classes("w-full gap-2 items-center"):
+                rec_ds = ui.select(options={}, label="Датасеты для сверки", multiple=True).props(
+                    "dense outlined use-chips"
+                ).classes("flex-1")
+                ui.button("СВЕРИТЬ", on_click=lambda: asyncio.create_task(_rec_run())).props("dense no-caps")
+                ui.button("СКАЧАТЬ XLSX", on_click=lambda: asyncio.create_task(_rec_download())).props(
+                    "dense flat no-caps"
+                )
+            rec_summary = ui.label("").style("font-size:.7rem;color:var(--dim);")
+            rec_tbl = ui.table(columns=[], rows=[], row_key="name").classes("w-full").style("font-size:.72rem;")
+            rec_tbl.add_slot("body-cell-status", """
+                <q-td :props="props">
+                  <span :style="{fontWeight:'800', color:
+                    props.value==='mismatch' ? '#ef4444' :
+                    props.value==='gap' ? '#f59e0b' :
+                    props.value==='match' ? '#10b981' : '#94a3b8'}">
+                    {{ {mismatch:'РАСХОЖДЕНИЕ', gap:'пробел', match:'сходится', single:'один док.'}[props.value] || props.value }}
+                  </span>
+                </q-td>""")
+
+            def _rec_apply(result: dict):
+                doc_types = result.get("doc_types", [])
+                labels = result.get("doc_type_labels", {})
+                cols = [
+                    {"name": "name", "label": "Наименование", "field": "name", "align": "left"},
+                    {"name": "unit", "label": "Ед.", "field": "unit", "align": "center"},
+                ]
+                cols += [{"name": f"src_{dt}", "label": labels.get(dt, dt), "field": f"src_{dt}",
+                          "align": "right"} for dt in doc_types]
+                cols += [
+                    {"name": "delta_pct", "label": "Δ %", "field": "delta_pct", "align": "right"},
+                    {"name": "status", "label": "Статус", "field": "status", "align": "center"},
+                ]
+                rows = []
+                for r in result.get("rows", []):
+                    row = {"name": r["name"], "unit": r["unit"],
+                           "delta_pct": r["delta_pct"] if r["delta_pct"] is not None else "—",
+                           "status": r["status"]}
+                    for dt in doc_types:
+                        v = r["qty_by_source"].get(dt)
+                        row[f"src_{dt}"] = v if v is not None else ("—" if dt in r["present"] else "·")
+                    rows.append(row)
+                rec_tbl.columns = cols
+                rec_tbl.rows = rows
+                rec_tbl.update()
+
+            async def _rec_run():
+                ids = rec_ds.value or []
+                if len(ids) < 1:
+                    ui.notify("Выбери хотя бы один датасет", type="warning")
+                    return
+                add_log(f"[СВЕРКА] {','.join(ids)}")
+                d = await api_get(f"/api/bor/reconcile?datasets={','.join(ids)}&limit=400")
+                if not isinstance(d, dict):
+                    ui.notify(last_api_error_text("Сверка: нет табличных позиций"), type="negative")
+                    return
+                t = d.get("totals", {})
+                rec_summary.text = (
+                    f"Позиций: {t.get('lines',0)} · РАСХОЖДЕНИЙ {t.get('mismatch',0)} · "
+                    f"пробелов {t.get('gap',0)} · сходится {t.get('match',0)} · "
+                    f"один док. {t.get('single',0)}"
+                )
+                _rec_apply(d)
+                ui.notify(rec_summary.text, type="positive" if not t.get("mismatch") else "warning")
+
+            async def _rec_download():
+                ids = rec_ds.value or []
+                if len(ids) < 1:
+                    ui.notify("Выбери датасеты", type="warning")
+                    return
+                gen = await api_post(f"/api/bor/reconcile/generate?datasets={','.join(ids)}")
+                if not gen:
+                    ui.notify(last_api_error_text("Сверка: нечего выгружать"), type="negative")
+                    return
+                await _download("/api/bor/reconcile/download")
+
         # ───────────────────────── НОРМОКОНТРОЛЬ ─────────────────────────
         with ui.card().classes("card-les w-full"):
             ui.label("ФОРМАЛЬНЫЙ НОРМОКОНТРОЛЬ (NK-01…NK-04, ГОСТ)").classes("section-title")
@@ -317,9 +401,11 @@ def build_instrumenty():
             bor_ds.options = opts
             nc_ds.options = opts
             pf_ds.options = opts
+            rec_ds.options = opts
             bor_ds.update()
             nc_ds.update()
             pf_ds.update()
+            rec_ds.update()
             forms = (await api_get("/api/forms") or {}).get("forms", [])
             fm_form.options = {f["id"]: f.get("title", f["id"]) for f in forms}
             fm_form.update()
