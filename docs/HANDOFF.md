@@ -50,6 +50,8 @@
 
 - ✅ **Outlook/IMAP в GUI (W11.13):** «плагин для связи РАГ с Outlook» = IMAP-приём (десктоп Outlook = клиент аккаунта, IMAP к аккаунту). `import-imap` теперь принимает host/port/login/password/ssl/folders в запросе (перекрывают env; пароль не персистится). Карта «OUTLOOK / IMAP» в Самоваре: пресеты M365 (`outlook.office365.com:993`) / Outlook.com (`imap-mail.outlook.com`) + поля + кнопка → MAIL_Index. Авто-синхрон — `MAIL_IMAP_*` в .env. Живо: override-плcombing подтверждён (fake→502, пусто→понятная 400). Каверза: в корп. M365 базовый IMAP может быть закрыт админом → app-password.
 
+- ✅ **Архивы Outlook + .msg + Mac (W11.14):** `.msg` уже работал (extract_msg в mail_profile). Новое: `backend/olm_reader.py` — парсер `.olm` (Outlook для Mac, ZIP+XML OPF → `.eml`, **0 зависимостей**); `POST /api/mail/import-archive` (.olm извлекает→.eml→MAIL_Index; .pst через pst_reader). GUI: импорт архива в карте Outlook (поле пути + кнопка). Живо: .olm → 2 письма в MAIL_Index; .pst → 501 «нужен libpff». **`.pst` ждёт зависимость** (libpff+pypff или libpst/readpst) — нужно одобрение Олега на `brew install libpff && uv add pypff`.
+
 ## Остатки (мерж)
 
 - **#7 Влить `feat/les3-p1` → main** + настоящий релиз — когда контур стабилизируется (полный `make test` на живых сервисах + доменный golden 16/16). Придержано по решению Олега 2026-06-18 («стабилизировать»). 7 коммитов на ветке, локально, НЕ запушено.
