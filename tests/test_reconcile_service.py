@@ -182,6 +182,30 @@ def test_reconcile_datasets_end_to_end_xlsx(tmp_path):
     assert xlsx.exists()
 
 
+def test_reconcile_by_dataset_axis(tmp_path):
+    # два документа ОДНОГО типа (обе ведомости) сравниваются по оси датасета, а не схлопываются
+    _make_parquet(tmp_path, "vor", [_row("VEDOMOST", "Коробка установочная", "шт", qty=395.0)])
+    _make_parquet(tmp_path, "akt", [_row("VEDOMOST", "Коробка установочная", "шт", qty=60.0)])
+    res = reconcile_datasets(
+        ["vor", "akt"], storage_root=tmp_path, by="dataset",
+        dataset_names={"vor": "ВОР", "akt": "Акт"},
+    )
+    assert set(res["doc_types"]) == {"ВОР", "Акт"}  # ось = датасет, ярлыки из имён
+    row = _by_name(res, "Коробка установочная")
+    assert row["status"] == "mismatch"
+    assert row["qty_by_source"]["ВОР"] == 395.0
+    assert row["qty_by_source"]["Акт"] == 60.0
+
+
+def test_reconcile_by_doctype_default_collapses(tmp_path):
+    # по умолчанию (doc_type) две ведомости схлопываются в один источник → single
+    _make_parquet(tmp_path, "vor", [_row("VEDOMOST", "Коробка", "шт", qty=395.0)])
+    _make_parquet(tmp_path, "akt", [_row("VEDOMOST", "Коробка", "шт", qty=60.0)])
+    res = reconcile_datasets(["vor", "akt"], storage_root=tmp_path)
+    assert res["doc_types"] == ["VEDOMOST"]
+    assert _by_name(res, "Коробка")["status"] == "single"
+
+
 def test_reconcile_uses_no_llm():
     """ADR-11: сервис сверки не зовёт LLM/HTTP."""
     import inspect

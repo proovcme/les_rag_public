@@ -245,16 +245,28 @@ def reconcile_datasets(
     *,
     storage_root: Path = Path("storage/datasets"),
     output_dir: Path | None = None,
+    by: str = "doc_type",
+    dataset_names: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Свести позиции по одному/нескольким датасетам, авто-группируя по типу документа.
+    """Свести позиции по одному/нескольким датасетам. Без LLM (ADR-11).
 
-    Несколько датасетов одного типа сливаются в один источник (например, КС-2 за
-    разные периоды). Без LLM (ADR-11).
+    ``by="doc_type"`` (по умолчанию) — ось источника = тип документа (КС-2/смета/…);
+    датасеты одного типа сливаются (например, КС-2 за разные периоды).
+    ``by="dataset"`` — ось источника = сам документ/датасет (для «сверь ведомость X с
+    актом Y», когда оба — одного типа). Ярлык берётся из ``dataset_names``.
     """
+    names = dataset_names or {}
     sources: dict[str, list[dict]] = {}
     for dataset_id in dataset_ids:
-        for doc_type, rows in collect_rows_by_doc_type(dataset_id, storage_root=storage_root).items():
-            sources.setdefault(doc_type, []).extend(rows)
+        by_type = collect_rows_by_doc_type(dataset_id, storage_root=storage_root)
+        if by == "dataset":
+            label = names.get(dataset_id, dataset_id)
+            bucket = sources.setdefault(label, [])
+            for rows in by_type.values():
+                bucket.extend(rows)
+        else:
+            for doc_type, rows in by_type.items():
+                sources.setdefault(doc_type, []).extend(rows)
 
     result = reconcile_sources(sources)
     result.update({

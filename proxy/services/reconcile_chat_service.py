@@ -107,11 +107,14 @@ def answer_reconcile_query(
     *,
     storage_root: Path = Path("./storage/datasets"),
     dataset_ids: list[str] | None = None,
+    dataset_names: dict[str, str] | None = None,
+    by: str = "dataset",
 ) -> dict[str, Any] | None:
     """Выполнить сверку по запросу чата. None — если данных нет вовсе. Без LLM.
 
     `dataset_ids` — явный scope (например, датасеты объекта); иначе берём все
-    датасеты с Parquet.
+    датасеты с Parquet. По умолчанию `by="dataset"` — сравниваем документы между
+    собой (ведомость↔акт), а не схлопываем по типу.
     """
     ids = [d for d in (dataset_ids or []) if (storage_root / d / "_parquet").exists()]
     if not ids:
@@ -119,7 +122,7 @@ def answer_reconcile_query(
     if not ids:
         return None
 
-    result = reconcile_datasets(ids, storage_root=storage_root)
+    result = reconcile_datasets(ids, storage_root=storage_root, by=by, dataset_names=dataset_names)
     if not result["rows"]:
         return None
 

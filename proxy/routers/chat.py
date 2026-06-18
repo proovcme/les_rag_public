@@ -835,8 +835,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     if is_reconcile_query(req.question):
         t_rec_start = time.time()
         try:
+            rec_names = await _dataset_name_map(rag_backend)
             rec = await asyncio.to_thread(
-                answer_reconcile_query, req.question, dataset_ids=effective_dataset_ids
+                answer_reconcile_query, req.question,
+                dataset_ids=effective_dataset_ids, dataset_names=rec_names,
             )
         except Exception as rec_err:
             logger.warning("[RECONCILE] deterministic answer skipped: %s", rec_err)
