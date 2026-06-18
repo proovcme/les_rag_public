@@ -61,6 +61,46 @@ def test_session_memory_empty_without_session():
     assert ms.session_memory("nope") == ""
 
 
+# ── авто-заметки (факт без «запомни:») ──
+
+def test_autonote_saves_fact_statements():
+    for fact in [
+        "Прораб на объекте — Иван Петров",
+        "Объект называется БЦ Банкрот",
+        "Срок сдачи 30 июня",
+        "Контактный телефон 8-900-000",
+    ]:
+        assert ms.looks_like_fact(fact), fact
+
+
+def test_autonote_ignores_questions_and_commands():
+    for q in [
+        "Какие требования к серверным по СП 485?",   # вопрос
+        "требования к серверным сп 485",             # запрос без «?» — НЕ факт (нет маркера)
+        "Сделай ВОР из спецификации",                # команда
+        "Сверь ведомости и акты",                    # команда
+        "Сколько кабеля в смете",                    # запрос
+        "Покажи заметки",                            # команда
+    ]:
+        assert not ms.looks_like_fact(q), q
+
+
+def test_maybe_autonote_creates_auto_note():
+    reply = ms.maybe_autonote("Главный инженер проекта — Сидоров")
+    assert reply["operation"] == "note_autocreate"
+    notes = ms.list_notes()
+    assert notes and notes[0]["auto"] == 1 and "Сидоров" in notes[0]["text"]
+
+
+def test_maybe_autonote_disabled_by_env(monkeypatch):
+    monkeypatch.setenv("LES_AUTONOTE_ENABLED", "false")
+    assert ms.maybe_autonote("Объект называется Банкрот") is None
+
+
+def test_maybe_autonote_returns_none_for_query():
+    assert ms.maybe_autonote("Сколько стоит кабель") is None
+
+
 # ── чат-команды ──
 
 def test_remember_and_list():

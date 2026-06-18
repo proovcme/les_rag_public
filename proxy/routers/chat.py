@@ -788,6 +788,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         if task_reply is not None or field_reply is not None or decision_reply is not None
         else maybe_handle_memory_command(req.question, dataset_filter=req.dataset_filter or "", project_id=pid)
     )
+    # Авто-заметки: утверждение-факт (не вопрос/команда) ЛЕС запоминает сам. 0 LLM.
+    if memory_reply is None and task_reply is None and field_reply is None and decision_reply is None:
+        from proxy.services.memory_service import maybe_autonote
+        memory_reply = maybe_autonote(req.question, dataset_filter=req.dataset_filter or "", project_id=pid)
     if task_reply is not None or field_reply is not None or decision_reply is not None or memory_reply is not None:
         reply = task_reply or field_reply or decision_reply or memory_reply
         channel = ("tasks" if task_reply is not None else "field" if field_reply is not None
