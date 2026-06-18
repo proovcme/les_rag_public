@@ -21,6 +21,7 @@ ADR-11: ноль LLM. Источник — нормализованные Parque
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,29 @@ from backend.parquet_writer import DOC_TYPES
 from proxy.services.bor_service import _normalize_name, normalize_unit, rows_from_parquet
 
 logger = logging.getLogger(__name__)
+
+# Строки-заголовки секций таблицы («1. Бюро…», «2) Помещения…») — не позиции для сверки.
+_SECTION_RE = re.compile(r"^\d+\s*[.)]\s")
+
+
+def _is_noise_name(name: str) -> bool:
+    """Мусорная «позиция»: пустая, заголовок секции или почти без букв (артефакт парсинга)."""
+    s = (name or "").strip()
+    if len(s) < 3:
+        return True
+    if _SECTION_RE.match(s):
+        return True
+    return sum(ch.isalpha() for ch in s) < 2
+
+
+def _pretty_label(label: str) -> str:
+    """Человекочитаемый ярлык датасета: убираем технический суффикс `_Index`, `_`→пробел."""
+    s = str(label or "").strip()
+    for suf in ("_Index", "_index"):
+        if s.endswith(suf):
+            s = s[: -len(suf)]
+    return s.replace("_", " ").strip() or str(label)
+
 
 # Порог длины короткой строки для сопоставления по вхождению (как в plan_fact).
 _MIN_CONTAINS_LEN = 4
@@ -155,6 +179,8 @@ def reconcile_sources(sources: dict[str, list[dict]]) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     for doc_type in doc_types:
         for (name_norm, unit), entry in aggregate_positions(sources[doc_type]).items():
+            if _is_noise_name(entry["name"]):
+                continue  # заголовки секций / числовой мусор парсинга — не позиции сверки
             items.append({
                 "doc_type": doc_type, "norm": name_norm, "unit": unit,
                 "name": entry["name"], "qty": entry["qty"],
@@ -260,7 +286,7 @@ def reconcile_datasets(
     for dataset_id in dataset_ids:
         by_type = collect_rows_by_doc_type(dataset_id, storage_root=storage_root)
         if by == "dataset":
-            label = names.get(dataset_id, dataset_id)
+            label = _pretty_label(names.get(dataset_id, dataset_id))
             bucket = sources.setdefault(label, [])
             for rows in by_type.values():
                 bucket.extend(rows)

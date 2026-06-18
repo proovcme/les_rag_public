@@ -25,17 +25,40 @@ def _parse_datasets(datasets: str) -> list[str]:
     return ids
 
 
+def _dataset_names(ids: list[str]) -> dict[str, str]:
+    """id→имя датасета из метабазы (для читаемых ярлыков оси «по документу»)."""
+    import sqlite3
+
+    from backend.rag_config import rag_meta_db_path
+
+    names: dict[str, str] = {}
+    try:
+        con = sqlite3.connect(rag_meta_db_path())
+        try:
+            placeholders = ",".join("?" * len(ids))
+            for did, name in con.execute(
+                f"SELECT id, name FROM datasets WHERE id IN ({placeholders})", ids
+            ):
+                names[str(did)] = str(name or did)
+        finally:
+            con.close()
+    except Exception:  # имя — косметика; без него ось «по документу» покажет id
+        pass
+    return names
+
+
 # ── Сверка ВОР↔КС-2↔смета↔ИД по позициям (W11.4) ──
 # Объявлены ДО параметрических /{dataset_id}/* — иначе FastAPI сматчит dataset_id="reconcile".
 
 @router.get("/reconcile")
-async def reconcile_preview(datasets: str, limit: int = 500, _user=Depends(require_user)):
-    """Сверка количеств между документами разных типов (Parquet) в JSON. Без LLM.
+async def reconcile_preview(datasets: str, limit: int = 500, by: str = "dataset", _user=Depends(require_user)):
+    """Сверка количеств в JSON. Без LLM.
 
-    `datasets` — список id датасетов через запятую; типы документов авто-группируются.
+    `datasets` — id датасетов через запятую. `by="dataset"` (по умолчанию) сравнивает
+    документы между собой (ведомость↔акт), `by="doc_type"` — группирует по типу.
     """
     ids = _parse_datasets(datasets)
-    result = reconcile_datasets(ids, storage_root=_STORAGE_ROOT)
+    result = reconcile_datasets(ids, storage_root=_STORAGE_ROOT, by=by, dataset_names=_dataset_names(ids))
     if not result["rows"]:
         raise HTTPException(404, "Нет табличных позиций для сверки в указанных датасетах (нужен _parquet)")
     result["rows"] = result["rows"][:limit]
@@ -43,10 +66,12 @@ async def reconcile_preview(datasets: str, limit: int = 500, _user=Depends(requi
 
 
 @router.post("/reconcile/generate")
-async def reconcile_generate(datasets: str, _user=Depends(require_user)):
+async def reconcile_generate(datasets: str, by: str = "dataset", _user=Depends(require_user)):
     """Генерация xlsx-сверки в storage/reconcile/."""
     ids = _parse_datasets(datasets)
-    result = reconcile_datasets(ids, storage_root=_STORAGE_ROOT, output_dir=_RECONCILE_DIR)
+    result = reconcile_datasets(
+        ids, storage_root=_STORAGE_ROOT, output_dir=_RECONCILE_DIR, by=by, dataset_names=_dataset_names(ids)
+    )
     if not result["rows"]:
         raise HTTPException(404, "Нет табличных позиций для сверки в указанных датасетах (нужен _parquet)")
     result.pop("rows", None)  # полный список — через GET /reconcile

@@ -206,6 +206,32 @@ def test_reconcile_by_doctype_default_collapses(tmp_path):
     assert _by_name(res, "Коробка")["status"] == "single"
 
 
+def test_noise_rows_filtered():
+    # заголовки секций и числовой мусор не попадают в сверку
+    res = reconcile_sources({
+        "SMETA": [
+            _row("SMETA", "1. Бюро выдачи пропусков", "", qty=None),
+            _row("SMETA", "2", "шт", qty=4.0),
+            _row("SMETA", "Розетка 220В", "шт", qty=7.0),
+        ],
+        "KS2": [_row("KS2", "Розетка 220В", "шт", qty=7.0)],
+    })
+    names = [r["name"] for r in res["rows"]]
+    assert names == ["Розетка 220В"]  # секция и «2» отфильтрованы
+    assert res["rows"][0]["status"] == "match"
+
+
+def test_dataset_axis_labels_cleaned(tmp_path):
+    _make_parquet(tmp_path, "vor", [_row("VEDOMOST", "Коробка", "шт", qty=395.0)])
+    _make_parquet(tmp_path, "akt", [_row("VEDOMOST", "Коробка", "шт", qty=60.0)])
+    res = reconcile_datasets(
+        ["vor", "akt"], storage_root=tmp_path, by="dataset",
+        dataset_names={"vor": "TABLE_SMETA_Index", "akt": "M74_ID_EOM_Index"},
+    )
+    # суффикс _Index убран, подчёркивания → пробелы
+    assert set(res["doc_types"]) == {"TABLE SMETA", "M74 ID EOM"}
+
+
 def test_reconcile_uses_no_llm():
     """ADR-11: сервис сверки не зовёт LLM/HTTP."""
     import inspect

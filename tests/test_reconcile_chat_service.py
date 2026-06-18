@@ -82,8 +82,8 @@ def test_answer_none_when_no_parquet(tmp_path):
 
 
 def test_explicit_scope_filters_to_existing_parquet(tmp_path):
-    _mk(tmp_path, "smeta", [{"doc_type": "SMETA", "name": "A", "unit": "шт", "qty": 1.0}])
-    _mk(tmp_path, "ks2", [{"doc_type": "KS2", "name": "A", "unit": "шт", "qty": 1.0}])
+    _mk(tmp_path, "smeta", [{"doc_type": "SMETA", "name": "Розетка 220В", "unit": "шт", "qty": 1.0}])
+    _mk(tmp_path, "ks2", [{"doc_type": "KS2", "name": "Розетка 220В", "unit": "шт", "qty": 1.0}])
     # scope только на smeta → один источник → single
     res = answer_reconcile_query("сверь", storage_root=tmp_path, dataset_ids=["smeta"])
     assert res["dataset_ids"] == ["smeta"]
