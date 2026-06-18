@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +47,14 @@ class MailImapImportRequest(BaseModel):
     parse_limit: int = Field(default=DEFAULT_PARSE_BATCH_LIMIT, ge=1, le=25)
     parse_batches: int = Field(default=1, ge=1, le=20)
     background: bool = False
+    # Параметры подключения из GUI (перекрывают env для этого вызова; пусто → берётся env).
+    # Пароль НЕ персистится — живёт только в этом запросе по локальному/доверенному каналу.
+    host: str | None = None
+    port: int | None = Field(default=None, ge=1, le=65535)
+    login: str | None = None
+    password: str | None = None
+    ssl: bool | None = None
+    folders: list[str] | None = None
 
 
 class MailAppleImportRequest(BaseModel):
@@ -392,10 +400,28 @@ async def import_local_mail(req: MailLocalImportRequest, _admin=Depends(require_
 async def import_imap_mail(req: MailImapImportRequest, _admin=Depends(require_admin)):
     state = get_dataset_state()
     settings = imap_settings_from_env()
+    # GUI-параметры перекрывают env для этого вызова (host/login/password/port/ssl/folders).
+    overrides: dict[str, Any] = {}
+    if req.host:
+        overrides["host"] = req.host.strip()
+    if req.login:
+        overrides["login"] = req.login.strip()
+    if req.password:
+        overrides["password"] = req.password
+    if req.port:
+        overrides["port"] = int(req.port)
+    if req.ssl is not None:
+        overrides["ssl"] = bool(req.ssl)
+    if req.folders:
+        cleaned = [f.strip() for f in req.folders if f and f.strip()]
+        if cleaned:
+            overrides["folders"] = cleaned
+    if overrides:
+        settings = replace(settings, **overrides)
     if not settings.configured:
         raise HTTPException(
             status_code=400,
-            detail="MAIL_IMAP_HOST, MAIL_IMAP_LOGIN and MAIL_IMAP_PASSWORD are required",
+            detail="Нужны host, login и password (в полях подключения или MAIL_IMAP_* в .env)",
         )
     if req.background:
         job = state.job_service.create(

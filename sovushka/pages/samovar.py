@@ -495,6 +495,73 @@ def build_samovar():
                     "color:var(--ok);font-size:.7rem;font-weight:900;"
                 )
 
+        # ── Outlook / IMAP → почта в RAG (Е.Ж.И.К.) — W11.13 ──
+        with ui.card().classes("card-les w-full"):
+            ui.label("OUTLOOK / IMAP // ПОЧТА В RAG (Е.Ж.И.К.)").classes("section-title")
+            ui.label(
+                "Подключение к ящику по IMAP: письма → .eml → индексация в MAIL_Index (P0, только локально). "
+                "Пароль не сохраняется — живёт только на время импорта. Для авто-синхрона пропиши MAIL_IMAP_* в .env. "
+                "Десктоп Outlook на Windows = клиент аккаунта; IMAP подключается к самому аккаунту "
+                "(в корпоративном M365 базовый IMAP может быть закрыт админом — тогда нужен app-password)."
+            ).style("font-size:.62rem;color:var(--dim);margin-bottom:4px;")
+            with ui.row().classes("gap-2 w-full items-center"):
+                mail_preset = ui.select(
+                    {"office365": "Outlook / Microsoft 365", "outlookcom": "Outlook.com (личный)", "custom": "Другой IMAP"},
+                    value="office365", label="Пресет",
+                ).props("dense outlined").style("max-width:230px;font-size:.72rem;")
+                mail_host = ui.input(label="IMAP-хост", value="outlook.office365.com").props(
+                    "dense outlined"
+                ).classes("flex-1").style("font-size:.72rem;")
+                mail_port = ui.number(label="Порт", value=993, min=1, max=65535).props("dense outlined").style("width:88px;")
+            with ui.row().classes("gap-2 w-full items-center"):
+                mail_login = ui.input(label="Логин (email)").props("dense outlined").classes("flex-1").style("font-size:.72rem;")
+                mail_pass = ui.input(label="Пароль / app-password").props("dense outlined type=password").classes(
+                    "flex-1"
+                ).style("font-size:.72rem;")
+            with ui.row().classes("gap-2 w-full items-center"):
+                mail_folders = ui.input(label="Папки (через запятую)", value="INBOX").props(
+                    "dense outlined"
+                ).classes("flex-1").style("font-size:.72rem;")
+                mail_max = ui.number(label="Писем за раз", value=25, min=1, max=200).props("dense outlined").style("width:120px;")
+                ui.button("⤵ ПОДКЛЮЧИТЬ И ИМПОРТИРОВАТЬ", on_click=lambda: asyncio.create_task(_mail_import())).props(
+                    "no-caps"
+                ).style("background:rgba(16,185,129,.15);border:1px solid var(--ok);color:var(--ok);font-size:.7rem;font-weight:900;")
+            mail_status = ui.label("").style("font-size:.7rem;color:var(--dim);")
+
+            def _apply_preset():
+                if mail_preset.value == "office365":
+                    mail_host.value, mail_port.value = "outlook.office365.com", 993
+                elif mail_preset.value == "outlookcom":
+                    mail_host.value, mail_port.value = "imap-mail.outlook.com", 993
+                mail_host.update()
+                mail_port.update()
+
+            mail_preset.on_value_change(lambda _e: _apply_preset())
+
+            async def _mail_import():
+                if not (mail_host.value and mail_login.value and mail_pass.value):
+                    ui.notify("Заполни хост, логин и пароль", type="warning")
+                    return
+                mail_status.text = "Подключение и импорт…"
+                add_log(f"[OUTLOOK] import {mail_login.value} @ {mail_host.value}")
+                payload = {
+                    "host": mail_host.value, "port": int(mail_port.value or 993),
+                    "login": mail_login.value, "password": mail_pass.value, "ssl": True,
+                    "folders": [f.strip() for f in (mail_folders.value or "INBOX").split(",") if f.strip()],
+                    "max_messages": int(mail_max.value or 25), "parse": True, "background": False,
+                }
+                d = await api_post("/api/mail/import-imap", payload)
+                if not isinstance(d, dict):
+                    ui.notify(last_api_error_text("IMAP-импорт не удался (проверь хост/логин/пароль)"), type="negative")
+                    mail_status.text = ""
+                    return
+                if d.get("status") == "no_new_mail":
+                    mail_status.text = "Новых писем нет — всё уже импортировано."
+                else:
+                    mail_status.text = (f"Импортировано писем: {d.get('files', 0)} → {d.get('dataset_name', 'MAIL')}. "
+                                        f"Парс запущен: {d.get('parse_started')}")
+                ui.notify(mail_status.text, type="positive")
+
         # ── Карта архива → выборочная индексация (W15.1/W15.2) ──
         with ui.card().classes("card-les w-full"):
             with ui.row().classes("items-center justify-between w-full"):
