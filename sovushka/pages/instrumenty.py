@@ -53,10 +53,15 @@ def build_instrumenty():
                 bor_ds = ui.select(options={}, label="Датасет со спецификациями").props(
                     "dense outlined"
                 ).classes("flex-1")
+                bor_mode = ui.toggle(
+                    {"svod": "Свод позиций", "works": "Работы из спец. (Ф9)"}, value="svod",
+                ).props("dense no-caps").tooltip(
+                    "Свод: сумма позиций. Работы: каждая позиция → монтажная работа (объём = кол-во)"
+                )
                 ui.button("СФОРМИРОВАТЬ", on_click=lambda: asyncio.create_task(_bor_generate())).props("dense no-caps")
-                ui.button("СКАЧАТЬ XLSX", on_click=lambda: asyncio.create_task(
-                    _download(f"/api/bor/{bor_ds.value}/download")
-                )).props("dense flat no-caps")
+                ui.button("СКАЧАТЬ XLSX", on_click=lambda: asyncio.create_task(_bor_download())).props(
+                    "dense flat no-caps"
+                )
             bor_summary = ui.label("").style("font-size:.7rem;color:var(--dim);")
             bor_tbl = ui.table(
                 columns=[
@@ -69,20 +74,36 @@ def build_instrumenty():
                 rows=[], row_key="name",
             ).classes("w-full").style("font-size:.72rem;")
 
+            def _bor_paths():
+                # (generate, preview, download) под выбранный режим
+                seg = "from-spec/" if bor_mode.value == "works" else ""
+                base = f"/api/bor/{bor_ds.value}"
+                preview = f"{base}/from-spec?limit=300" if bor_mode.value == "works" else f"{base}/preview?limit=200"
+                return f"{base}/{seg}generate", preview, f"{base}/{seg}download"
+
             async def _bor_generate():
                 if not bor_ds.value:
                     ui.notify("Выбери датасет", type="warning")
                     return
-                add_log(f"[ВОР] generate {bor_ds.value}")
-                d = await api_post(f"/api/bor/{bor_ds.value}/generate")
+                gen_path, preview_path, _ = _bor_paths()
+                add_log(f"[ВОР] generate {bor_ds.value} mode={bor_mode.value}")
+                d = await api_post(gen_path)
                 if not d:
                     ui.notify(last_api_error_text("ВОР: нет строк спецификаций"), type="negative")
                     return
-                ui.notify(f"ВОР: {d.get('bor_lines',0)} строк из {d.get('source_rows',0)} исходных", type="positive")
-                prev = await api_get(f"/api/bor/{bor_ds.value}/preview?limit=200") or {}
-                bor_summary.text = f"Строк ВОР: {prev.get('bor_lines',0)} · исходных: {prev.get('source_rows',0)}"
+                tag = "работ" if bor_mode.value == "works" else "строк"
+                ui.notify(f"ВОР: {d.get('bor_lines',0)} {tag} из {d.get('source_rows',0)} исходных", type="positive")
+                prev = await api_get(preview_path) or {}
+                bor_summary.text = (f"{'Работ' if bor_mode.value=='works' else 'Строк ВОР'}: "
+                                    f"{prev.get('bor_lines',0)} · исходных позиций: {prev.get('source_rows',0)}")
                 bor_tbl.rows = prev.get("lines", [])
                 bor_tbl.update()
+
+            async def _bor_download():
+                if not bor_ds.value:
+                    ui.notify("Выбери датасет", type="warning")
+                    return
+                await _download(_bor_paths()[2])
 
         # ───────────────────── ПЛАН/ФАКТ (W11.2) ─────────────────────
         with ui.card().classes("card-les w-full"):

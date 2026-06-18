@@ -931,6 +931,60 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     dataset_name_by_id = await _dataset_name_map(rag_backend)
     resolved_dataset_names = _names_for_dataset_ids(_dataset_ids, dataset_name_by_id)
 
+    # W11.10: «сделай ВОР из спецификации (Ф9)» — детерминированное преобразование
+    # позиций спецификации в строки работ (объём = кол-во, глагол по словарю). 0 LLM.
+    from proxy.services.spec_to_bor_service import (
+        format_spec_bor_answer, generate_spec_bor, is_spec_to_bor_query,
+    )
+    if is_spec_to_bor_query(req.question) and _dataset_ids:
+        t_spec = time.time()
+        spec_res = None
+        spec_ds = ""
+        try:
+            for ds in _dataset_ids:
+                r = await asyncio.to_thread(generate_spec_bor, ds, storage_root=Path("./storage/datasets"))
+                if r["bor_lines"]:
+                    spec_res, spec_ds = r, ds
+                    break
+        except Exception as spec_err:
+            logger.warning("[SPEC_BOR] deterministic spec→bor skipped: %s", spec_err)
+        if spec_res and spec_res["bor_lines"]:
+            label = (dataset_name_by_id.get(spec_ds, "") or "")
+            answer = format_spec_bor_answer(spec_res, dataset_label=label)
+            if memory_block:
+                answer = f"{answer}\n\n{memory_block}"
+            state.crag_stats["verified"] += 1
+            state.chat_metrics["crag_pass"] += 1
+            spec_trace = {
+                "mode": "deterministic_spec_to_bor", "vector_count": 0, "lexical_count": 0,
+                "merged_count": spec_res["bor_lines"], "retry_count": 0,
+                "quality_status": "deterministic_spec_to_bor",
+                "spec_to_bor": {"bor_lines": spec_res["bor_lines"], "source_rows": spec_res["source_rows"]},
+            }
+            history_id = None
+            try:
+                history_id = save_chat_history(
+                    question=req.question, answer=answer, sources=[label or spec_ds],
+                    crag_status="VERIFIED", latency_sec=time.time() - t_spec, tokens=0,
+                    session_id=req.session_id, requested_dataset_filter=req.dataset_filter,
+                    effective_dataset_filter=effective_dataset_filter,
+                    resolved_dataset_ids=[spec_ds], resolved_dataset_names=[label] if label else [],
+                    source_dataset_ids=[spec_ds], source_dataset_names=[label] if label else [],
+                    query_route={"channel": "spec_to_bor", "operation": "spec_to_bor"},
+                    retrieval_trace=spec_trace, cache_type="deterministic_spec_to_bor",
+                    validation_enabled=False, success=1,
+                )
+            except Exception as db_err:
+                logger.warning("[CHAT] History save error: %s", db_err)
+            return {
+                "answer": answer, "crag_status": "VERIFIED", "sources": [label or spec_ds],
+                "effective_dataset_filter": effective_dataset_filter,
+                "query_route": {"channel": "spec_to_bor", "operation": "spec_to_bor"},
+                "retrieval_trace": spec_trace, "cache": "deterministic_spec_to_bor",
+                "validation": {"enabled": False, "reason": "deterministic_spec_to_bor"},
+                "spec_to_bor": spec_trace["spec_to_bor"], "history_id": history_id,
+            }
+
     # Состав/перечень разделов документа: семантика не собирает структуру (заголовки
     # размазаны по чанкам, единого чанка нет). Детерминированно извлекаем нумерованную
     # структуру из полного текста документа — 0 LLM. Additive: не вышло → обычный RAG.

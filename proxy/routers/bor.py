@@ -11,6 +11,7 @@ from proxy.security import require_user
 from proxy.services.bor_service import build_bor, collect_spec_rows, generate_bor
 from proxy.services.plan_fact_service import generate_plan_fact
 from proxy.services.reconcile_service import reconcile_datasets
+from proxy.services.spec_to_bor_service import generate_spec_bor
 
 router = APIRouter(prefix="/api/bor", tags=["bor"])
 
@@ -123,6 +124,42 @@ async def bor_download(dataset_id: str, _user=Depends(require_user)):
     files = sorted(bor_dir.glob("bor_*.xlsx")) if bor_dir.exists() else []
     if not files:
         raise HTTPException(404, "ВОР ещё не генерировалась — вызови POST /api/bor/{dataset_id}/generate")
+    latest = files[-1]
+    return FileResponse(
+        latest,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=latest.name,
+    )
+
+
+# ── ВОР из спецификации (форма 9, ГОСТ 21.110) — работы из позиций (W11.10) ──
+
+@router.get("/{dataset_id}/from-spec")
+async def spec_bor_preview(dataset_id: str, limit: int = 300, _user=Depends(require_user)):
+    """Превью ВОР работ из спецификации (Ф9) в JSON. Алгоритм — docs/ALGO-spec-to-bor.md. Без LLM."""
+    result = generate_spec_bor(dataset_id, storage_root=_STORAGE_ROOT)
+    result["lines"] = result["lines"][:limit]
+    return result
+
+
+@router.post("/{dataset_id}/from-spec/generate")
+async def spec_bor_generate(dataset_id: str, _user=Depends(require_user)):
+    """Генерация xlsx ВОР-из-спецификации в storage/datasets/{id}/_bor/."""
+    output_dir = _STORAGE_ROOT / dataset_id / "_bor"
+    result = generate_spec_bor(dataset_id, storage_root=_STORAGE_ROOT, output_dir=output_dir)
+    if not result["bor_lines"]:
+        raise HTTPException(404, f"В датасете {dataset_id} нет строк спецификации (_parquet SPEC/VEDOMOST)")
+    result.pop("lines", None)
+    return result
+
+
+@router.get("/{dataset_id}/from-spec/download")
+async def spec_bor_download(dataset_id: str, _user=Depends(require_user)):
+    """Последний сгенерированный xlsx ВОР-из-спецификации."""
+    bor_dir = _STORAGE_ROOT / dataset_id / "_bor"
+    files = sorted(bor_dir.glob("specbor_*.xlsx")) if bor_dir.exists() else []
+    if not files:
+        raise HTTPException(404, "ВОР-из-спецификации ещё не генерировалась — POST /api/bor/{id}/from-spec/generate")
     latest = files[-1]
     return FileResponse(
         latest,
