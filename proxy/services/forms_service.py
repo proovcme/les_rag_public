@@ -133,12 +133,26 @@ def resolve_fields(form_id: str, project_id: int | None = None, manual: dict[str
             "value": value,
             "needs_input": source == "manual" and not value,
         })
+    columns = list(descriptor.get("columns", []) or [])
     return {
         "id": descriptor["id"],
         "title": descriptor.get("title", descriptor["id"]),
         "legal_basis": descriptor.get("legal_basis", ""),
         "fields": fields,
+        "columns": columns,
+        "rows": _resolve_table_rows(descriptor, columns) if columns else [],
     }
+
+
+def _resolve_table_rows(descriptor: dict[str, Any], columns: list[str]) -> list[list[str]]:
+    """Строки табличной формы. mode=blank → N пустых строк (бланк по ГОСТ).
+
+    Заполнение из данных объекта (spec/bor/smeta) — отдельный шаг; сейчас отдаём бланк
+    с канонической шапкой колонок (ГОСТ), чтобы форма была собрана и печатаема.
+    """
+    table = descriptor.get("table", {}) or {}
+    count = int(table.get("rows", 12) or 12)
+    return [["" for _ in columns] for _ in range(max(0, count))]
 
 
 # ── 3. рендереры (за единым интерфейсом) ─────────────────────────────
@@ -161,10 +175,25 @@ def render_html(resolved: dict[str, Any]) -> str:
         f"<td style='padding:4px 8px'><b>{escape(f['value']) or '—'}</b></td></tr>"
         for f in resolved["fields"]
     )
+    table_html = ""
+    cols = resolved.get("columns") or []
+    if cols:
+        head = "".join(f"<th style='border:1px solid #999;padding:3px 6px'>{escape(c)}</th>" for c in cols)
+        body = "".join(
+            "<tr>" + "".join(
+                f"<td style='border:1px solid #ccc;padding:3px 6px'>{escape(c)}&nbsp;</td>" for c in r
+            ) + "</tr>"
+            for r in resolved.get("rows", [])
+        )
+        table_html = (
+            f"<table style='border-collapse:collapse;margin-top:10px;font-size:.8em'>"
+            f"<tr>{head}</tr>{body}</table>"
+        )
     return (
         f"<h3>{escape(resolved['title'])}</h3>"
         f"<div style='font-size:.8em;color:#777'>{escape(resolved['legal_basis'])}</div>"
         f"<table style='border-collapse:collapse'>{rows}</table>"
+        f"{table_html}"
     )
 
 
@@ -212,6 +241,20 @@ def render_docx(resolved: dict[str, Any], out_path: Path, template_path: Path | 
             cells = table.add_row().cells
             cells[0].text = f["label"]
             cells[1].text = f["value"] or "—"
+    cols = resolved.get("columns") or []
+    if cols:
+        doc.add_paragraph()
+        gt = doc.add_table(rows=1, cols=len(cols))
+        try:
+            gt.style = "Table Grid"
+        except Exception:
+            pass
+        for i, c in enumerate(cols):
+            gt.rows[0].cells[i].text = str(c)
+        for r in resolved.get("rows", []):
+            cells = gt.add_row().cells
+            for i, val in enumerate(r):
+                cells[i].text = str(val)
     out_path = Path(out_path)
     doc.save(str(out_path))
     return out_path
@@ -235,6 +278,20 @@ def render_xlsx(resolved: dict[str, Any], out_path: Path) -> Path:
         r += 1
     ws.column_dimensions["A"].width = 48
     ws.column_dimensions["B"].width = 40
+
+    cols = resolved.get("columns") or []
+    if cols:
+        r += 1
+        for c, title in enumerate(cols, 1):
+            cell = ws.cell(r, c, title)
+            cell.font = Font(bold=True)
+        for row_vals in resolved.get("rows", []):
+            r += 1
+            for c, val in enumerate(row_vals, 1):
+                ws.cell(r, c, val)
+        for c in range(1, len(cols) + 1):
+            ws.column_dimensions[chr(64 + c) if c <= 26 else "AA"].width = 22
+
     out_path = Path(out_path)
     wb.save(str(out_path))
     return out_path

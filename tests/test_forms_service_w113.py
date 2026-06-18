@@ -144,3 +144,35 @@ def test_generate_rejects_bad_fmt(env):
     pid = _seed_project()
     with pytest.raises(ValueError):
         fs.generate("demo", "pdf", project_id=pid)
+
+
+# ── табличные формы (W11.16: спецификация/ВОР/смета) ──
+
+def test_tabular_form_resolves_and_renders(env):
+    fs, forms_dir, tmp_path = env
+    (forms_dir / "tbl.yaml").write_text(
+        "id: tbl\ntitle: Таблица\nlegal_basis: X\n"
+        "fields:\n  - { key: object_name, label: Объект, type: str, source: \"project.name\" }\n"
+        "columns: [\"Поз.\", \"Наименование\", \"Кол.\"]\n"
+        "table: { mode: blank, rows: 3 }\n",
+        encoding="utf-8",
+    )
+    resolved = fs.resolve_fields("tbl")
+    assert resolved["columns"] == ["Поз.", "Наименование", "Кол."]
+    assert len(resolved["rows"]) == 3 and len(resolved["rows"][0]) == 3
+    assert "Наименование" in fs.render_html(resolved)
+    out = tmp_path / "tbl.xlsx"
+    fs.render_xlsx(resolved, out)
+    assert out.exists()
+
+
+def test_real_table_form_descriptors_valid():
+    import yaml
+    from pathlib import Path
+    expected = {"spec_gost21110": 9, "vor": 6, "smeta_lsr": 8}
+    for fid, ncols in expected.items():
+        d = yaml.safe_load(Path(f"config/forms/{fid}.yaml").read_text(encoding="utf-8"))
+        assert d["id"] == fid, fid
+        assert len(d["columns"]) == ncols, (fid, len(d["columns"]))
+        assert d.get("table", {}).get("mode") == "blank"
+        assert d.get("legal_basis")
