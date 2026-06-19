@@ -52,7 +52,31 @@ systemctl --user start les-proxy les-ui
 
 Qdrant and model runtime can be native, Docker or remote depending on `.env`.
 
-## Windows
+## Windows — double-click installer (no terminal)
+
+Same UX goal as macOS, but Windows has no Apple MLX — the engine is
+cloud / ollama / lemonade, picked in the Sovushka GUI (no weights bundled).
+
+Design mirrors the mac bundle: an NSIS per-user installer (`LES-Setup.exe`,
+no admin) drops the clean code export under `%LOCALAPPDATA%\Programs\LES` and a
+Start-Menu/Desktop shortcut → `app/launcher.vbs` (runs hidden) → `app/bootstrap.ps1`,
+which on first launch installs `uv` (winget or the official script), runs
+`uv sync`, `lesctl init --profile windows-lite`, optionally starts Qdrant
+(Docker if present), brings up proxy + UI via `start-light.ps1`, and opens the
+browser. Progress shows as tray balloons, failures as a dialog; full detail in
+`%LOCALAPPDATA%\LES\logs\bootstrap.log`.
+
+```bash
+# Stage + build (NSIS auto-detected; without it, writes a portable zip + the
+# makensis command to run on a Windows box). Runs on any OS for staging:
+uv run python tools/build_windows_installer.py --version 0.1.0   # -> dist/LES-Setup.exe | LES-windows-portable.zip
+```
+
+`bootstrap.ps1` and `LES.nsi` carry Cyrillic UI strings and are stored UTF-8
+**with BOM** so Windows PowerShell 5.1 / NSIS render them correctly. Drop an icon
+at `windows/app/LES.ico` to brand the shortcuts.
+
+## Windows (advanced: docker / lite profiles)
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\installers\windows\install.ps1 -Profile windows-lite -InitEnv -Sync

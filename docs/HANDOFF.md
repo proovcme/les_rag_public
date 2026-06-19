@@ -62,8 +62,20 @@
   - Осталось по Mac: иконка `LES.icns`, Developer ID-подпись + нотаризация (сейчас только ad-hoc),
     богатый онбординг-UI (сейчас нотификации), coreml-эмбеддер из `artifacts/` в бандл не входит →
     фолбэк на mlx-эмбеддер (`COREML_EMBED_FALLBACK=true`) — проверить на чистой установке.
-- **Windows** (отдельная сессия): без MLX → облако/ollama/lemonade; инсталлер (NSIS/MSIX), служба, GUI.
-  Артель — отдельный Win+Revit пакет (см. память `legion-build-workflow`).
+- **Windows — Фаза 1 ГОТОВА (эта сессия).** Зеркало mac-подхода (без MLX → движок облако/ollama/lemonade,
+  выбор в GUI, веса не бандлятся):
+  - `installers/windows/app/` — `bootstrap.ps1` (install-uv: winget/офиц.скрипт → `uv sync` →
+    `lesctl init --profile windows-lite` → `onboard_models --skip-if-cloud` → Qdrant best-effort (docker
+    если есть) → `start-light.ps1` (proxy+UI) → open `127.0.0.1:8051/les`; прогресс = трей-баллоны,
+    ошибки = диалог, лог `%LOCALAPPDATA%\LES\logs\bootstrap.log`), `launcher.vbs` (скрытый запуск, без
+    мелькания консоли), `LES.nsi` (NSIS per-user в `%LOCALAPPDATA%\Programs\LES`, ярлыки Пуск/Рабочий стол,
+    uninstaller, Add/Remove). `bootstrap.ps1`+`LES.nsi` — UTF-8 **с BOM** (PowerShell 5.1/NSIS читают кириллицу).
+  - `tools/build_windows_installer.py` — стейдж чистого экспорта (`iter_files`); `makensis` есть → `dist/LES-Setup.exe`,
+    нет → `dist/LES-windows-portable.zip` + печать команды makensis. Тесты `tests/test_installer_windows.py` (3).
+  - **НЕ проверено**: `.ps1`/NSIS на этой машине не исполнялись (нет `pwsh`/`makensis` на Mac); прогон/сборка
+    `.exe` — на Windows-боксе. Осталось: иконка `LES.ico`; решить дефолт-провайдер/онбординг-ключ в GUI;
+    нативный Qdrant без Docker (сейчас docker-or-warn); подпись (signtool).
+  - Артель — отдельный Win+Revit пакет (см. память `legion-build-workflow`).
 
 **2. Дотянуть данные**: W-205 (остаток PENDING), каталоги DKC (если пара кусков не домолота),
 проверить ГОСТ-спеку в GUI начисто (облако + скоуп «Каталоги» → артефакт ГОСТ-таблица + CSV).
