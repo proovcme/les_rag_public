@@ -16,6 +16,7 @@ from sovushka.safe_markup import sanitize_svg
 from sovushka.state import (
     add_log,
     api_get,
+    api_get_bytes,
     api_post,
     api_post_file,
     api_post_stream,
@@ -212,6 +213,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     with ui.row().classes("sov-guard-controls"):
                         validation_sw = ui.switch("Т.О.С.К.А.", value=True).props("dense")
                         validation_state = ui.label("ON").classes("sov-chip")
+                    # W11.17: палитра /-команд (как у взрослых)
+                    with ui.button(icon="o_terminal").props("no-caps flat round").tooltip("Команды /"):
+                        with ui.menu():
+                            cmd_menu_box = ui.column().classes("gap-0")
+                            with cmd_menu_box:
+                                ui.menu_item("Загрузка команд…", on_click=lambda: None)
                     ui.button(
                         icon="o_attach_file",
                         on_click=lambda: attach_dialog.open(),
@@ -1183,6 +1190,39 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
 
         _tick_task = asyncio.create_task(_tick())
 
+        async def _gen_form_from_command(cmd: dict) -> None:
+            """Создать документ по /-команде: генерация формы + скачивание файла."""
+            fid = cmd.get("form_id")
+            fmt = cmd.get("fmt", "xlsx")
+            gen = await api_post(f"/api/forms/{fid}/generate", {"fmt": fmt})
+            if not isinstance(gen, dict) or not gen.get("download"):
+                ui.notify(last_api_error_text("Не удалось создать документ"), type="negative")
+                return
+            res = await api_get_bytes(gen["download"])
+            if not res:
+                ui.notify(last_api_error_text("Файл не готов"), type="negative")
+                return
+            data, fname = res
+            ui.download(data, fname)
+            ui.notify(f"Документ создан: {cmd.get('title', fid)} ({fmt})", type="positive")
+
+        async def _load_commands() -> None:
+            d = await api_get("/api/commands")
+            cmds = (d or {}).get("commands", []) if isinstance(d, dict) else []
+            cmd_menu_box.clear()
+            with cmd_menu_box:
+                if not cmds:
+                    ui.menu_item("Команды недоступны", on_click=lambda: None)
+                for c in cmds:
+                    label = f"{c['cmd']} — {c['desc']}"
+
+                    def _run(cmd=c["cmd"]):
+                        chat_input.value = cmd
+                        _update_prompt_preview()
+                        asyncio.create_task(send_chat())
+
+                    ui.menu_item(label, on_click=_run)
+
         def _apply_chat_result(d: dict) -> None:
             """Применяет финальный payload (общий для стрима и нестриминга):
             форматированный ответ, источники, вердикт, артефакт."""
@@ -1205,6 +1245,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, ans, srcs, crag, meta=meta)
             _render_result(ans, out_mode, artifact_panel, table_query=d.get("table_query"))
             add_log(f"[AI] Формат:{out_mode} CRAG:{crag or 'N/A'} src:{len(srcs)}")
+            # W11.17: команда «создать документ» → генерируем форму и скачиваем файл.
+            cmd = d.get("command") or {}
+            if cmd.get("action") == "generate_form" and cmd.get("form_id"):
+                asyncio.create_task(_gen_form_from_command(cmd))
             # Команда задачника/журнала могла изменить данные — обновим открытую панель.
             if work_drawer.visible:
                 asyncio.create_task(_refresh_work())
@@ -1538,6 +1582,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 _render_tree(item, level)
 
     select_format("text")
+    asyncio.create_task(_load_commands())  # W11.17: наполнить /-палитру
     asyncio.create_task(_refresh_resource_gate())
     resource_gate_timer = ui.timer(5.0, lambda: asyncio.create_task(_refresh_resource_gate()))
     context.client.on_disconnect(lambda *_: resource_gate_timer.cancel())

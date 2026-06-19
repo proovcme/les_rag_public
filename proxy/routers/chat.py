@@ -64,6 +64,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["chat"])
 
 
+@router.get("/commands")
+async def list_chat_commands(_user=Depends(require_user)):
+    """Палитра /-команд для GUI (команда + ярлык + описание). W11.17."""
+    from proxy.services.command_service import list_commands
+    return {"commands": list_commands()}
+
+
 class ChatRequest(BaseModel):
     question: str
     dataset_ids: Optional[List[str]] = None
@@ -777,6 +784,23 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     from proxy.services.decision_service import maybe_handle_decision_command
 
     pid = req.project_id or 0  # Q3: режим объекта → задачи/объёмы/заметки/решения привязываются к нему
+
+    # W11.17: /-команды (палитра). rewrite → переформулировать и пройти конвейером; иначе — детерм. ответ.
+    from proxy.services.command_service import handle_command, is_command
+    if is_command(req.question):
+        cmd_res = handle_command(req.question, project_id=pid)
+        if cmd_res and cmd_res.get("rewrite"):
+            req.question = cmd_res["rewrite"]
+        elif cmd_res is not None:
+            return {
+                "answer": cmd_res["answer"],
+                "crag_status": "DETERMINISTIC",
+                "sources": [],
+                "query_route": {"channel": "command", "operation": (cmd_res.get("command") or {}).get("action")},
+                "validation": {"enabled": False, "reason": "deterministic_command"},
+                "command": cmd_res.get("command"),
+            }
+
     task_reply = maybe_handle_task_command(req.question, dataset_filter=req.dataset_filter or "", project_id=pid)
     field_reply = None if task_reply is not None else maybe_handle_field_command(req.question, project_id=pid)
     decision_reply = (
