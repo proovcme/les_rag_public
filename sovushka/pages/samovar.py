@@ -1024,9 +1024,18 @@ def build_samovar():
                 reindex_progress.style("width:220px;display:block;")
                 cur = rx.get("current_doc") or {}
                 cur_name = cur.get("doc") or cur.get("file") or cur.get("name") or ""
-                reindex_progress_label.set_text(
-                    f"реиндекс: {rx_done}/{rx_total}" + (f" · {cur_name[:48]}" if cur_name else "")
-                )
+                pct = rx.get("percent")
+                eta = rx.get("eta_text") or ""
+                rate = rx.get("rate_per_min")
+                head = f"реиндекс: {rx_done}/{rx_total}" + (f" ({pct:.0f}%)" if pct is not None else "")
+                tail = []
+                if eta:
+                    tail.append(f"осталось {eta}")
+                if rate:
+                    tail.append(f"{rate:g} док/мин")
+                if cur_name:
+                    tail.append(cur_name[:40])
+                reindex_progress_label.set_text(head + (" · " + " · ".join(tail) if tail else ""))
             elif rx.get("paused"):
                 reindex_progress.style("width:220px;display:block;")
                 reindex_progress_label.set_text(f"⏸ пауза: {rx_done}/{rx_total}")

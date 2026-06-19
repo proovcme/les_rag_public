@@ -95,13 +95,27 @@ def test_generate_spec_bor_end_to_end(tmp_path):
     ]
     save_parquet(rows, str(parquet_dir / "spec.parquet"))
     out = tmp_path / "out"
-    res = generate_spec_bor("ds", storage_root=tmp_path, output_dir=out)
-    assert res["bor_lines"] == 3
+    res = generate_spec_bor("ds", storage_root=tmp_path, output_dir=out, decompose=False)  # v1
+    assert res["bor_lines"] == 3 and res["mode"] == "simple"
     names = {l["name"] for l in res["lines"]}
     assert "Прокладка: Кабель ВВГнг 3х1,5" in names
     assert "Монтаж: Светильник LED" in names
     assert "Установка: Коробка установочная" in names
     assert Path(res["xlsx_path"]).exists()
+
+
+def test_generate_spec_bor_v2_decompose(tmp_path):
+    parquet_dir = tmp_path / "ds" / "_parquet"
+    parquet_dir.mkdir(parents=True)
+    rows = [
+        _spec("Кабель ВВГнг 3х1,5", "м", 744.93, section="ЭОМ"),
+        _spec("Светильник LED", "шт", 280.0, section="ЭОМ"),
+    ]
+    save_parquet(rows, str(parquet_dir / "spec.parquet"))
+    res = generate_spec_bor("ds", storage_root=tmp_path, output_dir=tmp_path / "out")  # decompose=default
+    assert res["mode"] == "decompose"
+    assert res["bor_lines"] > 2                # позиции декомпозированы в набор работ
+    assert Path(res["xlsx_path"]).exists()     # xlsx с графами ГОСТ 21.111
 
 
 def test_uses_no_llm():
@@ -112,3 +126,56 @@ def test_uses_no_llm():
     src = inspect.getsource(svc)
     for marker in ("import httpx", "import openai", "/api/chat", "completions"):
         assert marker not in src
+
+
+# ── v2: декомпозиция (методика ГОСТ 21.111) ──
+
+from proxy.services.spec_to_bor_service import (  # noqa: E402
+    _decompose,
+    spec_rows_to_work_lines_v2,
+    work_lines_to_xlsx,
+)
+
+
+def test_decompose_cable_into_works():
+    works, note = _decompose("кабель ВВГнг 3х2,5")
+    assert "Разметка трассы" in works and any("Прокладка" in w for w in works)
+    assert "конц" in note  # доп. работы по числу концов — в примечании
+
+
+def test_decompose_device_install_connect():
+    works, _ = _decompose("щит распределительный ЩР-1")
+    assert any("Установка" in w for w in works) and "Подключение" in works
+
+
+def test_v2_one_position_many_works_qty_inherited():
+    rows = [_spec("кабель ВВГнг 3х2,5", unit="м", qty=1003.0, section="ЭОМ", mark="Э-1")]
+    lines = spec_rows_to_work_lines_v2(rows)
+    # одна позиция → несколько работ, у каждой объём = кол-ву позиции
+    assert len(lines) >= 2
+    for l in lines:
+        assert l.unit == "м" and l.qty == 1003.0
+        assert l.chertezh == "Э-1" and l.section == "ЭОМ"
+        assert "поз" in l.note or "спецификац" in l.note
+
+
+def test_v2_groups_and_sums_same_work():
+    rows = [
+        _spec("кабель А", unit="м", qty=100.0, section="ЭОМ"),
+        _spec("кабель Б", unit="м", qty=50.0, section="ЭОМ"),
+    ]
+    lines = spec_rows_to_work_lines_v2(rows)
+    razm = [l for l in lines if l.work.startswith("Разметка трассы")]
+    assert len(razm) == 1 and razm[0].qty == 150.0  # свод одинаковой работы
+
+
+def test_v2_xlsx_has_gost_columns(tmp_path):
+    rows = [_spec("извещатель ИП-212", unit="шт", qty=85.0, section="АУПС")]
+    lines = spec_rows_to_work_lines_v2(rows)
+    out = tmp_path / "vor.xlsx"
+    n = work_lines_to_xlsx(lines, out, title="ВОР тест")
+    assert out.exists() and n == len(lines)
+    import openpyxl
+    ws = openpyxl.load_workbook(out).active
+    hdr = [ws.cell(row=2, column=c).value for c in range(1, 7)]
+    assert hdr == ["№", "Наименование работ", "Ед. изм.", "Кол-во", "Ссылка на чертёж", "Примечание"]

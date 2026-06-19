@@ -227,6 +227,12 @@ _FACT_MARKERS = (
     "отвечает за", "ответствен", "контакт", "телефон", "адрес", " у нас ", " у меня ",
     " наш ", " наша ", " наше ", " наши ", "договор", "срок ", "дедлайн", "бюджет",
 )
+# Слова-запросы где угодно в тексте → это ПРОСЬБА, не факт («Котельная — справка по объекту»).
+# Иначе паттерн «X — Y» ложно уходит в авто-заметку.
+_REQUEST_ANYWHERE = (
+    "справк", "сводк", "сделай", "покажи", "дай ", "оформи", "подготов", "сформир",
+    "выведи", "составь", "перечисли", "рассчита", "посчита", "сгенер", "напиши",
+)
 
 
 def autonote_enabled() -> bool:
@@ -240,6 +246,8 @@ def looks_like_fact(text: str) -> bool:
         return False
     low = t.lower()
     if any(low.startswith(w) for w in _NON_FACT_STARTS):
+        return False
+    if any(m in low for m in _REQUEST_ANYWHERE):  # запрос где угодно → не факт
         return False
     if len([w for w in _WORD_RE.findall(t) if w.lower() not in _STOPWORDS]) < 2:
         return False

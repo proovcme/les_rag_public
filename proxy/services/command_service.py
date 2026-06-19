@@ -37,6 +37,12 @@ COMMANDS: tuple[dict[str, Any], ...] = (
      "title": "Сверка документов", "desc": "ВОР ↔ КС-2 ↔ смета ↔ ИД по количествам"},
     {"cmd": "/мсп", "aliases": ("/mcp", "/mcp-server", "/мсп-сервер"), "kind": "stub",
      "title": "MCP-сервер ЛЕС", "desc": "Инструменты ЛЕС наружу по Model Context Protocol (готов)"},
+    {"cmd": "/исполнительная", "aliases": ("/ид", "/объём-ид", "/asbuilt"), "kind": "asbuilt",
+     "title": "Смонтированный объём из ИД", "desc": "Приёмка объёмов из сканов исполнительных схем/чек-листов"},
+    {"cmd": "/проекты", "aliases": ("/реестр", "/объекты", "/карта"), "kind": "rewrite",
+     "rewrite": "реестр проектов", "title": "Реестр проектов", "desc": "Общая карта всех объектов и папок ЛЕС"},
+    {"cmd": "/режим", "aliases": ("/mode", "/режимы"), "kind": "stripslash",
+     "title": "Режим работы", "desc": "local / cloud / mix — переключить чат+OCR+приёмку (напр. /режим облако)"},
     {"cmd": "/команды", "aliases": ("/help", "/?", "/команда"), "kind": "help",
      "title": "Список команд", "desc": "Показать все команды"},
 )
@@ -72,7 +78,12 @@ def _explain_doc(form_id: str) -> str:
         parts.append(f"Основание: {basis}.")
     if cols:
         parts.append("Графы: " + " · ".join(cols) + ".")
-    parts.append("Генерирую бланк xlsx — скачается; для docx/html — Инструменты → Формы.")
+    parts.append("⚠️ Это ПУСТОЙ бланк (шаблон, без данных проекта) — xlsx скачается; docx/html — Инструменты → Формы.")
+    if form_id in ("vor", "spec_gost21110"):
+        build = ("«сделай ВОР из спецификации»" if form_id == "vor"
+                 else "индексируй спецификации и спроси по ним")
+        parts.append(f"Чтобы заполнить ИЗ ДАННЫХ проекта (а не пустой бланк) — {build} "
+                     "(нужны проиндексированные спецификации/ведомости).")
     return "\n".join(parts)
 
 
@@ -91,6 +102,10 @@ def handle_command(question: str, *, project_id: int | None = None) -> dict[str,
         return None
     token = text.split()[0].lower()
     entry = _BY_NAME.get(token)
+    if entry is None:  # токен мог слипнуться («/командыответь») — берём известную команду как префикс
+        prefix = max((c for c in _BY_NAME if token.startswith(c)), key=len, default="")
+        if prefix:
+            entry = _BY_NAME[prefix]
     if entry is None:
         return {"answer": f"Неизвестная команда «{token}». Набери /команды — покажу список.",
                 "command": {"action": "unknown"}}
@@ -98,6 +113,8 @@ def handle_command(question: str, *, project_id: int | None = None) -> dict[str,
     kind = entry["kind"]
     if kind == "rewrite":
         return {"rewrite": entry["rewrite"]}
+    if kind == "stripslash":  # «/режим облако» → «режим облако» → ловит NL-канал (с аргументом)
+        return {"rewrite": text.lstrip("/")}
     if kind == "help":
         return {"answer": _help_text(), "command": {"action": "help", "commands": list_commands()}}
     if kind == "stub":
@@ -113,6 +130,16 @@ def handle_command(question: str, *, project_id: int | None = None) -> dict[str,
                        '  {"mcpServers":{"les":{"command":"uv","args":["run","python",'
                        '"tools/les_mcp_server.py"],"cwd":"/Users/ovc/LES"}}}'),
             "command": {"action": "mcp_info", "feature": "mcp_server"},
+        }
+    if kind == "asbuilt":
+        return {
+            "answer": ("Приёмка смонтированного объёма из исполнительных схем/чек-листов (сканов).\n"
+                       "Скажи в чате с путём, например:\n"
+                       "  • «вытащи смонтированный объём из «/Users/ovc/RAG/АУПС-СОУЭ»»\n"
+                       "  • добавь «облаком» — медленнее, но точнее на плотных таблицах.\n"
+                       "Конвейер: разворот → найти таблицу → прочитать → строки в журнал объёмов "
+                       "(status=pending, проверишь перед зачётом). Потом спроси «свод по L5»."),
+            "command": {"action": "asbuilt_help", "feature": "asbuilt_intake"},
         }
     if kind == "form":
         form_id = entry["form"]

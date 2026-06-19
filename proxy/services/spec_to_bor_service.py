@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -107,6 +108,135 @@ def spec_rows_to_work_lines(rows: list[dict]) -> list[BorLine]:
     return sorted(lines.values(), key=lambda l: (l.section.casefold(), l.name.casefold()))
 
 
+# ── v2: декомпозиция позиции в НАБОР работ (методика ВОР, ГОСТ 21.111) ──
+# Категория → перечень работ. Все под-работы наследуют ЕД.+КОЛ-ВО позиции (объём один и тот
+# же — линейный/поштучный), поэтому чисел НЕ выдумываем (ADR-11). Работы по числу концов
+# (маркировка, расключение) в авто-объём не попадают — отмечаем в примечании.
+_DECOMPOSE: tuple[tuple[tuple[str, ...], tuple[str, ...], str], ...] = (
+    # (ключевые слова категории, перечень работ, примечание о доп. работах)
+    (("кабель", "провод", "шнур"),
+     ("Разметка трассы", "Прокладка кабеля"),
+     "доп.: маркировка и расключение — по числу концов, добавить отдельно"),
+    (("лоток", "короб", "труба", "гофр", "канал"),
+     ("Разметка трассы", "Монтаж {предмет}"),
+     ""),
+    (("стойк", "полка", "подвес", "конструкц", "закладн"),
+     ("Монтаж {предмет}",),
+     ""),
+    (("коробка", "клемм", "наконечник", "крепеж", "крепёж", "дюбель", "хомут", "скоба", "зажим"),
+     ("Установка {предмет}",),
+     ""),
+    (("светильник", "прожектор", "щит", "шкаф", "бокс", "розетк", "выключател", "датчик",
+      "извещател", "прибор", "блок", "автомат", "трансформатор", "привод", "двигател",
+      "насос", "вентилятор", "агрегат", "оповещател", "модул"),
+     ("Установка {предмет}", "Подключение"),
+     ""),
+)
+_DEFAULT_DECOMPOSE = (("Монтаж {предмет}",), "")
+
+
+def _decompose(name: str) -> tuple[tuple[str, ...], str]:
+    low = f" {(name or '').lower().replace('ё', 'е')} "
+    for tokens, works, note in _DECOMPOSE:
+        if any(t.replace("ё", "е") in low for t in tokens):
+            return works, note
+    return _DEFAULT_DECOMPOSE
+
+
+@dataclass
+class WorkLine:
+    """Строка ВОР (форма ГОСТ 21.111): работа + объём + ссылка на чертёж + примечание."""
+    section: str
+    work: str
+    unit: str
+    qty: float | None = None
+    chertezh: str = ""           # ссылка на чертёж (шифр/марка позиции)
+    note: str = ""               # примечание/формула/доп. работы
+    source_rows: int = 0
+    qty_missing_rows: int = 0
+    sources: list[str] = field(default_factory=list)
+
+    def payload(self) -> dict:
+        return {"section": self.section, "name": self.work, "unit": self.unit,
+                "qty": (round(self.qty, 3) if self.qty is not None else None),
+                "chertezh": self.chertezh, "note": self.note,
+                "source_rows": self.source_rows, "sources": self.sources}
+
+
+def spec_rows_to_work_lines_v2(rows: list[dict]) -> list[WorkLine]:
+    """Декомпозиция: позиция → набор работ; свод по (раздел, работа, ед.), сумма qty."""
+    lines: dict[tuple, WorkLine] = {}
+    for row in rows:
+        raw_name = str(row.get("name") or row.get("work_name") or "").strip()
+        if not raw_name or _is_noise_name(raw_name):
+            continue
+        name = re.sub(r"\s+", " ", raw_name)
+        unit = normalize_unit(row.get("unit"))
+        qty = _row_qty(row)
+        section = str(row.get("section") or "").strip()
+        chertezh = str(row.get("mark") or row.get("code") or "").strip()
+        works, dnote = _decompose(name)
+        pos = str(row.get("pos") or row.get("position") or "").strip()
+        src = str(row.get("source_file") or "").strip()
+        ref = f"{src}#{pos}" if pos else src
+        for tmpl in works:
+            work = tmpl.replace("{предмет}", name)
+            key = (section.casefold(), _normalize_name(work), unit)
+            line = lines.get(key)
+            if line is None:
+                note = f"объём = кол-ву по спецификации (поз. {pos})" if pos else "объём = кол-ву по спецификации"
+                if dnote:
+                    note += "; " + dnote
+                line = WorkLine(section=section, work=work, unit=unit, chertezh=chertezh, note=note)
+                lines[key] = line
+            if qty is None:
+                line.qty_missing_rows += 1
+            else:
+                line.qty = (line.qty or 0.0) + qty
+            line.source_rows += 1
+            if ref and ref not in line.sources:
+                line.sources.append(ref)
+    return sorted(lines.values(), key=lambda l: (l.section.casefold(), l.work.casefold()))
+
+
+def work_lines_to_xlsx(lines: list[WorkLine], path: Path, *, title: str) -> int:
+    """xlsx ВОР по графам ГОСТ 21.111: №/Наименование работ/Ед./Кол-во/Чертёж/Примечание."""
+    import openpyxl
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "ВОР"
+    ws.append([title])
+    ws.merge_cells("A1:F1")
+    ws["A1"].font = Font(bold=True, size=12)
+    hdr = ["№", "Наименование работ", "Ед. изм.", "Кол-во", "Ссылка на чертёж", "Примечание"]
+    ws.append(hdr)
+    fill = PatternFill("solid", fgColor="1F4E78")
+    for c in range(1, len(hdr) + 1):
+        cell = ws.cell(row=2, column=c)
+        cell.fill = fill
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.alignment = Alignment(horizontal="center", wrap_text=True)
+    cur_section = None
+    n = 0
+    for line in lines:
+        if line.section and line.section != cur_section:
+            cur_section = line.section
+            ws.append([f"Раздел: {cur_section}"])
+            ws.cell(row=ws.max_row, column=1).font = Font(bold=True, italic=True)
+        n += 1
+        ws.append([n, line.work, line.unit,
+                   (round(line.qty, 3) if line.qty is not None else "—"),
+                   line.chertezh, line.note])
+    widths = [5, 52, 9, 12, 18, 40]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
+    path.parent.mkdir(parents=True, exist_ok=True)
+    wb.save(path)
+    return n
+
+
 def is_spec_to_bor_query(question: str) -> bool:
     """Намерение «сделай ВОР из спецификации»: упоминание спецификации + ВОР/объёмов работ."""
     q = (question or "").lower().replace("ё", "е")
@@ -136,16 +266,33 @@ def generate_spec_bor(
     *,
     storage_root: Path = Path("storage/datasets"),
     output_dir: Path | None = None,
+    decompose: bool = True,
 ) -> dict:
-    """Полный цикл: спецификация датасета (Parquet) → ВОР работ → xlsx. Без LLM."""
+    """Спецификация датасета (Parquet) → ВОР работ → xlsx. Без LLM.
+
+    decompose=True (v2, методика ГОСТ 21.111): позиция → НАБОР работ + графы чертёж/примечание,
+    группировка по разделам. decompose=False (v1): 1 позиция → 1 монтажная работа.
+    """
     rows = collect_spec_rows(dataset_id, storage_root=storage_root)
+    if decompose:
+        wlines = spec_rows_to_work_lines_v2(rows)
+        result: dict = {
+            "dataset_id": dataset_id, "mode": "decompose",
+            "source_rows": len(rows), "bor_lines": len(wlines),
+            "lines": [w.payload() for w in wlines], "xlsx_path": None,
+        }
+        if output_dir is not None and wlines:
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            xlsx_path = output_dir / f"specbor_{dataset_id}_{stamp}.xlsx"
+            work_lines_to_xlsx(wlines, xlsx_path, title=f"ВОР из спецификации (ГОСТ 21.111) — {dataset_id}")
+            result["xlsx_path"] = str(xlsx_path)
+        return result
+
     lines = spec_rows_to_work_lines(rows)
-    result: dict = {
-        "dataset_id": dataset_id,
-        "source_rows": len(rows),
-        "bor_lines": len(lines),
-        "lines": [line.payload() for line in lines],
-        "xlsx_path": None,
+    result = {
+        "dataset_id": dataset_id, "mode": "simple",
+        "source_rows": len(rows), "bor_lines": len(lines),
+        "lines": [line.payload() for line in lines], "xlsx_path": None,
     }
     if output_dir is not None and lines:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")

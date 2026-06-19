@@ -1167,9 +1167,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         _render_artifact_loading(out_mode, question)
         add_log(f'[AI] Запрос: "{question[:60]}"')
 
+        # Формат/стиль ответа — ОТДЕЛЬНЫМ полем (не клеим в текст вопроса): иначе бэкенд
+        # видит мусор-шаблон как вопрос → авто-заметки/роутинг/ретрив плывут.
         extra_prompt = "" if skip_resource_gate else _build_extra_prompt(question)
         payload = {
-            "question": question + extra_prompt,
+            "question": question,
+            "output_directive": extra_prompt or None,
             "reranker_enabled": reranker_sw.value,
             "validation_enabled": bool(validation_sw.value),
             "session_id": state.get("session_id"),
@@ -1205,23 +1208,6 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             data, fname = res
             ui.download(data, fname)
             ui.notify(f"Документ создан: {cmd.get('title', fid)} ({fmt})", type="positive")
-
-        async def _load_commands() -> None:
-            d = await api_get("/api/commands")
-            cmds = (d or {}).get("commands", []) if isinstance(d, dict) else []
-            cmd_menu_box.clear()
-            with cmd_menu_box:
-                if not cmds:
-                    ui.menu_item("Команды недоступны", on_click=lambda: None)
-                for c in cmds:
-                    label = f"{c['cmd']} — {c['desc']}"
-
-                    def _run(cmd=c["cmd"]):
-                        chat_input.value = cmd
-                        _update_prompt_preview()
-                        asyncio.create_task(send_chat())
-
-                    ui.menu_item(label, on_click=_run)
 
         def _apply_chat_result(d: dict) -> None:
             """Применяет финальный payload (общий для стрима и нестриминга):
@@ -1582,6 +1568,23 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 _render_tree(item, level)
 
     select_format("text")
+    async def _load_commands() -> None:  # build_chat-уровень: зовётся ниже при сборке страницы
+        d = await api_get("/api/commands")
+        cmds = (d or {}).get("commands", []) if isinstance(d, dict) else []
+        cmd_menu_box.clear()
+        with cmd_menu_box:
+            if not cmds:
+                ui.menu_item("Команды недоступны", on_click=lambda: None)
+            for c in cmds:
+                label = f"{c['cmd']} — {c['desc']}"
+
+                def _run(cmd=c["cmd"]):
+                    chat_input.value = cmd
+                    _update_prompt_preview()
+                    asyncio.create_task(send_chat())
+
+                ui.menu_item(label, on_click=_run)
+
     asyncio.create_task(_load_commands())  # W11.17: наполнить /-палитру
     asyncio.create_task(_refresh_resource_gate())
     resource_gate_timer = ui.timer(5.0, lambda: asyncio.create_task(_refresh_resource_gate()))

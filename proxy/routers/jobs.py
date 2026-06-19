@@ -9,6 +9,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Query
 
 from proxy.security import require_user
+from proxy.services.runtime_dispatcher import compute_eta
 
 router = APIRouter(prefix="/api", tags=["jobs"])
 logger = logging.getLogger(__name__)
@@ -57,6 +58,11 @@ def summarize_job(job_id: str, job: Any) -> dict[str, Any]:
         "updated_at": job.get("updated_at", ""),
         "finished_at": job.get("finished_at", ""),
     }
+    # ETA индексации: percent + оценка остатка по средней скорости (числа считает код)
+    summary.update(compute_eta(
+        job.get("started_at"), job.get("processed"), job.get("total"),
+        running=str(job.get("status", "")).lower() in {"running", "parsing", "queued"},
+    ))
     if result:
         summary["result_summary"] = {
             "status": result.get("status"),

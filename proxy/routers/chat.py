@@ -80,6 +80,7 @@ class ChatRequest(BaseModel):
     validation_enabled: Optional[bool] = None
     session_id: Optional[str] = None
     project_id: Optional[int] = None  # W17.1: режим проекта — ретрив сужается к датасетам объекта
+    output_directive: Optional[str] = None  # формат/стиль ответа — ТОЛЬКО в генерацию (не в роутинг/заметки/ретрив)
 
     @field_validator("question")
     @classmethod
@@ -801,30 +802,47 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 "command": cmd_res.get("command"),
             }
 
-    task_reply = maybe_handle_task_command(req.question, dataset_filter=req.dataset_filter or "", project_id=pid)
-    field_reply = None if task_reply is not None else maybe_handle_field_command(req.question, project_id=pid)
-    decision_reply = (
-        None if task_reply is not None or field_reply is not None
-        else maybe_handle_decision_command(req.question, project_id=pid)  # W17.4
+    from proxy.services.asbuilt_chat_service import maybe_handle_asbuilt_query  # приёмка ИД-сканов
+    from proxy.services.les_md_chat_service import maybe_handle_les_md_query  # LES.md: пойми папку
+    from proxy.services.project_registry_chat_service import maybe_handle_registry_query  # реестр
+    from proxy.services.preset_chat_service import maybe_handle_preset_query  # режим local/cloud/mix
+
+    # Детерминированные каналы по порядку (regex+SQL, 0 LLM): первый сработавший — ответ.
+    _det_channels = (
+        ("tasks", lambda: maybe_handle_task_command(req.question, dataset_filter=req.dataset_filter or "", project_id=pid)),
+        ("preset", lambda: maybe_handle_preset_query(req.question, project_id=pid)),
+        ("asbuilt", lambda: maybe_handle_asbuilt_query(req.question, project_id=pid)),
+        ("les_md", lambda: maybe_handle_les_md_query(req.question, project_id=pid)),
+        ("registry", lambda: maybe_handle_registry_query(req.question, project_id=pid)),
+        ("field", lambda: maybe_handle_field_command(req.question, project_id=pid)),
+        ("decision", lambda: maybe_handle_decision_command(req.question, project_id=pid)),  # W17.4
+        ("memory", lambda: maybe_handle_memory_command(req.question, dataset_filter=req.dataset_filter or "", project_id=pid)),
     )
-    memory_reply = (
-        None
-        if task_reply is not None or field_reply is not None or decision_reply is not None
-        else maybe_handle_memory_command(req.question, dataset_filter=req.dataset_filter or "", project_id=pid)
-    )
+    reply, channel = None, ""
+    for _ch, _fn in _det_channels:
+        reply = _fn()
+        if reply is not None:
+            channel = _ch
+            break
     # Авто-заметки: утверждение-факт (не вопрос/команда) ЛЕС запоминает сам. 0 LLM.
-    if memory_reply is None and task_reply is None and field_reply is None and decision_reply is None:
+    if reply is None:
         from proxy.services.memory_service import maybe_autonote
-        memory_reply = maybe_autonote(req.question, dataset_filter=req.dataset_filter or "", project_id=pid)
-    if task_reply is not None or field_reply is not None or decision_reply is not None or memory_reply is not None:
-        reply = task_reply or field_reply or decision_reply or memory_reply
-        channel = ("tasks" if task_reply is not None else "field" if field_reply is not None
-                   else "decision" if decision_reply is not None else "memory")
+        reply = maybe_autonote(req.question, dataset_filter=req.dataset_filter or "", project_id=pid)
+        if reply is not None:
+            channel = "memory"
+    # Ярус 2 (флаг LES_AGENT_LOOP): чат сам выбирает инструмент, если regex не поймал.
+    if reply is None:
+        from proxy.services.agent_router_service import maybe_agent_route
+        reply = maybe_agent_route(req.question, project_id=pid)
+        if reply is not None:
+            channel = "agent"
+    if reply is not None:
         return {
             "answer": reply["answer"],
             "crag_status": "DETERMINISTIC",
             "sources": [],
-            "query_route": {"channel": channel, "operation": reply.get("operation")},
+            "query_route": {"channel": channel, "operation": reply.get("operation"),
+                            "agent_tool": reply.get("agent_tool")},
             "validation": {"enabled": False, "reason": f"deterministic_{channel}_command"},
         }
 
@@ -836,6 +854,16 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     except Exception as err:
         logger.warning("[MEMORY] recall failed: %s", err)
         memory_block = ""
+    # LES.md: контекст папки/проекта — ВСЕГДА для in-project (как CLAUDE.md для harness).
+    if pid:
+        try:
+            from proxy.services.les_md_service import context_for_chat
+            les_md_block = context_for_chat(pid)
+            if les_md_block:
+                memory_block = les_md_block + ("\n\n" + memory_block if memory_block else "")
+                logger.info("[LES.md] подмешан контекст проекта #%s (%s симв.)", pid, len(les_md_block))
+        except Exception as err:  # noqa: BLE001
+            logger.warning("[LES.md] context inject failed: %s", err)
     if memory_block:
         logger.info("[MEMORY] подмешано %s символов рабочей памяти", len(memory_block))
     # «Запоминать всё»: история диалога текущей сессии в промпт (чат потурно безсостоятельный).
@@ -1936,6 +1964,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                         )
                         # ADR-12 §2: каркас формы под интент добавляем к нормальному промпту.
                         sys_msg = sys_normal + (f" {answer_form.instruction}" if answer_form.instruction else "")
+                        # Формат/стиль из GUI (глубина/язык) — ТОЛЬКО в системный промпт генерации,
+                        # чтобы роутинг/авто-заметки/ретрив видели чистый вопрос (не мусор-шаблон).
+                        if req.output_directive and req.output_directive.strip():
+                            sys_msg += " " + req.output_directive.strip()
 
                     messages = [
                         {"role": "system", "content": sys_msg},

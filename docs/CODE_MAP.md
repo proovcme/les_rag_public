@@ -8,6 +8,8 @@
 перед правкой соответствующего сервиса:
 - **[ALGO-table-query.md](ALGO-table-query.md)** — счёт по ячейкам таблиц (суммы/кол-ва): типизация в Parquet → детерминированная агрегация по полному набору строк. Сервис `proxy/services/table_query_service.py`.
 - **[ALGO-spec-to-bor.md](ALGO-spec-to-bor.md)** — спецификация (форма 9, ГОСТ 21.110) → ВОР работ (глагол по словарю). Сервис `proxy/services/spec_to_bor_service.py`.
+- **[ALGO-asbuilt-intake.md](ALGO-asbuilt-intake.md)** — приёмка смонтированного объёма из исполнительных схем/чек-листов (сканов): рендер → авто-поворот → locate-then-read (vision-OCR — единственный LLM-шаг) → строки → журнал объёмов (status=pending). Сервисы `proxy/services/asbuilt_intake_service.py` (+ `asbuilt_ocr.py`), чат-канал `asbuilt_chat_service.py` (Совушка вызывает сама: «вытащи смонтированный объём из «<путь>»»), эндпоинт `POST /api/field/extract-asbuilt`, CLI `tools/asbuilt_extract.py`. Выбор vision-модели — бенч `tools/asbuilt_ocr_bench.py` (recall по якорям + латентность).
+- **[ALGO-les-md.md](ALGO-les-md.md)** — `LES.md`/`ЛЕС.md`: файл-контекст папки (CLAUDE.md для ЛЕС). frontmatter (проект/объект/стадия/шифр/директивы/ignore) + тело→контекст чата; привязка папки к проекту, авто-черновик из скана. Сервис `proxy/services/les_md_service.py`, чат `les_md_chat_service.py` («пойми папку «<путь>»»), роутер `proxy/routers/les_md.py`.
 
 ## Стек
 
@@ -53,7 +55,7 @@ Proxy       :8050  (FastAPI)  ── /api/chat, /api/datasets, /api/runtime, /ap
 
 ### `backend/` — RAG-движок и конвертация (~21 модуль)
 - **Ядро RAG:** [backend/qdrant_adapter.py](../backend/qdrant_adapter.py) (`QdrantLlamaIndexAdapter`, `EmbedClient`→MLX, `MetaDB` SQLite, `StructureAwareSplitter`), [backend/rag_config.py](../backend/rag_config.py) (профили эмбеддингов), [backend/interface.py](../backend/interface.py) (`RAGBackend`, `Chunk`), [backend/reranker.py](../backend/reranker.py) (кросс-энкодер через MLX), [backend/mlx_adapter.py](../backend/mlx_adapter.py) (`MLXMemoryManager`: TTL-выгрузка, metal-семафор).
-- **Конвертация:** `converter.py` (MarkItDown: pdf/docx/xlsx/email), `document_router.py`, `ocr_parser.py` (MLX VLM OCR), `parquet_writer.py` (таблицы→Parquet).
+- **Конвертация:** `converter.py` (MarkItDown: pdf/docx/xlsx/email; **+legacy `.doc`→textutil, `.xlsm`, картинки jpg/png/tiff→vision-OCR, `.p7m`→openssl→PDF, открепл. подпись скипается**), `document_router.py` (группы TABLE/PDF/IMAGE/EMAIL/CAD_BIM), `ocr_parser.py` (vision OCR), `parquet_writer.py` (таблицы→Parquet). Intake-гейт типов — `smart_index.SUPPORTED_SUFFIXES`. Архивы (.7z/.zip) — препроцесс `tools/unpack_archives.py`. **DWG (бинарь) пока вне пайплайна** — нужен внешний DWG→DXF/JSON (LibreDWG/ODA/Legion-бокс) → потом `cad_bim_extract_dxf`.
 - **Почта (Е.Ж.И.К.):** `mail_ingest.py` (IMAP/Apple Mail), `mail_threads.py`, `mail_profile.py`, `mail_emlx.py`, `pst_reader.py`.
 - **Прочее:** `smart_index.py` (план индексации), `metrics_collector.py`, `diagnostics.py`, `rules_extractor.py`, `auth.py`/`auth_login_route.py` (В.О.Л.К.).
 - **`backend/inference/` (W3.1/W2.4/W3.3):** `providers.py` (протоколы ChatProvider/EmbedProvider/ValidatorProvider/RerankProvider/OCRProvider), `validator.py` (общий rules-валидатор, каскад rules→LLM), `bm25_sparse.py` (BM25/IDF sparse для гибрида, W2.4), `sparse_embed.py` (BGE-M3 learned-sparse — задел, не в активном пути), `routing.py` (W3.3: политика локал/облако по чувствительности P0/P1/P2 — `decide_provider`/`memory_aware_provider`/`estimate_cost_usd`, pure-функции; гейт в `chat.py` — P0 не уходит в облако).
