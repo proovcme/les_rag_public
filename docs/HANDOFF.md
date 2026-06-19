@@ -45,15 +45,25 @@
 ## ПЛАН СЛЕДУЮЩЕЙ СЕССИИ (приоритет Олега)
 
 **1. РЕЛИЗЫ под Mac и Windows с человеческой установкой** («чем мы хуже AnythingLLM?»).
-Цель: дабл-клик инсталлер, который ставит и поднимает весь стек (Qdrant + MLX-host + proxy + Совушка)
-без терминала и uv-плясок. Что есть: `installers/{macos,linux,windows}/`, `tools/build_*_release.py`,
-`tools/install_les.py`, `tools/check_*_budget.py`, launchd-плисты (mac). Что нужно:
-- **Mac**: .app/.dmg (или .pkg) — встроить uv-окружение (`uv sync --extra mac-mlx`, см. память
-  `runtime-uv-sync-mlx-extra`), MLX-модель 4B, автозапуск служб (launchd), первый-запуск-онбординг.
-  Бенчмарк удобства = AnythingLLM/LM Studio (один установщик, GUI, без CLI).
-- **Windows**: без MLX (нет Apple Silicon) → облако/ollama/lemonade как движок; инсталлер (NSIS/MSIX),
-  служба, GUI. Артель — отдельный Win+Revit пакет (см. память `legion-build-workflow`).
-- Решить: бандлить ли веса моделей в инсталлер (размер) или докачка при первом запуске.
+Развилки решены (Олег): **лёгкий .app-бутстрап** (не PyInstaller) + **докачка весов при первом запуске**.
+
+- **Mac — Фаза 1 ГОТОВА (эта сессия).** Дабл-клик `LES.app` собирается из чистого экспорта кода:
+  - `installers/macos/app/` — `Info.plist.template`, `launcher` (bundle exec), `bootstrap.sh`
+    (install-uv-if-missing → `uv sync --extra mac-mlx` → `lesctl init` → `onboard_models` →
+    `lesctl start --include-ui` → open `127.0.0.1:8051/les`; прогресс = нотификации, ошибки = диалог,
+    лог `~/Library/Logs/LES/bootstrap.log`; рантайм разворачивается в `~/Library/Application Support/LES`,
+    override `LES_HOME`).
+  - `tools/build_macos_app.py` → `dist/LES.app` (ad-hoc подпись, переиспользует `iter_files`,
+    без `.env`/данных). `tools/build_macos_dmg.py` → `dist/LES.dmg` (~20 МБ, drag-to-Applications).
+  - `tools/onboard_models.py` — идемпотентная докачка весов (4B MLX + эмбеддер) из `.env`/`env.example`.
+  - Тесты: `tests/test_installer_macos.py` (4, зелёные). Бандл провалидирован (`plutil`/`codesign`).
+  - **Проверено офлайн** (сборка+валидация). **НЕ проверено на чистой машине** — `bootstrap.sh`
+    специально не запускался (живой рантайм не трогать). Следующий шаг — прогон на свежем Mac/в песочнице.
+  - Осталось по Mac: иконка `LES.icns`, Developer ID-подпись + нотаризация (сейчас только ad-hoc),
+    богатый онбординг-UI (сейчас нотификации), coreml-эмбеддер из `artifacts/` в бандл не входит →
+    фолбэк на mlx-эмбеддер (`COREML_EMBED_FALLBACK=true`) — проверить на чистой установке.
+- **Windows** (отдельная сессия): без MLX → облако/ollama/lemonade; инсталлер (NSIS/MSIX), служба, GUI.
+  Артель — отдельный Win+Revit пакет (см. память `legion-build-workflow`).
 
 **2. Дотянуть данные**: W-205 (остаток PENDING), каталоги DKC (если пара кусков не домолота),
 проверить ГОСТ-спеку в GUI начисто (облако + скоуп «Каталоги» → артефакт ГОСТ-таблица + CSV).

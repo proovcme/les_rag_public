@@ -4,12 +4,37 @@ This folder contains boxed-install entrypoints for platform profiles.
 
 The installers are intentionally thin adapters around the repository runtime:
 
+- `macos/app/` + `tools/build_macos_app.py` build a double-click `LES.app` (see below).
 - `linux/install.sh` prepares Linux Docker/systemd/server-remote-model profiles.
 - `windows/install.ps1` prepares Windows Docker/lite profiles.
 - `tools/build_release_artifacts.py` builds distributable archives without local data.
 
 Local corpora, `.env`, model files, Qdrant data, logs, snapshots and private samples
 must never be packed into release archives.
+
+## macOS — double-click app (no terminal)
+
+The goal is AnythingLLM/LM-Studio-grade UX: drag `LES.app` to Applications,
+double-click, and the stack (Qdrant + MLX host + proxy + Sovushka) comes up and
+opens in the browser. No `uv` dance, no terminal.
+
+Design: a **lightweight bootstrap** (chosen over a fully self-contained
+PyInstaller bundle). The `.app` carries a clean code export plus
+`macos/app/bootstrap.sh`, which on first launch installs `uv` if missing, runs
+`uv sync --extra mac-mlx`, downloads model weights (`tools/onboard_models.py`,
+download-on-first-run), then `lesctl start --include-ui` and opens the UI.
+Progress shows as macOS notifications; failures as a dialog; full detail in
+`~/Library/Logs/LES/bootstrap.log`. The runtime is materialized into
+`~/Library/Application Support/LES` (override with `LES_HOME`).
+
+```bash
+# Build the bundle and a drag-to-install .dmg (macOS only):
+uv run python tools/build_macos_app.py --version 0.1.0 --sign   # -> dist/LES.app
+uv run python tools/build_macos_dmg.py --version 0.1.0          # -> dist/LES.dmg
+```
+
+Model weights and venv are NOT bundled — the `.dmg` stays ~20 MB; weights are
+fetched on first run. Drop an icon at `macos/app/LES.icns` to brand the bundle.
 
 ## Linux Docker
 
