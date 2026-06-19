@@ -55,6 +55,12 @@ mac-mlx = [
 parsers = [
     "docling>=2.101.0",
 ]
+desktop = [
+    # Тонкий нативный шелл (окно + трей) поверх веб-UI Совушки (tools/les_shell.py).
+    "pywebview>=5.0",
+    "pystray>=0.19",
+    "Pillow>=10.0",
+]
 mail-pst = [
     # Архивы Outlook .pst (Windows). C-сборка libpff (self-contained, нужен компилятор).
     "libpff-python>=20231205",

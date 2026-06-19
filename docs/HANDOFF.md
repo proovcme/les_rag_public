@@ -49,10 +49,17 @@
 
 - **Mac — Фаза 1 ГОТОВА (эта сессия).** Дабл-клик `LES.app` собирается из чистого экспорта кода:
   - `installers/macos/app/` — `Info.plist.template`, `launcher` (bundle exec), `bootstrap.sh`
-    (install-uv-if-missing → `uv sync --extra mac-mlx` → `lesctl init` → `onboard_models` →
-    `lesctl start --include-ui` → open `127.0.0.1:8051/les`; прогресс = нотификации, ошибки = диалог,
+    (install-uv-if-missing → `uv sync --extra mac-mlx --extra desktop` → `lesctl init` → `onboard_models` →
+    **запуск десктоп-шелла** `python -m tools.les_shell`; прогресс = нотификации, ошибки = диалог,
     лог `~/Library/Logs/LES/bootstrap.log`; рантайм разворачивается в `~/Library/Application Support/LES`,
     override `LES_HOME`).
+  - **GUI-шелл L1 ГОТОВ (эта сессия)** — `tools/les_shell.py` (extra `desktop`: pywebview+pystray+Pillow):
+    тонкое нативное окно (сплэш «Поднимаю ЛЕС…» → загрузка `127.0.0.1:8051/les`) + трей
+    (Открыть/Перезапустить/Остановить/Логи/Выход) поверх **существующей** Совушки (UI не переписан).
+    Шелл владеет жизненным циклом (`les_runtime_control.start/stop/restart_core`), закрывает долг
+    «стоп/статус без терминала». Нет GUI-деп → деградирует в браузер (`--no-gui`/headless-fallback).
+    Тесты `tests/test_les_shell.py` (8). **GUI-склейка на дисплее НЕ гонялась** (нет дисплея, дет
+    не ставился) — прогон на живом Mac. L2 (онбординг-мастер: провайдер/ключ/выбор модели) — потом.
   - `tools/build_macos_app.py` → `dist/LES.app` (ad-hoc подпись, переиспользует `iter_files`,
     без `.env`/данных). `tools/build_macos_dmg.py` → `dist/LES.dmg` (~20 МБ, drag-to-Applications).
   - `tools/onboard_models.py` — идемпотентная докачка весов (4B MLX + эмбеддер) из `.env`/`env.example`.
@@ -60,8 +67,11 @@
   - **Проверено офлайн** (сборка+валидация). **НЕ проверено на чистой машине** — `bootstrap.sh`
     специально не запускался (живой рантайм не трогать). Следующий шаг — прогон на свежем Mac/в песочнице.
   - Осталось по Mac: иконка `LES.icns`, Developer ID-подпись + нотаризация (сейчас только ad-hoc),
-    богатый онбординг-UI (сейчас нотификации), coreml-эмбеддер из `artifacts/` в бандл не входит →
-    фолбэк на mlx-эмбеддер (`COREML_EMBED_FALLBACK=true`) — проверить на чистой установке.
+    GUI-шелл L2 (онбординг-мастер провайдер/ключ/модель — L1 окно+трей уже есть), coreml-эмбеддер из
+    `artifacts/` в бандл не входит → фолбэк на mlx-эмбеддер (`COREML_EMBED_FALLBACK=true`) — проверить.
+    **Windows-шелл**: `les_shell` кросс-платформенно импортируется, но бэкенд старта = `les_runtime_control`
+    (launchd, mac); под Win старт через `start-light.ps1` → шелл для Win не подключён (Win-bootstrap пока
+    start-light+open браузера). Подключить Win-бэкенд шелла — следующий заход.
 - **Windows — Фаза 1 ГОТОВА (эта сессия).** Зеркало mac-подхода (без MLX → движок облако/ollama/lemonade,
   выбор в GUI, веса не бандлятся):
   - `installers/windows/app/` — `bootstrap.ps1` (install-uv: winget/офиц.скрипт → `uv sync` →

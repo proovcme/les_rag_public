@@ -21,11 +21,18 @@ opens in the browser. No `uv` dance, no terminal.
 Design: a **lightweight bootstrap** (chosen over a fully self-contained
 PyInstaller bundle). The `.app` carries a clean code export plus
 `macos/app/bootstrap.sh`, which on first launch installs `uv` if missing, runs
-`uv sync --extra mac-mlx`, downloads model weights (`tools/onboard_models.py`,
-download-on-first-run), then `lesctl start --include-ui` and opens the UI.
-Progress shows as macOS notifications; failures as a dialog; full detail in
-`~/Library/Logs/LES/bootstrap.log`. The runtime is materialized into
-`~/Library/Application Support/LES` (override with `LES_HOME`).
+`uv sync --extra mac-mlx --extra desktop`, downloads model weights
+(`tools/onboard_models.py`, download-on-first-run), then launches the **desktop
+shell** (`tools/les_shell.py`). Progress shows as macOS notifications; failures
+as a dialog; full detail in `~/Library/Logs/LES/bootstrap.log`. The runtime is
+materialized into `~/Library/Application Support/LES` (override with `LES_HOME`).
+
+The shell is a thin native window + tray (pywebview + pystray) **around** the
+existing Sovushka web UI — not a reimplementation. It owns lifecycle
+(start / restart / stop / open logs from the tray, so no terminal is needed),
+shows a splash while the stack comes up, then loads `127.0.0.1:8051/les`. With
+the `desktop` extra absent it degrades to opening the default browser
+(`python -m tools.les_shell --no-gui`).
 
 ```bash
 # Build the bundle and a drag-to-install .dmg (macOS only):
