@@ -208,14 +208,63 @@ class OllamaVisualOCRParser:
         return "\n\n".join(pages_md)
 
 
-def make_ocr_parser(model_id: Optional[str] = None):
-    """Фабрика скан-OCR парсера по env. Бэкенд: ``RAG_OCR_BACKEND`` (ollama|mlx).
+class TesseractOCRParser:
+    """Скан-OCR через бинарь Tesseract (offline, без Python-зависимостей → не конфликтует с MLX).
 
-    Дефолт — ``ollama`` с моделью gemma4:12b (GLM-OCR удалён). MLX-путь оставлен
-    для оффлайн-Metal сценариев (``RAG_OCR_BACKEND=mlx`` + MLX-VLM модель).
+    Лучший локальный путь для русского: `brew install tesseract tesseract-lang`. Зовётся
+    subprocess'ом — изолирован от proxy-venv (transformers 5.x и пр. не трогает). Язык —
+    ``RAG_OCR_TESSERACT_LANG`` (дефолт ``rus+eng``), бинарь — ``RAG_OCR_TESSERACT_BIN``.
+    """
+
+    def __init__(self, lang: str = "", binary: str = ""):
+        import shutil
+
+        self.lang = lang or os.getenv("RAG_OCR_TESSERACT_LANG", "rus+eng")
+        self.binary = (binary or os.getenv("RAG_OCR_TESSERACT_BIN", "")
+                       or shutil.which("tesseract") or "/opt/homebrew/bin/tesseract")
+        self.psm = os.getenv("RAG_OCR_TESSERACT_PSM", "6")  # 6 — единый блок текста
+
+    def ocr_page(self, image) -> str:
+        import subprocess
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=True) as f:
+            image.convert("RGB").save(f.name)
+            try:
+                out = subprocess.run(
+                    [self.binary, f.name, "stdout", "-l", self.lang, "--psm", self.psm],
+                    capture_output=True, timeout=float(os.getenv("RAG_OCR_TESSERACT_TIMEOUT", "120")),
+                )
+                return out.stdout.decode("utf-8", errors="ignore").strip()
+            except FileNotFoundError:
+                logger.error("[OCR] tesseract не найден (%s) — brew install tesseract tesseract-lang", self.binary)
+                return ""
+            except Exception as e:  # noqa: BLE001
+                logger.error("[OCR] tesseract ошибка: %s", e)
+                return ""
+
+    def parse_pdf(self, pdf_path: Path, prompt: Optional[str] = None, dpi: int = 0) -> str:
+        dpi = dpi or int(os.getenv("RAG_OCR_TESSERACT_DPI", "300"))  # tesseract любит 300
+        images = render_pdf_to_images(pdf_path, dpi=dpi)
+        if not images:
+            return ""
+        pages = []
+        for idx, img in enumerate(images, 1):
+            logger.info("[OCR] Стр. %s/%s (%s) → tesseract %s", idx, len(images), pdf_path.name, self.lang)
+            pages.append(f"## Стр. {idx}\n\n{self.ocr_page(img)}")
+        return "\n\n".join(pages)
+
+
+def make_ocr_parser(model_id: Optional[str] = None):
+    """Фабрика скан-OCR парсера по env. Бэкенд: ``RAG_OCR_BACKEND`` (tesseract|ollama|mlx).
+
+    ``tesseract`` — лучший локальный путь для русского (бинарь, изолирован от venv, без VLM).
+    ``ollama`` (gemma4:12b) — vision-VLM. ``mlx`` — MLX-VLM (оффлайн-Metal).
     """
     backend = os.getenv("RAG_OCR_BACKEND", "ollama").strip().lower()
     model = model_id or os.getenv("RAG_OCR_MODEL", DEFAULT_OCR_MODEL)
+    if backend in ("tesseract", "tess"):
+        return TesseractOCRParser()
     if backend in ("mlx", "mlx-vlm"):
         # Историческая GLM-OCR модель удалена — для MLX-пути нужна явная MLX-VLM модель.
         return MLXVisualOCRParser(model_id=model if model != DEFAULT_OCR_MODEL else "mlx-community/GLM-OCR-4bit")

@@ -18,13 +18,17 @@ MAX_FILE_CHARS = 500_000  # ~125k токенов
 PDF_MAX_FILE_CHARS = 2_000_000
 BOOK_PDF_MIN_PAGES = 200
 
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
+
 SUPPORTED = {
     ".pdf", ".docx", ".doc",
     ".eml", ".emlx", ".msg",
-    ".xlsx", ".xls", ".csv",
+    ".xlsx", ".xlsm", ".xls", ".csv",
     ".pptx",
     ".json", ".jsonl",
     ".md", ".txt",
+    ".p7m",                       # подписанный PKCS#7 (обычно PDF внутри) → разворачиваем
+    *IMAGE_SUFFIXES,              # сканы-картинки → vision-OCR
 }
 
 
@@ -51,11 +55,18 @@ def convert_to_markdown(file_path: Path, route=None) -> Optional[str]:
     try:
         if suffix == ".pdf":
             result = _parse_pdf(file_path, route=route)
-        elif suffix in (".docx", ".doc"):
+        elif suffix == ".p7m":
+            result = _parse_p7m(file_path, route=route)
+        elif suffix in IMAGE_SUFFIXES:
+            result = _parse_image_ocr(file_path)
+        elif suffix == ".docx":
             result = _parse_with_markitdown(file_path) or _parse_docx(file_path)
+        elif suffix == ".doc":
+            # legacy бинарный .doc: markitdown/mammoth (только .docx) не берут → нативный textutil
+            result = _parse_with_markitdown(file_path) or _parse_legacy_doc(file_path)
         elif suffix in (".eml", ".emlx", ".msg"):
             result = _parse_email(file_path)
-        elif suffix in (".xlsx", ".xls", ".csv"):
+        elif suffix in (".xlsx", ".xlsm", ".xls", ".csv"):
             result = _parse_with_markitdown(file_path) or _parse_spreadsheet(file_path)
         elif suffix == ".pptx":
             result = _parse_with_markitdown(file_path)
@@ -86,6 +97,19 @@ def _parse_pdf(path: Path, route=None) -> str:
     force_ocr = False
     if route and getattr(route, "pipeline", None) == "markdown_needs_ocr":
         force_ocr = True
+
+    # Скан без текстового слоя → сразу НАШ OCR (make_ocr_parser, напр. tesseract rus+eng),
+    # не пуская встроенный eng-OCR pymupdf4llm (он даёт латинскую кашу на кириллице).
+    if not force_ocr and ocr_enabled:
+        try:
+            import fitz
+            with fitz.open(str(path)) as _d:
+                _real = sum(len(_d[i].get_text() or "") for i in range(min(3, _d.page_count)))
+            if _real < 80:
+                logger.info("[CONVERT] %s: нет текстового слоя → наш OCR (минуя eng-OCR pymupdf)", path.name)
+                force_ocr = True
+        except Exception:  # noqa: BLE001
+            pass
 
     # 1. Если роутер явно сказал делать OCR, делаем его сразу
     if force_ocr and ocr_enabled:
@@ -266,6 +290,102 @@ def _parse_docx(path: Path) -> str:
         for msg in result.messages:
             logger.debug(f"[CONVERT] mammoth: {msg}")
     return result.value
+
+
+def _parse_legacy_doc(path: Path) -> Optional[str]:
+    """Бинарный .doc (Word 97-2003): mammoth/markitdown их не читают (только .docx).
+
+    macOS-нативный ``textutil`` конвертирует .doc/.rtf в txt без сторонних зависимостей.
+    Если textutil недоступен (не macOS) — мягко вернуть None (фолбэк на antiword/catdoc, если есть).
+    """
+    import shutil
+    import subprocess
+
+    tu = shutil.which("textutil")
+    if tu:
+        try:
+            out = subprocess.run([tu, "-convert", "txt", "-stdout", str(path)],
+                                 capture_output=True, timeout=60)
+            text = out.stdout.decode("utf-8", errors="ignore").strip()
+            if text:
+                return text
+            logger.warning("[CONVERT] textutil вернул пусто для %s", path.name)
+        except Exception as err:  # noqa: BLE001
+            logger.warning("[CONVERT] textutil не справился с %s: %s", path.name, err)
+    for tool in ("antiword", "catdoc"):  # фолбэк для не-macOS, если установлены
+        exe = shutil.which(tool)
+        if exe:
+            try:
+                out = subprocess.run([exe, str(path)], capture_output=True, timeout=60)
+                text = out.stdout.decode("utf-8", errors="ignore").strip()
+                if text:
+                    return text
+            except Exception:  # noqa: BLE001
+                continue
+    return None
+
+
+def _parse_image_ocr(path: Path) -> Optional[str]:
+    """Скан-картинка (jpg/png/tiff) → текст через тот же vision-OCR, что и скан-PDF."""
+    if os.getenv("RAG_OCR_ENABLED", "true").lower() not in ("true", "1", "yes", "on"):
+        return None
+    try:
+        from PIL import Image
+
+        from .ocr_parser import make_ocr_parser
+
+        parser = make_ocr_parser()
+        with Image.open(path) as img:
+            text = parser.ocr_page(img.convert("RGB"))
+        return text if text and text.strip() else None
+    except Exception as err:  # noqa: BLE001 — OCR не должен ронять индексацию
+        logger.error("[CONVERT] image-OCR %s: %s", path.name, err)
+        return None
+
+
+def _parse_p7m(path: Path, route=None) -> Optional[str]:
+    """Подписанный контейнер PKCS#7 (.p7m, обычно PDF внутри): развернуть openssl → распарсить.
+
+    `openssl smime -verify -noverify` снимает подпись без проверки цепочки (нам нужен контент,
+    не валидация). Пробуем DER и PEM. Развёрнутый PDF идёт штатным PDF-путём (текст/OCR).
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    openssl = shutil.which("openssl")
+    if not openssl:
+        logger.warning("[CONVERT] openssl недоступен — .p7m %s пропущен", path.name)
+        return None
+    # «Лесной64_АС.pdf.p7m» рядом с «Лесной64_АС.pdf» → открепленная подпись: контента нет,
+    # оригинал индексируется сам — тихо пропускаем.
+    sibling = path.with_suffix("")  # снять .p7m
+    detached = sibling.exists() and sibling.suffix.lower() in SUPPORTED
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "content.bin"
+        # cms — современный путь для CAdES/PKCS#7; smime — запасной; оба формата DER/PEM
+        attempts = [[openssl, "cms", "-verify", "-noverify", "-in", str(path), "-inform", inf, "-out", str(out)]
+                    for inf in ("DER", "PEM")]
+        attempts += [[openssl, "smime", "-verify", "-noverify", "-in", str(path), "-inform", inf, "-out", str(out)]
+                     for inf in ("DER", "PEM")]
+        for cmd in attempts:
+            try:
+                subprocess.run(cmd, capture_output=True, timeout=60)
+                if out.exists() and out.stat().st_size > 0:
+                    if out.read_bytes()[:5].startswith(b"%PDF"):
+                        pdf = out.with_suffix(".pdf"); out.rename(pdf)
+                        return _parse_pdf(pdf, route=route)
+                    txt = out.read_text(encoding="utf-8", errors="ignore").strip()
+                    if txt:
+                        return txt
+            except Exception:  # noqa: BLE001
+                continue
+    if detached:
+        logger.info("[CONVERT] .p7m %s — открепленная подпись (оригинал %s индексируется отдельно)",
+                    path.name, sibling.name)
+    else:
+        logger.warning("[CONVERT] .p7m %s: не удалось развернуть контейнер", path.name)
+    return None
 
 
 def _parse_email(path: Path) -> str:

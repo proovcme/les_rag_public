@@ -12,8 +12,9 @@ from pathlib import Path
 from typing import Any
 
 
-TABLE_SUFFIXES = {".xlsx", ".xls", ".csv"}
-PDF_SUFFIXES = {".pdf"}
+TABLE_SUFFIXES = {".xlsx", ".xlsm", ".xls", ".csv"}
+PDF_SUFFIXES = {".pdf", ".p7m"}                       # .p7m разворачивается в PDF в конвертере
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 EMAIL_SUFFIXES = {".eml", ".emlx", ".msg"}
 CAD_BIM_SUFFIXES = {".dwg", ".rvt", ".ifc", ".ifczip"}
 
