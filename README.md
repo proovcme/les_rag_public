@@ -1,298 +1,148 @@
-# Л.Е.С.
+# Л.Е.С. — локальный центр данных строительного проекта
 
-![LES and ATLAS overview](assets/readme/les-atlas-hero.png)
+> ИИ-среда общих данных (СОД) и агент-помощник РП/ГИП. Собирает нормативы, проектную
+> документацию, сметы, переписку и таблицы в единый локальный центр, отвечает со ссылками
+> на пункты и **считает по документам кодом, а не нейросетью**.
 
-**Л.Е.С.** - локальная система для инженерной базы знаний.
+**Local-first.** Векторная база (Qdrant), модели (MLX / Core ML / локальный vision), метаданные
+и UI работают на вашей машине или в вашей сети. Облако (OpenAI-совместимое) — опционально, для
+качества языка; данные проекта остаются приватными. Self-hosted appliance для Apple Silicon.
 
-Если совсем просто: кладем документы, таблицы, письма и CAD/BIM-данные в свою
-машину, а потом спрашиваем по ним нормальным языком. Ответ должен быть не
-"похоже где-то было", а с опорой на источник: файл, chunk, таблицу, слой,
-`GlobalId`, Revit-параметр или объект модели.
+---
 
-Это public snapshot. Здесь нет приватных данных, ключей, рабочих индексов и
-закрытых моделей. Зато есть код, схемы, примеры, АТЛАС viewer, CAD/BIM
-exporters, install surface и тесты, по которым можно понять архитектуру и
-развернуть свой контур.
+## Главный принцип: LLM — последний инструмент
 
-[Демо АТЛАС](https://les.ovc.me/vv/) · [Установка](INSTALL.md) ·
-[CAD/BIM schema](schema/cad_bim_graph.schema.json) ·
-[Пример JSON](examples/minimal.cad_bim_graph.json) ·
-[Exporters](exporters/) ·
-[Standalone АТЛАС](standalone/cad_bim_viewer/)
+Языковая модель плоха в точной арифметике и легко галлюцинирует на числах. Поэтому в Л.Е.С.
+**нейросеть к числам не подпускается**: суммы, объёмы, сверки, преобразования документов считает
+детерминированный код поверх типизированного Parquet. LLM отвечает только за язык — понять
+вопрос, собрать формулировку, разрулить термины.
 
-![LES ecosystem](assets/readme/les-ecosystem.svg)
+Лесенка выбора инструмента: **алгоритм → словарь → малая модель → локальная LLM → облако.**
+Большую модель зовём последней и только там, где правда нужен язык.
 
-## Зачем
+Подробно: [docs/ALGO-table-query.md](docs/ALGO-table-query.md) (счёт по ячейкам таблиц),
+[docs/blog/llm-arithmetic-parquet.md](docs/blog/llm-arithmetic-parquet.md) (почему так).
 
-Обычный RAG хорошо выглядит на демо, но быстро ломается на реальных инженерных
-архивах:
+---
 
-- PDF бывают сканами, книгами, нормами, чертежами и мусором;
-- таблицы нужно считать, а не пересказывать;
-- почта хранит решения, вложения и контекст;
-- DWG/RVT/IFC нельзя нормально читать как обычный текст;
-- локальная машина может умереть, если одновременно запустить модель, OCR и
-  тяжелую индексацию;
-- ответ без источника в инженерной работе почти бесполезен.
+## Что умеет
 
-Л.Е.С. нужен как локальный слой памяти: аккуратно принять данные, распилить,
-разложить по индексам, найти нужное и вернуть ответ с проверяемой привязкой.
+### Поиск и ответы (RAG)
+- Вопросы по нормативам и проекту — ответ **со ссылкой на конкретный пункт**, статус `VERIFIED / NO_DATA`.
+- Типизированный многоуровневый ретрив: класс → документ → пункт (мостит вокабулярный разрыв «серверная → помещение ЭВМ → СП 486»).
+- Мультикласс через диалог: вопрос задел несколько классов → чипы-варианты «посмотреть как…».
+- Форма ответа по интенту: «значение» → строка с пунктом, «расскажи» → сжатый перечень, «собери всё» → развёрнуто.
+- Память диалога + авто-заметки фактов (ЛЕС сам запоминает утверждения).
 
-## Из чего состоит
+### Таблицы и числа (0 LLM)
+- **Счёт по таблицам** — суммы и количества по сметам/спецификациям/ведомостям; числа считает код по полному Parquet (доказано: кабель 3×1,5 = 15 030,72 м бит-в-бит).
+- **ВОР** — свод из спецификаций; **ВОР работ из спецификации** (форма 9 ГОСТ 21.110) по словарю категорий.
+- **Сверка** ВОР ↔ КС-2 ↔ смета ↔ ИД по количествам с флагами расхождений (по документу или по типу).
+- **План/факт** — ВОР ↔ журнал полевых объёмов.
+- **Сводка проекта** — стадия (ПД/РД), ТЭП, состав документов *(каркас, ТЭП калибруется на реальных проектах)*.
 
-| Часть | Что делает |
+### Документы и формы
+- Типовые формы по стандартам с генерацией docx/xlsx/html: **спецификация** (ГОСТ 21.110), **ВОР**, **смета (ЛСР)** (Методика 421/пр), **АОСР**.
+- Формальный нормоконтроль (проверки по ГОСТ), дифф ревизий моделей и текстов.
+
+### Приём данных (ingest)
+- Форматы: PDF, DOCX/DOC, XLSX/XLS, PPTX, CSV, EML/MSG, DWG/IFC, MD/TXT/JSON.
+- Индексация **внешней папки по ссылке** (in-place, без копий в storage) + серверный браузер папок.
+- Почта: **IMAP** (Outlook / Microsoft 365 / Outlook.com), архивы **.olm** (Outlook для Mac), **.pst** (Outlook Windows, через libpff), отдельные **.msg**, Apple Mail.
+- OCR сканов через локальный vision (Gemma).
+
+### Интерфейсы
+- **Чат-команды** (`/`-палитра): `/спецификация`, `/вор`, `/смета`, `/акт`, `/сверка`, `/сводка`, `/команды`.
+- **GUI «Совушка»** (NiceGUI): чат, датасеты, инструменты (ВОР/сверка/нормоконтроль/формы), журналы объёмов.
+- **REST API** (FastAPI).
+- **MCP-сервер** — инструменты Л.Е.С. наружу по Model Context Protocol (Claude Code/Desktop, IDE): `les_table_sum`, `les_reconcile`, `les_bor`, `les_spec_to_bor`, `les_project_summary`, `les_form_generate`.
+
+### АРТЕЛЬ (отдельный модуль, экспериментальный)
+Генератор семейств Revit: vision-классификация архетипа → детерминированный план → исполнение в Revit. Поставляется отдельным Windows+Revit пакетом.
+
+---
+
+## Архитектура
+
+```
+Браузер / внешний вход (reverse SSH, ZeroTier)
+   ▼
+Совушка UI  :8051  (NiceGUI)
+   ▼
+Proxy       :8050  (FastAPI) ── маршрутизация: table / mail / clause / reconcile / command / RAG
+   ├──► MLX-host :8080  ── чат-модель, валидатор, эмбеддер (Apple Silicon)
+   └──► Qdrant   :6333  ── векторные коллекции
+              │
+        SQLite метаданные · Parquet (таблицы) · RAG_Content (внешние папки)
+```
+
+**Поток запроса:** детерминированные каналы (команды, таблицы, сверка, почта, формы) проверяются
+**до** семантического поиска; не подошло — обычный RAG (гибрид dense+sparse → реранк → валидатор
+Т.О.С.К.А. → генерация со стримингом). Числа считает код, не модель.
+
+Карта кода — [docs/CODE_MAP.md](docs/CODE_MAP.md). Гид для агентов — [AGENTS.md](AGENTS.md).
+
+### Стек
+Python 3.12 (uv) · FastAPI · NiceGUI · Qdrant · MLX / `mlx-lm` / Core ML · llama-index ·
+Parquet (pyarrow) · SQLite · launchd (macOS, без Docker) · опц. OpenAI-совместимое облако.
+
+---
+
+## Запуск
+
+Живой рантайм — набор launchd-сервисов (Qdrant / MLX-host / proxy / Совушка). Кратко:
+
+```bash
+uv sync --extra mac-mlx        # зависимости (mlx-lm под Apple Silicon)
+cp env.example .env            # заполнить ключи/пути
+make verify                    # офлайн-гейт: синтаксис + импорт-смоук
+uv run lesctl start            # поднять сервисы (или launchd-плисты)
+```
+
+Опциональные возможности — через extras: `mail-pst` (архивы .pst, libpff), `mcp` (MCP-сервер),
+`parsers` (layout-aware PDF). Рантайм-операции и доступы — [SKILL.md](SKILL.md).
+
+MCP-сервер: `uv run python tools/les_mcp_server.py --list` (каталог) / без флага — stdio-сервер.
+
+---
+
+## Документация
+
+| Документ | О чём |
 |---|---|
-| **Л.Е.С.** | API, ingestion, routing, chunking, Qdrant/SQLite, search, health, runtime safety |
-| **АТЛАС** | viewer для IFC и `cad_bim_graph.json`; помогает глазами проверить модель и источник ответа |
-| **АРТЕЛЬ** | контур для Revit-семейств: ТЗ, спецификация, проверка RFA, каталог, learning cases |
-
-АТЛАС и АРТЕЛЬ могут жить отдельно. Но смысл экосистемы в том, что они говорят
-с Л.Е.С. через понятные JSON-контракты и не плодят второй RAG.
-
-## Что внутри
-
-```text
-backend/                  парсинг, адаптеры, документные helpers
-proxy/                    FastAPI, retrieval, CAD/BIM import, settings, auth
-sovushka/                 локальный UI/admin
-frontend/cad_bim_viewer/  исходники АТЛАС
-standalone/cad_bim_viewer/готовый offline viewer
-exporters/                AutoCAD / Revit / Navisworks exporters
-schema/                   JSON-схемы CAD/BIM и ARTEL learning case
-examples/                 маленькие public-safe примеры
-tools/                    smoke, seed, build и runtime utilities
-tests/                    проверки контрактов
-```
-
-## CAD/BIM
-
-Главная идея: не пытаться скормить RAG бинарный DWG или RVT напрямую.
-
-Сначала инженерная модель превращается в нормальный JSON:
-
-```text
-cad_bim_graph.json = elements + relations + properties + display geometry
-```
-
-Потом Л.Е.С. индексирует текстовые проекции и объектные связи. АТЛАС открывает
-тот же JSON и показывает, что именно попало в базу.
-
-![CAD/BIM pipeline](assets/readme/cad-bim-pipeline.png)
-
-```mermaid
-flowchart LR
-  A["DWG / RVT / IFC / Navisworks"] --> B["Exporter / parser"]
-  B --> C["cad_bim_graph.json"]
-  C --> D["LES import"]
-  D --> E["Graph DB + text projections"]
-  E --> F["Hybrid search"]
-  F --> G["Answer with anchors"]
-  G --> H["АТЛАС highlight / inspect"]
-```
-
-Что сохраняется:
-
-- DWG/DXF: слои, линии, дуги, polyline, тексты, handles;
-- Revit/RVT: элементы, категории, типы, параметры, уровни, display geometry;
-- IFC: `GlobalId`, property sets, spatial structure, типы элементов;
-- Navisworks: дерево, свойства, instance GUID, bbox/preview.
-
-## Документы, таблицы, почта
-
-Л.Е.С. не только про CAD/BIM.
-
-- PDF, DOCX, DOC, MD, TXT: документный router, chunking, источники.
-- XLSX, XLS, CSV: табличный канал, row-level chunks, детерминированные ответы
-  там, где нужно считать.
-- EML, EMLX, MSG, IMAP/Apple Mail: письма, участники, вложения, цепочки.
-- JSON/JSONL: прямой ingestion структурированных данных.
-
-## Почему важны router и chunking
-
-Плохой RAG обычно начинается не с плохой модели, а с плохой подготовки данных.
-
-В Л.Е.С. файл сначала маршрутизируется: нормативка, таблица, письмо, CAD/BIM,
-ARTEL learning case и так далее. Потом выбирается pipeline и metadata. Chunk
-получает контекст: dataset, document type, порядок, источник, anchors.
-
-```mermaid
-flowchart LR
-  F["File"] --> R["Router"]
-  R --> P["Parser / table / mail / CAD-BIM"]
-  P --> C["Metadata-rich chunks"]
-  C --> V["Vector search"]
-  C --> L["Lexical search"]
-  V --> M["Merge / RRF"]
-  L --> M
-  M --> W["Context windows"]
-  W --> A["Answer + sources"]
-```
-
-Именно это дает нормальные ответы по инженерному корпусу: вопрос по смете не
-должен искать как вопрос по СП, а ответ по BIM-элементу должен иметь объектный
-anchor.
-
-## Memory safety
-
-Локальный RAG легко убить: модель, embeddings, OCR, PDF parser и UI начинают
-бороться за одну память.
-
-Поэтому в Л.Е.С. есть runtime profiles и admission control:
-
-- `CHAT`
-- `INDEX_LIGHT`
-- `INDEX_HEAVY_PDF`
-- `MAINTENANCE`
-- memory states `GREEN / YELLOW / RED / CRITICAL`
-
-Система смотрит на RAM/swap, активные jobs и режим работы. Если сейчас опасно
-генерировать или индексировать, она должна остановиться понятным образом, а не
-сломать индекс.
-
-Важный практический показатель: health сверяет SQLite chunks и Qdrant points.
-Если `points_match_sqlite_chunks=true`, значит векторная база и метаданные не
-разъехались.
-
-## Windows / Linux / Mac
-
-Первый референсный runtime был на Mac/Apple Silicon с локальным MLX. Но коробка
-не должна быть только для Mac.
-
-Текущие профили:
-
-- **mac-native**: локальный MLX/CoreML runtime, Qdrant, proxy, UI.
-- **windows-lite**: Qdrant + LES proxy + UI, без MLX; генерация через
-  OpenAI-compatible provider.
-- **linux-docker / windows-docker**: контейнерный контур.
-
-Для Windows light подходят:
-
-- Lemonade
-- Ollama
-- OpenRouter
-- OpenAI
-- любой OpenAI-compatible endpoint
-
-Это один принцип: `base_url + model + api_key`.
-
-## Быстрый старт
-
-```bash
-git clone https://github.com/proovcme/les_rag_public.git
-cd les_rag_public
-uv sync
-cp env.example .env
-```
-
-Mac:
-
-```bash
-uv run lesctl init --profile mac-native
-uv run lesctl start --profile mac-native --include-ui
-```
-
-Windows light:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\installers\windows\install.ps1 -Profile windows-lite -InitEnv -Sync
-powershell -ExecutionPolicy Bypass -File .\installers\windows\start-light.ps1 -Provider lemonade -StartQdrant
-```
-
-Открыть:
-
-```text
-http://127.0.0.1:8051/
-http://127.0.0.1:8051/les
-http://127.0.0.1:8050/api/health
-```
-
-Пустой fresh install может вернуть `status=degraded` и `rag.status=empty`.
-Это нормально: runtime поднят, но корпус еще не загружен.
-
-## АТЛАС отдельно
-
-АТЛАС standalone можно запустить без Л.Е.С., npm и интернета:
-
-```bash
-cd standalone/cad_bim_viewer
-./serve.sh 8095
-```
-
-Windows:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\serve.ps1 -Port 8095
-```
-
-Открыть:
-
-```text
-http://127.0.0.1:8095/?source=models/demo.cad_bim_graph.json
-```
-
-## АРТЕЛЬ
-
-АРТЕЛЬ - это направление для Revit family factory.
-
-Идея такая:
-
-```text
-задание -> спецификация -> RFA -> validation report -> catalog -> learning case -> LES
-```
-
-Л.Е.С. хранит требования, ФОП/shared parameters, Revit API notes, validation
-reports и learning cases. Тогда следующая семья делается не с нуля, а от
-проверенной памяти.
-
-В public snapshot есть схема learning case и маленький пример:
-
-```text
-schema/artel_family_learning_case.schema.json
-examples/artel/family_learning_case.metal_cabinet.json
-```
-
-## Что важно
-
-- Это не SaaS. Базовая идея - локальный/private runtime.
-- Public repo не содержит приватных документов, индексов, ключей и RFA.
-- Raw RVT/DWG лучше не индексировать напрямую. Надежнее exporter -> JSON.
-- Ответ без источника не считается хорошим ответом.
-- Большие PDF и тяжелый OCR должны идти через guarded режим, а не в общий чат.
-- Windows light без LLM на машине - нормальный режим, если подключен
-  OpenAI-compatible provider.
-
-## Что дальше
-
-Ближайшие цели:
-
-- довести Windows service wrapper для `windows-lite`;
-- упаковать release artifacts по профилям;
-- расширить CAD/BIM exporters и regression samples;
-- посадить локальную Revit API/SDK базу из скачанных источников;
-- прогнать АРТЕЛЬ на реальных RFA через Revit add-in;
-- копить accepted/rejected learning cases;
-- сделать больше честных end-to-end smoke сценариев.
-
-## Проверки
-
-В public snapshot обычно гоняются:
-
-```bash
-uv lock --check
-uv run pytest -q
-uv run python tools/runtime_smoke.py --proxy-url http://127.0.0.1:8050 --ui-url http://127.0.0.1:8051
-```
-
-Для АТЛАС:
-
-```bash
-uv run python tools/smoke_atlas_standalone.py
-```
-
-## English Short Version
-
-LES is a local-first engineering RAG system. It indexes documents, tables, mail
-and CAD/BIM JSON graphs, then answers with source anchors. ATLAS is the
-standalone CAD/BIM viewer. ARTEL is the Revit family workflow layer. The public
-repo contains code, schemas, examples, exporters and install surfaces, but no
-private data or production indexes.
+| [AGENTS.md](AGENTS.md) | Гид для AI-агентов: гейт, рабочий цикл, грабли |
+| [docs/CODE_MAP.md](docs/CODE_MAP.md) | Карта кода: топология, потоки, «где искать что» |
+| [docs/ALGO-table-query.md](docs/ALGO-table-query.md) | Алгоритм счёта по ячейкам таблиц |
+| [docs/ALGO-spec-to-bor.md](docs/ALGO-spec-to-bor.md) | Спецификация (форма 9) → ВОР работ |
+| [CHANGELOG.md](CHANGELOG.md) | История изменений |
+| [SKILL.md](SKILL.md) | Рантайм-знание оператора (порты, доступы) |
+
+---
+
+## Дорожная карта
+
+**Готово / в работе**
+- ✅ Детерминированный счёт по таблицам, ВОР, спец→ВОР, сверка, план/факт
+- ✅ Типовые формы по стандартам (спецификация/ВОР/смета/АОСР), нормоконтроль, дифф
+- ✅ Приём почты (IMAP/Outlook, .olm/.pst/.msg/Apple Mail), внешние папки in-place, OCR→Gemma
+- ✅ Чат-команды (`/`-палитра), память диалога, авто-заметки
+- ✅ MCP-сервер (инструменты Л.Е.С. наружу)
+
+**Ближайшее**
+- 🚧 Калибровка ТЭП-экстрактора и «сводки проекта» на реальных проектах
+- 🚧 Автозаполнение форм из данных объекта (спецификация ← оборудование, ВОР ← работы)
+- ⏳ Fuzzy-match наименований для сверки план/факт (артикул/типоразмер как ключ)
+- ⏳ Мультикласс end-to-end (ответ секциями по классам)
+- ⏳ Авто-синхрон почты по расписанию
+- ⏳ Тюнинг валидатора Т.О.С.К.А. (Core ML NLI) и OCR-качества
+- ⏳ MCP-клиент — точечно, под внешние действия (напр. календарный план в MS Project)
+- ⏳ АРТЕЛЬ: MEP-коннекторы; голосовые заметки (Whisper)
+
+---
+
+## Статус и приватность
+
+Исследовательско-полевой self-hosted appliance для Apple Silicon. Часть возможностей —
+рабочий каркас в калибровке (помечено выше). Приватность: штатный рантайм полностью локальный;
+данные класса P0 (почта, договоры, ПДн) физически не уходят в облако; внешний доступ — только
+relay до локального хоста через приватную сеть. Открытая лицензия не объявлена — проект приватный.
