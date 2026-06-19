@@ -14,7 +14,7 @@ from typing import Any
 from backend.rag_config import rag_meta_db_path
 
 # Доменные виды привязок (что можно отнести к объекту). Расширяется по мере волны.
-LINK_KINDS = {"dataset", "cad_bim_import", "task", "field_zahvatka", "mail_thread", "note"}
+LINK_KINDS = {"dataset", "cad_bim_import", "task", "field_zahvatka", "mail_thread", "note", "folder"}
 PROJECT_STATUSES = {"active", "archived", "on_hold"}
 
 
@@ -173,6 +173,38 @@ def _datasets_in_scope(dataset_ids: list[str]) -> list[dict[str, Any]]:
         # таблицы нет → вернём хотя бы id-привязки (имена подтянутся на живой системе)
         out = [{"id": did, "name": did, "files": 0, "chunks": 0} for did in dataset_ids]
     return out
+
+
+def build_registry() -> dict[str, Any]:
+    """Реестр проектов (общая карта): все объекты + папки + мета из LES.md. Без LLM."""
+    import json
+    import sqlite3
+
+    le_meta: dict[int, dict] = {}
+    try:  # мета из LES.md-контекста (таблица создаётся les_md_service)
+        conn = sqlite3.connect(rag_meta_db_path())
+        conn.row_factory = sqlite3.Row
+        for r in conn.execute("SELECT project_id, meta_json FROM les_md_context").fetchall():
+            try:
+                le_meta[int(r["project_id"])] = json.loads(r["meta_json"] or "{}")
+            except (json.JSONDecodeError, TypeError):
+                pass
+        conn.close()
+    except sqlite3.OperationalError:
+        pass
+
+    out = []
+    for p in list_projects(limit=500):
+        pid = int(p["id"])
+        meta = le_meta.get(pid, {})
+        folders = [l["ref"] for l in list_links(pid, "folder")]
+        out.append({
+            "id": pid, "name": p.get("name"), "code": p.get("code") or meta.get("cipher"),
+            "address": p.get("address") or meta.get("address"), "stage": meta.get("stage"),
+            "status": p.get("status"), "folders": folders,
+            "datasets": len(project_dataset_ids(pid)), "has_les_md": pid in le_meta,
+        })
+    return {"projects": out, "count": len(out)}
 
 
 def build_dossier(project_id: int) -> dict[str, Any] | None:

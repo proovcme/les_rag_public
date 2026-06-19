@@ -1178,6 +1178,29 @@ async def sync_smart(req: SmartSyncRequest, _admin=Depends(require_admin)):
     }
 
 
+def _auto_run_pipelines(root, les_md: dict | None) -> None:
+    """Авто-исполнение директив LES.md в фоне (ид→asbuilt). Без команды оператора."""
+    pipelines = (les_md or {}).get("pipelines") or {}
+    if not isinstance(pipelines, dict):
+        return
+    if str(pipelines.get("ид") or pipelines.get("id") or "").strip().lower() == "asbuilt":
+        from proxy.services.asbuilt_intake_service import iter_pdfs, process_path
+        if not iter_pdfs(root):
+            return
+        pid = int((les_md or {}).get("project_id") or 0)
+        engine = os.getenv("LES_ASBUILT_OCR_ENGINE", "local")
+
+        def _job():
+            try:
+                process_path(root, rotate="auto", engine=engine, write=True,
+                             status="pending", project_id=pid)
+            except Exception as err:  # noqa: BLE001
+                logger.error("[AUTO-PIPELINE] asbuilt %s: %s", root, err)
+
+        threading.Thread(target=_job, name="auto-asbuilt", daemon=True).start()
+        logger.info("[AUTO-PIPELINE] ид→asbuilt запущен в фоне: %s", root)
+
+
 @router.post("/index-external")
 async def index_external(req: IndexExternalRequest, _admin=Depends(require_admin)):
     """In-place индексация одобренной внешней папки.
@@ -1221,6 +1244,17 @@ async def index_external(req: IndexExternalRequest, _admin=Depends(require_admin
     if registered == 0:
         raise HTTPException(400, f"в папке нет поддерживаемых документов: {root}")
 
+    # Auto-init: дал папку индексировать → LES.md появляется сам + привязка к проекту,
+    # затем авто-исполнение директив (ид→asbuilt и т.п.) в фоне. 0 команд от оператора.
+    les_md_summary = None
+    try:
+        from proxy.services.les_md_service import read_and_bind
+        les_md_summary = await asyncio.to_thread(read_and_bind, root, write_draft=True)
+        if os.getenv("LES_AUTO_PIPELINES", "true").lower() in ("1", "true", "yes", "on"):
+            _auto_run_pipelines(root, les_md_summary)
+    except Exception as err:  # noqa: BLE001 — авто-init не должен ронять индексацию
+        logger.warning("[LES.md] auto-init при индексации %s: %s", root, err)
+
     parse_started = False
     if req.parse:
         async def _parse():
@@ -1244,6 +1278,7 @@ async def index_external(req: IndexExternalRequest, _admin=Depends(require_admin
         "parse_started": parse_started,
         "parse_limit": req.parse_limit,
         "samples": samples,
+        "les_md": les_md_summary,  # auto-init: что ЛЕС сам понял о папке + директивы
     }
 
 
