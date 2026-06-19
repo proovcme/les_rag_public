@@ -305,3 +305,29 @@ def _mail_updates(req: SettingsRequest) -> dict[str, str]:
             updates[env_key] = "true" if bool(getattr(req, field)) else "false"
 
     return updates
+
+
+# ── Режимы работы: local / cloud / mix (один переключатель) ──
+
+@router.get("/presets")
+async def list_presets(_user=Depends(require_user)):
+    """Список режимов + текущий. Режим согласованно ставит чат-LLM, скан-OCR и приёмку ИД."""
+    from proxy.services.preset_service import PRESETS, current_preset, describe
+    return {
+        "current": current_preset(),
+        "presets": [{"name": n, "desc": describe(n), "env": PRESETS[n]} for n in PRESETS],
+    }
+
+
+class PresetRequest(BaseModel):
+    name: str
+
+
+@router.post("/preset")
+async def set_preset(req: PresetRequest, _admin=Depends(require_admin)):
+    """Применить режим (local|cloud|mix или рус-алиас). Пишет .env + os.environ, действует сразу."""
+    from proxy.services.preset_service import apply_preset
+    try:
+        return await asyncio.to_thread(apply_preset, req.name)
+    except ValueError as err:
+        raise HTTPException(400, str(err))

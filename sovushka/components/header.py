@@ -138,8 +138,33 @@ def build_header(
                     answering_label = ui.label("СЕЙЧАС ОТВЕЧАЕТ: …").style(
                         "font-size:.8rem;font-weight:900;color:var(--ok);border:1px solid var(--border);"
                         "border-left:3px solid var(--ok);border-radius:6px;padding:8px 12px;width:100%;"
-                        "background:var(--bg);margin-bottom:12px;"
+                        "background:var(--bg);margin-bottom:8px;"
                     )
+                    # Режим работы — пресет (local/cloud/mix): один переключатель всего стека
+                    # (чат-LLM + скан-OCR + приёмка ИД). Действует сразу, без рестарта.
+                    mode_label = ui.label("РЕЖИМ: …").style(
+                        "font-size:.72rem;font-weight:900;color:var(--accent);margin-bottom:4px;"
+                    )
+
+                    async def _apply_preset(name: str):
+                        from sovushka.state import api_post
+                        r = await api_post("/api/settings/preset", {"name": name})
+                        if r and r.get("preset"):
+                            a = r.get("applied", {})
+                            ui.notify(f"Режим: {r['preset']} (чат {a.get('LES_LLM_PROVIDER','?')}, "
+                                      f"OCR {a.get('RAG_OCR_BACKEND','?')}, ИД {a.get('LES_ASBUILT_OCR_ENGINE','?')})",
+                                      type="positive")
+                            await _load_settings()
+                        else:
+                            ui.notify("Не удалось переключить режим", type="negative")
+
+                    with ui.row().classes("w-full gap-2").style("margin-bottom:12px;"):
+                        ui.button("🖥 Локально", on_click=lambda: _apply_preset("local")).props("no-caps flat").style(
+                            "border:1px solid var(--border);color:var(--ok);background:transparent;flex:1;")
+                        ui.button("☁ Облако", on_click=lambda: _apply_preset("cloud")).props("no-caps flat").style(
+                            "border:1px solid var(--border);color:var(--warn);background:transparent;flex:1;")
+                        ui.button("⚖ Микс", on_click=lambda: _apply_preset("mix")).props("no-caps flat").style(
+                            "border:1px solid var(--border);color:var(--accent);background:transparent;flex:1;")
                     set_provider = ui.select(
                         {
                             "mlx": "MLX — локальный (валидация Т.О.С.К.А.; блок по памяти активен)",
@@ -223,6 +248,14 @@ def build_header(
                             set_url.set_value(d.get("mlx_url", ""))
                             providers = d.get("providers") or {}
                             _refresh_answering(d)
+                            try:  # текущий режим-пресет
+                                pr = await api_get("/api/settings/presets")
+                                cur = (pr or {}).get("current")
+                                mode_label.set_text(f"РЕЖИМ: {cur.upper()}" if cur else "РЕЖИМ: кастомный (микс настроек)")
+                                mode_label.style("color:" + ("var(--ok)" if cur == "local" else
+                                                 "var(--warn)" if cur == "cloud" else "var(--accent)") + ";")
+                            except Exception:
+                                pass
                             active = (providers.get("active") or "mlx").lower()
                             set_provider.set_value(active if active in ("mlx", "ollama", "openrouter", "openai") else "mlx")
                             ollama = providers.get("ollama") or {}
