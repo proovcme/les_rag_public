@@ -243,13 +243,19 @@ async def api_patch(path: str, data: Optional[dict] = None, base: Optional[str] 
         return None
 
 
-async def api_delete(path: str, base: Optional[str] = None) -> Optional[dict]:
+async def api_delete(
+    path: str, base: Optional[str] = None, data: Optional[dict] = None
+) -> Optional[dict]:
     from sovushka.config import PROXY_URL
     if base is None:
         base = PROXY_URL
     try:
         async with httpx.AsyncClient(timeout=180.0) as client:
-            r = await client.delete(f"{base}{path}", headers=_auth_headers())
+            # DELETE с телом (напр. снятие привязки ProjectLink) — через request().
+            if data is not None:
+                r = await client.request("DELETE", f"{base}{path}", headers=_auth_headers(), json=data)
+            else:
+                r = await client.delete(f"{base}{path}", headers=_auth_headers())
             r.raise_for_status()
             _api_success()
             return r.json()

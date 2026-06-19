@@ -65,3 +65,44 @@ async def test_file_text_404_missing(root):
 async def test_file_raw_serves_pdf(root):
     resp = await files_router.rag_file_raw(path="NTD/doc.pdf", _user=object())
     assert str(resp.path).endswith("doc.pdf")
+
+
+# ── Мульти-корень: внешние корни индексации по ссылке (ADR-12) ──
+
+@pytest.fixture()
+def ext_root(root, tmp_path, monkeypatch):
+    ext = tmp_path / "ext_src"
+    (ext / "Котельная" / "РД").mkdir(parents=True)
+    (ext / "Котельная" / "note.md").write_text("# схема", encoding="utf-8")
+    monkeypatch.setenv("LES_EXTERNAL_SOURCE_ROOTS", str(ext))
+    return ext
+
+
+@pytest.mark.asyncio
+async def test_tree_top_lists_internal_and_external_roots(ext_root):
+    tree = await files_router.rag_tree(path="", depth=2, _user=object())
+    # синтетический супер-корень с детьми-корнями
+    names = {c["name"] for c in tree["children"]}
+    assert "RAG_Content" in names
+    assert "ext_src" in names
+
+
+@pytest.mark.asyncio
+async def test_external_path_prefixed_and_resolves(ext_root):
+    tree = await files_router.rag_tree(path="ext_src::", depth=2, _user=object())
+    kot = next(c for c in tree["children"] if c["name"] == "Котельная")
+    assert kot["path"].startswith("ext_src::")
+    res = await files_router.rag_file_text(path="ext_src::Котельная/note.md", _user=object())
+    assert "схема" in res["content"]
+
+
+def test_external_traversal_blocked(ext_root):
+    with pytest.raises(HTTPException) as e:
+        files_router._safe("ext_src::../../etc/passwd")
+    assert e.value.status_code == 400
+
+
+def test_unknown_root_rejected(ext_root):
+    with pytest.raises(HTTPException) as e:
+        files_router._safe("nope::secret")
+    assert e.value.status_code == 400

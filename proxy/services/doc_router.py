@@ -139,8 +139,13 @@ async def _llm_route(question: str, catalog: dict[str, str]) -> list[str]:
         url = os.getenv("MLX_URL", "http://127.0.0.1:8080").rstrip("/") + "/v1/chat/completions"
         model = os.getenv("MLX_MODEL", "")
         headers = {"content-type": "application/json"}
-    body = {"model": model, "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 300, "temperature": 0}
+    body = {"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0}
+    # GPT-5.x / o-серия требуют max_completion_tokens вместо max_tokens (иначе 400).
+    _ml = (model or "").lower()
+    if _ml.startswith("gpt-5") or (len(_ml) >= 2 and _ml[0] == "o" and _ml[1].isdigit()):
+        body["max_completion_tokens"] = 300
+    else:
+        body["max_tokens"] = 300
     try:
         async with httpx.AsyncClient(timeout=float(os.getenv("LES_ROUTER_TIMEOUT_SEC", "30"))) as cl:
             r = await cl.post(url, json=body, headers=headers)

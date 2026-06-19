@@ -271,6 +271,19 @@ def test_pending_files_are_ordered_by_size(tmp_path):
     assert db.get_pending_files(dataset_id, limit=2) == ["small.md", "large.md"]
 
 
+def test_dataset_group_set_and_listed(tmp_path):
+    db = MetaDB(str(tmp_path / "meta.db"))
+    ds = db.create_dataset("W-205")
+    [d0] = db.list_datasets()
+    assert d0.group_name == ""  # дефолт — без группы
+    db.set_dataset_group(ds, "Проект W-205")
+    [d1] = db.list_datasets()
+    assert d1.group_name == "Проект W-205"
+    db.set_dataset_group(ds, "")  # снятие группы
+    [d2] = db.list_datasets()
+    assert d2.group_name == ""
+
+
 def test_recover_interrupted_parsing_resets_dataset_status(tmp_path):
     db = MetaDB(str(tmp_path / "meta.db"))
     dataset_id = db.create_dataset("BOOKS_Index")

@@ -497,6 +497,12 @@ class MetaDB:
                 conn.execute("ALTER TABLE datasets ADD COLUMN sensitivity TEXT DEFAULT 'P0'")
             except Exception:
                 pass
+            # Пользовательская группа датасета — организация списка в САМОВАРе
+            # (навигация, на поиск не влияет). Пусто = без группы.
+            try:
+                conn.execute("ALTER TABLE datasets ADD COLUMN group_name TEXT DEFAULT ''")
+            except Exception:
+                pass
 
     def create_dataset(self, name: str) -> str:
         ds_id = str(uuid.uuid4())
@@ -523,6 +529,7 @@ class MetaDB:
             rows = conn.execute("""
                 SELECT d.id, d.name, d.status, d.chunk_count,
                        COALESCE(d.sensitivity, 'P0') AS sensitivity,
+                       COALESCE(d.group_name, '') AS group_name,
                        SUM(CASE WHEN doc.status='INDEXED' THEN 1 ELSE 0 END) as indexed_count
                 FROM datasets d
                 LEFT JOIN documents doc ON d.id = doc.dataset_id
@@ -534,6 +541,7 @@ class MetaDB:
                 doc_count=r["indexed_count"] or 0,
                 chunk_count=r["chunk_count"] or 0,
                 sensitivity=r["sensitivity"] or "P0",
+                group_name=r["group_name"] or "",
             )
             for r in rows
         ]
@@ -546,6 +554,14 @@ class MetaDB:
         with self._get_conn() as conn:
             conn.execute(
                 "UPDATE datasets SET sensitivity=? WHERE id=?", (level, dataset_id)
+            )
+
+    def set_dataset_group(self, dataset_id: str, group_name: str) -> None:
+        """Пользовательская группа датасета (организация в САМОВАРе). Пусто = без группы."""
+        grp = str(group_name or "").strip()[:60]
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE datasets SET group_name=? WHERE id=?", (grp, dataset_id)
             )
 
     def add_document(
@@ -900,6 +916,9 @@ class QdrantLlamaIndexAdapter(RAGBackend):
 
     async def set_dataset_sensitivity(self, dataset_id: str, sensitivity: str) -> None:
         self.db.set_dataset_sensitivity(dataset_id, sensitivity)
+
+    async def set_dataset_group(self, dataset_id: str, group_name: str) -> None:
+        self.db.set_dataset_group(dataset_id, group_name)
 
     async def upload_file(self, dataset_id: str, file_path: Path, relative_path: Optional[str] = None) -> str:
         dest_dir  = self.content_dir / dataset_id

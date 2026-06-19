@@ -381,8 +381,13 @@ def _llm_text(prompt: str, *, max_tokens: int = 400) -> str:
         return ""
     url = f"{base}/chat/completions" if base.endswith("/v1") else f"{base}/v1/chat/completions"
     try:
+        # GPT-5.x / o-серия требуют max_completion_tokens вместо max_tokens (иначе 400).
+        _ml = model.lower()
+        _tok_key = ("max_completion_tokens"
+                    if (_ml.startswith("gpt-5") or (len(_ml) >= 2 and _ml[0] == "o" and _ml[1].isdigit()))
+                    else "max_tokens")
         resp = httpx.post(url, headers={"Authorization": f"Bearer {key}"}, timeout=60, json={
-            "model": model, "temperature": 0.0, "max_tokens": max_tokens,
+            "model": model, "temperature": 0.0, _tok_key: max_tokens,
             "messages": [{"role": "user", "content": prompt}],
         })
         resp.raise_for_status()

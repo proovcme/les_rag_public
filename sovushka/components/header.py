@@ -175,7 +175,33 @@ def build_header(
                         label="Активный LLM-провайдер",
                         value="mlx",
                     ).style("width:100%;font-family:var(--font);")
-                    set_llm   = ui.input("LLM Модель (MLX)",   value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    # Локальная модель чата (MLX): лёгкий 4B (основной) ↔ тяжёлый 9B (резерв).
+                    # Переключается вживую через /api/settings/mlx-model — без рестарта хоста.
+                    _mlx_loading = {"v": False}
+                    set_llm = ui.select({}, label="Локальная модель (MLX): 4B быстрый / 9B тяжёлый").props(
+                        "dense outlined"
+                    ).style("width:100%;font-family:var(--font);")
+
+                    async def _apply_mlx_model(e) -> None:
+                        if _mlx_loading["v"]:
+                            return
+                        model = getattr(e, "value", None) or set_llm.value
+                        if not model:
+                            return
+                        from sovushka.state import api_post, add_log
+                        r = await api_post("/api/settings/mlx-model", {"model": model})
+                        if r and r.get("status") == "ok":
+                            live = "вживую" if r.get("switched_live") else "при следующем старте хоста"
+                            add_log(f"[SETTINGS] Локальная модель → {r.get('label', model)} ({live})")
+                            ui.notify(f"Локальная модель: {r.get('label', model)} — {live}", type="positive")
+                            from sovushka.state import api_get
+                            d = await api_get("/api/settings")
+                            if d:
+                                _refresh_answering(d)
+                        else:
+                            ui.notify(last_api_error_text("Не удалось переключить локальную модель"), type="negative")
+
+                    set_llm.on_value_change(_apply_mlx_model)
                     set_embed = ui.input("Embedding Модель",  value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
                     set_url   = ui.input("MLX URL",  value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
                     set_ollama_url = ui.input("Ollama URL", value="http://127.0.0.1:11434").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
@@ -243,7 +269,13 @@ def build_header(
                         from sovushka.state import api_get
                         d = await api_get("/api/settings")
                         if d:
-                            set_llm.set_value(d.get("llm_model", ""))
+                            # MLX-модель: опции из реестра бэкенда + текущая (без триггера свитча).
+                            _mlx_loading["v"] = True
+                            choices = d.get("mlx_model_choices") or {}
+                            cur = d.get("mlx_main_model") or d.get("llm_model") or ""
+                            if choices:
+                                set_llm.set_options(choices, value=cur if cur in choices else None)
+                            _mlx_loading["v"] = False
                             set_embed.set_value(d.get("embed_model", ""))
                             set_url.set_value(d.get("mlx_url", ""))
                             providers = d.get("providers") or {}

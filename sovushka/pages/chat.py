@@ -15,8 +15,10 @@ from sovushka.components.charts import _html, esc
 from sovushka.safe_markup import sanitize_svg
 from sovushka.state import (
     add_log,
+    api_delete,
     api_get,
     api_get_bytes,
+    api_patch,
     api_post,
     api_post_file,
     api_post_stream,
@@ -25,6 +27,57 @@ from sovushka.state import (
     refresh_samovar,
     state,
 )
+
+
+async def _copy_text(text: str) -> None:
+    """Скопировать в буфер. navigator.clipboard работает только в secure-context
+    (https/localhost); за туннелем по http — fallback на execCommand через textarea."""
+    payload = json.dumps(text or "")
+    js = (
+        "(async (t) => {"
+        "  try { if (navigator.clipboard && window.isSecureContext) {"
+        "    await navigator.clipboard.writeText(t); return true; } } catch (e) {}"
+        "  try { const ta = document.createElement('textarea'); ta.value = t;"
+        "    ta.style.position='fixed'; ta.style.top='0'; ta.style.opacity='0';"
+        "    document.body.appendChild(ta); ta.focus(); ta.select();"
+        "    const ok = document.execCommand('copy'); document.body.removeChild(ta);"
+        "    return ok; } catch (e) { return false; }"
+        f"}})({payload})"
+    )
+    try:
+        ok = await ui.run_javascript(js, timeout=5.0)
+    except Exception:
+        ok = False
+    ui.notify("Скопировано" if ok else "Не удалось скопировать (выдели и Ctrl+C)",
+              type="positive" if ok else "warning")
+
+
+def _is_spec_request(q: str) -> bool:
+    """«Собери/составь/сделай … спецификацию …» — намерение собрать спеку → GOST-форма."""
+    import re as _re
+    return bool(_re.search(r"\b(собери|составь|сделай|сформируй|подготовь)\b.{0,40}специфика",
+                           (q or "").lower()))
+
+
+def _rows_to_csv(rows: list[dict]) -> bytes:
+    """list[dict] → CSV для рус-Excel: разделитель «;», UTF-8 BOM (кириллица не ломается)."""
+    import csv
+    import io
+    if not rows:
+        return "﻿".encode("utf-8")
+    keys: list[str] = []
+    for r in rows:
+        if isinstance(r, dict):
+            for k in r:
+                if k not in keys:
+                    keys.append(k)
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=keys, extrasaction="ignore", delimiter=";")
+    w.writeheader()
+    for r in rows:
+        if isinstance(r, dict):
+            w.writerow({k: ("" if r.get(k) is None else r.get(k)) for k in keys})
+    return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
 OUTPUT_FORMATS = {
@@ -63,6 +116,37 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
     out_mode_val = {"v": "text"}
     selected_session_card = {"el": None}
     project_state = {"id": None}  # W17.1: активный объект (None = обычный RAG по всему)
+
+    # Резиновый layout: тащим разделитель → меняем ширину панели артефактов (CSS-var),
+    # ширина сохраняется в localStorage. Деградирует мягко (нет JS → разделитель статичен).
+    ui.add_body_html("""
+    <script>
+    (function(){
+      function init(){
+        var shell=document.querySelector('.sov-chat-shell');
+        var div=document.querySelector('.sov-resize-divider');
+        if(!shell||!div){ setTimeout(init,400); return; }
+        if(div.dataset.bound){ return; } div.dataset.bound='1';
+        try{ var s=localStorage.getItem('sovArtW'); if(s) shell.style.setProperty('--sov-artifacts-w', s); }catch(e){}
+        var drag=false;
+        div.addEventListener('pointerdown', function(e){ drag=true; try{div.setPointerCapture(e.pointerId);}catch(_){} e.preventDefault(); });
+        window.addEventListener('pointermove', function(e){
+          if(!drag) return;
+          var r=shell.getBoundingClientRect();
+          var w=r.right - e.clientX - 14;
+          w=Math.max(280, Math.min(820, w));
+          shell.style.setProperty('--sov-artifacts-w', w+'px');
+        });
+        window.addEventListener('pointerup', function(){
+          if(!drag) return; drag=false;
+          var w=shell.style.getPropertyValue('--sov-artifacts-w');
+          try{ if(w) localStorage.setItem('sovArtW', w.trim()); }catch(e){}
+        });
+      }
+      if(document.readyState!=='loading'){ init(); } else { document.addEventListener('DOMContentLoaded', init); }
+    })();
+    </script>
+    """)
 
     with ui.element("div").classes("sov-chat-shell"):
         history_drawer = ui.element("aside").classes("sov-history-drawer")
@@ -233,6 +317,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                         icon="o_send",
                         on_click=lambda: asyncio.create_task(send_chat()),
                     ).props("no-caps")
+
+        # Резиновый layout: разделитель между чатом и артефактами (таскать по ширине).
+        ui.element("div").classes("sov-resize-divider")
 
         with ui.element("aside").classes("sov-artifacts-panel"):
             with ui.row().classes("w-full items-center justify-between"):
@@ -473,32 +560,75 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         if files_drawer.visible:
             asyncio.create_task(_load_file_tree())
 
+    # Состояние файл-дерева: карта «папка ли» + множество уже-дозагруженных папок
+    # + ссылка на сам ui.tree (для ленивой дозагрузки поддеревьев по раскрытию).
+    _file_state: dict = {"is_dir": {}, "loaded": set(), "tree": None}
+    _LAZY = "\x00lazy"  # маркер заглушки-ребёнка нераскрытой папки
+
+    def _mk_node(api_node: dict) -> dict:
+        path = api_node.get("path")
+        nid = path if path else "/"
+        _file_state["is_dir"][nid] = bool(api_node.get("dir"))
+        node = {"id": nid, "label": api_node.get("name", "?")}
+        kids = api_node.get("children")
+        if kids:
+            node["children"] = [_mk_node(c) for c in kids]
+            _file_state["loaded"].add(nid)
+        elif api_node.get("dir"):
+            # заглушка → у папки появляется стрелка раскрытия (ленивая дозагрузка)
+            node["children"] = [{"id": nid + _LAZY, "label": "…"}]
+        return node
+
+    def _find_node(nodes: list, nid: str):
+        for n in nodes:
+            if n.get("id") == nid:
+                return n
+            found = _find_node(n.get("children") or [], nid)
+            if found is not None:
+                return found
+        return None
+
     async def _load_file_tree():
         files_tree_box.clear()
+        _file_state.update({"is_dir": {}, "loaded": set(), "tree": None})
         data = await api_get("/api/rag/tree?depth=2")
         if not isinstance(data, dict):
             with files_tree_box:
                 _html('<div class="sov-muted" style="font-size:.62rem;">Не удалось загрузить дерево файлов.</div>')
             return
-        is_dir: dict[str, bool] = {}
-
-        def _to_nodes(node: dict) -> dict:
-            path = node.get("path") or "/"
-            is_dir[path] = bool(node.get("dir"))
-            n = {"id": path, "label": node.get("name", "?")}
-            kids = node.get("children")
-            if kids:
-                n["children"] = [_to_nodes(c) for c in kids]
-            return n
-
-        root = _to_nodes(data)
+        root = _mk_node(data)
         with files_tree_box:
             tree = ui.tree([root], label_key="label", node_key="id",
-                           on_select=lambda e: _on_file_select(e.value, is_dir))
+                           on_select=lambda e: _on_file_select(e.value),
+                           on_expand=lambda e: asyncio.create_task(_on_tree_expand(e.value)))
+            _file_state["tree"] = tree
             tree.expand([root["id"]])
 
-    def _on_file_select(path, is_dir: dict) -> None:
-        if path and not is_dir.get(path, False):
+    async def _on_tree_expand(expanded: list) -> None:
+        # Дозагружаем детей для раскрытых папок, которых ещё не грузили (depth=1).
+        from urllib.parse import quote
+        tree = _file_state["tree"]
+        if tree is None:
+            return
+        changed = False
+        for nid in (expanded or []):
+            if (not nid or nid.endswith(_LAZY) or nid in _file_state["loaded"]
+                    or _file_state["is_dir"].get(nid) is False):
+                continue
+            data = await api_get(f"/api/rag/tree?path={quote(nid)}&depth=1")
+            if not isinstance(data, dict):
+                continue
+            node = _find_node(tree._props["nodes"], nid)
+            if node is None:
+                continue
+            node["children"] = [_mk_node(c) for c in (data.get("children") or [])]
+            _file_state["loaded"].add(nid)
+            changed = True
+        if changed:
+            tree.update()
+
+    def _on_file_select(path) -> None:
+        if path and not path.endswith(_LAZY) and not _file_state["is_dir"].get(path, False):
             asyncio.create_task(_view_file(path))
 
     async def _view_file(path: str) -> None:
@@ -534,6 +664,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         if not isinstance(d, dict):
             ui.notify(last_api_error_text("Не удалось загрузить карту объекта"), type="negative")
             return
+        # все датасеты тянем ДО построения диалога: await внутри `with ui...` рвёт слот-контекст.
+        all_ds = await api_get("/api/rag/datasets") or []
         with ui.dialog() as dlg, ui.card().classes("sov-advanced-dialog"):
             proj = d.get("project", {})
             with ui.row().classes("w-full items-center justify-between"):
@@ -554,12 +686,67 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                             with ui.column().classes("kpi-box").style("min-width:auto;padding:8px 14px;"):
                                 ui.label(str(val)).classes("kpi-val").style("font-size:1.2rem;")
                                 ui.label(lbl).classes("kpi-lbl")
-                    ui.label("Нормативы в области").classes("section-title").style("margin-top:8px;")
+                    ui.label("Датасеты объекта").classes("section-title").style("margin-top:8px;")
+                    ui.label("Привязка сужает поиск к объекту. «Данные»: P0 — только локально; "
+                             "P1/P2 — можно в облако (быстрее). P0-данные облако не увидит.").style(
+                        "font-size:.6rem;color:var(--dim);line-height:1.35;")
                     ds = d.get("datasets_in_scope", [])
+                    sens_by_id = {x.get("id"): (x.get("sensitivity") or "P0") for x in all_ds}
+                    bound_ids = {x.get("id") for x in ds}
+
+                    async def _reopen_dossier():
+                        dlg.close()
+                        await _open_dossier()
+
+                    async def _set_ds_sens(dsid: str, level: str):
+                        from urllib.parse import quote as _q
+                        r = await api_patch(f"/api/rag/datasets/{_q(dsid, safe='')}/sensitivity?sensitivity={level}")
+                        if r is not None:
+                            ui.notify(f"Данные → {level}" + (" (можно в облако)" if level != "P0" else " (только локально)"),
+                                      type="positive")
+                        else:
+                            ui.notify(last_api_error_text("Не удалось сменить уровень"), type="negative")
+
+                    async def _unbind_ds(dsid: str):
+                        r = await api_delete(f"/api/projects/{pid}/links", data={"kind": "dataset", "ref": dsid})
+                        if r is not None:
+                            ui.notify("Отвязано", type="positive")
+                            await _reopen_dossier()
+                        else:
+                            ui.notify(last_api_error_text("Не удалось отвязать"), type="negative")
+
+                    async def _bind_ds(dsid: str):
+                        if not dsid:
+                            return
+                        r = await api_post(f"/api/projects/{pid}/links", {"kind": "dataset", "ref": dsid})
+                        if r is not None:
+                            ui.notify("Привязано", type="positive")
+                            await _reopen_dossier()
+                        else:
+                            ui.notify(last_api_error_text("Не удалось привязать"), type="negative")
+
                     if not ds:
-                        ui.label("датасеты не привязаны — привяжи в режиме объекта").style("font-size:.66rem;color:var(--dim);")
+                        ui.label("датасеты ещё не привязаны — привяжи ниже ↓").style("font-size:.66rem;color:var(--dim);")
                     for x in ds:
-                        ui.label(f"• {x.get('name')} — {x.get('files', 0)} файлов / {x.get('chunks', 0)} чанков").style("font-size:.7rem;")
+                        _did = x.get("id")
+                        with ui.row().classes("w-full items-center gap-2").style("flex-wrap:nowrap;"):
+                            ui.label(f"• {x.get('name')} — {x.get('files', 0)}ф / {x.get('chunks', 0)}ч").style(
+                                "font-size:.7rem;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;")
+                            ui.select(["P0", "P1", "P2"], value=sens_by_id.get(_did, "P0"),
+                                      on_change=lambda e, i=_did: asyncio.create_task(_set_ds_sens(i, e.value))).props(
+                                "dense outlined options-dense").style("font-size:.62rem;min-width:64px;")
+                            ui.button(icon="o_link_off", on_click=lambda i=_did: asyncio.create_task(_unbind_ds(i))).props(
+                                'flat round dense aria-label="Отвязать"').classes("sov-icon-btn")
+                    # привязать новый датасет
+                    _unbound = {x.get("id"): f"{x.get('name')} [{x.get('sensitivity') or 'P0'}]"
+                                for x in all_ds if x.get("id") not in bound_ids}
+                    if _unbound:
+                        with ui.row().classes("w-full items-center gap-2").style("margin-top:4px;"):
+                            _bind_sel = ui.select(_unbound, label="привязать датасет…").props(
+                                "dense outlined options-dense").style("font-size:.62rem;flex:1;min-width:0;")
+                            ui.button("Привязать", icon="o_add_link",
+                                      on_click=lambda: asyncio.create_task(_bind_ds(_bind_sel.value))).props(
+                                "no-caps flat dense").style("font-size:.62rem;color:var(--accent);")
                     ui.label("Открытые задачи").classes("section-title").style("margin-top:8px;")
                     tasks = d.get("open_tasks", [])
                     if not tasks:
@@ -847,6 +1034,54 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                         "font-size:.7rem;line-height:1.5;color:var(--text);white-space:pre-wrap;"
                     )
 
+    def _artifact_present(ans: str, mode: str) -> bool:
+        """Есть ли в ответе рендеримый артефакт (таблица/спека/диаграмма/svg)."""
+        ans = ans or ""
+        if mode in ("spec", "table", "structure", "template", "schema"):
+            return bool(_parse_table_from_ai(ans) or _parse_json_from_ai(ans))
+        if mode == "mermaid":
+            return bool(_parse_mermaid_from_ai(ans))
+        if mode == "svg":
+            return bool(_parse_svg_from_ai(ans))
+        # text/дефолт: авто-детект таблицы или диаграммы в обычном ответе
+        return bool(_parse_table_from_ai(ans) or _parse_markdown_table(ans)
+                    or _parse_mermaid_from_ai(ans) or _parse_svg_from_ai(ans))
+
+    def _show_artifact(ans: str, mode: str) -> None:
+        """Открыть артефакт сообщения в панели «Артефакты» (как карточка в Claude Desktop)."""
+        _render_result(ans, mode if mode in OUTPUT_FORMATS else "text", artifact_panel)
+        try:
+            ui.run_javascript(
+                "document.querySelector('.sov-artifacts-panel')?.scrollIntoView({behavior:'smooth',block:'start'})"
+            )
+        except Exception:
+            pass
+
+    def _artifact_button(ans: str, mode: str) -> None:
+        """Кнопка-карточка артефакта в пузыре ответа (если артефакт есть)."""
+        if not _artifact_present(ans, mode):
+            return
+        lbl = OUTPUT_FORMATS[mode][0] if (mode in OUTPUT_FORMATS and mode != "text") else "Таблица"
+        ui.button(
+            f"Артефакт: {lbl} — открыть",
+            icon="o_table_view",
+            on_click=lambda a=ans, m=mode: _show_artifact(a, m),
+        ).props("no-caps flat dense").classes("sov-artifact-chip").style(
+            "margin-top:6px;border:1px solid var(--border);border-radius:8px;"
+            "background:var(--bg);color:var(--accent);font-size:.68rem;font-weight:700;padding:4px 10px;"
+        )
+
+    def _bubble_text(ans: str, mode: str) -> str:
+        """Текст для пузыря: если есть артефакт — убираем дублирующую таблицу/код-блоки
+        (они уже в артефакте), оставляем только коммент модели. Олег: «текст-то зачем?»."""
+        ans = ans or ""
+        if not _artifact_present(ans, mode):
+            return ans
+        t = re.sub(r"```.*?```", "", ans, flags=re.DOTALL)           # fenced json/svg/mermaid
+        t = "\n".join(ln for ln in t.splitlines() if not ln.strip().startswith("|"))  # md-таблица
+        t = re.sub(r"\n{3,}", "\n\n", t).strip()
+        return t or "Готово — результат в артефакте (кнопка ниже)."
+
     def _render_chat_bubble(
         text: str,
         class_name: str,
@@ -854,12 +1089,16 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         crag: str = "",
         meta: dict | None = None,
     ):
+        _mode = (meta or {}).get("out_mode", "text")
+        _disp = _bubble_text(str(text or ""), _mode) if (meta and "chat-msg-ai" in class_name) else str(text or "")
         with ui.element("div").classes(class_name) as bubble:
-            ui.label(str(text or "")).classes("sov-chat-message-text")
+            ui.label(_disp).classes("sov-chat-message-text")
             _render_source_tags(srcs or [], crag, meta)
             if meta:
                 _render_suggestions(meta)
                 _render_excerpts(meta)
+                if "chat-msg-ai" in class_name:
+                    _artifact_button(str(text or ""), _mode)
         return bubble
 
     def _render_ai_placeholder(text: str):
@@ -879,12 +1118,15 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         bubble.classes(remove="typing")
         if error:
             bubble.classes(add="chat-msg-error")
-        label.set_text(str(text or ""))
+        _mode = (meta or {}).get("out_mode", "text")
+        label.set_text(_bubble_text(str(text or ""), _mode) if (meta and not error) else str(text or ""))
         with bubble:
             _render_source_tags(srcs or [], crag, meta)
             if meta:
                 _render_suggestions(meta)
                 _render_excerpts(meta)
+                if not error:
+                    _artifact_button(str(text or ""), meta.get("out_mode", "text"))
 
     def _render_msg(msg):
         if msg.get("role") == "user":
@@ -1155,6 +1397,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         apply_btn.props("disabled")
         advanced_btn.props("disabled")
         chat_input.props("disabled")
+        # Авто-GOST: «собери/составь спецификацию …» → формат спеки (ГОСТ 21.110), чтобы
+        # артефакт был чистой таблицей по форме, а не прозой. Не липко — селектор вернём.
+        _orig_mode = out_mode_val["v"]
+        if _orig_mode == "text" and _is_spec_request(question):
+            out_mode_val["v"] = "spec"
         out_mode = out_mode_val["v"]
 
         state["chat_history"].append({"role": "user", "text": question})
@@ -1170,6 +1417,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         # Формат/стиль ответа — ОТДЕЛЬНЫМ полем (не клеим в текст вопроса): иначе бэкенд
         # видит мусор-шаблон как вопрос → авто-заметки/роутинг/ретрив плывут.
         extra_prompt = "" if skip_resource_gate else _build_extra_prompt(question)
+        out_mode_val["v"] = _orig_mode  # вернуть пользователю его выбор формата (авто-GOST не липкий)
         payload = {
             "question": question,
             "output_directive": extra_prompt or None,
@@ -1222,6 +1470,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 "validation": d.get("validation") or {"enabled": bool(validation_sw.value)},
                 "history_id": d.get("history_id"),
                 "table_query": d.get("table_query"),
+                "out_mode": out_mode,
                 "clarifying_questions": d.get("clarifying_questions") or [],
                 "suggested_filters": d.get("suggested_filters") or [],
                 "class_suggestions": d.get("class_suggestions") or [],
@@ -1372,20 +1621,29 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         with container:
             with ui.card().classes("sov-artifact-card"):
                 label = "Интерактивная таблица" if table_query else OUTPUT_FORMATS.get(mode, ("Ответ", ""))[0]
+                # text-режим с таблицей внутри → заголовок «Таблица», а не «Текст»
+                if not table_query and mode == "text" and (_parse_table_from_ai(ans) or _parse_markdown_table(ans)):
+                    label = "Таблица"
                 with ui.row().classes("w-full items-center justify-between"):
                     _html(f'<div class="sov-panel-title">{esc(label)}</div>')
-                    ui.button("Копировать", icon="o_content_copy", on_click=lambda: ui.clipboard.write(ans)).props(
+                    ui.button("Копировать", icon="o_content_copy", on_click=lambda: asyncio.create_task(_copy_text(ans))).props(
                         "no-caps flat dense"
                     )
 
                 if table_query:
                     _render_table_query(table_query)
                 elif mode == "text":
-                    ui.markdown(ans).classes("sov-artifact-markdown")
+                    # Если в ответе есть таблица — артефакт = ТОЛЬКО таблица + CSV (прозу
+                    # видно в чате; Олег: «артефакт только таблицу, текст я и так вижу»).
+                    auto = _parse_table_from_ai(ans) or _parse_markdown_table(ans)
+                    if isinstance(auto, list) and auto and isinstance(auto[0], dict):
+                        _render_table(auto)
+                    else:
+                        ui.markdown(ans).classes("sov-artifact-markdown")
                 elif mode == "spec":
                     data = _parse_table_from_ai(ans)
-                    if data:
-                        _render_table(data)
+                    if isinstance(data, list) and data and isinstance(data[0], dict):
+                        _render_gost_spec(data)
                     else:
                         ui.markdown(ans).classes("sov-artifact-markdown")
                 elif mode == "schema":
@@ -1409,7 +1667,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                         state["mermaid_last"] = code
                         ui.mermaid(code).classes("w-full")
                         with ui.row().classes("gap-2"):
-                            ui.button("Код", icon="o_content_copy", on_click=lambda c=code: ui.clipboard.write(c)).props("no-caps flat dense")
+                            ui.button("Код", icon="o_content_copy", on_click=lambda c=code: asyncio.create_task(_copy_text(c))).props("no-caps flat dense")
                             if tabs and tab_mermaid:
                                 ui.button("В редактор", icon="o_open_in_new", on_click=lambda: tabs.set_value(tab_mermaid)).props("no-caps flat dense")
                     else:
@@ -1418,7 +1676,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     svg_code = _parse_svg_from_ai(ans)
                     if svg_code:
                         _html(f'<div class="sov-svg-preview">{svg_code}</div>')
-                        ui.button("Копировать SVG", icon="o_content_copy", on_click=lambda c=svg_code: ui.clipboard.write(c)).props("no-caps flat dense")
+                        ui.button("Копировать SVG", icon="o_content_copy", on_click=lambda c=svg_code: asyncio.create_task(_copy_text(c))).props("no-caps flat dense")
                     else:
                         ui.markdown(ans).classes("sov-artifact-markdown")
 
@@ -1430,6 +1688,35 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             except Exception:
                 pass
         return None
+
+    def _parse_markdown_table(text: str):
+        """Первую markdown-таблицу (| a | b | + строка-разделитель) → list[dict]. Иначе None."""
+        lines = [ln.rstrip() for ln in (text or "").splitlines()]
+        block: list[str] = []
+        for ln in lines:
+            s = ln.strip()
+            if s.startswith("|") and s.count("|") >= 2:
+                block.append(s)
+            elif block:
+                break  # таблица закончилась — берём первую целостную
+        if len(block) < 2:
+            return None
+
+        def _cells(row: str) -> list[str]:
+            return [c.strip() for c in row.strip().strip("|").split("|")]
+
+        # вторая строка должна быть разделителем (---|:--: и т.п.)
+        if not re.match(r"^\s*\|?[\s:|-]+\|?\s*$", block[1]):
+            return None
+        headers = _cells(block[0])
+        rows: list[dict] = []
+        for row in block[2:]:
+            vals = _cells(row)
+            if not any(vals):
+                continue
+            vals = (vals + [""] * len(headers))[: len(headers)]
+            rows.append({h or f"col{i+1}": vals[i] for i, h in enumerate(headers)})
+        return rows or None
 
     def _parse_json_from_ai(text: str):
         match = re.search(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", text, re.DOTALL)
@@ -1462,11 +1749,52 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         keys = list(data[0].keys()) if data else []
         cols = [{"name": k, "label": k, "field": k, "align": "left", "sortable": True} for k in keys]
         ui.table(columns=cols, rows=data, pagination=8).classes("sov-artifact-table")
-        ui.button(
-            "JSON",
-            icon="o_content_copy",
-            on_click=lambda d=data: ui.clipboard.write(json.dumps(d, ensure_ascii=False, indent=2)),
-        ).props("no-caps flat dense")
+        with ui.row().classes("gap-2"):
+            ui.button(
+                "CSV",
+                icon="o_download",
+                on_click=lambda d=data: ui.download(_rows_to_csv(d), "specification.csv"),
+            ).props("no-caps flat dense").tooltip("Скачать CSV (рус-Excel: ; + UTF-8 BOM)")
+            ui.button(
+                "JSON",
+                icon="o_content_copy",
+                on_click=lambda d=data: asyncio.create_task(_copy_text(json.dumps(d, ensure_ascii=False, indent=2))),
+            ).props("no-caps flat dense")
+
+    def _render_gost_spec(data: list[dict]):
+        """Рендер спецификации по форме ГОСТ 21.110-2013: графы с правильными
+        заголовками + рамка + заголовок формы + CSV/JSON с ГОСТ-шапкой."""
+        gost = [
+            ("поз", "Поз."),
+            ("обозначение", "Обозначение"),
+            ("наименование", "Наименование и техническая характеристика"),
+            ("тип_марка", "Тип, марка, обозначение документа / опросного листа"),
+            ("код", "Код продукции / завод-изготовитель"),
+            ("ед_изм", "Ед. изм."),
+            ("кол_во", "Кол."),
+            ("масса_ед", "Масса ед., кг"),
+            ("примечание", "Примечание"),
+        ]
+        rows = [r for r in data if isinstance(r, dict)]
+        present = [(k, h) for k, h in gost if any(k in r for r in rows)]
+        if not present:  # модель отдала иные ключи — показываем как есть
+            present = [(k, k) for k in (rows[0].keys() if rows else [])]
+        _html('<div style="font-size:.72rem;font-weight:900;color:var(--text);'
+              'text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">'
+              'Спецификация оборудования, изделий и материалов · ГОСТ 21.110-2013</div>')
+        cols = [{"name": k, "label": h, "field": k, "align": "left"} for k, h in present]
+        ui.table(columns=cols, rows=rows, pagination=20, row_key="поз").props(
+            "bordered dense flat"
+        ).classes("sov-artifact-table")
+        # CSV/JSON — с ГОСТ-заголовками граф (рус-Excel читает кириллицу).
+        csv_rows = [{h: r.get(k, "") for k, h in present} for r in rows]
+        with ui.row().classes("gap-2"):
+            ui.button("CSV", icon="o_download",
+                      on_click=lambda d=csv_rows: ui.download(_rows_to_csv(d), "specification_gost.csv")
+                      ).props("no-caps flat dense").tooltip("Скачать CSV по ГОСТ (; + UTF-8 BOM)")
+            ui.button("JSON", icon="o_content_copy",
+                      on_click=lambda d=rows: asyncio.create_task(_copy_text(json.dumps(d, ensure_ascii=False, indent=2)))
+                      ).props("no-caps flat dense")
 
     def _render_table_query(table_query: dict):
         try:
@@ -1532,7 +1860,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 
                 # Export actions
                 with ui.row().classes("gap-2"):
-                    ui.button("Копировать JSON", icon="o_content_copy", on_click=lambda: ui.clipboard.write(json.dumps(rows, ensure_ascii=False, indent=2))).props("no-caps flat dense")
+                    ui.button("Копировать JSON", icon="o_content_copy", on_click=lambda: asyncio.create_task(_copy_text(json.dumps(rows, ensure_ascii=False, indent=2)))).props("no-caps flat dense")
                     
         except Exception as e:
             logger.error(f"Error rendering AG Grid table query: {e}")

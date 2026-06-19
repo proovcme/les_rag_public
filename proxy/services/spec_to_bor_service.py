@@ -242,8 +242,10 @@ def is_spec_to_bor_query(question: str) -> bool:
     q = (question or "").lower().replace("ё", "е")
     if "спецификац" not in q and "форм" not in q:
         return False
-    return ("вор" in q or "ведомост" in q or "объем работ" in q
-            or "объемов работ" in q or "в вор" in q)
+    # «вор» — по границе слова: иначе «пОВОРоты», «творог», «забор» ложно триггерят
+    # канал ВОР (баг: «собери спецификацию ... повороты» уходил в spec_to_bor).
+    return (bool(re.search(r"\bвор\b", q)) or "ведомост" in q or "объем работ" in q
+            or "объемов работ" in q)
 
 
 def format_spec_bor_answer(result: dict, dataset_label: str = "") -> str:

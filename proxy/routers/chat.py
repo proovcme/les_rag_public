@@ -178,6 +178,24 @@ def _join_openai_path(base_url: str, path: str) -> str:
     return f"{base}/v1{path}"
 
 
+def _model_needs_completion_tokens(model: str) -> bool:
+    """GPT-5.x и reasoning o-серия (o1/o3/o4) требуют `max_completion_tokens`
+    вместо `max_tokens` — иначе OpenAI/proxyapi отвечает 400."""
+    m = (model or "").strip().lower()
+    return m.startswith("gpt-5") or (len(m) >= 2 and m[0] == "o" and m[1].isdigit())
+
+
+def _cloud_body_for_model(body: dict, model: str, provider: str) -> dict:
+    """Облако: для GPT-5/o-моделей переименовать max_tokens→max_completion_tokens
+    (один точечный фикс совместимости; для остальных тело без изменений)."""
+    if (is_cloud_provider(provider) and "max_tokens" in body
+            and _model_needs_completion_tokens(model)):
+        b = dict(body)
+        b["max_completion_tokens"] = b.pop("max_tokens")
+        return b
+    return body
+
+
 def _llm_runtime() -> LlmRuntime:
     provider = os.getenv("LES_LLM_PROVIDER", "mlx").strip().lower() or "mlx"
     if provider == "openrouter":
@@ -316,21 +334,24 @@ async def _validate_via_provider(client, llm_runtime, headers, *, question: str,
         "NO_DATA — контекст не содержит информации для ответа на вопрос."
     )
     user = f"КОНТЕКСТ:\n{context[:9000]}\n\nВОПРОС: {question}\n\nОТВЕТ:\n{answer[:4000]}\n\nВердикт (одно слово):"
+    _vbody = {
+        "model": llm_runtime.model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "stream": False,
+        "temperature": 0,
+        # Reasoning-модели тратят токены на скрытое рассуждение — даём запас,
+        # иначе видимый контент пуст и вердикт теряется (кейс tencent/hy3).
+        "max_tokens": 400,
+    }
+    # GPT-5.x/o-серия: max_tokens→max_completion_tokens (иначе 400).
+    _vbody = _cloud_body_for_model(_vbody, llm_runtime.model, llm_runtime.provider)
     resp = await client.post(
         llm_runtime.chat_url,
         headers=headers,
-        json={
-            "model": llm_runtime.model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "stream": False,
-            "temperature": 0,
-            # Reasoning-модели тратят токены на скрытое рассуждение — даём запас,
-            # иначе видимый контент пуст и вердикт теряется (кейс tencent/hy3).
-            "max_tokens": 400,
-        },
+        json=_vbody,
         timeout=90.0,
     )
     resp.raise_for_status()
@@ -816,7 +837,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         ("registry", lambda: maybe_handle_registry_query(req.question, project_id=pid)),
         ("field", lambda: maybe_handle_field_command(req.question, project_id=pid)),
         ("decision", lambda: maybe_handle_decision_command(req.question, project_id=pid)),  # W17.4
-        ("memory", lambda: maybe_handle_memory_command(req.question, dataset_filter=req.dataset_filter or "", project_id=pid)),
+        ("memory", lambda: maybe_handle_memory_command(req.question, dataset_filter=req.dataset_filter or "", project_id=pid, output_directive=req.output_directive)),
     )
     reply, channel = None, ""
     for _ch, _fn in _det_channels:
@@ -827,7 +848,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     # Авто-заметки: утверждение-факт (не вопрос/команда) ЛЕС запоминает сам. 0 LLM.
     if reply is None:
         from proxy.services.memory_service import maybe_autonote
-        reply = maybe_autonote(req.question, dataset_filter=req.dataset_filter or "", project_id=pid)
+        reply = maybe_autonote(req.question, dataset_filter=req.dataset_filter or "", project_id=pid, output_directive=req.output_directive)
         if reply is not None:
             channel = "memory"
     # Ярус 2 (флаг LES_AGENT_LOOP): чат сам выбирает инструмент, если regex не поймал.
@@ -946,12 +967,16 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 "history_id": history_id,
             }
 
+    # «дай сводку проекта» с известным объектом — детерминированный канал (сводка из
+    # LES.md ниже), не клярифицировать как «слишком широкий». Аналогично reconcile/spec_to_bor.
+    from proxy.services.project_summary_service import is_project_summary_query as _is_proj_sum
+    _summary_intent = bool(pid) and _is_proj_sum(req.question)
     clarification = build_clarification_decision(
         req.question,
         dataset_ids=effective_dataset_ids,
         dataset_filter=req.dataset_filter,
     )
-    if clarification.needs_clarification:
+    if clarification.needs_clarification and not _summary_intent:
         logger.info(
             "[CLARIFY] reasons=%s route=%s filter=%s",
             clarification.classification.reasons,
@@ -1061,6 +1086,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         except Exception as sum_err:
             logger.warning("[PROJ_SUMMARY] skipped: %s", sum_err)
             summ = None
+        # Есть Parquet-ТЭП/таблицы → детерминированная сводка (числа из кода, 0 LLM). Нет →
+        # НЕ возвращаем заглушку: проваливаемся в обычный RAG, чтобы модель сама собрала
+        # сводку по документам проекта (LES.md уже в контексте как опора; clarification снят
+        # guard'ом выше для summary-интента с проектом).
         if summ and (summ["tep"] or summ["documents"]):
             label = ", ".join(resolved_dataset_names[:3])
             answer = format_project_summary(summ, label=label)
@@ -1874,8 +1903,9 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     """Один вызов LLM. token_sink задан → стрим (токены клиенту по
                     мере генерации), иначе — обычный POST (поведение неизменно).
                     Возвращает (answer_text, usage_dict)."""
+                    _body = _cloud_body_for_model(body, model, runtime.provider)
                     if token_sink is not None:
-                        sbody = {**body, "model": model, "stream": True}
+                        sbody = {**_body, "model": model, "stream": True}
                         # include_usage нужен только облаку (учёт $); MLX/локальные —
                         # не шлём, чтобы не рисковать 400 на незнакомом поле.
                         if is_cloud_provider(runtime.provider):
@@ -1902,7 +1932,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                                 if chunk.get("usage"):
                                     usage_d = chunk["usage"]
                         return "".join(acc), usage_d
-                    r = await client.post(runtime.chat_url, headers=hdrs, json={**body, "model": model})
+                    r = await client.post(runtime.chat_url, headers=hdrs, json={**_body, "model": model})
                     r.raise_for_status()
                     rj = r.json()
                     return (

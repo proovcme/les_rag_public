@@ -22,6 +22,37 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 ENV_PATH = Path(".env")
 
+# Локальные MLX-модели чата под Apple M4/24GB: лёгкий 4B — основной (≈20 ток/с, 2.6 ГБ),
+# тяжёлый 9B — резерв под качество (≈5 ток/с, 5.6 ГБ; душит память бокса). Переключение
+# в GUI применяется вживую через MLX-host /api/switch_model (без рестарта процесса).
+MLX_MODEL_CHOICES = {
+    "mlx-community/Qwen3.5-4B-MLX-4bit": "4B — быстрый (≈20 ток/с, 2.6 ГБ) · основной",
+    "mlx-community/Qwen3.5-9B-MLX-4bit": "9B — качество (≈5 ток/с, 5.6 ГБ) · тяжёлый резерв",
+}
+
+
+def _current_mlx_model() -> str:
+    """Активная локальная модель: имя в запросах proxy (LLM_MODEL), затем старт хоста (MLX_MODEL)."""
+    return os.getenv("LLM_MODEL", "").strip() or os.getenv("MLX_MODEL", "").strip()
+
+
+def _persist_env(updates: dict[str, str]) -> None:
+    """Идемпотентно обновляет ключи в .env (заменяет существующие, дописывает новые)."""
+    env_lines = ENV_PATH.read_text().splitlines() if ENV_PATH.exists() else []
+    new_lines: list[str] = []
+    seen: set[str] = set()
+    for line in env_lines:
+        key = line.split("=")[0].strip()
+        if key in updates:
+            new_lines.append(f"{key}={updates[key]}")
+            seen.add(key)
+        else:
+            new_lines.append(line)
+    for key, val in updates.items():
+        if key not in seen:
+            new_lines.append(f"{key}={val}")
+    ENV_PATH.write_text("\n".join(new_lines) + "\n")
+
 
 class SettingsRequest(BaseModel):
     llm_model: Optional[str] = None
@@ -81,6 +112,8 @@ async def get_settings(_user=Depends(require_user)):
             "embed_model": os.getenv("EMBED_MODEL", "bge-m3:latest"),
             "mlx_url": mlx_url,
             "available_models": available,
+            "mlx_main_model": _current_mlx_model(),
+            "mlx_model_choices": MLX_MODEL_CHOICES,
             "cloud_consent": _env_bool("LES_CLOUD_CONSENT", "false"),
             "providers": _provider_settings_payload(),
             "mail": _mail_settings_payload(),
@@ -331,3 +364,44 @@ async def set_preset(req: PresetRequest, _admin=Depends(require_admin)):
         return await asyncio.to_thread(apply_preset, req.name)
     except ValueError as err:
         raise HTTPException(400, str(err))
+
+
+# ── Локальная MLX-модель: лёгкий 4B (основной) ↔ тяжёлый 9B (резерв) ──
+
+class MlxModelRequest(BaseModel):
+    model: str
+
+
+@router.post("/mlx-model")
+async def set_mlx_model(req: MlxModelRequest, _admin=Depends(require_admin)):
+    """Переключить локальную модель чата вживую: пишет .env (MLX_MODEL стартовый +
+    LLM_MODEL имя запросов) и дёргает MLX-host /api/switch_model — без рестарта процесса."""
+    model = (req.model or "").strip()
+    if model not in MLX_MODEL_CHOICES:
+        raise HTTPException(400, f"Неизвестная MLX-модель: {model}")
+
+    # 1) persist: MLX_MODEL — что хост грузит на старте; LLM_MODEL — имя в запросах proxy.
+    await asyncio.to_thread(_persist_env, {"MLX_MODEL": model, "LLM_MODEL": model})
+    os.environ["MLX_MODEL"] = model
+    os.environ["LLM_MODEL"] = model
+
+    # 2) применить вживую на хосте (force_unload + reload_tokenizer; веса лениво на след. генерации).
+    mlx_url = os.getenv("MLX_URL", "http://127.0.0.1:8080").rstrip("/")
+    switched_live = False
+    detail = ""
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            r = await client.post(f"{mlx_url}/api/switch_model", json={"target": "main", "model": model})
+            switched_live = r.status_code == 200
+            detail = r.text[:200]
+    except Exception as exc:  # хост недоступен — .env уже записан, подхватится при старте
+        detail = str(exc)[:200]
+
+    logger.info("[SETTINGS] MLX main model → %s (live=%s)", model, switched_live)
+    return {
+        "status": "ok",
+        "model": model,
+        "label": MLX_MODEL_CHOICES[model],
+        "switched_live": switched_live,
+        "detail": detail,
+    }

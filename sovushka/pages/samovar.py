@@ -145,6 +145,7 @@ def build_samovar():
             {"name": "chunks",   "label": "Чанков",   "field": "chunks",   "align": "center", "sortable": True},
             {"name": "status",   "label": "Статус",   "field": "status",   "align": "left"},
             {"name": "sensitivity", "label": "Данные", "field": "sensitivity", "align": "center"},
+            {"name": "group_name", "label": "Группа", "field": "group_name", "align": "left", "sortable": True},
             {"name": "job_info", "label": "Job",      "field": "job_info", "align": "left"},
             {"name": "actions",  "label": "",          "field": "folder",   "align": "center"},
         ]
@@ -208,6 +209,21 @@ def build_samovar():
               </q-select>
               <span v-else style="color:#64748b;font-size:.6rem;cursor:help;" title="нет датасета — пометка появится после индексации">—</span>
             </q-td>""")
+        # Группа датасета — организация списка (клик по ячейке → ввод; сортировка колонки кластеризует).
+        sam_grid.add_slot("body-cell-group_name", """
+            <q-td :props="props">
+              <div v-if="props.row.dataset_id" class="cursor-pointer"
+                   style="font-size:.64rem;color:#a78bfa;font-weight:700;min-width:70px;border-bottom:1px dashed #475569;">
+                {{ props.row.group_name || '— задать —' }}
+                <q-popup-edit v-model="props.row.group_name" auto-save v-slot="scope"
+                    @save="val => $parent.$emit('setgroup', {dataset_id: props.row.dataset_id, folder: props.row.folder, group: val})">
+                  <q-input v-model="scope.value" dense autofocus counter maxlength="60"
+                           placeholder="имя группы" @keyup.enter="scope.set"/>
+                </q-popup-edit>
+              </div>
+              <span v-else style="color:#64748b;font-size:.6rem;">—</span>
+            </q-td>""")
+        sam_grid.on("setgroup", lambda e: asyncio.create_task(_set_group(e.args)))
         sam_grid.on("inspect", lambda e: asyncio.create_task(_open_index_dialog(e.args)))
         sam_grid.on("sync",  lambda e: asyncio.create_task(_sync_row(e.args)))
         sam_grid.on("reset", lambda e: asyncio.create_task(_reset_row(e.args)))
@@ -944,6 +960,22 @@ def build_samovar():
             else:
                 ui.notify(last_api_error_text("Не удалось изменить чувствительность"), type="negative")
 
+        async def _set_group(payload):
+            """Пользовательская группа датасета — организация списка в САМОВАРе."""
+            if not isinstance(payload, dict):
+                return
+            ds_id = str(payload.get("dataset_id", "") or "")
+            grp = str(payload.get("group", "") or "").strip()[:60]
+            if not ds_id:
+                return
+            res = await api_patch(f"/api/rag/datasets/{quote(ds_id, safe='')}/group?group={quote(grp, safe='')}")
+            folder = payload.get("folder", "")
+            if res is not None:
+                ui.notify(f"✓ {folder}: группа → {grp or '(снята)'}", type="positive")
+                add_log(f"[ГРУППА] {folder or ds_id} → {grp or '(снята)'}")
+            else:
+                ui.notify(last_api_error_text("Не удалось задать группу"), type="negative")
+
         async def _sync_row(row):
             folder = row.get("folder", "") if isinstance(row, dict) else str(row)
             if not folder:
@@ -1149,6 +1181,7 @@ def build_samovar():
                     "chunks":     chunks,
                     "status":     status,
                     "sensitivity": (ds_map.get(src.get("dataset_id", "")) or {}).get("sensitivity", "P0"),
+                    "group_name": (ds_map.get(src.get("dataset_id", "")) or {}).get("group_name", ""),
                     "job_info":   job_info,
                     "can_sync":    not parse_blocked,
                     "sync_reason": "парсинг сейчас заблокирован (идёт другая задача)" if parse_blocked else "",
@@ -1178,6 +1211,7 @@ def build_samovar():
                     "chunks":     chunks,
                     "status":     ds.get("status", ""),
                     "sensitivity": ds.get("sensitivity", "P0"),
+                    "group_name": ds.get("group_name", ""),
                     "job_info":   "",
                     "can_sync":    False,
                     "sync_reason": "нет папки-источника в RAG_Content — датасет наполняется загрузкой файлов",

@@ -235,6 +235,23 @@ _REQUEST_ANYWHERE = (
 )
 
 
+def strip_output_directive(text: str, output_directive: str | None = None) -> str:
+    """Срезать форматную директиву ответа (`output_directive`), если клиент приклеил
+    её к тексту вопроса.
+
+    `output_directive` — формат/стиль ответа (см. ChatRequest), идёт ТОЛЬКО в
+    генерацию, не в заметки/роутинг/ретрив. Старые/сторонние клиенты могли клеить
+    её прямо в текст вопроса без разделителя («…по объектуОтветь развёрнуто…») —
+    тогда мусор-шаблон утекал в авто-заметку. Здесь срезаем директиву-суффикс,
+    чтобы в заметку шёл только чистый вопрос/факт.
+    """
+    t = (text or "").strip()
+    d = (output_directive or "").strip()
+    if d and t.endswith(d):
+        t = t[: -len(d)].strip()
+    return t
+
+
 def autonote_enabled() -> bool:
     return os.getenv("LES_AUTONOTE_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
 
@@ -254,11 +271,17 @@ def looks_like_fact(text: str) -> bool:
     return any(m in low for m in _FACT_MARKERS)
 
 
-def maybe_autonote(question: str, dataset_filter: str = "", project_id: int = 0) -> dict[str, Any] | None:
-    """Авто-заметка из утверждения-факта (не вопрос, не команда, есть маркер). Без LLM."""
-    if not autonote_enabled() or not looks_like_fact(question):
+def maybe_autonote(question: str, dataset_filter: str = "", project_id: int = 0,
+                   output_directive: str | None = None) -> dict[str, Any] | None:
+    """Авто-заметка из утверждения-факта (не вопрос, не команда, есть маркер). Без LLM.
+
+    `output_directive` (формат/стиль ответа) в текст заметки НЕ попадает — срезаем,
+    если клиент приклеил её к вопросу.
+    """
+    clean = strip_output_directive(question, output_directive)
+    if not autonote_enabled() or not looks_like_fact(clean):
         return None
-    note = create_note(question.strip().rstrip("."), dataset_filter=dataset_filter or "",
+    note = create_note(clean.rstrip("."), dataset_filter=dataset_filter or "",
                        project_id=project_id, auto=True)
     return {
         "answer": (f"✎ Принял к сведению (авто-заметка #{note['id']}): {note['text']}\n"
@@ -269,10 +292,12 @@ def maybe_autonote(question: str, dataset_filter: str = "", project_id: int = 0)
     }
 
 
-def maybe_handle_memory_command(question: str, dataset_filter: str = "", project_id: int = 0) -> dict[str, Any] | None:
+def maybe_handle_memory_command(question: str, dataset_filter: str = "", project_id: int = 0,
+                                output_directive: str | None = None) -> dict[str, Any] | None:
     """Детерминированный обработчик команд заметок из чата (ADR-11: без LLM).
-    В режиме объекта (project_id>0) заметки создаются и перечисляются в рамках объекта."""
-    text = question.strip()
+    В режиме объекта (project_id>0) заметки создаются и перечисляются в рамках объекта.
+    `output_directive` (формат/стиль ответа) срезаем — в текст «запомни:»-заметки не идёт."""
+    text = strip_output_directive(question, output_directive)
 
     match = REMEMBER_RE.match(text)
     if match:

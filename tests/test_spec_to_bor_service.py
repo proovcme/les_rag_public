@@ -9,9 +9,19 @@ import pytest
 from backend.parquet_writer import save_parquet
 from proxy.services.spec_to_bor_service import (
     generate_spec_bor,
+    is_spec_to_bor_query,
     spec_rows_to_work_lines,
     work_verb,
 )
+
+
+def test_is_spec_to_bor_query_word_boundary():
+    # «повороты» содержит подстроку «вор» — НЕ должно триггерить канал ВОР
+    assert is_spec_to_bor_query("Собери спецификацию лотков 200х50, повороты, крышки") is False
+    assert is_spec_to_bor_query("спецификация светильников, забор, творог") is False
+    # легитимные «ВОР из спецификации» — должны
+    assert is_spec_to_bor_query("сделай ВОР из спецификации формы 9") is True
+    assert is_spec_to_bor_query("ведомость объёмов работ из спецификации") is True
 
 
 def _spec(name, unit="шт", qty=1.0, **kw):

@@ -151,3 +151,16 @@ def test_price_table_env_garbage_ignored():
     assert table["ok"] == (1.0, 1.0)
     assert "broken" not in table
     assert "no-slash" not in table
+
+
+def test_gpt5_uses_max_completion_tokens():
+    """GPT-5/o-серия в облаке требуют max_completion_tokens вместо max_tokens (иначе 400)."""
+    from proxy.routers.chat import _model_needs_completion_tokens as need, _cloud_body_for_model as fix
+    assert need("gpt-5.4-mini") and need("o1-mini") and need("o3")
+    assert not need("gpt-4.1") and not need("deepseek/deepseek-v4-flash")
+    body = {"max_tokens": 400, "temperature": 0.2}
+    fixed = fix(body, "gpt-5.4-mini", "openai")
+    assert fixed == {"max_completion_tokens": 400, "temperature": 0.2}
+    assert body == {"max_tokens": 400, "temperature": 0.2}  # оригинал не мутируется
+    assert fix(body, "gpt-4.1", "openai") == body           # 4.1 принимает max_tokens
+    assert fix(body, "gpt-5.4-mini", "mlx") == body         # локаль не трогаем

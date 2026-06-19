@@ -538,12 +538,26 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   height: calc(100vh - 92px);
   min-height: 620px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
+  grid-template-columns: minmax(0, 1fr) 8px var(--sov-artifacts-w, 360px);
   gap: 14px;
   padding: 14px;
   background: var(--shell-bg);
   overflow: hidden;
 }
+/* Резиновый layout: разделитель между чатом и артефактами — таскать по ширине */
+.sov-resize-divider {
+  cursor: col-resize;
+  align-self: stretch;
+  position: relative;
+  touch-action: none;
+}
+.sov-resize-divider::before {
+  content: ""; position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  width: 4px; height: 46px; border-radius: 3px;
+  background: rgba(138,162,184,.4); transition: background .15s, height .15s;
+}
+.sov-resize-divider:hover::before { background: var(--accent); height: 80px; }
 .sov-chat-main, .sov-artifacts-panel, .sov-history-drawer {
   background: var(--panel-glass);
   border: 1px solid rgba(138,162,184,.32);

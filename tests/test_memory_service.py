@@ -101,6 +101,38 @@ def test_maybe_autonote_returns_none_for_query():
     assert ms.maybe_autonote("Сколько стоит кабель") is None
 
 
+def test_strip_output_directive_drops_glued_suffix():
+    directive = "Ответь развёрнуто — 3-5 абзацев. Пиши профессиональным техническим языком"
+    # клиент приклеил директиву к вопросу без разделителя
+    glued = "Главный инженер проекта — Сидоров" + directive
+    assert ms.strip_output_directive(glued, directive) == "Главный инженер проекта — Сидоров"
+    # без директивы или когда её нет в тексте — текст не меняется (кроме обрезки пробелов)
+    assert ms.strip_output_directive("Главный инженер — Сидоров", None) == "Главный инженер — Сидоров"
+    assert ms.strip_output_directive("Главный инженер — Сидоров", "что-то другое") == "Главный инженер — Сидоров"
+
+
+def test_autonote_does_not_store_output_directive():
+    """output_directive не должна попадать в текст авто-заметки (баг: склейка вопроса с директивой)."""
+    directive = "Ответь развёрнуто — 3-5 абзацев. Пиши профессиональным техническим языком"
+    glued = "Главный инженер проекта — Сидоров" + directive
+    reply = ms.maybe_autonote(glued, output_directive=directive)
+    assert reply is not None and reply["operation"] == "note_autocreate"
+    notes = ms.list_notes()
+    assert notes and notes[0]["text"] == "Главный инженер проекта — Сидоров"
+    assert "Ответь развёрнуто" not in notes[0]["text"]
+    assert "техническим языком" not in notes[0]["text"]
+
+
+def test_remember_command_strips_output_directive():
+    directive = "Ответь кратко — 1-2 абзаца."
+    glued = "запомни: по корпусу Б дымоудаление считаем по СП 7" + directive
+    reply = ms.maybe_handle_memory_command(glued, output_directive=directive)
+    assert reply["operation"] == "note_create"
+    notes = ms.list_notes()
+    assert notes[0]["text"] == "по корпусу Б дымоудаление считаем по СП 7"
+    assert "Ответь кратко" not in notes[0]["text"]
+
+
 # ── чат-команды ──
 
 def test_remember_and_list():

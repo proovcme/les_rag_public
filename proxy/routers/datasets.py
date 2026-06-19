@@ -110,6 +110,8 @@ class IndexExternalRequest(BaseModel):
     dataset_id: str = Field(min_length=1)
     parse: bool = True
     parse_limit: int = Field(default=25, ge=1, le=500)
+    auto_split: bool = True  # крупные PDF режутся (tools/pdf_preprocess) перед регистрацией
+    split_max_mb: float = Field(default=40.0, ge=5, le=500)
 
 
 class ParseSchedulerRequest(BaseModel):
@@ -792,6 +794,14 @@ async def set_dataset_sensitivity(dataset_id: str, sensitivity: str, _admin=Depe
     return {"id": dataset_id, "sensitivity": level}
 
 
+@router.patch("/datasets/{dataset_id}/group")
+async def set_dataset_group(dataset_id: str, group: str = "", _admin=Depends(require_admin)):
+    """Пользовательская группа датасета — организация списка в САМОВАРе (на поиск не влияет)."""
+    grp = (group or "").strip()[:60]
+    await get_dataset_state().backend.set_dataset_group(dataset_id, grp)
+    return {"id": dataset_id, "group_name": grp}
+
+
 @router.get("/graph/edges")
 async def graph_reference_edges(_user=Depends(require_user)):
     """W5.7-v2: рёбра «документ → документ» по упоминаниям номеров НТД (FTS, без LLM)."""
@@ -1218,6 +1228,25 @@ async def index_external(req: IndexExternalRequest, _admin=Depends(require_admin
     if dataset is None:
         raise HTTPException(404, f"dataset_id не найден: {req.dataset_id} (создайте датасет заранее)")
 
+    # Авто-нарезка крупных PDF (штатная часть ЛЕСа, tools/pdf_preprocess): чистим+режем
+    # гиганты на части < split_max_mb (границы по оглавлению), оригиналы → в _originals/.
+    # Без этого 150–200МБ-каталог вешает конвертер (блокирует event loop). Не роняет индексацию.
+    split_summary = {"split_files": 0, "parts": 0}
+    if req.auto_split:
+        try:
+            from tools.pdf_preprocess import preprocess_dir
+            max_bytes = int(req.split_max_mb * 1024 * 1024)
+            results = await asyncio.to_thread(preprocess_dir, root, max_bytes)
+            for r in results:
+                if getattr(r, "action", "") == "clean+split" and getattr(r, "split", None):
+                    split_summary["split_files"] += 1
+                    split_summary["parts"] += len(r.split.parts)
+            if split_summary["split_files"]:
+                logger.info("[INDEX-EXT] авто-нарезка: %s гигантов → %s частей",
+                            split_summary["split_files"], split_summary["parts"])
+        except Exception as err:  # noqa: BLE001 — нарезка не должна ронять индексацию
+            logger.warning("[INDEX-EXT] авто-нарезка пропущена: %s", err)
+
     suffixes = rag_upload_suffixes()
     registered = 0
     skipped_unsupported = 0
@@ -1225,6 +1254,8 @@ async def index_external(req: IndexExternalRequest, _admin=Depends(require_admin
     samples: list[str] = []
     for path in sorted(root.rglob("*")):
         if not path.is_file():
+            continue
+        if "_originals" in path.parts:  # архив оригиналов после нарезки — не индексируем
             continue
         # Анти-traversal: симлинк внутри папки, указывающий наружу корня, отбрасываем.
         if not is_within_external_root(path, root):
@@ -1273,6 +1304,8 @@ async def index_external(req: IndexExternalRequest, _admin=Depends(require_admin
         "registered_files": registered,
         "skipped_unsupported": skipped_unsupported,
         "skipped_outside_root": skipped_outside_root,
+        "split_large_pdfs": split_summary["split_files"],
+        "split_parts": split_summary["parts"],
         "in_place": True,
         "copied_to_storage": False,
         "parse_started": parse_started,
