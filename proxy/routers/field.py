@@ -14,7 +14,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from proxy.security import require_user
+from proxy.security import require_admin, require_user
+from proxy.services.asbuilt_intake_service import process_path
 from proxy.services.field_intake_service import (
     FIELD_STATUSES,
     aggregate_volumes,
@@ -150,6 +151,55 @@ async def field_delete(entry_id: int, _user=Depends(require_user)):
     if not ok:
         raise HTTPException(404, f"записи #{entry_id} нет")
     return {"deleted": entry_id}
+
+
+class AsbuiltExtractReq(BaseModel):
+    path: str = Field(min_length=1)              # файл или папка внутри LES_EXTERNAL_SOURCE_ROOTS
+    rotate: str = "auto"                          # auto | 0 | 90 | 180 | 270
+    ocr_engine: str = "local"                     # local (gemma) | cloud (gpt-4.1 через proxyapi)
+    write: bool = False                           # true → создать записи журнала (status=pending)
+    status: str = "pending"
+    project_id: int = 0
+
+
+def _guard_asbuilt_path(raw: str) -> Path:
+    """Резолв + проверка внутри LES_EXTERNAL_SOURCE_ROOTS (как index-external), файл ИЛИ папка."""
+    from proxy.config import external_source_roots
+
+    roots = external_source_roots()
+    if not roots:
+        raise HTTPException(403, "внешний доступ выключен: LES_EXTERNAL_SOURCE_ROOTS пуст")
+    try:
+        cand = Path((raw or "").strip()).expanduser().resolve(strict=True)
+    except FileNotFoundError as err:
+        raise HTTPException(404, f"путь не найден: {raw}") from err
+    except (OSError, RuntimeError) as err:
+        raise HTTPException(400, f"некорректный путь: {raw}") from err
+    if not any(cand == r or r in cand.parents for r in roots):
+        raise HTTPException(403, f"путь вне одобренных корней (LES_EXTERNAL_SOURCE_ROOTS): {cand}")
+    return cand
+
+
+@router.post("/extract-asbuilt")
+async def field_extract_asbuilt(req: AsbuiltExtractReq, _admin=Depends(require_admin)):
+    """Скан исполнительной/чек-листа → строки смонтированного объёма → (опц.) журнал.
+
+    Один LLM-шаг (vision-OCR ячеек); числа/свод считает код (ADR-11). write=false → превью.
+    """
+    if req.status not in FIELD_STATUSES:
+        raise HTTPException(400, f"status: {FIELD_STATUSES}")
+    if req.ocr_engine not in ("local", "cloud"):
+        raise HTTPException(400, "ocr_engine: local | cloud")
+    path = _guard_asbuilt_path(req.path)
+    return await asyncio.to_thread(
+        process_path,
+        path,
+        rotate=req.rotate,
+        engine=req.ocr_engine,
+        write=req.write,
+        status=req.status,
+        project_id=req.project_id,
+    )
 
 
 @router.post("/export")
