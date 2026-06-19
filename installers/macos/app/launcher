@@ -1,0 +1,7 @@
+#!/bin/bash
+# LES.app bundle executable (Contents/MacOS/LES).
+# Thin shim: resolve the Resources dir and hand off to bootstrap.sh, which does
+# all the work and logs to ~/Library/Logs/LES/bootstrap.log.
+HERE="$(cd "$(dirname "$0")" && pwd)"            # …/Contents/MacOS
+RES="$(cd "$HERE/../Resources" && pwd)"          # …/Contents/Resources
+exec /bin/bash "$RES/bootstrap.sh"

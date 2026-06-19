@@ -3,6 +3,53 @@
 Л.Е.С. имеет несколько профилей запуска. Базовый контур: Qdrant `:6333`,
 model/provider endpoint, FastAPI proxy `:8050`, Sovushka Lite UI `:8051`.
 
+Два пути: **установка в один клик** (дабл-клик `.app`/`.exe`, без терминала —
+ниже) или **ручной CLI** через `uv` + `lesctl` (со раздела «Требования»).
+
+## Установка в один клик (без терминала)
+
+Цель — UX уровня AnythingLLM/LM Studio: дабл-клик, и весь стек
+(Qdrant + модель/провайдер + proxy + Совушка) поднимается и открывается в
+браузере. Веса не входят в установщик — на первом запуске докачиваются
+(Mac) либо движок берётся облачный/ollama/lemonade (Windows).
+
+### macOS — `LES.app` / `LES.dmg`
+
+Соберите бандл из исходников (macOS, есть `uv`):
+
+```bash
+git clone https://github.com/proovcme/les_rag_public.git
+cd les_rag_public
+uv run python tools/build_macos_app.py --version 0.1.4 --sign   # -> dist/LES.app
+uv run python tools/build_macos_dmg.py --version 0.1.4          # -> dist/LES.dmg
+```
+
+Перетащите `LES.app` в «Программы» и запустите двойным кликом. На первом
+запуске бутстрап ставит `uv` (если нет), выполняет `uv sync --extra mac-mlx`,
+докачивает локальную модель (Qwen3.5-4B-MLX + эмбеддер), поднимает службы и
+открывает `http://127.0.0.1:8051/les`. Прогресс — в нотификациях, лог —
+`~/Library/Logs/LES/bootstrap.log`. Рантайм разворачивается в
+`~/Library/Application Support/LES` (override `LES_HOME`).
+
+### Windows — `LES-Setup.exe`
+
+Windows без Apple MLX → движок облачный / `ollama` / `lemonade` (выбор в GUI
+Совушки), веса не бандлятся. Соберите установщик (NSIS):
+
+```bash
+uv run python tools/build_windows_installer.py --version 0.1.4
+# NSIS установлен -> dist/LES-Setup.exe; иначе -> dist/LES-windows-portable.zip
+# + печать команды makensis для сборки .exe на Windows.
+```
+
+`LES-Setup.exe` ставит per-user (без админа) в `%LOCALAPPDATA%\Programs\LES`,
+создаёт ярлыки в меню «Пуск» и на рабочем столе. Двойной клик → бутстрап
+ставит `uv`, `uv sync`, поднимает proxy + UI (`start-light.ps1`) и открывает
+браузер. Лог — `%LOCALAPPDATA%\LES\logs\bootstrap.log`.
+
+Артефакты установщика (`.dmg`/`.exe`) намеренно не прикладываются к релизам —
+собирайте из исходников этого репозитория, чтобы бандл содержал ровно его код.
+
 ## Требования
 
 - Python `3.12+`

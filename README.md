@@ -133,6 +133,11 @@ llama-index · Parquet (pyarrow) · SQLite · launchd (macOS, без Docker) · 
 
 ## Запуск
 
+**Установка в один клик** (без терминала): соберите дабл-клик `LES.app`/`.dmg`
+(macOS) или `LES-Setup.exe` (Windows) — см. [INSTALL.md](INSTALL.md#установка-в-один-клик-без-терминала).
+
+Ручной запуск через CLI:
+
 ```bash
 uv sync --extra mac-mlx        # зависимости (mlx-lm под Apple Silicon)
 cp env.example .env            # ключи/пути
