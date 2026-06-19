@@ -36,7 +36,7 @@ COMMANDS: tuple[dict[str, Any], ...] = (
     {"cmd": "/сверка", "aliases": ("/сверь",), "kind": "rewrite", "rewrite": "сверь ведомости и акты, где расхождения",
      "title": "Сверка документов", "desc": "ВОР ↔ КС-2 ↔ смета ↔ ИД по количествам"},
     {"cmd": "/мсп", "aliases": ("/mcp", "/mcp-server", "/мсп-сервер"), "kind": "stub",
-     "title": "MCP-сервер ЛЕС", "desc": "Выставить инструменты ЛЕС наружу по MCP — в разработке"},
+     "title": "MCP-сервер ЛЕС", "desc": "Инструменты ЛЕС наружу по Model Context Protocol (готов)"},
     {"cmd": "/команды", "aliases": ("/help", "/?", "/команда"), "kind": "help",
      "title": "Список команд", "desc": "Показать все команды"},
 )
@@ -102,16 +102,17 @@ def handle_command(question: str, *, project_id: int | None = None) -> dict[str,
         return {"answer": _help_text(), "command": {"action": "help", "commands": list_commands()}}
     if kind == "stub":
         return {
-            "answer": ("🚧 MCP-сервер ЛЕС — в разработке (заглушка).\n"
-                       "Идея: выставить детерминированные инструменты ЛЕС наружу по Model Context "
-                       "Protocol, чтобы внешние агенты (Claude и др.) вызывали их как tools:\n"
-                       "  • table_sum — счёт по таблицам (суммы/кол-ва из Parquet);\n"
-                       "  • reconcile — сверка ВОР↔КС-2↔смета↔ИД по количествам;\n"
-                       "  • bor / spec_to_bor — ВОР (свод и работы из спецификации);\n"
-                       "  • project_summary — сводка проекта (ТЭП/стадии/состав);\n"
-                       "  • forms — генерация спецификации/ВОР/сметы/АОСР.\n"
-                       "Каркас: tools/les_mcp_server.py. Сейчас всё доступно через чат-команды и REST API."),
-            "command": {"action": "stub", "feature": "mcp_server"},
+            "answer": ("✅ MCP-сервер ЛЕС готов — инструменты доступны внешним агентам по Model "
+                       "Context Protocol (Claude Code/Desktop, IDE):\n"
+                       "  • les_table_sum — счёт по таблицам (суммы/кол-ва из Parquet);\n"
+                       "  • les_reconcile — сверка ВОР↔КС-2↔смета↔ИД по количествам;\n"
+                       "  • les_bor / les_spec_to_bor — ВОР (свод и работы из спецификации);\n"
+                       "  • les_project_summary — сводка проекта (ТЭП/стадии/состав);\n"
+                       "  • les_form_generate — генерация спецификации/ВОР/сметы/АОСР.\n"
+                       "Запуск: uv run python tools/les_mcp_server.py (stdio). Регистрация в MCP-клиенте:\n"
+                       '  {"mcpServers":{"les":{"command":"uv","args":["run","python",'
+                       '"tools/les_mcp_server.py"],"cwd":"/Users/ovc/LES"}}}'),
+            "command": {"action": "mcp_info", "feature": "mcp_server"},
         }
     if kind == "form":
         form_id = entry["form"]

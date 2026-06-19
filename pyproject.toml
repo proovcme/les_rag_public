@@ -59,6 +59,10 @@ mail-pst = [
     # Архивы Outlook .pst (Windows). C-сборка libpff (self-contained, нужен компилятор).
     "libpff-python>=20231205",
 ]
+mcp = [
+    # MCP-сервер ЛЕС (tools/les_mcp_server.py): инструменты ЛЕС наружу по Model Context Protocol.
+    "mcp>=1.0.0",
+]
 
 [dependency-groups]
 dev = []
