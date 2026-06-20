@@ -62,7 +62,24 @@ def wait_healthy(url: str = HEALTH_URL, attempts: int = 90, delay: float = 1.0) 
     return False
 
 
+def _platform() -> str:
+    if sys.platform == "darwin":
+        return "darwin"
+    if sys.platform.startswith("win"):
+        return "windows"
+    return "other"
+
+
+def _win_script(name: str) -> list[str]:
+    script = ROOT / "installers" / "windows" / name
+    return ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)]
+
+
 def start_stack() -> bool:
+    # Windows has no launchd: bring the stack up via start-light.ps1. macOS/Linux
+    # use les_runtime_control (launchd labels + ordered start).
+    if _platform() == "windows":
+        return subprocess.run(_win_script("start-light.ps1"), check=False).returncode == 0
     from tools import les_runtime_control as rc
 
     try:
@@ -73,6 +90,9 @@ def start_stack() -> bool:
 
 
 def stop_stack() -> None:
+    if _platform() == "windows":
+        subprocess.run(_win_script("stop-light.ps1"), check=False)
+        return
     from tools import les_runtime_control as rc
 
     try:
@@ -82,12 +102,9 @@ def stop_stack() -> None:
 
 
 def restart_stack() -> None:
-    from tools import les_runtime_control as rc
-
-    try:
-        rc.restart_core(include_ui=True)
-    except Exception:
-        pass
+    # stop+start composes across backends (no launchd-only path).
+    stop_stack()
+    start_stack()
 
 
 def ensure_started() -> bool:

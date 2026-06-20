@@ -31,6 +31,7 @@ from proxy.routers.decisions import router as decisions_router
 from proxy.routers.worklog import router as worklog_router
 from proxy.routers.incoming_control import router as incoming_control_router
 from proxy.routers.estimates import router as estimates_router
+from proxy.routers.extract import router as extract_router
 from proxy.routers.forms import router as forms_router
 from proxy.routers.files import router as files_router
 from proxy.routers.field import router as field_router
@@ -373,6 +374,7 @@ def create_app():
     fastapi_app.include_router(worklog_router)
     fastapi_app.include_router(incoming_control_router)
     fastapi_app.include_router(estimates_router)
+    fastapi_app.include_router(extract_router)
     fastapi_app.include_router(forms_router)
     fastapi_app.include_router(files_router)
     fastapi_app.include_router(notes_router)

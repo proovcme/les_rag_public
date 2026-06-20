@@ -87,6 +87,41 @@ def test_main_no_gui_runs_headless(monkeypatch):
     assert opened == [les_shell.UI_URL]
 
 
+def test_start_stack_windows_uses_start_light(monkeypatch):
+    monkeypatch.setattr(les_shell, "_platform", lambda: "windows")
+    captured = {}
+
+    class _R:
+        returncode = 0
+
+    def fake_run(cmd, check=False):
+        captured["cmd"] = cmd
+        return _R()
+
+    monkeypatch.setattr(les_shell.subprocess, "run", fake_run)
+    assert les_shell.start_stack() is True
+    assert any("start-light.ps1" in str(part) for part in captured["cmd"])
+
+
+def test_stop_stack_windows_uses_stop_light(monkeypatch):
+    monkeypatch.setattr(les_shell, "_platform", lambda: "windows")
+    captured = {}
+    monkeypatch.setattr(les_shell.subprocess, "run", lambda cmd, check=False: captured.update(cmd=cmd))
+    les_shell.stop_stack()
+    assert any("stop-light.ps1" in str(part) for part in captured["cmd"])
+
+
+def test_start_stack_darwin_uses_runtime_control(monkeypatch):
+    monkeypatch.setattr(les_shell, "_platform", lambda: "darwin")
+    from tools import les_runtime_control as rc
+
+    class _Ok:
+        ok = True
+
+    monkeypatch.setattr(rc, "start_core", lambda include_ui=False: [_Ok()])
+    assert les_shell.start_stack() is True
+
+
 def test_open_logs_creates_dir_and_opens(monkeypatch, tmp_path):
     monkeypatch.setattr(les_shell, "_log_dir", lambda: tmp_path / "logs")
     ran = {}

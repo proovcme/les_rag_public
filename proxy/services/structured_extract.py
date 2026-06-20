@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from typing import Awaitable, Callable, Optional
 
 try:  # optional, stronger validator
     import jsonschema as _jsonschema
@@ -38,6 +38,7 @@ except Exception:  # pragma: no cover - depends on environment
 # backends that support native structured outputs (cloud); local backends ignore
 # it and rely on the validate-and-repair loop.
 LLMCall = Callable[[str, Optional[dict]], str]
+AsyncLLMCall = Callable[[str, Optional[dict]], Awaitable[str]]
 
 
 @dataclass
@@ -218,13 +219,42 @@ def extract(
 
     for attempt in range(1, max_attempts + 1):
         reply = call_llm(prompt, response_format)
-        data = parse_json(reply)
-        if data is None:
-            errors = ["ответ не содержит валидного JSON-объекта"]
-        else:
-            errors = validate(data, schema)
-            if not errors:
-                return ExtractResult(ok=True, data=data, attempts=attempt, errors=[])
+        data, errors = _evaluate(reply, schema)
+        if not errors:
+            return ExtractResult(ok=True, data=data, attempts=attempt, errors=[])
+        if attempt < max_attempts:
+            prompt = _repair_prompt(schema, reply, errors)
+
+    return ExtractResult(ok=False, data=None, attempts=max_attempts, errors=errors)
+
+
+def _evaluate(reply: str, schema: dict) -> tuple[Optional[dict], list[str]]:
+    """Parse + validate one model reply. ([] errors means valid)."""
+    data = parse_json(reply)
+    if data is None:
+        return None, ["ответ не содержит валидного JSON-объекта"]
+    return data, validate(data, schema)
+
+
+async def aextract(
+    schema: dict,
+    instruction: str,
+    context: str,
+    call_llm: AsyncLLMCall,
+    *,
+    max_attempts: int = 3,
+    use_cloud_response_format: bool = False,
+) -> ExtractResult:
+    """Async twin of :func:`extract` — awaits ``call_llm`` (no event-loop block)."""
+    response_format = cloud_response_format(schema) if use_cloud_response_format else None
+    prompt = build_prompt(schema, instruction, context)
+    errors: list[str] = []
+
+    for attempt in range(1, max_attempts + 1):
+        reply = await call_llm(prompt, response_format)
+        data, errors = _evaluate(reply, schema)
+        if not errors:
+            return ExtractResult(ok=True, data=data, attempts=attempt, errors=[])
         if attempt < max_attempts:
             prompt = _repair_prompt(schema, reply, errors)
 

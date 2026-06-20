@@ -68,9 +68,10 @@ if (-not $Uv) {
 Log "uv: $Uv"
 
 # --- 2. Environment ---------------------------------------------------------
+# --extra desktop pulls the native shell (pywebview + tray). No mac-mlx on Windows.
 Toast "Готовлю окружение…"
-Log "uv sync"
-& $Uv sync
+Log "uv sync --extra desktop"
+& $Uv sync --extra desktop
 if ($LASTEXITCODE -ne 0) { Fail "uv sync не удался" }
 
 # --- 3. .env + directories --------------------------------------------------
@@ -93,14 +94,14 @@ if (-not $qdrantUp -and (Get-Command docker -ErrorAction SilentlyContinue)) {
   Log "qdrant not running and docker absent — RAG features limited until Qdrant is available"
 }
 
-# --- 6. Start proxy + UI ----------------------------------------------------
-Toast "Запускаю службы…"
-Log "start-light.ps1"
-& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $AppDir "..\start-light.ps1") | Out-File -FilePath $Log -Append -Encoding utf8
-if ($LASTEXITCODE -ne 0) { Fail "не удалось поднять службы" }
+# --- 6. Launch the desktop shell --------------------------------------------
+# The shell (tools/les_shell.py) owns lifecycle: on Windows it starts the stack
+# via start-light.ps1, shows the native window + tray, and degrades to a browser
+# tab if the GUI deps are missing.
+Toast "Запускаю Совушку…"
+Log "les_shell"
+& $Uv run python -m tools.les_shell | Out-File -FilePath $Log -Append -Encoding utf8
+if ($LASTEXITCODE -ne 0) { Fail "не удалось запустить шелл" }
 
-# --- 7. Open the UI ---------------------------------------------------------
-Start-Process $UiUrl
-Toast "Совушка готова."
 Log "===== bootstrap done ====="
 exit 0
