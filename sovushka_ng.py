@@ -176,6 +176,7 @@ async def classic_admin_page(request: Request):
     from sovushka.pages.zadachi import build_zadachi
     from sovushka.pages.instrumenty import build_instrumenty
     from sovushka.pages.obyomy import build_obyomy
+    from sovushka.pages.verify import build_verify
 
     allowed, role, holder, is_admin = _resolve_auth(request)
     if not allowed:
@@ -208,6 +209,7 @@ async def classic_admin_page(request: Request):
         tab_instrumenty = tr.get("instrumenty")
         tab_zadachi  = tr.get("zadachi")
         tab_obyomy   = tr.get("obyomy")
+        tab_verify   = tr.get("verify")
         tab_diag     = tr.get("diag")
         tab_volk     = tr.get("volk")
 
@@ -240,6 +242,8 @@ async def classic_admin_page(request: Request):
                 build_zadachi()
             with ui.tab_panel(tab_obyomy):
                 build_obyomy()
+            with ui.tab_panel(tab_verify):
+                build_verify()
             with ui.tab_panel(tab_diag):
                 build_diag()
             with ui.tab_panel(tab_volk):
@@ -257,6 +261,8 @@ async def classic_admin_page(request: Request):
         "КВАДРАНТ":        tab_qdrant_viz,
         "ИНСТРУМЕНТЫ":     tab_instrumenty,
         "ЗАДАЧИ":          tab_zadachi,
+        "ОБЪЁМЫ":          tab_obyomy,
+        "ВЕРИФИКАЦИЯ":     tab_verify,
         "Д.И.А.Г.Н.О.З.": tab_diag,
         "🔬 ДИАГН":        tab_diag,
         "В.О.Л.К.":       tab_volk,
