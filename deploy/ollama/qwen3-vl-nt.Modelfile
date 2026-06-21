@@ -1,0 +1,20 @@
+# Не-thinking вариант локального vision-OCR (Qwen3-VL) для ollama.
+#
+# Зачем: базовый qwen3-vl:4b/8b в ollama 0.30.10 — thinking-модель; thinking
+# НЕ гасится ни `think:false`, ни `/no_think` (prompt/system), и на сложных
+# сканах уходит в бесконечное рассуждение → пустой ответ. Этот Modelfile
+# переключает встроенный рендерер/парсер на НЕ-thinking `qwen3-vl-instruct`.
+#
+# ВАЖНО (вторая половина рецепта): при вызове API всё равно добавляй
+# prefill пустого блока размышления последним assistant-сообщением:
+#   messages=[{role:user, content, images:[...]},
+#             {role:assistant, content:"<think>\n\n</think>\n\n"}]
+# Тогда модель сразу выдаёт ответ (done:stop), без thinking-петли.
+#
+# Сборка:  ollama create qwen3-vl-nt -f deploy/ollama/qwen3-vl-nt.Modelfile
+# Проверено: страница щитов (OCR=0) → 15 строк JSON, 4 с рукописной приёмкой.
+
+FROM qwen3-vl:4b
+RENDERER qwen3-vl-instruct
+PARSER qwen3-vl-instruct
+PARAMETER temperature 0
