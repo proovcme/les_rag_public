@@ -134,6 +134,7 @@ def render_and_extract(path: str, page: int = 0, engine: str = "local") -> dict:
         except Exception:
             rows = []
 
+    rows = [_flatten_row(r) for r in rows if isinstance(r, dict)]  # вложенные {ГП,ФН} → строка
     # колонки = объединение ключей по порядку появления
     columns: list[str] = []
     for r in rows:
@@ -141,6 +142,19 @@ def render_and_extract(path: str, page: int = 0, engine: str = "local") -> dict:
             if k not in columns:
                 columns.append(k)
     return {"token": token, "rows": rows, "columns": columns}
+
+
+def _flatten_row(row: dict) -> dict:
+    """Вложенные dict/list в ячейке → читаемая строка (иначе aggrid рисует [object Object])."""
+    out: dict = {}
+    for k, v in row.items():
+        if isinstance(v, dict):
+            out[k] = " ".join(f"{kk}:{vv}" for kk, vv in v.items() if str(vv).strip())
+        elif isinstance(v, list):
+            out[k] = ", ".join(str(x) for x in v)
+        else:
+            out[k] = v
+    return out
 
 
 def image_path(token: str) -> Optional[Path]:

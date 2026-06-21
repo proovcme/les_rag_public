@@ -40,14 +40,16 @@ def render_verify_artifact(payload: Optional[dict]) -> None:
     with ui.column().classes("w-full gap-2"):
         # ── СКАН (сверху, во всю ширину панели) ──
         ui.label("СКАН").classes("sov-panel-title")
-        with ui.element("div").style(
-            "max-height:42vh;overflow:auto;border:1px solid var(--border);"
-            "border-radius:6px;background:#0b0d12;"
-        ):
-            if img_src:
-                ui.image(img_src).classes("w-full")
-            else:
-                ui.label("скан не загрузился").style("color:var(--dim);padding:10px;display:block;")
+        if img_src:
+            # обычный <img> (не q-img — тот схлопывается в 0 высоты)
+            ui.html(
+                f'<div style="max-height:46vh;overflow:auto;border:1px solid var(--border);'
+                f'border-radius:6px;background:#0b0d12">'
+                f'<img src="{img_src}" style="width:100%;display:block" '
+                f'alt="скан"/></div>'
+            ).classes("w-full")
+        else:
+            ui.label("скан не загрузился").style("color:var(--dim);padding:10px;display:block;")
 
         # ── РАСПОЗНАНО (снизу, во всю ширину, все колонки) ──
         ui.label("РАСПОЗНАНО — правится в ячейках").classes("sov-panel-title")
