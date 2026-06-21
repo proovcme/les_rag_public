@@ -39,20 +39,12 @@ def test_render_and_extract_orchestration(monkeypatch, tmp_path):
     monkeypatch.setattr(vs, "CACHE_DIR", tmp_path / "cache")
     monkeypatch.setattr(vs, "_safe_path", lambda path: tmp_path / "scan.pdf")
     monkeypatch.setattr(vs, "_load_page_image", lambda src, page: _FakeImg())
-    # vision-путь первый: для проверки фолбэка на as-built OCR — глушим его
+    # vision дал пусто → результат пустой (фолбэка на gemma больше нет), но скан закэширован
     monkeypatch.setattr(vs, "_vision_extract_rows", lambda image: [])
-    monkeypatch.setattr(asbuilt_ocr, "resolve_engine", lambda e: object())
-    monkeypatch.setattr(
-        asbuilt_ocr, "vision_ocr_tables",
-        lambda img, eng: '[{"поз": 1, "кол": 5}, {"поз": 2, "ед": "м"}]',
-    )
-    monkeypatch.setattr(asbuilt_ocr, "parse_rows_json", lambda t: json.loads(t))
 
     res = vs.render_and_extract("scan.pdf", 0, "local")
-    assert res["rows"][0]["поз"] == 1
-    # колонки = объединение ключей по порядку появления
-    assert res["columns"] == ["поз", "кол", "ед"]
-    # рендер страницы закэширован и достаётся по токену
+    assert res["rows"] == [] and res["columns"] == []
+    # рендер страницы закэширован и достаётся по токену — оператор заполнит вручную
     assert vs.image_path(res["token"]) is not None
 
 
