@@ -94,12 +94,24 @@ OUTPUT_FORMATS = {
 
 
 def _verify_path(q: str) -> str | None:
-    """Путь к скану из сообщения: в кавычках или абсолютный (допускаем пробелы)."""
-    m = re.search(r'["«]([^"»]+\.(?:pdf|png|tif|tiff|jpe?g))["»]', q or "", re.IGNORECASE)
-    if m:
-        return m.group(1).strip()
-    m = re.search(r"(/.+\.(?:pdf|png|tif|tiff|jpe?g))", q or "", re.IGNORECASE)
-    return m.group(1).strip() if m else None
+    """Путь к скану: в кавычках или абсолютный от первого '/'.
+
+    Устойчиво к пробелам в имени, усечённому расширению (.pd) и хвосту «стр N» —
+    лучше отдать путь backend'у (он честно скажет «файл не найден»), чем молча
+    увести запрос в обычный RAG.
+    """
+    q = q or ""
+    m = re.search(r'["«]([^"»]+)["»]', q)
+    if m and m.group(1).strip().startswith("/"):
+        cand = m.group(1).strip()
+    else:
+        idx = q.find("/")
+        if idx < 0:
+            return None
+        cand = q[idx:].strip()
+    # отрезать хвостовое «стр N» / «страница N» / «page N»
+    cand = re.sub(r"\s+(?:стр\.?|страниц\w*|page)\s*\d+\s*$", "", cand, flags=re.IGNORECASE).strip()
+    return cand or None
 
 
 def _verify_page(q: str) -> int:
