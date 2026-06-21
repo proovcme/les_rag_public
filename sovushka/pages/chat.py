@@ -89,7 +89,31 @@ OUTPUT_FORMATS = {
     "mermaid": ("Диаграмма", "Mermaid"),
     "svg": ("SVG", "Векторная схема"),
     "template": ("По образцу", "Структура файла"),
+    "verify": ("Верификация", "Сверка скана с распознанным"),
 }
+
+
+def _verify_path(q: str) -> str | None:
+    """Путь к скану из сообщения: в кавычках или абсолютный (допускаем пробелы)."""
+    m = re.search(r'["«]([^"»]+\.(?:pdf|png|tif|tiff|jpe?g))["»]', q or "", re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+    m = re.search(r"(/.+\.(?:pdf|png|tif|tiff|jpe?g))", q or "", re.IGNORECASE)
+    return m.group(1).strip() if m else None
+
+
+def _verify_page(q: str) -> int:
+    m = re.search(r"(?:стр\.?|страниц\w*|page)\s*(\d+)", q or "", re.IGNORECASE)
+    return max(0, int(m.group(1)) - 1) if m else 0  # оператор думает 1-based
+
+
+def _is_verify_request(q: str) -> bool:
+    """«проверь/сверь объёмы … <путь к скану>» → артефакт верификации (tool, не LLM)."""
+    ql = (q or "").casefold()
+    has_kw = ("провер" in ql or "свер" in ql or "верифиц" in ql) and (
+        "объём" in ql or "объем" in ql or "скан" in ql or "таблиц" in ql
+    )
+    return bool(has_kw and _verify_path(q))
 
 
 def should_skip_chat_resource_gate(question: str, dataset_filter: str | None = None) -> bool:
@@ -1379,8 +1403,56 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         _set_chat_blocked(blocked, _indexing_summary(data) if blocked else "")
         return allowed
 
+    async def _do_verify(question: str):
+        """Верификация объёмов: распознать скан и открыть спец-артефакт сверки.
+
+        Tool-действие (не LLM-ответ): сплит «скан ↔ распознанное» в панели артефактов.
+        Сохранённый оператором результат = принятая выписка + ground truth для бенча.
+        """
+        path = _verify_path(question)
+        page = _verify_page(question)
+        with chat_column:
+            _render_chat_bubble(question, "chat-msg-user")
+            ph, ph_label = _render_ai_placeholder("Распознаю таблицу объёмов…")
+        chat_scroll.scroll_to(percent=1)
+        _render_artifact_loading("verify", question)
+        res = await api_post("/api/verify/extract", {"path": path, "page": page, "engine": "local"})
+        if not isinstance(res, dict):
+            _finish_ai_placeholder(ph, ph_label, "Не удалось распознать скан (см. лог).", [], "", meta={})
+            return
+        rows = res.get("rows") or []
+        payload = {
+            "token": res.get("token"),
+            "rows": rows,
+            "columns": res.get("columns") or [],
+            "source": path,
+            "page": page,
+        }
+        ans = json.dumps(payload, ensure_ascii=False)
+        text = (
+            f"Распознал таблицу объёмов: {len(rows)} строк из «{path}» (стр.{page + 1}). "
+            "Сверь со сканом и подтверди в артефакте справа →"
+        )
+        _finish_ai_placeholder(ph, ph_label, text, [], "", meta={"out_mode": "text"})
+        with ph:  # кнопка переоткрытия артефакта (как у Клода)
+            ui.button(
+                "Артефакт: Верификация — открыть",
+                icon="o_table_view",
+                on_click=lambda a=ans: _show_artifact(a, "verify"),
+            ).props("no-caps flat dense").classes("sov-artifact-chip").style(
+                "margin-top:6px;border:1px solid var(--border);border-radius:8px;"
+                "background:var(--bg);color:var(--accent);font-size:.68rem;font-weight:700;padding:4px 10px;"
+            )
+        _render_result(ans, "verify", artifact_panel)
+        chat_scroll.scroll_to(percent=1)
+        add_log(f"[ВЕРИФ] {path} стр.{page}: {len(rows)} строк → артефакт")
+
     async def _do_send(question: str):
         if _sending["v"]:
+            return
+        # Верификация объёмов — tool-действие: распознать скан + открыть спец-артефакт.
+        if _is_verify_request(question):
+            await _do_verify(question)
             return
         selected_dataset_filter = (
             detail_dataset.value
@@ -1646,6 +1718,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                         _render_gost_spec(data)
                     else:
                         ui.markdown(ans).classes("sov-artifact-markdown")
+                elif mode == "verify":
+                    from sovushka.pages.verify import render_verify_artifact
+                    render_verify_artifact(_parse_json_from_ai(ans))
                 elif mode == "schema":
                     data = _parse_json_from_ai(ans)
                     if data:

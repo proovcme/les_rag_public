@@ -79,3 +79,17 @@ def test_router_imports_and_registered():
     from proxy.routers import verify as verify_router
     assert verify_router.router.prefix == "/api/verify"
     import proxy.app  # noqa: F401  — verify_router включён в include_router
+
+
+def test_chat_verify_intent():
+    from sovushka.pages.chat import _is_verify_request, _verify_path, _verify_page
+
+    # путь с пробелами (реальные имена чек-листов) вытаскивается целиком
+    q = "проверь объёмы /Users/ovc/RAG/Чек-листы оставшиеся/Чек-лист щиты.pdf стр 2"
+    assert _verify_path(q) == "/Users/ovc/RAG/Чек-листы оставшиеся/Чек-лист щиты.pdf"
+    assert _verify_page(q) == 1  # 1-based → 0-based
+    assert _is_verify_request(q) is True
+    assert _is_verify_request("сверь скан \"/a/b.png\"") is True
+    # без пути или без verify-ключа — не перехватываем (обычный чат идёт в LLM)
+    assert _is_verify_request("проверь почту") is False
+    assert _is_verify_request("сколько объёмов за июнь?") is False
