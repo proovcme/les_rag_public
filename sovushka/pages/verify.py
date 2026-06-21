@@ -2,13 +2,13 @@
 С.О.В.У.Ш.К.А. — специализированный артефакт ВЕРИФИКАЦИИ объёмов.
 
 Не отдельная вкладка, а артефакт чата (как визуализатор Клода): чат распознаёт
-таблицу объёмов со скана и открывает в панели артефактов сплит — слева рендер
-скана, справа распознанная таблица (правится в ячейках). Оператор подтверждает
-«всё ок» / правит / отклоняет; результат уходит в /api/verify/save и становится
-принятой выпиской + ground truth для бенча извлечения.
+таблицу объёмов со скана и открывает в панели артефактов — СКАН сверху (во всю
+ширину панели, читаемо), РАСПОЗНАННАЯ таблица снизу (правится в ячейках, все
+колонки видны). Оператор подтверждает «всё ок» / правит / отклоняет; результат
+уходит в /api/verify/save → принятая выписка + ground truth для бенча.
 
-Рендерится в ТЕКУЩИЙ ui-контекст (внутри карточки артефакта в chat._render_result).
-Бэкенд — proxy/services/verify_service.
+Картинка приходит инлайн (data-URI в payload.image_b64) — без кросс-origin/порта/
+куки. Рендерится в ТЕКУЩИЙ ui-контекст карточки артефакта (chat._render_result).
 """
 from __future__ import annotations
 
@@ -22,35 +22,45 @@ from sovushka.state import add_log, api_post
 
 
 def render_verify_artifact(payload: Optional[dict]) -> None:
-    """Нарисовать сплит «скан ↔ распознанное» из payload {token, rows, columns, source, page}."""
     payload = payload or {}
     token = payload.get("token") or ""
+    image_b64 = payload.get("image_b64") or ""
     source = payload.get("source") or ""
     page = int(payload.get("page") or 0)
     rows = payload.get("rows") or []
-    columns = payload.get("columns") or (list(rows[0].keys()) if rows and isinstance(rows[0], dict) else [])
+    columns = payload.get("columns") or (
+        list(rows[0].keys()) if rows and isinstance(rows[0], dict) else []
+    )
+    img_src = image_b64 or (f"{PROXY_URL}/api/verify/image?token={token}" if token else "")
 
-    if not token:
-        ui.label("нет рендера скана — повтори «проверь объёмы …»").style("color:var(--err);font-size:.75rem;")
+    if not img_src and not rows:
+        ui.label("нет данных — повтори «проверь объёмы …»").style("color:var(--err);font-size:.8rem;")
         return
 
     with ui.column().classes("w-full gap-2"):
-        # ── сплит ──
-        with ui.row().classes("w-full gap-2 no-wrap").style("min-height:48vh;"):
-            with ui.column().style("flex:1;min-width:0;overflow:auto;"):
-                ui.label("СКАН").classes("sov-panel-title")
-                ui.image(f"{PROXY_URL}/api/verify/image?token={token}").classes("w-full").style(
-                    "border:1px solid var(--border);border-radius:6px;background:#0b0d12;"
-                )
-            with ui.column().style("flex:1;min-width:0;overflow:auto;"):
-                ui.label("РАСПОЗНАНО (правится в ячейках)").classes("sov-panel-title")
-                grid = ui.aggrid({
-                    "columnDefs": [{"headerName": c, "field": c} for c in columns]
-                                  or [{"headerName": "значение", "field": "value"}],
-                    "rowData": rows,
-                    "defaultColDef": {"editable": True, "resizable": True, "sortable": True},
-                    "singleClickEdit": True,
-                }).classes("w-full").style("height:46vh;")
+        # ── СКАН (сверху, во всю ширину панели) ──
+        ui.label("СКАН").classes("sov-panel-title")
+        with ui.element("div").style(
+            "max-height:42vh;overflow:auto;border:1px solid var(--border);"
+            "border-radius:6px;background:#0b0d12;"
+        ):
+            if img_src:
+                ui.image(img_src).classes("w-full")
+            else:
+                ui.label("скан не загрузился").style("color:var(--dim);padding:10px;display:block;")
+
+        # ── РАСПОЗНАНО (снизу, во всю ширину, все колонки) ──
+        ui.label("РАСПОЗНАНО — правится в ячейках").classes("sov-panel-title")
+        grid = ui.aggrid({
+            "columnDefs": [
+                {"headerName": c, "field": c, "minWidth": 130, "flex": 1,
+                 "wrapText": True, "autoHeight": True, "wrapHeaderText": True}
+                for c in columns
+            ] or [{"headerName": "значение", "field": "value", "flex": 1}],
+            "rowData": rows,
+            "defaultColDef": {"editable": True, "resizable": True, "sortable": True, "minWidth": 110},
+            "singleClickEdit": True,
+        }).classes("w-full").style("height:44vh;")
 
         # ── вердикт ──
         async def _save(verdict: str) -> None:

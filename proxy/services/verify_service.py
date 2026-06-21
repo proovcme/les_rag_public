@@ -119,6 +119,10 @@ def render_and_extract(path: str, page: int = 0, engine: str = "local") -> dict:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     token = _token(path, page)
     image.save(CACHE_DIR / f"{token}.png")
+    try:
+        image_b64 = _display_b64(image)  # inline для артефакта (обходим кросс-origin/порт/куку)
+    except Exception:
+        image_b64 = ""
 
     rows: list[dict] = []
     try:
@@ -140,7 +144,19 @@ def render_and_extract(path: str, page: int = 0, engine: str = "local") -> dict:
         for k in r:
             if k not in columns:
                 columns.append(k)
-    return {"token": token, "rows": rows, "columns": columns}
+    return {"token": token, "rows": rows, "columns": columns, "image_b64": image_b64}
+
+
+def _display_b64(image, max_w: int = 1100) -> str:
+    """PNG страницы → data-URI (даунскейл по ширине) для inline-показа в артефакте."""
+    import base64
+    import io
+
+    w, h = image.size
+    disp = image.resize((max_w, int(h * max_w / w))) if w > max_w else image
+    buf = io.BytesIO()
+    disp.save(buf, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
 def image_path(token: str) -> Optional[Path]:
