@@ -39,6 +39,8 @@ def test_render_and_extract_orchestration(monkeypatch, tmp_path):
     monkeypatch.setattr(vs, "CACHE_DIR", tmp_path / "cache")
     monkeypatch.setattr(vs, "_safe_path", lambda path: tmp_path / "scan.pdf")
     monkeypatch.setattr(vs, "_load_page_image", lambda src, page: _FakeImg())
+    # vision-путь первый: для проверки фолбэка на as-built OCR — глушим его
+    monkeypatch.setattr(vs, "_vision_extract_rows", lambda image: [])
     monkeypatch.setattr(asbuilt_ocr, "resolve_engine", lambda e: object())
     monkeypatch.setattr(
         asbuilt_ocr, "vision_ocr_tables",
@@ -52,6 +54,22 @@ def test_render_and_extract_orchestration(monkeypatch, tmp_path):
     assert res["columns"] == ["поз", "кол", "ед"]
     # рендер страницы закэширован и достаётся по токену
     assert vs.image_path(res["token"]) is not None
+
+
+def test_render_and_extract_uses_vision_first(monkeypatch, tmp_path):
+    class _FakeImg:
+        def save(self, p, **kw):
+            from pathlib import Path
+            Path(p).write_bytes(b"x") if isinstance(p, (str, Path)) else None
+
+    monkeypatch.setattr(vs, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(vs, "_safe_path", lambda path: tmp_path / "scan.pdf")
+    monkeypatch.setattr(vs, "_load_page_image", lambda src, page: _FakeImg())
+    monkeypatch.setattr(vs, "_vision_extract_rows", lambda image: [{"помещение": "451", "количество": "5"}])
+
+    res = vs.render_and_extract("scan.pdf", 0, "local")
+    assert res["rows"] == [{"помещение": "451", "количество": "5"}]
+    assert res["columns"] == ["помещение", "количество"]
 
 
 def test_render_and_extract_survives_failed_extraction(monkeypatch, tmp_path):
@@ -68,9 +86,10 @@ def test_render_and_extract_survives_failed_extraction(monkeypatch, tmp_path):
     def _boom(*a, **k):
         raise RuntimeError("движок недоступен")
 
-    monkeypatch.setattr(asbuilt_ocr, "resolve_engine", _boom)
+    monkeypatch.setattr(vs, "_vision_extract_rows", _boom)  # vision упал
+    monkeypatch.setattr(asbuilt_ocr, "resolve_engine", _boom)  # и as-built упал
     res = vs.render_and_extract("scan.pdf", 0, "local")
-    # извлечение упало → пустая таблица, но картинка есть, оператор заполнит руками
+    # оба движка упали → пустая таблица, но картинка есть, оператор заполнит руками
     assert res["rows"] == [] and res["columns"] == []
     assert vs.image_path(res["token"]) is not None
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 from pathlib import Path
 from typing import Optional
@@ -54,11 +55,63 @@ def _load_page_image(src: Path, page: int):
     return Image.open(src).convert("RGB")
 
 
+def _vision_extract_rows(image) -> list[dict]:
+    """Извлечь строки таблицы локальным vision (qwen3-vl-nt + prefill пустого <think>).
+
+    Рабочий рецепт (см. docs/extraction_and_lora): не-thinking рендерер ollama +
+    prefill гасит «размышление» → чистый JSON; читает и рукописное на мусорных сканах.
+    """
+    import base64
+    import io
+    import re
+    import urllib.request
+
+    # Крупные сканы (большие листы) qwen3-vl не сходит к JSON — даунскейлим по ширине.
+    max_w = int(os.getenv("VERIFY_VL_MAX_WIDTH", "1400"))
+    w, h = image.size
+    if w > max_w:
+        image = image.resize((max_w, int(h * max_w / w)))
+
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    img_b64 = base64.b64encode(buf.getvalue()).decode()
+    prompt = (
+        "Скан строительного чек-листа — таблица объёмов/оборудования по помещениям. "
+        "Извлеки ВСЕ строки таблицы в JSON-массив. Поля каждой строки бери из шапки "
+        "таблицы (напр. помещение, оборудование/наименование, позиция, количество, "
+        "единица, отметка_о_приемке). ВКЛЮЧИ рукописные значения (пиши как видишь). "
+        "Только JSON-массив."
+    )
+    body = {
+        "model": os.getenv("VERIFY_VL_MODEL", "qwen3-vl-nt"),
+        "messages": [
+            {"role": "user", "content": prompt, "images": [img_b64]},
+            {"role": "assistant", "content": "<think>\n\n</think>\n\n"},  # гасим thinking
+        ],
+        "stream": False,
+        "options": {"temperature": 0, "num_predict": 2200},
+    }
+    url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/") + "/api/chat"
+    req = urllib.request.Request(
+        url, data=json.dumps(body).encode(), headers={"content-type": "application/json"}, method="POST"
+    )
+    with urllib.request.urlopen(req, timeout=float(os.getenv("VERIFY_VL_TIMEOUT_SEC", "240"))) as r:
+        content = (json.loads(r.read()).get("message", {}) or {}).get("content", "") or ""
+    m = re.search(r"\[.*\]", content, re.DOTALL)
+    if not m:
+        return []
+    try:
+        data = json.loads(m.group(0))
+    except Exception:
+        return []
+    return [row for row in data if isinstance(row, dict)]
+
+
 def render_and_extract(path: str, page: int = 0, engine: str = "local") -> dict:
     """Рендер страницы + извлечение таблицы. Возвращает {token, rows, columns}.
 
-    Извлечение делегируется штатному движку as-built OCR — какой он ни есть; смысл
-    режима в том, что оператор ПРАВИТ результат, а не доверяет ему слепо.
+    Извлечение — локальный vision (qwen3-vl-nt), с фолбэком на штатный as-built OCR.
+    Смысл режима в том, что оператор ПРАВИТ результат, а не доверяет ему слепо.
     """
     src = _safe_path(path)
     image = _load_page_image(src, page)
@@ -69,13 +122,17 @@ def render_and_extract(path: str, page: int = 0, engine: str = "local") -> dict:
 
     rows: list[dict] = []
     try:
-        from proxy.services import asbuilt_ocr
-        ocr_engine = asbuilt_ocr.resolve_engine(engine)
-        text = asbuilt_ocr.vision_ocr_tables(image, ocr_engine)
-        rows = asbuilt_ocr.parse_rows_json(text)
-    except Exception as exc:  # извлечение упало — оператор заполнит вручную
+        rows = _vision_extract_rows(image)
+    except Exception:
         rows = []
-        _detail = f"extract failed: {exc}"
+    if not rows:  # vision не дал — пробуем штатный as-built OCR
+        try:
+            from proxy.services import asbuilt_ocr
+            ocr_engine = asbuilt_ocr.resolve_engine(engine)
+            text = asbuilt_ocr.vision_ocr_tables(image, ocr_engine)
+            rows = asbuilt_ocr.parse_rows_json(text)
+        except Exception:
+            rows = []
 
     # колонки = объединение ключей по порядку появления
     columns: list[str] = []
