@@ -145,15 +145,17 @@ def render_and_extract(path: str, page: int = 0, engine: str = "local") -> dict:
 
 
 def _flatten_row(row: dict) -> dict:
-    """Вложенные dict/list в ячейке → читаемая строка (иначе aggrid рисует [object Object])."""
+    """Вложенные dict/list в ячейке → читаемая строка (иначе aggrid рисует [object Object]).
+    Названия колонок нормализуем: схлопываем переносы/лишние пробелы."""
     out: dict = {}
     for k, v in row.items():
+        key = " ".join(str(k).split())  # «Наименование\nназначения» → «Наименование назначения»
         if isinstance(v, dict):
-            out[k] = " ".join(f"{kk}:{vv}" for kk, vv in v.items() if str(vv).strip())
+            out[key] = " ".join(f"{kk}:{vv}" for kk, vv in v.items() if str(vv).strip())
         elif isinstance(v, list):
-            out[k] = ", ".join(str(x) for x in v)
+            out[key] = ", ".join(str(x) for x in v)
         else:
-            out[k] = v
+            out[key] = v
     return out
 
 

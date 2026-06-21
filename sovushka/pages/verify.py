@@ -51,19 +51,28 @@ def render_verify_artifact(payload: Optional[dict]) -> None:
         else:
             ui.label("скан не загрузился").style("color:var(--dim);padding:10px;display:block;")
 
-        # ── РАСПОЗНАНО (снизу, во всю ширину, все колонки) ──
-        ui.label("РАСПОЗНАНО — правится в ячейках").classes("sov-panel-title")
+        # ── РАСПОЗНАНО: правится и ШАПКА (инпуты), и ячейки (грид) ──
+        ui.label("РАСПОЗНАНО — правь шапку и ячейки").classes("sov-panel-title")
+        header_inputs: list = []  # (исходный ключ, input нового имени)
+        with ui.row().classes("w-full gap-1 flex-wrap").style("margin-bottom:2px;"):
+            ui.label("шапка:").style("font-size:.62rem;color:var(--dim);align-self:center;")
+            for c in columns:
+                inp = ui.input(value=c).props("dense outlined").style("width:120px;font-size:.66rem;")
+                header_inputs.append((c, inp))
         grid = ui.aggrid({
             "columnDefs": [{"headerName": c, "field": c, "minWidth": 120} for c in columns]
                           or [{"headerName": "значение", "field": "value"}],
             "rowData": rows,
             "defaultColDef": {"editable": True, "resizable": True, "sortable": True, "minWidth": 110},
             "singleClickEdit": True,
-        }).classes("w-full").style("height:44vh;")
+        }).classes("w-full").style("height:40vh;")
 
         # ── вердикт ──
         async def _save(verdict: str) -> None:
             data = await grid.get_client_data()
+            # ремап шапки из инпутов (АОРПИ, КОРПУС …) → в ground truth
+            rename = {orig: (inp.value or orig).strip() for orig, inp in header_inputs}
+            data = [{rename.get(k, k): v for k, v in row.items()} for row in data]
             res = await api_post(
                 "/api/verify/save",
                 {"path": source, "page": page, "rows": data, "verdict": verdict},
