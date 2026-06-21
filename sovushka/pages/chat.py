@@ -1427,37 +1427,47 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             _render_chat_bubble(question, "chat-msg-user")
             ph, ph_label = _render_ai_placeholder("Распознаю таблицу объёмов…")
         chat_scroll.scroll_to(percent=1)
-        _render_artifact_loading("verify", question)
-        res = await api_post("/api/verify/extract", {"path": path, "page": page, "engine": "local"})
-        if not isinstance(res, dict):
-            _finish_ai_placeholder(ph, ph_label, "Не удалось распознать скан (см. лог).", [], "", meta={})
-            return
-        rows = res.get("rows") or []
-        payload = {
-            "token": res.get("token"),
-            "rows": rows,
-            "columns": res.get("columns") or [],
-            "source": path,
-            "page": page,
-        }
-        ans = json.dumps(payload, ensure_ascii=False)
-        text = (
-            f"Распознал таблицу объёмов: {len(rows)} строк из «{path}» (стр.{page + 1}). "
-            "Сверь со сканом и подтверди в артефакте справа →"
-        )
-        _finish_ai_placeholder(ph, ph_label, text, [], "", meta={"out_mode": "text"})
-        with ph:  # кнопка переоткрытия артефакта (как у Клода)
-            ui.button(
-                "Артефакт: Верификация — открыть",
-                icon="o_table_view",
-                on_click=lambda a=ans: _show_artifact(a, "verify"),
-            ).props("no-caps flat dense").classes("sov-artifact-chip").style(
-                "margin-top:6px;border:1px solid var(--border);border-radius:8px;"
-                "background:var(--bg);color:var(--accent);font-size:.68rem;font-weight:700;padding:4px 10px;"
+        try:
+            _render_artifact_loading("verify", question)
+            res = await api_post("/api/verify/extract", {"path": path, "page": page, "engine": "local"})
+            if not isinstance(res, dict):
+                _finish_ai_placeholder(ph, ph_label, f"Не удалось распознать скан «{path}» (файл найден? см. лог).", [], "", meta={})
+                return
+            rows = res.get("rows") or []
+            payload = {
+                "token": res.get("token"),
+                "rows": rows,
+                "columns": res.get("columns") or [],
+                "source": path,
+                "page": page,
+            }
+            ans = json.dumps(payload, ensure_ascii=False)
+            text = (
+                f"Распознал таблицу объёмов: {len(rows)} строк из «{path}» (стр.{page + 1}). "
+                "Сверь со сканом и подтверди в артефакте справа →"
             )
-        _render_result(ans, "verify", artifact_panel)
-        chat_scroll.scroll_to(percent=1)
-        add_log(f"[ВЕРИФ] {path} стр.{page}: {len(rows)} строк → артефакт")
+            _finish_ai_placeholder(ph, ph_label, text, [], "", meta={"out_mode": "text"})
+            with ph:  # кнопка переоткрытия артефакта (как у Клода)
+                ui.button(
+                    "Артефакт: Верификация — открыть",
+                    icon="o_table_view",
+                    on_click=lambda a=ans: _show_artifact(a, "verify"),
+                ).props("no-caps flat dense").classes("sov-artifact-chip").style(
+                    "margin-top:6px;border:1px solid var(--border);border-radius:8px;"
+                    "background:var(--bg);color:var(--accent);font-size:.68rem;font-weight:700;padding:4px 10px;"
+                )
+            _render_result(ans, "verify", artifact_panel)
+            chat_scroll.scroll_to(percent=1)
+            add_log(f"[ВЕРИФ] {path} стр.{page}: {len(rows)} строк → артефакт")
+        except Exception as ex:  # любая ошибка — в чат текстом, не в тишину
+            import traceback
+            add_log(f"[ВЕРИФ] ОШИБКА: {ex}")
+            add_log(traceback.format_exc()[:700])
+            try:
+                _finish_ai_placeholder(ph, ph_label, f"⚠️ Верификация упала: {type(ex).__name__}: {ex}", [], "", meta={})
+            except Exception:
+                with chat_column:
+                    _render_chat_bubble(f"⚠️ Верификация упала: {ex}", "chat-msg-ai")
 
     async def _do_send(question: str):
         if _sending["v"]:
