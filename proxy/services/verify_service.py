@@ -56,11 +56,39 @@ def _load_page_image(src: Path, page: int):
 
 
 def _vision_extract_rows(image) -> list[dict]:
-    """Извлечь строки таблицы локальным vision (qwen3-vl-nt + prefill пустого <think>).
+    """Диспетчер: высокий скан (узкая таблица на весь лист) qwen3-vl не берёт целиком
+    (теряет строки / галлюцинирует) → режем на горизонтальные полосы. Иначе — один вызов."""
+    w, h = image.size
+    if h / max(w, 1) > float(os.getenv("VERIFY_VL_TILE_ASPECT", "1.7")):
+        return _tiled_extract(image)
+    return _vision_call(image)
 
-    Рабочий рецепт (см. docs/extraction_and_lora): не-thinking рендерер ollama +
-    prefill гасит «размышление» → чистый JSON; читает и рукописное на мусорных сканах.
-    """
+
+def _tiled_extract(image) -> list[dict]:
+    """Горизонтальные полосы с перекрытием → vision по каждой → строки, дедуп по сигнатуре."""
+    w, h = image.size
+    n = min(5, max(2, round(h / max(w, 1))))   # число полос ~ соотношение сторон
+    overlap = int((h / n) * 0.12)              # перекрытие, чтобы не резать строки пополам
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for i in range(n):
+        top = max(0, int(i * h / n) - overlap)
+        bot = min(h, int((i + 1) * h / n) + overlap)
+        try:
+            tile_rows = _vision_call(image.crop((0, top, w, bot)))
+        except Exception:
+            tile_rows = []
+        for r in tile_rows:
+            sig = json.dumps(r, ensure_ascii=False, sort_keys=True)
+            if sig not in seen:
+                seen.add(sig)
+                rows.append(r)
+    return rows
+
+
+def _vision_call(image) -> list[dict]:
+    """Один vision-вызов qwen3-vl-nt + prefill пустого <think> (рабочий рецепт,
+    см. docs/extraction_and_lora) по одной картинке → строки JSON."""
     import base64
     import io
     import re
@@ -90,6 +118,9 @@ def _vision_extract_rows(image) -> list[dict]:
         "Сначала прочитай ШАПКУ таблицы ДОСЛОВНО и используй её графы как ключи JSON. "
         "Внимательно различай похожие кириллические буквы: А/Л, П/И, О/С, Н/И, Р/Я "
         "(напр. это АОРПИ, КОРПУС — не «ЛОРПИ», не «КОРИУС»). "
+        "ЦИФРЫ пиши ЦИФРАМИ, не латиницей: «5» это пять (НЕ латинская «S»), «0» это ноль "
+        "(НЕ буква «О»), «6» это шесть. В марках сохраняй точки и цифры дословно "
+        "(напр. 1.2ШР5, ШС65, РШТ5.1 — не «ШС6S», не «12ШРПS»). "
         "Извлеки ВСЕ строки данных в JSON-массив объектов (ключ = графа из шапки). "
         "ВКЛЮЧИ рукописные значения — количества, подписи, даты, замечания — пиши как видишь. "
         "КРИТИЧНО: пиши ТОЛЬКО то, что реально видишь на скане. НЕ выдумывай строки, "
