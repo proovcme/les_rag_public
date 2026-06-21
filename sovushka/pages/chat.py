@@ -1436,7 +1436,6 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             rows = res.get("rows") or []
             payload = {
                 "token": res.get("token"),
-                "image_b64": res.get("image_b64"),
                 "rows": rows,
                 "columns": res.get("columns") or [],
                 "source": path,

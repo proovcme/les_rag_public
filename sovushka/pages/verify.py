@@ -24,14 +24,14 @@ from sovushka.state import add_log, api_post
 def render_verify_artifact(payload: Optional[dict]) -> None:
     payload = payload or {}
     token = payload.get("token") or ""
-    image_b64 = payload.get("image_b64") or ""
     source = payload.get("source") or ""
     page = int(payload.get("page") or 0)
     rows = payload.get("rows") or []
     columns = payload.get("columns") or (
         list(rows[0].keys()) if rows and isinstance(rows[0], dict) else []
     )
-    img_src = image_b64 or (f"{PROXY_URL}/api/verify/image?token={token}" if token else "")
+    # картинка — same-origin роутом Совушки (/verify-image), без кросс-порта/base64 в payload
+    img_src = f"/verify-image?token={token}" if token else ""
 
     if not img_src and not rows:
         ui.label("нет данных — повтори «проверь объёмы …»").style("color:var(--err);font-size:.8rem;")
@@ -52,11 +52,8 @@ def render_verify_artifact(payload: Optional[dict]) -> None:
         # ── РАСПОЗНАНО (снизу, во всю ширину, все колонки) ──
         ui.label("РАСПОЗНАНО — правится в ячейках").classes("sov-panel-title")
         grid = ui.aggrid({
-            "columnDefs": [
-                {"headerName": c, "field": c, "minWidth": 130, "flex": 1,
-                 "wrapText": True, "autoHeight": True, "wrapHeaderText": True}
-                for c in columns
-            ] or [{"headerName": "значение", "field": "value", "flex": 1}],
+            "columnDefs": [{"headerName": c, "field": c, "minWidth": 120} for c in columns]
+                          or [{"headerName": "значение", "field": "value"}],
             "rowData": rows,
             "defaultColDef": {"editable": True, "resizable": True, "sortable": True, "minWidth": 110},
             "singleClickEdit": True,

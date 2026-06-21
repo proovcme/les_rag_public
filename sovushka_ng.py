@@ -40,6 +40,19 @@ async def healthz():
     return {"status": "ok", "service": "sovushka"}
 
 
+@app.get("/verify-image")
+async def verify_image(token: str):
+    """Рендер скана для артефакта верификации — same-origin (8051), без кросс-порта/куки."""
+    from fastapi import HTTPException
+    from fastapi.responses import FileResponse
+    from proxy.services import verify_service
+
+    p = verify_service.image_path(token)
+    if p is None:
+        raise HTTPException(404, "нет рендера — повтори «проверь объёмы …»")
+    return FileResponse(p, media_type="image/png")
+
+
 def _start_qdrant_visualizer() -> None:
     """Serve the static Qdrant visualizer on its own local port."""
     with contextlib.suppress(OSError):
