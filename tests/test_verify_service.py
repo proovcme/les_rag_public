@@ -33,6 +33,8 @@ def test_render_and_extract_orchestration(monkeypatch, tmp_path):
     from proxy.services import asbuilt_ocr
 
     class _FakeImg:
+        width, height = 100, 200
+
         def save(self, p):
             Path(p).write_bytes(b"\x89PNG-stub")
 
@@ -50,6 +52,8 @@ def test_render_and_extract_orchestration(monkeypatch, tmp_path):
 
 def test_render_and_extract_uses_vision_first(monkeypatch, tmp_path):
     class _FakeImg:
+        width, height = 100, 200
+
         def save(self, p, **kw):
             from pathlib import Path
             Path(p).write_bytes(b"x") if isinstance(p, (str, Path)) else None
@@ -68,6 +72,8 @@ def test_render_and_extract_survives_failed_extraction(monkeypatch, tmp_path):
     from proxy.services import asbuilt_ocr
 
     class _FakeImg:
+        width, height = 100, 200
+
         def save(self, p):
             Path(p).write_bytes(b"x")
 
@@ -84,6 +90,37 @@ def test_render_and_extract_survives_failed_extraction(monkeypatch, tmp_path):
     # оба движка упали → пустая таблица, но картинка есть, оператор заполнит руками
     assert res["rows"] == [] and res["columns"] == []
     assert vs.image_path(res["token"]) is not None
+
+
+def test_region_image_rejects_tiny_selection(tmp_path):
+    # вырожденное/крошечное выделение → ошибка (а не пустой/мусорный кроп)
+    import pytest
+    with pytest.raises(ValueError):
+        vs._region_image(tmp_path / "x.pdf", 0, [0.5, 0.5, 0.505, 0.505])
+
+
+def test_render_and_extract_uses_region(monkeypatch, tmp_path):
+    class _FakeImg:
+        width, height = 100, 200
+
+        def save(self, p):
+            Path(p).write_bytes(b"x")
+
+    monkeypatch.setattr(vs, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(vs, "_safe_path", lambda path: tmp_path / "scan.pdf")
+    monkeypatch.setattr(vs, "_load_page_image", lambda src, page: _FakeImg())
+    seen = {}
+
+    def _region(src, page, region):
+        seen["region"] = region
+        return _FakeImg()
+
+    monkeypatch.setattr(vs, "_region_image", _region)
+    monkeypatch.setattr(vs, "_vision_extract_rows", lambda image: [{"кол": "5"}])
+
+    res = vs.render_and_extract("scan.pdf", 0, "local", region=[0.1, 0.2, 0.8, 0.6])
+    assert seen["region"] == [0.1, 0.2, 0.8, 0.6]  # регион ушёл в _region_image
+    assert res["rows"] == [{"кол": "5"}] and res["img_w"] == 100 and res["img_h"] == 200
 
 
 def test_router_imports_and_registered():

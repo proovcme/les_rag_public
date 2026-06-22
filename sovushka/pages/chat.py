@@ -1440,6 +1440,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 "columns": res.get("columns") or [],
                 "source": path,
                 "page": page,
+                "img_w": res.get("img_w"),
+                "img_h": res.get("img_h"),
             }
             ans = json.dumps(payload, ensure_ascii=False)
             text = (

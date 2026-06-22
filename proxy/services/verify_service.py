@@ -173,22 +173,58 @@ def _vision_call(image) -> list[dict]:
     return [row for row in data if isinstance(row, dict)]
 
 
-def render_and_extract(path: str, page: int = 0, engine: str = "local") -> dict:
-    """Рендер страницы + извлечение таблицы. Возвращает {token, rows, columns}.
+def _region_image(src: Path, page: int, region: list):
+    """Под-прямоугольник страницы (region = [x0,y0,x1,y1], нормировано 0..1 в координатах
+    ПОКАЗАННОГО рендера) → картинка в ВЫСОКОМ разрешении. Для больших листов-чертежей:
+    оператор выделяет таблицу, vision получает только её, крупно и без шума плана."""
+    x0, y0, x1, y1 = (max(0.0, min(1.0, float(v))) for v in region[:4])
+    if x1 - x0 < 0.01 or y1 - y0 < 0.01:
+        raise ValueError("слишком маленькое выделение")
+    if src.suffix.lower() == ".pdf":
+        import fitz
+        from PIL import Image
+        doc = fitz.open(src)
+        pg = doc[min(page, doc.page_count - 1)]
+        r = pg.rect  # та же ориентация, что и рендер показа (render_pdf_to_images по pg.rect)
+        clip = fitz.Rect(r.x0 + r.width * x0, r.y0 + r.height * y0,
+                         r.x0 + r.width * x1, r.y0 + r.height * y1)
+        scale = float(os.getenv("VERIFY_REGION_SCALE", "5.0"))
+        pix = pg.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=clip)
+        return Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+    from PIL import Image
+    img = Image.open(src).convert("RGB")
+    W, H = img.size
+    crop = img.crop((int(W * x0), int(H * y0), int(W * x1), int(H * y1)))
+    if crop.width < 1600:  # апскейл мелкого выделения под читаемость
+        crop = crop.resize((1600, max(1, int(crop.height * 1600 / crop.width))))
+    return crop
 
-    Извлечение — локальный vision (qwen3-vl-nt), с фолбэком на штатный as-built OCR.
-    Смысл режима в том, что оператор ПРАВИТ результат, а не доверяет ему слепо.
+
+def render_and_extract(path: str, page: int = 0, engine: str = "local",
+                       region: Optional[list] = None) -> dict:
+    """Рендер страницы + извлечение таблицы. Возвращает {token, rows, columns, img_w, img_h}.
+
+    region (опц.) — выделенный оператором прямоугольник [x0,y0,x1,y1] (0..1) для листов,
+    где таблица — часть чертежа: vision получает только выделение, крупно. Смысл режима —
+    оператор ПРАВИТ результат, а не доверяет ему слепо.
     """
     src = _safe_path(path)
-    image = _load_page_image(src, page)
+    image = _load_page_image(src, page)  # ПОЛНЫЙ лист — его показываем и по нему выделяют
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     token = _token(path, page)
     image.save(CACHE_DIR / f"{token}.png")  # отдаётся роутом /verify-image?token= (same-origin)
 
+    extract_img = image
+    if region and len(region) >= 4:
+        try:
+            extract_img = _region_image(src, page, region)
+        except Exception:
+            extract_img = image
+
     rows: list[dict] = []
     try:
-        rows = _vision_extract_rows(image)
+        rows = _vision_extract_rows(extract_img)
     except Exception:
         rows = []
     # Фолбэк на штатный as-built OCR убран: его движок (gemma4:12b) сломан —
@@ -202,7 +238,8 @@ def render_and_extract(path: str, page: int = 0, engine: str = "local") -> dict:
         for k in r:
             if k not in columns:
                 columns.append(k)
-    return {"token": token, "rows": rows, "columns": columns}
+    return {"token": token, "rows": rows, "columns": columns,
+            "img_w": image.width, "img_h": image.height}
 
 
 def _flatten_row(row: dict) -> dict:

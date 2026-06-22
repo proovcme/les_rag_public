@@ -21,6 +21,7 @@ class ExtractRequest(BaseModel):
     path: str
     page: int = 0
     engine: str = "local"
+    region: list[float] | None = None  # [x0,y0,x1,y1] 0..1 — выделенная таблица на чертеже
 
 
 class SaveRequest(BaseModel):
@@ -33,7 +34,7 @@ class SaveRequest(BaseModel):
 @router.post("/extract")
 async def verify_extract(req: ExtractRequest, _user=Depends(require_user)) -> dict:
     try:
-        return verify_service.render_and_extract(req.path, req.page, req.engine)
+        return verify_service.render_and_extract(req.path, req.page, req.engine, req.region)
     except FileNotFoundError:
         raise HTTPException(404, "файл не найден")
     except Exception as exc:
