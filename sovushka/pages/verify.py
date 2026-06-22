@@ -219,4 +219,10 @@ def render_verify_artifact(payload: Optional[dict]) -> None:
                     ui.button("+ строка", on_click=lambda: asyncio.create_task(_add_row())).props("dense flat")
                     status = ui.label("").style("font-size:.72rem;color:var(--dim);")
 
-        _render_table(rows, columns)
+        if payload.get("needs_region") and not rows:
+            with table_box:
+                ui.label(
+                    "↑ Большой лист. Выдели таблицу рамкой на скане, затем «⤵ Извлечь выделенное»."
+                ).style("color:var(--accent);font-size:.8rem;font-weight:700;padding:8px 0;")
+        else:
+            _render_table(rows, columns)

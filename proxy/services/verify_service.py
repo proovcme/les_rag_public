@@ -215,6 +215,18 @@ def render_and_extract(path: str, page: int = 0, engine: str = "local",
     token = _token(path, page)
     image.save(CACHE_DIR / f"{token}.png")  # отдаётся роутом /verify-image?token= (same-origin)
 
+    # Большой лист-чертёж (таблица — лишь часть листа): мусорный проход по всему листу
+    # долгий и бесполезный (план + повороты). Без региона — сразу просим выделить таблицу.
+    mp = (image.width * image.height) / 1_000_000
+    if region is None and mp > float(os.getenv("VERIFY_AUTO_EXTRACT_MAX_MP", "12")):
+        return {
+            "token": token, "rows": [], "columns": [],
+            "img_w": image.width, "img_h": image.height, "needs_region": True,
+            "doc_type": {"type": "неизвестно",
+                         "label": f"большой лист ({mp:.0f} Мп) — выдели таблицу рамкой",
+                         "about": "", "route": "", "confidence": None},
+        }
+
     extract_img = image
     if region and len(region) >= 4:
         try:

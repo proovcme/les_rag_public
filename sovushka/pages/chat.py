@@ -1435,6 +1435,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 return
             rows = res.get("rows") or []
             dtype = res.get("doc_type") or {}
+            needs_region = bool(res.get("needs_region"))
             payload = {
                 "token": res.get("token"),
                 "rows": rows,
@@ -1444,13 +1445,20 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 "img_w": res.get("img_w"),
                 "img_h": res.get("img_h"),
                 "doc_type": dtype,
+                "needs_region": needs_region,
             }
             ans = json.dumps(payload, ensure_ascii=False)
-            tname = dtype.get("label") or "таблицу"
-            text = (
-                f"Распознал «{tname}»: {len(rows)} строк из «{path}» (стр.{page + 1}). "
-                "Сверь со сканом и подтверди в артефакте справа →"
-            )
+            if needs_region:
+                text = (
+                    f"Большой лист-чертёж «{path}» (стр.{page + 1}). Таблица — часть листа: "
+                    "выдели её рамкой на скане в артефакте справа → «⤵ Извлечь выделенное»."
+                )
+            else:
+                tname = dtype.get("label") or "таблицу"
+                text = (
+                    f"Распознал «{tname}»: {len(rows)} строк из «{path}» (стр.{page + 1}). "
+                    "Сверь со сканом и подтверди в артефакте справа →"
+                )
             _finish_ai_placeholder(ph, ph_label, text, [], "", meta={"out_mode": "text"})
             with ph:  # кнопка переоткрытия артефакта (как у Клода)
                 ui.button(

@@ -92,6 +92,29 @@ def test_render_and_extract_survives_failed_extraction(monkeypatch, tmp_path):
     assert vs.image_path(res["token"]) is not None
 
 
+def test_big_sheet_requires_region(monkeypatch, tmp_path):
+    # большой лист-чертёж без региона → не гоняем vision по всему листу, просим рамку
+    class _BigImg:
+        width, height = 5000, 3000  # 15 Мп > порога 12
+
+        def save(self, p):
+            Path(p).write_bytes(b"x")
+
+    monkeypatch.setattr(vs, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(vs, "_safe_path", lambda path: tmp_path / "scan.pdf")
+    monkeypatch.setattr(vs, "_load_page_image", lambda src, page: _BigImg())
+    called = {"vision": False}
+
+    def _v(image):
+        called["vision"] = True
+        return []
+
+    monkeypatch.setattr(vs, "_vision_extract_rows", _v)
+    res = vs.render_and_extract("scan.pdf", 0, "local")  # без региона
+    assert res["needs_region"] is True and res["rows"] == []
+    assert called["vision"] is False  # vision НЕ вызывали — мгновенно
+
+
 def test_region_image_rejects_tiny_selection(tmp_path):
     # вырожденное/крошечное выделение → ошибка (а не пустой/мусорный кроп)
     import pytest
