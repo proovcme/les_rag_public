@@ -23,7 +23,9 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from proxy.services import table_detect  # noqa: E402
-from proxy.services.verify_service import _load_page_image, _safe_path, render_and_extract  # noqa: E402
+from proxy.services.verify_service import (  # noqa: E402
+    _load_page_image, _safe_path, classify_region, render_and_extract,
+)
 
 EXTS = (".pdf", ".tif", ".tiff", ".png", ".jpg", ".jpeg")
 
@@ -31,9 +33,9 @@ EXTS = (".pdf", ".tif", ".tiff", ".png", ".jpg", ".jpeg")
 def _files(target: str) -> list[str]:
     if os.path.isdir(target):
         out = []
-        for ext in EXTS:
-            out += glob.glob(os.path.join(target, f"*{ext}"))
-            out += glob.glob(os.path.join(target, f"*{ext.upper()}"))
+        for ext in EXTS:  # рекурсивно — сканы лежат и в подпапках
+            out += glob.glob(os.path.join(target, "**", f"*{ext}"), recursive=True)
+            out += glob.glob(os.path.join(target, "**", f"*{ext.upper()}"), recursive=True)
         return sorted(set(out))
     return sorted(glob.glob(target))
 
@@ -45,9 +47,17 @@ def process_file(path: str, max_tables: int, classify_only: bool) -> dict:
         rec["img"] = list(img.size)
         regions = table_detect.detect_table_regions(img)
         rec["n_regions"] = len(regions)
-        if classify_only:
-            return rec
         for reg in regions[:max_tables]:
+            if classify_only:  # дёшево: тип по названию+шапке, без построчного извлечения
+                dt = classify_region(path, 0, reg)
+                if dt.get("type") == "неизвестно":
+                    continue  # шум (легенда/рамка/штамп) — не таблица данных
+                rec["tables"].append({
+                    "region": [round(v, 3) for v in reg],
+                    "type": dt.get("label"), "route": dt.get("route"),
+                    "confidence": dt.get("confidence"),
+                })
+                continue
             res = render_and_extract(path, 0, "local", region=reg)
             rows = res.get("rows") or []
             if not rows:
@@ -95,9 +105,13 @@ def main(argv=None) -> int:
         for t in tabs:
             by_type[t.get("type") or "—"] = by_type.get(t.get("type") or "—", 0) + 1
             total_rows += t.get("n_rows", 0)
-        tag = (f"{len(tabs)} табл: " + ", ".join(f"{t['type']}({t['n_rows']})" for t in tabs)) if tabs \
-            else (f"{rec.get('n_regions', 0)} регионов (не извлекал)" if args.classify_only
-                  else "таблиц с данными нет")
+        if tabs:
+            tag = f"{len(tabs)} табл: " + ", ".join(
+                t["type"] + (f"({t['n_rows']})" if t.get("n_rows") is not None else "") for t in tabs)
+        elif args.classify_only:
+            tag = f"{rec.get('n_regions', 0)} регионов — тип не опознан"
+        else:
+            tag = "таблиц с данными нет"
         print(f"[{i}/{len(files)}] {rec['file'][:58]:60} → {tag}" + (f"  ОШИБКА:{rec['error']}" if rec.get("error") else ""))
 
     (out_dir / "batch_report.json").write_text(

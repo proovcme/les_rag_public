@@ -37,6 +37,12 @@ def test_unknown_on_empty():
     assert classify_table(["a", "b", "c"])["type"] == "неизвестно"
 
 
+def test_specific_title_beats_generic():
+    # «кабельный журнал» содержит «журнал» → специфичный тип должен бить generic
+    r = classify_table(["марка", "сечение"], title="Кабельный журнал")
+    assert r["type"] == "кабельный_журнал" and r["route"] == "кабели"
+
+
 def test_title_disambiguates_materials_vs_vor():
     # одинаково «наименование/ед.изм/количество», но название разводит
     cols = ["№", "Наименование работ", "Ед.изм", "Количество", "Обоснование"]

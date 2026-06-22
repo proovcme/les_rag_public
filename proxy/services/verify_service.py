@@ -301,6 +301,64 @@ def _read_title_vision(image) -> str:
         return ""
 
 
+def classify_region(path: str, page: int, region: list) -> dict:
+    """Быстрая классификация ТИПА региона БЕЗ построчного извлечения: читаем только
+    верхнюю полосу (название + шапка) коротким vision → сигнатура. Для пакетной
+    разведки «что в пачке» — кратно дешевле полного извлечения."""
+    from proxy.services import doc_classifier
+    try:
+        x0, y0, x1, y1 = (float(v) for v in region[:4])
+        strip = [x0, y0, x1, min(y1, y0 + 0.25 * (y1 - y0))]  # верх региона = название+шапка
+        img = _region_image(_safe_path(path), page, strip)
+    except Exception:
+        return doc_classifier.classify_table([])
+    head = _read_head_vision(img)
+    return doc_classifier.classify_table(head.get("headers") or [], title=head.get("title") or None)
+
+
+def _read_head_vision(image) -> dict:
+    """Короткий vision-вызов: {title, headers} по ШАПКЕ таблицы (без строк данных)."""
+    try:
+        import base64
+        import io
+        import re as _re
+        import urllib.request
+        w, h = image.size
+        if w > 1500:
+            image = image.resize((1500, int(h * 1500 / w)))
+        buf = io.BytesIO()
+        image.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        prompt = (
+            "Это ВЕРХ строительной таблицы. Верни JSON-объект "
+            '{"title":"<название таблицы: Ведомость материалов / Экспликация помещений / '
+            'Кабельный журнал / Спецификация / Журнал работ / Чек-лист приёмки; пусто если нет>",'
+            '"headers":["<граф.1>","<граф.2>",...]}. Бери ТОЛЬКО шапку и название, НЕ строки данных.'
+        )
+        body = {
+            "model": os.getenv("VERIFY_VL_MODEL", "qwen3-vl-nt"),
+            "messages": [
+                {"role": "user", "content": prompt, "images": [b64]},
+                {"role": "assistant", "content": "<think>\n\n</think>\n\n"},
+            ],
+            "stream": False,
+            "options": {"temperature": 0, "num_predict": 160},
+        }
+        url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/") + "/api/chat"
+        req = urllib.request.Request(
+            url, data=json.dumps(body).encode(), headers={"content-type": "application/json"}, method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=90) as r:
+            content = (json.loads(r.read()).get("message", {}) or {}).get("content", "") or ""
+        m = _re.search(r"\{.*\}", content, _re.DOTALL)
+        if not m:
+            return {}
+        obj = json.loads(m.group(0))
+        return {"title": obj.get("title") or "", "headers": [str(x) for x in (obj.get("headers") or [])]}
+    except Exception:
+        return {}
+
+
 def _flatten_row(row: dict) -> dict:
     """Вложенные dict/list в ячейке → читаемая строка (иначе aggrid рисует [object Object]).
     Названия колонок нормализуем: схлопываем переносы/лишние пробелы."""

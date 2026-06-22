@@ -99,8 +99,11 @@ def classify_table(columns: list, rows: list | None = None, title: str | None = 
         hits = [kw for kw in sig["headers"] if kw in blob]
         score = len(hits) / max(len(sig["headers"]), 1)
         if title_n:
-            if any(tk in title_n for tk in sig.get("title", [])):
-                score += 1.5  # название таблицы — сильнейший сигнал
+            tmatch = [tk for tk in sig.get("title", []) if tk in title_n]
+            if tmatch:
+                # название — сильнейший сигнал; длиннее совпадение = специфичнее
+                # («кабельный журнал» бьёт «журнал», иначе generic выигрывает ничью)
+                score += 1.5 + 0.03 * max(len(tk) for tk in tmatch)
         scores[t] = round(score, 3)
         matched[t] = hits
 
