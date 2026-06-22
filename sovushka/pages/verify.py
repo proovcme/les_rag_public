@@ -122,23 +122,47 @@ def render_verify_artifact(payload: Optional[dict]) -> None:
             rstatus = ui.label("").style("font-size:.7rem;color:var(--dim);")
 
         # ── рендер таблицы (шапка-инпуты + грид + вердикт); перерисовываемо ──
+        ACC = "Принято (объём)"  # колонка приёмки: рукопись с галочками vision не читает → правит оператор
+
         def _render_table(trows: list, tcols: list) -> None:
             table_box.clear()
             tcols = tcols or (list(trows[0].keys()) if trows and isinstance(trows[0], dict) else [])
+            # графа количества → добавляем «Принято», преднаполняя печатным Кол-во
+            qty = next((c for c in tcols if "кол" in str(c).lower()), None)
+            add_acc = bool(qty) and ACC not in tcols
+            disp_cols = list(tcols) + ([ACC] if add_acc else [])
+            disp_rows = []
+            for r in trows:
+                rr = dict(r)
+                if add_acc:
+                    rr[ACC] = rr.get(qty, "")
+                disp_rows.append(rr)
             with table_box:
                 ui.label("РАСПОЗНАНО — правь шапку и ячейки").classes("sov-panel-title")
+                if add_acc:
+                    ui.label(
+                        "«Принято» (зелёная графа) = принятый объём: преднаполнено печатным Кол-во; "
+                        "правь, где на скане рукопись/исправление (галочка = принято как есть)."
+                    ).style("font-size:.6rem;color:var(--dim);")
                 header_inputs: list = []
                 with ui.row().classes("w-full gap-1 flex-wrap").style("margin-bottom:2px;"):
                     ui.label("шапка:").style("font-size:.62rem;color:var(--dim);align-self:center;")
-                    for c in tcols:
+                    for c in tcols:  # переименовываемы только реальные графы (не служебное «Принято»)
                         inp = ui.input(value=c).props("dense outlined").style(
                             "width:120px;font-size:.66rem;"
                         )
                         header_inputs.append((c, inp))
+                coldefs = [{"headerName": c, "field": c, "minWidth": 120} for c in disp_cols] or [
+                    {"headerName": "значение", "field": "value"}
+                ]
+                for cd in coldefs:  # подсветить колонку приёмки
+                    if cd.get("field") == ACC:
+                        cd["cellStyle"] = {"backgroundColor": "rgba(90,200,120,0.14)", "fontWeight": "700"}
+                        cd["pinned"] = "right"
+                        cd["minWidth"] = 130
                 grid = ui.aggrid({
-                    "columnDefs": [{"headerName": c, "field": c, "minWidth": 120} for c in tcols]
-                                  or [{"headerName": "значение", "field": "value"}],
-                    "rowData": trows,
+                    "columnDefs": coldefs,
+                    "rowData": disp_rows,
                     "defaultColDef": {"editable": True, "resizable": True, "sortable": True, "minWidth": 110},
                     "singleClickEdit": True,
                 }).classes("w-full").style("height:40vh;")
