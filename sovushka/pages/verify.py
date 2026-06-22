@@ -42,6 +42,26 @@ def render_verify_artifact(payload: Optional[dict]) -> None:
     sel = {"x0": None, "y0": None, "x1": None, "y1": None, "down": False}
 
     with ui.column().classes("w-full gap-2"):
+        # ── ТИП документа (классификатор: ведомость/экспликация/журнал/…) ──
+        type_badge = ui.html("").classes("w-full")
+
+        def _set_type(dt: Optional[dict]) -> None:
+            dt = dt or {}
+            label = dt.get("label") or "тип не распознан"
+            known = dt.get("type") and dt.get("type") != "неизвестно"
+            color = "#5ac878" if known else "#c79a3a"
+            about = f" · {dt.get('about')}" if dt.get("about") else ""
+            tr = f" · название: «{dt.get('title_read')}»" if dt.get("title_read") else ""
+            type_badge.content = (
+                f'<div style="display:inline-block;padding:3px 10px;border-radius:8px;'
+                f'background:rgba(90,200,120,0.10);border:1px solid {color};color:{color};'
+                f'font-size:.72rem;font-weight:800">📄 {label}'
+                f'<span style="color:var(--dim);font-weight:500">{about} '
+                f'(conf {dt.get("confidence", "—")}){tr}</span></div>'
+            )
+
+        _set_type(payload.get("doc_type"))
+
         # ── СКАН с выделением региона ──
         with ui.row().classes("items-center gap-2 w-full"):
             ui.label("СКАН").classes("sov-panel-title")
@@ -102,6 +122,7 @@ def render_verify_artifact(payload: Optional[dict]) -> None:
                 "/api/verify/extract", {"path": source, "page": page, "region": reg}
             )
             if isinstance(res, dict) and res.get("rows") is not None:
+                _set_type(res.get("doc_type"))
                 _render_table(res.get("rows") or [], res.get("columns") or [])
                 rstatus.text = f"из выделенного: {len(res.get('rows') or [])} строк"
                 add_log(f"[ВЕРИФ] регион {reg} → {len(res.get('rows') or [])} строк")

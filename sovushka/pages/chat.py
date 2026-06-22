@@ -1434,6 +1434,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 _finish_ai_placeholder(ph, ph_label, f"Не удалось распознать скан «{path}» (файл найден? см. лог).", [], "", meta={})
                 return
             rows = res.get("rows") or []
+            dtype = res.get("doc_type") or {}
             payload = {
                 "token": res.get("token"),
                 "rows": rows,
@@ -1442,10 +1443,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 "page": page,
                 "img_w": res.get("img_w"),
                 "img_h": res.get("img_h"),
+                "doc_type": dtype,
             }
             ans = json.dumps(payload, ensure_ascii=False)
+            tname = dtype.get("label") or "таблицу"
             text = (
-                f"Распознал таблицу объёмов: {len(rows)} строк из «{path}» (стр.{page + 1}). "
+                f"Распознал «{tname}»: {len(rows)} строк из «{path}» (стр.{page + 1}). "
                 "Сверь со сканом и подтверди в артефакте справа →"
             )
             _finish_ai_placeholder(ph, ph_label, text, [], "", meta={"out_mode": "text"})

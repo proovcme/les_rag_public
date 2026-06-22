@@ -238,8 +238,55 @@ def render_and_extract(path: str, page: int = 0, engine: str = "local",
         for k in r:
             if k not in columns:
                 columns.append(k)
+
+    # ТИП таблицы: сигнатура шапки (бесплатно) → если слабо, дешёвый vision на название
+    from proxy.services import doc_classifier
+    doc_type = doc_classifier.classify_table(columns, rows)
+    if doc_type.get("type") == "неизвестно" and rows and os.getenv("VERIFY_CLASSIFY_TITLE", "1") == "1":
+        title = _read_title_vision(extract_img)
+        if title:
+            doc_type = doc_classifier.classify_table(columns, rows, title=title)
+            doc_type["title_read"] = title
+
     return {"token": token, "rows": rows, "columns": columns,
-            "img_w": image.width, "img_h": image.height}
+            "img_w": image.width, "img_h": image.height, "doc_type": doc_type}
+
+
+def _read_title_vision(image) -> str:
+    """Дешёвый vision-вызов: ТОЛЬКО название таблицы — для классификации типа, когда
+    сигнатуры шапки не хватило (напр. экспликация с графами «номер/Имя»)."""
+    try:
+        import base64
+        import io
+        import urllib.request
+        w, h = image.size
+        if w > 1400:
+            image = image.resize((1400, int(h * 1400 / w)))
+        buf = io.BytesIO()
+        image.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        prompt = (
+            "Верни ТОЛЬКО название этой таблицы одной короткой строкой (напр.: «Ведомость "
+            "материалов», «Экспликация помещений», «Спецификация», «Журнал работ», «Кабельный "
+            "журнал», «Чек-лист приёмки»). Если названия нет — верни пустую строку."
+        )
+        body = {
+            "model": os.getenv("VERIFY_VL_MODEL", "qwen3-vl-nt"),
+            "messages": [
+                {"role": "user", "content": prompt, "images": [b64]},
+                {"role": "assistant", "content": "<think>\n\n</think>\n\n"},
+            ],
+            "stream": False,
+            "options": {"temperature": 0, "num_predict": 40},
+        }
+        url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/") + "/api/chat"
+        req = urllib.request.Request(
+            url, data=json.dumps(body).encode(), headers={"content-type": "application/json"}, method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return ((json.loads(r.read()).get("message", {}) or {}).get("content", "") or "").strip()[:120]
+    except Exception:
+        return ""
 
 
 def _flatten_row(row: dict) -> dict:
