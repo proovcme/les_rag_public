@@ -40,6 +40,17 @@ _MATERIAL_WORDS = {
 }
 _OBJECT_WORDS = ("дом", "коттедж", "дача", "здание", "сруб", "баня", "гараж")
 
+# Человекочитаемые подписи геометрических ASSUME-коэффициентов (для блока «Допущения»).
+# Ключ нет в карте → показываем как есть (сырое имя из geometry шаблона).
+_GEO_LABELS = {
+    "H": "Высота этажа H, м",
+    "roof_slope_k": "Коэф. скатной кровли (к площади застройки)",
+    "found_section": "Сечение ленты фундамента, м²",
+    "roof_flat_k": "Коэф. плоской кровли (к площади застройки)",
+    "found_slab_t": "Толщина фундаментной плиты, м",
+    "partition_k": "Коэф. перегородок (к площади этажа)",
+}
+
 # Этажность словом: одно/двух/трёх… → N.
 _FLOORS_WORD = {
     "одноэтаж": 1, "однаэтаж": 1, "двухэтаж": 2, "двуэтаж": 2, "трёхэтаж": 3,
@@ -239,8 +250,10 @@ def estimate(
 
     tpl = select_template(parsed, path=templates_path)
     if tpl is None:
+        have = [t.get("name") or t.get("id") for t in load_templates(templates_path)]
+        have_str = "; ".join(h for h in have if h) or "—"
         return {"ok": False, "parsed": parsed,
-                "error": "Нет шаблона под объект/материал (есть: деревянный дом)."}
+                "error": f"Нет шаблона под объект/материал (есть: {have_str})."}
 
     vor = build_vor(tpl, parsed)
 
@@ -293,16 +306,17 @@ def estimate(
 def _collect_assumptions(
     tpl: dict[str, Any], params: dict[str, Any], missing: list[str]
 ) -> list[str]:
-    """Человекочитаемые допущения (геометрия/коэффициенты/пропуски) для прозрачности сметы."""
+    """Человекочитаемые допущения (геометрия/коэффициенты/пропуски) для прозрачности сметы.
+    Коэффициенты берутся ДИНАМИЧЕСКИ из geometry шаблона — каждый тип объекта (дерево/
+    монолит) несёт свои (скат vs плоская кровля, лента vs плита) и показывает только их."""
     geo = tpl.get("geometry") or {}
     out = [
         f"Пятно квадратное: периметр P = 4·√(S/N) = {params.get('P')} м "
         f"(S={params.get('S')} м², N={params.get('N')}, S₁={params.get('S1')} м²).",
-        f"Высота этажа H = {geo.get('H', '?')} м (ASSUME).",
-        f"Коэф. скатной кровли = {geo.get('roof_slope_k', '?')} к площади застройки (ASSUME).",
-        f"Сечение ленты фундамента = {geo.get('found_section', '?')} м² (ASSUME).",
-        "Объёмы — из формул шаблона над {S,N,P,H,S₁}; числа из норм ГЭСН (ADR-11, 0 LLM в расчёте).",
     ]
+    for k, v in geo.items():
+        out.append(f"{_GEO_LABELS.get(k, k)} = {v} (ASSUME).")
+    out.append("Объёмы — из формул шаблона над {S,N,P,H,S₁}; числа из норм ГЭСН (ADR-11, 0 LLM в расчёте).")
     if missing:
         out.append(f"Нет нормы в локальной базе (пропущены): {', '.join(missing)}.")
     return out

@@ -201,28 +201,68 @@ def _answer_object_estimate(q: str) -> Optional[dict[str, Any]]:
 
     r = estimate(q)
     if not r.get("ok"):
-        return None                                   # объект не распознан → дальше/в RAG
+        # Запрос ЯВНО про объектную смету (есть площадь/этажность ИЛИ императив «смету на …»),
+        # но собрать не можем (нет шаблона под объект/материал, нет площади) — отдаём БЫСТРЫЙ
+        # честный ответ, а НЕ роняем в полный RAG (там local-only датасет → форс локальной 4B →
+        # десятки секунд генерации мусора). Чистый knowledge-вопрос про сметы (без объекта/чисел)
+        # → None, пусть идёт в RAG.
+        parsed = r.get("parsed", {})
+        # «Конкретный» сигнал объектной сметы = распознан объект/площадь/этажность. Голый
+        # императив без параметров («посчитай смету») слишком расплывчат → пусть идёт в RAG.
+        build_intent = bool(parsed.get("object") or parsed.get("area") or parsed.get("floors"))
+        if not build_intent:
+            return None
+        err = r.get("error") or "Не получилось собрать смету по описанию."
+        msg = (
+            f"{err}\n"
+            f"Распознал: объект={parsed.get('object') or '—'}, "
+            f"материал={parsed.get('material') or '—'}, "
+            f"этажей={parsed.get('floors') or '—'}, "
+            f"площадь={parsed.get('area') or '—'} м².\n"
+            "Под этот объект пока нет типового шаблона. Добавь его в "
+            "config/domain/object_templates.yaml (коды ГЭСН + формулы объёма) — тогда соберу "
+            "смету из локальной базы за секунду, без облака и без долгой генерации."
+        )
+        return {"answer": msg, "operation": "object_estimate_nomatch"}
     parsed, est = r.get("parsed", {}), r.get("estimate", {})
     pos, apos = r.get("vor", {}).get("positions", []), est.get("positions", [])
     head = r.get("template", {}).get("name", "объект")
+    # Тело — markdown-ТАБЛИЦА позиций (inline-рендер чата превращает её в ui.table) +
+    # проза с итогами/допущениями над и под таблицей.
     lines = [f"Смета: {head} · {parsed.get('area')} м², {parsed.get('floors')} эт. "
-             f"(укрупнённо, по типовому составу работ)"]
+             f"(укрупнённо, по типовому составу работ)", ""]
+    lines.append("| Позиция | Код ГЭСН | Объём | Стоимость, ₽ |")
+    lines.append("|---|---|---|---|")
     for p, ap in zip(pos, apos):
         t = _f(ap.get("base", {}).get("total"))
-        lines.append(f"• {str(p.get('name',''))} · {p.get('code')} · "
-                     f"{p.get('qty')} {p.get('unit','')} — {_fmt_num(t)} ₽")
+        qty_disp = _humanize_qty(p.get("qty"), p.get("unit", ""))
+        name = str(p.get("name", "")).replace("|", "/")
+        lines.append(f"| {name} | {p.get('code')} | {qty_disp} | {_fmt_num(t)} |")
+    lines.append("")
     tot = r.get("totals", {})
-    lines.append(f"  ИТОГО СМР (прямые+НР+СП): {_fmt_num(tot.get('smr'))} ₽")
-    lines.append(f"  + непредвиденные {_fmt_num(tot.get('contingency_pct'))}%: {_fmt_num(tot.get('contingency'))} ₽")
-    lines.append(f"  + НДС {_fmt_num(tot.get('vat_pct'))}%: {_fmt_num(tot.get('vat'))} ₽")
-    lines.append(f"━━ ВСЕГО (общая цена с НДС): {_fmt_num(tot.get('grand_total'))} ₽")
+    lines.append(f"**ИТОГО СМР (прямые+НР+СП): {_fmt_num(tot.get('smr'))} ₽**")
+    lines.append(f"+ непредвиденные {_fmt_num(tot.get('contingency_pct'))}%: {_fmt_num(tot.get('contingency'))} ₽")
+    lines.append(f"+ НДС {_fmt_num(tot.get('vat_pct'))}%: {_fmt_num(tot.get('vat'))} ₽")
+    lines.append(f"**━━ ВСЕГО (общая цена с НДС): {_fmt_num(tot.get('grand_total'))} ₽**")
     if r.get("missing_codes"):
         lines.append(f"⚠ нет в базе: {', '.join(r['missing_codes'])}")
-    lines.append(f"⚙ Состав укрупнённый ({tot.get('positions')} поз., типовой ИЖС) — "
+    lines.append(f"⚙ Состав укрупнённый ({tot.get('positions')} поз., типовой) — "
                  f"отделка/проёмы/инженерка добавляются в шаблон.")
     if r.get("assumptions"):
         lines.append("Допущения: " + "; ".join(r["assumptions"]))
     return {"answer": "\n".join(lines), "operation": "object_estimate"}
+
+
+def _humanize_qty(qty: Any, unit: str) -> str:
+    """Объём из нормы (qty в «сотнях/десятках единиц») → человекочитаемо в базовой единице.
+    «100 м3» qty=4.0 → «400 м³»; «10 м2» qty=125.2 → «1 252 м²»."""
+    u = str(unit or "").strip()
+    factor, base_u = 1.0, u
+    m = re.match(r"(\d+)\s*(.+)", u)
+    if m:
+        factor = float(m.group(1))
+        base_u = m.group(2).replace("м2", "м²").replace("м3", "м³")
+    return f"{_fmt_num(round(_f(qty) * factor, 2))} {base_u}".strip()
 
 
 def maybe_handle_smeta_query(question: str, *, project_id: int = 0) -> Optional[dict[str, Any]]:
