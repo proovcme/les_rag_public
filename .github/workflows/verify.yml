@@ -3,11 +3,11 @@
 # Матрица macos+windows появится в W4.3 после кроссплатформенных правок.
 name: verify
 
+# Авто-триггеры СНЯТЫ: приватный репо на БЕСПЛАТНОМ GitHub — Actions-минуты выжжены (дорогие macOS-
+# runner'ы 10×), любой прогон падает «job was not started». Гейт гоняем ЛОКАЛЬНО: `make verify`.
+# Запуск вручную (Actions → verify → Run) или верни push/PR, когда минуты сбросятся / репо публичный.
 on:
-  push:
-    branches: ["main", "feat/**", "chore/**", "fix/**"]
-  pull_request:
-    branches: ["main"]
+  workflow_dispatch:
 
 jobs:
   verify:
