@@ -135,6 +135,22 @@ def _parse_pdf(path: Path, route=None) -> str:
         except Exception as docling_err:
             logger.warning("[CONVERT] docling failed для %s (%s) — fallback pymupdf", path.name, docling_err)
 
+    # 1.7 (Ц11, ADR-5): layout-aware извлечение — сохраняем порядок чтения / колонки /
+    # таблицы (markdown PIPE-таблицы, стыкуется с Ц9 table_appendix). СТРОГО аддитивно:
+    # за флагом LES_LAYOUT_PDF, любой сбой/пустой результат → тихий fallback на штатный
+    # pymupdf4llm-путь ниже. Не запускаем в OCR-режиме (там нет текстового слоя).
+    if not force_ocr:
+        try:
+            from .pdf_layout import extract_layout_markdown, layout_pdf_enabled
+            if layout_pdf_enabled():
+                layout_md = extract_layout_markdown(path)
+                if layout_md and len(layout_md.strip()) > 100:
+                    logger.info("[CONVERT] %s: layout-aware извлечение (LES_LAYOUT_PDF)", path.name)
+                    return layout_md
+        except Exception as layout_err:  # noqa: BLE001 — фолбэк на штатный путь
+            logger.warning("[CONVERT] layout-парсер %s упал (%s) — fallback на pymupdf4llm",
+                           path.name, layout_err)
+
     # 2. Пытаемся извлечь стандартный текстовый слой.
     # W1.4: большие PDF конвертируются постраничными батчами — ограничивает пик памяти
     # и даёт прогресс в логе (лечение причины таймаутов на 60+ МБ комплектах).
