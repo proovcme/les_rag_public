@@ -244,20 +244,28 @@ def _route_llm_text(prompt: str, *, max_tokens: int = 40) -> str:
 
     import httpx
 
-    base = os.getenv("LES_ROUTER_BASE_URL", "http://127.0.0.1:8080/v1").rstrip("/")
-    model = os.getenv("LES_ROUTER_MODEL", "mlx-community/Qwen3.5-4B-MLX-4bit")
-    key = os.getenv("LES_ROUTER_API_KEY", "local")
-    timeout = int(os.getenv("LES_ROUTER_TIMEOUT", "15"))
+    # Роутер — на ТОЙ ЖЕ модели, что и ответ (по умолчанию провайдер OPENAI_*): на облаке это
+    # ~0.5-1с вместо ~7с локальной 4B на КАЖДЫЙ запрос. LES_ROUTER_* — явный override (локальный MLX
+    # для канал-независимости, если нужен). Короткий таймаут; сбой → none → RAG, чат не вешаем.
+    base = os.getenv("LES_ROUTER_BASE_URL", os.getenv("OPENAI_BASE_URL", "http://127.0.0.1:8080/v1")).rstrip("/")
+    model = os.getenv("LES_ROUTER_MODEL", os.getenv("OPENAI_MODEL", "gpt-4.1"))
+    key = os.getenv("LES_ROUTER_API_KEY", os.getenv("OPENAI_API_KEY", "local"))
+    timeout = int(os.getenv("LES_ROUTER_TIMEOUT", "12"))
     url = f"{base}/chat/completions" if base.endswith("/v1") else f"{base}/v1/chat/completions"
+    # gpt-5.x / o-серия требуют max_completion_tokens вместо max_tokens (иначе 400).
+    ml = model.lower()
+    tok_key = ("max_completion_tokens"
+               if (ml.startswith("gpt-5") or (len(ml) >= 2 and ml[0] == "o" and ml[1].isdigit()))
+               else "max_tokens")
     try:
         resp = httpx.post(url, headers={"Authorization": f"Bearer {key}"}, timeout=timeout, json={
-            "model": model, "temperature": 0.0, "max_tokens": max_tokens,
+            "model": model, "temperature": 0.0, tok_key: max_tokens,
             "messages": [{"role": "user", "content": prompt}],
         })
         resp.raise_for_status()
         return str(resp.json().get("choices", [{}])[0].get("message", {}).get("content", "") or "")
     except Exception as err:  # noqa: BLE001 — best-effort; сбой → none → RAG, не вешать чат
-        logger.warning("[AGENT] router LLM (local) недоступен: %s", err)
+        logger.warning("[AGENT] router LLM недоступен: %s", err)
         return ""
 
 
