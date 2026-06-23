@@ -190,10 +190,12 @@ def maybe_answer_table_query(
     field = _select_numeric_field(question)
     operation = _select_operation(question)
     subject_kw = _query_keywords(question)
-    if operation == "sum" and subject_kw:
-        # Полная детерминированная агрегация ПО ПРЕДМЕТУ: суммируем по ВСЕМ parquet
-        # задействованных датасетов, а не только по retrieved top-k (иначе сумма частична —
-        # кейс кабель 3х1,5: 5900 вместо 15030.72). ADR-11: числа считает код, не LLM.
+    if operation == "sum" and (subject_kw or _wants_full_table(question)):
+        # Полная детерминированная агрегация: суммируем по ВСЕМ parquet задействованных
+        # датасетов, а не только по retrieved top-k (иначе сумма частична — кейс кабель
+        # 3х1,5: 5900 вместо 15030.72). ADR-11: числа считает код, не LLM.
+        # Срабатывает либо по ПРЕДМЕТУ (subject_kw фильтрует строки), либо при ЯВНОМ
+        # «по всем строкам / все позиции» (универсальный квантор → суммируем всю таблицу).
         ds_ids = [
             d for d in _dedupe(
                 str((getattr(c, "meta", {}) or {}).get("dataset_id") or "") for c in table_chunks
@@ -281,6 +283,24 @@ def _select_operation(question: str) -> str:
     if tokens & {"общая", "общую", "общий", "общее", "общие", "всего"}:
         return "sum"
     return "list"
+
+
+def _wants_full_table(question: str) -> bool:
+    """Явный универсальный квантор: «по всем строкам / все позиции / всю таблицу».
+
+    Отличает осознанную агрегацию ПО ВСЕЙ таблице (без предмета) от «слепой» суммы
+    вроде «итого по таблице», где предмет не задан и суммировать всё рискованно.
+    Требуем слово-квантор все/всем/всех/всю/всей/всё рядом с областью охвата
+    (строк/позици/таблиц/смет/ведомост). «всего» исключено — оно само по себе
+    лишь маркёр операции (sum), а не указание «по всем».
+    """
+    tokens = set(re.findall(r"[а-яёa-z]{2,}", question.casefold()))
+    quantifier = {"все", "всем", "всех", "всю", "всей", "всё"}
+    if not (tokens & quantifier):
+        return False
+    scope = ("строк", "позици", "таблиц", "смет", "ведомост", "перечн", "список")
+    q = question.casefold()
+    return any(token in q for token in scope)
 
 
 def _chunk_parquet_ref(chunk: RetrievedChunk) -> Optional[tuple[str, str]]:
