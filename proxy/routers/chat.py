@@ -1820,14 +1820,21 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             cache_marker=cache_marker,
             use_validation=use_validation,
         )
-    validation_context_windows = expand_context_windows(
-        chunks,
-        collection=getattr(rag_backend, "collection_name", ""),
-        logger=logger,
-        max_chunks=_env_int("RAG_VALIDATION_CONTEXT_MAX_CHUNKS", 10),
-        max_chars_per_chunk=_env_int("RAG_VALIDATION_CONTEXT_WINDOW_CHARS", 2600),
-        radius=_env_int("RAG_VALIDATION_CONTEXT_RADIUS", 1),
-    )
+    # ПЕРФ: валидатор теперь аддитивный/быстрый (rules+coreml fail-open) — ему НЕ нужен второй
+    # дорогой проход expand_context_windows (это удваивало context-фазу, 2.7-5.7с на сложных).
+    # Переиспользуем контекст ответа: те же чанки, валидатор проверяет ответ по ним.
+    # Отдельный проход вернуть: RAG_VALIDATION_SEPARATE_CONTEXT=true.
+    if _env_bool("RAG_VALIDATION_SEPARATE_CONTEXT", False):
+        validation_context_windows = expand_context_windows(
+            chunks,
+            collection=getattr(rag_backend, "collection_name", ""),
+            logger=logger,
+            max_chunks=_env_int("RAG_VALIDATION_CONTEXT_MAX_CHUNKS", 10),
+            max_chars_per_chunk=_env_int("RAG_VALIDATION_CONTEXT_WINDOW_CHARS", 2600),
+            radius=_env_int("RAG_VALIDATION_CONTEXT_RADIUS", 1),
+        )
+    else:
+        validation_context_windows = context_windows
     retrieval_trace["validation_context_window"] = validation_context_windows.payload()
     t_ctx = time.time() - t_ctx_start
 
