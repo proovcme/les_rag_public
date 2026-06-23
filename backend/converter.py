@@ -447,17 +447,26 @@ def _parse_json(path: Path) -> str:
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             first_line = f.readline().strip()
+            second_line = ""
+            for _l in f:                      # следующая НЕПУСТАЯ строка (readline уже съел первую)
+                if _l.strip():
+                    second_line = _l.strip()
+                    break
             f.seek(0)
 
-            # Определяем JSONL по первой строке
-            is_jsonl = False
-            try:
-                json.loads(first_line)
-                is_jsonl = True
-            except Exception:
-                pass
+            # JSONL = расширение .jsonl ЛИБО есть ВТОРАЯ строка, тоже парсящаяся как JSON.
+            # Компактный json-массив (json.dumps([...]) — ОДНА строка) → second_line="" → НЕ jsonl,
+            # читаем целиком (иначе весь list уходил в построчную ветку → "" → файл индексировался ПУСТЫМ).
+            is_jsonl = path.suffix.lower() == ".jsonl"
+            if not is_jsonl and second_line:
+                try:
+                    json.loads(first_line)
+                    json.loads(second_line)
+                    is_jsonl = True
+                except Exception:
+                    pass
 
-            if is_jsonl or size_mb > 10:
+            if is_jsonl or (size_mb > 10 and bool(second_line)):
                 # Стриминг построчно
                 for i, line in enumerate(f):
                     if i >= MAX_ENTRIES:

@@ -1336,6 +1336,8 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(memory_guard_loop())
     yield
     logger.info("[SHUTDOWN] Завершение работы.")
+    main_engine.stop()        # остановить cleanup-task TTL-выгрузки (не утекать при shutdown)
+    val_engine.stop()
     embedder.force_unload()
     if _coreml_validator is not None:
         _coreml_validator.force_unload()
