@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -380,7 +381,9 @@ async def retrieve_chat_chunks(
     # к документам-узлам (LLM-роутер по каталогу, см. doc_router), затем стадия-2 ищет
     # ТОЛЬКО в них. За флагом LES_TYPED_RETRIEVAL; пусто/сбой → плоский поиск.
     doc_filter = None
+    _rt: dict[str, float] = {}  # под-фазовый тайминг ретрива (профилирование латентности)
     if os.getenv("LES_TYPED_RETRIEVAL", "false").strip().lower() == "true" and is_technical_or_legal:
+        _s = time.monotonic()
         try:
             from proxy.services.doc_router import route_documents
             doc_filter = await route_documents(
@@ -390,11 +393,19 @@ async def retrieve_chat_chunks(
         except Exception as _route_err:  # noqa: BLE001 — роутинг best-effort
             logger.warning("[DOC_ROUTER] fallback на плоский поиск: %s", _route_err)
             doc_filter = None
+        _rt["route"] = round(time.monotonic() - _s, 3)
+    _s = time.monotonic()
     vector_chunks = await rag_backend.retrieve(retrieval_query, dataset_ids=dataset_ids, top_k=vector_top_k, doc_filter=doc_filter)
+    _rt["vec"] = round(time.monotonic() - _s, 3)
     # W2.4: BGE-M3 learned-sparse рядом с dense (Qdrant-native гибрид). За флагом
     # RAG_SPARSE_ENABLED; при сбое/пустом sparse — молча падаем на dense+FTS.
+    _s = time.monotonic()
     sparse_chunks = await _retrieve_sparse_safe(rag_backend, retrieval_query, dataset_ids, pool_k, logger, doc_filter=doc_filter)
+    _rt["sparse"] = round(time.monotonic() - _s, 3)
+    _s = time.monotonic()
     chunks, trace = _hybrid_merge(question, vector_chunks, dataset_ids, rag_backend, logger, retrieval_query=retrieval_query, pool_k=pool_k, limit=merged_top_k, sparse_chunks=sparse_chunks)
+    _rt["merge"] = round(time.monotonic() - _s, 3)
+    logger.info("[RETR] подфазы=%s", _rt)
     # ADR-12 (Ц9): подъём ТАБЛИЧНЫХ ПРИЛОЖЕНИЙ норм. Если узлы-документы известны
     # (doc_filter из стадии-1) и запрос «табличный» (перечень/приложение/категория
     # помещений) — аддитивно подмешиваем pipe-table чанки ЭТИХ узлов в пул, чтобы

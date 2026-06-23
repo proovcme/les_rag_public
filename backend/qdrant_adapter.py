@@ -876,6 +876,19 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                         size=self.vector_size, distance=models.Distance.COSINE
                     ),
                 )
+            # Payload-индексы под фильтрованный поиск (retrieve фильтрует по dataset_id и
+            # file_name). БЕЗ индекса query_points с фильтром проверяет фильтр по ВСЕМ точкам
+            # (~1.6с на 179k) — с индексом ~30мс. create_payload_index идемпотентен (повторный
+            # вызов — no-op/обновление). Best-effort: сбой не должен блокировать старт.
+            for _field in ("dataset_id", "file_name"):
+                try:
+                    await self.aclient.create_payload_index(
+                        collection_name=self.collection_name,
+                        field_name=_field,
+                        field_schema=models.PayloadSchemaType.KEYWORD,
+                    )
+                except Exception as _idx_err:  # noqa: BLE001
+                    logger.warning("[INIT] payload-индекс %s: %s", _field, _idx_err)
             self._collection_ready = True
 
     async def health(self) -> bool:
