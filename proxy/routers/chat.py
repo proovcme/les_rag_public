@@ -2163,12 +2163,14 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                             # (ответ виден, но помечен «не подтверждён»). Жёсткий блок
                             # остаётся только за детерминированными rules. Отключается
                             # TOSKA_FAIL_OPEN=false.
-                            if (
-                                crag_status == "HALLUCINATION"
-                                and verdict_source == "coreml"
-                                and _env_bool("TOSKA_FAIL_OPEN", True)
-                            ):
-                                logger.info("[TOSKA] fail-open: coreml HALLUCINATION → UNVALIDATED (ответ показан)")
+                            # АДДИТИВНЫЙ гейт (best-practice, не-хрупкий): валидатор МЕТИТ, не блокирует.
+                            # ЛЮБОЙ HALLUCINATION (rules-числовой-guard ИЛИ coreml) → UNVALIDATED:
+                            # ответ показан с меткой «не подтверждён», БЕЗ дорогого ретрая (он же
+                            # таймаутил облако → падал на медленный локальный MLX, 34с). Числовой
+                            # guard ложно рубил заземлённые ответы (контекст-валидации ≠ чанки ответа).
+                            # Жёсткий блок вернуть: TOSKA_FAIL_OPEN=false.
+                            if crag_status == "HALLUCINATION" and _env_bool("TOSKA_FAIL_OPEN", True):
+                                logger.info("[TOSKA] fail-open: %s HALLUCINATION → UNVALIDATED (показан, без ретрая)", verdict_source)
                                 crag_status = "UNVALIDATED"
                             logger.info("[TOSKA] attempt=%s → %s%s", attempt, crag_status, " (via provider)" if validate_via_llm else "")
                         except Exception as ve:
