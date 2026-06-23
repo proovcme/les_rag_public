@@ -60,3 +60,25 @@ def test_route_push_no_kp_no_kac():
 def test_email_as_text_has_header():
     t = mps.email_as_text("Тема1", "ivan@x.ru", "2026-06-23", "Привет")
     assert "Тема: Тема1" in t and "От: ivan@x.ru" in t and t.endswith("Привет")
+
+
+def test_save_attachments_skips_non_dict_items(tmp_path: Path):
+    """Плагин прислал мусор (строку) вместо объекта вложения — пропускаем, не падаем."""
+    good = base64.b64encode(b"a").decode()
+    saved = mps.save_attachments(["junk-string", {"name": "ok.pdf", "content_b64": good}], tmp_path / "m")
+    assert len(saved) == 1
+    assert saved[0]["name"] == "ok.pdf"
+
+
+def test_save_attachments_non_string_b64_does_not_raise(tmp_path: Path):
+    """content_b64 не строка (int/dict) → пустой файл, без TypeError."""
+    saved = mps.save_attachments([{"name": "f.pdf", "content_b64": 12345}], tmp_path / "m")
+    assert len(saved) == 1
+    assert saved[0]["size"] == 0
+    assert Path(saved[0]["path"]).exists()
+
+
+def test_save_attachments_non_string_name_coerced(tmp_path: Path):
+    saved = mps.save_attachments([{"name": 999, "content_b64": ""}], tmp_path / "m")
+    assert len(saved) == 1
+    assert isinstance(saved[0]["name"], str)

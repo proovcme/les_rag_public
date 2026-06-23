@@ -187,3 +187,20 @@ def test_import_apple_mail_emlx_converts_to_eml(tmp_path):
     assert imported[0].message_id == "<apple-1@example.com>"
     summaries = summarize_mail_files(imported[0].path.parent)
     assert summaries[0].subject == "Письмо из Mail.app"
+
+
+def test_summarize_single_part_attachment(tmp_path):
+    """Ingest-сводка не теряет вложение однокускового письма-вложения (был баг)."""
+    source = tmp_path / "RAG_Content" / "MAIL"
+    source.mkdir(parents=True)
+    raw = (
+        b"Subject: Single\r\nFrom: a@x.ru\r\nTo: b@x.ru\r\n"
+        b"Date: Tue, 26 May 2026 09:00:00 +0300\r\nMessage-ID: <s@x>\r\n"
+        b'Content-Type: application/pdf; name="report.pdf"\r\n'
+        b'Content-Disposition: attachment; filename="report.pdf"\r\n'
+        b"Content-Transfer-Encoding: base64\r\n\r\nAAEC\r\n"
+    )
+    (source / "single.eml").write_bytes(raw)
+    summaries = summarize_mail_files(source)
+    assert len(summaries) == 1
+    assert summaries[0].attachments == ["report.pdf"]

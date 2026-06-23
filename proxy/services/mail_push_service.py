@@ -63,7 +63,10 @@ def save_attachments(attachments: list[dict[str, Any]], dest: Path) -> list[dict
     saved: list[dict[str, Any]] = []
     used: set[str] = set()
     for a in attachments or []:
-        orig = a.get("name") or "attachment"
+        if not isinstance(a, dict):
+            # плагин прислал мусор вместо объекта вложения — пропускаем, не падаем
+            continue
+        orig = str(a.get("name") or "attachment")
         fname = _safe_name(orig)
         # не перезатирать одноимённые вложения
         stem, suf = Path(fname).stem, Path(fname).suffix
@@ -73,7 +76,8 @@ def save_attachments(attachments: list[dict[str, Any]], dest: Path) -> list[dict
         used.add(cand)
         try:
             data = base64.b64decode(a.get("content_b64") or "", validate=False)
-        except (binascii.Error, ValueError):
+        except (binascii.Error, ValueError, TypeError):
+            # бьётый/нестроковый base64 → пустой файл, маршрут не падает
             data = b""
         p = dest / cand
         p.write_bytes(data)
