@@ -197,6 +197,41 @@ def les_price_lookup(code: str, book: str | None = None, method: str = "index") 
     }
 
 
+# ── action-инструменты (Ярус 3): не только считают, но и МЕНЯЮТ состояние ──
+
+def les_smeta_save(assembled: dict, project_id: int, form_id: str = "vor",
+                   fmt: str = "xlsx", doc_code: str = "") -> dict[str, Any]:
+    """ДЕЙСТВИЕ: собранную смету (выход les_lsr_assemble) → документ ВОР/ЛСР в проект.
+
+    Композ: les_lsr_assemble → les_smeta_save. assembled — словарь с positions[]+summary{}.
+    Создаёт НОВЫЙ файл (storage/projects/<id>/smeta), не перезаписывает; form_id: vor|smeta_lsr.
+    """
+    from proxy.services.les_action_service import save_smeta
+
+    try:
+        return save_smeta(assembled, project_id, form_id=form_id, fmt=fmt, doc_code=doc_code)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def les_journal_append(position: str, volume: float, unit: str = "", project_id: int = 0,
+                       entry_date: str = "", zahvatka: str = "", author: str = "",
+                       notes: str = "", idem_key: str = "") -> dict[str, Any]:
+    """ДЕЙСТВИЕ: дописать запись (вид работ + объём + дата) в журнал работ как PENDING.
+
+    Append, не overwrite; status=pending (ждёт подтверждения, ср. приёмку ИД). idem_key —
+    защита от дублей при ретраях. volume>0 обязателен. project_id>0 — привязка к объекту.
+    """
+    from proxy.services.les_action_service import journal_append
+
+    try:
+        return journal_append(position, volume, unit, project_id=project_id,
+                              entry_date=entry_date, zahvatka=zahvatka, author=author,
+                              notes=notes, idem_key=idem_key)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 # Каталог: имя инструмента → (описание, функция). Источник истины для сервера и манифеста.
 TOOLS: dict[str, tuple[str, Any]] = {
     "les_table_sum": ("Сумма/кол-во по таблицам (Parquet), без LLM", les_table_sum),
@@ -213,6 +248,9 @@ TOOLS: dict[str, tuple[str, Any]] = {
     "les_gesn_expand": ("Норма ГЭСН + объём → ресурсы (труд/машины/материалы)", les_gesn_expand),
     "les_table_agg": ("Агрегация по таблицам с группировкой (сумма по разделам/типу)", les_table_agg),
     "les_gesn_fetch": ("Дотянуть норму ГЭСН-2022 из API smetnoedelo в базу (квота)", les_gesn_fetch),
+    # action-инструменты (Ярус 3): меняют состояние (документ/журнал)
+    "les_smeta_save": ("ДЕЙСТВИЕ: собранную смету → документ ВОР/ЛСР в проект (assemble→save)", les_smeta_save),
+    "les_journal_append": ("ДЕЙСТВИЕ: дописать запись в журнал работ (pending, idempotent)", les_journal_append),
 }
 
 
