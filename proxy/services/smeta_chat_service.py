@@ -195,6 +195,32 @@ def _answer_assemble(q: str) -> dict[str, Any]:
     return {"answer": "\n".join(lines), "operation": "assemble"}
 
 
+def _answer_object_estimate(q: str) -> Optional[dict[str, Any]]:
+    """«дай смету на <объект>» → объектный расчёт (Ц16): фраза → ВОР → ЛСР-движок → смета."""
+    from proxy.services.object_estimate_service import estimate
+
+    r = estimate(q)
+    if not r.get("ok"):
+        return None                                   # объект не распознан → дальше/в RAG
+    parsed, est = r.get("parsed", {}), r.get("estimate", {})
+    pos, apos = r.get("vor", {}).get("positions", []), est.get("positions", [])
+    head = r.get("template", {}).get("name", "объект")
+    lines = [f"Смета: {head} · {parsed.get('area')} м², {parsed.get('floors')} эт. "
+             f"(укрупнённо, по типовому составу работ)"]
+    total = 0.0
+    for p, ap in zip(pos, apos):
+        t = _f(ap.get("base", {}).get("total"))
+        total += t
+        lines.append(f"• {str(p.get('name',''))[:44]} · {p.get('code')} · "
+                     f"{p.get('qty')} {p.get('unit','')} — {_fmt_num(t)} ₽")
+    lines.append(f"ИТОГО (укрупнённо): {_fmt_num(total)} ₽")
+    if r.get("missing_codes"):
+        lines.append(f"⚠ нет в базе: {', '.join(r['missing_codes'])}")
+    if r.get("assumptions"):
+        lines.append("Допущения (без чертежа): " + "; ".join(r["assumptions"])[:220])
+    return {"answer": "\n".join(lines), "operation": "object_estimate"}
+
+
 def maybe_handle_smeta_query(question: str, *, project_id: int = 0) -> Optional[dict[str, Any]]:
     """Лёгкий сметный запрос → справка/расчёт. None — не наш кейс (уходит дальше/в RAG)."""
     from proxy.services import sovushka_tone
@@ -206,13 +232,15 @@ def maybe_handle_smeta_query(question: str, *, project_id: int = 0) -> Optional[
     code = _first_code(q)
 
     r: Optional[dict[str, Any]] = None
-    if any(w in ql for w in _ASSEMBLE_WORDS) and _GESN_RE.search(q):   # сборка от кода ГЭСН
+    if ("смет" in ql or "посчитай" in ql) and not _GESN_RE.search(q):  # «дай смету на <объект>» (Ц16)
+        r = _answer_object_estimate(q)
+    if r is None and any(w in ql for w in _ASSEMBLE_WORDS) and _GESN_RE.search(q):  # сборка от кода ГЭСН
         r = _answer_assemble(q)
-    elif any(w in ql for w in _STESN_WORDS) and ("коэф" in ql or "стесн" in ql):  # стеснённость
+    elif r is None and any(w in ql for w in _STESN_WORDS) and ("коэф" in ql or "стесн" in ql):  # стеснённость
         r = _answer_stesnennost(q)
-    elif code and any(w in ql for w in _KAC_WORDS):                   # нужен ли КАЦ
+    elif r is None and code and any(w in ql for w in _KAC_WORDS):     # нужен ли КАЦ
         r = _answer_needs_kac(code)
-    elif code and any(w in ql for w in _PRICE_WORDS):                 # цена по коду
+    elif r is None and code and any(w in ql for w in _PRICE_WORDS):   # цена по коду
         r = _answer_price(code)
     if r is None:
         return None
