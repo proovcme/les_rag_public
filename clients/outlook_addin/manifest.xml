@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Outlook Add-in «В ЛЕС» — отправка текущего письма в локальный ЛЕС.
+  Это классический XML-манифест (Add-in only), поддерживается Outlook desktop (Win/Mac)
+  и Outlook on the web. Сайдлоад на личном ноуте — см. README.md.
+
+  ВАЖНО:
+   - <Id> ниже — ЗАГЛУШКА-GUID. Для своего сайдлоада сгенерируй собственный GUID
+     (любой UUID v4) и подставь сюда, иначе при повторном сайдлоаде разных версий
+     возможен конфликт. На macOS:  uuidgen
+   - Все URL ассетов таскпейна указывают на https://localhost:3000 — это локальный
+     dev-сервер ассетов (НЕ сам ЛЕС). ЛЕС-эндпоинт /api/mail/push настраивается
+     в самом таскпейне (поле «URL ЛЕС»), а не здесь.
+-->
+<OfficeApp
+  xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+  xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides/1.0"
+  xsi:type="MailApp">
+
+  <!-- ЗАГЛУШКА GUID — замени на свой (uuidgen) -->
+  <Id>4f7c2a10-9b3d-4e21-8f6a-1c2d3e4f5a6b</Id>
+  <Version>1.0.0.0</Version>
+  <ProviderName>LES</ProviderName>
+  <DefaultLocale>ru-RU</DefaultLocale>
+  <DisplayName DefaultValue="В ЛЕС"/>
+  <Description DefaultValue="Отправить текущее письмо (тема, отправитель, тело, вложения) в локальный ЛЕС."/>
+  <IconUrl DefaultValue="https://localhost:3000/assets/icon-64.png"/>
+  <HighResolutionIconUrl DefaultValue="https://localhost:3000/assets/icon-128.png"/>
+  <SupportUrl DefaultValue="https://localhost:3000/"/>
+
+  <!-- Где работает: почтовый хост -->
+  <Hosts>
+    <Host Name="Mailbox"/>
+  </Hosts>
+
+  <Requirements>
+    <Sets>
+      <Set Name="Mailbox" MinVersion="1.5"/>
+    </Sets>
+  </Requirements>
+
+  <!-- Точка входа по умолчанию (легаси, для старых клиентов без VersionOverrides) -->
+  <FormSettings>
+    <Form xsi:type="ItemRead">
+      <DesktopSettings>
+        <SourceLocation DefaultValue="https://localhost:3000/src/taskpane.html"/>
+        <RequestedHeight>450</RequestedHeight>
+      </DesktopSettings>
+    </Form>
+  </FormSettings>
+
+  <!-- ReadWriteMailbox нужен, чтобы читать содержимое вложений
+       (item.getAttachmentContentAsync). Для чтения только темы/тела хватило бы
+       ReadItem, но контракт требует вложения. -->
+  <Permissions>ReadWriteMailbox</Permissions>
+
+  <Rule xsi:type="RuleCollection" Mode="Or">
+    <Rule xsi:type="ItemIs" ItemType="Message" FormType="Read"/>
+  </Rule>
+
+  <DisableEntityHighlighting>false</DisableEntityHighlighting>
+
+  <!-- Современный UI: кнопка на ленте при чтении письма + таскпейн -->
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides" xsi:type="VersionOverridesV1_0">
+    <Requirements>
+      <bt:Sets DefaultMinVersion="1.5">
+        <bt:Set Name="Mailbox"/>
+      </bt:Sets>
+    </Requirements>
+
+    <Hosts>
+      <Host xsi:type="MailHost">
+        <DesktopFormFactor>
+          <!-- Точка входа функции (command handler) — на случай безпейновых команд -->
+          <FunctionFile resid="Commands.Url"/>
+
+          <!-- Поверхность: лента при ЧТЕНИИ письма -->
+          <ExtensionPoint xsi:type="MessageReadCommandSurface">
+            <OfficeTab id="TabDefault">
+              <Group id="lesGroup">
+                <Label resid="GroupLabel"/>
+                <Control xsi:type="Button" id="lesOpenPaneButton">
+                  <Label resid="TaskpaneButton.Label"/>
+                  <Supertip>
+                    <Title resid="TaskpaneButton.Label"/>
+                    <Description resid="TaskpaneButton.Tooltip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16"/>
+                    <bt:Image size="32" resid="Icon.32"/>
+                    <bt:Image size="80" resid="Icon.80"/>
+                  </Icon>
+                  <!-- Открыть таскпейн -->
+                  <Action xsi:type="ShowTaskpane">
+                    <SourceLocation resid="Taskpane.Url"/>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+
+    <Resources>
+      <bt:Images>
+        <bt:Image id="Icon.16" DefaultValue="https://localhost:3000/assets/icon-16.png"/>
+        <bt:Image id="Icon.32" DefaultValue="https://localhost:3000/assets/icon-32.png"/>
+        <bt:Image id="Icon.80" DefaultValue="https://localhost:3000/assets/icon-80.png"/>
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="Commands.Url" DefaultValue="https://localhost:3000/src/commands.html"/>
+        <bt:Url id="Taskpane.Url" DefaultValue="https://localhost:3000/src/taskpane.html"/>
+      </bt:Urls>
+      <bt:ShortStrings>
+        <bt:String id="GroupLabel" DefaultValue="ЛЕС"/>
+        <bt:String id="TaskpaneButton.Label" DefaultValue="В ЛЕС"/>
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Отправить это письмо и вложения в локальный ЛЕС"/>
+      </bt:LongStrings>
+    </Resources>
+  </VersionOverrides>
+</OfficeApp>

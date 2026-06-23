@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>В ЛЕС — commands</title>
+  <!--
+    Невидимый host для FunctionFile (command handlers).
+    Манифест объявляет <FunctionFile resid="Commands.Url"> → этот файл.
+    Сейчас кнопка открывает таскпейн (ShowTaskpane), отдельный обработчик не нужен,
+    но host обязателен по схеме VersionOverrides, и сюда легко добавить
+    безпейновые команды позже.
+  -->
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <script src="./commands.js"></script>
+</head>
+<body></body>
+</html>

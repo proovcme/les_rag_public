@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>В ЛЕС</title>
+  <!-- Office.js c CDN. Должен загрузиться ДО taskpane.js. -->
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <style>
+    :root {
+      --les-green: #2e7d32;
+      --les-green-d: #1b5e20;
+      --bg: #ffffff;
+      --fg: #1f2328;
+      --muted: #57606a;
+      --border: #d0d7de;
+      --err: #b3261e;
+      --ok: #1a7f37;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", -apple-system, system-ui, sans-serif;
+      font-size: 14px;
+      color: var(--fg);
+      background: var(--bg);
+      padding: 12px 14px;
+    }
+    h1 { font-size: 16px; margin: 0 0 10px; }
+    h1 .leaf { color: var(--les-green); }
+    .card {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin-bottom: 12px;
+    }
+    .row { margin-bottom: 6px; line-height: 1.35; word-break: break-word; }
+    .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+    .val { font-weight: 500; }
+    ul.attlist { margin: 4px 0 0; padding-left: 18px; }
+    ul.attlist li { margin-bottom: 2px; }
+    .att-size { color: var(--muted); font-size: 12px; }
+    label.field { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+    input[type="text"] {
+      width: 100%;
+      padding: 7px 9px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    button {
+      font-size: 14px;
+      font-weight: 600;
+      border: 0;
+      border-radius: 6px;
+      padding: 9px 14px;
+      cursor: pointer;
+    }
+    button.primary { background: var(--les-green); color: #fff; width: 100%; }
+    button.primary:hover { background: var(--les-green-d); }
+    button.primary:disabled { background: #9bbf9d; cursor: default; }
+    .status { margin-top: 10px; font-size: 13px; min-height: 18px; }
+    .status.err { color: var(--err); }
+    .status.ok { color: var(--ok); }
+    .spinner {
+      display: inline-block; width: 13px; height: 13px;
+      border: 2px solid #cfe3d0; border-top-color: var(--les-green);
+      border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .result { margin-top: 12px; }
+    .result table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .result th, .result td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .result th { color: var(--muted); font-weight: 600; }
+    .kac { margin-top: 12px; border-left: 3px solid var(--les-green); padding: 6px 10px; background: #f3f9f3; border-radius: 0 6px 6px 0; }
+    .kac h3 { margin: 0 0 4px; font-size: 13px; }
+    .kac pre { margin: 0; white-space: pre-wrap; font-size: 12px; color: var(--muted); }
+    details { margin-top: 8px; }
+    summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+    .hint { color: var(--muted); font-size: 11px; margin-top: 4px; line-height: 1.4; }
+  </style>
+</head>
+<body>
+  <h1><span class="leaf">🌲</span> В ЛЕС</h1>
+
+  <div class="card" id="mailCard">
+    <div class="row"><span class="label">Тема</span><br/><span class="val" id="subject">—</span></div>
+    <div class="row"><span class="label">Отправитель</span><br/><span class="val" id="from">—</span></div>
+    <div class="row"><span class="label">Дата</span><br/><span class="val" id="date">—</span></div>
+    <div class="row">
+      <span class="label">Вложения</span>
+      <ul class="attlist" id="attachments"><li class="att-size">загрузка…</li></ul>
+    </div>
+  </div>
+
+  <div class="card">
+    <label class="field" for="lesUrl">URL ЛЕС</label>
+    <input type="text" id="lesUrl" placeholder="http://localhost:8050" autocomplete="off"/>
+    <div class="hint">Базовый адрес ЛЕС. Письмо уйдёт на <code>&lt;URL&gt;/api/mail/push</code>. Сохраняется автоматически.</div>
+  </div>
+
+  <button class="primary" id="sendBtn">Отправить в ЛЕС</button>
+  <div class="status" id="status"></div>
+  <div class="result" id="result"></div>
+
+  <script src="./taskpane.js"></script>
+</body>
+</html>

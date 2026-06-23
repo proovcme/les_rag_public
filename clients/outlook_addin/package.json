@@ -1,0 +1,22 @@
+{
+  "name": "les-outlook-addin",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Outlook Add-in «В ЛЕС» — отправка текущего письма в локальный ЛЕС (POST /api/mail/push).",
+  "scripts": {
+    "_comment": "Зависимости НЕ устанавливаются в этот пакет. Скрипты вызывают инструменты office-addin через npx (скачиваются разово во временный кэш npx).",
+
+    "certs": "npx --yes office-addin-dev-certs install",
+    "certs-verify": "npx --yes office-addin-dev-certs verify",
+
+    "start": "npx --yes office-addin-debugging start manifest.xml desktop",
+    "start-web": "npx --yes office-addin-debugging start manifest.xml web --document https://outlook.office.com",
+    "stop": "npx --yes office-addin-debugging stop manifest.xml",
+
+    "serve": "npx --yes http-server . -p 3000 --cors -S -C ~/.office-addin-dev-certs/localhost.crt -K ~/.office-addin-dev-certs/localhost.key",
+    "serve-http": "npx --yes http-server . -p 3000 --cors",
+
+    "validate": "npx --yes office-addin-manifest validate manifest.xml",
+    "sideload-mac": "npx --yes office-addin-debugging start manifest.xml desktop"
+  }
+}
