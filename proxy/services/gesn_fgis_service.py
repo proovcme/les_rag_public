@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import urllib.parse
 import urllib.request
@@ -21,6 +22,20 @@ from typing import Any
 
 API = "https://fgiscs.minstroyrf.ru/api/FullTextSearch/SearchEstimatedRates?search="
 CACHE_PARQUET = Path("data/gesn_base/gesn2022.parquet")
+
+# Труд рабочих в ФГИС идёт как «Средний разряд работы N,M» БЕЗ кода → выводим тарифный код
+# `1-100-NM` (эталон: разряд 2,5 → 1-100-25), который есть в Сплит-форме ФГИС ЦС → цена ОЗП.
+_RAZRYAD_RE = re.compile(r"разряд\D*(\d)[.,](\d)")
+
+
+def _is_real_code(code: Any) -> bool:
+    s = str(code or "").strip()
+    return bool(s) and s not in {"—", "-", "1", "2"} and bool(re.search(r"\d", s)) and ("-" in s or "." in s)
+
+
+def _derive_labor_code(name: Any) -> str | None:
+    m = _RAZRYAD_RE.search(str(name or "").lower())
+    return f"1-100-{m.group(1)}{m.group(2)}" if m else None
 
 
 def _fetch_raw(code: str) -> list[dict[str, Any]]:
@@ -50,6 +65,12 @@ def fetch_and_cache(code: str, *, parquet_path: str | Path = CACHE_PARQUET) -> d
     rows = parse_fgis_json(records)
     if not rows:
         return {"ok": False, "code": code, "source": "fgis", "note": "не найдено в ФГИС ЦС"}
+    # ставка труда по разряду: ОЗП-строкам без кода присваиваем тарифный 1-100-NM (ценится ФГИС ЦС)
+    for r in rows:
+        if r.get("kind") == "labor" and not _is_real_code(r.get("resource_code")):
+            dc = _derive_labor_code(r.get("resource_name"))
+            if dc:
+                r["resource_code"] = dc
     summary = build_parquet(rows, parquet_path, append=True)   # дедуп по norm_code в build_parquet
     try:
         gesn_service.load_base_norms.cache_clear()
