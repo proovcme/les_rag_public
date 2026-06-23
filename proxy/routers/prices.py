@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from proxy.security import require_user
+from proxy.services import fgis_price_fetch_service as pf
 from proxy.services import fgis_price_service as fps
 
 router = APIRouter(prefix="/api/prices", tags=["prices"])
@@ -105,3 +106,78 @@ async def prices_import(req: PriceImport, _user=Depends(require_user)):
     fps.get_pricebook.cache_clear()
     summary["name"] = out.stem
     return summary
+
+
+# ─────────────────────────────────────────
+# НАПОЛНЕНИЕ из ФГИС ЦС (канал — только для обновления базы, недоверенный)
+# ─────────────────────────────────────────
+
+class PriceUpdate(BaseModel):
+    subject: str = "Петербург"      # подстрока субъекта РФ
+    quarter: str = "2 квартал 2025"  # подстрока периода
+    name: str = "spb_2kv2025"        # stem Parquet-книги
+
+
+@router.get("/sources/subjects")
+async def prices_sources_subjects(_user=Depends(require_user)):
+    """Субъекты РФ из ФГИС ЦС (открытые метаданные). Сетевой запрос — короткий таймаут."""
+    try:
+        subjects = await asyncio.to_thread(pf.list_subjects)
+    except Exception as e:                           # noqa: BLE001 — недоверенный канал
+        raise HTTPException(502, f"ФГИС ЦС недоступен: {e}")
+    return {"count": len(subjects), "subjects": subjects}
+
+
+@router.get("/sources/periods")
+async def prices_sources_periods(
+    subject: str = Query(..., description="Субъект РФ (подстрока, напр. 'Петербург')"),
+    _user=Depends(require_user),
+):
+    """Доступные кварталы зоны субъекта из ФГИС ЦС (для выбора при обновлении)."""
+    def _periods() -> dict[str, Any]:
+        subj = pf.resolve_subject(subject)
+        if not subj:
+            return {"error": f"субъект {subject!r} не найден"}
+        zones = pf.price_zones(subj["id"])
+        if not zones:
+            return {"error": f"нет зон у {subj['name']!r}"}
+        return {"subject": subj, "zone": zones[0], "periods": pf.periods(zones[0]["id"])}
+    try:
+        res = await asyncio.to_thread(_periods)
+    except Exception as e:                           # noqa: BLE001
+        raise HTTPException(502, f"ФГИС ЦС недоступен: {e}")
+    if "error" in res:
+        raise HTTPException(404, res["error"])
+    return res
+
+
+@router.post("/update")
+async def prices_update(req: PriceUpdate, _user=Depends(require_user)):
+    """Обновить локальную книгу цен из ФГИС ЦС (Сплит-форма → Parquet).
+
+    Канал-безопасно: сбой → graceful 502, локальная база не повреждается.
+    Источник — ТОЛЬКО файл-выгрузка (per-code price API закрыт, 401).
+    """
+    res = await asyncio.to_thread(
+        pf.import_region, subject=req.subject, quarter=req.quarter, name=req.name,
+    )
+    if not res.get("ok"):
+        raise HTTPException(502, f"ФГИС ЦС: {res.get('stage')} — {res.get('note')}")
+    return res
+
+
+@router.get("/needs")
+async def prices_needs(
+    code: str = Query(..., description="Код ресурса ФГИС ЦС"),
+    book: Optional[str] = None,
+    refresh: bool = Query(False, description="Промах → добрать книгу из ФГИС ЦС (наполнение)"),
+    _user=Depends(require_user),
+):
+    """Локаль-первый вердикт по коду: ценится локально / нужен добор / корректный КАЦ.
+
+    refresh=False (дефолт) — query-time, канал НЕ дёргаем. refresh=True — наполнение.
+    """
+    res = await asyncio.to_thread(
+        pf.lookup_local_first, code, book=book, refresh_on_miss=refresh,
+    )
+    return res

@@ -384,6 +384,40 @@ def build_instrumenty():
                 ],
                 rows=[], row_key="code",
             ).classes("w-full").style("font-size:.72rem;")
+            ui.separator().style("margin:6px 0;")
+            ui.label(
+                "ОБНОВИТЬ КНИГУ из ФГИС ЦС (наполнение). Источник цен — ТОЛЬКО файл-выгрузка "
+                "(per-code API закрыт). Канал недоверенный: query-time не дёргается, при сбое — graceful."
+            ).style("font-size:.62rem;color:var(--dim);")
+            with ui.row().classes("w-full gap-2 items-center"):
+                pr_subj = ui.input(label="Субъект (Петербург)", value="Петербург").props(
+                    "dense outlined").style("max-width:200px;")
+                pr_qtr = ui.input(label="Квартал (2 квартал 2025)", value="2 квартал 2025").props(
+                    "dense outlined").style("max-width:200px;")
+                pr_name = ui.input(label="Имя книги (spb_2kv2025)", value="spb_2kv2025").props(
+                    "dense outlined").style("max-width:180px;")
+                ui.button("ОБНОВИТЬ", on_click=lambda: asyncio.create_task(_pr_update())).props(
+                    "dense flat no-caps")
+            pr_upd_result = ui.html("").style("font-size:.72rem;")
+
+            async def _pr_update():
+                body = {"subject": pr_subj.value or "Петербург",
+                        "quarter": pr_qtr.value or "2 квартал 2025",
+                        "name": (pr_name.value or "spb_2kv2025").strip()}
+                ui.notify("Качаю «Сплит-форму» из ФГИС ЦС — это файл ≈8 МБ…", type="info")
+                d = await api_post("/api/prices/update", body)
+                if not isinstance(d, dict) or not d.get("ok"):
+                    pr_upd_result.content = (
+                        f"<span style='color:var(--err)'>"
+                        f"{last_api_error_text('ФГИС ЦС недоступен — книга не тронута')}</span>")
+                    return
+                pr_upd_result.content = (
+                    f"<span style='color:var(--ok)'>Готово</span>: {d['region']} {d['quarter']} · "
+                    f"<b>{d['rows']}</b> строк ({d['bytes']//1024} КБ) → {d['name']}")
+                books = (await api_get("/api/prices/books") or {}).get("books", [])
+                pr_book.options = {b["name"]: b["name"] for b in books}
+                pr_book.value = d["name"]
+                pr_book.update()
 
             async def _pr_lookup():
                 code = (pr_code.value or "").strip()
