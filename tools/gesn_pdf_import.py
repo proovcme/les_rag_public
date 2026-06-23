@@ -291,6 +291,17 @@ def _strip_em(s: Any) -> str:
     return re.sub(r"</?em>", "", str(s or ""))
 
 
+def _loads_tolerant_json(s: str) -> Any:
+    """json.loads, толерантный к битым \\uXXXX от ФГИС: санируем \\u без 4 hex и повторяем."""
+    try:
+        return json.loads(s)
+    except (json.JSONDecodeError, ValueError):
+        try:
+            return json.loads(re.sub(r"\\u(?![0-9a-fA-F]{4})", "", s))
+        except (json.JSONDecodeError, ValueError):
+            return None
+
+
 def parse_fgis_json(records_json: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Ответ SearchEstimatedRates (список норм-таблиц) → строки-ресурсы (схема RESOURCE_FIELDS).
 
@@ -303,9 +314,9 @@ def parse_fgis_json(records_json: list[dict[str, Any]]) -> list[dict[str, Any]]:
         cols = rec.get("normTableJson")
         vals = rec.get("normTableValueTableJson")
         if isinstance(cols, str):
-            cols = json.loads(cols)
+            cols = _loads_tolerant_json(cols)
         if isinstance(vals, str):
-            vals = json.loads(vals)
+            vals = _loads_tolerant_json(vals)
         cols, vals = cols or [], vals or []
         col_meta: dict[str, tuple[str, str]] = {}
         for c in cols:

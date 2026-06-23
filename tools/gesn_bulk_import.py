@@ -111,13 +111,28 @@ def _otdel_codes(sbornik: int, *, otdel_max: int = DEFAULT_OTDEL_MAX) -> list[st
     return [f"{sbornik:02d}-{o:02d}" for o in range(1, otdel_max + 1)]
 
 
+def _loads_tolerant(s: str) -> Any:
+    """json.loads, толерантный к битым \\uXXXX от ФГИС (Invalid \\uXXXX escape роняет прогон).
+
+    Сначала обычный разбор; при сбое — санируем `\\u` без 4 hex-цифр и повторяем; иначе None.
+    Так один битый escape не убивает целый отдел.
+    """
+    try:
+        return json.loads(s)
+    except (json.JSONDecodeError, ValueError):
+        try:
+            return json.loads(re.sub(r"\\u(?![0-9a-fA-F]{4})", "", s))
+        except (json.JSONDecodeError, ValueError):
+            return None
+
+
 def _records_for_prefix(prefix: str, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Оставить лишь записи, чей шифр нормы начинается на запрошенный отдел (анти-мусор fulltext)."""
     kept = []
     for rec in records:
         cols = rec.get("normTableJson")
         if isinstance(cols, str):
-            cols = json.loads(cols)
+            cols = _loads_tolerant(cols)
         nums = [re.sub(r"</?em>", "", str(c.get("number") or "")) for c in (cols or [])]
         if any(n.startswith(prefix) for n in nums):
             kept.append(rec)
