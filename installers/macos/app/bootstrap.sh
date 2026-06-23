@@ -74,6 +74,12 @@ echo "uv sync --extra mac-mlx --extra desktop"
 # --- 4. .env + runtime directories ------------------------------------------
 "$UV" run lesctl init --profile mac-native >/dev/null 2>&1 || true
 
+# --- 4b. Provider onboarding (first run only) -------------------------------
+# Bootstrap is non-interactive (no TTY): if no provider is set yet, default to
+# local MLX so the first chat works. The operator refines provider/key/model in
+# the Sovushka GUI «Настройки» afterwards.
+"$UV" run python tools/onboard_provider.py --skip-if-configured >/dev/null 2>&1 || true
+
 # --- 5. Model weights (download-on-first-run, idempotent) -------------------
 notify "Проверяю модели…"
 echo "onboard models"

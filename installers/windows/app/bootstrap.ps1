@@ -77,6 +77,12 @@ if ($LASTEXITCODE -ne 0) { Fail "uv sync не удался" }
 # --- 3. .env + directories --------------------------------------------------
 & $Uv run lesctl init --profile windows-lite 2>$null | Out-Null
 
+# --- 3b. Provider onboarding (first run only) -------------------------------
+# No MLX on Windows. Non-interactive default = local ollama so the first chat
+# works without a cloud key; the operator switches provider/key/model in the
+# Sovushka GUI «Настройки» afterwards. Skips if a provider is already set.
+& $Uv run python tools\onboard_provider.py --skip-if-configured --provider ollama 2>$null | Out-Null
+
 # --- 4. Model weights (only if a local HF model is configured) --------------
 # Cloud/ollama setups skip this; for a local provider it pre-pulls weights.
 Toast "Проверяю модели…"
