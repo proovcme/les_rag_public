@@ -78,7 +78,7 @@ def test_estimate_end_to_end_assembles_total():
     assert r["parsed"]["area"] == 100.0
 
     # ВОР непустой, объёмы перенесены в позиции движка
-    assert len(r["vor"]["positions"]) == 6
+    assert len(r["vor"]["positions"]) == 7
 
     summary = r["estimate"]["summary"]
     # хотя бы часть норм нашлась локально → позиции собрались
@@ -89,6 +89,12 @@ def test_estimate_end_to_end_assembles_total():
     for pos in r["estimate"]["positions"]:
         assert pos["total"] >= 0
         assert pos["qty"] > 0
+
+    # хвост сметы: ИТОГО СМР → непредвиденные → НДС → ВСЕГО (общая цена)
+    tot = r["totals"]
+    assert tot["smr"] == round(summary["total"], 2)
+    assert tot["vat"] == round(tot["before_vat"] * tot["vat_pct"] / 100, 2)
+    assert tot["grand_total"] > tot["smr"]            # ВСЕГО с НДС больше СМР
 
     # допущения по геометрии присутствуют (прозрачность)
     assert any("P = 4" in a for a in r["assumptions"])
