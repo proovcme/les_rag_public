@@ -209,7 +209,7 @@ def _answer_object_estimate(q: str) -> Optional[dict[str, Any]]:
              f"(укрупнённо, по типовому составу работ)"]
     for p, ap in zip(pos, apos):
         t = _f(ap.get("base", {}).get("total"))
-        lines.append(f"• {str(p.get('name',''))[:44]} · {p.get('code')} · "
+        lines.append(f"• {str(p.get('name',''))} · {p.get('code')} · "
                      f"{p.get('qty')} {p.get('unit','')} — {_fmt_num(t)} ₽")
     tot = r.get("totals", {})
     lines.append(f"  ИТОГО СМР (прямые+НР+СП): {_fmt_num(tot.get('smr'))} ₽")
@@ -221,7 +221,7 @@ def _answer_object_estimate(q: str) -> Optional[dict[str, Any]]:
     lines.append(f"⚙ Состав укрупнённый ({tot.get('positions')} поз., типовой ИЖС) — "
                  f"отделка/проёмы/инженерка добавляются в шаблон.")
     if r.get("assumptions"):
-        lines.append("Допущения: " + "; ".join(r["assumptions"])[:200])
+        lines.append("Допущения: " + "; ".join(r["assumptions"]))
     return {"answer": "\n".join(lines), "operation": "object_estimate"}
 
 

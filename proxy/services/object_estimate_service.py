@@ -153,11 +153,14 @@ def select_template(parsed: dict[str, Any], *, path: str | None = None) -> Optio
     for tpl in load_templates(path):
         match = tpl.get("match", {})
         obj_ok = any(o in raw or o == obj for o in match.get("object", [])) if match.get("object") else True
-        mat_ok = (
-            any(m.replace("ё", "е") in raw or m.startswith(mat) for m in match.get("material", []))
-            if match.get("material")
-            else True
-        )
+        # Материал-специфичный шаблон (есть match.material) ТРЕБУЕТ сигнал материала — слово в
+        # запросе ИЛИ распознанный материал. Пустой mat НЕ матчит (иначе startswith("") == True
+        # лепил «деревянный дом» на любой объект — офис/монолит и т.п.). Нет матча → к модели.
+        materials = [m.replace("ё", "е") for m in match.get("material", [])]
+        if materials:
+            mat_ok = any(m in raw for m in materials) or (bool(mat) and any(m.startswith(mat) for m in materials))
+        else:
+            mat_ok = True
         if obj_ok and mat_ok:
             return tpl
     return None
