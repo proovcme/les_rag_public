@@ -128,11 +128,22 @@ def _answer_assemble(q: str) -> dict[str, Any]:
     from proxy.services.gesn_service import get_norm
     from proxy.services.lsr_assembly_service import assemble
 
+    import os
+
     code = _GESN_RE.search(q).group(0).strip()
     norm = get_norm(code)
+    if norm is None and os.getenv("LES_SMETNOE_TOKEN", "").strip():
+        # авто-дотяжка из API cs.smetnoedelo (квота-aware: один код = один запрос, кешируется)
+        try:
+            from proxy.services.gesn_api_service import fetch_and_cache
+            from proxy.services.gesn_service import _norm_code
+            fetch_and_cache(_norm_code(code))
+            norm = get_norm(code)
+        except Exception:
+            pass
     if norm is None:
-        return {"answer": f"Норма ГЭСН {code} не найдена. Засеяна демо-норма эталона; полную базу "
-                          f"ГЭСН-2022 импортируй: tools/gesn_import (нужна XLSX-выгрузка из ГРАНД-Сметы).",
+        return {"answer": f"Норма ГЭСН {code} не найдена (семя/база/API). Дёрнуть из cs.smetnoedelo: "
+                          f"задай LES_SMETNOE_TOKEN, или импортируй базу (tools/gesn_import).",
                 "operation": "assemble"}
     qty = _parse_qty(q, code)
     if qty is None:

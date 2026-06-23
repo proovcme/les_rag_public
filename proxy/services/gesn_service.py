@@ -16,12 +16,17 @@
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
 
 DEFAULT_PATH = Path("config/domain/gesn_seed.yaml")
 DEFAULT_BASE_PATH = Path("data/gesn_base/gesn2022.parquet")
+
+# Префикс базы перед шифром: «ГЭСН 12-01-034-02» ≡ «12-01-034-02» (API smetnoedelo даёт без префикса,
+# семя/чат — с «ГЭСН»). Снимаем, чтобы обе формы вели к одной норме.
+_BASE_PREFIX_RE = re.compile(r"^(ГЭСН[РМПMR]*|ФЕР[РМПMR]*|ТЕР[РМПMR]*)", re.I)
 
 
 def _f(value: Any) -> float:
@@ -32,7 +37,8 @@ def _f(value: Any) -> float:
 
 
 def _norm_code(code: Any) -> str:
-    return str(code or "").strip().upper().replace(" ", "")
+    s = str(code or "").strip().upper().replace(" ", "")
+    return _BASE_PREFIX_RE.sub("", s)
 
 
 @lru_cache(maxsize=4)

@@ -92,6 +92,19 @@ def les_glossary(term: str) -> dict[str, Any]:
     }
 
 
+def les_gesn_fetch(code: str, base: str = "gesn2") -> dict[str, Any]:
+    """Дотянуть норму ГЭСН-2022 (расход) из API cs.smetnoedelo в базу. Нужен env LES_SMETNOE_TOKEN.
+
+    Тратит 1 запрос квоты. Дальше норма доступна в сборке ЛСР (les_lsr_assemble / чат «собери <код>»).
+    """
+    from proxy.services.gesn_api_service import fetch_and_cache
+
+    try:
+        return fetch_and_cache(code, base=base)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 def les_table_agg(dataset_ids: list[str], field: str = "amount", op: str = "sum",
                   contains: str | None = None, group_by: str | None = None) -> dict[str, Any]:
     """Агрегация по табличным датасетам с ГРУППИРОВКОЙ (сумма по разделам/типу и т.п.), 0 LLM.
@@ -199,6 +212,7 @@ TOOLS: dict[str, tuple[str, Any]] = {
     "les_lsr_assemble": ("Сборка ЛСР: объём+ресурсы→цены→стеснённость→НР/СП→Всего→свод", les_lsr_assemble),
     "les_gesn_expand": ("Норма ГЭСН + объём → ресурсы (труд/машины/материалы)", les_gesn_expand),
     "les_table_agg": ("Агрегация по таблицам с группировкой (сумма по разделам/типу)", les_table_agg),
+    "les_gesn_fetch": ("Дотянуть норму ГЭСН-2022 из API smetnoedelo в базу (квота)", les_gesn_fetch),
 }
 
 
