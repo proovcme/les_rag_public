@@ -89,27 +89,36 @@ def expand_context_windows(
             if logger:
                 logger.warning("[CTX] lexical context unavailable: %s", error)
 
-    # Добор соседей по чанкам — НЕЗАВИСИМЫЕ фетчи; раньше ПОСЛЕДОВАТЕЛЬНО (~0.5с×N → до 4с на
-    # context-фазе сложных вопросов). Параллелим через threadpool → ~время одного фетча. Сборка
-    # ниже — последовательно (порядок чанков сохраняется). Сбой фетча → [] (graceful).
+    # Добор соседей по чанкам — read-фетчи в SQLite. Раньше: threadpool, но КАЖДЫЙ фетч открывал
+    # своё соединение + ensure_schema (CREATE TABLE×N) — а под GIL параллель всё равно не давала
+    # выигрыша. Теперь: ОДНО соединение на все чанки (1×connect+ensure_schema вместо N), фетчи
+    # последовательно через общий conn — узкое место (per-call connect/schema) убрано. Сбой → [].
+    shared_conn = None
+    if index is not None:
+        try:
+            shared_conn = index.connect()  # ensure_schema один раз на всю context-фазу
+        except Exception as error:  # noqa: BLE001
+            if logger:
+                logger.warning("[CTX] lexical connect failed: %s", error)
+
     def _fetch_neighbors(chunk: Any) -> list[Any]:
-        if index is not None and _has_window_key(chunk):
+        if shared_conn is not None and _has_window_key(chunk):
             try:
                 return index.context_window(
                     collection, chunk,
                     radius=neighbor_radius, limit=max(5, neighbor_radius * 2 + 1),
+                    conn=shared_conn,
                 )
             except Exception as error:  # noqa: BLE001
                 if logger:
                     logger.warning("[CTX] context lookup skipped: %s", error)
         return []
 
-    if index is not None and len(selected) > 1:
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(selected))) as _ex:
-            neighbors_by_chunk = list(_ex.map(_fetch_neighbors, selected))
-    else:
+    try:
         neighbors_by_chunk = [_fetch_neighbors(c) for c in selected]
+    finally:
+        if shared_conn is not None:
+            shared_conn.close()
 
     expanded: list[Any] = []
     for chunk, neighbors in zip(selected, neighbors_by_chunk):

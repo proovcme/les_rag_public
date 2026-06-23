@@ -250,6 +250,12 @@ class LexicalIndex:
                 cursor_json TEXT DEFAULT '',
                 updated_at REAL NOT NULL
             );
+            -- Индексы под context_window (добор соседей/родителя): без них SELECT шёл ПОЛНЫМ
+            -- сканом таблицы на КАЖДЫЙ чанк → context-фаза 3-4с. С индексом — seek, ~мс.
+            CREATE INDEX IF NOT EXISTS idx_lexical_neighbors
+                ON lexical_chunks(collection, dataset_id, doc_name, chunk_ord);
+            CREATE INDEX IF NOT EXISTS idx_lexical_parent
+                ON lexical_chunks(collection, parent_id);
             """
         )
         existing = {
@@ -407,7 +413,10 @@ class LexicalIndex:
             )
         return chunks
 
-    def context_window(self, collection: str, chunk: Any, *, radius: int = 1, limit: int = 5) -> list[Chunk]:
+    def context_window(self, collection: str, chunk: Any, *, radius: int = 1, limit: int = 5,
+                       conn: sqlite3.Connection | None = None) -> list[Chunk]:
+        """Соседние/родительские чанки. conn задан → переиспользуем (context-фаза открывает
+        ОДНО соединение на все чанки: 1×connect+ensure_schema вместо N — это read, схема уже есть)."""
         meta = getattr(chunk, "meta", {}) or {}
         dataset_id = str(meta.get("dataset_id") or "")
         doc_name = str(meta.get("file_name") or getattr(chunk, "doc_name", "") or "")
@@ -433,9 +442,7 @@ class LexicalIndex:
             where = "collection=? AND dataset_id=? AND doc_name=? AND chunk_ord BETWEEN ? AND ?"
             order = "chunk_ord ASC"
 
-        with self.connect() as conn:
-            rows = conn.execute(
-                f"""
+        sql = f"""
                 SELECT
                     point_id, dataset_id, doc_id, doc_name, text, content_hash,
                     chunk_ord, section_heading, parent_id, parent_ord, child_ord,
@@ -444,9 +451,12 @@ class LexicalIndex:
                 WHERE {where}
                 ORDER BY {order}
                 LIMIT ?
-                """,
-                params,
-            ).fetchall()
+                """
+        if conn is not None:                       # переиспользуем переданное соединение (read)
+            rows = conn.execute(sql, params).fetchall()
+        else:
+            with self.connect() as own_conn:
+                rows = own_conn.execute(sql, params).fetchall()
         return [_row_to_chunk(row) for row in rows]
 
 
