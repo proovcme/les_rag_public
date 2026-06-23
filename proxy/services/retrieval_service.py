@@ -315,8 +315,10 @@ async def resolve_dataset_ids(
                 ids = [dataset.id for dataset in matches]
                 logger.info("[CHAT] dataset_filter='%s' -> ids=%s", effective_filter, ids)
                 return ids
-            logger.warning("[CHAT] dataset_filter='%s' not found", effective_filter)
-            return []
+            # RAG-first: keyword-scope не нашёл датасет по имени → НЕ загоняем в пустой scope
+            # («нет данных»), а ищем ШИРОКО по всему корпусу (None) — семантика+реранк разберутся.
+            logger.warning("[CHAT] dataset_filter='%s' не найден → broad RAG по всему корпусу", effective_filter)
+            return None
         except Exception as e:
             logger.warning("[CHAT] dataset_filter resolve error: %s", e)
     if dataset_ids is None and ds_list is None:
