@@ -846,11 +846,20 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         ("memory", lambda: maybe_handle_memory_command(req.question, dataset_filter=req.dataset_filter or "", project_id=pid, output_directive=req.output_directive)),
     )
     reply, channel = None, ""
-    for _ch, _fn in _det_channels:
-        reply = _fn()
+    # Шаг 2 инверсии (docs/AUDIT_DETERMINISM): роутер ОСНОВНОЙ — LLM (локальная Qwen3.5-4B, :8080)
+    # выбирает инструмент ПЕРЕД keyword-каскадом. За флагом LES_ROUTER_PRIMARY; none/сбой/таймаут →
+    # каскад/RAG (каскад сохранён фолбэком, обратимо). Роутер-бенч = 100% локально.
+    from proxy.services.agent_router_service import maybe_agent_route, router_primary
+    if router_primary():
+        reply = maybe_agent_route(req.question, project_id=pid)
         if reply is not None:
-            channel = _ch
-            break
+            channel = "agent"
+    if reply is None:
+        for _ch, _fn in _det_channels:
+            reply = _fn()
+            if reply is not None:
+                channel = _ch
+                break
     # Авто-заметки: утверждение-факт (не вопрос/команда) ЛЕС запоминает сам. 0 LLM.
     if reply is None:
         from proxy.services.memory_service import maybe_autonote
@@ -858,8 +867,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         if reply is not None:
             channel = "memory"
     # Ярус 2 (флаг LES_AGENT_LOOP): чат сам выбирает инструмент, если regex не поймал.
-    if reply is None:
-        from proxy.services.agent_router_service import maybe_agent_route
+    # В режиме router_primary роутер УЖЕ отработал выше — не зовём повторно.
+    if reply is None and not router_primary():
         reply = maybe_agent_route(req.question, project_id=pid)
         if reply is not None:
             channel = "agent"

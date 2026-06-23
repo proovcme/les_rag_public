@@ -185,7 +185,13 @@ _FEWSHOT: tuple[tuple[str, str], ...] = (
 
 
 def _is_on() -> bool:
-    return os.getenv("LES_AGENT_LOOP", "false").strip().lower() in ("1", "true", "yes", "on")
+    flags = (os.getenv("LES_AGENT_LOOP", "false"), os.getenv("LES_ROUTER_PRIMARY", "false"))
+    return any(f.strip().lower() in ("1", "true", "yes", "on") for f in flags)
+
+
+def router_primary() -> bool:
+    """Роутер ОСНОВНОЙ — зовётся ПЕРЕД keyword-каскадом (инверсия, AUDIT_DETERMINISM шаг 2)."""
+    return os.getenv("LES_ROUTER_PRIMARY", "false").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _build_prompt(question: str) -> str:
@@ -227,15 +233,41 @@ def _parse_tool(raw: str) -> str:
     return ""
 
 
+def _route_llm_text(prompt: str, *, max_tokens: int = 40) -> str:
+    """ЛОКАЛЬНЫЙ быстрый вызов для РОУТИНГА (MLX :8080), НЕ облако — роутинг без канала.
+
+    Роутер-бенч = 100% на локальной Qwen3.5-4B → выбор инструмента не зависит от облачного канала
+    ([[local-bases-untrusted-channel]]). КОРОТКИЙ таймаут: роутер не должен вешать чат; сбой → ''
+    (→ none → каскад/RAG). Эндпоинт/модель — env (дефолт локальный MLX-хост).
+    """
+    import os
+
+    import httpx
+
+    base = os.getenv("LES_ROUTER_BASE_URL", "http://127.0.0.1:8080/v1").rstrip("/")
+    model = os.getenv("LES_ROUTER_MODEL", "mlx-community/Qwen3.5-4B-MLX-4bit")
+    key = os.getenv("LES_ROUTER_API_KEY", "local")
+    timeout = int(os.getenv("LES_ROUTER_TIMEOUT", "15"))
+    url = f"{base}/chat/completions" if base.endswith("/v1") else f"{base}/v1/chat/completions"
+    try:
+        resp = httpx.post(url, headers={"Authorization": f"Bearer {key}"}, timeout=timeout, json={
+            "model": model, "temperature": 0.0, "max_tokens": max_tokens,
+            "messages": [{"role": "user", "content": prompt}],
+        })
+        resp.raise_for_status()
+        return str(resp.json().get("choices", [{}])[0].get("message", {}).get("content", "") or "")
+    except Exception as err:  # noqa: BLE001 — best-effort; сбой → none → RAG, не вешать чат
+        logger.warning("[AGENT] router LLM (local) недоступен: %s", err)
+        return ""
+
+
 def _classify(question: str) -> str:
     """LLM выбирает имя инструмента. Constrained output: неизвестное/пусто → 'none'.
 
     Сырой строке НЕ доверяем — имя сверяется с каталогом ``_VALID_NAMES``; любой шум, выдумка
     или пустой ответ схлопываются в 'none' (вопрос уходит в RAG). Best-effort; сбой → 'none'.
     """
-    from proxy.services.les_md_service import _llm_text
-
-    raw = _llm_text(_build_prompt(question), max_tokens=40)
+    raw = _route_llm_text(_build_prompt(question), max_tokens=40)
     name = _parse_tool(raw)
     if name not in _VALID_NAMES:   # constrained: галлюцинация/шум/пусто → дефолт
         if name:
