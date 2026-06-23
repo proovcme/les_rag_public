@@ -1185,13 +1185,19 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             rows.append({h or f"col{i+1}": vals[i] for i, h in enumerate(headers)})
         return rows or None
 
+    def _md_table_row(line: str) -> str | None:
+        """Строка md-таблицы (терпим ведущий маркер списка «- | … |», которым модель
+        иногда оборачивает таблицу) → нормализованная «| … |», иначе None."""
+        s = re.sub(r"^[-*•]\s+", "", line.strip())
+        return s if (s.startswith("|") and s.count("|") >= 2) else None
+
     def _md_table_at(lines: list[str], i: int):
         """Если со строки i начинается md-таблица — (rows, next_i), иначе None."""
         block: list[str] = []
         j = i
         while j < len(lines):
-            s = lines[j].strip()
-            if s.startswith("|") and s.count("|") >= 2:
+            s = _md_table_row(lines[j])
+            if s is not None:
                 block.append(s)
                 j += 1
             else:
@@ -1213,8 +1219,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             buf.clear()
 
         while i < len(lines):
-            s = lines[i].strip()
-            if s.startswith("|") and s.count("|") >= 2:
+            if _md_table_row(lines[i]) is not None:
                 tbl = _md_table_at(lines, i)
                 if tbl:
                     _flush()
