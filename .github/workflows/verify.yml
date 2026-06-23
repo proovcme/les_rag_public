@@ -11,8 +11,8 @@ on:
 
 jobs:
   verify:
-    runs-on: macos-latest
-    timeout-minutes: 20
+    runs-on: ubuntu-latest        # офлайн-гейт (compileall + collect) ОС-агностичен; Linux ~10× дешевле macos
+    timeout-minutes: 20            # macos+windows матрица вернётся в W4.3, когда понадобится
     steps:
       - uses: actions/checkout@v4
 
