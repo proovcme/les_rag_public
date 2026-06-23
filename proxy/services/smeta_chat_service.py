@@ -35,6 +35,13 @@ def _fmt_num(v: Any) -> str:
     return f"{f:,.2f}".replace(",", " ")
 
 
+def _f(v: Any) -> float:
+    try:
+        return float(str(v).replace(",", ".")) if v not in (None, "") else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _first_code(q: str) -> Optional[str]:
     m = _CODE_RE.search(q)
     return m.group(0) if m else None
@@ -150,8 +157,17 @@ def _answer_assemble(q: str) -> dict[str, Any]:
         return {"answer": f"Норма {code} найдена ({norm.get('name','')}). Укажи объём: "
                           f"«собери {code} объём <число>».", "operation": "assemble"}
     cond = _detect_condition(q) if ("стеснён" in q.lower() or "стеснен" in q.lower()) else None
+    # НР/СП по виду работ (норма их не несёт) — из наименования
+    nr_pct, sp_pct = _f(norm.get("nr_pct")), _f(norm.get("sp_pct"))
+    nr_sp_note = ""
+    if not nr_pct or not sp_pct:
+        from proxy.services.nr_sp_service import resolve as _resolve_nr_sp
+        rs = _resolve_nr_sp(norm.get("name", ""))
+        nr_pct = nr_pct or rs["nr_pct"]
+        sp_pct = sp_pct or rs["sp_pct"]
+        nr_sp_note = f"вид работ: {rs['label']}" + (" (по умолчанию — уточнить)" if rs["default"] else "")
     pos = {"code": code, "name": norm.get("name", ""), "unit": norm.get("unit", ""), "qty": qty,
-           "nr_pct": norm.get("nr_pct", 0), "sp_pct": norm.get("sp_pct", 0)}
+           "nr_pct": nr_pct, "sp_pct": sp_pct}
     res = assemble([pos], condition=cond)
     p = res["positions"][0]
     b = p["base"]
@@ -160,7 +176,8 @@ def _answer_assemble(q: str) -> dict[str, Any]:
         f"{norm.get('name','')} · {code} · объём {qty} {norm.get('unit','')}",
         f"ОЗП {_fmt_num(b['ozp'])} + ЭМ {_fmt_num(b['em'])} + М {_fmt_num(b['mat'])} = "
         f"прямые {_fmt_num(b['direct'])}",
-        f"ФОТ {_fmt_num(b['fot'])} → НР {_fmt_num(b['nr'])} + СП {_fmt_num(b['sp'])}",
+        f"ФОТ {_fmt_num(b['fot'])} → НР {_fmt_num(b['nr'])} ({_fmt_num(nr_pct)}%) + "
+        f"СП {_fmt_num(b['sp'])} ({_fmt_num(sp_pct)}%)" + (f" · {nr_sp_note}" if nr_sp_note else ""),
         f"ИТОГО по позиции: {_fmt_num(used['total'])} руб."
         + (f"  (стеснённость ×{res['k_ozp']}: было {_fmt_num(b['total'])})" if cond else ""),
     ]
