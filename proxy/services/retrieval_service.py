@@ -310,10 +310,13 @@ async def resolve_dataset_ids(
             candidates = _dataset_name_candidates(effective_filter)
             matches = [dataset for dataset in ds_list if dataset.name in candidates]
             if not matches and effective_filter.startswith("NTD_"):
-                # точного NTD_HVAC/NTD_Index нет (в рантайме NTD_GENERAL/CONSTRUCTION/FIRE/…) →
-                # скоупимся на ВЕСЬ нормативный корпус (все NTD_*_Index): фокус на нормативке,
-                # высокие скоры (не broad-шум, не пустота). RAG-first: вопрос достаёт корпус.
-                matches = [dataset for dataset in ds_list if str(dataset.name).startswith("NTD_")]
+                # СНАЧАЛА конкретный датасет по ПРЕФИКСУ (NTD_FIRE → NTD_FIRE_Index) — быстро+релевантно
+                # (один датасет, малый контекст). Имена в рантайме: NTD_FIRE_Index/GENERAL/CONSTRUCTION/…
+                matches = [d for d in ds_list if str(d.name).startswith(effective_filter)]
+                if not matches:
+                    # конкретного нет (напр. NTD_HVAC отсутствует) → ВЕСЬ нормативный корпус (все NTD_*),
+                    # чтобы вопрос всё равно достал документ (медленнее, но не пусто). RAG-first.
+                    matches = [d for d in ds_list if str(d.name).startswith("NTD_")]
             if matches:
                 ids = [dataset.id for dataset in matches]
                 logger.info("[CHAT] dataset_filter='%s' -> ids=%s", effective_filter, ids)
