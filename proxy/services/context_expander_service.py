@@ -89,22 +89,31 @@ def expand_context_windows(
             if logger:
                 logger.warning("[CTX] lexical context unavailable: %s", error)
 
-    expanded: list[Any] = []
-    for chunk in selected:
-        source = ""
-        neighbors: list[Any] = []
+    # Добор соседей по чанкам — НЕЗАВИСИМЫЕ фетчи; раньше ПОСЛЕДОВАТЕЛЬНО (~0.5с×N → до 4с на
+    # context-фазе сложных вопросов). Параллелим через threadpool → ~время одного фетча. Сборка
+    # ниже — последовательно (порядок чанков сохраняется). Сбой фетча → [] (graceful).
+    def _fetch_neighbors(chunk: Any) -> list[Any]:
         if index is not None and _has_window_key(chunk):
             try:
-                neighbors = index.context_window(
-                    collection,
-                    chunk,
-                    radius=neighbor_radius,
-                    limit=max(5, neighbor_radius * 2 + 1),
+                return index.context_window(
+                    collection, chunk,
+                    radius=neighbor_radius, limit=max(5, neighbor_radius * 2 + 1),
                 )
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001
                 if logger:
                     logger.warning("[CTX] context lookup skipped: %s", error)
-                neighbors = []
+        return []
+
+    if index is not None and len(selected) > 1:
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(selected))) as _ex:
+            neighbors_by_chunk = list(_ex.map(_fetch_neighbors, selected))
+    else:
+        neighbors_by_chunk = [_fetch_neighbors(c) for c in selected]
+
+    expanded: list[Any] = []
+    for chunk, neighbors in zip(selected, neighbors_by_chunk):
+        source = ""
         if len(neighbors) > 1:
             source = "lexical_parent" if _meta(chunk).get("parent_id") else "lexical_neighbors"
         elif _has_inline_window(chunk):
