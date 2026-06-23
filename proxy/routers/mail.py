@@ -7,7 +7,7 @@ from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from backend.mail_ingest import (
@@ -400,6 +400,67 @@ async def import_local_mail(req: MailLocalImportRequest, _admin=Depends(require_
         "parse_started": parse_started,
         "parse_blocked": parse_blocked,
         "parse_result": parse_result,
+    }
+
+
+@router.post("/push")
+async def push_mail(payload: dict[str, Any] = Body(...), _user=Depends(require_user)):
+    """Письмо из Outlook-плагина → классификация вложений → маршрут (КП→КАЦ, смета/док→RAG, скан→приёмка).
+
+    Контракт: {subject, from, date, body, attachments:[{name, content_type, content_b64}]}.
+    Принцип [[local-bases-untrusted-channel]]: плагин шлёт в ЛОКАЛЬНЫЙ ЛЕС, не в облако.
+    """
+    import hashlib
+
+    from proxy.services import mail_push_service as mps
+
+    subject = str(payload.get("subject") or "")
+    sender = str(payload.get("from") or "")
+    date = str(payload.get("date") or "")
+    body = str(payload.get("body") or "")
+    attachments = payload.get("attachments") or []
+    if not isinstance(attachments, list):
+        raise HTTPException(status_code=400, detail="attachments must be a list")
+
+    msg_id = hashlib.sha1(f"{subject}|{sender}|{date}|{len(body)}|{len(attachments)}".encode()).hexdigest()[:12]
+    push_dir = Path("storage/mail_push") / msg_id
+    saved = mps.save_attachments(attachments, push_dir)
+
+    state = get_dataset_state()
+    dataset_id, created = await _mail_dataset_id(state)
+    uploaded: list[dict[str, Any]] = []
+
+    # тело письма → текстовый документ в RAG (mail-датасет)
+    body_path = push_dir / f"{msg_id}.txt"
+    body_path.write_text(mps.email_as_text(subject, sender, date, body), encoding="utf-8")
+    try:
+        body_doc = await state.backend.upload_file(
+            dataset_id, body_path, relative_path=f"push/{msg_id}/{msg_id}.txt")
+        uploaded.append({"doc_id": body_doc, "name": "(тело письма)"})
+    except Exception as exc:  # noqa: BLE001 — регистрация best-effort, маршрут не должен падать
+        uploaded.append({"name": "(тело письма)", "error": str(exc)})
+
+    plan = mps.route_push(saved)
+
+    # смета/документ-вложения → RAG; КП и сканы НЕ в общий RAG (КП→КАЦ, скан→приёмку)
+    for s in plan["to_rag"]:
+        try:
+            doc_id = await state.backend.upload_file(
+                dataset_id, Path(s["path"]), relative_path=f"push/{msg_id}/{Path(s['path']).name}")
+            uploaded.append({"doc_id": doc_id, "name": s["name"]})
+        except Exception as exc:  # noqa: BLE001
+            uploaded.append({"name": s["name"], "error": str(exc)})
+
+    return {
+        "ok": True,
+        "message_id": msg_id,
+        "dataset_id": dataset_id,
+        "dataset_created": created,
+        "routed": plan["routed"],
+        "kac": plan["kac"],
+        "kp_count": plan["kp_count"],
+        "uploaded": uploaded,
+        "note": "КП → КАЦ; смета/док → RAG; скан → приёмка ИД (очередь pending)",
     }
 
 
