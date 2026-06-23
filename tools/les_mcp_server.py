@@ -74,6 +74,116 @@ def les_form_generate(form_id: str, fmt: str = "xlsx", project_id: int | None = 
     return {"form_id": form_id, "fmt": fmt, "path": out.get("path"), "html": out.get("html")}
 
 
+def les_glossary(term: str) -> dict[str, Any]:
+    """Что такое ВОР/КАЦ/ЛСР/КС и т.п.: определение + из чего выходит → во что (онтология, 0 LLM).
+
+    term — термин или синоним (напр. «КАЦ», «смета», «конъюнктурный анализ»).
+    """
+    from proxy.services.smeta_ontology_service import derivation, get_concept
+
+    node = get_concept(term)
+    if node is None:
+        return {"found": False, "term": term}
+    der = derivation(term) or {}
+    return {
+        "found": True, "id": node["id"], "term": node.get("term"), "kind": node.get("kind"),
+        "what": node.get("what"), "why": node.get("why"), "basis": node.get("basis"),
+        "derived_from": der.get("direct_inputs", []), "produces": der.get("direct_outputs", []),
+    }
+
+
+def les_table_agg(dataset_ids: list[str], field: str = "amount", op: str = "sum",
+                  contains: str | None = None, group_by: str | None = None) -> dict[str, Any]:
+    """Агрегация по табличным датасетам с ГРУППИРОВКОЙ (сумма по разделам/типу и т.п.), 0 LLM.
+
+    field: amount|qty|price|… · op: sum|count|avg|min|max · contains: фильтр по name/code ·
+    group_by: section|doc_type|unit|… . Считает по ПОЛНОМУ parquet (не top-k).
+    """
+    from proxy.services.table_sql_service import aggregate
+
+    return aggregate(dataset_ids, field=field, op=op, contains=contains, group_by=group_by)
+
+
+def les_gesn_expand(code: str, qty: float = 1.0) -> dict[str, Any]:
+    """Норма ГЭСН + объём → ресурсы (труд/машины/материалы × объём). 0 LLM.
+
+    Дальше ресурсы идут в les_lsr_assemble (цены→стеснённость→НР/СП→Всего).
+    """
+    from proxy.services.gesn_service import expand_position, get_norm
+
+    lines = expand_position(code, qty)
+    if lines is None:
+        return {"found": False, "code": code}
+    norm = get_norm(code) or {}
+    return {"found": True, "code": code, "name": norm.get("name"), "unit": norm.get("unit"),
+            "qty": qty, "resources": lines}
+
+
+def les_lsr_assemble(positions: list[dict], book: str | None = None,
+                     kac_prices: dict | None = None, condition: str | None = None,
+                     k_ozp: float | None = None, k_em: float | None = None) -> dict[str, Any]:
+    """Сборка ЛСР: позиции (объём+ресурсы) → цены (ФГИС ЦС/КАЦ) → стеснённость → НР/СП → Всего → свод. 0 LLM.
+
+    Каждая позиция: {code, name, unit, qty, section, nr_pct, sp_pct, resources:[{kind,name,unit,qty,price?,code?}]}.
+    kind: labor|machinist|machine|material. book — книга цен; kac_prices — {наименование: цена}.
+    """
+    from proxy.services.lsr_assembly_service import assemble
+
+    return assemble(positions, book=book, kac_prices=kac_prices,
+                    condition=condition, k_ozp=k_ozp, k_em=k_em)
+
+
+def les_stesnennost(positions: list[dict], condition: str | None = None,
+                    k_ozp: float | None = None, k_em: float | None = None) -> dict[str, Any]:
+    """Коэф. стеснённости → пересчёт позиций ЛСР (ОЗП/ЭМ → ФОТ/НР/СП/Всего). 0 LLM.
+
+    positions — {name, ozp, em, zpm, mat, nr_pct, sp_pct}. Либо condition из каталога,
+    либо явные k_ozp/k_em.
+    """
+    from proxy.services.stesnennost_service import apply
+
+    return apply(positions, condition=condition, k_ozp=k_ozp, k_em=k_em)
+
+
+def les_kac(quotes: list[dict], min_suppliers: int = 3, strategy: str = "min") -> dict[str, Any]:
+    """КАЦ: котировки поставщиков (≥3 на материал) → выбор экономичного + линии для ЛСР. 0 LLM.
+
+    quotes — список {material, supplier, unit, price, source}. strategy: 'min' | 'median'.
+    """
+    from proxy.services.kac_service import analyze_kac, kac_to_lsr_lines
+
+    result = analyze_kac(quotes, min_suppliers=min_suppliers, strategy=strategy)
+    return {"summary": result["summary"], "materials": result["materials"],
+            "lsr_lines": kac_to_lsr_lines(result)}
+
+
+def les_price_lookup(code: str, book: str | None = None, method: str = "index") -> dict[str, Any]:
+    """Сметная цена ФГИС ЦС по коду ресурса (exact-match по «Сплит-форме»), без LLM.
+
+    code — код ресурса (91.05.01-017); book — имя книги цен (без имени берётся единственная);
+    method='index' — текущая цена (база×индекс/прямая), 'base' — базовая.
+    """
+    from pathlib import Path as _P
+    from proxy.services import fgis_price_service as fps
+
+    books = fps.available_pricebooks()
+    if not books:
+        return {"found": False, "note": "нет книг цен — импортируйте «Сплит-форму»"}
+    path = next((p for p in books if _P(p).stem == book), None) if book else books[0]
+    if path is None:
+        return {"found": False, "note": f"книга {book!r} не найдена"}
+    pb = fps.get_pricebook(path)
+    rec = pb.lookup(code)
+    if rec is None:
+        return {"found": False, "code": code, "book": _P(path).stem}
+    return {
+        "found": True, "book": _P(path).stem, "region": pb.region, "quarter": pb.quarter,
+        "method": method,
+        "price": rec.get("price_current_eff") if method == "index" else rec.get("price_base"),
+        "row": rec,
+    }
+
+
 # Каталог: имя инструмента → (описание, функция). Источник истины для сервера и манифеста.
 TOOLS: dict[str, tuple[str, Any]] = {
     "les_table_sum": ("Сумма/кол-во по таблицам (Parquet), без LLM", les_table_sum),
@@ -82,6 +192,13 @@ TOOLS: dict[str, tuple[str, Any]] = {
     "les_spec_to_bor": ("ВОР работ из спецификации (форма 9)", les_spec_to_bor),
     "les_project_summary": ("Сводка проекта: ТЭП/стадии/состав", les_project_summary),
     "les_form_generate": ("Генерация формы: спецификация/ВОР/смета/АОСР", les_form_generate),
+    "les_price_lookup": ("Цена ФГИС ЦС по коду ресурса (Сплит-форма)", les_price_lookup),
+    "les_glossary": ("Что такое ВОР/КАЦ/ЛСР/КС: определение + деривация", les_glossary),
+    "les_kac": ("КАЦ: ≥3 КП на материал → выбор экономичного + линии ЛСР", les_kac),
+    "les_stesnennost": ("Коэф. стеснённости → пересчёт позиций ЛСР (ОЗП/ЭМ/НР/СП)", les_stesnennost),
+    "les_lsr_assemble": ("Сборка ЛСР: объём+ресурсы→цены→стеснённость→НР/СП→Всего→свод", les_lsr_assemble),
+    "les_gesn_expand": ("Норма ГЭСН + объём → ресурсы (труд/машины/материалы)", les_gesn_expand),
+    "les_table_agg": ("Агрегация по таблицам с группировкой (сумма по разделам/типу)", les_table_agg),
 }
 
 

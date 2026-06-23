@@ -329,6 +329,23 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 ).classes("sov-composer-input").props("rows=2 autogrow borderless")
                 attach_chip = ui.label("").style("font-size:.7rem;color:var(--accent);font-weight:700;")
                 attach_chip.visible = False
+
+                # Шпаргалка: кликабельные примеры (детерминированные каналы) — заполняют ввод и шлют.
+                def _fill_send(text: str) -> None:
+                    chat_input.value = text
+                    chat_input.update()
+                    asyncio.create_task(send_chat())
+
+                with ui.row().classes("sov-hints").style("gap:6px;flex-wrap:wrap;margin:2px 0 4px;align-items:center;"):
+                    ui.label("примеры:").style("font-size:.62rem;color:var(--dim);")
+                    for _ex in ("что такое КАЦ", "что такое ЛСР", "цена 91.05.01-017",
+                                "коэффициент стеснённости для города",
+                                "собери ГЭСН12-01-034-02 объём 0.61", "что ты умеешь"):
+                        ui.button(_ex, on_click=lambda e=_ex: _fill_send(e)).props("dense flat no-caps").style(
+                            "font-size:.62rem;padding:1px 8px;min-height:0;color:var(--accent);"
+                            "border:1px solid var(--accent);border-radius:10px;text-transform:none;"
+                        )
+
                 with ui.row().classes("sov-composer-actions"):
                     with ui.row().classes("sov-guard-controls"):
                         validation_sw = ui.switch("Т.О.С.К.А.", value=True).props("dense")

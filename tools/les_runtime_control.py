@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import plistlib
 import re
 import signal
 import subprocess
@@ -26,6 +27,12 @@ LAUNCH_AGENTS = Path.home() / "Library" / "LaunchAgents"
 GUI_DOMAIN = f"gui/{os.getuid()}" if hasattr(os, "getuid") else "gui/0"
 LEGACY_ROOT_PLACEHOLDER = "/Users/ovc/Projects/LES_v2"
 ROOT_PLACEHOLDER = "__LES_ROOT__"
+
+# Анти-дрейф (AUDIT_CORE §0/§3.1): рантайм-хоум для путей в плисте берём из LES_HOME, а не из
+# папки скрипта (ROOT) — иначе start/restart из dev-клона переустанавливают плист с dev-путями →
+# MLX/эмбеддер мрут. И существующий рабочий плист НЕ перезаписываем (только если нет / по флагу).
+LES_HOME = (os.getenv("LES_HOME") or os.getenv("LES_RUNTIME_HOME") or "").strip()
+_PLIST_FORCE = os.getenv("LES_PLIST_FORCE", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass(frozen=True)
@@ -347,19 +354,47 @@ def _repo_plist_path(service: ServiceDef) -> Path:
     return ROOT / service.repo_plist
 
 
-def _render_plist_template(src: Path) -> str:
+def _render_plist_template(src: Path, home: str) -> str:
     text = src.read_text(encoding="utf-8")
-    root = str(ROOT)
-    return text.replace(ROOT_PLACEHOLDER, root).replace(LEGACY_ROOT_PLACEHOLDER, root)
+    return text.replace(ROOT_PLACEHOLDER, home).replace(LEGACY_ROOT_PLACEHOLDER, home)
 
 
-def _install(service: ServiceDef) -> None:
+def _plist_working_dir(path: Path) -> str | None:
+    """WorkingDirectory из уже установленного плиста — текущая правда рантайма."""
+    try:
+        with path.open("rb") as fh:
+            data = plistlib.load(fh)
+    except Exception:
+        return None
+    wd = data.get("WorkingDirectory")
+    return str(wd) if wd else None
+
+
+def _resolve_home(service: ServiceDef) -> str:
+    """Рантайм-хоум для путей плиста: LES_HOME → home уже установленного плиста → ROOT (1-й install)."""
+    if LES_HOME:
+        return str(Path(LES_HOME).expanduser())
+    dst = _agent_path(service)
+    if dst.exists():
+        wd = _plist_working_dir(dst)
+        if wd:
+            return wd
+    return str(ROOT)
+
+
+def _install(service: ServiceDef, *, force: bool | None = None) -> None:
     src = _repo_plist_path(service)
     if not src.exists():
         raise FileNotFoundError(f"missing plist template: {src}")
     LAUNCH_AGENTS.mkdir(parents=True, exist_ok=True)
     dst = _agent_path(service)
-    rendered = _render_plist_template(src).encode("utf-8")
+    force = _PLIST_FORCE if force is None else force
+    # КОРЕНЬ «танцев»: существующий рабочий плист НЕ перезаписываем (иначе start/restart из любого
+    # клона переустанавливает его с чужими путями → MLX/эмбеддер мрут). Только если нет / явный force.
+    if dst.exists() and not force:
+        return
+    home = _resolve_home(service)
+    rendered = _render_plist_template(src, home).encode("utf-8")
     if not dst.exists() or rendered != dst.read_bytes():
         dst.write_bytes(rendered)
 

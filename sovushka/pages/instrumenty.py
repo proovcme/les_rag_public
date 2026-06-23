@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from urllib.parse import quote
 
 from nicegui import ui
 
@@ -352,6 +354,254 @@ def build_instrumenty():
                     out.append(f"<div style='color:var(--err)'>− п.{_h.escape(r.get('clause',''))}</div>")
                 diff_out.content = "".join(out)
 
+        # ──────────────── ФГИС ЦС — ЦЕНА ПО КОДУ РЕСУРСА ────────────────
+        with ui.card().classes("card-les w-full"):
+            ui.label("ФГИС ЦС — СМЕТНАЯ ЦЕНА ПО КОДУ РЕСУРСА (0 LLM)").classes("section-title")
+            ui.label(
+                "Точный поиск цены/индекса по коду из «Сплит-формы» (текущая = база×индекс или прямая). "
+                "Exact-match по коду, не векторный top-k — SQL-замена для автоценообразования ЛСР."
+            ).style("font-size:.66rem;color:var(--dim);")
+            with ui.row().classes("w-full gap-2 items-center"):
+                pr_book = ui.select(options={}, label="Книга цен").props("dense outlined").style("max-width:220px;")
+                pr_code = ui.input(label="Код ресурса (91.05.01-017)").props("dense outlined").classes("flex-1")
+                pr_method = ui.toggle({"index": "Текущая", "base": "Базовая"}, value="index").props("dense no-caps")
+                ui.button("НАЙТИ", on_click=lambda: asyncio.create_task(_pr_lookup())).props("dense no-caps")
+            pr_result = ui.html("").style("font-size:.78rem;")
+            ui.separator().style("margin:6px 0;")
+            with ui.row().classes("w-full gap-2 items-center"):
+                pr_q = ui.input(label="Поиск по наименованию (если код неизвестен)").props(
+                    "dense outlined"
+                ).classes("flex-1")
+                ui.button("ИСКАТЬ", on_click=lambda: asyncio.create_task(_pr_search())).props("dense flat no-caps")
+            pr_tbl = ui.table(
+                columns=[
+                    {"name": "code", "label": "Код", "field": "code", "align": "left"},
+                    {"name": "name", "label": "Наименование", "field": "name", "align": "left"},
+                    {"name": "unit", "label": "Ед.", "field": "unit", "align": "center"},
+                    {"name": "price_base", "label": "База", "field": "price_base", "align": "right"},
+                    {"name": "index", "label": "Индекс", "field": "index", "align": "right"},
+                    {"name": "price_current_eff", "label": "Текущая", "field": "price_current_eff", "align": "right"},
+                ],
+                rows=[], row_key="code",
+            ).classes("w-full").style("font-size:.72rem;")
+
+            async def _pr_lookup():
+                code = (pr_code.value or "").strip()
+                if not code:
+                    ui.notify("Введи код ресурса", type="warning")
+                    return
+                bq = f"&book={quote(pr_book.value)}" if pr_book.value else ""
+                d = await api_get(f"/api/prices/lookup?code={quote(code)}&method={pr_method.value}{bq}")
+                if not isinstance(d, dict):
+                    ui.notify(last_api_error_text("Поиск не выполнен — нет книги цен?"), type="negative")
+                    return
+                if not d.get("found"):
+                    pr_result.content = f"<span style='color:var(--err)'>Код {code} не найден</span>"
+                    return
+                r = d["row"]
+                pr_result.content = (
+                    f"<b>{r.get('name','')}</b> · {r.get('unit','')}<br>"
+                    f"Цена ({'текущая' if d['method']=='index' else 'базовая'}): "
+                    f"<b style='color:var(--ok)'>{d.get('price')}</b> руб. · "
+                    f"база {r.get('price_base')} × индекс {r.get('index')} · "
+                    f"{d.get('region','')} {d.get('quarter','')}"
+                )
+
+            async def _pr_search():
+                q = (pr_q.value or "").strip()
+                if len(q) < 2:
+                    ui.notify("Минимум 2 символа", type="warning")
+                    return
+                bq = f"&book={quote(pr_book.value)}" if pr_book.value else ""
+                d = await api_get(f"/api/prices/search?q={quote(q)}&limit=50{bq}")
+                if not isinstance(d, dict):
+                    ui.notify(last_api_error_text("Поиск не выполнен"), type="negative")
+                    return
+                pr_tbl.rows = d.get("rows", [])
+                pr_tbl.update()
+
+        # ──────────────── КАЦ — КОНЪЮНКТУРНЫЙ АНАЛИЗ ЦЕН ────────────────
+        with ui.card().classes("card-les w-full"):
+            ui.label("КАЦ — КОНЪЮНКТУРНЫЙ АНАЛИЗ ЦЕН (0 LLM)").classes("section-title")
+            ui.label(
+                "Для материалов, которых НЕТ в ФГИС ЦС: ≥3 КП на материал → выбор экономичного → "
+                "цена в позицию ЛСР. Котировки правь в таблице (материал · поставщик · цена · источник)."
+            ).style("font-size:.66rem;color:var(--dim);")
+            with ui.row().classes("w-full gap-2 items-center"):
+                kac_min = ui.number(label="Мин. поставщиков", value=3, min=1, max=9).props(
+                    "dense outlined"
+                ).style("max-width:150px;")
+                kac_strat = ui.toggle({"min": "Экономичный", "median": "Медиана"}, value="min").props("dense no-caps")
+                ui.button("+ СТРОКА", on_click=lambda: asyncio.create_task(_kac_add())).props("dense flat no-caps")
+                ui.button("АНАЛИЗ", on_click=lambda: asyncio.create_task(_kac_run())).props("dense no-caps")
+                ui.button("СКАЧАТЬ XLSX", on_click=lambda: asyncio.create_task(_kac_dl())).props("dense flat no-caps")
+            kac_grid = ui.aggrid({
+                "columnDefs": [
+                    {"headerName": "Материал", "field": "material", "editable": True, "minWidth": 200},
+                    {"headerName": "Поставщик", "field": "supplier", "editable": True},
+                    {"headerName": "Ед.", "field": "unit", "editable": True, "maxWidth": 80},
+                    {"headerName": "Цена", "field": "price", "editable": True, "maxWidth": 110},
+                    {"headerName": "Источник", "field": "source", "editable": True},
+                ],
+                "rowData": [
+                    {"material": "Гранит серый, плита 600×300×30", "supplier": "ГранитИнвест", "unit": "м2", "price": 2450, "source": "КП ГранитИнвест"},
+                    {"material": "Гранит серый, плита 600×300×30", "supplier": "ЛЕВ", "unit": "м2", "price": 2300, "source": "КП ЛЕВ"},
+                    {"material": "Гранит серый, плита 600×300×30", "supplier": "ПрофСтрой", "unit": "м2", "price": 2520, "source": "КП ПрофСтрой"},
+                ],
+                "defaultColDef": {"resizable": True, "sortable": True},
+                "singleClickEdit": True,
+            }).classes("w-full").style("height:24vh;")
+            kac_summary = ui.label("").style("font-size:.7rem;color:var(--dim);")
+            kac_tbl = ui.table(
+                columns=[
+                    {"name": "material", "label": "Материал", "field": "material", "align": "left"},
+                    {"name": "unit", "label": "Ед.", "field": "unit", "align": "center"},
+                    {"name": "suppliers", "label": "КП", "field": "suppliers", "align": "center"},
+                    {"name": "chosen_supplier", "label": "Выбран", "field": "chosen_supplier", "align": "left"},
+                    {"name": "chosen_price", "label": "Цена", "field": "chosen_price", "align": "right"},
+                    {"name": "spread_pct", "label": "Разброс,%", "field": "spread_pct", "align": "right"},
+                    {"name": "sufficient", "label": "≥мин", "field": "sufficient", "align": "center"},
+                ],
+                rows=[], row_key="material",
+            ).classes("w-full").style("font-size:.72rem;")
+
+            def _kac_body(quotes: list) -> dict:
+                return {"quotes": quotes, "min_suppliers": int(kac_min.value or 3), "strategy": kac_strat.value}
+
+            async def _kac_add():
+                data = await kac_grid.get_client_data()
+                data.append({"material": "", "supplier": "", "unit": "", "price": "", "source": ""})
+                kac_grid.options["rowData"] = data
+                kac_grid.update()
+
+            async def _kac_run():
+                quotes = await kac_grid.get_client_data()
+                d = await api_post("/api/kac/analyze", _kac_body(quotes))
+                if not isinstance(d, dict):
+                    ui.notify(last_api_error_text("КАЦ: не посчитан"), type="negative")
+                    return
+                s = d.get("summary", {})
+                kac_summary.text = (
+                    f"Материалов: {s.get('materials',0)} · достаточно (≥{int(kac_min.value or 3)} КП): "
+                    f"{s.get('sufficient',0)} · недостаточно: {s.get('insufficient',0)} · котировок: {s.get('total_quotes',0)}"
+                )
+                kac_tbl.rows = [
+                    {"material": m["material"], "unit": m["unit"], "suppliers": m["suppliers"],
+                     "chosen_supplier": m["chosen_supplier"], "chosen_price": m["chosen_price"],
+                     "spread_pct": m["spread_pct"], "sufficient": "✓" if m["sufficient"] else "✗"}
+                    for m in d.get("materials", [])
+                ]
+                kac_tbl.update()
+
+            async def _kac_dl():
+                quotes = await kac_grid.get_client_data()
+                d = await api_post("/api/kac/generate", _kac_body(quotes))
+                if not isinstance(d, dict) or not d.get("download"):
+                    ui.notify(last_api_error_text("КАЦ: нечего выгружать"), type="negative")
+                    return
+                await _download(d["download"])
+
+        # ──────────────── СБОРКА ЛСР (ДВИЖОК) ────────────────
+        with ui.card().classes("card-les w-full"):
+            ui.label("СБОРКА ЛСР — ОБЪЁМ+РЕСУРСЫ → ЦЕНЫ → СТЕСНЁННОСТЬ → НР/СП → ВСЕГО (0 LLM)").classes("section-title")
+            ui.label(
+                "Позиции в JSON: объём + ресурсы (kind: labor/machinist/machine/material). Цена строки — явная, "
+                "либо ФГИС ЦС по коду (книга), либо КАЦ. Бухгалтерия выверена на эталоне (поз. ниже = 11813.04)."
+            ).style("font-size:.66rem;color:var(--dim);")
+            with ui.row().classes("w-full gap-2 items-center"):
+                la_book = ui.input(label="Книга цен ФГИС ЦС (опц.)").props("dense outlined").style("max-width:210px;")
+                la_cond = ui.select(options={}, label="Стеснённость (опц.)").props(
+                    "dense outlined clearable"
+                ).classes("flex-1")
+                ui.button("СОБРАТЬ", on_click=lambda: asyncio.create_task(_la_run())).props("dense no-caps")
+            la_json = ui.textarea(value=json.dumps([{
+                "code": "ГЭСН12-01-034-02", "name": "Устройство обрешётки", "unit": "100 м2", "qty": 0.61,
+                "section": "Раздел 1", "nr_pct": 109, "sp_pct": 57, "resources": [
+                    {"kind": "labor", "name": "ОТ(ЗТ)", "qty": 1, "price": 3750.23},
+                    {"kind": "machine", "name": "Машины", "qty": 1, "price": 533.72},
+                    {"kind": "machinist", "name": "ОТм", "qty": 1, "price": 458.68},
+                    {"kind": "material", "name": "Гвозди", "qty": 1, "price": 83.62}]}],
+                ensure_ascii=False, indent=1)).props("dense outlined").classes("w-full").style(
+                "font-family:monospace;font-size:.68rem;height:18vh;")
+            la_out = ui.html("").style("font-size:.8rem;")
+            la_tbl = ui.table(columns=[
+                {"name": "section", "label": "Раздел", "field": "section", "align": "left"},
+                {"name": "positions", "label": "Позиций", "field": "positions", "align": "center"},
+                {"name": "total", "label": "Итого, руб.", "field": "total", "align": "right"},
+            ], rows=[], row_key="section").classes("w-full").style("font-size:.72rem;")
+
+            async def _la_run():
+                try:
+                    positions = json.loads(la_json.value or "[]")
+                except Exception as e:
+                    ui.notify(f"JSON: {e}", type="negative")
+                    return
+                body: dict = {"positions": positions}
+                if la_book.value:
+                    body["book"] = la_book.value
+                if la_cond.value:
+                    body["condition"] = la_cond.value
+                d = await api_post("/api/lsr/assemble", body)
+                if not isinstance(d, dict):
+                    ui.notify(last_api_error_text("ЛСР: не собран"), type="negative")
+                    return
+                s = d["summary"]
+                up = f" (стеснённость +{s['stesnennost_uplift']})" if s.get("stesnennost_uplift") else ""
+                warn = f"<br><span style='color:var(--err)'>без цены: {s['needs_price']}</span>" if s.get("needs_price") else ""
+                la_out.content = (f"Позиций: {s['positions']} · Итого: "
+                                  f"<b style='color:var(--ok)'>{s['total']}</b> руб.{up}{warn}")
+                la_tbl.rows = [{"section": x["section"], "positions": x["positions"], "total": x["total"]}
+                               for x in d.get("sections", [])]
+                la_tbl.update()
+
+        # ──────────────── КОЭФФИЦИЕНТ СТЕСНЁННОСТИ ────────────────
+        with ui.card().classes("card-les w-full"):
+            ui.label("КОЭФФИЦИЕНТ СТЕСНЁННОСТИ — ПЕРЕСЧЁТ ПОЗИЦИИ ЛСР (0 LLM)").classes("section-title")
+            ui.label(
+                "Усложняющие условия → коэф. к ОЗП и ЭМ → пересчёт ФОТ/НР/СП/Всего. Материалы не затрагиваются. "
+                "Каталог условий редактируется в config/domain/stesnennost.yaml."
+            ).style("font-size:.66rem;color:var(--dim);")
+            with ui.row().classes("w-full gap-2 items-center"):
+                st_cond = ui.select(options={}, label="Условие (или задай k вручную)").props(
+                    "dense outlined clearable"
+                ).classes("flex-1")
+                st_kozp = ui.number(label="k ОЗП", value=None, format="%.2f").props("dense outlined").style("max-width:100px;")
+                st_kem = ui.number(label="k ЭМ", value=None, format="%.2f").props("dense outlined").style("max-width:100px;")
+            with ui.row().classes("w-full gap-2 items-center flex-wrap"):
+                st_ozp = ui.number(label="ОЗП", value=4208.91).props("dense outlined").style("max-width:110px;")
+                st_em = ui.number(label="ЭМ", value=533.72).props("dense outlined").style("max-width:110px;")
+                st_zpm = ui.number(label="ЗПМ", value=458.68).props("dense outlined").style("max-width:110px;")
+                st_mat = ui.number(label="Материалы", value=83.62).props("dense outlined").style("max-width:120px;")
+                st_nr = ui.number(label="НР %", value=109).props("dense outlined").style("max-width:90px;")
+                st_sp = ui.number(label="СП %", value=57).props("dense outlined").style("max-width:90px;")
+                ui.button("РАССЧИТАТЬ", on_click=lambda: asyncio.create_task(_st_run())).props("dense no-caps")
+            st_out = ui.html("Позиция-пример — из эталона (медный отлив). Подставь свои числа.").style("font-size:.78rem;color:var(--dim);")
+
+            async def _st_run():
+                pos = {"name": "позиция", "ozp": st_ozp.value, "em": st_em.value, "zpm": st_zpm.value,
+                       "mat": st_mat.value, "nr_pct": st_nr.value, "sp_pct": st_sp.value}
+                body: dict = {"positions": [pos]}
+                if st_cond.value:
+                    body["condition"] = st_cond.value
+                if st_kozp.value:
+                    body["k_ozp"] = st_kozp.value
+                if st_kem.value:
+                    body["k_em"] = st_kem.value
+                d = await api_post("/api/lsr/stesnennost/apply", body)
+                if not isinstance(d, dict):
+                    ui.notify(last_api_error_text("Стеснённость: задай условие или k ОЗП/ЭМ"), type="negative")
+                    return
+                p = d["positions"][0]
+                lbl = f" · {d['condition_label']}" if d.get("condition_label") else ""
+                st_out.content = (
+                    f"k ОЗП {d['k_ozp']} · k ЭМ {d['k_em']}{lbl}<br>"
+                    f"Всего по позиции: <b>{p['base']['total']}</b> → "
+                    f"<b style='color:var(--ok)'>{p['adjusted']['total']}</b> руб. (+{p['uplift']})<br>"
+                    f"ОЗП {p['base']['ozp']}→{p['adjusted']['ozp']} · ЭМ {p['base']['em']}→{p['adjusted']['em']} · "
+                    f"ФОТ {p['base']['fot']}→{p['adjusted']['fot']} · НР {p['base']['nr']}→{p['adjusted']['nr']} · "
+                    f"СП {p['base']['sp']}→{p['adjusted']['sp']}"
+                )
+
         # ──────────────────── ФОРМЫ ДОКУМЕНТОВ (W11.3/W19) ────────────────────
         with ui.card().classes("card-les w-full"):
             ui.label("ФОРМЫ ДОКУМЕНТОВ — ЗАПОЛНЕНИЕ ИЗ ОБЪЕКТА (0 LLM)").classes("section-title")
@@ -433,6 +683,17 @@ def build_instrumenty():
             projects = (await api_get("/api/projects") or {}).get("projects", [])
             fm_proj.options = {p["id"]: p.get("name", p["id"]) for p in projects}
             fm_proj.update()
+            books = (await api_get("/api/prices/books") or {}).get("books", [])
+            pr_book.options = {b["name"]: b["name"] for b in books}
+            if books and not pr_book.value:
+                pr_book.value = books[0]["name"]
+            pr_book.update()
+            conds = (await api_get("/api/lsr/stesnennost/conditions") or {}).get("conditions", [])
+            cond_opts = {c["id"]: f"{c['label']} (×{c['k_ozp']}/{c['k_em']})" for c in conds}
+            st_cond.options = cond_opts
+            st_cond.update()
+            la_cond.options = cond_opts
+            la_cond.update()
             imports = (await api_get("/api/diff/cad-bim/imports") or {}).get("imports", [])
             imp_opts = {
                 i["id"]: f"{i.get('source','?')} · {i.get('element_count',0)}эл · {str(i.get('created_at',''))[:16]}"

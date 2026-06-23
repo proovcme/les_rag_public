@@ -17,3 +17,5 @@ columns:
 table:
   mode: blank
   rows: 15
+templates:
+  xlsx: config/forms/templates/vor.xlsx

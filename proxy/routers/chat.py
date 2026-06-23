@@ -827,6 +827,9 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     from proxy.services.les_md_chat_service import maybe_handle_les_md_query  # LES.md: пойми папку
     from proxy.services.project_registry_chat_service import maybe_handle_registry_query  # реестр
     from proxy.services.preset_chat_service import maybe_handle_preset_query  # режим local/cloud/mix
+    from proxy.services.glossary_chat_service import maybe_handle_glossary_query  # глоссарий: что такое X
+    from proxy.services.smeta_chat_service import maybe_handle_smeta_query  # смета: цена/КАЦ/стеснённость
+    from proxy.services.help_chat_service import maybe_handle_help_query  # помощь: как спрашивать
 
     # Детерминированные каналы по порядку (regex+SQL, 0 LLM): первый сработавший — ответ.
     _det_channels = (
@@ -835,6 +838,9 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         ("asbuilt", lambda: maybe_handle_asbuilt_query(req.question, project_id=pid)),
         ("les_md", lambda: maybe_handle_les_md_query(req.question, project_id=pid)),
         ("registry", lambda: maybe_handle_registry_query(req.question, project_id=pid)),
+        ("glossary", lambda: maybe_handle_glossary_query(req.question, project_id=pid)),
+        ("smeta", lambda: maybe_handle_smeta_query(req.question, project_id=pid)),
+        ("help", lambda: maybe_handle_help_query(req.question, project_id=pid)),
         ("field", lambda: maybe_handle_field_command(req.question, project_id=pid)),
         ("decision", lambda: maybe_handle_decision_command(req.question, project_id=pid)),  # W17.4
         ("memory", lambda: maybe_handle_memory_command(req.question, dataset_filter=req.dataset_filter or "", project_id=pid, output_directive=req.output_directive)),
@@ -858,12 +864,23 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         if reply is not None:
             channel = "agent"
     if reply is not None:
+        det_route = {"channel": channel, "operation": reply.get("operation"),
+                     "agent_tool": reply.get("agent_tool")}
+        det_hid = None
+        try:  # детерм. ответы тоже в историю (видны в Совушке); сбой записи не ломает ответ
+            det_hid = save_chat_history(
+                question=req.question, answer=reply["answer"], sources=[],
+                crag_status="DETERMINISTIC", latency_sec=0.0, tokens=0,
+                session_id=req.session_id, query_route=det_route, validation_enabled=False,
+            )
+        except Exception as _hist_err:
+            logger.warning("[HISTORY] deterministic save failed: %s", _hist_err)
         return {
             "answer": reply["answer"],
             "crag_status": "DETERMINISTIC",
             "sources": [],
-            "query_route": {"channel": channel, "operation": reply.get("operation"),
-                            "agent_tool": reply.get("agent_tool")},
+            "history_id": det_hid,
+            "query_route": det_route,
             "validation": {"enabled": False, "reason": f"deterministic_{channel}_command"},
         }
 

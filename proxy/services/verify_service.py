@@ -379,8 +379,15 @@ def image_path(token: str) -> Optional[Path]:
     return p if p.exists() else None
 
 
-def save_verification(path: str, page: int, rows: list[dict], verdict: str = "ok") -> dict:
-    """Сохранить подтверждённую/исправленную таблицу — ground truth."""
+def save_verification(
+    path: str, page: int, rows: list[dict], verdict: str = "ok",
+    pred_rows: Optional[list[dict]] = None,
+) -> dict:
+    """Сохранить подтверждённую/исправленную таблицу — ground truth.
+
+    pred_rows — ИСХОДНОЕ извлечение модели (до правок оператора). Хранится рядом,
+    чтобы verify-правка = размеченный дифф (pred→target) для таксономии ошибок и LoRA.
+    """
     VERIFY_DIR.mkdir(parents=True, exist_ok=True)
     token = _token(path, page)
     record = {
@@ -388,7 +395,8 @@ def save_verification(path: str, page: int, rows: list[dict], verdict: str = "ok
         "source": path,
         "page": page,
         "verdict": verdict,           # ok | corrected | rejected
-        "rows": rows,
+        "rows": rows,                 # принятый/исправленный результат (target)
+        "pred_rows": pred_rows,       # исходное предсказание модели (для диффа)
         "saved_at": int(time.time()),
     }
     (VERIFY_DIR / f"{token}.json").write_text(

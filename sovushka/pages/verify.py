@@ -147,6 +147,8 @@ def render_verify_artifact(payload: Optional[dict]) -> None:
 
         def _render_table(trows: list, tcols: list) -> None:
             table_box.clear()
+            # снимок ИСХОДНОГО предсказания модели (до правок) — уйдёт как pred_rows
+            pred_snapshot = [dict(r) for r in (trows or []) if isinstance(r, dict)]
             tcols = tcols or (list(trows[0].keys()) if trows and isinstance(trows[0], dict) else [])
             # графа количества → добавляем «Принято», преднаполняя печатным Кол-во
             qty = next((c for c in tcols if "кол" in str(c).lower()), None)
@@ -194,7 +196,8 @@ def render_verify_artifact(payload: Optional[dict]) -> None:
                     data = [{rename.get(k, k): v for k, v in row.items()} for row in data]
                     res = await api_post(
                         "/api/verify/save",
-                        {"path": source, "page": page, "rows": data, "verdict": verdict},
+                        {"path": source, "page": page, "rows": data, "verdict": verdict,
+                         "pred_rows": pred_snapshot},
                     )
                     if res and res.get("ok"):
                         status.text = f"сохранено ({verdict}): {res.get('n_rows')} строк"

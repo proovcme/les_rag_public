@@ -29,6 +29,7 @@ class SaveRequest(BaseModel):
     page: int = 0
     rows: list[dict]
     verdict: str = "ok"  # ok | corrected | rejected
+    pred_rows: list[dict] | None = None  # исходное извлечение модели (до правок)
 
 
 @router.post("/extract")
@@ -51,7 +52,9 @@ async def verify_image(token: str, _user=Depends(require_user)):
 
 @router.post("/save")
 async def verify_save(req: SaveRequest, _user=Depends(require_user)) -> dict:
-    record = verify_service.save_verification(req.path, req.page, req.rows, req.verdict)
+    record = verify_service.save_verification(
+        req.path, req.page, req.rows, req.verdict, pred_rows=req.pred_rows
+    )
     return {"ok": True, "token": record["token"], "n_rows": len(record["rows"])}
 
 

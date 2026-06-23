@@ -1,0 +1,26 @@
+# Акт о приёмке выполненных работ (КС-2). Унифицированная форма Госкомстата № 100.
+# Бланк; данные строк обычно из сметы/журнала объёмов (сверка — reconcile_service).
+id: ks2
+title: Акт о приёмке выполненных работ (КС-2)
+legal_basis: Унифицированная форма КС-2 (Постановление Госкомстата РФ № 100 от 11.11.1999)
+fields:
+  - { key: object_name, label: Объект,                  type: str, source: "project.name" }
+  - { key: contractor,  label: Подрядчик,               type: str, source: "manual" }
+  - { key: customer,    label: Заказчик,                type: str, source: "manual" }
+  - { key: contract,    label: Договор подряда (№, дата), type: str, source: "manual" }
+  - { key: period,      label: Отчётный период,          type: str, source: "manual" }
+  - { key: act_no,      label: Номер документа,          type: str, source: "manual" }
+  - { key: date,        label: Дата составления,         type: str, source: "date.today" }
+columns:
+  - "№ п/п"
+  - "Наименование работ"
+  - "Номер расценки"
+  - "Ед. изм."
+  - "Количество"
+  - "Цена за ед., руб."
+  - "Стоимость, руб."
+table:
+  mode: blank
+  rows: 15
+templates:
+  xlsx: config/forms/templates/ks2.xlsx

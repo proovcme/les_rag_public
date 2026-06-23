@@ -260,9 +260,39 @@ def render_docx(resolved: dict[str, Any], out_path: Path, template_path: Path | 
     return out_path
 
 
-def render_xlsx(resolved: dict[str, Any], out_path: Path) -> Path:
+def render_xlsx(resolved: dict[str, Any], out_path: Path, template_path: Path | None = None) -> Path:
     from openpyxl import Workbook
     from openpyxl.styles import Font
+
+    if template_path and Path(template_path).is_file():
+        # Родной бланк: подстановка {{key}} в ячейках + строки данных от якоря {{rows}}.
+        from openpyxl import load_workbook
+
+        wb = load_workbook(str(template_path))
+        ws = wb.active
+        mapping = _value_map(resolved)
+        anchor: tuple[int, int] | None = None
+        for row in ws.iter_rows():
+            for cell in row:
+                v = cell.value
+                if not isinstance(v, str) or "{{" not in v:
+                    continue
+                if v.strip() == "{{rows}}":
+                    anchor = (cell.row, cell.column)
+                    cell.value = None
+                    continue
+                for key, val in mapping.items():
+                    v = v.replace("{{" + key + "}}", str(val or ""))
+                cell.value = v
+        rows = resolved.get("rows") or []
+        if anchor and rows:
+            r0, c0 = anchor
+            for i, row_vals in enumerate(rows):
+                for j, val in enumerate(row_vals):
+                    ws.cell(r0 + i, c0 + j, val)
+        out_path = Path(out_path)
+        wb.save(str(out_path))
+        return out_path
 
     wb = Workbook()
     ws = wb.active
@@ -322,5 +352,7 @@ def generate(
         tmpl_path = Path(tmpl) if tmpl else None
         render_docx(resolved, out_path, tmpl_path)
     elif fmt == "xlsx":
-        render_xlsx(resolved, out_path)
+        tmpl = (descriptor.get("templates") or {}).get("xlsx")
+        tmpl_path = Path(tmpl) if tmpl else None
+        render_xlsx(resolved, out_path, tmpl_path)
     return {"resolved": resolved, "html": None, "path": str(out_path)}
