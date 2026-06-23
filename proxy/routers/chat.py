@@ -81,6 +81,7 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None
     project_id: Optional[int] = None  # W17.1: режим проекта — ретрив сужается к датасетам объекта
     output_directive: Optional[str] = None  # формат/стиль ответа — ТОЛЬКО в генерацию (не в роутинг/заметки/ретрив)
+    mode: Optional[str] = None  # явный РЕЖИМ из UI («smeta» → форс сметного пути минуя роутер/RAG)
 
     @field_validator("question")
     @classmethod
@@ -789,6 +790,108 @@ async def chat_stream(req: ChatRequest, _user=Depends(require_user)):
     )
 
 
+async def _run_project_normcontrol(req: "ChatRequest", pid: int) -> str:
+    """Режим «Проверка проекта»: формальный нормоконтроль PDF датасетов объекта
+    (run_normcontrol, без LLM) → markdown-таблица замечаний. Нет датасета → подсказка."""
+    from proxy.services.normcontrol_service import run_normcontrol
+
+    ds_ids = list(req.dataset_ids or [])
+    if not ds_ids and pid:
+        try:
+            from proxy.services.project_service import project_dataset_ids
+            ds_ids = await asyncio.to_thread(project_dataset_ids, pid) or []
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[REVIEW] project scope failed: %s", e)
+    if not ds_ids:
+        return ("Режим «Проверка проекта» (нормоконтроль): выбери объект или датасет — проверка "
+                "идёт по его PDF-файлам (форматы листов, шифры, ведомость↔файлы). Открой проект "
+                "слева и повтори запрос.")
+    storage_root = Path("storage/datasets")
+    findings: list[dict] = []
+    checked = 0
+    for ds in ds_ids:
+        fdir = storage_root / ds
+        if not fdir.exists():
+            continue
+        try:
+            res = await asyncio.to_thread(run_normcontrol, ds, fdir, storage_root, None)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[REVIEW] normcontrol %s failed: %s", ds, e)
+            continue
+        checked += res.get("files_checked", 0)
+        findings.extend(res.get("findings", []))
+    if not checked:
+        return ("Режим «Проверка проекта»: в датасетах объекта нет PDF для формального "
+                "нормоконтроля (проверяются чертежи-PDF: форматы листов, шифры, комплектность).")
+    if not findings:
+        return f"Нормоконтроль: проверено {checked} PDF — формальных замечаний нет. ✅"
+    sev_lbl = {"error": "🔴 ошибка", "warning": "🟡 предупр.", "info": "ℹ️ инфо"}
+    lines = [f"Нормоконтроль проекта: {checked} PDF, замечаний — {len(findings)}.", "",
+             "| Уровень | Проверка | Объект | Замечание |", "|---|---|---|---|"]
+    for f in findings[:60]:
+        sev = sev_lbl.get(f.get("severity", ""), f.get("severity", ""))
+        chk = str(f.get("check", "")).replace("|", "/")
+        tgt = str(f.get("target", "")).replace("|", "/")
+        msg = str(f.get("message", "")).replace("|", "/")
+        lines.append(f"| {sev} | {chk} | {tgt} | {msg} |")
+    if len(findings) > 60:
+        lines += ["", f"… и ещё {len(findings) - 60} замечаний (полный список — кнопкой выгрузки xlsx)."]
+    return "\n".join(lines)
+
+
+async def _run_free_mode(req: "ChatRequest", token_sink=None) -> str:
+    """Режим «Свободный»: прямой вызов LLM БЕЗ ретрива (ответ из знаний модели) + мягкая
+    плашка. Изолирован — RAG-конвейер не задействуется. Стримит токены, если token_sink задан."""
+    runtime = _llm_runtime()
+    disclaimer = ("⚠️ Вольный режим — ответ модели без обращения к базе документов; "
+                  "возможны неточности, проверяй факты.\n\n")
+    sys_prompt = ("Ты Совушка в «вольном» режиме: отвечай свободно, можешь рассуждать и "
+                  "предполагать. База документов НЕ используется — отвечай из общих знаний. "
+                  "По-русски, по делу, с лёгкой иронией.")
+    body = {
+        "model": runtime.model,
+        "messages": [{"role": "system", "content": sys_prompt},
+                     {"role": "user", "content": req.question}],
+        "temperature": 0.85, "max_tokens": 1400,
+    }
+    body = _cloud_body_for_model(body, runtime.model, runtime.provider)
+    headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
+    acc: list[str] = []
+    try:
+        if token_sink is not None:
+            await token_sink({"event": "token", "data": disclaimer})
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            if token_sink is not None:
+                sbody = {**body, "stream": True}
+                if is_cloud_provider(runtime.provider):
+                    sbody["stream_options"] = {"include_usage": True}
+                async with client.stream("POST", runtime.chat_url, headers=headers, json=sbody) as sresp:
+                    sresp.raise_for_status()
+                    async for line in sresp.aiter_lines():
+                        if not line or not line.startswith("data:"):
+                            continue
+                        p = line[5:].strip()
+                        if p == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(p)
+                        except json.JSONDecodeError:
+                            continue
+                        ch = chunk.get("choices") or []
+                        piece = (ch[0].get("delta", {}).get("content") or "") if ch else ""
+                        if piece:
+                            acc.append(piece)
+                            await token_sink({"event": "token", "data": piece})
+            else:
+                r = await client.post(runtime.chat_url, headers=headers, json=body)
+                r.raise_for_status()
+                acc.append(r.json().get("choices", [{}])[0].get("message", {}).get("content", ""))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[FREE] generation failed: %s", e)
+        return disclaimer + f"Не удалось получить вольный ответ: {type(e).__name__}: {e}"
+    return disclaimer + "".join(acc).strip()
+
+
 async def _run_chat(req: ChatRequest, token_sink=None):
     """Ядро чата. token_sink=None — обычный ответ (dict). Если задан — корутина
     `await token_sink({"event":..., "data":...})` получает события стриминга по
@@ -823,6 +926,63 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 "command": cmd_res.get("command"),
             }
 
+    # ── ЯВНЫЕ РЕЖИМЫ из UI (пользователь выбрал → форсим путь, минуя угадайку роутера) ──
+    # smeta/review/kp → детерминированный ответ; rag/free гейтят роутер+каскад ниже.
+    _MODE = (req.mode or "").strip().lower()
+
+    def _mode_reply(answer: str, operation: str, channel: str, crag: str = "DETERMINISTIC") -> dict:
+        """Единый shape ответа для режимных каналов (+ запись в историю)."""
+        hid = None
+        try:
+            hid = save_chat_history(
+                question=req.question, answer=answer, sources=[],
+                crag_status=crag, latency_sec=0.0, tokens=0,
+                session_id=req.session_id,
+                query_route={"channel": channel, "operation": operation}, validation_enabled=False,
+            )
+        except Exception as _hist_err:  # noqa: BLE001
+            logger.warning("[HISTORY] %s save failed: %s", channel, _hist_err)
+        return {
+            "answer": answer, "crag_status": crag, "sources": [], "history_id": hid,
+            "query_route": {"channel": channel, "operation": operation},
+            "validation": {"enabled": False, "reason": channel},
+        }
+
+    if _MODE == "smeta":
+        # Режим Смета = намерение УЖЕ задано → object_estimate НАПРЯМУЮ (минуя keyword-гейт
+        # «смет»/«посчитай» в maybe_handle_smeta_query: в режиме слово-триггер не нужно) и минуя
+        # роутер/RAG. Не объект-смета (цена/КАЦ/код) → maybe_handle. Нет данных → просим уточнить.
+        from proxy.services.smeta_chat_service import _answer_object_estimate, maybe_handle_smeta_query
+        sm = _answer_object_estimate(req.question) or maybe_handle_smeta_query(req.question, project_id=pid) or {
+            "answer": ("Режим «Смета» включён, но я не вижу объект и площадь. Напиши, например: "
+                       "«офисное здание 3 этажа 3000 м²» или «деревянный дом 120 м² 2 этажа» — "
+                       "соберу расчёт из локальной базы ГЭСН."),
+            "operation": "smeta_need_params",
+        }
+        return _mode_reply(sm["answer"], sm.get("operation", "object_estimate"), "smeta_mode")
+
+    if _MODE == "review":
+        # Нормоконтроль документов проекта (формальный, без LLM) → таблица замечаний.
+        answer = await _run_project_normcontrol(req, pid)
+        return _mode_reply(answer, "normcontrol", "review_mode")
+
+    if _MODE == "kp":
+        # КП = генерация коммерческого предложения по материалам. Задел на будущее —
+        # честная заглушка, НЕ фейковый КП.
+        answer = (
+            "Режим «КП» (генерация коммерческого предложения по приложенным/указанным "
+            "материалам) — в разработке. Он соберёт исходящее КП из позиций сметы/прайса "
+            "для заказчика. Пока для расчёта используй режим «Смета», а для разбора входящих "
+            "КП в КАЦ — вложение в Outlook→ЛЕС или вопрос «нужен ли КАЦ для <код>»."
+        )
+        return _mode_reply(answer, "kp_stub", "kp_mode")
+
+    if _MODE == "free":
+        # Свободный: прямой LLM БЕЗ ретрива (отвечает из своих знаний) + мягкая плашка.
+        # Изолированный путь — RAG-конвейер не трогаем.
+        answer = await _run_free_mode(req, token_sink)
+        return _mode_reply(answer, "free", "free_mode", crag="")
+
     from proxy.services.asbuilt_chat_service import maybe_handle_asbuilt_query  # приёмка ИД-сканов
     from proxy.services.les_md_chat_service import maybe_handle_les_md_query  # LES.md: пойми папку
     from proxy.services.project_registry_chat_service import maybe_handle_registry_query  # реестр
@@ -849,29 +1009,32 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     # Шаг 2 инверсии (docs/AUDIT_DETERMINISM): роутер ОСНОВНОЙ — LLM (локальная Qwen3.5-4B, :8080)
     # выбирает инструмент ПЕРЕД keyword-каскадом. За флагом LES_ROUTER_PRIMARY; none/сбой/таймаут →
     # каскад/RAG (каскад сохранён фолбэком, обратимо). Роутер-бенч = 100% локально.
+    # Режим «РАГ» (явно выбран): форсим заземлённый RAG — пропускаем роутер/каскад/автозаметку,
+    # чтобы ничто не увело запрос в детерминированный канал. reply=None → дальше в RAG-конвейер.
     from proxy.services.agent_router_service import maybe_agent_route, router_primary
-    if router_primary():
-        reply = maybe_agent_route(req.question, project_id=pid)
-        if reply is not None:
-            channel = "agent"
-    if reply is None:
-        for _ch, _fn in _det_channels:
-            reply = _fn()
+    if _MODE != "rag":
+        if router_primary():
+            reply = maybe_agent_route(req.question, project_id=pid)
             if reply is not None:
-                channel = _ch
-                break
-    # Авто-заметки: утверждение-факт (не вопрос/команда) ЛЕС запоминает сам. 0 LLM.
-    if reply is None:
-        from proxy.services.memory_service import maybe_autonote
-        reply = maybe_autonote(req.question, dataset_filter=req.dataset_filter or "", project_id=pid, output_directive=req.output_directive)
-        if reply is not None:
-            channel = "memory"
-    # Ярус 2 (флаг LES_AGENT_LOOP): чат сам выбирает инструмент, если regex не поймал.
-    # В режиме router_primary роутер УЖЕ отработал выше — не зовём повторно.
-    if reply is None and not router_primary():
-        reply = maybe_agent_route(req.question, project_id=pid)
-        if reply is not None:
-            channel = "agent"
+                channel = "agent"
+        if reply is None:
+            for _ch, _fn in _det_channels:
+                reply = _fn()
+                if reply is not None:
+                    channel = _ch
+                    break
+        # Авто-заметки: утверждение-факт (не вопрос/команда) ЛЕС запоминает сам. 0 LLM.
+        if reply is None:
+            from proxy.services.memory_service import maybe_autonote
+            reply = maybe_autonote(req.question, dataset_filter=req.dataset_filter or "", project_id=pid, output_directive=req.output_directive)
+            if reply is not None:
+                channel = "memory"
+        # Ярус 2 (флаг LES_AGENT_LOOP): чат сам выбирает инструмент, если regex не поймал.
+        # В режиме router_primary роутер УЖЕ отработал выше — не зовём повторно.
+        if reply is None and not router_primary():
+            reply = maybe_agent_route(req.question, project_id=pid)
+            if reply is not None:
+                channel = "agent"
     if reply is not None:
         det_route = {"channel": channel, "operation": reply.get("operation"),
                      "agent_tool": reply.get("agent_tool")}
