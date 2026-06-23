@@ -387,6 +387,30 @@ async def retrieve_chat_chunks(
     # RAG_SPARSE_ENABLED; при сбое/пустом sparse — молча падаем на dense+FTS.
     sparse_chunks = await _retrieve_sparse_safe(rag_backend, retrieval_query, dataset_ids, pool_k, logger, doc_filter=doc_filter)
     chunks, trace = _hybrid_merge(question, vector_chunks, dataset_ids, rag_backend, logger, retrieval_query=retrieval_query, pool_k=pool_k, limit=merged_top_k, sparse_chunks=sparse_chunks)
+    # ADR-12 (Ц9): подъём ТАБЛИЧНЫХ ПРИЛОЖЕНИЙ норм. Если узлы-документы известны
+    # (doc_filter из стадии-1) и запрос «табличный» (перечень/приложение/категория
+    # помещений) — аддитивно подмешиваем pipe-table чанки ЭТИХ узлов в пул, чтобы
+    # реранк поднял приложение (эмбеддинг строки таблицы ≠ запрос → плоско тонет).
+    # Пусто/нет интента/нет узлов → no-op, плоский пул нетронут.
+    table_appendix_chunks: list[Any] = []
+    if doc_filter:
+        try:
+            from proxy.services.table_appendix_service import (
+                fetch_table_appendix_chunks,
+                merge_table_appendix,
+            )
+            table_appendix_chunks = await fetch_table_appendix_chunks(
+                question=question, retrieval_query=retrieval_query,
+                doc_filter=doc_filter, dataset_ids=dataset_ids,
+                rag_backend=rag_backend, logger=logger,
+            )
+            if table_appendix_chunks:
+                before = len(chunks)
+                chunks = merge_table_appendix(chunks, table_appendix_chunks)
+                if len(chunks) != before:
+                    trace.mode = f"{trace.mode}+table_appendix"
+        except Exception as _tbl_err:  # noqa: BLE001 — best-effort, флат не страдает
+            logger.warning("[TABLE_APPENDIX] fallback на плоский пул: %s", _tbl_err)
     quality = evaluate_retrieval_quality(question=question, chunks=chunks, trace=trace, kot=kot)
 
     if return_trace and quality.status == "weak":
@@ -437,6 +461,22 @@ async def retrieve_chat_chunks(
         except Exception as rerank_error:
             logger.warning("[RERANKER] Ошибка, гибридный порядок без реранка: %s", rerank_error)
             trace.fallback_reason = trace.fallback_reason or "rerank_error"
+
+    # ADR-12 (Ц9): после реранка гарантируем табличным приложениям места в видимом
+    # окне ответа — иначе cross-encoder топит сырой текст таблицы под прозой и
+    # приложение не доезжает. Аддитивно: без подмешанных таблиц — no-op.
+    if table_appendix_chunks:
+        try:
+            from proxy.services.table_appendix_service import guarantee_table_appendix
+            # Окно гарантии — ВИДИМЫЙ срез ответа (CHAT_TOP_K), а не весь пул:
+            # пользователь читает первые CHAT_TOP_K, под ними приложение бесполезно.
+            promoted = guarantee_table_appendix(chunks, table_appendix_chunks, window=CHAT_TOP_K)
+            if promoted is not chunks and [id(c) for c in promoted] != [id(c) for c in chunks]:
+                chunks = promoted
+                if "table_appendix_guarantee" not in trace.mode:
+                    trace.mode = f"{trace.mode}+table_appendix_guarantee"
+        except Exception as _g_err:  # noqa: BLE001 — best-effort
+            logger.warning("[TABLE_APPENDIX] guarantee fallback: %s", _g_err)
 
     trace.quality_status = quality.status
     trace.quality_detail = quality.detail
