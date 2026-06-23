@@ -24,6 +24,17 @@ from typing import Any, Optional
 DEFAULT_PATH = Path("config/domain/gesn_seed.yaml")
 DEFAULT_BASE_PATH = Path("data/gesn_base/gesn2022.parquet")
 
+# Труд в базе ФГИС идёт как «Средний разряд работы N,M» БЕЗ кода (parse_fgis_json кладёт code="").
+# Выводим тарифный код 1-100-NM (эталон: разряд 2,5 → 1-100-25), который ценится Сплит-формой ФГИС ЦС
+# → ОЗП базовых норм ≠ 0. Read-time, единый чокпойнт для bulk и on-demand. Машинист-агрегат без
+# разряда → код не выводим (флаг «нет цены»). Ср. gesn_fgis_service._derive_labor_code.
+_LABOR_RAZRYAD_RE = re.compile(r"разряд\D*(\d)[.,](\d)")
+
+
+def _labor_tariff_code(name: Any) -> Optional[str]:
+    m = _LABOR_RAZRYAD_RE.search(str(name or "").lower())
+    return f"1-100-{m.group(1)}{m.group(2)}" if m else None
+
 # Префикс базы перед шифром: «ГЭСН 12-01-034-02» ≡ «12-01-034-02» (API smetnoedelo даёт без префикса,
 # семя/чат — с «ГЭСН»). Снимаем, чтобы обе формы вели к одной норме.
 _BASE_PREFIX_RE = re.compile(r"^(ГЭСН[РМПMR]*|ФЕР[РМПMR]*|ТЕР[РМПMR]*)", re.I)
@@ -92,6 +103,10 @@ def load_base_norms(parquet_path: str | None = None) -> dict[str, dict[str, Any]
         }
         if rec.get("resource_code"):
             res["code"] = rec["resource_code"]
+        elif rec.get("kind") == "labor":                  # труд без кода → тарифный 1-100-NM по разряду
+            tc = _labor_tariff_code(rec.get("resource_name"))
+            if tc:
+                res["code"] = tc
         if rec.get("price") not in (None, ""):
             res["price"] = rec["price"]
         norm["resources"].append(res)
