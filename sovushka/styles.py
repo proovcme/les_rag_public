@@ -765,6 +765,48 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   padding: 10px;
 }
 .sov-svg-preview svg { max-width: 100%; height: auto; }
+
+/* Богатые формы прямо в пузыре чата: таблицы, mermaid-диаграммы, проза-сегменты. */
+.sov-chat-rich { align-items: stretch; }
+.sov-chat-md { white-space: normal; }
+.sov-chat-md p { margin: .2rem 0; }
+.sov-chat-inline-table {
+  width: 100%;
+  background: var(--bg-panel);
+  color: var(--text);
+  font-size: .76rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.sov-chat-inline-table thead th { font-weight: 800; }
+.sov-chat-inline-mermaid {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  overflow: auto;
+}
+.sov-chat-inline-mermaid svg { max-width: 100%; height: auto; }
+
+/* Панель «Файлы»: готовые документы-артефакты (смета xlsx, формы). */
+.sov-files-artifacts {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.sov-file-card {
+  width: 100%;
+  background: var(--card-bg) !important;
+  border: 1px solid rgba(138,162,184,.32) !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+  padding: 8px 10px !important;
+}
+.sov-file-icon { color: var(--accent); font-size: 1.1rem; }
+.sov-file-name { color: var(--text); font-weight: 700; }
 .sov-history-drawer {
   position: absolute;
   z-index: 20;

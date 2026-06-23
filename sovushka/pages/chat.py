@@ -59,6 +59,17 @@ def _is_spec_request(q: str) -> bool:
                            (q or "").lower()))
 
 
+def _looks_like_smeta(q: str) -> bool:
+    """Похоже на запрос объектной сметы (есть «смета»+объект/число) — для подсказки
+    «включить режим Смета», когда режим выключен и ответ ушёл в обычный RAG."""
+    ql = (q or "").lower()
+    if "смет" not in ql:
+        return False
+    has_obj = any(w in ql for w in ("дом", "здание", "коттедж", "гараж", "баня", "офис", "дача", "сруб"))
+    has_num = bool(re.search(r"\d+\s*(?:м²|м2|кв|метр|этаж)", ql))
+    return has_obj or has_num
+
+
 def _rows_to_csv(rows: list[dict]) -> bytes:
     """list[dict] → CSV для рус-Excel: разделитель «;», UTF-8 BOM (кириллица не ломается)."""
     import csv
@@ -82,6 +93,11 @@ def _rows_to_csv(rows: list[dict]) -> bytes:
 
 OUTPUT_FORMATS = {
     "text": ("Текст", "Свободный ответ"),
+    "rag": ("РАГ", "Заземлённый ответ из документов (с цитатами)"),
+    "smeta": ("Смета", "Расчёт сметы на объект по описанию"),
+    "kp": ("КП", "Коммерческое предложение (задел на будущее)"),
+    "review": ("Проверка проекта", "Нормоконтроль документов объекта"),
+    "free": ("Свободный", "Вольный ответ модели без источников (возможны неточности)"),
     "spec": ("Спецификация", "JSON-таблица изделий"),
     "schema": ("Схема", "Иерархия или дерево"),
     "structure": ("Структура", "JSON-объект"),
@@ -386,6 +402,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     '<div class="sov-muted">Структурированные ответы, таблицы, SVG и диаграммы появятся здесь.</div>'
                     '</div>'
                 )
+            # Готовые ФАЙЛЫ-артефакты (сметы xlsx, документы форм): отдельная панель,
+            # её _render_result не чистит — список накапливается за сессию.
+            files_artifacts_panel = ui.column().classes("sov-files-artifacts")
+            files_artifacts_panel.set_visibility(False)
 
     with ui.dialog() as advanced_dialog:
         with ui.card().classes("sov-advanced-dialog"):
@@ -1135,6 +1155,247 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         t = re.sub(r"\n{3,}", "\n\n", t).strip()
         return t or "Готово — результат в артефакте (кнопка ниже)."
 
+    # ── Богатые формы ПРЯМО В ЧАТЕ (таблицы/mermaid → красиво, не сырой текст) ──
+    # Ответ режется на сегменты по месту блока (mermaid-fence, markdown-таблица),
+    # проза остаётся прозой. Каждый сегмент рисуется своим виджетом: text → ui.markdown,
+    # table → ui.table, mermaid → ui.mermaid (NiceGUI бандлит mermaid.js, рисует SVG).
+    # Fenced-блоки: ```mermaid``` → диаграмма, ```json [ {..} ]``` → таблица.
+    _BLOCK_RE = re.compile(
+        r"```mermaid\s*(?P<mermaid>.*?)```|```json\s*(?P<json>\[\s*\{.*?\}\s*\])\s*```",
+        re.DOTALL | re.IGNORECASE,
+    )
+
+    def _parse_md_table(block_lines: list[str]):
+        """Блок строк md-таблицы (| a | b | + строка-разделитель ---) → list[dict]."""
+        if len(block_lines) < 2:
+            return None
+        if not re.match(r"^\s*\|?[\s:|-]+\|?\s*$", block_lines[1]):
+            return None
+
+        def _cells(row: str) -> list[str]:
+            return [c.strip() for c in row.strip().strip("|").split("|")]
+
+        headers = _cells(block_lines[0])
+        rows: list[dict] = []
+        for row in block_lines[2:]:
+            vals = _cells(row)
+            if not any(vals):
+                continue
+            vals = (vals + [""] * len(headers))[: len(headers)]
+            rows.append({h or f"col{i+1}": vals[i] for i, h in enumerate(headers)})
+        return rows or None
+
+    def _md_table_at(lines: list[str], i: int):
+        """Если со строки i начинается md-таблица — (rows, next_i), иначе None."""
+        block: list[str] = []
+        j = i
+        while j < len(lines):
+            s = lines[j].strip()
+            if s.startswith("|") and s.count("|") >= 2:
+                block.append(s)
+                j += 1
+            else:
+                break
+        rows = _parse_md_table(block)
+        return (rows, j) if rows else None
+
+    def _segment_text_and_tables(chunk: str) -> list[dict]:
+        """Текстовый кусок (без mermaid) → проза + md-таблицы как отдельные сегменты."""
+        lines = chunk.splitlines()
+        out: list[dict] = []
+        buf: list[str] = []
+        i = 0
+
+        def _flush():
+            txt = "\n".join(buf).strip()
+            if txt:
+                out.append({"kind": "text", "text": txt})
+            buf.clear()
+
+        while i < len(lines):
+            s = lines[i].strip()
+            if s.startswith("|") and s.count("|") >= 2:
+                tbl = _md_table_at(lines, i)
+                if tbl:
+                    _flush()
+                    rows, nxt = tbl
+                    out.append({"kind": "table", "rows": rows})
+                    i = nxt
+                    continue
+            buf.append(lines[i])
+            i += 1
+        _flush()
+        return out
+
+    def _segment_answer(ans: str) -> list[dict]:
+        """Ответ → последовательность сегментов text / table / mermaid.
+
+        Ловит fenced-блоки (```mermaid```, ```json [..]```), прочее отдаёт в
+        _segment_text_and_tables (проза + markdown-таблицы)."""
+        ans = ans or ""
+        segments: list[dict] = []
+        cursor = 0
+        for m in _BLOCK_RE.finditer(ans):
+            pre = ans[cursor:m.start()]
+            if pre.strip():
+                segments.extend(_segment_text_and_tables(pre))
+            if m.group("mermaid") is not None:
+                code = (m.group("mermaid") or "").strip()
+                if code:
+                    segments.append({"kind": "mermaid", "code": code})
+            elif m.group("json") is not None:
+                try:
+                    data = json.loads(m.group("json"))
+                except Exception:
+                    data = None
+                if isinstance(data, list) and data and isinstance(data[0], dict):
+                    segments.append({"kind": "table", "rows": data})
+                else:  # не таблица — оставить как код в прозе
+                    segments.append({"kind": "text", "text": m.group(0)})
+            cursor = m.end()
+        tail = ans[cursor:]
+        if tail.strip():
+            segments.extend(_segment_text_and_tables(tail))
+        return segments
+
+    def _render_inline_table(rows: list[dict]) -> None:
+        """Красивая таблица в пузыре чата (ui.table: сортировка, лёгкий стиль)."""
+        keys = list(rows[0].keys()) if rows else []
+        cols = [{"name": k, "label": k, "field": k, "align": "left", "sortable": True} for k in keys]
+        ui.table(columns=cols, rows=rows, pagination=10).props("dense flat bordered").classes(
+            "sov-chat-inline-table"
+        )
+
+    def _render_inline_mermaid(code: str) -> None:
+        """Mermaid → SVG прямо в чате. ui.mermaid рисует SVG на клиенте; если упал —
+        fallback на исходный код в свёрнутом блоке (чтобы данные не пропали)."""
+        try:
+            ui.mermaid(code).classes("sov-chat-inline-mermaid w-full")
+        except Exception:
+            with ui.expansion("Диаграмма (код Mermaid)", icon="account_tree").props("dense").classes("w-full"):
+                ui.markdown(f"```mermaid\n{code}\n```").classes("sov-chat-message-text")
+
+    def _render_rich_body(text: str) -> bool:
+        """Отрисовать тело ответа богато (таблицы/mermaid внутри прозы). True — если
+        нарисован хоть один не-текстовый сегмент (тогда сырой ui.label не нужен)."""
+        ans = str(text or "")
+        try:
+            segments = _segment_answer(ans)
+        except Exception:
+            return False
+        if not any(seg["kind"] != "text" for seg in segments):
+            return False
+        with ui.column().classes("sov-chat-rich w-full gap-2"):
+            for seg in segments:
+                if seg["kind"] == "table":
+                    _render_inline_table(seg["rows"])
+                elif seg["kind"] == "mermaid":
+                    _render_inline_mermaid(seg["code"])
+                else:
+                    ui.markdown(seg["text"]).classes("sov-chat-message-text sov-chat-md")
+        return True
+
+    # ── ФАЙЛЫ-АРТЕФАКТЫ: готовые документы (смета xlsx, формы) в панели «Файлы» ──
+    _file_artifacts: dict[str, dict] = {}  # url → {name, kind}
+
+    async def _download_file_artifact(url: str, name: str) -> None:
+        res = await api_get_bytes(url)
+        if not res:
+            ui.notify(last_api_error_text("Файл не готов"), type="negative")
+            return
+        data, fname = res
+        ui.download(data, name or fname)
+
+    def _rows_from_spreadsheet(data: bytes, kind: str) -> list[dict]:
+        """xlsx/csv байты → list[dict] (первый лист, шапка = первая строка). Лимит 200 строк."""
+        try:
+            if kind == "csv":
+                import csv
+                import io
+                text = data.decode("utf-8-sig", errors="replace")
+                reader = csv.reader(io.StringIO(text), delimiter=";" if ";" in text.split("\n", 1)[0] else ",")
+                table = list(reader)
+            else:
+                import io
+                import openpyxl
+                wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+                ws = wb.active
+                table = [[("" if c is None else str(c)) for c in row]
+                         for row in ws.iter_rows(values_only=True)]
+            if not table:
+                return []
+            headers = [str(h or f"col{i+1}") for i, h in enumerate(table[0])]
+            out = []
+            for row in table[1:201]:
+                vals = (list(row) + [""] * len(headers))[: len(headers)]
+                out.append({headers[i]: vals[i] for i in range(len(headers))})
+            return out
+        except Exception:
+            return []
+
+    async def _preview_file_artifact(url: str, name: str, kind: str) -> None:
+        """Открыть файл-артефакт в живой панели: xlsx/csv → таблица, картинка → image,
+        прочее → скачивание. Превью не затирает список файлов (он в отдельной панели)."""
+        if kind == "image":
+            artifact_panel.clear()
+            with artifact_panel:
+                with ui.card().classes("sov-artifact-card"):
+                    _html(f'<div class="sov-panel-title">{esc(name)}</div>')
+                    ui.image(url).style("width:100%;border-radius:6px;")
+            return
+        if kind in ("xlsx", "csv"):
+            res = await api_get_bytes(url)
+            if not res:
+                ui.notify(last_api_error_text("Не удалось открыть файл"), type="negative")
+                return
+            data, _fn = res
+            rows = _rows_from_spreadsheet(data, kind)
+            artifact_panel.clear()
+            with artifact_panel:
+                with ui.card().classes("sov-artifact-card"):
+                    with ui.row().classes("w-full items-center justify-between"):
+                        _html(f'<div class="sov-panel-title">{esc(name)}</div>')
+                        ui.button("Скачать", icon="o_download",
+                                  on_click=lambda u=url, n=name: asyncio.create_task(_download_file_artifact(u, n))
+                                  ).props("no-caps flat dense")
+                    if rows:
+                        _render_table(rows)
+                    else:
+                        ui.markdown("_Пустой файл или не удалось разобрать таблицу._").classes("sov-artifact-markdown")
+            return
+        await _download_file_artifact(url, name)
+
+    def _kind_from_name(name: str) -> str:
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        if ext in ("png", "jpg", "jpeg", "gif", "webp"):
+            return "image"
+        if ext in ("xlsx", "xls", "csv", "docx", "pdf"):
+            return "xlsx" if ext in ("xlsx", "xls") else ext
+        return "file"
+
+    def _register_file_artifact(name: str, url: str, kind: str = "file") -> None:
+        if not url or url in _file_artifacts:
+            return
+        _file_artifacts[url] = {"name": name, "kind": kind}
+        files_artifacts_panel.set_visibility(True)
+        with files_artifacts_panel:
+            if len(_file_artifacts) == 1:
+                _html('<div class="sov-panel-title" style="margin-top:6px;">Файлы</div>')
+            icon = {"xlsx": "o_table_chart", "csv": "o_grid_on", "docx": "o_description",
+                    "image": "o_image", "pdf": "o_picture_as_pdf"}.get(kind, "o_insert_drive_file")
+            with ui.card().classes("sov-file-card"):
+                with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                    ui.icon(icon).classes("sov-file-icon")
+                    ui.label(name).classes("sov-file-name").style(
+                        "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:.72rem;"
+                    )
+                    ui.button(icon="o_visibility",
+                              on_click=lambda u=url, n=name, k=kind: asyncio.create_task(_preview_file_artifact(u, n, k))
+                              ).props("flat round dense").tooltip("Открыть в панели")
+                    ui.button(icon="o_download",
+                              on_click=lambda u=url, n=name: asyncio.create_task(_download_file_artifact(u, n))
+                              ).props("flat round dense").tooltip("Скачать")
+
     def _render_chat_bubble(
         text: str,
         class_name: str,
@@ -1143,14 +1404,19 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         meta: dict | None = None,
     ):
         _mode = (meta or {}).get("out_mode", "text")
-        _disp = _bubble_text(str(text or ""), _mode) if (meta and "chat-msg-ai" in class_name) else str(text or "")
+        _is_ai = "chat-msg-ai" in class_name
         with ui.element("div").classes(class_name) as bubble:
-            ui.label(_disp).classes("sov-chat-message-text")
+            # AI-ответ с таблицей/диаграммой → рисуем формы прямо в пузыре; SVG и прочее,
+            # что inline-рендер не ловит, остаётся на «сыром» тексте + кнопке артефакта.
+            rich = _render_rich_body(str(text or "")) if _is_ai else False
+            if not rich:
+                _disp = _bubble_text(str(text or ""), _mode) if (meta and _is_ai) else str(text or "")
+                ui.label(_disp).classes("sov-chat-message-text")
             _render_source_tags(srcs or [], crag, meta)
             if meta:
                 _render_suggestions(meta)
                 _render_excerpts(meta)
-                if "chat-msg-ai" in class_name:
+                if _is_ai and not rich:
                     _artifact_button(str(text or ""), _mode)
         return bubble
 
@@ -1172,13 +1438,18 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         if error:
             bubble.classes(add="chat-msg-error")
         _mode = (meta or {}).get("out_mode", "text")
-        label.set_text(_bubble_text(str(text or ""), _mode) if (meta and not error) else str(text or ""))
         with bubble:
+            # Формы (таблица/mermaid) рисуем виджетами; сырой стрим-label прячем.
+            rich = _render_rich_body(str(text or "")) if (meta and not error) else False
+            if rich:
+                label.set_visibility(False)
+            else:
+                label.set_text(_bubble_text(str(text or ""), _mode) if (meta and not error) else str(text or ""))
             _render_source_tags(srcs or [], crag, meta)
             if meta:
                 _render_suggestions(meta)
                 _render_excerpts(meta)
-                if not error:
+                if not error and not rich:
                     _artifact_button(str(text or ""), meta.get("out_mode", "text"))
 
     def _render_msg(msg):
@@ -1362,6 +1633,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         artifact_panel.clear()
         with artifact_panel:
             _render_empty_artifacts()
+        _file_artifacts.clear()
+        files_artifacts_panel.clear()
+        files_artifacts_panel.set_visibility(False)
         state["chat_history"].clear()
         state["session_id"] = _new_session_id()
         state["load_session_id"] = None
@@ -1527,20 +1801,31 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         if _orig_mode == "text" and _is_spec_request(question):
             out_mode_val["v"] = "spec"
         out_mode = out_mode_val["v"]
+        # МАРШРУТНЫЕ РЕЖИМЫ: backend форсит путь по полю mode (минуя угадайку роутера).
+        #   smeta/review → детерминированная таблица; kp → текст-задел; rag → заземлённый RAG;
+        #   free → вольный LLM без ретрива. Прочие out_mode (table/svg/…) — обычный формат-режим.
+        _ROUTING_MODES = {"smeta", "review", "kp", "rag", "free"}
+        _routing_mode = out_mode if out_mode in _ROUTING_MODES else None
+        is_smeta_mode = (out_mode == "smeta")
+        _ph_map = {"smeta": "Считаю смету…", "review": "Проверяю проект…", "kp": "Готовлю КП…",
+                   "free": "Думаю вольно…", "rag": "Ищу в документах…"}
+        # рендер ответа: смета/проверка → таблица; вольный/раг/кп → текст; иначе сам формат.
+        _render_mode = "table" if out_mode in ("smeta", "review") else ("text" if _routing_mode else out_mode)
 
         state["chat_history"].append({"role": "user", "text": question})
         state["chat_pending"] = {"question": question, "started_at": time.time()}
 
         with chat_column:
             _render_chat_bubble(question, "chat-msg-user")
-            ai_placeholder, ai_placeholder_label = _render_ai_placeholder("Генерирую... 0с")
+            ai_placeholder, ai_placeholder_label = _render_ai_placeholder(_ph_map.get(out_mode, "Генерирую... 0с"))
         chat_scroll.scroll_to(percent=1)
-        _render_artifact_loading(out_mode, question)
+        _render_artifact_loading(_render_mode, question)
         add_log(f'[AI] Запрос: "{question[:60]}"')
 
         # Формат/стиль ответа — ОТДЕЛЬНЫМ полем (не клеим в текст вопроса): иначе бэкенд
         # видит мусор-шаблон как вопрос → авто-заметки/роутинг/ретрив плывут.
-        extra_prompt = "" if skip_resource_gate else _build_extra_prompt(question)
+        # В маршрутном режиме формат-директива не нужна (backend сам решает, что вернуть).
+        extra_prompt = "" if (skip_resource_gate or _routing_mode) else _build_extra_prompt(question)
         out_mode_val["v"] = _orig_mode  # вернуть пользователю его выбор формата (авто-GOST не липкий)
         payload = {
             "question": question,
@@ -1549,6 +1834,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             "validation_enabled": bool(validation_sw.value),
             "session_id": state.get("session_id"),
         }
+        if _routing_mode:
+            payload["mode"] = _routing_mode
+            out_mode = _render_mode  # дальше ответ рендерится в выбранном виде (таблица/текст)
         if detail_dataset.value and detail_dataset.value != "(все датасеты)":
             payload["dataset_filter"] = detail_dataset.value
         if project_state["id"]:  # W17.1: режим объекта — сузить ретрив к датасетам проекта
@@ -1566,20 +1854,22 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         _tick_task = asyncio.create_task(_tick())
 
         async def _gen_form_from_command(cmd: dict) -> None:
-            """Создать документ по /-команде: генерация формы + скачивание файла."""
+            """Создать документ по /-команде: генерация формы → карточка в панели «Файлы»
+            (предпросмотр + скачивание кнопками), а не принудительный диалог сохранения."""
             fid = cmd.get("form_id")
             fmt = cmd.get("fmt", "xlsx")
             gen = await api_post(f"/api/forms/{fid}/generate", {"fmt": fmt})
             if not isinstance(gen, dict) or not gen.get("download"):
                 ui.notify(last_api_error_text("Не удалось создать документ"), type="negative")
                 return
-            res = await api_get_bytes(gen["download"])
-            if not res:
-                ui.notify(last_api_error_text("Файл не готов"), type="negative")
-                return
-            data, fname = res
-            ui.download(data, fname)
-            ui.notify(f"Документ создан: {cmd.get('title', fid)} ({fmt})", type="positive")
+            nm = cmd.get("title") or gen.get("path", fid).rsplit("/", 1)[-1] or f"{fid}.{fmt}"
+            _register_file_artifact(nm, gen["download"], _kind_from_name(nm))
+            ui.notify(f"Документ создан: {cmd.get('title', fid)} ({fmt}) — в панели «Файлы»", type="positive")
+
+        def _resend_as_smeta(q: str) -> None:
+            """Переключить формат на «Смета» и переспросить тот же вопрос (по клику подсказки)."""
+            select_format("smeta")
+            asyncio.create_task(_do_send(q))
 
         def _apply_chat_result(d: dict) -> None:
             """Применяет финальный payload (общий для стрима и нестриминга):
@@ -1602,6 +1892,20 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             }
             state["chat_history"].append({"role": "ai", "text": ans, "srcs": srcs, "crag": crag, "meta": meta})
             _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, ans, srcs, crag, meta=meta)
+            # Режим «Смета» выключен, но запрос похож на объектную смету → предложить
+            # пересчитать капстоуном (детерминированный расчёт вместо RAG-осколков).
+            _route_ch = (d.get("query_route") or {}).get("channel", "")
+            if (not is_smeta_mode and _looks_like_smeta(question)
+                    and _route_ch not in ("smeta_mode", "smeta")):
+                with ai_placeholder:
+                    ui.button(
+                        "Посчитать в режиме «Смета»",
+                        icon="o_calculate",
+                        on_click=lambda q=question: _resend_as_smeta(q),
+                    ).props("no-caps flat dense").classes("sov-artifact-chip").style(
+                        "margin-top:6px;border:1px solid var(--border);border-radius:8px;"
+                        "background:var(--bg);color:var(--accent);font-size:.68rem;font-weight:700;padding:4px 10px;"
+                    )
             _render_result(ans, out_mode, artifact_panel, table_query=d.get("table_query"))
             add_log(f"[AI] Формат:{out_mode} CRAG:{crag or 'N/A'} src:{len(srcs)}")
             # W11.17: команда «создать документ» → генерируем форму и скачиваем файл.
