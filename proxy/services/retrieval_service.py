@@ -339,6 +339,29 @@ async def resolve_dataset_ids(
     return dataset_ids
 
 
+def _dedup_chunks(chunks: list[Any], logger: logging.Logger | None = None) -> list[Any]:
+    """Убрать дубли по content_hash — один фрагмент часто лежит копиями в разных датасетах
+    (BOOKS+TABLE_SMETA и т.п.) и забивал топ-k одинаковым текстом (одна таблица — 4/5 слотов).
+    Держим ПЕРВУЮ копию (наивысший ранг RRF). Нет content_hash → ключ по нормализованному тексту."""
+    seen: set[str] = set()
+    out: list[Any] = []
+    dropped = 0
+    for c in chunks:
+        meta = getattr(c, "meta", {}) or {}
+        key = str(meta.get("content_hash") or "")
+        if not key:
+            text = getattr(c, "content", "") or getattr(c, "text", "") or ""
+            key = "t:" + " ".join(str(text).split())[:160]
+        if key in seen:
+            dropped += 1
+            continue
+        seen.add(key)
+        out.append(c)
+    if dropped and logger:
+        logger.info("[DEDUP] убрано %s дублей из пула (%s→%s)", dropped, len(chunks), len(out))
+    return out
+
+
 async def retrieve_chat_chunks(
     *,
     question: str,
@@ -430,6 +453,7 @@ async def retrieve_chat_chunks(
                     trace.mode = f"{trace.mode}+table_appendix"
         except Exception as _tbl_err:  # noqa: BLE001 — best-effort, флат не страдает
             logger.warning("[TABLE_APPENDIX] fallback на плоский пул: %s", _tbl_err)
+    chunks = _dedup_chunks(chunks, logger)  # убрать кросс-датасетные дубли (одна таблица 4/5 слотов)
     quality = evaluate_retrieval_quality(question=question, chunks=chunks, trace=trace, kot=kot)
 
     if return_trace and quality.status == "weak":

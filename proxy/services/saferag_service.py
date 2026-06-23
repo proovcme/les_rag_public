@@ -160,11 +160,26 @@ def _source_label(index: int, chunk: SourceChunk, include_metadata: bool) -> str
     return "[" + " | ".join(details) + "]"
 
 
+_BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
+
+
+def _clean_chunk_text(text: str) -> str:
+    """Снять тег-суп `<br>` из деградированных табличных чанков (~18% корпуса: «215<br>1<br>5»,
+    «**<br>**») перед подачей в LLM — модель не должна видеть HTML-мусор. Пайпы НЕ трогаем
+    (можно сломать настоящую markdown-таблицу). No-op для чистого текста (дешёвый гард)."""
+    if not text or "<br" not in text.lower():
+        return text
+    t = _BR_RE.sub(" ", text)
+    t = re.sub(r"\*\*\s*\*\*", " ", t)   # осиротевшие ** после удаления <br>
+    t = re.sub(r"[ \t]{2,}", " ", t)
+    return t
+
+
 def build_context(chunks: Iterable[SourceChunk], max_chars: int, *, include_metadata: bool = False) -> str:
     parts: list[str] = []
     total = 0
     for index, chunk in enumerate(chunks, 1):
-        part = f"{_source_label(index, chunk, include_metadata)}:\n{chunk.content}"
+        part = f"{_source_label(index, chunk, include_metadata)}:\n{_clean_chunk_text(chunk.content)}"
         if total + len(part) > max_chars:
             break
         parts.append(part)
