@@ -310,7 +310,10 @@ async def resolve_dataset_ids(
             candidates = _dataset_name_candidates(effective_filter)
             matches = [dataset for dataset in ds_list if dataset.name in candidates]
             if not matches and effective_filter.startswith("NTD_"):
-                matches = [dataset for dataset in ds_list if dataset.name == "NTD_Index"]
+                # точного NTD_HVAC/NTD_Index нет (в рантайме NTD_GENERAL/CONSTRUCTION/FIRE/…) →
+                # скоупимся на ВЕСЬ нормативный корпус (все NTD_*_Index): фокус на нормативке,
+                # высокие скоры (не broad-шум, не пустота). RAG-first: вопрос достаёт корпус.
+                matches = [dataset for dataset in ds_list if str(dataset.name).startswith("NTD_")]
             if matches:
                 ids = [dataset.id for dataset in matches]
                 logger.info("[CHAT] dataset_filter='%s' -> ids=%s", effective_filter, ids)
