@@ -23,6 +23,11 @@ from typing import Any
 API = "https://fgiscs.minstroyrf.ru/api/FullTextSearch/SearchEstimatedRates?search="
 CACHE_PARQUET = Path("data/gesn_base/gesn2022.parquet")
 
+# Принцип: query-time работаем ТОЛЬКО из локальной базы; канал (ФГИС/Cloudflare режутся из
+# рантайма) — лишь для ОБНОВЛЕНИЯ базы по запросу, и ему НЕ доверяем. Короткий таймаут, чтобы
+# недоверенный канал не вешал чат (как было «чат висит минуты»): при сбое — graceful no-op.
+_CHAT_TIMEOUT = int(os.getenv("LES_FGIS_TIMEOUT", "8"))
+
 # Труд рабочих в ФГИС идёт как «Средний разряд работы N,M» БЕЗ кода → выводим тарифный код
 # `1-100-NM` (эталон: разряд 2,5 → 1-100-25), который есть в Сплит-форме ФГИС ЦС → цена ОЗП.
 _RAZRYAD_RE = re.compile(r"разряд\D*(\d)[.,](\d)")
@@ -43,13 +48,13 @@ def _fetch_raw(code: str) -> list[dict[str, Any]]:
     via = os.getenv("LES_FGIS_VIA_SSH", "").strip()
     if via:
         out = subprocess.run(
-            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=12", via, f"curl -sS -m 25 '{url}'"],
-            capture_output=True, text=True, timeout=45,
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6", via, f"curl -sS -m {_CHAT_TIMEOUT} '{url}'"],
+            capture_output=True, text=True, timeout=_CHAT_TIMEOUT + 6,
         ).stdout
         data = json.loads(out)
     else:
         req = urllib.request.Request(url, headers={"Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with urllib.request.urlopen(req, timeout=_CHAT_TIMEOUT) as r:
             data = json.loads(r.read().decode("utf-8"))
     if isinstance(data, list):
         return data
