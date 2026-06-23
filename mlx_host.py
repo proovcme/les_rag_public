@@ -77,6 +77,12 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 # ── Конфигурация ──────────────────────────────────────────────────────────────
+# Порт конфигурируем (MLX_PORT) — чтобы поднять ВТОРОЙ инстанс embed-only на альт-порту
+# (разгрузка чат-эмбеддера от парс-эмбеддингов при индексации). MLX_EMBED_ONLY на втором
+# инстансе глушит генерацию (chat/generate/validate) → 14B-модель в него никогда не грузится
+# (страховка от OOM; LLM и так lazy, но гард надёжнее случайного вызова на :8081).
+MLX_PORT = int(os.getenv("MLX_PORT", "8080"))
+MLX_EMBED_ONLY = os.getenv("MLX_EMBED_ONLY", "").strip().lower() in ("1", "true", "yes")
 MAIN_MODEL = os.getenv("MLX_MODEL",     "mlx-community/Qwen3-14B-4bit")
 VAL_MODEL  = os.getenv("MLX_VAL_MODEL", "mlx-community/Qwen3-4B-4bit")
 BGE_MODEL  = embedding_model_id()
@@ -1627,6 +1633,8 @@ async def api_ps():
 
 @app.post("/api/switch_model")
 async def switch_model(req: SwitchModelRequest):
+    if MLX_EMBED_ONLY:
+        raise HTTPException(503, "embed-only instance: смена модели отключена")
     if req.target == "val":
         val_engine.force_unload()
         val_engine.model_path = req.model
@@ -1657,6 +1665,8 @@ async def list_models():
 @app.post("/api/generate")
 async def generate_ollama(req: GenerateRequest):
     """Ollama-совместимый endpoint для обратной совместимости."""
+    if MLX_EMBED_ONLY:
+        raise HTTPException(503, "embed-only instance: генерация отключена (используй основной :8080)")
     engine = _get_engine(req.model)
     answer, _ = await _generate_with_llm_policy(engine, prompt=req.prompt, max_tokens=req.max_tokens)
     return {"model": req.model, "response": answer, "eval_count": len(answer.split())}
@@ -1665,6 +1675,8 @@ async def generate_ollama(req: GenerateRequest):
 @app.post("/v1/chat/completions")
 async def chat_completions(req: OAIChatRequest):
     """OpenAI-совместимый — основной для прокси и Roo Code."""
+    if MLX_EMBED_ONLY:
+        raise HTTPException(503, "embed-only instance: генерация отключена (используй основной :8080)")
     engine = _get_engine(req.model or MAIN_MODEL)
     prompt = _messages_to_prompt(req.messages, engine)
     
@@ -1867,6 +1879,8 @@ async def _validate_by_backend(req: ValidateRequest) -> dict:
 @app.post("/api/validate")
 async def validate_answer(req: ValidateRequest):
     """Проверка ответа. Возвращает VERIFIED / NO_DATA / HALLUCINATION."""
+    if MLX_EMBED_ONLY:
+        raise HTTPException(503, "embed-only instance: валидация отключена (используй основной :8080)")
     try:
         result = await _validate_by_backend(req)
         logger.info("[VALIDATE:%s] → %s", result.get("backend", _validator_backend_name()), result.get("status"))
@@ -1932,4 +1946,6 @@ async def rerank_endpoint(req: RerankRequest):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host=MLX_HOST_BIND, port=8080, log_level="info")
+    if MLX_EMBED_ONLY:
+        logger.info("[MLX] EMBED-ONLY инстанс на порту %s (генерация заглушена)", MLX_PORT)
+    uvicorn.run(app, host=MLX_HOST_BIND, port=MLX_PORT, log_level="info")

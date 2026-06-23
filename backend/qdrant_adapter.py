@@ -853,6 +853,14 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         self.aclient         = qdrant_client.AsyncQdrantClient(url=qdrant_url, timeout=60.0)
         self.qdrant_url      = qdrant_url
         self.embed           = EmbedClient(mlx_url, model=embed_model_name.replace(":latest", ""))
+        # Отдельный эмбеддер для ПАРСА (опц.): EMBED_URL_PARSE → парс-эмбеддинги уходят на
+        # ВТОРОЙ инстанс, не голодая чат-эмбеддинг на основном :8080 во время индексации.
+        # Дефолт = основной URL (ноль изменений, пока env не задан). Активация: поднять второй
+        # MLX-эмбеддер на альт-порту + EMBED_URL_PARSE=http://127.0.0.1:<порт>.
+        _parse_url = os.getenv("EMBED_URL_PARSE", "").strip() or mlx_url
+        self.embed_parse     = EmbedClient(_parse_url, model=embed_model_name.replace(":latest", ""))
+        if _parse_url != mlx_url:
+            logger.info("[INIT] парс-эмбеддер на отдельном инстансе: %s", _parse_url)
         self.collection_name = rag_collection_name()
         self.vector_size     = rag_vector_size()
         self._collection_ready = False
@@ -1261,7 +1269,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
 
                         if miss_texts:
                             phase_start = _t.time()
-                            vectors = self.embed.encode_sync(miss_texts)
+                            vectors = self.embed_parse.encode_sync(miss_texts)  # парс-эмбеддер (EMBED_URL_PARSE)
                             _add_timing("embed_sec", phase_start)
                             if len(vectors) != len(miss_texts):
                                 raise RuntimeError(
