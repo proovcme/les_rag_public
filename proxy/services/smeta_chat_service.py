@@ -139,18 +139,27 @@ def _answer_assemble(q: str) -> dict[str, Any]:
 
     code = _GESN_RE.search(q).group(0).strip()
     norm = get_norm(code)
-    if norm is None and os.getenv("LES_SMETNOE_TOKEN", "").strip():
-        # авто-дотяжка из API cs.smetnoedelo (квота-aware: один код = один запрос, кешируется)
+    if norm is None:
+        from proxy.services.gesn_service import _norm_code
+        ac = _norm_code(code)
+        # 1) официальный ФГИС ЦС — БЕСПЛАТНО, без квоты (основной источник базы как есть)
         try:
-            from proxy.services.gesn_api_service import fetch_and_cache
-            from proxy.services.gesn_service import _norm_code
-            fetch_and_cache(_norm_code(code))
+            from proxy.services.gesn_fgis_service import fetch_and_cache as _fgis
+            _fgis(ac)
             norm = get_norm(code)
         except Exception:
             pass
+        # 2) cs.smetnoedelo — резерв/апдейты (квота, нужен токен)
+        if norm is None and os.getenv("LES_SMETNOE_TOKEN", "").strip():
+            try:
+                from proxy.services.gesn_api_service import fetch_and_cache as _sm
+                _sm(ac)
+                norm = get_norm(code)
+            except Exception:
+                pass
     if norm is None:
-        return {"answer": f"Норма ГЭСН {code} не найдена (семя/база/API). Дёрнуть из cs.smetnoedelo: "
-                          f"задай LES_SMETNOE_TOKEN, или импортируй базу (tools/gesn_import).",
+        return {"answer": f"Норма ГЭСН {code} не найдена (семя/база/ФГИС ЦС/smetnoedelo). "
+                          f"Проверь шифр или импортируй базу (tools/gesn_pdf_import).",
                 "operation": "assemble"}
     qty = _parse_qty(q, code)
     if qty is None:
