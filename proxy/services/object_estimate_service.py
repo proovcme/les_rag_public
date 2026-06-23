@@ -260,6 +260,20 @@ def estimate(
         "positions": [], "summary": {"positions": 0, "total": 0.0, "base_total": 0.0,
                                      "flags": [], "needs_price": 0}}
 
+    # Хвост сметы: ИТОГО СМР (прямые+НР+СП) → непредвиденные → НДС → ВСЕГО («общая цена»).
+    # Проценты — стандартные укрупнённые (МДС/НК РФ): непредвиденные ~2%, НДС 20%.
+    smr = round(_f(lsr.get("summary", {}).get("total")), 2)
+    cont_pct, vat_pct = 2.0, 20.0
+    contingency = round(smr * cont_pct / 100, 2)
+    before_vat = round(smr + contingency, 2)
+    vat = round(before_vat * vat_pct / 100, 2)
+    grand_total = round(before_vat + vat, 2)
+    totals = {
+        "smr": smr, "contingency_pct": cont_pct, "contingency": contingency,
+        "before_vat": before_vat, "vat_pct": vat_pct, "vat": vat, "grand_total": grand_total,
+        "positions": len(positions),
+    }
+
     assumptions = _collect_assumptions(tpl, vor["params"], missing_codes)
     return {
         "ok": True,
@@ -267,6 +281,7 @@ def estimate(
         "template": {"id": tpl.get("id"), "name": tpl.get("name")},
         "vor": vor,
         "estimate": lsr,
+        "totals": totals,
         "missing_codes": missing_codes,
         "assumptions": assumptions,
     }

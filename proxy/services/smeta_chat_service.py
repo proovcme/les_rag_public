@@ -207,17 +207,21 @@ def _answer_object_estimate(q: str) -> Optional[dict[str, Any]]:
     head = r.get("template", {}).get("name", "объект")
     lines = [f"Смета: {head} · {parsed.get('area')} м², {parsed.get('floors')} эт. "
              f"(укрупнённо, по типовому составу работ)"]
-    total = 0.0
     for p, ap in zip(pos, apos):
         t = _f(ap.get("base", {}).get("total"))
-        total += t
         lines.append(f"• {str(p.get('name',''))[:44]} · {p.get('code')} · "
                      f"{p.get('qty')} {p.get('unit','')} — {_fmt_num(t)} ₽")
-    lines.append(f"ИТОГО (укрупнённо): {_fmt_num(total)} ₽")
+    tot = r.get("totals", {})
+    lines.append(f"  ИТОГО СМР (прямые+НР+СП): {_fmt_num(tot.get('smr'))} ₽")
+    lines.append(f"  + непредвиденные {_fmt_num(tot.get('contingency_pct'))}%: {_fmt_num(tot.get('contingency'))} ₽")
+    lines.append(f"  + НДС {_fmt_num(tot.get('vat_pct'))}%: {_fmt_num(tot.get('vat'))} ₽")
+    lines.append(f"━━ ВСЕГО (общая цена с НДС): {_fmt_num(tot.get('grand_total'))} ₽")
     if r.get("missing_codes"):
         lines.append(f"⚠ нет в базе: {', '.join(r['missing_codes'])}")
+    lines.append(f"⚙ Состав укрупнённый ({tot.get('positions')} поз., типовой ИЖС) — "
+                 f"отделка/проёмы/инженерка добавляются в шаблон.")
     if r.get("assumptions"):
-        lines.append("Допущения (без чертежа): " + "; ".join(r["assumptions"])[:220])
+        lines.append("Допущения: " + "; ".join(r["assumptions"])[:200])
     return {"answer": "\n".join(lines), "operation": "object_estimate"}
 
 
