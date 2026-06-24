@@ -18,13 +18,53 @@ def _state(area=3000, floors=3):
 
 # ── search_norm: тонкий кандидатор + фильтр применимости ──────────────────────────────────
 
-def test_search_norm_thin_and_collection_filtered():
-    r = h.search_norm("разработка грунта котлован", work_family="earthworks", unit_hint="м3")
-    assert r["status"] in ("found", "ambiguous", "not_found")
-    # все кандидаты — только из разрешённого сборника 01; чужие — в rejected
-    for c in r.get("candidates", []):
-        assert c["collection"] == "01"
+def test_search_norm_thin_and_no_match():
     assert h.search_norm("жжжыыы щщщъъъ ёёёххх")["status"] == "not_found"
+
+
+# ── Gate 3: структурный ranking — хорошее всплывает, спец тонет ───────────────────────────
+
+def test_score_forbidden_anchor_heavy_penalty():
+    sc = h._score_candidate(["бетонирование", "плиты"], "06-22-003-05",
+                            "бетонирование плиты защитной оболочки реактора", "100 м3",
+                            work_family="concrete_monolithic", element_type="foundation_slab",
+                            action="бетонирование", phys_unit="м3")
+    assert sc is not None and sc[1].get("forbidden", 0) < 0 and sc[0] < 3  # утоплен
+
+
+def test_score_element_anchor_boost():
+    sc = h._score_candidate(["устройство", "фундамент"], "06-02-001-04",
+                            "устройство железобетонных фундаментов общего назначения", "100 м3",
+                            work_family="concrete_monolithic", element_type="foundation_slab",
+                            action="устройство", phys_unit="м3")
+    assert sc is not None and sc[1].get("element", 0) > 0 and sc[0] > 3   # поднят
+
+
+def test_search_general_code_outranks_reactor():
+    r = h.search_norm("устройство монолитной железобетонной фундаментной плиты",
+                      work_family="concrete_monolithic", element_type="foundation_slab", unit_hint="м3")
+    assert r["candidates"]
+    top = r["candidates"][0]
+    assert top["applicability_status"] == "accepted"        # лидер применим
+    assert not top["norm_code"].startswith("06-22")         # не реактор
+    # любой forbidden-кандидат имеет отрицательный score_part forbidden
+    for c in r["candidates"]:
+        if any(a in c["title"].lower() for a in ("реактор", "оболочк")):
+            assert c["score_parts"].get("forbidden", 0) < 0
+
+
+def test_search_candidates_carry_score_parts_for_trace():
+    r = h.search_norm("разработка грунта котлована", work_family="earthworks",
+                      element_type="excavation", unit_hint="м3")
+    for c in r["candidates"]:
+        assert "score_total" in c and "score_parts" in c and "applicability_status" in c
+
+
+def test_bind_accepts_top_applicable_general_code():
+    st = _state()
+    obs = h._add_position({"work": "Фунд. плита", "code": "06-02-001-04", "work_family": "concrete_monolithic",
+                           "physical_unit": "м3", "qty_formula": "S1*0.4"}, st)
+    assert obs["status"] == "computed"                      # general accepted → считается
 
 
 # ── (1) UNIT CONTRACT: физический объём → измеритель нормы (код, не модель) ───────────────

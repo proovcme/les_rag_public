@@ -127,49 +127,76 @@ def _norm_index() -> list[tuple[str, str, str]]:
             for code, n in (load_base_norms() or {}).items()]
 
 
-def search_norm(work_description: str, *, work_family: str = "", unit_hint: str = "",
-                top_k: int = 5) -> dict[str, Any]:
-    """Описание работы → КАНДИДАТЫ кодов ГЭСН (лексика), отфильтрованные по applicability:
-    норма из сборника, не разрешённого для work_family, отклоняется (rejected_candidates)."""
+# Gate 3: позитивные/негативные признаки названия по ТИПУ ЭЛЕМЕНТА (точнее семьи).
+_ELEMENT_ANCHORS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "excavation":          (("разработ", "грунт", "котлован", "выемк", "землян"), ("тоннел", "шахт", "скальн", "подводн")),
+    "concrete_preparation": (("подготовк", "бетонн", "щебен", "основани"), ()),
+    "foundation_slab":     (("плит", "фундамент", "бетон", "железобетон", "монолит"), ()),
+    "foundation":          (("фундамент", "основани", "бетон"), ()),
+    "monolithic_wall":     (("стен", "бетонирован", "бетон", "монолит", "железобетон"), ()),
+    "monolithic_slab":     (("перекрыт", "плит", "бетонирован", "бетон", "монолит"), ()),
+    "column":              (("колонн", "бетон", "монолит"), ()),
+    "waterproofing":       (("гидроизол", "изоляц", "оклеечн", "обмазочн", "мастичн"), ()),
+    "roofing":             (("кровл", "покрыт", "рулон", "мембран"), ()),
+}
+
+
+def _score_candidate(words: list[str], code: str, name: str, unit: str, *, work_family: str,
+                     element_type: str, action: str, phys_unit: str) -> tuple[float, dict[str, float]] | None:
+    """Структурный скоринг кандидата (прозрачный score_parts). Нет лексич. совпадения → None."""
+    fts = sum(1 for w in words if w in name)
+    if not fts:
+        return None
+    parts: dict[str, float] = {"fts": float(fts)}
+    pos, neg = _ELEMENT_ANCHORS.get(element_type, ((), ()))
+    parts["element"] = 1.5 * sum(1 for a in pos if a in name)
+    parts["element_neg"] = -2.0 * sum(1 for a in neg if a in name)
+    parts["family"] = 1.0 if any(a in name for a in _FAMILY_POSITIVE_ANCHORS.get(work_family, ())) else 0.0
+    parts["action"] = 0.8 if (action and action.lower()[:5] and action.lower()[:5] in name) else 0.0
+    _, base = _norm_unit_factor(unit)
+    parts["unit"] = 1.0 if (phys_unit and _units_compatible(phys_unit, base)) else 0.0
+    # тяжёлые штрафы: спец/нерелевантные сооружения и запрещённые подразделы тонут (но в выдаче видны)
+    parts["forbidden"] = -5.0 * sum(1 for a in _FORBIDDEN_TITLE_ANCHORS if a in name)
+    parts["denied_subsection"] = -5.0 if any(code.startswith(p) for p in _FAMILY_DENIED_PREFIXES.get(work_family, ())) else 0.0
+    parts["collection"] = 1.0 if _collection_of(code) in WORK_FAMILY_COLLECTIONS.get(work_family, set()) else -3.0
+    return round(sum(parts.values()), 2), {k: round(v, 2) for k, v in parts.items() if v}
+
+
+def search_norm(work_description: str, *, work_family: str = "", element_type: str = "",
+                action: str = "", unit_hint: str = "", top_k: int = 6) -> dict[str, Any]:
+    """Gate 3: КАНДИДАТОР (не выбирает норму). Структурный ranking по work_family/element_type/
+    action/unit/anchors — хорошие general всплывают, спец-коды штрафуются и тонут (но видны в trace).
+    applicability_status метит каждого; bind (add_position) остаётся финальным барьером."""
     words = [w for w in re.findall(r"[а-яёa-z0-9]{3,}", (work_description or "").lower())]
     if not words:
         return {"status": "not_found", "candidates": [], "missing_inputs": ["work_description"]}
-    allowed = WORK_FAMILY_COLLECTIONS.get(work_family or "", set())
     uh = _canon_unit(unit_hint)
-    scored: list[tuple[float, str, str, str]] = []
+    scored: list[tuple[float, dict, str, str, str]] = []
     for code, name, unit in _norm_index():
-        score = sum(1 for w in words if w in name)
-        if not score:
+        sc = _score_candidate(words, code, name, unit, work_family=work_family,
+                              element_type=element_type, action=action, phys_unit=uh)
+        if sc is None:
             continue
-        if uh and uh in _canon_unit(unit):
-            score += 0.5
-        scored.append((score, code, name, unit))
+        scored.append((sc[0], sc[1], code, name, unit))
     if not scored:
         return {"status": "not_found", "candidates": [], "hint": "переформулируй work_description"}
-    scored.sort(key=lambda t: (-t[0], t[1]))
+    scored.sort(key=lambda t: (-t[0], t[2]))
 
-    candidates, rejected = [], []
-    for s, c, nm, u in scored:
-        if allowed and _collection_of(c) not in allowed:
-            if len(rejected) < 4:
-                rejected.append({"norm_code": c, "collection": _collection_of(c),
-                                 "reason": f"сборник не разрешён для {work_family}"})
-            continue
+    candidates = []
+    for total, parts, c, nm, u in scored[:top_k]:
         factor, base = _norm_unit_factor(u)
-        appl, reasons = check_applicability(c, nm, work_family)   # Gate 2: применимость кандидата
+        appl, reasons = check_applicability(c, nm, work_family)
         candidates.append({"norm_code": c, "title": nm, "collection": _collection_of(c),
                            "measure_unit": u, "base_unit": base,
                            "unit_compatible": (not uh) or _units_compatible(uh, base),
                            "applicability_status": appl, "rejection_reasons": reasons,
-                           "score": round(s, 2)})
-        if len(candidates) >= top_k:
-            break
-    if not candidates:
-        return {"status": "not_found", "candidates": [], "rejected_candidates": rejected,
-                "work_family": work_family, "allowed_collections": sorted(allowed)}
-    status = "found" if len(candidates) == 1 or candidates[0]["score"] >= candidates[1]["score"] + 1.5 else "ambiguous"
-    return {"status": status, "work_family": work_family, "allowed_collections": sorted(allowed),
-            "candidates": candidates, "rejected_candidates": rejected}
+                           "score_total": total, "score_parts": parts})
+    # found, если лидер ПРИМЕНИМ и заметно сильнее второго; иначе ambiguous
+    top = candidates[0]
+    clear_lead = len(candidates) == 1 or top["score_total"] >= candidates[1]["score_total"] + 2.0
+    status = "found" if (top["applicability_status"] == "accepted" and clear_lead) else "ambiguous"
+    return {"status": status, "work_family": work_family, "element_type": element_type,
+            "candidates": candidates}
 
 
 # ── magnitude guard: грубые порядковые границы ───────────────────────────────────────────
@@ -201,7 +228,10 @@ SYSTEM_PROMPT = (
     "Код вернёт геометрию {S,N,S1,P,H}.\n"
     "2) {\"tool\":\"search_norm\",\"args\":{\"work_description\":\"..\",\"work_family\":"
     "\"earthworks|foundation|concrete_monolithic|masonry|roofing|waterproofing|floors\","
-    "\"unit_hint\":\"м3|м2\"}} — кандидаты ГЭСН (код фильтрует по применимости сборника).\n"
+    "\"element_type\":\"excavation|concrete_preparation|foundation_slab|monolithic_wall|"
+    "monolithic_slab|column|waterproofing\",\"action\":\"бетонирование|разработка|..\","
+    "\"unit_hint\":\"м3|м2\"}} — кандидаты ГЭСН (ранжируются; спец-коды тонут). Бери из них "
+    "тот, у кого applicability_status=accepted.\n"
     "3) {\"tool\":\"add_position\",\"args\":{\"work\":\"..\",\"code\":\"NN-NN-NNN-NN\","
     "\"work_family\":\"..\",\"physical_unit\":\"м3|м2\",\"qty_formula\":\"<ФИЗИЧЕСКИЙ объём над "
     "S,N,S1,P,H, БЕЗ деления на измеритель>\",\"assumptions\":[..]}} — код сам переведёт в "
@@ -290,6 +320,8 @@ def _exec_tool(name: str, args: dict[str, Any], state: dict[str, Any]) -> dict[s
         if name == "search_norm":
             return search_norm(str(args.get("work_description", "")),
                                work_family=str(args.get("work_family", "")),
+                               element_type=str(args.get("element_type", "")),
+                               action=str(args.get("action", "")),
                                unit_hint=str(args.get("unit_hint", "")))
         if name == "add_position":
             return _add_position(args, state)
