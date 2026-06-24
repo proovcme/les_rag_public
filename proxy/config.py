@@ -128,6 +128,23 @@ def external_source_roots() -> list[Path]:
     return roots
 
 
+def external_allow_any() -> bool:
+    """Локальный single-user режим: разрешить in-place индексацию ЛЮБОГО локального каталога,
+    а не только LES_EXTERNAL_SOURCE_ROOTS. По умолчанию ВКЛ (это машина оператора, Trusted Network).
+    Guard'ы resolve(strict)+isdir+анти-симлинк-эскейп остаются в коде. LES_EXTERNAL_ALLOW_ANY=0 →
+    строгий allowlist (fail-closed)."""
+    return os.getenv("LES_EXTERNAL_ALLOW_ANY", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def external_browse_default() -> Path:
+    """Старт браузера папок, когда корни не заданы / разрешён любой каталог."""
+    raw = os.getenv("LES_EXTERNAL_BROWSE_DEFAULT", "").strip()
+    try:
+        return Path(raw).expanduser().resolve(strict=False) if raw else Path.home()
+    except (OSError, RuntimeError):
+        return Path.home()
+
+
 def max_upload_bytes() -> int:
     return int(os.getenv("MAX_UPLOAD_MB", "100")) * 1024 * 1024
 

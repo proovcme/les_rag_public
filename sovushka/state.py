@@ -301,10 +301,21 @@ async def api_get_cached(path: str, ttl: float = 2.0, base: Optional[str] = None
 
 def add_log(msg: str):
     t = datetime.now().strftime("%H:%M:%S")
+    logs = state["logs"]
+    # Схлопывание подряд идущих ОДИНАКОВЫХ сообщений → «… (×N)»: при перегрузке proxy
+    # поллеры бьют таймаутами каждые ~2-3с — без дедупа лог превращается в стену. Повтор
+    # обновляет последнюю строку в буфере и НЕ пушится в живой лог (UI показывает одну строку).
+    if msg == state.get("_last_log_msg") and logs:
+        n = state.get("_last_log_count", 1) + 1
+        state["_last_log_count"] = n
+        logs[-1] = f"> [{t}] {msg}  (×{n})"
+        return
+    state["_last_log_msg"] = msg
+    state["_last_log_count"] = 1
     line = f"> [{t}] {msg}"
-    state["logs"].append(line)
-    if len(state["logs"]) > 200:
-        state["logs"] = state["logs"][-200:]
+    logs.append(line)
+    if len(logs) > 200:
+        state["logs"] = logs[-200:]
     if log_element is not None:
         # log_element — глобальный на процесс, но в NiceGUI элемент привязан к
         # клиенту. Если он принадлежит отключённому клиенту (реконнект, рестарт,

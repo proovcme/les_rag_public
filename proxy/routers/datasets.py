@@ -1327,23 +1327,33 @@ def _count_dir_files(d: Path) -> int:
 async def browse_external(path: str = "", _admin=Depends(require_admin)):
     """Серверный браузер папок для выбора внешней папки кликами (без печати пути).
 
-    Ограничен корнями LES_EXTERNAL_SOURCE_ROOTS (как и индексация). Пустой `path` →
-    список корней; иначе — подпапки текущей директории + ссылка «вверх».
+    По умолчанию (LES_EXTERNAL_ALLOW_ANY, single-user) — браузер ходит по ВСЕЙ локальной ФС от
+    $HOME, любая папка индексируема. Строгий режим (=0) ограничивает корнями LES_EXTERNAL_SOURCE_ROOTS.
+    Пустой `path` → старт ($HOME + корни как быстрый выбор); иначе — подпапки + «вверх».
     """
-    from proxy.config import external_source_roots
+    from proxy.config import external_source_roots, external_allow_any, external_browse_default
 
     roots = external_source_roots()
-    if not roots:
+    allow_any = external_allow_any()
+    if not roots and not allow_any:
         raise HTTPException(403, "внешняя индексация выключена: LES_EXTERNAL_SOURCE_ROOTS пуст")
 
     if not (path or "").strip():
-        return {
-            "path": "", "parent": None,
-            "roots": [str(r) for r in roots],
-            "dirs": [{"name": r.name or str(r), "path": str(r), "file_count": _count_dir_files(r)} for r in roots],
-        }
+        if allow_any:
+            start = external_browse_default()      # $HOME — отсюда видно любую папку
+            dirs = []
+            try:
+                for child in sorted(start.iterdir(), key=lambda p: p.name.lower()):
+                    if child.is_dir() and not child.name.startswith("."):
+                        dirs.append({"name": child.name, "path": str(child), "file_count": _count_dir_files(child)})
+            except OSError:
+                pass
+            return {"path": str(start), "parent": str(start.parent) if start.parent != start else None,
+                    "roots": [str(r) for r in roots], "dirs": dirs}
+        return {"path": "", "parent": None, "roots": [str(r) for r in roots],
+                "dirs": [{"name": r.name or str(r), "path": str(r), "file_count": _count_dir_files(r)} for r in roots]}
 
-    current = validate_external_source(path)  # внутри корней, существует, директория
+    current = validate_external_source(path)  # resolve+isdir guard (+ allowlist если строгий режим)
     dirs = []
     for child in sorted(current.iterdir(), key=lambda p: p.name.lower()):
         try:
@@ -1351,13 +1361,10 @@ async def browse_external(path: str = "", _admin=Depends(require_admin)):
                 dirs.append({"name": child.name, "path": str(child), "file_count": _count_dir_files(child)})
         except OSError:
             continue
+    # в allow_any можно подниматься до корня ФС; в строгом — не выше одобренного корня.
     is_root = any(current == r for r in roots)
-    return {
-        "path": str(current),
-        "parent": None if is_root else str(current.parent),
-        "roots": [str(r) for r in roots],
-        "dirs": dirs,
-    }
+    parent = None if (current.parent == current or (not allow_any and is_root)) else str(current.parent)
+    return {"path": str(current), "parent": parent, "roots": [str(r) for r in roots], "dirs": dirs}
 
 
 @router.post("/sync/{folder}")

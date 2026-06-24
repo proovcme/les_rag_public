@@ -138,11 +138,11 @@ def build_samovar():
         # Таблица датасетов
         sam_tbl_cols = [
             {"name": "folder",   "label": "Папка",    "field": "folder",   "align": "left",   "sortable": True},
-            {"name": "total",    "label": "Файлов",   "field": "total",    "align": "center", "sortable": True},
-            {"name": "indexed",  "label": "В индексе", "field": "indexed",  "align": "center", "sortable": True},
-            {"name": "pending",  "label": "Ожидают",  "field": "pending",  "align": "center", "sortable": True},
-            {"name": "errors",   "label": "Ошибки",   "field": "errors",   "align": "center", "sortable": True},
-            {"name": "chunks",   "label": "Чанков",   "field": "chunks",   "align": "center", "sortable": True},
+            {"name": "total",    "label": "Файлов",   "field": "total",    "align": "right",  "sortable": True},
+            {"name": "indexed",  "label": "В индексе", "field": "indexed",  "align": "right",  "sortable": True},
+            {"name": "pending",  "label": "Ожидают",  "field": "pending",  "align": "right",  "sortable": True},
+            {"name": "errors",   "label": "Ошибки",   "field": "errors",   "align": "right",  "sortable": True},
+            {"name": "chunks",   "label": "Чанков",   "field": "chunks",   "align": "right",  "sortable": True},
             {"name": "status",   "label": "Статус",   "field": "status",   "align": "left"},
             {"name": "sensitivity", "label": "Данные", "field": "sensitivity", "align": "center"},
             {"name": "group_name", "label": "Группа", "field": "group_name", "align": "left", "sortable": True},
@@ -178,7 +178,7 @@ def build_samovar():
             </q-td>""")
         sam_grid.add_slot("body-cell-status", """
             <q-td :props="props">
-              <span :style="{color: ['INDEXED','READY'].includes(props.value)?'#10b981':['PARSING','SCANNING'].includes(props.value)?'#f59e0b':'#94a3b8'}">
+              <span :style="{color: ['INDEXED','READY','COMPLETED'].includes(props.value)?'#10b981':['PARSING','SCANNING'].includes(props.value)?'#f59e0b':'#94a3b8'}">
                 {{ props.value }}
               </span>
             </q-td>""")
@@ -380,25 +380,27 @@ def build_samovar():
         with ui.card().classes("card-les w-full"):
             with ui.row().classes("items-center justify-between w-full"):
                 ui.label("ВНЕШНЯЯ ПАПКА // IN-PLACE (БЕЗ КОПИИ В STORAGE)").classes("section-title")
-                ui.label("/api/rag/index-external · только корни LES_EXTERNAL_SOURCE_ROOTS").style(
+                ui.label("/api/rag/index-external · любой локальный каталог").style(
                     "font-size:.6rem;color:var(--dim);"
                 )
             ui.label(
                 "Исходники остаются в своей папке; в LES попадают только производное "
-                "(Qdrant-векторы, Parquet, метаданные). Путь обязан быть внутри одобренного корня."
+                "(Qdrant-векторы, Parquet, метаданные). Индексируется любая локальная папка "
+                "(резолв симлинков, без копии в storage)."
             ).style("font-size:.64rem;color:var(--dim);margin-bottom:4px;")
 
             # Серверный браузер папок — выбрать внешнюю папку кликами, без печати пути.
             browse_state = {"path": ""}
             with ui.dialog() as folder_dialog, ui.card().style("min-width:520px;max-width:92vw"):
-                ui.label("ВЫБОР ПАПКИ // корни LES_EXTERNAL_SOURCE_ROOTS").classes("section-title")
-                fb_path_lbl = ui.label("Корни").style(
-                    "font-size:.72rem;color:var(--accent);word-break:break-all;font-weight:700;"
-                )
-                fb_list = ui.column().classes("w-full gap-1").style("max-height:340px;overflow:auto;")
-                with ui.row().classes("w-full justify-end gap-2"):
-                    ui.button("Отмена", on_click=folder_dialog.close).props("flat no-caps")
+                ui.label("ВЫБОР ПАПКИ // любой локальный каталог").classes("section-title")
+                # Действия СВЕРХУ: «Выбрать эту папку» видно сразу, без прокрутки списка.
+                with ui.row().classes("w-full items-center gap-2").style("margin:4px 0 8px;"):
                     fb_select_btn = ui.button("✓ Выбрать эту папку", on_click=lambda: _pick_folder()).props("no-caps")
+                    ui.button("Отмена", on_click=folder_dialog.close).props("flat no-caps")
+                    fb_path_lbl = ui.label("…").style(
+                        "font-size:.7rem;color:var(--accent);word-break:break-all;font-weight:700;flex:1;text-align:right;"
+                    )
+                fb_list = ui.column().classes("w-full gap-1").style("max-height:340px;overflow:auto;")
 
             async def _browse_folder(path=""):
                 d = await api_get(f"/api/rag/browse-external?path={quote(path, safe='')}")

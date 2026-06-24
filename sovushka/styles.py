@@ -1076,5 +1076,55 @@ select:focus-visible,
     scroll-behavior: auto !important;
   }
 }
+
+/* ═══ FEEL-BETTER PASS v0.1 — «details that make interfaces feel better» ═══════════════ */
+/* Невидимый полиш: чёткость, ритм, тактильность. Терминальную эстетику не трогаем.       */
+
+/* 1. Сглаживание шрифта — моноширинный текст чётче на тёмном фоне. */
+body, .nicegui-content {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* 2. ТАБЛИЧНЫЕ ЦИФРЫ — числа в таблицах/KPI/счётчиках не «прыгают» по ширине колонок.
+      Главный рычаг для data-плотного интерфейса (датасеты, объёмы, диагностика). */
+.kpi-val, .les-fuse-val, .les-fuse-detail,
+.output-table td, .output-table th,
+.q-table td, .q-table th,
+.sov-chat-inline-table td, .sov-chat-inline-table th,
+.diag-node-sub, .diag-node-state, .sov-session-meta, .sov-chip {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* 3. ПЛАВНОСТЬ СОСТОЯНИЙ — hover/active/focus мягкие, не мгновенные. */
+.q-btn, .q-tab, .mode-rag, .mode-code, .sov-format-btn, .les-map-preset,
+.card-les, .les-fuse, .diag-node, .diag-acronym-item, .sov-session-card,
+.kpi-box, .q-field__control, .sov-chip, .les-runtime-service {
+  transition: background-color .16s ease, border-color .16s ease,
+              box-shadow .16s ease, transform .12s ease, filter .16s ease;
+}
+
+/* 4. КНОПКИ — тактильность: лёгкая подсветка на наведении, «вдавливание» на нажатии. */
+.q-btn:hover:not(:disabled) { filter: brightness(1.08); }
+.q-btn:active:not(:disabled) { transform: translateY(1px); }
+
+/* 5. КАРТОЧКИ/ПРЕДОХРАНИТЕЛИ/УЗЛЫ — лёгкий подъём при наведении (без дрожи слоя). */
+.card-les:hover, .les-fuse:hover, .kpi-box:hover,
+.diag-node:hover, .diag-acronym-item:hover, .les-runtime-service:hover {
+  border-color: rgba(56,189,248,.46);
+  box-shadow: 0 4px 18px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.05);
+}
+
+/* 6. ПОЛЯ ВВОДА — мягкое фокус-кольцо акцентом (дополняет focus-visible). */
+.q-field--focused .q-field__control {
+  border-color: rgba(56,189,248,.7) !important;
+  box-shadow: 0 0 0 3px rgba(56,189,248,.14);
+}
+
+/* 7. СТРОКИ ТАБЛИЦ — наведение читается мягче, выделяет текущую строку. */
+.q-table tbody tr { transition: background-color .14s ease; }
+.q-table tbody tr:hover td { background: var(--bg-mod) !important; }
 </style>
 """

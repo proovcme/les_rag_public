@@ -33,24 +33,31 @@ def validate_external_source(path: str) -> Path:
     наружу резолвится в реальную цель и отклоняется, если она вне корней.
     Возвращает существующую директорию внутри allowlist; иначе HTTPException.
     """
-    from proxy.config import external_source_roots
+    from proxy.config import external_source_roots, external_allow_any
 
     raw = (path or "").strip()
     if not raw:
         raise HTTPException(400, "path обязателен")
     roots = external_source_roots()
-    if not roots:
+    allow_any = external_allow_any()
+    # fail-closed: запрещаем только если нет корней И режим «любой каталог» выключен.
+    if not roots and not allow_any:
         raise HTTPException(403, "внешняя индексация выключена: LES_EXTERNAL_SOURCE_ROOTS пуст")
+    # GUARD остаётся в коде: resolve(strict=True) снимает симлинки и требует существования —
+    # ссылка/`..` наружу резолвится в реальную цель; несуществующий путь отклоняется.
     try:
         candidate = Path(raw).expanduser().resolve(strict=True)
     except FileNotFoundError as error:
         raise HTTPException(404, f"путь не найден: {raw}") from error
     except (OSError, RuntimeError) as error:
         raise HTTPException(400, f"некорректный путь: {raw}") from error
-    if not any(candidate == root or root in candidate.parents for root in roots):
-        raise HTTPException(403, f"путь вне одобренных корней (LES_EXTERNAL_SOURCE_ROOTS): {candidate}")
     if not candidate.is_dir():
         raise HTTPException(400, "path должен быть директорией")
+    # Allowlist применяется ТОЛЬКО в строгом режиме (LES_EXTERNAL_ALLOW_ANY=0). По умолчанию
+    # (single-user, машина оператора) — любой существующий локальный каталог.
+    if roots and not allow_any:
+        if not any(candidate == root or root in candidate.parents for root in roots):
+            raise HTTPException(403, f"путь вне одобренных корней (LES_EXTERNAL_SOURCE_ROOTS): {candidate}")
     return candidate
 
 

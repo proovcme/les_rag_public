@@ -16,10 +16,24 @@ from proxy.storage.file_storage import validate_external_source
 # ── Валидатор: безопасность ──────────────────────────────────────────────────
 
 def test_validate_external_source_disabled_when_allowlist_empty(tmp_path, monkeypatch):
+    # строгий режим (LES_EXTERNAL_ALLOW_ANY=0): пустой allowlist → fail-closed 403
+    monkeypatch.setenv("LES_EXTERNAL_ALLOW_ANY", "0")
     monkeypatch.delenv("LES_EXTERNAL_SOURCE_ROOTS", raising=False)
     with pytest.raises(HTTPException) as exc:
         validate_external_source(str(tmp_path))
     assert exc.value.status_code == 403
+
+
+def test_validate_external_source_allow_any_accepts_any_dir(tmp_path, monkeypatch):
+    # ДЕФОЛТ (allow_any): любой существующий локальный каталог индексируем; guard'ы живы.
+    monkeypatch.delenv("LES_EXTERNAL_ALLOW_ANY", raising=False)
+    monkeypatch.delenv("LES_EXTERNAL_SOURCE_ROOTS", raising=False)
+    any_dir = tmp_path / "anywhere"
+    any_dir.mkdir()
+    assert validate_external_source(str(any_dir)) == any_dir.resolve()
+    with pytest.raises(HTTPException) as exc:           # несуществующий → 404 (guard)
+        validate_external_source(str(tmp_path / "nope"))
+    assert exc.value.status_code == 404
 
 
 def test_validate_external_source_accepts_path_inside_root(tmp_path, monkeypatch):
@@ -32,6 +46,7 @@ def test_validate_external_source_accepts_path_inside_root(tmp_path, monkeypatch
 
 
 def test_validate_external_source_rejects_outside_root(tmp_path, monkeypatch):
+    monkeypatch.setenv("LES_EXTERNAL_ALLOW_ANY", "0")  # строгий режим: guard'ы держатся
     root = tmp_path / "approved"
     root.mkdir()
     outside = tmp_path / "secret"
@@ -43,6 +58,7 @@ def test_validate_external_source_rejects_outside_root(tmp_path, monkeypatch):
 
 
 def test_validate_external_source_rejects_traversal(tmp_path, monkeypatch):
+    monkeypatch.setenv("LES_EXTERNAL_ALLOW_ANY", "0")  # строгий режим: guard'ы держатся
     root = tmp_path / "approved"
     root.mkdir()
     (tmp_path / "secret").mkdir()
@@ -52,6 +68,7 @@ def test_validate_external_source_rejects_traversal(tmp_path, monkeypatch):
 
 
 def test_validate_external_source_rejects_symlink_escaping_root(tmp_path, monkeypatch):
+    monkeypatch.setenv("LES_EXTERNAL_ALLOW_ANY", "0")  # строгий режим: guard'ы держатся
     root = tmp_path / "approved"
     root.mkdir()
     outside = tmp_path / "outside_target"
