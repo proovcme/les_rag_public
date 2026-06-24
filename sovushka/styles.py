@@ -1209,5 +1209,18 @@ body, .nicegui-content {
   font-weight: 800; letter-spacing: .02em;
 }
 .sov-chat-inline-table td, .sov-chat-inline-table th { font-variant-numeric: tabular-nums; }
+
+/* v0.20 — действия ответа (Копировать), бейдж версии, меню примеров. */
+.sov-answer-actions { opacity: .55; transition: opacity .14s ease; }
+.chat-msg-ai:hover .sov-answer-actions { opacity: 1; }
+.sov-answer-act {
+  color: var(--dim) !important;
+  font-size: .58rem !important;
+  font-family: var(--font);
+  padding: 1px 7px !important;
+  min-height: 0 !important;
+}
+.sov-answer-act:hover { color: var(--accent) !important; }
+.sov-examples-menu .q-item { min-height: 0; padding: 3px 12px; }
 </style>
 """

@@ -54,10 +54,17 @@ def build_header(
         def _ver_rows(info: dict) -> list[tuple[str, str]]:
             al = info.get("runtime_alignment") or {}
             fl = info.get("feature_flags") or {}
+            ds = info.get("deploy_stamp") or {}
+            ds_line = ds.get("status", "unknown")
+            if ds.get("hash_mismatch_files"):
+                ds_line += " · изменены: " + ", ".join(ds["hash_mismatch_files"])
             return [
                 ("Версия ЛЕС", info.get("app_version", "?")),
                 ("Harness", info.get("harness_version", "?")),
-                ("Commit", f"{info.get('git_commit','?')} ({info.get('git_branch','?')})"),
+                ("Git commit", f"{info.get('git_commit','?')} ({info.get('git_branch','?')})"),
+                ("Deployed commit", info.get("deployed_commit", "?")),
+                ("Deploy stamp", ds_line),
+                ("Deployed at", ds.get("deployed_at", "?")),
                 ("Build", info.get("build_time", "?")),
                 ("Runtime", info.get("runtime_path", "?")),
                 ("Evidence schema", info.get("evidence_schema_version", "?")),
@@ -98,8 +105,12 @@ def build_header(
             if isinstance(info, dict):
                 _ver_state["info"] = info
                 c = info.get("git_commit", "")
-                ver_badge.set_text(f"{info.get('app_version','?')}" + (f" · {c}" if c and c != "unknown" else ""))
-                if (info.get("runtime_alignment") or {}).get("status") == "divergent":
+                h = info.get("harness_version", "")
+                ver_badge.set_text(f"{info.get('app_version','?')}" + (f" · h{h}" if h else "")
+                                   + (f" · {c}" if c and c != "unknown" else ""))
+                al = (info.get("runtime_alignment") or {}).get("status")
+                ds = (info.get("deploy_stamp") or {}).get("status")
+                if al == "divergent" or ds in ("stale", "deploy_stamp_missing"):
                     ver_badge.style("color:var(--warn);border-color:var(--warn);")
             else:
                 ver_badge.set_text("?")

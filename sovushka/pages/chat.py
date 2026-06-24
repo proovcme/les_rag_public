@@ -352,15 +352,28 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     chat_input.update()
                     asyncio.create_task(send_chat())
 
-                with ui.row().classes("sov-hints").style("gap:6px;flex-wrap:wrap;margin:2px 0 4px;align-items:center;"):
-                    ui.label("примеры:").style("font-size:.62rem;color:var(--dim);")
-                    for _ex in ("что такое КАЦ", "что такое ЛСР", "цена 91.05.01-017",
-                                "коэффициент стеснённости для города",
-                                "собери ГЭСН12-01-034-02 объём 0.61", "что ты умеешь"):
-                        ui.button(_ex, on_click=lambda e=_ex: _fill_send(e)).props("dense flat no-caps").style(
-                            "font-size:.62rem;padding:1px 8px;min-height:0;color:var(--accent);"
-                            "border:1px solid var(--accent);border-radius:10px;text-transform:none;"
-                        )
+                # v0.20: устаревшие inline-демо-чипы → компактное меню «Примеры» по задачам.
+                _EXAMPLE_GROUPS = (
+                    ("Нормы", ("что такое ОЖР", "правила огнестойкости стен", "требования к кровлям")),
+                    ("Проект", ("расскажи про котельную на лесном 64", "составь реестр документации котельной")),
+                    ("Смета", ("цена 91.05.01-017", "нужен ли КАЦ для 91.05.01-017",
+                               "коэффициент стеснённости для города")),
+                    ("ВОР/ЛСР", ("извлеки ВОР из Ф9", "собери ГЭСН12-01-034-02 объём 0.61")),
+                    ("Почта", ("что писали по котельной в почте",)),
+                    ("Поиск в источнике", ("найди ОЗК в актах", "найди насос в спецификации")),
+                )
+                with ui.row().classes("sov-hints").style("gap:6px;margin:2px 0 4px;align-items:center;"):
+                    with ui.button("Примеры", icon="o_lightbulb").props("flat dense no-caps").style(
+                        "font-size:.62rem;padding:1px 8px;min-height:0;color:var(--dim);"
+                    ):
+                        with ui.menu().classes("sov-examples-menu"):
+                            for _grp, _items in _EXAMPLE_GROUPS:
+                                ui.menu_item(_grp).props("dense").style(
+                                    "color:var(--dim);font-size:.58rem;font-weight:800;pointer-events:none;"
+                                    "min-height:0;padding-top:6px;")
+                                for _ex in _items:
+                                    ui.menu_item(_ex, on_click=lambda e=_ex: _fill_send(e)).props("dense").style(
+                                        "font-size:.66rem;color:var(--accent);")
 
                 with ui.row().classes("sov-composer-actions"):
                     with ui.row().classes("sov-guard-controls"):
@@ -1448,6 +1461,20 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             with ui.expansion("подробнее (trace)").classes("sov-ev-trace"):
                 ui.label(ts).classes("sov-ev-trace-text")
 
+    def _render_answer_actions(text: str, srcs: list) -> None:
+        """v0.20: панель действий ответа — «Копировать» (чистый текст) и «С источниками» (без полного
+        тела письма — только chip-локатор). Без скрытого trace."""
+        from sovushka.answer_render import answer_copy_text
+        with ui.row().classes("sov-answer-actions").style("gap:4px;margin-top:6px;"):
+            ui.button("Копировать", icon="o_content_copy",
+                      on_click=lambda t=text: asyncio.create_task(_copy_text(answer_copy_text(t)))
+                      ).props("flat dense no-caps").classes("sov-answer-act")
+            if srcs:
+                ui.button("С источниками", icon="o_format_quote",
+                          on_click=lambda t=text, s=srcs: asyncio.create_task(
+                              _copy_text(answer_copy_text(t, s, with_sources=True)))
+                          ).props("flat dense no-caps").classes("sov-answer-act")
+
     def _render_chat_bubble(
         text: str,
         class_name: str,
@@ -1472,6 +1499,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 _render_excerpts(meta)
                 if _is_ai and not rich:
                     _artifact_button(str(text or ""), _mode)
+            if _is_ai and str(text or "").strip():
+                _render_answer_actions(str(text or ""), srcs or [])
         return bubble
 
     def _render_ai_placeholder(text: str):
@@ -1507,6 +1536,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 _render_excerpts(meta)
                 if not error and not rich:
                     _artifact_button(str(text or ""), meta.get("out_mode", "text"))
+            if not error and str(text or "").strip():
+                _render_answer_actions(str(text or ""), srcs or [])
 
     def _render_msg(msg):
         if msg.get("role") == "user":

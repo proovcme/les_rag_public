@@ -154,6 +154,21 @@ def group_evidence_sections(evidence_blocks: list) -> list[dict]:
 
 # ── §9 conflict-блок (разные версии параметра — не сливать молча) ──────────────────────────
 
+def answer_copy_text(answer: str, sources: list | None = None, *, with_sources: bool = False) -> str:
+    """v0.20: чистый текст ответа для «Копировать». Без скрытого trace, без UI-мусора. with_sources →
+    добавить список источников (письма — без полного тела, только chip-локатор). Числа/таблицы как есть
+    (markdown)."""
+    text = (answer or "").strip()
+    if with_sources and sources:
+        lines = ["", "Источники:"]
+        for c in source_chips(sources):
+            loc = f" · {c['locator']}" if c["locator"] else ""
+            ref = "" if c["has_ref"] else " (без ссылки)"
+            lines.append(f"  [{c['n']}] {c['file']}{loc}{ref}")
+        text += "\n" + "\n".join(lines)
+    return text
+
+
 def conflict_block(variants: list[dict]) -> dict | None:
     """v0.17 §9: ≥2 варианта значения параметра → отдельный блок «Проверить» с источниками каждого.
     variants: [{label, value, sources:[...]}]. <2 → None (нет конфликта)."""
