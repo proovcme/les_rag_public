@@ -167,14 +167,20 @@ def recall_context(
 
     parts: list[str] = []
     for _, note in scored_notes[:max_notes]:
-        parts.append(f"- Заметка оператора #{note['id']}: {note['text'][:400]}")
+        # Типизация (Codex §12, пет-размер): различаем «сказал оператор» vs «распознала система»
+        # по существующему флагу auto. Авто-заметка рискованнее (система угадала факт).
+        kind = "распознала система" if note.get("auto") else "сказал оператор"
+        parts.append(f"- Заметка ({kind}, НЕПРОВЕРЕНО) #{note['id']}: {note['text'][:400]}")
     for _, row in scored_history[:max_history]:
         parts.append(
             f"- Из истории (на вопрос «{row['question'][:150]}» ранее отвечено): {row['answer'][:600]}"
         )
     if not parts:
         return ""
-    return "Рабочая память (заметки оператора и прошлые решения):\n" + "\n".join(parts)
+    # Память — непроверенный ФОН, не основание (Codex §12): не источник чисел/норм, не перебивает контекст.
+    return ("Рабочая память (НЕПРОВЕРЕННЫЙ ввод оператора и прошлые ответы — фон, НЕ основание: "
+            "не используй как источник чисел/норм/пунктов и не противоречь нормативу из контекста):\n"
+            + "\n".join(parts))
 
 
 def session_memory(session_id: str, *, max_turns: int = 6, max_chars: int = 2000) -> str:
