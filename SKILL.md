@@ -81,7 +81,18 @@ curl -fsS -X POST http://127.0.0.1:8050/api/scope/resolve -H 'content-type: appl
 curl -fsS -X POST http://127.0.0.1:8050/api/rag/datasets/<id>/extract-body/dry-run | python3 -m json.tool
 ```
 
-**Deploy stamp:** деплой = `cp` файлов в `/Users/ovc/LES` (git HEAD рантайма отстаёт — это норма). Стамп пишется на `--apply` деплой-тулом ИЛИ вручную: `python -c "from proxy.services.version_service import write_deploy_stamp; ..."`. `/api/version.deployed_commit` = что реально скопировано; `runtime_alignment` = расхождение repo↔runtime по хэшам.
+**Deploy stamp — ⚠ ОБЯЗАТЕЛЬНО после КАЖДОГО cp-деплоя** (иначе `deployed_commit` врёт — реальный инцидент 2026-06-25: выкатил GUI-файл, забыл re-stamp → стамп застрял на старом коммите). Деплой = `cp` файлов в `/Users/ovc/LES` (git HEAD рантайма отстаёт — это норма). Финальный шаг любого деплоя:
+
+```bash
+# после cp файлов в /Users/ovc/LES:
+uv run python -c "from datetime import datetime,timezone; from pathlib import Path; \
+from proxy.services.version_service import write_deploy_stamp; \
+print(write_deploy_stamp(dev_root=Path('.'), runtime_root=Path('/Users/ovc/LES'), \
+deployed_at=datetime.now(timezone.utc).isoformat(timespec='seconds')))"
+# затем рестарт затронутых сервисов: launchctl kickstart -k gui/$(id -u)/me.ovc.les.proxy (и/или com.les.sovushka)
+```
+
+`/api/version.deployed_commit` = что реально скопировано; `deploy_stamp.status` (`ok`/`stale`) + `hash_mismatch_files` ловят дрейф по хэшам бандла (вкл. `sovushka/*` с v0.22); `runtime_alignment` = расхождение repo↔runtime.
 
 ## Tests
 
