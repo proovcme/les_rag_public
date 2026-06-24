@@ -3,13 +3,21 @@
 Канонический файл для любого агента (Codex, Claude Code, Cursor). Держи коротким; длинные процедуры — в доках и `SKILL.md`.
 
 ## Что это
-Локальная экспертная RAG-система: FastAPI (proxy :8050 + MLX-host :8080) + NiceGUI UI «Совушка» (:8051) + Qdrant (:6333), Python 3.12 на **uv**. Запускается набором сервисов (launchd/docker).
+Локальный **строительный evidence-harness** (RAG — один из слоёв, не продукт): проект/датасет → вопрос → правильный workflow → источники → расчёт КОДОМ → blockers/MISSING → проверяемое evidence → ответ. FastAPI (proxy :8050 + MLX-host :8080) + NiceGUI UI «Совушка» (:8051) + Qdrant (:6333), Python 3.12 на **uv**. Сервисы — launchd. Принцип: **модель связывает, код считает**; число без происхождения — не результат.
 
-## Старт (читать ПЕРВЫМ — экономит токены)
-- **[docs/CODE_MAP.md](docs/CODE_MAP.md)** — карта кода: топология, поток чата/индексации, пакеты, «где искать что». Сначала карта → точечный поиск → исходники.
-- **[SKILL.md](SKILL.md)** — рантайм-знание оператора (порты, доступы, доверенные сети, P.A.U.K./V.O.L.K., внешний `les.ovc.me`). НЕ дублировать сюда.
-- **Алгоритм-доки** (детерминированные ядра, 0 LLM — читать перед правкой соответствующего сервиса): [docs/ALGO-table-query.md](docs/ALGO-table-query.md) (счёт по ячейкам таблиц), [docs/ALGO-spec-to-bor.md](docs/ALGO-spec-to-bor.md) (спецификация Ф9 → ВОР).
-- Архитектура: [INFRASTRUCTURE_v2.0.md](INFRASTRUCTURE_v2.0.md) · [PROXY_ARCHITECTURE.md](PROXY_ARCHITECTURE.md) · [LES_MASTER_DOC_v2_1.md](LES_MASTER_DOC_v2_1.md) · [RAG_MODERNIZATION_PLAN.md](RAG_MODERNIZATION_PLAN.md) · [MLX_GUIDE.md](MLX_GUIDE.md) · термины [DICTIONARY_LES_v2.0.md](DICTIONARY_LES_v2.0.md) · «не читать» [docs/AGENT_NOTES.md](docs/AGENT_NOTES.md).
+## Канон документации (читать В ЭТОМ ПОРЯДКЕ — остальное историческое)
+> ⚠️ Доков много и они разных эпох. **Текущая правда — только эта цепочка.** Всё, что ниже в «Историческом», — контекст, НЕ инструкция; не принимай старый слой за актуальный.
+
+1. **AGENTS.md** (этот файл) — канон для агента.
+2. **[SKILL.md](SKILL.md)** — рантайм/эксплуатация (порты, деплой = `cp`+`write_deploy_stamp`, доступы, гейты). Источник истины по запуску.
+3. **[docs/CODE_MAP.md](docs/CODE_MAP.md)** — карта кода: где что лежит, поток чата/индексации, «где искать что». Сначала карта → точечный поиск → исходники.
+4. **[ROADMAP_TO_V1.md](ROADMAP_TO_V1.md)** — что считается v1, этапы, блокеры (актуальный план).
+5. **[docs/unified_harness_failure_ledger.md](docs/unified_harness_failure_ledger.md)** — журнал реальных провалов и как закрыты (читать, чтобы не наступить снова).
+6. **[docs/TEST_INVENTORY.md](docs/TEST_INVENTORY.md)** — тесты v0.16–v0.22 (что и где покрыто).
+
+Доп. при правке конкретного ядра: **алгоритм-доки** (0 LLM) — [docs/ALGO-table-query.md](docs/ALGO-table-query.md), [docs/ALGO-spec-to-bor.md](docs/ALGO-spec-to-bor.md) и др. в `docs/ALGO-*`; «что НЕ читать» — [docs/AGENT_NOTES.md](docs/AGENT_NOTES.md).
+
+**Историческое (контекст, НЕ текущая правда):** `SESSION_SUMMARY_*.md`, `ROADMAP_LES_v2.0.md`, `README_v2.0.md`, `LES_MASTER_DOC_v2_1.md`, `INFRASTRUCTURE_v2.0.md`, `RAG_MODERNIZATION_PLAN.md`, `ARTICLE_*.md`, `docs/DOCS_*AUDIT*`, прочие датированные планы/саммари. Полезны для «почему так», но версии/решения в них могут быть устаревшими — сверяй с каноном и кодом (`/api/version`).
 
 ## Гейт проверки
 - **`make verify`** — офлайн: `compileall` (синтаксис) + `pytest --collect-only` (импорт-смоук всех тестов, без живых сервисов). Гонять перед готовностью.
