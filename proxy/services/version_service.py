@@ -17,7 +17,7 @@ from typing import Any
 # ── центральные версии ────────────────────────────────────────────────────────────────────
 
 APP_VERSION = "5.1.0"                 # пользовательская версия ЛЕС
-HARNESS_VERSION = "0.19"             # внутренний строительный контур (unified harness)
+HARNESS_VERSION = "0.20"             # внутренний строительный контур (unified harness)
 EVIDENCE_SCHEMA_VERSION = "1.0"
 EXTRACTION_SCHEMA_VERSION = "1.0"
 RESOURCE_CALC_VERSION = "0.6"
@@ -131,6 +131,67 @@ def feature_flags() -> dict[str, bool]:
     return {name: _flag(name) for name in _SAFE_FLAGS}
 
 
+# ── deploy stamp (v0.20): что РЕАЛЬНО задеплоено (cp-деплой ≠ git HEAD рантайма) ───────────
+
+DEPLOY_STAMP_NAME = ".les_deploy_stamp.json"
+# файлы в хэш-бандле стампа (совпадает с критичными — но стамп фиксирует моментальный снимок деплоя)
+DEPLOY_BUNDLE_FILES = _CRITICAL_FILES
+
+
+def deploy_stamp_path() -> Path:
+    return _RUNTIME_ROOT / DEPLOY_STAMP_NAME
+
+
+def write_deploy_stamp(*, dev_root: Path | None = None, runtime_root: Path | None = None,
+                       deployed_at: str = "", deployed_commit: str = "", deployed_branch: str = "",
+                       notes: list[str] | None = None) -> Path:
+    """Записать deploy stamp в runtime: версии + commit + хэш-бандл реально скопированных файлов.
+    Вызывается deploy-тулом на --apply. Хэши берутся из RUNTIME (что фактически лежит)."""
+    import json
+    dev = Path(dev_root) if dev_root else _code_root()
+    rt = Path(runtime_root) if runtime_root else _RUNTIME_ROOT
+    if not deployed_commit:
+        deployed_commit = _git(["rev-parse", "--short", "HEAD"], dev) or "unknown"
+        deployed_branch = deployed_branch or _git(["rev-parse", "--abbrev-ref", "HEAD"], dev) or "unknown"
+    bundle: dict[str, str] = {}
+    for rel in DEPLOY_BUNDLE_FILES:
+        h = _sha(rt / rel)
+        if h is not None:
+            bundle[rel] = h
+    stamp = {
+        "app_version": APP_VERSION, "harness_version": HARNESS_VERSION,
+        "deployed_commit": deployed_commit, "deployed_branch": deployed_branch,
+        "deployed_at": deployed_at or "unknown", "deployed_by": "local",
+        "deploy_method": "copy_files", "file_hash_bundle": bundle, "notes": notes or [],
+    }
+    p = rt / DEPLOY_STAMP_NAME
+    p.write_text(json.dumps(stamp, ensure_ascii=False, indent=2))
+    return p
+
+
+def deploy_stamp() -> dict[str, Any]:
+    """Прочитать deploy stamp + сверить хэши с фактическими runtime-файлами. Нет стампа →
+    {'status': 'deploy_stamp_missing'} (warning, не падение)."""
+    import json
+    p = deploy_stamp_path()
+    if not p.is_file():
+        return {"status": "deploy_stamp_missing",
+                "note": "deploy выполнен без стампа — точный состав файлов неизвестен"}
+    try:
+        st = json.loads(p.read_text())
+    except Exception:  # noqa: BLE001
+        return {"status": "deploy_stamp_unreadable"}
+    bundle = st.get("file_hash_bundle") or {}
+    mismatch: list[str] = []
+    for rel, stored in bundle.items():
+        cur = _sha(_RUNTIME_ROOT / rel)
+        if cur is not None and cur != stored:
+            mismatch.append(rel)         # файл изменён ПОСЛЕ стампа (cp/ручная правка)
+    st["status"] = "stale" if mismatch else "ok"
+    st["hash_mismatch_files"] = mismatch
+    return st
+
+
 def version_info() -> dict[str, Any]:
     """Полный version-объект для /api/version и version-drawer. Без секретов."""
     gi = git_info()
@@ -140,10 +201,13 @@ def version_info() -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         extractor = EXTRACTION_SCHEMA_VERSION
     align = runtime_alignment()
+    ds = deploy_stamp()
     import sys
     return {
         "app_version": APP_VERSION,
         "harness_version": HARNESS_VERSION,
+        "deployed_commit": ds.get("deployed_commit", "unknown"),
+        "deploy_stamp": ds,
         "evidence_schema_version": EVIDENCE_SCHEMA_VERSION,
         "extraction_schema_version": EXTRACTION_SCHEMA_VERSION,
         "resource_calc_version": RESOURCE_CALC_VERSION,
@@ -180,7 +244,8 @@ def version_info_trace() -> dict[str, Any]:
 
 
 def version_brief() -> str:
-    """Короткая строка для бейджа: «Л.Е.С. 5.1.0 · 5ded539»."""
+    """Короткая строка для бейджа: «Л.Е.С. 5.1.0 · h0.20 · 5ded539»."""
     gi = git_info()
     c = gi["git_commit"]
-    return f"Л.Е.С. {APP_VERSION}" + (f" · {c}" if c and c != "unknown" else "")
+    return (f"Л.Е.С. {APP_VERSION} · h{HARNESS_VERSION}"
+            + (f" · {c}" if c and c != "unknown" else ""))

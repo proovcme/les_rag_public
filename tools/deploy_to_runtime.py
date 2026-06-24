@@ -158,6 +158,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.apply:
         if copied:
             _save_manifest(manifest)
+        # v0.20 deploy stamp: зафиксировать, что РЕАЛЬНО задеплоено (cp ≠ git HEAD рантайма).
+        try:
+            from datetime import datetime, timezone
+            from proxy.services.version_service import write_deploy_stamp
+            sp = write_deploy_stamp(dev_root=DEV, runtime_root=RT,
+                                    deployed_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                    notes=[f"copied {len(copied)} files"])
+            print(f"  ⓘ deploy stamp: {sp}")
+        except Exception as _e:  # noqa: BLE001
+            print(f"  ⚠ deploy stamp не записан: {_e}")
         print(f"Скопировано: {len(copied)}.")
         if args.restart and services:
             uid = os.getuid()
