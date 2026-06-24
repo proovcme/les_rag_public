@@ -910,30 +910,42 @@ def _harness_complete(messages: list[dict]) -> str:
 
 
 def _format_harness(r: dict) -> str:
-    """Результат харнесса → markdown: предварительная ВОР, посчитанное таблицей, нет-данных явно."""
+    """Результат харнесса+Gate1 → markdown. Жёстко: ORCHESTRATION доказан, QUALITY нет; итог
+    скрыт при critical-провалах (не выдаём бред за сумму)."""
     sch = r.get("schema", {}) or {}
-    lines = [f"**Предварительная ВОР (харнесс)** — {sch.get('object_type', 'объект')} · "
+    lines = [f"**Предварительная ВОР (харнесс, ЭКСПЕРИМЕНТ)** — {sch.get('object_type', 'объект')} · "
              f"{sch.get('area_total_m2', '?')} м²", "",
-             "_НЕ финальная смета: модель разложила объект и дёрнула инструменты; числа — из ГЭСН/формул, "
-             "не из головы модели._", ""]
+             "_Доказывает оркестрацию (модель раскладывает объект и дёргает инструменты, числа — из "
+             "ГЭСН/формул). НЕ доказывает качество сметы — это прототип петли, не смета._", ""]
     comp = r.get("computed", [])
     if comp:
-        lines += ["| Работа | Код ГЭСН | Объём | Ед. |", "|---|---|---|---|"]
+        lines += ["| Работа | Код ГЭСН | Кол-во (в ед. нормы) | Физ.объём |", "|---|---|---|---|"]
         for p in comp:
-            lines.append(f"| {p.get('work', '')} | {p.get('code')} | {p.get('qty')} | {p.get('unit', '')} |")
-        t = r.get("totals", {})
+            lines.append(f"| {p.get('work', '')} | {p.get('code')} | {p.get('qty')} {p.get('norm_unit','')} "
+                         f"| {p.get('phys_qty','')} {p.get('physical_unit','')} |")
+    else:
+        lines.append("_Посчитанных позиций нет._")
+
+    t = r.get("totals")
+    if r.get("total_blocked"):
+        lines += ["", "**⛔ Итог НЕ сформирован**: есть позиции, отклонённые предохранителями "
+                  "(magnitude/применимость/код). Сумма бессмысленна, пока они не исправлены."]
+    elif t:
         lines += ["", f"**ИТОГО СМР {t.get('smr')} ₽ · ВСЕГО с НДС {t.get('grand_total')} ₽** "
                   f"({t.get('positions')} поз., предварительно)"]
-    else:
-        lines.append("_Посчитанных позиций нет — не хватило данных/норм._")
-    for p in r.get("needs_input", []):
-        if not any("Нет данных" in x for x in lines):
-            lines += ["", "**Нет данных для расчёта (не выдумываем):**"]
-        lines.append(f"- {p.get('work', '')} ({p.get('code')}) — {p.get('reason', 'нужны параметры')}")
+
+    rej = r.get("rejected", [])
+    if rej:
+        lines += ["", "**Отклонено предохранителями (Gate 1):**"]
+        for p in rej:
+            lines.append(f"- {p.get('work', '')} ({p.get('code')}) — {p.get('status')}: {p.get('reason', '')}")
+    ni = r.get("needs_input", [])
+    if ni:
+        lines += ["", "**Нет данных для расчёта (не выдумываем):**"]
+        for p in ni:
+            lines.append(f"- {p.get('work', '')} ({p.get('code')}) — {p.get('reason', 'нужны параметры')}")
     if sch.get("missing_inputs"):
         lines.append(f"\n_Не хватает входных данных: {', '.join(map(str, sch['missing_inputs']))}._")
-    if r.get("by_assumption"):
-        lines.append("_Часть позиций — по допущениям._")
     lines.append(f"\n⚙ Петля: {r.get('steps')} шагов · инструменты: "
                  f"{', '.join(str(t.get('tool')) for t in r.get('trace', [])) or '—'}")
     return "\n".join(lines)

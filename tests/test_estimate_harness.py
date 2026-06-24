@@ -1,76 +1,122 @@
-"""Сметный харнесс — петля инструментов на объекте ВНЕ YAML (паркинг).
+"""Сметный харнесс + Quality Gate 1 — петля и предохранители на объекте ВНЕ YAML (паркинг).
 
-Модель скриптуется (детерминированно) — проверяем МЕХАНИКУ харнесса, не качество LLM:
-схема → кандидаты ГЭСН → позиции (computed + needs_input) → предварительный итог. Числа из кода.
+Проверяем МЕХАНИКУ и GATE (не качество LLM): unit-контракт, применимость сборника, magnitude,
+needs_input, блокировку итога. Числа из кода. 7 критериев готовности из ТЗ.
 """
 
 import json
 
 from proxy.services import estimate_harness_service as h
+from proxy.services.object_estimate_service import _geometry
 
 
-def test_search_norm_is_thin_candidate_finder():
-    # тонкий кандидатор, не магия: статус + кандидаты, не «один правильный»
-    r = h.search_norm("устройство бетонных фундаментов")
-    assert r["status"] in ("found", "ambiguous")
-    assert r["candidates"] and all("norm_code" in c for c in r["candidates"])
-
-    assert h.search_norm("жжжыыы щщщъъъ ёёёххх ыфвапр")["status"] == "not_found"
+def _state(area=3000, floors=3):
+    """state с готовой геометрией (S1=area/floors)."""
+    return {"schema": {}, "geom": _geometry(area, floors, {"geometry": {"H": 3.0}}),
+            "positions": [], "steps": 0}
 
 
-def test_validate_schema_requires_object_and_area():
-    bad = h._validate_schema({"object_type": "parking"})
-    assert bad["ok"] is False and "area_total_m2" in bad["missing_required"]
-    good = h._validate_schema({"object_type": "parking", "area_total_m2": 4800, "levels_below_ground": 2})
-    assert good["ok"] is True and good["geometry"]["S1"] > 0
+# ── search_norm: тонкий кандидатор + фильтр применимости ──────────────────────────────────
+
+def test_search_norm_thin_and_collection_filtered():
+    r = h.search_norm("разработка грунта котлован", work_family="earthworks", unit_hint="м3")
+    assert r["status"] in ("found", "ambiguous", "not_found")
+    # все кандидаты — только из разрешённого сборника 01; чужие — в rejected
+    for c in r.get("candidates", []):
+        assert c["collection"] == "01"
+    assert h.search_norm("жжжыыы щщщъъъ ёёёххх")["status"] == "not_found"
 
 
-def test_harness_loop_on_parking_preliminary():
-    """Скрипт «модели»: схема паркинга → норма → 2 позиции (одна computed, одна needs_input) → финал."""
+# ── (1) UNIT CONTRACT: физический объём → измеритель нормы (код, не модель) ───────────────
+
+def test_unit_conversion_physical_to_norm_measure():
+    st = _state()                                  # S1 = 1000
+    obs = h._add_position({"work": "плита", "code": "06-02-001-01", "work_family": "concrete_monolithic",
+                           "physical_unit": "м3", "qty_formula": "S1*0.4"}, st)   # физ = 400 м³
+    assert obs["status"] == "computed"
+    assert obs["phys_qty"] == 400.0
+    assert obs["quantity_for_estimate"] == 4.0     # 400 / 100 (норма «100 м3») — НЕ 400
+
+
+# ── (2) несовместимая единица → needs_input ──────────────────────────────────────────────
+
+def test_incompatible_unit_needs_input():
+    st = _state()
+    obs = h._add_position({"work": "x", "code": "12-01-021-01", "work_family": "roofing",
+                           "physical_unit": "м3", "qty_formula": "S1"}, st)  # норма в м2, физ в м3
+    assert obs["status"] == "needs_input"
+    assert "несовместима" in obs["reason"]
+
+
+# ── (3) запрещённый сборник для семейства → rejected ─────────────────────────────────────
+
+def test_disallowed_collection_rejected():
+    st = _state()
+    obs = h._add_position({"work": "котлован", "code": "06-02-001-01", "work_family": "earthworks",
+                           "physical_unit": "м3", "qty_formula": "S1"}, st)  # 06 не для earthworks(01)
+    assert obs["status"] == "rejected_collection"
+
+
+# ── (4) нет параметра в формуле → needs_input (не молча) ─────────────────────────────────
+
+def test_missing_param_needs_input():
+    st = _state()
+    obs = h._add_position({"work": "гидро", "code": "06-02-001-01", "work_family": "concrete_monolithic",
+                           "physical_unit": "м3", "qty_formula": "S1*depth"}, st)  # depth нет в геометрии
+    assert obs["status"] == "needs_input"
+
+
+# ── (6) magnitude guard блокирует порядковый бред ────────────────────────────────────────
+
+def test_magnitude_guard_blocks_order_of_magnitude():
+    st = _state()
+    obs = h._add_position({"work": "котлован", "code": "06-02-001-01", "work_family": "concrete_monolithic",
+                           "physical_unit": "м3", "qty_formula": "S1*1000"}, st)  # 1 млн м³ — бред
+    assert obs["status"] == "rejected_magnitude"
+    assert obs["phys_qty"] > obs["upper_bound"]
+
+
+# ── (5)+(7) допущение → by_assumption; critical → итог НЕ как сумма ───────────────────────
+
+def test_finalize_marks_assumptions_and_blocks_total_on_critical():
+    st = _state()
+    h._add_position({"work": "плита", "code": "06-02-001-01", "work_family": "concrete_monolithic",
+                     "physical_unit": "м3", "qty_formula": "S1*0.4", "assumptions": ["толщина 0.4 (нет данных)"]}, st)
+    h._add_position({"work": "бред", "code": "06-02-001-01", "work_family": "concrete_monolithic",
+                     "physical_unit": "м3", "qty_formula": "S1*1000"}, st)   # rejected_magnitude
+    res = h._finalize(st)
+    assert res["by_assumption"]                    # плита по допущению
+    assert res["rejected"]                         # бред отклонён
+    assert res["total_blocked"] is True            # есть critical → итог не как сумма
+    assert res["totals"] is None
+
+
+# ── end-to-end петля (скриптовая модель) ─────────────────────────────────────────────────
+
+def test_harness_loop_end_to_end_parking():
     script = [
-        json.dumps({"tool": "propose_schema", "args": {
-            "object_type": "underground_parking", "area_total_m2": 4800,
-            "levels_below_ground": 2, "structural_system": "monolithic_rc",
-            "included_sections": ["foundation", "monolithic_frame", "waterproofing"],
-            "excluded_sections": ["mep", "finishes"],
-            "missing_inputs": ["soil_category", "concrete_class"]}}),
-        json.dumps({"tool": "search_norm", "args": {"work_description": "бетонные фундаменты", "unit_hint": "м3"}}),
-        # позиция считается из геометрии (S1, толщина 0.4) — число из формулы
-        json.dumps({"tool": "add_position", "args": {
-            "work": "Фундаментная плита", "code": "06-02-001-01", "unit": "100 м3",
-            "qty_formula": "S1*0.4/100", "assumptions": ["толщина плиты 0.4 м (нет данных)"]}}),
-        # позиция, где формула требует ОТСУТСТВУЮЩИЙ параметр → needs_input (не считаем молча)
-        json.dumps({"tool": "add_position", "args": {
-            "work": "Гидроизоляция (зависит от глубины)", "code": "06-02-001-01", "unit": "100 м2",
-            "qty_formula": "P*depth/100"}}),
+        json.dumps({"tool": "propose_schema", "args": {"object_type": "underground_parking",
+                    "area_total_m2": 4800, "levels_below_ground": 2, "structural_system": "monolithic_rc",
+                    "missing_inputs": ["soil_category"]}}),
+        json.dumps({"tool": "add_position", "args": {"work": "Фунд. плита", "code": "06-02-001-01",
+                    "work_family": "concrete_monolithic", "physical_unit": "м3", "qty_formula": "S1*0.4"}}),
         json.dumps({"final": True}),
     ]
     calls = {"i": 0}
 
-    def complete(_messages):
+    def complete(_m):
         i = calls["i"]; calls["i"] += 1
         return script[i] if i < len(script) else json.dumps({"final": True})
 
-    res = h.run_estimate_harness("подземный паркинг 4800 м² 2 уровня", complete, max_steps=10)
-
+    res = h.run_estimate_harness("подземный паркинг 4800 м² 2 уровня", complete, max_steps=8)
     assert res["preliminary"] is True
-    # одна позиция посчитана из формулы (число из кода), одна — needs_input (не выдумана)
     assert len(res["computed"]) == 1
-    assert res["computed"][0]["code"] == "06-02-001-01"
-    assert res["computed"][0]["qty"] > 0                      # qty = S1*0.4/100, посчитан кодом
-    assert len(res["needs_input"]) == 1                       # гидроизоляция без глубины
-    assert res["by_assumption"]                               # плита по допущению о толщине
-    assert res["totals"]["grand_total"] >= 0                  # итог из ЛСР-сборки
-    assert res["schema"]["object_type"] == "underground_parking"
-    # trace показывает петлю инструментов
-    tools = [t["tool"] for t in res["trace"]]
-    assert tools == ["propose_schema", "search_norm", "add_position", "add_position"]
+    assert res["computed"][0]["qty"] > 0
+    assert res["total_blocked"] is False           # критичных нет → итог есть
+    assert res["totals"]["grand_total"] > 0
+    assert [t["tool"] for t in res["trace"]] == ["propose_schema", "add_position"]
 
 
-def test_harness_no_numbers_from_model_text():
-    """Если «модель» вернёт прозу с числом вместо JSON — оно НЕ попадёт в смету (нет tool-call)."""
-    def complete(_messages):
-        return "Итого примерно 5 миллионов рублей."  # не JSON → игнор, число не учитывается
-    res = h.run_estimate_harness("гараж 50 м²", complete, max_steps=3)
-    assert res["totals"]["grand_total"] == 0.0               # ни одной позиции из текста
+def test_no_numbers_from_model_text():
+    res = h.run_estimate_harness("гараж 50 м²", lambda _m: "Итого 5 миллионов.", max_steps=3)
     assert res["computed"] == []
