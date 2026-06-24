@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from proxy.services import doc_extract_service as de
-from proxy.services.unified_construction_harness_service import classify_doc_type, classify_discipline
+from proxy.services.doc_type_classifier import classify_doc_type, classify_discipline
 
 V16_VERSION = "sidecar_ops_v0_16"
 
