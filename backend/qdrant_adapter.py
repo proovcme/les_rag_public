@@ -1269,7 +1269,9 @@ class QdrantLlamaIndexAdapter(RAGBackend):
 
                         if miss_texts:
                             phase_start = _t.time()
-                            vectors = self.embed_parse.encode_sync(miss_texts)  # парс-эмбеддер (EMBED_URL_PARSE)
+                            # Парс-эмбеддер (EMBED_URL_PARSE); дефолт/тесты-моки → основной self.embed.
+                            _parse_embed = getattr(self, "embed_parse", None) or self.embed
+                            vectors = _parse_embed.encode_sync(miss_texts)
                             _add_timing("embed_sec", phase_start)
                             if len(vectors) != len(miss_texts):
                                 raise RuntimeError(
