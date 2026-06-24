@@ -203,3 +203,80 @@ def test_harness_loop_end_to_end_parking():
 def test_no_numbers_from_model_text():
     res = h.run_estimate_harness("гараж 50 м²", lambda _m: "Итого 5 миллионов.", max_steps=3)
     assert res["computed"] == []
+
+
+# ── Gate 4: SLOT REQUIREMENTS + FORMULA CATALOG (формула не придумывает входы) ────────────
+
+def test_parse_params_from_question():
+    s = h.parse_params("паркинг 4800 глубина котлована 6 м плита 400 мм стены 300 мм высота 3 м")
+    assert s["excavation_depth_m"] == 6.0
+    assert s["slab_thickness_m"] == 0.4              # 400 мм → 0.4 м
+    assert s["wall_thickness_m"] == 0.3
+
+
+def test_resolve_slots_geometry_and_assume():
+    geom = _geometry(3000, 3, {"geometry": {"H": 3.0}})  # S1=1000
+    spec, ns, missing, asm = h.resolve_slots("foundation_slab", geom, {})
+    assert "slab_thickness_m" in missing             # критичный, без него нельзя
+    assert ns["slab_area_m2"] == ns["S1"]            # допущение slab_area_m2 = S1
+    assert any("slab_area_m2" in a for a in asm)
+
+
+def test_excavation_without_depth_needs_input():
+    st = _state()
+    obs = h._add_position({"work": "котлован", "code": "01-02-056-01", "work_family": "earthworks",
+                           "element_type": "excavation"}, st)   # нет глубины
+    assert obs["status"] == "needs_input" and "excavation_depth_m" in obs["missing_slots"]
+
+
+def test_excavation_with_depth_computes():
+    st = _state()
+    obs = h._add_position({"work": "котлован", "code": "01-02-056-01", "work_family": "earthworks",
+                           "element_type": "excavation", "slots": {"excavation_depth_m": 6}}, st)
+    assert obs["status"] == "computed"               # S1*6*1.2 → объём посчитан кодом
+    assert obs["phys_qty"] > 0
+
+
+def test_foundation_slab_without_thickness_needs_input():
+    st = _state()
+    obs = h._add_position({"work": "плита", "code": "06-02-001-04", "work_family": "concrete_monolithic",
+                           "element_type": "foundation_slab"}, st)
+    assert obs["status"] == "needs_input" and "slab_thickness_m" in obs["missing_slots"]
+
+
+def test_foundation_slab_with_thickness_computes():
+    st = _state()
+    obs = h._add_position({"work": "плита", "code": "06-02-001-04", "work_family": "concrete_monolithic",
+                           "element_type": "foundation_slab", "slots": {"slab_thickness_m": 0.4}}, st)
+    assert obs["status"] == "computed" and obs["phys_qty"] == 400.0   # S1(1000)*0.4
+
+
+def test_monolithic_wall_without_geometry_needs_input():
+    st = _state()
+    obs = h._add_position({"work": "стены", "code": "06-02-001-04", "work_family": "concrete_monolithic",
+                           "element_type": "monolithic_wall", "slots": {"wall_thickness_m": 0.3}}, st)
+    assert obs["status"] == "needs_input"            # нет длины/высоты → нельзя
+    assert "wall_length_m" in obs["missing_slots"]
+
+
+def test_excavation_overdig_marked_as_assumption():
+    st = _state()
+    h._add_position({"work": "котлован", "code": "01-02-056-01", "work_family": "earthworks",
+                     "element_type": "excavation", "slots": {"excavation_depth_m": 6}}, st)
+    res = h._finalize(st)
+    assert res["by_assumption"]                      # overdig_factor принят допущением
+
+
+def test_slots_loop_partial_then_complete():
+    """Без слотов → needs_input/partial; со слотами → computed/complete (петля уточнения)."""
+    # без глубины — needs_input → не complete
+    st1 = _state()
+    h._add_position({"work": "котлован", "code": "01-02-056-01", "work_family": "earthworks",
+                     "element_type": "excavation"}, st1)
+    assert h._finalize(st1)["total_status"] != "complete"
+    # с глубиной — computed → complete (одна позиция, критичных/нет-данных нет)
+    st2 = _state()
+    h._add_position({"work": "котлован", "code": "01-02-056-01", "work_family": "earthworks",
+                     "element_type": "excavation", "slots": {"excavation_depth_m": 6}}, st2)
+    r2 = h._finalize(st2)
+    assert r2["total_status"] == "complete" and r2["final_total"]["grand_total"] > 0

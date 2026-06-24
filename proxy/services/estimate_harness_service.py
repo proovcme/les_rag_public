@@ -215,6 +215,93 @@ def _magnitude_check(physical_unit: str, qty: float, geom: dict[str, Any]) -> tu
     return True, None, ""
 
 
+# ── Quality Gate 4: SLOT REQUIREMENTS + FORMULA CATALOG ──────────────────────────────────
+# Формула НЕ от модели и НЕ придумывает входы. Объём считается из ПОИМЕНОВАННЫХ слотов по
+# каталогу под element_type. Нет критичного слота (глубина/толщина/геометрия стен) → needs_input,
+# не считаем. Слоты: из геометрии (S,N,S1,P,H — авто) + от пользователя + допущения (where can).
+
+# element_type → {unit, expr над слотами, required(критичные), assume(slot→дефолт или geom-var)}.
+FORMULA_CATALOG: dict[str, dict[str, Any]] = {
+    "excavation": {
+        "unit": "м3", "expr": "S1 * excavation_depth_m * overdig_factor",
+        "required": ["excavation_depth_m"], "assume": {"overdig_factor": 1.2}},
+    "concrete_preparation": {
+        "unit": "м3", "expr": "S1 * prep_thickness_m",
+        "required": [], "assume": {"prep_thickness_m": 0.1}},
+    "foundation_slab": {
+        "unit": "м3", "expr": "slab_area_m2 * slab_thickness_m",
+        "required": ["slab_thickness_m"], "assume": {"slab_area_m2": "S1"}},
+    "monolithic_slab": {
+        "unit": "м3", "expr": "floor_area_m2 * slab_thickness_m * N",
+        "required": ["slab_thickness_m"], "assume": {"floor_area_m2": "S1"}},
+    "monolithic_wall": {
+        "unit": "м3", "expr": "wall_length_m * wall_height_m * wall_thickness_m",
+        "required": ["wall_length_m", "wall_height_m", "wall_thickness_m"], "assume": {}},
+    "waterproofing": {
+        "unit": "м2", "expr": "P * H * N + S1",   # стены + дно, из геометрии — считаемо
+        "required": [], "assume": {}},
+}
+
+
+def _is_number(v: Any) -> bool:
+    try:
+        float(str(v).replace(",", ".").replace(" ", ""))
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def resolve_slots(element_type: str, geom: dict[str, Any], user_slots: dict[str, Any]
+                  ) -> tuple[dict | None, dict, list[str], list[str]]:
+    """Слоты под element_type: геометрия + пользователь + допущения. Возвращает
+    (spec, namespace, missing_critical, assumptions_used). Нет spec → (None,…)."""
+    spec = FORMULA_CATALOG.get(element_type)
+    if not spec:
+        return None, {}, [], []
+    ns: dict[str, float] = {k: _f(v) for k, v in (geom or {}).items()}
+    for k, v in (user_slots or {}).items():
+        if _is_number(v):
+            ns[k] = _f(v)
+    assumptions: list[str] = []
+    for slot, default in spec.get("assume", {}).items():
+        if slot in ns:
+            continue
+        val = ns.get(default) if (isinstance(default, str) and default in ns) else (_f(default) if _is_number(default) else None)
+        if val is not None:
+            ns[slot] = val
+            assumptions.append(f"{slot}={round(val, 3)} (допущение)")
+    missing = [s for s in spec.get("required", []) if s not in ns]
+    return spec, ns, missing, assumptions
+
+
+_PARAM_PATTERNS = [
+    ("excavation_depth_m", r"глубин\w*\D{0,18}(\d+(?:[.,]\d+)?)\s*м(?!\w)", 1.0),
+    ("slab_thickness_m",   r"(?:плит\w*|фундамент\w*)\D{0,16}(\d+(?:[.,]\d+)?)\s*(мм|см|м)\b", None),
+    ("wall_thickness_m",   r"стен\w*\D{0,16}(\d+(?:[.,]\d+)?)\s*(мм|см|м)\b", None),
+    ("wall_height_m",      r"высот\w*\D{0,14}(\d+(?:[.,]\d+)?)\s*м(?!\w)", 1.0),
+    ("wall_length_m",      r"(?:периметр|длин\w* стен)\D{0,14}(\d+(?:[.,]\d+)?)\s*м(?!\w)", 1.0),
+]
+
+
+def parse_params(question: str) -> dict[str, float]:
+    """Достать известные параметры из текста запроса → слоты (для петли уточнения в одном
+    запросе: «паркинг 4800 глубина 6м плита 400мм»). Мм/см → метры."""
+    ql = (question or "").lower()
+    slots: dict[str, float] = {}
+    for slot, pat, _mult in _PARAM_PATTERNS:
+        m = re.search(pat, ql)
+        if not m:
+            continue
+        val = _f(m.group(1))
+        unit = (m.group(2) if m.lastindex and m.lastindex >= 2 else "м")
+        if unit == "мм":
+            val /= 1000.0
+        elif unit == "см":
+            val /= 100.0
+        slots[slot] = val
+    return slots
+
+
 # ── петля ────────────────────────────────────────────────────────────────────────────────
 
 _REQUIRED_SCHEMA = ("object_type", "area_total_m2")
@@ -233,10 +320,10 @@ SYSTEM_PROMPT = (
     "\"unit_hint\":\"м3|м2\"}} — кандидаты ГЭСН (ранжируются; спец-коды тонут). Бери из них "
     "тот, у кого applicability_status=accepted.\n"
     "3) {\"tool\":\"add_position\",\"args\":{\"work\":\"..\",\"code\":\"NN-NN-NNN-NN\","
-    "\"work_family\":\"..\",\"physical_unit\":\"м3|м2\",\"qty_formula\":\"<ФИЗИЧЕСКИЙ объём над "
-    "S,N,S1,P,H, БЕЗ деления на измеритель>\",\"assumptions\":[..]}} — код сам переведёт в "
-    "измеритель нормы и проверит единицы/применимость/магнитуду. Нет параметра в формуле → "
-    "позиция станет needs_input (это НОРМАЛЬНО).\n"
+    "\"work_family\":\"..\",\"element_type\":\"<из списка>\",\"slots\":{\"slab_thickness_m\":0.4,..}}} "
+    "— объём считает КОД по element_type (формула в каталоге, НЕ ты). Слоты: что знаешь "
+    "(толщина/глубина/геометрия стен). Нет критичного слота → needs_input (НОРМАЛЬНО, не выдумывай; "
+    "это сигнал спросить пользователя). Геометрия (S,S1,P,H) подставляется сама.\n"
     "4) {\"final\":true} — собрать (ПРЕДВАРИТЕЛЬНО).\n\n"
     "Подземный паркинг: котлован(earthworks), гидроизоляция(waterproofing), фунд.плита+стены+"
     "перекрытия(concrete_monolithic). Один JSON за ход; коды — только из search_norm."
@@ -276,12 +363,32 @@ def _add_position(args: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]
                                    "candidate": code})
         return {"ok": True, "status": st, "reason": "; ".join(appl_reasons),
                 "note": "норма не подтверждена применимостью — возьми accepted из search_norm"}
-    # физический объём из формулы
-    try:
-        phys = _eval_formula(str(args.get("qty_formula", "")), state["geom"])
-    except Exception as e:  # нет переменной → needs_input, НЕ считаем молча
-        state["positions"].append({**base_pos, "status": "needs_input", "reason": str(e)[:80]})
-        return {"ok": True, "status": "needs_input", "reason": str(e)[:80]}
+    # Gate 4: объём из FORMULA CATALOG по element_type + СЛОТЫ (формула НЕ от модели и НЕ
+    # придумывает входы). Нет критичного слота (глубина/толщина/геометрия стен) → needs_input.
+    et = str(args.get("element_type", ""))
+    user_slots = {**state.get("user_slots", {}), **(args.get("slots") or {})}
+    if et in FORMULA_CATALOG:
+        spec, ns, missing, slot_assumptions = resolve_slots(et, state["geom"], user_slots)
+        if missing:
+            state["positions"].append({**base_pos, "status": "needs_input", "missing_slots": missing,
+                                       "reason": f"нет параметров: {', '.join(missing)}"})
+            return {"ok": True, "status": "needs_input", "missing_slots": missing,
+                    "reason": f"для расчёта нужны: {', '.join(missing)} — спроси пользователя"}
+        try:
+            phys = _eval_formula(spec["expr"], ns)
+        except Exception as e:  # noqa: BLE001
+            state["positions"].append({**base_pos, "status": "needs_input", "reason": str(e)[:80]})
+            return {"ok": True, "status": "needs_input", "reason": str(e)[:80]}
+        base_pos["physical_unit"] = _canon_unit(spec["unit"])      # единица из каталога, не от модели
+        base_pos["assumptions"] = list(base_pos.get("assumptions", [])) + slot_assumptions
+        base_pos["formula"] = spec["expr"]
+    else:
+        # legacy: element_type вне каталога → принимаем qty_formula модели (всё ещё через Gate 1)
+        try:
+            phys = _eval_formula(str(args.get("qty_formula", "")), state["geom"])
+        except Exception as e:  # noqa: BLE001
+            state["positions"].append({**base_pos, "status": "needs_input", "reason": str(e)[:80]})
+            return {"ok": True, "status": "needs_input", "reason": str(e)[:80]}
     # единицы: физическая ↔ базовая единица нормы
     factor, base_unit = _norm_unit_factor(norm.get("unit", ""))
     if not _units_compatible(base_pos["physical_unit"], base_unit):
@@ -398,10 +505,15 @@ def _finalize(state: dict[str, Any], *, note: str = "") -> dict[str, Any]:
 
 def run_estimate_harness(question: str, complete: Callable[[list[dict[str, str]]], str],
                          *, max_steps: int = 16) -> dict[str, Any]:
-    state: dict[str, Any] = {"schema": {}, "geom": {}, "positions": [], "steps": 0}
+    # Gate 4: параметры из запроса → слоты (петля уточнения: «… глубина 6м плита 400мм»).
+    user_slots = parse_params(question)
+    state: dict[str, Any] = {"schema": {}, "geom": {}, "positions": [], "steps": 0,
+                             "user_slots": user_slots}
+    _slots_note = (f" Известные параметры: {user_slots}." if user_slots else
+                   " Параметры (глубина/толщины/геометрия стен) НЕ заданы — где их нет, позиция станет needs_input.")
     messages: list[dict[str, str]] = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": f"Объект: {question}\nНачни с propose_schema."},
+        {"role": "user", "content": f"Объект: {question}\nНачни с propose_schema.{_slots_note}"},
     ]
     trace: list[dict[str, Any]] = []
     for _ in range(max_steps):

@@ -947,10 +947,17 @@ def _format_harness(r: dict) -> str:
     ni = r.get("needs_input", [])
     if ni:
         lines += ["", "**Нет данных для расчёта (не выдумываем):**"]
+        slots_needed: list[str] = []
         for p in ni:
             lines.append(f"- {p.get('work', '')} ({p.get('code')}) — {p.get('reason', 'нужны параметры')}")
-    if sch.get("missing_inputs"):
-        lines.append(f"\n_Не хватает входных данных: {', '.join(map(str, sch['missing_inputs']))}._")
+            slots_needed += [s for s in (p.get("missing_slots") or []) if s not in slots_needed]
+        if slots_needed:
+            human = {"excavation_depth_m": "глубина котлована (м)", "slab_thickness_m": "толщина плиты (мм/м)",
+                     "wall_thickness_m": "толщина стен (мм/м)", "wall_height_m": "высота стен (м)",
+                     "wall_length_m": "длина/периметр стен (м)"}
+            ask = ", ".join(human.get(s, s) for s in slots_needed)
+            lines += ["", f"**Чтобы дорассчитать — пришлите:** {ask}.",
+                      "_Можно прямо в запросе: «…паркинг 4800 глубина 6 м плита 400 мм»._"]
     lines.append(f"\n⚙ Петля: {r.get('steps')} шагов · инструменты: "
                  f"{', '.join(str(t.get('tool')) for t in r.get('trace', [])) or '—'}")
     return "\n".join(lines)
