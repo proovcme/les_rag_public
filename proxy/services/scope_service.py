@@ -121,6 +121,54 @@ def resolve_scope(*, scope: dict | None = None, project_id: int | None = None,
     }
 
 
+# ── §1 v0.22: проектный запрос при scope=all → попросить выбрать область (не искать молча) ──
+
+# доп. маркеры проектных операций (ВОР/ЛСР/Ф9/извлеки) — кроме descriptive/source-scoped/doc-registry
+_PROJECT_OP_MARKERS = ("извлеки вор", "извлеки ведомость", "собери лср", "лср по ф9", "вор из ф9",
+                       "по ф9", "из ф9", "смета по объекту", "смету на объект")
+
+
+def needs_project_scope(question: str) -> bool:
+    """Запрос привязан к КОНКРЕТНОМУ объекту (descriptive / source-scoped / реестр документации / ВОР-ЛСР)
+    → при scope=all нельзя молча искать весь корпус. Нормы/глоссарий/глобальный реестр — НЕ сюда."""
+    try:
+        from proxy.services.deterministic_policy_service import (
+            is_project_descriptive_query, is_source_scoped_query, is_explicit_term_query,
+            is_global_project_registry_query)
+        from proxy.services.project_registry_chat_service import is_document_registry_query
+    except Exception:  # noqa: BLE001
+        return False
+    q = (question or "").lower().replace("ё", "е")
+    if is_explicit_term_query(q) or is_global_project_registry_query(q):
+        return False                       # «что такое X», «реестр проектов» — допустимы на всём RAG
+    return (is_project_descriptive_query(q) or is_source_scoped_query(q)
+            or is_document_registry_query(question) or any(m in q for m in _PROJECT_OP_MARKERS))
+
+
+def suggest_project(question: str, projects: list[dict] | None) -> dict | None:
+    """Единственный проект-кандидат по имени/алиасу в запросе → можно предложить (но не auto-resolve)."""
+    q = (question or "").lower().replace("ё", "е")
+    hits = []
+    for p in projects or []:
+        names = [str(p.get("name", ""))] + [str(a) for a in (p.get("aliases") or [])]
+        for nm in names:
+            toks = [t for t in (nm.lower().replace("ё", "е")).split() if len(t) >= 4]
+            if toks and all(t in q for t in toks):
+                hits.append(p)
+                break
+    return hits[0] if len(hits) == 1 else None
+
+
+def scope_clarification(question: str, *, projects: list[dict] | None = None) -> dict:
+    """Actionable-ответ: проектный запрос при scope=all. Предлагает уникального кандидата, если есть."""
+    base = "Выбран весь RAG. Для проектного запроса выберите проект или датасет в «Области поиска»."
+    cand = suggest_project(question, projects)
+    if cand:
+        base += f" Похоже, вы имеете в виду «{cand.get('name')}» — выбрать этот проект?"
+    return {"answer": base, "operation": "scope_clarification",
+            "suggested_project_id": (cand or {}).get("id")}
+
+
 def _catalog_name(did: str, catalog: list[dict] | None) -> str | None:
     for d in catalog or []:
         if str(d.get("id", "")) == did:
