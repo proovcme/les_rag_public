@@ -166,6 +166,40 @@ present/stale_count/sidecar_stale-warning.
 **Safety v0.14:** оригиналы read-only (тест на байты), dry-run не пишет, runtime-write за двойным гейтом,
 без OCR, без облака, нет fake source_refs, staleness честно помечается, evidence-контракт цел.
 
+## ✅ v0.15 (2026-06-24): APPROVED RUNTIME SIDECAR WRITE + REAL EXTRACTED-BODY SMOKE
+
+**Оператор ЯВНО разрешил запись** sidecar для датасета 844a2b53 (через AskUserQuestion). Выполнен
+approved runtime write (env LES_ALLOW_RUNTIME_SIDECAR_WRITE=1 + --confirm-runtime-write):
+- 27 ГОСТ/СП .docx → **27 sidecar'ов + manifest.json**, **23 930 параграфов**, 0 failures;
+- **оригиналы БАЙТ-В-БАЙТ идентичны** (shasum до/после), only _extracted/ добавлен;
+- index_health: sidecar_available=True, extracted_body=23930, stale=0, warns→
+  `no_lexical_index_but_file_body_available` (НЕ blind).
+
+**Реальный extracted_body smoke (через unified harness на данных оператора):**
+- registry → complete (27 ГОСТ/СП);
+- norm_qa «правила огнестойкости стен» → **complete → СП 327.1325800.2017 #para85**;
+- «требования к кровлям» → СП 17.13330; «опалубку» → СП 114.13330; «по нормам для серверной» → 9 src;
+- «АУПТ для серверной» → honest `norm_no_source` (термина нет в структурных ГОСТ — НЕ no_lexical_index);
+- asbuilt/spec → `no_source_in_scope` (нет актов в норм-датасете).
+
+**v0.15 фиксы:** (1) norm_qa word-expansion — фраза нормализуется в склеенный блок и не матчит тело →
+добавлен поиск по СОДЕРЖАТЕЛЬНЫМ словам >5 симв (кроме служебных); «огнестойкости» в «правила
+огнестойкости стен» теперь матчит. (2) sample_extracted_terms_v15.py — сэмпл реальных норм-кодов/слов/
+заголовков из sidecar (для позитивного smoke, не только negative).
+
+| было (v0.14) | стало (v0.15) |
+|---|---|
+| no_lexical_index для ГОСТ-датасета | **extracted_body → complete с source_ref до .docx#para** ИЛИ honest norm_no_source |
+| dry-run only | **approved runtime write** (27 sidecar, оригиналы read-only доказано) |
+| — | term-sampler находит реальные термины (СП 20.13330, огнестойкость…) с source_ref |
+
+24 теста v0.15 (norm word-expansion, sidecar-available, sampler, **4 реальных на 844a2b53-sidecars**,
+write-policy/staleness регрессии). 351 unified-сюита + 83 chat (0 failed) + verify зелёные.
+
+**Safety v0.15:** запись ТОЛЬКО с явным разрешением оператора (получено), оригиналы read-only (shasum),
+без OCR, без облака, source_ref до реального абзаца (не sidecar-путь), нет fake-хитов, no_lexical_index
+заменён реальным RETRIEVED или честным term_not_found. runtime .env НЕ трогал.
+
 ## Открыто (когда backend подключён в рантайме)
 - vector/mail сейчас `unavailable` в **sync** unified-пути (async retrieve/mail_query не вшит). Закрыть —
   async-обёртка адаптеров в chat-пути ИЛИ sync-мост к Qdrant.

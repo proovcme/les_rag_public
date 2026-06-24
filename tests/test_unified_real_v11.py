@@ -122,11 +122,16 @@ def test_real_registry_groups_gost_sp():
     assert "norm" in r.answer_data.get("groups", {})        # ГОСТ/СП → norm
 
 @pytest.mark.skipif(not (_RUNTIME / _GOST_DS).exists(), reason="реальный датасет рантайма недоступен")
-def test_real_norm_no_lexical_index():
+def test_real_norm_lexical_still_zero():
+    # v0.15: после approved sidecar-write norm может находить термин в extracted_body → complete;
+    # lexical-индекс при этом ВСЁ РАВНО пуст (sidecar ≠ lexical FTS). Если no_data — не blind.
     r = u.run_unified_construction_harness("правила расстановки ОЗК", dataset_ids=[_GOST_DS], storage_root=_RUNTIME)
-    assert r.total_status == "no_data"
-    h = r.answer_data.get("index_health", {})
-    assert h.get("total_lexical_chunks") == 0    # индекс пуст в dev-view → честная причина
+    if r.total_status == "complete":                   # нашли в extracted_body (sidecar записан)
+        assert r.sources and "extracted_body" in r.answer_data.get("searched_tiers", [])
+    else:                                              # no_data → не blind: sidecar просмотрен, lexical пуст
+        h = r.answer_data.get("index_health", {})
+        assert h.get("total_lexical_chunks") == 0
+        assert "extracted_body" in r.answer_data.get("searched_tiers", [])
 
 
 # ── регрессии v0.3-v0.10 ─────────────────────────────────────────────────────────────────

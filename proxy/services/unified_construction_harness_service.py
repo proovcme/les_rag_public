@@ -602,7 +602,12 @@ def _handle_norm_qa(question, *, project_id=0, dataset_ids=None, storage_root=No
     from proxy.services.source_adapters import (search_lexical_chunks, search_vector_chunks,
                                                  search_file_body, search_extracted_body)
     eq = extract_source_scoped_query(question)
-    terms = eq.query_terms or [question]
+    # v0.15: norm/doc QA — keyword-поиск по СОДЕРЖАТЕЛЬНЫМ словам (фраза целиком нормализуется в
+    # склеенный блок и не матчит тело; добавляем отдельные слова >5 симв, кроме служебных).
+    _STOP = {"правила", "правило", "требования", "требование", "какие", "нужна", "нужно", "нужен",
+             "документ", "документы", "документах", "проекта", "проект", "помещения", "помещений"}
+    words = [w for w in re.findall(r"\w{6,}", (question or "").lower()) if w not in _STOP]
+    terms = list(dict.fromkeys((eq.query_terms or [question]) + words))
     tiers: list[str] = []
     warns: list[str] = []
     # tier 1: file_body (.md/.txt напрямую — норма в реальном .md без lexical-индекса)
