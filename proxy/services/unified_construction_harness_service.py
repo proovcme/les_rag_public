@@ -726,8 +726,8 @@ def _handle_resource_cost(question, *, project_id=0, dataset_ids=None, storage_r
                               "кац", " тц", "прямые затрат", "ставк")):
         res = rc.run_resource_cost_golden()
         cr = rc.resource_result_to_construction_result(res)
-        cr.answer_data["source_note"] = ("стоимость строительных работ (ресурсный обсчёт по ГЭСН), "
-                                         "не стоимость проектирования")
+        cr.answer_data["cost_kind"] = ("стоимость строительных работ (ресурсный обсчёт по ГЭСН), "
+                                       "не стоимость проектирования")
         return cr
     # нет источника для расчёта
     it = EvidenceItem(EvidenceType.MISSING, "Источник для ресурсного расчёта не найден",

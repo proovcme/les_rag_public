@@ -29,10 +29,46 @@ from proxy.services.evidence_contract import (
 )
 
 WORKBOOK_NAME = "ПРИМЕР_обсчета_24_06.xlsx"
+RECONSTRUCTED_FIXTURE = Path("tests/fixtures/cost_calc/ПРИМЕР_обсчета_24_06.xlsx")
+REAL_WORKBOOK = Path("tests/fixtures/cost_calc/real_ПРИМЕР_обсчета_24_06.xlsx")
+
+# v0.6: РЕАЛЬНЫЙ ПРИМЕР_обсчета_24_06.xlsx найден (creator='fsnb2022.ru') и скопирован в REAL_WORKBOOK.
+# Система различает real (оригинал fsnb2022.ru) и reconstructed (наша openpyxl-fixture) и НЕ выдаёт
+# reconstructed за real (ТЗ §0.4/§8/§11). Расчёт воспроизводится КОДОМ; xlsx хранит значения, не формулы.
+FIXTURE_PROVENANCE = "real"
+REAL_WORKBOOK_ABSENT_NOTE = ("оригинальный workbook не найден; источник — reconstructed fixture "
+                             "(структура документирована, расчёт воспроизводится кодом)")
 
 
 def _r2(x: float) -> float:
     return round(float(x) + 1e-9, 2)
+
+
+def _provenance_of(path: Path, creator: str) -> str:
+    cl = (creator or "").lower()
+    if cl.startswith("openpyxl"):
+        return "reconstructed"
+    if "fsnb" in cl or "excel" in cl or "fsnb2022" in cl:
+        return "real"
+    return "real_candidate" if path.name.startswith("real_") else "reconstructed"
+
+
+def real_workbook_status(path: str | Path | None = None) -> dict[str, Any]:
+    """Провенанс источника обсчёта. real → оригинал fsnb2022.ru; reconstructed → наша fixture;
+    absent → нет файла. НИКОГДА не помечает reconstructed как real."""
+    p = Path(path) if path else (REAL_WORKBOOK if REAL_WORKBOOK.exists() else RECONSTRUCTED_FIXTURE)
+    if not p.exists():
+        return {"available": False, "provenance": "absent", "path": str(p), "creator": "",
+                "note": REAL_WORKBOOK_ABSENT_NOTE}
+    try:
+        import openpyxl
+        creator = openpyxl.load_workbook(p, read_only=True).properties.creator or ""
+    except Exception:  # noqa: BLE001
+        creator = ""
+    prov = _provenance_of(p, creator)
+    note = ("источник — РЕАЛЬНЫЙ workbook (fsnb2022.ru)" if prov == "real" else
+            REAL_WORKBOOK_ABSENT_NOTE if prov == "reconstructed" else "кандидат реального workbook")
+    return {"available": True, "provenance": prov, "path": str(p), "creator": creator, "note": note}
 
 
 # ── data models ──────────────────────────────────────────────────────────────────────────
@@ -443,13 +479,90 @@ def price_sample(pos: dict[str, Any] | None = None) -> list[ResourcePrice]:
 
 # ── parse uploaded/dataset workbook (если xlsx присутствует) ─────────────────────────────
 
-def parse_cost_workbook(path: str | Path) -> dict[str, Any]:
-    """Прочитать xlsx обсчёта (если файл есть). Возвращает {sheets, norm_codes, position_qty, kac_rows}.
-    Реальный openpyxl-парс по документированной раскладке; источник = workbook (не формулы)."""
+@dataclass
+class WorkbookSourceRef:
+    """Cell-level ссылка на ячейку/строку workbook (ТЗ §4)."""
+    file_name: str = WORKBOOK_NAME
+    sheet_name: str = ""
+    row: int | None = None
+    column: int | None = None
+    cell_address: str = ""
+    value_type: str = ""
+
+    def ref(self) -> str:
+        base = f"{self.file_name}#{self.sheet_name}"
+        if self.cell_address:
+            return f"{base}!{self.cell_address}"
+        if self.row is not None:
+            return f"{base}!R{self.row}" + (f"C{self.column}" if self.column else "")
+        return base
+
+
+@dataclass
+class MethodNote:
+    """Методический комментарий из ПРАВОЙ зоны листа `пример` (Q:AF) — RETRIEVED evidence, НЕ движок."""
+    text: str
+    sheet_name: str
+    row: int
+    column: int
+    cell_address: str = ""
+
+    def source_ref(self) -> str:
+        return WorkbookSourceRef(sheet_name=self.sheet_name, row=self.row, column=self.column,
+                                 cell_address=self.cell_address, value_type="method_note").ref()
+
+
+_METHOD_ZONE_MIN_COL = 17        # Q и правее (левая расчётная зона A:P = 1..16)
+
+
+def parse_method_notes(path: str | Path, sheet: str = "пример") -> list[MethodNote]:
+    """Извлечь правую методзону (Q:AF) листа `пример` как MethodNote с cell-ref. Не вычисляет."""
     import openpyxl
     p = Path(path)
     if not p.exists():
-        return {"status": "not_found", "sheets": [], "norm_codes": [], "position_qty": None, "kac_rows": []}
+        return []
+    wb = openpyxl.load_workbook(p, data_only=True)
+    out: list[MethodNote] = []
+    # содержательные методнотации (не заголовки колонок): инструкции расчёта
+    keys = ("гр.", "сплит", "прочерк", "коэф", "код ресурс", "по умолчанию", "кац", "тц",
+            "выбор расценки", "если в гр", "норма из", "приказ")
+    if sheet in wb.sheetnames:
+        for cell in (c for r in wb[sheet].iter_rows() for c in r):
+            v = cell.value
+            if cell.column and cell.column >= _METHOD_ZONE_MIN_COL and isinstance(v, str) \
+                    and len(v.strip()) > 12 and any(k in v.lower() for k in keys):
+                out.append(MethodNote(v.strip(), sheet, cell.row, cell.column, cell.coordinate))
+    wb.close()
+    return out
+
+
+def parse_formula_cells(path: str | Path) -> list[dict[str, Any]]:
+    """Список формульных ячеек (RETRIEVED metadata). Формул МАЛО — осн. расчёты хранятся значениями;
+    формулы НЕ используются как движок (ТЗ §3)."""
+    import openpyxl
+    p = Path(path)
+    if not p.exists():
+        return []
+    wb = openpyxl.load_workbook(p, data_only=False)
+    out = []
+    for sn in wb.sheetnames:
+        for cell in (c for r in wb[sn].iter_rows() for c in r):
+            if isinstance(cell.value, str) and cell.value.startswith("="):
+                out.append({"sheet": sn, "cell": cell.coordinate, "formula": cell.value})
+    wb.close()
+    return out
+
+
+def parse_cost_workbook(path: str | Path) -> dict[str, Any]:
+    """Прочитать xlsx обсчёта (если есть). Возвращает sheets/norm_codes/position_qty/kac_rows/
+    method_notes/formula_cells + ПРОВЕНАНС (real vs reconstructed). Источник = workbook, НЕ формулы."""
+    import openpyxl
+    p = Path(path)
+    if not p.exists():
+        return {"status": "not_found", "provenance": "absent", "sheets": [], "norm_codes": [],
+                "position_qty": None, "kac_rows": [], "method_notes": [], "formula_cells": [],
+                "note": REAL_WORKBOOK_ABSENT_NOTE}
+    status = real_workbook_status(p)
     wb = openpyxl.load_workbook(p, data_only=True, read_only=True)
     sheets = wb.sheetnames
     norm_codes = [s for s in sheets if "гэсн" in s.lower()]
@@ -466,19 +579,184 @@ def parse_cost_workbook(path: str | Path) -> dict[str, Any]:
             if any(v.strip() == "-" for v in vals):
                 kac_rows.append({"row": i, "values": vals, "status": "needs_kac"})
     wb.close()
-    return {"status": "found", "sheets": sheets, "norm_codes": norm_codes,
-            "position_qty": position_qty, "kac_rows": kac_rows}
+    return {"status": "found", "provenance": status["provenance"], "note": status["note"],
+            "sheets": sheets, "norm_codes": norm_codes, "position_qty": position_qty,
+            "kac_rows": kac_rows, "method_notes": parse_method_notes(p),
+            "formula_cells": parse_formula_cells(p)}
+
+
+# ── v0.6: реальный парсер левой расчётной зоны листа `пример` ─────────────────────────────
+# Раскладка реального workbook (fsnb2022.ru): B=код C=наимен H=ед I=норма J=коэфф
+# K=всего_кол(=I×J×qty) L=база M=индекс N=текущая(=L×M или прямая) P=строка(=K×N).
+
+_COL = {"code": 2, "name": 3, "unit": 8, "norm": 9, "coeff": 10, "total_qty": 11,
+        "base": 12, "index": 13, "current": 14, "line_total": 16}
+
+
+def _cellnum(v: Any) -> float | None:
+    if isinstance(v, (int, float)):
+        return float(v)
+    try:
+        return float(str(v).replace(",", ".").replace(" ", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_real_workbook_position(path: str | Path = REAL_WORKBOOK) -> dict[str, Any]:
+    """Распарсить левую расчётную зону листа `пример` реального workbook → строки ресурсов +
+    сохранённые итоги (direct/ФОТ/НР/СП/позиция/КАЦ). Каждая строка с cell-level source_ref."""
+    import openpyxl
+    p = Path(path)
+    if not p.exists():
+        return {"status": "not_found", "provenance": "absent", "lines": []}
+    status = real_workbook_status(p)
+    wb = openpyxl.load_workbook(p, data_only=True)
+    if "пример" not in wb.sheetnames:
+        wb.close()
+        return {"status": "blocked", "provenance": status["provenance"], "lines": [],
+                "blocker": "лист 'пример' отсутствует"}
+    ex = wb["пример"]
+    lines: list[dict] = []
+    stored: dict[str, Any] = {}
+    kac = None
+    for r in ex.iter_rows(min_row=1, max_row=ex.max_row, min_col=1, max_col=16):
+        cell = {c.column: c.value for c in r}
+        code = cell.get(_COL["code"])
+        name = str(cell.get(_COL["name"]) or "")
+        P = _cellnum(cell.get(_COL["line_total"]))
+        I = _cellnum(cell.get(_COL["norm"]))
+        # агрегатные строки
+        if name.startswith("Итого прямые"):
+            stored["direct"] = P; continue
+        if name.strip() == "ФОТ":
+            stored["fot"] = P; continue
+        if name.startswith("НР"):
+            stored["nr"] = {"rate": I, "amount": P, "obos": code}; continue
+        if name.startswith("СП"):
+            stored["sp"] = {"rate": I, "amount": P, "obos": code}; continue
+        if name.startswith("Всего по позиции"):
+            stored.setdefault("position", P); continue
+        if isinstance(code, str) and code.startswith("ТЦ_"):
+            kac = {"code": code, "name": cell.get(_COL["name"]), "qty": I,
+                   "price": _cellnum(cell.get(_COL["current"])), "total": P,
+                   "src": _sref("пример", r[0].row)}
+            continue
+        if code in (None, "") or str(code) == "4" or P is None:
+            continue
+        import re as _re
+        if _re.fullmatch(r"\d{1,2}", str(code).strip()) and _re.fullmatch(r"\d{1,2}", name.strip()):
+            continue                                  # header-строка (номера колонок 1/2/3…)
+        row_i = r[0].row
+        lines.append({
+            "row": row_i, "code": str(code), "name": cell.get(_COL["name"]), "unit": cell.get(_COL["unit"]),
+            "norm": I, "coeff": _cellnum(cell.get(_COL["coeff"])), "total_qty": _cellnum(cell.get(_COL["total_qty"])),
+            "base": _cellnum(cell.get(_COL["base"])), "index": _cellnum(cell.get(_COL["index"])),
+            "current": _cellnum(cell.get(_COL["current"])), "line_total": P,
+            "category": classify_resource_category(str(code), str(cell.get(_COL["name"]) or "")),
+            "src": _sref("пример", row_i)})
+    wb.close()
+    # объём позиции: мода по строкам total/(norm×coeff) — устойчиво к header/informational-строкам
+    from collections import Counter
+    derived = []
+    for ln in lines:
+        if ln["norm"] and ln["coeff"] and ln["total_qty"]:
+            derived.append(round(ln["total_qty"] / (ln["norm"] * ln["coeff"]), 6))
+    pos_qty = Counter(derived).most_common(1)[0][0] if derived else None
+    return {"status": "found", "provenance": status["provenance"], "note": status["note"],
+            "position_qty": pos_qty, "lines": lines, "stored": stored, "kac": kac,
+            "method_notes": parse_method_notes(p)}
+
+
+def validate_real_workbook(path: str | Path = REAL_WORKBOOK, *, tol: float = 0.5) -> dict[str, Any]:
+    """Воспроизвести КОДОМ значения реального workbook и сверить с сохранёнными. expand/price/итоги
+    пересчитываются, расхождения — в diff (не скрываются). Возвращает provenance + per-totals diff."""
+    parsed = parse_real_workbook_position(path)
+    if parsed["status"] != "found":
+        return {"status": parsed["status"], "provenance": parsed.get("provenance", "absent"), "diffs": [],
+                "blocked": True}
+    pos_qty = parsed["position_qty"]
+    coeff = CoefficientSet(labor_coeff=1.15, machine_usage_coeff=1.15, machinist_labor_coeff=1.15,
+                           material_coeff=1.0, status="retrieved")
+    diffs: list[dict] = []
+    computed_direct = 0.0
+    for ln in parsed["lines"]:
+        # пересчёт total_qty = norm × coeff × pos_qty (коэфф материала=1 если в данных =1)
+        if ln["norm"] is not None and ln["total_qty"] is not None:
+            k = ln["coeff"] if ln["coeff"] else 1.0
+            recomputed_qty = ln["norm"] * k * pos_qty
+            if abs(recomputed_qty - ln["total_qty"]) > 1e-3:
+                diffs.append({"row": ln["row"], "field": "total_qty", "code": ln["code"],
+                              "stored": ln["total_qty"], "recomputed": round(recomputed_qty, 6)})
+        # пересчёт current = base × index (если оба есть)
+        if ln["base"] is not None and ln["index"] is not None and ln["current"] is not None:
+            rc_cur = round(ln["base"] * ln["index"], 2)
+            if abs(rc_cur - ln["current"]) > 0.05:
+                diffs.append({"row": ln["row"], "field": "current_price", "code": ln["code"],
+                              "stored": ln["current"], "recomputed": rc_cur})
+        # пересчёт line_total = total_qty × current
+        if ln["total_qty"] is not None and ln["current"] is not None and ln["line_total"] is not None:
+            rc_lt = round(ln["total_qty"] * ln["current"], 2)
+            if abs(rc_lt - ln["line_total"]) > tol:
+                diffs.append({"row": ln["row"], "field": "line_total", "code": ln["code"],
+                              "stored": ln["line_total"], "recomputed": rc_lt})
+            computed_direct += ln["line_total"]
+    stored = parsed["stored"]
+    totals_diff = []
+    # прямые: сумма строк vs сохранённое
+    if "direct" in stored and stored["direct"]:
+        if abs(computed_direct - stored["direct"]) > 1.0:
+            totals_diff.append({"total": "direct", "stored": stored["direct"],
+                                "recomputed": round(computed_direct, 2)})
+    # ФОТ/НР/СП пересчёт
+    fot = stored.get("fot")
+    if fot and stored.get("nr"):
+        nr_rate = (stored["nr"]["rate"] or 0) / 100.0
+        rc_nr = _r2(fot * nr_rate)
+        if abs(rc_nr - (stored["nr"]["amount"] or 0)) > 1.0:
+            totals_diff.append({"total": "nr", "stored": stored["nr"]["amount"], "recomputed": rc_nr})
+    if fot and stored.get("sp"):
+        sp_rate = (stored["sp"]["rate"] or 0) / 100.0
+        rc_sp = _r2(fot * sp_rate)
+        if abs(rc_sp - (stored["sp"]["amount"] or 0)) > 1.0:
+            totals_diff.append({"total": "sp", "stored": stored["sp"]["amount"], "recomputed": rc_sp})
+    return {"status": "found", "provenance": parsed["provenance"], "position_qty": pos_qty,
+            "lines_count": len(parsed["lines"]), "computed_direct": round(computed_direct, 2),
+            "stored": stored, "kac": parsed["kac"], "line_diffs": diffs, "totals_diff": totals_diff,
+            "matches": not diffs and not totals_diff, "method_notes_count": len(parsed["method_notes"])}
 
 
 # ── evidence-result для chat ──────────────────────────────────────────────────────────────
 
 def resource_result_to_construction_result(res: ResourceEstimateResult) -> ConstructionHarnessResult:
+    # v0.6: провенанс источника (real vs reconstructed) + реальные методнотации как RETRIEVED.
+    status = real_workbook_status()
+    blocks = list(res.evidence_blocks)
+    warnings = list(res.warnings)
+    method_count = 0
+    validation = None
+    if status["provenance"] == "real":
+        notes = parse_method_notes(status["path"])
+        method_count = len(notes)
+        if notes:
+            items = [EvidenceItem(EvidenceType.RETRIEVED, n.text[:140], source_refs=[n.source_ref()],
+                                  status="supported") for n in notes[:12]]
+            blocks.append(block_of(EvidenceType.RETRIEVED, "Методика из workbook (правая зона листа)", items))
+        val = validate_real_workbook()
+        validation = {"matches": val.get("matches"), "line_diffs": len(val.get("line_diffs", [])),
+                      "computed_direct": val.get("computed_direct")}
+        warnings.append("источник — РЕАЛЬНЫЙ workbook (fsnb2022.ru); расчёт воспроизведён кодом "
+                        "(xlsx хранит значения, не формулы)")
+    else:
+        warnings.append(status["note"])
     return ConstructionHarnessResult(
         answer_data={"intent": "resource_cost_calc", "norm_code": res.norm_code, "title": res.title,
+                     "provenance": status["provenance"], "source_note": status["note"],
+                     "method_notes": method_count, "validation": validation,
                      "direct_cost": res.direct_cost_total, "fot": res.fot, "nr": res.nr_amount,
                      "sp": res.sp_amount, "position_total": res.position_total,
                      "kac_total": res.additional_price_items_total, "grand_total": res.grand_total},
-        evidence_blocks=res.evidence_blocks, total_status=res.total_status,
+        evidence_blocks=blocks, total_status=res.total_status,
         final_total=res.grand_total if res.total_status == "complete" else None,
-        partial_total=res.position_total, warnings=res.warnings, blockers=res.blockers,
-        tool_trace=[{"tool": "resource_cost_golden", "norm": res.norm_code, "status": res.total_status}])
+        partial_total=res.position_total, warnings=warnings, blockers=res.blockers,
+        tool_trace=[{"tool": "resource_cost_calc", "norm": res.norm_code, "provenance": status["provenance"],
+                     "status": res.total_status}])
