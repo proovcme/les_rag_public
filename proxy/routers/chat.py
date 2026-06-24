@@ -926,17 +926,22 @@ def _format_harness(r: dict) -> str:
     else:
         lines.append("_Посчитанных позиций нет._")
 
-    t = r.get("totals")
-    if r.get("total_blocked"):
-        lines += ["", "**⛔ Итог НЕ сформирован**: есть позиции, отклонённые предохранителями "
-                  "(magnitude/применимость/код). Сумма бессмысленна, пока они не исправлены."]
-    elif t:
-        lines += ["", f"**ИТОГО СМР {t.get('smr')} ₽ · ВСЕГО с НДС {t.get('grand_total')} ₽** "
-                  f"({t.get('positions')} поз., предварительно)"]
+    # Gate 2: final_total ТОЛЬКО при complete; иначе partial_total как диагностика, не как смета.
+    status = r.get("total_status")
+    pt, ft = r.get("partial_total"), r.get("final_total")
+    if status == "complete" and ft:
+        lines += ["", f"**ИТОГО СМР {ft.get('smr')} ₽ · ВСЕГО с НДС {ft.get('grand_total')} ₽** "
+                  f"({ft.get('positions')} поз.)"]
+    elif status == "partial" and pt:
+        lines += ["", f"**⛔ Итоговая смета НЕ сформирована.** Предварительно рассчитанные позиции: "
+                  f"~{pt.get('grand_total')} ₽ ({pt.get('positions')} поз.) — это ДИАГНОСТИКА, не смета: "
+                  f"часть ключевых позиций без подтверждённой нормы или без данных."]
+    else:
+        lines += ["", "**⛔ Итог не сформирован** — нет ни одной позиции с подтверждённой применимой нормой."]
 
     rej = r.get("rejected", [])
     if rej:
-        lines += ["", "**Отклонено предохранителями (Gate 1):**"]
+        lines += ["", "**Отклонено предохранителями (Gate 1+2):**"]
         for p in rej:
             lines.append(f"- {p.get('work', '')} ({p.get('code')}) — {p.get('status')}: {p.get('reason', '')}")
     ni = r.get("needs_input", [])

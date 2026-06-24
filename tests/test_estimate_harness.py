@@ -76,9 +76,9 @@ def test_magnitude_guard_blocks_order_of_magnitude():
     assert obs["phys_qty"] > obs["upper_bound"]
 
 
-# ── (5)+(7) допущение → by_assumption; critical → итог НЕ как сумма ───────────────────────
+# ── (5)+(7) допущение → by_assumption; critical → итог partial, final_total None ──────────
 
-def test_finalize_marks_assumptions_and_blocks_total_on_critical():
+def test_finalize_marks_assumptions_and_partial_on_critical():
     st = _state()
     h._add_position({"work": "плита", "code": "06-02-001-01", "work_family": "concrete_monolithic",
                      "physical_unit": "м3", "qty_formula": "S1*0.4", "assumptions": ["толщина 0.4 (нет данных)"]}, st)
@@ -87,8 +87,51 @@ def test_finalize_marks_assumptions_and_blocks_total_on_critical():
     res = h._finalize(st)
     assert res["by_assumption"]                    # плита по допущению
     assert res["rejected"]                         # бред отклонён
-    assert res["total_blocked"] is True            # есть critical → итог не как сумма
-    assert res["totals"] is None
+    assert res["total_status"] == "partial"        # есть computed + critical
+    assert res["final_total"] is None              # final НЕ показываем
+    assert res["partial_total"]["grand_total"] > 0 # partial как диагностика существует
+    assert res["blockers"]                          # blocker с причиной
+
+
+# ── Gate 2: ПРИМЕНИМОСТЬ нормы (барьер между кандидатом и числом) ─────────────────────────
+
+def test_applicability_rejects_forbidden_title_anchor():
+    st, rs = "rejected", h.check_applicability(
+        "06-22-003-05", "Бетонирование плиты защитной оболочки реактора", "concrete_monolithic")
+    assert rs[0] == st and rs[1]
+
+
+def test_applicability_rejects_denied_subsection():
+    s, _ = h.check_applicability("06-22-001-01", "обычное бетонирование плиты", "concrete_monolithic")
+    assert s == "rejected"                         # 06-22 в denied prefixes
+
+
+def test_applicability_accepts_regular_concrete():
+    s, _ = h.check_applicability("06-02-001-01", "Устройство бетонных фундаментов общего назначения",
+                                 "concrete_monolithic")
+    assert s == "accepted"
+
+
+def test_applicability_ambiguous_when_no_positive_anchor():
+    s, _ = h.check_applicability("06-50-001-01", "устройство некоего объекта общего", "concrete_monolithic")
+    assert s == "ambiguous"                        # сб.06, но в названии нет признаков бетона
+
+
+def test_add_position_rejects_reactor_norm_not_computed():
+    """Живой реакторный код (06-22-003-05) НЕ становится computed-позицией."""
+    st = _state()
+    obs = h._add_position({"work": "плита", "code": "06-22-003-05", "work_family": "concrete_monolithic",
+                           "physical_unit": "м3", "qty_formula": "S1*0.4"}, st)
+    assert obs["status"] in ("rejected_applicability", "rejected_collection")
+    res = h._finalize(st)
+    assert res["computed"] == []                   # в итог не попал
+    assert res["total_status"] == "blocked"
+
+
+def test_search_norm_marks_applicability_status():
+    r = h.search_norm("бетонирование плиты", work_family="concrete_monolithic", unit_hint="м3")
+    for c in r.get("candidates", []):
+        assert c["applicability_status"] in ("accepted", "ambiguous", "rejected")
 
 
 # ── end-to-end петля (скриптовая модель) ─────────────────────────────────────────────────
@@ -112,8 +155,8 @@ def test_harness_loop_end_to_end_parking():
     assert res["preliminary"] is True
     assert len(res["computed"]) == 1
     assert res["computed"][0]["qty"] > 0
-    assert res["total_blocked"] is False           # критичных нет → итог есть
-    assert res["totals"]["grand_total"] > 0
+    assert res["total_status"] == "complete"       # одна accepted-позиция, критичных/нет-данных нет
+    assert res["final_total"]["grand_total"] > 0
     assert [t["tool"] for t in res["trace"]] == ["propose_schema", "add_position"]
 
 

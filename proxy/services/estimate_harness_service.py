@@ -73,6 +73,51 @@ def _collection_of(code: str) -> str:
     return m.group(1) if m else ""
 
 
+# ── Quality Gate 2: ПРИМЕНИМОСТЬ НОРМЫ (барьер между кандидатом и числом) ─────────────────
+# Фильтр по сборнику — крупное сито (06-22 «защитная оболочка реактора» проходит как сб.06).
+# Поэтому ещё: запретные признаки в названии + обязательные признаки семейства + чёрный список
+# подразделов. Это предохранитель, НЕ онтология — заводится руками под реальные провалы.
+
+# Признаки «не та норма» в названии (спец/нерелевантные сооружения).
+_FORBIDDEN_TITLE_ANCHORS = (
+    "реактор", "оболочк", "защитн", "шахт", "тоннел", "метрополит", "спецсооруж", "башенн",
+    "копр", "резервуар", "силос", "градирн", "доменн", "плотин", "судов", "вагон", "мост",
+)
+# Обязательные признаки семейства — иначе ambiguous (название не похоже на работу).
+_FAMILY_POSITIVE_ANCHORS: dict[str, tuple[str, ...]] = {
+    "earthworks": ("грунт", "котлован", "траншея", "разработ", "выемк", "насып", "землян", "разраб"),
+    "foundation": ("фундамент", "основани", "плит", "бетон"),
+    "concrete_monolithic": ("бетон", "монолит", "железобетон", "плит", "стен", "перекрыт", "колонн", "фундамент"),
+    "concrete_precast": ("сборн", "панел", "плит", "блок"),
+    "masonry": ("кладк", "стен", "перегородк", "кирпич", "блок"),
+    "metal": ("металл", "сталь", "конструкц", "балк", "ферм"),
+    "floors": ("пол", "стяжк", "покрыт"),
+    "roofing": ("кровл", "покрыт", "рулон", "мембран"),
+    "waterproofing": ("гидроизол", "изоляц", "оклеечн", "обмазочн", "мастичн"),
+    "finishes": ("отделк", "штукатур", "окрас", "облицов"),
+}
+# Чёрный список подразделов под семейство (реальные провалы паркинга).
+_FAMILY_DENIED_PREFIXES: dict[str, tuple[str, ...]] = {
+    "concrete_monolithic": ("06-22", "06-13", "06-14"),   # реактор/ёмкостные/спец
+    "foundation": ("06-22",),
+}
+
+
+def check_applicability(code: str, norm_name: str, work_family: str) -> tuple[str, list[str]]:
+    """Кандидат → accepted | ambiguous | rejected (+ причины). Барьер перед привязкой нормы."""
+    name = (norm_name or "").lower()
+    for a in _FORBIDDEN_TITLE_ANCHORS:
+        if a in name:
+            return "rejected", [f"запретный признак в названии: «{a}»"]
+    for pref in _FAMILY_DENIED_PREFIXES.get(work_family, ()):
+        if str(code).startswith(pref):
+            return "rejected", [f"подраздел {pref} не для {work_family}"]
+    pos = _FAMILY_POSITIVE_ANCHORS.get(work_family, ())
+    if pos and not any(a in name for a in pos):
+        return "ambiguous", [f"в названии нет признаков семейства {work_family}"]
+    return "accepted", []
+
+
 # ── search_norm: тонкий кандидатор + фильтр применимости ─────────────────────────────────
 
 @lru_cache(maxsize=1)
@@ -111,9 +156,11 @@ def search_norm(work_description: str, *, work_family: str = "", unit_hint: str 
                                  "reason": f"сборник не разрешён для {work_family}"})
             continue
         factor, base = _norm_unit_factor(u)
+        appl, reasons = check_applicability(c, nm, work_family)   # Gate 2: применимость кандидата
         candidates.append({"norm_code": c, "title": nm, "collection": _collection_of(c),
                            "measure_unit": u, "base_unit": base,
                            "unit_compatible": (not uh) or _units_compatible(uh, base),
+                           "applicability_status": appl, "rejection_reasons": reasons,
                            "score": round(s, 2)})
         if len(candidates) >= top_k:
             break
@@ -190,6 +237,15 @@ def _add_position(args: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]
                                    "reason": f"сборник {_collection_of(code)} не для {family}"})
         return {"ok": True, "status": "rejected_collection",
                 "reason": f"сборник {_collection_of(code)} не разрешён для {family} — возьми из search_norm"}
+    # Gate 2: ПРИМЕНИМОСТЬ нормы (bind-барьер) — кривой кандидат (реактор/спец/не та работа) НЕ
+    # становится основанием числа. accepted → считаем; rejected/ambiguous → в итог не идёт.
+    appl, appl_reasons = check_applicability(code, norm.get("name", ""), family)
+    if appl != "accepted":
+        st = "rejected_applicability" if appl == "rejected" else "ambiguous"
+        state["positions"].append({**base_pos, "status": st, "reason": "; ".join(appl_reasons),
+                                   "candidate": code})
+        return {"ok": True, "status": st, "reason": "; ".join(appl_reasons),
+                "note": "норма не подтверждена применимостью — возьми accepted из search_norm"}
     # физический объём из формулы
     try:
         phys = _eval_formula(str(args.get("qty_formula", "")), state["geom"])
@@ -242,11 +298,14 @@ def _exec_tool(name: str, args: dict[str, Any], state: dict[str, Any]) -> dict[s
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
-_CRITICAL = {"rejected_magnitude", "rejected_collection", "rejected_norm"}
+_CRITICAL = {"rejected_magnitude", "rejected_collection", "rejected_norm",
+             "rejected_applicability", "ambiguous"}
 
 
 def _finalize(state: dict[str, Any], *, note: str = "") -> dict[str, Any]:
-    """Сборка с Gate 1: суммируем ТОЛЬКО computed; есть critical-rejected → итог НЕ как сумма."""
+    """Сборка с Gate 1+2: считаем ТОЛЬКО computed (accepted-норма). Итог:
+    complete (всё посчитано) | partial (есть computed + критичные/нет данных) | blocked (ничего).
+    partial_total показываем как диагностику; final_total — только при complete (Codex Gate 2)."""
     from proxy.services.gesn_service import get_norm
     from proxy.services.lsr_assembly_service import assemble
     from proxy.services.nr_sp_service import resolve as resolve_nr_sp
@@ -270,24 +329,35 @@ def _finalize(state: dict[str, Any], *, note: str = "") -> dict[str, Any]:
             asm.append({"code": p["code"], "name": p.get("work") or (norm or {}).get("name", ""),
                         "unit": p.get("norm_unit", ""), "qty": p["qty"], "section": "Конструктив",
                         "nr_pct": rs["nr_pct"], "sp_pct": rs["sp_pct"]})
-    has_critical = bool(buckets["rejected"])
+
     lsr = assemble(asm) if asm else {"summary": {"total": 0.0}}
     smr = round(_f(lsr.get("summary", {}).get("total")), 2)
     cont = round(smr * 0.02, 2)
     vat = round((smr + cont) * 0.20, 2)
+    partial = {"smr": smr, "contingency": cont, "vat": vat,
+               "grand_total": round(smr + cont + vat, 2), "positions": len(buckets["computed"])}
+    has_critical = bool(buckets["rejected"]) or bool(buckets["needs_input"])
+    if not buckets["computed"]:
+        total_status = "blocked"
+    elif has_critical:
+        total_status = "partial"
+    else:
+        total_status = "complete"
+    blockers = [{"position": p.get("work", ""), "reason": p.get("status"),
+                 "candidate": p.get("code"), "detail": p.get("reason", "")} for p in buckets["rejected"]]
     return {
         "ok": bool(buckets["computed"]),
         "preliminary": True,
-        "total_blocked": has_critical,           # Gate 1: критичные провалы → итог не как сумма
+        "total_status": total_status,            # blocked | partial | complete
+        "partial_total": partial if buckets["computed"] else None,
+        "final_total": partial if total_status == "complete" else None,
+        "blockers": blockers,
         "schema": state.get("schema", {}),
         "computed": buckets["computed"],
         "needs_input": buckets["needs_input"],
         "rejected": buckets["rejected"],
         "by_assumption": buckets["by_assumption"],
         "estimate": lsr,
-        "totals": None if has_critical else {
-            "smr": smr, "contingency": cont, "vat": vat,
-            "grand_total": round(smr + cont + vat, 2), "positions": len(buckets["computed"])},
         "steps": state.get("steps", 0),
         "note": note,
         "source": "harness",
