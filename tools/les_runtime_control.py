@@ -354,7 +354,9 @@ def _repo_plist_path(service: ServiceDef) -> Path:
     return ROOT / service.repo_plist
 
 
-def _render_plist_template(src: Path, home: str) -> str:
+def _render_plist_template(src: Path, home: str | None = None) -> str:
+    # home не задан (1-й install) → текущий ROOT клона; читаем глобал в момент вызова.
+    home = home if home is not None else str(ROOT)
     text = src.read_text(encoding="utf-8")
     return text.replace(ROOT_PLACEHOLDER, home).replace(LEGACY_ROOT_PLACEHOLDER, home)
 

@@ -396,6 +396,7 @@ class RuntimeDispatcher:
             state_path = self.root / state_path
         state = _read_json(state_path)
         completed = state.get("completed") if isinstance(state.get("completed"), dict) else {}
+        completed_count = len(completed or {})
         log_path_raw = str(pid_info.get("log_path") or "")
         log_path = Path(log_path_raw) if log_path_raw else None
         if log_path is not None and not log_path.is_absolute():
@@ -403,9 +404,9 @@ class RuntimeDispatcher:
         events = _tail_json_events(log_path) if log_path is not None else []
         last_event = events[-1] if events else {}
         plan = self._last_named_event(events, "plan")
-        total = int(plan.get("total") or 0) + int(plan.get("completed_in_state") or 0) if plan else len(completed or {})
+        total = int(plan.get("total") or 0) + int(plan.get("completed_in_state") or 0) if plan else completed_count
         done = self._last_named_event(events, "done")
-        complete = bool((done or (total and len(completed or {}) >= total)) and not running)
+        complete = bool((done or (total and completed_count >= total)) and not running)
         return {
             **compute_eta(pid_info.get("started_at"), completed_count, total, running=running),
             "running": running,
@@ -417,9 +418,9 @@ class RuntimeDispatcher:
             "stop_file": str(self.route_change_stop_file),
             "pause_requested": bool(self.route_change_stop_file.exists() and running),
             "supports_pause": True,
-            "completed": len(completed or {}),
+            "completed": completed_count,
             "total": total,
-            "remaining": max(0, total - len(completed or {})) if total else 0,
+            "remaining": max(0, total - completed_count) if total else 0,
             "last_log": str(log_path) if log_path is not None else "",
             "last_started_at": pid_info.get("started_at"),
             "last_event": last_event,

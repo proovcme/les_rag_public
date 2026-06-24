@@ -36,7 +36,7 @@ def test_default_when_unknown():
     f = classify_answer_form("Серверные помещения СП 485")
     assert f.intent == "default"
     assert f.instruction == ""
-    assert f.max_tokens == 2048
+    assert f.max_tokens == 8192   # снят блок длины по умолчанию (было 2048) — форму не навязываем
 
 
 def test_empty_question_is_default():

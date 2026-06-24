@@ -50,7 +50,8 @@ def test_prompt_has_catalog_and_fewshot():
     ('', "none"),                              # модель промолчала → none
 ])
 def test_constrained_output_collapses_to_none(monkeypatch, raw, want):
-    monkeypatch.setattr("proxy.services.les_md_service._llm_text", lambda *a, **k: raw)
+    # роутер ходит в свой LLM-сем (_route_llm_text), не в les_md_service._llm_text — патчим его
+    monkeypatch.setattr(ar, "_route_llm_text", lambda *a, **k: raw)
     assert ar._classify("любой запрос") == want
 
 
