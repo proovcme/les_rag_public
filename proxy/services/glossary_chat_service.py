@@ -81,8 +81,11 @@ def _format(node: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def maybe_handle_glossary_query(question: str, *, project_id: int = 0) -> Optional[dict[str, Any]]:
-    """«что такое X» → определение из онтологии. None — не глоссарный вопрос/термин не найден."""
+def maybe_handle_glossary_query(question: str, *, project_id: int = 0,
+                                dataset_filter: str = "") -> Optional[dict[str, Any]]:
+    """«что такое X» → определение из онтологии. None — не глоссарный вопрос/термин не найден.
+    v0.18 DeterministicFinalPolicy: глоссарий — final ТОЛЬКО при явном намерении (термин литерально в
+    запросе, нет проектного scope-preempt, не source-scoped); иначе уступает дорогу RAG/проектному пути."""
     from proxy.services import sovushka_tone
 
     if sovushka_tone.wants_model(question):   # «своими словами» → уступаем дорогу модели
@@ -93,5 +96,11 @@ def maybe_handle_glossary_query(question: str, *, project_id: int = 0) -> Option
     node = _resolve(term)
     if node is None:
         return None
+    from proxy.services.deterministic_policy_service import can_return_deterministic_final
+    ok, _reason = can_return_deterministic_final(
+        "glossary", question, project_id=project_id, dataset_filter=dataset_filter,
+        candidate={"concept": node.get("id")})
+    if not ok:
+        return None       # policy отклонила: термин не в запросе / проект-scope / source-scoped
     return {"answer": sovushka_tone.flavor(_format(node), "glossary", seed=term),
             "operation": "glossary", "concept": node.get("id")}

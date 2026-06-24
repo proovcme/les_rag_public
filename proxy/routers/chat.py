@@ -1167,7 +1167,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         ("doc_registry", lambda: maybe_handle_document_registry(
             req.question, project_id=pid, dataset_filter=req.dataset_filter or "")),
         ("registry", lambda: maybe_handle_registry_query(req.question, project_id=pid)),
-        ("glossary", lambda: maybe_handle_glossary_query(req.question, project_id=pid)),
+        ("glossary", lambda: maybe_handle_glossary_query(req.question, project_id=pid, dataset_filter=req.dataset_filter or "")),
         ("smeta", lambda: maybe_handle_smeta_query(req.question, project_id=pid)),
         ("help", lambda: maybe_handle_help_query(req.question, project_id=pid)),
         ("field", lambda: maybe_handle_field_command(req.question, project_id=pid)),
@@ -1175,6 +1175,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         ("memory", lambda: maybe_handle_memory_command(req.question, dataset_filter=req.dataset_filter or "", project_id=pid, output_directive=req.output_directive)),
     )
     reply, channel = None, ""
+    _rejected_det: list[dict] = []   # v0.18: отклонённые policy детерминированные кандидаты (для trace)
     # Шаг 2 инверсии (docs/AUDIT_DETERMINISM): роутер ОСНОВНОЙ — LLM (локальная Qwen3.5-4B, :8080)
     # выбирает инструмент ПЕРЕД keyword-каскадом. За флагом LES_ROUTER_PRIMARY; none/сбой/таймаут →
     # каскад/RAG (каскад сохранён фолбэком, обратимо). Роутер-бенч = 100% локально.
@@ -1187,11 +1188,22 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             if reply is not None:
                 channel = "agent"
         if reply is None:
+            # v0.18 DeterministicFinalPolicy: кандидат-ответ детерминированного канала принимается final
+            # ТОЛЬКО при явном намерении (см. deterministic_policy_service). Иначе — отклоняем, пишем в
+            # trace и уступаем дорогу RAG (legacy-канал не перехватывает проектный/descriptive/scoped вопрос).
+            from proxy.services.deterministic_policy_service import can_return_deterministic_final
             for _ch, _fn in _det_channels:
-                reply = _fn()
-                if reply is not None:
-                    channel = _ch
-                    break
+                _cand = _fn()
+                if _cand is None:
+                    continue
+                _ok, _why = can_return_deterministic_final(
+                    _ch, req.question, project_id=pid, dataset_filter=req.dataset_filter or "", candidate=_cand)
+                if not _ok:
+                    _rejected_det.append({"channel": _ch, "accepted": False, "reject_reason": _why})
+                    continue
+                reply = _cand
+                channel = _ch
+                break
         # Авто-заметки: утверждение-факт (не вопрос/команда) ЛЕС запоминает сам. 0 LLM.
         if reply is None:
             from proxy.services.memory_service import maybe_autonote
@@ -1207,6 +1219,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     if reply is not None:
         det_route = {"channel": channel, "operation": reply.get("operation"),
                      "agent_tool": reply.get("agent_tool")}
+        if _rejected_det:                       # v0.18: что policy отклонила до принятого кандидата
+            det_route["rejected_deterministic"] = _rejected_det
         det_hid = None
         try:  # детерм. ответы тоже в историю (видны в Совушке); сбой записи не ломает ответ
             det_hid = save_chat_history(
