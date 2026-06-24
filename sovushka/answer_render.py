@@ -113,6 +113,58 @@ def source_chips(sources: list, max_n: int = 12) -> list[dict]:
     return [source_chip(s, i + 1) for i, s in enumerate((sources or [])[:max_n])]
 
 
+def citation_artifact(sources: list) -> dict:
+    """v0.17 §7: артефакт «Цитаты» — source chips + сниппеты (письма ТОЛЬКО snippet, не полное тело).
+    Нет source_ref → has_ref=False (предупреждение, не фейк-линк)."""
+    items = []
+    for i, s in enumerate((sources or []), 1):
+        c = source_chip(s, i)
+        snippet = ""
+        if isinstance(s, dict):
+            snippet = str(s.get("snippet") or s.get("excerpt") or "")[:240]
+        items.append({"n": i, "file": c["file"], "locator": c["locator"], "kind": c["kind"],
+                      "source_ref": (s.get("source_ref") if isinstance(s, dict) else str(s)) if c["has_ref"] else "",
+                      "snippet": snippet, "has_ref": c["has_ref"], "weak": c["weak"]})
+    return {"type": "citations", "title": "Цитаты", "count": len(items), "items": items}
+
+
+# ── §8 evidence-секции (группировка по типу для рендера) ──────────────────────────────────
+
+_SECTION_TITLE = {"RETRIEVED": "Найдено", "COMPUTED": "Вычислено", "ASSUMED": "Допущено",
+                  "MISSING": "Не хватает", "BLOCKED": "Заблокировано", "CONFLICT": "Проверить"}
+
+
+def group_evidence_sections(evidence_blocks: list) -> list[dict]:
+    """evidence_blocks → секции в каноническом порядке. MISSING/BLOCKED НЕ прячем (идут со своим
+    заголовком и тоном). Принимает блоки с .type (Enum/строка) и .items."""
+    order = ["RETRIEVED", "COMPUTED", "ASSUMED", "MISSING", "BLOCKED", "CONFLICT"]
+    buckets: dict[str, list] = {k: [] for k in order}
+    for b in evidence_blocks or []:
+        t = getattr(getattr(b, "type", None), "name", None) or getattr(b, "type", None) or ""
+        t = str(t).upper()
+        if t in buckets:
+            buckets[t].extend(getattr(b, "items", None) or (b.get("items") if isinstance(b, dict) else []) or [])
+    out = []
+    for k in order:
+        if buckets[k]:
+            out.append({"type": k, "title": _SECTION_TITLE[k], "tone": _EVIDENCE_TONE.get(k, "dim"),
+                        "count": len(buckets[k]), "items": buckets[k]})
+    return out
+
+
+# ── §9 conflict-блок (разные версии параметра — не сливать молча) ──────────────────────────
+
+def conflict_block(variants: list[dict]) -> dict | None:
+    """v0.17 §9: ≥2 варианта значения параметра → отдельный блок «Проверить» с источниками каждого.
+    variants: [{label, value, sources:[...]}]. <2 → None (нет конфликта)."""
+    vs = [v for v in (variants or []) if v]
+    if len(vs) < 2:
+        return None
+    return {"type": "conflict", "title": "Проверить: найдены разные версии параметра", "tone": "warn",
+            "variants": [{"label": v.get("label", ""), "value": v.get("value", ""),
+                          "chips": source_chips(v.get("sources") or [])} for v in vs]}
+
+
 # ── trace summary (компактно; без тел писем) ──────────────────────────────────────────────
 
 def trace_summary(unified_trace: dict | None) -> str:

@@ -93,3 +93,38 @@ def test_trace_summary_no_mail_body():
 
 def test_trace_summary_empty():
     assert ar.trace_summary(None) == "" and ar.trace_summary({}) == ""
+
+
+# ── v0.17 evidence-пакет хелперы (citation / sections / conflict) ─────────────────────────
+
+def test_citation_artifact_created():
+    art = ar.citation_artifact([{"source_ref": "СП327.docx#para85", "source_kind": "extracted_body",
+                                 "snippet": "огнестойкость R45"}])
+    assert art["type"] == "citations" and art["count"] == 1 and art["items"][0]["has_ref"]
+    assert art["items"][0]["snippet"] == "огнестойкость R45"
+
+def test_citation_no_ref_warning_not_fake_link():
+    art = ar.citation_artifact([{"file": "doc.pdf"}])   # нет source_ref
+    assert art["items"][0]["has_ref"] is False and art["items"][0]["source_ref"] == ""
+
+def test_citation_mail_snippet_only():
+    art = ar.citation_artifact([{"source_ref": "m#id1", "source_kind": "eml_message",
+                                 "snippet": "кратко", "body": "ПОЛНОЕ ТЕЛО ПИСЬМА"}])
+    assert "ПОЛНОЕ ТЕЛО" not in str(art)   # полное тело письма не попадает в цитату
+
+def test_group_evidence_sections_order_and_missing_visible():
+    from proxy.services.evidence_contract import EvidenceItem, EvidenceType, block_of
+    blocks = [block_of(EvidenceType.MISSING, "M", [EvidenceItem(EvidenceType.MISSING, "x", status="missing")]),
+              block_of(EvidenceType.RETRIEVED, "R",
+                       [EvidenceItem(EvidenceType.RETRIEVED, "y", source_refs=["сп.docx#p1"], status="ok")])]
+    secs = ar.group_evidence_sections(blocks)
+    assert [s["type"] for s in secs] == ["RETRIEVED", "MISSING"]   # канон-порядок, MISSING виден
+    assert secs[1]["title"] == "Не хватает"
+
+def test_conflict_block_visible_with_sources():
+    cb = ar.conflict_block([{"label": "Вариант А", "value": "2291 кВт", "sources": ["сп.docx#p1"]},
+                            {"label": "Вариант Б", "value": "1045 кВт", "sources": ["письмо#id5"]}])
+    assert cb and len(cb["variants"]) == 2 and cb["variants"][0]["chips"][0]["n"] == 1
+
+def test_conflict_block_none_for_single_value():
+    assert ar.conflict_block([{"label": "A", "value": "1", "sources": []}]) is None
