@@ -1037,6 +1037,29 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             "versions": _version_stamp(),
         }
 
+    # ── Unified Construction Harness v0.3 (feature-flag LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED,
+    # OFF дефолт). Только дефолтный путь (auto/grounded_rag) — явные режимы смета/review/КП/free НЕ
+    # трогаем. Поддержанный строительный intent → evidence-ответ (RETRIEVED/COMPUTED/MISSING/BLOCKED),
+    # честный no_data вместо фантазии. Не поддержан/none → None → старый путь (поведение прежнее).
+    if _PROFILE in ("auto", "grounded_rag"):
+        from proxy.services.unified_construction_harness_service import (
+            unified_enabled, run_unified_construction_harness, compose_unified_answer)
+        if unified_enabled():
+            _uds = list(req.dataset_ids or [])
+            if not _uds and pid:
+                try:
+                    from proxy.services.project_service import project_dataset_ids
+                    _uds = await asyncio.to_thread(project_dataset_ids, pid) or []
+                except Exception:  # noqa: BLE001
+                    _uds = []
+            _ures = await asyncio.to_thread(
+                run_unified_construction_harness, req.question, project_id=pid, dataset_ids=_uds)
+            if _ures is not None:   # поддержанный intent → честный evidence-ответ (вкл. MISSING)
+                return _mode_reply(
+                    compose_unified_answer(_ures),
+                    (_ures.answer_data.get("route") or {}).get("intent", "construction"),
+                    "unified_construction_harness", crag="EVIDENCE")
+
     if _PROFILE == "object_estimate":
         # Режим Смета = намерение УЖЕ задано → object_estimate НАПРЯМУЮ (минуя keyword-гейт
         # «смет»/«посчитай» в maybe_handle_smeta_query: в режиме слово-триггер не нужно) и минуя
