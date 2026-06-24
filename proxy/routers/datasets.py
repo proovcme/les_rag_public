@@ -802,6 +802,37 @@ async def set_dataset_group(dataset_id: str, group: str = "", _admin=Depends(req
     return {"id": dataset_id, "group_name": grp}
 
 
+# ── v0.16 §5: extraction body ops (status / dry-run / approved write) ─────────────────────
+_EXTRACT_STORAGE_ROOT = Path("storage/datasets")
+
+
+@router.get("/datasets/{dataset_id}/extraction-status")
+async def extraction_status_endpoint(dataset_id: str, _admin=Depends(require_admin)):
+    """Read-only: что можно извлечь, есть ли sidecar/manifest/stale, OCR, extraction-state. Без записи."""
+    from proxy.services import sidecar_ops_service as ops
+    return ops.extraction_status(dataset_id, storage_root=_EXTRACT_STORAGE_ROOT)
+
+
+@router.post("/datasets/{dataset_id}/extract-body/dry-run")
+async def extract_body_dry_run(dataset_id: str, _admin=Depends(require_admin)):
+    """Dry-run извлечения: сколько файлов/абзацев/строк извлечётся. Ничего не пишет, оригиналы целы."""
+    from proxy.services import sidecar_ops_service as ops
+    return ops.extract_body_op(dataset_id, storage_root=_EXTRACT_STORAGE_ROOT, write=False)
+
+
+@router.post("/datasets/{dataset_id}/extract-body/write")
+async def extract_body_write(dataset_id: str, confirm_runtime_write: bool = False,
+                             _admin=Depends(require_admin)):
+    """Запись sidecar — ТОЛЬКО при confirm_runtime_write=true И env LES_ALLOW_RUNTIME_SIDECAR_WRITE=1
+    (гейт внутри). Без env → blocked-ответ (dry-run). Оригиналы не меняются, пишутся только _extracted/."""
+    from proxy.services import sidecar_ops_service as ops
+    rep = ops.extract_body_op(dataset_id, storage_root=_EXTRACT_STORAGE_ROOT, write=True,
+                              confirm_runtime_write=confirm_runtime_write)
+    # blocked → 200 с самоописывающим отчётом (write_blocked + wrote_sidecars=0 + dry_run=True),
+    # GUI показывает причину и следующее действие; оригиналы не тронуты в любом случае.
+    return rep
+
+
 @router.get("/graph/edges")
 async def graph_reference_edges(_user=Depends(require_user)):
     """W5.7-v2: рёбра «документ → документ» по упоминаниям номеров НТД (FTS, без LLM)."""

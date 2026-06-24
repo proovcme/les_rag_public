@@ -200,6 +200,50 @@ write-policy/staleness регрессии). 351 unified-сюита + 83 chat (0 
 без OCR, без облака, source_ref до реального абзаца (не sidecar-путь), нет fake-хитов, no_lexical_index
 заменён реальным RETRIEVED или честным term_not_found. runtime .env НЕ трогал.
 
+## ✅ v0.16 (2026-06-24): SIDECAR OPERATIONS + CLASSIFIER + EXTRACTION UX HOOKS
+
+Извлечение стало **операторски видимой и управляемой** операцией (бэкенд; флаг OFF не менялся, runtime
+.env не трогал, новых runtime-записей без одобрения НЕТ — только dry-run).
+
+**§1 Инвентарь (28 датасетов, без записи):** mail=1 (11da8ad7, 402 .eml), norm=15, project-like=4,
+extract-candidates=19, already-extracted=1 (844a2b53). `inspect_runtime_datasets_v16.py` →
+`artifacts/runtime_dataset_inventory_v16.json`.
+
+**§2 Dry-run на реальных датасетах (БЕЗ записи, оригиналы целы):** e19cc409 (project docx): files_seen=22,
+would_write=22, **docx_paragraphs=20054**, originals_mutated=False; 11da8ad7: 402 .eml + 1 pdf; a1cc873f:
+файлы `.xls` (legacy) + уже `_parquet/` — **парсер-лимит: .xls не извлекается** (данные уже в parquet);
+844a2b53: manifest/sidecar=27/stale=0 — **дубль-записи не делал**; write без env → wrote_sidecars=0.
+
+**§3 Классификатор по заголовкам** (`classify_document_from_sidecar`): мусорное имя + heading «Акт …
+смонтированного оборудования» → **installed_equipment_act** (by=sidecar_heading); 844a2b53 остаётся
+**norm** (by=filename). Heading улучшает, filename — фолбэк, «не-мусор» не теряется.
+
+**§4 Extraction-state сообщения** (видимый MISSING/BLOCKED + действие, 7 кейсов A–G): sidecar_exists_and_
+searched / extraction_required / extraction_write_not_approved / sidecar_stale / no_text_layer(ocr_required) /
+term_absent_after_extracted_search / eml_dataset_searched. **Нет дженерик «не найдено»/«no_lexical_index».**
+
+**§5 GUI/API** (backend готов; кнопка — TODO): `GET …/datasets/{id}/extraction-status`, `POST …/extract-
+body/dry-run`, `POST …/extract-body/write` (write только confirm+env, иначе blocked-отчёт). Сервис:
+`extraction_status`, `extract_body_op` (гейт extract_v14).
+
+**§6A Lexical extracted_fts** (отдельная FTS): dry-run 844a2b53 → would_index=23930; write+search находит
+текст с сохранённым source_ref до `.docx#para`; дубли по source_ref не переиндексируются. **§6B Qdrant —
+только отчёт** (~2386 точек, deferred, embedding_run=False).
+
+**§7 OCR — только детект** (`ocr_detection`): pdf_no_text_layer_count из manifest, ocr_status=deferred.
+OCR не реализован, зависимостей не добавлено.
+
+**§8 Smoke v16** (`smoke_unified_v16.py`, 15 канон.вопросов): 844a2b53 — norm_qa→complete (СП 70/114 с
+source_ref), АУПТ→term_absent_after_extracted_search; 11da8ad7 — mail→eml_dataset_searched.
+
+**Категории:** extraction_dry_run_done · extraction_write_blocked_by_policy · extraction_already_present ·
+sidecar_heading_classified · extracted_lexical_index_ready · qdrant_index_deferred · no_text_layer/ocr_
+required · eml_dataset_read · project_like_dataset(.xls лимит).
+
+50 тестов + verify + 254 backend-регрессия + 17 chat OFF — зелёные. Safety: оригиналы read-only (shasum),
+запись только env+confirm, без OCR/облака/Qdrant-эмбеддинга, без фейк-source_ref, без хардкода терминов,
+флаг OFF и runtime .env не тронуты.
+
 ## Открыто (когда backend подключён в рантайме)
 - vector/mail сейчас `unavailable` в **sync** unified-пути (async retrieve/mail_query не вшит). Закрыть —
   async-обёртка адаптеров в chat-пути ИЛИ sync-мост к Qdrant.
