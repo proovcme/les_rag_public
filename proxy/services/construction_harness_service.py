@@ -151,6 +151,26 @@ def retrieve_project_doc(query: str = "", *, project_id: int = 0, dataset_ids: l
         if not out_rows and md_warn:
             trace.append({"step": "markdown_table", "warning": md_warn})
 
+    # v0.13: fallback — таблицы из XLSX/DOCX (sidecar-извлечение структуры)
+    if not out_rows:
+        from proxy.services.source_adapters import markdown_table_to_rows
+        from proxy.services.doc_extract_service import extract_bor_tables
+        for ds in ds_ids:
+            ddir = root / ds
+            if not ddir.exists():
+                continue
+            for fp in sorted(list(ddir.rglob("*.xlsx")) + list(ddir.rglob("*.docx"))):
+                if "/_extracted/" in fp.as_posix():
+                    continue
+                for tbl in extract_bor_tables(fp):
+                    conv = markdown_table_to_rows(tbl, file_name=fp.name, dataset_id=ds)
+                    if conv["status"] == "ok":
+                        out_rows.extend(conv["rows"])
+                        sources.append(f"{ds}/{fp.name}")
+                        trace.append({"step": "xlsx_docx_table", "file": f"{ds}/{fp.name}", "rows": len(conv["rows"])})
+                if len(out_rows) >= top_k * 50:
+                    break
+
     status = "found" if out_rows else "not_found"
     return {"status": status, "rows": out_rows, "sources": sources, "trace": trace,
             "warnings": [] if out_rows else ["в scope нет табличных проектных документов (ни parquet, ни markdown-таблиц)"]}

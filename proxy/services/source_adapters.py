@@ -241,14 +241,15 @@ def inspect_dataset_index_health(dataset_ids: list[str], *, storage_root: Any = 
     except Exception:  # noqa: BLE001
         lex_counts = {}
     out = []
+    from proxy.services.doc_extract_service import sidecar_count as _sidecar_count, read_sidecars, SIDECAR_DIRNAME
     for ds in dataset_ids:
         ddir = root / ds
-        parquet = files = mail = md = txt = eml = md_tables = 0
+        parquet = files = mail = md = txt = eml = md_tables = pdf = docx = xlsx = 0
         doc_types: Counter = Counter()
         if ddir.exists():
             from proxy.services.unified_construction_harness_service import classify_doc_type
             for p in ddir.rglob("*"):
-                if not p.is_file() or p.name.startswith("."):
+                if not p.is_file() or p.name.startswith(".") or f"/{SIDECAR_DIRNAME}/" in p.as_posix():
                     continue
                 ext = p.suffix.lower()
                 if ext == ".parquet":
@@ -256,33 +257,55 @@ def inspect_dataset_index_health(dataset_ids: list[str], *, storage_root: Any = 
                 else:
                     files += 1
                     if ext == ".eml":
-                        mail += 1
-                        eml += 1
+                        mail += 1; eml += 1
                     elif ext == ".md":
                         md += 1
                         if md_tables < 50:
                             md_tables += len(extract_markdown_tables_from_file(p))
                     elif ext == ".txt":
                         txt += 1
+                    elif ext == ".pdf":
+                        pdf += 1
+                    elif ext == ".docx":
+                        docx += 1
+                    elif ext == ".xlsx":
+                        xlsx += 1
                     doc_types[classify_doc_type(p.name)] += 1
+        scount = _sidecar_count(root, ds)
+        ext_items = read_sidecars(root, ds) if scount else []
+        extracted_body = len(ext_items)
         lex = lex_counts.get(ds, 0 if lex_counts else None)
         readable_body = (md + txt) > 0
+        binary_docs = pdf + docx + xlsx
         warns = []
         warns.append("no_parquet_but_markdown_table_found" if (parquet == 0 and md_tables) else "no_parquet"
                      if parquet == 0 else "")
         if lex is not None and lex <= 0:
-            warns.append("no_lexical_index_but_file_body_available" if readable_body else "no_lexical_index")
+            warns.append("no_lexical_index_but_file_body_available" if (readable_body or extracted_body)
+                         else "no_lexical_index")
         elif lex is None:
             warns.append("lexical_unavailable")
+        # v0.13: бинарные доки есть, но sidecar не создан → конкретная причина + actionable
+        if binary_docs and extracted_body == 0:
+            if pdf:
+                warns.append("pdf_files_without_sidecars")
+            if docx:
+                warns.append("docx_files_without_sidecars")
+            if xlsx:
+                warns.append("xlsx_files_without_sidecars")
+            warns.append("no_extracted_body")
         if eml == 0:
             warns.append("no_eml_messages")
         if files == 0 and parquet == 0:
             warns.append("empty_dataset")
-        if not readable_body and eml == 0:
+        if not readable_body and not extracted_body and eml == 0 and binary_docs == 0:
             warns.append("no_file_body_readable")
         warns = [w for w in warns if w]
         out.append({"dataset_id": ds, "parquet_count": parquet, "file_count": files, "mail_count": mail,
                     "md_file_count": md, "txt_file_count": txt, "eml_file_count": eml,
+                    "pdf_file_count": pdf, "docx_file_count": docx, "xlsx_file_count": xlsx,
+                    "sidecar_count": scount, "extracted_body_count": extracted_body,
+                    "sidecar_available": extracted_body > 0,
                     "readable_text_file_count": md + txt, "markdown_table_count": md_tables,
                     "readable_body_available": readable_body, "lexical_chunk_count": lex,
                     "doc_types": dict(doc_types), "warnings": warns})
@@ -516,3 +539,54 @@ def markdown_table_to_rows(table: dict, *, file_name: str = "", dataset_id: str 
         return {"status": "missing_required_columns", "rows": [],
                 "reason": "markdown_table_missing_required_columns: строки без name/qty"}
     return {"status": "ok", "rows": rows}
+
+
+KIND_EXTRACTED = "extracted_body"   # v0.13: sidecar PDF/DOCX/XLSX
+
+
+def search_extracted_body(query_terms: list[str], *, dataset_ids: list[str] | None = None,
+                          storage_root: Any = None, doc_type_filter: set[str] | None = None,
+                          top_k: int = 12) -> SourceAdapterResult:
+    """v0.13: поиск термина в sidecar-извлечениях (PDF/DOCX/XLSX → _extracted/*.jsonl). source_ref до
+    ОРИГИНАЛЬНОГО файла/страницы/абзаца/строки. Нет sidecar → not_found (actionable выше по стеку)."""
+    from pathlib import Path as _P
+    from proxy.services.doc_extract_service import read_sidecars
+    if not query_terms:
+        return SourceAdapterResult(NOT_FOUND, KIND_EXTRACTED, warnings=["нет термина"])
+    if not dataset_ids:
+        return SourceAdapterResult(NO_SCOPE, KIND_EXTRACTED, warnings=["нет dataset-scope"])
+    root = _P(storage_root) if storage_root else _P("storage/datasets")
+    terms_norm = [(_norm(t), t) for t in query_terms if _norm(t)]
+    seen_any = False
+    matches: list[AdapterMatch] = []
+    for ds in dataset_ids:
+        items = read_sidecars(root, ds)
+        if items:
+            seen_any = True
+        if doc_type_filter:
+            from proxy.services.unified_construction_harness_service import classify_doc_type
+            items = [it for it in items if classify_doc_type(str(it.get("original_file_name", ""))) in doc_type_filter]
+        for it in items:
+            txt = str(it.get("text", ""))
+            hit = next((orig for tn, orig in terms_norm if tn and tn in _norm(txt)), None)
+            if not hit:
+                continue
+            ref = str(it.get("source_ref", ""))
+            if not ref:
+                continue                              # нет source_ref → не RETRIEVED
+            matches.append(AdapterMatch(KIND_EXTRACTED, ref, file_name=str(it.get("original_file_name", "")),
+                                        dataset_id=ds, snippet=txt[:200], matched_term=hit,
+                                        page=it.get("page"), row_id=it.get("row_index"),
+                                        line_start=it.get("paragraph_index"),
+                                        fields={"source_kind": it.get("source_kind", ""),
+                                                "sheet": it.get("sheet_name", "")}))
+            if len(matches) >= top_k:
+                break
+        if len(matches) >= top_k:
+            break
+    if matches:
+        return SourceAdapterResult(FOUND, KIND_EXTRACTED, matches=matches,
+                                   trace=[{"adapter": "extracted_body", "matches": len(matches)}])
+    status = NOT_FOUND if seen_any else NO_SOURCE
+    w = [] if seen_any else ["no_extracted_body: sidecar'ов нет — запустите extract_dataset_bodies_v13.py"]
+    return SourceAdapterResult(status, KIND_EXTRACTED, warnings=w)

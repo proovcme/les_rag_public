@@ -439,7 +439,12 @@ def source_scoped_search(eq: "EntitySearchQuery", *, dataset_ids: list[str] | No
         return {"status": "found", "matches": matches, "other_matches": [], "alias": [],
                 "searched_sources": searched, "searched_tiers": tiers, "adapter_warnings": []}
     from proxy.services.source_adapters import (search_lexical_chunks, search_vector_chunks,
-                                                 search_file_body, search_eml_messages)
+                                                 search_file_body, search_eml_messages, search_extracted_body)
+
+    def _adapt(m, dt):
+        return {"source_ref": m.source_ref, "file_name": m.file_name, "doc_type": dt,
+                "matched_term": m.matched_term, "snippet": m.snippet, "fields": getattr(m, "fields", {}) or {}}
+
     warns: list[str] = []
     terms = eq.exact_terms or eq.query_terms
     # Tier 3: file_body (.md/.txt напрямую, read-only) — закрывает no_lexical_index для реальных датасетов
@@ -447,10 +452,8 @@ def source_scoped_search(eq: "EntitySearchQuery", *, dataset_ids: list[str] | No
     tiers.append("file_body")
     warns += list(fb.warnings)
     if fb.status == "found":
-        fb_m = [{"source_ref": m.source_ref, "file_name": m.file_name, "doc_type": "file_body",
-                 "matched_term": m.matched_term, "snippet": m.snippet, "fields": {}} for m in fb.matches]
-        return {"status": "found", "matches": fb_m, "other_matches": [], "alias": [],
-                "searched_sources": searched, "searched_tiers": tiers, "source_kind": "file_body",
+        return {"status": "found", "matches": [_adapt(m, "file_body") for m in fb.matches], "other_matches": [],
+                "alias": [], "searched_sources": searched, "searched_tiers": tiers, "source_kind": "file_body",
                 "adapter_warnings": warns}
     # Tier 4: .eml (если scope=mail) — реальный mail-источник без backend
     if eq.source_scope == "mail":
@@ -458,12 +461,18 @@ def source_scoped_search(eq: "EntitySearchQuery", *, dataset_ids: list[str] | No
         tiers.append("eml_message")
         warns += list(em.warnings)
         if em.status == "found":
-            em_m = [{"source_ref": m.source_ref, "file_name": m.file_name, "doc_type": "mail",
-                     "matched_term": m.matched_term, "snippet": m.snippet, "fields": m.fields} for m in em.matches]
-            return {"status": "found", "matches": em_m, "other_matches": [], "alias": [],
-                    "searched_sources": searched, "searched_tiers": tiers, "source_kind": "mail_message",
-                    "adapter_warnings": warns}
-    # Tier 5: lexical-чанки (тело проиндексированных доков)
+            return {"status": "found", "matches": [_adapt(m, "mail") for m in em.matches], "other_matches": [],
+                    "alias": [], "searched_sources": searched, "searched_tiers": tiers,
+                    "source_kind": "mail_message", "adapter_warnings": warns}
+    # Tier 5: extracted_body (sidecar PDF/DOCX/XLSX → page/abzac/row) — закрывает no_text_layer
+    ext = search_extracted_body(terms, dataset_ids=dataset_ids, storage_root=storage_root, doc_type_filter=scope_types)
+    tiers.append("extracted_body")
+    warns += list(ext.warnings)
+    if ext.status == "found":
+        return {"status": "found", "matches": [_adapt(m, "extracted_body") for m in ext.matches],
+                "other_matches": [], "alias": [], "searched_sources": searched, "searched_tiers": tiers,
+                "source_kind": "extracted_body", "adapter_warnings": warns}
+    # Tier 6: lexical-чанки (тело проиндексированных доков)
     lex = search_lexical_chunks(terms, dataset_ids=dataset_ids, doc_type_filter=scope_types)
     tiers.append("lexical_chunk")
     warns += list(lex.warnings)
@@ -591,7 +600,7 @@ def _handle_norm_qa(question, *, project_id=0, dataset_ids=None, storage_root=No
     """v0.9 layered: lexical exact (tier1) → vector (tier2). Нормативный ответ ТОЛЬКО из источника;
     нет источника → MISSING с перечнем искомых tier'ов (не выдумка, не пункт СП из памяти)."""
     from proxy.services.source_adapters import (search_lexical_chunks, search_vector_chunks,
-                                                 search_file_body)
+                                                 search_file_body, search_extracted_body)
     eq = extract_source_scoped_query(question)
     terms = eq.query_terms or [question]
     tiers: list[str] = []
@@ -601,13 +610,19 @@ def _handle_norm_qa(question, *, project_id=0, dataset_ids=None, storage_root=No
     tiers.append("file_body")
     warns += list(fb.warnings)
     matches = fb.matches if fb.status == "found" else []
-    # tier 2: lexical exact
+    # tier 2: extracted_body (sidecar PDF/DOCX — норма в извлечённом теле)
+    if not matches:
+        ext = search_extracted_body(terms, dataset_ids=dataset_ids, storage_root=storage_root)
+        tiers.append("extracted_body")
+        warns += list(ext.warnings)
+        matches = ext.matches if ext.status == "found" else []
+    # tier 3: lexical exact
     if not matches:
         lex = search_lexical_chunks(terms, dataset_ids=dataset_ids)
         tiers.append("lexical_chunk")
         warns += list(lex.warnings)
         matches = lex.matches if lex.status == "found" else []
-    # tier 3: vector (в sync-пути unavailable — честный статус)
+    # tier 4: vector (в sync-пути unavailable — честный статус)
     if not matches:
         vec = search_vector_chunks(question, dataset_ids=dataset_ids)
         tiers.append("vector_chunk")
