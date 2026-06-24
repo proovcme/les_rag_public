@@ -42,6 +42,10 @@ def run(dataset_id: str, *, storage_root: Path, questions: list[str], dry_run_ex
     out["ocr"] = ops.ocr_detection(dataset_id, storage_root=storage_root)
     for q in questions:
         r = u.run_unified_construction_harness(q, dataset_ids=[dataset_id], storage_root=storage_root)
+        if r is None:   # harness не маршрутизировал вопрос (не его контур) → фиксируем как unrouted
+            out["results"].append({"q": q, "status": "unrouted", "tiers": [], "sources": 0,
+                                   "source_ref": None, "extraction_state": "not_construction_intent"})
+            continue
         retr = [it.source_refs[0] for b in r.evidence_blocks if b.type is EvidenceType.RETRIEVED
                 for it in b.items if it.source_refs]
         msg = ops.extraction_state_message(
