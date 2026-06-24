@@ -42,13 +42,13 @@ def test_agent_off_returns_none(monkeypatch):
 
 
 def test_classify_parses_json(monkeypatch):
-    monkeypatch.setattr(ar, "_classify", ar._classify)  # ensure real
-    monkeypatch.setattr("proxy.services.les_md_service._llm_text", lambda *a, **k: '{"tool": "asbuilt"}')
+    # _classify зовёт _route_llm_text (не les_md_service._llm_text) — мокаем реальный путь, без сети
+    monkeypatch.setattr(ar, "_route_llm_text", lambda *a, **k: '{"tool": "asbuilt"}')
     assert ar._classify("вытащи объём") == "asbuilt"
 
 
 def test_classify_bare_name(monkeypatch):
-    monkeypatch.setattr("proxy.services.les_md_service._llm_text", lambda *a, **k: "project_registry")
+    monkeypatch.setattr(ar, "_route_llm_text", lambda *a, **k: "project_registry")
     assert ar._classify("какие объекты") == "project_registry"
 
 

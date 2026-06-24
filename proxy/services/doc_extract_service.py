@@ -259,3 +259,79 @@ def extract_bor_tables(path: Path) -> list[dict[str, Any]]:
             if len(rows) >= 2:
                 out.append({"header": rows[0], "rows": rows[1:], "line_start": 1, "line_end": len(rows)})
     return out
+
+
+# ── v0.14: manifest + staleness + runtime-write guard ────────────────────────────────────
+
+MANIFEST_NAME = "manifest.json"
+
+
+def manifest_path(storage_root: Path, ds: str) -> Path:
+    return storage_root / ds / SIDECAR_DIRNAME / MANIFEST_NAME
+
+
+def write_manifest(storage_root: Path, ds: str, entries: list[dict[str, Any]], *, created_at: str = "") -> Path:
+    """Manifest sidecar'ов: для каждого файла original mtime/size + sidecar + status → staleness."""
+    summary: dict[str, int] = {"pdf_count": 0, "docx_count": 0, "xlsx_count": 0,
+                               "extracted_count": 0, "failed_count": 0, "no_text_layer_count": 0}
+    for e in entries:
+        ext = str(e.get("ext", "")).lower()
+        summary["pdf_count"] += ext == ".pdf"
+        summary["docx_count"] += ext == ".docx"
+        summary["xlsx_count"] += ext == ".xlsx"
+        summary["extracted_count"] += int(e.get("status") == "ok")
+        summary["failed_count"] += int(e.get("status") in ("failed", "unavailable"))
+        summary["no_text_layer_count"] += int(e.get("status") == "no_text_layer")
+    mp = manifest_path(storage_root, ds)
+    mp.parent.mkdir(parents=True, exist_ok=True)
+    mp.write_text(json.dumps({"dataset_id": ds, "extractor_version": EXTRACTOR_VERSION,
+                              "created_at": created_at, "files": entries, "summary": summary},
+                             ensure_ascii=False, indent=2), encoding="utf-8")
+    return mp
+
+
+def read_manifest(storage_root: Path, ds: str) -> dict[str, Any] | None:
+    mp = manifest_path(storage_root, ds)
+    if not mp.exists():
+        return None
+    try:
+        return json.loads(mp.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def sidecar_stale_files(storage_root: Path, ds: str) -> list[str]:
+    """Файлы, чей original mtime/size разошёлся с manifest → sidecar устарел. Нет manifest → []."""
+    man = read_manifest(storage_root, ds)
+    if not man:
+        return []
+    base = storage_root / ds
+    stale = []
+    for e in man.get("files", []):
+        rel = e.get("original_relative_path", "")
+        orig = base / rel
+        try:
+            st = orig.stat()
+            if int(st.st_size) != int(e.get("original_size", -1)) or \
+                    abs(float(st.st_mtime) - float(e.get("original_mtime", -1))) > 1.0:
+                stale.append(rel)
+        except OSError:
+            stale.append(rel)
+    return stale
+
+
+def is_runtime_path(storage_root: Path) -> bool:
+    """Путь внутри runtime storage /Users/ovc/LES (или LES_RUNTIME_HOME)?"""
+    import os
+    rt = os.getenv("LES_RUNTIME_HOME", "/Users/ovc/LES")
+    try:
+        return Path(rt).resolve() in Path(storage_root).resolve().parents or \
+            Path(rt).resolve() == Path(storage_root).resolve() or \
+            str(Path(storage_root).resolve()).startswith(str(Path(rt).resolve()))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def runtime_write_allowed() -> bool:
+    import os
+    return os.getenv("LES_ALLOW_RUNTIME_SIDECAR_WRITE", "").strip().lower() in ("1", "true", "yes", "on")

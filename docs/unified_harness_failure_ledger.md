@@ -138,6 +138,34 @@ source-scoped спец → complete (extracted_body tier), ВОР из XLSX → 
 блок, лимит размера 40МБ, dry-run не пишет, нет fake source_refs, нет облака, extractor_version в каждом
 item, scanned PDF → no_text_layer (не выдумка).
 
+## ✅ v0.14 (2026-06-24): RUNTIME SIDECAR ACCEPTANCE + WRITE-POLICY + TEST-STABILITY
+
+v0.13 доказал extraction на синтетике; v0.14 — operator-safe runtime-процесс + реальная dry-run-
+приёмка + починка test-flakiness.
+
+**Test-stability (КОРЕНЬ найден):** «2 chat-падения в общей сессии» — НЕ chat-state leakage и НЕ
+pytest-randomly (его вообще нет в окружении). Реальная причина: `test_agent_router.py::test_classify_*`
+мокали `les_md_service._llm_text`, а `_classify` зовёт `_route_llm_text` → мок не срабатывал → РЕАЛЬНЫЙ
+LLM-вызов на :8080 (24с), шум→'none'. «Flaky» = зависело, ответил ли живой :8080. Фикс: мок на правильный
+путь `ar._route_llm_text` → герметично (24с→0.25с). Полный chat/router/mail-сет: 2 failed → **0 failed (83)**.
+
+**Write-policy gate:** doc_extract_service +manifest/staleness/runtime-guard. scripts/extract_dataset_
+bodies_v14.py: dry-run по умолчанию; --write-sidecars пишет; запись в RUNTIME (/Users/ovc/LES) требует
+--confirm-runtime-write И env LES_ALLOW_RUNTIME_SIDECAR_WRITE=1, иначе ⛔ `runtime_sidecar_write_not_
+approved` (dry-run). manifest.json (mtime/size оригиналов) → `sidecar_stale`. index_health +manifest_
+present/stale_count/sidecar_stale-warning.
+
+**Реальная dry-run приёмка (датасет 844a2b53, 27 ГОСТ/СП .docx, read-only):** would_write=27,
+**docx_paragraphs=23 930** извлекаемо, 0 failures, originals_mutated=False. Gate проверен: --write в runtime
+без разрешения → ⛔, _extracted НЕ создан. **Sidecar в рантайм НЕ писал (нет одобрения оператора в этой
+сессии); runtime .env НЕ трогал.**
+
+15 тестов v0.14 (write-policy gate, manifest, staleness, real dry-run, agent_router-герметичность,
+регрессии). 345 unified-сюита + 83 chat (0 failed) + verify зелёные.
+
+**Safety v0.14:** оригиналы read-only (тест на байты), dry-run не пишет, runtime-write за двойным гейтом,
+без OCR, без облака, нет fake source_refs, staleness честно помечается, evidence-контракт цел.
+
 ## Открыто (когда backend подключён в рантайме)
 - vector/mail сейчас `unavailable` в **sync** unified-пути (async retrieve/mail_query не вшит). Закрыть —
   async-обёртка адаптеров в chat-пути ИЛИ sync-мост к Qdrant.

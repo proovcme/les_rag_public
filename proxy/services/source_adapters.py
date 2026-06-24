@@ -241,7 +241,8 @@ def inspect_dataset_index_health(dataset_ids: list[str], *, storage_root: Any = 
     except Exception:  # noqa: BLE001
         lex_counts = {}
     out = []
-    from proxy.services.doc_extract_service import sidecar_count as _sidecar_count, read_sidecars, SIDECAR_DIRNAME
+    from proxy.services.doc_extract_service import (sidecar_count as _sidecar_count, read_sidecars,
+                                                    SIDECAR_DIRNAME, read_manifest, sidecar_stale_files)
     for ds in dataset_ids:
         ddir = root / ds
         parquet = files = mail = md = txt = eml = md_tables = pdf = docx = xlsx = 0
@@ -274,6 +275,8 @@ def inspect_dataset_index_health(dataset_ids: list[str], *, storage_root: Any = 
         scount = _sidecar_count(root, ds)
         ext_items = read_sidecars(root, ds) if scount else []
         extracted_body = len(ext_items)
+        manifest_present = read_manifest(root, ds) is not None
+        stale = sidecar_stale_files(root, ds) if manifest_present else []
         lex = lex_counts.get(ds, 0 if lex_counts else None)
         readable_body = (md + txt) > 0
         binary_docs = pdf + docx + xlsx
@@ -300,12 +303,15 @@ def inspect_dataset_index_health(dataset_ids: list[str], *, storage_root: Any = 
             warns.append("empty_dataset")
         if not readable_body and not extracted_body and eml == 0 and binary_docs == 0:
             warns.append("no_file_body_readable")
+        if stale:
+            warns.append("sidecar_stale")
         warns = [w for w in warns if w]
         out.append({"dataset_id": ds, "parquet_count": parquet, "file_count": files, "mail_count": mail,
                     "md_file_count": md, "txt_file_count": txt, "eml_file_count": eml,
                     "pdf_file_count": pdf, "docx_file_count": docx, "xlsx_file_count": xlsx,
                     "sidecar_count": scount, "extracted_body_count": extracted_body,
-                    "sidecar_available": extracted_body > 0,
+                    "sidecar_available": extracted_body > 0, "manifest_present": manifest_present,
+                    "stale_count": len(stale),
                     "readable_text_file_count": md + txt, "markdown_table_count": md_tables,
                     "readable_body_available": readable_body, "lexical_chunk_count": lex,
                     "doc_types": dict(doc_types), "warnings": warns})
