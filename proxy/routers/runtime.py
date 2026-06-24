@@ -230,7 +230,18 @@ async def _live_datasets_and_projects():
     try:
         backend = get_runtime_state().backend
         if backend:
-            datasets = list(await backend.list_datasets() or [])
+            raw = list(await backend.list_datasets() or [])
+            for d in raw:
+                if isinstance(d, dict):
+                    datasets.append(d)
+                else:   # DatasetInfo (dataclass) → dict
+                    datasets.append({
+                        "id": getattr(d, "id", ""), "name": getattr(d, "name", ""),
+                        "file_count": getattr(d, "doc_count", 0),
+                        "chunk_count": getattr(d, "chunk_count", 0),
+                        "source_type": getattr(d, "group_name", "") or "dataset",
+                        "qdrant_status": "indexed" if getattr(d, "chunk_count", 0) else "unknown",
+                    })
     except Exception as e:  # noqa: BLE001
         logger.warning("[SCOPE] list_datasets failed: %s", e)
     projects, links = [], {}
