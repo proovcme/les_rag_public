@@ -312,14 +312,19 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                         scope_state["label"] = _scope_label()
                         scope_btn.set_text(scope_state["label"])
 
-                    async def _open_scope_dialog():
-                        data = scope_opts_cache["data"] or await api_get("/api/scope/options") or {}
-                        scope_opts_cache["data"] = data
+                    def _open_scope_dialog():
+                        # СИНХРОННО строим диалог из prefetch-кэша (как version-диалог): создавать UI в
+                        # фоновом asyncio-таске нельзя (slot stack empty). Данные тянет _prefetch_scope.
+                        data = scope_opts_cache["data"] or {}
                         sel_p = set(scope_state["project_ids"]); sel_d = set(scope_state["dataset_ids"])
                         with ui.dialog() as dlg, ui.card().style(
                             "background:var(--bg-panel);border:1px solid var(--border);min-width:440px;max-width:520px;"
                             "max-height:72vh;padding:16px;"):
                             ui.label("Область поиска").style("font-weight:900;font-size:.85rem;margin-bottom:4px;")
+                            if not data.get("projects") and not data.get("datasets"):
+                                ui.label("Загрузка списка проектов и датасетов… закройте и откройте ещё раз.").style(
+                                    "font-size:.66rem;color:var(--warn);")
+                                asyncio.create_task(_prefetch_scope())
                             search = ui.input(placeholder="Найти проект или датасет…").props(
                                 "dense outlined clearable").style("width:100%;font-size:.7rem;")
                             with ui.scroll_area().style("max-height:46vh;width:100%;"):
@@ -365,7 +370,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                                 ui.button("Применить", on_click=lambda: (_apply_scope(sel_p, sel_d), dlg.close())).props("dense no-caps").style("color:var(--accent);font-size:.64rem;")
                         dlg.open()
 
-                    scope_btn.on("click", lambda: asyncio.create_task(_open_scope_dialog()))
+                    scope_btn.on("click", lambda: _open_scope_dialog())
 
                     async def _prefetch_scope():
                         scope_opts_cache["data"] = await api_get("/api/scope/options") or {}
