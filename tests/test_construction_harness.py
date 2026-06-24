@@ -19,9 +19,23 @@ def test_spec_to_bor_positions_keep_source_ref():
 
 
 def test_gesn_expand_rejected_norm_not_computed():
-    # работа без нормы (полная абракадабра) → blocked, не accepted (норма не пройдёт в расчёт)
+    # работа без нормы (полная абракадабра) → не accepted (норма не пройдёт в расчёт)
     exp = ch.gesn_expand({"work": "жжжыыы щщщъъъ ёёёххх ыфвапр", "unit": "м3"})
-    assert exp["status"] == "blocked"
+    assert exp["status"] != "accepted"
+
+
+def test_unknown_work_family_not_computed_safety():
+    """SAFETY: неопределённая семья работ → needs_classification, НЕ accepted (нет COMPUTED).
+    Даже если что-то нашлось по «работа/общего» — без классификации в расчёт не идёт."""
+    exp = ch.gesn_expand({"work": "некие работы общего вида по объекту", "unit": "м3"})
+    assert exp["status"] == "needs_classification"     # не accepted → не посчитается
+    # сквозь оркестратор: позиция без семьи → BLOCKED, не COMPUTED, final запрещён
+    rows = ch.demo_f9_rows() + [{"name": "некие работы общего вида", "unit": "м3", "qty": 5,
+                                 "source_file": "demo_f9_parking.xlsx", "pos": "8"}]
+    r = ch.run_construction_harness("смета", rows=rows)
+    assert r.total_status in ("partial", "blocked") and r.final_total is None
+    blocked = [it for b in r.evidence_blocks if b.type is EvidenceType.BLOCKED for it in b.items]
+    assert blocked and any("классифиц" in "; ".join(it.blockers).lower() for it in blocked)
 
 
 def test_lsr_unit_gate_converts_physical_to_norm_measure():

@@ -1,13 +1,19 @@
-"""Construction RAG Harness v0.1 — evidence-driven контур поверх существующих сервисов.
+"""Construction EVIDENCE Harness v0.1 — evidence-driven контур поверх существующих сервисов.
+
+ВАЖНО (честный статус, Codex): это Construction EVIDENCE Harness, ещё НЕ полноценный RAG Harness —
+`retrieve_project_doc` пока FIXTURE/STUB (источник подаётся, не добывается). Контур и контракт
+доказаны; настоящий RAG-добытчик проектных источников — v0.2.
 
 НЕ публичный режим, НЕ рефакторинг, НЕ замена smeta/review/rag/free. Тонкий слой:
-  вопрос → retrieve_project_doc → spec_to_bor → gesn_expand → lsr_assemble → evidence-контракт.
+  вопрос → retrieve_project_doc(facade) → spec_to_bor → gesn_expand → lsr_assemble → evidence-контракт.
 
-RAG ищет/доказывает; typed-фасады извлекают/считают/собирают; gates (Gate 1-4 переиспользуются,
-НЕ ослабляются) маркируют качество; число НИКОГДА не из текста LLM — только из tool-результатов.
-Ответ делится на RETRIEVED / COMPUTED / ASSUMED / MISSING / BLOCKED.
+project-doc facade даёт источник/fixture; typed-фасады извлекают/считают; gates (Gate 1-4
+переиспользуются, НЕ ослабляются) маркируют; число НИКОГДА не из текста LLM — только из tool-
+результатов. Ответ: RETRIEVED / COMPUTED / ASSUMED / MISSING / BLOCKED.
 
-ЧЕСТНО: v0.1 доказывает evidence-driven КОНТУР, не доказывает полное сметное качество.
+SAFETY: неопределённая work_family НЕ даёт COMPUTED (gesn_expand → needs_classification → BLOCKED).
+
+ЧЕСТНО: v0.1 доказывает evidence workflow НА FIXTURE, не доказывает production RAG и не сметное качество.
 """
 
 from __future__ import annotations
@@ -73,6 +79,12 @@ def gesn_expand(position: dict[str, Any]) -> dict[str, Any]:
     work = str(position.get("work", ""))
     family = _infer_family(work)
     unit = position.get("unit", "")
+    # SAFETY (Codex): НЕОПРЕДЕЛЁННАЯ семья работ НЕ даёт COMPUTED. Без классификации
+    # applicability была бы пермиссивна (приняла бы по «работа/монтаж») — дыра. Блокируем.
+    if not family:
+        res = hns.search_norm(work, work_family="", unit_hint=unit)
+        return {"status": "needs_classification", "work_family": "", "candidates": res.get("candidates", []),
+                "reason": "не удалось классифицировать вид работ (work_family unknown) — норма не привязана"}
     res = hns.search_norm(work, work_family=family, unit_hint=unit)
     cands = res.get("candidates", [])
     accepted = [c for c in cands if c.get("applicability_status") == "accepted"]
