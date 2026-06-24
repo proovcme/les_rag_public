@@ -441,12 +441,27 @@ def source_scoped_search(eq: "EntitySearchQuery", *, dataset_ids: list[str] | No
 
 # ── per-intent handlers → ConstructionHarnessResult (evidence) ───────────────────────────
 
+# v0.8: какой ИСТОЧНИК нужен этому intent'у — для actionable MISSING (не общее «нет scope»).
+_INTENT_SOURCE_HUMAN = {
+    "project_document_registry": "проектные документы", "project_summary": "проектные документы",
+    "estimate_from_bor": "Ф9/ВОР (проектная таблица)", "bor_extract": "Ф9/ВОР/спецификация",
+    "table_agg": "проектная таблица", "asbuilt_extract": "акты смонтированного оборудования/исполнительная",
+    "mail_entity_search": "почта/переписка проекта", "project_doc_entity_search": "проектные документы",
+    "source_scoped_entity_search": "проектные документы",
+}
+
+
 def _missing_scope_result(intent: str) -> ConstructionHarnessResult:
-    it = EvidenceItem(EvidenceType.MISSING, "Не задан проект/датасет",
-                      blockers=["укажите project_id или dataset_ids — без scope искать негде"], status="missing")
-    return ConstructionHarnessResult(answer_data={"intent": intent},
-                                     evidence_blocks=[block_of(EvidenceType.MISSING, "Нет scope", [it])],
-                                     total_status="no_data")
+    """v0.8 actionable: говорит, КАКОЙ источник нужен и КАК задать scope (не уходит в RAG/фантазию)."""
+    src = _INTENT_SOURCE_HUMAN.get(intent, "проектные документы")
+    msg = (f"Для этого запроса нужен проект или датасет (источник: {src}). "
+           f"Выберите проект/датасет в GUI Совушки или укажите project_id/dataset_ids.")
+    it = EvidenceItem(EvidenceType.MISSING, "Не выбран проект/датасет", blockers=[msg],
+                      status="missing")
+    return ConstructionHarnessResult(
+        answer_data={"intent": intent, "needs_scope": True, "required_source": src, "action": msg},
+        evidence_blocks=[block_of(EvidenceType.MISSING, "Нужен выбор проекта/датасета", [it])],
+        total_status="no_data")
 
 
 def _handle_project_registry(question, *, project_id=0, dataset_ids=None, storage_root=None) -> ConstructionHarnessResult:
@@ -737,10 +752,15 @@ def _handle_resource_cost(question, *, project_id=0, dataset_ids=None, storage_r
                                      total_status="no_data")
 
 
+def _handle_estimate_from_bor(question, *, project_id=0, dataset_ids=None, storage_root=None):
+    if not dataset_ids and not project_id:
+        return _missing_scope_result("estimate_from_bor")    # v0.8 actionable (нужен Ф9/ВОР)
+    return run_construction_harness(question, project_id=project_id, dataset_ids=dataset_ids,
+                                    storage_root=storage_root)
+
+
 _HANDLERS = {
-    "estimate_from_bor": lambda q, **kw: run_construction_harness(
-        q, project_id=kw.get("project_id", 0), dataset_ids=kw.get("dataset_ids"),
-        storage_root=kw.get("storage_root")),
+    "estimate_from_bor": _handle_estimate_from_bor,
     "bor_extract": _handle_bor_extract,
     "project_document_registry": _handle_project_registry,
     "project_summary": _handle_project_summary,

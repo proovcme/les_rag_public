@@ -2,7 +2,7 @@
 
 Доказывает, что при LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED=1 обычный chat (`_run_chat`) реально
 маршрутизирует строительные intent'ы в unified-harness и отдаёт evidence-ответ с query_route=
-unified_construction_harness_v0_7 — не только в unit-тестах сервиса, а через живой роутер.
+unified_construction_harness_v0_8 — не только в unit-тестах сервиса, а через живой роутер.
 
 Источники: resource workbook = РЕАЛЬНЫЙ (fsnb2022.ru); project/asbuilt/ВОР/ЛСР = parquet-fixture
 через storage facade. Числа/нормы/итоги — только из tool. Flag OFF не покрывается здесь (живой RAG
@@ -45,7 +45,7 @@ async def _ask(q, **kw):
 async def test_live_resource_workbook(live_chat):
     r = await _ask("проверь пример обсчёта")
     qr = r["query_route"]
-    assert qr["version"] == "unified_construction_harness_v0_7"
+    assert qr["version"] == "unified_construction_harness_v0_8"
     assert qr["intent"] == "resource_cost_calc" and qr["provenance"] == "real"
     assert r["total_status"] == "complete"
     assert "16 827 283.19" in r["answer"] or "16827283.19" in r["answer"]
@@ -54,7 +54,7 @@ async def test_live_resource_workbook(live_chat):
 @pytest.mark.asyncio
 async def test_live_norm_qa_missing_not_hallucination(live_chat):
     r = await _ask("правила расстановки ОЗК")
-    assert r["query_route"]["version"] == "unified_construction_harness_v0_7"
+    assert r["query_route"]["version"] == "unified_construction_harness_v0_8"
     assert r["query_route"]["intent"] == "norm_qa"
     assert r["total_status"] in ("no_data", "complete")     # без lexical-данных → честный no_data
 
@@ -62,7 +62,7 @@ async def test_live_norm_qa_missing_not_hallucination(live_chat):
 async def test_live_source_scoped_asbuilt_routes(live_chat):
     r = await _ask("найди ОЗК в актах смонтированного оборудования")
     assert r["query_route"]["intent"] == "asbuilt_extract"   # НЕ norm_qa
-    assert r["query_route"]["version"] == "unified_construction_harness_v0_7"
+    assert r["query_route"]["version"] == "unified_construction_harness_v0_8"
 
 @pytest.mark.asyncio
 async def test_live_cost_project_ambiguous(live_chat):
@@ -73,7 +73,7 @@ async def test_live_cost_project_ambiguous(live_chat):
 async def test_live_kac_query(live_chat):
     r = await _ask("что требует КАЦ по примеру")
     assert r["query_route"]["intent"] == "resource_cost_calc"
-    assert r["query_route"]["version"] == "unified_construction_harness_v0_7"
+    assert r["query_route"]["version"] == "unified_construction_harness_v0_8"
 
 
 # ── dataset-голдены (через storage facade, run_unified) ──────────────────────────────────

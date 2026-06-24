@@ -1055,17 +1055,28 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             _ures = await asyncio.to_thread(
                 run_unified_construction_harness, req.question, project_id=pid, dataset_ids=_uds)
             if _ures is not None:   # поддержанный intent → честный evidence-ответ (вкл. MISSING)
-                _intent = (_ures.answer_data.get("route") or {}).get("intent", "construction")
+                _ad = _ures.answer_data or {}
+                _intent = (_ad.get("route") or {}).get("intent", _ad.get("intent", "construction"))
                 _reply = _mode_reply(compose_unified_answer(_ures), _intent,
                                      "unified_construction_harness", crag="EVIDENCE")
-                # v0.7 live-trace: версия маршрута + сводка evidence + статус (для operational-проверки)
-                _reply["query_route"]["version"] = "unified_construction_harness_v0_7"
+                _ev = {b.type.value: len(b.items) for b in _ures.evidence_blocks}
+                # v0.8 observability: структурный unified_trace (без тела писем/чувствительных данных)
+                _reply["query_route"]["version"] = "unified_construction_harness_v0_8"
                 _reply["query_route"]["intent"] = _intent
-                _reply["query_route"]["source_scope"] = _ures.answer_data.get("source_scope", "")
-                _reply["query_route"]["provenance"] = _ures.answer_data.get("provenance", "")
+                _reply["query_route"]["source_scope"] = _ad.get("source_scope", "")
+                _reply["query_route"]["provenance"] = _ad.get("provenance", "")
                 _reply["total_status"] = _ures.total_status
-                _reply["evidence_summary"] = {b.type.value: len(b.items) for b in _ures.evidence_blocks}
+                _reply["evidence_summary"] = _ev
                 _reply["sources"] = list(_ures.sources or [])
+                _reply["unified_trace"] = {
+                    "version": "unified_construction_harness_v0_8", "intent": _intent,
+                    "source_scope": _ad.get("source_scope", ""), "query_terms": _ad.get("query_terms", []),
+                    "dataset_scope": _uds, "needs_scope": bool(_ad.get("needs_scope")),
+                    "tools": [t.get("tool") for t in (_ures.tool_trace or [])],
+                    "sources_count": len(_ures.sources or []), "evidence": _ev,
+                    "blockers_count": sum(len(it.blockers) for b in _ures.evidence_blocks for it in b.items),
+                    "total_status": _ures.total_status,
+                }
                 return _reply
 
     if _PROFILE == "object_estimate":
