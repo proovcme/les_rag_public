@@ -20,6 +20,26 @@ from proxy.services.doc_type_classifier import classify_doc_type, classify_disci
 
 V16_VERSION = "sidecar_ops_v0_16"
 
+# v0.21 §13: пользовательские названия (внутри — extracted_body/sidecar; снаружи — по-человечески).
+PREPARE_BUTTON_LABEL = "Подготовить документы"
+PREPARE_HELP_TEXT = "Извлечь текст из PDF/DOCX/XLSX для поиска. Оригиналы не меняются."
+EXTRACTION_STATUS_LABELS = {
+    "sidecar_exists_and_searched": "Текст извлечён",
+    "extraction_required": "Нужна подготовка",
+    "extraction_write_not_approved": "Нужна подготовка (запись не разрешена)",
+    "sidecar_stale": "Устарел",
+    "no_text_layer": "PDF без текстового слоя",
+    "term_absent_after_extracted_search": "Текст извлечён",
+    "eml_dataset_searched": "Почта просмотрена",
+    "legacy_xls_unsupported": "Legacy .xls — не поддержан",
+    "no_extractable_docs": "Нет документов для подготовки",
+}
+
+
+def extraction_status_label(case: str) -> str:
+    """case из extraction_state_message → человекочитаемая метка статуса (без «тело»)."""
+    return EXTRACTION_STATUS_LABELS.get(case, "Статус неизвестен")
+
 # ── §1 инвентаризация датасетов рантайма ─────────────────────────────────────────────────
 
 _EXT_GROUPS = {"md": (".md",), "eml": (".eml",), "pdf": (".pdf",), "docx": (".docx", ".doc"),

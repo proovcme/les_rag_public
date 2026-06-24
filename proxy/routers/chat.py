@@ -80,6 +80,7 @@ class ChatRequest(BaseModel):
     validation_enabled: Optional[bool] = None
     session_id: Optional[str] = None
     project_id: Optional[int] = None  # W17.1: режим проекта — ретрив сужается к датасетам объекта
+    scope: Optional[dict] = None  # v0.21: нормализованная область поиска {scope_type, project_ids, dataset_ids}
     output_directive: Optional[str] = None  # формат/стиль ответа — ТОЛЬКО в генерацию (не в роутинг/заметки/ретрив)
     mode: Optional[str] = None  # явный РЕЖИМ из UI («smeta» → форс сметного пути минуя роутер/RAG)
 
@@ -1000,6 +1001,19 @@ async def _run_chat(req: ChatRequest, token_sink=None):
 
     pid = req.project_id or 0  # Q3: режим объекта → задачи/объёмы/заметки/решения привязываются к нему
 
+    # v0.21: нормализованная ОБЛАСТЬ ПОИСКА (snapshot для trace/истории; явный ui-scope управляет ретривом).
+    from proxy.services.scope_service import resolve_scope
+    _scope_snap = resolve_scope(scope=req.scope, project_id=req.project_id,
+                                dataset_ids=req.dataset_ids, dataset_filter=req.dataset_filter)
+    if isinstance(req.scope, dict) and req.scope.get("scope_type"):
+        # явный scope из ScopeSelector приоритетнее legacy: проставляем resolved в поля, которые
+        # понимает существующий конвейер (без молчаливого fallback на «весь RAG»).
+        if _scope_snap["resolved_dataset_ids"]:
+            req.dataset_ids = _scope_snap["resolved_dataset_ids"]
+        if _scope_snap["scope_type"] == "project" and _scope_snap["project_ids"]:
+            req.project_id = _scope_snap["project_ids"][0]
+            pid = req.project_id
+
     # W11.17: /-команды (палитра). rewrite → переформулировать и пройти конвейером; иначе — детерм. ответ.
     from proxy.services.command_service import handle_command, is_command
     if is_command(req.question):
@@ -1225,7 +1239,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 channel = "agent"
     if reply is not None:
         det_route = {"channel": channel, "operation": reply.get("operation"),
-                     "agent_tool": reply.get("agent_tool")}
+                     "agent_tool": reply.get("agent_tool"), "scope": _scope_snap}
         if _rejected_det:                       # v0.18: что policy отклонила до принятого кандидата
             det_route["rejected_deterministic"] = _rejected_det
         det_hid = None
@@ -1562,6 +1576,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             logger.warning("[OUTLINE] fallback to RAG: %s", _outline_err)
 
     query_route_payload = _query_route_payload(query_intent, effective_dataset_filter, kot_decision)
+    query_route_payload["scope"] = _scope_snap   # v0.21: где реально искали (snapshot для trace/истории)
     cache = SemanticCache()
     cache_embedding = None
     cache_scope = ""

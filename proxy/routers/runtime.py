@@ -223,6 +223,46 @@ async def version():
     return version_info()
 
 
+async def _live_datasets_and_projects():
+    """Живые датасеты (backend) + проекты (registry) + связи project→dataset. Без падений."""
+    from proxy.services import project_service as ps
+    datasets: list[dict] = []
+    try:
+        backend = get_runtime_state().backend
+        if backend:
+            datasets = list(await backend.list_datasets() or [])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[SCOPE] list_datasets failed: %s", e)
+    projects, links = [], {}
+    try:
+        projects = ps.build_registry().get("projects", [])
+        links = {int(p["id"]): ps.project_dataset_ids(int(p["id"])) for p in projects}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[SCOPE] registry failed: %s", e)
+    return datasets, projects, links
+
+
+@router.get("/scope/options")
+async def scope_options_endpoint(_admin=Depends(require_admin)):
+    """v0.21: всё для ScopeSelector — проекты, ВСЕ датасеты, непривязанные, системные (с reason).
+    Админский датасет ОБЯЗАН быть здесь (ничего не скрываем молча)."""
+    from proxy.services.scope_service import scope_options
+    datasets, projects, links = await _live_datasets_and_projects()
+    return scope_options(datasets, projects, links)
+
+
+@router.post("/scope/resolve")
+async def scope_resolve_endpoint(payload: dict, _admin=Depends(require_admin)):
+    """v0.21: request-поля (scope/project_id/dataset_ids/dataset_filter) → нормализованный Scope с
+    resolved_dataset_ids. Явный scope приоритетнее legacy. Не теряет область молча."""
+    from proxy.services.scope_service import resolve_scope
+    datasets, _projects, _links = await _live_datasets_and_projects()
+    return resolve_scope(
+        scope=payload.get("scope"), project_id=payload.get("project_id"),
+        dataset_ids=payload.get("dataset_ids"), dataset_filter=payload.get("dataset_filter"),
+        label=payload.get("label"), dataset_catalog=datasets)
+
+
 @router.post("/warmup")
 async def warmup_models(_admin=Depends(require_admin)):
     state = get_runtime_state()
