@@ -57,6 +57,9 @@ class EvidenceItem:
         if self.type is EvidenceType.COMPUTED and self.value is not None \
                 and not (self.formula or self.inputs or self.source_refs):
             raise EvidenceError(f"COMPUTED без provenance (формула/входы/источник): {self.title!r}")
+        # ASSUMED обязан нести явное допущение
+        if self.type is EvidenceType.ASSUMED and not self.assumptions:
+            raise EvidenceError(f"ASSUMED без явного допущения: {self.title!r}")
 
     def payload(self) -> dict[str, Any]:
         return {"type": self.type.value, "title": self.title, "value": self.value, "unit": self.unit,

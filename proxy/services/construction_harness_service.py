@@ -18,6 +18,9 @@ SAFETY: неопределённая work_family НЕ даёт COMPUTED (gesn_ex
 
 from __future__ import annotations
 
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from proxy.services.evidence_contract import (
@@ -49,14 +52,85 @@ def _infer_family(work_text: str) -> str:
 
 # ── typed tool facades (поверх существующих сервисов) ────────────────────────────────────
 
-def retrieve_project_doc(query: str, *, rows: list[dict] | None = None,
-                         project_id: int = 0) -> dict[str, Any]:
-    """Найти проектный документ (Ф9/ВОР/спецификация). v0.1: rows инъектируются (fixture/демо).
-    Прод-расширение — table_query/RAG по project_id/dataset_scope. RETRIEVED или MISSING."""
-    if rows:
-        sources = sorted({str(r.get("source_file") or "demo") for r in rows})
-        return {"status": "found", "rows": rows, "sources": sources}
-    return {"status": "not_found", "rows": [], "sources": []}
+@dataclass
+class SourceRef:
+    """Богатая ссылка на источник (Codex v0.2): откуда строка извлечена."""
+    dataset_id: str = ""
+    file_name: str = ""
+    row_id: int | None = None
+    page: int | None = None
+    table_id: str = ""
+    chunk_id: str = ""
+    title: str = ""
+
+    def ref(self) -> str:
+        base = f"{self.dataset_id}/{self.file_name}" if self.dataset_id else (self.file_name or "doc")
+        if self.row_id is not None:
+            return f"{base}#row{self.row_id}"
+        if self.page is not None:
+            return f"{base}#p{self.page}"
+        return base
+
+
+def retrieve_project_doc(query: str = "", *, project_id: int = 0, dataset_ids: list[str] | None = None,
+                         dataset_filter: str | None = None, doc_type: str = "", top_k: int = 5,
+                         storage_root: Path | None = None, rows: list[dict] | None = None) -> dict[str, Any]:
+    """v0.2 RETRIEVAL-BACKED facade: ищет проектный табличный документ (Ф9/ВОР/спецификация) в
+    `storage/datasets/{ds}/_parquet/*.parquet` по dataset-scope (dataset_ids | project_id). Читает
+    строки + богатый SourceRef. Ничего не нашёл → not_found (НЕ фантазия). `rows=` — ТОЛЬКО для
+    unit-тестов facade (прямая инъекция), в production-path оркестратор его НЕ использует."""
+    import pandas as pd
+    trace: list[dict[str, Any]] = []
+
+    if rows is not None:   # test-only direct injection через facade (не production path)
+        for i, r in enumerate(rows):
+            r.setdefault("source_file", str(r.get("source_file") or "injected"))
+            r.setdefault("pos", str(r.get("pos") or i + 1))
+        srcs = sorted({str(r.get("source_file")) for r in rows})
+        return {"status": "found", "rows": rows, "sources": srcs,
+                "trace": [{"step": "inject", "rows": len(rows)}]}
+
+    root = storage_root or Path("storage/datasets")
+    ds_ids = list(dataset_ids or [])
+    if not ds_ids and project_id:
+        try:
+            from proxy.services.project_service import project_dataset_ids
+            ds_ids = project_dataset_ids(project_id) or []
+        except Exception as e:  # noqa: BLE001
+            trace.append({"step": "resolve_scope", "error": str(e)})
+    trace.append({"step": "resolve_scope", "datasets": ds_ids})
+    if not ds_ids:
+        return {"status": "not_found", "rows": [], "sources": [], "trace": trace,
+                "warnings": ["нет dataset-scope (нет dataset_ids/project_id)"]}
+
+    out_rows: list[dict[str, Any]] = []
+    sources: list[str] = []
+    for ds in ds_ids:
+        proot = root / ds / "_parquet"
+        if not proot.exists():
+            continue
+        for pq in sorted(proot.rglob("*.parquet")):
+            if doc_type and doc_type.lower() not in pq.name.lower():
+                continue
+            try:
+                df = pd.read_parquet(pq)
+            except Exception as e:  # noqa: BLE001
+                trace.append({"step": "read_parquet", "file": pq.name, "error": str(e)[:60]})
+                continue
+            fname = pq.name
+            for i, rec in enumerate(df.to_dict("records")):
+                rec = {k: (None if pd.isna(v) else v) for k, v in dict(rec).items()}
+                sr = SourceRef(dataset_id=ds, file_name=fname, row_id=i)
+                rec["source_file"] = sr.ref()
+                rec.setdefault("pos", str(i + 1))
+                out_rows.append(rec)
+            sources.append(f"{ds}/{fname}")
+            trace.append({"step": "read_parquet", "file": f"{ds}/{fname}", "rows": len(df)})
+            if len(out_rows) >= top_k * 50:   # грубый предел
+                break
+    status = "found" if out_rows else "not_found"
+    return {"status": status, "rows": out_rows, "sources": sources, "trace": trace,
+            "warnings": [] if out_rows else ["в scope нет табличных проектных документов"]}
 
 
 def spec_to_bor(rows: list[dict]) -> dict[str, Any]:
@@ -122,11 +196,14 @@ def lsr_assemble(positions: list[dict[str, Any]]) -> dict[str, Any]:
             blockers.append({"work": p.get("work"),
                              "reason": f"единица документа {p.get('unit')} ≠ {base} нормы"})
             continue
-        qty_lsr = round(_f(p.get("qty")) / factor, 6) if factor else _f(p.get("qty"))
+        phys = _f(p.get("qty"))
+        qty_lsr = round(phys / factor, 6) if factor else phys
         rs = resolve_nr_sp(norm.get("name", ""))
         asm.append({"code": code, "name": p.get("work") or norm.get("name", ""),
                     "unit": norm.get("unit", ""), "qty": qty_lsr, "section": "ВОР",
-                    "nr_pct": rs["nr_pct"], "sp_pct": rs["sp_pct"]})
+                    "nr_pct": rs["nr_pct"], "sp_pct": rs["sp_pct"],
+                    "phys_qty": phys, "phys_unit": p.get("unit", ""), "conversion": f"{phys} / {factor}",
+                    "source_refs": p.get("source_refs", [])})
     lsr = assemble(asm) if asm else {"summary": {"total": 0.0}, "positions": []}
     smr = round(_f(lsr.get("summary", {}).get("total")), 2)
     cont = round(smr * 0.02, 2)
@@ -137,16 +214,21 @@ def lsr_assemble(positions: list[dict[str, Any]]) -> dict[str, Any]:
 
 # ── оркестратор: Ф9/ВОР → ГЭСН → ЛСР → evidence ──────────────────────────────────────────
 
-def run_construction_harness(query: str, *, rows: list[dict] | None = None,
-                             project_id: int = 0) -> ConstructionHarnessResult:
-    """End-to-end строительный evidence-контур. Числа из tool-результатов, не из LLM."""
+def run_construction_harness(query: str, *, project_id: int = 0, dataset_ids: list[str] | None = None,
+                             doc_type: str = "", storage_root: Path | None = None,
+                             rows: list[dict] | None = None) -> ConstructionHarnessResult:
+    """End-to-end строительный evidence-контур (v0.2 retrieval-backed). Источник НАХОДИТСЯ через
+    retrieve_project_doc по scope (project_id/dataset_ids), не подаётся напрямую. Числа из tool-
+    результатов, не из LLM. `rows=` — только для тестов facade."""
     from proxy.services.object_estimate_service import _f
 
     trace: list[dict[str, Any]] = []
 
-    # 1. найти документ
-    doc = retrieve_project_doc(query, rows=rows, project_id=project_id)
-    trace.append({"tool": "retrieve_project_doc", "status": doc["status"]})
+    # 1. найти документ через retrieval-backed facade
+    doc = retrieve_project_doc(query, project_id=project_id, dataset_ids=dataset_ids,
+                               doc_type=doc_type, storage_root=storage_root, rows=rows)
+    trace.append({"tool": "retrieve_project_doc", "status": doc["status"],
+                  "sources": doc.get("sources", [])})
     if doc["status"] != "found":
         miss = EvidenceItem(EvidenceType.MISSING, "Проектный документ не найден",
                             blockers=["нет источника (Ф9/ВОР/спецификация)"], status="missing")
@@ -188,8 +270,13 @@ def run_construction_harness(query: str, *, rows: list[dict] | None = None,
     for ap in lsr["asm_positions"]:
         computed_items.append(EvidenceItem(
             EvidenceType.COMPUTED, ap["name"], value=ap["qty"], unit=ap["unit"],
-            formula="кол-во (ВОР) × расценка ГЭСН → ЛСР", source_refs=[ap["code"]] + (ap.get("source_refs") or []),
-            status="computed"))
+            formula=f"кол-во ВОР {ap.get('phys_qty')} {ap.get('phys_unit')} → измеритель нормы "
+                    f"({ap.get('conversion')}) × расценка ГЭСН",
+            inputs=[{"name": "qty_документа", "value": ap.get("phys_qty"), "unit": ap.get("phys_unit"),
+                     "type": "RETRIEVED"},
+                    {"name": "norm_unit_conversion", "value": ap.get("conversion")},
+                    {"name": "norm_code", "value": ap["code"]}],
+            source_refs=[ap["code"]] + (ap.get("source_refs") or []), status="computed"))
     for b in lsr["blockers"]:
         blocked_items.append(EvidenceItem(EvidenceType.BLOCKED, str(b.get("work", "")),
                              blockers=[b.get("reason", "")], status="blocked"))
@@ -247,7 +334,7 @@ def smeta_harness_result_to_evidence(hres: dict[str, Any]) -> ConstructionHarnes
                              source_refs=[p.get("code", "")], status="computed")
                 for p in hres.get("computed", [])]
     assumed = [EvidenceItem(EvidenceType.ASSUMED, p.get("work", ""),
-                            assumptions=p.get("assumptions", []), status="preliminary")
+                            assumptions=(p.get("assumptions") or ["принято допущение"]), status="preliminary")
                for p in hres.get("by_assumption", [])]
     missing = [EvidenceItem(EvidenceType.MISSING, p.get("work", ""),
                             blockers=[p.get("reason", "нет данных")], status="missing")
@@ -272,7 +359,61 @@ def smeta_harness_result_to_evidence(hres: dict[str, Any]) -> ConstructionHarnes
         blockers=[{"work": i.title, "reason": "; ".join(i.blockers)} for i in blocked])
 
 
+# ── feature flag + route hints (Codex E/F): OFF по умолчанию, НЕ вшито в chat.py ─────────
+
+def construction_harness_enabled() -> bool:
+    """Feature flag. OFF (дефолт) → chat-поведение НЕ меняется."""
+    return os.getenv("LES_CONSTRUCTION_HARNESS_ENABLED", "").strip().lower() in ("1", "true", "yes")
+
+
+@dataclass
+class RouteHint:
+    """Подсказка маршрута (НЕ ответчик): keyword-каскад даёт hint, не отдельный ответ (Codex F)."""
+    source: str                       # keyword | explicit | llm_router | fallback
+    intent: str                       # retrieve_norm | estimate_from_bor | table_agg | none
+    confidence: float = 0.0
+    matched_terms: list[str] = field(default_factory=list)
+    suggested_tools: list[str] = field(default_factory=list)
+
+
+_BOR_INTENT_TERMS = ("по ф9", "по вор", "ведомость объ", "собери лср", "предварительн", "смету по ф9",
+                     "лср по", "из ведомости")
+
+
+def route_hint(question: str) -> RouteHint:
+    """Keyword → hint (не ответ). Распознаёт «собрать ЛСР по Ф9/ВОР» → estimate_from_bor."""
+    ql = (question or "").lower()
+    matched = [t for t in _BOR_INTENT_TERMS if t in ql]
+    if matched:
+        return RouteHint("keyword", "estimate_from_bor", 0.6, matched,
+                         ["retrieve_project_doc", "spec_to_bor", "gesn_expand", "lsr_assemble"])
+    return RouteHint("keyword", "none", 0.0)
+
+
+def maybe_construction_harness(question: str, *, project_id: int = 0,
+                               dataset_ids: list[str] | None = None,
+                               storage_root: Path | None = None) -> ConstructionHarnessResult | None:
+    """Feature-flagged entrypoint. OFF → None (chat не меняется). ON + intent=estimate_from_bor →
+    запуск. НЕ вшит в chat.py (по ТЗ — рискованно), тестируется напрямую."""
+    if not construction_harness_enabled():
+        return None
+    if route_hint(question).intent != "estimate_from_bor":
+        return None
+    return run_construction_harness(question, project_id=project_id, dataset_ids=dataset_ids,
+                                    storage_root=storage_root)
+
+
 # ── demo fixture (ЯВНО демо, не production-data) ─────────────────────────────────────────
+
+def write_demo_project_doc(storage_root: Path, *, dataset_id: str = "demo_ds") -> str:
+    """Записать demo Ф9 как ПРОЕКТНУЮ ТАБЛИЦУ (parquet) в storage — чтобы golden НАХОДИЛ её через
+    retrieve_project_doc, а не получал напрямую. Возвращает dataset_id. ЯВНО демо, не production."""
+    import pandas as pd
+    pdir = Path(storage_root) / dataset_id / "_parquet"
+    pdir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(demo_f9_rows()).to_parquet(pdir / "f9_vor.parquet", index=False)
+    return dataset_id
+
 
 def demo_f9_rows() -> list[dict[str, Any]]:
     """ДЕМО Ф9/ВОР-fixture (НЕ реальные данные) для golden end-to-end. Объёмы — из «документа»."""

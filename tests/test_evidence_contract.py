@@ -34,6 +34,13 @@ def test_missing_and_blocked_cannot_carry_number():
         EvidenceItem(EvidenceType.BLOCKED, "стены", value=10.0)
 
 
+def test_evidence_assumed_requires_assumptions():
+    with pytest.raises(EvidenceError):
+        EvidenceItem(EvidenceType.ASSUMED, "толщина плиты")     # без явного допущения
+    ok = EvidenceItem(EvidenceType.ASSUMED, "толщина плиты", assumptions=["принято 0.4 м"])
+    assert ok.assumptions
+
+
 def test_numbers_in_answer_have_provenance_holds():
     from proxy.services.evidence_contract import EvidenceBlock
     items = [EvidenceItem(EvidenceType.COMPUTED, "x", value=5.0, formula="a*b"),

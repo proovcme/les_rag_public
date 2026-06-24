@@ -101,6 +101,63 @@ def test_rag_result_wrapped_as_retrieved():
     assert r2.evidence_blocks[0].type is EvidenceType.MISSING
 
 
+# ── v0.2: retrieval-backed facade (источник НАХОДИТСЯ, не подаётся) ───────────────────────
+
+def test_retrieve_project_doc_returns_source_refs(tmp_path):
+    ds = ch.write_demo_project_doc(tmp_path)              # demo Ф9 → parquet в storage
+    doc = ch.retrieve_project_doc("ЛСР по Ф9", dataset_ids=[ds], storage_root=tmp_path)
+    assert doc["status"] == "found" and doc["rows"]
+    assert doc["sources"]                                 # источник (dataset/file)
+    assert all("#row" in str(r.get("source_file", "")) for r in doc["rows"])  # богатый source_ref
+
+
+def test_retrieve_project_doc_not_found_yields_missing_evidence(tmp_path):
+    # scope без табличных документов → not_found → MISSING evidence, НЕ фантазия
+    r = ch.run_construction_harness("ЛСР", dataset_ids=["nonexistent_ds"], storage_root=tmp_path)
+    assert r.total_status == "no_data"
+    assert r.evidence_blocks[0].type is EvidenceType.MISSING
+    assert r.final_total is None
+
+
+def test_retrieval_backed_f9_to_lsr_golden(tmp_path):
+    """ГЛАВНЫЙ v0.2 golden: документ НАЙДЕН через facade (parquet по scope), не подан напрямую."""
+    ds = ch.write_demo_project_doc(tmp_path)
+    r = ch.run_construction_harness("собери предварительную ЛСР по Ф9 паркинга",
+                                    dataset_ids=[ds], storage_root=tmp_path)
+    tools = [t["tool"] for t in r.tool_trace]
+    assert tools[0] == "retrieve_project_doc" and r.tool_trace[0]["status"] == "found"
+    types = {b.type for b in r.evidence_blocks}
+    assert EvidenceType.RETRIEVED in types and EvidenceType.COMPUTED in types
+    # source_ref сквозной: facade(dataset/file/row) → spec_to_bor(#pos) → evidence
+    retr = next(b for b in r.evidence_blocks if b.type is EvidenceType.RETRIEVED)
+    assert all(it.source_refs and "f9_vor.parquet" in it.source_refs[0] for it in retr.items)
+    assert numbers_in_answer_have_provenance(r)
+    assert r.partial_total is not None and r.partial_total < 100_000_000   # unit-gate
+
+
+# ── v0.2: feature flag (OFF по умолчанию, не меняет chat) ─────────────────────────────────
+
+def test_feature_flag_off_returns_none(monkeypatch):
+    monkeypatch.delenv("LES_CONSTRUCTION_HARNESS_ENABLED", raising=False)
+    assert ch.maybe_construction_harness("собери ЛСР по Ф9") is None   # OFF → None, chat не меняется
+
+
+def test_feature_flag_on_routes_matching_query(monkeypatch, tmp_path):
+    monkeypatch.setenv("LES_CONSTRUCTION_HARNESS_ENABLED", "1")
+    ds = ch.write_demo_project_doc(tmp_path)
+    # подходящий intent (estimate_from_bor) + scope → запуск
+    res = ch.maybe_construction_harness("собери предварительную ЛСР по Ф9", dataset_ids=[ds], storage_root=tmp_path)
+    assert res is not None and res.evidence_blocks
+    # неподходящий запрос → None даже при ON
+    assert ch.maybe_construction_harness("что такое огнестойкость") is None
+
+
+def test_route_hint_is_hint_not_answer():
+    h = ch.route_hint("собери ЛСР по Ф9")
+    assert h.intent == "estimate_from_bor" and h.source == "keyword" and h.suggested_tools
+    assert ch.route_hint("привет").intent == "none"
+
+
 def test_smeta_harness_result_maps_to_evidence_blocks():
     hres = {
         "computed": [{"work": "плита", "code": "06-02-001-01", "qty": 7.2, "norm_unit": "100 м3", "formula": "S1*0.4"}],
