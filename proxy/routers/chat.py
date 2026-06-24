@@ -1237,6 +1237,20 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             reply = maybe_agent_route(req.question, project_id=pid)
             if reply is not None:
                 channel = "agent"
+        # v0.22: проектный запрос при scope=all → не искать молча весь корпус, а попросить выбрать
+        # область (нормы/глоссарий/глобальный реестр сюда не попадают — им весь RAG разрешён).
+        if reply is None and _scope_snap.get("scope_type") == "all":
+            from proxy.services.scope_service import needs_project_scope, scope_clarification
+            if needs_project_scope(req.question):
+                try:
+                    from proxy.services.project_service import build_registry
+                    _projs = build_registry().get("projects", [])
+                except Exception:  # noqa: BLE001
+                    _projs = []
+                _clar = scope_clarification(req.question, projects=_projs)
+                reply = {"answer": _clar["answer"], "operation": "scope_clarification"}
+                channel = "scope_clarification"
+                _scope_snap.setdefault("warnings", []).append("scope_all_for_project_query")
     if reply is not None:
         det_route = {"channel": channel, "operation": reply.get("operation"),
                      "agent_tool": reply.get("agent_tool"), "scope": _scope_snap}

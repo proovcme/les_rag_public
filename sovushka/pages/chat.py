@@ -258,24 +258,119 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     _html('<div class="sov-chat-title">С.О.В.У.Ш.К.А.</div>')
                     _html('<div class="sov-chat-subtitle">нормативный RAG-диспетчер</div>')
                 with ui.row().classes("items-center gap-2"):
-                    # W17.1: режим объекта — сужает ретрив к датасетам проекта; «— весь RAG —» = обычный поиск.
-                    project_select = ui.select({0: "— весь RAG —"}, value=0).props(
-                        'dense outlined options-dense aria-label="Объект (режим проекта)"'
-                    ).style("min-width:150px;font-size:.66rem;background:var(--input-bg);")
-                    project_select.on(
-                        "update:model-value",
-                        lambda e: project_state.__setitem__("id", project_select.value or None),
-                    )
+                    # v0.22 ScopeSelector — ОБЛАСТЬ ПОИСКА (весь RAG / проект(ы) / датасет(ы) / mixed).
+                    # Заменяет неясную выпадашку: явные группы Проекты/Датасеты/Непривязанные/Системные.
+                    scope_state = {"scope_type": "all", "project_ids": [], "dataset_ids": [], "label": "Весь RAG"}
+                    scope_opts_cache: dict = {"data": None}
 
-                    async def _load_projects():
-                        data = await api_get("/api/projects") or {}
-                        opts = {0: "— весь RAG —"}
-                        for p in (data.get("projects") or []):
-                            if p.get("id") and p.get("status") != "archived":
-                                opts[int(p["id"])] = f"🏗 {p.get('name', 'объект')}"
-                        project_select.set_options(opts, value=project_state["id"] or 0)
+                    scope_btn = ui.button("Весь RAG", icon="o_travel_explore").props(
+                        "flat dense no-caps").style(
+                        "min-width:140px;font-size:.66rem;color:var(--accent);border:1px solid var(--border);"
+                        "border-radius:8px;padding:2px 10px;").tooltip(
+                        "Область поиска: в каких проектах и датасетах ЛЕС будет искать источники.")
 
-                    asyncio.create_task(_load_projects())
+                    def _scope_label() -> str:
+                        st = scope_state["scope_type"]
+                        np, nd = len(scope_state["project_ids"]), len(scope_state["dataset_ids"])
+                        data = scope_opts_cache["data"] or {}
+                        if st == "all":
+                            return "Весь RAG"
+                        if st == "project" and np == 1:
+                            for p in data.get("projects", []):
+                                if int(p["id"]) == scope_state["project_ids"][0]:
+                                    return str(p["name"])
+                        if st == "dataset" and nd == 1:
+                            for d in data.get("datasets", []) + data.get("system_datasets", []):
+                                if str(d["id"]) == scope_state["dataset_ids"][0]:
+                                    return str(d["name"])[:28]
+                        if st == "projects":
+                            return f"{np} проекта · {nd} датасетов"
+                        if st == "datasets":
+                            return f"{nd} датасета"
+                        if st == "mixed":
+                            return "Смешанная область"
+                        return "Весь RAG"
+
+                    def _apply_scope(sel_projects: set, sel_datasets: set) -> None:
+                        scope_state["project_ids"] = sorted(sel_projects)
+                        scope_state["dataset_ids"] = sorted(sel_datasets)
+                        np, nd = len(sel_projects), len(sel_datasets)
+                        if np == 0 and nd == 0:
+                            scope_state["scope_type"] = "all"
+                        elif np and nd:
+                            scope_state["scope_type"] = "mixed"
+                        elif np == 1:
+                            scope_state["scope_type"] = "project"
+                        elif np > 1:
+                            scope_state["scope_type"] = "projects"
+                        elif nd == 1:
+                            scope_state["scope_type"] = "dataset"
+                        else:
+                            scope_state["scope_type"] = "datasets"
+                        # back-compat: одиночный проект → project_state (карта объекта и пр.)
+                        project_state["id"] = scope_state["project_ids"][0] if scope_state["scope_type"] == "project" else None
+                        scope_state["label"] = _scope_label()
+                        scope_btn.set_text(scope_state["label"])
+
+                    async def _open_scope_dialog():
+                        data = scope_opts_cache["data"] or await api_get("/api/scope/options") or {}
+                        scope_opts_cache["data"] = data
+                        sel_p = set(scope_state["project_ids"]); sel_d = set(scope_state["dataset_ids"])
+                        with ui.dialog() as dlg, ui.card().style(
+                            "background:var(--bg-panel);border:1px solid var(--border);min-width:440px;max-width:520px;"
+                            "max-height:72vh;padding:16px;"):
+                            ui.label("Область поиска").style("font-weight:900;font-size:.85rem;margin-bottom:4px;")
+                            search = ui.input(placeholder="Найти проект или датасет…").props(
+                                "dense outlined clearable").style("width:100%;font-size:.7rem;")
+                            with ui.scroll_area().style("max-height:46vh;width:100%;"):
+                                def _row_match(name: str) -> bool:
+                                    q = (search.value or "").strip().lower()
+                                    return not q or q in name.lower()
+
+                                def _cb(label, key, store, sub=""):
+                                    cb = ui.checkbox(label, value=key in store).props("dense").style("font-size:.7rem;")
+                                    cb.on("update:model-value", lambda e, k=key, s=store: (s.add(k) if e.args else s.discard(k)))
+                                    if sub:
+                                        ui.label(sub).style("font-size:.55rem;color:var(--dim);margin:-6px 0 2px 28px;")
+                                    return cb
+
+                                ui.label("ПРОЕКТЫ").style("font-size:.56rem;font-weight:800;color:var(--dim);margin-top:6px;")
+                                for p in data.get("projects", []):
+                                    if _row_match(str(p["name"])):
+                                        warn = " ⚠ нет датасетов" if not p.get("dataset_count") else ""
+                                        _cb(f"🏗 {p['name']}", int(p["id"]), sel_p,
+                                            sub=f"{p.get('dataset_count',0)} датасетов{warn}")
+                                _unassigned_ids = {str(d["id"]) for d in data.get("unassigned_datasets", [])}
+                                assigned = [d for d in data.get("datasets", []) if str(d["id"]) not in _unassigned_ids]
+                                if assigned:
+                                    ui.label("ДАТАСЕТЫ (в проектах)").style("font-size:.56rem;font-weight:800;color:var(--dim);margin-top:8px;")
+                                    for d in assigned:
+                                        if _row_match(str(d["name"])):
+                                            _cb(str(d["name"])[:40], str(d["id"]), sel_d,
+                                                sub=f"{d.get('file_count',0)} файлов · {d.get('source_type','')}")
+                                if data.get("unassigned_datasets"):
+                                    ui.label("НЕПРИВЯЗАННЫЕ ДАТАСЕТЫ").style("font-size:.56rem;font-weight:800;color:var(--warn);margin-top:8px;")
+                                    for d in data.get("unassigned_datasets", []):
+                                        if _row_match(str(d["name"])):
+                                            _cb(str(d["name"])[:40], str(d["id"]), sel_d,
+                                                sub=f"{d.get('file_count',0)} файлов · {d.get('source_type','')}")
+                                if data.get("system_datasets"):
+                                    with ui.expansion(f"Системные ({len(data['system_datasets'])})").props("dense").style("font-size:.6rem;margin-top:8px;"):
+                                        for d in data.get("system_datasets", []):
+                                            _cb(str(d["name"])[:40], str(d["id"]), sel_d,
+                                                sub=str(d.get("hidden_reason", "служебный")))
+                            with ui.row().style("gap:8px;margin-top:10px;justify-content:flex-end;width:100%;"):
+                                ui.button("Весь RAG", on_click=lambda: (_apply_scope(set(), set()), dlg.close())).props("flat dense no-caps").style("color:var(--dim);font-size:.64rem;")
+                                ui.button("Сбросить", on_click=lambda: (sel_p.clear(), sel_d.clear())).props("flat dense no-caps").style("color:var(--dim);font-size:.64rem;")
+                                ui.button("Применить", on_click=lambda: (_apply_scope(sel_p, sel_d), dlg.close())).props("dense no-caps").style("color:var(--accent);font-size:.64rem;")
+                        dlg.open()
+
+                    scope_btn.on("click", lambda: asyncio.create_task(_open_scope_dialog()))
+
+                    async def _prefetch_scope():
+                        scope_opts_cache["data"] = await api_get("/api/scope/options") or {}
+
+                    asyncio.create_task(_prefetch_scope())
                     # W17.5: КАРТА ОБЪЕКТА — паспорт выбранного объекта.
                     ui.button(icon="o_dashboard", on_click=lambda: _open_dossier()).props(
                         'flat round dense aria-label="Карта объекта"'
@@ -1926,7 +2021,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             out_mode = _render_mode  # дальше ответ рендерится в выбранном виде (таблица/текст)
         if detail_dataset.value and detail_dataset.value != "(все датасеты)":
             payload["dataset_filter"] = detail_dataset.value
-        if project_state["id"]:  # W17.1: режим объекта — сузить ретрив к датасетам проекта
+        # v0.22: явная ОБЛАСТЬ ПОИСКА из ScopeSelector (приоритетнее legacy; backend сам резолвит).
+        if scope_state["scope_type"] != "all":
+            payload["scope"] = {"scope_type": scope_state["scope_type"],
+                                "project_ids": scope_state["project_ids"],
+                                "dataset_ids": scope_state["dataset_ids"]}
+        if project_state["id"]:  # back-compat: одиночный проект → project_id
             payload["project_id"] = project_state["id"]
 
         _t0 = time.monotonic()
