@@ -727,6 +727,43 @@ def validate_real_workbook(path: str | Path = REAL_WORKBOOK, *, tol: float = 0.5
 
 # ── evidence-result для chat ──────────────────────────────────────────────────────────────
 
+# ── v0.7: bridge-интерфейсы к реальным источникам (лёгкие обёртки, НЕ форсим интеграцию) ──
+# Цель — сделать БУДУЩИЙ переход с workbook-цен на реальный resource-price DB/ФГИС возможным.
+# Сейчас источник цен — workbook; bridge возвращает found/not_found, без silent-fake-fallback.
+
+def resource_price_source() -> dict[str, Any]:
+    """Текущий источник цен ресурсов. v0.7: workbook (значения из листа `пример`). Production
+    price-DB (ФГИС/локальный parquet) — НЕ подключён (bridge готов к подключению)."""
+    return {"source": "workbook", "db_available": False,
+            "note": "цены берутся из реального workbook (fsnb2022.ru); production price-DB не подключён"}
+
+
+def fgis_price_lookup(resource_code: str) -> dict[str, Any]:
+    """Bridge к ФГИС/локальной базе цен по коду ресурса. v0.7: не подключён → not_found (не fake)."""
+    return {"status": "not_found", "resource_code": resource_code,
+            "note": "ФГИС price-bridge не подключён; цена берётся из workbook"}
+
+
+def nr_sp_lookup(name: str = "") -> dict[str, Any]:
+    """Bridge к nr_sp_service для ставок НР/СП. found → ставки из локальной базы Приказов."""
+    try:
+        from proxy.services.nr_sp_service import resolve as _resolve_nr_sp
+        rs = _resolve_nr_sp(name)
+        return {"status": "found", "nr_pct": rs.get("nr_pct"), "sp_pct": rs.get("sp_pct"),
+                "source": "nr_sp_service (Приказы 812/774)"}
+    except Exception as e:  # noqa: BLE001
+        return {"status": "not_found", "note": f"nr_sp_service недоступен: {e}"}
+
+
+def machinist_mapping_lookup(machine_code: str) -> dict[str, Any]:
+    """Bridge маппинга машина→машинист. found → тарифный код; not_found → MISSING (не выдумка)."""
+    mc = machine_to_machinist(machine_code)
+    if mc:
+        return {"status": "found", "machine_code": machine_code, "machinist_code": mc}
+    return {"status": "not_found", "machine_code": machine_code,
+            "note": "маппинг машина→машинист не определён (частичный); машинист-строка → MISSING"}
+
+
 def resource_result_to_construction_result(res: ResourceEstimateResult) -> ConstructionHarnessResult:
     # v0.6: провенанс источника (real vs reconstructed) + реальные методнотации как RETRIEVED.
     status = real_workbook_status()

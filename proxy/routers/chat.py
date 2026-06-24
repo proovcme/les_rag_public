@@ -1055,10 +1055,18 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             _ures = await asyncio.to_thread(
                 run_unified_construction_harness, req.question, project_id=pid, dataset_ids=_uds)
             if _ures is not None:   # поддержанный intent → честный evidence-ответ (вкл. MISSING)
-                return _mode_reply(
-                    compose_unified_answer(_ures),
-                    (_ures.answer_data.get("route") or {}).get("intent", "construction"),
-                    "unified_construction_harness", crag="EVIDENCE")
+                _intent = (_ures.answer_data.get("route") or {}).get("intent", "construction")
+                _reply = _mode_reply(compose_unified_answer(_ures), _intent,
+                                     "unified_construction_harness", crag="EVIDENCE")
+                # v0.7 live-trace: версия маршрута + сводка evidence + статус (для operational-проверки)
+                _reply["query_route"]["version"] = "unified_construction_harness_v0_7"
+                _reply["query_route"]["intent"] = _intent
+                _reply["query_route"]["source_scope"] = _ures.answer_data.get("source_scope", "")
+                _reply["query_route"]["provenance"] = _ures.answer_data.get("provenance", "")
+                _reply["total_status"] = _ures.total_status
+                _reply["evidence_summary"] = {b.type.value: len(b.items) for b in _ures.evidence_blocks}
+                _reply["sources"] = list(_ures.sources or [])
+                return _reply
 
     if _PROFILE == "object_estimate":
         # Режим Смета = намерение УЖЕ задано → object_estimate НАПРЯМУЮ (минуя keyword-гейт
