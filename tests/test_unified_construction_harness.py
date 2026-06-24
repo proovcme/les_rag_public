@@ -37,7 +37,9 @@ def test_route_project_document_registry():
     assert u.route_construction_intent("дай реестр документов проекта").intent == "project_document_registry"
 
 def test_route_mail_qa():
-    assert u.route_construction_intent("что в почте по котельной").intent == "mail_qa"
+    # v0.4: «в почте» = source-фраза → mail_entity_search (источник доминирует); «из писем» → mail_qa
+    assert u.route_construction_intent("что в почте по котельной").intent == "mail_entity_search"
+    assert u.route_construction_intent("из писем по согласованию").intent == "mail_qa"
 
 def test_route_estimate_from_bor():
     assert u.route_construction_intent("собери предварительную ЛСР по Ф9").intent == "estimate_from_bor"
