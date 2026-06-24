@@ -104,7 +104,8 @@ def build_header(
             info = await api_get("/api/version")
             if isinstance(info, dict):
                 _ver_state["info"] = info
-                c = info.get("git_commit", "")
+                # бейдж ведёт с DEPLOYED commit (что реально запущено), git рантайма отстаёт при cp-деплое
+                c = info.get("deployed_commit") or info.get("git_commit", "")
                 h = info.get("harness_version", "")
                 ver_badge.set_text(f"{info.get('app_version','?')}" + (f" · h{h}" if h else "")
                                    + (f" · {c}" if c and c != "unknown" else ""))

@@ -176,7 +176,7 @@ def test_version_endpoint_still_has_deployed_commit():
     from proxy.routers.runtime import router
     app = FastAPI(); app.include_router(router)
     d = TestClient(app).get("/api/version").json()
-    assert "deployed_commit" in d and d["harness_version"] == "0.20"
+    assert "deployed_commit" in d and d["harness_version"] == "0.22"
 
 def test_flag_off_preserves_chat_behavior():
     import os
