@@ -1041,10 +1041,17 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     # OFF дефолт). Только дефолтный путь (auto/grounded_rag) — явные режимы смета/review/КП/free НЕ
     # трогаем. Поддержанный строительный intent → evidence-ответ (RETRIEVED/COMPUTED/MISSING/BLOCKED),
     # честный no_data вместо фантазии. Не поддержан/none → None → старый путь (поведение прежнее).
-    if _PROFILE in ("auto", "grounded_rag"):
-        from proxy.services.unified_construction_harness_service import (
-            unified_enabled, run_unified_construction_harness_async, compose_unified_answer)
-        if unified_enabled():
+    # ВАЖНО: импорт unified-харнесса ТОЛЬКО при включённом флаге — иначе в рантайме (где unified-стек
+    # не задеплоен, флаг OFF) каждый /chat падал бы ModuleNotFoundError. env-проверка ДО импорта +
+    # try/except: флаг OFF или модуль отсутствует → старый RAG-путь (поведение прежнее).
+    _uns_on = os.getenv("LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
+    if _PROFILE in ("auto", "grounded_rag") and _uns_on:
+        try:
+            from proxy.services.unified_construction_harness_service import (
+                unified_enabled, run_unified_construction_harness_async, compose_unified_answer)
+        except ModuleNotFoundError:
+            unified_enabled = None
+        if unified_enabled and unified_enabled():
             _uds = list(req.dataset_ids or [])
             if not _uds and pid:
                 try:
