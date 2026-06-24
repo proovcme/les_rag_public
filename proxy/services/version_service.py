@@ -26,15 +26,21 @@ RESOURCE_CALC_VERSION = "0.6"
 _REPO_ROOT = Path(os.getenv("LES_REPO_ROOT", "/Users/ovc/Projects/LES_v2"))
 _RUNTIME_ROOT = Path(os.getenv("LES_RUNTIME_HOME", "/Users/ovc/LES"))
 
-# критичные файлы, по которым ловим расхождение repo↔runtime (хэш, не полный diff)
+# критичные файлы, по которым ловим расхождение repo↔runtime (хэш, не полный diff).
+# v0.22: + GUI-файлы (sovushka) — иначе deploy stamp слеп к фронт-правкам и не флипается в stale.
 _CRITICAL_FILES = (
     "proxy/routers/datasets.py",
     "proxy/routers/chat.py",
+    "proxy/routers/runtime.py",
     "proxy/services/doc_extract_service.py",
     "proxy/services/sidecar_ops_service.py",
     "proxy/services/deterministic_policy_service.py",
     "proxy/services/glossary_chat_service.py",
+    "proxy/services/scope_service.py",
     "proxy/services/version_service.py",
+    "sovushka/pages/chat.py",
+    "sovushka/components/header.py",
+    "sovushka/answer_render.py",
 )
 # файлы, которых в рантайме намеренно НЕТ (flag-OFF, dev-only) — их отсутствие НЕ divergence
 _DEV_ONLY = frozenset({
