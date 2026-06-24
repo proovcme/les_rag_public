@@ -109,8 +109,9 @@ def test_source_scope_priority_still_holds():
 # ── norm_qa: layered lexical→vector ──────────────────────────────────────────────────────
 
 def test_norm_qa_layered_tiers():
+    # v0.12: file_body добавлен первым tier'ом (real .md без lexical-индекса)
     r = u.run_unified_construction_harness("правила расстановки ОЗК", dataset_ids=["k"], storage_root=None)
-    assert r.answer_data["searched_tiers"] == ["lexical_chunk", "vector_chunk"]
+    assert r.answer_data["searched_tiers"] == ["file_body", "lexical_chunk", "vector_chunk"]
 
 def test_norm_qa_no_source_missing_with_tiers():
     r = u.run_unified_construction_harness("правила расстановки ОЗК")

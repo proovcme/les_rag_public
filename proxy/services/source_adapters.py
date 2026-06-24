@@ -25,6 +25,14 @@ KIND_LEXICAL = "lexical_chunk"
 KIND_VECTOR = "vector_chunk"
 KIND_MAIL = "mail_message"
 KIND_WORKBOOK = "workbook_cell"
+KIND_FILE_BODY = "file_body"           # v0.12: тело .md/.txt
+KIND_EML = "mail_message"              # .eml = mail_message kind
+
+# v0.12 file_body limits (read-only, без OCR/бинарей)
+_TEXT_EXTS = {".md", ".txt", ".csv"}
+_MAX_FILE_BYTES = 8 * 1024 * 1024
+_MAX_FILES_PER_QUERY = 400
+_MAX_SNIPPETS_PER_FILE = 3
 
 
 @dataclass
@@ -37,8 +45,11 @@ class AdapterMatch:
     chunk_id: str = ""
     page: int | None = None
     row_id: int | None = None
+    line_start: int | None = None
+    line_end: int | None = None
     score: float | None = None
     matched_term: str = ""
+    fields: dict = field(default_factory=dict)   # mail: from/to/date/subject
 
 
 @dataclass
@@ -232,34 +243,49 @@ def inspect_dataset_index_health(dataset_ids: list[str], *, storage_root: Any = 
     out = []
     for ds in dataset_ids:
         ddir = root / ds
-        parquet = files = mail = 0
+        parquet = files = mail = md = txt = eml = md_tables = 0
         doc_types: Counter = Counter()
         if ddir.exists():
             from proxy.services.unified_construction_harness_service import classify_doc_type
             for p in ddir.rglob("*"):
                 if not p.is_file() or p.name.startswith("."):
                     continue
-                if p.suffix.lower() == ".parquet":
+                ext = p.suffix.lower()
+                if ext == ".parquet":
                     parquet += 1
                 else:
                     files += 1
-                    if p.suffix.lower() == ".eml":
+                    if ext == ".eml":
                         mail += 1
+                        eml += 1
+                    elif ext == ".md":
+                        md += 1
+                        if md_tables < 50:
+                            md_tables += len(extract_markdown_tables_from_file(p))
+                    elif ext == ".txt":
+                        txt += 1
                     doc_types[classify_doc_type(p.name)] += 1
         lex = lex_counts.get(ds, 0 if lex_counts else None)
+        readable_body = (md + txt) > 0
         warns = []
-        if parquet == 0:
-            warns.append("no_parquet")
+        warns.append("no_parquet_but_markdown_table_found" if (parquet == 0 and md_tables) else "no_parquet"
+                     if parquet == 0 else "")
         if lex is not None and lex <= 0:
-            warns.append("no_lexical_index")
+            warns.append("no_lexical_index_but_file_body_available" if readable_body else "no_lexical_index")
         elif lex is None:
             warns.append("lexical_unavailable")
-        if mail == 0:
-            warns.append("no_mail_source")
+        if eml == 0:
+            warns.append("no_eml_messages")
         if files == 0 and parquet == 0:
             warns.append("empty_dataset")
+        if not readable_body and eml == 0:
+            warns.append("no_file_body_readable")
+        warns = [w for w in warns if w]
         out.append({"dataset_id": ds, "parquet_count": parquet, "file_count": files, "mail_count": mail,
-                    "lexical_chunk_count": lex, "doc_types": dict(doc_types), "warnings": warns})
+                    "md_file_count": md, "txt_file_count": txt, "eml_file_count": eml,
+                    "readable_text_file_count": md + txt, "markdown_table_count": md_tables,
+                    "readable_body_available": readable_body, "lexical_chunk_count": lex,
+                    "doc_types": dict(doc_types), "warnings": warns})
     return {"datasets": out, "total_lexical_chunks": sum(v for v in lex_counts.values() if v and v > 0)}
 
 
@@ -292,3 +318,201 @@ async def retrieve_mail_evidence_async(query_terms: list[str], question: str = "
     status = FOUND if matches else NOT_FOUND
     return SourceAdapterResult(status, KIND_MAIL, matches=matches,
                                trace=[{"adapter": "mail", "messages": len(matches)}])
+
+
+# ── v0.12: file_body adapter (.md/.txt read-only, source_ref до строки) ──────────────────
+
+def _safe_under(root, p) -> bool:
+    from pathlib import Path as _P
+    try:
+        _P(p).resolve().relative_to(_P(root).resolve())
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def search_file_body(query_terms: list[str], *, dataset_ids: list[str] | None = None,
+                     storage_root: Any = None, doc_type_filter: set[str] | None = None,
+                     top_k: int = 12) -> SourceAdapterResult:
+    """Прямой read-only поиск термина в теле .md/.txt/.csv (без lexical-индекса, без OCR/бинарей).
+    source_ref до файла/строки. path-traversal защита + лимиты размера/числа файлов/сниппетов."""
+    from pathlib import Path as _P
+    if not query_terms:
+        return SourceAdapterResult(NOT_FOUND, KIND_FILE_BODY, warnings=["нет термина"])
+    if not dataset_ids:
+        return SourceAdapterResult(NO_SCOPE, KIND_FILE_BODY, warnings=["нет dataset-scope"])
+    root = _P(storage_root) if storage_root else _P("storage/datasets")
+    terms_norm = [(_norm(t), t) for t in query_terms if _norm(t)]
+    from proxy.services.unified_construction_harness_service import classify_doc_type
+    matches: list[AdapterMatch] = []
+    scanned = 0
+    for ds in dataset_ids:
+        ddir = root / ds
+        if not ddir.exists():
+            continue
+        for p in sorted(ddir.rglob("*")):
+            if scanned >= _MAX_FILES_PER_QUERY or len(matches) >= top_k:
+                break
+            if not p.is_file() or p.suffix.lower() not in _TEXT_EXTS or p.name.startswith("."):
+                continue
+            if not _safe_under(root, p):
+                continue
+            if doc_type_filter and classify_doc_type(p.name) not in doc_type_filter:
+                continue
+            try:
+                if p.stat().st_size > _MAX_FILE_BYTES:
+                    continue
+                text = p.read_text(encoding="utf-8", errors="replace")
+            except Exception:  # noqa: BLE001
+                continue
+            scanned += 1
+            if not any(tn in _norm(text) for tn, _ in terms_norm):
+                continue
+            rel = p.relative_to(ddir).as_posix()
+            per_file = 0
+            for i, ln in enumerate(text.splitlines(), 1):
+                lnn = _norm(ln)
+                hit = next((orig for tn, orig in terms_norm if tn and tn in lnn), None)
+                if hit:
+                    matches.append(AdapterMatch(KIND_FILE_BODY, f"{ds}/{rel}#L{i}", file_name=p.name,
+                                                dataset_id=ds, snippet=ln.strip()[:200], line_start=i,
+                                                line_end=i, matched_term=hit))
+                    per_file += 1
+                    if per_file >= _MAX_SNIPPETS_PER_FILE:
+                        break
+    status = FOUND if matches else NOT_FOUND
+    return SourceAdapterResult(status, KIND_FILE_BODY, matches=matches,
+                               trace=[{"adapter": "file_body", "files_scanned": scanned, "matches": len(matches)}])
+
+
+# ── v0.12: eml adapter (.eml read-only, snippet-only, нет send/delete) ────────────────────
+
+def _eml_plain_snippet(msg) -> str:
+    try:
+        body = msg.get_body(preferencelist=("plain",))
+        if body is not None:
+            return (body.get_content() or "")[:400]
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
+
+
+def search_eml_messages(query_terms: list[str], *, dataset_ids: list[str] | None = None,
+                        storage_root: Any = None, top_k: int = 12) -> SourceAdapterResult:
+    """Read-only поиск термина в .eml (subject/body/attachment-names). Реальный mail-источник БЕЗ
+    backend. snippet-only (полное тело НЕ в trace). НИКАКИХ send/draft/delete/mutate."""
+    from pathlib import Path as _P
+    from email import policy
+    from email.parser import BytesParser
+    if not dataset_ids:
+        return SourceAdapterResult(NO_SCOPE, KIND_MAIL, warnings=["нет dataset-scope"])
+    root = _P(storage_root) if storage_root else _P("storage/datasets")
+    terms_norm = [_norm(t) for t in (query_terms or []) if _norm(t)]
+    eml_seen = 0
+    matches: list[AdapterMatch] = []
+    for ds in dataset_ids:
+        ddir = root / ds
+        if not ddir.exists():
+            continue
+        for p in sorted(ddir.rglob("*.eml")):
+            if len(matches) >= top_k:
+                break
+            if not _safe_under(root, p) or p.stat().st_size > _MAX_FILE_BYTES:
+                continue
+            eml_seen += 1
+            try:
+                with open(p, "rb") as fh:
+                    msg = BytesParser(policy=policy.default).parse(fh)
+            except Exception:  # noqa: BLE001
+                continue
+            subj = str(msg.get("subject", "") or "")
+            frm = str(msg.get("from", "") or "")
+            to = str(msg.get("to", "") or "")
+            date = str(msg.get("date", "") or "")
+            mid = str(msg.get("message-id", "") or "")
+            body = _eml_plain_snippet(msg)
+            atts = " ".join(part.get_filename() or "" for part in msg.iter_attachments()) if hasattr(msg, "iter_attachments") else ""
+            hay = _norm(f"{subj} {body} {atts}")
+            hit = next((t for t in terms_norm if t and t in hay), None) if terms_norm else "*"
+            if not hit:
+                continue
+            ref = mid or f"{ds}/{p.relative_to(ddir).as_posix()}"
+            matches.append(AdapterMatch(KIND_MAIL, ref, file_name=subj[:60], dataset_id=ds,
+                                        snippet=(subj + " — " + body)[:200], matched_term=str(hit),
+                                        fields={"from": frm[:80], "to": to[:80], "date": date[:40], "subject": subj[:120]}))
+    if eml_seen == 0:
+        return SourceAdapterResult(NO_SOURCE, KIND_MAIL, warnings=["no_eml_messages: .eml в датасете нет"])
+    return SourceAdapterResult(FOUND if matches else NOT_FOUND, KIND_MAIL, matches=matches,
+                               trace=[{"adapter": "eml", "eml_seen": eml_seen, "matches": len(matches)}])
+
+
+# ── v0.12: markdown-таблицы → ВОР-строки ─────────────────────────────────────────────────
+
+_MD_NAME = ("наименование", "работа", "вид работ", "позиция", "описание", "item", "name", "наимен")
+_MD_UNIT = ("ед. изм", "ед.изм", "единица", "ед ", "изм", "unit", "ед")
+_MD_QTY = ("кол-во", "количество", "кол", "объем", "объём", "qty", "к-во")
+
+
+def extract_markdown_tables_from_file(path: Any) -> list[dict]:
+    """Простые markdown pipe-таблицы (|...|...| + строка-разделитель |---|). source: line_start."""
+    from pathlib import Path as _P
+    p = _P(path)
+    if not p.exists() or p.suffix.lower() not in (".md", ".txt"):
+        return []
+    try:
+        lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:  # noqa: BLE001
+        return []
+    tables, i, n = [], 0, len(lines)
+    while i < n - 1:
+        if lines[i].strip().startswith("|") and set(lines[i + 1].strip().replace("|", "").replace(":", "").strip()) <= {"-", " "} and "-" in lines[i + 1]:
+            header = [c.strip() for c in lines[i].strip().strip("|").split("|")]
+            rows, j = [], i + 2
+            while j < n and lines[j].strip().startswith("|"):
+                rows.append([c.strip() for c in lines[j].strip().strip("|").split("|")])
+                j += 1
+            tables.append({"header": header, "rows": rows, "line_start": i + 1, "line_end": j})
+            i = j
+        else:
+            i += 1
+    return tables
+
+
+def _md_col(header: list[str], syns: tuple) -> int:
+    for idx, h in enumerate(header):
+        hl = h.lower()
+        if any(s in hl for s in syns):
+            return idx
+    return -1
+
+
+def markdown_table_to_rows(table: dict, *, file_name: str = "", dataset_id: str = "") -> dict:
+    """Маппинг markdown-таблицы → ВОР-строки {name,unit,qty,source_file,pos}. Не распознано → blocked."""
+    header = table["header"]
+    ci_name = _md_col(header, _MD_NAME)
+    ci_unit = _md_col(header, _MD_UNIT)
+    ci_qty = _md_col(header, _MD_QTY)
+    if ci_name < 0 or ci_qty < 0:
+        return {"status": "not_recognized", "rows": [],
+                "reason": "markdown_table_not_recognized: нет колонок наименование/кол-во"}
+    rows = []
+    base = f"{dataset_id}/{file_name}" if dataset_id else file_name
+    for k, r in enumerate(table["rows"]):
+        if max(ci_name, ci_qty, ci_unit) >= len(r):
+            continue
+        name = r[ci_name].strip()
+        qty_raw = r[ci_qty].strip()
+        unit = r[ci_unit].strip() if 0 <= ci_unit < len(r) else ""
+        try:
+            qty = float(qty_raw.replace(",", ".").replace(" ", "").replace(" ", ""))
+        except ValueError:
+            continue
+        if not name:
+            continue
+        ln = table["line_end"] - len(table["rows"]) + k
+        rows.append({"name": name, "unit": unit, "qty": qty,
+                     "source_file": f"{base}#L{ln}", "pos": str(k + 1)})
+    if not rows:
+        return {"status": "missing_required_columns", "rows": [],
+                "reason": "markdown_table_missing_required_columns: строки без name/qty"}
+    return {"status": "ok", "rows": rows}

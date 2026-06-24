@@ -128,9 +128,32 @@ def retrieve_project_doc(query: str = "", *, project_id: int = 0, dataset_ids: l
             trace.append({"step": "read_parquet", "file": f"{ds}/{fname}", "rows": len(df)})
             if len(out_rows) >= top_k * 50:   # грубый предел
                 break
+    # v0.12: fallback — markdown-таблицы в .md (реальные датасеты без parquet)
+    if not out_rows:
+        from proxy.services.source_adapters import (extract_markdown_tables_from_file,
+                                                    markdown_table_to_rows)
+        md_warn = ""
+        for ds in ds_ids:
+            ddir = root / ds
+            if not ddir.exists():
+                continue
+            for mp in sorted(ddir.rglob("*.md")):
+                for tbl in extract_markdown_tables_from_file(mp):
+                    conv = markdown_table_to_rows(tbl, file_name=mp.name, dataset_id=ds)
+                    if conv["status"] == "ok":
+                        out_rows.extend(conv["rows"])
+                        sources.append(f"{ds}/{mp.name}")
+                        trace.append({"step": "markdown_table", "file": f"{ds}/{mp.name}", "rows": len(conv["rows"])})
+                    elif conv["status"] in ("not_recognized", "missing_required_columns"):
+                        md_warn = conv["reason"]
+                if len(out_rows) >= top_k * 50:
+                    break
+        if not out_rows and md_warn:
+            trace.append({"step": "markdown_table", "warning": md_warn})
+
     status = "found" if out_rows else "not_found"
     return {"status": status, "rows": out_rows, "sources": sources, "trace": trace,
-            "warnings": [] if out_rows else ["в scope нет табличных проектных документов"]}
+            "warnings": [] if out_rows else ["в scope нет табличных проектных документов (ни parquet, ни markdown-таблиц)"]}
 
 
 def spec_to_bor(rows: list[dict]) -> dict[str, Any]:

@@ -84,6 +84,31 @@ mail→complete mail=found; КДУ-в-актах→vector=**weak_related** (се
 backend) → честный unavailable. `_run_chat` строит vector_fn/mail_fn ТОЛЬКО при реальном backend
 (есть list_datasets); test/offline → fn=None → unavailable. Нет asyncio.run в running loop.
 
+## ✅ v0.12 (2026-06-24): FILE_BODY + EML + MARKDOWN — закрыт реальный gap v0.11
+
+v0.11 вскрыл: реальные датасеты = `.md`/`.eml`, не parquet. v0.12 читает их НАПРЯМУЮ read-only (без
+OCR/бинарей), source_ref до файла/строки/message_id.
+
+`source_adapters.py`: `search_file_body` (.md/.txt, path-traversal + лимиты), `search_eml_messages`
+(.eml через email.parser, snippet-only, нет send/delete), `extract_markdown_tables_from_file`/
+`markdown_table_to_rows` (markdown pipe-таблица → ВОР-строки). Интеграция: source_scoped tier-chain
+parquet→filename→**file_body→eml**→lexical→vector; norm_qa file_body первым tier'ом; retrieve_project_doc
+markdown-fallback при no_parquet. index_health +md/txt/eml/markdown_table counts + readable_body_available.
+doc_classifier: revit-api/cad_bim/speckle .md → external_reference (не проектный док), .md/.txt→project_doc.
+
+| было (v0.11) | стало (v0.12) |
+|---|---|
+| `no_lexical_index` (слепо) | **file_body** ищет в .md напрямую → RETRIEVED; health: no_lexical_index_but_file_body_available |
+| `mail_backend_not_configured` | **.eml читается** → mail_not_found (термина нет) ИЛИ found(message_id); backend опционален |
+| `f9_not_found_no_parquet` | **markdown-таблица в .md** → ВОР-строки с source_ref (ЛСР проходит) |
+
+**Реальный прогон датасета 11da8ad7 (402 .eml):** health eml=402; mail → `mail_not_found` (прочитал 402
+реальных письма, термина нет — НЕ backend_not_configured); norm file_body-tier. Синтетика: markdown
+Ф9 → ВОР (3 строки), .eml ОЗК → found(message_id), file_body .md → found(#L3). 33 теста v0.12.
+
+**Безопасность v0.12:** read-only, без OCR, path-traversal блок, лимит размера/числа файлов/сниппетов,
+snippet-only (нет полного тела письма), нет send/delete/mutate, нет fake source_refs, нет хардкод-словаря.
+
 ## Открыто (когда backend подключён в рантайме)
 - vector/mail сейчас `unavailable` в **sync** unified-пути (async retrieve/mail_query не вшит). Закрыть —
   async-обёртка адаптеров в chat-пути ИЛИ sync-мост к Qdrant.
