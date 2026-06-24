@@ -1043,7 +1043,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     # честный no_data вместо фантазии. Не поддержан/none → None → старый путь (поведение прежнее).
     if _PROFILE in ("auto", "grounded_rag"):
         from proxy.services.unified_construction_harness_service import (
-            unified_enabled, run_unified_construction_harness, compose_unified_answer)
+            unified_enabled, run_unified_construction_harness_async, compose_unified_answer)
         if unified_enabled():
             _uds = list(req.dataset_ids or [])
             if not _uds and pid:
@@ -1052,17 +1052,32 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     _uds = await asyncio.to_thread(project_dataset_ids, pid) or []
                 except Exception:  # noqa: BLE001
                     _uds = []
-            _ures = await asyncio.to_thread(
-                run_unified_construction_harness, req.question, project_id=pid, dataset_ids=_uds)
+            # v0.10: async vector/mail замыкания — только при РЕАЛЬНОМ backend (есть list_datasets);
+            # offline/test-backend → fn=None → честный unavailable (не фейк, не краш).
+            _backend = getattr(state, "backend", None)
+            _vector_fn = _mail_fn = None
+            if _backend is not None and hasattr(_backend, "list_datasets"):
+                async def _vector_fn(_q, _dsids, _b=_backend):  # noqa: E306
+                    _r = await retrieve_chat_chunks(
+                        question=_q, dataset_ids=_dsids, rag_backend=_b, reranker_enabled=False,
+                        reranker_available=state.reranker_available, reranker_cls=state.reranker_cls,
+                        mlx_url=os.getenv("MLX_URL", "http://127.0.0.1:8080"), logger=logger,
+                        llm_semaphore=state.llm_semaphore, return_trace=False)
+                    return getattr(_r, "chunks", _r)
+
+                async def _mail_fn(_q, _b=_backend):  # noqa: E306
+                    return await maybe_answer_mail_query(_q, _b)
+            _ures = await run_unified_construction_harness_async(
+                req.question, project_id=pid, dataset_ids=_uds, vector_fn=_vector_fn, mail_fn=_mail_fn)
             if _ures is not None:   # поддержанный intent → честный evidence-ответ (вкл. MISSING)
                 _ad = _ures.answer_data or {}
                 _intent = (_ad.get("route") or {}).get("intent", _ad.get("intent", "construction"))
                 _reply = _mode_reply(compose_unified_answer(_ures), _intent,
                                      "unified_construction_harness", crag="EVIDENCE")
                 _ev = {b.type.value: len(b.items) for b in _ures.evidence_blocks}
-                _tiers = _ad.get("searched_tiers", [])
-                # v0.9 observability: tier'ы поиска + статус адаптеров (без тела писем/чувствительного)
-                _reply["query_route"]["version"] = "unified_construction_harness_v0_9"
+                _astat = _ad.get("adapter_statuses", {})
+                # v0.10 observability: tier'ы + статус адаптеров (parquet/lexical/vector/mail/workbook)
+                _reply["query_route"]["version"] = "unified_construction_harness_v0_10"
                 _reply["query_route"]["intent"] = _intent
                 _reply["query_route"]["source_scope"] = _ad.get("source_scope", "")
                 _reply["query_route"]["provenance"] = _ad.get("provenance", "")
@@ -1070,10 +1085,11 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 _reply["evidence_summary"] = _ev
                 _reply["sources"] = list(_ures.sources or [])
                 _reply["unified_trace"] = {
-                    "version": "unified_construction_harness_v0_9", "intent": _intent,
+                    "version": "unified_construction_harness_v0_10", "intent": _intent,
                     "source_scope": _ad.get("source_scope", ""), "query_terms": _ad.get("query_terms", []),
                     "dataset_scope": _uds, "needs_scope": bool(_ad.get("needs_scope")),
-                    "searched_tiers": _tiers, "adapter_warnings": _ad.get("adapter_warnings", []),
+                    "searched_tiers": _ad.get("searched_tiers", []), "adapter_statuses": _astat,
+                    "adapter_warnings": _ad.get("adapter_warnings", []) + list(_ures.warnings or []),
                     "tools": [t.get("tool") for t in (_ures.tool_trace or [])],
                     "sources_count": len(_ures.sources or []), "evidence": _ev,
                     "blockers_count": sum(len(it.blockers) for b in _ures.evidence_blocks for it in b.items),

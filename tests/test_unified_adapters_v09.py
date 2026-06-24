@@ -141,9 +141,9 @@ def test_mail_no_source_actionable(tmp_path):
 async def test_live_trace_v09_has_tiers(live_chat):
     r = await chat_router._run_chat(
         chat_router.ChatRequest(question="правила расстановки ОЗК"))
-    assert r["query_route"]["version"] == "unified_construction_harness_v0_9"
+    assert r["query_route"]["version"] == "unified_construction_harness_v0_10"
     ut = r["unified_trace"]
-    assert ut["version"] == "unified_construction_harness_v0_9"
+    assert ut["version"] == "unified_construction_harness_v0_10"
     assert "searched_tiers" in ut and "adapter_warnings" in ut
 
 @pytest.mark.asyncio

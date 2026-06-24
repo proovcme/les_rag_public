@@ -839,6 +839,71 @@ def maybe_unified_construction_harness(question: str, *, project_id: int = 0,
                                             storage_root=storage_root)
 
 
+_VECTOR_INTENTS = {"norm_qa", "document_qa"}
+_SOURCE_SCOPED_INTENTS = {"asbuilt_extract", "project_doc_entity_search", "source_scoped_entity_search"}
+_MAIL_INTENTS = {"mail_entity_search", "mail_qa"}
+
+
+async def run_unified_construction_harness_async(question: str, *, project_id: int = 0,
+                                                 dataset_ids: list[str] | None = None,
+                                                 storage_root: Path | None = None,
+                                                 vector_fn=None, mail_fn=None) -> ConstructionHarnessResult | None:
+    """v0.10 sync-first + async-escalate. Sync делает tier 1-3 (offline-safe), затем при наличии
+    backend (vector_fn/mail_fn) эскалирует tier-4 vector / mail. Backend нет → честный unavailable.
+    Семантический vector-матч без точного термина → weak_related, НЕ «найдено»."""
+    from proxy.services.source_adapters import (
+        search_vector_chunks_async, retrieve_mail_evidence_async, FOUND, WEAK_RELATED)
+    res = run_unified_construction_harness(question, project_id=project_id, dataset_ids=dataset_ids,
+                                           storage_root=storage_root)
+    if res is None:
+        return None
+    ad = res.answer_data
+    intent = (ad.get("route") or {}).get("intent", ad.get("intent", ""))
+    statuses: dict[str, str] = {"parquet": "used", "metadata": "used",
+                                "lexical": "used" if "lexical_chunk" in ad.get("searched_tiers", []) else "skipped"}
+    # эскалируем только если sync дал no_data (нашли в tier 1-3 → не трогаем)
+    if res.total_status == "no_data":
+        if intent in _VECTOR_INTENTS and vector_fn is not None:
+            vec = await search_vector_chunks_async(question, dataset_ids=dataset_ids, vector_fn=vector_fn)
+            statuses["vector"] = vec.status
+            res.warnings.extend(vec.warnings)
+            if vec.status == FOUND:
+                items = [EvidenceItem(EvidenceType.RETRIEVED, m.snippet or m.file_name,
+                                      source_refs=[m.source_ref], status="supported") for m in vec.matches]
+                res.evidence_blocks = [block_of(EvidenceType.RETRIEVED, "Найдено (vector)", items)]
+                res.sources = [m.source_ref for m in vec.matches]
+                res.total_status = "complete"
+        elif intent in _SOURCE_SCOPED_INTENTS and vector_fn is not None:
+            eq = extract_source_scoped_query(question)
+            scope_types = _SCOPE_DOC_TYPES.get(eq.source_scope, set())
+            vec = await search_vector_chunks_async(question, dataset_ids=dataset_ids, doc_type_filter=scope_types,
+                                                   exact_terms=eq.exact_terms or eq.query_terms,
+                                                   require_exact=True, vector_fn=vector_fn)
+            statuses["vector"] = vec.status
+            res.warnings.extend(vec.warnings)
+            if vec.status == FOUND:                     # точное вхождение термина в vector-сниппете
+                items = [EvidenceItem(EvidenceType.RETRIEVED, f"{m.matched_term} в {m.file_name} (vector)",
+                                      source_refs=[m.source_ref], status="supported") for m in vec.matches]
+                res.evidence_blocks.insert(0, block_of(EvidenceType.RETRIEVED, "Найдено (vector, точное)", items))
+                res.sources = [m.source_ref for m in vec.matches]
+                res.total_status = "complete"
+            elif vec.status == WEAK_RELATED:            # семантически близко, но термина нет — НЕ «найдено»
+                res.warnings.append("vector: похожие документы есть, точного термина нет — не подтверждение")
+        elif intent in _MAIL_INTENTS and mail_fn is not None:
+            ml = await retrieve_mail_evidence_async(extract_source_scoped_query(question).query_terms or [question],
+                                                    question, mail_fn=mail_fn)
+            statuses["mail"] = ml.status
+            res.warnings.extend(ml.warnings)
+            if ml.status == FOUND:
+                items = [EvidenceItem(EvidenceType.RETRIEVED, f"{m.file_name}: {m.snippet}"[:140],
+                                      source_refs=[m.source_ref], status="supported") for m in ml.matches]
+                res.evidence_blocks = [block_of(EvidenceType.RETRIEVED, "Найденные письма", items)]
+                res.sources = [m.source_ref for m in ml.matches]
+                res.total_status = "complete"
+    ad["adapter_statuses"] = statuses
+    return res
+
+
 # ── composer: human-readable из evidence (без фактов/чисел вне evidence) ─────────────────
 
 _BLOCK_ORDER = [EvidenceType.RETRIEVED, EvidenceType.COMPUTED, EvidenceType.ASSUMED,
