@@ -581,9 +581,17 @@ def _handle_norm_qa(question, *, project_id=0, dataset_ids=None, storage_root=No
         warns += list(vec.warnings)
     ad = {"intent": "norm_qa", "query_terms": terms, "searched_tiers": tiers, "adapter_warnings": warns}
     if not matches:
-        it = EvidenceItem(EvidenceType.MISSING, "Нормативный источник не найден",
-                          blockers=[f"искал по tier'ам: {', '.join(tiers)}; источник по запросу не найден "
-                                    f"(нормативного утверждения без источника не даю)"], status="missing")
+        # v0.11: конкретизируем причину через index-health (no_lexical_index ≠ просто «не найдено»)
+        health_note = ""
+        if dataset_ids:
+            from proxy.services.source_adapters import inspect_dataset_index_health
+            h = inspect_dataset_index_health(dataset_ids, storage_root=storage_root)
+            ad["index_health"] = h
+            if h["total_lexical_chunks"] == 0:
+                health_note = " ПРИЧИНА: корпус не проиндексирован (no_lexical_index) — проиндексируйте документы"
+        blk = (f"искал по tier'ам: {', '.join(tiers)}; источник по запросу не найден "
+               f"(нормативного утверждения без источника не даю).{health_note}")
+        it = EvidenceItem(EvidenceType.MISSING, "Нормативный источник не найден", blockers=[blk], status="missing")
         return ConstructionHarnessResult(answer_data=ad,
                                          evidence_blocks=[block_of(EvidenceType.MISSING, "Нормы", [it])],
                                          total_status="no_data", warnings=warns)

@@ -91,3 +91,43 @@ backend) → честный unavailable. `_run_chat` строит vector_fn/mail
 - реальный resource-price DB/ФГИС (bridge готов, not_found). **На реальном проекте в GUI прогон ещё не
   делался** — оператору включить флаг в рантайме (`LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED=1`) и
   `smoke_unified_v09.py --dataset-id <id> --append-ledger`.
+
+## ✅ v0.11 (2026-06-24): REAL-DATA ACCEPTANCE (26 датасетов рантайма, read-only)
+
+**runtime flag NOT changed by policy** — оператор не давал явного разрешения; прогон только через
+script-smoke на реальных данных `/Users/ovc/LES/storage/datasets` (read-only). `inspect_dataset_index_
+health` (§5) превращает общий lexical_miss в КОНКРЕТНЫЙ no_lexical_index/no_parquet.
+
+**Главное открытие о реальных данных:** датасеты рантайма НЕ хранят `_parquet/` — это `.md`/`.docx`/
+`.eml`, проиндексированные в Qdrant/lexical. parquet-путь harness'а (ВОР/ЛСР/source-scoped-по-строкам)
+на реале пуст; нужен lexical/vector (в dev-view индекс пуст → no_lexical_index).
+
+**Прогон датасета 844a2b53 (27 реальных ГОСТ/СП, 16 вопросов) — 16/16 классифицировано верно:**
+
+| вопрос-класс | route | status | failure_type | вердикт |
+|---|---|---|---|---|
+| опиши проект + реестр | project_document_registry | **complete (27 src)** | — | ✅ WIN: registry РАБОТАЕТ на реальных ГОСТ/СП |
+| найди ОЗК/КДУ в актах | asbuilt_extract | no_data | `no_source_in_scope` | OK (нет актов в норм-датасете) |
+| правила/нормы (×4) | norm_qa | no_data | `no_lexical_index` | limitation (индекс пуст → проиндексировать) |
+| почта (×2) | mail_entity_search | no_data | `mail_backend_not_configured` | limitation |
+| ВОР/ЛСР | bor/estimate | no_data | `f9_not_found_no_parquet` | OK (Ф9 не выгружен как parquet) |
+| обсчёт/КАЦ | resource_cost_calc | **complete** | — | ✅ real workbook |
+
+**Категории (real): no_source_in_scope=4, no_lexical_index=4, mail_backend_not_configured=2,
+f9_not_found_no_parquet=2.** Все — честные limitation'ы (нет источника нужного типа в датасете), НЕ
+баги: маршрут верный, evidence честный, нет фейков/галлюцинаций. elapsed 0.2–155 мс.
+
+**Закрыто в v0.11 (failure-driven):**
+- ✅ `lexical_miss` → конкретный **`no_lexical_index`** через index-health (norm_qa MISSING называет
+  причину: «корпус не проиндексирован, проиндексируйте документы», а не общее «не найдено»).
+- ✅ failure-классификация по intent (был баг: asbuilt-без-актов помечался mail → теперь no_source_in_scope).
+
+**Блокировано отсутствием инфраструктуры (не баг, нужен оператор/рантайм):**
+- `no_lexical_index` — индекс lexical_chunks пуст в dev-view (в рантайме наполнен; нужен прогон ТАМ).
+- `mail_backend_not_configured` — async mail_query требует живой rag_backend (есть в рантайме).
+- `f9_not_found_no_parquet` — реальные Ф9/ВОР индексируются, не лежат parquet'ом в датасете.
+
+**Следующий шаг — РЕАЛЬНЫЙ прогон В РАНТАЙМЕ** (оператор включает флаг): тогда lexical/vector/mail
+наполнены → no_lexical_index/mail закроются реальными RETRIEVED. Команда: `LES_UNIFIED_CONSTRUCTION_
+HARNESS_ENABLED=1 python scripts/smoke_unified_v11.py --dataset-id <ID> --storage-root /Users/ovc/LES/
+storage/datasets --append-ledger`.

@@ -208,6 +208,61 @@ async def search_vector_chunks_async(question: str, *, dataset_ids: list[str] | 
                                trace=[{"adapter": "vector", "chunks": len(chunks), "weak": weak}])
 
 
+def inspect_dataset_index_health(dataset_ids: list[str], *, storage_root: Any = None) -> dict[str, Any]:
+    """v0.11 диагностика: чем РЕАЛЬНО наполнен датасет (parquet/файлы/lexical/mail/doc-типы). Превращает
+    общий lexical_miss в конкретный no_lexical_index/no_parquet. Без дорогих сканов (только count)."""
+    from pathlib import Path as _P
+    from collections import Counter
+    root = _P(storage_root) if storage_root else _P("storage/datasets")
+    # lexical-счётчик по датасету (если индекс есть)
+    lex_counts: dict[str, int] = {}
+    try:
+        from proxy.services.lexical_index_service import LexicalIndex, lexical_enabled
+        if lexical_enabled():
+            idx = LexicalIndex()
+            with idx.connect() as conn:
+                for ds in dataset_ids:
+                    try:
+                        lex_counts[ds] = conn.execute(
+                            "SELECT count(*) FROM lexical_chunks WHERE dataset_id=?", (ds,)).fetchone()[0]
+                    except Exception:  # noqa: BLE001
+                        lex_counts[ds] = -1
+    except Exception:  # noqa: BLE001
+        lex_counts = {}
+    out = []
+    for ds in dataset_ids:
+        ddir = root / ds
+        parquet = files = mail = 0
+        doc_types: Counter = Counter()
+        if ddir.exists():
+            from proxy.services.unified_construction_harness_service import classify_doc_type
+            for p in ddir.rglob("*"):
+                if not p.is_file() or p.name.startswith("."):
+                    continue
+                if p.suffix.lower() == ".parquet":
+                    parquet += 1
+                else:
+                    files += 1
+                    if p.suffix.lower() == ".eml":
+                        mail += 1
+                    doc_types[classify_doc_type(p.name)] += 1
+        lex = lex_counts.get(ds, 0 if lex_counts else None)
+        warns = []
+        if parquet == 0:
+            warns.append("no_parquet")
+        if lex is not None and lex <= 0:
+            warns.append("no_lexical_index")
+        elif lex is None:
+            warns.append("lexical_unavailable")
+        if mail == 0:
+            warns.append("no_mail_source")
+        if files == 0 and parquet == 0:
+            warns.append("empty_dataset")
+        out.append({"dataset_id": ds, "parquet_count": parquet, "file_count": files, "mail_count": mail,
+                    "lexical_chunk_count": lex, "doc_types": dict(doc_types), "warnings": warns})
+    return {"datasets": out, "total_lexical_chunks": sum(v for v in lex_counts.values() if v and v > 0)}
+
+
 async def retrieve_mail_evidence_async(query_terms: list[str], question: str = "", *,
                                        mail_fn: MailFn | None = None, timeout_s: float = 8.0) -> SourceAdapterResult:
     """Read-only поиск по почте через инжектированный mail_fn (обёртка maybe_answer_mail_query). Нет fn →
