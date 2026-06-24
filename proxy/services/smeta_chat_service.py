@@ -244,13 +244,24 @@ def _answer_object_estimate(q: str) -> Optional[dict[str, Any]]:
     lines.append(f"+ непредвиденные {_fmt_num(tot.get('contingency_pct'))}%: {_fmt_num(tot.get('contingency'))} ₽")
     lines.append(f"+ НДС {_fmt_num(tot.get('vat_pct'))}%: {_fmt_num(tot.get('vat'))} ₽")
     lines.append(f"**━━ ВСЕГО (общая цена с НДС): {_fmt_num(tot.get('grand_total'))} ₽**")
+    # Codex §10.1B: число COMPUTED — строгое ТОЛЬКО относительно явной базы и допущений ниже.
+    # Это не итог по проекту, а условный расчёт по шаблону. Честность важнее красивой цифры.
+    lines.append("_⚠ УСЛОВНО строгое: числа вычислены из ГЭСН по допущениям ниже (шаблон "
+                 f"«{head}»), это НЕ смета по проекту — состав укрупнён, не ВОР с чертежей._")
     if r.get("missing_codes"):
         lines.append(f"⚠ нет в базе: {', '.join(r['missing_codes'])}")
     lines.append(f"⚙ Состав укрупнённый ({tot.get('positions')} поз., типовой) — "
                  f"отделка/проёмы/инженерка добавляются в шаблон.")
     if r.get("assumptions"):
         lines.append("Допущения: " + "; ".join(r["assumptions"]))
-    return {"answer": "\n".join(lines), "operation": "object_estimate"}
+    # provenance (Codex §10.1B): класс числа + база + допущения — структурно, для claim-валидации.
+    provenance = {
+        "kind": "COMPUTED",
+        "basis": [f"template:{r.get('template', {}).get('id')}", "ГЭСН-2022"],
+        "assumptions": r.get("assumptions", []),
+        "confidence": "conditional",
+    }
+    return {"answer": "\n".join(lines), "operation": "object_estimate", "provenance": provenance}
 
 
 def _humanize_qty(qty: Any, unit: str) -> str:

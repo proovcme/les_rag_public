@@ -926,29 +926,34 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 "command": cmd_res.get("command"),
             }
 
-    # ── ЯВНЫЕ РЕЖИМЫ из UI (пользователь выбрал → форсим путь, минуя угадайку роутера) ──
-    # smeta/review/kp → детерминированный ответ; rag/free гейтят роутер+каскад ниже.
-    _MODE = (req.mode or "").strip().lower()
+    # ── МАРШРУТИЗАЦИЯ ЧЕРЕЗ ProfileResolver (Codex §10.1A: единый контракт) ──
+    # Все источники выбора пути сводятся к ProfileResolution. Сейчас формализован явный режим
+    # (mode→profile); router/каскад резолвятся ниже и помечаются профилем auto. Поведение 1:1
+    # с прежним диспетчером по _MODE (порт, не переписывание). Резолвер сам не отвечает (§10.3 №4).
+    from proxy.services.profile_resolver import resolve as _resolve_profile
+    _resolution = _resolve_profile(mode=req.mode, question=req.question)
+    _PROFILE = _resolution.profile_id
 
     def _mode_reply(answer: str, operation: str, channel: str, crag: str = "DETERMINISTIC") -> dict:
-        """Единый shape ответа для режимных каналов (+ запись в историю)."""
+        """Единый shape ответа для режимных каналов (+ запись в историю + след профиля)."""
+        route = {"channel": channel, "operation": operation, "profile": _resolution.as_trace()}
         hid = None
         try:
             hid = save_chat_history(
                 question=req.question, answer=answer, sources=[],
                 crag_status=crag, latency_sec=0.0, tokens=0,
                 session_id=req.session_id,
-                query_route={"channel": channel, "operation": operation}, validation_enabled=False,
+                query_route=route, validation_enabled=False,
             )
         except Exception as _hist_err:  # noqa: BLE001
             logger.warning("[HISTORY] %s save failed: %s", channel, _hist_err)
         return {
             "answer": answer, "crag_status": crag, "sources": [], "history_id": hid,
-            "query_route": {"channel": channel, "operation": operation},
+            "query_route": route,
             "validation": {"enabled": False, "reason": channel},
         }
 
-    if _MODE == "smeta":
+    if _PROFILE == "object_estimate":
         # Режим Смета = намерение УЖЕ задано → object_estimate НАПРЯМУЮ (минуя keyword-гейт
         # «смет»/«посчитай» в maybe_handle_smeta_query: в режиме слово-триггер не нужно) и минуя
         # роутер/RAG. Не объект-смета (цена/КАЦ/код) → maybe_handle. Нет данных → просим уточнить.
@@ -961,12 +966,12 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         }
         return _mode_reply(sm["answer"], sm.get("operation", "object_estimate"), "smeta_mode")
 
-    if _MODE == "review":
+    if _PROFILE == "normcontrol":
         # Нормоконтроль документов проекта (формальный, без LLM) → таблица замечаний.
         answer = await _run_project_normcontrol(req, pid)
         return _mode_reply(answer, "normcontrol", "review_mode")
 
-    if _MODE == "kp":
+    if _PROFILE == "kp_stub":
         # КП = генерация коммерческого предложения по материалам. Задел на будущее —
         # честная заглушка, НЕ фейковый КП.
         answer = (
@@ -977,7 +982,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         )
         return _mode_reply(answer, "kp_stub", "kp_mode")
 
-    if _MODE == "free":
+    if _PROFILE == "free_llm":
         # Свободный: прямой LLM БЕЗ ретрива (отвечает из своих знаний) + мягкая плашка.
         # Изолированный путь — RAG-конвейер не трогаем.
         answer = await _run_free_mode(req, token_sink)
@@ -1012,7 +1017,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     # Режим «РАГ» (явно выбран): форсим заземлённый RAG — пропускаем роутер/каскад/автозаметку,
     # чтобы ничто не увело запрос в детерминированный канал. reply=None → дальше в RAG-конвейер.
     from proxy.services.agent_router_service import maybe_agent_route, router_primary
-    if _MODE != "rag":
+    if _PROFILE != "grounded_rag":
         if router_primary():
             reply = maybe_agent_route(req.question, project_id=pid)
             if reply is not None:
