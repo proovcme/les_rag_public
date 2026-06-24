@@ -175,6 +175,31 @@ def _clean_chunk_text(text: str) -> str:
     return t
 
 
+_NUM_RUN_RE = re.compile(r"\d[\d  .,]{2,}\d")
+
+
+def numeric_provenance_check(answer: str, context: str, *, max_flags: int = 5) -> list[str]:
+    """Числа в ОТВЕТЕ (4+ значащих цифр), которых НЕТ в контексте — возможно не заземлённые
+    (Codex §8, пет-гард, ТОЛЬКО метит). RAG не должен сам считать: число берётся из контекста.
+    Нормализуем разделители (15 030,72 ↔ 15030.72). Годы (1900-2099) и короткие — пропускаем."""
+    def _norm(s: str) -> str:
+        return re.sub(r"[  .,]", "", s or "")
+
+    ctx = _norm(context)
+    flagged: list[str] = []
+    for m in _NUM_RUN_RE.finditer(answer or ""):
+        digits = re.sub(r"\D", "", m.group())
+        if len(digits) < 4:
+            continue
+        if len(digits) == 4 and 1900 <= int(digits) <= 2099:   # год — не флагуем
+            continue
+        if digits not in ctx:
+            flagged.append(m.group().strip())
+        if len(flagged) >= max_flags:
+            break
+    return flagged
+
+
 def build_context(chunks: Iterable[SourceChunk], max_chars: int, *, include_metadata: bool = False) -> str:
     parts: list[str] = []
     total = 0

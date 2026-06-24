@@ -892,6 +892,18 @@ async def _run_free_mode(req: "ChatRequest", token_sink=None) -> str:
     return disclaimer + "".join(acc).strip()
 
 
+def _version_stamp() -> dict:
+    """Version-stamp для воспроизводимости (Codex §15, пет-размер): через месяц объяснить,
+    почему тот же запрос дал другой ответ. Версии — из env/констант, без отдельного реестра."""
+    return {
+        "embed_model": os.getenv("EMBED_MODEL", "?"),
+        "collection": os.getenv("RAG_COLLECTION", "") or "default",
+        "norm_base": "ГЭСН-2022",
+        "prompt": "sys_normal_v1",
+        "profiles": "v1",
+    }
+
+
 async def _run_chat(req: ChatRequest, token_sink=None):
     """Ядро чата. token_sink=None — обычный ответ (dict). Если задан — корутина
     `await token_sink({"event":..., "data":...})` получает события стриминга по
@@ -951,6 +963,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             "answer": answer, "crag_status": crag, "sources": [], "history_id": hid,
             "query_route": route,
             "validation": {"enabled": False, "reason": channel},
+            "versions": _version_stamp(),
         }
 
     if _PROFILE == "object_estimate":
@@ -2454,6 +2467,14 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     except Exception as cache_err:
                         logger.warning("[SESSION_CACHE] store skipped: %s", cache_err)
 
+                # Numeric provenance гард (Codex §8, пет, flag-only): числа в ответе, которых нет
+                # в контексте — возможно не заземлённые. Метим, не блокируем. Сбой → пропуск.
+                try:
+                    from proxy.services.saferag_service import numeric_provenance_check
+                    _num_unverified = numeric_provenance_check(answer, context)
+                except Exception:  # noqa: BLE001
+                    _num_unverified = []
+
                 response: dict[str, Any] = {
                     "answer": answer,
                     "crag_status": crag_status,
@@ -2466,6 +2487,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     "history_id": history_id,
                     "source_excerpts": source_excerpts(chunks),
                     "class_suggestions": class_suggestions,
+                    "versions": _version_stamp(),
+                    "numeric_unverified": _num_unverified,
                 }
 
                 # W6.7: source_id CAD/BIM-элементов из текста чанков → ответ + снимок
