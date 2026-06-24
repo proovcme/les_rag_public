@@ -1126,5 +1126,88 @@ body, .nicegui-content {
 /* 7. СТРОКИ ТАБЛИЦ — наведение читается мягче, выделяет текущую строку. */
 .q-table tbody tr { transition: background-color .14s ease; }
 .q-table tbody tr:hover td { background: var(--bg-mod) !important; }
+
+/* ═══ EVIDENCE UI v0.16 — статус-полоска, бейджи, source-chips, проза ═══════════════════ */
+
+/* Проза ответа — читаемый sans (моноширинный оставляем кодам/таблицам/числам). */
+:root { --font-prose: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
+        'Inter', system-ui, sans-serif; }
+.sov-chat-md, .sov-chat-message-text, .sov-artifact-markdown {
+  font-family: var(--font-prose) !important;
+  line-height: 1.55;
+}
+.sov-chat-md code, .sov-chat-message-text code { font-family: var(--font) !important; }
+
+/* Статус-полоска ответа: статус + бейджи evidence + источники + intent. */
+.sov-ev-header {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 9px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(138,162,184,.18);
+}
+.sov-ev-status {
+  font-family: var(--font);
+  font-size: .6rem;
+  font-weight: 900;
+  letter-spacing: .06em;
+  padding: 2px 9px;
+  border-radius: 5px;
+  border: 1px solid currentColor;
+}
+.sov-ev-badge {
+  font-family: var(--font);
+  font-size: .56rem;
+  font-weight: 800;
+  letter-spacing: .04em;
+  padding: 2px 7px;
+  border-radius: 5px;
+  border: 1px solid color-mix(in srgb, currentColor 42%, transparent);
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+.sov-ev-meta { color: var(--dim); font-size: .62rem; font-family: var(--font); }
+/* Сдержанные семантические тона (не неон). */
+.sov-ev-ok   { color: var(--ok); }
+.sov-ev-acc  { color: var(--accent); }
+.sov-ev-warn { color: var(--warn); }
+.sov-ev-err  { color: var(--err); }
+.sov-ev-dim  { color: var(--dim); }
+.sov-ev-status.sov-ev-ok  { background: rgba(34,224,111,.10); }
+.sov-ev-status.sov-ev-warn{ background: rgba(255,209,102,.10); }
+.sov-ev-status.sov-ev-err { background: rgba(255,107,107,.11); }
+.sov-ev-status.sov-ev-dim { background: rgba(138,162,184,.10); }
+
+/* Trace — компактный, свёрнут по умолчанию. */
+.sov-ev-trace { margin-top: 8px; }
+.sov-ev-trace .q-expansion-item__label { font-size: .62rem; color: var(--dim); }
+.sov-ev-trace-text { font-family: var(--font); font-size: .6rem; color: var(--dim); line-height: 1.5; }
+
+/* Source-chips: «N · file · абз.85» — кликабельный вид, моноширинный локатор. */
+.src-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font);
+  font-size: .58rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 5px;
+  border: 1px solid rgba(34,224,111,.45);
+  color: var(--ok);
+  background: rgba(34,224,111,.07);
+  cursor: default;
+  transition: background-color .14s ease, border-color .14s ease;
+}
+.src-tag:hover { background: rgba(34,224,111,.14); border-color: rgba(34,224,111,.7); }
+
+/* Inline-таблица в чате: читаемее, не «терминал». */
+.sov-chat-inline-table { font-family: var(--font); font-size: .74rem; }
+.sov-chat-inline-table thead th {
+  position: sticky; top: 0;
+  background: var(--bg-mod) !important;
+  font-weight: 800; letter-spacing: .02em;
+}
+.sov-chat-inline-table td, .sov-chat-inline-table th { font-variant-numeric: tabular-nums; }
 </style>
 """

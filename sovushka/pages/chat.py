@@ -924,16 +924,28 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         chat_scroll.scroll_to(percent=1)
 
     def _source_label(source) -> str:
-        if isinstance(source, dict):
-            return str(source.get("file") or source.get("name") or source)
-        return str(source)
+        # v0.16: «N · file · абз.85» вместо сырого пути; нет ref → «без ссылки» (не фейк-линк).
+        from sovushka.answer_render import source_chip
+        if isinstance(source, dict) and not source.get("source_ref") and (source.get("file") or source.get("name")):
+            return str(source.get("file") or source.get("name"))
+        c = source_chip(source)
+        if not c["has_ref"]:
+            return str(source) or "без ссылки"
+        parts = [c["file"]] + ([c["locator"]] if c["locator"] else [])
+        return " · ".join(p for p in parts if p)
 
     def _render_source_tags(srcs: list, crag: str = "", meta: dict | None = None):
+        from sovushka.answer_render import source_chip
         if not srcs and not crag and not meta:
             return
         with ui.row().classes("msg-srcs"):
-            for source in srcs:
-                ui.label(_source_label(source)).classes("src-tag")
+            for i, source in enumerate(srcs, 1):
+                c = source_chip(source, i)
+                cls = "src-tag src-tag-warn" if (c["weak"] or not c["has_ref"]) else "src-tag"
+                lbl = f"{i} · {_source_label(source)}"
+                el = ui.label(lbl).classes(cls)
+                if c["kind"]:
+                    el.tooltip(c["kind"] + ("" if c["has_ref"] else " · без ссылки"))
             if crag:
                 if crag == "VERIFIED":
                     cls = "src-tag"
@@ -1264,9 +1276,19 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         return segments
 
     def _render_inline_table(rows: list[dict]) -> None:
-        """Красивая таблица в пузыре чата (ui.table: сортировка, лёгкий стиль)."""
+        """Красивая таблица в пузыре чата (ui.table: сортировка, лёгкий стиль).
+        v0.16: снимаем inline-markdown с ячеек (`**Тип**`→`Тип`), числовые колонки — вправо."""
+        from sovushka.answer_render import clean_table_rows, strip_markdown_cell
+        rows = clean_table_rows(rows)
         keys = list(rows[0].keys()) if rows else []
-        cols = [{"name": k, "label": k, "field": k, "align": "left", "sortable": True} for k in keys]
+
+        def _numeric(k):
+            vals = [str(r.get(k, "")).replace(",", ".").replace(" ", "") for r in rows]
+            ok = [v for v in vals if v]
+            return bool(ok) and all(re.fullmatch(r"-?\d+(\.\d+)?", v or "") for v in ok)
+
+        cols = [{"name": k, "label": strip_markdown_cell(k), "field": k,
+                 "align": "right" if _numeric(k) else "left", "sortable": True} for k in keys]
         ui.table(columns=cols, rows=rows, pagination=10).props("dense flat bordered").classes(
             "sov-chat-inline-table"
         )
@@ -1401,6 +1423,31 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                               on_click=lambda u=url, n=name: asyncio.create_task(_download_file_artifact(u, n))
                               ).props("flat round dense").tooltip("Скачать")
 
+    def _render_evidence_header(meta: dict | None, srcs: list | None) -> None:
+        """v0.16: компактная статус-полоска ответа — статус + бейджи evidence (RETRIEVED/COMPUTED/
+        ASSUMED/MISSING/BLOCKED) + источники + intent + свёрнутый trace. Нет evidence → ничего
+        (старый рендер сохраняется)."""
+        if not meta:
+            return
+        from sovushka.answer_render import header_summary, trace_summary
+        h = header_summary(meta.get("query_route"), meta.get("evidence_summary"),
+                           len(srcs or []), meta.get("total_status"))
+        if not h["has_evidence"]:
+            return
+        with ui.row().classes("sov-ev-header"):
+            st = h["status"]
+            ui.label(st["label"]).classes(f"sov-ev-status sov-ev-{st['tone']}")
+            for b in h["badges"]:
+                ui.label(f"{b['type']} {b['count']}").classes(f"sov-ev-badge sov-ev-{b['tone']}")
+            if h["sources_count"]:
+                ui.label(f"{h['sources_count']} ист.").classes("sov-ev-meta")
+            if h["intent"]:
+                ui.label(h["intent"]).classes("sov-ev-meta")
+        ts = trace_summary(meta.get("unified_trace"))
+        if ts:
+            with ui.expansion("подробнее (trace)").classes("sov-ev-trace"):
+                ui.label(ts).classes("sov-ev-trace-text")
+
     def _render_chat_bubble(
         text: str,
         class_name: str,
@@ -1411,6 +1458,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         _mode = (meta or {}).get("out_mode", "text")
         _is_ai = "chat-msg-ai" in class_name
         with ui.element("div").classes(class_name) as bubble:
+            if _is_ai:
+                _render_evidence_header(meta, srcs)     # v0.16: статус-полоска сверху
             # AI-ответ с таблицей/диаграммой → рисуем формы прямо в пузыре; SVG и прочее,
             # что inline-рендер не ловит, остаётся на «сыром» тексте + кнопке артефакта.
             rich = _render_rich_body(str(text or "")) if _is_ai else False
@@ -1444,6 +1493,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             bubble.classes(add="chat-msg-error")
         _mode = (meta or {}).get("out_mode", "text")
         with bubble:
+            if not error:
+                _render_evidence_header(meta, srcs)     # v0.16: статус-полоска сверху
             # Формы (таблица/mermaid) рисуем виджетами; сырой стрим-label прячем.
             rich = _render_rich_body(str(text or "")) if (meta and not error) else False
             if rich:
