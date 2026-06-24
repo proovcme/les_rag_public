@@ -187,6 +187,13 @@ def extract_file(path: Path, *, ds: str, rel: str) -> ExtractResult:
         return extract_text_file(path, ds=ds, rel=rel, kind="md_body")
     if ext in (".csv",):
         return extract_text_file(path, ds=ds, rel=rel, kind="csv_row")
+    # v0.17: legacy .xls/.doc — НЕ открываем как .xlsx/.docx (openpyxl/python-docx их не читают,
+    # фейк-таблицы недопустимы). Честный actionable-статус: сконвертировать или подключить парсер.
+    if ext in (".xls", ".doc"):
+        return ExtractResult("legacy_unsupported", warnings=[
+            f"legacy_{ext[1:]}_unsupported: формат {ext} не поддержан без конвертации/совместимого "
+            f"парсера (xlrd/antiword). Сохраните как .xlsx/.docx или подключите парсер — "
+            f"как новый формат НЕ читаем (нет фейк-таблиц)."])
     return ExtractResult("skipped", warnings=[f"unsupported_binary: {ext}"])
 
 

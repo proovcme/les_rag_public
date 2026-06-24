@@ -51,6 +51,7 @@ def inspect_dataset(ds_dir: Path, *, storage_root: Path) -> dict:
         for g, exts in _EXT_GROUPS.items():
             if n.endswith(exts):
                 counts[g] += 1
+    legacy_xls = sum(1 for n in names if n.endswith((".xls", ".doc")) and not n.endswith((".xlsx", ".docx")))
     sc = de.sidecar_count(storage_root, ds)
     manifest = de.read_manifest(storage_root, ds)
     stale = de.sidecar_stale_files(storage_root, ds) if sc else []
@@ -71,6 +72,7 @@ def inspect_dataset(ds_dir: Path, *, storage_root: Path) -> dict:
         "md_count": counts["md"], "eml_count": counts["eml"], "pdf_count": counts["pdf"],
         "docx_count": counts["docx"], "xlsx_count": counts["xlsx"], "txt_count": counts["txt"],
         "csv_count": counts["csv"], "parquet_count": counts["parquet"],
+        "legacy_xls_count": legacy_xls,
         "extractable_count": extractable,
         "sidecar_count": sc, "manifest_exists": manifest is not None, "stale_count": len(stale),
         "likely_project_score": proj, "likely_mail_score": mail,
@@ -179,7 +181,7 @@ def extraction_state_message(*, sidecar_available: bool = False, has_extractable
                              is_runtime: bool = False, write_allowed: bool = False,
                              stale_count: int = 0, no_text_layer_count: int = 0,
                              term_searched: bool = False, term_found: bool = False,
-                             is_eml_dataset: bool = False) -> dict:
+                             is_eml_dataset: bool = False, legacy_xls_count: int = 0) -> dict:
     """Состояние извлечения → {case, message, action, ocr_required}. Приоритет конкретного состояния
     над дженериком. Никогда не «не найдено»/«no_lexical_index», если состояние известно."""
     # G: EML-корпус просмотрен
@@ -208,6 +210,11 @@ def extraction_state_message(*, sidecar_available: bool = False, has_extractable
         return _msg("extraction_write_not_approved",
                     "Извлечение возможно, но запись sidecar в runtime-хранилище не разрешена оператором.",
                     "Включите LES_ALLOW_RUNTIME_SIDECAR_WRITE=1 и подтвердите запись.")
+    # legacy .xls/.doc — честный actionable (не читаем как новый формат, не фейк-таблицы)
+    if legacy_xls_count > 0 and not has_extractable_docs and not sidecar_available:
+        return _msg("legacy_xls_unsupported",
+                    "Найдены legacy .xls/.doc — не поддержаны без конвертации/совместимого парсера.",
+                    "Сохраните как .xlsx/.docx или подключите xlrd/antiword-совместимый парсер.")
     # B: извлекаемые есть, sidecar нет
     if has_extractable_docs:
         return _msg("extraction_required",
@@ -358,7 +365,8 @@ def extraction_status(dataset_id: str, *, storage_root: Path) -> dict:
     state = extraction_state_message(
         sidecar_available=inv["sidecar_count"] > 0, has_extractable_docs=inv["extractable_count"] > 0,
         is_runtime=is_runtime, write_allowed=write_allowed, stale_count=inv["stale_count"],
-        no_text_layer_count=ocr["pdf_no_text_layer_count"], is_eml_dataset=inv["eml_count"] > 0)
+        no_text_layer_count=ocr["pdf_no_text_layer_count"], is_eml_dataset=inv["eml_count"] > 0,
+        legacy_xls_count=inv.get("legacy_xls_count", 0))
     return {"version": V16_VERSION, "dataset_id": dataset_id, "inventory": inv, "ocr": ocr,
             "state": state, "is_runtime": is_runtime, "write_allowed": write_allowed,
             "sidecar_count": inv["sidecar_count"], "manifest_exists": inv["manifest_exists"],

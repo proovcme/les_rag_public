@@ -39,7 +39,11 @@ def _h_les_md(q: str, pid: int):
 
 
 def _h_registry(q: str, pid: int):
-    from proxy.services.project_registry_chat_service import registry_answer
+    # v0.17: даже если LLM-роутер выбрал project_registry для «реестр документации …» — глобальный
+    # список НЕ выдаём (defense-in-depth): документный запрос уступает дорогу RAG по выбранному объекту.
+    from proxy.services.project_registry_chat_service import is_document_registry_query, registry_answer
+    if is_document_registry_query(q):
+        return None
     return registry_answer()
 
 
@@ -110,9 +114,9 @@ _TOOLS: tuple[dict[str, Any], ...] = (
              "договор/титул (нужен путь).",
      "examples": ["пойми папку /Projects/Банкрот", "собери LES.md для этого объекта"]},
     {"name": "project_registry", "handler": _h_registry,
-     "desc": "СПИСОК всех объектов/проектов ЛЕС (реестр, карта). НЕ для вопросов о содержании "
-             "одного объекта.",
-     "examples": ["какие у нас объекты", "покажи реестр проектов"]},
+     "desc": "ГЛОБАЛЬНЫЙ список ВСЕХ объектов/проектов ЛЕС (реестр проектов, карта объектов). НЕ для "
+             "ДОКУМЕНТАЦИИ/документов одного объекта («реестр документации котельной» → none/RAG, НЕ сюда).",
+     "examples": ["какие у нас объекты", "покажи реестр проектов", "список всех проектов"]},
     {"name": "field", "handler": _h_field,
      "desc": "Записать ПОЛЕВОЙ выполненный объём работ в журнал или дать свод по журналу объёмов.",
      "examples": ["прими объём: уложено 120 м кабеля", "сводка по журналу объёмов"]},
@@ -179,6 +183,8 @@ _FEWSHOT: tuple[tuple[str, str], ...] = (
     ("что такое конъюнктурный анализ цен", "glossary"),
     ("запомни что прораб Иванов", "memory"),
     ("какие требования к ширине эвакуационных путей", "none"),
+    ("составь реестр документации котельной", "none"),
+    ("реестр проектов", "project_registry"),
     ("расскажи что известно про дымоудаление на объекте", "none"),
     ("переключись в локальный режим", "preset"),
 )

@@ -1142,7 +1142,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
 
     from proxy.services.asbuilt_chat_service import maybe_handle_asbuilt_query  # приёмка ИД-сканов
     from proxy.services.les_md_chat_service import maybe_handle_les_md_query  # LES.md: пойми папку
-    from proxy.services.project_registry_chat_service import maybe_handle_registry_query  # реестр
+    from proxy.services.project_registry_chat_service import (  # реестр проектов / документации
+        maybe_handle_registry_query, maybe_handle_document_registry)
     from proxy.services.preset_chat_service import maybe_handle_preset_query  # режим local/cloud/mix
     from proxy.services.glossary_chat_service import maybe_handle_glossary_query  # глоссарий: что такое X
     from proxy.services.smeta_chat_service import maybe_handle_smeta_query  # смета: цена/КАЦ/стеснённость
@@ -1154,6 +1155,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         ("preset", lambda: maybe_handle_preset_query(req.question, project_id=pid)),
         ("asbuilt", lambda: maybe_handle_asbuilt_query(req.question, project_id=pid)),
         ("les_md", lambda: maybe_handle_les_md_query(req.question, project_id=pid)),
+        # v0.17: «реестр документации» — scoped (нет scope → actionable MISSING; есть → RAG по объекту),
+        # ПЕРЕД глобальным registry, чтобы документный запрос не уходил в «Реестр проектов ЛЕС».
+        ("doc_registry", lambda: maybe_handle_document_registry(
+            req.question, project_id=pid, dataset_filter=req.dataset_filter or "")),
         ("registry", lambda: maybe_handle_registry_query(req.question, project_id=pid)),
         ("glossary", lambda: maybe_handle_glossary_query(req.question, project_id=pid)),
         ("smeta", lambda: maybe_handle_smeta_query(req.question, project_id=pid)),
