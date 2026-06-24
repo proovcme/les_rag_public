@@ -102,10 +102,26 @@ Proxy       :8050  (FastAPI)  ── /api/chat, /api/datasets, /api/runtime, /ap
 - **Управление памятью MLX:** `backend/mlx_adapter.py` — TTL-выгрузка моделей, metal-семафор (один движок к Metal), RAM-гарды.
 - **Сервисы (launchd):** `*_launchd.plist` (qdrant/mlx/proxy/sovushka/pauk/qwen-index) + `*.command`. **Агент НЕ должен рестартить сервисы без явной нужды.**
 
+## Unified Construction Harness + Scope + Versioning (v0.16–v0.22)
+
+Флаг харнесса `LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED` — **OFF по умолчанию**. Версии — в [docs/releases.md](releases.md), число `HARNESS_VERSION` в `version_service.py` (двигать каждую версию).
+
+- **`proxy/services/scope_service.py` (v0.21–0.22)** — модель ОБЛАСТИ ПОИСКА. `resolve_scope` (all/project/projects/dataset/datasets/mixed; legacy project_id/dataset_ids/dataset_filter→Scope; явный scope > legacy). `scope_options` (проекты+ВСЕ датасеты+непривязанные+системные-с-reason). `needs_project_scope`/`scope_clarification` (проектный запрос при scope=all → не искать молча, попросить выбрать область). Эндпоинты `GET /api/scope/options`, `POST /api/scope/resolve` (в `runtime.py`). Scope-snapshot пишется в `query_route.scope`.
+- **`proxy/services/deterministic_policy_service.py` (v0.18)** — `can_return_deterministic_final`: легаси-каналы (glossary/registry) дают final-ответ ТОЛЬКО при явном намерении (литеральный термин в запросе / точный глобальный реестр). Убил класс hijack'ов «расскажи про котельную → ОЖР».
+- **`proxy/services/version_service.py` (v0.19–0.20)** — единый центр версий (APP/HARNESS/schema + git + флаги). Deploy stamp (`.les_deploy_stamp.json`): `deployed_commit` + хэш-бандл реально скопированных файлов (cp-деплой ≠ git HEAD). Runtime-divergence детектор. `GET /api/version`. Бейдж версии — `sovushka/components/header.py`.
+- **`proxy/services/sidecar_ops_service.py` (v0.16)** — инвентарь датасетов, классификатор по заголовкам sidecar, extraction-state сообщения, lexical `extracted_fts`, OCR-детект (без OCR), `run_extraction`/`extract_body_op`, user-friendly labels «Подготовить документы». Эндпоинты `…/extract-body/{dry-run,write}`, `extraction-status`.
+- **`proxy/services/doc_type_classifier.py` (v0.17)** — filename→doc_type/discipline (вынесен из unified, чтобы runtime-эндпоинты не тянули весь харнесс).
+- **`proxy/services/doc_extract_service.py`** — sidecar-извлечение PDF/DOCX/XLSX (без OCR; `.xls`→honest `legacy_unsupported`). **`sovushka/answer_render.py`** — чистые render-хелперы (source-chips, evidence-секции, citation/conflict, `answer_copy_text` для «Копировать»).
+- **Ledger:** [docs/unified_harness_failure_ledger.md](unified_harness_failure_ledger.md). **Roadmap до v1:** [ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
+
 ## «Где искать что»
 
 | Хочу… | Смотреть |
 |---|---|
+| Область поиска (scope) / `/api/scope/*` | `proxy/services/scope_service.py`, ScopeSelector в `sovushka/pages/chat.py` |
+| Версию/деплой/что запущено | `proxy/services/version_service.py`, `GET /api/version`, бейдж в `header.py` |
+| Детерминированную маршрутизацию | `proxy/services/deterministic_policy_service.py`, `glossary_chat_service.py`, `project_registry_chat_service.py` |
+| Подготовку документов (sidecar) | `proxy/services/sidecar_ops_service.py` + `doc_extract_service.py` |
 | Поток чата/ответа | `proxy/routers/chat.py` → services (`retrieval`, `saferag`, `runtime_dispatcher`) |
 | Индексацию/эмбеддинги | `backend/qdrant_adapter.py` + `backend/rag_config.py` (профили) |
 | Память/выгрузку моделей | `backend/mlx_adapter.py`, `mlx_host.py` |

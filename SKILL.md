@@ -66,12 +66,30 @@ Live baseline on 2026-06-01:
   - **Template Formatting**: For `GLM-OCR` visual models, always apply the chat template using `apply_chat_template` on the task prompt (e.g. `"Text Recognition:"`) to correctly format and align visual token placeholders `<|image|>` for the language model.
   - **Repetition Mitigation**: In dense document OCR tasks, always pass `repetition_penalty=1.2`, `repetition_context_size=64`, and explicit length constraints like `max_tokens=1024` to prevent infinite token loops at the end of the page text.
 
+## Version / Scope / Sidecar (Unified Construction Harness v0.16–v0.22)
+
+Флаг `LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED` — **OFF по умолчанию** (не менять). Число версии `HARNESS_VERSION` в `proxy/services/version_service.py` — **двигать каждую версию v0.NN** (иначе UI/бейдж отстаёт).
+
+```bash
+# что РЕАЛЬНО запущено (app/harness/git_commit ≠ deployed_commit, deploy stamp, alignment, флаги; без секретов)
+curl -fsS http://127.0.0.1:8050/api/version | python3 -m json.tool
+# область поиска: 28 датасетов (проекты/датасеты/непривязанные/системные)
+curl -fsS http://127.0.0.1:8050/api/scope/options | python3 -m json.tool
+curl -fsS -X POST http://127.0.0.1:8050/api/scope/resolve -H 'content-type: application/json' \
+  -d '{"scope":{"scope_type":"project","project_ids":[2]}}' | python3 -m json.tool
+# подготовка документов к поиску (sidecar) — dry-run; запись только env+confirm:
+curl -fsS -X POST http://127.0.0.1:8050/api/rag/datasets/<id>/extract-body/dry-run | python3 -m json.tool
+```
+
+**Deploy stamp:** деплой = `cp` файлов в `/Users/ovc/LES` (git HEAD рантайма отстаёт — это норма). Стамп пишется на `--apply` деплой-тулом ИЛИ вручную: `python -c "from proxy.services.version_service import write_deploy_stamp; ..."`. `/api/version.deployed_commit` = что реально скопировано; `runtime_alignment` = расхождение repo↔runtime по хэшам.
+
 ## Tests
 
-Run these before finalizing meaningful changes:
+Инвентарь тестов v0.16–v0.22 (230 шт) — **[docs/TEST_INVENTORY.md](docs/TEST_INVENTORY.md)**. Гейт `make verify` (офлайн). Run before finalizing meaningful changes:
 
 ```bash
 uv run pytest -q
+make verify
 git diff --check
 uv lock --check
 ```

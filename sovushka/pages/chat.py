@@ -379,12 +379,14 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     # W17.5: КАРТА ОБЪЕКТА — паспорт выбранного объекта.
                     ui.button(icon="o_dashboard", on_click=lambda: _open_dossier()).props(
                         'flat round dense aria-label="Карта объекта"'
-                    ).classes("sov-icon-btn")
+                    ).classes("sov-icon-btn").tooltip("Карта объекта — паспорт выбранного проекта")
                     mode_chip = ui.label("RAG").classes("sov-chip")
+                    mode_chip.tooltip("Режим ответа: заземлённый поиск по документам (RAG)")
                     validation_chip = ui.label("CRAG ON").classes("sov-chip")
+                    validation_chip.tooltip("Т.О.С.К.А.: проверка ответа на галлюцинации включена")
                     ui.button(icon="o_delete_sweep", on_click=lambda: _clear_chat()).props(
                         'flat round dense aria-label="Очистить чат"'
-                    ).classes("sov-icon-btn")
+                    ).classes("sov-icon-btn").tooltip("Очистить чат")
 
             chat_scroll = ui.scroll_area().classes("sov-chat-scroll")
             with chat_scroll:
