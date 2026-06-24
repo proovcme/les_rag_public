@@ -65,9 +65,9 @@ def test_no_scope_does_not_hallucinate():
 @pytest.mark.asyncio
 async def test_live_trace_v08_resource(live_chat):
     r = await chat_router._run_chat(chat_router.ChatRequest(question="проверь пример обсчёта"))
-    assert r["query_route"]["version"] == "unified_construction_harness_v0_8"
+    assert r["query_route"]["version"] == "unified_construction_harness_v0_9"
     ut = r["unified_trace"]
-    assert ut["version"] == "unified_construction_harness_v0_8"
+    assert ut["version"] == "unified_construction_harness_v0_9"
     assert ut["intent"] == "resource_cost_calc" and ut["total_status"] == "complete"
     assert ut["tools"] and "evidence" in ut and ut["evidence"].get("COMPUTED", 0) > 0
 

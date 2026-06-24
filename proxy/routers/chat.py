@@ -1060,8 +1060,9 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 _reply = _mode_reply(compose_unified_answer(_ures), _intent,
                                      "unified_construction_harness", crag="EVIDENCE")
                 _ev = {b.type.value: len(b.items) for b in _ures.evidence_blocks}
-                # v0.8 observability: структурный unified_trace (без тела писем/чувствительных данных)
-                _reply["query_route"]["version"] = "unified_construction_harness_v0_8"
+                _tiers = _ad.get("searched_tiers", [])
+                # v0.9 observability: tier'ы поиска + статус адаптеров (без тела писем/чувствительного)
+                _reply["query_route"]["version"] = "unified_construction_harness_v0_9"
                 _reply["query_route"]["intent"] = _intent
                 _reply["query_route"]["source_scope"] = _ad.get("source_scope", "")
                 _reply["query_route"]["provenance"] = _ad.get("provenance", "")
@@ -1069,9 +1070,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 _reply["evidence_summary"] = _ev
                 _reply["sources"] = list(_ures.sources or [])
                 _reply["unified_trace"] = {
-                    "version": "unified_construction_harness_v0_8", "intent": _intent,
+                    "version": "unified_construction_harness_v0_9", "intent": _intent,
                     "source_scope": _ad.get("source_scope", ""), "query_terms": _ad.get("query_terms", []),
                     "dataset_scope": _uds, "needs_scope": bool(_ad.get("needs_scope")),
+                    "searched_tiers": _tiers, "adapter_warnings": _ad.get("adapter_warnings", []),
                     "tools": [t.get("tool") for t in (_ures.tool_trace or [])],
                     "sources_count": len(_ures.sources or []), "evidence": _ev,
                     "blockers_count": sum(len(it.blockers) for b in _ures.evidence_blocks for it in b.items),

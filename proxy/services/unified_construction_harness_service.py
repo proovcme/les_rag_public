@@ -425,18 +425,38 @@ def source_scoped_search(eq: "EntitySearchQuery", *, dataset_ids: list[str] | No
             dt = classify_doc_type(p.name)
             (in_scope if dt in scope_types else other).append((ds, p, dt))
     searched = [f"{ds}/{p.name}" for ds, p, _ in in_scope]
+    scope_h = _SCOPE_HUMAN.get(eq.source_scope, eq.source_scope)
+    tiers: list[str] = ["parquet_row", "filename_metadata"]
     if not in_scope:
         return {"status": "no_source", "matches": [], "other_matches": [], "alias": [],
-                "searched_sources": [], "scope_human": _SCOPE_HUMAN.get(eq.source_scope, eq.source_scope)}
+                "searched_sources": [], "scope_human": scope_h, "searched_tiers": tiers, "adapter_warnings": []}
+    # Tier 1+2: parquet-строки + имена файлов нужного doc_type
     matches = _scan_docs_for_terms(in_scope, eq, root)
     if matches:
         return {"status": "found", "matches": matches, "other_matches": [], "alias": [],
-                "searched_sources": searched}
-    # не нашли в нужном источнике → отдельно: другие документы + алиас (Case B/E)
+                "searched_sources": searched, "searched_tiers": tiers, "adapter_warnings": []}
+    # Tier 3: lexical-чанки (тело PDF/доков, scoped по doc_type) — закрывает parquet_only
+    from proxy.services.source_adapters import search_lexical_chunks, search_vector_chunks
+    lex = search_lexical_chunks(eq.exact_terms or eq.query_terms, dataset_ids=dataset_ids,
+                                doc_type_filter=scope_types)
+    tiers.append("lexical_chunk")
+    warns = list(lex.warnings)
+    if lex.status == "found":
+        lex_matches = [{"source_ref": m.source_ref, "file_name": m.file_name, "doc_type": m.source_kind,
+                        "matched_term": m.matched_term, "snippet": m.snippet, "fields": {}} for m in lex.matches]
+        return {"status": "found", "matches": lex_matches, "other_matches": [], "alias": [],
+                "searched_sources": searched, "searched_tiers": tiers, "source_kind": "lexical_chunk",
+                "adapter_warnings": warns}
+    # Tier 4: vector (Qdrant) — в sync-пути unavailable (честный статус, не фейк)
+    vec = search_vector_chunks(" ".join(eq.query_terms), dataset_ids=dataset_ids, doc_type_filter=scope_types)
+    tiers.append("vector_chunk")
+    warns += list(vec.warnings)
+    # не нашли в нужном источнике → другие документы + алиас (Case B/E)
     other_matches = _scan_docs_for_terms(other, eq, root)
     alias = _alias_from_docs(in_scope + other, eq, root)
     return {"status": "not_found", "matches": [], "other_matches": other_matches, "alias": alias,
-            "searched_sources": searched, "scope_human": _SCOPE_HUMAN.get(eq.source_scope, eq.source_scope)}
+            "searched_sources": searched, "scope_human": scope_h, "searched_tiers": tiers,
+            "adapter_warnings": warns}
 
 
 # ── per-intent handlers → ConstructionHarnessResult (evidence) ───────────────────────────
@@ -542,31 +562,35 @@ def _handle_asbuilt(question, *, project_id=0, dataset_ids=None, storage_root=No
 
 
 def _handle_norm_qa(question, *, project_id=0, dataset_ids=None, storage_root=None) -> ConstructionHarnessResult:
-    """Нормативный ответ ТОЛЬКО из источника (lexical/FTS). Нет источника → MISSING, не выдумка."""
-    try:
-        from proxy.services.lexical_index_service import LexicalIndex, lexical_enabled
-        from backend.rag_config import rag_collection_name
-        if not lexical_enabled():
-            raise RuntimeError("lexical off")
-        idx = LexicalIndex()
-        chunks = idx.search(question, collection=rag_collection_name(), dataset_ids=dataset_ids or None, limit=5)
-    except Exception:
-        chunks = []
-    if not chunks:
-        it = EvidenceItem(EvidenceType.MISSING, "Нормативный источник",
-                          blockers=["в выбранных документах нормы по запросу не найдены"], status="missing")
-        return ConstructionHarnessResult(answer_data={"intent": "norm_qa"},
+    """v0.9 layered: lexical exact (tier1) → vector (tier2). Нормативный ответ ТОЛЬКО из источника;
+    нет источника → MISSING с перечнем искомых tier'ов (не выдумка, не пункт СП из памяти)."""
+    from proxy.services.source_adapters import search_lexical_chunks, search_vector_chunks
+    eq = extract_source_scoped_query(question)
+    terms = eq.query_terms or [question]
+    tiers: list[str] = []
+    warns: list[str] = []
+    # tier 1: lexical exact
+    lex = search_lexical_chunks(terms, dataset_ids=dataset_ids)
+    tiers.append("lexical_chunk")
+    warns += list(lex.warnings)
+    matches = lex.matches if lex.status == "found" else []
+    # tier 2: vector (в sync-пути unavailable — честный статус)
+    if not matches:
+        vec = search_vector_chunks(question, dataset_ids=dataset_ids)
+        tiers.append("vector_chunk")
+        warns += list(vec.warnings)
+    ad = {"intent": "norm_qa", "query_terms": terms, "searched_tiers": tiers, "adapter_warnings": warns}
+    if not matches:
+        it = EvidenceItem(EvidenceType.MISSING, "Нормативный источник не найден",
+                          blockers=[f"искал по tier'ам: {', '.join(tiers)}; источник по запросу не найден "
+                                    f"(нормативного утверждения без источника не даю)"], status="missing")
+        return ConstructionHarnessResult(answer_data=ad,
                                          evidence_blocks=[block_of(EvidenceType.MISSING, "Нормы", [it])],
-                                         total_status="no_data")
-    items = []
-    for c in chunks:
-        meta = getattr(c, "meta", {}) or {}
-        doc = str(meta.get("file_name") or getattr(c, "doc_name", "") or "источник")
-        ref = doc + (f"#{meta.get('chunk_ord')}" if meta.get("chunk_ord") is not None else "")
-        items.append(EvidenceItem(EvidenceType.RETRIEVED, (getattr(c, "content", "") or "")[:200],
-                                  source_refs=[ref], status="supported"))
-    return ConstructionHarnessResult(answer_data={"intent": "norm_qa"},
-                                     evidence_blocks=[block_of(EvidenceType.RETRIEVED, "Найдено в нормах", items)],
+                                         total_status="no_data", warnings=warns)
+    items = [EvidenceItem(EvidenceType.RETRIEVED, m.snippet or m.file_name, source_refs=[m.source_ref],
+                          status="supported") for m in matches]
+    return ConstructionHarnessResult(answer_data=ad,
+                                     evidence_blocks=[block_of(EvidenceType.RETRIEVED, "Найдено в нормах/документах", items)],
                                      sources=[i.source_refs[0] for i in items], total_status="complete")
 
 
@@ -646,14 +670,22 @@ def _handle_source_scoped(question, *, project_id=0, dataset_ids=None, storage_r
             block_of(EvidenceType.MISSING, "Нет scope", [it])], total_status="no_data")
     res = source_scoped_search(eq, dataset_ids=dataset_ids, storage_root=storage_root)
     ad["searched_sources"] = res.get("searched_sources", [])
+    ad["searched_tiers"] = res.get("searched_tiers", [])
+    ad["adapter_warnings"] = res.get("adapter_warnings", [])
     term = ", ".join(eq.exact_terms or eq.query_terms)
 
     if res["status"] == "no_source":                          # Case C: нет источника такого типа
+        blk = f"нет документов типа {sorted(_SCOPE_DOC_TYPES.get(eq.source_scope, set()))}"
+        warns = []
+        if eq.source_scope == "mail":                         # mail-адаптер: actionable статус backend
+            from proxy.services.source_adapters import retrieve_mail_evidence
+            m = retrieve_mail_evidence(eq.query_terms, project_id=project_id, dataset_ids=dataset_ids)
+            warns = list(m.warnings)
+            ad["mail_adapter_status"] = m.status
         it = EvidenceItem(EvidenceType.MISSING, f"Источник «{ad['scope_human']}» в проекте не найден",
-                          blockers=[f"нет документов типа {sorted(_SCOPE_DOC_TYPES.get(eq.source_scope, set()))}"],
-                          status="missing")
+                          blockers=[blk], status="missing")
         return ConstructionHarnessResult(answer_data=ad, evidence_blocks=[
-            block_of(EvidenceType.MISSING, "Нет источника", [it])], total_status="no_data")
+            block_of(EvidenceType.MISSING, "Нет источника", [it])], total_status="no_data", warnings=warns)
 
     if res["status"] == "found":
         matches = res["matches"]
@@ -676,11 +708,13 @@ def _handle_source_scoped(question, *, project_id=0, dataset_ids=None, storage_r
             block_of(EvidenceType.RETRIEVED, f"Найдено «{term}» в источнике ({ad['scope_human']})", retr)],
             sources=[m["source_ref"] for m in matches], total_status="complete")
 
-    # not_found в нужном источнике
+    # not_found в нужном источнике — actionable: какие tier'ы искал + что недоступно
+    tiers_h = ", ".join(res.get("searched_tiers", [])) or "—"
     miss = EvidenceItem(EvidenceType.MISSING, f"«{term}» не найден в источнике ({ad['scope_human']})",
-                        blockers=[f"искал в: {', '.join(res.get('searched_sources', [])) or '—'}"], status="missing")
+                        blockers=[f"искал по tier'ам: {tiers_h}; файлы: {', '.join(res.get('searched_sources', [])) or '—'}"],
+                        status="missing")
     blocks = [block_of(EvidenceType.MISSING, "Не найдено", [miss])]
-    warnings = []
+    warnings = list(res.get("adapter_warnings", []))
     if res["other_matches"]:                                  # Case B: есть в других доках — отдельно
         other = [_match_to_item(m) for m in res["other_matches"][:15]]
         blocks.append(block_of(EvidenceType.RETRIEVED,
