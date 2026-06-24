@@ -892,6 +892,53 @@ async def _run_free_mode(req: "ChatRequest", token_sink=None) -> str:
     return disclaimer + "".join(acc).strip()
 
 
+def _harness_complete(messages: list[dict]) -> str:
+    """Sync LLM-вызов для петли сметного харнесса (исполняется в to_thread). Облако/MLX по
+    конфигу — декомпозиция объекта = где большая модель уместна. Низкая temperature для tool-call."""
+    runtime = _llm_runtime()
+    body = {"model": runtime.model, "messages": messages, "temperature": 0.2, "max_tokens": 700}
+    body = _cloud_body_for_model(body, runtime.model, runtime.provider)
+    headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
+    try:
+        with httpx.Client(timeout=90.0) as c:
+            r = c.post(runtime.chat_url, headers=headers, json=body)
+            r.raise_for_status()
+            return r.json().get("choices", [{}])[0].get("message", {}).get("content", "") or ""
+    except Exception as e:  # noqa: BLE001 — петля переживёт пустой ответ (учтёт как «нет JSON»)
+        logger.warning("[HARNESS] llm call failed: %s", e)
+        return ""
+
+
+def _format_harness(r: dict) -> str:
+    """Результат харнесса → markdown: предварительная ВОР, посчитанное таблицей, нет-данных явно."""
+    sch = r.get("schema", {}) or {}
+    lines = [f"**Предварительная ВОР (харнесс)** — {sch.get('object_type', 'объект')} · "
+             f"{sch.get('area_total_m2', '?')} м²", "",
+             "_НЕ финальная смета: модель разложила объект и дёрнула инструменты; числа — из ГЭСН/формул, "
+             "не из головы модели._", ""]
+    comp = r.get("computed", [])
+    if comp:
+        lines += ["| Работа | Код ГЭСН | Объём | Ед. |", "|---|---|---|---|"]
+        for p in comp:
+            lines.append(f"| {p.get('work', '')} | {p.get('code')} | {p.get('qty')} | {p.get('unit', '')} |")
+        t = r.get("totals", {})
+        lines += ["", f"**ИТОГО СМР {t.get('smr')} ₽ · ВСЕГО с НДС {t.get('grand_total')} ₽** "
+                  f"({t.get('positions')} поз., предварительно)"]
+    else:
+        lines.append("_Посчитанных позиций нет — не хватило данных/норм._")
+    for p in r.get("needs_input", []):
+        if not any("Нет данных" in x for x in lines):
+            lines += ["", "**Нет данных для расчёта (не выдумываем):**"]
+        lines.append(f"- {p.get('work', '')} ({p.get('code')}) — {p.get('reason', 'нужны параметры')}")
+    if sch.get("missing_inputs"):
+        lines.append(f"\n_Не хватает входных данных: {', '.join(map(str, sch['missing_inputs']))}._")
+    if r.get("by_assumption"):
+        lines.append("_Часть позиций — по допущениям._")
+    lines.append(f"\n⚙ Петля: {r.get('steps')} шагов · инструменты: "
+                 f"{', '.join(str(t.get('tool')) for t in r.get('trace', [])) or '—'}")
+    return "\n".join(lines)
+
+
 def _version_stamp() -> dict:
     """Version-stamp для воспроизводимости (Codex §15, пет-размер): через месяц объяснить,
     почему тот же запрос дал другой ответ. Версии — из env/констант, без отдельного реестра."""
@@ -1000,6 +1047,14 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         # Изолированный путь — RAG-конвейер не трогаем.
         answer = await _run_free_mode(req, token_sink)
         return _mode_reply(answer, "free", "free_mode", crag="")
+
+    if _PROFILE == "estimate_harness":
+        # ЭКСПЕРИМЕНТ: сметный харнесс — модель раскладывает объект → дёргает инструменты (петля).
+        # Рядом со старым smeta (YAML), не вместо. Числа из инструментов. Объект ВНЕ шаблонов
+        # (паркинг/мост) → предварительная ВОР, а не «нет шаблона». Петля в to_thread (sync LLM).
+        from proxy.services.estimate_harness_service import run_estimate_harness
+        result = await asyncio.to_thread(run_estimate_harness, req.question, _harness_complete)
+        return _mode_reply(_format_harness(result), "estimate_harness", "harness_mode")
 
     from proxy.services.asbuilt_chat_service import maybe_handle_asbuilt_query  # приёмка ИД-сканов
     from proxy.services.les_md_chat_service import maybe_handle_les_md_query  # LES.md: пойми папку

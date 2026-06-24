@@ -70,6 +70,14 @@ PROFILES: dict[str, Profile] = {
         validation_policy="fail_open", escalation_policy="none",
         failure_policy="mark_preliminary", output_contract="prose",
     ),
+    # ЭКСПЕРИМЕНТАЛЬНЫЙ ХАРНЕСС: модель раскладывает объект → дёргает инструменты (петля).
+    # Рядом со старым object_estimate (YAML), не вместо. Числа из инструментов, не из модели.
+    "estimate_harness": Profile(
+        id="estimate_harness", executor="cloud_large", role="сметчик-харнесс",
+        tools=("propose_schema", "search_norm", "add_position"), grounded=False,
+        validation_policy="require_numeric_provenance", escalation_policy="none",
+        failure_policy="mark_preliminary", output_contract="estimate_preliminary_v1",
+    ),
     # auto — нет явного режима: путь решают router/каскад/RAG ниже по конвейеру.
     "auto": Profile(
         id="auto", executor="router", role="—", tools=("*",), grounded=True,
@@ -85,6 +93,7 @@ MODE_TO_PROFILE: dict[str, str] = {
     "kp": "kp_stub",
     "rag": "grounded_rag",
     "free": "free_llm",
+    "smeta_harness": "estimate_harness",
 }
 
 
