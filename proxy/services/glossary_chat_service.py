@@ -34,12 +34,26 @@ def _extract_term(question: str) -> Optional[str]:
     return None
 
 
+# v0.18 фикс greedy-матча: предлоги/служебные слова НЕ резолвим в концепты. Корень бага —
+# onto.get_concept('на') → 'ozr' (ОЖР), из-за чего «расскажи про котельную НА лесном 64» уходил
+# в глоссарий (определение ОЖР) вместо RAG. Термины глоссария (ВОР/КАЦ/ЛСР/ОЖР) стоп-словами не бывают.
+_STOPWORDS = frozenset({
+    "на", "по", "в", "во", "и", "или", "о", "об", "с", "со", "к", "ко", "за", "из", "изо",
+    "от", "ото", "до", "у", "не", "ни", "ну", "да", "для", "при", "над", "под", "про", "без",
+    "что", "это", "как", "так", "там", "тут", "же", "бы", "ли", "то", "вот", "его", "её", "их",
+})
+
+
 def _resolve(candidate: str):
-    """Концепт по кандидату: целиком, затем по 2-словным и одиночным токенам."""
-    node = onto.get_concept(candidate)
+    """Концепт по кандидату: целиком, затем по 2-словным и одиночным ЗНАЧИМЫМ токенам.
+    Стоп-слова (предлоги и пр.) не резолвим — иначе «на»→ОЖР перехватывал нарративные запросы."""
+    cand = (candidate or "").strip()
+    if not cand or cand.lower() in _STOPWORDS:
+        return None
+    node = onto.get_concept(cand)
     if node is not None:
         return node
-    words = [w for w in re.split(r"[\s,]+", candidate) if len(w) >= 2]
+    words = [w for w in re.split(r"[\s,]+", cand) if len(w) >= 2 and w.lower() not in _STOPWORDS]
     for n in (2, 1):
         for i in range(len(words) - n + 1):
             node = onto.get_concept(" ".join(words[i:i + n]))
