@@ -9,7 +9,7 @@ from nicegui import app, ui
 
 from backend.auth import logout
 from sovushka.components.charts import _html
-from sovushka.state import last_api_error_text, proxy_online
+from sovushka.state import api_get, last_api_error_text, proxy_online
 from sovushka.styles import _DARK_THEME, _LIGHT_THEME
 
 
@@ -39,9 +39,72 @@ def build_header(
     ):
         # ── Лого ──────────────────────────────────────────────────────────────
         _html(
-            '<span class="les-brand" style="white-space:nowrap;margin-right:16px;">'
+            '<span class="les-brand" style="white-space:nowrap;margin-right:8px;">'
             '[O_O] Л.Е.С.</span>'
         )
+
+        # ── Бейдж версии (v0.19): что реально запущено — версия+commit+runtime-divergence ──
+        _ver_state: dict = {"info": None}
+        ver_badge = ui.button("· · ·").props("flat dense no-caps").style(
+            "color:var(--dim);font-family:var(--font);font-size:.58rem;font-weight:700;"
+            "margin-right:14px;padding:2px 7px;border:1px solid var(--border);border-radius:5px;"
+            "min-height:0;line-height:1.2;"
+        ).tooltip("Версия ЛЕС — нажмите для деталей")
+
+        def _ver_rows(info: dict) -> list[tuple[str, str]]:
+            al = info.get("runtime_alignment") or {}
+            fl = info.get("feature_flags") or {}
+            return [
+                ("Версия ЛЕС", info.get("app_version", "?")),
+                ("Harness", info.get("harness_version", "?")),
+                ("Commit", f"{info.get('git_commit','?')} ({info.get('git_branch','?')})"),
+                ("Build", info.get("build_time", "?")),
+                ("Runtime", info.get("runtime_path", "?")),
+                ("Evidence schema", info.get("evidence_schema_version", "?")),
+                ("Extraction", info.get("extraction_schema_version", "?")),
+                ("Runtime alignment", al.get("status", "unknown")
+                 + ((" · изменены: " + ", ".join(al.get("changed_files") or [])) if al.get("changed_files") else "")),
+                ("Unified harness", "ON" if fl.get("LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED") else "OFF"),
+                ("Sidecar write", "ON" if fl.get("LES_ALLOW_RUNTIME_SIDECAR_WRITE") else "OFF"),
+            ]
+
+        def _open_version_dialog() -> None:
+            info = _ver_state["info"] or {}
+            with ui.dialog() as dlg, ui.card().style(
+                "background:var(--bg-panel);border:1px solid var(--border);min-width:440px;padding:18px;"
+            ):
+                ui.label("Версия и сборка ЛЕС").style("font-weight:900;font-size:.85rem;margin-bottom:6px;")
+                if not info:
+                    ui.label("Версия недоступна (прокси не ответил на /api/version).").style(
+                        "color:var(--warn);font-size:.7rem;")
+                else:
+                    al = info.get("runtime_alignment") or {}
+                    if al.get("status") == "divergent":
+                        ui.label("⚠ Runtime отличается от репозитория").style(
+                            "color:var(--warn);font-size:.66rem;font-family:var(--font);margin-bottom:4px;")
+                    for k, v in _ver_rows(info):
+                        with ui.row().style("gap:8px;align-items:baseline;width:100%;"):
+                            ui.label(k).style("color:var(--dim);font-size:.62rem;min-width:140px;")
+                            ui.label(str(v)).style("font-size:.66rem;font-family:var(--font);")
+                    ui.button("Копировать диагностику", on_click=lambda: ui.run_javascript(
+                        f"navigator.clipboard.writeText({json.dumps(json.dumps(info, ensure_ascii=False, indent=2))})"
+                    )).props("flat dense no-caps").style("color:var(--accent);font-size:.62rem;margin-top:8px;")
+            dlg.open()
+
+        ver_badge.on("click", lambda: _open_version_dialog())
+
+        async def _load_version() -> None:
+            info = await api_get("/api/version")
+            if isinstance(info, dict):
+                _ver_state["info"] = info
+                c = info.get("git_commit", "")
+                ver_badge.set_text(f"{info.get('app_version','?')}" + (f" · {c}" if c and c != "unknown" else ""))
+                if (info.get("runtime_alignment") or {}).get("status") == "divergent":
+                    ver_badge.style("color:var(--warn);border-color:var(--warn);")
+            else:
+                ver_badge.set_text("?")
+
+        ui.timer(0.4, _load_version, once=True)
 
         # ── Табы (по центру, растягиваются) ───────────────────────────────────
         with ui.tabs().classes("les-top-tabs").props("dense no-caps").style(
