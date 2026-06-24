@@ -965,14 +965,21 @@ def _format_harness(r: dict) -> str:
 
 def _version_stamp() -> dict:
     """Version-stamp для воспроизводимости (Codex §15, пет-размер): через месяц объяснить,
-    почему тот же запрос дал другой ответ. Версии — из env/констант, без отдельного реестра."""
-    return {
+    почему тот же запрос дал другой ответ. v0.19: + version_info (app/harness/commit/флаги) из
+    единого version_service — баг-репорт идентифицирует точный build."""
+    stamp = {
         "embed_model": os.getenv("EMBED_MODEL", "?"),
         "collection": os.getenv("RAG_COLLECTION", "") or "default",
         "norm_base": "ГЭСН-2022",
         "prompt": "sys_normal_v1",
         "profiles": "v1",
     }
+    try:
+        from proxy.services.version_service import version_info_trace
+        stamp["version_info"] = version_info_trace()
+    except Exception:  # noqa: BLE001
+        pass
+    return stamp
 
 
 async def _run_chat(req: ChatRequest, token_sink=None):

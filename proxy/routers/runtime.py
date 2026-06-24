@@ -215,6 +215,14 @@ async def health():
     return response
 
 
+@router.get("/version")
+async def version():
+    """v0.19: единый version-объект ЛЕС (product/harness/schema + git + флаги + runtime-divergence).
+    Без секретов, без падений — git недоступен → 'unknown'."""
+    from proxy.services.version_service import version_info
+    return version_info()
+
+
 @router.post("/warmup")
 async def warmup_models(_admin=Depends(require_admin)):
     state = get_runtime_state()
