@@ -373,25 +373,99 @@ def extraction_status(dataset_id: str, *, storage_root: Path) -> dict:
             "stale_count": inv["stale_count"]}
 
 
-def _load_extract_run():
-    """Загрузить проверенный run() из scripts/extract_dataset_bodies_v14.py (гейт записи внутри)."""
-    import importlib.util
-    p = Path(__file__).resolve().parents[2] / "scripts" / "extract_dataset_bodies_v14.py"
-    spec = importlib.util.spec_from_file_location("_extract_v14", p)
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m.run
+def _safe_under(root: Path, p: Path) -> bool:
+    try:
+        p.resolve().relative_to(root.resolve())
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def run_extraction(dataset_id: str, *, storage_root: Path, exts: set[str], max_files: int = 2000,
+                   max_mb: float = 40.0, do_write: bool = False, confirm_runtime: bool = False,
+                   force: bool = False) -> dict:
+    """Ядро извлечения тела (перенесено из scripts/extract_dataset_bodies_v14 в v0.17 — runtime-эндпоинты
+    не зависят от скрипт-файла). GATE: запись в runtime только при confirm_runtime И env. Оригиналы целы."""
+    ddir = Path(storage_root) / dataset_id
+    runtime = de.is_runtime_path(storage_root)
+    write_blocked = ""
+    effective_write = do_write
+    if do_write and runtime and not (confirm_runtime and de.runtime_write_allowed()):
+        effective_write = False
+        write_blocked = ("runtime_sidecar_write_not_approved: запись в runtime storage требует "
+                         "confirm_runtime_write И env LES_ALLOW_RUNTIME_SIDECAR_WRITE=1; выполнен dry-run")
+    rep: dict[str, Any] = {"dataset_id": dataset_id, "storage_root": str(storage_root), "runtime_path": runtime,
+           "dry_run": not effective_write, "write_requested": do_write, "write_blocked": write_blocked,
+           "originals_mutated": False, "files_seen": 0, "would_write": 0, "wrote_sidecars": 0,
+           "pdf_text_pages": 0, "pdf_no_text_layer": 0, "docx_paragraphs": 0, "xlsx_rows": 0,
+           "legacy_unsupported": 0, "unsupported": 0, "skipped_large": 0, "failures": 0,
+           "by_status": Counter(), "manifest": ""}
+    if not ddir.exists():
+        rep["error"] = "dataset_dir_not_found"
+        rep["by_status"] = {}
+        return rep
+    max_bytes = int(max_mb * 1024 * 1024)
+    manifest_entries: list[dict] = []
+    for p in sorted(ddir.rglob("*")):
+        if rep["files_seen"] >= max_files:
+            break
+        if not p.is_file() or p.name.startswith(".") or f"/{de.SIDECAR_DIRNAME}/" in p.as_posix():
+            continue
+        ext = p.suffix.lower()
+        if ext not in exts:
+            continue
+        rep["files_seen"] += 1
+        if not _safe_under(ddir, p):
+            continue
+        try:
+            st = p.stat()
+            if st.st_size > max_bytes:
+                rep["skipped_large"] += 1
+                continue
+        except OSError:
+            continue
+        rel = p.relative_to(ddir).as_posix()
+        res = de.extract_file(p, ds=dataset_id, rel=rel)
+        rep["by_status"][res.status] += 1
+        if res.status == "legacy_unsupported":     # v0.17 honest .xls/.doc
+            rep["legacy_unsupported"] += 1
+            continue
+        if res.status == "skipped":
+            rep["unsupported"] += 1
+            continue
+        if res.status == "no_text_layer" and ext == ".pdf":
+            rep["pdf_no_text_layer"] += 1
+        if res.status in ("unavailable", "failed"):
+            rep["failures"] += 1
+        for it in res.items:
+            rep["pdf_text_pages"] += it.source_kind == "pdf_text"
+            rep["docx_paragraphs"] += it.source_kind in ("docx_text", "docx_table")
+            rep["xlsx_rows"] += it.source_kind == "xlsx_row"
+        if not res.items:
+            continue
+        rep["would_write"] += 1
+        sp = de.sidecar_path(storage_root, dataset_id, rel)
+        if effective_write and (not sp.exists() or force):
+            de.write_sidecar(storage_root, dataset_id, rel, res.items)
+            rep["wrote_sidecars"] += 1
+        manifest_entries.append({"original_relative_path": rel, "original_size": st.st_size,
+                                 "original_mtime": st.st_mtime, "ext": ext, "status": res.status,
+                                 "item_count": len(res.items), "sidecar_path": str(sp),
+                                 "warnings": res.warnings})
+    if effective_write and manifest_entries:
+        rep["manifest"] = str(de.write_manifest(storage_root, dataset_id, manifest_entries, created_at=""))
+    rep["by_status"] = dict(rep["by_status"])
+    return rep
 
 
 def extract_body_op(dataset_id: str, *, storage_root: Path, write: bool = False,
                     confirm_runtime_write: bool = False, exts: set[str] | None = None,
                     max_files: int = 2000, max_mb: float = 40.0, force: bool = False) -> dict:
     """GUI/API-экшен извлечения. dry-run по умолчанию; запись только при write И confirm_runtime_write И
-    env LES_ALLOW_RUNTIME_SIDECAR_WRITE=1 (гейт внутри run()). Оригиналы не меняются."""
-    run = _load_extract_run()
+    env LES_ALLOW_RUNTIME_SIDECAR_WRITE=1 (гейт внутри). Оригиналы не меняются."""
     exts = exts or {".pdf", ".docx", ".xlsx", ".txt", ".md", ".csv"}
-    return run(dataset_id, storage_root=Path(storage_root), exts=exts, max_files=max_files,
-               max_mb=max_mb, do_write=write, confirm_runtime=confirm_runtime_write, force=force)
+    return run_extraction(dataset_id, storage_root=Path(storage_root), exts=exts, max_files=max_files,
+                          max_mb=max_mb, do_write=write, confirm_runtime=confirm_runtime_write, force=force)
 
 
 def qdrant_deferred_report(dataset_id: str, *, storage_root: Path, chunk_chars: int = 1200) -> dict:
