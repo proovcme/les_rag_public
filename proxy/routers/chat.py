@@ -1014,6 +1014,29 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             req.project_id = _scope_snap["project_ids"][0]
             pid = req.project_id
 
+    # ── МАРШРУТИЗАЦИЯ ЧЕРЕЗ ProfileResolver (Codex §10.1A: единый контракт) ──
+    # Все источники выбора пути сводятся к ОДНОЙ ProfileResolution. Явный режим → профиль;
+    # auto-путь (command/regex/keyword/llm_router/fallback) доуточняет резолюцию через refine,
+    # как только канал реально выбран. Так «какой канал дёрнут» — один записанный контракт
+    # (query_route.profile), а не неявный control-flow. Резолвер сам не отвечает (§10.3 №4).
+    from proxy.services.profile_resolver import (
+        resolve as _resolve_profile, route_source_for_channel)
+    _resolution = _resolve_profile(mode=req.mode, question=req.question)
+    _PROFILE = _resolution.profile_id
+
+    def _profile_route(channel: str, operation: str | None, *,
+                       base: dict | None = None, source: str | None = None) -> dict:
+        """query_route c честным profile-трейсом: refine резолюции выбранным каналом + as_trace.
+        Профиль не меняется (auto остаётся auto) — фиксируем КАК принят маршрут и КАКОЙ канал."""
+        _resolution.refine(route_source=(source or route_source_for_channel(channel)),
+                            channel=channel, operation=operation)
+        route = dict(base or {})
+        route["channel"] = channel
+        if operation is not None:
+            route["operation"] = operation
+        route["profile"] = _resolution.as_trace()
+        return route
+
     # W11.17: /-команды (палитра). rewrite → переформулировать и пройти конвейером; иначе — детерм. ответ.
     from proxy.services.command_service import handle_command, is_command
     if is_command(req.question):
@@ -1025,18 +1048,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 "answer": cmd_res["answer"],
                 "crag_status": "DETERMINISTIC",
                 "sources": [],
-                "query_route": {"channel": "command", "operation": (cmd_res.get("command") or {}).get("action")},
+                "query_route": _profile_route("command", (cmd_res.get("command") or {}).get("action")),
                 "validation": {"enabled": False, "reason": "deterministic_command"},
                 "command": cmd_res.get("command"),
             }
-
-    # ── МАРШРУТИЗАЦИЯ ЧЕРЕЗ ProfileResolver (Codex §10.1A: единый контракт) ──
-    # Все источники выбора пути сводятся к ProfileResolution. Сейчас формализован явный режим
-    # (mode→profile); router/каскад резолвятся ниже и помечаются профилем auto. Поведение 1:1
-    # с прежним диспетчером по _MODE (порт, не переписывание). Резолвер сам не отвечает (§10.3 №4).
-    from proxy.services.profile_resolver import resolve as _resolve_profile
-    _resolution = _resolve_profile(mode=req.mode, question=req.question)
-    _PROFILE = _resolution.profile_id
 
     def _mode_reply(answer: str, operation: str, channel: str, crag: str = "DETERMINISTIC") -> dict:
         """Единый shape ответа для режимных каналов (+ запись в историю + след профиля)."""
@@ -1100,6 +1115,9 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             if _ures is not None:   # поддержанный intent → честный evidence-ответ (вкл. MISSING)
                 _ad = _ures.answer_data or {}
                 _intent = (_ad.get("route") or {}).get("intent", _ad.get("intent", "construction"))
+                # auto-профиль: харнесс сам выбрал intent словарём/scope → keyword (не «pending»).
+                _resolution.refine(route_source="keyword", channel="unified_construction_harness",
+                                   operation=_intent)
                 _reply = _mode_reply(compose_unified_answer(_ures), _intent,
                                      "unified_construction_harness", crag="EVIDENCE")
                 _ev = {b.type.value: len(b.items) for b in _ures.evidence_blocks}
@@ -1252,8 +1270,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 channel = "scope_clarification"
                 _scope_snap.setdefault("warnings", []).append("scope_all_for_project_query")
     if reply is not None:
-        det_route = {"channel": channel, "operation": reply.get("operation"),
-                     "agent_tool": reply.get("agent_tool"), "scope": _scope_snap}
+        det_route = _profile_route(channel, reply.get("operation"),
+                                   base={"agent_tool": reply.get("agent_tool"), "scope": _scope_snap})
         if _rejected_det:                       # v0.18: что policy отклонила до принятого кандидата
             det_route["rejected_deterministic"] = _rejected_det
         det_hid = None
@@ -1340,6 +1358,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             state.crag_stats["verified"] += 1
             state.chat_metrics["crag_pass"] += 1
             rec_answer = rec["answer"] + (f"\n\n{memory_block}" if memory_block else "")
+            rec_route = _profile_route("reconcile", "reconcile")
             rec_trace = {
                 "mode": "deterministic_reconcile",
                 "vector_count": 0, "lexical_count": 0,
@@ -1357,7 +1376,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     effective_dataset_filter="RECONCILE",
                     resolved_dataset_ids=rec["dataset_ids"], resolved_dataset_names=[],
                     source_dataset_ids=rec["dataset_ids"], source_dataset_names=[],
-                    query_route={"channel": "reconcile", "operation": "reconcile"},
+                    query_route=rec_route,
                     retrieval_trace=rec_trace, cache_type="deterministic_reconcile",
                     validation_enabled=False, success=1,
                 )
@@ -1367,7 +1386,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 "answer": rec_answer, "crag_status": status,
                 "sources": [doc_type_label(dt) for dt in rec["doc_types"]],
                 "effective_dataset_filter": "RECONCILE",
-                "query_route": {"channel": "reconcile", "operation": "reconcile"},
+                "query_route": rec_route,
                 "retrieval_trace": rec_trace, "cache": "deterministic_reconcile",
                 "validation": {"enabled": False, "reason": "deterministic_reconcile"},
                 "reconcile": {"totals": rec["totals"], "doc_types": rec["doc_types"]},
@@ -1450,6 +1469,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 answer = f"{answer}\n\n{memory_block}"
             state.crag_stats["verified"] += 1
             state.chat_metrics["crag_pass"] += 1
+            spec_route = _profile_route("spec_to_bor", "spec_to_bor")
             spec_trace = {
                 "mode": "deterministic_spec_to_bor", "vector_count": 0, "lexical_count": 0,
                 "merged_count": spec_res["bor_lines"], "retry_count": 0,
@@ -1465,7 +1485,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     effective_dataset_filter=effective_dataset_filter,
                     resolved_dataset_ids=[spec_ds], resolved_dataset_names=[label] if label else [],
                     source_dataset_ids=[spec_ds], source_dataset_names=[label] if label else [],
-                    query_route={"channel": "spec_to_bor", "operation": "spec_to_bor"},
+                    query_route=spec_route,
                     retrieval_trace=spec_trace, cache_type="deterministic_spec_to_bor",
                     validation_enabled=False, success=1,
                 )
@@ -1474,7 +1494,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             return {
                 "answer": answer, "crag_status": "VERIFIED", "sources": [label or spec_ds],
                 "effective_dataset_filter": effective_dataset_filter,
-                "query_route": {"channel": "spec_to_bor", "operation": "spec_to_bor"},
+                "query_route": spec_route,
                 "retrieval_trace": spec_trace, "cache": "deterministic_spec_to_bor",
                 "validation": {"enabled": False, "reason": "deterministic_spec_to_bor"},
                 "spec_to_bor": spec_trace["spec_to_bor"], "history_id": history_id,
@@ -1504,6 +1524,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 answer = f"{answer}\n\n{memory_block}"
             state.crag_stats["verified"] += 1
             state.chat_metrics["crag_pass"] += 1
+            sum_route = _profile_route("project_summary", "project_summary")
             sum_trace = {
                 "mode": "deterministic_project_summary", "vector_count": 0, "lexical_count": 0,
                 "merged_count": summ["document_count"], "retry_count": 0,
@@ -1521,7 +1542,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     effective_dataset_filter=effective_dataset_filter,
                     resolved_dataset_ids=_dataset_ids, resolved_dataset_names=resolved_dataset_names,
                     source_dataset_ids=_dataset_ids, source_dataset_names=resolved_dataset_names,
-                    query_route={"channel": "project_summary", "operation": "project_summary"},
+                    query_route=sum_route,
                     retrieval_trace=sum_trace, cache_type="deterministic_project_summary",
                     validation_enabled=False, success=1,
                 )
@@ -1531,7 +1552,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 "answer": answer, "crag_status": "VERIFIED",
                 "sources": resolved_dataset_names or _dataset_ids,
                 "effective_dataset_filter": effective_dataset_filter,
-                "query_route": {"channel": "project_summary", "operation": "project_summary"},
+                "query_route": sum_route,
                 "retrieval_trace": sum_trace, "cache": "deterministic_project_summary",
                 "validation": {"enabled": False, "reason": "deterministic_project_summary"},
                 "project_summary": sum_trace["project_summary"], "history_id": history_id,
@@ -1557,6 +1578,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 if memory_block:
                     _ans = f"{_ans}\n\n{memory_block}"
                 logger.info("[OUTLINE] детерминированная структура %s: %s пунктов", _doc, len(_items))
+                _outline_route = _profile_route("outline", "document_outline")
                 # Детерминированный ответ — тоже ответ: пишем в историю (раньше outline-роут
                 # возвращался мимо хвоста save_chat_history → «история не пишется»).
                 _outline_history_id = None
@@ -1573,7 +1595,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                         resolved_dataset_ids=_dataset_ids,
                         resolved_dataset_names=resolved_dataset_names,
                         source_dataset_names=[_ds],
-                        query_route={"channel": "outline", "operation": "document_outline"},
+                        query_route=_outline_route,
                         validation_enabled=False,
                     )
                 except Exception as _hist_err:
@@ -1582,7 +1604,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     "answer": _ans,
                     "crag_status": "DETERMINISTIC",
                     "sources": [{"doc_name": _doc, "dataset_name": _ds}],
-                    "query_route": {"channel": "outline", "operation": "document_outline"},
+                    "query_route": _outline_route,
                     "validation": {"enabled": False, "reason": "deterministic_document_outline"},
                     "history_id": _outline_history_id,
                 }
@@ -1591,6 +1613,12 @@ async def _run_chat(req: ChatRequest, token_sink=None):
 
     query_route_payload = _query_route_payload(query_intent, effective_dataset_filter, kot_decision)
     query_route_payload["scope"] = _scope_snap   # v0.21: где реально искали (snapshot для trace/истории)
+    # #2: финальный resolved-канал = семантический RAG. default_rag (ни команда/regex/каскад
+    # не поймали) → честный fallback; иначе keyword (route_query поймал по словарю). profile-
+    # трейс кладём в payload — как у детерминированных каналов выше: один контракт в каждом route.
+    _resolution.refine(route_source=("fallback" if query_intent.reason == "default_rag" else "keyword"),
+                       channel=query_intent.channel, operation=query_intent.reason)
+    query_route_payload["profile"] = _resolution.as_trace()
     cache = SemanticCache()
     cache_embedding = None
     cache_scope = ""
