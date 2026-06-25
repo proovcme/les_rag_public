@@ -1296,7 +1296,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         # v0.17: «реестр документации» — scoped (нет scope → actionable MISSING; есть → RAG по объекту),
         # ПЕРЕД глобальным registry, чтобы документный запрос не уходил в «Реестр проектов ЛЕС».
         ("doc_registry", lambda: maybe_handle_document_registry(
-            req.question, project_id=pid, dataset_filter=req.dataset_filter or "")),
+            req.question, project_id=pid, dataset_filter=req.dataset_filter or "",
+            dataset_ids=(req.dataset_ids or _scope_snap.get("resolved_dataset_ids")))),
         ("registry", lambda: maybe_handle_registry_query(req.question, project_id=pid)),
         ("glossary", lambda: maybe_handle_glossary_query(req.question, project_id=pid, dataset_filter=req.dataset_filter or "")),
         ("smeta", lambda: maybe_handle_smeta_query(req.question, project_id=pid)),

@@ -90,6 +90,17 @@ def test_no_scope_for_document_registry_actionable_missing():
     r = prc.maybe_handle_document_registry("составь реестр документации котельной", project_id=0, dataset_filter="")
     assert r and r["operation"] == "document_registry_no_scope" and "выберите" in r["answer"].lower()
 
+def test_document_registry_sees_dataset_ids_scope():
+    # РЕГРЕССИЯ: датасет выбран через ScopeSelector → приходит dataset_ids (НЕ dataset_filter).
+    # Раньше канал был слеп к dataset_ids → ложно отбивал «выберите объект» при выбранном датасете.
+    q = "составь реестр документации в папке и опиши проекты с системами и ТЭП"
+    assert prc.is_document_registry_query(q) is True
+    # есть dataset_ids → scope распознан → None (отвечает RAG по выбранному датасету)
+    assert prc.maybe_handle_document_registry(q, dataset_ids=["449190eb-050e-422f-91a6-54852469201a"]) is None
+    # пустой/None dataset_ids без прочего scope → по-прежнему actionable MISSING (route-safety цел)
+    assert prc.maybe_handle_document_registry(q, dataset_ids=[]) is not None
+    assert prc.maybe_handle_document_registry(q, dataset_ids=None) is not None
+
 def test_legacy_deterministic_does_not_preempt_unified_doc_registry():
     # даже если LLM-роутер выбрал project_registry — handler уступает дорогу для документного запроса
     assert ar._h_registry("составь реестр документации котельной", 2) is None

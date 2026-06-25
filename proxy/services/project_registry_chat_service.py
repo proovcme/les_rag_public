@@ -39,12 +39,19 @@ def is_document_registry_query(question: str) -> bool:
 
 
 def maybe_handle_document_registry(question: str, *, project_id: int = 0,
-                                   dataset_filter: str = "") -> Optional[dict[str, Any]]:
-    """Scoped реестр документации. Есть scope (проект/датасет) → None (отвечает RAG по выбранному
-    датасету, НЕ глобальный список). Нет scope → actionable MISSING (выберите проект/датасет)."""
+                                   dataset_filter: str = "",
+                                   dataset_ids: Optional[list] = None) -> Optional[dict[str, Any]]:
+    """Scoped реестр документации. Есть scope → None (отвечает RAG по выбранному объекту, НЕ
+    глобальный список). Нет scope → actionable MISSING (выберите проект/датасет).
+
+    Scope = ЕДИНЫЙ: project_id | dataset_filter (legacy) | dataset_ids (ScopeSelector/resolve_scope).
+    Раньше канал был слеп к dataset_ids → при выбранном через ScopeSelector датасете (приходит
+    dataset_ids, а не dataset_filter) ложно отбивал «выберите объект». Теперь видит все формы scope."""
     if not is_document_registry_query(question):
         return None
-    has_scope = (isinstance(project_id, int) and project_id > 0) or bool((dataset_filter or "").strip())
+    has_scope = ((isinstance(project_id, int) and project_id > 0)
+                 or bool((dataset_filter or "").strip())
+                 or bool(dataset_ids))
     if has_scope:
         return None      # scope есть → RAG-конвейер ответит по документам выбранного объекта
     return {"answer": "Для реестра документации нужен выбранный проект или датасет. Выберите объект "
