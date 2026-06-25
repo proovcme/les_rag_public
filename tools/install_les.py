@@ -142,6 +142,57 @@ def init_env(force: bool = False) -> str:
     return ".env created from env.example" if not force else ".env overwritten from env.example"
 
 
+def profile_env_overrides(profile: str | None) -> dict[str, str]:
+    """Ключи .env, специфичные для профиля. env.example несёт Mac/MLX-дефолты (CoreML/MLX) —
+    на Windows без этих оверрайдов эмбеддер/провайдер настроены неверно (см. windows-install).
+
+    windows-lite: MLX недоступна → чат и эмбеддинги идут в ollama (OpenAI-совместимый
+    /v1/embeddings bge-m3 = 1024 dims). Прочие профили — без оверрайдов (поведение прежнее)."""
+    if profile == "windows-lite":
+        return {
+            "LES_LLM_PROVIDER": "ollama",
+            "OLLAMA_BASE_URL": "http://127.0.0.1:11434",
+            "OLLAMA_MODEL": "qwen3.5:9b",
+            # Эмбеддер: EmbedClient httpx → {MLX_URL}/v1/embeddings. На Windows MLX-хоста нет,
+            # направляем на ollama (bge-m3). EMBED_BACKEND здесь — только дескриптор кэша.
+            "MLX_URL": "http://127.0.0.1:11434",
+            "EMBED_MODEL": "bge-m3",
+            "EMBEDDING_MODEL": "bge-m3",
+            "EMBED_BACKEND": "ollama",
+            "RAG_VECTOR_SIZE": "1024",
+            # MLX-зависимая валидация/тяжёлое — off (lite-профиль, ARTEL/Revit-ориентир).
+            "CHAT_VALIDATION_ENABLED": "false",
+            "VALIDATOR_BACKEND": "rules",
+            "RAG_OCR_ENABLED": "false",
+            "SPECKLE_ENABLED": "false",
+        }
+    return {}
+
+
+def apply_env_overrides(overrides: dict[str, str], target: Path | None = None) -> list[str]:
+    """Идемпотентно проставить KEY=value в .env: обновить существующую строку или дописать.
+    Комментарии и прочие строки сохраняются. Возвращает применённые ключи."""
+    if not overrides:
+        return []
+    target = target or (ROOT / ".env")
+    lines = target.read_text(encoding="utf-8").splitlines() if target.exists() else []
+    applied: list[str] = []
+    remaining = dict(overrides)
+    for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if key in remaining:
+            lines[i] = f"{key}={remaining.pop(key)}"
+            applied.append(key)
+    for key, value in remaining.items():  # ключей не было в файле — дописываем
+        lines.append(f"{key}={value}")
+        applied.append(key)
+    target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return sorted(applied)
+
+
 def run_uv_sync() -> int:
     result = subprocess.run(["uv", "sync"], cwd=ROOT, check=False)
     return result.returncode
@@ -180,6 +231,10 @@ def main(argv: list[str] | None = None) -> int:
         actions["created_dirs"] = ensure_dirs()
     if args.init_env or args.force_env:
         actions["env"] = init_env(force=args.force_env)
+        # Профиль-специфичные оверрайды (Windows: ollama-чат+эмбеддинги вместо Mac/MLX-дефолтов).
+        overrides = profile_env_overrides(args.profile)
+        if overrides:
+            actions["env_profile_overrides"] = apply_env_overrides(overrides)
     if args.sync:
         actions["uv_sync_exit_code"] = run_uv_sync()
 
