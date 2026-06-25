@@ -850,7 +850,11 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         recovered = self.db.recover_interrupted_parsing()
         if recovered:
             logger.info("[INIT] Recovered %s interrupted parsing dataset(s)", recovered)
-        self.aclient         = qdrant_client.AsyncQdrantClient(url=qdrant_url, timeout=60.0)
+        # check_compatibility=False: пропустить версии-чек клиент↔сервер. Иначе на Windows он
+        # вис («Failed to obtain server version») и держал /api/health/ретрив десятками секунд,
+        # когда Qdrant недоступен (#2). Skip → операции фейлятся быстро, версия не блокирует старт.
+        self.aclient         = qdrant_client.AsyncQdrantClient(
+            url=qdrant_url, timeout=60.0, check_compatibility=False)
         self.qdrant_url      = qdrant_url
         self.embed           = EmbedClient(mlx_url, model=embed_model_name.replace(":latest", ""))
         # Отдельный эмбеддер для ПАРСА (опц.): EMBED_URL_PARSE → парс-эмбеддинги уходят на
@@ -1091,7 +1095,8 @@ class QdrantLlamaIndexAdapter(RAGBackend):
 
             sync_qdrant = qdrant_client.QdrantClient(
                 url=self.qdrant_url,
-                timeout=60.0
+                timeout=60.0,
+                check_compatibility=False,  # #2: версии-чек вис на Windows при недоступном Qdrant
             )
 
             # Внутренние (скопированные в storage) файлы: матчинг по относительному
