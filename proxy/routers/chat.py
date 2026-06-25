@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import sqlite3
 import time
 import json
@@ -497,6 +498,31 @@ def _preview_text(text: str, limit: int = 220) -> str:
     return " ".join(str(text or "").split())[:limit].strip()
 
 
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_think(text: str) -> str:
+    """Срезать <think>…</think> — reasoning-модели инлайнят размышления в content."""
+    return _THINK_RE.sub("", text or "").strip()
+
+
+def _assistant_text(message: dict) -> str:
+    """Текст ответа из chat-completion `message` с поддержкой reasoning-моделей.
+
+    Reasoning-модели (Qwen3.5, o-серия и др.) держат ФИНАЛЬНЫЙ ответ в ``content``, а
+    размышления — в ``reasoning``/``reasoning_content`` и/или в ``<think>…</think>`` внутри
+    content. Берём content без think-блоков; если он пуст (модель «думала» и упёрлась в лимит
+    токенов — ровно случай ollama qwen3.5 на Windows) — fallback на reasoning, чтобы не отдать
+    пустой ответ. Не-reasoning модели не затронуты (content присутствует → возвращается как был)."""
+    if not isinstance(message, dict):
+        return ""
+    content = _strip_think(str(message.get("content") or ""))
+    if content:
+        return content
+    reasoning = message.get("reasoning") or message.get("reasoning_content") or ""
+    return _strip_think(str(reasoning))
+
+
 def _source_lookup_answer(question: str, chunks: list[Any], *, max_sources: int = 3) -> str | None:
     if not _is_source_lookup_question(question) or not chunks:
         return None
@@ -879,14 +905,17 @@ async def _run_free_mode(req: "ChatRequest", token_sink=None) -> str:
                         except json.JSONDecodeError:
                             continue
                         ch = chunk.get("choices") or []
-                        piece = (ch[0].get("delta", {}).get("content") or "") if ch else ""
+                        _delta = ch[0].get("delta", {}) if ch else {}
+                        # reasoning-модели стримят размышления в delta.reasoning, content пуст —
+                        # берём reasoning как fallback, иначе стрим был бы пустым (#1, Windows ollama).
+                        piece = _delta.get("content") or _delta.get("reasoning") or ""
                         if piece:
                             acc.append(piece)
                             await token_sink({"event": "token", "data": piece})
             else:
                 r = await client.post(runtime.chat_url, headers=headers, json=body)
                 r.raise_for_status()
-                acc.append(r.json().get("choices", [{}])[0].get("message", {}).get("content", ""))
+                acc.append(_assistant_text(r.json().get("choices", [{}])[0].get("message", {})))
     except Exception as e:  # noqa: BLE001
         logger.warning("[FREE] generation failed: %s", e)
         return disclaimer + f"Не удалось получить вольный ответ: {type(e).__name__}: {e}"
@@ -904,7 +933,7 @@ def _harness_complete(messages: list[dict]) -> str:
         with httpx.Client(timeout=90.0) as c:
             r = c.post(runtime.chat_url, headers=headers, json=body)
             r.raise_for_status()
-            return r.json().get("choices", [{}])[0].get("message", {}).get("content", "") or ""
+            return _assistant_text(r.json().get("choices", [{}])[0].get("message", {}))
     except Exception as e:  # noqa: BLE001 — петля переживёт пустой ответ (учтёт как «нет JSON»)
         logger.warning("[HARNESS] llm call failed: %s", e)
         return ""
@@ -2373,7 +2402,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                                 except json.JSONDecodeError:
                                     continue
                                 choices = chunk.get("choices") or []
-                                piece = (choices[0].get("delta", {}).get("content") or "") if choices else ""
+                                _delta = choices[0].get("delta", {}) if choices else {}
+                                piece = _delta.get("content") or _delta.get("reasoning") or ""
                                 if piece:
                                     acc.append(piece)
                                     await token_sink({"event": "token", "data": piece})
@@ -2384,7 +2414,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     r.raise_for_status()
                     rj = r.json()
                     return (
-                        rj.get("choices", [{}])[0].get("message", {}).get("content", ""),
+                        _assistant_text(rj.get("choices", [{}])[0].get("message", {})),
                         rj.get("usage", {}) or {},
                     )
 
