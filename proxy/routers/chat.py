@@ -1610,7 +1610,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         # НЕ возвращаем заглушку: проваливаемся в обычный RAG, чтобы модель сама собрала
         # сводку по документам проекта (LES.md уже в контексте как опора; clarification снят
         # guard'ом выше для summary-интента с проектом).
-        if summ and (summ["tep"] or summ["documents"]):
+        if summ and (summ["tep"] or summ["documents"] or summ.get("file_count")):
             label = ", ".join(resolved_dataset_names[:3])
             answer = format_project_summary(summ, label=label)
             if memory_block:
