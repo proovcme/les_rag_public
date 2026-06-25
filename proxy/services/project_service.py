@@ -150,6 +150,22 @@ def project_dataset_ids(project_id: int) -> list[str]:
     return [link["ref"] for link in list_links(project_id, kind="dataset")]
 
 
+def project_for_dataset(dataset_id: str) -> int:
+    """Обратный поиск: к какому объекту привязан датасет (kind='dataset'). 0 — не привязан.
+
+    Симметрия датасет↔проект: выбор ДАТАСЕТА несёт контекст своего объекта (LES.md) так же, как
+    выбор ПРОЕКТА — проект это лишь именованная группа датасетов (ADR scope). Без этого режим
+    датасета терял LES.md, который есть в режиме проекта."""
+    if not dataset_id:
+        return 0
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT project_id FROM les_project_links WHERE kind='dataset' AND ref=? ORDER BY id LIMIT 1",
+            (str(dataset_id),),
+        ).fetchone()
+    return int(row["project_id"]) if row else 0
+
+
 def _datasets_in_scope(dataset_ids: list[str]) -> list[dict[str, Any]]:
     """Имена/счётчики привязанных датасетов из метабазы (нормативы в области)."""
     if not dataset_ids:

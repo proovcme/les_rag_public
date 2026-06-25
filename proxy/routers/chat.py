@@ -1393,14 +1393,24 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     except Exception as err:
         logger.warning("[MEMORY] recall failed: %s", err)
         memory_block = ""
-    # LES.md: контекст папки/проекта — ВСЕГДА для in-project (как CLAUDE.md для harness).
-    if pid:
+    # LES.md: контекст папки/проекта — ВСЕГДА (как CLAUDE.md для harness). Симметрия датасет↔проект
+    # (#2): если выбран ДАТАСЕТ без проекта (pid=0), резолвим его объект и подмешиваем тот же LES.md,
+    # что и в режиме проекта — иначе режим датасета терял контекст (системы/стадия/состав папки).
+    _les_pid = pid
+    if not _les_pid and req.dataset_ids:
+        try:
+            from proxy.services.project_service import project_for_dataset
+            _les_pid = project_for_dataset(req.dataset_ids[0]) or 0
+        except Exception:  # noqa: BLE001
+            _les_pid = 0
+    if _les_pid:
         try:
             from proxy.services.les_md_service import context_for_chat
-            les_md_block = context_for_chat(pid)
+            les_md_block = context_for_chat(_les_pid)
             if les_md_block:
                 memory_block = les_md_block + ("\n\n" + memory_block if memory_block else "")
-                logger.info("[LES.md] подмешан контекст проекта #%s (%s симв.)", pid, len(les_md_block))
+                logger.info("[LES.md] подмешан контекст объекта #%s (%s симв.; scope=%s)",
+                            _les_pid, len(les_md_block), "project" if pid else "dataset")
         except Exception as err:  # noqa: BLE001
             logger.warning("[LES.md] context inject failed: %s", err)
     if memory_block:

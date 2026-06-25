@@ -180,7 +180,12 @@ async def parse_memory_state() -> dict[str, Any]:
             response.raise_for_status()
             memory = (response.json().get("memory") or {})
     except Exception as error:
-        raise HTTPException(status_code=503, detail=f"MLX health failed: {error}") from error
+        # MLX-хост недостижим/не-MLX (Windows-lite, ollama/облако: MLX_URL не отдаёт /api/health).
+        # MLX-memory-guard защищает от OOM при локальной загрузке MLX-моделей — без MLX он
+        # НЕПРИМЕНИМ. Не блокируем индексацию (иначе на Windows upload навечно queued), а
+        # возвращаем пермиссивное состояние. На Mac (MLX жив, /api/health 200) guard остаётся.
+        logger.warning("[PARSE] MLX memory probe failed (%s) — MLX-memory-guard пропущен (нет MLX)", error)
+        return {"ram_free_gb": 999.0, "swap_pct": 0.0, "state": "ok", "raw": {}, "mlx_available": False}
 
     ram_free = memory.get("ram_free_gb")
     swap = memory.get("swap_pct")
@@ -1312,6 +1317,12 @@ async def index_external(req: IndexExternalRequest, _admin=Depends(require_admin
     try:
         from proxy.services.les_md_service import read_and_bind
         les_md_summary = await asyncio.to_thread(read_and_bind, root, write_draft=True)
+        # #2 симметрия: привязать СОЗДАННЫЙ датасет к объекту (kind='dataset'), а не только папку.
+        # Иначе датасет и проект жили раздельно → режим датасета терял LES.md, обратный поиск пуст.
+        _md_pid = int((les_md_summary or {}).get("project_id") or 0)
+        if _md_pid:
+            from proxy.services.project_service import link_entity
+            await asyncio.to_thread(link_entity, _md_pid, "dataset", req.dataset_id)
         if os.getenv("LES_AUTO_PIPELINES", "true").lower() in ("1", "true", "yes", "on"):
             _auto_run_pipelines(root, les_md_summary)
     except Exception as err:  # noqa: BLE001 — авто-init не должен ронять индексацию
