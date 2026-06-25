@@ -84,13 +84,17 @@ def test_table_query_does_not_need_clarification():
 
 
 @pytest.mark.asyncio
-async def test_chat_returns_clarification_before_retrieval():
+async def test_chat_asks_to_narrow_scope_before_retrieval():
+    # v0.22: проектный запрос при scope=all («проверь все документы») перехватывает
+    # scope_clarification РАНЬШЕ старого build_clarification — и не молча ищет весь корпус.
+    # Инвариант сохранён: ретрив не запускается до выбора области. Раньше тест ждал
+    # NEEDS_CLARIFICATION (v0.21) — это поведение superseded scope_clarification (v0.22).
     class BackendThatMustNotRun:
         async def list_datasets(self):
-            raise AssertionError("list_datasets should not run for clarification")
+            raise AssertionError("list_datasets should not run before scope is chosen")
 
         async def retrieve(self, *args, **kwargs):
-            raise AssertionError("retrieve should not run for clarification")
+            raise AssertionError("retrieve should not run before scope is chosen")
 
     chat_router.set_chat_state(
         chat_router.ChatRouterState(
@@ -115,11 +119,15 @@ async def test_chat_returns_clarification_before_retrieval():
         _user=object(),
     )
 
-    assert response["crag_status"] == "NEEDS_CLARIFICATION"
+    assert response["crag_status"] == "DETERMINISTIC"
     assert response["sources"] == []
-    assert response["effective_dataset_filter"] is None
-    assert response["clarifying_questions"] == response["clarification"]["questions"]
-    assert response["suggested_filters"] == ["NTD", "TABLE_SMETA", "GKRF"]
+    assert "област" in response["answer"].lower()        # просит выбрать область поиска
+    route = response["query_route"]
+    assert route["channel"] == "scope_clarification"
+    # #2: query_route несёт честный profile-трейс (auto-путь, regex-канал — не «pending»).
+    assert route["profile"]["channel"] == "scope_clarification"
+    assert route["profile"]["route_source"] == "regex"
+    assert route["profile"]["profile_id"] == "auto"
 
 
 @pytest.mark.asyncio
