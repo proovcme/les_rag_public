@@ -184,6 +184,13 @@ def profile_env_overrides(profile: str | None) -> dict[str, str]:
             # LLM_MODEL — фолбэк-модель локального рантайма; на Windows = тот же ollama-тег
             # (если какой-то путь всё же возьмёт _mlx_runtime, чтобы не 404 на MLX-имени).
             "LLM_MODEL": "qwen3.5:9b",
+            # CORS под Outlook-аддин: таскпейн на :3000 (http-server) шлёт fetch POST /api/mail/push
+            # на :8050 — без origin :3000 в CORS браузерный движок таскпейна режет запрос.
+            "CORS_ALLOWED_ORIGINS": (
+                "http://localhost:3000,http://127.0.0.1:3000,"
+                "http://localhost:8050,http://127.0.0.1:8050,"
+                "http://localhost:8051,http://127.0.0.1:8051"
+            ),
         }
     return {}
 
