@@ -523,6 +523,62 @@ def _assistant_text(message: dict) -> str:
     return _strip_think(str(reasoning))
 
 
+# ── Нативный ollama /api/chat с think:false (#1b) ──────────────────────────────────────────
+# OpenAI-совместимый эндпоинт ollama ИГНОРИРУЕТ управление «думаньем» (think, /no_think,
+# chat_template_kwargs — проверено на qwen3.5:9b), и reasoning-модель тратит весь лимит токенов
+# на размышления → пустой/CoT-ответ. Нативный /api/chat с think:false даёт ЧИСТЫЙ content.
+# Совпадает с интентом кода (в основном промпте уже есть /no_think «без скрытых рассуждений»).
+
+def _ollama_native_url(base_url: str) -> str:
+    """Корень ollama (для /api/chat) из base_url, который мог быть задан с /v1."""
+    b = (base_url or "http://127.0.0.1:11434").rstrip("/")
+    if b.endswith("/v1"):
+        b = b[: -len("/v1")].rstrip("/")
+    return f"{b}/api/chat"
+
+
+def _ollama_native_body(model: str, messages: list, *, max_tokens: int, temperature: float,
+                        stream: bool, think: bool = False) -> dict:
+    """OpenAI-style messages → нативный ollama /api/chat body. think=False → чистый ответ."""
+    return {
+        "model": model, "messages": messages, "think": think, "stream": stream,
+        "options": {"num_predict": int(max_tokens), "temperature": float(temperature)},
+    }
+
+
+async def _ollama_native_complete(client, runtime, messages, *, max_tokens: int, temperature: float,
+                                  headers=None, token_sink=None):
+    """Нативный ollama-вызов (think:false). Стрим = NDJSON-строки `{"message":{"content":…},"done":…}`.
+    Возвращает (text, usage). usage пуст — ollama локальна, $ не считаем."""
+    url = _ollama_native_url(runtime.base_url)
+    headers = headers or {}
+    if token_sink is not None:
+        body = _ollama_native_body(runtime.model, messages, max_tokens=max_tokens,
+                                   temperature=temperature, stream=True)
+        acc: list[str] = []
+        async with client.stream("POST", url, headers=headers, json=body) as sresp:
+            sresp.raise_for_status()
+            async for line in sresp.aiter_lines():
+                if not line.strip():
+                    continue
+                try:
+                    chunk = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                piece = (chunk.get("message") or {}).get("content") or ""
+                if piece:
+                    acc.append(piece)
+                    await token_sink({"event": "token", "data": piece})
+                if chunk.get("done"):
+                    break
+        return "".join(acc), {}
+    body = _ollama_native_body(runtime.model, messages, max_tokens=max_tokens,
+                               temperature=temperature, stream=False)
+    r = await client.post(url, headers=headers, json=body)
+    r.raise_for_status()
+    return _assistant_text(r.json().get("message", {})), {}
+
+
 def _source_lookup_answer(question: str, chunks: list[Any], *, max_sources: int = 3) -> str | None:
     if not _is_source_lookup_question(question) or not chunks:
         return None
@@ -888,7 +944,14 @@ async def _run_free_mode(req: "ChatRequest", token_sink=None) -> str:
         if token_sink is not None:
             await token_sink({"event": "token", "data": disclaimer})
         async with httpx.AsyncClient(timeout=300.0) as client:
-            if token_sink is not None:
+            if runtime.provider == "ollama":
+                # #1b: нативный /api/chat think:false → чистый ответ (OpenAI-compat ollama
+                # игнорирует управление reasoning; модель иначе уходит в дамп размышлений).
+                text, _ = await _ollama_native_complete(
+                    client, runtime, body["messages"], max_tokens=1400, temperature=0.85,
+                    headers=headers, token_sink=token_sink)
+                acc.append(text)
+            elif token_sink is not None:
                 sbody = {**body, "stream": True}
                 if is_cloud_provider(runtime.provider):
                     sbody["stream_options"] = {"include_usage": True}
@@ -2380,6 +2443,15 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     """Один вызов LLM. token_sink задан → стрим (токены клиенту по
                     мере генерации), иначе — обычный POST (поведение неизменно).
                     Возвращает (answer_text, usage_dict)."""
+                    if runtime.provider == "ollama":
+                        # #1b: нативный /api/chat think:false → чистый ответ без CoT-дампа
+                        # (OpenAI-compat ollama игнорирует reasoning-контроль). Облачного
+                        # fallback у ollama нет — model == runtime.model.
+                        return await _ollama_native_complete(
+                            client, runtime, body["messages"],
+                            max_tokens=int(body.get("max_tokens", 1400)),
+                            temperature=float(body.get("temperature", 0.7)),
+                            headers=hdrs, token_sink=token_sink)
                     _body = _cloud_body_for_model(body, model, runtime.provider)
                     if token_sink is not None:
                         sbody = {**_body, "model": model, "stream": True}
