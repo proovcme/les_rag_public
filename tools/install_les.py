@@ -156,7 +156,11 @@ def profile_env_overrides(profile: str | None) -> dict[str, str]:
             # Эмбеддер: EmbedClient httpx → {MLX_URL}/v1/embeddings. На Windows MLX-хоста нет,
             # направляем на ollama (bge-m3). EMBED_BACKEND здесь — только дескриптор кэша.
             "MLX_URL": "http://127.0.0.1:11434",
-            "EMBED_MODEL": "bge-m3",
+            # ВАЖНО: ":latest", а не голый "bge-m3". embedding_api_model() ИГНОРИРУЕТ EMBED_MODEL,
+            # если оно == api_model легаси-профиля (а это ровно "bge-m3"), и подставляет api_model
+            # активного qwen-профиля (qwen3-embedding-0.6b) → ollama 404. "bge-m3:latest" проходит
+            # гард, а EmbedClient срезает ":latest" → в ollama уходит "bge-m3" → 200.
+            "EMBED_MODEL": "bge-m3:latest",
             "EMBEDDING_MODEL": "bge-m3",
             "EMBED_BACKEND": "ollama",
             "RAG_VECTOR_SIZE": "1024",
@@ -165,6 +169,21 @@ def profile_env_overrides(profile: str | None) -> dict[str, str]:
             "VALIDATOR_BACKEND": "rules",
             "RAG_OCR_ENABLED": "false",
             "SPECKLE_ENABLED": "false",
+            # Память: дефолтные пороги (chat≥8 ГБ свободно, green 12 / red 8 / critical 6) рассчитаны
+            # на локальную MLX-загрузку моделей. На Windows-lite MLX в прокси нет (ollama — отдельный
+            # процесс со своей памятью, облако — вообще без локальной RAM), и при Docker+ollama+qdrant
+            # свободной RAM мало → дефолт ложно режет чат/ретрив (ram_free<8 → 503). Понижаем под lite.
+            "LES_CHAT_MIN_FREE_GB": "2",
+            "LES_MEMORY_GREEN_MIN_FREE_GB": "3",
+            "LES_MEMORY_RED_MIN_FREE_GB": "1.5",
+            "LES_MEMORY_CRITICAL_MIN_FREE_GB": "1",
+            # memory_aware_provider на тесной RAM сводит ollama→MLX (защита от swap). Но на Windows
+            # MLX НЕТ: _mlx_runtime бьёт MLX-моделью (LLM_MODEL) по ollama-URL → 404. Порог 0 =
+            # не съезжать с ollama (LLM на Windows-lite и так в отдельном процессе ollama).
+            "LES_LOCAL_PROVIDER_MIN_FREE_GB": "0",
+            # LLM_MODEL — фолбэк-модель локального рантайма; на Windows = тот же ollama-тег
+            # (если какой-то путь всё же возьмёт _mlx_runtime, чтобы не 404 на MLX-имени).
+            "LLM_MODEL": "qwen3.5:9b",
         }
     return {}
 

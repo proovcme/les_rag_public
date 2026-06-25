@@ -14,10 +14,14 @@ def test_windows_lite_overrides_point_to_ollama():
     assert ov["OLLAMA_MODEL"] == "qwen3.5:9b"
     # эмбеддер → ollama /v1/embeddings (bge-m3, 1024 dims); НЕ MLX-хост и НЕ coreml
     assert ov["MLX_URL"] == "http://127.0.0.1:11434"
-    assert ov["EMBED_MODEL"] == "bge-m3" and ov["EMBEDDING_MODEL"] == "bge-m3"
+    # ":latest" обязателен: иначе embedding_api_model() сбрасывает EMBED_MODEL==legacy-default("bge-m3")
+    # на api_model qwen-профиля → ollama 404. ":latest" проходит гард, EmbedClient его срезает.
+    assert ov["EMBED_MODEL"] == "bge-m3:latest" and ov["EMBEDDING_MODEL"] == "bge-m3"
     assert ov["RAG_VECTOR_SIZE"] == "1024"
     assert ov["EMBED_BACKEND"] != "coreml"
     assert ov["CHAT_VALIDATION_ENABLED"] == "false"
+    # пороги памяти понижены: MLX-headroom-дефолт (8 ГБ free) ложно режет чат на Windows-lite
+    assert float(ov["LES_CHAT_MIN_FREE_GB"]) < 8.0
 
 
 def test_other_profiles_have_no_overrides():
