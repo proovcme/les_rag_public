@@ -246,21 +246,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 ).classes("sov-icon-btn")
             sessions_col = ui.column().classes("w-full gap-2 sov-history-list")
 
-        # Задачи/объёмы прямо в чат-шелле: ввод — командами чата («поставь задачу…»,
-        # «запиши объём…»), просмотр — здесь, рядом, без ухода в админ-консоль.
-        work_drawer = ui.element("aside").classes("sov-history-drawer")
-        work_drawer.set_visibility(False)
-        with work_drawer:
-            with ui.row().classes("w-full items-center justify-between"):
-                _html('<div class="sov-panel-title">Задачи и объёмы</div>')
-                ui.button(icon="o_close", on_click=lambda: work_drawer.set_visibility(False)).props(
-                    'flat round dense aria-label="Закрыть"'
-                ).classes("sov-icon-btn")
-            _html(
-                '<div class="sov-muted" style="font-size:.64rem;line-height:1.4;">'
-                'Ввод — командами в чате: «поставь задачу…», «запиши объём…». Здесь — просмотр.</div>'
-            )
-            work_body = ui.column().classes("w-full gap-1 sov-history-list")
+        # «Задачи и объёмы» убраны из чата (Олег): ввод — командами, просмотр — в админ-вкладках.
 
         # W18.1: файл-вьювер — дерево RAG_Content + просмотр (текст/код/картинка/PDF).
         files_drawer = ui.element("aside").classes("sov-history-drawer")
@@ -282,9 +268,6 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 with ui.row().classes("items-center gap-2"):
                     ui.button(icon="o_history", on_click=lambda: _toggle_history()).props(
                         'flat round dense aria-label="История чата"'
-                    ).classes("sov-icon-btn")
-                    ui.button(icon="o_checklist", on_click=lambda: _toggle_work()).props(
-                        'flat round dense aria-label="Задачи и объёмы"'
                     ).classes("sov-icon-btn")
                     ui.button(icon="o_folder_open", on_click=lambda: _toggle_files()).props(
                         'flat round dense aria-label="Файлы"'
@@ -410,10 +393,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                         scope_opts_cache["data"] = await api_get("/api/scope/options") or {}
 
                     asyncio.create_task(_prefetch_scope())
-                    # W17.5: КАРТА ОБЪЕКТА — паспорт выбранного объекта.
-                    ui.button(icon="o_dashboard", on_click=lambda: _open_dossier()).props(
-                        'flat round dense aria-label="Карта объекта"'
-                    ).classes("sov-icon-btn").tooltip("Карта объекта — паспорт выбранного проекта")
+                    # «Карта объекта» убрана из чата (Олег).
                     mode_chip = ui.label("RAG").classes("sov-chip")
                     mode_chip.tooltip("Режим ответа: заземлённый поиск по документам (RAG)")
                     validation_chip = ui.label("CRAG ON").classes("sov-chip")
@@ -516,21 +496,21 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     with ui.row().classes("sov-guard-controls"):
                         validation_sw = ui.switch("Т.О.С.К.А.", value=True).props("dense")
                         validation_state = ui.label("ON").classes("sov-chip")
-                    # W11.17: палитра /-команд (как у взрослых)
-                    with ui.button(icon="o_terminal").props("no-caps flat round").tooltip("Команды /"):
+                    # W11.17 + причёска (Олег): /-команды и «Расширенный запрос» под одной кнопкой.
+                    advanced_btn = ui.button(icon="o_tune").props("no-caps flat round").tooltip("Команды и формат")
+                    with advanced_btn:
                         with ui.menu():
                             cmd_menu_box = ui.column().classes("gap-0")
                             with cmd_menu_box:
                                 ui.menu_item("Загрузка команд…", on_click=lambda: None)
+                            ui.separator().style("border-color:var(--border);margin:4px 0;")
+                            ui.menu_item("⚙ Расширенный запрос…",
+                                         on_click=lambda: advanced_dialog.open()).props("dense").style(
+                                "font-size:.66rem;color:var(--accent);font-weight:700;")
                     ui.button(
                         icon="o_attach_file",
                         on_click=lambda: attach_dialog.open(),
                     ).props("no-caps flat round").tooltip("Прикрепить документ")
-                    advanced_btn = ui.button(
-                        "Расширенный запрос",
-                        icon="o_tune",
-                        on_click=lambda: advanced_dialog.open(),
-                    ).props("no-caps flat")
                     send_btn = ui.button(
                         "Отправить",
                         icon="o_send",
@@ -732,53 +712,16 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
     asyncio.create_task(_load_datasets_select())
 
     def _toggle_history():
-        work_drawer.set_visibility(False)
         files_drawer.set_visibility(False)
         history_drawer.set_visibility(not history_drawer.visible)
         if history_drawer.visible:
             asyncio.create_task(_load_sessions())
 
-    def _toggle_work():
-        history_drawer.set_visibility(False)
-        files_drawer.set_visibility(False)
-        work_drawer.set_visibility(not work_drawer.visible)
-        if work_drawer.visible:
-            asyncio.create_task(_refresh_work())
-
-    async def _refresh_work():
-        """Просмотр задач/объёмов в чат-шелле. Данные те же, что у чат-команд и
-        вкладок ЗАДАЧИ/ОБЪЁМЫ (/api/tasks, /api/field) — без LLM."""
-        tdata = await api_get("/api/tasks?limit=100") or {}
-        tasks = [t for t in (tdata.get("tasks") or []) if t.get("status") in ("open", "in_progress")]
-        fdata = await api_get("/api/field?limit=50") or {}
-        entries = [e for e in (fdata.get("entries") or []) if e.get("status") == "confirmed"][:20]
-        work_body.clear()
-        with work_body:
-            ui.label("Открытые задачи").classes("section-title")
-            if not tasks:
-                ui.label("нет открытых задач").style("font-size:.68rem;color:var(--dim);")
-            for t in tasks[:30]:
-                with ui.row().classes("w-full items-center gap-2").style(
-                    "border-bottom:1px dashed var(--border);padding:3px 0;"
-                ):
-                    ui.label(f"#{t.get('id','?')} {t.get('title', '—')}").classes("flex-1").style("font-size:.74rem;")
-                    ui.label(str(t.get("status", ""))).style("font-size:.62rem;color:var(--dim);width:90px;flex-shrink:0;")
-            ui.label("Объёмы (подтверждённые)").classes("section-title").style("margin-top:12px;")
-            if not entries:
-                ui.label("журнал пуст").style("font-size:.68rem;color:var(--dim);")
-            for e in entries:
-                with ui.row().classes("w-full items-center gap-2").style(
-                    "border-bottom:1px dashed var(--border);padding:3px 0;"
-                ):
-                    ui.label(f"#{e.get('id','?')} {e.get('position', '—')}").classes("flex-1").style("font-size:.72rem;")
-                    ui.label(f"{e.get('volume', '')} {e.get('unit', '')}").style(
-                        "font-size:.72rem;font-weight:700;width:110px;text-align:right;flex-shrink:0;"
-                    )
+    # «Задачи и объёмы» убраны из чата (Олег) — toggle/refresh-панель не нужны.
 
     # W18.1: файл-вьювер (дерево RAG_Content + просмотр текст/код/картинка/PDF).
     def _toggle_files():
         history_drawer.set_visibility(False)
-        work_drawer.set_visibility(False)
         files_drawer.set_visibility(not files_drawer.visible)
         if files_drawer.visible:
             asyncio.create_task(_load_file_tree())
@@ -2138,9 +2081,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             cmd = d.get("command") or {}
             if cmd.get("action") == "generate_form" and cmd.get("form_id"):
                 asyncio.create_task(_gen_form_from_command(cmd))
-            # Команда задачника/журнала могла изменить данные — обновим открытую панель.
-            if work_drawer.visible:
-                asyncio.create_task(_refresh_work())
+            # (панель «Задачи и объёмы» убрана из чата)
 
         # W5.1: SSE-стрим — токены в пузырь по мере генерации; финальное событие
         # несёт авторитетный payload (вердикт валидации в crag_status).
