@@ -77,7 +77,12 @@ def maybe_handle_help_query(question: str, *, project_id: int = 0) -> Optional[d
     if sovushka_tone.wants_model(question):
         return None
     ql = " ".join(str(question or "").split()).lower()
-    if not any(t in ql for t in _TRIGGERS):
+    # help — ИНСТРУМЕНТ, не keyword-гейт на ПОНИМАНИЕ (docs/AUDIT_DETERMINISM): срабатывает ТОЛЬКО
+    # когда сам запрос И ЕСТЬ просьба о помощи (фраза-триггер ≈ всё сообщение), а НЕ когда «что можешь»
+    # затесалось в содержательный вопрос («расскажи всё что можешь про объект» → это RAG про объект,
+    # не справка). Лидирующий триггер + короткий хвост — без substring-перехвата свободного текста.
+    _hit = next((t for t in _TRIGGERS if ql.startswith(t)), None)
+    if _hit is None or len(ql) > len(_hit) + 12:
         return None
     answer = _OVERVIEW
     for words, key in _TOPIC_HINTS:   # тематический срез, если в запросе есть тема
