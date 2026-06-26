@@ -709,6 +709,16 @@ class MetaDB:
             rows = conn.execute(sql, params).fetchall()
         return [r["file_name"] for r in rows]
 
+    def indexed_files_with_counts(self, dataset_id: str) -> List[tuple[str, int]]:
+        """INDEXED-документы датасета с их chunk_count — для сверки с Qdrant (reconcile)."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT file_name, COALESCE(chunk_count, 0) AS cc FROM documents "
+                "WHERE dataset_id=? AND status='INDEXED'",
+                (dataset_id,),
+            ).fetchall()
+        return [(r["file_name"], int(r["cc"])) for r in rows]
+
     def get_pending_files_with_paths(
         self, dataset_id: str, limit: int | None = None
     ) -> List[tuple]:
@@ -1516,6 +1526,34 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             exact=True,
         )
         return int(result.count)
+
+    def reconcile_dataset(self, dataset_id: str) -> dict:
+        """РЕКОНСАЙЛ MetaDB↔Qdrant: для каждого INDEXED-документа сверяет chunk_count (SQLite) с числом
+        точек в Qdrant. Несовпавшие → PENDING (переиндексируются и встанут на место). Лечит рассинхрон
+        от сбоя cleanup/краша/ручных операций. Дорогая (count на файл) — это разовая операция-ремонт."""
+        sync_qdrant = qdrant_client.QdrantClient(
+            url=self.qdrant_url, timeout=60.0, check_compatibility=False,
+        )
+        files = self.db.indexed_files_with_counts(dataset_id)
+        checked = 0
+        mismatched: list[dict] = []
+        for file_name, sqlite_cc in files:
+            checked += 1
+            try:
+                qpoints = self._sync_count_file_points(sync_qdrant, dataset_id, file_name)
+            except Exception as error:  # noqa: BLE001
+                logger.warning("[RECONCILE] count failed %s: %s", file_name, error)
+                continue
+            if qpoints != sqlite_cc:
+                mismatched.append({"file": file_name, "sqlite": sqlite_cc, "qdrant": qpoints})
+                self.db.update_document_status(dataset_id, file_name, "PENDING", 0)
+        if mismatched:
+            self.db.update_dataset_chunk_count(dataset_id)
+        logger.info("[RECONCILE] dataset=%s checked=%s mismatched=%s (→PENDING)",
+                    dataset_id, checked, len(mismatched))
+        return {"dataset_id": dataset_id, "checked": checked,
+                "mismatched": len(mismatched), "requeued": len(mismatched),
+                "details": mismatched[:50]}
 
     def _sync_existing_file_vectors_by_hash(
         self,

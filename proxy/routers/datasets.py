@@ -835,6 +835,19 @@ async def repair_dataset(dataset_id: str, _admin=Depends(require_admin)):
             "hint": "нажмите Пуск (parse-scheduler) для переиндексации" if requeued else "ошибочных файлов нет"}
 
 
+@router.post("/datasets/{dataset_id}/reconcile")
+async def reconcile_dataset_endpoint(dataset_id: str, _admin=Depends(require_admin)):
+    """РЕКОНСАЙЛ MetaDB↔Qdrant: сверяет точки каждого INDEXED-документа; рассинхронные → PENDING
+    (переиндексация чинит). Лечит тихую потерю recall от сбоев cleanup/краша. Дорогая операция-ремонт."""
+    backend = get_dataset_state().backend
+    res = await asyncio.to_thread(backend.reconcile_dataset, dataset_id)
+    if res.get("requeued"):
+        backend.db.update_dataset_status(dataset_id, "IDLE")
+    res["hint"] = ("нажмите Пуск для переиндексации рассинхронных" if res.get("requeued")
+                   else "рассинхрона нет — индекс согласован")
+    return res
+
+
 @router.post("/datasets/{dataset_id}/extract-body/dry-run")
 async def extract_body_dry_run(dataset_id: str, _admin=Depends(require_admin)):
     """Dry-run извлечения: сколько файлов/абзацев/строк извлечётся. Ничего не пишет, оригиналы целы."""
