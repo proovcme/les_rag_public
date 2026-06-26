@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Literal, Optional
 
@@ -16,6 +17,27 @@ class QueryIntent:
     channel: QueryChannel
     dataset_filter: Optional[str]
     reason: str
+
+
+_TOKEN_RE_CACHE: dict[str, "re.Pattern[str]"] = {}
+
+
+def _has_token(q: str, tokens) -> bool:
+    """Токен на ГРАНИЦЕ слова, не подстрокой (мина substring). Короткий (≤3 симв.) — полная граница
+    с обеих сторон («кац» не ловит специфиКАЦия, «сп» не ловит спОсоб); длинный — граница слева,
+    словоформа справа разрешена («смет»→сметы/сметная). Регэкспы кэшируются."""
+    for t in tokens:
+        pat = _TOKEN_RE_CACHE.get(t)
+        if pat is None:
+            esc = re.escape(t)
+            if len(t) <= 3:
+                pat = re.compile(rf"(?<![а-яёa-z0-9]){esc}(?![а-яёa-z0-9])")
+            else:
+                pat = re.compile(rf"(?<![а-яёa-z0-9]){esc}")
+            _TOKEN_RE_CACHE[t] = pat
+        if pat.search(q):
+            return True
+    return False
 
 
 TABLE_AGGREGATE_TOKENS = (
@@ -158,30 +180,30 @@ def route_query(
         if dataset_filter.startswith("NTD") or dataset_filter == "GKRF":
             return QueryIntent("rag", dataset_filter, "explicit_rag_filter")
 
-    if any(token in q for token in MAIL_TOKENS):
+    if _has_token(q, MAIL_TOKENS):
         return QueryIntent("mail", "MAIL", "mail_keyword")
-    if any(token in q for token in FIELD_STRONG_TOKENS) or (
-        any(verb in q for verb in FIELD_WORK_VERBS)
-        and any(token in q for token in FIELD_VOLUME_TOKENS)
+    if _has_token(q, FIELD_STRONG_TOKENS) or (
+        _has_token(q, FIELD_WORK_VERBS)
+        and _has_token(q, FIELD_VOLUME_TOKENS)
     ):
         return QueryIntent("field", "FIELD", "field_volume_keyword")
-    if any(token in q for token in FIRE_SAFETY_TOKENS):
+    if _has_token(q, FIRE_SAFETY_TOKENS):
         return QueryIntent("rag", "NTD_FIRE", "fire_safety_keyword")
-    if any(token in q for token in HVAC_TOKENS):
+    if _has_token(q, HVAC_TOKENS):
         return QueryIntent("rag", "NTD_HVAC", "hvac_keyword")
 
-    has_normative = any(token in q for token in NORMATIVE_TOKENS)
-    has_rag_form = any(token in q for token in RAG_QUESTION_TOKENS)
+    has_normative = _has_token(q, NORMATIVE_TOKENS)
+    has_rag_form = _has_token(q, RAG_QUESTION_TOKENS)
     if has_normative and has_rag_form:
         return QueryIntent("rag", None, "normative_question")
-    if has_normative and not any(token in q for token in ("смет", "спецификац", "ведомост", "таблиц")):
+    if has_normative and not _has_token(q, ("смет", "спецификац", "ведомост", "таблиц")):
         return QueryIntent("rag", None, "normative_keyword")
 
-    has_aggregate = any(token in q for token in TABLE_AGGREGATE_TOKENS)
-    has_table_context = any(token in q for token in TABLE_CONTEXT_TOKENS)
+    has_aggregate = _has_token(q, TABLE_AGGREGATE_TOKENS)
+    has_table_context = _has_token(q, TABLE_CONTEXT_TOKENS)
     if has_aggregate and has_table_context:
         return QueryIntent("table", "TABLE", "table_aggregate_context")
-    if any(token in q for token in ("смет", "спецификац", "ведомост", "кс-2", "кс2")):
+    if _has_token(q, ("смет", "спецификац", "ведомост", "кс-2", "кс2")):
         return QueryIntent("table", "TABLE", "table_document_keyword")
 
     kot = analyze_question(question)
