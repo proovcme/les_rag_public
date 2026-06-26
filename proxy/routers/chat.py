@@ -1508,6 +1508,57 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 "history_id": history_id,
             }
 
+    # Нормоконтроль комплекта (СПДС, ГОСТ Р 21.101) — чат-инструмент: LLM-роутер выбрал doc_review,
+    # исполняем на скоупном датасете (RAG-led review). Проверки/числа считает код, вердикт — за инженером.
+    if _rp and _rt == "doc_review":
+        from proxy.services import doc_review_service as _drs
+        _dr_ds = effective_dataset_ids[0] if effective_dataset_ids else None
+        if not _dr_ds:
+            _dr_route = _profile_route("doc_review", "doc_review")
+            return {
+                "answer": "Выбери комплект (датасет) в шапке чата — нормоконтроль идёт по конкретному "
+                          "комплекту. Затем повтори: «проверь комплект по ГОСТ Р 21.101».",
+                "crag_status": "NEEDS_SCOPE", "sources": [],
+                "effective_dataset_filter": "DOC_REVIEW", "query_route": _dr_route,
+                "retrieval_trace": {"mode": "doc_review", "quality_status": "needs_scope"},
+                "validation": {"enabled": False, "reason": "doc_review_needs_scope"},
+            }
+        _t_dr = time.time()
+        try:
+            _dr_map, _dr_items = await asyncio.to_thread(_drs.review_dataset, _dr_ds)
+        except Exception as _dr_err:
+            logger.warning("[DOC_REVIEW] skipped: %s", _dr_err)
+            _dr_map = _dr_items = None
+        if _dr_items is not None:
+            _dr_text = _drs.review_to_chat_text(_dr_items, _dr_map) + (f"\n\n{memory_block}" if memory_block else "")
+            _dr_sum = _drs.review_summary(_dr_items)
+            _dr_route = _profile_route("doc_review", "doc_review")
+            _dr_trace = {"mode": "doc_review", "vector_count": 0, "lexical_count": 0,
+                         "merged_count": _dr_sum["total"], "retry_count": 0,
+                         "quality_status": "doc_review", "doc_review": _dr_sum}
+            _dr_hist = None
+            try:
+                _dr_hist = save_chat_history(
+                    question=req.question, answer=_dr_text, sources=[_dr_map.standard],
+                    crag_status="VERIFIED", latency_sec=time.time() - _t_dr, tokens=0,
+                    session_id=req.session_id, requested_dataset_filter=req.dataset_filter,
+                    effective_dataset_filter="DOC_REVIEW",
+                    resolved_dataset_ids=[_dr_ds], resolved_dataset_names=[],
+                    source_dataset_ids=[_dr_ds], source_dataset_names=[],
+                    query_route=_dr_route, retrieval_trace=_dr_trace,
+                    cache_type="doc_review", validation_enabled=False, success=1,
+                )
+            except Exception as _db_err:
+                logger.warning("[CHAT] History save error: %s", _db_err)
+            return {
+                "answer": _dr_text, "crag_status": "VERIFIED", "sources": [_dr_map.standard],
+                "effective_dataset_filter": "DOC_REVIEW", "query_route": _dr_route,
+                "retrieval_trace": _dr_trace, "cache": "doc_review",
+                "validation": {"enabled": False, "reason": "doc_review"},
+                "doc_review": _drs.review_to_json(_dr_items, _dr_map),
+                "history_id": _dr_hist,
+            }
+
     # «дай сводку проекта» с известным объектом — детерминированный канал (сводка из
     # LES.md ниже), не клярифицировать как «слишком широкий». Аналогично reconcile/spec_to_bor.
     from proxy.services.project_summary_service import is_project_summary_query as _is_proj_sum

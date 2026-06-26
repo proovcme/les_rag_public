@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from proxy.services.document_set_model import DocumentSet, VedomostMatch, match_vedomost
+from proxy.services.document_set_model import DocumentSet, VedomostMatch, build_document_set, match_vedomost
 from proxy.services.normcontrol_review_map_service import ReviewMap, ReviewTarget
 from proxy.services.normcontrol_service import check_cipher_consistency
 
@@ -146,6 +146,82 @@ def review_summary(items: list[ReviewItem]) -> dict:
             "computed_issues": by_status.get(S_COMPUTED_ISSUE, 0),
             "manual_required": by_status.get(S_MANUAL, 0),
             "review_needed": by_status.get(S_REVIEW_NEEDED, 0)}
+
+
+# ── оркестратор: dataset_id → review (файлы из MetaDB, ведомость из Parquet) ──
+# Используется и роутером /api/doc-review, и чат-инструментом doc_review (агент-роутер).
+
+def _dataset_file_names(dataset_id: str) -> list[str]:
+    import sqlite3
+
+    from backend.rag_config import rag_meta_db_path
+
+    try:
+        with sqlite3.connect(rag_meta_db_path()) as conn:
+            rows = conn.execute(
+                "SELECT file_name FROM documents WHERE dataset_id=?", (dataset_id,)
+            ).fetchall()
+        return [r[0] for r in rows if r and r[0]]
+    except Exception:
+        return []
+
+
+def _vedomost_entries(dataset_id: str, storage_root: Path = Path("storage/datasets")):
+    """Позиции ведомости (VEDOMOST в Parquet) → [{designation, name}]. None если ведомости нет."""
+    try:
+        from proxy.services.bor_service import rows_from_parquet
+    except Exception:
+        return None
+    parquet_root = storage_root / dataset_id / "_parquet"
+    if not parquet_root.exists():
+        return None
+    entries: list[dict] = []
+    for pq in sorted(parquet_root.rglob("*.parquet")):
+        try:
+            for row in rows_from_parquet(pq):
+                if row.get("doc_type") == "VEDOMOST":
+                    ref = str(row.get("designation") or row.get("code") or "").strip()
+                    if ref:
+                        entries.append({"designation": ref, "name": str(row.get("name") or "").strip()})
+        except Exception:
+            continue
+    return entries or None
+
+
+def review_dataset(dataset_id: str, *, rulepack: str = "gost_r_21_101_2026"):
+    """dataset_id → (review_map, items). Поднимает ValueError('no_documents') если файлов нет,
+    FileNotFoundError/ValueError если rulepack битый (валидирует load_review_map)."""
+    from proxy.services.normcontrol_review_map_service import load_review_map
+
+    review_map = load_review_map(rulepack)
+    files = _dataset_file_names(dataset_id)
+    if not files:
+        raise ValueError("no_documents")
+    vedomost = _vedomost_entries(dataset_id)
+    doc_set = build_document_set(files)
+    return review_map, run_review(doc_set, review_map, vedomost_entries=vedomost)
+
+
+def review_to_chat_text(items: list[ReviewItem], review_map: ReviewMap, *, top: int = 8) -> str:
+    """Краткий человекочитаемый ответ для чата (RAG-led: предлагаемые замечания, не вердикт)."""
+    s = review_summary(items)
+    lines = [
+        f"**Нормоконтроль комплекта — {review_map.standard} (СПДС, предварительно)**",
+        "",
+        f"Позиций проверки: {s['total']} · замечаний (код): {s['computed_issues']} · "
+        f"ручных проверок: {s['manual_required']} · нужен обзор требования: {s['review_needed']}.",
+    ]
+    issues = [it for it in items if it.status in (S_COMPUTED_ISSUE, S_MANUAL)]
+    if issues:
+        lines.append("")
+        for it in issues[:top]:
+            lines.append(f"- [{it.rule_id} · {_STATUS_RU.get(it.status, it.status)}] "
+                         f"{it.target}: {it.model_note}")
+        if len(issues) > top:
+            lines.append(f"… и ещё {len(issues) - top} (показаны первые {top}).")
+    lines += ["", "_Статусы предлагаемые: код считает формализуемое, требования ищет RAG; "
+              "финальное решение по каждому пункту — за инженером._"]
+    return "\n".join(lines)
 
 
 def review_to_json(items: list[ReviewItem], review_map: ReviewMap) -> dict:

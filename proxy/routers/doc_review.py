@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sqlite3
 import time
 from pathlib import Path
 from typing import Optional
@@ -24,7 +23,6 @@ from pydantic import BaseModel
 
 from proxy.security import require_user
 from proxy.services import doc_review_service as dr
-from proxy.services.document_set_model import build_document_set
 from proxy.services.normcontrol_review_map_service import list_review_maps, load_review_map
 
 router = APIRouter(prefix="/api/doc-review", tags=["doc-review"])
@@ -42,53 +40,16 @@ class DocReviewRequest(BaseModel):
     strictness: str = "normal"                # normal | strict
 
 
-def _dataset_file_names(dataset_id: str) -> list[str]:
-    from backend.rag_config import rag_meta_db_path
-
-    try:
-        with sqlite3.connect(rag_meta_db_path()) as conn:
-            rows = conn.execute(
-                "SELECT file_name FROM documents WHERE dataset_id=?", (dataset_id,)
-            ).fetchall()
-        return [r[0] for r in rows if r and r[0]]
-    except Exception:
-        return []
-
-
-def _vedomost_entries(dataset_id: str) -> Optional[list[dict]]:
-    """Позиции ведомости (VEDOMOST в Parquet) → [{designation, name}]. None если ведомости нет."""
-    try:
-        from proxy.services.bor_service import rows_from_parquet
-    except Exception:
-        return None
-    parquet_root = _STORAGE_ROOT / dataset_id / "_parquet"
-    if not parquet_root.exists():
-        return None
-    entries: list[dict] = []
-    for pq in sorted(parquet_root.rglob("*.parquet")):
-        try:
-            for row in rows_from_parquet(pq):
-                if row.get("doc_type") == "VEDOMOST":
-                    ref = str(row.get("designation") or row.get("code") or "").strip()
-                    if ref:
-                        entries.append({"designation": ref, "name": str(row.get("name") or "").strip()})
-        except Exception:
-            continue
-    return entries or None
-
-
 async def _build_review(dataset_id: str, rulepack: str):
+    # Оркестрация — в сервисе (dr.review_dataset): тот же путь, что у чат-инструмента doc_review.
     try:
-        review_map = await asyncio.to_thread(load_review_map, rulepack)
-    except (FileNotFoundError, ValueError) as e:
+        return await asyncio.to_thread(dr.review_dataset, dataset_id, rulepack=rulepack)
+    except ValueError as e:
+        if str(e) == "no_documents":
+            raise HTTPException(404, f"в датасете {dataset_id} нет документов (MetaDB)")
         raise HTTPException(400, f"rulepack: {e}")
-    files = await asyncio.to_thread(_dataset_file_names, dataset_id)
-    if not files:
-        raise HTTPException(404, f"в датасете {dataset_id} нет документов (MetaDB)")
-    vedomost = await asyncio.to_thread(_vedomost_entries, dataset_id)
-    doc_set = await asyncio.to_thread(build_document_set, files)
-    items = await asyncio.to_thread(dr.run_review, doc_set, review_map, vedomost_entries=vedomost)
-    return review_map, items
+    except FileNotFoundError as e:
+        raise HTTPException(400, f"rulepack: {e}")
 
 
 @router.get("/rulepacks")
