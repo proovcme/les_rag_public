@@ -284,13 +284,18 @@ async def assert_parse_admission(
     memory = await parse_memory_state()
     ram_free_gb = memory["ram_free_gb"]
     swap_pct = memory["swap_pct"]
-    if ram_free_gb < min_free_gb or swap_pct > max_swap_pct:
+    # RAM-aware: macOS держит «висячий» swap аллоцированным даже при свободной RAM — это НЕ давление.
+    # Реальное давление = низкий RAM, ИЛИ высокий swap одновременно с почти-исчерпанной RAM.
+    swap_floor_gb = min_free_gb + 2.0
+    ram_low = ram_free_gb < min_free_gb
+    swap_pressure = swap_pct > max_swap_pct and ram_free_gb < swap_floor_gb
+    if ram_low or swap_pressure:
         raise HTTPException(
             status_code=429,
             detail=(
                 f"parse rejected by memory guard: ram_free_gb={ram_free_gb}, "
-                f"swap_pct={swap_pct}, required ram_free_gb>={min_free_gb}, "
-                f"swap_pct<={max_swap_pct}"
+                f"swap_pct={swap_pct}, required ram_free_gb>={min_free_gb} "
+                f"(swap>{max_swap_pct}% блокирует только при RAM<{swap_floor_gb:.0f}ГБ)"
             ),
         )
 
