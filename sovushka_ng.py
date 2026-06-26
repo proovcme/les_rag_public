@@ -116,17 +116,22 @@ _COSMOS_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>Гра
       .backgroundColor('#0e1116')
       .graphData({nodes: nodes, links: links})
       .nodeLabel(n => n.id + ' · ' + n.deg + ' связей')
-      .nodeVal(n => 1 + Math.sqrt(n.deg))
-      .nodeColor(n => 'hsl(' + (162 - Math.min(n.deg, 28)) + ', 68%, ' + (40 + Math.min(n.deg, 28)) + '%)')
-      .nodeOpacity(0.95)
-      .linkColor(() => 'rgba(52,211,153,0.16)')
-      .linkWidth(0.4)
+      .nodeVal(n => 0.7 + Math.sqrt(n.deg) * 0.7)
+      .nodeColor(n => 'hsl(' + (162 - Math.min(n.deg, 28)) + ', 70%, ' + (42 + Math.min(n.deg, 26)) + '%)')
+      .nodeOpacity(0.9)
+      .linkColor(() => 'rgba(110,231,183,0.42)')
+      .linkWidth(0.8)
+      .linkOpacity(0.5)
+      .linkDirectionalParticles(1)
+      .linkDirectionalParticleWidth(1.1)
+      .linkDirectionalParticleColor(() => '#9ff5d0')
       .enableNodeDrag(false)
-      .warmupTicks(50)
-    try { G.d3Force('charge').strength(-45); } catch (e) {}
+      .warmupTicks(60)
+    try { G.d3Force('charge').strength(-130); } catch (e) {}
+    try { G.d3Force('link').distance(36); } catch (e) {}
     note.remove()
     document.getElementById('meta').textContent = nodes.length + ' узлов · ' + edges.length + ' рёбер · 3D';
-    let a = 0; const dist = 900;
+    let a = 0; const dist = 1200;
     G.cameraPosition({z: dist});
     setInterval(() => { a += 0.0016; G.cameraPosition({x: dist * Math.sin(a), z: dist * Math.cos(a)}); }, 30);
   } catch (err) { note.textContent = 'Ошибка графа: ' + (err && err.message || err); }
@@ -146,8 +151,8 @@ def _build_qdrant_visualizer_panel(visualizer_url: str) -> None:
         with ui.row().classes("items-center justify-between w-full px-4 py-2").style(
             "border-bottom:1px solid var(--border);background:var(--bg-panel);"
         ):
-            ui.label("QDRANT // ВИЗУАЛИЗАТОР").style(
-                "font-size:.8rem;font-weight:900;letter-spacing:1px;color:var(--text);"
+            ui.label("Граф знаний ЛЕС").style(
+                "font-size:14px;font-weight:500;color:var(--text);"
             )
             ui.button("ОТКРЫТЬ В ОТДЕЛЬНОЙ ВКЛАДКЕ", on_click=lambda: ui.navigate.to(visualizer_url, new_tab=True)).props(
                 "flat no-caps dense"
