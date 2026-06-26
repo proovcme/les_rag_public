@@ -284,18 +284,19 @@ async def assert_parse_admission(
     memory = await parse_memory_state()
     ram_free_gb = memory["ram_free_gb"]
     swap_pct = memory["swap_pct"]
-    # RAM-aware: macOS держит «висячий» swap аллоцированным даже при свободной RAM — это НЕ давление.
-    # Реальное давление = низкий RAM, ИЛИ высокий swap одновременно с почти-исчерпанной RAM.
-    swap_floor_gb = min_free_gb + 2.0
+    # На macOS swap_pct почти ВСЕГДА высок (висячие stale-аллокации) даже при куче свободной RAM —
+    # это НЕ давление памяти. Надёжный сигнал = свободная RAM. Блокируем при низкой RAM, либо при
+    # ЭКСТРЕМАЛЬНОМ swap-thrashing (>90%) одновременно с уже подсевшей RAM. max_swap_pct (дефолт под
+    # не-macOS, 45%) для блокировки НЕ используем — иначе нормальный macOS-swap ложно режет индексацию.
+    swap_thrash_floor = min_free_gb * 1.5
     ram_low = ram_free_gb < min_free_gb
-    swap_pressure = swap_pct > max_swap_pct and ram_free_gb < swap_floor_gb
-    if ram_low or swap_pressure:
+    swap_thrash = swap_pct > 90.0 and ram_free_gb < swap_thrash_floor
+    if ram_low or swap_thrash:
         raise HTTPException(
             status_code=429,
             detail=(
-                f"parse rejected by memory guard: ram_free_gb={ram_free_gb}, "
-                f"swap_pct={swap_pct}, required ram_free_gb>={min_free_gb} "
-                f"(swap>{max_swap_pct}% блокирует только при RAM<{swap_floor_gb:.0f}ГБ)"
+                f"parse rejected by memory guard: ram_free_gb={ram_free_gb}, swap_pct={swap_pct}; "
+                f"нужно ram_free_gb>={min_free_gb} (swap>90% блокирует только при RAM<{swap_thrash_floor:.0f}ГБ)"
             ),
         )
 
