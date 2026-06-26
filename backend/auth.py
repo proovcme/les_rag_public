@@ -16,12 +16,14 @@ API:
 """
 
 import logging
+import os
 import httpx
 from nicegui import app, ui
 
 logger = logging.getLogger(__name__)
 
-PROXY_URL = "http://localhost:8050"
+# Конфигурируемо (windows-lite/иной хост): LES_PROXY_URL, дефолт — локальный прокси.
+PROXY_URL = os.getenv("LES_PROXY_URL", "http://localhost:8050")
 
 # ── Состояние сессии ─────────────────────────────────────────────────────────
 
