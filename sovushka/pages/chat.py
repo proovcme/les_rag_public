@@ -510,6 +510,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                                 for _ex in _items:
                                     ui.menu_item(_ex, on_click=lambda e=_ex: _fill_send(e)).props("dense").style(
                                         "font-size:.66rem;color:var(--accent);")
+                    ui.label("Shift+Enter — перенос строки · Enter — отправить").classes("sov-composer-hint")
 
                 with ui.row().classes("sov-composer-actions"):
                     with ui.row().classes("sov-guard-controls"):

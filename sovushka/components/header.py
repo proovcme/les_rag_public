@@ -150,8 +150,8 @@ def build_header(
             ui.timer(3.0, _upd_proxy_dot)
 
             # Обновить
-            ui.button("↻", on_click=lambda: asyncio.create_task(_full_refresh())
-            ).props('flat dense aria-label="Обновить данные"').style("color:var(--dim);font-size:.85rem;")
+            ui.button(icon="o_refresh", on_click=lambda: asyncio.create_task(_full_refresh())
+            ).props('flat dense round aria-label="Обновить данные"').style("color:var(--dim);")
 
             # Тема
             _dark_init = app.storage.user.get("dark_theme", True)
@@ -170,11 +170,11 @@ def build_header(
                 )
                 js += f";if(window.Quasar){{Quasar.Dark.set({'true' if d else 'false'});}}"
                 ui.run_javascript(js)
-                theme_btn.set_text("🌙" if d else "☀")
+                theme_btn.props(f'icon={"o_dark_mode" if d else "o_light_mode"}')
 
             theme_btn = ui.button(
-                "🌙" if _dark_init else "☀", on_click=_toggle_theme
-            ).props('flat dense aria-label="Переключить тему"').style("color:var(--dim);font-size:.85rem;")
+                icon=("o_dark_mode" if _dark_init else "o_light_mode"), on_click=_toggle_theme
+            ).props('flat dense round aria-label="Переключить тему"').style("color:var(--dim);")
 
             if not _dark_init:
                 ui.run_javascript("if(window.Quasar){Quasar.Dark.set(false);}")
@@ -453,11 +453,11 @@ def build_header(
                             "border:1px solid var(--accent);color:var(--accent);background:transparent;"
                         )
 
-                ui.button("⚙", on_click=lambda: settings_dialog.open()).props('flat dense aria-label="Настройки"').style("color:var(--dim);")
+                ui.button(icon="o_settings", on_click=lambda: settings_dialog.open()).props('flat dense round aria-label="Настройки"').style("color:var(--dim);")
 
             # Пользователь / выход
-            badge_text = f"{'👑' if is_admin else '👤'} {auth_holder or auth_role}"
-            ui.button(badge_text, on_click=lambda: (logout(), ui.navigate.to("/login"))
+            ui.button(auth_holder or auth_role, icon=("o_shield" if is_admin else "o_person"),
+                      on_click=lambda: (logout(), ui.navigate.to("/login"))
             ).props("flat no-caps dense").style(
                 "color:var(--ok);font-size:.62rem;font-family:var(--font);max-width:120px;"
                 "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"

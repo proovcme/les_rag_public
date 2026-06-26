@@ -1251,5 +1251,23 @@ body, .nicegui-content {
 }
 .sov-ev-badge { font-size: 11.5px !important; }
 .src-tag i { font-size: 14px !important; }
+/* Этап 4 — чат: бабблы круглее/крупнее, чипы-источники как пилюли, подсказка композера. */
+.chat-msg-user, .chat-msg-ai {
+  border-radius: 12px !important;
+  padding: 11px 15px !important;
+  font-size: 14px !important;
+  line-height: 1.6 !important;
+}
+.chat-msg-user { background: var(--bg-mod) !important; border-right: 1px solid var(--border) !important; }
+.chat-msg-ai { border-left: 2px solid var(--accent) !important; }
+.src-tag { border-radius: 7px !important; padding: 3px 9px !important; }
+.sov-composer { border-radius: 12px !important; }
+.sov-composer-hint {
+  color: var(--dim);
+  font-size: 11.5px;
+  font-family: var(--font-ui);
+  padding: 2px 4px 0;
+  opacity: .82;
+}
 </style>
 """
