@@ -147,18 +147,69 @@ def build_samovar():
 
     def _open_add():
         add_dialog.clear()
+        picked = {"path": ""}
+        browse = {"path": ""}
         with add_dialog, ui.card().classes("sov-advanced-dialog").style("min-width:560px;"):
             ui.label("Добавить датасет").classes("sov-panel-title")
             ui.label("Папка индексируется in-place (без копии в storage).").classes("sov-muted")
             name_in = ui.input("Название").props("dense outlined").classes("w-full")
-            path_in = ui.input("Путь к папке (напр. /Users/ovc/Downloads/BAI)").props("dense outlined").classes("w-full")
+            with ui.row().classes("items-center w-full").style("gap:8px;"):
+                path_lbl = ui.label("Папка не выбрана").style(
+                    "flex:1;font-size:13px;color:var(--dim);border:1px solid var(--border);"
+                    "border-radius:8px;padding:8px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;")
+                ui.button("Обзор…", icon="o_folder_open",
+                          on_click=lambda: _open_browser()).props("no-caps flat dense").style("color:var(--accent);")
             parse_sw = ui.switch("Сразу индексировать", value=True)
+
+            # вложенный браузер папок (клик-навигация по серверной ФС, без печати пути)
+            with ui.dialog() as fdlg, ui.card().style("min-width:520px;max-width:92vw;"):
+                ui.label("Выбор папки").classes("sov-panel-title")
+                with ui.row().classes("items-center w-full").style("gap:8px;margin:6px 0;"):
+                    fb_sel = ui.button("Выбрать эту", icon="o_check",
+                                       on_click=lambda: _pick()).props("no-caps").style(
+                                       "background:var(--accent);color:var(--bg);border-radius:8px;")
+                    ui.button("Отмена", on_click=fdlg.close).props("flat no-caps dense").style("color:var(--dim);")
+                    fb_path = ui.label("…").style("flex:1;text-align:right;font-size:12px;"
+                                                  "color:var(--accent);word-break:break-all;")
+                fb_list = ui.column().classes("w-full").style("max-height:340px;overflow:auto;gap:2px;")
+
+            async def _nav(path=""):
+                d = await api_get(f"/api/rag/browse-external?path={quote(path, safe='')}")
+                if not isinstance(d, dict):
+                    ui.notify(last_api_error_text("Не удалось открыть папку"), type="negative")
+                    return
+                browse["path"] = d.get("path", "")
+                fb_path.set_text(d.get("path") or "Корни — выбери папку ниже")
+                fb_list.clear()
+                with fb_list:
+                    if d.get("path"):
+                        ui.button("↑ Вверх", icon="o_arrow_upward",
+                                  on_click=lambda u=d.get("parent"): asyncio.create_task(_nav(u or ""))
+                                  ).props("flat dense no-caps").classes("w-full")
+                    for e in d.get("dirs", []):
+                        ui.button(f"{e['name']}   ·   {e.get('file_count', 0)} файл.", icon="o_folder",
+                                  on_click=lambda p=e["path"]: asyncio.create_task(_nav(p))
+                                  ).props("flat dense no-caps align=left").classes("w-full")
+                    if not d.get("dirs") and d.get("path"):
+                        ui.label("Подпапок нет — можно выбрать эту.").classes("sov-muted").style("padding:6px;")
+                fb_sel.set_enabled(bool(d.get("path")))
+
+            def _pick():
+                if browse["path"]:
+                    picked["path"] = browse["path"]
+                    path_lbl.set_text(browse["path"])
+                    path_lbl.style("color:var(--text);")
+                    fdlg.close()
+
+            def _open_browser():
+                fdlg.open()
+                asyncio.create_task(_nav(""))
 
             async def _do_add():
                 nm = (name_in.value or "").strip()
-                pth = (path_in.value or "").strip()
+                pth = picked["path"]
                 if not nm or not pth:
-                    ui.notify("Нужны и название, и путь", type="negative")
+                    ui.notify("Нужны название и выбранная папка (Обзор…)", type="negative")
                     return
                 ds = await api_post(f"/api/rag/datasets?name={quote(nm)}", {})
                 did = (ds or {}).get("id")
@@ -248,11 +299,13 @@ def build_samovar():
     async def _refresh():
         try:
             await _load()
-            if _refs["kpi"]:
-                tf = sum(r["total"] for r in _S["rows"])
-                ti = sum(r["indexed"] for r in _S["rows"])
-                te = sum(r["error"] for r in _S["rows"])
-                _refs["kpi"].set_text(f"{len(_S['rows'])} объектов · {tf} файлов · {ti} в индексе · {te} ошибок")
+            if _refs.get("stats"):
+                rows = _S["rows"]
+                vals = {"datasets": len(rows), "files": sum(r["total"] for r in rows),
+                        "indexed": sum(r["indexed"] for r in rows), "pending": sum(r["pending"] for r in rows),
+                        "error": sum(r["error"] for r in rows), "chunks": sum(r["chunks"] for r in rows)}
+                for k, lbl in _refs["stats"].items():
+                    lbl.set_text(f"{vals.get(k, 0):,}".replace(",", " "))
             _render_rows()
             await _refresh_status()
         except Exception as exc:  # noqa: BLE001 — рендер не должен ронять страницу
@@ -273,8 +326,7 @@ def build_samovar():
 
     with ui.column().classes("w-full max-w-6xl mx-auto p-4 gap-3"):
         with ui.row().classes("items-center w-full").style("gap:12px;flex-wrap:nowrap;"):
-            ui.label("Датасеты").style("font-size:16px;font-weight:500;")
-            _refs["kpi"] = ui.label("…").classes("sov-muted")
+            ui.label("Датасеты").style("font-size:20px;font-weight:500;")
             ui.element("div").style("flex:1;")
             with ui.row().classes("items-center").style("border:1px solid var(--border);border-radius:8px;overflow:hidden;"):
                 _refs["tbtn"] = ui.button("Таблица", icon="o_table_rows",
@@ -283,6 +335,18 @@ def build_samovar():
                                           on_click=lambda: _set_mode("cards")).props("flat dense no-caps")
             ui.button("Добавить", icon="o_add", on_click=_open_add).props("no-caps").style(
                 "background:var(--accent);color:var(--bg);border-radius:8px;font-weight:500;")
+        # Большая статистика сверху
+        _refs["stats"] = {}
+        _STAT_DEFS = (("datasets", "Датасеты", "var(--text)"), ("files", "Файлов", "var(--text)"),
+                      ("indexed", "В индексе", "var(--ok)"), ("pending", "Ждут", "var(--warn)"),
+                      ("error", "Ошибки", "var(--err)"), ("chunks", "Чанков", "var(--accent)"))
+        with ui.element("div").style("display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));"
+                                     "gap:10px;width:100%;"):
+            for _k, _lbl, _col in _STAT_DEFS:
+                with ui.element("div").classes("card-les").style("padding:14px 16px;"):
+                    _refs["stats"][_k] = ui.label("—").style(
+                        f"font-size:26px;font-weight:500;line-height:1;color:{_col};font-variant-numeric:tabular-nums;")
+                    ui.label(_lbl).style("font-size:12px;color:var(--dim);margin-top:6px;")
         with ui.row().classes("items-center w-full").style("gap:10px;"):
             ui.button("Пуск", icon="o_play_arrow",
                       on_click=lambda: asyncio.create_task(_start_all())).props("flat dense no-caps").style("color:var(--ok);")
