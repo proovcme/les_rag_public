@@ -812,3 +812,68 @@ async def delete_backup(req: BackupDeleteRequest, _admin=Depends(require_admin))
             raise HTTPException(status_code=500, detail=f"Failed to delete Qdrant snapshot: {e}")
     else:
         raise HTTPException(status_code=400, detail="Invalid backup type")
+
+
+def _backup_roots():
+    from pathlib import Path
+    les_home = os.getenv("LES_HOME") or str(Path(__file__).resolve().parents[2])
+    return [
+        Path(os.getenv("BACKUP_ROOT", "/Volumes/Data/les_backups")).resolve(),
+        (Path(les_home) / "storage" / "backups").resolve(),
+    ], les_home
+
+
+@router.get("/backup/archives")
+async def list_backup_archives(_admin=Depends(require_admin)):
+    """Полные off-disk архивы (Qdrant-снапшоты + SQLite + .env) от backup_runtime.sh — для восстановления."""
+    from datetime import datetime
+
+    roots, _ = _backup_roots()
+    archives, seen = [], set()
+    for root in roots:
+        if not root.exists():
+            continue
+        for d in sorted(root.glob("*"), key=lambda p: p.name, reverse=True):
+            if not d.is_dir() or str(d) in seen:
+                continue
+            seen.add(str(d))
+            snaps = sorted(p.name for p in d.glob("*.snapshot"))
+            has_db = (d / "les_meta_qwen.db").exists()
+            if not snaps and not has_db:
+                continue
+            size = sum(p.stat().st_size for p in d.rglob("*") if p.is_file())
+            archives.append({
+                "path": str(d), "name": d.name, "snapshots": snaps, "has_sqlite": has_db,
+                "size_bytes": size,
+                "created_at": datetime.fromtimestamp(d.stat().st_mtime).isoformat(),
+            })
+    return {"archives": archives}
+
+
+class BackupRestoreRequest(BaseModel):
+    archive_path: str
+    with_env: bool = False
+
+
+@router.post("/backup/restore")
+async def restore_backup(req: BackupRestoreRequest, _admin=Depends(require_admin)):
+    """Запускает restore_runtime.sh ОТЦЕПЛЕННО (скрипт сам остановит/поднимет proxy).
+    ОПАСНО: перезаписывает живой индекс и метабазу. .env не трогается без with_env."""
+    import subprocess
+    from pathlib import Path
+
+    roots, les_home = _backup_roots()
+    target = Path(req.archive_path).resolve()
+    if not any(str(target).startswith(str(r)) for r in roots) or not target.is_dir():
+        raise HTTPException(status_code=400, detail="archive_path вне известных бэкап-папок")
+    script = (Path(les_home) / "tools" / "restore_runtime.sh").resolve()
+    if not script.exists():
+        raise HTTPException(status_code=500, detail="restore_runtime.sh не найден")
+    args = ["/bin/bash", str(script), str(target)]
+    if req.with_env:
+        args.append("--env")
+    log = open("/tmp/les_restore.log", "ab")  # noqa: SIM115 — живёт у отцеплённого процесса
+    subprocess.Popen(args, stdout=log, stderr=log, start_new_session=True, cwd=les_home)
+    logger.warning("[СУХАРИК] RESTORE запущен из %s (with_env=%s)", target.name, req.with_env)
+    return {"status": "launched", "archive": target.name,
+            "note": "Восстановление в фоне; сервис перезапустится. Лог: /tmp/les_restore.log"}

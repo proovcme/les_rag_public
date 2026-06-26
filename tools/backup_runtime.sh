@@ -18,14 +18,17 @@ META_DB="${META_DB:-$LES_HOME/data/les_meta_qwen.db}"
 ts="$(date +%Y%m%d_%H%M%S)"
 dest="$BACKUP_ROOT/$ts"
 
-# Том бэкапа должен быть смонтирован (USB можно отключить) — иначе не льём на корень.
-if [ ! -d "$BACKUP_ROOT" ]; then
-  if ! mkdir -p "$BACKUP_ROOT" 2>/dev/null; then
-    echo "[backup] FAIL: целевой том недоступен: $BACKUP_ROOT" >&2
-    exit 1
-  fi
+# Целевой том может быть недоступен: USB отключён ИЛИ launchd-агенту нет прав (TCC/Full Disk Access
+# на /Volumes/Data). Чтобы бэкап НЕ умирал молча (был мёртв 10 дней) — локальный фолбэк.
+FALLBACK_ROOT="$LES_HOME/storage/backups"
+mkdir -p "$BACKUP_ROOT" 2>/dev/null || true
+if ! mkdir -p "$dest" 2>/dev/null || ! touch "$dest/.wtest" 2>/dev/null; then
+  echo "[backup] WARN: $BACKUP_ROOT недоступен (USB отключён или нет Full Disk Access у launchd-агента)" >&2
+  echo "[backup] WARN: → локальный фолбэк $FALLBACK_ROOT (тот же диск; для off-disk дай агенту FDA)" >&2
+  BACKUP_ROOT="$FALLBACK_ROOT"; dest="$BACKUP_ROOT/$ts"
+  mkdir -p "$dest" || { echo "[backup] FAIL: и фолбэк недоступен: $dest" >&2; exit 1; }
 fi
-mkdir -p "$dest"
+rm -f "$dest/.wtest" 2>/dev/null || true
 echo "[backup] $ts → $dest"
 
 # 1. Qdrant: снапшот каждой коллекции + скачивание в бэкап.
