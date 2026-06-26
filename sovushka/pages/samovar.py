@@ -25,7 +25,7 @@ from sovushka.state import (
 def build_samovar():
     """Датасеты (v0.24) — таблица/карточки, светофор статуса, бар файлов, Пуск/Стоп/Ремонт,
     ошибка→что делать, диалог файлов, одна кнопка «Добавить». На API proxy/routers/datasets."""
-    _S = {"mode": "table", "rows": []}
+    _S = {"mode": "table", "rows": [], "q": "", "filter": "all"}
     _refs = {"disp": None, "kpi": None, "status": None, "tbtn": None, "cbtn": None}
 
     def _error_hint(err: str) -> str:
@@ -259,6 +259,24 @@ def build_samovar():
         ui.button(icon="o_delete", on_click=lambda rr=r: asyncio.create_task(_delete(rr))).props(
             'flat dense round aria-label="Удалить"').style("color:var(--dim);")
 
+    def _visible_rows():
+        q = (_S.get("q") or "").strip().lower()
+        f = _S.get("filter", "all")
+        out = []
+        for r in _S["rows"]:
+            if q and q not in str(r["name"]).lower():
+                continue
+            if f == "indexed" and not (r["error"] == 0 and r["pending"] == 0 and r["indexed"] > 0):
+                continue
+            if f == "pending" and r["pending"] <= 0:
+                continue
+            if f == "error" and r["error"] <= 0:
+                continue
+            if f == "empty" and r["total"] > 0:
+                continue
+            out.append(r)
+        return out
+
     def _render_rows():
         disp = _refs["disp"]
         if disp is None:
@@ -267,6 +285,10 @@ def build_samovar():
         with disp:
             if not _S["rows"]:
                 ui.label("Датасетов нет — нажми «Добавить».").classes("sov-muted").style("padding:18px;")
+                return
+            vis = _visible_rows()
+            if not vis:
+                ui.label("Ничего не найдено по фильтру.").classes("sov-muted").style("padding:18px;")
                 return
             if _S["mode"] == "table":
                 with ui.element("div").classes("card-les w-full").style("padding:0;overflow:hidden;"):
@@ -278,7 +300,7 @@ def build_samovar():
                         ui.label("Файлы").style("flex:1.6;")
                         ui.label("Чанки").style("width:70px;")
                         ui.label("").style("width:160px;")
-                    for r in _S["rows"]:
+                    for r in vis:
                         col, txt, ico = _light(r)
                         with ui.row().classes("items-center w-full").style(
                                 "gap:10px;padding:9px 14px;border-bottom:1px solid var(--border);"):
@@ -294,7 +316,7 @@ def build_samovar():
             else:
                 with ui.element("div").style(
                         "display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;width:100%;"):
-                    for r in _S["rows"]:
+                    for r in vis:
                         col, txt, ico = _light(r)
                         with ui.element("div").classes("card-les").style("padding:12px;"):
                             with ui.row().classes("items-center w-full").style("gap:8px;margin-bottom:8px;"):
@@ -340,6 +362,12 @@ def build_samovar():
         _upd_toggle()
         _render_rows()
 
+    def _set_filter(m):
+        _S["filter"] = m
+        for key, btn in (_refs.get("fbtn") or {}).items():
+            btn.style(f"font-size:.7rem;color:{'var(--accent)' if key == m else 'var(--dim)'};")
+        _render_rows()
+
     with ui.column().classes("w-full max-w-6xl mx-auto p-4 gap-3"):
         with ui.row().classes("items-center w-full").style("gap:12px;flex-wrap:nowrap;"):
             ui.label("Датасеты").style("font-size:20px;font-weight:500;")
@@ -363,6 +391,19 @@ def build_samovar():
                     _refs["stats"][_k] = ui.label("—").style(
                         f"font-size:26px;font-weight:500;line-height:1;color:{_col};font-variant-numeric:tabular-nums;")
                     ui.label(_lbl).style("font-size:12px;color:var(--dim);margin-top:6px;")
+        # Фильтр-бар (напрашивался): поиск по имени + фильтр по статусу
+        _refs["fbtn"] = {}
+        with ui.row().classes("items-center w-full").style("gap:8px;flex-wrap:wrap;"):
+            _fsearch = ui.input(placeholder="Поиск датасета…").props("dense outlined clearable").style(
+                "min-width:220px;font-size:.72rem;")
+            _fsearch.on_value_change(lambda *_: (_S.update(q=(_fsearch.value or "")), _render_rows()))
+            with ui.row().classes("items-center").style(
+                    "border:1px solid var(--border);border-radius:8px;overflow:hidden;"):
+                for _fk, _flbl in (("all", "Все"), ("indexed", "В индексе"), ("pending", "Ждут"),
+                                   ("error", "Ошибки"), ("empty", "Пустые")):
+                    _refs["fbtn"][_fk] = ui.button(_flbl, on_click=lambda k=_fk: _set_filter(k)).props(
+                        "flat dense no-caps").style(
+                        f"font-size:.7rem;color:{'var(--accent)' if _fk == 'all' else 'var(--dim)'};")
         with ui.row().classes("items-center w-full").style("gap:10px;"):
             ui.button("Пуск", icon="o_play_arrow",
                       on_click=lambda: asyncio.create_task(_start_all())).props("flat dense no-caps").style("color:var(--ok);")
