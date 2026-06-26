@@ -1509,8 +1509,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             }
 
     # Нормоконтроль комплекта (СПДС, ГОСТ Р 21.101) — чат-инструмент: LLM-роутер выбрал doc_review,
-    # исполняем на скоупном датасете (RAG-led review). Проверки/числа считает код, вердикт — за инженером.
-    if _rp and _rt == "doc_review":
+    # ЛИБО оператор включил режим-чип «Нормоконтроль» (mode=doc_review). Исполняем на скоупном
+    # датасете (RAG-led review). Проверки/числа считает код, вердикт — за инженером.
+    _dr_mode = str(getattr(req, "mode", "") or "").lower() == "doc_review"
+    if _dr_mode or (_rp and _rt == "doc_review"):
         from proxy.services import doc_review_service as _drs
         _dr_ds = effective_dataset_ids[0] if effective_dataset_ids else None
         if not _dr_ds:

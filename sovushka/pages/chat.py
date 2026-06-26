@@ -472,6 +472,32 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 attach_chip = ui.label("").style("font-size:.7rem;color:var(--accent);font-weight:700;")
                 attach_chip.visible = False
 
+                # ── Codex-style режим-чипы: ставят DOMAIN-режим (сильный хинт роутеру/профилю).
+                # Модель остаётся моделью — режим биасит выбор инструмента, не жёсткий keyword-гейт.
+                # Клик по активному чипу → «Авто» (роутер решает сам). Реюзают out_mode→payload.mode.
+                _MODE_CHIPS = (("rag", "🔍", "Поиск"), ("smeta", "📐", "Сметы"), ("doc_review", "📋", "Нормоконтроль"))
+                _mode_chip_refs: dict = {}
+
+                def _chip_style(on: bool) -> str:
+                    base = ("border:1px solid var(--accent);color:var(--accent);background:rgba(52,211,153,.12);"
+                            if on else "border:1px solid var(--border);color:var(--dim);background:transparent;")
+                    return base + "border-radius:14px;font-size:.64rem;font-weight:700;padding:1px 10px;min-height:0;"
+
+                def _set_mode(m: str) -> None:
+                    new = "text" if out_mode_val["v"] == m else m  # повторный клик по активному → авто
+                    out_mode_val["v"] = new
+                    for _k, _btn in _mode_chip_refs.items():
+                        _btn.style(_chip_style(_k == new))
+                    _lbl = dict((mm, lb) for mm, _, lb in _MODE_CHIPS).get(new, "Авто (роутер решает)")
+                    ui.notify(f"Режим чата: {_lbl}", type="info")
+
+                with ui.row().style("gap:6px;margin:5px 0 2px;align-items:center;flex-wrap:wrap;"):
+                    ui.label("Режим").style("font-size:.58rem;color:var(--dim);font-weight:800;letter-spacing:.04em;")
+                    for _m, _ic, _lb in _MODE_CHIPS:
+                        _cb = ui.button(f"{_ic} {_lb}", on_click=lambda mm=_m: _set_mode(mm)).props(
+                            "flat dense no-caps").style(_chip_style(False))
+                        _mode_chip_refs[_m] = _cb
+
                 # Шпаргалка: кликабельные примеры (детерминированные каналы) — заполняют ввод и шлют.
                 def _fill_send(text: str) -> None:
                     chat_input.value = text
@@ -1978,11 +2004,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         # МАРШРУТНЫЕ РЕЖИМЫ: backend форсит путь по полю mode (минуя угадайку роутера).
         #   smeta/review → детерминированная таблица; kp → текст-задел; rag → заземлённый RAG;
         #   free → вольный LLM без ретрива. Прочие out_mode (table/svg/…) — обычный формат-режим.
-        _ROUTING_MODES = {"smeta", "review", "kp", "rag", "free"}
+        _ROUTING_MODES = {"smeta", "review", "kp", "rag", "free", "doc_review"}
         _routing_mode = out_mode if out_mode in _ROUTING_MODES else None
         is_smeta_mode = (out_mode == "smeta")
         _ph_map = {"smeta": "Считаю смету…", "review": "Проверяю проект…", "kp": "Готовлю КП…",
-                   "free": "Думаю вольно…", "rag": "Ищу в документах…"}
+                   "free": "Думаю вольно…", "rag": "Ищу в документах…", "doc_review": "Проверяю по ГОСТ…"}
         # рендер ответа: смета/проверка → таблица; вольный/раг/кп → текст; иначе сам формат.
         _render_mode = "table" if out_mode in ("smeta", "review") else ("text" if _routing_mode else out_mode)
 
