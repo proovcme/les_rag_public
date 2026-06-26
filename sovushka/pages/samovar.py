@@ -54,8 +54,18 @@ def build_samovar():
 
     async def _load():
         ds = await api_get("/api/rag/datasets") or []
-        docs = await api_get("/api/rag/documents?limit=6000") or {}
-        agg = _agg(docs)
+        # Эндпоинт документов капит лимит на 500 (le=500): limit>500 → 422 → пусто (баг v1).
+        # Пагинируем по 500, агрегируем все.
+        all_docs = []
+        offset = 0
+        while True:
+            page = await api_get(f"/api/rag/documents?limit=500&offset={offset}")
+            items = (page or {}).get("documents", []) if isinstance(page, dict) else []
+            all_docs.extend(items)
+            if len(items) < 500 or offset >= 30000:
+                break
+            offset += 500
+        agg = _agg({"documents": all_docs})
         rows = []
         for d in (ds if isinstance(ds, list) else ds.get("datasets", []) or []):
             did = d.get("id") or d.get("dataset_id")

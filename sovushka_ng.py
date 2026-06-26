@@ -82,59 +82,62 @@ async def knowledge_graph_page():
     return HTMLResponse(graph_file.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
 
 
-_COSMOS_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>Граф ЛЕС · Cosmos</title>
+_COSMOS_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>Граф ЛЕС</title>
 <style>
- html,body{margin:0;height:100%;background:#0e1116;color:#e6e9ee;
-   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;overflow:hidden}
+ html,body{margin:0;height:100%;background:#0e1116;color:#e6e9ee;overflow:hidden;
+   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif}
  #graph{position:absolute;inset:0}
  #hud{position:fixed;top:14px;left:14px;background:rgba(22,26,33,.86);border:1px solid #262b35;
    border-radius:10px;padding:10px 14px;font-size:13px;z-index:5;line-height:1.5}
- #hud .t{font-weight:500} #hud .m{color:#8b93a1;font-size:12px}
+ #hud .m{color:#8b93a1;font-size:12px}
  #note{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);color:#8b93a1;
    font-size:14px;text-align:center;z-index:5;max-width:70%}
  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#34d399;margin-right:5px}
 </style></head><body>
 <div id="graph"></div>
-<div id="hud"><div class="t"><span class="dot"></span>Граф ссылок НТД</div><div class="m" id="meta">…</div></div>
+<div id="hud"><div><span class="dot"></span>Граф ссылок НТД</div><div class="m" id="meta">…</div></div>
 <div id="note">Загрузка графа…</div>
-<script type="module">
-import { Graph } from 'https://esm.sh/@cosmos.gl/graph'
-const note = document.getElementById('note')
-const API = (location.port === '8050') ? '/api' : '/lite-api'
-try {
-  const r = await fetch(`${API}/rag/graph/edges`).then(x => x.json()).catch(() => ({edges: []}))
-  const edges = (r && r.edges) || []
-  if (!edges.length) { note.textContent = 'Рёбер нет — нужен лексический индекс и документы с номерами НТД.'; }
-  else {
-    const idx = new Map(); const labels = []
-    const id2i = (id) => { if (!idx.has(id)) { idx.set(id, labels.length); labels.push(id); } return idx.get(id); }
-    const linkArr = []
-    for (const e of edges) { linkArr.push(id2i(e.source), id2i(e.target)); }
-    const n = labels.length
-    const pos = new Float32Array(n * 2)
-    for (let i = 0; i < n; i++) { pos[i*2] = Math.random()*4096; pos[i*2+1] = Math.random()*4096; }
-    const links = new Float32Array(linkArr)
-    const config = {
-      spaceSize: 4096, backgroundColor: '#0e1116',
-      simulationFriction: 0.15, simulationRepulsion: 0.6, simulationGravity: 0.12, simulationLinkSpring: 1.2,
-      fitViewOnInit: true, fitViewDelay: 1400, enableDrag: true,
-      pointColor: [0.20, 0.83, 0.60, 0.9], pointSize: 4,
-      linkColor: [0.33, 0.50, 0.50, 0.22], linkWidth: 1,
-    }
-    const graph = new Graph(document.getElementById('graph'), config)
-    graph.setPointPositions(pos)
-    graph.setLinks(links)
-    graph.render(); graph.start()
+<script src="https://cdn.jsdelivr.net/npm/3d-force-graph"></script>
+<script>
+(async () => {
+  const note = document.getElementById('note')
+  const API = (location.port === '8050') ? '/api' : '/lite-api'
+  try {
+    const r = await fetch(`${API}/rag/graph/edges`).then(x => x.json()).catch(() => ({edges: []}))
+    const edges = (r && r.edges) || []
+    if (!edges.length) { note.textContent = 'Рёбер нет — нужен лексический индекс и документы с номерами НТД.'; return }
+    const nm = new Map()
+    const nd = (id) => { let v = nm.get(id); if (!v) { v = {id: id, deg: 0}; nm.set(id, v); } return v; }
+    const links = []
+    for (const e of edges) { nd(e.source).deg++; nd(e.target).deg++; links.push({source: e.source, target: e.target}); }
+    const nodes = Array.from(nm.values())
+    if (typeof ForceGraph3D === 'undefined') { note.textContent = '3d-force-graph не загрузился (CDN).'; return }
+    const G = ForceGraph3D()(document.getElementById('graph'))
+      .backgroundColor('#0e1116')
+      .graphData({nodes: nodes, links: links})
+      .nodeLabel(n => n.id + ' · ' + n.deg + ' связей')
+      .nodeVal(n => 1 + Math.sqrt(n.deg))
+      .nodeColor(n => 'hsl(' + (162 - Math.min(n.deg, 28)) + ', 68%, ' + (40 + Math.min(n.deg, 28)) + '%)')
+      .nodeOpacity(0.95)
+      .linkColor(() => 'rgba(52,211,153,0.16)')
+      .linkWidth(0.4)
+      .enableNodeDrag(false)
+      .warmupTicks(50)
+    try { G.d3Force('charge').strength(-45); } catch (e) {}
     note.remove()
-    document.getElementById('meta').textContent = `${n} узлов · ${edges.length} рёбер · GPU (Cosmos)`
-  }
-} catch (err) { note.textContent = 'Ошибка графа: ' + (err && err.message || err); }
+    document.getElementById('meta').textContent = nodes.length + ' узлов · ' + edges.length + ' рёбер · 3D';
+    let a = 0; const dist = 900;
+    G.cameraPosition({z: dist});
+    setInterval(() => { a += 0.0016; G.cameraPosition({x: dist * Math.sin(a), z: dist * Math.cos(a)}); }, 30);
+  } catch (err) { note.textContent = 'Ошибка графа: ' + (err && err.message || err); }
+})()
 </script></body></html>"""
 
 
 @app.get("/graph-cosmos")
 async def cosmos_graph_page():
-    """Cosmos.gl — GPU-граф ссылок НТД. Узлы/рёбра из /api/rag/graph/edges (same-origin /lite-api)."""
+    """3D-граф ссылок НТД (3d-force-graph): узлы из /api/rag/graph/edges (same-origin /lite-api),
+    зелёные/крупнее по числу связей, авто-вращение. /graph — legacy-фолбэк."""
     return HTMLResponse(_COSMOS_HTML, headers={"Cache-Control": "no-store"})
 
 
