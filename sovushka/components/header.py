@@ -125,11 +125,12 @@ def build_header(
             "color:var(--dim);height:56px;"
         ) as tabs:
             if show_admin_tabs:
-                # v0.24: админка сведена к 3 вкладкам с чистыми именами (вместо акроним-зоопарка из 9).
-                # Остальное (Обзор/Прораб/Инструменты/Задачи/Объёмы/Волк) — функции живы, убраны из нав.
+                # v0.24: админка с чистыми именами (вместо акроним-зоопарка из 9). Состояние/Датасеты/
+                # Визуал/Доступ. Обзор/Прораб/Инструменты/Задачи/Объёмы — функции живы, убраны из нав.
                 tab_refs["diag"]       = ui.tab("Состояние", icon="o_health_and_safety")
                 tab_refs["samovar"]    = ui.tab("Датасеты",  icon="o_inventory_2")
                 tab_refs["qdrant_viz"] = ui.tab("Визуал",    icon="o_scatter_plot")
+                tab_refs["volk"]       = ui.tab("Доступ",    icon="o_vpn_key")  # В.О.Л.К. — контур доступа
             if include_chat:
                 tab_refs["chat"]     = ui.tab("AI ЧАТ",         icon="o_forum")
                 tab_refs["history"]  = ui.tab("ИСТОРИЯ",        icon="o_history")

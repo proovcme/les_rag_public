@@ -183,6 +183,7 @@ async def classic_admin_page(request: Request):
     from sovushka.components.logterm import build_log_terminal
     from sovushka.pages.diag import build_diag
     from sovushka.pages.samovar import build_samovar
+    from sovushka.pages.volk import build_volk
 
     allowed, role, holder, is_admin = _resolve_auth(request)
     if not allowed:
@@ -211,6 +212,7 @@ async def classic_admin_page(request: Request):
         tab_diag       = tr.get("diag")
         tab_samovar    = tr.get("samovar")
         tab_qdrant_viz = tr.get("qdrant_viz")
+        tab_volk       = tr.get("volk")
 
         # Персистим активный таб
         def _save_tab(e):
@@ -233,6 +235,8 @@ async def classic_admin_page(request: Request):
                 build_samovar()
             with ui.tab_panel(tab_qdrant_viz):
                 _build_qdrant_visualizer_panel(visualizer_url)
+            with ui.tab_panel(tab_volk):
+                build_volk()
 
         # Подвал (Лог)
         build_log_terminal()
@@ -243,6 +247,7 @@ async def classic_admin_page(request: Request):
         "Состояние": tab_diag,
         "Датасеты":  tab_samovar,
         "Визуал":    tab_qdrant_viz,
+        "Доступ":    tab_volk,
     }
     _target = _tab_map.get(_last_tab)
     if _target and _target != _default_tab:
