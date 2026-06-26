@@ -867,6 +867,19 @@ async def graph_reference_edges(_user=Depends(require_user)):
     return await _asyncio.to_thread(build_reference_edges, collection)
 
 
+@router.get("/graph/full")
+async def graph_full(_user=Depends(require_user)):
+    """Полный граф знаний: Проект→Датасет→Документ + NTD-ссылки, с метаданными узлов
+    (для раскраски по проекту/датасету/типу/домену, размера по чанкам, клика→scope)."""
+    import asyncio as _asyncio
+
+    from proxy.services.graph_edges_service import build_graph_full
+
+    state = get_dataset_state()
+    collection = getattr(state.backend, "collection_name", "")
+    return await _asyncio.to_thread(build_graph_full, collection)
+
+
 @router.get("/sources")
 async def list_sources(_user=Depends(require_user)):
     state = get_dataset_state()
