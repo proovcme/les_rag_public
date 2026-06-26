@@ -22,13 +22,11 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+from proxy.services import fsem_machinist_service as fsem
 from proxy.services import stesnennost_service as st
 
-_MACHINE_TO_MACHINIST: dict[str, tuple[str, str]] = {
-    "91.05.05-015": ("4-100-060", "ОТм: кран на автомобильном ходу 16 т, машинист 6,0"),
-    "91.14.02-001": ("4-100-040", "ОТм: автомобиль бортовой, машинист 4,0"),
-    "91.14.02-002": ("4-100-040", "ОТм: автомобиль бортовой до 8 т, машинист 4,0"),
-}
+# Справочник «машина→машинист» (ОТм/ЗПМ) вынесен в config/domain/fsem_machinist.yaml
+# (fsem_machinist_service, handoff #3). Источник истины — fsem.machine_to_machinist(); не дублируем.
 
 _EXPORT_FIELDS = (
     "section", "position_no", "position_code", "position_name", "position_unit", "position_qty",
@@ -86,7 +84,7 @@ def _split_machinist_aggregates(resources: list[dict[str, Any]]) -> list[dict[st
         if str(res.get("kind") or "") != "machine":
             continue
         code = str(res.get("code") or "").strip()
-        mapped = _MACHINE_TO_MACHINIST.get(code)
+        mapped = fsem.machine_to_machinist().get(code)
         if mapped:
             mapped_machines.append({**res, "_machinist_code": mapped[0], "_machinist_name": mapped[1]})
 
