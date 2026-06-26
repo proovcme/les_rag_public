@@ -38,10 +38,9 @@ def build_header(
         "display:flex;align-items:center;padding:0 16px;height:56px;gap:0;"
     ):
         # ── Лого ──────────────────────────────────────────────────────────────
-        _html(
-            '<span class="les-brand" style="white-space:nowrap;margin-right:8px;">'
-            '[O_O] Л.Е.С.</span>'
-        )
+        with ui.row().classes("items-center").style("gap:6px;margin-right:12px;white-space:nowrap;flex-wrap:nowrap;"):
+            ui.icon("o_forest").style("font-size:21px;color:var(--accent);")
+            ui.label("Л.Е.С.").classes("les-brand")
 
         # ── Бейдж версии (v0.19): что реально запущено — версия+commit+runtime-divergence ──
         _ver_state: dict = {"info": None}
