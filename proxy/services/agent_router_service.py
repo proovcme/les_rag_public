@@ -102,6 +102,12 @@ def _h_clause(q: str, pid: int):
     return None
 
 
+def _h_reconcile(q: str, pid: int):
+    # Сверка требует документов датасета (ведомости↔акты) — исполнение в потоке chat.py
+    # (как table_agg/clause): роутер ВЫБИРАЕТ интент, блок в chat.py исполняет с данными.
+    return None
+
+
 # ── каталог инструментов: имя, описание (по нему LLM выбирает), примеры-триггеры, handler ──
 _TOOLS: tuple[dict[str, Any], ...] = (
     {"name": "asbuilt", "handler": _h_asbuilt,
@@ -160,6 +166,10 @@ _TOOLS: tuple[dict[str, Any], ...] = (
     {"name": "clause", "handler": _h_clause,
      "desc": "Точечный ВЫНОС текста ПУНКТА норматива по ссылке (пункт N.N СП/ГОСТ X).",
      "examples": ["приведи пункт 4.2.1 СП 1.13130", "процитируй п. 6.1 ГОСТ 21.501"]},
+    {"name": "reconcile", "handler": _h_reconcile,
+     "desc": "СВЕРКА документов: сверить ведомости/спецификации с актами/КС-2/сметой/ИД — что совпало, "
+             "чего нет, расхождения. Структурное сравнение таблиц, НЕ описание объекта.",
+     "examples": ["сверь ведомости и акты", "сверка ВОР и КС-2", "что не закрыто актами"]},
     {"name": "memory", "handler": _h_memory,
      "desc": "КОМАНДА памяти: «запомни …», «забудь заметку N», «мои заметки» (сохранить/удалить/"
              "показать заметки оператора). НЕ для вопросов про содержание.",
@@ -327,3 +337,35 @@ def maybe_agent_route(question: str, *, project_id: int = 0) -> Optional[dict[st
     res["agent_tool"] = name
     logger.info("[AGENT] запрос → инструмент «%s»", name)
     return res
+
+
+def route_with_name(question: str, *, project_id: int = 0) -> tuple[str, Optional[dict[str, Any]]]:
+    """Как maybe_agent_route, но возвращает (имя_инструмента, результат|None).
+
+    Имя нужно chat.py для IN-FLOW гейтинга инструментов БЕЗ своего handler (table_agg/clause/reconcile
+    исполняются в потоке, где есть данные/ретрив). LLM выбирает интент → блок в chat.py исполняет.
+    Off/сбой/пусто → ('', None). 'none' (LLM решил «обычный вопрос») → ('none', None) → RAG.
+    """
+    if not _is_on() or not (question or "").strip():
+        return "", None
+    try:
+        name = _classify(question)
+    except Exception as err:  # noqa: BLE001
+        logger.warning("[AGENT] classify failed: %s", err)
+        return "", None
+    tool = _BY_NAME.get(name)
+    if not tool:
+        return "none", None
+    res = None
+    if tool["handler"] is not None:
+        try:
+            res = tool["handler"](question, project_id)
+        except Exception as err:  # noqa: BLE001
+            logger.warning("[AGENT] tool %s failed: %s", name, err)
+            res = None
+        if res:
+            res.setdefault("operation", name)
+            res["agent_tool"] = name
+        else:
+            res = None
+    return name, res

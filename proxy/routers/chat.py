@@ -1115,12 +1115,13 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         resolve as _resolve_profile, route_source_for_channel)
     _resolution = _resolve_profile(mode=req.mode, question=req.question)
     _PROFILE = _resolution.profile_id
-    # «НИКАКОЙ детерминации в чате»: при router_primary (дефолт ON) ВСЕ детерминированные
-    # каналы-перехватчики свободного текста (reconcile/clarification/project_summary/mail/table/
-    # clause/autonote/scope_clar) выключены — понимание делает LLM-роутер, ответ собирает RAG
-    # (со стримом). Инструменты (цена/гэсн/задача/память/поле) остаются ЧЕРЕЗ роутер, не каналом.
+    # «Мины детерминации vs инструменты»: при router_primary (дефолт ON) keyword-МИНЫ, перехватывавшие
+    # descriptive-текст (mail/project_summary/clarification/scope_clar/autonote/каскад), выключены —
+    # понимание делает LLM-роутер, ответ собирает RAG (стрим). А ИНСТРУМЕНТЫ (table-сумма/reconcile/
+    # clause/цена/гэсн/задача/память/поле) РАБОТАЮТ — но вызываются по ИНТЕНТУ роутера (_rt), не keyword.
     from proxy.services.agent_router_service import router_primary as _router_primary
     _rp = _router_primary()
+    _rt = ""  # имя инструмента по версии LLM-роутера (для in-flow гейта table/reconcile/clause)
 
     def _profile_route(channel: str, operation: str | None, *,
                        base: dict | None = None, source: str | None = None) -> dict:
@@ -1319,10 +1320,12 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     # каскад/RAG (каскад сохранён фолбэком, обратимо). Роутер-бенч = 100% локально.
     # Режим «РАГ» (явно выбран): форсим заземлённый RAG — пропускаем роутер/каскад/автозаметку,
     # чтобы ничто не увело запрос в детерминированный канал. reply=None → дальше в RAG-конвейер.
-    from proxy.services.agent_router_service import maybe_agent_route, router_primary
+    from proxy.services.agent_router_service import maybe_agent_route, router_primary, route_with_name
     if _PROFILE != "grounded_rag":
         if router_primary():
-            reply = maybe_agent_route(req.question, project_id=pid)
+            # route_with_name: имя инструмента + результат handler'а. Имя (_rt) гейтит in-flow
+            # инструменты без handler'а (table_agg/clause/reconcile исполняются ниже, где есть данные).
+            _rt, reply = route_with_name(req.question, project_id=pid)
             if reply is not None:
                 channel = "agent"
         # ИНВЕРСИЯ (AUDIT_DETERMINISM, no-determinism-in-chat-directive): keyword-каскад — ТОЛЬКО
@@ -1453,7 +1456,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     # иначе «проверь соответствие…» перехватит уточняющий гейт (broad_review). 0 LLM.
     from proxy.services.reconcile_chat_service import answer_reconcile_query, is_reconcile_query
     from proxy.services.reconcile_service import doc_type_label
-    if not _rp and is_reconcile_query(req.question):
+    if ((_rt == "reconcile") if _rp else is_reconcile_query(req.question)):
         t_rec_start = time.time()
         try:
             rec_names = await _dataset_name_map(rag_backend)
@@ -1883,7 +1886,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 "history_id": history_id,
             }
 
-    if not _rp and query_intent.channel == "table" and _dataset_ids:
+    if ((_rt == "table_agg") if _rp else (query_intent.channel == "table")) and _dataset_ids:
         t_table_start = time.time()
         table_chunks = parquet_ref_chunks_for_datasets(
             _dataset_ids,
@@ -1930,7 +1933,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 use_validation=False,
             )
 
-    if not _rp and query_intent.channel == "rag" and _dataset_ids:
+    if ((_rt == "clause") if _rp else (query_intent.channel == "rag")) and _dataset_ids:
         t_clause_start = time.time()
         try:
             clause_result = maybe_answer_clause_lookup(
