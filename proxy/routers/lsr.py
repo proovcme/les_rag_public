@@ -20,6 +20,7 @@ from proxy.security import require_user
 from proxy.services import gesn_service as gesn
 from proxy.services import lsr_assembly_service as la
 from proxy.services import rim_lsr_trace_service as rim
+from proxy.services import rim_trace_xlsx_service as rim_xlsx
 from proxy.services import stesnennost_service as st
 
 router = APIRouter(prefix="/api/lsr", tags=["lsr"])
@@ -121,6 +122,35 @@ async def lsr_rim_trace(req: RimTraceRequest, _user=Depends(require_user)):
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+@router.post("/rim-trace/export")
+async def lsr_rim_trace_export(req: RimTraceRequest, _user=Depends(require_user)):
+    """РИМ-трасса позиции → XLSX по форме Приложения 3 к 421/пр. Рендер ГОТОВОЙ трассы (не калькулятор):
+    те же числа, что /rim-trace, разложены по графам 1-12 + «Источник» (происхождение цены). Скачивание
+    через /api/lsr/download. Контракт /assemble и /rim-trace не меняется."""
+    try:
+        pricebook = await asyncio.to_thread(la._resolve_book, req.book)
+        trace = await asyncio.to_thread(
+            rim.build_position_trace, req.position,
+            pricebook=pricebook,
+            kac_map=req.kac_prices,
+            k_ozp=(req.k_ozp if req.k_ozp is not None else 1.0),
+            k_em=(req.k_em if req.k_em is not None else 1.0),
+            coefficient_basis=(req.coefficient_basis or ""),
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    _EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    name = f"rim_trace_{int(time.time())}.xlsx"
+    out = _EXPORT_DIR / name
+    await asyncio.to_thread(rim_xlsx.render_trace_xlsx, trace, out)
+    return {
+        "code": trace.get("code"),
+        "summary": trace["summary"],
+        "path": str(out),
+        "download": f"/api/lsr/download?path={name}",
+    }
 
 
 @router.post("/export")
