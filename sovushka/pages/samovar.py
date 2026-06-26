@@ -275,6 +275,12 @@ def build_samovar():
             if f == "empty" and r["total"] > 0:
                 continue
             out.append(r)
+        sk = _S.get("sort")
+        if sk:
+            keyf = {"files": lambda r: r["total"], "chunks": lambda r: r["chunks"],
+                    "name": lambda r: str(r["name"]).lower()}.get(sk)
+            if keyf:
+                out.sort(key=keyf, reverse=_S.get("sort_dir", -1) < 0)
         return out
 
     def _render_rows():
@@ -295,10 +301,13 @@ def build_samovar():
                     with ui.row().classes("items-center w-full").style(
                             "gap:10px;padding:8px 14px;border-bottom:1px solid var(--border);"
                             "font-size:11.5px;color:var(--dim);"):
-                        ui.label("Датасет").style("flex:2;")
+                        ui.label("Датасет" + _sort_arrow("name")).style("flex:2;cursor:pointer;").on(
+                            "click", lambda: _set_sort("name"))
                         ui.label("Статус").style("flex:1.4;")
-                        ui.label("Файлы").style("flex:1.6;")
-                        ui.label("Чанки").style("width:70px;")
+                        ui.label("Файлы" + _sort_arrow("files")).style("flex:1.6;cursor:pointer;").on(
+                            "click", lambda: _set_sort("files"))
+                        ui.label("Чанки" + _sort_arrow("chunks")).style("width:70px;cursor:pointer;").on(
+                            "click", lambda: _set_sort("chunks"))
                         ui.label("").style("width:160px;")
                     for r in vis:
                         col, txt, ico = _light(r)
@@ -368,6 +377,28 @@ def build_samovar():
             btn.style(f"font-size:.7rem;color:{'var(--accent)' if key == m else 'var(--dim)'};")
         _render_rows()
 
+    def _set_sort(key):
+        if _S.get("sort") == key:
+            _S["sort_dir"] = -_S.get("sort_dir", -1)
+        else:
+            _S["sort"] = key
+            _S["sort_dir"] = 1 if key == "name" else -1  # имя по возрастанию, числа по убыванию
+        _render_rows()
+
+    def _card_click(k):
+        # карточки статистики кликабельны: статусные → фильтр, числовые → сортировка
+        if k == "datasets":
+            _set_filter("all")
+        elif k in ("indexed", "pending", "error"):
+            _set_filter(k)
+        elif k in ("files", "chunks"):
+            _set_sort(k)
+
+    def _sort_arrow(key):
+        if _S.get("sort") != key:
+            return ""
+        return " ▼" if _S.get("sort_dir", -1) < 0 else " ▲"
+
     with ui.column().classes("w-full max-w-6xl mx-auto p-4 gap-3"):
         with ui.row().classes("items-center w-full").style("gap:12px;flex-wrap:nowrap;"):
             ui.label("Датасеты").style("font-size:20px;font-weight:500;")
@@ -387,7 +418,9 @@ def build_samovar():
         with ui.element("div").style("display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));"
                                      "gap:10px;width:100%;"):
             for _k, _lbl, _col in _STAT_DEFS:
-                with ui.element("div").classes("card-les").style("padding:14px 16px;"):
+                with ui.element("div").classes("card-les").style("padding:14px 16px;cursor:pointer;").on(
+                        "click", lambda k=_k: _card_click(k)).tooltip(
+                        "клик: статус → фильтр, число → сортировка"):
                     _refs["stats"][_k] = ui.label("—").style(
                         f"font-size:26px;font-weight:500;line-height:1;color:{_col};font-variant-numeric:tabular-nums;")
                     ui.label(_lbl).style("font-size:12px;color:var(--dim);margin-top:6px;")
