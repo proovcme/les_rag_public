@@ -2709,6 +2709,14 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                             if crag_status == "HALLUCINATION" and _env_bool("TOSKA_FAIL_OPEN", True):
                                 logger.info("[TOSKA] fail-open: %s HALLUCINATION → UNVALIDATED (показан, без ретрая)", verdict_source)
                                 crag_status = "UNVALIDATED"
+                            # coreml NO_DATA на НЕПУСТОМ контексте недостоверен (golden ~25%): данные
+                            # ЕСТЬ и ответ обоснован — не врать «нет данных». Понижаем до UNVALIDATED
+                            # (ответ виден, помечен «не подтверждён»). Истинный NO_DATA = ПУСТОЙ контекст,
+                            # его ставят детерминированные rules (verdict_source="rules"), их не трогаем.
+                            if (crag_status == "NO_DATA" and verdict_source == "coreml"
+                                    and validation_context.strip() and _env_bool("TOSKA_FAIL_OPEN", True)):
+                                logger.info("[TOSKA] fail-open: coreml NO_DATA на непустом контексте → UNVALIDATED")
+                                crag_status = "UNVALIDATED"
                             logger.info("[TOSKA] attempt=%s → %s%s", attempt, crag_status, " (via provider)" if validate_via_llm else "")
                         except Exception as ve:
                             logger.warning("[TOSKA] Validate skip: %s", ve)
