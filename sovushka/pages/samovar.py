@@ -906,6 +906,24 @@ def build_samovar_legacy():
                     "no-caps"
                 ).style("background:rgba(16,185,129,.15);border:1px solid var(--ok);color:var(--ok);font-size:.7rem;font-weight:900;")
             mail_status = ui.label("").style("font-size:.7rem;color:var(--dim);")
+            autosync_lbl = ui.label("Авто-синхрон: …").style("font-size:.64rem;margin-top:2px;")
+
+            async def _load_autosync():
+                d = await api_get("/api/mail/status") or {}
+                a = (d.get("autosync") or {})
+                ps = int(a.get("poll_sec", 0) or 0)
+                if ps > 0:
+                    msg = (f"🟢 Внутренний IMAP-сервис ВКЛ: каждые {ps} сек · циклов {a.get('runs', 0)} · "
+                           f"последняя порция {a.get('last_count', 0)} писем")
+                    if a.get("last_error"):
+                        msg += f" · ошибка: {str(a['last_error'])[:60]}"
+                    autosync_lbl.set_text(msg); autosync_lbl.style("color:var(--ok);")
+                else:
+                    autosync_lbl.set_text("⚪ Внутренний IMAP-сервис ВЫКЛ — включить: "
+                                          "MAIL_IMAP_POLL_SEC=600 + MAIL_IMAP_HOST/LOGIN/PASSWORD в .env")
+                    autosync_lbl.style("color:var(--dim);")
+
+            asyncio.create_task(_load_autosync())
 
             ui.separator().style("margin:6px 0;")
             ui.label(
