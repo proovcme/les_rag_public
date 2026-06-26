@@ -4,7 +4,8 @@
 (docs/DOC_REVIEW_GOST_R_21_101_2026_PLAN.md §5). АРХИТЕКТУРА:
   • computed-checks (формализуемое) → evidence-статус (computed_issue / supported_by_evidence /
     not_applicable). Переиспользуют normcontrol_service (NK-03/NK-04), не дублируют.
-  • retrieval-цели → review_needed (RAG-поиск требования стандарта — отдельная под-фаза).
+  • retrieval-цели → факты корпуса (устаревший ГОСТ-2020 / стадия ПД-РД) + текст требования (под-фаза
+    retrieval, doc_review_retrieval_service, лексика 0 LLM); поиск недоступен → review_needed.
   • layout/manual_required → manual_required (без уверенного extraction вердикта нет).
   • human_decision у каждого item = unset: финальный статус даёт инженер, не движок.
 Движок НЕ выносит юридического решения — он предлагает proposed issues с requirement/document source_ref.
@@ -138,10 +139,35 @@ def _run_computed(target: ReviewTarget, doc_set: DocumentSet, ved: VedomostMatch
     return None  # computed-движка нет → manual_required
 
 
+def _run_retrieval(target: ReviewTarget, ev: dict | None):
+    """Retrieval-evidence (факт в корпусе + текст требования) → (status, document_evidence, note).
+    Нет факта (поиск недоступен/не строился) → review_needed (фолбэк сохранён). Источник evidence —
+    doc_review_retrieval_service.build_retrieval_evidence (лексический поиск по корпусу, 0 LLM)."""
+    check = target.check
+    fact = (ev or {}).get("fact")
+    if check == "outdated_standard_in_corpus":
+        if fact is None:
+            return S_REVIEW_NEEDED, [], "Устаревшая база ищется в корпусе (поиск недоступен — review)."
+        if fact.get("found"):
+            return (S_COMPUTED_ISSUE, fact.get("hits", []),
+                    "В корпусе найден ГОСТ Р 21.101-2020 при rulepack 2026 — устаревшая нормативная база.")
+        return S_SUPPORTED, [], "Устаревший ГОСТ Р 21.101-2020 в корпусе не найден."
+    if check == "project_stage_detect":
+        if fact is None:
+            return S_REVIEW_NEEDED, [], "Стадия ищется в корпусе (поиск недоступен — review)."
+        stage = fact.get("stage")
+        if stage in ("ПД", "РД"):
+            return S_SUPPORTED, fact.get("hits", []), f"Стадия документации по корпусу: {stage}."
+        return S_MANUAL, fact.get("hits", []), "Стадия (ПД/РД) по корпусу не однозначна — ручное подтверждение."
+    return S_REVIEW_NEEDED, [], "Требование/база ищется в RAG (под-фаза retrieval)."
+
+
 def run_review(doc_set: DocumentSet, review_map: ReviewMap, *, vedomost_entries: list[dict] | None = None,
-               title_block: dict | None = None) -> list[ReviewItem]:
+               title_block: dict | None = None, retrieval_evidence: dict | None = None) -> list[ReviewItem]:
     """Прогон комплекта по review-map → список review-items. Чистая функция (без живых сервисов).
-    title_block — сводка детектора штампа (title_block_extract_service.detect_dataset) для D4-002."""
+    title_block — сводка детектора штампа (title_block_extract_service.detect_dataset) для D4-002.
+    retrieval_evidence — {rule_id: {check, fact, requirement}} от retrieval-подфазы (оркестратор):
+    факты корпуса + текст требования для kind: retrieval. Нет → retrieval-цели = review_needed."""
     ved = match_vedomost(doc_set, vedomost_entries) if vedomost_entries is not None else None
     items: list[ReviewItem] = []
     for t in review_map.targets:
@@ -156,9 +182,14 @@ def run_review(doc_set: DocumentSet, review_map: ReviewMap, *, vedomost_entries:
             items.append(ReviewItem(t.id, t.clause, S_MANUAL, t.severity, t.title, req, [],
                                     {"name": t.check, "status": "not_run"}, "Автопроверка не реализована."))
         elif t.kind == "retrieval":
-            items.append(ReviewItem(t.id, t.clause, S_REVIEW_NEEDED, t.severity, t.title, req, [],
-                                    {"name": t.check, "status": "not_run"},
-                                    "Требование/база ищется в RAG (под-фаза retrieval)."))
+            ev = (retrieval_evidence or {}).get(t.id)
+            status, ev_docs, note = _run_retrieval(t, ev)
+            req_hit = (ev or {}).get("requirement")   # flavor B: текст требования ГОСТ из корпуса
+            if req_hit and req_hit.get("source_ref"):
+                req = {"source_ref": req_hit["source_ref"], "snippet": req_hit.get("snippet", "")}
+            cc_status = "not_run" if status == S_REVIEW_NEEDED else "ok"
+            items.append(ReviewItem(t.id, t.clause, status, t.severity, t.title, req, ev_docs,
+                                    {"name": t.check, "status": cc_status}, note))
         else:  # layout | manual_required
             items.append(ReviewItem(t.id, t.clause, S_MANUAL, t.severity, t.title, req, [],
                                     {"name": t.check, "status": "not_run"},
@@ -232,8 +263,15 @@ def review_dataset(dataset_id: str, *, rulepack: str = "gost_r_21_101_2026"):
         title_block = tbx.detect_dataset(_dataset_source_paths(dataset_id), sample=8)
     except Exception:
         title_block = None
+    retrieval_evidence = None
+    try:  # Phase 3+: retrieval-подфаза (факты корпуса + текст требования) для kind: retrieval
+        from proxy.services import doc_review_retrieval_service as drr
+        retrieval_evidence = drr.build_retrieval_evidence(dataset_id, review_map)
+    except Exception:
+        retrieval_evidence = None
     doc_set = build_document_set(files)
-    return review_map, run_review(doc_set, review_map, vedomost_entries=vedomost, title_block=title_block)
+    return review_map, run_review(doc_set, review_map, vedomost_entries=vedomost,
+                                  title_block=title_block, retrieval_evidence=retrieval_evidence)
 
 
 def _dataset_source_paths(dataset_id: str) -> list[str]:
