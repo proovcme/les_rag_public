@@ -24,44 +24,44 @@
 
 | Суб-модуль | Назначение | Точки входа | Док | Статус |
 |---|---|---|---|---|
-| smeta (поток) | объём ВОР → … → ВСЕГО; чат-команды сметы | `smeta_chat_service` | [ALGO-smeta.md](ALGO-smeta.md) | 🟡 |
+| smeta (поток) | объём ВОР → … → ВСЕГО; чат-команды сметы | `smeta_chat_service` | [ALGO-smeta.md](ALGO-smeta.md) | ✅ |
 | smeta/lsr | сборка позиции→Всего→свод; РИМ-трасса (графы 2-12); XLSX форма **Прил.4** (одно/многопозиц.) | `lsr_assembly_service`, `rim_lsr_trace_service`, `rim_trace_xlsx_service`, `fsem_machinist_service`; `POST /api/lsr/{assemble,rim-trace,lsr-trace}[/export]`; MCP `les_lsr_assemble` | [ALGO-lsr-assembly.md](ALGO-lsr-assembly.md) | ✅ |
-| smeta/gesn | норма ГЭСН → ресурсы (расход×объём); база 42408 норм | `gesn_service`; `GET /api/lsr/gesn[/{code}/expand]`; MCP `les_gesn_*` | [ALGO-gesn.md](ALGO-gesn.md) | 🟡 |
+| smeta/gesn | норма ГЭСН → ресурсы (расход×объём); база 42408 норм | `gesn_service`; `GET /api/lsr/gesn[/{code}/expand]`; MCP `les_gesn_*` | [ALGO-gesn.md](ALGO-gesn.md) | ✅ |
 | smeta/fgis | цена ресурса по коду из «Сплит-формы» ФГИС ЦС | `fgis_price_service`; `/api/prices/*`; MCP `les_price_lookup` | [ALGO-fgis-price.md](ALGO-fgis-price.md) | ✅ |
 | smeta/kac | конъюнктурный анализ цен (≥3 КП на материал) | `kac_service`; `/api/kac/*`; MCP `les_kac` | [ALGO-kac.md](ALGO-kac.md) | ✅ |
 | smeta/stesn | коэффициент стеснённости (k к ОЗП/ЭМ) | `stesnennost_service`; `/api/lsr/stesnennost/*`; MCP `les_stesnennost` | [ALGO-stesnennost.md](ALGO-stesnennost.md) | ✅ |
-| smeta/object | фраза «дай смету на …» → объектный расчёт (СМР→НДС→ВСЕГО) | `object_estimate_service`, `nr_sp_service`; шаблоны `config/domain/object_templates.yaml` | [ALGO-object-estimate.md](ALGO-object-estimate.md) | 🟡 |
-| smeta/ontology | доменные понятия (ВОР/КАЦ/ЛСР/КС) | `smeta_ontology_service`; MCP `les_glossary` | [ALGO-smeta-ontology.md](ALGO-smeta-ontology.md) ✅ · [smeta_ontology.md](smeta_ontology.md) 🟡 (генерится) | 🟡 |
+| smeta/object | фраза «дай смету на …» → объектный расчёт (СМР→НДС→ВСЕГО) | `object_estimate_service`, `nr_sp_service`; шаблоны `config/domain/object_templates.yaml` | [ALGO-object-estimate.md](ALGO-object-estimate.md) | ✅ |
+| smeta/ontology | доменные понятия (ВОР/КАЦ/ЛСР/КС) | `smeta_ontology_service`; MCP `les_glossary` | [ALGO-smeta-ontology.md](ALGO-smeta-ontology.md) ✅ · [smeta_ontology.md](smeta_ontology.md) ✅ (генерится) | ✅ |
 | smeta/bor | спецификация Ф9 → ВОР работ | `spec_to_bor_service`; `/api/bor/{id}/from-spec*` | [ALGO-spec-to-bor.md](ALGO-spec-to-bor.md) | ✅ |
 | smeta/indices | индексы изменения сметной стоимости (Минстрой ИФ/09) | 📋 v0.26+ ([../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md)) | — | 📋 |
 
-**🟡 чинить:** ALGO-smeta §3/§6 и ALGO-object-estimate — «только деревянный дом, офис→отказ» ВРЁТ: `monolith_office` живой (`object_templates.yaml`). ALGO-gesn — добавить `gesn2022_v2.parquet` (v2-слой) + разнести `gesn_import` (XLSX/ГРАНД) vs `gesn_bulk_import` (ФГИС ЦС API). smeta_ontology(.md+yaml) — «Приложение 3» → «Приложение 4» (ЛСР); чинить ИСТОЧНИК `smeta_ontology.yaml`, файл регенерится.
+**✅ исправлено (437f1aa):** ALGO-smeta/object — два шаблона (wooden_house + monolith_office); ALGO-gesn — v2-слой базы; smeta_ontology.yaml «Прил.3»→«Прил.4», `smeta_ontology.md` регенерирован.
 
 ## 2. RAG-ядро и маршрутизация
 
 | Суб-модуль | Назначение | Точки входа | Док | Статус |
 |---|---|---|---|---|
-| rag/core | поток чата, ретрив, C-RAG, диспетч | `retrieval_service`, `saferag_service`, `runtime_dispatcher`/`runtime_admission`; `routers/chat.py` | [ARCHITECTURE_les_algorithm.md](ARCHITECTURE_les_algorithm.md) ✅ · [STORY_les_dispatcher.md](STORY_les_dispatcher.md) ✅ · [CODE_MAP.md](CODE_MAP.md) 🟡 | 🟡 |
-| rag/routing | выбор контура: ProfileResolver + agent-router (router-primary ON) | `profile_resolver`, `agent_router_service`, `query_router`, `deterministic_policy_service`, `scope_service` | — (истина в ARCHITECTURE §10 + коде; [AUDIT_DETERMINISM.md](AUDIT_DETERMINISM.md) 🗄 план исполнен) | 🟡 |
+| rag/core | поток чата, ретрив, C-RAG, диспетч | `retrieval_service`, `saferag_service`, `runtime_dispatcher`/`runtime_admission`; `routers/chat.py` | [ARCHITECTURE_les_algorithm.md](ARCHITECTURE_les_algorithm.md) ✅ · [STORY_les_dispatcher.md](STORY_les_dispatcher.md) ✅ · [CODE_MAP.md](CODE_MAP.md) ✅ | ✅ |
+| rag/routing | выбор контура: ProfileResolver + agent-router (router-primary ON) | `profile_resolver`, `agent_router_service`, `query_router`, `deterministic_policy_service`, `scope_service` | [ALGO-routing.md](ALGO-routing.md) ✅ · [AUDIT_DETERMINISM.md](AUDIT_DETERMINISM.md) (решение/история) | ✅ |
 | rag/retrieval | типизированный ретрив (ADR-12), doc_router | `retrieval_service`, `doc_router`; флаг `LES_TYPED_RETRIEVAL` | [ADR-12-typed-retrieval.md](ADR-12-typed-retrieval.md) | ✅ |
-| rag/table | детерм. SUM по полному Parquet (числа — код) | `table_query_service`; MCP `les_table_*` | [ALGO-table-query.md](ALGO-table-query.md) | 🟡 (порядок вызова) |
+| rag/table | детерм. SUM по полному Parquet (числа — код) | `table_query_service`; MCP `les_table_*` | [ALGO-table-query.md](ALGO-table-query.md) | ✅ |
 | rag/pdf | layout-aware PDF (колонки/таблицы→pipe) | `backend/pdf_layout`; флаг `LES_LAYOUT_PDF` | [ALGO-pdf-layout.md](ALGO-pdf-layout.md) | ✅ |
 | rag/harvest | verify-правки → train-set + таксономия ошибок | `harvest_service`; `tools/harvest_dataset.py` | [ALGO-harvest.md](ALGO-harvest.md) | ✅ |
 | rag/vision | вердикт по VL-LoRA (пока не нужна) | — | [ALGO-vl-lora.md](ALGO-vl-lora.md) | ✅ (решение) |
 | rag/scan-mining | поиск данных в сканах + различение типа (verify) | `verify_service`, `table_detect`, `doc_classifier`; `routers/verify.py` | [scan_data_mining.md](scan_data_mining.md) | ✅ |
 | harness | unified construction harness (source-adapters, evidence) — флаг OFF | `source_adapters`, `unified_construction_harness_service` | [unified_harness_failure_ledger.md](unified_harness_failure_ledger.md) | ✅ (OFF) |
 
-**🟡 чинить:** CODE_MAP — счётчики (**~21→101 сервисов, ~15→36 роутеров, 146→218 тестов**) + вписать ProfileResolver в «Поток чата». rag/routing — нет своего канон-дока (истина размазана по ARCHITECTURE §10 + AUDIT_DETERMINISM, который теперь описывает «как было ДО инверсии»). ALGO-table-query — уточнить: агрегация **после** ретрива по router-интенту, не «до семантики».
+**✅ исправлено (437f1aa):** CODE_MAP-счётчики (~101/~36/~2046); создан `ALGO-routing.md` (канон маршрутизации); AUDIT_DETERMINISM/AUDIT_CORE получили статус-баннер «исполнено»; ALGO-table-query уточнён (агрегация после ретрива).
 
 ## 3. Нормоконтроль и проверка документации
 
 | Суб-модуль | Назначение | Точки входа | Док | Статус |
 |---|---|---|---|---|
-| normcontrol/doc-review | RAG-led СПДС-review по ГОСТ Р 21.101-2026 (computed + retrieval-подфаза + штамп) | `doc_review_service`, `doc_review_retrieval_service`, `title_block_extract_service`, `document_set_model`, `normcontrol_review_map_service`; `routers/doc_review.py`; флаг `LES_TITLE_BLOCK_OCR` | [DOC_REVIEW_GOST_R_21_101_2026_PLAN.md](DOC_REVIEW_GOST_R_21_101_2026_PLAN.md) | 🟡 |
-| normcontrol/formal-v1 | формальные NK-01..04 (форматы ГОСТ, шифры, ведомость) | `normcontrol_service`; `/api/normcontrol` | — (**нет ALGO-дока — пробел**) | 🟡 |
+| normcontrol/doc-review | RAG-led СПДС-review по ГОСТ Р 21.101-2026 (computed + retrieval-подфаза + штамп) | `doc_review_service`, `doc_review_retrieval_service`, `title_block_extract_service`, `document_set_model`, `normcontrol_review_map_service`; `routers/doc_review.py`; флаг `LES_TITLE_BLOCK_OCR` | [DOC_REVIEW_GOST_R_21_101_2026_PLAN.md](DOC_REVIEW_GOST_R_21_101_2026_PLAN.md) | ✅ |
+| normcontrol/formal-v1 | формальные NK-01..04 (форматы ГОСТ, шифры, ведомость) | `normcontrol_service`; `/api/normcontrol` | [ALGO-normcontrol.md](ALGO-normcontrol.md) | ✅ |
 | normcontrol/checklist | чек-лист входного контроля ПД БУП/ГИП | 📋 кода нет | [CHECKLIST_REVIEW_PD_TASK.md](CHECKLIST_REVIEW_PD_TASK.md) | 📋 |
 
-**🟡 чинить:** DOC_REVIEW план помечен «planned», хотя **Phases 1-5 в проде**; ссылается на призрачные `normcontrol_rulepack_service`/`remark_normalization_service` (реально `normcontrol_review_map_service`; remark-слой не написан). Создать короткий ALGO-док для `normcontrol_service` (formal-v1) — сейчас он без своей доки.
+**✅ исправлено (437f1aa):** DOC_REVIEW шапка «planned»→«Phases 1-5 реализованы»; призрачные сервисы → реальные имена; создан `ALGO-normcontrol.md` (formal-v1). Остаётся 📋 Phase 6 (ПП-87, normalized remark JSON, DOCX/PDF, checklist).
 
 ## 4. Приёмка / Intake
 
@@ -75,14 +75,14 @@
 
 | Суб-модуль | Назначение | Точки входа | Док | Статус |
 |---|---|---|---|---|
-| infra/runtime | топология (proxy:8050 / sovushka:8051 / mlx:8080 / qdrant:6333) | `proxy_server.py`, `sovushka_ng.py`, `mlx_host.py` | [PROXY_ARCHITECTURE.md](../PROXY_ARCHITECTURE.md) 🟡 · [INFRASTRUCTURE_v2.0.md](../INFRASTRUCTURE_v2.0.md) 🗄 | 🟡 |
+| infra/runtime | топология (proxy:8050 / sovushka:8051 / mlx:8080 / qdrant:6333) | `proxy_server.py`, `sovushka_ng.py`, `mlx_host.py` | [PROXY_ARCHITECTURE.md](../PROXY_ARCHITECTURE.md) ✅ · топология в [CODE_MAP.md](CODE_MAP.md) (INFRASTRUCTURE_v2.0 → archive) | ✅ |
 | infra/mlx | TTL-выгрузка, memory-guard, профили памяти | `backend/mlx_adapter`, `mlx_host.py` | [MLX_GUIDE.md](../MLX_GUIDE.md), [RUNTIME_MEMORY_PROFILES.md](../RUNTIME_MEMORY_PROFILES.md) ✅ | 🟡 |
 | ops/deploy | dev→рантайм cp-деплой + stamp; откат | `tools/deploy_to_runtime.py`, `tools/restore_runtime.sh` | [SKILL.md](../SKILL.md) 🟡, [RELEASE_LEDGER.md](RELEASE_LEDGER.md) | 🟡 |
 | ops/versioning | единый центр версий + divergence repo↔runtime | `version_service`; `GET /api/version` | [RELEASE_LEDGER.md](RELEASE_LEDGER.md), [VERSIONING.md](VERSIONING.md), [releases.md](releases.md) | 🟡 |
 | ops/test | гейт (verify/test/smoke-basic) | `Makefile`, `tools/basic_function_smoke.py` | [TEST_INVENTORY.md](TEST_INVENTORY.md) 🟡 | 🟡 |
 | install | сборка/инсталляторы Mac/Win/Linux | `tools/build_*`, `installers/` | [INSTALL_RUNBOOK.md](INSTALL_RUNBOOK.md) ✅, [PLATFORMS.md](PLATFORMS.md) ✅ | 🟡 |
 
-**🟡 чинить:** версии (3 несвязанные оси) — см. [RELEASE_LEDGER.md](RELEASE_LEDGER.md). SKILL.md/TEST_INVENTORY — «v0.22/230 тестов/h0.20» отстали от h0.23; smoke-basic уже сделан (в TEST_INVENTORY помечен планом). INFRASTRUCTURE/PROXY_ARCHITECTURE — мёртвое (Speckle/GLM-OCR/4B/`les_meta.db`).
+**✅ исправлено (437f1aa):** SKILL/TEST_INVENTORY → v0.23/~2046/smoke-basic done; PROXY_ARCHITECTURE → `les_meta_qwen.db`; INFRASTRUCTURE_v2.0 (мёртвое) → archive. Версии (3 оси) объяснены в [RELEASE_LEDGER.md](RELEASE_LEDGER.md); внедрение 0.23.N.P в `version_service` — 📋 (код на паузе).
 
 ## 6. Прочие модули (отдельные продукты/контуры)
 

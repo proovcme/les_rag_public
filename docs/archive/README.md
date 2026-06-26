@@ -18,6 +18,12 @@
 | `PROJECT_HISTORY_REPORT_2026-06-26.md` | исторический отчёт по проекту |
 | `ROADMAP_LES_v2.0.md` | **заменён** актуальным `ROADMAP_TO_V1.md` |
 | `QWEN_TASKS.md`, `QWEN_DIAGNOSTICS.md` | старые листы задач/диагностики по qwen |
+| `README_v2.0.md` | устаревший дубль роли `README.md` (4B/GLM-OCR/Aider) — актуален корневой `README.md` |
+| `LES_MASTER_DOC_v2_1.md` | мастер-док «v4.0», дубль-секции, вапор-стек (GLM-OCR/LangExtract) — историческое |
+| `INFRASTRUCTURE_v2.0.md` | инфра-док: ≥40% мёртвое (Speckle/GLM-OCR/Qwen3.5-4B/lite-shell). Актуальная инфра → `../CODE_MAP.md` (топология) + `../../PROXY_ARCHITECTURE.md` |
+| `AUDIT_RAG_FUNCTIONAL.md` | аудит RAG (06-23); план в основном исполнен. **Живой долг вынесен:** авто-индексация pending-документов (`proxy/workers/` пуст) — добавить self-healing планировщик |
 
 > Ничего не удалено — перемещено (git хранит и историю файлов). Если что-то понадобится в каноне —
 > вернуть `git mv docs/archive/<файл> <место>`.
+> Аудиты **AUDIT_DETERMINISM** и **AUDIT_CORE** оставлены в `docs/` (на них ссылается КОД), но получили
+> статус-баннер «исполнено/закрыто» — это история решений, не текущая инструкция.

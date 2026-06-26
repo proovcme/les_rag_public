@@ -2,7 +2,7 @@
 
 > **Карта МОДУЛЕЙ (что есть + статус док↔код) — [MODULE_INDEX.md](MODULE_INDEX.md).** Этот файл — карта кода по файлам/связям; начинай с MODULE_INDEX, сюда приходи за деталями.
 
-Навигатор по коду для агентов и людей: где что лежит и как связано. Архитектура/инфраструктура подробно — в [INFRASTRUCTURE_v2.0.md](../INFRASTRUCTURE_v2.0.md), [PROXY_ARCHITECTURE.md](../PROXY_ARCHITECTURE.md), [LES_MASTER_DOC_v2_1.md](../LES_MASTER_DOC_v2_1.md), [RAG_MODERNIZATION_PLAN.md](../RAG_MODERNIZATION_PLAN.md), [MLX_GUIDE.md](../MLX_GUIDE.md), термины — в [DICTIONARY_LES_v2.0.md](../DICTIONARY_LES_v2.0.md). Рантайм-операции и доступы — в корневом [SKILL.md](../SKILL.md). Здесь — структура и связи кода.
+Навигатор по коду для агентов и людей: где что лежит и как связано. Прокси-слой — [PROXY_ARCHITECTURE.md](../PROXY_ARCHITECTURE.md), RAG-модернизация — [RAG_MODERNIZATION_PLAN.md](../RAG_MODERNIZATION_PLAN.md), MLX — [MLX_GUIDE.md](../MLX_GUIDE.md), термины — [DICTIONARY_LES_v2.0.md](../DICTIONARY_LES_v2.0.md). Рантайм-операции и доступы — в корневом [SKILL.md](../SKILL.md). (Историческое `INFRASTRUCTURE_v2.0`/`LES_MASTER_DOC_v2_1` → `docs/archive/`.) Здесь — структура и связи кода.
 
 ## Алгоритм-доки (детерминированные ядра, 0 LLM)
 
