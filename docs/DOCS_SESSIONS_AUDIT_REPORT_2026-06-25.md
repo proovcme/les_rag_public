@@ -237,7 +237,7 @@ User question + selected scope
 
 ## 10. Repo / GitHub / runtime audit
 
-Дата первичной проверки: 2026-06-25. Повторная проверка после фикса deploy stamp: 2026-06-25.
+Дата первичной проверки: 2026-06-25. Повторная проверка после фикса deploy stamp: 2026-06-25. Актуализация после повторного аудита: 2026-06-26.
 
 Проверенные факты:
 
@@ -246,11 +246,11 @@ User question + selected scope
 - GitHub remote dev-репо: `git@github.com:proovcme/les_rag.git`.
 - Текущая ветка dev-репо: `feat/les3-p1`.
 - `git fetch --prune origin` прошел успешно.
-- Dev HEAD: `9e88381`.
-- `origin/feat/les3-p1`: `9e88381`.
-- `origin/main`: `cc869e9`.
+- Dev HEAD: `98278ea`.
+- `origin/feat/les3-p1`: `98278ea`.
+- `origin/main`: `98278ea`.
 - Dev branch vs upstream: `ahead=0`, `behind=0`.
-- `origin/main..origin/feat/les3-p1`: 348 коммитов; обратного main-only хвоста нет. Значит `feat/les3-p1` содержит `main`, но `main` сильно отстает.
+- `origin/main...origin/feat/les3-p1`: `0 0`. Значит `main` и `feat/les3-p1` сейчас указывают на один commit.
 
 Runtime:
 
@@ -258,10 +258,10 @@ Runtime:
 - Runtime remote: `/Users/ovc/Projects/LES_v2_reinstall_stress`, не GitHub.
 - Runtime git dirty: 128 entries по `git status --porcelain`; это ожидаемо для divergent runtime-клона и не должно использоваться как источник правды о деплое.
 - `/api/version` отвечает:
-  - `app_version=5.1.0`;
-  - `harness_version=0.22`;
+- `app_version=5.1.0`;
+- `harness_version=0.23`;
 - `git_commit=1e98be6`;
-- `deployed_commit=9e88381`;
+- `deployed_commit=00ddee2`;
 - `deploy_stamp.status=ok`;
 - `runtime_alignment.status=aligned`;
 - `runtime_alignment.checked=12`.
@@ -269,24 +269,24 @@ Runtime:
 Ключевая поправка к первичной проверке:
 
 - Ранее live `/api/version` показывал `deployed_commit = ba2e8d3`, что отставало от dev/GitHub HEAD.
-- После фикса live `/api/version` показывает `deployed_commit = 9e88381`, то есть deploy stamp догнан до текущего dev/GitHub HEAD.
+- На актуализации 2026-06-26 live `/api/version` показывает `deployed_commit = 00ddee2`, а dev/GitHub HEAD уже `98278ea`.
 - `runtime_alignment=aligned` означает совпадение по 12 файлам deploy-stamp bundle, а не полное совпадение всего runtime-клона с dev HEAD.
 
 Health:
 
 - `GET /api/health` отвечает, но `status=degraded`.
-- RAG totals на момент проверки: 28 датасетов, 2379 файлов, 1553 indexed, 826 pending, 0 error, 181652 chunks.
+- RAG totals на момент повторной проверки: 30 датасетов, 3133 файлов, 1651 indexed, 1482 pending, 0 error, 187642 chunks.
 - Это не блокирует git/runtime-audit, но важно для операционного отчета: live runtime не полностью "green", он "degraded" из-за pending index state.
 
-Untracked:
+Audit-файл:
 
-- Единственный новый untracked файл в dev-репо: `docs/DOCS_SESSIONS_AUDIT_REPORT_2026-06-25.md`.
-- Это файл текущего аудита, созданный Codex в этой сессии; на GitHub его нет, пока не будет отдельного commit/push.
+- `docs/DOCS_SESSIONS_AUDIT_REPORT_2026-06-25.md` уже отслеживается git и попал в историю через `b0c2d65`.
+- После текущей актуализации файл снова изменен в рабочем дереве до нового commit.
 
 Вывод:
 
 - GitHub-ветка `feat/les3-p1` синхронна с dev-репо.
-- `main` не актуален относительно LES3/v0.22.
+- `main` синхронен с `feat/les3-p1`.
 - Runtime нельзя оценивать по git-клону; надо смотреть deploy stamp.
-- Runtime реально задеплоен на `9e88381`, что совпадает с текущим `feat/les3-p1` в dev/GitHub.
-- По stamp-проверяемым файлам runtime aligned, но это ограниченная проверка.
+- Runtime реально задеплоен на `00ddee2`, а текущие `main` и `feat/les3-p1` уже на `98278ea`.
+- По stamp-проверяемым файлам runtime aligned, но это ограниченная проверка; commit stamp сейчас не равен GitHub HEAD.

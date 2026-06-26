@@ -24,6 +24,33 @@
 - **`/api/scope/options`**: 28 датасетов (assigned 2 / unassigned 25 / system 1), 6 проектов.
 - **`/api/version`**: harness 0.22, `deployed_commit` ≠ git (deploy stamp), 0 секретов.
 
+## Открытый пробел: basic product smoke
+
+`make verify` и основная pytest-сюита хорошо ловят синтаксис, импорты, unit/regression
+и часть contract-поведения. Но они не гарантируют, что живой пользовательский маршрут
+"открыл UI -> задал вопрос -> увидел источники -> скопировал/открыл/остановил" работает
+после очередной правки.
+
+План закрытия пробела: `docs/BASIC_FUNCTIONS_AUTOTEST_PLAN.md`.
+
+Целевой новый гейт:
+
+```text
+make smoke-basic
+```
+
+Минимум для первого этапа:
+
+```text
+runtime/version/health
+scope options
+chat answer or explicit MISSING/BLOCKED
+copy answer rendered
+source chip/citation not fake
+auth/trust boundary
+diagnostics does not hide FAIL
+```
+
 ## Чек-лист перед коммитом версии
 
 1. `HARNESS_VERSION` в `version_service.py` поднят (двигать КАЖДУЮ версию).

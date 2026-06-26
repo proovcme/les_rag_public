@@ -654,14 +654,15 @@ Top-5 локальных провалов закрыты или marked infrastru
 Цель: первым доменным workflow сделать нормоконтроль комплекта документации на соответствие
 СПДС и требованиям нормоконтроля. Первый стандарт в фокусе — ГОСТ Р 21.101-2026.
 
-Это не обычный RAG-вопрос. Workflow:
+Это не падение в чистую детерминацию и не обычный одиночный RAG-вопрос. Workflow — RAG-led review:
 
 ```text
 комплект ПД/РД
-  → rulepack СПДС
-  → формальные/структурные проверки
-  → evidence по документам и пунктам стандарта
-  → fail/warn/pass/manual_required
+  → RAG находит применимые требования СПДС/ГОСТ
+  → RAG находит evidence в комплекте
+  → код проверяет только формализуемые вещи
+  → модель объясняет и связывает evidence
+  → инженер подтверждает/отклоняет замечание
   → XLSX/JSON/HTML отчёт
 ```
 
@@ -679,13 +680,15 @@ Top-5 локальных провалов закрыты или marked infrastru
 ### Сделать
 
 ```text
-rulepack config/normcontrol/gost_r_21_101_2026.yaml
-doc-review service поверх текущего normcontrol v1
+rulepack config/normcontrol/gost_r_21_101_2026.yaml как карта review, не как полный rule engine и не "ГОСТ в YAML"
+doc-review service поверх текущего normcontrol v1 и RAG retrieval
 SPDS applicability: ПД/РД/unknown, комплект, раздел, марка, дисциплина
 document set model: файл ↔ лист ↔ ведомость ↔ штамп ↔ обозначение
-проверки состава комплекта, ведомостей, обозначений, листов, изменений
+RAG search по требованиям ГОСТ Р 21.101-2026 и related СПДС
+RAG search по комплекту: ведомости, штампы, пояснения, листы, изменения
+computed checks: состав комплекта, ведомости, обозначения, листы, изменения
 title block/stamp extraction: уверенно или manual_required
-evidence model: rule_id, clause, target, source_ref, status, confidence
+evidence model: requirement, document_evidence, computed_check, model_note, human_decision
 отчёт XLSX/JSON/HTML
 UI "Проверка документации" в Инструментах
 ```
@@ -694,37 +697,41 @@ UI "Проверка документации" в Инструментах
 
 ```text
 полный текст ГОСТ не коммитить
-rulepack хранит проверочные правила и ссылки на пункты
-pass/fail только по structured evidence
+rulepack хранит карту review: что искать, какие evidence нужны, какие checks возможны
+RAG ищет требования и доказательства, rulepack не заменяет retrieval
+окончательный status только для computed checks или подтверждённых человеком замечаний
 если extraction/layout не уверен — manual_required, не fake pass
-LLM может объяснить замечание, но не ставит verdict без evidence
+LLM формулирует вывод и вопросы к evidence, но не ставит финальное решение без evidence/human decision
+computed checks являются evidence-слоем внутри RAG-led review, а не заменой retrieval
 ```
 
 ### Первый набор проверок
 
 ```text
+RAG: найти применимые требования ГОСТ Р 21.101-2026 по комплекту
+RAG: найти evidence в документах комплекта под каждое требование
 version gate: выбран ГОСТ Р 21.101-2026, не устаревший 2020
 применимость СПДС: комплект относится к ПД/РД или требует ручного выбора
-согласованность базового шифра комплекта
-ведомость рабочих чертежей / состав документации ↔ фактические файлы
-обозначение документа: имя файла ↔ ведомость ↔ извлечённый штамп
-формат листа и текстовый слой
-основная надпись/штамп: found / missing / manual_required
-изменения/revisions: found / consistent / not_applicable
+computed: согласованность базового шифра комплекта
+computed: ведомость рабочих чертежей / состав документации ↔ фактические файлы
+computed/layout: обозначение документа: имя файла ↔ ведомость ↔ извлечённый штамп
+computed: формат листа и текстовый слой
+RAG/layout: основная надпись/штамп: evidence found / potential issue / manual_required
+RAG/layout: изменения/revisions: evidence found / potential issue / not_applicable
 ```
 
 ### Acceptance
 
 ```text
-synthetic РД clean → 0 error
-synthetic РД missing sheet → error с rule_id/clause/source_ref
-bad designation → warning/error с target
+synthetic РД clean → no confirmed error, requirements/evidence trace есть, silent pass нет
+synthetic РД missing sheet → computed issue с rule_id/clause/source_ref
+bad designation → potential/confirmed issue с target
 PDF без текста → OCR/manual_required, не crash
-штамп не найден → manual_required, не pass
+штамп не найден → manual_required или potential_issue, не pass
 ГОСТ Р 21.101-2020 в корпусе при rulepack 2026 → warning
-реальный комплект РД от оператора → top-10 замечаний вручную сверены
+реальный комплект РД от оператора → top-10 RAG/computed замечаний вручную сверены
 отчёт XLSX/JSON создаётся
-UI показывает auto/manual/pass/fail отдельно
+UI показывает retrieved requirements / computed checks / review needed / confirmed отдельно
 ```
 
 Подробный план: `docs/DOC_REVIEW_GOST_R_21_101_2026_PLAN.md`.
