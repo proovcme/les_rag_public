@@ -744,6 +744,35 @@ UI показывает retrieved requirements / computed checks / review needed
 
 ---
 
+## v0.24+ — Checklist Review ПД (профиль БУП/ГИП поверх Doc Review)
+
+Цель: прикладной чек-лист входного контроля ПД ГИП/БУП **как профиль поверх v0.24**, НЕ отдельный
+rule-engine и НЕ замена нормоконтролю. RAG-led checklist review: чек-лист задаёт карту требований,
+RAG ищет evidence, код проверяет формализуемое, модель связывает/объясняет, инженер подтверждает.
+
+Полная спецификация: **`docs/CHECKLIST_REVIEW_PD_TASK.md`** (13 разделов: классы пунктов, data model,
+API, UI, report, проверки, tests, acceptance, 5-фазный roadmap). Сверена с `les final build spec.pdf`.
+
+```text
+вход:     Чек_лист_входного_контроля_ПД_ГИПы_БУП.xlsx (12 листов, 10 разделов, ~400 пунктов;
+          дисциплины Общее/СПОЗУ/АР/КР/ЭОМ/ЭН/ВК_НВК/ОВиК/СС/ПБ2) + Приложение 1 PDF (печатный образ)
+классы:   presence · calculation · spds_formal · cross_section · tz_vendor · layout · manual_required
+сервисы:  checklist_template_importer · checklist_review_service · checklist_report_service +
+          router checklist_review (опц. checklist_item_classifier)
+переиспользовать: doc_review_service / normcontrol_service (computed) / RAG retrieval / ПП87 composition /
+          normalized remark JSON (общий выход doc-review/formal/normative/consistency)
+фазы:     P0 Doc Review alignment → P1 template import → P2 evidence review → P3 report+UI →
+          P3b normcontrol DOCX/PDF → P4 РД extension → P5 Cross-Checker ПД↔РД
+```
+
+Инвариант: `suggested yes/no` запрещён без `evidence.source_ref`; `human_answer` сильнее предложенного;
+никакого общего verdict «ПД соответствует» без human decision; полный текст ГОСТ/ПП87 не коммитить;
+исходные XLSX/PDF оператора не коммитить (только нормализованный template/config). Для v1 — XLSX/JSON/
+HTML отчёт; importer достаточно универсален, чтобы позже принять РД workbook (28 листов, ~793 пункта)
+без переписывания архитектуры. Зависит от v0.24 (общий Doc Review / ГОСТ Р 21.101-2026 review-map).
+
+---
+
 ## v0.25 — Retrieval and Citation Quality
 
 Цель: улучшить качество источников и доверие к ответу.
@@ -806,6 +835,33 @@ no final_total with blockers
 Если норма/цена/семья не подтверждены — BLOCKED/MISSING.
 Итог показывается только при complete.
 ```
+
+---
+
+## v0.26+ — Источник: индексы изменения сметной стоимости (Минстрой ИФ/09)
+
+Цель: завести **официальные индексы изменения сметной стоимости Минстроя** как локальный источник для
+перевода базовых цен в текущие (`price_base × индекс` — графы 8-10 РИМ-трассы, режим `fgis_base_index`).
+Сейчас индекс берётся из ФГИС ЦС; письма Минстроя — официальный рекомендованный источник (особ. для
+базисно-индексного метода) и нужны, когда ФГИС ЦС не покрывает субъект/квартал.
+
+```text
+источник:  https://minstroyrf.gov.ru/trades/tsenoobrazovanie/indeksy-izmeneniya-smetnoy-stoimosti/
+формат:    ежемесячные/квартальные «Письма Минстроя России … № NNNNN-ИФ/09 О рекомендуемой величине
+           индексов изменения сметной стоимости …» → страница /docs/<id>/ + PDF /upload/iblock/…
+           (свежие: 22.06.2026 №37404-ИФ/09, 03.06.2026 №33771-ИФ/09, 22.05.2026 №31091-ИФ/09, …)
+содержание PDF: индексы по субъектам РФ × видам строительства/работ × элементам прямых затрат
+           (СМР, ОЗП, ЭМ, материалы) — таблицы внутри письма (часто приложением)
+egress:    minstroyrf.gov.ru РЕЖЕТ не-РФ IP (WebFetch/рантайм-сеть таймаутят) → тянуть через РФ-VPS
+           `box` (ZeroTier 10.195.146.136 / public 185.185.71.196), как ГЭСН-добор (LES_FGIS_VIA_SSH)
+```
+
+Принцип (см. R6 и [[local-bases-untrusted-channel]]): **локаль-первый** — PDF/индексы кэшировать в
+parquet локально, канал (Минстрой) только для квартального обновления по запросу; query-time без сети.
+Шаги: (1) скачать последнее письмо через `box`; (2) распарсить таблицу индексов (PDF → строки:
+субъект×вид×элемент→коэф.); (3) сложить в `data/indices/minstroy_if09.parquet`; (4) сервис
+`index_lookup` (субъект+квартал+вид → индекс) → стык с `fgis_price_service`/РИМ-трассой. Релиз —
+post-v1 (как Price DB/FGIS в §4), но добор уже возможен ручным шагом из рантайма.
 
 ---
 
@@ -1202,8 +1258,10 @@ v0.23A — Operational Trust Hardening
 v0.23B — Clickable Sources + Citation Drawer
 v0.23C — Real Dataset Acceptance
 v0.24 — SPDS Documentation Normcontrol: ГОСТ Р 21.101-2026
+v0.24+ — Checklist Review ПД (профиль БУП/ГИП поверх Doc Review) → docs/CHECKLIST_REVIEW_PD_TASK.md
 v0.25 — Retrieval and Citation Quality
 v0.26 — Estimate Workflow Hardening
+v0.26+ — Источник: индексы изменения сметной стоимости (Минстрой ИФ/09, локаль-первый, egress через РФ-VPS)
 v0.90 — Release Candidate
 v1.0  — Local Evidence Assistant
 ```
