@@ -52,6 +52,40 @@ async def _copy_text(text: str) -> None:
               type="positive" if ok else "warning")
 
 
+def _copy_js(text: str) -> str:
+    """Client-side JS: копировать В ЖЕСТЕ клика (без серверного round-trip — иначе жест теряется и
+    execCommand/clipboard блокируются браузером; за http-туннелем navigator.clipboard недоступен).
+    navigator.clipboard на secure-context, иначе execCommand-fallback; короткий клиентский тост."""
+    t = json.dumps(text or "")
+    return (
+        "(e) => { const t = " + t + ";"
+        " const toast = (ok) => { try { const d = document.createElement('div');"
+        "  d.textContent = ok ? 'Скопировано' : 'Не вышло — выдели и Ctrl+C';"
+        "  d.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);"
+        "background:#222;color:#fff;padding:8px 14px;border-radius:8px;z-index:99999;font:13px sans-serif';"
+        "  document.body.appendChild(d); setTimeout(() => d.remove(), 1500); } catch (_) {} };"
+        " const fb = () => { try { const ta = document.createElement('textarea'); ta.value = t;"
+        "  ta.style.position='fixed'; ta.style.top='0'; ta.style.opacity='0';"
+        "  document.body.appendChild(ta); ta.focus(); ta.select();"
+        "  const ok = document.execCommand('copy'); document.body.removeChild(ta); toast(ok); }"
+        "  catch (_) { toast(false); } };"
+        " try { if (navigator.clipboard && window.isSecureContext) {"
+        "   navigator.clipboard.writeText(t).then(() => toast(true)).catch(fb); } else { fb(); } }"
+        " catch (_) { fb(); } }"
+    )
+
+
+def _copy_button(label: str, text: str, *, icon: str = "o_content_copy",
+                 props: str = "flat dense no-caps", classes: str = ""):
+    """Кнопка «Копировать» с КЛИЕНТСКИМ обработчиком (копирует в жесте → работает и по http/туннелю,
+    не только на localhost/https). Текст известен на рендере — зашит в js_handler."""
+    btn = ui.button(label, icon=icon).props(props)
+    if classes:
+        btn.classes(classes)
+    btn.on("click", js_handler=_copy_js(text))
+    return btn
+
+
 def _is_spec_request(q: str) -> bool:
     """«Собери/составь/сделай … спецификацию …» — намерение собрать спеку → GOST-форма."""
     import re as _re
@@ -1568,14 +1602,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         тела письма — только chip-локатор). Без скрытого trace."""
         from sovushka.answer_render import answer_copy_text
         with ui.row().classes("sov-answer-actions").style("gap:4px;margin-top:6px;"):
-            ui.button("Копировать", icon="o_content_copy",
-                      on_click=lambda t=text: asyncio.create_task(_copy_text(answer_copy_text(t)))
-                      ).props("flat dense no-caps").classes("sov-answer-act")
+            # Клиентское копирование в жесте клика — работает и по http/туннелю (не только localhost).
+            _copy_button("Копировать", answer_copy_text(text), classes="sov-answer-act")
             if srcs:
-                ui.button("С источниками", icon="o_format_quote",
-                          on_click=lambda t=text, s=srcs: asyncio.create_task(
-                              _copy_text(answer_copy_text(t, s, with_sources=True)))
-                          ).props("flat dense no-caps").classes("sov-answer-act")
+                _copy_button("С источниками", answer_copy_text(text, srcs, with_sources=True),
+                             icon="o_format_quote", classes="sov-answer-act")
 
     def _render_chat_bubble(
         text: str,
@@ -2248,9 +2279,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     label = "Таблица"
                 with ui.row().classes("w-full items-center justify-between"):
                     _html(f'<div class="sov-panel-title">{esc(label)}</div>')
-                    ui.button("Копировать", icon="o_content_copy", on_click=lambda: asyncio.create_task(_copy_text(ans))).props(
-                        "no-caps flat dense"
-                    )
+                    _copy_button("Копировать", ans, props="no-caps flat dense")
 
                 if table_query:
                     _render_table_query(table_query)
@@ -2292,7 +2321,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                         state["mermaid_last"] = code
                         ui.mermaid(code).classes("w-full")
                         with ui.row().classes("gap-2"):
-                            ui.button("Код", icon="o_content_copy", on_click=lambda c=code: asyncio.create_task(_copy_text(c))).props("no-caps flat dense")
+                            _copy_button("Код", code, props="no-caps flat dense")
                             if tabs and tab_mermaid:
                                 ui.button("В редактор", icon="o_open_in_new", on_click=lambda: tabs.set_value(tab_mermaid)).props("no-caps flat dense")
                     else:
@@ -2301,7 +2330,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     svg_code = _parse_svg_from_ai(ans)
                     if svg_code:
                         _html(f'<div class="sov-svg-preview">{svg_code}</div>')
-                        ui.button("Копировать SVG", icon="o_content_copy", on_click=lambda c=svg_code: asyncio.create_task(_copy_text(c))).props("no-caps flat dense")
+                        _copy_button("Копировать SVG", svg_code, props="no-caps flat dense")
                     else:
                         ui.markdown(ans).classes("sov-artifact-markdown")
 
@@ -2380,11 +2409,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 icon="o_download",
                 on_click=lambda d=data: ui.download(_rows_to_csv(d), "specification.csv"),
             ).props("no-caps flat dense").tooltip("Скачать CSV (рус-Excel: ; + UTF-8 BOM)")
-            ui.button(
-                "JSON",
-                icon="o_content_copy",
-                on_click=lambda d=data: asyncio.create_task(_copy_text(json.dumps(d, ensure_ascii=False, indent=2))),
-            ).props("no-caps flat dense")
+            _copy_button("JSON", json.dumps(data, ensure_ascii=False, indent=2), props="no-caps flat dense")
 
     def _render_gost_spec(data: list[dict]):
         """Рендер спецификации по форме ГОСТ 21.110-2013: графы с правильными
@@ -2417,9 +2442,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             ui.button("CSV", icon="o_download",
                       on_click=lambda d=csv_rows: ui.download(_rows_to_csv(d), "specification_gost.csv")
                       ).props("no-caps flat dense").tooltip("Скачать CSV по ГОСТ (; + UTF-8 BOM)")
-            ui.button("JSON", icon="o_content_copy",
-                      on_click=lambda d=rows: asyncio.create_task(_copy_text(json.dumps(d, ensure_ascii=False, indent=2)))
-                      ).props("no-caps flat dense")
+            _copy_button("JSON", json.dumps(rows, ensure_ascii=False, indent=2), props="no-caps flat dense")
 
     def _render_table_query(table_query: dict):
         try:
@@ -2485,7 +2508,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 
                 # Export actions
                 with ui.row().classes("gap-2"):
-                    ui.button("Копировать JSON", icon="o_content_copy", on_click=lambda: asyncio.create_task(_copy_text(json.dumps(rows, ensure_ascii=False, indent=2)))).props("no-caps flat dense")
+                    _copy_button("Копировать JSON", json.dumps(rows, ensure_ascii=False, indent=2), props="no-caps flat dense")
                     
         except Exception as e:
             logger.error(f"Error rendering AG Grid table query: {e}")
