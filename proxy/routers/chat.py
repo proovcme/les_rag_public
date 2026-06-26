@@ -1319,7 +1319,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             reply = maybe_agent_route(req.question, project_id=pid)
             if reply is not None:
                 channel = "agent"
-        if reply is None:
+        # ИНВЕРСИЯ (AUDIT_DETERMINISM, no-determinism-in-chat-directive): keyword-каскад — ТОЛЬКО
+        # legacy-фолбэк. В режиме router_primary (дефолт ON) понимание делает LLM-роутер выше; его
+        # «none» = это RAG-вопрос → НЕ запускаем гейты на свободный текст, уступаем дорогу RAG.
+        if reply is None and not router_primary():
             # v0.18 DeterministicFinalPolicy: кандидат-ответ детерминированного канала принимается final
             # ТОЛЬКО при явном намерении (см. deterministic_policy_service). Иначе — отклоняем, пишем в
             # trace и уступаем дорогу RAG (legacy-канал не перехватывает проектный/descriptive/scoped вопрос).
