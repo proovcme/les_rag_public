@@ -82,7 +82,12 @@ def maybe_handle_help_query(question: str, *, project_id: int = 0) -> Optional[d
     # затесалось в содержательный вопрос («расскажи всё что можешь про объект» → это RAG про объект,
     # не справка). Лидирующий триггер + короткий хвост — без substring-перехвата свободного текста.
     _hit = next((t for t in _TRIGGERS if ql.startswith(t)), None)
-    if _hit is None or len(ql) > len(_hit) + 12:
+    if _hit is None:
+        return None
+    tail = ql[len(_hit):].strip()
+    # длинный хвост допустим ТОЛЬКО как тематический срез «про/по <тема>» («как спросить ПРО смету»);
+    # иначе триггер в начале контент-вопроса → это RAG, не справка.
+    if len(tail) > 12 and not tail.startswith(("про ", "по ")):
         return None
     answer = _OVERVIEW
     for words, key in _TOPIC_HINTS:   # тематический срез, если в запросе есть тема

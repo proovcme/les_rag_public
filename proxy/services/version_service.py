@@ -16,8 +16,11 @@ from typing import Any
 
 # ── центральные версии ────────────────────────────────────────────────────────────────────
 
-APP_VERSION = "5.1.0"                 # пользовательская версия ЛЕС
-HARNESS_VERSION = "0.23"             # внутренний строительный контур (двигать КАЖДУЮ версию v0.NN)
+APP_VERSION = "5.1.0"                 # пользовательская «маркетинговая» версия ЛЕС
+HARNESS_VERSION = "0.23"             # веха roadmap (v0.NN); двигать на смене вехи
+# Гранулярная версия «где мы»: 0.<веха>.<фича>.<патч>. Двигать КАЖДУЮ фичу/фикс + строка в
+# docs/RELEASE_LEDGER.md. Это основной номер в /api/version и бейдже (см. docs/RELEASE_LEDGER.md).
+LES_VERSION = "0.23.6.0"
 EVIDENCE_SCHEMA_VERSION = "1.0"
 EXTRACTION_SCHEMA_VERSION = "1.0"
 RESOURCE_CALC_VERSION = "0.6"
@@ -165,7 +168,7 @@ def write_deploy_stamp(*, dev_root: Path | None = None, runtime_root: Path | Non
         if h is not None:
             bundle[rel] = h
     stamp = {
-        "app_version": APP_VERSION, "harness_version": HARNESS_VERSION,
+        "les_version": LES_VERSION, "app_version": APP_VERSION, "harness_version": HARNESS_VERSION,
         "deployed_commit": deployed_commit, "deployed_branch": deployed_branch,
         "deployed_at": deployed_at or "unknown", "deployed_by": "local",
         "deploy_method": "copy_files", "file_hash_bundle": bundle, "notes": notes or [],
@@ -210,9 +213,11 @@ def version_info() -> dict[str, Any]:
     ds = deploy_stamp()
     import sys
     return {
+        "les_version": LES_VERSION,
         "app_version": APP_VERSION,
         "harness_version": HARNESS_VERSION,
         "deployed_commit": ds.get("deployed_commit", "unknown"),
+        "deployed_les_version": ds.get("les_version", "unknown"),
         "deploy_stamp": ds,
         "evidence_schema_version": EVIDENCE_SCHEMA_VERSION,
         "extraction_schema_version": EXTRACTION_SCHEMA_VERSION,
@@ -240,6 +245,7 @@ def version_info_trace() -> dict[str, Any]:
     """Лёгкий version_info для trace каждого ответа (без runtime-divergence-сканов, дёшево)."""
     gi = git_info()
     return {
+        "les_version": LES_VERSION,
         "app_version": APP_VERSION,
         "harness_version": HARNESS_VERSION,
         "evidence_schema_version": EVIDENCE_SCHEMA_VERSION,
@@ -253,5 +259,5 @@ def version_brief() -> str:
     """Короткая строка для бейджа: «Л.Е.С. 5.1.0 · h0.20 · 5ded539»."""
     gi = git_info()
     c = gi["git_commit"]
-    return (f"Л.Е.С. {APP_VERSION} · h{HARNESS_VERSION}"
+    return (f"Л.Е.С. {LES_VERSION} · app {APP_VERSION} · h{HARNESS_VERSION}"
             + (f" · {c}" if c and c != "unknown" else ""))

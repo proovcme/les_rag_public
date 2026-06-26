@@ -59,7 +59,7 @@ def test_version_endpoint_includes_deployed_commit():
     from proxy.routers.runtime import router
     app = FastAPI(); app.include_router(router)
     d = TestClient(app).get("/api/version").json()
-    assert "deployed_commit" in d and "deploy_stamp" in d and d["harness_version"] == "0.22"
+    assert "deployed_commit" in d and "deploy_stamp" in d and d["harness_version"] == vs.HARNESS_VERSION and "les_version" in d
 
 def test_version_no_secrets():
     blob = json.dumps(vs.version_info()).lower()
@@ -67,7 +67,7 @@ def test_version_no_secrets():
         assert m not in blob
 
 def test_version_brief_has_harness():
-    assert "h0.22" in vs.version_brief()
+    assert f"h{vs.HARNESS_VERSION}" in vs.version_brief() and vs.LES_VERSION in vs.version_brief()
 
 
 # ── §5 copy answer ────────────────────────────────────────────────────────────────────────
@@ -138,7 +138,7 @@ def test_source_scoped_not_glossary_v020():
 
 def test_chat_response_has_version_info_v020():
     from proxy.routers.chat import _version_stamp
-    assert _version_stamp()["version_info"]["harness_version"] == "0.22"
+    assert _version_stamp()["version_info"]["harness_version"] == vs.HARNESS_VERSION
 
 
 # ── §12 legacy .xls + регрессии ───────────────────────────────────────────────────────────
