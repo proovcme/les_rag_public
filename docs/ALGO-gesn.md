@@ -17,8 +17,9 @@
    - **Семя** `config/domain/gesn_seed.yaml`: норма = {code, name, unit, resources:[…]}.
      Ресурс: kind (labor|machinist|machine|material), per_unit, code (для цены ФГИС ЦС),
      price (тариф ОЗП/ОТм; для машин/материалов — опц. снимок цены).
-   - **Полная база** `data/gesn_base/gesn2022.parquet` (десятки тысяч норм, в gitignore как ФГИС ЦС).
-     При совпадении кода **семя побеждает** (эталон остаётся точным).
+   - **Полная база** — parquet-слой `data/gesn_base/` (десятки тысяч норм, в gitignore как ФГИС ЦС):
+     `gesn2022.parquet` + опц. `gesn2022_v2.parquet` поверх (если файл есть — `_default_base_paths`
+     грузит оба, v2 дополняет старый слой). При совпадении кода **семя побеждает** (эталон точен).
 2. **Разворот** (`expand_position`): qty_строки = per_unit × объём; kind/name/code/price переносятся.
 3. **Интеграция**: `lsr_assembly.compute_position` — если у позиции есть `code`, но нет `resources`,
    разворачивает по норме; дальше штатный пайплайн (цены→ОЗП/ЭМ/М→стеснённость→НР/СП→Всего).

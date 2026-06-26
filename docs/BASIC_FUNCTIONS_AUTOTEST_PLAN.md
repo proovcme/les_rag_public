@@ -155,19 +155,19 @@ MISSING/BLOCKED видны как отдельное состояние, а не
 
 ## 3. Что надо автоматизировать первым
 
-### P0
+### P0 — ЗАКРЫТО (реализовано)
 
 ```text
-tools/basic_function_smoke.py
-  объединяет L1 + минимальный L2
+[done] tools/basic_function_smoke.py
+  L1 HTTP-смоук базовых функций (НЕ браузерный; L2 — отдельный browser_smoke)
   пишет JSON artifact
-  возвращает non-zero на любом P0
+  возвращает non-zero на любом P0 (P1 → exit 1 при --release)
 
-make smoke-basic
-  запускает basic_function_smoke.py против локального runtime
+[done] make smoke-basic
+  запускает basic_function_smoke.py против локального runtime (:8050/:8051)
 
-tests/test_basic_function_smoke.py
-  unit-тестирует парсинг результатов и критерии fail/warn
+[done] tests/test_basic_function_smoke.py
+  unit-тестирует парсинг результатов и критерии fail/warn (compute_exit/failures)
 ```
 
 P0 assertions:

@@ -1,9 +1,9 @@
-# TEST_INVENTORY — тесты Unified Construction Harness v0.16–v0.22
+# TEST_INVENTORY — тесты Unified Construction Harness v0.16–v0.23
 
-Гейт: `make verify` (офлайн, синтаксис+импорт-смоук). Полная сюита: `uv run python -m pytest tests/ -q`.
+Гейт: `make verify` (офлайн, синтаксис+импорт-смоук). Полная сюита: `uv run python -m pytest tests/ -q` (~2046 тестов / 218 файлов).
 Все тесты ниже офлайн (без живых Qdrant/MLX), flag `LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED` OFF.
 
-**Итого v0.16–v0.22: 230 тестов** (+ регрессия v0.3–v0.15 и chat/router при OFF).
+**Профильные таблицы v0.16–v0.22: 230 тестов** (+ регрессия v0.3–v0.15 и chat/router при OFF). Полная сюита на h0.23 — **~2046 тестов в 218 файлах**.
 
 | Файл | Тестов | Покрывает |
 |---|---:|---|
@@ -22,24 +22,22 @@
 - **resource workbook** — `ПРИМЕР_обсчета_24_06.xlsx` валидирован кодом: grand total **16 827 283.19 ₽**, line_diffs=0.
 - **route**: «расскажи про котельную»@all→`scope_clarification`; @project→RAG; «что такое ОЖР»→glossary; «реестр документации»≠глобальный.
 - **`/api/scope/options`**: 28 датасетов (assigned 2 / unassigned 25 / system 1), 6 проектов.
-- **`/api/version`**: harness 0.22, `deployed_commit` ≠ git (deploy stamp), 0 секретов.
+- **`/api/version`**: harness 0.23, `deployed_commit` ≠ git (deploy stamp), 0 секретов.
 
-## Открытый пробел: basic product smoke
+## Basic product smoke (L1 — реализован)
 
 `make verify` и основная pytest-сюита хорошо ловят синтаксис, импорты, unit/regression
 и часть contract-поведения. Но они не гарантируют, что живой пользовательский маршрут
 "открыл UI -> задал вопрос -> увидел источники -> скопировал/открыл/остановил" работает
 после очередной правки.
 
-План закрытия пробела: `docs/BASIC_FUNCTIONS_AUTOTEST_PLAN.md`.
+План: `docs/BASIC_FUNCTIONS_AUTOTEST_PLAN.md`.
 
-Целевой новый гейт:
+Гейт `make smoke-basic` — **РЕАЛИЗОВАН** (`tools/basic_function_smoke.py` + цель в `Makefile`):
+L1 HTTP-смоук базовых функций против живого runtime (:8050/:8051), JSON-артефакт, non-zero на P0.
+Браузерный слой L2/L3 (Playwright + `data-testid`) пока **открыт** — см. план.
 
-```text
-make smoke-basic
-```
-
-Минимум для первого этапа:
+Проверяется на L1:
 
 ```text
 runtime/version/health

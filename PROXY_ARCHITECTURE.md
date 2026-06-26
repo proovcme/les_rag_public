@@ -5,6 +5,8 @@
 ## Overview
 The `proxy_server.py` module exposes the FastAPI app, while `proxy/app.py` owns app composition, middleware, router state, startup, and route registration. It interacts with Qdrant, MLX Host, SQLite metadata, and local file storage to provide dataset management, document ingestion, chat queries, SafeRAG validation, jobs, diagnostics, and auth.
 
+> Scope: этот документ описывает **прокси-слой** (FastAPI app, маршрутизация, БД, поток данных). Актуальное ядро продукта — детерминированные каналы чата, ProfileResolver, Parquet-числа (счёт без LLM) и MCP-сервер — см. `docs/MODULE_INDEX.md` и `docs/CODE_MAP.md`.
+
 ## Modules and Dependencies
 - **FastAPI**: Used for building the web server.
 - **asyncio**: For handling asynchronous operations.
@@ -21,8 +23,8 @@ The `proxy_server.py` module exposes the FastAPI app, while `proxy/app.py` owns 
    - Requests are validated and routed to appropriate handlers.
 
 2. **Database Interactions**:
-   - The server interacts with two SQLite databases: `les_meta.db` and `les_metrics.db`.
-   - `les_meta.db` stores metadata about datasets and documents.
+   - The server interacts with two SQLite databases: `les_meta_qwen.db` and `les_metrics.db`.
+   - `les_meta_qwen.db` (active metabase) stores metadata about datasets and documents.
    - `les_metrics.db` logs system metrics for monitoring.
 
 3. **Backend Services**:
@@ -37,7 +39,7 @@ The `proxy_server.py` module exposes the FastAPI app, while `proxy/app.py` owns 
    - SSE is used to stream logs and real-time updates to clients.
 
 ## SQL Schema
-### les_meta.db
+### les_meta_qwen.db
 - **datasets**: Stores information about datasets.
   - `id`: Dataset ID.
   - `name`: Dataset name.

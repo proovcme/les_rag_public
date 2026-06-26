@@ -67,7 +67,7 @@ Live baseline on 2026-06-01:
   - **Template Formatting**: For `GLM-OCR` visual models, always apply the chat template using `apply_chat_template` on the task prompt (e.g. `"Text Recognition:"`) to correctly format and align visual token placeholders `<|image|>` for the language model.
   - **Repetition Mitigation**: In dense document OCR tasks, always pass `repetition_penalty=1.2`, `repetition_context_size=64`, and explicit length constraints like `max_tokens=1024` to prevent infinite token loops at the end of the page text.
 
-## Version / Scope / Sidecar (Unified Construction Harness v0.16–v0.22)
+## Version / Scope / Sidecar (Unified Construction Harness v0.16–v0.23)
 
 Флаг `LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED` — **OFF по умолчанию** (не менять). Число версии `HARNESS_VERSION` в `proxy/services/version_service.py` — **двигать каждую версию v0.NN** (иначе UI/бейдж отстаёт).
 
@@ -97,7 +97,7 @@ deployed_at=datetime.now(timezone.utc).isoformat(timespec='seconds')))"
 
 ## Tests
 
-Инвентарь тестов v0.16–v0.22 (230 шт) — **[docs/TEST_INVENTORY.md](docs/TEST_INVENTORY.md)**. Гейт `make verify` (офлайн). Run before finalizing meaningful changes:
+Инвентарь тестов v0.16–v0.23 (~2046 тестов, 218 файлов) — **[docs/TEST_INVENTORY.md](docs/TEST_INVENTORY.md)**. Гейт `make verify` (офлайн); базовый L1 HTTP-смоук — `make smoke-basic` (`tools/basic_function_smoke.py`). Run before finalizing meaningful changes:
 
 ```bash
 uv run pytest -q
