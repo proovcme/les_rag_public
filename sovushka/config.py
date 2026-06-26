@@ -32,4 +32,27 @@ TRUSTED_PROXY_NETWORKS = tuple(
     if item.strip()
 )
 TRUSTED_PROXY_HEADER = os.getenv("TRUSTED_PROXY_HEADER", "x-les-trusted-network")
-STORAGE_SECRET = os.getenv("SOVUSHKA_STORAGE_SECRET", "les_secret_883")
+def _storage_secret() -> str:
+    # БЕЗОПАСНОСТЬ: НЕ дефолтить предсказуемым «les_secret_883» (им подписываются куки сессий →
+    # подделка). Нет env → персистим случайный в data/.storage_secret (стабилен между рестартами,
+    # сессии не мрут). chmod 600.
+    env = (os.getenv("SOVUSHKA_STORAGE_SECRET") or "").strip()
+    if env:
+        return env
+    import secrets as _secrets
+    path = ROOT / "data" / ".storage_secret"
+    try:
+        if path.exists():
+            saved = path.read_text(encoding="utf-8").strip()
+            if saved:
+                return saved
+        path.parent.mkdir(parents=True, exist_ok=True)
+        val = _secrets.token_hex(32)
+        path.write_text(val, encoding="utf-8")
+        path.chmod(0o600)
+        return val
+    except Exception:
+        return _secrets.token_hex(32)  # fallback: не персистится (сессии умрут на рестарте), но НЕ предсказуем
+
+
+STORAGE_SECRET = _storage_secret()

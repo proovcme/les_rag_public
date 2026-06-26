@@ -65,7 +65,14 @@ def auth_db() -> sqlite3.Connection:
 
 
 def seed_admin_key() -> None:
-    admin_key = os.getenv("ADMIN_PASSWORD", "admin123")
+    # БЕЗОПАСНОСТЬ: НЕ дефолтить предсказуемым «admin123». Нет ADMIN_PASSWORD в .env →
+    # СЛУЧАЙНЫЙ admin-ключ + громкий лог (оператор берёт его в Доступ/auth_keys).
+    admin_key = (os.getenv("ADMIN_PASSWORD") or "").strip()
+    generated = False
+    if not admin_key:
+        import secrets
+        admin_key = "les-admin-" + secrets.token_hex(12)
+        generated = True
     conn = auth_db()
     try:
         exists = conn.execute("SELECT 1 FROM auth_keys WHERE role='admin' LIMIT 1").fetchone()
@@ -75,7 +82,11 @@ def seed_admin_key() -> None:
                 (admin_key, "admin", "admin"),
             )
             conn.commit()
-            logger.info("[В.О.Л.К.] Admin-ключ создан из ADMIN_PASSWORD")
+            if generated:
+                logger.warning("[В.О.Л.К.] ADMIN_PASSWORD не задан — создан СЛУЧАЙНЫЙ admin-ключ «%s» "
+                               "(задай ADMIN_PASSWORD в .env для стабильного; НЕ admin123)", admin_key)
+            else:
+                logger.info("[В.О.Л.К.] Admin-ключ создан из ADMIN_PASSWORD")
     finally:
         conn.close()
 
