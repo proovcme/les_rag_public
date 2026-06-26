@@ -393,6 +393,16 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                         scope_opts_cache["data"] = await api_get("/api/scope/options") or {}
 
                     asyncio.create_task(_prefetch_scope())
+
+                    # Граф знаний: /classic?scope=p:ID|ds:ID — предвыбор области поиска (2×клик в графе).
+                    try:
+                        _sc = (context.client.request.query_params.get("scope") or "").strip()
+                        if _sc.startswith("p:") and _sc[2:].isdigit():
+                            _apply_scope({int(_sc[2:])}, set())
+                        elif _sc.startswith("ds:") and _sc[3:]:
+                            _apply_scope(set(), {_sc[3:]})
+                    except Exception:
+                        pass
                     # «Карта объекта» убрана из чата (Олег).
                     mode_chip = ui.label("RAG").classes("sov-chip")
                     mode_chip.tooltip("Режим ответа: заземлённый поиск по документам (RAG)")
