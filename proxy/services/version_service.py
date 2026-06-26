@@ -17,7 +17,7 @@ from typing import Any
 # ── центральные версии ────────────────────────────────────────────────────────────────────
 
 APP_VERSION = "5.1.0"                 # пользовательская версия ЛЕС
-HARNESS_VERSION = "0.22"             # внутренний строительный контур (двигать КАЖДУЮ версию v0.NN)
+HARNESS_VERSION = "0.23"             # внутренний строительный контур (двигать КАЖДУЮ версию v0.NN)
 EVIDENCE_SCHEMA_VERSION = "1.0"
 EXTRACTION_SCHEMA_VERSION = "1.0"
 RESOURCE_CALC_VERSION = "0.6"
