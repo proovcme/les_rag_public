@@ -53,7 +53,8 @@ def _doc_ev(targets: list[str]) -> list:
     return [{"kind": "document", "source_ref": t, "snippet": ""} for t in targets[:20]]
 
 
-def _run_computed(target: ReviewTarget, doc_set: DocumentSet, ved: VedomostMatch | None):
+def _run_computed(target: ReviewTarget, doc_set: DocumentSet, ved: VedomostMatch | None,
+                  title_block: dict | None = None):
     """Возвращает (status, computed_check, document_evidence, note) для computed-цели.
     None → computed-движка для этого check нет (вызывающий пометит manual_required)."""
     check = target.check
@@ -109,17 +110,44 @@ def _run_computed(target: ReviewTarget, doc_set: DocumentSet, ved: VedomostMatch
         # формат ок, но текстовый слой требует sidecar/OCR-проверки → не финальный pass
         return S_MANUAL, {"name": check, "status": "ok"}, [], "Формат поддерживается; текстовый слой проверяется отдельно (sidecar/OCR)."
 
+    if check == "title_block_present":
+        tb = title_block or {}
+        checked = int(tb.get("checked", 0))
+        present = int(tb.get("present", 0))
+        scan = int(tb.get("scan", 0))
+        no_stamp = int(tb.get("no_stamp", 0))
+        if checked == 0:
+            return None  # нет PDF для проверки → честный manual_required (не fake)
+        ex = tb.get("examples", []) or []
+        text_checked = present + no_stamp
+        scan_note = f" ({scan} сканов без текст-слоя — нужен OCR)" if scan else ""
+        if text_checked > 0 and present >= max(1, text_checked // 2):  # штамп в текст-листах
+            return (S_SUPPORTED, {"name": check, "status": "ok"},
+                    _doc_ev([e["file"] for e in ex if e.get("present")]),
+                    f"Основная надпись найдена в {present}/{text_checked} текст-листах "
+                    f"(сигнатуры полей ГОСТ Р 21.101){scan_note}.")
+        if no_stamp > 0:
+            return (S_COMPUTED_ISSUE, {"name": check, "status": "issue"},
+                    _doc_ev([e["file"] for e in ex if not e.get("present") and not e.get("scan")]),
+                    f"Штамп не распознан в {no_stamp}/{text_checked} текст-листах — "
+                    f"проверить основную надпись{scan_note}.")
+        # остались только сканы — текстом не определить, честный manual (не fake issue)
+        return (S_MANUAL, {"name": check, "status": "not_run"}, [],
+                f"Все {scan} проверенных PDF — сканы без текст-слоя; штамп проверить вручную/OCR.")
+
     return None  # computed-движка нет → manual_required
 
 
-def run_review(doc_set: DocumentSet, review_map: ReviewMap, *, vedomost_entries: list[dict] | None = None) -> list[ReviewItem]:
-    """Прогон комплекта по review-map → список review-items. Чистая функция (без живых сервисов)."""
+def run_review(doc_set: DocumentSet, review_map: ReviewMap, *, vedomost_entries: list[dict] | None = None,
+               title_block: dict | None = None) -> list[ReviewItem]:
+    """Прогон комплекта по review-map → список review-items. Чистая функция (без живых сервисов).
+    title_block — сводка детектора штампа (title_block_extract_service.detect_dataset) для D4-002."""
     ved = match_vedomost(doc_set, vedomost_entries) if vedomost_entries is not None else None
     items: list[ReviewItem] = []
     for t in review_map.targets:
         req = _requirement(review_map.standard, t.clause)
         if t.kind == "computed":
-            res = _run_computed(t, doc_set, ved)
+            res = _run_computed(t, doc_set, ved, title_block)
             if res is not None:
                 status, cc, ev, note = res
                 items.append(ReviewItem(t.id, t.clause, status, t.severity, t.title, req, ev, cc, note))
@@ -198,8 +226,30 @@ def review_dataset(dataset_id: str, *, rulepack: str = "gost_r_21_101_2026"):
     if not files:
         raise ValueError("no_documents")
     vedomost = _vedomost_entries(dataset_id)
+    title_block = None
+    try:  # Phase 5: детект штампа по сэмплу PDF (D4-002 → computed); сбой → None → честный manual
+        from proxy.services import title_block_extract_service as tbx
+        title_block = tbx.detect_dataset(_dataset_source_paths(dataset_id), sample=8)
+    except Exception:
+        title_block = None
     doc_set = build_document_set(files)
-    return review_map, run_review(doc_set, review_map, vedomost_entries=vedomost)
+    return review_map, run_review(doc_set, review_map, vedomost_entries=vedomost, title_block=title_block)
+
+
+def _dataset_source_paths(dataset_id: str) -> list[str]:
+    import sqlite3
+
+    from backend.rag_config import rag_meta_db_path
+
+    try:
+        with sqlite3.connect(rag_meta_db_path()) as conn:
+            rows = conn.execute(
+                "SELECT source_path FROM documents WHERE dataset_id=? AND source_path IS NOT NULL",
+                (dataset_id,),
+            ).fetchall()
+        return [r[0] for r in rows if r and r[0]]
+    except Exception:
+        return []
 
 
 def review_to_chat_text(items: list[ReviewItem], review_map: ReviewMap, *, top: int = 8) -> str:

@@ -150,12 +150,12 @@ rules:
   - id: G21.101-2026-D4-002
     clause: "5"
     title: "Основная надпись (штамп)"
-    kind: manual_required
+    kind: computed
     scope: both
     severity: error
     check: title_block_present
     evidence_required: [document_file]
-    message: "Основная надпись должна присутствовать; при неуверенном layout — ручная проверка."
+    message: "Основная надпись должна присутствовать; детект по сигнатурам полей ГОСТ Р 21.101 (Phase 5); нет PDF → ручная проверка."
 
   # ── D5. Изменения / revisions ────────────────────────────────────────────
   - id: G21.101-2026-D5-001
