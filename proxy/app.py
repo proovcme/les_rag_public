@@ -169,6 +169,51 @@ def _get_db_files():
         return 0
 
 
+mail_autosync = {"last_sync": 0.0, "last_count": 0, "runs": 0, "last_error": "", "enabled": False}
+
+
+async def mail_imap_autosync_loop():
+    """Е.Ж.И.К. — ВНУТРЕННИЙ IMAP-сервис. MAIL_IMAP_POLL_SEC>0 + MAIL_IMAP_* (host/login/password) →
+    периодически тянет НОВУЮ почту (инкрементально по чекпойнту) → MAIL_Index → парс. 0/без кредов = выкл.
+    ЛЕС сам забирает почту в RAG, без внешнего Outlook-поллера/аддина."""
+    from backend.mail_ingest import fetch_imap_eml_files, imap_settings_from_env
+
+    await asyncio.sleep(25)  # дать backend подняться
+    while True:
+        try:
+            interval = int(os.getenv("MAIL_IMAP_POLL_SEC", "0") or "0")
+        except ValueError:
+            interval = 0
+        mail_autosync["enabled"] = interval > 0
+        if interval <= 0:
+            await asyncio.sleep(300)  # выключен — перечитываем флаг раз в 5 мин
+            continue
+        try:
+            settings = imap_settings_from_env()
+            if getattr(settings, "configured", False):
+                from proxy.routers.datasets import get_dataset_state
+                from proxy.routers.mail import _upload_fetched_mail
+                state = get_dataset_state()
+                fetched = await asyncio.to_thread(fetch_imap_eml_files, settings, max_messages=200)
+                if fetched:
+                    dataset_id, _created, _uploaded = await _upload_fetched_mail(state, fetched)
+                    try:
+                        await state.backend.parse_dataset(dataset_id, limit=25)
+                    except Exception as parse_err:  # noqa: BLE001 — парс не роняет поллер
+                        logger.warning("[ЕЖИК] autosync parse: %s", parse_err)
+                    logger.info("[ЕЖИК] IMAP autosync: +%s писем → RAG", len(fetched))
+                    mail_autosync.update(last_sync=time.time(), last_count=len(fetched),
+                                         runs=mail_autosync["runs"] + 1, last_error="")
+                else:
+                    mail_autosync.update(last_sync=time.time(), last_count=0, last_error="")
+            else:
+                logger.debug("[ЕЖИК] autosync: MAIL_IMAP_* не заданы — пропуск")
+        except Exception as error:  # noqa: BLE001 — поллер не падает
+            mail_autosync["last_error"] = str(error)[:200]
+            logger.warning("[ЕЖИК] IMAP autosync failed: %s", error)
+        await asyncio.sleep(max(60, interval))
+
+
 async def metrics_collector_loop():
     while True:
         try:
@@ -252,6 +297,7 @@ async def startup():
         logger.info("[INIT] Backend initialized successfully")
         asyncio.create_task(metrics_collector_loop())
         asyncio.create_task(metrics_loop())
+        asyncio.create_task(mail_imap_autosync_loop())  # Е.Ж.И.К.: внутренний IMAP-сервис (MAIL_IMAP_POLL_SEC)
         asyncio.create_task(_warmup_models())  # №2: убрать холодный старт первого запроса
     except Exception as e:
         logger.error("[INIT] Backend initialization failed: %s", e)
