@@ -2,9 +2,67 @@
 
 # ЛЕС v1.0 — дорожная карта до стабильной локальной версии
 
-Статус: рабочий roadmap после ветки `feat/les3-p1` и серии `Unified Construction Harness v0.3–v0.18`.
+Статус: рабочий roadmap после ветки `feat/les3-p1`; актуализирован 2026-06-26 после runtime `h0.23`
+и `docs/MODULE_AUDIT_2026-06-26.md`.
 
 Цель документа — перестать идти «по наитию» и зафиксировать, что именно считается версией 1.0, какие этапы ведут к ней, что блокирует релиз и какие вещи сознательно остаются после v1.
+
+---
+
+## 0. Актуализация 2026-06-26
+
+Фактический runtime уже дошёл до `h0.23`, но номера ниже частично исторические: часть пунктов
+v0.19–v0.22 закрыта, часть Evidence UI осталась незакрытой, а свежий аудит модулей добавил
+операционные P0, которых в первом release-plan не хватало.
+
+### Что уже фактически сделано
+
+```text
+version/deploy stamp есть
+main = feat/les3-p1 = deployed_commit
+ProfileResolver появился как единый контракт маршрутизации
+scope_model и scope_clarification работают
+DeterministicFinalPolicy закрывает старые hijack-баги
+sidecar/source operations частично выведены в API/UI
+copy у ответа есть
+```
+
+### Что не считать закрытым
+
+```text
+Evidence UI не закрыт целиком: source drawer / открыть источник / Stop ещё не v1-ready
+Real Dataset Acceptance не закрыт как системная матрица 3–5 датасетов
+Retrieval/Citation Quality не закрыт: used/found/rejected, preview, weak/strong ещё требуют прохода
+Estimate Workflow Hardening не закрыт как release gate
+операционные P0 из MODULE_AUDIT не были частью старого milestone-плана
+```
+
+### Новый порядок до v1
+
+До новых больших функций действует правило:
+
+```text
+Сначала доверие и воспроизводимость.
+Потом кликабельный evidence.
+Потом нормоконтроль СПДС как первый доменный workflow.
+Потом retrieval quality и сметный workflow.
+Потом RC.
+```
+
+Новые pre-RC gates:
+
+```text
+v0.23A — Operational Trust Hardening
+v0.23B — Clickable Sources + Citation Drawer
+v0.23C — Real Dataset Acceptance
+v0.24  — SPDS Documentation Normcontrol: ГОСТ Р 21.101-2026
+v0.25  — Retrieval and Citation Quality
+v0.26  — Estimate Workflow Hardening
+v0.90  — Release Candidate
+v1.0   — Local Evidence Assistant
+```
+
+Источник P0 для v0.23A — `docs/MODULE_AUDIT_2026-06-26.md`.
 
 ---
 
@@ -442,7 +500,118 @@ Scanned PDF → OCR required outside hot path.
 
 ---
 
-## v0.23 — Real Dataset Acceptance
+## v0.23A — Operational Trust Hardening
+
+Цель: закрыть P0 из `docs/MODULE_AUDIT_2026-06-26.md`, чтобы v1 не был только "умным",
+но хрупким. Это gate перед RC и перед расширением больших функций.
+
+### Сделать
+
+```text
+auth/trust hardening:
+  no predictable admin/JWT defaults
+  trusted proxy only from trusted proxy networks
+  X-Forwarded-For не даёт spoof trusted client
+  proxy/security.py и sovushka/trust.py не расходятся по логике
+
+backup/restore:
+  restore для SQLite + Qdrant
+  checksum/manifest
+  свежий backup smoke
+  launchd/права не молчат
+
+index consistency:
+  MetaDB ↔ Qdrant consistency check
+  repair/reconcile path
+  partial upsert не оставляет файл "INDEXED" без точек
+  health показывает рассинхрон как FAIL/WARN
+
+diagnostics truth:
+  API не нормализует FAIL в OK ради красивого UI
+  Docker/MLX/Qdrant checks честно говорят unavailable/error
+  dead diagnostics modules помечены или удалены после отдельного решения
+```
+
+### Acceptance
+
+```text
+auth/trust smoke green
+backup restore smoke green
+MetaDB↔Qdrant consistency smoke green
+doctor/diagnostics не прячут реальные ошибки
+MODULE_AUDIT P0 закрыты или явно marked infrastructure-blocked
+```
+
+### Статус 2026-06-26 — фактически закрыт
+
+```text
+auth/trust:   admin123/JWT-дефолты убраны (random+warn, не предсказуемы); XFF-спуф проверен — не
+              проходит; proxy/security.py ↔ sovushka/trust.py сведены в backend/trust_core.py
+              (11 тестов + спуф-реверификация зелёные)
+backup/restore: tools/restore_runtime.sh (Qdrant snapshot-upload + SQLite stop/start), смоук-цикл
+              зелёный; /api/backup/{archives,restore} + кнопка в diag; бэкап-фолбэк (launchd оживлён,
+              доказан — писал 3.3G локально при TCC на /Volumes/Data)
+index:        reconcile_dataset + /datasets/{id}/reconcile (детект+лечение рассинхрона); upsert
+              wait=True durable + raise→cleanup → INDEXED только при успехе; live-рассинхрон = 0
+diagnostics:  _normalize_diag_payload хранит raw_status (MLX/CRAG err→warn не стирают правду);
+              Docker-матч сужен; мёртвый backend/diagnostics.py помечен DEPRECATED
+basic smoke:  tools/basic_function_smoke.py + make smoke-basic + tests/test_basic_function_smoke.py
+              (live: 8 pass / 1 warn / 0 fail)
+```
+
+Источник: `docs/MODULE_AUDIT_2026-06-26.md` (P0/P1 закрыты), ветка `feat/les3-p1`.
+
+---
+
+## v0.23B — Clickable Sources + Citation Drawer
+
+Цель: убрать фейковую интерактивность. Любой источник, который выглядит кликабельным,
+обязан открываться. Если открыть нельзя — он disabled и объясняет почему.
+
+### Сделать
+
+```text
+SourceRefUI normalization:
+  answer.sources
+  evidence_blocks
+  retrieval_trace
+  artifacts
+  table source cells
+
+SourceChip:
+  clickable / disabled / weak / warning states
+  file + locator + kind + tooltip
+
+Citation drawer:
+  file/source_kind/location/snippet
+  copy source_ref
+  copy citation
+  no full mail body leaks
+
+Artifact "Цитаты":
+  used sources
+  snippets
+  warning for incomplete source_ref
+
+Open behavior:
+  file preview when available
+  extracted paragraph/page/row/cell locator when available
+  clear unavailable reason when not available
+```
+
+### Acceptance
+
+```text
+source chip открывает drawer
+"Открыть" работает или disabled с причиной
+source без source_ref не рисуется как fake button
+mail citation snippet-only
+котельная/live answer можно проверить глазами
+```
+
+---
+
+## v0.23C — Real Dataset Acceptance
 
 Цель: уйти от fixture-confidence к реальной приёмке.
 
@@ -454,6 +623,7 @@ Scanned PDF → OCR required outside hot path.
 norm-like dataset
 mail-like .eml dataset
 project-like dataset
+SPDS ПД/РД dataset for normcontrol
 xlsx/docx/pdf dataset
 resource workbook dataset
 ```
@@ -479,7 +649,89 @@ Top-5 локальных провалов закрыты или marked infrastru
 
 ---
 
-## v0.24 — Retrieval and Citation Quality
+## v0.24 — SPDS Documentation Normcontrol: ГОСТ Р 21.101-2026
+
+Цель: первым доменным workflow сделать нормоконтроль комплекта документации на соответствие
+СПДС и требованиям нормоконтроля. Первый стандарт в фокусе — ГОСТ Р 21.101-2026.
+
+Это не обычный RAG-вопрос. Workflow:
+
+```text
+комплект ПД/РД
+  → rulepack СПДС
+  → формальные/структурные проверки
+  → evidence по документам и пунктам стандарта
+  → fail/warn/pass/manual_required
+  → XLSX/JSON/HTML отчёт
+```
+
+Статус стандарта на 2026-06-26:
+
+```text
+ГОСТ Р 21.101-2026
+Система проектной документации для строительства.
+Основные требования к проектной и рабочей документации.
+Утверждён приказом Росстандарта от 12.02.2026 № 129-ст.
+Дата введения: 01.04.2026.
+Взамен ГОСТ Р 21.101-2020.
+```
+
+### Сделать
+
+```text
+rulepack config/normcontrol/gost_r_21_101_2026.yaml
+doc-review service поверх текущего normcontrol v1
+SPDS applicability: ПД/РД/unknown, комплект, раздел, марка, дисциплина
+document set model: файл ↔ лист ↔ ведомость ↔ штамп ↔ обозначение
+проверки состава комплекта, ведомостей, обозначений, листов, изменений
+title block/stamp extraction: уверенно или manual_required
+evidence model: rule_id, clause, target, source_ref, status, confidence
+отчёт XLSX/JSON/HTML
+UI "Проверка документации" в Инструментах
+```
+
+Принципы:
+
+```text
+полный текст ГОСТ не коммитить
+rulepack хранит проверочные правила и ссылки на пункты
+pass/fail только по structured evidence
+если extraction/layout не уверен — manual_required, не fake pass
+LLM может объяснить замечание, но не ставит verdict без evidence
+```
+
+### Первый набор проверок
+
+```text
+version gate: выбран ГОСТ Р 21.101-2026, не устаревший 2020
+применимость СПДС: комплект относится к ПД/РД или требует ручного выбора
+согласованность базового шифра комплекта
+ведомость рабочих чертежей / состав документации ↔ фактические файлы
+обозначение документа: имя файла ↔ ведомость ↔ извлечённый штамп
+формат листа и текстовый слой
+основная надпись/штамп: found / missing / manual_required
+изменения/revisions: found / consistent / not_applicable
+```
+
+### Acceptance
+
+```text
+synthetic РД clean → 0 error
+synthetic РД missing sheet → error с rule_id/clause/source_ref
+bad designation → warning/error с target
+PDF без текста → OCR/manual_required, не crash
+штамп не найден → manual_required, не pass
+ГОСТ Р 21.101-2020 в корпусе при rulepack 2026 → warning
+реальный комплект РД от оператора → top-10 замечаний вручную сверены
+отчёт XLSX/JSON создаётся
+UI показывает auto/manual/pass/fail отдельно
+```
+
+Подробный план: `docs/DOC_REVIEW_GOST_R_21_101_2026_PLAN.md`.
+
+---
+
+## v0.25 — Retrieval and Citation Quality
 
 Цель: улучшить качество источников и доверие к ответу.
 
@@ -509,7 +761,7 @@ vector semantic-only != exact occurrence
 
 ---
 
-## v0.25 — Estimate Workflow Hardening
+## v0.26 — Estimate Workflow Hardening
 
 Цель: сделать стабильным не “идеальную смету”, а предварительный сметный workflow.
 
@@ -546,7 +798,7 @@ no final_total with blockers
 
 ## v0.90 — Release Candidate
 
-После v0.25 перестать добавлять крупные функции.
+После v0.26 перестать добавлять крупные функции.
 
 Разрешено:
 
@@ -598,6 +850,7 @@ v1.0 должен стабильно уметь:
 
 ```text
 отвечать по документам и нормам с source_refs
+проверять комплект документации на соответствие СПДС / ГОСТ Р 21.101-2026
 описывать проект и давать чистый реестр документов
 искать произвольные термины в заданных источниках
 искать по .eml как read-only mail source
@@ -637,6 +890,12 @@ v1 блокируется, если есть хотя бы один пункт:
 16. Version info отсутствует в ответе.
 17. Legacy .xls крашит extraction вместо actionable unsupported.
 18. Deterministic handler может вернуть термин, отсутствующий в запросе.
+19. Auth/trust допускает предсказуемый admin/JWT default или X-Forwarded-For spoof.
+20. Нет проверенного restore для SQLite + Qdrant.
+21. MetaDB↔Qdrant рассинхрон не виден в health/doctor.
+22. Diagnostics/doctor нормализуют реальные FAIL в OK/WARN без raw_status.
+23. Нормоконтроль СПДС ставит pass/fail без source_ref или при layout uncertainty.
+24. Проверка ГОСТ Р 21.101-2026 молча использует/цитирует устаревший ГОСТ Р 21.101-2020.
 ```
 
 ---
@@ -676,6 +935,18 @@ v1 блокируется, если есть хотя бы один пункт:
 почему итог partial/blocked
 ```
 
+### SPDS normcontrol smoke
+
+```text
+ГОСТ Р 21.101-2026 rulepack загружается
+clean synthetic РД → 0 error
+missing sheet synthetic РД → error с rule_id/clause/source_ref
+bad designation → warning/error
+stamp unknown → manual_required
+outdated ГОСТ Р 21.101-2020 source при rulepack 2026 → warning
+отчёт XLSX/JSON создаётся
+```
+
 ### Resource smoke
 
 ```text
@@ -703,6 +974,17 @@ sidecar stale warning
 таблица раскрывается
 стоп генерации
 MISSING/BLOCKED видны
+```
+
+### Operational trust smoke
+
+```text
+auth/trust: public client без ключа → 401
+auth/trust: trusted ZeroTier/loopback → ожидаемая роль
+auth/trust: spoofed X-Forwarded-For от недоверенного peer не даёт trusted
+backup: сделать backup + restore на копии SQLite/Qdrant
+index: MetaDB↔Qdrant consistency check green
+diagnostics: искусственно выключенный сервис виден как FAIL/UNREACHABLE, не OK
 ```
 
 ---
@@ -781,6 +1063,7 @@ UI renderer
 citations
 stop generation
 sidecar operations
+SPDS normcontrol
 estimate workflow
 smoke/ledger
 ```
@@ -794,6 +1077,34 @@ smoke/ledger
 ---
 
 ## 11. Открытые риски
+
+Важно: пункты ниже — не приговор архитектуре, а проверяемые риск-гипотезы. Их нельзя чинить
+"потому что так написано в аудите". Каждый риск должен закрываться трассой, smoke/golden-тестом
+или измерением. Если проверка показывает, что риск не воспроизводится или уже закрыт другим
+механизмом, пункт снимается или понижается.
+
+### R0. Architecture risk hypotheses
+
+Текущие гипотезы риска:
+
+```text
+quality/CRAG/validator/strict-retry могут быть неаддитивными и блокировать ответ при найденных источниках
+keyword/substring routing может перехватывать вопрос раньше intent/scope contract
+несколько роутеров могут конкурировать за один простой запрос
+UI evidence может отставать от backend evidence
+ingestion/format contracts могут расходиться между конвертером, smart_index, router и sidecar
+make verify не ловит базовый пользовательский путь
+```
+
+Как доказывать или снимать:
+
+```text
+trace показывает, какой слой принял/отклонил решение
+golden/smoke воспроизводит проблему до фикса и зелёный после
+negative smoke доказывает, что анти-галлюцинация не ослаблена
+basic product smoke доказывает UI-путь глазами пользователя
+если риск не воспроизводится на real dataset matrix — снять/понизить, не чинить вслепую
+```
 
 ### R1. Legacy deterministic hijack
 
@@ -849,10 +1160,14 @@ v1.0 можно выпускать, если:
 [ ] runtime alignment виден
 [ ] route smoke green
 [ ] evidence smoke green
+[ ] SPDS normcontrol ГОСТ Р 21.101-2026 smoke green
 [ ] estimate smoke green
 [ ] resource workbook smoke green
 [ ] sidecar workflow smoke green
 [ ] UI smoke green
+[ ] operational trust smoke green
+[ ] backup restore smoke green
+[ ] MetaDB↔Qdrant consistency smoke green
 [ ] no release blockers
 [ ] failure ledger не содержит P0 open
 [ ] chat OFF behavior stable
@@ -870,14 +1185,17 @@ v0.19 — Version Stamp + Diagnostics
 v0.20 — Evidence UI
 v0.21 — Route Safety Freeze
 v0.22 — Source Operations
-v0.23 — Real Dataset Acceptance
-v0.24 — Retrieval and Citation Quality
-v0.25 — Estimate Workflow Hardening
+v0.23A — Operational Trust Hardening
+v0.23B — Clickable Sources + Citation Drawer
+v0.23C — Real Dataset Acceptance
+v0.24 — SPDS Documentation Normcontrol: ГОСТ Р 21.101-2026
+v0.25 — Retrieval and Citation Quality
+v0.26 — Estimate Workflow Hardening
 v0.90 — Release Candidate
 v1.0  — Local Evidence Assistant
 ```
 
-После v0.25 — feature freeze. Дальше только стабилизация.
+После v0.26 — feature freeze. Дальше только стабилизация.
 
 ---
 
