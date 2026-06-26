@@ -59,6 +59,17 @@ class RimTraceRequest(BaseModel):
     coefficient_basis: Optional[str] = None
 
 
+class LsrTraceRequest(BaseModel):
+    positions: list[dict[str, Any]]            # позиции ЛСР: code ГЭСН + qty (+ опц. section/resources/nr_pct/sp_pct)
+    name: Optional[str] = None                 # наименование сметы (в шапку формы)
+    book: Optional[str] = None                 # книга цен ФГИС ЦС
+    kac_prices: Optional[dict[str, float]] = None
+    k_ozp: Optional[float] = None
+    k_em: Optional[float] = None
+    coefficient_basis: Optional[str] = None
+    meta: Optional[dict[str, Any]] = None       # шапка формы: stroika/object/lsr_no/subject/price_level/osnovanie
+
+
 @router.get("/stesnennost/conditions")
 async def stesn_conditions(_user=Depends(require_user)):
     """Каталог условий стеснённости (коэф. к ОЗП/ЭМ) — из config/domain/stesnennost.yaml."""
@@ -148,6 +159,57 @@ async def lsr_rim_trace_export(req: RimTraceRequest, _user=Depends(require_user)
     return {
         "code": trace.get("code"),
         "summary": trace["summary"],
+        "path": str(out),
+        "download": f"/api/lsr/download?path={name}",
+    }
+
+
+@router.post("/lsr-trace")
+async def lsr_multi_trace(req: LsrTraceRequest, _user=Depends(require_user)):
+    """МНОГОПОЗИЦИОННАЯ РИМ-трасса ЛСР: позиции по разделам (поле ``section``) + итоги разделов +
+    общий свод. Числа каждой позиции — те же, что у /rim-trace; свод = Σ позиций (код, не LLM).
+    Read-only evidence-слой — контракт /assemble не меняется."""
+    try:
+        pricebook = await asyncio.to_thread(la._resolve_book, req.book)
+        return await asyncio.to_thread(
+            rim.build_lsr_trace, req.positions,
+            pricebook=pricebook,
+            kac_map=req.kac_prices,
+            k_ozp=(req.k_ozp if req.k_ozp is not None else 1.0),
+            k_em=(req.k_em if req.k_em is not None else 1.0),
+            coefficient_basis=(req.coefficient_basis or ""),
+            name=(req.name or ""),
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/lsr-trace/export")
+async def lsr_multi_trace_export(req: LsrTraceRequest, _user=Depends(require_user)):
+    """МНОГОПОЗИЦИОННАЯ ЛСР → XLSX по форме Приложения 4 к 421/пр: шапка с общим итогом + разделы
+    («Раздел N» → позиции с непрерывной нумерацией → «Итого по разделу N») + «ВСЕГО по смете».
+    Рендер ГОТОВОЙ трассы (не калькулятор). Скачивание через /api/lsr/download."""
+    try:
+        pricebook = await asyncio.to_thread(la._resolve_book, req.book)
+        lsr = await asyncio.to_thread(
+            rim.build_lsr_trace, req.positions,
+            pricebook=pricebook,
+            kac_map=req.kac_prices,
+            k_ozp=(req.k_ozp if req.k_ozp is not None else 1.0),
+            k_em=(req.k_em if req.k_em is not None else 1.0),
+            coefficient_basis=(req.coefficient_basis or ""),
+            name=(req.name or ""),
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    _EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    name = f"lsr_trace_{int(time.time())}.xlsx"
+    out = _EXPORT_DIR / name
+    await asyncio.to_thread(rim_xlsx.render_lsr_xlsx, lsr, out, meta=(req.meta or {}))
+    return {
+        "name": lsr.get("name"),
+        "summary": lsr["summary"],
+        "sections": [{"section": s["section"], "total": s["total"]} for s in lsr.get("sections", [])],
         "path": str(out),
         "download": f"/api/lsr/download?path={name}",
     }

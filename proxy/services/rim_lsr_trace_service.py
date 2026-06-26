@@ -277,6 +277,67 @@ def build_position_trace(
             "nr": nr,
             "sp": sp,
             "total": total,
+            "labor_qty": qty_sums["labor"],
+            "machinist_qty": qty_sums["machinist"],
             "flags": flags,
         },
     }
+
+
+def build_lsr_trace(
+    positions: list[dict[str, Any]],
+    *,
+    pricebook=None,
+    kac_map: dict[str, float] | None = None,
+    k_ozp: float = 1.0,
+    k_em: float = 1.0,
+    coefficient_basis: str = "",
+    name: str = "",
+) -> dict[str, Any]:
+    """Многопозиционная РИМ-трасса ЛСР: позиции по разделам + итоги разделов + общий свод.
+
+    Каждая позиция строится через :func:`build_position_trace` — числа те же, gold позиции сохраняется
+    (один общий калькулятор, не дубль). Разделы — по полю ``position["section"]`` (порядок первого
+    появления, позиции одного раздела группируются вместе). Свод — Σ позиций (код, не LLM):
+    прямые/ФОТ/НР/СП/Всего и нормативные чел.-ч рабочих/машинистов для шапки формы.
+    """
+    sections: list[dict[str, Any]] = []
+    by_section: dict[str, dict[str, Any]] = {}
+    for pos in positions or []:
+        trace = build_position_trace(
+            pos,
+            pricebook=pricebook,
+            kac_map=kac_map,
+            k_ozp=k_ozp,
+            k_em=k_em,
+            coefficient_basis=coefficient_basis,
+        )
+        sec_name = str(pos.get("section") or "").strip() or "Без раздела"
+        trace = {**trace, "section": sec_name}
+        entry = by_section.get(sec_name)
+        if entry is None:
+            entry = {"section": sec_name, "positions": [], "total": 0.0}
+            by_section[sec_name] = entry
+            sections.append(entry)
+        entry["positions"].append(trace)
+        entry["total"] = round(entry["total"] + _f(trace["summary"]["total"]), 2)
+
+    money_keys = ("ozp", "zpm", "machine", "em", "mat", "direct", "fot", "nr", "sp", "total")
+    summary: dict[str, Any] = {k: 0.0 for k in money_keys}
+    summary["labor_qty"] = 0.0
+    summary["machinist_qty"] = 0.0
+    flags: list[str] = []
+    count = 0
+    for entry in sections:
+        for trace in entry["positions"]:
+            s = trace["summary"]
+            for k in money_keys:
+                summary[k] = round(summary[k] + _f(s.get(k)), 2)
+            summary["labor_qty"] = round(summary["labor_qty"] + _f(s.get("labor_qty")), 6)
+            summary["machinist_qty"] = round(summary["machinist_qty"] + _f(s.get("machinist_qty")), 6)
+            flags.extend(s.get("flags") or [])
+            count += 1
+    summary["positions"] = count
+    summary["flags"] = flags
+
+    return {"name": name or "", "sections": sections, "summary": summary}
