@@ -1,0 +1,180 @@
+# СПДС-нормоконтроль — review map ГОСТ Р 21.101-2026.
+# ВАЖНО: это НЕ автономный rule-engine и НЕ замена RAG.
+# Здесь НЕТ полного текста стандарта — только карта review: какие требования искать,
+# какие evidence нужны и какие computed/layout checks возможны.
+# Source evidence по пунктам берётся из легального экземпляра стандарта в RAG
+# (см. docs/DOC_REVIEW_GOST_R_21_101_2026_PLAN.md).
+#
+# kind:     retrieval | computed | layout | manual_required
+# scope:    project_doc | working_doc | both
+# severity: error | warning | info
+# check:    идентификатор проверки; review status появляется только из computed evidence
+#           или human decision, а не из наличия строки в rulepack.
+
+meta:
+  name: gost_r_21_101_2026
+  standard: "ГОСТ Р 21.101-2026"
+  title: "СПДС. Основные требования к проектной и рабочей документации"
+  version: "2026"
+  effective_date: "2026-04-01"
+  approved_by: "Приказ Росстандарта от 12.02.2026 № 129-ст"
+  supersedes: "ГОСТ Р 21.101-2020"
+
+rules:
+  # ── D-1. Применимость СПДС ───────────────────────────────────────────────
+  - id: G21.101-2026-D1-001
+    clause: "1"
+    title: "Применимость СПДС к комплекту"
+    kind: retrieval
+    scope: both
+    severity: info
+    check: spds_applicability
+    evidence_required: [document_file]
+    message: "Комплект должен относиться к проектной/рабочей документации СПДС; иначе — ручной выбор."
+
+  # ── D0. Версия стандарта ─────────────────────────────────────────────────
+  - id: G21.101-2026-D0-001
+    clause: "1"
+    title: "Версия rulepack — 2026, не 2020"
+    kind: computed
+    scope: both
+    severity: info
+    check: rulepack_version_gate
+    evidence_required: []
+    message: "Проверка ведётся по ГОСТ Р 21.101-2026 (взамен 2020); версия указывается в отчёте."
+
+  - id: G21.101-2026-D0-002
+    clause: "1"
+    title: "Устаревшая база в корпусе"
+    kind: retrieval
+    scope: both
+    severity: warning
+    check: outdated_standard_in_corpus
+    evidence_required: [standard]
+    message: "В корпусе найден только ГОСТ Р 21.101-2020 при выбранном 2026 — устаревшая нормативная база."
+
+  # ── D1. Комплект и стадия ────────────────────────────────────────────────
+  - id: G21.101-2026-D1-010
+    clause: "4"
+    title: "Стадия документации ПД/РД"
+    kind: retrieval
+    scope: both
+    severity: info
+    check: project_stage_detect
+    evidence_required: [document_file]
+    message: "Определить стадию (ПД/РД/unknown); при неопределённости — ручное подтверждение."
+
+  - id: G21.101-2026-D1-011
+    clause: "5"
+    title: "Согласованность базового шифра комплекта"
+    kind: computed
+    scope: both
+    severity: warning
+    check: base_designation_consistency
+    evidence_required: [document_file]
+    message: "Файлы одного комплекта должны иметь согласованный базовый шифр (обозначение)."
+
+  # ── D2. Состав комплекта ─────────────────────────────────────────────────
+  - id: G21.101-2026-D2-001
+    clause: "6"
+    title: "Ведомость ↔ фактический состав"
+    kind: computed
+    scope: working_doc
+    severity: error
+    check: vedomost_vs_files
+    evidence_required: [document_file, sheet_or_table]
+    message: "Состав по ведомости рабочих чертежей должен соответствовать фактическим файлам комплекта."
+
+  - id: G21.101-2026-D2-002
+    clause: "6"
+    title: "Отсутствующие документы по ведомости"
+    kind: computed
+    scope: working_doc
+    severity: error
+    check: vedomost_missing
+    evidence_required: [sheet_or_table]
+    message: "Документ из ведомости отсутствует в комплекте."
+
+  - id: G21.101-2026-D2-003
+    clause: "6"
+    title: "Лишние/нераспознанные документы"
+    kind: computed
+    scope: working_doc
+    severity: warning
+    check: vedomost_extra
+    evidence_required: [document_file]
+    message: "Документ присутствует в комплекте, но не указан в ведомости."
+
+  # ── D3. Обозначения и именование ─────────────────────────────────────────
+  - id: G21.101-2026-D3-001
+    clause: "7"
+    title: "Формат обозначения документа"
+    kind: computed
+    scope: both
+    severity: warning
+    check: designation_pattern
+    evidence_required: [document_file]
+    message: "Обозначение документа должно соответствовать структуре СПДС (марка/раздел/номер)."
+
+  - id: G21.101-2026-D3-002
+    clause: "7"
+    title: "Недопустимые разделители в обозначении"
+    kind: computed
+    scope: both
+    severity: warning
+    check: designation_separators
+    evidence_required: [document_file]
+    message: "В обозначении не должно быть недопустимых пробелов/разделителей."
+
+  - id: G21.101-2026-D3-003
+    clause: "7"
+    title: "Обозначение: файл ↔ штамп ↔ ведомость"
+    kind: layout
+    scope: both
+    severity: warning
+    check: designation_cross_consistency
+    evidence_required: [document_file, sheet_or_table]
+    message: "Обозначение в имени файла, основной надписи и ведомости должно совпадать."
+
+  # ── D4. Листы и основные надписи ─────────────────────────────────────────
+  - id: G21.101-2026-D4-001
+    clause: "5"
+    title: "Формат листа"
+    kind: computed
+    scope: both
+    severity: info
+    check: sheet_format
+    evidence_required: [document_file]
+    message: "Формат листа определяется по ГОСТ 2.301; нестандартный — info/предупреждение."
+
+  - id: G21.101-2026-D4-002
+    clause: "5"
+    title: "Основная надпись (штамп)"
+    kind: manual_required
+    scope: both
+    severity: error
+    check: title_block_present
+    evidence_required: [document_file]
+    message: "Основная надпись должна присутствовать; при неуверенном layout — ручная проверка."
+
+  # ── D5. Изменения / revisions ────────────────────────────────────────────
+  - id: G21.101-2026-D5-001
+    clause: "7"
+    title: "Согласованность изменений (revision)"
+    kind: layout
+    scope: both
+    severity: warning
+    check: revision_consistency
+    evidence_required: [document_file, sheet_or_table]
+    message: "Номер изменения в листе, ведомости и имени файла должен быть согласован."
+
+  # ── D6. Готовность к проверке (electronic readiness) ─────────────────────
+  - id: G21.101-2026-D6-001
+    clause: "4"
+    title: "PDF открывается и имеет текстовый слой"
+    kind: computed
+    scope: both
+    severity: warning
+    check: electronic_readiness
+    evidence_required: [document_file]
+    message: "Документ должен открываться и иметь текстовый слой; скан без текста — OCR/ручная проверка."
