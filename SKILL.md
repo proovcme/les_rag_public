@@ -23,6 +23,7 @@ Current production posture:
 - Qdrant: `http://127.0.0.1:6333`
 - External: `https://les.ovc.me` through P.A.U.K. reverse SSH tunnel and V.O.L.K. API keys; on 2026-06-01 external smoke passes `12/12`.
 - ZeroTier trusted GUI/API access: `TRUSTED_NETWORKS=127.0.0.0/8,::1/128,10.195.146.0/24`, `TRUSTED_NETWORK_ROLE=admin`. Trusted clients should open `/classic`, `/les/classic` and `/lite-api/*` without a key; stale browser keys fallback to `trusted-network`, while public clients still receive `401`.
+- **КРИТ для public-401:** `TRUSTED_PROXY_NETWORKS` ОБЯЗАН включать ZeroTier-IP VPS-Caddy — `127.0.0.0/8,::1/128,10.195.146.136/32`. Иначе Mac игнорирует `X-Forwarded-For` + заголовок `X-LES-Trusted-Network` (Caddy ставит `1` для `@zerotier`, `""` для public) и падает на peer-IP Caddy (∈ TRUSTED_NETWORKS) → **весь public-трафик идёт как доверенный admin** (дыра, чинено 2026-06-26). Проверка: `curl -D- https://les.ovc.me/classic` → `307 → /login`; `POST /api/chat` без ключа → `401`. Без ключа пускает только ZeroTier-прямой `10.195.146.98`.
 
 ## First Checks
 
