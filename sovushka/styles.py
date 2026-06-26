@@ -1222,5 +1222,34 @@ body, .nicegui-content {
 }
 .sov-answer-act:hover { color: var(--accent) !important; }
 .sov-examples-menu .q-item { min-height: 0; padding: 3px 12px; }
+
+/* ═══ v0.24 UI-РЕФРЕШ · Этап 1 — читаемость + де-терминал хрома (аддитивно, обратимо) ═══════ */
+/* Хром (шапка/табы/лейблы/чипы/действия) → чистый sans вместо моно, размеры ≥12px.            */
+/* Данные (таблицы/логи/числа/коды) остаются моноширинными. Плотные диаг-сетки не трогаем.      */
+:root {
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', system-ui, sans-serif;
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+}
+.les-top-tabs .q-tab__label {
+  font-family: var(--font-ui) !important;
+  font-size: var(--fs-sm) !important;
+  max-width: 200px !important;
+  letter-spacing: 0 !important;
+  line-height: 1.1 !important;
+}
+.les-top-tabs .q-tab__icon { font-size: 20px !important; }
+.les-brand { font-family: var(--font-ui) !important; text-shadow: none !important; }
+.q-btn__content, .q-item__label, .q-field__label, .q-tab__label,
+.sov-panel-title, .section-title, .sov-chat-title, .sov-chat-subtitle,
+.sov-session-title, .sov-tree-name, .sov-answer-act {
+  font-family: var(--font-ui) !important;
+}
+.src-tag, .sov-chip, .sov-ev-status, .sov-answer-act,
+.sov-ev-meta, .sov-chat-subtitle, .sov-session-meta, .sov-muted {
+  font-size: var(--fs-xs) !important;
+}
+.sov-ev-badge { font-size: 11.5px !important; }
+.src-tag i { font-size: 14px !important; }
 </style>
 """
