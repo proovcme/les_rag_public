@@ -10,10 +10,12 @@
 
 1. **AGENTS.md** (этот файл) — канон для агента.
 2. **[SKILL.md](SKILL.md)** — рантайм/эксплуатация (порты, деплой = `cp`+`write_deploy_stamp`, доступы, гейты). Источник истины по запуску.
-3. **[docs/CODE_MAP.md](docs/CODE_MAP.md)** — карта кода: где что лежит, поток чата/индексации, «где искать что». Сначала карта → точечный поиск → исходники.
-4. **[ROADMAP_TO_V1.md](ROADMAP_TO_V1.md)** — что считается v1, этапы, блокеры (актуальный план).
-5. **[docs/unified_harness_failure_ledger.md](docs/unified_harness_failure_ledger.md)** — журнал реальных провалов и как закрыты (читать, чтобы не наступить снова).
-6. **[docs/TEST_INVENTORY.md](docs/TEST_INVENTORY.md)** — тесты v0.16–v0.22 (что и где покрыто).
+3. **[docs/MODULE_INDEX.md](docs/MODULE_INDEX.md)** — карта МОДУЛЕЙ: что есть, точки входа, **статус док↔код** (✅/🟡/🗄/📋), ссылка на док модуля. Начинай отсюда: модуль → его док/код.
+4. **[docs/CODE_MAP.md](docs/CODE_MAP.md)** — карта кода по файлам: поток чата/индексации, «где искать что».
+5. **[ROADMAP_TO_V1.md](ROADMAP_TO_V1.md)** — что считается v1, этапы, блокеры (актуальный план).
+6. **[docs/RELEASE_LEDGER.md](docs/RELEASE_LEDGER.md)** — **где мы сейчас**: версия (схема 0.23.N.P), dev↔рантайм commit, что задеплоено.
+7. **[docs/unified_harness_failure_ledger.md](docs/unified_harness_failure_ledger.md)** — журнал реальных провалов и как закрыты.
+8. **[docs/TEST_INVENTORY.md](docs/TEST_INVENTORY.md)** — карта тестов (что и где покрыто).
 
 Доп. при правке конкретного ядра: **алгоритм-доки** (0 LLM) — [docs/ALGO-table-query.md](docs/ALGO-table-query.md), [docs/ALGO-spec-to-bor.md](docs/ALGO-spec-to-bor.md) и др. в `docs/ALGO-*`; «что НЕ читать» — [docs/AGENT_NOTES.md](docs/AGENT_NOTES.md).
 
