@@ -1115,6 +1115,12 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         resolve as _resolve_profile, route_source_for_channel)
     _resolution = _resolve_profile(mode=req.mode, question=req.question)
     _PROFILE = _resolution.profile_id
+    # «НИКАКОЙ детерминации в чате»: при router_primary (дефолт ON) ВСЕ детерминированные
+    # каналы-перехватчики свободного текста (reconcile/clarification/project_summary/mail/table/
+    # clause/autonote/scope_clar) выключены — понимание делает LLM-роутер, ответ собирает RAG
+    # (со стримом). Инструменты (цена/гэсн/задача/память/поле) остаются ЧЕРЕЗ роутер, не каналом.
+    from proxy.services.agent_router_service import router_primary as _router_primary
+    _rp = _router_primary()
 
     def _profile_route(channel: str, operation: str | None, *,
                        base: dict | None = None, source: str | None = None) -> dict:
@@ -1340,7 +1346,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 channel = _ch
                 break
         # Авто-заметки: утверждение-факт (не вопрос/команда) ЛЕС запоминает сам. 0 LLM.
-        if reply is None:
+        if reply is None and not _rp:
             from proxy.services.memory_service import maybe_autonote
             reply = maybe_autonote(req.question, dataset_filter=req.dataset_filter or "", project_id=pid, output_directive=req.output_directive)
             if reply is not None:
@@ -1353,7 +1359,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 channel = "agent"
         # v0.22: проектный запрос при scope=all → не искать молча весь корпус, а попросить выбрать
         # область (нормы/глоссарий/глобальный реестр сюда не попадают — им весь RAG разрешён).
-        if reply is None and _scope_snap.get("scope_type") == "all":
+        if reply is None and not _rp and _scope_snap.get("scope_type") == "all":
             from proxy.services.scope_service import needs_project_scope, scope_clarification
             if needs_project_scope(req.question):
                 try:
@@ -1447,7 +1453,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     # иначе «проверь соответствие…» перехватит уточняющий гейт (broad_review). 0 LLM.
     from proxy.services.reconcile_chat_service import answer_reconcile_query, is_reconcile_query
     from proxy.services.reconcile_service import doc_type_label
-    if is_reconcile_query(req.question):
+    if not _rp and is_reconcile_query(req.question):
         t_rec_start = time.time()
         try:
             rec_names = await _dataset_name_map(rag_backend)
@@ -1508,7 +1514,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         dataset_ids=effective_dataset_ids,
         dataset_filter=req.dataset_filter,
     )
-    if clarification.needs_clarification and not _summary_intent:
+    if not _rp and clarification.needs_clarification and not _summary_intent:
         logger.info(
             "[CLARIFY] reasons=%s route=%s filter=%s",
             clarification.classification.reasons,
@@ -1610,7 +1616,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     from proxy.services.project_summary_service import (
         build_project_summary, format_project_summary, is_project_summary_query,
     )
-    if is_project_summary_query(req.question) and _dataset_ids:
+    if not _rp and is_project_summary_query(req.question) and _dataset_ids:
         t_sum = time.time()
         try:
             summ = await asyncio.to_thread(
@@ -1741,7 +1747,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         else chat_validation_enabled()
     )
 
-    if query_intent.channel == "mail" or effective_dataset_filter == "MAIL":
+    if not _rp and (query_intent.channel == "mail" or effective_dataset_filter == "MAIL"):
         t_mail_start = time.time()
         try:
             mail_result = await maybe_answer_mail_query(req.question, rag_backend)
@@ -1877,7 +1883,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 "history_id": history_id,
             }
 
-    if query_intent.channel == "table" and _dataset_ids:
+    if not _rp and query_intent.channel == "table" and _dataset_ids:
         t_table_start = time.time()
         table_chunks = parquet_ref_chunks_for_datasets(
             _dataset_ids,
@@ -1924,7 +1930,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 use_validation=False,
             )
 
-    if query_intent.channel == "rag" and _dataset_ids:
+    if not _rp and query_intent.channel == "rag" and _dataset_ids:
         t_clause_start = time.time()
         try:
             clause_result = maybe_answer_clause_lookup(
