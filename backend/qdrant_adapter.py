@@ -648,6 +648,17 @@ class MetaDB:
                     f"for dataset_id={dataset_id}, file_name={file_name}"
                 )
 
+    def requeue_error_documents(self, dataset_id: str) -> int:
+        """«Ремонт» датасета: ERROR-документы → PENDING (очистка last_error/stage/chunk_count),
+        чтобы перепарсить их БЕЗ удаления датасета/индекса. Возвращает число сброшенных."""
+        with self._get_conn() as conn:
+            cur = conn.execute(
+                "UPDATE documents SET status='PENDING', last_error='', stage='', chunk_count=0 "
+                "WHERE dataset_id=? AND status='ERROR'",
+                (dataset_id,),
+            )
+            return cur.rowcount
+
     def update_document_stage(self, dataset_id: str, file_name: str, stage: str) -> None:
         """W1.4: текущая стадия конвейера файла (CONVERT/EMBED/UPSERT) — для прогресса/диагностики."""
         with self._get_conn() as conn:

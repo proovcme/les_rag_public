@@ -23,7 +23,285 @@ from sovushka.state import (
 
 
 def build_samovar():
-    """Строит содержимое вкладки С.А.М.О.В.А.Р. Вызывать внутри with ui.tab_panel(tab_samovar)."""
+    """Датасеты (v0.24) — таблица/карточки, светофор статуса, бар файлов, Пуск/Стоп/Ремонт,
+    ошибка→что делать, диалог файлов, одна кнопка «Добавить». На API proxy/routers/datasets."""
+    _S = {"mode": "table", "rows": []}
+    _refs = {"disp": None, "kpi": None, "status": None, "tbtn": None, "cbtn": None}
+
+    def _error_hint(err: str) -> str:
+        e = (err or "").lower()
+        if any(k in e for k in ("memory", "память", "swap", "oom")):
+            return "Память: уменьшить batch/cooldown, выгрузить MLX, затем Ремонт"
+        if any(k in e for k in ("timeout", "таймаут", "1800")):
+            return "Завис/большой: меньший лимит парсинга, затем Ремонт"
+        if any(k in e for k in ("not found", "не найден", "no such file")):
+            return "Файл переехал/удалён: пересинк папки-источника"
+        if any(k in e for k in ("corrupt", "поврежд", "no stream")):
+            return "Файл повреждён: пересоздать или пропустить"
+        if any(k in e for k in ("unsupported", "не поддерж")):
+            return "Формат не поддержан: конвертировать в pdf/docx"
+        return "Открой список файлов — точный текст ошибки"
+
+    def _agg(docs):
+        by = {}
+        for d in (docs or {}).get("documents", []):
+            s = by.setdefault(d.get("dataset_id"), {"INDEXED": 0, "PENDING": 0, "ERROR": 0, "chunks": 0})
+            st = d.get("status", "")
+            if st in s and st != "chunks":
+                s[st] += 1
+            s["chunks"] += int(d.get("chunk_count") or 0)
+        return by
+
+    async def _load():
+        ds = await api_get("/api/rag/datasets") or []
+        docs = await api_get("/api/rag/documents?limit=6000") or {}
+        agg = _agg(docs)
+        rows = []
+        for d in (ds if isinstance(ds, list) else ds.get("datasets", []) or []):
+            did = d.get("id") or d.get("dataset_id")
+            a = agg.get(did, {"INDEXED": 0, "PENDING": 0, "ERROR": 0, "chunks": 0})
+            tot = a["INDEXED"] + a["PENDING"] + a["ERROR"]
+            rows.append({"id": did, "name": d.get("name", "?"), "sensitivity": d.get("sensitivity", "P0"),
+                         "group": d.get("group_name", ""), "indexed": a["INDEXED"], "pending": a["PENDING"],
+                         "error": a["ERROR"], "chunks": a["chunks"] or int(d.get("chunk_count") or 0), "total": tot})
+        rows.sort(key=lambda r: (0 if r["error"] else 1, 0 if r["pending"] else 1, r["name"].lower()))
+        _S["rows"] = rows
+
+    def _light(r):
+        if r["error"]:
+            return ("var(--err)", f"{r['error']} ошибок", "o_error")
+        if r["pending"]:
+            return ("var(--warn)", f"Парсинг {r['indexed']}/{r['total']}", "o_sync")
+        if r["indexed"]:
+            return ("var(--ok)", "Готов", "o_check_circle")
+        return ("var(--dim)", "Пусто", "o_remove")
+
+    def _bar(r):
+        with ui.element("div").style("height:7px;border-radius:4px;overflow:hidden;display:flex;"
+                                     "background:var(--bg-mod);min-width:120px;"):
+            for n, col in ((r["indexed"], "var(--ok)"), (r["pending"], "var(--warn)"), (r["error"], "var(--err)")):
+                if n:
+                    ui.element("div").style(f"flex:{n};background:{col};")
+
+    async def _parse(r):
+        await api_post(f"/api/rag/parse-batch/{r['id']}?limit=25", {})
+        ui.notify(f"Пуск парсинга: {r['name']}", type="positive")
+        await _refresh()
+
+    async def _repair(r):
+        d = await api_post(f"/api/rag/datasets/{r['id']}/repair", {})
+        n = (d or {}).get("requeued", 0)
+        ui.notify(f"Ремонт {r['name']}: в очередь {n} файлов — нажми Пуск" if n else "Ошибочных файлов нет",
+                  type="warning" if n else "info")
+        await _refresh()
+
+    async def _delete(r):
+        ok = await ui.run_javascript(f"confirm('Удалить датасет {r['name']}? Необратимо.')", timeout=10)
+        if ok:
+            await api_delete(f"/api/rag/datasets/{r['id']}")
+            ui.notify(f"Удалён: {r['name']}", type="warning")
+            await _refresh()
+
+    async def _start_all():
+        await api_post("/api/runtime/dispatcher/reindex/start", {"parse_method": "scheduler"})
+        ui.notify("Индексатор запущен", type="positive")
+        await _refresh_status()
+
+    async def _stop_all():
+        await api_post("/api/runtime/dispatcher/reindex/pause", {"reason": "operator"})
+        ui.notify("Индексатор остановлен", type="warning")
+        await _refresh_status()
+
+    files_dialog = ui.dialog()
+
+    async def _open_files(r):
+        files_dialog.clear()
+        with files_dialog, ui.card().classes("sov-advanced-dialog").style("min-width:680px;"):
+            with ui.row().classes("items-center w-full").style("gap:10px;"):
+                ui.label(r["name"]).classes("sov-panel-title")
+                ui.label(f"{r['total']} файлов · {r['indexed']} в индексе · {r['pending']} ждут · "
+                         f"{r['error']} ошибок · {r['chunks']} чанков").classes("sov-muted")
+                ui.element("div").style("flex:1;")
+                if r["error"]:
+                    ui.button("Ремонт", icon="o_build",
+                              on_click=lambda rr=r: asyncio.create_task(_repair(rr))).props("flat dense no-caps").style("color:var(--accent);")
+            flist = ui.column().classes("w-full sov-advanced-scroll").style("gap:0;")
+        files_dialog.open()
+        d = await api_get(f"/api/rag/documents?dataset_id={r['id']}&limit=1500") or {}
+        flist.clear()
+        with flist:
+            for it in d.get("documents", []):
+                st = it.get("status", "")
+                col = "var(--ok)" if st == "INDEXED" else "var(--warn)" if st == "PENDING" else "var(--err)"
+                with ui.row().classes("items-center w-full").style(
+                        "gap:8px;padding:6px 4px;border-bottom:1px solid var(--border);"):
+                    ui.icon("o_circle").style(f"font-size:8px;color:{col};")
+                    ui.label((it.get("file_name") or "?")[-70:]).style("font-size:13px;flex:1;overflow:hidden;")
+                    ui.label(st).style(f"font-size:11.5px;color:{col};")
+                if st == "ERROR" and it.get("last_error"):
+                    with ui.row().classes("w-full").style("gap:6px;padding:0 4px 6px 20px;"):
+                        ui.label(f"{(it.get('last_error') or '')[:90]} → {_error_hint(it.get('last_error'))}").style(
+                            "font-size:11.5px;color:var(--err);opacity:.85;")
+
+    add_dialog = ui.dialog()
+
+    def _open_add():
+        add_dialog.clear()
+        with add_dialog, ui.card().classes("sov-advanced-dialog").style("min-width:560px;"):
+            ui.label("Добавить датасет").classes("sov-panel-title")
+            ui.label("Папка индексируется in-place (без копии в storage).").classes("sov-muted")
+            name_in = ui.input("Название").props("dense outlined").classes("w-full")
+            path_in = ui.input("Путь к папке (напр. /Users/ovc/Downloads/BAI)").props("dense outlined").classes("w-full")
+            parse_sw = ui.switch("Сразу индексировать", value=True)
+
+            async def _do_add():
+                nm = (name_in.value or "").strip()
+                pth = (path_in.value or "").strip()
+                if not nm or not pth:
+                    ui.notify("Нужны и название, и путь", type="negative")
+                    return
+                ds = await api_post(f"/api/rag/datasets?name={quote(nm)}", {})
+                did = (ds or {}).get("id")
+                if not did:
+                    ui.notify(last_api_error_text("Не удалось создать датасет"), type="negative")
+                    return
+                r = await api_post("/api/rag/index-external",
+                                   {"path": pth, "dataset_id": did, "parse": bool(parse_sw.value), "parse_limit": 25})
+                if r:
+                    ui.notify(f"Папка зарегистрирована: {nm} ({r.get('registered_files', '?')} файлов)", type="positive")
+                    add_dialog.close()
+                    await _refresh()
+                else:
+                    ui.notify(last_api_error_text("Ошибка индексации папки"), type="negative")
+
+            with ui.row().classes("justify-end w-full").style("gap:8px;margin-top:8px;"):
+                ui.button("Отмена", on_click=add_dialog.close).props("flat dense no-caps").style("color:var(--dim);")
+                ui.button("Индексировать", icon="o_bolt",
+                          on_click=lambda: asyncio.create_task(_do_add())).props("no-caps").style(
+                          "background:var(--accent);color:var(--bg);border-radius:8px;")
+        add_dialog.open()
+
+    def _row_actions(r):
+        ui.button(icon="o_folder_open", on_click=lambda rr=r: asyncio.create_task(_open_files(rr))).props(
+            'flat dense round aria-label="Файлы"').style("color:var(--dim);")
+        if r["error"]:
+            ui.button(icon="o_build", on_click=lambda rr=r: asyncio.create_task(_repair(rr))).props(
+                'flat dense round aria-label="Ремонт"').style("color:var(--accent);")
+        ui.button(icon="o_play_arrow", on_click=lambda rr=r: asyncio.create_task(_parse(rr))).props(
+            'flat dense round aria-label="Пуск"').style("color:var(--ok);")
+        ui.button(icon="o_delete", on_click=lambda rr=r: asyncio.create_task(_delete(rr))).props(
+            'flat dense round aria-label="Удалить"').style("color:var(--dim);")
+
+    def _render_rows():
+        disp = _refs["disp"]
+        if disp is None:
+            return
+        disp.clear()
+        with disp:
+            if not _S["rows"]:
+                ui.label("Датасетов нет — нажми «Добавить».").classes("sov-muted").style("padding:18px;")
+                return
+            if _S["mode"] == "table":
+                with ui.element("div").classes("card-les w-full").style("padding:0;overflow:hidden;"):
+                    with ui.row().classes("items-center w-full").style(
+                            "gap:10px;padding:8px 14px;border-bottom:1px solid var(--border);"
+                            "font-size:11.5px;color:var(--dim);"):
+                        ui.label("Датасет").style("flex:2;")
+                        ui.label("Статус").style("flex:1.4;")
+                        ui.label("Файлы").style("flex:1.6;")
+                        ui.label("Чанки").style("width:70px;")
+                        ui.label("").style("width:160px;")
+                    for r in _S["rows"]:
+                        col, txt, ico = _light(r)
+                        with ui.row().classes("items-center w-full").style(
+                                "gap:10px;padding:9px 14px;border-bottom:1px solid var(--border);"):
+                            ui.label(r["name"]).style("flex:2;font-size:14px;font-weight:500;")
+                            with ui.row().classes("items-center").style("flex:1.4;gap:5px;"):
+                                ui.icon(ico).style(f"font-size:15px;color:{col};")
+                                ui.label(txt).style(f"font-size:12px;color:{col};")
+                            with ui.column().style("flex:1.6;gap:2px;"):
+                                _bar(r)
+                            ui.label(str(r["chunks"])).style("width:70px;font-size:13px;color:var(--text);")
+                            with ui.row().classes("items-center justify-end").style("width:160px;gap:0;"):
+                                _row_actions(r)
+            else:
+                with ui.element("div").style(
+                        "display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;width:100%;"):
+                    for r in _S["rows"]:
+                        col, txt, ico = _light(r)
+                        with ui.element("div").classes("card-les").style("padding:12px;"):
+                            with ui.row().classes("items-center w-full").style("gap:8px;margin-bottom:8px;"):
+                                ui.icon("o_circle").style(f"font-size:9px;color:{col};")
+                                ui.label(r["name"]).style("font-size:14px;font-weight:500;flex:1;")
+                                ui.label(f"{r['chunks']} чанков").classes("sov-muted")
+                            _bar(r)
+                            with ui.row().classes("items-center w-full").style("gap:6px;margin-top:8px;"):
+                                ui.label(txt).style(f"font-size:12px;color:{col};flex:1;")
+                                _row_actions(r)
+
+    async def _refresh_status():
+        st = await api_get("/api/runtime/dispatcher/status") or {}
+        running = bool((st.get("reindex") or {}).get("running") or st.get("running"))
+        if _refs["status"]:
+            _refs["status"].set_text("Индексатор: " + ("идёт…" if running else "простаивает"))
+
+    async def _refresh():
+        try:
+            await _load()
+            if _refs["kpi"]:
+                tf = sum(r["total"] for r in _S["rows"])
+                ti = sum(r["indexed"] for r in _S["rows"])
+                te = sum(r["error"] for r in _S["rows"])
+                _refs["kpi"].set_text(f"{len(_S['rows'])} объектов · {tf} файлов · {ti} в индексе · {te} ошибок")
+            _render_rows()
+            await _refresh_status()
+        except Exception as exc:  # noqa: BLE001 — рендер не должен ронять страницу
+            if _refs["disp"]:
+                _refs["disp"].clear()
+                with _refs["disp"]:
+                    ui.label(f"Ошибка загрузки датасетов: {exc}").style("color:var(--err);padding:16px;")
+
+    def _upd_toggle():
+        for key, mode in (("tbtn", "table"), ("cbtn", "cards")):
+            if _refs[key]:
+                _refs[key].style("color:" + ("var(--accent)" if _S["mode"] == mode else "var(--dim)"))
+
+    def _set_mode(m):
+        _S["mode"] = m
+        _upd_toggle()
+        _render_rows()
+
+    with ui.column().classes("w-full max-w-6xl mx-auto p-4 gap-3"):
+        with ui.row().classes("items-center w-full").style("gap:12px;flex-wrap:nowrap;"):
+            ui.label("Датасеты").style("font-size:16px;font-weight:500;")
+            _refs["kpi"] = ui.label("…").classes("sov-muted")
+            ui.element("div").style("flex:1;")
+            with ui.row().classes("items-center").style("border:1px solid var(--border);border-radius:8px;overflow:hidden;"):
+                _refs["tbtn"] = ui.button("Таблица", icon="o_table_rows",
+                                          on_click=lambda: _set_mode("table")).props("flat dense no-caps")
+                _refs["cbtn"] = ui.button("Карточки", icon="o_grid_view",
+                                          on_click=lambda: _set_mode("cards")).props("flat dense no-caps")
+            ui.button("Добавить", icon="o_add", on_click=_open_add).props("no-caps").style(
+                "background:var(--accent);color:var(--bg);border-radius:8px;font-weight:500;")
+        with ui.row().classes("items-center w-full").style("gap:10px;"):
+            ui.button("Пуск", icon="o_play_arrow",
+                      on_click=lambda: asyncio.create_task(_start_all())).props("flat dense no-caps").style("color:var(--ok);")
+            ui.button("Стоп", icon="o_pause",
+                      on_click=lambda: asyncio.create_task(_stop_all())).props("flat dense no-caps").style("color:var(--dim);")
+            ui.element("div").style("width:1px;height:16px;background:var(--border);")
+            _refs["status"] = ui.label("Индексатор: …").classes("sov-muted")
+            ui.element("div").style("flex:1;")
+            ui.button("Обновить", icon="o_refresh",
+                      on_click=lambda: asyncio.create_task(_refresh())).props("flat dense no-caps").style("color:var(--dim);")
+        _refs["disp"] = ui.column().classes("w-full").style("gap:8px;")
+
+    _upd_toggle()
+    asyncio.create_task(_refresh())
+
+
+def build_samovar_legacy():
+    """LEGACY (v0.23 и ранее) — старая страница С.А.М.О.В.А.Р. Сохранена для отката
+    (sovushka_ng.py: build_samovar → build_samovar_legacy при проблемах с новой)."""
     with ui.column().classes("w-full max-w-6xl mx-auto p-4 gap-4"):
         with ui.row().classes("items-center justify-between w-full"):
             with ui.column().classes("gap-0"):

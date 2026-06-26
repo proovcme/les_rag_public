@@ -818,6 +818,18 @@ async def extraction_status_endpoint(dataset_id: str, _admin=Depends(require_adm
     return ops.extraction_status(dataset_id, storage_root=_EXTRACT_STORAGE_ROOT)
 
 
+@router.post("/datasets/{dataset_id}/repair")
+async def repair_dataset(dataset_id: str, _admin=Depends(require_admin)):
+    """«Ремонт»: ERROR-файлы датасета → PENDING (без удаления датасета/индекса), затем перепарс.
+    Возвращает число поставленных в очередь. Парс — фоном (parse-scheduler), если есть что чинить."""
+    backend = get_dataset_state().backend
+    requeued = await asyncio.to_thread(backend.db.requeue_error_documents, dataset_id)
+    if requeued:
+        backend.db.update_dataset_status(dataset_id, "IDLE")
+    return {"id": dataset_id, "requeued": requeued,
+            "hint": "нажмите Пуск (parse-scheduler) для переиндексации" if requeued else "ошибочных файлов нет"}
+
+
 @router.post("/datasets/{dataset_id}/extract-body/dry-run")
 async def extract_body_dry_run(dataset_id: str, _admin=Depends(require_admin)):
     """Dry-run извлечения: сколько файлов/абзацев/строк извлечётся. Ничего не пишет, оригиналы целы."""
