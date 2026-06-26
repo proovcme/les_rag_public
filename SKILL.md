@@ -261,11 +261,12 @@ curl -fsS "http://127.0.0.1:8050/api/cad-bim/highlight" | python3 -m json.tool  
 
 ## Documentation
 
-When closing a LES session, update at least:
+When closing a LES session, update the **living** canon (датированные `SESSION_SUMMARY_*` ретая —
+не плодим новые, история в `git log` + `docs/archive/`):
 
-- `README.md`
-- `RAG_MODERNIZATION_PLAN.md`
-- `INFRASTRUCTURE_v2.0.md`
-- newest `SESSION_SUMMARY_*.md`
+- `ROADMAP_TO_V1.md` — бэклог/состояние до v1
+- `docs/releases.md` — версии/что вошло
+- `docs/CODE_MAP.md` — при структурных правках
+- auto-memory (`MEMORY.md`) — непроизводные факты сессии
 
-Record exact dates, test counts, index counts, model ids, Core ML package names, fallback state, and external smoke state.
+Record exact dates, test counts, index counts, model ids, Core ML package names, fallback state, and external smoke state — в коммитах и `/api/version`, не в отдельных саммари.
