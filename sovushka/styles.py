@@ -588,10 +588,20 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
 }
 .sov-chat-thread {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 100%;
   gap: 13px;
   padding: 22px 24px 150px;
 }
+/* FIX «красота не лезет»: QScrollArea-контент рос по самому широкому ребёнку (таблица/код/длинный
+   токен) → бабблы (flex-start/flex-end) уезжали за оба края колонки. Держим контент = ширине окна,
+   широкие блоки скроллим внутри баббла, длинные токены/кириллицу переносим. */
+.sov-chat-scroll .q-scrollarea__content { width: 100% !important; max-width: 100% !important; }
+.chat-msg-user, .chat-msg-ai { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+.chat-msg-ai table, .chat-msg-ai pre,
+.sov-chat-message-text table, .sov-chat-message-text pre { display: block; max-width: 100%; overflow-x: auto; }
+.chat-msg-ai img, .sov-chat-message-text img { max-width: 100%; height: auto; }
 .sov-composer {
   margin: 0 18px 18px;
   padding: 10px;
