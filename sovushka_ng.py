@@ -182,13 +182,7 @@ async def classic_admin_page(request: Request):
     from sovushka.components.header import build_header
     from sovushka.components.logterm import build_log_terminal
     from sovushka.pages.diag import build_diag
-    from sovushka.pages.overview import build_overview
-    from sovushka.pages.prorab import build_prorab
     from sovushka.pages.samovar import build_samovar
-    from sovushka.pages.volk import build_volk
-    from sovushka.pages.zadachi import build_zadachi
-    from sovushka.pages.instrumenty import build_instrumenty
-    from sovushka.pages.obyomy import build_obyomy
 
     allowed, role, holder, is_admin = _resolve_auth(request)
     if not allowed:
@@ -214,15 +208,9 @@ async def classic_admin_page(request: Request):
             visualizer_url=visualizer_url,
         )
 
-        tab_overview = tr.get("overview")
-        tab_samovar  = tr.get("samovar")
-        tab_prorab   = tr.get("prorab")
+        tab_diag       = tr.get("diag")
+        tab_samovar    = tr.get("samovar")
         tab_qdrant_viz = tr.get("qdrant_viz")
-        tab_instrumenty = tr.get("instrumenty")
-        tab_zadachi  = tr.get("zadachi")
-        tab_obyomy   = tr.get("obyomy")
-        tab_diag     = tr.get("diag")
-        tab_volk     = tr.get("volk")
 
         # Персистим активный таб
         def _save_tab(e):
@@ -234,46 +222,27 @@ async def classic_admin_page(request: Request):
                 pass
         tabs.on("update:model-value", _save_tab)
 
-        # Контент
-        _default_tab = tab_overview
+        # Контент — Состояние (landing) / Датасеты / Визуал
+        _default_tab = tab_diag
         with ui.tab_panels(tabs, value=_default_tab).classes("w-full flex-1").style(
             "background:var(--bg);overflow-y:auto;padding:0;"
         ):
-            with ui.tab_panel(tab_overview):
-                build_overview(tabs, is_admin)
-            with ui.tab_panel(tab_samovar):
-                build_samovar()
-            with ui.tab_panel(tab_prorab):
-                build_prorab()
-            with ui.tab_panel(tab_qdrant_viz):
-                _build_qdrant_visualizer_panel(visualizer_url)
-            with ui.tab_panel(tab_instrumenty):
-                build_instrumenty()
-            with ui.tab_panel(tab_zadachi):
-                build_zadachi()
-            with ui.tab_panel(tab_obyomy):
-                build_obyomy()
             with ui.tab_panel(tab_diag):
                 build_diag()
-            with ui.tab_panel(tab_volk):
-                build_volk()
+            with ui.tab_panel(tab_samovar):
+                build_samovar()
+            with ui.tab_panel(tab_qdrant_viz):
+                _build_qdrant_visualizer_panel(visualizer_url)
 
         # Подвал (Лог)
         build_log_terminal()
 
     # Восстанавливаем последний активный таб
-    _last_tab = app.storage.user.get("last_tab", "ОБЗОР")
+    _last_tab = app.storage.user.get("last_tab", "Состояние")
     _tab_map = {
-        "ОБЗОР":          tab_overview,
-        "С.А.М.О.В.А.Р.": tab_samovar,
-        "П.Р.О.Р.А.Б.":   tab_prorab,
-        "КВАДРАНТ":        tab_qdrant_viz,
-        "ИНСТРУМЕНТЫ":     tab_instrumenty,
-        "ЗАДАЧИ":          tab_zadachi,
-        "ОБЪЁМЫ":          tab_obyomy,
-        "Д.И.А.Г.Н.О.З.": tab_diag,
-        "🔬 ДИАГН":        tab_diag,
-        "В.О.Л.К.":       tab_volk,
+        "Состояние": tab_diag,
+        "Датасеты":  tab_samovar,
+        "Визуал":    tab_qdrant_viz,
     }
     _target = _tab_map.get(_last_tab)
     if _target and _target != _default_tab:

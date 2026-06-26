@@ -125,19 +125,14 @@ def build_header(
             "color:var(--dim);height:56px;"
         ) as tabs:
             if show_admin_tabs:
-                tab_refs["overview"] = ui.tab("ОБЗОР",          icon="o_dashboard")
-                tab_refs["samovar"]  = ui.tab("С.А.М.О.В.А.Р.", icon="o_inventory_2")
-                tab_refs["prorab"]   = ui.tab("П.Р.О.Р.А.Б.",   icon="o_monitor")
+                # v0.24: админка сведена к 3 вкладкам с чистыми именами (вместо акроним-зоопарка из 9).
+                # Остальное (Обзор/Прораб/Инструменты/Задачи/Объёмы/Волк) — функции живы, убраны из нав.
+                tab_refs["diag"]       = ui.tab("Состояние", icon="o_health_and_safety")
+                tab_refs["samovar"]    = ui.tab("Датасеты",  icon="o_inventory_2")
+                tab_refs["qdrant_viz"] = ui.tab("Визуал",    icon="o_scatter_plot")
             if include_chat:
                 tab_refs["chat"]     = ui.tab("AI ЧАТ",         icon="o_forum")
                 tab_refs["history"]  = ui.tab("ИСТОРИЯ",        icon="o_history")
-            if show_admin_tabs:
-                tab_refs["qdrant_viz"] = ui.tab("КВАДРАНТ",      icon="o_scatter_plot")
-                tab_refs["instrumenty"] = ui.tab("ИНСТРУМЕНТЫ", icon="o_build")
-                tab_refs["zadachi"]  = ui.tab("ЗАДАЧИ",         icon="o_checklist")
-                tab_refs["obyomy"]   = ui.tab("ОБЪЁМЫ",         icon="o_straighten")
-                tab_refs["diag"]     = ui.tab("Д.И.А.Г.Н.О.З.", icon="o_health_and_safety")
-                tab_refs["volk"]     = ui.tab("В.О.Л.К.",       icon="o_vpn_key")
 
         # ── Контролы (справа) ─────────────────────────────────────────────────
         with ui.row().classes("items-center gap-1").style("flex-shrink:0;margin-left:8px;"):

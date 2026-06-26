@@ -2565,7 +2565,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
     asyncio.create_task(_refresh_resource_gate())
     resource_gate_timer = ui.timer(5.0, lambda: asyncio.create_task(_refresh_resource_gate()))
     context.client.on_disconnect(lambda *_: resource_gate_timer.cancel())
+    # .exact: отправка ТОЛЬКО на чистый Enter; Shift+Enter (и любой модификатор) → дефолтный
+    # перенос строки в textarea (раньше .prevent убивал перенос на любом Enter).
     chat_input.on(
-        "keydown.enter.prevent",
-        lambda e: asyncio.create_task(send_chat()) if not (e.args or {}).get("shiftKey") and not _resource_blocked["v"] else None,
+        "keydown.enter.exact.prevent",
+        lambda e: asyncio.create_task(send_chat()) if not _resource_blocked["v"] else None,
     )
