@@ -126,25 +126,22 @@ def _normalize_diag_payload(payload: dict) -> dict:
         item = dict(raw)
         name = item.get("name", "")
         value_msg = f"{item.get('value', '')} {item.get('message', '')}".lower()
+        # БЕЗ маскировки: нормализация поясняет «not applicable / ещё нет данных», но raw_status хранит
+        # исходный статус — иначе нельзя отличить «лениво грузится» от «сломан» (наблюдаемость врёт).
         docker_missing = (
             name == "Docker"
             and item.get("status") == "err"
-            and ("no such file" in value_msg or "not found" in value_msg or "docker" in value_msg)
+            and ("no such file" in value_msg or "not found" in value_msg or "not running" in value_msg)
         )
         if docker_missing:
             item.update(
-                name="Docker runtime",
-                status="ok",
-                value="removed",
-                expected="no Docker",
-                message="Qdrant/proxy/UI/MLX run on host LaunchAgents",
+                name="Docker runtime", status="ok", value="removed", expected="no Docker",
+                message="не используется — Qdrant/proxy/UI/MLX на host LaunchAgents",
             )
         elif name == "MLX Backend" and item.get("status") == "err" and mlx_health_ok:
             item.update(
-                status="warn",
-                value="main idle",
-                expected="health OK",
-                message="MLX health отвечает; основная модель загружается лениво",
+                status="warn", raw_status="err", value="main idle", expected="health OK",
+                message=f"MLX health отвечает, основная модель грузится лениво (исходно err: {item.get('message','')})".strip(),
             )
         elif (
             name == "Т.О.С.К.А. статистика"
@@ -152,9 +149,8 @@ def _normalize_diag_payload(payload: dict) -> dict:
             and str(item.get("value", "")).startswith("V:0 N:0 H:0")
         ):
             item.update(
-                status="warn",
-                expected="first validation sample",
-                message="статистики валидации ещё нет",
+                status="warn", raw_status="err", expected="first validation sample",
+                message="статистики валидации ещё нет (норма на старте)",
             )
         checks.append(item)
 
