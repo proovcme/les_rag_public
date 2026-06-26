@@ -575,7 +575,7 @@ async def list_documents(
     dataset_id: str | None = None,
     status: str | None = Query(default=None, pattern="^(PENDING|INDEXED|ERROR)$"),
     q: str | None = Query(default=None, max_length=200),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=5000),  # le=500 был тесен: диалог файлов датасета шлёт 1500
     offset: int = Query(default=0, ge=0),
     _user=Depends(require_user),
 ):
