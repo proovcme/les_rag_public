@@ -112,6 +112,7 @@ class IndexExternalRequest(BaseModel):
     parse_limit: int = Field(default=25, ge=1, le=500)
     auto_split: bool = True  # крупные PDF режутся (tools/pdf_preprocess) перед регистрацией
     split_max_mb: float = Field(default=40.0, ge=5, le=500)
+    background: bool = False  # True → регистрация+нарезка+парс в фоне, мгновенный ответ (большие папки)
 
 
 class ParseSchedulerRequest(BaseModel):
@@ -1308,6 +1309,16 @@ async def index_external(req: IndexExternalRequest, _admin=Depends(require_admin
     if dataset is None:
         raise HTTPException(404, f"dataset_id не найден: {req.dataset_id} (создайте датасет заранее)")
 
+    if req.background:
+        asyncio.create_task(_index_external_run(state, req, root, dataset))
+        return {"status": "started", "dataset_id": req.dataset_id, "dataset_name": dataset.name,
+                "note": "регистрация и индексация идут в фоне — файлы появятся в датасете"}
+    return await _index_external_run(state, req, root, dataset)
+
+
+async def _index_external_run(state, req, root, dataset) -> dict:
+    """Тело in-place индексации: нарезка крупных PDF + регистрация файлов + LES.md + (опц.) парс.
+    Выносимо в фон (req.background) — не зависит от HTTP-таймаута на больших папках (758 файлов = ~47с)."""
     # Авто-нарезка крупных PDF (штатная часть ЛЕСа, tools/pdf_preprocess): чистим+режем
     # гиганты на части < split_max_mb (границы по оглавлению), оригиналы → в _originals/.
     # Без этого 150–200МБ-каталог вешает конвертер (блокирует event loop). Не роняет индексацию.

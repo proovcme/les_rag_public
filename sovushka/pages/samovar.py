@@ -226,14 +226,20 @@ def build_samovar():
                 if not did:
                     ui.notify(last_api_error_text("Не удалось создать датасет"), type="negative")
                     return
+                # background=True: index-external отвечает мгновенно, регистрация+нарезка+парс — в фоне
+                # (большие папки не упираются в HTTP-таймаут 180с; 758 файлов = ~47с регистрации).
                 r = await api_post("/api/rag/index-external",
-                                   {"path": pth, "dataset_id": did, "parse": bool(parse_sw.value), "parse_limit": 25})
-                if r:
-                    ui.notify(f"Папка зарегистрирована: {nm} ({r.get('registered_files', '?')} файлов)", type="positive")
-                    add_dialog.close()
+                                   {"path": pth, "dataset_id": did, "parse": bool(parse_sw.value),
+                                    "parse_limit": 25, "background": True})
+                add_dialog.close()
+                if r and r.get("status") in ("started", "registered"):
+                    ui.notify(f"Индексация «{nm}» запущена — файлы появятся в датасете", type="positive")
                     await _refresh()
                 else:
-                    ui.notify(last_api_error_text("Ошибка индексации папки"), type="negative")
+                    # откат: не плодим пустые датасеты при ошибке (плохой путь, нет документов)
+                    await api_delete(f"/api/rag/datasets/{did}")
+                    ui.notify(last_api_error_text("Не удалось проиндексировать папку"), type="negative")
+                    await _refresh()
 
             with ui.row().classes("justify-end w-full").style("gap:8px;margin-top:8px;"):
                 ui.button("Отмена", on_click=add_dialog.close).props("flat dense no-caps").style("color:var(--dim);")
