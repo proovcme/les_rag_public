@@ -79,7 +79,7 @@ def test_etalon_12_01_034_02_classification():
     parts = [
         {"NormTablePartId": 1, "NormTablePartParentId": None, "Name": "ЗАТРАТЫ ТРУДА РАБОЧИХ, ВСЕГО:"},
         {"NormTablePartId": 2, "NormTablePartParentId": 1, "Name": "Средний разряд работы 2,5",
-         "Cipher": "", "UnitName": "чел.-ч",
+         "Cipher": "1-100-25", "UnitName": "чел.-ч",
          "NormTablePartNormValueList": [{"NormNumber": "12-01-034-02", "Value": "12.94"}]},
         # машинисты — категория-лист (parentId=None, но со значением)
         {"NormTablePartId": 3, "NormTablePartParentId": None, "Name": "Затраты труда машинистов",
@@ -111,8 +111,8 @@ def test_etalon_12_01_034_02_classification():
     assert [r["per_unit"] for r in by_kind["machinist"]] == [1.01]
     assert sorted(r["per_unit"] for r in by_kind["machine"]) == [0.01, 0.03, 0.97]
     assert sorted(r["per_unit"] for r in by_kind["material"]) == [0.0015, 0.4]
-    # код ресурса труда — пуст (ценится тарифом), у машин/материалов — есть
-    assert by_kind["labor"][0]["resource_code"] == ""
+    # код ресурса труда — тариф ФГИС ЦС, у машин/материалов — ресурсный код
+    assert by_kind["labor"][0]["resource_code"] == "1-100-25"
     assert {r["resource_code"] for r in by_kind["material"]} == {"01.7.15.06-0111", "11.1.03.01-0076"}
 
 

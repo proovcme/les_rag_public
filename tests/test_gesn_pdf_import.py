@@ -31,9 +31,9 @@ FIXTURE = Path(__file__).parent / "fixtures" / "gesn_fgis_12-01-034.json"
 PDF = Path("data/gesn_pdf/gesn_12-01-034.pdf")
 CODE = "12-01-034-02"
 
-# Эталон: (kind, resource_code) → per_unit. Машинисты/рабочие — без кода ресурса.
+# Эталон: (kind, resource_code) → per_unit. Труд хранит тарифный код для сплит-формы.
 ETALON = {
-    ("labor", ""): 12.94,
+    ("labor", "1-100-25"): 12.94,
     ("machinist", ""): 1.01,
     ("machine", "91.05.01-017"): 0.97,
     ("machine", "91.05.05-015"): 0.01,
@@ -71,12 +71,41 @@ def test_fgis_json_kinds_classified():
             if r["norm_code"] == CODE]
     kinds = {r["kind"] for r in recs}
     assert kinds == {"labor", "machinist", "machine", "material"}
-    # коды ресурсов ФГИС ЦС только у машин/материалов; у труда — пусто
+    # у труда сохраняется тарифный код; агрегат машинистов без разряда остаётся без кода
     for r in recs:
-        if r["kind"] in ("labor", "machinist"):
+        if r["kind"] == "labor":
+            assert r["resource_code"].startswith("1-100-")
+        elif r["kind"] == "machinist":
             assert r["resource_code"] == ""
         else:
             assert r["resource_code"]
+
+
+def test_fgis_json_keeps_latest_published_table_version():
+    """FGIS search can return old and new publications of the same table; latest id wins."""
+    def record(row_id: int, resource_code: str) -> dict:
+        cols = [{"number": "38-01-001-01", "name": "Листовые конструкции", "meterName": "т"}]
+        parts = [
+            {"NormTablePartId": 1, "NormTablePartParentId": None, "Name": "МАТЕРИАЛЫ"},
+            {"NormTablePartId": 2, "NormTablePartParentId": 1, "Name": f"Материал {resource_code}",
+             "Cipher": resource_code, "UnitName": "кг",
+             "NormTablePartNormValueList": [{"NormNumber": "38-01-001-01", "Value": "1"}]},
+        ]
+        return {
+            "id": row_id,
+            "documentTypeName": "ГЭСНм",
+            "documentName": "Сборник 38<br/>Таблица ГЭСНм 38-01-001 Листовые конструкции",
+            "normLegalDocPublishedGuid": f"guid-{row_id}",
+            "normTableJson": json.dumps(cols, ensure_ascii=False),
+            "normTableValueTableJson": json.dumps(parts, ensure_ascii=False),
+        }
+
+    recs = parse_fgis_json([record(1, "01.7.11.07-0044"), record(2, "01.7.11.07-0227")])
+
+    assert len(recs) == 1
+    assert recs[0]["norm_key"] == "ГЭСНм:38-01-001-01"
+    assert recs[0]["source_guid"] == "guid-2"
+    assert recs[0]["resource_code"] == "01.7.11.07-0227"
 
 
 def test_fgis_json_builds_parquet(tmp_path):

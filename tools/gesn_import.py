@@ -61,6 +61,10 @@ RESOURCE_FIELDS = (
     "resource_name",   # наименование ресурса
     "resource_unit",   # единица ресурса
     "price",           # снимок цены/тариф (опц., для ОЗП/ОТм — обязателен тариф)
+    "base_type",       # база/тип норматива: ГЭСН | ГЭСНм | ГЭСНп | ГЭСНр | ...
+    "norm_key",        # машинный ключ без коллизий: <base_type>:<голый_код>
+    "source_doc",      # документ-источник (опц., для аудита)
+    "source_guid",     # GUID/ID источника (опц., для аудита)
 )
 
 DEFAULT_OUT = Path("data/gesn_base/gesn2022.parquet")
@@ -71,6 +75,7 @@ DEFAULT_OUT = Path("data/gesn_base/gesn2022.parquet")
 _NORM_CODE_RE = re.compile(r"(?:ГЭСН[А-Яа-я]*|GESN)?\s*\d{2}-\d{2}-\d{3}-\d{2}", re.IGNORECASE)
 # «голый» код нормы (формат с дефисами) — отличает норму от кода ресурса (NN.NN…).
 _BARE_NORM_RE = re.compile(r"\d{2}-\d{2}-\d{3}-\d{2}")
+_BASE_TYPE_RE = re.compile(r"^(ГЭСНМР|ГЭСНМ|ГЭСНП|ГЭСНР|ГЭСН|GESNMR|GESNM|GESNP|GESNR|GESN)", re.IGNORECASE)
 # Код ресурса ФГИС ЦС: «91.05.01-017», «01.7.15.06-0111», «11.1.03.01-0063».
 _RES_CODE_RE = re.compile(r"\d{2}[.\d-]{3,}")
 
@@ -100,6 +105,37 @@ def _kind_from_text(text: Any) -> Optional[str]:
 def _norm_code(code: Any) -> str:
     """Канонический ключ кода нормы: trim, upper, без пробелов."""
     return str(code or "").strip().upper().replace(" ", "")
+
+
+def _bare_norm_code(code: Any) -> str:
+    """Код нормы без префикса базы: ГЭСНм38-01-001-01 → 38-01-001-01."""
+    m = _BARE_NORM_RE.search(str(code or "").strip().upper().replace(" ", ""))
+    return m.group(0) if m else ""
+
+
+def _base_type_from_code(code: Any, *, default: str = "ГЭСН") -> str:
+    """Префикс нормативной базы из кода/текста; порядок важен: ГЭСНм раньше ГЭСН."""
+    s = str(code or "").strip().upper().replace(" ", "")
+    m = _BASE_TYPE_RE.match(s)
+    if not m:
+        return default
+    raw = m.group(1).upper().replace("GESN", "ГЭСН")
+    suffix = raw.replace("ГЭСН", "", 1).lower()
+    return "ГЭСН" + suffix if suffix else "ГЭСН"
+
+
+def _norm_key(code: Any, *, base_type: Any = None) -> str:
+    """Машинный ключ нормы без коллизий между ГЭСН/ГЭСНм/ГЭСНп."""
+    bare = _bare_norm_code(code)
+    bt = str(base_type or _base_type_from_code(code)).strip() or "ГЭСН"
+    return f"{bt}:{bare}" if bare else ""
+
+
+def _stamp_norm_identity(rec: dict[str, Any], code: Any, *, base_type: Any = None) -> None:
+    """Дополнить строку ресурсной схемы полями base_type/norm_key."""
+    bt = str(base_type or _base_type_from_code(code)).strip() or "ГЭСН"
+    rec["base_type"] = bt
+    rec["norm_key"] = _norm_key(code, base_type=bt)
 
 
 def _looks_like_norm_code(value: Any) -> bool:
@@ -199,6 +235,7 @@ def parse_flat(rows: list[list[Any]]) -> list[dict[str, Any]]:
             continue
         rec = {f: None for f in RESOURCE_FIELDS}
         rec["norm_code"] = _norm_code(code)
+        _stamp_norm_identity(rec, code)
         rec["norm_name"] = _cell(row, hdr.get("norm_name"))
         rec["norm_unit"] = _cell(row, hdr.get("norm_unit"))
         kind = _kind_from_text(_cell(row, hdr.get("kind")))
@@ -261,7 +298,7 @@ def parse_blocks(rows: list[list[Any]]) -> list[dict[str, Any]]:
         texts = [c for c in cells if c and _safe_float(c) is None and c != rcode
                  and _kind_from_text(c) != kind]
         rname = max(texts, key=len) if texts else ""
-        out.append({
+        rec = {
             "norm_code": cur_code,
             "norm_name": cur_name,
             "norm_unit": cur_unit,
@@ -271,7 +308,13 @@ def parse_blocks(rows: list[list[Any]]) -> list[dict[str, Any]]:
             "resource_name": rname,
             "resource_unit": "",
             "price": nums[1] if len(nums) > 1 else None,
-        })
+            "base_type": None,
+            "norm_key": None,
+            "source_doc": None,
+            "source_guid": None,
+        }
+        _stamp_norm_identity(rec, cur_code)
+        out.append(rec)
     return out
 
 

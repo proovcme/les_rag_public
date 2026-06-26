@@ -122,6 +122,62 @@ def test_import_to_parquet_and_read(flat_xlsx: Path, tmp_path: Path):
     assert mat["code"] == "04.3.01.09-0102"
 
 
+def test_base_type_prevents_gesn_gesnm_collision(tmp_path: Path):
+    """Одинаковый номер нормы в ГЭСН и ГЭСНм не должен схлопываться в один ресурсный блок."""
+    import pandas as pd
+
+    from proxy.services import gesn_service as gs
+
+    rows = [
+        {
+            **{f: None for f in RESOURCE_FIELDS},
+            "norm_code": "38-01-001-01",
+            "norm_name": "Возведение плотин каменно-набросных",
+            "norm_unit": "1000 м3",
+            "kind": "machine",
+            "per_unit": 3.0,
+            "resource_code": "91.05.01-017",
+            "resource_name": "Краны башенные",
+            "resource_unit": "маш.-ч",
+            "base_type": "ГЭСН",
+            "norm_key": "ГЭСН:38-01-001-01",
+        },
+        {
+            **{f: None for f in RESOURCE_FIELDS},
+            "norm_code": "38-01-001-01",
+            "norm_name": "Листовые конструкции массой свыше 0,5 т",
+            "norm_unit": "т",
+            "kind": "labor",
+            "per_unit": 91.8,
+            "resource_code": "1-100-40",
+            "resource_name": "Средний разряд работы 4,0",
+            "resource_unit": "чел.-ч",
+            "base_type": "ГЭСНм",
+            "norm_key": "ГЭСНм:38-01-001-01",
+        },
+    ]
+    out = tmp_path / "gesn_collision.parquet"
+    pd.DataFrame(rows, columns=list(RESOURCE_FIELDS)).to_parquet(out, index=False)
+
+    gs.load_base_norms.cache_clear()
+    construction = gs.get_norm("ГЭСН38-01-001-01", base_path=str(out))
+    metal = gs.get_norm("ГЭСНм38-01-001-01", base_path=str(out))
+    bare = gs.get_norm("38-01-001-01", base_path=str(out))
+
+    assert construction is not None and "плотин" in construction["name"]
+    assert metal is not None and "Листовые конструкции" in metal["name"]
+    assert bare is not None and bare["key"] == "ГЭСН:38-01-001-01"
+
+    lines = gs.expand_position("ГЭСНм38-01-001-01", 2.0, base_path=str(out))
+    assert lines == [{
+        "kind": "labor",
+        "name": "Средний разряд работы 4,0",
+        "unit": "чел.-ч",
+        "qty": 183.6,
+        "code": "1-100-40",
+    }]
+
+
 def test_base_merges_under_seed(flat_xlsx: Path, tmp_path: Path):
     """База дополняет семя; эталон семени остаётся (семя побеждает по коду)."""
     from proxy.services import gesn_service as gs

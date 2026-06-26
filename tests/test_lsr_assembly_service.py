@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from proxy.services.lsr_assembly_service import assemble, compute_position
+from proxy.services.lsr_assembly_service import assemble, compute_position, export_assembled
 
 # Эталон_кровля, поз.1 «Устройство обрешётки» — ресурсы агрегатами с фактическими суммами.
 GOLD_POS = {
@@ -73,3 +73,48 @@ def test_assemble_rollup():
     assert res["summary"]["total"] == round(11813.04 * 2, 2)
     assert len(res["sections"]) == 1
     assert res["sections"][0]["positions"] == 2
+
+
+def test_machinist_aggregate_split_by_mapped_machines():
+    class FakePriceBook:
+        def lookup(self, code: str):
+            prices = {
+                "4-100-060": 801.41,
+                "4-100-040": 650.0,
+            }
+            if code in prices:
+                return {"price_current_eff": prices[code]}
+            return None
+
+    pos = {"name": "metal", "nr_pct": 0, "sp_pct": 0, "resources": [
+        {"kind": "machine", "name": "Кран 16 т", "code": "91.05.05-015", "qty": 9, "price": 100},
+        {"kind": "machine", "name": "Авто до 8 т", "code": "91.14.02-002", "qty": 0.5, "price": 50},
+        {"kind": "machinist", "name": "Затраты труда машинистов", "qty": 9.5},
+    ]}
+
+    res = compute_position(pos, pricebook=FakePriceBook())
+
+    assert res["flags"] == []
+    assert res["base"]["zpm"] == round(9 * 801.41 + 0.5 * 650.0, 2)
+    assert {r.get("code") for r in res["resources"] if r["kind"] == "machinist"} == {"4-100-060", "4-100-040"}
+
+
+def test_machinist_aggregate_stays_missing_without_complete_mapping():
+    pos = {"name": "metal", "nr_pct": 0, "sp_pct": 0, "resources": [
+        {"kind": "machine", "name": "Ножницы", "code": "91.21.12-002", "qty": 2, "price": 100},
+        {"kind": "machinist", "name": "Затраты труда машинистов", "qty": 2},
+    ]}
+
+    res = compute_position(pos)
+
+    assert res["base"]["zpm"] == 0
+    assert res["flags"] and "Затраты труда машинистов" in res["flags"][0]
+
+
+def test_export_assembled_csv_and_xlsx(tmp_path):
+    result = assemble([GOLD_POS])
+    csv_path = export_assembled(result, tmp_path / "lsr.csv", fmt="csv")
+    xlsx_path = export_assembled(result, tmp_path / "lsr.xlsx", fmt="xlsx")
+
+    assert csv_path.read_text(encoding="utf-8-sig").startswith("section;position_no;")
+    assert xlsx_path.exists() and xlsx_path.stat().st_size > 0

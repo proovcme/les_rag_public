@@ -66,7 +66,13 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 # Та же нормализованная схема строки-ресурса, что у tools.gesn_import (общий контракт Parquet).
-from tools.gesn_import import RESOURCE_FIELDS, _norm_code, _safe_float
+from tools.gesn_import import (
+    RESOURCE_FIELDS,
+    _base_type_from_code,
+    _norm_code,
+    _norm_key,
+    _safe_float,
+)
 
 DEFAULT_OUT = Path("data/gesn_base/gesn2022.parquet")
 
@@ -112,7 +118,7 @@ def _is_labor_leaf(name: Any) -> bool:
 
 
 # Шифр нормы в PDF: «12-01-034» (таблица) и «12-01-034-02» (конкретная норма-колонка).
-_TABLE_RE = re.compile(r"Таблица\s+ГЭСН\s+(\d{2}-\d{2}-\d{3})\b", re.IGNORECASE)
+_TABLE_RE = re.compile(r"Таблица\s+(ГЭСН[А-Яа-я]*)?\s*(\d{2}-\d{2}-\d{3})\b", re.IGNORECASE)
 _FULL_NORM_RE = re.compile(r"^(\d{2}-\d{2}-\d{3}-\d{2})\b")
 _COL_SUFFIX_RE = re.compile(r"^\d{3}-\d{2}$")           # «034-02» — короткая колонка
 _MEASURE_RE = re.compile(r"Измеритель[:\s]+(.+?)(?:\s*$|\s*\()", re.IGNORECASE)
@@ -194,6 +200,7 @@ def parse_pdf(path: str | Path) -> list[dict[str, Any]]:
 
     records: list[dict[str, Any]] = []
     cur_table = ""              # «12-01-034»
+    cur_base_type = "ГЭСН"       # «ГЭСН» / «ГЭСНм» / ...
     cur_name = ""               # наименование таблицы
     cur_unit = ""               # «100 м2»
     cur_kind: Optional[str] = None
@@ -207,7 +214,8 @@ def parse_pdf(path: str | Path) -> list[dict[str, Any]]:
 
                 m = _TABLE_RE.search(text)
                 if m:
-                    cur_table = m.group(1)
+                    cur_table = m.group(2)
+                    cur_base_type = _base_type_from_code(m.group(1) or "ГЭСН")
                     cur_name = text[m.end():].strip()
                     cur_unit, cur_kind = "", None
                     anchors, col_fullcode = [], {}
@@ -243,6 +251,7 @@ def parse_pdf(path: str | Path) -> list[dict[str, Any]]:
                             for col_key, val in _values_by_column(line, anchors).items():
                                 records.append(_mk(
                                     cur_table, cur_name, cur_unit, col_fullcode, col_key,
+                                    base_type=cur_base_type,
                                     kind="machinist", res_code="",
                                     res_name="Затраты труда машинистов",
                                     res_unit="чел.-ч", per_unit=val,
@@ -257,6 +266,7 @@ def parse_pdf(path: str | Path) -> list[dict[str, Any]]:
                         for col_key, val in _values_by_column(line, anchors).items():
                             records.append(_mk(
                                 cur_table, cur_name, cur_unit, col_fullcode, col_key,
+                                base_type=cur_base_type,
                                 kind=cur_kind, res_code=rcode, res_name=rname,
                                 res_unit=runit, per_unit=val,
                             ))
@@ -264,18 +274,21 @@ def parse_pdf(path: str | Path) -> list[dict[str, Any]]:
 
 
 def _mk(table: str, name: str, unit: str, col_fullcode: dict[str, str], col_key: str,
-        *, kind: str, res_code: str, res_name: str, res_unit: str,
+        *, base_type: str = "ГЭСН",
+        kind: str, res_code: str, res_name: str, res_unit: str,
         per_unit: float) -> dict[str, Any]:
-    """Собрать нормализованную строку-ресурс. Тариф ОЗП/ОТм (1-…) → resource_code пустой."""
+    """Собрать нормализованную строку-ресурс."""
     full = col_fullcode.get(col_key) or f"{table}-{col_key.split('-')[-1]}"
     rec = {f: None for f in RESOURCE_FIELDS}
     rec["norm_code"] = _norm_code(full)
+    rec["base_type"] = base_type
+    rec["norm_key"] = _norm_key(full, base_type=base_type)
     rec["norm_name"] = name
     rec["norm_unit"] = unit
     rec["kind"] = kind
     rec["per_unit"] = per_unit
-    # тарифные шифры рабочих/машинистов — НЕ код ресурса ФГИС ЦС (цена резолвится тарифом)
-    rec["resource_code"] = "" if kind in ("labor", "machinist") else res_code
+    # Тарифные шифры вида 1-100-40 нужны Сплит-форме для расчёта ОЗП/ОТм.
+    rec["resource_code"] = res_code
     rec["resource_name"] = res_name
     rec["resource_unit"] = res_unit
     rec["price"] = None
@@ -291,6 +304,10 @@ def _strip_em(s: Any) -> str:
     return re.sub(r"</?em>", "", str(s or ""))
 
 
+def _strip_html(s: Any) -> str:
+    return re.sub(r"<[^>]+>", " ", str(s or "")).strip()
+
+
 def _loads_tolerant_json(s: str) -> Any:
     """json.loads, толерантный к битым \\uXXXX от ФГИС: санируем \\u без 4 hex и повторяем."""
     try:
@@ -302,6 +319,37 @@ def _loads_tolerant_json(s: str) -> Any:
             return None
 
 
+def _record_base_type(rec: dict[str, Any]) -> str:
+    explicit = rec.get("documentTypeName")
+    if explicit:
+        return _base_type_from_code(explicit)
+    for field in ("documentName", "normTableName", "name"):
+        text = str(rec.get(field) or "")
+        m = re.search(r"ГЭСН[А-Яа-я]*", text)
+        if m:
+            return _base_type_from_code(m.group(0))
+    return "ГЭСН"
+
+
+def _resource_code_for_kind(kind: str, cipher: str) -> str:
+    """Код ресурса для строки нормы: тарифы труда сохраняем, агрегат машинистов без кода."""
+    cipher = str(cipher or "").strip()
+    if kind in {"labor", "machinist"}:
+        return cipher if _RES_CODE_RE.match(cipher) else ""
+    return cipher
+
+
+def _latest_fgis_records(records_json: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """FGIS search may return older and newer publications of the same table; keep latest id."""
+    by_doc: dict[tuple[str, str], dict[str, Any]] = {}
+    for rec in records_json:
+        key = (_record_base_type(rec), re.sub(r"\s+", " ", _strip_html(rec.get("documentName"))).casefold())
+        prev = by_doc.get(key)
+        if prev is None or int(rec.get("id") or 0) >= int(prev.get("id") or 0):
+            by_doc[key] = rec
+    return list(by_doc.values())
+
+
 def parse_fgis_json(records_json: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Ответ SearchEstimatedRates (список норм-таблиц) → строки-ресурсы (схема RESOURCE_FIELDS).
 
@@ -310,7 +358,10 @@ def parse_fgis_json(records_json: list[dict[str, Any]]) -> list[dict[str, Any]]:
     дочерние строки — ресурсы (Cipher=код, NormTablePartNormValueList=[{NormNumber, Value}]).
     """
     out: list[dict[str, Any]] = []
-    for rec in records_json:
+    for rec in _latest_fgis_records(records_json):
+        base_type = _record_base_type(rec)
+        source_doc = rec.get("documentName") or rec.get("normTableName") or ""
+        source_guid = rec.get("normLegalDocPublishedGuid") or rec.get("guid") or ""
         cols = rec.get("normTableJson")
         vals = rec.get("normTableValueTableJson")
         if isinstance(cols, str):
@@ -348,11 +399,15 @@ def parse_fgis_json(records_json: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 name, unit = col_meta.get(num, ("", ""))
                 rec_out = {f: None for f in RESOURCE_FIELDS}
                 rec_out["norm_code"] = _norm_code(num)
+                rec_out["base_type"] = base_type
+                rec_out["norm_key"] = _norm_key(num, base_type=base_type)
+                rec_out["source_doc"] = source_doc
+                rec_out["source_guid"] = source_guid
                 rec_out["norm_name"] = name
                 rec_out["norm_unit"] = unit
                 rec_out["kind"] = kind
                 rec_out["per_unit"] = per_unit
-                rec_out["resource_code"] = "" if kind in ("labor", "machinist") else cipher
+                rec_out["resource_code"] = _resource_code_for_kind(kind, cipher)
                 rec_out["resource_name"] = rname
                 rec_out["resource_unit"] = runit
                 rec_out["price"] = None
@@ -387,17 +442,22 @@ def build_parquet(records: list[dict[str, Any]], out_path: str | Path = DEFAULT_
     if not records:
         raise ValueError("Не распознано ни одной строки-ресурса")
     df = pd.DataFrame(records, columns=list(RESOURCE_FIELDS))
+    dedupe_cols = ["norm_key", "kind", "resource_code", "resource_name"]
+    if "norm_key" not in df.columns or df["norm_key"].isna().all():
+        dedupe_cols = ["norm_code", "kind", "resource_code", "resource_name"]
+    df = df.drop_duplicates(subset=dedupe_cols, keep="last")
 
     out_path = Path(out_path)
     if append and out_path.exists():
         old = pd.read_parquet(out_path)
         df = pd.concat([old, df], ignore_index=True)
-        df = df.drop_duplicates(subset=["norm_code", "kind", "resource_code", "resource_name"],
-                                keep="last")
+        if "norm_key" not in df.columns or df["norm_key"].isna().all():
+            dedupe_cols = ["norm_code", "kind", "resource_code", "resource_name"]
+        df = df.drop_duplicates(subset=dedupe_cols, keep="last")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(out_path, compression="snappy", index=False)
-    norm_codes = sorted({r["norm_code"] for r in records if r["norm_code"]})
-    return {"parquet": str(out_path), "norms": len(norm_codes), "resources": len(df)}
+    norm_keys = sorted({r.get("norm_key") or r.get("norm_code") for r in records if r.get("norm_code")})
+    return {"parquet": str(out_path), "norms": len(norm_keys), "resources": len(df)}
 
 
 def _main(argv: Optional[Iterable[str]] = None) -> int:
