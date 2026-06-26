@@ -3,7 +3,22 @@
 Детект по тексту листа (сигнатуры полей штампа), без layout-парсинга PDF. Неуверенно → не врём.
 """
 
+import pytest
+
 from proxy.services import title_block_extract_service as tbx
+
+
+def _make_textless_pdf(path) -> None:
+    """Минимальный PDF без текст-слоя (пустая страница) → extract_from_pdf уходит в скан-ветку."""
+    fitz = pytest.importorskip("fitz")
+    doc = fitz.open()
+    doc.new_page()
+    doc.save(str(path))
+    doc.close()
+
+
+_STAMP_OCR = ("Изм Кол.уч Лист № док Подп Дата  Стадия Лист Листов  "
+              "Разраб Иванов  Пров Петров  Н.контр Сидоров  Масштаб 1:100")
 
 
 def test_detects_stamp_from_field_signatures():
@@ -55,3 +70,57 @@ def test_doc_review_title_block_computed_and_scan_aware():
     assert _d4({"checked": 5, "present": 0, "scan": 5, "no_stamp": 0, "examples": []}).status == dr.S_MANUAL
     # нет title_block → manual
     assert _d4(None).status == dr.S_MANUAL
+
+
+def test_ocr_enabled_reads_env(monkeypatch):
+    monkeypatch.delenv("LES_TITLE_BLOCK_OCR", raising=False)
+    assert tbx._ocr_enabled() is False  # OFF по умолчанию (вне hot-path)
+    monkeypatch.setenv("LES_TITLE_BLOCK_OCR", "1")
+    assert tbx._ocr_enabled() is True
+
+
+def test_scan_without_ocr_stays_scan(tmp_path):
+    pdf = tmp_path / "scan.pdf"
+    _make_textless_pdf(pdf)
+    tb = tbx.extract_from_pdf(pdf, ocr=False)
+    assert tb.scan is True and tb.present is False and tb.ocr_used is False
+
+
+def test_scan_with_ocr_confirms_stamp(tmp_path, monkeypatch):
+    # OCR штампа распознаёт поля основной надписи → present, скан снят (D4 → supported)
+    pdf = tmp_path / "scan.pdf"
+    _make_textless_pdf(pdf)
+    monkeypatch.setattr(tbx, "_ocr_title_block_text", lambda p, **k: (_STAMP_OCR, True))
+    tb = tbx.extract_from_pdf(pdf, ocr=True)
+    assert tb.present is True and tb.scan is False and tb.ocr_used is True
+    assert "OCR" in tb.note
+
+
+def test_scan_with_ocr_noise_stays_manual(tmp_path, monkeypatch):
+    # OCR прочитал текст, но штампа нет — НЕ утверждаем «нет штампа» по шуму, остаёмся scan (manual)
+    pdf = tmp_path / "scan.pdf"
+    _make_textless_pdf(pdf)
+    monkeypatch.setattr(tbx, "_ocr_title_block_text", lambda p, **k: ("просто шумный текст без полей", True))
+    tb = tbx.extract_from_pdf(pdf, ocr=True)
+    assert tb.scan is True and tb.present is False and tb.ocr_used is True
+
+
+def test_scan_with_ocr_unavailable_stays_scan(tmp_path, monkeypatch):
+    # рендер/бинарь недоступен → OCR пуст → честный scan (manual), не падаем
+    pdf = tmp_path / "scan.pdf"
+    _make_textless_pdf(pdf)
+    monkeypatch.setattr(tbx, "_ocr_title_block_text", lambda p, **k: ("", False))
+    tb = tbx.extract_from_pdf(pdf, ocr=True)
+    assert tb.scan is True and tb.present is False
+
+
+def test_detect_dataset_ocr_promotes_scan_to_present(tmp_path, monkeypatch):
+    pdf = tmp_path / "scan.pdf"
+    _make_textless_pdf(pdf)
+    monkeypatch.setattr(tbx, "_ocr_title_block_text", lambda p, **k: (_STAMP_OCR, True))
+    out = tbx.detect_dataset([str(pdf)], sample=4, ocr=True)
+    assert out["checked"] == 1 and out["present"] == 1 and out["scan"] == 0
+    assert out["ocr_used"] == 1
+    # без OCR тот же скан остаётся в scan
+    out_off = tbx.detect_dataset([str(pdf)], sample=4, ocr=False)
+    assert out_off["scan"] == 1 and out_off["present"] == 0 and out_off["ocr_used"] == 0
