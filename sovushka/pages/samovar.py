@@ -94,8 +94,29 @@ def build_samovar():
                     ui.element("div").style(f"flex:{n};background:{col};")
 
     async def _parse(r):
-        await api_post(f"/api/rag/parse-batch/{r['id']}?limit=25", {})
-        ui.notify(f"Пуск парсинга: {r['name']}", type="positive")
+        # «Плей» = одна СИНХРОННАЯ партия ≤25 файлов (endpoint ждёт до конца). Даём честный сигнал:
+        # старт сразу (notify+лог), затем результат со счётчиками — чтобы не было «идёт или стоит?».
+        nm = r.get("name", "?")
+        add_log(f"[ПАРС] ▶ {nm}: партия до 25 файлов…")
+        ui.notify(f"▶ Парсинг «{nm}» — партия до 25 файлов…", type="info")
+        try:
+            d = await api_post(f"/api/rag/parse-batch/{r['id']}?limit=25", {})
+        except Exception as e:  # noqa: BLE001
+            add_log(f"[ПАРС] ✗ {nm}: {e}")
+            ui.notify(last_api_error_text(f"Парсинг «{nm}» не запустился"), type="negative")
+            return
+        if not d:
+            add_log(f"[ПАРС] ✗ {nm}: отказ (вероятно, защита памяти — см. статус)")
+            ui.notify(last_api_error_text(f"Парсинг «{nm}»: отказ (память?)"), type="negative")
+            await _refresh_status()
+            return
+        res = (d or {}).get("result", {}) or {}
+        chunks, errs, rem = res.get("chunks", 0), res.get("errors", 0), res.get("remaining_pending", 0)
+        msg = f"✓ «{nm}»: +{chunks} чанков · ошибок {errs} · осталось {rem}"
+        if rem:
+            msg += " — повтори «плей» или жми «Пуск» (индексатор) для всех"
+        add_log(f"[ПАРС] {msg}")
+        ui.notify(msg, type="positive" if not errs else "warning")
         await _refresh()
 
     async def _repair(r):
@@ -338,10 +359,21 @@ def build_samovar():
                                 _row_actions(r)
 
     async def _refresh_status():
+        # Тикает каждые 5с НЕЗАВИСИМО от _parse (который ждёт батч) → ловит «PARSING» датасета
+        # живьём: parse_dataset ставит статус PARSING в БД на время партии. Так видно «идёт/стоит».
         st = await api_get("/api/runtime/dispatcher/status") or {}
-        running = bool((st.get("reindex") or {}).get("running") or st.get("running"))
+        disp = bool((st.get("reindex") or {}).get("running") or st.get("running"))
+        ds = await api_get("/api/rag/datasets") or []
+        ds_list = ds if isinstance(ds, list) else (ds.get("datasets") or [])
+        parsing = [d.get("name", "?") for d in ds_list if str(d.get("status", "")).upper() == "PARSING"]
         if _refs["status"]:
-            _refs["status"].set_text("Индексатор: " + ("идёт…" if running else "простаивает"))
+            if parsing:
+                extra = f" +{len(parsing) - 3}" if len(parsing) > 3 else ""
+                _refs["status"].set_text(f"Индексатор: ПАРСИНГ идёт — {', '.join(parsing[:3])}{extra}")
+            elif disp:
+                _refs["status"].set_text("Индексатор: идёт…")
+            else:
+                _refs["status"].set_text("Индексатор: простаивает")
 
     async def _refresh():
         try:
