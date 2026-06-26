@@ -9,12 +9,12 @@ _DARK_THEME = {
     "--text":     "#f8fbff",
     "--dim":      "#d2deea",
     "--border":   "#55708a",
-    "--accent":   "#38bdf8",
+    "--accent":   "#34d399",
     "--ok":       "#22e06f",
     "--pauk":     "#c084fc",
     "--warn":     "#ffd166",
     "--err":      "#ff6b6b",
-    "--shell-bg": "radial-gradient(circle at 14% 10%, rgba(56,189,248,.10), transparent 28%), linear-gradient(180deg, rgba(16,20,27,.96), #050608)",
+    "--shell-bg": "radial-gradient(circle at 14% 10%, rgba(52,211,153,.10), transparent 28%), linear-gradient(180deg, rgba(16,20,27,.96), #050608)",
     "--panel-glass": "rgba(16,20,27,.88)",
     "--panel-top": "rgba(24,33,44,.70)",
     "--scroll-bg": "linear-gradient(180deg, rgba(5,6,8,.18), rgba(5,6,8,.44))",
@@ -32,7 +32,7 @@ _LIGHT_THEME = {
     "--text":     "#0b1220",
     "--dim":      "#2f3f53",
     "--border":   "#60758c",
-    "--accent":   "#0057bd",
+    "--accent":   "#047857",
     "--ok":       "#006d3a",
     "--pauk":     "#6d28d9",
     "--warn":     "#8a4b00",
@@ -73,12 +73,12 @@ CUSTOM_CSS = """
   --text:     #f8fbff;
   --dim:      #d2deea;
   --border:   #55708a;
-  --accent:   #38bdf8;
+  --accent:   #34d399;
   --ok:       #22e06f;
   --pauk:     #c084fc;
   --warn:     #ffd166;
   --err:      #ff6b6b;
-  --shell-bg: radial-gradient(circle at 14% 10%, rgba(56,189,248,.10), transparent 28%), linear-gradient(180deg, rgba(16,20,27,.96), #050608);
+  --shell-bg: radial-gradient(circle at 14% 10%, rgba(52,211,153,.10), transparent 28%), linear-gradient(180deg, rgba(16,20,27,.96), #050608);
   --panel-glass: rgba(16,20,27,.88);
   --panel-top: rgba(24,33,44,.70);
   --scroll-bg: linear-gradient(180deg, rgba(5,6,8,.18), rgba(5,6,8,.44));
@@ -99,7 +99,7 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   align-items: center;
   justify-content: space-between;
 }
-.les-brand { font-weight: 900; font-size: 1.1rem; color: var(--accent); text-shadow: 0 0 12px rgba(56,189,248,.35); }
+.les-brand { font-weight: 900; font-size: 1.1rem; color: var(--accent); text-shadow: 0 0 12px rgba(52,211,153,.35); }
 .kpi-box {
   background: var(--bg-panel);
   border: 1px solid var(--border);
@@ -127,13 +127,13 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
 .tag-warn { background:rgba(245,158,11,.15); color:var(--warn); border:1px solid rgba(245,158,11,.3); border-radius:10px; padding:2px 8px; font-size:.6rem; font-weight:700; }
 .tag-err  { background:rgba(239,68,68,.15);  color:var(--err);  border:1px solid rgba(239,68,68,.3);  border-radius:10px; padding:2px 8px; font-size:.6rem; font-weight:700; }
 .tag-dim  { background:var(--bg-mod); color:var(--dim); border:1px solid var(--border); border-radius:10px; padding:2px 8px; font-size:.6rem; font-weight:700; }
-.tag-acc  { background:rgba(59,130,246,.15); color:var(--accent); border:1px solid rgba(59,130,246,.3); border-radius:10px; padding:2px 8px; font-size:.6rem; font-weight:700; }
+.tag-acc  { background:rgba(52,211,153,.15); color:var(--accent); border:1px solid rgba(52,211,153,.3); border-radius:10px; padding:2px 8px; font-size:.6rem; font-weight:700; }
 .tag-pauk { background:rgba(139,92,246,.15); color:var(--pauk);  border:1px solid rgba(139,92,246,.3); border-radius:10px; padding:2px 8px; font-size:.6rem; font-weight:700; }
 .les-fuse-board {
   position: relative;
   overflow: hidden;
   background:
-    linear-gradient(90deg, rgba(34,224,111,.09), rgba(56,189,248,.07) 52%, rgba(255,209,102,.06)),
+    linear-gradient(90deg, rgba(34,224,111,.09), rgba(52,211,153,.07) 52%, rgba(255,209,102,.06)),
     var(--bg-panel);
 }
 .les-fuse-board::before {
@@ -255,7 +255,7 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
 .les-map-preset-active {
   color: var(--text) !important;
   border-color: var(--accent);
-  background: rgba(56,189,248,.12) !important;
+  background: rgba(52,211,153,.12) !important;
 }
 .les-map-action,
 .les-map-action-muted {
@@ -364,7 +364,7 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   left: 0;
   right: 0;
   height: 2px;
-  background: linear-gradient(90deg, rgba(56,189,248,.14), rgba(56,189,248,.85));
+  background: linear-gradient(90deg, rgba(52,211,153,.14), rgba(52,211,153,.85));
   transform: translateY(-50%);
 }
 .diag-map-arrow::after {
@@ -374,7 +374,7 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   right: 0;
   border-top: 5px solid transparent;
   border-bottom: 5px solid transparent;
-  border-left: 7px solid rgba(125,211,252,.9);
+  border-left: 7px solid rgba(110,231,183,.9);
 }
 .diag-node {
   --node-color: rgba(138,162,184,.62);
@@ -504,7 +504,7 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
     bottom: 0;
     border-left: 5px solid transparent;
     border-right: 5px solid transparent;
-    border-top: 7px solid rgba(125,211,252,.9);
+    border-top: 7px solid rgba(110,231,183,.9);
     border-bottom: 0;
   }
   .diag-node-hub {
@@ -626,7 +626,7 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   letter-spacing: .04em;
 }
 .sov-composer-actions .q-btn:last-child {
-  background: linear-gradient(135deg, rgba(56,189,248,.95), rgba(34,224,111,.86)) !important;
+  background: linear-gradient(135deg, rgba(52,211,153,.95), rgba(34,224,111,.86)) !important;
   color: #041014 !important;
   font-weight: 900;
 }
@@ -637,9 +637,9 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   height: 24px;
   padding: 0 9px;
   border-radius: 4px;
-  border: 1px solid rgba(56,189,248,.36);
+  border: 1px solid rgba(52,211,153,.36);
   color: var(--accent);
-  background: rgba(56,189,248,.10);
+  background: rgba(52,211,153,.10);
   font-size: .62rem;
   font-weight: 900;
 }
@@ -837,8 +837,8 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   cursor: pointer;
 }
 .sov-session-card:hover, .sov-session-card-active {
-  border-color: rgba(56,189,248,.7);
-  background: rgba(56,189,248,.10);
+  border-color: rgba(52,211,153,.7);
+  background: rgba(52,211,153,.10);
 }
 .sov-session-title {
   color: var(--text);
@@ -878,9 +878,9 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   justify-content: flex-start !important;
 }
 .sov-format-btn-active {
-  border-color: rgba(56,189,248,.8) !important;
+  border-color: rgba(52,211,153,.8) !important;
   color: var(--accent) !important;
-  background: rgba(56,189,248,.12) !important;
+  background: rgba(52,211,153,.12) !important;
 }
 .sov-template-preview,
 .sov-prompt-preview {
@@ -984,7 +984,7 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
 }
 /* Tabs */
 .q-tab { color: var(--dim) !important; opacity: 1 !important; }
-.q-tab--active { color: var(--accent) !important; background: rgba(56,189,248,.10) !important; }
+.q-tab--active { color: var(--accent) !important; background: rgba(52,211,153,.10) !important; }
 .les-top-tabs .q-tabs__content {
   height: 56px !important;
 }
@@ -1113,14 +1113,14 @@ body, .nicegui-content {
 /* 5. КАРТОЧКИ/ПРЕДОХРАНИТЕЛИ/УЗЛЫ — лёгкий подъём при наведении (без дрожи слоя). */
 .card-les:hover, .les-fuse:hover, .kpi-box:hover,
 .diag-node:hover, .diag-acronym-item:hover, .les-runtime-service:hover {
-  border-color: rgba(56,189,248,.46);
+  border-color: rgba(52,211,153,.46);
   box-shadow: 0 4px 18px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.05);
 }
 
 /* 6. ПОЛЯ ВВОДА — мягкое фокус-кольцо акцентом (дополняет focus-visible). */
 .q-field--focused .q-field__control {
-  border-color: rgba(56,189,248,.7) !important;
-  box-shadow: 0 0 0 3px rgba(56,189,248,.14);
+  border-color: rgba(52,211,153,.7) !important;
+  box-shadow: 0 0 0 3px rgba(52,211,153,.14);
 }
 
 /* 7. СТРОКИ ТАБЛИЦ — наведение читается мягче, выделяет текущую строку. */
