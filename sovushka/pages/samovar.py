@@ -371,6 +371,9 @@ def build_samovar():
 
     _upd_toggle()
     asyncio.create_task(_refresh())
+    # Авто-обновление: статус индексатора часто и дёшево, полная сводка (счётчики+строки) реже
+    ui.timer(5.0, lambda: asyncio.create_task(_refresh_status()))
+    ui.timer(20.0, lambda: asyncio.create_task(_refresh()))
 
 
 def build_samovar_legacy():

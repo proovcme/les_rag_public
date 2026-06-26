@@ -260,8 +260,9 @@ async def classic_admin_page(request: Request):
 
     # Layout: Header (со встроенными табами) + Content + Footer
     with ui.column().classes("w-full h-screen no-wrap gap-0"):
-        # W5.7: граф знаний same-origin (/lite-api, без CORS). Cosmos.gl GPU-граф (/graph → legacy-фолбэк).
-        visualizer_url = "/graph-cosmos"
+        # Граф знаний: canvas-2D со своей физикой + тумблер «связи НТД» (Олегу зашёл больше cosmos).
+        # /graph-cosmos (3d-force-graph) оставлен как альтернатива.
+        visualizer_url = "/graph"
 
         # Единая полоса: лого + табы + контролы
         tabs, tr = build_header(
@@ -327,6 +328,7 @@ if __name__ in {"__main__", "__mp_main__"}:
     ui.run(
         port=UI_PORT,
         title="Л.Е.С. v5.0",
+        favicon="🦉",  # Совушка — иконка во вкладке браузера
         dark=True,
         show=False,
         storage_secret=STORAGE_SECRET,
