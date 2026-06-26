@@ -8,6 +8,16 @@
 Это не замена текущему `normcontrol_service.py`, а следующий вертикальный слой поверх него.
 Архитектурно это **RAG-led SPDS review**, а не чистая экспертная система.
 
+Дополнение по `/Users/ovc/Documents/les final build spec.pdf`:
+
+```text
+Doc Review — верхний продукт нормоконтроля.
+Formal Checker — детерминированный evidence provider.
+ГОСТ Р 21.101-2026 и ПП РФ №87 — первые обязательные профили.
+Чек-листы БУП/ГИП — прикладные профили поверх Doc Review, а не отдельный движок.
+Normalized remark JSON — общий выход для formal/normative/checklist/consistency замечаний.
+```
+
 Приоритет оператора:
 
 ```text
@@ -82,6 +92,7 @@ RAG-поиска требований стандарта и evidence в комп
 видеть, какие пункты требуют ручного подтверждения
 получить source_refs до листа/файла/пункта ГОСТ
 скачать XLSX/JSON/HTML отчёт
+иметь машинный JSON замечаний, совместимый с DOCX/PDF renderer
 ```
 
 Не цель первого среза:
@@ -154,11 +165,16 @@ proxy/services/doc_review_service.py
 proxy/services/normcontrol_rulepack_service.py
 proxy/services/title_block_extract_service.py
 proxy/services/document_set_model.py
+proxy/services/remark_normalization_service.py
 ```
 
 Текущий `normcontrol_service.py` остаётся низкоуровневым formal engine для computed checks.
 Он не должен становиться главным продуктовым "судьёй": в новом workflow его выводы
 встраиваются в RAG-led review рядом с requirement/document evidence.
+
+Проверка состава ПД по ПП РФ №87 должна жить как отдельный profile/checker над
+`document_set_model`, а не внутри YAML ГОСТ Р 21.101-2026. ГОСТ отвечает за СПДС-оформление
+и структуру документации, ПП 87 — за состав разделов ПД.
 
 ### API
 
@@ -233,6 +249,7 @@ GET  /api/doc-review/{run_id}
 сверить ведомость с фактическими файлами
 пометить отсутствующие, лишние и нераспознанные документы
 для каждого результата показать, каким требованием он мотивирован
+для стадии ПД отдельно сверить состав разделов с профилем ПП РФ №87
 ```
 
 ### D3. Обозначения и именование
@@ -303,6 +320,36 @@ PDF открывается
 }
 ```
 
+Единый normalized remark для отчётов и интеграций:
+
+```json
+{
+  "id": "REM-042",
+  "source": "doc_review|formal_checker|checklist|cross_checker",
+  "severity": "critical|major|minor|info",
+  "category": "formal|normative|consistency|checklist",
+  "location": {
+    "document": "Том 3. ПБ",
+    "page": 5,
+    "section": "Основная надпись"
+  },
+  "description": "Краткое описание замечания",
+  "normative_ref": {
+    "document": "ГОСТ Р 21.101-2026",
+    "clause": "пункт/раздел",
+    "source_ref": "norm_dataset:file#page=..."
+  },
+  "document_evidence": [
+    {
+      "source_ref": "pd_dataset:file#page=5",
+      "snippet": "короткий фрагмент"
+    }
+  ],
+  "recommendation": "Что проверить или исправить",
+  "human_decision": "unset|confirmed|rejected|needs_more_evidence"
+}
+```
+
 Правила:
 
 ```text
@@ -311,6 +358,7 @@ PDF открывается
 нет уверенного extraction — manual_required
 окончательный статус не рисовать без computed evidence или human_decision
 LLM объясняет, связывает и предлагает вопросы, но не утверждает финальное решение
+remark может попасть в XLSX/DOCX/PDF только с source_ref или явным статусом manual_required
 ```
 
 ---
@@ -328,6 +376,9 @@ PDF без текстового слоя → OCR/manual_required, не crash
 ГОСТ 21.101-2020 в корпусе при выбранном 2026 → warning о версии
 отчёт XLSX/JSON создаётся
 UI показывает retrieved requirements / document evidence / computed checks / review needed отдельно
+ПП 87 checker на синтетической ПД находит отсутствующий обязательный раздел
+normalized remark JSON создаётся для computed_issue и potential_issue
+чек-лист ПД может сослаться на doc_review item / normalized remark без повторной проверки
 ```
 
 Live-приёмка:
@@ -372,6 +423,15 @@ make verify
 make smoke-basic
 ```
 
+Дополнительные safety tests:
+
+```text
+doc_review/checklist не emit-ит общий verdict "ПД соответствует" без human decision
+ПП 87 не зашит в ГОСТ 21.101 rulepack как полный текст
+normalized remark без source_ref допускается только для manual_required/missing_evidence
+DOCX/PDF renderer потребляет тот же JSON remarks, что и XLSX/HTML
+```
+
 ---
 
 ## 8. Порядок реализации
@@ -400,6 +460,7 @@ structured review items
 XLSX/JSON/HTML report
 source_refs
 manual_required
+normalized remarks
 ```
 
 ### Phase 4 — UI
@@ -418,4 +479,13 @@ open source
 ручной аудит top-10
 обновление review map/rulepack
 запись в failure ledger
+```
+
+### Phase 6 — profiles and final reports
+
+```text
+ПП 87 composition profile для ПД
+Checklist Review profile: БУП/ГИП поверх doc-review evidence
+DOCX/PDF renderer по normalized remarks
+Cross-Checker ПД↔РД как отдельная следующая вертикаль
 ```

@@ -659,11 +659,13 @@ Top-5 локальных провалов закрыты или marked infrastru
 ```text
 комплект ПД/РД
   → RAG находит применимые требования СПДС/ГОСТ
+  → отдельный profile сверяет состав ПД по ПП РФ №87
   → RAG находит evidence в комплекте
   → код проверяет только формализуемые вещи
   → модель объясняет и связывает evidence
   → инженер подтверждает/отклоняет замечание
-  → XLSX/JSON/HTML отчёт
+  → normalized remarks
+  → XLSX/JSON/HTML отчёт, затем DOCX/PDF renderer
 ```
 
 Статус стандарта на 2026-06-26:
@@ -684,11 +686,13 @@ rulepack config/normcontrol/gost_r_21_101_2026.yaml как карта review, н
 doc-review service поверх текущего normcontrol v1 и RAG retrieval
 SPDS applicability: ПД/РД/unknown, комплект, раздел, марка, дисциплина
 document set model: файл ↔ лист ↔ ведомость ↔ штамп ↔ обозначение
+ПП 87 composition profile для состава ПД
 RAG search по требованиям ГОСТ Р 21.101-2026 и related СПДС
 RAG search по комплекту: ведомости, штампы, пояснения, листы, изменения
 computed checks: состав комплекта, ведомости, обозначения, листы, изменения
 title block/stamp extraction: уверенно или manual_required
 evidence model: requirement, document_evidence, computed_check, model_note, human_decision
+normalized remark JSON: общий выход для doc-review/formal-checker/checklist/cross-checker
 отчёт XLSX/JSON/HTML
 UI "Проверка документации" в Инструментах
 ```
@@ -726,11 +730,13 @@ RAG/layout: изменения/revisions: evidence found / potential issue / not
 synthetic РД clean → no confirmed error, requirements/evidence trace есть, silent pass нет
 synthetic РД missing sheet → computed issue с rule_id/clause/source_ref
 bad designation → potential/confirmed issue с target
+synthetic ПД без обязательного раздела ПП 87 → computed/potential issue, не общий verdict
 PDF без текста → OCR/manual_required, не crash
 штамп не найден → manual_required или potential_issue, не pass
 ГОСТ Р 21.101-2020 в корпусе при rulepack 2026 → warning
 реальный комплект РД от оператора → top-10 RAG/computed замечаний вручную сверены
 отчёт XLSX/JSON создаётся
+JSON remarks пригоден для чек-листа БУП/ГИП и будущего DOCX/PDF отчёта
 UI показывает retrieved requirements / computed checks / review needed / confirmed отдельно
 ```
 
