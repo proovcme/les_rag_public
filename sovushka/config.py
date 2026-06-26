@@ -7,7 +7,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 
-ROOT = Path(".")
+# Корень рантайма ОТ ФАЙЛА, не от CWD: иначе UI-сервис (другой WorkingDirectory) не находил .env
+# и TRUSTED_NETWORKS падал в дефолт (только loopback) → ZeroTier/доверенные сети бились в логин ВОЛК.
+ROOT = Path(__file__).resolve().parent.parent
 ENV_PATH = ROOT / ".env"
 load_dotenv(ENV_PATH, override=False)
 
