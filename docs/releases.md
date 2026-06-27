@@ -7,6 +7,8 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.9** | HEAD | Scope passport hotfix: the chat passport dialog is pre-mounted in the NiceGUI slot and populated on click, so the operator-facing passport button opens reliably after async profile loading. |
+| **v0.24.0.8** | HEAD | Operator UX pass: chat hides internal KOT/CTX/CACHE markers behind technical details, adds a visible scope passport dialog for chat/dataset memory, and forces token-bubble updates during SSE streaming. |
 | **v0.24.0.7** | HEAD | Chat table-format correction: local normative RAG keeps compact markdown tables for multi-requirement answers while still exposing `source_map` and latency phases. |
 | **v0.24.0.6** | HEAD | Chat stability pass: local MLX RAG gets a smaller default context budget, `/api/chat` returns `source_map` matching the exact "Источник N" prompt numbering, and `latency_phases` exposes retrieval/context/generation/validation timing. |
 | **v0.24.0.5** | HEAD | External Radar: Samovar gets a no-reindex overview of configured external roots, filemap candidates and already indexed in-place `source_path` documents via `/api/external-radar/summary`. |

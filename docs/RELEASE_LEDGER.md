@@ -7,12 +7,12 @@
 ## Текущее состояние (2026-06-27)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.7  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.9  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.7 table-format correction
+задеплоено на рантайм:     0.24.0.9 passport dialog hotfix
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.7 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=27
+рантайм /api/version:      0.24.0.9 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=27
 ```
 
 > 0.24.0.6 выкачен через `make ship`. Живой чат-прогон без semantic cache:
@@ -20,6 +20,11 @@ dev HEAD:                  HEAD  (см. git log -1)
 > HVAC `37.0s` (`generation=30.148s`, `source_map=4`, unknown citations `0`).
 > 0.24.0.7 возвращает таблицы как нормальный формат строительной выдачи. Живой FIRE-прогон:
 > `has_table=true`, `50.6s` (`generation=42.264s`), `source_map=5`, unknown citations `0`.
+> 0.24.0.8 выкачен через `make ship`: операторский слой чата прячет внутренние KOT/CTX/CACHE
+> за раскрывашку, добавляет видимый «Паспорт области» и принудительно обновляет пузырь на каждом
+> SSE-токене.
+> 0.24.0.9 — hotfix кнопки «Паспорт области»: диалог заранее создаётся в UI-slot NiceGUI, а клик
+> только заполняет его после async-загрузки профилей.
 
 > Деплоятся только code-правки (`proxy/`,`backend/`,`sovushka/`,`config/`). Доки на рантайм не катятся —
 > поэтому dev HEAD ≠ deployed_commit это нормально, пока расходятся только доки.
@@ -56,6 +61,8 @@ dev HEAD:                  HEAD  (см. git log -1)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.9 | HEAD | 2026-06-27 | Passport dialog hotfix: «Паспорт области» больше не создаёт `ui.dialog()` из фоновой задачи; диалог предмонтирован в правильном NiceGUI slot и заполняется после async-загрузки памяти чата/deep-паспортов датасетов | ✅ рантайм, full test + ship/smoke + browser click ✅ |
+| 0.24.0.8 | HEAD | 2026-06-27 | Operator UX/passports/streaming: первый слой чата показывает человеческие статусы (`Проверено`, `Без проверки`, маршрут, секунды), внутренние KOT/CTX/CACHE переехали в «Технические детали»; добавлена кнопка «Паспорт области» с памятью чата и deep-паспортами выбранных датасетов; SSE-токены принудительно обновляют пузырь ответа и скролл | ✅ рантайм, full test + ship/smoke ✅ |
 | 0.24.0.7 | HEAD | 2026-06-27 | Chat table-format correction: локальный technical/legal RAG снова предпочитает компактную markdown-таблицу, если найдено несколько требований/условий; короткий профиль теперь режет простыни/постскриптумы, а не таблицы | ✅ рантайм, full test + ship/smoke + live table check ✅ |
 | 0.24.0.6 | HEAD | 2026-06-27 | Chat stability/source trace: локальный MLX получает меньший default context budget и короткий формат для technical/legal RAG; `/api/chat` отдаёт `source_map`, совпадающий с номерами prompt-блоков `Источник N`; `latency_phases` возвращает retrieval/context/generation/validation/overhead/total; `saferag_service.py` добавлен в critical runtime alignment | ✅ рантайм, full test + ship/smoke + live chat latency/source-map ✅ |
 | 0.24.0.5 | HEAD | 2026-06-27 | External Radar: Самовар получил no-reindex обзор внешних корней, `file_map.db`-кандидатов и уже indexed in-place `documents.source_path`; новый API `GET /api/external-radar/summary`; радар делает только shallow-статистику и не читает содержимое файлов | ✅ рантайм, full test + ship/smoke + live radar ✅ |
@@ -134,6 +141,11 @@ focused 0.24.0.7:       ✅ 32 passed (source-map/chat/version)
 make test 0.24.0.7:     ✅ 2096 passed / 6 warnings / 121.69s
 make ship 0.24.0.7:     ✅ verify 2096 collected; focused 61 passed; pre-smoke pass=9; post-smoke pass=9 after restart retry
 live table 0.24.0.7:    ✅ FIRE has_table=true; 50.6s; source_map=5; unknown citations=0
+focused 0.24.0.9:       ✅ 39 passed (operator UI helpers + SSE + version)
+make verify 0.24.0.9:   ✅ 2098 collected
+make test 0.24.0.9:     ✅ 2098 passed / 6 warnings / 123.11s
+make ship 0.24.0.9:     ✅ verify 2098 collected; focused 63 passed; pre-smoke pass=9; post-smoke pass=9 after restart retry
+browser 0.24.0.9:       ✅ /classic 200, «Паспорт области» button present and click opens dialog
 ```
 
 **Закрыто в 0.23.6.7:** latency-smoke был не LLM generation, а 12s ожидание недоступного

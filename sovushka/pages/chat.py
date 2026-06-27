@@ -143,6 +143,108 @@ OUTPUT_FORMATS = {
 }
 
 
+def _operator_status_chips(crag: str, meta: dict | None, srcs: list | None = None) -> list[dict[str, str]]:
+    """Human-facing chips for the answer footer.
+
+    Internal router/cache/debug markers stay in technical details; the first UI
+    layer should tell the operator what matters: sources, check status, route.
+    """
+    chips: list[dict[str, str]] = []
+    src_count = len(srcs or [])
+    if src_count:
+        chips.append({"label": f"{src_count} источн.", "tone": "ok"})
+    status = (crag or "").upper()
+    if status == "VERIFIED":
+        chips.append({"label": "Проверено", "tone": "ok"})
+    elif status == "UNVALIDATED":
+        chips.append({"label": "Без проверки", "tone": "warn"})
+    elif status:
+        chips.append({"label": "Нужна проверка", "tone": "err"})
+
+    route = (meta or {}).get("query_route") if isinstance((meta or {}).get("query_route"), dict) else {}
+    channel = str(route.get("channel") or route.get("operation") or "").strip()
+    route_labels = {
+        "table": "Таблица",
+        "mail": "Почта",
+        "doc_review": "Нормоконтроль",
+        "smeta": "Смета",
+        "smeta_mode": "Смета",
+        "rag": "Поиск",
+        "generic": "Поиск",
+        "source_lookup": "Источник",
+        "memory": "Память",
+        "command": "Команда",
+    }
+    if channel:
+        chips.append({"label": route_labels.get(channel, "Маршрут выбран"), "tone": "dim"})
+
+    phases = (meta or {}).get("latency_phases") or ((meta or {}).get("retrieval_trace") or {}).get("latency_phases")
+    if isinstance(phases, dict) and phases.get("total") is not None:
+        chips.append({"label": f"{float(phases.get('total') or 0):.1f}с", "tone": "dim"})
+    return chips
+
+
+def _operator_technical_chips(meta: dict | None) -> list[str]:
+    """Compact internal trace chips, hidden behind a details expander."""
+    if not meta:
+        return []
+    out: list[str] = []
+    query_route = meta.get("query_route") if isinstance(meta.get("query_route"), dict) else {}
+    kot = query_route.get("kot") if isinstance(query_route.get("kot"), dict) else {}
+    trace = meta.get("retrieval_trace") if isinstance(meta.get("retrieval_trace"), dict) else {}
+    validation = meta.get("validation") if isinstance(meta.get("validation"), dict) else {}
+    if kot:
+        out.append(f"KOT {kot.get('dataset_filter') or 'AUTO'} {kot.get('confidence', 0)}")
+    if trace:
+        mode = str(trace.get("mode") or "vector").upper()
+        quality = trace.get("quality_status") or trace.get("quality", {}).get("status") or "?"
+        out.append(f"{mode} {quality}")
+        context_window = trace.get("context_window") if isinstance(trace.get("context_window"), dict) else {}
+        if context_window:
+            out.append(f"CTX {context_window.get('expanded_count', 0)}/{context_window.get('input_count', 0)}")
+    out.append(f"CACHE {str(meta.get('cache') or 'miss').upper()}")
+    if validation:
+        out.append("VALIDATOR ON" if validation.get("enabled") else "VALIDATOR OFF")
+    return out
+
+
+def _dataset_profile_operator_summary(profile: dict) -> list[str]:
+    """Short operator summary of a dataset passport."""
+    if not isinstance(profile, dict):
+        return []
+    lines = [
+        f"{profile.get('name') or profile.get('dataset_id')}: "
+        f"{profile.get('document_count', 0)} файлов, {profile.get('chunk_count', 0)} чанков",
+    ]
+    deep = profile.get("deep") if isinstance(profile.get("deep"), dict) else {}
+    norm_refs = ", ".join((deep.get("norm_refs") or [])[:5])
+    keywords = ", ".join((deep.get("content_keywords") or profile.get("keywords") or [])[:8])
+    if norm_refs:
+        lines.append(f"Нормативы/ссылки: {norm_refs}")
+    if keywords:
+        lines.append(f"Темы: {keywords}")
+    if deep.get("table_signal_chunks"):
+        lines.append(f"Табличный сигнал: {deep.get('table_signal_chunks')} фрагм.")
+    if profile.get("profile_path"):
+        lines.append(f"Файл паспорта: {profile.get('profile_path')}")
+    return lines
+
+
+def _chat_profile_operator_summary(profile: dict) -> list[str]:
+    if not isinstance(profile, dict) or not profile:
+        return []
+    lines = [
+        f"Ходов: {profile.get('turn_count', 0)} · последний статус: {profile.get('last_status') or 'unknown'}",
+    ]
+    if profile.get("effective_dataset_filter"):
+        lines.append(f"Текущий фильтр: {profile.get('effective_dataset_filter')}")
+    if profile.get("blockers"):
+        lines.append("Не хватает: " + "; ".join(profile.get("blockers", [])[-3:]))
+    if profile.get("assumptions"):
+        lines.append("Допущения: " + "; ".join(profile.get("assumptions", [])[-3:]))
+    return lines
+
+
 def _attachment_chat_payload(attachment: dict) -> dict:
     """Скрепка → поля ChatRequest. Чистая функция для тестов и чтобы UI не забывал scope."""
     if not attachment or not attachment.get("id"):
@@ -446,6 +548,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     mode_chip.tooltip("Режим ответа: заземлённый поиск по документам (RAG)")
                     validation_chip = ui.label("CRAG ON").classes("sov-chip")
                     validation_chip.tooltip("Т.О.С.К.А.: проверка ответа на галлюцинации включена")
+                    ui.button(
+                        icon="o_article",
+                        on_click=lambda: asyncio.create_task(_open_scope_passport()),
+                    ).props('flat round dense aria-label="Паспорт области"').classes("sov-icon-btn").tooltip(
+                        "Паспорт области: что известно о выбранном чате и датасетах"
+                    )
                     ui.button(icon="o_delete_sweep", on_click=lambda: _clear_chat()).props(
                         'flat round dense aria-label="Очистить чат"'
                     ).classes("sov-icon-btn").tooltip("Очистить чат")
@@ -793,6 +901,20 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     on_click=lambda: asyncio.create_task(send_with_form()),
                 ).props("no-caps")
 
+    with ui.dialog() as passport_dialog:
+        with ui.card().classes("sov-advanced-dialog"):
+            with ui.row().classes("w-full items-center justify-between"):
+                with ui.column().classes("gap-0"):
+                    ui.label("Паспорт области").classes("sov-panel-title")
+                    passport_scope_label = ui.label("Весь RAG").classes("sov-muted")
+                ui.button(icon="o_close", on_click=passport_dialog.close).props(
+                    'flat round dense aria-label="Закрыть"'
+                ).classes("sov-icon-btn")
+            with ui.scroll_area().classes("sov-advanced-scroll"):
+                passport_body = ui.column().classes("w-full gap-3")
+            with ui.row().classes("w-full justify-end gap-2"):
+                ui.button("Закрыть", on_click=passport_dialog.close).props("no-caps flat")
+
     def select_format(key: str):
         out_mode_val["v"] = key
         label, hint = OUTPUT_FORMATS[key]
@@ -837,6 +959,76 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             asyncio.create_task(_load_sessions())
 
     # «Задачи и объёмы» убраны из чата (Олег) — toggle/refresh-панель не нужны.
+
+    async def _resolve_scope_dataset_ids() -> tuple[list[str], list[str]]:
+        ids = [str(x) for x in (scope_state.get("dataset_ids") or []) if str(x)]
+        names: list[str] = []
+        if scope_state.get("scope_type") == "all":
+            return ids, names
+        if ids:
+            data = scope_opts_cache.get("data") or {}
+            by_id = {
+                str(d.get("id")): str(d.get("name") or d.get("id"))
+                for d in (data.get("datasets", []) + data.get("system_datasets", []) + data.get("unassigned_datasets", []))
+            }
+            return ids, [by_id.get(i, i) for i in ids]
+        payload = {
+            "scope": {
+                "scope_type": scope_state.get("scope_type"),
+                "project_ids": scope_state.get("project_ids") or [],
+                "dataset_ids": scope_state.get("dataset_ids") or [],
+            }
+        }
+        resolved = await api_post("/api/scope/resolve", payload)
+        if not isinstance(resolved, dict):
+            return [], []
+        return (
+            [str(x) for x in (resolved.get("resolved_dataset_ids") or []) if str(x)],
+            [str(x) for x in (resolved.get("resolved_dataset_names") or []) if str(x)],
+        )
+
+    async def _open_scope_passport() -> None:
+        passport_scope_label.set_text(scope_state.get("label") or "Весь RAG")
+        passport_body.clear()
+        with passport_body:
+            with ui.card().classes("sov-control-card"):
+                ui.label("Паспорт области загружается...").classes("sov-muted")
+        passport_dialog.open()
+
+        ds_ids, ds_names = await _resolve_scope_dataset_ids()
+        chat_profile = await api_get(f"/api/chat/memory/{state.get('session_id')}") if state.get("session_id") else None
+        dataset_profiles: list[dict] = []
+        for dsid in ds_ids[:5]:
+            from urllib.parse import quote as _q
+            prof = await api_get(f"/api/rag/datasets/{_q(dsid, safe='')}/profile?depth=deep")
+            if isinstance(prof, dict):
+                dataset_profiles.append(prof)
+        passport_body.clear()
+        with passport_body:
+            with ui.card().classes("sov-control-card"):
+                ui.label("Память чата").classes("section-title")
+                lines = _chat_profile_operator_summary(chat_profile or {})
+                if lines:
+                    for line in lines:
+                        ui.label(line).style("font-size:.68rem;color:var(--text);line-height:1.45;")
+                else:
+                    ui.label("Пока нет накопленного паспорта этой сессии. Он появится после ответов с источниками.").classes("sov-muted")
+            with ui.card().classes("sov-control-card"):
+                ui.label("Датасеты в области").classes("section-title")
+                if not ds_ids:
+                    ui.label("Область не сужена: ЛЕС будет искать по всему RAG. Для точного паспорта выбери проект или датасет.").classes("sov-muted")
+                if dataset_profiles:
+                    for idx, prof in enumerate(dataset_profiles, 1):
+                        ui.label(f"{idx}. {prof.get('name') or prof.get('dataset_id')}").style(
+                            "font-size:.72rem;color:var(--accent);font-weight:800;"
+                        )
+                        for line in _dataset_profile_operator_summary(prof)[1:]:
+                            ui.label(line).style("font-size:.66rem;color:var(--text);line-height:1.45;")
+                        ui.separator().style("border-color:var(--border);margin:6px 0;")
+                elif ds_ids:
+                    ui.label("Не удалось загрузить паспорта выбранных датасетов.").classes("sov-muted")
+                if len(ds_ids) > 5:
+                    ui.label(f"Показаны первые 5 датасетов из {len(ds_ids)}. Остальные участвуют в поиске, но не раскрыты в этом окне.").classes("sov-muted")
 
     # W18.1: файл-вьювер (дерево RAG_Content + просмотр текст/код/картинка/PDF).
     def _toggle_files():
@@ -1205,41 +1397,22 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 if c["kind"]:
                     el.tooltip(c["kind"] + ("" if c["has_ref"] else " · без ссылки"))
             if crag:
-                if crag == "VERIFIED":
-                    cls = "src-tag"
-                    label = "Т.О.С.К.А.: VERIFIED"
-                elif crag == "UNVALIDATED":
-                    cls = "src-tag src-tag-warn"
-                    label = "Т.О.С.К.А.: OFF"
-                else:
-                    cls = "src-tag src-tag-err"
-                    label = f"Т.О.С.К.А.: {crag}"
-                ui.label(label).classes(cls)
+                for chip in _operator_status_chips(crag, meta, srcs):
+                    cls = {
+                        "ok": "src-tag",
+                        "warn": "src-tag src-tag-warn",
+                        "err": "src-tag src-tag-err",
+                    }.get(chip.get("tone", "dim"), "src-tag")
+                    ui.label(chip["label"]).classes(cls)
             if meta:
-                query_route = meta.get("query_route") if isinstance(meta.get("query_route"), dict) else {}
-                kot = query_route.get("kot") if isinstance(query_route.get("kot"), dict) else {}
-                trace = meta.get("retrieval_trace") if isinstance(meta.get("retrieval_trace"), dict) else {}
-                cache = meta.get("cache") or "miss"
-                validation = meta.get("validation") if isinstance(meta.get("validation"), dict) else {}
-                if kot:
-                    kdf = kot.get("dataset_filter") or "AUTO"
-                    conf = kot.get("confidence", 0)
-                    ui.label(f"KOT {kdf} {conf}").classes("src-tag")
-                if trace:
-                    mode = str(trace.get("mode") or "vector").upper()
-                    quality = trace.get("quality_status") or trace.get("quality", {}).get("status") or "?"
-                    ui.label(f"{mode} {quality}").classes("src-tag")
-                    context_window = trace.get("context_window") if isinstance(trace.get("context_window"), dict) else {}
-                    if context_window:
-                        expanded = context_window.get("expanded_count", 0)
-                        total = context_window.get("input_count", 0)
-                        cls = "src-tag" if expanded else "src-tag src-tag-warn"
-                        ui.label(f"CTX {expanded}/{total}").classes(cls)
-                ui.label(f"CACHE {str(cache).upper()}").classes("src-tag")
-                if validation:
-                    ui.label("VALIDATOR ON" if validation.get("enabled") else "VALIDATOR OFF").classes(
-                        "src-tag" if validation.get("enabled") else "src-tag src-tag-warn"
-                    )
+                tech = _operator_technical_chips(meta)
+                if tech:
+                    with ui.expansion("Технические детали").props("dense").style(
+                        "font-size:.62rem;color:var(--dim);margin-left:4px;"
+                    ):
+                        with ui.row().classes("gap-1 flex-wrap"):
+                            for item in tech:
+                                ui.label(item).classes("src-tag")
                 history_id = meta.get("history_id")
                 if history_id:
                     async def _feedback(status: str):
@@ -2295,6 +2468,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 "validation": d.get("validation") or {"enabled": bool(validation_sw.value)},
                 "history_id": d.get("history_id"),
                 "table_query": d.get("table_query"),
+                "latency_phases": d.get("latency_phases") or (d.get("retrieval_trace") or {}).get("latency_phases"),
                 "out_mode": out_mode,
                 "clarifying_questions": d.get("clarifying_questions") or [],
                 "suggested_filters": d.get("suggested_filters") or [],
@@ -2335,9 +2509,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     _stop_tick["v"] = True  # глушим тикер «Генерирую… Nс»
                 stream_state["text"] += payload if isinstance(payload, str) else ""
                 ai_placeholder_label.set_text(stream_state["text"])
+                ai_placeholder_label.update()
+                chat_scroll.scroll_to(percent=1)
             elif event == "reset":
                 stream_state["text"] = ""
                 ai_placeholder_label.set_text("")
+                ai_placeholder_label.update()
             elif event == "final":
                 stream_state["final"] = payload if isinstance(payload, dict) else {}
             elif event == "error":
