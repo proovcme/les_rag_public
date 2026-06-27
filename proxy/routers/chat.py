@@ -347,7 +347,7 @@ def _generation_token_budget(*, max_tokens: int, local_big: bool, attempt: int, 
         return _env_int("RAG_CHAT_RETRY_MAX_TOKENS", 2048)
     if not local_big:
         return max_tokens
-    cap = _env_int("RAG_LOCAL_CHAT_MAX_TOKENS", 700)
+    cap = _env_int("RAG_LOCAL_CHAT_MAX_TOKENS", 1100)
     if intent == "full":
         cap = _env_int("RAG_LOCAL_CHAT_FULL_MAX_TOKENS", 1800)
     return min(max_tokens, cap)
@@ -2902,8 +2902,9 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                         if local_big and answer_form.intent in {"brief", "value", "default"}:
                             sys_msg += (
                                 " Для локального нормативного ответа это правило приоритетнее общего правила "
-                                "про таблицы: максимум 5 коротких пунктов, без markdown-таблицы, без вступления, "
-                                "без заключения, без шуток и постскриптумов. "
+                                "про стиль: если найдено несколько требований или условий, используй компактную "
+                                "markdown-таблицу до 6 строк; если найден один факт, дай одну строку. "
+                                "Без длинного вступления, без заключения, без шуток и постскриптумов. "
                                 "Если в контексте есть только общие нормы, прямо отдели их от отсутствующих "
                                 "специальных требований."
                             )
@@ -2929,8 +2930,9 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                                 "Если ссылаешься на источник, используй только номера из заголовков "
                                 "контекста вида [Источник N | ...]; не придумывай номера источников. "
                                 + (
-                                    "Формат именно этого ответа: 3-5 маркированных пунктов, одна строка на пункт; "
-                                    "markdown-таблицу не используй; примечания, вступления, заключения и шутки не пиши."
+                                    "Формат именно этого ответа: короткая markdown-таблица, если требований несколько; "
+                                    "до 6 строк, одна строка на требование; примечания, длинные вступления, заключения "
+                                    "и шутки не пиши."
                                     if local_big and answer_form.intent in {"brief", "value", "default"}
                                     else ""
                                 )
