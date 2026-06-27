@@ -59,7 +59,7 @@ Proxy       :8050  (FastAPI)  ── /api/chat, /api/datasets, /api/runtime, /ap
 
 ## Поток запроса (чат) и индексации
 
-**Запрос:** `POST /api/chat` → `runtime_admission` (очередь/режим) → `query_router` (mail/table/clause/generic) → `retrieval_service` (semantic_cache → Qdrant) → `context_memory_service` (deep-паспорт чата/датасета как фон, НЕ evidence; prompt-лимит датасетов) → `saferag_service` (C-RAG: контекст + source-map `Источник N` + валидация фактов через MLX `/api/validate`) → `runtime_dispatcher` (MLX `/v1/chat/completions`, стрим) → ответ + `sources`/`source_map` + `latency_phases` + статус валидации.
+**Запрос:** `POST /api/chat` → `runtime_admission` (очередь/режим) → `query_router` (mail/table/clause/generic) → `retrieval_service` (semantic_cache → Qdrant) → `context_memory_service` (deep-паспорт чата/датасета как фон, НЕ evidence; prompt-лимит датасетов) → `saferag_service` (C-RAG: контекст + source-map `Источник N` + валидация фактов через MLX `/api/validate`) → `runtime_dispatcher` (MLX `/v1/chat/completions`, стрим) → ответ + `sources`/`source_map` + `latency_phases` + статус валидации + `scenario`/`answer_contract`.
 
 **Индексация:** `POST /api/datasets/{id}/upload` → `document_router.route_document()` → `converter.convert_to_markdown()` (pdf/docx/xlsx/eml/dxf/ifc) → `StructureAwareSplitter` (бережёт нумерованные пункты ГОСТ/СП) → батч-эмбеддинг через MLX `/v1/embeddings` → `upsert` в Qdrant → метаданные в SQLite (`data/les_meta_qwen.db`).
 
@@ -84,7 +84,7 @@ Proxy       :8050  (FastAPI)  ── /api/chat, /api/datasets, /api/runtime, /ap
 - **pages/**: `overview` (ОБЗОР), `samovar` (С.А.М.О.В.А.Р. — датасеты), `prorab`, `zadachi` (задачник+заметки, W16), `instrumenty` (операторская панель служебных источников данных), `obyomy` (журнал полевых объёмов, W8), `chat` (AI ЧАТ; drawer «Задачи и объёмы» — просмотр /api/tasks+/api/field прямо в чат-шелле, ввод командами чата), `history`, `volk` (auth), `diag`. **components/**: `header`, `charts`, `logterm`.
 - Единственный UI — NiceGUI: `/classic` чат, `/les/classic` админка (W5.4/5.5). HTML-шеллы lite_chat/lite_admin удалены; `/`, `/les`, `/les/lite` редиректят в NiceGUI.
 - `lite_bridge.py` (`register_lite_bridge_routes`): мост `/lite-api/*`→proxy (контур les.ovc.me/M5/smoke 12/12/вьювер), `/lite-runtime/*` (рестарты сервисов, loopback/trusted), статика+страница вьювера CAD/BIM, редиректы шеллов. `m5_display.py` (экран Wokyis M5) — отдельно.
-- Чат: нестриминговый `POST /api/chat` + SSE `POST /api/chat/stream` (W5.1, токены по мере генерации; UI обновляет пузырь ответа на каждом токене); push-канал `GET /api/live` (W5.2, метрики/статус/индексация одним SSE). В первом слое ответа Совушка показывает операторские статусы, а KOT/CTX/CACHE прячет в «Технические детали». Кнопка «Паспорт области» показывает память чата и deep-паспорта выбранных датасетов.
+- Чат: нестриминговый `POST /api/chat` + SSE `POST /api/chat/stream` (W5.1, токены по мере генерации; UI обновляет пузырь ответа на каждом токене; tool/детерминированные ветки шлют `progress`-события до final); push-канал `GET /api/live` (W5.2, метрики/статус/индексация одним SSE). В первом слое ответа Совушка показывает операторские статусы, сценарий и табличный контракт, а KOT/CTX/CACHE/contract-id прячет в «Технические детали». Кнопка «Паспорт области» показывает память чата и deep-паспорта выбранных датасетов.
 - Статика: [frontend/](../frontend/) (legacy `sovushka.html`; `cad_bim_viewer/` — TS+Vite+three.js+web-ifc), [qdrant_visualizer/](../qdrant_visualizer/) (three.js + клиентский PCA), `static/fonts/`.
 
 ### `tools/` (~48) — установка, сборка, ML, smoke, индексация
@@ -130,7 +130,7 @@ Proxy       :8050  (FastAPI)  ── /api/chat, /api/datasets, /api/runtime, /ap
 | Версию/деплой/что запущено | `proxy/services/version_service.py`, `GET /api/version`, бейдж в `header.py` |
 | Детерминированную маршрутизацию | `proxy/services/deterministic_policy_service.py`, `glossary_chat_service.py`, `project_registry_chat_service.py` |
 | Подготовку документов (sidecar) | `proxy/services/sidecar_ops_service.py` + `doc_extract_service.py` |
-| Поток чата/ответа | `proxy/routers/chat.py` → services (`retrieval`, `saferag`, `runtime_dispatcher`) |
+| Поток чата/ответа | `proxy/routers/chat.py` → services (`retrieval`, `saferag`, `runtime_dispatcher`, `answer_contract_service`) |
 | Индексацию/эмбеддинги | `backend/qdrant_adapter.py` + `backend/rag_config.py` (профили) |
 | Память чата/датасета | `proxy/services/context_memory_service.py`, `proxy/services/memory_service.py` |
 | Память/выгрузку моделей | `backend/mlx_adapter.py`, `mlx_host.py` |

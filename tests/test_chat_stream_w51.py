@@ -23,6 +23,9 @@ def test_sse_event_framing():
     assert final.startswith("event: final\ndata: ")
     body = final.split("data: ", 1)[1].rstrip("\n")
     assert json.loads(body)["crag_status"] == "VERIFIED"
+    progress = _sse_event("progress", {"step": 1, "total": 2, "label": "Ищу"})
+    assert progress.startswith("event: progress\ndata: ")
+    assert json.loads(progress.split("data: ", 1)[1])["label"] == "Ищу"
 
 
 async def _drain(resp) -> str:
@@ -45,7 +48,8 @@ async def test_chat_stream_emits_tokens_then_final(monkeypatch):
     assert resp.media_type == "text/event-stream"
     body = await _drain(resp)
 
-    # три token-события в порядке, затем final с вердиктом
+    # progress, три token-события в порядке, затем final с вердиктом
+    assert "event: progress" in body
     assert body.index('data: "При"') < body.index('data: "вет"') < body.index('data: "!"')
     assert "event: final" in body
     final_blob = body.split("event: final\ndata: ", 1)[1].split("\n\n", 1)[0]
@@ -53,6 +57,8 @@ async def test_chat_stream_emits_tokens_then_final(monkeypatch):
     assert final["answer"] == "Привет!"
     assert final["crag_status"] == "VERIFIED"
     assert final["sources"] == ["doc.pdf"]
+    assert final["scenario"]["id"]
+    assert final["answer_contract"]["id"]
     assert body.index("event: token") < body.index("event: final")
 
 
@@ -130,6 +136,7 @@ class _FakeClient:
 @pytest.mark.asyncio
 async def test_api_post_stream_parses_sse(monkeypatch):
     lines = [
+        "event: progress", 'data: {"step": 1, "total": 2, "label": "Ищу"}', "",
         "event: token", 'data: "При"', "",
         "event: token", 'data: "вет"', "",
         "event: final", 'data: {"answer": "Привет", "crag_status": "VERIFIED"}', "",
@@ -140,6 +147,7 @@ async def test_api_post_stream_parses_sse(monkeypatch):
     got_final = await sov_state.api_post_stream("/api/chat/stream", {"question": "q"}, lambda e, p: events.append((e, p)))
 
     assert got_final is True
+    assert ("progress", {"step": 1, "total": 2, "label": "Ищу"}) in events
     assert ("token", "При") in events
     assert ("token", "вет") in events
     assert events[-1][0] == "final"

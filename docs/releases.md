@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.10** | HEAD | Chat workflow contracts: SSE now emits operator `progress` events for tool/deterministic paths, final payloads carry `scenario` and `answer_contract`, and ProfileResolver exposes `output_contract` in route trace. |
 | **v0.24.0.9** | HEAD | Scope passport hotfix: the chat passport dialog is pre-mounted in the NiceGUI slot and populated on click, so the operator-facing passport button opens reliably after async profile loading. |
 | **v0.24.0.8** | HEAD | Operator UX pass: chat hides internal KOT/CTX/CACHE markers behind technical details, adds a visible scope passport dialog for chat/dataset memory, and forces token-bubble updates during SSE streaming. |
 | **v0.24.0.7** | HEAD | Chat table-format correction: local normative RAG keeps compact markdown tables for multi-requirement answers while still exposing `source_map` and latency phases. |

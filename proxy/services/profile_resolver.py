@@ -175,6 +175,7 @@ class ProfileResolution:
             "confidence": round(self.confidence, 3),
             "executor": p.executor,
             "validation_policy": p.validation_policy,
+            "output_contract": p.output_contract,
         }
         if self.channel:
             t["channel"] = self.channel

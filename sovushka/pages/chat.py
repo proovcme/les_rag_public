@@ -177,6 +177,12 @@ def _operator_status_chips(crag: str, meta: dict | None, srcs: list | None = Non
     }
     if channel:
         chips.append({"label": route_labels.get(channel, "Маршрут выбран"), "tone": "dim"})
+    scenario = (meta or {}).get("scenario") if isinstance((meta or {}).get("scenario"), dict) else {}
+    if scenario.get("label"):
+        chips.append({"label": str(scenario["label"]), "tone": "dim"})
+    contract = (meta or {}).get("answer_contract") if isinstance((meta or {}).get("answer_contract"), dict) else {}
+    if contract.get("tables") == "required":
+        chips.append({"label": "Табличный контракт", "tone": "ok"})
 
     phases = (meta or {}).get("latency_phases") or ((meta or {}).get("retrieval_trace") or {}).get("latency_phases")
     if isinstance(phases, dict) and phases.get("total") is not None:
@@ -193,6 +199,8 @@ def _operator_technical_chips(meta: dict | None) -> list[str]:
     kot = query_route.get("kot") if isinstance(query_route.get("kot"), dict) else {}
     trace = meta.get("retrieval_trace") if isinstance(meta.get("retrieval_trace"), dict) else {}
     validation = meta.get("validation") if isinstance(meta.get("validation"), dict) else {}
+    scenario = meta.get("scenario") if isinstance(meta.get("scenario"), dict) else {}
+    contract = meta.get("answer_contract") if isinstance(meta.get("answer_contract"), dict) else {}
     if kot:
         out.append(f"KOT {kot.get('dataset_filter') or 'AUTO'} {kot.get('confidence', 0)}")
     if trace:
@@ -205,6 +213,10 @@ def _operator_technical_chips(meta: dict | None) -> list[str]:
     out.append(f"CACHE {str(meta.get('cache') or 'miss').upper()}")
     if validation:
         out.append("VALIDATOR ON" if validation.get("enabled") else "VALIDATOR OFF")
+    if scenario.get("id"):
+        out.append(f"SCENARIO {scenario.get('id')}")
+    if contract.get("id"):
+        out.append(f"CONTRACT {contract.get('id')}")
     return out
 
 
@@ -2474,6 +2486,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 "suggested_filters": d.get("suggested_filters") or [],
                 "class_suggestions": d.get("class_suggestions") or [],
                 "source_excerpts": d.get("source_excerpts") or [],
+                "scenario": d.get("scenario") or {},
+                "answer_contract": d.get("answer_contract") or {},
             }
             state["chat_history"].append({"role": "ai", "text": ans, "srcs": srcs, "crag": crag, "meta": meta})
             _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, ans, srcs, crag, meta=meta)
@@ -2500,7 +2514,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
 
         # W5.1: SSE-стрим — токены в пузырь по мере генерации; финальное событие
         # несёт авторитетный payload (вердикт валидации в crag_status).
-        stream_state = {"text": "", "got_token": False, "final": None, "error": None}
+        stream_state = {"text": "", "got_token": False, "got_progress": False, "final": None, "error": None}
 
         def _on_sse(event: str, payload) -> None:
             if event == "token":
@@ -2515,6 +2529,19 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 stream_state["text"] = ""
                 ai_placeholder_label.set_text("")
                 ai_placeholder_label.update()
+            elif event == "progress":
+                stream_state["got_progress"] = True
+                _stop_tick["v"] = True
+                if isinstance(payload, dict):
+                    label = str(payload.get("label") or "Работаю...")
+                    step = payload.get("step")
+                    total = payload.get("total")
+                    prefix = f"{step}/{total} · " if step and total else ""
+                    ai_placeholder_label.set_text(prefix + label)
+                else:
+                    ai_placeholder_label.set_text(str(payload or "Работаю..."))
+                ai_placeholder_label.update()
+                chat_scroll.scroll_to(percent=1)
             elif event == "final":
                 stream_state["final"] = payload if isinstance(payload, dict) else {}
             elif event == "error":
