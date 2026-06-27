@@ -6,6 +6,7 @@ from proxy.routers.chat import save_chat_history
 from proxy.services.lexical_index_service import LexicalIndex
 from proxy.services.context_memory_service import (
     DATASET_PROFILE_FILE,
+    benchmark_dataset_profile_warmup,
     build_context_memory_block,
     build_dataset_profile,
     get_chat_profile,
@@ -122,8 +123,12 @@ def test_deep_dataset_profile_uses_bounded_lexical_index(tmp_path, monkeypatch):
     assert "ГОСТ Р 21.101-2026" in profile["deep"]["norm_refs"]
     assert profile["deep"]["table_signal_chunks"] == 1
     assert profile["deep"]["representative_fragments"]
+    assert profile["quality"]["status"] == "good"
+    assert profile["quality"]["score"] > 0.7
+    assert profile["cache_status"] in {"miss", "rebuilt"}
     saved = json.loads((storage_root / "ds-1" / DATASET_PROFILE_FILE).read_text())
     assert saved["deep"]["available"] is True
+    assert saved["quality"]["status"] == "good"
 
 
 def test_warmup_dataset_profiles_builds_all_requested(tmp_path, monkeypatch):
@@ -139,6 +144,29 @@ def test_warmup_dataset_profiles_builds_all_requested(tmp_path, monkeypatch):
     assert result["status"] == "ok"
     assert result["built"] == 1
     assert result["profiles"][0]["lexical_chunks"] == 2
+    assert result["profiles"][0]["quality_status"] == "good"
+    assert result["profiles"][0]["quality_score"] > 0.7
+    assert result["profiles"][0]["elapsed_ms"] >= 0
+
+
+def test_benchmark_dataset_profile_warmup_reports_speed_delta(tmp_path, monkeypatch):
+    db_path = tmp_path / "data" / "les_meta.db"
+    storage_root = tmp_path / "storage" / "datasets"
+    monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+    monkeypatch.setenv("RAG_LEXICAL_DB_PATH", str(db_path))
+    _seed_meta_db(db_path)
+    _seed_lexical(db_path)
+
+    result = benchmark_dataset_profile_warmup(dataset_ids=["ds-1"], storage_root=storage_root, depth="deep")
+
+    assert result["status"] == "ok"
+    assert result["benchmarked"] == 1
+    item = result["profiles"][0]
+    assert item["cold_rebuild_ms"] >= 0
+    assert item["warm_read_ms"] >= 0
+    assert item["speedup_x"] is None or item["speedup_x"] >= 0
+    assert item["quality_status"] == "good"
+    assert item["profile_path"].endswith(DATASET_PROFILE_FILE)
 
 
 def test_chat_profile_updates_from_history_and_prompt_block(tmp_path, monkeypatch):

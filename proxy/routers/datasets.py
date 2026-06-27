@@ -28,6 +28,7 @@ from proxy.config import max_upload_bytes, mlx_url, rag_upload_suffixes
 from proxy.security import require_admin, require_user
 from proxy.services.context_expander_service import expand_context_windows
 from proxy.services.context_memory_service import (
+    benchmark_dataset_profile_warmup,
     build_dataset_profile,
     get_dataset_profile,
     warmup_dataset_profiles,
@@ -846,6 +847,17 @@ async def warmup_dataset_context_profiles(req: DatasetProfileWarmupRequest, _adm
         storage_root=Path("storage/datasets"),
         depth=req.depth,
         force=req.force,
+        limit=req.limit,
+    )
+
+
+@router.post("/datasets/profiles/benchmark")
+async def benchmark_dataset_context_profiles(req: DatasetProfileWarmupRequest, _admin=Depends(require_admin)):
+    """Сравнить холодную пересборку deep-паспорта и тёплое чтение кэша. No-reindex."""
+    return benchmark_dataset_profile_warmup(
+        dataset_ids=req.dataset_ids,
+        storage_root=Path("storage/datasets"),
+        depth=req.depth,
         limit=req.limit,
     )
 

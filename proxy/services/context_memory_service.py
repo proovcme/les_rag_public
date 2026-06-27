@@ -328,6 +328,77 @@ def _lexical_deep_profile(dataset_id: str) -> dict[str, Any]:
     }
 
 
+def _profile_quality(profile: dict[str, Any]) -> dict[str, Any]:
+    """Small deterministic usefulness score for a dataset passport."""
+    warnings: list[str] = []
+    signals = {
+        "documents": int(profile.get("document_count") or 0),
+        "chunks": int(profile.get("chunk_count") or 0),
+        "sample_files": len(profile.get("sample_files") or []),
+        "keywords": len(profile.get("keywords") or []),
+        "document_types": len(profile.get("document_types") or []),
+        "file_extensions": len(profile.get("file_extensions") or []),
+    }
+    score = 0.0
+    if signals["documents"] > 0:
+        score += 0.18
+    else:
+        warnings.append("no_documents")
+    if signals["chunks"] > 0:
+        score += 0.18
+    else:
+        warnings.append("no_chunks")
+    if signals["sample_files"] > 0:
+        score += 0.12
+    if signals["keywords"] > 0:
+        score += 0.08
+    if signals["document_types"] > 0:
+        score += 0.07
+    if signals["file_extensions"] > 0:
+        score += 0.07
+
+    deep = profile.get("deep") or {}
+    if profile.get("depth") == "deep":
+        signals.update({
+            "lexical_available": bool(deep.get("available")),
+            "lexical_chunks": int(deep.get("lexical_chunks") or 0),
+            "content_keywords": len(deep.get("content_keywords") or []),
+            "norm_refs": len(deep.get("norm_refs") or []),
+            "representative_fragments": len(deep.get("representative_fragments") or []),
+            "table_signal_chunks": int(deep.get("table_signal_chunks") or 0),
+        })
+        if deep.get("available"):
+            score += 0.12
+        else:
+            warnings.append(str(deep.get("reason") or "deep_unavailable"))
+        if signals["lexical_chunks"] > 0:
+            score += 0.06
+        if signals["content_keywords"] > 0:
+            score += 0.04
+        if signals["representative_fragments"] > 0:
+            score += 0.04
+        if signals["norm_refs"] > 0:
+            score += 0.02
+        if signals["table_signal_chunks"] > 0:
+            score += 0.02
+
+    score = round(min(score, 1.0), 3)
+    if score >= 0.75:
+        status = "good"
+    elif score >= 0.4:
+        status = "partial"
+    elif signals["documents"] == 0:
+        status = "empty"
+    else:
+        status = "weak"
+    return {
+        "status": status,
+        "score": score,
+        "warnings": warnings,
+        "signals": signals,
+    }
+
+
 def build_dataset_profile(
     dataset_id: str,
     *,
@@ -337,6 +408,7 @@ def build_dataset_profile(
     depth: str = "metadata",
 ) -> dict[str, Any]:
     """Build or read a compact dataset profile and mirror it to a sidecar file."""
+    build_started = time.perf_counter()
     dataset_id = (dataset_id or "").strip()
     if not dataset_id:
         raise ValueError("dataset_id is required")
@@ -355,6 +427,9 @@ def build_dataset_profile(
             if isinstance(profile, dict) and profile:
                 profile.setdefault("profile_path", stored["profile_path"] or "")
                 if profile.get("depth") == depth:
+                    profile.setdefault("quality", _profile_quality(profile))
+                    profile["read_elapsed_ms"] = round((time.perf_counter() - build_started) * 1000, 2)
+                    profile["cache_status"] = "hit"
                     return profile
                 return profile
 
@@ -401,6 +476,9 @@ def build_dataset_profile(
         }
         if depth == "deep":
             profile["deep"] = _lexical_deep_profile(dataset_id)
+        profile["quality"] = _profile_quality(profile)
+        profile["build_elapsed_ms"] = round((time.perf_counter() - build_started) * 1000, 2)
+        profile["cache_status"] = "rebuilt" if force else "miss"
 
         profile_path = ""
         try:
@@ -467,12 +545,15 @@ def warmup_dataset_profiles(
     started = time.time()
     for dataset_id in ids:
         try:
+            item_started = time.perf_counter()
             profile = build_dataset_profile(
                 dataset_id,
                 storage_root=storage_root,
                 depth=depth,
                 force=force,
             )
+            elapsed_ms = round((time.perf_counter() - item_started) * 1000, 2)
+            quality = profile.get("quality") or _profile_quality(profile)
             results.append(
                 {
                     "dataset_id": dataset_id,
@@ -481,6 +562,11 @@ def warmup_dataset_profiles(
                     "document_count": profile.get("document_count", 0),
                     "chunk_count": profile.get("chunk_count", 0),
                     "lexical_chunks": (profile.get("deep") or {}).get("lexical_chunks", 0),
+                    "quality_status": quality.get("status"),
+                    "quality_score": quality.get("score"),
+                    "quality_warnings": quality.get("warnings", []),
+                    "cache_status": profile.get("cache_status", ""),
+                    "elapsed_ms": elapsed_ms,
                     "profile_path": profile.get("profile_path", ""),
                 }
             )
@@ -495,6 +581,81 @@ def warmup_dataset_profiles(
         "errors": errors,
         "elapsed_sec": round(time.time() - started, 3),
         "profiles": results,
+    }
+
+
+def benchmark_dataset_profile_warmup(
+    *,
+    dataset_ids: list[str] | None = None,
+    storage_root: Path = Path("storage/datasets"),
+    depth: str = "deep",
+    limit: int = 0,
+) -> dict[str, Any]:
+    """Measure cold rebuild vs warm cached passport read. Safe no-reindex benchmark."""
+    depth = _normalize_depth(depth)
+    with _connect() as conn:
+        ids = [str(d).strip() for d in (dataset_ids or []) if str(d).strip()]
+        if not ids:
+            ids = _all_dataset_ids(conn)
+    if limit and limit > 0:
+        ids = ids[:limit]
+
+    items: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    started = time.perf_counter()
+    for dataset_id in ids:
+        try:
+            cold_started = time.perf_counter()
+            cold_profile = build_dataset_profile(
+                dataset_id,
+                storage_root=storage_root,
+                depth=depth,
+                force=True,
+            )
+            cold_ms = round((time.perf_counter() - cold_started) * 1000, 2)
+
+            warm_started = time.perf_counter()
+            warm_profile = build_dataset_profile(
+                dataset_id,
+                storage_root=storage_root,
+                depth=depth,
+                force=False,
+            )
+            warm_ms = round((time.perf_counter() - warm_started) * 1000, 2)
+            quality = cold_profile.get("quality") or _profile_quality(cold_profile)
+            speedup = round(cold_ms / warm_ms, 2) if warm_ms > 0 else None
+            items.append({
+                "dataset_id": dataset_id,
+                "name": cold_profile.get("name", ""),
+                "depth": depth,
+                "cold_rebuild_ms": cold_ms,
+                "warm_read_ms": warm_ms,
+                "speedup_x": speedup,
+                "document_count": cold_profile.get("document_count", 0),
+                "chunk_count": cold_profile.get("chunk_count", 0),
+                "lexical_chunks": (cold_profile.get("deep") or {}).get("lexical_chunks", 0),
+                "quality_status": quality.get("status"),
+                "quality_score": quality.get("score"),
+                "quality_warnings": quality.get("warnings", []),
+                "profile_path": warm_profile.get("profile_path", cold_profile.get("profile_path", "")),
+            })
+        except Exception as err:  # noqa: BLE001
+            logger.warning("[CONTEXT_MEMORY] benchmark failed for %s: %s", dataset_id, err)
+            errors.append({"dataset_id": dataset_id, "error": str(err)})
+
+    cold_total = round(sum(float(item["cold_rebuild_ms"]) for item in items), 2)
+    warm_total = round(sum(float(item["warm_read_ms"]) for item in items), 2)
+    return {
+        "status": "ok" if not errors else "partial",
+        "depth": depth,
+        "requested": len(ids),
+        "benchmarked": len(items),
+        "errors": errors,
+        "cold_total_ms": cold_total,
+        "warm_total_ms": warm_total,
+        "speedup_x": round(cold_total / warm_total, 2) if warm_total > 0 else None,
+        "elapsed_sec": round(time.perf_counter() - started, 3),
+        "profiles": items,
     }
 
 

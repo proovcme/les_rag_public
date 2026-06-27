@@ -7,12 +7,12 @@
 ## Текущее состояние (2026-06-27)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.16  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.17  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.16 smeta composition candidates
+задеплоено на рантайм:     0.24.0.17 dataset passport benchmark
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.16 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=30
+рантайм /api/version:      0.24.0.17 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=30
 ```
 
 > 0.24.0.6 выкачен через `make ship`. Живой чат-прогон без semantic cache:
@@ -43,6 +43,8 @@ dev HEAD:                  HEAD  (см. git log -1)
 > короткие списки «Коротко / Что не покрыто точно / Итог / Ключевые допущения».
 > 0.24.0.16 добавляет `composition_candidates`: спорные части объектной сметы ищут реальные
 > ГЭСН-кандидаты в локальной базе, но эти нормы не включаются в сумму без ВОР/подтверждения.
+> 0.24.0.17 делает паспорта датасетов измеримыми: quality-сигнал и no-reindex benchmark
+> cold rebuild против warm cached read по каждому датасету.
 
 > Деплоятся только code-правки (`proxy/`,`backend/`,`sovushka/`,`config/`). Доки на рантайм не катятся —
 > поэтому dev HEAD ≠ deployed_commit это нормально, пока расходятся только доки.
@@ -79,6 +81,7 @@ dev HEAD:                  HEAD  (см. git log -1)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.17 | HEAD | 2026-06-27 | Dataset passport benchmark: deep-паспорта датасетов получили `quality` (`good/partial/weak/empty`, score/warnings/signals), warmup теперь отдаёт per-dataset timing/cache-status, а новый `POST /api/rag/datasets/profiles/benchmark` сравнивает cold rebuild и warm cached read без reindex/OCR/LLM | ✅ рантайм, focused/verify + ship/smoke + live warmup/benchmark ✅ |
 | 0.24.0.16 | HEAD | 2026-06-27 | Smeta composition candidates: объектная прикидка теперь показывает ГЭСН-кандидаты для непокрытого scope (`каркасные стены`, `сваи/ростверк`, `плоская кровля`, `крыльцо/терраса`) через `estimate_harness.search_norm`; кандидаты идут в answer/source/trace, но не добавляются в сумму автоматически | ✅ рантайм, focused/verify + ship/smoke + live dacha candidates ✅ |
 | 0.24.0.15 | HEAD | 2026-06-27 | Smeta answer readability: объектная прикидка теперь отдаёт операторский список вместо плотного абзаца, прячет слово “шаблон” из видимого текста в пользу “типовой состав/локальный аналог”, warnings выводит отдельными bullet-строками, а итог — отдельным списком | ✅ рантайм, focused/verify + ship/smoke + preview ✅ |
 | 0.24.0.14 | HEAD | 2026-06-27 | Smeta object analog fallback: объектная смета больше не падает в “нет шаблона” для близкого локального аналога; каркасная дача 150 м² на сваях считается по ближайшему ИЖС-аналогу `wooden_house` со статусом `rough_analog_object_assumed`, trace/provenance/source помечают аналог, а цепочка “два этажа → крыльцо → фундамент → плоская кровля” сохраняет контекст и выводит warnings по непокрытому scope | ✅ рантайм, full test + ship/smoke + live dacha dialogue ✅ |
@@ -200,6 +203,10 @@ focused 0.24.0.16:      ✅ 62 passed (object_estimate + smeta_chat + estimate_h
 make verify 0.24.0.16:  ✅ 2121 collected
 make ship 0.24.0.16:    ✅ verify 2121 collected; focused 75 passed; pre-smoke pass=9; post-smoke pass=9 after restart retry
 live 0.24.0.16:         ✅ /api/version 0.24.0.16 aligned checked=30; smeta dacha answer returns `composition_candidates.status=found`, source_kind `norm_candidate`, and visible ГЭСН candidates for frame walls/piles/flat roof/porch without adding them to the total
+focused 0.24.0.17:      ✅ 38 passed (context-memory + datasets router)
+make verify 0.24.0.17:  ✅ 2122 collected
+make ship 0.24.0.17:    ✅ verify 2122 collected; focused 75 passed; pre-smoke pass=9; post-smoke pass=9 after restart retry
+live 0.24.0.17:         ✅ /api/version 0.24.0.17 aligned checked=30; dataset profiles warmup 31/31 in 19.007s; benchmark 31/31 cold 9988.91ms vs warm 3462.95ms, speedup 2.88x, quality good=22 partial=9
 ```
 
 **Закрыто в 0.23.6.7:** latency-smoke был не LLM generation, а 12s ожидание недоступного
