@@ -525,32 +525,44 @@ def _answer_object_estimate(
             f"материал={parsed.get('material') or '—'}, "
             f"этажей={parsed.get('floors') or '—'}, "
             f"площадь={parsed.get('area') or '—'} м².\n"
-            "Под этот объект пока нет типового шаблона. Добавь его в "
-            "config/domain/object_templates.yaml (коды ГЭСН + формулы объёма) — тогда соберу "
-            "смету из локальной базы за секунду, без облака и без долгой генерации."
+            "Под этот объект пока нет точного типового состава и близкого локального аналога. "
+            "Нужны ВОР/проект/смета/КС-2 или новый типовой состав с кодами ГЭСН и формулами объёма."
         )
         return {"answer": msg, "operation": "object_estimate_nomatch"}
     parsed, est = r.get("parsed", {}), r.get("estimate", {})
     pos, apos = r.get("vor", {}).get("positions", []), est.get("positions", [])
     head = r.get("template", {}).get("name", "объект")
     analog = r.get("analog") or {}
-    # Тело — markdown-ТАБЛИЦА позиций (inline-рендер чата превращает её в ui.table) +
-    # проза с итогами/допущениями над и под таблицей.
-    lines = [f"Прикидка стоимости объекта по мутному ТЗ: {head} · {parsed.get('area')} м², "
-             f"{parsed.get('floors')} эт. (укрупнённо, с допущениями)", ""]
+    # Тело — короткие блоки + markdown-таблица позиций (inline-рендер чата превращает её в ui.table).
+    # Видимый текст должен быть операторским, без внутренних id/status, которые остаются в payload.
+    lines = [
+        f"Прикидка стоимости объекта: {parsed.get('area')} м², {parsed.get('floors')} эт.",
+        "",
+        "Коротко:",
+    ]
     if analog:
-        reasons = "; ".join(str(x) for x in analog.get("reasons") or [])
-        lines.append(
-            "Нашёл ближайший локальный аналог: "
-            f"{analog.get('template_name') or analog.get('template_id')} "
-            f"(score={_fmt_num(analog.get('score'))}). "
-            "Точного шаблона под исходный материал/объект нет, поэтому итог ниже — расчёт по аналогу."
-        )
-        if reasons:
-            lines.append(f"Почему этот аналог: {reasons}.")
-        lines.append("")
+        lines.extend([
+            f"- Ближайший локальный аналог: {head}.",
+            "- Это не точное совпадение с исходным описанием.",
+            "- Это ориентир, не защищаемая ЛСР по проекту.",
+            "- Объёмы посчитаны кодом из площади и этажности; цены собраны по локальной ГЭСН-базе.",
+            "- Точного состава под исходный материал нет: взят ближайший локальный аналог.",
+            "",
+            "Почему выбран этот аналог:",
+        ])
+        for reason in _visible_analog_reasons(analog):
+            lines.append(f"- {reason}.")
+    else:
+        lines.extend([
+            f"- Типовой состав: {head}.",
+            "- Это ориентир, не защищаемая ЛСР по проекту.",
+            "- Объёмы посчитаны кодом из площади и этажности; цены собраны по локальной ГЭСН-базе.",
+        ])
+    lines.append("")
     if r.get("scope_warnings"):
-        lines.append("⚠️ Укрупнённый охват: " + " ".join(r["scope_warnings"]))
+        lines.append("Что не покрыто точно:")
+        for warning in r["scope_warnings"]:
+            lines.append(f"- {_visible_object_text(warning)}")
         lines.append("")
     lines.append("| Позиция/раздел | Основание | Объём | Стоимость, ₽ |")
     lines.append("|---|---|---|---|")
@@ -560,28 +572,33 @@ def _answer_object_estimate(
         name = str(p.get("name", "")).replace("|", "/")
         lines.append(f"| {name} | {p.get('code')} | {qty_disp} | {_fmt_num(t)} |")
     for a in r.get("allowances") or []:
-        label = str(a.get("label") or "ASSUME-раздел").replace("|", "/")
+        label = str(a.get("label") or "Укрупнённый раздел").replace("|", "/")
         pct = round(_f(a.get("pct_of_smr")) * 100, 1)
-        lines.append(f"| {label} | ASSUME {pct}% от ГЭСН-конструктива | — | {_fmt_num(a.get('amount'))} |")
+        lines.append(f"| {label} | Допущение: {pct}% от ГЭСН-конструктива | — | {_fmt_num(a.get('amount'))} |")
     lines.append("")
     tot = r.get("totals", {})
-    lines.append(f"ГЭСН-конструктив (локальный уровень): {_fmt_num(tot.get('gesn_smr'))} ₽")
-    lines.append(f"+ укрупнённые ASSUME-разделы: {_fmt_num(tot.get('allowance_total'))} ₽")
-    lines.append(f"× текущий уровень цен k={_fmt_num(tot.get('price_level_k'))}: "
-                 f"**{_fmt_num(tot.get('smr'))} ₽**")
-    lines.append(f"+ непредвиденные {_fmt_num(tot.get('contingency_pct'))}%: {_fmt_num(tot.get('contingency'))} ₽")
-    lines.append(f"+ НДС {_fmt_num(tot.get('vat_pct'))}%: {_fmt_num(tot.get('vat'))} ₽")
-    lines.append(f"**━━ ОРИЕНТИР стоимости объекта с НДС: {_fmt_num(tot.get('grand_total'))} ₽**")
+    lines.extend([
+        "Итог:",
+        f"- ГЭСН-конструктив: {_fmt_num(tot.get('gesn_smr'))} ₽",
+        f"- Укрупнённые разделы по допущению: {_fmt_num(tot.get('allowance_total'))} ₽",
+        f"- Текущий уровень цен k={_fmt_num(tot.get('price_level_k'))}: {_fmt_num(tot.get('smr'))} ₽",
+        f"- Непредвиденные {_fmt_num(tot.get('contingency_pct'))}%: {_fmt_num(tot.get('contingency'))} ₽",
+        f"- НДС {_fmt_num(tot.get('vat_pct'))}%: {_fmt_num(tot.get('vat'))} ₽",
+        f"- **Ориентир с НДС: {_fmt_num(tot.get('grand_total'))} ₽**",
+    ])
     # Codex §10.1B: число COMPUTED — строгое ТОЛЬКО относительно явной базы и допущений ниже.
-    # Это не детальная смета по проекту, а бюджетная прикидка с явными ASSUME-разделами.
-    lines.append("_Это прикидка для мутного ТЗ: недостающие разделы придуманы как ASSUME. "
-                 "Если прикрепить ВОР/Ф9/КС-2/папку проекта, будет считаться детальная смета по данным._")
+    # Это не детальная смета по проекту, а бюджетная прикидка с явными допущениями.
+    lines.append("")
+    lines.append("_Если прикрепить ВОР/Ф9/КС-2/папку проекта, расчёт пойдёт по проектным данным._")
     if r.get("missing_codes"):
         lines.append(f"⚠ нет в базе: {', '.join(r['missing_codes'])}")
-    lines.append(f"⚙ Состав: {tot.get('positions')} ГЭСН-поз. + "
-                 f"{tot.get('allowance_positions')} укрупнённых ASSUME-разделов.")
+    lines.append(f"Состав: {tot.get('positions')} ГЭСН-поз. + "
+                 f"{tot.get('allowance_positions')} укрупнённых разделов.")
     if r.get("assumptions"):
-        lines.append("Допущения: " + "; ".join(r["assumptions"]))
+        lines.append("")
+        lines.append("Ключевые допущения:")
+        for assumption in r["assumptions"]:
+            lines.append(f"- {_visible_object_text(assumption)}")
     logic_lines = _object_estimate_logic_lines(r)
     if logic_lines:
         lines.extend(["", "### Защита расчёта: что откуда взято", *logic_lines])
@@ -628,6 +645,38 @@ def _object_estimate_sources(result: dict[str, Any]) -> list[dict[str, Any]]:
     return sources
 
 
+def _visible_analog_reasons(analog: dict[str, Any]) -> list[str]:
+    """Машинные причины выбора аналога → человекочитаемые bullets без внутренних match.*."""
+    obj = str(analog.get("requested_object") or "объект").strip()
+    material = str(analog.get("requested_material") or "").strip()
+    out = [f"объект распознан как `{obj}`"]
+    if material:
+        out.append(f"материал `{material}` близок к деревянному ИЖС, но это не точное совпадение")
+    out.append("назначение похоже на малоэтажный жилой объект")
+    return out
+
+
+def _visible_object_text(text: Any) -> str:
+    """Убрать из видимого ответа внутренние слова/пути, оставив смысл для оператора."""
+    s = str(text or "")
+    replacements = [
+        ("Точного объектного шаблона", "Точного объектного состава"),
+        ("отдельный вариант шаблона", "отдельный вариант состава"),
+        ("шаблоне", "типовом составе"),
+        ("шаблона", "типового состава"),
+        ("шаблону", "типовому составу"),
+        ("шаблоны", "типовые составы"),
+        ("шаблон", "типовой состав"),
+        ("типовой состава", "типового состава"),
+        ("ASSUME", "допущение"),
+        (" из config/domain/object_templates.yaml", ""),
+        ("config/domain/object_templates.yaml", "локальная база типовых составов"),
+    ]
+    for old, new in replacements:
+        s = s.replace(old, new)
+    return s
+
+
 def _object_estimate_trace(result: dict[str, Any]) -> dict[str, Any]:
     totals = result.get("totals") or {}
     return {
@@ -662,8 +711,8 @@ def _object_estimate_logic_lines(result: dict[str, Any]) -> list[str]:
     resources = int(coverage.get("resources") or 0)
     lines = [
         "- Статус: **ориентир, не защищаемая ЛСР**. Защищать можно ход расчёта и нижнюю "
-        "ГЭСН-базу; итог целиком держится на ASSUME-разделах, k текущего уровня и незакрытых ценах ресурсов.",
-        f"- Нормативная база: шаблон `{template_id}` выбрал коды ГЭСН {codes or '—'}; объёмы ниже "
+        "ГЭСН-базу; итог целиком держится на укрупнённых допущениях, k текущего уровня и незакрытых ценах ресурсов.",
+        f"- Нормативная база: типовой состав `{template_id}` выбрал коды ГЭСН {codes or '—'}; объёмы ниже "
         "получены из формул ВОР, а не из текста модели.",
         f"- Ценовое покрытие ресурсов: {resources} ресурс(ов), без цены: {missing_prices}. "
         "Ресурс без цены входит в предупреждения и не делает итог защищаемой коммерческой сметой.",
@@ -688,13 +737,13 @@ def _object_estimate_logic_lines(result: dict[str, Any]) -> list[str]:
         )
     allowances = defense.get("allowance_positions") or []
     if allowances:
-        lines.extend(["", "ASSUME-разделы — не нормы и не КП, а явные операторские допущения шаблона:"])
+        lines.extend(["", "Укрупнённые разделы — не нормы и не КП, а явные операторские допущения типового состава:"])
         for a in allowances:
             pct = round(_f(a.get("pct_of_smr")) * 100, 1)
             lines.append(
                 f"- {a.get('label')}: {pct}% × ГЭСН-конструктив "
                 f"{_fmt_num(totals.get('gesn_smr'))} = {_fmt_num(a.get('amount'))} ₽ "
-                "(ASSUMED_NOT_NORMATIVE)."
+                "(допущение, не нормативная позиция)."
             )
     lines.extend([
         f"- Текущий уровень цен: (`ГЭСН-конструктив + ASSUME`) × k={_fmt_num(totals.get('price_level_k'))} "

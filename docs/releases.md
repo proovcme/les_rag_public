@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.15** | HEAD | Smeta answer readability: object-estimate answers now use short operator-facing bullet blocks for summary, uncovered scope, totals and assumptions, while internal template/status terms stay in machine payloads. |
 | **v0.24.0.14** | HEAD | Smeta object analog fallback: when exact object template is missing, LES searches the local template base for a bounded analog, marks the result as `rough_analog_object_assumed`, and keeps the multi-turn frame-dacha dialogue (`150 м²` → `2 эт.` → porch/foundation/flat roof warnings) without hidden prompt hints. |
 | **v0.24.0.13** | HEAD | Smeta tool-trace memory: explicit smeta mode reuses previous tool `retrieval_trace` for follow-ups, mass-based steel estimates stop surfacing internal `custom_mass_rates`/YAML refs, show GESN candidates for manual binding, detect height-work modifiers without inventing a coefficient, and GESN/FER/TER PDF norm files route as normative construction docs instead of table smeta. |
 | **v0.24.0.12** | HEAD | Smeta context hardening: explicit smeta mode now merges prior session turns into deterministic object-estimate fields, free/attachment LLM paths receive session memory, object parsing understands reversed area/floor wording, unsupported scope such as piles/porch/flat roof is warned instead of silently hidden, and GESN candidate gates reject wrong collections with prefixed norm codes. |

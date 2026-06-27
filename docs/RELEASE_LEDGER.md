@@ -7,12 +7,12 @@
 ## Текущее состояние (2026-06-27)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.14  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.15  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.14 smeta object analog fallback
+задеплоено на рантайм:     0.24.0.15 smeta answer readability
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.14 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=30
+рантайм /api/version:      0.24.0.15 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=30
 ```
 
 > 0.24.0.6 выкачен через `make ship`. Живой чат-прогон без semantic cache:
@@ -39,6 +39,8 @@ dev HEAD:                  HEAD  (см. git log -1)
 > 0.24.0.14 добавляет bounded analog fallback для объектной сметы: если точного шаблона нет,
 > ЛЕС ищет ближайший локальный аналог в `object_templates.yaml`, помечает результат
 > `rough_analog_object_assumed` и удерживает диалоговый сценарий каркасной дачи без скрытых подсказок.
+> 0.24.0.15 чистит видимый ответ объектной сметы: вместо абзацев с внутренними терминами —
+> короткие списки «Коротко / Что не покрыто точно / Итог / Ключевые допущения».
 
 > Деплоятся только code-правки (`proxy/`,`backend/`,`sovushka/`,`config/`). Доки на рантайм не катятся —
 > поэтому dev HEAD ≠ deployed_commit это нормально, пока расходятся только доки.
@@ -75,6 +77,7 @@ dev HEAD:                  HEAD  (см. git log -1)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.15 | HEAD | 2026-06-27 | Smeta answer readability: объектная прикидка теперь отдаёт операторский список вместо плотного абзаца, прячет слово “шаблон” из видимого текста в пользу “типовой состав/локальный аналог”, warnings выводит отдельными bullet-строками, а итог — отдельным списком | ✅ рантайм, focused/verify + ship/smoke + preview ✅ |
 | 0.24.0.14 | HEAD | 2026-06-27 | Smeta object analog fallback: объектная смета больше не падает в “нет шаблона” для близкого локального аналога; каркасная дача 150 м² на сваях считается по ближайшему ИЖС-аналогу `wooden_house` со статусом `rough_analog_object_assumed`, trace/provenance/source помечают аналог, а цепочка “два этажа → крыльцо → фундамент → плоская кровля” сохраняет контекст и выводит warnings по непокрытому scope | ✅ рантайм, full test + ship/smoke + live dacha dialogue ✅ |
 | 0.24.0.13 | HEAD | 2026-06-27 | Smeta tool-trace memory: явный режим `smeta` читает прошлые `retrieval_trace` для продолжений tool-расчётов; fallback по массе для стальных/бронзовых конструкций не показывает `custom_mass_rates`/yaml как источники, добавляет кандидаты ГЭСН из сб.09 для ручной привязки, распознаёт высотные работы и применяет только явный коэффициент; `ГЭСН/ФЕР/ТЕР` PDF-нормы классифицируются как `NORMATIVE/NTD_CONSTRUCTION`, не `TABLE_SMETA` | ✅ рантайм, full test + ship/smoke + live smeta follow-up ✅ |
 | 0.24.0.12 | HEAD | 2026-06-27 | Smeta context hardening: явный режим `smeta` собирает параметры объектной сметы из прошлых вопросов текущей сессии без склейки строк; `free`/read-attachment LLM-пути получают `session_memory`; парсер понимает «метров 150» и «в два этажа»; шаблонная смета предупреждает про сваи/крыльцо/плоскую кровлю вне состава; `estimate_harness` извлекает сборник из `ГЭСН:10-...` и rejects wrong collection для work_family | ✅ рантайм, full test + ship/smoke + live smeta context ✅ |
@@ -186,6 +189,10 @@ make verify 0.24.0.14:  ✅ 2120 collected
 make test 0.24.0.14:    ✅ 2120 passed / 6 warnings / 133.34s
 make ship 0.24.0.14:    ✅ verify 2120 collected; focused 74 passed; pre-smoke pass=9; post-smoke pass=9
 live 0.24.0.14:         ✅ /api/version 0.24.0.14 aligned checked=30; smeta session `дача каркас 150 м² 1 эт.` → `два этажа` → `крыльцо` → `фундамент` → `плоская кровля` keeps 150 м²/2 эт., status `rough_analog_object_assumed`, total 48 283 098.41 ₽, warnings for piles/porch/flat roof
+focused 0.24.0.15:      ✅ 30 passed (object_estimate + smeta_chat)
+make verify 0.24.0.15:  ✅ 2120 collected
+make ship 0.24.0.15:    ✅ verify 2120 collected; focused 74 passed; pre-smoke pass=9; post-smoke pass=9
+live 0.24.0.15:         ✅ /api/version 0.24.0.15 aligned checked=30; object-estimate answer preview uses bullet blocks: `Коротко`, `Почему выбран этот аналог`, `Что не покрыто точно`, `Итог`, `Ключевые допущения`
 ```
 
 **Закрыто в 0.23.6.7:** latency-smoke был не LLM generation, а 12s ожидание недоступного
