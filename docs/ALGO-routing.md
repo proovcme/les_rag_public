@@ -46,6 +46,12 @@
 
 `query_route.profile` несёт честный `route_source` + `channel` в trace каждого ответа.
 
+После выполнения ответа `answer_contract_service.decorate_payload()` добавляет общий
+`workflow_plan_v1` (`workflow_plan_service`): какой workflow фактически прошёл, какие входы нужны,
+чего не хватило, сколько claims/evidence собрано, есть ли blockers и какие next actions нужны.
+`ProfileResolver` не исполняет задачу; `workflow_plan` не выбирает маршрут. Первый отвечает на
+«куда пошли», второй — «что получилось и насколько это финально».
+
 ## Где в коде
 
 - Резолвер профиля: `proxy/services/profile_resolver.py`
@@ -54,6 +60,7 @@
 - Область поиска: `proxy/services/scope_service.py` (all/project/dataset…; проектный запрос при scope=all → не искать молча, спросить)
 - Поток: `proxy/routers/chat.py` (`_run_chat`: роутер ПЕРЕД каскадом; каскад =
   `not effective_router_primary`, то есть `LES_ROUTER_PRIMARY=false` или router `unavailable`)
+- Общий план результата: `proxy/services/workflow_plan_service.py`, док [ALGO-workflow-plan.md](ALGO-workflow-plan.md)
 - Read-вложение из скрепки (`attachment_context`) — часть следующего пользовательского запроса:
   в auto-профиле ранний keyword/clarification-каскад пропускается, чтобы файл обработал LLM/RAG-путь.
   Если project/dataset scope не выбран, используется `attachment_context`-канал без глобального RAG:

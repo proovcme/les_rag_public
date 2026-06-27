@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.18** | HEAD | Workflow plan contract: chat/doc-review payloads now carry a shared `workflow_plan_v1` with workflow id, required/missing inputs, evidence policy, claim/source summary, blockers and next actions, giving smeta/normcontrol/checklists one common information contract. |
 | **v0.24.0.17** | HEAD | Dataset passport benchmark: deep dataset profiles now expose a deterministic quality score and per-dataset warmup timings, plus a no-reindex benchmark endpoint comparing cold rebuild with warm cached profile reads. |
 | **v0.24.0.16** | HEAD | Smeta composition candidates: object estimates now surface local GESN candidates for uncovered scope such as frame walls, pile/grillage, flat roof and porch/deck, without automatically binding those norms into the current total. |
 | **v0.24.0.15** | HEAD | Smeta answer readability: object-estimate answers now use short operator-facing bullet blocks for summary, uncovered scope, totals and assumptions, while internal template/status terms stay in machine payloads. |

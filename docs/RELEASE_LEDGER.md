@@ -7,12 +7,12 @@
 ## Текущее состояние (2026-06-27)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.17  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.18  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.17 dataset passport benchmark
+задеплоено на рантайм:     0.24.0.18 workflow plan contract
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.17 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=30
+рантайм /api/version:      0.24.0.18 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=31
 ```
 
 > 0.24.0.6 выкачен через `make ship`. Живой чат-прогон без semantic cache:
@@ -45,6 +45,8 @@ dev HEAD:                  HEAD  (см. git log -1)
 > ГЭСН-кандидаты в локальной базе, но эти нормы не включаются в сумму без ВОР/подтверждения.
 > 0.24.0.17 делает паспорта датасетов измеримыми: quality-сигнал и no-reindex benchmark
 > cold rebuild против warm cached read по каждому датасету.
+> 0.24.0.18 добавляет общий `workflow_plan_v1`: smeta/normcontrol/RAG/table payload получают
+> единый план workflow, required/missing inputs, evidence policy, claim/source summary, blockers/actions.
 
 > Деплоятся только code-правки (`proxy/`,`backend/`,`sovushka/`,`config/`). Доки на рантайм не катятся —
 > поэтому dev HEAD ≠ deployed_commit это нормально, пока расходятся только доки.
@@ -81,6 +83,7 @@ dev HEAD:                  HEAD  (см. git log -1)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.18 | HEAD | 2026-06-27 | Workflow plan contract: ответы чата и JSON нормоконтроля получают общий `workflow_plan_v1` (workflow id, required/missing inputs, evidence policy, claim/source summary, blockers, next actions), чтобы smeta/normcontrol/checklist развивались через один информационный контракт | ✅ рантайм, focused/verify + ship/smoke + live workflow plan ✅ |
 | 0.24.0.17 | HEAD | 2026-06-27 | Dataset passport benchmark: deep-паспорта датасетов получили `quality` (`good/partial/weak/empty`, score/warnings/signals), warmup теперь отдаёт per-dataset timing/cache-status, а новый `POST /api/rag/datasets/profiles/benchmark` сравнивает cold rebuild и warm cached read без reindex/OCR/LLM | ✅ рантайм, focused/verify + ship/smoke + live warmup/benchmark ✅ |
 | 0.24.0.16 | HEAD | 2026-06-27 | Smeta composition candidates: объектная прикидка теперь показывает ГЭСН-кандидаты для непокрытого scope (`каркасные стены`, `сваи/ростверк`, `плоская кровля`, `крыльцо/терраса`) через `estimate_harness.search_norm`; кандидаты идут в answer/source/trace, но не добавляются в сумму автоматически | ✅ рантайм, focused/verify + ship/smoke + live dacha candidates ✅ |
 | 0.24.0.15 | HEAD | 2026-06-27 | Smeta answer readability: объектная прикидка теперь отдаёт операторский список вместо плотного абзаца, прячет слово “шаблон” из видимого текста в пользу “типовой состав/локальный аналог”, warnings выводит отдельными bullet-строками, а итог — отдельным списком | ✅ рантайм, focused/verify + ship/smoke + preview ✅ |
@@ -207,6 +210,10 @@ focused 0.24.0.17:      ✅ 38 passed (context-memory + datasets router)
 make verify 0.24.0.17:  ✅ 2122 collected
 make ship 0.24.0.17:    ✅ verify 2122 collected; focused 75 passed; pre-smoke pass=9; post-smoke pass=9 after restart retry
 live 0.24.0.17:         ✅ /api/version 0.24.0.17 aligned checked=30; dataset profiles warmup 31/31 in 19.007s; benchmark 31/31 cold 9988.91ms vs warm 3462.95ms, speedup 2.88x, quality good=22 partial=9
+focused 0.24.0.18:      ✅ 54 passed (answer contracts + doc-review + smeta + version)
+make verify 0.24.0.18:  ✅ 2123 collected
+make ship 0.24.0.18:    ✅ verify 2123 collected; focused 75 passed; pre-smoke pass=9; post-smoke pass=9 after restart retry
+live 0.24.0.18:         ✅ /api/chat returns `workflow_plan.schema=workflow_plan_v1`; /api/version 0.24.0.18 aligned checked=31
 ```
 
 **Закрыто в 0.23.6.7:** latency-smoke был не LLM generation, а 12s ожидание недоступного

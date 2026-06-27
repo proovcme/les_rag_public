@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from proxy.services import fgis_price_service as fps
 from proxy.services.object_estimate_service import merge_parsed_requests
+from proxy.services.answer_contract_service import decorate_payload
 from proxy.services.smeta_chat_service import _answer_object_estimate, maybe_handle_smeta_query as h
 
 
@@ -82,6 +83,11 @@ def test_object_estimate_answer_is_rough_full_object_budget():
     assert r["evidence_summary"]["MISSING_PRICE"] > 0
     assert r["provenance"]["confidence"] == "rough_full_object_assumed"
     assert r["provenance"]["final_total_allowed"] is False
+    decorated = decorate_payload({**r, "query_route": {"channel": "smeta_mode"}})
+    assert decorated["workflow_plan"]["workflow_id"] == "object_estimate"
+    assert decorated["workflow_plan"]["evidence_policy"] == "numbers_need_provenance_and_assumptions"
+    assert decorated["workflow_plan"]["claim_summary"]["claims"] > 0
+    assert decorated["workflow_plan"]["finality"] in {"human_required", "not_final"}
 
 
 def test_object_estimate_uses_dialog_context_without_string_concat():

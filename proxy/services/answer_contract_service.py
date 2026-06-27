@@ -11,6 +11,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from proxy.services.workflow_plan_service import build_workflow_plan
+
 
 ANSWER_CONTRACTS: dict[str, dict[str, Any]] = {
     "auto": {
@@ -356,4 +358,5 @@ def decorate_payload(payload: dict[str, Any]) -> dict[str, Any]:
     payload.setdefault("scenario", scenario_for_payload(payload))
     payload.setdefault("answer_contract", contract_for_payload(payload))
     payload.setdefault("answer_contract_check", check_contract(payload, payload["answer_contract"]))
+    payload.setdefault("workflow_plan", build_workflow_plan(payload))
     return payload
