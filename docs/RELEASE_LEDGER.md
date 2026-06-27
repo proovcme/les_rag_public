@@ -7,17 +7,19 @@
 ## Текущее состояние (2026-06-27)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.6  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.7  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.6 chat stability/source-map/latency
+задеплоено на рантайм:     0.24.0.7 table-format correction
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.6 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=27
+рантайм /api/version:      0.24.0.7 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=27
 ```
 
 > 0.24.0.6 выкачен через `make ship`. Живой чат-прогон без semantic cache:
 > FIRE `52.8s` (`generation=44.313s`, `source_map=5`, unknown citations `0`);
 > HVAC `37.0s` (`generation=30.148s`, `source_map=4`, unknown citations `0`).
+> 0.24.0.7 возвращает таблицы как нормальный формат строительной выдачи. Живой FIRE-прогон:
+> `has_table=true`, `50.6s` (`generation=42.264s`), `source_map=5`, unknown citations `0`.
 
 > Деплоятся только code-правки (`proxy/`,`backend/`,`sovushka/`,`config/`). Доки на рантайм не катятся —
 > поэтому dev HEAD ≠ deployed_commit это нормально, пока расходятся только доки.
@@ -54,6 +56,7 @@ dev HEAD:                  HEAD  (см. git log -1)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.7 | HEAD | 2026-06-27 | Chat table-format correction: локальный technical/legal RAG снова предпочитает компактную markdown-таблицу, если найдено несколько требований/условий; короткий профиль теперь режет простыни/постскриптумы, а не таблицы | ✅ рантайм, full test + ship/smoke + live table check ✅ |
 | 0.24.0.6 | HEAD | 2026-06-27 | Chat stability/source trace: локальный MLX получает меньший default context budget и короткий формат для technical/legal RAG; `/api/chat` отдаёт `source_map`, совпадающий с номерами prompt-блоков `Источник N`; `latency_phases` возвращает retrieval/context/generation/validation/overhead/total; `saferag_service.py` добавлен в critical runtime alignment | ✅ рантайм, full test + ship/smoke + live chat latency/source-map ✅ |
 | 0.24.0.5 | HEAD | 2026-06-27 | External Radar: Самовар получил no-reindex обзор внешних корней, `file_map.db`-кандидатов и уже indexed in-place `documents.source_path`; новый API `GET /api/external-radar/summary`; радар делает только shallow-статистику и не читает содержимое файлов | ✅ рантайм, full test + ship/smoke + live radar ✅ |
 | 0.24.0.4 | HEAD | 2026-06-27 | Deep context memory: паспорта датасетов получили `depth=deep` поверх bounded read из `lexical_chunks` (top-documents/headings/content-keywords/norm_refs/table-signal/fragments) без reindex/OCR/LLM; prompt-блок ограничивает число датасетов; добавлен no-reindex прогрев `POST /api/rag/datasets/profiles/warmup`; профиль честно пишет `available=false`, если lexical index не готов | ✅ рантайм, full test + ship/smoke + live warmup ✅ |
@@ -127,6 +130,10 @@ make verify 0.24.0.6:   ✅ 2096 collected
 make test 0.24.0.6:     ✅ 2096 passed / 6 warnings / 126.83s
 make ship 0.24.0.6:     ✅ verify 2096 collected; focused 61 passed; pre-smoke pass=9; post-smoke pass=9
 live chat 0.24.0.6:     ✅ FIRE 52.8s (source_map=5, unknown citations=0); HVAC 37.0s (source_map=4, unknown citations=0)
+focused 0.24.0.7:       ✅ 32 passed (source-map/chat/version)
+make test 0.24.0.7:     ✅ 2096 passed / 6 warnings / 121.69s
+make ship 0.24.0.7:     ✅ verify 2096 collected; focused 61 passed; pre-smoke pass=9; post-smoke pass=9 after restart retry
+live table 0.24.0.7:    ✅ FIRE has_table=true; 50.6s; source_map=5; unknown citations=0
 ```
 
 **Закрыто в 0.23.6.7:** latency-smoke был не LLM generation, а 12s ожидание недоступного
