@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.19** | HEAD | Workflow plan UI: Sovushka keeps `workflow_plan_v1` in chat message metadata and surfaces workflow status/finality to the operator while keeping workflow id, missing inputs and next actions in technical details. |
 | **v0.24.0.18** | HEAD | Workflow plan contract: chat/doc-review payloads now carry a shared `workflow_plan_v1` with workflow id, required/missing inputs, evidence policy, claim/source summary, blockers and next actions, giving smeta/normcontrol/checklists one common information contract. |
 | **v0.24.0.17** | HEAD | Dataset passport benchmark: deep dataset profiles now expose a deterministic quality score and per-dataset warmup timings, plus a no-reindex benchmark endpoint comparing cold rebuild with warm cached profile reads. |
 | **v0.24.0.16** | HEAD | Smeta composition candidates: object estimates now surface local GESN candidates for uncovered scope such as frame walls, pile/grillage, flat roof and porch/deck, without automatically binding those norms into the current total. |

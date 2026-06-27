@@ -16,6 +16,8 @@ normcontrol, RAG, table, mail и future checklist workflows, чтобы доме
   `answer_contract`, `answer_contract_check`, затем `workflow_plan` ко всем chat payload.
 - `proxy/services/doc_review_service.py::review_to_json()` — добавляет `workflow_plan` в JSON
   нормоконтроля напрямую, чтобы отчёты и чат имели один контракт.
+- `sovushka/pages/chat.py` — показывает статус/финальность плана в операторских чипах ответа,
+  а `workflow_id`, missing inputs и next actions — в технических деталях.
 
 ## Контракт
 
@@ -58,3 +60,5 @@ source/profile → workflow_plan → evidence claims → answer/report/UI
   missing inputs и next actions.
 - `tests/test_doc_review_gost_21_101_2026.py` — normcontrol JSON содержит `workflow_plan_v1`.
 - `tests/test_smeta_chat_service.py` — object-estimate после chat-декорации получает общий план.
+- `tests/test_sovushka_chat.py` — Совушка сохраняет `workflow_plan` в метаданных ответа и показывает
+  человеческий workflow-статус без вывода внутренних router/debug полей в первый слой.

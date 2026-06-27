@@ -186,6 +186,23 @@ def _operator_status_chips(crag: str, meta: dict | None, srcs: list | None = Non
     contract_check = (meta or {}).get("answer_contract_check") if isinstance((meta or {}).get("answer_contract_check"), dict) else {}
     if contract_check.get("status") == "warn":
         chips.append({"label": "Контракт: замечания", "tone": "warn"})
+    workflow = (meta or {}).get("workflow_plan") if isinstance((meta or {}).get("workflow_plan"), dict) else {}
+    wf_status = str(workflow.get("status") or "").strip()
+    wf_finality = str(workflow.get("finality") or "").strip()
+    if wf_status == "complete":
+        chips.append({"label": "Ход: готов", "tone": "ok"})
+    elif wf_status == "needs_review":
+        chips.append({"label": "Ход: на проверку", "tone": "warn"})
+    elif wf_status == "preliminary":
+        chips.append({"label": "Ход: предварительно", "tone": "warn"})
+    elif wf_status == "needs_data":
+        chips.append({"label": "Ход: нужны данные", "tone": "err"})
+    elif wf_status == "blocked":
+        chips.append({"label": "Ход: блок", "tone": "err"})
+    if wf_finality == "human_required":
+        chips.append({"label": "Финал: инженер", "tone": "warn"})
+    elif wf_finality == "not_final":
+        chips.append({"label": "Не финал", "tone": "warn"})
 
     phases = (meta or {}).get("latency_phases") or ((meta or {}).get("retrieval_trace") or {}).get("latency_phases")
     if isinstance(phases, dict) and phases.get("total") is not None:
@@ -205,6 +222,7 @@ def _operator_technical_chips(meta: dict | None) -> list[str]:
     scenario = meta.get("scenario") if isinstance(meta.get("scenario"), dict) else {}
     contract = meta.get("answer_contract") if isinstance(meta.get("answer_contract"), dict) else {}
     contract_check = meta.get("answer_contract_check") if isinstance(meta.get("answer_contract_check"), dict) else {}
+    workflow = meta.get("workflow_plan") if isinstance(meta.get("workflow_plan"), dict) else {}
     if kot:
         out.append(f"KOT {kot.get('dataset_filter') or 'AUTO'} {kot.get('confidence', 0)}")
     if trace:
@@ -226,6 +244,18 @@ def _operator_technical_chips(meta: dict | None) -> list[str]:
         missing = contract_check.get("missing")
         if isinstance(missing, list) and missing:
             out.append(f"MISSING {','.join(str(x) for x in missing[:4])}")
+    if workflow.get("workflow_id"):
+        out.append(f"WORKFLOW {workflow.get('workflow_id')}")
+    if workflow.get("status"):
+        out.append(f"WF_STATUS {workflow.get('status')}")
+    if workflow.get("finality"):
+        out.append(f"WF_FINALITY {workflow.get('finality')}")
+    wf_missing = workflow.get("missing_inputs")
+    if isinstance(wf_missing, list) and wf_missing:
+        out.append(f"WF_MISSING {','.join(str(x) for x in wf_missing[:4])}")
+    wf_actions = workflow.get("next_actions")
+    if isinstance(wf_actions, list) and wf_actions:
+        out.append(f"WF_ACTION {str(wf_actions[0])[:80]}")
     return out
 
 
@@ -2498,6 +2528,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 "scenario": d.get("scenario") or {},
                 "answer_contract": d.get("answer_contract") or {},
                 "answer_contract_check": d.get("answer_contract_check") or {},
+                "workflow_plan": d.get("workflow_plan") or {},
             }
             state["chat_history"].append({"role": "ai", "text": ans, "srcs": srcs, "crag": crag, "meta": meta})
             _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, ans, srcs, crag, meta=meta)

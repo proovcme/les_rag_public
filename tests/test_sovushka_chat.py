@@ -142,6 +142,14 @@ def test_operator_status_chips_hide_internal_trace_from_first_layer():
         "scenario": {"id": "table_query", "label": "Табличный расчёт"},
         "answer_contract": {"id": "tool_result_v1", "label": "Результат инструмента", "tables": "required"},
         "answer_contract_check": {"status": "warn", "missing": ["answer"]},
+        "workflow_plan": {
+            "schema": "workflow_plan_v1",
+            "workflow_id": "table_query",
+            "status": "needs_data",
+            "finality": "not_final",
+            "missing_inputs": ["structured_rows"],
+            "next_actions": ["Выбрать табличный датасет"],
+        },
     }
 
     chips = _operator_status_chips("VERIFIED", meta, ["a", "b"])
@@ -153,6 +161,8 @@ def test_operator_status_chips_hide_internal_trace_from_first_layer():
     assert "Табличный расчёт" in labels
     assert "Табличный контракт" in labels
     assert "Контракт: замечания" in labels
+    assert "Ход: нужны данные" in labels
+    assert "Не финал" in labels
     assert "12.3с" in labels
     assert all("KOT" not in label and "CACHE" not in label for label in labels)
 
@@ -163,6 +173,11 @@ def test_operator_status_chips_hide_internal_trace_from_first_layer():
     assert "MISSING answer" in tech
     assert "SCENARIO table_query" in tech
     assert "CONTRACT tool_result_v1" in tech
+    assert "WORKFLOW table_query" in tech
+    assert "WF_STATUS needs_data" in tech
+    assert "WF_FINALITY not_final" in tech
+    assert "WF_MISSING structured_rows" in tech
+    assert "WF_ACTION Выбрать табличный датасет" in tech
 
 
 def test_dataset_and_chat_profile_operator_summaries_are_human_readable():
