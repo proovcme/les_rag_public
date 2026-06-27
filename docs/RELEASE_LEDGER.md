@@ -7,13 +7,17 @@
 ## Текущее состояние (2026-06-27)
 
 ```
-версия (схема 0.23.N.P):   0.23.5   (docs-аудит + MODULE_INDEX/RELEASE_LEDGER)
+версия (схема 0.23.N.P):   0.23.6.0  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  <git log -1>   (см. git)
 задеплоено на рантайм:     75ed9da  (#3 retrieval-подфаза)  ← deploy_stamp.deployed_commit
-НЕ задеплоено:             docs-чистка + docs-аудит (docs-only, рантайм не трогают)
-рантайм /api/version:      app 5.1.0 · h0.23 · stamp ok · alignment aligned
+НЕ задеплоено:             docs-чистка/аудит (docs) + версия 0.23.6.0/5 fail-фиксов/скилл (КОД, ждёт make ship)
+рантайм /api/version:      ещё app 5.1.0 · h0.23 (без les_version, пока не выкачено)
 ```
+
+> Версия 0.23.6.0 уже в КОДЕ (`version_service.LES_VERSION`), но на рантайм НЕ выкачена → `/api/version`
+> на рантайме покажет её после `make ship` + deploy (рестарт proxy — явный шаг, есть 4 known-fail
+> router-теста, см. ниже — деплой по решению оператора).
 
 > Деплоятся только code-правки (`proxy/`,`backend/`,`sovushka/`,`config/`). Доки на рантайм не катятся —
 > поэтому dev HEAD ≠ deployed_commit это нормально, пока расходятся только доки.
@@ -49,7 +53,8 @@ dev HEAD:                  <git log -1>   (см. git)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
-| 0.23.5 | (этот) | 2026-06-27 | docs-аудит (4 прохода, сверка с кодом) + `MODULE_INDEX.md` + `RELEASE_LEDGER.md` + чистка архива | — (docs) |
+| 0.23.6 | `3362cee`+ | 2026-06-27 | версия 0.23.N.P в /api/version (`LES_VERSION`) + 5 fail-фиксов (4 версионных стейл-теста, help topic_slices) + сметный скилл (`skills/smeta/SKILL.md`) + `make ship`-гейт | КОД, ждёт deploy |
+| 0.23.5 | `1cb1bd4` | 2026-06-27 | docs-аудит (4 прохода, сверка с кодом) + `MODULE_INDEX.md` + `RELEASE_LEDGER.md` + 3 новых ALGO/GUARDRAILS + архив мёртвого | — (docs) |
 | 0.23.4 | `8f777a8`/`f414c90` | 2026-06-27 | чистка доков: 18 исторических → `docs/archive/` + указатели | — (docs) |
 | 0.23.3 | `75ed9da` | 2026-06-27 | нормоконтроль: doc-review retrieval-подфаза (факты корпуса + текст требования) | ✅ рантайм |
 | 0.23.2 | `a21f7dc` | 2026-06-27 | нормоконтроль: title_block OCR для сканов (флаг `LES_TITLE_BLOCK_OCR`) | ✅ рантайм |
@@ -64,7 +69,13 @@ dev HEAD:                  <git log -1>   (см. git)
 
 ```
 make verify:     ✅ зелёный (2046 собрано)
-make test:       🟡 2037 passed / 9 failed (version-эндпоинт ×3, help topic_slices TypeError, 3× chat live-сервисы, profile_resolver glossary)
+make test:       🟡 ~2042 passed / 4 failed (было 9 → починено 5: версия+topic_slices).
+                  Остаток 4 — router-primary регрессия (роутер-LLM недоступен → детерм.-гейты не как фолбэк)
+                  + 1 флэки (test_agent_off_returns_none: _is_on() True из-за LES_ROUTER_PRIMARY дефолта).
 make smoke-basic: 🟡 8 pass / 1 fail (chat_project_noscope таймаут 120с; chat_glossary 82с — латентность чата)
 ```
-9 падений и латентность чата — в долг (разобрать при возврате к коду; часть — live-сервисы/env, часть реальная).
+**Отложено (нужен отдельный заход, НЕ хак в ядро):** 4 router-fail + латентность чата — один корень:
+инверсия детерминизма ↔ недоступность роутера ↔ честность `route_source` ↔ scope-гейт. Фикс
+(`RouterUnavailable` → каскад-фолбэк) пробован и откачен — задевал ядро чат-пути с неполной моделью
+потока (table_query прошёл не через каскад). Нужно: разобрать поток chat.py целиком, спроектировать
+«роутер недоступен → детерм.-каскад + честный route_source», закрыть тестами с моком роутера (не 12с-таймаут).
