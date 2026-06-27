@@ -2,7 +2,7 @@ from pathlib import Path
 
 import yaml
 
-from proxy.services.service_source_registry import service_source, service_sources
+from proxy.services.service_source_registry import process_service_source, service_source, service_sources
 
 
 def test_service_sources_report_required_files(tmp_path):
@@ -40,6 +40,10 @@ def test_service_sources_report_required_files(tmp_path):
     gesn = service_source("gesn_base", cfg_path)
     assert gesn["status"] == "missing_blocking"
     assert gesn["accepted_files"] == ["*.parquet"]
+    assert gesn["folders"][0]["path"] == str(tmp_path)
+    processed = process_service_source("gesn_base", cfg_path)
+    assert processed["status"] == "missing_blocking"
+    assert "Положи нужные файлы" in processed["message"]
 
 
 def test_canonical_service_sources_include_smeta_and_normcontrol():
@@ -47,3 +51,7 @@ def test_canonical_service_sources_include_smeta_and_normcontrol():
     ids = {x["id"] for x in out["sources"]}
     assert {"gesn_base", "fgis_price_base", "normcontrol_spds_rulepack", "normcontrol_spds_rag"} <= ids
     assert out["summary"]["total"] >= 5
+    gesn = service_source("gesn_base")
+    assert gesn["folders"]
+    assert gesn["process_label"]
+    assert "tools/" not in str(gesn.get("operator_action", ""))

@@ -29,6 +29,36 @@ def _file_info(path: str) -> dict[str, Any]:
     }
 
 
+def _folder_info(path: str) -> dict[str, Any]:
+    p = Path(path)
+    return {
+        "path": str(p),
+        "exists": p.exists() and p.is_dir(),
+    }
+
+
+def _folders_for_source(src: dict[str, Any], files: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    configured = [str(x) for x in src.get("folders") or [] if str(x).strip()]
+    folders = configured[:]
+    if not folders:
+        for f in files:
+            raw = str(f.get("path") or "").strip()
+            if not raw:
+                continue
+            if any(ch in raw for ch in "*?["):
+                folders.append(str(Path(raw).parent))
+            else:
+                folders.append(str(Path(raw).parent if Path(raw).suffix else Path(raw)))
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for folder in folders:
+        if folder in seen:
+            continue
+        seen.add(folder)
+        out.append(_folder_info(folder))
+    return out
+
+
 def _glob_infos(pattern: str) -> list[dict[str, Any]]:
     matches = sorted(glob.glob(pattern))
     if not matches:
@@ -150,10 +180,13 @@ def service_sources(path: Path | str = DEFAULT_CONFIG) -> dict[str, Any]:
             "status": status,
             "requiredness": src.get("status_if_missing", "degraded"),
             "files": files,
+            "folders": _folders_for_source(src, files),
             "dataset": dataset,
             "accepted_files": src.get("accepted_files") or [],
             "needed_for": src.get("needed_for") or [],
             "operator_hint": src.get("operator_hint") or "",
+            "operator_action": src.get("operator_action") or "",
+            "process_label": src.get("process_label") or "Проверить источник",
         }
         item["facts"] = _facts_for_source(str(item["id"]), files, dataset)
         out.append(item)
@@ -171,3 +204,38 @@ def service_source(source_id: str, path: Path | str = DEFAULT_CONFIG) -> dict[st
         if src.get("id") == source_id:
             return src
     return None
+
+
+def process_service_source(source_id: str, path: Path | str = DEFAULT_CONFIG) -> dict[str, Any]:
+    """Operator-facing "play" action for a service source.
+
+    v0.24.0.2 intentionally keeps this action non-destructive: it refreshes the registry contract and
+    tells the operator what is ready/missing. Real importers/reindexers stay behind explicit workflow
+    screens because a service-source button must never silently mutate a live knowledge base.
+    """
+    item = service_source(source_id, path)
+    if item is None:
+        return {"ok": False, "source_id": source_id, "status": "not_found", "message": "Источник данных не найден."}
+    status = str(item.get("status") or "")
+    folders = [f["path"] for f in item.get("folders") or [] if f.get("path")]
+    missing_files = [f["path"] for f in item.get("files") or [] if not f.get("exists")]
+    found_files = [f["path"] for f in item.get("files") or [] if f.get("exists")]
+    label = item.get("label") or source_id
+    if status == "ok":
+        msg = f"{label}: источник найден. ЛЕС может использовать эти данные."
+    elif status == "missing_blocking":
+        where = ", ".join(folders[:3]) or ", ".join(missing_files[:3]) or "служебную папку источника"
+        msg = f"{label}: данных нет. Положи нужные файлы в {where} и запусти проверку ещё раз."
+    else:
+        where = ", ".join(folders[:3]) or ", ".join(missing_files[:3]) or "служебную папку источника"
+        msg = f"{label}: источник неполный. ЛЕС продолжит работу с ограничениями; для полной проверки добавь файлы в {where}."
+    return {
+        "ok": status == "ok",
+        "source_id": source_id,
+        "status": status,
+        "message": msg,
+        "folders": folders,
+        "missing_files": missing_files,
+        "found_files": found_files,
+        "facts": item.get("facts") or {},
+    }

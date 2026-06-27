@@ -15,6 +15,7 @@ from pydantic import BaseModel, field_validator
 from backend.rag_config import rag_meta_db_path
 from proxy.security import require_user
 from proxy.routers.chat import ensure_chat_history_schema
+from proxy.services.context_memory_service import get_chat_profile
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +166,15 @@ async def get_chat_sessions(limit: int = 50, _user=Depends(require_user)):
     except Exception as e:
         logger.warning("[SESSIONS] %s", e)
         return []
+
+
+@router.get("/memory/{session_id}")
+async def get_chat_memory(session_id: str, _user=Depends(require_user)):
+    """Return deterministic context profile for a chat session."""
+    profile = get_chat_profile(session_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="chat memory profile not found")
+    return profile
 
 
 @router.post("/history/{history_id}/feedback")

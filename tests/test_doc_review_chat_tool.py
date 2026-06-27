@@ -31,9 +31,11 @@ def test_review_to_chat_text_shape():
     rmap = load_review_map("gost_r_21_101_2026")
     text = dr.review_to_chat_text([], rmap)
     assert "ГОСТ Р 21.101" in text
-    assert "Вердикт машины" in text
-    assert "### Защита решения" in text
+    assert "предварительный отчёт ЛЕС" in text
+    assert "### Как защищать отчёт" in text
     assert "инженер" in text.lower()
     assert "| Класс | Кол-во |" not in text
     assert "Рабочая память" not in text
     assert "LES.md" not in text
+    assert "manual_required" not in text
+    assert "review_needed" not in text

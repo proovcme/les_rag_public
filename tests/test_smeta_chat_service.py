@@ -80,3 +80,21 @@ def test_object_estimate_answer_is_rough_full_object_budget():
     assert r["evidence_summary"]["MISSING_PRICE"] > 0
     assert r["provenance"]["confidence"] == "rough_full_object_assumed"
     assert r["provenance"]["final_total_allowed"] is False
+
+
+def test_custom_mass_estimate_fallback_for_steel_tiers():
+    q = (
+        "Стальные каркасы, облицованные бронзой. Общая масса составляет 664 711,12 кг, "
+        "11 ярусов. Этап 1 контрольная сборка двух смежных ярусов. Этап 2 упаковка. "
+        "Этап 3 транспорт принять 0 руб. Этап 4 монтаж с колес гусеничным краном. "
+        "Стоимость давальческого сырья принять 0 руб."
+    )
+    r = _answer_object_estimate(q)
+    assert r is not None
+    assert r["operation"] == "custom_mass_estimate_assumed"
+    assert "стальные/бронзовые ярусы" in r["answer"]
+    assert "664.71 т" in r["answer"]
+    assert "ОРИЕНТИР стоимости работ" in r["answer"]
+    assert "ASSUME" in r["answer"]
+    assert r["evidence_summary"]["MISSING"] == 2
+    assert r["retrieval_trace"]["mass_t"] == 664.711

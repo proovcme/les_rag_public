@@ -147,8 +147,9 @@ def citation_drawer_item(source: Any, index: int | None = None) -> dict:
         unavailable_reason = "Источник слабый/vector: точное место не гарантировано, доступно копирование source_ref."
     elif "/" in file_part or re.search(r"\.(pdf|docx?|xlsx?|csv|md|txt|eml|jsonl?)$", file_part, re.I):
         open_url = f"/lite-api/rag/file/raw?path={quote(file_part)}"
-    else:
-        unavailable_reason = "source_ref есть, но прямой путь к файлу не определён; скопируй ref для проверки."
+    # Нормативные/расчётные refs вида "ГЭСН-2022#06-..." или "ГОСТ...#clause=..."
+    # не являются локальными файлами. Не пугаем оператора техническим предупреждением: ref остаётся
+    # в copy_text, а drawer просто показывает название источника и цитату/сниппет.
     item.update({
         "location": location,
         "open_url": open_url,

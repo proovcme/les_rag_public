@@ -500,45 +500,86 @@ def _evidence_refs(it: ReviewItem, *, limit: int = 3) -> str:
     ]
     if len(it.document_evidence or []) > limit:
         refs.append(f"+{len(it.document_evidence or []) - limit}")
-    return "; ".join(refs) if refs else "нет извлечённого evidence"
+    return "; ".join(refs) if refs else "доказательства в комплекте не извлечены"
 
 
 def _review_action(it: ReviewItem) -> str:
     if it.status == S_COMPUTED_ISSUE:
-        return "подтвердить/отклонить замечание"
+        return "проверить файлы, затем подтвердить или отклонить замечание"
     if it.status == S_REVIEW_NEEDED:
-        return "добрать источник требования/факт корпуса"
+        return "добавить нормативный источник или факт из комплекта и повторить проверку"
     if it.status == S_MANUAL:
         return "ручная проверка инженером"
     if it.status == S_NOT_APPLICABLE:
         return "зафиксировать неприменимость"
-    return "оставить как evidence"
+    return "оставить как подтверждённый пункт"
 
 
 def _review_section_title(status: str) -> str:
     return {
-        S_COMPUTED_ISSUE: "Предварительные замечания, которые уже можно защищать evidence",
-        S_MANUAL: "Ручные проверки: машина не имеет права ставить финал",
-        S_REVIEW_NEEDED: "Что нужно добрать для доказательности",
+        S_COMPUTED_ISSUE: "Замечания для решения инженера",
+        S_MANUAL: "Что нужно посмотреть глазами",
+        S_REVIEW_NEEDED: "Чего не хватает для вывода",
     }.get(status, _STATUS_RU.get(status, status))
 
 
+def _check_ru(name: object) -> str:
+    return {
+        "rulepack_version_gate": "выбор нормативной базы",
+        "base_designation_consistency": "согласованность шифра комплекта",
+        "designation_pattern": "формат обозначения документа",
+        "designation_separators": "разделители в обозначении",
+        "vedomost_vs_files": "сверка ведомости с файлами",
+        "vedomost_missing": "наличие файлов по ведомости",
+        "vedomost_extra": "лишние файлы вне ведомости",
+        "electronic_readiness": "пригодность электронных файлов",
+        "sheet_format": "формат листа",
+        "title_block_present": "основная надпись",
+        "outdated_standard_in_corpus": "актуальность нормативной базы",
+        "project_stage_detect": "стадия документации",
+        "spds_applicability": "применимость СПДС",
+    }.get(str(name or ""), str(name or "проверка"))
+
+
+def _severity_ru(severity: object) -> str:
+    return {"error": "критично", "warning": "замечание", "info": "информация"}.get(str(severity or ""), str(severity or ""))
+
+
+def _note_ru(text: object) -> str:
+    value = str(text or "").strip()
+    replacements = {
+        "retrieval evidence": "доказательств из поиска",
+        "retrieval": "поиск по источникам",
+        "review_needed": "нужны источники",
+        "manual_required": "ручная проверка",
+        "review": "обзор",
+        "layout": "разметка листа",
+        "sidecar/OCR": "текстовый слой или распознавание",
+        "OCR": "распознавание",
+        "fake pass": "ложное прохождение",
+    }
+    for src, dst in replacements.items():
+        value = value.replace(src, dst)
+    return value
+
+
 def _append_review_cards(lines: list[str], rows: list[ReviewItem], *, top: int) -> None:
-    for it in rows[:top]:
+    for n, it in enumerate(rows[:top], 1):
         requirement_ref = _source_label((it.requirement or {}).get("source_ref"), limit=72)
-        computed = str((it.computed_check or {}).get("name") or "manual").strip()
-        reason = f"{computed}: {it.model_note}" if computed else it.model_note
+        check_name = _check_ru((it.computed_check or {}).get("name"))
+        reason = _note_ru(it.model_note)
         lines += [
             "",
-            f"**{it.rule_id} · {it.target}**",
-            f"- Статус: {_STATUS_RU.get(it.status, it.status)} · уровень: {it.severity}.",
+            f"**{n}. {it.target}**",
+            f"- Код пункта: {it.rule_id}; важность: {_severity_ru(it.severity)}.",
+            f"- Что проверялось: {check_name}.",
             f"- Основание: {requirement_ref}.",
-            f"- Доказательства комплекта: {_evidence_refs(it, limit=2)}.",
-            f"- Почему так: {reason}",
-            f"- Что сделать: {_review_action(it)}.",
+            f"- Где видно: {_evidence_refs(it, limit=2)}.",
+            f"- Вывод ЛЕС: {reason or _STATUS_RU.get(it.status, it.status)}.",
+            f"- Действие: {_review_action(it)}.",
         ]
     if len(rows) > top:
-        lines += ["", f"Ещё {len(rows) - top} пункт(ов) есть в JSON/XLSX/HTML отчёте."]
+        lines += ["", f"Ещё {len(rows) - top} пункт(ов) есть в выгрузках JSON/XLSX/HTML."]
 
 
 def review_to_chat_text(items: list[ReviewItem], review_map: ReviewMap, *, top: int = 6) -> str:
@@ -553,23 +594,25 @@ def review_to_chat_text(items: list[ReviewItem], review_map: ReviewMap, *, top: 
     manual = [it for it in items if it.status == S_MANUAL]
     missing = [it for it in items if it.status == S_REVIEW_NEEDED]
     lines = [
-        f"**Нормоконтроль комплекта — {review_map.standard} (СПДС, предварительно)**",
+        f"**Нормоконтроль комплекта по {review_map.standard}**",
         "",
-        "**Вердикт машины:** это не финальное заключение нормоконтролёра. Машина показывает "
-        "предварительные замечания, evidence и пробелы; финальный статус по каждому пункту "
-        "ставит инженер.",
+        "Это предварительный отчёт ЛЕС. Он не подменяет подпись нормоконтролёра: система "
+        "показывает найденные признаки, ссылки на основание и места в комплекте, а инженер "
+        "принимает решение по каждому замечанию.",
         "",
-        f"Проверено пунктов: **{s['total']}**. Кодом найдено замечаний: **{s['computed_issues']}**. "
-        f"Подтверждено/неприменимо без замечаний: **{supported}**. "
-        f"Ручная проверка: **{s['manual_required']}**. Нужно добрать evidence/RAG: **{s['review_needed']}**.",
-        f"Решения инженера: подтверждено **{s['human_confirmed']}**, отклонено **{s['human_rejected']}**, "
-        f"нужны данные **{s['human_needs_more_evidence']}**.",
+        f"Проверено пунктов: **{s['total']}**. Замечаний к решению: **{s['computed_issues']}**. "
+        f"Без замечаний или неприменимо: **{supported}**. "
+        f"Требуют просмотра листа/штампа: **{s['manual_required']}**. "
+        f"Не хватает источников: **{s['review_needed']}**.",
+        f"Решения инженера в системе: подтверждено **{s['human_confirmed']}**, "
+        f"отклонено **{s['human_rejected']}**, запрошены данные **{s['human_needs_more_evidence']}**.",
         "",
-        "**Как читать отчёт:**",
-        f"- Замечания кодом: **{s['computed_issues']}** — можно защищать только после подтверждения инженером.",
-        f"- Ручные проверки: **{s['manual_required']}** — layout/штамп/изменения без человека не финализируются.",
-        f"- Нужно добрать доказательства: **{s['review_needed']}** — это не замечание, а запрос источников/RAG.",
-        f"- Подтверждено или неприменимо: **{supported}** — информационная часть отчёта, не список нарушений.",
+        "| Раздел | Кол-во | Что означает |",
+        "|---|---:|---|",
+        f"| Замечания к решению | {s['computed_issues']} | Есть формальный признак нарушения; инженер подтверждает или снимает. |",
+        f"| Смотреть вручную | {s['manual_required']} | Нужна проверка листа, штампа, изменений или состава. |",
+        f"| Не хватает источников | {s['review_needed']} | Нельзя делать вывод без нормы или факта из комплекта. |",
+        f"| Без замечаний / неприменимо | {supported} | Пункты не попали в список нарушений. |",
     ]
     for status, rows in ((S_COMPUTED_ISSUE, computed), (S_MANUAL, manual), (S_REVIEW_NEEDED, missing)):
         if not rows:
@@ -578,11 +621,11 @@ def review_to_chat_text(items: list[ReviewItem], review_map: ReviewMap, *, top: 
         _append_review_cards(lines, rows, top=top)
     lines += [
         "",
-        "### Защита решения",
-        "- Основание каждого пункта — ссылка на пункт стандарта или rulepack/RAG evidence.",
-        "- Доказательства комплекта — файлы/страницы/проверки, найденные или рассчитанные машиной.",
-        "- Если доказательств нет, пункт остаётся `review_needed` или `manual_required`, а не превращается в уверенный вывод.",
-        "- Полные машинные данные лежат в JSON/XLSX/HTML: `items`, `normalized_remarks`, `defense.contract`.",
+        "### Как защищать отчёт",
+        "- Для каждого замечания есть основание: пункт стандарта или правило проверки.",
+        "- Если ЛЕС нашёл место в комплекте, оно указано в строке «Где видно».",
+        "- Если место или норма не найдены, пункт остаётся запросом данных, а не нарушением.",
+        "- Финальная выгрузка для работы инженера: JSON, XLSX и HTML с полным списком пунктов.",
     ]
     return "\n".join(lines)
 
@@ -592,7 +635,7 @@ def review_to_json(items: list[ReviewItem], review_map: ReviewMap) -> dict:
             "summary": review_summary(items), "items": [it.to_dict() for it in items],
             "normalized_remarks": review_to_normalized_remarks(items, review_map),
             "defense": review_defense_pack(items, review_map),
-            "note": "RAG-led SPDS review: статусы — proposed issues/evidence, финал ставит инженер."}
+            "note": "Предварительный СПДС-нормоконтроль: статусы предлагаемые, финал ставит инженер."}
 
 
 def review_to_normalized_remarks(items: list[ReviewItem], review_map: ReviewMap) -> list[dict]:
@@ -636,8 +679,8 @@ def review_to_normalized_remarks(items: list[ReviewItem], review_map: ReviewMap)
     return out
 
 
-_STATUS_RU = {S_COMPUTED_ISSUE: "Замечание (код)", S_SUPPORTED: "Подтверждено evidence",
-              S_NOT_APPLICABLE: "Неприменимо", S_MANUAL: "Ручная проверка", S_REVIEW_NEEDED: "Нужен RAG/обзор"}
+_STATUS_RU = {S_COMPUTED_ISSUE: "Замечание к решению", S_SUPPORTED: "Подтверждено источниками",
+              S_NOT_APPLICABLE: "Неприменимо", S_MANUAL: "Ручная проверка", S_REVIEW_NEEDED: "Нужны источники"}
 
 
 def review_to_html(items: list[ReviewItem], review_map: ReviewMap) -> str:
@@ -649,7 +692,7 @@ def review_to_html(items: list[ReviewItem], review_map: ReviewMap) -> str:
     return (f"<!doctype html><meta charset='utf-8'><title>Нормоконтроль {review_map.standard}</title>"
             f"<h2>Проверка документации — {review_map.standard}</h2>"
             f"<p>Всего {s['total']} · замечаний(код) {s['computed_issues']} · ручных {s['manual_required']} · RAG {s['review_needed']}</p>"
-            f"<p><i>RAG-led review: статусы — предлагаемые; финал ставит инженер.</i></p>"
+            f"<p><i>Предварительная проверка: статусы предлагаемые; финал ставит инженер.</i></p>"
             f"<table border=1 cellpadding=4 cellspacing=0><tr><th>Правило</th><th>Пункт</th><th>Статус</th>"
             f"<th>Severity</th><th>Решение инженера</th><th>Объект</th><th>Пояснение</th></tr>{rows}</table>")
 

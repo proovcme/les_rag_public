@@ -132,6 +132,12 @@ def test_citation_drawer_item_weak_source_does_not_fake_open():
     assert item["open_url"] == ""
     assert "vector" in item["unavailable_reason"]
 
+def test_citation_drawer_item_logical_ref_no_operator_warning():
+    item = ar.citation_drawer_item({"source_ref": "ГЭСН-2022#06-16-005-01", "source_kind": "parquet_row"})
+    assert item["open_url"] == ""
+    assert item["copy_text"] == "ГЭСН-2022#06-16-005-01"
+    assert item["unavailable_reason"] == ""
+
 def test_group_evidence_sections_order_and_missing_visible():
     from proxy.services.evidence_contract import EvidenceItem, EvidenceType, block_of
     blocks = [block_of(EvidenceType.MISSING, "M", [EvidenceItem(EvidenceType.MISSING, "x", status="missing")]),

@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from proxy.security import require_user
-from proxy.services.service_source_registry import service_source, service_sources
+from proxy.services.service_source_registry import process_service_source, service_source, service_sources
 
 router = APIRouter(prefix="/api/service-sources", tags=["service-sources"])
 
@@ -21,3 +21,11 @@ async def get_service_source(source_id: str, _user=Depends(require_user)):
     if item is None:
         raise HTTPException(404, "service source not found")
     return item
+
+
+@router.post("/{source_id}/process")
+async def process_source(source_id: str, _user=Depends(require_user)):
+    result = process_service_source(source_id)
+    if result.get("status") == "not_found":
+        raise HTTPException(404, "service source not found")
+    return result

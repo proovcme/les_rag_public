@@ -143,6 +143,7 @@ curl -X POST http://127.0.0.1:8050/api/chat \
 |---|---|---|
 | `GET` | `/api/service-sources` | Реестр файлов/датасетов, нужных ЛЕСу для смет и нормоконтроля |
 | `GET` | `/api/service-sources/{source_id}` | Один служебный источник: status, файлы, факты, missing-action |
+| `POST` | `/api/service-sources/{source_id}/process` | Безопасная операторская проверка источника: найдено/не найдено, что положить в папку |
 
 Реестр задаётся в `config/service_sources.yaml`: ГЭСН, ФГИС ЦС, сметные коэффициенты/шаблоны,
 СПДС rulepack, нормативный RAG и layout-reference. В GUI это блок **Инструменты → Служебные источники данных**

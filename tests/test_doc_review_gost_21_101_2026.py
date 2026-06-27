@@ -99,14 +99,16 @@ def test_sheet_format_uses_pdf_geometry_evidence(tmp_path):
 def test_chat_report_is_defensible_human_report():
     items = run_review(build_document_set(["2024 15 АР 1.pdf", "README.pdf"]), MAP)
     text = review_to_chat_text(items, MAP)
-    assert "Вердикт машины" in text
-    assert "Предварительные замечания" in text
+    assert "предварительный отчёт ЛЕС" in text
+    assert "Замечания для решения инженера" in text
     assert "| ID | Что проверено | Основание | Evidence комплекта | Почему так | Действие |" not in text
     assert "| Класс | Кол-во |" not in text
     assert "ГОСТ Р 21.101-2026#clause=" in text
-    assert "подтвердить/отклонить замечание" in text
-    assert "### Защита решения" in text
-    assert "defense.contract" in text
+    assert "подтвердить или отклонить замечание" in text
+    assert "### Как защищать отчёт" in text
+    assert "manual_required" not in text
+    assert "review_needed" not in text
+    assert "defense.contract" not in text
 
 
 def test_reports_render(tmp_path):

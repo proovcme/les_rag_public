@@ -27,6 +27,11 @@ from backend.smart_index import SKIP_DIRS, build_smart_plan, should_index_source
 from proxy.config import max_upload_bytes, mlx_url, rag_upload_suffixes
 from proxy.security import require_admin, require_user
 from proxy.services.context_expander_service import expand_context_windows
+from proxy.services.context_memory_service import (
+    build_dataset_profile,
+    get_dataset_profile,
+    warmup_dataset_profiles,
+)
 from proxy.services.resource_governor import active_parse_priority_order, current_runtime_profile
 from proxy.services.runtime_admission import evaluate_memory_pressure
 from proxy.services.retrieval_service import classify_query, resolve_dataset_ids, retrieve_chat_chunks
@@ -130,6 +135,13 @@ class ParseSchedulerRequest(BaseModel):
     stop_on_error: bool = False
     background: bool = True
     dataset_priority_order: list[str] | None = None
+
+
+class DatasetProfileWarmupRequest(BaseModel):
+    dataset_ids: list[str] | None = None
+    depth: str = "deep"
+    force: bool = False
+    limit: int = Field(default=0, ge=0, le=500)
 
 
 _state: DatasetRouterState | None = None
@@ -812,6 +824,30 @@ async def set_dataset_group(dataset_id: str, group: str = "", _admin=Depends(req
     grp = (group or "").strip()[:60]
     await get_dataset_state().backend.set_dataset_group(dataset_id, grp)
     return {"id": dataset_id, "group_name": grp}
+
+
+@router.get("/datasets/{dataset_id}/profile")
+async def dataset_context_profile(dataset_id: str, depth: str = "deep", _user=Depends(require_user)):
+    """Паспорт датасета: состав, покрытие и путь к sidecar-файлу."""
+    return get_dataset_profile(dataset_id, storage_root=Path("storage/datasets"), depth=depth)
+
+
+@router.post("/datasets/{dataset_id}/profile/refresh")
+async def refresh_dataset_context_profile(dataset_id: str, depth: str = "deep", _admin=Depends(require_admin)):
+    """Пересобрать паспорт датасета и записать sidecar рядом с датасетом."""
+    return build_dataset_profile(dataset_id, storage_root=Path("storage/datasets"), force=True, depth=depth)
+
+
+@router.post("/datasets/profiles/warmup")
+async def warmup_dataset_context_profiles(req: DatasetProfileWarmupRequest, _admin=Depends(require_admin)):
+    """Прогреть паспорта датасетов. No-reindex: читает только MetaDB/lexical index."""
+    return warmup_dataset_profiles(
+        dataset_ids=req.dataset_ids,
+        storage_root=Path("storage/datasets"),
+        depth=req.depth,
+        force=req.force,
+        limit=req.limit,
+    )
 
 
 # ── v0.16 §5: extraction body ops (status / dry-run / approved write) ─────────────────────

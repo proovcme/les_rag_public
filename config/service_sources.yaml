@@ -11,12 +11,15 @@ sources:
     paths:
       - data/gesn_base/gesn2022.parquet
       - config/domain/gesn_seed.yaml
+    folders:
+      - data/gesn_base
     accepted_files: ["*.parquet", "*.xlsx", "*.csv", "*.json", "*.pdf"]
     needed_for:
       - "ГЭСН-код → ресурсы"
       - "ЛСР от нормы"
       - "объектная прикидка"
-    operator_hint: "Импортируй официальную базу ГЭСН/ФЕР/ТЕР через tools/gesn_import.py, tools/gesn_bulk_import.py или tools/gesn_pdf_import.py. Семя — только минимальный fallback."
+    operator_action: "Положи официальную базу ГЭСН/ФЕР/ТЕР в папку ГЭСН. Семя нужно только как аварийный минимум."
+    process_label: "Проверить ГЭСН"
 
   - id: fgis_price_base
     domain: smeta
@@ -24,12 +27,15 @@ sources:
     status_if_missing: degraded
     paths:
       - data/price_base/*.parquet
+    folders:
+      - data/price_base
     accepted_files: ["*.xlsx", "*.parquet"]
     needed_for:
       - "цены ресурсов по коду"
       - "ресурсно-индексный расчёт"
       - "понимание, нужен ли КАЦ"
-    operator_hint: "Загрузи/обнови Сплит-форму субъекта и квартала в Инструменты → ФГИС ЦС. Query-time не ходит в интернет."
+    operator_action: "Положи сплит-формы цен нужного региона и квартала в папку цен. ЛЕС не ходит за ними в интернет во время расчёта."
+    process_label: "Проверить цены"
 
   - id: smeta_coefficients
     domain: smeta
@@ -40,13 +46,16 @@ sources:
       - config/domain/stesnennost.yaml
       - config/domain/object_templates.yaml
       - config/domain/smeta_ontology.yaml
+    folders:
+      - config/domain
     accepted_files: ["*.yaml"]
     needed_for:
       - "НР/СП"
       - "коэффициенты стеснённости"
       - "шаблоны объектной прикидки"
       - "сметная онтология"
-    operator_hint: "Это управляемые конфиги ЛЕС: менять только через версию, тесты и release ledger."
+    operator_action: "Проверяются служебные YAML: НР/СП, стеснённость, шаблоны объектов и сметная онтология."
+    process_label: "Проверить шаблоны"
 
   - id: normcontrol_spds_rulepack
     domain: normcontrol
@@ -54,12 +63,15 @@ sources:
     status_if_missing: blocking
     paths:
       - config/normcontrol/gost_r_21_101_2026.yaml
+    folders:
+      - config/normcontrol
     accepted_files: ["*.yaml"]
     needed_for:
       - "doc-review"
       - "карта проверок нормоконтроля"
       - "defense claims по пунктам"
-    operator_hint: "Rulepack — карта требований, не полный текст ГОСТ. Текст требований должен быть в нормативном RAG-датасете."
+    operator_action: "Rulepack задаёт карту проверок. Текст стандарта нужен отдельно в нормативном RAG-датасете."
+    process_label: "Проверить rulepack"
 
   - id: normcontrol_spds_rag
     domain: normcontrol
@@ -73,7 +85,8 @@ sources:
       - "цитаты/текст требований"
       - "retrieval-подфаза doc-review"
       - "защита замечаний ссылками на норму"
-    operator_hint: "Добавь легальный экземпляр ГОСТ/СПДС в нормативный датасет. Без него часть пунктов останется review_needed."
+    operator_action: "Добавь легальный экземпляр ГОСТ/СПДС в нормативный датасет. Без него часть пунктов останется на добор источников."
+    process_label: "Проверить RAG"
 
   - id: normcontrol_layout_reference
     domain: normcontrol
@@ -81,9 +94,12 @@ sources:
     status_if_missing: degraded
     paths:
       - config/normcontrol/layout_reference.yaml
+    folders:
+      - config/normcontrol
     accepted_files: ["*.yaml", "*.pdf", "*.png"]
     needed_for:
       - "проверка расположения рамки"
       - "проверка зоны основной надписи"
       - "проверка заполнения граф"
-    operator_hint: "Пока работает встроенный измерительный v1 по PDF-геометрии и зоне штампа. Для строгой проверки всех граф нужен эталонный layout_reference."
+    operator_action: "Нужен эталон расположения листа, рамки и основной надписи для строгой проверки граф."
+    process_label: "Проверить эталон"

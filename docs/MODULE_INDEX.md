@@ -48,6 +48,7 @@
 | rag/table | детерм. SUM по полному Parquet (числа — код) | `table_query_service`; MCP `les_table_*` | [ALGO-table-query.md](ALGO-table-query.md) | ✅ |
 | rag/pdf | layout-aware PDF (колонки/таблицы→pipe) | `backend/pdf_layout`; флаг `LES_LAYOUT_PDF` | [ALGO-pdf-layout.md](ALGO-pdf-layout.md) | ✅ |
 | rag/harvest | verify-правки → train-set + таксономия ошибок | `harvest_service`; `tools/harvest_dataset.py` | [ALGO-harvest.md](ALGO-harvest.md) | ✅ |
+| rag/context-memory | паспорт чата + metadata/deep паспорт датасета (`_les_dataset_profile.json`) + прогрев, как навигационный фон, НЕ evidence | `context_memory_service`; `GET /api/chat/memory/{session_id}`; `GET/POST /api/rag/datasets/{id}/profile*`; `POST /api/rag/datasets/profiles/warmup`; `routers/chat.py` | [ALGO-context-memory.md](ALGO-context-memory.md) | ✅ |
 | rag/vision | вердикт по VL-LoRA (пока не нужна) | — | [ALGO-vl-lora.md](ALGO-vl-lora.md) | ✅ (решение) |
 | rag/scan-mining | поиск данных в сканах + различение типа (verify) | `verify_service`, `table_detect`, `doc_classifier`; `routers/verify.py` | [scan_data_mining.md](scan_data_mining.md) | ✅ |
 | harness | unified construction harness (source-adapters, evidence) — флаг OFF | `source_adapters`, `unified_construction_harness_service` | [unified_harness_failure_ledger.md](unified_harness_failure_ledger.md) | ✅ (OFF) |

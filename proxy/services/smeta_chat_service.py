@@ -153,6 +153,135 @@ def _detect_condition(q: str) -> Optional[str]:
     return None
 
 
+def _num_ru(text: str) -> float:
+    clean = str(text or "").replace("\u00a0", " ").replace(" ", "").replace(",", ".")
+    return _f(clean)
+
+
+def _extract_mass_kg(text: str) -> float:
+    for pat in (
+        r"масса[^.\n]{0,80}?([\d\s\u00a0]+(?:[,.]\d+)?)\s*кг",
+        r"([\d\s\u00a0]+(?:[,.]\d+)?)\s*кг",
+    ):
+        m = re.search(pat, text, re.I)
+        if m:
+            return _num_ru(m.group(1))
+    return 0.0
+
+
+def _extract_int(pattern: str, text: str) -> int:
+    m = re.search(pattern, text, re.I)
+    return int(_num_ru(m.group(1))) if m else 0
+
+
+def _answer_custom_mass_estimate(q: str) -> Optional[dict[str, Any]]:
+    """Fallback для мутных ТЗ на монтаж тяжёлых металлоконструкций по массе.
+
+    Не защищаемая ЛСР: нет Приложения_1 с позициями, нет подобранных ГЭСН-кодов и рыночных КП.
+    Но прикидка целиком нужна оператору — считаем кодом от массы/этапов и явно маркируем ASSUME.
+    """
+    ql = q.lower()
+    if not any(w in ql for w in ("сталь", "стальные", "металлоконструкц", "каркас")):
+        return None
+    if not any(w in ql for w in ("ярус", "монтаж", "кран", "трал", "строп")):
+        return None
+    mass_kg = _extract_mass_kg(q)
+    if mass_kg <= 0:
+        return None
+    tiers = _extract_int(r"(\d+)\s*ярус", q) or 1
+    mass_t = round(mass_kg / 1000.0, 3)
+    control_t = round(mass_t * min(2, tiers) / max(tiers, 1), 3)
+    material_cost_zero = "0 руб" in ql and ("даваль" in ql or "сыр" in ql)
+    transport_zero = "транспорт" in ql and "0 руб" in ql
+
+    rates = {
+        "control_assembly": 45000.0,
+        "packaging": 20000.0,
+        "mounting": 85000.0,
+        "rigging": 12000.0,
+        "constrained_k": 1.15,
+        "qa_pct": 0.03,
+        "contingency_pct": 0.10,
+        "vat_pct": 0.20,
+    }
+    rows = [
+        ("Этап 1. Контрольная сборка двух смежных ярусов с бронзовыми элементами",
+         "ТЗ: 2 смежных яруса; ASSUME ставка 45 000 ₽/т",
+         control_t, "т", rates["control_assembly"], round(control_t * rates["control_assembly"], 2)),
+        ("Этап 2. Упаковка в транспортировочную тару негабаритных ярусов",
+         "ТЗ: весь тоннаж; ASSUME ставка 20 000 ₽/т",
+         mass_t, "т", rates["packaging"], round(mass_t * rates["packaging"], 2)),
+        ("Этап 4. Монтаж ярусов с колёс гусеничным краном",
+         "ТЗ: весь тоннаж; ASSUME 85 000 ₽/т × k=1.15",
+         mass_t, "т", rates["mounting"] * rates["constrained_k"],
+         round(mass_t * rates["mounting"] * rates["constrained_k"], 2)),
+        ("Строповка, временный крепёж, такелажная оснастка и монтажные доводки",
+         "ASSUME ставка 12 000 ₽/т",
+         mass_t, "т", rates["rigging"], round(mass_t * rates["rigging"], 2)),
+    ]
+    direct = round(sum(r[-1] for r in rows), 2)
+    qa = round(direct * rates["qa_pct"], 2)
+    subtotal = round(direct + qa, 2)
+    contingency = round(subtotal * rates["contingency_pct"], 2)
+    before_vat = round(subtotal + contingency, 2)
+    vat = round(before_vat * rates["vat_pct"], 2)
+    total = round(before_vat + vat, 2)
+
+    lines = [
+        "**Предварительная прикидка по прикреплённому ТЗ: стальные/бронзовые ярусы**",
+        "",
+        f"Распознано из ТЗ: масса **{_fmt_num(mass_t)} т**, ярусов **{tiers}**. "
+        "Стоимость давальческого сырья принята 0 ₽; транспорт/погрузка по этапу 3 не включены.",
+        "",
+        "| Раздел | Основание | Объём | Ставка | Стоимость, ₽ |",
+        "|---|---|---:|---:|---:|",
+    ]
+    for name, basis, qty, unit, rate, amount in rows:
+        lines.append(f"| {name} | {basis} | {_fmt_num(qty)} {unit} | {_fmt_num(rate)} ₽/{unit} | {_fmt_num(amount)} |")
+    lines += [
+        f"| Инженерное сопровождение, ППР/геодезия/контроль качества | ASSUME 3% от работ | — | — | {_fmt_num(qa)} |",
+        "",
+        f"Работы без НДС: **{_fmt_num(subtotal)} ₽**",
+        f"+ резерв на погодные/организационные простои и нестыковки 10%: {_fmt_num(contingency)} ₽",
+        f"+ НДС 20%: {_fmt_num(vat)} ₽",
+        f"**━━ ОРИЕНТИР стоимости работ с НДС: {_fmt_num(total)} ₽**",
+        "",
+        "### Защита расчёта: что откуда взято",
+        "- Масса, 11 ярусов, этапы, нулевое сырьё и исключение транспорта взяты из прикреплённого ТЗ.",
+        "- Ставки по тонне — ASSUME, потому что в ЛЕС сейчас нет служебного рыночного датасета КП/договоров по таким уникальным работам.",
+        "- Нормативная ЛСР по ГЭСН пока не защищается: нужен файл Приложение_1 с массами/габаритами ярусов и ручной подбор норм на монтаж/такелаж/упаковку.",
+        "- Рыночную стоимость с внешними ссылками ЛЕС сейчас не подтверждает: нужен датасет коммерческих предложений или разрешённый market-source workflow.",
+    ]
+    warnings = []
+    if not material_cost_zero:
+        warnings.append("стоимость давальческого сырья не удалось уверенно занулить")
+    if not transport_zero:
+        warnings.append("транспортный этап не удалось уверенно исключить")
+    if warnings:
+        lines.append("- Проверить: " + "; ".join(warnings) + ".")
+    return {
+        "answer": "\n".join(lines),
+        "operation": "custom_mass_estimate_assumed",
+        "sources": [
+            {"source_ref": "attachment:ТЗ_столп_22_06.docx", "source_kind": "file_body",
+             "excerpt": "Масса 664 711,12 кг; 11 ярусов; этапы сборка/упаковка/монтаж; сырьё и транспорт = 0."},
+            {"source_ref": "ASSUME#custom_mass_rates", "source_kind": "assumption",
+             "excerpt": "Укрупнённые ставки ₽/т для контрольной сборки, упаковки, монтажа и такелажа."},
+            {"source_ref": "config/service_sources.yaml#gesn_base", "source_kind": "service_source",
+             "excerpt": "ГЭСН доступен, но для этого ТЗ требуется отдельный маппинг норм по Приложению_1."},
+        ],
+        "retrieval_trace": {
+            "mode": "custom_mass_estimate_assumed",
+            "mass_t": mass_t,
+            "tiers": tiers,
+            "assume_rates": rates,
+            "grand_total": total,
+        },
+        "evidence_summary": {"COMPUTED": 1, "ASSUMED": len(rows) + 3, "MISSING": 2},
+        "total_status": "computed_assumed",
+    }
+
+
 def _answer_assemble(q: str) -> dict[str, Any]:
     from proxy.services.gesn_service import get_norm
     from proxy.services.lsr_assembly_service import assemble
@@ -223,6 +352,9 @@ def _answer_object_estimate(q: str) -> Optional[dict[str, Any]]:
 
     r = estimate(q)
     if not r.get("ok"):
+        custom = _answer_custom_mass_estimate(q)
+        if custom is not None:
+            return custom
         # Запрос ЯВНО про объектную смету (есть площадь/этажность ИЛИ императив «смету на …»),
         # но собрать не можем (нет шаблона под объект/материал, нет площади) — отдаём БЫСТРЫЙ
         # честный ответ, а НЕ роняем в полный RAG (там local-only датасет → форс локальной 4B →

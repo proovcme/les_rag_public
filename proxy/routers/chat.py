@@ -34,6 +34,7 @@ from backend.inference.routing import (
 from proxy.services.cad_bim_highlight import extract_highlight, set_highlight
 from proxy.services.clause_lookup_service import maybe_answer_clause_lookup
 from proxy.services.context_expander_service import expand_context_windows
+from proxy.services.context_memory_service import build_context_memory_block, update_chat_profile
 from proxy.services.memory_service import recall_context, session_memory
 from proxy.services.kot_service import analyze_question
 from proxy.services.lexical_index_service import retrieval_fingerprint
@@ -702,7 +703,25 @@ def save_chat_history(
                 success_value,
             ),
         )
-        return int(cur.lastrowid)
+        history_id = int(cur.lastrowid)
+    try:
+        update_chat_profile(
+            session_id=session_id,
+            question=question,
+            answer=answer,
+            crag_status=crag_status,
+            route=route,
+            requested_dataset_filter=requested_dataset_filter,
+            effective_dataset_filter=effective_dataset_filter,
+            resolved_dataset_ids=resolved_dataset_ids or [],
+            resolved_dataset_names=resolved_dataset_names or [],
+            source_dataset_ids=source_dataset_ids or [],
+            source_dataset_names=source_dataset_names or [],
+            success=success_value,
+        )
+    except Exception as err:  # профиль не должен ломать ответ/историю
+        logger.warning("[CONTEXT_MEMORY] chat profile update skipped: %s", err)
+    return history_id
 
 
 def _table_query_response(
@@ -914,6 +933,13 @@ async def _run_project_normcontrol(req: "ChatRequest", pid: int) -> str:
         except Exception as e:  # noqa: BLE001
             logger.warning("[REVIEW] project scope failed: %s", e)
     if not ds_ids:
+        if req.attachment_context:
+            return (
+                "Режим «Проверка проекта» видит прикреплённый файл, но read-вложение пришло как текст. "
+                "Для нормоконтроля нужны сами PDF/файлы комплекта: формат листа, рамка, штамп и ведомость "
+                "по одному тексту не проверяются. Прикрепи файл в режиме «В базу» или выбери датасет/проект, "
+                "после этого запусти проверку ещё раз."
+            )
         return ("Режим «Проверка проекта» (нормоконтроль): выбери объект или датасет — проверка "
                 "идёт по его PDF-файлам (форматы листов, шифры, ведомость↔файлы). Открой проект "
                 "слева и повтори запрос.")
@@ -1026,6 +1052,17 @@ def _attachment_source_label(ctx: str | None) -> str:
         if name:
             return f"attachment:{name}"
     return "attachment"
+
+
+def _question_with_attachment(req: "ChatRequest") -> str:
+    """User task plus read-attachment text for explicit tool modes.
+
+    Auto/free/RAG have their own context paths; explicit tools must still see the file instead of
+    silently using only the typed question.
+    """
+    if not req.attachment_context:
+        return req.question
+    return f"{req.question}\n\nКонтекст прикреплённого файла:\n{req.attachment_context}"
 
 
 async def _run_attachment_mode(req: "ChatRequest", token_sink=None) -> str:
@@ -1372,7 +1409,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         # «смет»/«посчитай» в maybe_handle_smeta_query: в режиме слово-триггер не нужно) и минуя
         # роутер/RAG. Не объект-смета (цена/КАЦ/код) → maybe_handle. Нет данных → просим уточнить.
         from proxy.services.smeta_chat_service import _answer_object_estimate, maybe_handle_smeta_query
-        sm = _answer_object_estimate(req.question) or maybe_handle_smeta_query(req.question, project_id=pid) or {
+        smeta_input = _question_with_attachment(req)
+        sm = _answer_object_estimate(smeta_input) or maybe_handle_smeta_query(smeta_input, project_id=pid) or {
             "answer": ("Режим «Смета» включён, но я не вижу объект и площадь. Напиши, например: "
                        "«офисное здание 3 этажа 3000 м²» или «деревянный дом 120 м² 2 этажа» — "
                        "соберу расчёт из локальной базы ГЭСН."),
@@ -1393,8 +1431,13 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     if _PROFILE == "kp_stub":
         # КП = генерация коммерческого предложения по материалам. Задел на будущее —
         # честная заглушка, НЕ фейковый КП.
+        attach_note = (
+            "Прикреплённый файл я вижу, но генератор КП ещё не включён в рабочий контур. "
+            if req.attachment_context else ""
+        )
         answer = (
-            "Режим «КП» (генерация коммерческого предложения по приложенным/указанным "
+            attach_note
+            + "Режим «КП» (генерация коммерческого предложения по приложенным/указанным "
             "материалам) — в разработке. Он соберёт исходящее КП из позиций сметы/прайса "
             "для заказчика. Пока для расчёта используй режим «Смета», а для разбора входящих "
             "КП в КАЦ — вложение в Outlook→ЛЕС или вопрос «нужен ли КАЦ для <код>»."
@@ -1412,7 +1455,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         # Рядом со старым smeta (YAML), не вместо. Числа из инструментов. Объект ВНЕ шаблонов
         # (паркинг/мост) → предварительная ВОР, а не «нет шаблона». Петля в to_thread (sync LLM).
         from proxy.services.estimate_harness_service import run_estimate_harness
-        result = await asyncio.to_thread(run_estimate_harness, req.question, _harness_complete)
+        result = await asyncio.to_thread(run_estimate_harness, _question_with_attachment(req), _harness_complete)
         return _mode_reply(_format_harness(result), "estimate_harness", "harness_mode")
 
     from proxy.services.asbuilt_chat_service import maybe_handle_asbuilt_query  # приёмка ИД-сканов
@@ -1772,6 +1815,18 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     )
     dataset_name_by_id = await _dataset_name_map(rag_backend)
     resolved_dataset_names = _names_for_dataset_ids(_dataset_ids, dataset_name_by_id)
+    try:
+        context_memory_block = build_context_memory_block(
+            session_id=req.session_id,
+            dataset_ids=_dataset_ids,
+            dataset_names=resolved_dataset_names,
+            storage_root=Path("./storage/datasets"),
+        )
+        if context_memory_block:
+            memory_block = memory_block + ("\n\n" if memory_block else "") + context_memory_block
+            logger.info("[CONTEXT_MEMORY] подмешан паспорт чата/датасетов (%s симв.)", len(context_memory_block))
+    except Exception as err:  # навигационная память не должна блокировать RAG
+        logger.warning("[CONTEXT_MEMORY] prompt block skipped: %s", err)
 
     # W11.10: «сделай ВОР из спецификации (Ф9)» — детерминированное преобразование
     # позиций спецификации в строки работ (объём = кол-во, глагол по словарю). 0 LLM.
