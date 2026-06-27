@@ -17,7 +17,7 @@
 7. **[docs/unified_harness_failure_ledger.md](docs/unified_harness_failure_ledger.md)** — журнал реальных провалов и как закрыты.
 8. **[docs/TEST_INVENTORY.md](docs/TEST_INVENTORY.md)** — карта тестов (что и где покрыто).
 
-Доп. при правке конкретного ядра: **алгоритм-доки** (0 LLM) — [docs/ALGO-table-query.md](docs/ALGO-table-query.md), [docs/ALGO-spec-to-bor.md](docs/ALGO-spec-to-bor.md) и др. в `docs/ALGO-*`; «что НЕ читать» — [docs/AGENT_NOTES.md](docs/AGENT_NOTES.md).
+Доп. при правке конкретного ядра: **алгоритм-доки** (0 LLM) — [docs/ALGO-table-query.md](docs/ALGO-table-query.md), [docs/ALGO-spec-to-bor.md](docs/ALGO-spec-to-bor.md) и др. в `docs/ALGO-*`; «что НЕ читать» — [docs/AGENT_NOTES.md](docs/AGENT_NOTES.md). **Как документировать (стандарт):** [docs/DOCUMENTATION_PLAYBOOK.md](docs/DOCUMENTATION_PLAYBOOK.md).
 
 **Историческое (контекст, НЕ текущая правда):** датированные саммари/хендоффы/репорты и заменённые планы сведены в **[`docs/archive/`](docs/archive/)** (`SESSION_SUMMARY_*`, `ROADMAP_LES_v2.0`, `DOCS_*AUDIT*`, хендоффы — см. `docs/archive/README.md`). На месте, но тоже историческое: `README_v2.0.md`, `LES_MASTER_DOC_v2_1.md`, `INFRASTRUCTURE_v2.0.md`, `RAG_MODERNIZATION_PLAN.md`, `ARTICLE_*.md`. Полезны для «почему так», но версии/решения могут устареть — сверяй с каноном и кодом (`/api/version`).
 
@@ -27,11 +27,17 @@
 - **Доменный гейт** (после правок retrieval/router): `uv run python tools/rag_golden_set.py --cases golden/domain_fire_hvac_set.json` — база **16/16** ([SKILL.md](SKILL.md): качество FIRE/HVAC — это доменная приёмка, не точечные фиксы).
 - **CI нет** — гейт запускается вручную.
 
-## Рабочий цикл изменения
-1. Сузить контекст (CODE_MAP → узкий поиск, не открывать тяжёлое).
-2. Минимальный дифф.
-3. Точечная проверка (один тест: `uv run pytest tests/test_X.py`).
-4. **`make verify`** до объявления готовности.
+## Definition of Done — ЛЮБОЕ изменение
+Изменение «готово» не когда код работает, а когда выполнено всё ниже (полный гайд по докам —
+[docs/DOCUMENTATION_PLAYBOOK.md](docs/DOCUMENTATION_PLAYBOOK.md); прод-дисциплина — [docs/GUARDRAILS.md](docs/GUARDRAILS.md)):
+1. Сузить контекст (MODULE_INDEX/CODE_MAP → узкий поиск, не открывать тяжёлое); **минимальный дифф**.
+2. **Тест на изменение** (ловит регрессию); точечно `uv run pytest tests/test_X.py`.
+3. **Док — в ТОМ ЖЕ коммите:** обновить док модуля (если менялись поток/границы/точки входа) + строку в
+   [MODULE_INDEX](docs/MODULE_INDEX.md) (статус док↔код + новые точки входа). **Док не должен врать о коде.**
+4. **Версия + леджер:** двинуть `LES_VERSION` (`0.веха.фича.патч`, `version_service.py`) + строка в
+   [RELEASE_LEDGER](docs/RELEASE_LEDGER.md) (что вошло).
+5. **Гейт ПЕРЕД «готово»:** `make verify` (всегда); `make test` если трогал логику.
+6. **В прод — только `make ship`** (verify→test→smoke зелёные) + известный откат (git checkout + redeploy / `tools/restore_runtime.sh`).
 
 ## Грабли и осторожность
 - **uv-проект:** зависимости/запуск через `uv run`. Не ставить пакеты без одобрения (`uv add` меняет lock).
