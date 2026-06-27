@@ -214,9 +214,59 @@ def test_harness_loop_end_to_end_parking():
     assert [t["tool"] for t in res["trace"]] == ["propose_schema", "add_position"]
 
 
+def test_batch_plan_calls_model_once_and_surfaces_gesn_candidates():
+    plan = {
+        "object_schema": {"object_type": "underground_parking", "area_total_m2": 4800,
+                          "levels_below_ground": 2, "structural_system": "monolithic_rc"},
+        "work_items": [
+            {"work": "Фундаментная плита",
+             "work_description": "устройство монолитной железобетонной фундаментной плиты",
+             "work_family": "concrete_monolithic", "element_type": "foundation_slab",
+             "action": "устройство", "unit_hint": "м3", "slots": {"slab_thickness_m": 0.4}},
+        ],
+    }
+    calls = {"n": 0}
+
+    def complete(_m):
+        calls["n"] += 1
+        return json.dumps(plan, ensure_ascii=False)
+
+    res = h.run_estimate_harness("паркинг 4800 м², плита 400 мм", complete)
+
+    assert calls["n"] == 1
+    assert res["planner_status"] == "batch"
+    assert res["trace"][0]["tool"] == "propose_schema"
+    assert res["trace"][1]["tool"] == "search_norm"
+    assert res["trace"][1]["candidates"]       # номера ГЭСН видны для operator review
+    assert res["computed"] == []               # близкие кандидаты не берём в сумму вслепую
+    assert res["rejected"][0]["status"] == "ambiguous"
+    assert res["rejected"][0]["candidates"][0]["norm_code"].startswith("ГЭСН:")
+
+
+def test_compact_batch_plan_array_contract():
+    plan = {
+        "object": {"object_type": "residential_house", "area_total_m2": 150, "floors": 1,
+                   "levels_below_ground": 0, "structural_system": "frame"},
+        "works": [
+            ["Устройство кровли", "Устройство двускатной кровли", "roofing", "roofing",
+             "устройство", "м2", {}],
+            ["Каркасные стены", "Устройство деревянных каркасных стен", "wood", "wood_wall",
+             "устройство", "м2", {}],
+        ],
+    }
+
+    res = h.run_estimate_harness("дача 150 м²", lambda _m: json.dumps(plan, ensure_ascii=False))
+
+    assert res["planner_status"] == "batch"
+    assert res["schema"]["object_type"] == "residential_house"
+    assert [t["tool"] for t in res["trace"]].count("search_norm") == 2
+    assert all(t["candidates"] for t in res["trace"] if t["tool"] == "search_norm")
+
+
 def test_no_numbers_from_model_text():
     res = h.run_estimate_harness("гараж 50 м²", lambda _m: "Итого 5 миллионов.", max_steps=3)
     assert res["computed"] == []
+    assert res["planner_status"] == "no_json"
 
 
 # ── Gate 4: SLOT REQUIREMENTS + FORMULA CATALOG (формула не придумывает входы) ────────────

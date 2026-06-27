@@ -312,7 +312,7 @@ def parse_params(question: str) -> dict[str, float]:
     return slots
 
 
-# ── петля ────────────────────────────────────────────────────────────────────────────────
+# ── планировщик ──────────────────────────────────────────────────────────────────────────
 
 _REQUIRED_SCHEMA = ("object_type", "area_total_m2")
 
@@ -337,6 +337,21 @@ SYSTEM_PROMPT = (
     "4) {\"final\":true} — собрать (ПРЕДВАРИТЕЛЬНО).\n\n"
     "Подземный паркинг: котлован(earthworks), гидроизоляция(waterproofing), фунд.плита+стены+"
     "перекрытия(concrete_monolithic). Один JSON за ход; коды — только из search_norm."
+)
+
+BATCH_SYSTEM_PROMPT = (
+    "/no_think\n"
+    "Ты инженер-сметчик. Верни только компактный JSON, без markdown и пояснений. "
+    "Модель раскладывает объект, но НЕ придумывает коды ГЭСН, объёмы и деньги: это делает код.\n"
+    "Формат: {\"object\":{\"object_type\":\"...\",\"area_total_m2\":150,\"floors\":1,"
+    "\"levels_below_ground\":0,\"structural_system\":\"...\",\"missing_inputs\":[\"...\"]},"
+    "\"works\":[[\"work\",\"search description\",\"family\",\"element\",\"action\",\"unit\",{\"slot\":1}]]}\n"
+    "family: earthworks,foundation,concrete_monolithic,concrete_precast,masonry,metal,wood,floors,"
+    "roofing,waterproofing,finishes. element: excavation,concrete_preparation,foundation_slab,"
+    "monolithic_wall,monolithic_slab,column,waterproofing,roofing,wood_wall,metal_assembly,pile,foundation.\n"
+    "Дай 3-6 ключевых работ. work и search description пиши по-русски, словами из строительных норм. "
+    "unit только м3, м2 или т. missing_inputs максимум 5. Если параметра нет, не выдумывай slot. "
+    "Коды норм не включай."
 )
 
 
@@ -447,6 +462,147 @@ def _exec_tool(name: str, args: dict[str, Any], state: dict[str, Any]) -> dict[s
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
+def _as_items(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [x for x in value if isinstance(x, dict)]
+
+
+def _schema_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    schema = plan.get("object") or plan.get("object_schema") or plan.get("schema") or {}
+    return schema if isinstance(schema, dict) else {}
+
+
+def _coerce_work_item(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, (list, tuple)) or len(value) < 6:
+        return None
+    slots = value[6] if len(value) >= 7 and isinstance(value[6], dict) else {}
+    return {
+        "work": value[0],
+        "work_description": value[1],
+        "work_family": value[2],
+        "element_type": value[3],
+        "action": value[4],
+        "unit_hint": value[5],
+        "slots": slots,
+    }
+
+
+def _work_items_from_plan(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = plan.get("works") if "works" in plan else plan.get("work_items")
+    items: list[dict[str, Any]] = []
+    for value in raw if isinstance(raw, list) else []:
+        item = _coerce_work_item(value)
+        if item:
+            items.append(item)
+    return items
+
+
+def _candidate_codes(candidates: list[dict[str, Any]], *, limit: int = 3) -> list[str]:
+    codes: list[str] = []
+    for c in candidates[:limit]:
+        code = str(c.get("norm_code") or "").strip()
+        if code:
+            codes.append(code)
+    return codes
+
+
+def _append_unbound_position(item: dict[str, Any], search: dict[str, Any],
+                             state: dict[str, Any]) -> None:
+    candidates = _as_items(search.get("candidates"))
+    top = candidates[0] if candidates else {}
+    status = "ambiguous" if candidates else "needs_input"
+    reason = (
+        "нет уверенно применимой нормы ГЭСН"
+        if candidates else "норма ГЭСН не найдена по описанию работы"
+    )
+    if search.get("status") == "not_found":
+        reason = str(search.get("hint") or reason)
+    state["positions"].append({
+        "work": item.get("work") or item.get("work_description") or "",
+        "code": top.get("norm_code", ""),
+        "work_family": item.get("work_family", ""),
+        "physical_unit": _canon_unit(item.get("unit_hint", "")),
+        "status": status,
+        "reason": reason,
+        "candidates": candidates[:5],
+    })
+
+
+def _run_batch_plan(question: str, complete: Callable[[list[dict[str, str]]], str],
+                    state: dict[str, Any], *, max_steps: int = 16) -> dict[str, Any]:
+    _slots_note = (f"Известные параметры из текста: {state.get('user_slots')}."
+                   if state.get("user_slots") else
+                   "Если параметров нет, оставь missing_inputs/пустые slots; код не будет выдумывать.")
+    messages = [
+        {"role": "system", "content": BATCH_SYSTEM_PROMPT},
+        {"role": "user", "content": f"Объект/контекст:\n{question}\n\n{_slots_note}"},
+    ]
+    state["steps"] = 1
+    raw = complete(messages) or ""
+    plan = _extract_json(raw)
+    trace: list[dict[str, Any]] = []
+
+    if plan is None:
+        res = _finalize(state, note="модель не вернула машинный JSON-план")
+        res["trace"] = trace
+        res["planner_status"] = "no_json"
+        return res
+
+    # Совместимость с прежним tool-loop контрактом: если модель вернула один tool-call,
+    # исполняем старый режим, но только как fallback, не как основной прод-путь.
+    if plan.get("tool") or plan.get("final"):
+        return _run_tool_loop(question, complete, state=state, max_steps=max_steps,
+                              first_call=plan, first_raw=raw)
+
+    schema = _schema_from_plan(plan)
+    obs_schema = _exec_tool("propose_schema", schema, state)
+    trace.append({"tool": "propose_schema",
+                  "status": "ok" if obs_schema.get("ok") else "err",
+                  "missing_inputs": obs_schema.get("missing_inputs")
+                  or obs_schema.get("missing_required") or []})
+
+    for item in _work_items_from_plan(plan):
+        search_args = {
+            "work_description": str(item.get("work_description") or item.get("work") or ""),
+            "work_family": str(item.get("work_family") or ""),
+            "element_type": str(item.get("element_type") or ""),
+            "action": str(item.get("action") or ""),
+            "unit_hint": str(item.get("unit_hint") or ""),
+        }
+        search = _exec_tool("search_norm", search_args, state)
+        candidates = _as_items(search.get("candidates"))
+        trace.append({
+            "tool": "search_norm",
+            "status": search.get("status") or ("ok" if search.get("ok") else "err"),
+            "work": item.get("work") or item.get("work_description") or "",
+            "candidates": _candidate_codes(candidates),
+        })
+        top = candidates[0] if candidates else None
+        if search.get("status") == "found" and top and top.get("unit_compatible") is not False:
+            add_args = {
+                "work": item.get("work") or item.get("work_description") or top.get("title") or "",
+                "code": top.get("norm_code", ""),
+                "work_family": item.get("work_family") or search.get("work_family") or "",
+                "element_type": item.get("element_type") or search.get("element_type") or "",
+                "slots": item.get("slots") if isinstance(item.get("slots"), dict) else {},
+            }
+            obs = _exec_tool("add_position", add_args, state)
+            trace.append({"tool": "add_position",
+                          "status": obs.get("status") or ("ok" if obs.get("ok") else "err"),
+                          "work": add_args["work"],
+                          "code": add_args["code"]})
+        else:
+            _append_unbound_position(item, search, state)
+
+    res = _finalize(state)
+    res["trace"] = trace
+    res["planner_status"] = "batch"
+    return res
+
+
 _CRITICAL = {"rejected_magnitude", "rejected_collection", "rejected_norm",
              "rejected_applicability", "ambiguous"}
 
@@ -513,12 +669,10 @@ def _finalize(state: dict[str, Any], *, note: str = "") -> dict[str, Any]:
     }
 
 
-def run_estimate_harness(question: str, complete: Callable[[list[dict[str, str]]], str],
-                         *, max_steps: int = 16) -> dict[str, Any]:
-    # Gate 4: параметры из запроса → слоты (петля уточнения: «… глубина 6м плита 400мм»).
-    user_slots = parse_params(question)
-    state: dict[str, Any] = {"schema": {}, "geom": {}, "positions": [], "steps": 0,
-                             "user_slots": user_slots}
+def _run_tool_loop(question: str, complete: Callable[[list[dict[str, str]]], str],
+                   *, state: dict[str, Any], max_steps: int = 16,
+                   first_call: dict[str, Any] | None = None, first_raw: str = "") -> dict[str, Any]:
+    user_slots = state.get("user_slots", {})
     _slots_note = (f" Известные параметры: {user_slots}." if user_slots else
                    " Параметры (глубина/толщины/геометрия стен) НЕ заданы — где их нет, позиция станет needs_input.")
     messages: list[dict[str, str]] = [
@@ -526,10 +680,18 @@ def run_estimate_harness(question: str, complete: Callable[[list[dict[str, str]]
         {"role": "user", "content": f"Объект: {question}\nНачни с propose_schema.{_slots_note}"},
     ]
     trace: list[dict[str, Any]] = []
+    pending_call = first_call
+    pending_raw = first_raw
     for _ in range(max_steps):
         state["steps"] += 1
-        raw = complete(messages) or ""
-        call = _extract_json(raw)
+        if pending_call is not None:
+            call = pending_call
+            raw = pending_raw
+            pending_call = None
+            pending_raw = ""
+        else:
+            raw = complete(messages) or ""
+            call = _extract_json(raw)
         messages.append({"role": "assistant", "content": raw[:1500]})
         if call is None:
             obs: dict[str, Any] = {"ok": False, "error": "ответь РОВНО одним JSON {tool,args} или {final:true}"}
@@ -545,6 +707,16 @@ def run_estimate_harness(question: str, complete: Callable[[list[dict[str, str]]
     res = _finalize(state, note=f"достигнут лимит {max_steps} шагов")
     res["trace"] = trace
     return res
+
+
+def run_estimate_harness(question: str, complete: Callable[[list[dict[str, str]]], str],
+                         *, max_steps: int = 16) -> dict[str, Any]:
+    # Gate 4: параметры из запроса → слоты (уточнение в одном запросе:
+    # «… глубина 6м плита 400мм»).
+    user_slots = parse_params(question)
+    state: dict[str, Any] = {"schema": {}, "geom": {}, "positions": [], "steps": 0,
+                             "user_slots": user_slots}
+    return _run_batch_plan(question, complete, state, max_steps=max_steps)
 
 
 def _extract_json(text: str) -> dict[str, Any] | None:

@@ -1183,11 +1183,12 @@ def _harness_complete(messages: list[dict]) -> str:
     """Sync LLM-вызов для петли сметного харнесса (исполняется в to_thread). Облако/MLX по
     конфигу — декомпозиция объекта = где большая модель уместна. Низкая temperature для tool-call."""
     runtime = _llm_runtime()
-    body = {"model": runtime.model, "messages": messages, "temperature": 0.2, "max_tokens": 700}
+    timeout_s = float(os.getenv("LES_ESTIMATE_HARNESS_TIMEOUT_SEC", "35"))
+    body = {"model": runtime.model, "messages": messages, "temperature": 0.0, "max_tokens": 700}
     body = _cloud_body_for_model(body, runtime.model, runtime.provider)
     headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
     try:
-        with httpx.Client(timeout=90.0) as c:
+        with httpx.Client(timeout=timeout_s) as c:
             r = c.post(runtime.chat_url, headers=headers, json=body)
             r.raise_for_status()
             return _assistant_text(r.json().get("choices", [{}])[0].get("message", {}))
@@ -1200,7 +1201,9 @@ def _format_harness(r: dict) -> str:
     """Результат харнесса+Gate1 → markdown. Жёстко: ORCHESTRATION доказан, QUALITY нет; итог
     скрыт при critical-провалах (не выдаём бред за сумму)."""
     sch = r.get("schema", {}) or {}
-    lines = [f"**Предварительная сметная декомпозиция** — {sch.get('object_type', 'объект')} · "
+    obj_type = str(sch.get("object_type") or "объект")
+    obj_type = {"house": "дом", "residential_house": "жилой дом"}.get(obj_type, obj_type)
+    lines = [f"**Предварительная сметная декомпозиция** — {obj_type} · "
              f"{sch.get('area_total_m2', '?')} м²", "",
              "_Модель сама раскладывает объект на работы и вызывает инструменты. Код ищет нормы, "
              "проверяет применимость, единицы и объёмы; считает только то, что прошло проверки. "
@@ -1229,15 +1232,21 @@ def _format_harness(r: dict) -> str:
 
     rej = r.get("rejected", [])
     if rej:
-        lines += ["", "**Отклонено предохранителями (Gate 1+2):**"]
+        lines += ["", "**Нужна привязка нормы или уточнение:**"]
         for p in rej:
-            lines.append(f"- {p.get('work', '')} ({p.get('code')}) — {p.get('status')}: {p.get('reason', '')}")
+            cand = [str(c.get("norm_code")) for c in (p.get("candidates") or [])[:3] if c.get("norm_code")]
+            suffix = f"; кандидаты: {', '.join(cand)}" if cand else ""
+            lines.append(f"- {p.get('work', '')} ({p.get('code')}) — "
+                         f"{p.get('reason', '')}{suffix}")
     ni = r.get("needs_input", [])
     if ni:
         lines += ["", "**Нет данных для расчёта (не выдумываем):**"]
         slots_needed: list[str] = []
         for p in ni:
-            lines.append(f"- {p.get('work', '')} ({p.get('code')}) — {p.get('reason', 'нужны параметры')}")
+            cand = [str(c.get("norm_code")) for c in (p.get("candidates") or [])[:3] if c.get("norm_code")]
+            suffix = f"; кандидаты: {', '.join(cand)}" if cand else ""
+            lines.append(f"- {p.get('work', '')} ({p.get('code')}) — "
+                         f"{p.get('reason', 'нужны параметры')}{suffix}")
             slots_needed += [s for s in (p.get("missing_slots") or []) if s not in slots_needed]
         if slots_needed:
             human = {"excavation_depth_m": "глубина котлована (м)", "slab_thickness_m": "толщина плиты (мм/м)",
@@ -1246,7 +1255,7 @@ def _format_harness(r: dict) -> str:
             ask = ", ".join(human.get(s, s) for s in slots_needed)
             lines += ["", f"**Чтобы дорассчитать — пришлите:** {ask}.",
                       "_Можно прямо в запросе: «…паркинг 4800 глубина 6 м плита 400 мм»._"]
-    lines.append(f"\n⚙ Петля: {r.get('steps')} шагов · инструменты: "
+    lines.append(f"\n⚙ Планировщик: {r.get('steps')} шаг · инструменты: "
                  f"{', '.join(str(t.get('tool')) for t in r.get('trace', [])) or '—'}")
     return "\n".join(lines)
 
