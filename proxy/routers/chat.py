@@ -50,6 +50,7 @@ from proxy.services.saferag_service import (
     concentrate_sources,
     final_answer_for_status,
     rank_chunks_for_question,
+    source_map_for_context,
     source_names,
 )
 from proxy.services.semantic_cache import (
@@ -311,6 +312,45 @@ def source_excerpts(chunks, *, max_n: int = 6, max_chars: int = 700) -> list[dic
         if len(out) >= max_n:
             break
     return out
+
+
+def _local_context_budget(*, local_big: bool, big_context: bool) -> dict[str, int]:
+    """Context budget for chat generation.
+
+    Cloud can digest a large prompt quickly. Local MLX pays heavily for prefill,
+    so technical/legal RAG gets a smaller default budget with env overrides.
+    """
+    if big_context:
+        return {
+            "focus_max_chunks": 24,
+            "context_max_chunks": 24,
+            "context_chars_limit": 32000,
+            "context_window_chars": _env_int("RAG_CONTEXT_WINDOW_CHARS", 2200),
+        }
+    if local_big:
+        return {
+            "focus_max_chunks": _env_int("RAG_LOCAL_FOCUS_MAX_CHUNKS", 8),
+            "context_max_chunks": _env_int("RAG_LOCAL_CONTEXT_MAX_CHUNKS", 6),
+            "context_chars_limit": _env_int("RAG_LOCAL_CHAT_CONTEXT_CHARS", 6500),
+            "context_window_chars": _env_int("RAG_LOCAL_CONTEXT_WINDOW_CHARS", 1200),
+        }
+    return {
+        "focus_max_chunks": _env_int("RAG_CHAT_FOCUS_MAX_CHUNKS", 8),
+        "context_max_chunks": _env_int("RAG_CONTEXT_MAX_CHUNKS", 6),
+        "context_chars_limit": _env_int("RAG_CHAT_CONTEXT_CHARS", 9000),
+        "context_window_chars": _env_int("RAG_CONTEXT_WINDOW_CHARS", 2200),
+    }
+
+
+def _generation_token_budget(*, max_tokens: int, local_big: bool, attempt: int, intent: str) -> int:
+    if attempt != 1:
+        return _env_int("RAG_CHAT_RETRY_MAX_TOKENS", 2048)
+    if not local_big:
+        return max_tokens
+    cap = _env_int("RAG_LOCAL_CHAT_MAX_TOKENS", 700)
+    if intent == "full":
+        cap = _env_int("RAG_LOCAL_CHAT_FULL_MAX_TOKENS", 1800)
+    return min(max_tokens, cap)
 
 
 def _dataset_sensitivities(dataset_ids: Iterable[str]) -> list[str]:
@@ -2449,9 +2489,11 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     big_context = (is_structured or is_technical_or_legal) and will_be_cloud
     local_big = (is_structured or is_technical_or_legal) and not will_be_cloud
 
-    focus_max_chunks = 24 if big_context else (12 if local_big else _env_int("RAG_CHAT_FOCUS_MAX_CHUNKS", 8))
-    context_max_chunks = 24 if big_context else (10 if local_big else _env_int("RAG_CONTEXT_MAX_CHUNKS", 6))
-    context_chars_limit = 32000 if big_context else (12000 if local_big else _env_int("RAG_CHAT_CONTEXT_CHARS", 9000))
+    context_budget = _local_context_budget(local_big=local_big, big_context=big_context)
+    focus_max_chunks = context_budget["focus_max_chunks"]
+    context_max_chunks = context_budget["context_max_chunks"]
+    context_chars_limit = context_budget["context_chars_limit"]
+    context_window_chars = context_budget["context_window_chars"]
     context_radius = 0 if is_structured else None
 
     chunks = rank_chunks_for_question(req.question, chunks)
@@ -2585,10 +2627,18 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         collection=getattr(rag_backend, "collection_name", ""),
         logger=logger,
         max_chunks=context_max_chunks,
+        max_chars_per_chunk=context_window_chars,
         radius=context_radius,
     )
     llm_chunks = context_windows.chunks
     retrieval_trace["context_window"] = context_windows.payload()
+    retrieval_trace["context_budget"] = {
+        **context_budget,
+        "big_context": big_context,
+        "local_big": local_big,
+        "will_be_cloud": will_be_cloud,
+        "context_radius": context_radius,
+    }
     expanded_table_chunks = [*chunks, *context_windows.chunks]
     table_result = maybe_answer_table_query(
         req.question,
@@ -2723,6 +2773,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     t_gen_start = time.time()
     t_llm = 0.0  # W0.1: чистое время LLM-вызовов (включая загрузку модели на стороне MLX)
     t_val = 0.0  # W0.1: чистое время /api/validate
+    answer_source_map: list[dict[str, object]] = []
     async with gen_semaphore:
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:
@@ -2827,11 +2878,17 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                         )
                         ctx_chunks = strict_windows.chunks
                         context = build_context(ctx_chunks, 6000, include_metadata=True)
+                        answer_source_map = source_map_for_context(ctx_chunks, 6000, include_metadata=True)
                         sys_msg = sys_strict
                         logger.warning("[SAFERAG] Retry #2 — строгий промпт, %s чанков", len(ctx_chunks))
                     else:
                         ctx_chunks = llm_chunks
                         context = build_context(
+                            ctx_chunks,
+                            context_chars_limit,
+                            include_metadata=True,
+                        )
+                        answer_source_map = source_map_for_context(
                             ctx_chunks,
                             context_chars_limit,
                             include_metadata=True,
@@ -2842,6 +2899,14 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                         # чтобы роутинг/авто-заметки/ретрив видели чистый вопрос (не мусор-шаблон).
                         if req.output_directive and req.output_directive.strip():
                             sys_msg += " " + req.output_directive.strip()
+                        if local_big and answer_form.intent in {"brief", "value", "default"}:
+                            sys_msg += (
+                                " Для локального нормативного ответа это правило приоритетнее общего правила "
+                                "про таблицы: максимум 5 коротких пунктов, без markdown-таблицы, без вступления, "
+                                "без заключения, без шуток и постскриптумов. "
+                                "Если в контексте есть только общие нормы, прямо отдели их от отсутствующих "
+                                "специальных требований."
+                            )
 
                     messages = [
                         {"role": "system", "content": sys_msg},
@@ -2860,7 +2925,15 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                                 + f"Вопрос: {req.question}\n\n"
                                 "/no_think\n"
                                 "Ответь сразу итоговым ответом без скрытых рассуждений. "
-                                "Не используй знания вне контекста."
+                                "Не используй знания вне контекста. "
+                                "Если ссылаешься на источник, используй только номера из заголовков "
+                                "контекста вида [Источник N | ...]; не придумывай номера источников. "
+                                + (
+                                    "Формат именно этого ответа: 3-5 маркированных пунктов, одна строка на пункт; "
+                                    "markdown-таблицу не используй; примечания, вступления, заключения и шутки не пиши."
+                                    if local_big and answer_form.intent in {"brief", "value", "default"}
+                                    else ""
+                                )
                             ),
                         },
                     ]
@@ -2873,7 +2946,12 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                         "stream": False,
                         "temperature": _env_float("CHAT_TEMPERATURE", 0.2),
                         # Потолок токенов под форму (attempt 1); строгий ретрай — дефолт.
-                        "max_tokens": answer_form.max_tokens if attempt == 1 else 2048,
+                        "max_tokens": _generation_token_budget(
+                            max_tokens=answer_form.max_tokens,
+                            local_big=local_big,
+                            attempt=attempt,
+                            intent=answer_form.intent,
+                        ),
                     }
                     # При стриминге ретрай (строгий промпт) шлёт уже новый текст —
                     # просим клиент очистить накопленное от прошлой попытки.
@@ -3037,7 +3115,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     "generation": round(t_llm, 3),
                     "validation": round(t_val, 3),
                     "overhead": round(max(0.0, t_gen - t_llm - t_val), 3),
+                    "total": round(t_search + t_ctx + t_gen, 3),
                 }
+                retrieval_trace["latency_phases"] = phases
+                retrieval_trace["source_map_count"] = len(answer_source_map)
                 state.chat_metrics.setdefault("latency_phases", []).append(phases)
                 logger.info("[METRICS] phases=%s", phases)
                 for key in ("latency_search", "latency_gen", "tokens", "latency_phases"):
@@ -3116,6 +3197,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     "validation": {"enabled": use_validation},
                     "history_id": history_id,
                     "source_excerpts": source_excerpts(chunks),
+                    "source_map": answer_source_map,
+                    "latency_phases": phases,
                     "class_suggestions": class_suggestions,
                     "versions": _version_stamp(),
                     "numeric_unverified": _num_unverified,

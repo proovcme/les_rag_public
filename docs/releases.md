@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.6** | HEAD | Chat stability pass: local MLX RAG gets a smaller default context budget, `/api/chat` returns `source_map` matching the exact "Источник N" prompt numbering, and `latency_phases` exposes retrieval/context/generation/validation timing. |
 | **v0.24.0.5** | HEAD | External Radar: Samovar gets a no-reindex overview of configured external roots, filemap candidates and already indexed in-place `source_path` documents via `/api/external-radar/summary`. |
 | **v0.24.0.4** | HEAD | Deep context memory: dataset passports support `depth=deep` from bounded `lexical_chunks` reads, prompt context is capped, and `/api/rag/datasets/profiles/warmup` can prebuild profiles without reindex/OCR/LLM. |
 | **v0.24.0.3** | HEAD | Context memory: chat sessions now keep a deterministic profile, datasets get a `_les_dataset_profile.json` sidecar/profile from metadata, RAG prompts receive compact chat/dataset context marked as navigation not evidence, and API endpoints expose chat memory and dataset profile refresh. |

@@ -212,6 +212,46 @@ def build_context(chunks: Iterable[SourceChunk], max_chars: int, *, include_meta
     return "\n\n".join(parts)
 
 
+def source_map_for_context(
+    chunks: Iterable[SourceChunk],
+    max_chars: int,
+    *,
+    include_metadata: bool = False,
+    snippet_chars: int = 220,
+) -> list[dict[str, object]]:
+    """Return the exact source numbering visible in ``build_context``.
+
+    ``sources`` in chat responses are document chips, while the prompt cites chunk
+    headers as "Источник N". This map keeps those two surfaces explainable.
+    """
+    out: list[dict[str, object]] = []
+    total = 0
+    for index, chunk in enumerate(chunks, 1):
+        clean = _clean_chunk_text(chunk.content)
+        label = _source_label(index, chunk, include_metadata)
+        part = f"{label}:\n{clean}"
+        if total + len(part) > max_chars:
+            break
+        meta = getattr(chunk, "meta", {}) or {}
+        item: dict[str, object] = {
+            "index": index,
+            "label": f"Источник {index}",
+            "doc_name": chunk.doc_name,
+            "header": label,
+            "snippet": clean[:snippet_chars].strip(),
+        }
+        score = getattr(chunk, "score", None)
+        if isinstance(score, (int, float)):
+            item["score"] = round(float(score), 3)
+        if isinstance(meta, dict):
+            for key in ("dataset_id", "source_page", "page", "page_number", "doc_type", "source_ref"):
+                if meta.get(key):
+                    item[key] = meta[key]
+        out.append(item)
+        total += len(part)
+    return out
+
+
 def build_validation_context(
     chunks: Iterable[SourceChunk],
     max_chars: int = 8000,
