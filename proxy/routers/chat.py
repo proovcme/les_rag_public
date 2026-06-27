@@ -21,6 +21,7 @@ from pydantic import BaseModel, field_validator
 from backend.rag_config import rag_meta_db_path
 from proxy.security import require_user
 from proxy.services.answer_form_service import classify_answer_form
+from proxy.services.answer_contract_service import decorate_payload, scenario_for_request
 from proxy.services.class_router_service import build_class_suggestions
 from proxy.services.clarification_service import build_clarification_decision
 from backend.inference.validator import rules_pre_verdict
@@ -908,17 +909,19 @@ def _sse_event(event: str, data: Any) -> str:
 async def chat(req: ChatRequest, _user=Depends(require_user)):
     """W5.1: нестриминговый эндпоинт — поведение неизменно (M5, смоуки, АРТЕЛЬ,
     chat_format_smoke). token_sink=None → путь stream:False, как раньше."""
-    return await _run_chat(req)
+    return decorate_payload(await _run_chat(req))
 
 
 @router.post("/chat/stream")
 async def chat_stream(req: ChatRequest, _user=Depends(require_user)):
     """W5.1: SSE-стриминг. События:
       • `token` — кусок ответа по мере генерации (только generic-LLM путь);
+      • `progress` — видимый шаг workflow для tool/детерминированных веток;
       • `reset` — очистить накопленный текст (ретрай/деградация на MLX);
       • `final` — полный payload (sources + вердикт валидации в `crag_status`);
       • `error` — {status, detail}.
-    Детерминированные/кэш/clarification ветки токенов не шлют — приходит сразу `final`."""
+    Детерминированные/tool ветки не подделывают токены модели: они шлют progress,
+    а затем авторитетный final payload."""
     if not req.question.strip():
         raise HTTPException(400, "Empty question")
     queue: asyncio.Queue = asyncio.Queue()
@@ -928,7 +931,24 @@ async def chat_stream(req: ChatRequest, _user=Depends(require_user)):
 
     async def runner() -> None:
         try:
-            result = await _run_chat(req, token_sink=sink)
+            scenario = scenario_for_request(
+                mode=req.mode,
+                question=req.question,
+                has_attachment=bool(req.attachment_context),
+            )
+            steps = scenario.get("progress") or []
+            total = len(steps)
+            for idx, label in enumerate(steps, 1):
+                await queue.put({
+                    "event": "progress",
+                    "data": {
+                        "step": idx,
+                        "total": total,
+                        "label": label,
+                        "scenario": {"id": scenario.get("id"), "label": scenario.get("label")},
+                    },
+                })
+            result = decorate_payload(await _run_chat(req, token_sink=sink))
             await queue.put({"event": "final", "data": result})
         except HTTPException as he:
             await queue.put({"event": "error", "data": {"status": he.status_code, "detail": he.detail}})

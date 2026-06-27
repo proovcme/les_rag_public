@@ -7,12 +7,12 @@
 ## Текущее состояние (2026-06-27)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.9  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.10  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.9 passport dialog hotfix
+задеплоено на рантайм:     0.24.0.10 progress/contracts
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.9 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=27
+рантайм /api/version:      0.24.0.10 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=27
 ```
 
 > 0.24.0.6 выкачен через `make ship`. Живой чат-прогон без semantic cache:
@@ -25,6 +25,8 @@ dev HEAD:                  HEAD  (см. git log -1)
 > SSE-токене.
 > 0.24.0.9 — hotfix кнопки «Паспорт области»: диалог заранее создаётся в UI-slot NiceGUI, а клик
 > только заполняет его после async-загрузки профилей.
+> 0.24.0.10 добавляет видимый ход работы для tool/детерминированных веток (`progress` SSE)
+> и явный `answer_contract`/`scenario` в payload ответа.
 
 > Деплоятся только code-правки (`proxy/`,`backend/`,`sovushka/`,`config/`). Доки на рантайм не катятся —
 > поэтому dev HEAD ≠ deployed_commit это нормально, пока расходятся только доки.
@@ -61,6 +63,7 @@ dev HEAD:                  HEAD  (см. git log -1)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.10 | HEAD | 2026-06-27 | Chat workflow contracts: `/api/chat/stream` шлёт операторские `progress`-события до final, tool/детерминированные ветки больше не выглядят как зависший чат; каждый final payload получает `scenario` и `answer_contract`, а `ProfileResolver.as_trace()` отдаёт `output_contract`; Совушка показывает сценарий и табличный контракт в чипах, технические id — в раскрывашке | ✅ рантайм, full test + ship/smoke + browser smoke ✅ |
 | 0.24.0.9 | HEAD | 2026-06-27 | Passport dialog hotfix: «Паспорт области» больше не создаёт `ui.dialog()` из фоновой задачи; диалог предмонтирован в правильном NiceGUI slot и заполняется после async-загрузки памяти чата/deep-паспортов датасетов | ✅ рантайм, full test + ship/smoke + browser click ✅ |
 | 0.24.0.8 | HEAD | 2026-06-27 | Operator UX/passports/streaming: первый слой чата показывает человеческие статусы (`Проверено`, `Без проверки`, маршрут, секунды), внутренние KOT/CTX/CACHE переехали в «Технические детали»; добавлена кнопка «Паспорт области» с памятью чата и deep-паспортами выбранных датасетов; SSE-токены принудительно обновляют пузырь ответа и скролл | ✅ рантайм, full test + ship/smoke ✅ |
 | 0.24.0.7 | HEAD | 2026-06-27 | Chat table-format correction: локальный technical/legal RAG снова предпочитает компактную markdown-таблицу, если найдено несколько требований/условий; короткий профиль теперь режет простыни/постскриптумы, а не таблицы | ✅ рантайм, full test + ship/smoke + live table check ✅ |
@@ -141,11 +144,11 @@ focused 0.24.0.7:       ✅ 32 passed (source-map/chat/version)
 make test 0.24.0.7:     ✅ 2096 passed / 6 warnings / 121.69s
 make ship 0.24.0.7:     ✅ verify 2096 collected; focused 61 passed; pre-smoke pass=9; post-smoke pass=9 after restart retry
 live table 0.24.0.7:    ✅ FIRE has_table=true; 50.6s; source_map=5; unknown citations=0
-focused 0.24.0.9:       ✅ 39 passed (operator UI helpers + SSE + version)
-make verify 0.24.0.9:   ✅ 2098 collected
-make test 0.24.0.9:     ✅ 2098 passed / 6 warnings / 123.11s
-make ship 0.24.0.9:     ✅ verify 2098 collected; focused 63 passed; pre-smoke pass=9; post-smoke pass=9 after restart retry
-browser 0.24.0.9:       ✅ /classic 200, «Паспорт области» button present and click opens dialog
+focused 0.24.0.10:      ✅ 58 passed (answer contracts + SSE progress + UI helpers + profile resolver + version)
+make verify 0.24.0.10:  ✅ 2102 collected
+make test 0.24.0.10:    ✅ 2102 passed / 6 warnings / 127.99s
+make ship 0.24.0.10:    ✅ verify 2102 collected; focused 63 passed; pre-smoke pass=9; post-smoke pass=9
+live 0.24.0.10:         ✅ /api/chat/stream emits progress→final with scenario=tool and answer_contract=tool_result_v1; /classic 200
 ```
 
 **Закрыто в 0.23.6.7:** latency-smoke был не LLM generation, а 12s ожидание недоступного

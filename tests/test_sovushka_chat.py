@@ -75,6 +75,8 @@ def test_operator_status_chips_hide_internal_trace_from_first_layer():
         "cache": "miss",
         "validation": {"enabled": True},
         "latency_phases": {"total": 12.34},
+        "scenario": {"id": "table_query", "label": "Табличный расчёт"},
+        "answer_contract": {"id": "tool_result_v1", "label": "Результат инструмента", "tables": "required"},
     }
 
     chips = _operator_status_chips("VERIFIED", meta, ["a", "b"])
@@ -83,12 +85,16 @@ def test_operator_status_chips_hide_internal_trace_from_first_layer():
     assert "2 источн." in labels
     assert "Проверено" in labels
     assert "Таблица" in labels
+    assert "Табличный расчёт" in labels
+    assert "Табличный контракт" in labels
     assert "12.3с" in labels
     assert all("KOT" not in label and "CACHE" not in label for label in labels)
 
     tech = _operator_technical_chips(meta)
     assert "KOT NTD_FIRE 0.8" in tech
     assert "CACHE MISS" in tech
+    assert "SCENARIO table_query" in tech
+    assert "CONTRACT tool_result_v1" in tech
 
 
 def test_dataset_and_chat_profile_operator_summaries_are_human_readable():
