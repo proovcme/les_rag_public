@@ -59,7 +59,7 @@ Proxy       :8050  (FastAPI)  ── /api/chat, /api/datasets, /api/runtime, /ap
 
 ## Поток запроса (чат) и индексации
 
-**Запрос:** `POST /api/chat` → `runtime_admission` (очередь/режим) → `query_router` (mail/table/clause/generic) → `retrieval_service` (semantic_cache → Qdrant) → `context_memory_service` (deep-паспорт чата/датасета как фон, НЕ evidence; prompt-лимит датасетов) → `saferag_service` (C-RAG: контекст + валидация фактов через MLX `/api/validate`) → `runtime_dispatcher` (MLX `/v1/chat/completions`, стрим) → ответ + источники + статус валидации.
+**Запрос:** `POST /api/chat` → `runtime_admission` (очередь/режим) → `query_router` (mail/table/clause/generic) → `retrieval_service` (semantic_cache → Qdrant) → `context_memory_service` (deep-паспорт чата/датасета как фон, НЕ evidence; prompt-лимит датасетов) → `saferag_service` (C-RAG: контекст + source-map `Источник N` + валидация фактов через MLX `/api/validate`) → `runtime_dispatcher` (MLX `/v1/chat/completions`, стрим) → ответ + `sources`/`source_map` + `latency_phases` + статус валидации.
 
 **Индексация:** `POST /api/datasets/{id}/upload` → `document_router.route_document()` → `converter.convert_to_markdown()` (pdf/docx/xlsx/eml/dxf/ifc) → `StructureAwareSplitter` (бережёт нумерованные пункты ГОСТ/СП) → батч-эмбеддинг через MLX `/v1/embeddings` → `upsert` в Qdrant → метаданные в SQLite (`data/les_meta_qwen.db`).
 

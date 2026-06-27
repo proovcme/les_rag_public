@@ -110,6 +110,12 @@ Response:
 | `POST` | `/api/chat/history/{history_id}/feedback` | Feedback: good/bad/wrong dataset/source |
 | `GET` | `/api/chat/learning` | Learning trace для будущей настройки routing |
 
+`/api/chat` возвращает документные `sources` для UI-чипов и отдельный `source_map`: карту
+фактических prompt-блоков `Источник N`, по которым модель цитирует ответ. Один документ может дать
+несколько чанков (`Источник 1`, `Источник 5` и т.п.), поэтому `source_map` — канон для проверки
+номеров источников в тексте ответа. Поле `latency_phases` дублируется в `retrieval_trace` и показывает
+фазы `retrieval/context/generation/validation/overhead/total`.
+
 Минимальный запрос:
 
 ```bash
