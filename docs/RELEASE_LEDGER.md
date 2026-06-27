@@ -7,12 +7,12 @@
 ## Текущее состояние (2026-06-28)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.19  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.20  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.19 workflow plan UI
+задеплоено на рантайм:     0.24.0.20 smeta model-first route + object-composition removal
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.19 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=31
+рантайм /api/version:      0.24.0.20 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=31
 ```
 
 > 0.24.0.6 выкачен через `make ship`. Живой чат-прогон без semantic cache:
@@ -49,6 +49,9 @@ dev HEAD:                  HEAD  (см. git log -1)
 > единый план workflow, required/missing inputs, evidence policy, claim/source summary, blockers/actions.
 > 0.24.0.19 выводит `workflow_plan_v1` в операторский слой Совушки: статус/финальность видны в чипах,
 > а workflow id, missing inputs и next actions доступны в технических деталях ответа.
+> 0.24.0.20 переключает режим «Смета» на model-first tool-loop: модель сама раскладывает объект,
+> харнесс только даёт инструменты и gates; старый объектный слой, его YAML-данные и mass-rate fallback
+> удалены, а auto-router больше не имеет отдельного объектного инструмента.
 
 > Деплоятся только code-правки (`proxy/`,`backend/`,`sovushka/`,`config/`). Доки на рантайм не катятся —
 > поэтому dev HEAD ≠ deployed_commit это нормально, пока расходятся только доки.
@@ -85,6 +88,7 @@ dev HEAD:                  HEAD  (см. git log -1)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.20 | HEAD | 2026-06-28 | Smeta model-first route: режим «Смета» идёт через `estimate_harness` (модель сама раскладывает объект; харнесс даёт `search_norm`/`add_position` и gates); старый объектный слой, его YAML-данные, mass-rate fallback и auto-router target удалены; служебные источники больше не требуют готовых объектных составов | ✅ рантайм, full test + ship/smoke; runtime old files removed ✅ |
 | 0.24.0.19 | HEAD | 2026-06-28 | Workflow plan UI: Совушка сохраняет `workflow_plan_v1` в metadata сообщения, показывает статус/финальность workflow оператору и оставляет `workflow_id`, missing inputs, next actions в технических деталях без вывода router/debug полей в первый слой | ✅ рантайм, focused/verify + ship/smoke + live workflow UI ✅ |
 | 0.24.0.18 | HEAD | 2026-06-27 | Workflow plan contract: ответы чата и JSON нормоконтроля получают общий `workflow_plan_v1` (workflow id, required/missing inputs, evidence policy, claim/source summary, blockers, next actions), чтобы smeta/normcontrol/checklist развивались через один информационный контракт | ✅ рантайм, focused/verify + ship/smoke + live workflow plan ✅ |
 | 0.24.0.17 | HEAD | 2026-06-27 | Dataset passport benchmark: deep-паспорта датасетов получили `quality` (`good/partial/weak/empty`, score/warnings/signals), warmup теперь отдаёт per-dataset timing/cache-status, а новый `POST /api/rag/datasets/profiles/benchmark` сравнивает cold rebuild и warm cached read без reindex/OCR/LLM | ✅ рантайм, focused/verify + ship/smoke + live warmup/benchmark ✅ |
@@ -221,6 +225,11 @@ focused 0.24.0.19:      ✅ 19 passed (sovushka chat + answer contracts)
 make verify 0.24.0.19:  ✅ 2123 collected
 make ship 0.24.0.19:    ✅ verify 2123 collected; focused 75 passed; pre-smoke pass=9; post-smoke pass=9 after restart retry
 live 0.24.0.19:         ✅ /api/chat returns `workflow_plan.schema=workflow_plan_v1`, `workflow_id=tool`, `status=needs_data`, `finality=not_final`; /api/version 0.24.0.19 aligned checked=31
+focused 0.24.0.20:      ✅ 92 passed (profile resolver + answer contracts + smeta quick tools + estimate harness + agent router)
+make verify 0.24.0.20:  ✅ 2101 collected
+make test 0.24.0.20:    ✅ 2101 passed / 6 warnings / 134.60s
+make ship 0.24.0.20:    ✅ verify 2101 collected; focused 99 passed; pre-smoke pass=9; post-smoke pass=8 warn=1 fail=0 after proxy restart retry
+live 0.24.0.20:         ✅ /api/version 0.24.0.20 aligned checked=31; runtime `object_templates.yaml` and `object_estimate_service.py` absent; quick smeta channel returns None for house/dacha/steel-mass object requests. ⚠ `/api/chat mode=smeta` dacha live probe timed out at 180s in model tool-loop — stability/latency backlog, not fallback.
 ```
 
 **Закрыто в 0.23.6.7:** latency-smoke был не LLM generation, а 12s ожидание недоступного

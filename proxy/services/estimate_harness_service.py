@@ -27,7 +27,7 @@ import re
 from functools import lru_cache
 from typing import Any, Callable
 
-from proxy.services.object_estimate_service import _eval_formula, _f, _geometry
+from proxy.services.estimate_math_service import _eval_formula, _f, _geometry
 
 # ── единицы измерения (UNIT CONTRACT) ────────────────────────────────────────────────────
 
@@ -87,7 +87,7 @@ _FORBIDDEN_TITLE_ANCHORS = (
 # Обязательные признаки семейства — иначе ambiguous (название не похоже на работу).
 _FAMILY_POSITIVE_ANCHORS: dict[str, tuple[str, ...]] = {
     "earthworks": ("грунт", "котлован", "траншея", "разработ", "выемк", "насып", "землян", "разраб"),
-    "foundation": ("фундамент", "основани", "плит", "бетон"),
+    "foundation": ("фундамент", "основани", "плит", "бетон", "сва", "ростверк"),
     "concrete_monolithic": ("бетон", "монолит", "железобетон", "плит", "стен", "перекрыт", "колонн", "фундамент"),
     "concrete_precast": ("сборн", "панел", "плит", "блок"),
     "masonry": ("кладк", "стен", "перегородк", "кирпич", "блок"),

@@ -15,7 +15,6 @@ WORKFLOW_PLAN_SCHEMA = "workflow_plan_v1"
 
 
 _REQUIRED_INPUTS: dict[str, list[str]] = {
-    "object_estimate": ["object_description", "norm_base", "price_basis", "project_bor_or_assumptions"],
     "estimate_harness": ["object_schema", "work_items", "norm_candidates", "price_basis"],
     "normcontrol": ["document_set", "rulepack", "requirements", "layout_or_manual_review"],
     "grounded_rag": ["scope", "retrieved_sources"],
@@ -29,7 +28,6 @@ _REQUIRED_INPUTS: dict[str, list[str]] = {
 
 
 _EVIDENCE_POLICY: dict[str, str] = {
-    "object_estimate": "numbers_need_provenance_and_assumptions",
     "estimate_harness": "numbers_need_provenance_and_assumptions",
     "normcontrol": "findings_need_requirement_or_computed_check",
     "grounded_rag": "claims_need_source_refs",

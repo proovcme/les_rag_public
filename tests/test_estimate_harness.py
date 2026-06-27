@@ -7,7 +7,7 @@ needs_input, блокировку итога. Числа из кода. 7 кри
 import json
 
 from proxy.services import estimate_harness_service as h
-from proxy.services.object_estimate_service import _geometry
+from proxy.services.estimate_math_service import _geometry
 
 
 def _state(area=3000, floors=3):

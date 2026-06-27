@@ -1,127 +1,48 @@
-# Алгоритм: объектная смета (фраза → ВОР → ЛСР → СМР·НДС·ВСЕГО)
+# Legacy: object-estimate layer
 
-Из короткой мутной фразы оператора («офис, 3 этажа, подвал, 3000 м²») собрать **прикидку
-стоимости объекта целиком** без ручного ввода ресурсов. Если данных мало, недостающие разделы
-добавляются как явные `ASSUME`-строки; если оператор прикрепил ВОР/Ф9/КС-2/папку проекта,
-детальная смета должна идти по этим данным, а не по шаблону. В шаблонном режиме результат имеет
-статус `rough_full_object_assumed` и `final_total_allowed=false`: это бюджетный ориентир, не
-детальная проектная смета. 0 LLM в счёте (ADR-11): LLM в лучшем случае парсит фразу, **все числа —
-код** (геометрия, разворот норм, ASSUME-разделы, коэффициент текущего уровня, хвост).
+> **Status since 0.24.0.20: retired from the product route.**
+> User-facing Smeta mode must not enter this layer.
+>
+> Current principle: **модель первична и сама раскладывает объект, харнесс только даёт инструменты**.
+> The working route is `estimate_harness_service.run_estimate_harness()`:
+> the model proposes work items, the harness exposes `search_norm` / `add_position`,
+> and code checks norm applicability, units, quantities, prices and evidence.
 
-## Конвейер
+## Why This Page Exists
 
-```
-реплики текущей сессии → merge_parsed_requests (последнее уточнение побеждает) →
-  parse_request (тип объекта / материал / этажность / площадь) →
-  select_template (точный шаблон) → select_analog_template (если точного нет) →
-  build_composition_candidates (ГЭСН-кандидаты для спорных частей, без автосуммы) →
-  build_vor (геометрия → объёмы позиций) →
-  lsr_assembly.assemble (ГЭСН-конструктив) →
-  ASSUME-разделы → price_level_k → непредвиденные → НДС → ОРИЕНТИР объекта
-```
+This document is now a tombstone for the older object-estimate experiment, not an instruction.
+It remains only so historical tests, release notes and rollback discussions have a stable link.
+Do not extend this layer for new object estimates.
 
-## Шаги
+## Product Route
 
-1. **Разбор фразы** (`parse_request(text, use_llm=False)`): детерминированно (regex/словарь)
-   достаёт тип объекта, материал, этажность, площадь. Понимает прямую и разговорную запись площади
-   (`150 м²`, `метров 150`) и этажность словами (`один этаж`, `в два этажа`). LLM-фолбэк выключен
-   по умолчанию (ADR-11) — только парсит, не считает.
-2. **Состояние диалога** (`merge_parsed_requests`): в явном режиме «Смета» `chat.py` берёт последние
-   вопросы текущей `session_id` и текущую реплику, затем последовательно переносит распознанные поля.
-   Позднее уточнение заменяет раннее: `один этаж` → `а давай два этажа` даёт `floors=2`, без склейки
-   строк и без LLM. Память — только параметры для выбора шаблона/формул; числа по-прежнему считает код.
-3. **Выбор шаблона** (`select_template`): сопоставляет разбор с `config/domain/object_templates.yaml`
-   по спискам `match.object[]` и `match.material[]`. **Ловушка матча решена** (commit 0139182,
-   «офис ≠ дерев. дом»): материал-специфичный шаблон требует **сигнала материала** (слово в запросе
-   ИЛИ распознанный материал). Пустой материал больше не матчится ни на что (раньше
-   `"".startswith("")==True` лепил «деревянный дом» на любой запрос) — нет сигнала → нет шаблона
-   → честный отказ/уход к модели, не выдумка.
-4. **Поиск аналога** (`select_analog_template`): если точного шаблона нет, сервис ищет ближайший
-   локальный аналог среди тех же объектных шаблонов. Аналог не расширяет `match` и не притворяется
-   точным шаблоном: результат получает `analog`, `quality.status=rough_analog_object_assumed`,
-   источник `config/domain/object_templates.yaml#...` помечается как аналог, а ответ обязан
-   показать причину выбора. Сейчас безопасно разрешён только близкий мост `каркасный ИЖС` →
-   `wooden_house` как локальный деревянный ИЖС-аналог; несовместимые материалы вроде кирпича не
-   притягиваются к дереву только по слову «дом».
-5. **Кандидаты состава работ** (`build_composition_candidates`): для явно непокрытых частей
-   запроса (`каркас`, `сваи/ростверк`, `плоская кровля`, `крыльцо/терраса`, `фундамент`) сервис
-   вызывает `estimate_harness_service.search_norm()` по локальной ГЭСН-базе. Результат —
-   `composition_candidates`: список норм-кандидатов с `accepted/ambiguous/rejected`, который
-   показывается в ответе и trace, но **не включается в сумму автоматически**. Это путь от
-   типового аналога к детальной ВОР, а не новая детерминированная мина.
-6. **Сборка ВОР** (`build_vor`): из площади S и этажности N выводит геометрию — S1=S/N (пятно),
-   a=√S1 (сторона), P=4a (периметр); затем считает `qty_formula` каждой позиции в безопасном
-   namespace `{S, N, P, H, S1, sqrt, min, max, round, abs}`. Формулы дают объём в **сотнях**
-   (единица нормы ГЭСН — «100 м²»/«100 м³»). Геометрия — допущения, выписываются в `assumptions`.
-7. **Сборка ЛСР** (`lsr_assembly.assemble`): позиции с `{code, qty}` → разворот по ГЭСН →
-   цены ФГИС ЦС/КАЦ → ОЗП/ЭМ/М → стеснённость → НР/СП (по виду работ через `nr_sp_service`) →
-   Всего по позиции → свод. См. [[ALGO-lsr-assembly]].
-8. **Хвост прикидки объекта:** ГЭСН-конструктив (прямые + НР + СП по проверяемым позициям) →
-   `allowances[]` (`ASSUME`-разделы в процентах от ГЭСН-конструктива) → `price_level_k`
-   (грубый переход к текущему уровню бюджета) → непредвиденные (~2%) → НДС (20%) →
-   **ориентир стоимости объекта**. Коды без цены/без нормы → `missing_codes` (кандидаты на добор).
-9. **Defense-contract:** `estimate()` возвращает `defense.contract` (`defense_contract_v1` из
-   `evidence_contract.DefensePack/DefenseClaim`). По каждой ГЭСН-позиции фиксируются формула объёма,
-   фактические значения переменных, физический объём, прямые/НР/СП/итог, покрытие цен ресурсов
-   (`fgis`/`missing`/примеры без цены). ASSUME-разделы имеют статус `assumed`, итог объекта —
-   `not_defensible`: это честный ориентир, а не защищаемая ЛСР.
-10. **Scope warnings:** явные части задания, которые считаются только укрупнённо, помечаются в
-   `scope_warnings`. Для `monolith_office` запрос с подвалом/подземной частью получает warning:
-   подвал учтён ASSUME-добавкой, но детальных земляных/гидроизоляционных позиций нет.
-   Сваи, крыльцо/терраса и плоская кровля в неподходящем шаблоне получают явное предупреждение:
-   ЛЕС не подменяет их процентом и не прячет внутри старого типового состава. Инженерка/отделка/
-   проёмы также остаются укрупнёнными `ASSUME`, пока нет ВОР/Ф9/КС-2.
+Explicit `mode=smeta` resolves to `estimate_harness`.
 
-## НР/СП по виду работ — `nr_sp_service` + `config/domain/nr_sp.yaml`
+The user question is passed with the current chat context. The model decides how to decompose the
+object. The harness does not invent a house, a porch, a pile field, a roof or any other ready-made
+scope. It only provides tools:
 
-Норма несёт ресурсы, но НЕ НР/СП. `nr_sp_service.resolve(name)` сопоставляет вид работы по
-ключевому слову в наименовании → `{nr_pct, sp_pct, label, basis}` из официальных приказов
-Минстроя (НР — Приказ 812/пр, СП — Приказ 774/пр; оба — % от ФОТ). Дефолт при неузнанном виде —
-отделочные (сб.15): НР 100% / СП 49%. Порядок ключей важен (первое совпадение, без перекрытий).
+- `search_norm`: search the local GESN base for candidate norms.
+- `add_position`: add a checked position with quantity/unit constraints.
+- calculation gates: applicability, unit compatibility, quantity sanity, price coverage and
+  evidence status.
 
-## Шаблоны — `config/domain/object_templates.yaml`
+If the model cannot produce enough checked positions, the answer must say what is missing. It must
+not substitute a prewritten object composition.
 
-Шаблон = `{match:{object[],material[]}, geometry:{...константы}, price_level_k, allowances[],
-positions:[{code, name, qty_formula, ...}]}`. Сейчас **два** шаблона (по порядку матча):
-- `wooden_house` (деревянный дом из бруса, типовой ИЖС) — требует сигнал материала «дерево»:
-  константы H=3.0, roof_slope_k=1.20, found_section=0.30 м²; `price_level_k=7.0`; ASSUME-разделы
-  на отделку/проёмы/инженерку и наружные/прочие работы; 7 позиций с реальными кодами ГЭСН
-  (фундамент 06-02-001-01, стены из бруса 10-02-024-02, перекрытия, обрешётка, кровля, полы,
-  утепление).
-- `monolith_office` (офисное/административное здание, монолит) — ловит «офис/административн/
-  бизнес/здание», когда материал НЕ назван: константы H=3.3, found_slab_t=0.40, roof_flat_k=1.05,
-  partition_k=0.80; `price_level_k=8.0`; ASSUME-разделы на фасад/проёмы, инженерку, отделку,
-  наружные/прочие работы и подвал (только при сигнале «подвал/цоколь/подзем»); 5 позиций
-  (плитный фундамент 06-02-001-01, монолитные стены 06-16-004-01, перекрытия 06-16-005-01,
-  газобетонные перегородки 08-04-003-02, плоская кровля 12-01-021-01).
+## Code Boundaries
 
-**Незакрытое:** ASSUME-разделы надо постепенно заменять детальными позициями из ВОР/Ф9/КС-2
-или новыми шаблонами; запрос ВНЕ покрытых шаблонов сначала пробует ближайший локальный аналог,
-но несовместимый или слишком далёкий объект → честный отказ. Расширение — добавление новых
-шаблонов в `config/domain/object_templates.yaml` (данные, не логика).
+- Current route: `proxy/services/estimate_harness_service.py`
+- Mode/profile mapping: `proxy/services/profile_resolver.py`
+- Chat entry point: `proxy/routers/chat.py`
+- Removed experiment: `proxy/services/object_estimate_service.py`
+- Removed data file: `config/domain/object_templates.yaml`
 
-## Где в коде
+Shared arithmetic helpers that were still useful to the harness moved to
+`proxy/services/estimate_math_service.py`.
 
-- Сервис: `proxy/services/object_estimate_service.py` (`estimate`/`parse_request`/`select_template`/
-  `select_analog_template`/`build_composition_candidates`/`build_vor`); НР/СП —
-  `proxy/services/nr_sp_service.py`.
-- Каталоги: `config/domain/object_templates.yaml`, `config/domain/nr_sp.yaml`.
-- Чат: `smeta_chat_service.maybe_handle_smeta_query` — фраза «дай смету на …» (без кода ГЭСН) →
-  `_answer_object_estimate` → форматирует ГЭСН-конструктив, ASSUME-разделы, `price_level_k`,
-  непредвиденные, НДС, ориентир стоимости объекта и блок «Защита расчёта: что откуда взято».
-  Канал детерминированный, до RAG.
-- Системный defense-contract: `proxy/services/evidence_contract.py` (`DefensePack`, `DefenseClaim`);
-  тот же контракт используется нормоконтролем/doc-review, чтобы UI/экспорт не парсили markdown.
-- MCP/action: собранный результат сохраняется в проект инструментом `les_smeta_save` (Ярус 3).
+## Regression Guard
 
-## Граница (что осталось)
-
-- Покрыты два типа: дерев. дом (`wooden_house`) и офис/монолит (`monolith_office`); объект вне их
-  пробует локальный analog fallback, но не получает фальшивый точный статус. Новые типы —
-  расширять каталог (данные, не логика).
-- Подбор кода нормы под произвольную позицию ВОР (наименование→ГЭСН) — ретрив по базе ГЭСН.
-  Первый слой уже есть как `composition_candidates`, но он кандидатный: не выбирает норму и не
-  добавляет её в сумму без подтверждённого объёма/ВОР.
-- Геометрия — грубая (квадрат в плане); сложные обводы/проёмы — допущение, помечается.
-- Настоящая смета по проекту должна идти от прикреплённого/выбранного файла, папки или датасета
-  с ВОР/Ф9/КС-2/спецификацией; шаблонная оценка не заменяет этот путь.
+The important regression is simple: phrases like “дай смету на дом 150 м2” must not be captured by
+the old deterministic object-estimate channel. In explicit Smeta mode they go to the model-first
+harness; in auto routing they do not select a retired object-estimate tool.

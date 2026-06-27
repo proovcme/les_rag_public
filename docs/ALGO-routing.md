@@ -38,7 +38,7 @@
 
 | Режим (чип) | Профиль | Контур |
 |---|---|---|
-| Сметы | `object_estimate` | объектная смета / сметные инструменты |
+| Сметы | `estimate_harness` | модель сама раскладывает объект; харнесс даёт `search_norm`/`add_position` и проверяет числа |
 | Нормоконтроль | `normcontrol` | doc-review по rulepack |
 | Поиск (default) | `grounded_rag` | RAG с цитатами |
 | (свободный) | `free_llm` | прямой LLM |

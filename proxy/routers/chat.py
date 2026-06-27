@@ -1200,10 +1200,11 @@ def _format_harness(r: dict) -> str:
     """Результат харнесса+Gate1 → markdown. Жёстко: ORCHESTRATION доказан, QUALITY нет; итог
     скрыт при critical-провалах (не выдаём бред за сумму)."""
     sch = r.get("schema", {}) or {}
-    lines = [f"**Предварительная ВОР (харнесс, ЭКСПЕРИМЕНТ)** — {sch.get('object_type', 'объект')} · "
+    lines = [f"**Предварительная сметная декомпозиция** — {sch.get('object_type', 'объект')} · "
              f"{sch.get('area_total_m2', '?')} м²", "",
-             "_Доказывает оркестрацию (модель раскладывает объект и дёргает инструменты, числа — из "
-             "ГЭСН/формул). НЕ доказывает качество сметы — это прототип петли, не смета._", ""]
+             "_Модель сама раскладывает объект на работы и вызывает инструменты. Код ищет нормы, "
+             "проверяет применимость, единицы и объёмы; считает только то, что прошло проверки. "
+             "Без ВОР/проекта это не финальная ЛСР._", ""]
     comp = r.get("computed", [])
     if comp:
         lines += ["| Работа | Код ГЭСН | Кол-во (в ед. нормы) | Физ.объём |", "|---|---|---|---|"]
@@ -1248,6 +1249,21 @@ def _format_harness(r: dict) -> str:
     lines.append(f"\n⚙ Петля: {r.get('steps')} шагов · инструменты: "
                  f"{', '.join(str(t.get('tool')) for t in r.get('trace', [])) or '—'}")
     return "\n".join(lines)
+
+
+def _smeta_harness_question(req: "ChatRequest") -> str:
+    """Передать модели контекст диалога, не подсовывая ей готовый состав работ."""
+    current = _question_with_attachment(req)
+    try:
+        history = session_user_questions(req.session_id, max_turns=6)
+    except Exception as err:  # noqa: BLE001
+        logger.warning("[HARNESS] session history failed: %s", err)
+        history = []
+    history = [str(q).strip() for q in history if str(q or "").strip()]
+    if not history:
+        return current
+    turns = "\n".join(f"- {q}" for q in history)
+    return f"Контекст текущего диалога:\n{turns}\n\nТекущий запрос:\n{current}"
 
 
 def _version_stamp() -> dict:
@@ -1478,61 +1494,6 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 }
                 return _reply
 
-    if _PROFILE == "object_estimate":
-        # Режим Смета = намерение УЖЕ задано → object_estimate НАПРЯМУЮ (минуя keyword-гейт
-        # «смет»/«посчитай» в maybe_handle_smeta_query: в режиме слово-триггер не нужно) и минуя
-        # роутер/RAG. Не объект-смета (цена/КАЦ/код) → maybe_handle. Нет данных → просим уточнить.
-        from proxy.services.smeta_chat_service import _answer_object_estimate, maybe_handle_smeta_query
-        from proxy.services.object_estimate_service import merge_parsed_requests, parse_request
-        smeta_input = _question_with_attachment(req)
-        parsed_context = None
-        history_questions: list[str] = []
-        history_traces: list[dict[str, Any]] = []
-        try:
-            current_parsed = parse_request(smeta_input)
-            current_has_object_field = any(current_parsed.get(k) not in (None, "") for k in ("object", "material", "floors", "area"))
-            current_is_scope_followup = bool(re.search(
-                r"\b(давай|если|добав|помен|замен|этаж|площад|кровл|фундамент|сва|крыльц|террас|веранд|учти|высотн|коэфф)\w*",
-                smeta_input.casefold().replace("ё", "е"),
-            ))
-            if current_has_object_field or current_is_scope_followup:
-                history_questions = session_user_questions(req.session_id, max_turns=6)
-                history_traces = session_recent_retrieval_traces(req.session_id, max_turns=6)
-                if history_questions:
-                    parsed_context = merge_parsed_requests([*history_questions, smeta_input])
-                    logger.info("[SMETA_CONTEXT] merged %s previous turn(s): fields=%s",
-                                len(history_questions),
-                                {k: parsed_context.get(k) for k in ("object", "material", "floors", "area")})
-        except Exception as err:  # noqa: BLE001
-            logger.warning("[SMETA_CONTEXT] merge failed: %s", err)
-            parsed_context = None
-        sm = (
-            _answer_object_estimate(
-                smeta_input,
-                parsed_context=parsed_context,
-                context_questions=history_questions,
-                context_traces=history_traces,
-            )
-            or maybe_handle_smeta_query(
-                smeta_input,
-                project_id=pid,
-                context_questions=history_questions,
-                context_traces=history_traces,
-            )
-            or {
-            "answer": ("Режим «Смета» включён, но я не вижу объект и площадь. Напиши, например: "
-                       "«офисное здание 3 этажа 3000 м²» или «деревянный дом 120 м² 2 этажа» — "
-                       "соберу расчёт из локальной базы ГЭСН."),
-            "operation": "smeta_need_params",
-            }
-        )
-        return _mode_reply(
-            sm["answer"],
-            sm.get("operation", "object_estimate"),
-            "smeta_mode",
-            extra=sm,
-        )
-
     if _PROFILE == "normcontrol":
         # Нормоконтроль документов проекта (формальный, без LLM) → таблица замечаний.
         answer = await _run_project_normcontrol(req, pid)
@@ -1561,11 +1522,9 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         return _mode_reply(answer, "free", "free_mode", crag="")
 
     if _PROFILE == "estimate_harness":
-        # ЭКСПЕРИМЕНТ: сметный харнесс — модель раскладывает объект → дёргает инструменты (петля).
-        # Рядом со старым smeta (YAML), не вместо. Числа из инструментов. Объект ВНЕ шаблонов
-        # (паркинг/мост) → предварительная ВОР, а не «нет шаблона». Петля в to_thread (sync LLM).
+        # Model-first estimate: model decomposes the object, harness provides tools and gates.
         from proxy.services.estimate_harness_service import run_estimate_harness
-        result = await asyncio.to_thread(run_estimate_harness, _question_with_attachment(req), _harness_complete)
+        result = await asyncio.to_thread(run_estimate_harness, _smeta_harness_question(req), _harness_complete)
         return _mode_reply(_format_harness(result), "estimate_harness", "harness_mode")
 
     from proxy.services.asbuilt_chat_service import maybe_handle_asbuilt_query  # приёмка ИД-сканов
@@ -2966,7 +2925,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                         # ADR-12 §2: каркас формы под интент добавляем к нормальному промпту.
                         sys_msg = sys_normal + (f" {answer_form.instruction}" if answer_form.instruction else "")
                         # Формат/стиль из GUI (глубина/язык) — ТОЛЬКО в системный промпт генерации,
-                        # чтобы роутинг/авто-заметки/ретрив видели чистый вопрос (не мусор-шаблон).
+                        # чтобы роутинг/авто-заметки/ретрив видели чистый вопрос (не мусор-директиву).
                         if req.output_directive and req.output_directive.strip():
                             sys_msg += " " + req.output_directive.strip()
                         if local_big and answer_form.intent in {"brief", "value", "default"}:

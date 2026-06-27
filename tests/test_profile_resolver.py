@@ -14,7 +14,7 @@ from proxy.services.profile_resolver import (
 
 def test_explicit_modes_map_to_profiles():
     cases = {
-        "smeta": "object_estimate",
+        "smeta": "estimate_harness",
         "review": "normcontrol",
         "kp": "kp_stub",
         "rag": "grounded_rag",
@@ -47,7 +47,7 @@ def test_unknown_mode_falls_back_not_crash():
 
 
 def test_mode_case_insensitive():
-    assert resolve(mode="SMETA", question="x").profile_id == "object_estimate"
+    assert resolve(mode="SMETA", question="x").profile_id == "estimate_harness"
     assert resolve(mode=" Rag ", question="x").profile_id == "grounded_rag"
 
 
@@ -58,8 +58,9 @@ def test_every_mode_target_profile_exists():
 
 def test_profile_carries_declarative_policy():
     p = resolve(mode="smeta", question="x").profile
-    assert p.executor == "deterministic"          # смета = 0 LLM
+    assert p.executor == "cloud_large"            # смета = model-first tool loop
     assert p.validation_policy == "require_numeric_provenance"
+    assert "search_norm" in p.tools and "add_position" in p.tools
     free = resolve(mode="free", question="x").profile
     assert free.grounded is False                  # вольный — без ретрива
     rag = resolve(mode="rag", question="x").profile
@@ -68,9 +69,9 @@ def test_profile_carries_declarative_policy():
 
 def test_as_trace_compact():
     t = resolve(mode="smeta", question="x").as_trace()
-    assert t["profile_id"] == "object_estimate"
+    assert t["profile_id"] == "estimate_harness"
     assert t["route_source"] == "explicit_mode"
-    assert t["executor"] == "deterministic"
+    assert t["executor"] == "cloud_large"
     # без refine канал/операция не протекают в trace
     assert "channel" not in t and "operation" not in t
 
@@ -175,14 +176,15 @@ async def test_query_route_carries_honest_profile_for_glossary():
 
 
 @pytest.mark.asyncio
-async def test_query_route_carries_profile_for_explicit_mode():
-    # явный режим «Смета» → профиль object_estimate, источник explicit_mode (даже без параметров
-    # объекта — режимный канал отвечает actionable-подсказкой, но профиль уже зафиксирован).
+async def test_query_route_carries_profile_for_explicit_mode(monkeypatch):
+    # явный режим «Смета» → профиль estimate_harness, источник explicit_mode. В тесте петлю
+    # закрываем сразу, чтобы не дергать живую LLM.
     from proxy.routers import chat as chat_router
     _mock_chat_state(chat_router)
+    monkeypatch.setattr(chat_router, "_harness_complete", lambda messages: '{"final": true}')
     resp = await chat_router.chat(
         chat_router.ChatRequest(question="что такое ОЖР", mode="smeta"), _user=object())
     prof = resp["query_route"]["profile"]
-    assert prof["profile_id"] == "object_estimate"
+    assert prof["profile_id"] == "estimate_harness"
     assert prof["route_source"] == "explicit_mode"
-    assert prof["executor"] == "deterministic"
+    assert prof["executor"] == "cloud_large"

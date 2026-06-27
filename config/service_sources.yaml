@@ -39,12 +39,11 @@ sources:
 
   - id: smeta_coefficients
     domain: smeta
-    label: "Сметные коэффициенты и шаблоны"
+    label: "Сметные коэффициенты и правила"
     status_if_missing: blocking
     paths:
       - config/domain/nr_sp.yaml
       - config/domain/stesnennost.yaml
-      - config/domain/object_templates.yaml
       - config/domain/smeta_ontology.yaml
     folders:
       - config/domain
@@ -52,10 +51,9 @@ sources:
     needed_for:
       - "НР/СП"
       - "коэффициенты стеснённости"
-      - "шаблоны объектной прикидки"
       - "сметная онтология"
-    operator_action: "Проверяются служебные YAML: НР/СП, стеснённость, шаблоны объектов и сметная онтология."
-    process_label: "Проверить шаблоны"
+    operator_action: "Проверяются служебные YAML: НР/СП, стеснённость и сметная онтология."
+    process_label: "Проверить правила"
 
   - id: normcontrol_spds_rulepack
     domain: normcontrol

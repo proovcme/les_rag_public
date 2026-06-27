@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.20** | HEAD | Smeta model-first route: explicit Smeta mode now goes through the estimate tool loop where the model decomposes the object and the harness only exposes tools/gates; the old object-composition service, its YAML data and auto-router target were removed, so object/TZ requests no longer fall into prewritten compositions or mass-rate fallbacks. |
 | **v0.24.0.19** | HEAD | Workflow plan UI: Sovushka keeps `workflow_plan_v1` in chat message metadata and surfaces workflow status/finality to the operator while keeping workflow id, missing inputs and next actions in technical details. |
 | **v0.24.0.18** | HEAD | Workflow plan contract: chat/doc-review payloads now carry a shared `workflow_plan_v1` with workflow id, required/missing inputs, evidence policy, claim/source summary, blockers and next actions, giving smeta/normcontrol/checklists one common information contract. |
 | **v0.24.0.17** | HEAD | Dataset passport benchmark: deep dataset profiles now expose a deterministic quality score and per-dataset warmup timings, plus a no-reindex benchmark endpoint comparing cold rebuild with warm cached profile reads. |

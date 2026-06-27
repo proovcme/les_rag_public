@@ -18,9 +18,9 @@
     {"id": "lsr_2", "question": "посчитай позицию ФЕР08-02-001-01 на 30 м3", "expected": "lsr_assemble", "rephrase": true},
     {"id": "lsr_3", "question": "рассчитай ресурсами расценку ГЭСН08-01-003-07", "expected": "lsr_assemble", "rephrase": true},
 
-    {"id": "objest_1", "question": "дай смету на дом 150 м2 одноэтажный", "expected": "object_estimate", "rephrase": false},
-    {"id": "objest_2", "question": "посчитай укрупнённую смету на гараж 40 квадратов", "expected": "object_estimate", "rephrase": true},
-    {"id": "objest_3", "question": "прикинь стоимость строительства коттеджа 200 м2 в два этажа", "expected": "object_estimate", "rephrase": true},
+    {"id": "objest_1", "question": "дай смету на дом 150 м2 одноэтажный", "expected": "none", "rephrase": false},
+    {"id": "objest_2", "question": "посчитай укрупнённую смету на гараж 40 квадратов", "expected": "none", "rephrase": true},
+    {"id": "objest_3", "question": "прикинь стоимость строительства коттеджа 200 м2 в два этажа", "expected": "none", "rephrase": true},
 
     {"id": "gloss_1", "question": "что такое КАЦ", "expected": "glossary", "rephrase": false},
     {"id": "gloss_2", "question": "объясни значение термина стеснённость", "expected": "glossary", "rephrase": true},
