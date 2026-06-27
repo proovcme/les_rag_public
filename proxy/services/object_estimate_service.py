@@ -41,6 +41,12 @@ _MATERIAL_WORDS = {
     "газобетон": "газобетон", "пенобетон": "пенобетон", "блок": "блок",
 }
 _OBJECT_WORDS = ("дом", "коттедж", "дача", "здание", "сруб", "баня", "гараж")
+_HOUSE_OBJECT_WORDS = {"дом", "коттедж", "дача", "сруб"}
+_MATERIAL_ANALOGS = {
+    # Каркасный ИЖС не равен брусу, но в локальной базе ближайший объектный аналог сейчас
+    # деревянный ИЖС. Это именно analog fallback, а не точный match шаблона.
+    "каркас": {"дерев", "деревян", "брус", "бревен", "бревён"},
+}
 
 # Человекочитаемые подписи геометрических ASSUME-коэффициентов (для блока «Допущения»).
 # Ключ нет в карте → показываем как есть (сырое имя из geometry шаблона).
@@ -221,6 +227,65 @@ def select_template(parsed: dict[str, Any], *, path: str | None = None) -> Optio
     return None
 
 
+def select_analog_template(
+    parsed: dict[str, Any],
+    *,
+    path: str | None = None,
+) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
+    """Ближайший локальный шаблон, если точного match нет.
+
+    Это не расширяет `match`: результат помечается как аналог и обязан попасть в ответ/trace.
+    Нужен для поведения «нет точного шаблона — найди похожее в нашей базе», без фантазии LLM.
+    """
+    obj = str(parsed.get("object") or "").casefold().replace("ё", "е")
+    mat = str(parsed.get("material") or "").casefold().replace("ё", "е")
+    raw = str(parsed.get("raw") or "").casefold().replace("ё", "е")
+    best: tuple[float, Optional[dict[str, Any]], list[str]] = (0.0, None, [])
+    for tpl in load_templates(path):
+        match = tpl.get("match") or {}
+        objects = [str(o).casefold().replace("ё", "е") for o in match.get("object") or []]
+        materials = [str(m).casefold().replace("ё", "е") for m in match.get("material") or []]
+        score = 0.0
+        reasons: list[str] = []
+        if obj and any(o == obj or o in raw for o in objects):
+            score += 5.0
+            reasons.append(f"объект `{obj}` есть в match.object")
+        elif obj in _HOUSE_OBJECT_WORDS and any(o in _HOUSE_OBJECT_WORDS for o in objects):
+            score += 3.0
+            reasons.append(f"объект `{obj}` относится к ИЖС/дому")
+        if mat and materials:
+            if any(m in raw or m.startswith(mat) for m in materials):
+                score += 4.0
+                reasons.append(f"материал `{mat}` совпал с match.material")
+            elif any(m in _MATERIAL_ANALOGS.get(mat, set()) for m in materials):
+                score += 2.0
+                reasons.append(f"материал `{mat}` близок к деревянному ИЖС, но не точный матч")
+            else:
+                score -= 4.0
+                reasons.append(f"материал `{mat}` не совместим с материалами шаблона")
+        if any(token in raw for token in ("ижс", "дач", "коттедж")) and any(o in _HOUSE_OBJECT_WORDS for o in objects):
+            score += 1.0
+            reasons.append("назначение похоже на малоэтажный жилой объект")
+        if score > best[0]:
+            best = (score, tpl, reasons)
+    score, tpl, reasons = best
+    if tpl is None or score < 4.0:
+        return None, None
+    return tpl, {
+        "status": "template_analog",
+        "score": round(score, 2),
+        "template_id": tpl.get("id"),
+        "template_name": tpl.get("name"),
+        "requested_object": parsed.get("object"),
+        "requested_material": parsed.get("material"),
+        "reasons": reasons,
+        "warning": (
+            "Точного объектного шаблона нет; расчёт выполнен по ближайшему локальному аналогу "
+            "из config/domain/object_templates.yaml."
+        ),
+    }
+
+
 # ── геометрия + объёмы (это ВОР) ─────────────────────────────────────────────────────────
 
 def _geometry(area: float, floors: int, tpl: dict[str, Any]) -> dict[str, float]:
@@ -320,11 +385,14 @@ def estimate(
         parsed = {**parsed, "floors": 1}  # этажность по умолчанию — 1 (явно фиксируем)
 
     tpl = select_template(parsed, path=templates_path)
+    analog: Optional[dict[str, Any]] = None
     if tpl is None:
-        have = [t.get("name") or t.get("id") for t in load_templates(templates_path)]
-        have_str = "; ".join(h for h in have if h) or "—"
-        return {"ok": False, "parsed": parsed,
-                "error": f"Нет шаблона под объект/материал (есть: {have_str})."}
+        tpl, analog = select_analog_template(parsed, path=templates_path)
+        if tpl is None:
+            have = [t.get("name") or t.get("id") for t in load_templates(templates_path)]
+            have_str = "; ".join(h for h in have if h) or "—"
+            return {"ok": False, "parsed": parsed,
+                    "error": f"Нет шаблона или близкого аналога под объект/материал (есть: {have_str})."}
 
     vor = build_vor(tpl, parsed)
 
@@ -378,6 +446,8 @@ def estimate(
         tpl, vor["params"], missing_codes, scope_warnings,
         allowances=allowances, price_level_k=price_level_k,
     )
+    if analog:
+        assumptions.insert(0, str(analog.get("warning") or "Расчёт выполнен по локальному аналогу."))
     defense = _build_defense(
         tpl=tpl,
         vor_positions=assembled_vor_positions,
@@ -389,6 +459,7 @@ def estimate(
         "ok": True,
         "parsed": parsed,
         "template": {"id": tpl.get("id"), "name": tpl.get("name")},
+        "analog": analog,
         "vor": vor,
         "estimate": lsr,
         "allowances": allowances,
@@ -396,9 +467,12 @@ def estimate(
         "missing_codes": missing_codes,
         "scope_warnings": scope_warnings,
         "quality": {
-            "status": "rough_full_object_assumed",
+            "status": "rough_analog_object_assumed" if analog else "rough_full_object_assumed",
             "final_total_allowed": False,
             "reason": (
+                "Точный шаблон отсутствует; использован ближайший локальный аналог. "
+                if analog else ""
+            ) + (
                 "Мутное ТЗ: недостающие разделы и текущий уровень цен приняты допущениями; "
                 "позиции с ресурсами без цены являются неполным ценовым покрытием."
             ),
