@@ -36,6 +36,43 @@ def test_search_rejects_wrong_collection_for_work_family():
     assert all(c["applicability_status"] == "rejected" for c in wrong)
 
 
+def test_work_item_normalization_repairs_frame_wall_family():
+    item = {
+        "work": "каркасно-щитовые работы",
+        "work_description": "каркасно-щитовые работы стены",
+        "work_family": "metal",
+        "element_type": "metal_assembly",
+        "action": "assemble",
+        "unit_hint": "m2",
+    }
+
+    norm, corrections = h._normalize_work_item(item)
+
+    assert norm["work_family"] == "wood"
+    assert norm["element_type"] == "wood_wall"
+    assert norm["action"] == "монтаж"
+    assert norm["unit_hint"] == "м2"
+    assert corrections
+
+
+def test_normalized_frame_wall_search_stays_in_wood_collection():
+    item = {
+        "work": "каркасно-щитовые работы",
+        "work_description": "каркасно-щитовые работы стены",
+        "work_family": "metal",
+        "element_type": "metal_assembly",
+        "action": "assemble",
+        "unit_hint": "m2",
+    }
+    norm, _ = h._normalize_work_item(item)
+    r = h.search_norm(norm["work_description"], work_family=norm["work_family"],
+                      element_type=norm["element_type"], action=norm["action"],
+                      unit_hint=norm["unit_hint"])
+
+    assert r["candidates"]
+    assert r["candidates"][0]["collection"] == "10"
+
+
 # ── Gate 3: структурный ranking — хорошее всплывает, спец тонет ───────────────────────────
 
 def test_score_forbidden_anchor_heavy_penalty():
@@ -261,6 +298,22 @@ def test_compact_batch_plan_array_contract():
     assert res["schema"]["object_type"] == "residential_house"
     assert [t["tool"] for t in res["trace"]].count("search_norm") == 2
     assert all(t["candidates"] for t in res["trace"] if t["tool"] == "search_norm")
+
+
+def test_batch_plan_trace_reports_tool_argument_normalization():
+    plan = {
+        "object": {"object_type": "residential_house", "area_total_m2": 150, "floors": 1},
+        "works": [
+            ["каркасно-щитовые работы", "каркасно-щитовые работы стены",
+             "metal", "metal_assembly", "assemble", "m2", {}],
+        ],
+    }
+
+    res = h.run_estimate_harness("дача 150 м²", lambda _m: json.dumps(plan, ensure_ascii=False))
+
+    search_trace = [t for t in res["trace"] if t["tool"] == "search_norm"][0]
+    assert search_trace["normalized"]
+    assert res["rejected"][0]["candidates"][0]["collection"] == "10"
 
 
 def test_no_numbers_from_model_text():

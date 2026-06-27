@@ -68,6 +68,46 @@ WORK_FAMILY_COLLECTIONS: dict[str, set[str]] = {
     "finishes": {"15"},                         # отделка
 }
 
+_ELEMENT_DEFAULT_FAMILY: dict[str, str] = {
+    "excavation": "earthworks",
+    "concrete_preparation": "concrete_monolithic",
+    "foundation_slab": "concrete_monolithic",
+    "foundation": "foundation",
+    "wood_wall": "wood",
+    "metal_assembly": "metal",
+    "pile": "foundation",
+    "monolithic_wall": "concrete_monolithic",
+    "monolithic_slab": "concrete_monolithic",
+    "column": "concrete_monolithic",
+    "waterproofing": "waterproofing",
+    "roofing": "roofing",
+}
+
+_ACTION_ALIASES: dict[str, str] = {
+    "assemble": "монтаж",
+    "assembly": "монтаж",
+    "cast": "бетонирование",
+    "pour": "бетонирование",
+    "excavate": "разработка",
+    "remove": "разработка",
+    "dig": "разработка",
+    "install": "устройство",
+    "prepare": "устройство",
+}
+
+_UNIT_ALIASES: dict[str, str] = {
+    "m3": "м3",
+    "m2": "м2",
+    "t": "т",
+    "ton": "т",
+    "tons": "т",
+    "tonne": "т",
+    "tonnes": "т",
+    "piece": "",
+    "pcs": "",
+    "шт": "",
+}
+
 
 def _collection_of(code: str) -> str:
     m = re.search(r"(?<!\d)(\d{2})-\d{2}-\d{3}-\d{2}", str(code or ""))
@@ -149,6 +189,76 @@ _ELEMENT_ANCHORS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "waterproofing":       (("гидроизол", "изоляц", "оклеечн", "обмазочн", "мастичн"), ()),
     "roofing":             (("кровл", "покрыт", "рулон", "мембран"), ()),
 }
+
+_ELEMENT_TEXT_SIGNALS: tuple[tuple[str, str, str], ...] = (
+    ("wood_wall", "wood", r"\b(?:дерев|брус|бревн|каркасно[- ]?щит|каркасн\w*\s+стен|стен\w*\s+каркас)"),
+    ("pile", "foundation", r"\b(?:сва|ростверк|свайн)"),
+    ("roofing", "roofing", r"\b(?:кровл|стропил|двускат|плоск\w*\s+кров)"),
+    ("excavation", "earthworks", r"\b(?:котлован|грунт|транше|выемк|землян|разработк)"),
+    ("waterproofing", "waterproofing", r"\b(?:гидроизол|изоляц|обмазочн|оклеечн)"),
+    ("foundation_slab", "concrete_monolithic", r"\b(?:фундаментн\w*\s+плит|плитн\w*\s+фундамент)"),
+    ("monolithic_wall", "concrete_monolithic", r"\b(?:монолитн\w*\s+стен|бетонирован\w*\s+стен)"),
+    ("floors", "floors", r"\b(?:пол|стяжк)"),
+)
+
+
+def _normalize_action(action: str) -> str:
+    a = (action or "").strip().lower()
+    return _ACTION_ALIASES.get(a, action)
+
+
+def _normalize_unit_hint(unit: str) -> str:
+    u = _canon_unit(unit)
+    return _UNIT_ALIASES.get(u, u if u in {"м3", "м2", "т"} else "")
+
+
+def _normalize_work_item(item: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Нормализовать tool-аргументы модели перед поиском ГЭСН.
+
+    Это не состав работ и не выбор нормы: модель уже дала work item, а harness приводит
+    family/element/action/unit к словарю инструмента, чтобы `search_norm` не уходил в очевидно
+    чужой сборник из-за терминологического шума.
+    """
+    norm = dict(item)
+    corrections: list[str] = []
+    text = f"{norm.get('work', '')} {norm.get('work_description', '')}".lower()
+    family = str(norm.get("work_family") or "")
+    element = str(norm.get("element_type") or "")
+
+    for inferred_element, inferred_family, pattern in _ELEMENT_TEXT_SIGNALS:
+        if re.search(pattern, text):
+            if element != inferred_element:
+                corrections.append(f"element_type:{element or '—'}→{inferred_element}")
+                norm["element_type"] = inferred_element
+                element = inferred_element
+            if family != inferred_family:
+                corrections.append(f"work_family:{family or '—'}→{inferred_family}")
+                norm["work_family"] = inferred_family
+                family = inferred_family
+            break
+
+    default_family = _ELEMENT_DEFAULT_FAMILY.get(element)
+    if default_family and family and family != default_family:
+        corrections.append(f"work_family:{family}→{default_family}")
+        norm["work_family"] = default_family
+    elif default_family and not family:
+        corrections.append(f"work_family:—→{default_family}")
+        norm["work_family"] = default_family
+
+    action = str(norm.get("action") or "")
+    normalized_action = _normalize_action(action)
+    if normalized_action != action:
+        corrections.append(f"action:{action}→{normalized_action}")
+        norm["action"] = normalized_action
+
+    unit = str(norm.get("unit_hint") or "")
+    normalized_unit = _normalize_unit_hint(unit)
+    if normalized_unit != _canon_unit(unit):
+        corrections.append(f"unit_hint:{unit or '—'}→{normalized_unit or '—'}")
+        norm["unit_hint"] = normalized_unit
+    else:
+        norm["unit_hint"] = normalized_unit
+    return norm, corrections
 
 
 def _score_candidate(words: list[str], code: str, name: str, unit: str, *, work_family: str,
@@ -564,7 +674,8 @@ def _run_batch_plan(question: str, complete: Callable[[list[dict[str, str]]], st
                   "missing_inputs": obs_schema.get("missing_inputs")
                   or obs_schema.get("missing_required") or []})
 
-    for item in _work_items_from_plan(plan):
+    for raw_item in _work_items_from_plan(plan):
+        item, corrections = _normalize_work_item(raw_item)
         search_args = {
             "work_description": str(item.get("work_description") or item.get("work") or ""),
             "work_family": str(item.get("work_family") or ""),
@@ -579,6 +690,7 @@ def _run_batch_plan(question: str, complete: Callable[[list[dict[str, str]]], st
             "status": search.get("status") or ("ok" if search.get("ok") else "err"),
             "work": item.get("work") or item.get("work_description") or "",
             "candidates": _candidate_codes(candidates),
+            "normalized": corrections,
         })
         top = candidates[0] if candidates else None
         if search.get("status") == "found" and top and top.get("unit_compatible") is not False:
