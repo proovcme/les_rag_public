@@ -1,12 +1,14 @@
 """Operator-facing answer scenarios and contracts for chat responses.
 
-This layer is intentionally descriptive: it tells UI/operators what workflow is
-running and what shape of answer is expected. It does not validate the domain
-math itself; numeric/evidence checks remain in the concrete tools.
+This layer tells UI/operators what workflow is running, what shape of answer is
+expected, and whether the returned payload satisfies the shallow contract. It
+does not validate domain math itself; numeric/evidence checks remain in the
+concrete tools.
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -258,10 +260,100 @@ def contract_for_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return contract
 
 
+def _has_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, set, dict)):
+        return bool(value)
+    return True
+
+
+def _field_value(payload: dict[str, Any], field: str) -> Any:
+    if field == "source_map":
+        trace = payload.get("retrieval_trace") if isinstance(payload.get("retrieval_trace"), dict) else {}
+        return payload.get("source_map") or trace.get("source_map") or trace.get("source_map_preview")
+    if field == "provenance":
+        return payload.get("provenance") or payload.get("source_map") or payload.get("evidence_summary")
+    if field == "defense":
+        return payload.get("defense") or payload.get("defense_contract_v1")
+    return payload.get(field)
+
+
+def _answer_has_markdown_table(answer: str) -> bool:
+    lines = [line.strip() for line in (answer or "").splitlines()]
+    for idx, line in enumerate(lines[:-1]):
+        next_line = lines[idx + 1]
+        if line.count("|") >= 2 and next_line.count("|") >= 2 and re.search(r"\|\s*:?-{3,}:?\s*\|", next_line):
+            return True
+    return False
+
+
+def _has_structured_table(payload: dict[str, Any]) -> bool:
+    for key in ("table_query", "normalized_remarks", "rows", "items", "positions"):
+        value = payload.get(key)
+        if isinstance(value, list) and value:
+            return True
+        if isinstance(value, dict) and any(_has_value(v) for v in value.values()):
+            return True
+    return False
+
+
+def check_contract(payload: dict[str, Any], contract: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Shallow machine check for the declared answer contract.
+
+    The check is intentionally non-blocking: it reports missing shape/evidence
+    signals, while domain validators and deterministic tools remain the source
+    of truth for calculations and factual correctness.
+    """
+    if not isinstance(payload, dict):
+        return {"status": "warn", "missing": ["payload"], "warnings": ["Ответ не является объектом"]}
+    contract = contract or contract_for_payload(payload)
+    expected = [str(x) for x in (contract.get("expects") or [])]
+    missing = [field for field in expected if not _has_value(_field_value(payload, field))]
+    warnings: list[str] = []
+
+    answer = str(payload.get("answer") or payload.get("response") or "")
+    has_table = _answer_has_markdown_table(answer) or _has_structured_table(payload)
+    if contract.get("tables") == "required" and not has_table:
+        warnings.append("Требуется таблица, но в payload не найдено табличной структуры")
+
+    evidence_mode = str(contract.get("evidence") or "")
+    if evidence_mode in {"required", "required_for_findings"}:
+        has_sources = _has_value(payload.get("sources"))
+        has_source_map = _has_value(_field_value(payload, "source_map"))
+        if not (has_sources or has_source_map):
+            warnings.append("Требуется evidence, но источники/source_map не найдены")
+    if evidence_mode == "numeric_provenance_required" and not _has_value(_field_value(payload, "provenance")):
+        warnings.append("Требуется происхождение чисел, но provenance/evidence не найдены")
+    if evidence_mode == "assumptions_must_be_marked":
+        has_assumptions = _has_value(payload.get("assumptions")) or any(
+            marker in answer.casefold() for marker in ("assume", "допущен", "missing", "не хватает")
+        )
+        if not has_assumptions:
+            warnings.append("Предварительный расчёт должен явно помечать допущения")
+
+    status = "pass" if not missing and not warnings else "warn"
+    return {
+        "contract_id": contract.get("id") or "auto",
+        "status": status,
+        "missing": missing,
+        "warnings": warnings,
+        "observed": {
+            "answer": bool(answer.strip()),
+            "table": has_table,
+            "sources": _has_value(payload.get("sources")),
+            "source_map": _has_value(_field_value(payload, "source_map")),
+        },
+    }
+
+
 def decorate_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Attach scenario and answer_contract if absent. Mutates and returns payload."""
     if not isinstance(payload, dict):
         return payload
     payload.setdefault("scenario", scenario_for_payload(payload))
     payload.setdefault("answer_contract", contract_for_payload(payload))
+    payload.setdefault("answer_contract_check", check_contract(payload, payload["answer_contract"]))
     return payload

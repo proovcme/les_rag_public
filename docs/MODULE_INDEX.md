@@ -43,7 +43,7 @@
 | Суб-модуль | Назначение | Точки входа | Док | Статус |
 |---|---|---|---|---|
 | rag/core | поток чата, ретрив, C-RAG, source-map/latency trace, диспетч | `retrieval_service`, `saferag_service`, `runtime_dispatcher`/`runtime_admission`; `routers/chat.py` | [ARCHITECTURE_les_algorithm.md](ARCHITECTURE_les_algorithm.md) ✅ · [STORY_les_dispatcher.md](STORY_les_dispatcher.md) ✅ · [CODE_MAP.md](CODE_MAP.md) ✅ | ✅ |
-| rag/routing | выбор контура: ProfileResolver + agent-router (router-primary ON), `output_contract` в trace | `profile_resolver`, `agent_router_service`, `query_router`, `deterministic_policy_service`, `scope_service`, `answer_contract_service` | [ALGO-routing.md](ALGO-routing.md) ✅ · [AUDIT_DETERMINISM.md](AUDIT_DETERMINISM.md) (решение/история) | ✅ |
+| rag/routing | выбор контура: ProfileResolver + agent-router (router-primary ON), `output_contract` в trace; сценарии/контракты ответа + мягкий `answer_contract_check` | `profile_resolver`, `agent_router_service`, `query_router`, `deterministic_policy_service`, `scope_service`, `answer_contract_service` | [ALGO-routing.md](ALGO-routing.md) ✅ · [AUDIT_DETERMINISM.md](AUDIT_DETERMINISM.md) (решение/история) | ✅ |
 | rag/retrieval | типизированный ретрив (ADR-12), doc_router | `retrieval_service`, `doc_router`; флаг `LES_TYPED_RETRIEVAL` | [ADR-12-typed-retrieval.md](ADR-12-typed-retrieval.md) | ✅ |
 | rag/table | детерм. SUM по полному Parquet (числа — код) | `table_query_service`; MCP `les_table_*` | [ALGO-table-query.md](ALGO-table-query.md) | ✅ |
 | rag/pdf | layout-aware PDF (колонки/таблицы→pipe) | `backend/pdf_layout`; флаг `LES_LAYOUT_PDF` | [ALGO-pdf-layout.md](ALGO-pdf-layout.md) | ✅ |

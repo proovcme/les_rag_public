@@ -183,6 +183,9 @@ def _operator_status_chips(crag: str, meta: dict | None, srcs: list | None = Non
     contract = (meta or {}).get("answer_contract") if isinstance((meta or {}).get("answer_contract"), dict) else {}
     if contract.get("tables") == "required":
         chips.append({"label": "Табличный контракт", "tone": "ok"})
+    contract_check = (meta or {}).get("answer_contract_check") if isinstance((meta or {}).get("answer_contract_check"), dict) else {}
+    if contract_check.get("status") == "warn":
+        chips.append({"label": "Контракт: замечания", "tone": "warn"})
 
     phases = (meta or {}).get("latency_phases") or ((meta or {}).get("retrieval_trace") or {}).get("latency_phases")
     if isinstance(phases, dict) and phases.get("total") is not None:
@@ -201,6 +204,7 @@ def _operator_technical_chips(meta: dict | None) -> list[str]:
     validation = meta.get("validation") if isinstance(meta.get("validation"), dict) else {}
     scenario = meta.get("scenario") if isinstance(meta.get("scenario"), dict) else {}
     contract = meta.get("answer_contract") if isinstance(meta.get("answer_contract"), dict) else {}
+    contract_check = meta.get("answer_contract_check") if isinstance(meta.get("answer_contract_check"), dict) else {}
     if kot:
         out.append(f"KOT {kot.get('dataset_filter') or 'AUTO'} {kot.get('confidence', 0)}")
     if trace:
@@ -217,6 +221,11 @@ def _operator_technical_chips(meta: dict | None) -> list[str]:
         out.append(f"SCENARIO {scenario.get('id')}")
     if contract.get("id"):
         out.append(f"CONTRACT {contract.get('id')}")
+    if contract_check.get("status"):
+        out.append(f"CONTRACT_CHECK {str(contract_check.get('status')).upper()}")
+        missing = contract_check.get("missing")
+        if isinstance(missing, list) and missing:
+            out.append(f"MISSING {','.join(str(x) for x in missing[:4])}")
     return out
 
 
@@ -2488,6 +2497,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 "source_excerpts": d.get("source_excerpts") or [],
                 "scenario": d.get("scenario") or {},
                 "answer_contract": d.get("answer_contract") or {},
+                "answer_contract_check": d.get("answer_contract_check") or {},
             }
             state["chat_history"].append({"role": "ai", "text": ans, "srcs": srcs, "crag": crag, "meta": meta})
             _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, ans, srcs, crag, meta=meta)
