@@ -106,6 +106,49 @@ def test_custom_mass_estimate_fallback_for_steel_tiers():
     assert "стальные/бронзовые ярусы" in r["answer"]
     assert "664.71 т" in r["answer"]
     assert "ОРИЕНТИР стоимости работ" in r["answer"]
-    assert "ASSUME" in r["answer"]
+    assert "расчётное допущение" in r["answer"]
+    assert "Кандидаты ГЭСН" in r["answer"]
+    assert "ГЭСН:09-" in r["answer"]
+    assert "custom_mass_rates" not in r["answer"]
+    assert all("custom_mass_rates" not in s["source_ref"] for s in r["sources"])
+    assert all("config/service_sources.yaml" not in s["source_ref"] for s in r["sources"])
     assert r["evidence_summary"]["MISSING"] == 2
     assert r["retrieval_trace"]["mass_t"] == 664.711
+
+
+def test_custom_mass_followup_uses_previous_trace_for_height_work():
+    trace = {
+        "mode": "custom_mass_estimate_assumed",
+        "mass_t": 664.711,
+        "tiers": 11,
+        "material_cost_zero": True,
+        "transport_zero": True,
+    }
+    r = _answer_object_estimate(
+        "учти высотные работы",
+        context_questions=["Сколько стоит монтаж стальных ярусов?"],
+        context_traces=[trace],
+    )
+    assert r is not None and r["operation"] == "custom_mass_estimate_assumed"
+    assert "664.71 т" in r["answer"]
+    assert "восстановлены из предыдущего расчёта" in r["answer"]
+    assert "Высотные работы распознаны" in r["answer"]
+    assert r["retrieval_trace"]["height_work"]["requested"] is True
+    assert r["retrieval_trace"]["height_work"]["applied"] is False
+    assert r["evidence_summary"]["MISSING"] == 3
+
+
+def test_custom_mass_followup_applies_explicit_height_coefficient():
+    trace = {
+        "mode": "custom_mass_estimate_assumed",
+        "mass_t": 664.711,
+        "tiers": 11,
+        "material_cost_zero": True,
+        "transport_zero": True,
+    }
+    r = _answer_object_estimate("учти высотные работы k=1,15", context_traces=[trace])
+    assert r is not None
+    assert "коэффициентом k=1.15" in r["answer"]
+    assert r["retrieval_trace"]["height_work"]["applied"] is True
+    assert r["retrieval_trace"]["height_work"]["coefficient"] == 1.15
+    assert r["evidence_summary"]["MISSING"] == 2

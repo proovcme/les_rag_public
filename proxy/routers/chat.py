@@ -36,7 +36,8 @@ from proxy.services.cad_bim_highlight import extract_highlight, set_highlight
 from proxy.services.clause_lookup_service import maybe_answer_clause_lookup
 from proxy.services.context_expander_service import expand_context_windows
 from proxy.services.context_memory_service import build_context_memory_block, update_chat_profile
-from proxy.services.memory_service import recall_context, session_memory, session_user_questions
+from proxy.services.memory_service import (
+    recall_context, session_memory, session_recent_retrieval_traces, session_user_questions)
 from proxy.services.kot_service import analyze_question
 from proxy.services.lexical_index_service import retrieval_fingerprint
 from proxy.services.mail_query_service import maybe_answer_mail_query
@@ -1485,15 +1486,18 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         from proxy.services.object_estimate_service import merge_parsed_requests, parse_request
         smeta_input = _question_with_attachment(req)
         parsed_context = None
+        history_questions: list[str] = []
+        history_traces: list[dict[str, Any]] = []
         try:
             current_parsed = parse_request(smeta_input)
             current_has_object_field = any(current_parsed.get(k) not in (None, "") for k in ("object", "material", "floors", "area"))
             current_is_scope_followup = bool(re.search(
-                r"\b(давай|если|добав|помен|замен|этаж|площад|кровл|фундамент|сва|крыльц|террас|веранд)\w*",
+                r"\b(давай|если|добав|помен|замен|этаж|площад|кровл|фундамент|сва|крыльц|террас|веранд|учти|высотн|коэфф)\w*",
                 smeta_input.casefold().replace("ё", "е"),
             ))
             if current_has_object_field or current_is_scope_followup:
                 history_questions = session_user_questions(req.session_id, max_turns=6)
+                history_traces = session_recent_retrieval_traces(req.session_id, max_turns=6)
                 if history_questions:
                     parsed_context = merge_parsed_requests([*history_questions, smeta_input])
                     logger.info("[SMETA_CONTEXT] merged %s previous turn(s): fields=%s",
@@ -1502,12 +1506,26 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         except Exception as err:  # noqa: BLE001
             logger.warning("[SMETA_CONTEXT] merge failed: %s", err)
             parsed_context = None
-        sm = _answer_object_estimate(smeta_input, parsed_context=parsed_context) or maybe_handle_smeta_query(smeta_input, project_id=pid) or {
+        sm = (
+            _answer_object_estimate(
+                smeta_input,
+                parsed_context=parsed_context,
+                context_questions=history_questions,
+                context_traces=history_traces,
+            )
+            or maybe_handle_smeta_query(
+                smeta_input,
+                project_id=pid,
+                context_questions=history_questions,
+                context_traces=history_traces,
+            )
+            or {
             "answer": ("Режим «Смета» включён, но я не вижу объект и площадь. Напиши, например: "
                        "«офисное здание 3 этажа 3000 м²» или «деревянный дом 120 м² 2 этажа» — "
                        "соберу расчёт из локальной базы ГЭСН."),
             "operation": "smeta_need_params",
-        }
+            }
+        )
         return _mode_reply(
             sm["answer"],
             sm.get("operation", "object_estimate"),

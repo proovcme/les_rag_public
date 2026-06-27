@@ -1,5 +1,6 @@
 """W16.1/W16.3: рабочая память — заметки и лексический recall, без LLM."""
 
+import json
 import sqlite3
 import time
 
@@ -44,6 +45,20 @@ def _add_session(session_id, question, answer):
         conn.commit()
 
 
+def _add_session_trace(session_id, question, trace):
+    with ms._connect() as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS chat_history ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, question TEXT, answer TEXT, "
+            "retrieval_trace_json TEXT DEFAULT '{}')"
+        )
+        conn.execute(
+            "INSERT INTO chat_history(session_id, question, answer, retrieval_trace_json) VALUES (?,?,?,?)",
+            (session_id, question, "ответ", json.dumps(trace, ensure_ascii=False)),
+        )
+        conn.commit()
+
+
 # ── память диалога (запоминать всё) ──
 
 def test_session_memory_returns_dialogue():
@@ -68,6 +83,16 @@ def test_session_user_questions_returns_chronological_questions():
     assert ms.session_user_questions("s1") == ["Первый вопрос", "Второй вопрос"]
     assert ms.session_user_questions("other") == ["Чужой вопрос"]
     assert ms.session_user_questions("") == []
+
+
+def test_session_recent_retrieval_traces_returns_chronological_dicts():
+    _add_session_trace("s1", "Первый", {"mode": "one", "mass_t": 1})
+    _add_session_trace("s1", "Второй", {"mode": "two", "mass_t": 2})
+    _add_session_trace("other", "Чужой", {"mode": "other"})
+    traces = ms.session_recent_retrieval_traces("s1")
+    assert [t["mode"] for t in traces] == ["one", "two"]
+    assert ms.session_recent_retrieval_traces("missing") == []
+    assert ms.session_recent_retrieval_traces("") == []
 
 
 # ── авто-заметки (факт без «запомни:») ──
