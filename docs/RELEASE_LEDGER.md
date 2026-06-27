@@ -7,12 +7,12 @@
 ## Текущее состояние (2026-06-27)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.11  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.12  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.11 contract checks
+задеплоено на рантайм:     0.24.0.12 smeta context hardening
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.11 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=27
+рантайм /api/version:      0.24.0.12 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=30
 ```
 
 > 0.24.0.6 выкачен через `make ship`. Живой чат-прогон без semantic cache:
@@ -29,6 +29,9 @@ dev HEAD:                  HEAD  (см. git log -1)
 > и явный `answer_contract`/`scenario` в payload ответа.
 > 0.24.0.11 добавляет мягкую машинную проверку `answer_contract_check`: pass/warn,
 > missing-поля и признаки таблиц/evidence без блокировки ответа.
+> 0.24.0.12 чинит наблюдённые системные провалы smeta-чата: состояние параметров по истории
+> текущей сессии, разговорные площадь/этажность, предупреждения по неподдержанным вариантам и
+> фильтр кандидатов ГЭСН по реальному сборнику даже при префиксе `ГЭСН:`.
 
 > Деплоятся только code-правки (`proxy/`,`backend/`,`sovushka/`,`config/`). Доки на рантайм не катятся —
 > поэтому dev HEAD ≠ deployed_commit это нормально, пока расходятся только доки.
@@ -65,6 +68,7 @@ dev HEAD:                  HEAD  (см. git log -1)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.12 | HEAD | 2026-06-27 | Smeta context hardening: явный режим `smeta` собирает параметры объектной сметы из прошлых вопросов текущей сессии без склейки строк; `free`/read-attachment LLM-пути получают `session_memory`; парсер понимает «метров 150» и «в два этажа»; шаблонная смета предупреждает про сваи/крыльцо/плоскую кровлю вне состава; `estimate_harness` извлекает сборник из `ГЭСН:10-...` и rejects wrong collection для work_family | ✅ рантайм, full test + ship/smoke + live smeta context ✅ |
 | 0.24.0.11 | HEAD | 2026-06-27 | Answer contract checks: финальные payload чата получают `answer_contract_check` с pass/warn, missing-полями и observed-сигналами таблиц/evidence; Совушка показывает операторское предупреждение «Контракт: замечания» и прячет детали в technical chips | ✅ рантайм, full test + ship/smoke + live SSE ✅ |
 | 0.24.0.10 | HEAD | 2026-06-27 | Chat workflow contracts: `/api/chat/stream` шлёт операторские `progress`-события до final, tool/детерминированные ветки больше не выглядят как зависший чат; каждый final payload получает `scenario` и `answer_contract`, а `ProfileResolver.as_trace()` отдаёт `output_contract`; Совушка показывает сценарий и табличный контракт в чипах, технические id — в раскрывашке | ✅ рантайм, full test + ship/smoke + browser smoke ✅ |
 | 0.24.0.9 | HEAD | 2026-06-27 | Passport dialog hotfix: «Паспорт области» больше не создаёт `ui.dialog()` из фоновой задачи; диалог предмонтирован в правильном NiceGUI slot и заполняется после async-загрузки памяти чата/deep-паспортов датасетов | ✅ рантайм, full test + ship/smoke + browser click ✅ |
@@ -157,6 +161,11 @@ make verify 0.24.0.11:  ✅ 2104 collected
 make test 0.24.0.11:    ✅ 2104 passed / 6 warnings / 126.62s
 make ship 0.24.0.11:    ✅ verify 2104 collected; focused 63 passed; pre-smoke pass=9; post-smoke pass=9
 live 0.24.0.11:         ✅ /api/chat/stream final has answer_contract_check=pass for glossary tool route; /classic 200
+focused 0.24.0.12:      ✅ 86 passed (memory + smeta/object + harness + attachment prompt)
+make verify 0.24.0.12:  ✅ 2113 collected
+make test 0.24.0.12:    ✅ 2113 passed / 6 warnings / 133.58s
+make ship 0.24.0.12:    ✅ verify 2113 collected; focused 69 passed; pre-smoke pass=9; post-smoke pass=9
+live 0.24.0.12:         ✅ /api/version 0.24.0.12 aligned checked=30; smeta follow-up `А давай два этажа` keeps 150 м² and returns `2 эт.`; frame-house request now recognizes area/floors/material and refuses no-template instead of losing params
 ```
 
 **Закрыто в 0.23.6.7:** latency-smoke был не LLM generation, а 12s ожидание недоступного

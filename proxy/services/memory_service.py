@@ -215,6 +215,27 @@ def session_memory(session_id: str, *, max_turns: int = 6, max_chars: int = 2000
     return block[:max_chars]
 
 
+def session_user_questions(session_id: str, *, max_turns: int = 6) -> list[str]:
+    """Последние вопросы пользователя в текущей сессии, в хронологическом порядке."""
+    if not (session_id or "").strip():
+        return []
+    try:
+        with _connect() as conn:
+            rows = conn.execute(
+                "SELECT question FROM chat_history WHERE session_id=? "
+                "ORDER BY id DESC LIMIT ?",
+                (session_id.strip(), max_turns),
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    out: list[str] = []
+    for row in reversed(rows):
+        q = " ".join(str(row["question"] or "").split())
+        if q:
+            out.append(q)
+    return out
+
+
 # ── Авто-заметки: ЛЕС сам сохраняет утверждения-факты (без «запомни:»), 0 LLM ──
 
 # Начала вопросов/команд — НЕ факт (это запрос, даже без «?»).

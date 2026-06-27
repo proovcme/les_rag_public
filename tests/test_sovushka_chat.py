@@ -1,3 +1,6 @@
+import pytest
+
+from proxy.routers import chat as chat_router
 from sovushka.pages.chat import (
     _attachment_chat_payload,
     _attachment_visible_text,
@@ -50,6 +53,67 @@ def test_explicit_tool_modes_can_receive_read_attachment_context():
     assert "сделай смету" in text
     assert "Контекст прикреплённого файла" in text
     assert "Площадь 1200 м²" in text
+
+
+class _FakeLlmResponse:
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return {"choices": [{"message": {"content": "ответ"}}]}
+
+
+class _FakeAsyncClient:
+    last_json = None
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def post(self, url, *, headers=None, json=None):
+        self.__class__.last_json = json
+        return _FakeLlmResponse()
+
+
+@pytest.mark.asyncio
+async def test_free_mode_injects_session_memory(monkeypatch):
+    monkeypatch.setattr(
+        chat_router,
+        "_llm_runtime",
+        lambda: chat_router.LlmRuntime("openai-compatible", "http://127.0.0.1:9", "http://llm/chat", "m", "", False),
+    )
+    monkeypatch.setattr(chat_router, "session_memory", lambda session_id, **kwargs: "ПАМЯТЬ СЕССИИ")
+    monkeypatch.setattr(chat_router.httpx, "AsyncClient", _FakeAsyncClient)
+
+    answer = await chat_router._run_free_mode(ChatRequest(question="продолжи", session_id="s1"))
+    prompt = _FakeAsyncClient.last_json["messages"][1]["content"]
+    assert "ПАМЯТЬ СЕССИИ" in prompt
+    assert prompt.index("ПАМЯТЬ СЕССИИ") < prompt.index("продолжи")
+    assert answer.endswith("ответ")
+
+
+@pytest.mark.asyncio
+async def test_attachment_mode_injects_session_memory(monkeypatch):
+    monkeypatch.setattr(
+        chat_router,
+        "_llm_runtime",
+        lambda: chat_router.LlmRuntime("openai-compatible", "http://127.0.0.1:9", "http://llm/chat", "m", "", False),
+    )
+    monkeypatch.setattr(chat_router, "session_memory", lambda session_id, **kwargs: "ПАМЯТЬ СЕССИИ")
+    monkeypatch.setattr(chat_router.httpx, "AsyncClient", _FakeAsyncClient)
+
+    answer = await chat_router._run_attachment_mode(
+        ChatRequest(question="что изменилось?", session_id="s1", attachment_context="Файл: a.txt\n\nТекст")
+    )
+    prompt = _FakeAsyncClient.last_json["messages"][1]["content"]
+    assert "ПАМЯТЬ СЕССИИ" in prompt
+    assert prompt.index("ПАМЯТЬ СЕССИИ") < prompt.index("Контекст прикреплённого файла")
+    assert answer == "ответ"
 
 
 def test_attachment_visible_text_makes_next_request_obvious():

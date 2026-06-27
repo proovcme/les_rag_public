@@ -10,8 +10,11 @@
 ## Точки входа
 
 - `proxy/services/context_memory_service.py` — сборка/хранение профилей.
+- `proxy/services/memory_service.py` — короткая история текущей сессии (`session_memory`,
+  `session_user_questions`) для прямых LLM-путей и детерминированного состояния smeta/object.
 - `proxy/routers/chat.py` — подмешивает паспорт в RAG-промпт после resolve scope и обновляет профиль
-  при `save_chat_history`.
+  при `save_chat_history`; в `free`/read-attachment добавляет `session_memory` как фон, а в явном
+  `smeta` использует вопросы сессии только для переноса полей объектной сметы.
 - `GET /api/chat/memory/{session_id}` — просмотр паспорта чата.
 - `GET /api/rag/datasets/{dataset_id}/profile?depth=deep|metadata` — просмотр паспорта датасета.
 - `POST /api/rag/datasets/{dataset_id}/profile/refresh?depth=deep|metadata` — принудительная пересборка паспорта датасета.
@@ -34,6 +37,11 @@ fragments. Исходные файлы не читаются.
 
 Паспорт чата обновляется из факта сохранённого ответа: последний вопрос/ответ, route, scope, датасеты,
 статус, принятые допущения и MISSING/blockers, извлечённые простыми regex из ответа.
+
+Короткая история сессии (`session_memory`) — отдельный слой: последние Q/A текущего `session_id`,
+подмешанные в prompt как фон. Для smeta/object используется ещё строже: только список прошлых вопросов
+пользователя (`session_user_questions`) и только для детерминированного merge полей `object/material/floors/area`.
+Это не источник норм, цен или итоговых чисел.
 
 ## Поток
 

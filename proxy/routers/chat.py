@@ -36,7 +36,7 @@ from proxy.services.cad_bim_highlight import extract_highlight, set_highlight
 from proxy.services.clause_lookup_service import maybe_answer_clause_lookup
 from proxy.services.context_expander_service import expand_context_windows
 from proxy.services.context_memory_service import build_context_memory_block, update_chat_profile
-from proxy.services.memory_service import recall_context, session_memory
+from proxy.services.memory_service import recall_context, session_memory, session_user_questions
 from proxy.services.kot_service import analyze_question
 from proxy.services.lexical_index_service import retrieval_fingerprint
 from proxy.services.mail_query_service import maybe_answer_mail_query
@@ -1049,10 +1049,15 @@ async def _run_free_mode(req: "ChatRequest", token_sink=None) -> str:
         f"Контекст прикреплённого файла:\n{req.attachment_context}\n\n"
         if req.attachment_context else ""
     )
+    try:
+        session_block = session_memory(req.session_id, max_turns=6, max_chars=2000)
+    except Exception as err:
+        logger.warning("[MEMORY] free session recall failed: %s", err)
+        session_block = ""
     body = {
         "model": runtime.model,
         "messages": [{"role": "system", "content": sys_prompt},
-                     {"role": "user", "content": attachment + req.question}],
+                     {"role": "user", "content": (f"{session_block}\n\n" if session_block else "") + attachment + req.question}],
         "temperature": 0.85, "max_tokens": 1400,
     }
     body = _cloud_body_for_model(body, runtime.model, runtime.provider)
@@ -1128,15 +1133,23 @@ def _question_with_attachment(req: "ChatRequest") -> str:
 async def _run_attachment_mode(req: "ChatRequest", token_sink=None) -> str:
     """Direct LLM over the attached file text only. No global RAG sources."""
     runtime = _llm_runtime()
+    try:
+        session_block = session_memory(req.session_id, max_turns=4, max_chars=1600)
+    except Exception as err:
+        logger.warning("[MEMORY] attachment session recall failed: %s", err)
+        session_block = ""
     sys_prompt = (
         "Ты Совушка. Пользователь прикрепил файл к сообщению. Отвечай по тексту файла как по "
         "главному источнику; не привлекай внешние документы и не выдумывай отсутствующие данные. "
         "Если в тексте файла нет нужной информации, прямо скажи, чего не хватает. По-русски, кратко."
     )
     user_prompt = (
+        (f"{session_block}\n\n" if session_block else "")
+        + (
         "Контекст прикреплённого файла:\n"
         f"{req.attachment_context}\n\n"
         f"Задание пользователя: {req.question}"
+        )
     )
     body = {
         "model": runtime.model,
@@ -1469,8 +1482,27 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         # «смет»/«посчитай» в maybe_handle_smeta_query: в режиме слово-триггер не нужно) и минуя
         # роутер/RAG. Не объект-смета (цена/КАЦ/код) → maybe_handle. Нет данных → просим уточнить.
         from proxy.services.smeta_chat_service import _answer_object_estimate, maybe_handle_smeta_query
+        from proxy.services.object_estimate_service import merge_parsed_requests, parse_request
         smeta_input = _question_with_attachment(req)
-        sm = _answer_object_estimate(smeta_input) or maybe_handle_smeta_query(smeta_input, project_id=pid) or {
+        parsed_context = None
+        try:
+            current_parsed = parse_request(smeta_input)
+            current_has_object_field = any(current_parsed.get(k) not in (None, "") for k in ("object", "material", "floors", "area"))
+            current_is_scope_followup = bool(re.search(
+                r"\b(давай|если|добав|помен|замен|этаж|площад|кровл|фундамент|сва|крыльц|террас|веранд)\w*",
+                smeta_input.casefold().replace("ё", "е"),
+            ))
+            if current_has_object_field or current_is_scope_followup:
+                history_questions = session_user_questions(req.session_id, max_turns=6)
+                if history_questions:
+                    parsed_context = merge_parsed_requests([*history_questions, smeta_input])
+                    logger.info("[SMETA_CONTEXT] merged %s previous turn(s): fields=%s",
+                                len(history_questions),
+                                {k: parsed_context.get(k) for k in ("object", "material", "floors", "area")})
+        except Exception as err:  # noqa: BLE001
+            logger.warning("[SMETA_CONTEXT] merge failed: %s", err)
+            parsed_context = None
+        sm = _answer_object_estimate(smeta_input, parsed_context=parsed_context) or maybe_handle_smeta_query(smeta_input, project_id=pid) or {
             "answer": ("Режим «Смета» включён, но я не вижу объект и площадь. Напиши, например: "
                        "«офисное здание 3 этажа 3000 м²» или «деревянный дом 120 м² 2 этажа» — "
                        "соберу расчёт из локальной базы ГЭСН."),

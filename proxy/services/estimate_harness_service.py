@@ -61,6 +61,7 @@ WORK_FAMILY_COLLECTIONS: dict[str, set[str]] = {
     "concrete_precast": {"07"},                 # сборный ж/б
     "masonry": {"08"},                          # каменные
     "metal": {"09"},                            # металлоконструкции
+    "wood": {"10"},                             # деревянные конструкции
     "floors": {"11"},                           # полы
     "roofing": {"12"},                          # кровли
     "waterproofing": {"08", "12"},              # гидро/тепло-изоляция
@@ -69,7 +70,7 @@ WORK_FAMILY_COLLECTIONS: dict[str, set[str]] = {
 
 
 def _collection_of(code: str) -> str:
-    m = re.match(r"\s*(\d{2})", str(code or ""))
+    m = re.search(r"(?<!\d)(\d{2})-\d{2}-\d{3}-\d{2}", str(code or ""))
     return m.group(1) if m else ""
 
 
@@ -91,6 +92,7 @@ _FAMILY_POSITIVE_ANCHORS: dict[str, tuple[str, ...]] = {
     "concrete_precast": ("сборн", "панел", "плит", "блок"),
     "masonry": ("кладк", "стен", "перегородк", "кирпич", "блок"),
     "metal": ("металл", "сталь", "конструкц", "балк", "ферм"),
+    "wood": ("дерев", "брус", "бревн", "каркас", "стен", "перекрыт", "стропил"),
     "floors": ("пол", "стяжк", "покрыт"),
     "roofing": ("кровл", "покрыт", "рулон", "мембран"),
     "waterproofing": ("гидроизол", "изоляц", "оклеечн", "обмазочн", "мастичн"),
@@ -106,6 +108,10 @@ _FAMILY_DENIED_PREFIXES: dict[str, tuple[str, ...]] = {
 def check_applicability(code: str, norm_name: str, work_family: str) -> tuple[str, list[str]]:
     """Кандидат → accepted | ambiguous | rejected (+ причины). Барьер перед привязкой нормы."""
     name = (norm_name or "").lower()
+    allowed = WORK_FAMILY_COLLECTIONS.get(work_family)
+    collection = _collection_of(code)
+    if allowed and collection and collection not in allowed:
+        return "rejected", [f"сборник {collection} не разрешён для {work_family}"]
     for a in _FORBIDDEN_TITLE_ANCHORS:
         if a in name:
             return "rejected", [f"запретный признак в названии: «{a}»"]
@@ -133,6 +139,8 @@ _ELEMENT_ANCHORS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "concrete_preparation": (("подготовк", "бетонн", "щебен", "основани"), ()),
     "foundation_slab":     (("плит", "фундамент", "бетон", "железобетон", "монолит"), ()),
     "foundation":          (("фундамент", "основани", "бетон"), ()),
+    "wood_wall":           (("дерев", "брус", "бревн", "стен", "каркас"), ("линолеум", "грунтовк", "окрас")),
+    "pile":                (("сва", "оголов", "ростверк"), ("насосн", "мелиоративн")),
     "monolithic_wall":     (("стен", "бетонирован", "бетон", "монолит", "железобетон"), ()),
     "monolithic_slab":     (("перекрыт", "плит", "бетонирован", "бетон", "монолит"), ()),
     "column":              (("колонн", "бетон", "монолит"), ()),
