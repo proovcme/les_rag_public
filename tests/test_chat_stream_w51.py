@@ -59,6 +59,7 @@ async def test_chat_stream_emits_tokens_then_final(monkeypatch):
     assert final["sources"] == ["doc.pdf"]
     assert final["scenario"]["id"]
     assert final["answer_contract"]["id"]
+    assert final["answer_contract_check"]["status"] in {"pass", "warn"}
     assert body.index("event: token") < body.index("event: final")
 
 

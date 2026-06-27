@@ -77,6 +77,7 @@ def test_operator_status_chips_hide_internal_trace_from_first_layer():
         "latency_phases": {"total": 12.34},
         "scenario": {"id": "table_query", "label": "Табличный расчёт"},
         "answer_contract": {"id": "tool_result_v1", "label": "Результат инструмента", "tables": "required"},
+        "answer_contract_check": {"status": "warn", "missing": ["answer"]},
     }
 
     chips = _operator_status_chips("VERIFIED", meta, ["a", "b"])
@@ -87,12 +88,15 @@ def test_operator_status_chips_hide_internal_trace_from_first_layer():
     assert "Таблица" in labels
     assert "Табличный расчёт" in labels
     assert "Табличный контракт" in labels
+    assert "Контракт: замечания" in labels
     assert "12.3с" in labels
     assert all("KOT" not in label and "CACHE" not in label for label in labels)
 
     tech = _operator_technical_chips(meta)
     assert "KOT NTD_FIRE 0.8" in tech
     assert "CACHE MISS" in tech
+    assert "CONTRACT_CHECK WARN" in tech
+    assert "MISSING answer" in tech
     assert "SCENARIO table_query" in tech
     assert "CONTRACT tool_result_v1" in tech
 
