@@ -61,6 +61,15 @@ def test_session_memory_empty_without_session():
     assert ms.session_memory("nope") == ""
 
 
+def test_session_user_questions_returns_chronological_questions():
+    _add_session("s1", "Первый вопрос", "Первый ответ")
+    _add_session("s1", "Второй вопрос", "Второй ответ")
+    _add_session("other", "Чужой вопрос", "Чужой ответ")
+    assert ms.session_user_questions("s1") == ["Первый вопрос", "Второй вопрос"]
+    assert ms.session_user_questions("other") == ["Чужой вопрос"]
+    assert ms.session_user_questions("") == []
+
+
 # ── авто-заметки (факт без «запомни:») ──
 
 def test_autonote_saves_fact_statements():

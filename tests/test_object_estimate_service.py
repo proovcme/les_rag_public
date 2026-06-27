@@ -24,8 +24,9 @@ def test_parse_request_wooden_two_floors_100():
     "phrase,floors,area",
     [
         ("деревянный одноэтажный дом 80 м²", 1, 80.0),
-        ("брусовой дом площадью 120 кв.м в два этажа", None, 120.0),  # этажность словом отсутствует
+        ("брусовой дом площадью 120 кв.м в два этажа", 2, 120.0),
         ("сруб 2-этажный 100 м2", 2, 100.0),
+        ("дача метров 150, один этаж", 1, 150.0),
     ],
 )
 def test_parse_variants(phrase, floors, area):
@@ -33,6 +34,28 @@ def test_parse_variants(phrase, floors, area):
     assert p["area"] == area
     if floors is not None:
         assert p["floors"] == floors
+
+
+def test_merge_parsed_requests_last_turn_overrides_fields():
+    state = oes.merge_parsed_requests([
+        "Хочу деревянный дом 150 м2, один этаж",
+        "А давай два этажа",
+    ])
+    assert state["object"] == "дом"
+    assert state["material"] == "дерево"
+    assert state["area"] == 150.0
+    assert state["floors"] == 2
+    assert state["source"] == "dialog_state"
+    assert state["turns"][-1]["changed"] == {"floors": 2}
+
+
+def test_scope_warnings_call_out_unmodelled_user_scope():
+    r = oes.estimate("деревянный дом 100 м2 1 этаж на сваях, с крыльцом и плоской кровлей")
+    assert r["ok"]
+    warnings = " ".join(r["scope_warnings"])
+    assert "Свайный фундамент" in warnings
+    assert "Плоская кровля" in warnings
+    assert "Крыльцо/терраса" in warnings
 
 
 # ── геометрия / объёмы ВОР (детерминированы) ─────────────────────────────────────────────

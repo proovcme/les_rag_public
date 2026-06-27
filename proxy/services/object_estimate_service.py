@@ -58,6 +58,9 @@ _FLOORS_WORD = {
     "одноэтаж": 1, "однаэтаж": 1, "двухэтаж": 2, "двуэтаж": 2, "трёхэтаж": 3,
     "трехэтаж": 3, "четырёхэтаж": 4, "четырехэтаж": 4, "пятиэтаж": 5,
     "одноэтажн": 1, "двухэтажн": 2, "трёхэтажн": 3, "трехэтажн": 3,
+    "один этаж": 1, "один этажа": 1, "в один этаж": 1,
+    "два этажа": 2, "в два этажа": 2,
+    "три этажа": 3, "в три этажа": 3,
 }
 
 
@@ -116,6 +119,11 @@ def parse_request(text: str, *, use_llm: bool = False) -> dict[str, Any]:
     )
     if not m:
         m = re.search(r"площад\w*\D{0,8}(\d+(?:[.,]\d+)?)", ql)
+    if not m:
+        m = re.search(
+            r"(?:м²|м2|м\s*кв|кв\.?\s*м|квадрат\w*|метр\w*)\D{0,8}(\d+(?:[.,]\d+)?)",
+            ql,
+        )
     if m:
         area = _f(m.group(1))
 
@@ -132,6 +140,40 @@ def parse_request(text: str, *, use_llm: bool = False) -> dict[str, Any]:
                     result[k] = llm[k]
             result["source"] = "deterministic+llm"
     return result
+
+
+def merge_parsed_requests(texts: list[str], *, use_llm: bool = False) -> dict[str, Any]:
+    """Несколько реплик диалога → одно состояние объектной сметы.
+
+    Правило простое и воспроизводимое: каждое новое распознанное поле заменяет старое.
+    Так уточнение «а давай два этажа» не конфликтует с прежним «один этаж».
+    """
+    merged: dict[str, Any] = {
+        "object": None,
+        "material": None,
+        "floors": None,
+        "area": None,
+        "raw": "",
+        "source": "dialog_state",
+        "turns": [],
+    }
+    raw_parts: list[str] = []
+    for text in texts:
+        q = " ".join(str(text or "").split())
+        if not q:
+            continue
+        parsed = parse_request(q, use_llm=use_llm)
+        raw_parts.append(q)
+        changed: dict[str, Any] = {}
+        for key in ("object", "material", "floors", "area"):
+            value = parsed.get(key)
+            if value not in (None, ""):
+                merged[key] = value
+                changed[key] = value
+        if changed:
+            merged["turns"].append({"raw": q, "changed": changed})
+    merged["raw"] = " ".join(raw_parts)
+    return merged
 
 
 def _parse_request_llm(text: str) -> Optional[dict[str, Any]]:
@@ -256,6 +298,7 @@ def estimate(
     use_llm: bool = False,
     condition: str | None = None,
     templates_path: str | None = None,
+    parsed_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Фраза → прикидка: parse → шаблон → ВОР → lsr_assembly.assemble. Локально, без сети.
 
@@ -266,7 +309,9 @@ def estimate(
     from proxy.services.lsr_assembly_service import assemble
     from proxy.services.nr_sp_service import resolve as resolve_nr_sp
 
-    parsed = parse_request(text, use_llm=use_llm)
+    parsed = dict(parsed_context) if parsed_context else parse_request(text, use_llm=use_llm)
+    if not parsed.get("raw"):
+        parsed["raw"] = " ".join(str(text or "").split())
 
     if not parsed.get("area"):
         return {"ok": False, "parsed": parsed,
@@ -639,6 +684,26 @@ def _scope_warnings(raw: str, tpl: dict[str, Any]) -> list[str]:
         warnings.append(
             "Подвал/подземная часть учтены укрупнённой ASSUME-добавкой; "
             "детальных земляных/гидроизоляционных позиций нет."
+        )
+    if re.search(r"\bсва(я|и|й|е|ю|ях|ям|ями|ев|ями)\b", q) or "винтов" in q:
+        has_pile_position = any(
+            "сва" in str(p.get("name") or "").casefold().replace("ё", "е")
+            or "сва" in str(p.get("work_kind") or "").casefold().replace("ё", "е")
+            for p in tpl.get("positions") or []
+        )
+        if not has_pile_position:
+            warnings.append(
+                "Свайный фундамент запрошен явно, но в выбранном шаблоне нет отдельных свайных "
+                "позиций; нужна схема свай/ростверка или отдельный вариант шаблона."
+            )
+    if tpl_id == "wooden_house" and any(token in q for token in ("плоск", "мембран")):
+        warnings.append(
+            "Плоская кровля запрошена явно, но шаблон деревянного дома сейчас содержит скатную "
+            "кровлю; нужен вариант кровельного пирога/узлов."
+        )
+    if any(token in q for token in ("крыльц", "террас", "веранд")):
+        warnings.append(
+            "Крыльцо/терраса не разложены отдельными ГЭСН-позициями; нужны размеры и конструкция."
         )
     if any(token in q for token in ("инженерк", "овик", "вк", "электр", "слаботоч", "отделк", "окн", "двер")):
         warnings.append("Инженерные сети/отделка/проёмы считаются только укрупнёнными ASSUME-разделами.")

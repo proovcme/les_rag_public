@@ -346,11 +346,11 @@ def _answer_assemble(q: str) -> dict[str, Any]:
     return {"answer": "\n".join(lines), "operation": "assemble"}
 
 
-def _answer_object_estimate(q: str) -> Optional[dict[str, Any]]:
+def _answer_object_estimate(q: str, *, parsed_context: dict[str, Any] | None = None) -> Optional[dict[str, Any]]:
     """«дай смету на <объект>» → объектный расчёт (Ц16): фраза → ВОР → ЛСР-движок → смета."""
     from proxy.services.object_estimate_service import estimate
 
-    r = estimate(q)
+    r = estimate(q, parsed_context=parsed_context)
     if not r.get("ok"):
         custom = _answer_custom_mass_estimate(q)
         if custom is not None:

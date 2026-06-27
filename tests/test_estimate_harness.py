@@ -22,6 +22,20 @@ def test_search_norm_thin_and_no_match():
     assert h.search_norm("жжжыыы щщщъъъ ёёёххх")["status"] == "not_found"
 
 
+def test_collection_of_prefixed_norm_code():
+    assert h._collection_of("ГЭСН:10-02-024-02") == "10"
+    assert h._collection_of("12-01-023-01") == "12"
+
+
+def test_search_rejects_wrong_collection_for_work_family():
+    r = h.search_norm("каркасные стены деревянные", work_family="wood",
+                      element_type="wood_wall", unit_hint="м2")
+    assert r["candidates"]
+    wrong = [c for c in r["candidates"] if c["collection"] != "10"]
+    assert wrong
+    assert all(c["applicability_status"] == "rejected" for c in wrong)
+
+
 # ── Gate 3: структурный ranking — хорошее всплывает, спец тонет ───────────────────────────
 
 def test_score_forbidden_anchor_heavy_penalty():

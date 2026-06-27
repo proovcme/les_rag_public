@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from proxy.services import fgis_price_service as fps
+from proxy.services.object_estimate_service import merge_parsed_requests
 from proxy.services.smeta_chat_service import _answer_object_estimate, maybe_handle_smeta_query as h
 
 
@@ -80,6 +81,16 @@ def test_object_estimate_answer_is_rough_full_object_budget():
     assert r["evidence_summary"]["MISSING_PRICE"] > 0
     assert r["provenance"]["confidence"] == "rough_full_object_assumed"
     assert r["provenance"]["final_total_allowed"] is False
+
+
+def test_object_estimate_uses_dialog_context_without_string_concat():
+    ctx = merge_parsed_requests([
+        "Хочу деревянный дом 150 м2, один этаж",
+        "А давай два этажа",
+    ])
+    r = _answer_object_estimate("А давай два этажа", parsed_context=ctx)
+    assert r is not None and r["operation"] == "object_estimate"
+    assert "150.0 м², 2 эт." in r["answer"]
 
 
 def test_custom_mass_estimate_fallback_for_steel_tiers():
