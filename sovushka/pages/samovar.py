@@ -894,8 +894,15 @@ def build_samovar_legacy():
             def _pick_folder():
                 if browse_state["path"]:
                     ext_path_input.value = browse_state["path"]
+                    ext_path_input.update()
                     folder_dialog.close()
                     ui.notify(f"Папка: {browse_state['path']}", type="positive")
+
+            def _set_external_path(path: str):
+                ext_path_input.value = path or ""
+                ext_path_input.update()
+                if path:
+                    ui.notify(f"Путь выбран: {path}", type="positive")
 
             def _open_folder_browser():
                 folder_dialog.open()
@@ -978,6 +985,91 @@ def build_samovar_legacy():
                 ).props("no-caps").style(
                     "background:rgba(16,185,129,.15);border:1px solid var(--ok);"
                     "color:var(--ok);font-size:.7rem;font-weight:900;"
+                )
+
+        # ── External Radar: обзор внешних корней/карты/уже in-place датасетов ──
+        with ui.card().classes("card-les w-full"):
+            with ui.row().classes("items-center justify-between w-full"):
+                ui.label("EXTERNAL RADAR // ВНЕШНИЕ ИСТОЧНИКИ").classes("section-title")
+                radar_status = ui.label("—").style("font-size:.65rem;color:var(--dim);")
+            ui.label(
+                "Быстрый обзор без чтения содержимого: корни, карта архива, уже привязанные "
+                "in-place файлы и папки-кандидаты."
+            ).style("font-size:.64rem;color:var(--dim);margin-bottom:4px;")
+            radar_box = ui.column().classes("w-full gap-1")
+
+            async def refresh_external_radar():
+                radar_status.text = "сканирую метаданные…"
+                radar_box.clear()
+                d = await api_get("/api/external-radar/summary?limit=12")
+                if not isinstance(d, dict):
+                    radar_status.text = "ошибка"
+                    ui.notify(last_api_error_text("External Radar недоступен"), type="negative")
+                    return
+                roots = d.get("roots", [])
+                cands = d.get("candidates", [])
+                radar_status.text = (
+                    f"{len(roots)} корн. · external docs {d.get('external_documents', 0)} · "
+                    f"кандидатов {len(cands)}"
+                )
+                with radar_box:
+                    if not roots:
+                        ui.label("Корней нет: задай LES_EXTERNAL_SOURCE_ROOTS или выбери папку через Обзор.").style(
+                            "font-size:.7rem;color:var(--dim);"
+                        )
+                    for root in roots[:6]:
+                        status = root.get("status", "")
+                        color = "var(--ok)" if root.get("indexed_files") else (
+                            "var(--warn)" if root.get("mapped_files") else "var(--dim)"
+                        )
+                        sources = ",".join(root.get("sources", []))
+                        with ui.row().classes("w-full items-center gap-2").style(
+                            "border-bottom:1px dashed var(--dim);padding:2px 0;"
+                        ):
+                            ui.icon("o_radar").style(f"color:{color};font-size:18px;")
+                            ui.label(root.get("name") or root.get("path", "")).classes("flex-1").style(
+                                "font-size:.72rem;"
+                            ).tooltip(root.get("path", ""))
+                            ui.label(
+                                f"{status} · map {root.get('mapped_files', 0)} · "
+                                f"idx {root.get('indexed_files', 0)} · {sources}"
+                            ).style("font-size:.62rem;color:var(--dim);")
+                            ui.button(
+                                "Взять путь",
+                                on_click=lambda p=root.get("path", ""): _set_external_path(p),
+                            ).props("flat dense no-caps").style("font-size:.62rem;")
+
+                    if cands:
+                        ui.label("Кандидаты из карты архива:").style(
+                            "font-size:.65rem;color:var(--dim);margin-top:4px;"
+                        )
+                    for cand in cands[:8]:
+                        already = int(cand.get("indexed_files") or 0)
+                        color = "var(--ok)" if already else "var(--accent)"
+                        with ui.row().classes("w-full items-center gap-2").style(
+                            "border-bottom:1px dashed var(--dim);padding:2px 0;"
+                        ):
+                            ui.icon("o_folder_search").style(f"color:{color};font-size:18px;")
+                            ui.label(cand.get("folder") or cand.get("root", "")).classes("flex-1").style(
+                                "font-size:.72rem;"
+                            ).tooltip(cand.get("abs_path", ""))
+                            ui.label(
+                                f"{cand.get('ciphered', 0)}/{cand.get('files', 0)} · "
+                                f"idx {already} · {', '.join((cand.get('ciphers') or [])[:3])}"
+                            ).style("font-size:.62rem;color:var(--dim);")
+                            ui.button(
+                                "Взять",
+                                on_click=lambda p=cand.get("abs_path", ""): _set_external_path(p),
+                            ).props("flat dense no-caps").style("font-size:.62rem;")
+
+            with ui.row().classes("gap-2 items-center"):
+                ui.button("Обновить радар", icon="o_radar", on_click=refresh_external_radar).props(
+                    "dense no-caps outline"
+                ).style("border-color:var(--accent);color:var(--accent);font-size:.7rem;")
+                ui.label("Глубокий скан: блок «Карта архива» ниже").style(
+                    "font-size:.68rem;color:var(--dim);"
+                ).tooltip(
+                    "Радар сам не сканирует диск; для новой карты используй блок «Карта архива» ниже"
                 )
 
         # ── Outlook / IMAP → почта в RAG (Е.Ж.И.К.) — W11.13 ──

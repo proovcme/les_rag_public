@@ -7,16 +7,16 @@
 ## Текущее состояние (2026-06-27)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.4  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.5  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
-dev HEAD:                  HEAD  (см. git log -1; 0.24.0.2–0.24.0.4 собраны в релизный коммит)
-задеплоено на рантайм:     0.24.0.4 deep context-memory warmup
+dev HEAD:                  HEAD  (см. git log -1)
+задеплоено на рантайм:     0.24.0.5 external radar
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.4 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=24
+рантайм /api/version:      0.24.0.5 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=26
 ```
 
-> 0.24.0.4 выкачена через `make ship`; live-прогрев deep-паспортов проверен на runtime через
-> `POST /api/rag/datasets/profiles/warmup`.
+> 0.24.0.5 выкачен через `make ship`. Живой `GET /api/external-radar/summary` проверен:
+> `status=ok`, `roots=2`, `external_documents=1842`, `candidates=2`.
 
 > Деплоятся только code-правки (`proxy/`,`backend/`,`sovushka/`,`config/`). Доки на рантайм не катятся —
 > поэтому dev HEAD ≠ deployed_commit это нормально, пока расходятся только доки.
@@ -53,6 +53,7 @@ dev HEAD:                  HEAD  (см. git log -1; 0.24.0.2–0.24.0.4 собр
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.5 | HEAD | 2026-06-27 | External Radar: Самовар получил no-reindex обзор внешних корней, `file_map.db`-кандидатов и уже indexed in-place `documents.source_path`; новый API `GET /api/external-radar/summary`; радар делает только shallow-статистику и не читает содержимое файлов | ✅ рантайм, full test + ship/smoke + live radar ✅ |
 | 0.24.0.4 | HEAD | 2026-06-27 | Deep context memory: паспорта датасетов получили `depth=deep` поверх bounded read из `lexical_chunks` (top-documents/headings/content-keywords/norm_refs/table-signal/fragments) без reindex/OCR/LLM; prompt-блок ограничивает число датасетов; добавлен no-reindex прогрев `POST /api/rag/datasets/profiles/warmup`; профиль честно пишет `available=false`, если lexical index не готов | ✅ рантайм, full test + ship/smoke + live warmup ✅ |
 | 0.24.0.3 | HEAD | 2026-06-27 | Context memory: добавлен `context_memory_service` с паспортом чата (`les_chat_profiles`) и паспортом датасета (`les_dataset_profiles` + `storage/datasets/{dataset_id}/_les_dataset_profile.json`); RAG-промпт получает компактный фон по текущей сессии/датасетам после resolve scope, явно помеченный как НЕ evidence; `save_chat_history` обновляет профиль сессии; добавлены API просмотра `GET /api/chat/memory/{session_id}`, `GET /api/rag/datasets/{id}/profile` и admin refresh | ✅ рантайм, full test + ship/smoke ✅ |
 | 0.24.0.2 | HEAD | 2026-06-27 | Operator-facing source/normcontrol polish: вкладка «Инструменты» оставлена только под служебные источники данных с папками, кнопкой открытия и безопасной play-проверкой; `/api/service-sources/{id}/process` отдаёт понятный статус без скрытых импортов; явные режимы больше не теряют read-вложение: «Смета»/smeta_harness передают текст в инструмент, «Проверка проекта» честно просит датасет/PDF для layout-нормоконтроля; сметный чат получил weight-based fallback для тяжёлых стальных/бронзовых ярусов по массе с ASSUME-ставками; chat-report нормоконтроля очищен от служебных enum/англицизмов; drawer источников больше не показывает техническое предупреждение для логических refs типа ГЭСН/ГОСТ | ✅ рантайм, fast ship/smoke ✅ |
@@ -114,6 +115,11 @@ make verify 0.24.0.4:   ✅ 2090 collected
 make test 0.24.0.4:     ✅ 2090 passed / 6 warnings / 220.45s
 make ship 0.24.0.4:     ✅ verify 2090 collected; focused 61 passed; pre-smoke pass=9; post-smoke pass=9
 live deep warmup:       ✅ /api/version 0.24.0.4 aligned checked=24; warmup status=ok built=3/3 depth=deep
+focused 0.24.0.5:       ✅ 43 passed (external radar + external index/filemap/version)
+make verify 0.24.0.5:   ✅ 2093 collected
+make test 0.24.0.5:     ✅ 2093 passed / 6 warnings / 122.18s
+make ship 0.24.0.5:     ✅ verify 2093 collected; focused 61 passed; pre-smoke pass=9; post-smoke pass=9 after retry
+live external-radar:    ✅ /api/version 0.24.0.5 aligned checked=26; summary status=ok roots=2 external_docs=1842 candidates=2
 ```
 
 **Закрыто в 0.23.6.7:** latency-smoke был не LLM generation, а 12s ожидание недоступного

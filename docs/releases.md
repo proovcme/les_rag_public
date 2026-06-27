@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.5** | HEAD | External Radar: Samovar gets a no-reindex overview of configured external roots, filemap candidates and already indexed in-place `source_path` documents via `/api/external-radar/summary`. |
 | **v0.24.0.4** | HEAD | Deep context memory: dataset passports support `depth=deep` from bounded `lexical_chunks` reads, prompt context is capped, and `/api/rag/datasets/profiles/warmup` can prebuild profiles without reindex/OCR/LLM. |
 | **v0.24.0.3** | HEAD | Context memory: chat sessions now keep a deterministic profile, datasets get a `_les_dataset_profile.json` sidecar/profile from metadata, RAG prompts receive compact chat/dataset context marked as navigation not evidence, and API endpoints expose chat memory and dataset profile refresh. |
 | **v0.24.0.2** | HEAD | Operator-facing source/normcontrol polish: Admin “Инструменты” is now a clean data-source panel with folders/open/play checks, service-source API has a safe process action, explicit modes no longer silently lose read attachments, smeta chat has a mass-based fallback for heavy steel/bronze tier structures, citation drawer no longer shows raw technical `source_ref` warnings for logical refs, and doc-review chat reports use Russian human wording instead of internal statuses. |
