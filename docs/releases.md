@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.16** | HEAD | Smeta composition candidates: object estimates now surface local GESN candidates for uncovered scope such as frame walls, pile/grillage, flat roof and porch/deck, without automatically binding those norms into the current total. |
 | **v0.24.0.15** | HEAD | Smeta answer readability: object-estimate answers now use short operator-facing bullet blocks for summary, uncovered scope, totals and assumptions, while internal template/status terms stay in machine payloads. |
 | **v0.24.0.14** | HEAD | Smeta object analog fallback: when exact object template is missing, LES searches the local template base for a bounded analog, marks the result as `rough_analog_object_assumed`, and keeps the multi-turn frame-dacha dialogue (`150 м²` → `2 эт.` → porch/foundation/flat roof warnings) without hidden prompt hints. |
 | **v0.24.0.13** | HEAD | Smeta tool-trace memory: explicit smeta mode reuses previous tool `retrieval_trace` for follow-ups, mass-based steel estimates stop surfacing internal `custom_mass_rates`/YAML refs, show GESN candidates for manual binding, detect height-work modifiers without inventing a coefficient, and GESN/FER/TER PDF norm files route as normative construction docs instead of table smeta. |

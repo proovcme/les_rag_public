@@ -110,6 +110,10 @@ def test_frame_dacha_dialog_uses_context_and_nearest_local_analog():
     assert "ближайший локальный аналог" in r["answer"]
     assert "Точного состава под исходный материал нет" in r["answer"]
     assert "Что не покрыто точно:" in r["answer"]
+    assert "Что нашлось в базе ГЭСН для детализации:" in r["answer"]
+    assert "Эти нормы пока не включены в сумму автоматически" in r["answer"]
+    assert "ГЭСН:10-02-019" in r["answer"]
+    assert "ГЭСН:10-01-080-01" in r["answer"]
     assert "- **Ориентир с НДС:" in r["answer"]
     assert "Свайный фундамент" in r["answer"]
     assert "Крыльцо/терраса" in r["answer"]
@@ -118,6 +122,8 @@ def test_frame_dacha_dialog_uses_context_and_nearest_local_analog():
     assert r["provenance"]["confidence"] == "rough_analog_object_assumed"
     assert r["provenance"]["analog"]["requested_material"] == "каркас"
     assert r["retrieval_trace"]["analog"]["template_id"] == "wooden_house"
+    assert r["retrieval_trace"]["composition_candidates"]["status"] == "found"
+    assert any(s["source_kind"] == "norm_candidate" for s in r["sources"])
 
 
 def test_custom_mass_estimate_fallback_for_steel_tiers():

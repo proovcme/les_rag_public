@@ -77,6 +77,20 @@ def test_frame_dacha_uses_nearest_local_analog_not_nomatch():
     assert any("Свайный фундамент" in w for w in r["scope_warnings"])
 
 
+def test_frame_dacha_gets_gesn_composition_candidates_without_autobinding():
+    r = oes.estimate("дача на сваях каркас, метров 150, один этаж, с крыльцом и плоской кровлей")
+    plan = r["composition_candidates"]
+    assert plan["status"] == "found"
+    by_id = {item["id"]: item for item in plan["items"]}
+    assert {"frame_walls", "wood_pile_grillage", "flat_roof", "porch_deck"} <= set(by_id)
+    frame_codes = [c["norm_code"] for c in by_id["frame_walls"]["candidates"]]
+    pile_codes = [c["norm_code"] for c in by_id["wood_pile_grillage"]["candidates"]]
+    assert any(str(code).startswith("ГЭСН:10-02-019") for code in frame_codes)
+    assert "ГЭСН:10-01-080-01" in pile_codes
+    assert plan["note"].startswith("Кандидаты ГЭСН")
+    assert r["totals"]["positions"] == 7  # candidates are not auto-bound into the current sum
+
+
 # ── геометрия / объёмы ВОР (детерминированы) ─────────────────────────────────────────────
 
 def test_build_vor_volumes_are_deterministic():
