@@ -59,9 +59,10 @@ def test_non_smeta_falls_through():
 def test_object_estimate_answer_is_rough_full_object_budget():
     r = _answer_object_estimate("Офисное здание новое - 3 этажа, подвал, плоская кровля, 3000 метров")
     assert r is not None and r["operation"] == "object_estimate"
-    assert "Прикидка стоимости объекта по мутному ТЗ" in r["answer"]
-    assert "ОРИЕНТИР стоимости объекта" in r["answer"]
-    assert "ASSUME" in r["answer"]
+    assert "Прикидка стоимости объекта:" in r["answer"]
+    assert "Коротко:" in r["answer"]
+    assert "**Ориентир с НДС:" in r["answer"]
+    assert "Укрупнённые разделы по допущению" in r["answer"]
     assert "Подвал/подземная часть учтены" in r["answer"]
     assert "### Защита расчёта: что откуда взято" in r["answer"]
     assert "ориентир, не защищаемая ЛСР" in r["answer"]
@@ -69,7 +70,7 @@ def test_object_estimate_answer_is_rough_full_object_budget():
     assert "нет цены" in r["answer"]
     assert "прямые" in r["answer"] and "НР" in r["answer"] and "СП" in r["answer"]
     assert "S1=1 000.00" in r["answer"]
-    assert "ASSUMED_NOT_NORMATIVE" in r["answer"]
+    assert "допущение, не нормативная позиция" in r["answer"]
     assert "для защиты нужен регион/квартал/индекс" in r["answer"]
     assert "воспроизводимость расчёта, не доказательство стоимости" in r["answer"]
     assert r["sources"]
@@ -107,7 +108,9 @@ def test_frame_dacha_dialog_uses_context_and_nearest_local_analog():
     assert r is not None and r["operation"] == "object_estimate"
     assert "150.0 м², 2 эт." in r["answer"]
     assert "ближайший локальный аналог" in r["answer"]
-    assert "Точного шаблона под исходный материал/объект нет" in r["answer"]
+    assert "Точного состава под исходный материал нет" in r["answer"]
+    assert "Что не покрыто точно:" in r["answer"]
+    assert "- **Ориентир с НДС:" in r["answer"]
     assert "Свайный фундамент" in r["answer"]
     assert "Крыльцо/терраса" in r["answer"]
     assert "Плоская кровля" in r["answer"]
