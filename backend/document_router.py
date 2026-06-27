@@ -252,6 +252,8 @@ def _classify_doc_type(probe: DocumentProbe) -> str:
         return "EMAIL"
     if _looks_like_book(probe):
         return "BOOK"
+    if _is_estimate_norm_source(name):
+        return "NORMATIVE"
     normative_name_prefixes = ("гост", "сп ", "снип", "санпин", "постановление", "приказ")
     if name.startswith(normative_name_prefixes):
         return "NORMATIVE"
@@ -281,6 +283,13 @@ def _classify_doc_type(probe: DocumentProbe) -> str:
     if probe.suffix in TABLE_SUFFIXES:
         return "TABLE"
     return "DOCUMENT"
+
+
+def _is_estimate_norm_source(name: str) -> bool:
+    n = name.casefold().replace("ё", "е").strip()
+    if re.match(r"^(гэсн|гэснм|гэснр|гэснп|гэснмр|фер|тер)\b", n):
+        return True
+    return bool(re.match(r"^(гэсн|гэснм|гэснр|гэснп|гэснмр|фер|тер)\s*81-0[2356]-", n))
 
 
 def _has_strong_normative_signal(text: str) -> bool:
@@ -316,6 +325,8 @@ def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
         return "MAIL"
     if doc_type == "BOOK" or _looks_like_book(probe):
         return "BOOKS"
+    if doc_type == "NORMATIVE" and _is_estimate_norm_source(name):
+        return "NTD_CONSTRUCTION"
 
     if any(token in name for token in ("гкрф", "градостроительный кодекс", "постановление 87", "пп 87", "pp87")):
         return "GKRF"

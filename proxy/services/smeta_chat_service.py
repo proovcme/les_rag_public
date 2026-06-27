@@ -174,27 +174,85 @@ def _extract_int(pattern: str, text: str) -> int:
     return int(_num_ru(m.group(1))) if m else 0
 
 
-def _answer_custom_mass_estimate(q: str) -> Optional[dict[str, Any]]:
-    """Fallback для мутных ТЗ на монтаж тяжёлых металлоконструкций по массе.
+def _has_custom_mass_signal(text: str) -> bool:
+    ql = text.lower()
+    return (
+        any(w in ql for w in ("сталь", "стальные", "металлоконструкц", "каркас"))
+        and any(w in ql for w in ("ярус", "монтаж", "кран", "трал", "строп"))
+    )
 
-    Не защищаемая ЛСР: нет Приложения_1 с позициями, нет подобранных ГЭСН-кодов и рыночных КП.
-    Но прикидка целиком нужна оператору — считаем кодом от массы/этапов и явно маркируем ASSUME.
-    """
-    ql = q.lower()
-    if not any(w in ql for w in ("сталь", "стальные", "металлоконструкц", "каркас")):
-        return None
-    if not any(w in ql for w in ("ярус", "монтаж", "кран", "трал", "строп")):
-        return None
-    mass_kg = _extract_mass_kg(q)
-    if mass_kg <= 0:
-        return None
-    tiers = _extract_int(r"(\d+)\s*ярус", q) or 1
-    mass_t = round(mass_kg / 1000.0, 3)
-    control_t = round(mass_t * min(2, tiers) / max(tiers, 1), 3)
-    material_cost_zero = "0 руб" in ql and ("даваль" in ql or "сыр" in ql)
-    transport_zero = "транспорт" in ql and "0 руб" in ql
 
-    rates = {
+def _is_custom_mass_followup(text: str) -> bool:
+    ql = text.casefold().replace("ё", "е")
+    return any(w in ql for w in (
+        "учти", "добав", "а если", "если", "помен", "пересч", "высотн", "на высоте",
+        "коэфф", "коэффициент",
+    ))
+
+
+def _latest_custom_mass_trace(context_traces: list[dict[str, Any]] | None) -> dict[str, Any]:
+    for trace in reversed(context_traces or []):
+        if str(trace.get("mode") or "").startswith("custom_mass_estimate"):
+            return trace
+    return {}
+
+
+def _height_work_requested(text: str) -> bool:
+    ql = text.casefold().replace("ё", "е")
+    return "высотн" in ql or "на высоте" in ql or "работы на высоте" in ql
+
+
+def _extract_user_coefficient(text: str) -> Optional[float]:
+    """Явный коэффициент из фразы: «коэф. 1,15», «k=1.2», «×1,15»."""
+    for pat in (
+        r"(?:коэфф(?:ициент)?|k|к)\s*[=:xх×]?\s*(1[,.]\d{1,3})",
+        r"[xх×]\s*(1[,.]\d{1,3})",
+    ):
+        m = re.search(pat, text, re.I)
+        if m:
+            val = _num_ru(m.group(1))
+            if 1.0 < val <= 3.0:
+                return val
+    return None
+
+
+def _custom_mass_gesn_candidates(*, include_height: bool = False) -> list[dict[str, str]]:
+    """Показать оператору возможные нормы-кандидаты, не привязывая их к сумме без ВОР."""
+    try:
+        from proxy.services.estimate_harness_service import search_norm
+    except Exception:  # noqa: BLE001
+        return []
+    descriptions = [
+        ("монтаж стальных конструкций каркаса", "монтаж металлоконструкций"),
+        ("такелаж строповка металлических конструкций", "такелаж/строповка"),
+        ("установка стальных конструкций ярусов", "монтаж ярусов"),
+    ]
+    if include_height:
+        descriptions.append(("работа на высоте монтаж металлических конструкций", "высотный фактор"))
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for desc, label in descriptions:
+        res = search_norm(desc, work_family="metal", element_type="metal_assembly",
+                          action="монтаж", unit_hint="т", top_k=5)
+        for cand in res.get("candidates") or []:
+            code = str(cand.get("norm_code") or "").strip()
+            if not code or code in seen:
+                continue
+            if cand.get("applicability_status") not in ("accepted", "ambiguous"):
+                continue
+            seen.add(code)
+            out.append({
+                "work": label,
+                "code": code,
+                "title": str(cand.get("title") or ""),
+                "status": str(cand.get("applicability_status") or ""),
+            })
+            break
+    return out[:5]
+
+
+def _default_custom_mass_rates() -> dict[str, float]:
+    return {
         "control_assembly": 45000.0,
         "packaging": 20000.0,
         "mounting": 85000.0,
@@ -204,20 +262,64 @@ def _answer_custom_mass_estimate(q: str) -> Optional[dict[str, Any]]:
         "contingency_pct": 0.10,
         "vat_pct": 0.20,
     }
+
+
+def _answer_custom_mass_estimate(
+    q: str,
+    *,
+    context_questions: list[str] | None = None,
+    context_traces: list[dict[str, Any]] | None = None,
+) -> Optional[dict[str, Any]]:
+    """Fallback для мутных ТЗ на монтаж тяжёлых металлоконструкций по массе.
+
+    Не защищаемая ЛСР: нет Приложения_1 с позициями, нет подобранных ГЭСН-кодов и рыночных КП.
+    Но прикидка целиком нужна оператору — считаем кодом от массы/этапов и явно маркируем допущения.
+    """
+    context_text = "\n".join([*(context_questions or []), q])
+    trace = _latest_custom_mass_trace(context_traces)
+    has_trace_followup = bool(trace) and _is_custom_mass_followup(q)
+    if not _has_custom_mass_signal(context_text) and not has_trace_followup:
+        return None
+    ql = context_text.lower()
+    mass_kg = _extract_mass_kg(context_text)
+    if mass_kg <= 0 and trace.get("mass_t"):
+        mass_kg = _f(trace.get("mass_t")) * 1000.0
+    if mass_kg <= 0:
+        return None
+    tiers = _extract_int(r"(\d+)\s*ярус", context_text) or int(_f(trace.get("tiers"))) or 1
+    mass_t = round(mass_kg / 1000.0, 3)
+    control_t = round(mass_t * min(2, tiers) / max(tiers, 1), 3)
+    material_cost_zero = "0 руб" in ql and ("даваль" in ql or "сыр" in ql)
+    transport_zero = "транспорт" in ql and "0 руб" in ql
+    if trace and "material_cost_zero" in trace:
+        material_cost_zero = material_cost_zero or bool(trace.get("material_cost_zero"))
+    if trace and "transport_zero" in trace:
+        transport_zero = transport_zero or bool(trace.get("transport_zero"))
+
+    rates = dict(trace.get("assume_rates") or _default_custom_mass_rates())
+    for key, val in _default_custom_mass_rates().items():
+        rates[key] = _f(rates.get(key)) or val
+    height_requested = _height_work_requested(context_text)
+    height_k = _extract_user_coefficient(q if height_requested else "")
+    height_applied = bool(height_requested and height_k)
+    height_factor = height_k or 1.0
+    mounting_rate = rates["mounting"] * rates["constrained_k"] * height_factor
+    rigging_rate = rates["rigging"] * height_factor
     rows = [
         ("Этап 1. Контрольная сборка двух смежных ярусов с бронзовыми элементами",
-         "ТЗ: 2 смежных яруса; ASSUME ставка 45 000 ₽/т",
+         "ТЗ: 2 смежных яруса; расчётное допущение 45 000 ₽/т",
          control_t, "т", rates["control_assembly"], round(control_t * rates["control_assembly"], 2)),
         ("Этап 2. Упаковка в транспортировочную тару негабаритных ярусов",
-         "ТЗ: весь тоннаж; ASSUME ставка 20 000 ₽/т",
+         "ТЗ: весь тоннаж; расчётное допущение 20 000 ₽/т",
          mass_t, "т", rates["packaging"], round(mass_t * rates["packaging"], 2)),
         ("Этап 4. Монтаж ярусов с колёс гусеничным краном",
-         "ТЗ: весь тоннаж; ASSUME 85 000 ₽/т × k=1.15",
-         mass_t, "т", rates["mounting"] * rates["constrained_k"],
-         round(mass_t * rates["mounting"] * rates["constrained_k"], 2)),
+         "ТЗ: весь тоннаж; расчётное допущение 85 000 ₽/т × k=1.15"
+         + (f" × высотные работы k={_fmt_num(height_factor)}" if height_applied else ""),
+         mass_t, "т", mounting_rate, round(mass_t * mounting_rate, 2)),
         ("Строповка, временный крепёж, такелажная оснастка и монтажные доводки",
-         "ASSUME ставка 12 000 ₽/т",
-         mass_t, "т", rates["rigging"], round(mass_t * rates["rigging"], 2)),
+         "расчётное допущение 12 000 ₽/т"
+         + (f" × высотные работы k={_fmt_num(height_factor)}" if height_applied else ""),
+         mass_t, "т", rigging_rate, round(mass_t * rigging_rate, 2)),
     ]
     direct = round(sum(r[-1] for r in rows), 2)
     qa = round(direct * rates["qa_pct"], 2)
@@ -239,7 +341,7 @@ def _answer_custom_mass_estimate(q: str) -> Optional[dict[str, Any]]:
     for name, basis, qty, unit, rate, amount in rows:
         lines.append(f"| {name} | {basis} | {_fmt_num(qty)} {unit} | {_fmt_num(rate)} ₽/{unit} | {_fmt_num(amount)} |")
     lines += [
-        f"| Инженерное сопровождение, ППР/геодезия/контроль качества | ASSUME 3% от работ | — | — | {_fmt_num(qa)} |",
+        f"| Инженерное сопровождение, ППР/геодезия/контроль качества | расчётное допущение 3% от работ | — | — | {_fmt_num(qa)} |",
         "",
         f"Работы без НДС: **{_fmt_num(subtotal)} ₽**",
         f"+ резерв на погодные/организационные простои и нестыковки 10%: {_fmt_num(contingency)} ₽",
@@ -247,37 +349,77 @@ def _answer_custom_mass_estimate(q: str) -> Optional[dict[str, Any]]:
         f"**━━ ОРИЕНТИР стоимости работ с НДС: {_fmt_num(total)} ₽**",
         "",
         "### Защита расчёта: что откуда взято",
-        "- Масса, 11 ярусов, этапы, нулевое сырьё и исключение транспорта взяты из прикреплённого ТЗ.",
-        "- Ставки по тонне — ASSUME, потому что в ЛЕС сейчас нет служебного рыночного датасета КП/договоров по таким уникальным работам.",
+        f"- Масса, {tiers} ярусов, этапы, нулевое сырьё и исключение транспорта взяты из прикреплённого ТЗ.",
+        "- Ставки по тонне — расчётные допущения, потому что в ЛЕС сейчас нет служебного рыночного датасета КП/договоров по таким уникальным работам.",
         "- Нормативная ЛСР по ГЭСН пока не защищается: нужен файл Приложение_1 с массами/габаритами ярусов и ручной подбор норм на монтаж/такелаж/упаковку.",
         "- Рыночную стоимость с внешними ссылками ЛЕС сейчас не подтверждает: нужен датасет коммерческих предложений или разрешённый market-source workflow.",
     ]
+    if trace and not _extract_mass_kg(q):
+        lines.append("- Масса и число ярусов восстановлены из предыдущего расчёта этой сессии.")
+    if height_requested and height_applied:
+        lines.append(
+            f"- Высотные работы учтены коэффициентом k={_fmt_num(height_factor)} из текущей реплики; "
+            "коэффициент применён к монтажу и такелажу."
+        )
+    elif height_requested:
+        lines.append(
+            "- Высотные работы распознаны как фактор, но итог не увеличен: в реплике нет высоты, "
+            "ПОС/ППР или явного коэффициента. Можно написать: «учти высотные работы k=1,15»."
+        )
+    candidates = _custom_mass_gesn_candidates(include_height=height_requested)
+    if candidates:
+        lines += [
+            "",
+            "### Кандидаты ГЭСН для привязки",
+            "_Это не основание текущей суммы: кандидаты надо привязать к ВОР/Приложению 1, единицам и объёмам._",
+            "",
+            "| Работа | Кандидат | Что найдено |",
+            "|---|---|---|",
+        ]
+        for cand in candidates:
+            title = cand["title"].replace("|", "/")
+            lines.append(f"| {cand['work']} | {cand['code']} | {title} |")
     warnings = []
     if not material_cost_zero:
         warnings.append("стоимость давальческого сырья не удалось уверенно занулить")
     if not transport_zero:
         warnings.append("транспортный этап не удалось уверенно исключить")
+    if height_requested and not height_applied:
+        warnings.append("для высотных работ нужен явный коэффициент или нормативное основание")
     if warnings:
         lines.append("- Проверить: " + "; ".join(warnings) + ".")
+    sources = [
+        {"source_ref": "attachment:ТЗ_столп_22_06.docx", "source_kind": "file_body",
+         "excerpt": "Масса 664 711,12 кг; 11 ярусов; этапы сборка/упаковка/монтаж; сырьё и транспорт = 0."},
+    ]
+    if trace and not _extract_mass_kg(q):
+        sources.append({
+            "source_ref": "session:previous_custom_mass_estimate",
+            "source_kind": "session_context",
+            "excerpt": "Масса, ярусы и ставки восстановлены из retrieval_trace предыдущего расчёта.",
+        })
     return {
         "answer": "\n".join(lines),
         "operation": "custom_mass_estimate_assumed",
-        "sources": [
-            {"source_ref": "attachment:ТЗ_столп_22_06.docx", "source_kind": "file_body",
-             "excerpt": "Масса 664 711,12 кг; 11 ярусов; этапы сборка/упаковка/монтаж; сырьё и транспорт = 0."},
-            {"source_ref": "ASSUME#custom_mass_rates", "source_kind": "assumption",
-             "excerpt": "Укрупнённые ставки ₽/т для контрольной сборки, упаковки, монтажа и такелажа."},
-            {"source_ref": "config/service_sources.yaml#gesn_base", "source_kind": "service_source",
-             "excerpt": "ГЭСН доступен, но для этого ТЗ требуется отдельный маппинг норм по Приложению_1."},
-        ],
+        "sources": sources,
         "retrieval_trace": {
             "mode": "custom_mass_estimate_assumed",
             "mass_t": mass_t,
             "tiers": tiers,
             "assume_rates": rates,
+            "material_cost_zero": material_cost_zero,
+            "transport_zero": transport_zero,
+            "height_work": {
+                "requested": height_requested,
+                "applied": height_applied,
+                "coefficient": height_factor if height_applied else None,
+                "missing": "height_or_coefficient_basis" if height_requested and not height_applied else None,
+            },
+            "gesn_candidates": candidates,
             "grand_total": total,
         },
-        "evidence_summary": {"COMPUTED": 1, "ASSUMED": len(rows) + 3, "MISSING": 2},
+        "evidence_summary": {"COMPUTED": 1, "ASSUMED": len(rows) + 3,
+                             "MISSING": 2 + (1 if height_requested and not height_applied else 0)},
         "total_status": "computed_assumed",
     }
 
@@ -346,13 +488,23 @@ def _answer_assemble(q: str) -> dict[str, Any]:
     return {"answer": "\n".join(lines), "operation": "assemble"}
 
 
-def _answer_object_estimate(q: str, *, parsed_context: dict[str, Any] | None = None) -> Optional[dict[str, Any]]:
+def _answer_object_estimate(
+    q: str,
+    *,
+    parsed_context: dict[str, Any] | None = None,
+    context_questions: list[str] | None = None,
+    context_traces: list[dict[str, Any]] | None = None,
+) -> Optional[dict[str, Any]]:
     """«дай смету на <объект>» → объектный расчёт (Ц16): фраза → ВОР → ЛСР-движок → смета."""
     from proxy.services.object_estimate_service import estimate
 
     r = estimate(q, parsed_context=parsed_context)
     if not r.get("ok"):
-        custom = _answer_custom_mass_estimate(q)
+        custom = _answer_custom_mass_estimate(
+            q,
+            context_questions=context_questions,
+            context_traces=context_traces,
+        )
         if custom is not None:
             return custom
         # Запрос ЯВНО про объектную смету (есть площадь/этажность ИЛИ императив «смету на …»),
@@ -568,7 +720,13 @@ def _humanize_qty(qty: Any, unit: str) -> str:
     return f"{_fmt_num(round(_f(qty) * factor, 2))} {base_u}".strip()
 
 
-def maybe_handle_smeta_query(question: str, *, project_id: int = 0) -> Optional[dict[str, Any]]:
+def maybe_handle_smeta_query(
+    question: str,
+    *,
+    project_id: int = 0,
+    context_questions: list[str] | None = None,
+    context_traces: list[dict[str, Any]] | None = None,
+) -> Optional[dict[str, Any]]:
     """Лёгкий сметный запрос → справка/расчёт. None — не наш кейс (уходит дальше/в RAG)."""
     from proxy.services import sovushka_tone
 
@@ -580,7 +738,7 @@ def maybe_handle_smeta_query(question: str, *, project_id: int = 0) -> Optional[
 
     r: Optional[dict[str, Any]] = None
     if ("смет" in ql or "посчитай" in ql) and not _GESN_RE.search(q):  # «дай смету на <объект>» (Ц16)
-        r = _answer_object_estimate(q)
+        r = _answer_object_estimate(q, context_questions=context_questions, context_traces=context_traces)
     if r is None and any(w in ql for w in _ASSEMBLE_WORDS) and _GESN_RE.search(q):  # сборка от кода ГЭСН
         r = _answer_assemble(q)
     elif r is None and any(w in ql for w in _STESN_WORDS) and ("коэф" in ql or "стесн" in ql):  # стеснённость

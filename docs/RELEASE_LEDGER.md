@@ -7,12 +7,12 @@
 ## Текущее состояние (2026-06-27)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.12  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.13  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.12 smeta context hardening
+задеплоено на рантайм:     0.24.0.13 smeta tool-trace memory / GESN candidates
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.12 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=30
+рантайм /api/version:      0.24.0.13 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=30
 ```
 
 > 0.24.0.6 выкачен через `make ship`. Живой чат-прогон без semantic cache:
@@ -32,6 +32,10 @@ dev HEAD:                  HEAD  (см. git log -1)
 > 0.24.0.12 чинит наблюдённые системные провалы smeta-чата: состояние параметров по истории
 > текущей сессии, разговорные площадь/этажность, предупреждения по неподдержанным вариантам и
 > фильтр кандидатов ГЭСН по реальному сборнику даже при префиксе `ГЭСН:`.
+> 0.24.0.13 добавляет память tool-следов для smeta-продолжений: повторная реплика может
+> использовать массу/ярусы из предыдущего `retrieval_trace`; mass-fallback показывает кандидатов
+> ГЭСН, но не выдаёт их за ЛСР, и убирает внутренние refs ставок/yaml из видимого ответа.
+> PDF-нормы ГЭСН/ФЕР/ТЕР классифицируются как нормативные строительные документы, а не `TABLE_SMETA`.
 
 > Деплоятся только code-правки (`proxy/`,`backend/`,`sovushka/`,`config/`). Доки на рантайм не катятся —
 > поэтому dev HEAD ≠ deployed_commit это нормально, пока расходятся только доки.
@@ -68,6 +72,7 @@ dev HEAD:                  HEAD  (см. git log -1)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.13 | HEAD | 2026-06-27 | Smeta tool-trace memory: явный режим `smeta` читает прошлые `retrieval_trace` для продолжений tool-расчётов; fallback по массе для стальных/бронзовых конструкций не показывает `custom_mass_rates`/yaml как источники, добавляет кандидаты ГЭСН из сб.09 для ручной привязки, распознаёт высотные работы и применяет только явный коэффициент; `ГЭСН/ФЕР/ТЕР` PDF-нормы классифицируются как `NORMATIVE/NTD_CONSTRUCTION`, не `TABLE_SMETA` | ✅ рантайм, full test + ship/smoke + live smeta follow-up ✅ |
 | 0.24.0.12 | HEAD | 2026-06-27 | Smeta context hardening: явный режим `smeta` собирает параметры объектной сметы из прошлых вопросов текущей сессии без склейки строк; `free`/read-attachment LLM-пути получают `session_memory`; парсер понимает «метров 150» и «в два этажа»; шаблонная смета предупреждает про сваи/крыльцо/плоскую кровлю вне состава; `estimate_harness` извлекает сборник из `ГЭСН:10-...` и rejects wrong collection для work_family | ✅ рантайм, full test + ship/smoke + live smeta context ✅ |
 | 0.24.0.11 | HEAD | 2026-06-27 | Answer contract checks: финальные payload чата получают `answer_contract_check` с pass/warn, missing-полями и observed-сигналами таблиц/evidence; Совушка показывает операторское предупреждение «Контракт: замечания» и прячет детали в technical chips | ✅ рантайм, full test + ship/smoke + live SSE ✅ |
 | 0.24.0.10 | HEAD | 2026-06-27 | Chat workflow contracts: `/api/chat/stream` шлёт операторские `progress`-события до final, tool/детерминированные ветки больше не выглядят как зависший чат; каждый final payload получает `scenario` и `answer_contract`, а `ProfileResolver.as_trace()` отдаёт `output_contract`; Совушка показывает сценарий и табличный контракт в чипах, технические id — в раскрывашке | ✅ рантайм, full test + ship/smoke + browser smoke ✅ |
@@ -166,6 +171,12 @@ make verify 0.24.0.12:  ✅ 2113 collected
 make test 0.24.0.12:    ✅ 2113 passed / 6 warnings / 133.58s
 make ship 0.24.0.12:    ✅ verify 2113 collected; focused 69 passed; pre-smoke pass=9; post-smoke pass=9
 live 0.24.0.12:         ✅ /api/version 0.24.0.12 aligned checked=30; smeta follow-up `А давай два этажа` keeps 150 м² and returns `2 эт.`; frame-house request now recognizes area/floors/material and refuses no-template instead of losing params
+focused 0.24.0.13:      ✅ 92 passed (document router + smeta/memory/harness)
+make verify 0.24.0.13:  ✅ 2117 collected
+make test 0.24.0.13:    ✅ 2117 passed / 6 warnings / 136.34s
+make ship 0.24.0.13:    ✅ verify 2117 collected; focused 71 passed; pre-smoke pass=9; post-smoke pass=9
+live 0.24.0.13:         ✅ /api/version 0.24.0.13 aligned checked=30; `учти высотные работы` reuses prior mass and blocks coefficient; `k=1,15` recalculates to 139 532 515.00 ₽; GESN PDF route=NORMATIVE/NTD_CONSTRUCTION
+dataset 0.24.0.13:      ✅ external `GESN_NORMS_2022_PDF` = b774e116-8172-4b53-84da-9c923c13693d, 118 PDF as NORMATIVE/NTD_CONSTRUCTION, metadata profile built; parse left PENDING due memory guard
 ```
 
 **Закрыто в 0.23.6.7:** latency-smoke был не LLM generation, а 12s ожидание недоступного

@@ -354,6 +354,21 @@ def test_strong_gost_signal_wins_over_smeta_word_in_normative_doc():
     assert route.domain == "NTD_FIRE"
 
 
+def test_gesn_pdf_norm_routes_to_normative_not_table_smeta():
+    route = classify_document(
+        DocumentProbe(
+            path=Path("ГЭСН 81-02-09-2022. Сметные нормы на строительные работы. Сб.PDF"),
+            suffix=".pdf",
+            size_bytes=10_000,
+            text_sample="",
+            has_tables=False,
+        )
+    )
+    assert route.doc_type == "NORMATIVE"
+    assert route.domain == "NTD_CONSTRUCTION"
+    assert route.dataset_name == "NTD_CONSTRUCTION_Index"
+
+
 def test_iec_and_fire_protection_names_route_to_specific_domains():
     electrical = classify_document(
         DocumentProbe(

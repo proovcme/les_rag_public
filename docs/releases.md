@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.13** | HEAD | Smeta tool-trace memory: explicit smeta mode reuses previous tool `retrieval_trace` for follow-ups, mass-based steel estimates stop surfacing internal `custom_mass_rates`/YAML refs, show GESN candidates for manual binding, detect height-work modifiers without inventing a coefficient, and GESN/FER/TER PDF norm files route as normative construction docs instead of table smeta. |
 | **v0.24.0.12** | HEAD | Smeta context hardening: explicit smeta mode now merges prior session turns into deterministic object-estimate fields, free/attachment LLM paths receive session memory, object parsing understands reversed area/floor wording, unsupported scope such as piles/porch/flat roof is warned instead of silently hidden, and GESN candidate gates reject wrong collections with prefixed norm codes. |
 | **v0.24.0.11** | HEAD | Answer contract checks: final chat payloads now include non-blocking `answer_contract_check` with pass/warn, missing fields and observed table/evidence signals; Sovushka surfaces contract warnings to the operator. |
 | **v0.24.0.10** | HEAD | Chat workflow contracts: SSE now emits operator `progress` events for tool/deterministic paths, final payloads carry `scenario` and `answer_contract`, and ProfileResolver exposes `output_contract` in route trace. |
