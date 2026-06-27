@@ -1,186 +1,101 @@
-# Л.Е.С. — локальный центр данных строительного проекта
+# LES / Л.Е.С.
 
-![Python](https://img.shields.io/badge/python-3.12-blue)
-![Runtime](https://img.shields.io/badge/runtime-Apple%20Silicon-black)
-![Local-first](https://img.shields.io/badge/local--first-%E2%9C%93-2ea44f)
-![Numbers](https://img.shields.io/badge/%D1%87%D0%B8%D1%81%D0%BB%D0%B0-%D1%81%D1%87%D0%B8%D1%82%D0%B0%D0%B5%D1%82%20%D0%BA%D0%BE%D0%B4-success)
-![MCP](https://img.shields.io/badge/MCP-server-orange)
+Local Evidence System for construction documents, estimates and project data.
 
-> ИИ-среда общих данных (СОД) и агент-помощник РП/ГИП для стройки. Собирает нормы, проект,
-> сметы, переписку и таблицы в **один локальный центр**, отвечает со ссылкой на пункт и
-> **считает по документам кодом, а не нейросетью**.
+Л.Е.С. is a local-first evidence harness for construction work. It helps an engineer search project documents, standards, estimates, tables, mail and CAD/BIM exports, then answer with sources, computed values and explicit gaps.
 
----
+The core rule is simple:
 
-## Зачем
+**the model connects language and evidence; code computes numbers.**
 
-Информация по строительному проекту разбросана: нормы — в PDF, проект — по разделам РД,
-переписка — в почте, сметы — в Excel, модели — в BIM. Найти нужный пункт нормы — квест.
-А если спросить обычную нейросеть «сколько кабеля в этой смете на 93 позиции» — получишь
-уверенное **враньё** (LLM не считает, она «прикидывает правдоподобный ответ»).
+## What It Is
 
-**Л.Е.С. решает это:** один локальный центр на все документы проекта, ответы со ссылкой на
-конкретный пункт и проверяемым статусом, а числа по сметам/ведомостям считает
-детерминированный код — бит-в-бит, а не на глаз.
+LES is not "a chatbot over PDFs". It is a workflow layer around project data:
 
-```text
-Вопрос:  «Сколько кабеля 3×1,5 в смете?»
-Ответ:   «Количество (кабель 3х1,5): 15 030,72 м» [VERIFIED · route=table · 0 LLM]
+- document and table ingestion;
+- RAG over indexed project and normative corpora;
+- deterministic calculations over tables and Parquet;
+- estimate helpers for GESN/FGIS/LSR workflows;
+- document review and normcontrol reports;
+- project memory and dataset passports;
+- API, web UI and MCP tools for external agents.
 
-Вопрос:  «Минимальная ширина пути эвакуации по СП 1.13130?»
-Ответ:   «Не менее 1,2 м (п. 4.3.4 СП 1.13130.2022)» [VERIFIED]
-         Источник: СП 1.13130.2022.pdf, стр. 12
-```
+The system is designed for cases where a wrong confident answer is worse than no answer. A result should say where it came from:
 
-## Сильные стороны
+- `RETRIEVED`: found in a source;
+- `COMPUTED`: calculated by code;
+- `ASSUMED`: accepted as an assumption;
+- `MISSING`: required data is absent;
+- `BLOCKED`: the workflow should not continue without more evidence.
 
-- 🔢 **Числа считает код, не нейросеть.** Суммы, объёмы, сверки — детерминированно по Parquet. Кабель 3×1,5 = 15 030,72 м совпало с ручным расчётом бит-в-бит (обычный RAG выдавал 5900 — терял строки в top-k).
-- 🔒 **Local-first и приватно.** Векторная база, модели и UI — на вашей машине. Данные класса P0 (почта, договоры, ПДн) физически не уходят в облако. Облако — опционально, только для качества языка.
-- 📦 **Всё в одном (СОД).** Нормы + проект по разделам + почта + сметы + BIM/CAD — единый индекс, ответы со ссылками на пункты.
-- ✅ **Проверяемые инструменты, не «магия».** Сверка ВОР↔КС-2↔смета, ВОР из спецификаций, типовые формы по ГОСТ — каждый результат прослеживается к исходным строкам.
-- 🧾 **Паспорт ответа (evidence-контракт).** Каждый фрагмент помечен: `RETRIEVED` (найдено в источнике), `COMPUTED` (вычислено кодом), `ASSUMED` (допущение), `MISSING` (данных не хватает), `BLOCKED` (продолжать нельзя). Число без происхождения — не инженерный результат.
-- 🧭 **Явная область поиска.** Выбор: весь корпус / проект / датасет / их смесь. Проект — именованный набор датасетов, а не папка. На проектный вопрос при «весь RAG» система просит выбрать область, а не смешивает чужие документы молча.
-- 🙅 **Честный отказ вместо красивой ошибки.** «Источник не найден», «тело документа не извлечено», «норма не применима», «итог заблокирован» — явно, а не уверенным враньём.
-- 🔌 **Открыт наружу как MCP-сервер.** Инструменты Л.Е.С. вызываются из Claude Code / Desktop / IDE по Model Context Protocol.
-- 🧭 **LLM — последний инструмент** (ADR-11). Лесенка: алгоритм → словарь → малая модель → локальная LLM → облако. Большую модель зовём только там, где правда нужен язык.
+## What It Does Well
 
----
+- Answers questions over indexed project/normative documents with source references.
+- Computes quantities, sums and reconciliations from structured tables.
+- Builds and checks bill-of-quantities style outputs from specifications.
+- Helps assemble estimate workflows using local GESN/FGIS/price data where available.
+- Keeps chat and dataset context as navigation memory, not as proof.
+- Exposes deterministic tools through HTTP and MCP.
+- Runs local-first on Apple Silicon with optional external model providers.
 
-## Как это работает
+## What It Does Not Promise
 
-Детерминированные каналы (команды, таблицы, сверка, почта, формы) срабатывают **до**
-семантического поиска. Не подошло — обычный RAG. Числа считает код, не модель.
+- It does not make final engineering or normcontrol decisions for a human.
+- It does not treat LLM text as a reliable calculator.
+- It does not silently turn rough object analogues into defensible estimates.
+- It does not guarantee that every request is handled before RAG by a deterministic route.
+
+Some routes are intentionally deterministic and can answer before semantic search: commands, selected table calculations, selected estimate tools, task/memory commands and other explicit tool workflows. Other requests go through scope resolution, profile/router gates and then RAG. If a deterministic tool does not have enough structured evidence, LES should say so instead of pretending.
+
+## High-Level Flow
 
 ```mermaid
 flowchart TD
-    Q["Вопрос / команда"] --> CMD{"/команда?"}
-    CMD -->|да| FORM["Документ / сводка / сверка<br/>0 LLM · VERIFIED"]
-    CMD -->|нет| DET{"Таблица · сверка · почта · форма?"}
-    DET -->|да| CODE["Детерминированный ответ<br/>код по Parquet · 0 LLM · VERIFIED"]
-    DET -->|нет| RAG["RAG: типизированный ретрив<br/>гибрид dense+sparse → реранк"]
-    RAG --> VAL["Валидатор Т.О.С.К.А.<br/>VERIFIED / NO_DATA"]
-    VAL --> GEN["Генерация ответа со стримингом"]
+    Q["User question"] --> S["Scope / mode resolution"]
+    S --> T{"Explicit tool route?"}
+    T -->|yes| C["Code tool<br/>tables, estimates, forms, review"]
+    T -->|no| R["RAG retrieval<br/>documents and chunks"]
+    C --> E["Evidence contract"]
+    R --> E
+    E --> A["Answer with sources, assumptions and gaps"]
 ```
 
-**Лесенка выбора инструмента (LLM — последней):**
+## Typical Use Cases
 
-```mermaid
-flowchart LR
-    T["Задача"] --> A1["Алгоритм"] --> A2["Словарь"] --> A3["Малая модель"] --> A4["Локальная LLM"] --> A5["Облако"]
-    style A1 fill:#c7ebc0,stroke:#2ea44f
-    style A2 fill:#d8edd2
-    style A3 fill:#fdf0c9
-    style A4 fill:#fadfc4
-    style A5 fill:#f5c6c6,stroke:#cc3b3b
-```
+- "Find the fire-safety requirement and show the source."
+- "Sum this cable type across all estimate sheets."
+- "Compare BoQ, KS-2, estimate and field records."
+- "Prepare a rough object estimate and list what is not defensible yet."
+- "Review a project PDF against a normcontrol checklist."
+- "Create a dataset passport so the system can understand what is inside."
 
-## Архитектура
+## Local Runtime
 
-```mermaid
-flowchart TB
-    U["Браузер · Совушка UI :8051"] --> P
-    AG["AI-агент"] --> MCP["MCP-сервер ЛЕС<br/>(stdio)"]
-    MCP --> SVC
-    P["Proxy · FastAPI :8050<br/>маршрутизация запроса"]
-    P --> SVC["Детерминированные сервисы<br/>таблицы · сверка · ВОР · формы · команды"]
-    P --> RAG["RAG-движок<br/>ретрив + реранк + валидатор"]
-    SVC --> PQ[("Parquet<br/>таблицы / числа")]
-    SVC --> DB[("SQLite<br/>метаданные")]
-    RAG --> QD[("Qdrant<br/>вектора :6333")]
-    RAG --> MLX["MLX-host :8080<br/>модель · эмбеддер · валидатор"]
-```
+The usual local stack is:
 
-**Стек:** Python 3.12 (uv) · FastAPI · NiceGUI · Qdrant · MLX / `mlx-lm` / Core ML ·
-llama-index · Parquet (pyarrow) · SQLite · launchd (macOS, без Docker) · опц. облако.
+- Python 3.12 with `uv`;
+- FastAPI proxy;
+- NiceGUI web UI;
+- Qdrant;
+- SQLite metadata;
+- Parquet for structured tables;
+- MLX/Core ML local models on Apple Silicon.
 
-Карта кода — [docs/CODE_MAP.md](docs/CODE_MAP.md). Гид для агентов — [AGENTS.md](AGENTS.md).
-
----
-
-## Функции
-
-### Поиск и ответы (RAG)
-- Ответ со ссылкой на конкретный пункт нормы, статус `VERIFIED / NO_DATA`.
-- Типизированный многоуровневый ретрив (класс → документ → пункт): мостит вокабулярный разрыв «серверная → помещение ЭВМ → СП 486».
-- Мультикласс через диалог (чипы-варианты «посмотреть как…»).
-- Форма ответа по интенту: «значение» → строка с пунктом, «расскажи» → сжато, «собери всё» → развёрнуто.
-- Память диалога + авто-заметки фактов.
-
-### Таблицы и числа (0 LLM)
-- **Счёт по таблицам** — суммы/количества по полному Parquet (доказано бит-в-бит).
-- **ВОР** — свод из спецификаций; **ВОР работ из спецификации** (форма 9 ГОСТ 21.110).
-- **Сверка** ВОР ↔ КС-2 ↔ смета ↔ ИД по количествам (флаги расхождений).
-- **План/факт** — ВОР ↔ журнал полевых объёмов.
-- **Сводка проекта** — стадия (ПД/РД), ТЭП, состав *(каркас, ТЭП калибруется на реальных доках)*.
-
-### Документы и формы
-- Типовые формы по стандартам → docx/xlsx/html: **спецификация** (ГОСТ 21.110), **ВОР**, **смета (ЛСР 421/пр)**, **АОСР**.
-- Формальный нормоконтроль, дифф ревизий моделей и текстов.
-
-### Приём данных
-- Форматы: PDF, DOCX/DOC, XLSX/XLS, PPTX, CSV, EML/MSG, DWG/IFC, MD/TXT/JSON.
-- Индексация **внешней папки по ссылке** (in-place, без копий) + серверный браузер папок.
-- Почта: **IMAP** (Outlook / Microsoft 365 / Outlook.com), архивы **.olm** (Mac), **.pst** (Windows, libpff), **.msg**, Apple Mail.
-- OCR сканов через локальный vision (Gemma).
-
-### Интерфейсы
-- **Чат-команды** (`/`-палитра): `/спецификация`, `/вор`, `/смета`, `/акт`, `/сверка`, `/сводка`, `/команды`.
-- **GUI «Совушка»** (NiceGUI): чат, датасеты, инструменты, журналы объёмов.
-- **REST API** (FastAPI).
-- **MCP-сервер**: `les_table_sum`, `les_reconcile`, `les_bor`, `les_spec_to_bor`, `les_project_summary`, `les_form_generate`.
-
-### АРТЕЛЬ (отдельный модуль, экспериментальный)
-Генератор семейств Revit: vision-классификация архетипа → детерминированный план → исполнение в Revit (Windows+Revit пакет).
-
----
-
-## Запуск
-
-**Установка в один клик** (без терминала): соберите дабл-клик `LES.app`/`.dmg`
-(macOS) или `LES-Setup.exe` (Windows) — см. [INSTALL.md](INSTALL.md#установка-в-один-клик-без-терминала).
-
-Ручной запуск через CLI:
+Basic developer check:
 
 ```bash
-uv sync --extra mac-mlx        # зависимости (mlx-lm под Apple Silicon)
-cp env.example .env            # ключи/пути
-make verify                    # офлайн-гейт: синтаксис + импорт-смоук
-uv run lesctl start            # поднять сервисы (Qdrant / MLX / proxy / Совушка)
+uv sync
+make verify
 ```
 
-Опц. возможности — extras: `mail-pst` (.pst, libpff), `mcp` (MCP-сервер), `parsers` (layout-aware PDF).
-MCP-сервер: `uv run python tools/les_mcp_server.py --list`. Рантайм/доступы — [SKILL.md](SKILL.md).
+Runtime deployment and private operator procedures are intentionally not documented in this public README.
 
----
+## Repository Status
 
-## Дорожная карта
+This public repository is a source-available technical snapshot of LES code. It does not include private datasets, indexed corpora, customer files, runtime databases, model caches, logs or secrets.
 
-**Готово**
-- ✅ Детерминированный счёт по таблицам, ВОР, спец→ВОР, сверка, план/факт
-- ✅ Типовые формы по стандартам, нормоконтроль, дифф
-- ✅ Приём почты (IMAP/Outlook, .olm/.pst/.msg/Apple Mail), внешние папки in-place, OCR→Gemma
-- ✅ Чат-команды (`/`-палитра), память диалога, авто-заметки
-- ✅ MCP-сервер (инструменты Л.Е.С. наружу)
-- ✅ **Evidence-контракт**: паспорт ответа (RETRIEVED / COMPUTED / ASSUMED / MISSING / BLOCKED) + честный отказ
-- ✅ **Source-scoped поиск**: «найди X в актах/спецификации/почте» — маршрут по источнику, а не по догадке о термине
-- ✅ **Подготовка документов**: текстовый слой из PDF/DOCX/XLSX рядом с оригиналом (оригиналы не меняются, под операторским gate)
-- ✅ **Ресурсный обсчёт по реальному XLSX** воспроизведён кодом до итога 16 827 283,19 ₽ (line_diffs = 0)
-- ✅ **Модель проектов/датасетов и выбор области поиска** (проект = группа датасетов, не папка)
-- ✅ **Диагностика версии/деплоя**: что именно запущено (commit, deploy stamp, расхождения runtime↔repo)
+Some workflows require local service data such as GESN/FGIS price books, project datasets or layout references. Without those sources, LES should return a degraded or missing-data result rather than inventing evidence.
 
-**Ближайшее**
-- 🚧 Evidence-UI: рабочая «Открыть источник», копирование ответа, цитаты как артефакт, стоп генерации
-- 🚧 Калибровка ТЭП-экстрактора и «сводки проекта» на реальных проектах
-- ⏳ Автозаполнение форм из данных объекта · fuzzy-match наименований для сверки план/факт
-- ⏳ Мультикласс end-to-end (ответ секциями) · авто-синхрон почты по расписанию
-- ⏳ Тюнинг валидатора Т.О.С.К.А. и OCR-качества
-- ⏳ MCP-клиент (точечно, под внешние действия) · АРТЕЛЬ MEP-коннекторы · голос (Whisper)
+## License And Security
 
----
-
-## Статус и приватность
-
-Исследовательско-полевой self-hosted appliance для Apple Silicon; часть возможностей —
-рабочий каркас в калибровке (помечено выше). Штатный рантайм полностью локальный; данные
-класса P0 не уходят в облако; внешний доступ — relay до локального хоста через приватную сеть.
-Открытая лицензия не объявлена — проект приватный.
+See [LICENSE](LICENSE) and [SECURITY.md](SECURITY.md).
