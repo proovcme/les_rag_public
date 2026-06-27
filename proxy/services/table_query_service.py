@@ -24,8 +24,8 @@ class TableRefChunk:
 
 
 NUMERIC_FIELDS = {
-    "amount": ("сумм", "стоимост", "итого", "руб"),
-    "qty": ("колич", "кол-во", "объем", "объём", "сколько"),
+    "amount": ("сумм", "стоимост", "итого", "руб", "затрат"),
+    "qty": ("колич", "кол-во", "объем", "объём", "сколько", "метраж", "метр", "длин", "погон"),
     "price": ("цен", "расцен"),
     "amount_mat": ("материал",),
     "amount_work": ("работ", "зп", "труд"),
@@ -104,6 +104,10 @@ STOPWORDS = {
     "или",
     "руб",
     "рублей",
+    "ведомость", "ведомости", "ведомостям", "ведомостей", "вор",
+    "объём", "объем", "объёма", "объема", "объёмов", "объемов",
+    "метраж", "метр", "метра", "метров", "длина", "длину", "длины",
+    "количество", "количества", "штук", "штука", "число", "погонн",
 }
 
 
@@ -185,7 +189,27 @@ def maybe_answer_table_query(
 
     field = _select_numeric_field(question)
     operation = _select_operation(question)
-    rows = _load_relevant_rows(question, table_chunks, storage_root=storage_root, max_rows=max_rows)
+    subject_kw = _query_keywords(question)
+    if operation == "sum" and (subject_kw or _wants_full_table(question)):
+        # Полная детерминированная агрегация: суммируем по ВСЕМ parquet задействованных
+        # датасетов, а не только по retrieved top-k (иначе сумма частична — кейс кабель
+        # 3х1,5: 5900 вместо 15030.72). ADR-11: числа считает код, не LLM.
+        # Срабатывает либо по ПРЕДМЕТУ (subject_kw фильтрует строки), либо при ЯВНОМ
+        # «по всем строкам / все позиции» (универсальный квантор → суммируем всю таблицу).
+        ds_ids = [
+            d for d in _dedupe(
+                str((getattr(c, "meta", {}) or {}).get("dataset_id") or "") for c in table_chunks
+            ) if d
+        ]
+        full_refs = parquet_ref_chunks_for_datasets(ds_ids, storage_root=storage_root)
+        rows = _load_relevant_rows(
+            question, full_refs or table_chunks, storage_root=storage_root, max_rows=10 ** 9
+        )
+    else:
+        # sum без предмета — не суммируем всю таблицу вслепую, отвечаем списком.
+        if operation == "sum":
+            operation = "list"
+        rows = _load_relevant_rows(question, table_chunks, storage_root=storage_root, max_rows=max_rows)
     if not rows:
         return None
 
@@ -193,8 +217,11 @@ def maybe_answer_table_query(
     parquet_paths = _dedupe(str(row.get("_parquet_path") or "") for row in rows)
 
     if operation == "sum":
-        values = [_as_float(row.get(field)) for row in rows]
-        numbers = [value for value in values if value is not None]
+        numbers = [v for v in (_as_float(row.get(field)) for row in rows) if v is not None]
+        # Data-aware fallback: колонки нет/пуста ИЛИ все нули (напр. ВОР с amount=0) → qty.
+        if (not numbers or sum(numbers) == 0.0) and field != "qty":
+            field = "qty"
+            numbers = [v for v in (_as_float(row.get("qty")) for row in rows) if v is not None]
         if not numbers:
             return None
         total = sum(numbers)
@@ -231,12 +258,19 @@ def _looks_like_table_query(question: str) -> bool:
 
 def _select_numeric_field(question: str) -> str:
     q = question.casefold()
+    # Явная единица количества (метраж/объём/сколько/…) имеет ПРИОРИТЕТ над денежными
+    # словами: «суммарный метраж кабеля» = qty, а не amount (даже если есть «сумм»).
+    if any(token in q for token in NUMERIC_FIELDS["qty"]):
+        return "qty"
     scores = {
         field: sum(1 for token in tokens if token in q)
         for field, tokens in NUMERIC_FIELDS.items()
     }
     best = max(scores, key=scores.get)
-    return best if scores[best] > 0 else "amount"
+    if scores[best] > 0:
+        return best
+    # Нет явного поля: деньги → amount, иначе → qty (для ВОР/смет объём — основное).
+    return "amount" if any(m in q for m in ("стоимост", "руб", "затрат", "цен")) else "qty"
 
 
 def _select_operation(question: str) -> str:
@@ -249,6 +283,24 @@ def _select_operation(question: str) -> str:
     if tokens & {"общая", "общую", "общий", "общее", "общие", "всего"}:
         return "sum"
     return "list"
+
+
+def _wants_full_table(question: str) -> bool:
+    """Явный универсальный квантор: «по всем строкам / все позиции / всю таблицу».
+
+    Отличает осознанную агрегацию ПО ВСЕЙ таблице (без предмета) от «слепой» суммы
+    вроде «итого по таблице», где предмет не задан и суммировать всё рискованно.
+    Требуем слово-квантор все/всем/всех/всю/всей/всё рядом с областью охвата
+    (строк/позици/таблиц/смет/ведомост). «всего» исключено — оно само по себе
+    лишь маркёр операции (sum), а не указание «по всем».
+    """
+    tokens = set(re.findall(r"[а-яёa-z]{2,}", question.casefold()))
+    quantifier = {"все", "всем", "всех", "всю", "всей", "всё"}
+    if not (tokens & quantifier):
+        return False
+    scope = ("строк", "позици", "таблиц", "смет", "ведомост", "перечн", "список")
+    q = question.casefold()
+    return any(token in q for token in scope)
 
 
 def _chunk_parquet_ref(chunk: RetrievedChunk) -> Optional[tuple[str, str]]:
@@ -359,7 +411,19 @@ def _read_parquet_rows(path: Path) -> list[dict[str, Any]]:
 
 def _query_keywords(question: str) -> list[str]:
     tokens = re.findall(r"[0-9A-Za-zА-Яа-яЁё_.-]{3,}", question.casefold())
-    return [token for token in tokens if token not in STOPWORDS and not token.isdigit()]
+    out: list[str] = []
+    for token in tokens:
+        if token.isdigit():
+            continue
+        # Лёгкий стем: чисто кириллическое слово >5 → 5-симв. префикс (кабеля/кабель→кабел),
+        # чтобы морфология не мешала substring-матчу. Токены с цифрами/спецсимволами
+        # (3х1,5, марки) — как есть.
+        stem = token[:5] if (len(token) > 5 and token.isalpha()) else token
+        # Стоп-слово ловим и по полной форме, и по стему (суммарный→сумма∈STOPWORDS).
+        if token in STOPWORDS or stem in STOPWORDS:
+            continue
+        out.append(stem)
+    return out
 
 
 def _row_matches(row: dict[str, Any], keywords: list[str]) -> bool:
@@ -424,7 +488,10 @@ def _sum_answer(field: str, total: float, count: int, sources: list[str]) -> str
         "weight_total": "Масса",
     }.get(field, field)
     source_text = f" Источник: {', '.join(sources)}." if sources else ""
-    return f"{label} по найденным строкам: {_format_number(total)}. Строк учтено: {count}.{source_text}"
+    return (
+        f"{label} по найденным строкам (полная выгрузка Parquet): {_format_number(total)}. "
+        f"Строк учтено: {count}.{source_text}"
+    )
 
 
 def _list_answer(rows: list[dict[str, Any]], sources: list[str]) -> str:

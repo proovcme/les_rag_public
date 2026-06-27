@@ -132,7 +132,7 @@ def test_parse_memory_processes_marks_les_and_protected_processes():
     output = """
       10  1048576 ovc  /Applications/Google Chrome.app/Contents/MacOS/Google Chrome --type=renderer
        1   512000 root /sbin/launchd
-      20   900000 ovc  <LOCAL_LES_ROOT>/.venv/bin/python mlx_host.py
+      20   900000 ovc  /Users/ovc/Projects/LES_v2/.venv/bin/python mlx_host.py
     """
 
     processes = runtime_control._parse_ps_memory_processes(output)
@@ -237,3 +237,20 @@ def test_start_service_enables_disabled_launch_agent(monkeypatch):
 
 def test_ui_service_uses_lightweight_health_endpoint():
     assert runtime_control.SERVICES["ui"].health_url == "http://127.0.0.1:8051/healthz"
+
+
+def test_render_plist_template_rewrites_repo_root(tmp_path, monkeypatch):
+    template = tmp_path / "service.plist"
+    template.write_text(
+        "<string>/Users/ovc/Projects/LES_v2/.venv/bin/python3</string>"
+        "<string>__LES_ROOT__/logs/service.log</string>",
+        encoding="utf-8",
+    )
+    fresh_root = tmp_path / "fresh-clone"
+    monkeypatch.setattr(runtime_control, "ROOT", fresh_root)
+
+    rendered = runtime_control._render_plist_template(template)
+
+    assert "/Users/ovc/Projects/LES_v2" not in rendered
+    assert f"{fresh_root}/.venv/bin/python3" in rendered
+    assert f"{fresh_root}/logs/service.log" in rendered

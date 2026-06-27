@@ -12,8 +12,9 @@ from pathlib import Path
 from typing import Any
 
 
-TABLE_SUFFIXES = {".xlsx", ".xls", ".csv"}
-PDF_SUFFIXES = {".pdf"}
+TABLE_SUFFIXES = {".xlsx", ".xlsm", ".xls", ".csv"}
+PDF_SUFFIXES = {".pdf", ".p7m"}                       # .p7m разворачивается в PDF в конвертере
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 EMAIL_SUFFIXES = {".eml", ".emlx", ".msg"}
 CAD_BIM_SUFFIXES = {".dwg", ".rvt", ".ifc", ".ifczip"}
 
@@ -231,7 +232,19 @@ def _probe_text_like(path: Path, size_bytes: int) -> DocumentProbe:
 def _classify_doc_type(probe: DocumentProbe) -> str:
     text = f"{probe.path.name}\n{probe.text_sample}".lower()
     name = probe.path.name.lower()
-    if _is_artel_source(probe):
+    if _is_artel_fop_source(probe):
+        return "FOP_PROFILE"
+    if _is_artel_revit_model_guide_source(probe):
+        return "REVIT_MODEL_GUIDE"
+    if _is_artel_revit_api_symbol_map_source(probe):
+        return "REVIT_API_SYMBOL_MAP"
+    if _is_artel_revit_api_sdk_source(probe):
+        return "REVIT_API_SDK_DOC"
+    if _is_artel_revit_api_source(probe):
+        return "REVIT_API_REFERENCE"
+    if _is_artel_family_guide_source(probe):
+        return "FAMILY_GUIDE"
+    if _is_artel_learning_case_source(probe):
         return "LEARNING_CASE"
     if _is_cad_bim_source(probe):
         return "CAD_BIM"
@@ -280,7 +293,20 @@ def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
     text = f"{' '.join(probe.path.parts)}\n{probe.text_sample}".casefold()
     name = probe.path.name.casefold()
 
-    if doc_type == "LEARNING_CASE" or _is_artel_source(probe):
+    if (
+        doc_type
+        in {
+            "LEARNING_CASE",
+            "FOP_PROFILE",
+            "FAMILY_GUIDE",
+            "REVIT_API_REFERENCE",
+            "REVIT_MODEL_GUIDE",
+            "REVIT_API_SYMBOL_MAP",
+            "REVIT_API_SDK_DOC",
+        }
+        or _is_artel_source(probe)
+        or _is_artel_fop_source(probe)
+    ):
         return "ARTEL"
 
     if doc_type == "CAD_BIM" or _is_cad_bim_source(probe):
@@ -709,6 +735,8 @@ def _is_industrial_chimney_norm(text: str, name: str) -> bool:
 
 
 def _classify_content_type(probe: DocumentProbe) -> str:
+    if _is_artel_fop_source(probe):
+        return "text"
     if _is_artel_source(probe):
         return "text"
     if _is_cad_bim_source(probe):
@@ -764,6 +792,84 @@ def _is_artel_source(probe: DocumentProbe) -> bool:
         or "artel.family_learning_case.v1" in text
         or ("familylearningcase" in text and ("rfa" in text or "revit" in text))
     )
+
+
+def _is_artel_learning_case_source(probe: DocumentProbe) -> bool:
+    parts = {part.casefold() for part in probe.path.parts}
+    text = f"{probe.path.name}\n{probe.text_sample}".casefold()
+    return (
+        "family_learning_cases" in parts
+        or "artel familylearningcase" in text
+        or "artel.family_learning_case.v1" in text
+        or ("familylearningcase" in text and ("rfa" in text or "revit" in text))
+    )
+
+
+def _is_artel_fop_source(probe: DocumentProbe) -> bool:
+    parts = {part.casefold() for part in probe.path.parts}
+    text = f"{probe.path.name}\n{probe.text_sample}".casefold()
+    if "family_learning_cases" in parts or "familylearningcase" in text:
+        return False
+    return (
+        "fop_profiles" in parts
+        or ("artel fop shared parameter profile" in text)
+        or ("revit shared parameter file" in text and ("adsk_" in text or "фоп" in text))
+    )
+
+
+def _is_artel_revit_api_source(probe: DocumentProbe) -> bool:
+    parts = {part.casefold() for part in probe.path.parts}
+    text = f"{probe.path.name}\n{probe.text_sample}".casefold()
+    return (
+        "revit_api" in parts
+        or "artel revit api reference" in text
+        or ("document type: revit_api_reference" in text)
+        or ("revit api" in text and "familymanager" in text and "filteredElementCollector".casefold() in text)
+    )
+
+
+def _is_artel_revit_model_guide_source(probe: DocumentProbe) -> bool:
+    parts = {part.casefold() for part in probe.path.parts}
+    text = f"{probe.path.name}\n{probe.text_sample}".casefold()
+    return (
+        "revit_model_guides" in parts
+        or "artel revit model guide" in text
+        or ("document type: revit_model_guide" in text)
+        or ("understanding revit's data model" in text and "categories, families" in text)
+    )
+
+
+def _is_artel_revit_api_symbol_map_source(probe: DocumentProbe) -> bool:
+    parts = {part.casefold() for part in probe.path.parts}
+    text = f"{probe.path.name}\n{probe.text_sample}".casefold()
+    return (
+        "revit_api_symbol_map" in parts
+        or "artel revit api symbol map" in text
+        or ("document type: revit_api_symbol_map" in text)
+        or ("schema: artel.revit_api_symbol_map" in text)
+    )
+
+
+def _is_artel_revit_api_sdk_source(probe: DocumentProbe) -> bool:
+    parts = {part.casefold() for part in probe.path.parts}
+    text = f"{probe.path.name}\n{probe.text_sample}".casefold()
+    return (
+        "revit_api_sdk" in parts
+        or "revit_api_sdk_docs" in parts
+        or "artel revit api sdk doc" in text
+        or ("document type: revit_api_sdk_doc" in text)
+        or ("source kind: revit sdk chm" in text)
+    )
+
+
+def _is_artel_family_guide_source(probe: DocumentProbe) -> bool:
+    parts = {part.casefold() for part in probe.path.parts}
+    text = f"{probe.path.name}\n{probe.text_sample}".casefold()
+    if "family_guides" in parts:
+        return True
+    if "руководство по созданию семейств" in text and "autodesk revit" in text:
+        return True
+    return False
 
 
 def _text_has_table_signals(text: str) -> bool:

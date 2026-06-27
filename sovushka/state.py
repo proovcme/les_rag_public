@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import asyncio
 import httpx
+import json
 import os
 import sqlite3
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -31,6 +33,7 @@ state = {
     "rag_health": {},
     "rag_documents": {},
     "indexing_mode": {},
+    "reindex": {},          # W5.2: прогресс реиндекса из push-канала /api/live
     "proxy_logs": [],
     "sources": [],
     "jobs": {},
@@ -45,6 +48,9 @@ state = {
     "diag_results": [],
     "diag_running": False,
     "last_api_error": None,
+    # W5.3: индикатор «proxy недоступен» — поднимается при connect/timeout-сбоях.
+    "proxy_online": True,
+    "proxy_offline_reason": "",
 }
 
 # ─────────────────────────────────────────
@@ -69,6 +75,13 @@ def _auth_headers() -> dict:
     return {"X-API-Key": key} if key else {}
 
 
+def _api_success() -> None:
+    """Успешный ответ proxy → сброс ошибки и индикатора недоступности (W5.3)."""
+    state["last_api_error"] = None
+    state["proxy_online"] = True
+    state["proxy_offline_reason"] = ""
+
+
 def _api_error(method: str, path: str, exc: Exception) -> None:
     detail = str(exc)
     status_code = None
@@ -79,6 +92,16 @@ def _api_error(method: str, path: str, exc: Exception) -> None:
             detail = body.get("detail", detail) if isinstance(body, dict) else str(body)
         except Exception:
             detail = exc.response.text or detail
+    # W5.3: честное сообщение и индикатор «proxy недоступен» — отличаем сетевую
+    # недоступность/таймаут (proxy не отвечает) от прикладной HTTP-ошибки.
+    elif isinstance(exc, httpx.TimeoutException):
+        detail = "превышено время ожидания ответа (proxy перегружен или не отвечает)"
+        state["proxy_online"] = False
+        state["proxy_offline_reason"] = "timeout"
+    elif isinstance(exc, httpx.TransportError):
+        detail = "proxy недоступен (нет соединения) — проверь, запущен ли сервис :8050"
+        state["proxy_online"] = False
+        state["proxy_offline_reason"] = "offline"
     state["last_api_error"] = {
         "method": method,
         "path": path,
@@ -96,7 +119,7 @@ async def api_get(path: str, base: Optional[str] = None) -> Optional[Union[dict,
         async with httpx.AsyncClient(timeout=180.0) as client:
             r = await client.get(f"{base}{path}", headers=_auth_headers())
             r.raise_for_status()
-            state["last_api_error"] = None
+            _api_success()
             return r.json()
     except Exception as e:
         _api_error("GET", path, e)
@@ -111,22 +134,130 @@ async def api_post(path: str, data: Optional[dict] = None, base: Optional[str] =
         async with httpx.AsyncClient(timeout=180.0) as client:
             r = await client.post(f"{base}{path}", json=data or {}, headers=_auth_headers())
             r.raise_for_status()
-            state["last_api_error"] = None
+            _api_success()
             return r.json()
     except Exception as e:
         _api_error("POST", path, e)
         return None
 
 
-async def api_delete(path: str, base: Optional[str] = None) -> Optional[dict]:
+async def api_post_file(
+    path: str, content: bytes, filename: str,
+    params: Optional[dict] = None, base: Optional[str] = None,
+) -> Optional[dict]:
+    """Multipart-загрузка файла на proxy (скрепка чата). Возвращает JSON или None."""
+    from sovushka.config import PROXY_URL
+    if base is None:
+        base = PROXY_URL
+    try:
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            r = await client.post(
+                f"{base}{path}",
+                files={"file": (filename, content)},
+                params=params or {},
+                headers=_auth_headers(),
+            )
+            r.raise_for_status()
+            _api_success()
+            return r.json()
+    except Exception as e:
+        _api_error("POST", path, e)
+        return None
+
+
+async def api_post_stream(path: str, data: Optional[dict], on_event, base: Optional[str] = None) -> bool:
+    """W5.1: POST с чтением Server-Sent Events. Для каждого события вызывает
+    `on_event(event: str, payload)` — payload уже распарсен из JSON (для `token`
+    это строка-кусок ответа, для `final`/`error` — dict, для `reset` — "").
+    Возвращает True, если получено событие `final` (ответ дошёл целиком)."""
+    from sovushka.config import PROXY_URL
+    if base is None:
+        base = PROXY_URL
+    got_final = False
+    try:
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            async with client.stream(
+                "POST", f"{base}{path}", json=data or {}, headers=_auth_headers()
+            ) as r:
+                if r.status_code != 200:
+                    body = (await r.aread()).decode("utf-8", "replace")
+                    raise httpx.HTTPStatusError(body[:300], request=r.request, response=r)
+                _api_success()
+                event: Optional[str] = None
+                data_buf: list[str] = []
+                async for line in r.aiter_lines():
+                    if line == "":  # конец события — диспатчим накопленное
+                        if event is not None and data_buf:
+                            raw = "\n".join(data_buf)
+                            try:
+                                payload = json.loads(raw)
+                            except json.JSONDecodeError:
+                                payload = raw
+                            on_event(event, payload)
+                            if event == "final":
+                                got_final = True
+                        event, data_buf = None, []
+                        continue
+                    if line.startswith("event:"):
+                        event = line[6:].strip()
+                    elif line.startswith("data:"):
+                        data_buf.append(line[5:].lstrip())
+        return got_final
+    except Exception as e:
+        _api_error("POST", path, e)
+        return False
+
+
+async def api_get_bytes(path: str, base: Optional[str] = None) -> Optional[tuple[bytes, str]]:
+    """GET бинарного файла (xlsx-отчёты и т.п.) → (содержимое, имя файла) или None."""
     from sovushka.config import PROXY_URL
     if base is None:
         base = PROXY_URL
     try:
         async with httpx.AsyncClient(timeout=180.0) as client:
-            r = await client.delete(f"{base}{path}", headers=_auth_headers())
+            r = await client.get(f"{base}{path}", headers=_auth_headers())
             r.raise_for_status()
-            state["last_api_error"] = None
+            disp = r.headers.get("content-disposition", "")
+            fname = ""
+            if "filename=" in disp:
+                fname = disp.split("filename=", 1)[1].strip('"; ')
+            _api_success()
+            return r.content, (fname or path.rsplit("/", 1)[-1])
+    except Exception as e:
+        _api_error("GET", path, e)
+        return None
+
+
+async def api_patch(path: str, data: Optional[dict] = None, base: Optional[str] = None) -> Optional[dict]:
+    from sovushka.config import PROXY_URL
+    if base is None:
+        base = PROXY_URL
+    try:
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            r = await client.patch(f"{base}{path}", json=data or {}, headers=_auth_headers())
+            r.raise_for_status()
+            _api_success()
+            return r.json()
+    except Exception as e:
+        _api_error("PATCH", path, e)
+        return None
+
+
+async def api_delete(
+    path: str, base: Optional[str] = None, data: Optional[dict] = None
+) -> Optional[dict]:
+    from sovushka.config import PROXY_URL
+    if base is None:
+        base = PROXY_URL
+    try:
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            # DELETE с телом (напр. снятие привязки ProjectLink) — через request().
+            if data is not None:
+                r = await client.request("DELETE", f"{base}{path}", headers=_auth_headers(), json=data)
+            else:
+                r = await client.delete(f"{base}{path}", headers=_auth_headers())
+            r.raise_for_status()
+            _api_success()
             return r.json()
     except Exception as e:
         _api_error("DELETE", path, e)
@@ -140,18 +271,61 @@ def last_api_error_text(default: str = "Ошибка API") -> str:
     return f"{status}: {detail}" if status else detail
 
 
+def proxy_online() -> bool:
+    """W5.3: доступен ли proxy по последним запросам (для индикатора в шапке)."""
+    return bool(state.get("proxy_online", True))
+
+
+# W5.3: TTL-кэш GET-ответов — гасит дубль-запросы одинаковых путей с разных
+# таймеров/вкладок в окне ttl. Кэш per-процесс; None (ошибка) не кэшируется.
+_GET_CACHE: dict[str, tuple[float, Union[dict, list]]] = {}
+
+
+async def api_get_cached(path: str, ttl: float = 2.0, base: Optional[str] = None) -> Optional[Union[dict, list]]:
+    import time as _time
+
+    key = f"{base or ''}{path}"
+    hit = _GET_CACHE.get(key)
+    now = _time.monotonic()
+    if hit and now - hit[0] < ttl:
+        return hit[1]
+    data = await api_get(path, base=base)
+    if data is not None:
+        _GET_CACHE[key] = (now, data)
+    return data
+
+
 # ─────────────────────────────────────────
 # ЛОГИ
 # ─────────────────────────────────────────
 
 def add_log(msg: str):
     t = datetime.now().strftime("%H:%M:%S")
+    logs = state["logs"]
+    # Схлопывание подряд идущих ОДИНАКОВЫХ сообщений → «… (×N)»: при перегрузке proxy
+    # поллеры бьют таймаутами каждые ~2-3с — без дедупа лог превращается в стену. Повтор
+    # обновляет последнюю строку в буфере и НЕ пушится в живой лог (UI показывает одну строку).
+    if msg == state.get("_last_log_msg") and logs:
+        n = state.get("_last_log_count", 1) + 1
+        state["_last_log_count"] = n
+        logs[-1] = f"> [{t}] {msg}  (×{n})"
+        return
+    state["_last_log_msg"] = msg
+    state["_last_log_count"] = 1
     line = f"> [{t}] {msg}"
-    state["logs"].append(line)
-    if len(state["logs"]) > 200:
-        state["logs"] = state["logs"][-200:]
+    logs.append(line)
+    if len(logs) > 200:
+        state["logs"] = logs[-200:]
     if log_element is not None:
-        log_element.push(line)
+        # log_element — глобальный на процесс, но в NiceGUI элемент привязан к
+        # клиенту. Если он принадлежит отключённому клиенту (реконнект, рестарт,
+        # фоновый таск без контекста), push кидает RuntimeError «client/parent
+        # slot deleted» и рушит сборку страницы/таск. Логгер не должен ронять
+        # приложение — глушим (строка уже в state["logs"]).
+        try:
+            log_element.push(line)
+        except Exception:
+            pass
 
 
 # ─────────────────────────────────────────
@@ -159,7 +333,8 @@ def add_log(msg: str):
 # ─────────────────────────────────────────
 
 async def refresh_metrics():
-    d = await api_get("/api/metrics")
+    # W5.3: TTL-кэш гасит дубль-опрос /api/metrics с разных вкладок/таймеров в окне 2с.
+    d = await api_get_cached("/api/metrics", ttl=2.0)
     if d:
         state["metrics"] = d
         # Не логируем каждый тик — только молча обновляем state
@@ -328,24 +503,124 @@ async def refresh_samovar():
         add_log(f"[С.А.М.О.В.А.Р.] Источников: {prev_count} → {now_count}")
 
 
-async def bg_loop():
-    """Главный фоновый цикл опроса.
+def _apply_live_snapshot(snap: dict) -> None:
+    """W5.2: применяет push-снимок /api/live в state — зеркалит логику
+    refresh_metrics/status/indexing_mode/samovar(jobs), но без HTTP."""
+    m = snap.get("metrics")
+    if isinstance(m, dict) and "error" not in m:
+        state["metrics"] = m
+    s = snap.get("status")
+    if isinstance(s, dict) and "error" not in s:
+        state["status"] = s
+        mode = s.get("mode", {})
+        if isinstance(mode, dict) and mode.get("mode"):
+            state["mode"] = mode["mode"]
+    im = snap.get("indexing_mode")
+    if isinstance(im, dict) and "error" not in im:
+        state["indexing_mode"] = im
+    rx = snap.get("reindex")
+    if isinstance(rx, dict) and "error" not in rx:
+        state["reindex"] = rx
+    j = snap.get("jobs_summary")
+    if isinstance(j, dict) and "error" not in j:
+        state["jobs_summary"] = j
+        state["jobs"] = {
+            str(item.get("id") or ""): item
+            for item in (j.get("jobs") or [])
+            if isinstance(item, dict) and item.get("id")
+        }
 
-    Расписание (интервал тика = 10с):
-      - metrics:  каждые 10с
-      - status:   каждые 20с  (tick % 2)
-      - mlx:      каждые 30с  (tick % 3)
-      - samovar:  каждые 60с  (tick % 6)
-    """
+
+# W5.2/фикс: время последнего применённого снимка — для детекта «висящего»
+# (открытого, но молчащего) SSE-соединения в bg_loop.
+_LIVE_HEARTBEAT = {"ts": 0.0}
+
+
+async def live_subscribe() -> bool:
+    """W5.2: подписка на /api/live (SSE) — единый push вместо частого поллинга.
+    Обновляет state на каждый снимок. Возвращает при штатном завершении/обрыве —
+    bg_loop переподключает. True, если соединение открывалось успешно.
+    read-таймаут ограничен (не None): молчащий >read сервер → обрыв → реконнект."""
+    from sovushka.config import PROXY_URL
+
+    opened = False
+    try:
+        # read больше серверного интервала снимков (LES_LIVE_INTERVAL_SEC, деф. 3с),
+        # но конечен — иначе half-open соединение висит вечно и UI замирает.
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=20.0)) as client:
+            async with client.stream("GET", f"{PROXY_URL}/api/live", headers=_auth_headers()) as r:
+                if r.status_code != 200:
+                    return False
+                opened = True
+                _api_success()
+                _LIVE_HEARTBEAT["ts"] = time.monotonic()
+                event: Optional[str] = None
+                data_buf: list[str] = []
+                async for line in r.aiter_lines():
+                    if line == "":
+                        if event == "snapshot" and data_buf:
+                            try:
+                                snap = json.loads("\n".join(data_buf))
+                            except json.JSONDecodeError:
+                                snap = None
+                            if isinstance(snap, dict):
+                                _apply_live_snapshot(snap)
+                                # Каждый снимок переутверждает, что proxy жив (иначе
+                                # индикатор W5.3 застревал бы offline при долгом SSE).
+                                _api_success()
+                                _LIVE_HEARTBEAT["ts"] = time.monotonic()
+                        event, data_buf = None, []
+                        continue
+                    if line.startswith("event:"):
+                        event = line[6:].strip()
+                    elif line.startswith("data:"):
+                        data_buf.append(line[5:].lstrip())
+        return opened
+    except (httpx.TimeoutException, httpx.TransportError):
+        state["proxy_online"] = False
+        state["proxy_offline_reason"] = "offline"
+        return opened
+    except Exception:
+        return opened
+
+
+async def bg_loop():
+    """Главный фоновый цикл (W5.2: push-first).
+
+    Высокочастотное (metrics/status/indexing/jobs) приходит push-каналом
+    `live_subscribe()` одним долгоживущим SSE-соединением. Здесь остаётся только
+    редкое и тяжёлое (mlx-health 30с, samovar 60с) + переподключение push при
+    обрыве. Если push недоступен — деградация на прежний поллинг, чтобы UI не
+    «застывал»."""
+    live_task: Optional[asyncio.Task] = None
     tick = 0
+    # Открытый, но молчащий >этого времени SSE считаем мёртвым (висящий сокет):
+    # реконнект + фолбэк-поллинг, иначе UI замирает без признаков обрыва.
+    stale_after = 30.0
     while True:
+        # Push мёртв если: задачи нет / завершилась / соединение открыто, но
+        # снимки давно не приходят (heartbeat протух).
+        snapshot_stale = (time.monotonic() - _LIVE_HEARTBEAT["ts"]) > stale_after
+        if live_task is None or live_task.done() or snapshot_stale:
+            if live_task is not None and not live_task.done():
+                live_task.cancel()  # висящий сокет — рвём принудительно
+            live_task = asyncio.create_task(live_subscribe())
+            await asyncio.sleep(1.0)  # дать снимку прийти до первого фолбэка
+
         await asyncio.sleep(10)
         tick += 1
+        push_alive = (
+            live_task is not None
+            and not live_task.done()
+            and (time.monotonic() - _LIVE_HEARTBEAT["ts"]) <= stale_after
+        )
         try:
-            await refresh_metrics()
-            if tick % 2 == 0:
-                await refresh_status()
-                await refresh_indexing_mode()
+            if not push_alive:
+                # Фолбэк-поллинг, пока push лежит.
+                await refresh_metrics()
+                if tick % 2 == 0:
+                    await refresh_status()
+                    await refresh_indexing_mode()
             if tick % 3 == 0:
                 await refresh_mlx()
             if tick % 6 == 0:

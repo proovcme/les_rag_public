@@ -11,11 +11,35 @@ from proxy.services.lexical_index_service import LexicalIndex, lexical_enabled
 
 
 CLAUSE_RE = re.compile(
-    r"(?:пункт(?:а|е|ом)?|п\.)\s*(\d+(?:[.,]\d+){1,4})",
+    r"(?:пункт(?:а|е|ом)?|п\.|подпункт(?:а|е)?|пп\.)\s*(\d+(?:[.,]\d+){1,4})",
     re.IGNORECASE,
 )
+# W2.6: раздел/глава/статья/параграф — одиночный номер ("раздел 6"), дробный и римский.
+SECTION_RE = re.compile(
+    r"(?:раздел(?:а|е|ом)?|глав(?:а|е|ы)|стать(?:я|и|е)|параграф(?:а|е)?|§)\s*"
+    r"(?:(\d+(?:[.,]\d+)*)|([IVXLC]{1,7})\b)",
+    re.IGNORECASE,
+)
+# W2.6: «приложение Б» — буквенные приложения по ГОСТ (кириллица/латиница).
+APPENDIX_RE = re.compile(r"приложени[еяию]\w*\s+([А-ЯЁA-Z])\b", re.IGNORECASE)
 LEADING_CLAUSE_RE = re.compile(r"^\s*(?:найди|покажи|дай|открой)?\s*(\d+(?:[.,]\d+){1,4})(?:\s|$)", re.IGNORECASE)
 HEADING_RE = re.compile(r"(?m)(?:^|\n{2,})(\d+(?:\.\d+){1,4})(?:\.|\s)")
+# Для одиночных целей («раздел 6») — отдельный шаблон с заглавной буквой после номера:
+# «6 Вентиляция» — заголовок, «6 шт.» в списке — нет. Снижает ложные границы.
+SECTION_HEADING_RE = re.compile(r"(?m)(?:^|\n{2,})#{0,6}\s*(\d+(?:\.\d+){0,4})[.\s]+(?=[А-ЯЁA-Z])")
+APPENDIX_HEADING_RE = re.compile(r"(?m)(?:^|\n)\s*#{0,6}\s*Приложени[ея]\s+([А-ЯЁA-Z])\b")
+
+_ROMAN_VALUES = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100}
+
+
+def _roman_to_int(value: str) -> int:
+    total = 0
+    prev = 0
+    for char in reversed(value.upper()):
+        current = _ROMAN_VALUES.get(char, 0)
+        total = total - current if current < prev else total + current
+        prev = max(prev, current)
+    return total
 
 
 @dataclass(frozen=True)
@@ -50,10 +74,10 @@ def maybe_answer_clause_lookup(
 ) -> ClauseLookupResult | None:
     if not collection or not lexical_enabled():
         return None
-    clause = _extract_clause(question)
+    kind, clause = _extract_clause(question)
     implied_smoke_clause = _implied_smoke_control_exception(question)
     if not clause and implied_smoke_clause:
-        clause = implied_smoke_clause
+        kind, clause = "clause", implied_smoke_clause
     if not clause:
         return None
     norm_refs = list(extract_norm_refs(question))
@@ -79,11 +103,15 @@ def maybe_answer_clause_lookup(
                     """,
                     (collection, doc["dataset_id"], doc["doc_name"]),
                 ).fetchall()
-                extracted = _extract_clause_text(rows, clause, max_chars=max_chars)
+                if kind == "appendix":
+                    extracted = _extract_appendix_text(rows, clause, max_chars=max_chars)
+                else:
+                    extracted = _extract_clause_text(rows, clause, max_chars=max_chars)
                 if extracted:
                     text, start_ord, end_ord = extracted
                     doc_name = str(doc["doc_name"])
-                    answer = f"Пункт {clause} {norm_ref.upper()}:\n\n{text}"
+                    label = f"Приложение {clause.upper()}" if kind == "appendix" else f"Пункт {clause}"
+                    answer = f"{label} {norm_ref.upper()}:\n\n{text}"
                     return ClauseLookupResult(
                         answer=answer,
                         sources=[doc_name],
@@ -117,11 +145,20 @@ def _candidate_docs(conn: Any, collection: str, ref_number: str, dataset_ids: li
     ).fetchall()
 
 
-def _extract_clause(question: str) -> str:
+def _extract_clause(question: str) -> tuple[str, str]:
+    """Возвращает (kind, value): ('clause', '7.2') / ('appendix', 'Б') / ('', '')."""
     match = CLAUSE_RE.search(question) or LEADING_CLAUSE_RE.search(question)
-    if not match:
-        return ""
-    return match.group(1).replace(",", ".")
+    if match:
+        return "clause", match.group(1).replace(",", ".")
+    section = SECTION_RE.search(question)
+    if section:
+        if section.group(1):
+            return "clause", section.group(1).replace(",", ".")
+        return "clause", str(_roman_to_int(section.group(2)))
+    appendix = APPENDIX_RE.search(question)
+    if appendix:
+        return "appendix", appendix.group(1).upper()
+    return "", ""
 
 
 def _ref_number(norm_ref: str) -> str:
@@ -170,7 +207,9 @@ def _extract_clause_text(rows: list[Any], clause: str, *, max_chars: int) -> tup
     target = tuple(int(part) for part in clause.split("."))
     start = None
     end = len(merged)
-    for match in HEADING_RE.finditer(merged):
+    # W2.6: для одиночной цели («раздел 6») заголовки ищем шаблоном с одиночными номерами.
+    heading_re = SECTION_HEADING_RE if len(target) == 1 else HEADING_RE
+    for match in heading_re.finditer(merged):
         number = match.group(1)
         number_parts = tuple(int(part) for part in number.split("."))
         number_start = match.start(1)
@@ -187,6 +226,48 @@ def _extract_clause_text(rows: list[Any], clause: str, *, max_chars: int) -> tup
     if start is None:
         return None
 
+    extracted = merged[start:end].strip()
+    if not extracted:
+        return None
+    if max_chars and len(extracted) > max_chars:
+        extracted = extracted[: max_chars - 1].rstrip() + "…"
+    return extracted, _ord_at(offsets, start), _ord_at(offsets, max(start, end - 1))
+
+
+def _extract_appendix_text(rows: list[Any], letter: str, *, max_chars: int) -> tuple[str, int | None, int | None] | None:
+    """W2.6: «Приложение Б» — от его заголовка до следующего приложения/конца документа."""
+    if not rows:
+        return None
+    parts: list[str] = []
+    offsets: list[tuple[int, int | None]] = []
+    cursor = 0
+    for row in rows:
+        text = _clean_text(str(row["text"] or ""))
+        if not text:
+            continue
+        if parts:
+            parts.append("\n\n")
+            cursor += 2
+        offsets.append((cursor, row["chunk_ord"]))
+        parts.append(text)
+        cursor += len(text)
+    merged = "".join(parts)
+    if not merged:
+        return None
+
+    start = None
+    end = len(merged)
+    target = letter.upper()
+    for match in APPENDIX_HEADING_RE.finditer(merged):
+        if start is None:
+            if match.group(1).upper() == target:
+                start = match.start()
+            continue
+        if match.start() > start:
+            end = match.start()
+            break
+    if start is None:
+        return None
     extracted = merged[start:end].strip()
     if not extracted:
         return None

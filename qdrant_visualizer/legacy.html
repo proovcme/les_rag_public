@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-i18n="doc-title">3D Визуализатор Базы Знаний Qdrant</title>
+    <link rel="stylesheet" href="styles.css?v=20260523-doc-clouds-5">
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/examples/jsm/controls/OrbitControls.js": "https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js"
+        }
+    }
+    </script>
+</head>
+<body>
+    <!-- Background Space Grid -->
+    <div class="bg-grid"></div>
+
+    <!-- Three.js Canvas Container -->
+    <div id="canvas-container"></div>
+
+    <!-- LEFT: Database and Controls Panel -->
+    <aside id="control-panel" class="glass-panel">
+        <!-- 1. LES Data Section -->
+        <section class="panel-section">
+            <div class="section-title" data-i18n="section-conn">Данные Л.Е.С.</div>
+            <button id="load-les-btn" class="btn" data-i18n="load-les-btn">Обновить из Qdrant</button>
+            <a id="snapshot-download" class="btn btn-secondary disabled-link" href="#" download="data.js" data-i18n="snapshot-download">Скачать слепок data.js</a>
+            <button id="load-snapshot-btn" class="btn btn-secondary" data-i18n="load-snapshot-btn">Загрузить слепок data.js</button>
+            <div class="source-note" data-i18n="source-note">Источник: локальный Qdrant Л.Е.С. · загрузка только по кнопке</div>
+        </section>
+
+        <!-- 2. Collection Statistics -->
+        <section class="panel-section">
+            <div class="section-title" data-i18n="section-stats">Статистика коллекции</div>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label" data-i18n="stat-points">Векторных точек</div>
+                    <div id="total-points" class="stat-val cyan">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label" data-i18n="stat-dims">Размерность</div>
+                    <div id="vector-dim" class="stat-val green">0</div>
+                </div>
+            </div>
+            <div style="font-size: 0.75rem; display: flex; justify-content: space-between; padding: 2px 5px; background: rgba(0,0,0,0.2); border-radius: 4px;">
+                <span data-i18n="stat-pca-label">Статус PCA:</span>
+                <span id="pca-status" style="font-family: var(--font-mono); color: var(--neon-cyan); font-weight: 700;">ОЖИДАНИЕ</span>
+            </div>
+        </section>
+
+        <!-- 3. Realtime Search / Filter -->
+        <section class="panel-section">
+            <div class="section-title" data-i18n="section-search">Поиск по контенту</div>
+            <div class="form-group">
+                <input type="text" id="search-input" placeholder="Поиск текста или документа..." data-i18n-placeholder="search-placeholder">
+            </div>
+        </section>
+
+        <!-- 4. Rendering & Effects Adjuster -->
+        <section class="panel-section">
+            <div class="section-title" data-i18n="section-tuning">Визуальная настройка</div>
+            
+            <div class="slider-container">
+                <div class="slider-header">
+                    <span data-i18n="tune-scale">Масштаб точек</span>
+                    <span id="node-size-val" class="slider-val">1.0</span>
+                </div>
+                <input type="range" id="node-size" min="0.5" max="4.0" step="0.1" value="1.0">
+            </div>
+
+            <div class="slider-container">
+                <div class="slider-header">
+                    <span data-i18n="tune-glow">Яркость свечения</span>
+                    <span id="glow-intensity-val" class="slider-val">0.7</span>
+                </div>
+                <input type="range" id="glow-intensity" min="0.1" max="3.0" step="0.1" value="0.7">
+            </div>
+
+            <div class="slider-container">
+                <div class="slider-header">
+                    <span data-i18n="tune-constellation">Связи созвездия</span>
+                    <span id="neighbors-val" class="slider-val">2</span>
+                </div>
+                <input type="range" id="constellation-neighbors" min="1" max="5" step="1" value="2">
+            </div>
+
+            <div class="slider-container">
+                <div class="slider-header">
+                    <span data-i18n="tune-spread">Разлипание точек</span>
+                    <span id="spread-val" class="slider-val">2.2</span>
+                </div>
+                <input type="range" id="spread-strength" min="0" max="3.0" step="0.1" value="2.2">
+            </div>
+
+            <div class="slider-container">
+                <div class="slider-header">
+                    <span data-i18n="tune-doc-spread">Разнос документов</span>
+                    <span id="doc-spread-val" class="slider-val">1.4</span>
+                </div>
+                <input type="range" id="doc-spread-strength" min="0" max="3.0" step="0.1" value="1.4">
+            </div>
+        </section>
+
+        <!-- 5. Display Toggles -->
+        <section class="panel-section">
+            <div class="section-title" data-i18n="section-toggles">Отображение</div>
+            <div style="display: flex; flex-direction: column; gap: 10px; font-size: 0.8rem;">
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;">
+                    <input type="checkbox" id="toggle-grid" checked style="accent-color: var(--neon-cyan);"> <span data-i18n="toggle-grid">Сетка на полу</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;">
+                    <input type="checkbox" id="toggle-constellation" checked style="accent-color: var(--neon-cyan);"> <span data-i18n="toggle-constellation">Линии созвездия</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;">
+                    <input type="checkbox" id="toggle-rotate" checked style="accent-color: var(--neon-cyan);"> <span data-i18n="toggle-rotate">Вращение камеры</span>
+                </label>
+            </div>
+        </section>
+
+        <!-- 6. File Metadata Checklist Filter -->
+        <section class="panel-section">
+            <div class="section-title" data-i18n="section-isolate">Подсветка документов</div>
+            <div id="file-filter-list" class="file-filter-list">
+                <!-- populated dynamically -->
+            </div>
+        </section>
+    </aside>
+
+    <!-- RIGHT: Selected Node Metadata Details -->
+    <aside id="detail-panel" class="glass-panel">
+        <div class="meta-header">
+            <div>
+                <div class="meta-title" data-i18n="inspect-title">Инспекция точки</div>
+                <div class="meta-subtitle" data-i18n="inspect-subtitle">Данные выбранного вектора</div>
+            </div>
+            <button id="close-detail" class="close-btn">&times;</button>
+        </div>
+
+        <div class="meta-card">
+            <div class="meta-field">
+                <div class="meta-field-label" data-i18n="inspect-uuid">UUID точки</div>
+                <div id="meta-id" class="meta-field-value" style="color: var(--neon-cyan);">N/A</div>
+            </div>
+            
+            <div class="meta-field">
+                <div class="meta-field-label" data-i18n="inspect-file">Исходный документ</div>
+                <div id="meta-file" class="meta-field-value" style="font-family: var(--font-sans); font-weight: 500;">N/A</div>
+            </div>
+
+            <div class="meta-field">
+                <div class="meta-field-label" data-i18n="inspect-dochash">Хэш / ID документа</div>
+                <div id="meta-docid" class="meta-field-value">N/A</div>
+            </div>
+
+            <div class="meta-field">
+                <div class="meta-field-label" data-i18n="inspect-coords">3D координаты (PCA)</div>
+                <div id="meta-coords" class="meta-field-value" style="color: var(--neon-magenta);">N/A</div>
+            </div>
+        </div>
+
+        <div class="panel-section">
+            <div class="section-title" data-i18n="inspect-payload">Текст чанка (Payload)</div>
+            <div id="meta-text" class="meta-text-box">Выберите точку на графике, чтобы просмотреть её смысловое текстовое содержимое...</div>
+        </div>
+    </aside>
+
+    <!-- BOTTOM: User Guide Instructions Overlay -->
+    <button id="help-toggle" class="help-toggle glass-panel" type="button" aria-expanded="false">Управление</button>
+    <footer id="instructions-bar" class="glass-panel is-collapsed">
+        <div class="instruction-item">
+            <span class="key-badge" data-i18n="help-rotate-key">ЛКМ + Перетаскивание</span> <span data-i18n="help-rotate-val">Вращение сцены</span>
+        </div>
+        <div class="instruction-item">
+            <span class="key-badge" data-i18n="help-zoom-key">Колесо мыши</span> <span data-i18n="help-zoom-val">Масштаб</span>
+        </div>
+        <div class="instruction-item">
+            <span class="key-badge" data-i18n="help-pan-key">ПКМ + Перетаскивание</span> <span data-i18n="help-pan-val">Панорама</span>
+        </div>
+        <div class="instruction-item">
+            <span class="key-badge" data-i18n="help-inspect-key">Клик по точке</span> <span data-i18n="help-inspect-val">Инспекция точки</span>
+        </div>
+    </footer>
+
+    <!-- LOADER SCREEN (Diagnostic console overlay) -->
+    <div id="loader-overlay" class="hidden">
+        <div class="loader-container">
+            <div class="spinner-outer">
+                <div class="spinner-inner">
+                    <div class="spinner-core"></div>
+                </div>
+            </div>
+            <div>
+                <div class="loader-title" data-i18n="loader-title">3D Нейровизуализатор</div>
+                <div id="loader-status" style="text-align: center; margin-top: 5px;">ПОДКЛЮЧЕНИЕ...</div>
+            </div>
+            <!-- Interactive Diagnostic Terminal Console logs -->
+            <div id="loader-console" class="loader-console"></div>
+            
+            <div style="font-size:0.7rem; color:var(--text-dim); text-align:center; max-width: 350px;" data-i18n="loader-note">Загрузка данных запускается только вручную.</div>
+        </div>
+    </div>
+
+    <!-- Application Script Engine Modules -->
+    <script type="module" src="visualizer.js?v=20260523-doc-clouds-5"></script>
+</body>
+</html>

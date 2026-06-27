@@ -7,7 +7,7 @@ import asyncio
 import time
 from nicegui import ui
 
-from sovushka.state import state, api_get, add_log
+from sovushka.state import state, api_get, api_post, add_log
 from sovushka.config import MLX_URL
 from sovushka.components.charts import _html, esc
 
@@ -93,6 +93,10 @@ def _build_acronym_glossary_html() -> str:
         ("Д.И.А.Г.Н.О.З.", "Диспетчер Инфраструктурного Анализа Готовности, Нагрузки, Ошибок и Здоровья", "проверки"),
         ("Т.О.С.К.А.", "Терминал Оценки, Самопроверки и Контроля Архитектуры", "валидация"),
         ("В.О.Л.К.", "Внутренний Охранный Локальный Контур", "доступ"),
+        ("Е.Ж.И.К.", "Единый Журнал Импорта Корреспонденции", "почта (IMAP-сбор писем в RAG)"),
+        ("С.У.Х.А.Р.И.К.", "Система Управления Холодными Архивами и Резервными Источниками Комплекса", "резервные копии"),
+        ("П.А.У.К.", "Постоянный Активный Удалённый Канал", "сеть / туннель доступа (keepalive)"),
+        ("К.О.Т.", "Классификатор Областей и Терминов", "таксономия доменов и синонимов"),
         ("RAG", "Retrieval-Augmented Generation", "ответ с поиском по источникам"),
         ("CRAG", "Corrective RAG", "контроль достоверности ответа"),
         ("MLX", "Apple MLX / Metal runtime", "локальные модели"),
@@ -122,25 +126,22 @@ def _normalize_diag_payload(payload: dict) -> dict:
         item = dict(raw)
         name = item.get("name", "")
         value_msg = f"{item.get('value', '')} {item.get('message', '')}".lower()
+        # БЕЗ маскировки: нормализация поясняет «not applicable / ещё нет данных», но raw_status хранит
+        # исходный статус — иначе нельзя отличить «лениво грузится» от «сломан» (наблюдаемость врёт).
         docker_missing = (
             name == "Docker"
             and item.get("status") == "err"
-            and ("no such file" in value_msg or "not found" in value_msg or "docker" in value_msg)
+            and ("no such file" in value_msg or "not found" in value_msg or "not running" in value_msg)
         )
         if docker_missing:
             item.update(
-                name="Docker runtime",
-                status="ok",
-                value="removed",
-                expected="no Docker",
-                message="Qdrant/proxy/UI/MLX run on host LaunchAgents",
+                name="Docker runtime", status="ok", value="removed", expected="no Docker",
+                message="не используется — Qdrant/proxy/UI/MLX на host LaunchAgents",
             )
         elif name == "MLX Backend" and item.get("status") == "err" and mlx_health_ok:
             item.update(
-                status="warn",
-                value="main idle",
-                expected="health OK",
-                message="MLX health отвечает; основная модель загружается лениво",
+                status="warn", raw_status="err", value="main idle", expected="health OK",
+                message=f"MLX health отвечает, основная модель грузится лениво (исходно err: {item.get('message','')})".strip(),
             )
         elif (
             name == "Т.О.С.К.А. статистика"
@@ -148,9 +149,8 @@ def _normalize_diag_payload(payload: dict) -> dict:
             and str(item.get("value", "")).startswith("V:0 N:0 H:0")
         ):
             item.update(
-                status="warn",
-                expected="first validation sample",
-                message="статистики валидации ещё нет",
+                status="warn", raw_status="err", expected="first validation sample",
+                message="статистики валидации ещё нет (норма на старте)",
             )
         checks.append(item)
 
@@ -231,6 +231,13 @@ def build_diag():
                     ).props("no-caps").style(
                         "background:rgba(16,185,129,.15);border:1px solid var(--ok);"
                         "color:var(--ok);font-family:var(--font);font-weight:900;font-size:.75rem;"
+                    )
+                    backup_restore_btn = ui.button(
+                        "♻ ВОССТАНОВИТЬ",
+                        on_click=lambda: asyncio.create_task(open_restore_dialog())
+                    ).props("no-caps").style(
+                        "background:rgba(245,181,74,.12);border:1px solid var(--warn);"
+                        "color:var(--warn);font-family:var(--font);font-weight:900;font-size:.75rem;"
                     )
 
             # Контейнер для списков
@@ -331,6 +338,63 @@ def build_diag():
             await load_backups()
         else:
             ui.notify("Ошибка при создании резервной копии", type="negative")
+
+    async def open_restore_dialog():
+        data = await api_get("/api/backup/archives") or {}
+        archives = data.get("archives", [])
+        with ui.dialog() as dlg, ui.card().style(
+            "background:var(--bg-panel);border:1px solid var(--border);min-width:480px;max-width:640px;max-height:74vh;padding:16px;"
+        ):
+            ui.label("Восстановление из архива").style("font-weight:900;font-size:.85rem;")
+            ui.label("Перезапишет ЖИВОЙ индекс Qdrant и метабазу SQLite. .env не трогается. Сервис перезапустится.").style(
+                "font-size:.64rem;color:var(--warn);line-height:1.4;margin-bottom:6px;"
+            )
+            if not archives:
+                ui.label("Полных off-disk архивов нет (backup_runtime.sh → /Volumes/Data или storage/backups).").style(
+                    "font-size:.66rem;color:var(--dim);"
+                )
+            with ui.scroll_area().style("max-height:48vh;width:100%;"):
+                for a in archives:
+                    gb = a.get("size_bytes", 0) / (1024 ** 3)
+                    dt = str(a.get("created_at", "")).split(".")[0].replace("T", " ")
+                    meta = (f"{gb:.1f} GB · {len(a.get('snapshots', []))} снапшотов"
+                            + ("  · +SQLite" if a.get("has_sqlite") else "") + f" · {dt}")
+                    with ui.row().classes("items-center justify-between w-full p-2 rounded").style(
+                        "background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);"
+                    ):
+                        with ui.column().classes("gap-0"):
+                            ui.label(a["name"]).style("font-size:.72rem;font-weight:700;color:var(--text);")
+                            ui.label(meta).style("font-size:.6rem;color:var(--dim);")
+                        ui.button("Восстановить",
+                                  on_click=lambda _, p=a["path"], n=a["name"]: asyncio.create_task(confirm_restore(p, n, dlg))
+                                  ).props("no-caps dense").style(
+                            "background:rgba(245,181,74,.15);border:1px solid var(--warn);color:var(--warn);font-size:.66rem;"
+                        )
+            ui.button("Закрыть", on_click=dlg.close).props("flat dense no-caps").style("color:var(--dim);margin-top:6px;")
+        dlg.open()
+
+    async def confirm_restore(path: str, name: str, parent_dlg):
+        with ui.dialog() as c, ui.card().style(
+            "background:var(--bg-panel);border:1px solid var(--err);padding:16px;max-width:460px;"
+        ):
+            ui.label("Точно восстановить?").style("font-weight:900;color:var(--err);font-size:.8rem;")
+            ui.label(f"Архив «{name}». ПЕРЕЗАПИШЕТ текущий индекс и метабазу. Прежняя метабаза сохранится "
+                     "рядом как .pre_restore. Сервис перезапустится.").style(
+                "font-size:.66rem;color:var(--text);line-height:1.4;"
+            )
+            with ui.row().classes("gap-2 justify-end w-full").style("margin-top:8px;"):
+                ui.button("Отмена", on_click=c.close).props("flat dense no-caps").style("color:var(--dim);")
+                ui.button("Восстановить", on_click=lambda: asyncio.create_task(do_restore(path, c, parent_dlg))
+                          ).props("dense no-caps").style("background:var(--err);color:#fff;font-weight:700;font-size:.66rem;")
+        c.open()
+
+    async def do_restore(path: str, c, parent_dlg):
+        c.close(); parent_dlg.close()
+        res = await api_post("/api/backup/restore", {"archive_path": path})
+        if res and res.get("status") == "launched":
+            ui.notify(f"Восстановление запущено: {res.get('archive')}. Сервис перезапустится…", type="warning", timeout=10000)
+        else:
+            ui.notify("Не удалось запустить восстановление", type="negative")
 
     async def delete_backup_item(type_str: str, name: str):
         res = await api_post("/api/backup/delete", {"type": type_str, "name": name})

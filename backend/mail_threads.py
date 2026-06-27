@@ -236,10 +236,23 @@ def _parse_eml(path: Path, source_dir: Path) -> MailMessageRecord:
                 except Exception:
                     pass
     else:
-        try:
-            body_parts.append(str(msg.get_content()))
-        except Exception:
-            pass
+        # Однокусковое письмо. Бывает, что весь body — это вложение
+        # (Content-Disposition: attachment, либо нетекстовый тип): тогда не льём
+        # бинарь в snippet, а считаем это вложением.
+        filename = msg.get_filename()
+        disposition = (msg.get_content_disposition() or "").lower()
+        if filename or disposition == "attachment" or msg.get_content_maintype() not in {"text", "multipart"}:
+            attachments.append(filename or "(без имени)")
+        elif msg.get_content_type() == "text/html":
+            try:
+                html_parts.append(str(msg.get_content()))
+            except Exception:
+                pass
+        else:
+            try:
+                body_parts.append(str(msg.get_content()))
+            except Exception:
+                pass
     body = "\n".join(body_parts) or _strip_html("\n".join(html_parts))
     message_id = _canonical_message_id(str(msg.get("Message-ID", "") or ""))
     in_reply_to = _first_message_id(str(msg.get("In-Reply-To", "") or ""))

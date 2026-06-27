@@ -1,0 +1,275 @@
+{
+  "version": "v1-draft",
+  "description": "Seed cases for validator backend comparison. Contexts are intentionally empty here and must be materialized from real validation_context_windows before scoring.",
+  "label_semantics": {
+    "VERIFIED": "The answer is supported by the supplied validation context and answers the question.",
+    "NO_DATA": "The validation context does not contain enough evidence for the answer claim.",
+    "HALLUCINATION": "The answer contradicts the validation context, invents a value where the context gives another value, or does not answer the asked question."
+  },
+  "cases": [
+    {
+      "id": "evac_exit_width_verified",
+      "expected": "VERIFIED",
+      "question": "Какая минимальная ширина эвакуационного выхода?",
+      "answer": "Ширина эвакуационного выхода должна быть, как правило, не менее 0,8 м.",
+      "dataset_filter": "NTD_FIRE",
+      "label_rationale": "SP 1.13130 context should contain the 0.8 m minimum width requirement."
+    },
+    {
+      "id": "evac_exit_width_hallucination",
+      "expected": "HALLUCINATION",
+      "question": "Какая минимальная ширина эвакуационного выхода?",
+      "answer": "Минимальная ширина эвакуационного выхода составляет 1,5 м.",
+      "dataset_filter": "NTD_FIRE",
+      "label_rationale": "Contradicts the expected 0.8 m minimum in the context."
+    },
+    {
+      "id": "evac_exit_width_no_data",
+      "expected": "NO_DATA",
+      "question": "Какой срок хранения расчета ширины эвакуационных выходов указан в СП 1.13130?",
+      "answer": "Срок хранения расчета ширины эвакуационных выходов составляет 5 лет.",
+      "dataset_filter": "NTD_FIRE",
+      "label_rationale": "A retention period claim is not expected in the evacuation-width context."
+    },
+    {
+      "id": "evac_exit_height_verified",
+      "expected": "VERIFIED",
+      "question": "Какая минимальная высота эвакуационного выхода в свету?",
+      "answer": "Высота эвакуационных выходов в свету должна быть, как правило, не менее 1,9 м.",
+      "dataset_filter": "NTD_FIRE",
+      "label_rationale": "SP 1.13130 context should contain the 1.9 m height requirement."
+    },
+    {
+      "id": "evac_exit_height_hallucination",
+      "expected": "HALLUCINATION",
+      "question": "Какая минимальная высота эвакуационного выхода в свету?",
+      "answer": "Высота эвакуационного выхода в свету должна быть не менее 2,5 м.",
+      "dataset_filter": "NTD_FIRE",
+      "label_rationale": "Contradicts the expected 1.9 m value."
+    },
+    {
+      "id": "evac_exit_height_no_data",
+      "expected": "NO_DATA",
+      "question": "Какая дата следующего пересмотра требования о высоте эвакуационных выходов указана в контексте?",
+      "answer": "Следующий пересмотр требования назначен на 2030 год.",
+      "dataset_filter": "NTD_FIRE",
+      "label_rationale": "A future review date is not expected in the retrieved normative windows."
+    },
+    {
+      "id": "pp87_sections_verified",
+      "expected": "VERIFIED",
+      "question": "Какие разделы проектной документации предусмотрены Постановлением 87?",
+      "answer": "Среди разделов проектной документации указаны пояснительная записка, схема планировочной организации земельного участка, архитектурные решения, конструктивные и объемно-планировочные решения.",
+      "dataset_filter": "GKRF",
+      "label_rationale": "PP87 context should list these project documentation sections."
+    },
+    {
+      "id": "pp87_sections_hallucination",
+      "expected": "HALLUCINATION",
+      "question": "Какие разделы проектной документации предусмотрены Постановлением 87?",
+      "answer": "Постановление 87 включает разделы пояснительная записка, архитектурные решения и декларация промышленной безопасности.",
+      "dataset_filter": "GKRF",
+      "label_rationale": "Adds a section that is not part of the expected PP87 section list in the context."
+    },
+    {
+      "id": "pp87_sections_no_data",
+      "expected": "NO_DATA",
+      "question": "Какой срок хранения проектной документации установлен Постановлением 87?",
+      "answer": "Постановление 87 устанавливает срок хранения проектной документации 25 лет.",
+      "dataset_filter": "GKRF",
+      "label_rationale": "A retention period is not expected in the PP87 section-list windows."
+    },
+    {
+      "id": "fire_alarm_sp484_verified",
+      "expected": "VERIFIED",
+      "question": "Каким нормативом регулируется пожарная сигнализация?",
+      "answer": "Проектирование систем пожарной сигнализации регулируется СП 484.1311500.2020.",
+      "dataset_filter": "NTD_FIRE",
+      "label_rationale": "Fire alarm retrieval should surface SP 484.1311500.2020."
+    },
+    {
+      "id": "fire_alarm_sp484_hallucination",
+      "expected": "HALLUCINATION",
+      "question": "Каким нормативом регулируется пожарная сигнализация?",
+      "answer": "Пожарная сигнализация регулируется СП 1.13130.",
+      "dataset_filter": "NTD_FIRE",
+      "label_rationale": "SP 1.13130 is evacuation, not the fire alarm standard expected for this question."
+    },
+    {
+      "id": "fire_alarm_sp484_no_data",
+      "expected": "NO_DATA",
+      "question": "Какой заводской серийный номер указан для системы пожарной сигнализации?",
+      "answer": "Для системы пожарной сигнализации указан серийный номер FPS-2026-17.",
+      "dataset_filter": "NTD_FIRE",
+      "label_rationale": "A product serial number should not be present in normative SP 484 windows."
+    },
+    {
+      "id": "mgn_self_service_verified",
+      "expected": "VERIFIED",
+      "question": "Какие группы МГН по способности к самообслуживанию приведены в СП 140.13330?",
+      "answer": "МГН по способности к самообслуживанию разделены на способных к полному самообслуживанию, способных к частичному самообслуживанию и не способных к самообслуживанию.",
+      "dataset_filter": "NTD_ARCH_URBAN",
+      "label_rationale": "The SP 140.13330 context contains the MGN self-service classification table."
+    },
+    {
+      "id": "mgn_self_service_hallucination",
+      "expected": "HALLUCINATION",
+      "question": "Какие группы МГН по способности к самообслуживанию приведены в СП 140.13330?",
+      "answer": "Все МГН относятся только к группе способных к полному самообслуживанию.",
+      "dataset_filter": "NTD_ARCH_URBAN",
+      "label_rationale": "Contradicts the context table, which lists three groups."
+    },
+    {
+      "id": "mgn_sp59_no_data",
+      "expected": "NO_DATA",
+      "question": "Какой номер личного пропуска МГН указан в требованиях доступности?",
+      "answer": "В требованиях доступности указан личный пропуск МГН N 42-17.",
+      "dataset_filter": "NTD_ARCH_URBAN",
+      "label_rationale": "Personal pass numbers are outside normative accessibility context."
+    },
+    {
+      "id": "smoke_protection_equipment_verified",
+      "expected": "VERIFIED",
+      "question": "Что должны обеспечивать конструкции и оборудование противодымной защиты?",
+      "answer": "Конструкции и оборудование противодымной защиты должны обеспечивать выполнение установленных требований.",
+      "dataset_filter": "NTD_FIRE",
+      "label_rationale": "The SP 60.13330 context states that smoke-protection constructions and equipment must ensure compliance with requirements."
+    },
+    {
+      "id": "smoke_protection_equipment_hallucination",
+      "expected": "HALLUCINATION",
+      "question": "Что должны обеспечивать конструкции и оборудование противодымной защиты?",
+      "answer": "Конструкции и оборудование противодымной защиты не должны обеспечивать выполнение требований.",
+      "dataset_filter": "NTD_FIRE",
+      "label_rationale": "Directly contradicts the context requirement."
+    },
+    {
+      "id": "smoke_protection_no_data",
+      "expected": "NO_DATA",
+      "question": "Какой инвентарный номер вентилятора противодымной защиты указан в нормативе?",
+      "answer": "Инвентарный номер вентилятора противодымной защиты: PDV-008.",
+      "dataset_filter": "NTD_FIRE",
+      "label_rationale": "Equipment inventory numbers are not expected in normative smoke-control windows."
+    },
+    {
+      "id": "hvac_energy_rate_verified",
+      "expected": "VERIFIED",
+      "question": "Что такое удельная характеристика расхода тепловой энергии на отопление и вентиляцию здания?",
+      "answer": "Это физическая величина, численно равная потерям тепловой энергии единицы отапливаемого объема здания в единицу времени, отнесенная к перепаду температуры, с учетом воздухообмена и дополнительных тепловыделений.",
+      "dataset_filter": "NTD_HVAC",
+      "label_rationale": "The HVAC context contains this definition from the retrieved standard."
+    },
+    {
+      "id": "hvac_energy_rate_hallucination",
+      "expected": "HALLUCINATION",
+      "question": "Что такое удельная характеристика расхода тепловой энергии на отопление и вентиляцию здания?",
+      "answer": "Это отношение площади кровли к числу эвакуационных выходов.",
+      "dataset_filter": "NTD_HVAC",
+      "label_rationale": "Contradicts the definition in the HVAC context."
+    },
+    {
+      "id": "hvac_sp60_no_data",
+      "expected": "NO_DATA",
+      "question": "Какой серийный номер котла указан в СП 60.13330?",
+      "answer": "В СП 60.13330 указан серийный номер котла K-60-2026.",
+      "dataset_filter": "NTD_HVAC",
+      "label_rationale": "A boiler serial number should not be present in normative HVAC windows."
+    },
+    {
+      "id": "loads_sp20_verified",
+      "expected": "VERIFIED",
+      "question": "Какие нормативные требования применяются к нагрузкам и воздействиям?",
+      "answer": "Нагрузки и воздействия для зданий и сооружений регламентируются СП 20.13330.",
+      "dataset_filter": "NTD_STRUCTURAL",
+      "label_rationale": "Structural retrieval should surface SP 20.13330."
+    },
+    {
+      "id": "loads_sp20_hallucination",
+      "expected": "HALLUCINATION",
+      "question": "Какие нормативные требования применяются к нагрузкам и воздействиям?",
+      "answer": "Нагрузки и воздействия регламентируются СП 7.13130.",
+      "dataset_filter": "NTD_STRUCTURAL",
+      "label_rationale": "SP 7.13130 is fire/HVAC smoke ventilation, not loads and actions."
+    },
+    {
+      "id": "loads_sp20_no_data",
+      "expected": "NO_DATA",
+      "question": "Какой внутренний номер заявки указан для расчета нагрузок и воздействий?",
+      "answer": "Для расчета нагрузок указан внутренний номер заявки STR-8842.",
+      "dataset_filter": "NTD_STRUCTURAL",
+      "label_rationale": "Internal request numbers are outside normative loads context."
+    },
+    {
+      "id": "concrete_sp63_verified",
+      "expected": "VERIFIED",
+      "question": "Каким нормативом регулируются бетонные и железобетонные конструкции?",
+      "answer": "Бетонные и железобетонные конструкции регулируются СП 63.13330.",
+      "dataset_filter": "NTD_STRUCTURAL",
+      "label_rationale": "Structural concrete retrieval should surface SP 63.13330."
+    },
+    {
+      "id": "concrete_sp63_hallucination",
+      "expected": "HALLUCINATION",
+      "question": "Каким нормативом регулируются бетонные и железобетонные конструкции?",
+      "answer": "Бетонные и железобетонные конструкции регулируются СП 484.1311500.",
+      "dataset_filter": "NTD_STRUCTURAL",
+      "label_rationale": "SP 484 is fire alarm, not concrete structures."
+    },
+    {
+      "id": "concrete_sp63_no_data",
+      "expected": "NO_DATA",
+      "question": "Какой цвет обложки указан для СП 63.13330?",
+      "answer": "Для СП 63.13330 указан красный цвет обложки.",
+      "dataset_filter": "NTD_STRUCTURAL",
+      "label_rationale": "Cover color is not expected in structural normative windows."
+    },
+    {
+      "id": "water_sp30_verified",
+      "expected": "VERIFIED",
+      "question": "Каким нормативом регулируются внутренний водопровод и канализация зданий?",
+      "answer": "Внутренний водопровод и канализация зданий регулируются СП 30.13330.",
+      "dataset_filter": "NTD_WATER",
+      "label_rationale": "Water/sewer retrieval should surface SP 30.13330."
+    },
+    {
+      "id": "water_sp30_hallucination",
+      "expected": "HALLUCINATION",
+      "question": "Каким нормативом регулируются внутренний водопровод и канализация зданий?",
+      "answer": "Внутренний водопровод и канализация зданий регулируются СП 20.13330.",
+      "dataset_filter": "NTD_WATER",
+      "label_rationale": "SP 20.13330 is loads and actions, not internal water/sewer."
+    },
+    {
+      "id": "water_sp30_no_data",
+      "expected": "NO_DATA",
+      "question": "Какой номер договора на обслуживание водопровода указан в СП 30.13330?",
+      "answer": "В СП 30.13330 указан договор обслуживания ВК-2026/15.",
+      "dataset_filter": "NTD_WATER",
+      "label_rationale": "Maintenance contract numbers are not expected in normative water/sewer windows."
+    },
+    {
+      "id": "engineering_protection_docs_verified",
+      "expected": "VERIFIED",
+      "question": "Какими документами регулируется проектная документация по инженерной защите от опасных геологических процессов?",
+      "answer": "Проектная документация по инженерной защите регулируется общими положениями Градостроительного кодекса, постановлением о составе разделов проектной документации и СП 42.13330.",
+      "dataset_filter": "NTD_ARCH_URBAN",
+      "label_rationale": "The SP 116.13330 context cites these documents for engineering-protection project documentation."
+    },
+    {
+      "id": "engineering_protection_docs_hallucination",
+      "expected": "HALLUCINATION",
+      "question": "Какими документами регулируется проектная документация по инженерной защите от опасных геологических процессов?",
+      "answer": "Проектная документация по инженерной защите регулируется только СП 484.1311500.",
+      "dataset_filter": "NTD_ARCH_URBAN",
+      "label_rationale": "Contradicts the cited engineering-protection context."
+    },
+    {
+      "id": "red_lines_no_data",
+      "expected": "NO_DATA",
+      "question": "Какой цвет печати органа власти указан рядом с красными линиями?",
+      "answer": "Рядом с красными линиями указан синий цвет печати органа власти.",
+      "dataset_filter": "NTD_ARCH_URBAN",
+      "label_rationale": "Seal color is not expected in the red-lines definition windows."
+    }
+  ]
+}

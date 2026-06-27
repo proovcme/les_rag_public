@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>С.О.В.У.Ш.К.А. — Л.Е.С. v2.0</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js">
+async function updateJobs() {
+  try {
+    const res = await fetch('/api/jobs');
+    const jobs = await res.json();
+    const c = document.getElementById('jobs-list');
+    if (Object.keys(jobs).length === 0) { c.innerHTML = '<div class="muted">Нет активных задач</div>'; return; }
+    c.innerHTML = '';
+    for (const [id, j] of Object.entries(jobs)) {
+      const pct = j.total > 0 ? Math.round((j.processed / j.total) * 100) : 0;
+      const rem = Math.max(0, j.total - j.processed);
+      const col = j.status === 'COMPLETED' ? '#4caf50' : j.status === 'FAILED' ? '#f44336' : '#2196f3';
+      c.innerHTML += `<div class="job-row"><div class="job-header"><span><b>${j.dataset_name||id}</b> [${j.status}]</span><span style="color:${col}">${j.message||''}</span></div><div class="progress-bg"><div class="progress-fill" style="width:${pct}%;background:${col}"></div></div><div class="job-stats">Сделано: ${j.processed} / ${j.total} | Осталось: ${rem}</div></div>`;
+    }
+  } catch(e) {}
+}
+setInterval(updateJobs, 2000);
+updateJobs();
+
+
+// Charts instances
+let charts = {};
+
+function initProrabCharts() {
+    if (charts.ram) return; // Already init
+    const commonOpts = { responsive: true, maintainAspectRatio: false };
+    
+    charts.ram = new Chart(document.getElementById('chart-ram'), {
+        type: 'bar',
+        data: { labels: ['Used'], datasets: [
+            { label: 'Ollama', data: [0], backgroundColor: '#f87171' },
+            { label: 'System', data: [0], backgroundColor: '#60a5fa' },
+            { label: 'Free', data: [0], backgroundColor: '#34d399' }
+        ]},
+        options: { ...commonOpts, scales: { x: { stacked: true }, y: { stacked: true } } }
+    });
+
+    charts.disk = new Chart(document.getElementById('chart-disk'), {
+        type: 'doughnut',
+        data: { labels: ['Used', 'Free'], datasets: [{ data: [0, 100], backgroundColor: ['#ef4444', '#10b981'] }] },
+        options: commonOpts
+    });
+
+    charts.latency = new Chart(document.getElementById('chart-latency'), {
+        type: 'line',
+        data: { labels: [], datasets: [
+            { label: 'Search', data: [], borderColor: '#60a5fa', fill: false },
+            { label: 'Gen', data: [], borderColor: '#f87171', fill: false }
+        ]},
+        options: commonOpts
+    });
+
+    charts.crag = new Chart(document.getElementById('chart-crag'), {
+        type: 'pie',
+        data: { labels: ['Pass', 'Fail'], datasets: [{ data: [1, 0], backgroundColor: ['#10b981', '#ef4444'] }] },
+        options: commonOpts
+    });
+
+    charts.tokens = new Chart(document.getElementById('chart-tokens'), {
+        type: 'bar',
+        data: { labels: [], datasets: [{ label: 'Tokens', data: [], backgroundColor: '#a78bfa' }] },
+        options: commonOpts
+    });
+
+    charts.errors = new Chart(document.getElementById('chart-errors'), {
+        type: 'bar',
+        data: { labels: ['4xx', '5xx'], datasets: [{ label: 'Count', data: [0, 0], backgroundColor: ['#fbbf24', '#ef4444'] }] },
+        options: commonOpts
+    });
+}
+
+function updateProrab(data) {
+    if (!data || document.getElementById('tab-prorab').classList.contains('hidden')) return;
+    initProrabCharts();
+
+    const s = data.system;
+    document.getElementById('p-cpu').innerText = s.cpu.toFixed(1) + '%';
+    document.getElementById('p-ram').innerText = (s.ram_used).toFixed(1) + ' / ' + (s.ram_total).toFixed(1) + ' GB';
+    
+    const swapEl = document.getElementById('p-swap');
+    swapEl.innerText = (s.swap_used * 1000).toFixed(0) + ' MB';
+    swapEl.style.color = s.swap_used > 0.1 ? '#ef4444' : 'var(--success)';
+
+    document.getElementById('p-disk').innerText = (s.disk_used/1000).toFixed(1) + ' TB';
+    document.getElementById('p-net').innerText = s.network_ok === 2 ? '✅ OK' : '⚠️ ' + s.network_ok;
+    document.getElementById('p-queue').innerText = data.queue.llm_waiting;
+
+    // RAM Chart
+    charts.ram.data.datasets[0].data = [s.ollama_ram];
+    charts.ram.data.datasets[1].data = [s.ram_used - s.ollama_ram];
+    charts.ram.data.datasets[2].data = [Math.max(0, s.ram_total - s.ram_used)];
+    charts.ram.update();
+
+    // Disk Chart
+    charts.disk.data.datasets[0].data = [s.disk_used, s.disk_total - s.disk_used];
+    charts.disk.update();
+
+    // Latency
+    if (data.pipeline.latency_search.length > 0) {
+        charts.latency.data.labels = data.pipeline.latency_search.map((_, i) => i+1);
+        charts.latency.data.datasets[0].data = data.pipeline.latency_search;
+        charts.latency.data.datasets[1].data = data.pipeline.latency_gen;
+        charts.latency.update();
+    }
+
+    // CRAG
+    const cragRate = data.pipeline.crag_pass_rate;
+    charts.crag.data.datasets[0].data = [cragRate * 100, (1 - cragRate) * 100];
+    charts.crag.update();
+
+    // Tokens
+    if (data.pipeline.tokens.length > 0) {
+        charts.tokens.data.labels = data.pipeline.tokens.map((_, i) => i+1);
+        charts.tokens.data.datasets[0].data = data.pipeline.tokens;
+        charts.tokens.update();
+    }
+
+    // Errors
+    const errs = data.errors || {};
+    const e4 = Object.keys(errs).filter(k => k.startsWith('4')).reduce((a, k) => a + errs[k], 0);
+    const e5 = Object.keys(errs).filter(k => k.startsWith('5')).reduce((a, k) => a + errs[k], 0);
+    charts.errors.data.datasets[0].data = [e4, e5];
+    charts.errors.update();
+
+    // Heartbeats
+    const now = Date.now() / 1000;
+    const hb = data.heartbeats;
+    document.getElementById('hb-collector').innerText = (now - hb.collector < 10) ? '🟢 Alive' : '🔴 Dead';
+    document.getElementById('hb-collector-time').innerText = new Date(hb.collector * 1000).toLocaleTimeString();
+}
+
+// Hook into existing polling if possible, or add standalone
+if (typeof updateMetrics === 'function') {
+    const originalUpdate = updateMetrics;
+    updateMetrics = async function() {
+        await originalUpdate();
+        try {
+            const res = await fetch('/api/metrics');
+            const data = await res.json();
+            updateProrab(data);
+        } catch(e) {}
+    };
+}
+
+</script>
+<style>
+:root { --bg: #0f1115; --surface: #161920; --border: #2a2e38; --text: #e6e8eb; --muted: #8b92a0; --accent: #3b82f6; --ok: #22c55e; --warn: #eab308; --busy: #ef4444; --font: system-ui, sans-serif; }
+[data-theme="light"] { --bg: #f8f9fa; --surface: #fff; --border: #e2e5ea; --text: #111827; --muted: #6b7280; --accent: #2563eb; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font); background: var(--bg); color: var(--text); line-height: 1.5; }
+header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.header-left { display: flex; align-items: center; gap: 12px; }
+.logo { font-weight: 700; font-size: 1.1rem; }
+.version { font-size: 0.75rem; color: var(--muted); }
+.controls { display: flex; gap: 8px; }
+.btn-sm { background: var(--border); border: none; color: var(--text); padding: 6px 10px; border-radius: 6px; cursor: pointer; }
+.btn-sm:hover { background: var(--accent); color: #fff; }
+nav { display: flex; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--surface); overflow-x: auto; }
+nav a { color: var(--muted); text-decoration: none; font-size: 0.9rem; white-space: nowrap; padding: 4px 8px; border-radius: 4px; }
+nav a.active { background: var(--accent); color: #fff; }
+main { padding: 16px; }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-bottom: 16px; }
+.card h3 { font-size: 0.95rem; margin-bottom: 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; }
+.metric { background: var(--bg); padding: 10px; border-radius: 6px; text-align: center; }
+.metric .val { font-size: 1.4rem; font-weight: 700; }
+.metric .lbl { font-size: 0.75rem; color: var(--muted); }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+input, textarea { width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; font-family: var(--font); }
+.row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+.log-box { background: #000; color: #0f0; font-family: monospace; font-size: 0.8rem; padding: 10px; border-radius: 6px; height: 300px; overflow-y: auto; white-space: pre-wrap; }
+.log-controls { display: flex; gap: 8px; margin-bottom: 8px; }
+.log-btn { padding: 4px 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
+.log-btn.active { background: var(--accent); color: #fff; }
+table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+th, td { padding: 8px; text-align: left; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 600; }
+.badge { padding: 3px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+.b-idle { background: var(--border); color: var(--text); }
+.b-parsing { background: var(--accent); color: #fff; }
+.b-completed { background: var(--ok); color: #fff; }
+.b-error { background: var(--busy); color: #fff; }
+.b-none { background: #333; color: #888; }
+.ds-selector { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.ds-chip { display: flex; align-items: center; gap: 6px; background: var(--bg); border: 1px solid var(--border); padding: 4px 8px; border-radius: 20px; cursor: pointer; font-size: 0.85rem; transition: 0.2s; }
+.ds-chip:hover { border-color: var(--accent); }
+.ds-chip input { display: none; }
+.ds-chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+@media (max-width: 1024px) { .grid-2 { grid-template-columns: 1fr; } }
+
+.job-row { background: var(--bg); padding: 10px; border-radius: 6px; margin-bottom: 8px; }
+.job-header { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 0.85rem; }
+.progress-bg { background: #333; height: 8px; border-radius: 4px; overflow: hidden; }
+.progress-fill { height: 100%; background: #2196f3; transition: width 0.3s; }
+.job-stats { font-size: 0.75rem; color: var(--muted); margin-top: 4px; }
+
+</style>
+</head>
+<body>
+<header>
+  <div class="header-left"><span class="logo">🦉 С.О.В.У.Ш.К.А.</span><span class="version">Л.Е.С. v2.0 Core</span></div>
+  <div class="controls"><button class="btn-sm" id="btn-theme">🌓 Тема</button></div>
+</header>
+<nav>
+  <a href="#" class="active" data-tab="overview">Обзор</a>
+  <a href="#" data-tab="datasets">Датасеты</a>
+  <a href="#" data-tab="rag">RAG</a>
+  <a href="#" data-tab="logs">Логи</a>
+</nav>
+<main>
+  <div id="tab-overview" class="tab-content active">
+    <div class="card"><h3>Метрики комплекса</h3>
+      <div class="metrics">
+        <div class="metric"><div class="val" id="m-cpu">...</div><div class="lbl">CPU %</div></div>
+        <div class="metric"><div class="val" id="m-ram">...</div><div class="lbl">RAM %</div></div>
+        <div class="metric"><div class="val" id="m-datasets">0</div><div class="lbl">Датасетов</div></div>
+        <div class="metric"><div class="val" id="m-files">0</div><div class="lbl">Файлов</div></div>
+        <div class="metric"><div class="val" id="m-chunks">0</div><div class="lbl">Чанков</div></div>
+        <div class="metric"><div class="val" id="m-queue">0</div><div class="lbl">В очереди</div></div>
+        <div class="metric"><div class="val" id="m-active">0</div><div class="lbl">В обработке</div></div>
+        <div class="metric"><div class="val" id="m-speed">0</div><div class="lbl">Файлов/сек</div></div>
+      </div>
+    </div>
+    <div class="grid-2">
+      
+      <div class="card" id="jobs-card">
+        <h3>📦 Задачи индексации</h3>
+        <div id="jobs-list"><div class="muted">Нет активных задач</div></div>
+      </div>
+
+      <div class="card"><h3>Latency /api/chat</h3><canvas id="chart-latency"></canvas></div>
+      <div class="card"><h3>CRAG Валидация</h3><canvas id="chart-crag"></canvas></div>
+    </div>
+  </div>
+
+  <div id="tab-datasets" class="tab-content">
+    <div class="card">
+      <h3>Источники и Индексы</h3>
+      <table id="src-table">
+        <thead><tr><th>Папка контента</th><th>Файлов (источник)</th><th>Статус индекса</th><th>В индексе</th><th>Действия</th></tr></thead>
+        <tbody id="src-body"><tr><td colspan="5" style="color:var(--muted)">Загрузка...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="tab-rag" class="tab-content">
+    <div class="card">
+      <h3>Источники для поиска</h3>
+      <div class="ds-selector" id="ds-selector"><span style="color:var(--muted); font-size:0.8rem;">Загрузка списка...</span></div>
+    </div>
+    <div class="card">
+      <h3>AI Чат (Т.О.С.К.А.)</h3>
+      <textarea id="chat-input" rows="3" placeholder="Задайте вопрос по выбранным источникам..."></textarea>
+      <div class="row" style="margin-top:8px;"><button class="btn-sm" id="btn-send">Отправить</button></div>
+      <div id="chat-output" style="margin-top:10px; font-size:0.9rem; color:var(--muted); white-space: pre-wrap;"></div>
+    </div>
+  </div>
+
+  <div id="tab-logs" class="tab-content">
+    <div class="card">
+      <h3>Системный лог (Live)</h3>
+      <div class="log-controls">
+        <button class="log-btn active" id="btn-pause">⏸ Пауза</button>
+        <button class="log-btn" id="btn-clear">🗑 Очистить</button>
+      </div>
+      <div class="log-box" id="sys-log">[init] Подключение к потоку логов...</div>
+    </div>
+  </div>
+
+<div id="tab-prorab" class="tab-content hidden">
+    <h2>🏗 П.Р.О.Р.А.Б. — Панель управления ресурсами</h2>
+    
+    <!-- KPI Карточки -->
+    <div class="metrics-grid" style="grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 20px;">
+        <div class="card"><h3>CPU</h3><p id="p-cpu" class="metric-value">-</p></div>
+        <div class="card"><h3>RAM</h3><p id="p-ram" class="metric-value">-</p></div>
+        <div class="card"><h3>Swap</h3><p id="p-swap" class="metric-value" style="color:var(--success)">0</p></div>
+        <div class="card"><h3>Disk</h3><p id="p-disk" class="metric-value">-</p></div>
+        <div class="card"><h3>Сеть</h3><p id="p-net" class="metric-value">-</p></div>
+        <div class="card"><h3>Очередь LLM</h3><p id="p-queue" class="metric-value">0</p></div>
+    </div>
+
+    <!-- Графики -->
+    <div class="charts-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
+        <div class="card"><h3>RAM Breakdown (GB)</h3><canvas id="chart-ram"></canvas></div>
+        <div class="card"><h3>Storage Usage</h3><canvas id="chart-disk"></canvas></div>
+        <div class="card"><h3>Latency Pipeline (sec)</h3><canvas id="chart-latency"></canvas></div>
+        <div class="card"><h3>CRAG Pass Rate</h3><canvas id="chart-crag"></canvas></div>
+        <div class="card"><h3>Token Usage</h3><canvas id="chart-tokens"></canvas></div>
+        <div class="card"><h3>Errors (4xx/5xx)</h3><canvas id="chart-errors"></canvas></div>
+    </div>
+
+    <!-- Таблица здоровья -->
+    <div class="card" style="margin-top: 20px;">
+        <h3>Background Tasks Health</h3>
+        <table style="width:100%; text-align: left;">
+            <tr><th>Task</th><th>Status</th><th>Last Beat</th></tr>
+            <tr><td>Metrics Collector</td><td id="hb-collector">⚪</td><td id="hb-collector-time">-</td></tr>
+            <tr><td>SSE Emitter</td><td id="hb-sse">⚪</td><td id="hb-sse-time">-</td></tr>
+            <tr><td>Folder Watcher</td><td id="hb-watcher">⚪</td><td id="hb-watcher-time">-</td></tr>
+        </table>
+    </div>
+</div>
+
+</main>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  let chartLatency, chartCrag;
+  let selectedDatasetIds = new Set();
+  let datasetsInitialized = false;
+  let logPaused = false;
+  let currentDatasetList = [];
+
+  // Theme
+  document.getElementById('btn-theme').addEventListener('click', () => {
+    const html = document.documentElement;
+    html.dataset.theme = html.dataset.theme === 'dark' ? 'light' : 'dark';
+  });
+
+  // Tabs
+  document.querySelectorAll('nav a').forEach(link => {
+    link.addEventListener('click', e => {
+      e.preventDefault();
+      const tab = link.dataset.tab;
+      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
+      document.getElementById('tab-' + tab).classList.add('active');
+      link.classList.add('active');
+    });
+  });
+
+  // Logs controls
+  document.getElementById('btn-pause').addEventListener('click', function() {
+    logPaused = !logPaused;
+    this.textContent = logPaused ? '▶ Продолжить' : '⏸ Пауза';
+    this.classList.toggle('active', !logPaused);
+  });
+  document.getElementById('btn-clear').addEventListener('click', () => {
+    document.getElementById('sys-log').textContent = '';
+  });
+
+  // Charts
+  try {
+    const ctxL = document.getElementById('chart-latency').getContext('2d');
+    chartLatency = new Chart(ctxL, {
+      type: 'line',
+      data: { labels: [], datasets: [{ label: 'Latency (s)', data: [], borderColor: '#3b82f6', tension: 0.3, fill: false }] },
+      options: { responsive: true, scales: { y: { beginAtZero: true } }, animation: false }
+    });
+    const ctxC = document.getElementById('chart-crag').getContext('2d');
+    chartCrag = new Chart(ctxC, {
+      type: 'bar',
+      data: { labels: ['VERIFIED', 'NO_DATA'], datasets: [{ label: 'Count', data: [0,0], backgroundColor: ['#22c55e','#eab308'] }] },
+      options: { responsive: true, scales: { y: { beginAtZero: true } } }
+    });
+  } catch(e) { console.error('Chart init failed:', e); }
+
+  // Metrics
+  async function fetchMetrics() {
+    try {
+      const res = await fetch('/api/metrics');
+      const data = await res.json();
+      const m = data.latest || {};
+      document.getElementById('m-cpu').textContent = (m.cpu || 0).toFixed(1);
+      document.getElementById('m-ram').textContent = m.ram_total ? ((m.ram_used/m.ram_total)*100).toFixed(0)+'%' : '...';
+      document.getElementById('m-datasets').textContent = m.datasets || 0;
+      document.getElementById('m-files').textContent = m.files_processed || 0;
+      document.getElementById('m-chunks').textContent = m.chunks_indexed || 0;
+      document.getElementById('m-queue').textContent = m.queue || 0;
+      document.getElementById('m-active').textContent = m.active || 0;
+      document.getElementById('m-speed').textContent = (m.avg_speed_fps || 0).toFixed(2);
+      if (chartLatency && data.history?.length) {
+        chartLatency.data.labels = data.history.map((_, i) => i);
+        chartLatency.data.datasets[0].data = data.history.map(h => h.chat_latency);
+        chartLatency.update();
+      }
+      if (chartCrag) {
+        chartCrag.data.datasets[0].data = [m.crag_verified || 0, m.crag_no_data || 0];
+        chartCrag.update();
+      }
+    } catch(e) {}
+  }
+
+  // Sources
+  async function fetchSources() {
+    try {
+      const res = await fetch('/api/rag/sources');
+      const list = await res.json();
+      const tbody = document.getElementById('src-body');
+      tbody.innerHTML = '';
+      if (!list.length) { tbody.innerHTML = '<tr><td colspan="5" style="color:var(--muted)">Нет папок в RAG_Content</td></tr>'; return; }
+      list.forEach(s => {
+        const badgeClass = s.dataset_status === 'PARSING' ? 'b-parsing' : s.dataset_status === 'COMPLETED' ? 'b-completed' : s.dataset_status === 'ERROR' ? 'b-error' : s.dataset_status === 'NOT_CREATED' ? 'b-none' : 'b-idle';
+        const row = document.createElement('tr');
+        row.innerHTML = `<td><strong>${s.folder}</strong><br><span style="font-size:0.7rem;color:var(--muted)">RAG_Content/${s.folder}</span></td><td>${s.source_files}</td><td><span class="badge ${badgeClass}">${s.dataset_status}</span></td><td>${s.indexed_files}</td><td><button class="btn-sm" onclick="window.syncFolder('${s.folder}')">🔄 Загрузить в индекс</button></td>`;
+        tbody.appendChild(row);
+      });
+    } catch(e) { console.error(e); }
+  }
+
+  // Datasets for chat
+  async function fetchDatasetsForChat() {
+    try {
+      const res = await fetch('/api/rag/datasets');
+      const list = await res.json();
+      const valid = list.filter(d => d.status === 'COMPLETED' || d.status === 'IDLE' || d.status === 'PARSING');
+      const ids = valid.map(d => d.id).sort().join(',');
+      if (datasetsInitialized && currentDatasetList === ids) return;
+      currentDatasetList = ids;
+      
+      const container = document.getElementById('ds-selector');
+      container.innerHTML = '';
+      if (!valid.length) { container.innerHTML = '<span style="color:var(--muted); font-size:0.8rem;">Нет готовых датасетов.</span>'; return; }
+      
+      valid.forEach(ds => {
+        const isChecked = !datasetsInitialized || selectedDatasetIds.has(ds.id);
+        if (isChecked) selectedDatasetIds.add(ds.id);
+        const chip = document.createElement('label');
+        chip.className = `ds-chip ${isChecked ? 'active' : ''}`;
+        chip.innerHTML = `<input type="checkbox" value="${ds.id}" ${isChecked ? 'checked' : ''}> ${ds.name}`;
+        chip.querySelector('input').addEventListener('change', function() {
+          if (this.checked) selectedDatasetIds.add(this.value);
+          else selectedDatasetIds.delete(this.value);
+          chip.classList.toggle('active', this.checked);
+        });
+        container.appendChild(chip);
+      });
+      datasetsInitialized = true;
+    } catch(e) {}
+  }
+
+  // Sync folder
+  window.syncFolder = async function(folder) {
+    if (!confirm(`Синхронизировать папку ${folder} с индексом?`)) return;
+    try {
+      const res = await fetch(`/api/rag/sync/${folder}`, { method: 'POST' });
+      const data = await res.json();
+      alert(`✅ Синхронизация завершена.\n🆕 Новых файлов: ${data.new_files}\n⏭ Пропущено: ${data.skipped_files}`);
+      fetchSources(); fetchDatasetsForChat();
+    } catch(e) { alert('❌ Ошибка запуска: ' + e.message); }
+  };
+
+  // Logs SSE
+  function connectLogs() {
+    const evt = new EventSource('/api/logs/stream');
+    const box = document.getElementById('sys-log');
+    evt.onmessage = e => {
+      if (logPaused) return;
+      box.textContent += e.data;
+      box.scrollTop = box.scrollHeight;
+    };
+    evt.onerror = () => { box.textContent += '\n[sys] Соединение потеряно. Переподключение...\n'; };
+  }
+
+  // Chat
+  document.getElementById('btn-send').addEventListener('click', async () => {
+    const q = document.getElementById('chat-input').value;
+    if(!q) return;
+    const selectedIds = Array.from(selectedDatasetIds);
+    const out = document.getElementById('chat-output');
+    out.textContent = '⏳ CRAG валидация...';
+    try {
+      const res = await fetch('/api/chat', { 
+        method: 'POST', 
+        headers: {'Content-Type': 'application/json'}, 
+        body: JSON.stringify({question: q, dataset_ids: selectedIds.length ? selectedIds : null}) 
+      });
+      const data = await res.json();
+      out.textContent = `[${data.crag_status}] ${data.answer}\n\nИсточники: ${data.sources?.join(', ') || '-'}`;
+    } catch(e) { out.textContent = '❌ Ошибка: ' + e.message; }
+  });
+
+  // Init
+  connectLogs();
+  fetchSources();
+  fetchDatasetsForChat();
+  fetchMetrics();
+  setInterval(fetchMetrics, 3000);
+  setInterval(fetchSources, 10000);
+  setInterval(fetchDatasetsForChat, 10000);
+});
+
+async function updateJobs() {
+  try {
+    const res = await fetch('/api/jobs');
+    const jobs = await res.json();
+    const c = document.getElementById('jobs-list');
+    if (Object.keys(jobs).length === 0) { c.innerHTML = '<div class="muted">Нет активных задач</div>'; return; }
+    c.innerHTML = '';
+    for (const [id, j] of Object.entries(jobs)) {
+      const pct = j.total > 0 ? Math.round((j.processed / j.total) * 100) : 0;
+      const rem = Math.max(0, j.total - j.processed);
+      const col = j.status === 'COMPLETED' ? '#4caf50' : j.status === 'FAILED' ? '#f44336' : '#2196f3';
+      c.innerHTML += `<div class="job-row"><div class="job-header"><span><b>${j.dataset_name||id}</b> [${j.status}]</span><span style="color:${col}">${j.message||''}</span></div><div class="progress-bg"><div class="progress-fill" style="width:${pct}%;background:${col}"></div></div><div class="job-stats">Сделано: ${j.processed} / ${j.total} | Осталось: ${rem}</div></div>`;
+    }
+  } catch(e) {}
+}
+setInterval(updateJobs, 2000);
+updateJobs();
+
+
+// Charts instances
+let charts = {};
+
+function initProrabCharts() {
+    if (charts.ram) return; // Already init
+    const commonOpts = { responsive: true, maintainAspectRatio: false };
+    
+    charts.ram = new Chart(document.getElementById('chart-ram'), {
+        type: 'bar',
+        data: { labels: ['Used'], datasets: [
+            { label: 'Ollama', data: [0], backgroundColor: '#f87171' },
+            { label: 'System', data: [0], backgroundColor: '#60a5fa' },
+            { label: 'Free', data: [0], backgroundColor: '#34d399' }
+        ]},
+        options: { ...commonOpts, scales: { x: { stacked: true }, y: { stacked: true } } }
+    });
+
+    charts.disk = new Chart(document.getElementById('chart-disk'), {
+        type: 'doughnut',
+        data: { labels: ['Used', 'Free'], datasets: [{ data: [0, 100], backgroundColor: ['#ef4444', '#10b981'] }] },
+        options: commonOpts
+    });
+
+    charts.latency = new Chart(document.getElementById('chart-latency'), {
+        type: 'line',
+        data: { labels: [], datasets: [
+            { label: 'Search', data: [], borderColor: '#60a5fa', fill: false },
+            { label: 'Gen', data: [], borderColor: '#f87171', fill: false }
+        ]},
+        options: commonOpts
+    });
+
+    charts.crag = new Chart(document.getElementById('chart-crag'), {
+        type: 'pie',
+        data: { labels: ['Pass', 'Fail'], datasets: [{ data: [1, 0], backgroundColor: ['#10b981', '#ef4444'] }] },
+        options: commonOpts
+    });
+
+    charts.tokens = new Chart(document.getElementById('chart-tokens'), {
+        type: 'bar',
+        data: { labels: [], datasets: [{ label: 'Tokens', data: [], backgroundColor: '#a78bfa' }] },
+        options: commonOpts
+    });
+
+    charts.errors = new Chart(document.getElementById('chart-errors'), {
+        type: 'bar',
+        data: { labels: ['4xx', '5xx'], datasets: [{ label: 'Count', data: [0, 0], backgroundColor: ['#fbbf24', '#ef4444'] }] },
+        options: commonOpts
+    });
+}
+
+function updateProrab(data) {
+    if (!data || document.getElementById('tab-prorab').classList.contains('hidden')) return;
+    initProrabCharts();
+
+    const s = data.system;
+    document.getElementById('p-cpu').innerText = s.cpu.toFixed(1) + '%';
+    document.getElementById('p-ram').innerText = (s.ram_used).toFixed(1) + ' / ' + (s.ram_total).toFixed(1) + ' GB';
+    
+    const swapEl = document.getElementById('p-swap');
+    swapEl.innerText = (s.swap_used * 1000).toFixed(0) + ' MB';
+    swapEl.style.color = s.swap_used > 0.1 ? '#ef4444' : 'var(--success)';
+
+    document.getElementById('p-disk').innerText = (s.disk_used/1000).toFixed(1) + ' TB';
+    document.getElementById('p-net').innerText = s.network_ok === 2 ? '✅ OK' : '⚠️ ' + s.network_ok;
+    document.getElementById('p-queue').innerText = data.queue.llm_waiting;
+
+    // RAM Chart
+    charts.ram.data.datasets[0].data = [s.ollama_ram];
+    charts.ram.data.datasets[1].data = [s.ram_used - s.ollama_ram];
+    charts.ram.data.datasets[2].data = [Math.max(0, s.ram_total - s.ram_used)];
+    charts.ram.update();
+
+    // Disk Chart
+    charts.disk.data.datasets[0].data = [s.disk_used, s.disk_total - s.disk_used];
+    charts.disk.update();
+
+    // Latency
+    if (data.pipeline.latency_search.length > 0) {
+        charts.latency.data.labels = data.pipeline.latency_search.map((_, i) => i+1);
+        charts.latency.data.datasets[0].data = data.pipeline.latency_search;
+        charts.latency.data.datasets[1].data = data.pipeline.latency_gen;
+        charts.latency.update();
+    }
+
+    // CRAG
+    const cragRate = data.pipeline.crag_pass_rate;
+    charts.crag.data.datasets[0].data = [cragRate * 100, (1 - cragRate) * 100];
+    charts.crag.update();
+
+    // Tokens
+    if (data.pipeline.tokens.length > 0) {
+        charts.tokens.data.labels = data.pipeline.tokens.map((_, i) => i+1);
+        charts.tokens.data.datasets[0].data = data.pipeline.tokens;
+        charts.tokens.update();
+    }
+
+    // Errors
+    const errs = data.errors || {};
+    const e4 = Object.keys(errs).filter(k => k.startsWith('4')).reduce((a, k) => a + errs[k], 0);
+    const e5 = Object.keys(errs).filter(k => k.startsWith('5')).reduce((a, k) => a + errs[k], 0);
+    charts.errors.data.datasets[0].data = [e4, e5];
+    charts.errors.update();
+
+    // Heartbeats
+    const now = Date.now() / 1000;
+    const hb = data.heartbeats;
+    document.getElementById('hb-collector').innerText = (now - hb.collector < 10) ? '🟢 Alive' : '🔴 Dead';
+    document.getElementById('hb-collector-time').innerText = new Date(hb.collector * 1000).toLocaleTimeString();
+}
+
+// Hook into existing polling if possible, or add standalone
+if (typeof updateMetrics === 'function') {
+    const originalUpdate = updateMetrics;
+    updateMetrics = async function() {
+        await originalUpdate();
+        try {
+            const res = await fetch('/api/metrics');
+            const data = await res.json();
+            updateProrab(data);
+        } catch(e) {}
+    };
+}
+
+</script>
+</body>
+</html>

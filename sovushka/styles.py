@@ -9,12 +9,12 @@ _DARK_THEME = {
     "--text":     "#f8fbff",
     "--dim":      "#d2deea",
     "--border":   "#55708a",
-    "--accent":   "#38bdf8",
+    "--accent":   "#34d399",
     "--ok":       "#22e06f",
     "--pauk":     "#c084fc",
     "--warn":     "#ffd166",
     "--err":      "#ff6b6b",
-    "--shell-bg": "radial-gradient(circle at 14% 10%, rgba(56,189,248,.10), transparent 28%), linear-gradient(180deg, rgba(16,20,27,.96), #050608)",
+    "--shell-bg": "radial-gradient(circle at 14% 10%, rgba(52,211,153,.10), transparent 28%), linear-gradient(180deg, rgba(16,20,27,.96), #050608)",
     "--panel-glass": "rgba(16,20,27,.88)",
     "--panel-top": "rgba(24,33,44,.70)",
     "--scroll-bg": "linear-gradient(180deg, rgba(5,6,8,.18), rgba(5,6,8,.44))",
@@ -32,7 +32,7 @@ _LIGHT_THEME = {
     "--text":     "#0b1220",
     "--dim":      "#2f3f53",
     "--border":   "#60758c",
-    "--accent":   "#0057bd",
+    "--accent":   "#047857",
     "--ok":       "#006d3a",
     "--pauk":     "#6d28d9",
     "--warn":     "#8a4b00",
@@ -73,12 +73,12 @@ CUSTOM_CSS = """
   --text:     #f8fbff;
   --dim:      #d2deea;
   --border:   #55708a;
-  --accent:   #38bdf8;
+  --accent:   #34d399;
   --ok:       #22e06f;
   --pauk:     #c084fc;
   --warn:     #ffd166;
   --err:      #ff6b6b;
-  --shell-bg: radial-gradient(circle at 14% 10%, rgba(56,189,248,.10), transparent 28%), linear-gradient(180deg, rgba(16,20,27,.96), #050608);
+  --shell-bg: radial-gradient(circle at 14% 10%, rgba(52,211,153,.10), transparent 28%), linear-gradient(180deg, rgba(16,20,27,.96), #050608);
   --panel-glass: rgba(16,20,27,.88);
   --panel-top: rgba(24,33,44,.70);
   --scroll-bg: linear-gradient(180deg, rgba(5,6,8,.18), rgba(5,6,8,.44));
@@ -99,7 +99,7 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   align-items: center;
   justify-content: space-between;
 }
-.les-brand { font-weight: 900; font-size: 1.1rem; color: var(--accent); text-shadow: 0 0 12px rgba(56,189,248,.35); }
+.les-brand { font-weight: 900; font-size: 1.1rem; color: var(--accent); text-shadow: 0 0 12px rgba(52,211,153,.35); }
 .kpi-box {
   background: var(--bg-panel);
   border: 1px solid var(--border);
@@ -127,13 +127,13 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
 .tag-warn { background:rgba(245,158,11,.15); color:var(--warn); border:1px solid rgba(245,158,11,.3); border-radius:10px; padding:2px 8px; font-size:.6rem; font-weight:700; }
 .tag-err  { background:rgba(239,68,68,.15);  color:var(--err);  border:1px solid rgba(239,68,68,.3);  border-radius:10px; padding:2px 8px; font-size:.6rem; font-weight:700; }
 .tag-dim  { background:var(--bg-mod); color:var(--dim); border:1px solid var(--border); border-radius:10px; padding:2px 8px; font-size:.6rem; font-weight:700; }
-.tag-acc  { background:rgba(59,130,246,.15); color:var(--accent); border:1px solid rgba(59,130,246,.3); border-radius:10px; padding:2px 8px; font-size:.6rem; font-weight:700; }
+.tag-acc  { background:rgba(52,211,153,.15); color:var(--accent); border:1px solid rgba(52,211,153,.3); border-radius:10px; padding:2px 8px; font-size:.6rem; font-weight:700; }
 .tag-pauk { background:rgba(139,92,246,.15); color:var(--pauk);  border:1px solid rgba(139,92,246,.3); border-radius:10px; padding:2px 8px; font-size:.6rem; font-weight:700; }
 .les-fuse-board {
   position: relative;
   overflow: hidden;
   background:
-    linear-gradient(90deg, rgba(34,224,111,.09), rgba(56,189,248,.07) 52%, rgba(255,209,102,.06)),
+    linear-gradient(90deg, rgba(34,224,111,.09), rgba(52,211,153,.07) 52%, rgba(255,209,102,.06)),
     var(--bg-panel);
 }
 .les-fuse-board::before {
@@ -255,7 +255,7 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
 .les-map-preset-active {
   color: var(--text) !important;
   border-color: var(--accent);
-  background: rgba(56,189,248,.12) !important;
+  background: rgba(52,211,153,.12) !important;
 }
 .les-map-action,
 .les-map-action-muted {
@@ -364,7 +364,7 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   left: 0;
   right: 0;
   height: 2px;
-  background: linear-gradient(90deg, rgba(56,189,248,.14), rgba(56,189,248,.85));
+  background: linear-gradient(90deg, rgba(52,211,153,.14), rgba(52,211,153,.85));
   transform: translateY(-50%);
 }
 .diag-map-arrow::after {
@@ -374,7 +374,7 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   right: 0;
   border-top: 5px solid transparent;
   border-bottom: 5px solid transparent;
-  border-left: 7px solid rgba(125,211,252,.9);
+  border-left: 7px solid rgba(110,231,183,.9);
 }
 .diag-node {
   --node-color: rgba(138,162,184,.62);
@@ -504,7 +504,7 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
     bottom: 0;
     border-left: 5px solid transparent;
     border-right: 5px solid transparent;
-    border-top: 7px solid rgba(125,211,252,.9);
+    border-top: 7px solid rgba(110,231,183,.9);
     border-bottom: 0;
   }
   .diag-node-hub {
@@ -538,12 +538,29 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   height: calc(100vh - 92px);
   min-height: 620px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
+  grid-template-columns: minmax(0, 1fr) 8px var(--sov-artifacts-w, 360px);
   gap: 14px;
   padding: 14px;
   background: var(--shell-bg);
   overflow: hidden;
 }
+.sov-chat-shell.sov-artifacts-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+/* Резиновый layout: разделитель между чатом и артефактами — таскать по ширине */
+.sov-resize-divider {
+  cursor: col-resize;
+  align-self: stretch;
+  position: relative;
+  touch-action: none;
+}
+.sov-resize-divider::before {
+  content: ""; position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  width: 4px; height: 46px; border-radius: 3px;
+  background: rgba(138,162,184,.4); transition: background .15s, height .15s;
+}
+.sov-resize-divider:hover::before { background: var(--accent); height: 80px; }
 .sov-chat-main, .sov-artifacts-panel, .sov-history-drawer {
   background: var(--panel-glass);
   border: 1px solid rgba(138,162,184,.32);
@@ -574,10 +591,20 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
 }
 .sov-chat-thread {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 100%;
   gap: 13px;
   padding: 22px 24px 150px;
 }
+/* FIX «красота не лезет»: QScrollArea-контент рос по самому широкому ребёнку (таблица/код/длинный
+   токен) → бабблы (flex-start/flex-end) уезжали за оба края колонки. Держим контент = ширине окна,
+   широкие блоки скроллим внутри баббла, длинные токены/кириллицу переносим. */
+.sov-chat-scroll .q-scrollarea__content { width: 100% !important; max-width: 100% !important; }
+.chat-msg-user, .chat-msg-ai { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+.chat-msg-ai table, .chat-msg-ai pre,
+.sov-chat-message-text table, .sov-chat-message-text pre { display: block; max-width: 100%; overflow-x: auto; }
+.chat-msg-ai img, .sov-chat-message-text img { max-width: 100%; height: auto; }
 .sov-composer {
   margin: 0 18px 18px;
   padding: 10px;
@@ -592,6 +619,41 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   font-family: var(--font-chat) !important;
   font-size: .92rem;
   font-weight: 650;
+}
+.sov-attachment-strip {
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(52,211,153,.12);
+  box-shadow: inset 0 0 0 1px rgba(16,185,129,.45);
+}
+.sov-attachment-icon {
+  color: var(--accent);
+  font-size: 1.1rem;
+  flex: 0 0 auto;
+}
+.sov-attachment-copy {
+  flex: 1;
+  min-width: 0;
+  gap: 0 !important;
+}
+.sov-attachment-title {
+  color: var(--text);
+  font-size: .72rem;
+  font-weight: 900;
+  line-height: 1.2;
+}
+.sov-attachment-chip {
+  min-width: 0;
+  color: var(--accent);
+  font-size: .66rem;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 .sov-composer-actions {
   width: 100%;
@@ -612,7 +674,7 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   letter-spacing: .04em;
 }
 .sov-composer-actions .q-btn:last-child {
-  background: linear-gradient(135deg, rgba(56,189,248,.95), rgba(34,224,111,.86)) !important;
+  background: linear-gradient(135deg, rgba(52,211,153,.95), rgba(34,224,111,.86)) !important;
   color: #041014 !important;
   font-weight: 900;
 }
@@ -623,9 +685,9 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   height: 24px;
   padding: 0 9px;
   border-radius: 4px;
-  border: 1px solid rgba(56,189,248,.36);
+  border: 1px solid rgba(52,211,153,.36);
   color: var(--accent);
-  background: rgba(56,189,248,.10);
+  background: rgba(52,211,153,.10);
   font-size: .62rem;
   font-weight: 900;
 }
@@ -751,6 +813,48 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   padding: 10px;
 }
 .sov-svg-preview svg { max-width: 100%; height: auto; }
+
+/* Богатые формы прямо в пузыре чата: таблицы, mermaid-диаграммы, проза-сегменты. */
+.sov-chat-rich { align-items: stretch; }
+.sov-chat-md { white-space: normal; }
+.sov-chat-md p { margin: .2rem 0; }
+.sov-chat-inline-table {
+  width: 100%;
+  background: var(--bg-panel);
+  color: var(--text);
+  font-size: .76rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.sov-chat-inline-table thead th { font-weight: 800; }
+.sov-chat-inline-mermaid {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  overflow: auto;
+}
+.sov-chat-inline-mermaid svg { max-width: 100%; height: auto; }
+
+/* Панель «Файлы»: готовые документы-артефакты (смета xlsx, формы). */
+.sov-files-artifacts {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.sov-file-card {
+  width: 100%;
+  background: var(--card-bg) !important;
+  border: 1px solid rgba(138,162,184,.32) !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+  padding: 8px 10px !important;
+}
+.sov-file-icon { color: var(--accent); font-size: 1.1rem; }
+.sov-file-name { color: var(--text); font-weight: 700; }
 .sov-history-drawer {
   position: absolute;
   z-index: 20;
@@ -781,8 +885,8 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   cursor: pointer;
 }
 .sov-session-card:hover, .sov-session-card-active {
-  border-color: rgba(56,189,248,.7);
-  background: rgba(56,189,248,.10);
+  border-color: rgba(52,211,153,.7);
+  background: rgba(52,211,153,.10);
 }
 .sov-session-title {
   color: var(--text);
@@ -822,9 +926,9 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   justify-content: flex-start !important;
 }
 .sov-format-btn-active {
-  border-color: rgba(56,189,248,.8) !important;
+  border-color: rgba(52,211,153,.8) !important;
   color: var(--accent) !important;
-  background: rgba(56,189,248,.12) !important;
+  background: rgba(52,211,153,.12) !important;
 }
 .sov-template-preview,
 .sov-prompt-preview {
@@ -928,7 +1032,7 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
 }
 /* Tabs */
 .q-tab { color: var(--dim) !important; opacity: 1 !important; }
-.q-tab--active { color: var(--accent) !important; background: rgba(56,189,248,.10) !important; }
+.q-tab--active { color: var(--accent) !important; background: rgba(52,211,153,.10) !important; }
 .les-top-tabs .q-tabs__content {
   height: 56px !important;
 }
@@ -981,6 +1085,237 @@ input::placeholder {
 }
 .q-table td {
   color: var(--text) !important;
+}
+/* ─── Доступность (WCAG) ─────────────────────────────────────────── */
+/* 2.4.7 Focus Visible: явный фокус-индикатор для клавиатуры. Только
+   :focus-visible — мышиный клик контур не показывает, разметку не двигает. */
+a:focus-visible,
+button:focus-visible,
+[tabindex]:focus-visible,
+[role="button"]:focus-visible,
+.q-btn:focus-visible,
+.q-tab:focus-visible,
+.q-toggle:focus-visible,
+.q-checkbox:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+.q-field__native:focus-visible,
+.sov-session-card:focus-visible,
+.sov-format-btn:focus-visible,
+.les-map-preset:focus-visible,
+.mode-rag:focus-visible,
+.mode-code:focus-visible {
+  outline: 2px solid var(--accent) !important;
+  outline-offset: 2px !important;
+  border-radius: 4px;
+}
+/* Контраст самого индикатора фокуса на тёмном фоне — двойная обводка. */
+.q-btn:focus-visible,
+.q-tab:focus-visible {
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent) !important;
+}
+/* 2.3.3 Animation from Interactions: уважать prefers-reduced-motion. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ═══ FEEL-BETTER PASS v0.1 — «details that make interfaces feel better» ═══════════════ */
+/* Невидимый полиш: чёткость, ритм, тактильность. Терминальную эстетику не трогаем.       */
+
+/* 1. Сглаживание шрифта — моноширинный текст чётче на тёмном фоне. */
+body, .nicegui-content {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* 2. ТАБЛИЧНЫЕ ЦИФРЫ — числа в таблицах/KPI/счётчиках не «прыгают» по ширине колонок.
+      Главный рычаг для data-плотного интерфейса (датасеты, объёмы, диагностика). */
+.kpi-val, .les-fuse-val, .les-fuse-detail,
+.output-table td, .output-table th,
+.q-table td, .q-table th,
+.sov-chat-inline-table td, .sov-chat-inline-table th,
+.diag-node-sub, .diag-node-state, .sov-session-meta, .sov-chip {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* 3. ПЛАВНОСТЬ СОСТОЯНИЙ — hover/active/focus мягкие, не мгновенные. */
+.q-btn, .q-tab, .mode-rag, .mode-code, .sov-format-btn, .les-map-preset,
+.card-les, .les-fuse, .diag-node, .diag-acronym-item, .sov-session-card,
+.kpi-box, .q-field__control, .sov-chip, .les-runtime-service {
+  transition: background-color .16s ease, border-color .16s ease,
+              box-shadow .16s ease, transform .12s ease, filter .16s ease;
+}
+
+/* 4. КНОПКИ — тактильность: лёгкая подсветка на наведении, «вдавливание» на нажатии. */
+.q-btn:hover:not(:disabled) { filter: brightness(1.08); }
+.q-btn:active:not(:disabled) { transform: translateY(1px); }
+
+/* 5. КАРТОЧКИ/ПРЕДОХРАНИТЕЛИ/УЗЛЫ — лёгкий подъём при наведении (без дрожи слоя). */
+.card-les:hover, .les-fuse:hover, .kpi-box:hover,
+.diag-node:hover, .diag-acronym-item:hover, .les-runtime-service:hover {
+  border-color: rgba(52,211,153,.46);
+  box-shadow: 0 4px 18px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.05);
+}
+
+/* 6. ПОЛЯ ВВОДА — мягкое фокус-кольцо акцентом (дополняет focus-visible). */
+.q-field--focused .q-field__control {
+  border-color: rgba(52,211,153,.7) !important;
+  box-shadow: 0 0 0 3px rgba(52,211,153,.14);
+}
+
+/* 7. СТРОКИ ТАБЛИЦ — наведение читается мягче, выделяет текущую строку. */
+.q-table tbody tr { transition: background-color .14s ease; }
+.q-table tbody tr:hover td { background: var(--bg-mod) !important; }
+
+/* ═══ EVIDENCE UI v0.16 — статус-полоска, бейджи, source-chips, проза ═══════════════════ */
+
+/* Проза ответа — читаемый sans (моноширинный оставляем кодам/таблицам/числам). */
+:root { --font-prose: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
+        'Inter', system-ui, sans-serif; }
+.sov-chat-md, .sov-chat-message-text, .sov-artifact-markdown {
+  font-family: var(--font-prose) !important;
+  line-height: 1.55;
+}
+.sov-chat-md code, .sov-chat-message-text code { font-family: var(--font) !important; }
+
+/* Статус-полоска ответа: статус + бейджи evidence + источники + intent. */
+.sov-ev-header {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 9px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(138,162,184,.18);
+}
+.sov-ev-status {
+  font-family: var(--font);
+  font-size: .6rem;
+  font-weight: 900;
+  letter-spacing: .06em;
+  padding: 2px 9px;
+  border-radius: 5px;
+  border: 1px solid currentColor;
+}
+.sov-ev-badge {
+  font-family: var(--font);
+  font-size: .56rem;
+  font-weight: 800;
+  letter-spacing: .04em;
+  padding: 2px 7px;
+  border-radius: 5px;
+  border: 1px solid color-mix(in srgb, currentColor 42%, transparent);
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+.sov-ev-meta { color: var(--dim); font-size: .62rem; font-family: var(--font); }
+/* Сдержанные семантические тона (не неон). */
+.sov-ev-ok   { color: var(--ok); }
+.sov-ev-acc  { color: var(--accent); }
+.sov-ev-warn { color: var(--warn); }
+.sov-ev-err  { color: var(--err); }
+.sov-ev-dim  { color: var(--dim); }
+.sov-ev-status.sov-ev-ok  { background: rgba(34,224,111,.10); }
+.sov-ev-status.sov-ev-warn{ background: rgba(255,209,102,.10); }
+.sov-ev-status.sov-ev-err { background: rgba(255,107,107,.11); }
+.sov-ev-status.sov-ev-dim { background: rgba(138,162,184,.10); }
+
+/* Trace — компактный, свёрнут по умолчанию. */
+.sov-ev-trace { margin-top: 8px; }
+.sov-ev-trace .q-expansion-item__label { font-size: .62rem; color: var(--dim); }
+.sov-ev-trace-text { font-family: var(--font); font-size: .6rem; color: var(--dim); line-height: 1.5; }
+
+/* Source-chips: «N · file · абз.85» — кликабельный вид, моноширинный локатор. */
+.src-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font);
+  font-size: .58rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 5px;
+  border: 1px solid rgba(34,224,111,.45);
+  color: var(--ok);
+  background: rgba(34,224,111,.07);
+  cursor: default;
+  transition: background-color .14s ease, border-color .14s ease;
+}
+.src-tag:hover { background: rgba(34,224,111,.14); border-color: rgba(34,224,111,.7); }
+
+/* Inline-таблица в чате: читаемее, не «терминал». */
+.sov-chat-inline-table { font-family: var(--font); font-size: .74rem; }
+.sov-chat-inline-table thead th {
+  position: sticky; top: 0;
+  background: var(--bg-mod) !important;
+  font-weight: 800; letter-spacing: .02em;
+}
+.sov-chat-inline-table td, .sov-chat-inline-table th { font-variant-numeric: tabular-nums; }
+
+/* v0.20 — действия ответа (Копировать), бейдж версии, меню примеров. */
+.sov-answer-actions { opacity: .55; transition: opacity .14s ease; }
+.chat-msg-ai:hover .sov-answer-actions { opacity: 1; }
+.sov-answer-act {
+  color: var(--dim) !important;
+  font-size: .58rem !important;
+  font-family: var(--font);
+  padding: 1px 7px !important;
+  min-height: 0 !important;
+}
+.sov-answer-act:hover { color: var(--accent) !important; }
+.sov-examples-menu .q-item { min-height: 0; padding: 3px 12px; }
+
+/* ═══ v0.24 UI-РЕФРЕШ · Этап 1 — читаемость + де-терминал хрома (аддитивно, обратимо) ═══════ */
+/* Хром (шапка/табы/лейблы/чипы/действия) → чистый sans вместо моно, размеры ≥12px.            */
+/* Данные (таблицы/логи/числа/коды) остаются моноширинными. Плотные диаг-сетки не трогаем.      */
+:root {
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', system-ui, sans-serif;
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+}
+.les-top-tabs .q-tab__label {
+  font-family: var(--font-ui) !important;
+  font-size: var(--fs-sm) !important;
+  max-width: 200px !important;
+  letter-spacing: 0 !important;
+  line-height: 1.1 !important;
+}
+.les-top-tabs .q-tab__icon { font-size: 20px !important; }
+.les-brand { font-family: var(--font-ui) !important; text-shadow: none !important; }
+.q-btn__content, .q-item__label, .q-field__label, .q-tab__label,
+.sov-panel-title, .section-title, .sov-chat-title, .sov-chat-subtitle,
+.sov-session-title, .sov-tree-name, .sov-answer-act {
+  font-family: var(--font-ui) !important;
+}
+.src-tag, .sov-chip, .sov-ev-status, .sov-answer-act,
+.sov-ev-meta, .sov-chat-subtitle, .sov-session-meta, .sov-muted {
+  font-size: var(--fs-xs) !important;
+}
+.sov-ev-badge { font-size: 11.5px !important; }
+.src-tag i { font-size: 14px !important; }
+/* Этап 4 — чат: бабблы круглее/крупнее, чипы-источники как пилюли, подсказка композера. */
+.chat-msg-user, .chat-msg-ai {
+  border-radius: 12px !important;
+  padding: 11px 15px !important;
+  font-size: 14px !important;
+  line-height: 1.6 !important;
+}
+.chat-msg-user { background: var(--bg-mod) !important; border-right: 1px solid var(--border) !important; }
+.chat-msg-ai { border-left: 2px solid var(--accent) !important; }
+.src-tag { border-radius: 7px !important; padding: 3px 9px !important; }
+.sov-composer { border-radius: 12px !important; }
+.sov-composer-hint {
+  color: var(--dim);
+  font-size: 11.5px;
+  font-family: var(--font-ui);
+  padding: 2px 4px 0;
+  opacity: .82;
 }
 </style>
 """

@@ -1,0 +1,4 @@
+interface:
+  display_name: "АРТЕЛЬ"
+  short_description: "АРТЕЛЬ plus LES RAG workflow"
+  default_prompt: "Use $agnostis to work on the АРТЕЛЬ Revit family platform with LES RAG context."

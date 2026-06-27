@@ -170,7 +170,7 @@ def test_dispatcher_memory_recommendations_report_manual_candidates(tmp_path):
                 pid=101,
                 user="ovc",
                 rss_mb=650.0,
-                command="<LOCAL_LES_ROOT>/.venv/bin/python3 mlx_host.py",
+                command="/Users/ovc/Projects/LES_v2/.venv/bin/python3 mlx_host.py",
                 les_owned=True,
                 protected=False,
             ),

@@ -27,10 +27,22 @@ from backend.smart_index import SKIP_DIRS, build_smart_plan, should_index_source
 from proxy.config import max_upload_bytes, mlx_url, rag_upload_suffixes
 from proxy.security import require_admin, require_user
 from proxy.services.context_expander_service import expand_context_windows
+from proxy.services.context_memory_service import (
+    build_dataset_profile,
+    get_dataset_profile,
+    warmup_dataset_profiles,
+)
 from proxy.services.resource_governor import active_parse_priority_order, current_runtime_profile
 from proxy.services.runtime_admission import evaluate_memory_pressure
 from proxy.services.retrieval_service import classify_query, resolve_dataset_ids, retrieve_chat_chunks
-from proxy.storage.file_storage import save_upload_tmp, safe_dataset_storage_dir, safe_upload_name, validate_source_folder
+from proxy.storage.file_storage import (
+    is_within_external_root,
+    safe_dataset_storage_dir,
+    safe_upload_name,
+    save_upload_tmp,
+    validate_external_source,
+    validate_source_folder,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +110,16 @@ class FolderWatchRequest(BaseModel):
     limit: int = Field(default=20, ge=1, le=200)
 
 
+class IndexExternalRequest(BaseModel):
+    path: str = Field(min_length=1)
+    dataset_id: str = Field(min_length=1)
+    parse: bool = True
+    parse_limit: int = Field(default=25, ge=1, le=500)
+    auto_split: bool = True  # крупные PDF режутся (tools/pdf_preprocess) перед регистрацией
+    split_max_mb: float = Field(default=40.0, ge=5, le=500)
+    background: bool = False  # True → регистрация+нарезка+парс в фоне, мгновенный ответ (большие папки)
+
+
 class ParseSchedulerRequest(BaseModel):
     batch_limit: int = Field(default=DEFAULT_PARSE_SCHEDULER_BATCH_LIMIT, ge=1, le=25)
     max_batches: int = Field(default=DEFAULT_PARSE_SCHEDULER_MAX_BATCHES, ge=1, le=500)
@@ -113,6 +135,13 @@ class ParseSchedulerRequest(BaseModel):
     stop_on_error: bool = False
     background: bool = True
     dataset_priority_order: list[str] | None = None
+
+
+class DatasetProfileWarmupRequest(BaseModel):
+    dataset_ids: list[str] | None = None
+    depth: str = "deep"
+    force: bool = False
+    limit: int = Field(default=0, ge=0, le=500)
 
 
 _state: DatasetRouterState | None = None
@@ -164,7 +193,12 @@ async def parse_memory_state() -> dict[str, Any]:
             response.raise_for_status()
             memory = (response.json().get("memory") or {})
     except Exception as error:
-        raise HTTPException(status_code=503, detail=f"MLX health failed: {error}") from error
+        # MLX-хост недостижим/не-MLX (Windows-lite, ollama/облако: MLX_URL не отдаёт /api/health).
+        # MLX-memory-guard защищает от OOM при локальной загрузке MLX-моделей — без MLX он
+        # НЕПРИМЕНИМ. Не блокируем индексацию (иначе на Windows upload навечно queued), а
+        # возвращаем пермиссивное состояние. На Mac (MLX жив, /api/health 200) guard остаётся.
+        logger.warning("[PARSE] MLX memory probe failed (%s) — MLX-memory-guard пропущен (нет MLX)", error)
+        return {"ram_free_gb": 999.0, "swap_pct": 0.0, "state": "ok", "raw": {}, "mlx_available": False}
 
     ram_free = memory.get("ram_free_gb")
     swap = memory.get("swap_pct")
@@ -263,13 +297,19 @@ async def assert_parse_admission(
     memory = await parse_memory_state()
     ram_free_gb = memory["ram_free_gb"]
     swap_pct = memory["swap_pct"]
-    if ram_free_gb < min_free_gb or swap_pct > max_swap_pct:
+    # На macOS swap_pct почти ВСЕГДА высок (висячие stale-аллокации) даже при куче свободной RAM —
+    # это НЕ давление памяти. Надёжный сигнал = свободная RAM. Блокируем при низкой RAM, либо при
+    # ЭКСТРЕМАЛЬНОМ swap-thrashing (>90%) одновременно с уже подсевшей RAM. max_swap_pct (дефолт под
+    # не-macOS, 45%) для блокировки НЕ используем — иначе нормальный macOS-swap ложно режет индексацию.
+    swap_thrash_floor = min_free_gb * 1.5
+    ram_low = ram_free_gb < min_free_gb
+    swap_thrash = swap_pct > 90.0 and ram_free_gb < swap_thrash_floor
+    if ram_low or swap_thrash:
         raise HTTPException(
             status_code=429,
             detail=(
-                f"parse rejected by memory guard: ram_free_gb={ram_free_gb}, "
-                f"swap_pct={swap_pct}, required ram_free_gb>={min_free_gb}, "
-                f"swap_pct<={max_swap_pct}"
+                f"parse rejected by memory guard: ram_free_gb={ram_free_gb}, swap_pct={swap_pct}; "
+                f"нужно ram_free_gb>={min_free_gb} (swap>90% блокирует только при RAM<{swap_thrash_floor:.0f}ГБ)"
             ),
         )
 
@@ -549,7 +589,7 @@ async def list_documents(
     dataset_id: str | None = None,
     status: str | None = Query(default=None, pattern="^(PENDING|INDEXED|ERROR)$"),
     q: str | None = Query(default=None, max_length=200),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=100, ge=1, le=5000),  # le=500 был тесен: диалог файлов датасета шлёт 1500
     offset: int = Query(default=0, ge=0),
     _user=Depends(require_user),
 ):
@@ -628,6 +668,7 @@ async def list_documents(
                 COALESCE(doc.content_type, '') AS content_type,
                 COALESCE(doc.complexity, '') AS complexity,
                 COALESCE(doc.pipeline, '') AS pipeline,
+                COALESCE(doc.source_path, '') AS source_path,
                 COALESCE(doc.last_error, '') AS last_error
             FROM documents doc
             LEFT JOIN datasets ds ON ds.id = doc.dataset_id
@@ -669,13 +710,23 @@ async def retrieve_debug(req: RetrievalDebugRequest, _user=Depends(require_user)
         logger,
         question=req.question,
     )
+    # W2.3: retrieve-debug идёт ТЕМ ЖЕ путём, что чат (гибрид → реранк) —
+    # иначе гейты и граф «куда смотрит RAG» видят не то, что пользователь.
+    try:
+        from backend.reranker import select_reranker_cls
+
+        _rr_cls = select_reranker_cls()
+        _rr_available = True
+    except ImportError:
+        _rr_cls, _rr_available = None, False
+    _rr_enabled = os.getenv("RERANKER_ENABLED", "true").lower() == "true"
     retrieval = await retrieve_chat_chunks(
         question=req.question,
         dataset_ids=dataset_ids,
         rag_backend=state.backend,
-        reranker_enabled=False,
-        reranker_available=False,
-        reranker_cls=None,
+        reranker_enabled=_rr_enabled,
+        reranker_available=_rr_available,
+        reranker_cls=_rr_cls,
         mlx_url=mlx_url(),
         logger=logger,
         return_trace=True,
@@ -755,6 +806,129 @@ async def retrieve_debug(req: RetrievalDebugRequest, _user=Depends(require_user)
 async def create_dataset(name: str, _admin=Depends(require_admin)):
     state = get_dataset_state()
     return {"id": await state.backend.create_dataset(name), "name": name}
+
+
+@router.patch("/datasets/{dataset_id}/sensitivity")
+async def set_dataset_sensitivity(dataset_id: str, sensitivity: str, _admin=Depends(require_admin)):
+    """W3.3 (ADR-9): пометить чувствительность датасета — P0 local-only / P1 / P2."""
+    level = (sensitivity or "").strip().upper()
+    if level not in ("P0", "P1", "P2"):
+        raise HTTPException(400, "sensitivity must be P0, P1 or P2")
+    await get_dataset_state().backend.set_dataset_sensitivity(dataset_id, level)
+    return {"id": dataset_id, "sensitivity": level}
+
+
+@router.patch("/datasets/{dataset_id}/group")
+async def set_dataset_group(dataset_id: str, group: str = "", _admin=Depends(require_admin)):
+    """Пользовательская группа датасета — организация списка в САМОВАРе (на поиск не влияет)."""
+    grp = (group or "").strip()[:60]
+    await get_dataset_state().backend.set_dataset_group(dataset_id, grp)
+    return {"id": dataset_id, "group_name": grp}
+
+
+@router.get("/datasets/{dataset_id}/profile")
+async def dataset_context_profile(dataset_id: str, depth: str = "deep", _user=Depends(require_user)):
+    """Паспорт датасета: состав, покрытие и путь к sidecar-файлу."""
+    return get_dataset_profile(dataset_id, storage_root=Path("storage/datasets"), depth=depth)
+
+
+@router.post("/datasets/{dataset_id}/profile/refresh")
+async def refresh_dataset_context_profile(dataset_id: str, depth: str = "deep", _admin=Depends(require_admin)):
+    """Пересобрать паспорт датасета и записать sidecar рядом с датасетом."""
+    return build_dataset_profile(dataset_id, storage_root=Path("storage/datasets"), force=True, depth=depth)
+
+
+@router.post("/datasets/profiles/warmup")
+async def warmup_dataset_context_profiles(req: DatasetProfileWarmupRequest, _admin=Depends(require_admin)):
+    """Прогреть паспорта датасетов. No-reindex: читает только MetaDB/lexical index."""
+    return warmup_dataset_profiles(
+        dataset_ids=req.dataset_ids,
+        storage_root=Path("storage/datasets"),
+        depth=req.depth,
+        force=req.force,
+        limit=req.limit,
+    )
+
+
+# ── v0.16 §5: extraction body ops (status / dry-run / approved write) ─────────────────────
+_EXTRACT_STORAGE_ROOT = Path("storage/datasets")
+
+
+@router.get("/datasets/{dataset_id}/extraction-status")
+async def extraction_status_endpoint(dataset_id: str, _admin=Depends(require_admin)):
+    """Read-only: что можно извлечь, есть ли sidecar/manifest/stale, OCR, extraction-state. Без записи."""
+    from proxy.services import sidecar_ops_service as ops
+    return ops.extraction_status(dataset_id, storage_root=_EXTRACT_STORAGE_ROOT)
+
+
+@router.post("/datasets/{dataset_id}/repair")
+async def repair_dataset(dataset_id: str, _admin=Depends(require_admin)):
+    """«Ремонт»: ERROR-файлы датасета → PENDING (без удаления датасета/индекса), затем перепарс.
+    Возвращает число поставленных в очередь. Парс — фоном (parse-scheduler), если есть что чинить."""
+    backend = get_dataset_state().backend
+    requeued = await asyncio.to_thread(backend.db.requeue_error_documents, dataset_id)
+    if requeued:
+        backend.db.update_dataset_status(dataset_id, "IDLE")
+    return {"id": dataset_id, "requeued": requeued,
+            "hint": "нажмите Пуск (parse-scheduler) для переиндексации" if requeued else "ошибочных файлов нет"}
+
+
+@router.post("/datasets/{dataset_id}/reconcile")
+async def reconcile_dataset_endpoint(dataset_id: str, _admin=Depends(require_admin)):
+    """РЕКОНСАЙЛ MetaDB↔Qdrant: сверяет точки каждого INDEXED-документа; рассинхронные → PENDING
+    (переиндексация чинит). Лечит тихую потерю recall от сбоев cleanup/краша. Дорогая операция-ремонт."""
+    backend = get_dataset_state().backend
+    res = await asyncio.to_thread(backend.reconcile_dataset, dataset_id)
+    if res.get("requeued"):
+        backend.db.update_dataset_status(dataset_id, "IDLE")
+    res["hint"] = ("нажмите Пуск для переиндексации рассинхронных" if res.get("requeued")
+                   else "рассинхрона нет — индекс согласован")
+    return res
+
+
+@router.post("/datasets/{dataset_id}/extract-body/dry-run")
+async def extract_body_dry_run(dataset_id: str, _admin=Depends(require_admin)):
+    """Dry-run извлечения: сколько файлов/абзацев/строк извлечётся. Ничего не пишет, оригиналы целы."""
+    from proxy.services import sidecar_ops_service as ops
+    return ops.extract_body_op(dataset_id, storage_root=_EXTRACT_STORAGE_ROOT, write=False)
+
+
+@router.post("/datasets/{dataset_id}/extract-body/write")
+async def extract_body_write(dataset_id: str, confirm_runtime_write: bool = False,
+                             _admin=Depends(require_admin)):
+    """Запись sidecar — ТОЛЬКО при confirm_runtime_write=true И env LES_ALLOW_RUNTIME_SIDECAR_WRITE=1
+    (гейт внутри). Без env → blocked-ответ (dry-run). Оригиналы не меняются, пишутся только _extracted/."""
+    from proxy.services import sidecar_ops_service as ops
+    rep = ops.extract_body_op(dataset_id, storage_root=_EXTRACT_STORAGE_ROOT, write=True,
+                              confirm_runtime_write=confirm_runtime_write)
+    # blocked → 200 с самоописывающим отчётом (write_blocked + wrote_sidecars=0 + dry_run=True),
+    # GUI показывает причину и следующее действие; оригиналы не тронуты в любом случае.
+    return rep
+
+
+@router.get("/graph/edges")
+async def graph_reference_edges(_user=Depends(require_user)):
+    """W5.7-v2: рёбра «документ → документ» по упоминаниям номеров НТД (FTS, без LLM)."""
+    import asyncio as _asyncio
+
+    from proxy.services.graph_edges_service import build_reference_edges
+
+    state = get_dataset_state()
+    collection = getattr(state.backend, "collection_name", "")
+    return await _asyncio.to_thread(build_reference_edges, collection)
+
+
+@router.get("/graph/full")
+async def graph_full(_user=Depends(require_user)):
+    """Полный граф знаний: Проект→Датасет→Документ + NTD-ссылки, с метаданными узлов
+    (для раскраски по проекту/датасету/типу/домену, размера по чанкам, клика→scope)."""
+    import asyncio as _asyncio
+
+    from proxy.services.graph_edges_service import build_graph_full
+
+    state = get_dataset_state()
+    collection = getattr(state.backend, "collection_name", "")
+    return await _asyncio.to_thread(build_graph_full, collection)
 
 
 @router.get("/sources")
@@ -1131,6 +1305,201 @@ async def sync_smart(req: SmartSyncRequest, _admin=Depends(require_admin)):
     }
 
 
+def _auto_run_pipelines(root, les_md: dict | None) -> None:
+    """Авто-исполнение директив LES.md в фоне (ид→asbuilt). Без команды оператора."""
+    pipelines = (les_md or {}).get("pipelines") or {}
+    if not isinstance(pipelines, dict):
+        return
+    if str(pipelines.get("ид") or pipelines.get("id") or "").strip().lower() == "asbuilt":
+        from proxy.services.asbuilt_intake_service import iter_pdfs, process_path
+        if not iter_pdfs(root):
+            return
+        pid = int((les_md or {}).get("project_id") or 0)
+        engine = os.getenv("LES_ASBUILT_OCR_ENGINE", "local")
+
+        def _job():
+            try:
+                process_path(root, rotate="auto", engine=engine, write=True,
+                             status="pending", project_id=pid)
+            except Exception as err:  # noqa: BLE001
+                logger.error("[AUTO-PIPELINE] asbuilt %s: %s", root, err)
+
+        threading.Thread(target=_job, name="auto-asbuilt", daemon=True).start()
+        logger.info("[AUTO-PIPELINE] ид→asbuilt запущен в фоне: %s", root)
+
+
+@router.post("/index-external")
+async def index_external(req: IndexExternalRequest, _admin=Depends(require_admin)):
+    """In-place индексация одобренной внешней папки.
+
+    Исходники НЕ копируются в storage — в LES попадают только производные
+    (Qdrant-векторы, Parquet, метаданные). Путь обязан быть внутри
+    LES_EXTERNAL_SOURCE_ROOTS (resolve снимает симлинки → ссылка/`..` наружу
+    отклоняется). Каждый файл дополнительно проверяется на выход за корень.
+    """
+    state = get_dataset_state()
+    root = validate_external_source(req.path)
+
+    ds_list = await state.backend.list_datasets()
+    dataset = next((dataset for dataset in ds_list if dataset.id == req.dataset_id), None)
+    if dataset is None:
+        raise HTTPException(404, f"dataset_id не найден: {req.dataset_id} (создайте датасет заранее)")
+
+    if req.background:
+        asyncio.create_task(_index_external_run(state, req, root, dataset))
+        return {"status": "started", "dataset_id": req.dataset_id, "dataset_name": dataset.name,
+                "note": "регистрация и индексация идут в фоне — файлы появятся в датасете"}
+    return await _index_external_run(state, req, root, dataset)
+
+
+async def _index_external_run(state, req, root, dataset) -> dict:
+    """Тело in-place индексации: нарезка крупных PDF + регистрация файлов + LES.md + (опц.) парс.
+    Выносимо в фон (req.background) — не зависит от HTTP-таймаута на больших папках (758 файлов = ~47с)."""
+    # Авто-нарезка крупных PDF (штатная часть ЛЕСа, tools/pdf_preprocess): чистим+режем
+    # гиганты на части < split_max_mb (границы по оглавлению), оригиналы → в _originals/.
+    # Без этого 150–200МБ-каталог вешает конвертер (блокирует event loop). Не роняет индексацию.
+    split_summary = {"split_files": 0, "parts": 0}
+    if req.auto_split:
+        try:
+            from tools.pdf_preprocess import preprocess_dir
+            max_bytes = int(req.split_max_mb * 1024 * 1024)
+            results = await asyncio.to_thread(preprocess_dir, root, max_bytes)
+            for r in results:
+                if getattr(r, "action", "") == "clean+split" and getattr(r, "split", None):
+                    split_summary["split_files"] += 1
+                    split_summary["parts"] += len(r.split.parts)
+            if split_summary["split_files"]:
+                logger.info("[INDEX-EXT] авто-нарезка: %s гигантов → %s частей",
+                            split_summary["split_files"], split_summary["parts"])
+        except Exception as err:  # noqa: BLE001 — нарезка не должна ронять индексацию
+            logger.warning("[INDEX-EXT] авто-нарезка пропущена: %s", err)
+
+    suffixes = rag_upload_suffixes()
+    registered = 0
+    skipped_unsupported = 0
+    skipped_outside_root = 0
+    samples: list[str] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        if "_originals" in path.parts:  # архив оригиналов после нарезки — не индексируем
+            continue
+        # Анти-traversal: симлинк внутри папки, указывающий наружу корня, отбрасываем.
+        if not is_within_external_root(path, root):
+            skipped_outside_root += 1
+            continue
+        resolved = path.resolve()
+        if resolved.suffix.lower() not in suffixes:
+            skipped_unsupported += 1
+            continue
+        # file_name — путь относительно родителя корня: "<папка>/rel" (читаемо и уникально).
+        file_name = resolved.relative_to(root.parent).as_posix()
+        await state.backend.register_external_file(req.dataset_id, resolved, file_name)
+        registered += 1
+        if len(samples) < 10:
+            samples.append(file_name)
+
+    if registered == 0:
+        raise HTTPException(400, f"в папке нет поддерживаемых документов: {root}")
+
+    # Auto-init: дал папку индексировать → LES.md появляется сам + привязка к проекту,
+    # затем авто-исполнение директив (ид→asbuilt и т.п.) в фоне. 0 команд от оператора.
+    les_md_summary = None
+    try:
+        from proxy.services.les_md_service import read_and_bind
+        les_md_summary = await asyncio.to_thread(read_and_bind, root, write_draft=True)
+        # #2 симметрия: привязать СОЗДАННЫЙ датасет к объекту (kind='dataset'), а не только папку.
+        # Иначе датасет и проект жили раздельно → режим датасета терял LES.md, обратный поиск пуст.
+        _md_pid = int((les_md_summary or {}).get("project_id") or 0)
+        if _md_pid:
+            from proxy.services.project_service import link_entity
+            await asyncio.to_thread(link_entity, _md_pid, "dataset", req.dataset_id)
+        if os.getenv("LES_AUTO_PIPELINES", "true").lower() in ("1", "true", "yes", "on"):
+            _auto_run_pipelines(root, les_md_summary)
+    except Exception as err:  # noqa: BLE001 — авто-init не должен ронять индексацию
+        logger.warning("[LES.md] auto-init при индексации %s: %s", root, err)
+
+    parse_started = False
+    if req.parse:
+        async def _parse():
+            async with state.parse_semaphore:
+                await assert_parse_admission(state)
+                await state.backend.parse_dataset(req.dataset_id, limit=req.parse_limit)
+
+        asyncio.create_task(_parse())
+        parse_started = True
+
+    return {
+        "status": "registered",
+        "source_root": root.as_posix(),
+        "dataset_id": req.dataset_id,
+        "dataset_name": dataset.name,
+        "registered_files": registered,
+        "skipped_unsupported": skipped_unsupported,
+        "skipped_outside_root": skipped_outside_root,
+        "split_large_pdfs": split_summary["split_files"],
+        "split_parts": split_summary["parts"],
+        "in_place": True,
+        "copied_to_storage": False,
+        "parse_started": parse_started,
+        "parse_limit": req.parse_limit,
+        "samples": samples,
+        "les_md": les_md_summary,  # auto-init: что ЛЕС сам понял о папке + директивы
+    }
+
+
+def _count_dir_files(d: Path) -> int:
+    """Быстрый счёт файлов в папке (только непосредственные дети) — для подсказки в браузере."""
+    try:
+        return sum(1 for x in d.iterdir() if x.is_file() and not x.name.startswith("."))
+    except OSError:
+        return 0
+
+
+@router.get("/browse-external")
+async def browse_external(path: str = "", _admin=Depends(require_admin)):
+    """Серверный браузер папок для выбора внешней папки кликами (без печати пути).
+
+    По умолчанию (LES_EXTERNAL_ALLOW_ANY, single-user) — браузер ходит по ВСЕЙ локальной ФС от
+    $HOME, любая папка индексируема. Строгий режим (=0) ограничивает корнями LES_EXTERNAL_SOURCE_ROOTS.
+    Пустой `path` → старт ($HOME + корни как быстрый выбор); иначе — подпапки + «вверх».
+    """
+    from proxy.config import external_source_roots, external_allow_any, external_browse_default
+
+    roots = external_source_roots()
+    allow_any = external_allow_any()
+    if not roots and not allow_any:
+        raise HTTPException(403, "внешняя индексация выключена: LES_EXTERNAL_SOURCE_ROOTS пуст")
+
+    if not (path or "").strip():
+        if allow_any:
+            start = external_browse_default()      # $HOME — отсюда видно любую папку
+            dirs = []
+            try:
+                for child in sorted(start.iterdir(), key=lambda p: p.name.lower()):
+                    if child.is_dir() and not child.name.startswith("."):
+                        dirs.append({"name": child.name, "path": str(child), "file_count": _count_dir_files(child)})
+            except OSError:
+                pass
+            return {"path": str(start), "parent": str(start.parent) if start.parent != start else None,
+                    "roots": [str(r) for r in roots], "dirs": dirs}
+        return {"path": "", "parent": None, "roots": [str(r) for r in roots],
+                "dirs": [{"name": r.name or str(r), "path": str(r), "file_count": _count_dir_files(r)} for r in roots]}
+
+    current = validate_external_source(path)  # resolve+isdir guard (+ allowlist если строгий режим)
+    dirs = []
+    for child in sorted(current.iterdir(), key=lambda p: p.name.lower()):
+        try:
+            if child.is_dir() and not child.name.startswith("."):
+                dirs.append({"name": child.name, "path": str(child), "file_count": _count_dir_files(child)})
+        except OSError:
+            continue
+    # в allow_any можно подниматься до корня ФС; в строгом — не выше одобренного корня.
+    is_root = any(current == r for r in roots)
+    parent = None if (current.parent == current or (not allow_any and is_root)) else str(current.parent)
+    return {"path": str(current), "parent": parent, "roots": [str(r) for r in roots], "dirs": dirs}
+
+
 @router.post("/sync/{folder}")
 async def sync_folder(folder: str, _admin=Depends(require_admin)):
     state = get_dataset_state()
@@ -1416,15 +1785,138 @@ async def upload_file(dataset_id: str, file: UploadFile = File(...), _admin=Depe
     doc_id = await state.backend.upload_file(dataset_id, temp_path, relative_path=original_name)
 
     async def _parse():
+        # Дренаж очереди: один upload разгребает батч PENDING (а не 1 док — иначе
+        # пачка аплоадов оставляет хвост висеть, см. фикс индексатора 2026-06-17).
+        try:
+            limit = int(os.getenv("LES_UPLOAD_PARSE_LIMIT", "25"))
+        except ValueError:
+            limit = 25
         try:
             async with state.parse_semaphore:
                 await assert_parse_admission(state)
-                await state.backend.parse_dataset(dataset_id, limit=1)
+                await state.backend.parse_dataset(dataset_id, limit=limit)
         finally:
             temp_path.unlink(missing_ok=True)
 
     asyncio.create_task(_parse())
     return {"doc_id": doc_id, "status": "queued"}
+
+
+# ── Скрепка чата: прикрепить документ (W11.8) ──
+
+_CHAT_ATTACH_DATASET_NAME = "Вложения чата"
+_QUICK_ATTACH_PREFIX = "attach_"
+_ATTACH_STORAGE_ROOT = Path("storage/datasets")
+_READ_ATTACH_MAX_CHARS = int(os.getenv("RAG_ATTACH_READ_MAX_CHARS", "18000"))
+
+
+async def _ensure_chat_attach_dataset(state) -> str:
+    for d in await state.backend.list_datasets():
+        if d.name == _CHAT_ATTACH_DATASET_NAME:
+            return d.id
+    return await state.backend.create_dataset(_CHAT_ATTACH_DATASET_NAME)
+
+
+def _cleanup_quick_attachments(root: Path, max_age_sec: int = 6 * 3600) -> None:
+    """Устаревшие быстрые вложения (parquet-only) удаляем, чтобы не копились в сверке."""
+    if not root.exists():
+        return
+    for d in root.glob(f"{_QUICK_ATTACH_PREFIX}*"):
+        try:
+            if d.is_dir() and (time.time() - d.stat().st_mtime) > max_age_sec:
+                shutil.rmtree(d, ignore_errors=True)
+        except OSError:
+            pass
+
+
+@router.post("/attach")
+async def attach_chat_file(
+    file: UploadFile = File(...),
+    mode: str = Query("quick"),
+    _admin=Depends(require_admin),
+):
+    """Скрепка чата.
+
+    ``mode=read`` — прочитать файл в markdown и вернуть текст как контекст следующего запроса
+    (без индексации); ``mode=quick`` — быстрый парс таблиц в Parquet (без векторов), сразу
+    доступно сверке/таблицам; ``mode=index`` — полная индексация в датасет «Вложения чата»
+    (вектора в Qdrant). На парсе таблиц LLM не участвует (ADR-11).
+    """
+    from uuid import uuid4
+
+    state = get_dataset_state()
+    original_name = safe_upload_name(file.filename or "upload.bin", rag_upload_suffixes())
+    temp_path = await save_upload_tmp(file, allowed_suffixes=rag_upload_suffixes(), max_bytes=max_upload_bytes())
+
+    if mode == "read":
+        try:
+            from backend.converter import convert_to_markdown
+
+            try:
+                text = await asyncio.to_thread(convert_to_markdown, temp_path)
+            except Exception as error:  # noqa: BLE001 - upload errors must stay operator-visible
+                logger.warning("[ATTACH] read conversion failed for %s: %s", original_name, error)
+                raise HTTPException(
+                    422,
+                    f"Не удалось прочитать файл «{original_name}»: {error}. "
+                    "Попробуй режим индексации/OCR или другой формат файла.",
+                ) from error
+        finally:
+            temp_path.unlink(missing_ok=True)
+        text = (text or "").strip()
+        if not text:
+            raise HTTPException(
+                422,
+                f"Не удалось прочитать текст из «{original_name}». "
+                "Для таблиц попробуй режим быстрой сверки, для сканов — индексацию/OCR.",
+            )
+        truncated = len(text) > _READ_ATTACH_MAX_CHARS
+        return {
+            "attachment_id": f"read_{uuid4().hex[:12]}",
+            "mode": "read",
+            "name": original_name,
+            "chars": len(text),
+            "text": text[:_READ_ATTACH_MAX_CHARS],
+            "truncated": truncated,
+        }
+
+    if mode == "index":
+        ds_id = await _ensure_chat_attach_dataset(state)
+        doc_id = await state.backend.upload_file(ds_id, temp_path, relative_path=original_name)
+
+        async def _parse():
+            try:
+                async with state.parse_semaphore:
+                    await assert_parse_admission(state)
+                    await state.backend.parse_dataset(ds_id, limit=25)
+            finally:
+                temp_path.unlink(missing_ok=True)
+
+        asyncio.create_task(_parse())
+        return {"attachment_id": ds_id, "mode": "index", "name": original_name,
+                "dataset_name": _CHAT_ATTACH_DATASET_NAME, "doc_id": doc_id, "status": "queued"}
+
+    # quick: парс таблиц в Parquet-«датасет», который сверка обнаружит автоматически
+    from backend.parquet_writer import TableNormalizer
+
+    _cleanup_quick_attachments(_ATTACH_STORAGE_ROOT)
+    attach_id = f"{_QUICK_ATTACH_PREFIX}{uuid4().hex[:12]}"
+    attach_dir = _ATTACH_STORAGE_ROOT / attach_id
+    try:
+        norm = TableNormalizer(use_llm=False, parquet_dir=str(attach_dir / "_parquet"))
+        res = await norm.process(str(temp_path), dataset_id=attach_id)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+    if not res.get("rows"):
+        shutil.rmtree(attach_dir, ignore_errors=True)
+        raise HTTPException(
+            422, f"В файле «{original_name}» не найдено табличных строк для быстрой сверки. "
+                 "Для текстовых документов используй режим индексации.",
+        )
+    (attach_dir / "_name.txt").write_text(original_name, encoding="utf-8")
+    return {"attachment_id": attach_id, "mode": "quick", "name": original_name,
+            "rows": res["rows"], "doc_type": res.get("doc_type", "")}
 
 
 @router.post("/upload-smart")

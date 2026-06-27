@@ -104,6 +104,137 @@ def test_route_artel_learning_case_to_artel_index():
     assert route.pipeline == "markdown"
 
 
+def test_route_artel_fop_profile_to_artel_index():
+    probe = DocumentProbe(
+        path=Path("RAG_Content/ARTEL/fop_profiles/FOP2021.md"),
+        suffix=".md",
+        size_bytes=10_000,
+        text_sample=(
+            "# ARTEL FOP Shared Parameter Profile\n"
+            "ФОП shared parameters Revit GUID\n"
+            "ADSK_Наименование GUID=11111111-1111-1111-1111-111111111111"
+        ),
+        has_tables=True,
+    )
+
+    route = classify_document(probe)
+
+    assert route.doc_type == "FOP_PROFILE"
+    assert route.domain == "ARTEL"
+    assert route.dataset_name == "ARTEL_Index"
+    assert route.content_type == "text"
+    assert route.pipeline == "markdown"
+
+
+def test_route_artel_family_guide_to_artel_index():
+    probe = DocumentProbe(
+        path=Path("RAG_Content/ARTEL/family_guides/revit_family_creation_guide_autodesk_2017.pdf"),
+        suffix=".pdf",
+        size_bytes=2_000_000,
+        page_count=45,
+        text_sample=(
+            "РУКОВОДСТВО ПО СОЗДАНИЮ СЕМЕЙСТВ Autodesk Revit\n"
+            "Требования к семействам. Процедура создания семейств."
+        ),
+        has_text_layer=True,
+    )
+
+    route = classify_document(probe)
+
+    assert route.doc_type == "FAMILY_GUIDE"
+    assert route.domain == "ARTEL"
+    assert route.dataset_name == "ARTEL_Index"
+    assert route.content_type == "text"
+    assert route.pipeline == "markdown"
+
+
+def test_route_artel_revit_api_reference_to_artel_index():
+    probe = DocumentProbe(
+        path=Path("RAG_Content/ARTEL/revit_api/revit_api_family_automation_reference.md"),
+        suffix=".md",
+        size_bytes=12_000,
+        text_sample=(
+            "# ARTEL Revit API Reference\n"
+            "Document type: REVIT_API_REFERENCE\n"
+            "FamilyManager FilteredElementCollector Transaction NewFamilyDocument"
+        ),
+        has_tables=True,
+    )
+
+    route = classify_document(probe)
+
+    assert route.doc_type == "REVIT_API_REFERENCE"
+    assert route.domain == "ARTEL"
+    assert route.dataset_name == "ARTEL_Index"
+    assert route.content_type == "text"
+    assert route.pipeline == "markdown"
+
+
+def test_route_artel_revit_model_guide_to_artel_index():
+    probe = DocumentProbe(
+        path=Path("RAG_Content/ARTEL/revit_model_guides/rhino_inside_revit_data_model.md"),
+        suffix=".md",
+        size_bytes=12_000,
+        text_sample=(
+            "# ARTEL Revit Model Guide\n"
+            "Document type: REVIT_MODEL_GUIDE\n"
+            "Understanding Revit's data model. Categories, Families, Types, Parameters."
+        ),
+    )
+
+    route = classify_document(probe)
+
+    assert route.doc_type == "REVIT_MODEL_GUIDE"
+    assert route.domain == "ARTEL"
+    assert route.dataset_name == "ARTEL_Index"
+    assert route.content_type == "text"
+    assert route.pipeline == "markdown"
+
+
+def test_route_artel_revit_api_symbol_map_to_artel_index():
+    probe = DocumentProbe(
+        path=Path("RAG_Content/ARTEL/revit_api_symbol_map/revit_api_2023_symbol_map.md"),
+        suffix=".md",
+        size_bytes=50_000,
+        text_sample=(
+            "# ARTEL Revit API Symbol Map\n"
+            "Document type: REVIT_API_SYMBOL_MAP\n"
+            "Schema: artel.revit_api_symbol_map.v1\n"
+            "Autodesk.Revit.DB.FamilyManager method property namespace"
+        ),
+    )
+
+    route = classify_document(probe)
+
+    assert route.doc_type == "REVIT_API_SYMBOL_MAP"
+    assert route.domain == "ARTEL"
+    assert route.dataset_name == "ARTEL_Index"
+    assert route.content_type == "text"
+    assert route.pipeline == "markdown"
+
+
+def test_route_artel_revit_api_sdk_doc_to_artel_index():
+    probe = DocumentProbe(
+        path=Path("RAG_Content/ARTEL/revit_api_sdk_docs/autodesk_revit_db_familymanager.md"),
+        suffix=".md",
+        size_bytes=30_000,
+        text_sample=(
+            "# ARTEL Revit API SDK Doc\n"
+            "Document type: REVIT_API_SDK_DOC\n"
+            "Source kind: Revit SDK CHM\n"
+            "FamilyManager class members methods properties"
+        ),
+    )
+
+    route = classify_document(probe)
+
+    assert route.doc_type == "REVIT_API_SDK_DOC"
+    assert route.domain == "ARTEL"
+    assert route.dataset_name == "ARTEL_Index"
+    assert route.content_type == "text"
+    assert route.pipeline == "markdown"
+
+
 def test_route_raw_ifc_to_cad_bim_index():
     probe = DocumentProbe(
         path=Path("RAG_Content/CAD_BIM/IFC/model.ifc"),
@@ -165,7 +296,7 @@ def test_route_metadata_is_added_to_table_payload(tmp_path):
 
     route = route_document(csv_path)
     adapter = QdrantLlamaIndexAdapter.__new__(QdrantLlamaIndexAdapter)
-    nodes = adapter._sync_table_nodes(csv_path, data_dir, "ds-1", route)
+    nodes = adapter._sync_table_nodes(csv_path, data_dir, "smeta.csv", "ds-1", route)
 
     assert nodes[0]["payload"]["doc_type"] == "SMETA"
     assert nodes[0]["payload"]["domain"] == "TABLE_SMETA"

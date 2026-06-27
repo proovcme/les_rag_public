@@ -1,0 +1,165 @@
+{
+  "version": 1,
+  "description": "Domain acceptance retrieval checks for FIRE and HVAC. These cases verify route selection and top evidence before spending LLM time.",
+  "cases": [
+    {
+      "id": "fire_sp7_clause_7_3",
+      "question": "Найди пункт 7.3 в СП 7.13130",
+      "expected_route_filter": "NTD_FIRE",
+      "top_k": 8,
+      "min_chunks": 1,
+      "source_top_any": ["СП 7.13130"],
+      "source_top_k": 3
+    },
+    {
+      "id": "fire_smoke_omission_cases",
+      "question": "В каких случаях допускается не выполнять систему дымоудаления?",
+      "expected_route_filter": "NTD_FIRE",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["дымоудален", "допускается"],
+      "source_top_any": ["СП 7.13130"],
+      "source_top_k": 6
+    },
+    {
+      "id": "fire_evac_exit_width",
+      "question": "Какая минимальная ширина эвакуационного выхода?",
+      "expected_route_filter": "NTD_FIRE",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["эвакуац", "0,8"],
+      "source_top_any": ["СП 1.13130"],
+      "source_top_k": 3
+    },
+    {
+      "id": "fire_evac_path_width",
+      "question": "Какая минимальная ширина горизонтальных участков путей эвакуации?",
+      "expected_route_filter": "NTD_FIRE",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["эвакуац", "1,2", "1,0"],
+      "source_top_any": ["СП 1.13130"],
+      "source_top_k": 3
+    },
+    {
+      "id": "fire_alarm_norms",
+      "question": "Какие нормы применяются для систем пожарной сигнализации?",
+      "expected_route_filter": "NTD_FIRE",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["пожарн", "сигнализац"],
+      "source_top_any": ["СП 484", "59638"],
+      "source_top_k": 3
+    },
+    {
+      "id": "fire_soue_norms",
+      "question": "Какие требования применяются к СОУЭ?",
+      "expected_route_filter": "NTD_FIRE",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["соуэ"],
+      "source_top_any": ["СП 3.13130"],
+      "source_top_k": 3
+    },
+    {
+      "id": "fire_resistance_limits",
+      "question": "Где смотреть требования к пределам огнестойкости строительных конструкций?",
+      "expected_route_filter": "NTD_FIRE",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["огнестойк"],
+      "source_top_any": ["СП 2.13130"],
+      "source_top_k": 3
+    },
+    {
+      "id": "fire_fire_truck_access",
+      "question": "Какие требования предъявляются к проездам пожарных автомобилей к зданиям?",
+      "expected_route_filter": "NTD_FIRE",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["пожар", "проезд"],
+      "source_top_any": ["СП 4.13130"],
+      "source_top_k": 3
+    },
+    {
+      "id": "hvac_sp60_scope",
+      "question": "Какие нормы регулируют отопление, вентиляцию и кондиционирование зданий?",
+      "expected_route_filter": "NTD_HVAC",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["отоп", "вентиля", "кондиц"],
+      "source_top_any": ["СП 60.13330"],
+      "source_top_k": 3
+    },
+    {
+      "id": "hvac_air_exchange",
+      "question": "Где смотреть требования к воздухообмену и расходу воздуха в помещениях?",
+      "expected_route_filter": "NTD_HVAC",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["воздухообм", "воздух"],
+      "source_top_any": ["СП 60.13330"],
+      "source_top_k": 3
+    },
+    {
+      "id": "hvac_microclimate",
+      "question": "Какие параметры микроклимата учитываются для систем отопления и вентиляции?",
+      "expected_route_filter": "NTD_HVAC",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["микроклимат", "отоп", "вентиля"],
+      "source_top_any": ["СП 60.13330"],
+      "source_top_k": 3
+    },
+    {
+      "id": "hvac_silencers",
+      "question": "Какие требования применяются к системам шумоглушения воздуховодов?",
+      "expected_route_filter": "NTD_HVAC",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["шумоглуш", "воздух"],
+      "source_top_any": ["СП 271.1325800"],
+      "source_top_k": 3
+    },
+    {
+      "id": "hvac_thermal_insulation",
+      "question": "Где смотреть требования к тепловой изоляции оборудования и трубопроводов?",
+      "expected_route_filter": "NTD_HVAC",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["теплов", "изоляц"],
+      "source_top_any": ["СП 61.13330"],
+      "source_top_k": 3
+    },
+    {
+      "id": "hvac_conditioner_capacity",
+      "question": "Что такое холодопроизводительность кондиционера?",
+      "expected_route_filter": "NTD_HVAC",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["холодопроизвод", "кондицион"],
+      "source_top_any": ["ГОСТ 26963", "СП 60.13330"],
+      "source_top_k": 3
+    },
+    {
+      "id": "hvac_noise_protection",
+      "question": "Где смотреть требования по защите от шума инженерного оборудования?",
+      "expected_route_filter": "NTD_HVAC",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["шум"],
+      "source_top_any": ["СП 51.13330", "СП 353.1325800"],
+      "source_top_k": 3
+    },
+    {
+      "id": "hvac_heat_networks",
+      "question": "Какие нормы применяются к тепловым сетям?",
+      "expected_route_filter": "NTD_HVAC",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["теплов", "сети"],
+      "source_top_any": ["СП 124.13330", "СП 74.13330"],
+      "source_top_k": 3
+    }
+  ]
+}

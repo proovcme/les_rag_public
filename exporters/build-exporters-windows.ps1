@@ -65,7 +65,7 @@ are also included next to the installer for manual loading/debugging.
 Useful modes:
   .\LES.CadBimPluginsSetup.exe --only revit
   .\LES.CadBimPluginsSetup.exe --skip navisworks
-  .\LES.CadBimPluginsSetup.exe --les-url http://127.0.0.1:8050 --local-output-dir "%USERPROFILE%\Documents\LES CAD BIM"
+  .\LES.CadBimPluginsSetup.exe --les-url http://10.195.146.98:8050 --local-output-dir "%USERPROFILE%\Documents\LES CAD BIM"
 
 After install:
   AutoCAD ribbon tab: LES

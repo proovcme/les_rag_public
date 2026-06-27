@@ -1,0 +1,26 @@
+{
+	# Replace placeholders before installing:
+	# {{LES_DOMAIN}}, {{LES_APP_HOST}}, {{LES_TRUSTED_CIDR}}
+}
+
+{{LES_DOMAIN}} {
+	@trusted_network remote_ip {{LES_TRUSTED_CIDR}}
+
+	handle @trusted_network {
+		reverse_proxy /api/* {{LES_APP_HOST}}:8050 {
+			header_up X-LES-Trusted-Network 1
+		}
+		reverse_proxy /* {{LES_APP_HOST}}:8051 {
+			header_up X-LES-Trusted-Network 1
+		}
+	}
+
+	handle {
+		reverse_proxy /api/* {{LES_APP_HOST}}:8050 {
+			header_up X-LES-Trusted-Network ""
+		}
+		reverse_proxy /* {{LES_APP_HOST}}:8051 {
+			header_up X-LES-Trusted-Network ""
+		}
+	}
+}

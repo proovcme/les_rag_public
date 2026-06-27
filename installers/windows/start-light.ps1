@@ -60,6 +60,9 @@ switch ($Provider) {
   "ollama" {
     $env:OLLAMA_BASE_URL = if ($env:OLLAMA_BASE_URL) { $env:OLLAMA_BASE_URL } else { "http://127.0.0.1:11434" }
     if ($Model) { $env:OLLAMA_MODEL = $Model }
+    # Эмбеддер (EmbedClient → {MLX_URL}/v1/embeddings) на Windows идёт в ollama (bge-m3),
+    # а не в несуществующий MLX-хост :18080. Иначе RAG-индексация/ретрив падают (#3/#4).
+    $env:MLX_URL = $env:OLLAMA_BASE_URL
   }
   "lemonade" {
     $env:LEMONADE_BASE_URL = if ($env:LEMONADE_BASE_URL) { $env:LEMONADE_BASE_URL } else { "http://127.0.0.1:13305/api/v1" }

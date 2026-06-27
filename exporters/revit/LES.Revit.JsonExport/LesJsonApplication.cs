@@ -44,7 +44,7 @@ public sealed class LesJsonApplication : IExternalApplication
                 typeof(LesJsonPushCommand).FullName
             )
             {
-                ToolTip = "Export current Revit model and upload it to LES over private LAN or tunnel.",
+                ToolTip = "Export current Revit model and upload it to LES over ZeroTier or tunnel.",
                 Image = LesRibbonIcons.PushToLes(),
                 LargeImage = LesRibbonIcons.PushToLes(),
             };

@@ -98,7 +98,7 @@ internal static class Program
         }
 
         var lesUrls = options.LesUrls.Count == 0
-            ? new List<string> { "http://127.0.0.1:8050" }
+            ? new List<string> { "http://10.195.146.98:8050", "https://les.ovc.me" }
             : options.LesUrls;
         var localOutputDir = string.IsNullOrWhiteSpace(options.LocalOutputDir)
             ? @"%USERPROFILE%\Documents\LES CAD BIM"

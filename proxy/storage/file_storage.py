@@ -25,6 +25,54 @@ def validate_source_folder(folder: str, base: Path = Path("./RAG_Content")) -> P
     return src_dir
 
 
+def validate_external_source(path: str) -> Path:
+    """Принять абсолютный путь ТОЛЬКО если он внутри одобренного корня.
+
+    Корни — LES_EXTERNAL_SOURCE_ROOTS (см. proxy.config.external_source_roots).
+    resolve(strict=True) снимает симлинки и требует существования: ссылка/`..`
+    наружу резолвится в реальную цель и отклоняется, если она вне корней.
+    Возвращает существующую директорию внутри allowlist; иначе HTTPException.
+    """
+    from proxy.config import external_source_roots, external_allow_any
+
+    raw = (path or "").strip()
+    if not raw:
+        raise HTTPException(400, "path обязателен")
+    roots = external_source_roots()
+    allow_any = external_allow_any()
+    # fail-closed: запрещаем только если нет корней И режим «любой каталог» выключен.
+    if not roots and not allow_any:
+        raise HTTPException(403, "внешняя индексация выключена: LES_EXTERNAL_SOURCE_ROOTS пуст")
+    # GUARD остаётся в коде: resolve(strict=True) снимает симлинки и требует существования —
+    # ссылка/`..` наружу резолвится в реальную цель; несуществующий путь отклоняется.
+    try:
+        candidate = Path(raw).expanduser().resolve(strict=True)
+    except FileNotFoundError as error:
+        raise HTTPException(404, f"путь не найден: {raw}") from error
+    except (OSError, RuntimeError) as error:
+        raise HTTPException(400, f"некорректный путь: {raw}") from error
+    if not candidate.is_dir():
+        raise HTTPException(400, "path должен быть директорией")
+    # Allowlist применяется ТОЛЬКО в строгом режиме (LES_EXTERNAL_ALLOW_ANY=0). По умолчанию
+    # (single-user, машина оператора) — любой существующий локальный каталог.
+    if roots and not allow_any:
+        if not any(candidate == root or root in candidate.parents for root in roots):
+            raise HTTPException(403, f"путь вне одобренных корней (LES_EXTERNAL_SOURCE_ROOTS): {candidate}")
+    return candidate
+
+
+def is_within_external_root(path: Path, root: Path) -> bool:
+    """True, если resolve(path) (снят симлинк) лежит внутри уже одобренного root.
+
+    Защита при обходе папки: симлинк на файл, указывающий наружу корня, отбрасывается.
+    """
+    try:
+        resolved = path.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return False
+    return resolved == root or root in resolved.parents
+
+
 def safe_upload_name(filename: str, allowed_suffixes: set[str] | None = None) -> str:
     name = Path(filename or "upload.bin").name
     if name in ("", ".", ".."):

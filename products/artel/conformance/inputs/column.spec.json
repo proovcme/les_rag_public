@@ -1,0 +1,17 @@
+{
+  "id": "spec_col01",
+  "taskId": "task_col01",
+  "status": "approved",
+  "familyName": "Колонна круглая",
+  "revitCategory": "Columns",
+  "sharedParameterProfileId": "fop_2026",
+  "parameters": [
+    {"id": "param_001", "name": "ADSK_Наименование", "source": "shared_parameter", "sharedParameterGuid": "4f5cb6a1-0000-0000-0000-000000000000", "dataType": "Text", "group": "Identity Data", "isInstance": false, "isRequired": true},
+    {"id": "param_002", "name": "Диаметр", "source": "family_parameter", "dataType": "Length", "group": "Dimensions", "isInstance": false, "isRequired": true},
+    {"id": "param_003", "name": "Высота", "source": "family_parameter", "dataType": "Length", "group": "Dimensions", "isInstance": false, "isRequired": true}
+  ],
+  "types": [
+    {"id": "type_001", "name": "Колонна D300 H3000", "values": {"Диаметр": 300, "Высота": 3000}}
+  ],
+  "materials": []
+}

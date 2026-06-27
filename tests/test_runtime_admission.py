@@ -115,3 +115,31 @@ def test_active_job_count_deduplicates_durable_and_memory_jobs():
     )
 
     assert count == 3
+
+
+# ── W3.3-частично: guard по памяти зависит от локальности провайдера ──
+
+def test_memory_guard_on_for_local_providers(monkeypatch):
+    from proxy.services import runtime_admission as ra
+
+    for provider in ("mlx", "ollama", "lemonade"):
+        monkeypatch.setenv("LES_LLM_PROVIDER", provider)
+        monkeypatch.delenv("LES_CHAT_MEMORY_GUARD", raising=False)
+        assert ra.chat_memory_guard_for_provider() is True, provider
+
+
+def test_memory_guard_off_for_cloud_providers(monkeypatch):
+    from proxy.services import runtime_admission as ra
+
+    for provider in ("openrouter", "openai"):
+        monkeypatch.setenv("LES_LLM_PROVIDER", provider)
+        monkeypatch.delenv("LES_CHAT_MEMORY_GUARD", raising=False)
+        assert ra.chat_memory_guard_for_provider() is False, provider
+
+
+def test_memory_guard_cloud_can_be_forced_on(monkeypatch):
+    from proxy.services import runtime_admission as ra
+
+    monkeypatch.setenv("LES_LLM_PROVIDER", "openrouter")
+    monkeypatch.setenv("LES_CHAT_MEMORY_GUARD", "true")
+    assert ra.chat_memory_guard_for_provider() is True

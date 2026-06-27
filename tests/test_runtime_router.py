@@ -146,6 +146,17 @@ async def test_status_includes_chat_admission(runtime_state, monkeypatch):
     assert response["memory_state"]["state"] in {"UNKNOWN", "GREEN"}
 
 
+def test_openai_provider_status_defaults_to_gpt_model(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "openai")
+    monkeypatch.delenv("OPENAI_MODEL", raising=False)
+    monkeypatch.setenv("LLM_MODEL", "mlx-community/Qwen3.5-4B-MLX-4bit")
+
+    status = runtime._provider_status()
+
+    assert status["provider"] == "openai"
+    assert status["model"] == "gpt-4.1"
+
+
 @pytest.mark.asyncio
 async def test_chat_admission_counts_active_dispatcher_reindex(runtime_state, monkeypatch):
     class FakeDispatcher:

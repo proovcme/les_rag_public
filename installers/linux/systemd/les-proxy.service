@@ -1,0 +1,16 @@
+[Unit]
+Description=LES FastAPI proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__LES_ROOT__
+EnvironmentFile=__LES_ROOT__/.env
+ExecStart=__LES_ROOT__/.venv/bin/uvicorn proxy_server:app --host 0.0.0.0 --port 8050
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+

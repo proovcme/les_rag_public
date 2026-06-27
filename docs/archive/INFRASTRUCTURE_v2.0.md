@@ -1,0 +1,219 @@
+# 🖥️ Инфраструктура Л.Е.С. v2.0+ (Mac Mini M4 + host LaunchAgents + MLX)
+
+**Статус:** 🟢 Активна, local consistency closed | **Обновлено:** 07.06.2026 | **Версия:** 4.3 hybrid structural-semantic runtime + CAD/BIM + ARTEL Revit family loop
+**Архитектура:** Headless Mac Mini M4 / 24 GB + ZeroTier P2P + host LaunchAgents (Qdrant + Proxy + UI + optional indexer + П.А.У.К.) + MLX Native Host with Core ML embedder and rules/Core ML validation paths. Docker Desktop/OrbStack удалены из штатного контура. Ollama сохранён как резерв.
+
+**Live baseline 02.06.2026:** local proxy health `ok`: `1212` files, `1212 indexed`, `0 pending`, `0 errors`, `143150` SQLite chunks, `143150` Qdrant points, `points_match_sqlite_chunks=true`. Closeout выполнен под SQLite/Qdrant backup, stale Qdrant points удалены, duplicate-basename pending selection исправлен, Speckle CAD/BIM projection проиндексирован. FIRE/HVAC acceptance gate проходит `16/16`; latest full pytest `365 passed`. External `https://les.ovc.me` отвечает `/` и `/api/health` `200`. Speckle bridge настроен на `https://speckle.ovc.me`; после token setup live probe отвечает `status=ok`, `http_status=200`, `api_token_set=true`, а `502/503/504` остаются классификацией sleeping для будущего сна сервера. Speckle server на Lenovo Legion обновлен до `2.31.5/custom` и patched только для текущего DUI schema compatibility: `Workspace.logoUrl`, `ModelPermissionChecks.canCreateIngestion`, `WorkspacePermissionChecks.canAccessHelpCenter`, disabled-workspaces empty fallback. AutoCAD/Revit/Navisworks V3 connector publish не считается рабочим путем на community self-hosted сервере: V3 connectors требуют workspace-based projects, а open-source/self-hosted workspace module здесь недоступен. CAD/BIM import поддерживает профили AutoCAD/DWG, Revit/RVT, IFC и Excel/Power BI properties через `data/cad_bim_graph.db`, если объектный граф уже извлечен; project `36` / model `шпалерная 36_отсоединено_oleg` импортирован как `432aa0b18f2a` и проиндексирован в `CAD_BIM_Index`.
+
+**ARTEL/Revit baseline 07.06.2026:** `ARTEL_Index` чистый после загрузки family guides, FOP/shared parameters, Revit model/API docs, Revit 2025 SDK/CHM HTML shards and learning cases: `67` files, `28258` chunks, `0` pending, `0` errors, Qdrant points match SQLite chunks. На Legion установлен Revit 2025 и `ARTEL.Revit.FamilyFactory` add-in; backend-only managed tunnel smoke проходит через `127.0.0.1:15057 -> legion:127.0.0.1:5057`. Текущий readiness status: `ready_except_revit_locked`. До разблокировки Windows desktop не запускать Revit autorun как доказательство: locked session produces no validation report.
+
+## 📋 Узлы сети (ZeroTier)
+| Устройство | Роль | IP-адрес | Доступ | ОС |
+|---|---|---|---|---|
+| Mac Mini M4 | Сервер / Хост | 10.195.146.98 | SSH, UI:8051, API:8050, Qdrant:6333, MLX:8080 | macOS 26.4.1 |
+| MacBook Air | Клиент / Управление | 10.195.146.176 | SSH, Browser | macOS |
+| Lenovo Legion | Клиент / Управление | 10.195.146.20 | SSH, Browser | Windows 11 |
+
+**Параметры сети:**
+Network ID: `8d1c312afa249de4` | Подсеть: `10.195.146.0/24` | Транспорт: P2P (UDP 9993)
+
+**Trusted GUI access:** `TRUSTED_NETWORKS=127.0.0.0/8,::1/128,10.195.146.0/24`, role `admin`. Proxy fallback allows trusted ZeroTier clients even if the browser still sends a stale saved API key; public clients with the same stale key remain `401`.
+
+## 🍎 Базовая настройка Mac Mini M4
+| Параметр | Команда / Значение | Назначение |
+|---|---|---|
+| FileVault | Off | Отключено для автономной загрузки |
+| Автологин | `sudo defaults write ... autoLoginUser ovc` | Автоматический вход |
+| Авторестарт | `sudo pmset -a autorestart 1` | Включение после сбоя питания |
+| Сон | `sudo pmset -a sleep 0 disksleep 0` | Запрет спящего режима |
+| Сеть | Ethernet (en0) приоритет №1 | Стабильный линк, ZeroTier не мешает |
+
+## 🤖 MLX Host / модельный стек
+**Сервис:** `mlx_host.py`, порт `8080`
+
+| Модель | Роль | Примечание |
+|---|---|---|
+| `mlx-community/Qwen3.5-4B-MLX-4bit` | main LLM, RAG-ответы | MLX / Metal, live 24 GB default |
+| deterministic `rules` | Т.О.С.К.А. validator | live default after local consistency closeout; Core ML MiniLM kept for measured compare/probe |
+| `MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli` | optional validator candidate | Core ML package `validator_minilm_l6_b1_s512`, installed but not live default |
+| `Qwen/Qwen3-Embedding-0.6B` | embeddings | Core ML package `qwen3_embedding_06b_b1_s512_static`, `compute_units=all`, ANE/GPU eligible |
+| `mlx-community/GLM-OCR-4bit` | Visual OCR / VLM | MLX / Metal, лениво загружается и выгружается с Metal cache clean |
+
+Запуск:
+```bash
+./start_mlx.command
+```
+
+## 🧠 Runtime memory profiles
+Актуальная политика памяти вынесена в отдельный runbook:
+[`RUNTIME_MEMORY_PROFILES.md`](./RUNTIME_MEMORY_PROFILES.md).
+
+Главное правило: сервисы могут быть подняты, но модели не должны жить в памяти
+без активного lease под конкретную операцию. Memory guard имеет право выгружать
+только LES-модели и останавливать LES-owned jobs/services; чужие процессы macOS,
+GUI, IDE и браузеры он не трогает.
+
+## 🤖 Ollama Конфигурация (резерв)
+**Файл:** `~/.ollama/env`
+```env
+OLLAMA_NUM_PARALLEL=1
+OLLAMA_MAX_LOADED_MODELS=1
+OLLAMA_KEEP_ALIVE=10m
+OLLAMA_CONTEXT_LENGTH=8192
+```
+
+**Модели:**
+| Модель | Размер | Роль | RAM |
+|---|---|---|---|
+| `qwen3:14b` | 9.3 GB | RAG-чат, Т.О.С.К.А. валидация | ~9.3 GB |
+| `qwen2.5-coder:14b` | 9.0 GB | Генерация кода (Roo Code) | ~9.0 GB |
+| `bge-m3:latest` | 1.2 GB | Эмбеддинги (векторизация чанков) | ~1.2 GB |
+
+Ollama не является основным runtime. Использовать только как fallback/локального помощника.
+
+## 🧭 Host LaunchAgents v4.0
+**Путь:** `~/Library/LaunchAgents/` и plist-файлы проекта.
+
+| LaunchAgent | Порт | Роль | Статус |
+|---|---:|---|---|
+| `me.ovc.les.qdrant` | 6333/6334 | Qdrant local binary, storage `data/qdrant/` | active |
+| `me.ovc.les.proxy` | 8050 | FastAPI ядро, RAG, CRAG, auth, metrics | active |
+| `com.les.sovushka` | 8051/8066 | Sovushka Lite chat/admin + NiceGUI classic/Qdrant visualizer | active |
+| `me.ovc.les.mlx` | 8080 | MLX LLM/validator/embedder | active |
+| `me.ovc.les.qwen-index-until-done` | — | guarded qwen indexing loop (`batch_limit=1`) | normally stopped between planned reindex waves |
+| `me.ovc.les.pauk` | — | SSH reverse tunnel for `les.ovc.me` (`127.0.0.1:8050/8051` on VPS) | enabled; script exits after spawning ssh tunnel, so launchd state can be `not running` while tunnel PID is alive |
+
+## 🌐 П.А.У.К. / публичный контур
+| Маршрут | Назначение | Backend |
+|---|---|---|
+| `https://les.ovc.me/api/*` | API proxy | `localhost:8050` |
+| `https://les.ovc.me/` | Sovushka Lite chat shell | `localhost:8051` |
+| `https://les.ovc.me/vv` | Public standalone CAD/BIM viewer | VPS static `/var/www/vv` |
+| `https://les.ovc.me/classic` | Legacy NiceGUI chat shell | `localhost:8051` |
+| `https://les.ovc.me/les` | Sovushka Lite Admin shell | `localhost:8051` |
+| `https://les.ovc.me/les/classic` | Legacy NiceGUI Admin shell | `localhost:8051` |
+
+Чат и админка разделены на уровне routes. Основной `/` отдаёт статический Lite-shell
+без NiceGUI client state; `/les` отдаёт статический Lite Admin. Rich NiceGUI chat
+сохранён на `/classic`, rich NiceGUI admin — на `/les/classic`.
+
+Внешний `les.ovc.me` не держит модели на VPS: Caddy проксирует в reverse SSH tunnel
+П.А.У.К. до Mac Mini. Доступ снаружи идёт через В.О.Л.К. API key; admin key допускает
+chat/admin/diagnostics, локальная trusted-сеть остаётся отдельной политикой.
+
+**Зависимости Proxy (`pyproject.toml` / `requirements.txt`):**
+FastAPI, Uvicorn, Pydantic v2, LlamaIndex, Qdrant-client, `pymupdf4llm`, `mammoth`, `extract-msg`, `pandas`, `sse-starlette`, `psutil`, `mlx-vlm`, `Pillow`, `markitdown`, `google-langextract` (или `langextract`).
+
+**Хранение данных:**
+- `./data/qdrant/` → Qdrant local storage
+- `./data/les_meta_qwen.db` → активная SQLite метабаза Qwen-профиля: datasets/documents/cache/lexical index, а также таблица `structured_rules`
+- `./data/les_meta.db` → legacy/older metadata profile; не считать источником live Qwen health без явной причины
+- `./data/les_metrics.db` → SQLite time-series метрики П.Р.О.Р.А.Б.
+- `./logs/chat_feedback.jsonl` → JSONL-журнал пользовательской разметки ответов; негативные статусы также видны как `[CHAT_FEEDBACK]` в `./logs/proxy.log`
+- `./storage/datasets/` → Физические UUID-папки загруженных файлов
+- `./RAG_Content/` → Исходники (NTD, BIM, MAIL) для загрузки
+- `./frontend/`, `./backend/` → Hot-reload кода без пересборки
+
+## 🔄 Сценарии эксплуатации
+### 1. Полный сброс питания
+1. Подача 220В → Mac Mini включается (`autorestart 1`).
+2. Загрузка macOS → автологин `ovc`.
+3. Запуск launchd agents: Qdrant, proxy, MLX, UI, при необходимости indexer.
+4. Docker не нужен и не должен быть частью штатного восстановления.
+**Итог:** Через 60 сек доступен `http://localhost:8050` и SSH.
+
+### 2. Проверка состояния
+```bash
+# Статус launchd-сервисов
+launchctl list | grep -E 'les|sovushka|qdrant|mlx'
+
+# Qdrant
+curl -s http://localhost:6333/healthz
+
+# Метрики системы
+curl -s http://localhost:8050/api/metrics | python3 -m json.tool
+
+# UI health and Lite shell
+curl -s http://localhost:8051/healthz
+curl -I http://localhost:8051/
+
+# Логи индексации и proxy
+tail -f logs/qwen_index_until_done.log
+tail -f logs/proxy.log
+```
+
+### 3. Пересборка ядра (при обновлении кода)
+```bash
+cd ~/Projects/LES_v2
+launchctl kickstart -k gui/$(id -u)/me.ovc.les.proxy
+```
+
+### 4. Массовая загрузка нормативки
+Через UI С.О.В.У.Ш.К.А. → вкладка **Датасеты** → кнопка `🔄 Загрузить в индекс` напротив нужной папки.
+Или через API: `POST /api/rag/sync/NTD`
+
+### 5. ARTEL/Revit readiness
+```bash
+python3 tools/smoke_artel_expert_loop.py \
+  --backend-only-smoke \
+  --check-legion
+```
+
+Нормальный статус до ручной разблокировки Legion: `ready_except_revit_locked`.
+После получения настоящего Revit report финальный gate:
+
+```bash
+python3 tools/smoke_artel_expert_loop.py \
+  --require-real-revit-learning-case \
+  --backend-only-smoke \
+  --check-legion
+```
+
+## 🛡️ Безопасность
+| Уровень | Мера | Статус |
+|---|---|---|
+| Сеть | ZeroTier P2P, закрытая подсеть | ✅ |
+| Доступ | SSH по ключам, UI без пароля (локально) | ✅ |
+| Данные | Полностью локально, Zero-Cloud | ✅ |
+| Runtime | No-Docker host LaunchAgents, без Docker socket/daemon | ✅ |
+| Модели | Лимиты RAM, автовыгрузка, контекст 8K | ✅ |
+| Нагрузка | `asyncio.Semaphore(2)` на индексацию | ✅ |
+
+## 📝 История изменений
+| Дата | Изменение |
+|---|---|
+| 10.05.2026 | Создана инфраструктура v2.0. Отказ от RAGFlow/ES/MySQL/MinIO. |
+| 10.05.2026 | Внедрён стек Qdrant + FastAPI + LlamaIndex + Ollama. |
+| 10.05.2026 | Настроен ConverterRouter (pymupdf4llm, mammoth, pandas). |
+| 10.05.2026 | Фиксация Ollama env, приоритет Ethernet, структура storage/datasets. |
+| 10.05.2026 | Внедрены SQLite-метрики, SSE-логи, Chart.js дашборды. |
+| 10.05.2026 | Реализован UI Sync: `/api/rag/sources`, `/api/rag/sync/{folder}`, вкладка Датасеты. |
+| 25.05.2026 | Docker Desktop/OrbStack удалены из runtime; Qdrant переведён на local binary + LaunchAgent. |
+| 10.05.2026 | Исправлен persistence: проброс `./data` и `./storage` в volumes. |
+| 22.05.2026 | Основной runtime зафиксирован на MLX Host; Ollama переведён в резерв. |
+| 22.05.2026 | Разделены UI routes: `/` чат, `/les` админка. |
+| 22.05.2026 | `restart_sovushka.command` запускает `.venv/bin/python3` и пишет реальный PID. |
+| 27.05.2026 | Core ML embedder/validator включены как guarded local default; индекс закрыт `1003/1003`, `248917` chunks, Qdrant match `true`, внешний `les.ovc.me` smoke зелёный. |
+| 27.05.2026 | FIRE/HVAC route hardening: selective HVAC route-change reindex, lexical rebuild, `golden/domain_fire_hvac_set.json` `16/16`, deterministic source lookup для “где смотреть/какие нормы”. |
+| 31.05.2026 | Hybrid structural-semantic runtime: MarkItDown, GLM-OCR, LangExtract schema, FIRE/BOOKS guarded reindex, Core ML embedding `compute_units=all`. |
+| 01.06.2026 | Local consistency closeout: `1211/1211` indexed, `0 pending`, `0 errors`, `142193` SQLite chunks = `142193` Qdrant points, stale Qdrant repair under backup/snapshot, duplicate-basename parser fix, validator live default `rules`, `structured_rules` schema ready but `0` rows before targeted population. |
+| 01.06.2026 | External contour restored: VPS Caddy left intact, LES reverse tunnel publishes Mac `8050/8051` to VPS `127.0.0.1:8050/8051`, neighbour tunnel `127.0.0.1:22020` untouched, public smoke `12/12`. |
+| 02.06.2026 | Speckle `speckle.ovc.me` updated to `2.31.5/custom`; DUI compatibility shim added for `logoUrl`, `canCreateIngestion`, `canAccessHelpCenter`, and disabled workspace list fallback. External GraphQL introspection and `WorkspaceListQuery` return `errors=null`, but V3 connector publish remains blocked by missing workspace-enabled server support. Direct presigned upload route through ingress works; local self-hosted importer rejects DWG/DXF, so IFC/extracted object graph is the supported LES path. |
+| 07.06.2026 | ARTEL/Revit family loop documented as ready except locked Legion desktop: `ARTEL_Index` health clean, SDK/CHM shards indexed, managed Legion backend/tunnel smoke green, strict real Revit learning-case gate pending real `validation_*.json`. |
+
+📅 **Документация актуальна на:** 07.06.2026
+
+
+## 🧭 Host runtime v4.1 (Обновлено 01.06.2026)
+- Uvicorn работает в production-режиме. Авто-релоад отключён во избежание deadlock'ов и лишних fork-процессов.
+- Метрики (П.Р.О.Р.А.Б.) собираются неблокирующим фоновым циклом (`asyncio.to_thread` + `psutil` + SQLite + Qdrant).
+- Данные лежат на host: `./data`, `./storage`, `./RAG_Content`, `./frontend`, `./backend`. Qdrant storage — `./data/qdrant`.
+- Прокси использует `asyncio.to_thread` для всех дисковых операций → event-loop не зависает под нагрузкой.
+
+## 📝 История изменений
+| Дата | Изменение |
+|---|---|
+| 10.05.2026 | Фикс Uvicorn hot-reload deadlock, переход на production-режим. |
+| 10.05.2026 | Внедрён фоновый коллектор метрик, неблокирующий кэш. |
+| 10.05.2026 | Delta-Sync, идемпотентная регистрация, рекурсивный обход. |
+| 10.05.2026 | Потоковый JSON-парсер для логов LLM (200MB+). |

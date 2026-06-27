@@ -1,0 +1,19 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- LES · Совушка app icon: spruce on a dark rounded square. -->
+  <rect x="0" y="0" width="1024" height="1024" rx="224" fill="#0f1115"/>
+  <rect x="0" y="0" width="1024" height="1024" rx="224" fill="url(#g)" opacity="0.10"/>
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4c8bf5"/>
+      <stop offset="1" stop-color="#0f1115"/>
+    </linearGradient>
+  </defs>
+  <!-- trunk -->
+  <rect x="486" y="720" width="52" height="120" rx="10" fill="#6b4a2b"/>
+  <!-- three spruce tiers -->
+  <polygon points="512,150 700,430 324,430" fill="#2f7d4f"/>
+  <polygon points="512,300 740,580 284,580" fill="#3a945e"/>
+  <polygon points="512,460 780,740 244,740" fill="#46a86c"/>
+  <!-- snow/star highlight -->
+  <circle cx="512" cy="172" r="22" fill="#eaf6ef"/>
+</svg>

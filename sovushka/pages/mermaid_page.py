@@ -75,7 +75,7 @@ flowchart TB
     end
     subgraph EDGE[VPS edge]
         C[Caddy HTTPS]
-        Z[private LAN route]
+        Z[ZeroTier route]
     end
 
     C --> Z --> U
@@ -99,7 +99,7 @@ AUTH_MAP = """%%{init: {"theme": "dark", "themeVariables": {"fontFamily": "ui-mo
 sequenceDiagram
     participant B as Browser
     participant UI as NiceGUI
-    participant V as public auth gateway
+    participant V as V.O.L.K.
     participant P as les-proxy
     participant DB as SQLite keys
     B->>UI: открыть / или /les

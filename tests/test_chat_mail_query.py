@@ -34,6 +34,11 @@ class MailBackend:
 async def test_chat_answers_mail_query_without_llm_or_vector_retrieval(tmp_path, monkeypatch):
     (tmp_path / "data").mkdir()
     monkeypatch.setenv("RAG_META_DB_PATH", str(tmp_path / "data" / "les_meta_qwen.db"))
+    monkeypatch.setenv("LES_ROUTER_PRIMARY", "true")
+    monkeypatch.setattr(
+        "proxy.services.agent_router_service.route_with_name",
+        lambda *a, **k: ("unavailable", None),
+    )
     root = tmp_path / "storage" / "datasets" / "mail-ds" / "MAIL"
     root.mkdir(parents=True)
     _write_message(

@@ -8,8 +8,55 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
+
+
+def _fmt_dur(seconds: float) -> str:
+    """Секунды → человекочитаемая длительность («~45с», «~12м», «~1ч 20м»)."""
+    s = int(max(0, seconds))
+    if s < 90:
+        return f"~{s}с"
+    m = s // 60
+    if m < 90:
+        return f"~{m}м"
+    return f"~{m // 60}ч {m % 60}м"
+
+
+def compute_eta(started_at: Any, completed: Any, total: Any, *, running: bool = True,
+                now_ts: float | None = None) -> dict[str, Any]:
+    """Оценка времени индексации из старта+скорости. Чистая функция (числа считает код, не LLM).
+
+    Возвращает percent + (если идёт и есть прогресс) elapsed/eta/rate. ETA — оценка по средней
+    скорости с начала текущего прогона: на резюме может слегка плыть, поэтому всегда «~».
+    """
+    out: dict[str, Any] = {"percent": None, "elapsed_seconds": None,
+                           "eta_seconds": None, "eta_text": "", "rate_per_min": None}
+    try:
+        total_i, done_i = int(total or 0), int(completed or 0)
+    except (TypeError, ValueError):
+        return out
+    if total_i > 0:
+        out["percent"] = round(100.0 * min(done_i, total_i) / total_i, 1)
+    if not running or not started_at or done_i <= 0 or total_i <= 0 or done_i >= total_i:
+        return out
+    try:
+        started = datetime.fromisoformat(str(started_at))
+    except (TypeError, ValueError):
+        return out
+    now = datetime.fromtimestamp(now_ts) if now_ts is not None else datetime.now()
+    elapsed = (now - started).total_seconds()
+    if elapsed <= 0:
+        return out
+    rate = done_i / elapsed  # док/сек
+    eta = (total_i - done_i) / rate if rate > 0 else None
+    out["elapsed_seconds"] = round(elapsed)
+    out["rate_per_min"] = round(rate * 60, 1)
+    if eta is not None:
+        out["eta_seconds"] = round(eta)
+        out["eta_text"] = _fmt_dur(eta)
+    return out
 
 from backend.rag_config import rag_collection_name, rag_meta_db_path
 from proxy.services.resource_governor import current_runtime_profile, is_indexing_mode
@@ -349,6 +396,7 @@ class RuntimeDispatcher:
             state_path = self.root / state_path
         state = _read_json(state_path)
         completed = state.get("completed") if isinstance(state.get("completed"), dict) else {}
+        completed_count = len(completed or {})
         log_path_raw = str(pid_info.get("log_path") or "")
         log_path = Path(log_path_raw) if log_path_raw else None
         if log_path is not None and not log_path.is_absolute():
@@ -356,10 +404,11 @@ class RuntimeDispatcher:
         events = _tail_json_events(log_path) if log_path is not None else []
         last_event = events[-1] if events else {}
         plan = self._last_named_event(events, "plan")
-        total = int(plan.get("total") or 0) + int(plan.get("completed_in_state") or 0) if plan else len(completed or {})
+        total = int(plan.get("total") or 0) + int(plan.get("completed_in_state") or 0) if plan else completed_count
         done = self._last_named_event(events, "done")
-        complete = bool((done or (total and len(completed or {}) >= total)) and not running)
+        complete = bool((done or (total and completed_count >= total)) and not running)
         return {
+            **compute_eta(pid_info.get("started_at"), completed_count, total, running=running),
             "running": running,
             "pid": pid if running else None,
             "stale_pid": bool(pid and not running),
@@ -369,9 +418,9 @@ class RuntimeDispatcher:
             "stop_file": str(self.route_change_stop_file),
             "pause_requested": bool(self.route_change_stop_file.exists() and running),
             "supports_pause": True,
-            "completed": len(completed or {}),
+            "completed": completed_count,
             "total": total,
-            "remaining": max(0, total - len(completed or {})) if total else 0,
+            "remaining": max(0, total - completed_count) if total else 0,
             "last_log": str(log_path) if log_path is not None else "",
             "last_started_at": pid_info.get("started_at"),
             "last_event": last_event,
@@ -651,6 +700,7 @@ class RuntimeDispatcher:
         paused = bool(stop_exists and not running and not complete)
         auth_smoke_required = bool(complete and not auth_smoke)
         return {
+            **compute_eta(pid_info.get("started_at"), completed_count, total, running=running),
             "running": running,
             "pid": pid if running else None,
             "stale_pid": bool(pid and not running),

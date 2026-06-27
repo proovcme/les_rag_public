@@ -1,0 +1,10 @@
+.DS_Store
+.vs/
+*.user
+*.suo
+*.zip
+*.dll
+*.pdb
+**/bin/
+**/obj/
+**/publish/

@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Л.Е.С. — граф знаний</title>
+<style>
+  :root {
+    --bg: #0a0d13; --panel: rgba(15,19,28,.86); --border: #1d2533;
+    --text: #cdd6e4; --dim: #5d6b80; --accent: #34d399;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; overflow: hidden; background: var(--bg); }
+  body { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; color: var(--text); }
+  #graph { position: fixed; inset: 0; cursor: grab; }
+  #graph.dragging { cursor: grabbing; }
+
+  .hud { position: fixed; z-index: 5; }
+  #topbar { top: 14px; left: 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; max-width: calc(100vw - 28px); }
+  #topbar .brand { font-size: 13px; font-weight: 800; letter-spacing: 1.5px; color: var(--text);
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; backdrop-filter: blur(6px); }
+  #search { background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 8px;
+    padding: 8px 12px; font: inherit; font-size: 12px; width: 220px; outline: none; backdrop-filter: blur(6px); }
+  #search:focus { border-color: var(--accent); }
+  .btn { background: var(--panel); border: 1px solid var(--border); color: var(--dim); border-radius: 8px;
+    padding: 8px 11px; font: inherit; font-size: 11px; cursor: pointer; text-decoration: none; backdrop-filter: blur(6px); }
+  .btn:hover { color: var(--text); border-color: var(--accent); }
+  .btn.on { color: var(--accent); border-color: var(--accent); }
+  .seg { display: flex; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; backdrop-filter: blur(6px); }
+  .seg button { background: transparent; border: 0; color: var(--dim); font: inherit; font-size: 11px; padding: 8px 10px; cursor: pointer; }
+  .seg button.on { color: var(--bg); background: var(--accent); font-weight: 700; }
+  .seg .lbl { color: var(--dim); font-size: 10px; padding: 8px 4px 8px 9px; align-self: center; }
+
+  #status { bottom: 14px; left: 14px; font-size: 11px; color: var(--dim);
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 7px 11px; backdrop-filter: blur(6px); }
+  #legend { top: 56px; right: 14px; max-width: 250px; max-height: 64vh; overflow: auto;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+    font-size: 11px; backdrop-filter: blur(6px); }
+  #legend .ttl { color: var(--dim); font-size: 10px; letter-spacing: .5px; margin-bottom: 6px; text-transform: uppercase; }
+  #legend .item { display: flex; gap: 7px; align-items: center; padding: 2.5px 0; cursor: pointer; opacity: .9; }
+  #legend .item:hover { opacity: 1; }
+  #legend .item.off { opacity: .3; }
+  #legend .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; box-shadow: 0 0 6px currentColor; }
+  #legend .n { color: var(--dim); margin-left: auto; font-size: 10px; }
+
+  #tip { position: fixed; z-index: 9; pointer-events: none; display: none; max-width: 360px;
+    background: rgba(10,13,19,.96); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: 8px; padding: 9px 12px; font-size: 11px; line-height: 1.55; }
+  #tip .t-name { color: var(--text); font-weight: 700; word-break: break-all; }
+  #tip .t-meta { color: var(--dim); margin-top: 3px; }
+  #tip .t-hint { color: var(--accent); margin-top: 5px; font-size: 10px; }
+</style>
+</head>
+<body>
+<canvas id="graph"></canvas>
+
+<div class="hud" id="topbar">
+  <span class="brand">Л.Е.С. // ГРАФ ЗНАНИЙ</span>
+  <input id="search" type="search" placeholder="найти узел… (Enter — спросить RAG)" autocomplete="off">
+  <div class="seg" id="colormode">
+    <span class="lbl">цвет:</span>
+    <button data-mode="project" class="on">проект</button>
+    <button data-mode="dataset">датасет</button>
+    <button data-mode="doc_type">тип</button>
+    <button data-mode="domain">домен</button>
+  </div>
+  <button class="btn" id="docsToggle" title="показать/скрыть документы (только проекты+датасеты — чище)">▣ документы</button>
+  <button class="btn" id="edgesToggle" title="рёбра перекрёстных ссылок между нормативами">⛓ связи НТД</button>
+  <button class="btn" id="reload">⟳ обновить</button>
+</div>
+<div class="hud" id="legend"></div>
+<div class="hud" id="status">загрузка…</div>
+<div id="tip"></div>
+
+<script>
+"use strict";
+// Л.Е.С. граф знаний — canvas-2D, своя физика, без зависимостей.
+// 3 уровня: Проект → Датасет → Документ (рёбра member). Перекрёстные NTD-ссылки — рёбра ntd.
+// Раскраска по проекту/датасету/типу/домену; размер по чанкам; клик → соседи; 2×клик → область поиска.
+
+const canvas = document.getElementById("graph");
+const ctx = canvas.getContext("2d");
+const tip = document.getElementById("tip");
+const statusEl = document.getElementById("status");
+const legendEl = document.getElementById("legend");
+const searchEl = document.getElementById("search");
+
+// На :8051/:8061 граф отдан Совушкой → данные через same-origin мост /lite-api (без CORS).
+const SAME_ORIGIN = location.port === "8051" || location.port === "8061";
+const API = SAME_ORIGIN ? "/lite-api" : `http://${location.hostname || "127.0.0.1"}:8050/api`;
+const CHAT_ORIGIN = SAME_ORIGIN ? "" : `http://${location.hostname || "127.0.0.1"}:8051`;
+const MAX_DOCS = 1500;            // потолок документов на канвасе (физика)
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
+
+const view = { x: 0, y: 0, scale: 1 };
+let nodes = [], edges = [], byId = new Map();     // edges = member (проект→датасет→документ)
+let refEdges = [], showRefEdges = false;          // ntd-ссылки документ↔документ
+let ragScores = null;                             // подсветка выдачи RAG (узел → score)
+let hover = null, focus = null, dragNode = null, panning = false;
+let alpha = 1, query = "";
+let colorMode = "project";
+let showDocs = true;
+const hiddenCats = new Set();                     // скрытые категории текущей раскраски
+let stats = {};
+
+// палитра: золотое сечение по тону
+const _palCache = new Map();
+function paletteColor(i) { return `hsl(${(i * 137.508 + 150) % 360} 70% 62%)`; }
+function catColor(key) {
+  if (key == null || key === "—") return "#5d6b80";
+  if (!_palCache.has(key)) _palCache.set(key, paletteColor(_palCache.size));
+  return _palCache.get(key);
+}
+
+// Категория узла в текущем режиме раскраски (+ человекочитаемая метка).
+const projName = new Map(), dsName = new Map();
+function catOf(n) {
+  if (colorMode === "project") {
+    if (n.kind === "project") return { key: n.id, label: n.label };
+    return n.project_id != null ? { key: "p:" + n.project_id, label: n.project || ("Проект " + n.project_id) }
+                                : { key: "—", label: "без проекта" };
+  }
+  if (colorMode === "dataset") {
+    if (n.kind === "dataset") return { key: n.id, label: n.label };
+    if (n.dataset_id) return { key: "ds:" + n.dataset_id, label: n.dataset || n.dataset_id };
+    return { key: "—", label: "—" };
+  }
+  if (colorMode === "doc_type") {
+    const v = n.doc_type || (n.kind === "document" ? "?" : "—");
+    return { key: v, label: v };
+  }
+  if (colorMode === "domain") {
+    const v = n.domain || (n.kind === "document" ? "?" : "—");
+    return { key: v, label: v };
+  }
+  return { key: "—", label: "—" };
+}
+function colorOf(n) { return catColor(catOf(n).key); }
+
+async function loadData() {
+  statusEl.textContent = "загрузка графа…";
+  const full = await fetch(`${API}/rag/graph/full`).then(r => r.json());
+  buildGraph(full);
+  stats = full.stats || {};
+  const more = (stats.documents || 0) > MAX_DOCS ? ` (показано ${MAX_DOCS})` : "";
+  statusEl.textContent = `${stats.projects || 0} проектов · ${stats.datasets || 0} датасетов · ${stats.documents || 0} документов${more} · ${stats.ntd_edges || 0} NTD-связей`;
+}
+
+function buildGraph(full) {
+  nodes = []; edges = []; byId.clear(); refEdges = []; _palCache.clear();
+  projName.clear(); dsName.clear();
+  const W = canvas.width / DPR, H = canvas.height / DPR;
+  const cx = W / 2, cy = H / 2;
+  const raw = full.nodes || [], rawEdges = full.edges || [];
+
+  const projects = raw.filter(n => n.kind === "project");
+  const datasets = raw.filter(n => n.kind === "dataset");
+  let docs = raw.filter(n => n.kind === "document");
+  if (docs.length > MAX_DOCS) docs = docs.slice(0, MAX_DOCS);
+  const keepDocs = new Set(docs.map(d => d.id));
+
+  const sz = (chunks, base, max) => base + Math.min(max, Math.sqrt((chunks || 1)) * 0.7);
+
+  // Проекты — крупные хабы по кругу в центре.
+  projects.forEach((p, i) => {
+    projName.set(p.id, p.label);
+    const a = (i / Math.max(1, projects.length)) * Math.PI * 2;
+    const node = { ...p, x: cx + Math.cos(a) * 170, y: cy + Math.sin(a) * 170, vx: 0, vy: 0,
+      r: sz(p.chunks, 16, 12), parent: null };
+    nodes.push(node); byId.set(p.id, node);
+  });
+  // Датасеты — средние хабы у своего проекта (или у центра, если без проекта).
+  datasets.forEach((ds, i) => {
+    dsName.set(ds.id, ds.label);
+    const par = ds.project_id != null ? byId.get("p:" + ds.project_id) : null;
+    const a = (i / Math.max(1, datasets.length)) * Math.PI * 2;
+    const ox = (par ? par.x : cx) + Math.cos(a) * 90, oy = (par ? par.y : cy) + Math.sin(a) * 90;
+    const node = { ...ds, x: ox, y: oy, vx: 0, vy: 0, r: sz(ds.chunks, 9, 9), parent: par };
+    nodes.push(node); byId.set(ds.id, node);
+    if (par) edges.push({ a: par, b: node, lvl: 1 });
+  });
+  // Документы — мелкие узлы вокруг своего датасета.
+  docs.forEach(doc => {
+    const par = byId.get("ds:" + doc.dataset_id);
+    if (!par) return;
+    const j = () => (Math.random() - 0.5) * 120;
+    const node = { ...doc, x: par.x + j(), y: par.y + j(), vx: 0, vy: 0, r: sz(doc.chunks, 2.5, 6), parent: par };
+    nodes.push(node); byId.set(doc.id, node);
+    edges.push({ a: par, b: node, lvl: 2 });
+  });
+
+  // NTD-рёбра документ↔документ (только между отрисованными документами).
+  for (const e of rawEdges) {
+    if (e.kind !== "ntd") continue;
+    const a = byId.get(e.source), b = byId.get(e.target);
+    if (a && b && a !== b && keepDocs.has(a.id) && keepDocs.has(b.id)) refEdges.push({ a, b, w: e.weight || 1 });
+  }
+  document.getElementById("edgesToggle").textContent = `⛓ связи НТД (${refEdges.length})`;
+  rebuildLegend();
+  alpha = 1;
+}
+
+// «куда смотрит RAG» — Enter в поиске → retrieve-debug → подсветка документов по score.
+async function ragAsk(question) {
+  statusEl.textContent = "RAG ищет…";
+  try {
+    const d = await fetch(`${API}/rag/retrieve-debug`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, top_k: 12 }),
+    }).then(r => r.json());
+    const norm = s => String(s || "").replace(/\s*\([^)]*\)\s*$/, "").trim().toLowerCase();
+    const byLabel = new Map();
+    for (const n of nodes) if (n.kind === "document") byLabel.set(norm(n.label), n);
+    ragScores = new Map(); let best = 0;
+    for (const c of d.chunks || []) {
+      const n = byLabel.get(norm(c.doc_name)); if (!n) continue;
+      const s = Math.max(ragScores.get(n) || 0, c.score || 0);
+      ragScores.set(n, s); best = Math.max(best, s);
+    }
+    for (const [n, s] of ragScores) ragScores.set(n, best ? s / best : 1);
+    statusEl.textContent = `RAG: ${ragScores.size} документов в выдаче (top ${best.toFixed(3)}) — Esc сбросить`;
+  } catch (err) { statusEl.textContent = "RAG-запрос не удался: " + err.message; }
+}
+
+// ── легенда по текущему режиму раскраски ──
+function rebuildLegend() {
+  const counts = new Map(), labels = new Map();
+  for (const n of nodes) {
+    if (n.kind === "document" && !showDocs) continue;
+    const { key, label } = catOf(n);
+    counts.set(key, (counts.get(key) || 0) + 1); labels.set(key, label);
+  }
+  const ttl = { project: "Проекты", dataset: "Датасеты", doc_type: "Типы документов", domain: "Домены" }[colorMode];
+  const rows = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 40);
+  legendEl.innerHTML = `<div class="ttl">${ttl}</div>`;
+  for (const [key, n] of rows) {
+    const c = catColor(key);
+    const item = document.createElement("div");
+    item.className = "item" + (hiddenCats.has(key) ? " off" : "");
+    item.innerHTML = `<span class="dot" style="color:${c};background:${c}"></span>` +
+      `<span>${labels.get(key)}</span><span class="n">${n}</span>`;
+    item.onclick = () => { hiddenCats.has(key) ? hiddenCats.delete(key) : hiddenCats.add(key); rebuildLegend(); alpha = Math.max(alpha, 0.2); };
+    legendEl.appendChild(item);
+  }
+}
+
+const visible = n => (showDocs || n.kind !== "document") && !hiddenCats.has(catOf(n).key);
+
+// ── физика: репульсия по сетке + пружины к родителю + гравитация ──
+function step() {
+  if (alpha < 0.012) return;
+  const W = canvas.width / DPR, H = canvas.height / DPR;
+  const cell = 64, grid = new Map();
+  const live = nodes.filter(visible);
+  for (const n of live) {
+    const key = `${(n.x / cell) | 0}:${(n.y / cell) | 0}`;
+    (grid.get(key) || grid.set(key, []).get(key)).push(n);
+  }
+  for (const n of live) {
+    const gx = (n.x / cell) | 0, gy = (n.y / cell) | 0;
+    for (let ix = gx - 1; ix <= gx + 1; ix++) for (let iy = gy - 1; iy <= gy + 1; iy++) {
+      const bucket = grid.get(`${ix}:${iy}`); if (!bucket) continue;
+      for (const m of bucket) {
+        if (m === n) continue;
+        let dx = n.x - m.x, dy = n.y - m.y, d2 = dx * dx + dy * dy;
+        if (d2 < 1) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d2 = 1; }
+        if (d2 > cell * cell * 4) continue;
+        const big = (n.kind !== "document" || m.kind !== "document");
+        const f = (big ? 1100 : 220) / d2 * alpha;
+        const d = Math.sqrt(d2);
+        n.vx += (dx / d) * f; n.vy += (dy / d) * f;
+      }
+    }
+    const grav = n.kind === "project" ? 0.005 : n.kind === "dataset" ? 0.0018 : 0.0005;
+    n.vx += (W / 2 - n.x) * grav * alpha; n.vy += (H / 2 - n.y) * grav * alpha;
+  }
+  for (const e of edges) {
+    if (!visible(e.b) || !visible(e.a)) continue;
+    const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y;
+    const d = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+    const want = (e.lvl === 1 ? 120 : 60) + e.a.r * 2.5;
+    const f = (d - want) * 0.013 * alpha;
+    e.b.vx -= (dx / d) * f * 1.5; e.b.vy -= (dy / d) * f * 1.5;
+    e.a.vx += (dx / d) * f * 0.2; e.a.vy += (dy / d) * f * 0.2;
+  }
+  for (const n of live) {
+    if (n === dragNode) { n.vx = 0; n.vy = 0; continue; }
+    n.vx *= 0.86; n.vy *= 0.86; n.x += n.vx; n.y += n.vy;
+  }
+  alpha *= 0.995;
+}
+
+function neighborsOf(node) {
+  const set = new Set([node]);
+  for (const e of edges) { if (e.a === node) set.add(e.b); if (e.b === node) set.add(e.a); }
+  for (const e of refEdges) { if (e.a === node) set.add(e.b); if (e.b === node) set.add(e.a); }
+  return set;
+}
+function matchesQuery(n) { return query && n.label.toLowerCase().includes(query); }
+
+function draw() {
+  const W = canvas.width / DPR, H = canvas.height / DPR;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  const g = ctx.createRadialGradient(W / 2, H / 2, 80, W / 2, H / 2, Math.max(W, H) * 0.75);
+  g.addColorStop(0, "#0d1119"); g.addColorStop(1, "#070a0f");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+
+  ctx.translate(view.x, view.y); ctx.scale(view.scale, view.scale);
+  const sel = focus || hover;
+  const hood = sel ? neighborsOf(sel) : null;
+  const dimmed = n =>
+    (ragScores && n.kind === "document" && !ragScores.has(n)) ||
+    (hood && !hood.has(n)) ||
+    (query && !ragScores && !matchesQuery(n) && n.kind === "document");
+
+  // NTD-ссылки (по кнопке или при фокусе на документе)
+  if (refEdges.length && (showRefEdges || (sel && sel.kind === "document"))) {
+    for (const e of refEdges) {
+      if (!visible(e.a) || !visible(e.b)) continue;
+      if (!showRefEdges && sel && e.a !== sel && e.b !== sel) continue;
+      const lit = sel && (e.a === sel || e.b === sel);
+      ctx.strokeStyle = lit ? "#e8c66a" : "rgba(160,170,200,0.10)";
+      ctx.globalAlpha = Math.min(1, 0.25 + e.w * 0.05) * (lit ? 1 : 0.7);
+      ctx.lineWidth = (lit ? 1.3 : 0.6) / view.scale;
+      const mx = (e.a.x + e.b.x) / 2, my = (e.a.y + e.b.y) / 2 - 24 / view.scale;
+      ctx.beginPath(); ctx.moveTo(e.a.x, e.a.y); ctx.quadraticCurveTo(mx, my, e.b.x, e.b.y); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // member-рёбра (проект→датасет→документ)
+  for (const e of edges) {
+    if (!visible(e.b) || !visible(e.a)) continue;
+    const lit = hood ? (hood.has(e.a) && hood.has(e.b)) : false;
+    ctx.strokeStyle = lit ? colorOf(e.a) : "rgba(110,130,165,0.10)";
+    ctx.globalAlpha = lit ? 0.6 : (hood || query ? 0.3 : (e.lvl === 1 ? 0.5 : 0.85));
+    ctx.lineWidth = (lit ? 1.2 : (e.lvl === 1 ? 0.9 : 0.45)) / view.scale;
+    ctx.beginPath(); ctx.moveTo(e.a.x, e.a.y); ctx.lineTo(e.b.x, e.b.y); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  for (const n of nodes) {
+    if (!visible(n)) continue;
+    const dim = dimmed(n);
+    const col = colorOf(n);
+    const ragBoost = ragScores && ragScores.get(n);
+    const r = n.r * (n === sel ? 1.35 : 1) * (ragBoost ? 1 + ragBoost * 0.8 : 1);
+    ctx.globalAlpha = dim ? 0.16 : 1;
+    ctx.shadowColor = ragBoost ? "#ffd166" : col;
+    ctx.shadowBlur = dim ? 0 : ((n.kind === "project" ? 28 : n.kind === "dataset" ? 18 : 10) + (ragBoost ? ragBoost * 30 : 0)) * view.scale;
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+    if (n.kind === "project") {     // кольцо у проектов
+      ctx.strokeStyle = "rgba(255,255,255,.5)"; ctx.lineWidth = 1.2 / view.scale;
+      ctx.beginPath(); ctx.arc(n.x, n.y, r + 2.5 / view.scale, 0, Math.PI * 2); ctx.stroke();
+    }
+    if (!dim && n.status === "ERROR") {
+      ctx.strokeStyle = "#ff5560"; ctx.lineWidth = 1.6 / view.scale;
+      ctx.beginPath(); ctx.arc(n.x, n.y, r + 3 / view.scale, 0, Math.PI * 2); ctx.stroke();
+    } else if (!dim && n.status === "PENDING") {
+      ctx.strokeStyle = "#f5b54a"; ctx.lineWidth = 1.2 / view.scale;
+      ctx.beginPath(); ctx.arc(n.x, n.y, r + 3 / view.scale, 0, Math.PI * 2); ctx.stroke();
+    }
+    const showLabel = n.kind === "project" || n === sel || matchesQuery(n) ||
+      (n.kind === "dataset" && view.scale > 0.9) || view.scale > 2.4;
+    if (showLabel && !dim) {
+      const fs = (n.kind === "project" ? 13 : n.kind === "dataset" ? 11 : 10) / view.scale;
+      ctx.font = `${n.kind === "project" ? "700 " : ""}${fs}px ui-monospace, monospace`;
+      ctx.fillStyle = n.kind === "document" ? "rgba(205,214,228,0.85)" : "#dfe7f3";
+      ctx.textAlign = "center";
+      const label = n.label.length > 42 ? n.label.slice(0, 40) + "…" : n.label;
+      ctx.fillText(label, n.x, n.y - r - 6 / view.scale);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+function frame() { step(); draw(); requestAnimationFrame(frame); }
+
+// ── интеракции ──
+function toWorld(px, py) { return { x: (px - view.x) / view.scale, y: (py - view.y) / view.scale }; }
+function pick(px, py) {
+  const p = toWorld(px, py); let best = null, bestD = 1e9;
+  for (const n of nodes) {
+    if (!visible(n)) continue;
+    const d = Math.hypot(n.x - p.x, n.y - p.y);
+    if (d < Math.max(n.r + 6, 10) / Math.sqrt(view.scale) && d < bestD) { best = n; bestD = d; }
+  }
+  return best;
+}
+const kindRu = k => k === "project" ? "проект" : k === "dataset" ? "датасет" : "документ";
+
+canvas.addEventListener("pointerdown", e => {
+  const n = pick(e.clientX, e.clientY);
+  if (n) { dragNode = n; alpha = Math.max(alpha, 0.3); } else { panning = true; }
+  canvas.classList.add("dragging"); canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener("pointermove", e => {
+  if (dragNode) {
+    const p = toWorld(e.clientX, e.clientY); dragNode.x = p.x; dragNode.y = p.y; alpha = Math.max(alpha, 0.25);
+  } else if (panning) {
+    view.x += e.movementX; view.y += e.movementY;
+  } else {
+    hover = pick(e.clientX, e.clientY);
+    if (hover) {
+      tip.style.display = "block";
+      tip.style.left = Math.min(e.clientX + 16, innerWidth - 380) + "px";
+      tip.style.top = Math.min(e.clientY + 16, innerHeight - 130) + "px";
+      const refsN = refEdges.reduce((s, x) => s + (x.a === hover || x.b === hover ? 1 : 0), 0);
+      let meta = kindRu(hover.kind);
+      if (hover.kind === "document") meta += ` · ${hover.doc_type || "?"} · ${hover.domain || "?"}`;
+      if (hover.kind !== "project") meta += ` · ${hover.project || "без проекта"}`;
+      if (hover.kind === "document") meta += ` · ${hover.dataset || ""}`;
+      if (hover.kind === "dataset") meta += ` · ${hover.chunks} чанков`;
+      if (hover.kind === "project") meta += ` · ${hover.datasets} датасетов · ${hover.chunks} чанков`;
+      if (hover.kind === "document") meta += ` · ${hover.chunks} чанков${hover.status ? " · " + hover.status : ""}`;
+      const hint = hover.kind === "document" ? "клик — связи · 2×клик — искать в датасете"
+                                             : "клик — раскрыть · 2×клик — область поиска";
+      tip.innerHTML = `<div class="t-name">${hover.label}</div><div class="t-meta">${meta}` +
+        `${refsN ? " · ссылок: " + refsN : ""}</div><div class="t-hint">${hint}</div>`;
+    } else tip.style.display = "none";
+  }
+});
+canvas.addEventListener("pointerup", e => {
+  if (dragNode && Math.abs(e.movementX) + Math.abs(e.movementY) < 2) focus = (focus === dragNode) ? null : dragNode;
+  if (!dragNode && panning && Math.abs(e.movementX) + Math.abs(e.movementY) < 2) focus = null;
+  dragNode = null; panning = false; canvas.classList.remove("dragging");
+});
+canvas.addEventListener("wheel", e => {
+  e.preventDefault();
+  const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+  const next = Math.min(8, Math.max(0.2, view.scale * factor));
+  const p = toWorld(e.clientX, e.clientY);
+  view.x = e.clientX - p.x * next; view.y = e.clientY - p.y * next; view.scale = next;
+}, { passive: false });
+
+// 2×клик → ОБЛАСТЬ ПОИСКА в чате: проект/датасет → scope, документ → scope его датасета.
+canvas.addEventListener("dblclick", e => {
+  const n = pick(e.clientX, e.clientY); if (!n) return;
+  let scope = null;
+  if (n.kind === "project") scope = n.id;                 // p:ID
+  else if (n.kind === "dataset") scope = n.id;            // ds:ID
+  else if (n.kind === "document" && n.dataset_id) scope = "ds:" + n.dataset_id;
+  if (scope) window.open(`${CHAT_ORIGIN}/classic?scope=${encodeURIComponent(scope)}`, "_blank");
+});
+
+// ── контролы ──
+document.querySelectorAll("#colormode button").forEach(b => {
+  b.onclick = () => {
+    colorMode = b.dataset.mode; hiddenCats.clear();
+    document.querySelectorAll("#colormode button").forEach(x => x.classList.toggle("on", x === b));
+    rebuildLegend(); alpha = Math.max(alpha, 0.15);
+  };
+});
+document.getElementById("docsToggle").onclick = function () {
+  showDocs = !showDocs; this.classList.toggle("on", !showDocs);
+  this.textContent = showDocs ? "▣ документы" : "▢ документы";
+  rebuildLegend(); alpha = Math.max(alpha, 0.25);
+};
+document.getElementById("edgesToggle").onclick = function () {
+  showRefEdges = !showRefEdges; this.classList.toggle("on", showRefEdges);
+};
+document.getElementById("reload").onclick = () => loadData().catch(err => statusEl.textContent = "ошибка: " + err.message);
+searchEl.addEventListener("input", () => { query = searchEl.value.trim().toLowerCase(); });
+searchEl.addEventListener("keydown", e => {
+  if (e.key === "Enter" && searchEl.value.trim().length > 3) ragAsk(searchEl.value.trim());
+  if (e.key === "Escape") { ragScores = null; query = ""; searchEl.value = ""; statusEl.textContent = "сброшено"; }
+});
+addEventListener("keydown", e => { if (e.key === "Escape") { ragScores = null; focus = null; } });
+
+function resize() {
+  canvas.width = innerWidth * DPR; canvas.height = innerHeight * DPR;
+  canvas.style.width = innerWidth + "px"; canvas.style.height = innerHeight + "px";
+}
+addEventListener("resize", resize); resize();
+loadData().catch(err => { statusEl.textContent = "ошибка загрузки: " + err.message + (SAME_ORIGIN ? "" : " (proxy :8050 доступен?)"); });
+frame();
+</script>
+</body>
+</html>

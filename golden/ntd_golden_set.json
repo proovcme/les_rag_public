@@ -1,0 +1,88 @@
+{
+  "version": "v1",
+  "description": "Small live NTD retrieval golden set for post-indexing milestones.",
+  "cases": [
+    {
+      "id": "evacuation_width",
+      "question": "Какая минимальная ширина путей эвакуации?",
+      "dataset_filter": "NTD",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["эвакуац"],
+      "source_any": ["1.13130", "СП 1"]
+    },
+    {
+      "id": "pp87_project_sections",
+      "question": "Какие разделы проектной документации предусмотрены Постановлением 87?",
+      "dataset_filter": "GKRF",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["раздел", "проектн"],
+      "source_any": ["Постановление Правительства РФ от 16.02.2008 N 87"]
+    },
+    {
+      "id": "fire_alarm_norms",
+      "question": "Каким нормативом регулируется пожарная сигнализация?",
+      "dataset_filter": "NTD",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["пожар"]
+    },
+    {
+      "id": "accessibility_mgn",
+      "question": "Какие требования применяются для доступности МГН?",
+      "dataset_filter": "NTD",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["мгн"]
+    },
+    {
+      "id": "smoke_protection",
+      "question": "Что относится к требованиям противодымной защиты?",
+      "dataset_filter": "NTD",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["противодым"]
+    },
+    {
+      "id": "fire_evacuation_exits",
+      "question": "Какие требования предъявляются к эвакуационным выходам при пожаре?",
+      "dataset_filter": "NTD_FIRE",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["эвакуац", "выход"]
+    },
+    {
+      "id": "hvac_ventilation_requirements",
+      "question": "Какие нормы регулируют вентиляцию и отопление здания?",
+      "dataset_filter": "NTD_HVAC",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["вентиляц", "отоплен"]
+    },
+    {
+      "id": "architectural_red_lines",
+      "question": "Что такое красные линии в градостроительной документации?",
+      "dataset_filter": "NTD_ARCH_URBAN",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["красн", "лини"]
+    },
+    {
+      "id": "structural_loads",
+      "question": "Какие нормативные требования применяются к нагрузкам и воздействиям?",
+      "dataset_filter": "NTD_STRUCTURAL",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["нагруз", "воздейств"]
+    },
+    {
+      "id": "ambiguous_requirements_needs_scope",
+      "question": "Какие требования нужно проверить по проекту?",
+      "dataset_filter": "NTD",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["требован"]
+    }
+  ]
+}

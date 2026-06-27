@@ -1,0 +1,24 @@
+# Справка о стоимости выполненных работ и затрат (КС-3). Форма Госкомстата № 100.
+# Денежный итог по КС-2 за период; данные обычно из акта/сметы.
+id: ks3
+title: Справка о стоимости выполненных работ и затрат (КС-3)
+legal_basis: Унифицированная форма КС-3 (Постановление Госкомстата РФ № 100 от 11.11.1999)
+fields:
+  - { key: object_name, label: Объект,                  type: str, source: "project.name" }
+  - { key: contractor,  label: Подрядчик,               type: str, source: "manual" }
+  - { key: customer,    label: Заказчик,                type: str, source: "manual" }
+  - { key: contract,    label: Договор подряда (№, дата), type: str, source: "manual" }
+  - { key: period,      label: Отчётный период,          type: str, source: "manual" }
+  - { key: ref_no,      label: Номер документа,          type: str, source: "manual" }
+  - { key: date,        label: Дата составления,         type: str, source: "date.today" }
+columns:
+  - "№ п/п"
+  - "Наименование работ и затрат"
+  - "Стоимость с начала проведения работ, руб."
+  - "В т.ч. с начала года, руб."
+  - "За отчётный период, руб."
+table:
+  mode: blank
+  rows: 12
+templates:
+  xlsx: config/forms/templates/ks3.xlsx

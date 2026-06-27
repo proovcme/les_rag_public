@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <AddIn Type="Command">
+    <Name>MyVeras AI Rendering</Name>
+    <Assembly>MyVeras.RevitAPI.dll</Assembly>
+    <ClientId>8F4E1A7E-4E4B-4B8F-9B2A-1C7D3F9E2A1B</ClientId>
+    <FullClassName>MyVeras.RevitAPI.RevitCommand</FullClassName>
+    <Text>MyVeras AI Rendering</Text>
+    <Description>Professional AI-powered rendering plugin for Revit</Description>
+    <VisibilityMode>AlwaysVisible</VisibilityMode>
+    <Discipline>Any</Discipline>
+    <LanguageType>English_USA</LanguageType>
+    <VendorId>MyVeras</VendorId>
+    <VendorDescription>MyVeras AI Rendering Solutions</VendorDescription>
+  </AddIn>
+</RevitAddIns>

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -76,10 +77,14 @@ def classify_query(question: str) -> QueryRoute:
         return QueryRoute(kot.dataset_filter, expanded, _kot_reason_alias(kot.dataset_filter, kot.reason))
 
     q = question.casefold()
+    # Нормализуем разделители, чтобы ловить ПП87 в любом написании: «пп87», «пп 87»,
+    # «пп-87», «пп. 87», «пп №87». Иначе «пп87» слитно промахивался мимо «пп 87» и
+    # каноничный перечень разделов (через _expand_gkrf_query) не подставлялся.
+    q_compact = q.replace(" ", "").replace("-", "").replace(".", "").replace("№", "")
     if (
         "постановлени" in q
-        or "пп 87" in q
-        or "постановление 87" in q
+        or "пп87" in q_compact
+        or "постановление87" in q_compact
         or "градостроительн" in q
         or "гкрф" in q
     ):
@@ -306,13 +311,21 @@ async def resolve_dataset_ids(
             candidates = _dataset_name_candidates(effective_filter)
             matches = [dataset for dataset in ds_list if dataset.name in candidates]
             if not matches and effective_filter.startswith("NTD_"):
-                matches = [dataset for dataset in ds_list if dataset.name == "NTD_Index"]
+                # СНАЧАЛА конкретный датасет по ПРЕФИКСУ (NTD_FIRE → NTD_FIRE_Index) — быстро+релевантно
+                # (один датасет, малый контекст). Имена в рантайме: NTD_FIRE_Index/GENERAL/CONSTRUCTION/…
+                matches = [d for d in ds_list if str(d.name).startswith(effective_filter)]
+                if not matches:
+                    # конкретного нет (напр. NTD_HVAC отсутствует) → ВЕСЬ нормативный корпус (все NTD_*),
+                    # чтобы вопрос всё равно достал документ (медленнее, но не пусто). RAG-first.
+                    matches = [d for d in ds_list if str(d.name).startswith("NTD_")]
             if matches:
                 ids = [dataset.id for dataset in matches]
                 logger.info("[CHAT] dataset_filter='%s' -> ids=%s", effective_filter, ids)
                 return ids
-            logger.warning("[CHAT] dataset_filter='%s' not found", effective_filter)
-            return []
+            # RAG-first: keyword-scope не нашёл датасет по имени → НЕ загоняем в пустой scope
+            # («нет данных»), а ищем ШИРОКО по всему корпусу (None) — семантика+реранк разберутся.
+            logger.warning("[CHAT] dataset_filter='%s' не найден → broad RAG по всему корпусу", effective_filter)
+            return None
         except Exception as e:
             logger.warning("[CHAT] dataset_filter resolve error: %s", e)
     if dataset_ids is None and ds_list is None:
@@ -349,76 +362,8 @@ async def retrieve_chat_chunks(
         if return_trace:
             return RetrievalResult([], trace, kot, quality)
         return []
-    if reranker_available and reranker_enabled:
-        raw_chunks = await rag_backend.retrieve(retrieval_query, dataset_ids=dataset_ids, top_k=RERANK_POOL_K)
-        if raw_chunks and len(raw_chunks) > RERANK_TOP_K:
-            try:
-                reranker = reranker_cls(mlx_url=mlx_url, mode="batch")
-                rerank_input = [
-                    {
-                        "text": chunk.content,
-                        "metadata": {"doc_name": chunk.doc_name},
-                        "score": getattr(chunk, "score", 0.0),
-                    }
-                    for chunk in raw_chunks
-                ]
-                if llm_semaphore is None:
-                    ranked = await reranker.rerank(question, rerank_input, top_k=RERANK_TOP_K)
-                else:
-                    async with llm_semaphore:
-                        ranked = await reranker.rerank(question, rerank_input, top_k=RERANK_TOP_K)
-                chunks = []
-                for ranked_chunk in ranked:
-                    match = next(
-                        (chunk for chunk in raw_chunks if chunk.content == ranked_chunk.text),
-                        None,
-                    )
-                    if match:
-                        chunks.append(match)
-                    else:
-                        chunks.append(
-                            RerankedStub(
-                                content=ranked_chunk.text,
-                                doc_name=ranked_chunk.metadata.get("doc_name", "?"),
-                            )
-                        )
-                logger.info("[RERANKER] %s -> %s чанков", len(raw_chunks), len(chunks))
-                if not return_trace:
-                    return chunks
-                trace = RetrievalTrace(
-                    mode="reranker",
-                    vector_count=len(raw_chunks),
-                    lexical_count=0,
-                    merged_count=len(chunks),
-                )
-                quality = evaluate_retrieval_quality(question=question, chunks=chunks, trace=trace, kot=kot)
-                trace.quality_status = quality.status
-                trace.quality_detail = quality.detail
-                return RetrievalResult(chunks, trace, kot, quality)
-            except Exception as rerank_error:
-                logger.warning("[RERANKER] Ошибка, fallback: %s", rerank_error)
-                chunks = raw_chunks[:RERANK_TOP_K]
-                if not return_trace:
-                    return chunks
-                trace = RetrievalTrace(
-                    mode="vector",
-                    vector_count=len(raw_chunks),
-                    lexical_count=0,
-                    merged_count=len(chunks),
-                    fallback_reason="reranker_error",
-                )
-                quality = evaluate_retrieval_quality(question=question, chunks=chunks, trace=trace, kot=kot)
-                trace.quality_status = quality.status
-                trace.quality_detail = quality.detail
-                return RetrievalResult(chunks, trace, kot, quality)
-        if not return_trace:
-            return raw_chunks
-        trace = RetrievalTrace(mode="vector", vector_count=len(raw_chunks), merged_count=len(raw_chunks))
-        quality = evaluate_retrieval_quality(question=question, chunks=raw_chunks, trace=trace, kot=kot)
-        trace.quality_status = quality.status
-        trace.quality_detail = quality.detail
-        return RetrievalResult(raw_chunks, trace, kot, quality)
-
+    # W2.3 (ADR-3): ранней реранк-ветки больше нет — реранкер работает ПОВЕРХ
+    # гибридного пула (vector + lexical → RRF → rerank), а не вместо него.
 
     # Dynamic top-k scaling for structured, legal, or technical queries
     is_structured = any(word in question.casefold() for word in ("перечен", "состав", "список", "разделы", "все разделы", "перечисли"))
@@ -432,25 +377,148 @@ async def retrieve_chat_chunks(
     has_refs = bool(extract_norm_refs(question) or extract_norm_refs(retrieval_query))
     pool_k = max(36, merged_top_k * 2) if has_refs or is_structured or is_technical_or_legal else RERANK_POOL_K
     vector_top_k = pool_k if return_trace and lexical_enabled() else merged_top_k
-    vector_chunks = await rag_backend.retrieve(retrieval_query, dataset_ids=dataset_ids, top_k=vector_top_k)
-    chunks, trace = _hybrid_merge(question, vector_chunks, dataset_ids, rag_backend, logger, retrieval_query=retrieval_query, pool_k=pool_k, limit=merged_top_k)
+    # ADR-12 стадия-1: для технических/правовых классов сначала маршрутизируем запрос
+    # к документам-узлам (LLM-роутер по каталогу, см. doc_router), затем стадия-2 ищет
+    # ТОЛЬКО в них. За флагом LES_TYPED_RETRIEVAL; пусто/сбой → плоский поиск.
+    doc_filter = None
+    _rt: dict[str, float] = {}  # под-фазовый тайминг ретрива (профилирование латентности)
+    if os.getenv("LES_TYPED_RETRIEVAL", "false").strip().lower() == "true" and is_technical_or_legal:
+        _s = time.monotonic()
+        try:
+            from proxy.services.doc_router import route_documents
+            doc_filter = await route_documents(
+                question=question, expanded_query=retrieval_query,
+                dataset_ids=dataset_ids, rag_backend=rag_backend,
+            ) or None
+        except Exception as _route_err:  # noqa: BLE001 — роутинг best-effort
+            logger.warning("[DOC_ROUTER] fallback на плоский поиск: %s", _route_err)
+            doc_filter = None
+        _rt["route"] = round(time.monotonic() - _s, 3)
+    _s = time.monotonic()
+    vector_chunks = await rag_backend.retrieve(retrieval_query, dataset_ids=dataset_ids, top_k=vector_top_k, doc_filter=doc_filter)
+    _rt["vec"] = round(time.monotonic() - _s, 3)
+    # W2.4: BGE-M3 learned-sparse рядом с dense (Qdrant-native гибрид). За флагом
+    # RAG_SPARSE_ENABLED; при сбое/пустом sparse — молча падаем на dense+FTS.
+    _s = time.monotonic()
+    sparse_chunks = await _retrieve_sparse_safe(rag_backend, retrieval_query, dataset_ids, pool_k, logger, doc_filter=doc_filter)
+    _rt["sparse"] = round(time.monotonic() - _s, 3)
+    _s = time.monotonic()
+    chunks, trace = _hybrid_merge(question, vector_chunks, dataset_ids, rag_backend, logger, retrieval_query=retrieval_query, pool_k=pool_k, limit=merged_top_k, sparse_chunks=sparse_chunks)
+    _rt["merge"] = round(time.monotonic() - _s, 3)
+    logger.info("[RETR] подфазы=%s", _rt)
+    # ADR-12 (Ц9): подъём ТАБЛИЧНЫХ ПРИЛОЖЕНИЙ норм. Если узлы-документы известны
+    # (doc_filter из стадии-1) и запрос «табличный» (перечень/приложение/категория
+    # помещений) — аддитивно подмешиваем pipe-table чанки ЭТИХ узлов в пул, чтобы
+    # реранк поднял приложение (эмбеддинг строки таблицы ≠ запрос → плоско тонет).
+    # Пусто/нет интента/нет узлов → no-op, плоский пул нетронут.
+    table_appendix_chunks: list[Any] = []
+    if doc_filter:
+        try:
+            from proxy.services.table_appendix_service import (
+                fetch_table_appendix_chunks,
+                merge_table_appendix,
+            )
+            table_appendix_chunks = await fetch_table_appendix_chunks(
+                question=question, retrieval_query=retrieval_query,
+                doc_filter=doc_filter, dataset_ids=dataset_ids,
+                rag_backend=rag_backend, logger=logger,
+            )
+            if table_appendix_chunks:
+                before = len(chunks)
+                chunks = merge_table_appendix(chunks, table_appendix_chunks)
+                if len(chunks) != before:
+                    trace.mode = f"{trace.mode}+table_appendix"
+        except Exception as _tbl_err:  # noqa: BLE001 — best-effort, флат не страдает
+            logger.warning("[TABLE_APPENDIX] fallback на плоский пул: %s", _tbl_err)
+    # NB: hot-path дедуп по content_hash снят — измерено 0.7% дублей / 3 кросс-кластера на 6000
+    # (tools/ingestion_quality_report). Кросс-датасетные дубли — задача ingestion QA, не рантайма.
     quality = evaluate_retrieval_quality(question=question, chunks=chunks, trace=trace, kot=kot)
 
     if return_trace and quality.status == "weak":
         retry_query = expanded_quality_query(question, kot)
         if retry_query != question:
             retry_vector = await rag_backend.retrieve(retry_query, dataset_ids=dataset_ids, top_k=vector_top_k)
-            retry_chunks, retry_trace = _hybrid_merge(retry_query, retry_vector, dataset_ids, rag_backend, logger, retrieval_query=retry_query, pool_k=pool_k, limit=merged_top_k)
+            retry_sparse = await _retrieve_sparse_safe(rag_backend, retry_query, dataset_ids, pool_k, logger)
+            retry_chunks, retry_trace = _hybrid_merge(retry_query, retry_vector, dataset_ids, rag_backend, logger, retrieval_query=retry_query, pool_k=pool_k, limit=merged_top_k, sparse_chunks=retry_sparse)
             retry_trace.retry_count = 1
             retry_quality = evaluate_retrieval_quality(question=question, chunks=retry_chunks, trace=retry_trace, kot=kot)
             if retry_quality.status != "weak" or len(retry_chunks) >= len(chunks):
                 chunks, trace, quality = retry_chunks, retry_trace, retry_quality
+
+    # W2.3: cross-encoder реранк гибридного пула — переупорядочивает, не режет
+    # (downstream-фокусировка сама сузит). Сопоставление по индексу через
+    # metadata._idx (не по тексту). Сбой → исходный гибридный порядок.
+    if reranker_available and reranker_enabled and len(chunks) > 3:
+        try:
+            reranker = reranker_cls(mlx_url=mlx_url, mode="batch")
+            rerank_input = [
+                {
+                    "text": chunk.content,
+                    "metadata": {"doc_name": chunk.doc_name, "_idx": idx},
+                    "score": getattr(chunk, "score", 0.0),
+                }
+                for idx, chunk in enumerate(chunks)
+            ]
+            # Семафор нужен только LLM-реранкеру (держит Metal); cross-encoder — нет.
+            needs_semaphore = llm_semaphore is not None and reranker_cls.__name__ == "Reranker"
+            if needs_semaphore:
+                async with llm_semaphore:
+                    ranked = await reranker.rerank(question, rerank_input, top_k=len(chunks))
+            else:
+                ranked = await reranker.rerank(question, rerank_input, top_k=len(chunks))
+            reordered = []
+            seen = set()
+            for ranked_chunk in ranked:
+                idx = ranked_chunk.metadata.get("_idx")
+                if isinstance(idx, int) and 0 <= idx < len(chunks) and idx not in seen:
+                    seen.add(idx)
+                    reordered.append(chunks[idx])
+            for idx, chunk in enumerate(chunks):  # хвост, не вернувшийся из реранка
+                if idx not in seen:
+                    reordered.append(chunk)
+            chunks = reordered
+            trace.mode = f"{trace.mode}+rerank"
+            logger.info("[RERANK-CE] гибридный пул %s переупорядочен", len(chunks))
+        except Exception as rerank_error:
+            logger.warning("[RERANKER] Ошибка, гибридный порядок без реранка: %s", rerank_error)
+            trace.fallback_reason = trace.fallback_reason or "rerank_error"
+
+    # ADR-12 (Ц9): после реранка гарантируем табличным приложениям места в видимом
+    # окне ответа — иначе cross-encoder топит сырой текст таблицы под прозой и
+    # приложение не доезжает. Аддитивно: без подмешанных таблиц — no-op.
+    if table_appendix_chunks:
+        try:
+            from proxy.services.table_appendix_service import guarantee_table_appendix
+            # Окно гарантии — ВИДИМЫЙ срез ответа (CHAT_TOP_K), а не весь пул:
+            # пользователь читает первые CHAT_TOP_K, под ними приложение бесполезно.
+            promoted = guarantee_table_appendix(chunks, table_appendix_chunks, window=CHAT_TOP_K)
+            if promoted is not chunks and [id(c) for c in promoted] != [id(c) for c in chunks]:
+                chunks = promoted
+                if "table_appendix_guarantee" not in trace.mode:
+                    trace.mode = f"{trace.mode}+table_appendix_guarantee"
+        except Exception as _g_err:  # noqa: BLE001 — best-effort
+            logger.warning("[TABLE_APPENDIX] guarantee fallback: %s", _g_err)
 
     trace.quality_status = quality.status
     trace.quality_detail = quality.detail
     if return_trace:
         return RetrievalResult(chunks, trace, kot, quality)
     return chunks
+
+
+def sparse_enabled() -> bool:
+    """W2.4: BGE-M3 learned-sparse в гибриде (флаг; включается после миграции коллекции)."""
+    return os.getenv("RAG_SPARSE_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+async def _retrieve_sparse_safe(rag_backend, query: str, dataset_ids, pool_k: int, logger: logging.Logger, doc_filter=None) -> list[Any]:
+    if not sparse_enabled() or not hasattr(rag_backend, "retrieve_sparse"):
+        return []
+    try:
+        return await rag_backend.retrieve_sparse(query, dataset_ids=dataset_ids, top_k=pool_k, doc_filter=doc_filter)
+    except Exception as error:
+        logger.warning("[HYBRID] sparse fallback: %s", error)
+        return []
 
 
 def _hybrid_merge(
@@ -463,7 +531,15 @@ def _hybrid_merge(
     retrieval_query: str = "",
     pool_k: int = RERANK_POOL_K,
     limit: int = CHAT_TOP_K,
+    sparse_chunks: Optional[list[Any]] = None,
 ) -> tuple[list[Any], RetrievalTrace]:
+    # W2.4: learned-sparse (BGE-M3) ЗАМЕНЯЕТ самописный FTS в гибриде (план: FTS
+    # остаётся для clause lookup). Если sparse пуст/выключен — падаем на FTS.
+    if sparse_chunks:
+        merged, trace = merge_rrf(vector_chunks, sparse_chunks, question=retrieval_query or question, limit=limit)
+        trace.mode = "hybrid+sparse"
+        return merged, trace
+
     if not lexical_enabled():
         trace = RetrievalTrace(
             mode="vector",

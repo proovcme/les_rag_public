@@ -1,16 +1,62 @@
-.DS_Store
+# Данные и Секреты (НИКОГДА не пушить)
+.env
+data/
+storage/
+RAG_Content/
+logs/
+.claude/
+.nicegui/
+standalone/cad_bim_viewer/JSON/
+standalone/cad_bim_viewer/ifc-sample/
+
+# Python
 __pycache__/
 *.py[cod]
-.venv/
-node_modules/
-dist/
+*$py.class
+*.so
+.Python
 build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Логи
 *.log
-.env
-.env.*
-!.env.example
-data/
-/storage/
-RAG_Content/
+.aider*
+
+# Generated local workbench exports
+qdrant_visualizer/data.js
+scratch/
+
+# Local runtime artifacts
+artifacts/
+.qdrant-initialized
+snapshots/
+
+# Local CAD/BIM deliverables and private samples
+local_private_archive/
+deliverables/
 outputs/
-exporters/artifacts/
+exporters.zip
+rag_engineer_v3.pptx
+ARTICLE_CAD_BIM_RAG.md
+ifc_sample/*.ifc
+.deploy_manifest.json

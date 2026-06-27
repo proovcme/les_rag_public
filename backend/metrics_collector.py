@@ -3,7 +3,7 @@ metrics_collector.py — сбор системных метрик в SQLite.
 
 Проблемы оригинала:
   - requests.get синхронный внутри asyncio → блокирует event loop
-  - get_network_status пингует private LAN IP хардкодом
+  - get_network_status пингует ZeroTier IP хардкодом
   - metrics таблица не чистится → растёт вечно
   - init_db вызывается дважды (startup + metrics_loop)
 """
@@ -76,7 +76,7 @@ async def _get_llm_ram() -> float:
 
 
 async def _get_network_ok() -> int:
-    """Проверяет доступность прокси — только localhost, без хардкода private LAN."""
+    """Проверяет доступность прокси — только localhost, без хардкода ZeroTier."""
     try:
         async with httpx.AsyncClient(timeout=1.0) as c:
             r = await c.get("http://localhost:8050/api/health")

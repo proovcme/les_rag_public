@@ -35,6 +35,10 @@ ALLOWED_SETTINGS = {
     "OLLAMA_MODEL",
     "LEMONADE_BASE_URL",
     "LEMONADE_MODEL",
+    # W3.3 (ADR-9): маршрутизация локал/облако
+    "LES_CLOUD_CONSENT",            # разрешить P2-данные в облако (P0 — никогда)
+    "LES_CLOUD_PRICES",             # переопределение цен: "model:in/out,..."
+    "LES_LOCAL_PROVIDER_MIN_FREE_GB",  # ниже порога локальный конкурент MLX сводится к MLX
 }
 DEFAULT_RAG_UPLOAD_SUFFIXES = (
     ".pdf",
@@ -60,7 +64,7 @@ TRUSTED_NETWORKS = tuple(
     item.strip()
     for item in os.getenv(
         "TRUSTED_NETWORKS",
-        "127.0.0.0/8,::1/128",
+        "127.0.0.1/32,::1/128",
     ).split(",")
     if item.strip()
 )
@@ -68,7 +72,7 @@ TRUSTED_NETWORK_ROLE = os.getenv("TRUSTED_NETWORK_ROLE", ADMIN_ROLE)
 
 TRUSTED_PROXY_NETWORKS = tuple(
     item.strip()
-    for item in os.getenv("TRUSTED_PROXY_NETWORKS", "127.0.0.0/8,::1/128").split(",")
+    for item in os.getenv("TRUSTED_PROXY_NETWORKS", "127.0.0.1/32,::1/128").split(",")
     if item.strip()
 )
 TRUSTED_PROXY_HEADER = os.getenv("TRUSTED_PROXY_HEADER", "x-les-trusted-network")
@@ -84,6 +88,13 @@ CORS_ALLOWED_ORIGINS = tuple(
     if item.strip()
 )
 
+# W5.7: origin-ы доверенного контура (loopback + ZeroTier) с ЛЮБЫМ портом —
+# визуализатор :8066 и шеллы ходят в proxy кросс-доменно с любого ZT-адреса.
+CORS_ALLOWED_ORIGIN_REGEX = os.getenv(
+    "CORS_ALLOWED_ORIGIN_REGEX",
+    r"^https?://(localhost|127\.0\.0\.1|10\.195\.146\.\d{1,3})(:\d+)?$",
+)
+
 
 def docker_control_enabled() -> bool:
     return os.getenv("LES_ENABLE_DOCKER_CONTROL", "false").lower() in {"1", "true", "yes", "on"}
@@ -92,6 +103,46 @@ def docker_control_enabled() -> bool:
 def rag_upload_suffixes() -> set[str]:
     raw = os.getenv("RAG_UPLOAD_SUFFIXES", ",".join(DEFAULT_RAG_UPLOAD_SUFFIXES))
     return {item.strip().lower() for item in raw.split(",") if item.strip()}
+
+
+def external_source_roots() -> list[Path]:
+    """Одобренные внешние корни для in-place индексации.
+
+    LES_EXTERNAL_SOURCE_ROOTS — список абсолютных путей через запятую. Пусто →
+    внешняя индексация выключена (fail-closed). Каждый корень резолвится (снимая
+    симлинки) — валидатор в proxy.storage.file_storage пускает абсолютный путь
+    ТОЛЬКО если он внутри одного из этих корней.
+    """
+    raw = os.getenv("LES_EXTERNAL_SOURCE_ROOTS", "")
+    roots: list[Path] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            resolved = Path(part).expanduser().resolve(strict=False)
+        except (OSError, RuntimeError):
+            continue
+        if resolved.is_absolute() and resolved not in roots:
+            roots.append(resolved)
+    return roots
+
+
+def external_allow_any() -> bool:
+    """Локальный single-user режим: разрешить in-place индексацию ЛЮБОГО локального каталога,
+    а не только LES_EXTERNAL_SOURCE_ROOTS. По умолчанию ВКЛ (это машина оператора, Trusted Network).
+    Guard'ы resolve(strict)+isdir+анти-симлинк-эскейп остаются в коде. LES_EXTERNAL_ALLOW_ANY=0 →
+    строгий allowlist (fail-closed)."""
+    return os.getenv("LES_EXTERNAL_ALLOW_ANY", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def external_browse_default() -> Path:
+    """Старт браузера папок, когда корни не заданы / разрешён любой каталог."""
+    raw = os.getenv("LES_EXTERNAL_BROWSE_DEFAULT", "").strip()
+    try:
+        return Path(raw).expanduser().resolve(strict=False) if raw else Path.home()
+    except (OSError, RuntimeError):
+        return Path.home()
 
 
 def max_upload_bytes() -> int:

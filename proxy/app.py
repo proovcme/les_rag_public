@@ -18,8 +18,30 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.metrics_collector import init_db, metrics_loop
 from backend.qdrant_adapter import QdrantLlamaIndexAdapter
 from backend.rag_config import embedding_api_model, rag_meta_db_path
-from proxy.config import CORS_ALLOWED_ORIGINS
+from proxy.config import CORS_ALLOWED_ORIGIN_REGEX, CORS_ALLOWED_ORIGINS
 from proxy.routers.auth import router as auth_router, seed_admin_key
+from proxy.routers.bor import router as bor_router
+from proxy.routers.diff import router as diff_router
+from proxy.routers.filemap import router as filemap_router
+from proxy.routers.tasks import notes_router, router as tasks_router
+from proxy.routers.projects import router as projects_router
+from proxy.routers.edges import router as edges_router
+from proxy.routers.ontology import router as ontology_router
+from proxy.routers.decisions import router as decisions_router
+from proxy.routers.worklog import router as worklog_router
+from proxy.routers.incoming_control import router as incoming_control_router
+from proxy.routers.estimates import router as estimates_router
+from proxy.routers.prices import router as prices_router
+from proxy.routers.kac import router as kac_router
+from proxy.routers.lsr import router as lsr_router
+from proxy.routers.extract import router as extract_router
+from proxy.routers.verify import router as verify_router
+from proxy.routers.forms import router as forms_router
+from proxy.routers.files import router as files_router
+from proxy.routers.field import router as field_router
+from proxy.routers.les_md import router as les_md_router
+from proxy.routers.normcontrol import router as normcontrol_router
+from proxy.routers.doc_review import router as doc_review_router
 from proxy.routers.chat import ChatRouterState, ensure_chat_history_schema, router as chat_router, set_chat_state
 from proxy.routers.chat_history import router as chat_history_router
 from proxy.routers.datasets import DatasetRouterState, router as datasets_router, search_router, set_dataset_state
@@ -34,9 +56,22 @@ from proxy.routers.rerank import (
     router as rerank_router,
     set_rerank_state,
 )
+
+
+def _select_reranker_cls():
+    """W2.2 (ADR-3): cross-encoder по умолчанию, RERANKER_BACKEND=llm — старый путь."""
+    try:
+        from backend.reranker import select_reranker_cls
+
+        return select_reranker_cls()
+    except ImportError:
+        return Reranker
+
+
 from proxy.routers.runtime import RuntimeRouterState, router as runtime_router, set_runtime_state
 from proxy.routers.settings import router as settings_router
-from proxy.routers.speckle import cad_bim_router, router as speckle_router
+from proxy.routers.service_sources import router as service_sources_router
+from proxy.routers.speckle import cad_bim_router
 from proxy.routers.status_page import StatusPageState, router as status_page_router, set_status_page_state
 from proxy.services.job_service import JobService
 from proxy.services.resource_governor import CHAT_MODE, PROFILE_CHAT
@@ -76,6 +111,7 @@ error_counts = defaultdict(int)
 chat_metrics = {
     "latency_search": [],
     "latency_gen": [],
+    "latency_phases": [],  # W0.1: per-request dict {retrieval, context, generation, validation, overhead}
     "tokens": [],
     "crag_pass": 0,
     "crag_fail": 0,
@@ -83,6 +119,12 @@ chat_metrics = {
     "cache_miss": 0,
     "retrieval_good": 0,
     "retrieval_weak": 0,
+    # W3.3: учёт расходов облака (накопительно за аптайм proxy)
+    "cloud_requests": 0,
+    "cloud_prompt_tokens": 0,
+    "cloud_completion_tokens": 0,
+    "cloud_cost_usd": 0.0,
+    "cloud_cost_by_model": {},
 }
 
 metrics_cache = {
@@ -127,6 +169,51 @@ def _get_db_files():
         return count
     except Exception:
         return 0
+
+
+mail_autosync = {"last_sync": 0.0, "last_count": 0, "runs": 0, "last_error": "", "enabled": False}
+
+
+async def mail_imap_autosync_loop():
+    """Е.Ж.И.К. — ВНУТРЕННИЙ IMAP-сервис. MAIL_IMAP_POLL_SEC>0 + MAIL_IMAP_* (host/login/password) →
+    периодически тянет НОВУЮ почту (инкрементально по чекпойнту) → MAIL_Index → парс. 0/без кредов = выкл.
+    ЛЕС сам забирает почту в RAG, без внешнего Outlook-поллера/аддина."""
+    from backend.mail_ingest import fetch_imap_eml_files, imap_settings_from_env
+
+    await asyncio.sleep(25)  # дать backend подняться
+    while True:
+        try:
+            interval = int(os.getenv("MAIL_IMAP_POLL_SEC", "0") or "0")
+        except ValueError:
+            interval = 0
+        mail_autosync["enabled"] = interval > 0
+        if interval <= 0:
+            await asyncio.sleep(300)  # выключен — перечитываем флаг раз в 5 мин
+            continue
+        try:
+            settings = imap_settings_from_env()
+            if getattr(settings, "configured", False):
+                from proxy.routers.datasets import get_dataset_state
+                from proxy.routers.mail import _upload_fetched_mail
+                state = get_dataset_state()
+                fetched = await asyncio.to_thread(fetch_imap_eml_files, settings, max_messages=200)
+                if fetched:
+                    dataset_id, _created, _uploaded = await _upload_fetched_mail(state, fetched)
+                    try:
+                        await state.backend.parse_dataset(dataset_id, limit=25)
+                    except Exception as parse_err:  # noqa: BLE001 — парс не роняет поллер
+                        logger.warning("[ЕЖИК] autosync parse: %s", parse_err)
+                    logger.info("[ЕЖИК] IMAP autosync: +%s писем → RAG", len(fetched))
+                    mail_autosync.update(last_sync=time.time(), last_count=len(fetched),
+                                         runs=mail_autosync["runs"] + 1, last_error="")
+                else:
+                    mail_autosync.update(last_sync=time.time(), last_count=0, last_error="")
+            else:
+                logger.debug("[ЕЖИК] autosync: MAIL_IMAP_* не заданы — пропуск")
+        except Exception as error:  # noqa: BLE001 — поллер не падает
+            mail_autosync["last_error"] = str(error)[:200]
+            logger.warning("[ЕЖИК] IMAP autosync failed: %s", error)
+        await asyncio.sleep(max(60, interval))
 
 
 async def metrics_collector_loop():
@@ -212,9 +299,46 @@ async def startup():
         logger.info("[INIT] Backend initialized successfully")
         asyncio.create_task(metrics_collector_loop())
         asyncio.create_task(metrics_loop())
+        asyncio.create_task(mail_imap_autosync_loop())  # Е.Ж.И.К.: внутренний IMAP-сервис (MAIL_IMAP_POLL_SEC)
+        asyncio.create_task(_warmup_models())  # №2: убрать холодный старт первого запроса
     except Exception as e:
         logger.error("[INIT] Backend initialization failed: %s", e)
         raise
+
+async def _warmup_models():
+    """№2 латентность: прогрев эмбеддера (Core ML) и реранкера (MLX) на старте.
+    Первый запрос лениво грузил обе модели → 25-30с. Фоном, не блокирует старт."""
+    import httpx
+
+    await asyncio.sleep(3)  # дать бэкенду/MLX-хосту подняться
+    try:
+        await rag_backend.retrieve("прогрев системы при запуске", dataset_ids=None, top_k=2)
+        logger.info("[WARMUP] эмбеддер/ретрив прогрет")
+    except Exception as exc:
+        logger.warning("[WARMUP] embed: %s", exc)
+    try:
+        mlx = os.getenv("MLX_URL", "http://127.0.0.1:8080")
+        async with httpx.AsyncClient(timeout=120) as client:
+            await client.post(
+                f"{mlx}/v1/rerank",
+                json={"query": "прогрев", "documents": ["прогрев первый документ", "прогрев второй документ"], "top_k": 1},
+            )
+        logger.info("[WARMUP] реранкер прогрет")
+    except Exception as exc:
+        logger.warning("[WARMUP] rerank: %s", exc)
+    try:
+        # Прогрев основной LLM: грузит main-движок на старте, иначе первый реальный
+        # запрос после рестарта платил холодную загрузку модели (~100-120с).
+        mlx = os.getenv("MLX_URL", "http://127.0.0.1:8080")
+        model = os.getenv("LLM_MODEL", "mlx-community/Qwen3.5-4B-MLX-4bit")
+        async with httpx.AsyncClient(timeout=180) as client:
+            await client.post(
+                f"{mlx}/v1/chat/completions",
+                json={"model": model, "messages": [{"role": "user", "content": "прогрев"}], "max_tokens": 1},
+            )
+        logger.info("[WARMUP] LLM прогрета")
+    except Exception as exc:
+        logger.warning("[WARMUP] llm: %s", exc)
 
 
 async def track_errors(request: Request, call_next):
@@ -262,7 +386,7 @@ def configure_router_state() -> None:
             crag_stats=crag_stats,
             chat_metrics=chat_metrics,
             reranker_available=RERANKER_AVAILABLE,
-            reranker_cls=Reranker,
+            reranker_cls=_select_reranker_cls(),
             current_mode=current_mode,
             metrics_cache=metrics_cache,
             job_service=job_service,
@@ -286,12 +410,36 @@ def create_app():
     fastapi_app.add_middleware(
         CORSMiddleware,
         allow_origins=list(CORS_ALLOWED_ORIGINS),
+        allow_origin_regex=CORS_ALLOWED_ORIGIN_REGEX,
         allow_methods=["*"],
         allow_headers=["*"],
     )
     fastapi_app.include_router(auth_router)
+    fastapi_app.include_router(bor_router)
+    fastapi_app.include_router(diff_router)
+    fastapi_app.include_router(filemap_router)
+    fastapi_app.include_router(tasks_router)
+    fastapi_app.include_router(projects_router)
+    fastapi_app.include_router(edges_router)
+    fastapi_app.include_router(ontology_router)
+    fastapi_app.include_router(decisions_router)
+    fastapi_app.include_router(worklog_router)
+    fastapi_app.include_router(incoming_control_router)
+    fastapi_app.include_router(estimates_router)
+    fastapi_app.include_router(prices_router)
+    fastapi_app.include_router(kac_router)
+    fastapi_app.include_router(lsr_router)
+    fastapi_app.include_router(extract_router)
+    fastapi_app.include_router(verify_router)
+    fastapi_app.include_router(forms_router)
+    fastapi_app.include_router(files_router)
+    fastapi_app.include_router(notes_router)
+    fastapi_app.include_router(field_router)
+    fastapi_app.include_router(les_md_router)
+    fastapi_app.include_router(normcontrol_router)
+    fastapi_app.include_router(doc_review_router)
+    fastapi_app.include_router(service_sources_router)
     fastapi_app.include_router(settings_router)
-    fastapi_app.include_router(speckle_router)
     fastapi_app.include_router(cad_bim_router)
     fastapi_app.include_router(chat_history_router)
     fastapi_app.include_router(datasets_router)

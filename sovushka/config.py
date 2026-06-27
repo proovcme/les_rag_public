@@ -7,7 +7,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 
-ROOT = Path(".")
+# Корень рантайма ОТ ФАЙЛА, не от CWD: иначе UI-сервис (другой WorkingDirectory) не находил .env
+# и TRUSTED_NETWORKS падал в дефолт (только loopback) → ZeroTier/доверенные сети бились в логин ВОЛК.
+ROOT = Path(__file__).resolve().parent.parent
 ENV_PATH = ROOT / ".env"
 load_dotenv(ENV_PATH, override=False)
 
@@ -19,15 +21,38 @@ TRUSTED_NETWORKS = tuple(
     item.strip()
     for item in os.getenv(
         "TRUSTED_NETWORKS",
-        "127.0.0.0/8,::1/128",
+        "127.0.0.1/32,::1/128",
     ).split(",")
     if item.strip()
 )
 TRUSTED_NETWORK_ROLE = os.getenv("TRUSTED_NETWORK_ROLE", "admin")
 TRUSTED_PROXY_NETWORKS = tuple(
     item.strip()
-    for item in os.getenv("TRUSTED_PROXY_NETWORKS", "127.0.0.0/8,::1/128").split(",")
+    for item in os.getenv("TRUSTED_PROXY_NETWORKS", "127.0.0.1/32,::1/128").split(",")
     if item.strip()
 )
 TRUSTED_PROXY_HEADER = os.getenv("TRUSTED_PROXY_HEADER", "x-les-trusted-network")
-STORAGE_SECRET = os.getenv("SOVUSHKA_STORAGE_SECRET", "les_secret_883")
+def _storage_secret() -> str:
+    # БЕЗОПАСНОСТЬ: НЕ дефолтить предсказуемым «les_secret_883» (им подписываются куки сессий →
+    # подделка). Нет env → персистим случайный в data/.storage_secret (стабилен между рестартами,
+    # сессии не мрут). chmod 600.
+    env = (os.getenv("SOVUSHKA_STORAGE_SECRET") or "").strip()
+    if env:
+        return env
+    import secrets as _secrets
+    path = ROOT / "data" / ".storage_secret"
+    try:
+        if path.exists():
+            saved = path.read_text(encoding="utf-8").strip()
+            if saved:
+                return saved
+        path.parent.mkdir(parents=True, exist_ok=True)
+        val = _secrets.token_hex(32)
+        path.write_text(val, encoding="utf-8")
+        path.chmod(0o600)
+        return val
+    except Exception:
+        return _secrets.token_hex(32)  # fallback: не персистится (сессии умрут на рестарте), но НЕ предсказуем
+
+
+STORAGE_SECRET = _storage_secret()

@@ -66,26 +66,32 @@ cd "$INSTALL_DIR" || fail "нет каталога установки $INSTALL_D
 
 # --- 3. Environment (uv sync with the mac MLX extra) ------------------------
 # Bare `uv sync` evicts mlx-lm (see memory runtime-uv-sync-mlx-extra) → always
-# pass --extra mac-mlx.
+# pass --extra mac-mlx. --extra desktop pulls the native shell (pywebview+tray).
 notify "Готовлю окружение…"
-echo "uv sync --extra mac-mlx"
-"$UV" sync --extra mac-mlx || fail "uv sync не удался"
+echo "uv sync --extra mac-mlx --extra desktop"
+"$UV" sync --extra mac-mlx --extra desktop || fail "uv sync не удался"
 
 # --- 4. .env + runtime directories ------------------------------------------
 "$UV" run lesctl init --profile mac-native >/dev/null 2>&1 || true
+
+# --- 4b. Provider onboarding (first run only) -------------------------------
+# Bootstrap is non-interactive (no TTY): if no provider is set yet, default to
+# local MLX so the first chat works. The operator refines provider/key/model in
+# the Sovushka GUI «Настройки» afterwards.
+"$UV" run python tools/onboard_provider.py --skip-if-configured >/dev/null 2>&1 || true
 
 # --- 5. Model weights (download-on-first-run, idempotent) -------------------
 notify "Проверяю модели…"
 echo "onboard models"
 "$UV" run python tools/onboard_models.py || fail "загрузка моделей не удалась"
 
-# --- 6. Start the stack -----------------------------------------------------
-notify "Запускаю службы…"
-echo "lesctl start"
-"$UV" run lesctl start --profile mac-native --include-ui --memory-preflight || fail "не удалось поднять службы"
+# --- 6. Launch the desktop shell --------------------------------------------
+# The shell (tools/les_shell.py) owns lifecycle: it starts the stack, shows a
+# native window + tray, and degrades to a browser tab if the GUI deps are
+# missing. It blocks while the window is open, so run it foreground.
+notify "Запускаю Совушку…"
+echo "les_shell"
+"$UV" run python -m tools.les_shell || fail "не удалось запустить шелл"
 
-# --- 7. Open the UI ---------------------------------------------------------
-/usr/bin/open "$UI_URL" || true
-notify "Совушка готова."
 echo "===== $(date '+%Y-%m-%d %H:%M:%S') bootstrap done ====="
 exit 0

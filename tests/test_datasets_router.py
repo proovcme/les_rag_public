@@ -68,7 +68,7 @@ class FakeBackend:
             ]
         }
 
-    async def retrieve(self, question, dataset_ids=None, top_k=5):
+    async def retrieve(self, question, dataset_ids=None, top_k=5, doc_filter=None):
         return [
             Chunk(
                 content=f"{question} result",
@@ -142,6 +142,7 @@ async def test_list_documents_returns_file_status_rows(tmp_path, monkeypatch, da
                 content_type TEXT DEFAULT '',
                 complexity TEXT DEFAULT '',
                 pipeline TEXT DEFAULT '',
+                source_path TEXT DEFAULT '',
                 last_error TEXT DEFAULT ''
             )
             """
@@ -150,8 +151,8 @@ async def test_list_documents_returns_file_status_rows(tmp_path, monkeypatch, da
         conn.execute(
             """
             INSERT INTO documents
-            (id, dataset_id, file_name, status, file_size, chunk_count, domain, route_dataset, doc_type, content_type, complexity, pipeline)
-            VALUES ('doc-1', 'ds-1', 'NTD/SP.docx', 'INDEXED', 2048, 12, 'NTD_FIRE', 'NTD_FIRE_Index', 'NORMATIVE', 'text', 'simple', 'markdown')
+            (id, dataset_id, file_name, status, file_size, chunk_count, domain, route_dataset, doc_type, content_type, complexity, pipeline, source_path)
+            VALUES ('doc-1', 'ds-1', 'NTD/SP.docx', 'INDEXED', 2048, 12, 'NTD_FIRE', 'NTD_FIRE_Index', 'NORMATIVE', 'text', 'simple', 'markdown', '/ext/NTD/SP.docx')
             """
         )
 
@@ -163,6 +164,7 @@ async def test_list_documents_returns_file_status_rows(tmp_path, monkeypatch, da
     assert result["documents"][0]["file_name"] == "NTD/SP.docx"
     assert result["documents"][0]["route_dataset"] == "NTD_FIRE_Index"
     assert result["documents"][0]["chunk_count"] == 12
+    assert result["documents"][0]["source_path"] == "/ext/NTD/SP.docx"
 
 
 @pytest.mark.asyncio
@@ -690,6 +692,46 @@ async def test_upload_smart_routes_file_to_classified_dataset(tmp_path, monkeypa
     assert dataset_state.uploads[0][0] == "ds-2"
     assert dataset_state.uploads[0][1].endswith("_local_smeta.csv")
     assert dataset_state.uploads[0][2] == "local_smeta.csv"
+
+
+@pytest.mark.asyncio
+async def test_attach_read_returns_text_context(tmp_path, monkeypatch, dataset_state):
+    monkeypatch.chdir(tmp_path)
+    result = await datasets.attach_chat_file(
+        file=_upload("note.txt", "Прочитай меня как задание".encode("utf-8")),
+        mode="read",
+        _admin=object(),
+    )
+
+    assert result["mode"] == "read"
+    assert result["name"] == "note.txt"
+    assert "Прочитай меня" in result["text"]
+    assert result["attachment_id"].startswith("read_")
+    assert dataset_state.uploads == []
+
+
+@pytest.mark.asyncio
+async def test_attach_read_converter_error_is_controlled(tmp_path, monkeypatch, dataset_state):
+    monkeypatch.chdir(tmp_path)
+
+    def broken_converter(_path):
+        raise ValueError("битый файл")
+
+    import backend.converter
+
+    monkeypatch.setattr(backend.converter, "convert_to_markdown", broken_converter)
+
+    with pytest.raises(datasets.HTTPException) as exc:
+        await datasets.attach_chat_file(
+            file=_upload("broken.txt", b"not really readable"),
+            mode="read",
+            _admin=object(),
+        )
+
+    assert exc.value.status_code == 422
+    assert "Не удалось прочитать файл" in exc.value.detail
+    assert "broken.txt" in exc.value.detail
+    assert dataset_state.uploads == []
 
 
 @pytest.mark.asyncio

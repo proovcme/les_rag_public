@@ -142,6 +142,83 @@ def init_env(force: bool = False) -> str:
     return ".env created from env.example" if not force else ".env overwritten from env.example"
 
 
+def profile_env_overrides(profile: str | None) -> dict[str, str]:
+    """Ключи .env, специфичные для профиля. env.example несёт Mac/MLX-дефолты (CoreML/MLX) —
+    на Windows без этих оверрайдов эмбеддер/провайдер настроены неверно (см. windows-install).
+
+    windows-lite: MLX недоступна → чат и эмбеддинги идут в ollama (OpenAI-совместимый
+    /v1/embeddings bge-m3 = 1024 dims). Прочие профили — без оверрайдов (поведение прежнее)."""
+    if profile == "windows-lite":
+        return {
+            "LES_LLM_PROVIDER": "ollama",
+            "OLLAMA_BASE_URL": "http://127.0.0.1:11434",
+            "OLLAMA_MODEL": "qwen3.5:9b",
+            # Эмбеддер: EmbedClient httpx → {MLX_URL}/v1/embeddings. На Windows MLX-хоста нет,
+            # направляем на ollama (bge-m3). EMBED_BACKEND здесь — только дескриптор кэша.
+            "MLX_URL": "http://127.0.0.1:11434",
+            # ВАЖНО: ":latest", а не голый "bge-m3". embedding_api_model() ИГНОРИРУЕТ EMBED_MODEL,
+            # если оно == api_model легаси-профиля (а это ровно "bge-m3"), и подставляет api_model
+            # активного qwen-профиля (qwen3-embedding-0.6b) → ollama 404. "bge-m3:latest" проходит
+            # гард, а EmbedClient срезает ":latest" → в ollama уходит "bge-m3" → 200.
+            "EMBED_MODEL": "bge-m3:latest",
+            "EMBEDDING_MODEL": "bge-m3",
+            "EMBED_BACKEND": "ollama",
+            "RAG_VECTOR_SIZE": "1024",
+            # MLX-зависимая валидация/тяжёлое — off (lite-профиль, ARTEL/Revit-ориентир).
+            "CHAT_VALIDATION_ENABLED": "false",
+            "VALIDATOR_BACKEND": "rules",
+            "RAG_OCR_ENABLED": "false",
+            "SPECKLE_ENABLED": "false",
+            # Память: дефолтные пороги (chat≥8 ГБ свободно, green 12 / red 8 / critical 6) рассчитаны
+            # на локальную MLX-загрузку моделей. На Windows-lite MLX в прокси нет (ollama — отдельный
+            # процесс со своей памятью, облако — вообще без локальной RAM), и при Docker+ollama+qdrant
+            # свободной RAM мало → дефолт ложно режет чат/ретрив (ram_free<8 → 503). Понижаем под lite.
+            "LES_CHAT_MIN_FREE_GB": "2",
+            "LES_MEMORY_GREEN_MIN_FREE_GB": "3",
+            "LES_MEMORY_RED_MIN_FREE_GB": "1.5",
+            "LES_MEMORY_CRITICAL_MIN_FREE_GB": "1",
+            # memory_aware_provider на тесной RAM сводит ollama→MLX (защита от swap). Но на Windows
+            # MLX НЕТ: _mlx_runtime бьёт MLX-моделью (LLM_MODEL) по ollama-URL → 404. Порог 0 =
+            # не съезжать с ollama (LLM на Windows-lite и так в отдельном процессе ollama).
+            "LES_LOCAL_PROVIDER_MIN_FREE_GB": "0",
+            # LLM_MODEL — фолбэк-модель локального рантайма; на Windows = тот же ollama-тег
+            # (если какой-то путь всё же возьмёт _mlx_runtime, чтобы не 404 на MLX-имени).
+            "LLM_MODEL": "qwen3.5:9b",
+            # CORS под Outlook-аддин: таскпейн на :3000 (http-server) шлёт fetch POST /api/mail/push
+            # на :8050 — без origin :3000 в CORS браузерный движок таскпейна режет запрос.
+            "CORS_ALLOWED_ORIGINS": (
+                "http://localhost:3000,http://127.0.0.1:3000,"
+                "http://localhost:8050,http://127.0.0.1:8050,"
+                "http://localhost:8051,http://127.0.0.1:8051"
+            ),
+        }
+    return {}
+
+
+def apply_env_overrides(overrides: dict[str, str], target: Path | None = None) -> list[str]:
+    """Идемпотентно проставить KEY=value в .env: обновить существующую строку или дописать.
+    Комментарии и прочие строки сохраняются. Возвращает применённые ключи."""
+    if not overrides:
+        return []
+    target = target or (ROOT / ".env")
+    lines = target.read_text(encoding="utf-8").splitlines() if target.exists() else []
+    applied: list[str] = []
+    remaining = dict(overrides)
+    for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if key in remaining:
+            lines[i] = f"{key}={remaining.pop(key)}"
+            applied.append(key)
+    for key, value in remaining.items():  # ключей не было в файле — дописываем
+        lines.append(f"{key}={value}")
+        applied.append(key)
+    target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return sorted(applied)
+
+
 def run_uv_sync() -> int:
     result = subprocess.run(["uv", "sync"], cwd=ROOT, check=False)
     return result.returncode
@@ -180,6 +257,10 @@ def main(argv: list[str] | None = None) -> int:
         actions["created_dirs"] = ensure_dirs()
     if args.init_env or args.force_env:
         actions["env"] = init_env(force=args.force_env)
+        # Профиль-специфичные оверрайды (Windows: ollama-чат+эмбеддинги вместо Mac/MLX-дефолтов).
+        overrides = profile_env_overrides(args.profile)
+        if overrides:
+            actions["env_profile_overrides"] = apply_env_overrides(overrides)
     if args.sync:
         actions["uv_sync_exit_code"] = run_uv_sync()
 

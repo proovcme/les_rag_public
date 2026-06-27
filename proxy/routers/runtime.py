@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import sqlite3
@@ -13,6 +14,7 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from backend.metrics_collector import DB_PATH, heartbeats
@@ -27,12 +29,31 @@ from proxy.services.resource_governor import (
     is_indexing_mode,
     normalize_runtime_profile,
 )
-from proxy.services.runtime_admission import count_active_jobs, evaluate_chat_admission, evaluate_memory_pressure
+from proxy.services.runtime_admission import (
+    count_active_jobs,
+    evaluate_chat_admission,
+    evaluate_memory_pressure,
+    generation_semaphore,
+)
 from proxy.services.runtime_dispatcher import DEFAULT_DATASETS, DispatcherError, RuntimeDispatcher
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["runtime"])
+
+
+def summarize_phases(phases: list[dict]) -> dict[str, float]:
+    """W0.1: среднее по каждой фазе латентности за накопленные запросы."""
+    if not phases:
+        return {}
+    totals: dict[str, float] = {}
+    counts: dict[str, int] = {}
+    for entry in phases:
+        for key, value in entry.items():
+            if isinstance(value, (int, float)):
+                totals[key] = totals.get(key, 0.0) + float(value)
+                counts[key] = counts.get(key, 0) + 1
+    return {key: round(totals[key] / counts[key], 3) for key in totals}
 
 
 class ModeRequest(BaseModel):
@@ -102,6 +123,7 @@ class RuntimeRouterState:
 
 
 _state: RuntimeRouterState | None = None
+DEFAULT_OPENAI_MODEL = "gpt-4.1"
 
 
 def set_runtime_state(state: RuntimeRouterState) -> None:
@@ -125,7 +147,7 @@ def chat_admission_for_state(state: RuntimeRouterState):
         current_mode=state.current_mode,
         metrics_cache=state.metrics_cache,
         active_jobs=count_active_jobs(state.job_service, state.job_tracker) + active_reindex_jobs,
-        llm_available=getattr(state.llm_semaphore, "_value", 1) > 0,
+        llm_available=getattr(generation_semaphore(state.llm_semaphore), "_value", 1) > 0,
     )
 
 
@@ -141,7 +163,7 @@ def _provider_status() -> dict[str, str]:
         return {
             "provider": provider,
             "base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-            "model": os.getenv("OPENAI_MODEL", ""),
+            "model": os.getenv("OPENAI_MODEL", "").strip() or os.getenv("LES_DEFAULT_OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
         }
     if provider == "ollama":
         return {
@@ -192,6 +214,65 @@ async def health():
             response["rag"] = {"status": "unknown", "error": str(error)}
     response["embedding"] = rag_runtime_config()
     return response
+
+
+@router.get("/version")
+async def version():
+    """v0.19: единый version-объект ЛЕС (product/harness/schema + git + флаги + runtime-divergence).
+    Без секретов, без падений — git недоступен → 'unknown'."""
+    from proxy.services.version_service import version_info
+    return version_info()
+
+
+async def _live_datasets_and_projects():
+    """Живые датасеты (backend) + проекты (registry) + связи project→dataset. Без падений."""
+    from proxy.services import project_service as ps
+    datasets: list[dict] = []
+    try:
+        backend = get_runtime_state().backend
+        if backend:
+            raw = list(await backend.list_datasets() or [])
+            for d in raw:
+                if isinstance(d, dict):
+                    datasets.append(d)
+                else:   # DatasetInfo (dataclass) → dict
+                    datasets.append({
+                        "id": getattr(d, "id", ""), "name": getattr(d, "name", ""),
+                        "file_count": getattr(d, "doc_count", 0),
+                        "chunk_count": getattr(d, "chunk_count", 0),
+                        "source_type": getattr(d, "group_name", "") or "dataset",
+                        "qdrant_status": "indexed" if getattr(d, "chunk_count", 0) else "unknown",
+                    })
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[SCOPE] list_datasets failed: %s", e)
+    projects, links = [], {}
+    try:
+        projects = ps.build_registry().get("projects", [])
+        links = {int(p["id"]): ps.project_dataset_ids(int(p["id"])) for p in projects}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[SCOPE] registry failed: %s", e)
+    return datasets, projects, links
+
+
+@router.get("/scope/options")
+async def scope_options_endpoint(_admin=Depends(require_admin)):
+    """v0.21: всё для ScopeSelector — проекты, ВСЕ датасеты, непривязанные, системные (с reason).
+    Админский датасет ОБЯЗАН быть здесь (ничего не скрываем молча)."""
+    from proxy.services.scope_service import scope_options
+    datasets, projects, links = await _live_datasets_and_projects()
+    return scope_options(datasets, projects, links)
+
+
+@router.post("/scope/resolve")
+async def scope_resolve_endpoint(payload: dict, _admin=Depends(require_admin)):
+    """v0.21: request-поля (scope/project_id/dataset_ids/dataset_filter) → нормализованный Scope с
+    resolved_dataset_ids. Явный scope приоритетнее legacy. Не теряет область молча."""
+    from proxy.services.scope_service import resolve_scope
+    datasets, _projects, _links = await _live_datasets_and_projects()
+    return resolve_scope(
+        scope=payload.get("scope"), project_id=payload.get("project_id"),
+        dataset_ids=payload.get("dataset_ids"), dataset_filter=payload.get("dataset_filter"),
+        label=payload.get("label"), dataset_catalog=datasets)
 
 
 @router.post("/warmup")
@@ -281,6 +362,55 @@ async def get_indexing_mode():
         "chat_admission": admission.payload(),
         "dataset_priority_order": active_parse_priority_order(state.current_mode),
     }
+
+
+async def _live_snapshot() -> dict:
+    """W5.2: единый снимок для push-канала — то, что раньше опрашивалось
+    отдельными поллерами (metrics/status/indexing/jobs) + прогресс реиндекса
+    для прогресс-бара САМОВАРа. Любой сбой ветки не роняет снимок целиком."""
+    from proxy.routers.jobs import get_jobs_summary
+
+    snap: dict = {}
+    for key, coro in (
+        ("metrics", get_metrics()),
+        ("status", get_status()),
+        ("indexing_mode", get_indexing_mode()),
+        ("jobs_summary", get_jobs_summary(limit=120, active_only=False, _user=None)),
+    ):
+        try:
+            snap[key] = await coro
+        except Exception as err:  # noqa: BLE001
+            snap[key] = {"error": str(err)}
+    try:
+        state = get_runtime_state()
+        snap["reindex"] = await asyncio.to_thread(dispatcher_for_state(state).reindex_status_payload)
+    except Exception as err:  # noqa: BLE001
+        snap["reindex"] = {"error": str(err)}
+    return snap
+
+
+@router.get("/live")
+async def live_stream():
+    """W5.2: push-канал (SSE). Каждые LES_LIVE_INTERVAL_SEC секунд (деф. 3)
+    шлёт событие `snapshot` со сводкой метрик/статуса/индексации/задач — заменяет
+    частый поллинг bg_loop одним долгоживущим соединением. Доступность совпадает
+    с /metrics и /status (открыт на localhost, key-gated через лайт-мост)."""
+    try:
+        interval = max(1.0, float(os.getenv("LES_LIVE_INTERVAL_SEC", "3")))
+    except ValueError:
+        interval = 3.0
+
+    async def gen():
+        while True:
+            snap = await _live_snapshot()
+            yield f"event: snapshot\ndata: {json.dumps(snap, ensure_ascii=False)}\n\n"
+            await asyncio.sleep(interval)
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+    )
 
 
 @router.post("/indexing-mode")
@@ -551,6 +681,8 @@ async def get_metrics():
         "pipeline": {
             "latency_search": state.chat_metrics["latency_search"][-10:],
             "latency_gen": state.chat_metrics["latency_gen"][-10:],
+            "latency_phases": state.chat_metrics.get("latency_phases", [])[-10:],
+            "latency_phases_avg": summarize_phases(state.chat_metrics.get("latency_phases", [])),
             "tokens": state.chat_metrics["tokens"][-10:],
             "crag_pass_rate": crag_verified / crag_total,
             "crag_verified_rate": crag_verified / crag_total,
@@ -566,6 +698,14 @@ async def get_metrics():
         "heartbeats": heartbeats,
         "rag": rag_stats,
         "embedding": rag_runtime_config(),
+        # W3.3: расходы облака накопительно за аптайм proxy (токены/$).
+        "cost": {
+            "cloud_requests": state.chat_metrics.get("cloud_requests", 0),
+            "cloud_prompt_tokens": state.chat_metrics.get("cloud_prompt_tokens", 0),
+            "cloud_completion_tokens": state.chat_metrics.get("cloud_completion_tokens", 0),
+            "cloud_cost_usd": round(state.chat_metrics.get("cloud_cost_usd", 0.0), 4),
+            "cloud_cost_by_model": dict(state.chat_metrics.get("cloud_cost_by_model", {})),
+        },
     }
 
 
@@ -673,3 +813,68 @@ async def delete_backup(req: BackupDeleteRequest, _admin=Depends(require_admin))
             raise HTTPException(status_code=500, detail=f"Failed to delete Qdrant snapshot: {e}")
     else:
         raise HTTPException(status_code=400, detail="Invalid backup type")
+
+
+def _backup_roots():
+    from pathlib import Path
+    les_home = os.getenv("LES_HOME") or str(Path(__file__).resolve().parents[2])
+    return [
+        Path(os.getenv("BACKUP_ROOT", "/Volumes/Data/les_backups")).resolve(),
+        (Path(les_home) / "storage" / "backups").resolve(),
+    ], les_home
+
+
+@router.get("/backup/archives")
+async def list_backup_archives(_admin=Depends(require_admin)):
+    """Полные off-disk архивы (Qdrant-снапшоты + SQLite + .env) от backup_runtime.sh — для восстановления."""
+    from datetime import datetime
+
+    roots, _ = _backup_roots()
+    archives, seen = [], set()
+    for root in roots:
+        if not root.exists():
+            continue
+        for d in sorted(root.glob("*"), key=lambda p: p.name, reverse=True):
+            if not d.is_dir() or str(d) in seen:
+                continue
+            seen.add(str(d))
+            snaps = sorted(p.name for p in d.glob("*.snapshot"))
+            has_db = (d / "les_meta_qwen.db").exists()
+            if not snaps and not has_db:
+                continue
+            size = sum(p.stat().st_size for p in d.rglob("*") if p.is_file())
+            archives.append({
+                "path": str(d), "name": d.name, "snapshots": snaps, "has_sqlite": has_db,
+                "size_bytes": size,
+                "created_at": datetime.fromtimestamp(d.stat().st_mtime).isoformat(),
+            })
+    return {"archives": archives}
+
+
+class BackupRestoreRequest(BaseModel):
+    archive_path: str
+    with_env: bool = False
+
+
+@router.post("/backup/restore")
+async def restore_backup(req: BackupRestoreRequest, _admin=Depends(require_admin)):
+    """Запускает restore_runtime.sh ОТЦЕПЛЕННО (скрипт сам остановит/поднимет proxy).
+    ОПАСНО: перезаписывает живой индекс и метабазу. .env не трогается без with_env."""
+    import subprocess
+    from pathlib import Path
+
+    roots, les_home = _backup_roots()
+    target = Path(req.archive_path).resolve()
+    if not any(str(target).startswith(str(r)) for r in roots) or not target.is_dir():
+        raise HTTPException(status_code=400, detail="archive_path вне известных бэкап-папок")
+    script = (Path(les_home) / "tools" / "restore_runtime.sh").resolve()
+    if not script.exists():
+        raise HTTPException(status_code=500, detail="restore_runtime.sh не найден")
+    args = ["/bin/bash", str(script), str(target)]
+    if req.with_env:
+        args.append("--env")
+    log = open("/tmp/les_restore.log", "ab")  # noqa: SIM115 — живёт у отцеплённого процесса
+    subprocess.Popen(args, stdout=log, stderr=log, start_new_session=True, cwd=les_home)
+    logger.warning("[СУХАРИК] RESTORE запущен из %s (with_env=%s)", target.name, req.with_env)
+    return {"status": "launched", "archive": target.name,
+            "note": "Восстановление в фоне; сервис перезапустится. Лог: /tmp/les_restore.log"}

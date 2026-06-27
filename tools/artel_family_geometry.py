@@ -1,0 +1,383 @@
+"""Deterministic parametric geometry compilation for ARTEL family generation
+(LES3_PLAN W10.2, geometry layer).
+
+The insight (operator, 2026-06-14): Revit API can build geometry from a
+description, so geometry is *not* manual work. But a vision model must not invent
+geometry directly — that is fragile. Instead the pipeline splits into three:
+
+  read source (vision) -> classify into a parametric ARCHETYPE + bind dimensions
+                       -> deterministically instantiate Revit geometry (this code)
+
+This module owns the archetype library and turns a ``family_geometry.v1`` recipe
+into ordered ``create_extrusion`` operations whose dimensions are bound to family
+parameters, so the resulting family flexes. Execution of the operations is on the
+Windows/Revit side (`ARTEL.Revit.FamilyFactory`, finished on Legion).
+
+Archetypes cover the common parametric forms (boxes, panels, profiles, fittings).
+A shape not in the library is reported as manual work and is a candidate to grow
+the library via the learning loop.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Callable
+
+GEOMETRY_SCHEMA_VERSION = "artel.family_geometry.v1"
+
+# A door's thickness when not bound to a parameter (mm). Constant defaults keep
+# the recipe terse: vision only has to identify the archetype + main dimensions.
+_DEFAULT_DOOR_THICKNESS_MM = 18.0
+_DEFAULT_PANEL_THICKNESS_MM = 18.0
+_DEFAULT_BACK_THICKNESS_MM = 4.0
+_DEFAULT_SHELF_THICKNESS_MM = 18.0
+
+
+def _param_ref(name: str) -> dict[str, Any]:
+    return {"parameter": name}
+
+
+def _const_ref(value: float, unit: str = "mm") -> dict[str, Any]:
+    return {"constant": value, "unit": unit}
+
+
+def _resolve_dim(
+    archetype: str,
+    dim: str,
+    bindings: dict[str, str],
+    declared: set[str],
+    diagnostics: list[dict[str, Any]],
+    *,
+    required: bool = True,
+) -> dict[str, Any] | None:
+    """Resolve an archetype dimension to a parameter ref, validating bindings."""
+    param = bindings.get(dim)
+    if not param:
+        if required:
+            diagnostics.append({
+                "severity": "error", "code": "ARF-PLAN-GEOM-002",
+                "message": f"Archetype '{archetype}' requires dimension '{dim}'; not bound.",
+                "target": archetype,
+            })
+        return None
+    if param not in declared:
+        diagnostics.append({
+            "severity": "error", "code": "ARF-PLAN-GEOM-003",
+            "message": f"Geometry binds dimension '{dim}' to undeclared parameter '{param}'.",
+            "target": param,
+        })
+        return None
+    return _param_ref(param)
+
+
+def _compile_rect_cabinet(
+    bindings: dict[str, str],
+    features: list[dict[str, Any]],
+    declared: set[str],
+    diagnostics: list[dict[str, Any]],
+    manual_work: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Rectangular body extruded up; optional door (front face), back panel, shelves.
+
+    Каждый элемент — отдельное тело со своим `placement` относительно корпуса:
+    body/shelf — на горизонтальной плоскости (доля высоты), door/back — на вертикальной
+    передней/задней грани. C#-исполнитель строит их по габаритам корпуса.
+    """
+    width = _resolve_dim("rect_cabinet", "width", bindings, declared, diagnostics)
+    depth = _resolve_dim("rect_cabinet", "depth", bindings, declared, diagnostics)
+    height = _resolve_dim("rect_cabinet", "height", bindings, declared, diagnostics)
+    if not (width and depth and height):
+        return []
+
+    ops: list[dict[str, Any]] = [{
+        "op": "create_extrusion",
+        "id": "body",
+        "role": "body",
+        "sketch_plane": "ref_level",
+        "placement": {"plane": "level", "z_fraction": 0.0},
+        "profile": {"shape": "rectangle", "width": width, "depth": depth},
+        "extrusion": height,
+    }]
+
+    for feature in features:
+        kind = str(feature.get("kind", "")).strip().lower()
+        fb = dict(feature.get("bindings") or {})
+        if kind == "door":
+            door_w = _resolve_dim("door", "width", fb, declared, diagnostics, required=False) or width
+            door_h = _resolve_dim("door", "height", fb, declared, diagnostics, required=False) or height
+            thickness = (_resolve_dim("door", "thickness", fb, declared, diagnostics, required=False)
+                         or _const_ref(_DEFAULT_DOOR_THICKNESS_MM))
+            ops.append({
+                "op": "create_extrusion", "id": "door", "role": "door",
+                "sketch_plane": "front", "placement": {"plane": "front"},
+                "profile": {"shape": "rectangle", "width": door_w, "depth": door_h},
+                "extrusion": thickness,
+            })
+        elif kind == "back":
+            thickness = (_resolve_dim("back", "thickness", fb, declared, diagnostics, required=False)
+                         or _const_ref(_DEFAULT_BACK_THICKNESS_MM))
+            ops.append({
+                "op": "create_extrusion", "id": "back", "role": "back",
+                "sketch_plane": "back", "placement": {"plane": "back"},
+                "profile": {"shape": "rectangle", "width": width, "depth": height},
+                "extrusion": thickness,
+            })
+        elif kind in ("shelf", "shelves"):
+            count = max(1, int(feature.get("count") or 1))
+            thickness = _const_ref(_DEFAULT_SHELF_THICKNESS_MM)
+            for i in range(1, count + 1):
+                ops.append({
+                    "op": "create_extrusion", "id": f"shelf_{i}", "role": "shelf",
+                    "sketch_plane": "ref_level",
+                    "placement": {"plane": "level", "z_fraction": round(i / (count + 1), 4)},
+                    "profile": {"shape": "rectangle", "width": width, "depth": depth},
+                    "extrusion": thickness,
+                })
+        else:
+            diagnostics.append({
+                "severity": "warning", "code": "ARF-PLAN-GEOM-004",
+                "message": f"Feature '{kind}' is not in the rect_cabinet archetype; flagged as manual work.",
+                "target": "rect_cabinet",
+            })
+            manual_work.append({
+                "kind": "geometry",
+                "description": f"Доделать элемент '{kind}' вручную (нет в архетипе rect_cabinet).",
+            })
+    return ops
+
+
+def _compile_panel(
+    bindings: dict[str, str],
+    features: list[dict[str, Any]],
+    declared: set[str],
+    diagnostics: list[dict[str, Any]],
+    manual_work: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Flat panel/plate: front face extruded by thickness."""
+    width = _resolve_dim("panel", "width", bindings, declared, diagnostics)
+    height = _resolve_dim("panel", "height", bindings, declared, diagnostics)
+    thickness = _resolve_dim("panel", "thickness", bindings, declared, diagnostics, required=False)
+    if not (width and height):
+        return []
+    return [{
+        "op": "create_extrusion",
+        "id": "body",
+        "role": "body",
+        "sketch_plane": "front",
+        "profile": {"shape": "rectangle", "width": width, "depth": height},
+        "extrusion": thickness or _const_ref(_DEFAULT_PANEL_THICKNESS_MM),
+    }]
+
+
+def _compile_bar_profile(
+    bindings: dict[str, str],
+    features: list[dict[str, Any]],
+    declared: set[str],
+    diagnostics: list[dict[str, Any]],
+    manual_work: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Linear bar/beam: a section (width×height) extruded along its length."""
+    width = _resolve_dim("bar_profile", "width", bindings, declared, diagnostics)
+    height = _resolve_dim("bar_profile", "height", bindings, declared, diagnostics)
+    length = _resolve_dim("bar_profile", "length", bindings, declared, diagnostics)
+    if not (width and height and length):
+        return []
+    manual_work.append({
+        "kind": "geometry",
+        "description": "Заменить габаритный прямоугольник сечения на реальный профиль (L/I/U), если требуется.",
+    })
+    return [{
+        "op": "create_extrusion",
+        "id": "body",
+        "role": "body",
+        "sketch_plane": "section",
+        "profile": {"shape": "rectangle", "width": width, "depth": height},
+        "extrusion": length,
+    }]
+
+
+def _compile_cylinder_revolve(
+    bindings: dict[str, str],
+    features: list[dict[str, Any]],
+    declared: set[str],
+    diagnostics: list[dict[str, Any]],
+    manual_work: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Round body: a circle (diameter) extruded by height (a straight cylinder)."""
+    diameter = _resolve_dim("cylinder_revolve", "diameter", bindings, declared, diagnostics)
+    height = _resolve_dim("cylinder_revolve", "height", bindings, declared, diagnostics)
+    if not (diameter and height):
+        return []
+    return [{
+        "op": "create_extrusion",
+        "id": "body",
+        "role": "body",
+        "sketch_plane": "ref_level",
+        "profile": {"shape": "circle", "diameter": diameter},
+        "extrusion": height,
+    }]
+
+
+# MEP-коннекторы: домены и формы присоединений (Revit ConnectorProfileType / Domain).
+_CONN_DOMAINS = {"hvac", "piping", "electrical", "cabletray", "conduit"}
+_CONN_SHAPES = {"round", "rectangular", "oval"}
+
+
+def _resolve_conn_dim(
+    value: Any, declared: set[str], diagnostics: list[dict[str, Any]], conn_id: str, dim: str,
+) -> dict[str, Any] | None:
+    """Размер коннектора: имя параметра (строка/{parameter}) → param ref; число/{constant} → const."""
+    if value is None:
+        diagnostics.append({
+            "severity": "error", "code": "ARF-PLAN-CONN-002",
+            "message": f"Connector '{conn_id}' missing dimension '{dim}'.", "target": conn_id,
+        })
+        return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return _const_ref(float(value))
+    if isinstance(value, dict):
+        if value.get("parameter"):
+            param = str(value["parameter"])
+        elif "constant" in value:
+            return {"constant": float(value["constant"]), "unit": str(value.get("unit", "mm"))}
+        else:
+            param = ""
+    else:
+        param = str(value).strip()
+    if not param:
+        diagnostics.append({
+            "severity": "error", "code": "ARF-PLAN-CONN-002",
+            "message": f"Connector '{conn_id}' dimension '{dim}' is empty.", "target": conn_id,
+        })
+        return None
+    if param not in declared:
+        diagnostics.append({
+            "severity": "error", "code": "ARF-PLAN-CONN-003",
+            "message": f"Connector '{conn_id}' binds '{dim}' to undeclared parameter '{param}'.",
+            "target": param,
+        })
+        return None
+    return _param_ref(param)
+
+
+def _compile_connectors(
+    connectors: list[dict[str, Any]], declared: set[str], diagnostics: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """MEP-присоединения изделия → `add_connector` ops (флексятся по присоед. размеру).
+
+    Машина задаёт размер/тип/грань/систему из техлиста; форму и факт постановки коннектора
+    в Revit делает C#-исполнитель (Revit это умеет, но требует точности — флаг проверки)."""
+    ops: list[dict[str, Any]] = []
+    for index, conn in enumerate(connectors, 1):
+        conn_id = str(conn.get("id") or f"conn_{index}")
+        domain = str(conn.get("domain") or "hvac").strip().lower()
+        if domain not in _CONN_DOMAINS:
+            diagnostics.append({
+                "severity": "warning", "code": "ARF-PLAN-CONN-001",
+                "message": f"Connector '{conn_id}': unknown domain '{domain}', defaulting to hvac.",
+                "target": conn_id,
+            })
+            domain = "hvac"
+        shape = str(conn.get("shape") or "round").strip().lower()
+        if shape not in _CONN_SHAPES:
+            diagnostics.append({
+                "severity": "error", "code": "ARF-PLAN-CONN-004",
+                "message": f"Connector '{conn_id}': unknown shape '{shape}'.", "target": conn_id,
+            })
+            continue
+        op: dict[str, Any] = {
+            "op": "add_connector",
+            "id": conn_id,
+            "domain": domain,
+            "shape": shape,
+            "host_face": str(conn.get("host_face") or conn.get("face") or "top"),
+            "system_classification": str(conn.get("system") or conn.get("system_classification") or ""),
+            "flow": str(conn.get("flow") or ""),
+        }
+        if shape == "round":
+            diameter = _resolve_conn_dim(conn.get("diameter"), declared, diagnostics, conn_id, "diameter")
+            if diameter is None:
+                continue
+            op["diameter"] = diameter
+        else:
+            width = _resolve_conn_dim(conn.get("width"), declared, diagnostics, conn_id, "width")
+            height = _resolve_conn_dim(conn.get("height"), declared, diagnostics, conn_id, "height")
+            if width is None or height is None:
+                continue
+            op["width"] = width
+            op["height"] = height
+        ops.append(op)
+    return ops
+
+
+# Archetype library: key -> {label, dimensions (required), compile}.
+ArchetypeCompiler = Callable[
+    [dict[str, str], list[dict[str, Any]], set[str], list[dict[str, Any]], list[dict[str, Any]]],
+    list[dict[str, Any]],
+]
+
+ARCHETYPES: dict[str, dict[str, Any]] = {
+    "rect_cabinet": {
+        "label": "Прямоугольный корпус",
+        "dimensions": ["width", "depth", "height"],
+        "features": ["door"],
+        "compile": _compile_rect_cabinet,
+    },
+    "panel": {
+        "label": "Плита / панель",
+        "dimensions": ["width", "height"],
+        "features": [],
+        "compile": _compile_panel,
+    },
+    "bar_profile": {
+        "label": "Линейный профиль / балка",
+        "dimensions": ["width", "height", "length"],
+        "features": [],
+        "compile": _compile_bar_profile,
+    },
+    "cylinder_revolve": {
+        "label": "Цилиндр / тело вращения",
+        "dimensions": ["diameter", "height"],
+        "features": [],
+        "compile": _compile_cylinder_revolve,
+    },
+}
+
+
+def compile_geometry(
+    recipe: dict[str, Any],
+    declared_parameters: set[str],
+    diagnostics: list[dict[str, Any]],
+    manual_work: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Compile a family_geometry.v1 recipe into geometry operations.
+
+    Appends diagnostics/manual_work in place. Returns the ordered operations
+    (empty on a blocking error). Deterministic and offline.
+    """
+    archetype = str(recipe.get("archetype", "")).strip()
+    spec = ARCHETYPES.get(archetype)
+    if spec is None:
+        diagnostics.append({
+            "severity": "error", "code": "ARF-PLAN-GEOM-001",
+            "message": (
+                f"Unknown geometry archetype '{archetype}'. "
+                f"Known: {', '.join(sorted(ARCHETYPES))}."
+            ),
+            "target": archetype or None,
+        })
+        manual_work.append({
+            "kind": "geometry",
+            "description": f"Архетип '{archetype}' неизвестен — построить геометрию вручную.",
+        })
+        return []
+
+    bindings = {str(k): str(v) for k, v in (recipe.get("bindings") or {}).items()}
+    features = list(recipe.get("features") or [])
+    compiler: ArchetypeCompiler = spec["compile"]
+    ops = compiler(bindings, features, declared_parameters, diagnostics, manual_work)
+
+    # MEP-коннекторы — отдельный слой рецепта (любой архетип может их нести).
+    connectors = list(recipe.get("connectors") or [])
+    if connectors:
+        ops = ops + _compile_connectors(connectors, declared_parameters, diagnostics)
+    return ops

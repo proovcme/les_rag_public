@@ -336,7 +336,7 @@ async def test_import_apple_mail_registers_converted_eml(tmp_path, monkeypatch, 
             AppleMailImportedFile(
                 path=eml,
                 relative_path="MAIL/AppleMail/local/apple_test.eml",
-                source_path="fixtures/mail/test.emlx",
+                source_path="/Users/ovc/Library/Mail/V10/test.emlx",
                 subject="Письмо по проекту",
                 message_id="<apple-1>",
             )

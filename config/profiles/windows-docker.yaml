@@ -1,0 +1,15 @@
+name: windows-docker
+platform: windows
+service_manager: powershell_docker
+model_provider: openai_compatible_or_remote
+embedding_provider: remote_or_sentence_transformers
+qdrant: docker_named_volume
+storage_root: "%ProgramData%\\LES"
+ports:
+  qdrant: 6333
+  model_host: 8080
+  proxy: 8050
+  ui: 8051
+notes:
+  - Use Docker named volumes for Qdrant data.
+  - Intended for BIM/Revit workstations and ARTEL integration.

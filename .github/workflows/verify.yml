@@ -1,0 +1,31 @@
+# W0.2 (LES3_PLAN): офлайн-гейт на push/PR. Без живых Qdrant/MLX —
+# только compileall + импорт-смоук тестов, ровно как `make verify`.
+# Матрица macos+windows появится в W4.3 после кроссплатформенных правок.
+name: verify
+
+# Авто-триггеры СНЯТЫ: приватный репо на БЕСПЛАТНОМ GitHub — Actions-минуты выжжены (дорогие macOS-
+# runner'ы 10×), любой прогон падает «job was not started». Гейт гоняем ЛОКАЛЬНО: `make verify`.
+# Запуск вручную (Actions → verify → Run) или верни push/PR, когда минуты сбросятся / репо публичный.
+on:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest        # офлайн-гейт (compileall + collect) ОС-агностичен; Linux ~10× дешевле macos
+    timeout-minutes: 20            # macos+windows матрица вернётся в W4.3, когда понадобится
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies (frozen lock)
+        run: uv sync --frozen
+
+      - name: make verify (compileall + pytest collect-only)
+        run: make verify

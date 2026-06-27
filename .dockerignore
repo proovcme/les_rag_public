@@ -1,0 +1,17 @@
+.git
+.venv
+.env
+*.env
+__pycache__
+*.pyc
+.pytest_cache
+.nicegui
+.aider*
+.claude
+.DS_Store
+logs
+data
+storage
+RAG_Content
+legacy
+qdrant_visualizer/data.js

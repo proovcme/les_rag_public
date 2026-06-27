@@ -205,45 +205,6 @@ async def test_save_settings_updates_provider_keys_without_exposing_secret(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_save_settings_updates_speckle_without_exposing_token(tmp_path, monkeypatch):
-    env_path = tmp_path / ".env"
-    env_path.write_text("SPECKLE_API_TOKEN=old-token\n")
-    monkeypatch.setattr(settings, "ENV_PATH", env_path)
-    monkeypatch.setenv("SPECKLE_API_TOKEN", "old-token")
-
-    result = await settings.save_settings(
-        settings.SettingsRequest(
-            speckle_enabled=True,
-            speckle_base_url="https://speckle.example.com",
-            speckle_graphql_url="https://speckle.example.com/graphql",
-            speckle_api_token="speckle-secret",
-            speckle_wake_timeout_sec=4.5,
-        ),
-        restart=False,
-        _admin=object(),
-    )
-
-    assert result["updated"]["SPECKLE_API_TOKEN"] == "***"
-    assert result["updated"]["SPECKLE_BASE_URL"] == "https://speckle.example.com"
-    text = env_path.read_text()
-    assert "SPECKLE_API_TOKEN=speckle-secret" in text
-    assert "SPECKLE_WAKE_TIMEOUT_SEC=4.5" in text
-
-    payload = await settings.get_settings(_user=object())
-    assert payload["speckle"]["api_token_set"] is True
-    assert payload["speckle"]["supported_formats"] == ["json", "jsonl", "dwg", "dxf", "rvt", "ifc"]
-    assert "api_token" not in payload["speckle"]
-
-    cleared = await settings.save_settings(
-        settings.SettingsRequest(speckle_api_token_clear=True),
-        restart=False,
-        _admin=object(),
-    )
-    assert cleared["updated"]["SPECKLE_API_TOKEN"] == "***"
-    assert os.environ["SPECKLE_API_TOKEN"] == ""
-
-
-@pytest.mark.asyncio
 async def test_save_settings_rejects_unsafe_values(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "ENV_PATH", tmp_path / ".env")
 
@@ -271,135 +232,6 @@ async def test_save_settings_rejects_unsafe_values(tmp_path, monkeypatch):
         )
     assert bad_provider_url.value.status_code == 400
 
-    with pytest.raises(HTTPException) as bad_speckle_url:
-        await settings.save_settings(
-            settings.SettingsRequest(speckle_base_url="file:///tmp/socket"),
-            restart=False,
-            _admin=object(),
-        )
-    assert bad_speckle_url.value.status_code == 400
-
-    with pytest.raises(HTTPException) as bad_speckle_timeout:
-        await settings.save_settings(
-            settings.SettingsRequest(speckle_wake_timeout_sec=0.1),
-            restart=False,
-            _admin=object(),
-        )
-    assert bad_speckle_timeout.value.status_code == 400
-
-
-@pytest.mark.asyncio
-async def test_speckle_status_classifies_sleeping_http(monkeypatch):
-    class FakeResponse:
-        status_code = 502
-
-    class FakeClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return None
-
-        async def get(self, url, headers=None):
-            assert url == "https://speckle.example.com"
-            return FakeResponse()
-
-    monkeypatch.setenv("SPECKLE_BASE_URL", "https://speckle.example.com")
-    monkeypatch.setenv("SPECKLE_GRAPHQL_URL", "")
-    monkeypatch.setattr(speckle.httpx, "AsyncClient", FakeClient)
-
-    payload = await speckle.speckle_status(_user=object())
-
-    assert payload["status"] == "sleeping"
-    assert payload["http_status"] == 502
-    assert payload["graphql_url"] == "https://speckle.example.com/graphql"
-
-
-@pytest.mark.asyncio
-async def test_speckle_import_inline_payload_builds_graph_and_projection(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    payload = {
-        "id": "root",
-        "speckle_type": "Objects.BuiltElements.Model",
-        "name": "Demo model",
-        "elements": [
-            {
-                "id": "wall-1",
-                "speckle_type": "Objects.BuiltElements.Wall",
-                "name": "Типовой узел стены",
-                "layer": "A-WALL",
-                "category": "Walls",
-                "material": "Concrete",
-            }
-        ],
-    }
-
-    result = await speckle.speckle_import(
-        speckle.SpeckleImportRequest(payload=payload, source_type="revit"),
-        _admin=object(),
-    )
-
-    assert result["status"] == "imported"
-    assert result["profile"] == "revit"
-    assert result["elements"] == 2
-    assert result["relations"] == 1
-    projection = tmp_path / result["projection_path"]
-    assert projection.exists()
-    text = projection.read_text(encoding="utf-8")
-    assert "Типовой узел стены" in text
-    assert "A-WALL" in text
-
-
-@pytest.mark.asyncio
-async def test_speckle_import_excel_profile_keeps_table_properties(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    payload = {
-        "id": "row-1",
-        "speckle_type": "Objects.Data.ExcelRow",
-        "name": "Ведомость узлов строка 1",
-        "category": "Sheet1",
-        "cells": {
-            "node_mark": "УК-1",
-            "material": "Concrete",
-            "cost": {"value": 1200, "unit": "RUB"},
-        },
-    }
-
-    result = await speckle.speckle_import(
-        speckle.SpeckleImportRequest(payload=payload, source_type="excel"),
-        _admin=object(),
-    )
-
-    assert result["profile"] == "excel"
-    assert result["properties"] == 3
-    text = (tmp_path / result["projection_path"]).read_text(encoding="utf-8")
-    assert "Sheet/table: Sheet1" in text
-    assert "node_mark" in text
-    assert "УК-1" in text
-
-
-@pytest.mark.asyncio
-async def test_speckle_import_uses_latest_local_source(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    source_dir = tmp_path / "RAG_Content" / "CAD_BIM" / "Speckle"
-    source_dir.mkdir(parents=True)
-    (source_dir / "model.json").write_text(
-        '{"id":"node-1","speckle_type":"Objects.Other","name":"Local node"}',
-        encoding="utf-8",
-    )
-
-    result = await speckle.speckle_import(
-        speckle.SpeckleImportRequest(),
-        _admin=object(),
-    )
-
-    assert result["status"] == "imported"
-    assert result["elements"] == 1
-    assert result["projection_path"].startswith("RAG_Content/CAD_BIM/exports/")
-
 
 @pytest.mark.asyncio
 async def test_cad_bim_import_uses_json_inbox_and_json_projection(tmp_path, monkeypatch):
@@ -412,7 +244,7 @@ async def test_cad_bim_import_uses_json_inbox_and_json_projection(tmp_path, monk
     )
 
     result = await speckle.cad_bim_import(
-        speckle.SpeckleImportRequest(source_type="ifc"),
+        speckle.CadBimImportRequest(source_type="ifc"),
         _admin=object(),
     )
 
@@ -461,7 +293,7 @@ async def test_cad_bim_element_context_returns_rag_prompt_by_source_id(tmp_path,
         encoding="utf-8",
     )
     await speckle.cad_bim_import(
-        speckle.SpeckleImportRequest(source_path="ifc_model.json", source_type="ifc"),
+        speckle.CadBimImportRequest(source_path="ifc_model.json", source_type="ifc"),
         _admin=object(),
     )
 

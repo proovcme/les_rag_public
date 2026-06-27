@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "metric": "field_accuracy",
+  "note": "Синтетический стартовый набор для бенча schema-constrained экстракции (proxy/services/structured_extract.py). НЕ приватные данные — образец формата. Реальные стройсканы добавлять отдельными кейсами (context = OCR-текст/markdown страницы, expected = эталонный JSON по schema).",
+  "cases": [
+    {
+      "name": "spec_cable_line",
+      "instruction": "Извлеки позицию спецификации в JSON по схеме.",
+      "schema": {
+        "type": "object",
+        "required": ["poz", "name", "qty", "unit"],
+        "properties": {
+          "poz": {"type": "integer"},
+          "name": {"type": "string"},
+          "qty": {"type": "number"},
+          "unit": {"type": "string", "enum": ["шт", "м", "кг", "компл"]},
+          "gost": {"type": "string"}
+        }
+      },
+      "context": "Поз. 1  Кабель ВВГнг(А)-LS 3х2,5  ГОСТ 31996-2012  150 м",
+      "expected": {"poz": 1, "name": "Кабель ВВГнг(А)-LS 3х2,5", "qty": 150, "unit": "м", "gost": "ГОСТ 31996-2012"}
+    },
+    {
+      "name": "spec_panel_unit_enum",
+      "instruction": "Извлеки позицию спецификации в JSON по схеме.",
+      "schema": {
+        "type": "object",
+        "required": ["poz", "name", "qty", "unit"],
+        "properties": {
+          "poz": {"type": "integer"},
+          "name": {"type": "string"},
+          "qty": {"type": "number"},
+          "unit": {"type": "string", "enum": ["шт", "м", "кг", "компл"]}
+        }
+      },
+      "context": "2  Щит распределительный ЩРН-12  IP31  4 шт.",
+      "expected": {"poz": 2, "name": "Щит распределительный ЩРН-12 IP31", "qty": 4, "unit": "шт"}
+    },
+    {
+      "name": "spec_multi_row",
+      "instruction": "Извлеки все позиции спецификации в JSON по схеме (массив rows).",
+      "schema": {
+        "type": "object",
+        "required": ["rows"],
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["poz", "name", "qty", "unit"],
+              "properties": {
+                "poz": {"type": "integer"},
+                "name": {"type": "string"},
+                "qty": {"type": "number"},
+                "unit": {"type": "string"}
+              }
+            }
+          }
+        }
+      },
+      "context": "1  Автоматический выключатель ВА47-29 1P 16А  6 шт\n2  УЗО ВД1-63 2P 25А 30мА  2 шт\n3  Шина нулевая N 6x9  1 шт",
+      "expected": {
+        "rows": [
+          {"poz": 1, "name": "Автоматический выключатель ВА47-29 1P 16А", "qty": 6, "unit": "шт"},
+          {"poz": 2, "name": "УЗО ВД1-63 2P 25А 30мА", "qty": 2, "unit": "шт"},
+          {"poz": 3, "name": "Шина нулевая N 6x9", "qty": 1, "unit": "шт"}
+        ]
+      }
+    },
+    {
+      "name": "journal_entry",
+      "instruction": "Извлеки запись журнала работ в JSON по схеме.",
+      "schema": {
+        "type": "object",
+        "required": ["date", "work", "volume", "unit"],
+        "properties": {
+          "date": {"type": "string"},
+          "work": {"type": "string"},
+          "volume": {"type": "number"},
+          "unit": {"type": "string"},
+          "executor": {"type": "string"}
+        }
+      },
+      "context": "15.04.2026  Прокладка кабеля по лоткам, ось 1-5  320 м  Бригада №3",
+      "expected": {"date": "15.04.2026", "work": "Прокладка кабеля по лоткам, ось 1-5", "volume": 320, "unit": "м", "executor": "Бригада №3"}
+    }
+  ]
+}

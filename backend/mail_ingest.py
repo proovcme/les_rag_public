@@ -328,6 +328,12 @@ def _summarize_eml(path: Path, source_dir: Path) -> MailFileSummary:
             disposition = (part.get_content_disposition() or "").lower()
             if filename or disposition == "attachment":
                 attachments.append(filename or "(без имени)")
+    else:
+        # Однокусковое письмо-вложение (форвард .pdf/.eml как тело): не теряем вложение.
+        filename = msg.get_filename()
+        disposition = (msg.get_content_disposition() or "").lower()
+        if filename or disposition == "attachment" or msg.get_content_maintype() not in {"text", "multipart"}:
+            attachments.append(filename or "(без имени)")
     return MailFileSummary(
         path=path.as_posix(),
         relative_path=path.relative_to(source_dir).as_posix(),

@@ -183,6 +183,10 @@ def _map_columns_simple(headers: list) -> dict:
         ("pos", ("№", "номер", "поз", "позиция", "п/п")),
         ("section", ("раздел", "глава", "этап")),
         ("subsection", ("подраздел", "подэтап")),
+        # «Наименование …» — это всегда колонка наименования, даже если в тексте есть
+        # «материалов»/«работ» (иначе amount_mat/amount_work перехватывают её как число
+        # → имя теряется, строка отбрасывается). Высокий приоритет до amount-правил.
+        ("name", ("наименование", "наимен.")),
         ("amount", ("сумма", "итого", "всего")),
         ("amount_mat", ("материал", "материалы")),
         ("amount_work", ("работа", "работы", "зп", "оплата труда")),
@@ -264,8 +268,12 @@ def _find_header_row(ws, max_scan: int = 20) -> int:
     """
     best_row = 0
     best_score = 0
-    for row_idx in range(1, min(max_scan, ws.max_row) + 1):
-        row = [ws.cell(row_idx, c).value for c in range(1, ws.max_column + 1)]
+    max_row = ws.max_row or max_scan
+    scan_rows = min(max_scan, max_row)
+    for row_idx, row in enumerate(
+        ws.iter_rows(min_row=1, max_row=scan_rows, values_only=True),
+        start=1,
+    ):
         non_empty = sum(1 for v in row if v is not None and str(v).strip())
         text_cells = sum(1 for v in row if v is not None and isinstance(v, str) and len(str(v).strip()) > 1)
         score = text_cells * 2 + non_empty
@@ -273,6 +281,22 @@ def _find_header_row(ws, max_scan: int = 20) -> int:
             best_score = score
             best_row = row_idx
     return best_row
+
+
+def _xls_to_xlsx_tmp(xls_path: str) -> str:
+    """openpyxl не читает старый .xls — конвертируем в .xlsx через pandas/xlrd
+    (вычисленные значения, без формул) и дальше используем штатный openpyxl-конвейер."""
+    import tempfile
+    import re as _re
+    import pandas as pd
+    sheets = pd.read_excel(xls_path, sheet_name=None, header=None)  # engine=xlrd для .xls
+    tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
+    tmp.close()
+    with pd.ExcelWriter(tmp.name, engine="openpyxl") as writer:
+        for idx, (name, df) in enumerate(sheets.items()):
+            safe = _re.sub(r"[\[\]:*?/\\]", "_", str(name))[:31] or f"s{idx}"
+            df.to_excel(writer, sheet_name=safe, header=False, index=False)
+    return tmp.name
 
 
 def read_xlsx_sheets(file_path: str) -> list:
@@ -285,12 +309,15 @@ def read_xlsx_sheets(file_path: str) -> list:
     except ImportError:
         raise RuntimeError("openpyxl не установлен: pip install openpyxl --break-system-packages")
 
+    if str(file_path).lower().endswith(".xls"):
+        file_path = _xls_to_xlsx_tmp(file_path)
+
     wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
     sheets = []
 
     for sheet_name in wb.sheetnames:
         ws = wb[sheet_name]
-        if ws.max_row is None or ws.max_row < 2:
+        if ws.max_row is not None and ws.max_row < 2:
             continue
 
         header_row_idx = _find_header_row(ws)
@@ -298,15 +325,20 @@ def read_xlsx_sheets(file_path: str) -> list:
             continue
 
         # Заголовки
-        headers = []
-        for c in range(1, ws.max_column + 1):
-            v = ws.cell(header_row_idx, c).value
-            headers.append(str(v).strip() if v is not None else f"col_{c}")
+        header_values = next(
+            ws.iter_rows(min_row=header_row_idx, max_row=header_row_idx, values_only=True),
+            (),
+        )
+        headers = [
+            str(v).strip() if v is not None and str(v).strip() else f"col_{idx}"
+            for idx, v in enumerate(header_values, start=1)
+        ]
+        if not headers:
+            continue
 
         # Строки данных
         rows = []
-        for row_idx in range(header_row_idx + 1, ws.max_row + 1):
-            row_vals = [ws.cell(row_idx, c).value for c in range(1, ws.max_column + 1)]
+        for row_vals in ws.iter_rows(min_row=header_row_idx + 1, values_only=True):
             # Пропускаем полностью пустые строки
             if all(v is None or str(v).strip() == "" for v in row_vals):
                 continue

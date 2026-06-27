@@ -1,3 +1,7 @@
+"""DEPRECATED / МЁРТВЫЙ МОДУЛЬ (помечен 2026-06-26): не импортируется и не вызывается нигде
+(0 внешних использований — аудит модулей). Живая диагностика — proxy/routers/diagnostics.py
+(+ sovushka/pages/diag.py). Оставлен по правилу «ничего не удалять»; не развивать."""
+
 import json
 import subprocess
 import re

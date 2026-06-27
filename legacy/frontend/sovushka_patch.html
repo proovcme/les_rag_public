@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>С.О.В.У.Ш.К.А. // v2.6.3 Live Core</title>
+<style>
+  :root[data-theme="dark"] {
+    --bg: #08090b; --bg-panel: #12151a; --bg-module: #1a1e25;
+    --text: #ffffff; --text-dim: #94a3b8;
+    --border: #2d3748; --border-hl: #4a5568;
+    --accent: #3b82f6; --ok: #10b981; --pauk: #8b5cf6; --warn: #f59e0b; --err: #ef4444;
+    --font: 'Courier New', Courier, monospace;
+  }
+  :root[data-theme="light"] {
+    --bg: #f8fafc; --bg-panel: #ffffff; --bg-module: #f1f5f9;
+    --text: #0f172a; --text-dim: #64748b;
+    --border: #cbd5e1; --border-hl: #94a3b8;
+    --accent: #2563eb; --ok: #059669; --pauk: #7c3aed; --warn: #d97706; --err: #dc2626;
+    --font: 'Courier New', Courier, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font); background: var(--bg); color: var(--text); display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+
+  .hdr { padding: 14px 24px; background: var(--bg-panel); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; z-index: 10; }
+  .brand { font-weight: 900; font-size: 1.1rem; display: flex; gap: 8px; align-items: center; }
+  .brand-logo { color: var(--accent); }
+  
+  .nav { display: flex; gap: 4px; }
+  .nav-btn { background: transparent; border: 1px solid transparent; color: var(--text-dim); padding: 6px 14px; cursor: pointer; font-family: var(--font); font-size: 0.75rem; font-weight: 700; border-radius: 4px; transition: all 0.2s; }
+  .nav-btn:hover { color: var(--text); }
+  .nav-btn.active { color: var(--accent); border-color: var(--border); background: var(--bg); }
+
+  .controls { display: flex; gap: 10px; }
+  .btn { background: transparent; border: 1px solid var(--border); color: var(--text); padding: 6px 12px; font-family: var(--font); font-size: 0.7rem; cursor: pointer; border-radius: 4px; font-weight: 700; transition: all 0.2s; }
+  .btn:hover { border-color: var(--accent); background: var(--bg-module); }
+
+  .view { flex: 1; padding: 40px; overflow-y: auto; display: none; flex-direction: column; align-items: center; }
+  .view.active { display: flex; }
+
+  /* OVERVIEW */
+  .c-label { position: absolute; top: -11px; left: 20px; background: var(--bg); padding: 0 10px; font-weight: 900; font-size: 0.75rem; letter-spacing: 0.5px; border-radius: 4px; display: flex; align-items: center; gap: 8px; }
+  .chip-container { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; margin-top: 4px; padding-left: 5px; }
+  .chip { background: var(--bg-module); border: 1px solid var(--border); padding: 6px 14px; border-radius: 16px; font-size: 0.7rem; color: var(--text-dim); font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  .chip-lbl { color: var(--text); font-size: 0.65rem; background: var(--border); padding: 2px 6px; border-radius: 10px; }
+  .pauk-layer .chip-lbl { background: rgba(139, 92, 246, 0.2); color: var(--pauk); }
+
+  .pauk-layer { border: 1px dashed var(--pauk); padding: 45px 30px 30px; position: relative; width: 100%; max-width: 1200px; border-radius: 12px; margin-bottom: 20px; }
+  .pauk-layer > .c-label { color: var(--pauk); }
+  .zhaba-layer { border: 1px solid var(--border-hl); padding: 45px 30px 30px; position: relative; background: var(--bg-panel); border-radius: 10px; }
+  .zhaba-layer > .c-label { color: var(--text); background: var(--bg-panel); }
+  .les-layer { border: 2px solid var(--ok); padding: 45px 30px 30px; position: relative; background: var(--bg); border-radius: 8px; }
+  .les-layer > .c-label { color: var(--ok); background: var(--bg); }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; width: 100%; }
+  .module { background: var(--bg-module); border: 1px solid var(--border); padding: 20px; border-radius: 6px; position: relative; transition: all 0.2s; }
+  .module.core { border-color: var(--accent); box-shadow: 0 4px 15px rgba(59, 130, 246, 0.1); }
+  .interactive-node { cursor: pointer; }
+  .interactive-node:hover { transform: translateY(-2px); box-shadow: 0 6px 12px rgba(0,0,0,0.2); border-color: var(--ok); }
+
+  .m-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 8px; }
+  .m-name-box { display: flex; align-items: center; gap: 8px; flex: 1; }
+  .m-name { font-weight: 900; font-size: 0.95rem; color: var(--text); white-space: nowrap; }
+  .btn-info { cursor: pointer; font-size: 0.75rem; font-weight: 900; color: var(--accent); background: var(--border); width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: all 0.2s; border: none; }
+  .btn-info:hover { background: var(--accent); color: #fff; }
+  .m-tag { font-size: 0.6rem; background: var(--border); padding: 2px 6px; border-radius: 4px; color: var(--text-dim); }
+  .module.core .m-tag { background: var(--accent); color: #fff; }
+
+  .m-expansion { max-height: 0; overflow: hidden; transition: max-height 0.3s ease-out, margin-bottom 0.3s; font-size: 0.7rem; font-weight: 700; color: var(--accent); background: rgba(59, 130, 246, 0.05); border-radius: 4px; line-height: 1.3; }
+  .m-expansion.open { max-height: 80px; margin-bottom: 12px; padding: 6px 10px; border: 1px solid var(--accent); }
+  .m-desc { font-size: 0.7rem; color: var(--text-dim); margin-bottom: 16px; line-height: 1.4; }
+  .m-status { display: flex; align-items: center; gap: 8px; font-size: 0.65rem; font-weight: 700; text-transform: uppercase; border-top: 1px solid var(--border); padding-top: 12px; }
+  .s-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex-shrink: 0; }
+  .s-dot.warn { background: var(--warn); }
+  .s-dot.err { background: var(--err); }
+  .s-dot.idle { background: var(--border-hl); }
+
+  /* PRORAB METRICS */
+  #view-prorab { align-items: stretch; max-width: 1400px; margin: 0 auto; width: 100%; }
+  .kpi-row { display: flex; gap: 32px; margin-bottom: 24px; padding: 20px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px; }
+  .kpi { display: flex; flex-direction: column; flex: 1; }
+  .kpi-val { font-weight: 900; font-size: 1.6rem; color: var(--text); }
+  .kpi-lbl { color: var(--text-dim); font-size: 0.7rem; text-transform: uppercase; font-weight: 700; margin-top: 4px; }
+
+  .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+  .m-card { background: var(--bg-panel); border: 1px solid var(--border); padding: 16px; border-radius: 8px; display: flex; flex-direction: column; gap: 12px; }
+  .m-head { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+  .m-title { font-size: 0.75rem; font-weight: 900; text-transform: uppercase; color: var(--text-dim); }
+  .m-val { font-size: 0.8rem; font-weight: 900; color: var(--text); }
+  
+  .chart-area { height: 60px; width: 100%; position: relative; display: flex; align-items: flex-end; gap: 4px; padding-top: 10px; }
+  .bar { flex: 1; background: var(--accent); opacity: 0.6; min-height: 2px; transition: height 0.5s; border-radius: 2px 2px 0 0; }
+  .bar.ok { background: var(--ok); }
+  .bar.err { background: var(--err); }
+  .bar.warn { background: var(--warn); }
+  .bar.dim { background: var(--border-hl); }
+
+  /* CHAT */
+  .chat-container { display: flex; flex-direction: column; height: 100%; width: 100%; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .chat-header { padding: 12px 20px; background: var(--bg-module); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  .chat-history { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+  .msg { max-width: 80%; padding: 12px 16px; border-radius: 6px; font-size: 0.8rem; line-height: 1.5; }
+  .msg-system { align-self: center; background: transparent; color: var(--text-dim); font-size: 0.7rem; text-align: center; border: 1px solid var(--border); }
+  .msg-ai { align-self: flex-start; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-left: 3px solid var(--accent); }
+  .msg-user { align-self: flex-end; background: var(--border-hl); color: var(--text); border-right: 3px solid var(--pauk); }
+  .msg-srcs { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .src-tag { font-size: 0.6rem; font-weight: 700; padding: 2px 6px; border: 1px solid var(--ok); color: var(--ok); border-radius: 4px; cursor: pointer; }
+  .chat-input-area { padding: 16px; background: var(--bg-module); border-top: 1px solid var(--border); display: flex; gap: 10px; }
+  .chat-input { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 10px 14px; border-radius: 4px; font-family: inherit; font-size: 0.8rem; outline: none; }
+  .chat-input:focus { border-color: var(--accent); }
+  .typing-cursor::after { content: '▋'; animation: blink 1s step-end infinite; opacity: 0.7; margin-left: 4px; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* LOGS */
+  .term { background: #000; color: var(--ok); padding: 12px 24px; font-size: 0.75rem; border-top: 1px solid var(--border); font-weight: 700; height: 140px; overflow-y: auto; }
+  [data-theme="light"] .term { background: #1e293b; }
+  .log-line { margin-bottom: 4px; opacity: 0.9; }
+</style>
+</head>
+<body>
+
+  <header class="hdr">
+    <div class="brand">
+      <span class="brand-logo">[O_O]</span>
+      <span>С.О.В.У.Ш.К.А.</span>
+    </div>
+    
+    <nav class="nav">
+      <button id="nav-overview" class="nav-btn active" onclick="switchTab('overview', this)">ОБЗОР</button>
+      <button id="nav-prorab" class="nav-btn" onclick="switchTab('prorab', this)">П.Р.О.Р.А.Б.</button>
+      <button id="nav-chat" class="nav-btn" onclick="switchTab('chat', this)">AI ЧАТ</button>
+    </nav>
+
+    <div class="controls">
+      <button class="btn" onclick="toggleTheme()">ТЕМА</button>
+      <button class="btn">⚙</button>
+    </div>
+  </header>
+
+  <main id="view-overview" class="view active">
+    <div class="pauk-layer">
+      <div class="c-label"><span class="s-dot" id="s-pauk"></span> П.А.У.К. <button class="btn-info" onclick="toggleExpand('exp-pauk', event)">?</button></div>
+      <div id="exp-pauk" class="m-expansion">Паутина Автономного Удаленного Контроля</div>
+      <div class="chip-container">
+        <div class="chip"><span class="chip-lbl">MESH</span> ZeroTier</div>
+        <div class="chip"><span class="chip-lbl">REMOTE</span> SSH / Proxy</div>
+      </div>
+
+      <div class="zhaba-layer">
+        <div class="c-label"><span class="s-dot" id="s-zhaba"></span> Ж.А.Б.А. <button class="btn-info" onclick="toggleExpand('exp-zhaba', event)">?</button></div>
+        <div id="exp-zhaba" class="m-expansion">Жесткая Аппаратная База Аналитики</div>
+        <div class="chip-container">
+          <div class="chip"><span class="chip-lbl">HOST</span> Mac Mini M4</div>
+          <div class="chip"><span class="chip-lbl">OS</span> macOS</div>
+        </div>
+
+        <div class="les-layer">
+          <div class="c-label"><span class="s-dot" id="s-les"></span> Л.Е.С. <button class="btn-info" onclick="toggleExpand('exp-les', event)">?</button></div>
+          <div id="exp-les" class="m-expansion">Локальная Единая Система</div>
+
+          <div class="grid">
+            <div class="module core interactive-node" onclick="switchTab('chat', document.getElementById('nav-chat'))">
+              <div class="m-header">
+                <div class="m-name-box"><span class="m-name">С.О.В.У.Ш.К.А.</span><button class="btn-info" onclick="toggleExpand('exp-sova', event)">?</button></div>
+                <span class="m-tag">CORE UI</span>
+              </div>
+              <div id="exp-sova" class="m-expansion">Система Обработки и Выдачи</div>
+              <div class="m-desc">Интеллектуальный интерфейс. Кликни для чата.</div>
+              <div class="m-status"><span class="s-dot"></span><span>Status: Live</span></div>
+            </div>
+
+            <div class="module interactive-node" onclick="switchTab('prorab', document.getElementById('nav-prorab'))">
+              <div class="m-header">
+                <div class="m-name-box"><span class="m-name">П.Р.О.Р.А.Б.</span><button class="btn-info" onclick="toggleExpand('exp-prorab', event)">?</button></div>
+                <span class="m-tag">METRICS</span>
+              </div>
+              <div id="exp-prorab" class="m-expansion">Программа Регулярной Оценки Работы Автономной Базы</div>
+              <div class="m-desc">Сбор метрик. Кликни для перехода к дашборду.</div>
+              <div class="m-status"><span class="s-dot" id="dot-prorab"></span><span id="st-prorab">Status: Waiting</span></div>
+            </div>
+
+            <div class="module">
+              <div class="m-header">
+                <div class="m-name-box"><span class="m-name">С.А.М.О.В.А.Р.</span><button class="btn-info" onclick="toggleExpand('exp-samovar', event)">?</button></div>
+                <span class="m-tag">RAG</span>
+              </div>
+              <div id="exp-samovar" class="m-expansion">Система Автономная Машинной Обработки Внутренних Архивов РАГ</div>
+              <div class="m-desc">Ядро RAG: Qdrant + LlamaIndex.</div>
+              <div class="m-status"><span class="s-dot" id="dot-qdrant"></span><span id="st-qdrant">Status: Ready</span></div>
+            </div>
+
+            <div class="module">
+              <div class="m-header">
+                <div class="m-name-box"><span class="m-name">Т.О.С.К.А.</span><button class="btn-info" onclick="toggleExpand('exp-toska', event)">?</button></div>
+                <span class="m-tag">CRAG</span>
+              </div>
+              <div id="exp-toska" class="m-expansion">Терминал Оценки, Самопроверки и Контроля Архитектуры</div>
+              <div class="m-desc">Нативный CRAG-пайплайн. Валидация ответов LLM.</div>
+              <div class="m-status"><span class="s-dot"></span><span id="st-toska">Status: Active</span></div>
+            </div>
+
+            <div class="module">
+              <div class="m-header">
+                <div class="m-name-box"><span class="m-name">В.О.Л.К.</span><button class="btn-info" onclick="toggleExpand('exp-volk', event)">?</button></div>
+                <span class="m-tag">AUTH</span>
+              </div>
+              <div id="exp-volk" class="m-expansion">Внутренний Охранный Локальный Контур</div>
+              <div class="m-desc">RBAC, JWT-аутентификация, маскирование секретов.</div>
+              <div class="m-status"><span class="s-dot"></span><span>Status: Guarding</span></div>
+            </div>
+
+            <div class="module">
+              <div class="m-header">
+                <div class="m-name-box"><span class="m-name">К.О.Т.</span><button class="btn-info" onclick="toggleExpand('exp-kot', event)">?</button></div>
+                <span class="m-tag">TERM</span>
+              </div>
+              <div id="exp-kot" class="m-expansion">Куратор Отраслевой Терминологии</div>
+              <div class="m-desc">Семантический фильтр инженерного языка, pre-check контекста.</div>
+              <div class="m-status"><span class="s-dot"></span><span>Status: Active</span></div>
+            </div>
+
+            <div class="module">
+              <div class="m-header">
+                <div class="m-name-box"><span class="m-name">С.У.Х.А.Р.И.К.</span><button class="btn-info" onclick="toggleExpand('exp-suh', event)">?</button></div>
+                <span class="m-tag">BACKUP</span>
+              </div>
+              <div id="exp-suh" class="m-expansion">Система Управления Холодными Архивами и Резервными Источниками Комплекса</div>
+              <div class="m-desc">Снапшоты Qdrant, бэкапы storage/datasets/, ротация архивов.</div>
+              <div class="m-status"><span class="s-dot idle"></span><span>Status: Idle</span></div>
+            </div>
+
+            <div class="module">
+              <div class="m-header">
+                <div class="m-name-box"><span class="m-name">Е.Ж.И.К.</span><button class="btn-info" onclick="toggleExpand('exp-ezhik', event)">?</button></div>
+                <span class="m-tag">MAIL</span>
+              </div>
+              <div id="exp-ezhik" class="m-expansion">Единый Журнал Извлечения Контента</div>
+              <div class="m-desc">Обработка почты (IMAP) и парсинг вложений.</div>
+              <div class="m-status"><span class="s-dot warn"></span><span>Status: Wait IMAP</span></div>
+            </div>
+            </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <main id="view-prorab" class="view">
+    
+    <div class="kpi-row">
+      <div class="kpi"><div class="kpi-val" id="kpi-files">0</div><div class="kpi-lbl">Индекс (Файлов)</div></div>
+      <div class="kpi"><div class="kpi-val" id="kpi-ram">0%</div><div class="kpi-lbl">RAM Узла</div></div>
+      <div class="kpi"><div class="kpi-val" id="kpi-cpu">0.0</div><div class="kpi-lbl">CPU Load</div></div>
+      <div class="kpi"><div class="kpi-val" style="color:var(--ok)" id="kpi-queue">0</div><div class="kpi-lbl">LLM Очередь</div></div>
+    </div>
+
+    <div class="metrics-grid">
+      <div class="m-card">
+        <div class="m-head"><span class="m-title">RAM Breakdown</span><span class="m-val" id="pro-ram-val">0 / 24 GB</span></div>
+        <div class="chart-area">
+          <div class="bar err" id="bar-ram-ollama" style="width: 0%;" title="Ollama"></div>
+          <div class="bar ok" id="bar-ram-sys" style="width: 0%;" title="System"></div>
+          <div class="bar dim" id="bar-ram-free" style="width: 100%;" title="Free"></div>
+        </div>
+        <div style="display:flex; justify-content:space-between; font-size: 0.6rem; color: var(--text-dim); margin-top: 4px;">
+          <span>Ollama</span><span>Sys</span><span>Free</span>
+        </div>
+      </div>
+
+      <div class="m-card">
+        <div class="m-head"><span class="m-title">Т.О.С.К.А. Validation</span><span class="m-val" id="pro-crag-val">0% Pass</span></div>
+        <div class="chart-area">
+          <div class="bar ok" id="bar-crag-pass" style="width: 0%;"></div>
+          <div class="bar err" id="bar-crag-fail" style="width: 0%;"></div>
+        </div>
+        <div style="font-size: 0.6rem; color: var(--text-dim); text-align: center;">Verified vs Rejected</div>
+      </div>
+    </div>
+  </main>
+
+  <main id="view-chat" class="view" style="max-width: 900px; margin: 0 auto; width: 100%;">
+    <div class="chat-container">
+      <div class="chat-header">
+        <div style="font-weight: 900; font-size: 0.8rem; color: var(--accent);">С.О.В.У.Ш.К.А. // AI АССИСТЕНТ</div>
+        <div style="font-size: 0.65rem; color: var(--text-dim); font-weight: 700;">Engine: qwen3:14b | RAG: Active</div>
+      </div>
+      
+      <div class="chat-history" id="chat-history">
+        <div class="msg msg-system">Система активирована. Ожидание запросов.</div>
+      </div>
+
+      <div class="chat-input-area">
+        <input type="text" class="chat-input" id="chat-input" placeholder="Введите запрос по нормативам или проекту...">
+        <button class="btn" id="chat-btn" style="border-color: var(--ok); color: var(--ok);" onclick="sendChat()">ОТПРАВИТЬ</button>
+      </div>
+    </div>
+  </main>
+
+  <footer class="term" id="term-logs">
+    <div class="log-line">> [С.О.В.У.Ш.К.А.] Интерфейс загружен. Подключение к ядру...</div>
+  </footer>
+
+  <script>
+    const API = '';
+    let sse = null;
+    let fallbackLogInterval = null;
+
+    function toggleTheme() {
+      const html = document.documentElement;
+      html.setAttribute('data-theme', html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+    }
+    
+    function toggleExpand(id, event) {
+      if(event) event.stopPropagation();
+      document.getElementById(id).classList.toggle('open');
+    }
+
+    function switchTab(viewId, btnElement) {
+      document.querySelectorAll('.view').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
+      document.getElementById('view-' + viewId).classList.add('active');
+      btnElement.classList.add('active');
+    }
+
+    async function fetchMetrics() {
+      try {
+        const res = await fetch(API + '/api/metrics');
+        if (!res.ok) return;
+        const d = await res.json();
+        const s = d.system || {};
+        const p = d.pipeline || {};
+        const r = d.rag || {};
+        const q = d.queue || {};
+
+        // KPIs
+        document.getElementById('kpi-cpu').innerText = (s.cpu || 0).toFixed(1) + '%';
+        document.getElementById('kpi-ram').innerText = (s.ram_used || 0).toFixed(1) + ' GB';
+        document.getElementById('kpi-queue').innerText = q.llm_waiting || 0;
+        document.getElementById('kpi-files').innerText = r.files || r.documents || 0;
+
+        // PRORAB Bars
+        const rTot = s.ram_total || 24;
+        const rUsed = s.ram_used || 0;
+        const rOll = s.ollama_ram || 10.5;
+        const rSys = Math.max(0, rUsed - rOll);
+        const rFree = Math.max(0, rTot - rUsed);
+
+        document.getElementById('pro-ram-val').innerText = rUsed.toFixed(1) + ' / ' + rTot.toFixed(1) + ' GB';
+        document.getElementById('bar-ram-ollama').style.width = (rOll/rTot*100) + '%';
+        document.getElementById('bar-ram-sys').style.width = (rSys/rTot*100) + '%';
+        document.getElementById('bar-ram-free').style.width = (rFree/rTot*100) + '%';
+
+        const crPass = p.crag_pass_rate || 0;
+        document.getElementById('pro-crag-val').innerText = (crPass * 100).toFixed(1) + '% Pass';
+        document.getElementById('bar-crag-pass').style.width = (crPass * 100) + '%';
+        document.getElementById('bar-crag-fail').style.width = ((1 - crPass) * 100) + '%';
+
+        // Dots update
+        document.getElementById('st-prorab').innerText = 'Status: Sync OK';
+        
+      } catch(e) {}
+    }
+
+    async function sendChat() {
+      const inp = document.getElementById('chat-input');
+      const btn = document.getElementById('chat-btn');
+      const hist = document.getElementById('chat-history');
+      
+      const query = inp.value.trim();
+      if (!query) return;
+      inp.value = '';
+      btn.disabled = true;
+
+      hist.innerHTML += `<div class="msg msg-user">${query}</div>`;
+      
+      const botMsg = document.createElement('div');
+      botMsg.className = 'msg msg-ai typing-cursor';
+      botMsg.innerText = 'Обрабатываю...';
+      hist.appendChild(botMsg);
+      hist.scrollTop = hist.scrollHeight;
+
+      try {
+        const res = await fetch(API + '/api/chat', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({query})
+        });
+        const d = await res.json();
+        const ans = d.answer || d.response || 'Нет ответа';
+        const srcs = d.sources || [];
+
+        botMsg.classList.remove('typing-cursor');
+        botMsg.innerText = '';
+        
+        let i = 0;
+        const iv = setInterval(() => {
+          botMsg.innerHTML += ans.charAt(i); i++;
+          hist.scrollTop = hist.scrollHeight;
+          if (i >= ans.length) {
+            clearInterval(iv);
+            btn.disabled = false;
+            if (srcs.length > 0) {
+              const sDiv = document.createElement('div');
+              sDiv.className = 'msg-srcs';
+              sDiv.innerHTML = srcs.map(s => `<span class="src-tag">${s.file || s}</span>`).join('');
+              botMsg.appendChild(sDiv);
+            }
+          }
+        }, 15);
+      } catch(e) {
+        botMsg.classList.remove('typing-cursor');
+        botMsg.innerText = 'Ошибка: ' + e.message;
+        btn.disabled = false;
+      }
+    }
+
+    // Enter Key
+    document.getElementById('chat-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') sendChat();
+    });
+
+    // Улучшенный обработчик SSE с fallback-механизмом
+    function connectSSE() {
+      if(sse) return;
+      
+      const term = document.getElementById('term-logs');
+      
+      try {
+        sse = new EventSource(API + '/api/logs/stream');
+        
+        sse.onopen = () => {
+            const time = new Date().toLocaleTimeString();
+            const div = document.createElement('div');
+            div.className = 'log-line';
+            div.style.color = 'var(--ok)';
+            div.innerText = `> [${time}] SSE соединение установлено. Ожидание потока данных...`;
+            term.appendChild(div);
+            term.scrollTop = term.scrollHeight;
+            
+            // Если SSE поднялся, чистим fallback
+            if(fallbackLogInterval) {
+                clearInterval(fallbackLogInterval);
+                fallbackLogInterval = null;
+            }
+        };
+
+        sse.onmessage = (e) => {
+          try {
+            const d = JSON.parse(e.data);
+            const time = new Date().toLocaleTimeString();
+            const div = document.createElement('div');
+            div.className = 'log-line';
+            div.innerText = `> [${time}] ${d.message || d.event || JSON.stringify(d)}`;
+            term.appendChild(div);
+            term.scrollTop = term.scrollHeight;
+          } catch(err) {}
+        };
+        
+        sse.onerror = () => {
+            sse.close();
+            sse = null;
+            
+            const time = new Date().toLocaleTimeString();
+            const div = document.createElement('div');
+            div.className = 'log-line';
+            div.style.color = 'var(--warn)';
+            div.innerText = `> [${time}] Ошибка SSE. Переключение на fallback-опрос (10s)...`;
+            term.appendChild(div);
+            term.scrollTop = term.scrollHeight;
+            
+            // Запускаем fallback, если SSE отвалился
+            if(!fallbackLogInterval) {
+                fallbackLogInterval = setInterval(fetchLogsFallback, 10000);
+            }
+            
+            // Пытаемся переподключиться через минуту
+            setTimeout(connectSSE, 60000);
+        };
+      } catch (err) {
+          console.error("SSE Error:", err);
+      }
+    }
+    
+    // Fallback для логов, если SSE не поддерживается или блокируется
+    async function fetchLogsFallback() {
+        try {
+            // Если у вас есть эндпоинт для статических логов, например /api/logs/recent
+            // Если нет, этот блок просто тихо умрет, не ломая интерфейс
+            const res = await fetch(API + '/api/logs/recent?limit=1');
+            if(!res.ok) return;
+            const logs = await res.json();
+            
+            if(logs && logs.length > 0) {
+                const term = document.getElementById('term-logs');
+                const time = new Date().toLocaleTimeString();
+                const msg = logs[0].message || JSON.stringify(logs[0]);
+                
+                // Чтобы не спамить одинаковыми логами, проверяем последний
+                const lastLog = term.lastChild?.innerText || "";
+                if(!lastLog.includes(msg)) {
+                    const div = document.createElement('div');
+                    div.className = 'log-line';
+                    div.innerText = `> [${time}] [POLL] ${msg}`;
+                    term.appendChild(div);
+                    term.scrollTop = term.scrollHeight;
+                }
+            }
+        } catch(e) {}
+    }
+
+    setInterval(fetchMetrics, 3000);
+    fetchMetrics();
+    // Даем метрикам загрузиться, потом коннектим логи
+    setTimeout(connectSSE, 1000);
+  </script>
+</body>
+</html>

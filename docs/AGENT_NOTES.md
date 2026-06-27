@@ -1,0 +1,34 @@
+# AGENT_NOTES — токен-безопасность и контекст-гигиена (LES_v2)
+
+Памятка к [AGENTS.md](../AGENTS.md). Меньше токенов, меньше риска, больше точности.
+
+## Тяжёлое — НЕ открывать целиком
+- `.venv/` (виртуальное окружение), `data/` (SQLite-метабазы, логи парсинга, индексы), `storage/`, `RAG_Content/`, `logs/`.
+- `dist/`, собранные бандлы `frontend/cad_bim_viewer/dist/**`, `standalone/**` артефакты.
+- `exporters/**/artifacts` (скомпилированные .NET, десятки МБ), `*.parquet`, большие `golden/*.json`.
+- `.pytest_cache/`, `.nicegui/`, `.aider.tags.cache.v4/`, `.qdrant-initialized`, `qdrant_storage`/данные Qdrant.
+
+## Генерируемое (источник — в другом месте)
+- `frontend/cad_bim_viewer/dist/` собирается Vite из `frontend/cad_bim_viewer/src/` — правь ИСХОДНИК.
+- Релизные ZIP/артефакты собираются `tools/build_*_release.py` — не редактировать вручную.
+
+## Секреты / чувствительное — НЕ читать и НЕ печатать
+- `.env`, `.env.*` (реальные ключи); `env.example` — только как список КЛЮЧЕЙ, без значений.
+- `JWT_SECRET`, `ADMIN_PASSWORD`, API-ключи V.O.L.K., IMAP-пароли.
+- **`local_private_archive/`** — приватное, не открывать.
+
+## Рантайм — осторожно
+- Живые сервисы (launchd: qdrant/mlx/proxy/sovushka/pauk). **Не рестартить** без явной нужды; управление — `tools/les_runtime_control.py`, `lesctl.py`.
+- **Не удалять данные** (Guardrails в `SKILL.md`): `data/qdrant/`, `data/les_meta_qwen.db`, `storage/`, `RAG_Content/`; не запускать полный реиндекс без явной просьбы; беречь таблицу `structured_rules`.
+- `uv`-проект: запуск через `uv run`; `uv add`/`uv sync --upgrade` меняют `uv.lock` — только с одобрения.
+- Тесты частично интеграционные (Qdrant/MLX/сеть): быстрый офлайн-сигнал — `make verify` (импорт-смоук), не полный `pytest`.
+
+## Порядок чтения контекста (от дешёвого к дорогому)
+1. `AGENTS.md`
+2. **`docs/CODE_MAP.md`** — карта кода (часто отвечает без открытия исходников)
+3. `SKILL.md` — рантайм/доступы; релевантные `*_v2*.md` в корне
+4. узкий поиск (`rg`/grep по символу/строке)
+5. и только потом — открывать исходники точечно
+
+## Вывод
+Длинные логи/выводы — сжимать в итог (шаг + статус + ключевая строка), а не вставлять целиком.

@@ -1,0 +1,184 @@
+import json
+import sqlite3
+from pathlib import Path
+
+from proxy.routers.chat import save_chat_history
+from proxy.services.lexical_index_service import LexicalIndex
+from proxy.services.context_memory_service import (
+    DATASET_PROFILE_FILE,
+    build_context_memory_block,
+    build_dataset_profile,
+    get_chat_profile,
+    warmup_dataset_profiles,
+)
+
+
+def _seed_meta_db(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE datasets (
+                id TEXT PRIMARY KEY,
+                name TEXT,
+                status TEXT,
+                chunk_count INTEGER DEFAULT 0,
+                group_name TEXT DEFAULT '',
+                sensitivity TEXT DEFAULT ''
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE documents (
+                id TEXT PRIMARY KEY,
+                dataset_id TEXT,
+                file_name TEXT,
+                status TEXT,
+                file_mtime REAL DEFAULT 0,
+                file_size INTEGER DEFAULT 0,
+                chunk_count INTEGER DEFAULT 0,
+                doc_type TEXT DEFAULT '',
+                domain TEXT DEFAULT '',
+                route_dataset TEXT DEFAULT '',
+                source_path TEXT DEFAULT ''
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO datasets(id, name, status, chunk_count, group_name, sensitivity) "
+            "VALUES('ds-1', 'Проект ПД', 'IDLE', 12, 'project', 'P0')"
+        )
+        conn.execute(
+            "INSERT INTO documents(id, dataset_id, file_name, status, chunk_count, doc_type, domain, route_dataset) "
+            "VALUES('doc-1', 'ds-1', '01-ПЗ.pdf', 'INDEXED', 7, 'PDF', 'PD', 'NTD_PROJECT')"
+        )
+        conn.execute(
+            "INSERT INTO documents(id, dataset_id, file_name, status, chunk_count, doc_type, domain, route_dataset) "
+            "VALUES('doc-2', 'ds-1', '02-Спецификация.xlsx', 'INDEXED', 5, 'TABLE', 'SPEC', 'SMETA')"
+        )
+        conn.commit()
+
+
+def _seed_lexical(path: Path) -> None:
+    index = LexicalIndex(str(path))
+    index.upsert_chunks(
+        "les_rag_test",
+        [
+            {
+                "point_id": "p1",
+                "dataset_id": "ds-1",
+                "doc_id": "doc-1",
+                "doc_name": "01-ПЗ.pdf",
+                "text": "ГОСТ Р 21.101-2026 задаёт требования к проектной документации и нормоконтролю.",
+                "chunk_ord": 1,
+                "section_heading": "Общие требования",
+            },
+            {
+                "point_id": "p2",
+                "dataset_id": "ds-1",
+                "doc_id": "doc-2",
+                "doc_name": "02-Спецификация.xlsx",
+                "text": "| Наименование | Ед. изм | Количество | Цена | Сумма |",
+                "chunk_ord": 1,
+                "section_heading": "Спецификация",
+            },
+        ],
+    )
+
+
+def test_dataset_profile_writes_sidecar(tmp_path, monkeypatch):
+    db_path = tmp_path / "data" / "les_meta.db"
+    storage_root = tmp_path / "storage" / "datasets"
+    monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+    _seed_meta_db(db_path)
+
+    profile = build_dataset_profile("ds-1", storage_root=storage_root)
+
+    assert profile["dataset_id"] == "ds-1"
+    assert profile["document_count"] == 2
+    assert profile["chunk_count"] == 12
+    assert "coverage_note" in profile
+    sidecar = storage_root / "ds-1" / DATASET_PROFILE_FILE
+    assert sidecar.exists()
+    saved = json.loads(sidecar.read_text())
+    assert saved["name"] == "Проект ПД"
+    assert saved["sample_files"][0]["file_name"]
+
+
+def test_deep_dataset_profile_uses_bounded_lexical_index(tmp_path, monkeypatch):
+    db_path = tmp_path / "data" / "les_meta.db"
+    storage_root = tmp_path / "storage" / "datasets"
+    monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+    monkeypatch.setenv("RAG_LEXICAL_DB_PATH", str(db_path))
+    _seed_meta_db(db_path)
+    _seed_lexical(db_path)
+
+    profile = build_dataset_profile("ds-1", storage_root=storage_root, depth="deep")
+
+    assert profile["depth"] == "deep"
+    assert profile["deep"]["available"] is True
+    assert profile["deep"]["lexical_chunks"] == 2
+    assert "ГОСТ Р 21.101-2026" in profile["deep"]["norm_refs"]
+    assert profile["deep"]["table_signal_chunks"] == 1
+    assert profile["deep"]["representative_fragments"]
+    saved = json.loads((storage_root / "ds-1" / DATASET_PROFILE_FILE).read_text())
+    assert saved["deep"]["available"] is True
+
+
+def test_warmup_dataset_profiles_builds_all_requested(tmp_path, monkeypatch):
+    db_path = tmp_path / "data" / "les_meta.db"
+    storage_root = tmp_path / "storage" / "datasets"
+    monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+    monkeypatch.setenv("RAG_LEXICAL_DB_PATH", str(db_path))
+    _seed_meta_db(db_path)
+    _seed_lexical(db_path)
+
+    result = warmup_dataset_profiles(dataset_ids=["ds-1"], storage_root=storage_root, depth="deep", force=True)
+
+    assert result["status"] == "ok"
+    assert result["built"] == 1
+    assert result["profiles"][0]["lexical_chunks"] == 2
+
+
+def test_chat_profile_updates_from_history_and_prompt_block(tmp_path, monkeypatch):
+    db_path = tmp_path / "data" / "les_meta.db"
+    storage_root = tmp_path / "storage" / "datasets"
+    monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+    monkeypatch.setenv("RAG_LEXICAL_DB_PATH", str(db_path))
+    _seed_meta_db(db_path)
+    _seed_lexical(db_path)
+
+    history_id = save_chat_history(
+        question="сделай смету по проекту",
+        answer="ASSUME: принята масса по ТЗ.\nMISSING: нужен проектный PDF.",
+        sources=["01-ПЗ.pdf"],
+        crag_status="UNVALIDATED",
+        latency_sec=0.1,
+        tokens=0,
+        session_id="s-1",
+        effective_dataset_filter="SMETA",
+        resolved_dataset_ids=["ds-1"],
+        resolved_dataset_names=["Проект ПД"],
+        source_dataset_ids=["ds-1"],
+        source_dataset_names=["Проект ПД"],
+        query_route={"channel": "rag", "reason": "test"},
+        success=1,
+    )
+
+    assert history_id > 0
+    profile = get_chat_profile("s-1")
+    assert profile["turn_count"] == 1
+    assert profile["assumptions"]
+    assert profile["blockers"]
+
+    block = build_context_memory_block(
+        session_id="s-1",
+        dataset_ids=["ds-1"],
+        dataset_names=["Проект ПД"],
+        storage_root=storage_root,
+    )
+    assert "Паспорт чата" in block
+    assert "Паспорта выбранных датасетов" in block
+    assert "ключевые слова по содержанию" in block
+    assert "НЕ evidence" in block

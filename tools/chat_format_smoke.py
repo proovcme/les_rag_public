@@ -157,8 +157,8 @@ def chat(args: argparse.Namespace, name: str, question: str, fmt: str) -> dict[s
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--proxy-url", default="http://127.0.0.1:8050")
-    parser.add_argument("--mlx-url", default="http://127.0.0.1:8080")
-    parser.add_argument("--qdrant-url", default="http://127.0.0.1:6333")
+    parser.add_argument("--mlx-url", default="http://10.195.146.98:8080")
+    parser.add_argument("--qdrant-url", default="http://10.195.146.98:6333")
     parser.add_argument("--chat-timeout", type=float, default=240)
     parser.add_argument("--health-timeout", type=float, default=10)
     parser.add_argument("--min-free-gb", type=float, default=6.0)

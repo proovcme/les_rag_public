@@ -77,6 +77,12 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 # ── Конфигурация ──────────────────────────────────────────────────────────────
+# Порт конфигурируем (MLX_PORT) — чтобы поднять ВТОРОЙ инстанс embed-only на альт-порту
+# (разгрузка чат-эмбеддера от парс-эмбеддингов при индексации). MLX_EMBED_ONLY на втором
+# инстансе глушит генерацию (chat/generate/validate) → 14B-модель в него никогда не грузится
+# (страховка от OOM; LLM и так lazy, но гард надёжнее случайного вызова на :8081).
+MLX_PORT = int(os.getenv("MLX_PORT", "8080"))
+MLX_EMBED_ONLY = os.getenv("MLX_EMBED_ONLY", "").strip().lower() in ("1", "true", "yes")
 MAIN_MODEL = os.getenv("MLX_MODEL",     "mlx-community/Qwen3-14B-4bit")
 VAL_MODEL  = os.getenv("MLX_VAL_MODEL", "mlx-community/Qwen3-4B-4bit")
 BGE_MODEL  = embedding_model_id()
@@ -130,8 +136,14 @@ MLX_HOST_BIND = os.getenv("MLX_HOST_BIND", "127.0.0.1")
 RAM_WARN_FREE_GB = _env_float("MLX_RAM_WARN_FREE_GB", 8.0)
 RAM_KILL_FREE_GB = _env_float("MLX_RAM_KILL_FREE_GB", 6.0)
 EMBED_TTL_SEC = _env_int("MLX_EMBED_TTL_SEC", 300)
+# TTL основной LLM. Дефолт 300с выгружал модель после 5 мин простоя → следующий запрос
+# платил ХОЛОДНУЮ загрузку (~12 ток/с эффективно + время загрузки, выбросы 100-190с).
+# Один оператор на M4/24GB — держим тёплой (MLX_MAIN_TTL_SEC велик); тёплый декод ~27 ток/с.
+# ВАЖНО: MLX_VAL_MODEL не должна равняться MLX_MODEL — иначе _get_engine() маршрутит все
+# chat-запросы на val-движок (ttl 120) вместо main, и модель циклически выгружается.
+MAIN_TTL_SEC = _env_int("MLX_MAIN_TTL_SEC", 300)
 
-main_engine = MLXMemoryManager(model_path=MAIN_MODEL, ttl_seconds=300)
+main_engine = MLXMemoryManager(model_path=MAIN_MODEL, ttl_seconds=MAIN_TTL_SEC)
 val_engine  = MLXMemoryManager(model_path=VAL_MODEL,  ttl_seconds=120)
 _llm_policy_lock: asyncio.Lock | None = None
 _llm_policy_lock_loop: asyncio.AbstractEventLoop | None = None
@@ -185,6 +197,52 @@ class SentenceTransformersEmbedder:
         if self._model is None or self.last_used <= 0:
             return 0.0
         return time.time() - self.last_used
+
+
+class CrossEncoderReranker:
+    """W2.2 (ADR-3): lazy cross-encoder реранкер (bge-reranker-v2-m3).
+
+    Не трогает Metal-семафор MLX: torch/MPS живёт отдельно. TTL-выгрузка —
+    в общем memory_guard_loop, по образцу эмбеддера.
+    """
+
+    def __init__(self, model_id: str | None = None, ttl_seconds: int | None = None):
+        self.model_id = model_id or os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
+        self.ttl_seconds = int(ttl_seconds or os.getenv("RERANK_TTL_SEC", "600"))
+        self._model = None
+        self.last_used = 0.0
+
+    def _load(self):
+        if self._model is not None:
+            return
+        from sentence_transformers import CrossEncoder
+
+        logger.info("[RERANK] Загрузка %s...", self.model_id)
+        t0 = time.time()
+        self._model = CrossEncoder(self.model_id, max_length=int(os.getenv("RERANK_MAX_LENGTH", "1024")))
+        logger.info("[RERANK] модель готова за %.1fs", time.time() - t0)
+
+    def score(self, query: str, documents: List[str]) -> List[float]:
+        self._load()
+        pairs = [(query, doc) for doc in documents]
+        scores = self._model.predict(pairs, show_progress_bar=False, batch_size=int(os.getenv("RERANK_BATCH", "8")))
+        self.last_used = time.time()
+        return [float(s) for s in scores]
+
+    def force_unload(self):
+        if self._model is None:
+            return
+        self._model = None
+        gc.collect()
+        logger.info("[RERANK] модель выгружена.")
+
+    def idle_seconds(self) -> float:
+        if self._model is None or self.last_used <= 0:
+            return 0.0
+        return time.time() - self.last_used
+
+
+reranker_engine = CrossEncoderReranker()
 
 
 class CoreMLEmbedder:
@@ -1243,6 +1301,11 @@ async def memory_guard_loop():
                 logger.info("[MEM] Embedder idle %.0fs >= %ss — выгружаю", embed_idle, embedder.ttl_seconds)
                 embedder.force_unload()
 
+            rerank_idle = reranker_engine.idle_seconds()
+            if rerank_idle >= reranker_engine.ttl_seconds and rerank_idle > 0:
+                logger.info("[MEM] Reranker idle %.0fs >= %ss — выгружаю", rerank_idle, reranker_engine.ttl_seconds)
+                reranker_engine.force_unload()
+
             critical = sw.percent >= SWAP_KILL_PCT or ram_free_gb < RAM_KILL_FREE_GB
             warning = sw.percent >= SWAP_WARN_PCT or ram_free_gb < RAM_WARN_FREE_GB
             if critical:
@@ -1279,6 +1342,8 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(memory_guard_loop())
     yield
     logger.info("[SHUTDOWN] Завершение работы.")
+    main_engine.stop()        # остановить cleanup-task TTL-выгрузки (не утекать при shutdown)
+    val_engine.stop()
     embedder.force_unload()
     if _coreml_validator is not None:
         _coreml_validator.force_unload()
@@ -1333,6 +1398,12 @@ class OAIChatRequest(BaseModel):
 class OAIEmbeddingRequest(BaseModel):
     input: Union[str, List[str]]
     model: str = "bge-m3"
+
+
+class RerankRequest(BaseModel):
+    query: str
+    documents: List[str]
+    top_k: int | None = None  # None — оценки всех документов
 
 
 class ValidateRequest(BaseModel):
@@ -1562,6 +1633,8 @@ async def api_ps():
 
 @app.post("/api/switch_model")
 async def switch_model(req: SwitchModelRequest):
+    if MLX_EMBED_ONLY:
+        raise HTTPException(503, "embed-only instance: смена модели отключена")
     if req.target == "val":
         val_engine.force_unload()
         val_engine.model_path = req.model
@@ -1592,6 +1665,8 @@ async def list_models():
 @app.post("/api/generate")
 async def generate_ollama(req: GenerateRequest):
     """Ollama-совместимый endpoint для обратной совместимости."""
+    if MLX_EMBED_ONLY:
+        raise HTTPException(503, "embed-only instance: генерация отключена (используй основной :8080)")
     engine = _get_engine(req.model)
     answer, _ = await _generate_with_llm_policy(engine, prompt=req.prompt, max_tokens=req.max_tokens)
     return {"model": req.model, "response": answer, "eval_count": len(answer.split())}
@@ -1600,6 +1675,8 @@ async def generate_ollama(req: GenerateRequest):
 @app.post("/v1/chat/completions")
 async def chat_completions(req: OAIChatRequest):
     """OpenAI-совместимый — основной для прокси и Roo Code."""
+    if MLX_EMBED_ONLY:
+        raise HTTPException(503, "embed-only instance: генерация отключена (используй основной :8080)")
     engine = _get_engine(req.model or MAIN_MODEL)
     prompt = _messages_to_prompt(req.messages, engine)
     
@@ -1738,128 +1815,16 @@ async def _validate_with_mlx(req: ValidateRequest) -> dict:
     }
 
 
-def _normalize_rule_text(text: str) -> str:
-    return " ".join(re.sub(r"[^\w]+", " ", text.lower(), flags=re.UNICODE).split())
-
-
-def _extract_rule_numbers(text: str) -> set[str]:
-    # Normalize text
-    cleaned = text.lower()
-    
-    # 1. Remove dates like 16.02.2008 or 09.04.2021
-    cleaned = re.sub(r'\b\d{1,2}[.,/]\d{1,2}[.,/]\d{2,4}\b', '', cleaned)
-    
-    # 2. Remove standalone year numbers (like 2008, 2021, 2019, 2012)
-    cleaned = re.sub(r'\b(?:19|20)\d{2}\b', '', cleaned)
-    
-    # 3. Clean line-by-line list numbers (like "1. ", "2. ", "10) ")
-    lines = []
-    for line in cleaned.split('\n'):
-        line = re.sub(r'^\s*\d+[\s.)-]', '', line)
-        lines.append(line)
-    cleaned = ' '.join(lines)
-    
-    # 4. Remove typical document prefixes and section references
-    # including "n", "N", "no", "№", "п.", "пункт", "раздел", "постановление", "сп", "гост"
-    prefix_pat = r'(?:раздел|п\.|пункт[ы]?|постановлени[ея]|№|от|n|рис|рисунок|таблиц[аы]|табл\.|стр\.)\s*\d+(?:[-–—]\d+)?'
-    cleaned = re.sub(prefix_pat, '', cleaned)
-    
-    # 5. Extract all numbers and filter them:
-    # Keep if:
-    # - It has a decimal point (like 1.2 or 0.5)
-    # - It is followed by a unit of measurement within 8 characters (like "м", "мм", "мин", "EI")
-    # - Or it is a larger number (e.g. >= 100)
-    found = set()
-    for match in re.finditer(r"\b\d+(?:[,.]\d+)?\b", cleaned):
-        num_str = match.group(0).replace(",", ".")
-        start_idx = match.start()
-        end_idx = match.end()
-        
-        # Check if it has decimal point
-        if "." in num_str:
-            found.add(num_str)
-            continue
-            
-        # Check context after number for units of measurement
-        suffix = cleaned[end_idx : end_idx + 8].strip()
-        if re.match(r'^(?:м\b|мм\b|см\b|мин\b|ч\b|сек\b|кг\b|°|ei|re|r\b|еи\b|квт\b|вт\b|чел\b|г\b|литр|куб)', suffix):
-            found.add(num_str)
-            continue
-            
-        # Check if number is large (>= 100)
-        try:
-            val = float(num_str)
-            if val >= 100:
-                found.add(num_str)
-        except ValueError:
-            pass
-            
-    return found
-
-
-def _rules_lexical_overlap(answer: str, context: str, min_token_len: int = 4) -> float:
-    """Return fraction of meaningful answer tokens found in context (0.0–1.0)."""
-    _STOPWORDS_RU = {
-        "что", "это", "как", "так", "при", "для", "или", "над", "под",
-        "если", "есть", "нужно", "нужен", "должна", "должен", "должно",
-        "должны", "может", "могут", "более", "менее", "также", "либо",
-        "иные", "иной", "иная", "такой", "такая", "такие", "через",
-        "между", "после", "перед", "очень", "весь", "вся", "всех",
-        "всем", "одного", "одной", "одним", "любом", "любой", "любых",
-    }
-    norm_ctx = _normalize_rule_text(context)
-    tokens = re.findall(r"[а-яёa-z0-9]{%d,}" % min_token_len, answer.lower())
-    meaningful = [t for t in tokens if t not in _STOPWORDS_RU]
-    if not meaningful:
-        return 0.0
-    hits = sum(1 for t in meaningful if t in norm_ctx)
-    return hits / len(meaningful)
-
-
 def _validate_with_rules(req: ValidateRequest) -> dict:
+    """Детерминированный rules-валидатор (W3.1: общий код с proxy).
+
+    Логика вынесена в `backend.inference.validator.rules_validate` (DRY),
+    чтобы тот же rules→LLM каскад работал в proxy для облачных провайдеров.
+    Поведение бит-в-бит прежнее: VERIFIED/HALLUCINATION/NO_DATA.
     """
-    Детерминированный rules-валидатор с лексическим перекрытием.
+    from backend.inference.validator import rules_validate
 
-    Логика:
-      1. Пустой контекст → NO_DATA.
-      2. Ответ буквально входит в контекст → VERIFIED (быстрый путь).
-      3. Числа из ответа нарушают контекст → HALLUCINATION.
-      4. Лексическое перекрытие ≥ LEX_THRESHOLD → VERIFIED.
-      5. Иначе → NO_DATA (не смогли подтвердить, но не галлюцинация).
-    """
-    LEX_THRESHOLD = float(os.getenv("RULES_LEX_THRESHOLD", "0.35"))
-
-    context = req.context or ""
-    answer = req.answer or ""
-
-    if not context.strip():
-        return {"status": "NO_DATA", "raw": "empty_context", "backend": "rules", "unloaded_peer": []}
-
-    if answer.strip() and _normalize_rule_text(answer) in _normalize_rule_text(context):
-        return {"status": "VERIFIED", "raw": "answer_text_found_in_context", "backend": "rules", "unloaded_peer": []}
-
-    answer_numbers = _extract_rule_numbers(answer)
-    context_numbers = _extract_rule_numbers(context)
-    if answer_numbers and context_numbers and not answer_numbers.issubset(context_numbers):
-        return {"status": "HALLUCINATION", "raw": "answer_numeric_claim_not_in_context", "backend": "rules", "unloaded_peer": []}
-
-    overlap = _rules_lexical_overlap(answer, context)
-    if overlap >= LEX_THRESHOLD:
-        return {
-            "status": "VERIFIED",
-            "raw": f"lexical_overlap_{overlap:.2f}",
-            "backend": "rules",
-            "unloaded_peer": [],
-            "lexical_overlap": overlap,
-        }
-
-    return {
-        "status": "NO_DATA",
-        "raw": f"rules_cannot_verify_overlap_{overlap:.2f}",
-        "backend": "rules",
-        "unloaded_peer": [],
-        "lexical_overlap": overlap,
-    }
+    return rules_validate(req.question or "", req.answer or "", req.context or "")
 
 
 async def _validate_with_coreml(req: ValidateRequest) -> dict:
@@ -1914,6 +1879,8 @@ async def _validate_by_backend(req: ValidateRequest) -> dict:
 @app.post("/api/validate")
 async def validate_answer(req: ValidateRequest):
     """Проверка ответа. Возвращает VERIFIED / NO_DATA / HALLUCINATION."""
+    if MLX_EMBED_ONLY:
+        raise HTTPException(503, "embed-only instance: валидация отключена (используй основной :8080)")
     try:
         result = await _validate_by_backend(req)
         logger.info("[VALIDATE:%s] → %s", result.get("backend", _validator_backend_name()), result.get("status"))
@@ -1961,5 +1928,24 @@ async def embeddings_openai(req: OAIEmbeddingRequest):
     }
 
 
+@app.post("/v1/rerank")
+async def rerank_endpoint(req: RerankRequest):
+    """W2.2 (ADR-3): cross-encoder реранк. Возвращает оценки и порядок документов."""
+    if not req.documents:
+        return {"model": reranker_engine.model_id, "results": []}
+    if len(req.documents) > 64:
+        raise HTTPException(400, "слишком много документов для реранка (максимум 64)")
+    scores = await asyncio.to_thread(reranker_engine.score, req.query, req.documents)
+    order = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+    if req.top_k:
+        order = order[: req.top_k]
+    return {
+        "model": reranker_engine.model_id,
+        "results": [{"index": i, "score": scores[i]} for i in order],
+    }
+
+
 if __name__ == "__main__":
-    uvicorn.run(app, host=MLX_HOST_BIND, port=8080, log_level="info")
+    if MLX_EMBED_ONLY:
+        logger.info("[MLX] EMBED-ONLY инстанс на порту %s (генерация заглушена)", MLX_PORT)
+    uvicorn.run(app, host=MLX_HOST_BIND, port=MLX_PORT, log_level="info")

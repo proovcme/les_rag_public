@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>me.ovc.les.proxy</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/ovc/Projects/LES_v2</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/ovc/Projects/LES_v2/.venv/bin/python3</string>
+        <string>-m</string>
+        <string>uvicorn</string>
+        <string>proxy_server:app</string>
+        <string>--host</string>
+        <string>0.0.0.0</string>
+        <string>--port</string>
+        <string>8050</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>MLX_URL</key>
+        <string>http://127.0.0.1:8080</string>
+        <key>QDRANT_URL</key>
+        <string>http://127.0.0.1:6333</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/ovc/Projects/LES_v2/logs/proxy.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/ovc/Projects/LES_v2/logs/proxy.log</string>
+</dict>
+</plist>

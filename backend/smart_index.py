@@ -20,8 +20,11 @@ SUPPORTED_SUFFIXES = {
     ".md",
     ".txt",
     ".xlsx",
+    ".xlsm",
     ".xls",
     ".csv",
+    ".p7m",                                                       # подписанный PKCS#7 (PDF внутри)
+    ".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp",   # сканы-картинки → vision-OCR
 }
 
 SKIP_DIRS = {

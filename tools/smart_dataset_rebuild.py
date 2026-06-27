@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source-root", default="RAG_Content")
     parser.add_argument("--content-dir", default="storage/datasets")
     parser.add_argument("--db-path", default="data/les_meta.db")
-    parser.add_argument("--qdrant-url", default="http://127.0.0.1:6333")
+    parser.add_argument("--qdrant-url", default="http://10.195.146.98:6333")
     parser.add_argument("--mlx-url", default="http://127.0.0.1:8080")
     parser.add_argument("--embed-model", default="BAAI/bge-m3")
     parser.add_argument("--execute", action="store_true")

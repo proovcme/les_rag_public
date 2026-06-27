@@ -58,3 +58,40 @@ def test_mail_threads_group_message_id_references_and_who_to_whom(tmp_path):
     assert thread["messages"][1]["who_to_whom"]["to"] == ["Alice <alice@example.com>"]
     assert thread["messages"][1]["what"]["snippet"] == "Принял, замечания внесу сегодня."
     assert thread["edges"] == [{"from_message_id": "m1@example.com", "to_message_id": "m2@example.com"}]
+
+
+def test_single_part_attachment_not_leaked_into_body(tmp_path):
+    """Письмо-вложение (Content-Disposition: attachment, не multipart):
+    вложение учитывается, бинарь НЕ течёт в snippet (был баг)."""
+    root = tmp_path / "mail"
+    root.mkdir()
+    raw = (
+        b"Subject: Single\r\nFrom: a@x.ru\r\nTo: b@x.ru\r\n"
+        b"Date: Tue, 26 May 2026 09:00:00 +0300\r\nMessage-ID: <s@x>\r\n"
+        b'Content-Type: application/pdf; name="report.pdf"\r\n'
+        b'Content-Disposition: attachment; filename="report.pdf"\r\n'
+        b"Content-Transfer-Encoding: base64\r\n\r\nAAEC\r\n"
+    )
+    (root / "single.eml").write_bytes(raw)
+    messages = read_mail_messages(root)
+    assert len(messages) == 1
+    record = messages[0]
+    assert record.attachments == ["report.pdf"]
+    assert record.body_snippet == ""
+
+
+def test_single_part_plain_and_html_body_preserved(tmp_path):
+    root = tmp_path / "mail"
+    root.mkdir()
+    (root / "plain.eml").write_bytes(
+        b"Subject: P\r\nFrom: a@x.ru\r\nMessage-ID: <p@x>\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n\r\nhello plain"
+    )
+    (root / "html.eml").write_bytes(
+        b"Subject: H\r\nFrom: a@x.ru\r\nMessage-ID: <h@x>\r\n"
+        b"Content-Type: text/html; charset=utf-8\r\n\r\n<b>Bold</b> hi"
+    )
+    by_name = {m.relative_path: m for m in read_mail_messages(root)}
+    assert "hello plain" in by_name["plain.eml"].body_snippet
+    assert "Bold hi" in by_name["html.eml"].body_snippet
+    assert "<b>" not in by_name["html.eml"].body_snippet

@@ -39,9 +39,22 @@ class FakeBackend:
             Dataset("ds-3", "GKRF_Index"),
         ]
 
-    async def retrieve(self, question, dataset_ids=None, top_k=5):
+    async def retrieve(self, question, dataset_ids=None, top_k=5, doc_filter=None):
         self.calls.append({"question": question, "dataset_ids": dataset_ids, "top_k": top_k})
         return [Chunk(f"text-{i}", f"doc-{i}", 1.0 - i * 0.01) for i in range(top_k)]
+
+
+class EmptyBackend:
+    def __init__(self):
+        self.calls = []
+        self.collection_name = "empty_collection"
+
+    async def list_datasets(self):
+        return []
+
+    async def retrieve(self, question, dataset_ids=None, top_k=5, doc_filter=None):
+        self.calls.append({"question": question, "dataset_ids": dataset_ids, "top_k": top_k})
+        raise AssertionError("empty retrieval should not call backend.retrieve")
 
 
 class FakeReranker:
@@ -129,6 +142,43 @@ async def test_resolve_dataset_ids_infers_filter_from_question():
 
 
 @pytest.mark.asyncio
+async def test_resolve_dataset_ids_returns_empty_scope_when_no_datasets():
+    backend = EmptyBackend()
+
+    resolved = await resolve_dataset_ids(
+        backend,
+        None,
+        None,
+        SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+        question="smoke",
+    )
+
+    assert resolved == []
+
+
+@pytest.mark.asyncio
+async def test_retrieve_chat_chunks_returns_empty_without_backend_call():
+    backend = EmptyBackend()
+
+    result = await retrieve_chat_chunks(
+        question="smoke",
+        dataset_ids=[],
+        rag_backend=backend,
+        reranker_enabled=False,
+        reranker_available=False,
+        reranker_cls=None,
+        mlx_url="http://mlx",
+        logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+        return_trace=True,
+    )
+
+    assert result.chunks == []
+    assert result.trace.mode == "empty"
+    assert result.trace.fallback_reason == "no_datasets"
+    assert backend.calls == []
+
+
+@pytest.mark.asyncio
 async def test_retrieve_chat_chunks_uses_plain_retrieval_when_reranker_disabled():
     backend = FakeBackend()
 
@@ -162,8 +212,11 @@ async def test_retrieve_chat_chunks_reranks_pool_when_available():
         logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
     )
 
-    assert [chunk.content for chunk in chunks] == ["text-2", "text-0"]
-    assert backend.calls[0]["top_k"] == 12
+    # W2.3: реранкер переупорядочивает гибридный пул, не режет его:
+    # топ — порядок реранкера (metadata._idx), хвост — исходный порядок.
+    assert [c.content for c in chunks[:2]] == ["text-2", "text-0"]
+    assert len(chunks) == 8  # merged_top_k (CHAT_TOP_K) — без усечения
+    assert backend.calls[0]["top_k"] == 8
 
 
 @pytest.mark.asyncio
@@ -206,14 +259,15 @@ async def test_retrieve_chat_chunks_runs_reranker_inside_llm_budget():
         llm_semaphore=budget,
     )
 
-    assert [chunk.content for chunk in chunks] == ["text-0"]
-    assert budget.entered is True
-    assert budget.seen_inside is True
-    assert budget.active is False
+    # W2.3: семафор держит только LLM-реранкер (cls.__name__ == "Reranker");
+    # cross-encoder и прочие — нет (Metal не занят). Порядок: топ от реранкера, хвост исходный.
+    assert chunks[0].content == "text-0"
+    assert len(chunks) == 8
+    assert budget.entered is False
 
 
 @pytest.mark.asyncio
-async def test_retrieve_chat_chunks_falls_back_to_top_five_on_reranker_error():
+async def test_retrieve_chat_chunks_keeps_hybrid_order_on_reranker_error():
     backend = FakeBackend()
 
     chunks = await retrieve_chat_chunks(
@@ -227,7 +281,8 @@ async def test_retrieve_chat_chunks_falls_back_to_top_five_on_reranker_error():
         logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
     )
 
-    assert [chunk.content for chunk in chunks] == [f"text-{i}" for i in range(6)]
+    # W2.3: сбой реранкера → исходный гибридный порядок без усечения.
+    assert [chunk.content for chunk in chunks] == [f"text-{i}" for i in range(8)]
 
 
 @pytest.mark.asyncio

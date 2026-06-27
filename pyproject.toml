@@ -15,20 +15,19 @@ dependencies = [
     "sse-starlette>=2.1.0",
     "httpx>=0.27.0",
     "psutil>=5.9.0",
-
     # ── RAG / Qdrant ─────────────────────────────────────────────
     "qdrant-client>=1.11.0",
     "llama-index-core>=0.10.0",
     "llama-index-vector-stores-qdrant>=0.2.0",
     "llama-index-embeddings-openai>=0.1.0",
     "llama-index-embeddings-ollama>=0.1.0",
-
     # ── Конвертация документов ───────────────────────────────────
     "pymupdf>=1.24.0",
     "pymupdf4llm>=0.0.17",
     "mammoth>=1.8.0",
     "openpyxl>=3.1.0",
     "pandas>=2.0.0",
+    "xlrd>=2.0.1",
     "pyarrow>=16.0.0",
     "extract-msg>=0.48.0",
     "pdfplumber>=0.11.0",
@@ -36,13 +35,12 @@ dependencies = [
     "markitdown>=0.0.1",
     "langextract>=1.1.0",
     "ezdxf>=1.3.0",
-
     # ── UI ───────────────────────────────────────────────────────
     "nicegui>=2.0.0",
-
     # ── Утилиты ──────────────────────────────────────────────────
     "python-dotenv>=1.0.0",
     "aiofiles>=23.0.0",
+    "python-docx>=1.2.0",
 ]
 
 [project.optional-dependencies]
@@ -53,6 +51,23 @@ mac-mlx = [
     "torch>=2.2.0",
     "torchvision>=0.17.0",
     "coremltools>=9.0",
+]
+parsers = [
+    "docling>=2.101.0",
+]
+desktop = [
+    # Тонкий нативный шелл (окно + трей) поверх веб-UI Совушки (tools/les_shell.py).
+    "pywebview>=5.0",
+    "pystray>=0.19",
+    "Pillow>=10.0",
+]
+mail-pst = [
+    # Архивы Outlook .pst (Windows). C-сборка libpff (self-contained, нужен компилятор).
+    "libpff-python>=20231205",
+]
+mcp = [
+    # MCP-сервер ЛЕС (tools/les_mcp_server.py): инструменты ЛЕС наружу по Model Context Protocol.
+    "mcp>=1.0.0",
 ]
 
 [dependency-groups]

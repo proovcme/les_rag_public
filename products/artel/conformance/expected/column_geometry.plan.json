@@ -1,0 +1,87 @@
+{
+  "schema_version": "artel.family_action_plan.v1",
+  "plan_id": "spec_col01",
+  "task_id": "task_col01",
+  "spec_id": "spec_col01",
+  "status": "ok",
+  "compiled_at": null,
+  "generator": {
+    "mode": "deterministic",
+    "llm_used": false,
+    "tool": "artel_family_action_plan"
+  },
+  "family": {
+    "name": "Колонна круглая",
+    "category": "Columns",
+    "template_file_id": null,
+    "shared_parameter_profile_id": "fop_2026"
+  },
+  "operations": [
+    {
+      "op": "add_shared_parameter",
+      "name": "ADSK_Наименование",
+      "guid": "4f5cb6a1-0000-0000-0000-000000000000",
+      "data_type": "Text",
+      "storage_type": "String",
+      "group": "Identity Data",
+      "is_instance": false,
+      "is_required": true
+    },
+    {
+      "op": "add_family_parameter",
+      "name": "Диаметр",
+      "data_type": "Length",
+      "storage_type": "Double",
+      "group": "Dimensions",
+      "is_instance": false
+    },
+    {
+      "op": "add_family_parameter",
+      "name": "Высота",
+      "data_type": "Length",
+      "storage_type": "Double",
+      "group": "Dimensions",
+      "is_instance": false
+    },
+    {
+      "op": "create_extrusion",
+      "id": "body",
+      "role": "body",
+      "sketch_plane": "ref_level",
+      "profile": {
+        "shape": "circle",
+        "diameter": {
+          "parameter": "Диаметр"
+        }
+      },
+      "extrusion": {
+        "parameter": "Высота"
+      }
+    },
+    {
+      "op": "create_type",
+      "name": "Колонна D300 H3000",
+      "values": [
+        {
+          "parameter": "Диаметр",
+          "value": 300
+        },
+        {
+          "parameter": "Высота",
+          "value": 3000
+        }
+      ]
+    }
+  ],
+  "manual_work": [
+    {
+      "kind": "geometry_review",
+      "description": "Сверить сгенерированную геометрию с техничкой/чертежом; проверить флекс типоразмеров."
+    },
+    {
+      "kind": "subcategories",
+      "description": "Назначить подкатегории и графику элементов геометрии."
+    }
+  ],
+  "diagnostics": []
+}

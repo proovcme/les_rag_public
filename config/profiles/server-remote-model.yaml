@@ -1,0 +1,13 @@
+name: server-remote-model
+platform: any
+service_manager: external
+model_provider: openai_compatible
+embedding_provider: openai_compatible_or_remote
+qdrant: remote_or_local
+storage_root: .
+ports:
+  proxy: 8050
+  ui: 8051
+notes:
+  - Useful for testing LES packaging without local model runtime.
+  - Requires provider keys configured outside git.

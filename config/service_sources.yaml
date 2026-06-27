@@ -1,0 +1,105 @@
+meta:
+  version: 1
+  title: "Служебные источники Л.Е.С."
+  note: "Реестр файлов и датасетов, без которых сметные и нормоконтрольные workflow становятся неполными."
+
+sources:
+  - id: gesn_base
+    domain: smeta
+    label: "ГЭСН-2022: нормы и ресурсы"
+    status_if_missing: blocking
+    paths:
+      - data/gesn_base/gesn2022.parquet
+      - config/domain/gesn_seed.yaml
+    folders:
+      - data/gesn_base
+    accepted_files: ["*.parquet", "*.xlsx", "*.csv", "*.json", "*.pdf"]
+    needed_for:
+      - "ГЭСН-код → ресурсы"
+      - "ЛСР от нормы"
+      - "объектная прикидка"
+    operator_action: "Положи официальную базу ГЭСН/ФЕР/ТЕР в папку ГЭСН. Семя нужно только как аварийный минимум."
+    process_label: "Проверить ГЭСН"
+
+  - id: fgis_price_base
+    domain: smeta
+    label: "ФГИС ЦС: Сплит-формы цен"
+    status_if_missing: degraded
+    paths:
+      - data/price_base/*.parquet
+    folders:
+      - data/price_base
+    accepted_files: ["*.xlsx", "*.parquet"]
+    needed_for:
+      - "цены ресурсов по коду"
+      - "ресурсно-индексный расчёт"
+      - "понимание, нужен ли КАЦ"
+    operator_action: "Положи сплит-формы цен нужного региона и квартала в папку цен. ЛЕС не ходит за ними в интернет во время расчёта."
+    process_label: "Проверить цены"
+
+  - id: smeta_coefficients
+    domain: smeta
+    label: "Сметные коэффициенты и шаблоны"
+    status_if_missing: blocking
+    paths:
+      - config/domain/nr_sp.yaml
+      - config/domain/stesnennost.yaml
+      - config/domain/object_templates.yaml
+      - config/domain/smeta_ontology.yaml
+    folders:
+      - config/domain
+    accepted_files: ["*.yaml"]
+    needed_for:
+      - "НР/СП"
+      - "коэффициенты стеснённости"
+      - "шаблоны объектной прикидки"
+      - "сметная онтология"
+    operator_action: "Проверяются служебные YAML: НР/СП, стеснённость, шаблоны объектов и сметная онтология."
+    process_label: "Проверить шаблоны"
+
+  - id: normcontrol_spds_rulepack
+    domain: normcontrol
+    label: "СПДС rulepack: ГОСТ Р 21.101-2026"
+    status_if_missing: blocking
+    paths:
+      - config/normcontrol/gost_r_21_101_2026.yaml
+    folders:
+      - config/normcontrol
+    accepted_files: ["*.yaml"]
+    needed_for:
+      - "doc-review"
+      - "карта проверок нормоконтроля"
+      - "defense claims по пунктам"
+    operator_action: "Rulepack задаёт карту проверок. Текст стандарта нужен отдельно в нормативном RAG-датасете."
+    process_label: "Проверить rulepack"
+
+  - id: normcontrol_spds_rag
+    domain: normcontrol
+    label: "Нормативный RAG: СПДС/ГОСТ Р 21.101"
+    status_if_missing: degraded
+    dataset_query:
+      domains: ["NTD_SPDS", "NTD_GENERAL"]
+      name_contains: ["21.101", "СПДС", "SPDS"]
+    accepted_files: ["*.pdf", "*.docx", "*.md", "*.txt"]
+    needed_for:
+      - "цитаты/текст требований"
+      - "retrieval-подфаза doc-review"
+      - "защита замечаний ссылками на норму"
+    operator_action: "Добавь легальный экземпляр ГОСТ/СПДС в нормативный датасет. Без него часть пунктов останется на добор источников."
+    process_label: "Проверить RAG"
+
+  - id: normcontrol_layout_reference
+    domain: normcontrol
+    label: "Layout-эталон СПДС: лист/рамка/основная надпись"
+    status_if_missing: degraded
+    paths:
+      - config/normcontrol/layout_reference.yaml
+    folders:
+      - config/normcontrol
+    accepted_files: ["*.yaml", "*.pdf", "*.png"]
+    needed_for:
+      - "проверка расположения рамки"
+      - "проверка зоны основной надписи"
+      - "проверка заполнения граф"
+    operator_action: "Нужен эталон расположения листа, рамки и основной надписи для строгой проверки граф."
+    process_label: "Проверить эталон"

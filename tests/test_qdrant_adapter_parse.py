@@ -33,6 +33,11 @@ class LegacyNamePendingDB:
         pass
 
 
+class StatusTrackingDB(LegacyNamePendingDB):
+    def update_document_status(self, dataset_id, file_name, status, chunk_count, route=None, last_error=""):
+        self.updated.append((dataset_id, file_name, status, chunk_count, last_error))
+
+
 def test_sync_parse_does_not_parse_all_files_when_no_pending(tmp_path):
     dataset_dir = tmp_path / "ds-1"
     dataset_dir.mkdir()
@@ -139,6 +144,42 @@ def test_sync_parse_prefers_exact_relative_path_over_legacy_basename(tmp_path, m
     assert result["files_skipped"] == 1
     assert parsed == ["doc.md"]
     assert db.updated == [("ds-1", "doc.md", "INDEXED", 1)]
+
+
+def test_sync_parse_marks_error_when_qdrant_count_mismatches(tmp_path, monkeypatch):
+    dataset_dir = tmp_path / "ds-1"
+    dataset_dir.mkdir()
+    (dataset_dir / "doc.md").write_text("content with enough text for a chunk")
+    db = StatusTrackingDB()
+    deleted = []
+    adapter = SimpleNamespace(
+        content_dir=tmp_path,
+        db=db,
+        qdrant_url="http://127.0.0.1:6333",
+        collection_name="les_rag",
+        embed=SimpleNamespace(encode_sync=lambda texts: [[0.0] * 1024 for _ in texts]),
+        _sync_delete_file_points=lambda _q, _ds, key: deleted.append(key),
+        _sync_count_file_points=lambda *args: 0,
+        _sync_markdown_nodes=lambda *args: [
+            {"text": "content with enough text for a chunk", "doc_id": "doc-1", "payload": {}}
+        ],
+    )
+
+    class FakeQdrant:
+        def __init__(self, url, **kwargs):
+            self.url = url
+
+        def upsert(self, collection_name, points):
+            return None
+
+    monkeypatch.setattr("backend.qdrant_adapter.qdrant_client.QdrantClient", FakeQdrant)
+
+    result = QdrantLlamaIndexAdapter._sync_parse(adapter, "ds-1", limit=1)
+
+    assert result["errors"] == 1
+    assert deleted == ["doc.md", "doc.md"]
+    assert db.updated[-1][0:4] == ("ds-1", "doc.md", "ERROR", 0)
+    assert "qdrant point count mismatch" in db.updated[-1][4]
 
 
 def test_sync_parse_reuses_existing_vector_by_content_hash(tmp_path, monkeypatch):
@@ -269,6 +310,19 @@ def test_pending_files_are_ordered_by_size(tmp_path):
     db.add_document(dataset_id, "small.md", file_mtime=1, file_size=small.stat().st_size)
 
     assert db.get_pending_files(dataset_id, limit=2) == ["small.md", "large.md"]
+
+
+def test_dataset_group_set_and_listed(tmp_path):
+    db = MetaDB(str(tmp_path / "meta.db"))
+    ds = db.create_dataset("W-205")
+    [d0] = db.list_datasets()
+    assert d0.group_name == ""  # дефолт — без группы
+    db.set_dataset_group(ds, "Проект W-205")
+    [d1] = db.list_datasets()
+    assert d1.group_name == "Проект W-205"
+    db.set_dataset_group(ds, "")  # снятие группы
+    [d2] = db.list_datasets()
+    assert d2.group_name == ""
 
 
 def test_recover_interrupted_parsing_resets_dataset_status(tmp_path):

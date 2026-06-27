@@ -18,7 +18,7 @@ from typing import Any
 
 DEFAULT_UI_URL = "http://localhost:8051"
 
-ADMIN_TABS = ("ОБЗОР", "С.А.М.О.В.А.Р.", "П.Р.О.Р.А.Б.", "ГРАФ", "ДИАГН", "В.О.Л.К.")
+ADMIN_TABS = ("ОБЗОР", "С.А.М.О.В.А.Р.", "П.Р.О.Р.А.Б.", "КВАДРАНТ", "Д.И.А.Г.Н.О.З.", "В.О.Л.К.")
 USER_TABS = ("AI ЧАТ", "ИСТОРИЯ")
 LOGIN_MARKERS = ("В.О.Л.К.", "Ключ доступа", "ВОЙТИ В СИСТЕМУ")
 
@@ -113,15 +113,18 @@ def _admin_scenario(context: Any, args: argparse.Namespace) -> list[CheckResult]
     results: list[CheckResult] = []
     timeout_ms = int(args.timeout * 1000)
 
+    # W5.4/5.5: админ-консоль живёт на /les/classic (корень → /classic = чат).
+    admin_url = f"{args.ui_url}/les/classic"
     if args.trusted_local:
         started = time.time()
-        page.goto(args.ui_url, wait_until="domcontentloaded", timeout=timeout_ms)
+        page.goto(admin_url, wait_until="domcontentloaded", timeout=timeout_ms)
         results.append(CheckResult("trusted local entry", True, page.url, time.time() - started))
     else:
-        results.append(_login(page, args.ui_url, args.admin_key, timeout_ms))
+        results.append(_login(page, admin_url, args.admin_key, timeout_ms))
 
     if results[-1].ok:
-        results.append(_assert_visible(page, "admin tabs", ADMIN_TABS + USER_TABS, timeout_ms))
+        # W5.4/5.5: /les/classic несёт только админ-вкладки; чат/история — на /classic.
+        results.append(_assert_visible(page, "admin tabs", ADMIN_TABS, timeout_ms))
         if args.question:
             results.append(_ask_question(page, args.question, timeout_ms))
     page.close()
@@ -175,7 +178,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--user-key", default=os.getenv("LES_USER_KEY", ""))
     parser.add_argument("--question", default=os.getenv("LES_BROWSER_SMOKE_QUESTION", ""))
     parser.add_argument("--timeout", type=float, default=float(os.getenv("LES_BROWSER_SMOKE_TIMEOUT", "20")))
-    parser.add_argument("--trusted-local", action="store_true", help="Skip login and verify trusted localhost/private LAN admin shell.")
+    parser.add_argument("--trusted-local", action="store_true", help="Skip login and verify trusted localhost/ZeroTier admin shell.")
     parser.add_argument("--show", action="store_true", help="Run browser headed.")
     parser.add_argument("--ignore-https-errors", action="store_true", default=True)
     return parser.parse_args(argv)

@@ -1,54 +1,6 @@
 # Установка Л.Е.С.
 
-Л.Е.С. имеет несколько профилей запуска. Базовый контур: Qdrant `:6333`,
-model/provider endpoint, FastAPI proxy `:8050`, Sovushka Lite UI `:8051`.
-
-Два пути: **установка в один клик** (дабл-клик `.app`/`.exe`, без терминала —
-ниже) или **ручной CLI** через `uv` + `lesctl` (со раздела «Требования»).
-
-## Установка в один клик (без терминала)
-
-Цель — UX уровня AnythingLLM/LM Studio: дабл-клик, и весь стек
-(Qdrant + модель/провайдер + proxy + Совушка) поднимается и открывается в
-браузере. Веса не входят в установщик — на первом запуске докачиваются
-(Mac) либо движок берётся облачный/ollama/lemonade (Windows).
-
-### macOS — `LES.app` / `LES.dmg`
-
-Соберите бандл из исходников (macOS, есть `uv`):
-
-```bash
-git clone https://github.com/proovcme/les_rag_public.git
-cd les_rag_public
-uv run python tools/build_macos_app.py --version 0.1.4 --sign   # -> dist/LES.app
-uv run python tools/build_macos_dmg.py --version 0.1.4          # -> dist/LES.dmg
-```
-
-Перетащите `LES.app` в «Программы» и запустите двойным кликом. На первом
-запуске бутстрап ставит `uv` (если нет), выполняет `uv sync --extra mac-mlx`,
-докачивает локальную модель (Qwen3.5-4B-MLX + эмбеддер), поднимает службы и
-открывает `http://127.0.0.1:8051/les`. Прогресс — в нотификациях, лог —
-`~/Library/Logs/LES/bootstrap.log`. Рантайм разворачивается в
-`~/Library/Application Support/LES` (override `LES_HOME`).
-
-### Windows — `LES-Setup.exe`
-
-Windows без Apple MLX → движок облачный / `ollama` / `lemonade` (выбор в GUI
-Совушки), веса не бандлятся. Соберите установщик (NSIS):
-
-```bash
-uv run python tools/build_windows_installer.py --version 0.1.4
-# NSIS установлен -> dist/LES-Setup.exe; иначе -> dist/LES-windows-portable.zip
-# + печать команды makensis для сборки .exe на Windows.
-```
-
-`LES-Setup.exe` ставит per-user (без админа) в `%LOCALAPPDATA%\Programs\LES`,
-создаёт ярлыки в меню «Пуск» и на рабочем столе. Двойной клик → бутстрап
-ставит `uv`, `uv sync`, поднимает proxy + UI (`start-light.ps1`) и открывает
-браузер. Лог — `%LOCALAPPDATA%\LES\logs\bootstrap.log`.
-
-Артефакты установщика (`.dmg`/`.exe`) намеренно не прикладываются к релизам —
-собирайте из исходников этого репозитория, чтобы бандл содержал ровно его код.
+Л.Е.С. сейчас имеет референсный локальный host-runtime на macOS Apple Silicon, но упаковка переводится в профильную модель для macOS, Linux и Windows. Базовый контур: Qdrant `:6333`, model host `:8080`, FastAPI proxy `:8050`, Sovushka Lite UI `:8051`.
 
 ## Требования
 
@@ -58,16 +10,18 @@ uv run python tools/build_windows_installer.py --version 0.1.4
 - 16 GB RAM минимум, 24 GB+ комфортно
 - Node/npm нужны только для пересборки `frontend/cad_bim_viewer`
 
+Платформенные профили описаны в `docs/PLATFORMS.md`, план коробочной упаковки — в `docs/PACKAGING.md`.
+
 ## Быстрый старт
 
 ```bash
-git clone https://github.com/proovcme/les_rag_public.git
-cd les_rag_public
+git clone git@github.com:proovcme/les_rag.git
+cd les_rag
 
 uv sync
 uv run lesctl doctor --profile mac-native
 uv run lesctl init --profile mac-native
-uv run lesctl install --profile mac-native --init-env
+uv run lesctl install --profile mac-native
 ```
 
 `lesctl install` подготавливает директории, `.env` и зависимости. launchd-сервисы
@@ -80,7 +34,7 @@ uv run lesctl install --profile mac-native --init-env
 - добавляйте VPN/LAN CIDR только если понимаете, кто получит admin-доступ;
 - не коммитьте `.env` и реальные API keys.
 
-macOS wrapper, если он есть в выбранном snapshot:
+macOS wrapper:
 
 ```bash
 ./installers/macos/install.sh --init-env
@@ -94,7 +48,7 @@ macOS wrapper, если он есть в выбранном snapshot:
 uv run lesctl start --profile mac-native --include-ui --memory-preflight
 ```
 
-Для Linux Docker profile, если Docker/installers включены в snapshot:
+Для Linux Docker profile:
 
 ```bash
 ./installers/linux/install.sh --profile linux-docker --init-env --sync
@@ -202,6 +156,22 @@ uv run lesctl stop --include-ui
 ```bash
 ./stop_les.command
 ```
+
+## Переустановка на Mac с нуля
+
+Перед настоящим сносом сначала прогоните safe smoke в temp-копии:
+
+```bash
+uv run python tools/clean_install_smoke.py --profile server-remote-model --run-tests --build-artifact
+```
+
+Dry-run uninstall:
+
+```bash
+./installers/macos/uninstall.sh
+```
+
+Настоящий destructive сценарий описан в [docs/MAC_REINSTALL_STRESS.md](docs/MAC_REINSTALL_STRESS.md).
 
 ## Индексация документов
 

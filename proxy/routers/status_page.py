@@ -52,7 +52,7 @@ body{{background:#08090b;color:#e2e8f0;font-family:'Courier New',monospace;paddi
 a{{color:#3b82f6;text-decoration:none}}
 </style></head><body>
 <div class="brand">[O_O] Л.Е.С.</div>
-<div class="sub">Локальная Экспертная Система · localhost · proxy :8050</div>
+<div class="sub">Локальная Экспертная Система · les.ovc.me · proxy :8050</div>
 <div class="grid">
   <div class="card"><div class="val ok">UP</div><div class="lbl">Статус прокси</div></div>
   <div class="card"><div class="val">{h}ч {m}м</div><div class="lbl">Uptime</div></div>
@@ -71,6 +71,6 @@ a{{color:#3b82f6;text-decoration:none}}
   </div>
 </div>
 <div class="dim" style="font-size:.65rem;margin-top:16px">
-  С.О.В.У.Ш.К.А. UI → <a href="http://127.0.0.1:8051/">localhost</a>
+  С.О.В.У.Ш.К.А. UI → <a href="https://les.ovc.me/">les.ovc.me</a>
 </div>
 </body></html>""")

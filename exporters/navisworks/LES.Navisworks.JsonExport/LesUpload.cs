@@ -28,7 +28,7 @@ internal sealed class LesUploadSettings
 
     public static List<string> DefaultUrls()
     {
-        return new List<string> { "http://127.0.0.1:8050" };
+        return new List<string> { "http://10.195.146.98:8050", "https://les.ovc.me" };
     }
 
     public static LesUploadSettings Load()

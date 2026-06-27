@@ -20,6 +20,8 @@ class DatasetInfo:
     status:      str
     doc_count:   int
     chunk_count: int
+    sensitivity: str = "P0"  # W3.3 (ADR-9): P0 local-only / P1 cloud-ok / P2 cloud-с-согласия
+    group_name:  str = ""    # пользовательская группа для организации списка в САМОВАРе
 
 
 class RAGBackend(ABC):
@@ -34,6 +36,15 @@ class RAGBackend(ABC):
 
     @abstractmethod
     async def upload_file(self, dataset_id: str, file_path: Path, relative_path: Optional[str] = None) -> str: ...
+
+    @abstractmethod
+    async def register_external_file(self, dataset_id: str, source_path: Path, file_name: str) -> str:
+        """Регистрирует внешний файл как источник БЕЗ копирования в storage.
+
+        В storage остаются только производные (Parquet/_parquet); сам документ
+        читается из source_path при парсинге. file_name — ключ дока (rel-путь).
+        """
+        ...
 
     @abstractmethod
     async def parse_dataset(self, dataset_id: str, limit: Optional[int] = None) -> Dict[str, Any]: ...

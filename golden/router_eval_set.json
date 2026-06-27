@@ -1,0 +1,68 @@
+{
+  "version": "v1",
+  "description": "Router tool-selection eval for Ярус 2 (agent_router_service). Каждый интент в 2-3 переформулировках — главный тест устойчивости к «шагу в сторону». + явные none/RAG-кейсы. Меряем tool-selection accuracy (overall, по инструментам, отдельно на переформулировках).",
+  "cases": [
+    {"id": "price_1", "question": "цена ресурса 91.05.01-017", "expected": "price_lookup", "rephrase": false},
+    {"id": "price_2", "question": "сколько стоит позиция 01.7.15.06-0111", "expected": "price_lookup", "rephrase": true},
+    {"id": "price_3", "question": "какая расценка у кода 91.05.01-017 в ФГИС ЦС", "expected": "price_lookup", "rephrase": true},
+
+    {"id": "kac_1", "question": "нужен ли КАЦ для кода 91.05.01-017", "expected": "kac", "rephrase": false},
+    {"id": "kac_2", "question": "требуется ли конъюнктурный анализ цен по 14.4.02.05", "expected": "kac", "rephrase": true},
+    {"id": "kac_3", "question": "есть ли материал 91.05.01-017 в базе ФГИС ЦС или нужен КАЦ", "expected": "kac", "rephrase": true},
+
+    {"id": "stesn_1", "question": "коэффициент стеснённости для действующего предприятия", "expected": "stesnennost", "rephrase": false},
+    {"id": "stesn_2", "question": "какой коэф стеснённости при работе в стеснённых условиях города", "expected": "stesnennost", "rephrase": true},
+    {"id": "stesn_3", "question": "поправочный коэффициент на усложняющие условия производства работ", "expected": "stesnennost", "rephrase": true},
+
+    {"id": "lsr_1", "question": "собери смету по ГЭСН12-01-034-02 объём 50", "expected": "lsr_assemble", "rephrase": false},
+    {"id": "lsr_2", "question": "посчитай позицию ФЕР08-02-001-01 на 30 м3", "expected": "lsr_assemble", "rephrase": true},
+    {"id": "lsr_3", "question": "рассчитай ресурсами расценку ГЭСН08-01-003-07", "expected": "lsr_assemble", "rephrase": true},
+
+    {"id": "objest_1", "question": "дай смету на дом 150 м2 одноэтажный", "expected": "object_estimate", "rephrase": false},
+    {"id": "objest_2", "question": "посчитай укрупнённую смету на гараж 40 квадратов", "expected": "object_estimate", "rephrase": true},
+    {"id": "objest_3", "question": "прикинь стоимость строительства коттеджа 200 м2 в два этажа", "expected": "object_estimate", "rephrase": true},
+
+    {"id": "gloss_1", "question": "что такое КАЦ", "expected": "glossary", "rephrase": false},
+    {"id": "gloss_2", "question": "объясни значение термина стеснённость", "expected": "glossary", "rephrase": true},
+    {"id": "gloss_3", "question": "что значит конъюнктурный анализ цен простыми словами", "expected": "glossary", "rephrase": true},
+
+    {"id": "tableagg_1", "question": "сколько всего кабеля по спецификации", "expected": "table_agg", "rephrase": false},
+    {"id": "tableagg_2", "question": "посчитай итог по всем позициям ведомости объёмов", "expected": "table_agg", "rephrase": true},
+    {"id": "tableagg_3", "question": "суммарное количество труб по всей таблице", "expected": "table_agg", "rephrase": true},
+
+    {"id": "clause_1", "question": "приведи пункт 4.2.1 СП 1.13130", "expected": "clause", "rephrase": false},
+    {"id": "clause_2", "question": "процитируй дословно п. 6.1 ГОСТ 21.501", "expected": "clause", "rephrase": true},
+
+    {"id": "mem_1", "question": "запомни: прораб на объекте Иванов", "expected": "memory", "rephrase": false},
+    {"id": "mem_2", "question": "сохрани заметку что бетон везут по понедельникам", "expected": "memory", "rephrase": true},
+    {"id": "mem_3", "question": "покажи мои заметки", "expected": "memory", "rephrase": true},
+
+    {"id": "dec_1", "question": "реши: кабель вести по лотку обоснование экономия", "expected": "decision", "rephrase": false},
+    {"id": "dec_2", "question": "зафиксируй решение: фундамент на сваях", "expected": "decision", "rephrase": true},
+    {"id": "dec_3", "question": "покажи решения по объекту", "expected": "decision", "rephrase": true},
+
+    {"id": "task_1", "question": "создай задачу проверить АОСР", "expected": "task", "rephrase": false},
+    {"id": "task_2", "question": "поставь поручение собрать исполнительную документацию", "expected": "task", "rephrase": true},
+
+    {"id": "preset_1", "question": "переключись на облако", "expected": "preset", "rephrase": false},
+    {"id": "preset_2", "question": "включи локальный режим работы", "expected": "preset", "rephrase": true},
+
+    {"id": "registry_1", "question": "какие у нас объекты", "expected": "project_registry", "rephrase": false},
+    {"id": "registry_2", "question": "покажи реестр всех проектов", "expected": "project_registry", "rephrase": true},
+
+    {"id": "field_1", "question": "прими объём: уложено 120 м кабеля", "expected": "field", "rephrase": false},
+    {"id": "field_2", "question": "запиши в журнал выполнено 80 м3 бетона", "expected": "field", "rephrase": true},
+
+    {"id": "asbuilt_1", "question": "вытащи смонтированный объём из папки /scans/корпус5", "expected": "asbuilt", "rephrase": false},
+    {"id": "asbuilt_2", "question": "прими исполнительные схемы из /ИД и посчитай фактический объём", "expected": "asbuilt", "rephrase": true},
+
+    {"id": "lesmd_1", "question": "пойми папку /Projects/Банкрот", "expected": "les_md", "rephrase": false},
+    {"id": "lesmd_2", "question": "собери LES.md для этого объекта по папке /data/obj2", "expected": "les_md", "rephrase": true},
+
+    {"id": "none_1", "question": "какие требования к огнестойкости несущих стен", "expected": "none", "rephrase": false},
+    {"id": "none_2", "question": "расскажи что известно про систему дымоудаления на объекте", "expected": "none", "rephrase": true},
+    {"id": "none_3", "question": "объясни как устроена приёмка скрытых работ", "expected": "none", "rephrase": true},
+    {"id": "none_4", "question": "какая минимальная ширина путей эвакуации", "expected": "none", "rephrase": true},
+    {"id": "none_5", "question": "что в проекте по вентиляции подвала", "expected": "none", "rephrase": true}
+  ]
+}

@@ -231,7 +231,37 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--memory-cooldown-sec", type=float, default=300)
     parser.add_argument("--proxy-retry-sec", type=float, default=30)
     parser.add_argument("--unload-on-memory-guard", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--preprocess-dirs",
+        nargs="*",
+        default=None,
+        help="W1.3: каталоги с PDF для очистки/нарезки (tools/pdf_preprocess.py) до первого sync",
+    )
     return parser.parse_args(argv)
+
+
+def run_preprocess(dirs: list[str] | None) -> None:
+    """W1.3: препроцессинг PDF до индексации. Ошибки не прерывают индексацию."""
+    if not dirs:
+        return
+    from pathlib import Path
+
+    from tools.pdf_preprocess import preprocess_dir
+
+    for raw in dirs:
+        directory = Path(raw)
+        if not directory.is_dir():
+            log("preprocess_skip", dir=raw, reason="not_a_directory")
+            continue
+        log("preprocess_start", dir=raw)
+        results = preprocess_dir(directory)
+        log(
+            "preprocess_done",
+            dir=raw,
+            processed=sum(1 for r in results if r.action in ("clean", "clean+split")),
+            split=sum(1 for r in results if r.action == "clean+split"),
+            errors=sum(1 for r in results if r.action == "error"),
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -239,6 +269,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.wave_batches > MAX_WAVE_BATCHES:
         log("wave_batches_clamped", requested=args.wave_batches, effective=MAX_WAVE_BATCHES)
         args.wave_batches = MAX_WAVE_BATCHES
+
+    run_preprocess(args.preprocess_dirs)  # W1.3: до первого sync — части подхватятся как PENDING
 
     proxy_url = args.proxy_url.rstrip("/")
     while True:

@@ -7,6 +7,7 @@ from backend.parquet_writer import (
     _clean_pdf_table,
     _map_columns_simple,
     read_docx_tables,
+    read_xlsx_sheets,
     row_to_chunk_text,
 )
 from backend.qdrant_adapter import QdrantLlamaIndexAdapter
@@ -58,6 +59,29 @@ def test_table_normalizer_writes_parquet_and_row_chunks(tmp_path):
     assert (tmp_path / "parquet" / "smeta.parquet").exists()
 
 
+def test_read_xlsx_sheets_streams_rows_and_preserves_shape(tmp_path):
+    import openpyxl
+
+    xlsx_path = tmp_path / "smeta.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet A"
+    ws.append([None, None, None])
+    ws.append(["№", "Наименование работ", "Кол-во"])
+    ws.append([1, "Монтаж кабеля", 12])
+    ws.append([2, "Установка щита", 1])
+    wb.save(xlsx_path)
+
+    result = read_xlsx_sheets(str(xlsx_path))
+
+    assert len(result) == 1
+    assert result[0]["sheet_name"] == "Sheet A"
+    assert result[0]["header_row"] == 2
+    assert result[0]["headers"][:3] == ["№", "Наименование работ", "Кол-во"]
+    assert result[0]["rows"][0]["Наименование работ"] == "Монтаж кабеля"
+    assert result[0]["rows"][1]["Кол-во"] == 1
+
+
 def test_qdrant_adapter_builds_table_nodes_with_parquet_payload(tmp_path):
     data_dir = tmp_path / "dataset"
     data_dir.mkdir()
@@ -69,7 +93,7 @@ def test_qdrant_adapter_builds_table_nodes_with_parquet_payload(tmp_path):
     )
 
     adapter = QdrantLlamaIndexAdapter.__new__(QdrantLlamaIndexAdapter)
-    nodes = adapter._sync_table_nodes(csv_path, data_dir, "ds-1")
+    nodes = adapter._sync_table_nodes(csv_path, data_dir, "spec.csv", "ds-1")
 
     assert len(nodes) == 1
     assert "Щит распределительный" in nodes[0]["text"]
@@ -184,7 +208,7 @@ def test_qdrant_adapter_builds_needs_ocr_marker(tmp_path, monkeypatch):
     })
 
     adapter = QdrantLlamaIndexAdapter.__new__(QdrantLlamaIndexAdapter)
-    nodes = adapter._sync_table_nodes(pdf_path, data_dir, "ds-1")
+    nodes = adapter._sync_table_nodes(pdf_path, data_dir, "scan.pdf", "ds-1")
 
     assert len(nodes) == 1
     assert nodes[0]["payload"]["type"] == "pdf_needs_ocr"

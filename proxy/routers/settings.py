@@ -21,24 +21,53 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 ENV_PATH = Path(".env")
+DEFAULT_OPENAI_MODEL = "gpt-4.1"
+
+# Локальные MLX-модели чата под Apple M4/24GB: лёгкий 4B — основной (≈20 ток/с, 2.6 ГБ),
+# тяжёлый 9B — резерв под качество (≈5 ток/с, 5.6 ГБ; душит память бокса). Переключение
+# в GUI применяется вживую через MLX-host /api/switch_model (без рестарта процесса).
+MLX_MODEL_CHOICES = {
+    "mlx-community/Qwen3.5-4B-MLX-4bit": "4B — быстрый (≈20 ток/с, 2.6 ГБ) · основной",
+    "mlx-community/Qwen3.5-9B-MLX-4bit": "9B — качество (≈5 ток/с, 5.6 ГБ) · тяжёлый резерв",
+}
+
+
+def _current_mlx_model() -> str:
+    """Активная локальная модель: имя в запросах proxy (LLM_MODEL), затем старт хоста (MLX_MODEL)."""
+    return os.getenv("LLM_MODEL", "").strip() or os.getenv("MLX_MODEL", "").strip()
+
+
+def _persist_env(updates: dict[str, str]) -> None:
+    """Идемпотентно обновляет ключи в .env (заменяет существующие, дописывает новые)."""
+    env_lines = ENV_PATH.read_text().splitlines() if ENV_PATH.exists() else []
+    new_lines: list[str] = []
+    seen: set[str] = set()
+    for line in env_lines:
+        key = line.split("=")[0].strip()
+        if key in updates:
+            new_lines.append(f"{key}={updates[key]}")
+            seen.add(key)
+        else:
+            new_lines.append(line)
+    for key, val in updates.items():
+        if key not in seen:
+            new_lines.append(f"{key}={val}")
+    ENV_PATH.write_text("\n".join(new_lines) + "\n")
 
 
 class SettingsRequest(BaseModel):
     llm_model: Optional[str] = None
     embed_model: Optional[str] = None
     mlx_url: Optional[str] = None
-    speckle_enabled: Optional[bool] = None
-    speckle_base_url: Optional[str] = None
-    speckle_graphql_url: Optional[str] = None
-    speckle_api_token: Optional[str] = None
-    speckle_api_token_clear: Optional[bool] = None
-    speckle_wake_timeout_sec: Optional[float] = None
+    cloud_consent: Optional[bool] = None  # W3.3: согласие на облако для данных P2
     openrouter_base_url: Optional[str] = None
     openrouter_model: Optional[str] = None
+    openrouter_models: Optional[str] = None  # цепочка фолбэка (через запятую)
     openrouter_api_key: Optional[str] = None
     openrouter_api_key_clear: Optional[bool] = None
     openai_base_url: Optional[str] = None
     openai_model: Optional[str] = None
+    openai_models: Optional[str] = None  # цепочка фолбэка (через запятую)
     openai_api_key: Optional[str] = None
     openai_api_key_clear: Optional[bool] = None
     llm_provider: Optional[str] = None
@@ -84,7 +113,9 @@ async def get_settings(_user=Depends(require_user)):
             "embed_model": os.getenv("EMBED_MODEL", "bge-m3:latest"),
             "mlx_url": mlx_url,
             "available_models": available,
-            "speckle": _speckle_settings_payload(),
+            "mlx_main_model": _current_mlx_model(),
+            "mlx_model_choices": MLX_MODEL_CHOICES,
+            "cloud_consent": _env_bool("LES_CLOUD_CONSENT", "false"),
             "providers": _provider_settings_payload(),
             "mail": _mail_settings_payload(),
         }
@@ -105,7 +136,6 @@ async def save_settings(req: SettingsRequest, restart: bool = False, _admin=Depe
         updates["EMBED_MODEL"] = req.embed_model
     if req.mlx_url:
         updates["MLX_URL"] = req.mlx_url
-    updates.update(_speckle_updates(req))
     updates.update(_provider_updates(req))
     updates.update(_mail_updates(req))
 
@@ -115,8 +145,6 @@ async def save_settings(req: SettingsRequest, restart: bool = False, _admin=Depe
     if req.mlx_url and not req.mlx_url.startswith(("http://", "https://")):
         raise HTTPException(400, "MLX_URL должен начинаться с http:// или https://")
     for field, env_key in (
-        (req.speckle_base_url, "SPECKLE_BASE_URL"),
-        (req.speckle_graphql_url, "SPECKLE_GRAPHQL_URL"),
         (req.openrouter_base_url, "OPENROUTER_BASE_URL"),
         (req.openai_base_url, "OPENAI_BASE_URL"),
         (req.ollama_base_url, "OLLAMA_BASE_URL"),
@@ -180,40 +208,20 @@ def _env_bool(name: str, default: str = "false") -> bool:
     return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _speckle_default_base_url() -> str:
-    return os.getenv("SPECKLE_BASE_URL", "https://speckle.ovc.me").rstrip("/")
-
-
-def _speckle_default_graphql_url(base_url: str | None = None) -> str:
-    explicit = os.getenv("SPECKLE_GRAPHQL_URL", "").strip()
-    if explicit:
-        return explicit
-    return f"{(base_url or _speckle_default_base_url()).rstrip('/')}/graphql"
-
-
-def _speckle_settings_payload() -> dict[str, object]:
-    base_url = _speckle_default_base_url()
-    return {
-        "enabled": _env_bool("SPECKLE_ENABLED", "true"),
-        "base_url": base_url,
-        "graphql_url": _speckle_default_graphql_url(base_url),
-        "api_token_set": bool(os.getenv("SPECKLE_API_TOKEN", "")),
-        "wake_timeout_sec": float(os.getenv("SPECKLE_WAKE_TIMEOUT_SEC", "5") or "5"),
-        "supported_formats": ["json", "jsonl", "dwg", "dxf", "rvt", "ifc"],
-    }
-
-
 def _provider_settings_payload() -> dict[str, object]:
     return {
         "active": os.getenv("LES_LLM_PROVIDER", "mlx"),
         "openrouter": {
             "base_url": os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
             "model": os.getenv("OPENROUTER_MODEL", ""),
+            "models": os.getenv("OPENROUTER_MODELS", ""),
             "api_key_set": bool(os.getenv("OPENROUTER_API_KEY", "")),
         },
         "openai_compatible": {
             "base_url": os.getenv("OPENAI_BASE_URL", ""),
-            "model": os.getenv("OPENAI_MODEL", ""),
+            "model": os.getenv("OPENAI_MODEL", "").strip() or os.getenv("LES_DEFAULT_OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
+            "configured_model": os.getenv("OPENAI_MODEL", ""),
+            "models": os.getenv("OPENAI_MODELS", ""),
             "api_key_set": bool(os.getenv("OPENAI_API_KEY", "")),
         },
         "ollama": {
@@ -249,27 +257,6 @@ def _mail_settings_payload() -> dict[str, object]:
     }
 
 
-def _speckle_updates(req: SettingsRequest) -> dict[str, str]:
-    fields = req.model_fields_set
-    updates: dict[str, str] = {}
-    if "speckle_enabled" in fields:
-        updates["SPECKLE_ENABLED"] = "true" if bool(req.speckle_enabled) else "false"
-    if "speckle_base_url" in fields:
-        updates["SPECKLE_BASE_URL"] = str(req.speckle_base_url or "").strip().rstrip("/")
-    if "speckle_graphql_url" in fields:
-        updates["SPECKLE_GRAPHQL_URL"] = str(req.speckle_graphql_url or "").strip()
-    if "speckle_api_token" in fields and req.speckle_api_token:
-        updates["SPECKLE_API_TOKEN"] = req.speckle_api_token.strip()
-    if req.speckle_api_token_clear:
-        updates["SPECKLE_API_TOKEN"] = ""
-    if "speckle_wake_timeout_sec" in fields:
-        timeout = float(req.speckle_wake_timeout_sec or 0)
-        if timeout < 0.5 or timeout > 60:
-            raise HTTPException(400, "SPECKLE_WAKE_TIMEOUT_SEC должен быть от 0.5 до 60")
-        updates["SPECKLE_WAKE_TIMEOUT_SEC"] = str(timeout)
-    return updates
-
-
 def _provider_updates(req: SettingsRequest) -> dict[str, str]:
     fields = req.model_fields_set
     updates: dict[str, str] = {}
@@ -277,8 +264,10 @@ def _provider_updates(req: SettingsRequest) -> dict[str, str]:
         "llm_provider": "LES_LLM_PROVIDER",
         "openrouter_base_url": "OPENROUTER_BASE_URL",
         "openrouter_model": "OPENROUTER_MODEL",
+        "openrouter_models": "OPENROUTER_MODELS",
         "openai_base_url": "OPENAI_BASE_URL",
         "openai_model": "OPENAI_MODEL",
+        "openai_models": "OPENAI_MODELS",
         "ollama_base_url": "OLLAMA_BASE_URL",
         "ollama_model": "OLLAMA_MODEL",
         "lemonade_base_url": "LEMONADE_BASE_URL",
@@ -307,6 +296,9 @@ def _provider_updates(req: SettingsRequest) -> dict[str, str]:
         updates["LEMONADE_API_KEY"] = req.lemonade_api_key.strip()
     if req.lemonade_api_key_clear:
         updates["LEMONADE_API_KEY"] = ""
+
+    if "cloud_consent" in fields:
+        updates["LES_CLOUD_CONSENT"] = "true" if req.cloud_consent else "false"
 
     return updates
 
@@ -348,3 +340,70 @@ def _mail_updates(req: SettingsRequest) -> dict[str, str]:
             updates[env_key] = "true" if bool(getattr(req, field)) else "false"
 
     return updates
+
+
+# ── Режимы работы: local / cloud / mix (один переключатель) ──
+
+@router.get("/presets")
+async def list_presets(_user=Depends(require_user)):
+    """Список режимов + текущий. Режим согласованно ставит чат-LLM, скан-OCR и приёмку ИД."""
+    from proxy.services.preset_service import PRESETS, current_preset, describe
+    return {
+        "current": current_preset(),
+        "presets": [{"name": n, "desc": describe(n), "env": PRESETS[n]} for n in PRESETS],
+    }
+
+
+class PresetRequest(BaseModel):
+    name: str
+
+
+@router.post("/preset")
+async def set_preset(req: PresetRequest, _admin=Depends(require_admin)):
+    """Применить режим (local|cloud|mix или рус-алиас). Пишет .env + os.environ, действует сразу."""
+    from proxy.services.preset_service import apply_preset
+    try:
+        return await asyncio.to_thread(apply_preset, req.name)
+    except ValueError as err:
+        raise HTTPException(400, str(err))
+
+
+# ── Локальная MLX-модель: лёгкий 4B (основной) ↔ тяжёлый 9B (резерв) ──
+
+class MlxModelRequest(BaseModel):
+    model: str
+
+
+@router.post("/mlx-model")
+async def set_mlx_model(req: MlxModelRequest, _admin=Depends(require_admin)):
+    """Переключить локальную модель чата вживую: пишет .env (MLX_MODEL стартовый +
+    LLM_MODEL имя запросов) и дёргает MLX-host /api/switch_model — без рестарта процесса."""
+    model = (req.model or "").strip()
+    if model not in MLX_MODEL_CHOICES:
+        raise HTTPException(400, f"Неизвестная MLX-модель: {model}")
+
+    # 1) persist: MLX_MODEL — что хост грузит на старте; LLM_MODEL — имя в запросах proxy.
+    await asyncio.to_thread(_persist_env, {"MLX_MODEL": model, "LLM_MODEL": model})
+    os.environ["MLX_MODEL"] = model
+    os.environ["LLM_MODEL"] = model
+
+    # 2) применить вживую на хосте (force_unload + reload_tokenizer; веса лениво на след. генерации).
+    mlx_url = os.getenv("MLX_URL", "http://127.0.0.1:8080").rstrip("/")
+    switched_live = False
+    detail = ""
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            r = await client.post(f"{mlx_url}/api/switch_model", json={"target": "main", "model": model})
+            switched_live = r.status_code == 200
+            detail = r.text[:200]
+    except Exception as exc:  # хост недоступен — .env уже записан, подхватится при старте
+        detail = str(exc)[:200]
+
+    logger.info("[SETTINGS] MLX main model → %s (live=%s)", model, switched_live)
+    return {
+        "status": "ok",
+        "model": model,
+        "label": MLX_MODEL_CHOICES[model],
+        "switched_live": switched_live,
+        "detail": detail,
+    }

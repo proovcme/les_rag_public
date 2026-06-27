@@ -1,8 +1,6 @@
 """Trusted-network helpers shared by Sovushka pages."""
 from __future__ import annotations
 
-import ipaddress
-
 from fastapi import Request
 
 from sovushka.config import (
@@ -12,19 +10,17 @@ from sovushka.config import (
     TRUSTED_PROXY_NETWORKS,
 )
 
+# Единое ядро trust-логики (общее с proxy/security.py) — алгоритм один, конфиг свой.
+from backend.trust_core import (
+    ip_in_networks as _core_ip_in_networks,
+    network_role as _core_network_role,
+    proxy_asserts_network as _core_proxy_asserts,
+    resolve_client_ip as _core_resolve_client_ip,
+)
+
 
 def _ip_in_networks(ip_value: str, networks: tuple[str, ...]) -> bool:
-    try:
-        ip = ipaddress.ip_address(ip_value)
-    except ValueError:
-        return False
-    for net_value in networks:
-        try:
-            if ip in ipaddress.ip_network(net_value, strict=False):
-                return True
-        except ValueError:
-            continue
-    return False
+    return _core_ip_in_networks(ip_value, networks)
 
 
 def _peer_ip(request: Request) -> str:
@@ -32,29 +28,25 @@ def _peer_ip(request: Request) -> str:
 
 
 def _trusted_proxy_asserts_network(request: Request) -> bool:
-    peer_ip = _peer_ip(request)
-    if not _ip_in_networks(peer_ip, TRUSTED_PROXY_NETWORKS):
-        return False
-    value = request.headers.get(TRUSTED_PROXY_HEADER, "")
-    return value.lower() in {"1", "true", "yes", "on", TRUSTED_NETWORK_ROLE}
+    return _core_proxy_asserts(
+        _peer_ip(request),
+        request.headers.get(TRUSTED_PROXY_HEADER, ""),
+        TRUSTED_PROXY_NETWORKS,
+        TRUSTED_NETWORK_ROLE,
+    )
 
 
 def client_ip_from_request(request: Request) -> str:
-    peer_ip = _peer_ip(request)
-    if not _ip_in_networks(peer_ip, TRUSTED_PROXY_NETWORKS):
-        return peer_ip
-
-    forwarded = request.headers.get("x-forwarded-for")
-    real_ip = request.headers.get("x-real-ip")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    if real_ip:
-        return real_ip.strip()
-    return peer_ip
+    return _core_resolve_client_ip(
+        _peer_ip(request),
+        request.headers.get("x-forwarded-for"),
+        request.headers.get("x-real-ip"),
+        TRUSTED_PROXY_NETWORKS,
+    )
 
 
 def trusted_role_for_ip(ip_value: str) -> str | None:
-    return TRUSTED_NETWORK_ROLE if _ip_in_networks(ip_value, TRUSTED_NETWORKS) else None
+    return _core_network_role(ip_value, TRUSTED_NETWORKS, TRUSTED_NETWORK_ROLE)
 
 
 def trusted_role_for_request(request: Request) -> str | None:

@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from backend.mail_ingest import (
@@ -47,6 +47,21 @@ class MailImapImportRequest(BaseModel):
     parse_limit: int = Field(default=DEFAULT_PARSE_BATCH_LIMIT, ge=1, le=25)
     parse_batches: int = Field(default=1, ge=1, le=20)
     background: bool = False
+    # Параметры подключения из GUI (перекрывают env для этого вызова; пусто → берётся env).
+    # Пароль НЕ персистится — живёт только в этом запросе по локальному/доверенному каналу.
+    host: str | None = None
+    port: int | None = Field(default=None, ge=1, le=65535)
+    login: str | None = None
+    password: str | None = None
+    ssl: bool | None = None
+    folders: list[str] | None = None
+
+
+class MailArchiveImportRequest(BaseModel):
+    path: str
+    max_messages: int = Field(default=2000, ge=1, le=50000)
+    parse: bool = False
+    parse_limit: int = Field(default=DEFAULT_PARSE_BATCH_LIMIT, ge=1, le=25)
 
 
 class MailAppleImportRequest(BaseModel):
@@ -254,6 +269,13 @@ async def mail_status(_user=Depends(require_user)):
     datasets = await state.backend.list_datasets()
     dataset = next((item for item in datasets if item.name == MAIL_DATASET_NAME), None)
     imap_settings = imap_settings_from_env()
+    autosync: dict[str, Any] = {}
+    try:  # статус внутреннего IMAP-поллера (proxy.app.mail_autosync) — ленивый импорт без циклов
+        import os as _os
+        from proxy.app import mail_autosync as _autosync
+        autosync = {**_autosync, "poll_sec": int(_os.getenv("MAIL_IMAP_POLL_SEC", "0") or "0")}
+    except Exception:
+        pass
     return {
         "component": "Е.Ж.И.К.",
         "status": "ready" if dataset else "not_created",
@@ -261,6 +283,7 @@ async def mail_status(_user=Depends(require_user)):
         "dataset": asdict(dataset) if dataset else None,
         "supported": [".eml", ".emlx", ".msg"],
         "imap": imap_settings.public_payload(),
+        "autosync": autosync,
         "apple_mail": apple_mail_public_payload(),
     }
 
@@ -388,14 +411,196 @@ async def import_local_mail(req: MailLocalImportRequest, _admin=Depends(require_
     }
 
 
+@router.post("/push")
+async def push_mail(payload: dict[str, Any] = Body(...), _user=Depends(require_user)):
+    """Письмо из Outlook-плагина → классификация вложений → маршрут (КП→КАЦ, смета/док→RAG, скан→приёмка).
+
+    Контракт: {subject, from, date, body, attachments:[{name, content_type, content_b64}]}.
+    Принцип [[local-bases-untrusted-channel]]: плагин шлёт в ЛОКАЛЬНЫЙ ЛЕС, не в облако.
+    """
+    import hashlib
+
+    from proxy.services import mail_push_service as mps
+
+    subject = str(payload.get("subject") or "")
+    sender = str(payload.get("from") or "")
+    date = str(payload.get("date") or "")
+    body = str(payload.get("body") or "")
+    attachments = payload.get("attachments") or []
+    if not isinstance(attachments, list):
+        raise HTTPException(status_code=400, detail="attachments must be a list")
+
+    msg_id = hashlib.sha1(f"{subject}|{sender}|{date}|{len(body)}|{len(attachments)}".encode()).hexdigest()[:12]
+    push_dir = Path("storage/mail_push") / msg_id
+    saved = mps.save_attachments(attachments, push_dir)
+
+    state = get_dataset_state()
+    dataset_id, created = await _mail_dataset_id(state)
+    uploaded: list[dict[str, Any]] = []
+
+    # тело письма → текстовый документ в RAG (mail-датасет)
+    body_path = push_dir / f"{msg_id}.txt"
+    body_path.write_text(mps.email_as_text(subject, sender, date, body), encoding="utf-8")
+    try:
+        body_doc = await state.backend.upload_file(
+            dataset_id, body_path, relative_path=f"push/{msg_id}/{msg_id}.txt")
+        uploaded.append({"doc_id": body_doc, "name": "(тело письма)"})
+    except Exception as exc:  # noqa: BLE001 — регистрация best-effort, маршрут не должен падать
+        uploaded.append({"name": "(тело письма)", "error": str(exc)})
+
+    plan = mps.route_push(saved)
+
+    # смета/документ-вложения → RAG; КП и сканы НЕ в общий RAG (КП→КАЦ, скан→приёмку)
+    for s in plan["to_rag"]:
+        try:
+            doc_id = await state.backend.upload_file(
+                dataset_id, Path(s["path"]), relative_path=f"push/{msg_id}/{Path(s['path']).name}")
+            uploaded.append({"doc_id": doc_id, "name": s["name"]})
+        except Exception as exc:  # noqa: BLE001
+            uploaded.append({"name": s["name"], "error": str(exc)})
+
+    return {
+        "ok": True,
+        "message_id": msg_id,
+        "dataset_id": dataset_id,
+        "dataset_created": created,
+        "routed": plan["routed"],
+        "kac": plan["kac"],
+        "kp_count": plan["kp_count"],
+        "uploaded": uploaded,
+        "note": "КП → КАЦ; смета/док → RAG; скан → приёмка ИД (очередь pending)",
+    }
+
+
+def _validate_archive_path(path: str) -> Path:
+    """Путь к .olm/.pst внутри одобренных корней (LES_EXTERNAL_SOURCE_ROOTS)."""
+    from proxy.config import external_source_roots
+
+    raw = (path or "").strip()
+    if not raw:
+        raise HTTPException(400, "path обязателен")
+    try:
+        p = Path(raw).expanduser().resolve(strict=True)
+    except FileNotFoundError as error:
+        raise HTTPException(404, f"файл не найден: {raw}") from error
+    except (OSError, RuntimeError) as error:
+        raise HTTPException(400, f"некорректный путь: {raw}") from error
+    if not p.is_file():
+        raise HTTPException(400, "path должен быть файлом архива (.olm/.pst)")
+    if p.suffix.lower() not in (".olm", ".pst"):
+        raise HTTPException(400, "поддерживаются только .olm (Outlook для Mac) и .pst (Outlook Windows)")
+    roots = external_source_roots()
+    if roots and not any(p == r or r in p.parents for r in roots):
+        raise HTTPException(403, f"архив вне одобренных корней LES_EXTERNAL_SOURCE_ROOTS: {p}")
+    return p
+
+
+def _extract_pst_to_eml(archive: Path, out_dir: Path, max_messages: int) -> list[Path]:
+    try:
+        import pypff  # noqa: F401
+    except ImportError as error:
+        raise RuntimeError(
+            "PST требует libpff+pypff (не установлены). Установка (нужно одобрение): "
+            "brew install libpff && uv add pypff. Либо экспортируй ящик в .olm/.eml."
+        ) from error
+    from email.message import EmailMessage
+
+    from backend.pst_reader import PSTReader
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+    for idx, msg in enumerate(PSTReader(str(archive)).iter_messages(), 1):
+        if idx > max_messages:
+            break
+        em = EmailMessage()
+        em["Subject"] = getattr(msg, "subject", "") or "(без темы)"
+        if getattr(msg, "from_addr", ""):
+            em["From"] = msg.from_addr
+        to_addrs = getattr(msg, "to_addrs", None) or []
+        cc_addrs = getattr(msg, "cc_addrs", None) or []
+        if to_addrs:
+            em["To"] = ", ".join(to_addrs)
+        if cc_addrs:
+            em["Cc"] = ", ".join(cc_addrs)
+        if getattr(msg, "date", ""):
+            em["Date"] = msg.date
+        body = getattr(msg, "body_text", "") or getattr(msg, "body_html", "") or ""
+        em.set_content(body)
+        eml = out_dir / f"pst_{idx:05d}.eml"
+        eml.write_bytes(em.as_bytes())
+        written.append(eml)
+    return written
+
+
+@router.post("/import-archive")
+async def import_mail_archive(req: MailArchiveImportRequest, _admin=Depends(require_admin)):
+    """Импорт почтового архива Outlook: .olm (Mac, stdlib) или .pst (Windows, нужен libpff).
+
+    Извлекает письма → .eml → индексация в MAIL_Index (P0). Путь — внутри LES_EXTERNAL_SOURCE_ROOTS.
+    """
+    state = get_dataset_state()
+    archive = _validate_archive_path(req.path)
+    out_dir = Path("RAG_Content/MAIL") / archive.suffix.lstrip(".").upper() / archive.stem
+
+    if archive.suffix.lower() == ".olm":
+        from backend.olm_reader import extract_olm_to_eml
+        eml_paths = await asyncio.to_thread(extract_olm_to_eml, archive, out_dir)
+    else:
+        try:
+            eml_paths = await asyncio.to_thread(_extract_pst_to_eml, archive, out_dir, req.max_messages)
+        except RuntimeError as error:  # нет libpff/pypff
+            raise HTTPException(status_code=501, detail=str(error)) from error
+        except Exception as error:  # битый/нечитаемый PST
+            raise HTTPException(status_code=422, detail=f"не удалось прочитать .pst: {error}") from error
+
+    eml_paths = eml_paths[: req.max_messages]
+    if not eml_paths:
+        raise HTTPException(422, f"в архиве {archive.name} не найдено писем")
+
+    dataset_id, created = await _mail_dataset_id(state)
+    uploaded: list[dict[str, Any]] = []
+    for eml in eml_paths:
+        doc_id = await state.backend.upload_file(dataset_id, eml, relative_path=f"{archive.stem}/{eml.name}")
+        uploaded.append({"doc_id": doc_id, "relative_path": eml.name})
+
+    parse_started, parse_blocked, parse_result = await _maybe_parse_mail_dataset(
+        state, dataset_id, parse=req.parse, parse_limit=req.parse_limit,
+    )
+    return {
+        "status": "registered", "component": "Е.Ж.И.К.",
+        "archive": archive.name, "format": archive.suffix.lstrip("."),
+        "dataset_id": dataset_id, "dataset_name": MAIL_DATASET_NAME, "dataset_created": created,
+        "messages": len(eml_paths), "parse_started": parse_started,
+        "parse_blocked": parse_blocked, "parse_result": parse_result,
+    }
+
+
 @router.post("/import-imap")
 async def import_imap_mail(req: MailImapImportRequest, _admin=Depends(require_admin)):
     state = get_dataset_state()
     settings = imap_settings_from_env()
+    # GUI-параметры перекрывают env для этого вызова (host/login/password/port/ssl/folders).
+    overrides: dict[str, Any] = {}
+    if req.host:
+        overrides["host"] = req.host.strip()
+    if req.login:
+        overrides["login"] = req.login.strip()
+    if req.password:
+        overrides["password"] = req.password
+    if req.port:
+        overrides["port"] = int(req.port)
+    if req.ssl is not None:
+        overrides["ssl"] = bool(req.ssl)
+    if req.folders:
+        cleaned = [f.strip() for f in req.folders if f and f.strip()]
+        if cleaned:
+            overrides["folders"] = cleaned
+    if overrides:
+        settings = replace(settings, **overrides)
     if not settings.configured:
         raise HTTPException(
             status_code=400,
-            detail="MAIL_IMAP_HOST, MAIL_IMAP_LOGIN and MAIL_IMAP_PASSWORD are required",
+            detail="Нужны host, login и password (в полях подключения или MAIL_IMAP_* в .env)",
         )
     if req.background:
         job = state.job_service.create(

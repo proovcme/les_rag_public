@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "description": "W0.3 (LES3_PLAN): пункты с подпунктами — запрос родительского пункта должен поднимать и его подпункты (приёмка W2.6 clause lookup v2). Baseline до W2: допустимы провалы — фиксируем как точку отсчёта.",
+  "cases": [
+    {
+      "id": "clause_parent_7_2_includes_children",
+      "question": "Какие требования содержит пункт 7.2 СП 7.13130?",
+      "expected_route_filter": "NTD_FIRE",
+      "top_k": 12,
+      "min_chunks": 2,
+      "must_find": ["7.2"],
+      "source_top_any": ["СП 7.13130"],
+      "source_top_k": 6
+    },
+    {
+      "id": "clause_section_word_form",
+      "question": "Что сказано в разделе 6 СП 7.13130 про вентиляцию?",
+      "expected_route_filter": "NTD_FIRE",
+      "top_k": 12,
+      "min_chunks": 1,
+      "must_find": ["вентиляц"],
+      "source_top_any": ["СП 7.13130"],
+      "source_top_k": 6
+    },
+    {
+      "id": "clause_appendix_letter",
+      "question": "Что содержит приложение Б СП 7.13130?",
+      "expected_route_filter": "NTD_FIRE",
+      "top_k": 12,
+      "min_chunks": 1,
+      "source_top_any": ["СП 7.13130"],
+      "source_top_k": 8
+    },
+    {
+      "id": "clause_subclause_direct",
+      "question": "пункт 7.2.1 СП 7.13130",
+      "expected_route_filter": "NTD_FIRE",
+      "top_k": 8,
+      "min_chunks": 1,
+      "must_find": ["7.2"],
+      "source_top_any": ["СП 7.13130"],
+      "source_top_k": 3
+    }
+  ]
+}

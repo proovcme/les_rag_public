@@ -87,6 +87,12 @@ LOOKUP_INTENT_TOKENS = (
     "перечисли",
 )
 
+# Перечисление/состав («перечень разделов», «состав проектной документации»,
+# «список/номенклатура …») — это lookup, а НЕ широкий обзор. Без этого слово
+# «документац(ии)» из BROAD_INTENT_TOKENS ложно метит каноничные запросы вида
+# «Перечень разделов проектной документации по ПП87» как broad_review и блокирует их.
+ENUMERATION_INTENT_TOKENS = ("перечень", "перечисли", "состав", "список", "номенклатур")
+
 COMPARE_INTENT_TOKENS = ("сравни", "отлич", "разниц", "верси")
 SCOPE_TOKENS = ("файл", "раздел", "датасет", "источник", "объект", "проект ", "том ", "лист ")
 
@@ -170,6 +176,10 @@ def _domains(q: str) -> list[tuple[str, str]]:
 def _intent(q: str) -> str:
     if any(token in q for token in COMPARE_INTENT_TOKENS):
         return "compare"
+    # Перечислительный запрос («перечень/состав/список … разделов/документации») —
+    # это lookup; проверяем ДО broad, иначе «документац» утянет его в broad_review.
+    if any(token in q for token in ENUMERATION_INTENT_TOKENS):
+        return "lookup"
     if any(token in q for token in BROAD_INTENT_TOKENS):
         return "broad_review"
     if any(token in q for token in LOOKUP_INTENT_TOKENS):
