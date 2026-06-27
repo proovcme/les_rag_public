@@ -93,6 +93,30 @@ def test_object_estimate_uses_dialog_context_without_string_concat():
     assert "150.0 м², 2 эт." in r["answer"]
 
 
+def test_frame_dacha_dialog_uses_context_and_nearest_local_analog():
+    turns = [
+        "Привет, я строю дачу! Хочу дом на сваях каркас, метров 150, один этаж, двускатная кровля.",
+        "а давай два этажа!",
+        "а давай крыльцо!",
+        "а если фундамент?",
+        "а давай плоскую кровлю",
+    ]
+    ctx = merge_parsed_requests(turns)
+    r = _answer_object_estimate(turns[-1], parsed_context=ctx)
+
+    assert r is not None and r["operation"] == "object_estimate"
+    assert "150.0 м², 2 эт." in r["answer"]
+    assert "ближайший локальный аналог" in r["answer"]
+    assert "Точного шаблона под исходный материал/объект нет" in r["answer"]
+    assert "Свайный фундамент" in r["answer"]
+    assert "Крыльцо/терраса" in r["answer"]
+    assert "Плоская кровля" in r["answer"]
+    assert "Под этот объект пока нет типового шаблона" not in r["answer"]
+    assert r["provenance"]["confidence"] == "rough_analog_object_assumed"
+    assert r["provenance"]["analog"]["requested_material"] == "каркас"
+    assert r["retrieval_trace"]["analog"]["template_id"] == "wooden_house"
+
+
 def test_custom_mass_estimate_fallback_for_steel_tiers():
     q = (
         "Стальные каркасы, облицованные бронзой. Общая масса составляет 664 711,12 кг, "

@@ -533,10 +533,22 @@ def _answer_object_estimate(
     parsed, est = r.get("parsed", {}), r.get("estimate", {})
     pos, apos = r.get("vor", {}).get("positions", []), est.get("positions", [])
     head = r.get("template", {}).get("name", "объект")
+    analog = r.get("analog") or {}
     # Тело — markdown-ТАБЛИЦА позиций (inline-рендер чата превращает её в ui.table) +
     # проза с итогами/допущениями над и под таблицей.
     lines = [f"Прикидка стоимости объекта по мутному ТЗ: {head} · {parsed.get('area')} м², "
              f"{parsed.get('floors')} эт. (укрупнённо, с допущениями)", ""]
+    if analog:
+        reasons = "; ".join(str(x) for x in analog.get("reasons") or [])
+        lines.append(
+            "Нашёл ближайший локальный аналог: "
+            f"{analog.get('template_name') or analog.get('template_id')} "
+            f"(score={_fmt_num(analog.get('score'))}). "
+            "Точного шаблона под исходный материал/объект нет, поэтому итог ниже — расчёт по аналогу."
+        )
+        if reasons:
+            lines.append(f"Почему этот аналог: {reasons}.")
+        lines.append("")
     if r.get("scope_warnings"):
         lines.append("⚠️ Укрупнённый охват: " + " ".join(r["scope_warnings"]))
         lines.append("")
@@ -577,6 +589,7 @@ def _answer_object_estimate(
     provenance = {
         "kind": "COMPUTED",
         "basis": [f"template:{r.get('template', {}).get('id')}", "ГЭСН-2022"],
+        "analog": analog or None,
         "assumptions": r.get("assumptions", []),
         "confidence": r.get("quality", {}).get("status") or "rough_full_object_assumed",
         "final_total_allowed": False,
@@ -602,6 +615,8 @@ def _object_estimate_sources(result: dict[str, Any]) -> list[dict[str, Any]]:
     sources = [dict(s) for s in _OBJECT_ESTIMATE_SOURCES]
     template_id = result.get("template", {}).get("id") or "object_template"
     sources[0]["source_ref"] = f"config/domain/object_templates.yaml#{template_id}"
+    if result.get("analog"):
+        sources[0]["excerpt"] += " Использован как ближайший локальный аналог, не как точный шаблон."
     for p in result.get("vor", {}).get("positions") or []:
         code = str(p.get("code") or "").strip()
         if code:
@@ -619,6 +634,7 @@ def _object_estimate_trace(result: dict[str, Any]) -> dict[str, Any]:
         "mode": "object_estimate",
         "quality_status": result.get("quality", {}).get("status") or "rough_full_object_assumed",
         "template": result.get("template", {}).get("id"),
+        "analog": result.get("analog"),
         "positions": totals.get("positions", 0),
         "allowance_positions": totals.get("allowance_positions", 0),
         "sources_count": len(_object_estimate_sources(result)),

@@ -36,6 +36,14 @@ def test_parse_variants(phrase, floors, area):
         assert p["floors"] == floors
 
 
+def test_parse_frame_dacha_without_template_cheat():
+    p = oes.parse_request("Привет, я строю дачу! Хочу дом на сваях каркас, метров 150, один этаж")
+    assert p["object"] == "дом"
+    assert p["material"] == "каркас"
+    assert p["area"] == 150.0
+    assert p["floors"] == 1
+
+
 def test_merge_parsed_requests_last_turn_overrides_fields():
     state = oes.merge_parsed_requests([
         "Хочу деревянный дом 150 м2, один этаж",
@@ -56,6 +64,17 @@ def test_scope_warnings_call_out_unmodelled_user_scope():
     assert "Свайный фундамент" in warnings
     assert "Плоская кровля" in warnings
     assert "Крыльцо/терраса" in warnings
+
+
+def test_frame_dacha_uses_nearest_local_analog_not_nomatch():
+    r = oes.estimate("дача на сваях каркас, метров 150, один этаж, двускатная кровля")
+    assert r["ok"] is True
+    assert r["template"]["id"] == "wooden_house"
+    assert r["analog"]["status"] == "template_analog"
+    assert r["analog"]["requested_material"] == "каркас"
+    assert r["quality"]["status"] == "rough_analog_object_assumed"
+    assert "Точного объектного шаблона нет" in r["assumptions"][0]
+    assert any("Свайный фундамент" in w for w in r["scope_warnings"])
 
 
 # ── геометрия / объёмы ВОР (детерминированы) ─────────────────────────────────────────────
