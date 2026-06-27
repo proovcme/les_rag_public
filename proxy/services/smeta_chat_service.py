@@ -564,6 +564,10 @@ def _answer_object_estimate(
         for warning in r["scope_warnings"]:
             lines.append(f"- {_visible_object_text(warning)}")
         lines.append("")
+    candidate_lines = _composition_candidate_lines(r)
+    if candidate_lines:
+        lines.extend(candidate_lines)
+        lines.append("")
     lines.append("| Позиция/раздел | Основание | Объём | Стоимость, ₽ |")
     lines.append("|---|---|---|---|")
     for p, ap in zip(pos, apos):
@@ -642,6 +646,15 @@ def _object_estimate_sources(result: dict[str, Any]) -> list[dict[str, Any]]:
                 "source_kind": "norm",
                 "excerpt": str(p.get("name") or ""),
             })
+    for item in (result.get("composition_candidates") or {}).get("items") or []:
+        for cand in item.get("candidates") or []:
+            code = str(cand.get("norm_code") or "").strip()
+            if code:
+                sources.append({
+                    "source_ref": f"ГЭСН-2022#{code}",
+                    "source_kind": "norm_candidate",
+                    "excerpt": str(cand.get("title") or ""),
+                })
     return sources
 
 
@@ -649,9 +662,9 @@ def _visible_analog_reasons(analog: dict[str, Any]) -> list[str]:
     """Машинные причины выбора аналога → человекочитаемые bullets без внутренних match.*."""
     obj = str(analog.get("requested_object") or "объект").strip()
     material = str(analog.get("requested_material") or "").strip()
-    out = [f"объект распознан как `{obj}`"]
+    out = [f"объект распознан как «{obj}»"]
     if material:
-        out.append(f"материал `{material}` близок к деревянному ИЖС, но это не точное совпадение")
+        out.append(f"материал «{material}» близок к деревянному ИЖС, но это не точное совпадение")
     out.append("назначение похоже на малоэтажный жилой объект")
     return out
 
@@ -684,6 +697,7 @@ def _object_estimate_trace(result: dict[str, Any]) -> dict[str, Any]:
         "quality_status": result.get("quality", {}).get("status") or "rough_full_object_assumed",
         "template": result.get("template", {}).get("id"),
         "analog": result.get("analog"),
+        "composition_candidates": result.get("composition_candidates"),
         "positions": totals.get("positions", 0),
         "allowance_positions": totals.get("allowance_positions", 0),
         "sources_count": len(_object_estimate_sources(result)),
@@ -755,6 +769,39 @@ def _object_estimate_logic_lines(result: dict[str, Any]) -> list[str]:
         "- Ссылки на код/алгоритм — это воспроизводимость расчёта, не доказательство стоимости.",
     ])
     return lines
+
+
+def _composition_candidate_lines(result: dict[str, Any]) -> list[str]:
+    plan = result.get("composition_candidates") or {}
+    items = [item for item in plan.get("items") or [] if item.get("candidates")]
+    if not items:
+        return []
+    lines = [
+        "Что нашлось в базе ГЭСН для детализации:",
+        "- Эти нормы пока не включены в сумму автоматически; их нужно подтвердить ВОР/проектом или отдельным уточнением.",
+    ]
+    for item in items[:5]:
+        label = str(item.get("label") or "Работа")
+        cand_text = []
+        candidates = item.get("candidates") or []
+        for cand in candidates[:1]:
+            code = str(cand.get("norm_code") or "—")
+            title = str(cand.get("title") or "").strip()
+            title = title[:82] + "..." if len(title) > 82 else title
+            status = str(cand.get("applicability_status") or "candidate")
+            cand_text.append(f"{code} — {title} ({_candidate_status_text(status)})")
+        if cand_text:
+            more = f"; ещё {len(candidates) - 1} в источниках/trace" if len(candidates) > 1 else ""
+            lines.append(f"- {label}: " + "; ".join(cand_text) + more)
+    return lines
+
+
+def _candidate_status_text(status: str) -> str:
+    return {
+        "accepted": "подходит по грубому фильтру",
+        "ambiguous": "требует проверки",
+        "rejected": "показано только для следа, не подходит",
+    }.get(status, "кандидат")
 
 
 def _formula_values_text(values: dict[str, Any]) -> str:

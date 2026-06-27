@@ -442,6 +442,7 @@ def estimate(
     }
 
     scope_warnings = _scope_warnings(parsed.get("raw", ""), tpl)
+    composition_candidates = build_composition_candidates(parsed)
     assumptions = _collect_assumptions(
         tpl, vor["params"], missing_codes, scope_warnings,
         allowances=allowances, price_level_k=price_level_k,
@@ -466,6 +467,7 @@ def estimate(
         "totals": totals,
         "missing_codes": missing_codes,
         "scope_warnings": scope_warnings,
+        "composition_candidates": composition_candidates,
         "quality": {
             "status": "rough_analog_object_assumed" if analog else "rough_full_object_assumed",
             "final_total_allowed": False,
@@ -480,6 +482,137 @@ def estimate(
         "defense": defense,
         "assumptions": assumptions,
     }
+
+
+def build_composition_candidates(parsed: dict[str, Any], *, top_k: int = 5) -> dict[str, Any]:
+    """Найти кандидаты ГЭСН для детализации состава работ, не включая их в сумму.
+
+    Это анти-мина: локальный аналог/типовой состав может дать ориентир, но спорные части
+    должны поднимать реальные нормы из базы ГЭСН как candidates. Автовыбора нормы здесь нет.
+    """
+    raw = str(parsed.get("raw") or "").casefold().replace("ё", "е")
+    material = str(parsed.get("material") or "").casefold().replace("ё", "е")
+    seeds: list[dict[str, str]] = []
+
+    def add(seed: dict[str, str]) -> None:
+        if not any(s["id"] == seed["id"] for s in seeds):
+            seeds.append(seed)
+
+    if material == "каркас" or "каркас" in raw:
+        add({
+            "id": "frame_walls",
+            "label": "Каркасные стены",
+            "why": "в описании есть каркасный дом/стены",
+            "work_description": "сборка стен каркасной конструкции деревянные",
+            "work_family": "wood",
+            "element_type": "wood_wall",
+            "unit_hint": "м2",
+        })
+    if re.search(r"\bсва(я|и|й|е|ю|ях|ям|ями|ев|ями)\b", raw) or "винтов" in raw or "ростверк" in raw:
+        add({
+            "id": "wood_pile_grillage",
+            "label": "Сваи/ростверк",
+            "why": "в описании явно есть свайный фундамент",
+            "work_description": "устройство ростверков из брусьев по деревянным сваям",
+            "work_family": "wood",
+            "element_type": "pile",
+            "unit_hint": "м3",
+        })
+    if "плоск" in raw or "мембран" in raw:
+        add({
+            "id": "flat_roof",
+            "label": "Плоская кровля",
+            "why": "в описании явно есть плоская кровля",
+            "work_description": "устройство однослойной кровли из полимерного рулонного материала плоская кровля",
+            "work_family": "roofing",
+            "element_type": "roofing",
+            "unit_hint": "м2",
+        })
+    elif "кровл" in raw:
+        add({
+            "id": "roofing",
+            "label": "Кровля",
+            "why": "в описании есть кровля",
+            "work_description": "устройство кровли металлочерепица",
+            "work_family": "roofing",
+            "element_type": "roofing",
+            "unit_hint": "м2",
+        })
+    if any(token in raw for token in ("крыльц", "террас", "веранд")):
+        add({
+            "id": "porch_deck",
+            "label": "Крыльцо/терраса",
+            "why": "в описании есть крыльцо/терраса",
+            "work_description": "настил деревянный крыльцо терраса",
+            "work_family": "floors",
+            "element_type": "",
+            "unit_hint": "м2",
+        })
+    if "фундамент" in raw and not any(s["id"] == "wood_pile_grillage" for s in seeds):
+        add({
+            "id": "foundation",
+            "label": "Фундамент",
+            "why": "в описании есть фундамент",
+            "work_description": "устройство бетонных фундаментов общего назначения",
+            "work_family": "foundation",
+            "element_type": "foundation",
+            "unit_hint": "м3",
+        })
+
+    if not seeds:
+        return {"status": "not_applicable", "items": []}
+
+    try:
+        from proxy.services.estimate_harness_service import search_norm
+    except Exception:
+        return {"status": "unavailable", "items": [], "error": "search_norm unavailable"}
+
+    items: list[dict[str, Any]] = []
+    for seed in seeds:
+        res = search_norm(
+            seed["work_description"],
+            work_family=seed["work_family"],
+            element_type=seed["element_type"],
+            unit_hint=seed["unit_hint"],
+            top_k=top_k,
+        )
+        candidates = _visible_norm_candidates(res.get("candidates") or [], limit=3)
+        items.append({
+            "id": seed["id"],
+            "label": seed["label"],
+            "why": seed["why"],
+            "query": seed["work_description"],
+            "work_family": seed["work_family"],
+            "element_type": seed["element_type"],
+            "unit_hint": seed["unit_hint"],
+            "search_status": res.get("status") or "unknown",
+            "candidates": candidates,
+        })
+    found = sum(1 for item in items if item.get("candidates"))
+    return {
+        "status": "found" if found else "not_found",
+        "items": items,
+        "found_items": found,
+        "total_items": len(items),
+        "note": "Кандидаты ГЭСН найдены для детализации; в текущую сумму автоматически не включены.",
+    }
+
+
+def _visible_norm_candidates(candidates: list[dict[str, Any]], *, limit: int = 3) -> list[dict[str, Any]]:
+    accepted = [c for c in candidates if c.get("applicability_status") == "accepted"]
+    ambiguous = [c for c in candidates if c.get("applicability_status") == "ambiguous"]
+    rejected = [c for c in candidates if c.get("applicability_status") == "rejected"]
+    chosen = (accepted + ambiguous + rejected)[:limit]
+    return [
+        {
+            "norm_code": c.get("norm_code"),
+            "title": c.get("title"),
+            "measure_unit": c.get("measure_unit"),
+            "applicability_status": c.get("applicability_status"),
+            "score_total": c.get("score_total"),
+        }
+        for c in chosen
+    ]
 
 
 def _build_defense(
