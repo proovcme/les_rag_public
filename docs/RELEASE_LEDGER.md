@@ -7,17 +7,16 @@
 ## Текущее состояние (2026-06-27)
 
 ```
-версия (схема 0.23.N.P):   0.23.6.0  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.0  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  <git log -1>   (см. git)
-задеплоено на рантайм:     75ed9da  (#3 retrieval-подфаза)  ← deploy_stamp.deployed_commit
-НЕ задеплоено:             docs-чистка/аудит (docs) + версия 0.23.6.0/5 fail-фиксов/скилл (КОД, ждёт make ship)
-рантайм /api/version:      ещё app 5.1.0 · h0.23 (без les_version, пока не выкачено)
+задеплоено на рантайм:     05f908d  ← deploy_stamp.deployed_commit
+НЕ задеплоено:             нет code-расхождения по critical bundle; repo остаётся dirty из-за незакоммиченного dev-пакета
+рантайм /api/version:      0.24.0.0 · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
-> Версия 0.23.6.0 уже в КОДЕ (`version_service.LES_VERSION`), но на рантайм НЕ выкачена → `/api/version`
-> на рантайме покажет её после `make ship` + deploy (рестарт proxy — явный шаг, есть 4 known-fail
-> router-теста, см. ниже — деплой по решению оператора).
+> Версия 0.24.0.0 уже выкачена на рантайм: `/api/version.les_version=0.24.0.0`,
+> `deploy_stamp.status=ok`, `runtime_alignment.status=aligned`.
 
 > Деплоятся только code-правки (`proxy/`,`backend/`,`sovushka/`,`config/`). Доки на рантайм не катятся —
 > поэтому dev HEAD ≠ deployed_commit это нормально, пока расходятся только доки.
@@ -43,16 +42,30 @@ dev HEAD:                  <git log -1>   (см. git)
 | `FEATURE` | фиче-инкремент внутри вехи (двигать КАЖДУЮ фичу) | `0.23.5` |
 | `PATCH` | фикс/патч | `0.23.5.1` |
 
-**Статус:** схема зафиксирована здесь (док). Внедрение в код (`version_service` → 4-частная версия в
-`/api/version` + бейдж + рядом deployed-версия) — **в очереди** (код на паузе до «сияющего репо доков»).
+**Статус:** схема зафиксирована здесь и внедрена в код (`version_service` → 4-частная версия в
+`/api/version` + deployed-версия рядом).
 Дисциплина после: бамп версии + строка в этот леджер + строка в `releases.md` на каждую фичу; деплой —
-через `make ship` (verify→test→smoke→bump→deploy→smoke), откат — `git checkout <prev>` + redeploy
+через `make ship` (быстрый gate: verify→focused tests→smoke→deploy→retry-smoke) или `make ship-full`
+(полная сюита на границе версии), откат — `git checkout <prev>` + redeploy
 (код) / `tools/restore_runtime.sh` (данные). См. [GUARDRAILS.md](GUARDRAILS.md) (в очереди).
 
 ## Леджер (новое → старое)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.0 | HEAD | 2026-06-27 | SPDS/public-ready baseline: ГОСТ Р 21.101-2026 doc-review теперь отдаёт общий `normalized_remarks` contract поверх `items`/`defense` для checklist/DOCX/PDF renderers; XLSX включает лист `normalized_remarks`; Admin GUI скачивает XLSX/JSON/HTML; `/api/version.runtime_alignment` расширен на doc-review/service-sources entrypoints; добавлены source-available `LICENSE`, `SECURITY.md`, public publication checklist and `make public-check` guardrail | ✅ рантайм, full ship/smoke ✅ |
+| 0.23.6.12 | uncommitted | 2026-06-27 | Service source registry + layout v1: added `config/service_sources.yaml`, `service_source_registry` and `/api/service-sources` so Admin/GUI shows required data for smeta and normcontrol (ГЭСН, ФГИС ЦС, coefficients/templates, СПДС rulepack, normative RAG, layout reference); Instruments page now surfaces those sources and missing/degraded status; title-block check now verifies that text-layer stamp signatures are in the expected bottom-right zone, and reports signatures outside the zone as a computed issue | ✅ рантайм, fast ship/smoke ✅ |
+| 0.23.6.11 | uncommitted | 2026-06-27 | Normcontrol human defense report: chat doc-review now renders a defendable human report with verdict, evidence/action tables and “Защита решения”; working memory is no longer appended to doc-review answers; `defense` is exposed at top-level chat payload; D4-001 sheet format is computed from PDF page geometry via ГОСТ 2.301, while deeper element placement/fill remains explicit layout/title-block work | ✅ рантайм, fast ship/smoke ✅ |
+| 0.23.6.10 | uncommitted | 2026-06-27 | Attachment UX + release cadence: after upload the chat now shows a visible system message and composer strip saying the file/table will go with the next request; `make ship` is the fast iteration gate (verify + focused tests + smoke + deploy + retry post-smoke), `make ship-full` keeps the full pytest release gate | ✅ рантайм, fast ship/smoke ✅ |
+| 0.23.6.9 | uncommitted | 2026-06-27 | System defense-contract v1: `DefensePack/DefenseClaim` added to `evidence_contract`; object-estimate now exposes per-GESН formula values, physical quantities, direct/НР/СП build-up, resource price coverage/missing-price examples, explicit non-defensible-LSR status, and ASSUME sections as non-normative; doc-review/normcontrol JSON now emits the same `defense` contract; object-estimate chat payload includes `defense` for UI/export | ✅ рантайм, full pytest/smoke ✅ |
+| 0.23.6.8 | uncommitted | 2026-06-27 | Chat attachment contract: default file attach is "to chat", composer/user bubble show the attached file, read attachments send filename-bearing `attachment_context` to the model; plain file-reading tasks use attachment-only LLM route without global RAG noise; direct/router LLM calls use local MLX when cloud is not keyed | ✅ рантайм, make ship/smoke/live attach ✅ |
+| 0.23.6.7 | uncommitted | 2026-06-27 | Latency hotfix: `LES_ROUTER_PRIMARY` default is now explicit opt-in (`false` unless set) so deterministic chat paths do not wait the 12s LLM-router timeout before cascade fallback; added regression for router-primary default | ✅ рантайм, verify/test/smoke ✅ |
+| 0.23.6.6 | uncommitted | 2026-06-27 | v0.23B partial: source chips with real `source_ref` open a citation drawer in the Artifacts panel; weak/vector and missing-ref sources do not fake file opening and expose a clear unavailable reason; citation drawer keeps snippets only and copy actions for `source_ref`/citation | ✅ рантайм via 0.23.6.7 |
+| 0.23.6.5 | uncommitted | 2026-06-27 | Stability contract pass: read-attachment converter failures return controlled 422 instead of leaking a backend exception; the hidden-by-default artifact panel now has an explicit GUI open control; Guardrails documents the per-feature stability contract and current green test baseline | КОД, verify/test ✅, ждёт deploy |
+| 0.23.6.4 | uncommitted | 2026-06-27 | UI defaults: chat/admin start in light theme, artifacts panel is collapsed by default and opens only on explicit artifact/file/verify actions; OpenAI-compatible cloud defaults to `gpt-4.1` instead of blank/local model names; object-estimate carries calculation footer, sources, trace and evidence summary through `/api/chat` | КОД, verify/test/smoke ✅, ждёт deploy |
+| 0.23.6.3 | uncommitted | 2026-06-27 | UI/smeta stabilization: chat attachments get `read` mode (file text as request context), quick/index attachments are sent as `dataset_ids`; composer gets direct scope/folder buttons and removable attachment chip; object-estimate now produces a rough full-object budget from vague ToR (ГЭСН-конструктив + explicit `ASSUME` allowances + `price_level_k` + VAT) while detailed estimates remain file/dataset-driven | КОД, verify/test/smoke ✅, ждёт deploy |
+| 0.23.6.2 | uncommitted | 2026-06-27 | v0.23A stabilization: default trusted loopback/proxy networks narrowed to `127.0.0.1/32`; KOT term matching uses word-boundary regex with explicit `противопожар`; Samovar verifies Qdrant point count for every indexed file by default; backup archives get `SHA256SUMS.txt`, restore refuses checksum mismatch | КОД, verify/test/smoke ✅, ждёт deploy |
+| 0.23.6.1 | uncommitted | 2026-06-27 | router-primary fallback: `RouterUnavailable` ≠ `none`; при недоступном роутере включается deterministic cascade + legacy in-flow gates (`mail`/`reconcile`/`table_agg`/`clause`/scope clarification) с честным `route_source`; `maybe_agent_route` снова зависит только от `LES_AGENT_LOOP` | КОД, tests ✅, ждёт deploy |
 | 0.23.6 | `3362cee`+ | 2026-06-27 | версия 0.23.N.P в /api/version (`LES_VERSION`) + 5 fail-фиксов (4 версионных стейл-теста, help topic_slices) + сметный скилл (`skills/smeta/SKILL.md`) + `make ship`-гейт | КОД, ждёт deploy |
 | 0.23.5 | `1cb1bd4` | 2026-06-27 | docs-аудит (4 прохода, сверка с кодом) + `MODULE_INDEX.md` + `RELEASE_LEDGER.md` + 3 новых ALGO/GUARDRAILS + архив мёртвого | — (docs) |
 | 0.23.4 | `8f777a8`/`f414c90` | 2026-06-27 | чистка доков: 18 исторических → `docs/archive/` + указатели | — (docs) |
@@ -68,26 +81,60 @@ dev HEAD:                  <git log -1>   (см. git)
 ## Здоровье на 2026-06-27 (из прогона)
 
 ```
-make verify:     ✅ зелёный (2046 собрано)
-make test:       🟡 ~2042 passed / 4 failed (было 9 → починено 5: версия+topic_slices).
-                  Остаток 4 — router-primary регрессия (роутер-LLM недоступен → детерм.-гейты не как фолбэк)
-                  + 1 флэки (test_agent_off_returns_none: _is_on() True из-за LES_ROUTER_PRIMARY дефолта).
-make smoke-basic: 🟡 8 pass / 1 fail (chat_project_noscope таймаут 120с; chat_glossary 82с — латентность чата)
+make verify:     ✅ зелёный (2062 собрано)
+make test:       ✅ 2062 passed / 6 warnings / 317.64s
+make smoke-basic: ✅ pass=9 / warn=0 / fail=0 (chat_glossary 75.6с; chat_project_noscope 106.3с)
+make verify 0.23.6.7: ✅ зелёный (2063 собрано)
+make test 0.23.6.7:   ✅ 2063 passed / 6 warnings / 223.75s
+post-deploy smoke:    ✅ pass=9 / warn=0 / fail=0 (chat_glossary 5ms; chat_project_noscope 8ms)
+make ship 0.23.6.8:   ✅ verify 2067 collected; test 2067 passed / 6 warnings / 220.73s; smoke pass=9
+post-deploy 0.23.6.8: ✅ pass=9 / warn=0 / fail=0 (chat_glossary 49ms; chat_project_noscope 10ms)
+live attach-check:    ✅ crag_status=ATTACHMENT; route=attachment_context/read_attachment; sources=[attachment:demo.txt]
+make ship-full 0.23.6.9: ✅ verify 2068 collected; test 2068 passed / 6 warnings / 221.83s; smoke pass=9
+post-deploy 0.23.6.9:   ✅ pass=9 / warn=0 / fail=0 (manual retry after restart; motivated retry-smoke)
+make ship 0.23.6.10:    ✅ verify 2069 collected; focused 35 passed; pre-smoke pass=9; post-smoke pass=9 after retry
+make ship 0.23.6.11:    ✅ verify 2071 collected; focused 40 passed; pre-smoke pass=9; post-smoke pass=9
+live doc-review BAI:    ✅ crag_status=VERIFIED; cache=doc_review; items=15; top-level defense present; no LES.md/memory leak
+make ship 0.23.6.12:    ✅ verify 2076 collected; focused 56 passed; pre-smoke pass=9; post-smoke pass=9
+live service-sources:     ✅ /api/service-sources total=6; ok=5; missing_blocking=0; smoke pass=9 after runtime app registration
+make ship-full 0.24.0.0: ✅ verify 2078 collected; test 2078 passed / 6 warnings / 223.10s; pre-smoke pass=9; post-smoke pass=9
+live doc-review 0.24:   ✅ ГОСТ Р 21.101-2026; items=15; normalized_remarks=15; defense=true
+public-check 0.24:      ✅ git-visible files: no forbidden runtime paths or high-signal secrets
 ```
-**Отложено (нужен отдельный заход, НЕ хак в ядро):** 4 router-fail + латентность чата — один корень:
-инверсия детерминизма ↔ недоступность роутера ↔ честность `route_source` ↔ scope-гейт. Фикс
-(`RouterUnavailable` → каскад-фолбэк) пробован и откачен — задевал ядро чат-пути с неполной моделью
-потока (table_query прошёл не через каскад). Нужно: разобрать поток chat.py целиком, спроектировать
-«роутер недоступен → детерм.-каскад + честный route_source», закрыть тестами с моком роутера (не 12с-таймаут).
+
+**Закрыто в 0.23.6.7:** latency-smoke был не LLM generation, а 12s ожидание недоступного
+LLM-router перед deterministic fallback (`router_unavailable_cascade_fallback`). Router-primary теперь
+явный opt-in: без `LES_ROUTER_PRIMARY=true` быстрые deterministic/RAG fallback-пути не ждут router timeout.
+**Закрыто в 0.23.6.8:** read-вложение стало контрактом "файл к следующему сообщению": UI показывает
+имя файла, backend получает `attachment_context`, plain file-reading идёт по attachment-only LLM route
+без глобального RAG, а direct/router LLM без облачного ключа уходит в локальный MLX вместо 401.
+**Закрыто в 0.23.6.10:** после галочки upload файл не исчезает в тишину: composer показывает явную
+плашку "к следующему сообщению", а в ленте чата появляется системное сообщение. Полный pytest теперь
+`make ship-full`, быстрый итерационный выкат — `make ship` с retry post-deploy smoke.
+**Закрыто в 0.23.6.11:** нормоконтроль в чате больше не выглядит как trace-мусор: это человеческий
+отчёт с defended/blocked/manual секциями, source/action таблицами и top-level `defense`. `memory_block`
+не примешивается к doc-review. Формат листа D4-001 снова computed: PDF-страницы измеряются и
+классифицируются по ГОСТ 2.301; размещение рамки/граф и заполнение основной надписи остаются отдельной
+layout/title-block задачей, а не скрытой уверенностью модели.
+**Закрыто в 0.23.6.12:** служебные источники стали видимым контрактом (`/api/service-sources` + блок в
+Инструментах): оператор видит, какие файлы нужны ЛЕСу для смет и нормоконтроля, где они лежат и что
+деградирует без них. Layout v1 для основной надписи проверяет не только наличие сигнатур, но и попадание
+в ожидаемую нижнюю правую зону листа; сигнатуры вне зоны дают computed issue.
+**Закрыто в 0.24.0.0:** v0.24 оформлен как первый публично объяснимый SPDS workflow: doc-review
+имеет человеческий отчёт, `defense_contract_v1`, `normalized_remarks` для последующих checklist/DOCX/PDF
+слоёв, XLSX/JSON/HTML выгрузки в GUI, а repo получил source-available license/security/publication gate.
+Полная публикация GitHub остаётся owner-gated: сначала scrub private data/secrets, затем менять visibility.
+
+**Закрыто в 0.23.6.1:** router-primary регрессия переведена в честный
+`RouterUnavailable` → deterministic cascade/in-flow fallback; `LES_ROUTER_PRIMARY` больше не включает
+legacy agent loop. Латентность live-чата остаётся отдельной операционной темой.
 
 ## Следующее (по приоритету — хендофф)
 
-1. **Роутер-регрессия → потом деплой** (решение оператора): отдельный заход — разбор `chat.py`, фикс
-   «роутер недоступен → каскад + честный route_source», тесты с моком; затем `make ship` + deploy 0.23.6.0
-   на рантайм (выведет `les_version` в `/api/version` live). См. [[router-regression-deferred]] (память).
+1. **v0.24+ ПП-87/checklist/DOCX/PDF**: composition profile, checklist template import, rendered
+   DOCX/PDF normcontrol reports.
 2. **v0.26+ Минстрой-индексы** ([[minstroy-indices-source]]): последнее письмо ИФ/09 через VPS box →
    parquet → `index_lookup` к РИМ-трассе.
 3. **GRAND-фиделити Прил.4** (долг #2): метаданные шапки из проекта, 179 колонок.
 4. Доделать `make ship`-дисциплину как привычку: версия+леджер+док в каждом фиче-коммите
    (Definition of Done в AGENTS.md; стандарт — `docs/DOCUMENTATION_PLAYBOOK.md`).
-

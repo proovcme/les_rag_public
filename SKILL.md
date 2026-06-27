@@ -97,7 +97,7 @@ deployed_at=datetime.now(timezone.utc).isoformat(timespec='seconds')))"
 
 ## Tests
 
-Инвентарь тестов v0.16–v0.23 (~2046 тестов, 218 файлов) — **[docs/TEST_INVENTORY.md](docs/TEST_INVENTORY.md)**. Гейт `make verify` (офлайн); базовый L1 HTTP-смоук — `make smoke-basic` (`tools/basic_function_smoke.py`). Run before finalizing meaningful changes:
+Инвентарь тестов v0.16–v0.23 (~2067 тестов, 218 файлов) — **[docs/TEST_INVENTORY.md](docs/TEST_INVENTORY.md)**. Гейт `make verify` (офлайн); базовый L1 HTTP-смоук — `make smoke-basic` (`tools/basic_function_smoke.py`). Run before finalizing meaningful changes:
 
 ```bash
 uv run pytest -q
@@ -185,11 +185,33 @@ Task tracker from chat (deterministic regex+SQL, no LLM, works even under memory
 
 Operator memory from chat (same mechanics): «запомни: …» / «заметки» / «забудь заметку N». Relevant notes and past good answers are mixed into the answer context automatically (lexical recall, no LLM; also visible to Т.О.С.К.А. validation).
 
+Inspect service sources required by smeta/normcontrol (what files LES needs and what is missing):
+
+```bash
+curl -fsS http://127.0.0.1:8050/api/service-sources | python3 -m json.tool
+```
+
+Canonical source contract lives in `config/service_sources.yaml`. Current groups: ГЭСН base
+(`data/gesn_base/*.parquet` + seed), ФГИС ЦС price books (`data/price_base/*.parquet`), smeta YAML
+coefficients/templates, СПДС rulepack, normative SPDS RAG dataset, and layout-reference. The same status is
+visible in GUI: **Инструменты → Служебные источники данных**.
+
 Run formal normcontrol checks (NK-01 sheet formats, NK-02 scans, NK-03 cipher, NK-04 ведомость↔files; deterministic, no LLM):
 
 ```bash
 curl -fsS -X POST http://127.0.0.1:8050/api/normcontrol/<dataset_id>/run | python3 -m json.tool
 # report: GET /api/normcontrol/<dataset_id>/download
+```
+
+Run RAG-led СПДС doc-review (ГОСТ Р 21.101-2026): чат-режим `Нормоконтроль` или API ниже. JSON содержит
+`defense_contract_v1` и `normalized_remarks`; чатовый ответ — человеческий отчёт с evidence/action таблицами. D4-001 формат листа
+проверяется по PDF-геометрии/ГОСТ 2.301; D4-002 text-layer проверяет, что сигнатуры основной надписи
+попали в ожидаемую нижнюю правую зону листа. Полная проверка заполнения всех граф требует
+layout-reference.
+
+```bash
+curl -fsS -X POST http://127.0.0.1:8050/api/doc-review/<dataset_id>/run \
+  -H 'Content-Type: application/json' -d '{"rulepack":"gost_r_21_101_2026"}' | python3 -m json.tool
 ```
 
 Check ZeroTier access from any ZT device (each line = endpoint probe; non-200 → что именно «не пускает»):
@@ -242,11 +264,12 @@ curl -fsS "http://127.0.0.1:8050/api/cad-bim/highlight" | python3 -m json.tool  
 - **Сводка проекта:** чат «дай сводку проекта» → стадия+ТЭП+состав (`project_summary_service`, каркас; ТЭП-якоря калибровать на реальных доках).
 - **/-команды чата:** `GET /api/commands`; `/спецификация //вор //смета //акт //сверка //сводка //мсп //команды`. GUI — «/»-палитра в композере.
 - **Почта/архивы Outlook:** IMAP из GUI (Самовар → карта OUTLOOK/IMAP, пресеты M365/Outlook.com; параметры в `POST /api/mail/import-imap`); архивы `POST /api/mail/import-archive` (`.olm` Mac — stdlib; `.pst` Windows — нужен `libpff`; `.msg` индексируется как файл). Авто-синхрон — `MAIL_IMAP_*` в .env.
-- **Скрепка чата:** `POST /api/rag/attach?mode=quick|index` — прикрепить документ (быстрый Parquet-парс / полная индексация). Браузер папок: `GET /api/rag/browse-external`.
-- **Сметное ценообразование (2026-06-22):** **ФГИС ЦС lookup** — `GET /api/prices/lookup?code=…` (цена ресурса по коду из «Сплит-формы», exact-match), `/search`, `GET /api/prices/books`, `POST /api/prices/import` (книга в `data/price_base/`); **добор из ФГИС ЦС** — `GET /api/prices/sources/subjects`, `/sources/periods?subject=…` (субъект/квартал), `POST /api/prices/update` (скачать+кэшировать, graceful-fail), `GET /api/prices/needs?code=…` (локаль-первый вердикт «есть в ФГИС ЦС или нужен КАЦ»); GUI «Инструменты»→«ФГИС ЦС». **КАЦ** — `POST /api/kac/analyze` (≥3 КП→экономичный), `/lsr-lines`, `/generate`, `GET /api/kac/needs`; GUI «КАЦ». **Глоссарий/онтология** — `les_glossary`; источник `config/domain/smeta_ontology.yaml`, RAG-глоссарий `docs/smeta_ontology.md`. **Коэф. стеснённости** — `GET /api/lsr/stesnennost/conditions`, `POST /api/lsr/stesnennost/apply` (коэф. к ОЗП/ЭМ→ФОТ/НР/СП/Всего; каталог `config/domain/stesnennost.yaml`); GUI «Коэффициент стеснённости». **ГЭСН норма→ресурсы** — `GET /api/lsr/gesn` (список), `GET /api/lsr/gesn/{code}/expand?qty=…` (разворот нормы); полная база **42408 норм ГЭСН-2022** в `data/gesn_base/gesn2022.parquet`. **Движок сборки ЛСР** — `POST /api/lsr/assemble` (позиция: объём+ресурсы labor/machinist/machine/material → цены ФГИС ЦС/КАЦ → стеснённость → НР/СП → Всего → свод; gold = позиция эталона 11813.04); GUI «Сборка ЛСР». **Объектная смета (чат):** «дай смету на <объект>» (без кода ГЭСН) → `object_estimate_service` (фраза→шаблон→геометрия→ВОР→ЛСР→СМР·непредвиденные·НДС·ВСЕГО); шаблоны `config/domain/object_templates.yaml`, НР/СП `config/domain/nr_sp.yaml`. **Harvest** — `tools/harvest_dataset.py` (verify→train-set+таксономия под VL-LoRA). Каноны: `docs/ALGO-{fgis-price,kac,gesn,smeta-ontology,harvest,stesnennost,lsr-assembly,object-estimate}.md`. Родные бланки форм — `config/forms/templates/{vor,ks2,ks3}.xlsx` (xlsx-шаблон: `{{key}}` + якорь `{{rows}}`).
+- **Скрепка чата:** `POST /api/rag/attach?mode=read|quick|index` — `read` прикрепляет текст файла к следующему сообщению (без индексации; модель видит `attachment_context`), `quick` делает временный табличный датасет для сверки, `index` добавляет документ в RAG-базу; UI после галочки обязан показать системное сообщение в чате и плашку composer "к следующему сообщению". Браузер папок: `GET /api/rag/browse-external`.
+- **Сметное ценообразование (2026-06-22):** **ФГИС ЦС lookup** — `GET /api/prices/lookup?code=…` (цена ресурса по коду из «Сплит-формы», exact-match), `/search`, `GET /api/prices/books`, `POST /api/prices/import` (книга в `data/price_base/`); **добор из ФГИС ЦС** — `GET /api/prices/sources/subjects`, `/sources/periods?subject=…` (субъект/квартал), `POST /api/prices/update` (скачать+кэшировать, graceful-fail), `GET /api/prices/needs?code=…` (локаль-первый вердикт «есть в ФГИС ЦС или нужен КАЦ»); GUI «Инструменты»→«ФГИС ЦС». **КАЦ** — `POST /api/kac/analyze` (≥3 КП→экономичный), `/lsr-lines`, `/generate`, `GET /api/kac/needs`; GUI «КАЦ». **Глоссарий/онтология** — `les_glossary`; источник `config/domain/smeta_ontology.yaml`, RAG-глоссарий `docs/smeta_ontology.md`. **Коэф. стеснённости** — `GET /api/lsr/stesnennost/conditions`, `POST /api/lsr/stesnennost/apply` (коэф. к ОЗП/ЭМ→ФОТ/НР/СП/Всего; каталог `config/domain/stesnennost.yaml`); GUI «Коэффициент стеснённости». **ГЭСН норма→ресурсы** — `GET /api/lsr/gesn` (список), `GET /api/lsr/gesn/{code}/expand?qty=…` (разворот нормы); полная база **42408 норм ГЭСН-2022** в `data/gesn_base/gesn2022.parquet`. **Движок сборки ЛСР** — `POST /api/lsr/assemble` (позиция: объём+ресурсы labor/machinist/machine/material → цены ФГИС ЦС/КАЦ → стеснённость → НР/СП → Всего → свод; gold = позиция эталона 11813.04); GUI «Сборка ЛСР». **Объектная прикидка (чат):** мутное ТЗ «дай смету на <объект>» (без кода ГЭСН) → `object_estimate_service` (фраза→шаблон→геометрия→ВОР→ЛСР→ГЭСН-конструктив + ASSUME-разделы + `price_level_k` + НДС) + `defense_contract_v1` (формулы, НР/СП, покрытие цен, gaps/actions); детальная смета идёт от ВОР/Ф9/КС-2/датасета; шаблоны `config/domain/object_templates.yaml`, НР/СП `config/domain/nr_sp.yaml`. **Defense-contract:** `proxy/services/evidence_contract.py` (`DefensePack/DefenseClaim`) общий для смет и doc-review/normcontrol. **Harvest** — `tools/harvest_dataset.py` (verify→train-set+таксономия под VL-LoRA). Каноны: `docs/ALGO-{fgis-price,kac,gesn,smeta-ontology,harvest,stesnennost,lsr-assembly,object-estimate}.md`. Родные бланки форм — `config/forms/templates/{vor,ks2,ks3}.xlsx` (xlsx-шаблон: `{{key}}` + якорь `{{rows}}`).
 - **Импорт базы ГЭСН-2022 (полная, из ФГИС ЦС, бесплатно):** `uv run python -m tools.gesn_bulk_import --all --rate 1.0 --out data/gesn_base/gesn2022.parquet` (резюмируемый, ~30–90 мин; один сборник — `--sbornik 12`). Альтернативы: `tools.gesn_import IN.xlsx` (выгрузка ГРАНД/НСИ), `tools.gesn_pdf_import` (PDF/JSON). Egress из не-РФ — `LES_FGIS_VIA_SSH=root@HOST`. См. `docs/ALGO-gesn.md`.
 - **Приёмка почты из Outlook:** `POST /api/mail/push` (тело+вложения base64) → детерм. классификация: КП→КАЦ, смета/ВОР→RAG, скан→приёмка ИД (pending), прочее→RAG-документ. Плагин — `clients/outlook_addin/`. Legion-Outlook (Windows) → этот Мак через обратный SSH: `bash tools/legion_mail_tunnel.sh` (env `LES_LEGION_SSH`/`LES_PORT`). См. `docs/ALGO-mail-intake.md`.
-- **Деплой dev→рантайм (вместо ручных cp/Edit):** `uv run python -m tools.deploy_to_runtime --apply [--restart]` (манифест, дивергентные рантайм-файлы пропускаются и патчатся вручную; dry-run по умолчанию). Онбординг провайдера до GUI — `uv run python tools/onboard_provider.py --provider mlx`. Иконки — `tools/build_icons.py`.
+- **Деплой dev→рантайм:** `make ship` = быстрый итерационный выкат (`verify → test-focused → smoke → deploy-runtime → retry post-deploy-smoke`); `make ship-full` = полный gate версии (`verify → test → smoke → deploy-runtime → retry post-deploy-smoke`). Низкоуровневый деплой: `uv run python -m tools.deploy_to_runtime --apply [--restart]` (манифест, дивергентные рантайм-файлы пропускаются и патчатся вручную; dry-run по умолчанию). Онбординг провайдера до GUI — `uv run python tools/onboard_provider.py --provider mlx`. Иконки — `tools/build_icons.py`.
+- **Public-ready gate:** `make public-check` проверяет tracked git на запрещённые runtime/private пути и высокосигнальные секреты; публичная публикация репозитория всё равно требует ручного owner-review по `docs/PUBLICATION_CHECKLIST.md`.
 - **MCP-сервер:** `uv run python tools/les_mcp_server.py` (stdio) / `--list` (каталог). **16 инструментов** наружу: 14 счётных (`les_table_sum/les_table_agg/reconcile/bor/spec_to_bor/project_summary/form_generate` + `les_price_lookup/les_glossary/les_kac/les_stesnennost/les_lsr_assemble/les_gesn_expand/les_gesn_fetch`) + **2 action** (`les_smeta_save` — собранная смета→ВОР/ЛСР в проект, не перезаписывает; `les_journal_append` — запись в журнал `pending`, идемпотентно по `idem_key`). Требует extra `mcp`. Регистрация в MCP-клиенте — `{"mcpServers":{"les":{"command":"uv","args":["run","python","tools/les_mcp_server.py"],"cwd":"/Users/ovc/LES"}}}`.
 - **Режимы local/cloud/mix (один переключатель):** `preset_service` согласованно ставит чат-LLM + скан-OCR + движок приёмки ИД. **local** (mlx+tesseract+local — приватно/бесплатно/валидируется) · **cloud** (openai+cloud-asbuilt — качество, $) · **mix** (локальный чат+OCR, облако только под плотные таблицы ИД). Чат: «режим/какой режим/переключи на облако», команда `/режим <имя>`; API `GET /api/settings/presets`, `POST /api/settings/preset {name}` (пишет .env+environ, действует сразу). Канал `preset` + инструмент agent-роутера.
 - **Ярус 2 — агент-роутер (чат сам выбирает инструмент):** за флагом `LES_AGENT_LOOP`. Когда regex-каналы не поймали — LLM выбирает один инструмент (`agent_router_service`: asbuilt/les_md/реестр/объёмы/задачи) и исполняет **детерминированный** обработчик (числа — код). Подключён в `chat.py` ПОСЛЕ детерм. каналов, ПЕРЕД RAG; сбой/«none»/обработчик-отказ → фолбэк на RAG. `channel=agent`, `agent_tool=<имя>`.

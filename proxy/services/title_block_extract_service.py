@@ -36,6 +36,7 @@ _PRESENT_MIN = 4
 _MAYBE_MIN = 3
 
 _STAGE_RE = re.compile(r"стади[яи][^а-яё]{0,4}([прПР]{1,2}|рабоч|проект)", re.IGNORECASE)
+_TITLE_ZONE = (0.45, 0.58, 1.0, 1.0)  # right-bottom area where SPDS title block normally lives
 
 
 @dataclass
@@ -73,6 +74,66 @@ def detect_in_text(text: str, *, source: str = "") -> TitleBlock:
         return TitleBlock(False, 0.4, found, fields, source,
                           f"возможен штамп ({n} сигнатуры) — нужна ручная проверка")
     return TitleBlock(False, 0.0, found, fields, source, "признаков штампа не найдено")
+
+
+def _zone_payload(page_no: int, page_rect, zone_rect, zone_tb: TitleBlock, full_tb: TitleBlock) -> dict[str, Any]:
+    return {
+        "page": page_no,
+        "page_size_pt": [round(page_rect.width, 2), round(page_rect.height, 2)],
+        "expected_zone_rel": list(_TITLE_ZONE),
+        "expected_zone_pt": [round(zone_rect.x0, 2), round(zone_rect.y0, 2),
+                             round(zone_rect.x1, 2), round(zone_rect.y1, 2)],
+        "signatures_in_zone": zone_tb.signatures,
+        "signatures_on_page": full_tb.signatures,
+        "placement": "expected_zone" if zone_tb.present else ("outside_expected_zone" if full_tb.present else "not_found"),
+    }
+
+
+def _detect_text_layer_with_layout(doc, *, source: str, max_pages: int = 3) -> TitleBlock:
+    """Text-layer PDF → title block with a simple layout check.
+
+    v1 layout-tool: detect signatures of the title block inside the expected bottom-right zone.
+    If signatures exist only elsewhere on the page, this is a computed issue, not a supported stamp.
+    """
+    if not getattr(doc, "page_count", 0):
+        return TitleBlock(False, 0.0, [], {}, source, "пустой PDF")
+    idxs = sorted(set(list(range(min(max_pages, doc.page_count))) + ([doc.page_count - 1] if doc.page_count else [])))
+    best_full = TitleBlock(False, 0.0, [], {}, source, "признаков штампа не найдено")
+    best_misplaced: TitleBlock | None = None
+    for i in idxs:
+        page = doc[i]
+        full_text = page.get_text() or ""
+        if len(full_text.strip()) < 60:
+            continue
+        full_tb = detect_in_text(full_text, source=source)
+        if full_tb.confidence > best_full.confidence:
+            best_full = full_tb
+        r = page.rect
+        z = _TITLE_ZONE
+        zone_rect = type(r)(r.x0 + r.width * z[0], r.y0 + r.height * z[1],
+                            r.x0 + r.width * z[2], r.y0 + r.height * z[3])
+        zone_parts: list[str] = []
+        for block in page.get_text("blocks") or []:
+            try:
+                x0, y0, x1, y1, text = block[:5]
+            except Exception:
+                continue
+            cx = (float(x0) + float(x1)) / 2
+            cy = (float(y0) + float(y1)) / 2
+            if zone_rect.x0 <= cx <= zone_rect.x1 and zone_rect.y0 <= cy <= zone_rect.y1:
+                zone_parts.append(str(text or ""))
+        zone_tb = detect_in_text("\n".join(zone_parts), source=source)
+        fields = dict(zone_tb.fields or full_tb.fields or {})
+        fields["layout_zone"] = _zone_payload(i + 1, r, zone_rect, zone_tb, full_tb)
+        if zone_tb.present:
+            return TitleBlock(True, min(1.0, zone_tb.confidence + 0.05), zone_tb.signatures, fields, source,
+                              f"штамп найден в ожидаемой зоне основной надписи: {len(zone_tb.signatures)} сигнатур")
+        if full_tb.present:
+            best_misplaced = TitleBlock(False, max(0.45, full_tb.confidence), full_tb.signatures, fields, source,
+                                        "сигнатуры основной надписи найдены, но не в ожидаемой нижней правой зоне листа")
+    if best_misplaced is not None:
+        return best_misplaced
+    return best_full
 
 
 def _ocr_enabled() -> bool:
@@ -145,8 +206,12 @@ def extract_from_pdf(pdf_path: str | Path, *, max_pages: int = 3, ocr: bool | No
     except Exception as e:  # noqa: BLE001
         return TitleBlock(False, 0.0, [], {}, p.name, f"чтение PDF не удалось: {e}")
     joined = "\n".join(text_parts)
-    if len(joined.strip()) >= 60:  # есть текст-слой → детект по тексту (быстрый путь)
-        return detect_in_text(joined, source=p.name)
+    if len(joined.strip()) >= 60:  # есть текст-слой → детект + проверка зоны листа
+        try:
+            with fitz.open(str(p)) as doc:
+                return _detect_text_layer_with_layout(doc, source=p.name, max_pages=max_pages)
+        except Exception:
+            return detect_in_text(joined, source=p.name)
 
     # пустой текст-слой → скан: штамп текстом не извлечь
     if ocr is None:
@@ -193,7 +258,8 @@ def detect_dataset(source_paths: list[str], *, sample: int = 8, ocr: bool | None
         if len(examples) < 6:
             examples.append({"file": Path(sp).name, "present": tb.present, "scan": tb.scan,
                              "confidence": tb.confidence, "signatures": tb.signatures,
-                             "ocr_used": tb.ocr_used})
+                             "ocr_used": tb.ocr_used, "note": tb.note,
+                             "layout_zone": (tb.fields or {}).get("layout_zone")})
     return {
         "pdf_total": len(pdfs),
         "checked": len(picked),

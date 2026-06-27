@@ -1,13 +1,13 @@
-# TEST_INVENTORY — тесты Unified Construction Harness v0.16–v0.23
+# TEST_INVENTORY — тесты Unified Construction Harness v0.16–v0.24
 
-Гейт: `make verify` (офлайн, синтаксис+импорт-смоук). Полная сюита: `uv run python -m pytest tests/ -q` (~2046 тестов / 218 файлов).
+Гейт: `make verify` (офлайн, синтаксис+импорт-смоук). Полная сюита: `uv run python -m pytest tests/ -q` (~2076 тестов / 219 файлов).
 Все тесты ниже офлайн (без живых Qdrant/MLX), flag `LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED` OFF.
 
-**Профильные таблицы v0.16–v0.22: 230 тестов** (+ регрессия v0.3–v0.15 и chat/router при OFF). Полная сюита на h0.23 — **~2046 тестов в 218 файлах**.
+**Профильные таблицы v0.16–v0.22: 230 тестов** (+ регрессия v0.3–v0.15 и chat/router при OFF). Полная сюита на h0.24 — **~2078 тестов в 220 файлах**.
 
 | Файл | Тестов | Покрывает |
 |---|---:|---|
-| `tests/test_answer_render_v16.py` | 22 | render-хелперы Совушки: strip markdown из ячеек, source-chips, evidence-секции, citation/conflict-блоки, `answer_copy_text` (Копировать без trace/тела письма) |
+| `tests/test_answer_render_v16.py` | 25 | render-хелперы Совушки: strip markdown из ячеек, source-chips, evidence-секции, citation/conflict-блоки, citation drawer payload, `answer_copy_text` (Копировать без trace/тела письма) |
 | `tests/test_sidecar_ops_v16.py` | 50 | sidecar-операции: инвентарь датасетов, heading-классификатор, extraction-state (7 кейсов), lexical `extracted_fts`, OCR-детект, `run_extraction`/`extract_body_op` (gate env+confirm), originals read-only (shasum), legacy `.xls` |
 | `tests/test_route_and_runtime_v17.py` | 34 | runtime alignment (extract-эндпоинты зарегистрированы), route-fix «реестр документации» ≠ глобальный реестр, doc_type_classifier, honest `.xls`, регрессии v0.3–v0.16 |
 | `tests/test_deterministic_policy_v18.py` | 27 | DeterministicFinalPolicy: glossary-final только при литеральном термине, registry только глобальный, source-scoped/descriptive→reject; «расскажи про котельную»≠ОЖР; ОЖР/КАЦ/ЛСР работают |
@@ -22,7 +22,7 @@
 - **resource workbook** — `ПРИМЕР_обсчета_24_06.xlsx` валидирован кодом: grand total **16 827 283.19 ₽**, line_diffs=0.
 - **route**: «расскажи про котельную»@all→`scope_clarification`; @project→RAG; «что такое ОЖР»→glossary; «реестр документации»≠глобальный.
 - **`/api/scope/options`**: 28 датасетов (assigned 2 / unassigned 25 / system 1), 6 проектов.
-- **`/api/version`**: harness 0.23, `deployed_commit` ≠ git (deploy stamp), 0 секретов.
+- **`/api/version`**: harness 0.24, `deployed_commit` ≠ git (deploy stamp), 0 секретов.
 
 ## Basic product smoke (L1 — реализован)
 

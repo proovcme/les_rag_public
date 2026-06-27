@@ -165,7 +165,7 @@ def _build_qdrant_visualizer_panel(visualizer_url: str) -> None:
 
 def _apply_theme() -> None:
     """Inject theme CSS before rendering the page body."""
-    _dark = app.storage.user.get("dark_theme", True)
+    _dark = app.storage.user.get("dark_theme", False)
     ui.add_head_html(theme_vars_css(_dark))
     ui.add_head_html(CUSTOM_CSS)
     # WCAG 3.1.1 Language of Page: интерфейс и контент русские — помечаем

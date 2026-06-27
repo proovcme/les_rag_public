@@ -31,7 +31,7 @@
 | smeta/fgis | цена ресурса по коду из «Сплит-формы» ФГИС ЦС | `fgis_price_service`; `/api/prices/*`; MCP `les_price_lookup` | [ALGO-fgis-price.md](ALGO-fgis-price.md) | ✅ |
 | smeta/kac | конъюнктурный анализ цен (≥3 КП на материал) | `kac_service`; `/api/kac/*`; MCP `les_kac` | [ALGO-kac.md](ALGO-kac.md) | ✅ |
 | smeta/stesn | коэффициент стеснённости (k к ОЗП/ЭМ) | `stesnennost_service`; `/api/lsr/stesnennost/*`; MCP `les_stesnennost` | [ALGO-stesnennost.md](ALGO-stesnennost.md) | ✅ |
-| smeta/object | фраза «дай смету на …» → объектный расчёт (СМР→НДС→ВСЕГО) | `object_estimate_service`, `nr_sp_service`; шаблоны `config/domain/object_templates.yaml` | [ALGO-object-estimate.md](ALGO-object-estimate.md) | ✅ |
+| smeta/object | мутное ТЗ «дай смету на …» → прикидка объекта целиком + defense-contract (формулы, НР/СП, покрытие цен, ASSUME/gaps) | `object_estimate_service`, `nr_sp_service`, `evidence_contract`; шаблоны `config/domain/object_templates.yaml` | [ALGO-object-estimate.md](ALGO-object-estimate.md) | ✅ |
 | smeta/ontology | доменные понятия (ВОР/КАЦ/ЛСР/КС) | `smeta_ontology_service`; MCP `les_glossary` | [ALGO-smeta-ontology.md](ALGO-smeta-ontology.md) ✅ · [smeta_ontology.md](smeta_ontology.md) ✅ (генерится) | ✅ |
 | smeta/bor | спецификация Ф9 → ВОР работ | `spec_to_bor_service`; `/api/bor/{id}/from-spec*` | [ALGO-spec-to-bor.md](ALGO-spec-to-bor.md) | ✅ |
 | smeta/indices | индексы изменения сметной стоимости (Минстрой ИФ/09) | 📋 v0.26+ ([../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md)) | — | 📋 |
@@ -52,17 +52,17 @@
 | rag/scan-mining | поиск данных в сканах + различение типа (verify) | `verify_service`, `table_detect`, `doc_classifier`; `routers/verify.py` | [scan_data_mining.md](scan_data_mining.md) | ✅ |
 | harness | unified construction harness (source-adapters, evidence) — флаг OFF | `source_adapters`, `unified_construction_harness_service` | [unified_harness_failure_ledger.md](unified_harness_failure_ledger.md) | ✅ (OFF) |
 
-**✅ исправлено (437f1aa):** CODE_MAP-счётчики (~101/~36/~2046); создан `ALGO-routing.md` (канон маршрутизации); AUDIT_DETERMINISM/AUDIT_CORE получили статус-баннер «исполнено»; ALGO-table-query уточнён (агрегация после ретрива).
+**✅ исправлено:** CODE_MAP-счётчики (~101/~36/~2062); создан `ALGO-routing.md` (канон маршрутизации); AUDIT_DETERMINISM/AUDIT_CORE получили статус-баннер «исполнено»; ALGO-table-query уточнён (агрегация после ретрива). В 0.23.6.1 router-primary fallback закрыт через `RouterUnavailable` → deterministic cascade/in-flow fallback. В 0.23.6.9 `evidence_contract` расширен до системного `DefensePack/DefenseClaim`, первым подключены smeta/object и normcontrol/doc-review.
 
 ## 3. Нормоконтроль и проверка документации
 
 | Суб-модуль | Назначение | Точки входа | Док | Статус |
 |---|---|---|---|---|
-| normcontrol/doc-review | RAG-led СПДС-review по ГОСТ Р 21.101-2026 (computed + retrieval-подфаза + штамп) | `doc_review_service`, `doc_review_retrieval_service`, `title_block_extract_service`, `document_set_model`, `normcontrol_review_map_service`; `routers/doc_review.py`; флаг `LES_TITLE_BLOCK_OCR` | [DOC_REVIEW_GOST_R_21_101_2026_PLAN.md](DOC_REVIEW_GOST_R_21_101_2026_PLAN.md) | ✅ |
+| normcontrol/doc-review | RAG-led СПДС-review по ГОСТ Р 21.101-2026 (computed + retrieval-подфаза + PDF sheet geometry + layout-zone штампа) + defense-contract + `normalized_remarks` для checklist/report renderers | `doc_review_service`, `doc_review_retrieval_service`, `title_block_extract_service`, `document_set_model`, `normcontrol_review_map_service`, `evidence_contract`; `routers/doc_review.py`; флаг `LES_TITLE_BLOCK_OCR` | [DOC_REVIEW_GOST_R_21_101_2026_PLAN.md](DOC_REVIEW_GOST_R_21_101_2026_PLAN.md) | ✅ |
 | normcontrol/formal-v1 | формальные NK-01..04 (форматы ГОСТ, шифры, ведомость) | `normcontrol_service`; `/api/normcontrol` | [ALGO-normcontrol.md](ALGO-normcontrol.md) | ✅ |
 | normcontrol/checklist | чек-лист входного контроля ПД БУП/ГИП | 📋 кода нет | [CHECKLIST_REVIEW_PD_TASK.md](CHECKLIST_REVIEW_PD_TASK.md) | 📋 |
 
-**✅ исправлено (437f1aa):** DOC_REVIEW шапка «planned»→«Phases 1-5 реализованы»; призрачные сервисы → реальные имена; создан `ALGO-normcontrol.md` (formal-v1). Остаётся 📋 Phase 6 (ПП-87, normalized remark JSON, DOCX/PDF, checklist).
+**✅ исправлено (437f1aa):** DOC_REVIEW шапка «planned»→«Phases 1-5 реализованы»; призрачные сервисы → реальные имена; создан `ALGO-normcontrol.md` (formal-v1). В 0.23.6.11 чатовый doc-review стал человеческим defense-отчётом без подмешивания memory, а D4-001 формат листа проверяется по PDF-геометрии/ГОСТ 2.301. В 0.23.6.12 D4-002 проверяет, что сигнатуры основной надписи попали в ожидаемую нижнюю правую зону листа; сигнатуры вне зоны становятся computed issue. В 0.24.0.0 JSON/XLSX получил `normalized_remarks`. Остаётся 📋 Phase 6: ПП-87 composition profile, DOCX/PDF renderer, checklist importer и deeper layout-tool для заполнения всех граф.
 
 ## 4. Приёмка / Intake
 
@@ -80,10 +80,11 @@
 | infra/mlx | TTL-выгрузка, memory-guard, профили памяти | `backend/mlx_adapter`, `mlx_host.py` | [MLX_GUIDE.md](../MLX_GUIDE.md), [RUNTIME_MEMORY_PROFILES.md](../RUNTIME_MEMORY_PROFILES.md) ✅ | 🟡 |
 | ops/deploy | dev→рантайм cp-деплой + stamp; откат | `tools/deploy_to_runtime.py`, `tools/restore_runtime.sh` | [SKILL.md](../SKILL.md) 🟡, [RELEASE_LEDGER.md](RELEASE_LEDGER.md) | 🟡 |
 | ops/versioning | единый центр версий + divergence repo↔runtime | `version_service`; `GET /api/version` | [RELEASE_LEDGER.md](RELEASE_LEDGER.md), [VERSIONING.md](VERSIONING.md), [releases.md](releases.md) | 🟡 |
+| ops/service-sources | видимый реестр служебных источников для смет и нормоконтроля | `service_source_registry`; `routers/service_sources.py`; `config/service_sources.yaml`; GUI `sovushka/pages/instrumenty.py` | [SKILL.md](../SKILL.md), [CODE_MAP.md](CODE_MAP.md) | ✅ |
 | ops/test | гейт (verify/test/smoke-basic) | `Makefile`, `tools/basic_function_smoke.py` | [TEST_INVENTORY.md](TEST_INVENTORY.md) 🟡 | 🟡 |
 | install | сборка/инсталляторы Mac/Win/Linux | `tools/build_*`, `installers/` | [INSTALL_RUNBOOK.md](INSTALL_RUNBOOK.md) ✅, [PLATFORMS.md](PLATFORMS.md) ✅ | 🟡 |
 
-**✅ исправлено (437f1aa):** SKILL/TEST_INVENTORY → v0.23/~2046/smoke-basic done; PROXY_ARCHITECTURE → `les_meta_qwen.db`; INFRASTRUCTURE_v2.0 (мёртвое) → archive. Версии (3 оси) объяснены в [RELEASE_LEDGER.md](RELEASE_LEDGER.md); внедрение 0.23.N.P в `version_service` — 📋 (код на паузе).
+**✅ исправлено:** SKILL/TEST_INVENTORY → v0.23/~2063/smoke-basic done; PROXY_ARCHITECTURE → `les_meta_qwen.db`; INFRASTRUCTURE_v2.0 (мёртвое) → archive. Версии (3 оси) объяснены в [RELEASE_LEDGER.md](RELEASE_LEDGER.md); 0.23.N.P внедрено в `version_service`. В 0.23.6.2 добавлены checksum для backup/restore и сужены дефолтные trusted loopback/proxy-сети; в 0.23.6.3 скрепка чата стала реальным контекстом/payload scope; в 0.23.6.4 закреплены светлая тема по умолчанию, скрытая панель артефактов и OpenAI-compatible `gpt-4.1` fallback; в 0.23.6.5 добавлен явный GUI-контроль открытия артефактов и управляемый fail-path чтения вложений; в 0.23.6.6 source chips открывают citation drawer без fake-open; в 0.23.6.7 router-primary стал explicit opt-in, чтобы убрать 12s latency fallback; в 0.23.6.8 read-вложение стало видимым файлом следующего сообщения, plain file-reading идёт без глобального RAG, direct/router LLM без облачного ключа уходит в локальный MLX; в 0.23.6.10 `make ship` стал быстрым итерационным gate, `make ship-full` — полным release gate с retry post-smoke; в 0.23.6.11 нормоконтрольный чат отдаёт defense-report и top-level `defense`.
 
 ## 6. Прочие модули (отдельные продукты/контуры)
 

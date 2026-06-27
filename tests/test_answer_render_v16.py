@@ -112,6 +112,26 @@ def test_citation_mail_snippet_only():
                                  "snippet": "кратко", "body": "ПОЛНОЕ ТЕЛО ПИСЬМА"}])
     assert "ПОЛНОЕ ТЕЛО" not in str(art)   # полное тело письма не попадает в цитату
 
+def test_citation_drawer_item_opens_file_like_refs():
+    item = ar.citation_drawer_item({"source_ref": "RAG_Content/NTD/SP.docx#para85",
+                                    "source_kind": "extracted_body",
+                                    "snippet": "фрагмент"}, 3)
+    assert item["n"] == 3
+    assert item["open_url"].startswith("/lite-api/rag/file/raw?path=RAG_Content")
+    assert item["location"] == "para85"
+    assert item["snippet"] == "фрагмент"
+
+def test_citation_drawer_item_disabled_without_ref():
+    item = ar.citation_drawer_item({"file": "doc.pdf"})
+    assert item["open_url"] == ""
+    assert "нет source_ref" in item["unavailable_reason"].lower()
+
+def test_citation_drawer_item_weak_source_does_not_fake_open():
+    item = ar.citation_drawer_item({"source_ref": "db/chunk.md#chunk2", "source_kind": "vector_chunk"})
+    assert item["weak"] is True
+    assert item["open_url"] == ""
+    assert "vector" in item["unavailable_reason"]
+
 def test_group_evidence_sections_order_and_missing_visible():
     from proxy.services.evidence_contract import EvidenceItem, EvidenceType, block_of
     blocks = [block_of(EvidenceType.MISSING, "M", [EvidenceItem(EvidenceType.MISSING, "x", status="missing")]),

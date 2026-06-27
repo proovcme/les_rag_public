@@ -695,6 +695,46 @@ async def test_upload_smart_routes_file_to_classified_dataset(tmp_path, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_attach_read_returns_text_context(tmp_path, monkeypatch, dataset_state):
+    monkeypatch.chdir(tmp_path)
+    result = await datasets.attach_chat_file(
+        file=_upload("note.txt", "Прочитай меня как задание".encode("utf-8")),
+        mode="read",
+        _admin=object(),
+    )
+
+    assert result["mode"] == "read"
+    assert result["name"] == "note.txt"
+    assert "Прочитай меня" in result["text"]
+    assert result["attachment_id"].startswith("read_")
+    assert dataset_state.uploads == []
+
+
+@pytest.mark.asyncio
+async def test_attach_read_converter_error_is_controlled(tmp_path, monkeypatch, dataset_state):
+    monkeypatch.chdir(tmp_path)
+
+    def broken_converter(_path):
+        raise ValueError("битый файл")
+
+    import backend.converter
+
+    monkeypatch.setattr(backend.converter, "convert_to_markdown", broken_converter)
+
+    with pytest.raises(datasets.HTTPException) as exc:
+        await datasets.attach_chat_file(
+            file=_upload("broken.txt", b"not really readable"),
+            mode="read",
+            _admin=object(),
+        )
+
+    assert exc.value.status_code == 422
+    assert "Не удалось прочитать файл" in exc.value.detail
+    assert "broken.txt" in exc.value.detail
+    assert dataset_state.uploads == []
+
+
+@pytest.mark.asyncio
 async def test_upload_smart_rejects_empty_file(tmp_path, monkeypatch, dataset_state):
     monkeypatch.chdir(tmp_path)
 

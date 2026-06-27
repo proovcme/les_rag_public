@@ -34,6 +34,18 @@
 | `POST` | `/api/runtime/dispatcher/reindex/resume` | Возобновить guarded reindex |
 | `POST` | `/api/runtime/dispatcher/mlx/unload` | Выгрузить MLX модели |
 
+## Doc Review / Normcontrol
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| `GET` | `/api/doc-review/rulepacks` | Доступные review-map/rulepack профили |
+| `POST` | `/api/doc-review/{dataset_id}/run` | RAG-led СПДС-review комплекта по ГОСТ Р 21.101-2026 |
+| `GET` | `/api/doc-review/{dataset_id}/download?fmt=xlsx\|json\|html` | Детерминированный отчёт |
+
+`run` возвращает `items`, `defense` (`defense_contract_v1`) и `normalized_remarks`.
+`normalized_remarks` — общий машинный контракт для checklist/DOCX/PDF renderers; это proposed
+remarks, финальное решение по каждому пункту остаётся за инженером.
+
 ## Search
 
 | Метод | Путь | Назначение |
@@ -120,6 +132,16 @@ curl -X POST http://127.0.0.1:8050/api/chat \
 | `GET` | `/api/rag/watch/status` | Folder watcher status |
 | `POST` | `/api/rag/watch/scan` | Зарегистрировать new/changed |
 | `GET` | `/api/rag/watch/reindex-plan` | Dry-run route_changed reindex |
+
+## Служебные Источники
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| `GET` | `/api/service-sources` | Реестр файлов/датасетов, нужных ЛЕСу для смет и нормоконтроля |
+| `GET` | `/api/service-sources/{source_id}` | Один служебный источник: status, файлы, факты, missing-action |
+
+Реестр задаётся в `config/service_sources.yaml`: ГЭСН, ФГИС ЦС, сметные коэффициенты/шаблоны,
+СПДС rulepack, нормативный RAG и layout-reference. В GUI это блок **Инструменты → Служебные источники данных**.
 
 ## CAD/BIM
 

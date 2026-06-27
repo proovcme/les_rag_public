@@ -5,8 +5,11 @@
 (числа/действия считает код, не LLM, ADR-11). Это превращает Совушку из «набора каналов» в
 агент над своими инструментами: спрашиваешь как угодно — она сама решает, что вызвать.
 
-За флагом ``LES_AGENT_LOOP`` (по умолчанию off). Любой сбой/«none» → None → обычный путь
-(RAG) как фолбэк. Ядро чат-пути не меняется — это аддитивная ступень перед RAG.
+Legacy-ступень за флагом ``LES_AGENT_LOOP`` (по умолчанию off). Primary-роутер за
+``LES_ROUTER_PRIMARY`` вызывается из chat.py перед keyword-каскадом только при явном opt-in.
+Любой осознанный «none» →
+обычный RAG; транспортная недоступность роутера возвращается как sentinel, чтобы chat.py включил
+детерминированный fallback.
 
 Дешёвые рычаги надёжности (ADR-11, ПЕРЕД любой LoRA):
   • чёткие описания + 1-2 примера-триггера на каждый инструмент (по ним LLM выбирает);
@@ -23,6 +26,17 @@ import re
 from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
+
+
+class RouterUnavailable(RuntimeError):
+    """Роутер-LLM НЕ ответил (таймаут/сеть/5xx) — это НЕ осознанный выбор «none».
+
+    Критично для chat.py: «роутер упал» ≠ «роутер выбрал RAG». Первое → детерм.-каскад-фолбэк
+    с ЧЕСТНЫМ route_source канала (regex/keyword); второе → RAG (default). Без этого различения
+    route_source врал «llm_router», а 0-LLM-каналы (mail/table/scope/glossary) были мертвы при
+    медленном/упавшем MLX. См. docs/ALGO-routing.md §«Фолбэк при недоступном роутере»,
+    memory router-regression-deferred.
+    """
 
 
 # ── handlers: тонкие обёртки над СУЩЕСТВУЮЩИМИ сервисами (сервисы не переписываем) ──
@@ -223,19 +237,24 @@ _FEWSHOT: tuple[tuple[str, str], ...] = (
 )
 
 
+def _agent_loop_on() -> bool:
+    return os.getenv("LES_AGENT_LOOP", "false").strip().lower() in ("1", "true", "yes", "on")
+
+
 def _is_on() -> bool:
-    flags = (os.getenv("LES_AGENT_LOOP", "false"), os.getenv("LES_ROUTER_PRIMARY", "true"))
+    """Primary router or explicit legacy agent loop is enabled."""
+    flags = (os.getenv("LES_AGENT_LOOP", "false"), os.getenv("LES_ROUTER_PRIMARY", "false"))
     return any(f.strip().lower() in ("1", "true", "yes", "on") for f in flags)
 
 
 def router_primary() -> bool:
     """Роутер ОСНОВНОЙ — зовётся ПЕРЕД keyword-каскадом (инверсия, AUDIT_DETERMINISM шаг 2).
 
-    ДЕФОЛТ ON (2026-06-26): свободный текст в чате понимает LLM-роутер, а не keyword-гейты
-    («НИКАКОЙ детерминации на ПОНИМАНИЕ в чате» — см. no-determinism-in-chat-directive). Роутер →
-    инструмент ИЛИ none→RAG (default). Каскад остаётся фолбэком ТОЛЬКО при явном LES_ROUTER_PRIMARY=false.
+    ДЕФОЛТ OFF (2026-06-27): без явно настроенного роутера чат не должен платить 12-секундный
+    timeout перед очевидным deterministic fallback. Роутер → инструмент ИЛИ none→RAG включается
+    только явным ``LES_ROUTER_PRIMARY=true``; каскад остаётся стабильным базовым путём.
     """
-    return os.getenv("LES_ROUTER_PRIMARY", "true").strip().lower() in ("1", "true", "yes", "on")
+    return os.getenv("LES_ROUTER_PRIMARY", "false").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _build_prompt(question: str) -> str:
@@ -277,24 +296,55 @@ def _parse_tool(raw: str) -> str:
     return ""
 
 
-def _route_llm_text(prompt: str, *, max_tokens: int = 40) -> str:
-    """ЛОКАЛЬНЫЙ быстрый вызов для РОУТИНГА (MLX :8080), НЕ облако — роутинг без канала.
+def _router_runtime_config() -> dict[str, Any]:
+    """OpenAI-compatible config for the tiny routing call.
 
-    Роутер-бенч = 100% на локальной Qwen3.5-4B → выбор инструмента не зависит от облачного канала
-    ([[local-bases-untrusted-channel]]). КОРОТКИЙ таймаут: роутер не должен вешать чат; сбой → ''
-    (→ none → каскад/RAG). Эндпоинт/модель — env (дефолт локальный MLX-хост).
+    Explicit LES_ROUTER_* wins. Without explicit router base, cloud is used only when an API key is
+    actually present; otherwise router-primary falls back to local MLX and fails fast.
     """
-    import os
+    explicit_base = (os.getenv("LES_ROUTER_BASE_URL") or "").strip()
+    explicit_model = (os.getenv("LES_ROUTER_MODEL") or "").strip()
+    explicit_key = (os.getenv("LES_ROUTER_API_KEY") or "").strip()
+    openai_base = (os.getenv("OPENAI_BASE_URL") or "").strip()
+    openai_model = (os.getenv("OPENAI_MODEL") or "").strip()
+    openai_key = (os.getenv("OPENAI_API_KEY") or "").strip()
 
+    if explicit_base:
+        base = explicit_base
+        model = explicit_model or openai_model or os.getenv("MLX_MODEL", "mlx-community/Qwen3.5-9B-MLX-4bit")
+        key = explicit_key or openai_key or "local"
+    elif openai_base and openai_key:
+        base = openai_base
+        model = explicit_model or openai_model or "gpt-4.1"
+        key = explicit_key or openai_key
+    else:
+        mlx_url = os.getenv("MLX_URL", "http://127.0.0.1:8080").rstrip("/")
+        base = mlx_url if mlx_url.endswith("/v1") else f"{mlx_url}/v1"
+        model = explicit_model or os.getenv("MLX_MODEL", os.getenv("LLM_MODEL", "mlx-community/Qwen3.5-9B-MLX-4bit"))
+        key = explicit_key or "local"
+
+    try:
+        timeout = float(os.getenv("LES_ROUTER_TIMEOUT", "2.0"))
+    except ValueError:
+        timeout = 2.0
+
+    return {"base": base.rstrip("/"), "model": model, "key": key, "timeout": timeout}
+
+
+def _route_llm_text(prompt: str, *, max_tokens: int = 40) -> str:
+    """Короткий OpenAI-compatible вызов для РОУТИНГА: explicit cloud key or local MLX fail-fast.
+
+    Без явного облачного ключа используется локальный MLX :8080. КОРОТКИЙ таймаут: роутер не должен вешать чат; транспортный
+    сбой → RouterUnavailable → chat.py включает детерминированный fallback. Эндпоинт/модель — env
+    (LES_ROUTER_* overrides).
+    """
     import httpx
 
-    # Роутер — на ТОЙ ЖЕ модели, что и ответ (по умолчанию провайдер OPENAI_*): на облаке это
-    # ~0.5-1с вместо ~7с локальной 4B на КАЖДЫЙ запрос. LES_ROUTER_* — явный override (локальный MLX
-    # для канал-независимости, если нужен). Короткий таймаут; сбой → none → RAG, чат не вешаем.
-    base = os.getenv("LES_ROUTER_BASE_URL", os.getenv("OPENAI_BASE_URL", "http://127.0.0.1:8080/v1")).rstrip("/")
-    model = os.getenv("LES_ROUTER_MODEL", os.getenv("OPENAI_MODEL", "gpt-4.1"))
-    key = os.getenv("LES_ROUTER_API_KEY", os.getenv("OPENAI_API_KEY", "local"))
-    timeout = int(os.getenv("LES_ROUTER_TIMEOUT", "12"))
+    cfg = _router_runtime_config()
+    base = cfg["base"]
+    model = cfg["model"]
+    key = cfg["key"]
+    timeout = cfg["timeout"]
     url = f"{base}/chat/completions" if base.endswith("/v1") else f"{base}/v1/chat/completions"
     # gpt-5.x / o-серия требуют max_completion_tokens вместо max_tokens (иначе 400).
     ml = model.lower()
@@ -308,9 +358,12 @@ def _route_llm_text(prompt: str, *, max_tokens: int = 40) -> str:
         })
         resp.raise_for_status()
         return str(resp.json().get("choices", [{}])[0].get("message", {}).get("content", "") or "")
-    except Exception as err:  # noqa: BLE001 — best-effort; сбой → none → RAG, не вешать чат
+    except Exception as err:  # noqa: BLE001 — транспорт/таймаут/5xx = роутер НЕДОСТУПЕН, не «none»
+        # РАНЬШЕ: return "" → схлопывалось в «none» → (router_primary ON) тихо в RAG, route_source
+        # врал «llm_router», каскад-фолбэк не запускался. ТЕПЕРЬ — явный сигнал недоступности:
+        # chat.py поймает его и деградирует в детерм.-каскад. Чат не вешаем (сигнал, не проброс хапуна).
         logger.warning("[AGENT] router LLM недоступен: %s", err)
-        return ""
+        raise RouterUnavailable(str(err)) from err
 
 
 def _classify(question: str) -> str:
@@ -330,7 +383,7 @@ def _classify(question: str) -> str:
 
 def maybe_agent_route(question: str, *, project_id: int = 0) -> Optional[dict[str, Any]]:
     """Ярус 2: LLM выбирает инструмент → исполняет детерминированный обработчик. Off/сбой → None."""
-    if not _is_on() or not (question or "").strip():
+    if not _agent_loop_on() or not (question or "").strip():
         return None
     try:
         name = _classify(question)
@@ -364,6 +417,11 @@ def route_with_name(question: str, *, project_id: int = 0) -> tuple[str, Optiona
         return "", None
     try:
         name = _classify(question)
+    except RouterUnavailable as err:
+        # Недоступность ≠ «none»: явный сентинел — chat.py включит детерм.-каскад-фолбэк с честным
+        # route_source канала (не «llm_router»). См. docs/ALGO-routing.md §«Фолбэк…».
+        logger.warning("[AGENT] router недоступен → каскад-фолбэк: %s", err)
+        return "unavailable", None
     except Exception as err:  # noqa: BLE001
         logger.warning("[AGENT] classify failed: %s", err)
         return "", None

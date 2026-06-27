@@ -145,7 +145,7 @@ rules:
     severity: info
     check: sheet_format
     evidence_required: [document_file]
-    message: "Формат листа определяется по ГОСТ 2.301; нестандартный — info/предупреждение."
+    message: "Формат листа определяется по ГОСТ 2.301; doc-review проверяет геометрию PDF-страниц, а размещение элементов листа проверяется отдельными layout/title-block проверками."
 
   - id: G21.101-2026-D4-002
     clause: "5"

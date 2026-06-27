@@ -90,14 +90,16 @@ def test_estimate_end_to_end_assembles_total():
         assert pos["total"] >= 0
         assert pos["qty"] > 0
 
-    # хвост сметы: ИТОГО СМР → непредвиденные → НДС → ВСЕГО (общая цена)
+    # хвост прикидки: ГЭСН-конструктив → ASSUME-разделы → уровень цен → НДС
     tot = r["totals"]
-    assert tot["smr"] == round(summary["total"], 2)
+    assert tot["gesn_smr"] == round(summary["total"], 2)
+    assert tot["smr"] > tot["gesn_smr"]
     assert tot["vat"] == round(tot["before_vat"] * tot["vat_pct"] / 100, 2)
     assert tot["grand_total"] > tot["smr"]            # ВСЕГО с НДС больше СМР
 
     # допущения по геометрии присутствуют (прозрачность)
     assert any("P = 4" in a for a in r["assumptions"])
+    assert any("Коэффициент текущего уровня цен" in a for a in r["assumptions"])
 
 
 def test_estimate_needs_area():
@@ -109,3 +111,40 @@ def test_estimate_needs_area():
 def test_estimate_unknown_object_no_template():
     r = oes.estimate("дай смету на кирпичный дом 100 м²")
     assert r["ok"] is False  # шаблон только под дерево
+
+
+def test_monolith_office_with_basement_gets_rough_full_object_allowances():
+    r = oes.estimate("Офисное здание новое - 3 этажа, подвал, плоская кровля, 3000 метров")
+    assert r["ok"] is True
+    assert r["template"]["id"] == "monolith_office"
+    assert r["quality"]["final_total_allowed"] is False
+    assert r["quality"]["status"] == "rough_full_object_assumed"
+    assert {a["id"] for a in r["allowances"]} >= {"facade_openings", "mep", "finishes", "site_general", "basement"}
+    assert r["totals"]["allowance_positions"] == 5
+    assert r["totals"]["grand_total"] > 100_000_000
+    assert any("Подвал" in w for w in r["scope_warnings"])
+
+
+def test_monolith_office_defense_explains_formula_cost_and_price_coverage():
+    r = oes.estimate("Офисное здание новое - 3 этажа, подвал, плоская кровля, 3000 метров")
+    defense = r["defense"]
+    assert defense["contract"]["schema"] == "defense_contract_v1"
+    assert defense["contract"]["domain"] == "smeta.object_estimate"
+    assert defense["contract"]["status"] == "not_defensible"
+    assert any(c["id"] == "object_estimate:final_total" for c in defense["contract"]["claims"])
+    assert defense["defensibility"]["status"] == "ORIENTIR_NOT_DEFENSIBLE_LSR"
+    assert defense["price_coverage"]["resources"] > 0
+    assert defense["price_coverage"]["missing"] > 0
+    assert defense["allowance_positions"][0]["status"] == "ASSUMED_NOT_NORMATIVE"
+
+    by_code = {p["code"]: p for p in defense["gesn_positions"]}
+    slab = by_code["06-02-001-01"]
+    assert slab["formula"] == "S1 * found_slab_t / 100"
+    assert slab["formula_values"]["S1"] == 1000.0
+    assert slab["physical_qty"] == 400.0
+    assert slab["physical_unit"] == "м³"
+    assert slab["cost_build_up"]["direct"] > 0
+    assert slab["cost_build_up"]["nr"] > 0
+    assert slab["cost_build_up"]["sp"] > 0
+    assert slab["resource_price_coverage"]["by_source"]["fgis"] > 0
+    assert slab["resource_price_coverage"]["missing"] > 0

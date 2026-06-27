@@ -21,6 +21,11 @@ from sovushka.state import (
 )
 
 _SEV_COLOR = {"error": "var(--err)", "warning": "#d6a400", "info": "var(--dim)"}
+_SRC_STATUS = {
+    "ok": ("OK", "var(--ok)"),
+    "missing_degraded": ("НУЖЕН", "#d6a400"),
+    "missing_blocking": ("БЛОК", "var(--err)"),
+}
 
 
 async def _datasets() -> list[dict]:
@@ -47,6 +52,69 @@ def build_instrumenty():
         ui.label("ИНСТРУМЕНТЫ // ДЕТЕРМИНИРОВАННЫЕ ФУНКЦИИ (0 LLM)").style(
             "font-size:1rem;font-weight:900;letter-spacing:1px;"
         )
+
+        # ───────────────────── СЛУЖЕБНЫЕ ИСТОЧНИКИ ─────────────────────
+        with ui.card().classes("card-les w-full"):
+            with ui.row().classes("w-full items-center justify-between gap-2"):
+                ui.label("СЛУЖЕБНЫЕ ИСТОЧНИКИ ДАННЫХ").classes("section-title")
+                ui.button("ОБНОВИТЬ", on_click=lambda: asyncio.create_task(_src_refresh())).props(
+                    "dense flat no-caps"
+                )
+            ui.label(
+                "То, на чём ЛЕС считает и проверяет: ГЭСН, ФГИС ЦС, коэффициенты, СПДС-rulepack, "
+                "нормативный RAG и layout-эталон. Нет источника — расчёт/проверка честно деградирует."
+            ).style("font-size:.66rem;color:var(--dim);")
+            src_summary = ui.label("").style("font-size:.72rem;color:var(--dim);")
+            src_tbl = ui.table(
+                columns=[
+                    {"name": "status_label", "label": "Статус", "field": "status_label", "align": "center"},
+                    {"name": "domain", "label": "Контур", "field": "domain", "align": "left"},
+                    {"name": "label", "label": "Источник", "field": "label", "align": "left"},
+                    {"name": "facts_text", "label": "Что найдено", "field": "facts_text", "align": "left"},
+                    {"name": "needed_text", "label": "Нужно для", "field": "needed_text", "align": "left"},
+                    {"name": "operator_hint", "label": "Что загрузить/проверить", "field": "operator_hint", "align": "left"},
+                ],
+                rows=[], row_key="id",
+            ).classes("w-full").style("font-size:.68rem;")
+            src_tbl.add_slot("body-cell-status_label", """
+                <q-td :props="props">
+                  <span :style="{fontWeight:'900', color: props.row.status_color}">{{ props.value }}</span>
+                </q-td>""")
+
+            def _src_row(item: dict) -> dict:
+                label, color = _SRC_STATUS.get(item.get("status"), (item.get("status", "?"), "var(--dim)"))
+                facts = item.get("facts") or {}
+                fact_parts = []
+                for key in ("base_norms", "seed_norms", "parquet_rows", "pricebooks", "price_rows",
+                            "targets", "documents", "datasets"):
+                    if facts.get(key) not in (None, "", 0):
+                        fact_parts.append(f"{key}: {facts[key]}")
+                if not fact_parts:
+                    files = [f for f in item.get("files", []) if f.get("exists")]
+                    fact_parts = [", ".join(f.get("path", "") for f in files[:2])] if files else ["—"]
+                return {
+                    "id": item.get("id"),
+                    "status_label": label,
+                    "status_color": color,
+                    "domain": item.get("domain"),
+                    "label": item.get("label"),
+                    "facts_text": " · ".join(fact_parts),
+                    "needed_text": "; ".join(item.get("needed_for") or []),
+                    "operator_hint": item.get("operator_hint") or "",
+                }
+
+            async def _src_refresh():
+                d = await api_get("/api/service-sources")
+                if not isinstance(d, dict):
+                    ui.notify(last_api_error_text("Реестр источников недоступен"), type="negative")
+                    return
+                s = d.get("summary", {})
+                src_summary.text = (
+                    f"Источников: {s.get('total',0)} · OK {s.get('ok',0)} · "
+                    f"нужны {s.get('missing_degraded',0)} · блокируют {s.get('missing_blocking',0)}"
+                )
+                src_tbl.rows = [_src_row(x) for x in d.get("sources", [])]
+                src_tbl.update()
 
         # ─────────────────────────── ВОР ───────────────────────────
         with ui.card().classes("card-les w-full"):
@@ -305,6 +373,10 @@ def build_instrumenty():
                 ui.button("ПРОВЕРИТЬ", on_click=lambda: asyncio.create_task(_dr_run())).props("dense no-caps")
                 ui.button("XLSX", on_click=lambda: asyncio.create_task(
                     _download(f"/api/doc-review/{dr_ds.value}/download?fmt=xlsx"))).props("dense flat no-caps")
+                ui.button("JSON", on_click=lambda: asyncio.create_task(
+                    _download(f"/api/doc-review/{dr_ds.value}/download?fmt=json"))).props("dense flat no-caps")
+                ui.button("HTML", on_click=lambda: asyncio.create_task(
+                    _download(f"/api/doc-review/{dr_ds.value}/download?fmt=html"))).props("dense flat no-caps")
             dr_summary = ui.label("").style("font-size:.7rem;color:var(--dim);")
             dr_tbl = ui.table(
                 columns=[
@@ -749,6 +821,7 @@ def build_instrumenty():
                     ui.notify("Документ сгенерирован", type="positive")
 
         async def _refresh():
+            await _src_refresh()
             ds_list = await _datasets()
             opts = _ds_options(ds_list)
             bor_ds.options = opts

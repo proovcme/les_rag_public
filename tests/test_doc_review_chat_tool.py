@@ -24,11 +24,15 @@ def test_review_dataset_no_documents_raises():
 
 
 def test_review_to_chat_text_shape():
-    # рендер для чата: заголовок + сводка + дисклеймер «вердикт за инженером» (RAG-led)
+    # рендер для чата: человекочитаемый отчёт + защита, а не служебная трассировка.
     from proxy.services import doc_review_service as dr
     from proxy.services.normcontrol_review_map_service import load_review_map
 
     rmap = load_review_map("gost_r_21_101_2026")
     text = dr.review_to_chat_text([], rmap)
     assert "ГОСТ Р 21.101" in text
+    assert "Вердикт машины" in text
+    assert "### Защита решения" in text
     assert "инженер" in text.lower()
+    assert "Рабочая память" not in text
+    assert "LES.md" not in text

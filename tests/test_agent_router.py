@@ -38,7 +38,53 @@ def test_registry_empty(monkeypatch):
 
 def test_agent_off_returns_none(monkeypatch):
     monkeypatch.delenv("LES_AGENT_LOOP", raising=False)
+    monkeypatch.setenv("LES_ROUTER_PRIMARY", "true")
+    monkeypatch.setattr(ar, "_classify", lambda q: pytest.fail("legacy agent loop must stay off"))
     assert ar.maybe_agent_route("реестр проектов") is None
+
+
+def test_router_primary_defaults_off(monkeypatch):
+    monkeypatch.delenv("LES_ROUTER_PRIMARY", raising=False)
+    assert ar.router_primary() is False
+
+
+def test_router_runtime_config_falls_back_to_local_mlx(monkeypatch):
+    monkeypatch.delenv("LES_ROUTER_BASE_URL", raising=False)
+    monkeypatch.delenv("LES_ROUTER_MODEL", raising=False)
+    monkeypatch.delenv("LES_ROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    monkeypatch.delenv("OPENAI_MODEL", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("MLX_MODEL", raising=False)
+    monkeypatch.setenv("MLX_URL", "http://127.0.0.1:8080")
+
+    cfg = ar._router_runtime_config()
+
+    assert cfg["base"] == "http://127.0.0.1:8080/v1"
+    assert cfg["key"] == "local"
+    assert cfg["timeout"] == 2.0
+    assert cfg["model"] == "mlx-community/Qwen3.5-9B-MLX-4bit"
+
+
+def test_router_runtime_config_uses_cloud_only_with_key(monkeypatch):
+    monkeypatch.delenv("LES_ROUTER_BASE_URL", raising=False)
+    monkeypatch.delenv("LES_ROUTER_MODEL", raising=False)
+    monkeypatch.delenv("LES_ROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://openai.api.proxyapi.ru/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-4.1")
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+
+    cfg = ar._router_runtime_config()
+
+    assert cfg["base"] == "https://openai.api.proxyapi.ru/v1"
+    assert cfg["model"] == "gpt-4.1"
+    assert cfg["key"] == "secret"
+
+
+def test_route_with_name_router_unavailable_sentinel(monkeypatch):
+    monkeypatch.setenv("LES_ROUTER_PRIMARY", "true")
+    monkeypatch.setattr(ar, "_classify", lambda q: (_ for _ in ()).throw(ar.RouterUnavailable("timeout")))
+    assert ar.route_with_name("реестр проектов") == ("unavailable", None)
 
 
 def test_classify_parses_json(monkeypatch):

@@ -5,8 +5,9 @@
 Дата: 2026-06-26.
 
 Статус: **Phases 1-5 РЕАЛИЗОВАНЫ** (computed-проверки D0-D6, title_block OCR за флагом
-`LES_TITLE_BLOCK_OCR`, retrieval-подфаза `doc_review_retrieval_service`); **Phase 6** (ПП-87
-composition, normalized remark JSON, DOCX/PDF, checklist) — план. **Первый доменный workflow
+`LES_TITLE_BLOCK_OCR`, retrieval-подфаза `doc_review_retrieval_service`); **0.24.0.0 добавил
+`normalized_remarks` JSON/XLSX** как общий выход для следующих слоёв. **Phase 6** (ПП-87
+composition, DOCX/PDF renderer, checklist importer) — план. **Первый доменный workflow
 перед сметами и прочими расширениями**.
 Это не замена текущему `normcontrol_service.py`, а следующий вертикальный слой поверх него.
 Архитектурно это **RAG-led SPDS review**, а не чистая экспертная система.
@@ -169,7 +170,8 @@ proxy/services/doc_review_retrieval_service.py     # retrieval-подфаза (k
 proxy/services/normcontrol_review_map_service.py   # loader rulepack/review map
 proxy/services/title_block_extract_service.py
 proxy/services/document_set_model.py
-proxy/services/remark_normalization_service.py     # (план, не реализован)
+ normalized_remarks in doc_review_service.py        # v0.24 baseline contract
+ proxy/services/remark_normalization_service.py     # (позже, если контракт разрастётся)
 ```
 
 **Retrieval-подфаза (`doc_review_retrieval_service`).** Для целей `kind: retrieval` ищет в корпусе
@@ -343,6 +345,34 @@ PDF открывается
   "confidence": 0.0
 }
 ```
+
+Начиная с 0.23.6.9 JSON-отчёт дополнительно несёт системный `defense`:
+`defense_contract_v1` (`DefensePack/DefenseClaim` из `evidence_contract`). Это тот же
+claim→source/formula/input→gaps/actions контракт, что у смет: UI/экспорт могут показывать
+обоснование пунктов нормоконтроля без парсинга markdown и без финального verdict от модели.
+
+Начиная с 0.23.6.11 чатовый ответ `doc_review` — не служебная трассировка, а человекочитаемый
+отчёт для защиты: краткий verdict машины, сводка классов, таблицы `Основание / Evidence комплекта /
+Почему так / Действие`, блок `Защита решения`. Рабочая память диалога (`LES.md`/history memory) не
+добавляется в этот отчёт: все доказательные данные должны приходить из `ReviewItem` и JSON `defense`.
+
+D4-001 `sheet_format` снова computed: `doc_review_service.build_sheet_format_evidence()` открывает
+PDF через PyMuPDF, измеряет страницы и классифицирует формат через `normcontrol_service.classify_format`
+по ГОСТ 2.301. Если PDF-геометрия недоступна — пункт честно остаётся `manual_required`; если размер
+нестандартный — это `computed_issue` с `source_ref` страницы. Это НЕ заменяет проверку размещения рамки,
+основной надписи и заполнения граф: эти вещи должны идти отдельным layout/title-block инструментом.
+
+Начиная с 0.23.6.12 D4-002 получил layout-tool v1 для текстового PDF: `title_block_extract_service`
+ищет сигнатуры основной надписи не только в тексте листа целиком, но и в ожидаемой нижней правой зоне
+листа (`layout_zone.expected_zone_rel`). Если сигнатуры есть вне этой зоны, пункт не считается
+подтверждённым: `doc_review` выдаёт `computed_issue` с пояснением, что основная надпись не в ожидаемой
+зоне. Это всё ещё не полный контроль всех граф формы: заполненность/координаты каждой ячейки требуют
+следующего эталонного `layout_reference`.
+
+Служебные источники для работы вынесены в `config/service_sources.yaml` и API `/api/service-sources`.
+Для нормоконтроля важны как минимум: СПДС rulepack, нормативный RAG с легальным текстом ГОСТ/СПДС,
+и layout-reference (сейчас optional/degraded). UI показывает, чего не хватает, чтобы не было эффекта
+чёрного ящика.
 
 Единый normalized remark для отчётов и интеграций:
 

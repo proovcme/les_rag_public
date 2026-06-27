@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from proxy.services import fgis_price_service as fps
-from proxy.services.smeta_chat_service import maybe_handle_smeta_query as h
+from proxy.services.smeta_chat_service import _answer_object_estimate, maybe_handle_smeta_query as h
 
 
 def test_price_routes_even_without_book(monkeypatch):
@@ -53,3 +53,30 @@ def test_non_smeta_falls_through():
     assert h("привет как дела") is None
     assert h("посчитай смету") is None                    # без кода/интента → дальше
     assert h("") is None
+
+
+def test_object_estimate_answer_is_rough_full_object_budget():
+    r = _answer_object_estimate("Офисное здание новое - 3 этажа, подвал, плоская кровля, 3000 метров")
+    assert r is not None and r["operation"] == "object_estimate"
+    assert "Прикидка стоимости объекта по мутному ТЗ" in r["answer"]
+    assert "ОРИЕНТИР стоимости объекта" in r["answer"]
+    assert "ASSUME" in r["answer"]
+    assert "Подвал/подземная часть учтены" in r["answer"]
+    assert "### Защита расчёта: что откуда взято" in r["answer"]
+    assert "ориентир, не защищаемая ЛСР" in r["answer"]
+    assert "Ценовое покрытие ресурсов" in r["answer"]
+    assert "нет цены" in r["answer"]
+    assert "прямые" in r["answer"] and "НР" in r["answer"] and "СП" in r["answer"]
+    assert "S1=1 000.00" in r["answer"]
+    assert "ASSUMED_NOT_NORMATIVE" in r["answer"]
+    assert "для защиты нужен регион/квартал/индекс" in r["answer"]
+    assert "воспроизводимость расчёта, не доказательство стоимости" in r["answer"]
+    assert r["sources"]
+    assert r["retrieval_trace"]["mode"] == "object_estimate"
+    assert r["retrieval_trace"]["price_coverage"]["missing"] > 0
+    assert r["defense"]["schema"] == "defense_contract_v1"
+    assert r["defense"]["status"] == "not_defensible"
+    assert r["evidence_summary"]["COMPUTED"] == 1
+    assert r["evidence_summary"]["MISSING_PRICE"] > 0
+    assert r["provenance"]["confidence"] == "rough_full_object_assumed"
+    assert r["provenance"]["final_total_allowed"] is False

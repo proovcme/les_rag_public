@@ -544,6 +544,9 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   background: var(--shell-bg);
   overflow: hidden;
 }
+.sov-chat-shell.sov-artifacts-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
 /* Резиновый layout: разделитель между чатом и артефактами — таскать по ширине */
 .sov-resize-divider {
   cursor: col-resize;
@@ -616,6 +619,41 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   font-family: var(--font-chat) !important;
   font-size: .92rem;
   font-weight: 650;
+}
+.sov-attachment-strip {
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(52,211,153,.12);
+  box-shadow: inset 0 0 0 1px rgba(16,185,129,.45);
+}
+.sov-attachment-icon {
+  color: var(--accent);
+  font-size: 1.1rem;
+  flex: 0 0 auto;
+}
+.sov-attachment-copy {
+  flex: 1;
+  min-width: 0;
+  gap: 0 !important;
+}
+.sov-attachment-title {
+  color: var(--text);
+  font-size: .72rem;
+  font-weight: 900;
+  line-height: 1.2;
+}
+.sov-attachment-chip {
+  min-width: 0;
+  color: var(--accent);
+  font-size: .66rem;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 .sov-composer-actions {
   width: 100%;

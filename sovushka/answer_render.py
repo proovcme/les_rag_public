@@ -8,6 +8,7 @@ source-chips, trace-summary. Чистые (без NiceGUI) → юнит-тест
 from __future__ import annotations
 
 import re
+from urllib.parse import quote
 from typing import Any
 
 # ── strip markdown из ячеек таблицы (фикс `**Тип котельной**` в ячейке) ───────────────────
@@ -126,6 +127,35 @@ def citation_artifact(sources: list) -> dict:
                       "source_ref": (s.get("source_ref") if isinstance(s, dict) else str(s)) if c["has_ref"] else "",
                       "snippet": snippet, "has_ref": c["has_ref"], "weak": c["weak"]})
     return {"type": "citations", "title": "Цитаты", "count": len(items), "items": items}
+
+
+def citation_drawer_item(source: Any, index: int | None = None) -> dict:
+    """One source → drawer payload for GUI.
+
+    A chip may open the drawer only when it has a real ``source_ref``. Direct file opening is best-effort:
+    if the ref looks like a file path, expose a raw-file URL; otherwise return a clear unavailable reason.
+    """
+    item = citation_artifact([source])["items"][0]
+    item["n"] = index or item["n"]
+    source_ref = str(item.get("source_ref") or "")
+    file_part, _, location = source_ref.partition("#")
+    open_url = ""
+    unavailable_reason = ""
+    if not item.get("has_ref"):
+        unavailable_reason = "У источника нет source_ref: открыть нельзя, можно только проверить текст ответа."
+    elif item.get("weak"):
+        unavailable_reason = "Источник слабый/vector: точное место не гарантировано, доступно копирование source_ref."
+    elif "/" in file_part or re.search(r"\.(pdf|docx?|xlsx?|csv|md|txt|eml|jsonl?)$", file_part, re.I):
+        open_url = f"/lite-api/rag/file/raw?path={quote(file_part)}"
+    else:
+        unavailable_reason = "source_ref есть, но прямой путь к файлу не определён; скопируй ref для проверки."
+    item.update({
+        "location": location,
+        "open_url": open_url,
+        "unavailable_reason": unavailable_reason,
+        "copy_text": source_ref if source_ref else item.get("file", ""),
+    })
+    return item
 
 
 # ── §8 evidence-секции (группировка по типу для рендера) ──────────────────────────────────

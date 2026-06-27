@@ -123,6 +123,7 @@ class RuntimeRouterState:
 
 
 _state: RuntimeRouterState | None = None
+DEFAULT_OPENAI_MODEL = "gpt-4.1"
 
 
 def set_runtime_state(state: RuntimeRouterState) -> None:
@@ -162,7 +163,7 @@ def _provider_status() -> dict[str, str]:
         return {
             "provider": provider,
             "base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-            "model": os.getenv("OPENAI_MODEL", ""),
+            "model": os.getenv("OPENAI_MODEL", "").strip() or os.getenv("LES_DEFAULT_OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
         }
     if provider == "ollama":
         return {

@@ -1,0 +1,18 @@
+Source-Available License
+
+Copyright (c) 2026 OVC / LES project authors.
+
+Permission is granted to view, clone, run, and evaluate this repository for
+personal, research, demonstration, and internal engineering purposes.
+
+You may not sell, sublicense, rebrand, host as a paid service, or redistribute
+modified or unmodified copies as a competing product without prior written
+permission from the copyright holder.
+
+This software is provided "as is", without warranty of any kind. The authors
+are not liable for construction, engineering, estimating, legal, financial, or
+operational decisions made from its output.
+
+Project documents, normative corpora, private datasets, credentials, model
+weights, generated indexes, logs, backups, and runtime databases are not part
+of this license unless explicitly included in the repository.

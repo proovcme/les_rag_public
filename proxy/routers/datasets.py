@@ -1771,6 +1771,7 @@ async def upload_file(dataset_id: str, file: UploadFile = File(...), _admin=Depe
 _CHAT_ATTACH_DATASET_NAME = "Вложения чата"
 _QUICK_ATTACH_PREFIX = "attach_"
 _ATTACH_STORAGE_ROOT = Path("storage/datasets")
+_READ_ATTACH_MAX_CHARS = int(os.getenv("RAG_ATTACH_READ_MAX_CHARS", "18000"))
 
 
 async def _ensure_chat_attach_dataset(state) -> str:
@@ -1798,14 +1799,50 @@ async def attach_chat_file(
     mode: str = Query("quick"),
     _admin=Depends(require_admin),
 ):
-    """Скрепка чата. ``mode=quick`` — быстрый парс таблиц в Parquet (без векторов),
-    сразу доступно сверке/таблицам; ``mode=index`` — полная индексация в датасет
-    «Вложения чата» (вектора в Qdrant). На парсе таблиц LLM не участвует (ADR-11)."""
+    """Скрепка чата.
+
+    ``mode=read`` — прочитать файл в markdown и вернуть текст как контекст следующего запроса
+    (без индексации); ``mode=quick`` — быстрый парс таблиц в Parquet (без векторов), сразу
+    доступно сверке/таблицам; ``mode=index`` — полная индексация в датасет «Вложения чата»
+    (вектора в Qdrant). На парсе таблиц LLM не участвует (ADR-11).
+    """
     from uuid import uuid4
 
     state = get_dataset_state()
     original_name = safe_upload_name(file.filename or "upload.bin", rag_upload_suffixes())
     temp_path = await save_upload_tmp(file, allowed_suffixes=rag_upload_suffixes(), max_bytes=max_upload_bytes())
+
+    if mode == "read":
+        try:
+            from backend.converter import convert_to_markdown
+
+            try:
+                text = await asyncio.to_thread(convert_to_markdown, temp_path)
+            except Exception as error:  # noqa: BLE001 - upload errors must stay operator-visible
+                logger.warning("[ATTACH] read conversion failed for %s: %s", original_name, error)
+                raise HTTPException(
+                    422,
+                    f"Не удалось прочитать файл «{original_name}»: {error}. "
+                    "Попробуй режим индексации/OCR или другой формат файла.",
+                ) from error
+        finally:
+            temp_path.unlink(missing_ok=True)
+        text = (text or "").strip()
+        if not text:
+            raise HTTPException(
+                422,
+                f"Не удалось прочитать текст из «{original_name}». "
+                "Для таблиц попробуй режим быстрой сверки, для сканов — индексацию/OCR.",
+            )
+        truncated = len(text) > _READ_ATTACH_MAX_CHARS
+        return {
+            "attachment_id": f"read_{uuid4().hex[:12]}",
+            "mode": "read",
+            "name": original_name,
+            "chars": len(text),
+            "text": text[:_READ_ATTACH_MAX_CHARS],
+            "truncated": truncated,
+        }
 
     if mode == "index":
         ds_id = await _ensure_chat_attach_dataset(state)

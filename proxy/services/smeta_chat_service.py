@@ -25,6 +25,28 @@ _ASSEMBLE_WORDS = ("собери", "собрать", "посчитай смет"
 _PRICE_WORDS = ("цена", "цену", "стоимост", "сколько стоит", "почем", "почём", "расцен")
 _KAC_WORDS = ("кац", "конъюнктур", "коньюктур", "в фгис", "в базе цен", "есть в фгис")
 _STESN_WORDS = ("стеснённ", "стесненн", "стеснён", "усложняющ")
+_OBJECT_ESTIMATE_SOURCES = [
+    {
+        "source_ref": "config/domain/object_templates.yaml#monolith_office",
+        "source_kind": "template",
+        "excerpt": "Параметрические шаблоны объектов: match, geometry, positions, allowances, price_level_k.",
+    },
+    {
+        "source_ref": "proxy/services/object_estimate_service.py#estimate",
+        "source_kind": "code",
+        "excerpt": "Фраза → шаблон → ВОР → ЛСР → ASSUME-разделы → price_level_k → НДС.",
+    },
+    {
+        "source_ref": "proxy/services/lsr_assembly_service.py#assemble",
+        "source_kind": "code",
+        "excerpt": "Разворот позиций ГЭСН в СМР: прямые затраты, НР/СП, итог по позиции.",
+    },
+    {
+        "source_ref": "docs/ALGO-object-estimate.md#pipeline",
+        "source_kind": "doc",
+        "excerpt": "Воспроизводимость алгоритма объектной прикидки; сам файл не является доказательством цены.",
+    },
+]
 
 
 def _fmt_num(v: Any) -> str:
@@ -229,39 +251,177 @@ def _answer_object_estimate(q: str) -> Optional[dict[str, Any]]:
     head = r.get("template", {}).get("name", "объект")
     # Тело — markdown-ТАБЛИЦА позиций (inline-рендер чата превращает её в ui.table) +
     # проза с итогами/допущениями над и под таблицей.
-    lines = [f"Смета: {head} · {parsed.get('area')} м², {parsed.get('floors')} эт. "
-             f"(укрупнённо, по типовому составу работ)", ""]
-    lines.append("| Позиция | Код ГЭСН | Объём | Стоимость, ₽ |")
+    lines = [f"Прикидка стоимости объекта по мутному ТЗ: {head} · {parsed.get('area')} м², "
+             f"{parsed.get('floors')} эт. (укрупнённо, с допущениями)", ""]
+    if r.get("scope_warnings"):
+        lines.append("⚠️ Укрупнённый охват: " + " ".join(r["scope_warnings"]))
+        lines.append("")
+    lines.append("| Позиция/раздел | Основание | Объём | Стоимость, ₽ |")
     lines.append("|---|---|---|---|")
     for p, ap in zip(pos, apos):
         t = _f(ap.get("base", {}).get("total"))
         qty_disp = _humanize_qty(p.get("qty"), p.get("unit", ""))
         name = str(p.get("name", "")).replace("|", "/")
         lines.append(f"| {name} | {p.get('code')} | {qty_disp} | {_fmt_num(t)} |")
+    for a in r.get("allowances") or []:
+        label = str(a.get("label") or "ASSUME-раздел").replace("|", "/")
+        pct = round(_f(a.get("pct_of_smr")) * 100, 1)
+        lines.append(f"| {label} | ASSUME {pct}% от ГЭСН-конструктива | — | {_fmt_num(a.get('amount'))} |")
     lines.append("")
     tot = r.get("totals", {})
-    lines.append(f"**ИТОГО СМР (прямые+НР+СП): {_fmt_num(tot.get('smr'))} ₽**")
+    lines.append(f"ГЭСН-конструктив (локальный уровень): {_fmt_num(tot.get('gesn_smr'))} ₽")
+    lines.append(f"+ укрупнённые ASSUME-разделы: {_fmt_num(tot.get('allowance_total'))} ₽")
+    lines.append(f"× текущий уровень цен k={_fmt_num(tot.get('price_level_k'))}: "
+                 f"**{_fmt_num(tot.get('smr'))} ₽**")
     lines.append(f"+ непредвиденные {_fmt_num(tot.get('contingency_pct'))}%: {_fmt_num(tot.get('contingency'))} ₽")
     lines.append(f"+ НДС {_fmt_num(tot.get('vat_pct'))}%: {_fmt_num(tot.get('vat'))} ₽")
-    lines.append(f"**━━ ВСЕГО (общая цена с НДС): {_fmt_num(tot.get('grand_total'))} ₽**")
+    lines.append(f"**━━ ОРИЕНТИР стоимости объекта с НДС: {_fmt_num(tot.get('grand_total'))} ₽**")
     # Codex §10.1B: число COMPUTED — строгое ТОЛЬКО относительно явной базы и допущений ниже.
-    # Это не итог по проекту, а условный расчёт по шаблону. Честность важнее красивой цифры.
-    lines.append("_⚠ УСЛОВНО строгое: числа вычислены из ГЭСН по допущениям ниже (шаблон "
-                 f"«{head}»), это НЕ смета по проекту — состав укрупнён, не ВОР с чертежей._")
+    # Это не детальная смета по проекту, а бюджетная прикидка с явными ASSUME-разделами.
+    lines.append("_Это прикидка для мутного ТЗ: недостающие разделы придуманы как ASSUME. "
+                 "Если прикрепить ВОР/Ф9/КС-2/папку проекта, будет считаться детальная смета по данным._")
     if r.get("missing_codes"):
         lines.append(f"⚠ нет в базе: {', '.join(r['missing_codes'])}")
-    lines.append(f"⚙ Состав укрупнённый ({tot.get('positions')} поз., типовой) — "
-                 f"отделка/проёмы/инженерка добавляются в шаблон.")
+    lines.append(f"⚙ Состав: {tot.get('positions')} ГЭСН-поз. + "
+                 f"{tot.get('allowance_positions')} укрупнённых ASSUME-разделов.")
     if r.get("assumptions"):
         lines.append("Допущения: " + "; ".join(r["assumptions"]))
+    logic_lines = _object_estimate_logic_lines(r)
+    if logic_lines:
+        lines.extend(["", "### Защита расчёта: что откуда взято", *logic_lines])
     # provenance (Codex §10.1B): класс числа + база + допущения — структурно, для claim-валидации.
     provenance = {
         "kind": "COMPUTED",
         "basis": [f"template:{r.get('template', {}).get('id')}", "ГЭСН-2022"],
         "assumptions": r.get("assumptions", []),
-        "confidence": "conditional",
+        "confidence": r.get("quality", {}).get("status") or "rough_full_object_assumed",
+        "final_total_allowed": False,
+        "defensibility": r.get("defense", {}).get("defensibility", {}),
     }
-    return {"answer": "\n".join(lines), "operation": "object_estimate", "provenance": provenance}
+    return {
+        "answer": "\n".join(lines),
+        "operation": "object_estimate",
+        "provenance": provenance,
+        "defense": (r.get("defense") or {}).get("contract") or r.get("defense"),
+        "sources": _object_estimate_sources(r),
+        "retrieval_trace": _object_estimate_trace(r),
+        "evidence_summary": {
+            "COMPUTED": 1,
+            "ASSUMED": len(r.get("allowances") or []),
+            "MISSING_PRICE": r.get("defense", {}).get("price_coverage", {}).get("missing", 0),
+        },
+        "total_status": "computed_assumed",
+    }
+
+
+def _object_estimate_sources(result: dict[str, Any]) -> list[dict[str, Any]]:
+    sources = [dict(s) for s in _OBJECT_ESTIMATE_SOURCES]
+    template_id = result.get("template", {}).get("id") or "object_template"
+    sources[0]["source_ref"] = f"config/domain/object_templates.yaml#{template_id}"
+    for p in result.get("vor", {}).get("positions") or []:
+        code = str(p.get("code") or "").strip()
+        if code:
+            sources.append({
+                "source_ref": f"ГЭСН-2022#{code}",
+                "source_kind": "norm",
+                "excerpt": str(p.get("name") or ""),
+            })
+    return sources
+
+
+def _object_estimate_trace(result: dict[str, Any]) -> dict[str, Any]:
+    totals = result.get("totals") or {}
+    return {
+        "mode": "object_estimate",
+        "quality_status": result.get("quality", {}).get("status") or "rough_full_object_assumed",
+        "template": result.get("template", {}).get("id"),
+        "positions": totals.get("positions", 0),
+        "allowance_positions": totals.get("allowance_positions", 0),
+        "sources_count": len(_object_estimate_sources(result)),
+        "price_coverage": result.get("defense", {}).get("price_coverage", {}),
+        "calc": {
+            "gesn_smr": totals.get("gesn_smr"),
+            "allowance_total": totals.get("allowance_total"),
+            "subtotal_base": totals.get("subtotal_base"),
+            "price_level_k": totals.get("price_level_k"),
+            "smr_current": totals.get("smr"),
+            "contingency_pct": totals.get("contingency_pct"),
+            "vat_pct": totals.get("vat_pct"),
+            "grand_total": totals.get("grand_total"),
+        },
+    }
+
+
+def _object_estimate_logic_lines(result: dict[str, Any]) -> list[str]:
+    totals = result.get("totals") or {}
+    template_id = result.get("template", {}).get("id") or "—"
+    codes = ", ".join(str(p.get("code")) for p in result.get("vor", {}).get("positions") or [] if p.get("code"))
+    defense = result.get("defense") or {}
+    coverage = defense.get("price_coverage") or {}
+    missing_prices = int(coverage.get("missing") or 0)
+    resources = int(coverage.get("resources") or 0)
+    lines = [
+        "- Статус: **ориентир, не защищаемая ЛСР**. Защищать можно ход расчёта и нижнюю "
+        "ГЭСН-базу; итог целиком держится на ASSUME-разделах, k текущего уровня и незакрытых ценах ресурсов.",
+        f"- Нормативная база: шаблон `{template_id}` выбрал коды ГЭСН {codes or '—'}; объёмы ниже "
+        "получены из формул ВОР, а не из текста модели.",
+        f"- Ценовое покрытие ресурсов: {resources} ресурс(ов), без цены: {missing_prices}. "
+        "Ресурс без цены входит в предупреждения и не делает итог защищаемой коммерческой сметой.",
+        "",
+        "| Код | Объём защищён чем | Стоимость собрана как | Цены ресурсов |",
+        "|---|---|---|---|",
+    ]
+    for item in defense.get("gesn_positions") or []:
+        c = item.get("cost_build_up") or {}
+        pc = item.get("resource_price_coverage") or {}
+        qty = f"{_fmt_num(item.get('physical_qty'))} {item.get('physical_unit') or ''}".strip()
+        formula = str(item.get("formula") or "—")
+        values = _formula_values_text(item.get("formula_values") or {})
+        norm = f"{_fmt_num(item.get('norm_qty'))} {item.get('norm_unit') or ''}".strip()
+        cost = (
+            f"прямые {_fmt_num(c.get('direct'))} + НР {_fmt_num(c.get('nr'))} + "
+            f"СП {_fmt_num(c.get('sp'))} = {_fmt_num(c.get('total'))}"
+        )
+        lines.append(
+            f"| {item.get('code') or '—'} | {qty}; `{formula}` при {values} → {norm} | "
+            f"{cost} | {_coverage_text(pc)} |"
+        )
+    allowances = defense.get("allowance_positions") or []
+    if allowances:
+        lines.extend(["", "ASSUME-разделы — не нормы и не КП, а явные операторские допущения шаблона:"])
+        for a in allowances:
+            pct = round(_f(a.get("pct_of_smr")) * 100, 1)
+            lines.append(
+                f"- {a.get('label')}: {pct}% × ГЭСН-конструктив "
+                f"{_fmt_num(totals.get('gesn_smr'))} = {_fmt_num(a.get('amount'))} ₽ "
+                "(ASSUMED_NOT_NORMATIVE)."
+            )
+    lines.extend([
+        f"- Текущий уровень цен: (`ГЭСН-конструктив + ASSUME`) × k={_fmt_num(totals.get('price_level_k'))} "
+        f"= {_fmt_num(totals.get('smr'))} ₽. k сейчас ASSUME: для защиты нужен регион/квартал/индекс.",
+        f"- Хвост: непредвиденные {_fmt_num(totals.get('contingency_pct'))}% + НДС "
+        f"{_fmt_num(totals.get('vat_pct'))}% = {_fmt_num(totals.get('grand_total'))} ₽.",
+        "- Для защищаемой сметы нужны ВОР/Ф9/КС-2 или проектные объёмы, регион/квартал индексов, "
+        "ФГИС/КАЦ/КП по ресурсам, и детальные позиции по подвалу, инженерке, фасадам и отделке.",
+        "- Ссылки на код/алгоритм — это воспроизводимость расчёта, не доказательство стоимости.",
+    ])
+    return lines
+
+
+def _formula_values_text(values: dict[str, Any]) -> str:
+    if not values:
+        return "—"
+    return ", ".join(f"{k}={_fmt_num(v)}" for k, v in sorted(values.items()))
+
+
+def _coverage_text(coverage: dict[str, Any]) -> str:
+    by_source = coverage.get("by_source") or {}
+    parts = [f"{k} {v}" for k, v in sorted(by_source.items())]
+    text = ", ".join(parts) if parts else "—"
+    examples = coverage.get("missing_examples") or []
+    if examples:
+        text += "; нет цены: " + "; ".join(str(x) for x in examples[:2])
+    return text
 
 
 def _humanize_qty(qty: Any, unit: str) -> str:

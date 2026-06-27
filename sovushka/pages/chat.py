@@ -143,6 +143,44 @@ OUTPUT_FORMATS = {
 }
 
 
+def _attachment_chat_payload(attachment: dict) -> dict:
+    """Скрепка → поля ChatRequest. Чистая функция для тестов и чтобы UI не забывал scope."""
+    if not attachment or not attachment.get("id"):
+        return {}
+    mode = attachment.get("mode")
+    payload: dict = {}
+    if mode in {"quick", "index"}:
+        payload["dataset_ids"] = [str(attachment["id"])]
+    if mode == "read" and attachment.get("text"):
+        name = str(attachment.get("name") or "вложение").strip() or "вложение"
+        payload["attachment_context"] = f"Файл: {name}\n\n{str(attachment['text']).strip()}"
+    return payload
+
+
+def _attachment_visible_text(data: dict) -> tuple[str, str, str]:
+    """Текст видимого подтверждения: куда именно пойдёт файл после галочки upload."""
+    name = str(data.get("name") or "файл").strip() or "файл"
+    mode = str(data.get("mode") or "")
+    if mode == "read":
+        suffix = " · усечён" if data.get("truncated") else ""
+        return (
+            "Файл прикреплён к следующему сообщению",
+            f"{name} · В чат · {data.get('chars', 0)} симв.{suffix}",
+            f"📎 Файл «{name}» прикреплён к следующему запросу. Модель увидит его текст вместе с сообщением.",
+        )
+    if mode == "quick":
+        return (
+            "Таблица прикреплена к следующему сообщению",
+            f"{name} · Таблица · {data.get('rows', 0)} строк",
+            f"📎 Таблица «{name}» прикреплена к следующему запросу как временный датасет для сверки.",
+        )
+    return (
+        "Файл добавлен в базу и выбран для следующего сообщения",
+        f"{name} · В базу · {data.get('dataset_name', 'RAG-датасет')}",
+        f"📎 Файл «{name}» добавлен в базу и будет выбран как источник следующего запроса.",
+    )
+
+
 def _verify_path(q: str) -> str | None:
     """Путь к скану: в кавычках или абсолютный от первого '/'.
 
@@ -234,7 +272,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
     </script>
     """)
 
-    with ui.element("div").classes("sov-chat-shell"):
+    with ui.element("div").classes("sov-chat-shell sov-artifacts-collapsed") as chat_shell:
         history_drawer = ui.element("aside").classes("sov-history-drawer")
         history_drawer.set_visibility(False)
 
@@ -421,17 +459,18 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             indexing_banner = ui.label("").classes("sov-indexing-banner")
             indexing_banner.set_visibility(False)
 
-            # Скрепка чата: прикрепить документ — быстрая сверка / индексация (W11.8)
-            attach_state = {"id": None, "name": "", "mode": ""}
+            # Скрепка чата: файл к следующему сообщению / быстрая сверка / индексация (W11.8)
+            attach_state = {"id": None, "name": "", "mode": "", "text": ""}
             with ui.dialog() as attach_dialog, ui.card().classes("sov-control-card").style("min-width:360px"):
-                _html('<div class="section-title">Прикрепить документ</div>')
+                _html('<div class="section-title">Добавить файл к сообщению</div>')
                 attach_mode = ui.toggle(
-                    {"quick": "Быстрая сверка (таблицы)", "index": "Индексация (в базу)"},
-                    value="quick",
+                    {"read": "В чат", "quick": "Таблица", "index": "В базу"},
+                    value="read",
                 ).props("no-caps")
                 ui.label(
-                    "Быстрая сверка: парс таблиц без векторов — сразу можно «сверь с ВОР». "
-                    "Индексация: документ войдёт в базу знаний (поиск в чате)."
+                    "В чат: текст файла уйдёт модели вместе со следующим сообщением и не попадёт в базу. "
+                    "Таблица: xlsx/csv станет временным датасетом для сверки. "
+                    "В базу: документ добавится в RAG-датасет."
                 ).style("font-size:.66rem;color:var(--dim);")
                 ui.upload(
                     auto_upload=True,
@@ -452,25 +491,48 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     ui.notify(last_api_error_text("Не удалось прикрепить файл"), type="negative")
                     attach_status.text = ""
                     return
-                attach_state.update({"id": d.get("attachment_id"), "name": d.get("name", e.name), "mode": d.get("mode")})
-                if d.get("mode") == "quick":
-                    msg = f"📎 {d.get('name')} — {d.get('rows', 0)} строк, готово к сверке"
-                else:
-                    msg = f"📎 {d.get('name')} — индексируется в «{d.get('dataset_name', 'базу')}»"
-                attach_chip.text = msg
-                attach_chip.visible = True
-                attach_status.text = "Готово"
+                attach_state.update({
+                    "id": d.get("attachment_id"),
+                    "name": d.get("name", e.name),
+                    "mode": d.get("mode"),
+                    "text": d.get("text", ""),
+                })
+                title, detail, chat_msg = _attachment_visible_text(d)
+                attach_title.set_text(title)
+                attach_chip.set_text(detail)
+                attach_strip.set_visibility(True)
+                attach_status.text = "Готово: файл виден под полем ввода"
                 attach_dialog.close()
-                ui.notify(msg, type="positive")
+                with chat_column:
+                    _render_chat_bubble(chat_msg, "chat-msg-sys")
+                chat_scroll.scroll_to(percent=1)
+                ui.notify(title, type="positive")
                 if d.get("mode") == "quick":
-                    ui.notify("Спроси «сверь это с ВОР» — файл уже участвует в сверке", type="info")
+                    ui.notify("Таблица пойдёт в scope следующего запроса", type="info")
+                elif d.get("mode") == "read":
+                    ui.notify("Файл будет отправлен модели вместе со следующим сообщением", type="info")
+
+            def _clear_attachment(*, notify: bool = True):
+                attach_state.update({"id": None, "name": "", "mode": "", "text": ""})
+                attach_title.set_text("")
+                attach_chip.set_text("")
+                attach_strip.set_visibility(False)
+                if notify:
+                    ui.notify("Вложение снято", type="info")
 
             with ui.element("div").classes("sov-composer") as composer_box:
                 chat_input = ui.textarea(
                     placeholder="Спросить по нормативам, проекту или базе знаний..."
                 ).classes("sov-composer-input").props("rows=2 autogrow borderless")
-                attach_chip = ui.label("").style("font-size:.7rem;color:var(--accent);font-weight:700;")
-                attach_chip.visible = False
+                with ui.row().classes("sov-attachment-strip") as attach_strip:
+                    ui.icon("o_attach_file").classes("sov-attachment-icon")
+                    with ui.column().classes("sov-attachment-copy"):
+                        attach_title = ui.label("").classes("sov-attachment-title")
+                        attach_chip = ui.label("").classes("sov-attachment-chip")
+                    ui.button(icon="o_close", on_click=lambda: _clear_attachment()).props(
+                        'flat round dense aria-label="Снять вложение"'
+                    ).classes("sov-icon-btn").tooltip("Снять вложение")
+                attach_strip.set_visibility(False)
 
                 # ── Codex-style режим-чипы: ставят DOMAIN-режим (сильный хинт роутеру/профилю).
                 # Модель остаётся моделью — режим биасит выбор инструмента, не жёсткий keyword-гейт.
@@ -544,9 +606,21 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                                          on_click=lambda: advanced_dialog.open()).props("dense").style(
                                 "font-size:.66rem;color:var(--accent);font-weight:700;")
                     ui.button(
+                        icon="o_travel_explore",
+                        on_click=lambda: _open_scope_dialog(),
+                    ).props("no-caps flat round").tooltip("Выбрать проект или датасет")
+                    ui.button(
+                        icon="o_folder_open",
+                        on_click=lambda: _toggle_files(),
+                    ).props("no-caps flat round").tooltip("Открыть файлы и папки")
+                    ui.button(
                         icon="o_attach_file",
                         on_click=lambda: attach_dialog.open(),
-                    ).props("no-caps flat round").tooltip("Прикрепить документ")
+                    ).props("no-caps flat round").tooltip("Прикрепить файл")
+                    ui.button(
+                        icon="o_view_sidebar",
+                        on_click=lambda: _open_artifacts(),
+                    ).props("no-caps flat round").tooltip("Показать артефакты")
                     send_btn = ui.button(
                         "Отправить",
                         icon="o_send",
@@ -554,12 +628,17 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     ).props("no-caps")
 
         # Резиновый layout: разделитель между чатом и артефактами (таскать по ширине).
-        ui.element("div").classes("sov-resize-divider")
+        artifact_divider = ui.element("div").classes("sov-resize-divider")
+        artifact_divider.set_visibility(False)
 
-        with ui.element("aside").classes("sov-artifacts-panel"):
+        with ui.element("aside").classes("sov-artifacts-panel") as artifact_shell:
+            artifact_shell.set_visibility(False)
             with ui.row().classes("w-full items-center justify-between"):
                 _html('<div class="sov-panel-title">Артефакты</div>')
-                _html('<span class="sov-chip sov-chip-soft">live</span>')
+                ui.button(
+                    icon="o_close",
+                    on_click=lambda: _set_artifacts_visible(False),
+                ).props('flat round dense aria-label="Скрыть артефакты"').classes("sov-icon-btn")
             artifact_panel = ui.column().classes("sov-artifacts-body")
             with artifact_panel:
                 _html(
@@ -1063,6 +1142,47 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         parts = [c["file"]] + ([c["locator"]] if c["locator"] else [])
         return " · ".join(p for p in parts if p)
 
+    def _show_source_drawer(source, index: int) -> None:
+        """v0.23B: source chip opens a real citation drawer in Artifacts."""
+        from sovushka.answer_render import citation_drawer_item
+
+        item = citation_drawer_item(source, index)
+        _open_artifacts()
+        artifact_panel.clear()
+        with artifact_panel:
+            with ui.card().classes("sov-artifact-card"):
+                with ui.row().classes("w-full items-center justify-between gap-2"):
+                    ui.label(f"Источник {item.get('n') or index}").classes("sov-panel-title")
+                    if item.get("kind"):
+                        ui.label(str(item["kind"])).classes(
+                            "src-tag src-tag-warn" if item.get("weak") else "src-tag"
+                        )
+                title = str(item.get("file") or "источник")
+                if item.get("locator"):
+                    title += f" · {item['locator']}"
+                ui.label(title).style(
+                    "font-size:.78rem;font-weight:800;word-break:break-word;margin-top:4px;"
+                )
+                if item.get("source_ref"):
+                    ui.label(str(item["source_ref"])).style(
+                        "font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
+                        "font-size:.62rem;color:var(--dim);word-break:break-all;margin-top:6px;"
+                    )
+                    with ui.row().classes("gap-2 items-center flex-wrap").style("margin-top:6px;"):
+                        _copy_button("source_ref", str(item["source_ref"]), classes="sov-answer-act")
+                        citation_text = f"{title}\n{item.get('snippet') or item.get('source_ref') or ''}".strip()
+                        _copy_button("Цитату", citation_text, icon="o_format_quote", classes="sov-answer-act")
+                        if item.get("open_url"):
+                            ui.link("Открыть", str(item["open_url"])).props("target=_blank").classes("sov-answer-act")
+                        else:
+                            ui.label(str(item.get("unavailable_reason") or "Открытие недоступно")).classes(
+                                "src-tag src-tag-warn"
+                            )
+                else:
+                    ui.label(str(item.get("unavailable_reason") or "Нет source_ref")).classes("src-tag src-tag-warn")
+                if item.get("snippet"):
+                    ui.markdown(f"> {item['snippet']}").classes("sov-artifact-markdown").style("margin-top:8px;")
+
     def _render_source_tags(srcs: list, crag: str = "", meta: dict | None = None):
         from sovushka.answer_render import source_chip
         if not srcs and not crag and not meta:
@@ -1072,7 +1192,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 c = source_chip(source, i)
                 cls = "src-tag src-tag-warn" if (c["weak"] or not c["has_ref"]) else "src-tag"
                 lbl = f"{i} · {_source_label(source)}"
-                el = ui.label(lbl).classes(cls)
+                if c["has_ref"]:
+                    el = ui.button(lbl, on_click=lambda s=source, n=i: _show_source_drawer(s, n)).props(
+                        "flat dense no-caps"
+                    ).classes(cls)
+                else:
+                    el = ui.label(lbl).classes(cls)
                 if c["kind"]:
                     el.tooltip(c["kind"] + ("" if c["has_ref"] else " · без ссылки"))
             if crag:
@@ -1261,8 +1386,20 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         return bool(_parse_table_from_ai(ans) or _parse_markdown_table(ans)
                     or _parse_mermaid_from_ai(ans) or _parse_svg_from_ai(ans))
 
+    def _set_artifacts_visible(visible: bool) -> None:
+        artifact_shell.set_visibility(visible)
+        artifact_divider.set_visibility(visible)
+        if visible:
+            chat_shell.classes(remove="sov-artifacts-collapsed")
+        else:
+            chat_shell.classes(add="sov-artifacts-collapsed")
+
+    def _open_artifacts() -> None:
+        _set_artifacts_visible(True)
+
     def _show_artifact(ans: str, mode: str) -> None:
         """Открыть артефакт сообщения в панели «Артефакты» (как карточка в Claude Desktop)."""
+        _open_artifacts()
         _render_result(ans, mode if mode in OUTPUT_FORMATS else "text", artifact_panel)
         try:
             ui.run_javascript(
@@ -1492,6 +1629,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
     async def _preview_file_artifact(url: str, name: str, kind: str) -> None:
         """Открыть файл-артефакт в живой панели: xlsx/csv → таблица, картинка → image,
         прочее → скачивание. Превью не затирает список файлов (он в отдельной панели)."""
+        _open_artifacts()
         if kind == "image":
             artifact_panel.clear()
             with artifact_panel:
@@ -1532,6 +1670,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
     def _register_file_artifact(name: str, url: str, kind: str = "file") -> None:
         if not url or url in _file_artifacts:
             return
+        _open_artifacts()
         _file_artifacts[url] = {"name": name, "kind": kind}
         files_artifacts_panel.set_visibility(True)
         with files_artifacts_panel:
@@ -1610,7 +1749,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             if meta:
                 _render_suggestions(meta)
                 _render_excerpts(meta)
-                if _is_ai and not rich:
+                if _is_ai:
                     _artifact_button(str(text or ""), _mode)
             if _is_ai and str(text or "").strip():
                 _render_answer_actions(str(text or ""), srcs or [])
@@ -1647,7 +1786,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             if meta:
                 _render_suggestions(meta)
                 _render_excerpts(meta)
-                if not error and not rich:
+                if not error:
                     _artifact_button(str(text or ""), meta.get("out_mode", "text"))
             if not error and str(text or "").strip():
                 _render_answer_actions(str(text or ""), srcs or [])
@@ -1995,6 +2134,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         apply_btn.props("disabled")
         advanced_btn.props("disabled")
         chat_input.props("disabled")
+        sent_attachment = dict(attach_state) if attach_state.get("id") else {}
+        attachment_name = str(sent_attachment.get("name") or "").strip()
+        question_display = question
+        if attachment_name:
+            question_display = f"{question}\n\n📎 Прикреплено: {attachment_name}"
         # Авто-GOST: «собери/составь спецификацию …» → формат спеки (ГОСТ 21.110), чтобы
         # артефакт был чистой таблицей по форме, а не прозой. Не липко — селектор вернём.
         _orig_mode = out_mode_val["v"]
@@ -2012,14 +2156,13 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         # рендер ответа: смета/проверка → таблица; вольный/раг/кп → текст; иначе сам формат.
         _render_mode = "table" if out_mode in ("smeta", "review") else ("text" if _routing_mode else out_mode)
 
-        state["chat_history"].append({"role": "user", "text": question})
+        state["chat_history"].append({"role": "user", "text": question_display})
         state["chat_pending"] = {"question": question, "started_at": time.time()}
 
         with chat_column:
-            _render_chat_bubble(question, "chat-msg-user")
+            _render_chat_bubble(question_display, "chat-msg-user")
             ai_placeholder, ai_placeholder_label = _render_ai_placeholder(_ph_map.get(out_mode, "Генерирую... 0с"))
         chat_scroll.scroll_to(percent=1)
-        _render_artifact_loading(_render_mode, question)
         add_log(f'[AI] Запрос: "{question[:60]}"')
 
         # Формат/стиль ответа — ОТДЕЛЬНЫМ полем (не клеим в текст вопроса): иначе бэкенд
@@ -2046,6 +2189,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                                 "dataset_ids": scope_state["dataset_ids"]}
         if project_state["id"]:  # back-compat: одиночный проект → project_id
             payload["project_id"] = project_state["id"]
+        payload.update(_attachment_chat_payload(sent_attachment))
+        if sent_attachment:
+            _clear_attachment(notify=False)
 
         _t0 = time.monotonic()
         _stop_tick = {"v": False}
@@ -2085,6 +2231,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             meta = {
                 "query_route": d.get("query_route") or {},
                 "retrieval_trace": d.get("retrieval_trace") or {},
+                "unified_trace": d.get("unified_trace") or d.get("retrieval_trace") or {},
+                "evidence_summary": d.get("evidence_summary") or {},
+                "total_status": d.get("total_status") or "",
                 "cache": d.get("cache", "miss"),
                 "validation": d.get("validation") or {"enabled": bool(validation_sw.value)},
                 "history_id": d.get("history_id"),
@@ -2111,7 +2260,6 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                         "margin-top:6px;border:1px solid var(--border);border-radius:8px;"
                         "background:var(--bg);color:var(--accent);font-size:.68rem;font-weight:700;padding:4px 10px;"
                     )
-            _render_result(ans, out_mode, artifact_panel, table_query=d.get("table_query"))
             add_log(f"[AI] Формат:{out_mode} CRAG:{crag or 'N/A'} src:{len(srcs)}")
             # W11.17: команда «создать документ» → генерируем форму и скачиваем файл.
             cmd = d.get("command") or {}
@@ -2208,6 +2356,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         await _do_send(q)
 
     def _html_set_artifact_mode(label: str, hint: str):
+        _open_artifacts()
         artifact_panel.clear()
         with artifact_panel:
             _html(
@@ -2226,6 +2375,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         )
 
     def _render_artifact_loading(mode: str, question: str):
+        _open_artifacts()
         artifact_panel.clear()
         label = OUTPUT_FORMATS.get(mode, ("Артефакт", ""))[0]
         with artifact_panel:
@@ -2238,6 +2388,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             )
 
     def _render_artifact_error(detail: str):
+        _open_artifacts()
         artifact_panel.clear()
         with artifact_panel:
             _html(

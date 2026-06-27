@@ -37,6 +37,15 @@ Estimate Workflow Hardening не закрыт как release gate
 операционные P0 из MODULE_AUDIT не были частью старого milestone-плана
 ```
 
+### Стабилизационный вектор сессии 2026-06-27
+
+Все функции, поднятые в сессии 0.23.6.x, должны идти по контракту “взрослой” функции:
+работает в GUI, управляется оператором явно, документирована, даёт понятную ошибку вместо падения
+workflow, не выдаёт число без логики/source/assumption/MISSING/BLOCKED и имеет regression test на
+happy path плюс управляемый fail path там, где возможен плохой ввод. Формальный чек-лист перенесён в
+`docs/GUARDRAILS.md#5-контракт-стабильной-функции`; для смет это означает: мутное ТЗ допускает только
+ориентир с явными ASSUME/коэффициентами, а честная смета строится по файлам/датасетам/ВОР с evidence.
+
 ### Новый порядок до v1
 
 До новых больших функций действует правило:
@@ -559,7 +568,55 @@ basic smoke:  tools/basic_function_smoke.py + make smoke-basic + tests/test_basi
               (live: 8 pass / 1 warn / 0 fail)
 ```
 
+### Стабилизация 2026-06-27 — 0.23.6.2
+
+```text
+auth/trust:   дефолты TRUSTED_NETWORKS/TRUSTED_PROXY_NETWORKS сужены с 127.0.0.0/8 до
+              127.0.0.1/32, env может явно расширить ZeroTier; regression на 127.1.2.3 spoof.
+backup/restore: backup_runtime.sh пишет SHA256SUMS.txt; restore_runtime.sh проверяет checksum
+              до dry-run/restore и останавливается на mismatch.
+index:        RAG_VERIFY_POINTS_EVERY default = 1; mismatch Qdrant-count → ERROR + cleanup, не INDEXED.
+KOT:          term matching только от границы слова; "кац" не ловится внутри "спецификация";
+              "противопожар" добавлен явно, чтобы качество пожарного домена не просело.
+```
+
 Источник: `docs/MODULE_AUDIT_2026-06-26.md` (P0/P1 закрыты), ветка `feat/les3-p1`.
+
+### UI/сметная стабилизация 2026-06-27 — 0.23.6.3
+
+```text
+chat attachments: скрепка получила read-mode (текст файла → контекст следующего запроса);
+              quick/index-вложения реально попадают в payload как dataset_ids; чип вложения снимаемый.
+chat scope:    в composer добавлены прямые кнопки выбора проекта/датасета и открытия папок/файлов
+              рядом со скрепкой (не только верхний ScopeSelector).
+smeta:         object_estimate разделён на два честных режима: мутное ТЗ → прикидка целого
+              объекта (ГЭСН-конструктив + явные ASSUME-разделы + price_level_k + НДС);
+              много данных/вложений → детальная смета должна считаться по ВОР/Ф9/КС-2/датасету.
+              Ориентир остаётся final_total_allowed=false, потому что допущения придуманы явно.
+```
+
+### UI/сметная стабилизация 2026-06-27 — 0.23.6.4
+
+```text
+theme:          чат и админка стартуют в светлой теме; тёмная остаётся ручным переключателем.
+artifacts:      правая панель "Артефакты" по умолчанию скрыта; открывается по явному чипу,
+                файлу/форме или verification-artifact, закрывается кнопкой.
+cloud model:    OpenAI-compatible/proxyapi больше не показывает "модель не задана":
+                дефолт `OPENAI_MODEL=gpt-4.1`, runtime/status/UI показывают фактическую модель.
+smeta evidence: объектная прикидка несёт RAG-подвал: логика расчёта, ссылки на шаблон/код/ALGO,
+                ГЭСН-коды, `sources`, `retrieval_trace`, `evidence_summary`.
+```
+
+### Стабилизационный контракт 2026-06-27 — 0.23.6.5
+
+```text
+attachments:     режим "Прочитать" ловит сбой конвертера и отдаёт управляемый 422 с подсказкой,
+                 без падения workflow и без записи в датасет.
+artifacts GUI:   при скрытой по умолчанию панели у оператора есть отдельная кнопка "Показать
+                 артефакты" в composer actions; закрытие остаётся в самой панели.
+docs:            Guardrails получил формальный контракт стабильной функции: GUI-контроль,
+                 fail-path как результат, evidence/provenance, тест, документация, gate.
+```
 
 ---
 
@@ -602,11 +659,91 @@ Open behavior:
 ### Acceptance
 
 ```text
-source chip открывает drawer
+source chip открывает drawer                         ✅ 0.23.6.6
 "Открыть" работает или disabled с причиной
-source без source_ref не рисуется как fake button
-mail citation snippet-only
+source без source_ref не рисуется как fake button     ✅ 0.23.6.6
+mail citation snippet-only                            ✅ 0.23.6.6
 котельная/live answer можно проверить глазами
+```
+
+### Частично закрыто 2026-06-27 — 0.23.6.6
+
+```text
+source drawer:   source chip с реальным source_ref открывает карточку цитаты в панели "Артефакты".
+open behavior:   file-like source_ref получает ссылку raw-file; weak/vector/missing-ref показывают
+                 причину недоступности вместо фейкового открытия.
+copy:            в drawer есть копирование source_ref и текстовой цитаты.
+mail safety:     citation payload остаётся snippet-only, полное тело письма не попадает в artifact.
+```
+
+### Latency hotfix 2026-06-27 — 0.23.6.7
+
+```text
+router primary:  LES_ROUTER_PRIMARY больше не включается по умолчанию. Без явного opt-in чат
+                 не ждёт 12 секунд LLM-router timeout перед deterministic fallback.
+smoke symptom:   до фикса deterministic smoke-ответы имели router_unavailable_cascade_fallback
+                 и занимали ~12s даже без LLM generation.
+```
+
+### Attachment/router stabilization 2026-06-27 — 0.23.6.8
+
+```text
+chat attach:     дефолт скрепки стал "В чат": файл виден в composer/user bubble и уходит модели
+                 как attachment_context следующего запроса с именем файла; после отправки вложение
+                 снимается, чтобы не протекать в следующий вопрос.
+read attach:     auto-путь с attachment_context пропускает ранний keyword/clarification-каскад:
+                 "прочитай/суммируй этот файл" идёт в LLM/RAG, а не в glossary/scope ловушку.
+plain read:      если у запроса нет project/dataset scope, read-вложение обрабатывается attachment-only
+                 LLM route без глобального RAG, чтобы не подтягивать случайные источники корпуса.
+LLM fallback:    direct LLM/attachment/free path и router-primary без облачного ключа используют
+                 локальный MLX; router-primary имеет LES_ROUTER_TIMEOUT=2s fail-fast вместо 12s ожидания.
+```
+
+### Defense-contract stabilization 2026-06-27 — 0.23.6.9
+
+```text
+system:          evidence_contract расширен до DefensePack/DefenseClaim: claim → source/formula/input
+                 → assumptions/gaps/actions → defensibility.
+smeta object:    объектная прикидка показывает не только итог, но и защиту строк: формула объёма,
+                 physical qty, прямые/НР/СП, покрытие цен ресурсов, missing-price examples.
+normcontrol:     doc_review JSON отдаёт такой же defense-contract для proposed remarks; финал по-прежнему
+                 ставит инженер, не движок.
+ops:             make ship стал полным check→deploy→post-smoke; make ship-check оставлен для проверки
+                 без деплоя.
+```
+
+### Attachment UX / ship cadence 2026-06-27 — 0.23.6.10
+
+```text
+attach UX:       после галочки upload файл виден прямо в чате системным сообщением и в composer-плашке:
+                 оператор понимает, что файл уйдёт со следующим запросом.
+ship cadence:    make ship = быстрый итерационный gate; make ship-full = полный pytest gate версии.
+post smoke:      post-deploy smoke делает retry после restart proxy, а не падает на коротком startup gap.
+```
+
+### Normcontrol defense report 2026-06-27 — 0.23.6.11
+
+```text
+doc-review chat: ответ стал отчётом для человека: verdict машины, evidence/action таблицы, защита решения.
+leak fix:        рабочая память/LES.md больше не примешивается в doc-review answer.
+payload:         chat payload отдаёт top-level defense для UI/экспорта без парсинга markdown.
+sheet format:    D4-001 проверяет PDF-геометрию листов по ГОСТ 2.301 кодом; нестандартный лист даёт
+                 computed_issue с source_ref страницы.
+layout next:     размещение рамки/основной надписи и заполнение граф — отдельный layout-tool; не выдаём
+                 это за текущую уверенность модели.
+```
+
+### Service sources / layout v1 2026-06-27 — 0.23.6.12
+
+```text
+service sources: config/service_sources.yaml + /api/service-sources показывают, какие служебные
+                 источники нужны ЛЕСу: ГЭСН, ФГИС ЦС, коэффициенты/шаблоны, СПДС rulepack,
+                 нормативный RAG и layout-reference.
+admin GUI:       Инструменты получили блок "Служебные источники данных" со статусом OK/НУЖЕН/БЛОК.
+layout v1:       D4-002 проверяет текстовые блоки PDF: сигнатуры основной надписи должны быть в
+                 ожидаемой нижней правой зоне листа; вне зоны = computed_issue.
+safe self-write: ЛЕС может вести реестр источников/подсказки/missing-actions, но расчётные ядра и
+                 rulepack меняются только через версию, тесты и ledger.
 ```
 
 ---
@@ -741,6 +878,26 @@ UI показывает retrieved requirements / computed checks / review needed
 ```
 
 Подробный план: `docs/DOC_REVIEW_GOST_R_21_101_2026_PLAN.md`.
+
+### Статус 2026-06-27 — 0.24.0.0
+
+```text
+doc-review:      RAG-led ГОСТ Р 21.101-2026 workflow работает через чат, API и Инструменты.
+reports:         JSON/HTML/XLSX доступны; XLSX содержит лист normalized_remarks.
+evidence:        каждый пункт отдаёт items + defense_contract_v1 + normalized_remarks; финал остаётся за инженером.
+layout:          D4-001 формат листа и D4-002 зона основной надписи проверяются кодом.
+service sources: оператор видит, какие базы/датасеты нужны для смет и нормоконтроля.
+public-ready:    README/LICENSE/SECURITY/PUBLICATION_CHECKLIST + make public-check.
+```
+
+Не закрыто и вынесено в v0.24+:
+
+```text
+ПП РФ №87 composition profile
+импорт чек-листа БУП/ГИП как template
+DOCX/PDF renderer отчёта
+deeper layout-tool для заполнения всех граф основной надписи
+```
 
 ---
 

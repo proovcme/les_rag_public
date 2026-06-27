@@ -17,10 +17,10 @@ from typing import Any
 # ── центральные версии ────────────────────────────────────────────────────────────────────
 
 APP_VERSION = "5.1.0"                 # пользовательская «маркетинговая» версия ЛЕС
-HARNESS_VERSION = "0.23"             # веха roadmap (v0.NN); двигать на смене вехи
+HARNESS_VERSION = "0.24"             # веха roadmap (v0.NN); двигать на смене вехи
 # Гранулярная версия «где мы»: 0.<веха>.<фича>.<патч>. Двигать КАЖДУЮ фичу/фикс + строка в
 # docs/RELEASE_LEDGER.md. Это основной номер в /api/version и бейдже (см. docs/RELEASE_LEDGER.md).
-LES_VERSION = "0.23.6.0"
+LES_VERSION = "0.24.0.0"
 EVIDENCE_SCHEMA_VERSION = "1.0"
 EXTRACTION_SCHEMA_VERSION = "1.0"
 RESOURCE_CALC_VERSION = "0.6"
@@ -32,18 +32,26 @@ _RUNTIME_ROOT = Path(os.getenv("LES_RUNTIME_HOME", "/Users/ovc/LES"))
 # критичные файлы, по которым ловим расхождение repo↔runtime (хэш, не полный diff).
 # v0.22: + GUI-файлы (sovushka) — иначе deploy stamp слеп к фронт-правкам и не флипается в stale.
 _CRITICAL_FILES = (
+    "proxy/app.py",
     "proxy/routers/datasets.py",
     "proxy/routers/chat.py",
+    "proxy/routers/doc_review.py",
     "proxy/routers/runtime.py",
+    "proxy/routers/service_sources.py",
     "proxy/services/doc_extract_service.py",
+    "proxy/services/doc_review_service.py",
     "proxy/services/sidecar_ops_service.py",
     "proxy/services/deterministic_policy_service.py",
     "proxy/services/glossary_chat_service.py",
+    "proxy/services/service_source_registry.py",
     "proxy/services/scope_service.py",
+    "proxy/services/title_block_extract_service.py",
     "proxy/services/version_service.py",
     "sovushka/pages/chat.py",
+    "sovushka/pages/instrumenty.py",
     "sovushka/components/header.py",
     "sovushka/answer_render.py",
+    "config/service_sources.yaml",
 )
 # файлы, которых в рантайме намеренно НЕТ (flag-OFF, dev-only) — их отсутствие НЕ divergence
 _DEV_ONLY = frozenset({

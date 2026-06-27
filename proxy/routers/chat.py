@@ -63,6 +63,7 @@ from proxy.services.table_query_service import maybe_answer_table_query, parquet
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["chat"])
+DEFAULT_OPENAI_MODEL = "gpt-4.1"
 
 
 @router.get("/commands")
@@ -84,6 +85,7 @@ class ChatRequest(BaseModel):
     scope: Optional[dict] = None  # v0.21: нормализованная область поиска {scope_type, project_ids, dataset_ids}
     output_directive: Optional[str] = None  # формат/стиль ответа — ТОЛЬКО в генерацию (не в роутинг/заметки/ретрив)
     mode: Optional[str] = None  # явный РЕЖИМ из UI («smeta» → форс сметного пути минуя роутер/RAG)
+    attachment_context: Optional[str] = None  # текст файла из скрепки (read-mode), без индексации
 
     @field_validator("question")
     @classmethod
@@ -93,6 +95,18 @@ class ChatRequest(BaseModel):
             raise ValueError("Пустой вопрос")
         if len(v) > 4000:
             raise ValueError(f"Вопрос слишком длинный ({len(v)} симв., макс. 4000)")
+        return v
+
+    @field_validator("attachment_context")
+    @classmethod
+    def attachment_context_limits(cls, v):
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            return None
+        if len(v) > 20000:
+            raise ValueError(f"Контекст вложения слишком длинный ({len(v)} симв., макс. 20000)")
         return v
 
 
@@ -181,6 +195,16 @@ def _join_openai_path(base_url: str, path: str) -> str:
     return f"{base}/v1{path}"
 
 
+def _is_local_llm_url(base_url: str) -> bool:
+    low = (base_url or "").strip().lower()
+    return (
+        low.startswith("http://127.")
+        or low.startswith("http://localhost")
+        or low.startswith("http://[::1]")
+        or low.startswith("http://0.0.0.0")
+    )
+
+
 def _model_needs_completion_tokens(model: str) -> bool:
     """GPT-5.x и reasoning o-серия (o1/o3/o4) требуют `max_completion_tokens`
     вместо `max_tokens` — иначе OpenAI/proxyapi отвечает 400."""
@@ -205,11 +229,15 @@ def _llm_runtime() -> LlmRuntime:
         base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip()
         model = os.getenv("OPENROUTER_MODEL", "").strip() or os.getenv("LLM_MODEL", "")
         api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+        if not api_key and not _is_local_llm_url(base_url):
+            return _mlx_runtime()
         return LlmRuntime(provider, base_url, _join_openai_path(base_url, "/chat/completions"), model, api_key, False)
     if provider in {"openai", "openai-compatible", "openai_compatible"}:
         base_url = os.getenv("OPENAI_BASE_URL", "").strip() or "https://api.openai.com/v1"
-        model = os.getenv("OPENAI_MODEL", "").strip() or os.getenv("LLM_MODEL", "")
+        model = os.getenv("OPENAI_MODEL", "").strip() or os.getenv("LES_DEFAULT_OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
         api_key = os.getenv("OPENAI_API_KEY", "").strip()
+        if not api_key and not _is_local_llm_url(base_url):
+            return _mlx_runtime()
         return LlmRuntime(provider, base_url, _join_openai_path(base_url, "/chat/completions"), model, api_key, False)
     if provider == "ollama":
         base_url = os.getenv("OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")).strip()
@@ -931,10 +959,14 @@ async def _run_free_mode(req: "ChatRequest", token_sink=None) -> str:
     sys_prompt = ("Ты Совушка в «вольном» режиме: отвечай свободно, можешь рассуждать и "
                   "предполагать. База документов НЕ используется — отвечай из общих знаний. "
                   "По-русски, по делу, с лёгкой иронией.")
+    attachment = (
+        f"Контекст прикреплённого файла:\n{req.attachment_context}\n\n"
+        if req.attachment_context else ""
+    )
     body = {
         "model": runtime.model,
         "messages": [{"role": "system", "content": sys_prompt},
-                     {"role": "user", "content": req.question}],
+                     {"role": "user", "content": attachment + req.question}],
         "temperature": 0.85, "max_tokens": 1400,
     }
     body = _cloud_body_for_model(body, runtime.model, runtime.provider)
@@ -983,6 +1015,57 @@ async def _run_free_mode(req: "ChatRequest", token_sink=None) -> str:
         logger.warning("[FREE] generation failed: %s", e)
         return disclaimer + f"Не удалось получить вольный ответ: {type(e).__name__}: {e}"
     return disclaimer + "".join(acc).strip()
+
+
+def _attachment_source_label(ctx: str | None) -> str:
+    if not ctx:
+        return "attachment"
+    first = ctx.strip().splitlines()[0].strip()
+    if first.lower().startswith("файл:"):
+        name = first.split(":", 1)[1].strip()
+        if name:
+            return f"attachment:{name}"
+    return "attachment"
+
+
+async def _run_attachment_mode(req: "ChatRequest", token_sink=None) -> str:
+    """Direct LLM over the attached file text only. No global RAG sources."""
+    runtime = _llm_runtime()
+    sys_prompt = (
+        "Ты Совушка. Пользователь прикрепил файл к сообщению. Отвечай по тексту файла как по "
+        "главному источнику; не привлекай внешние документы и не выдумывай отсутствующие данные. "
+        "Если в тексте файла нет нужной информации, прямо скажи, чего не хватает. По-русски, кратко."
+    )
+    user_prompt = (
+        "Контекст прикреплённого файла:\n"
+        f"{req.attachment_context}\n\n"
+        f"Задание пользователя: {req.question}"
+    )
+    body = {
+        "model": runtime.model,
+        "messages": [{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_prompt}],
+        "temperature": 0.2,
+        "max_tokens": 1400,
+    }
+    body = _cloud_body_for_model(body, runtime.model, runtime.provider)
+    headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
+    try:
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            if runtime.provider == "ollama":
+                text, _ = await _ollama_native_complete(
+                    client, runtime, body["messages"], max_tokens=1400, temperature=0.2,
+                    headers=headers, token_sink=None)
+            else:
+                r = await client.post(runtime.chat_url, headers=headers, json=body)
+                r.raise_for_status()
+                text = _assistant_text(r.json().get("choices", [{}])[0].get("message", {}))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[ATTACHMENT] generation failed: %s", e)
+        text = f"Не удалось обработать прикреплённый файл: {type(e).__name__}: {e}"
+    text = text.strip()
+    if token_sink is not None and text:
+        await token_sink({"event": "token", "data": text})
+    return text
 
 
 def _harness_complete(messages: list[dict]) -> str:
@@ -1122,6 +1205,9 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     from proxy.services.agent_router_service import router_primary as _router_primary
     _rp = _router_primary()
     _rt = ""  # имя инструмента по версии LLM-роутера (для in-flow гейта table/reconcile/clause)
+    _router_down = False   # роутер-LLM недоступен (таймаут/сеть/5xx) ≠ осознанный «none»
+    _rp_eff = _rp          # эффективный router-primary: роутер упал → False → легаси детерм.-каскад
+    _has_read_attachment = bool(req.attachment_context)
 
     def _profile_route(channel: str, operation: str | None, *,
                        base: dict | None = None, source: str | None = None) -> dict:
@@ -1152,25 +1238,64 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 "command": cmd_res.get("command"),
             }
 
-    def _mode_reply(answer: str, operation: str, channel: str, crag: str = "DETERMINISTIC") -> dict:
+    def _mode_reply(
+        answer: str,
+        operation: str,
+        channel: str,
+        crag: str = "DETERMINISTIC",
+        *,
+        extra: dict[str, Any] | None = None,
+    ) -> dict:
         """Единый shape ответа для режимных каналов (+ запись в историю + след профиля)."""
         route = {"channel": channel, "operation": operation, "profile": _resolution.as_trace()}
+        extra = extra or {}
+        sources = extra.get("sources") or []
+        retrieval_trace = extra.get("retrieval_trace") or {}
         hid = None
         try:
+            history_sources = [
+                str(s.get("source_ref") or s.get("ref") or s.get("path") or s)
+                if isinstance(s, dict) else str(s)
+                for s in sources
+            ]
             hid = save_chat_history(
-                question=req.question, answer=answer, sources=[],
+                question=req.question, answer=answer, sources=history_sources,
                 crag_status=crag, latency_sec=0.0, tokens=0,
                 session_id=req.session_id,
-                query_route=route, validation_enabled=False,
+                query_route=route, retrieval_trace=retrieval_trace, validation_enabled=False,
             )
         except Exception as _hist_err:  # noqa: BLE001
             logger.warning("[HISTORY] %s save failed: %s", channel, _hist_err)
-        return {
-            "answer": answer, "crag_status": crag, "sources": [], "history_id": hid,
+        payload = {
+            "answer": answer, "crag_status": crag, "sources": sources, "history_id": hid,
             "query_route": route,
+            "retrieval_trace": retrieval_trace,
             "validation": {"enabled": False, "reason": channel},
             "versions": _version_stamp(),
         }
+        for key in ("provenance", "defense", "evidence_summary", "total_status"):
+            if key in extra:
+                payload[key] = extra[key]
+        return payload
+
+    if _PROFILE == "auto" and _has_read_attachment and not req.dataset_ids and not req.dataset_filter and not pid:
+        answer = await _run_attachment_mode(req, token_sink)
+        return _mode_reply(
+            answer,
+            "read_attachment",
+            "attachment_context",
+            crag="ATTACHMENT",
+            extra={
+                "sources": [_attachment_source_label(req.attachment_context)],
+                "retrieval_trace": {
+                    "mode": "attachment_context",
+                    "vector_count": 0,
+                    "lexical_count": 0,
+                    "merged_count": 0,
+                    "quality_status": "attachment_only",
+                },
+            },
+        )
 
     # ── Unified Construction Harness v0.3 (feature-flag LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED,
     # OFF дефолт). Только дефолтный путь (auto/grounded_rag) — явные режимы смета/review/КП/free НЕ
@@ -1253,7 +1378,12 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                        "соберу расчёт из локальной базы ГЭСН."),
             "operation": "smeta_need_params",
         }
-        return _mode_reply(sm["answer"], sm.get("operation", "object_estimate"), "smeta_mode")
+        return _mode_reply(
+            sm["answer"],
+            sm.get("operation", "object_estimate"),
+            "smeta_mode",
+            extra=sm,
+        )
 
     if _PROFILE == "normcontrol":
         # Нормоконтроль документов проекта (формальный, без LLM) → таблица замечаний.
@@ -1321,17 +1451,26 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     # Режим «РАГ» (явно выбран): форсим заземлённый RAG — пропускаем роутер/каскад/автозаметку,
     # чтобы ничто не увело запрос в детерминированный канал. reply=None → дальше в RAG-конвейер.
     from proxy.services.agent_router_service import maybe_agent_route, router_primary, route_with_name
-    if _PROFILE != "grounded_rag":
-        if router_primary():
+    if _PROFILE != "grounded_rag" and not (_has_read_attachment and _PROFILE == "auto"):
+        if _rp:
             # route_with_name: имя инструмента + результат handler'а. Имя (_rt) гейтит in-flow
             # инструменты без handler'а (table_agg/clause/reconcile исполняются ниже, где есть данные).
             _rt, reply = route_with_name(req.question, project_id=pid)
-            if reply is not None:
+            if _rt == "unavailable":
+                # Роутер-LLM недоступен (таймаут/сеть/5xx) — это НЕ осознанный «none». Деградируем в
+                # легаси детерм.-каскад: mail/table/scope/glossary отвечают БЕЗ LLM, а route_source у
+                # каждого канала остаётся ЧЕСТНЫМ (regex/keyword) — не врём «llm_router». Маркер «упал»
+                # пишем в trace. См. docs/ALGO-routing.md §«Фолбэк при недоступном роутере».
+                _router_down = True
+                _rt = ""
+                _rp_eff = _rp and not _router_down   # → False: ниже работают _det_channels + keyword-гейты
+                _scope_snap.setdefault("warnings", []).append("router_unavailable_cascade_fallback")
+            elif reply is not None:
                 channel = "agent"
         # ИНВЕРСИЯ (AUDIT_DETERMINISM, no-determinism-in-chat-directive): keyword-каскад — ТОЛЬКО
         # legacy-фолбэк. В режиме router_primary (дефолт ON) понимание делает LLM-роутер выше; его
         # «none» = это RAG-вопрос → НЕ запускаем гейты на свободный текст, уступаем дорогу RAG.
-        if reply is None and not router_primary():
+        if reply is None and not _rp_eff:
             # v0.18 DeterministicFinalPolicy: кандидат-ответ детерминированного канала принимается final
             # ТОЛЬКО при явном намерении (см. deterministic_policy_service). Иначе — отклоняем, пишем в
             # trace и уступаем дорогу RAG (legacy-канал не перехватывает проектный/descriptive/scoped вопрос).
@@ -1349,20 +1488,20 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 channel = _ch
                 break
         # Авто-заметки: утверждение-факт (не вопрос/команда) ЛЕС запоминает сам. 0 LLM.
-        if reply is None and not _rp:
+        if reply is None and not _rp_eff:
             from proxy.services.memory_service import maybe_autonote
             reply = maybe_autonote(req.question, dataset_filter=req.dataset_filter or "", project_id=pid, output_directive=req.output_directive)
             if reply is not None:
                 channel = "memory"
         # Ярус 2 (флаг LES_AGENT_LOOP): чат сам выбирает инструмент, если regex не поймал.
         # В режиме router_primary роутер УЖЕ отработал выше — не зовём повторно.
-        if reply is None and not router_primary():
+        if reply is None and not _rp:
             reply = maybe_agent_route(req.question, project_id=pid)
             if reply is not None:
                 channel = "agent"
         # v0.22: проектный запрос при scope=all → не искать молча весь корпус, а попросить выбрать
         # область (нормы/глоссарий/глобальный реестр сюда не попадают — им весь RAG разрешён).
-        if reply is None and not _rp and _scope_snap.get("scope_type") == "all":
+        if reply is None and not _rp_eff and _scope_snap.get("scope_type") == "all":
             from proxy.services.scope_service import needs_project_scope, scope_clarification
             if needs_project_scope(req.question):
                 try:
@@ -1377,25 +1516,37 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     if reply is not None:
         det_route = _profile_route(channel, reply.get("operation"),
                                    base={"agent_tool": reply.get("agent_tool"), "scope": _scope_snap})
+        det_sources = reply.get("sources") or []
+        det_trace = reply.get("retrieval_trace") or {}
         if _rejected_det:                       # v0.18: что policy отклонила до принятого кандидата
             det_route["rejected_deterministic"] = _rejected_det
         det_hid = None
         try:  # детерм. ответы тоже в историю (видны в Совушке); сбой записи не ломает ответ
+            det_history_sources = [
+                str(s.get("source_ref") or s.get("ref") or s.get("path") or s)
+                if isinstance(s, dict) else str(s)
+                for s in det_sources
+            ]
             det_hid = save_chat_history(
-                question=req.question, answer=reply["answer"], sources=[],
+                question=req.question, answer=reply["answer"], sources=det_history_sources,
                 crag_status="DETERMINISTIC", latency_sec=0.0, tokens=0,
-                session_id=req.session_id, query_route=det_route, validation_enabled=False,
+                session_id=req.session_id, query_route=det_route, retrieval_trace=det_trace, validation_enabled=False,
             )
         except Exception as _hist_err:
             logger.warning("[HISTORY] deterministic save failed: %s", _hist_err)
-        return {
+        payload = {
             "answer": reply["answer"],
             "crag_status": "DETERMINISTIC",
-            "sources": [],
+            "sources": det_sources,
             "history_id": det_hid,
             "query_route": det_route,
+            "retrieval_trace": det_trace,
             "validation": {"enabled": False, "reason": f"deterministic_{channel}_command"},
         }
+        for key in ("provenance", "defense", "evidence_summary", "total_status"):
+            if key in reply:
+                payload[key] = reply[key]
+        return payload
 
     # W16.1/W16.3: рабочая память — релевантные заметки оператора и прошлые удачные
     # ответы (лексический recall, без LLM). Считается до clarification: проектные
@@ -1405,6 +1556,12 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     except Exception as err:
         logger.warning("[MEMORY] recall failed: %s", err)
         memory_block = ""
+    if req.attachment_context:
+        attachment_block = (
+            "Контекст прикреплённого файла (read-mode, не индекс):\n"
+            f"{req.attachment_context}"
+        )
+        memory_block = attachment_block + ("\n\n" + memory_block if memory_block else "")
     # LES.md: контекст папки/проекта — ВСЕГДА (как CLAUDE.md для harness). Симметрия датасет↔проект
     # (#2): если выбран ДАТАСЕТ без проекта (pid=0), резолвим его объект и подмешиваем тот же LES.md,
     # что и в режиме проекта — иначе режим датасета терял контекст (системы/стадия/состав папки).
@@ -1456,7 +1613,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     # иначе «проверь соответствие…» перехватит уточняющий гейт (broad_review). 0 LLM.
     from proxy.services.reconcile_chat_service import answer_reconcile_query, is_reconcile_query
     from proxy.services.reconcile_service import doc_type_label
-    if ((_rt == "reconcile") if _rp else is_reconcile_query(req.question)):
+    if ((_rt == "reconcile") if _rp_eff else is_reconcile_query(req.question)):
         t_rec_start = time.time()
         try:
             rec_names = await _dataset_name_map(rag_backend)
@@ -1512,7 +1669,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     # ЛИБО оператор включил режим-чип «Нормоконтроль» (mode=doc_review). Исполняем на скоупном
     # датасете (RAG-led review). Проверки/числа считает код, вердикт — за инженером.
     _dr_mode = str(getattr(req, "mode", "") or "").lower() == "doc_review"
-    if _dr_mode or (_rp and _rt == "doc_review"):
+    if _dr_mode or (_rp_eff and _rt == "doc_review"):
         from proxy.services import doc_review_service as _drs
         _dr_ds = effective_dataset_ids[0] if effective_dataset_ids else None
         if not _dr_ds:
@@ -1532,12 +1689,14 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             logger.warning("[DOC_REVIEW] skipped: %s", _dr_err)
             _dr_map = _dr_items = None
         if _dr_items is not None:
-            _dr_text = _drs.review_to_chat_text(_dr_items, _dr_map) + (f"\n\n{memory_block}" if memory_block else "")
+            _dr_text = _drs.review_to_chat_text(_dr_items, _dr_map)
             _dr_sum = _drs.review_summary(_dr_items)
+            _dr_json = _drs.review_to_json(_dr_items, _dr_map)
             _dr_route = _profile_route("doc_review", "doc_review")
             _dr_trace = {"mode": "doc_review", "vector_count": 0, "lexical_count": 0,
                          "merged_count": _dr_sum["total"], "retry_count": 0,
-                         "quality_status": "doc_review", "doc_review": _dr_sum}
+                         "quality_status": "doc_review", "doc_review": _dr_sum,
+                         "defense_status": "manual_required"}
             _dr_hist = None
             try:
                 _dr_hist = save_chat_history(
@@ -1557,7 +1716,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 "effective_dataset_filter": "DOC_REVIEW", "query_route": _dr_route,
                 "retrieval_trace": _dr_trace, "cache": "doc_review",
                 "validation": {"enabled": False, "reason": "doc_review"},
-                "doc_review": _drs.review_to_json(_dr_items, _dr_map),
+                "doc_review": _dr_json,
+                "defense": _dr_json.get("defense"),
                 "history_id": _dr_hist,
             }
 
@@ -1570,7 +1730,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         dataset_ids=effective_dataset_ids,
         dataset_filter=req.dataset_filter,
     )
-    if not _rp and clarification.needs_clarification and not _summary_intent:
+    if not _rp and clarification.needs_clarification and not _summary_intent and not _has_read_attachment:
         logger.info(
             "[CLARIFY] reasons=%s route=%s filter=%s",
             clarification.classification.reasons,
@@ -1803,7 +1963,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         else chat_validation_enabled()
     )
 
-    if not _rp and (query_intent.channel == "mail" or effective_dataset_filter == "MAIL"):
+    if not _rp_eff and (query_intent.channel == "mail" or effective_dataset_filter == "MAIL"):
         t_mail_start = time.time()
         try:
             mail_result = await maybe_answer_mail_query(req.question, rag_backend)
@@ -1939,7 +2099,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 "history_id": history_id,
             }
 
-    if ((_rt == "table_agg") if _rp else (query_intent.channel == "table")) and _dataset_ids:
+    if ((_rt == "table_agg") if _rp_eff else (query_intent.channel == "table")) and _dataset_ids:
         t_table_start = time.time()
         table_chunks = parquet_ref_chunks_for_datasets(
             _dataset_ids,
@@ -1986,7 +2146,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 use_validation=False,
             )
 
-    if ((_rt == "clause") if _rp else (query_intent.channel == "rag")) and _dataset_ids:
+    if ((_rt == "clause") if _rp_eff else (query_intent.channel == "rag")) and _dataset_ids:
         t_clause_start = time.time()
         try:
             clause_result = maybe_answer_clause_lookup(

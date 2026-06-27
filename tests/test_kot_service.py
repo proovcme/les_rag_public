@@ -47,6 +47,16 @@ def test_kot_short_terms_do_not_match_inside_words():
     assert "пос" not in decision.matched_terms
 
 
+def test_kot_terms_match_only_from_word_boundary():
+    from proxy.services.kot_service import _term_matches
+
+    assert _term_matches("спецификац", "спецификация оборудования") is True
+    assert _term_matches("кац", "спецификация оборудования") is False
+    assert _term_matches("пожар", "противопожарная преграда") is False
+    assert _term_matches("пожар", "пожарная сигнализация") is True
+    assert analyze_question("противопожарная преграда").dataset_filter == "NTD_FIRE"
+
+
 def test_kot_layout_and_typo_preprocessing():
     from proxy.services.kot_service import transform_query
 

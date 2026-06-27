@@ -64,7 +64,7 @@ TRUSTED_NETWORKS = tuple(
     item.strip()
     for item in os.getenv(
         "TRUSTED_NETWORKS",
-        "127.0.0.0/8,::1/128",
+        "127.0.0.1/32,::1/128",
     ).split(",")
     if item.strip()
 )
@@ -72,7 +72,7 @@ TRUSTED_NETWORK_ROLE = os.getenv("TRUSTED_NETWORK_ROLE", ADMIN_ROLE)
 
 TRUSTED_PROXY_NETWORKS = tuple(
     item.strip()
-    for item in os.getenv("TRUSTED_PROXY_NETWORKS", "127.0.0.0/8,::1/128").split(",")
+    for item in os.getenv("TRUSTED_PROXY_NETWORKS", "127.0.0.1/32,::1/128").split(",")
     if item.strip()
 )
 TRUSTED_PROXY_HEADER = os.getenv("TRUSTED_PROXY_HEADER", "x-les-trusted-network")

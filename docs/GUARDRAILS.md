@@ -5,18 +5,22 @@
 
 ## 1. Прод-гейт: в рантайм только после тестов
 
-Последовательность выката (цель — `make ship`, пока вручную в этом порядке):
+Последовательность выката:
 
 ```
-1. make verify        # офлайн-гейт: compileall + pytest --collect-only (импорт-смоук)
-2. make test          # полная сюита — должна быть зелёной (или явный список known-fail)
-3. make smoke-basic   # живой HTTP-смок против рантайма (:8050/:8051)
-4. bump версии 0.23.N.P + строка в RELEASE_LEDGER + releases.md
-5. uv run python -m tools.deploy_to_runtime --apply [--restart]   # cp + deploy stamp
-6. make smoke-basic   # post-deploy: подтвердить, что живое не упало
+1. bump версии 0.23.N.P + строка в RELEASE_LEDGER + releases.md
+2. make ship          # verify → focused tests → smoke → deploy-runtime → retry post-deploy-smoke
 ```
 
-**Деплой запрещён, если шаги 1-3 красные** (или без явного решения оператора по known-fail).
+Для проверки без деплоя или полного релизного gate:
+
+```
+make ship-check       # verify → test-focused → smoke-basic
+make ship-full-check  # verify → test → smoke-basic
+make ship-full        # полный gate + deploy + retry post-deploy-smoke
+```
+
+**Деплой запрещён, если выбранный gate красный** (или без явного решения оператора по known-fail).
 
 ## 2. Откат
 
@@ -47,8 +51,21 @@
 - Не плодить датированные саммари — состояние в `git log` + RELEASE_LEDGER + `/api/version`.
 - Deploy stamp не должен врать: не подгонять `deployed_commit` косметически; не звать готовым без проверки на рантайме ([[deploy-stamp-discipline]]).
 
-## 5. Известное (на 2026-06-27, в долг)
+## 5. Контракт стабильной функции
 
-- `make test`: 9 fail / 2037 pass (version-эндпоинт ×3, help `topic_slices` TypeError, 3× chat live-сервисы, profile_resolver glossary) — разобрать при возврате к коду.
-- `make smoke-basic`: 8/1 (chat_project_noscope таймаут; chat_glossary 82с) — латентность чата.
-- Версия `0.23.N.P` зафиксирована в доке (RELEASE_LEDGER); внедрение в `version_service`/`/api/version` — в очереди (код на паузе).
+Любая новая рабочая функция считается включённой только если выполнены все пункты:
+
+- **GUI-контроль:** оператор видит состояние, может явно запустить/остановить/скрыть/открыть связанный блок и не зависит от скрытого auto-flow.
+- **Ошибки как результат:** ожидаемые сбои ввода, конвертации, поиска, генерации и файлового вывода возвращают HTTP 4xx/5xx с понятным `detail` или показываются в чате/панели; исключение не должно уносить весь workflow.
+- **Evidence/provenance:** для расчётов и RAG-ответов есть source/formula/assumption/MISSING/BLOCKED-след; число без происхождения не считается результатом. Для защищаемых выводов использовать системный `DefensePack/DefenseClaim` (`defense_contract_v1`): claim → basis/source/formula → assumptions/gaps/actions → defensibility.
+- **Тест:** есть точечный regression test на основной happy path и хотя бы один управляемый fail path для рискованного ввода.
+- **Док:** модульный/ALGO/ledger-док обновлён в том же пакете, версия `LES_VERSION` поднята.
+- **Гейт:** перед готовностью минимум `make verify`; для логики — `make test` или обоснованный focused-test + явный residual risk.
+
+## 6. Известное (на 2026-06-27, в долг)
+
+- `make ship`: с 0.23.6.10 быстрый итерационный gate (`verify → focused tests → smoke → deploy → retry-smoke`).
+- `make ship-full`: полный gate версии (`verify → test → smoke → deploy → retry-smoke`); последний полный pytest 2026-06-27: 2068 passed / 6 warnings.
+- post-deploy `make smoke-basic`: pass=9 / warn=0 / fail=0; live deterministic chat latency: glossary ~49ms, project_noscope ~10ms.
+- live attachment-check: `crag_status=ATTACHMENT`, `route=attachment_context/read_attachment`, `sources=['attachment:demo.txt']`.
+- 0.23.6.8 задеплоено на рантайм через `tools.deploy_to_runtime --apply --restart`; `/api/version.runtime_alignment=aligned`.

@@ -7,9 +7,13 @@ computed_issue; кривое обозначение → computed_issue; отчё
 
 import json
 
+import pytest
+
 from proxy.services.doc_review_service import (
     S_COMPUTED_ISSUE,
+    build_sheet_format_evidence,
     review_summary,
+    review_to_chat_text,
     review_to_html,
     review_to_json,
     review_to_xlsx,
@@ -19,6 +23,17 @@ from proxy.services.document_set_model import build_document_set
 from proxy.services.normcontrol_review_map_service import load_review_map
 
 MAP = load_review_map("gost_r_21_101_2026")
+MM_TO_PT = 72.0 / 25.4
+
+
+def _make_pdf(path, width_mm: float = 210, height_mm: float = 297):
+    import fitz
+
+    doc = fitz.open()
+    page = doc.new_page(width=width_mm * MM_TO_PT, height=height_mm * MM_TO_PT)
+    page.insert_text((40, 40), "sheet format fixture", fontsize=11)
+    doc.save(path)
+    doc.close()
 
 
 def test_clean_set_has_no_computed_issue():
@@ -67,10 +82,44 @@ def test_retrieval_and_manual_kinds_are_honest():
     assert "manual_required" in statuses
 
 
+def test_sheet_format_uses_pdf_geometry_evidence(tmp_path):
+    pytest.importorskip("fitz")
+    pdf = tmp_path / "2024-15-АР-1.pdf"
+    _make_pdf(pdf, width_mm=500, height_mm=500)
+    sheet = build_sheet_format_evidence([str(pdf)])
+    items = run_review(build_document_set([pdf.name]), MAP, sheet_format=sheet)
+    d4 = next(it for it in items if it.rule_id == "G21.101-2026-D4-001")
+    assert d4.status == S_COMPUTED_ISSUE
+    assert d4.computed_check["name"] == "sheet_format"
+    assert d4.document_evidence
+    assert "Нестандартный формат листа" in d4.document_evidence[0]["snippet"]
+
+
+def test_chat_report_is_defensible_human_report():
+    items = run_review(build_document_set(["2024 15 АР 1.pdf", "README.pdf"]), MAP)
+    text = review_to_chat_text(items, MAP)
+    assert "Вердикт машины" in text
+    assert "Предварительные замечания" in text
+    assert "| ID | Что проверено | Основание | Evidence комплекта | Почему так | Действие |" in text
+    assert "ГОСТ Р 21.101-2026#clause=" in text
+    assert "подтвердить/отклонить замечание" in text
+    assert "### Защита решения" in text
+    assert "defense.contract" in text
+
+
 def test_reports_render(tmp_path):
     items = run_review(build_document_set(["2024-15-АР-1.pdf"]), MAP)
     payload = review_to_json(items, MAP)
     assert payload["standard"] == "ГОСТ Р 21.101-2026" and payload["items"]
+    assert payload["defense"]["schema"] == "defense_contract_v1"
+    assert payload["defense"]["domain"] == "normcontrol.doc_review"
+    assert payload["defense"]["summary"]["human_final_required"] is True
+    assert payload["defense"]["claims"]
+    assert {c["status"] for c in payload["defense"]["claims"]} & {"computed", "missing", "manual_required", "supported"}
+    assert payload["normalized_remarks"]
+    assert payload["normalized_remarks"][0]["schema"] == "normalized_remark_v1"
+    assert payload["normalized_remarks"][0]["finality"] == "proposed"
+    assert payload["normalized_remarks"][0]["human_decision"] == "unset"
     assert json.dumps(payload, ensure_ascii=False)  # сериализуемо
     html = review_to_html(items, MAP)
     assert "ГОСТ Р 21.101-2026" in html and "<table" in html

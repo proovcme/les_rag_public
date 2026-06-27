@@ -53,8 +53,17 @@ if [ -f "$LES_HOME/.env" ]; then
   echo "[backup]   .env скопирован"
 fi
 
-# Манифест + ретенция.
-{ echo "ts=$ts"; echo "les_home=$LES_HOME"; echo "collections=$cols"; } > "$dest/MANIFEST.txt"
+# Манифест + checksum: restore обязан проверить целостность до перезаписи живых данных.
+{ echo "ts=$ts"; echo "les_home=$LES_HOME"; echo "collections=$cols"; echo "checksum=SHA256SUMS.txt"; } > "$dest/MANIFEST.txt"
+(
+  cd "$dest"
+  find . -type f ! -name "SHA256SUMS.txt" -print | LC_ALL=C sort | while IFS= read -r p; do
+    shasum -a 256 "$p"
+  done > SHA256SUMS.txt
+)
+echo "[backup]   checksum → SHA256SUMS.txt"
+
+# Ретенция.
 ls -1dt "$BACKUP_ROOT"/*/ 2>/dev/null | tail -n +$((KEEP+1)) | while read -r old; do
   echo "[backup]   ретенция: удаляю старый $old"; rm -rf "$old"
 done

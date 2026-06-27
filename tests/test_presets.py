@@ -12,7 +12,7 @@ from proxy.services import preset_chat_service as pc
 @pytest.fixture
 def isolated_env(monkeypatch, tmp_path):
     monkeypatch.setattr(ps, "ENV_PATH", tmp_path / ".env")
-    for k in ("LES_LLM_PROVIDER", "RAG_OCR_BACKEND", "LES_ASBUILT_OCR_ENGINE"):
+    for k in ("LES_LLM_PROVIDER", "RAG_OCR_BACKEND", "LES_ASBUILT_OCR_ENGINE", "OPENAI_MODEL"):
         monkeypatch.setenv(k, "x")  # monkeypatch вернёт после теста
     return tmp_path
 
@@ -30,8 +30,10 @@ def test_apply_preset_writes_env_and_environ(isolated_env):
     res = ps.apply_preset("облако")  # рус-алиас
     assert res["preset"] == "cloud"
     assert os.getenv("LES_LLM_PROVIDER") == "openai"
+    assert os.getenv("OPENAI_MODEL") == "gpt-4.1"
     assert os.getenv("LES_ASBUILT_OCR_ENGINE") == "cloud"
     assert (isolated_env / ".env").read_text().count("LES_LLM_PROVIDER=openai") == 1
+    assert (isolated_env / ".env").read_text().count("OPENAI_MODEL=gpt-4.1") == 1
 
 
 def test_apply_unknown_raises(isolated_env):

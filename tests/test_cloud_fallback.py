@@ -3,7 +3,7 @@
 модели, затем локальному MLX (W3.3)."""
 import pytest
 
-from proxy.routers.chat import LlmRuntime, cloud_fallback_models, cloud_model_timeout
+from proxy.routers.chat import LlmRuntime, _llm_runtime, cloud_fallback_models, cloud_model_timeout
 
 
 def _rt(provider: str, model: str) -> LlmRuntime:
@@ -50,3 +50,17 @@ def test_model_timeout_default_and_override(monkeypatch):
     assert cloud_model_timeout() == 45.0
     monkeypatch.setenv("LES_CLOUD_MODEL_TIMEOUT_SEC", "20")
     assert cloud_model_timeout() == 20.0
+
+
+def test_direct_llm_runtime_downgrades_cloud_without_key(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-4.1")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("MLX_URL", "http://127.0.0.1:8080")
+    monkeypatch.setenv("LLM_MODEL", "mlx-local")
+
+    rt = _llm_runtime()
+
+    assert rt.provider == "mlx"
+    assert rt.model == "mlx-local"

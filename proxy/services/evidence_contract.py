@@ -25,6 +25,17 @@ class EvidenceType(str, Enum):
     BLOCKED = "BLOCKED"       # отклонено предохранителем (норма/единица/магнитуда)
 
 
+class DefenseStatus(str, Enum):
+    SUPPORTED = "supported"                 # подтверждено источником/проверкой
+    COMPUTED = "computed"                   # вычислено кодом и воспроизводимо
+    ASSUMED = "assumed"                     # принято допущением
+    MISSING = "missing"                     # не хватает данных
+    BLOCKED = "blocked"                     # остановлено guardrail
+    PARTIAL = "partial"                     # часть основания есть, часть отсутствует
+    MANUAL_REQUIRED = "manual_required"     # нужен инженерный/операторский вердикт
+    NOT_DEFENSIBLE = "not_defensible"       # нельзя защищать как финальный результат
+
+
 # Типы, которым РАЗРЕШЕНО нести число.
 _VALUE_TYPES = {EvidenceType.RETRIEVED, EvidenceType.COMPUTED, EvidenceType.ASSUMED}
 
@@ -77,6 +88,82 @@ class EvidenceBlock:
     def payload(self) -> dict[str, Any]:
         return {"type": self.type.value, "title": self.title, "status": self.status,
                 "items": [i.payload() for i in self.items]}
+
+
+@dataclass
+class DefenseClaim:
+    """Одна защищаемая единица ответа: утверждение, расчётная строка или замечание.
+
+    Это системный слой над evidence: UI/экспорт/нормоконтроль могут показывать одинаковую
+    структуру "что утверждаем → на чём стоит → чего не хватает → кто финализирует".
+    """
+    id: str
+    title: str
+    statement: str
+    status: DefenseStatus | str
+    domain: str = ""
+    severity: str = ""
+    value: float | None = None
+    unit: str = ""
+    source_refs: list[str] = field(default_factory=list)
+    formulas: list[dict[str, Any]] = field(default_factory=list)
+    inputs: list[dict[str, Any]] = field(default_factory=list)
+    assumptions: list[str] = field(default_factory=list)
+    gaps: list[str] = field(default_factory=list)
+    actions: list[str] = field(default_factory=list)
+    related_evidence: list[str] = field(default_factory=list)
+    confidence: float | None = None
+
+    def __post_init__(self) -> None:
+        self.status = DefenseStatus(self.status)
+        if self.status is DefenseStatus.SUPPORTED and not (self.source_refs or self.formulas or self.inputs):
+            raise EvidenceError(f"DefenseClaim supported без основания: {self.id!r}")
+        if self.status is DefenseStatus.COMPUTED and not (self.formulas or self.inputs or self.source_refs):
+            raise EvidenceError(f"DefenseClaim computed без формулы/inputs/source_ref: {self.id!r}")
+        if self.status is DefenseStatus.ASSUMED and not self.assumptions:
+            raise EvidenceError(f"DefenseClaim assumed без assumptions: {self.id!r}")
+        if self.status in (DefenseStatus.MISSING, DefenseStatus.BLOCKED) and not (self.gaps or self.actions):
+            raise EvidenceError(f"DefenseClaim {self.status.value} без gaps/actions: {self.id!r}")
+        if self.status is DefenseStatus.NOT_DEFENSIBLE and not (self.gaps or self.assumptions or self.actions):
+            raise EvidenceError(f"DefenseClaim not_defensible без причины: {self.id!r}")
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "id": self.id, "title": self.title, "statement": self.statement,
+            "status": self.status.value, "domain": self.domain, "severity": self.severity,
+            "value": self.value, "unit": self.unit, "source_refs": self.source_refs,
+            "formulas": self.formulas, "inputs": self.inputs, "assumptions": self.assumptions,
+            "gaps": self.gaps, "actions": self.actions, "related_evidence": self.related_evidence,
+            "confidence": self.confidence,
+        }
+
+
+@dataclass
+class DefensePack:
+    """Единый защитный пакет результата: смета, нормоконтроль, сверка, таблица."""
+    domain: str
+    title: str
+    status: DefenseStatus | str
+    claims: list[DefenseClaim] = field(default_factory=list)
+    summary: dict[str, Any] = field(default_factory=dict)
+    coverage: dict[str, Any] = field(default_factory=dict)
+    required_actions: list[str] = field(default_factory=list)
+    schema: str = "defense_contract_v1"
+
+    def __post_init__(self) -> None:
+        self.status = DefenseStatus(self.status)
+
+    def payload(self) -> dict[str, Any]:
+        by_status: dict[str, int] = {}
+        for claim in self.claims:
+            key = claim.status.value
+            by_status[key] = by_status.get(key, 0) + 1
+        return {
+            "schema": self.schema, "domain": self.domain, "title": self.title,
+            "status": self.status.value, "summary": {**self.summary, "by_status": by_status},
+            "coverage": self.coverage, "required_actions": self.required_actions,
+            "claims": [c.payload() for c in self.claims],
+        }
 
 
 @dataclass

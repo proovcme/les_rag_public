@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 ENV_PATH = Path(".env")
+DEFAULT_OPENAI_MODEL = "gpt-4.1"
 
 # Локальные MLX-модели чата под Apple M4/24GB: лёгкий 4B — основной (≈20 ток/с, 2.6 ГБ),
 # тяжёлый 9B — резерв под качество (≈5 ток/с, 5.6 ГБ; душит память бокса). Переключение
@@ -218,7 +219,8 @@ def _provider_settings_payload() -> dict[str, object]:
         },
         "openai_compatible": {
             "base_url": os.getenv("OPENAI_BASE_URL", ""),
-            "model": os.getenv("OPENAI_MODEL", ""),
+            "model": os.getenv("OPENAI_MODEL", "").strip() or os.getenv("LES_DEFAULT_OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
+            "configured_model": os.getenv("OPENAI_MODEL", ""),
             "models": os.getenv("OPENAI_MODELS", ""),
             "api_key_set": bool(os.getenv("OPENAI_API_KEY", "")),
         },

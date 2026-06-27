@@ -223,7 +223,7 @@ class StructureAwareSplitter:
 EMBED_BATCH  = int(os.getenv("RAG_EMBED_BATCH", "32"))      # чанков за один запрос к MLX embeddings
 MIN_CHUNK    = int(os.getenv("RAG_MIN_CHUNK_CHARS", "100"))  # W2.5: <100 симв — шум («Приложение», «А»), не индексируем
 UPSERT_BATCH = int(os.getenv("RAG_UPSERT_BATCH", "100"))    # точек за один upsert в Qdrant
-VERIFY_POINTS_EVERY = max(1, int(os.getenv("RAG_VERIFY_POINTS_EVERY", "10")))  # W1.2: exact-count каждый N-й файл
+VERIFY_POINTS_EVERY = max(1, int(os.getenv("RAG_VERIFY_POINTS_EVERY", "1")))  # P0: exact-count каждый файл by default
 # W1.4: конвейер — конвертация следующего файла параллельно с эмбеддингом текущего,
 # per-file таймаут конвертации (зависший файл помечается ERROR, индексация продолжается).
 PARSE_PREFETCH = os.getenv("RAG_PARSE_PREFETCH", "true").lower() == "true"

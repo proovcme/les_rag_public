@@ -15,9 +15,21 @@
        → agent_router (router_primary ON по умолчанию)                 [agent_router_service.py]
            │ LLM выбирает инструмент из каталога _TOOLS (price/kac/lsr/glossary/doc_review/asbuilt…)
            ▼ инструмент исполняется в chat.py (где есть scope/effective_dataset_ids)
-       → если роутер ничего не выбрал И not router_primary() → keyword-каскад _det_channels (фолбэк)
+       → если роутер недоступен ИЛИ not router_primary() → keyword-каскад _det_channels (фолбэк)
        → иначе → RAG-конвейер (retrieval → saferag C-RAG → dispatcher), профиль задаёт каркас ответа
 ```
+
+## Фолбэк при недоступном роутере
+
+Важно различать два разных состояния:
+
+- `none` — роутер ответил и осознанно выбрал обычный RAG; keyword-каскад не запускается.
+- `unavailable` — роутер-LLM не ответил из-за таймаута/сети/5xx; `chat.py` считает effective
+  router-primary выключенным (`_rp_eff=false`) и включает legacy deterministic cascade.
+
+В режиме `unavailable` детерминированные каналы и in-flow гейты (`mail`, `reconcile`, `table_agg`,
+`clause`, scope clarification) работают по своим regex/keyword/`query_intent` правилам, а `route_source`
+остаётся честным (`regex`/`keyword`/`fallback`), не `llm_router`.
 
 ## ProfileResolver — единый контракт
 
@@ -37,10 +49,15 @@
 ## Где в коде
 
 - Резолвер профиля: `proxy/services/profile_resolver.py`
-- Агент-роутер (каталог инструментов + LLM-выбор): `proxy/services/agent_router_service.py` (`router_primary()` — флаг `LES_ROUTER_PRIMARY`, дефолт **ON**)
+- Агент-роутер (каталог инструментов + LLM-выбор): `proxy/services/agent_router_service.py` (`router_primary()` — флаг `LES_ROUTER_PRIMARY`, дефолт **OFF**, только явный opt-in)
 - Детерм. политика финала: `proxy/services/deterministic_policy_service.py` (legacy-каналы дают final ТОЛЬКО при явном намерении/команде/точном термине)
 - Область поиска: `proxy/services/scope_service.py` (all/project/dataset…; проектный запрос при scope=all → не искать молча, спросить)
-- Поток: `proxy/routers/chat.py` (`_run_chat`: роутер ПЕРЕД каскадом; каскад = `not router_primary()`)
+- Поток: `proxy/routers/chat.py` (`_run_chat`: роутер ПЕРЕД каскадом; каскад =
+  `not effective_router_primary`, то есть `LES_ROUTER_PRIMARY=false` или router `unavailable`)
+- Read-вложение из скрепки (`attachment_context`) — часть следующего пользовательского запроса:
+  в auto-профиле ранний keyword/clarification-каскад пропускается, чтобы файл обработал LLM/RAG-путь.
+  Если project/dataset scope не выбран, используется `attachment_context`-канал без глобального RAG:
+  источником ответа считается только `attachment:<имя файла>`.
 - Обзор на ревью: [ARCHITECTURE_les_algorithm.md](ARCHITECTURE_les_algorithm.md) §10
 
 ## Граница

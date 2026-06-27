@@ -153,10 +153,10 @@ def build_header(
             ).props('flat dense round aria-label="Обновить данные"').style("color:var(--dim);")
 
             # Тема
-            _dark_init = app.storage.user.get("dark_theme", True)
+            _dark_init = app.storage.user.get("dark_theme", False)
 
             def _toggle_theme():
-                d = not app.storage.user.get("dark_theme", True)
+                d = not app.storage.user.get("dark_theme", False)
                 app.storage.user["dark_theme"] = d
                 vars_ = _DARK_THEME if d else _LIGHT_THEME
                 js = ";".join(
@@ -321,11 +321,14 @@ def build_header(
                     def _refresh_answering(d: dict) -> None:
                         providers = d.get("providers") or {}
                         active = (providers.get("active") or "mlx").lower()
+                        llm_fallback = d.get("llm_model") or "(LLM_MODEL из .env)"
+                        openrouter_model = (providers.get("openrouter") or {}).get("model") or llm_fallback
+                        openai_model = (providers.get("openai_compatible") or {}).get("model") or llm_fallback
                         model_by_provider = {
-                            "mlx": d.get("llm_model") or "(LLM_MODEL из .env)",
-                            "ollama": (providers.get("ollama") or {}).get("model") or "⚠ модель не задана",
-                            "openrouter": (providers.get("openrouter") or {}).get("model") or "⚠ модель не задана",
-                            "openai": (providers.get("openai_compatible") or {}).get("model") or "⚠ модель не задана",
+                            "mlx": llm_fallback,
+                            "ollama": (providers.get("ollama") or {}).get("model") or llm_fallback,
+                            "openrouter": openrouter_model,
+                            "openai": openai_model,
                         }
                         is_cloud = active in ("openrouter", "openai")
                         kind = "ОБЛАКО" if is_cloud else "ЛОКАЛЬНО"

@@ -22,6 +22,16 @@ for a in "$@"; do case "$a" in --dry-run) DRY=1;; --env) WITH_ENV=1;; esac; done
 
 [ -n "$SRC" ] && [ -d "$SRC" ] || { echo "[restore] укажи существующую папку бэкапа" >&2; exit 1; }
 [ -f "$SRC/MANIFEST.txt" ] || echo "[restore] WARN: нет MANIFEST.txt — точно ли это бэкап ЛЕС?" >&2
+if [ -f "$SRC/SHA256SUMS.txt" ]; then
+  echo "[restore] checksum: проверяю SHA256SUMS.txt…"
+  (cd "$SRC" && shasum -a 256 -c SHA256SUMS.txt >/dev/null) || {
+    echo "[restore] FAIL: checksum mismatch — восстановление остановлено" >&2
+    exit 1
+  }
+  echo "[restore] checksum: ok"
+else
+  echo "[restore] WARN: нет SHA256SUMS.txt — целостность архива не проверена" >&2
+fi
 
 snaps=()
 while IFS= read -r s; do [ -n "$s" ] && snaps+=("$s"); done < <(ls -1 "$SRC"/*.snapshot 2>/dev/null || true)

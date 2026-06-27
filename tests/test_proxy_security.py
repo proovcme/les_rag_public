@@ -128,6 +128,21 @@ async def test_trusted_proxy_header_only_trusted_from_proxy_network(auth_db):
 
 
 @pytest.mark.asyncio
+async def test_trusted_proxy_default_does_not_trust_whole_127_block(auth_db, monkeypatch):
+    monkeypatch.setattr(security, "TRUSTED_NETWORKS", ("127.0.0.1/32", "::1/128", "10.10.10.0/24"))
+    monkeypatch.setattr(security, "TRUSTED_PROXY_NETWORKS", ("127.0.0.1/32", "::1/128"))
+    spoofed_loopback_neighbor = _request(
+        "127.1.2.3",
+        {"x-forwarded-for": "10.10.10.98", "x-les-trusted-network": "1"},
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await security.get_request_user(spoofed_loopback_neighbor, x_api_key=None, authorization=None)
+
+    assert exc.value.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_api_key_roles_and_admin_guard(auth_db):
     admin = await security.get_request_user(_request("203.0.113.10"), x_api_key="admin-key")
     user = await security.get_request_user(

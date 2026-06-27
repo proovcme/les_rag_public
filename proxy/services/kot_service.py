@@ -225,13 +225,12 @@ def normalize_question(question: str) -> str:
 def _term_matches(term: str, question: str) -> bool:
     if not term:
         return False
+    escaped = re.escape(term)
     if " " in term:
-        return term in question
+        return bool(re.search(rf"(?<![a-zа-я0-9]){escaped}", question, flags=re.IGNORECASE))
     if len(term) <= 3:
-        return bool(re.search(rf"(?<![a-zа-я0-9]){re.escape(term)}(?![a-zа-я0-9])", question, flags=re.IGNORECASE))
-    if len(term) == 4:
-        return bool(re.search(rf"(?<![a-zа-я0-9]){re.escape(term)}[a-zа-я0-9-]*", question, flags=re.IGNORECASE))
-    return term in question
+        return bool(re.search(rf"(?<![a-zа-я0-9]){escaped}(?![a-zа-я0-9])", question, flags=re.IGNORECASE))
+    return bool(re.search(rf"(?<![a-zа-я0-9]){escaped}[a-zа-я0-9-]*", question, flags=re.IGNORECASE))
 
 
 def extract_norm_refs(question: str) -> tuple[str, ...]:
