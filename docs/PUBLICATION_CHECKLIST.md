@@ -53,10 +53,11 @@ uv run python tools/runtime_smoke.py \
 
 ## Current 0.24 Public-Ready Status
 
-`0.24.0.0` is a local-field public candidate:
+`0.24.0.1` is a local-field public candidate:
 
 - SPDS doc-review baseline is in code and deployed locally.
 - JSON/HTML/XLSX reports are available.
 - `normalized_remarks` is exposed for future checklist/DOCX/PDF renderers.
-- Service sources are visible through `/api/service-sources` and the Admin GUI.
+- Engineer decisions for doc-review remarks are persisted and exported.
+- Service sources are visible through `/api/service-sources`, the Admin GUI, and the chat panel.
 - Full publication still requires owner approval and a final secret/data scrub.

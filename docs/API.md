@@ -40,11 +40,15 @@
 |---|---|---|
 | `GET` | `/api/doc-review/rulepacks` | Доступные review-map/rulepack профили |
 | `POST` | `/api/doc-review/{dataset_id}/run` | RAG-led СПДС-review комплекта по ГОСТ Р 21.101-2026 |
+| `GET` | `/api/doc-review/{dataset_id}/decisions` | Сохранённые решения инженера по замечаниям |
+| `POST` | `/api/doc-review/{dataset_id}/decision` | Подтвердить/отклонить/запросить данные по пункту review |
 | `GET` | `/api/doc-review/{dataset_id}/download?fmt=xlsx\|json\|html` | Детерминированный отчёт |
 
 `run` возвращает `items`, `defense` (`defense_contract_v1`) и `normalized_remarks`.
 `normalized_remarks` — общий машинный контракт для checklist/DOCX/PDF renderers; это proposed
-remarks, финальное решение по каждому пункту остаётся за инженером.
+remarks, финальное решение по каждому пункту остаётся за инженером. `decision` принимает
+`rule_id`, `decision=confirmed|rejected|needs_more_evidence|unset` и опциональный `comment`;
+решения сохраняются в sidecar и попадают в JSON/XLSX/HTML.
 
 ## Search
 
@@ -141,7 +145,8 @@ curl -X POST http://127.0.0.1:8050/api/chat \
 | `GET` | `/api/service-sources/{source_id}` | Один служебный источник: status, файлы, факты, missing-action |
 
 Реестр задаётся в `config/service_sources.yaml`: ГЭСН, ФГИС ЦС, сметные коэффициенты/шаблоны,
-СПДС rulepack, нормативный RAG и layout-reference. В GUI это блок **Инструменты → Служебные источники данных**.
+СПДС rulepack, нормативный RAG и layout-reference. В GUI это блок **Инструменты → Служебные источники данных**
+и кнопка **Служебные источники** в чате.
 
 ## CAD/BIM
 

@@ -124,10 +124,11 @@ def build_header(
             "color:var(--dim);height:56px;"
         ) as tabs:
             if show_admin_tabs:
-                # v0.24: админка с чистыми именами (вместо акроним-зоопарка из 9). Состояние/Датасеты/
-                # Визуал/Доступ. Обзор/Прораб/Инструменты/Задачи/Объёмы — функции живы, убраны из нав.
+                # v0.24: админка с чистыми именами; рабочие инструменты оставляем видимыми,
+                # иначе оператор не видит служебные источники, ВОР и нормоконтроль.
                 tab_refs["diag"]       = ui.tab("Состояние", icon="o_health_and_safety")
                 tab_refs["samovar"]    = ui.tab("Датасеты",  icon="o_inventory_2")
+                tab_refs["instrumenty"] = ui.tab("Инструменты", icon="o_build")
                 tab_refs["qdrant_viz"] = ui.tab("Визуал",    icon="o_scatter_plot")
                 tab_refs["volk"]       = ui.tab("Доступ",    icon="o_vpn_key")  # В.О.Л.К. — контур доступа
             if include_chat:
@@ -153,6 +154,9 @@ def build_header(
             ).props('flat dense round aria-label="Обновить данные"').style("color:var(--dim);")
 
             # Тема
+            if app.storage.user.get("theme_default_migrated") != "0.24-light":
+                app.storage.user["dark_theme"] = False
+                app.storage.user["theme_default_migrated"] = "0.24-light"
             _dark_init = app.storage.user.get("dark_theme", False)
 
             def _toggle_theme():

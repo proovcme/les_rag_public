@@ -33,6 +33,7 @@ RT = Path(os.getenv("LES_RUNTIME_HOME", "/Users/ovc/LES"))
 MANIFEST = DEV / ".deploy_manifest.json"
 
 ALLOWED_DIRS = ("proxy/", "backend/", "sovushka/", "tools/", "config/", "docs/")
+ALLOWED_FILES = {"sovushka_ng.py", "proxy_server.py", "mlx_host.py"}
 ALLOWED_SUFFIX = {".py", ".yaml", ".yml", ".json", ".md", ".txt"}
 
 
@@ -55,6 +56,7 @@ def _save_manifest(m: dict[str, str]) -> None:
 
 # путь-префикс → launchd-сервис для рестарта
 SERVICE_BY_PREFIX = (
+    ("sovushka_ng.py", "com.les.sovushka"),
     ("sovushka/", "com.les.sovushka"),
     ("proxy/", "me.ovc.les.proxy"),
     ("backend/", "me.ovc.les.proxy"),
@@ -87,7 +89,7 @@ def _head_bytes(path: str) -> bytes | None:
 
 
 def _allowed(path: str) -> bool:
-    return path.startswith(ALLOWED_DIRS) and Path(path).suffix in ALLOWED_SUFFIX
+    return (path in ALLOWED_FILES or path.startswith(ALLOWED_DIRS)) and Path(path).suffix in ALLOWED_SUFFIX
 
 
 def classify(path: str, manifest: dict[str, str]) -> tuple[str, bool]:

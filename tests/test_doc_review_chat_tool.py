@@ -34,5 +34,6 @@ def test_review_to_chat_text_shape():
     assert "Вердикт машины" in text
     assert "### Защита решения" in text
     assert "инженер" in text.lower()
+    assert "| Класс | Кол-во |" not in text
     assert "Рабочая память" not in text
     assert "LES.md" not in text

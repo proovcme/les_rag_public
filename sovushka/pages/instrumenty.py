@@ -383,12 +383,28 @@ def build_instrumenty():
                     {"name": "rule_id", "label": "Правило", "field": "rule_id", "align": "left"},
                     {"name": "clause", "label": "Пункт", "field": "clause", "align": "center"},
                     {"name": "status", "label": "Статус", "field": "status", "align": "center"},
+                    {"name": "human_decision", "label": "Решение", "field": "human_decision", "align": "center"},
                     {"name": "severity", "label": "Уровень", "field": "severity", "align": "center"},
                     {"name": "target", "label": "Объект", "field": "target", "align": "left"},
                     {"name": "model_note", "label": "Пояснение", "field": "model_note", "align": "left"},
                 ],
                 rows=[], row_key="rule_id",
             ).classes("w-full").style("font-size:.72rem;")
+            with ui.row().classes("w-full gap-2 items-center"):
+                dr_decision_rule = ui.select(options={}, label="Пункт для решения").props(
+                    "dense outlined"
+                ).classes("flex-1")
+                dr_decision_comment = ui.input(label="Комментарий инженера").props(
+                    "dense outlined"
+                ).classes("flex-1")
+                ui.button("ПОДТВЕРДИТЬ", on_click=lambda: asyncio.create_task(
+                    _dr_decide("confirmed"))).props("dense no-caps").style("color:var(--ok);")
+                ui.button("ОТКЛОНИТЬ", on_click=lambda: asyncio.create_task(
+                    _dr_decide("rejected"))).props("dense no-caps").style("color:var(--err);")
+                ui.button("НУЖНЫ ДАННЫЕ", on_click=lambda: asyncio.create_task(
+                    _dr_decide("needs_more_evidence"))).props("dense flat no-caps")
+                ui.button("СБРОС", on_click=lambda: asyncio.create_task(
+                    _dr_decide("unset"))).props("dense flat no-caps")
 
             async def _dr_run():
                 if not dr_ds.value:
@@ -403,14 +419,45 @@ def build_instrumenty():
                 s = d.get("summary", {})
                 dr_summary.text = (f"{d.get('standard','')} · позиций {s.get('total',0)} · "
                                    f"замечаний-кода {s.get('computed_issues',0)} · "
-                                   f"ручных {s.get('manual_required',0)} · нужен обзор {s.get('review_needed',0)}")
+                                   f"ручных {s.get('manual_required',0)} · нужен обзор {s.get('review_needed',0)} · "
+                                   f"инженер: +{s.get('human_confirmed',0)} / "
+                                   f"−{s.get('human_rejected',0)} / ?{s.get('human_needs_more_evidence',0)}")
                 dr_tbl.rows = [
                     {"rule_id": it.get("rule_id"), "clause": it.get("clause"), "status": it.get("status"),
-                     "severity": it.get("severity"), "target": it.get("target"), "model_note": it.get("model_note")}
+                     "human_decision": it.get("human_decision", "unset"), "severity": it.get("severity"),
+                     "target": it.get("target"), "model_note": it.get("model_note")}
                     for it in d.get("items", [])
                 ]
+                dr_decision_rule.options = {
+                    str(it["rule_id"]): f"{it['rule_id']} · {it.get('status','')} · {it.get('target','')}"
+                    for it in dr_tbl.rows if it.get("rule_id")
+                }
+                if dr_decision_rule.value not in dr_decision_rule.options:
+                    dr_decision_rule.value = next(iter(dr_decision_rule.options), None)
+                dr_decision_rule.update()
                 dr_tbl.update()
                 ui.notify(dr_summary.text, type="positive" if not s.get("computed_issues") else "warning")
+
+            async def _dr_decide(decision: str):
+                if not dr_ds.value:
+                    ui.notify("Выбери комплект", type="warning")
+                    return
+                if not dr_decision_rule.value:
+                    ui.notify("Выбери пункт проверки", type="warning")
+                    return
+                d = await api_post(
+                    f"/api/doc-review/{quote(str(dr_ds.value), safe='')}/decision",
+                    {
+                        "rule_id": dr_decision_rule.value,
+                        "decision": decision,
+                        "comment": dr_decision_comment.value or "",
+                    },
+                )
+                if not d:
+                    ui.notify(last_api_error_text("Решение не сохранено"), type="negative")
+                    return
+                ui.notify("Решение инженера сохранено", type="positive")
+                await _dr_run()
 
         # ─────────────────────────── ДИФФ ───────────────────────────
         with ui.card().classes("card-les w-full"):

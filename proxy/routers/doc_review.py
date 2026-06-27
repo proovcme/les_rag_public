@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -38,6 +39,41 @@ class DocReviewRequest(BaseModel):
     project_stage: Optional[str] = None       # PD | RD | unknown
     discipline: Optional[str] = None          # auto | AR | KR | OV | ...
     strictness: str = "normal"                # normal | strict
+
+
+class DocReviewDecisionRequest(BaseModel):
+    rule_id: str
+    decision: str = "unset"                   # unset | confirmed | rejected | needs_more_evidence
+    comment: Optional[str] = None
+
+
+def _safe_dataset_dir(dataset_id: str) -> Path:
+    safe = "".join(ch if (ch.isalnum() or ch in "._-") else "_" for ch in str(dataset_id))[:160]
+    return _OUT_DIR / (safe or "dataset")
+
+
+def _decision_path(dataset_id: str) -> Path:
+    return _safe_dataset_dir(dataset_id) / "human_decisions.json"
+
+
+def _load_decisions(dataset_id: str) -> dict:
+    path = _decision_path(dataset_id)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except Exception:
+        return {}
+    decisions = payload.get("decisions") if isinstance(payload, dict) else None
+    return decisions if isinstance(decisions, dict) else {}
+
+
+def _save_decisions(dataset_id: str, decisions: dict) -> dict:
+    out_dir = _safe_dataset_dir(dataset_id)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    payload = {"schema": "doc_review_human_decisions_v1", "dataset_id": dataset_id, "decisions": decisions}
+    _decision_path(dataset_id).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return payload
 
 
 async def _build_review(dataset_id: str, rulepack: str):
@@ -69,10 +105,13 @@ async def doc_review_rulepacks(_user=Depends(require_user)):
 async def doc_review_run(dataset_id: str, req: DocReviewRequest, _user=Depends(require_user)):
     """RAG-led review комплекта по review-map. Статусы — proposed issues/evidence; финал ставит инженер."""
     review_map, items = await _build_review(dataset_id, req.rulepack)
+    decisions = _load_decisions(dataset_id)
+    dr.apply_human_decisions(items, decisions)
     payload = dr.review_to_json(items, review_map)
     payload["dataset_id"] = dataset_id
+    payload["human_decisions"] = decisions
     try:
-        out_dir = _OUT_DIR / dataset_id
+        out_dir = _safe_dataset_dir(dataset_id)
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / f"doc_review_{int(time.time())}.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -89,12 +128,44 @@ async def doc_review_download(dataset_id: str, fmt: str = Query("xlsx"),
     if fmt not in {"xlsx", "json", "html"}:
         raise HTTPException(400, "fmt: xlsx | json | html")
     review_map, items = await _build_review(dataset_id, rulepack)
+    decisions = _load_decisions(dataset_id)
+    dr.apply_human_decisions(items, decisions)
     if fmt == "json":
-        return dr.review_to_json(items, review_map)
+        payload = dr.review_to_json(items, review_map)
+        payload["dataset_id"] = dataset_id
+        payload["human_decisions"] = decisions
+        return payload
     if fmt == "html":
         return Response(dr.review_to_html(items, review_map), media_type="text/html; charset=utf-8")
-    out_dir = _OUT_DIR / dataset_id
+    out_dir = _safe_dataset_dir(dataset_id)
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"doc_review_{int(time.time())}.xlsx"
     await asyncio.to_thread(dr.review_to_xlsx, items, out, review_map)
     return FileResponse(out, media_type=_XLSX_MEDIA, filename=out.name)
+
+
+@router.get("/{dataset_id}/decisions")
+async def doc_review_decisions(dataset_id: str, _user=Depends(require_user)):
+    return {"schema": "doc_review_human_decisions_v1", "dataset_id": dataset_id,
+            "decisions": _load_decisions(dataset_id)}
+
+
+@router.post("/{dataset_id}/decision")
+async def doc_review_set_decision(dataset_id: str, req: DocReviewDecisionRequest, _user=Depends(require_user)):
+    rule_id = (req.rule_id or "").strip()
+    decision = (req.decision or "unset").strip()
+    if not rule_id:
+        raise HTTPException(400, "rule_id required")
+    if decision not in dr.HUMAN_DECISIONS:
+        raise HTTPException(400, f"decision must be one of: {', '.join(sorted(dr.HUMAN_DECISIONS))}")
+    decisions = _load_decisions(dataset_id)
+    if decision == "unset":
+        decisions.pop(rule_id, None)
+    else:
+        decisions[rule_id] = {
+            "decision": decision,
+            "comment": (req.comment or "").strip(),
+            "decided_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+    payload = _save_decisions(dataset_id, decisions)
+    return {"ok": True, **payload}

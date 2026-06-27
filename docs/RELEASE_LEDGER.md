@@ -7,15 +7,15 @@
 ## Текущее состояние (2026-06-27)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.0  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.1  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
-dev HEAD:                  <git log -1>   (см. git)
-задеплоено на рантайм:     05f908d  ← deploy_stamp.deployed_commit
-НЕ задеплоено:             нет code-расхождения по critical bundle; repo остаётся dirty из-за незакоммиченного dev-пакета
-рантайм /api/version:      0.24.0.0 · app 5.1.0 · h0.24 · runtime_alignment=aligned
+dev HEAD:                  HEAD  (см. git log -1)
+задеплоено на рантайм:     HEAD  ← deploy_stamp.deployed_commit после финального stamp
+НЕ задеплоено:             нет code-расхождения по critical bundle
+рантайм /api/version:      0.24.0.1 · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
-> Версия 0.24.0.0 уже выкачена на рантайм: `/api/version.les_version=0.24.0.0`,
+> Версия 0.24.0.1 уже выкачена на рантайм: `/api/version.les_version=0.24.0.1`,
 > `deploy_stamp.status=ok`, `runtime_alignment.status=aligned`.
 
 > Деплоятся только code-правки (`proxy/`,`backend/`,`sovushka/`,`config/`). Доки на рантайм не катятся —
@@ -53,6 +53,7 @@ dev HEAD:                  <git log -1>   (см. git)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.1 | HEAD | 2026-06-27 | Operator-facing normcontrol stabilization: `doc_review` получил persist-sidecar решений инженера (`confirmed/rejected/needs_more_evidence`) через API, JSON/XLSX/HTML и GUI-кнопки; вкладка «Инструменты» возвращена в админку; `sovushka_ng.py` добавлен в deploy/critical bundle, чтобы shell-правки реально выкатывались; чат получил явную панель служебных источников (ГЭСН/ФГИС/СПДС/layout); chat-report нормоконтроля больше не рендерится как огромные markdown-таблицы/авто-артефакт | ✅ рантайм, fast ship/smoke ✅ |
 | 0.24.0.0 | HEAD | 2026-06-27 | SPDS/public-ready baseline: ГОСТ Р 21.101-2026 doc-review теперь отдаёт общий `normalized_remarks` contract поверх `items`/`defense` для checklist/DOCX/PDF renderers; XLSX включает лист `normalized_remarks`; Admin GUI скачивает XLSX/JSON/HTML; `/api/version.runtime_alignment` расширен на doc-review/service-sources entrypoints; добавлены source-available `LICENSE`, `SECURITY.md`, public publication checklist and `make public-check` guardrail | ✅ рантайм, full ship/smoke ✅ |
 | 0.23.6.12 | uncommitted | 2026-06-27 | Service source registry + layout v1: added `config/service_sources.yaml`, `service_source_registry` and `/api/service-sources` so Admin/GUI shows required data for smeta and normcontrol (ГЭСН, ФГИС ЦС, coefficients/templates, СПДС rulepack, normative RAG, layout reference); Instruments page now surfaces those sources and missing/degraded status; title-block check now verifies that text-layer stamp signatures are in the expected bottom-right zone, and reports signatures outside the zone as a computed issue | ✅ рантайм, fast ship/smoke ✅ |
 | 0.23.6.11 | uncommitted | 2026-06-27 | Normcontrol human defense report: chat doc-review now renders a defendable human report with verdict, evidence/action tables and “Защита решения”; working memory is no longer appended to doc-review answers; `defense` is exposed at top-level chat payload; D4-001 sheet format is computed from PDF page geometry via ГОСТ 2.301, while deeper element placement/fill remains explicit layout/title-block work | ✅ рантайм, fast ship/smoke ✅ |

@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.1** | HEAD | Operator-facing normcontrol stabilization: doc-review now persists engineer decisions (`confirmed/rejected/needs_more_evidence`) through API, JSON/XLSX/HTML and Admin GUI controls; the Admin “Инструменты” tab is mounted again; chat has a direct service-sources panel for ГЭСН/ФГИС/СПДС/layout visibility; doc-review chat output no longer turns human reports into giant markdown artifact tables. |
 | **v0.24.0.0** | HEAD | SPDS/public-ready baseline: doc-review exposes `normalized_remarks` for checklist/report renderers, XLSX includes a normalized remarks sheet, GUI downloads XLSX/JSON/HTML, runtime alignment now watches doc-review/service-source entrypoints, and the repo has source-available `LICENSE`, `SECURITY.md`, publication checklist and `make public-check`. |
 | **v0.23.6.12** | uncommitted | Service source registry + layout v1: Admin/GUI now shows required data sources for smeta/normcontrol via `/api/service-sources`, and title-block review verifies that stamp signatures are in the expected bottom-right sheet zone instead of merely existing somewhere in text. |
 | **v0.23.6.11** | uncommitted | Normcontrol human defense report: doc-review chat answers now render a defendable human report with evidence/action tables, no working-memory leakage, top-level `defense` payload, and D4-001 sheet-format computed from PDF page geometry via ГОСТ 2.301. |

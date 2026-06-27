@@ -11,6 +11,7 @@ import pytest
 
 from proxy.services.doc_review_service import (
     S_COMPUTED_ISSUE,
+    apply_human_decisions,
     build_sheet_format_evidence,
     review_summary,
     review_to_chat_text,
@@ -100,7 +101,8 @@ def test_chat_report_is_defensible_human_report():
     text = review_to_chat_text(items, MAP)
     assert "Вердикт машины" in text
     assert "Предварительные замечания" in text
-    assert "| ID | Что проверено | Основание | Evidence комплекта | Почему так | Действие |" in text
+    assert "| ID | Что проверено | Основание | Evidence комплекта | Почему так | Действие |" not in text
+    assert "| Класс | Кол-во |" not in text
     assert "ГОСТ Р 21.101-2026#clause=" in text
     assert "подтвердить/отклонить замечание" in text
     assert "### Защита решения" in text
@@ -126,3 +128,17 @@ def test_reports_render(tmp_path):
     out = tmp_path / "report.xlsx"
     n = review_to_xlsx(items, out, MAP)
     assert out.exists() and n == len(items)
+
+
+def test_human_decision_updates_normalized_contract():
+    items = run_review(build_document_set(["2024-15-АР-1.pdf"]), MAP)
+    first = items[0].rule_id
+    apply_human_decisions(items, {
+        first: {"decision": "confirmed", "comment": "Проверено инженером", "decided_at": "2026-06-27T10:00:00+00:00"}
+    })
+    payload = review_to_json(items, MAP)
+    remark = next(r for r in payload["normalized_remarks"] if r["id"] == first)
+    assert remark["human_decision"] == "confirmed"
+    assert remark["human_comment"] == "Проверено инженером"
+    assert remark["finality"] == "human_decided"
+    assert payload["summary"]["human_confirmed"] == 1

@@ -614,6 +614,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                         on_click=lambda: _toggle_files(),
                     ).props("no-caps flat round").tooltip("Открыть файлы и папки")
                     ui.button(
+                        icon="o_inventory_2",
+                        on_click=lambda: asyncio.create_task(_show_service_sources()),
+                    ).props("no-caps flat round").tooltip("Служебные источники: ГЭСН, ФГИС, СПДС")
+                    ui.button(
                         icon="o_attach_file",
                         on_click=lambda: attach_dialog.open(),
                     ).props("no-caps flat round").tooltip("Прикрепить файл")
@@ -1396,6 +1400,59 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
 
     def _open_artifacts() -> None:
         _set_artifacts_visible(True)
+
+    async def _show_service_sources() -> None:
+        """Показать оператору, на каких служебных данных ЛЕС считает и проверяет."""
+        _open_artifacts()
+        artifact_panel.clear()
+        with artifact_panel:
+            with ui.card().classes("sov-artifact-card"):
+                _html('<div class="sov-panel-title">Служебные источники данных</div>')
+                _html(
+                    '<div class="sov-muted">'
+                    'ГЭСН, ФГИС ЦС, сметные коэффициенты, СПДС rulepack, нормативный RAG и layout-эталон. '
+                    'Если источник отсутствует, ЛЕС должен честно деградировать, а не изображать всезнание.'
+                    '</div>'
+                )
+                ui.spinner(size="sm")
+        d = await api_get("/api/service-sources")
+        artifact_panel.clear()
+        if not isinstance(d, dict):
+            with artifact_panel:
+                with ui.card().classes("sov-artifact-card"):
+                    _html('<div class="sov-panel-title" style="color:var(--err);">Источники недоступны</div>')
+                    _html(f'<div class="sov-muted">{esc(last_api_error_text("Реестр источников не ответил"))}</div>')
+            return
+        status_map = {
+            "ok": ("OK", "var(--ok)"),
+            "missing_degraded": ("НУЖЕН", "#d6a400"),
+            "missing_blocking": ("БЛОК", "var(--err)"),
+        }
+        s = d.get("summary", {})
+        with artifact_panel:
+            with ui.card().classes("sov-artifact-card"):
+                _html('<div class="sov-panel-title">Служебные источники данных</div>')
+                _html(
+                    f'<div class="sov-muted">Всего {s.get("total", 0)} · OK {s.get("ok", 0)} · '
+                    f'нужны {s.get("missing_degraded", 0)} · блокируют {s.get("missing_blocking", 0)}</div>'
+                )
+                for item in d.get("sources", []):
+                    label, color = status_map.get(item.get("status"), (item.get("status", "?"), "var(--dim)"))
+                    facts = item.get("facts") or {}
+                    fact_bits = []
+                    for key in ("base_norms", "seed_norms", "parquet_rows", "pricebooks", "price_rows",
+                                "targets", "documents", "datasets"):
+                        if facts.get(key) not in (None, "", 0):
+                            fact_bits.append(f"{key}: {facts[key]}")
+                    fact_text = " · ".join(fact_bits) or "файлы/датасет пока не подтверждены"
+                    with ui.card().classes("sov-control-card").style("width:100%;"):
+                        with ui.row().classes("w-full items-center justify-between gap-2"):
+                            _html(f'<b>{esc(item.get("label", item.get("id", "")))}</b>')
+                            _html(f'<span style="font-weight:900;color:{color}">{esc(label)}</span>')
+                        _html(f'<div class="sov-muted">{esc(item.get("domain", ""))} · {esc(fact_text)}</div>')
+                        hint = item.get("operator_hint") or ""
+                        if hint:
+                            _html(f'<div class="sov-muted">Что проверить: {esc(hint)}</div>')
 
     def _show_artifact(ans: str, mode: str) -> None:
         """Открыть артефакт сообщения в панели «Артефакты» (как карточка в Claude Desktop)."""
