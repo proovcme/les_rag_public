@@ -201,6 +201,16 @@ curl -X POST http://127.0.0.1:8050/api/chat \
 
 «ЛЕС поверх файлопомойки» (W15): карта строится без чтения содержимого и без LLM; из неё — выборочная индексация (W15.2).
 
+## External Radar
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| `GET` | `/api/external-radar/summary?limit=15` | Обзор внешних корней, filemap-кандидатов и уже in-place документов без reindex/OCR/LLM |
+
+Радар объединяет `LES_EXTERNAL_SOURCE_ROOTS`, `file_map.db` и MetaDB `documents.source_path`.
+Он делает только shallow-статистику корней; глубокий обход диска остаётся явным действием
+`POST /api/filemap/scan`.
+
 ## Задачник
 
 | Метод | Путь | Назначение |
