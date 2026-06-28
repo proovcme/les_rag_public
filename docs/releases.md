@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.35** | HEAD | Notebook study speed pass: the project-reading layer now chooses a smaller adaptive section plan from the notebook map and retrieves selected sections in parallel (`LES_NOTEBOOK_STUDY_PARALLELISM`, default 3). No answer cache, no deterministic final output. |
 | **v0.24.0.34** | HEAD | Notebook study layer: broad project/dataset questions in a selected scope now build a reading plan from `notebook_v1`, run section-level retrieval, feed the organized context to the normal model synthesis, and return a dedicated “Инженерный блокнот” artifact with the plan, sources by section and gaps. This is navigation, not deterministic final output. |
 | **v0.24.0.33** | HEAD | PDF/RAG lexical sync: qwen runtime lexical FTS was backfilled from existing Qdrant payloads (`188121/188121`) so deep notebooks and lexical/hybrid retrieval see already-indexed PDF/DOCX chunks; normal parse reindex now deletes and upserts `lexical_chunks` per file together with Qdrant points, making the FTS side index a maintained projection rather than a one-off repair. |
 | **v0.24.0.32** | HEAD | Attachment visibility + no auto project-summary: uploaded chat files persist as system messages in chat history, user turns keep an explicit attachment line, and broad project questions no longer auto-return deterministic project registers; normal chat continues to retrieval + model while project summary remains an explicit tool/MCP command. |

@@ -7,12 +7,12 @@
 ## Текущее состояние (2026-06-28)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.34  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.35  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.34 notebook study layer
+задеплоено на рантайм:     0.24.0.35 notebook study speed pass
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.34 · app 5.1.0 · h0.24 · runtime_alignment=aligned
+рантайм /api/version:      0.24.0.35 · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
 > 0.24.0.6 выкачен через `make ship`. Живой чат-прогон без semantic cache:
@@ -86,6 +86,9 @@ dev HEAD:                  HEAD  (см. git log -1)
 > строит reading plan из `notebook_v1`, добирает источники по разделам обычным retrieval,
 > передаёт организованный контекст в модель и отдаёт полный артефакт «Инженерный блокнот»
 > с планом, источниками и пробелами. Это navigation, не deterministic final.
+> 0.24.0.35 ускоряет `notebook_study`: reading plan выбирает меньший набор релевантных секций
+> по карте блокнота, а section retrieval идёт параллельно (`LES_NOTEBOOK_STUDY_PARALLELISM`,
+> default 3). Answer-cache не добавлялся; итог по-прежнему пишет модель.
 > 0.24.0.31 разделяет сметную выдачу на операторскую сводку в чате и полный артефакт:
 > расшифровка позиций, ОЗП/ЭМ/ЗПМ/материалы/прямые/ФОТ/НР/СП/СМР, ресурсы с ценами и явное
 > предупреждение, если высотные/производственные коэффициенты не применены без нормативного основания.
@@ -128,6 +131,7 @@ dev HEAD:                  HEAD  (см. git log -1)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.35 | HEAD | 2026-06-28 | Notebook study speed pass: план чтения выбирает меньше релевантных секций по `notebook_v1`, а retrieval по выбранным секциям идёт параллельно (`LES_NOTEBOOK_STUDY_PARALLELISM`, default 3); кэш готовых ответов не добавлен, итоговый синтез остаётся за моделью | ✅ рантайм, focused/verify + live probe ✅ |
 | 0.24.0.32 | HEAD | 2026-06-28 | Attachment visibility + no auto project-summary: uploaded chat files now persist as system messages in chat history and user turns keep a clear attachment line; broad project questions no longer auto-return deterministic project registers, so notebook/RAG synthesis goes to retrieval + model while project summary remains an explicit tool/MCP command | ✅ dev, focused tests/verify pending |
 | 0.24.0.30 | HEAD | 2026-06-28 | Smeta GESNm bridge: ГЭСН-блокнот различает `ГЭСН38` и `ГЭСНм38`; `metal_assembly` допускает монтажный сборник `ГЭСНм38`, масса `кг/т` нормализуется в `mass_t`, `СПб 2 кв. 2026` маршрутизируется в `spb_2kv2026`, тоннажные металлические позиции снова доходят до code-calculator/ЛСР-сборки вместо блокировки на плоском `search_norm` | ✅ dev, focused tests pass, deploy pending |
 | 0.24.0.29 | HEAD | 2026-06-28 | Notebook/prompt layer: общий `notebook_v1` поверх dataset profiles и service sources, публичные `/api/notebooks/*` + `/api/service-sources/notebooks`, системный ГЭСН-блокнот с картой сборников из локальной базы норм, prompt registry для общего LES prompt и режимных prompts; smeta planner получает ГЭСН-блокнот как navigation/context, а UI показывает «Блокнот области» | ✅ dev, focused tests/verify pending |

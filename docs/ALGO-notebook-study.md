@@ -27,9 +27,10 @@ layer: блокнот и план помогают читать корпус, н
    нормоконтроль, source lookup и точечные поисковые вопросы.
 3. `build_dataset_notebooks()` читает deep-блокноты выбранных датасетов. Блокноты — navigation,
    `is_evidence=false`.
-4. `build_reading_plan()` строит компактный план: состав комплекта, архитектура/конструктив,
-   инженерные системы, ведомости/спецификации/таблицы, нормативные ссылки, пробелы.
-5. Для каждого раздела вызывается тот же `retrieve_chat_chunks()`, но с расширенным section query.
+4. `build_reading_plan()` строит адаптивный компактный план: по карте блокнота выбираются только
+   релевантные разделы, обычно до 4, а не весь список подряд.
+5. Для выбранных разделов параллельно вызывается тот же `retrieve_chat_chunks()`, но с расширенным
+   section query. Параллелизм задаёт `LES_NOTEBOOK_STUDY_PARALLELISM` (по умолчанию 3).
 6. Найденные фрагменты добавляются в общий RAG-контекст; LLM получает `notebook_study` prompt-block
    и отвечает обычным модельным синтезом.
 7. Payload получает:
@@ -40,6 +41,8 @@ layer: блокнот и план помогают читать корпус, н
 ## Границы
 
 - Нет скрытого final-ответа без модели. Слой только организует чтение и retrieval.
+- Нет answer-cache: ускорение достигается меньшим числом релевантных секций и параллельным retrieval,
+  а не хранением готовых ответов.
 - Нет объектных шаблонов состава работ.
 - Числа не считаются этим слоем. Если вопрос про стоимость, объёмы или суммы — должны сработать
   сметные/табличные инструменты.
@@ -49,6 +52,6 @@ layer: блокнот и план помогают читать корпус, н
 
 ## Тесты
 
-- `tests/test_notebook_study_service.py` — trigger без hijack сметы/source lookup, план по карте блокнота,
-  section retrieval pack, artifact/prompt contract.
+- `tests/test_notebook_study_service.py` — trigger без hijack сметы/source lookup, адаптивный план по
+  карте блокнота, параллельный section retrieval pack, artifact/prompt contract.
 - `tests/test_notebook_api.py` и `tests/test_context_memory_service.py` — базовый notebook/context-memory слой.

@@ -7,7 +7,9 @@ synthesis step.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -143,8 +145,8 @@ def _profile_terms(notebook: dict[str, Any]) -> list[str]:
     return [term for term in terms if term.strip()]
 
 
-def _score_section(question: str, terms: Iterable[str], hints: Iterable[str]) -> int:
-    haystack = " ".join([question, *terms]).casefold()
+def _score_hints(text: str, hints: Iterable[str]) -> int:
+    haystack = text.casefold()
     score = 0
     for hint in hints:
         h = hint.casefold()
@@ -153,7 +155,14 @@ def _score_section(question: str, terms: Iterable[str], hints: Iterable[str]) ->
     return score
 
 
-def build_reading_plan(question: str, notebooks: list[dict[str, Any]], *, max_sections: int = 6) -> list[StudySection]:
+def _read_parallelism() -> int:
+    try:
+        return max(1, min(8, int(os.getenv("LES_NOTEBOOK_STUDY_PARALLELISM", "3"))))
+    except ValueError:
+        return 3
+
+
+def build_reading_plan(question: str, notebooks: list[dict[str, Any]], *, max_sections: int = 4) -> list[StudySection]:
     """Build a compact plan from notebook maps.
 
     The plan is navigation: it says where to read first, then retrieval must bring
@@ -163,6 +172,8 @@ def build_reading_plan(question: str, notebooks: list[dict[str, Any]], *, max_se
     for notebook in notebooks:
         terms.extend(_profile_terms(notebook))
     term_text = " ".join(dict.fromkeys(terms))[:1600]
+    q = (question or "").strip()
+    is_general = bool(_DIRECT_RE.search(q) or (_BROAD_STUDY_RE.search(q) and _AREA_RE.search(q)))
     sections = [
         (
             "composition",
@@ -204,15 +215,35 @@ def build_reading_plan(question: str, notebooks: list[dict[str, Any]], *, max_se
     ranked = []
     by_id: dict[str, StudySection] = {}
     for order, (section_id, title, hints, reason) in enumerate(sections):
-        score = _score_section(question, terms, hints)
-        if section_id in {"composition", "engineering_systems", "specs_tables", "gaps"}:
-            score += 2
+        question_score = _score_hints(q, hints)
+        profile_score = min(4, _score_hints(" ".join(terms), hints))
+        score = question_score + profile_score
+        if is_general and section_id in {"composition", "engineering_systems", "specs_tables", "gaps"}:
+            score += 3
+        elif not is_general and section_id == "gaps":
+            score += 1
         query = " ".join([question, title, *hints[:8], term_text[:600]]).strip()
         section = StudySection(section_id, title, query, reason, hints[:8])
         by_id[section_id] = section
-        ranked.append((score, order, section_id))
-    selected = {section_id for _score, _order, section_id in sorted(ranked, key=lambda item: (-item[0], item[1]))[:max_sections]}
-    return [by_id[section_id] for _score, _order, section_id in sorted(ranked, key=lambda item: item[1]) if section_id in selected]
+        ranked.append((score, question_score, order, section_id))
+
+    max_sections = max(1, min(max_sections, len(sections)))
+    minimum = min(max_sections, 3 if is_general else 2)
+    sorted_ranked = sorted(ranked, key=lambda item: (-item[0], item[2]))
+    selected = {
+        section_id
+        for score, question_score, _order, section_id in sorted_ranked
+        if score > 0 and (is_general or question_score > 0 or section_id == "gaps")
+    }
+    if len(selected) < minimum:
+        selected.update(section_id for _score, _question_score, _order, section_id in sorted_ranked[:minimum])
+    if len(selected) > max_sections:
+        selected = {section_id for _score, _question_score, _order, section_id in sorted_ranked[:max_sections]}
+    return [
+        by_id[section_id]
+        for _score, _question_score, _order, section_id in sorted(ranked, key=lambda item: item[2])
+        if section_id in selected
+    ]
 
 
 def build_dataset_notebooks(dataset_ids: list[str], *, storage_root: Path = Path("storage/datasets")) -> list[dict[str, Any]]:
@@ -231,23 +262,36 @@ async def build_notebook_study_pack(
     dataset_ids: list[str],
     retrieve: RetrieveFn,
     storage_root: Path = Path("storage/datasets"),
-    max_sections: int = 6,
+    max_sections: int = 4,
 ) -> StudyPack:
     notebooks = build_dataset_notebooks(dataset_ids, storage_root=storage_root)
     plan = build_reading_plan(question, notebooks, max_sections=max_sections)
     chunks_by_section: dict[str, list[Any]] = {}
     gaps: list[str] = []
-    for section in plan:
-        try:
-            retrieved = await retrieve(section.query)
-        except Exception as error:  # noqa: BLE001
-            logger.warning("[NOTEBOOK_STUDY] section retrieve failed %s: %s", section.id, error)
-            retrieved = []
+    semaphore = asyncio.Semaphore(_read_parallelism())
+
+    async def retrieve_section(section: StudySection) -> tuple[str, list[Any], str | None]:
+        async with semaphore:
+            try:
+                retrieved = await retrieve(section.query)
+            except Exception as error:  # noqa: BLE001
+                logger.warning("[NOTEBOOK_STUDY] section retrieve failed %s: %s", section.id, error)
+                retrieved = []
         ranked = rank_chunks_for_question(section.query, list(retrieved or []))
         focused = concentrate_sources(ranked, max_docs=2, min_score=0.0, max_chunks=4)
+        gap = None if focused else f"{section.title}: не найдено уверенных источников"
+        return section.id, focused, gap
+
+    results = await asyncio.gather(*(retrieve_section(section) for section in plan))
+    by_section = {section_id: (focused, gap) for section_id, focused, gap in results}
+    for section in plan:
+        try:
+            focused, gap = by_section[section.id]
+        except KeyError:
+            focused, gap = [], f"{section.title}: не найдено уверенных источников"
         chunks_by_section[section.id] = focused
-        if not focused:
-            gaps.append(f"{section.title}: не найдено уверенных источников")
+        if gap:
+            gaps.append(gap)
     if not notebooks:
         gaps.append("Блокнот области не построен: нет доступного deep-паспорта датасета")
     return StudyPack(notebooks=notebooks, plan=plan, chunks_by_section=chunks_by_section, gaps=gaps)

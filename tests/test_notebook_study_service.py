@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from backend.interface import Chunk
@@ -46,7 +48,18 @@ def test_reading_plan_uses_notebook_map_for_engineering_and_tables():
     assert "composition" in ids
     assert "engineering_systems" in ids
     assert "specs_tables" in ids
+    assert len(ids) <= 4
     assert all("шаблон" not in section.query.casefold() for section in plan)
+
+
+def test_reading_plan_selects_relevant_sections_without_reading_everything():
+    plan = build_reading_plan("что по инженерным системам и оборудованию", [_notebook()])
+    ids = [section.id for section in plan]
+
+    assert "engineering_systems" in ids
+    assert "gaps" in ids
+    assert "normative_refs" not in ids
+    assert len(ids) < 6
 
 
 @pytest.mark.asyncio
@@ -79,3 +92,26 @@ async def test_study_pack_retrieves_by_sections_and_formats_artifact(monkeypatch
     assert "ИОС4.pdf" in artifact
     assert "Спецификация.xlsx" in artifact
     assert "Блокнот и план — navigation, не evidence" in prompt_block(pack)
+
+
+@pytest.mark.asyncio
+async def test_study_pack_retrieves_sections_in_parallel(monkeypatch):
+    from proxy.services import notebook_study_service as svc
+
+    monkeypatch.setattr(svc, "build_dataset_notebooks", lambda dataset_ids, **_kw: [_notebook()])
+    monkeypatch.setenv("LES_NOTEBOOK_STUDY_PARALLELISM", "3")
+    active = 0
+    max_active = 0
+
+    async def retrieve(_query: str):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return []
+
+    pack = await build_notebook_study_pack(question="расскажи про проект", dataset_ids=["ds-1"], retrieve=retrieve)
+
+    assert len(pack.plan) >= 3
+    assert max_active > 1
