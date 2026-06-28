@@ -47,7 +47,11 @@ SQLite `data/les_meta_qwen.db`:
 
 `deep`-паспорт добавляет bounded-read по `lexical_chunks`: число lexical-чанков/документов, top-документы,
 частые headings, ключевые слова по содержанию, нормативные ссылки, table-signal и короткие representative
-fragments. Исходные файлы не читаются.
+fragments. Исходные файлы не читаются. `lexical_chunks` — поддерживаемая проекция уже
+проиндексированного корпуса: при parse-переиндексации файла `backend/qdrant_adapter.py` удаляет старые
+FTS-строки этого файла и записывает новые из тех же Qdrant payloads. Для существующих рантаймов допустим
+no-reindex backfill через `tools/build_lexical_index.py` из Qdrant payloads; это ремонт состояния, а не
+новый источник evidence.
 
 `quality` — компактная вычисляемая оценка паспорта: документы, чанки, примеры файлов, ключевые слова,
 типы/расширения, наличие lexical/deep-сигналов, фрагменты, нормативные ссылки и таблицы. Статусы:
@@ -97,7 +101,8 @@ fragments. Исходные файлы не читаются.
   `memory_service.py`.
 - Паспорт датасета не запускает переиндексацию и не читает тяжёлые файлы.
 - Deep-паспорт зависит от наличия `lexical_chunks`; если lexical index не готов, профиль честно пишет
-  `available=false`.
+  `available=false`. Если Qdrant points есть, а lexical пустой, сначала строится FTS-проекция из Qdrant
+  payloads без OCR/reindex, затем обычная индексация поддерживает её сама.
 - Benchmark меряет только паспортный слой (`les_dataset_profiles` + sidecar + lexical sample). Он не является
   полноценным RAG quality benchmark и не гарантирует ускорение генерации модели.
 - Ошибка записи профиля не ломает чат: слой best-effort, пишет warning.

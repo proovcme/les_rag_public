@@ -271,6 +271,21 @@ class LexicalIndex:
             conn.execute("DELETE FROM lexical_chunks WHERE collection=?", (collection,))
             conn.execute("DELETE FROM lexical_index_meta WHERE collection=?", (collection,))
 
+    def delete_file(self, collection: str, *, dataset_id: str, doc_name: str) -> int:
+        """Remove lexical rows for one indexed source file.
+
+        Qdrant reindex deletes points per file; the FTS side index must follow the same
+        lifecycle or hybrid/notebook context will keep stale PDF/DOCX chunks.
+        """
+        if not collection or not dataset_id or not doc_name:
+            return 0
+        with self.connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM lexical_chunks WHERE collection=? AND dataset_id=? AND doc_name=?",
+                (collection, dataset_id, doc_name),
+            )
+            return int(cur.rowcount or 0)
+
     def upsert_chunks(self, collection: str, rows: Iterable[dict[str, Any]]) -> int:
         now = time.time()
         count = 0

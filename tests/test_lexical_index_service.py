@@ -1,5 +1,8 @@
 from dataclasses import dataclass
 
+from qdrant_client import models
+
+from backend.qdrant_adapter import QdrantLlamaIndexAdapter
 from proxy.services.lexical_index_service import LexicalIndex, build_fts_query, merge_rrf
 
 
@@ -46,6 +49,66 @@ def test_lexical_index_search_returns_matching_chunks(tmp_path):
     assert len(chunks) == 1
     assert chunks[0].doc_name == "СП 1.13130.docx"
     assert chunks[0].meta["dataset_id"] == "ds-fire"
+
+
+def test_lexical_index_delete_file_removes_only_matching_doc(tmp_path):
+    index = LexicalIndex(str(tmp_path / "lex.db"))
+    index.upsert_chunks(
+        "collection",
+        [
+            {"point_id": "p1", "dataset_id": "ds", "doc_id": "d1", "doc_name": "a.pdf", "text": "котельная"},
+            {"point_id": "p2", "dataset_id": "ds", "doc_id": "d2", "doc_name": "b.pdf", "text": "котельная"},
+            {"point_id": "p3", "dataset_id": "other", "doc_id": "d3", "doc_name": "a.pdf", "text": "котельная"},
+        ],
+    )
+
+    deleted = index.delete_file("collection", dataset_id="ds", doc_name="a.pdf")
+    chunks = index.search("котельная", collection="collection", limit=10)
+
+    assert deleted == 1
+    assert {(chunk.meta["dataset_id"], chunk.doc_name) for chunk in chunks} == {
+        ("ds", "b.pdf"),
+        ("other", "a.pdf"),
+    }
+
+
+def test_qdrant_adapter_maps_points_to_lexical_rows():
+    point = models.PointStruct(
+        id="p1",
+        vector=[0.1, 0.2],
+        payload={
+            "text": "PDF text",
+            "dataset_id": "ds",
+            "doc_id": "doc",
+            "file_name": "drawing.pdf",
+            "content_hash": "hash",
+            "chunk_ord": 3,
+            "parent_id": "parent",
+            "context_kind": "pdf_page",
+        },
+    )
+
+    rows = QdrantLlamaIndexAdapter._lexical_rows_from_points([point])
+
+    assert rows == [
+        {
+            "point_id": "p1",
+            "dataset_id": "ds",
+            "doc_id": "doc",
+            "doc_name": "drawing.pdf",
+            "text": "PDF text",
+            "content_hash": "hash",
+            "chunk_ord": 3,
+            "section_heading": None,
+            "parent_id": "parent",
+            "parent_ord": None,
+            "child_ord": None,
+            "parent_heading": None,
+            "context_before": None,
+            "context_after": None,
+            "context_kind": "pdf_page",
+        }
+    ]
 
 
 def test_rrf_merge_adds_lexical_exact_hit_and_deduplicates():
