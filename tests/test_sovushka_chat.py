@@ -20,8 +20,19 @@ from proxy.routers.chat import ChatRequest, _attachment_source_label, _question_
 def test_ai_plain_markdown_is_rendered_as_markdown_widget():
     source = inspect.getsource(chat_page.build_chat)
 
-    assert "ui.markdown(_disp).classes(\"sov-chat-message-text sov-chat-md\")" in source
-    assert "ui.markdown(_bubble_text(str(text or \"\"), _mode)).classes(\"sov-chat-message-text sov-chat-md\")" in source
+    assert "ui.markdown(_format_sources_as_quotes(_disp)).classes(\"sov-chat-message-text sov-chat-md\")" in source
+    assert "ui.markdown(_format_sources_as_quotes(_bubble_text(str(text or \"\"), _mode)))" in source
+
+
+def test_chat_attachment_upload_uses_nicegui_file_api_not_stale_content_api():
+    source = inspect.getsource(chat_page.build_chat)
+    attach_block = source[source.index("async def _do_attach"):source.index("def _clear_attachment")]
+
+    assert "on_upload=_do_attach" in source
+    assert "lambda e: asyncio.create_task(_do_attach(e))" not in source
+    assert "upload = getattr(e, \"file\", None)" in attach_block
+    assert "await upload.read()" in attach_block
+    assert "e.content.read()" not in attach_block
 
 
 def test_smeta_table_question_skips_resource_gate():
