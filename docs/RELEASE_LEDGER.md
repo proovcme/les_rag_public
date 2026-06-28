@@ -7,12 +7,12 @@
 ## Текущее состояние (2026-06-28)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.45  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.46  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.45 broad answer length/source visual hotfix
+задеплоено на рантайм:     0.24.0.46 chat attachment upload hotfix
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.45 · app 5.1.0 · h0.24 · runtime_alignment=aligned
+рантайм /api/version:      0.24.0.46 · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
 > 0.24.0.6 выкачен через `make ship`. Живой чат-прогон без semantic cache:
@@ -120,6 +120,10 @@ dev HEAD:                  HEAD  (см. git log -1)
 > notebook/RAG-запросы больше не получают скрытые правила «5-8 строк»/«до 6 строк»; краткость
 > включается только явной просьбой оператора. Source-маркеры `[Источник N | ...]` в чате
 > визуально отделяются как цитаты.
+> 0.24.0.46 чинит скрепку чата под NiceGUI 3: upload-событие читает `e.file.read()`, а не
+> старое `e.content`; обработчик больше не уходит в background task без UI-контекста. Файл в
+> режиме «В чат» снова становится видимым pending-вложением под полем ввода и системной строкой
+> в истории.
 > 0.24.0.31 разделяет сметную выдачу на операторскую сводку в чате и полный артефакт:
 > расшифровка позиций, ОЗП/ЭМ/ЗПМ/материалы/прямые/ФОТ/НР/СП/СМР, ресурсы с ценами и явное
 > предупреждение, если высотные/производственные коэффициенты не применены без нормативного основания.
@@ -162,6 +166,7 @@ dev HEAD:                  HEAD  (см. git log -1)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.46 | HEAD | 2026-06-28 | Chat attachment upload hotfix: Совушка читает файл из актуального NiceGUI `UploadEventArguments.file.read()`, сохраняет fallback для старого `content`, больше не запускает upload handler через `asyncio.create_task` без UI-контекста; read-вложение после upload снова отображается под полем ввода и в истории как файл следующего сообщения | ✅ рантайм, focused/verify + live attach probe ✅ |
 | 0.24.0.45 | HEAD | 2026-06-28 | Broad answer length/source visual hotfix: удалены скрытые fixed-line правила для notebook-study/default RAG (`5-8 строк`, `до 6 строк`), `расскажи`/`требования к` больше не классифицируются как brief без явной просьбы `кратко`; default/full generation budget не режется local cap; source-маркеры в Совушке выводятся отдельными citation-строками | ✅ рантайм, focused/verify + live BAI probe ✅ |
 | 0.24.0.44 | HEAD | 2026-06-28 | Notebook artifact/length hotfix: снят отдельный `LES_NOTEBOOK_STUDY_CHAT_MAX_TOKENS=900` cap; notebook-study использует общий generation budget; payload artifact `Инженерный блокнот` теперь `mode=markdown`, Совушка рендерит markdown-артефакт целиком, а сам артефакт начинается с найденных материалов, не со служебного маршрута чтения | ✅ рантайм, focused/verify + live BAI probe ✅ |
 | 0.24.0.43 | HEAD | 2026-06-28 | Dataset UUID scope hotfix: legacy `dataset_filter=<uuid>` теперь резолвится как выбранный датасет и в `scope_service`, и в `retrieval_service`; broad-study получает `_dataset_ids` и может строить notebook artifact по выбранному объекту вместо fallback на широкий RAG | ✅ рантайм, focused/verify + live BAI probe ✅ |

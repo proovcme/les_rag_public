@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import re
 import time
@@ -600,39 +601,38 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
 
             # Скрепка чата: файл к следующему сообщению / быстрая сверка / индексация (W11.8)
             attach_state = {"id": None, "name": "", "mode": "", "text": ""}
-            with ui.dialog() as attach_dialog, ui.card().classes("sov-control-card").style("min-width:360px"):
-                _html('<div class="section-title">Добавить файл к сообщению</div>')
-                attach_mode = ui.toggle(
-                    {"read": "В чат", "quick": "Таблица", "index": "В базу"},
-                    value="read",
-                ).props("no-caps")
-                ui.label(
-                    "В чат: текст файла уйдёт модели вместе со следующим сообщением и не попадёт в базу. "
-                    "Таблица: xlsx/csv станет временным датасетом для сверки. "
-                    "В базу: документ добавится в RAG-датасет."
-                ).style("font-size:.66rem;color:var(--dim);")
-                ui.upload(
-                    auto_upload=True,
-                    on_upload=lambda e: asyncio.create_task(_do_attach(e)),
-                ).props("flat accept=.xlsx,.xls,.csv,.pdf,.docx").classes("w-full")
-                attach_status = ui.label("").style("font-size:.7rem;color:var(--ok);")
 
             async def _do_attach(e):
                 try:
-                    content = e.content.read()
-                except Exception:
+                    upload = getattr(e, "file", None)
+                    if upload is not None and hasattr(upload, "read"):
+                        content = await upload.read()
+                        file_name = getattr(upload, "name", "") or getattr(e, "name", "") or "upload.bin"
+                    else:
+                        raw = getattr(e, "content", None)
+                        if raw is None or not hasattr(raw, "read"):
+                            raise AttributeError("upload event has no file/content reader")
+                        maybe = raw.read()
+                        content = await maybe if inspect.isawaitable(maybe) else maybe
+                        file_name = getattr(e, "name", "") or "upload.bin"
+                    if isinstance(content, str):
+                        content = content.encode("utf-8")
+                    if not content:
+                        raise ValueError("empty upload content")
+                except Exception as error:
+                    attach_status.set_text(f"Не удалось прочитать файл: {error}")
                     ui.notify("Не удалось прочитать файл", type="negative")
                     return
-                attach_status.text = f"Загрузка «{e.name}»…"
-                add_log(f"[СКРЕПКА] {e.name} mode={attach_mode.value}")
-                d = await api_post_file("/api/rag/attach", content, e.name, params={"mode": attach_mode.value})
+                attach_status.set_text(f"Загрузка «{file_name}»…")
+                add_log(f"[СКРЕПКА] {file_name} mode={attach_mode.value}")
+                d = await api_post_file("/api/rag/attach", content, file_name, params={"mode": attach_mode.value})
                 if not isinstance(d, dict):
                     ui.notify(last_api_error_text("Не удалось прикрепить файл"), type="negative")
-                    attach_status.text = ""
+                    attach_status.set_text(last_api_error_text("Не удалось прикрепить файл"))
                     return
                 attach_state.update({
                     "id": d.get("attachment_id"),
-                    "name": d.get("name", e.name),
+                    "name": d.get("name", file_name),
                     "mode": d.get("mode"),
                     "text": d.get("text", ""),
                     "chars": d.get("chars") or len(str(d.get("text") or "")),
@@ -644,7 +644,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 attach_title.set_text(title)
                 attach_chip.set_text(detail)
                 attach_strip.set_visibility(True)
-                attach_status.text = "Готово: файл виден под полем ввода"
+                attach_status.set_text("Готово: файл виден под полем ввода")
                 attach_dialog.close()
                 state["chat_history"].append({
                     "role": "system",
@@ -668,6 +668,23 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     ui.notify("Таблица пойдёт в scope следующего запроса", type="info")
                 elif d.get("mode") == "read":
                     ui.notify("Файл будет отправлен модели вместе со следующим сообщением", type="info")
+
+            with ui.dialog() as attach_dialog, ui.card().classes("sov-control-card").style("min-width:360px"):
+                _html('<div class="section-title">Добавить файл к сообщению</div>')
+                attach_mode = ui.toggle(
+                    {"read": "В чат", "quick": "Таблица", "index": "В базу"},
+                    value="read",
+                ).props("no-caps")
+                ui.label(
+                    "В чат: текст файла уйдёт модели вместе со следующим сообщением и не попадёт в базу. "
+                    "Таблица: xlsx/csv станет временным датасетом для сверки. "
+                    "В базу: документ добавится в RAG-датасет."
+                ).style("font-size:.66rem;color:var(--dim);")
+                attach_status = ui.label("").style("font-size:.7rem;color:var(--ok);")
+                ui.upload(
+                    auto_upload=True,
+                    on_upload=_do_attach,
+                ).props("flat accept=.xlsx,.xls,.csv,.pdf,.docx").classes("w-full")
 
             def _clear_attachment(*, notify: bool = True):
                 attach_state.clear()
