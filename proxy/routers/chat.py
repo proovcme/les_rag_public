@@ -41,6 +41,12 @@ from proxy.services.memory_service import (
 from proxy.services.kot_service import analyze_question
 from proxy.services.lexical_index_service import retrieval_fingerprint
 from proxy.services.mail_query_service import maybe_answer_mail_query
+from proxy.services.notebook_study_service import (
+    build_notebook_study_pack,
+    format_study_artifact,
+    is_notebook_study_query,
+    prompt_block as notebook_study_prompt_block,
+)
 from proxy.services.query_router import route_query
 from proxy.services.retrieval_service import resolve_dataset_ids, retrieve_chat_chunks
 from proxy.services.runtime_admission import count_active_jobs, evaluate_chat_admission, generation_semaphore
@@ -2584,6 +2590,46 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     else:
         state.chat_metrics["retrieval_weak"] = state.chat_metrics.get("retrieval_weak", 0) + 1
 
+    notebook_study_pack = None
+    notebook_study_prompt = ""
+    notebook_study_artifact = ""
+    if _dataset_ids and is_notebook_study_query(req.question):
+        async def _study_retrieve(section_query: str) -> list[Any]:
+            result = await retrieve_chat_chunks(
+                question=section_query,
+                dataset_ids=_dataset_ids,
+                rag_backend=rag_backend,
+                reranker_enabled=_reranker_on,
+                reranker_available=state.reranker_available,
+                reranker_cls=state.reranker_cls,
+                mlx_url=os.getenv("MLX_URL", "http://127.0.0.1:8080"),
+                logger=logger,
+                llm_semaphore=state.llm_semaphore,
+                return_trace=True,
+            )
+            return result.chunks
+
+        try:
+            notebook_study_pack = await build_notebook_study_pack(
+                question=req.question,
+                dataset_ids=[str(d) for d in _dataset_ids],
+                retrieve=_study_retrieve,
+                storage_root=Path("./storage/datasets"),
+            )
+            study_chunks = notebook_study_pack.chunks
+            if study_chunks:
+                chunks = [*study_chunks, *chunks]
+            notebook_study_prompt = notebook_study_prompt_block(notebook_study_pack)
+            notebook_study_artifact = format_study_artifact(req.question, notebook_study_pack)
+            retrieval_trace["notebook_study"] = notebook_study_pack.payload()
+        except Exception as study_err:  # noqa: BLE001
+            logger.warning("[NOTEBOOK_STUDY] skipped: %s", study_err)
+            retrieval_trace["notebook_study"] = {
+                "schema": "notebook_study_v1",
+                "status": "skipped",
+                "error": f"{type(study_err).__name__}: {study_err}",
+            }
+
     # «Заставь отвечать»: не хард-режем разнородность, если есть сильный сигнал —
     # пользователь задал датасет (уже сузил) ИЛИ топ-совпадение хорошее (есть, что
     # отвечать). Гейт остаётся только для реально широких безскоповых слабых запросов.
@@ -3029,6 +3075,13 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                         # чтобы роутинг/авто-заметки/ретрив видели чистый вопрос (не мусор-директиву).
                         if req.output_directive and req.output_directive.strip():
                             sys_msg += " " + req.output_directive.strip()
+                        if notebook_study_prompt:
+                            sys_msg += (
+                                " Для этого notebook-study ответа чатовый слой обязан быть короткой "
+                                "инженерной сводкой: 5-8 строк или компактный список. Не делай большую "
+                                "таблицу в чате; полный план, таблицы, источники и пробелы уже вынесены "
+                                "в артефакт."
+                            )
                         if local_big and answer_form.intent in {"brief", "value", "default"}:
                             sys_msg += (
                                 " Для локального нормативного ответа это правило приоритетнее общего правила "
@@ -3045,6 +3098,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                             "role": "user",
                             "content": (
                                 f"Контекст:\n{context}\n\n"
+                                + (f"{notebook_study_prompt}\n\n" if notebook_study_prompt else "")
                                 + (f"{session_block}\n\n" if session_block else "")
                                 + (
                                     f"{memory_block}\n"
@@ -3078,11 +3132,23 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                         "stream": False,
                         "temperature": _env_float("CHAT_TEMPERATURE", 0.2),
                         # Потолок токенов под форму (attempt 1); строгий ретрай — дефолт.
-                        "max_tokens": _generation_token_budget(
-                            max_tokens=answer_form.max_tokens,
-                            local_big=local_big,
-                            attempt=attempt,
-                            intent=answer_form.intent,
+                        "max_tokens": (
+                            min(
+                                _generation_token_budget(
+                                    max_tokens=answer_form.max_tokens,
+                                    local_big=local_big,
+                                    attempt=attempt,
+                                    intent=answer_form.intent,
+                                ),
+                                _env_int("LES_NOTEBOOK_STUDY_CHAT_MAX_TOKENS", 900),
+                            )
+                            if notebook_study_prompt
+                            else _generation_token_budget(
+                                max_tokens=answer_form.max_tokens,
+                                local_big=local_big,
+                                attempt=attempt,
+                                intent=answer_form.intent,
+                            )
                         ),
                     }
                     # При стриминге ретрай (строгий промпт) шлёт уже новый текст —
@@ -3335,6 +3401,13 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     "versions": _version_stamp(),
                     "numeric_unverified": _num_unverified,
                 }
+                if notebook_study_pack is not None:
+                    response["notebook_context"] = notebook_study_pack.payload()
+                    response["artifact"] = {
+                        "title": "Инженерный блокнот",
+                        "mode": "text",
+                        "content": notebook_study_artifact,
+                    }
 
                 # W6.7: source_id CAD/BIM-элементов из текста чанков → ответ + снимок
                 # подсветки. Вьювер АТЛАС поллит /api/cad-bim/highlight и перекрашивает.
