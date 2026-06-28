@@ -146,6 +146,26 @@ async def test_status_includes_chat_admission(runtime_state, monkeypatch):
     assert response["memory_state"]["state"] in {"UNKNOWN", "GREEN"}
 
 
+@pytest.mark.asyncio
+async def test_status_reports_effective_chat_state_for_cloud_during_indexing(runtime_state, monkeypatch):
+    class FakeDispatcher:
+        def reindex_status_payload(self):
+            return {"running": True}
+
+    monkeypatch.setattr(runtime, "dispatcher_for_state", lambda state: FakeDispatcher())
+    monkeypatch.setenv("LES_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "key")
+    runtime_state.clear()
+    runtime_state.update({"mode": "indexing", "runtime_profile": "INDEX_LIGHT", "chat_generation": "paused"})
+
+    response = await runtime.get_status()
+
+    assert response["raw_mode"]["chat_generation"] == "paused"
+    assert response["mode"]["chat_generation"] == "allowed"
+    assert response["mode"]["indexing_chat_policy"]["reason"] == "cloud_provider"
+    assert response["chat_admission"]["allowed"] is True
+
+
 def test_openai_provider_status_defaults_to_gpt_model(monkeypatch):
     monkeypatch.setenv("LES_LLM_PROVIDER", "openai")
     monkeypatch.delenv("OPENAI_MODEL", raising=False)
