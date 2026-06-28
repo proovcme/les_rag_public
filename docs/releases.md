@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.30** | HEAD | Smeta GESNm bridge: the GESN notebook now distinguishes construction GESN collection 38 from mounting `ГЭСНм38`; smeta search/applicability allows `ГЭСНм38` for metal assembly, parses mass from kg/t into `mass_t`, routes SPb Q2 2026 ToR text to `spb_2kv2026`, and computes tonnage-based metal positions through the existing code calculator instead of losing the old RIM/LSR path. |
 | **v0.24.0.29** | HEAD | Notebook/prompt layer: common `notebook_v1` wraps dataset profiles and service sources; `/api/notebooks/*` and `/api/service-sources/notebooks` expose navigation context; GESN notebook maps collections from the local norm base; prompt registry composes common LES and mode prompts, and smeta planner receives the GESN notebook as navigation, not evidence. |
 | **v0.24.0.28** | HEAD | Smeta visible-output + MEP routing hotfix: when top-1 fails unit/applicability gates, the harness binds the first accepted unit-compatible norm; the visible answer footer hides route/contract/workflow internals; engineering networks route to MEP and ask for subsystem/volume data instead of binding to finishing norms; planner retries once after non-JSON/incomplete schema output; excavation signals win over pile words for pit works. |
 | **v0.24.0.27** | HEAD | ZeroTier trusted access hotfix: launchd plists and templates restore direct `10.195.146.0/24` trusted admin access while keeping the public route guarded by `/login`. |

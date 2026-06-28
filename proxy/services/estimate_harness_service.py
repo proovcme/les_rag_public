@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import re
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Callable
 
 from proxy.services.candidate_selection_service import (
@@ -67,7 +68,7 @@ WORK_FAMILY_COLLECTIONS: dict[str, set[str]] = {
     "concrete_monolithic": {"06"},              # монолит ж/б
     "concrete_precast": {"07"},                 # сборный ж/б
     "masonry": {"08"},                          # каменные
-    "metal": {"09"},                            # металлоконструкции
+    "metal": {"09", "ГЭСНм38"},                 # металлоконструкции + монтажные металлоконструкции
     "wood": {"10"},                             # деревянные конструкции
     "floors": {"11"},                           # полы
     "roofing": {"12"},                          # кровли
@@ -135,6 +136,25 @@ def _collection_of(code: str) -> str:
     return m.group(1) if m else ""
 
 
+def _base_type_of(code: str) -> str:
+    s = str(code or "").strip()
+    if s.startswith("ГЭСНм"):
+        return "ГЭСНм"
+    if s.startswith("ГЭСНр"):
+        return "ГЭСНр"
+    if s.startswith("ГЭСНп"):
+        return "ГЭСНп"
+    return "ГЭСН"
+
+
+def _collection_key(code: str) -> str:
+    collection = _collection_of(code)
+    base_type = _base_type_of(code)
+    if base_type == "ГЭСН" or not collection:
+        return collection
+    return f"{base_type}{collection}"
+
+
 def _plain_norm_code(code: str) -> str:
     m = re.search(r"(?<!\d)(\d{2}-\d{2}-\d{3}-\d{2})", str(code or ""))
     return m.group(1) if m else str(code or "")
@@ -157,7 +177,7 @@ _FAMILY_POSITIVE_ANCHORS: dict[str, tuple[str, ...]] = {
     "concrete_monolithic": ("бетон", "монолит", "железобетон", "плит", "стен", "перекрыт", "колонн", "фундамент"),
     "concrete_precast": ("сборн", "панел", "плит", "блок"),
     "masonry": ("кладк", "стен", "перегородк", "кирпич", "блок"),
-    "metal": ("металл", "сталь", "конструкц", "балк", "ферм"),
+    "metal": ("металл", "сталь", "конструкц", "листов", "балк", "ферм"),
     "wood": ("дерев", "брус", "бревн", "каркас", "стен", "перекрыт", "стропил"),
     "floors": ("пол", "стяжк", "покрыт"),
     "roofing": ("кровл", "покрыт", "рулон", "мембран"),
@@ -178,8 +198,9 @@ def check_applicability(code: str, norm_name: str, work_family: str) -> tuple[st
     plain_code = _plain_norm_code(code)
     allowed = WORK_FAMILY_COLLECTIONS.get(work_family)
     collection = _collection_of(code)
-    if allowed and collection and collection not in allowed:
-        return "rejected", [f"сборник {collection} не разрешён для {work_family}"]
+    collection_key = _collection_key(code)
+    if allowed and collection_key and collection_key not in allowed:
+        return "rejected", [f"сборник {collection_key} не разрешён для {work_family}"]
     for a in _FORBIDDEN_TITLE_ANCHORS:
         if a in name:
             return "rejected", [f"запретный признак в названии: «{a}»"]
@@ -208,7 +229,7 @@ _ELEMENT_ANCHORS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "foundation_slab":     (("плит", "фундамент", "бетон", "железобетон", "монолит"), ()),
     "foundation":          (("фундамент", "основани", "бетон"), ()),
     "wood_wall":           (("дерев", "брус", "бревн", "стен", "каркас"), ("линолеум", "грунтовк", "окрас")),
-    "metal_assembly":      (("монтаж", "установ", "металл", "сталь", "конструкц", "каркас", "балк", "ферм"),
+    "metal_assembly":      (("монтаж", "установ", "металл", "сталь", "конструкц", "листов", "масс", "каркас", "балк", "ферм"),
                              ("бак", "конвейер", "подстанц", "кабел", "автокоптил", "сцен")),
     "pile":                (("сва", "оголов", "ростверк"), ("насосн", "мелиоративн")),
     "monolithic_wall":     (("стен", "бетонирован", "бетон", "монолит", "железобетон"), ()),
@@ -221,6 +242,7 @@ _ELEMENT_ANCHORS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
 
 _ELEMENT_TEXT_SIGNALS: tuple[tuple[str, str, str], ...] = (
     ("engineering_networks", "mep", r"\b(?:инженерн\w*\s+(?:сет|систем)|сет\w*\s+инженер|вк\b|ов\b|эом\b|сс\b|водопровод|канализац|отоплен|вентиляц|электр|кабел|слаботоч)"),
+    ("metal_assembly", "metal", r"\b(?:металлоконструкц|металл\w*|стальн\w*|сталь|листов\w*\s+конструкц|столп|ярус)"),
     ("wood_wall", "wood", r"\b(?:дерев|брус|бревн|каркасно[- ]?щит|каркасн\w*\s+стен|стен\w*\s+каркас)"),
     ("roofing", "roofing", r"\b(?:кровл|стропил|двускат|плоск\w*\s+кров)"),
     ("excavation", "earthworks", r"\b(?:котлован|грунт|транше|выемк|землян|разработк)"),
@@ -310,7 +332,11 @@ def _score_candidate(words: list[str], code: str, name: str, unit: str, *, work_
     parts["forbidden"] = -5.0 * sum(1 for a in _FORBIDDEN_TITLE_ANCHORS if a in name)
     plain_code = _plain_norm_code(code)
     parts["denied_subsection"] = -5.0 if any(plain_code.startswith(p) for p in _FAMILY_DENIED_PREFIXES.get(work_family, ())) else 0.0
-    parts["collection"] = 1.0 if _collection_of(code) in WORK_FAMILY_COLLECTIONS.get(work_family, set()) else -3.0
+    parts["collection"] = 1.0 if _collection_key(code) in WORK_FAMILY_COLLECTIONS.get(work_family, set()) else -3.0
+    if work_family == "metal" and element_type == "metal_assembly" and _collection_key(code) == "ГЭСНм38":
+        parts["mounting_base"] = 2.0 if _canon_unit(phys_unit) == "т" else 0.0
+        if any(w.startswith(("масс", "ярус", "бронз", "кран", "столп", "тяжел", "негабар")) for w in words):
+            parts["mounting_context"] = 3.0
     return round(sum(parts.values()), 2), {k: round(v, 2) for k, v in parts.items() if v}
 
 
@@ -323,6 +349,12 @@ def search_norm(work_description: str, *, work_family: str = "", element_type: s
     if not words:
         return {"status": "not_found", "candidates": [], "missing_inputs": ["work_description"]}
     uh = _canon_unit(unit_hint)
+    if (
+        work_family == "metal"
+        and element_type == "metal_assembly"
+        and (uh == "т" or any(w.startswith(("масс", "тонн")) for w in words))
+    ):
+        words.extend(["массой", "сборка", "краном", "листовые", "конструкции"])
     scored: list[tuple[float, dict, str, str, str]] = []
     for code, name, unit in _norm_index():
         sc = _score_candidate(words, code, name, unit, work_family=work_family,
@@ -421,6 +453,9 @@ FORMULA_CATALOG: dict[str, dict[str, Any]] = {
     "wood_wall": {
         "unit": "м2", "expr": "P * H * N",
         "required": [], "assume": {}},
+    "metal_assembly": {
+        "unit": "т", "expr": "mass_t",
+        "required": ["mass_t"], "assume": {}},
     "roofing": {
         "unit": "м2", "expr": "S1 * roof_area_factor",
         "required": [], "assume": {"roof_area_factor": 1.25}},
@@ -468,6 +503,7 @@ def resolve_slots(element_type: str, geom: dict[str, Any], user_slots: dict[str,
 
 
 _PARAM_PATTERNS = [
+    ("mass_t",             r"(?:масс\w*|вес)[^\d]{0,80}(\d[\d\s\xa0]*(?:[.,]\d+)?)\s*(кг|т|тонн\w*)\b", None),
     ("excavation_depth_m", r"глубин\w*\D{0,18}(\d+(?:[.,]\d+)?)\s*м(?!\w)", 1.0),
     ("slab_thickness_m",   r"(?:плит\w*|фундамент\w*)\D{0,16}(\d+(?:[.,]\d+)?)\s*(мм|см|м)\b", None),
     ("wall_thickness_m",   r"стен\w*\D{0,16}(\d+(?:[.,]\d+)?)\s*(мм|см|м)\b", None),
@@ -489,13 +525,39 @@ def parse_params(question: str) -> dict[str, float]:
         groups = [g for g in m.groups() if g]
         raw_value = next((g for g in groups if re.match(r"^\d", str(g))), "")
         val = _f(raw_value)
-        unit = next((g for g in groups if str(g) in {"мм", "см", "м"}), "м")
+        unit = next((g for g in groups if str(g) in {"мм", "см", "м", "кг", "т"} or str(g).startswith("тонн")), "м")
         if unit == "мм":
             val /= 1000.0
         elif unit == "см":
             val /= 100.0
+        elif unit == "кг":
+            val /= 1000.0
         slots[slot] = val
     return slots
+
+
+def parse_pricebook_hint(question: str) -> str | None:
+    """Extract an installed FGIS price book hint from ToR text.
+
+    This is navigation for the calculator, not evidence. If the matching book is not installed,
+    lsr_assembly will fall back to its existing default book behavior.
+    """
+    ql = (question or "").lower().replace("ё", "е")
+    wants_spb = "санкт" in ql or "спб" in ql or "петербург" in ql
+    wants_2026_q2 = bool(re.search(r"(?:2|ii)[-\s]*(?:ого|ой|й)?\s*(?:кв|кварт)", ql) and "2026" in ql)
+    if not (wants_spb and wants_2026_q2):
+        return None
+    try:
+        from proxy.services import fgis_price_service as fps
+
+        stems = [Path(p).stem for p in fps.available_pricebooks()]
+    except Exception:  # noqa: BLE001
+        stems = []
+    for stem in stems:
+        low = stem.lower()
+        if "spb" in low and "2026" in low and ("2kv" in low or "q2" in low):
+            return stem
+    return "spb_2kv2026"
 
 
 # ── планировщик ──────────────────────────────────────────────────────────────────────────
@@ -537,6 +599,8 @@ BATCH_TOOL_CONTRACT = (
     "foundation,floors,finishes,engineering_networks.\n"
     "Инженерные сети не относить к отделке. Если раздел (ВК/ОВ/ЭОМ/СС), трассы, точки или "
     "оборудование не заданы, оставь slots пустыми: код запросит данные.\n"
+    "Для металлических конструкций, если в тексте дана масса, используй element metal_assembly, "
+    "unit т; код сам достанет mass_t из запроса и пересчитает кг в тонны.\n"
     "Дай 3-6 ключевых работ. work и search description пиши по-русски, словами из строительных норм. "
     "unit только м3, м2 или т. missing_inputs максимум 5. Если параметра нет, не выдумывай slot. "
     "Коды норм не включай."
@@ -550,7 +614,11 @@ def _add_position(args: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]
     в измеритель нормы. Любой провал → позиция помечается, в итог критичное НЕ идёт."""
     from proxy.services.gesn_service import get_norm
 
-    if not state.get("geom"):
+    et = str(args.get("element_type", ""))
+    spec_hint = FORMULA_CATALOG.get(et)
+    expr_hint = str((spec_hint or {}).get("expr") or "")
+    needs_geom = bool(re.search(r"\b(?:S|S1|P|H|N)\b", expr_hint))
+    if needs_geom and not state.get("geom"):
         return {"ok": False, "error": "сначала propose_schema с площадью"}
     code = str(args.get("code", "")).strip()
     norm = get_norm(code)
@@ -564,11 +632,12 @@ def _add_position(args: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]
         return {"ok": False, "status": "rejected_norm", "error": f"код {code} не в базе"}
     # применимость сборника
     allowed = WORK_FAMILY_COLLECTIONS.get(family, set())
-    if allowed and _collection_of(code) not in allowed:
+    collection_key = _collection_key(code)
+    if allowed and collection_key not in allowed:
         state["positions"].append({**base_pos, "status": "rejected_collection",
-                                   "reason": f"сборник {_collection_of(code)} не для {family}"})
+                                   "reason": f"сборник {collection_key} не для {family}"})
         return {"ok": True, "status": "rejected_collection",
-                "reason": f"сборник {_collection_of(code)} не разрешён для {family} — возьми из search_norm"}
+                "reason": f"сборник {collection_key} не разрешён для {family} — возьми из search_norm"}
     # Gate 2: ПРИМЕНИМОСТЬ нормы (bind-барьер) — кривой кандидат (реактор/спец/не та работа) НЕ
     # становится основанием числа. accepted → считаем; rejected/ambiguous → в итог не идёт.
     appl, appl_reasons = check_applicability(code, norm.get("name", ""), family)
@@ -580,7 +649,6 @@ def _add_position(args: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]
                 "note": "норма не подтверждена применимостью — возьми accepted из search_norm"}
     # Gate 4: объём из FORMULA CATALOG по element_type + СЛОТЫ (формула НЕ от модели и НЕ
     # придумывает входы). Нет критичного слота (глубина/толщина/геометрия стен) → needs_input.
-    et = str(args.get("element_type", ""))
     user_slots = {**state.get("user_slots", {}), **(args.get("slots") or {})}
     if et in FORMULA_CATALOG:
         spec, ns, missing, slot_assumptions = resolve_slots(et, state["geom"], user_slots)
@@ -815,8 +883,15 @@ def _run_batch_plan(question: str, complete: Callable[[list[dict[str, str]]], st
 
     for raw_item in _work_items_from_plan(plan):
         item, corrections = _normalize_work_item(raw_item)
+        work_description = str(item.get("work_description") or item.get("work") or "")
+        if (
+            item.get("element_type") == "metal_assembly"
+            and state.get("user_slots", {}).get("mass_t")
+            and "масс" not in work_description.lower()
+        ):
+            work_description = f"{work_description} масса {state['user_slots']['mass_t']} т"
         search_args = {
-            "work_description": str(item.get("work_description") or item.get("work") or ""),
+            "work_description": work_description,
             "work_family": str(item.get("work_family") or ""),
             "element_type": str(item.get("element_type") or ""),
             "action": str(item.get("action") or ""),
@@ -895,12 +970,14 @@ def _finalize(state: dict[str, Any], *, note: str = "") -> dict[str, Any]:
             if p.get("assumptions"):
                 buckets["by_assumption"].append(p)
             norm = get_norm(p["code"])
-            rs = resolve_nr_sp((norm or {}).get("name", ""))
+            rs = resolve_nr_sp(p.get("work") or "")
+            if rs.get("default"):
+                rs = resolve_nr_sp((norm or {}).get("name", ""))
             asm.append({"code": p["code"], "name": p.get("work") or (norm or {}).get("name", ""),
                         "unit": p.get("norm_unit", ""), "qty": p["qty"], "section": "Конструктив",
                         "nr_pct": rs["nr_pct"], "sp_pct": rs["sp_pct"]})
 
-    lsr = assemble(asm) if asm else {"summary": {"total": 0.0}}
+    lsr = assemble(asm, book=state.get("pricebook")) if asm else {"summary": {"total": 0.0}}
     smr = round(_f(lsr.get("summary", {}).get("total")), 2)
     cont = round(smr * 0.02, 2)
     vat = round((smr + cont) * 0.20, 2)
@@ -979,8 +1056,9 @@ def run_estimate_harness(question: str, complete: Callable[[list[dict[str, str]]
     # Gate 4: параметры из запроса → слоты (уточнение в одном запросе:
     # «… глубина 6м плита 400мм»).
     user_slots = parse_params(question)
+    pricebook = parse_pricebook_hint(question)
     state: dict[str, Any] = {"schema": {}, "geom": {}, "positions": [], "steps": 0,
-                             "user_slots": user_slots}
+                             "user_slots": user_slots, "pricebook": pricebook}
     notebook_excerpt = gesn_notebook_prompt_excerpt()
     system_prompt = build_smeta_batch_system_prompt(BATCH_TOOL_CONTRACT, notebook_context=notebook_excerpt)
     result = _run_batch_plan(question, complete, state, max_steps=max_steps, system_prompt=system_prompt)

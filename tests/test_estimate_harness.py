@@ -131,6 +131,36 @@ def test_engineering_networks_without_scope_need_mep_inputs():
     assert "ВК/ОВ/ЭОМ/СС" in obs["reason"]
 
 
+def test_metal_search_can_use_gesnm38_mounting_collection():
+    r = h.search_norm(
+        "листовые конструкции массой свыше 0,5 т сборка краном",
+        work_family="metal",
+        element_type="metal_assembly",
+        action="монтаж",
+        unit_hint="т",
+        top_k=8,
+    )
+
+    codes = [c["norm_code"] for c in r["candidates"]]
+    assert "ГЭСНм:38-01-001-01" in codes
+    gesnm = next(c for c in r["candidates"] if c["norm_code"] == "ГЭСНм:38-01-001-01")
+    assert gesnm["applicability_status"] == "accepted"
+    assert gesnm["unit_compatible"] is True
+
+
+def test_mass_context_promotes_gesnm38_over_building_frame_codes():
+    r = h.search_norm(
+        "Монтаж металлоконструкций масса 664.711 т",
+        work_family="metal",
+        element_type="metal_assembly",
+        action="монтаж",
+        unit_hint="т",
+        top_k=5,
+    )
+
+    assert r["candidates"][0]["norm_code"] == "ГЭСНм:38-01-001-01"
+
+
 def test_extract_json_from_markdown_wrapped_response():
     obj = h._extract_json("план ниже:\n```json\n{\"object\":{\"area_total_m2\":150},\"works\":[]}\n```")
     assert obj == {"object": {"area_total_m2": 150}, "works": []}
@@ -499,6 +529,28 @@ def test_batch_plan_trace_reports_tool_argument_normalization():
     assert res["computed"][0]["phys_qty"] > 0
 
 
+def test_batch_plan_computes_mass_based_metal_assembly():
+    plan = {
+        "object": {"object_type": "steel_structure"},
+        "works": [
+            ["Монтаж металлических конструкций", "Монтаж металлоконструкций",
+             "metal", "metal_assembly", "монтаж", "т", {}],
+        ],
+    }
+
+    res = h.run_estimate_harness(
+        "стальные ярусы, масса 664 711 кг",
+        lambda _m: json.dumps(plan, ensure_ascii=False),
+    )
+
+    assert res["computed"]
+    pos = res["computed"][0]
+    assert pos["code"] == "ГЭСНм:38-01-001-01"
+    assert pos["physical_unit"] == "т"
+    assert abs(pos["phys_qty"] - 664.711) < 0.001
+    assert pos["qty"] == pos["phys_qty"]
+
+
 def test_no_numbers_from_model_text():
     res = h.run_estimate_harness("гараж 50 м²", lambda _m: "Итого 5 миллионов.", max_steps=3)
     assert res["computed"] == []
@@ -512,6 +564,51 @@ def test_parse_params_from_question():
     assert s["excavation_depth_m"] == 6.0
     assert s["slab_thickness_m"] == 0.4              # 400 мм → 0.4 м
     assert s["wall_thickness_m"] == 0.3
+
+
+def test_parse_mass_from_question():
+    assert abs(h.parse_params("стальные ярусы масса 664 711 кг")["mass_t"] - 664.711) < 0.001
+    assert abs(h.parse_params("Общая масса (сталь + бронза) составляет 664\xa0711,12 кг")["mass_t"] - 664.71112) < 0.00001
+    assert h.parse_params("масса 12,5 т")["mass_t"] == 12.5
+
+
+def test_parse_pricebook_from_spb_q2_2026(monkeypatch):
+    from proxy.services import fgis_price_service as fps
+
+    monkeypatch.setattr(fps, "available_pricebooks", lambda *a, **k: ["/tmp/spb_2kv2026.parquet"])
+
+    assert h.parse_pricebook_hint("Расчет выполнить в ценах 2-ого квартала 2026 года по Санкт-Петербургу") == "spb_2kv2026"
+
+
+def test_mass_metal_plan_passes_pricebook_and_metal_nr_sp(monkeypatch):
+    from proxy.services import fgis_price_service as fps
+    from proxy.services import lsr_assembly_service as lsr
+
+    monkeypatch.setattr(fps, "available_pricebooks", lambda *a, **k: ["/tmp/spb_2kv2026.parquet"])
+    captured = {}
+
+    def fake_assemble(positions, *, book=None, **_kwargs):
+        captured["positions"] = positions
+        captured["book"] = book
+        return {"summary": {"total": 118799319.94}}
+
+    monkeypatch.setattr(lsr, "assemble", fake_assemble)
+    plan = {
+        "object": {"object_type": "steel_structure"},
+        "works": [
+            ["Монтаж металлоконструкций", "Монтаж металлоконструкций",
+             "metal", "metal_assembly", "монтаж", "т", {}],
+        ],
+    }
+
+    h.run_estimate_harness(
+        "Общая масса составляет 664 711,12 кг. Расчет в ценах 2-ого квартала 2026 года по Санкт-Петербургу.",
+        lambda _m: json.dumps(plan, ensure_ascii=False),
+    )
+
+    assert captured["book"] == "spb_2kv2026"
+    assert captured["positions"][0]["nr_pct"] == 93
+    assert captured["positions"][0]["sp_pct"] == 62
 
 
 def test_parse_pile_count_from_question():

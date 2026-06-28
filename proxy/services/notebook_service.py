@@ -35,6 +35,7 @@ _GESN_COLLECTION_LABELS = {
     "07": "бетонные и железобетонные сборные конструкции",
     "08": "конструкции из кирпича и блоков",
     "09": "металлические конструкции",
+    "ГЭСНм38": "монтаж металлических и листовых конструкций, оборудования и тяжёлых узлов",
     "10": "деревянные конструкции",
     "11": "полы",
     "12": "кровли",
@@ -187,6 +188,28 @@ def _collection_of(code: str) -> str:
     return match.group(1) if match else ""
 
 
+def _base_type_of(code: str, norm: dict[str, Any] | None = None) -> str:
+    base_type = str((norm or {}).get("base_type") or "").strip()
+    if base_type:
+        return base_type
+    value = str(code or "").strip()
+    if value.startswith("ГЭСНм"):
+        return "ГЭСНм"
+    if value.startswith("ГЭСНр"):
+        return "ГЭСНр"
+    if value.startswith("ГЭСНп"):
+        return "ГЭСНп"
+    return "ГЭСН"
+
+
+def _collection_id(code: str, norm: dict[str, Any] | None = None) -> str:
+    collection = _collection_of(code)
+    if not collection:
+        return ""
+    base_type = _base_type_of(code, norm)
+    return collection if base_type == "ГЭСН" else f"{base_type}{collection}"
+
+
 @lru_cache(maxsize=1)
 def build_gesn_notebook() -> dict[str, Any]:
     from proxy.services.gesn_service import load_base_norms, load_norms
@@ -195,7 +218,7 @@ def build_gesn_notebook() -> dict[str, Any]:
     grouped: dict[str, dict[str, Any]] = {}
     for code, norm in norms.items():
         display_code = str(norm.get("code") or code)
-        collection = _collection_of(display_code)
+        collection = _collection_id(display_code, norm)
         if not collection:
             continue
         rec = grouped.setdefault(collection, {"names": [], "units": [], "examples": []})
@@ -253,7 +276,7 @@ def build_gesn_notebook() -> dict[str, Any]:
 
 def gesn_notebook_prompt_excerpt(notebook: dict[str, Any] | None = None, *, collections: list[str] | None = None) -> str:
     nb = notebook or build_gesn_notebook()
-    wanted = set(collections or ["01", "05", "06", "07", "08", "09", "10", "11", "12", "15", "16", "17", "18", "20", "21", "22"])
+    wanted = set(collections or ["01", "05", "06", "07", "08", "09", "ГЭСНм38", "10", "11", "12", "15", "16", "17", "18", "20", "21", "22"])
     rows = [
         c for c in nb.get("collections", [])
         if str(c.get("collection")) in wanted

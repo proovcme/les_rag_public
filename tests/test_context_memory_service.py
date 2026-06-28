@@ -182,6 +182,12 @@ def test_gesn_notebook_maps_required_collections(monkeypatch):
         "ГЭСН:12-01-021-01": {"code": "ГЭСН12-01-021-01", "name": "Устройство кровли", "unit": "100 м2"},
         "ГЭСН:15-04-048-05": {"code": "ГЭСН15-04-048-05", "name": "Отделочные работы", "unit": "100 м2"},
         "ГЭСН:21-02-001-01": {"code": "ГЭСН21-02-001-01", "name": "Прокладка кабеля", "unit": "100 м"},
+        "ГЭСНм:38-01-001-01": {
+            "code": "ГЭСНм38-01-001-01",
+            "base_type": "ГЭСНм",
+            "name": "Листовые конструкции массой свыше 0,5 т, сборка краном",
+            "unit": "т",
+        },
     })
     monkeypatch.setattr(gesn_service, "load_norms", lambda: {})
     nb.build_gesn_notebook.cache_clear()
@@ -191,7 +197,9 @@ def test_gesn_notebook_maps_required_collections(monkeypatch):
 
     for code in ("01", "05", "10", "12", "15", "16", "17", "18", "20", "21", "22"):
         assert code in by_code
+    assert "ГЭСНм38" in by_code
     assert "земляные" in by_code["01"]["area"]
+    assert "монтаж" in by_code["ГЭСНм38"]["area"]
     assert "отдел" in by_code["15"]["area"]
     assert "электро" in by_code["21"]["area"]
     assert notebook["is_evidence"] is False
