@@ -7,6 +7,8 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.28** | HEAD | Smeta visible-output + MEP routing hotfix: when top-1 fails unit/applicability gates, the harness binds the first accepted unit-compatible norm; the visible answer footer hides route/contract/workflow internals; engineering networks route to MEP and ask for subsystem/volume data instead of binding to finishing norms; planner retries once after non-JSON/incomplete schema output; excavation signals win over pile words for pit works. |
+| **v0.24.0.27** | HEAD | ZeroTier trusted access hotfix: launchd plists and templates restore direct `10.195.146.0/24` trusted admin access while keeping the public route guarded by `/login`. |
 | **v0.24.0.26** | HEAD | Smeta partial-total wording hotfix: a visible partial preliminary total no longer conflicts with “число не показываю”; only the guarded final total is withheld until all key norms and parameters are confirmed. |
 | **v0.24.0.25** | HEAD | Smeta answer hotfix: visible estimate-harness output now shows operator-facing tables and preliminary numbers, hides planner/tool trace from the first layer, marks figures based on best applicable candidates as assumptions instead of returning only candidates, and Sovushka renders plain AI Markdown instead of raw `**...**`. |
 | **v0.24.0.24** | HEAD | Candidate selection system service: `candidate_selection_v1` moved into reusable `candidate_selection_service`; smeta `search_norm` now delegates shortlist/reasons/gap/action selection to the shared layer with smeta-specific labels. |

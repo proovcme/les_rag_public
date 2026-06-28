@@ -7,12 +7,12 @@
 ## Текущее состояние (2026-06-28)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.26  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.28  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.26 smeta partial total wording hotfix
+задеплоено на рантайм:     0.24.0.28 smeta visible-output + MEP routing hotfix
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.26 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=32
+рантайм /api/version:      0.24.0.28 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=32
 ```
 
 > 0.24.0.6 выкачен через `make ship`. Живой чат-прогон без semantic cache:
@@ -61,6 +61,15 @@ dev HEAD:                  HEAD  (см. git log -1)
 > AI-пузыри Совушки теперь рендерят обычный Markdown, а не показывают `**...**` сырьём.
 > 0.24.0.26 чинит противоречие в частичной смете: если рассчитанная часть уже показана в рублях,
 > ответ больше не пишет «число не показываю», а честно помечает только отсутствие финальной суммы.
+> 0.24.0.27 возвращает прямой ZeroTier-доступ к UI/API: launchd plist снова задают
+> `TRUSTED_NETWORKS=127.0.0.1/32,::1/128,10.195.146.0/24` и узкий
+> `TRUSTED_PROXY_NETWORKS=127.0.0.1/32,::1/128,10.195.146.136/32`.
+> 0.24.0.28 чинит причину провала кровли в smeta-harness: bind берёт первого кандидата,
+> прошедшего применимость и единицу измерения, а не слепо top-1; видимый UI больше не показывает
+> внутренние route/contract/workflow-чипы; инженерные сети уходят в отдельное MEP-семейство и без
+> раздела/объёмов требуют данные, а не маскируются под отделку; planner получает repair-ход, если
+> первый ответ модели был не машинным JSON или неполной схемой; земляные признаки (`котлован`,
+> `траншея`, `грунт`) при нормализации побеждают слово `свайный` внутри земляной работы.
 
 > Деплоятся только code-правки (`proxy/`,`backend/`,`sovushka/`,`config/`). Доки на рантайм не катятся —
 > поэтому dev HEAD ≠ deployed_commit это нормально, пока расходятся только доки.
@@ -97,6 +106,8 @@ dev HEAD:                  HEAD  (см. git log -1)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.28 | HEAD | 2026-06-28 | Smeta visible-output + MEP routing hotfix: if top-1 norm candidate fails unit/applicability gates, harness binds the first accepted unit-compatible candidate; visible answer footer no longer shows route/contract/workflow internals; engineering networks are routed to MEP and ask for subsystem/volume data instead of binding to finishing norms; planner retries once when the model returns non-JSON/incomplete schema; excavation signals win over pile words for pit works | ✅ рантайм, focused tests + live probes ✅ |
+| 0.24.0.27 | HEAD | 2026-06-28 | ZeroTier trusted access hotfix: installed launchd plists and repo templates restore direct `10.195.146.0/24` trusted admin access while keeping public `/classic` redirected to `/login`; proxy/UI trust diagnostics are green | ✅ рантайм, focused trust checks + public login guard ✅ |
 | 0.24.0.26 | HEAD | 2026-06-28 | Smeta partial-total wording hotfix: partial preliminary totals stay visible, but the answer no longer contradicts itself with “число не показываю”; only the final guarded total is withheld until all key norms/parameters are confirmed | ✅ рантайм, focused + ship/smoke + live dacha probe ✅ |
 | 0.24.0.25 | HEAD | 2026-06-28 | Smeta answer hotfix: visible estimate-harness response no longer exposes planner/tool trace or internal terms, shows computed preliminary totals when best applicable candidates can be priced, renders pending candidates as a compact table, and Совушка renders plain AI Markdown instead of raw `**...**`; ambiguous top norms can produce explicitly assumed preliminary figures while final status remains guarded by missing/rejected positions | ✅ рантайм, full test + ship/smoke + runtime format probe ✅ |
 | 0.24.0.24 | HEAD | 2026-06-28 | Candidate selection system service: reusable `candidate_selection_service` owns `candidate_selection_v1` shortlist/reasons/gap/action contract; smeta `search_norm` delegates selection to it with smeta-specific reason labels, and the new service is included in runtime alignment critical files | ✅ рантайм, full test + ship/smoke + alignment checked=32 ✅ |

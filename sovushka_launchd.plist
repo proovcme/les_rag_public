@@ -15,6 +15,16 @@
     <key>WorkingDirectory</key>
     <string>/Users/ovc/Projects/LES_v2</string>
 
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>TRUSTED_NETWORKS</key>
+        <string>127.0.0.1/32,::1/128,10.195.146.0/24</string>
+        <key>TRUSTED_NETWORK_ROLE</key>
+        <string>admin</string>
+        <key>TRUSTED_PROXY_NETWORKS</key>
+        <string>127.0.0.1/32,::1/128,10.195.146.136/32</string>
+    </dict>
+
     <key>RunAtLoad</key>
     <true/>
 

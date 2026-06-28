@@ -1265,7 +1265,7 @@ def _format_harness(r: dict) -> str:
         if slots_needed:
             human = {"excavation_depth_m": "глубина котлована (м)", "slab_thickness_m": "толщина плиты (мм/м)",
                      "wall_thickness_m": "толщина стен (мм/м)", "wall_height_m": "высота стен (м)",
-                     "wall_length_m": "длина/периметр стен (м)"}
+                     "wall_length_m": "длина/периметр стен (м)", "pile_count": "количество свай"}
             ask = ", ".join(human.get(s, s) for s in slots_needed)
             lines += ["", f"**Чтобы дорассчитать:** {ask}."]
     if not ft and not pt:
@@ -1549,7 +1549,22 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         # Model-first estimate: model decomposes the object, harness provides tools and gates.
         from proxy.services.estimate_harness_service import run_estimate_harness
         result = await asyncio.to_thread(run_estimate_harness, _smeta_harness_question(req), _harness_complete)
-        return _mode_reply(_format_harness(result), "estimate_harness", "harness_mode")
+        trace = {
+            "mode": "estimate_harness",
+            "planner_status": result.get("planner_status"),
+            "steps": result.get("steps"),
+            "total_status": result.get("total_status"),
+            "computed": len(result.get("computed") or []),
+            "needs_input": len(result.get("needs_input") or []),
+            "rejected": len(result.get("rejected") or []),
+            "tool_trace": result.get("trace") or [],
+        }
+        return _mode_reply(
+            _format_harness(result),
+            "estimate_harness",
+            "harness_mode",
+            extra={"retrieval_trace": trace, "total_status": result.get("total_status")},
+        )
 
     from proxy.services.asbuilt_chat_service import maybe_handle_asbuilt_query  # приёмка ИД-сканов
     from proxy.services.les_md_chat_service import maybe_handle_les_md_query  # LES.md: пойми папку

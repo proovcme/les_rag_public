@@ -146,67 +146,13 @@ OUTPUT_FORMATS = {
 def _operator_status_chips(crag: str, meta: dict | None, srcs: list | None = None) -> list[dict[str, str]]:
     """Human-facing chips for the answer footer.
 
-    Internal router/cache/debug markers stay in technical details; the first UI
-    layer should tell the operator what matters: sources, check status, route.
+    The first UI layer should not narrate internal routing/contracts. Evidence
+    status, workflow and contract details stay in the technical disclosure.
     """
     chips: list[dict[str, str]] = []
     src_count = len(srcs or [])
     if src_count:
         chips.append({"label": f"{src_count} источн.", "tone": "ok"})
-    status = (crag or "").upper()
-    if status == "VERIFIED":
-        chips.append({"label": "Проверено", "tone": "ok"})
-    elif status == "UNVALIDATED":
-        chips.append({"label": "Без проверки", "tone": "warn"})
-    elif status:
-        chips.append({"label": "Нужна проверка", "tone": "err"})
-
-    route = (meta or {}).get("query_route") if isinstance((meta or {}).get("query_route"), dict) else {}
-    channel = str(route.get("channel") or route.get("operation") or "").strip()
-    route_labels = {
-        "table": "Таблица",
-        "mail": "Почта",
-        "doc_review": "Нормоконтроль",
-        "smeta": "Смета",
-        "smeta_mode": "Смета",
-        "rag": "Поиск",
-        "generic": "Поиск",
-        "source_lookup": "Источник",
-        "memory": "Память",
-        "command": "Команда",
-    }
-    if channel:
-        chips.append({"label": route_labels.get(channel, "Маршрут выбран"), "tone": "dim"})
-    scenario = (meta or {}).get("scenario") if isinstance((meta or {}).get("scenario"), dict) else {}
-    if scenario.get("label"):
-        chips.append({"label": str(scenario["label"]), "tone": "dim"})
-    contract = (meta or {}).get("answer_contract") if isinstance((meta or {}).get("answer_contract"), dict) else {}
-    if contract.get("tables") == "required":
-        chips.append({"label": "Табличный контракт", "tone": "ok"})
-    contract_check = (meta or {}).get("answer_contract_check") if isinstance((meta or {}).get("answer_contract_check"), dict) else {}
-    if contract_check.get("status") == "warn":
-        chips.append({"label": "Контракт: замечания", "tone": "warn"})
-    workflow = (meta or {}).get("workflow_plan") if isinstance((meta or {}).get("workflow_plan"), dict) else {}
-    wf_status = str(workflow.get("status") or "").strip()
-    wf_finality = str(workflow.get("finality") or "").strip()
-    if wf_status == "complete":
-        chips.append({"label": "Ход: готов", "tone": "ok"})
-    elif wf_status == "needs_review":
-        chips.append({"label": "Ход: на проверку", "tone": "warn"})
-    elif wf_status == "preliminary":
-        chips.append({"label": "Ход: предварительно", "tone": "warn"})
-    elif wf_status == "needs_data":
-        chips.append({"label": "Ход: нужны данные", "tone": "err"})
-    elif wf_status == "blocked":
-        chips.append({"label": "Ход: блок", "tone": "err"})
-    if wf_finality == "human_required":
-        chips.append({"label": "Финал: инженер", "tone": "warn"})
-    elif wf_finality == "not_final":
-        chips.append({"label": "Не финал", "tone": "warn"})
-
-    phases = (meta or {}).get("latency_phases") or ((meta or {}).get("retrieval_trace") or {}).get("latency_phases")
-    if isinstance(phases, dict) and phases.get("total") is not None:
-        chips.append({"label": f"{float(phases.get('total') or 0):.1f}с", "tone": "dim"})
     return chips
 
 

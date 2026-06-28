@@ -73,6 +73,109 @@ def test_normalized_frame_wall_search_stays_in_wood_collection():
     assert r["candidates"][0]["collection"] == "10"
 
 
+def test_work_item_normalization_routes_engineering_networks_to_mep_not_finishes():
+    item = {
+        "work": "устройство_инженерных_сетей",
+        "work_description": "устройство инженерных сетей дома",
+        "work_family": "finishes",
+        "element_type": "finishes",
+        "action": "устройство",
+        "unit_hint": "м2",
+    }
+
+    norm, corrections = h._normalize_work_item(item)
+
+    assert norm["work_family"] == "mep"
+    assert norm["element_type"] == "engineering_networks"
+    assert corrections
+
+
+def test_excavation_signal_wins_over_pile_when_work_is_pit():
+    item = {
+        "work": "разработка котлована под свайный фундамент",
+        "work_description": "разработка котлована под свайный фундамент",
+        "work_family": "foundation",
+        "element_type": "pile",
+        "action": "разработка",
+        "unit_hint": "м3",
+    }
+
+    norm, corrections = h._normalize_work_item(item)
+
+    assert norm["work_family"] == "earthworks"
+    assert norm["element_type"] == "excavation"
+    assert corrections
+
+
+def test_engineering_networks_do_not_bind_to_finishes_collection():
+    r = h.search_norm(
+        "устройство инженерных сетей водопровод канализация отопление",
+        work_family="mep",
+        element_type="engineering_networks",
+        unit_hint="м2",
+    )
+
+    assert all(c["collection"] != "15" for c in r["candidates"])
+
+
+def test_engineering_networks_without_scope_need_mep_inputs():
+    st = _state(area=150, floors=1)
+    obs = h._add_position({
+        "work": "инженерные сети",
+        "code": "16-02-004-05",
+        "work_family": "mep",
+        "element_type": "engineering_networks",
+    }, st)
+
+    assert obs["status"] == "needs_input"
+    assert "ВК/ОВ/ЭОМ/СС" in obs["reason"]
+
+
+def test_extract_json_from_markdown_wrapped_response():
+    obj = h._extract_json("план ниже:\n```json\n{\"object\":{\"area_total_m2\":150},\"works\":[]}\n```")
+    assert obj == {"object": {"area_total_m2": 150}, "works": []}
+
+
+def test_batch_plan_repairs_first_non_json_response():
+    responses = iter([
+        "Я разложу объект на работы, но сейчас отвечу текстом.",
+        '{"object":{"object_type":"house","area_total_m2":150,"floors":1},'
+        '"works":[["кровля","устройство кровли","roofing","roofing","устройство","м2",{}]]}',
+    ])
+
+    res = h.run_estimate_harness("дом 150 м2", lambda _messages: next(responses))
+
+    assert res["planner_status"] == "batch"
+    assert res["trace"][0] == {"tool": "planner_repair", "status": "ok"}
+
+
+def test_batch_plan_repairs_incomplete_json_plan():
+    responses = iter([
+        '{"object":{"floors":1}, "works":[]}',
+        '{"object":{"object_type":"house","area_total_m2":150,"floors":1}, "works":[]}',
+    ])
+
+    res = h.run_estimate_harness("дом 150 м2", lambda _messages: next(responses))
+
+    assert res["planner_status"] == "batch"
+    assert res["trace"][0]["tool"] == "planner_schema_repair"
+    assert res["trace"][0]["status"] == "err"
+
+
+def test_batch_plan_uses_schema_repair_when_complete():
+    responses = iter([
+        '{"object":{"floors":1}, "works":[]}',
+        '{"object":{"object_type":"house","area_total_m2":150,"floors":1},'
+        '"works":[["кровля","устройство кровли","roofing","roofing","устройство","м2",{}]]}',
+    ])
+
+    res = h.run_estimate_harness("дом 150 м2 кровля", lambda _messages: next(responses))
+
+    assert res["planner_status"] == "batch"
+    assert res["trace"][0]["tool"] == "planner_schema_repair"
+    assert res["trace"][0]["status"] == "ok"
+
+
 # ── Gate 3: структурный ranking — хорошее всплывает, спец тонет ───────────────────────────
 
 def test_score_forbidden_anchor_heavy_penalty():
@@ -337,6 +440,27 @@ def test_compact_batch_plan_array_contract():
     assert res["schema"]["object_type"] == "residential_house"
     assert [t["tool"] for t in res["trace"]].count("search_norm") == 2
     assert all(t["candidates"] for t in res["trace"] if t["tool"] == "search_norm")
+    assert any(p["code"].startswith("ГЭСН:12-") for p in res["computed"])
+    roof = next(p for p in res["computed"] if p["code"].startswith("ГЭСН:12-"))
+    assert any("первый кандидат не прошёл" in a for a in roof["assumptions"])
+
+
+def test_batch_plan_binds_first_unit_compatible_roof_candidate():
+    plan = {
+        "object": {"object_type": "residential_house", "area_total_m2": 150, "floors": 1},
+        "works": [
+            ["Кровельные работы", "Устройство двускатной кровли", "roofing", "roofing",
+             "устройство", "м2", {}],
+        ],
+    }
+
+    res = h.run_estimate_harness("дача 150 м² двускатная кровля", lambda _m: json.dumps(plan, ensure_ascii=False))
+
+    assert res["computed"]
+    assert res["computed"][0]["code"] != "ГЭСН:12-01-041-01"
+    assert res["computed"][0]["physical_unit"] == "м2"
+    add_trace = [t for t in res["trace"] if t["tool"] == "add_position"][0]
+    assert add_trace["candidate_index"] > 0
 
 
 def test_batch_plan_trace_reports_tool_argument_normalization():
@@ -369,6 +493,11 @@ def test_parse_params_from_question():
     assert s["excavation_depth_m"] == 6.0
     assert s["slab_thickness_m"] == 0.4              # 400 мм → 0.4 м
     assert s["wall_thickness_m"] == 0.3
+
+
+def test_parse_pile_count_from_question():
+    assert h.parse_params("дом на 20 сваях")["pile_count"] == 20
+    assert h.parse_params("свай 24, ростверк")["pile_count"] == 24
 
 
 def test_resolve_slots_geometry_and_assume():
@@ -406,6 +535,23 @@ def test_foundation_slab_with_thickness_computes():
     obs = h._add_position({"work": "плита", "code": "06-02-001-04", "work_family": "concrete_monolithic",
                            "element_type": "foundation_slab", "slots": {"slab_thickness_m": 0.4}}, st)
     assert obs["status"] == "computed" and obs["phys_qty"] == 400.0   # S1(1000)*0.4
+
+
+def test_generic_foundation_without_formula_is_actionable_needs_input():
+    st = _state()
+    obs = h._add_position({"work": "фундамент", "code": "06-02-001-01", "work_family": "foundation",
+                           "element_type": "foundation"}, st)
+    assert obs["status"] == "needs_input"
+    assert "нет расчётной формулы" in obs["reason"]
+    assert "Недопустимая формула" not in obs["reason"]
+
+
+def test_pile_without_count_requests_pile_count():
+    st = _state()
+    obs = h._add_position({"work": "сваи", "code": "05-01-222-01", "work_family": "foundation",
+                           "element_type": "pile"}, st)
+    assert obs["status"] == "needs_input"
+    assert "pile_count" in obs["missing_slots"]
 
 
 def test_monolithic_wall_without_geometry_needs_input():

@@ -166,14 +166,14 @@ def test_operator_status_chips_hide_internal_trace_from_first_layer():
     labels = [c["label"] for c in chips]
 
     assert "2 источн." in labels
-    assert "Проверено" in labels
-    assert "Таблица" in labels
-    assert "Табличный расчёт" in labels
-    assert "Табличный контракт" in labels
-    assert "Контракт: замечания" in labels
-    assert "Ход: нужны данные" in labels
-    assert "Не финал" in labels
-    assert "12.3с" in labels
+    assert "Проверено" not in labels
+    assert "Таблица" not in labels
+    assert "Табличный расчёт" not in labels
+    assert "Табличный контракт" not in labels
+    assert "Контракт: замечания" not in labels
+    assert "Ход: нужны данные" not in labels
+    assert "Не финал" not in labels
+    assert "12.3с" not in labels
     assert all("KOT" not in label and "CACHE" not in label for label in labels)
 
     tech = _operator_technical_chips(meta)

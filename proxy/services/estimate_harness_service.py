@@ -71,6 +71,7 @@ WORK_FAMILY_COLLECTIONS: dict[str, set[str]] = {
     "roofing": {"12"},                          # кровли
     "waterproofing": {"08", "12"},              # гидро/тепло-изоляция
     "finishes": {"15"},                         # отделка
+    "mep": {"16", "17", "18", "20", "21", "22"},  # инженерные сети/системы
 }
 
 _ELEMENT_DEFAULT_FAMILY: dict[str, str] = {
@@ -88,6 +89,7 @@ _ELEMENT_DEFAULT_FAMILY: dict[str, str] = {
     "roofing": "roofing",
     "floors": "floors",
     "finishes": "finishes",
+    "engineering_networks": "mep",
 }
 
 _ACTION_ALIASES: dict[str, str] = {
@@ -159,6 +161,7 @@ _FAMILY_POSITIVE_ANCHORS: dict[str, tuple[str, ...]] = {
     "roofing": ("кровл", "покрыт", "рулон", "мембран"),
     "waterproofing": ("гидроизол", "изоляц", "оклеечн", "обмазочн", "мастичн"),
     "finishes": ("отделк", "штукатур", "окрас", "облицов"),
+    "mep": ("трубопровод", "водопровод", "канализац", "отоплен", "вентиляц", "кабел", "электр", "слаботоч", "сеть", "систем"),
 }
 # Чёрный список подразделов под семейство (реальные провалы паркинга).
 _FAMILY_DENIED_PREFIXES: dict[str, tuple[str, ...]] = {
@@ -211,13 +214,15 @@ _ELEMENT_ANCHORS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "column":              (("колонн", "бетон", "монолит"), ()),
     "waterproofing":       (("гидроизол", "изоляц", "оклеечн", "обмазочн", "мастичн"), ()),
     "roofing":             (("кровл", "покрыт", "рулон", "мембран"), ()),
+    "engineering_networks": (("трубопровод", "водопровод", "канализац", "отоплен", "вентиляц", "кабел", "электр", "слаботоч", "сеть", "систем"), ("отделк", "штукатур", "окрас")),
 }
 
 _ELEMENT_TEXT_SIGNALS: tuple[tuple[str, str, str], ...] = (
+    ("engineering_networks", "mep", r"\b(?:инженерн\w*\s+(?:сет|систем)|сет\w*\s+инженер|вк\b|ов\b|эом\b|сс\b|водопровод|канализац|отоплен|вентиляц|электр|кабел|слаботоч)"),
     ("wood_wall", "wood", r"\b(?:дерев|брус|бревн|каркасно[- ]?щит|каркасн\w*\s+стен|стен\w*\s+каркас)"),
-    ("pile", "foundation", r"\b(?:сва|ростверк|свайн)"),
     ("roofing", "roofing", r"\b(?:кровл|стропил|двускат|плоск\w*\s+кров)"),
     ("excavation", "earthworks", r"\b(?:котлован|грунт|транше|выемк|землян|разработк)"),
+    ("pile", "foundation", r"\b(?:сва|ростверк|свайн)"),
     ("waterproofing", "waterproofing", r"\b(?:гидроизол|изоляц|обмазочн|оклеечн)"),
     ("foundation_slab", "concrete_monolithic", r"\b(?:фундаментн\w*\s+плит|плитн\w*\s+фундамент)"),
     ("monolithic_wall", "concrete_monolithic", r"\b(?:монолитн\w*\s+стен|бетонирован\w*\s+стен)"),
@@ -359,6 +364,17 @@ def _candidate_selection(candidates: list[dict[str, Any]]) -> dict[str, Any]:
     return select_candidates(candidates, reason_labels=_SMETA_REASON_LABELS)
 
 
+def _first_bindable_candidate(candidates: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, int]:
+    """Return the first candidate that passed applicability and unit gates."""
+    for index, candidate in enumerate(candidates):
+        if (
+            candidate.get("applicability_status") == "accepted"
+            and candidate.get("unit_compatible") is not False
+        ):
+            return candidate, index
+    return None, -1
+
+
 # ── magnitude guard: грубые порядковые границы ───────────────────────────────────────────
 
 def _magnitude_check(physical_unit: str, qty: float, geom: dict[str, Any]) -> tuple[bool, float | None, str]:
@@ -406,6 +422,9 @@ FORMULA_CATALOG: dict[str, dict[str, Any]] = {
     "roofing": {
         "unit": "м2", "expr": "S1 * roof_area_factor",
         "required": [], "assume": {"roof_area_factor": 1.25}},
+    "pile": {
+        "unit": "шт", "expr": "pile_count",
+        "required": ["pile_count"], "assume": {}},
     "floors": {
         "unit": "м2", "expr": "S",
         "required": [], "assume": {}},
@@ -452,6 +471,7 @@ _PARAM_PATTERNS = [
     ("wall_thickness_m",   r"стен\w*\D{0,16}(\d+(?:[.,]\d+)?)\s*(мм|см|м)\b", None),
     ("wall_height_m",      r"высот\w*\D{0,14}(\d+(?:[.,]\d+)?)\s*м(?!\w)", 1.0),
     ("wall_length_m",      r"(?:периметр|длин\w* стен)\D{0,14}(\d+(?:[.,]\d+)?)\s*м(?!\w)", 1.0),
+    ("pile_count",         r"(?:сва\w*\D{0,10}(\d+(?:[.,]\d+)?)|(\d+(?:[.,]\d+)?)\s*сва\w*)", 1.0),
 ]
 
 
@@ -464,8 +484,10 @@ def parse_params(question: str) -> dict[str, float]:
         m = re.search(pat, ql)
         if not m:
             continue
-        val = _f(m.group(1))
-        unit = (m.group(2) if m.lastindex and m.lastindex >= 2 else "м")
+        groups = [g for g in m.groups() if g]
+        raw_value = next((g for g in groups if re.match(r"^\d", str(g))), "")
+        val = _f(raw_value)
+        unit = next((g for g in groups if str(g) in {"мм", "см", "м"}), "м")
         if unit == "мм":
             val /= 1000.0
         elif unit == "см":
@@ -486,7 +508,7 @@ SYSTEM_PROMPT = (
     "\"levels_below_ground\":..,\"structural_system\":..,\"missing_inputs\":[..]}} — ПЕРВЫМ. "
     "Код вернёт геометрию {S,N,S1,P,H}.\n"
     "2) {\"tool\":\"search_norm\",\"args\":{\"work_description\":\"..\",\"work_family\":"
-    "\"earthworks|foundation|concrete_monolithic|masonry|roofing|waterproofing|floors\","
+    "\"earthworks|foundation|concrete_monolithic|masonry|roofing|waterproofing|floors|mep\","
     "\"element_type\":\"excavation|concrete_preparation|foundation_slab|monolithic_wall|"
     "monolithic_slab|column|waterproofing\",\"action\":\"бетонирование|разработка|..\","
     "\"unit_hint\":\"м3|м2\"}} — кандидаты ГЭСН + selection. Если selection.action="
@@ -509,9 +531,11 @@ BATCH_SYSTEM_PROMPT = (
     "\"levels_below_ground\":0,\"structural_system\":\"...\",\"missing_inputs\":[\"...\"]},"
     "\"works\":[[\"work\",\"search description\",\"family\",\"element\",\"action\",\"unit\",{\"slot\":1}]]}\n"
     "family: earthworks,foundation,concrete_monolithic,concrete_precast,masonry,metal,wood,floors,"
-    "roofing,waterproofing,finishes. element: excavation,concrete_preparation,foundation_slab,"
+    "roofing,waterproofing,finishes,mep. element: excavation,concrete_preparation,foundation_slab,"
     "monolithic_wall,monolithic_slab,column,waterproofing,roofing,wood_wall,metal_assembly,pile,"
-    "foundation,floors,finishes.\n"
+    "foundation,floors,finishes,engineering_networks.\n"
+    "Инженерные сети не относить к отделке. Если раздел (ВК/ОВ/ЭОМ/СС), трассы, точки или "
+    "оборудование не заданы, оставь slots пустыми: код запросит данные.\n"
     "Дай 3-6 ключевых работ. work и search description пиши по-русски, словами из строительных норм. "
     "unit только м3, м2 или т. missing_inputs максимум 5. Если параметра нет, не выдумывай slot. "
     "Коды норм не включай."
@@ -572,8 +596,22 @@ def _add_position(args: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]
         base_pos["formula"] = spec["expr"]
     else:
         # legacy: element_type вне каталога → принимаем qty_formula модели (всё ещё через Gate 1)
+        qty_formula = str(args.get("qty_formula", "")).strip()
+        if not qty_formula:
+            if et == "engineering_networks":
+                reason = (
+                    "для инженерных сетей нужно уточнить раздел (ВК/ОВ/ЭОМ/СС), "
+                    "протяжённость трасс, точки подключения и оборудование"
+                )
+            else:
+                reason = (
+                    f"нет расчётной формулы для element_type={et or '—'}; "
+                    "нужно уточнить тип основания и параметры объёма"
+                )
+            state["positions"].append({**base_pos, "status": "needs_input", "reason": reason})
+            return {"ok": True, "status": "needs_input", "reason": reason}
         try:
-            phys = _eval_formula(str(args.get("qty_formula", "")), state["geom"])
+            phys = _eval_formula(qty_formula, state["geom"])
         except Exception as e:  # noqa: BLE001
             state["positions"].append({**base_pos, "status": "needs_input", "reason": str(e)[:80]})
             return {"ok": True, "status": "needs_input", "reason": str(e)[:80]}
@@ -663,6 +701,14 @@ def _work_items_from_plan(plan: dict[str, Any]) -> list[dict[str, Any]]:
     return items
 
 
+def _plan_missing_requirements(plan: dict[str, Any]) -> list[str]:
+    schema = _schema_from_plan(plan)
+    missing = [f"object.{k}" for k in _REQUIRED_SCHEMA if not schema.get(k)]
+    if not _work_items_from_plan(plan):
+        missing.append("works")
+    return missing
+
+
 def _candidate_codes(candidates: list[dict[str, Any]], *, limit: int = 3) -> list[str]:
     codes: list[str] = []
     for c in candidates[:limit]:
@@ -711,6 +757,19 @@ def _run_batch_plan(question: str, complete: Callable[[list[dict[str, str]]], st
     trace: list[dict[str, Any]] = []
 
     if plan is None:
+        messages.extend([
+            {"role": "assistant", "content": raw[:2000]},
+            {"role": "user", "content": (
+                "Предыдущий ответ не был машинным JSON. Верни тот же план повторно: "
+                "ровно один JSON-объект формата {\"object\": {...}, \"works\": [...]}. "
+                "Без markdown, без пояснений, без текста до или после JSON."
+            )},
+        ])
+        retry_raw = complete(messages) or ""
+        plan = _extract_json(retry_raw)
+        trace.append({"tool": "planner_repair", "status": "ok" if plan is not None else "err"})
+
+    if plan is None:
         res = _finalize(state, note="модель не вернула машинный JSON-план")
         res["trace"] = trace
         res["planner_status"] = "no_json"
@@ -721,6 +780,27 @@ def _run_batch_plan(question: str, complete: Callable[[list[dict[str, str]]], st
     if plan.get("tool") or plan.get("final"):
         return _run_tool_loop(question, complete, state=state, max_steps=max_steps,
                               first_call=plan, first_raw=raw)
+
+    missing_plan = _plan_missing_requirements(plan)
+    if missing_plan:
+        messages.extend([
+            {"role": "assistant", "content": json.dumps(plan, ensure_ascii=False)[:2500]},
+            {"role": "user", "content": (
+                "JSON получен, но он неполный для инструментов: не хватает "
+                f"{', '.join(missing_plan)}. Верни исправленный полный JSON для того же объекта: "
+                "{\"object\":{\"object_type\":\"...\",\"area_total_m2\":150,\"floors\":1,"
+                "\"levels_below_ground\":0,\"structural_system\":\"...\",\"missing_inputs\":[]},"
+                "\"works\":[[\"work\",\"search description\",\"family\",\"element\",\"action\",\"unit\",{}]]}. "
+                "Без markdown и пояснений."
+            )},
+        ])
+        retry_raw = complete(messages) or ""
+        retry_plan = _extract_json(retry_raw)
+        if retry_plan is not None and not _plan_missing_requirements(retry_plan):
+            plan = retry_plan
+            trace.append({"tool": "planner_schema_repair", "status": "ok", "missing": missing_plan})
+        else:
+            trace.append({"tool": "planner_schema_repair", "status": "err", "missing": missing_plan})
 
     schema = _schema_from_plan(plan)
     obs_schema = _exec_tool("propose_schema", schema, state)
@@ -748,22 +828,21 @@ def _run_batch_plan(question: str, complete: Callable[[list[dict[str, str]]], st
             "selection": search.get("selection", {}),
             "normalized": corrections,
         })
-        top = candidates[0] if candidates else None
-        top_accepted = (
-            top
-            and top.get("applicability_status") == "accepted"
-            and top.get("unit_compatible") is not False
-        )
-        if top_accepted:
+        bind_candidate, bind_index = _first_bindable_candidate(candidates)
+        if bind_candidate:
             selection = search.get("selection") if isinstance(search.get("selection"), dict) else {}
             norm_assumptions = []
             if search.get("status") != "found":
                 norm_assumptions.append(
                     "норма выбрана по лучшему применимому кандидату; требуется проверка сметчиком"
                 )
+            if bind_index > 0:
+                norm_assumptions.append(
+                    "первый кандидат не прошёл единицу или применимость; взят ближайший применимый кандидат"
+                )
             add_args = {
-                "work": item.get("work") or item.get("work_description") or top.get("title") or "",
-                "code": top.get("norm_code", ""),
+                "work": item.get("work") or item.get("work_description") or bind_candidate.get("title") or "",
+                "code": bind_candidate.get("norm_code", ""),
                 "work_family": item.get("work_family") or search.get("work_family") or "",
                 "element_type": item.get("element_type") or search.get("element_type") or "",
                 "slots": item.get("slots") if isinstance(item.get("slots"), dict) else {},
@@ -774,7 +853,8 @@ def _run_batch_plan(question: str, complete: Callable[[list[dict[str, str]]], st
                           "status": obs.get("status") or ("ok" if obs.get("ok") else "err"),
                           "work": add_args["work"],
                           "code": add_args["code"],
-                          "selection": selection})
+                          "selection": selection,
+                          "candidate_index": bind_index})
         else:
             _append_unbound_position(item, search, state)
 
@@ -903,11 +983,12 @@ def run_estimate_harness(question: str, complete: Callable[[list[dict[str, str]]
 def _extract_json(text: str) -> dict[str, Any] | None:
     if not text:
         return None
-    m = re.search(r"\{.*\}", text, re.DOTALL)
-    if not m:
-        return None
-    try:
-        obj = json.loads(m.group(0))
-        return obj if isinstance(obj, dict) else None
-    except Exception:
-        return None
+    decoder = json.JSONDecoder()
+    for m in re.finditer(r"\{", text):
+        try:
+            obj, _ = decoder.raw_decode(text[m.start():])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    return None
