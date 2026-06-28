@@ -1558,12 +1558,17 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             "needs_input": len(result.get("needs_input") or []),
             "rejected": len(result.get("rejected") or []),
             "tool_trace": result.get("trace") or [],
+            "notebook_context": result.get("notebook_context") or {},
         }
         return _mode_reply(
             _format_harness(result),
             "estimate_harness",
             "harness_mode",
-            extra={"retrieval_trace": trace, "total_status": result.get("total_status")},
+            extra={
+                "retrieval_trace": trace,
+                "notebook_context": result.get("notebook_context") or {},
+                "total_status": result.get("total_status"),
+            },
         )
 
     from proxy.services.asbuilt_chat_service import maybe_handle_asbuilt_query  # приёмка ИД-сканов

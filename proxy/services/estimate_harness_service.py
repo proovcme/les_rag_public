@@ -33,6 +33,8 @@ from proxy.services.candidate_selection_service import (
     select_candidates,
 )
 from proxy.services.estimate_math_service import _eval_formula, _f, _geometry
+from proxy.services.notebook_service import gesn_notebook_prompt_excerpt
+from proxy.services.prompt_registry_service import build_smeta_batch_system_prompt
 
 # ── единицы измерения (UNIT CONTRACT) ────────────────────────────────────────────────────
 
@@ -523,10 +525,9 @@ SYSTEM_PROMPT = (
     "перекрытия(concrete_monolithic). Один JSON за ход; коды — только из search_norm."
 )
 
-BATCH_SYSTEM_PROMPT = (
+BATCH_TOOL_CONTRACT = (
     "/no_think\n"
-    "Ты инженер-сметчик. Верни только компактный JSON, без markdown и пояснений. "
-    "Модель раскладывает объект, но НЕ придумывает коды ГЭСН, объёмы и деньги: это делает код.\n"
+    "Верни только компактный JSON, без markdown и пояснений. "
     "Формат: {\"object\":{\"object_type\":\"...\",\"area_total_m2\":150,\"floors\":1,"
     "\"levels_below_ground\":0,\"structural_system\":\"...\",\"missing_inputs\":[\"...\"]},"
     "\"works\":[[\"work\",\"search description\",\"family\",\"element\",\"action\",\"unit\",{\"slot\":1}]]}\n"
@@ -540,6 +541,8 @@ BATCH_SYSTEM_PROMPT = (
     "unit только м3, м2 или т. missing_inputs максимум 5. Если параметра нет, не выдумывай slot. "
     "Коды норм не включай."
 )
+
+BATCH_SYSTEM_PROMPT = build_smeta_batch_system_prompt(BATCH_TOOL_CONTRACT, notebook_context="")
 
 
 def _add_position(args: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
@@ -743,12 +746,13 @@ def _append_unbound_position(item: dict[str, Any], search: dict[str, Any],
 
 
 def _run_batch_plan(question: str, complete: Callable[[list[dict[str, str]]], str],
-                    state: dict[str, Any], *, max_steps: int = 16) -> dict[str, Any]:
+                    state: dict[str, Any], *, max_steps: int = 16,
+                    system_prompt: str | None = None) -> dict[str, Any]:
     _slots_note = (f"Известные параметры из текста: {state.get('user_slots')}."
                    if state.get("user_slots") else
                    "Если параметров нет, оставь missing_inputs/пустые slots; код не будет выдумывать.")
     messages = [
-        {"role": "system", "content": BATCH_SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt or BATCH_SYSTEM_PROMPT},
         {"role": "user", "content": f"Объект/контекст:\n{question}\n\n{_slots_note}"},
     ]
     state["steps"] = 1
@@ -977,7 +981,17 @@ def run_estimate_harness(question: str, complete: Callable[[list[dict[str, str]]
     user_slots = parse_params(question)
     state: dict[str, Any] = {"schema": {}, "geom": {}, "positions": [], "steps": 0,
                              "user_slots": user_slots}
-    return _run_batch_plan(question, complete, state, max_steps=max_steps)
+    notebook_excerpt = gesn_notebook_prompt_excerpt()
+    system_prompt = build_smeta_batch_system_prompt(BATCH_TOOL_CONTRACT, notebook_context=notebook_excerpt)
+    result = _run_batch_plan(question, complete, state, max_steps=max_steps, system_prompt=system_prompt)
+    result["notebook_context"] = {
+        "schema": "notebook_context_v1",
+        "role": "navigation",
+        "is_evidence": False,
+        "service_notebooks": ["gesn"],
+        "excerpt": notebook_excerpt,
+    }
+    return result
 
 
 def _extract_json(text: str) -> dict[str, Any] | None:

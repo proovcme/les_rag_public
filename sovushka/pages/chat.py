@@ -227,6 +227,22 @@ def _dataset_profile_operator_summary(profile: dict) -> list[str]:
     return lines
 
 
+def _dataset_notebook_operator_summary(notebook: dict) -> list[str]:
+    if not isinstance(notebook, dict):
+        return []
+    profile = notebook.get("profile") if isinstance(notebook.get("profile"), dict) else notebook
+    lines = _dataset_profile_operator_summary(profile)
+    summary = notebook.get("notebook_summary") if isinstance(notebook.get("notebook_summary"), dict) else {}
+    areas = ", ".join((summary.get("subject_areas") or [])[:6])
+    terms = ", ".join((summary.get("key_terms") or [])[:8])
+    if areas:
+        lines.append(f"Области: {areas}")
+    if terms and not any(line.startswith("Темы:") for line in lines):
+        lines.append(f"Темы: {terms}")
+    lines.append("Роль: навигация, не evidence.")
+    return lines
+
+
 def _chat_profile_operator_summary(profile: dict) -> list[str]:
     if not isinstance(profile, dict) or not profile:
         return []
@@ -548,8 +564,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     ui.button(
                         icon="o_article",
                         on_click=lambda: asyncio.create_task(_open_scope_passport()),
-                    ).props('flat round dense aria-label="Паспорт области"').classes("sov-icon-btn").tooltip(
-                        "Паспорт области: что известно о выбранном чате и датасетах"
+                    ).props('flat round dense aria-label="Блокнот области"').classes("sov-icon-btn").tooltip(
+                        "Блокнот области: карта выбранного чата, датасетов и служебных источников"
                     )
                     ui.button(icon="o_delete_sweep", on_click=lambda: _clear_chat()).props(
                         'flat round dense aria-label="Очистить чат"'
@@ -902,7 +918,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         with ui.card().classes("sov-advanced-dialog"):
             with ui.row().classes("w-full items-center justify-between"):
                 with ui.column().classes("gap-0"):
-                    ui.label("Паспорт области").classes("sov-panel-title")
+                    ui.label("Блокнот области").classes("sov-panel-title")
                     passport_scope_label = ui.label("Весь RAG").classes("sov-muted")
                 ui.button(icon="o_close", on_click=passport_dialog.close).props(
                     'flat round dense aria-label="Закрыть"'
@@ -989,17 +1005,18 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         passport_body.clear()
         with passport_body:
             with ui.card().classes("sov-control-card"):
-                ui.label("Паспорт области загружается...").classes("sov-muted")
+                ui.label("Блокнот области загружается...").classes("sov-muted")
         passport_dialog.open()
 
         ds_ids, ds_names = await _resolve_scope_dataset_ids()
         chat_profile = await api_get(f"/api/chat/memory/{state.get('session_id')}") if state.get("session_id") else None
-        dataset_profiles: list[dict] = []
+        dataset_notebooks: list[dict] = []
         for dsid in ds_ids[:5]:
             from urllib.parse import quote as _q
-            prof = await api_get(f"/api/rag/datasets/{_q(dsid, safe='')}/profile?depth=deep")
-            if isinstance(prof, dict):
-                dataset_profiles.append(prof)
+            notebook = await api_get(f"/api/notebooks/{_q(dsid, safe='')}?depth=deep")
+            if isinstance(notebook, dict):
+                dataset_notebooks.append(notebook)
+        service_notebooks = await api_get("/api/service-sources/notebooks")
         passport_body.clear()
         with passport_body:
             with ui.card().classes("sov-control-card"):
@@ -1009,23 +1026,38 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     for line in lines:
                         ui.label(line).style("font-size:.68rem;color:var(--text);line-height:1.45;")
                 else:
-                    ui.label("Пока нет накопленного паспорта этой сессии. Он появится после ответов с источниками.").classes("sov-muted")
+                    ui.label("Пока нет накопленного блокнота этой сессии. Он появится после ответов с источниками.").classes("sov-muted")
             with ui.card().classes("sov-control-card"):
                 ui.label("Датасеты в области").classes("section-title")
                 if not ds_ids:
-                    ui.label("Область не сужена: ЛЕС будет искать по всему RAG. Для точного паспорта выбери проект или датасет.").classes("sov-muted")
-                if dataset_profiles:
-                    for idx, prof in enumerate(dataset_profiles, 1):
-                        ui.label(f"{idx}. {prof.get('name') or prof.get('dataset_id')}").style(
+                    ui.label("Область не сужена: ЛЕС будет искать по всему RAG. Для точного блокнота выбери проект или датасет.").classes("sov-muted")
+                if dataset_notebooks:
+                    for idx, notebook in enumerate(dataset_notebooks, 1):
+                        ui.label(f"{idx}. {notebook.get('name') or notebook.get('dataset_id')}").style(
                             "font-size:.72rem;color:var(--accent);font-weight:800;"
                         )
-                        for line in _dataset_profile_operator_summary(prof)[1:]:
+                        for line in _dataset_notebook_operator_summary(notebook)[1:]:
                             ui.label(line).style("font-size:.66rem;color:var(--text);line-height:1.45;")
                         ui.separator().style("border-color:var(--border);margin:6px 0;")
                 elif ds_ids:
-                    ui.label("Не удалось загрузить паспорта выбранных датасетов.").classes("sov-muted")
+                    ui.label("Не удалось загрузить блокноты выбранных датасетов.").classes("sov-muted")
                 if len(ds_ids) > 5:
                     ui.label(f"Показаны первые 5 датасетов из {len(ds_ids)}. Остальные участвуют в поиске, но не раскрыты в этом окне.").classes("sov-muted")
+            with ui.card().classes("sov-control-card"):
+                ui.label("Служебные блокноты").classes("section-title")
+                notebooks = (service_notebooks or {}).get("notebooks") if isinstance(service_notebooks, dict) else []
+                if notebooks:
+                    for nb in notebooks[:3]:
+                        collections = nb.get("collections") or []
+                        ui.label(f"{nb.get('name') or nb.get('id')} · {len(collections)} разделов").style(
+                            "font-size:.72rem;color:var(--accent);font-weight:800;"
+                        )
+                        summary = nb.get("notebook_summary") if isinstance(nb.get("notebook_summary"), dict) else {}
+                        ui.label(str(summary.get("purpose") or "Навигационный блокнот")).style(
+                            "font-size:.66rem;color:var(--text);line-height:1.45;"
+                        )
+                else:
+                    ui.label("Служебные блокноты пока недоступны.").classes("sov-muted")
 
     # W18.1: файл-вьювер (дерево RAG_Content + просмотр текст/код/картинка/PDF).
     def _toggle_files():

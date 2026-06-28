@@ -149,6 +149,24 @@ def test_batch_plan_repairs_first_non_json_response():
     assert res["trace"][0] == {"tool": "planner_repair", "status": "ok"}
 
 
+def test_smeta_planner_prompt_includes_gesn_notebook_and_no_object_templates(monkeypatch):
+    monkeypatch.setattr(h, "gesn_notebook_prompt_excerpt", lambda: "[Блокнот ГЭСН]\n01: земляные работы")
+    seen = []
+
+    def complete(messages):
+        seen.append(messages)
+        return '{"final": true}'
+
+    res = h.run_estimate_harness("дом 150 м2", complete)
+
+    system = seen[0][0]["content"]
+    assert "Л.Е.С." in system
+    assert "Режим «Смета»" in system
+    assert "[Блокнот ГЭСН]" in system
+    assert "object_templates" not in system
+    assert res["notebook_context"]["service_notebooks"] == ["gesn"]
+
+
 def test_batch_plan_repairs_incomplete_json_plan():
     responses = iter([
         '{"object":{"floors":1}, "works":[]}',

@@ -12,6 +12,12 @@ from proxy.services.context_memory_service import (
     get_chat_profile,
     warmup_dataset_profiles,
 )
+from proxy.services.notebook_service import (
+    build_dataset_notebook,
+    build_gesn_notebook,
+    service_source_notebooks,
+    warmup_dataset_notebooks,
+)
 
 
 def _seed_meta_db(path: Path) -> None:
@@ -129,6 +135,85 @@ def test_deep_dataset_profile_uses_bounded_lexical_index(tmp_path, monkeypatch):
     saved = json.loads((storage_root / "ds-1" / DATASET_PROFILE_FILE).read_text())
     assert saved["deep"]["available"] is True
     assert saved["quality"]["status"] == "good"
+
+
+def test_dataset_notebook_wraps_profile_as_navigation_not_evidence(tmp_path, monkeypatch):
+    db_path = tmp_path / "data" / "les_meta.db"
+    storage_root = tmp_path / "storage" / "datasets"
+    monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+    monkeypatch.setenv("RAG_LEXICAL_DB_PATH", str(db_path))
+    _seed_meta_db(db_path)
+    _seed_lexical(db_path)
+
+    notebook = build_dataset_notebook("ds-1", storage_root=storage_root, depth="deep")
+
+    assert notebook["schema"] == "notebook_v1"
+    assert notebook["context_role"] == "navigation"
+    assert notebook["is_evidence"] is False
+    assert notebook["profile"]["dataset_id"] == "ds-1"
+    assert notebook["notebook_summary"]["key_terms"]
+    assert "НЕ evidence" not in notebook["prompt_excerpt"]
+    assert "не evidence" in notebook["prompt_excerpt"].lower()
+
+
+def test_warmup_dataset_notebooks_uses_profiles_without_reindex(tmp_path, monkeypatch):
+    db_path = tmp_path / "data" / "les_meta.db"
+    storage_root = tmp_path / "storage" / "datasets"
+    monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+    monkeypatch.setenv("RAG_LEXICAL_DB_PATH", str(db_path))
+    _seed_meta_db(db_path)
+    _seed_lexical(db_path)
+
+    result = warmup_dataset_notebooks(dataset_ids=["ds-1"], storage_root=storage_root, depth="deep", force=True)
+
+    assert result["schema"] == "notebook_v1"
+    assert result["built"] == 1
+    assert result["notebooks"][0]["summary"]["purpose"]
+
+
+def test_gesn_notebook_maps_required_collections(monkeypatch):
+    from proxy.services import gesn_service
+    from proxy.services import notebook_service as nb
+
+    monkeypatch.setattr(gesn_service, "load_base_norms", lambda: {
+        "ГЭСН:01-02-063-02": {"code": "ГЭСН01-02-063-02", "name": "Разработка грунта котлована", "unit": "100 м3"},
+        "ГЭСН:05-01-028-04": {"code": "ГЭСН05-01-028-04", "name": "Устройство свай", "unit": "м3"},
+        "ГЭСН:10-02-017-03": {"code": "ГЭСН10-02-017-03", "name": "Каркасные деревянные стены", "unit": "100 м2"},
+        "ГЭСН:12-01-021-01": {"code": "ГЭСН12-01-021-01", "name": "Устройство кровли", "unit": "100 м2"},
+        "ГЭСН:15-04-048-05": {"code": "ГЭСН15-04-048-05", "name": "Отделочные работы", "unit": "100 м2"},
+        "ГЭСН:21-02-001-01": {"code": "ГЭСН21-02-001-01", "name": "Прокладка кабеля", "unit": "100 м"},
+    })
+    monkeypatch.setattr(gesn_service, "load_norms", lambda: {})
+    nb.build_gesn_notebook.cache_clear()
+
+    notebook = build_gesn_notebook()
+    by_code = {c["collection"]: c for c in notebook["collections"]}
+
+    for code in ("01", "05", "10", "12", "15", "16", "17", "18", "20", "21", "22"):
+        assert code in by_code
+    assert "земляные" in by_code["01"]["area"]
+    assert "отдел" in by_code["15"]["area"]
+    assert "электро" in by_code["21"]["area"]
+    assert notebook["is_evidence"] is False
+    assert "Блокнот ГЭСН" in notebook["prompt_excerpt"]
+
+
+def test_service_source_notebooks_returns_gesn_first(monkeypatch):
+    from proxy.services import notebook_service as nb
+
+    nb.build_gesn_notebook.cache_clear()
+    monkeypatch.setattr(nb, "build_gesn_notebook", lambda: {
+        "name": "ГЭСН: карта сборников",
+        "context_role": "navigation",
+        "is_evidence": False,
+        "notebook_summary": {"purpose": "x"},
+        "collections": [],
+        "prompt_excerpt": "x",
+    })
+
+    result = service_source_notebooks()
+
+    assert result["notebooks"][0]["id"] == "gesn"
 
 
 def test_warmup_dataset_profiles_builds_all_requested(tmp_path, monkeypatch):

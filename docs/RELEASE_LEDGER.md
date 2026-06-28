@@ -7,12 +7,12 @@
 ## Текущее состояние (2026-06-28)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.28  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.29  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.28 smeta visible-output + MEP routing hotfix
+задеплоено на рантайм:     0.24.0.29 notebook/prompt layer for GESN+smeta
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.28 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=32
+рантайм /api/version:      0.24.0.29 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=35
 ```
 
 > 0.24.0.6 выкачен через `make ship`. Живой чат-прогон без semantic cache:
@@ -70,6 +70,9 @@ dev HEAD:                  HEAD  (см. git log -1)
 > раздела/объёмов требуют данные, а не маскируются под отделку; planner получает repair-ход, если
 > первый ответ модели был не машинным JSON или неполной схемой; земляные признаки (`котлован`,
 > `траншея`, `грунт`) при нормализации побеждают слово `свайный` внутри земляной работы.
+> 0.24.0.29 добавляет общий `notebook_v1`: датасетный блокнот поверх deep-паспорта, системный
+> ГЭСН-блокнот из локальной базы норм, prompt registry (`LES_SYSTEM_PROMPT` + режимные prompts) и
+> подключение ГЭСН-блокнота в smeta planner как навигации, не evidence.
 
 > Деплоятся только code-правки (`proxy/`,`backend/`,`sovushka/`,`config/`). Доки на рантайм не катятся —
 > поэтому dev HEAD ≠ deployed_commit это нормально, пока расходятся только доки.
@@ -106,6 +109,7 @@ dev HEAD:                  HEAD  (см. git log -1)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.29 | HEAD | 2026-06-28 | Notebook/prompt layer: общий `notebook_v1` поверх dataset profiles и service sources, публичные `/api/notebooks/*` + `/api/service-sources/notebooks`, системный ГЭСН-блокнот с картой сборников из локальной базы норм, prompt registry для общего LES prompt и режимных prompts; smeta planner получает ГЭСН-блокнот как navigation/context, а UI показывает «Блокнот области» | ✅ dev, focused tests/verify pending |
 | 0.24.0.28 | HEAD | 2026-06-28 | Smeta visible-output + MEP routing hotfix: if top-1 norm candidate fails unit/applicability gates, harness binds the first accepted unit-compatible candidate; visible answer footer no longer shows route/contract/workflow internals; engineering networks are routed to MEP and ask for subsystem/volume data instead of binding to finishing norms; planner retries once when the model returns non-JSON/incomplete schema; excavation signals win over pile words for pit works | ✅ рантайм, focused tests + live probes ✅ |
 | 0.24.0.27 | HEAD | 2026-06-28 | ZeroTier trusted access hotfix: installed launchd plists and repo templates restore direct `10.195.146.0/24` trusted admin access while keeping public `/classic` redirected to `/login`; proxy/UI trust diagnostics are green | ✅ рантайм, focused trust checks + public login guard ✅ |
 | 0.24.0.26 | HEAD | 2026-06-28 | Smeta partial-total wording hotfix: partial preliminary totals stay visible, but the answer no longer contradicts itself with “число не показываю”; only the final guarded total is withheld until all key norms/parameters are confirmed | ✅ рантайм, focused + ship/smoke + live dacha probe ✅ |
