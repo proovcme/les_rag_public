@@ -1214,6 +1214,113 @@ def _candidate_table_row(position: dict[str, Any]) -> str:
     return f"| {work} | {code} | {unit} | {rest} | {reason} |"
 
 
+def _rub(value: Any) -> str:
+    try:
+        return f"{float(value):,.2f}".replace(",", " ")
+    except (TypeError, ValueError):
+        return str(value or "0")
+
+
+def _qty(value: Any) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value or "")
+    return f"{number:,.6f}".rstrip("0").rstrip(".").replace(",", " ")
+
+
+def _resource_kind_label(kind: str) -> str:
+    return {
+        "labor": "Труд",
+        "machinist": "Машинисты",
+        "machine": "Машины",
+        "material": "Материалы",
+    }.get(kind, kind or "Ресурс")
+
+
+def _estimate_positions(r: dict) -> list[dict[str, Any]]:
+    estimate = r.get("estimate") if isinstance(r.get("estimate"), dict) else {}
+    positions = estimate.get("positions") if isinstance(estimate.get("positions"), list) else []
+    return [p for p in positions if isinstance(p, dict)]
+
+
+def _format_harness_artifact(r: dict) -> str:
+    """Полная сметная расшифровка для панели артефактов."""
+    positions = _estimate_positions(r)
+    if not positions:
+        return ""
+    lines = ["# Сметная расшифровка", ""]
+    lines += ["## Позиции", "",
+              "| Работа | Код | Кол-во | Ед. | Сумма, ₽ |",
+              "|---|---:|---:|---:|---:|"]
+    for pos in positions:
+        lines.append(
+            f"| {pos.get('name') or 'Работа'} | {pos.get('code') or '—'} "
+            f"| {_qty(pos.get('qty'))} | {pos.get('unit') or '—'} | {_rub(pos.get('total'))} |"
+        )
+
+    totals = [
+        ("ОЗП", "ozp"),
+        ("ЭМ", "em"),
+        ("в том числе ЗПМ", "zpm"),
+        ("Материалы", "mat"),
+        ("Прямые затраты", "direct"),
+        ("ФОТ", "fot"),
+        ("НР", "nr"),
+        ("СП", "sp"),
+        ("Всего по СМР", "total"),
+    ]
+    lines += ["", "## Структура стоимости", "",
+              "| Статья | Сумма, ₽ |",
+              "|---|---:|"]
+    for label, key in totals:
+        value = 0.0
+        for pos in positions:
+            bucket = pos.get("adjusted") or pos.get("base") or {}
+            if isinstance(bucket, dict):
+                value += float(bucket.get(key) or 0)
+        lines.append(f"| {label} | {_rub(value)} |")
+
+    estimate = r.get("estimate") if isinstance(r.get("estimate"), dict) else {}
+    condition = str(estimate.get("condition") or "").strip()
+    k_ozp = float(estimate.get("k_ozp") or 1)
+    k_em = float(estimate.get("k_em") or 1)
+    lines += ["", "## Коэффициенты и условия", "",
+              "| Условие | Применено |",
+              "|---|---|"]
+    if condition or k_ozp != 1 or k_em != 1:
+        lines.append(f"| Стеснённость/условия работ | {condition or 'коэффициент'}: ОЗП ×{k_ozp:g}, ЭМ ×{k_em:g} |")
+    else:
+        lines.append("| Стеснённость/высотные работы | Коэффициент не применён: нужен явный коэффициент, ПОС или нормативное основание |")
+
+    resources: list[dict[str, Any]] = []
+    for pos in positions:
+        for res in pos.get("resources") or []:
+            if isinstance(res, dict):
+                resources.append(res)
+    if resources:
+        lines += ["", "## Ресурсы", "",
+                  "| Вид | Код | Наименование | Кол-во | Цена, ₽ | Сумма, ₽ |",
+                  "|---|---:|---|---:|---:|---:|"]
+        for res in resources:
+            name = str(res.get("name") or "").replace("|", "/")
+            lines.append(
+                f"| {_resource_kind_label(str(res.get('kind') or ''))} "
+                f"| {res.get('code') or '—'} "
+                f"| {name} "
+                f"| {_qty(res.get('qty'))} {res.get('unit') or ''} "
+                f"| {_rub(res.get('price_used'))} "
+                f"| {_rub(res.get('cost'))} |"
+            )
+    flags = []
+    for pos in positions:
+        flags.extend(pos.get("flags") or [])
+    if flags:
+        lines += ["", "## Проверить", ""]
+        lines.extend(f"- {flag}" for flag in flags)
+    return "\n".join(lines)
+
+
 def _format_harness(r: dict) -> str:
     """Результат model-first estimate → operator-facing markdown.
 
@@ -1235,15 +1342,17 @@ def _format_harness(r: dict) -> str:
         for p in comp:
             lines.append(f"| {p.get('work', '')} | {p.get('code')} | {p.get('qty')} {p.get('norm_unit','')} "
                          f"| {p.get('phys_qty','')} {p.get('physical_unit','')} |")
+        if _estimate_positions(r):
+            lines += ["", "Полная ресурсная расшифровка, НР/СП, машины, труд и материалы — в артефакте."]
 
     status = r.get("total_status")
     pt, ft = r.get("partial_total"), r.get("final_total")
     if status == "complete" and ft:
-        lines += ["", f"**Итого: СМР {ft.get('smr')} ₽ · всего с НДС {ft.get('grand_total')} ₽** "
+        lines += ["", f"**Итого: СМР {_rub(ft.get('smr'))} ₽ · всего с НДС {_rub(ft.get('grand_total'))} ₽** "
                   f"({ft.get('positions')} поз.)"]
     elif status == "partial" and pt:
         lines += ["", f"**Итог не сформирован.** Есть рассчитанная часть: "
-                  f"~{pt.get('grand_total')} ₽ ({pt.get('positions')} поз.). "
+                  f"~{_rub(pt.get('grand_total'))} ₽ ({pt.get('positions')} поз.). "
                   "Это не смета: часть позиций ещё без подтверждённой нормы или параметров."]
 
     rej = r.get("rejected", [])
@@ -1424,7 +1533,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             "validation": {"enabled": False, "reason": channel},
             "versions": _version_stamp(),
         }
-        for key in ("provenance", "defense", "evidence_summary", "notebook_context", "total_status"):
+        for key in ("provenance", "defense", "evidence_summary", "notebook_context", "total_status", "artifact"):
             if key in extra:
                 payload[key] = extra[key]
         return payload
@@ -1568,6 +1677,11 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 "retrieval_trace": trace,
                 "notebook_context": result.get("notebook_context") or {},
                 "total_status": result.get("total_status"),
+                "artifact": {
+                    "title": "Сметная расшифровка",
+                    "mode": "text",
+                    "content": _format_harness_artifact(result),
+                },
             },
         )
 

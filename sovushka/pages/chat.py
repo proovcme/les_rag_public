@@ -1592,6 +1592,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         return bool(_parse_table_from_ai(ans) or _parse_markdown_table(ans)
                     or _parse_mermaid_from_ai(ans) or _parse_svg_from_ai(ans))
 
+    def _artifact_from_meta(meta: dict | None) -> dict:
+        artifact = (meta or {}).get("artifact") or {}
+        return artifact if isinstance(artifact, dict) and str(artifact.get("content") or "").strip() else {}
+
     def _set_artifacts_visible(visible: bool) -> None:
         artifact_shell.set_visibility(visible)
         artifact_divider.set_visibility(visible)
@@ -1667,15 +1671,18 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         except Exception:
             pass
 
-    def _artifact_button(ans: str, mode: str) -> None:
+    def _artifact_button(ans: str, mode: str, meta: dict | None = None) -> None:
         """Кнопка-карточка артефакта в пузыре ответа (если артефакт есть)."""
-        if not _artifact_present(ans, mode):
+        meta_artifact = _artifact_from_meta(meta)
+        content = str(meta_artifact.get("content") or ans or "")
+        artifact_mode = str(meta_artifact.get("mode") or mode or "text")
+        if not meta_artifact and not _artifact_present(ans, mode):
             return
-        lbl = OUTPUT_FORMATS[mode][0] if (mode in OUTPUT_FORMATS and mode != "text") else "Таблица"
+        lbl = str(meta_artifact.get("title") or (OUTPUT_FORMATS[mode][0] if (mode in OUTPUT_FORMATS and mode != "text") else "Таблица"))
         ui.button(
             f"Артефакт: {lbl} — открыть",
             icon="o_table_view",
-            on_click=lambda a=ans, m=mode: _show_artifact(a, m),
+            on_click=lambda a=content, m=artifact_mode: _show_artifact(a, m),
         ).props("no-caps flat dense").classes("sov-artifact-chip").style(
             "margin-top:6px;border:1px solid var(--border);border-radius:8px;"
             "background:var(--bg);color:var(--accent);font-size:.68rem;font-weight:700;padding:4px 10px;"
@@ -2000,7 +2007,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 _render_evidence_header(meta, srcs)     # v0.16: статус-полоска сверху
             # AI-ответ с таблицей/диаграммой → рисуем формы прямо в пузыре; SVG и прочее,
             # что inline-рендер не ловит, остаётся на «сыром» тексте + кнопке артефакта.
-            rich = _render_rich_body(str(text or "")) if _is_ai else False
+            explicit_artifact = bool(_artifact_from_meta(meta))
+            rich = _render_rich_body(str(text or "")) if (_is_ai and not explicit_artifact) else False
             if not rich:
                 _disp = _bubble_text(str(text or ""), _mode) if (meta and _is_ai) else str(text or "")
                 if _is_ai:
@@ -2012,7 +2020,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 _render_suggestions(meta)
                 _render_excerpts(meta)
                 if _is_ai:
-                    _artifact_button(str(text or ""), _mode)
+                    _artifact_button(str(text or ""), _mode, meta)
             if _is_ai and str(text or "").strip():
                 _render_answer_actions(str(text or ""), srcs or [])
         return bubble
@@ -2039,7 +2047,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             if not error:
                 _render_evidence_header(meta, srcs)     # v0.16: статус-полоска сверху
             # Формы (таблица/mermaid) рисуем виджетами; сырой стрим-label прячем.
-            rich = _render_rich_body(str(text or "")) if (meta and not error) else False
+            explicit_artifact = bool(_artifact_from_meta(meta))
+            rich = _render_rich_body(str(text or "")) if (meta and not error and not explicit_artifact) else False
             if rich:
                 label.set_visibility(False)
             else:
@@ -2053,7 +2062,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 _render_suggestions(meta)
                 _render_excerpts(meta)
                 if not error:
-                    _artifact_button(str(text or ""), meta.get("out_mode", "text"))
+                    _artifact_button(str(text or ""), meta.get("out_mode", "text"), meta)
             if not error and str(text or "").strip():
                 _render_answer_actions(str(text or ""), srcs or [])
 
@@ -2514,6 +2523,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 "answer_contract": d.get("answer_contract") or {},
                 "answer_contract_check": d.get("answer_contract_check") or {},
                 "workflow_plan": d.get("workflow_plan") or {},
+                "artifact": d.get("artifact") or {},
             }
             state["chat_history"].append({"role": "ai", "text": ans, "srcs": srcs, "crag": crag, "meta": meta})
             _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, ans, srcs, crag, meta=meta)
