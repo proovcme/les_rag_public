@@ -1700,8 +1700,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
     def _show_artifact(ans: str, mode: str) -> None:
         """Открыть артефакт сообщения в панели «Артефакты» (как карточка в Claude Desktop)."""
         _open_artifacts()
-        artifact_mode = "text" if mode == "markdown" else mode
-        _render_result(ans, artifact_mode if artifact_mode in OUTPUT_FORMATS else "text", artifact_panel)
+        artifact_mode = mode or "text"
+        _render_result(
+            ans,
+            artifact_mode if (artifact_mode in OUTPUT_FORMATS or artifact_mode == "markdown") else "text",
+            artifact_panel,
+        )
         try:
             ui.run_javascript(
                 "document.querySelector('.sov-artifacts-panel')?.scrollIntoView({behavior:'smooth',block:'start'})"
@@ -2768,7 +2772,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         with container:
             with ui.card().classes("sov-artifact-card"):
                 label = "Интерактивная таблица" if table_query else OUTPUT_FORMATS.get(mode, ("Ответ", ""))[0]
-                # text-режим с таблицей внутри → заголовок «Таблица», а не «Текст»
+                if mode == "markdown":
+                    label = "Инженерный блокнот"
+                # text-режим с таблицей внутри → заголовок «Таблица», а не «Текст».
+                # markdown-артефакты показываем целиком: это блокнот/отчёт, а не первая таблица.
                 if not table_query and mode == "text" and (_parse_table_from_ai(ans) or _parse_markdown_table(ans)):
                     label = "Таблица"
                 with ui.row().classes("w-full items-center justify-between"):
@@ -2785,6 +2792,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                         _render_table(auto)
                     else:
                         ui.markdown(ans).classes("sov-artifact-markdown")
+                elif mode == "markdown":
+                    ui.markdown(ans).classes("sov-artifact-markdown")
                 elif mode == "spec":
                     data = _parse_table_from_ai(ans)
                     if isinstance(data, list) and data and isinstance(data[0], dict):
