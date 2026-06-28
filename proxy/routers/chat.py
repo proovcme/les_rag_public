@@ -1268,8 +1268,10 @@ def _format_harness(r: dict) -> str:
                      "wall_length_m": "длина/периметр стен (м)"}
             ask = ", ".join(human.get(s, s) for s in slots_needed)
             lines += ["", f"**Чтобы дорассчитать:** {ask}."]
-    if not ft:
+    if not ft and not pt:
         lines += ["", "Число не показываю, пока нормы и параметры не подтверждены."]
+    elif not ft and pt:
+        lines += ["", "Финальную сумму не показываю, пока все ключевые нормы и параметры не подтверждены."]
     return "\n".join(lines)
 
 

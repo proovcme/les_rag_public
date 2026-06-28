@@ -7,12 +7,12 @@
 ## Текущее состояние (2026-06-28)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.25  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.26  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.25 smeta answer + markdown render hotfix
+задеплоено на рантайм:     0.24.0.26 smeta partial total wording hotfix
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.25 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=32
+рантайм /api/version:      0.24.0.26 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=32
 ```
 
 > 0.24.0.6 выкачен через `make ship`. Живой чат-прогон без semantic cache:
@@ -59,6 +59,8 @@ dev HEAD:                  HEAD  (см. git log -1)
 > 0.24.0.25 чинит видимую выдачу сметного режима: вместо внутреннего trace и списка инструментов —
 > операторский ответ с таблицами, черновыми цифрами по лучшим применимым кандидатам и явными допущениями.
 > AI-пузыри Совушки теперь рендерят обычный Markdown, а не показывают `**...**` сырьём.
+> 0.24.0.26 чинит противоречие в частичной смете: если рассчитанная часть уже показана в рублях,
+> ответ больше не пишет «число не показываю», а честно помечает только отсутствие финальной суммы.
 
 > Деплоятся только code-правки (`proxy/`,`backend/`,`sovushka/`,`config/`). Доки на рантайм не катятся —
 > поэтому dev HEAD ≠ deployed_commit это нормально, пока расходятся только доки.
@@ -95,6 +97,7 @@ dev HEAD:                  HEAD  (см. git log -1)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.26 | HEAD | 2026-06-28 | Smeta partial-total wording hotfix: partial preliminary totals stay visible, but the answer no longer contradicts itself with “число не показываю”; only the final guarded total is withheld until all key norms/parameters are confirmed | ✅ рантайм, focused + ship/smoke + live dacha probe ✅ |
 | 0.24.0.25 | HEAD | 2026-06-28 | Smeta answer hotfix: visible estimate-harness response no longer exposes planner/tool trace or internal terms, shows computed preliminary totals when best applicable candidates can be priced, renders pending candidates as a compact table, and Совушка renders plain AI Markdown instead of raw `**...**`; ambiguous top norms can produce explicitly assumed preliminary figures while final status remains guarded by missing/rejected positions | ✅ рантайм, full test + ship/smoke + runtime format probe ✅ |
 | 0.24.0.24 | HEAD | 2026-06-28 | Candidate selection system service: reusable `candidate_selection_service` owns `candidate_selection_v1` shortlist/reasons/gap/action contract; smeta `search_norm` delegates selection to it with smeta-specific reason labels, and the new service is included in runtime alignment critical files | ✅ рантайм, full test + ship/smoke + alignment checked=32 ✅ |
 | 0.24.0.23 | HEAD | 2026-06-28 | Smeta candidate selection contract: `search_norm` now returns `candidate_selection_v1` with an explainable shortlist, score parts translated into human reasons, score gap and action (`bind_top_candidate` only for a clear applicable leader; otherwise the model must choose or ask for data); batch trace and unbound positions carry the selection contract | ✅ рантайм, full test + ship/smoke + runtime selection probe ✅ |

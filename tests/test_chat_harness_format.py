@@ -58,3 +58,28 @@ def test_harness_answer_shows_candidate_table_without_tool_trace():
     assert "ГЭСН:05-01-089-03" in text
     assert "Число не показываю" in text
     assert "search_norm" not in text
+
+
+def test_harness_partial_total_does_not_contradict_visible_number():
+    text = _format_harness({
+        "schema": {"object_type": "house", "area_total_m2": 150},
+        "total_status": "partial",
+        "computed": [{
+            "work": "Каркасные стены",
+            "code": "ГЭСН:10-02-017-03",
+            "qty": 1.5,
+            "norm_unit": "100 м2",
+            "phys_qty": 150,
+            "physical_unit": "м2",
+        }],
+        "needs_input": [{"work": "Земляные работы", "reason": "нет параметров"}],
+        "rejected": [],
+        "partial_total": {"smr": 1000, "grand_total": 1200, "positions": 1},
+        "final_total": None,
+        "trace": [],
+        "steps": 1,
+    })
+
+    assert "~1200 ₽" in text
+    assert "Число не показываю" not in text
+    assert "Финальную сумму не показываю" in text

@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.26** | HEAD | Smeta partial-total wording hotfix: a visible partial preliminary total no longer conflicts with “число не показываю”; only the guarded final total is withheld until all key norms and parameters are confirmed. |
 | **v0.24.0.25** | HEAD | Smeta answer hotfix: visible estimate-harness output now shows operator-facing tables and preliminary numbers, hides planner/tool trace from the first layer, marks figures based on best applicable candidates as assumptions instead of returning only candidates, and Sovushka renders plain AI Markdown instead of raw `**...**`. |
 | **v0.24.0.24** | HEAD | Candidate selection system service: `candidate_selection_v1` moved into reusable `candidate_selection_service`; smeta `search_norm` now delegates shortlist/reasons/gap/action selection to the shared layer with smeta-specific labels. |
 | **v0.24.0.23** | HEAD | Smeta candidate selection contract: `search_norm` now returns `candidate_selection_v1` with an explainable shortlist, human-readable score reasons, score gap and action so the harness ranks/gates candidates while the model keeps the decomposition and ambiguous norm choice. |
