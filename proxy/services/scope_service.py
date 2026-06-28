@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable, Optional
 
 _VALID_TYPES = ("all", "project", "projects", "dataset", "datasets", "mixed")
@@ -17,6 +18,7 @@ _VALID_TYPES = ("all", "project", "projects", "dataset", "datasets", "mixed")
 # роли датасета в проекте (для отображения; не влияют на ретрив)
 DATASET_ROLES = ("docs", "norms", "mail", "estimate", "vor", "asbuilt", "resource_workbook",
                  "reference", "unknown")
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 
 
 def _default_project_resolver(pid: int) -> list[str]:
@@ -75,7 +77,8 @@ def resolve_scope(*, scope: dict | None = None, project_id: int | None = None,
             pids = [int(project_id)]
             st, source = "project", "legacy_project_id"
         elif dataset_filter and dataset_filter.strip() and dataset_filter != "(все датасеты)":
-            did = _name_to_id(dataset_filter)
+            normalized_filter = dataset_filter.strip()
+            did = _name_to_id(normalized_filter) or (normalized_filter if _UUID_RE.match(normalized_filter) else None)
             if did:
                 dids = [did]
                 st, source = "dataset", "legacy_dataset_filter"

@@ -36,6 +36,7 @@ def _notebook() -> dict:
 
 def test_notebook_study_query_is_explicit_and_does_not_hijack_smeta_or_lookup():
     assert is_notebook_study_query("расскажи про проект котельной")
+    assert is_notebook_study_query("расскажи про объект")
     assert is_notebook_study_query("сделай инженерную сводку по блокноту")
     assert not is_notebook_study_query("дай смету по проекту")
     assert not is_notebook_study_query("где лежит схема теплоснабжения")

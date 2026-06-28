@@ -1700,7 +1700,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
     def _show_artifact(ans: str, mode: str) -> None:
         """Открыть артефакт сообщения в панели «Артефакты» (как карточка в Claude Desktop)."""
         _open_artifacts()
-        _render_result(ans, mode if mode in OUTPUT_FORMATS else "text", artifact_panel)
+        artifact_mode = "text" if mode == "markdown" else mode
+        _render_result(ans, artifact_mode if artifact_mode in OUTPUT_FORMATS else "text", artifact_panel)
         try:
             ui.run_javascript(
                 "document.querySelector('.sov-artifacts-panel')?.scrollIntoView({behavior:'smooth',block:'start'})"
@@ -1858,9 +1859,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
 
         cols = [{"name": k, "label": strip_markdown_cell(k), "field": k,
                  "align": "right" if _numeric(k) else "left", "sortable": True} for k in keys]
-        ui.table(columns=cols, rows=rows, pagination=10).props("dense flat bordered").classes(
-            "sov-chat-inline-table"
-        )
+        with ui.element("div").classes("sov-table-scroll"):
+            ui.table(columns=cols, rows=rows, pagination=10).props("dense flat bordered").classes(
+                "sov-chat-inline-table"
+            )
 
     def _render_inline_mermaid(code: str) -> None:
         """Mermaid → SVG прямо в чате. ui.mermaid рисует SVG на клиенте; если упал —
@@ -2569,6 +2571,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             }
             state["chat_history"].append({"role": "ai", "text": ans, "srcs": srcs, "crag": crag, "meta": meta})
             _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, ans, srcs, crag, meta=meta)
+            explicit_artifact = _artifact_from_meta(meta)
+            if explicit_artifact and artifact_shell.visible:
+                _show_artifact(
+                    str(explicit_artifact.get("content") or ""),
+                    str(explicit_artifact.get("mode") or "text"),
+                )
             # Режим «Смета» выключен, но запрос похож на объектную смету → предложить
             # пересчитать капстоуном (детерминированный расчёт вместо RAG-осколков).
             _route_ch = (d.get("query_route") or {}).get("channel", "")
@@ -2888,7 +2896,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
     def _render_table(data: list[dict]):
         keys = list(data[0].keys()) if data else []
         cols = [{"name": k, "label": k, "field": k, "align": "left", "sortable": True} for k in keys]
-        ui.table(columns=cols, rows=data, pagination=8).classes("sov-artifact-table")
+        with ui.element("div").classes("sov-table-scroll"):
+            ui.table(columns=cols, rows=data, pagination=8).classes("sov-artifact-table")
         with ui.row().classes("gap-2"):
             ui.button(
                 "CSV",

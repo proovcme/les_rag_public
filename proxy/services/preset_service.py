@@ -22,16 +22,19 @@ DEFAULT_OPENAI_MODEL = "gpt-4.1"
 PRESETS: dict[str, dict[str, str]] = {
     "local": {  # всё на машине: приватно, бесплатно, валидируется Т.О.С.К.А.
         "LES_LLM_PROVIDER": "mlx",
+        "LES_CLOUD_CONSENT": "false",
         "RAG_OCR_BACKEND": "tesseract",
         "LES_ASBUILT_OCR_ENGINE": "local",
     },
     "cloud": {  # максимум качества: чат и плотные таблицы в облаке (дорого, данные наружу)
         "LES_LLM_PROVIDER": "openai",
+        "LES_CLOUD_CONSENT": "true",
         "RAG_OCR_BACKEND": "tesseract",       # массовый скан-OCR локально (облачного конвертер-OCR нет)
         "LES_ASBUILT_OCR_ENGINE": "cloud",
     },
     "mix": {  # приватность по умолчанию + облако только там, где локаль не тянет (плотные таблицы ИД)
         "LES_LLM_PROVIDER": "mlx",
+        "LES_CLOUD_CONSENT": "false",
         "RAG_OCR_BACKEND": "tesseract",
         "LES_ASBUILT_OCR_ENGINE": "cloud",
     },
@@ -54,6 +57,7 @@ def current_preset() -> str | None:
     """Какой пресет сейчас активен (по env) — или None, если набор кастомный."""
     cur = {
         "LES_LLM_PROVIDER": os.getenv("LES_LLM_PROVIDER", ""),
+        "LES_CLOUD_CONSENT": os.getenv("LES_CLOUD_CONSENT", ""),
         "RAG_OCR_BACKEND": os.getenv("RAG_OCR_BACKEND", ""),
         "LES_ASBUILT_OCR_ENGINE": os.getenv("LES_ASBUILT_OCR_ENGINE", "local"),
     }

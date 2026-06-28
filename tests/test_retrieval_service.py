@@ -87,6 +87,15 @@ async def test_resolve_dataset_ids_uses_named_filter_when_ids_missing():
 
 
 @pytest.mark.asyncio
+async def test_resolve_dataset_ids_accepts_dataset_uuid_filter():
+    backend = FakeBackend()
+
+    resolved = await resolve_dataset_ids(backend, None, "ds-2", SimpleNamespace(info=lambda *a: None, warning=lambda *a: None))
+
+    assert resolved == ["ds-2"]
+
+
+@pytest.mark.asyncio
 async def test_resolve_dataset_ids_preserves_explicit_ids():
     backend = FakeBackend()
 

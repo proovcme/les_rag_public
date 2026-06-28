@@ -799,7 +799,8 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   line-height: 1.6;
 }
 .sov-artifact-table {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   background: var(--bg-panel);
   color: var(--text);
   font-size: .72rem;
@@ -819,13 +820,31 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
 .sov-chat-md { white-space: normal; }
 .sov-chat-md p { margin: .2rem 0; }
 .sov-chat-inline-table {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   background: var(--bg-panel);
   color: var(--text);
   font-size: .76rem;
   border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
+}
+.sov-table-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-radius: 6px;
+}
+.sov-table-scroll .q-table__container {
+  min-width: max-content;
+}
+.sov-table-scroll .q-table__middle {
+  overflow-x: visible !important;
+}
+.sov-table-scroll .q-table {
+  width: max-content;
+  min-width: 100%;
 }
 .sov-chat-inline-table thead th { font-weight: 800; }
 .sov-chat-inline-mermaid {
