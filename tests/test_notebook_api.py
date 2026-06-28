@@ -1,6 +1,6 @@
 import pytest
 
-from proxy.routers import notebooks, service_sources
+from proxy.routers import notebooks, prompts, service_sources
 
 
 @pytest.mark.asyncio
@@ -43,3 +43,16 @@ async def test_service_source_notebooks_endpoint(monkeypatch):
     result = await service_sources.list_service_source_notebooks(_user=object())
 
     assert result["notebooks"][0]["id"] == "gesn"
+
+
+@pytest.mark.asyncio
+async def test_prompts_endpoint(monkeypatch):
+    monkeypatch.setattr(prompts, "prompt_registry_snapshot", lambda: {
+        "schema": "prompt_registry_v2",
+        "modes": {"rag": {"tools": ["retrieval"]}},
+    })
+
+    result = await prompts.list_prompts(_user=object())
+
+    assert result["schema"] == "prompt_registry_v2"
+    assert result["modes"]["rag"]["tools"] == ["retrieval"]

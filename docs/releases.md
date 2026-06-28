@@ -7,6 +7,8 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.39** | HEAD | Prompt registry v2: common LES prompt, tone prompt, per-mode prompts and tool contracts are exposed through `/api/prompts`; RAG/free/attachment/smeta harness use the registry layer, and Sovushka admin Instruments shows the prompt map to the operator. |
+| **v0.24.0.38** | HEAD | Chat streaming UX: final-only model/tool paths synthesize visible token chunks, progress keeps the elapsed timer alive, early source chips can arrive before final payload, and visible CJK/OCR garbage is stripped from Russian/Latin answers. |
 | **v0.24.0.37** | HEAD | Resource-aware chat admission/status: indexing mode is no longer a blanket chat kill-switch; cloud generation stays allowed during guarded reindex, local MLX is allowed only when indexing uses the Core ML embedder and memory is green, and runtime status exposes effective chat state plus `indexing_chat_policy`. |
 | **v0.24.0.36** | HEAD | Cloud settings/admission hotfix: the cloud preset no longer overwrites a custom `OPENAI_MODEL` such as `gpt-5.2`, and OpenAI-compatible generation is allowed during guarded reindex/`INDEX_LIGHT` while local providers remain protected by the memory gate. |
 | **v0.24.0.35** | HEAD | Notebook study speed pass: the project-reading layer now chooses a smaller adaptive section plan from the notebook map and retrieves selected sections in parallel (`LES_NOTEBOOK_STUDY_PARALLELISM`, default 3). No answer cache, no deterministic final output. |

@@ -7,12 +7,12 @@
 ## Текущее состояние (2026-06-28)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.37  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.39  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.36 cloud model/admission hotfix
-НЕ задеплоено:             0.24.0.37 resource-aware chat admission/status
-рантайм /api/version:      0.24.0.36 · app 5.1.0 · h0.24 · runtime_alignment=aligned
+задеплоено на рантайм:     0.24.0.39 prompt registry/admin view
+НЕ задеплоено:             —
+рантайм /api/version:      0.24.0.39 · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
 > 0.24.0.6 выкачен через `make ship`. Живой чат-прогон без semantic cache:
@@ -95,6 +95,12 @@ dev HEAD:                  HEAD  (см. git log -1)
 > 0.24.0.37 делает admission ресурсным: cloud проходит во время guarded reindex; локальный
 > MLX во время индексации допускается только для Core ML embedder и зелёной памяти; `/api/status`
 > отдаёт effective chat state вместо сырого `paused`, когда admission реально разрешил чат.
+> 0.24.0.38 чинит ощущение долгого ответа: final-only ветки получают синтетическую печать токенами,
+> progress не останавливает секундомер, источники могут показываться до финального payload, а видимый
+> ответ чистится от CJK/OCR-мусора.
+> 0.24.0.39 расширяет prompt registry: общий промт ЛЕС, тон, режимные промты и tool contracts
+> доступны через `/api/prompts`, RAG/free/attachment/smeta-harness используют registry, а Совушка
+> показывает карту промтов в админских «Инструментах».
 > 0.24.0.31 разделяет сметную выдачу на операторскую сводку в чате и полный артефакт:
 > расшифровка позиций, ОЗП/ЭМ/ЗПМ/материалы/прямые/ФОТ/НР/СП/СМР, ресурсы с ценами и явное
 > предупреждение, если высотные/производственные коэффициенты не применены без нормативного основания.
@@ -137,7 +143,9 @@ dev HEAD:                  HEAD  (см. git log -1)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
-| 0.24.0.37 | HEAD | 2026-06-28 | Resource-aware chat admission/status: indexing mode больше не является тупым рубильником; cloud generation проходит во время guarded reindex, локальный MLX допускается только при `EMBED_BACKEND=coreml` и зелёной памяти, а `/api/status`/`/api/indexing-mode` показывают effective chat state + `indexing_chat_policy` без операторского “paused”, если чат реально разрешён | ✅ dev, focused/verify pending |
+| 0.24.0.39 | HEAD | 2026-06-28 | Prompt registry v2: общий системный промт, тон, режимные промты и tool contracts вынесены в единый registry/API `/api/prompts`; RAG/free/attachment/smeta-harness берут системный слой оттуда; «Инструменты» показывают оператору карту промтов | ✅ рантайм, focused/verify + live `/api/prompts` probe ✅ |
+| 0.24.0.38 | HEAD | 2026-06-28 | Chat streaming UX: final-only ветки `/api/chat/stream` печатают ответ порциями, `progress` сохраняет живой таймер, SSE может отдавать ранние `sources` для чипов/цитат до финала, а видимый текст чистится от CJK/OCR-мусора | ✅ рантайм, focused/verify + live SSE probe ✅ |
+| 0.24.0.37 | HEAD | 2026-06-28 | Resource-aware chat admission/status: indexing mode больше не является тупым рубильником; cloud generation проходит во время guarded reindex, локальный MLX допускается только при `EMBED_BACKEND=coreml` и зелёной памяти, а `/api/status`/`/api/indexing-mode` показывают effective chat state + `indexing_chat_policy` без операторского “paused”, если чат реально разрешён | ✅ рантайм, focused/verify ✅ |
 | 0.24.0.36 | HEAD | 2026-06-28 | Cloud model/admission hotfix: пресет `cloud` сохраняет операторский `OPENAI_MODEL` (`gpt-5.2` не откатывается на `gpt-4.1`), а cloud generation проходит admission даже при active guarded reindex/`INDEX_LIGHT`; локальные провайдеры по-прежнему блокируются ради памяти | ✅ рантайм, focused/verify + live settings/admission probe ✅ |
 | 0.24.0.35 | HEAD | 2026-06-28 | Notebook study speed pass: план чтения выбирает меньше релевантных секций по `notebook_v1`, а retrieval по выбранным секциям идёт параллельно (`LES_NOTEBOOK_STUDY_PARALLELISM`, default 3); кэш готовых ответов не добавлен, итоговый синтез остаётся за моделью | ✅ рантайм, focused/verify + live probe ✅ |
 | 0.24.0.32 | HEAD | 2026-06-28 | Attachment visibility + no auto project-summary: uploaded chat files now persist as system messages in chat history and user turns keep a clear attachment line; broad project questions no longer auto-return deterministic project registers, so notebook/RAG synthesis goes to retrieval + model while project summary remains an explicit tool/MCP command | ✅ dev, focused tests/verify pending |
