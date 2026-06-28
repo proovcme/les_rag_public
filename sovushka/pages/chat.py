@@ -1859,9 +1859,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
 
         cols = [{"name": k, "label": strip_markdown_cell(k), "field": k,
                  "align": "right" if _numeric(k) else "left", "sortable": True} for k in keys]
-        ui.table(columns=cols, rows=rows, pagination=10).props("dense flat bordered").classes(
-            "sov-chat-inline-table"
-        )
+        with ui.element("div").classes("sov-table-scroll"):
+            ui.table(columns=cols, rows=rows, pagination=10).props("dense flat bordered").classes(
+                "sov-chat-inline-table"
+            )
 
     def _render_inline_mermaid(code: str) -> None:
         """Mermaid → SVG прямо в чате. ui.mermaid рисует SVG на клиенте; если упал —
@@ -2895,7 +2896,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
     def _render_table(data: list[dict]):
         keys = list(data[0].keys()) if data else []
         cols = [{"name": k, "label": k, "field": k, "align": "left", "sortable": True} for k in keys]
-        ui.table(columns=cols, rows=data, pagination=8).classes("sov-artifact-table")
+        with ui.element("div").classes("sov-table-scroll"):
+            ui.table(columns=cols, rows=data, pagination=8).classes("sov-artifact-table")
         with ui.row().classes("gap-2"):
             ui.button(
                 "CSV",

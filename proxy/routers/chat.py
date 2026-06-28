@@ -2230,6 +2230,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
 
     query_route_payload = _query_route_payload(query_intent, effective_dataset_filter, kot_decision)
     query_route_payload["scope"] = _scope_snap   # v0.21: где реально искали (snapshot для trace/истории)
+    study_requested = bool(req.dataset_ids or effective_dataset_filter) and is_notebook_study_query(req.question)
+    if study_requested:
+        query_route_payload["breadth"] = "wide"
+        query_route_payload["notebook_study_requested"] = True
     # #2: финальный resolved-канал = семантический RAG. default_rag (ни команда/regex/каскад
     # не поймали) → честный fallback; иначе keyword (route_query поймал по словарю). profile-
     # трейс кладём в payload — как у детерминированных каналов выше: один контракт в каждом route.
@@ -2246,6 +2250,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         if req.semantic_cache_enabled is not None
         else semantic_cache_enabled()
     )
+    if study_requested:
+        # Broad project/object questions must re-read the selected area. A cached short RAG table
+        # turns "расскажи про объект" into a stale narrow answer and hides the notebook artifact.
+        use_semantic_cache = False
     use_validation = (
         req.validation_enabled
         if req.validation_enabled is not None
