@@ -22,7 +22,10 @@ The user question is passed with the current chat context. The model decides how
 object. The harness does not invent a house, a porch, a pile field, a roof or any other ready-made
 scope. It only provides tools:
 
-- `search_norm`: search the local GESN base for candidate norms.
+- `search_norm`: search the local GESN base for candidate norms and return
+  `candidate_selection_v1` with an explainable shortlist, score gap, top reasons and an action
+  (`bind_top_candidate` only for a clear applicable leader; otherwise the model must choose from
+  the shortlist or ask for missing data).
 - `add_position`: add a checked position with quantity/unit constraints.
 - calculation gates: applicability, unit compatibility, quantity sanity, price coverage and
   evidence status.

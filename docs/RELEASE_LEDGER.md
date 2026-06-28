@@ -7,12 +7,12 @@
 ## Текущее состояние (2026-06-28)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.20  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.23  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.20 smeta model-first route + object-composition removal
+задеплоено на рантайм:     0.24.0.23 smeta candidate selection contract
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.20 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=31
+рантайм /api/version:      0.24.0.23 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=31
 ```
 
 > 0.24.0.6 выкачен через `make ship`. Живой чат-прогон без semantic cache:
@@ -52,6 +52,8 @@ dev HEAD:                  HEAD  (см. git log -1)
 > 0.24.0.20 переключает режим «Смета» на model-first tool-loop: модель сама раскладывает объект,
 > харнесс только даёт инструменты и gates; старый объектный слой, его YAML-данные и mass-rate fallback
 > удалены, а auto-router больше не имеет отдельного объектного инструмента.
+> 0.24.0.23 добавляет explainable shortlist поверх `search_norm`: кандидаты ГЭСН получают
+> `candidate_selection_v1` с причинами score, отрывом лидера и действием для привязки/модельной развилки.
 
 > Деплоятся только code-правки (`proxy/`,`backend/`,`sovushka/`,`config/`). Доки на рантайм не катятся —
 > поэтому dev HEAD ≠ deployed_commit это нормально, пока расходятся только доки.
@@ -88,6 +90,7 @@ dev HEAD:                  HEAD  (см. git log -1)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.23 | HEAD | 2026-06-28 | Smeta candidate selection contract: `search_norm` now returns `candidate_selection_v1` with an explainable shortlist, score parts translated into human reasons, score gap and action (`bind_top_candidate` only for a clear applicable leader; otherwise the model must choose or ask for data); batch trace and unbound positions carry the selection contract | ✅ рантайм, full test + ship/smoke + runtime selection probe ✅ |
 | 0.24.0.22 | HEAD | 2026-06-28 | Smeta tool-argument normalization: `estimate_harness` нормализует аргументы work-plan модели перед `search_norm` (каркасные/каркасно-щитовые стены не уходят в металл, английские action слова переводятся в строительные действия, unit aliases приводятся к `м2/м3/т`), сохраняя model-first декомпозицию и не добавляя объектных составов | ✅ рантайм, full test + ship/smoke + live dacha: frame candidates now `ГЭСН:10-*` ✅ |
 | 0.24.0.21 | HEAD | 2026-06-28 | Smeta harness latency: режим «Смета» больше не гоняет многоходовую LLM-петлю по умолчанию; модель одним компактным JSON отдаёт схему объекта и works, после чего код пакетно выполняет `search_norm`/`add_position` по ГЭСН, показывает коды-кандидаты при неоднозначности и не добавляет их в сумму без уверенной применимости; LLM-вызов планировщика ограничен timeout | ✅ рантайм, full test + ship/smoke + live dacha 18s ✅ |
 | 0.24.0.20 | HEAD | 2026-06-28 | Smeta model-first route: режим «Смета» идёт через `estimate_harness` (модель сама раскладывает объект; харнесс даёт `search_norm`/`add_position` и gates); старый объектный слой, его YAML-данные, mass-rate fallback и auto-router target удалены; служебные источники больше не требуют готовых объектных составов | ✅ рантайм, full test + ship/smoke; runtime old files removed ✅ |

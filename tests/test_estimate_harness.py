@@ -109,6 +109,42 @@ def test_search_candidates_carry_score_parts_for_trace():
                       element_type="excavation", unit_hint="м3")
     for c in r["candidates"]:
         assert "score_total" in c and "score_parts" in c and "applicability_status" in c
+    assert r["selection"]["schema"] == "candidate_selection_v1"
+
+
+def test_candidate_selection_clear_leader_contract():
+    candidates = [
+        {"norm_code": "01-02-056-01", "title": "разработка грунта котлована",
+         "measure_unit": "100 м3", "score_total": 8.0, "score_parts": {"unit": 1, "element": 3},
+         "applicability_status": "accepted", "unit_compatible": True},
+        {"norm_code": "01-01-001-01", "title": "прочая земляная работа",
+         "measure_unit": "100 м3", "score_total": 5.7, "score_parts": {"unit": 1},
+         "applicability_status": "accepted", "unit_compatible": True},
+    ]
+
+    s = h._candidate_selection(candidates)
+
+    assert s["action"] == "bind_top_candidate"
+    assert s["selected_code"] == "01-02-056-01"
+    assert s["score_gap"] == 2.3
+    assert s["shortlist"][0]["reasons"]
+
+
+def test_candidate_selection_small_gap_goes_back_to_model():
+    candidates = [
+        {"norm_code": "10-02-017-03", "title": "стены каркасные",
+         "measure_unit": "100 м2", "score_total": 7.0, "score_parts": {"unit": 1, "element": 3},
+         "applicability_status": "accepted", "unit_compatible": True},
+        {"norm_code": "10-01-011-01", "title": "стены деревянные",
+         "measure_unit": "100 м2", "score_total": 6.2, "score_parts": {"unit": 1, "family": 1},
+         "applicability_status": "accepted", "unit_compatible": True},
+    ]
+
+    s = h._candidate_selection(candidates)
+
+    assert s["status"] == "needs_model_choice"
+    assert s["action"] == "ask_model_to_choose_or_request_input"
+    assert s["selected_code"] == ""
 
 
 def test_bind_accepts_top_applicable_general_code():
@@ -275,8 +311,10 @@ def test_batch_plan_calls_model_once_and_surfaces_gesn_candidates():
     assert res["trace"][0]["tool"] == "propose_schema"
     assert res["trace"][1]["tool"] == "search_norm"
     assert res["trace"][1]["candidates"]       # номера ГЭСН видны для operator review
+    assert res["trace"][1]["selection"]["schema"] == "candidate_selection_v1"
     assert res["computed"] == []               # близкие кандидаты не берём в сумму вслепую
     assert res["rejected"][0]["status"] == "ambiguous"
+    assert res["rejected"][0]["selection"]["status"] in ("needs_model_choice", "clear")
     assert res["rejected"][0]["candidates"][0]["norm_code"].startswith("ГЭСН:")
 
 

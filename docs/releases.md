@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.23** | HEAD | Smeta candidate selection contract: `search_norm` now returns `candidate_selection_v1` with an explainable shortlist, human-readable score reasons, score gap and action so the harness ranks/gates candidates while the model keeps the decomposition and ambiguous norm choice. |
 | **v0.24.0.22** | HEAD | Smeta tool-argument normalization: estimate harness now repairs model work-plan arguments such as frame walls misrouted as metal work, English action words and unit aliases before GESN search, keeping the model-first plan but steering tool calls into the right machine-readable norm family. |
 | **v0.24.0.21** | HEAD | Smeta harness latency: explicit Smeta now asks the model for one machine work plan, then batch-runs GESN search/binding in code; ambiguous norms surface GESN candidates instead of entering the total, and the LLM planning call has a bounded timeout. |
 | **v0.24.0.20** | HEAD | Smeta model-first route: explicit Smeta mode now goes through the estimate tool loop where the model decomposes the object and the harness only exposes tools/gates; the old object-composition service, its YAML data and auto-router target were removed, so object/TZ requests no longer fall into prewritten compositions or mass-rate fallbacks. |
