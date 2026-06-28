@@ -88,8 +88,9 @@ async def test_study_pack_retrieves_by_sections_and_formats_artifact(monkeypatch
     assert payload["context_role"] == "navigation"
     assert payload["is_evidence"] is False
     assert any(item["hits"] for item in payload["retrieval_by_section"])
-    assert "План чтения" in artifact
-    assert "Источники по разделам" in artifact
+    assert "Найденные материалы по разделам" in artifact
+    assert "Как читалось" in artifact
+    assert artifact.index("Найденные материалы по разделам") < artifact.index("Как читалось")
     assert "ИОС4.pdf" in artifact
     assert "Спецификация.xlsx" in artifact
     assert "Блокнот и план — navigation, не evidence" in prompt_block(pack)

@@ -332,23 +332,15 @@ def format_study_artifact(question: str, pack: StudyPack) -> str:
         "",
         f"**Запрос:** {question}",
         "",
-        "## План чтения",
-        "",
-        "| Раздел | Зачем читаем | Найдено |",
-        "|---|---|---:|",
+        "## Найденные материалы по разделам",
     ]
-    for section in pack.plan:
-        hits = len(pack.chunks_by_section.get(section.id, []))
-        lines.append(f"| {section.title} | {section.reason} | {hits} |")
-
-    lines.extend(["", "## Источники по разделам"])
     for section in pack.plan:
         lines.extend(["", f"### {section.title}", ""])
         chunks = pack.chunks_by_section.get(section.id, [])
         if not chunks:
             lines.append("Источник не найден в выбранной области.")
             continue
-        lines.extend(["| Документ | Score | Фрагмент |", "|---|---:|---|"])
+        lines.extend(["| Документ | Релевантность | Фрагмент |", "|---|---:|---|"])
         for chunk in chunks:
             doc = str(getattr(chunk, "doc_name", "") or "источник").replace("|", "/")
             try:
@@ -364,6 +356,17 @@ def format_study_artifact(question: str, pack: StudyPack) -> str:
             lines.append(f"- {gap}")
     else:
         lines.append("- Явных пробелов на этапе чтения не найдено; это не заменяет проверку полноты исходного комплекта.")
+
+    lines.extend([
+        "",
+        "## Как читалось",
+        "",
+        "| Раздел | Зачем читаем | Найдено |",
+        "|---|---|---:|",
+    ])
+    for section in pack.plan:
+        hits = len(pack.chunks_by_section.get(section.id, []))
+        lines.append(f"| {section.title} | {section.reason} | {hits} |")
     lines.extend([
         "",
         "## Граница",

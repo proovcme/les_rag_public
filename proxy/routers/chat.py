@@ -3199,24 +3199,11 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                         "messages": messages,
                         "stream": False,
                         "temperature": _env_float("CHAT_TEMPERATURE", 0.2),
-                        # Потолок токенов под форму (attempt 1); строгий ретрай — дефолт.
-                        "max_tokens": (
-                            min(
-                                _generation_token_budget(
-                                    max_tokens=answer_form.max_tokens,
-                                    local_big=local_big,
-                                    attempt=attempt,
-                                    intent=answer_form.intent,
-                                ),
-                                _env_int("LES_NOTEBOOK_STUDY_CHAT_MAX_TOKENS", 900),
-                            )
-                            if notebook_study_prompt
-                            else _generation_token_budget(
-                                max_tokens=answer_form.max_tokens,
-                                local_big=local_big,
-                                attempt=attempt,
-                                intent=answer_form.intent,
-                            )
+                        "max_tokens": _generation_token_budget(
+                            max_tokens=answer_form.max_tokens,
+                            local_big=local_big,
+                            attempt=attempt,
+                            intent=answer_form.intent,
                         ),
                     }
                     # При стриминге ретрай (строгий промпт) шлёт уже новый текст —
@@ -3478,7 +3465,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     response["notebook_context"] = notebook_study_pack.payload()
                     response["artifact"] = {
                         "title": "Инженерный блокнот",
-                        "mode": "text",
+                        "mode": "markdown",
                         "content": notebook_study_artifact,
                     }
 
