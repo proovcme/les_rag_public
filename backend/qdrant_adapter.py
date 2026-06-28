@@ -1237,6 +1237,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     # конвертации больше не оставляет файл без старого индекса.
                     phase_start = _t.time()
                     self._sync_delete_file_points(sync_qdrant, dataset_id, file_key)
+                    self._sync_delete_file_lexical(dataset_id, file_key)
                     _add_timing("delete_sec", phase_start)
 
                     if not file_nodes:
@@ -1340,6 +1341,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                             points=points[point_start:point_start + UPSERT_BATCH],
                         )
                         _add_timing("upsert_sec", phase_start)
+                    self._sync_upsert_file_lexical(points)
 
                     file_chunk_count = len(file_nodes)
                     # W1.2: exact-count в Qdrant — дорогая проверка; выборочно (каждый N-й файл
@@ -1363,6 +1365,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     logger.error(f"[PARSE] ERROR {file_key}: {file_err}", exc_info=True)
                     try:
                         self._sync_delete_file_points(sync_qdrant, dataset_id, file_key)
+                        self._sync_delete_file_lexical(dataset_id, file_key)
                     except Exception as cleanup_err:
                         logger.error("[PARSE] cleanup failed %s: %s", file_key, cleanup_err)
                     phase_start = _t.time()
@@ -1513,6 +1516,60 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             ),
             wait=True,
         )
+
+    def _sync_delete_file_lexical(self, dataset_id: str, file_key: str) -> None:
+        try:
+            from proxy.services.lexical_index_service import LexicalIndex
+
+            deleted = LexicalIndex().delete_file(
+                self.collection_name,
+                dataset_id=dataset_id,
+                doc_name=file_key,
+            )
+            if deleted:
+                logger.debug("[LEXICAL] удалены старые FTS-чанки %s/%s: %s", dataset_id, file_key, deleted)
+        except Exception as error:  # noqa: BLE001
+            logger.warning("[LEXICAL] cleanup skipped %s/%s: %s", dataset_id, file_key, error)
+
+    @staticmethod
+    def _lexical_rows_from_points(points: list[Any]) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for point in points:
+            payload = getattr(point, "payload", None) or {}
+            text = str(payload.get("text") or "")
+            point_id = str(getattr(point, "id", "") or "")
+            if not text.strip() or not point_id:
+                continue
+            rows.append({
+                "point_id": point_id,
+                "dataset_id": payload.get("dataset_id"),
+                "doc_id": payload.get("doc_id"),
+                "doc_name": payload.get("file_name") or payload.get("doc_name"),
+                "text": text,
+                "content_hash": payload.get("content_hash"),
+                "chunk_ord": payload.get("chunk_ord"),
+                "section_heading": payload.get("section_heading"),
+                "parent_id": payload.get("parent_id"),
+                "parent_ord": payload.get("parent_ord"),
+                "child_ord": payload.get("child_ord"),
+                "parent_heading": payload.get("parent_heading"),
+                "context_before": payload.get("context_before"),
+                "context_after": payload.get("context_after"),
+                "context_kind": payload.get("context_kind"),
+            })
+        return rows
+
+    def _sync_upsert_file_lexical(self, points: list[Any]) -> None:
+        rows = self._lexical_rows_from_points(points)
+        if not rows:
+            return
+        try:
+            from proxy.services.lexical_index_service import LexicalIndex
+
+            indexed = LexicalIndex().upsert_chunks(self.collection_name, rows)
+            logger.debug("[LEXICAL] upsert FTS chunks collection=%s count=%s", self.collection_name, indexed)
+        except Exception as error:  # noqa: BLE001
+            logger.warning("[LEXICAL] upsert skipped collection=%s: %s", self.collection_name, error)
 
     def _sync_count_file_points(
         self,

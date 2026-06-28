@@ -41,6 +41,21 @@ _EVIDENCE_ORDER = ["RETRIEVED", "COMPUTED", "ASSUMED", "MISSING", "BLOCKED"]
 _STATUS_HUMAN = {"complete": "ГОТОВО", "partial": "ЧАСТИЧНО", "blocked": "ЗАБЛОКИРОВАНО",
                  "no_data": "НЕТ ДАННЫХ"}
 _STATUS_TONE = {"complete": "ok", "partial": "warn", "blocked": "err", "no_data": "dim"}
+_ROUTE_HUMAN = {
+    "command": "Команда",
+    "doc_review": "Нормоконтроль",
+    "generic": "Поиск",
+    "harness_mode": "Смета",
+    "mail": "Почта",
+    "memory": "Память",
+    "rag": "Поиск",
+    "review_mode": "Нормоконтроль",
+    "smeta": "Смета",
+    "smeta_harness": "Смета",
+    "smeta_mode": "Смета",
+    "source_lookup": "Источник",
+    "table": "Таблица",
+}
 # семантический цвет бейджа типа evidence (CSS-класс-суффикс)
 _EVIDENCE_TONE = {"RETRIEVED": "acc", "COMPUTED": "acc", "ASSUMED": "warn",
                   "MISSING": "warn", "BLOCKED": "err"}
@@ -69,8 +84,9 @@ def header_summary(query_route: dict | None, evidence_summary: dict | None,
     query_route → минимальный хедер; не unified-ответ → has_evidence=False (старый рендер)."""
     qr = query_route or {}
     badges = evidence_badges(evidence_summary)
+    intent_raw = str(qr.get("intent") or qr.get("channel") or "").strip()
     return {
-        "intent": qr.get("intent") or qr.get("channel") or "",
+        "intent": _ROUTE_HUMAN.get(intent_raw, intent_raw if not intent_raw.endswith("_mode") else ""),
         "source_scope": qr.get("source_scope") or "",
         "provenance": qr.get("provenance") or "",
         "version": qr.get("version") or "",

@@ -124,6 +124,10 @@ def test_reports_render(tmp_path):
     assert payload["normalized_remarks"][0]["schema"] == "normalized_remark_v1"
     assert payload["normalized_remarks"][0]["finality"] == "proposed"
     assert payload["normalized_remarks"][0]["human_decision"] == "unset"
+    assert payload["workflow_plan"]["schema"] == "workflow_plan_v1"
+    assert payload["workflow_plan"]["workflow_id"] == "normcontrol"
+    assert payload["workflow_plan"]["finality"] in {"human_required", "not_final"}
+    assert payload["workflow_plan"]["claim_summary"]["claims"] == len(payload["defense"]["claims"])
     assert json.dumps(payload, ensure_ascii=False)  # сериализуемо
     html = review_to_html(items, MAP)
     assert "ГОСТ Р 21.101-2026" in html and "<table" in html

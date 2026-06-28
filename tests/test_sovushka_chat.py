@@ -1,8 +1,12 @@
+import inspect
+
 import pytest
 
 from proxy.routers import chat as chat_router
+from sovushka.pages import chat as chat_page
 from sovushka.pages.chat import (
     _attachment_chat_payload,
+    _attachment_user_suffix,
     _attachment_visible_text,
     _chat_profile_operator_summary,
     _dataset_profile_operator_summary,
@@ -11,6 +15,13 @@ from sovushka.pages.chat import (
     should_skip_chat_resource_gate,
 )
 from proxy.routers.chat import ChatRequest, _attachment_source_label, _question_with_attachment
+
+
+def test_ai_plain_markdown_is_rendered_as_markdown_widget():
+    source = inspect.getsource(chat_page.build_chat)
+
+    assert "ui.markdown(_disp).classes(\"sov-chat-message-text sov-chat-md\")" in source
+    assert "ui.markdown(_bubble_text(str(text or \"\"), _mode)).classes(\"sov-chat-message-text sov-chat-md\")" in source
 
 
 def test_smeta_table_question_skips_resource_gate():
@@ -132,6 +143,26 @@ def test_attachment_visible_text_makes_next_request_obvious():
     assert "временный датасет" in chat
 
 
+def test_attachment_suffix_persists_context_in_user_message():
+    text = _attachment_user_suffix(
+        {"id": "read_1", "mode": "read", "name": "ТЗ.docx", "text": "abc", "chars": 3}
+    )
+    assert text == "📎 Прикреплён файл: ТЗ.docx · В чат · 3 симв."
+
+    text = _attachment_user_suffix(
+        {"id": "tmp_table", "mode": "quick", "name": "ВОР.xlsx", "rows": 12}
+    )
+    assert text == "📎 Прикреплена таблица: ВОР.xlsx · Таблица · 12 строк"
+
+
+def test_chat_no_longer_auto_hijacks_project_summary():
+    source = inspect.getsource(chat_router._run_chat)
+
+    assert "deterministic_project_summary" not in source
+    assert "is_project_summary_query(req.question)" not in source
+    assert "build_project_summary" not in source
+
+
 def test_operator_status_chips_hide_internal_trace_from_first_layer():
     meta = {
         "query_route": {"channel": "table", "kot": {"dataset_filter": "NTD_FIRE", "confidence": 0.8}},
@@ -142,18 +173,28 @@ def test_operator_status_chips_hide_internal_trace_from_first_layer():
         "scenario": {"id": "table_query", "label": "Табличный расчёт"},
         "answer_contract": {"id": "tool_result_v1", "label": "Результат инструмента", "tables": "required"},
         "answer_contract_check": {"status": "warn", "missing": ["answer"]},
+        "workflow_plan": {
+            "schema": "workflow_plan_v1",
+            "workflow_id": "table_query",
+            "status": "needs_data",
+            "finality": "not_final",
+            "missing_inputs": ["structured_rows"],
+            "next_actions": ["Выбрать табличный датасет"],
+        },
     }
 
     chips = _operator_status_chips("VERIFIED", meta, ["a", "b"])
     labels = [c["label"] for c in chips]
 
     assert "2 источн." in labels
-    assert "Проверено" in labels
-    assert "Таблица" in labels
-    assert "Табличный расчёт" in labels
-    assert "Табличный контракт" in labels
-    assert "Контракт: замечания" in labels
-    assert "12.3с" in labels
+    assert "Проверено" not in labels
+    assert "Таблица" not in labels
+    assert "Табличный расчёт" not in labels
+    assert "Табличный контракт" not in labels
+    assert "Контракт: замечания" not in labels
+    assert "Ход: нужны данные" not in labels
+    assert "Не финал" not in labels
+    assert "12.3с" not in labels
     assert all("KOT" not in label and "CACHE" not in label for label in labels)
 
     tech = _operator_technical_chips(meta)
@@ -163,6 +204,11 @@ def test_operator_status_chips_hide_internal_trace_from_first_layer():
     assert "MISSING answer" in tech
     assert "SCENARIO table_query" in tech
     assert "CONTRACT tool_result_v1" in tech
+    assert "WORKFLOW table_query" in tech
+    assert "WF_STATUS needs_data" in tech
+    assert "WF_FINALITY not_final" in tech
+    assert "WF_MISSING structured_rows" in tech
+    assert "WF_ACTION Выбрать табличный датасет" in tech
 
 
 def test_dataset_and_chat_profile_operator_summaries_are_human_readable():

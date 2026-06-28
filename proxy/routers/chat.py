@@ -41,6 +41,12 @@ from proxy.services.memory_service import (
 from proxy.services.kot_service import analyze_question
 from proxy.services.lexical_index_service import retrieval_fingerprint
 from proxy.services.mail_query_service import maybe_answer_mail_query
+from proxy.services.notebook_study_service import (
+    build_notebook_study_pack,
+    format_study_artifact,
+    is_notebook_study_query,
+    prompt_block as notebook_study_prompt_block,
+)
 from proxy.services.query_router import route_query
 from proxy.services.retrieval_service import resolve_dataset_ids, retrieve_chat_chunks
 from proxy.services.runtime_admission import count_active_jobs, evaluate_chat_admission, generation_semaphore
@@ -1183,11 +1189,12 @@ def _harness_complete(messages: list[dict]) -> str:
     """Sync LLM-вызов для петли сметного харнесса (исполняется в to_thread). Облако/MLX по
     конфигу — декомпозиция объекта = где большая модель уместна. Низкая temperature для tool-call."""
     runtime = _llm_runtime()
-    body = {"model": runtime.model, "messages": messages, "temperature": 0.2, "max_tokens": 700}
+    timeout_s = float(os.getenv("LES_ESTIMATE_HARNESS_TIMEOUT_SEC", "35"))
+    body = {"model": runtime.model, "messages": messages, "temperature": 0.0, "max_tokens": 700}
     body = _cloud_body_for_model(body, runtime.model, runtime.provider)
     headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
     try:
-        with httpx.Client(timeout=90.0) as c:
+        with httpx.Client(timeout=timeout_s) as c:
             r = c.post(runtime.chat_url, headers=headers, json=body)
             r.raise_for_status()
             return _assistant_text(r.json().get("choices", [{}])[0].get("message", {}))
@@ -1196,58 +1203,206 @@ def _harness_complete(messages: list[dict]) -> str:
         return ""
 
 
+def _norm_code_label(code: Any) -> str:
+    text = str(code or "").strip()
+    return text if text else "—"
+
+
+def _candidate_table_row(position: dict[str, Any]) -> str:
+    work = str(position.get("work") or "Работа").strip()
+    candidates = [c for c in (position.get("candidates") or []) if isinstance(c, dict)]
+    top = candidates[0] if candidates else {}
+    code = _norm_code_label(top.get("norm_code") or position.get("code"))
+    unit = str(top.get("measure_unit") or top.get("base_unit") or position.get("physical_unit") or "—")
+    rest = ", ".join(_norm_code_label(c.get("norm_code")) for c in candidates[1:4]) or "—"
+    selection = position.get("selection") if isinstance(position.get("selection"), dict) else {}
+    reason = str(selection.get("reason") or position.get("reason") or "нужна проверка применимости").strip()
+    return f"| {work} | {code} | {unit} | {rest} | {reason} |"
+
+
+def _rub(value: Any) -> str:
+    try:
+        return f"{float(value):,.2f}".replace(",", " ")
+    except (TypeError, ValueError):
+        return str(value or "0")
+
+
+def _qty(value: Any) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value or "")
+    return f"{number:,.6f}".rstrip("0").rstrip(".").replace(",", " ")
+
+
+def _resource_kind_label(kind: str) -> str:
+    return {
+        "labor": "Труд",
+        "machinist": "Машинисты",
+        "machine": "Машины",
+        "material": "Материалы",
+    }.get(kind, kind or "Ресурс")
+
+
+def _estimate_positions(r: dict) -> list[dict[str, Any]]:
+    estimate = r.get("estimate") if isinstance(r.get("estimate"), dict) else {}
+    positions = estimate.get("positions") if isinstance(estimate.get("positions"), list) else []
+    return [p for p in positions if isinstance(p, dict)]
+
+
+def _format_harness_artifact(r: dict) -> str:
+    """Полная сметная расшифровка для панели артефактов."""
+    positions = _estimate_positions(r)
+    if not positions:
+        return ""
+    lines = ["# Сметная расшифровка", ""]
+    lines += ["## Позиции", "",
+              "| Работа | Код | Кол-во | Ед. | Сумма, ₽ |",
+              "|---|---:|---:|---:|---:|"]
+    for pos in positions:
+        lines.append(
+            f"| {pos.get('name') or 'Работа'} | {pos.get('code') or '—'} "
+            f"| {_qty(pos.get('qty'))} | {pos.get('unit') or '—'} | {_rub(pos.get('total'))} |"
+        )
+
+    totals = [
+        ("ОЗП", "ozp"),
+        ("ЭМ", "em"),
+        ("в том числе ЗПМ", "zpm"),
+        ("Материалы", "mat"),
+        ("Прямые затраты", "direct"),
+        ("ФОТ", "fot"),
+        ("НР", "nr"),
+        ("СП", "sp"),
+        ("Всего по СМР", "total"),
+    ]
+    lines += ["", "## Структура стоимости", "",
+              "| Статья | Сумма, ₽ |",
+              "|---|---:|"]
+    for label, key in totals:
+        value = 0.0
+        for pos in positions:
+            bucket = pos.get("adjusted") or pos.get("base") or {}
+            if isinstance(bucket, dict):
+                value += float(bucket.get(key) or 0)
+        lines.append(f"| {label} | {_rub(value)} |")
+
+    estimate = r.get("estimate") if isinstance(r.get("estimate"), dict) else {}
+    condition = str(estimate.get("condition") or "").strip()
+    k_ozp = float(estimate.get("k_ozp") or 1)
+    k_em = float(estimate.get("k_em") or 1)
+    lines += ["", "## Коэффициенты и условия", "",
+              "| Условие | Применено |",
+              "|---|---|"]
+    if condition or k_ozp != 1 or k_em != 1:
+        lines.append(f"| Стеснённость/условия работ | {condition or 'коэффициент'}: ОЗП ×{k_ozp:g}, ЭМ ×{k_em:g} |")
+    else:
+        lines.append("| Стеснённость/высотные работы | Коэффициент не применён: нужен явный коэффициент, ПОС или нормативное основание |")
+
+    resources: list[dict[str, Any]] = []
+    for pos in positions:
+        for res in pos.get("resources") or []:
+            if isinstance(res, dict):
+                resources.append(res)
+    if resources:
+        lines += ["", "## Ресурсы", "",
+                  "| Вид | Код | Наименование | Кол-во | Цена, ₽ | Сумма, ₽ |",
+                  "|---|---:|---|---:|---:|---:|"]
+        for res in resources:
+            name = str(res.get("name") or "").replace("|", "/")
+            lines.append(
+                f"| {_resource_kind_label(str(res.get('kind') or ''))} "
+                f"| {res.get('code') or '—'} "
+                f"| {name} "
+                f"| {_qty(res.get('qty'))} {res.get('unit') or ''} "
+                f"| {_rub(res.get('price_used'))} "
+                f"| {_rub(res.get('cost'))} |"
+            )
+    flags = []
+    for pos in positions:
+        flags.extend(pos.get("flags") or [])
+    if flags:
+        lines += ["", "## Проверить", ""]
+        lines.extend(f"- {flag}" for flag in flags)
+    return "\n".join(lines)
+
+
 def _format_harness(r: dict) -> str:
-    """Результат харнесса+Gate1 → markdown. Жёстко: ORCHESTRATION доказан, QUALITY нет; итог
-    скрыт при critical-провалах (не выдаём бред за сумму)."""
+    """Результат model-first estimate → operator-facing markdown.
+
+    First layer must be human-readable: no tool names, planner trace or internal English enums.
+    The machine trace stays in payload technical details.
+    """
     sch = r.get("schema", {}) or {}
-    lines = [f"**Предварительная ВОР (харнесс, ЭКСПЕРИМЕНТ)** — {sch.get('object_type', 'объект')} · "
-             f"{sch.get('area_total_m2', '?')} м²", "",
-             "_Доказывает оркестрацию (модель раскладывает объект и дёргает инструменты, числа — из "
-             "ГЭСН/формул). НЕ доказывает качество сметы — это прототип петли, не смета._", ""]
+    obj_type = str(sch.get("object_type") or "объект")
+    obj_type = {"house": "дом", "residential_house": "жилой дом"}.get(obj_type, obj_type)
+    area = sch.get("area_total_m2")
+    area_text = f" · {area} м²" if area not in (None, "", 0) else ""
     comp = r.get("computed", [])
+    title = "Предварительная сметная стоимость" if comp else "Смета пока не собрана"
+    lines = [f"**{title}** — {obj_type}{area_text}", ""]
     if comp:
-        lines += ["| Работа | Код ГЭСН | Кол-во (в ед. нормы) | Физ.объём |", "|---|---|---|---|"]
+        lines += ["**Посчитано**", "",
+                  "| Работа | Код ГЭСН | Кол-во в измерителе нормы | Физический объём |",
+                  "|---|---:|---:|---:|"]
         for p in comp:
             lines.append(f"| {p.get('work', '')} | {p.get('code')} | {p.get('qty')} {p.get('norm_unit','')} "
                          f"| {p.get('phys_qty','')} {p.get('physical_unit','')} |")
-    else:
-        lines.append("_Посчитанных позиций нет._")
+        if _estimate_positions(r):
+            lines += ["", "Полная ресурсная расшифровка, НР/СП, машины, труд и материалы — в артефакте."]
 
-    # Gate 2: final_total ТОЛЬКО при complete; иначе partial_total как диагностика, не как смета.
     status = r.get("total_status")
     pt, ft = r.get("partial_total"), r.get("final_total")
     if status == "complete" and ft:
-        lines += ["", f"**ИТОГО СМР {ft.get('smr')} ₽ · ВСЕГО с НДС {ft.get('grand_total')} ₽** "
+        lines += ["", f"**Итого: СМР {_rub(ft.get('smr'))} ₽ · всего с НДС {_rub(ft.get('grand_total'))} ₽** "
                   f"({ft.get('positions')} поз.)"]
     elif status == "partial" and pt:
-        lines += ["", f"**⛔ Итоговая смета НЕ сформирована.** Предварительно рассчитанные позиции: "
-                  f"~{pt.get('grand_total')} ₽ ({pt.get('positions')} поз.) — это ДИАГНОСТИКА, не смета: "
-                  f"часть ключевых позиций без подтверждённой нормы или без данных."]
-    else:
-        lines += ["", "**⛔ Итог не сформирован** — нет ни одной позиции с подтверждённой применимой нормой."]
+        lines += ["", f"**Итог не сформирован.** Есть рассчитанная часть: "
+                  f"~{_rub(pt.get('grand_total'))} ₽ ({pt.get('positions')} поз.). "
+                  "Это не смета: часть позиций ещё без подтверждённой нормы или параметров."]
 
     rej = r.get("rejected", [])
-    if rej:
-        lines += ["", "**Отклонено предохранителями (Gate 1+2):**"]
-        for p in rej:
-            lines.append(f"- {p.get('work', '')} ({p.get('code')}) — {p.get('status')}: {p.get('reason', '')}")
     ni = r.get("needs_input", [])
+    pending = [p for p in [*rej, *ni] if isinstance(p, dict)]
+    if pending:
+        lines += ["", "**Нужно выбрать норму или уточнить параметры**", "",
+                  "| Работа | Лучший кандидат | Ед. | Другие варианты | Что не хватает |",
+                  "|---|---:|---:|---|---|"]
+        for p in pending:
+            lines.append(_candidate_table_row(p))
+    elif not comp:
+        lines += ["", "ЛЕС не нашёл подходящих норм по текущему описанию. Нужен проект, ВОР или более конкретное описание работ."]
+
     if ni:
-        lines += ["", "**Нет данных для расчёта (не выдумываем):**"]
         slots_needed: list[str] = []
         for p in ni:
-            lines.append(f"- {p.get('work', '')} ({p.get('code')}) — {p.get('reason', 'нужны параметры')}")
             slots_needed += [s for s in (p.get("missing_slots") or []) if s not in slots_needed]
         if slots_needed:
             human = {"excavation_depth_m": "глубина котлована (м)", "slab_thickness_m": "толщина плиты (мм/м)",
                      "wall_thickness_m": "толщина стен (мм/м)", "wall_height_m": "высота стен (м)",
-                     "wall_length_m": "длина/периметр стен (м)"}
+                     "wall_length_m": "длина/периметр стен (м)", "pile_count": "количество свай"}
             ask = ", ".join(human.get(s, s) for s in slots_needed)
-            lines += ["", f"**Чтобы дорассчитать — пришлите:** {ask}.",
-                      "_Можно прямо в запросе: «…паркинг 4800 глубина 6 м плита 400 мм»._"]
-    lines.append(f"\n⚙ Петля: {r.get('steps')} шагов · инструменты: "
-                 f"{', '.join(str(t.get('tool')) for t in r.get('trace', [])) or '—'}")
+            lines += ["", f"**Чтобы дорассчитать:** {ask}."]
+    if not ft and not pt:
+        lines += ["", "Число не показываю, пока нормы и параметры не подтверждены."]
+    elif not ft and pt:
+        lines += ["", "Финальную сумму не показываю, пока все ключевые нормы и параметры не подтверждены."]
     return "\n".join(lines)
+
+
+def _smeta_harness_question(req: "ChatRequest") -> str:
+    """Передать модели контекст диалога, не подсовывая ей готовый состав работ."""
+    current = _question_with_attachment(req)
+    try:
+        history = session_user_questions(req.session_id, max_turns=6)
+    except Exception as err:  # noqa: BLE001
+        logger.warning("[HARNESS] session history failed: %s", err)
+        history = []
+    history = [str(q).strip() for q in history if str(q or "").strip()]
+    if not history:
+        return current
+    turns = "\n".join(f"- {q}" for q in history)
+    return f"Контекст текущего диалога:\n{turns}\n\nТекущий запрос:\n{current}"
 
 
 def _version_stamp() -> dict:
@@ -1384,7 +1539,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             "validation": {"enabled": False, "reason": channel},
             "versions": _version_stamp(),
         }
-        for key in ("provenance", "defense", "evidence_summary", "total_status"):
+        for key in ("provenance", "defense", "evidence_summary", "notebook_context", "total_status", "artifact"):
             if key in extra:
                 payload[key] = extra[key]
         return payload
@@ -1478,61 +1633,6 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 }
                 return _reply
 
-    if _PROFILE == "object_estimate":
-        # Режим Смета = намерение УЖЕ задано → object_estimate НАПРЯМУЮ (минуя keyword-гейт
-        # «смет»/«посчитай» в maybe_handle_smeta_query: в режиме слово-триггер не нужно) и минуя
-        # роутер/RAG. Не объект-смета (цена/КАЦ/код) → maybe_handle. Нет данных → просим уточнить.
-        from proxy.services.smeta_chat_service import _answer_object_estimate, maybe_handle_smeta_query
-        from proxy.services.object_estimate_service import merge_parsed_requests, parse_request
-        smeta_input = _question_with_attachment(req)
-        parsed_context = None
-        history_questions: list[str] = []
-        history_traces: list[dict[str, Any]] = []
-        try:
-            current_parsed = parse_request(smeta_input)
-            current_has_object_field = any(current_parsed.get(k) not in (None, "") for k in ("object", "material", "floors", "area"))
-            current_is_scope_followup = bool(re.search(
-                r"\b(давай|если|добав|помен|замен|этаж|площад|кровл|фундамент|сва|крыльц|террас|веранд|учти|высотн|коэфф)\w*",
-                smeta_input.casefold().replace("ё", "е"),
-            ))
-            if current_has_object_field or current_is_scope_followup:
-                history_questions = session_user_questions(req.session_id, max_turns=6)
-                history_traces = session_recent_retrieval_traces(req.session_id, max_turns=6)
-                if history_questions:
-                    parsed_context = merge_parsed_requests([*history_questions, smeta_input])
-                    logger.info("[SMETA_CONTEXT] merged %s previous turn(s): fields=%s",
-                                len(history_questions),
-                                {k: parsed_context.get(k) for k in ("object", "material", "floors", "area")})
-        except Exception as err:  # noqa: BLE001
-            logger.warning("[SMETA_CONTEXT] merge failed: %s", err)
-            parsed_context = None
-        sm = (
-            _answer_object_estimate(
-                smeta_input,
-                parsed_context=parsed_context,
-                context_questions=history_questions,
-                context_traces=history_traces,
-            )
-            or maybe_handle_smeta_query(
-                smeta_input,
-                project_id=pid,
-                context_questions=history_questions,
-                context_traces=history_traces,
-            )
-            or {
-            "answer": ("Режим «Смета» включён, но я не вижу объект и площадь. Напиши, например: "
-                       "«офисное здание 3 этажа 3000 м²» или «деревянный дом 120 м² 2 этажа» — "
-                       "соберу расчёт из локальной базы ГЭСН."),
-            "operation": "smeta_need_params",
-            }
-        )
-        return _mode_reply(
-            sm["answer"],
-            sm.get("operation", "object_estimate"),
-            "smeta_mode",
-            extra=sm,
-        )
-
     if _PROFILE == "normcontrol":
         # Нормоконтроль документов проекта (формальный, без LLM) → таблица замечаний.
         answer = await _run_project_normcontrol(req, pid)
@@ -1561,12 +1661,35 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         return _mode_reply(answer, "free", "free_mode", crag="")
 
     if _PROFILE == "estimate_harness":
-        # ЭКСПЕРИМЕНТ: сметный харнесс — модель раскладывает объект → дёргает инструменты (петля).
-        # Рядом со старым smeta (YAML), не вместо. Числа из инструментов. Объект ВНЕ шаблонов
-        # (паркинг/мост) → предварительная ВОР, а не «нет шаблона». Петля в to_thread (sync LLM).
+        # Model-first estimate: model decomposes the object, harness provides tools and gates.
         from proxy.services.estimate_harness_service import run_estimate_harness
-        result = await asyncio.to_thread(run_estimate_harness, _question_with_attachment(req), _harness_complete)
-        return _mode_reply(_format_harness(result), "estimate_harness", "harness_mode")
+        result = await asyncio.to_thread(run_estimate_harness, _smeta_harness_question(req), _harness_complete)
+        trace = {
+            "mode": "estimate_harness",
+            "planner_status": result.get("planner_status"),
+            "steps": result.get("steps"),
+            "total_status": result.get("total_status"),
+            "computed": len(result.get("computed") or []),
+            "needs_input": len(result.get("needs_input") or []),
+            "rejected": len(result.get("rejected") or []),
+            "tool_trace": result.get("trace") or [],
+            "notebook_context": result.get("notebook_context") or {},
+        }
+        return _mode_reply(
+            _format_harness(result),
+            "estimate_harness",
+            "harness_mode",
+            extra={
+                "retrieval_trace": trace,
+                "notebook_context": result.get("notebook_context") or {},
+                "total_status": result.get("total_status"),
+                "artifact": {
+                    "title": "Сметная расшифровка",
+                    "mode": "text",
+                    "content": _format_harness_artifact(result),
+                },
+            },
+        )
 
     from proxy.services.asbuilt_chat_service import maybe_handle_asbuilt_query  # приёмка ИД-сканов
     from proxy.services.les_md_chat_service import maybe_handle_les_md_query  # LES.md: пойми папку
@@ -1874,16 +1997,12 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 "history_id": _dr_hist,
             }
 
-    # «дай сводку проекта» с известным объектом — детерминированный канал (сводка из
-    # LES.md ниже), не клярифицировать как «слишком широкий». Аналогично reconcile/spec_to_bor.
-    from proxy.services.project_summary_service import is_project_summary_query as _is_proj_sum
-    _summary_intent = bool(pid) and _is_proj_sum(req.question)
     clarification = build_clarification_decision(
         req.question,
         dataset_ids=effective_dataset_ids,
         dataset_filter=req.dataset_filter,
     )
-    if not _rp and clarification.needs_clarification and not _summary_intent and not _has_read_attachment:
+    if not _rp and clarification.needs_clarification and not _has_read_attachment:
         logger.info(
             "[CLARIFY] reasons=%s route=%s filter=%s",
             clarification.classification.reasons,
@@ -1993,63 +2112,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 "spec_to_bor": spec_trace["spec_to_bor"], "history_id": history_id,
             }
 
-    # W11.15: «дай сводку проекта» — стадия + ТЭП + состав документов, детерминированно. 0 LLM.
-    from proxy.services.project_summary_service import (
-        build_project_summary, format_project_summary, is_project_summary_query,
-    )
-    if not _rp and is_project_summary_query(req.question) and _dataset_ids:
-        t_sum = time.time()
-        try:
-            summ = await asyncio.to_thread(
-                build_project_summary, _dataset_ids, storage_root=Path("./storage/datasets")
-            )
-        except Exception as sum_err:
-            logger.warning("[PROJ_SUMMARY] skipped: %s", sum_err)
-            summ = None
-        # Есть Parquet-ТЭП/таблицы → детерминированная сводка (числа из кода, 0 LLM). Нет →
-        # НЕ возвращаем заглушку: проваливаемся в обычный RAG, чтобы модель сама собрала
-        # сводку по документам проекта (LES.md уже в контексте как опора; clarification снят
-        # guard'ом выше для summary-интента с проектом).
-        if summ and (summ["tep"] or summ["documents"] or summ.get("file_count")):
-            label = ", ".join(resolved_dataset_names[:3])
-            answer = format_project_summary(summ, label=label)
-            if memory_block:
-                answer = f"{answer}\n\n{memory_block}"
-            state.crag_stats["verified"] += 1
-            state.chat_metrics["crag_pass"] += 1
-            sum_route = _profile_route("project_summary", "project_summary")
-            sum_trace = {
-                "mode": "deterministic_project_summary", "vector_count": 0, "lexical_count": 0,
-                "merged_count": summ["document_count"], "retry_count": 0,
-                "quality_status": "deterministic_project_summary",
-                "project_summary": {"stage": summ["stage"], "tep": len(summ["tep"]),
-                                    "documents": summ["document_count"]},
-            }
-            history_id = None
-            try:
-                history_id = save_chat_history(
-                    question=req.question, answer=answer,
-                    sources=resolved_dataset_names or _dataset_ids,
-                    crag_status="VERIFIED", latency_sec=time.time() - t_sum, tokens=0,
-                    session_id=req.session_id, requested_dataset_filter=req.dataset_filter,
-                    effective_dataset_filter=effective_dataset_filter,
-                    resolved_dataset_ids=_dataset_ids, resolved_dataset_names=resolved_dataset_names,
-                    source_dataset_ids=_dataset_ids, source_dataset_names=resolved_dataset_names,
-                    query_route=sum_route,
-                    retrieval_trace=sum_trace, cache_type="deterministic_project_summary",
-                    validation_enabled=False, success=1,
-                )
-            except Exception as db_err:
-                logger.warning("[CHAT] History save error: %s", db_err)
-            return {
-                "answer": answer, "crag_status": "VERIFIED",
-                "sources": resolved_dataset_names or _dataset_ids,
-                "effective_dataset_filter": effective_dataset_filter,
-                "query_route": sum_route,
-                "retrieval_trace": sum_trace, "cache": "deterministic_project_summary",
-                "validation": {"enabled": False, "reason": "deterministic_project_summary"},
-                "project_summary": sum_trace["project_summary"], "history_id": history_id,
-            }
+    # W11.15 used to auto-hijack broad chat questions ("расскажи про проект") into a
+    # deterministic project register. That made LES look like a file inventory instead of a
+    # notebook/RAG synthesis. Project summary stays available as an explicit command/MCP tool,
+    # but normal chat questions now continue into retrieval + model.
 
     # Состав/перечень разделов документа: семантика не собирает структуру (заголовки
     # размазаны по чанкам, единого чанка нет). Детерминированно извлекаем нумерованную
@@ -2524,6 +2590,46 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     else:
         state.chat_metrics["retrieval_weak"] = state.chat_metrics.get("retrieval_weak", 0) + 1
 
+    notebook_study_pack = None
+    notebook_study_prompt = ""
+    notebook_study_artifact = ""
+    if _dataset_ids and is_notebook_study_query(req.question):
+        async def _study_retrieve(section_query: str) -> list[Any]:
+            result = await retrieve_chat_chunks(
+                question=section_query,
+                dataset_ids=_dataset_ids,
+                rag_backend=rag_backend,
+                reranker_enabled=_reranker_on,
+                reranker_available=state.reranker_available,
+                reranker_cls=state.reranker_cls,
+                mlx_url=os.getenv("MLX_URL", "http://127.0.0.1:8080"),
+                logger=logger,
+                llm_semaphore=state.llm_semaphore,
+                return_trace=True,
+            )
+            return result.chunks
+
+        try:
+            notebook_study_pack = await build_notebook_study_pack(
+                question=req.question,
+                dataset_ids=[str(d) for d in _dataset_ids],
+                retrieve=_study_retrieve,
+                storage_root=Path("./storage/datasets"),
+            )
+            study_chunks = notebook_study_pack.chunks
+            if study_chunks:
+                chunks = [*study_chunks, *chunks]
+            notebook_study_prompt = notebook_study_prompt_block(notebook_study_pack)
+            notebook_study_artifact = format_study_artifact(req.question, notebook_study_pack)
+            retrieval_trace["notebook_study"] = notebook_study_pack.payload()
+        except Exception as study_err:  # noqa: BLE001
+            logger.warning("[NOTEBOOK_STUDY] skipped: %s", study_err)
+            retrieval_trace["notebook_study"] = {
+                "schema": "notebook_study_v1",
+                "status": "skipped",
+                "error": f"{type(study_err).__name__}: {study_err}",
+            }
+
     # «Заставь отвечать»: не хард-режем разнородность, если есть сильный сигнал —
     # пользователь задал датасет (уже сузил) ИЛИ топ-совпадение хорошее (есть, что
     # отвечать). Гейт остаётся только для реально широких безскоповых слабых запросов.
@@ -2966,9 +3072,16 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                         # ADR-12 §2: каркас формы под интент добавляем к нормальному промпту.
                         sys_msg = sys_normal + (f" {answer_form.instruction}" if answer_form.instruction else "")
                         # Формат/стиль из GUI (глубина/язык) — ТОЛЬКО в системный промпт генерации,
-                        # чтобы роутинг/авто-заметки/ретрив видели чистый вопрос (не мусор-шаблон).
+                        # чтобы роутинг/авто-заметки/ретрив видели чистый вопрос (не мусор-директиву).
                         if req.output_directive and req.output_directive.strip():
                             sys_msg += " " + req.output_directive.strip()
+                        if notebook_study_prompt:
+                            sys_msg += (
+                                " Для этого notebook-study ответа чатовый слой обязан быть короткой "
+                                "инженерной сводкой: 5-8 строк или компактный список. Не делай большую "
+                                "таблицу в чате; полный план, таблицы, источники и пробелы уже вынесены "
+                                "в артефакт."
+                            )
                         if local_big and answer_form.intent in {"brief", "value", "default"}:
                             sys_msg += (
                                 " Для локального нормативного ответа это правило приоритетнее общего правила "
@@ -2985,6 +3098,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                             "role": "user",
                             "content": (
                                 f"Контекст:\n{context}\n\n"
+                                + (f"{notebook_study_prompt}\n\n" if notebook_study_prompt else "")
                                 + (f"{session_block}\n\n" if session_block else "")
                                 + (
                                     f"{memory_block}\n"
@@ -3018,11 +3132,23 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                         "stream": False,
                         "temperature": _env_float("CHAT_TEMPERATURE", 0.2),
                         # Потолок токенов под форму (attempt 1); строгий ретрай — дефолт.
-                        "max_tokens": _generation_token_budget(
-                            max_tokens=answer_form.max_tokens,
-                            local_big=local_big,
-                            attempt=attempt,
-                            intent=answer_form.intent,
+                        "max_tokens": (
+                            min(
+                                _generation_token_budget(
+                                    max_tokens=answer_form.max_tokens,
+                                    local_big=local_big,
+                                    attempt=attempt,
+                                    intent=answer_form.intent,
+                                ),
+                                _env_int("LES_NOTEBOOK_STUDY_CHAT_MAX_TOKENS", 900),
+                            )
+                            if notebook_study_prompt
+                            else _generation_token_budget(
+                                max_tokens=answer_form.max_tokens,
+                                local_big=local_big,
+                                attempt=attempt,
+                                intent=answer_form.intent,
+                            )
                         ),
                     }
                     # При стриминге ретрай (строгий промпт) шлёт уже новый текст —
@@ -3275,6 +3401,13 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     "versions": _version_stamp(),
                     "numeric_unverified": _num_unverified,
                 }
+                if notebook_study_pack is not None:
+                    response["notebook_context"] = notebook_study_pack.payload()
+                    response["artifact"] = {
+                        "title": "Инженерный блокнот",
+                        "mode": "text",
+                        "content": notebook_study_artifact,
+                    }
 
                 # W6.7: source_id CAD/BIM-элементов из текста чанков → ответ + снимок
                 # подсветки. Вьювер АТЛАС поллит /api/cad-bim/highlight и перекрашивает.

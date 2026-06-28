@@ -19,7 +19,7 @@ def test_catalog_registers_target_tools():
     expected = {
         "asbuilt", "les_md", "project_registry", "field", "task", "preset",
         "glossary", "price_lookup", "kac", "stesnennost", "lsr_assemble",
-        "object_estimate", "table_agg", "clause", "memory", "decision", "none",
+        "table_agg", "clause", "memory", "decision", "none",
     }
     assert expected <= names, f"не зарегистрированы: {expected - names}"
 

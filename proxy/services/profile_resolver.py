@@ -43,14 +43,8 @@ class Profile:
     output_contract: str            # id схемы вывода | "prose"
 
 
-# Реестр профилей. Текущие режимы UI портированы 1:1 (поведение не меняется).
+# Реестр профилей.
 PROFILES: dict[str, Profile] = {
-    "object_estimate": Profile(
-        id="object_estimate", executor="deterministic", role="сметчик-калькулятор",
-        tools=("object_estimate", "get_norm", "lsr_assembly"), grounded=False,
-        validation_policy="require_numeric_provenance", escalation_policy="none",
-        failure_policy="mark_preliminary", output_contract="estimate_table_v1",
-    ),
     "normcontrol": Profile(
         id="normcontrol", executor="deterministic", role="нормоконтролёр",
         tools=("run_normcontrol",), grounded=False,
@@ -73,8 +67,7 @@ PROFILES: dict[str, Profile] = {
         validation_policy="fail_open", escalation_policy="none",
         failure_policy="mark_preliminary", output_contract="prose",
     ),
-    # ЭКСПЕРИМЕНТАЛЬНЫЙ ХАРНЕСС: модель раскладывает объект → дёргает инструменты (петля).
-    # Рядом со старым object_estimate (YAML), не вместо. Числа из инструментов, не из модели.
+    # Модель первична: она раскладывает объект → вызывает инструменты; харнесс проверяет числа.
     "estimate_harness": Profile(
         id="estimate_harness", executor="cloud_large", role="сметчик-харнесс",
         tools=("propose_schema", "search_norm", "add_position"), grounded=False,
@@ -91,7 +84,7 @@ PROFILES: dict[str, Profile] = {
 
 # Явный режим UI → профиль.
 MODE_TO_PROFILE: dict[str, str] = {
-    "smeta": "object_estimate",
+    "smeta": "estimate_harness",
     "review": "normcontrol",
     "kp": "kp_stub",
     "rag": "grounded_rag",

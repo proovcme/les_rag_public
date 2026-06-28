@@ -4,7 +4,7 @@
 
 PKGS := backend proxy sovushka tools sovushka_ng.py proxy_server.py mlx_host.py
 SMOKE_ARGS ?=
-FOCUS_TESTS ?= tests/test_sovushka_chat.py tests/test_static_assets.py tests/test_smeta_chat_service.py tests/test_object_estimate_service.py tests/test_doc_review_gost_21_101_2026.py tests/test_doc_review_chat_tool.py tests/test_title_block_extract.py tests/test_service_source_registry.py
+FOCUS_TESTS ?= tests/test_sovushka_chat.py tests/test_static_assets.py tests/test_smeta_chat_service.py tests/test_estimate_harness.py tests/test_profile_resolver.py tests/test_doc_review_gost_21_101_2026.py tests/test_doc_review_chat_tool.py tests/test_title_block_extract.py tests/test_service_source_registry.py
 POST_DEPLOY_RETRIES ?= 12
 POST_DEPLOY_DELAY ?= 1
 

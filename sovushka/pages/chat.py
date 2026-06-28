@@ -146,50 +146,13 @@ OUTPUT_FORMATS = {
 def _operator_status_chips(crag: str, meta: dict | None, srcs: list | None = None) -> list[dict[str, str]]:
     """Human-facing chips for the answer footer.
 
-    Internal router/cache/debug markers stay in technical details; the first UI
-    layer should tell the operator what matters: sources, check status, route.
+    The first UI layer should not narrate internal routing/contracts. Evidence
+    status, workflow and contract details stay in the technical disclosure.
     """
     chips: list[dict[str, str]] = []
     src_count = len(srcs or [])
     if src_count:
         chips.append({"label": f"{src_count} источн.", "tone": "ok"})
-    status = (crag or "").upper()
-    if status == "VERIFIED":
-        chips.append({"label": "Проверено", "tone": "ok"})
-    elif status == "UNVALIDATED":
-        chips.append({"label": "Без проверки", "tone": "warn"})
-    elif status:
-        chips.append({"label": "Нужна проверка", "tone": "err"})
-
-    route = (meta or {}).get("query_route") if isinstance((meta or {}).get("query_route"), dict) else {}
-    channel = str(route.get("channel") or route.get("operation") or "").strip()
-    route_labels = {
-        "table": "Таблица",
-        "mail": "Почта",
-        "doc_review": "Нормоконтроль",
-        "smeta": "Смета",
-        "smeta_mode": "Смета",
-        "rag": "Поиск",
-        "generic": "Поиск",
-        "source_lookup": "Источник",
-        "memory": "Память",
-        "command": "Команда",
-    }
-    if channel:
-        chips.append({"label": route_labels.get(channel, "Маршрут выбран"), "tone": "dim"})
-    scenario = (meta or {}).get("scenario") if isinstance((meta or {}).get("scenario"), dict) else {}
-    if scenario.get("label"):
-        chips.append({"label": str(scenario["label"]), "tone": "dim"})
-    contract = (meta or {}).get("answer_contract") if isinstance((meta or {}).get("answer_contract"), dict) else {}
-    if contract.get("tables") == "required":
-        chips.append({"label": "Табличный контракт", "tone": "ok"})
-    contract_check = (meta or {}).get("answer_contract_check") if isinstance((meta or {}).get("answer_contract_check"), dict) else {}
-    if contract_check.get("status") == "warn":
-        chips.append({"label": "Контракт: замечания", "tone": "warn"})
-
-    phases = (meta or {}).get("latency_phases") or ((meta or {}).get("retrieval_trace") or {}).get("latency_phases")
-    if isinstance(phases, dict) and phases.get("total") is not None:
-        chips.append({"label": f"{float(phases.get('total') or 0):.1f}с", "tone": "dim"})
     return chips
 
 
@@ -205,6 +168,7 @@ def _operator_technical_chips(meta: dict | None) -> list[str]:
     scenario = meta.get("scenario") if isinstance(meta.get("scenario"), dict) else {}
     contract = meta.get("answer_contract") if isinstance(meta.get("answer_contract"), dict) else {}
     contract_check = meta.get("answer_contract_check") if isinstance(meta.get("answer_contract_check"), dict) else {}
+    workflow = meta.get("workflow_plan") if isinstance(meta.get("workflow_plan"), dict) else {}
     if kot:
         out.append(f"KOT {kot.get('dataset_filter') or 'AUTO'} {kot.get('confidence', 0)}")
     if trace:
@@ -226,6 +190,18 @@ def _operator_technical_chips(meta: dict | None) -> list[str]:
         missing = contract_check.get("missing")
         if isinstance(missing, list) and missing:
             out.append(f"MISSING {','.join(str(x) for x in missing[:4])}")
+    if workflow.get("workflow_id"):
+        out.append(f"WORKFLOW {workflow.get('workflow_id')}")
+    if workflow.get("status"):
+        out.append(f"WF_STATUS {workflow.get('status')}")
+    if workflow.get("finality"):
+        out.append(f"WF_FINALITY {workflow.get('finality')}")
+    wf_missing = workflow.get("missing_inputs")
+    if isinstance(wf_missing, list) and wf_missing:
+        out.append(f"WF_MISSING {','.join(str(x) for x in wf_missing[:4])}")
+    wf_actions = workflow.get("next_actions")
+    if isinstance(wf_actions, list) and wf_actions:
+        out.append(f"WF_ACTION {str(wf_actions[0])[:80]}")
     return out
 
 
@@ -248,6 +224,22 @@ def _dataset_profile_operator_summary(profile: dict) -> list[str]:
         lines.append(f"Табличный сигнал: {deep.get('table_signal_chunks')} фрагм.")
     if profile.get("profile_path"):
         lines.append(f"Файл паспорта: {profile.get('profile_path')}")
+    return lines
+
+
+def _dataset_notebook_operator_summary(notebook: dict) -> list[str]:
+    if not isinstance(notebook, dict):
+        return []
+    profile = notebook.get("profile") if isinstance(notebook.get("profile"), dict) else notebook
+    lines = _dataset_profile_operator_summary(profile)
+    summary = notebook.get("notebook_summary") if isinstance(notebook.get("notebook_summary"), dict) else {}
+    areas = ", ".join((summary.get("subject_areas") or [])[:6])
+    terms = ", ".join((summary.get("key_terms") or [])[:8])
+    if areas:
+        lines.append(f"Области: {areas}")
+    if terms and not any(line.startswith("Темы:") for line in lines):
+        lines.append(f"Темы: {terms}")
+    lines.append("Роль: навигация, не evidence.")
     return lines
 
 
@@ -302,6 +294,24 @@ def _attachment_visible_text(data: dict) -> tuple[str, str, str]:
         f"{name} · В базу · {data.get('dataset_name', 'RAG-датасет')}",
         f"📎 Файл «{name}» добавлен в базу и будет выбран как источник следующего запроса.",
     )
+
+
+def _attachment_user_suffix(attachment: dict) -> str:
+    """Строка в пользовательском сообщении: вложение должно остаться в истории диалога."""
+    if not attachment or not attachment.get("id"):
+        return ""
+    name = str(attachment.get("name") or "файл").strip() or "файл"
+    mode = str(attachment.get("mode") or "")
+    if mode == "read":
+        chars = int(attachment.get("chars") or len(str(attachment.get("text") or "")) or 0)
+        suffix = f" · {chars} симв." if chars else ""
+        return f"📎 Прикреплён файл: {name} · В чат{suffix}"
+    if mode == "quick":
+        rows = int(attachment.get("rows") or 0)
+        suffix = f" · {rows} строк" if rows else ""
+        return f"📎 Прикреплена таблица: {name} · Таблица{suffix}"
+    dataset_name = str(attachment.get("dataset_name") or "RAG-датасет").strip() or "RAG-датасет"
+    return f"📎 Файл добавлен в базу: {name} · {dataset_name}"
 
 
 def _verify_path(q: str) -> str | None:
@@ -572,8 +582,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     ui.button(
                         icon="o_article",
                         on_click=lambda: asyncio.create_task(_open_scope_passport()),
-                    ).props('flat round dense aria-label="Паспорт области"').classes("sov-icon-btn").tooltip(
-                        "Паспорт области: что известно о выбранном чате и датасетах"
+                    ).props('flat round dense aria-label="Блокнот области"').classes("sov-icon-btn").tooltip(
+                        "Блокнот области: карта выбранного чата, датасетов и служебных источников"
                     )
                     ui.button(icon="o_delete_sweep", on_click=lambda: _clear_chat()).props(
                         'flat round dense aria-label="Очистить чат"'
@@ -625,6 +635,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     "name": d.get("name", e.name),
                     "mode": d.get("mode"),
                     "text": d.get("text", ""),
+                    "chars": d.get("chars") or len(str(d.get("text") or "")),
+                    "rows": d.get("rows") or 0,
+                    "truncated": bool(d.get("truncated")),
+                    "dataset_name": d.get("dataset_name") or "",
                 })
                 title, detail, chat_msg = _attachment_visible_text(d)
                 attach_title.set_text(title)
@@ -632,8 +646,22 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 attach_strip.set_visibility(True)
                 attach_status.text = "Готово: файл виден под полем ввода"
                 attach_dialog.close()
+                state["chat_history"].append({
+                    "role": "system",
+                    "text": chat_msg,
+                    "meta": {
+                        "attachment": {
+                            "id": attach_state.get("id"),
+                            "name": attach_state.get("name"),
+                            "mode": attach_state.get("mode"),
+                            "chars": attach_state.get("chars"),
+                            "rows": attach_state.get("rows"),
+                            "dataset_name": attach_state.get("dataset_name"),
+                        }
+                    },
+                })
                 with chat_column:
-                    _render_chat_bubble(chat_msg, "chat-msg-sys")
+                    _render_msg(state["chat_history"][-1])
                 chat_scroll.scroll_to(percent=1)
                 ui.notify(title, type="positive")
                 if d.get("mode") == "quick":
@@ -642,6 +670,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     ui.notify("Файл будет отправлен модели вместе со следующим сообщением", type="info")
 
             def _clear_attachment(*, notify: bool = True):
+                attach_state.clear()
                 attach_state.update({"id": None, "name": "", "mode": "", "text": ""})
                 attach_title.set_text("")
                 attach_chip.set_text("")
@@ -926,7 +955,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         with ui.card().classes("sov-advanced-dialog"):
             with ui.row().classes("w-full items-center justify-between"):
                 with ui.column().classes("gap-0"):
-                    ui.label("Паспорт области").classes("sov-panel-title")
+                    ui.label("Блокнот области").classes("sov-panel-title")
                     passport_scope_label = ui.label("Весь RAG").classes("sov-muted")
                 ui.button(icon="o_close", on_click=passport_dialog.close).props(
                     'flat round dense aria-label="Закрыть"'
@@ -1013,17 +1042,18 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         passport_body.clear()
         with passport_body:
             with ui.card().classes("sov-control-card"):
-                ui.label("Паспорт области загружается...").classes("sov-muted")
+                ui.label("Блокнот области загружается...").classes("sov-muted")
         passport_dialog.open()
 
         ds_ids, ds_names = await _resolve_scope_dataset_ids()
         chat_profile = await api_get(f"/api/chat/memory/{state.get('session_id')}") if state.get("session_id") else None
-        dataset_profiles: list[dict] = []
+        dataset_notebooks: list[dict] = []
         for dsid in ds_ids[:5]:
             from urllib.parse import quote as _q
-            prof = await api_get(f"/api/rag/datasets/{_q(dsid, safe='')}/profile?depth=deep")
-            if isinstance(prof, dict):
-                dataset_profiles.append(prof)
+            notebook = await api_get(f"/api/notebooks/{_q(dsid, safe='')}?depth=deep")
+            if isinstance(notebook, dict):
+                dataset_notebooks.append(notebook)
+        service_notebooks = await api_get("/api/service-sources/notebooks")
         passport_body.clear()
         with passport_body:
             with ui.card().classes("sov-control-card"):
@@ -1033,23 +1063,38 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     for line in lines:
                         ui.label(line).style("font-size:.68rem;color:var(--text);line-height:1.45;")
                 else:
-                    ui.label("Пока нет накопленного паспорта этой сессии. Он появится после ответов с источниками.").classes("sov-muted")
+                    ui.label("Пока нет накопленного блокнота этой сессии. Он появится после ответов с источниками.").classes("sov-muted")
             with ui.card().classes("sov-control-card"):
                 ui.label("Датасеты в области").classes("section-title")
                 if not ds_ids:
-                    ui.label("Область не сужена: ЛЕС будет искать по всему RAG. Для точного паспорта выбери проект или датасет.").classes("sov-muted")
-                if dataset_profiles:
-                    for idx, prof in enumerate(dataset_profiles, 1):
-                        ui.label(f"{idx}. {prof.get('name') or prof.get('dataset_id')}").style(
+                    ui.label("Область не сужена: ЛЕС будет искать по всему RAG. Для точного блокнота выбери проект или датасет.").classes("sov-muted")
+                if dataset_notebooks:
+                    for idx, notebook in enumerate(dataset_notebooks, 1):
+                        ui.label(f"{idx}. {notebook.get('name') or notebook.get('dataset_id')}").style(
                             "font-size:.72rem;color:var(--accent);font-weight:800;"
                         )
-                        for line in _dataset_profile_operator_summary(prof)[1:]:
+                        for line in _dataset_notebook_operator_summary(notebook)[1:]:
                             ui.label(line).style("font-size:.66rem;color:var(--text);line-height:1.45;")
                         ui.separator().style("border-color:var(--border);margin:6px 0;")
                 elif ds_ids:
-                    ui.label("Не удалось загрузить паспорта выбранных датасетов.").classes("sov-muted")
+                    ui.label("Не удалось загрузить блокноты выбранных датасетов.").classes("sov-muted")
                 if len(ds_ids) > 5:
                     ui.label(f"Показаны первые 5 датасетов из {len(ds_ids)}. Остальные участвуют в поиске, но не раскрыты в этом окне.").classes("sov-muted")
+            with ui.card().classes("sov-control-card"):
+                ui.label("Служебные блокноты").classes("section-title")
+                notebooks = (service_notebooks or {}).get("notebooks") if isinstance(service_notebooks, dict) else []
+                if notebooks:
+                    for nb in notebooks[:3]:
+                        collections = nb.get("collections") or []
+                        ui.label(f"{nb.get('name') or nb.get('id')} · {len(collections)} разделов").style(
+                            "font-size:.72rem;color:var(--accent);font-weight:800;"
+                        )
+                        summary = nb.get("notebook_summary") if isinstance(nb.get("notebook_summary"), dict) else {}
+                        ui.label(str(summary.get("purpose") or "Навигационный блокнот")).style(
+                            "font-size:.66rem;color:var(--text);line-height:1.45;"
+                        )
+                else:
+                    ui.label("Служебные блокноты пока недоступны.").classes("sov-muted")
 
     # W18.1: файл-вьювер (дерево RAG_Content + просмотр текст/код/картинка/PDF).
     def _toggle_files():
@@ -1584,6 +1629,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         return bool(_parse_table_from_ai(ans) or _parse_markdown_table(ans)
                     or _parse_mermaid_from_ai(ans) or _parse_svg_from_ai(ans))
 
+    def _artifact_from_meta(meta: dict | None) -> dict:
+        artifact = (meta or {}).get("artifact") or {}
+        return artifact if isinstance(artifact, dict) and str(artifact.get("content") or "").strip() else {}
+
     def _set_artifacts_visible(visible: bool) -> None:
         artifact_shell.set_visibility(visible)
         artifact_divider.set_visibility(visible)
@@ -1659,15 +1708,18 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         except Exception:
             pass
 
-    def _artifact_button(ans: str, mode: str) -> None:
+    def _artifact_button(ans: str, mode: str, meta: dict | None = None) -> None:
         """Кнопка-карточка артефакта в пузыре ответа (если артефакт есть)."""
-        if not _artifact_present(ans, mode):
+        meta_artifact = _artifact_from_meta(meta)
+        content = str(meta_artifact.get("content") or ans or "")
+        artifact_mode = str(meta_artifact.get("mode") or mode or "text")
+        if not meta_artifact and not _artifact_present(ans, mode):
             return
-        lbl = OUTPUT_FORMATS[mode][0] if (mode in OUTPUT_FORMATS and mode != "text") else "Таблица"
+        lbl = str(meta_artifact.get("title") or (OUTPUT_FORMATS[mode][0] if (mode in OUTPUT_FORMATS and mode != "text") else "Таблица"))
         ui.button(
             f"Артефакт: {lbl} — открыть",
             icon="o_table_view",
-            on_click=lambda a=ans, m=mode: _show_artifact(a, m),
+            on_click=lambda a=content, m=artifact_mode: _show_artifact(a, m),
         ).props("no-caps flat dense").classes("sov-artifact-chip").style(
             "margin-top:6px;border:1px solid var(--border);border-radius:8px;"
             "background:var(--bg);color:var(--accent);font-size:.68rem;font-weight:700;padding:4px 10px;"
@@ -1992,16 +2044,20 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 _render_evidence_header(meta, srcs)     # v0.16: статус-полоска сверху
             # AI-ответ с таблицей/диаграммой → рисуем формы прямо в пузыре; SVG и прочее,
             # что inline-рендер не ловит, остаётся на «сыром» тексте + кнопке артефакта.
-            rich = _render_rich_body(str(text or "")) if _is_ai else False
+            explicit_artifact = bool(_artifact_from_meta(meta))
+            rich = _render_rich_body(str(text or "")) if (_is_ai and not explicit_artifact) else False
             if not rich:
                 _disp = _bubble_text(str(text or ""), _mode) if (meta and _is_ai) else str(text or "")
-                ui.label(_disp).classes("sov-chat-message-text")
+                if _is_ai:
+                    ui.markdown(_disp).classes("sov-chat-message-text sov-chat-md")
+                else:
+                    ui.label(_disp).classes("sov-chat-message-text")
             _render_source_tags(srcs or [], crag, meta)
             if meta:
                 _render_suggestions(meta)
                 _render_excerpts(meta)
                 if _is_ai:
-                    _artifact_button(str(text or ""), _mode)
+                    _artifact_button(str(text or ""), _mode, meta)
             if _is_ai and str(text or "").strip():
                 _render_answer_actions(str(text or ""), srcs or [])
         return bubble
@@ -2028,23 +2084,31 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             if not error:
                 _render_evidence_header(meta, srcs)     # v0.16: статус-полоска сверху
             # Формы (таблица/mermaid) рисуем виджетами; сырой стрим-label прячем.
-            rich = _render_rich_body(str(text or "")) if (meta and not error) else False
+            explicit_artifact = bool(_artifact_from_meta(meta))
+            rich = _render_rich_body(str(text or "")) if (meta and not error and not explicit_artifact) else False
             if rich:
                 label.set_visibility(False)
             else:
-                label.set_text(_bubble_text(str(text or ""), _mode) if (meta and not error) else str(text or ""))
+                if meta and not error:
+                    label.set_visibility(False)
+                    ui.markdown(_bubble_text(str(text or ""), _mode)).classes("sov-chat-message-text sov-chat-md")
+                else:
+                    label.set_text(str(text or ""))
             _render_source_tags(srcs or [], crag, meta)
             if meta:
                 _render_suggestions(meta)
                 _render_excerpts(meta)
                 if not error:
-                    _artifact_button(str(text or ""), meta.get("out_mode", "text"))
+                    _artifact_button(str(text or ""), meta.get("out_mode", "text"), meta)
             if not error and str(text or "").strip():
                 _render_answer_actions(str(text or ""), srcs or [])
 
     def _render_msg(msg):
         if msg.get("role") == "user":
             _render_chat_bubble(msg.get("text", ""), "chat-msg-user")
+            return
+        if msg.get("role") == "system":
+            _render_chat_bubble(msg.get("text", ""), "chat-msg-sys")
             return
         _render_chat_bubble(
             msg.get("text", ""),
@@ -2386,10 +2450,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         advanced_btn.props("disabled")
         chat_input.props("disabled")
         sent_attachment = dict(attach_state) if attach_state.get("id") else {}
-        attachment_name = str(sent_attachment.get("name") or "").strip()
+        attachment_suffix = _attachment_user_suffix(sent_attachment)
         question_display = question
-        if attachment_name:
-            question_display = f"{question}\n\n📎 Прикреплено: {attachment_name}"
+        if attachment_suffix:
+            question_display = f"{question}\n\n{attachment_suffix}"
         # Авто-GOST: «собери/составь спецификацию …» → формат спеки (ГОСТ 21.110), чтобы
         # артефакт был чистой таблицей по форме, а не прозой. Не липко — селектор вернём.
         _orig_mode = out_mode_val["v"]
@@ -2498,6 +2562,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 "scenario": d.get("scenario") or {},
                 "answer_contract": d.get("answer_contract") or {},
                 "answer_contract_check": d.get("answer_contract_check") or {},
+                "workflow_plan": d.get("workflow_plan") or {},
+                "artifact": d.get("artifact") or {},
             }
             state["chat_history"].append({"role": "ai", "text": ans, "srcs": srcs, "crag": crag, "meta": meta})
             _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, ans, srcs, crag, meta=meta)

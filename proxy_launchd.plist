@@ -29,6 +29,12 @@
         <string>http://127.0.0.1:6333</string>
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>TRUSTED_NETWORKS</key>
+        <string>127.0.0.1/32,::1/128,10.195.146.0/24</string>
+        <key>TRUSTED_NETWORK_ROLE</key>
+        <string>admin</string>
+        <key>TRUSTED_PROXY_NETWORKS</key>
+        <string>127.0.0.1/32,::1/128,10.195.146.136/32</string>
     </dict>
 
     <key>RunAtLoad</key>

@@ -73,6 +73,11 @@ def test_header_summary_legacy_fallback():
     h = ar.header_summary({"channel": "command"}, None, 0, None)
     assert h["has_evidence"] is False
 
+def test_header_summary_hides_internal_route_ids():
+    h = ar.header_summary({"channel": "harness_mode"}, {"COMPUTED": 1}, 0, "partial")
+    assert h["intent"] == "Смета"
+    assert "harness_mode" not in str(h)
+
 def test_missing_blocked_visible_in_badges():
     b = ar.evidence_badges({"RETRIEVED": 2, "MISSING": 1, "BLOCKED": 1})
     types = [x["type"] for x in b]

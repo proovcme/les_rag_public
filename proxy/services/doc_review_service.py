@@ -631,11 +631,21 @@ def review_to_chat_text(items: list[ReviewItem], review_map: ReviewMap, *, top: 
 
 
 def review_to_json(items: list[ReviewItem], review_map: ReviewMap) -> dict:
-    return {"standard": review_map.standard, "rulepack": review_map.name, "version": review_map.version,
-            "summary": review_summary(items), "items": [it.to_dict() for it in items],
-            "normalized_remarks": review_to_normalized_remarks(items, review_map),
-            "defense": review_defense_pack(items, review_map),
-            "note": "Предварительный СПДС-нормоконтроль: статусы предлагаемые, финал ставит инженер."}
+    from proxy.services.workflow_plan_service import build_workflow_plan
+
+    payload = {"standard": review_map.standard, "rulepack": review_map.name, "version": review_map.version,
+               "summary": review_summary(items), "items": [it.to_dict() for it in items],
+               "normalized_remarks": review_to_normalized_remarks(items, review_map),
+               "defense": review_defense_pack(items, review_map),
+               "scenario": {"id": "normcontrol", "label": "Нормоконтроль",
+                            "contract": "findings_table_v1",
+                            "progress": ["Определяю комплект проверки", "Проверяю правила и источники",
+                                         "Собираю замечания", "Формирую отчёт"]},
+               "answer_contract": {"id": "findings_table_v1", "label": "Таблица замечаний"},
+               "query_route": {"channel": "doc_review", "operation": "spds_review"},
+               "note": "Предварительный СПДС-нормоконтроль: статусы предлагаемые, финал ставит инженер."}
+    payload["workflow_plan"] = build_workflow_plan(payload)
+    return payload
 
 
 def review_to_normalized_remarks(items: list[ReviewItem], review_map: ReviewMap) -> list[dict]:

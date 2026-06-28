@@ -11,6 +11,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from proxy.services.workflow_plan_service import build_workflow_plan
+
 
 ANSWER_CONTRACTS: dict[str, dict[str, Any]] = {
     "auto": {
@@ -66,20 +68,9 @@ ANSWER_CONTRACTS: dict[str, dict[str, Any]] = {
 
 
 SCENARIOS: dict[str, dict[str, Any]] = {
-    "object_estimate": {
-        "id": "object_estimate",
-        "label": "Сметный расчёт",
-        "contract": "estimate_table_v1",
-        "progress": [
-            "Определяю сметный сценарий",
-            "Проверяю исходные данные",
-            "Считаю инструментами",
-            "Собираю таблицу ответа",
-        ],
-    },
     "estimate_harness": {
         "id": "estimate_harness",
-        "label": "Сметный harness",
+        "label": "Сметная декомпозиция",
         "contract": "estimate_preliminary_v1",
         "progress": [
             "Разбираю объект на позиции",
@@ -175,7 +166,7 @@ SCENARIOS: dict[str, dict[str, Any]] = {
 
 
 MODE_SCENARIOS = {
-    "smeta": "object_estimate",
+    "smeta": "estimate_harness",
     "smeta_harness": "estimate_harness",
     "review": "normcontrol",
     "doc_review": "normcontrol",
@@ -185,7 +176,7 @@ MODE_SCENARIOS = {
 
 
 CHANNEL_SCENARIOS = {
-    "smeta_mode": "object_estimate",
+    "smeta_mode": "estimate_harness",
     "harness_mode": "estimate_harness",
     "review_mode": "normcontrol",
     "normcontrol": "normcontrol",
@@ -356,4 +347,5 @@ def decorate_payload(payload: dict[str, Any]) -> dict[str, Any]:
     payload.setdefault("scenario", scenario_for_payload(payload))
     payload.setdefault("answer_contract", contract_for_payload(payload))
     payload.setdefault("answer_contract_check", check_contract(payload, payload["answer_contract"]))
+    payload.setdefault("workflow_plan", build_workflow_plan(payload))
     return payload

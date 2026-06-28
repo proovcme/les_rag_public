@@ -220,7 +220,7 @@ def lsr_assemble(positions: list[dict[str, Any]]) -> dict[str, Any]:
     from proxy.services.gesn_service import get_norm
     from proxy.services.lsr_assembly_service import assemble
     from proxy.services.nr_sp_service import resolve as resolve_nr_sp
-    from proxy.services.object_estimate_service import _f
+    from proxy.services.estimate_math_service import _f
 
     asm, blockers = [], []
     for p in positions:
@@ -263,7 +263,7 @@ def run_construction_harness(query: str, *, project_id: int = 0, dataset_ids: li
     """End-to-end строительный evidence-контур (v0.2 retrieval-backed). Источник НАХОДИТСЯ через
     retrieve_project_doc по scope (project_id/dataset_ids), не подаётся напрямую. Числа из tool-
     результатов, не из LLM. `rows=` — только для тестов facade."""
-    from proxy.services.object_estimate_service import _f
+    from proxy.services.estimate_math_service import _f
 
     trace: list[dict[str, Any]] = []
 

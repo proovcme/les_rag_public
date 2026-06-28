@@ -25,9 +25,17 @@ from __future__ import annotations
 import json
 import re
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Callable
 
-from proxy.services.object_estimate_service import _eval_formula, _f, _geometry
+from proxy.services.candidate_selection_service import (
+    candidate_reason_labels,
+    candidate_shortlist,
+    select_candidates,
+)
+from proxy.services.estimate_math_service import _eval_formula, _f, _geometry
+from proxy.services.notebook_service import gesn_notebook_prompt_excerpt
+from proxy.services.prompt_registry_service import build_smeta_batch_system_prompt
 
 # ── единицы измерения (UNIT CONTRACT) ────────────────────────────────────────────────────
 
@@ -60,18 +68,96 @@ WORK_FAMILY_COLLECTIONS: dict[str, set[str]] = {
     "concrete_monolithic": {"06"},              # монолит ж/б
     "concrete_precast": {"07"},                 # сборный ж/б
     "masonry": {"08"},                          # каменные
-    "metal": {"09"},                            # металлоконструкции
+    "metal": {"09", "ГЭСНм38"},                 # металлоконструкции + монтажные металлоконструкции
     "wood": {"10"},                             # деревянные конструкции
     "floors": {"11"},                           # полы
     "roofing": {"12"},                          # кровли
     "waterproofing": {"08", "12"},              # гидро/тепло-изоляция
     "finishes": {"15"},                         # отделка
+    "mep": {"16", "17", "18", "20", "21", "22"},  # инженерные сети/системы
+}
+
+_ELEMENT_DEFAULT_FAMILY: dict[str, str] = {
+    "excavation": "earthworks",
+    "concrete_preparation": "concrete_monolithic",
+    "foundation_slab": "concrete_monolithic",
+    "foundation": "foundation",
+    "wood_wall": "wood",
+    "metal_assembly": "metal",
+    "pile": "foundation",
+    "monolithic_wall": "concrete_monolithic",
+    "monolithic_slab": "concrete_monolithic",
+    "column": "concrete_monolithic",
+    "waterproofing": "waterproofing",
+    "roofing": "roofing",
+    "floors": "floors",
+    "finishes": "finishes",
+    "engineering_networks": "mep",
+}
+
+_ACTION_ALIASES: dict[str, str] = {
+    "assemble": "монтаж",
+    "assembly": "монтаж",
+    "cast": "бетонирование",
+    "pour": "бетонирование",
+    "excavate": "разработка",
+    "remove": "разработка",
+    "dig": "разработка",
+    "install": "устройство",
+    "prepare": "устройство",
+}
+
+_UNIT_ALIASES: dict[str, str] = {
+    "m3": "м3",
+    "m2": "м2",
+    "t": "т",
+    "ton": "т",
+    "tons": "т",
+    "tonne": "т",
+    "tonnes": "т",
+    "piece": "",
+    "pcs": "",
+    "шт": "",
+}
+
+_SMETA_REASON_LABELS: dict[str, tuple[str, str]] = {
+    "collection": ("сборник соответствует семейству работ", "сборник не соответствует семейству работ"),
+    "unit": ("единица измерения совпадает", "единица измерения не совпадает"),
+    "element": ("есть признаки нужного элемента", "есть признаки другого элемента"),
+    "family": ("есть признаки семейства работ", "нет признаков семейства работ"),
+    "action": ("совпало действие работы", "действие работы не совпало"),
+    "forbidden": ("", "есть признаки специальной/неподходящей нормы"),
+    "denied_subsection": ("", "подраздел не подходит для семейства работ"),
 }
 
 
 def _collection_of(code: str) -> str:
     m = re.search(r"(?<!\d)(\d{2})-\d{2}-\d{3}-\d{2}", str(code or ""))
     return m.group(1) if m else ""
+
+
+def _base_type_of(code: str) -> str:
+    s = str(code or "").strip()
+    if s.startswith("ГЭСНм"):
+        return "ГЭСНм"
+    if s.startswith("ГЭСНр"):
+        return "ГЭСНр"
+    if s.startswith("ГЭСНп"):
+        return "ГЭСНп"
+    return "ГЭСН"
+
+
+def _collection_key(code: str) -> str:
+    collection = _collection_of(code)
+    base_type = _base_type_of(code)
+    if base_type == "ГЭСН" or not collection:
+        return collection
+    return f"{base_type}{collection}"
+
+
+def _plain_norm_code(code: str) -> str:
+    m = re.search(r"(?<!\d)(\d{2}-\d{2}-\d{3}-\d{2})", str(code or ""))
+    return m.group(1) if m else str(code or "")
 
 
 # ── Quality Gate 2: ПРИМЕНИМОСТЬ НОРМЫ (барьер между кандидатом и числом) ─────────────────
@@ -87,16 +173,17 @@ _FORBIDDEN_TITLE_ANCHORS = (
 # Обязательные признаки семейства — иначе ambiguous (название не похоже на работу).
 _FAMILY_POSITIVE_ANCHORS: dict[str, tuple[str, ...]] = {
     "earthworks": ("грунт", "котлован", "траншея", "разработ", "выемк", "насып", "землян", "разраб"),
-    "foundation": ("фундамент", "основани", "плит", "бетон"),
+    "foundation": ("фундамент", "основани", "плит", "бетон", "сва", "ростверк"),
     "concrete_monolithic": ("бетон", "монолит", "железобетон", "плит", "стен", "перекрыт", "колонн", "фундамент"),
     "concrete_precast": ("сборн", "панел", "плит", "блок"),
     "masonry": ("кладк", "стен", "перегородк", "кирпич", "блок"),
-    "metal": ("металл", "сталь", "конструкц", "балк", "ферм"),
+    "metal": ("металл", "сталь", "конструкц", "листов", "балк", "ферм"),
     "wood": ("дерев", "брус", "бревн", "каркас", "стен", "перекрыт", "стропил"),
     "floors": ("пол", "стяжк", "покрыт"),
     "roofing": ("кровл", "покрыт", "рулон", "мембран"),
     "waterproofing": ("гидроизол", "изоляц", "оклеечн", "обмазочн", "мастичн"),
     "finishes": ("отделк", "штукатур", "окрас", "облицов"),
+    "mep": ("трубопровод", "водопровод", "канализац", "отоплен", "вентиляц", "кабел", "электр", "слаботоч", "сеть", "систем"),
 }
 # Чёрный список подразделов под семейство (реальные провалы паркинга).
 _FAMILY_DENIED_PREFIXES: dict[str, tuple[str, ...]] = {
@@ -108,15 +195,17 @@ _FAMILY_DENIED_PREFIXES: dict[str, tuple[str, ...]] = {
 def check_applicability(code: str, norm_name: str, work_family: str) -> tuple[str, list[str]]:
     """Кандидат → accepted | ambiguous | rejected (+ причины). Барьер перед привязкой нормы."""
     name = (norm_name or "").lower()
+    plain_code = _plain_norm_code(code)
     allowed = WORK_FAMILY_COLLECTIONS.get(work_family)
     collection = _collection_of(code)
-    if allowed and collection and collection not in allowed:
-        return "rejected", [f"сборник {collection} не разрешён для {work_family}"]
+    collection_key = _collection_key(code)
+    if allowed and collection_key and collection_key not in allowed:
+        return "rejected", [f"сборник {collection_key} не разрешён для {work_family}"]
     for a in _FORBIDDEN_TITLE_ANCHORS:
         if a in name:
             return "rejected", [f"запретный признак в названии: «{a}»"]
     for pref in _FAMILY_DENIED_PREFIXES.get(work_family, ()):
-        if str(code).startswith(pref):
+        if plain_code.startswith(pref):
             return "rejected", [f"подраздел {pref} не для {work_family}"]
     pos = _FAMILY_POSITIVE_ANCHORS.get(work_family, ())
     if pos and not any(a in name for a in pos):
@@ -140,7 +229,7 @@ _ELEMENT_ANCHORS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "foundation_slab":     (("плит", "фундамент", "бетон", "железобетон", "монолит"), ()),
     "foundation":          (("фундамент", "основани", "бетон"), ()),
     "wood_wall":           (("дерев", "брус", "бревн", "стен", "каркас"), ("линолеум", "грунтовк", "окрас")),
-    "metal_assembly":      (("монтаж", "установ", "металл", "сталь", "конструкц", "каркас", "балк", "ферм"),
+    "metal_assembly":      (("монтаж", "установ", "металл", "сталь", "конструкц", "листов", "масс", "каркас", "балк", "ферм"),
                              ("бак", "конвейер", "подстанц", "кабел", "автокоптил", "сцен")),
     "pile":                (("сва", "оголов", "ростверк"), ("насосн", "мелиоративн")),
     "monolithic_wall":     (("стен", "бетонирован", "бетон", "монолит", "железобетон"), ()),
@@ -148,7 +237,81 @@ _ELEMENT_ANCHORS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "column":              (("колонн", "бетон", "монолит"), ()),
     "waterproofing":       (("гидроизол", "изоляц", "оклеечн", "обмазочн", "мастичн"), ()),
     "roofing":             (("кровл", "покрыт", "рулон", "мембран"), ()),
+    "engineering_networks": (("трубопровод", "водопровод", "канализац", "отоплен", "вентиляц", "кабел", "электр", "слаботоч", "сеть", "систем"), ("отделк", "штукатур", "окрас")),
 }
+
+_ELEMENT_TEXT_SIGNALS: tuple[tuple[str, str, str], ...] = (
+    ("engineering_networks", "mep", r"\b(?:инженерн\w*\s+(?:сет|систем)|сет\w*\s+инженер|вк\b|ов\b|эом\b|сс\b|водопровод|канализац|отоплен|вентиляц|электр|кабел|слаботоч)"),
+    ("metal_assembly", "metal", r"\b(?:металлоконструкц|металл\w*|стальн\w*|сталь|листов\w*\s+конструкц|столп|ярус)"),
+    ("wood_wall", "wood", r"\b(?:дерев|брус|бревн|каркасно[- ]?щит|каркасн\w*\s+стен|стен\w*\s+каркас)"),
+    ("roofing", "roofing", r"\b(?:кровл|стропил|двускат|плоск\w*\s+кров)"),
+    ("excavation", "earthworks", r"\b(?:котлован|грунт|транше|выемк|землян|разработк)"),
+    ("pile", "foundation", r"\b(?:сва|ростверк|свайн)"),
+    ("waterproofing", "waterproofing", r"\b(?:гидроизол|изоляц|обмазочн|оклеечн)"),
+    ("foundation_slab", "concrete_monolithic", r"\b(?:фундаментн\w*\s+плит|плитн\w*\s+фундамент)"),
+    ("monolithic_wall", "concrete_monolithic", r"\b(?:монолитн\w*\s+стен|бетонирован\w*\s+стен)"),
+    ("floors", "floors", r"\b(?:пол|стяжк)"),
+    ("finishes", "finishes", r"\b(?:отделк|штукатур|окрас|облицов)"),
+)
+
+
+def _normalize_action(action: str) -> str:
+    a = (action or "").strip().lower()
+    return _ACTION_ALIASES.get(a, action)
+
+
+def _normalize_unit_hint(unit: str) -> str:
+    u = _canon_unit(unit)
+    return _UNIT_ALIASES.get(u, u if u in {"м3", "м2", "т"} else "")
+
+
+def _normalize_work_item(item: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Нормализовать tool-аргументы модели перед поиском ГЭСН.
+
+    Это не состав работ и не выбор нормы: модель уже дала work item, а harness приводит
+    family/element/action/unit к словарю инструмента, чтобы `search_norm` не уходил в очевидно
+    чужой сборник из-за терминологического шума.
+    """
+    norm = dict(item)
+    corrections: list[str] = []
+    text = f"{norm.get('work', '')} {norm.get('work_description', '')}".lower()
+    family = str(norm.get("work_family") or "")
+    element = str(norm.get("element_type") or "")
+
+    for inferred_element, inferred_family, pattern in _ELEMENT_TEXT_SIGNALS:
+        if re.search(pattern, text):
+            if element != inferred_element:
+                corrections.append(f"element_type:{element or '—'}→{inferred_element}")
+                norm["element_type"] = inferred_element
+                element = inferred_element
+            if family != inferred_family:
+                corrections.append(f"work_family:{family or '—'}→{inferred_family}")
+                norm["work_family"] = inferred_family
+                family = inferred_family
+            break
+
+    default_family = _ELEMENT_DEFAULT_FAMILY.get(element)
+    if default_family and family and family != default_family:
+        corrections.append(f"work_family:{family}→{default_family}")
+        norm["work_family"] = default_family
+    elif default_family and not family:
+        corrections.append(f"work_family:—→{default_family}")
+        norm["work_family"] = default_family
+
+    action = str(norm.get("action") or "")
+    normalized_action = _normalize_action(action)
+    if normalized_action != action:
+        corrections.append(f"action:{action}→{normalized_action}")
+        norm["action"] = normalized_action
+
+    unit = str(norm.get("unit_hint") or "")
+    normalized_unit = _normalize_unit_hint(unit)
+    if normalized_unit != _canon_unit(unit):
+        corrections.append(f"unit_hint:{unit or '—'}→{normalized_unit or '—'}")
+        norm["unit_hint"] = normalized_unit
+    else:
+        norm["unit_hint"] = normalized_unit
+    return norm, corrections
 
 
 def _score_candidate(words: list[str], code: str, name: str, unit: str, *, work_family: str,
@@ -167,8 +330,13 @@ def _score_candidate(words: list[str], code: str, name: str, unit: str, *, work_
     parts["unit"] = 1.0 if (phys_unit and _units_compatible(phys_unit, base)) else 0.0
     # тяжёлые штрафы: спец/нерелевантные сооружения и запрещённые подразделы тонут (но в выдаче видны)
     parts["forbidden"] = -5.0 * sum(1 for a in _FORBIDDEN_TITLE_ANCHORS if a in name)
-    parts["denied_subsection"] = -5.0 if any(code.startswith(p) for p in _FAMILY_DENIED_PREFIXES.get(work_family, ())) else 0.0
-    parts["collection"] = 1.0 if _collection_of(code) in WORK_FAMILY_COLLECTIONS.get(work_family, set()) else -3.0
+    plain_code = _plain_norm_code(code)
+    parts["denied_subsection"] = -5.0 if any(plain_code.startswith(p) for p in _FAMILY_DENIED_PREFIXES.get(work_family, ())) else 0.0
+    parts["collection"] = 1.0 if _collection_key(code) in WORK_FAMILY_COLLECTIONS.get(work_family, set()) else -3.0
+    if work_family == "metal" and element_type == "metal_assembly" and _collection_key(code) == "ГЭСНм38":
+        parts["mounting_base"] = 2.0 if _canon_unit(phys_unit) == "т" else 0.0
+        if any(w.startswith(("масс", "ярус", "бронз", "кран", "столп", "тяжел", "негабар")) for w in words):
+            parts["mounting_context"] = 3.0
     return round(sum(parts.values()), 2), {k: round(v, 2) for k, v in parts.items() if v}
 
 
@@ -181,6 +349,12 @@ def search_norm(work_description: str, *, work_family: str = "", element_type: s
     if not words:
         return {"status": "not_found", "candidates": [], "missing_inputs": ["work_description"]}
     uh = _canon_unit(unit_hint)
+    if (
+        work_family == "metal"
+        and element_type == "metal_assembly"
+        and (uh == "т" or any(w.startswith(("масс", "тонн")) for w in words))
+    ):
+        words.extend(["массой", "сборка", "краном", "листовые", "конструкции"])
     scored: list[tuple[float, dict, str, str, str]] = []
     for code, name, unit in _norm_index():
         sc = _score_candidate(words, code, name, unit, work_family=work_family,
@@ -201,12 +375,38 @@ def search_norm(work_description: str, *, work_family: str = "", element_type: s
                            "unit_compatible": (not uh) or _units_compatible(uh, base),
                            "applicability_status": appl, "rejection_reasons": reasons,
                            "score_total": total, "score_parts": parts})
-    # found, если лидер ПРИМЕНИМ и заметно сильнее второго; иначе ambiguous
-    top = candidates[0]
-    clear_lead = len(candidates) == 1 or top["score_total"] >= candidates[1]["score_total"] + 2.0
-    status = "found" if (top["applicability_status"] == "accepted" and clear_lead) else "ambiguous"
+    selection = _candidate_selection(candidates)
+    status = "found" if selection["action"] == "bind_top_candidate" else "ambiguous"
     return {"status": status, "work_family": work_family, "element_type": element_type,
-            "candidates": candidates}
+            "candidates": candidates, "selection": selection}
+
+
+def _candidate_reason_labels(candidate: dict[str, Any]) -> list[str]:
+    return candidate_reason_labels(candidate, reason_labels=_SMETA_REASON_LABELS)
+
+
+def _candidate_shortlist(candidates: list[dict[str, Any]], *, limit: int = 5) -> list[dict[str, Any]]:
+    return candidate_shortlist(candidates, limit=limit, reason_labels=_SMETA_REASON_LABELS)
+
+
+def _candidate_selection(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    """Explain whether the shortlist is clear enough to bind, or should go back to the model.
+
+    The harness ranks and gates; it does not invent a work item. A top candidate is bindable only
+    when it is applicable, unit-compatible and separated from the next candidate by a visible gap.
+    """
+    return select_candidates(candidates, reason_labels=_SMETA_REASON_LABELS)
+
+
+def _first_bindable_candidate(candidates: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, int]:
+    """Return the first candidate that passed applicability and unit gates."""
+    for index, candidate in enumerate(candidates):
+        if (
+            candidate.get("applicability_status") == "accepted"
+            and candidate.get("unit_compatible") is not False
+        ):
+            return candidate, index
+    return None, -1
 
 
 # ── magnitude guard: грубые порядковые границы ───────────────────────────────────────────
@@ -250,6 +450,24 @@ FORMULA_CATALOG: dict[str, dict[str, Any]] = {
     "waterproofing": {
         "unit": "м2", "expr": "P * H * N + S1",   # стены + дно, из геометрии — считаемо
         "required": [], "assume": {}},
+    "wood_wall": {
+        "unit": "м2", "expr": "P * H * N",
+        "required": [], "assume": {}},
+    "metal_assembly": {
+        "unit": "т", "expr": "mass_t",
+        "required": ["mass_t"], "assume": {}},
+    "roofing": {
+        "unit": "м2", "expr": "S1 * roof_area_factor",
+        "required": [], "assume": {"roof_area_factor": 1.25}},
+    "pile": {
+        "unit": "шт", "expr": "pile_count",
+        "required": ["pile_count"], "assume": {}},
+    "floors": {
+        "unit": "м2", "expr": "S",
+        "required": [], "assume": {}},
+    "finishes": {
+        "unit": "м2", "expr": "S * finish_area_factor",
+        "required": [], "assume": {"finish_area_factor": 2.5}},
 }
 
 
@@ -285,11 +503,13 @@ def resolve_slots(element_type: str, geom: dict[str, Any], user_slots: dict[str,
 
 
 _PARAM_PATTERNS = [
+    ("mass_t",             r"(?:масс\w*|вес)[^\d]{0,80}(\d[\d\s\xa0]*(?:[.,]\d+)?)\s*(кг|т|тонн\w*)\b", None),
     ("excavation_depth_m", r"глубин\w*\D{0,18}(\d+(?:[.,]\d+)?)\s*м(?!\w)", 1.0),
     ("slab_thickness_m",   r"(?:плит\w*|фундамент\w*)\D{0,16}(\d+(?:[.,]\d+)?)\s*(мм|см|м)\b", None),
     ("wall_thickness_m",   r"стен\w*\D{0,16}(\d+(?:[.,]\d+)?)\s*(мм|см|м)\b", None),
     ("wall_height_m",      r"высот\w*\D{0,14}(\d+(?:[.,]\d+)?)\s*м(?!\w)", 1.0),
     ("wall_length_m",      r"(?:периметр|длин\w* стен)\D{0,14}(\d+(?:[.,]\d+)?)\s*м(?!\w)", 1.0),
+    ("pile_count",         r"(?:сва\w*\D{0,10}(\d+(?:[.,]\d+)?)|(\d+(?:[.,]\d+)?)\s*сва\w*)", 1.0),
 ]
 
 
@@ -302,17 +522,45 @@ def parse_params(question: str) -> dict[str, float]:
         m = re.search(pat, ql)
         if not m:
             continue
-        val = _f(m.group(1))
-        unit = (m.group(2) if m.lastindex and m.lastindex >= 2 else "м")
+        groups = [g for g in m.groups() if g]
+        raw_value = next((g for g in groups if re.match(r"^\d", str(g))), "")
+        val = _f(raw_value)
+        unit = next((g for g in groups if str(g) in {"мм", "см", "м", "кг", "т"} or str(g).startswith("тонн")), "м")
         if unit == "мм":
             val /= 1000.0
         elif unit == "см":
             val /= 100.0
+        elif unit == "кг":
+            val /= 1000.0
         slots[slot] = val
     return slots
 
 
-# ── петля ────────────────────────────────────────────────────────────────────────────────
+def parse_pricebook_hint(question: str) -> str | None:
+    """Extract an installed FGIS price book hint from ToR text.
+
+    This is navigation for the calculator, not evidence. If the matching book is not installed,
+    lsr_assembly will fall back to its existing default book behavior.
+    """
+    ql = (question or "").lower().replace("ё", "е")
+    wants_spb = "санкт" in ql or "спб" in ql or "петербург" in ql
+    wants_2026_q2 = bool(re.search(r"(?:2|ii)[-\s]*(?:ого|ой|й)?\s*(?:кв|кварт)", ql) and "2026" in ql)
+    if not (wants_spb and wants_2026_q2):
+        return None
+    try:
+        from proxy.services import fgis_price_service as fps
+
+        stems = [Path(p).stem for p in fps.available_pricebooks()]
+    except Exception:  # noqa: BLE001
+        stems = []
+    for stem in stems:
+        low = stem.lower()
+        if "spb" in low and "2026" in low and ("2kv" in low or "q2" in low):
+            return stem
+    return "spb_2kv2026"
+
+
+# ── планировщик ──────────────────────────────────────────────────────────────────────────
 
 _REQUIRED_SCHEMA = ("object_type", "area_total_m2")
 
@@ -324,11 +572,11 @@ SYSTEM_PROMPT = (
     "\"levels_below_ground\":..,\"structural_system\":..,\"missing_inputs\":[..]}} — ПЕРВЫМ. "
     "Код вернёт геометрию {S,N,S1,P,H}.\n"
     "2) {\"tool\":\"search_norm\",\"args\":{\"work_description\":\"..\",\"work_family\":"
-    "\"earthworks|foundation|concrete_monolithic|masonry|roofing|waterproofing|floors\","
+    "\"earthworks|foundation|concrete_monolithic|masonry|roofing|waterproofing|floors|mep\","
     "\"element_type\":\"excavation|concrete_preparation|foundation_slab|monolithic_wall|"
     "monolithic_slab|column|waterproofing\",\"action\":\"бетонирование|разработка|..\","
-    "\"unit_hint\":\"м3|м2\"}} — кандидаты ГЭСН (ранжируются; спец-коды тонут). Бери из них "
-    "тот, у кого applicability_status=accepted.\n"
+    "\"unit_hint\":\"м3|м2\"}} — кандидаты ГЭСН + selection. Если selection.action="
+    "bind_top_candidate, можно брать selected_code; иначе выбери из shortlist или спроси данные.\n"
     "3) {\"tool\":\"add_position\",\"args\":{\"work\":\"..\",\"code\":\"NN-NN-NNN-NN\","
     "\"work_family\":\"..\",\"element_type\":\"<из списка>\",\"slots\":{\"slab_thickness_m\":0.4,..}}} "
     "— объём считает КОД по element_type (формула в каталоге, НЕ ты). Слоты: что знаешь "
@@ -339,13 +587,38 @@ SYSTEM_PROMPT = (
     "перекрытия(concrete_monolithic). Один JSON за ход; коды — только из search_norm."
 )
 
+BATCH_TOOL_CONTRACT = (
+    "/no_think\n"
+    "Верни только компактный JSON, без markdown и пояснений. "
+    "Формат: {\"object\":{\"object_type\":\"...\",\"area_total_m2\":150,\"floors\":1,"
+    "\"levels_below_ground\":0,\"structural_system\":\"...\",\"missing_inputs\":[\"...\"]},"
+    "\"works\":[[\"work\",\"search description\",\"family\",\"element\",\"action\",\"unit\",{\"slot\":1}]]}\n"
+    "family: earthworks,foundation,concrete_monolithic,concrete_precast,masonry,metal,wood,floors,"
+    "roofing,waterproofing,finishes,mep. element: excavation,concrete_preparation,foundation_slab,"
+    "monolithic_wall,monolithic_slab,column,waterproofing,roofing,wood_wall,metal_assembly,pile,"
+    "foundation,floors,finishes,engineering_networks.\n"
+    "Инженерные сети не относить к отделке. Если раздел (ВК/ОВ/ЭОМ/СС), трассы, точки или "
+    "оборудование не заданы, оставь slots пустыми: код запросит данные.\n"
+    "Для металлических конструкций, если в тексте дана масса, используй element metal_assembly, "
+    "unit т; код сам достанет mass_t из запроса и пересчитает кг в тонны.\n"
+    "Дай 3-6 ключевых работ. work и search description пиши по-русски, словами из строительных норм. "
+    "unit только м3, м2 или т. missing_inputs максимум 5. Если параметра нет, не выдумывай slot. "
+    "Коды норм не включай."
+)
+
+BATCH_SYSTEM_PROMPT = build_smeta_batch_system_prompt(BATCH_TOOL_CONTRACT, notebook_context="")
+
 
 def _add_position(args: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
     """Quality Gate 1: формула→физ.объём → проверки (применимость/единицы/магнитуда) → перевод
     в измеритель нормы. Любой провал → позиция помечается, в итог критичное НЕ идёт."""
     from proxy.services.gesn_service import get_norm
 
-    if not state.get("geom"):
+    et = str(args.get("element_type", ""))
+    spec_hint = FORMULA_CATALOG.get(et)
+    expr_hint = str((spec_hint or {}).get("expr") or "")
+    needs_geom = bool(re.search(r"\b(?:S|S1|P|H|N)\b", expr_hint))
+    if needs_geom and not state.get("geom"):
         return {"ok": False, "error": "сначала propose_schema с площадью"}
     code = str(args.get("code", "")).strip()
     norm = get_norm(code)
@@ -359,11 +632,12 @@ def _add_position(args: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]
         return {"ok": False, "status": "rejected_norm", "error": f"код {code} не в базе"}
     # применимость сборника
     allowed = WORK_FAMILY_COLLECTIONS.get(family, set())
-    if allowed and _collection_of(code) not in allowed:
+    collection_key = _collection_key(code)
+    if allowed and collection_key not in allowed:
         state["positions"].append({**base_pos, "status": "rejected_collection",
-                                   "reason": f"сборник {_collection_of(code)} не для {family}"})
+                                   "reason": f"сборник {collection_key} не для {family}"})
         return {"ok": True, "status": "rejected_collection",
-                "reason": f"сборник {_collection_of(code)} не разрешён для {family} — возьми из search_norm"}
+                "reason": f"сборник {collection_key} не разрешён для {family} — возьми из search_norm"}
     # Gate 2: ПРИМЕНИМОСТЬ нормы (bind-барьер) — кривой кандидат (реактор/спец/не та работа) НЕ
     # становится основанием числа. accepted → считаем; rejected/ambiguous → в итог не идёт.
     appl, appl_reasons = check_applicability(code, norm.get("name", ""), family)
@@ -375,7 +649,6 @@ def _add_position(args: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]
                 "note": "норма не подтверждена применимостью — возьми accepted из search_norm"}
     # Gate 4: объём из FORMULA CATALOG по element_type + СЛОТЫ (формула НЕ от модели и НЕ
     # придумывает входы). Нет критичного слота (глубина/толщина/геометрия стен) → needs_input.
-    et = str(args.get("element_type", ""))
     user_slots = {**state.get("user_slots", {}), **(args.get("slots") or {})}
     if et in FORMULA_CATALOG:
         spec, ns, missing, slot_assumptions = resolve_slots(et, state["geom"], user_slots)
@@ -394,8 +667,22 @@ def _add_position(args: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]
         base_pos["formula"] = spec["expr"]
     else:
         # legacy: element_type вне каталога → принимаем qty_formula модели (всё ещё через Gate 1)
+        qty_formula = str(args.get("qty_formula", "")).strip()
+        if not qty_formula:
+            if et == "engineering_networks":
+                reason = (
+                    "для инженерных сетей нужно уточнить раздел (ВК/ОВ/ЭОМ/СС), "
+                    "протяжённость трасс, точки подключения и оборудование"
+                )
+            else:
+                reason = (
+                    f"нет расчётной формулы для element_type={et or '—'}; "
+                    "нужно уточнить тип основания и параметры объёма"
+                )
+            state["positions"].append({**base_pos, "status": "needs_input", "reason": reason})
+            return {"ok": True, "status": "needs_input", "reason": reason}
         try:
-            phys = _eval_formula(str(args.get("qty_formula", "")), state["geom"])
+            phys = _eval_formula(qty_formula, state["geom"])
         except Exception as e:  # noqa: BLE001
             state["positions"].append({**base_pos, "status": "needs_input", "reason": str(e)[:80]})
             return {"ok": True, "status": "needs_input", "reason": str(e)[:80]}
@@ -447,6 +734,215 @@ def _exec_tool(name: str, args: dict[str, Any], state: dict[str, Any]) -> dict[s
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
+def _as_items(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [x for x in value if isinstance(x, dict)]
+
+
+def _schema_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    schema = plan.get("object") or plan.get("object_schema") or plan.get("schema") or {}
+    return schema if isinstance(schema, dict) else {}
+
+
+def _coerce_work_item(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, (list, tuple)) or len(value) < 6:
+        return None
+    slots = value[6] if len(value) >= 7 and isinstance(value[6], dict) else {}
+    return {
+        "work": value[0],
+        "work_description": value[1],
+        "work_family": value[2],
+        "element_type": value[3],
+        "action": value[4],
+        "unit_hint": value[5],
+        "slots": slots,
+    }
+
+
+def _work_items_from_plan(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = plan.get("works") if "works" in plan else plan.get("work_items")
+    items: list[dict[str, Any]] = []
+    for value in raw if isinstance(raw, list) else []:
+        item = _coerce_work_item(value)
+        if item:
+            items.append(item)
+    return items
+
+
+def _plan_missing_requirements(plan: dict[str, Any]) -> list[str]:
+    schema = _schema_from_plan(plan)
+    missing = [f"object.{k}" for k in _REQUIRED_SCHEMA if not schema.get(k)]
+    if not _work_items_from_plan(plan):
+        missing.append("works")
+    return missing
+
+
+def _candidate_codes(candidates: list[dict[str, Any]], *, limit: int = 3) -> list[str]:
+    codes: list[str] = []
+    for c in candidates[:limit]:
+        code = str(c.get("norm_code") or "").strip()
+        if code:
+            codes.append(code)
+    return codes
+
+
+def _append_unbound_position(item: dict[str, Any], search: dict[str, Any],
+                             state: dict[str, Any]) -> None:
+    candidates = _as_items(search.get("candidates"))
+    top = candidates[0] if candidates else {}
+    selection = search.get("selection") if isinstance(search.get("selection"), dict) else {}
+    status = "ambiguous" if candidates else "needs_input"
+    reason = (
+        "нет уверенно применимой нормы ГЭСН"
+        if candidates else "норма ГЭСН не найдена по описанию работы"
+    )
+    if search.get("status") == "not_found":
+        reason = str(search.get("hint") or reason)
+    state["positions"].append({
+        "work": item.get("work") or item.get("work_description") or "",
+        "code": top.get("norm_code", ""),
+        "work_family": item.get("work_family", ""),
+        "physical_unit": _canon_unit(item.get("unit_hint", "")),
+        "status": status,
+        "reason": reason,
+        "candidates": candidates[:5],
+        "selection": selection,
+    })
+
+
+def _run_batch_plan(question: str, complete: Callable[[list[dict[str, str]]], str],
+                    state: dict[str, Any], *, max_steps: int = 16,
+                    system_prompt: str | None = None) -> dict[str, Any]:
+    _slots_note = (f"Известные параметры из текста: {state.get('user_slots')}."
+                   if state.get("user_slots") else
+                   "Если параметров нет, оставь missing_inputs/пустые slots; код не будет выдумывать.")
+    messages = [
+        {"role": "system", "content": system_prompt or BATCH_SYSTEM_PROMPT},
+        {"role": "user", "content": f"Объект/контекст:\n{question}\n\n{_slots_note}"},
+    ]
+    state["steps"] = 1
+    raw = complete(messages) or ""
+    plan = _extract_json(raw)
+    trace: list[dict[str, Any]] = []
+
+    if plan is None:
+        messages.extend([
+            {"role": "assistant", "content": raw[:2000]},
+            {"role": "user", "content": (
+                "Предыдущий ответ не был машинным JSON. Верни тот же план повторно: "
+                "ровно один JSON-объект формата {\"object\": {...}, \"works\": [...]}. "
+                "Без markdown, без пояснений, без текста до или после JSON."
+            )},
+        ])
+        retry_raw = complete(messages) or ""
+        plan = _extract_json(retry_raw)
+        trace.append({"tool": "planner_repair", "status": "ok" if plan is not None else "err"})
+
+    if plan is None:
+        res = _finalize(state, note="модель не вернула машинный JSON-план")
+        res["trace"] = trace
+        res["planner_status"] = "no_json"
+        return res
+
+    # Совместимость с прежним tool-loop контрактом: если модель вернула один tool-call,
+    # исполняем старый режим, но только как fallback, не как основной прод-путь.
+    if plan.get("tool") or plan.get("final"):
+        return _run_tool_loop(question, complete, state=state, max_steps=max_steps,
+                              first_call=plan, first_raw=raw)
+
+    missing_plan = _plan_missing_requirements(plan)
+    if missing_plan:
+        messages.extend([
+            {"role": "assistant", "content": json.dumps(plan, ensure_ascii=False)[:2500]},
+            {"role": "user", "content": (
+                "JSON получен, но он неполный для инструментов: не хватает "
+                f"{', '.join(missing_plan)}. Верни исправленный полный JSON для того же объекта: "
+                "{\"object\":{\"object_type\":\"...\",\"area_total_m2\":150,\"floors\":1,"
+                "\"levels_below_ground\":0,\"structural_system\":\"...\",\"missing_inputs\":[]},"
+                "\"works\":[[\"work\",\"search description\",\"family\",\"element\",\"action\",\"unit\",{}]]}. "
+                "Без markdown и пояснений."
+            )},
+        ])
+        retry_raw = complete(messages) or ""
+        retry_plan = _extract_json(retry_raw)
+        if retry_plan is not None and not _plan_missing_requirements(retry_plan):
+            plan = retry_plan
+            trace.append({"tool": "planner_schema_repair", "status": "ok", "missing": missing_plan})
+        else:
+            trace.append({"tool": "planner_schema_repair", "status": "err", "missing": missing_plan})
+
+    schema = _schema_from_plan(plan)
+    obs_schema = _exec_tool("propose_schema", schema, state)
+    trace.append({"tool": "propose_schema",
+                  "status": "ok" if obs_schema.get("ok") else "err",
+                  "missing_inputs": obs_schema.get("missing_inputs")
+                  or obs_schema.get("missing_required") or []})
+
+    for raw_item in _work_items_from_plan(plan):
+        item, corrections = _normalize_work_item(raw_item)
+        work_description = str(item.get("work_description") or item.get("work") or "")
+        if (
+            item.get("element_type") == "metal_assembly"
+            and state.get("user_slots", {}).get("mass_t")
+            and "масс" not in work_description.lower()
+        ):
+            work_description = f"{work_description} масса {state['user_slots']['mass_t']} т"
+        search_args = {
+            "work_description": work_description,
+            "work_family": str(item.get("work_family") or ""),
+            "element_type": str(item.get("element_type") or ""),
+            "action": str(item.get("action") or ""),
+            "unit_hint": str(item.get("unit_hint") or ""),
+        }
+        search = _exec_tool("search_norm", search_args, state)
+        candidates = _as_items(search.get("candidates"))
+        trace.append({
+            "tool": "search_norm",
+            "status": search.get("status") or ("ok" if search.get("ok") else "err"),
+            "work": item.get("work") or item.get("work_description") or "",
+            "candidates": _candidate_codes(candidates),
+            "selection": search.get("selection", {}),
+            "normalized": corrections,
+        })
+        bind_candidate, bind_index = _first_bindable_candidate(candidates)
+        if bind_candidate:
+            selection = search.get("selection") if isinstance(search.get("selection"), dict) else {}
+            norm_assumptions = []
+            if search.get("status") != "found":
+                norm_assumptions.append(
+                    "норма выбрана по лучшему применимому кандидату; требуется проверка сметчиком"
+                )
+            if bind_index > 0:
+                norm_assumptions.append(
+                    "первый кандидат не прошёл единицу или применимость; взят ближайший применимый кандидат"
+                )
+            add_args = {
+                "work": item.get("work") or item.get("work_description") or bind_candidate.get("title") or "",
+                "code": bind_candidate.get("norm_code", ""),
+                "work_family": item.get("work_family") or search.get("work_family") or "",
+                "element_type": item.get("element_type") or search.get("element_type") or "",
+                "slots": item.get("slots") if isinstance(item.get("slots"), dict) else {},
+                "assumptions": norm_assumptions,
+            }
+            obs = _exec_tool("add_position", add_args, state)
+            trace.append({"tool": "add_position",
+                          "status": obs.get("status") or ("ok" if obs.get("ok") else "err"),
+                          "work": add_args["work"],
+                          "code": add_args["code"],
+                          "selection": selection,
+                          "candidate_index": bind_index})
+        else:
+            _append_unbound_position(item, search, state)
+
+    res = _finalize(state)
+    res["trace"] = trace
+    res["planner_status"] = "batch"
+    return res
+
+
 _CRITICAL = {"rejected_magnitude", "rejected_collection", "rejected_norm",
              "rejected_applicability", "ambiguous"}
 
@@ -474,12 +970,14 @@ def _finalize(state: dict[str, Any], *, note: str = "") -> dict[str, Any]:
             if p.get("assumptions"):
                 buckets["by_assumption"].append(p)
             norm = get_norm(p["code"])
-            rs = resolve_nr_sp((norm or {}).get("name", ""))
+            rs = resolve_nr_sp(p.get("work") or "")
+            if rs.get("default"):
+                rs = resolve_nr_sp((norm or {}).get("name", ""))
             asm.append({"code": p["code"], "name": p.get("work") or (norm or {}).get("name", ""),
                         "unit": p.get("norm_unit", ""), "qty": p["qty"], "section": "Конструктив",
                         "nr_pct": rs["nr_pct"], "sp_pct": rs["sp_pct"]})
 
-    lsr = assemble(asm) if asm else {"summary": {"total": 0.0}}
+    lsr = assemble(asm, book=state.get("pricebook")) if asm else {"summary": {"total": 0.0}}
     smr = round(_f(lsr.get("summary", {}).get("total")), 2)
     cont = round(smr * 0.02, 2)
     vat = round((smr + cont) * 0.20, 2)
@@ -513,12 +1011,10 @@ def _finalize(state: dict[str, Any], *, note: str = "") -> dict[str, Any]:
     }
 
 
-def run_estimate_harness(question: str, complete: Callable[[list[dict[str, str]]], str],
-                         *, max_steps: int = 16) -> dict[str, Any]:
-    # Gate 4: параметры из запроса → слоты (петля уточнения: «… глубина 6м плита 400мм»).
-    user_slots = parse_params(question)
-    state: dict[str, Any] = {"schema": {}, "geom": {}, "positions": [], "steps": 0,
-                             "user_slots": user_slots}
+def _run_tool_loop(question: str, complete: Callable[[list[dict[str, str]]], str],
+                   *, state: dict[str, Any], max_steps: int = 16,
+                   first_call: dict[str, Any] | None = None, first_raw: str = "") -> dict[str, Any]:
+    user_slots = state.get("user_slots", {})
     _slots_note = (f" Известные параметры: {user_slots}." if user_slots else
                    " Параметры (глубина/толщины/геометрия стен) НЕ заданы — где их нет, позиция станет needs_input.")
     messages: list[dict[str, str]] = [
@@ -526,10 +1022,18 @@ def run_estimate_harness(question: str, complete: Callable[[list[dict[str, str]]
         {"role": "user", "content": f"Объект: {question}\nНачни с propose_schema.{_slots_note}"},
     ]
     trace: list[dict[str, Any]] = []
+    pending_call = first_call
+    pending_raw = first_raw
     for _ in range(max_steps):
         state["steps"] += 1
-        raw = complete(messages) or ""
-        call = _extract_json(raw)
+        if pending_call is not None:
+            call = pending_call
+            raw = pending_raw
+            pending_call = None
+            pending_raw = ""
+        else:
+            raw = complete(messages) or ""
+            call = _extract_json(raw)
         messages.append({"role": "assistant", "content": raw[:1500]})
         if call is None:
             obs: dict[str, Any] = {"ok": False, "error": "ответь РОВНО одним JSON {tool,args} или {final:true}"}
@@ -547,14 +1051,36 @@ def run_estimate_harness(question: str, complete: Callable[[list[dict[str, str]]
     return res
 
 
+def run_estimate_harness(question: str, complete: Callable[[list[dict[str, str]]], str],
+                         *, max_steps: int = 16) -> dict[str, Any]:
+    # Gate 4: параметры из запроса → слоты (уточнение в одном запросе:
+    # «… глубина 6м плита 400мм»).
+    user_slots = parse_params(question)
+    pricebook = parse_pricebook_hint(question)
+    state: dict[str, Any] = {"schema": {}, "geom": {}, "positions": [], "steps": 0,
+                             "user_slots": user_slots, "pricebook": pricebook}
+    notebook_excerpt = gesn_notebook_prompt_excerpt()
+    system_prompt = build_smeta_batch_system_prompt(BATCH_TOOL_CONTRACT, notebook_context=notebook_excerpt)
+    result = _run_batch_plan(question, complete, state, max_steps=max_steps, system_prompt=system_prompt)
+    result["notebook_context"] = {
+        "schema": "notebook_context_v1",
+        "role": "navigation",
+        "is_evidence": False,
+        "service_notebooks": ["gesn"],
+        "excerpt": notebook_excerpt,
+    }
+    return result
+
+
 def _extract_json(text: str) -> dict[str, Any] | None:
     if not text:
         return None
-    m = re.search(r"\{.*\}", text, re.DOTALL)
-    if not m:
-        return None
-    try:
-        obj = json.loads(m.group(0))
-        return obj if isinstance(obj, dict) else None
-    except Exception:
-        return None
+    decoder = json.JSONDecoder()
+    for m in re.finditer(r"\{", text):
+        try:
+            obj, _ = decoder.raw_decode(text[m.start():])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    return None
