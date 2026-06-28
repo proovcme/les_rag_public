@@ -87,6 +87,13 @@ def _folder_text(item: dict) -> str:
     return "папка не задана"
 
 
+def _prompt_text(value: object, *, limit: int = 2200) -> str:
+    text = str(value or "").strip()
+    if len(text) > limit:
+        return text[: limit - 1].rstrip() + "…"
+    return text
+
+
 def build_instrumenty():
     """Содержимое вкладки ИНСТРУМЕНТЫ. Вызывать внутри with ui.tab_panel(...)."""
     with ui.column().classes("w-full max-w-6xl mx-auto p-4 gap-4"):
@@ -103,6 +110,19 @@ def build_instrumenty():
         with ui.card().classes("card-les w-full"):
             summary = ui.label("Загрузка источников…").style("font-size:.74rem;color:var(--dim);")
             cards = ui.column().classes("w-full gap-2")
+
+        with ui.card().classes("card-les w-full"):
+            with ui.row().classes("w-full items-end justify-between gap-3"):
+                with ui.column().classes("gap-1"):
+                    ui.label("СИСТЕМНЫЕ ПРОМТЫ").style(
+                        "font-size:1.02rem;font-weight:900;letter-spacing:1px;"
+                    )
+                    ui.label(
+                        "Общий характер ЛЕСа, режимные рамки и инструменты. Это поведение, не evidence."
+                    ).style("font-size:.72rem;color:var(--dim);")
+                ui.button("ОБНОВИТЬ", on_click=lambda: asyncio.create_task(_refresh_prompts())).props("dense no-caps")
+            prompt_summary = ui.label("Загрузка промтов…").style("font-size:.74rem;color:var(--dim);")
+            prompts_box = ui.column().classes("w-full gap-2")
 
         async def _process_source(source_id: str) -> None:
             d = await api_post(f"/api/service-sources/{source_id}/process", {})
@@ -142,6 +162,38 @@ def build_instrumenty():
                             "dense flat round"
                         ).tooltip(item.get("process_label") or "Проверить источник")
 
+        def _render_prompt_block(title: str, text: str, *, tools: list[str] | None = None) -> None:
+            with ui.expansion(title, icon="article").classes("w-full").props("dense"):
+                if tools:
+                    ui.label("Инструменты: " + ", ".join(tools)).style(
+                        "font-size:.68rem;color:var(--dim);margin-bottom:6px;"
+                    )
+                ui.markdown("```text\n" + _prompt_text(text).replace("```", "'''") + "\n```").classes("w-full").style(
+                    "font-size:.72rem;line-height:1.45;"
+                )
+
+        async def _refresh_prompts() -> None:
+            d = await api_get("/api/prompts")
+            if not isinstance(d, dict):
+                ui.notify(last_api_error_text("Промты недоступны"), type="negative")
+                return
+            modes = d.get("modes") or {}
+            prompt_summary.text = f"Registry: {d.get('schema', '?')} · режимов: {len(modes)}"
+            prompts_box.clear()
+            with prompts_box:
+                _render_prompt_block("Общий системный промт", str(d.get("common") or ""))
+                _render_prompt_block("Тон и характер", str(d.get("tone") or ""))
+                for mode_id, item in modes.items():
+                    if isinstance(item, dict):
+                        label = str(item.get("label") or mode_id)
+                        prompt = str(item.get("prompt") or "")
+                        tools = [str(t) for t in item.get("tools") or []]
+                    else:
+                        label = str(mode_id)
+                        prompt = str(item or "")
+                        tools = []
+                    _render_prompt_block(f"{label} · {mode_id}", prompt, tools=tools)
+
         async def _refresh() -> None:
             d = await api_get("/api/service-sources")
             if not isinstance(d, dict):
@@ -158,3 +210,4 @@ def build_instrumenty():
                     _render_source(item)
 
         ui.timer(0.2, lambda: asyncio.create_task(_refresh()), once=True)
+        ui.timer(0.35, lambda: asyncio.create_task(_refresh_prompts()), once=True)

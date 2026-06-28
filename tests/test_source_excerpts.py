@@ -1,7 +1,7 @@
 """Цитаты из источников: конкретные фрагменты норм под ответом (дедуп, обрезка)."""
 from types import SimpleNamespace as N
 
-from proxy.routers.chat import _generation_token_budget, _local_context_budget, source_excerpts
+from proxy.routers.chat import _generation_token_budget, _local_context_budget, clean_visible_text, source_excerpts
 from proxy.services.saferag_service import source_map_for_context
 
 
@@ -33,6 +33,10 @@ def test_empty_input():
 def test_short_text_not_truncated():
     ex = source_excerpts([N(content="короткий пункт", doc_name="d.docx", score=0.6, meta={})], max_chars=700)
     assert ex[0]["text"] == "короткий пункт"  # без многоточия
+
+
+def test_clean_visible_text_strips_cjk_garbage():
+    assert clean_visible_text("Документы 其它 系统 связи") == "Документы связи"
 
 
 def test_source_map_matches_context_numbering_and_limit():

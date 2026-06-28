@@ -2468,6 +2468,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         is_smeta_mode = (out_mode == "smeta")
         _ph_map = {"smeta": "Считаю смету…", "review": "Проверяю проект…", "kp": "Готовлю КП…",
                    "free": "Думаю вольно…", "rag": "Ищу в документах…", "doc_review": "Проверяю по ГОСТ…"}
+        _initial_status = _ph_map.get(out_mode, "Генерирую…")
         # рендер ответа: смета/проверка → таблица; вольный/раг/кп → текст; иначе сам формат.
         _render_mode = "table" if out_mode in ("smeta", "review") else ("text" if _routing_mode else out_mode)
 
@@ -2476,7 +2477,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
 
         with chat_column:
             _render_chat_bubble(question_display, "chat-msg-user")
-            ai_placeholder, ai_placeholder_label = _render_ai_placeholder(_ph_map.get(out_mode, "Генерирую... 0с"))
+            ai_placeholder, ai_placeholder_label = _render_ai_placeholder(f"{_initial_status} 0с")
         chat_scroll.scroll_to(percent=1)
         add_log(f'[AI] Запрос: "{question[:60]}"')
 
@@ -2510,11 +2511,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
 
         _t0 = time.monotonic()
         _stop_tick = {"v": False}
+        _status_text = {"v": _initial_status}
 
         async def _tick():
             while not _stop_tick["v"]:
                 elapsed = int(time.monotonic() - _t0)
-                ai_placeholder_label.set_text(f"Генерирую... {elapsed}с")
+                ai_placeholder_label.set_text(f"{_status_text['v']} {elapsed}с")
                 await asyncio.sleep(1)
 
         _tick_task = asyncio.create_task(_tick())
@@ -2591,6 +2593,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         # W5.1: SSE-стрим — токены в пузырь по мере генерации; финальное событие
         # несёт авторитетный payload (вердикт валидации в crag_status).
         stream_state = {"text": "", "got_token": False, "got_progress": False, "final": None, "error": None}
+        early_sources = {"el": None}
 
         def _on_sse(event: str, payload) -> None:
             if event == "token":
@@ -2607,17 +2610,32 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 ai_placeholder_label.update()
             elif event == "progress":
                 stream_state["got_progress"] = True
-                _stop_tick["v"] = True
                 if isinstance(payload, dict):
                     label = str(payload.get("label") or "Работаю...")
                     step = payload.get("step")
                     total = payload.get("total")
                     prefix = f"{step}/{total} · " if step and total else ""
-                    ai_placeholder_label.set_text(prefix + label)
+                    _status_text["v"] = prefix + label
                 else:
-                    ai_placeholder_label.set_text(str(payload or "Работаю..."))
+                    _status_text["v"] = str(payload or "Работаю...")
+                elapsed = int(time.monotonic() - _t0)
+                ai_placeholder_label.set_text(f"{_status_text['v']} {elapsed}с")
                 ai_placeholder_label.update()
                 chat_scroll.scroll_to(percent=1)
+            elif event == "sources":
+                if isinstance(payload, dict) and not early_sources["el"]:
+                    srcs = payload.get("sources") or []
+                    meta = {
+                        "source_excerpts": payload.get("source_excerpts") or [],
+                        "source_map": payload.get("source_map") or [],
+                    }
+                    if srcs or meta["source_excerpts"]:
+                        with ai_placeholder:
+                            with ui.column().classes("sov-early-sources w-full gap-1 mt-2") as holder:
+                                _render_source_tags(srcs, "", meta)
+                        early_sources["el"] = holder
+                        ai_placeholder.update()
+                        chat_scroll.scroll_to(percent=1)
             elif event == "final":
                 stream_state["final"] = payload if isinstance(payload, dict) else {}
             elif event == "error":
@@ -2630,6 +2648,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             d = stream_state["final"]
             if d:
                 completed = True
+                if early_sources["el"]:
+                    early_sources["el"].set_visibility(False)
                 _apply_chat_result(d)
             elif stream_state["got_token"]:
                 # Токены пришли, но финал потерян (обрыв середины стрима) —

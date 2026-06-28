@@ -93,6 +93,21 @@ async def test_chat_stream_reset_then_final(monkeypatch):
     assert body.index("event: reset") < body.index('data: "финал"')
 
 
+@pytest.mark.asyncio
+async def test_chat_stream_synthesizes_tokens_when_path_returns_final_only(monkeypatch):
+    async def final_only(req, token_sink=None):
+        assert token_sink is not None
+        return {"answer": "Готовый ответ без родных токенов.", "crag_status": "VERIFIED", "sources": []}
+
+    monkeypatch.setattr(chat_router, "_run_chat", final_only)
+    resp = await chat_stream(ChatRequest(question="q"), _user=None)
+    body = await _drain(resp)
+
+    assert "event: token" in body
+    assert body.index("event: token") < body.index("event: final")
+    assert "Готовый ответ" in body
+
+
 # ── клиентская сторона (sovushka/state.api_post_stream) ──────────────
 
 class _FakeStream:
