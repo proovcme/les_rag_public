@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.37** | HEAD | Resource-aware chat admission/status: indexing mode is no longer a blanket chat kill-switch; cloud generation stays allowed during guarded reindex, local MLX is allowed only when indexing uses the Core ML embedder and memory is green, and runtime status exposes effective chat state plus `indexing_chat_policy`. |
 | **v0.24.0.36** | HEAD | Cloud settings/admission hotfix: the cloud preset no longer overwrites a custom `OPENAI_MODEL` such as `gpt-5.2`, and OpenAI-compatible generation is allowed during guarded reindex/`INDEX_LIGHT` while local providers remain protected by the memory gate. |
 | **v0.24.0.35** | HEAD | Notebook study speed pass: the project-reading layer now chooses a smaller adaptive section plan from the notebook map and retrieves selected sections in parallel (`LES_NOTEBOOK_STUDY_PARALLELISM`, default 3). No answer cache, no deterministic final output. |
 | **v0.24.0.34** | HEAD | Notebook study layer: broad project/dataset questions in a selected scope now build a reading plan from `notebook_v1`, run section-level retrieval, feed the organized context to the normal model synthesis, and return a dedicated “Инженерный блокнот” artifact with the plan, sources by section and gaps. This is navigation, not deterministic final output. |

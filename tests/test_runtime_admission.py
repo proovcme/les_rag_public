@@ -54,7 +54,9 @@ def test_chat_admission_allows_stale_macos_swap_when_ram_is_plentiful():
     assert result.memory_state == "GREEN"
 
 
-def test_chat_admission_blocks_indexing_mode_before_memory_checks():
+def test_chat_admission_blocks_indexing_mode_before_memory_checks(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "mlx")
+    monkeypatch.setenv("EMBED_BACKEND", "sentence_transformers")
     result = evaluate_chat_admission(
         current_mode={"mode": "indexing"},
         metrics_cache={},
@@ -64,6 +66,60 @@ def test_chat_admission_blocks_indexing_mode_before_memory_checks():
 
     assert result.allowed is False
     assert result.status_code == 409
+    assert "Indexing mode is active" in result.reason
+
+
+def test_chat_admission_allows_local_generation_during_coreml_indexing_when_green(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "mlx")
+    monkeypatch.setenv("EMBED_BACKEND", "coreml")
+    result = evaluate_chat_admission(
+        current_mode={"mode": "indexing"},
+        metrics_cache={"ram_free_gb": 16.0, "swap_used_gb": 0.2, "swap_pct": 5.0},
+        active_jobs=1,
+        llm_available=True,
+        min_free_gb=8.0,
+        max_swap_pct=60.0,
+    )
+
+    assert result.allowed is True
+    assert result.mode_allowed is False
+    assert result.indexing_chat_policy["reason"] == "coreml_index_green_memory"
+    assert "Indexing mode is active" not in result.reason
+    assert "active_jobs=1" not in result.reason
+
+
+def test_chat_admission_blocks_local_generation_during_coreml_indexing_when_yellow(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "mlx")
+    monkeypatch.setenv("EMBED_BACKEND", "coreml")
+    result = evaluate_chat_admission(
+        current_mode={"mode": "indexing"},
+        metrics_cache={"ram_free_gb": 16.0, "swap_used_gb": 1.0, "swap_pct": 50.0},
+        active_jobs=1,
+        llm_available=True,
+        min_free_gb=8.0,
+        max_swap_pct=60.0,
+    )
+
+    assert result.allowed is False
+    assert result.indexing_chat_policy["reason"] == "memory_not_green_for_local_llm"
+    assert "Indexing mode is active" in result.reason
+    assert "active_jobs=1" in result.reason
+
+
+def test_chat_admission_blocks_local_generation_during_non_coreml_indexing(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "mlx")
+    monkeypatch.setenv("EMBED_BACKEND", "sentence_transformers")
+    result = evaluate_chat_admission(
+        current_mode={"mode": "indexing"},
+        metrics_cache={"ram_free_gb": 16.0, "swap_used_gb": 0.2, "swap_pct": 5.0},
+        active_jobs=1,
+        llm_available=True,
+        min_free_gb=8.0,
+        max_swap_pct=60.0,
+    )
+
+    assert result.allowed is False
+    assert result.indexing_chat_policy["reason"] == "index_embed_backend_not_isolated"
     assert "Indexing mode is active" in result.reason
 
 

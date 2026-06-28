@@ -109,6 +109,14 @@ def llm_provider_is_cloud() -> bool:
     return cloud_provider_configured(active_llm_provider())
 
 
+def active_embed_backend() -> str:
+    return os.getenv("EMBED_BACKEND", "sentence_transformers").strip().lower() or "sentence_transformers"
+
+
+def indexing_uses_coreml_embedder() -> bool:
+    return active_embed_backend() in {"coreml", "core_ml"}
+
+
 def generation_semaphore(local_semaphore):
     """Семафор генерации для активного провайдера: локальный Metal-слот или облачный пул."""
     return cloud_llm_semaphore if llm_provider_is_cloud() else local_semaphore
@@ -173,6 +181,7 @@ class ChatAdmission:
     active_jobs: int
     mode_allowed: bool
     mode_reason: str
+    indexing_chat_policy: dict[str, Any]
     status_code: int
 
     def payload(self) -> dict[str, Any]:
@@ -187,6 +196,7 @@ class ChatAdmission:
             "active_jobs": self.active_jobs,
             "mode_allowed": self.mode_allowed,
             "mode_reason": self.mode_reason,
+            "indexing_chat_policy": self.indexing_chat_policy,
             "status_code": self.status_code,
         }
 
@@ -357,15 +367,44 @@ def evaluate_chat_admission(
         stale_swap_relief_free_gb=swap_relief_free,
     )
     runtime_profile = current_runtime_profile(current_mode)
+    resource_mode = current_resource_mode(current_mode)
+    indexing_mode_active = resource_mode == INDEXING_MODE
+    coreml_indexing = indexing_uses_coreml_embedder()
+    local_index_green = (
+        indexing_mode_active
+        and not provider_is_cloud
+        and coreml_indexing
+        and memory_pressure.state == MEMORY_GREEN
+    )
+    indexing_chat_policy = {
+        "resource_mode": resource_mode,
+        "provider": active_llm_provider(),
+        "provider_is_cloud": provider_is_cloud,
+        "embed_backend": active_embed_backend(),
+        "indexing_uses_coreml": coreml_indexing,
+        "memory_state": memory_pressure.state,
+        "local_generation_allowed": bool(local_index_green),
+        "reason": "not_indexing",
+    }
+    if indexing_mode_active:
+        if provider_is_cloud:
+            indexing_chat_policy["reason"] = "cloud_provider"
+        elif local_index_green:
+            indexing_chat_policy["reason"] = "coreml_index_green_memory"
+        elif not coreml_indexing:
+            indexing_chat_policy["reason"] = "index_embed_backend_not_isolated"
+        else:
+            indexing_chat_policy["reason"] = "memory_not_green_for_local_llm"
+
     failures: list[str] = []
     status_code = 200
 
-    mode_block_is_local_only = (
-        provider_is_cloud
-        and current_resource_mode(current_mode) == INDEXING_MODE
+    mode_block_can_be_overridden = (
+        (provider_is_cloud or local_index_green)
+        and indexing_mode_active
         and "Indexing mode is active" in mode_reason
     )
-    if not mode_allowed and not mode_block_is_local_only:
+    if not mode_allowed and not mode_block_can_be_overridden:
         failures.append(mode_reason)
         status_code = 409
 
@@ -392,7 +431,8 @@ def evaluate_chat_admission(
                 failures.append(detail)
                 status_code = max(status_code, 503)
 
-    if block_jobs and active_jobs > 0 and not provider_is_cloud:
+    active_jobs_block_overridden = bool(provider_is_cloud or local_index_green)
+    if block_jobs and active_jobs > 0 and not active_jobs_block_overridden:
         failures.append(f"active_jobs={active_jobs}")
         status_code = max(status_code, 409)
 
@@ -412,5 +452,6 @@ def evaluate_chat_admission(
         active_jobs=active_jobs,
         mode_allowed=mode_allowed,
         mode_reason=mode_reason,
+        indexing_chat_policy=indexing_chat_policy,
         status_code=status_code,
     )

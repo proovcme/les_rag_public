@@ -151,6 +151,16 @@ def chat_admission_for_state(state: RuntimeRouterState):
     )
 
 
+def _effective_mode_payload(mode: dict[str, Any] | None, admission: Any) -> dict[str, Any]:
+    payload = dict(mode or {})
+    payload["chat_generation"] = "allowed" if admission.allowed else "paused"
+    payload["chat_generation_reason"] = admission.reason
+    policy = getattr(admission, "indexing_chat_policy", None)
+    if policy:
+        payload["indexing_chat_policy"] = policy
+    return payload
+
+
 def _provider_status() -> dict[str, str]:
     provider = os.getenv("LES_LLM_PROVIDER", "mlx").strip().lower() or "mlx"
     if provider == "openrouter":
@@ -352,9 +362,11 @@ async def get_indexing_mode():
     state = get_runtime_state()
     admission = chat_admission_for_state(state)
     memory_pressure = evaluate_memory_pressure(state.metrics_cache)
+    effective_mode = _effective_mode_payload(state.current_mode, admission)
     return {
         "active": is_indexing_mode(state.current_mode),
-        "mode": state.current_mode,
+        "mode": effective_mode,
+        "raw_mode": state.current_mode,
         "runtime_profile": current_runtime_profile(state.current_mode),
         "memory_state": memory_pressure.payload(),
         "chat_generation_allowed": admission.allowed,
@@ -606,8 +618,10 @@ async def get_status():
 
     admission = chat_admission_for_state(state)
     memory_pressure = evaluate_memory_pressure(state.metrics_cache)
+    effective_mode = _effective_mode_payload(state.current_mode, admission)
     return {
-        "mode": state.current_mode,
+        "mode": effective_mode,
+        "raw_mode": state.current_mode,
         "runtime_profile": current_runtime_profile(state.current_mode),
         "memory_state": memory_pressure.payload(),
         "mlx": {"models": loaded_models, "count": len(loaded_models)},
