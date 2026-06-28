@@ -7,12 +7,12 @@
 ## Текущее состояние (2026-06-28)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.31  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.32  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.31 smeta detail artifact
+задеплоено на рантайм:     0.24.0.32 attachment visibility + no auto project-summary
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.31 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=35
+рантайм /api/version:      0.24.0.32 · app 5.1.0 · h0.24 · runtime_alignment=aligned · checked=35
 ```
 
 > 0.24.0.6 выкачен через `make ship`. Живой чат-прогон без semantic cache:
@@ -81,6 +81,9 @@ dev HEAD:                  HEAD  (см. git log -1)
 > 0.24.0.31 разделяет сметную выдачу на операторскую сводку в чате и полный артефакт:
 > расшифровка позиций, ОЗП/ЭМ/ЗПМ/материалы/прямые/ФОТ/НР/СП/СМР, ресурсы с ценами и явное
 > предупреждение, если высотные/производственные коэффициенты не применены без нормативного основания.
+> 0.24.0.32 делает вложение видимым событием истории чата, а broad-вопросы по проекту больше не
+> перехватываются автосводкой `project_summary`: обычный чат идёт в retrieval+модель, явная сводка
+> остаётся инструментом/командой.
 
 > Деплоятся только code-правки (`proxy/`,`backend/`,`sovushka/`,`config/`). Доки на рантайм не катятся —
 > поэтому dev HEAD ≠ deployed_commit это нормально, пока расходятся только доки.
@@ -117,6 +120,7 @@ dev HEAD:                  HEAD  (см. git log -1)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.32 | HEAD | 2026-06-28 | Attachment visibility + no auto project-summary: uploaded chat files now persist as system messages in chat history and user turns keep a clear attachment line; broad project questions no longer auto-return deterministic project registers, so notebook/RAG synthesis goes to retrieval + model while project summary remains an explicit tool/MCP command | ✅ dev, focused tests/verify pending |
 | 0.24.0.30 | HEAD | 2026-06-28 | Smeta GESNm bridge: ГЭСН-блокнот различает `ГЭСН38` и `ГЭСНм38`; `metal_assembly` допускает монтажный сборник `ГЭСНм38`, масса `кг/т` нормализуется в `mass_t`, `СПб 2 кв. 2026` маршрутизируется в `spb_2kv2026`, тоннажные металлические позиции снова доходят до code-calculator/ЛСР-сборки вместо блокировки на плоском `search_norm` | ✅ dev, focused tests pass, deploy pending |
 | 0.24.0.29 | HEAD | 2026-06-28 | Notebook/prompt layer: общий `notebook_v1` поверх dataset profiles и service sources, публичные `/api/notebooks/*` + `/api/service-sources/notebooks`, системный ГЭСН-блокнот с картой сборников из локальной базы норм, prompt registry для общего LES prompt и режимных prompts; smeta planner получает ГЭСН-блокнот как navigation/context, а UI показывает «Блокнот области» | ✅ dev, focused tests/verify pending |
 | 0.24.0.28 | HEAD | 2026-06-28 | Smeta visible-output + MEP routing hotfix: if top-1 norm candidate fails unit/applicability gates, harness binds the first accepted unit-compatible candidate; visible answer footer no longer shows route/contract/workflow internals; engineering networks are routed to MEP and ask for subsystem/volume data instead of binding to finishing norms; planner retries once when the model returns non-JSON/incomplete schema; excavation signals win over pile words for pit works | ✅ рантайм, focused tests + live probes ✅ |

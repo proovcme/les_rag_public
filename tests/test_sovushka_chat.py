@@ -6,6 +6,7 @@ from proxy.routers import chat as chat_router
 from sovushka.pages import chat as chat_page
 from sovushka.pages.chat import (
     _attachment_chat_payload,
+    _attachment_user_suffix,
     _attachment_visible_text,
     _chat_profile_operator_summary,
     _dataset_profile_operator_summary,
@@ -140,6 +141,26 @@ def test_attachment_visible_text_makes_next_request_obvious():
     assert "следующему сообщению" in title
     assert "Таблица" in detail and "42" in detail
     assert "временный датасет" in chat
+
+
+def test_attachment_suffix_persists_context_in_user_message():
+    text = _attachment_user_suffix(
+        {"id": "read_1", "mode": "read", "name": "ТЗ.docx", "text": "abc", "chars": 3}
+    )
+    assert text == "📎 Прикреплён файл: ТЗ.docx · В чат · 3 симв."
+
+    text = _attachment_user_suffix(
+        {"id": "tmp_table", "mode": "quick", "name": "ВОР.xlsx", "rows": 12}
+    )
+    assert text == "📎 Прикреплена таблица: ВОР.xlsx · Таблица · 12 строк"
+
+
+def test_chat_no_longer_auto_hijacks_project_summary():
+    source = inspect.getsource(chat_router._run_chat)
+
+    assert "deterministic_project_summary" not in source
+    assert "is_project_summary_query(req.question)" not in source
+    assert "build_project_summary" not in source
 
 
 def test_operator_status_chips_hide_internal_trace_from_first_layer():

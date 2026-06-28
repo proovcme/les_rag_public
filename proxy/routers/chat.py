@@ -1991,16 +1991,12 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 "history_id": _dr_hist,
             }
 
-    # «дай сводку проекта» с известным объектом — детерминированный канал (сводка из
-    # LES.md ниже), не клярифицировать как «слишком широкий». Аналогично reconcile/spec_to_bor.
-    from proxy.services.project_summary_service import is_project_summary_query as _is_proj_sum
-    _summary_intent = bool(pid) and _is_proj_sum(req.question)
     clarification = build_clarification_decision(
         req.question,
         dataset_ids=effective_dataset_ids,
         dataset_filter=req.dataset_filter,
     )
-    if not _rp and clarification.needs_clarification and not _summary_intent and not _has_read_attachment:
+    if not _rp and clarification.needs_clarification and not _has_read_attachment:
         logger.info(
             "[CLARIFY] reasons=%s route=%s filter=%s",
             clarification.classification.reasons,
@@ -2110,63 +2106,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 "spec_to_bor": spec_trace["spec_to_bor"], "history_id": history_id,
             }
 
-    # W11.15: «дай сводку проекта» — стадия + ТЭП + состав документов, детерминированно. 0 LLM.
-    from proxy.services.project_summary_service import (
-        build_project_summary, format_project_summary, is_project_summary_query,
-    )
-    if not _rp and is_project_summary_query(req.question) and _dataset_ids:
-        t_sum = time.time()
-        try:
-            summ = await asyncio.to_thread(
-                build_project_summary, _dataset_ids, storage_root=Path("./storage/datasets")
-            )
-        except Exception as sum_err:
-            logger.warning("[PROJ_SUMMARY] skipped: %s", sum_err)
-            summ = None
-        # Есть Parquet-ТЭП/таблицы → детерминированная сводка (числа из кода, 0 LLM). Нет →
-        # НЕ возвращаем заглушку: проваливаемся в обычный RAG, чтобы модель сама собрала
-        # сводку по документам проекта (LES.md уже в контексте как опора; clarification снят
-        # guard'ом выше для summary-интента с проектом).
-        if summ and (summ["tep"] or summ["documents"] or summ.get("file_count")):
-            label = ", ".join(resolved_dataset_names[:3])
-            answer = format_project_summary(summ, label=label)
-            if memory_block:
-                answer = f"{answer}\n\n{memory_block}"
-            state.crag_stats["verified"] += 1
-            state.chat_metrics["crag_pass"] += 1
-            sum_route = _profile_route("project_summary", "project_summary")
-            sum_trace = {
-                "mode": "deterministic_project_summary", "vector_count": 0, "lexical_count": 0,
-                "merged_count": summ["document_count"], "retry_count": 0,
-                "quality_status": "deterministic_project_summary",
-                "project_summary": {"stage": summ["stage"], "tep": len(summ["tep"]),
-                                    "documents": summ["document_count"]},
-            }
-            history_id = None
-            try:
-                history_id = save_chat_history(
-                    question=req.question, answer=answer,
-                    sources=resolved_dataset_names or _dataset_ids,
-                    crag_status="VERIFIED", latency_sec=time.time() - t_sum, tokens=0,
-                    session_id=req.session_id, requested_dataset_filter=req.dataset_filter,
-                    effective_dataset_filter=effective_dataset_filter,
-                    resolved_dataset_ids=_dataset_ids, resolved_dataset_names=resolved_dataset_names,
-                    source_dataset_ids=_dataset_ids, source_dataset_names=resolved_dataset_names,
-                    query_route=sum_route,
-                    retrieval_trace=sum_trace, cache_type="deterministic_project_summary",
-                    validation_enabled=False, success=1,
-                )
-            except Exception as db_err:
-                logger.warning("[CHAT] History save error: %s", db_err)
-            return {
-                "answer": answer, "crag_status": "VERIFIED",
-                "sources": resolved_dataset_names or _dataset_ids,
-                "effective_dataset_filter": effective_dataset_filter,
-                "query_route": sum_route,
-                "retrieval_trace": sum_trace, "cache": "deterministic_project_summary",
-                "validation": {"enabled": False, "reason": "deterministic_project_summary"},
-                "project_summary": sum_trace["project_summary"], "history_id": history_id,
-            }
+    # W11.15 used to auto-hijack broad chat questions ("расскажи про проект") into a
+    # deterministic project register. That made LES look like a file inventory instead of a
+    # notebook/RAG synthesis. Project summary stays available as an explicit command/MCP tool,
+    # but normal chat questions now continue into retrieval + model.
 
     # Состав/перечень разделов документа: семантика не собирает структуру (заголовки
     # размазаны по чанкам, единого чанка нет). Детерминированно извлекаем нумерованную

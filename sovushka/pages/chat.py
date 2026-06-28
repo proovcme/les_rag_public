@@ -296,6 +296,24 @@ def _attachment_visible_text(data: dict) -> tuple[str, str, str]:
     )
 
 
+def _attachment_user_suffix(attachment: dict) -> str:
+    """Строка в пользовательском сообщении: вложение должно остаться в истории диалога."""
+    if not attachment or not attachment.get("id"):
+        return ""
+    name = str(attachment.get("name") or "файл").strip() or "файл"
+    mode = str(attachment.get("mode") or "")
+    if mode == "read":
+        chars = int(attachment.get("chars") or len(str(attachment.get("text") or "")) or 0)
+        suffix = f" · {chars} симв." if chars else ""
+        return f"📎 Прикреплён файл: {name} · В чат{suffix}"
+    if mode == "quick":
+        rows = int(attachment.get("rows") or 0)
+        suffix = f" · {rows} строк" if rows else ""
+        return f"📎 Прикреплена таблица: {name} · Таблица{suffix}"
+    dataset_name = str(attachment.get("dataset_name") or "RAG-датасет").strip() or "RAG-датасет"
+    return f"📎 Файл добавлен в базу: {name} · {dataset_name}"
+
+
 def _verify_path(q: str) -> str | None:
     """Путь к скану: в кавычках или абсолютный от первого '/'.
 
@@ -617,6 +635,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     "name": d.get("name", e.name),
                     "mode": d.get("mode"),
                     "text": d.get("text", ""),
+                    "chars": d.get("chars") or len(str(d.get("text") or "")),
+                    "rows": d.get("rows") or 0,
+                    "truncated": bool(d.get("truncated")),
+                    "dataset_name": d.get("dataset_name") or "",
                 })
                 title, detail, chat_msg = _attachment_visible_text(d)
                 attach_title.set_text(title)
@@ -624,8 +646,22 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 attach_strip.set_visibility(True)
                 attach_status.text = "Готово: файл виден под полем ввода"
                 attach_dialog.close()
+                state["chat_history"].append({
+                    "role": "system",
+                    "text": chat_msg,
+                    "meta": {
+                        "attachment": {
+                            "id": attach_state.get("id"),
+                            "name": attach_state.get("name"),
+                            "mode": attach_state.get("mode"),
+                            "chars": attach_state.get("chars"),
+                            "rows": attach_state.get("rows"),
+                            "dataset_name": attach_state.get("dataset_name"),
+                        }
+                    },
+                })
                 with chat_column:
-                    _render_chat_bubble(chat_msg, "chat-msg-sys")
+                    _render_msg(state["chat_history"][-1])
                 chat_scroll.scroll_to(percent=1)
                 ui.notify(title, type="positive")
                 if d.get("mode") == "quick":
@@ -634,6 +670,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     ui.notify("Файл будет отправлен модели вместе со следующим сообщением", type="info")
 
             def _clear_attachment(*, notify: bool = True):
+                attach_state.clear()
                 attach_state.update({"id": None, "name": "", "mode": "", "text": ""})
                 attach_title.set_text("")
                 attach_chip.set_text("")
@@ -2070,6 +2107,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         if msg.get("role") == "user":
             _render_chat_bubble(msg.get("text", ""), "chat-msg-user")
             return
+        if msg.get("role") == "system":
+            _render_chat_bubble(msg.get("text", ""), "chat-msg-sys")
+            return
         _render_chat_bubble(
             msg.get("text", ""),
             "chat-msg-ai",
@@ -2410,10 +2450,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         advanced_btn.props("disabled")
         chat_input.props("disabled")
         sent_attachment = dict(attach_state) if attach_state.get("id") else {}
-        attachment_name = str(sent_attachment.get("name") or "").strip()
+        attachment_suffix = _attachment_user_suffix(sent_attachment)
         question_display = question
-        if attachment_name:
-            question_display = f"{question}\n\n📎 Прикреплено: {attachment_name}"
+        if attachment_suffix:
+            question_display = f"{question}\n\n{attachment_suffix}"
         # Авто-GOST: «собери/составь спецификацию …» → формат спеки (ГОСТ 21.110), чтобы
         # артефакт был чистой таблицей по форме, а не прозой. Не липко — селектор вернём.
         _orig_mode = out_mode_val["v"]

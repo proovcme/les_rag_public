@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.32** | HEAD | Attachment visibility + no auto project-summary: uploaded chat files persist as system messages in chat history, user turns keep an explicit attachment line, and broad project questions no longer auto-return deterministic project registers; normal chat continues to retrieval + model while project summary remains an explicit tool/MCP command. |
 | **v0.24.0.31** | HEAD | Smeta detail artifact: estimate-harness chat answers stay as an operator summary while a dedicated artifact carries the full resource breakdown, cost structure, NR/SP, machines, labor, materials and explicit notes for unapplied height/working-condition coefficients. |
 | **v0.24.0.30** | HEAD | Smeta GESNm bridge: the GESN notebook now distinguishes construction GESN collection 38 from mounting `ГЭСНм38`; smeta search/applicability allows `ГЭСНм38` for metal assembly, parses mass from kg/t into `mass_t`, routes SPb Q2 2026 ToR text to `spb_2kv2026`, and computes tonnage-based metal positions through the existing code calculator instead of losing the old RIM/LSR path. |
 | **v0.24.0.29** | HEAD | Notebook/prompt layer: common `notebook_v1` wraps dataset profiles and service sources; `/api/notebooks/*` and `/api/service-sources/notebooks` expose navigation context; GESN notebook maps collections from the local norm base; prompt registry composes common LES and mode prompts, and smeta planner receives the GESN notebook as navigation, not evidence. |
