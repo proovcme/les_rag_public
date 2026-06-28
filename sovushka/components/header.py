@@ -154,9 +154,9 @@ def build_header(
             ).props('flat dense round aria-label="Обновить данные"').style("color:var(--dim);")
 
             # Тема
-            if app.storage.user.get("theme_default_migrated") != "0.24-light":
+            if app.storage.user.get("theme_default_migrated") != "0.24-light-2":
                 app.storage.user["dark_theme"] = False
-                app.storage.user["theme_default_migrated"] = "0.24-light"
+                app.storage.user["theme_default_migrated"] = "0.24-light-2"
             _dark_init = app.storage.user.get("dark_theme", False)
 
             def _toggle_theme():
