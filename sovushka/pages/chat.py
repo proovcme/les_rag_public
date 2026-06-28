@@ -2025,7 +2025,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             rich = _render_rich_body(str(text or "")) if _is_ai else False
             if not rich:
                 _disp = _bubble_text(str(text or ""), _mode) if (meta and _is_ai) else str(text or "")
-                ui.label(_disp).classes("sov-chat-message-text")
+                if _is_ai:
+                    ui.markdown(_disp).classes("sov-chat-message-text sov-chat-md")
+                else:
+                    ui.label(_disp).classes("sov-chat-message-text")
             _render_source_tags(srcs or [], crag, meta)
             if meta:
                 _render_suggestions(meta)
@@ -2062,7 +2065,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             if rich:
                 label.set_visibility(False)
             else:
-                label.set_text(_bubble_text(str(text or ""), _mode) if (meta and not error) else str(text or ""))
+                if meta and not error:
+                    label.set_visibility(False)
+                    ui.markdown(_bubble_text(str(text or ""), _mode)).classes("sov-chat-message-text sov-chat-md")
+                else:
+                    label.set_text(str(text or ""))
             _render_source_tags(srcs or [], crag, meta)
             if meta:
                 _render_suggestions(meta)

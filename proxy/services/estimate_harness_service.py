@@ -86,6 +86,8 @@ _ELEMENT_DEFAULT_FAMILY: dict[str, str] = {
     "column": "concrete_monolithic",
     "waterproofing": "waterproofing",
     "roofing": "roofing",
+    "floors": "floors",
+    "finishes": "finishes",
 }
 
 _ACTION_ALIASES: dict[str, str] = {
@@ -129,6 +131,11 @@ def _collection_of(code: str) -> str:
     return m.group(1) if m else ""
 
 
+def _plain_norm_code(code: str) -> str:
+    m = re.search(r"(?<!\d)(\d{2}-\d{2}-\d{3}-\d{2})", str(code or ""))
+    return m.group(1) if m else str(code or "")
+
+
 # ── Quality Gate 2: ПРИМЕНИМОСТЬ НОРМЫ (барьер между кандидатом и числом) ─────────────────
 # Фильтр по сборнику — крупное сито (06-22 «защитная оболочка реактора» проходит как сб.06).
 # Поэтому ещё: запретные признаки в названии + обязательные признаки семейства + чёрный список
@@ -163,6 +170,7 @@ _FAMILY_DENIED_PREFIXES: dict[str, tuple[str, ...]] = {
 def check_applicability(code: str, norm_name: str, work_family: str) -> tuple[str, list[str]]:
     """Кандидат → accepted | ambiguous | rejected (+ причины). Барьер перед привязкой нормы."""
     name = (norm_name or "").lower()
+    plain_code = _plain_norm_code(code)
     allowed = WORK_FAMILY_COLLECTIONS.get(work_family)
     collection = _collection_of(code)
     if allowed and collection and collection not in allowed:
@@ -171,7 +179,7 @@ def check_applicability(code: str, norm_name: str, work_family: str) -> tuple[st
         if a in name:
             return "rejected", [f"запретный признак в названии: «{a}»"]
     for pref in _FAMILY_DENIED_PREFIXES.get(work_family, ()):
-        if str(code).startswith(pref):
+        if plain_code.startswith(pref):
             return "rejected", [f"подраздел {pref} не для {work_family}"]
     pos = _FAMILY_POSITIVE_ANCHORS.get(work_family, ())
     if pos and not any(a in name for a in pos):
@@ -214,6 +222,7 @@ _ELEMENT_TEXT_SIGNALS: tuple[tuple[str, str, str], ...] = (
     ("foundation_slab", "concrete_monolithic", r"\b(?:фундаментн\w*\s+плит|плитн\w*\s+фундамент)"),
     ("monolithic_wall", "concrete_monolithic", r"\b(?:монолитн\w*\s+стен|бетонирован\w*\s+стен)"),
     ("floors", "floors", r"\b(?:пол|стяжк)"),
+    ("finishes", "finishes", r"\b(?:отделк|штукатур|окрас|облицов)"),
 )
 
 
@@ -292,7 +301,8 @@ def _score_candidate(words: list[str], code: str, name: str, unit: str, *, work_
     parts["unit"] = 1.0 if (phys_unit and _units_compatible(phys_unit, base)) else 0.0
     # тяжёлые штрафы: спец/нерелевантные сооружения и запрещённые подразделы тонут (но в выдаче видны)
     parts["forbidden"] = -5.0 * sum(1 for a in _FORBIDDEN_TITLE_ANCHORS if a in name)
-    parts["denied_subsection"] = -5.0 if any(code.startswith(p) for p in _FAMILY_DENIED_PREFIXES.get(work_family, ())) else 0.0
+    plain_code = _plain_norm_code(code)
+    parts["denied_subsection"] = -5.0 if any(plain_code.startswith(p) for p in _FAMILY_DENIED_PREFIXES.get(work_family, ())) else 0.0
     parts["collection"] = 1.0 if _collection_of(code) in WORK_FAMILY_COLLECTIONS.get(work_family, set()) else -3.0
     return round(sum(parts.values()), 2), {k: round(v, 2) for k, v in parts.items() if v}
 
@@ -390,6 +400,18 @@ FORMULA_CATALOG: dict[str, dict[str, Any]] = {
     "waterproofing": {
         "unit": "м2", "expr": "P * H * N + S1",   # стены + дно, из геометрии — считаемо
         "required": [], "assume": {}},
+    "wood_wall": {
+        "unit": "м2", "expr": "P * H * N",
+        "required": [], "assume": {}},
+    "roofing": {
+        "unit": "м2", "expr": "S1 * roof_area_factor",
+        "required": [], "assume": {"roof_area_factor": 1.25}},
+    "floors": {
+        "unit": "м2", "expr": "S",
+        "required": [], "assume": {}},
+    "finishes": {
+        "unit": "м2", "expr": "S * finish_area_factor",
+        "required": [], "assume": {"finish_area_factor": 2.5}},
 }
 
 
@@ -488,7 +510,8 @@ BATCH_SYSTEM_PROMPT = (
     "\"works\":[[\"work\",\"search description\",\"family\",\"element\",\"action\",\"unit\",{\"slot\":1}]]}\n"
     "family: earthworks,foundation,concrete_monolithic,concrete_precast,masonry,metal,wood,floors,"
     "roofing,waterproofing,finishes. element: excavation,concrete_preparation,foundation_slab,"
-    "monolithic_wall,monolithic_slab,column,waterproofing,roofing,wood_wall,metal_assembly,pile,foundation.\n"
+    "monolithic_wall,monolithic_slab,column,waterproofing,roofing,wood_wall,metal_assembly,pile,"
+    "foundation,floors,finishes.\n"
     "Дай 3-6 ключевых работ. work и search description пиши по-русски, словами из строительных норм. "
     "unit только м3, м2 или т. missing_inputs максимум 5. Если параметра нет, не выдумывай slot. "
     "Коды норм не включай."
@@ -726,19 +749,32 @@ def _run_batch_plan(question: str, complete: Callable[[list[dict[str, str]]], st
             "normalized": corrections,
         })
         top = candidates[0] if candidates else None
-        if search.get("status") == "found" and top and top.get("unit_compatible") is not False:
+        top_accepted = (
+            top
+            and top.get("applicability_status") == "accepted"
+            and top.get("unit_compatible") is not False
+        )
+        if top_accepted:
+            selection = search.get("selection") if isinstance(search.get("selection"), dict) else {}
+            norm_assumptions = []
+            if search.get("status") != "found":
+                norm_assumptions.append(
+                    "норма выбрана по лучшему применимому кандидату; требуется проверка сметчиком"
+                )
             add_args = {
                 "work": item.get("work") or item.get("work_description") or top.get("title") or "",
                 "code": top.get("norm_code", ""),
                 "work_family": item.get("work_family") or search.get("work_family") or "",
                 "element_type": item.get("element_type") or search.get("element_type") or "",
                 "slots": item.get("slots") if isinstance(item.get("slots"), dict) else {},
+                "assumptions": norm_assumptions,
             }
             obs = _exec_tool("add_position", add_args, state)
             trace.append({"tool": "add_position",
                           "status": obs.get("status") or ("ok" if obs.get("ok") else "err"),
                           "work": add_args["work"],
-                          "code": add_args["code"]})
+                          "code": add_args["code"],
+                          "selection": selection})
         else:
             _append_unbound_position(item, search, state)
 

@@ -1,6 +1,9 @@
+import inspect
+
 import pytest
 
 from proxy.routers import chat as chat_router
+from sovushka.pages import chat as chat_page
 from sovushka.pages.chat import (
     _attachment_chat_payload,
     _attachment_visible_text,
@@ -11,6 +14,13 @@ from sovushka.pages.chat import (
     should_skip_chat_resource_gate,
 )
 from proxy.routers.chat import ChatRequest, _attachment_source_label, _question_with_attachment
+
+
+def test_ai_plain_markdown_is_rendered_as_markdown_widget():
+    source = inspect.getsource(chat_page.build_chat)
+
+    assert "ui.markdown(_disp).classes(\"sov-chat-message-text sov-chat-md\")" in source
+    assert "ui.markdown(_bubble_text(str(text or \"\"), _mode)).classes(\"sov-chat-message-text sov-chat-md\")" in source
 
 
 def test_smeta_table_question_skips_resource_gate():

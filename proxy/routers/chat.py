@@ -1197,66 +1197,79 @@ def _harness_complete(messages: list[dict]) -> str:
         return ""
 
 
+def _norm_code_label(code: Any) -> str:
+    text = str(code or "").strip()
+    return text if text else "—"
+
+
+def _candidate_table_row(position: dict[str, Any]) -> str:
+    work = str(position.get("work") or "Работа").strip()
+    candidates = [c for c in (position.get("candidates") or []) if isinstance(c, dict)]
+    top = candidates[0] if candidates else {}
+    code = _norm_code_label(top.get("norm_code") or position.get("code"))
+    unit = str(top.get("measure_unit") or top.get("base_unit") or position.get("physical_unit") or "—")
+    rest = ", ".join(_norm_code_label(c.get("norm_code")) for c in candidates[1:4]) or "—"
+    selection = position.get("selection") if isinstance(position.get("selection"), dict) else {}
+    reason = str(selection.get("reason") or position.get("reason") or "нужна проверка применимости").strip()
+    return f"| {work} | {code} | {unit} | {rest} | {reason} |"
+
+
 def _format_harness(r: dict) -> str:
-    """Результат харнесса+Gate1 → markdown. Жёстко: ORCHESTRATION доказан, QUALITY нет; итог
-    скрыт при critical-провалах (не выдаём бред за сумму)."""
+    """Результат model-first estimate → operator-facing markdown.
+
+    First layer must be human-readable: no tool names, planner trace or internal English enums.
+    The machine trace stays in payload technical details.
+    """
     sch = r.get("schema", {}) or {}
     obj_type = str(sch.get("object_type") or "объект")
     obj_type = {"house": "дом", "residential_house": "жилой дом"}.get(obj_type, obj_type)
-    lines = [f"**Предварительная сметная декомпозиция** — {obj_type} · "
-             f"{sch.get('area_total_m2', '?')} м²", "",
-             "_Модель сама раскладывает объект на работы и вызывает инструменты. Код ищет нормы, "
-             "проверяет применимость, единицы и объёмы; считает только то, что прошло проверки. "
-             "Без ВОР/проекта это не финальная ЛСР._", ""]
+    area = sch.get("area_total_m2")
+    area_text = f" · {area} м²" if area not in (None, "", 0) else ""
     comp = r.get("computed", [])
+    title = "Предварительная сметная стоимость" if comp else "Смета пока не собрана"
+    lines = [f"**{title}** — {obj_type}{area_text}", ""]
     if comp:
-        lines += ["| Работа | Код ГЭСН | Кол-во (в ед. нормы) | Физ.объём |", "|---|---|---|---|"]
+        lines += ["**Посчитано**", "",
+                  "| Работа | Код ГЭСН | Кол-во в измерителе нормы | Физический объём |",
+                  "|---|---:|---:|---:|"]
         for p in comp:
             lines.append(f"| {p.get('work', '')} | {p.get('code')} | {p.get('qty')} {p.get('norm_unit','')} "
                          f"| {p.get('phys_qty','')} {p.get('physical_unit','')} |")
-    else:
-        lines.append("_Посчитанных позиций нет._")
 
-    # Gate 2: final_total ТОЛЬКО при complete; иначе partial_total как диагностика, не как смета.
     status = r.get("total_status")
     pt, ft = r.get("partial_total"), r.get("final_total")
     if status == "complete" and ft:
-        lines += ["", f"**ИТОГО СМР {ft.get('smr')} ₽ · ВСЕГО с НДС {ft.get('grand_total')} ₽** "
+        lines += ["", f"**Итого: СМР {ft.get('smr')} ₽ · всего с НДС {ft.get('grand_total')} ₽** "
                   f"({ft.get('positions')} поз.)"]
     elif status == "partial" and pt:
-        lines += ["", f"**⛔ Итоговая смета НЕ сформирована.** Предварительно рассчитанные позиции: "
-                  f"~{pt.get('grand_total')} ₽ ({pt.get('positions')} поз.) — это ДИАГНОСТИКА, не смета: "
-                  f"часть ключевых позиций без подтверждённой нормы или без данных."]
-    else:
-        lines += ["", "**⛔ Итог не сформирован** — нет ни одной позиции с подтверждённой применимой нормой."]
+        lines += ["", f"**Итог не сформирован.** Есть рассчитанная часть: "
+                  f"~{pt.get('grand_total')} ₽ ({pt.get('positions')} поз.). "
+                  "Это не смета: часть позиций ещё без подтверждённой нормы или параметров."]
 
     rej = r.get("rejected", [])
-    if rej:
-        lines += ["", "**Нужна привязка нормы или уточнение:**"]
-        for p in rej:
-            cand = [str(c.get("norm_code")) for c in (p.get("candidates") or [])[:3] if c.get("norm_code")]
-            suffix = f"; кандидаты: {', '.join(cand)}" if cand else ""
-            lines.append(f"- {p.get('work', '')} ({p.get('code')}) — "
-                         f"{p.get('reason', '')}{suffix}")
     ni = r.get("needs_input", [])
+    pending = [p for p in [*rej, *ni] if isinstance(p, dict)]
+    if pending:
+        lines += ["", "**Нужно выбрать норму или уточнить параметры**", "",
+                  "| Работа | Лучший кандидат | Ед. | Другие варианты | Что не хватает |",
+                  "|---|---:|---:|---|---|"]
+        for p in pending:
+            lines.append(_candidate_table_row(p))
+    elif not comp:
+        lines += ["", "ЛЕС не нашёл подходящих норм по текущему описанию. Нужен проект, ВОР или более конкретное описание работ."]
+
     if ni:
-        lines += ["", "**Нет данных для расчёта (не выдумываем):**"]
         slots_needed: list[str] = []
         for p in ni:
-            cand = [str(c.get("norm_code")) for c in (p.get("candidates") or [])[:3] if c.get("norm_code")]
-            suffix = f"; кандидаты: {', '.join(cand)}" if cand else ""
-            lines.append(f"- {p.get('work', '')} ({p.get('code')}) — "
-                         f"{p.get('reason', 'нужны параметры')}{suffix}")
             slots_needed += [s for s in (p.get("missing_slots") or []) if s not in slots_needed]
         if slots_needed:
             human = {"excavation_depth_m": "глубина котлована (м)", "slab_thickness_m": "толщина плиты (мм/м)",
                      "wall_thickness_m": "толщина стен (мм/м)", "wall_height_m": "высота стен (м)",
                      "wall_length_m": "длина/периметр стен (м)"}
             ask = ", ".join(human.get(s, s) for s in slots_needed)
-            lines += ["", f"**Чтобы дорассчитать — пришлите:** {ask}.",
-                      "_Можно прямо в запросе: «…паркинг 4800 глубина 6 м плита 400 мм»._"]
-    lines.append(f"\n⚙ Планировщик: {r.get('steps')} шаг · инструменты: "
-                 f"{', '.join(str(t.get('tool')) for t in r.get('trace', [])) or '—'}")
+            lines += ["", f"**Чтобы дорассчитать:** {ask}."]
+    if not ft:
+        lines += ["", "Число не показываю, пока нормы и параметры не подтверждены."]
     return "\n".join(lines)
 
 

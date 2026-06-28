@@ -312,10 +312,11 @@ def test_batch_plan_calls_model_once_and_surfaces_gesn_candidates():
     assert res["trace"][1]["tool"] == "search_norm"
     assert res["trace"][1]["candidates"]       # номера ГЭСН видны для operator review
     assert res["trace"][1]["selection"]["schema"] == "candidate_selection_v1"
-    assert res["computed"] == []               # близкие кандидаты не берём в сумму вслепую
-    assert res["rejected"][0]["status"] == "ambiguous"
-    assert res["rejected"][0]["selection"]["status"] in ("needs_model_choice", "clear")
-    assert res["rejected"][0]["candidates"][0]["norm_code"].startswith("ГЭСН:")
+    assert res["computed"]                     # черновую стоимость считаем по лучшему применимому кандидату
+    assert res["computed"][0]["code"].startswith("ГЭСН:06-02")
+    assert any("требуется проверка" in a for a in res["computed"][0]["assumptions"])
+    assert res["by_assumption"]
+    assert res["final_total"]["grand_total"] > 0
 
 
 def test_compact_batch_plan_array_contract():
@@ -351,7 +352,8 @@ def test_batch_plan_trace_reports_tool_argument_normalization():
 
     search_trace = [t for t in res["trace"] if t["tool"] == "search_norm"][0]
     assert search_trace["normalized"]
-    assert res["rejected"][0]["candidates"][0]["collection"] == "10"
+    assert res["computed"][0]["code"].startswith("ГЭСН:10-")
+    assert res["computed"][0]["phys_qty"] > 0
 
 
 def test_no_numbers_from_model_text():
