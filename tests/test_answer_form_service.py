@@ -28,7 +28,7 @@ def test_full_intent_verbose():
 
 
 def test_brief_intent_compact():
-    for q in ["Расскажи про требования к серверным", "Основные требования к эвакуации", "Кратко о ПУЭ"]:
+    for q in ["Расскажи кратко про требования к серверным", "В двух словах о ПУЭ", "Кратко о ПУЭ"]:
         assert classify_answer_form(q).intent == "brief", q
 
 
@@ -37,6 +37,11 @@ def test_default_when_unknown():
     assert f.intent == "default"
     assert f.instruction == ""
     assert f.max_tokens == 8192   # снят блок длины по умолчанию (было 2048) — форму не навязываем
+
+
+def test_broad_tell_me_queries_are_not_brief_by_default():
+    for q in ["Расскажи про объект", "Расскажи про требования к серверным", "Какие требования к эвакуации"]:
+        assert classify_answer_form(q).intent == "default", q
 
 
 def test_empty_question_is_default():

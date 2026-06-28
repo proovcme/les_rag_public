@@ -1741,6 +1741,25 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         t = re.sub(r"\n{3,}", "\n\n", t).strip()
         return t or "Готово — результат в артефакте (кнопка ниже)."
 
+    _INLINE_SOURCE_RE = re.compile(r"\[Источник\s+\d+(?:\s*\|[^\]]+)?\]")
+
+    def _format_sources_as_quotes(text: str) -> str:
+        """Визуально отделить source-маркеры от прозы, не меняя смысл ответа."""
+        out: list[str] = []
+        for line in str(text or "").splitlines():
+            markers = _INLINE_SOURCE_RE.findall(line)
+            if not markers:
+                out.append(line)
+                continue
+            body = _INLINE_SOURCE_RE.sub("", line)
+            body = re.sub(r"\s+([,.;:])", r"\1", body)
+            body = re.sub(r"([,;:])\s*([,;:.])", r"\2", body)
+            body = re.sub(r"\s{2,}", " ", body).strip(" ,;")
+            if body:
+                out.append(body)
+            out.append("> Источники: " + " ".join(markers))
+        return "\n".join(out)
+
     # ── Богатые формы ПРЯМО В ЧАТЕ (таблицы/mermaid → красиво, не сырой текст) ──
     # Ответ режется на сегменты по месту блока (mermaid-fence, markdown-таблица),
     # проза остаётся прозой. Каждый сегмент рисуется своим виджетом: text → ui.markdown,
@@ -1894,7 +1913,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 elif seg["kind"] == "mermaid":
                     _render_inline_mermaid(seg["code"])
                 else:
-                    ui.markdown(seg["text"]).classes("sov-chat-message-text sov-chat-md")
+                    ui.markdown(_format_sources_as_quotes(seg["text"])).classes("sov-chat-message-text sov-chat-md")
         return True
 
     # ── ФАЙЛЫ-АРТЕФАКТЫ: готовые документы (смета xlsx, формы) в панели «Файлы» ──
@@ -2055,7 +2074,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             if not rich:
                 _disp = _bubble_text(str(text or ""), _mode) if (meta and _is_ai) else str(text or "")
                 if _is_ai:
-                    ui.markdown(_disp).classes("sov-chat-message-text sov-chat-md")
+                    ui.markdown(_format_sources_as_quotes(_disp)).classes("sov-chat-message-text sov-chat-md")
                 else:
                     ui.label(_disp).classes("sov-chat-message-text")
             _render_source_tags(srcs or [], crag, meta)
@@ -2097,7 +2116,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             else:
                 if meta and not error:
                     label.set_visibility(False)
-                    ui.markdown(_bubble_text(str(text or ""), _mode)).classes("sov-chat-message-text sov-chat-md")
+                    ui.markdown(_format_sources_as_quotes(_bubble_text(str(text or ""), _mode))).classes(
+                        "sov-chat-message-text sov-chat-md"
+                    )
                 else:
                     label.set_text(str(text or ""))
             _render_source_tags(srcs or [], crag, meta)
