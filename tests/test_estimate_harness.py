@@ -160,6 +160,7 @@ def test_smeta_planner_prompt_includes_gesn_notebook_and_no_object_templates(mon
     res = h.run_estimate_harness("дом 150 м2", complete)
 
     system = seen[0][0]["content"]
+    assert system.startswith("/no_think")
     assert "Л.Е.С." in system
     assert "Режим «Смета»" in system
     assert "[Блокнот ГЭСН]" in system

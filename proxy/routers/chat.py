@@ -1424,7 +1424,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             "validation": {"enabled": False, "reason": channel},
             "versions": _version_stamp(),
         }
-        for key in ("provenance", "defense", "evidence_summary", "total_status"):
+        for key in ("provenance", "defense", "evidence_summary", "notebook_context", "total_status"):
             if key in extra:
                 payload[key] = extra[key]
         return payload

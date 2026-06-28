@@ -55,10 +55,11 @@ def build_mode_system_prompt(mode: str, *, notebook_context: str = "", extra: st
 
 def build_smeta_batch_system_prompt(tool_contract: str, *, notebook_context: str | None = None) -> str:
     nb = notebook_context if notebook_context is not None else gesn_notebook_prompt_excerpt()
-    return build_mode_system_prompt(
+    contract = tool_contract.replace("/no_think", "", 1).lstrip()
+    return "/no_think\n" + build_mode_system_prompt(
         "smeta",
         notebook_context=nb,
-        extra=tool_contract,
+        extra=contract,
     )
 
 

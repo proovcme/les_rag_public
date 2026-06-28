@@ -260,7 +260,7 @@ def gesn_notebook_prompt_excerpt(notebook: dict[str, Any] | None = None, *, coll
     ]
     lines = ["[Блокнот ГЭСН: карта сборников, навигация НЕ evidence]"]
     for c in rows:
-        terms = ", ".join((c.get("typical_terms") or [])[:6])
+        terms = ", ".join(_keywords([str(c.get("area") or "")], limit=4))
         units = ", ".join((c.get("units") or [])[:4])
         lines.append(
             f"{c.get('collection')}: {c.get('area')} · термины: {terms or '—'} · ед.: {units or '—'}"
