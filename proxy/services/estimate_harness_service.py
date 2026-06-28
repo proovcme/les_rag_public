@@ -27,6 +27,11 @@ import re
 from functools import lru_cache
 from typing import Any, Callable
 
+from proxy.services.candidate_selection_service import (
+    candidate_reason_labels,
+    candidate_shortlist,
+    select_candidates,
+)
 from proxy.services.estimate_math_service import _eval_formula, _f, _geometry
 
 # ── единицы измерения (UNIT CONTRACT) ────────────────────────────────────────────────────
@@ -106,6 +111,16 @@ _UNIT_ALIASES: dict[str, str] = {
     "piece": "",
     "pcs": "",
     "шт": "",
+}
+
+_SMETA_REASON_LABELS: dict[str, tuple[str, str]] = {
+    "collection": ("сборник соответствует семейству работ", "сборник не соответствует семейству работ"),
+    "unit": ("единица измерения совпадает", "единица измерения не совпадает"),
+    "element": ("есть признаки нужного элемента", "есть признаки другого элемента"),
+    "family": ("есть признаки семейства работ", "нет признаков семейства работ"),
+    "action": ("совпало действие работы", "действие работы не совпало"),
+    "forbidden": ("", "есть признаки специальной/неподходящей нормы"),
+    "denied_subsection": ("", "подраздел не подходит для семейства работ"),
 }
 
 
@@ -318,46 +333,11 @@ def search_norm(work_description: str, *, work_family: str = "", element_type: s
 
 
 def _candidate_reason_labels(candidate: dict[str, Any]) -> list[str]:
-    """Human-readable explanation of why a candidate rose or sank in the shortlist."""
-    parts = candidate.get("score_parts") if isinstance(candidate.get("score_parts"), dict) else {}
-    labels: list[str] = []
-    if candidate.get("applicability_status") == "accepted":
-        labels.append("применимость по сборнику и названию подтверждена")
-    elif candidate.get("applicability_status") == "ambiguous":
-        labels.append("применимость требует выбора модели")
-    elif candidate.get("applicability_status") == "rejected":
-        labels.append("кандидат отклонён фильтром применимости")
-    if parts.get("collection", 0) > 0:
-        labels.append("сборник соответствует семейству работ")
-    elif parts.get("collection", 0) < 0:
-        labels.append("сборник не соответствует семейству работ")
-    if parts.get("unit", 0) > 0:
-        labels.append("единица измерения совпадает")
-    if parts.get("element", 0) > 0:
-        labels.append("есть признаки нужного элемента")
-    if parts.get("family", 0) > 0:
-        labels.append("есть признаки семейства работ")
-    if parts.get("action", 0) > 0:
-        labels.append("совпало действие работы")
-    if parts.get("forbidden", 0) < 0 or parts.get("denied_subsection", 0) < 0:
-        labels.append("есть признаки специальной/неподходящей нормы")
-    return labels[:6]
+    return candidate_reason_labels(candidate, reason_labels=_SMETA_REASON_LABELS)
 
 
 def _candidate_shortlist(candidates: list[dict[str, Any]], *, limit: int = 5) -> list[dict[str, Any]]:
-    short: list[dict[str, Any]] = []
-    for c in candidates[:limit]:
-        short.append({
-            "norm_code": c.get("norm_code", ""),
-            "title": c.get("title", ""),
-            "measure_unit": c.get("measure_unit", ""),
-            "score_total": c.get("score_total", 0),
-            "score_parts": c.get("score_parts", {}),
-            "applicability_status": c.get("applicability_status", ""),
-            "unit_compatible": c.get("unit_compatible", True),
-            "reasons": _candidate_reason_labels(c),
-        })
-    return short
+    return candidate_shortlist(candidates, limit=limit, reason_labels=_SMETA_REASON_LABELS)
 
 
 def _candidate_selection(candidates: list[dict[str, Any]]) -> dict[str, Any]:
@@ -366,49 +346,7 @@ def _candidate_selection(candidates: list[dict[str, Any]]) -> dict[str, Any]:
     The harness ranks and gates; it does not invent a work item. A top candidate is bindable only
     when it is applicable, unit-compatible and separated from the next candidate by a visible gap.
     """
-    if not candidates:
-        return {
-            "schema": "candidate_selection_v1",
-            "status": "not_found",
-            "action": "refine_search",
-            "selected_code": "",
-            "score_gap": None,
-            "reason": "по описанию работы не найдено кандидатов",
-            "shortlist": [],
-        }
-    top = candidates[0]
-    second = candidates[1] if len(candidates) > 1 else None
-    gap = None if second is None else round(_f(top.get("score_total")) - _f(second.get("score_total")), 2)
-    top_ok = top.get("applicability_status") == "accepted" and top.get("unit_compatible") is not False
-    clear_lead = second is None or (gap is not None and gap >= 2.0)
-    if top_ok and clear_lead:
-        status = "clear"
-        action = "bind_top_candidate"
-        selected = str(top.get("norm_code") or "")
-        reason = (
-            "лидер применим и заметно сильнее ближайшей альтернативы"
-            if second else "единственный применимый кандидат"
-        )
-    elif top_ok:
-        status = "needs_model_choice"
-        action = "ask_model_to_choose_or_request_input"
-        selected = ""
-        reason = "есть применимый лидер, но отрыв от альтернатив мал"
-    else:
-        status = "needs_model_choice"
-        action = "ask_model_to_choose_or_request_input"
-        selected = ""
-        reason = "верхний кандидат не прошёл применимость или единицу измерения"
-    return {
-        "schema": "candidate_selection_v1",
-        "status": status,
-        "action": action,
-        "selected_code": selected,
-        "score_gap": gap,
-        "reason": reason,
-        "top_reasons": _candidate_reason_labels(top),
-        "shortlist": _candidate_shortlist(candidates),
-    }
+    return select_candidates(candidates, reason_labels=_SMETA_REASON_LABELS)
 
 
 # ── magnitude guard: грубые порядковые границы ───────────────────────────────────────────
