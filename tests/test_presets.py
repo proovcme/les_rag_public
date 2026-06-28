@@ -27,13 +27,15 @@ def test_normalize(alias, canon):
 
 def test_apply_preset_writes_env_and_environ(isolated_env):
     import os
+
+    os.environ["OPENAI_MODEL"] = "gpt-5.2"
     res = ps.apply_preset("облако")  # рус-алиас
     assert res["preset"] == "cloud"
     assert os.getenv("LES_LLM_PROVIDER") == "openai"
-    assert os.getenv("OPENAI_MODEL") == "gpt-4.1"
+    assert os.getenv("OPENAI_MODEL") == "gpt-5.2"
     assert os.getenv("LES_ASBUILT_OCR_ENGINE") == "cloud"
     assert (isolated_env / ".env").read_text().count("LES_LLM_PROVIDER=openai") == 1
-    assert (isolated_env / ".env").read_text().count("OPENAI_MODEL=gpt-4.1") == 1
+    assert "OPENAI_MODEL=" not in (isolated_env / ".env").read_text()
 
 
 def test_apply_unknown_raises(isolated_env):

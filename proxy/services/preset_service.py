@@ -27,7 +27,6 @@ PRESETS: dict[str, dict[str, str]] = {
     },
     "cloud": {  # максимум качества: чат и плотные таблицы в облаке (дорого, данные наружу)
         "LES_LLM_PROVIDER": "openai",
-        "OPENAI_MODEL": DEFAULT_OPENAI_MODEL,
         "RAG_OCR_BACKEND": "tesseract",       # массовый скан-OCR локально (облачного конвертер-OCR нет)
         "LES_ASBUILT_OCR_ENGINE": "cloud",
     },
@@ -98,7 +97,7 @@ def apply_preset(name: str) -> dict[str, Any]:
 def describe(name: str) -> str:
     d = {
         "local": "всё локально — Qwen3.5-9B + tesseract; приватно, бесплатно, с валидацией",
-        "cloud": "облако — gpt-4.1 (чат и плотные таблицы); качество, но $ и данные наружу",
+        "cloud": "облако — выбранная OpenAI-compatible модель; качество, но $ и данные наружу",
         "mix": "микс — локальный чат+OCR, облако только для плотных таблиц ИД",
     }
     return d.get(name, name)
