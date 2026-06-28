@@ -163,11 +163,22 @@ def _build_qdrant_visualizer_panel(visualizer_url: str) -> None:
         )
 
 
+_LIGHT_THEME_MIGRATION = "0.24-light-2"
+
+
+def _ensure_light_theme_default() -> None:
+    """Default to light once per migration; operator can still toggle afterwards."""
+    if app.storage.user.get("theme_default_migrated") != _LIGHT_THEME_MIGRATION:
+        app.storage.user["dark_theme"] = False
+        app.storage.user["theme_default_migrated"] = _LIGHT_THEME_MIGRATION
+
+
 def _apply_theme() -> None:
     """Inject theme CSS before rendering the page body."""
+    _ensure_light_theme_default()
     _dark = app.storage.user.get("dark_theme", False)
-    ui.add_head_html(theme_vars_css(_dark))
     ui.add_head_html(CUSTOM_CSS)
+    ui.add_head_html(theme_vars_css(_dark))
     # WCAG 3.1.1 Language of Page: интерфейс и контент русские — помечаем
     # документ lang=ru, иначе скринридеры читают кириллицу как английский.
     ui.add_head_html("<script>document.documentElement.lang='ru'</script>")
@@ -334,7 +345,7 @@ if __name__ in {"__main__", "__mp_main__"}:
         port=UI_PORT,
         title="Л.Е.С. v5.0",
         favicon="🦉",  # Совушка — иконка во вкладке браузера
-        dark=True,
+        dark=False,
         show=False,
         storage_secret=STORAGE_SECRET,
         reload=False,

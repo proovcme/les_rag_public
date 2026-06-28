@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.40** | HEAD | Sovushka UI polish hotfix: light theme is truly the default again (NiceGUI starts light and custom CSS no longer overwrites light variables), prompt registry text wraps as multi-line blocks, and `sovushka/styles.py` joins the deploy hash bundle. |
 | **v0.24.0.39** | HEAD | Prompt registry v2: common LES prompt, tone prompt, per-mode prompts and tool contracts are exposed through `/api/prompts`; RAG/free/attachment/smeta harness use the registry layer, and Sovushka admin Instruments shows the prompt map to the operator. |
 | **v0.24.0.38** | HEAD | Chat streaming UX: final-only model/tool paths synthesize visible token chunks, progress keeps the elapsed timer alive, early source chips can arrive before final payload, and visible CJK/OCR garbage is stripped from Russian/Latin answers. |
 | **v0.24.0.37** | HEAD | Resource-aware chat admission/status: indexing mode is no longer a blanket chat kill-switch; cloud generation stays allowed during guarded reindex, local MLX is allowed only when indexing uses the Core ML embedder and memory is green, and runtime status exposes effective chat state plus `indexing_chat_policy`. |

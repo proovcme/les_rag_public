@@ -945,7 +945,19 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   margin: 0;
   color: var(--dim);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   font-size: .68rem;
+}
+.sov-prompt-registry {
+  max-height: none;
+  overflow-x: hidden;
+}
+.sov-prompt-registry pre,
+.sov-prompt-registry code {
+  white-space: pre-wrap !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
 }
 .sov-tree-row {
   display: flex;

@@ -7,12 +7,12 @@
 ## Текущее состояние (2026-06-28)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.39  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.40  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.39 prompt registry/admin view
+задеплоено на рантайм:     0.24.0.40 light theme/prompt wrap hotfix
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.39 · app 5.1.0 · h0.24 · runtime_alignment=aligned
+рантайм /api/version:      0.24.0.40 · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
 > 0.24.0.6 выкачен через `make ship`. Живой чат-прогон без semantic cache:
@@ -101,6 +101,8 @@ dev HEAD:                  HEAD  (см. git log -1)
 > 0.24.0.39 расширяет prompt registry: общий промт ЛЕС, тон, режимные промты и tool contracts
 > доступны через `/api/prompts`, RAG/free/attachment/smeta-harness используют registry, а Совушка
 > показывает карту промтов в админских «Инструментах».
+> 0.24.0.40 чинит UI-регрессию: системные промты в админке переносятся как многострочный текст,
+> светлая тема снова дефолт при старте, а кастомный CSS больше не перетирает light-переменные.
 > 0.24.0.31 разделяет сметную выдачу на операторскую сводку в чате и полный артефакт:
 > расшифровка позиций, ОЗП/ЭМ/ЗПМ/материалы/прямые/ФОТ/НР/СП/СМР, ресурсы с ценами и явное
 > предупреждение, если высотные/производственные коэффициенты не применены без нормативного основания.
@@ -143,6 +145,7 @@ dev HEAD:                  HEAD  (см. git log -1)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.40 | HEAD | 2026-06-28 | UI hotfix: prompt registry в «Инструментах» переносится многострочно; NiceGUI стартует в light mode; порядок CSS больше не перетирает светлую тему тёмными `:root`; `sovushka/styles.py` добавлен в deploy hash bundle | ✅ рантайм, focused/verify + browser style probe ✅ |
 | 0.24.0.39 | HEAD | 2026-06-28 | Prompt registry v2: общий системный промт, тон, режимные промты и tool contracts вынесены в единый registry/API `/api/prompts`; RAG/free/attachment/smeta-harness берут системный слой оттуда; «Инструменты» показывают оператору карту промтов | ✅ рантайм, focused/verify + live `/api/prompts` probe ✅ |
 | 0.24.0.38 | HEAD | 2026-06-28 | Chat streaming UX: final-only ветки `/api/chat/stream` печатают ответ порциями, `progress` сохраняет живой таймер, SSE может отдавать ранние `sources` для чипов/цитат до финала, а видимый текст чистится от CJK/OCR-мусора | ✅ рантайм, focused/verify + live SSE probe ✅ |
 | 0.24.0.37 | HEAD | 2026-06-28 | Resource-aware chat admission/status: indexing mode больше не является тупым рубильником; cloud generation проходит во время guarded reindex, локальный MLX допускается только при `EMBED_BACKEND=coreml` и зелёной памяти, а `/api/status`/`/api/indexing-mode` показывают effective chat state + `indexing_chat_policy` без операторского “paused”, если чат реально разрешён | ✅ рантайм, focused/verify ✅ |

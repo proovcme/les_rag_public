@@ -168,7 +168,9 @@ def build_instrumenty():
                     ui.label("Инструменты: " + ", ".join(tools)).style(
                         "font-size:.68rem;color:var(--dim);margin-bottom:6px;"
                     )
-                ui.markdown("```text\n" + _prompt_text(text).replace("```", "'''") + "\n```").classes("w-full").style(
+                ui.markdown("```text\n" + _prompt_text(text).replace("```", "'''") + "\n```").classes(
+                    "w-full sov-prompt-preview sov-prompt-registry"
+                ).style(
                     "font-size:.72rem;line-height:1.45;"
                 )
 
