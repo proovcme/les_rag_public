@@ -1700,7 +1700,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
     def _show_artifact(ans: str, mode: str) -> None:
         """Открыть артефакт сообщения в панели «Артефакты» (как карточка в Claude Desktop)."""
         _open_artifacts()
-        _render_result(ans, mode if mode in OUTPUT_FORMATS else "text", artifact_panel)
+        artifact_mode = "text" if mode == "markdown" else mode
+        _render_result(ans, artifact_mode if artifact_mode in OUTPUT_FORMATS else "text", artifact_panel)
         try:
             ui.run_javascript(
                 "document.querySelector('.sov-artifacts-panel')?.scrollIntoView({behavior:'smooth',block:'start'})"
@@ -2569,6 +2570,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             }
             state["chat_history"].append({"role": "ai", "text": ans, "srcs": srcs, "crag": crag, "meta": meta})
             _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, ans, srcs, crag, meta=meta)
+            explicit_artifact = _artifact_from_meta(meta)
+            if explicit_artifact and artifact_shell.visible:
+                _show_artifact(
+                    str(explicit_artifact.get("content") or ""),
+                    str(explicit_artifact.get("mode") or "text"),
+                )
             # Режим «Смета» выключен, но запрос похож на объектную смету → предложить
             # пересчитать капстоуном (детерминированный расчёт вместо RAG-осколков).
             _route_ch = (d.get("query_route") or {}).get("channel", "")

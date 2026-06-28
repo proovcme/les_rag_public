@@ -953,6 +953,14 @@ def _should_synthesize_stream(result: dict[str, Any]) -> bool:
     return True
 
 
+def _notebook_study_validation_status(status: str, *, has_context: bool) -> str:
+    """Notebook-study is a reading workflow: incomplete validation must warn, not erase."""
+    normalized = (status or "UNKNOWN").upper()
+    if has_context and normalized in {"HALLUCINATION", "UNKNOWN"}:
+        return "UNVALIDATED"
+    return normalized
+
+
 @router.post("/chat")
 async def chat(req: ChatRequest, _user=Depends(require_user)):
     """W5.1: нестриминговый эндпоинт — поведение неизменно (M5, смоуки, АРТЕЛЬ,
@@ -3336,6 +3344,11 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     if attempt < max_attempts:
                         logger.warning("[SAFERAG] attempt=%s HALLUCINATION — retry...", attempt)
 
+                if notebook_study_pack is not None:
+                    crag_status = _notebook_study_validation_status(
+                        crag_status,
+                        has_context=bool(validation_context.strip() or context.strip()),
+                    )
                 answer, crag_status = final_answer_for_status(clean_visible_text(answer), crag_status)
                 if answer == SAFE_FALLBACK:
                     logger.error("[SAFERAG] Ответ не подтверждён (%s) — блокируем", crag_status)

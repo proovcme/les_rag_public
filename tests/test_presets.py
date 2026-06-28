@@ -12,7 +12,7 @@ from proxy.services import preset_chat_service as pc
 @pytest.fixture
 def isolated_env(monkeypatch, tmp_path):
     monkeypatch.setattr(ps, "ENV_PATH", tmp_path / ".env")
-    for k in ("LES_LLM_PROVIDER", "RAG_OCR_BACKEND", "LES_ASBUILT_OCR_ENGINE", "OPENAI_MODEL"):
+    for k in ("LES_LLM_PROVIDER", "LES_CLOUD_CONSENT", "RAG_OCR_BACKEND", "LES_ASBUILT_OCR_ENGINE", "OPENAI_MODEL"):
         monkeypatch.setenv(k, "x")  # monkeypatch вернёт после теста
     return tmp_path
 
@@ -32,9 +32,11 @@ def test_apply_preset_writes_env_and_environ(isolated_env):
     res = ps.apply_preset("облако")  # рус-алиас
     assert res["preset"] == "cloud"
     assert os.getenv("LES_LLM_PROVIDER") == "openai"
+    assert os.getenv("LES_CLOUD_CONSENT") == "true"
     assert os.getenv("OPENAI_MODEL") == "gpt-5.2"
     assert os.getenv("LES_ASBUILT_OCR_ENGINE") == "cloud"
     assert (isolated_env / ".env").read_text().count("LES_LLM_PROVIDER=openai") == 1
+    assert (isolated_env / ".env").read_text().count("LES_CLOUD_CONSENT=true") == 1
     assert "OPENAI_MODEL=" not in (isolated_env / ".env").read_text()
 
 
@@ -52,6 +54,7 @@ def test_current_preset_detected(isolated_env):
 
 def test_mix_local_chat_cloud_asbuilt():
     assert ps.PRESETS["mix"]["LES_LLM_PROVIDER"] == "mlx"        # чат локально (валидируется)
+    assert ps.PRESETS["mix"]["LES_CLOUD_CONSENT"] == "false"
     assert ps.PRESETS["mix"]["LES_ASBUILT_OCR_ENGINE"] == "cloud"  # плотные таблицы в облако
 
 
