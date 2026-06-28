@@ -59,6 +59,13 @@ def test_dataset_filter_maps_to_scope_or_warning():
     r = _R(dataset_filter="нет такого")
     assert r["scope_type"] == "all" and any("unresolved" in w for w in r["warnings"])  # warning, не молча
 
+def test_dataset_filter_uuid_maps_to_dataset_scope_without_catalog():
+    did = "449190eb-050e-422f-91a6-54852469201a"
+    r = s.resolve_scope(dataset_filter=did)
+    assert r["scope_type"] == "dataset"
+    assert r["resolved_dataset_ids"] == [did]
+    assert r["warnings"] == []
+
 def test_backend_prefers_explicit_scope_over_legacy_fields():
     r = _R(scope={"scope_type": "all"}, project_id=1)   # явный scope=all важнее project_id
     assert r["scope_type"] == "all" and r["source"] == "ui_scope" and r["resolved_dataset_ids"] == []

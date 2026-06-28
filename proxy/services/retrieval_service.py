@@ -308,6 +308,15 @@ async def resolve_dataset_ids(
     if effective_filter and not dataset_ids:
         try:
             ds_list = await rag_backend.list_datasets()
+            exact_matches = [
+                dataset for dataset in ds_list
+                if str(getattr(dataset, "id", "")) == effective_filter
+                or str(getattr(dataset, "name", "")) == effective_filter
+            ]
+            if exact_matches:
+                ids = [dataset.id for dataset in exact_matches]
+                logger.info("[CHAT] dataset_filter='%s' exact -> ids=%s", effective_filter, ids)
+                return ids
             candidates = _dataset_name_candidates(effective_filter)
             matches = [dataset for dataset in ds_list if dataset.name in candidates]
             if not matches and effective_filter.startswith("NTD_"):

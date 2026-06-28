@@ -7,12 +7,12 @@
 ## Текущее состояние (2026-06-28)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.42  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.43  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.42 broad-study/cache/table-scroll hotfix
+задеплоено на рантайм:     0.24.0.43 dataset UUID scope hotfix
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.42 · app 5.1.0 · h0.24 · runtime_alignment=aligned
+рантайм /api/version:      0.24.0.43 · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
 > 0.24.0.6 выкачен через `make ship`. Живой чат-прогон без semantic cache:
@@ -110,6 +110,9 @@ dev HEAD:                  HEAD  (см. git log -1)
 > 0.24.0.42 закрепляет принцип ширины ответа: broad-запросы по объекту/проекту обходят answer-cache
 > и идут в notebook-study, а точные вопросы остаются узким RAG. Таблицы в чате и артефактах получили
 > горизонтальную прокрутку вместо обрезки длинных проектных строк.
+> 0.24.0.43 чинит live-причину, почему `расскажи про объект` по выбранному BAI всё ещё не запускал
+> notebook-study: UI передавал UUID датасета в `dataset_filter`, а резолвер трактовал его только как
+> имя/класс фильтра. Теперь UUID в `dataset_filter` резолвится как dataset scope и идёт в `_dataset_ids`.
 > 0.24.0.31 разделяет сметную выдачу на операторскую сводку в чате и полный артефакт:
 > расшифровка позиций, ОЗП/ЭМ/ЗПМ/материалы/прямые/ФОТ/НР/СП/СМР, ресурсы с ценами и явное
 > предупреждение, если высотные/производственные коэффициенты не применены без нормативного основания.
@@ -152,6 +155,7 @@ dev HEAD:                  HEAD  (см. git log -1)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.43 | HEAD | 2026-06-28 | Dataset UUID scope hotfix: legacy `dataset_filter=<uuid>` теперь резолвится как выбранный датасет и в `scope_service`, и в `retrieval_service`; broad-study получает `_dataset_ids` и может строить notebook artifact по выбранному объекту вместо fallback на широкий RAG | ✅ рантайм, focused/verify + live BAI probe ✅ |
 | 0.24.0.42 | HEAD | 2026-06-28 | Broad-study/table UX hotfix: общие запросы по объекту/проекту помечаются `breadth=wide`, не берут stale answer-cache и проходят через notebook-study; точные запросы остаются обычным RAG; inline/artifact Quasar-таблицы обёрнуты в горизонтальный scroll-container | ✅ рантайм, focused/verify + live probes ✅ |
 | 0.24.0.41 | HEAD | 2026-06-28 | Notebook-study/cloud/artifact hotfix: broad-инженерные ответы с найденным контекстом больше не заменяются generic TOSKA fallback при неполной проверке; явный артефакт обновляет открытую панель и markdown-артефакты открываются как текст; пресет `cloud` теперь включает `LES_CLOUD_CONSENT=true`, а local/mix явно выключают согласие | ✅ рантайм, focused/verify + live probes ✅ |
 | 0.24.0.40 | HEAD | 2026-06-28 | UI hotfix: prompt registry в «Инструментах» переносится многострочно; NiceGUI стартует в light mode; порядок CSS больше не перетирает светлую тему тёмными `:root`; `sovushka/styles.py` добавлен в deploy hash bundle | ✅ рантайм, focused/verify + browser style probe ✅ |
