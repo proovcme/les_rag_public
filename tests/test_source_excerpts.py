@@ -74,10 +74,11 @@ def test_local_context_budget_is_smaller_than_cloud(monkeypatch):
     assert local["context_window_chars"] == 1200
 
 
-def test_local_generation_budget_caps_verbose_forms(monkeypatch):
+def test_local_generation_budget_does_not_cap_broad_forms(monkeypatch):
     monkeypatch.delenv("RAG_LOCAL_CHAT_MAX_TOKENS", raising=False)
 
-    assert _generation_token_budget(max_tokens=8192, local_big=True, attempt=1, intent="default") == 1100
+    assert _generation_token_budget(max_tokens=8192, local_big=True, attempt=1, intent="default") == 8192
+    assert _generation_token_budget(max_tokens=8192, local_big=True, attempt=1, intent="full") == 8192
     assert _generation_token_budget(max_tokens=1024, local_big=True, attempt=1, intent="brief") == 1024
     assert _generation_token_budget(max_tokens=8192, local_big=False, attempt=1, intent="default") == 8192
     assert _generation_token_budget(max_tokens=8192, local_big=True, attempt=2, intent="default") == 2048

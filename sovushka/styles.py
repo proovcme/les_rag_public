@@ -1216,6 +1216,19 @@ body, .nicegui-content {
   line-height: 1.55;
 }
 .sov-chat-md code, .sov-chat-message-text code { font-family: var(--font) !important; }
+.sov-chat-md blockquote, .sov-artifact-markdown blockquote {
+  margin: 8px 0 10px;
+  padding: 7px 10px 7px 12px;
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: .76rem;
+}
+.sov-chat-md blockquote p, .sov-artifact-markdown blockquote p {
+  margin: 0;
+}
 
 /* Статус-полоска ответа: статус + бейджи evidence + источники + intent. */
 .sov-ev-header {
