@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from proxy.services.resource_governor import chat_generation_allowed, current_runtime_profile
+from proxy.services.resource_governor import INDEXING_MODE, chat_generation_allowed, current_resource_mode, current_runtime_profile
 
 
 ACTIVE_JOB_STATUSES = {"QUEUED", "PARSING", "RUNNING"}
@@ -82,8 +82,31 @@ def active_llm_provider() -> str:
     return os.getenv("LES_LLM_PROVIDER", "mlx").strip().lower() or "mlx"
 
 
+def _is_local_llm_url(url: str) -> bool:
+    value = (url or "").strip().lower()
+    return (
+        value.startswith("http://127.0.0.1")
+        or value.startswith("http://localhost")
+        or value.startswith("http://0.0.0.0")
+    )
+
+
+def cloud_provider_configured(provider: str | None = None) -> bool:
+    """True when the selected cloud provider will not silently fall back to local MLX."""
+    selected = (provider or active_llm_provider()).strip().lower() or "mlx"
+    if selected in LOCAL_LLM_PROVIDERS:
+        return False
+    if selected == "openrouter":
+        base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip()
+        return bool(os.getenv("OPENROUTER_API_KEY", "").strip()) or _is_local_llm_url(base_url)
+    if selected in {"openai", "openai-compatible", "openai_compatible"}:
+        base_url = os.getenv("OPENAI_BASE_URL", "").strip() or "https://api.openai.com/v1"
+        return bool(os.getenv("OPENAI_API_KEY", "").strip()) or _is_local_llm_url(base_url)
+    return True
+
+
 def llm_provider_is_cloud() -> bool:
-    return active_llm_provider() not in LOCAL_LLM_PROVIDERS
+    return cloud_provider_configured(active_llm_provider())
 
 
 def generation_semaphore(local_semaphore):
@@ -324,6 +347,7 @@ def evaluate_chat_admission(
     swap_relief_free = chat_swap_relief_free_gb() if swap_relief_free_gb is None else swap_relief_free_gb
     block_jobs = chat_block_active_jobs() if block_active_jobs is None else block_active_jobs
     guard_memory = chat_memory_guard_for_provider() if memory_guard is None else memory_guard
+    provider_is_cloud = llm_provider_is_cloud()
 
     mode_allowed, mode_reason = chat_generation_allowed(current_mode)
     memory = memory_snapshot(metrics_cache)
@@ -336,7 +360,12 @@ def evaluate_chat_admission(
     failures: list[str] = []
     status_code = 200
 
-    if not mode_allowed:
+    mode_block_is_local_only = (
+        provider_is_cloud
+        and current_resource_mode(current_mode) == INDEXING_MODE
+        and "Indexing mode is active" in mode_reason
+    )
+    if not mode_allowed and not mode_block_is_local_only:
         failures.append(mode_reason)
         status_code = 409
 
@@ -363,7 +392,7 @@ def evaluate_chat_admission(
                 failures.append(detail)
                 status_code = max(status_code, 503)
 
-    if block_jobs and active_jobs > 0:
+    if block_jobs and active_jobs > 0 and not provider_is_cloud:
         failures.append(f"active_jobs={active_jobs}")
         status_code = max(status_code, 409)
 

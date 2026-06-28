@@ -67,6 +67,41 @@ def test_chat_admission_blocks_indexing_mode_before_memory_checks():
     assert "Indexing mode is active" in result.reason
 
 
+def test_chat_admission_allows_cloud_generation_during_indexing(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "key")
+    result = evaluate_chat_admission(
+        current_mode={"mode": "indexing"},
+        metrics_cache={"ram_free_gb": 4.0, "swap_pct": 95.0},
+        active_jobs=1,
+        llm_available=True,
+        min_free_gb=8.0,
+        max_swap_pct=60.0,
+    )
+
+    assert result.allowed is True
+    assert result.mode_allowed is False
+    assert "Indexing mode is active" not in result.reason
+    assert "active_jobs=1" not in result.reason
+
+
+def test_chat_admission_blocks_unconfigured_cloud_fallback_during_indexing(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "openai")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    result = evaluate_chat_admission(
+        current_mode={"mode": "indexing"},
+        metrics_cache={"ram_free_gb": 16.0, "swap_pct": 5.0},
+        active_jobs=1,
+        llm_available=True,
+        min_free_gb=8.0,
+        max_swap_pct=60.0,
+    )
+
+    assert result.allowed is False
+    assert "Indexing mode is active" in result.reason
+    assert "active_jobs=1" in result.reason
+
+
 def test_chat_admission_blocks_active_jobs_and_busy_llm():
     result = evaluate_chat_admission(
         current_mode={"mode": "chat"},
@@ -133,6 +168,8 @@ def test_memory_guard_off_for_cloud_providers(monkeypatch):
 
     for provider in ("openrouter", "openai"):
         monkeypatch.setenv("LES_LLM_PROVIDER", provider)
+        monkeypatch.setenv("OPENROUTER_API_KEY", "key")
+        monkeypatch.setenv("OPENAI_API_KEY", "key")
         monkeypatch.delenv("LES_CHAT_MEMORY_GUARD", raising=False)
         assert ra.chat_memory_guard_for_provider() is False, provider
 
@@ -141,5 +178,6 @@ def test_memory_guard_cloud_can_be_forced_on(monkeypatch):
     from proxy.services import runtime_admission as ra
 
     monkeypatch.setenv("LES_LLM_PROVIDER", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "key")
     monkeypatch.setenv("LES_CHAT_MEMORY_GUARD", "true")
     assert ra.chat_memory_guard_for_provider() is True

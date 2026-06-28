@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.36** | HEAD | Cloud settings/admission hotfix: the cloud preset no longer overwrites a custom `OPENAI_MODEL` such as `gpt-5.2`, and OpenAI-compatible generation is allowed during guarded reindex/`INDEX_LIGHT` while local providers remain protected by the memory gate. |
 | **v0.24.0.35** | HEAD | Notebook study speed pass: the project-reading layer now chooses a smaller adaptive section plan from the notebook map and retrieves selected sections in parallel (`LES_NOTEBOOK_STUDY_PARALLELISM`, default 3). No answer cache, no deterministic final output. |
 | **v0.24.0.34** | HEAD | Notebook study layer: broad project/dataset questions in a selected scope now build a reading plan from `notebook_v1`, run section-level retrieval, feed the organized context to the normal model synthesis, and return a dedicated “Инженерный блокнот” artifact with the plan, sources by section and gaps. This is navigation, not deterministic final output. |
 | **v0.24.0.33** | HEAD | PDF/RAG lexical sync: qwen runtime lexical FTS was backfilled from existing Qdrant payloads (`188121/188121`) so deep notebooks and lexical/hybrid retrieval see already-indexed PDF/DOCX chunks; normal parse reindex now deletes and upserts `lexical_chunks` per file together with Qdrant points, making the FTS side index a maintained projection rather than a one-off repair. |
