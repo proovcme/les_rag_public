@@ -259,6 +259,28 @@ def test_chat_ui_renders_clickable_project_inventory_artifact():
     assert ".sov-inventory-ask-btn" in styles
 
 
+def test_chat_ui_shows_selected_dataset_files_panel():
+    source = inspect.getsource(chat_page.build_chat)
+    styles = Path("sovushka/styles.py").read_text(encoding="utf-8")
+
+    assert "scope_files_panel" in source
+    assert "_refresh_scope_files_panel" in source
+    assert "/api/notebooks/{_q(dsid, safe='')}/memory" in source
+    assert "Файлы выбранной области" in source
+    assert "Файлы датасета" in source
+    assert "_ask_about_scope_file" in source
+    assert "_pending_target_file[\"v\"] = target" in source
+    assert "Спросить строго по файлу" in source
+    assert "content_layers" in source
+    assert "document_role" in source
+    assert "base_name.startswith(\".\")" in source
+    assert "base_name.startswith(\"_les_\")" in source
+    assert ".sov-scope-files-panel" in styles
+    assert ".sov-scope-file-chip" in styles
+    assert ".sov-scope-file-badge" in styles
+    assert ".sov-scope-file-ask" in styles
+
+
 def test_operator_status_chips_hide_internal_trace_from_first_layer():
     meta = {
         "query_route": {"channel": "table", "kot": {"dataset_filter": "NTD_FIRE", "confidence": 0.8}},

@@ -374,6 +374,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
     out_mode_val = {"v": "text"}
     selected_session_card = {"el": None}
     project_state = {"id": None}  # W17.1: активный объект (None = обычный RAG по всему)
+    _pending_target_file = {"v": ""}
 
     # Резиновый layout: тащим разделитель → меняем ширину панели артефактов (CSS-var),
     # ширина сохраняется в localStorage. Деградирует мягко (нет JS → разделитель статичен).
@@ -500,6 +501,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                         project_state["id"] = scope_state["project_ids"][0] if scope_state["scope_type"] == "project" else None
                         scope_state["label"] = _scope_label()
                         scope_btn.set_text(scope_state["label"])
+                        try:
+                            asyncio.create_task(_refresh_scope_files_panel())
+                        except NameError:
+                            pass
 
                     def _open_scope_dialog():
                         # СИНХРОННО строим диалог из prefetch-кэша (как version-диалог): создавать UI в
@@ -591,6 +596,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     ui.button("Новый чат", icon="o_add_comment", on_click=lambda: _clear_chat()).props(
                         'flat dense no-caps aria-label="Новый чат"'
                     ).classes("sov-new-chat-btn").tooltip("Новая сессия без памяти прошлого диалога")
+
+            scope_files_panel = ui.element("div").classes("sov-scope-files-panel")
+            scope_files_panel.set_visibility(False)
 
             chat_scroll = ui.scroll_area().classes("sov-chat-scroll")
             with chat_scroll:
@@ -1055,6 +1063,125 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             [str(x) for x in (resolved.get("resolved_dataset_ids") or []) if str(x)],
             [str(x) for x in (resolved.get("resolved_dataset_names") or []) if str(x)],
         )
+
+    _scope_files_loading = {"v": False}
+    _scope_layer_labels = {
+        "text": "текст",
+        "graphics": "графика",
+        "tables": "таблицы",
+        "calculations": "расчёты",
+        "technical_docs": "техничка",
+        "drawings": "чертежи",
+        "cad_bim": "BIM",
+        "normative": "нормы",
+        "estimate": "сметы",
+    }
+
+    async def _ask_about_scope_file(file_name: str) -> None:
+        target = str(file_name or "").strip()
+        if not target:
+            return
+        _pending_target_file["v"] = target
+        chat_input.value = f"расскажи, что в файле {target}"
+        _update_prompt_preview()
+        await send_chat()
+
+    def _scope_file_label(card: dict) -> str:
+        file_name = str(card.get("file_name") or "")
+        return file_name.rsplit("/", 1)[-1] or file_name or "файл"
+
+    def _scope_file_badges(card: dict) -> list[str]:
+        layers = card.get("content_layer_labels") or card.get("content_layers") or []
+        labels = [_scope_layer_labels.get(str(layer), str(layer)) for layer in layers if str(layer)]
+        role = str(card.get("document_role") or "").strip()
+        if role and role not in labels:
+            labels.insert(0, role)
+        return labels[:4]
+
+    async def _refresh_scope_files_panel() -> None:
+        if _scope_files_loading["v"]:
+            return
+        ds_ids, ds_names = await _resolve_scope_dataset_ids()
+        if not ds_ids:
+            scope_files_panel.clear()
+            scope_files_panel.set_visibility(False)
+            return
+        _scope_files_loading["v"] = True
+        scope_files_panel.set_visibility(True)
+        scope_files_panel.clear()
+        with scope_files_panel:
+            with ui.row().classes("sov-scope-files-head"):
+                ui.icon("o_folder_open").classes("sov-scope-files-icon")
+                ui.label("Файлы выбранной области").classes("sov-scope-files-title")
+                ui.label("загружаю...").classes("sov-scope-files-note")
+        try:
+            memories: list[dict] = []
+            from urllib.parse import quote as _q
+            for dsid in ds_ids[:3]:
+                memory = await api_get(f"/api/notebooks/{_q(dsid, safe='')}/memory")
+                if isinstance(memory, dict):
+                    memories.append(memory)
+            scope_files_panel.clear()
+            with scope_files_panel:
+                with ui.row().classes("sov-scope-files-head"):
+                    ui.icon("o_folder_open").classes("sov-scope-files-icon")
+                    title = "Файлы датасета" if len(ds_ids) == 1 else "Файлы выбранной области"
+                    ui.label(title).classes("sov-scope-files-title")
+                    total_files = sum(len(m.get("file_cards") or []) for m in memories)
+                    ui.label(f"{len(ds_ids)} датасет(ов) · {total_files} файлов").classes("sov-scope-files-note")
+                    ui.button(
+                        icon="o_refresh",
+                        on_click=lambda: asyncio.create_task(_refresh_scope_files_panel()),
+                    ).props('flat round dense aria-label="Обновить файлы датасета"').classes("sov-icon-btn")
+                shown = 0
+                with ui.row().classes("sov-scope-files-list"):
+                    for idx, memory in enumerate(memories):
+                        dataset_name = (
+                            (ds_names[idx] if idx < len(ds_names) else "")
+                            or memory.get("dataset_name")
+                            or memory.get("dataset_id")
+                            or "датасет"
+                        )
+                        cards = list(memory.get("file_cards") or [])
+                        cards.sort(
+                            key=lambda card: (
+                                0 if str(card.get("document_role") or "") else 1,
+                                _scope_file_label(card).lower(),
+                            )
+                        )
+                        for card in cards[:18]:
+                            file_name = str(card.get("file_name") or "")
+                            if not file_name:
+                                continue
+                            base_name = file_name.rsplit("/", 1)[-1]
+                            if base_name.startswith(".") or base_name.startswith("_les_"):
+                                continue
+                            shown += 1
+                            with ui.element("div").classes("sov-scope-file-chip"):
+                                ui.label(_scope_file_label(card)).classes("sov-scope-file-name")
+                                if len(ds_ids) > 1:
+                                    ui.label(str(dataset_name)[:38]).classes("sov-scope-file-dataset")
+                                elif "/" in file_name:
+                                    ui.label(file_name.rsplit("/", 1)[0][-48:]).classes("sov-scope-file-dataset")
+                                badges = _scope_file_badges(card)
+                                if badges:
+                                    with ui.row().classes("sov-scope-file-badges"):
+                                        for badge in badges:
+                                            ui.label(str(badge)).classes("sov-scope-file-badge")
+                                ui.button(
+                                    icon="o_chat",
+                                    on_click=lambda f=file_name: asyncio.create_task(_ask_about_scope_file(f)),
+                                ).props('flat round dense aria-label="Спросить по файлу"').classes(
+                                    "sov-scope-file-ask"
+                                ).tooltip(f"Спросить строго по файлу: {file_name}")
+                if not shown:
+                    ui.label("В выбранной области пока нет карточек файлов. Нажми «Блокнот области» или переизучи датасет.").classes("sov-muted")
+                if len(ds_ids) > 3:
+                    ui.label(f"Показаны первые 3 датасета из {len(ds_ids)}. Остальные остаются в области поиска.").classes("sov-muted")
+        finally:
+            _scope_files_loading["v"] = False
+
+    asyncio.create_task(_refresh_scope_files_panel())
 
     async def _open_scope_passport() -> None:
         passport_scope_label.set_text(scope_state.get("label") or "Весь RAG")
@@ -2592,7 +2719,6 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
 
     _sending = {"v": False}
     _resource_blocked = {"v": False, "reason": ""}
-    _pending_target_file = {"v": ""}
 
     def _indexing_summary(data: dict) -> str:
         rag = state.get("rag_health", {}) if isinstance(state.get("rag_health"), dict) else {}

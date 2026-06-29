@@ -958,6 +958,86 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   font-size: .64rem;
   font-weight: 800;
 }
+.sov-scope-files-panel {
+  margin: 0 12px 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(138,162,184,.26);
+  border-radius: 8px;
+  background: var(--artifact-bg);
+}
+.sov-scope-files-head {
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.sov-scope-files-icon { color: var(--accent); font-size: 1rem; }
+.sov-scope-files-title {
+  font-size: .68rem;
+  font-weight: 900;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.sov-scope-files-note {
+  font-size: .62rem;
+  color: var(--dim);
+  margin-left: auto;
+}
+.sov-scope-files-list {
+  width: 100%;
+  gap: 8px;
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  padding-bottom: 2px;
+}
+.sov-scope-file-chip {
+  flex: 0 0 230px;
+  min-height: 82px;
+  border: 1px solid rgba(138,162,184,.28);
+  border-radius: 8px;
+  background: var(--card-bg);
+  padding: 8px 34px 8px 10px;
+  position: relative;
+}
+.sov-scope-file-name {
+  color: var(--text);
+  font-size: .68rem;
+  font-weight: 800;
+  line-height: 1.25;
+  max-height: 2.5em;
+  overflow: hidden;
+  word-break: break-word;
+}
+.sov-scope-file-dataset {
+  color: var(--dim);
+  font-size: .56rem;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sov-scope-file-badges {
+  gap: 4px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+.sov-scope-file-badge {
+  color: var(--accent);
+  border: 1px solid rgba(31,145,201,.30);
+  border-radius: 999px;
+  background: rgba(31,145,201,.07);
+  padding: 1px 6px;
+  font-size: .53rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+.sov-scope-file-ask {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  color: var(--accent);
+}
 
 /* Панель «Файлы»: готовые документы-артефакты (смета xlsx, формы). */
 .sov-files-artifacts {

@@ -7,6 +7,8 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.89** | HEAD | Selected dataset files polish: the compact selected-scope file strip hides service dot/_les_ files and shows a short parent folder for single-dataset file chips so repeated contents filenames are distinguishable. |
+| **v0.24.0.88** | HEAD | Selected dataset files MVP: chat now shows a compact file strip for the selected dataset/scope using typed `file_cards` from dataset memory, displays data-layer badges, and asks strict questions via the existing `target_file` channel without stuffing the whole registry into the model prompt. |
 | **v0.24.0.87** | HEAD | Smeta norm navigation polish: the estimator role-pack no longer demonstrates `area_total_m2=1` as a placeholder, model-facing norm-navigation wording uses estimator language for neighboring norms/selected applicable norms, and visible smeta prose is told not to leak `nearby_norms`. |
 | **v0.24.0.86** | HEAD | Smeta norm navigation: `smeta_norm_store_v4` adds model-facing norm navigation (collection/subsection labels, applicability questions, RIM boundary and nearby norms), `search_norm` returns shortlist-level `norm_navigation`, the GESN notebook prompt teaches family→collection→unit→questions, and the voice layer rejects partial-total contradictions such as “money is not counted” when a calculated part is visible. |
 | **v0.24.0.85** | HEAD | Smeta norm applicability questions: `add_position` now uses selected norm-card conditions to keep computed direct quantities partial until key applicability inputs are confirmed (soil group, depth, fastening, section/width), while model-facing comments and dialog memory carry Russian `norm_questions` instead of hidden machine fields. |

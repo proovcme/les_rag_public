@@ -21,7 +21,7 @@
 | `tests/test_smeta_norm_store.py` | 7 | typed SQLite-light smeta norm projection over existing GESN/FSM/TER sources: schema payload, FTS/LIKE candidate search, norm-card profiles with hints/resources/condition_hints/provenance/model_card/navigation, nearby norms, worker-thread cached reads, no heavy row leak in trace |
 | `tests/test_chat_harness_format.py` | 19 | smeta answer formatting and voice-layer guards: partial/final totals, hidden tool terms, model comments, and rejection of contradictions when calculated partial totals are visible |
 | `tests/test_context_memory_service.py` | 9 | dataset/service notebooks including GESN collection map prompt excerpt, typed dataset memory context, warmup, and navigation-not-evidence behavior |
-| `tests/test_sovushka_chat.py` | 30+ | Sovushka chat/UI regressions: markdown rendering, new-chat/model-chip/table wrapping, editable prompt controls, attachment context, no project-summary final hijack, and additive MetaDB inventory context for file-register RAG |
+| `tests/test_sovushka_chat.py` | 30+ | Sovushka chat/UI regressions: markdown rendering, new-chat/model-chip/table wrapping, editable prompt controls, attachment context, no project-summary final hijack, additive MetaDB inventory context, clickable file-register RAG, and selected-dataset file panel |
 
 ## Ключевые «живые» доказательства (на рантайме :8050)
 
