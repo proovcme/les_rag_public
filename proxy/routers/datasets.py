@@ -33,6 +33,7 @@ from proxy.services.context_memory_service import (
     get_dataset_profile,
     warmup_dataset_profiles,
 )
+from proxy.services.dataset_memory_service import schedule_dataset_reader_pass
 from proxy.services.resource_governor import active_parse_priority_order, current_runtime_profile
 from proxy.services.runtime_admission import evaluate_memory_pressure
 from proxy.services.retrieval_service import classify_query, resolve_dataset_ids, retrieve_chat_chunks
@@ -61,6 +62,7 @@ FOLDER_WATCH_CACHE_TTL_SEC = float(os.getenv("RAG_WATCH_CACHE_TTL_SEC", "15"))
 FOLDER_WATCH_CACHE_SAMPLE_LIMIT = int(os.getenv("RAG_WATCH_CACHE_SAMPLE_LIMIT", "200"))
 _folder_watch_cache_lock = threading.Lock()
 _folder_watch_cache: dict[str, tuple[float, dict[str, Any], list[dict[str, Any]]]] = {}
+_TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
 
 
 @dataclass
@@ -157,6 +159,40 @@ def get_dataset_state() -> DatasetRouterState:
     if _state is None:
         raise RuntimeError("dataset router state is not configured")
     return _state
+
+
+def _sparse_enabled() -> bool:
+    return os.getenv("RAG_SPARSE_ENABLED", "false").strip().lower() in _TRUE_ENV_VALUES
+
+
+def _sparse_collection_name() -> str:
+    return os.getenv("RAG_SPARSE_COLLECTION", "").strip() or f"{rag_collection_name()}_sparse"
+
+
+async def _sparse_sidecar_exists(client: httpx.AsyncClient, qdrant_url: str, collection_name: str) -> bool:
+    if not _sparse_enabled():
+        return False
+    response = await client.get(f"{qdrant_url}/collections/{collection_name}")
+    if response.status_code == 404:
+        return False
+    response.raise_for_status()
+    return True
+
+
+async def _delete_sparse_points_by_filter(
+    client: httpx.AsyncClient,
+    qdrant_url: str,
+    filter_payload: dict[str, Any],
+) -> bool:
+    sparse_collection = _sparse_collection_name()
+    if not await _sparse_sidecar_exists(client, qdrant_url, sparse_collection):
+        return False
+    response = await client.post(
+        f"{qdrant_url}/collections/{sparse_collection}/points/delete",
+        json={"filter": filter_payload},
+    )
+    response.raise_for_status()
+    return True
 
 
 def _chunk_payload(chunk: Any, *, rank: int, max_chars: int, expanded_chunk: Any | None = None) -> dict[str, Any]:
@@ -381,6 +417,23 @@ def active_parse_scheduler_job(state: DatasetRouterState) -> tuple[str, dict[str
     return None
 
 
+def _parse_result_ready_for_reader(result: Any) -> bool:
+    if not isinstance(result, dict):
+        return False
+    if result.get("status") != "completed":
+        return False
+    if int(result.get("errors") or 0):
+        return False
+    return int(result.get("remaining_pending") or 0) == 0
+
+
+def _schedule_reader_after_parse(dataset_id: str, *, reason: str, parse_result: Any) -> dict[str, Any] | None:
+    if not _parse_result_ready_for_reader(parse_result):
+        return None
+    result = schedule_dataset_reader_pass(dataset_id, reason=reason, force=True, require_enabled=True)
+    return result if result.get("scheduled") else None
+
+
 async def run_parse_scheduler(
     state: DatasetRouterState,
     req: ParseSchedulerRequest,
@@ -443,6 +496,13 @@ async def run_parse_scheduler(
                 "result": result,
             }
         )
+        reader_job = _schedule_reader_after_parse(
+            target["dataset_id"],
+            reason="parse_scheduler_batch",
+            parse_result=result,
+        )
+        if reader_job:
+            batches[-1]["dataset_reader"] = reader_job
 
         if unload_between_batches:
             batches[-1]["unload"] = await unload_mlx_models()
@@ -523,16 +583,23 @@ async def run_parse_scheduler(
 async def delete_dataset(dataset_id: str, _admin=Depends(require_admin)):
     ds_dir = safe_dataset_storage_dir(dataset_id)
     errors = []
+    qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
+    dataset_filter = {"must": [{"key": "dataset_id", "match": {"value": dataset_id}}]}
 
     try:
-        qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
         async with httpx.AsyncClient(timeout=10.0) as client:
             await client.post(
                 f"{qdrant_url}/collections/{rag_collection_name()}/points/delete",
-                json={"filter": {"must": [{"key": "dataset_id", "match": {"value": dataset_id}}]}},
+                json={"filter": dataset_filter},
             )
     except Exception as e:
         errors.append(f"Qdrant: {e}")
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await _delete_sparse_points_by_filter(client, qdrant_url, dataset_filter)
+    except Exception as e:
+        errors.append(f"Qdrant sparse: {e}")
 
     try:
         with sqlite3.connect(rag_meta_db_path()) as conn:
@@ -553,13 +620,19 @@ async def delete_dataset(dataset_id: str, _admin=Depends(require_admin)):
 @router.delete("/datasets")
 async def delete_all_datasets(_admin=Depends(require_admin)):
     errors = []
+    qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
 
     try:
-        qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
         async with httpx.AsyncClient(timeout=10.0) as client:
             await client.delete(f"{qdrant_url}/collections/{rag_collection_name()}")
     except Exception as e:
         errors.append(f"Qdrant delete: {e}")
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await _delete_sparse_points_by_filter(client, qdrant_url, {"must": []})
+    except Exception as e:
+        errors.append(f"Qdrant sparse delete: {e}")
 
     try:
         with sqlite3.connect(rag_meta_db_path()) as conn:
@@ -1669,6 +1742,9 @@ async def sync_folder(folder: str, _admin=Depends(require_admin)):
                         "parse_status": result_status,
                     },
                 )
+                reader_job = _schedule_reader_after_parse(ds.id, reason="sync_folder_parse", parse_result=result)
+                if reader_job:
+                    state.job_tracker[job_id]["dataset_reader"] = reader_job
                 logger.info(
                     "[JOB %s] %s: %s chunks, %.0fs, remaining=%s, errors=%s",
                     job_id, final_status, chunks, elapsed, remaining, errors,
@@ -1704,7 +1780,11 @@ async def parse_dataset_batch(
     async with state.parse_semaphore:
         await assert_parse_admission(state)
         result = await state.backend.parse_dataset(dataset_id, limit=limit)
-    return {"dataset_id": dataset_id, "limit": limit, "result": result}
+    response = {"dataset_id": dataset_id, "limit": limit, "result": result}
+    reader_job = _schedule_reader_after_parse(dataset_id, reason="parse_batch", parse_result=result)
+    if reader_job:
+        response["dataset_reader"] = reader_job
+    return response
 
 
 @router.post("/parse-scheduler")

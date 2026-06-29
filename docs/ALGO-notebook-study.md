@@ -13,7 +13,7 @@ layer: блокнот и план помогают читать корпус, н
 ## Точки входа
 
 - `proxy/services/notebook_study_service.py` — trigger, reading plan, section retrieval pack,
-  prompt-block и markdown artifact.
+  target-file enrichment по паспортным файлам, prompt-block и markdown artifact.
 - `proxy/routers/chat.py` — подключает слой в обычный RAG-путь для явных broad-запросов по выбранной
   области: «расскажи/разбери проект», «инженерная сводка по блокноту», «что внутри датасета».
 - `proxy/services/notebook_service.py` — источник карты датасета (`notebook_v1`).
@@ -31,11 +31,17 @@ layer: блокнот и план помогают читать корпус, н
    релевантные разделы, обычно до 4, а не весь список подряд.
 5. Для выбранных разделов параллельно вызывается тот же `retrieve_chat_chunks()`, но с расширенным
    section query. Параллелизм задаёт `LES_NOTEBOOK_STUDY_PARALLELISM` (по умолчанию 3).
-6. Найденные фрагменты добавляются в общий RAG-контекст; LLM получает `notebook_study` prompt-block
+6. Если memory/inventory видят паспортные документы (`состав проекта`, `ПЗ`, `содержание тома`,
+   `задание на проектирование`, `СТУ`, `ТЭП` и т.п.), слой делает второй retrieval-проход с точным
+   `doc_filter=<file_name>`. Это не final-ответ и не объектный шаблон: код только приносит модели
+   проверяемые фрагменты из конкретных файлов.
+7. Найденные фрагменты добавляются в общий RAG-контекст; LLM получает `notebook_study` prompt-block
    и отвечает обычным модельным синтезом.
-7. Payload получает:
+8. Payload получает:
    - `notebook_context.schema=notebook_study_v1`;
    - `retrieval_trace.notebook_study`;
+   - `notebook_context.targeted_files[]` с именами файлов, причиной выбора и количеством найденных
+     фрагментов;
    - `artifact.title=Инженерный блокнот` с найденными материалами, маршрутом чтения и пробелами.
 
 ## Границы
@@ -46,12 +52,14 @@ layer: блокнот и план помогают читать корпус, н
 - Нет объектных шаблонов состава работ.
 - Числа не считаются этим слоем. Если вопрос про стоимость, объёмы или суммы — должны сработать
   сметные/табличные инструменты.
-- Если раздел плана не нашёл источники, это пишется как пробел, а не заполняется догадкой.
+- Если раздел плана или точечно выбранный файл не нашёл источники, это пишется как пробел, а не
+  заполняется догадкой.
 - Полнота ограничена текущей индексацией: pending PDF и OCR-сканы останутся пробелами, пока не пройдут
   свой ingestion-путь.
 
 ## Тесты
 
 - `tests/test_notebook_study_service.py` — trigger без hijack сметы/source lookup, адаптивный план по
-  карте блокнота, параллельный section retrieval pack, artifact/prompt contract.
+  карте блокнота, выбор target-файлов по memory/inventory, параллельный section retrieval pack,
+  artifact/prompt contract.
 - `tests/test_notebook_api.py` и `tests/test_context_memory_service.py` — базовый notebook/context-memory слой.

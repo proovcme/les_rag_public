@@ -94,6 +94,36 @@ async def test_chat_stream_reset_then_final(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_chat_stream_recovers_long_answer_instead_of_late_reset_error(monkeypatch):
+    monkeypatch.setenv("LES_STREAM_RECOVERY_MIN_CHARS", "20")
+    monkeypatch.setenv("LES_STREAM_RESET_PRESERVE_CHARS", "20")
+
+    async def long_answer_then_tail_failure(req, token_sink=None):
+        await token_sink({"event": "sources", "data": {"sources": ["project.pdf"]}})
+        for piece in ("Готовый ", "инженерный ", "ответ по проекту."):
+            await token_sink({"event": "token", "data": piece})
+        await token_sink({"event": "reset", "data": ""})
+        await token_sink({"event": "token", "data": "дубль после reset"})
+        raise RuntimeError("tail stream timeout")
+
+    monkeypatch.setattr(chat_router, "_run_chat", long_answer_then_tail_failure)
+    resp = await chat_stream(ChatRequest(question="расскажи про проект"), _user=None)
+    body = await _drain(resp)
+
+    assert "event: reset" not in body
+    assert "дубль после reset" not in body
+    assert "event: error" not in body
+    assert "event: final" in body
+    final_blob = body.split("event: final\ndata: ", 1)[1].split("\n\n", 1)[0]
+    final = json.loads(final_blob)
+    assert final["answer"] == "Готовый инженерный ответ по проекту."
+    assert final["crag_status"] == "UNVALIDATED"
+    assert final["sources"] == ["project.pdf"]
+    assert final["retrieval_trace"]["stream_recovery"]["reason"] == "RuntimeError"
+    assert final["retrieval_trace"]["stream_recovery"]["reset_suppressed"] is True
+
+
+@pytest.mark.asyncio
 async def test_chat_stream_synthesizes_tokens_when_path_returns_final_only(monkeypatch):
     async def final_only(req, token_sink=None):
         assert token_sink is not None

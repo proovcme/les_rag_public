@@ -1,5 +1,7 @@
 """ProfileResolver — контракт маршрутизации (Codex §10.1A)."""
 
+import json
+
 import pytest
 
 from proxy.services.profile_resolver import (
@@ -188,3 +190,41 @@ async def test_query_route_carries_profile_for_explicit_mode(monkeypatch):
     assert prof["profile_id"] == "estimate_harness"
     assert prof["route_source"] == "explicit_mode"
     assert prof["executor"] == "cloud_large"
+
+
+@pytest.mark.asyncio
+async def test_auto_work_estimate_goes_to_harness_not_retrieval(monkeypatch):
+    from proxy.routers import chat as chat_router
+    _mock_chat_state(chat_router)
+    plan = {
+        "object": {"object_type": "work_item"},
+        "works": [
+            ["Разработка траншеи вручную", "разработка грунта траншеи вручную",
+             "earthworks", "excavation", "разработка", "м3", {}],
+        ],
+    }
+    monkeypatch.setattr(chat_router, "_harness_complete", lambda _messages: json.dumps(plan, ensure_ascii=False))
+
+    resp = await chat_router.chat(
+        chat_router.ChatRequest(
+            question=(
+                "регион санкт-петербург, нужно рассчитать сметную стоимость работ по "
+                "разработке траншеи вручную, объем выработки грунта 200 м3"
+            )
+        ),
+        _user=object(),
+    )
+
+    prof = resp["query_route"]["profile"]
+    assert prof["profile_id"] == "auto"
+    assert prof["route_source"] == "keyword"
+    assert prof["channel"] == "harness_mode"
+    assert prof["operation"] == "estimate_harness_auto_work"
+    assert resp["query_route"]["operation"] == "estimate_harness_auto_work"
+    assert resp["total_status"] == "partial"
+    assert resp.get("final_total") is None
+    answer = resp["answer"]
+    assert "Проверить по выбранным нормам" in answer
+    assert "группа грунта" in answer
+    assert "глубина разработки" in answer
+    assert "крепления траншей/котлована" in answer

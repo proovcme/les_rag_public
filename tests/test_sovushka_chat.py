@@ -1,9 +1,11 @@
 import inspect
+from pathlib import Path
 
 import pytest
 
 from proxy.routers import chat as chat_router
 from sovushka.pages import chat as chat_page
+from sovushka.pages import instrumenty as instrumenty_page
 from sovushka.pages.chat import (
     _attachment_chat_payload,
     _attachment_user_suffix,
@@ -22,6 +24,40 @@ def test_ai_plain_markdown_is_rendered_as_markdown_widget():
 
     assert "ui.markdown(_format_sources_as_quotes(_disp)).classes(\"sov-chat-message-text sov-chat-md\")" in source
     assert "ui.markdown(_format_sources_as_quotes(_bubble_text(str(text or \"\"), _mode)))" in source
+
+
+def test_chat_ui_has_new_chat_model_chip_answer_badge_and_wrapping_tables():
+    source = inspect.getsource(chat_page.build_chat)
+    styles = Path("sovushka/styles.py").read_text(encoding="utf-8")
+
+    assert "Новый чат" in source
+    assert "sov-new-chat-btn" in source
+    assert "model_chip = ui.label(\"MODEL -\")" in source
+    assert "_refresh_active_model_chip" in source
+    assert "api_get(\"/api/status\")" in source
+    assert "_render_model_badge(meta)" in source
+    assert "versions" in source and "d.get(\"versions\")" in source
+    assert 'pagination={"rowsPerPage": 0}' in source
+    assert ".sov-model-chip" in styles
+    assert ".sov-model-badge" in styles
+    assert ".sov-table-scroll .q-table__bottom { display: none !important; }" in styles
+    assert "sov-artifact-table" in source
+    assert "table-layout: auto" in styles
+    assert "overflow-wrap: break-word" in styles
+    assert "overflow-x: auto" in styles
+    assert "Do not start a second long /api/chat" in source
+    assert "serr = stream_state[\"error\"] or {}" in source
+
+
+def test_instrumenty_has_editable_prompt_controls():
+    source = inspect.getsource(instrumenty_page.build_instrumenty)
+    styles = Path("sovushka/styles.py").read_text(encoding="utf-8")
+
+    assert "_render_prompt_editor" in source
+    assert "api_patch(f\"/api/prompts/" in source
+    assert "api_delete(f\"/api/prompts/" in source
+    assert "sov-prompt-editor" in source
+    assert ".sov-prompt-editor" in styles
 
 
 def test_chat_attachment_upload_uses_nicegui_file_api_not_stale_content_api():
@@ -171,7 +207,56 @@ def test_chat_no_longer_auto_hijacks_project_summary():
 
     assert "deterministic_project_summary" not in source
     assert "is_project_summary_query(req.question)" not in source
-    assert "build_project_summary" not in source
+    assert "format_project_summary" not in source
+
+
+def test_chat_adds_metadb_inventory_context_without_project_summary_hijack():
+    source = inspect.getsource(chat_router._run_chat)
+
+    assert "is_project_inventory_query(req.question)" in source
+    assert "format_project_inventory_prompt" in source
+    assert "format_project_inventory_context" in source
+    assert "КАРТА РЕЕСТРА ДАТАСЕТА" in source
+    assert "project_inventory_artifact_text" in source
+    assert "Полный реестр файлов доступен отдельным артефактом/project_inventory" in source
+    assert "без markdown-таблиц" in source
+    assert "generation_budget = max(generation_budget, 2048)" in source
+    assert "Опись файлов датасета (MetaDB documents)" in source
+    assert "inventory_requested = bool" in source
+    assert "study_requested or inventory_requested" in source
+    assert "inventory_has_files" in source
+    assert "broad_project_inventory_fast_path" in source
+    assert "source_map+project_inventory_artifact" in source
+    assert 'validation_context = ""' in source
+    assert 'response["project_inventory"] = project_inventory_payload or {}' in source
+    assert 'response["notebook_artifact"]' in source
+    assert 'LES_NOTEBOOK_STUDY_ARTIFACT_VISIBLE' in source
+    assert 'if project_inventory_prompt:' in source
+    assert '"title": "Реестр файлов"' in source
+    assert "Не выводи наружу служебные слова" in source
+    assert "evidence, dataset, датасет" in source
+
+
+def test_chat_ui_renders_clickable_project_inventory_artifact():
+    source = inspect.getsource(chat_page.build_chat)
+    styles = Path("sovushka/styles.py").read_text(encoding="utf-8")
+
+    assert "_inventory_file_rows_from_meta" in source
+    assert "project_inventory" in source
+    assert "artifact.get(\"project_inventory\")" in source
+    assert "payload[\"target_file\"] = target_file" in source
+    assert "_pending_target_file[\"v\"] = target" in source
+    assert "расскажи, что в файле" in source
+    assert "Спросить по файлу" in source
+    assert "target_file=" in source
+    assert "has_inventory = bool(_inventory_file_rows_from_meta(meta))" in source
+    assert "artifact_shell.visible or _inventory_file_rows_from_meta(meta)" in source
+    assert "\"Реестр файлов\"" in source
+    assert "INDEXED" in source and "PENDING" in source and "ERROR" in source
+    assert "chunk_count" in source and "чанков" in source
+    assert ".sov-inventory-file-row" in styles
+    assert ".sov-inventory-status-indexed" in styles
+    assert ".sov-inventory-ask-btn" in styles
 
 
 def test_operator_status_chips_hide_internal_trace_from_first_layer():

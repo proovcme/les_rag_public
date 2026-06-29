@@ -88,8 +88,50 @@ class FakeJobService:
         return {}
 
 
+def test_schedule_reader_after_parse_only_when_dataset_complete(monkeypatch):
+    calls = []
+
+    def fake_schedule(dataset_id, **kwargs):
+        calls.append((dataset_id, kwargs))
+        return {"scheduled": True, "dataset_id": dataset_id}
+
+    monkeypatch.setattr(datasets, "schedule_dataset_reader_pass", fake_schedule)
+
+    assert datasets._schedule_reader_after_parse(
+        "ds-1",
+        reason="test",
+        parse_result={"status": "completed", "errors": 0, "remaining_pending": 0},
+    ) == {"scheduled": True, "dataset_id": "ds-1"}
+    assert datasets._schedule_reader_after_parse(
+        "ds-1",
+        reason="test",
+        parse_result={"status": "completed", "errors": 0, "remaining_pending": 2},
+    ) is None
+    assert datasets._schedule_reader_after_parse(
+        "ds-1",
+        reason="test",
+        parse_result={"status": "partial", "errors": 0, "remaining_pending": 0},
+    ) is None
+    assert datasets._schedule_reader_after_parse(
+        "ds-1",
+        reason="test",
+        parse_result={"status": "completed", "errors": 1, "remaining_pending": 0},
+    ) is None
+
+    assert calls == [("ds-1", {"reason": "test", "force": True, "require_enabled": True})]
+
+
 def _upload(filename: str, content: bytes) -> UploadFile:
     return UploadFile(file=BytesIO(content), filename=filename)
+
+
+class FakeHTTPResponse:
+    def __init__(self, status_code: int = 200):
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"http {self.status_code}")
 
 
 @pytest.fixture()
@@ -117,6 +159,114 @@ async def test_dataset_list_and_create_use_configured_state(dataset_state):
     created = await datasets.create_dataset("Mail_Index", _admin=object())
 
     assert created == {"id": "ds-2", "name": "Mail_Index"}
+
+
+@pytest.mark.asyncio
+async def test_delete_dataset_cleans_sparse_sidecar_best_effort(tmp_path, monkeypatch, dataset_state):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RAG_META_DB_PATH", str(tmp_path / "data" / "les_meta.db"))
+    monkeypatch.setenv("RAG_COLLECTION_NAME", "les_rag")
+    monkeypatch.setenv("RAG_SPARSE_ENABLED", "true")
+    (tmp_path / "storage" / "datasets" / "ds-1").mkdir(parents=True)
+    (tmp_path / "data").mkdir()
+    with sqlite3.connect(tmp_path / "data" / "les_meta.db") as conn:
+        conn.execute("CREATE TABLE datasets (id TEXT PRIMARY KEY, name TEXT)")
+        conn.execute("CREATE TABLE documents (id TEXT PRIMARY KEY, dataset_id TEXT)")
+        conn.execute("INSERT INTO datasets (id, name) VALUES ('ds-1', 'NTD_Index')")
+        conn.execute("INSERT INTO documents (id, dataset_id) VALUES ('doc-1', 'ds-1')")
+
+    calls = []
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, json):
+            calls.append(("post", url, json))
+            return FakeHTTPResponse()
+
+        async def get(self, url):
+            calls.append(("get", url, None))
+            return FakeHTTPResponse()
+
+    monkeypatch.setattr(datasets.httpx, "AsyncClient", FakeAsyncClient)
+
+    result = await datasets.delete_dataset("ds-1", _admin=object())
+
+    assert result == {"status": "deleted", "dataset_id": "ds-1", "errors": []}
+    assert calls == [
+        (
+            "post",
+            "http://127.0.0.1:6333/collections/les_rag/points/delete",
+            {"filter": {"must": [{"key": "dataset_id", "match": {"value": "ds-1"}}]}},
+        ),
+        ("get", "http://127.0.0.1:6333/collections/les_rag_sparse", None),
+        (
+            "post",
+            "http://127.0.0.1:6333/collections/les_rag_sparse/points/delete",
+            {"filter": {"must": [{"key": "dataset_id", "match": {"value": "ds-1"}}]}},
+        ),
+    ]
+    assert not (tmp_path / "storage" / "datasets" / "ds-1").exists()
+
+
+@pytest.mark.asyncio
+async def test_delete_all_datasets_cleans_sparse_sidecar_points(tmp_path, monkeypatch, dataset_state):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RAG_META_DB_PATH", str(tmp_path / "data" / "les_meta.db"))
+    monkeypatch.setenv("RAG_COLLECTION_NAME", "les_rag")
+    monkeypatch.setenv("RAG_SPARSE_ENABLED", "true")
+    (tmp_path / "storage" / "datasets" / "ds-1").mkdir(parents=True)
+    (tmp_path / "data").mkdir()
+    with sqlite3.connect(tmp_path / "data" / "les_meta.db") as conn:
+        conn.execute("CREATE TABLE datasets (id TEXT PRIMARY KEY, name TEXT)")
+        conn.execute("CREATE TABLE documents (id TEXT PRIMARY KEY, dataset_id TEXT)")
+
+    calls = []
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def delete(self, url):
+            calls.append(("delete", url, None))
+            return FakeHTTPResponse()
+
+        async def get(self, url):
+            calls.append(("get", url, None))
+            return FakeHTTPResponse()
+
+        async def post(self, url, json):
+            calls.append(("post", url, json))
+            return FakeHTTPResponse()
+
+    monkeypatch.setattr(datasets.httpx, "AsyncClient", FakeAsyncClient)
+
+    result = await datasets.delete_all_datasets(_admin=object())
+
+    assert result == {"status": "reset", "errors": []}
+    assert calls == [
+        ("delete", "http://127.0.0.1:6333/collections/les_rag", None),
+        ("get", "http://127.0.0.1:6333/collections/les_rag_sparse", None),
+        (
+            "post",
+            "http://127.0.0.1:6333/collections/les_rag_sparse/points/delete",
+            {"filter": {"must": []}},
+        ),
+    ]
+    assert not (tmp_path / "storage" / "datasets" / "ds-1").exists()
 
 
 @pytest.mark.asyncio

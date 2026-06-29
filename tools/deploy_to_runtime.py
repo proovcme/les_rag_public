@@ -78,7 +78,12 @@ def _changed_files() -> list[str]:
         path = line[3:].strip().strip('"')
         if " -> " in path:                       # переименование
             path = path.split(" -> ", 1)[1]
-        files.append(path)
+        dev_path = DEV / path
+        if dev_path.is_dir():
+            for child in sorted(p for p in dev_path.rglob("*") if p.is_file()):
+                files.append(str(child.relative_to(DEV)))
+        else:
+            files.append(path)
     return files
 
 

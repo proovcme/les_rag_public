@@ -1,4 +1,14 @@
-from proxy.routers.chat import _format_harness, _format_harness_artifact
+from types import SimpleNamespace
+
+import pytest
+
+from proxy.routers.chat import (
+    _format_harness,
+    _format_harness_artifact,
+    _format_smeta_dialog_state,
+    _harness_voice_comment,
+    _smeta_dialog_state,
+)
 
 
 def test_harness_answer_is_operator_facing_with_numbers():
@@ -32,6 +42,270 @@ def test_harness_answer_is_operator_facing_with_numbers():
     assert "декомпозиция" not in text.lower()
 
 
+def test_harness_voice_allows_short_human_comment(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": (
+                "Считаю то, что можно привязать к нормам.\n"
+                "А спорное пока не тащу в итог: смета не место для гадания."
+            )}}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr("proxy.routers.chat._llm_runtime", lambda: SimpleNamespace(
+        model="test-model", provider="openai", chat_url="http://127.0.0.1/test", api_key="",
+    ))
+    monkeypatch.setattr("proxy.routers.chat.httpx.Client", FakeClient)
+
+    text = _harness_voice_comment({"computed": [{}], "needs_input": [{}]}, "вопрос")
+
+    assert "Считаю то" in text
+    assert "\n" in text
+
+
+def test_harness_voice_allows_visible_estimator_reasoning(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": (
+                "Я вижу объектный запрос, а не готовую ВОР: бетонная дача сама по себе ещё не объём.\n"
+                "Кровлю и отделку можно обсуждать как разделы, но считать их без площади дома — это уже цирк с калькулятором.\n"
+                "Сначала нужны площадь или габариты, дальше можно разложить фундамент, стены, перекрытия и кровлю.\n"
+                "После этого инструмент нормально подберёт нормы и посчитает, а не будет изображать смету на салфетке."
+            )}}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr("proxy.routers.chat._llm_runtime", lambda: SimpleNamespace(
+        model="test-model", provider="openai", chat_url="http://127.0.0.1/test", api_key="",
+    ))
+    monkeypatch.setattr("proxy.routers.chat.httpx.Client", FakeClient)
+
+    text = _harness_voice_comment({
+        "total_status": "blocked",
+        "computed": [],
+        "needs_input": [{"work": "Устройство кровли", "missing_slots": ["area_total_m2"]}],
+    }, "хочу построить бетонную двухэтажную дачу")
+
+    assert "объектный запрос" in text
+    assert "площадь" in text
+    assert len(text) > 250
+
+
+def test_harness_voice_trims_model_table_rewrite(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": (
+                "Понимаю запрос как объектную смету, но исходных ещё мало.\n"
+                "Сначала нужны габариты и конструктив, иначе смета будет гаданием.\n\n"
+                "Таблица расчётного слоя (статус: blocked)\n"
+                "1) Устройство кровли — pending"
+            )}}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr("proxy.routers.chat._llm_runtime", lambda: SimpleNamespace(
+        model="test-model", provider="openai", chat_url="http://127.0.0.1/test", api_key="",
+    ))
+    monkeypatch.setattr("proxy.routers.chat.httpx.Client", FakeClient)
+
+    text = _harness_voice_comment({"total_status": "blocked", "needs_input": [{}]}, "вопрос")
+
+    assert "Понимаю запрос" in text
+    assert "Таблица расчётного слоя" not in text
+    assert "Устройство кровли" not in text
+
+
+def test_harness_voice_allows_exact_payload_facts(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": (
+                "По ГЭСН:10-02-017-03 расчётная часть есть, 1 200.00 ₽ вижу в таблице.\n"
+                "Остальное без гадания держу в уточнении."
+            )}}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr("proxy.routers.chat._llm_runtime", lambda: SimpleNamespace(
+        model="test-model", provider="openai", chat_url="http://127.0.0.1/test", api_key="",
+    ))
+    monkeypatch.setattr("proxy.routers.chat.httpx.Client", FakeClient)
+
+    text = _harness_voice_comment({
+        "computed": [{"code": "ГЭСН:10-02-017-03"}],
+        "final_total": {"grand_total": 1200.0, "smr": 1000.0},
+    }, "вопрос")
+
+    assert "ГЭСН:10-02-017-03" in text
+    assert "1 200.00 ₽" in text
+
+
+def test_harness_voice_rejects_partial_money_even_when_partial_total_exists(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": (
+                "Часть расчёта есть: 1 200.00 ₽, но финал держу в уточнении."
+            )}}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr("proxy.routers.chat._llm_runtime", lambda: SimpleNamespace(
+        model="test-model", provider="openai", chat_url="http://127.0.0.1/test", api_key="",
+    ))
+    monkeypatch.setattr("proxy.routers.chat.httpx.Client", FakeClient)
+
+    text = _harness_voice_comment({
+        "computed": [{"code": "ГЭСН:10-02-017-03"}],
+        "needs_input": [{"work": "Параметры"}],
+        "partial_total": {"grand_total": 1200.0, "smr": 1000.0},
+        "final_total": None,
+    }, "вопрос")
+
+    assert text == ""
+
+
+def test_harness_voice_rejects_partial_contradiction_when_partial_total_visible(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": (
+                "Деньги сейчас не считаю: без региона это будет художественная литература."
+            )}}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr("proxy.routers.chat._llm_runtime", lambda: SimpleNamespace(
+        model="test-model", provider="openai", chat_url="http://127.0.0.1/test", api_key="",
+    ))
+    monkeypatch.setattr("proxy.routers.chat.httpx.Client", FakeClient)
+
+    text = _harness_voice_comment({
+        "total_status": "partial",
+        "computed": [{"work": "Каркас", "code": "ГЭСН:10-02-017-03"}],
+        "needs_input": [{"work": "Фундамент", "reason": "нет типа основания"}],
+        "partial_total": {"grand_total": 1200.0, "smr": 1000.0},
+        "final_total": None,
+    }, "дай смету на дачу")
+
+    assert text == ""
+
+
+@pytest.mark.parametrize("bad_text", [
+    "Получилось 1 200 ₽, жить можно.",
+    "Беру ГЭСН:10-02-017-03, дальше видно.",
+    "НР 109% оставляю как есть.",
+])
+def test_harness_voice_rejects_numbers_codes_and_percents(monkeypatch, bad_text):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": bad_text}}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr("proxy.routers.chat._llm_runtime", lambda: SimpleNamespace(
+        model="test-model", provider="openai", chat_url="http://127.0.0.1/test", api_key="",
+    ))
+    monkeypatch.setattr("proxy.routers.chat.httpx.Client", FakeClient)
+
+    assert _harness_voice_comment({"computed": [{}]}, "вопрос") == ""
+
+
 def test_harness_answer_shows_candidate_table_without_tool_trace():
     text = _format_harness({
         "schema": {"object_type": "house", "area_total_m2": 150},
@@ -54,10 +328,78 @@ def test_harness_answer_shows_candidate_table_without_tool_trace():
         "steps": 1,
     })
 
-    assert "| Работа | Лучший кандидат |" in text
+    assert "| Работа | Норма |" in text
     assert "ГЭСН:05-01-089-03" in text
     assert "Число не показываю" in text
     assert "search_norm" not in text
+    assert "кандидат" not in text.lower()
+
+
+def test_harness_answer_humanizes_missing_object_area_slot():
+    text = _format_harness({
+        "schema": {"object_type": "house", "area_total_m2": None},
+        "total_status": "blocked",
+        "computed": [],
+        "needs_input": [{
+            "work": "Устройство кровли",
+            "missing_slots": ["area_total_m2"],
+            "reason": "нет исходной площади/габаритов объекта",
+        }],
+        "rejected": [],
+        "partial_total": None,
+        "final_total": None,
+    })
+
+    assert "площадь/габариты объекта" in text
+    assert "area_total_m2" not in text
+
+
+def test_harness_answer_humanizes_internal_technical_terms():
+    text = _format_harness({
+        "schema": {"object_type": "house", "area_total_m2": None},
+        "total_status": "blocked",
+        "computed": [],
+        "needs_input": [{
+            "work": "Монолитные стены",
+            "missing_slots": ["wall_length_m", "wall_height_m", "wall_thickness_m"],
+            "reason": "нет расчётной формулы для element_type=monolithic_wall; нет параметров: wall_length_m",
+        }],
+        "rejected": [],
+        "partial_total": None,
+        "final_total": None,
+    })
+
+    assert "длина/периметр стен" in text
+    assert "высота стен" in text
+    assert "толщина стен" in text
+    assert "для типа работ: монолитные стены" in text
+    assert "element_type" not in text
+    assert "wall_length_m" not in text
+
+
+def test_harness_answer_marks_assumption_scenario():
+    text = _format_harness({
+        "schema": {"object_type": "house", "area_total_m2": 200},
+        "assumption_mode": True,
+        "scenario_assumptions": ["площадь принята по допущению"],
+        "total_status": "partial",
+        "computed": [{
+            "work": "Устройство кровли",
+            "code": "ГЭСН:12-01-024-01",
+            "qty": 1.25,
+            "norm_unit": "100 м2",
+            "phys_qty": 125,
+            "physical_unit": "м2",
+        }],
+        "needs_input": [{"work": "Фундамент", "reason": "нет типа основания"}],
+        "rejected": [],
+        "partial_total": {"smr": 1000, "grand_total": 1200, "positions": 1},
+        "final_total": None,
+    })
+
+    assert "Сценарий по допущениям" in text
+    assert "площадь принята по допущению" in text
+    assert "не проектная смета" in text
 
 
 def test_harness_partial_total_does_not_contradict_visible_number():
@@ -176,3 +518,73 @@ def test_harness_summary_points_to_resource_artifact():
     assert "Краны" in artifact
     assert "Электроды" in artifact
     assert "Коэффициент не применён" in artifact
+
+
+def test_smeta_dialog_state_preserves_tool_result_for_next_turn():
+    result = {
+        "schema": {"object_type": "concrete_house", "area_total_m2": None, "floors": 2},
+        "total_status": "blocked",
+        "computed": [],
+        "needs_input": [{
+            "work": "Устройство кровли",
+            "status": "needs_input",
+            "missing_slots": ["area_total_m2"],
+            "reason": "нет исходной площади/габаритов объекта",
+        }],
+        "rejected": [],
+    }
+
+    state = _smeta_dialog_state(result)
+    text = _format_smeta_dialog_state(state)
+
+    assert state["schema"] == "smeta_dialog_state_v1"
+    assert state["pending"][0]["missing_slots"] == ["площадь/габариты объекта"]
+    assert "Предыдущий результат smeta-инструментов" in text
+    assert "Устройство кровли" in text
+    assert "площадь/габариты объекта" in text
+    assert "area_total_m2" not in text
+
+
+def test_smeta_dialog_state_humanizes_missing_slots_for_model_memory():
+    state = _smeta_dialog_state({
+        "total_status": "blocked",
+        "schema": {"object_type": "house"},
+        "computed": [],
+        "needs_input": [{
+            "work": "Стены",
+            "reason": "нет параметров: wall_length_m, wall_height_m",
+            "missing_slots": ["wall_length_m", "wall_height_m"],
+        }],
+        "rejected": [],
+    })
+    formatted = _format_smeta_dialog_state(state)
+
+    assert "длина/периметр стен" in formatted
+    assert "высота стен" in formatted
+    assert "wall_length_m" not in formatted
+    assert "wall_height_m" not in formatted
+
+
+def test_harness_direct_quantity_title_does_not_show_planner_area():
+    text = _format_harness({
+        "schema": {"object_type": "metal_structure", "area_total_m2": 150},
+        "direct_quantity_estimate": True,
+        "total_status": "complete",
+        "computed": [{
+            "work": "Монтаж металлоконструкций",
+            "code": "ГЭСНм:38-01-001-01",
+            "qty": 664.71112,
+            "norm_unit": "т",
+            "phys_qty": 664.71112,
+            "physical_unit": "т",
+        }],
+        "needs_input": [],
+        "rejected": [],
+        "partial_total": {"smr": 1000, "grand_total": 1200, "positions": 1},
+        "final_total": {"smr": 1000, "grand_total": 1200, "positions": 1},
+        "trace": [],
+        "steps": 1,
+    })
+
+    assert "Монтаж металлоконструкций" in text
+    assert "150 м²" not in text

@@ -36,6 +36,7 @@ from proxy.services.candidate_selection_service import (
 from proxy.services.estimate_math_service import _eval_formula, _f, _geometry
 from proxy.services.notebook_service import gesn_notebook_prompt_excerpt
 from proxy.services.prompt_registry_service import build_smeta_batch_system_prompt
+from proxy.services.smeta_norm_store import SmetaNormRow, get_smeta_norm_store, norm_store_payload
 
 # ── единицы измерения (UNIT CONTRACT) ────────────────────────────────────────────────────
 
@@ -115,9 +116,17 @@ _UNIT_ALIASES: dict[str, str] = {
     "tons": "т",
     "tonne": "т",
     "tonnes": "т",
-    "piece": "",
-    "pcs": "",
-    "шт": "",
+    "piece": "шт",
+    "pcs": "шт",
+    "шт": "шт",
+}
+
+_DIRECT_QTY_SLOT_BY_UNIT = {
+    "м3": "volume_m3",
+    "м2": "area_m2",
+    "т": "mass_t",
+    "шт": "piece_count",
+    "": "piece_count",
 }
 
 _SMETA_REASON_LABELS: dict[str, tuple[str, str]] = {
@@ -217,9 +226,11 @@ def check_applicability(code: str, norm_name: str, work_family: str) -> tuple[st
 
 @lru_cache(maxsize=1)
 def _norm_index() -> list[tuple[str, str, str]]:
-    from proxy.services.gesn_service import load_base_norms
-    return [(code, str(n.get("name", "")).lower(), str(n.get("unit", "")))
-            for code, n in (load_base_norms() or {}).items()]
+    return [(row.code, row.title, row.measure_unit) for row in get_smeta_norm_store().rows]
+
+
+def _norm_candidate_rows(words: list[str]) -> list[SmetaNormRow]:
+    return get_smeta_norm_store().search_rows(words)
 
 
 # Gate 3: позитивные/негативные признаки названия по ТИПУ ЭЛЕМЕНТА (точнее семьи).
@@ -262,7 +273,7 @@ def _normalize_action(action: str) -> str:
 
 def _normalize_unit_hint(unit: str) -> str:
     u = _canon_unit(unit)
-    return _UNIT_ALIASES.get(u, u if u in {"м3", "м2", "т"} else "")
+    return _UNIT_ALIASES.get(u, u if u in {"м3", "м2", "т", "шт"} else "")
 
 
 def _normalize_work_item(item: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
@@ -315,7 +326,8 @@ def _normalize_work_item(item: dict[str, Any]) -> tuple[dict[str, Any], list[str
 
 
 def _score_candidate(words: list[str], code: str, name: str, unit: str, *, work_family: str,
-                     element_type: str, action: str, phys_unit: str) -> tuple[float, dict[str, float]] | None:
+                     element_type: str, action: str, phys_unit: str,
+                     norm_row: SmetaNormRow | None = None) -> tuple[float, dict[str, float]] | None:
     """Структурный скоринг кандидата (прозрачный score_parts). Нет лексич. совпадения → None."""
     fts = sum(1 for w in words if w in name)
     if not fts:
@@ -328,6 +340,24 @@ def _score_candidate(words: list[str], code: str, name: str, unit: str, *, work_
     parts["action"] = 0.8 if (action and action.lower()[:5] and action.lower()[:5] in name) else 0.0
     _, base = _norm_unit_factor(unit)
     parts["unit"] = 1.0 if (phys_unit and _units_compatible(phys_unit, base)) else 0.0
+    if norm_row is not None:
+        profile = norm_row.profile()
+        families = set(profile.get("family_hints") or [])
+        elements = set(profile.get("element_hints") or [])
+        actions = set(profile.get("action_hints") or [])
+        if work_family and work_family in families:
+            parts["profile_family"] = 1.4
+        elif work_family and families:
+            parts["profile_family"] = -0.8
+        if element_type and element_type in elements:
+            parts["profile_element"] = 1.6
+        elif element_type and elements:
+            parts["profile_element"] = -0.6
+        normalized_action = _normalize_action(action)
+        if normalized_action and normalized_action in actions:
+            parts["profile_action"] = 0.9
+        if profile.get("resource_count"):
+            parts["resource_profile"] = 0.2
     # тяжёлые штрафы: спец/нерелевантные сооружения и запрещённые подразделы тонут (но в выдаче видны)
     parts["forbidden"] = -5.0 * sum(1 for a in _FORBIDDEN_TITLE_ANCHORS if a in name)
     plain_code = _plain_norm_code(code)
@@ -355,30 +385,89 @@ def search_norm(work_description: str, *, work_family: str = "", element_type: s
         and (uh == "т" or any(w.startswith(("масс", "тонн")) for w in words))
     ):
         words.extend(["массой", "сборка", "краном", "листовые", "конструкции"])
-    scored: list[tuple[float, dict, str, str, str]] = []
-    for code, name, unit in _norm_index():
-        sc = _score_candidate(words, code, name, unit, work_family=work_family,
-                              element_type=element_type, action=action, phys_unit=uh)
+    norm_rows = _norm_candidate_rows(words)
+    scored: list[tuple[float, dict, SmetaNormRow]] = []
+    for row in norm_rows:
+        sc = _score_candidate(words, row.code, row.title, row.measure_unit, work_family=work_family,
+                              element_type=element_type, action=action, phys_unit=uh, norm_row=row)
         if sc is None:
             continue
-        scored.append((sc[0], sc[1], code, name, unit))
+        scored.append((sc[0], sc[1], row))
     if not scored:
         return {"status": "not_found", "candidates": [], "hint": "переформулируй work_description"}
-    scored.sort(key=lambda t: (-t[0], t[2]))
+    scored.sort(key=lambda t: (-t[0], t[2].code))
 
     candidates = []
-    for total, parts, c, nm, u in scored[:top_k]:
+    store = get_smeta_norm_store()
+    for total, parts, row in scored[:top_k]:
+        c, nm, u = row.code, row.title, row.measure_unit
         factor, base = _norm_unit_factor(u)
         appl, reasons = check_applicability(c, nm, work_family)
+        profile = row.profile()
+        profile["navigation"] = store.navigation_for(
+            row,
+            family_hint=work_family,
+            element_hint=element_type,
+            limit=3,
+        )
         candidates.append({"norm_code": c, "title": nm, "collection": _collection_of(c),
                            "measure_unit": u, "base_unit": base,
                            "unit_compatible": (not uh) or _units_compatible(uh, base),
                            "applicability_status": appl, "rejection_reasons": reasons,
-                           "score_total": total, "score_parts": parts})
+                           "score_total": total, "score_parts": parts,
+                           "norm_profile": profile})
     selection = _candidate_selection(candidates)
     status = "found" if selection["action"] == "bind_top_candidate" else "ambiguous"
+    navigation = _search_norm_navigation(candidates, work_family=work_family, element_type=element_type, unit_hint=uh)
     return {"status": status, "work_family": work_family, "element_type": element_type,
+            "norm_store": norm_store_payload(),
+            "candidate_pool": {"searched": len(norm_rows), "scored": len(scored)},
+            "norm_navigation": navigation,
             "candidates": candidates, "selection": selection}
+
+
+def _search_norm_navigation(candidates: list[dict[str, Any]], *, work_family: str,
+                            element_type: str, unit_hint: str) -> dict[str, Any]:
+    collections: dict[str, dict[str, Any]] = {}
+    questions: list[str] = []
+    accepted = 0
+    unit_mismatch = 0
+    for candidate in candidates:
+        profile = candidate.get("norm_profile") if isinstance(candidate.get("norm_profile"), dict) else {}
+        nav = profile.get("navigation") if isinstance(profile.get("navigation"), dict) else {}
+        collection = nav.get("collection") if isinstance(nav.get("collection"), dict) else {}
+        key = str(collection.get("key") or candidate.get("collection") or "")
+        if key:
+            bucket = collections.setdefault(key, {"key": key, "label": collection.get("label") or key, "count": 0})
+            bucket["count"] += 1
+        for question in nav.get("questions_to_ask") or []:
+            text = str(question or "").strip()
+            if text and text not in questions:
+                questions.append(text)
+        if candidate.get("applicability_status") == "accepted" and candidate.get("unit_compatible"):
+            accepted += 1
+        if candidate.get("unit_compatible") is False:
+            unit_mismatch += 1
+    if accepted:
+        next_step = "можно брать выбранную применимую норму в расчёт, но проверить условия нормы"
+    elif unit_mismatch:
+        next_step = "сначала уточнить физическую единицу/объём: первые найденные нормы не совпадают по измерителю"
+    elif candidates:
+        next_step = "кандидаты есть, но применимость не уверена: сравнить соседние нормы и спросить условия"
+    else:
+        next_step = "переформулировать описание работы строительными терминами"
+    return {
+        "purpose": "карта выбора нормы для модели; не расчёт и не готовый ответ",
+        "intent": {
+            "work_family": work_family,
+            "element_type": element_type,
+            "unit_hint": unit_hint,
+        },
+        "collections": sorted(collections.values(), key=lambda x: (-int(x.get("count") or 0), str(x.get("key"))))[:5],
+        "questions_to_ask": questions[:8],
+        "next_step": next_step,
+        "rim_boundary": "модель выбирает ход и вопросы; add_position/lsr_assembly считают объём, ресурсы, НР/СП и итог",
+    }
 
 
 def _candidate_reason_labels(candidate: dict[str, Any]) -> list[str]:
@@ -416,6 +505,8 @@ def _magnitude_check(physical_unit: str, qty: float, geom: dict[str, Any]) -> tu
     (1.44 млн м³ на 4800 м²), НЕ придирается к 2×. ok, bound, reason."""
     base = _canon_unit(physical_unit)
     S = _f(geom.get("S")); S1 = _f(geom.get("S1")); N = _f(geom.get("N")) or 1
+    if not geom or (base == "м3" and S1 <= 0) or (base == "м2" and S <= 0):
+        return True, None, ""
     if base == "м3":
         bound = max(S1 * (N * 4.0 + 15.0) * 2.0, 1.0)   # пятно × (высота+глубина) × запас 2
         return qty <= bound, round(bound, 1), "объём > пятно×высота×запас (вероятно ×100 от единицы)"
@@ -502,15 +593,54 @@ def resolve_slots(element_type: str, geom: dict[str, Any], user_slots: dict[str,
     return spec, ns, missing, assumptions
 
 
+_NUM_TOKEN = r"\d[\d\s\xa0.,]*"
 _PARAM_PATTERNS = [
-    ("mass_t",             r"(?:масс\w*|вес)[^\d]{0,80}(\d[\d\s\xa0]*(?:[.,]\d+)?)\s*(кг|т|тонн\w*)\b", None),
-    ("excavation_depth_m", r"глубин\w*\D{0,18}(\d+(?:[.,]\d+)?)\s*м(?!\w)", 1.0),
-    ("slab_thickness_m",   r"(?:плит\w*|фундамент\w*)\D{0,16}(\d+(?:[.,]\d+)?)\s*(мм|см|м)\b", None),
-    ("wall_thickness_m",   r"стен\w*\D{0,16}(\d+(?:[.,]\d+)?)\s*(мм|см|м)\b", None),
-    ("wall_height_m",      r"высот\w*\D{0,14}(\d+(?:[.,]\d+)?)\s*м(?!\w)", 1.0),
-    ("wall_length_m",      r"(?:периметр|длин\w* стен)\D{0,14}(\d+(?:[.,]\d+)?)\s*м(?!\w)", 1.0),
-    ("pile_count",         r"(?:сва\w*\D{0,10}(\d+(?:[.,]\d+)?)|(\d+(?:[.,]\d+)?)\s*сва\w*)", 1.0),
+    ("mass_t",             rf"(?:масс\w*|вес)[^\d]{{0,80}}({_NUM_TOKEN})\s*(кг|т|тонн\w*)\b", None),
+    ("volume_m3",          rf"(?:об[ъь]е[мё]\w*|выработк\w*)[^\d]{{0,50}}({_NUM_TOKEN})\s*(м3|м³|куб\.?\s*м)\b", None),
+    ("area_m2",            rf"(?:площад\w*)[^\d]{{0,50}}({_NUM_TOKEN})\s*(м2|м²|кв\.?\s*м)\b", None),
+    ("excavation_depth_m", rf"глубин\w*\D{{0,18}}({_NUM_TOKEN})\s*м(?!\w)", 1.0),
+    ("slab_thickness_m",   rf"(?:плит\w*|фундамент\w*)\D{{0,16}}({_NUM_TOKEN})\s*(мм|см|м)\b", None),
+    ("wall_thickness_m",   rf"стен\w*\D{{0,16}}({_NUM_TOKEN})\s*(мм|см|м)\b", None),
+    ("wall_height_m",      rf"высот\w*\D{{0,14}}({_NUM_TOKEN})\s*м(?!\w)", 1.0),
+    ("wall_length_m",      rf"(?:периметр|длин\w* стен)\D{{0,14}}({_NUM_TOKEN})\s*м(?!\w)", 1.0),
+    ("pile_count",         rf"(?:(?:кол(?:-?во|ичество)\s+)?сва\w*\s*(?:[:=№-]\s*)?({_NUM_TOKEN})(?:\s*шт\.?)?|({_NUM_TOKEN})\s*(?:шт\.?\s*)?сва\w*)", 1.0),
 ]
+
+_SOIL_GROUP_WORDS: dict[str, int] = {
+    "iv": 4, "4": 4, "четв": 4,
+    "iii": 3, "3": 3, "трет": 3,
+    "ii": 2, "2": 2, "втор": 2,
+    "i": 1, "1": 1, "перв": 1,
+}
+
+
+def _parse_text_number(value: str) -> float:
+    """Parse numbers as they appear after Office/table conversion.
+
+    Russian ToR files commonly mix spaces, NBSP, comma decimals and dot thousand groups
+    (``664 711,12``, ``664.711,12``). Some exports use the inverse English grouping
+    (``664,711.12``). This parser is intentionally conservative for extracted numeric
+    slots: a single comma or dot stays decimal, while mixed separators are resolved by
+    the last separator. That avoids treating every ``1.200`` as either 1.2 or 1200 by
+    guesswork.
+    """
+    s = str(value or "").strip().replace("\xa0", "").replace(" ", "")
+    if not s:
+        return 0.0
+    comma = s.rfind(",")
+    dot = s.rfind(".")
+    if comma >= 0 and dot >= 0:
+        decimal_sep = "," if comma > dot else "."
+        thousand_sep = "." if decimal_sep == "," else ","
+        return _f(s.replace(thousand_sep, "").replace(decimal_sep, "."))
+    if s.count(",") > 1:
+        return _f(s.replace(",", ""))
+    if s.count(".") > 1:
+        return _f(s.replace(".", ""))
+    if "," in s:
+        head, tail = s.split(",", 1)
+        return _f(head + "." + tail)
+    return _f(s)
 
 
 def parse_params(question: str) -> dict[str, float]:
@@ -524,8 +654,16 @@ def parse_params(question: str) -> dict[str, float]:
             continue
         groups = [g for g in m.groups() if g]
         raw_value = next((g for g in groups if re.match(r"^\d", str(g))), "")
-        val = _f(raw_value)
-        unit = next((g for g in groups if str(g) in {"мм", "см", "м", "кг", "т"} or str(g).startswith("тонн")), "м")
+        val = _parse_text_number(raw_value)
+        unit = next(
+            (
+                g for g in groups
+                if str(g).replace(" ", "") in {"мм", "см", "м", "кг", "т", "м3", "м³", "м2", "м²", "куб.м", "кв.м"}
+                or str(g).startswith("тонн")
+            ),
+            "м",
+        )
+        unit = str(unit).replace(" ", "")
         if unit == "мм":
             val /= 1000.0
         elif unit == "см":
@@ -533,7 +671,153 @@ def parse_params(question: str) -> dict[str, float]:
         elif unit == "кг":
             val /= 1000.0
         slots[slot] = val
+    soil_match = re.search(
+        r"(?:групп\w*\s+грунт\w*|грунт\w*\s+групп\w*)\s*(?:[:№#-]?\s*)?"
+        r"(iv|iii|ii|i|[1-4]|перв\w*|втор\w*|трет\w*|четв\w*)",
+        ql.replace("ё", "е"),
+    )
+    if soil_match:
+        key = soil_match.group(1).lower()
+        for prefix, value in _SOIL_GROUP_WORDS.items():
+            if key.startswith(prefix):
+                slots["soil_group"] = float(value)
+                break
     return slots
+
+
+_NORM_CONDITION_QUESTION_LABELS: dict[str, str] = {
+    "группа грунта": "группа грунта",
+    "глубина": "глубина разработки",
+    "крепления": "крепления траншей/котлована",
+    "геометрия сечения/ширина": "ширина или площадь сечения",
+    "масса элемента": "масса элемента",
+    "способ производства работ": "способ производства работ",
+    "материал/основание": "материал или основание",
+}
+
+_NORM_CONDITION_TEXT_ANCHORS: dict[str, tuple[str, ...]] = {
+    "крепления": ("с креплен", "без креплен", "креплен"),
+    "геометрия сечения/ширина": ("ширин", "сечени", "площадь сечения"),
+    "способ производства работ": ("вручную", "механизирован", "кран", "автомобильн", "экскаватор"),
+    "материал/основание": (
+        "материал", "основан", "каркас", "дерев", "бетон", "железобетон", "рулон", "мембран",
+    ),
+}
+
+_NORM_CONDITION_SLOT_MAP: dict[str, tuple[str, ...]] = {
+    "группа грунта": ("soil_group",),
+    "глубина": ("excavation_depth_m",),
+    "масса элемента": ("mass_t",),
+}
+
+_NORM_CONDITION_NONBLOCKING = {
+    "условия применения",
+    "способ производства работ",
+    "материал/основание",
+}
+
+
+def _norm_profile_for_code(code: str, norm: dict[str, Any] | None = None) -> dict[str, Any]:
+    store = get_smeta_norm_store()
+    variants = [str(code or "").strip()]
+    bare = _plain_norm_code(code)
+    if bare:
+        base_type = str((norm or {}).get("base_type") or _base_type_of(str((norm or {}).get("code") or code)))
+        variants.extend([f"{base_type}:{bare}", f"ГЭСН:{bare}", f"ГЭСНм:{bare}"])
+    for variant in variants:
+        if not variant:
+            continue
+        profile = store.norm_profile(variant)
+        if profile:
+            return profile
+    return {}
+
+
+def _unresolved_norm_questions(
+    profile: dict[str, Any],
+    *,
+    user_slots: dict[str, Any],
+    question_text: str,
+) -> list[str]:
+    """Return norm applicability questions still not answered by user evidence.
+
+    These are not object templates. They come from the selected norm card and only prevent
+    a preliminary computed line from being presented as a final estimate.
+    """
+    q = (question_text or "").casefold().replace("ё", "е")
+    unresolved: list[str] = []
+    for condition in profile.get("condition_hints") or []:
+        label = str(condition or "").strip()
+        if not label or label in _NORM_CONDITION_NONBLOCKING:
+            continue
+        slots = _NORM_CONDITION_SLOT_MAP.get(label, ())
+        if slots and any(slot in user_slots and _is_number(user_slots.get(slot)) for slot in slots):
+            continue
+        anchors = _NORM_CONDITION_TEXT_ANCHORS.get(label, ())
+        if anchors and any(anchor in q for anchor in anchors):
+            continue
+        human = _NORM_CONDITION_QUESTION_LABELS.get(label, label)
+        if human not in unresolved:
+            unresolved.append(human)
+    return unresolved
+
+
+def _object_area_from_text(question: str, slots: dict[str, float]) -> float | None:
+    """Return object area only when it is present in user/file/history text.
+
+    The planner's JSON schema is not evidence. A model may put ``1`` into
+    ``area_total_m2`` just to satisfy a contract; that must not become geometry.
+    """
+    if "area_m2" in slots and _f(slots.get("area_m2")) > 0:
+        return _f(slots.get("area_m2"))
+    q = (question or "").casefold().replace("ё", "е")
+    m = re.search(rf"(?:общая\s+)?площад\w*[^\d]{{0,50}}({_NUM_TOKEN})\s*(?:метр(?:ов|а)?|м)\b", q)
+    if m:
+        return _parse_text_number(m.group(1))
+    object_area = re.search(
+        rf"(?:дом|дач\w*|здани\w*|помещени\w*|объект|паркинг|коттедж|строени\w*)"
+        rf"\D{{0,80}}({_NUM_TOKEN})\s*(?:м2|м²|кв\.?\s*м)\b",
+        q,
+    )
+    if object_area:
+        return _parse_text_number(object_area.group(1))
+    return None
+
+
+def _assumptions_authorized(question: str) -> bool:
+    """True when the user explicitly allowed a scenario estimate by assumptions."""
+    q = (question or "").casefold().replace("ё", "е")
+    return bool(re.search(
+        r"\b(?:придумай|прикинь|предположи|допусти|по\s+допущени[яям]|"
+        r"типов(?:ой|ые|ому)|ориентировочн[оаяые]*|сам\s+задай|сам\s+прими)\b",
+        q,
+    ))
+
+
+_ESTIMATE_COST_MARKERS = (
+    "сметн", "смету", "смета", "стоимост", "расценк", "посчитай", "рассчитай", "рассчитать",
+)
+_ESTIMATE_WORK_MARKERS = (
+    "работ", "разработк", "устройств", "монтаж", "укладк", "бетонирован", "свар", "демонтаж",
+    "грунт", "транше", "котлован", "плит", "кровл", "изоляц",
+)
+_ESTIMATE_TABLE_LOOKUP_MARKERS = ("найди", "покажи", "выведи", "список", "строк")
+
+
+def is_explicit_work_estimate_request(question: str) -> bool:
+    """Narrow auto-route: a request to price a concrete work item with an explicit quantity.
+
+    This intentionally does not catch broad object estimates ("дом 150 м2") and does not know
+    specific objects. It only prevents quantity-priced work requests from falling into table/RAG
+    lookup just because the text contains "сметная стоимость" or "работы".
+    """
+    q = (question or "").casefold().replace("ё", "е")
+    if any(m in q for m in _ESTIMATE_TABLE_LOOKUP_MARKERS):
+        return False
+    has_cost = any(m in q for m in _ESTIMATE_COST_MARKERS)
+    has_work = any(m in q for m in _ESTIMATE_WORK_MARKERS)
+    has_qty = bool(re.search(rf"(?:об[ъь]ем|выработк|колич|кол-во|площад|масс)[^\d]{{0,50}}{_NUM_TOKEN}\s*(?:м3|м³|м2|м²|кг|т|тонн|шт|куб\.?\s*м|кв\.?\s*м)\b", q))
+    return has_cost and has_work and has_qty
 
 
 def parse_pricebook_hint(question: str) -> str | None:
@@ -562,7 +846,7 @@ def parse_pricebook_hint(question: str) -> str | None:
 
 # ── планировщик ──────────────────────────────────────────────────────────────────────────
 
-_REQUIRED_SCHEMA = ("object_type", "area_total_m2")
+_REQUIRED_SCHEMA = ("object_type",)
 
 SYSTEM_PROMPT = (
     "Ты — инженер-сметчик. Разложи строительный ОБЪЕКТ в смету через ИНСТРУМЕНТЫ. Числа сам НЕ "
@@ -589,20 +873,35 @@ SYSTEM_PROMPT = (
 
 BATCH_TOOL_CONTRACT = (
     "/no_think\n"
-    "Верни только компактный JSON, без markdown и пояснений. "
-    "Формат: {\"object\":{\"object_type\":\"...\",\"area_total_m2\":150,\"floors\":1,"
+    "Верни только компактный JSON smeta_work_plan_v1, без markdown и пояснений. "
+    "Формат: {\"object\":{\"object_type\":\"...\",\"area_total_m2\":150|null,\"floors\":1,"
     "\"levels_below_ground\":0,\"structural_system\":\"...\",\"missing_inputs\":[\"...\"]},"
     "\"works\":[[\"work\",\"search description\",\"family\",\"element\",\"action\",\"unit\",{\"slot\":1}]]}\n"
     "family: earthworks,foundation,concrete_monolithic,concrete_precast,masonry,metal,wood,floors,"
     "roofing,waterproofing,finishes,mep. element: excavation,concrete_preparation,foundation_slab,"
     "monolithic_wall,monolithic_slab,column,waterproofing,roofing,wood_wall,metal_assembly,pile,"
     "foundation,floors,finishes,engineering_networks.\n"
+    "Если пользователь явно просит придумать/прикинуть/посчитать по допущениям, можно задать "
+    "типовой сценарий: area_total_m2 и slots как допущения, но обязательно добавь object.assumptions "
+    "и work assumptions с понятным текстом; это сценарная прикидка, не проектная смета.\n"
     "Инженерные сети не относить к отделке. Если раздел (ВК/ОВ/ЭОМ/СС), трассы, точки или "
     "оборудование не заданы, оставь slots пустыми: код запросит данные.\n"
     "Для металлических конструкций, если в тексте дана масса, используй element metal_assembly, "
     "unit т; код сам достанет mass_t из запроса и пересчитает кг в тонны.\n"
+    "Если дана одна физическая масса/площадь/объём, не раскладывай её в несколько платных работ "
+    "с тем же количеством без явных долей или отдельных количеств. Опциональные работы без доли "
+    "лучше укажи в missing_inputs, а не в works.\n"
+    "Если запрос объектный (дом, здание, помещение, участок работ) и дана площадь, works — это состав "
+    "явно названных разделов объекта, а не одна самая заметная позиция. Если в запросе названо несколько "
+    "разделов, верни их отдельными work items; разделы без параметров оставь как missing_inputs.\n"
+    "Счётные элементы с unit шт допустимы только когда пользователь прямо дал количество/штуки; площадь, "
+    "масса или объём другого раздела не являются количеством штук.\n"
     "Дай 3-6 ключевых работ. work и search description пиши по-русски, словами из строительных норм. "
-    "unit только м3, м2 или т. missing_inputs максимум 5. Если параметра нет, не выдумывай slot. "
+    "unit только м3, м2, т или шт. missing_inputs максимум 5. Если площади/габаритов объекта нет, "
+    "area_total_m2=null и missing_inputs включает площадь/габариты; не ставь 1 м2 как заглушку. "
+    "Исключение: явный запрос на расчёт по допущениям — тогда площадь/слоты можно задать как "
+    "assumptions, а не как факт проекта. "
+    "Если параметра нет, не выдумывай slot. "
     "Коды норм не включай."
 )
 
@@ -615,21 +914,53 @@ def _add_position(args: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]
     from proxy.services.gesn_service import get_norm
 
     et = str(args.get("element_type", ""))
-    spec_hint = FORMULA_CATALOG.get(et)
-    expr_hint = str((spec_hint or {}).get("expr") or "")
-    needs_geom = bool(re.search(r"\b(?:S|S1|P|H|N)\b", expr_hint))
-    if needs_geom and not state.get("geom"):
-        return {"ok": False, "error": "сначала propose_schema с площадью"}
     code = str(args.get("code", "")).strip()
-    norm = get_norm(code)
     family = str(args.get("work_family", ""))
     base_pos = {"work": args.get("work", ""), "code": code, "work_family": family,
                 "physical_unit": _canon_unit(args.get("physical_unit", "")),
                 "assumptions": list(args.get("assumptions", []) or [])}
+    spec_hint = FORMULA_CATALOG.get(et)
+    expr_hint = str((spec_hint or {}).get("expr") or "")
+    needs_geom = bool(re.search(r"\b(?:S|S1|P|H|N)\b", expr_hint))
+    user_slots = {**state.get("user_slots", {}), **(args.get("slots") or {})}
+    direct_hint = _DIRECT_QTY_SLOT_BY_UNIT.get(_canon_unit((spec_hint or {}).get("unit", "")))
+    direct_qty_available = bool(
+        direct_hint and direct_hint in user_slots and _is_number(user_slots.get(direct_hint))
+    )
+    if needs_geom and not state.get("geom") and not direct_qty_available:
+        reason = (
+            "нет исходной площади/габаритов объекта; площадь из плана модели не используется как источник"
+        )
+        state["positions"].append({**base_pos, "status": "needs_input",
+                                   "missing_slots": ["area_total_m2"], "reason": reason})
+        return {"ok": True, "status": "needs_input", "missing_slots": ["area_total_m2"],
+                "reason": reason}
+    norm = get_norm(code)
 
     if norm is None:
         state["positions"].append({**base_pos, "status": "rejected_norm", "reason": "кода нет в базе ГЭСН"})
         return {"ok": False, "status": "rejected_norm", "error": f"код {code} не в базе"}
+    norm_profile = _norm_profile_for_code(code, norm)
+    norm_card = norm_profile.get("model_card") if isinstance(norm_profile.get("model_card"), dict) else {}
+    norm_questions = _unresolved_norm_questions(
+        norm_profile,
+        user_slots=user_slots,
+        question_text=str(state.get("question_text") or ""),
+    )
+    if norm_profile:
+        base_pos["norm_conditions"] = [str(x) for x in (norm_profile.get("condition_hints") or [])[:8]]
+        base_pos["norm_card"] = {
+            "measure": str(norm_card.get("measure") or "")[:160],
+            "conditions_to_check": [str(x)[:80] for x in (norm_card.get("conditions_to_check") or [])[:8]],
+            "warnings": [str(x)[:120] for x in (norm_card.get("warnings") or [])[:3]],
+        }
+    if norm_questions:
+        if state.get("assumption_mode"):
+            base_pos["assumptions"] = list(base_pos.get("assumptions", [])) + [
+                "условия применимости нормы приняты по сценарию: " + ", ".join(norm_questions[:6])
+            ]
+        else:
+            base_pos["norm_questions"] = norm_questions
     # применимость сборника
     allowed = WORK_FAMILY_COLLECTIONS.get(family, set())
     collection_key = _collection_key(code)
@@ -649,22 +980,30 @@ def _add_position(args: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]
                 "note": "норма не подтверждена применимостью — возьми accepted из search_norm"}
     # Gate 4: объём из FORMULA CATALOG по element_type + СЛОТЫ (формула НЕ от модели и НЕ
     # придумывает входы). Нет критичного слота (глубина/толщина/геометрия стен) → needs_input.
-    user_slots = {**state.get("user_slots", {}), **(args.get("slots") or {})}
     if et in FORMULA_CATALOG:
         spec, ns, missing, slot_assumptions = resolve_slots(et, state["geom"], user_slots)
-        if missing:
+        direct_slot = _DIRECT_QTY_SLOT_BY_UNIT.get(_canon_unit((spec or {}).get("unit", "")))
+        if direct_slot and direct_slot in user_slots and _is_number(user_slots.get(direct_slot)):
+            phys = _f(user_slots.get(direct_slot))
+            base_pos["physical_unit"] = _canon_unit(spec["unit"])
+            base_pos["formula"] = direct_slot
+            base_pos["assumptions"] = list(base_pos.get("assumptions", [])) + [
+                f"{direct_slot}={round(phys, 6)} (прямой объём из запроса)"
+            ]
+        elif missing:
             state["positions"].append({**base_pos, "status": "needs_input", "missing_slots": missing,
                                        "reason": f"нет параметров: {', '.join(missing)}"})
             return {"ok": True, "status": "needs_input", "missing_slots": missing,
                     "reason": f"для расчёта нужны: {', '.join(missing)} — спроси пользователя"}
-        try:
-            phys = _eval_formula(spec["expr"], ns)
-        except Exception as e:  # noqa: BLE001
-            state["positions"].append({**base_pos, "status": "needs_input", "reason": str(e)[:80]})
-            return {"ok": True, "status": "needs_input", "reason": str(e)[:80]}
-        base_pos["physical_unit"] = _canon_unit(spec["unit"])      # единица из каталога, не от модели
-        base_pos["assumptions"] = list(base_pos.get("assumptions", [])) + slot_assumptions
-        base_pos["formula"] = spec["expr"]
+        else:
+            try:
+                phys = _eval_formula(spec["expr"], ns)
+            except Exception as e:  # noqa: BLE001
+                state["positions"].append({**base_pos, "status": "needs_input", "reason": str(e)[:80]})
+                return {"ok": True, "status": "needs_input", "reason": str(e)[:80]}
+            base_pos["physical_unit"] = _canon_unit(spec["unit"])      # единица из каталога, не от модели
+            base_pos["assumptions"] = list(base_pos.get("assumptions", [])) + slot_assumptions
+            base_pos["formula"] = spec["expr"]
     else:
         # legacy: element_type вне каталога → принимаем qty_formula модели (всё ещё через Gate 1)
         qty_formula = str(args.get("qty_formula", "")).strip()
@@ -676,8 +1015,8 @@ def _add_position(args: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]
                 )
             else:
                 reason = (
-                    f"нет расчётной формулы для element_type={et or '—'}; "
-                    "нужно уточнить тип основания и параметры объёма"
+                    "нет расчётной формулы для такого типа работ; "
+                    "нужно уточнить конструктив, тип основания и параметры объёма"
                 )
             state["positions"].append({**base_pos, "status": "needs_input", "reason": reason})
             return {"ok": True, "status": "needs_input", "reason": reason}
@@ -693,13 +1032,44 @@ def _add_position(args: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]
                                    "reason": f"единица {base_pos['physical_unit']} ≠ {base_unit} нормы"})
         return {"ok": True, "status": "needs_input",
                 "reason": f"единица {base_pos['physical_unit']} несовместима с {base_unit} нормы"}
-    # magnitude guard (на ФИЗИЧЕСКОМ объёме)
-    mag_ok, bound, mag_reason = _magnitude_check(base_pos["physical_unit"], phys, state["geom"])
-    if not mag_ok:
-        state["positions"].append({**base_pos, "status": "rejected_magnitude", "phys_qty": phys,
-                                   "bound": bound, "reason": mag_reason})
-        return {"ok": True, "status": "rejected_magnitude", "phys_qty": phys, "upper_bound": bound,
-                "reason": mag_reason + " — проверь формулу"}
+    # Direct quantity guard: when the user gave one physical quantity (mass/volume/area),
+    # the planner may split a single requested work into optional sub-works and reuse the same
+    # code+quantity. That would multiply money without evidence. Keep the first computed
+    # position; require a separate quantity/share for the rest.
+    direct_slots = set(_DIRECT_QTY_SLOT_BY_UNIT.values())
+    is_direct_quantity = base_pos.get("formula") in direct_slots
+    # Magnitude guard is for formula-derived geometry. A direct quantity from the user is already
+    # the physical quantity being priced; comparing it to planner placeholder geometry rejects
+    # valid inputs such as "trench excavation, volume 200 m3".
+    if not is_direct_quantity:
+        mag_ok, bound, mag_reason = _magnitude_check(base_pos["physical_unit"], phys, state["geom"])
+        if not mag_ok:
+            state["positions"].append({**base_pos, "status": "rejected_magnitude", "phys_qty": phys,
+                                       "bound": bound, "reason": mag_reason})
+            return {"ok": True, "status": "rejected_magnitude", "phys_qty": phys, "upper_bound": bound,
+                    "reason": mag_reason + " — проверь формулу"}
+    if is_direct_quantity:
+        for prev in state.get("positions", []):
+            if (
+                prev.get("status") == "computed"
+                and prev.get("code") == code
+                and _canon_unit(prev.get("physical_unit", "")) == _canon_unit(base_pos["physical_unit"])
+                and str(prev.get("formula") or "") == str(base_pos.get("formula") or "")
+                and abs(_f(prev.get("phys_qty")) - _f(phys)) < 1e-9
+            ):
+                reason = (
+                    "дублирует уже посчитанную позицию с тем же кодом и физическим объёмом; "
+                    "нужна отдельная доля или отдельный объём"
+                )
+                state["positions"].append({
+                    **base_pos,
+                    "status": "skipped_duplicate",
+                    "phys_qty": phys,
+                    "norm_unit": norm.get("unit", ""),
+                    "reason": reason,
+                    "duplicate_of": prev.get("work") or prev.get("code"),
+                })
+                return {"ok": True, "status": "skipped_duplicate", "phys_qty": phys, "reason": reason}
     # перевод в измеритель нормы (КОД, не модель)
     qty_for_estimate = round(phys / factor, 6) if factor else phys
     state["positions"].append({**base_pos, "status": "computed", "phys_qty": phys,
@@ -713,14 +1083,32 @@ def _exec_tool(name: str, args: dict[str, Any], state: dict[str, Any]) -> dict[s
     try:
         if name == "propose_schema":
             missing_required = [k for k in _REQUIRED_SCHEMA if not args.get(k)]
-            area = _f(args.get("area_total_m2"))
-            state["schema"] = args
+            area = _f(state.get("object_area_m2"))
+            model_area = _f(args.get("area_total_m2"))
+            state["schema"] = dict(args)
+            assumptions = [str(x) for x in (args.get("assumptions") or []) if str(x).strip()]
+            state["scenario_assumptions"] = assumptions
+            if state.get("object_area_m2"):
+                state["schema"]["area_total_m2"] = state["object_area_m2"]
+            elif state.get("assumption_mode") and model_area:
+                area = model_area
+                state["schema"]["area_total_m2"] = model_area
+                if not assumptions:
+                    assumptions = [f"площадь объекта {model_area:g} м2 принята по допущению пользователя"]
+                    state["scenario_assumptions"] = assumptions
+            elif model_area:
+                state["schema"]["area_total_m2"] = None
             if not missing_required and area:
                 levels = int(_f(args.get("levels_below_ground")) or _f(args.get("floors")) or 1) or 1
                 state["geom"] = _geometry(area, levels, {"geometry": {"H": 3.0}})
                 return {"ok": True, "geometry": {k: round(v, 3) for k, v in state["geom"].items()},
                         "missing_inputs": list(args.get("missing_inputs", []) or [])}
-            return {"ok": False, "missing_required": missing_required}
+            missing_inputs = list(args.get("missing_inputs", []) or [])
+            if not state.get("object_area_m2") and model_area and not state.get("assumption_mode"):
+                missing_inputs.append("area_total_m2 не подтверждена текстом запроса")
+            if not area:
+                missing_inputs.append("area_total_m2")
+            return {"ok": False, "missing_required": missing_required, "missing_inputs": missing_inputs}
         if name == "search_norm":
             return search_norm(str(args.get("work_description", "")),
                                work_family=str(args.get("work_family", "")),
@@ -751,6 +1139,7 @@ def _coerce_work_item(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, (list, tuple)) or len(value) < 6:
         return None
     slots = value[6] if len(value) >= 7 and isinstance(value[6], dict) else {}
+    assumptions = value[7] if len(value) >= 8 and isinstance(value[7], list) else []
     return {
         "work": value[0],
         "work_description": value[1],
@@ -759,6 +1148,7 @@ def _coerce_work_item(value: Any) -> dict[str, Any] | None:
         "action": value[4],
         "unit_hint": value[5],
         "slots": slots,
+        "assumptions": assumptions,
     }
 
 
@@ -816,12 +1206,17 @@ def _append_unbound_position(item: dict[str, Any], search: dict[str, Any],
 def _run_batch_plan(question: str, complete: Callable[[list[dict[str, str]]], str],
                     state: dict[str, Any], *, max_steps: int = 16,
                     system_prompt: str | None = None) -> dict[str, Any]:
+    assumption_note = (
+        "Пользователь явно разрешил сценарную прикидку по допущениям: можно задать недостающую "
+        "геометрию и слоты как assumptions, но не выдавай их за проектные исходные."
+        if state.get("assumption_mode") else ""
+    )
     _slots_note = (f"Известные параметры из текста: {state.get('user_slots')}."
                    if state.get("user_slots") else
                    "Если параметров нет, оставь missing_inputs/пустые slots; код не будет выдумывать.")
     messages = [
         {"role": "system", "content": system_prompt or BATCH_SYSTEM_PROMPT},
-        {"role": "user", "content": f"Объект/контекст:\n{question}\n\n{_slots_note}"},
+        {"role": "user", "content": f"Объект/контекст:\n{question}\n\n{_slots_note}\n{assumption_note}".strip()},
     ]
     state["steps"] = 1
     raw = complete(messages) or ""
@@ -860,10 +1255,11 @@ def _run_batch_plan(question: str, complete: Callable[[list[dict[str, str]]], st
             {"role": "user", "content": (
                 "JSON получен, но он неполный для инструментов: не хватает "
                 f"{', '.join(missing_plan)}. Верни исправленный полный JSON для того же объекта: "
-                "{\"object\":{\"object_type\":\"...\",\"area_total_m2\":150,\"floors\":1,"
+                "{\"object\":{\"object_type\":\"...\",\"area_total_m2\":150|null,\"floors\":1,"
                 "\"levels_below_ground\":0,\"structural_system\":\"...\",\"missing_inputs\":[]},"
                 "\"works\":[[\"work\",\"search description\",\"family\",\"element\",\"action\",\"unit\",{}]]}. "
-                "Без markdown и пояснений."
+                "Если площадь/габариты не даны в запросе, area_total_m2=null и missing_inputs включает "
+                "площадь/габариты. Без markdown и пояснений."
             )},
         ])
         retry_raw = complete(messages) or ""
@@ -883,6 +1279,38 @@ def _run_batch_plan(question: str, complete: Callable[[list[dict[str, str]]], st
 
     for raw_item in _work_items_from_plan(plan):
         item, corrections = _normalize_work_item(raw_item)
+        et = str(item.get("element_type") or "")
+        spec_hint = FORMULA_CATALOG.get(et)
+        expr_hint = str((spec_hint or {}).get("expr") or "")
+        needs_geom = bool(re.search(r"\b(?:S|S1|P|H|N)\b", expr_hint))
+        direct_hint = _DIRECT_QTY_SLOT_BY_UNIT.get(_canon_unit((spec_hint or {}).get("unit", "")))
+        direct_qty_available = bool(
+            direct_hint
+            and direct_hint in state.get("user_slots", {})
+            and _is_number(state.get("user_slots", {}).get(direct_hint))
+        )
+        if needs_geom and not state.get("geom") and not direct_qty_available:
+            state["positions"].append({
+                "work": item.get("work") or item.get("work_description") or "",
+                "code": "",
+                "work_family": item.get("work_family", ""),
+                "physical_unit": _canon_unit(item.get("unit_hint", "")),
+                "status": "needs_input",
+                "missing_slots": ["area_total_m2"],
+                "reason": (
+                    "нет исходной площади/габаритов объекта; сначала нужно уточнить размер, "
+                    "потом подбирать норму и считать объём"
+                ),
+            })
+            trace.append({
+                "tool": "search_norm",
+                "status": "needs_input",
+                "work": item.get("work") or item.get("work_description") or "",
+                "candidates": [],
+                "selection": {},
+                "normalized": corrections,
+            })
+            continue
         work_description = str(item.get("work_description") or item.get("work") or "")
         if (
             item.get("element_type") == "metal_assembly"
@@ -917,7 +1345,7 @@ def _run_batch_plan(question: str, complete: Callable[[list[dict[str, str]]], st
                 )
             if bind_index > 0:
                 norm_assumptions.append(
-                    "первый кандидат не прошёл единицу или применимость; взят ближайший применимый кандидат"
+                    "выбрана ближайшая применимая норма из найденных вариантов; требуется проверка сметчиком"
                 )
             add_args = {
                 "work": item.get("work") or item.get("work_description") or bind_candidate.get("title") or "",
@@ -925,7 +1353,9 @@ def _run_batch_plan(question: str, complete: Callable[[list[dict[str, str]]], st
                 "work_family": item.get("work_family") or search.get("work_family") or "",
                 "element_type": item.get("element_type") or search.get("element_type") or "",
                 "slots": item.get("slots") if isinstance(item.get("slots"), dict) else {},
-                "assumptions": norm_assumptions,
+                "assumptions": norm_assumptions + [
+                    str(a) for a in (item.get("assumptions") or []) if str(a).strip()
+                ],
             }
             obs = _exec_tool("add_position", add_args, state)
             trace.append({"tool": "add_position",
@@ -955,7 +1385,9 @@ def _finalize(state: dict[str, Any], *, note: str = "") -> dict[str, Any]:
     from proxy.services.lsr_assembly_service import assemble
     from proxy.services.nr_sp_service import resolve as resolve_nr_sp
 
-    buckets: dict[str, list] = {"computed": [], "needs_input": [], "rejected": [], "by_assumption": []}
+    buckets: dict[str, list] = {
+        "computed": [], "needs_input": [], "rejected": [], "by_assumption": [], "skipped": [],
+    }
     asm = []
     for p in state.get("positions", []):
         st = p.get("status")
@@ -964,6 +1396,9 @@ def _finalize(state: dict[str, Any], *, note: str = "") -> dict[str, Any]:
             continue
         if st == "needs_input":
             buckets["needs_input"].append(p)
+            continue
+        if st == "skipped_duplicate":
+            buckets["skipped"].append(p)
             continue
         if st == "computed":
             buckets["computed"].append(p)
@@ -983,7 +1418,8 @@ def _finalize(state: dict[str, Any], *, note: str = "") -> dict[str, Any]:
     vat = round((smr + cont) * 0.20, 2)
     partial = {"smr": smr, "contingency": cont, "vat": vat,
                "grand_total": round(smr + cont + vat, 2), "positions": len(buckets["computed"])}
-    has_critical = bool(buckets["rejected"]) or bool(buckets["needs_input"])
+    norm_checks = [p for p in buckets["computed"] if p.get("norm_questions")]
+    has_critical = bool(buckets["rejected"]) or bool(buckets["needs_input"]) or bool(norm_checks)
     if not buckets["computed"]:
         total_status = "blocked"
     elif has_critical:
@@ -1003,7 +1439,11 @@ def _finalize(state: dict[str, Any], *, note: str = "") -> dict[str, Any]:
         "computed": buckets["computed"],
         "needs_input": buckets["needs_input"],
         "rejected": buckets["rejected"],
+        "norm_checks": norm_checks,
+        "skipped": buckets["skipped"],
         "by_assumption": buckets["by_assumption"],
+        "assumption_mode": bool(state.get("assumption_mode")),
+        "scenario_assumptions": list(state.get("scenario_assumptions") or []),
         "estimate": lsr,
         "steps": state.get("steps", 0),
         "note": note,
@@ -1056,12 +1496,27 @@ def run_estimate_harness(question: str, complete: Callable[[list[dict[str, str]]
     # Gate 4: параметры из запроса → слоты (уточнение в одном запросе:
     # «… глубина 6м плита 400мм»).
     user_slots = parse_params(question)
+    object_area_m2 = _object_area_from_text(question, user_slots)
+    assumption_mode = _assumptions_authorized(question)
+    explicit_direct_work = is_explicit_work_estimate_request(question)
+    if not explicit_direct_work:
+        # "площадь 200 м2" in an object estimate is object metadata, not the physical
+        # quantity for every m2-rated position. Keep explicit count/geometry slots, but
+        # do not let generic object area bypass formula-catalog geometry.
+        user_slots.pop("area_m2", None)
     pricebook = parse_pricebook_hint(question)
     state: dict[str, Any] = {"schema": {}, "geom": {}, "positions": [], "steps": 0,
-                             "user_slots": user_slots, "pricebook": pricebook}
+                             "object_area_m2": object_area_m2,
+                             "question_text": question,
+                             "user_slots": user_slots, "pricebook": pricebook,
+                             "assumption_mode": assumption_mode,
+                             "scenario_assumptions": []}
     notebook_excerpt = gesn_notebook_prompt_excerpt()
     system_prompt = build_smeta_batch_system_prompt(BATCH_TOOL_CONTRACT, notebook_context=notebook_excerpt)
     result = _run_batch_plan(question, complete, state, max_steps=max_steps, system_prompt=system_prompt)
+    direct_slots = sorted(set(user_slots) & set(_DIRECT_QTY_SLOT_BY_UNIT.values()))
+    result["direct_quantity_estimate"] = bool(explicit_direct_work and direct_slots)
+    result["direct_quantity_slots"] = direct_slots
     result["notebook_context"] = {
         "schema": "notebook_context_v1",
         "role": "navigation",

@@ -23,8 +23,24 @@ def test_enum_intent_bare_list():
 
 
 def test_full_intent_verbose():
-    for q in ["Собери всё про серверные", "Опиши максимально подробно требования", "Дай исчерпывающий обзор"]:
+    for q in [
+        "Собери всё про серверные",
+        "Опиши максимально подробно требования",
+        "Дай исчерпывающий обзор",
+        "Дай инженерный обзор: какие файлы важные, какие технические решения, что не сходится",
+    ]:
         assert classify_answer_form(q).intent == "full", q
+
+
+def test_full_intent_has_broad_but_bounded_budget():
+    f = classify_answer_form("Дай инженерный обзор: технические решения и что требует проверки")
+    assert f.intent == "full"
+    assert f.max_tokens == 3072
+    assert "несостыковки" in f.instruction
+    assert "важные файлы/разделы" in f.instruction
+    assert "Раздел 4 обязателен" in f.instruction
+    assert "не трать весь лимит" in f.instruction
+    assert "markdown-таблицы" in f.instruction
 
 
 def test_brief_intent_compact():

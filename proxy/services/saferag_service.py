@@ -100,15 +100,21 @@ def concentrate_sources(
     max_docs: int = 2,
     min_score: float = 0.45,
     max_chunks: int | None = None,
+    protected_doc_names: Iterable[str] | None = None,
 ) -> list[SourceChunk]:
     """
     Keep chunks from the most relevant documents to reduce context contamination.
 
     The score attribute is optional for compatibility with reranker fallback stubs.
     Missing scores are treated as relevant.
+    `protected_doc_names` is an intent/evidence tier: callers may name documents
+    that were deliberately opened (for example exact file-target retrieval). These
+    documents still deduplicate and obey max_chunks, but are not dropped merely
+    because semantic top-doc concentration preferred another family.
     """
     if not chunks:
         return chunks
+    protected_docs = {_doc_family(str(name or "")) for name in (protected_doc_names or []) if str(name or "").strip()}
 
     filtered = [c for c in chunks if getattr(c, "score", 1.0) >= min_score]
     if not filtered:
@@ -122,7 +128,7 @@ def concentrate_sources(
         if doc_key not in doc_max or doc_max[doc_key] < score:
             doc_max[doc_key] = score
 
-    top_docs = set(sorted(doc_max, key=lambda doc: -doc_max[doc])[:max_docs])
+    top_docs = set(sorted(doc_max, key=lambda doc: -doc_max[doc])[:max_docs]) | protected_docs
     result = []
     seen_content: set[str] = set()
     for chunk in filtered:

@@ -20,7 +20,7 @@ APP_VERSION = "5.1.0"                 # пользовательская «ма�
 HARNESS_VERSION = "0.24"             # веха roadmap (v0.NN); двигать на смене вехи
 # Гранулярная версия «где мы»: 0.<веха>.<фича>.<патч>. Двигать КАЖДУЮ фичу/фикс + строка в
 # docs/RELEASE_LEDGER.md. Это основной номер в /api/version и бейдже (см. docs/RELEASE_LEDGER.md).
-LES_VERSION = "0.24.0.46"
+LES_VERSION = "0.24.0.87"
 EVIDENCE_SCHEMA_VERSION = "1.0"
 EXTRACTION_SCHEMA_VERSION = "1.0"
 RESOURCE_CALC_VERSION = "0.6"
@@ -43,17 +43,22 @@ _CRITICAL_FILES = (
     "proxy/routers/notebooks.py",
     "proxy/routers/prompts.py",
     "proxy/services/doc_extract_service.py",
+    "proxy/services/extract_service.py",
     "proxy/services/context_memory_service.py",
     "proxy/services/lexical_index_service.py",
     "proxy/services/notebook_service.py",
+    "proxy/services/dataset_memory_service.py",
     "proxy/services/prompt_registry_service.py",
+    "proxy/services/project_summary_service.py",
     "proxy/services/saferag_service.py",
     "proxy/services/external_radar_service.py",
     "proxy/services/doc_review_service.py",
     "proxy/services/candidate_selection_service.py",
     "proxy/services/estimate_harness_service.py",
     "proxy/services/estimate_math_service.py",
+    "proxy/services/smeta_norm_store.py",
     "proxy/services/sidecar_ops_service.py",
+    "proxy/services/answer_form_service.py",
     "proxy/services/deterministic_policy_service.py",
     "proxy/services/glossary_chat_service.py",
     "proxy/services/memory_service.py",
@@ -65,6 +70,7 @@ _CRITICAL_FILES = (
     "proxy/services/version_service.py",
     "proxy/services/workflow_plan_service.py",
     "proxy/routers/chat_history.py",
+    "config/prompts/smeta_estimator_role.json",
     "sovushka/pages/chat.py",
     "sovushka/pages/instrumenty.py",
     "sovushka/components/header.py",

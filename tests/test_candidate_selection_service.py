@@ -48,6 +48,7 @@ def test_select_candidates_rejected_top_returns_to_model():
 
     assert selection["status"] == "needs_model_choice"
     assert selection["selected_code"] == ""
+    assert selection["reason"] == "нужно уточнить норму или измеритель"
     assert selection["top_reasons"][0] == "кандидат отклонён фильтром применимости"
 
 

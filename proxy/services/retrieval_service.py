@@ -360,6 +360,7 @@ async def retrieve_chat_chunks(
     logger: logging.Logger,
     llm_semaphore: Any | None = None,
     return_trace: bool = False,
+    doc_filter: Optional[list[str]] = None,
 ):
     kot = analyze_question(question)
     retrieval_query = expand_retrieval_query(question)
@@ -389,31 +390,104 @@ async def retrieve_chat_chunks(
     # ADR-12 стадия-1: для технических/правовых классов сначала маршрутизируем запрос
     # к документам-узлам (LLM-роутер по каталогу, см. doc_router), затем стадия-2 ищет
     # ТОЛЬКО в них. За флагом LES_TYPED_RETRIEVAL; пусто/сбой → плоский поиск.
-    doc_filter = None
+    effective_doc_filter = list(doc_filter or [])
     _rt: dict[str, float] = {}  # под-фазовый тайминг ретрива (профилирование латентности)
     if os.getenv("LES_TYPED_RETRIEVAL", "false").strip().lower() == "true" and is_technical_or_legal:
         _s = time.monotonic()
         try:
             from proxy.services.doc_router import route_documents
-            doc_filter = await route_documents(
+            routed_doc_filter = await route_documents(
                 question=question, expanded_query=retrieval_query,
                 dataset_ids=dataset_ids, rag_backend=rag_backend,
             ) or None
+            effective_doc_filter = effective_doc_filter or routed_doc_filter or []
         except Exception as _route_err:  # noqa: BLE001 — роутинг best-effort
             logger.warning("[DOC_ROUTER] fallback на плоский поиск: %s", _route_err)
-            doc_filter = None
+            effective_doc_filter = effective_doc_filter or []
         _rt["route"] = round(time.monotonic() - _s, 3)
-    _s = time.monotonic()
-    vector_chunks = await rag_backend.retrieve(retrieval_query, dataset_ids=dataset_ids, top_k=vector_top_k, doc_filter=doc_filter)
-    _rt["vec"] = round(time.monotonic() - _s, 3)
-    # W2.4: BGE-M3 learned-sparse рядом с dense (Qdrant-native гибрид). За флагом
-    # RAG_SPARSE_ENABLED; при сбое/пустом sparse — молча падаем на dense+FTS.
-    _s = time.monotonic()
-    sparse_chunks = await _retrieve_sparse_safe(rag_backend, retrieval_query, dataset_ids, pool_k, logger, doc_filter=doc_filter)
-    _rt["sparse"] = round(time.monotonic() - _s, 3)
-    _s = time.monotonic()
-    chunks, trace = _hybrid_merge(question, vector_chunks, dataset_ids, rag_backend, logger, retrieval_query=retrieval_query, pool_k=pool_k, limit=merged_top_k, sparse_chunks=sparse_chunks)
-    _rt["merge"] = round(time.monotonic() - _s, 3)
+    used_native_hybrid = False
+    if hybrid_backend() == "qdrant_native" and hasattr(rag_backend, "retrieve_native_hybrid"):
+        _s = time.monotonic()
+        try:
+            native_chunks = await rag_backend.retrieve_native_hybrid(
+                retrieval_query,
+                dataset_ids=dataset_ids,
+                top_k=merged_top_k,
+                doc_filter=effective_doc_filter or None,
+            )
+            _rt["native"] = round(time.monotonic() - _s, 3)
+            trace = RetrievalTrace(
+                mode="qdrant_native_hybrid",
+                vector_count=len(native_chunks),
+                lexical_count=0,
+                merged_count=len(native_chunks),
+            )
+            if effective_doc_filter:
+                trace.exact_refs.extend([f"file:{name}" for name in effective_doc_filter])
+            chunks = native_chunks
+            try:
+                merged_chunks, merged_trace = _hybrid_merge(
+                    question,
+                    native_chunks,
+                    dataset_ids,
+                    rag_backend,
+                    logger,
+                    retrieval_query=retrieval_query,
+                    pool_k=pool_k,
+                    limit=merged_top_k,
+                    sparse_chunks=None,
+                    doc_filter=effective_doc_filter or None,
+                )
+                if merged_trace.lexical_count:
+                    chunks = merged_chunks
+                    trace = merged_trace
+                    trace.mode = f"qdrant_native_{merged_trace.mode}"
+                    trace.vector_count = len(native_chunks)
+                    if effective_doc_filter:
+                        trace.exact_refs.extend([f"file:{name}" for name in effective_doc_filter])
+                    _rt["native_lexical"] = merged_trace.lexical_count
+            except Exception as native_merge_error:  # noqa: BLE001
+                logger.warning("[HYBRID] qdrant_native lexical safety merge skipped: %s", native_merge_error)
+            used_native_hybrid = True
+        except Exception as native_error:  # noqa: BLE001
+            logger.warning("[HYBRID] qdrant_native fallback to legacy hybrid: %s", native_error)
+    if not used_native_hybrid:
+        _s = time.monotonic()
+        vector_chunks = await rag_backend.retrieve(
+            retrieval_query,
+            dataset_ids=dataset_ids,
+            top_k=vector_top_k,
+            doc_filter=effective_doc_filter or None,
+        )
+        _rt["vec"] = round(time.monotonic() - _s, 3)
+        # W2.4: BGE-M3 learned-sparse рядом с dense (Qdrant-native гибрид). За флагом
+        # RAG_SPARSE_ENABLED; при сбое/пустом sparse — молча падаем на dense+FTS.
+        _s = time.monotonic()
+        sparse_chunks = await _retrieve_sparse_safe(
+            rag_backend,
+            retrieval_query,
+            dataset_ids,
+            pool_k,
+            logger,
+            doc_filter=effective_doc_filter or None,
+        )
+        _rt["sparse"] = round(time.monotonic() - _s, 3)
+        _s = time.monotonic()
+        chunks, trace = _hybrid_merge(
+            question,
+            vector_chunks,
+            dataset_ids,
+            rag_backend,
+            logger,
+            retrieval_query=retrieval_query,
+            pool_k=pool_k,
+            limit=merged_top_k,
+            sparse_chunks=sparse_chunks,
+            doc_filter=effective_doc_filter or None,
+        )
+        if effective_doc_filter:
+            trace.exact_refs.extend([f"file:{name}" for name in effective_doc_filter])
+        _rt["merge"] = round(time.monotonic() - _s, 3)
     logger.info("[RETR] подфазы=%s", _rt)
     # ADR-12 (Ц9): подъём ТАБЛИЧНЫХ ПРИЛОЖЕНИЙ норм. Если узлы-документы известны
     # (doc_filter из стадии-1) и запрос «табличный» (перечень/приложение/категория
@@ -421,7 +495,7 @@ async def retrieve_chat_chunks(
     # реранк поднял приложение (эмбеддинг строки таблицы ≠ запрос → плоско тонет).
     # Пусто/нет интента/нет узлов → no-op, плоский пул нетронут.
     table_appendix_chunks: list[Any] = []
-    if doc_filter:
+    if effective_doc_filter:
         try:
             from proxy.services.table_appendix_service import (
                 fetch_table_appendix_chunks,
@@ -429,7 +503,7 @@ async def retrieve_chat_chunks(
             )
             table_appendix_chunks = await fetch_table_appendix_chunks(
                 question=question, retrieval_query=retrieval_query,
-                doc_filter=doc_filter, dataset_ids=dataset_ids,
+                doc_filter=effective_doc_filter, dataset_ids=dataset_ids,
                 rag_backend=rag_backend, logger=logger,
             )
             if table_appendix_chunks:
@@ -446,9 +520,32 @@ async def retrieve_chat_chunks(
     if return_trace and quality.status == "weak":
         retry_query = expanded_quality_query(question, kot)
         if retry_query != question:
-            retry_vector = await rag_backend.retrieve(retry_query, dataset_ids=dataset_ids, top_k=vector_top_k)
-            retry_sparse = await _retrieve_sparse_safe(rag_backend, retry_query, dataset_ids, pool_k, logger)
-            retry_chunks, retry_trace = _hybrid_merge(retry_query, retry_vector, dataset_ids, rag_backend, logger, retrieval_query=retry_query, pool_k=pool_k, limit=merged_top_k, sparse_chunks=retry_sparse)
+            retry_vector = await rag_backend.retrieve(
+                retry_query,
+                dataset_ids=dataset_ids,
+                top_k=vector_top_k,
+                doc_filter=effective_doc_filter or None,
+            )
+            retry_sparse = await _retrieve_sparse_safe(
+                rag_backend,
+                retry_query,
+                dataset_ids,
+                pool_k,
+                logger,
+                doc_filter=effective_doc_filter or None,
+            )
+            retry_chunks, retry_trace = _hybrid_merge(
+                retry_query,
+                retry_vector,
+                dataset_ids,
+                rag_backend,
+                logger,
+                retrieval_query=retry_query,
+                pool_k=pool_k,
+                limit=merged_top_k,
+                sparse_chunks=retry_sparse,
+                doc_filter=effective_doc_filter or None,
+            )
             retry_trace.retry_count = 1
             retry_quality = evaluate_retrieval_quality(question=question, chunks=retry_chunks, trace=retry_trace, kot=kot)
             if retry_quality.status != "weak" or len(retry_chunks) >= len(chunks):
@@ -520,8 +617,36 @@ def sparse_enabled() -> bool:
     return os.getenv("RAG_SPARSE_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def hybrid_backend() -> str:
+    value = os.getenv("RAG_HYBRID_BACKEND", "lexical").strip().lower()
+    return value if value in {"lexical", "sidecar_sparse", "qdrant_native"} else "lexical"
+
+
+def _lexical_status_usable(status: dict[str, Any]) -> tuple[bool, str]:
+    if not status.get("ready"):
+        return False, "not_ready"
+    if not status.get("stale"):
+        return True, "ready"
+    try:
+        point_count = int(status.get("point_count") or 0)
+        chunks = int(status.get("chunks") or 0)
+    except (TypeError, ValueError):
+        return False, "stale_unknown_count"
+    if point_count <= 0:
+        return False, "stale_unknown_point_count"
+    missing_ratio = max(point_count - chunks, 0) / max(point_count, 1)
+    tolerance = float(os.getenv("RAG_LEXICAL_STALE_TOLERANCE", "0.02") or "0.02")
+    if missing_ratio <= max(tolerance, 0.0):
+        return True, f"minor_stale:{missing_ratio:.6f}"
+    return False, f"stale:{missing_ratio:.6f}"
+
+
 async def _retrieve_sparse_safe(rag_backend, query: str, dataset_ids, pool_k: int, logger: logging.Logger, doc_filter=None) -> list[Any]:
-    if not sparse_enabled() or not hasattr(rag_backend, "retrieve_sparse"):
+    if (
+        hybrid_backend() != "sidecar_sparse"
+        or not sparse_enabled()
+        or not hasattr(rag_backend, "retrieve_sparse")
+    ):
         return []
     try:
         return await rag_backend.retrieve_sparse(query, dataset_ids=dataset_ids, top_k=pool_k, doc_filter=doc_filter)
@@ -541,6 +666,7 @@ def _hybrid_merge(
     pool_k: int = RERANK_POOL_K,
     limit: int = CHAT_TOP_K,
     sparse_chunks: Optional[list[Any]] = None,
+    doc_filter: Optional[list[str]] = None,
 ) -> tuple[list[Any], RetrievalTrace]:
     # W2.4: learned-sparse (BGE-M3) ЗАМЕНЯЕТ самописный FTS в гибриде (план: FTS
     # остаётся для clause lookup). Если sparse пуст/выключен — падаем на FTS.
@@ -573,10 +699,19 @@ def _hybrid_merge(
     try:
         index = LexicalIndex()
         status = index.status(collection)
-        if status.get("ready") and not status.get("stale"):
-            lexical_chunks = index.search(retrieval_query or question, collection=collection, dataset_ids=dataset_ids, limit=pool_k)
+        lexical_usable, lexical_reason = _lexical_status_usable(status)
+        if lexical_usable:
+            if status.get("stale"):
+                logger.info("[HYBRID] lexical minor drift allowed for %s: %s %s", collection, lexical_reason, status)
+            lexical_chunks = index.search(
+                retrieval_query or question,
+                collection=collection,
+                dataset_ids=dataset_ids,
+                doc_filter=doc_filter,
+                limit=pool_k,
+            )
         elif status.get("stale"):
-            logger.info("[HYBRID] lexical index stale for %s: %s", collection, status)
+            logger.info("[HYBRID] lexical index stale for %s: %s %s", collection, lexical_reason, status)
     except Exception as error:
         logger.warning("[HYBRID] lexical fallback: %s", error)
     merged, trace = merge_rrf(vector_chunks, lexical_chunks, question=retrieval_query or question, limit=limit)

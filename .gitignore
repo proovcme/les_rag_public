@@ -4,6 +4,7 @@ data/
 storage/
 RAG_Content/
 logs/
+config/prompts/prompt_overrides.json
 .claude/
 .nicegui/
 standalone/cad_bim_viewer/JSON/

@@ -6,6 +6,7 @@ from backend.interface import Chunk
 from proxy.services.notebook_study_service import (
     build_notebook_study_pack,
     build_reading_plan,
+    build_target_file_plan,
     format_study_artifact,
     is_notebook_study_query,
     prompt_block,
@@ -30,6 +31,29 @@ def _notebook() -> dict:
             "domains": [{"value": "TABLE_SMETA"}],
             "routes": [{"value": "NTD_HVAC"}],
             "document_types": [{"value": "PDF"}],
+        },
+        "typed_memory": {
+            "reader_status": "bootstrap",
+            "file_cards": [
+                {
+                    "file_name": "ПД/02_Состав проекта.docx",
+                    "status": "INDEXED",
+                    "chunk_count": 8,
+                    "document_role": "состав проекта",
+                    "summary": "Состав проектной документации",
+                    "content_layers": ["text", "technical_docs"],
+                    "confidence": 0.8,
+                },
+                {
+                    "file_name": "ПД/03_Пояснительная записка.docx",
+                    "status": "INDEXED",
+                    "chunk_count": 18,
+                    "document_role": "пояснительная записка",
+                    "summary": "Паспорт объекта и исходные данные",
+                    "content_layers": ["text", "technical_docs"],
+                    "confidence": 0.8,
+                },
+            ],
         },
     }
 
@@ -63,6 +87,36 @@ def test_reading_plan_selects_relevant_sections_without_reading_everything():
     assert len(ids) < 6
 
 
+def test_target_file_plan_selects_passport_documents_from_memory_and_inventory():
+    inventory = {
+        "inventory": {
+            "files": [
+                {
+                    "file_name": "BAI/OUT/ИОС 5.2/03_Пояснительная записка.docx",
+                    "name": "03_Пояснительная записка.docx",
+                    "status": "INDEXED",
+                    "chunk_count": 12,
+                    "document_role": "пояснительная записка",
+                    "content_layers": ["text", "technical_docs"],
+                },
+                {
+                    "file_name": "BAI/RVT/model.rvt",
+                    "status": "INDEXED",
+                    "chunk_count": 0,
+                    "document_role": "модель/графика",
+                },
+            ]
+        }
+    }
+    plan = build_target_file_plan([_notebook()], project_inventory=inventory, max_files=5)
+    names = [item["file_name"] for item in plan]
+
+    assert "ПД/02_Состав проекта.docx" in names
+    assert "ПД/03_Пояснительная записка.docx" in names
+    assert "BAI/OUT/ИОС 5.2/03_Пояснительная записка.docx" in names
+    assert "BAI/RVT/model.rvt" not in names
+
+
 @pytest.mark.asyncio
 async def test_study_pack_retrieves_by_sections_and_formats_artifact(monkeypatch):
     from proxy.services import notebook_study_service as svc
@@ -80,7 +134,26 @@ async def test_study_pack_retrieves_by_sections_and_formats_artifact(monkeypatch
             ]
         return []
 
-    pack = await build_notebook_study_pack(question="расскажи про проект", dataset_ids=["ds-1"], retrieve=retrieve)
+    targeted = []
+
+    async def retrieve_file(query: str, file_name: str):
+        targeted.append(file_name)
+        return [
+            Chunk(
+                "Объект: котельная. Стадия: проектная документация.",
+                "doc-passport",
+                file_name,
+                0.93,
+                {"dataset_id": "ds-1"},
+            )
+        ]
+
+    pack = await build_notebook_study_pack(
+        question="расскажи про проект",
+        dataset_ids=["ds-1"],
+        retrieve=retrieve,
+        retrieve_file=retrieve_file,
+    )
     payload = pack.payload()
     artifact = format_study_artifact("расскажи про проект", pack)
 
@@ -93,6 +166,10 @@ async def test_study_pack_retrieves_by_sections_and_formats_artifact(monkeypatch
     assert artifact.index("Найденные материалы по разделам") < artifact.index("Как читалось")
     assert "ИОС4.pdf" in artifact
     assert "Спецификация.xlsx" in artifact
+    assert targeted
+    assert payload["targeted_files"][0]["hits"] > 0
+    assert "Точечно открытые файлы" in artifact
+    assert "Объект: котельная" in artifact
     assert "Блокнот и план — navigation, не evidence" in prompt_block(pack)
 
 

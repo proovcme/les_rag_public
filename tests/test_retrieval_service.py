@@ -29,6 +29,7 @@ class Chunk:
 class FakeBackend:
     def __init__(self):
         self.calls = []
+        self.doc_filters = []
         self.collection_name = "test_collection"
 
     async def list_datasets(self):
@@ -41,12 +42,14 @@ class FakeBackend:
 
     async def retrieve(self, question, dataset_ids=None, top_k=5, doc_filter=None):
         self.calls.append({"question": question, "dataset_ids": dataset_ids, "top_k": top_k})
+        self.doc_filters.append(doc_filter)
         return [Chunk(f"text-{i}", f"doc-{i}", 1.0 - i * 0.01) for i in range(top_k)]
 
 
 class EmptyBackend:
     def __init__(self):
         self.calls = []
+        self.doc_filters = []
         self.collection_name = "empty_collection"
 
     async def list_datasets(self):
@@ -54,6 +57,7 @@ class EmptyBackend:
 
     async def retrieve(self, question, dataset_ids=None, top_k=5, doc_filter=None):
         self.calls.append({"question": question, "dataset_ids": dataset_ids, "top_k": top_k})
+        self.doc_filters.append(doc_filter)
         raise AssertionError("empty retrieval should not call backend.retrieve")
 
 
@@ -75,6 +79,18 @@ class FailingReranker:
 
     async def rerank(self, question, chunks, top_k=5):
         raise RuntimeError("rerank failed")
+
+
+class NativeHybridBackend(FakeBackend):
+    def __init__(self):
+        super().__init__()
+        self.native_calls = []
+
+    async def retrieve_native_hybrid(self, question, dataset_ids=None, top_k=8, doc_filter=None):
+        self.native_calls.append(
+            {"question": question, "dataset_ids": dataset_ids, "top_k": top_k, "doc_filter": doc_filter}
+        )
+        return [Chunk("native text", "native.docx", 0.99)]
 
 
 @pytest.mark.asyncio
@@ -207,6 +223,54 @@ async def test_retrieve_chat_chunks_uses_plain_retrieval_when_reranker_disabled(
 
 
 @pytest.mark.asyncio
+async def test_retrieve_chat_chunks_passes_doc_filter_to_qdrant_backend():
+    backend = FakeBackend()
+
+    result = await retrieve_chat_chunks(
+        question="что в файле 02_Состав проекта.docx",
+        dataset_ids=["ds-1"],
+        rag_backend=backend,
+        reranker_enabled=False,
+        reranker_available=False,
+        reranker_cls=None,
+        mlx_url="http://mlx",
+        logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+        return_trace=True,
+        doc_filter=["BAI/OUT/ИОС 5.2/02_Состав проекта.docx"],
+    )
+
+    assert result.chunks
+    assert backend.doc_filters[0] == ["BAI/OUT/ИОС 5.2/02_Состав проекта.docx"]
+    assert "file:BAI/OUT/ИОС 5.2/02_Состав проекта.docx" in result.trace.exact_refs
+
+
+@pytest.mark.asyncio
+async def test_retrieve_chat_chunks_can_use_qdrant_native_hybrid(monkeypatch):
+    monkeypatch.setenv("RAG_HYBRID_BACKEND", "qdrant_native")
+    backend = NativeHybridBackend()
+
+    result = await retrieve_chat_chunks(
+        question="q",
+        dataset_ids=["ds-1"],
+        rag_backend=backend,
+        reranker_enabled=False,
+        reranker_available=False,
+        reranker_cls=None,
+        mlx_url="http://mlx",
+        logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+        return_trace=True,
+        doc_filter=["doc.md"],
+    )
+
+    assert result.trace.mode == "qdrant_native_hybrid"
+    assert result.chunks[0].doc_name == "native.docx"
+    assert backend.native_calls == [
+        {"question": "q", "dataset_ids": ["ds-1"], "top_k": 24, "doc_filter": ["doc.md"]}
+    ]
+    assert backend.calls == []
+
+
+@pytest.mark.asyncio
 async def test_retrieve_chat_chunks_reranks_pool_when_available():
     backend = FakeBackend()
 
@@ -330,3 +394,39 @@ async def test_retrieve_chat_chunks_returns_hybrid_trace(monkeypatch, tmp_path):
     assert result.trace.lexical_count == 1
     assert result.payload()["quality"]["status"] == "good"
     assert any(chunk.doc_name == "СП 1.13130.docx" for chunk in result.chunks)
+
+
+@pytest.mark.asyncio
+async def test_retrieve_chat_chunks_uses_lexical_with_minor_stale_drift(monkeypatch, tmp_path):
+    db_path = tmp_path / "lex.db"
+    monkeypatch.setenv("RAG_LEXICAL_DB_PATH", str(db_path))
+    index = LexicalIndex(str(db_path))
+    rows = [
+        {
+            "point_id": f"lex-{idx}",
+            "dataset_id": "ds-1",
+            "doc_id": f"doc-{idx}",
+            "doc_name": "СП 4.13130.docx" if idx == 0 else f"doc-{idx}.docx",
+            "text": "проезды пожарных автомобилей" if idx == 0 else f"other text {idx}",
+        }
+        for idx in range(99)
+    ]
+    index.upsert_chunks("test_collection", rows)
+    index.mark_collection("test_collection", point_count=100, indexed_count=100)
+    backend = FakeBackend()
+
+    result = await retrieve_chat_chunks(
+        question="проезды пожарных автомобилей по СП 4.13130",
+        dataset_ids=["ds-1"],
+        rag_backend=backend,
+        reranker_enabled=False,
+        reranker_available=False,
+        reranker_cls=None,
+        mlx_url="http://mlx",
+        logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+        return_trace=True,
+    )
+
+    assert result.trace.mode == "hybrid"
+    assert result.trace.lexical_count >= 1
+    assert any(chunk.doc_name == "СП 4.13130.docx" for chunk in result.chunks)

@@ -17,6 +17,10 @@ from proxy.services.context_memory_service import (
     build_dataset_profile,
     warmup_dataset_profiles,
 )
+from proxy.services.dataset_memory_service import (
+    build_typed_dataset_memory,
+    typed_memory_prompt_block,
+)
 
 NOTEBOOK_SCHEMA = "notebook_v1"
 NOTEBOOK_CONTEXT_SCHEMA = "notebook_context_v1"
@@ -124,6 +128,7 @@ def build_dataset_notebook(
     force: bool = False,
 ) -> dict[str, Any]:
     profile = build_dataset_profile(dataset_id, storage_root=storage_root, depth=depth, force=force)
+    typed_memory = build_typed_dataset_memory(dataset_id, force=force)
     notebook = {
         "schema": NOTEBOOK_SCHEMA,
         "kind": "dataset_notebook",
@@ -133,6 +138,7 @@ def build_dataset_notebook(
         "document_count": profile.get("document_count", 0),
         "chunk_count": profile.get("chunk_count", 0),
         "profile": profile,
+        "typed_memory": typed_memory,
         "notebook_summary": _dataset_notebook_summary(profile),
         "context_role": "navigation",
         "is_evidence": False,
@@ -140,6 +146,16 @@ def build_dataset_notebook(
     }
     notebook["prompt_excerpt"] = _dataset_prompt_excerpt(notebook)
     return notebook
+
+
+def dataset_memory_prompt_excerpt(dataset_ids: list[str]) -> str:
+    memories = []
+    for dataset_id in dataset_ids:
+        try:
+            memories.append(build_typed_dataset_memory(str(dataset_id)))
+        except Exception:
+            continue
+    return typed_memory_prompt_block(memories)
 
 
 def warmup_dataset_notebooks(
@@ -288,6 +304,14 @@ def gesn_notebook_prompt_excerpt(notebook: dict[str, Any] | None = None, *, coll
         lines.append(
             f"{c.get('collection')}: {c.get('area')} · термины: {terms or '—'} · ед.: {units or '—'}"
         )
+    lines.extend([
+        "Навигация РИМ/ГЭСН: сначала определи семейство работ и измеритель, потом ищи норму; "
+        "если единица нормы не совпадает с физическим объёмом, не bind-ить молча.",
+        "Типовые вопросы применимости: земляные работы — группа грунта, глубина, крепления, ширина/сечение; "
+        "металл — масса элемента и способ монтажа; инженерка — раздел ВК/ОВ/ЭОМ/СС, трассы и оборудование.",
+        "Если пользователь разрешил сценарий по допущениям, допущения можно предложить, но пометить как сценарий; "
+        "без такого разрешения спросить параметры.",
+    ])
     lines.append("Правило: модель выбирает область работ; нормы/объёмы/деньги подтверждают инструменты.")
     return "\n".join(lines)
 

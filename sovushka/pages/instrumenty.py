@@ -8,10 +8,11 @@ from __future__ import annotations
 import asyncio
 import subprocess
 from pathlib import Path
+from urllib.parse import quote
 
 from nicegui import ui
 
-from sovushka.state import add_log, api_get, api_post, last_api_error_text
+from sovushka.state import add_log, api_delete, api_get, api_patch, api_post, last_api_error_text
 
 _ROOT = Path(__file__).resolve().parents[2]
 _SRC_STATUS = {
@@ -117,9 +118,9 @@ def build_instrumenty():
                     ui.label("СИСТЕМНЫЕ ПРОМТЫ").style(
                         "font-size:1.02rem;font-weight:900;letter-spacing:1px;"
                     )
-                    ui.label(
-                        "Общий характер ЛЕСа, режимные рамки и инструменты. Это поведение, не evidence."
-                    ).style("font-size:.72rem;color:var(--dim);")
+                ui.label(
+                    "Общий характер ЛЕСа и режимные рамки. Это поведение модели, не evidence."
+                ).style("font-size:.72rem;color:var(--dim);")
                 ui.button("ОБНОВИТЬ", on_click=lambda: asyncio.create_task(_refresh_prompts())).props("dense no-caps")
             prompt_summary = ui.label("Загрузка промтов…").style("font-size:.74rem;color:var(--dim);")
             prompts_box = ui.column().classes("w-full gap-2")
@@ -165,7 +166,7 @@ def build_instrumenty():
         def _render_prompt_block(title: str, text: str, *, tools: list[str] | None = None) -> None:
             with ui.expansion(title, icon="article").classes("w-full").props("dense"):
                 if tools:
-                    ui.label("Инструменты: " + ", ".join(tools)).style(
+                    ui.label("Карта режима: " + ", ".join(tools)).style(
                         "font-size:.68rem;color:var(--dim);margin-bottom:6px;"
                     )
                 ui.markdown("```text\n" + _prompt_text(text).replace("```", "'''") + "\n```").classes(
@@ -174,17 +175,61 @@ def build_instrumenty():
                     "font-size:.72rem;line-height:1.45;"
                 )
 
+        def _render_prompt_editor(item: dict) -> None:
+            key = str(item.get("key") or "")
+            title = str(item.get("label") or key)
+            overridden = bool(item.get("overridden"))
+            with ui.element("div").classes("sov-prompt-editor"):
+                with ui.row().classes("w-full items-center justify-between gap-2"):
+                    with ui.column().classes("gap-0").style("min-width:0;"):
+                        ui.label(title).style("font-size:.82rem;font-weight:900;")
+                        ui.label("изменён" if overridden else "по умолчанию").style(
+                            "font-size:.66rem;color:var(--dim);"
+                        )
+                    with ui.row().classes("items-center gap-1"):
+                        async def _save_prompt() -> None:
+                            d = await api_patch(f"/api/prompts/{quote(key, safe='')}", {"value": editor.value or ""})
+                            if isinstance(d, dict):
+                                ui.notify("Промт сохранён", type="positive")
+                                await _refresh_prompts()
+                            else:
+                                ui.notify(last_api_error_text("Промт не сохранён"), type="negative")
+
+                        async def _reset_prompt() -> None:
+                            d = await api_delete(f"/api/prompts/{quote(key, safe='')}")
+                            if isinstance(d, dict):
+                                ui.notify("Промт сброшен", type="positive")
+                                await _refresh_prompts()
+                            else:
+                                ui.notify(last_api_error_text("Промт не сброшен"), type="negative")
+
+                        ui.button("Сохранить", icon="o_save", on_click=lambda: asyncio.create_task(_save_prompt())).props(
+                            "dense no-caps"
+                        )
+                        ui.button(icon="o_restart_alt", on_click=lambda: asyncio.create_task(_reset_prompt())).props(
+                            'flat round dense aria-label="Сбросить промт"'
+                        ).tooltip("Сбросить к встроенному промту")
+                editor = ui.textarea(value=str(item.get("value") or "")).props(
+                    "outlined dense autogrow"
+                ).classes("w-full sov-prompt-textarea")
+
         async def _refresh_prompts() -> None:
             d = await api_get("/api/prompts")
             if not isinstance(d, dict):
                 ui.notify(last_api_error_text("Промты недоступны"), type="negative")
                 return
             modes = d.get("modes") or {}
-            prompt_summary.text = f"Registry: {d.get('schema', '?')} · режимов: {len(modes)}"
+            editable = [item for item in d.get("editable") or [] if isinstance(item, dict)]
+            changed = sum(1 for item in editable if item.get("overridden"))
+            prompt_summary.text = (
+                f"Registry: {d.get('schema', '?')} · редактируемых: {len(editable)} · "
+                f"изменённых: {changed} · файл: {d.get('overrides_path') or '—'}"
+            )
             prompts_box.clear()
             with prompts_box:
-                _render_prompt_block("Общий системный промт", str(d.get("common") or ""))
-                _render_prompt_block("Тон и характер", str(d.get("tone") or ""))
+                for item in editable:
+                    _render_prompt_editor(item)
+                ui.separator()
                 for mode_id, item in modes.items():
                     if isinstance(item, dict):
                         label = str(item.get("label") or mode_id)

@@ -384,6 +384,7 @@ class LexicalIndex:
         *,
         collection: str,
         dataset_ids: list[str] | None = None,
+        doc_filter: list[str] | None = None,
         limit: int = 12,
     ) -> list[Chunk]:
         fts_query = build_fts_query(question)
@@ -395,6 +396,11 @@ class LexicalIndex:
             placeholders = ",".join("?" for _ in dataset_ids)
             dataset_clause = f" AND c.dataset_id IN ({placeholders})"
             params.extend(dataset_ids)
+        doc_clause = ""
+        if doc_filter:
+            placeholders = ",".join("?" for _ in doc_filter)
+            doc_clause = f" AND c.doc_name IN ({placeholders})"
+            params.extend(doc_filter)
         params.append(limit)
         try:
             with self.connect() as conn:
@@ -407,7 +413,7 @@ class LexicalIndex:
                         bm25(lexical_chunks_fts) AS bm25_score
                     FROM lexical_chunks_fts
                     JOIN lexical_chunks c ON c.id = lexical_chunks_fts.rowid
-                    WHERE lexical_chunks_fts MATCH ? AND c.collection=? {dataset_clause}
+                    WHERE lexical_chunks_fts MATCH ? AND c.collection=? {dataset_clause} {doc_clause}
                     ORDER BY bm25_score ASC
                     LIMIT ?
                     """,

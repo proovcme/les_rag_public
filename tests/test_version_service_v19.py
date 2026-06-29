@@ -121,6 +121,8 @@ def test_chat_response_has_version_info():
     from proxy.routers.chat import _version_stamp
     stamp = _version_stamp()
     assert "version_info" in stamp
+    assert stamp.get("llm_provider")
+    assert stamp.get("llm_model")
     vi = stamp["version_info"]
     assert vi["app_version"] == vs.APP_VERSION and vi["harness_version"] == vs.HARNESS_VERSION
     assert "git_commit" in vi and "feature_flags" in vi

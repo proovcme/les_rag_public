@@ -21,6 +21,7 @@ from proxy.services.saferag_service import concentrate_sources, rank_chunks_for_
 logger = logging.getLogger(__name__)
 
 RetrieveFn = Callable[[str], Awaitable[list[Any]]]
+RetrieveFileFn = Callable[[str, str], Awaitable[list[Any]]]
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,8 @@ class StudyPack:
     plan: list[StudySection]
     chunks_by_section: dict[str, list[Any]]
     gaps: list[str]
+    targeted_files: list[dict[str, Any]] = field(default_factory=list)
+    chunks_by_file: dict[str, list[Any]] = field(default_factory=dict)
 
     @property
     def chunks(self) -> list[Any]:
@@ -54,6 +57,13 @@ class StudyPack:
         seen: set[tuple[str, str]] = set()
         for section in self.plan:
             for chunk in self.chunks_by_section.get(section.id, []):
+                key = (str(getattr(chunk, "doc_name", "")), str(getattr(chunk, "content", ""))[:240])
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(chunk)
+        for file_name in [str(item.get("file_name") or "") for item in self.targeted_files]:
+            for chunk in self.chunks_by_file.get(file_name, []):
                 key = (str(getattr(chunk, "doc_name", "")), str(getattr(chunk, "content", ""))[:240])
                 if key in seen:
                     continue
@@ -87,6 +97,15 @@ class StudyPack:
             ],
             "reading_plan": [section.payload() for section in self.plan],
             "retrieval_by_section": quality,
+            "targeted_files": [
+                {
+                    "file_name": item.get("file_name"),
+                    "reason": item.get("reason"),
+                    "score": item.get("score"),
+                    "hits": len(self.chunks_by_file.get(str(item.get("file_name") or ""), [])),
+                }
+                for item in self.targeted_files
+            ],
             "gaps": self.gaps,
         }
 
@@ -256,17 +275,177 @@ def build_dataset_notebooks(dataset_ids: list[str], *, storage_root: Path = Path
     return notebooks
 
 
+_PASSPORT_TERMS = (
+    ("состав проекта", 170),
+    ("состав разделов", 160),
+    ("пояснительная записка", 150),
+    ("03_пз", 106),
+    ("_пз", 96),
+    ("содержание тома", 88),
+    ("содержание", 30),
+    ("задание на проектирование", 96),
+    ("техническое задание", 88),
+    ("технико-эконом", 84),
+    ("тэп", 84),
+    ("основные показатели", 80),
+    ("общие данные", 76),
+    ("сту", 68),
+    ("технические условия", 42),
+    ("обложка", 18),
+)
+_TARGETABLE_EXT_RE = re.compile(r"\.(pdf|docx?|xlsx?|xlsm|csv|txt|md)$", re.IGNORECASE)
+
+
+def _norm_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "").casefold().replace("ё", "е").replace("\\", "/")).strip()
+
+
+def _targetable_file(file_name: str, chunk_count: int | None = None) -> bool:
+    if not file_name or not _TARGETABLE_EXT_RE.search(file_name):
+        return False
+    if chunk_count is not None and chunk_count <= 0:
+        return False
+    return True
+
+
+def _iter_memory_cards(notebooks: list[dict[str, Any]]) -> Iterable[dict[str, Any]]:
+    seen: set[str] = set()
+    for notebook in notebooks:
+        memory = notebook.get("typed_memory") if isinstance(notebook.get("typed_memory"), dict) else {}
+        for item in memory.get("file_cards") or []:
+            file_name = str(item.get("file_name") or "")
+            if file_name and file_name not in seen:
+                seen.add(file_name)
+                yield dict(item)
+        for item in memory.get("important_files") or []:
+            file_name = str(item.get("file_name") or "")
+            if file_name and file_name not in seen:
+                seen.add(file_name)
+                yield dict(item)
+        reader = memory.get("reader_output") if memory.get("reader_status") == "model" else None
+        if not isinstance(reader, dict):
+            continue
+        for item in reader.get("file_roles") or []:
+            file_name = str(item.get("file_name") or "")
+            if file_name and file_name not in seen:
+                seen.add(file_name)
+                yield {
+                    "file_name": file_name,
+                    "document_role": item.get("role") or "",
+                    "summary": item.get("what_inside") or "",
+                    "confidence": item.get("confidence") or 0,
+                }
+        for where in reader.get("where_to_look") or []:
+            for file_name in where.get("target_files") or []:
+                file_name = str(file_name or "")
+                if file_name and file_name not in seen:
+                    seen.add(file_name)
+                    yield {
+                        "file_name": file_name,
+                        "document_role": where.get("question_type") or "",
+                        "summary": where.get("reason") or "",
+                        "confidence": 0.7,
+                    }
+
+
+def _iter_inventory_cards(project_inventory: dict[str, Any] | None) -> Iterable[dict[str, Any]]:
+    inv = (project_inventory or {}).get("inventory") if isinstance(project_inventory, dict) else {}
+    if not isinstance(inv, dict):
+        return
+    for item in inv.get("files") or []:
+        if isinstance(item, dict):
+            yield dict(item)
+
+
+def _passport_file_score(card: dict[str, Any]) -> tuple[int, str]:
+    file_name = str(card.get("file_name") or "")
+    try:
+        chunk_count = int(card.get("chunk_count")) if card.get("chunk_count") is not None else None
+    except (TypeError, ValueError):
+        chunk_count = None
+    if not _targetable_file(file_name, chunk_count):
+        return 0, ""
+    blob = _norm_text(
+        " ".join(
+            str(x or "")
+            for x in (
+                file_name,
+                card.get("name"),
+                card.get("document_role"),
+                card.get("role"),
+                card.get("summary"),
+                card.get("what_inside"),
+                " ".join(str(v) for v in (card.get("content_layers") or [])),
+            )
+        )
+    )
+    score = 0
+    reasons: list[str] = []
+    for term, weight in _PASSPORT_TERMS:
+        if _norm_text(term) in blob:
+            score += weight
+            reasons.append(term)
+    if "technical_docs" in blob or "технич" in blob:
+        score += 8
+    if "estimate" in blob or "смет" in blob:
+        score -= 18
+    if chunk_count:
+        score += min(10, max(1, chunk_count // 80))
+    try:
+        confidence = float(card.get("confidence") or 0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    score += int(max(0.0, min(1.0, confidence)) * 6)
+    return score, ", ".join(dict.fromkeys(reasons[:4]))
+
+
+def build_target_file_plan(
+    notebooks: list[dict[str, Any]],
+    *,
+    project_inventory: dict[str, Any] | None = None,
+    max_files: int = 10,
+) -> list[dict[str, Any]]:
+    """Choose concrete files worth opening for broad project answers.
+
+    This is a generic navigation heuristic over typed memory/inventory. It does
+    not assert facts and does not encode object-specific templates: it only
+    asks retrieval to read files whose role/name usually carries passport data.
+    """
+    by_file: dict[str, dict[str, Any]] = {}
+    for card in [*_iter_memory_cards(notebooks), *_iter_inventory_cards(project_inventory)]:
+        file_name = str(card.get("file_name") or "")
+        if not file_name:
+            continue
+        score, reason = _passport_file_score(card)
+        if score <= 0:
+            continue
+        prev = by_file.get(file_name)
+        if prev and int(prev.get("score") or 0) >= score:
+            continue
+        by_file[file_name] = {
+            "file_name": file_name,
+            "reason": reason or str(card.get("document_role") or card.get("role") or "паспортный документ"),
+            "score": score,
+        }
+    ranked = sorted(by_file.values(), key=lambda item: (-int(item.get("score") or 0), str(item.get("file_name") or "")))
+    return ranked[: max(0, max_files)]
+
+
 async def build_notebook_study_pack(
     *,
     question: str,
     dataset_ids: list[str],
     retrieve: RetrieveFn,
+    retrieve_file: RetrieveFileFn | None = None,
+    project_inventory: dict[str, Any] | None = None,
     storage_root: Path = Path("storage/datasets"),
     max_sections: int = 4,
 ) -> StudyPack:
     notebooks = build_dataset_notebooks(dataset_ids, storage_root=storage_root)
     plan = build_reading_plan(question, notebooks, max_sections=max_sections)
+    targeted_files = build_target_file_plan(notebooks, project_inventory=project_inventory)
     chunks_by_section: dict[str, list[Any]] = {}
+    chunks_by_file: dict[str, list[Any]] = {}
     gaps: list[str] = []
     semaphore = asyncio.Semaphore(_read_parallelism())
 
@@ -282,6 +461,26 @@ async def build_notebook_study_pack(
         gap = None if focused else f"{section.title}: не найдено уверенных источников"
         return section.id, focused, gap
 
+    async def retrieve_target_file(item: dict[str, Any]) -> tuple[str, list[Any], str | None]:
+        file_name = str(item.get("file_name") or "")
+        if not file_name or retrieve_file is None:
+            return file_name, [], None
+        query = (
+            f"{question}\n"
+            f"Прочитай паспортный/навигационный файл: {file_name}. "
+            "Ищи: наименование объекта, адрес, стадия, состав проекта, разделы, ТЭП, исходные данные."
+        )
+        async with semaphore:
+            try:
+                retrieved = await retrieve_file(query, file_name)
+            except Exception as error:  # noqa: BLE001
+                logger.warning("[NOTEBOOK_STUDY] target file retrieve failed %s: %s", file_name, error)
+                retrieved = []
+        ranked = rank_chunks_for_question(query, list(retrieved or []))
+        focused = concentrate_sources(ranked, max_docs=1, min_score=0.0, max_chunks=3)
+        gap = None if focused else f"{file_name}: файл найден в карте, но фрагменты не добрались"
+        return file_name, focused, gap
+
     results = await asyncio.gather(*(retrieve_section(section) for section in plan))
     by_section = {section_id: (focused, gap) for section_id, focused, gap in results}
     for section in plan:
@@ -292,9 +491,23 @@ async def build_notebook_study_pack(
         chunks_by_section[section.id] = focused
         if gap:
             gaps.append(gap)
+    if retrieve_file is not None and targeted_files:
+        file_results = await asyncio.gather(*(retrieve_target_file(item) for item in targeted_files))
+        for file_name, focused, gap in file_results:
+            if file_name:
+                chunks_by_file[file_name] = focused
+            if gap:
+                gaps.append(gap)
     if not notebooks:
         gaps.append("Блокнот области не построен: нет доступного deep-паспорта датасета")
-    return StudyPack(notebooks=notebooks, plan=plan, chunks_by_section=chunks_by_section, gaps=gaps)
+    return StudyPack(
+        notebooks=notebooks,
+        plan=plan,
+        chunks_by_section=chunks_by_section,
+        gaps=gaps,
+        targeted_files=targeted_files,
+        chunks_by_file=chunks_by_file,
+    )
 
 
 def prompt_block(pack: StudyPack) -> str:
@@ -311,6 +524,12 @@ def prompt_block(pack: StudyPack) -> str:
     if pack.gaps:
         lines.append("")
         lines.append("Пробелы чтения: " + "; ".join(pack.gaps[:6]))
+    if pack.targeted_files:
+        lines.append("")
+        lines.append("Точечно добранные файлы:")
+        for item in pack.targeted_files[:8]:
+            hits = len(pack.chunks_by_file.get(str(item.get("file_name") or ""), []))
+            lines.append(f"- {item.get('file_name')} — {item.get('reason')}; фрагментов: {hits}.")
     lines.append("")
     lines.append(
         "Ответ в чате сделай полноценной инженерной сводкой по широте запроса: для общего вопроса "
@@ -350,6 +569,24 @@ def format_study_artifact(question: str, pack: StudyPack) -> str:
                 score = "—"
             text = _snippet(getattr(chunk, "content", "")).replace("|", "/")
             lines.append(f"| {doc} | {score} | {text} |")
+
+    if pack.targeted_files:
+        lines.extend(["", "## Точечно открытые файлы"])
+        for item in pack.targeted_files:
+            file_name = str(item.get("file_name") or "файл")
+            lines.extend(["", f"### {file_name}", ""])
+            chunks = pack.chunks_by_file.get(file_name, [])
+            if not chunks:
+                lines.append("Файл найден в карте, но фрагменты не добрались в этом чтении.")
+                continue
+            lines.extend(["| Релевантность | Фрагмент |", "|---:|---|"])
+            for chunk in chunks:
+                try:
+                    score = f"{float(getattr(chunk, 'score', 0.0) or 0.0):.3f}"
+                except (TypeError, ValueError):
+                    score = "—"
+                text = _snippet(getattr(chunk, "content", "")).replace("|", "/")
+                lines.append(f"| {score} | {text} |")
 
     lines.extend(["", "## Пробелы"])
     if pack.gaps:

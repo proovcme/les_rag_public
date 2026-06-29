@@ -530,7 +530,7 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
 .chat-msg-ai   { align-self:flex-start; background:var(--bg-panel); color:var(--text) !important; border:1px solid var(--border); border-left:3px solid var(--accent); border-radius:6px; padding:10px 14px; max-width:85%; font-family:var(--font-chat) !important; font-size:.9rem; line-height:1.6; }
 .chat-msg-sys  { align-self:center; color:var(--dim); font-size:.72rem; border:1px solid var(--border); border-radius:4px; padding:4px 12px; font-family:var(--font-chat); }
 .chat-msg-error { color:var(--err) !important; border-color:var(--err) !important; }
-.sov-chat-message-text { white-space:pre-wrap; overflow-wrap:anywhere; }
+.sov-chat-message-text { white-space:pre-wrap; overflow-wrap:break-word; word-break:normal; }
 .msg-srcs { display:flex; flex-wrap:wrap; gap:4px; margin-top:8px; }
 .sov-chat-shell {
   position: relative;
@@ -601,7 +601,7 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
    токен) → бабблы (flex-start/flex-end) уезжали за оба края колонки. Держим контент = ширине окна,
    широкие блоки скроллим внутри баббла, длинные токены/кириллицу переносим. */
 .sov-chat-scroll .q-scrollarea__content { width: 100% !important; max-width: 100% !important; }
-.chat-msg-user, .chat-msg-ai { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+.chat-msg-user, .chat-msg-ai { min-width: 0; overflow-wrap: break-word; word-break: normal; }
 .chat-msg-ai table, .chat-msg-ai pre,
 .sov-chat-message-text table, .sov-chat-message-text pre { display: block; max-width: 100%; overflow-x: auto; }
 .chat-msg-ai img, .sov-chat-message-text img { max-width: 100%; height: auto; }
@@ -679,6 +679,16 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   font-weight: 900;
 }
 .sov-icon-btn { color: var(--dim) !important; }
+.sov-new-chat-btn {
+  min-height: 34px !important;
+  padding: 4px 11px !important;
+  border: 1px solid rgba(138,162,184,.32) !important;
+  border-radius: 8px !important;
+  color: var(--accent) !important;
+  background: rgba(52,211,153,.08) !important;
+  font-size: .66rem !important;
+  font-weight: 900 !important;
+}
 .sov-chip {
   display: inline-flex;
   align-items: center;
@@ -799,8 +809,10 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   line-height: 1.6;
 }
 .sov-artifact-table {
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  table-layout: fixed;
   background: var(--bg-panel);
   color: var(--text);
   font-size: .72rem;
@@ -820,8 +832,10 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
 .sov-chat-md { white-space: normal; }
 .sov-chat-md p { margin: .2rem 0; }
 .sov-chat-inline-table {
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  table-layout: fixed;
   background: var(--bg-panel);
   color: var(--text);
   font-size: .76rem;
@@ -837,14 +851,27 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   border-radius: 6px;
 }
 .sov-table-scroll .q-table__container {
-  min-width: max-content;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
 }
 .sov-table-scroll .q-table__middle {
-  overflow-x: visible !important;
+  overflow-x: auto !important;
 }
 .sov-table-scroll .q-table {
-  width: max-content;
+  table-layout: auto;
   min-width: 100%;
+  max-width: none;
+}
+.sov-table-scroll .q-table__bottom { display: none !important; }
+.sov-chat-inline-table td, .sov-chat-inline-table th,
+.sov-artifact-table td, .sov-artifact-table th {
+  min-width: 84px;
+  max-width: 360px;
+  white-space: normal !important;
+  overflow-wrap: break-word;
+  word-break: normal;
+  vertical-align: top;
 }
 .sov-chat-inline-table thead th { font-weight: 800; }
 .sov-chat-inline-mermaid {
@@ -855,6 +882,82 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   overflow: auto;
 }
 .sov-chat-inline-mermaid svg { max-width: 100%; height: auto; }
+
+/* Структурный реестр файлов в панели артефакта. */
+.sov-inventory-files {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sov-inventory-file-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid rgba(138,162,184,.26);
+  border-radius: 8px;
+  background: var(--artifact-bg);
+}
+.sov-inventory-file-main {
+  min-width: 0;
+  gap: 2px;
+}
+.sov-inventory-file-name {
+  color: var(--text);
+  font-size: .74rem;
+  font-weight: 800;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.sov-inventory-file-folder {
+  color: var(--dim);
+  font-size: .62rem;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.sov-inventory-file-role {
+  color: var(--accent);
+  font-size: .62rem;
+  line-height: 1.3;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+.sov-inventory-file-meta {
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.sov-inventory-status,
+.sov-inventory-chunks,
+.sov-inventory-layer {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: .58rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+.sov-inventory-status-indexed { color: var(--ok); border-color: rgba(46,204,113,.4); }
+.sov-inventory-status-pending { color: #d6a400; border-color: rgba(214,164,0,.42); }
+.sov-inventory-status-error { color: var(--err); border-color: rgba(255,77,109,.45); }
+.sov-inventory-status-unknown,
+.sov-inventory-chunks { color: var(--dim); }
+.sov-inventory-layer {
+  color: var(--accent);
+  border-color: rgba(31,145,201,.34);
+  background: rgba(31,145,201,.08);
+}
+.sov-inventory-ask-btn {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--accent);
+  font-size: .64rem;
+  font-weight: 800;
+}
 
 /* Панель «Файлы»: готовые документы-артефакты (смета xlsx, формы). */
 .sov-files-artifacts {
@@ -1216,6 +1319,21 @@ body, .nicegui-content {
   line-height: 1.55;
 }
 .sov-chat-md code, .sov-chat-message-text code { font-family: var(--font) !important; }
+.sov-chat-md table, .sov-artifact-markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+.sov-chat-md th, .sov-chat-md td,
+.sov-artifact-markdown th, .sov-artifact-markdown td {
+  min-width: 84px;
+  max-width: 360px;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
+  vertical-align: top;
+}
 .sov-chat-md blockquote, .sov-artifact-markdown blockquote {
   margin: 8px 0 10px;
   padding: 7px 10px 7px 12px;
@@ -1302,7 +1420,7 @@ body, .nicegui-content {
 }
 .sov-chat-inline-table td, .sov-chat-inline-table th { font-variant-numeric: tabular-nums; }
 
-/* v0.20 — действия ответа (Копировать), бейдж версии, меню примеров. */
+/* v0.20 — действия ответа (Копировать), плашка модели, меню примеров. */
 .sov-answer-actions { opacity: .55; transition: opacity .14s ease; }
 .chat-msg-ai:hover .sov-answer-actions { opacity: 1; }
 .sov-answer-act {
@@ -1313,6 +1431,42 @@ body, .nicegui-content {
   min-height: 0 !important;
 }
 .sov-answer-act:hover { color: var(--accent) !important; }
+.sov-model-chip {
+  max-width: 280px;
+  font-family: var(--font-ui);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+.sov-model-badge {
+  align-self: flex-start;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 0 4px;
+  padding: 2px 8px;
+  border: 1px solid rgba(28, 44, 64, .16);
+  border-radius: 999px;
+  background: rgba(255,255,255,.62);
+  color: var(--dim);
+  font-family: var(--font-ui);
+  font-size: 11.5px !important;
+  font-weight: 800;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.sov-prompt-editor {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255,255,255,.42);
+}
+.sov-prompt-textarea textarea {
+  font-family: var(--font);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
 .sov-examples-menu .q-item { min-height: 0; padding: 3px 12px; }
 
 /* ═══ v0.24 UI-РЕФРЕШ · Этап 1 — читаемость + де-терминал хрома (аддитивно, обратимо) ═══════ */

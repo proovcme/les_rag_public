@@ -580,15 +580,17 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     mode_chip.tooltip("Режим ответа: заземлённый поиск по документам (RAG)")
                     validation_chip = ui.label("CRAG ON").classes("sov-chip")
                     validation_chip.tooltip("Т.О.С.К.А.: проверка ответа на галлюцинации включена")
+                    model_chip = ui.label("MODEL -").classes("sov-chip sov-model-chip")
+                    model_chip.tooltip("Активная модель/провайдер чата")
                     ui.button(
                         icon="o_article",
                         on_click=lambda: asyncio.create_task(_open_scope_passport()),
                     ).props('flat round dense aria-label="Блокнот области"').classes("sov-icon-btn").tooltip(
                         "Блокнот области: карта выбранного чата, датасетов и служебных источников"
                     )
-                    ui.button(icon="o_delete_sweep", on_click=lambda: _clear_chat()).props(
-                        'flat round dense aria-label="Очистить чат"'
-                    ).classes("sov-icon-btn").tooltip("Очистить чат")
+                    ui.button("Новый чат", icon="o_add_comment", on_click=lambda: _clear_chat()).props(
+                        'flat dense no-caps aria-label="Новый чат"'
+                    ).classes("sov-new-chat-btn").tooltip("Новая сессия без памяти прошлого диалога")
 
             chat_scroll = ui.scroll_area().classes("sov-chat-scroll")
             with chat_scroll:
@@ -1646,9 +1648,104 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         return bool(_parse_table_from_ai(ans) or _parse_markdown_table(ans)
                     or _parse_mermaid_from_ai(ans) or _parse_svg_from_ai(ans))
 
+    def _inventory_file_rows_from_meta(meta: dict | None) -> list[dict]:
+        """Structured project inventory → flat UI rows."""
+        if not isinstance(meta, dict):
+            return []
+        artifact = meta.get("artifact") if isinstance(meta.get("artifact"), dict) else {}
+        candidates = [
+            artifact,
+            artifact.get("project_inventory") if isinstance(artifact, dict) else None,
+            meta.get("project_inventory"),
+        ]
+        seen: set[str] = set()
+        rows: list[dict] = []
+
+        def _add_row(item, folder: str = "") -> None:
+            if isinstance(item, dict):
+                name = str(
+                    item.get("file_name")
+                    or item.get("path")
+                    or item.get("source_path")
+                    or item.get("name")
+                    or ""
+                ).strip()
+                status = str(item.get("status") or item.get("index_status") or item.get("state") or "").strip()
+                chunk_count = item.get("chunk_count")
+                content_layers = item.get("content_layers") or []
+                content_layer_labels = item.get("content_layer_labels") or []
+                file_kind = str(item.get("file_kind") or "").strip()
+                document_role = str(item.get("document_role") or "").strip()
+                source_granularity = str(item.get("source_granularity") or "").strip()
+            elif isinstance(item, (list, tuple)) and item:
+                name = str(item[0] or "").strip()
+                status = str(item[1] if len(item) > 1 else "").strip()
+                chunk_count = item[2] if len(item) > 2 else None
+                content_layers = []
+                content_layer_labels = []
+                file_kind = ""
+                document_role = ""
+                source_granularity = ""
+            else:
+                name = str(item or "").strip()
+                status = ""
+                chunk_count = None
+                content_layers = []
+                content_layer_labels = []
+                file_kind = ""
+                document_role = ""
+                source_granularity = ""
+            if not name:
+                return
+            target = name
+            if folder and "/" not in name and folder != "(корень)":
+                target = f"{folder.rstrip('/')}/{name}"
+            if target in seen:
+                return
+            seen.add(target)
+            try:
+                chunks = int(chunk_count) if chunk_count not in (None, "") else None
+            except Exception:
+                chunks = None
+            rows.append({
+                "file_name": target,
+                "display_name": name.rsplit("/", 1)[-1],
+                "folder": folder,
+                "status": (status or "UNKNOWN").upper(),
+                "chunk_count": chunks,
+                "content_layers": [str(x) for x in content_layers if str(x).strip()],
+                "content_layer_labels": [str(x) for x in content_layer_labels if str(x).strip()],
+                "file_kind": file_kind,
+                "document_role": document_role,
+                "source_granularity": source_granularity,
+            })
+
+        def _walk(payload) -> None:
+            if not isinstance(payload, dict):
+                return
+            files = payload.get("files")
+            if isinstance(files, list):
+                for item in files:
+                    _add_row(item)
+            inventory = payload.get("inventory") if isinstance(payload.get("inventory"), dict) else payload
+            folders = inventory.get("folders") if isinstance(inventory, dict) else {}
+            if isinstance(folders, dict):
+                for folder, items in folders.items():
+                    if isinstance(items, list):
+                        for item in items:
+                            _add_row(item, str(folder or ""))
+
+        for candidate in candidates:
+            _walk(candidate)
+        return rows
+
     def _artifact_from_meta(meta: dict | None) -> dict:
         artifact = (meta or {}).get("artifact") or {}
-        return artifact if isinstance(artifact, dict) and str(artifact.get("content") or "").strip() else {}
+        if not isinstance(artifact, dict):
+            return {}
+        if str(artifact.get("content") or "").strip():
+            return artifact
+        return artifact if _inventory_file_rows_from_meta(meta) else {}
 
     def _set_artifacts_visible(visible: bool) -> None:
         artifact_shell.set_visibility(visible)
@@ -1660,6 +1757,102 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
 
     def _open_artifacts() -> None:
         _set_artifacts_visible(True)
+
+    async def _ask_about_inventory_file(file_name: str) -> None:
+        target = str(file_name or "").strip()
+        if not target:
+            return
+        _pending_target_file["v"] = target
+        chat_input.value = f"расскажи, что в файле {target}"
+        _update_prompt_preview()
+        await send_chat()
+
+    async def _ask_about_inventory_status(status: str) -> None:
+        value = str(status or "").strip().upper()
+        if not value:
+            return
+        chat_input.value = f"расскажи про файлы со статусом {value}"
+        _update_prompt_preview()
+        await send_chat()
+
+    async def _restudy_inventory_dataset() -> None:
+        chat_input.value = "изучи датасет заново: дай карту файлов, слои данных и что в каких документах искать"
+        _update_prompt_preview()
+        await send_chat()
+
+    def _render_project_inventory_artifact(meta: dict | None) -> bool:
+        rows = _inventory_file_rows_from_meta(meta)
+        if not rows:
+            return False
+        artifact = (meta or {}).get("artifact") if isinstance((meta or {}).get("artifact"), dict) else {}
+        title = str(artifact.get("title") or "Реестр файлов")
+        indexed = sum(1 for row in rows if row.get("status") == "INDEXED")
+        pending = sum(1 for row in rows if row.get("status") == "PENDING")
+        errors = sum(1 for row in rows if row.get("status") == "ERROR")
+        _open_artifacts()
+        artifact_panel.clear()
+        with artifact_panel:
+            with ui.card().classes("sov-artifact-card"):
+                with ui.row().classes("w-full items-center justify-between gap-2"):
+                    _html(f'<div class="sov-panel-title">{esc(title)}</div>')
+                    _copy_button(
+                        "JSON",
+                        json.dumps(rows, ensure_ascii=False, indent=2),
+                        props="no-caps flat dense",
+                    )
+                _html(
+                    '<div class="sov-muted">'
+                    f'Файлов: {len(rows)} · INDEXED {indexed} · PENDING {pending} · ERROR {errors}'
+                    '</div>'
+                )
+                with ui.row().classes("w-full items-center gap-2"):
+                    ui.button(
+                        "Переизучить",
+                        icon="o_travel_explore",
+                        on_click=lambda: asyncio.create_task(_restudy_inventory_dataset()),
+                    ).props("no-caps flat dense").classes("sov-inventory-ask-btn").tooltip(
+                        "Попросить модель заново построить карту датасета"
+                    )
+                    for st, count in (("INDEXED", indexed), ("PENDING", pending), ("ERROR", errors)):
+                        if count:
+                            ui.button(
+                                f"{st} · {count}",
+                                on_click=lambda s=st: asyncio.create_task(_ask_about_inventory_status(s)),
+                            ).props("no-caps flat dense").classes("sov-inventory-ask-btn").tooltip(
+                                f"Спросить про файлы со статусом {st}"
+                            )
+                with ui.column().classes("sov-inventory-files"):
+                    for row in rows:
+                        file_name = str(row.get("file_name") or "")
+                        status = str(row.get("status") or "UNKNOWN")
+                        status_cls = {
+                            "INDEXED": "sov-inventory-status-indexed",
+                            "PENDING": "sov-inventory-status-pending",
+                            "ERROR": "sov-inventory-status-error",
+                        }.get(status, "sov-inventory-status-unknown")
+                        chunks = row.get("chunk_count")
+                        with ui.element("div").classes("sov-inventory-file-row"):
+                            with ui.column().classes("sov-inventory-file-main"):
+                                ui.label(str(row.get("display_name") or file_name)).classes("sov-inventory-file-name")
+                                if row.get("folder"):
+                                    ui.label(str(row["folder"])).classes("sov-inventory-file-folder")
+                                if row.get("document_role"):
+                                    ui.label(str(row["document_role"])).classes("sov-inventory-file-role")
+                            with ui.row().classes("sov-inventory-file-meta"):
+                                labels = row.get("content_layer_labels") or row.get("content_layers") or []
+                                for layer_label in labels[:5]:
+                                    ui.label(str(layer_label)).classes("sov-inventory-layer")
+                                ui.label(status).classes(f"sov-inventory-status {status_cls}")
+                                if chunks is not None:
+                                    ui.label(f"{chunks} чанков").classes("sov-inventory-chunks")
+                                ui.button(
+                                    "Спросить по файлу",
+                                    icon="o_chat",
+                                    on_click=lambda f=file_name: asyncio.create_task(_ask_about_inventory_file(f)),
+                                ).props("no-caps flat dense").classes("sov-inventory-ask-btn").tooltip(
+                                    f"Отправить чат с target_file={file_name}"
+                                )
+        return True
 
     async def _show_service_sources() -> None:
         """Показать оператору, на каких служебных данных ЛЕС считает и проверяет."""
@@ -1730,6 +1923,15 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         except Exception:
             pass
 
+    def _show_meta_artifact(meta: dict | None, ans: str, mode: str) -> None:
+        if _render_project_inventory_artifact(meta):
+            return
+        meta_artifact = _artifact_from_meta(meta)
+        _show_artifact(
+            str(meta_artifact.get("content") or ans or ""),
+            str(meta_artifact.get("mode") or mode or "text"),
+        )
+
     def _artifact_button(ans: str, mode: str, meta: dict | None = None) -> None:
         """Кнопка-карточка артефакта в пузыре ответа (если артефакт есть)."""
         meta_artifact = _artifact_from_meta(meta)
@@ -1737,11 +1939,16 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         artifact_mode = str(meta_artifact.get("mode") or mode or "text")
         if not meta_artifact and not _artifact_present(ans, mode):
             return
-        lbl = str(meta_artifact.get("title") or (OUTPUT_FORMATS[mode][0] if (mode in OUTPUT_FORMATS and mode != "text") else "Таблица"))
+        has_inventory = bool(_inventory_file_rows_from_meta(meta))
+        lbl = (
+            "Реестр файлов"
+            if has_inventory
+            else str(meta_artifact.get("title") or (OUTPUT_FORMATS[mode][0] if (mode in OUTPUT_FORMATS and mode != "text") else "Таблица"))
+        )
         ui.button(
             f"Артефакт: {lbl} — открыть",
             icon="o_table_view",
-            on_click=lambda a=content, m=artifact_mode: _show_artifact(a, m),
+            on_click=lambda a=content, m=artifact_mode, md=meta: _show_meta_artifact(md, a, m),
         ).props("no-caps flat dense").classes("sov-artifact-chip").style(
             "margin-top:6px;border:1px solid var(--border);border-radius:8px;"
             "background:var(--bg);color:var(--accent);font-size:.68rem;font-weight:700;padding:4px 10px;"
@@ -1900,7 +2107,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         cols = [{"name": k, "label": strip_markdown_cell(k), "field": k,
                  "align": "right" if _numeric(k) else "left", "sortable": True} for k in keys]
         with ui.element("div").classes("sov-table-scroll"):
-            ui.table(columns=cols, rows=rows, pagination=10).props("dense flat bordered").classes(
+            ui.table(columns=cols, rows=rows, pagination={"rowsPerPage": 0}).props("dense flat bordered").classes(
                 "sov-chat-inline-table"
             )
 
@@ -2061,6 +2268,46 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             with ui.expansion("подробнее (trace)").classes("sov-ev-trace"):
                 ui.label(ts).classes("sov-ev-trace-text")
 
+    def _model_label(provider: str = "", model: str = "") -> str:
+        provider = str(provider or "").strip()
+        model = str(model or "").strip()
+        if not provider and not model:
+            return ""
+        if model:
+            short = model.rsplit("/", 1)[-1]
+            if len(short) > 34:
+                short = short[:31].rstrip() + "..."
+            return f"{provider or 'model'} · {short}"
+        return provider
+
+    def _answer_model_label(meta: dict | None) -> str:
+        """Human label for the model that produced this answer."""
+        if not isinstance(meta, dict):
+            return ""
+        trace = meta.get("retrieval_trace") if isinstance(meta.get("retrieval_trace"), dict) else {}
+        routing = trace.get("routing") if isinstance(trace.get("routing"), dict) else {}
+        versions = meta.get("versions") if isinstance(meta.get("versions"), dict) else {}
+        provider = routing.get("effective_provider") or versions.get("llm_provider") or ""
+        model = routing.get("effective_model") or versions.get("llm_model") or ""
+        return _model_label(provider, model)
+
+    async def _refresh_active_model_chip() -> None:
+        data = await api_get("/api/status") or {}
+        proxy = data.get("proxy") if isinstance(data.get("proxy"), dict) else {}
+        llm_provider = proxy.get("llm_provider") if isinstance(proxy.get("llm_provider"), dict) else {}
+        label = _model_label(llm_provider.get("provider", ""), llm_provider.get("model", ""))
+        if label:
+            model_chip.set_text(f"MODEL {label}")
+        else:
+            model_chip.set_text("MODEL -")
+
+    def _render_model_badge(meta: dict | None) -> None:
+        label = _answer_model_label(meta)
+        if label:
+            ui.label(f"MODEL {label}").classes("sov-model-badge").tooltip(
+                "Модель/провайдер этого ответа"
+            )
+
     def _render_answer_actions(text: str, srcs: list) -> None:
         """v0.20: панель действий ответа — «Копировать» (чистый текст) и «С источниками» (без полного
         тела письма — только chip-локатор). Без скрытого trace."""
@@ -2083,6 +2330,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         _is_ai = "chat-msg-ai" in class_name
         with ui.element("div").classes(class_name) as bubble:
             if _is_ai:
+                _render_model_badge(meta)
                 _render_evidence_header(meta, srcs)     # v0.16: статус-полоска сверху
             # AI-ответ с таблицей/диаграммой → рисуем формы прямо в пузыре; SVG и прочее,
             # что inline-рендер не ловит, остаётся на «сыром» тексте + кнопке артефакта.
@@ -2124,6 +2372,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         _mode = (meta or {}).get("out_mode", "text")
         with bubble:
             if not error:
+                _render_model_badge(meta)
                 _render_evidence_header(meta, srcs)     # v0.16: статус-полоска сверху
             # Формы (таблица/mermaid) рисуем виджетами; сырой стрим-label прячем.
             explicit_artifact = bool(_artifact_from_meta(meta))
@@ -2338,10 +2587,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         state["session_id"] = _new_session_id()
         state["load_session_id"] = None
         state["chat_pending"] = None
+        asyncio.create_task(_refresh_active_model_chip())
         add_log("[ЧАТ] История очищена, новая сессия")
 
     _sending = {"v": False}
     _resource_blocked = {"v": False, "reason": ""}
+    _pending_target_file = {"v": ""}
 
     def _indexing_summary(data: dict) -> str:
         rag = state.get("rag_health", {}) if isinstance(state.get("rag_health"), dict) else {}
@@ -2537,6 +2788,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             "validation_enabled": bool(validation_sw.value),
             "session_id": state.get("session_id"),
         }
+        target_file = str(_pending_target_file.get("v") or "").strip()
+        if target_file:
+            payload["target_file"] = target_file
+            _pending_target_file["v"] = ""
         if _routing_mode:
             payload["mode"] = _routing_mode
             out_mode = _render_mode  # дальше ответ рендерится в выбранном виде (таблица/текст)
@@ -2610,15 +2865,14 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 "answer_contract_check": d.get("answer_contract_check") or {},
                 "workflow_plan": d.get("workflow_plan") or {},
                 "artifact": d.get("artifact") or {},
+                "project_inventory": d.get("project_inventory") or {},
+                "versions": d.get("versions") or {},
             }
             state["chat_history"].append({"role": "ai", "text": ans, "srcs": srcs, "crag": crag, "meta": meta})
             _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, ans, srcs, crag, meta=meta)
             explicit_artifact = _artifact_from_meta(meta)
-            if explicit_artifact and artifact_shell.visible:
-                _show_artifact(
-                    str(explicit_artifact.get("content") or ""),
-                    str(explicit_artifact.get("mode") or "text"),
-                )
+            if explicit_artifact and (artifact_shell.visible or _inventory_file_rows_from_meta(meta)):
+                _show_meta_artifact(meta, str(explicit_artifact.get("content") or ""), str(explicit_artifact.get("mode") or "text"))
             # Режим «Смета» выключен, но запрос похож на объектную смету → предложить
             # пересчитать капстоуном (детерминированный расчёт вместо RAG-осколков).
             _route_ch = (d.get("query_route") or {}).get("channel", "")
@@ -2662,10 +2916,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 stream_state["got_progress"] = True
                 if isinstance(payload, dict):
                     label = str(payload.get("label") or "Работаю...")
-                    step = payload.get("step")
-                    total = payload.get("total")
-                    prefix = f"{step}/{total} · " if step and total else ""
-                    _status_text["v"] = prefix + label
+                    _status_text["v"] = label
                 else:
                     _status_text["v"] = str(payload or "Работаю...")
                 elapsed = int(time.monotonic() - _t0)
@@ -2715,22 +2966,30 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, message, error=True)
                 _render_artifact_error(message)
             else:
-                # Ни одного токена (стрим-эндпоинт недоступен/ошибка до первого токена) —
-                # безопасный откат на нестриминговый /api/chat.
-                d = await api_post("/api/chat", payload)
-                completed = True
-                if d:
-                    _apply_chat_result(d)
-                else:
-                    err = state.get("last_api_error") or {}
-                    serr = stream_state["error"] or {}
-                    message = last_api_error_text(
-                        serr.get("detail") or "Ошибка запроса"
-                    )
-                    if err.get("status_code") == 409 or serr.get("status") == 409:
+                serr = stream_state["error"] or {}
+                if serr:
+                    # SSE already carried the backend error. Do not start a second long /api/chat
+                    # request: show the failure and stop the timer.
+                    completed = True
+                    message = last_api_error_text(serr.get("detail") or "Ошибка запроса")
+                    if serr.get("status") == 409:
                         await _refresh_resource_gate()
                     _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, message, error=True)
                     _render_artifact_error(message)
+                else:
+                    # Ни одного токена и нет SSE error (стрим-эндпоинт недоступен/обрыв до событий) —
+                    # безопасный откат на нестриминговый /api/chat.
+                    d = await api_post("/api/chat", payload)
+                    completed = True
+                    if d:
+                        _apply_chat_result(d)
+                    else:
+                        err = state.get("last_api_error") or {}
+                        message = last_api_error_text("Ошибка запроса")
+                        if err.get("status_code") == 409:
+                            await _refresh_resource_gate()
+                        _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, message, error=True)
+                        _render_artifact_error(message)
         except Exception as ex:
             completed = True
             _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, f"Ошибка: {ex}", error=True)
@@ -2944,7 +3203,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         keys = list(data[0].keys()) if data else []
         cols = [{"name": k, "label": k, "field": k, "align": "left", "sortable": True} for k in keys]
         with ui.element("div").classes("sov-table-scroll"):
-            ui.table(columns=cols, rows=data, pagination=8).classes("sov-artifact-table")
+            ui.table(columns=cols, rows=data, pagination={"rowsPerPage": 0}).classes("sov-artifact-table")
         with ui.row().classes("gap-2"):
             ui.button(
                 "CSV",
@@ -3104,9 +3363,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 ui.menu_item(label, on_click=_run)
 
     asyncio.create_task(_load_commands())  # W11.17: наполнить /-палитру
+    asyncio.create_task(_refresh_active_model_chip())
     asyncio.create_task(_refresh_resource_gate())
     resource_gate_timer = ui.timer(5.0, lambda: asyncio.create_task(_refresh_resource_gate()))
-    context.client.on_disconnect(lambda *_: resource_gate_timer.cancel())
+    model_chip_timer = ui.timer(30.0, lambda: asyncio.create_task(_refresh_active_model_chip()))
+    context.client.on_disconnect(lambda *_: (resource_gate_timer.cancel(), model_chip_timer.cancel()))
     # .exact: отправка ТОЛЬКО на чистый Enter; Shift+Enter (и любой модификатор) → дефолтный
     # перенос строки в textarea (раньше .prevent убивал перенос на любом Enter).
     chat_input.on(

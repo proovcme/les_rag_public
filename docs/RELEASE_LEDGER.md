@@ -4,16 +4,74 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-06-28)
+## Текущее состояние (2026-06-29)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.46  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.87  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.46 chat attachment upload hotfix
-НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.46 · app 5.1.0 · h0.24 · runtime_alignment=aligned
+задеплоено на рантайм:     0.24.0.87 smeta norm navigation polish
+НЕ задеплоено:             нет
+рантайм /api/version:      0.24.0.87 · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
+
+> 0.24.0.87 — сметная косметика после `smeta_norm_store_v4`: role-pack больше не содержит
+> противоречивый пример с `area_total_m2=1`, навигационные подсказки для модели говорят
+> человеческим языком («соседние нормы», «выбранная применимая норма») и дополнительно запрещают
+> выносить `nearby_norms` в видимый ответ. Поведение остаётся model-first: без объектных шаблонов,
+> код только даёт норм-навигацию, проверяет и считает.
+> 0.24.0.86 расширяет `smeta_norm_store_v4`: норм-карточка теперь несёт `navigation`
+> (сборник/подраздел, вопросы применимости, РИМ-граница и `nearby_norms` вокруг кандидата), а
+> `search_norm` отдаёт общий `norm_navigation` по shortlist. Блокнот ГЭСН в prompt получил
+> короткую карту РИМ/ГЭСН: семейство работ → сборник/единица → вопросы применимости. Это навигация
+> для модели, а не объектный шаблон: состав работ по-прежнему делает модель, расчёт и bind-гейты —
+> код. Дополнительно voice-layer больше не принимает противоречие вида «деньги не считаю», если
+> ниже уже показана рассчитанная часть `partial_total`.
+> `make ship` 0.24.0.86: verify `2256 collected`; focused `151 passed`; pre-smoke `9/9`;
+> post-smoke `9/9`. `docs/RELEASE_LEDGER.md` на runtime намеренно остался divergent и не копировался
+> deploy tool'ом; dev-ledger обновлён как источник состояния.
+> 0.24.0.85 подключает норм-карточки к `add_position`: рассчитанная строка может оставаться
+> `computed`, но если выбранная норма требует условий применимости (например группа грунта,
+> глубина, крепления или ширина/сечение), итог становится `partial`, а модель получает
+> `norm_questions` и задаёт именно эти вопросы. Прямой `volume_m3` по-прежнему считается как
+> физический объём, но не продаётся как финальная смета без подтверждения условий нормы.
+> `make ship` 0.24.0.85: verify `2253 collected`; focused `150 passed`; pre-smoke `9/9`;
+> post-smoke `9/9`. `docs/RELEASE_LEDGER.md` на runtime намеренно остался divergent и не копировался
+> deploy tool'ом; dev-ledger обновлён как источник состояния.
+> 0.24.0.84 расширяет сметный `smeta_norm_store_v3`: норма теперь отдаёт не только технический
+> профиль, но и русскую `model_card` для модели (`measure`, domain, условия применимости,
+> ресурсы, предупреждения). Условия вроде группы грунта, глубины, креплений, массы элемента и
+> способа производства работ извлекаются из названия нормы как навигационные hints: модель может
+> задавать правильные уточняющие вопросы, но расчёт по-прежнему идёт только через code guards.
+> `make ship` 0.24.0.84: verify `2250 collected`; focused/release `147 passed`; pre-smoke `9/9`;
+> post-smoke `9/9`. `docs/RELEASE_LEDGER.md` на runtime намеренно остался divergent и не копировался
+> deploy tool'ом; dev-ledger обновлён как источник состояния.
+> 0.24.0.83 расширяет сметный `smeta_norm_store_v2`: вместо голого SQLite-light shortlist
+> каждая норма получает карточку профиля (`family_hints`, `element_hints`, `action_hints`,
+> `resource_kinds`, `resource_count`, `provenance`). `search_norm` использует профиль в прозрачном
+> `score_parts`, но не забирает у модели декомпозицию и не считает вместо `add_position`/ЛСР.
+> Это системный шаг к “ГЭСН как мини-раг/карта норм”, без объектных шаблонов и ситуационных заплаток.
+> `make ship` 0.24.0.83: verify `2250 collected`; focused/release `147 passed`; pre-smoke `9/9`;
+> post-smoke `9/9`. `docs/RELEASE_LEDGER.md` на runtime намеренно остался divergent и не копировался
+> deploy tool'ом; dev-ledger обновлён как источник состояния.
+> 0.24.0.82 добавляет сметный `smeta_norm_store_v1`: это typed SQLite/FTS-проекция существующих
+> ГЭСН/ФСНБ/ТЕР-источников, а не новая “сметная голова” и не объектный шаблон. Модель по-прежнему
+> раскладывает задачу, код выдаёт широкий shortlist норм, проверяет единицы/применимость и считает.
+> Broad SSE-ответы, которые уже успели отдать полезный текст, теперь не стираются поздним reset/error:
+> backend завершает их recovered `UNVALIDATED` payload.
+> `make ship` 0.24.0.82: verify `2248 collected`; focused `147 passed`; pre-smoke `9/9`;
+> post-smoke `9/9`. В ходе ship пойман и закрыт thread-regression: кэшированный SQLite norm-store
+> создавался в main thread, а chat-harness читал его из worker thread; теперь connection read-safe
+> (`check_same_thread=False` + lock) и покрыт тестом.
+> 0.24.0.79 чинит живой broad BAI-регресс после 0.24.0.78: `full` получает 3072 токена,
+> чтобы не резать ответ на середине фразы, инженерные обзоры не превращаются в гигантские
+> markdown-таблицы, а явный запрос реестра делает `Реестр файлов датасета` главным UI-artifact
+> даже если параллельно собран `Инженерный блокнот`.
+> 0.24.0.80 закрывает живой обрез на слове «кратко»: для явного inventory-запроса `brief/enum`
+> получает минимум 2048 токенов, а prompt просит списки и ссылку на artifact вместо большой таблицы.
+> 0.24.0.81 убирает видимый `Инженерный блокнот` из обычных broad-ответов: reading layer остаётся
+> в machine payload, но оператор видит ответ модели. Prompt дополнительно чистит наружный текст от
+> служебных слов evidence/dataset/context/RAG/notebook; реестр называется `Реестр файлов`.
 
 > 0.24.0.6 выкачен через `make ship`. Живой чат-прогон без semantic cache:
 > FIRE `52.8s` (`generation=44.313s`, `source_map=5`, unknown citations `0`);
@@ -101,6 +159,55 @@ dev HEAD:                  HEAD  (см. git log -1)
 > 0.24.0.39 расширяет prompt registry: общий промт ЛЕС, тон, режимные промты и tool contracts
 > доступны через `/api/prompts`, RAG/free/attachment/smeta-harness используют registry, а Совушка
 > показывает карту промтов в админских «Инструментах».
+> 0.24.0.57 делает системные промты редактируемыми через админские «Инструменты» и
+> `PATCH/DELETE /api/prompts/{key}`. Tool contracts больше не инжектятся в системный prompt:
+> они остаются только картой режима/API-метаданными, чтобы не превращать модель в чек-лист.
+> Для запросов «перечень файлов/реестр документов + описание проекта» RAG получает
+> evidence-блок из MetaDB `documents`, а semantic cache выключается, чтобы старый cache не подменял
+> свежую опись.
+> 0.24.0.58 разделяет модель runtime и модель ответа: верхняя плашка `MODEL` рядом с `RAG/CRAG`
+> показывает активную конфигурацию из `/api/status`, а каждый AI-пузырь получает свой бейдж модели
+> ответа. Опись файлов остаётся MetaDB evidence, но служебный inventory-заголовок заменён
+> человеческой формулировкой и запрещён к выводу в видимую речь модели.
+> агрегатный ответ не обходил поимённый реестр.
+> 0.24.0.60 переводит native Qdrant из экспериментального флага в runtime path: sibling-коллекция
+> `les_rag_qwen3_06b_native_v1` содержит named dense+sparse vectors; после первичного копирования
+> удалены `108` orphan-точек PENDING-документа, runtime count стал `187960` и совпал с MetaDB
+> indexed chunks. `retrieval_service` больше не выходит ранним native-return, а гонит результат через
+> общий postprocess/rerank и SQLite FTS safety merge. Это сохраняет точные буквальные совпадения и
+> `doc_filter`, но убирает отдельную sparse-коллекцию из горячего пути.
+> 0.24.0.61 чинит latency широкого BAI-запроса «расскажи про объект и дай реестр файлов»:
+> последняя сохранённая строка занимала `89.5s`, из них `38.3s` уходило в TOSKA validation длинного
+> broad-ответа. Для selected-scope `notebook_study`/`project_inventory` validation теперь по умолчанию
+> выключена (`UNVALIDATED` + source-map + deterministic MetaDB inventory artifact); явный
+> `validation_enabled=true` оставляет старый путь.
+> 0.24.0.62 чинит UX-симптом «таймер идёт, ответа нет»: если `/api/chat/stream` прислал backend
+> error до первого токена, Совушка больше не запускает молча второй долгий `/api/chat`, а показывает
+> ошибку и останавливает таймер. Trace latency получил `pre_retrieval` и `wall_total`, чтобы broad
+> notebook/inventory-запросы показывали полный пользовательский wait, а не только LLM/retrieval-фазы.
+> 0.24.0.63 чинит две видимые регрессии broad BAI-ответа: `project_inventory` теперь приходит top-level
+> даже рядом с `Инженерным блокнотом`, поэтому Совушка автооткрывает кликабельный реестр файлов;
+> таблицы больше не сжимаются до побуквенных «во/до/па/ды», а скроллятся внутри пузыря/артефакта.
+> 0.24.0.64 добавляет typed dataset memory: MetaDB получает `dataset_revisions`/`dataset_memory`/
+> `file_cards`/`evidence_atoms`, notebook и chat prompt видят карту слоёв данных как navigation-not-evidence,
+> Qdrant payload получает `content_layers/file_kind/document_role/source_granularity`, а Совушка показывает
+> бейджи слоёв в кликабельном реестре файлов.
+> 0.24.0.65 добавляет model reader-pass поверх typed memory: модель может отдельным проходом
+> “освоить” датасет и сохранить JSON-карту (`reader_output`) как navigation-not-evidence; API
+> `POST /api/notebooks/{dataset_id}/memory/read` запускает проход вручную/в фоне, а awaited parse-пути
+> могут ставить reader-pass после индексации через `LES_DATASET_READER_AFTER_PARSE=1`.
+> 0.24.0.66 чинит реальный reader-pass на cloud GPT-5.x: structured extraction получает больший
+> token budget (`LES_EXTRACT_MAX_TOKENS`, default 4096) и fallback без native `json_schema`, если
+> OpenAI-compatible proxy вернул не-JSON; `extract_service.py` включён в deploy hash bundle.
+> 0.24.0.67 добавляет второй слой для GPT-5 JSON-reader: default token budget поднят до 8192,
+> структурные GPT-5/o-series вызовы получают low-reasoning/low-verbosity подсказки, а при 400 от
+> OpenAI-compatible proxy автоматически повторяются без этих экспериментальных полей.
+> 0.24.0.68 расширяет карту, которую получает model reader-pass: лимиты `LES_DATASET_READER_FILE_LIMIT`
+> и `LES_DATASET_READER_CONTEXT_CHARS` стали настраиваемыми и шире по умолчанию, добавлен
+> `file_cards_scope`, а prompt запрещает путать выбранную навигационную карту с отсутствием данных.
+> 0.24.0.69 чинит локальный reader-pass: structured extraction для MLX/Qwen3 теперь добавляет
+> `/no_think`, иначе модель тратила генерацию на скрытый think-блок, который MLX-host срезал до
+> пустого `content`.
 > 0.24.0.40 чинит UI-регрессию: системные промты в админке переносятся как многострочный текст,
 > светлая тема снова дефолт при старте, а кастомный CSS больше не перетирает light-переменные.
 > 0.24.0.41 возвращает notebook-study к “котельному” поведению: валидация больше не стирает
@@ -166,7 +273,39 @@ dev HEAD:                  HEAD  (см. git log -1)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
-| 0.24.0.46 | HEAD | 2026-06-28 | Chat attachment upload hotfix: Совушка читает файл из актуального NiceGUI `UploadEventArguments.file.read()`, сохраняет fallback для старого `content`, больше не запускает upload handler через `asyncio.create_task` без UI-контекста; read-вложение после upload снова отображается под полем ввода и в истории как файл следующего сообщения | ✅ рантайм, focused/verify + live attach probe ✅ |
+| 0.24.0.78 | HEAD | 2026-06-29 | Compact inventory prompt: полный MetaDB-реестр больше не скармливается модели целиком; LLM получает компактную `КАРТА РЕЕСТРА ДАТАСЕТА` (папки, типы, важные файлы-кандидаты), а полный проверяемый реестр остаётся в `project_inventory`/artifact/UI | ✅ focused inventory/chat/notebook 34/34; make ship/post-smoke 9/9 |
+| 0.24.0.77 | HEAD | 2026-06-29 | Enforced overview sections: `full`-форма инженерного обзора задаёт порядок разделов — паспорт, ключевые решения, важные файлы/разделы, несостыковки/что проверить, затем детали; блок проверок обязателен даже при отсутствии явных противоречий | ✅ focused answer 19/19; make ship/post-smoke 9/9 |
+| 0.24.0.76 | HEAD | 2026-06-29 | Full overview priority: `full`-форма ответа теперь просит модель в первой половине инженерного обзора дать паспорт объекта, ключевые решения, важные файлы и несостыковки/что проверить, чтобы ответ не тратил весь лимит на один раздел и не обрывался до выводов | ✅ focused answer 19/19; make ship/post-smoke 9/9 |
+| 0.24.0.75 | HEAD | 2026-06-29 | Practical full answer budget: `full`-форма ответа ограничена 2048 токенами; это оставляет место для нормального инженерного обзора, но не провоцирует текущую облачную модель уходить в 180+ секунд без ответа | ✅ focused answer 19/19; make ship/post-smoke 9/9 |
+| 0.24.0.74 | HEAD | 2026-06-29 | Bounded full answer budget: `full`-форма ответа остаётся широкой, но ограничена 4096 токенами, чтобы инженерные обзоры не обрывались как `enum` и одновременно не зависали на облачной модели на 200+ секунд | ✅ focused answer 19/19; make ship/post-smoke 9/9 |
+| 0.24.0.73 | HEAD | 2026-06-29 | Answer-form broad overview fix: запросы вида «инженерный обзор / технические решения / что не сходится / требует проверки» больше не классифицируются как короткий `enum` из-за слов «какие файлы/разделы»; широкому RAG-ответу возвращён нормальный token budget. `answer_form_service.py` добавлен в deploy-stamp critical files, чтобы дрейф формы ответа был виден в `/api/version` | ✅ focused answer/RAG 42/42; make ship/post-smoke 9/9 |
+| 0.24.0.72 | HEAD | 2026-06-29 | File-target suffix resolver: `resolve_inventory_file_reference()` понимает пути из реестра без первого сегмента датасета (`OUT/...` вместо `BAI/OUT/...`) и использует boundary/scored matching, чтобы `01_...` не матчился внутри `001_...`; запрос по конкретному файлу больше не должен уходить в соседние документы. LES skill закрепляет философию model-first: модель ведёт ход, код хранит evidence/provenance/граф/версии и считает, ситуационные hardcode-костыли запрещены | ✅ focused resolver+SafeRAG+notebook 24/24; make verify; make ship/post-smoke 9/9 |
+| 0.24.0.71 | HEAD | 2026-06-29 | Protected evidence tier: `concentrate_sources()` принимает `protected_doc_names`, поэтому документы, явно открытые через `target_file`/клик по реестру или notebook target-file pass, не теряются из-за общего `max_docs` focus; клик по файлу больше не должен подменяться соседним похожим документом | ✅ focused SafeRAG+notebook 17/17; make ship/post-smoke 9/9 |
+| 0.24.0.70 | HEAD | 2026-06-29 | Wide notebook target-file pass: широкое чтение блокнота после section retrieval выбирает паспортные файлы из typed memory/model reader-pass/MetaDB inventory (`состав проекта`, `ПЗ`, `содержание`, `задание`, `СТУ`, `ТЭП`) и добирает их через строгий `doc_filter`, чтобы модель синтезировала ответ по конкретным файлам, а не по случайным top chunks | ✅ focused notebook-study 6/6 + make verify + make ship/post-smoke 9/9 |
+| 0.24.0.69 | HEAD | 2026-06-29 | Local structured extraction hotfix: локальные MLX/Qwen3 JSON-вызовы extractor-а получают `/no_think`, чтобы hidden-thinking не срезался в пустой ответ и dataset reader-pass мог работать на локальной модели | ✅ focused 26/26 + make verify + full `make test` 2237 passed + make ship/post-smoke 9/9 |
+| 0.24.0.68 | HEAD | 2026-06-29 | Dataset reader input quality: reader-pass получает более широкий env-настраиваемый контекст (`LES_DATASET_READER_FILE_LIMIT`, `LES_DATASET_READER_CONTEXT_CHARS`), `file_cards_scope` объясняет выборку карточек, prompt требует 10-30 конкретных file_roles и запрещает писать “данных нет” из-за ограниченной навигационной карты | ✅ focused 25/25 + make verify + full `make test` 2236 passed + make ship/post-smoke 9/9 |
+| 0.24.0.67 | HEAD | 2026-06-29 | GPT-5 structured reader-pass tuning: `LES_EXTRACT_MAX_TOKENS` default 8192, JSON-вызовы GPT-5/o-серии получают `reasoning_effort=minimal`/`verbosity=low`, при 400 от OpenAI-compatible proxy extractor повторяет запрос без этих полей, list-формат `message.content` приводится к тексту | ✅ focused 24/24 + make verify + full `make test` 2235 passed + make ship/post-smoke 9/9 |
+| 0.24.0.66 | HEAD | 2026-06-29 | Structured extraction hotfix для model reader-pass: `LES_EXTRACT_MAX_TOKENS` default 4096 вместо 1024 для GPT-5/o-серии, cloud structured-output fallback без native `json_schema` при не-JSON ответе, `extract_service.py` добавлен в critical deploy bundle | ✅ focused 20/20 + make verify + full `make test` 2231 passed + make ship/post-smoke 9/9 |
+| 0.24.0.65 | HEAD | 2026-06-29 | Model reader-pass для typed dataset memory: отдельный schema-bound проход модели строит навигационную карту корпуса (`corpus_kind`, где искать паспорт/ТЭП/инженерку/сметы/нормы, роли файлов, пробелы), хранится в `dataset_memory.reader_output` как НЕ evidence; добавлен `POST /api/notebooks/{dataset_id}/memory/read`, prompt использует reader-советы, awaited parse-пути умеют фоново переизучать датасет через `LES_DATASET_READER_AFTER_PARSE=1` | ✅ focused 11/11 + make verify + full `make test` 2228 passed + make ship/post-smoke 9/9 |
+| 0.24.0.64 | HEAD | 2026-06-29 | Model-first typed dataset memory: новые MetaDB-таблицы `dataset_revisions`/`dataset_memory`/`file_cards`/`evidence_atoms`; мультислои данных (`text/tables/calculations/technical_docs/drawings/cad_bim/normative/estimate`) идут в notebook/chat prompt как навигация, Qdrant payload и UI-реестр файлов с бейджами слоёв | ✅ focused 35/35 + make verify + full `make test` 2226 passed + make ship/post-smoke 9/9 |
+| 0.24.0.63 | HEAD | 2026-06-29 | Sovushka inventory/table UX hotfix: broad notebook+inventory ответы всегда несут top-level `project_inventory`, реестр файлов автооткрывается кликабельным артефактом, таблицы получают внутренний горизонтальный scroll и нормальный перенос слов вместо побуквенного `overflow-wrap:anywhere` | ✅ focused tests; ship/live UI probe см. текущий прогон |
+| 0.24.0.62 | HEAD | 2026-06-29 | Chat stream error/latency guard: SSE backend error до первого токена больше не превращается в скрытый повторный `/api/chat`, UI показывает ошибку и гасит таймер; `latency_phases` добавляет `pre_retrieval` и `wall_total`, а `latency_sec` истории пишет полный wall-time запроса | ✅ focused 49 passed; ship/live stream probe см. текущий прогон |
+| 0.24.0.61 | HEAD | 2026-06-29 | Broad project inventory speed guard: selected-scope `notebook_study`/`project_inventory` broad-ответы (`расскажи про объект и дай реестр файлов`) больше не запускают дорогую TOSKA validation по умолчанию; проверяемость держится source-map + deterministic MetaDB inventory artifact, а явный `validation_enabled=true` сохраняет старый validation path | ✅ focused 49 passed; live BAI probe см. текущий прогон |
+| 0.24.0.60 | HEAD | 2026-06-29 | Qdrant native runtime switch: создана sibling-коллекция `les_rag_qwen3_06b_native_v1` (named `dense`/`bm25_sparse`), построена её `lexical_chunks` FTS-проекция, удалены `108` orphan-точек PENDING-документа (`points_match_sqlite_chunks=true`, active count `187960`), `retrieve_chat_chunks` больше не возвращает native-ветку ранним выходом и прогоняет её через общий postprocess/rerank; native shortlist смешивается с SQLite FTS exact-word/doc-filter safety pool из той же коллекции; launchd proxy plist переключены на `RAG_COLLECTION_NAME=les_rag_qwen3_06b_native_v1`, `RAG_QDRANT_SCHEMA=named`, `RAG_HYBRID_BACKEND=qdrant_native`; deploy drift `tools/deploy_to_runtime.py` закрыт force-copy | ✅ runtime ship/post-deploy smoke 9/9 + FIRE/HVAC golden 16/16 + retrieve-debug `qdrant_native_hybrid+rerank` ✅ |
+| 0.24.0.59 | HEAD | 2026-06-29 | Qdrant document path + hybrid hardening: запросы по конкретному файлу из MetaDB inventory резолвятся в `target_file`/`doc_filter` и отключают cache; артефакт реестра файлов в Совушке стал кликабельным (`Спросить по файлу`) со статусом индекса и `chunk_count`; sparse sidecar `{collection}_sparse` теперь best-effort чистится/обновляется при parse/delete/reconcile; hybrid не выключает весь lexical FTS при малом sidecar drift (`RAG_LEXICAL_STALE_TOLERANCE`, default 2%); добавлены флаги `RAG_HYBRID_BACKEND`, `RAG_QDRANT_SCHEMA`, named dense/sparse support, `retrieve_native_hybrid()` через Qdrant `Prefetch+Fusion.RRF` и safe migration tool `tools/migrate_qdrant_native_hybrid.py` для sibling collection | ✅ рантайм, full test 2222/2222 + make ship/post-deploy smoke 9/9 + FIRE/HVAC golden 16/16 ✅ |
+| 0.24.0.58 | HEAD | 2026-06-29 | Sovushka/RAG wording hotfix: верхняя плашка `MODEL` показывает активную модель из `/api/status`, модель конкретного ответа показывается бейджем внутри AI-пузыря, а MetaDB file inventory больше не протаскивает в видимый ответ служебный `DETERMINISTIC DATASET FILE INVENTORY`; источники называются человекочитаемо как «Опись файлов датасета» | ✅ рантайм вместе с последующими релизами |
+| 0.24.0.57 | HEAD | 2026-06-29 | Editable prompt registry + RAG inventory context: `/api/prompts` получил admin `PATCH/DELETE` для override общего, tonal и режимных системных промтов; Совушка в «Инструментах» редактирует/сбрасывает эти тексты; локальный `config/prompts/prompt_overrides.json` игнорируется git; tool contracts больше не добавляются в системный prompt и остаются только метаданными карты режима; модель последнего ответа вынесена в верхнюю плашку `MODEL` рядом с `RAG/CRAG`; RAG-запросы «перечень файлов/реестр документов + описание проекта» получают MetaDB `documents` inventory как evidence/context/artifact, отключают semantic cache и не проваливаются в NO_DATA при слабом retrieval | ✅ рантайм, focused tests + verify + make ship/post-deploy smoke 9/9 ✅ |
+| 0.24.0.56 | HEAD | 2026-06-29 | Smeta Russian-facing technical terms: видимый smetnik-layer и `smeta_dialog_state_v1` больше не тащат наружу внутренние поля (`element_type`, `slots`, `wall_length_m`, `area_total_m2`); форматтер переводит их в русские сметные формулировки, а role-pack запрещает англицизмы в видимой прозе | ✅ рантайм, focused tests + verify/ship/smoke + live UI/API probe ✅ |
+| 0.24.0.55 | HEAD | 2026-06-29 | Smeta authorized assumptions: если пользователь явно просит «придумай/прикинь/по допущениям/типовой вариант», smeta harness разрешает модели задать недостающую геометрию и слоты как `assumptions`; модельная площадь всё ещё игнорируется без такого разрешения, а видимый ответ маркируется как «Сценарий по допущениям», не проектная смета | ✅ рантайм, focused tests + verify/ship/smoke + live smeta probe ✅ |
+| 0.24.0.54 | HEAD | 2026-06-29 | Chat UI cosmetics: Совушка получила явную кнопку «Новый чат» (новая `session_id` без памяти прошлого диалога), каждый AI-пузырь показывает provider/model ответа из payload `versions`/`retrieval_trace.routing`, а inline Quasar-таблицы в чате переносят строки внутри пузыря и скрывают footer `Records per page` | ✅ рантайм, focused 43 passed + verify/ship/smoke + live UI probe ✅ |
+| 0.24.0.53 | HEAD | 2026-06-29 | Smeta model-tool-model dialog loop: модель остаётся сметчиком-оркестратором (`model -> tools -> model reads tool result -> answer`), видимый smetnik-layer получает computed/pending/missing slots, а не только счётчики; broad object без площади/габаритов больше не считает м²-разделы по JSON-заглушке `1 м2`, а возвращает `needs_input`; `smeta_dialog_state_v1` сохраняется в `retrieval_trace_json`, чтобы следующий ход диалога видел расчётный статус/слоты, а не только текст ответа; partial-голос не получает рубли как разрешённый факт | ✅ рантайм, focused 102 passed + verify/ship/smoke + live smeta probe ✅ |
+| 0.24.0.52 | HEAD | 2026-06-29 | Smeta prompt/skill/voice boundary: role-pack и smeta skill закрепляют model-first декомпозицию без объектных if-шаблонов; счётные `шт` нельзя выводить из площади/массы/объёма другого раздела; объектная площадь не становится direct `area_m2` для всех м2-позиций; видимый ответ получает LLM voice-layer на 2-4 строки, который может цитировать только exact facts из расчётного payload, а таблицы/суммы остаются кодовым слоем; UI-progress больше не показывает `N/N`, а видимые причины подбора норм убраны из HR-style “кандидат не прошёл” | ✅ рантайм, full test 2193 passed + make ship/post-deploy smoke 9/9 + `/api/version` aligned ✅ |
+| 0.24.0.51 | HEAD | 2026-06-28 | Smeta direct quantity magnitude bypass: `magnitude_guard` больше не сравнивает прямые пользовательские `volume_m3`/`mass_t`/`area_m2`/`piece_count` со служебной геометрией планировщика; guard остаётся для формульных объёмов, а direct quantity считается авторитетным физическим количеством | ✅ рантайм, full test + make ship/post-deploy smoke + live metal/trench probes ✅ |
+| 0.24.0.50 | HEAD | 2026-06-28 | Smeta experienced-estimator role-pack: добавлен `config/prompts/smeta_estimator_role.json` (`experienced_estimator_v1`) с ролью опытного сметчика РИМ/ГЭСН, direct quantity policy, anti-patterns и machine contract `smeta_work_plan_v1`; `prompt_registry_service` подмешивает JSON role-pack в smeta harness prompt и отдаёт его через `/api/prompts`; `skills/smeta/SKILL.md` обновлён под схему skill + JSON role-pack + code guards для будущих ролей | ✅ рантайм, full test + make ship/post-deploy smoke + `/api/prompts` role-pack probe ✅ |
+| 0.24.0.49 | HEAD | 2026-06-28 | Smeta direct quantity duplicate guard: если планировщик несколько раз предлагает один и тот же `code` с тем же direct-слотом (`mass_t`/`volume_m3`/`area_m2`/`piece_count`) и тем же физическим объёмом, harness считает первую позицию, а повторы помечает `skipped_duplicate`, чтобы одна масса/объём не умножались в сумме; visible title для direct-расчётов скрывает служебную площадь планировщика | ✅ рантайм, full test + make ship/post-deploy smoke + live metal/trench probes ✅ |
+| 0.24.0.48 | HEAD | 2026-06-28 | Qdrant parse lexical guard: `_sync_parse` больше не падает на legacy/test/lightweight adapter без `_sync_delete_file_lexical`/`_sync_upsert_file_lexical`; vector parse остаётся обязательным, lexical FTS sidecar работает, когда методы доступны, и становится no-op только для адаптеров без sidecar-слоя | ✅ рантайм, full test + make ship/post-deploy smoke ✅ |
+| 0.24.0.47 | HEAD | 2026-06-28 | Smeta direct work quantity route: `parse_params` принимает Office/DOCX-форматы чисел с пробелами/NBSP и смешанными разделителями тысяч/десятых (`664.711,12 кг`, `664,711.12 кг`) для общих слотов без объектных спец-веток; добавлены прямые физические слоты `volume_m3`/`area_m2`/`mass_t`/`piece_count`, чтобы `200 м3` считались как объём позиции и пересчитывались кодом в измеритель нормы (`100 м3` → `qty=2`); auto-чат узко переводит запросы «рассчитать сметную стоимость работ + явное количество» в smeta harness вместо table/RAG, а `найди/покажи строки сметы` остаются табличным поиском; smeta-harness prompt сохраняет операторскую метку `Режим «Смета»` | ✅ рантайм вместе с 0.24.0.48, full test + make ship/post-deploy smoke ✅ |
+| 0.24.0.46 | 9d82b60 | 2026-06-28 | Chat attachment upload hotfix: Совушка читает файл из актуального NiceGUI `UploadEventArguments.file.read()`, сохраняет fallback для старого `content`, больше не запускает upload handler через `asyncio.create_task` без UI-контекста; read-вложение после upload снова отображается под полем ввода и в истории как файл следующего сообщения | ✅ рантайм, focused/verify + live attach probe ✅ |
 | 0.24.0.45 | HEAD | 2026-06-28 | Broad answer length/source visual hotfix: удалены скрытые fixed-line правила для notebook-study/default RAG (`5-8 строк`, `до 6 строк`), `расскажи`/`требования к` больше не классифицируются как brief без явной просьбы `кратко`; default/full generation budget не режется local cap; source-маркеры в Совушке выводятся отдельными citation-строками | ✅ рантайм, focused/verify + live BAI probe ✅ |
 | 0.24.0.44 | HEAD | 2026-06-28 | Notebook artifact/length hotfix: снят отдельный `LES_NOTEBOOK_STUDY_CHAT_MAX_TOKENS=900` cap; notebook-study использует общий generation budget; payload artifact `Инженерный блокнот` теперь `mode=markdown`, Совушка рендерит markdown-артефакт целиком, а сам артефакт начинается с найденных материалов, не со служебного маршрута чтения | ✅ рантайм, focused/verify + live BAI probe ✅ |
 | 0.24.0.43 | HEAD | 2026-06-28 | Dataset UUID scope hotfix: legacy `dataset_filter=<uuid>` теперь резолвится как выбранный датасет и в `scope_service`, и в `retrieval_service`; broad-study получает `_dataset_ids` и может строить notebook artifact по выбранному объекту вместо fallback на широкий RAG | ✅ рантайм, focused/verify + live BAI probe ✅ |

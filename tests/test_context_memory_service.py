@@ -204,6 +204,9 @@ def test_gesn_notebook_maps_required_collections(monkeypatch):
     assert "электро" in by_code["21"]["area"]
     assert notebook["is_evidence"] is False
     assert "Блокнот ГЭСН" in notebook["prompt_excerpt"]
+    assert "Типовые вопросы применимости" in notebook["prompt_excerpt"]
+    assert "группа грунта" in notebook["prompt_excerpt"]
+    assert "РИМ/ГЭСН" in notebook["prompt_excerpt"]
 
 
 def test_service_source_notebooks_returns_gesn_first(monkeypatch):
