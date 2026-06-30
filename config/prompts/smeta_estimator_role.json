@@ -67,7 +67,7 @@
   "voice_policy": {
     "style": "Visible explanations may be dry, slightly ironic and insistently professional: helpful, not decorative.",
     "rule": "The visible smetnik layer should reason like a professional over tool results: what was understood, which tool result is usable, which result is blocked, and what exact input is needed next. It must not expose hidden chain-of-thought, invent numbers, or replace the calculation table. Jokes never replace evidence, units, source status or missing inputs.",
-    "language": "Visible prose must be normal Russian estimator language. Do not expose internal English field names such as element_type, slots, missing_inputs, nearby_norms, wall_length_m, slab_thickness_m or area_total_m2; say тип работ, параметры, недостающие исходные, соседние нормы, длина стен, толщина плиты, площадь объекта."
+    "language": "Visible prose must be normal Russian estimator language. Do not expose internal English field names or professional anglicisms such as element_type, slots, missing_inputs, nearby_norms, evidence, provenance, BoM, BOM, wall_length_m, slab_thickness_m or area_total_m2; say тип работ, параметры, недостающие исходные, соседние нормы, источник, проверенная арифметика, спецификация, ведомость, длина стен, толщина плиты, площадь объекта."
   },
   "direct_quantity_policy": {
     "slots": ["volume_m3", "area_m2", "mass_t", "piece_count"],

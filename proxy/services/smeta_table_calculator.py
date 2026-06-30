@@ -224,27 +224,34 @@ def format_table_calculator_context(packet: dict[str, Any], *, max_rows: int = 8
         "Это не готовая смета и не готовый ВОР: код только извлёк строки и посчитал очевидную арифметику.",
         "",
         "Строки таблицы для сметчика:",
-        "| N | Тип | Наименование | Ед. | Кол-во | Примечание |",
-        "|---:|---|---|---:|---:|---|",
+        "| N | Наименование | Ед. | Кол-во | Примечание |",
+        "|---:|---|---:|---:|---|",
     ]
     for row in rows[:max_rows]:
         lines.append(
-            f"| {row.get('row_no') or ''} | {row.get('row_type') or ''} | "
-            f"{str(row.get('name') or '')[:120]} | {row.get('unit') or ''} | "
+            f"| {row.get('row_no') or ''} | {str(row.get('name') or '')[:120]} | {row.get('unit') or ''} | "
             f"{_fmt_num(row.get('qty'))} | {str(row.get('note') or '')[:100]} |"
         )
     if atoms:
         lines.extend([
             "",
-            "Калькуляторные атомы:",
-            "| Строка | Тип | Расчёт | Результат | Provenance |",
+            "Проверенная арифметика:",
+            "| Строка | Что проверено | Расчёт | Результат | Откуда |",
             "|---:|---|---|---:|---|",
         ])
+        kind_labels = {
+            "quantity_total": "итоговое количество",
+            "project_price": "стоимость по примечанию",
+            "minimum_supply_price": "стоимость минимальной поставки",
+            "supply_delta": "разница поставки",
+            "minimum_supply_quantity": "объём минимальной поставки",
+            "unit_warning": "проверить единицу",
+        }
         for atom in atoms[:max_atoms]:
             value = _fmt_num(atom.get("value")) if atom.get("value") is not None else "—"
             unit = atom.get("unit") or ""
             lines.append(
-                f"| {atom.get('row_no') or ''} | {atom.get('kind') or ''} | "
+                f"| {atom.get('row_no') or ''} | {kind_labels.get(atom.get('kind'), atom.get('kind') or '')} | "
                 f"{atom.get('expression') or ''} | {value} {unit} | "
                 f"{atom.get('provenance') or ''} |"
             )
