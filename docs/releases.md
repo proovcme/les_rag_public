@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.109** | HEAD | Smeta direct RAG packet: explicit Smeta direct model-first now receives compact retrieved chunks, source map and dataset navigation memory when a dataset/project/target file scope exists. RAG helps the estimator; it still does not become a code-written answer. |
 | **v0.24.0.108** | HEAD | Smeta direct model-first experiment: explicit Smeta mode now lets the estimator model answer from the full question/attachment context and smeta skill before any code harness runs. The old harness remains fallback/calculator/provenance tooling, but no longer pre-filters the visible answer by default. |
 | **v0.24.0.107** | HEAD | Smeta model-first blocked fallback: when the harness blocks every work item and computes nothing, the visible answer is produced by the estimator model over the full TZ/BOR context plus a compact blocked-harness advisory. The code trace remains technical evidence/artifact, but no longer replaces the estimator with a wall of rejected norm candidates. |
 | **v0.24.0.106** | HEAD | Smeta long-TZ orchestration fix: the model-owned work-plan gets a larger dynamic completion budget for long TZ/BOR/attachment contexts, and the visible estimator comment now receives the same harness question/excerpt while being blocked from claiming that a file or VOR is truncated without calculation evidence. |

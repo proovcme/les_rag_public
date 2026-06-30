@@ -1627,7 +1627,137 @@ def _smeta_model_first_answer(harness_question: str, result: dict) -> str:
     return text[:10000]
 
 
-def _smeta_direct_model_answer(harness_question: str) -> str:
+async def _smeta_direct_rag_context(
+    req: "ChatRequest",
+    *,
+    rag_backend: Any,
+    dataset_ids: list[str] | None,
+    state: Any,
+) -> dict[str, Any]:
+    """Compact RAG packet for direct smeta mode: context only, no deterministic answer."""
+    query_intent = route_query(
+        req.question,
+        dataset_filter=req.dataset_filter,
+        dataset_ids=dataset_ids,
+    )
+    kot_decision = analyze_question(req.question)
+    effective_dataset_filter = req.dataset_filter or query_intent.dataset_filter or kot_decision.dataset_filter
+    resolved_ids = await resolve_dataset_ids(
+        rag_backend,
+        dataset_ids,
+        effective_dataset_filter,
+        logger,
+        question=req.question,
+    )
+    trace: dict[str, Any] = {
+        "schema": "smeta_direct_rag_context_v1",
+        "effective_dataset_filter": effective_dataset_filter,
+        "dataset_ids": resolved_ids,
+        "status": "skipped",
+    }
+    if not resolved_ids:
+        trace["reason"] = "no_dataset_scope"
+        return {"text": "", "trace": trace, "sources": [], "source_map": []}
+
+    target_file_ref: dict[str, Any] | None = None
+    target_doc_filter: list[str] = []
+    target_query = req.target_file or req.question
+    try:
+        target_file_ref = await asyncio.to_thread(
+            resolve_inventory_file_reference,
+            target_query,
+            [str(d) for d in resolved_ids],
+        )
+        if target_file_ref and target_file_ref.get("match_status") == "matched" and target_file_ref.get("file_name"):
+            target_doc_filter = [str(target_file_ref["file_name"])]
+    except Exception as file_err:  # noqa: BLE001
+        trace["target_file_error"] = f"{type(file_err).__name__}: {file_err}"
+
+    try:
+        reranker_on = (
+            req.reranker_enabled
+            if req.reranker_enabled is not None
+            else os.getenv("RERANKER_ENABLED", "true").lower() == "true"
+        )
+        retrieval = await retrieve_chat_chunks(
+            question=req.question,
+            dataset_ids=resolved_ids,
+            rag_backend=rag_backend,
+            reranker_enabled=reranker_on,
+            reranker_available=state.reranker_available,
+            reranker_cls=state.reranker_cls,
+            mlx_url=os.getenv("MLX_URL", "http://127.0.0.1:8080"),
+            logger=logger,
+            llm_semaphore=state.llm_semaphore,
+            return_trace=True,
+            doc_filter=target_doc_filter or None,
+        )
+        chunks = rank_chunks_for_question(req.question, retrieval.chunks)
+        chunks = concentrate_sources(
+            chunks,
+            max_docs=_env_int("LES_SMETA_RAG_MAX_DOCS", 4),
+            min_score=_env_float("LES_SMETA_RAG_MIN_SCORE", 0.0),
+            max_chunks=_env_int("LES_SMETA_RAG_MAX_CHUNKS", 10),
+            protected_doc_names=target_doc_filter,
+        )
+        windows = expand_context_windows(
+            chunks,
+            collection=getattr(rag_backend, "collection_name", ""),
+            logger=logger,
+            max_chunks=_env_int("LES_SMETA_RAG_CONTEXT_MAX_CHUNKS", 8),
+            max_chars_per_chunk=_env_int("LES_SMETA_RAG_CONTEXT_WINDOW_CHARS", 1800),
+            radius=0,
+        )
+        ctx_chunks = windows.chunks
+        max_chars = _env_int("LES_SMETA_RAG_CONTEXT_CHARS", 9000)
+        context = build_context(ctx_chunks, max_chars, include_metadata=True)
+        source_map = source_map_for_context(ctx_chunks, max_chars, include_metadata=True)
+        memory_prompt = await asyncio.to_thread(
+            dataset_memory_prompt_excerpt,
+            [str(d) for d in resolved_ids],
+        )
+        blocks = []
+        if context:
+            blocks.append(
+                "Проверяемые фрагменты из выбранного RAG-корпуса для сметного ответа:\n"
+                f"{context}"
+            )
+        if memory_prompt:
+            blocks.append(
+                "Навигационная карта корпуса (не источник фактов, только куда смотреть):\n"
+                f"{memory_prompt}"
+            )
+        if target_file_ref and target_file_ref.get("match_status") == "matched":
+            blocks.append(
+                "Запрос привязан к файлу: "
+                f"{target_file_ref.get('file_name')} "
+                f"(статус индекса: {target_file_ref.get('status')}, чанков: {target_file_ref.get('chunk_count')})."
+            )
+        retrieval_payload = retrieval.payload()
+        trace.update({
+            "status": "ready" if blocks else "empty",
+            "retrieval": retrieval_payload,
+            "source_count": len(source_map),
+            "target_file": target_file_ref,
+            "context_chars": sum(len(b) for b in blocks),
+            "dataset_memory": bool(memory_prompt),
+        })
+        return {
+            "text": "\n\n".join(blocks),
+            "trace": trace,
+            "sources": source_names(ctx_chunks),
+            "source_map": source_map,
+        }
+    except Exception as rag_err:  # noqa: BLE001
+        logger.warning("[SMETA_RAG] context skipped: %s", rag_err)
+        trace.update({
+            "status": "error",
+            "error": f"{type(rag_err).__name__}: {rag_err}",
+        })
+        return {"text": "", "trace": trace, "sources": [], "source_map": []}
+
+
+def _smeta_direct_model_answer(harness_question: str, rag_context: str = "") -> str:
     """Primary visible smeta answer: estimator model first, calculator/harness later if needed."""
     runtime = _llm_runtime()
     sys_prompt = build_mode_system_prompt(
@@ -1642,6 +1772,9 @@ def _smeta_direct_model_answer(harness_question: str) -> str:
             "Если пользователь просит ориентировочно или разрешает допущения — можно дать сценарную "
             "оценку/диапазон только с явной пометкой, что цены требуют источника. Не выдумывай "
             "конкретные коды, ресурсы, НР/СП или рубли как проверенные, если их нет в контексте. "
+            "Если переданы проверяемые RAG-фрагменты, используй их как источники норм/прайсов/проектных "
+            "объёмов и явно отделяй их от исходных пользователя. Навигационная карта корпуса помогает "
+            "выбрать файл, но не является доказательством факта. "
             "Не говори внутренними словами вроде dataset_memory, evidence_atoms, slots, element_type, "
             "harness, trace. Не проси продолжение файла, если в предоставленном тексте видны нужные "
             "строки; сначала используй то, что уже есть."
@@ -1650,6 +1783,8 @@ def _smeta_direct_model_answer(harness_question: str) -> str:
     payload = {
         "task": "direct_model_smeta_answer",
         "user_context": str(harness_question or "")[:22000],
+        "rag_context": str(rag_context or "")[:12000],
+        "rag_context_role": "Проверяемые фрагменты и навигация. Факты можно утверждать только из пользовательского исходника или проверяемых фрагментов.",
         "required_visible_shape": [
             "что понял и какие исходные принял",
             "таблица работ/материалов с количеством: на единицу и итог, если множитель есть",
@@ -2227,7 +2362,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             "validation": {"enabled": False, "reason": channel},
             "versions": _version_stamp(),
         }
-        for key in ("provenance", "defense", "evidence_summary", "notebook_context", "total_status", "artifact"):
+        for key in ("provenance", "defense", "evidence_summary", "notebook_context", "total_status", "artifact", "source_map"):
             if key in extra:
                 payload[key] = extra[key]
         return payload
@@ -2363,18 +2498,39 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     if _PROFILE == "estimate_harness" or _auto_estimate_work:
         # Model-first estimate: model decomposes the object, harness provides tools and gates.
         harness_question = _smeta_harness_question(req)
+        smeta_rag_backend = state.backend
+        smeta_dataset_ids = req.dataset_ids
+        if req.project_id and not req.dataset_ids:
+            try:
+                from proxy.services.project_service import project_dataset_ids
+                smeta_scope = await asyncio.to_thread(project_dataset_ids, req.project_id)
+                if smeta_scope:
+                    smeta_dataset_ids = smeta_scope
+            except Exception as proj_err:  # noqa: BLE001
+                logger.warning("[PROJECT] smeta scope resolve failed: %s", proj_err)
         if (
             _PROFILE == "estimate_harness"
             and not _auto_estimate_work
             and _env_bool("LES_SMETA_DIRECT_MODEL_FIRST", True)
         ):
-            answer = await asyncio.to_thread(_smeta_direct_model_answer, harness_question)
+            rag_packet = await _smeta_direct_rag_context(
+                req,
+                rag_backend=smeta_rag_backend,
+                dataset_ids=smeta_dataset_ids,
+                state=state,
+            )
+            answer = await asyncio.to_thread(
+                _smeta_direct_model_answer,
+                harness_question,
+                rag_packet.get("text") or "",
+            )
             if answer:
                 trace = {
                     "mode": "estimate_harness",
                     "direct_model_first": True,
                     "harness_skipped": True,
                     "reason": "explicit smeta mode uses estimator model before code calculator",
+                    "smeta_rag_context": rag_packet.get("trace") or {},
                 }
                 return _mode_reply(
                     answer,
@@ -2382,6 +2538,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     "harness_mode",
                     extra={
                         "retrieval_trace": trace,
+                        "sources": rag_packet.get("sources") or [],
+                        "source_map": rag_packet.get("source_map") or [],
                         "total_status": "model_first",
                     },
                 )

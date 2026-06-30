@@ -1,7 +1,7 @@
 # Л.Е.С. — evidence-harness for construction data
 
 ![Python](https://img.shields.io/badge/python-3.12-blue)
-![LES](https://img.shields.io/badge/LES-0.24.0.108-0b8f64)
+![LES](https://img.shields.io/badge/LES-0.24.0.109-0b8f64)
 ![Runtime](https://img.shields.io/badge/runtime-Apple%20Silicon-black)
 ![Local-first](https://img.shields.io/badge/local--first-yes-2ea44f)
 ![Numbers](https://img.shields.io/badge/numbers-computed%20by%20code-success)
@@ -56,9 +56,10 @@ Question
 ### Smeta / GESN / RIM workflow
 
 Сметный режим direct model-first: в явном режиме «Смета» сначала отвечает сметчик-модель
-по полному вопросу, вложениям и skill. Кодовый harness подключается как fallback и как
-калькулятор/проверка норм, единиц, условий применимости, цен, НР/СП и provenance там,
-где модель уже показала, что именно нужно считать. Если данных не хватает, ответ
+по полному вопросу, вложениям, skill и компактному RAG-пакету выбранного корпуса
+(фрагменты, source map, навигационная память). Кодовый harness подключается как fallback
+и как калькулятор/проверка норм, единиц, условий применимости, цен, НР/СП и provenance
+там, где модель уже показала, что именно нужно считать. Если данных не хватает, ответ
 показывает ведомость, допущения и ценовые пробелы, а не стену внутренних отказов.
 
 Экспертная проверка сметного режима: [docs/public/smeta-expert-review.md](docs/public/smeta-expert-review.md).

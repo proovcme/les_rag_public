@@ -82,6 +82,11 @@ old harness stays available as a fallback and future calculator/provenance layer
 pre-filters whether the visible answer may exist. This is controlled by `LES_SMETA_DIRECT_MODEL_FIRST`
 (default on for explicit Smeta, off for auto-routed work estimates).
 
+Since 0.24.0.109 direct Smeta mode also gets a compact RAG packet when the operator selected a dataset,
+project scope or target file: top retrieved chunks, source map and navigation memory. This packet is
+context for the estimator model, not a deterministic answer; the harness still does not pre-filter the
+visible estimate.
+
 If the model cannot produce enough checked positions, the answer must say what is missing. It must
 not substitute a prewritten object composition.
 

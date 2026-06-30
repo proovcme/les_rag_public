@@ -3,12 +3,14 @@ from types import SimpleNamespace
 import pytest
 
 from proxy.routers.chat import (
+    ChatRequest,
     _compact_question_excerpt,
     _estimate_harness_plan_tokens,
     _format_harness,
     _format_harness_artifact,
     _format_smeta_dialog_state,
     _harness_voice_comment,
+    _smeta_direct_rag_context,
     _smeta_direct_model_answer,
     _should_use_model_first_smeta,
     _smeta_model_first_answer,
@@ -235,7 +237,8 @@ def test_smeta_direct_model_answer_does_not_need_harness_result(monkeypatch):
     monkeypatch.setattr("proxy.routers.chat.httpx.Client", FakeClient)
 
     text = _smeta_direct_model_answer(
-        "Текущий запрос:\nСделай смету по скамье\n\nКонтекст прикреплённого файла:\n3 скамьи; Г1 4 шт; бетон 0,4 м3"
+        "Текущий запрос:\nСделай смету по скамье\n\nКонтекст прикреплённого файла:\n3 скамьи; Г1 4 шт; бетон 0,4 м3",
+        "Проверяемые фрагменты из выбранного RAG-корпуса:\n[Источник 1 | нормы.docx]:\nГранитные элементы требуют КАЦ.",
     )
 
     assert "12 шт" in text
@@ -243,7 +246,51 @@ def test_smeta_direct_model_answer_does_not_need_harness_result(monkeypatch):
     prompt_payload = FakeClient.last_json["messages"][1]["content"]
     assert "direct_model_smeta_answer" in prompt_payload
     assert "3 скамьи" in prompt_payload
+    assert "Гранитные элементы требуют КАЦ" in prompt_payload
     assert "blocked_harness_advisory" not in prompt_payload
+
+
+@pytest.mark.asyncio
+async def test_smeta_direct_rag_context_builds_compact_context(monkeypatch):
+    chunk = SimpleNamespace(
+        content="Монтаж кабеля СКС Cat.6A, количество 120 м, прокладка в лотке.",
+        doc_name="СКС.xlsx",
+        score=0.91,
+        meta={"dataset_id": "ds-sks", "doc_type": "estimate"},
+    )
+
+    async def fake_resolve_dataset_ids(*args, **kwargs):
+        return ["ds-sks"]
+
+    async def fake_retrieve_chat_chunks(**kwargs):
+        assert kwargs["dataset_ids"] == ["ds-sks"]
+        assert kwargs["return_trace"] is True
+        quality = SimpleNamespace(status="good", top_score=0.91, detail="")
+        trace = SimpleNamespace(payload=lambda: {"mode": "fake", "merged_count": 1})
+        return SimpleNamespace(chunks=[chunk], quality=quality, payload=lambda: {"mode": "fake", "merged_count": 1}, trace=trace)
+
+    def fake_expand_context_windows(chunks, **kwargs):
+        return SimpleNamespace(chunks=list(chunks))
+
+    monkeypatch.setattr("proxy.routers.chat.resolve_dataset_ids", fake_resolve_dataset_ids)
+    monkeypatch.setattr("proxy.routers.chat.retrieve_chat_chunks", fake_retrieve_chat_chunks)
+    monkeypatch.setattr("proxy.routers.chat.expand_context_windows", fake_expand_context_windows)
+    monkeypatch.setattr("proxy.routers.chat.dataset_memory_prompt_excerpt", lambda ids: "СКС: таблицы и сметные строки")
+
+    packet = await _smeta_direct_rag_context(
+        ChatRequest(question="сделай смету по СКС", mode="smeta", dataset_ids=["ds-sks"]),
+        rag_backend=SimpleNamespace(collection_name="test"),
+        dataset_ids=["ds-sks"],
+        state=SimpleNamespace(reranker_available=False, reranker_cls=None, llm_semaphore=None),
+    )
+
+    assert packet["trace"]["status"] == "ready"
+    assert packet["trace"]["dataset_memory"] is True
+    assert "Проверяемые фрагменты" in packet["text"]
+    assert "СКС.xlsx" in packet["text"]
+    assert "120 м" in packet["text"]
+    assert packet["sources"] == ["СКС.xlsx"]
+    assert packet["source_map"][0]["doc_name"] == "СКС.xlsx"
 
 
 def test_harness_voice_allows_visible_estimator_reasoning(monkeypatch):

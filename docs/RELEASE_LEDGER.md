@@ -7,14 +7,18 @@
 ## Текущее состояние (2026-06-30)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.108  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.109  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.108 Smeta direct model-first experiment
+задеплоено на рантайм:     0.24.0.109 Smeta direct RAG packet
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.108 · app 5.1.0 · h0.24 · runtime_alignment=aligned
+рантайм /api/version:      0.24.0.109 · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.109 — явный режим «Смета» при выбранном dataset/project/target-file
+> scope получает компактный RAG-пакет: top chunks, source map и навигационную
+> память датасета. Это контекст для сметчика-модели, а не детерминированный
+> ответ; кодовый harness всё ещё не фильтрует видимый ответ заранее.
 > 0.24.0.108 — явный режим «Смета» теперь идёт от обратного: видимый ответ
 > сначала пишет сметчик-модель по полному `harness_question`/вложению и smeta
 > skill, без запуска кодового harness как предварительного фильтра. Harness
