@@ -30,6 +30,12 @@ scope. It only provides tools:
 - calculation gates: applicability, unit compatibility, quantity sanity, price coverage and
   evidence status.
 
+Since 0.24.0.101 the batch harness follows that contract explicitly: if `search_norm` returns an
+ambiguous shortlist, it asks the model for a compact JSON choice over the returned `norm_code`
+values (or an `ask_user` question). The harness rejects codes outside the shortlist and never falls
+through to the first applicable candidate on its own. Only after this model choice does
+`add_position` run the calculator gates.
+
 If the model cannot produce enough checked positions, the answer must say what is missing. It must
 not substitute a prewritten object composition.
 

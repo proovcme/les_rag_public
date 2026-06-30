@@ -16,6 +16,28 @@ def _state(area=3000, floors=3):
             "positions": [], "steps": 0}
 
 
+def _complete_plan_with_norm_choice(plan, *, reason="тестовый выбор модели из shortlist"):
+    def complete(messages):
+        if messages and "search_norm вернул список норм" in messages[-1]["content"]:
+            payload = json.loads(messages[-2]["content"])
+            shortlist = payload["search_norm"]["shortlist"]
+            candidate = next(
+                (
+                    c for c in shortlist
+                    if c.get("applicability_status") == "accepted"
+                    and c.get("unit_compatible") is not False
+                ),
+                shortlist[0] if shortlist else {},
+            )
+            return json.dumps({
+                "selected_code": candidate.get("norm_code", ""),
+                "reason": reason,
+                "ask_user": "",
+            }, ensure_ascii=False)
+        return json.dumps(plan, ensure_ascii=False)
+    return complete
+
+
 # ── search_norm: тонкий кандидатор + фильтр применимости ──────────────────────────────────
 
 def test_search_norm_thin_and_no_match():
@@ -191,8 +213,14 @@ def test_batch_plan_repairs_first_non_json_response():
         '{"object":{"object_type":"house","area_total_m2":150,"floors":1},'
         '"works":[["кровля","устройство кровли","roofing","roofing","устройство","м2",{}]]}',
     ])
+    chooser = _complete_plan_with_norm_choice({})
 
-    res = h.run_estimate_harness("дом 150 м2", lambda _messages: next(responses))
+    def complete(messages):
+        if messages and "search_norm вернул список норм" in messages[-1]["content"]:
+            return chooser(messages)
+        return next(responses)
+
+    res = h.run_estimate_harness("дом 150 м2", complete)
 
     assert res["planner_status"] == "batch"
     assert res["trace"][0] == {"tool": "planner_repair", "status": "ok"}
@@ -238,8 +266,14 @@ def test_batch_plan_uses_schema_repair_when_complete():
         '{"object":{"object_type":"house","area_total_m2":150,"floors":1},'
         '"works":[["кровля","устройство кровли","roofing","roofing","устройство","м2",{}]]}',
     ])
+    chooser = _complete_plan_with_norm_choice({})
 
-    res = h.run_estimate_harness("дом 150 м2 кровля", lambda _messages: next(responses))
+    def complete(messages):
+        if messages and "search_norm вернул список норм" in messages[-1]["content"]:
+            return chooser(messages)
+        return next(responses)
+
+    res = h.run_estimate_harness("дом 150 м2 кровля", complete)
 
     assert res["planner_status"] == "batch"
     assert res["trace"][0]["tool"] == "planner_schema_repair"
@@ -469,7 +503,7 @@ def test_direct_quantity_candidates_are_exposed_with_provenance():
 
     res = h.run_estimate_harness(
         "регион Санкт-Петербург, разработка траншеи вручную, объем выработки грунта 200 м3",
-        lambda _m: json.dumps(plan, ensure_ascii=False),
+        _complete_plan_with_norm_choice(plan),
     )
 
     volume = next(c for c in res["quantity_candidates"] if c["slot"] == "volume_m3")
@@ -508,7 +542,7 @@ def test_harness_loop_end_to_end_parking():
     assert [t["tool"] for t in res["trace"]] == ["propose_schema", "add_position"]
 
 
-def test_batch_plan_calls_model_once_and_surfaces_gesn_candidates():
+def test_batch_plan_asks_model_to_choose_when_search_is_ambiguous():
     plan = {
         "object_schema": {"object_type": "underground_parking", "area_total_m2": 4800,
                           "levels_below_ground": 2, "structural_system": "monolithic_rc"},
@@ -521,21 +555,29 @@ def test_batch_plan_calls_model_once_and_surfaces_gesn_candidates():
     }
     calls = {"n": 0}
 
-    def complete(_m):
+    def complete(messages):
         calls["n"] += 1
+        if messages and "search_norm вернул список норм" in messages[-1]["content"]:
+            return json.dumps({
+                "selected_code": "ГЭСН:06-02-001-04",
+                "reason": "подходит для фундаментной плиты общего назначения",
+                "ask_user": "",
+            }, ensure_ascii=False)
         return json.dumps(plan, ensure_ascii=False)
 
     res = h.run_estimate_harness("паркинг 4800 м², плита 400 мм", complete)
 
-    assert calls["n"] == 1
+    assert calls["n"] == 2
     assert res["planner_status"] == "batch"
     assert res["trace"][0]["tool"] == "propose_schema"
     assert res["trace"][1]["tool"] == "search_norm"
     assert res["trace"][1]["candidates"]       # номера ГЭСН видны для operator review
     assert res["trace"][1]["selection"]["schema"] == "candidate_selection_v1"
-    assert res["computed"]                     # черновую стоимость считаем по лучшему применимому кандидату
+    assert res["trace"][2]["tool"] == "model_norm_choice"
+    assert res["trace"][2]["status"] == "selected"
+    assert res["computed"]                     # черновую стоимость считаем после выбора модели
     assert res["computed"][0]["code"].startswith("ГЭСН:06-02")
-    assert any("требуется проверка" in a for a in res["computed"][0]["assumptions"])
+    assert any("моделью из shortlist" in a for a in res["computed"][0]["assumptions"])
     assert res["by_assumption"]
     assert res["total_status"] == "partial"
     assert res["partial_total"]["grand_total"] > 0
@@ -555,7 +597,7 @@ def test_compact_batch_plan_array_contract():
         ],
     }
 
-    res = h.run_estimate_harness("дача 150 м²", lambda _m: json.dumps(plan, ensure_ascii=False))
+    res = h.run_estimate_harness("дача 150 м²", _complete_plan_with_norm_choice(plan))
 
     assert res["planner_status"] == "batch"
     assert res["schema"]["object_type"] == "residential_house"
@@ -563,10 +605,10 @@ def test_compact_batch_plan_array_contract():
     assert all(t["candidates"] for t in res["trace"] if t["tool"] == "search_norm")
     assert any(p["code"].startswith("ГЭСН:12-") for p in res["computed"])
     roof = next(p for p in res["computed"] if p["code"].startswith("ГЭСН:12-"))
-    assert any("ближайшая применимая норма" in a for a in roof["assumptions"])
+    assert any("моделью из shortlist" in a for a in roof["assumptions"])
 
 
-def test_batch_plan_binds_first_unit_compatible_roof_candidate():
+def test_batch_plan_lets_model_select_later_unit_compatible_roof_candidate():
     plan = {
         "object": {"object_type": "residential_house", "area_total_m2": 150, "floors": 1},
         "works": [
@@ -575,13 +617,17 @@ def test_batch_plan_binds_first_unit_compatible_roof_candidate():
         ],
     }
 
-    res = h.run_estimate_harness("дача 150 м² двускатная кровля", lambda _m: json.dumps(plan, ensure_ascii=False))
+    res = h.run_estimate_harness(
+        "дача 150 м² двускатная кровля",
+        _complete_plan_with_norm_choice(plan),
+    )
 
     assert res["computed"]
     assert res["computed"][0]["code"] != "ГЭСН:12-01-041-01"
     assert res["computed"][0]["physical_unit"] == "м2"
     add_trace = [t for t in res["trace"] if t["tool"] == "add_position"][0]
     assert add_trace["candidate_index"] > 0
+    assert any(t["tool"] == "model_norm_choice" for t in res["trace"])
 
 
 def test_batch_plan_trace_reports_tool_argument_normalization():
@@ -593,7 +639,7 @@ def test_batch_plan_trace_reports_tool_argument_normalization():
         ],
     }
 
-    res = h.run_estimate_harness("дача 150 м²", lambda _m: json.dumps(plan, ensure_ascii=False))
+    res = h.run_estimate_harness("дача 150 м²", _complete_plan_with_norm_choice(plan))
 
     search_trace = [t for t in res["trace"] if t["tool"] == "search_norm"][0]
     assert search_trace["normalized"]
@@ -747,7 +793,7 @@ def test_direct_volume_with_unconfirmed_norm_conditions_is_partial():
 
     res = h.run_estimate_harness(
         "регион Санкт-Петербург, рассчитай стоимость разработки траншеи вручную, объем выработки грунта 200 м3",
-        lambda _m: json.dumps(plan, ensure_ascii=False),
+        _complete_plan_with_norm_choice(plan),
     )
 
     assert res["computed"]
@@ -773,7 +819,7 @@ def test_direct_volume_with_confirmed_norm_conditions_can_complete():
 
     res = h.run_estimate_harness(
         "разработка траншеи вручную, объем 200 м3, грунт группы II, глубина 2 м, с креплениями, ширина 1 м",
-        lambda _m: json.dumps(plan, ensure_ascii=False),
+        _complete_plan_with_norm_choice(plan),
     )
 
     assert res["computed"]
@@ -793,7 +839,7 @@ def test_object_area_does_not_override_m2_formula_quantities():
 
     res = h.run_estimate_harness(
         "каркасный дом площадь 200 м2, 2 этажа",
-        lambda _m: json.dumps(plan, ensure_ascii=False),
+        _complete_plan_with_norm_choice(plan),
     )
 
     assert res["computed"]
@@ -813,7 +859,7 @@ def test_object_area_can_be_read_from_bare_house_area_phrase():
 
     res = h.run_estimate_harness(
         "двухэтажный дом 200 м2",
-        lambda _m: json.dumps(plan, ensure_ascii=False),
+        _complete_plan_with_norm_choice(plan),
     )
 
     assert res["computed"]
@@ -833,7 +879,7 @@ def test_model_placeholder_area_does_not_create_fake_object_geometry():
 
     res = h.run_estimate_harness(
         "хочу построить бетонную двухэтажную дачу",
-        lambda _m: json.dumps(plan, ensure_ascii=False),
+        _complete_plan_with_norm_choice(plan),
     )
 
     assert not res["computed"]
@@ -863,7 +909,7 @@ def test_authorized_assumption_mode_can_use_model_scenario_geometry():
 
     res = h.run_estimate_harness(
         "хочу построить бетонную двухэтажную дачу. придумай сам и дай смету",
-        lambda _m: json.dumps(plan, ensure_ascii=False),
+        _complete_plan_with_norm_choice(plan),
     )
 
     assert res["assumption_mode"] is True
@@ -884,7 +930,7 @@ def test_explicit_work_area_can_be_direct_quantity():
 
     res = h.run_estimate_harness(
         "рассчитай сметную стоимость работ по устройству кровли, площадь работ 200 м2",
-        lambda _m: json.dumps(plan, ensure_ascii=False),
+        _complete_plan_with_norm_choice(plan),
     )
 
     assert res["computed"]

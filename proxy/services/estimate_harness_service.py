@@ -559,15 +559,97 @@ def _candidate_selection(candidates: list[dict[str, Any]]) -> dict[str, Any]:
     return select_candidates(candidates, reason_labels=_SMETA_REASON_LABELS)
 
 
-def _first_bindable_candidate(candidates: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, int]:
-    """Return the first candidate that passed applicability and unit gates."""
+def _selected_candidate_from_contract(
+    candidates: list[dict[str, Any]],
+    selection: dict[str, Any],
+) -> tuple[dict[str, Any] | None, int]:
+    """Bind only the norm explicitly selected by the candidate contract.
+
+    Ambiguous shortlists go back to the model/user instead of silently falling through to the
+    first applicable code. The calculator still verifies applicability and units in add_position.
+    """
+    if selection.get("action") != "bind_top_candidate":
+        return None, -1
+    selected_code = str(selection.get("selected_code") or "").strip()
+    if not selected_code:
+        return None, -1
     for index, candidate in enumerate(candidates):
-        if (
-            candidate.get("applicability_status") == "accepted"
-            and candidate.get("unit_compatible") is not False
-        ):
+        if str(candidate.get("norm_code") or "").strip() == selected_code:
             return candidate, index
     return None, -1
+
+
+def _candidate_by_code(candidates: list[dict[str, Any]], code: str) -> tuple[dict[str, Any] | None, int]:
+    wanted = str(code or "").strip()
+    if not wanted:
+        return None, -1
+    for index, candidate in enumerate(candidates):
+        if str(candidate.get("norm_code") or "").strip() == wanted:
+            return candidate, index
+    return None, -1
+
+
+def _model_select_candidate(
+    *,
+    item: dict[str, Any],
+    search: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    messages: list[dict[str, str]],
+    complete: Callable[[list[dict[str, str]]], str],
+) -> tuple[dict[str, Any] | None, int, dict[str, Any] | None]:
+    """Ask the model to choose from an ambiguous shortlist.
+
+    The model may pick only a returned norm_code or ask for missing inputs. The harness validates
+    the selected code against the shortlist; calculation still goes through add_position gates.
+    """
+    selection = search.get("selection") if isinstance(search.get("selection"), dict) else {}
+    candidate, index = _selected_candidate_from_contract(candidates, selection)
+    if candidate:
+        return candidate, index, None
+    if not candidates:
+        return None, -1, None
+
+    shortlist = selection.get("shortlist") if isinstance(selection.get("shortlist"), list) else []
+    if not shortlist:
+        shortlist = _candidate_shortlist(candidates)
+    selection_brief = {
+        "schema": selection.get("schema", ""),
+        "status": selection.get("status", ""),
+        "action": selection.get("action", ""),
+        "selected_code": selection.get("selected_code", ""),
+        "score_gap": selection.get("score_gap"),
+        "reason": selection.get("reason", ""),
+    }
+    choice_messages = list(messages)
+    choice_messages.extend([
+        {"role": "assistant", "content": json.dumps({
+            "work": item.get("work") or item.get("work_description") or "",
+            "search_norm": {
+                "status": search.get("status"),
+                "selection": selection_brief,
+                "shortlist": shortlist[:5],
+            },
+        }, ensure_ascii=False)},
+        {"role": "user", "content": (
+            "search_norm вернул список норм, но автоматической привязки нет. "
+            "Выбери норму только из shortlist, если по запросу/ТЗ условия понятны; иначе задай "
+            "короткий вопрос пользователю. Верни ровно JSON: "
+            "{\"selected_code\":\"ГЭСН:.. или пусто\",\"reason\":\"почему\","
+            "\"ask_user\":\"что уточнить или пусто\"}. Без markdown."
+        )},
+    ])
+    raw = complete(choice_messages) or ""
+    choice = _extract_json(raw) or {}
+    chosen, chosen_index = _candidate_by_code(candidates, str(choice.get("selected_code") or ""))
+    trace = {
+        "tool": "model_norm_choice",
+        "status": "selected" if chosen else ("needs_input" if choice.get("ask_user") else "invalid"),
+        "work": item.get("work") or item.get("work_description") or "",
+        "selected_code": str(choice.get("selected_code") or ""),
+        "reason": str(choice.get("reason") or ""),
+        "ask_user": str(choice.get("ask_user") or ""),
+    }
+    return chosen, chosen_index, trace
 
 
 # ── magnitude guard: грубые порядковые границы ───────────────────────────────────────────
@@ -1510,11 +1592,26 @@ def _run_batch_plan(question: str, complete: Callable[[list[dict[str, str]]], st
             "selection": search.get("selection", {}),
             "normalized": corrections,
         })
-        bind_candidate, bind_index = _first_bindable_candidate(candidates)
+        bind_candidate, bind_index, choice_trace = _model_select_candidate(
+            item=item,
+            search=search,
+            candidates=candidates,
+            messages=messages,
+            complete=complete,
+        )
+        if choice_trace:
+            state["steps"] = int(state.get("steps") or 0) + 1
+            trace.append(choice_trace)
         if bind_candidate:
             selection = search.get("selection") if isinstance(search.get("selection"), dict) else {}
             norm_assumptions = []
-            if search.get("status") != "found":
+            if choice_trace and choice_trace.get("status") == "selected":
+                reason = str(choice_trace.get("reason") or "").strip()
+                norm_assumptions.append(
+                    "норма выбрана моделью из shortlist search_norm"
+                    + (f": {reason}" if reason else "")
+                )
+            elif search.get("status") != "found":
                 norm_assumptions.append(
                     "норма выбрана по лучшему применимому кандидату; требуется проверка сметчиком"
                 )

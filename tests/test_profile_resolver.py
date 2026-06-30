@@ -203,7 +203,26 @@ async def test_auto_work_estimate_goes_to_harness_not_retrieval(monkeypatch):
              "earthworks", "excavation", "разработка", "м3", {}],
         ],
     }
-    monkeypatch.setattr(chat_router, "_harness_complete", lambda _messages: json.dumps(plan, ensure_ascii=False))
+    def complete(messages):
+        if messages and "search_norm вернул список норм" in messages[-1]["content"]:
+            payload = json.loads(messages[-2]["content"])
+            shortlist = payload["search_norm"]["shortlist"]
+            candidate = next(
+                (
+                    c for c in shortlist
+                    if c.get("applicability_status") == "accepted"
+                    and c.get("unit_compatible") is not False
+                ),
+                shortlist[0],
+            )
+            return json.dumps({
+                "selected_code": candidate["norm_code"],
+                "reason": "выбрано моделью из shortlist",
+                "ask_user": "",
+            }, ensure_ascii=False)
+        return json.dumps(plan, ensure_ascii=False)
+
+    monkeypatch.setattr(chat_router, "_harness_complete", complete)
 
     resp = await chat_router.chat(
         chat_router.ChatRequest(

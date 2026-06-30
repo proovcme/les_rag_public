@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.101** | HEAD | Smeta model-choice loop: ambiguous `search_norm` shortlists now go back to the model for a norm choice or user question; the batch harness no longer skips to the first applicable candidate by itself, and `add_position` calculates only after a selected shortlist code passes gates. |
 | **v0.24.0.100** | HEAD | Smeta RAG-before-calculation cut: batch planning no longer stops geometry-dependent work before `search_norm`; GESN/RIM candidates and navigation reach the trace even when quantities are missing, while `add_position` remains the calculator gate that refuses to compute without geometry. |
 | **v0.24.0.99** | HEAD | Smeta model-freedom repair: explicit TZ/BOR/file sections are primary for the estimator model, direct quantities may feed several explicitly named operations over the same object, and duplicate guards now distinguish true optional duplicates from control assembly / intermediate disassembly / site mounting style work breakdowns. |
 | **v0.24.0.98** | HEAD | Smeta prompt-first repair: the estimator skill/role-pack now tells the model to carry known parameters and scenario assumptions into the work plan, understand colloquial area/depth wording, and avoid pile/grillage choices unless stated; the harness parses meter-word quantities and penalizes pile norm candidates for non-pile foundations while still refusing to invent missing formula slots itself. |
