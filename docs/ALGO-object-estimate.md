@@ -92,11 +92,9 @@ query classification infer a generic TABLE/broad corpus and mix unrelated RAG fr
 answer. If the operator only attaches an XLSX/DOCX/PDF, the attachment itself is the input; RAG joins
 only after a dataset/project scope is selected.
 
-Since 0.24.0.111 direct Smeta mode also builds a table calculator context from attached tabular text.
-The context is intentionally narrow: table rows, obvious arithmetic atoms, packaging/minimum-supply
-notes and provenance. It does not decide whether the input is a VOR or a specification, does not
-choose norms and does not write the estimate. The estimator model uses it as the checked bridge
-between VOR and specification:
+Since 0.24.0.113 the short-lived table calculator context was removed from direct Smeta. Attached
+tables are again passed to the estimator model as source text, not as a code-built intermediate layer.
+The spec-to-VOR bridge is model behavior, not code behavior:
 
 - VOR rows define works and quantities.
 - Specification rows define materials, equipment, packaging, mass, supplier/price notes and supply
@@ -107,16 +105,12 @@ between VOR and specification:
 - Parent assembly rows must not be double-counted when detailed child work/material rows already
   describe the scope.
 
-The layer is guarded by `LES_SMETA_TABLE_CALCULATOR` (default on). If it pollutes model reasoning, turn
-the flag off; explicit Smeta then returns to pure model + attachment + skill + scoped RAG.
-
 If the model cannot produce enough checked positions, the answer must say what is missing. It must
 not substitute a prewritten object composition.
 
 ## Code Boundaries
 
 - Current route: `proxy/services/estimate_harness_service.py`
-- Table calculator context: `proxy/services/smeta_table_calculator.py`
 - Mode/profile mapping: `proxy/services/profile_resolver.py`
 - Chat entry point: `proxy/routers/chat.py`
 - Removed experiment: `proxy/services/object_estimate_service.py`

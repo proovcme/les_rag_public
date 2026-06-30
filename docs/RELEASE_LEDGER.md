@@ -7,14 +7,19 @@
 ## Текущее состояние (2026-06-30)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.112  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.113  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.112 Smeta table answer cleanup
+задеплоено на рантайм:     0.24.0.113 Smeta table calculator removed
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.112 · app 5.1.0 · h0.24 · runtime_alignment=aligned
+рантайм /api/version:      0.24.0.113 · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.113 — short-lived `smeta_table_calculator` убит: direct smeta больше
+> не получает кодовую табличную подложку и не видит классификацию/арифметику,
+> собранную кодом. Табличное вложение читает модель через обычный
+> attachment+skill+scoped RAG путь; код остаётся только будущим calculator/tool
+> после модельного решения.
 > 0.24.0.112 — сметный direct-ответ по таблице очищен от машинных
 > классификаций и англо-служебных слов: модель больше не видит колонку
 > row-type, а видимый ответ запрещает `evidence`/`provenance`/`BoM` и говорит

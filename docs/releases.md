@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.113** | HEAD | Smeta table calculator removal: the short-lived `smeta_table_calculator` service was removed from direct Smeta. Attached tables are read by the estimator model through the normal attachment+skill path; code no longer injects a table arithmetic/classification layer into the prompt. |
 | **v0.24.0.112** | HEAD | Smeta table answer cleanup: the table calculator context no longer exposes machine row types/kind ids, and the estimator prompt suppresses visible `evidence`/`provenance`/`BoM` wording. The model keeps the spec → VOR → estimate path in normal Russian estimator language. |
 | **v0.24.0.111** | HEAD | Smeta table calculator: explicit Smeta direct model-first now extracts table rows and calculator atoms from attached tabular text, so the estimator model receives checked quantities, packaging/minimum-supply arithmetic and provenance. The model decides whether the input is a specification, VOR or mixed table; specification first becomes a proposed VOR, then an estimate path. |
 | **v0.24.0.110** | HEAD | Smeta direct RAG scope guard: direct smeta no longer lets query classification pull an unrelated TABLE/broad corpus when the operator only attached a file. Compact RAG context is added only for explicit dataset/project scope. |

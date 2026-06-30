@@ -46,7 +46,7 @@ description: Use when working on LES estimating/сметы — pricing (ГЭСН
    “умножить массу”.
    Если ВОР/ТЗ содержит вложенную ведомость “для 1 изделия/узла” и выше дано количество изделий,
    модель должна сохранить иерархию: дочерние количества умножаются на родительское количество
-   только когда это прямо следует из текста. Такое умножение помечается в `assumptions`/provenance;
+   только когда это прямо следует из текста. Такое умножение помечается в допущениях и происхождении расчёта;
    если неясно, количества итоговые или на единицу, нужно уточнить.
    Родительскую строку сборки/монтажа нельзя автоматически считать вместе с подробной дочерней
    расшифровкой: если это заголовок, считаются дочерние работы; если самостоятельная укрупнённая
@@ -155,7 +155,6 @@ description: Use when working on LES estimating/сметы — pricing (ГЭСН
 | НР/СП по виду работ | `nr_sp_service` | [ALGO-object-estimate](../../docs/ALGO-object-estimate.md) |
 | сборка ЛСР + РИМ-трасса + форма Прил.4 | `lsr_assembly_service`, `rim_lsr_trace_service`, `rim_trace_xlsx_service` | [ALGO-lsr-assembly](../../docs/ALGO-lsr-assembly.md) |
 | model-first сметный harness | `estimate_harness_service`, `prompt_registry_service` | [ALGO-object-estimate](../../docs/ALGO-object-estimate.md) |
-| табличная калькуляторная подложка для модели | `smeta_table_calculator` | [ALGO-object-estimate](../../docs/ALGO-object-estimate.md) |
 | спецификация Ф9 → ВОР | `spec_to_bor_service` | [ALGO-spec-to-bor](../../docs/ALGO-spec-to-bor.md) |
 | онтология понятий | `smeta_ontology_service` | [ALGO-smeta-ontology](../../docs/ALGO-smeta-ontology.md) |
 
