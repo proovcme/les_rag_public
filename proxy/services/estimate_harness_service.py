@@ -358,6 +358,8 @@ def _score_candidate(words: list[str], code: str, name: str, unit: str, *, work_
             parts["profile_action"] = 0.9
         if profile.get("resource_count"):
             parts["resource_profile"] = 0.2
+        if element_type != "pile" and "pile" in elements and not any(w.startswith(("сва", "ростверк")) for w in words):
+            parts["pile_mismatch"] = -3.0
     # тяжёлые штрафы: спец/нерелевантные сооружения и запрещённые подразделы тонут (но в выдаче видны)
     parts["forbidden"] = -5.0 * sum(1 for a in _FORBIDDEN_TITLE_ANCHORS if a in name)
     plain_code = _plain_norm_code(code)
@@ -598,13 +600,24 @@ FORMULA_CATALOG: dict[str, dict[str, Any]] = {
         "required": [], "assume": {"finish_area_factor": 2.5}},
 }
 
-
 def _is_number(v: Any) -> bool:
     try:
         float(str(v).replace(",", ".").replace(" ", ""))
         return True
     except (TypeError, ValueError):
         return False
+
+
+def _formula_default_value(default: Any, ns: dict[str, float]) -> float | None:
+    if isinstance(default, str):
+        if default == "H_total":
+            h = ns.get("H")
+            n = ns.get("N") or 1
+            return h * n if h else None
+        if default in ns:
+            return ns.get(default)
+        return _f(default) if _is_number(default) else None
+    return _f(default) if _is_number(default) else None
 
 
 def resolve_slots(element_type: str, geom: dict[str, Any], user_slots: dict[str, Any]
@@ -622,7 +635,7 @@ def resolve_slots(element_type: str, geom: dict[str, Any], user_slots: dict[str,
     for slot, default in spec.get("assume", {}).items():
         if slot in ns:
             continue
-        val = ns.get(default) if (isinstance(default, str) and default in ns) else (_f(default) if _is_number(default) else None)
+        val = _formula_default_value(default, ns)
         if val is not None:
             ns[slot] = val
             assumptions.append(f"{slot}={round(val, 3)} (допущение)")
@@ -635,11 +648,11 @@ _PARAM_PATTERNS = [
     ("mass_t",             rf"(?:масс\w*|вес)[^\d]{{0,80}}({_NUM_TOKEN})\s*(кг|т|тонн\w*)\b", None),
     ("volume_m3",          rf"(?:об[ъь]е[мё]\w*|выработк\w*)[^\d]{{0,50}}({_NUM_TOKEN})\s*(м3|м³|куб\.?\s*м)\b", None),
     ("area_m2",            rf"(?:площад\w*)[^\d]{{0,50}}({_NUM_TOKEN})\s*(м2|м²|кв\.?\s*м)\b", None),
-    ("excavation_depth_m", rf"глубин\w*\D{{0,18}}({_NUM_TOKEN})\s*м(?!\w)", 1.0),
+    ("excavation_depth_m", rf"глубин\w*\D{{0,18}}({_NUM_TOKEN})\s*(м(?!\w)|метр\w*)", 1.0),
     ("slab_thickness_m",   rf"(?:плит\w*|фундамент\w*)\D{{0,16}}({_NUM_TOKEN})\s*(мм|см|м)\b", None),
     ("wall_thickness_m",   rf"стен\w*\D{{0,16}}({_NUM_TOKEN})\s*(мм|см|м)\b", None),
-    ("wall_height_m",      rf"высот\w*\D{{0,14}}({_NUM_TOKEN})\s*м(?!\w)", 1.0),
-    ("wall_length_m",      rf"(?:периметр|длин\w* стен)\D{{0,14}}({_NUM_TOKEN})\s*м(?!\w)", 1.0),
+    ("wall_height_m",      rf"высот\w*\D{{0,14}}({_NUM_TOKEN})\s*(м(?!\w)|метр\w*)", 1.0),
+    ("wall_length_m",      rf"(?:периметр|длин\w* стен)\D{{0,14}}({_NUM_TOKEN})\s*(м(?!\w)|метр\w*)", 1.0),
     ("pile_count",         rf"(?:(?:кол(?:-?во|ичество)\s+)?сва\w*\s*(?:[:=№-]\s*)?({_NUM_TOKEN})(?:\s*шт\.?)?|({_NUM_TOKEN})\s*(?:шт\.?\s*)?сва\w*)", 1.0),
 ]
 
@@ -695,7 +708,10 @@ def parse_params(question: str) -> dict[str, float]:
         unit = next(
             (
                 g for g in groups
-                if str(g).replace(" ", "") in {"мм", "см", "м", "кг", "т", "м3", "м³", "м2", "м²", "куб.м", "кв.м"}
+                if str(g).replace(" ", "") in {
+                    "мм", "см", "м", "метр", "метра", "метров",
+                    "кг", "т", "м3", "м³", "м2", "м²", "куб.м", "кв.м",
+                }
                 or str(g).startswith("тонн")
             ),
             "м",
@@ -826,7 +842,7 @@ def _assumptions_authorized(question: str) -> bool:
     q = (question or "").casefold().replace("ё", "е")
     return bool(re.search(
         r"\b(?:придумай|прикинь|предположи|допусти|по\s+допущени[яям]|"
-        r"типов(?:ой|ые|ому)|ориентировочн[оаяые]*|сам\s+задай|сам\s+прими)\b",
+        r"типов(?:ой|ые|ому)|ориентировочн[оаяые]*|сам\s+задай|сам\s+прими|сценари\w*)\b",
         q,
     ))
 
@@ -1013,6 +1029,10 @@ BATCH_TOOL_CONTRACT = (
     "Если пользователь явно просит придумать/прикинуть/посчитать по допущениям, можно задать "
     "типовой сценарий: area_total_m2 и slots как допущения, но обязательно добавь object.assumptions "
     "и work assumptions с понятным текстом; это сценарная прикидка, не проектная смета.\n"
+    "Уже сказанные параметры из текущего запроса/истории обязательно переноси в slots; не спрашивай "
+    "повторно глубину, толщину, массу или площадь, если они уже написаны словами вроде «2 метра».\n"
+    "Разговорное «3000 метров» у здания трактуй как вероятную площадь 3000 м2: если пользователь "
+    "просит придумать/прикинуть, можно принять это как допущение object.assumptions; иначе уточни.\n"
     "Инженерные сети не относить к отделке. Если раздел (ВК/ОВ/ЭОМ/СС), трассы, точки или "
     "оборудование не заданы, оставь slots пустыми: код запросит данные.\n"
     "Для металлических конструкций, если в тексте дана масса, используй element metal_assembly, "
@@ -1025,6 +1045,8 @@ BATCH_TOOL_CONTRACT = (
     "разделов, верни их отдельными work items; разделы без параметров оставь как missing_inputs.\n"
     "Счётные элементы с unit шт допустимы только когда пользователь прямо дал количество/штуки; площадь, "
     "масса или объём другого раздела не являются количеством штук.\n"
+    "Для монолитного каркаса не выбирай сваи/ростверк, если пользователь явно не сказал сваи или ростверк; "
+    "используй монолитные плиты/стены/перекрытия или оставь тип основания в missing_inputs.\n"
     "Дай 3-6 ключевых работ. work и search description пиши по-русски, словами из строительных норм. "
     "unit только м3, м2, т или шт. missing_inputs максимум 5. Если площади/габаритов объекта нет, "
     "area_total_m2=null и missing_inputs включает площадь/габариты; не ставь 1 м2 как заглушку. "
@@ -1110,7 +1132,11 @@ def _add_position(args: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]
     # Gate 4: объём из FORMULA CATALOG по element_type + СЛОТЫ (формула НЕ от модели и НЕ
     # придумывает входы). Нет критичного слота (глубина/толщина/геометрия стен) → needs_input.
     if et in FORMULA_CATALOG:
-        spec, ns, missing, slot_assumptions = resolve_slots(et, state["geom"], user_slots)
+        spec, ns, missing, slot_assumptions = resolve_slots(
+            et,
+            state["geom"],
+            user_slots,
+        )
         direct_slot = _DIRECT_QTY_SLOT_BY_UNIT.get(_canon_unit((spec or {}).get("unit", "")))
         if direct_slot and direct_slot in user_slots and _is_number(user_slots.get(direct_slot)):
             phys = _f(user_slots.get(direct_slot))

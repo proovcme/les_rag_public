@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.98** | HEAD | Smeta prompt-first repair: the estimator skill/role-pack now tells the model to carry known parameters and scenario assumptions into the work plan, understand colloquial area/depth wording, and avoid pile/grillage choices unless stated; the harness parses meter-word quantities and penalizes pile norm candidates for non-pile foundations while still refusing to invent missing formula slots itself. |
 | **v0.24.0.97** | HEAD | Smeta confidence pass: `smeta_norm_store_v5` adds explicit applicability/price-input/decision-order guidance, `search_norm` returns `norm_decision_context`, direct quantities are exposed as `quantity_candidates` with provenance, and estimate results include smeta service-source status so missing ФГИС/КАЦ/коэффициенты are visible without object templates. |
 | **v0.24.0.96** | HEAD | Smeta price-gap actions: LSR and RIM traces classify missing resource prices as actionable requirements (`needs_kac`, `needs_fgis_price`, `needs_labor_rate`, `needs_machinist_rate`); estimate harness keeps totals partial until price gaps are closed, and the artifact shows what must be sourced for a full calculation. |
 | **v0.24.0.95** | HEAD | Public showcase pass: README is now a curated external-facing product surface, GitHub Pages gets `docs/index.md`/`docs/_config.yml`, `docs/public/*` explains overview/demo workflows/privacy boundaries, and `smeta-expert-review` states what the estimate module needs to calculate confidently without templates or production autosmeta promises. |

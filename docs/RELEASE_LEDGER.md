@@ -7,14 +7,22 @@
 ## Текущее состояние (2026-06-30)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.97  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.98  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.97 Smeta confidence pass
+задеплоено на рантайм:     0.24.0.98 Smeta prompt-first repair
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.97 · app 5.1.0 · h0.24 · runtime_alignment=aligned
+рантайм /api/version:      0.24.0.98 · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.98 — сметный режим усилен со стороны prompt/skill, а не объектных шаблонов:
+> `skills/smeta/SKILL.md`, JSON role-pack и компактный machine contract закрепляют,
+> что модель-сметчик переносит уже сказанные параметры в план, использует разрешённые
+> сценарные допущения как допущения, понимает разговорные фразы вроде “3000 метров” у здания
+> и “глубина 2 метра”, а код только парсит/проверяет/считает. Калькулятор принимает полные
+> русские формы метров для глубины/высоты/периметра, не додумывает недостающие формульные слоты
+> сам и штрафует свайные нормы, если пользователь/модель не говорят про сваи или ростверк.
+> Объектных составов, hardcode-шаблонов детсада/дачи/дома не добавлено.
 > 0.24.0.97 — сметный режим получил следующий системный шаг без объектных шаблонов:
 > `smeta_norm_store_v5` добавляет в карточку нормы явные `applicability`, `price_inputs`
 > и `decision_order`; `search_norm` возвращает `norm_decision_context` для выбора нормы,
@@ -329,6 +337,7 @@ dev HEAD:                  HEAD  (см. git log -1)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.98 | HEAD | 2026-06-30 | Smeta prompt-first repair: сметный skill/role-pack и machine contract учат модель переносить уже сказанные параметры/допущения в work-plan, понимать разговорные площади/глубины и не выбирать сваи/ростверк без явного указания; код принимает русские формы метров, штрафует свайные нормы вне свайного контекста и не придумывает недостающие формульные слоты | ✅ full test 2272/2272 + verify/public-check |
 | 0.24.0.94 | HEAD | 2026-06-30 | Samovar operator indexing pass: dataset play creates a durable/background `rag_parse_batch` job, the GUI shows live parse jobs/ETA/memory guard/light-vs-OCR pending counts, scheduler settings return with safe defaults reset, and backend pending order prefers non-OCR documents before scan/OCR work | ✅ focused Sovushka/backend + ship/smoke |
 | 0.24.0.93 | HEAD | 2026-06-30 | Volk admin hotfix: кнопки и события таблицы В.О.Л.К. привязываются после объявления `_volk_*` async handlers; classic admin закрывает второй `UnboundLocalError` после cleanup-а async handlers | ✅ focused Sovushka + ship/smoke |
 | 0.24.0.92 | HEAD | 2026-06-30 | Instrumenty admin hotfix: кнопки обновления на странице «Инструменты» привязываются после объявления async handlers; classic admin больше не падает 500 из-за `UnboundLocalError` | ✅ focused Sovushka + ship/smoke |

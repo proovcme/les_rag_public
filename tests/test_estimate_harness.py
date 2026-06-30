@@ -871,6 +871,14 @@ def test_parse_params_from_question():
     assert s["wall_thickness_m"] == 0.3
 
 
+def test_parse_params_accepts_meter_words():
+    s = h.parse_params("глубина котлована 2 метра, высота стен 3 метра, периметр стен 160 метров")
+
+    assert s["excavation_depth_m"] == 2.0
+    assert s["wall_height_m"] == 3.0
+    assert s["wall_length_m"] == 160.0
+
+
 def test_parse_direct_work_volume_from_question():
     s = h.parse_params(
         "регион санкт-петербург, нужно рассчитать сметную стоимость работ по "
@@ -972,6 +980,54 @@ def test_resolve_slots_geometry_and_assume():
     assert "slab_thickness_m" in missing             # критичный, без него нельзя
     assert ns["slab_area_m2"] == ns["S1"]            # допущение slab_area_m2 = S1
     assert any("slab_area_m2" in a for a in asm)
+
+
+def test_assumption_mode_does_not_invent_missing_formula_slots():
+    st = _state()
+    st["assumption_mode"] = True
+    obs = h._add_position({"work": "котлован", "code": "01-02-056-01", "work_family": "earthworks",
+                           "element_type": "excavation"}, st)
+
+    assert obs["status"] == "needs_input"
+    assert "excavation_depth_m" in obs["missing_slots"]
+
+
+def test_model_supplied_scenario_slots_are_calculated():
+    st = _state(area=3000, floors=2)
+    st["assumption_mode"] = True
+    obs = h._add_position({"work": "котлован", "code": "01-02-056-01", "work_family": "earthworks",
+                           "element_type": "excavation",
+                           "slots": {"excavation_depth_m": 2}},
+                          st)
+
+    assert obs["status"] == "computed"
+    assert obs["phys_qty"] == 3600.0                 # S1(1500)*2*1.2
+
+
+def test_pile_norms_are_penalized_without_pile_words():
+    class Row:
+        def profile(self):
+            return {
+                "family_hints": ["foundation"],
+                "element_hints": ["pile"],
+                "action_hints": ["устройство"],
+                "resource_count": 1,
+            }
+
+    scored = h._score_candidate(
+        ["фундамент"],
+        "05-01-222-01",
+        "устройство свайных фундаментов",
+        "шт",
+        work_family="foundation",
+        element_type="foundation",
+        action="устройство",
+        phys_unit="м3",
+        norm_row=Row(),
+    )
+
+    assert scored is not None
+    assert scored[1]["pile_mismatch"] < 0
 
 
 def test_excavation_without_depth_needs_input():
