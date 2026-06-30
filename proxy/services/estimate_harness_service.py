@@ -1486,38 +1486,6 @@ def _run_batch_plan(question: str, complete: Callable[[list[dict[str, str]]], st
 
     for raw_item in _work_items_from_plan(plan):
         item, corrections = _normalize_work_item(raw_item)
-        et = str(item.get("element_type") or "")
-        spec_hint = FORMULA_CATALOG.get(et)
-        expr_hint = str((spec_hint or {}).get("expr") or "")
-        needs_geom = bool(re.search(r"\b(?:S|S1|P|H|N)\b", expr_hint))
-        direct_hint = _DIRECT_QTY_SLOT_BY_UNIT.get(_canon_unit((spec_hint or {}).get("unit", "")))
-        direct_qty_available = bool(
-            direct_hint
-            and direct_hint in state.get("user_slots", {})
-            and _is_number(state.get("user_slots", {}).get(direct_hint))
-        )
-        if needs_geom and not state.get("geom") and not direct_qty_available:
-            state["positions"].append({
-                "work": item.get("work") or item.get("work_description") or "",
-                "code": "",
-                "work_family": item.get("work_family", ""),
-                "physical_unit": _canon_unit(item.get("unit_hint", "")),
-                "status": "needs_input",
-                "missing_slots": ["area_total_m2"],
-                "reason": (
-                    "нет исходной площади/габаритов объекта; сначала нужно уточнить размер, "
-                    "потом подбирать норму и считать объём"
-                ),
-            })
-            trace.append({
-                "tool": "search_norm",
-                "status": "needs_input",
-                "work": item.get("work") or item.get("work_description") or "",
-                "candidates": [],
-                "selection": {},
-                "normalized": corrections,
-            })
-            continue
         work_description = str(item.get("work_description") or item.get("work") or "")
         if (
             item.get("element_type") == "metal_assembly"

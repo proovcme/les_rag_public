@@ -841,6 +841,10 @@ def test_model_placeholder_area_does_not_create_fake_object_geometry():
     assert {p["status"] for p in res["needs_input"]} == {"needs_input"}
     assert all("area_total_m2" in (p.get("missing_slots") or []) for p in res["needs_input"])
     assert res["schema"]["area_total_m2"] is None
+    search_steps = [t for t in res["trace"] if t["tool"] == "search_norm"]
+    assert search_steps
+    assert all(t["candidates"] for t in search_steps)
+    assert any(t["tool"] == "add_position" for t in res["trace"])
 
 
 def test_authorized_assumption_mode_can_use_model_scenario_geometry():

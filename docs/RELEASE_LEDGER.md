@@ -7,14 +7,20 @@
 ## Текущее состояние (2026-06-30)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.99  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.100  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.99 Smeta model-freedom repair
+задеплоено на рантайм:     0.24.0.100 Smeta RAG-before-calculation cut
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.99 · app 5.1.0 · h0.24 · runtime_alignment=aligned
+рантайм /api/version:      0.24.0.100 · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.100 — ещё один шаг к “модель+skill+RAG решают, код считает”:
+> batch-план больше не режет геометрически зависимую работу до `search_norm`.
+> Даже если площади/габаритов пока нет, ГЭСН/РИМ-кандидаты и навигация попадают в trace,
+> а `add_position` остаётся калькуляторным gate: без геометрии он не считает и просит
+> исходные. Так модель получает карту норм и может задавать осмысленный следующий вопрос,
+> вместо того чтобы код заранее скрывал от неё RAG.
 > 0.24.0.99 — сметному режиму возвращена свобода профессиональной декомпозиции:
 > ТЗ/ВОР/приложенный файл и предыдущий диалог объявлены первичными исходными для модели.
 > Если в ТЗ явно перечислены самостоятельные операции над одним изделием (например контрольная
@@ -344,6 +350,7 @@ dev HEAD:                  HEAD  (см. git log -1)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.100 | HEAD | 2026-06-30 | Smeta RAG-before-calculation cut: batch-путь больше не блокирует geometry-dependent работы до `search_norm`; ГЭСН/РИМ-кандидаты попадают в trace даже при missing geometry, а расчёт по-прежнему останавливает `add_position` без исходных объёмов | ✅ smeta focused 80/80 + verify |
 | 0.24.0.99 | HEAD | 2026-06-30 | Smeta model-freedom repair: ТЗ/ВОР/файл первичны для модели; прямой физический объём может использоваться несколькими явно названными самостоятельными операциями над тем же изделием; duplicate-guard отличает такие операции от опциональных дублей без доли/объёма | ✅ smeta focused 80/80 + verify |
 | 0.24.0.98 | HEAD | 2026-06-30 | Smeta prompt-first repair: сметный skill/role-pack и machine contract учат модель переносить уже сказанные параметры/допущения в work-plan, понимать разговорные площади/глубины и не выбирать сваи/ростверк без явного указания; код принимает русские формы метров, штрафует свайные нормы вне свайного контекста и не придумывает недостающие формульные слоты | ✅ full test 2272/2272 + verify/public-check |
 | 0.24.0.94 | HEAD | 2026-06-30 | Samovar operator indexing pass: dataset play creates a durable/background `rag_parse_batch` job, the GUI shows live parse jobs/ETA/memory guard/light-vs-OCR pending counts, scheduler settings return with safe defaults reset, and backend pending order prefers non-OCR documents before scan/OCR work | ✅ focused Sovushka/backend + ship/smoke |
