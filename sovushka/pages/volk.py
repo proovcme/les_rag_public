@@ -3,7 +3,6 @@
 """
 from __future__ import annotations
 
-import asyncio
 from nicegui import app, ui
 
 from sovushka.state import api_get, api_post, last_api_error_text
@@ -12,6 +11,12 @@ from sovushka.state import api_get, api_post, last_api_error_text
 def build_volk():
     """Строит содержимое вкладки В.О.Л.К. Вызывать внутри with ui.tab_panel(tab_volk)."""
     raw_key = app.storage.user.get("key", "")
+
+    def _grid_handler(coro_func):
+        async def _handler(event):
+            await coro_func(event.args)
+
+        return _handler
 
     with ui.column().classes("w-full max-w-4xl mx-auto p-4 gap-4"):
         with ui.row().classes("items-center justify-between w-full"):
@@ -24,7 +29,7 @@ def build_volk():
                 )
             ui.button(
                 "↻ ОБНОВИТЬ",
-                on_click=lambda: asyncio.create_task(_volk_load())
+                on_click=_volk_load
             ).props("no-caps outline").style(
                 "border-color:var(--accent);color:var(--accent);font-size:.7rem;"
             )
@@ -54,14 +59,16 @@ def build_volk():
             with ui.row().classes("gap-2 mt-2"):
                 def _gen():
                     import secrets
-                    inp_key.set_value("les_" + secrets.token_hex(8))
+                    prefix = "les-admin-" if inp_role.value == "admin" else "les_"
+                    size = 12 if inp_role.value == "admin" else 8
+                    inp_key.set_value(prefix + secrets.token_hex(size))
 
                 ui.button("🎲 Сгенерировать", on_click=_gen).props("no-caps flat").style(
                     "font-size:.7rem;color:var(--dim);"
                 )
                 ui.button(
                     "✚ СОЗДАТЬ",
-                    on_click=lambda: asyncio.create_task(_volk_create())
+                    on_click=_volk_create
                 ).props("no-caps").style(
                     "border:1px solid var(--ok);color:var(--ok);"
                     "background:transparent;font-size:.7rem;"
@@ -73,6 +80,7 @@ def build_volk():
             volk_cols = [
                 {"name": "holder_name",  "label": "Кто",       "field": "holder_name",  "align": "left",   "sortable": True},
                 {"name": "role",         "label": "Роль",      "field": "role",         "align": "center"},
+                {"name": "protected_admin", "label": "Root",   "field": "protected_admin", "align": "center"},
                 {"name": "key_value",    "label": "Ключ",      "field": "key_value",    "align": "left"},
                 {"name": "is_active",    "label": "Статус",    "field": "is_active",    "align": "center"},
                 {"name": "device_bound", "label": "Устройство","field": "device_bound", "align": "center"},
@@ -101,15 +109,28 @@ def build_volk():
                     {{ props.value.toUpperCase() }}
                   </span>
                 </q-td>""")
+            volk_tbl.add_slot("body-cell-protected_admin", """
+                <q-td :props="props" auto-width>
+                  <span v-if="props.value" style="color:#10b981;font-size:.62rem;font-weight:900;">
+                    ZERO / les-admin
+                  </span>
+                  <span v-else style="color:#64748b;font-size:.62rem;">—</span>
+                </q-td>""")
             volk_tbl.add_slot("body-cell-device_bound", """
                 <q-td :props="props" auto-width>
-                  <span :style="{color:props.value?'#f59e0b':'#94a3b8',fontSize:'.65rem',fontWeight:'700'}">
+                  <span v-if="props.row.protected_admin" style="color:#10b981;font-size:.65rem;font-weight:700;">
+                    root · без привязки
+                  </span>
+                  <span v-else :style="{color:props.value?'#f59e0b':'#94a3b8',fontSize:'.65rem',fontWeight:'700'}">
                     {{ props.value ? '📱 привязан' : '🔓 свободен' }}
                   </span>
                 </q-td>""")
             volk_tbl.add_slot("body-cell-actions", """
                 <q-td :props="props" auto-width>
-                  <q-btn flat dense size="xs" color="warning"
+                  <span v-if="props.row.protected_admin" style="color:#10b981;font-size:.6rem;font-weight:900;">
+                    ZERO ONLY
+                  </span>
+                  <q-btn v-else flat dense size="xs" color="warning"
                          @click="$parent.$emit('toggle', props.row)"
                          style="font-size:.6rem;margin-right:4px;">
                     {{ props.row.is_active ? 'OFF' : 'ON' }}
@@ -117,13 +138,13 @@ def build_volk():
                   <q-btn v-if="props.row.device_bound" flat dense size="xs" color="info"
                          @click="$parent.$emit('reset_device', props.row)"
                          style="font-size:.6rem;margin-right:4px;">📱✕</q-btn>
-                  <q-btn flat dense size="xs" color="negative"
+                  <q-btn v-if="!props.row.protected_admin" flat dense size="xs" color="negative"
                          @click="$parent.$emit('delete', props.row)"
                          style="font-size:.6rem;">DEL</q-btn>
                 </q-td>""")
-            volk_tbl.on("toggle", lambda e: asyncio.create_task(_volk_toggle(e.args)))
-            volk_tbl.on("reset_device", lambda e: asyncio.create_task(_volk_reset_device(e.args)))
-            volk_tbl.on("delete", lambda e: asyncio.create_task(_volk_delete(e.args)))
+            volk_tbl.on("toggle", _grid_handler(_volk_toggle))
+            volk_tbl.on("reset_device", _grid_handler(_volk_reset_device))
+            volk_tbl.on("delete", _grid_handler(_volk_delete))
 
         # ── Логика ──────────────────────────────
 
@@ -186,4 +207,4 @@ def build_volk():
             else:
                 ui.notify(last_api_error_text("Ошибка удаления ключа"), type="negative")
 
-        asyncio.create_task(_volk_load())
+        ui.timer(0.1, _volk_load, once=True)

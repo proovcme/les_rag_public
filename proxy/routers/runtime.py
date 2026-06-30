@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from backend.metrics_collector import DB_PATH, heartbeats
 from backend.rag_config import rag_meta_db_path, rag_runtime_config
 from proxy.config import docker_control_enabled, mlx_url
-from proxy.security import require_admin
+from proxy.security import require_admin, require_root_admin
 from proxy.services.resource_governor import (
     active_parse_priority_order,
     current_runtime_profile,
@@ -799,7 +799,7 @@ async def create_backup(_admin=Depends(require_admin)):
 
 
 @router.post("/backup/delete")
-async def delete_backup(req: BackupDeleteRequest, _admin=Depends(require_admin)):
+async def delete_backup(req: BackupDeleteRequest, _admin=Depends(require_root_admin)):
     """
     Deletes a specific SQLite backup file or Qdrant snapshot.
     """
@@ -871,7 +871,7 @@ class BackupRestoreRequest(BaseModel):
 
 
 @router.post("/backup/restore")
-async def restore_backup(req: BackupRestoreRequest, _admin=Depends(require_admin)):
+async def restore_backup(req: BackupRestoreRequest, _admin=Depends(require_root_admin)):
     """Запускает restore_runtime.sh ОТЦЕПЛЕННО (скрипт сам остановит/поднимет proxy).
     ОПАСНО: перезаписывает живой индекс и метабазу. .env не трогается без with_env."""
     import subprocess

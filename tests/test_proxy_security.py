@@ -31,6 +31,7 @@ def _init_auth_db(path):
         "INSERT INTO auth_keys (key_value, holder_name, role, is_active, expires_at) VALUES (?, ?, ?, ?, ?)",
         [
             ("admin-key", "Admin", "admin", 1, None),
+            ("les-admin-root", "Root", "user", 1, None),
             ("user-key", "User", "user", 1, None),
             ("disabled-key", "Disabled", "user", 0, None),
             (
@@ -145,6 +146,7 @@ async def test_trusted_proxy_default_does_not_trust_whole_127_block(auth_db, mon
 @pytest.mark.asyncio
 async def test_api_key_roles_and_admin_guard(auth_db):
     admin = await security.get_request_user(_request("203.0.113.10"), x_api_key="admin-key")
+    root = await security.get_request_user(_request("203.0.113.10"), x_api_key="les-admin-root")
     user = await security.get_request_user(
         _request("203.0.113.10", {"authorization": "Bearer user-key"}),
         x_api_key=None,
@@ -153,12 +155,20 @@ async def test_api_key_roles_and_admin_guard(auth_db):
 
     assert admin.role == "admin"
     assert admin.holder == "Admin"
+    assert root.role == "admin"
+    assert root.is_root_admin
+    assert root.is_protected_admin_key
     assert user.role == "user"
     assert user.holder == "User"
 
     with pytest.raises(HTTPException) as exc:
         await security.require_admin(user)
     assert exc.value.status_code == 403
+
+    with pytest.raises(HTTPException) as ordinary_admin:
+        await security.require_root_admin(admin)
+    assert ordinary_admin.value.status_code == 403
+    assert await security.require_root_admin(root) is root
 
 
 @pytest.mark.asyncio

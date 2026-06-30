@@ -11,7 +11,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from proxy.config import ADMIN_ROLE, META_DB_PATH, USER_ROLE
-from proxy.security import require_admin, trust_diagnostics
+from proxy.security import (
+    RequestUser,
+    is_protected_admin_key_value,
+    require_admin,
+    trust_diagnostics,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +69,26 @@ def auth_db() -> sqlite3.Connection:
     return conn
 
 
+def _is_trusted_admin_actor(actor) -> bool:
+    return isinstance(actor, RequestUser) and actor.is_trusted_network_admin
+
+
+def _is_root_admin_actor(actor) -> bool:
+    return isinstance(actor, RequestUser) and actor.is_root_admin
+
+
+def _effective_role_for_key(key_value: str, stored_role: str) -> str:
+    return ADMIN_ROLE if is_protected_admin_key_value(key_value) else stored_role
+
+
+def _guard_protected_key_mutation(key_value: str, actor) -> None:
+    if is_protected_admin_key_value(key_value) and not _is_trusted_admin_actor(actor):
+        raise HTTPException(
+            status_code=403,
+            detail="les-admin key can be changed only from trusted network",
+        )
+
+
 def seed_admin_key() -> None:
     # БЕЗОПАСНОСТЬ: НЕ дефолтить предсказуемым «admin123». Нет ADMIN_PASSWORD в .env →
     # СЛУЧАЙНЫЙ admin-ключ + громкий лог (оператор берёт его в Доступ/auth_keys).
@@ -96,21 +121,24 @@ async def auth_verify(req: AuthVerifyReq):
     conn = auth_db()
     try:
         row = conn.execute(
-            "SELECT role, holder_name, expires_at, device_fingerprint "
+            "SELECT key_value, role, holder_name, expires_at, device_fingerprint "
             "FROM auth_keys WHERE key_value=? AND is_active=1",
             (req.key.strip(),),
         ).fetchone()
         if not row:
             raise HTTPException(status_code=401, detail="Неверный ключ или ключ отключён")
 
-        if row["expires_at"] and datetime.now() > datetime.fromisoformat(
+        protected_admin = is_protected_admin_key_value(row["key_value"])
+        role = _effective_role_for_key(row["key_value"], row["role"])
+
+        if not protected_admin and row["expires_at"] and datetime.now() > datetime.fromisoformat(
             row["expires_at"].replace(" ", "T")
         ):
             raise HTTPException(status_code=401, detail="Ключ истёк")
 
         fp = req.fingerprint.strip()
         stored_fp = row["device_fingerprint"]
-        if fp:
+        if fp and not protected_admin:
             if not stored_fp:
                 conn.execute(
                     "UPDATE auth_keys SET device_fingerprint=? WHERE key_value=?",
@@ -121,7 +149,7 @@ async def auth_verify(req: AuthVerifyReq):
             elif stored_fp != fp:
                 raise HTTPException(status_code=403, detail="Ключ привязан к другому устройству")
 
-        return {"role": row["role"], "holder": row["holder_name"]}
+        return {"role": role, "holder": row["holder_name"]}
     finally:
         conn.close()
 
@@ -142,7 +170,17 @@ async def auth_list_keys(_admin=Depends(require_admin)):
         ).fetchall()
     finally:
         conn.close()
-    return [dict(r) for r in rows]
+    result = []
+    for row in rows:
+        item = dict(row)
+        protected = is_protected_admin_key_value(item.get("key_value", ""))
+        if protected:
+            item["role"] = ADMIN_ROLE
+            item["expires_at"] = None
+            item["device_bound"] = 0
+        item["protected_admin"] = 1 if protected else 0
+        result.append(item)
+    return result
 
 
 @router.post("/keys")
@@ -151,8 +189,12 @@ async def auth_create_key(req: AuthKeyCreate, _admin=Depends(require_admin)):
         raise HTTPException(400, "key_value не может быть пустым")
     if req.role not in {USER_ROLE, ADMIN_ROLE}:
         raise HTTPException(400, "Недопустимая роль ключа")
+    protected_admin = is_protected_admin_key_value(req.key_value)
+    role = ADMIN_ROLE if protected_admin else req.role
+    if role == ADMIN_ROLE and not _is_root_admin_actor(_admin):
+        raise HTTPException(403, "Admin/root keys can be created only from trusted network or les-admin key")
     expires_at = None
-    if req.expires_days > 0:
+    if not protected_admin and req.expires_days > 0:
         expires_at = (datetime.now() + timedelta(days=req.expires_days)).strftime(
             "%Y-%m-%d %H:%M:%S"
         )
@@ -160,7 +202,7 @@ async def auth_create_key(req: AuthKeyCreate, _admin=Depends(require_admin)):
     try:
         conn.execute(
             "INSERT INTO auth_keys (key_value, holder_name, role, expires_at) VALUES (?,?,?,?)",
-            (req.key_value.strip(), req.holder_name.strip(), req.role, expires_at),
+            (req.key_value.strip(), req.holder_name.strip(), role, expires_at),
         )
         conn.commit()
     except sqlite3.IntegrityError:
@@ -168,17 +210,18 @@ async def auth_create_key(req: AuthKeyCreate, _admin=Depends(require_admin)):
     finally:
         conn.close()
     kind = f"временный до {expires_at}" if expires_at else "постоянный"
-    logger.info("[В.О.Л.К.] Новый ключ: %s [%s] %s", req.holder_name, req.role, kind)
+    logger.info("[В.О.Л.К.] Новый ключ: %s [%s] %s", req.holder_name, role, kind)
     return {
         "status": "created",
         "key_value": req.key_value,
-        "role": req.role,
+        "role": role,
         "expires_at": expires_at,
     }
 
 
 @router.post("/keys/toggle")
 async def auth_toggle_key(req: AuthKeyToggle, _admin=Depends(require_admin)):
+    _guard_protected_key_mutation(req.key_value, _admin)
     conn = auth_db()
     try:
         conn.execute(
@@ -193,6 +236,7 @@ async def auth_toggle_key(req: AuthKeyToggle, _admin=Depends(require_admin)):
 
 @router.post("/keys/reset-device")
 async def auth_reset_device(req: AuthKeyToggle, _admin=Depends(require_admin)):
+    _guard_protected_key_mutation(req.key_value, _admin)
     conn = auth_db()
     try:
         conn.execute(
@@ -208,15 +252,16 @@ async def auth_reset_device(req: AuthKeyToggle, _admin=Depends(require_admin)):
 
 @router.delete("/keys/{key_value}")
 async def auth_delete_key(key_value: str, _admin=Depends(require_admin)):
-    return delete_auth_key(key_value)
+    return delete_auth_key(key_value, actor=_admin)
 
 
 @router.post("/keys/delete")
 async def auth_delete_key_body(req: AuthKeyDelete, _admin=Depends(require_admin)):
-    return delete_auth_key(req.key_value)
+    return delete_auth_key(req.key_value, actor=_admin)
 
 
-def delete_auth_key(key_value: str):
+def delete_auth_key(key_value: str, actor=None):
+    _guard_protected_key_mutation(key_value, actor)
     conn = auth_db()
     try:
         conn.execute("DELETE FROM auth_keys WHERE key_value=?", (key_value,))

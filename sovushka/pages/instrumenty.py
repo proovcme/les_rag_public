@@ -5,7 +5,6 @@ v0.24.0.2: экран оставлен только под служебные и
 """
 from __future__ import annotations
 
-import asyncio
 import subprocess
 from pathlib import Path
 from urllib.parse import quote
@@ -97,6 +96,12 @@ def _prompt_text(value: object, *, limit: int = 2200) -> str:
 
 def build_instrumenty():
     """Содержимое вкладки ИНСТРУМЕНТЫ. Вызывать внутри with ui.tab_panel(...)."""
+    def _ui_handler(coro_func, *args, **kwargs):
+        async def _handler(*_event_args):
+            await coro_func(*args, **kwargs)
+
+        return _handler
+
     with ui.column().classes("w-full max-w-6xl mx-auto p-4 gap-4"):
         with ui.row().classes("w-full items-end justify-between gap-3"):
             with ui.column().classes("gap-1"):
@@ -106,7 +111,7 @@ def build_instrumenty():
                 ui.label(
                     "Папки и датасеты, на которых ЛЕС считает сметы и проверяет документацию."
                 ).style("font-size:.72rem;color:var(--dim);")
-            ui.button("ОБНОВИТЬ", on_click=lambda: asyncio.create_task(_refresh())).props("dense no-caps")
+            ui.button("ОБНОВИТЬ", on_click=_refresh).props("dense no-caps")
 
         with ui.card().classes("card-les w-full"):
             summary = ui.label("Загрузка источников…").style("font-size:.74rem;color:var(--dim);")
@@ -121,7 +126,7 @@ def build_instrumenty():
                 ui.label(
                     "Общий характер ЛЕСа и режимные рамки. Это поведение модели, не evidence."
                 ).style("font-size:.72rem;color:var(--dim);")
-                ui.button("ОБНОВИТЬ", on_click=lambda: asyncio.create_task(_refresh_prompts())).props("dense no-caps")
+                ui.button("ОБНОВИТЬ", on_click=_refresh_prompts).props("dense no-caps")
             prompt_summary = ui.label("Загрузка промтов…").style("font-size:.74rem;color:var(--dim);")
             prompts_box = ui.column().classes("w-full gap-2")
 
@@ -156,10 +161,10 @@ def build_instrumenty():
                         ui.label(_facts_text(item)).style("font-size:.68rem;color:var(--dim);")
                     with ui.row().classes("items-center gap-1"):
                         if folders:
-                            ui.button(icon="folder_open", on_click=lambda p=folders[0]["path"]: asyncio.create_task(_open_folder(p))).props(
+                            ui.button(icon="folder_open", on_click=_ui_handler(_open_folder, folders[0]["path"])).props(
                                 "dense flat round"
                             ).tooltip("Открыть папку источника")
-                        ui.button(icon="play_arrow", on_click=lambda sid=item.get("id"): asyncio.create_task(_process_source(str(sid)))).props(
+                        ui.button(icon="play_arrow", on_click=_ui_handler(_process_source, str(item.get("id")))).props(
                             "dense flat round"
                         ).tooltip(item.get("process_label") or "Проверить источник")
 
@@ -203,10 +208,10 @@ def build_instrumenty():
                             else:
                                 ui.notify(last_api_error_text("Промт не сброшен"), type="negative")
 
-                        ui.button("Сохранить", icon="o_save", on_click=lambda: asyncio.create_task(_save_prompt())).props(
+                        ui.button("Сохранить", icon="o_save", on_click=_save_prompt).props(
                             "dense no-caps"
                         )
-                        ui.button(icon="o_restart_alt", on_click=lambda: asyncio.create_task(_reset_prompt())).props(
+                        ui.button(icon="o_restart_alt", on_click=_reset_prompt).props(
                             'flat round dense aria-label="Сбросить промт"'
                         ).tooltip("Сбросить к встроенному промту")
                 editor = ui.textarea(value=str(item.get("value") or "")).props(
@@ -256,5 +261,5 @@ def build_instrumenty():
                 for item in d.get("sources") or []:
                     _render_source(item)
 
-        ui.timer(0.2, lambda: asyncio.create_task(_refresh()), once=True)
-        ui.timer(0.35, lambda: asyncio.create_task(_refresh_prompts()), once=True)
+        ui.timer(0.2, _refresh, once=True)
+        ui.timer(0.35, _refresh_prompts, once=True)

@@ -21,12 +21,91 @@ from sovushka.state import (
     last_api_error_text,
 )
 
+_LAYER_LABELS = {
+    "text": "текст",
+    "graphics": "графика",
+    "tables": "таблицы",
+    "calculations": "расчёты",
+    "technical_docs": "техничка",
+    "drawings": "чертежи",
+    "cad_bim": "BIM",
+    "normative": "нормы",
+    "estimate": "сметы",
+}
+
+
+def _doc_layer_labels(item: dict) -> list[str]:
+    labels: list[str] = []
+    for layer in item.get("content_layers") or []:
+        label = _LAYER_LABELS.get(str(layer), str(layer))
+        if label and label not in labels:
+            labels.append(label)
+    role = str(item.get("document_role") or "").strip()
+    if role and role not in labels:
+        labels.insert(0, role)
+    kind = str(item.get("file_kind") or "").strip()
+    if not labels and kind:
+        labels.append(kind.replace("_", " "))
+    content = str(item.get("content_type") or item.get("content") or "").strip()
+    if not labels and content:
+        labels.append(content)
+    doc_type = str(item.get("doc_type") or "").strip()
+    if not labels and doc_type:
+        labels.append(doc_type)
+    return labels[:5]
+
+
+def _layer_counts(documents: list[dict]) -> list[tuple[str, int]]:
+    counts: dict[str, int] = {}
+    for item in documents:
+        seen = set(_doc_layer_labels(item)[:4])
+        if not seen:
+            seen = {"без карточки"}
+        for label in seen:
+            counts[label] = counts.get(label, 0) + 1
+    return sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))[:12]
+
+
+def _computed_index_status(
+    *,
+    raw_status: str = "",
+    total: int = 0,
+    indexed: int = 0,
+    pending: int = 0,
+    errors: int = 0,
+    active: bool = False,
+) -> str:
+    if active:
+        return "PARSING"
+    if errors:
+        return "ERROR"
+    if pending:
+        return "WAITING"
+    if indexed or total:
+        return "INDEXED"
+    raw = str(raw_status or "").upper()
+    if raw in {"PARSING", "SCANNING", "RUNNING"}:
+        return "IDLE"
+    return raw or "EMPTY"
+
 
 def build_samovar():
     """Датасеты (v0.24) — таблица/карточки, светофор статуса, бар файлов, Пуск/Стоп/Ремонт,
     ошибка→что делать, диалог файлов, одна кнопка «Добавить». На API proxy/routers/datasets."""
     _S = {"mode": "table", "rows": [], "q": "", "filter": "all"}
     _refs = {"disp": None, "kpi": None, "status": None, "tbtn": None, "cbtn": None}
+
+    def _ui_handler(coro_func, *args, **kwargs):
+        async def _handler(*_event_args):
+            await coro_func(*args, **kwargs)
+
+        return _handler
+
+    def _grid_handler(coro_func):
+        async def _handler(event):
+            await coro_func(event.args)
+
+        return _handler
 
     def _error_hint(err: str) -> str:
         e = (err or "").lower()
@@ -81,7 +160,7 @@ def build_samovar():
         if r["error"]:
             return ("var(--err)", f"{r['error']} ошибок", "o_error")
         if r["pending"]:
-            return ("var(--warn)", f"Парсинг {r['indexed']}/{r['total']}", "o_sync")
+            return ("var(--warn)", f"Ждёт {r['pending']} · готово {r['indexed']}/{r['total']}", "o_schedule")
         if r["indexed"]:
             return ("var(--ok)", "Готов", "o_check_circle")
         return ("var(--dim)", "Пусто", "o_remove")
@@ -134,8 +213,21 @@ def build_samovar():
             await _refresh()
 
     async def _start_all():
-        await api_post("/api/runtime/dispatcher/reindex/start", {"parse_method": "scheduler"})
-        ui.notify("Индексатор запущен", type="positive")
+        payload = {
+            "batch_limit": 1,
+            "max_batches": 25,
+            "cooldown_sec": 20,
+            "unload_between_batches": True,
+            "unload_before_start": True,
+            "background": True,
+        }
+        add_log("[PARSE_SCHEDULER] top Пуск → /api/rag/parse-scheduler")
+        d = await api_post("/api/rag/parse-scheduler", payload)
+        if d:
+            ui.notify(f"Индексатор запущен: job {d.get('job_id', '?')}", type="positive")
+            add_log(f"[PARSE_SCHEDULER] job {d.get('job_id', '?')} queued")
+        else:
+            ui.notify(last_api_error_text("Индексатор не запустился"), type="negative")
         await _refresh_status()
 
     async def _stop_all():
@@ -155,19 +247,39 @@ def build_samovar():
                 ui.element("div").style("flex:1;")
                 if r["error"]:
                     ui.button("Ремонт", icon="o_build",
-                              on_click=lambda rr=r: asyncio.create_task(_repair(rr))).props("flat dense no-caps").style("color:var(--accent);")
+                              on_click=_ui_handler(_repair, r)).props("flat dense no-caps").style("color:var(--accent);")
+            layer_summary = ui.row().classes("items-center w-full").style("gap:6px;flex-wrap:wrap;margin:2px 0 8px;")
             flist = ui.column().classes("w-full sov-advanced-scroll").style("gap:0;")
         files_dialog.open()
         d = await api_get(f"/api/rag/documents?dataset_id={r['id']}&limit=1500") or {}
+        docs = d.get("documents", []) if isinstance(d, dict) else []
+        layer_summary.clear()
+        with layer_summary:
+            for label, count in _layer_counts(docs):
+                ui.label(f"{label} · {count}").style(
+                    "font-size:11px;color:var(--accent);border:1px solid var(--border);"
+                    "border-radius:999px;padding:2px 7px;background:rgba(16,185,129,.06);"
+                )
         flist.clear()
         with flist:
-            for it in d.get("documents", []):
+            for it in docs:
                 st = it.get("status", "")
                 col = "var(--ok)" if st == "INDEXED" else "var(--warn)" if st == "PENDING" else "var(--err)"
                 with ui.row().classes("items-center w-full").style(
                         "gap:8px;padding:6px 4px;border-bottom:1px solid var(--border);"):
                     ui.icon("o_circle").style(f"font-size:8px;color:{col};")
-                    ui.label((it.get("file_name") or "?")[-70:]).style("font-size:13px;flex:1;overflow:hidden;")
+                    with ui.column().style("flex:1;gap:2px;min-width:0;"):
+                        ui.label((it.get("file_name") or "?")[-90:]).style(
+                            "font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+                        )
+                        labels = _doc_layer_labels(it)
+                        if labels:
+                            with ui.row().classes("items-center").style("gap:4px;flex-wrap:wrap;"):
+                                for label in labels[:4]:
+                                    ui.label(label).style(
+                                        "font-size:10px;color:var(--dim);border:1px solid var(--border);"
+                                        "border-radius:999px;padding:1px 6px;"
+                                    )
                     ui.label(st).style(f"font-size:11.5px;color:{col};")
                 if st == "ERROR" and it.get("last_error"):
                     with ui.row().classes("w-full").style("gap:6px;padding:0 4px 6px 20px;"):
@@ -188,8 +300,9 @@ def build_samovar():
                 path_lbl = ui.label("Папка не выбрана").style(
                     "flex:1;font-size:13px;color:var(--dim);border:1px solid var(--border);"
                     "border-radius:8px;padding:8px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;")
-                ui.button("Обзор…", icon="o_folder_open",
-                          on_click=lambda: _open_browser()).props("no-caps flat dense").style("color:var(--accent);")
+                browse_btn = ui.button("Обзор…", icon="o_folder_open").props(
+                    "no-caps flat dense"
+                ).style("color:var(--accent);")
             parse_sw = ui.switch("Сразу индексировать", value=True)
 
             # вложенный браузер папок (клик-навигация по серверной ФС, без печати пути)
@@ -215,11 +328,11 @@ def build_samovar():
                 with fb_list:
                     if d.get("path"):
                         ui.button("↑ Вверх", icon="o_arrow_upward",
-                                  on_click=lambda u=d.get("parent"): asyncio.create_task(_nav(u or ""))
+                                  on_click=_ui_handler(_nav, d.get("parent") or "")
                                   ).props("flat dense no-caps").classes("w-full")
                     for e in d.get("dirs", []):
                         ui.button(f"{e['name']}   ·   {e.get('file_count', 0)} файл.", icon="o_folder",
-                                  on_click=lambda p=e["path"]: asyncio.create_task(_nav(p))
+                                  on_click=_ui_handler(_nav, e["path"])
                                   ).props("flat dense no-caps align=left").classes("w-full")
                     if not d.get("dirs") and d.get("path"):
                         ui.label("Подпапок нет — можно выбрать эту.").classes("sov-muted").style("padding:6px;")
@@ -232,9 +345,11 @@ def build_samovar():
                     path_lbl.style("color:var(--text);")
                     fdlg.close()
 
-            def _open_browser():
+            async def _open_browser(*_event_args):
                 fdlg.open()
-                asyncio.create_task(_nav(""))
+                await _nav("")
+
+            browse_btn.on("click", _open_browser)
 
             async def _do_add():
                 nm = (name_in.value or "").strip()
@@ -265,19 +380,19 @@ def build_samovar():
             with ui.row().classes("justify-end w-full").style("gap:8px;margin-top:8px;"):
                 ui.button("Отмена", on_click=add_dialog.close).props("flat dense no-caps").style("color:var(--dim);")
                 ui.button("Индексировать", icon="o_bolt",
-                          on_click=lambda: asyncio.create_task(_do_add())).props("no-caps").style(
+                          on_click=_do_add).props("no-caps").style(
                           "background:var(--accent);color:var(--bg);border-radius:8px;")
         add_dialog.open()
 
     def _row_actions(r):
-        ui.button(icon="o_folder_open", on_click=lambda rr=r: asyncio.create_task(_open_files(rr))).props(
+        ui.button(icon="o_folder_open", on_click=_ui_handler(_open_files, r)).props(
             'flat dense round aria-label="Файлы"').style("color:var(--dim);")
         if r["error"]:
-            ui.button(icon="o_build", on_click=lambda rr=r: asyncio.create_task(_repair(rr))).props(
+            ui.button(icon="o_build", on_click=_ui_handler(_repair, r)).props(
                 'flat dense round aria-label="Ремонт"').style("color:var(--accent);")
-        ui.button(icon="o_play_arrow", on_click=lambda rr=r: asyncio.create_task(_parse(rr))).props(
+        ui.button(icon="o_play_arrow", on_click=_ui_handler(_parse, r)).props(
             'flat dense round aria-label="Пуск"').style("color:var(--ok);")
-        ui.button(icon="o_delete", on_click=lambda rr=r: asyncio.create_task(_delete(rr))).props(
+        ui.button(icon="o_delete", on_click=_ui_handler(_delete, r)).props(
             'flat dense round aria-label="Удалить"').style("color:var(--dim);")
 
     def _visible_rows():
@@ -359,19 +474,29 @@ def build_samovar():
                                 _row_actions(r)
 
     async def _refresh_status():
-        # Тикает каждые 5с НЕЗАВИСИМО от _parse (который ждёт батч) → ловит «PARSING» датасета
-        # живьём: parse_dataset ставит статус PARSING в БД на время партии. Так видно «идёт/стоит».
+        # Тикает каждые 5с НЕЗАВИСИМО от _parse. Верим активной job, а не stale dataset.status:
+        # PENDING — это очередь, PARSING — только если есть живой scheduler/batch.
         st = await api_get("/api/runtime/dispatcher/status") or {}
         disp = bool((st.get("reindex") or {}).get("running") or st.get("running"))
-        ds = await api_get("/api/rag/datasets") or []
-        ds_list = ds if isinstance(ds, list) else (ds.get("datasets") or [])
-        parsing = [d.get("name", "?") for d in ds_list if str(d.get("status", "")).upper() == "PARSING"]
+        jobs = await api_get("/api/jobs/summary?limit=40") or {}
+        job_items = jobs.get("jobs", []) if isinstance(jobs, dict) else []
+        active_parse = [
+            j for j in job_items
+            if str(j.get("status", "")).upper() in {"QUEUED", "RUNNING", "PARSING", "STARTED"}
+            and (j.get("type") == "rag_parse_scheduler" or "parse" in str(j.get("type", "")).lower())
+        ]
+        pending = sum(int(r.get("pending") or 0) for r in _S.get("rows", []))
         if _refs["status"]:
-            if parsing:
-                extra = f" +{len(parsing) - 3}" if len(parsing) > 3 else ""
-                _refs["status"].set_text(f"Индексатор: ПАРСИНГ идёт — {', '.join(parsing[:3])}{extra}")
+            if active_parse:
+                current = active_parse[0]
+                _refs["status"].set_text(
+                    f"Индексатор: идёт job {str(current.get('id', ''))[:12]} "
+                    f"{current.get('processed', 0)}/{current.get('total', 0)}"
+                )
             elif disp:
-                _refs["status"].set_text("Индексатор: идёт…")
+                _refs["status"].set_text("Индексатор: режим индексации, активной parse-job нет")
+            elif pending:
+                _refs["status"].set_text(f"Индексатор: простаивает · ждут {pending} файлов")
             else:
                 _refs["status"].set_text("Индексатор: простаивает")
 
@@ -471,26 +596,39 @@ def build_samovar():
                         f"font-size:.7rem;color:{'var(--accent)' if _fk == 'all' else 'var(--dim)'};")
         with ui.row().classes("items-center w-full").style("gap:10px;"):
             ui.button("Пуск", icon="o_play_arrow",
-                      on_click=lambda: asyncio.create_task(_start_all())).props("flat dense no-caps").style("color:var(--ok);")
+                      on_click=_start_all).props("flat dense no-caps").style("color:var(--ok);")
             ui.button("Стоп", icon="o_pause",
-                      on_click=lambda: asyncio.create_task(_stop_all())).props("flat dense no-caps").style("color:var(--dim);")
+                      on_click=_stop_all).props("flat dense no-caps").style("color:var(--dim);")
             ui.element("div").style("width:1px;height:16px;background:var(--border);")
             _refs["status"] = ui.label("Индексатор: …").classes("sov-muted")
             ui.element("div").style("flex:1;")
             ui.button("Обновить", icon="o_refresh",
-                      on_click=lambda: asyncio.create_task(_refresh())).props("flat dense no-caps").style("color:var(--dim);")
+                      on_click=_refresh).props("flat dense no-caps").style("color:var(--dim);")
         _refs["disp"] = ui.column().classes("w-full").style("gap:8px;")
 
     _upd_toggle()
-    asyncio.create_task(_refresh())
+    ui.timer(0.1, _refresh, once=True)
     # Авто-обновление: статус индексатора часто и дёшево, полная сводка (счётчики+строки) реже
-    ui.timer(5.0, lambda: asyncio.create_task(_refresh_status()))
-    ui.timer(20.0, lambda: asyncio.create_task(_refresh()))
+    ui.timer(5.0, _refresh_status)
+    ui.timer(20.0, _refresh)
 
 
 def build_samovar_legacy():
     """LEGACY (v0.23 и ранее) — старая страница С.А.М.О.В.А.Р. Сохранена для отката
     (sovushka_ng.py: build_samovar → build_samovar_legacy при проблемах с новой)."""
+
+    def _grid_handler(coro_func):
+        async def _handler(event):
+            await coro_func(event.args)
+
+        return _handler
+
+    def _ui_handler(coro_func, *args, **kwargs):
+        async def _handler(*_event_args):
+            await coro_func(*args, **kwargs)
+
+        return _handler
+
     with ui.column().classes("w-full max-w-6xl mx-auto p-4 gap-4"):
         with ui.row().classes("items-center justify-between w-full"):
             with ui.column().classes("gap-0"):
@@ -502,7 +640,7 @@ def build_samovar_legacy():
                 )
             ui.button(
                 "↻ ОБНОВИТЬ",
-                on_click=lambda: asyncio.create_task(refresh_and_render())
+                on_click=refresh_and_render
             ).props("no-caps outline").style(
                 "border-color:var(--accent);color:var(--accent);font-size:.7rem;"
             )
@@ -690,12 +828,12 @@ def build_samovar_legacy():
               </div>
               <span v-else style="color:#64748b;font-size:.6rem;">—</span>
             </q-td>""")
-        sam_grid.on("setgroup", lambda e: asyncio.create_task(_set_group(e.args)))
-        sam_grid.on("inspect", lambda e: asyncio.create_task(_open_index_dialog(e.args)))
-        sam_grid.on("sync",  lambda e: asyncio.create_task(_sync_row(e.args)))
-        sam_grid.on("reset", lambda e: asyncio.create_task(_reset_row(e.args)))
-        sam_grid.on("parse", lambda e: asyncio.create_task(_parse_row(e.args)))
-        sam_grid.on("setsens", lambda e: asyncio.create_task(_set_sensitivity(e.args)))
+        sam_grid.on("setgroup", _grid_handler(_set_group))
+        sam_grid.on("inspect", _grid_handler(_open_index_dialog))
+        sam_grid.on("sync", _grid_handler(_sync_row))
+        sam_grid.on("reset", _grid_handler(_reset_row))
+        sam_grid.on("parse", _grid_handler(_parse_row))
+        sam_grid.on("setsens", _grid_handler(_set_sensitivity))
 
         selected_index = {"row": {}}
         with ui.dialog() as index_dialog:
@@ -762,9 +900,13 @@ def build_samovar_legacy():
                     ).props("flat round dense").tooltip("Только ERROR")
 
                 index_docs_status = ui.label("показано: —").style("font-size:.65rem;color:var(--dim);")
+                index_layer_summary = ui.row().classes("items-center w-full").style(
+                    "gap:6px;flex-wrap:wrap;margin:2px 0 4px;"
+                )
                 index_docs_cols = [
                     {"name": "status", "label": "Статус", "field": "status", "align": "left", "sortable": True},
                     {"name": "file", "label": "Файл", "field": "file", "align": "left", "sortable": True},
+                    {"name": "layers", "label": "Слои", "field": "layers", "align": "left"},
                     {"name": "source", "label": "Источник (in-place)", "field": "source", "align": "left"},
                     {"name": "chunks", "label": "Чанков", "field": "chunks", "align": "center", "sortable": True},
                     {"name": "size", "label": "Размер", "field": "size", "align": "right", "sortable": True},
@@ -793,6 +935,13 @@ def build_samovar_legacy():
                       <div :title="props.value" style="max-width:460px;white-space:normal;word-break:break-word;font-family:var(--font-chat);font-size:.68rem;">
                         {{ props.value }}
                       </div>
+                    </q-td>""")
+                index_docs_grid.add_slot("body-cell-layers", """
+                    <q-td :props="props">
+                      <span v-if="props.value" style="color:#10b981;white-space:normal;word-break:break-word;font-size:.62rem;">
+                        {{ props.value }}
+                      </span>
+                      <span v-else style="color:#64748b;">—</span>
                     </q-td>""")
                 index_docs_grid.add_slot("body-cell-source", """
                     <q-td :props="props">
@@ -1354,6 +1503,7 @@ def build_samovar_legacy():
                 {"name": "domain", "label": "Domain", "field": "domain", "align": "left", "sortable": True},
                 {"name": "route", "label": "Route", "field": "route", "align": "left", "sortable": True},
                 {"name": "content", "label": "Content", "field": "content", "align": "left", "sortable": True},
+                {"name": "layers", "label": "Слои", "field": "layers", "align": "left"},
                 {"name": "complexity", "label": "Complexity", "field": "complexity", "align": "left", "sortable": True},
                 {"name": "chunks", "label": "Чанков", "field": "chunks", "align": "center", "sortable": True},
                 {"name": "size", "label": "Размер", "field": "size", "align": "right", "sortable": True},
@@ -1377,6 +1527,13 @@ def build_samovar_legacy():
                   <div :title="props.value" style="max-width:360px;white-space:normal;word-break:break-word;font-family:var(--font-chat);font-size:.68rem;">
                     {{ props.value }}
                   </div>
+                </q-td>""")
+            docs_grid.add_slot("body-cell-layers", """
+                <q-td :props="props">
+                  <span v-if="props.value" style="color:#10b981;white-space:normal;word-break:break-word;font-size:.62rem;">
+                    {{ props.value }}
+                  </span>
+                  <span v-else style="color:#64748b;">—</span>
                 </q-td>""")
             docs_grid.add_slot("body-cell-error", """
                 <q-td :props="props">
@@ -1420,6 +1577,7 @@ def build_samovar_legacy():
                 "route": item.get("route_dataset", ""),
                 "doc_type": item.get("doc_type", ""),
                 "content": item.get("content_type", ""),
+                "layers": " · ".join(_doc_layer_labels(item)[:4]),
                 "complexity": item.get("complexity", ""),
                 "chunks": item.get("chunk_count", 0),
                 "size": _format_size(int(item.get("file_size") or 0)),
@@ -1471,6 +1629,13 @@ def build_samovar_legacy():
                 f"показано: {len(doc_rows)}/{docs.get('total', len(doc_rows))} · "
                 f"фильтр: {index_status_select.value or 'ВСЕ'} · поиск: {(index_query_input.value or '').strip() or '—'}"
             )
+            index_layer_summary.clear()
+            with index_layer_summary:
+                for label, count in _layer_counts(docs.get("documents", [])):
+                    ui.label(f"{label} · {count}").style(
+                        "font-size:.62rem;color:var(--accent);border:1px solid var(--border);"
+                        "border-radius:999px;padding:2px 7px;background:rgba(16,185,129,.06);"
+                    )
             index_docs_grid.rows = doc_rows
             index_docs_grid.update()
             if render_main:
@@ -1712,6 +1877,11 @@ def build_samovar_legacy():
             tot_src = tot_idx = tot_pending = tot_errors = tot_chunks = 0
             rows = []
             seen_ds = set()
+            active_job_labels = {
+                str(j.get("dataset_name") or j.get("source") or "")
+                for j in jobs.values()
+                if str(j.get("status", "")).upper() in {"QUEUED", "RUNNING", "PARSING", "STARTED"}
+            }
             for src in sources:
                 folder = src.get("folder", "")
                 if not src.get("dataset_id") and any(name.startswith(f"{folder}_") for name in dataset_names):
@@ -1749,6 +1919,7 @@ def build_samovar_legacy():
                         f"{last_job['status']} "
                         f"{last_job.get('processed',0)}/{last_job.get('total',0)}"
                     )
+                active_row = folder in active_job_labels or f"{folder}_Index" in active_job_labels
 
                 rows.append({
                     "folder":     folder,
@@ -1758,7 +1929,14 @@ def build_samovar_legacy():
                     "pending":    pending,
                     "errors":     errors,
                     "chunks":     chunks,
-                    "status":     status,
+                    "status":     _computed_index_status(
+                        raw_status=status,
+                        total=int(total or 0),
+                        indexed=int(indexed or 0),
+                        pending=int(pending or 0),
+                        errors=int(errors or 0),
+                        active=active_row,
+                    ),
                     "sensitivity": (ds_map.get(src.get("dataset_id", "")) or {}).get("sensitivity", "P0"),
                     "group_name": (ds_map.get(src.get("dataset_id", "")) or {}).get("group_name", ""),
                     "job_info":   job_info,
@@ -1775,6 +1953,7 @@ def build_samovar_legacy():
                 pending = ds.get("pending_files", 0)
                 errors = ds.get("error_files", 0)
                 chunks = ds.get("chunks", ds.get("chunk_count", 0) or 0)
+                active_row = ds.get("name", ds_id) in active_job_labels or ds_id in active_job_labels
                 tot_src += total
                 tot_idx += indexed
                 tot_pending += pending
@@ -1788,7 +1967,14 @@ def build_samovar_legacy():
                     "pending":    pending,
                     "errors":     errors,
                     "chunks":     chunks,
-                    "status":     ds.get("status", ""),
+                    "status":     _computed_index_status(
+                        raw_status=ds.get("status", ""),
+                        total=int(total or 0),
+                        indexed=int(indexed or 0),
+                        pending=int(pending or 0),
+                        errors=int(errors or 0),
+                        active=active_row,
+                    ),
                     "sensitivity": ds.get("sensitivity", "P0"),
                     "group_name": ds.get("group_name", ""),
                     "job_info":   "",

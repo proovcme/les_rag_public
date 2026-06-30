@@ -6,6 +6,7 @@ import pytest
 from proxy.routers import chat as chat_router
 from sovushka.pages import chat as chat_page
 from sovushka.pages import instrumenty as instrumenty_page
+from sovushka.pages import samovar as samovar_page
 from sovushka.pages.chat import (
     _attachment_chat_payload,
     _attachment_user_suffix,
@@ -69,6 +70,39 @@ def test_chat_attachment_upload_uses_nicegui_file_api_not_stale_content_api():
     assert "upload = getattr(e, \"file\", None)" in attach_block
     assert "await upload.read()" in attach_block
     assert "e.content.read()" not in attach_block
+
+
+def test_samovar_parse_actions_keep_nicegui_slot_context():
+    source = inspect.getsource(samovar_page.build_samovar)
+    legacy_source = inspect.getsource(samovar_page.build_samovar_legacy)
+
+    assert "on_click=_ui_handler(_parse, r)" in source
+    assert "ui.timer(5.0, _refresh_status)" in source
+    assert "api_post(\"/api/rag/parse-scheduler\", payload)" in source
+    assert "sam_grid.on(\"parse\", _grid_handler(_parse_row))" in legacy_source
+    assert "asyncio.create_task(_parse(rr))" not in source
+    assert "asyncio.create_task(_parse_row(e.args))" not in legacy_source
+    start_block = source[source.index("async def _start_all"):source.index("async def _stop_all")]
+    assert "/api/runtime/dispatcher/reindex/start" not in start_block
+
+
+def test_samovar_pending_means_waiting_not_active_parsing():
+    assert samovar_page._computed_index_status(total=10, indexed=2, pending=8) == "WAITING"
+    assert samovar_page._computed_index_status(total=10, indexed=2, pending=8, active=True) == "PARSING"
+
+
+def test_samovar_document_layer_labels_are_human_readable():
+    item = {
+        "content_layers": ["tables", "calculations", "technical_docs"],
+        "document_role": "Пояснительная записка",
+    }
+
+    assert samovar_page._doc_layer_labels(item)[:4] == [
+        "Пояснительная записка",
+        "таблицы",
+        "расчёты",
+        "техничка",
+    ]
 
 
 def test_smeta_table_question_skips_resource_gate():

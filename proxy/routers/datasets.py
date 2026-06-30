@@ -25,7 +25,7 @@ from backend.document_router import route_document
 from backend.rag_config import rag_collection_name, rag_meta_db_path, rag_runtime_config
 from backend.smart_index import SKIP_DIRS, build_smart_plan, should_index_source_file, verify_source_file
 from proxy.config import max_upload_bytes, mlx_url, rag_upload_suffixes
-from proxy.security import require_admin, require_user
+from proxy.security import require_admin, require_root_admin, require_user
 from proxy.services.context_expander_service import expand_context_windows
 from proxy.services.context_memory_service import (
     benchmark_dataset_profile_warmup,
@@ -33,7 +33,7 @@ from proxy.services.context_memory_service import (
     get_dataset_profile,
     warmup_dataset_profiles,
 )
-from proxy.services.dataset_memory_service import schedule_dataset_reader_pass
+from proxy.services.dataset_memory_service import latest_file_cards, schedule_dataset_reader_pass
 from proxy.services.resource_governor import active_parse_priority_order, current_runtime_profile
 from proxy.services.runtime_admission import evaluate_memory_pressure
 from proxy.services.retrieval_service import classify_query, resolve_dataset_ids, retrieve_chat_chunks
@@ -580,7 +580,7 @@ async def run_parse_scheduler(
 
 
 @router.delete("/datasets/{dataset_id}")
-async def delete_dataset(dataset_id: str, _admin=Depends(require_admin)):
+async def delete_dataset(dataset_id: str, _admin=Depends(require_root_admin)):
     ds_dir = safe_dataset_storage_dir(dataset_id)
     errors = []
     qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
@@ -618,7 +618,7 @@ async def delete_dataset(dataset_id: str, _admin=Depends(require_admin)):
 
 
 @router.delete("/datasets")
-async def delete_all_datasets(_admin=Depends(require_admin)):
+async def delete_all_datasets(_admin=Depends(require_root_admin)):
     errors = []
     qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
 
@@ -761,6 +761,18 @@ async def list_documents(
             [*row_params, limit, offset],
         ).fetchall()
 
+    documents = [dict(row) for row in rows]
+    dataset_ids_for_cards = sorted(
+        {str(doc.get("dataset_id") or "") for doc in documents if doc.get("dataset_id")}
+    )
+    file_cards = latest_file_cards(dataset_ids_for_cards, meta_db_path=str(rag_meta_db_path()))
+    for doc in documents:
+        card = file_cards.get((str(doc.get("dataset_id") or ""), str(doc.get("file_name") or ""))) or {}
+        doc["file_kind"] = str(card.get("file_kind") or "")
+        doc["content_layers"] = list(card.get("content_layers") or [])
+        doc["document_role"] = str(card.get("document_role") or "")
+        doc["card_confidence"] = float(card.get("confidence") or 0.0) if card else 0.0
+
     return {
         "total": total,
         "limit": limit,
@@ -769,7 +781,7 @@ async def list_documents(
             row["status"]: {"files": row["files"], "chunks": row["chunks"]}
             for row in summary_rows
         },
-        "documents": [dict(row) for row in rows],
+        "documents": documents,
     }
 
 

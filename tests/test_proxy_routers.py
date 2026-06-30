@@ -4,6 +4,7 @@ import os
 import pytest
 from fastapi import HTTPException
 
+from proxy.security import RequestUser
 from proxy.routers import auth, settings, speckle
 
 
@@ -79,6 +80,56 @@ async def test_auth_create_key_rejects_unknown_role(tmp_path, monkeypatch):
         )
 
     assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_protected_les_admin_key_is_root_unbound_and_trusted_mutable(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data").mkdir()
+
+    root_actor = RequestUser(role="admin", holder="trusted-network", source="10.10.10.98")
+    created = await auth.auth_create_key(
+        auth.AuthKeyCreate(
+            key_value="les-admin-test-root",
+            holder_name="Root",
+            role="user",
+            expires_days=1,
+        ),
+        _admin=root_actor,
+    )
+    assert created["role"] == "admin"
+    assert created["expires_at"] is None
+
+    first = await auth.auth_verify(
+        auth.AuthVerifyReq(key="les-admin-test-root", fingerprint="device-a")
+    )
+    second = await auth.auth_verify(
+        auth.AuthVerifyReq(key="les-admin-test-root", fingerprint="device-b")
+    )
+    assert first == second == {"role": "admin", "holder": "Root"}
+
+    rows = await auth.auth_list_keys(_admin=root_actor)
+    assert rows[0]["protected_admin"] == 1
+    assert rows[0]["device_bound"] == 0
+
+    outside_root_key = RequestUser(
+        role="admin",
+        holder="Root",
+        key_value="les-admin-other-root",
+        source="api_key",
+    )
+    with pytest.raises(HTTPException) as outside:
+        await auth.auth_delete_key_body(
+            auth.AuthKeyDelete(key_value="les-admin-test-root"),
+            _admin=outside_root_key,
+        )
+    assert outside.value.status_code == 403
+
+    deleted = await auth.auth_delete_key_body(
+        auth.AuthKeyDelete(key_value="les-admin-test-root"),
+        _admin=root_actor,
+    )
+    assert deleted == {"status": "deleted", "key_value": "les-admin-test-root"}
 
 
 def test_seed_admin_key_is_idempotent(tmp_path, monkeypatch):

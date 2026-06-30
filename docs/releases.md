@@ -7,6 +7,8 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.91** | HEAD | Samovar scheduler truth pass: the top `Пуск` button now starts `/api/rag/parse-scheduler` directly instead of only switching dispatcher mode; pending files are labeled as waiting rather than active parsing; file dialogs and index tables show human data-layer badges from typed file cards. |
+| **v0.24.0.90** | HEAD | Samovar indexing play + root-admin hotfix: dataset parse/play controls keep the NiceGUI slot and reach parse APIs; protected `les-admin-` keys become device-unbound root admin keys, and destructive danger-zone endpoints require trusted ZeroTier/loopback/proxy or a protected `les-admin-` key. |
 | **v0.24.0.89** | HEAD | Selected dataset files polish: the compact selected-scope file strip hides service dot/_les_ files and shows a short parent folder for single-dataset file chips so repeated contents filenames are distinguishable. |
 | **v0.24.0.88** | HEAD | Selected dataset files MVP: chat now shows a compact file strip for the selected dataset/scope using typed `file_cards` from dataset memory, displays data-layer badges, and asks strict questions via the existing `target_file` channel without stuffing the whole registry into the model prompt. |
 | **v0.24.0.87** | HEAD | Smeta norm navigation polish: the estimator role-pack no longer demonstrates `area_total_m2=1` as a placeholder, model-facing norm-navigation wording uses estimator language for neighboring norms/selected applicable norms, and visible smeta prose is told not to leak `nearby_norms`. |

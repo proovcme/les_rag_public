@@ -4,17 +4,31 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-06-29)
+## Текущее состояние (2026-06-30)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.89  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.91  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.89 selected dataset files polish
+задеплоено на рантайм:     0.24.0.91 Samovar scheduler truth pass
 НЕ задеплоено:             нет
-рантайм /api/version:      0.24.0.89 · app 5.1.0 · h0.24 · runtime_alignment=aligned
+рантайм /api/version:      0.24.0.91 · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.91 — честный запуск и статус индексатора в Самоваре: верхний `Пуск` теперь вызывает
+> `/api/rag/parse-scheduler` напрямую, а не только переключает dispatcher/runtime mode. Строки
+> датасетов больше не называют `PENDING` “парсингом”: очередь отображается как `WAITING`/“Ждёт”,
+> `PARSING` показывается только при активной parse-job из `/api/jobs/summary`. Диалог файлов и
+> таблицы индекса показывают человеческие бейджи слоёв (`таблицы`, `расчёты`, `чертежи`, `BIM`,
+> `нормы`, `сметы`) из typed `file_cards`.
+> 0.24.0.90 — hotfix кнопок индексации в Самоваре + root-admin контур: `play`/parse actions и
+> события таблицы выполняются как NiceGUI async handlers, а не через оторванный `asyncio.create_task`.
+> Симптом был UI-slot crash (`The current slot cannot be determined`) до/вокруг уведомления, не
+> запрет backend: indexing mode остаётся Core ML (`embed_backend=coreml`, `indexing_uses_coreml=true`).
+> Ключи `les-admin-…` принудительно считаются root-admin, не привязываются к устройству и не получают
+> срок действия; менять/удалять такие ключи можно только из trusted-сети. Danger-zone endpoints для
+> удаления датасетов и удаления/restore бэкапов требуют trusted ZeroTier/loopback/proxy или protected
+> `les-admin-` key.
 > 0.24.0.89 — polish для панели файлов выбранного датасета: служебные dot/`_les_` файлы не
 > показываются в компактной полоске, а для одиночного датасета под именем файла показывается
 > короткий путь папки, чтобы одинаковые `001_Содержание тома.docx` не выглядели дублями.
@@ -282,6 +296,8 @@ dev HEAD:                  HEAD  (см. git log -1)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.91 | HEAD | 2026-06-30 | Samovar scheduler truth pass: верхний `Пуск` запускает реальный `/api/rag/parse-scheduler`, `PENDING` больше не подписывается как активный парсинг, `PARSING` зависит от живой job, а список файлов/индекс-таблицы показывают типизированные слои данных из `file_cards` | ✅ focused Sovushka + verify/ship |
+| 0.24.0.90 | HEAD | 2026-06-30 | Samovar indexing play + root-admin hotfix: кнопки `play`/parse и события таблицы запускают async-обработчики внутри NiceGUI slot, а не через detached `asyncio.create_task`; клик снова показывает уведомления и доходит до `/api/rag/parse-batch`/scheduler. Диагностика подтвердила Core ML индексатор (`embed_backend=coreml`) и отсутствие backend-блокировки. `les-admin-` ключи стали protected root-admin без expiry/device binding; danger-zone удаление датасетов и delete/restore бэкапов требует trusted ZeroTier/loopback/proxy или protected `les-admin-` key | ✅ focused security/auth/Sovushka 43/43; make ship/post-smoke |
 | 0.24.0.78 | HEAD | 2026-06-29 | Compact inventory prompt: полный MetaDB-реестр больше не скармливается модели целиком; LLM получает компактную `КАРТА РЕЕСТРА ДАТАСЕТА` (папки, типы, важные файлы-кандидаты), а полный проверяемый реестр остаётся в `project_inventory`/artifact/UI | ✅ focused inventory/chat/notebook 34/34; make ship/post-smoke 9/9 |
 | 0.24.0.77 | HEAD | 2026-06-29 | Enforced overview sections: `full`-форма инженерного обзора задаёт порядок разделов — паспорт, ключевые решения, важные файлы/разделы, несостыковки/что проверить, затем детали; блок проверок обязателен даже при отсутствии явных противоречий | ✅ focused answer 19/19; make ship/post-smoke 9/9 |
 | 0.24.0.76 | HEAD | 2026-06-29 | Full overview priority: `full`-форма ответа теперь просит модель в первой половине инженерного обзора дать паспорт объекта, ключевые решения, важные файлы и несостыковки/что проверить, чтобы ответ не тратил весь лимит на один раздел и не обрывался до выводов | ✅ focused answer 19/19; make ship/post-smoke 9/9 |
