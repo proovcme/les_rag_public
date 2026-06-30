@@ -1,7 +1,7 @@
 # Л.Е.С. — evidence-harness for construction data
 
 ![Python](https://img.shields.io/badge/python-3.12-blue)
-![LES](https://img.shields.io/badge/LES-0.24.0.110-0b8f64)
+![LES](https://img.shields.io/badge/LES-0.24.0.111-0b8f64)
 ![Runtime](https://img.shields.io/badge/runtime-Apple%20Silicon-black)
 ![Local-first](https://img.shields.io/badge/local--first-yes-2ea44f)
 ![Numbers](https://img.shields.io/badge/numbers-computed%20by%20code-success)
@@ -62,6 +62,8 @@ RAG не подмешивает соседний датасет по авто-и
 и как калькулятор/проверка норм, единиц, условий применимости, цен, НР/СП и provenance
 там, где модель уже показала, что именно нужно считать. Если данных не хватает, ответ
 показывает ведомость, допущения и ценовые пробелы, а не стену внутренних отказов.
+Если вход — спецификация или ведомость материалов, модель сначала предлагает ВОР как мост к смете;
+код только проверяет табличную арифметику вроде упаковок, множителей и минимальных поставок.
 
 Экспертная проверка сметного режима: [docs/public/smeta-expert-review.md](docs/public/smeta-expert-review.md).
 

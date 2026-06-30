@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.111** | HEAD | Smeta table calculator: explicit Smeta direct model-first now extracts table rows and calculator atoms from attached tabular text, so the estimator model receives checked quantities, packaging/minimum-supply arithmetic and provenance. The model decides whether the input is a specification, VOR or mixed table; specification first becomes a proposed VOR, then an estimate path. |
 | **v0.24.0.110** | HEAD | Smeta direct RAG scope guard: direct smeta no longer lets query classification pull an unrelated TABLE/broad corpus when the operator only attached a file. Compact RAG context is added only for explicit dataset/project scope. |
 | **v0.24.0.109** | HEAD | Smeta direct RAG packet: explicit Smeta direct model-first now receives compact retrieved chunks, source map and dataset navigation memory when a dataset/project/target file scope exists. RAG helps the estimator; it still does not become a code-written answer. |
 | **v0.24.0.108** | HEAD | Smeta direct model-first experiment: explicit Smeta mode now lets the estimator model answer from the full question/attachment context and smeta skill before any code harness runs. The old harness remains fallback/calculator/provenance tooling, but no longer pre-filters the visible answer by default. |

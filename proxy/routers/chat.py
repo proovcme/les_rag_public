@@ -1772,7 +1772,11 @@ async def _smeta_direct_rag_context(
         return {"text": "", "trace": trace, "sources": [], "source_map": []}
 
 
-def _smeta_direct_model_answer(harness_question: str, rag_context: str = "") -> str:
+def _smeta_direct_model_answer(
+    harness_question: str,
+    rag_context: str = "",
+    calculator_context: str = "",
+) -> str:
     """Primary visible smeta answer: estimator model first, calculator/harness later if needed."""
     runtime = _llm_runtime()
     sys_prompt = build_mode_system_prompt(
@@ -1789,7 +1793,12 @@ def _smeta_direct_model_answer(harness_question: str, rag_context: str = "") -> 
             "конкретные коды, ресурсы, НР/СП или рубли как проверенные, если их нет в контексте. "
             "Если переданы проверяемые RAG-фрагменты, используй их как источники норм/прайсов/проектных "
             "объёмов и явно отделяй их от исходных пользователя. Навигационная карта корпуса помогает "
-            "выбрать файл, но не является доказательством факта. "
+            "выбрать файл, но не является доказательством факта. Если передан табличный калькулятор, "
+            "считай его проверенной арифметической подложкой: строки таблицы, множители, упаковки, "
+            "минимальные поставки и простые суммы уже извлечены кодом. Код не решает, спецификация это "
+            "или ВОР: это решаешь ты как сметчик. Если вход похож на спецификацию поставки/материалов, "
+            "сначала предложи или собери ВОР (работы + объёмы + материалы), и только затем объясни, как "
+            "по этому ВОР идти в смету. Не превращай ответ в машинный дамп. "
             "Не говори внутренними словами вроде dataset_memory, evidence_atoms, slots, element_type, "
             "harness, trace. Не проси продолжение файла, если в предоставленном тексте видны нужные "
             "строки; сначала используй то, что уже есть."
@@ -1800,11 +1809,16 @@ def _smeta_direct_model_answer(harness_question: str, rag_context: str = "") -> 
         "user_context": str(harness_question or "")[:22000],
         "rag_context": str(rag_context or "")[:12000],
         "rag_context_role": "Проверяемые фрагменты и навигация. Факты можно утверждать только из пользовательского исходника или проверяемых фрагментов.",
+        "calculator_context": str(calculator_context or "")[:14000],
+        "calculator_context_role": "Проверяемые строки таблицы и простая арифметика из приложенного файла. Модель решает, это спецификация, ВОР или смесь, и при необходимости сначала строит ВОР.",
         "required_visible_shape": [
             "что понял и какие исходные принял",
+            "тип входа: спецификация, ВОР или смешанная таблица",
+            "если это спецификация: предложенный ВОР как мост к смете",
+            "что уже посчитано калькулятором из таблицы",
             "таблица работ/материалов с количеством: на единицу и итог, если множитель есть",
             "какие позиции являются поставкой/материалами, а какие работами",
-            "что можно посчитать сразу, а где нужны нормы/цены/КАЦ/ФГИС/КП/регион",
+            "как из ВОР перейти к смете: нормы/цены/КАЦ/ФГИС/КП/регион",
             "где именно код-калькулятор понадобится следующим шагом",
         ],
     }
@@ -2534,10 +2548,37 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 dataset_ids=smeta_dataset_ids,
                 state=state,
             )
+            calc_packet: dict[str, Any] = {}
+            calc_context = ""
+            if _env_bool("LES_SMETA_TABLE_CALCULATOR", True) and getattr(req, "attachment_context", None):
+                try:
+                    from proxy.services.smeta_table_calculator import (
+                        build_table_calculator_packet,
+                        format_table_calculator_context,
+                    )
+
+                    calc_packet = await asyncio.to_thread(
+                        build_table_calculator_packet,
+                        req.attachment_context,
+                    )
+                    calc_context = format_table_calculator_context(calc_packet)
+                except Exception as calc_err:  # noqa: BLE001
+                    logger.warning("[SMETA_CALC] table calculator skipped: %s", calc_err)
+                    calc_packet = {
+                        "schema": "smeta_table_calculator_v1",
+                        "status": "error",
+                        "error": f"{type(calc_err).__name__}: {calc_err}",
+                    }
+            elif getattr(req, "attachment_context", None):
+                calc_packet = {
+                    "schema": "smeta_table_calculator_v1",
+                    "status": "disabled",
+                }
             answer = await asyncio.to_thread(
                 _smeta_direct_model_answer,
                 harness_question,
                 rag_packet.get("text") or "",
+                calc_context,
             )
             if answer:
                 trace = {
@@ -2546,6 +2587,13 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     "harness_skipped": True,
                     "reason": "explicit smeta mode uses estimator model before code calculator",
                     "smeta_rag_context": rag_packet.get("trace") or {},
+                    "smeta_table_calculator": {
+                        "schema": calc_packet.get("schema"),
+                        "status": calc_packet.get("status")
+                        or ("ready" if calc_packet.get("row_count") else "empty"),
+                        "row_count": calc_packet.get("row_count", 0),
+                        "atom_count": len(calc_packet.get("atoms") or []),
+                    },
                 }
                 return _mode_reply(
                     answer,
