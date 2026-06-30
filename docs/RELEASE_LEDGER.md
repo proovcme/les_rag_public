@@ -7,14 +7,25 @@
 ## Текущее состояние (2026-06-30)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.91  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.94  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.91 Samovar scheduler truth pass
+задеплоено на рантайм:     0.24.0.94 Samovar operator indexing pass
 НЕ задеплоено:             нет
-рантайм /api/version:      0.24.0.91 · app 5.1.0 · h0.24 · runtime_alignment=aligned
+рантайм /api/version:      0.24.0.94 · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.94 — операторский контур индексации в С.А.М.О.В.А.Р.: play по датасету
+> создаёт настоящую background parse-job, GUI показывает live jobs/ETA/memory guard и
+> очередь `лёгкие/OCR`; настройки scheduler-а возвращены с предупреждением и сбросом
+> к умолчанию. Очередь pending в backend теперь предпочитает не-OCR документы перед
+> scan/OCR, чтобы лёгкий разбор не блокировался маленькими сканами.
+> 0.24.0.93 — hotfix второго 500 на classic admin: в `sovushka/pages/volk.py`
+> кнопки и table-events В.О.Л.К. теперь привязываются после объявления `_volk_*` handlers.
+> Симптом: `UnboundLocalError: cannot access local variable '_volk_load'`.
+> 0.24.0.92 — hotfix classic admin 500: в `sovushka/pages/instrumenty.py` кнопки
+> `ОБНОВИТЬ` теперь привязывают async handlers после объявления `_refresh`/`_refresh_prompts`.
+> Симптом: `UnboundLocalError: cannot access local variable '_refresh'` при открытии админки.
 > 0.24.0.91 — честный запуск и статус индексатора в Самоваре: верхний `Пуск` теперь вызывает
 > `/api/rag/parse-scheduler` напрямую, а не только переключает dispatcher/runtime mode. Строки
 > датасетов больше не называют `PENDING` “парсингом”: очередь отображается как `WAITING`/“Ждёт”,
@@ -296,6 +307,9 @@ dev HEAD:                  HEAD  (см. git log -1)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.94 | HEAD | 2026-06-30 | Samovar operator indexing pass: dataset play creates a durable/background `rag_parse_batch` job, the GUI shows live parse jobs/ETA/memory guard/light-vs-OCR pending counts, scheduler settings return with safe defaults reset, and backend pending order prefers non-OCR documents before scan/OCR work | ✅ focused Sovushka/backend + ship/smoke |
+| 0.24.0.93 | HEAD | 2026-06-30 | Volk admin hotfix: кнопки и события таблицы В.О.Л.К. привязываются после объявления `_volk_*` async handlers; classic admin закрывает второй `UnboundLocalError` после cleanup-а async handlers | ✅ focused Sovushka + ship/smoke |
+| 0.24.0.92 | HEAD | 2026-06-30 | Instrumenty admin hotfix: кнопки обновления на странице «Инструменты» привязываются после объявления async handlers; classic admin больше не падает 500 из-за `UnboundLocalError` | ✅ focused Sovushka + ship/smoke |
 | 0.24.0.91 | HEAD | 2026-06-30 | Samovar scheduler truth pass: верхний `Пуск` запускает реальный `/api/rag/parse-scheduler`, `PENDING` больше не подписывается как активный парсинг, `PARSING` зависит от живой job, а список файлов/индекс-таблицы показывают типизированные слои данных из `file_cards` | ✅ focused Sovushka + verify/ship |
 | 0.24.0.90 | HEAD | 2026-06-30 | Samovar indexing play + root-admin hotfix: кнопки `play`/parse и события таблицы запускают async-обработчики внутри NiceGUI slot, а не через detached `asyncio.create_task`; клик снова показывает уведомления и доходит до `/api/rag/parse-batch`/scheduler. Диагностика подтвердила Core ML индексатор (`embed_backend=coreml`) и отсутствие backend-блокировки. `les-admin-` ключи стали protected root-admin без expiry/device binding; danger-zone удаление датасетов и delete/restore бэкапов требует trusted ZeroTier/loopback/proxy или protected `les-admin-` key | ✅ focused security/auth/Sovushka 43/43; make ship/post-smoke |
 | 0.24.0.78 | HEAD | 2026-06-29 | Compact inventory prompt: полный MetaDB-реестр больше не скармливается модели целиком; LLM получает компактную `КАРТА РЕЕСТРА ДАТАСЕТА` (папки, типы, важные файлы-кандидаты), а полный проверяемый реестр остаётся в `project_inventory`/artifact/UI | ✅ focused inventory/chat/notebook 34/34; make ship/post-smoke 9/9 |

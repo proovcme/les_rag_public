@@ -4,9 +4,11 @@ from pathlib import Path
 import pytest
 
 from proxy.routers import chat as chat_router
+from proxy.routers import datasets as datasets_router
 from sovushka.pages import chat as chat_page
 from sovushka.pages import instrumenty as instrumenty_page
 from sovushka.pages import samovar as samovar_page
+from sovushka.pages import volk as volk_page
 from sovushka.pages.chat import (
     _attachment_chat_payload,
     _attachment_user_suffix,
@@ -61,6 +63,25 @@ def test_instrumenty_has_editable_prompt_controls():
     assert ".sov-prompt-editor" in styles
 
 
+def test_instrumenty_refresh_buttons_bind_after_handlers_exist():
+    source = inspect.getsource(instrumenty_page.build_instrumenty)
+
+    assert "ui.button(\"ОБНОВИТЬ\", on_click=_refresh)" not in source
+    assert "ui.button(\"ОБНОВИТЬ\", on_click=_refresh_prompts)" not in source
+    assert source.index("async def _refresh_prompts") < source.index("refresh_prompts_btn.on(\"click\", _refresh_prompts)")
+    assert source.index("async def _refresh") < source.index("refresh_btn.on(\"click\", _refresh)")
+
+
+def test_volk_buttons_and_grid_events_bind_after_handlers_exist():
+    source = inspect.getsource(volk_page.build_volk)
+
+    assert "on_click=_volk_load" not in source
+    assert "on_click=_volk_create" not in source
+    assert source.index("async def _volk_load") < source.index("refresh_btn.on(\"click\", _volk_load)")
+    assert source.index("async def _volk_create") < source.index("create_btn.on(\"click\", _volk_create)")
+    assert source.index("async def _volk_toggle") < source.index("volk_tbl.on(\"toggle\", _grid_handler(_volk_toggle))")
+
+
 def test_chat_attachment_upload_uses_nicegui_file_api_not_stale_content_api():
     source = inspect.getsource(chat_page.build_chat)
     attach_block = source[source.index("async def _do_attach"):source.index("def _clear_attachment")]
@@ -79,11 +100,42 @@ def test_samovar_parse_actions_keep_nicegui_slot_context():
     assert "on_click=_ui_handler(_parse, r)" in source
     assert "ui.timer(5.0, _refresh_status)" in source
     assert "api_post(\"/api/rag/parse-scheduler\", payload)" in source
+    assert "_scheduler_payload()" in source
+    assert "background': 'true'" in source
+    assert "row_batch_limit" in source
+    assert "Настройки индексации" in source
+    assert "По умолчанию" in source
+    assert "_notify(" in source
     assert "sam_grid.on(\"parse\", _grid_handler(_parse_row))" in legacy_source
     assert "asyncio.create_task(_parse(rr))" not in source
     assert "asyncio.create_task(_parse_row(e.args))" not in legacy_source
     start_block = source[source.index("async def _start_all"):source.index("async def _stop_all")]
     assert "/api/runtime/dispatcher/reindex/start" not in start_block
+
+
+def test_samovar_operator_panel_shows_jobs_memory_and_ocr_queue():
+    source = inspect.getsource(samovar_page.build_samovar)
+    adapter_source = Path("backend/qdrant_adapter.py").read_text(encoding="utf-8")
+
+    assert "Оператор индекса" in source
+    assert "лёгкие" in source
+    assert "OCR" in source
+    assert "/api/indexing-mode" in source
+    assert "/api/jobs/summary?limit=40" in source
+    assert "ETA {eta}" in source
+    assert "complexity='needs_ocr'" in adapter_source
+    assert "pipeline='markdown_needs_ocr'" in adapter_source
+
+
+def test_parse_batch_endpoint_can_create_background_job():
+    source = inspect.getsource(datasets_router.parse_dataset_batch)
+
+    assert "background: bool = False" in source
+    assert "\"rag_parse_batch\"" in source
+    assert "state.job_service.create" in source
+    assert "asyncio.create_task(_run())" in source
+    assert "await assert_parse_admission(state)" in source
+    assert "\"status\": \"queued\"" in source
 
 
 def test_samovar_pending_means_waiting_not_active_parsing():

@@ -27,9 +27,8 @@ def build_volk():
                 ui.label("Ключи хранятся в les_meta.db · cookie: les_key · 30 дней").style(
                     "font-size:.6rem;color:var(--dim);"
                 )
-            ui.button(
+            refresh_btn = ui.button(
                 "↻ ОБНОВИТЬ",
-                on_click=_volk_load
             ).props("no-caps outline").style(
                 "border-color:var(--accent);color:var(--accent);font-size:.7rem;"
             )
@@ -66,9 +65,8 @@ def build_volk():
                 ui.button("🎲 Сгенерировать", on_click=_gen).props("no-caps flat").style(
                     "font-size:.7rem;color:var(--dim);"
                 )
-                ui.button(
+                create_btn = ui.button(
                     "✚ СОЗДАТЬ",
-                    on_click=_volk_create
                 ).props("no-caps").style(
                     "border:1px solid var(--ok);color:var(--ok);"
                     "background:transparent;font-size:.7rem;"
@@ -142,10 +140,6 @@ def build_volk():
                          @click="$parent.$emit('delete', props.row)"
                          style="font-size:.6rem;">DEL</q-btn>
                 </q-td>""")
-            volk_tbl.on("toggle", _grid_handler(_volk_toggle))
-            volk_tbl.on("reset_device", _grid_handler(_volk_reset_device))
-            volk_tbl.on("delete", _grid_handler(_volk_delete))
-
         # ── Логика ──────────────────────────────
 
         async def _volk_load():
@@ -207,4 +201,9 @@ def build_volk():
             else:
                 ui.notify(last_api_error_text("Ошибка удаления ключа"), type="negative")
 
+        refresh_btn.on("click", _volk_load)
+        create_btn.on("click", _volk_create)
+        volk_tbl.on("toggle", _grid_handler(_volk_toggle))
+        volk_tbl.on("reset_device", _grid_handler(_volk_reset_device))
+        volk_tbl.on("delete", _grid_handler(_volk_delete))
         ui.timer(0.1, _volk_load, once=True)

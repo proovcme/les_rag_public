@@ -417,6 +417,29 @@ def active_parse_scheduler_job(state: DatasetRouterState) -> tuple[str, dict[str
     return None
 
 
+async def _dataset_name_for_id(state: DatasetRouterState, dataset_id: str) -> str:
+    try:
+        for dataset in await state.backend.list_datasets():
+            if getattr(dataset, "id", None) == dataset_id:
+                return str(getattr(dataset, "name", "") or dataset_id)
+    except Exception:
+        pass
+    return dataset_id
+
+
+async def _pending_count_for_dataset(state: DatasetRouterState, dataset_id: str) -> int:
+    if not hasattr(state.backend, "health_snapshot"):
+        return 0
+    try:
+        snapshot = await state.backend.health_snapshot()
+    except Exception:
+        return 0
+    for dataset in snapshot.get("datasets", []):
+        if dataset.get("id") == dataset_id:
+            return int(dataset.get("pending_files") or 0)
+    return 0
+
+
 def _parse_result_ready_for_reader(result: Any) -> bool:
     if not isinstance(result, dict):
         return False
@@ -1786,9 +1809,104 @@ async def sync_folder(folder: str, _admin=Depends(require_admin)):
 async def parse_dataset_batch(
     dataset_id: str,
     limit: int = Query(default=DEFAULT_PARSE_BATCH_LIMIT, ge=1, le=25),
+    background: bool = False,
     _admin=Depends(require_admin),
 ):
     state = get_dataset_state()
+    if background:
+        dataset_name = await _dataset_name_for_id(state, dataset_id)
+        pending = await _pending_count_for_dataset(state, dataset_id)
+        total = min(limit, pending) if pending > 0 else limit
+        job = state.job_service.create(
+            "rag_parse_batch",
+            source="dataset",
+            dataset_id=dataset_id,
+            dataset_name=dataset_name,
+            status="running",
+            total=total,
+            message=f"Парсинг партии: {dataset_name} · до {limit} файлов",
+        )
+        job_id = job["id"]
+        state.job_tracker[job_id] = {
+            "id": job_id,
+            "type": "rag_parse_batch",
+            "status": "RUNNING",
+            "source": "dataset",
+            "dataset_id": dataset_id,
+            "dataset_name": dataset_name,
+            "total": total,
+            "processed": 0,
+            "errors": 0,
+            "started_at": job.get("started_at"),
+            "message": f"Парсинг партии: {dataset_name} · до {limit} файлов",
+        }
+
+        async def _run():
+            try:
+                async with state.parse_semaphore:
+                    await assert_parse_admission(state)
+                    result = await state.backend.parse_dataset(dataset_id, limit=limit)
+                chunks = int(result.get("chunks") or 0) if isinstance(result, dict) else 0
+                errors = int(result.get("errors") or 0) if isinstance(result, dict) else 1
+                remaining = int(result.get("remaining_pending") or 0) if isinstance(result, dict) else 0
+                status = str(result.get("status") or "unknown") if isinstance(result, dict) else "unknown"
+                processed = max(0, total - min(remaining, total)) if total else limit
+                if status == "completed" and not errors:
+                    service_status = "completed"
+                    tracker_status = "COMPLETED"
+                else:
+                    service_status = "failed"
+                    tracker_status = "FAILED"
+                    errors = max(errors, 1)
+                message = (
+                    f"Готово: {dataset_name} · +{chunks} чанков · "
+                    f"ошибок {errors} · осталось pending={remaining}"
+                )
+                state.job_tracker[job_id].update(
+                    {
+                        "status": tracker_status,
+                        "processed": processed,
+                        "errors": errors,
+                        "finished_at": datetime.now().isoformat(),
+                        "message": message,
+                        "result": result if isinstance(result, dict) else {"status": status},
+                    }
+                )
+                state.job_service.update(
+                    job_id,
+                    status=service_status,
+                    processed=processed,
+                    errors=errors,
+                    message=message,
+                    result=result if isinstance(result, dict) else {"status": status},
+                )
+                reader_job = _schedule_reader_after_parse(dataset_id, reason="parse_batch_background", parse_result=result)
+                if reader_job:
+                    state.job_tracker[job_id]["dataset_reader"] = reader_job
+            except Exception as error:
+                detail = getattr(error, "detail", None) or str(error)
+                message = f"Ошибка парсинга: {detail}"
+                state.job_tracker[job_id].update(
+                    {
+                        "status": "FAILED",
+                        "errors": 1,
+                        "finished_at": datetime.now().isoformat(),
+                        "message": message,
+                    }
+                )
+                state.job_service.update(job_id, status="failed", errors=1, message=message)
+                logger.error("[PARSE_BATCH %s] FAILED: %s", job_id, detail, exc_info=True)
+
+        asyncio.create_task(_run())
+        return {
+            "status": "queued",
+            "job_id": job_id,
+            "dataset_id": dataset_id,
+            "dataset_name": dataset_name,
+            "limit": limit,
+            "pending": pending,
+        }
+
     async with state.parse_semaphore:
         await assert_parse_admission(state)
         result = await state.backend.parse_dataset(dataset_id, limit=limit)

@@ -33,6 +33,17 @@ _LAYER_LABELS = {
     "estimate": "сметы",
 }
 
+_DEFAULT_INDEX_SETTINGS = {
+    "batch_limit": 1,
+    "max_batches": 25,
+    "cooldown_sec": 20,
+    "min_free_gb": 8.0,
+    "max_swap_pct": 45.0,
+    "unload_between_batches": True,
+    "unload_before_start": True,
+    "row_batch_limit": 25,
+}
+
 
 def _doc_layer_labels(item: dict) -> list[str]:
     labels: list[str] = []
@@ -92,8 +103,156 @@ def _computed_index_status(
 def build_samovar():
     """Датасеты (v0.24) — таблица/карточки, светофор статуса, бар файлов, Пуск/Стоп/Ремонт,
     ошибка→что делать, диалог файлов, одна кнопка «Добавить». На API proxy/routers/datasets."""
-    _S = {"mode": "table", "rows": [], "q": "", "filter": "all"}
-    _refs = {"disp": None, "kpi": None, "status": None, "tbtn": None, "cbtn": None}
+    _S = {
+        "mode": "table",
+        "rows": [],
+        "q": "",
+        "filter": "all",
+        "jobs": [],
+        "memory": {},
+        "index_settings": dict(_DEFAULT_INDEX_SETTINGS),
+    }
+    _refs = {"disp": None, "kpi": None, "status": None, "ops": None, "tbtn": None, "cbtn": None}
+
+    def _notify(message: str, type: str = "info", **kwargs):
+        try:
+            ui.notify(message, type=type, **kwargs)
+        except RuntimeError as err:
+            add_log(f"[UI] уведомление не показано: {err}")
+        except Exception:
+            pass
+
+    def _settings_changed() -> bool:
+        cur = _S.get("index_settings") or {}
+        return any(cur.get(k) != v for k, v in _DEFAULT_INDEX_SETTINGS.items())
+
+    def _setting(key: str):
+        return (_S.get("index_settings") or {}).get(key, _DEFAULT_INDEX_SETTINGS[key])
+
+    def _set_setting(key: str, value):
+        settings = _S.setdefault("index_settings", dict(_DEFAULT_INDEX_SETTINGS))
+        if isinstance(_DEFAULT_INDEX_SETTINGS[key], bool):
+            settings[key] = bool(value)
+        elif isinstance(_DEFAULT_INDEX_SETTINGS[key], int):
+            settings[key] = int(value or _DEFAULT_INDEX_SETTINGS[key])
+        else:
+            settings[key] = float(value or _DEFAULT_INDEX_SETTINGS[key])
+        _render_ops()
+
+    def _reset_index_settings():
+        _S["index_settings"] = dict(_DEFAULT_INDEX_SETTINGS)
+        for key, ref in (_refs.get("settings") or {}).items():
+            if key in _DEFAULT_INDEX_SETTINGS:
+                ref.value = _DEFAULT_INDEX_SETTINGS[key]
+                ref.update()
+        _render_ops()
+        _notify("Настройки индексации сброшены к умолчанию", type="info")
+
+    def _scheduler_payload() -> dict:
+        return {
+            "batch_limit": int(_setting("batch_limit")),
+            "max_batches": int(_setting("max_batches")),
+            "cooldown_sec": float(_setting("cooldown_sec")),
+            "min_free_gb": float(_setting("min_free_gb")),
+            "max_swap_pct": float(_setting("max_swap_pct")),
+            "unload_between_batches": bool(_setting("unload_between_batches")),
+            "unload_before_start": bool(_setting("unload_before_start")),
+            "background": True,
+        }
+
+    def _queue_counts() -> dict[str, int]:
+        rows = _S.get("rows") or []
+        return {
+            "pending": sum(int(r.get("pending") or 0) for r in rows),
+            "light": sum(int(r.get("pending_light") or 0) for r in rows),
+            "ocr": sum(int(r.get("pending_ocr") or 0) for r in rows),
+            "unknown": sum(int(r.get("pending_unknown") or 0) for r in rows),
+            "errors": sum(int(r.get("error") or 0) for r in rows),
+        }
+
+    def _job_status_color(status: str) -> str:
+        s = str(status or "").upper()
+        if s in {"QUEUED", "RUNNING", "PARSING", "STARTED"}:
+            return "var(--warn)"
+        if s in {"COMPLETED", "PARTIAL"}:
+            return "var(--ok)"
+        if s in {"FAILED", "ERROR", "CANCELLED"}:
+            return "var(--err)"
+        return "var(--dim)"
+
+    def _render_ops():
+        panel = _refs.get("ops")
+        if panel is None:
+            return
+        panel.clear()
+        counts = _queue_counts()
+        memory_state = _S.get("memory") or {}
+        mem = memory_state.get("memory") if isinstance(memory_state.get("memory"), dict) else {}
+        reason = str(memory_state.get("reason") or "")
+        state_name = str(memory_state.get("state") or "UNKNOWN")
+        jobs = _S.get("jobs") or []
+        active = [
+            j for j in jobs
+            if str(j.get("status", "")).upper() in {"QUEUED", "RUNNING", "PARSING", "STARTED"}
+            and "parse" in str(j.get("type", "")).lower()
+        ]
+        recent = [j for j in jobs if "parse" in str(j.get("type", "")).lower()][:5]
+        with panel:
+            with ui.element("div").classes("card-les w-full").style("padding:12px 14px;"):
+                with ui.row().classes("items-center w-full").style("gap:10px;flex-wrap:wrap;"):
+                    ui.icon("o_radar").style("color:var(--accent);font-size:18px;")
+                    ui.label("Оператор индекса").style("font-size:14px;font-weight:700;")
+                    ui.label(f"очередь {counts['pending']}").style(
+                        "font-size:12px;color:var(--text);font-variant-numeric:tabular-nums;"
+                    )
+                    ui.label(f"лёгкие {counts['light']}").style("font-size:12px;color:var(--ok);")
+                    ui.label(f"OCR {counts['ocr']}").style("font-size:12px;color:var(--warn);")
+                    if counts["unknown"]:
+                        ui.label(f"не распознано {counts['unknown']}").style("font-size:12px;color:var(--dim);")
+                    if counts["errors"]:
+                        ui.label(f"ошибки {counts['errors']}").style("font-size:12px;color:var(--err);")
+                    ui.element("div").style("flex:1;")
+                    mem_color = "var(--ok)" if state_name in {"GREEN", "OK"} else "var(--warn)" if state_name in {"YELLOW", "RED"} else "var(--err)"
+                    ui.label(
+                        f"RAM {float(mem.get('ram_free_gb') or 0):.1f} GB · {state_name}"
+                    ).style(f"font-size:12px;color:{mem_color};font-variant-numeric:tabular-nums;")
+                if reason:
+                    ui.label(reason).style("font-size:11.5px;color:var(--dim);margin-top:4px;")
+                if counts["ocr"] and state_name in {"RED", "CRITICAL"}:
+                    ui.label(
+                        "OCR/сканы лучше отложить: можно гнать текст, DOCX и таблицы, а тяжёлые сканы оставить до зелёной памяти."
+                    ).style("font-size:12px;color:var(--warn);margin-top:6px;")
+                if _settings_changed():
+                    ui.label("Настройки отличаются от умолчания. Лучше трогать только если понимаем, зачем.").style(
+                        "font-size:12px;color:var(--warn);margin-top:6px;"
+                    )
+                if active:
+                    for job in active[:3]:
+                        total = int(job.get("total") or 0)
+                        processed = int(job.get("processed") or 0)
+                        pct = float(job.get("percent") or 0)
+                        eta = str(job.get("eta_text") or "")
+                        msg = str(job.get("message") or "")
+                        with ui.column().classes("w-full").style("gap:4px;margin-top:10px;"):
+                            with ui.row().classes("items-center w-full").style("gap:8px;"):
+                                ui.label(str(job.get("dataset_name") or job.get("source") or "очередь")).style(
+                                    "font-size:12.5px;font-weight:700;flex:1;"
+                                )
+                                ui.label(str(job.get("id") or "")[:12]).style("font-size:11px;color:var(--dim);")
+                                ui.label(str(job.get("status") or "")).style(
+                                    f"font-size:11px;color:{_job_status_color(str(job.get('status') or ''))};"
+                                )
+                                if eta:
+                                    ui.label(f"ETA {eta}").style("font-size:11px;color:var(--dim);")
+                            ui.linear_progress(value=max(0.0, min(1.0, pct / 100.0))).props(
+                                "instant-feedback color=orange"
+                            ).style("height:7px;border-radius:4px;")
+                            ui.label(f"{processed}/{total} · {msg}").style("font-size:11.5px;color:var(--dim);")
+                elif recent:
+                    last = recent[0]
+                    ui.label(
+                        f"Активной parse-job нет. Последняя: {last.get('status')} · {last.get('message') or last.get('id')}"
+                    ).style("font-size:11.5px;color:var(--dim);margin-top:8px;")
 
     def _ui_handler(coro_func, *args, **kwargs):
         async def _handler(*_event_args):
@@ -124,11 +283,28 @@ def build_samovar():
     def _agg(docs):
         by = {}
         for d in (docs or {}).get("documents", []):
-            s = by.setdefault(d.get("dataset_id"), {"INDEXED": 0, "PENDING": 0, "ERROR": 0, "chunks": 0})
+            s = by.setdefault(d.get("dataset_id"), {
+                "INDEXED": 0,
+                "PENDING": 0,
+                "ERROR": 0,
+                "chunks": 0,
+                "pending_ocr": 0,
+                "pending_light": 0,
+                "pending_unknown": 0,
+            })
             st = d.get("status", "")
             if st in s and st != "chunks":
                 s[st] += 1
             s["chunks"] += int(d.get("chunk_count") or 0)
+            if st == "PENDING":
+                complexity = str(d.get("complexity") or "").lower()
+                pipeline = str(d.get("pipeline") or "").lower()
+                if complexity == "needs_ocr" or pipeline == "markdown_needs_ocr":
+                    s["pending_ocr"] += 1
+                elif complexity or pipeline:
+                    s["pending_light"] += 1
+                else:
+                    s["pending_unknown"] += 1
         return by
 
     async def _load():
@@ -148,11 +324,21 @@ def build_samovar():
         rows = []
         for d in (ds if isinstance(ds, list) else ds.get("datasets", []) or []):
             did = d.get("id") or d.get("dataset_id")
-            a = agg.get(did, {"INDEXED": 0, "PENDING": 0, "ERROR": 0, "chunks": 0})
+            a = agg.get(did, {
+                "INDEXED": 0,
+                "PENDING": 0,
+                "ERROR": 0,
+                "chunks": 0,
+                "pending_ocr": 0,
+                "pending_light": 0,
+                "pending_unknown": 0,
+            })
             tot = a["INDEXED"] + a["PENDING"] + a["ERROR"]
             rows.append({"id": did, "name": d.get("name", "?"), "sensitivity": d.get("sensitivity", "P0"),
                          "group": d.get("group_name", ""), "indexed": a["INDEXED"], "pending": a["PENDING"],
-                         "error": a["ERROR"], "chunks": a["chunks"] or int(d.get("chunk_count") or 0), "total": tot})
+                         "pending_ocr": a["pending_ocr"], "pending_light": a["pending_light"],
+                         "pending_unknown": a["pending_unknown"], "error": a["ERROR"],
+                         "chunks": a["chunks"] or int(d.get("chunk_count") or 0), "total": tot})
         rows.sort(key=lambda r: (0 if r["error"] else 1, 0 if r["pending"] else 1, r["name"].lower()))
         _S["rows"] = rows
 
@@ -173,35 +359,31 @@ def build_samovar():
                     ui.element("div").style(f"flex:{n};background:{col};")
 
     async def _parse(r):
-        # «Плей» = одна СИНХРОННАЯ партия ≤25 файлов (endpoint ждёт до конца). Даём честный сигнал:
-        # старт сразу (notify+лог), затем результат со счётчиками — чтобы не было «идёт или стоит?».
+        # «Плей» = background job на одну партию. GUI верит jobs API, а не оптимистичной кнопке.
         nm = r.get("name", "?")
-        add_log(f"[ПАРС] ▶ {nm}: партия до 25 файлов…")
-        ui.notify(f"▶ Парсинг «{nm}» — партия до 25 файлов…", type="info")
+        limit = int(_setting("row_batch_limit"))
+        add_log(f"[ПАРС] ▶ {nm}: партия до {limit} файлов…")
+        _notify(f"▶ Парсинг «{nm}» — ставлю job на партию до {limit} файлов…", type="info")
         try:
-            d = await api_post(f"/api/rag/parse-batch/{r['id']}?limit=25", {})
+            d = await api_post(f"/api/rag/parse-batch/{r['id']}?{urlencode({'limit': limit, 'background': 'true'})}", {})
         except Exception as e:  # noqa: BLE001
             add_log(f"[ПАРС] ✗ {nm}: {e}")
-            ui.notify(last_api_error_text(f"Парсинг «{nm}» не запустился"), type="negative")
+            _notify(last_api_error_text(f"Парсинг «{nm}» не запустился"), type="negative")
             return
         if not d:
             add_log(f"[ПАРС] ✗ {nm}: отказ (вероятно, защита памяти — см. статус)")
-            ui.notify(last_api_error_text(f"Парсинг «{nm}»: отказ (память?)"), type="negative")
+            _notify(last_api_error_text(f"Парсинг «{nm}»: отказ (память?)"), type="negative")
             await _refresh_status()
             return
-        res = (d or {}).get("result", {}) or {}
-        chunks, errs, rem = res.get("chunks", 0), res.get("errors", 0), res.get("remaining_pending", 0)
-        msg = f"✓ «{nm}»: +{chunks} чанков · ошибок {errs} · осталось {rem}"
-        if rem:
-            msg += " — повтори «плей» или жми «Пуск» (индексатор) для всех"
+        msg = f"✓ «{nm}»: job {d.get('job_id', '?')} создана · pending {d.get('pending', 0)}"
         add_log(f"[ПАРС] {msg}")
-        ui.notify(msg, type="positive" if not errs else "warning")
-        await _refresh()
+        _notify(msg, type="positive")
+        await _refresh_status()
 
     async def _repair(r):
         d = await api_post(f"/api/rag/datasets/{r['id']}/repair", {})
         n = (d or {}).get("requeued", 0)
-        ui.notify(f"Ремонт {r['name']}: в очередь {n} файлов — нажми Пуск" if n else "Ошибочных файлов нет",
+        _notify(f"Ремонт {r['name']}: в очередь {n} файлов — нажми Пуск" if n else "Ошибочных файлов нет",
                   type="warning" if n else "info")
         await _refresh()
 
@@ -209,30 +391,23 @@ def build_samovar():
         ok = await ui.run_javascript(f"confirm('Удалить датасет {r['name']}? Необратимо.')", timeout=10)
         if ok:
             await api_delete(f"/api/rag/datasets/{r['id']}")
-            ui.notify(f"Удалён: {r['name']}", type="warning")
+            _notify(f"Удалён: {r['name']}", type="warning")
             await _refresh()
 
     async def _start_all():
-        payload = {
-            "batch_limit": 1,
-            "max_batches": 25,
-            "cooldown_sec": 20,
-            "unload_between_batches": True,
-            "unload_before_start": True,
-            "background": True,
-        }
+        payload = _scheduler_payload()
         add_log("[PARSE_SCHEDULER] top Пуск → /api/rag/parse-scheduler")
         d = await api_post("/api/rag/parse-scheduler", payload)
         if d:
-            ui.notify(f"Индексатор запущен: job {d.get('job_id', '?')}", type="positive")
+            _notify(f"Индексатор запущен: job {d.get('job_id', '?')}", type="positive")
             add_log(f"[PARSE_SCHEDULER] job {d.get('job_id', '?')} queued")
         else:
-            ui.notify(last_api_error_text("Индексатор не запустился"), type="negative")
+            _notify(last_api_error_text("Индексатор не запустился"), type="negative")
         await _refresh_status()
 
     async def _stop_all():
         await api_post("/api/runtime/dispatcher/reindex/pause", {"reason": "operator"})
-        ui.notify("Индексатор остановлен", type="warning")
+        _notify("Индексатор остановлен", type="warning")
         await _refresh_status()
 
     files_dialog = ui.dialog()
@@ -452,7 +627,16 @@ def build_samovar():
                             ui.label(r["name"]).style("flex:2;font-size:14px;font-weight:500;")
                             with ui.row().classes("items-center").style("flex:1.4;gap:5px;"):
                                 ui.icon(ico).style(f"font-size:15px;color:{col};")
-                                ui.label(txt).style(f"font-size:12px;color:{col};")
+                                with ui.column().style("gap:1px;"):
+                                    ui.label(txt).style(f"font-size:12px;color:{col};")
+                                    if r["pending"]:
+                                        detail = (
+                                            f"лёгкие {r.get('pending_light', 0)} · "
+                                            f"OCR {r.get('pending_ocr', 0)}"
+                                        )
+                                        if r.get("pending_unknown"):
+                                            detail += f" · ? {r.get('pending_unknown', 0)}"
+                                        ui.label(detail).style("font-size:10.5px;color:var(--dim);")
                             with ui.column().style("flex:1.6;gap:2px;"):
                                 _bar(r)
                             ui.label(str(r["chunks"])).style("width:70px;font-size:13px;color:var(--text);")
@@ -470,16 +654,23 @@ def build_samovar():
                                 ui.label(f"{r['chunks']} чанков").classes("sov-muted")
                             _bar(r)
                             with ui.row().classes("items-center w-full").style("gap:6px;margin-top:8px;"):
-                                ui.label(txt).style(f"font-size:12px;color:{col};flex:1;")
+                                extra = ""
+                                if r["pending"]:
+                                    extra = f" · лёгкие {r.get('pending_light', 0)} · OCR {r.get('pending_ocr', 0)}"
+                                ui.label(txt + extra).style(f"font-size:12px;color:{col};flex:1;")
                                 _row_actions(r)
 
     async def _refresh_status():
         # Тикает каждые 5с НЕЗАВИСИМО от _parse. Верим активной job, а не stale dataset.status:
         # PENDING — это очередь, PARSING — только если есть живой scheduler/batch.
         st = await api_get("/api/runtime/dispatcher/status") or {}
+        idx = await api_get("/api/indexing-mode") or {}
         disp = bool((st.get("reindex") or {}).get("running") or st.get("running"))
         jobs = await api_get("/api/jobs/summary?limit=40") or {}
         job_items = jobs.get("jobs", []) if isinstance(jobs, dict) else []
+        _S["jobs"] = job_items
+        if isinstance(idx, dict):
+            _S["memory"] = idx.get("memory_state") if isinstance(idx.get("memory_state"), dict) else {}
         active_parse = [
             j for j in job_items
             if str(j.get("status", "")).upper() in {"QUEUED", "RUNNING", "PARSING", "STARTED"}
@@ -499,6 +690,7 @@ def build_samovar():
                 _refs["status"].set_text(f"Индексатор: простаивает · ждут {pending} файлов")
             else:
                 _refs["status"].set_text("Индексатор: простаивает")
+        _render_ops()
 
     async def _refresh():
         try:
@@ -594,6 +786,61 @@ def build_samovar():
                     _refs["fbtn"][_fk] = ui.button(_flbl, on_click=lambda k=_fk: _set_filter(k)).props(
                         "flat dense no-caps").style(
                         f"font-size:.7rem;color:{'var(--accent)' if _fk == 'all' else 'var(--dim)'};")
+        _refs["ops"] = ui.column().classes("w-full").style("gap:8px;")
+        _refs["settings"] = {}
+        with ui.expansion("Настройки индексации", icon="o_tune", value=False).classes("w-full").style(
+            "border:1px solid var(--border);border-radius:8px;background:var(--bg-panel);"
+        ):
+            ui.label("Лучше не трогать без причины: маленький batch и пауза берегут память, особенно перед OCR.").style(
+                "font-size:12px;color:var(--warn);padding:0 12px 8px;"
+            )
+            with ui.element("div").style(
+                "display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));"
+                "gap:8px;padding:0 12px 12px;"
+            ):
+                batch_in = ui.number("batch", value=_setting("batch_limit"), min=1, max=25, step=1).props(
+                    "dense outlined"
+                )
+                max_in = ui.number("max партий", value=_setting("max_batches"), min=1, max=500, step=1).props(
+                    "dense outlined"
+                )
+                cooldown_in = ui.number("пауза, с", value=_setting("cooldown_sec"), min=0, max=600, step=5).props(
+                    "dense outlined"
+                )
+                min_ram_in = ui.number("мин. RAM, GB", value=_setting("min_free_gb"), min=1, max=64, step=1).props(
+                    "dense outlined"
+                )
+                swap_in = ui.number("swap %, инфо", value=_setting("max_swap_pct"), min=0, max=100, step=5).props(
+                    "dense outlined"
+                )
+                row_batch_in = ui.number("play batch", value=_setting("row_batch_limit"), min=1, max=25, step=1).props(
+                    "dense outlined"
+                )
+            with ui.row().classes("items-center w-full").style("gap:10px;flex-wrap:wrap;padding:0 12px 12px;"):
+                unload_between_sw = ui.switch("выгружать MLX между партиями", value=_setting("unload_between_batches"))
+                unload_before_sw = ui.switch("выгрузить MLX перед стартом", value=_setting("unload_before_start"))
+                ui.element("div").style("flex:1;")
+                ui.button("По умолчанию", icon="o_restart_alt", on_click=_reset_index_settings).props(
+                    "flat dense no-caps"
+                ).style("color:var(--dim);")
+            _refs["settings"].update({
+                "batch_limit": batch_in,
+                "max_batches": max_in,
+                "cooldown_sec": cooldown_in,
+                "min_free_gb": min_ram_in,
+                "max_swap_pct": swap_in,
+                "row_batch_limit": row_batch_in,
+                "unload_between_batches": unload_between_sw,
+                "unload_before_start": unload_before_sw,
+            })
+            batch_in.on_value_change(lambda *_: _set_setting("batch_limit", batch_in.value))
+            max_in.on_value_change(lambda *_: _set_setting("max_batches", max_in.value))
+            cooldown_in.on_value_change(lambda *_: _set_setting("cooldown_sec", cooldown_in.value))
+            min_ram_in.on_value_change(lambda *_: _set_setting("min_free_gb", min_ram_in.value))
+            swap_in.on_value_change(lambda *_: _set_setting("max_swap_pct", swap_in.value))
+            row_batch_in.on_value_change(lambda *_: _set_setting("row_batch_limit", row_batch_in.value))
+            unload_between_sw.on_value_change(lambda *_: _set_setting("unload_between_batches", unload_between_sw.value))
+            unload_before_sw.on_value_change(lambda *_: _set_setting("unload_before_start", unload_before_sw.value))
         with ui.row().classes("items-center w-full").style("gap:10px;"):
             ui.button("Пуск", icon="o_play_arrow",
                       on_click=_start_all).props("flat dense no-caps").style("color:var(--ok);")

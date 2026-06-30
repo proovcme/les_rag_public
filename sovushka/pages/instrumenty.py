@@ -111,7 +111,7 @@ def build_instrumenty():
                 ui.label(
                     "Папки и датасеты, на которых ЛЕС считает сметы и проверяет документацию."
                 ).style("font-size:.72rem;color:var(--dim);")
-            ui.button("ОБНОВИТЬ", on_click=_refresh).props("dense no-caps")
+            refresh_btn = ui.button("ОБНОВИТЬ").props("dense no-caps")
 
         with ui.card().classes("card-les w-full"):
             summary = ui.label("Загрузка источников…").style("font-size:.74rem;color:var(--dim);")
@@ -126,7 +126,7 @@ def build_instrumenty():
                 ui.label(
                     "Общий характер ЛЕСа и режимные рамки. Это поведение модели, не evidence."
                 ).style("font-size:.72rem;color:var(--dim);")
-                ui.button("ОБНОВИТЬ", on_click=_refresh_prompts).props("dense no-caps")
+                refresh_prompts_btn = ui.button("ОБНОВИТЬ").props("dense no-caps")
             prompt_summary = ui.label("Загрузка промтов…").style("font-size:.74rem;color:var(--dim);")
             prompts_box = ui.column().classes("w-full gap-2")
 
@@ -261,5 +261,7 @@ def build_instrumenty():
                 for item in d.get("sources") or []:
                     _render_source(item)
 
+        refresh_btn.on("click", _refresh)
+        refresh_prompts_btn.on("click", _refresh_prompts)
         ui.timer(0.2, _refresh, once=True)
         ui.timer(0.35, _refresh_prompts, once=True)

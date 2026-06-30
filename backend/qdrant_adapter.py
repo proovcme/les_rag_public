@@ -729,7 +729,9 @@ class MetaDB:
     def get_pending_files(self, dataset_id: str, limit: int | None = None) -> List[str]:
         sql = (
             "SELECT file_name FROM documents WHERE dataset_id=? AND status='PENDING' "
-            "ORDER BY COALESCE(NULLIF(file_size, 0), 9223372036854775807), file_name"
+            "ORDER BY "
+            "CASE WHEN complexity='needs_ocr' OR pipeline='markdown_needs_ocr' THEN 1 ELSE 0 END, "
+            "COALESCE(NULLIF(file_size, 0), 9223372036854775807), file_name"
         )
         params: list[Any] = [dataset_id]
         if limit is not None:
@@ -760,7 +762,9 @@ class MetaDB:
         sql = (
             "SELECT file_name, COALESCE(source_path, '') AS source_path FROM documents "
             "WHERE dataset_id=? AND status='PENDING' "
-            "ORDER BY COALESCE(NULLIF(file_size, 0), 9223372036854775807), file_name"
+            "ORDER BY "
+            "CASE WHEN complexity='needs_ocr' OR pipeline='markdown_needs_ocr' THEN 1 ELSE 0 END, "
+            "COALESCE(NULLIF(file_size, 0), 9223372036854775807), file_name"
         )
         params: list[Any] = [dataset_id]
         if limit is not None:
