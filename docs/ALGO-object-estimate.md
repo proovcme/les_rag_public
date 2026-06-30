@@ -62,6 +62,13 @@ calculator inputs. The estimator model must bind the right candidate into the `s
 work item. Geometry/applicability parameters such as depth, wall thickness, wall height/length,
 pile count and soil group may still flow as safe global slots.
 
+Since 0.24.0.106 the chat orchestration gives the model-owned work-plan a larger dynamic completion
+budget for long TZ/BOR/attachment contexts and passes the same harness question to the visible
+estimator comment. The comment layer receives only a compact excerpt and is forbidden, then
+post-filtered, from claiming that a file or VOR is truncated unless that is present in the calculation
+payload. This prevents the visible layer from asking for "continuation of the TZ" just because it saw
+only the beginning of a long attachment.
+
 If the model cannot produce enough checked positions, the answer must say what is missing. It must
 not substitute a prewritten object composition.
 

@@ -1337,7 +1337,12 @@ def _harness_complete(messages: list[dict]) -> str:
     конфигу — декомпозиция объекта = где большая модель уместна. Низкая temperature для tool-call."""
     runtime = _llm_runtime()
     timeout_s = float(os.getenv("LES_ESTIMATE_HARNESS_TIMEOUT_SEC", "35"))
-    body = {"model": runtime.model, "messages": messages, "temperature": 0.0, "max_tokens": 700}
+    body = {
+        "model": runtime.model,
+        "messages": messages,
+        "temperature": 0.0,
+        "max_tokens": _estimate_harness_plan_tokens(messages),
+    }
     body = _cloud_body_for_model(body, runtime.model, runtime.provider)
     headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
     try:
@@ -1348,6 +1353,45 @@ def _harness_complete(messages: list[dict]) -> str:
     except Exception as e:  # noqa: BLE001 — петля переживёт пустой ответ (учтёт как «нет JSON»)
         logger.warning("[HARNESS] llm call failed: %s", e)
         return ""
+
+
+def _estimate_harness_plan_tokens(messages: list[dict]) -> int:
+    """Completion budget for the model-owned smeta work plan.
+
+    Full TZ/BOR attachments can need many work items. If this budget is too small, the
+    model returns a partial plan and the user sees a false "missing source" problem.
+    """
+    total_chars = sum(len(str(m.get("content") or "")) for m in messages if isinstance(m, dict))
+    if total_chars >= 8000:
+        default = 2400
+    elif total_chars >= 3500:
+        default = 1800
+    else:
+        default = 1100
+    configured = _env_int("LES_ESTIMATE_HARNESS_MAX_TOKENS", default)
+    return max(700, min(configured, 3200))
+
+
+def _compact_question_excerpt(question: str, *, max_chars: int = 1600) -> dict[str, Any]:
+    text = str(question or "")
+    if len(text) <= max_chars:
+        return {"text": text, "chars": len(text), "truncated": False}
+    half = max(300, max_chars // 2)
+    return {
+        "text": text[:half].rstrip() + "\n...\n" + text[-half:].lstrip(),
+        "chars": len(text),
+        "truncated": True,
+    }
+
+
+def _voice_claims_source_truncated(text: str) -> bool:
+    t = str(text or "").casefold().replace("ё", "е")
+    return bool(re.search(
+        r"(?:исходн\w*|файл|тз|ведомост\w*|перечен\w*)\s+"
+        r"(?:оборвал|обрыва|усеч|неполн|не полн|заканчива|прерыва)|"
+        r"(?:пришл(?:ите|и)|дошл(?:ите|и))\s+(?:продолжени|остаток)",
+        t,
+    ))
 
 
 def _harness_model_comment(result: dict, question: str) -> str:
@@ -1371,7 +1415,7 @@ def _harness_model_comment(result: dict, question: str) -> str:
         if total.get(key)
     }
     payload = {
-        "question": str(question or "")[:600],
+        "question_excerpt": _compact_question_excerpt(question),
         "status": result.get("total_status"),
         "object": result.get("schema") if isinstance(result.get("schema"), dict) else {},
         "assumption_mode": bool(result.get("assumption_mode")),
@@ -1415,6 +1459,10 @@ def _harness_model_comment(result: dict, question: str) -> str:
             "живо, слегка иронично, профессионально. Не раскрывай скрытую цепочку размышлений; дай "
             "пользователю понятное рабочее рассуждение: что понял из запроса, чем готов пользоваться "
             "из инструментов, что нельзя считать без исходных, какой следующий вопрос самый полезный. "
+            "Поле question_excerpt может быть сокращённым фрагментом большого ТЗ/ВОР; запрещено делать "
+            "по нему вывод, что файл, ведомость или исходные данные оборвались, неполные или требуют "
+            "продолжения. О неполноте говори только если это прямо есть в расчётном payload как "
+            "недостающие параметры/условия нормы. "
             "Если в payload есть norm_questions, спрашивай именно их как условия выбранной нормы. "
             "Если итог не complete, "
             "не перечисляй рубли: только смысл, недостающие исходные и следующий шаг. "
@@ -1452,6 +1500,9 @@ def _harness_model_comment(result: dict, question: str) -> str:
     if len(lines) > 7:
         text = "\n".join(lines[:7])
     if not text or len(text) > 2000:
+        return ""
+    if _voice_claims_source_truncated(text):
+        logger.warning("[HARNESS] suppressed unsupported source-truncation voice claim")
         return ""
     def _norm_literal(value: str) -> str:
         return re.sub(r"\s+", " ", str(value or "").replace("₽", "").strip()).casefold()
@@ -2163,9 +2214,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     if _PROFILE == "estimate_harness" or _auto_estimate_work:
         # Model-first estimate: model decomposes the object, harness provides tools and gates.
         from proxy.services.estimate_harness_service import run_estimate_harness
-        result = await asyncio.to_thread(run_estimate_harness, _smeta_harness_question(req), _harness_complete)
+        harness_question = _smeta_harness_question(req)
+        result = await asyncio.to_thread(run_estimate_harness, harness_question, _harness_complete)
         answer = _format_harness(result)
-        voice = await asyncio.to_thread(_harness_model_comment, result, req.question)
+        voice = await asyncio.to_thread(_harness_model_comment, result, harness_question)
         if voice:
             answer = f"{voice}\n\n{answer}"
         trace = {

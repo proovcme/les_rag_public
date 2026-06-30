@@ -3,11 +3,14 @@ from types import SimpleNamespace
 import pytest
 
 from proxy.routers.chat import (
+    _compact_question_excerpt,
+    _estimate_harness_plan_tokens,
     _format_harness,
     _format_harness_artifact,
     _format_smeta_dialog_state,
     _harness_voice_comment,
     _smeta_dialog_state,
+    _voice_claims_source_truncated,
 )
 
 
@@ -75,6 +78,60 @@ def test_harness_voice_allows_short_human_comment(monkeypatch):
 
     assert "Считаю то" in text
     assert "\n" in text
+
+
+def test_harness_plan_budget_scales_for_large_tz_context():
+    small = [{"role": "user", "content": "скамья 3 шт"}]
+    medium = [{"role": "user", "content": "ВОР\n" + ("строка\n" * 900)}]
+    large = [{"role": "user", "content": "ВОР\n" + ("строка\n" * 1800)}]
+
+    assert _estimate_harness_plan_tokens(small) == 1100
+    assert _estimate_harness_plan_tokens(medium) == 1800
+    assert _estimate_harness_plan_tokens(large) == 2400
+
+
+def test_harness_voice_has_safe_excerpt_and_no_fake_truncation_claim():
+    long_question = "начало ТЗ\n" + ("строка ведомости\n" * 180) + "конец ТЗ"
+    excerpt = _compact_question_excerpt(long_question, max_chars=600)
+
+    assert excerpt["truncated"] is True
+    assert "начало ТЗ" in excerpt["text"]
+    assert "конец ТЗ" in excerpt["text"]
+    assert _voice_claims_source_truncated("исходные обрываются на п.9, пришлите продолжение")
+    assert not _voice_claims_source_truncated("нужно уточнить толщину стены и способ монтажа")
+
+
+def test_harness_voice_suppresses_unsupported_attachment_truncation_claim(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": (
+                "Исходные обрываются на пункте 9, пришлите продолжение ведомости."
+            )}}]}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr("proxy.routers.chat._llm_runtime", lambda: SimpleNamespace(
+        model="test-model", provider="openai", chat_url="http://127.0.0.1/test", api_key="",
+    ))
+    monkeypatch.setattr("proxy.routers.chat.httpx.Client", FakeClient)
+
+    text = _harness_voice_comment({"total_status": "blocked", "needs_input": [{}]}, "ВОР\n" + ("x" * 3000))
+
+    assert text == ""
 
 
 def test_harness_voice_allows_visible_estimator_reasoning(monkeypatch):

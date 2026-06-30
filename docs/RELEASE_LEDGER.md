@@ -7,14 +7,20 @@
 ## Текущее состояние (2026-06-30)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.105  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.106  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.105 Smeta quantity-binding cut
+задеплоено на рантайм:     0.24.0.106 Smeta long-TZ orchestration fix
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.105 · app 5.1.0 · h0.24 · runtime_alignment=aligned
+рантайм /api/version:      0.24.0.106 · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.106 — сметный chat/harness перестал создавать ложный “обрыв ТЗ”:
+> work-plan получает динамический budget ответа для длинных ТЗ/ВОР/вложений, а
+> видимый smetnik-comment теперь строится от того же `harness_question`, что и
+> расчётный планировщик. Комментатор получает compact excerpt и дополнительно
+> фильтруется от неподтверждённых заявлений “файл/ведомость оборвались, пришлите
+> продолжение”, если расчётный payload сам этого не доказывает.
 > 0.24.0.105 — сметный harness разделяет найденные числа и расчётные слоты:
 > `parse_params()` может найти объёмы/массы/площади/штуки как `quantity_candidates`
 > с provenance, но в широком ТЗ/ВОР/объектной смете эти числа больше не становятся
