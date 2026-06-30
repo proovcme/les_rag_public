@@ -7,14 +7,21 @@
 ## Текущее состояние (2026-06-30)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.95  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.96  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
 задеплоено на рантайм:     0.24.0.94 Samovar operator indexing pass
-НЕ задеплоено:             0.24.0.95 public showcase docs/version only
+НЕ задеплоено:             0.24.0.95 public showcase + 0.24.0.96 smeta price-gap actions
 рантайм /api/version:      0.24.0.94 · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.96 — сметный расчёт теперь явно говорит, чего не хватает для полного итога:
+> отсутствующие цены ресурсов классифицируются как `needs_kac`, `needs_fgis_price`,
+> `needs_labor_rate`, `needs_machinist_rate`; в артефакте появляется “Что нужно добрать”.
+> Материалы без цены помечаются как “нужен КАЦ”, машины/труд/машинисты — как нужная цена
+> или ставка. `estimate_harness` больше не ставит `complete`, если есть price gaps:
+> рассчитанная часть остаётся `partial_total`, а `final_total` появляется только после закрытия
+> ценовых требований.
 > 0.24.0.95 — публичная витрина GitHub/Pages без изменения рантайма: README переписан как
 > внешний продуктовый вход, добавлены `docs/index.md`, `docs/_config.yml` и `docs/public/*`
 > (overview, demo workflows, privacy boundaries, что нужно сметному модулю, чтобы считать).

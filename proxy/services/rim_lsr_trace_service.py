@@ -47,6 +47,20 @@ class PriceTrace:
     column_9: Optional[float] = None
     column_10: Optional[float] = None
     basis: str = ""
+    action: str = ""
+
+
+def _missing_price_action(res: dict[str, Any]) -> str:
+    kind = str(res.get("kind") or "")
+    if kind == "material":
+        return "needs_kac"
+    if kind == "labor":
+        return "needs_labor_rate"
+    if kind == "machinist":
+        return "needs_machinist_rate"
+    if kind == "machine":
+        return "needs_fgis_price"
+    return "needs_price"
 
 
 def _resolve_price_trace(
@@ -101,7 +115,8 @@ def _resolve_price_trace(
             price = _round(price)
             return PriceTrace(price=price, source="kac", column_10=price, basis="kac")
 
-    return PriceTrace(price=None, source="missing")
+    action = _missing_price_action(res)
+    return PriceTrace(price=None, source=action, basis=action, action=action)
 
 
 def _position_resources(position: dict[str, Any]) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
@@ -188,7 +203,13 @@ def build_position_trace(
         price = _resolve_price_trace(res, pricebook=pricebook, kac_map=kac_lookup)
         cost = 0.0 if price.price is None else round(total_qty * price.price, 2)
         if price.price is None:
-            flags.append(f"нет цены: {res.get('name','?')} ({res.get('code','—')})")
+            action_label = {
+                "needs_kac": "нужен КАЦ",
+                "needs_labor_rate": "нужна ставка ОЗП",
+                "needs_machinist_rate": "нужна ставка ЗПМ",
+                "needs_fgis_price": "нужна цена эксплуатации машины",
+            }.get(price.action or price.source, "нужна цена")
+            flags.append(f"{action_label}: {res.get('name','?')} ({res.get('code','—')})")
         if kind not in detail_rows:
             flags.append(f"неизвестный вид ресурса: {kind!r}")
             continue
@@ -212,7 +233,7 @@ def build_position_trace(
                     12: cost,
                 },
                 source=price.source,
-                meta={"basis": price.basis, "kind": kind},
+                meta={"basis": price.basis, "kind": kind, "price_action": price.action},
             )
         )
 

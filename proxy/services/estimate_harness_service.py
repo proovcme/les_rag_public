@@ -1419,7 +1419,9 @@ def _finalize(state: dict[str, Any], *, note: str = "") -> dict[str, Any]:
     partial = {"smr": smr, "contingency": cont, "vat": vat,
                "grand_total": round(smr + cont + vat, 2), "positions": len(buckets["computed"])}
     norm_checks = [p for p in buckets["computed"] if p.get("norm_questions")]
-    has_critical = bool(buckets["rejected"]) or bool(buckets["needs_input"]) or bool(norm_checks)
+    price_requirements = list(lsr.get("summary", {}).get("price_requirements") or [])
+    has_price_gaps = bool(price_requirements)
+    has_critical = bool(buckets["rejected"]) or bool(buckets["needs_input"]) or bool(norm_checks) or has_price_gaps
     if not buckets["computed"]:
         total_status = "blocked"
     elif has_critical:
@@ -1440,6 +1442,7 @@ def _finalize(state: dict[str, Any], *, note: str = "") -> dict[str, Any]:
         "needs_input": buckets["needs_input"],
         "rejected": buckets["rejected"],
         "norm_checks": norm_checks,
+        "price_requirements": price_requirements,
         "skipped": buckets["skipped"],
         "by_assumption": buckets["by_assumption"],
         "assumption_mode": bool(state.get("assumption_mode")),

@@ -1652,18 +1652,52 @@ def _format_harness_artifact(r: dict) -> str:
                 resources.append(res)
     if resources:
         lines += ["", "## Ресурсы", "",
-                  "| Вид | Код | Наименование | Кол-во | Цена, ₽ | Сумма, ₽ |",
-                  "|---|---:|---|---:|---:|---:|"]
+                  "| Вид | Код | Наименование | Кол-во | Цена, ₽ | Источник/добор | Сумма, ₽ |",
+                  "|---|---:|---|---:|---:|---|---:|"]
         for res in resources:
             name = str(res.get("name") or "").replace("|", "/")
+            source = str(res.get("price_source") or res.get("price_action") or "").strip()
+            if res.get("price_action") == "needs_kac":
+                source = "нужен КАЦ"
+            elif res.get("price_action") == "needs_labor_rate":
+                source = "нужна ставка ОЗП"
+            elif res.get("price_action") == "needs_machinist_rate":
+                source = "нужна ставка ЗПМ"
+            elif res.get("price_action") == "needs_fgis_price":
+                source = "нужна цена машины"
             lines.append(
                 f"| {_resource_kind_label(str(res.get('kind') or ''))} "
                 f"| {res.get('code') or '—'} "
                 f"| {name} "
                 f"| {_qty(res.get('qty'))} {res.get('unit') or ''} "
                 f"| {_rub(res.get('price_used'))} "
+                f"| {source or '—'} "
                 f"| {_rub(res.get('cost'))} |"
             )
+    price_requirements = []
+    estimate = r.get("estimate") if isinstance(r.get("estimate"), dict) else {}
+    summary = estimate.get("summary") if isinstance(estimate.get("summary"), dict) else {}
+    for req in summary.get("price_requirements") or r.get("price_requirements") or []:
+        if isinstance(req, dict):
+            price_requirements.append(req)
+    if price_requirements:
+        lines += ["", "## Что нужно добрать для полного расчёта", ""]
+        seen = set()
+        for req in price_requirements:
+            msg = str(req.get("message") or "").strip()
+            if not msg:
+                action = str(req.get("action") or "needs_price")
+                msg = {
+                    "needs_kac": "нужен КАЦ",
+                    "needs_labor_rate": "нужна ставка ОЗП",
+                    "needs_machinist_rate": "нужна ставка ЗПМ",
+                    "needs_fgis_price": "нужна цена ресурса ФГИС/машины",
+                }.get(action, "нужна цена ресурса")
+            key = (req.get("action"), req.get("resource_code"), req.get("resource_name"))
+            if key in seen:
+                continue
+            seen.add(key)
+            lines.append(f"- {msg}")
     flags = []
     for pos in positions:
         flags.extend(pos.get("flags") or [])

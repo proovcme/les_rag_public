@@ -64,7 +64,20 @@ def test_kac_price_for_unlisted_material():
 def test_missing_price_flagged():
     pos = {"name": "z", "resources": [{"kind": "material", "name": "Неизвестный", "qty": 1}]}
     r = compute_position(pos)
-    assert r["flags"] and "нет цены" in r["flags"][0]
+    assert r["flags"] and "нужен КАЦ" in r["flags"][0]
+    assert r["price_requirements"][0]["action"] == "needs_kac"
+    assert r["resources"][0]["price_action"] == "needs_kac"
+
+
+def test_missing_non_material_prices_are_actionable():
+    pos = {"name": "z", "resources": [
+        {"kind": "labor", "name": "Рабочий", "qty": 1},
+        {"kind": "machinist", "name": "Машинист", "qty": 1},
+        {"kind": "machine", "name": "Кран", "qty": 1},
+    ]}
+    r = compute_position(pos)
+    actions = [req["action"] for req in r["price_requirements"]]
+    assert actions == ["needs_labor_rate", "needs_machinist_rate", "needs_fgis_price"]
 
 
 def test_assemble_rollup():

@@ -500,8 +500,29 @@ def test_harness_summary_points_to_resource_artifact():
                         "price_used": 10.0,
                         "cost": 900.0,
                     },
+                    {
+                        "kind": "material",
+                        "name": "Нестандартный материал",
+                        "unit": "шт",
+                        "qty": 1,
+                        "price_used": None,
+                        "price_action": "needs_kac",
+                        "cost": 0.0,
+                    },
                 ],
+                "price_requirements": [{
+                    "action": "needs_kac",
+                    "resource_name": "Нестандартный материал",
+                    "message": "нужен КАЦ: Нестандартный материал",
+                }],
             }],
+            "summary": {
+                "price_requirements": [{
+                    "action": "needs_kac",
+                    "resource_name": "Нестандартный материал",
+                    "message": "нужен КАЦ: Нестандартный материал",
+                }],
+            },
         },
     }
 
@@ -517,6 +538,8 @@ def test_harness_summary_points_to_resource_artifact():
     assert "Средний разряд работы" in artifact
     assert "Краны" in artifact
     assert "Электроды" in artifact
+    assert "## Что нужно добрать для полного расчёта" in artifact
+    assert "нужен КАЦ: Нестандартный материал" in artifact
     assert "Коэффициент не применён" in artifact
 
 

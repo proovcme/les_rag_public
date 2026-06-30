@@ -31,7 +31,7 @@ from proxy.services import stesnennost_service as st
 _EXPORT_FIELDS = (
     "section", "position_no", "position_code", "position_name", "position_unit", "position_qty",
     "row_type", "resource_code", "resource_name", "resource_unit", "resource_qty",
-    "price_used", "price_source", "cost", "ozp", "em", "zpm", "mat", "direct", "fot",
+    "price_used", "price_source", "price_action", "cost", "ozp", "em", "zpm", "mat", "direct", "fot",
     "nr", "sp", "total", "flags",
 )
 
@@ -74,6 +74,37 @@ def _resource_price(
         if p is not None:
             return _f(p), "kac"
     return None, "missing"
+
+
+def _price_requirement(res: dict[str, Any]) -> dict[str, Any]:
+    """Что нужно добрать, если цена ресурса не найдена."""
+    kind = str(res.get("kind") or "")
+    code = str(res.get("code") or "").strip()
+    name = str(res.get("name") or "").strip() or "ресурс"
+    unit = str(res.get("unit") or "").strip()
+    if kind == "material":
+        action = "needs_kac"
+        human = f"нужен КАЦ: {name}"
+    elif kind == "labor":
+        action = "needs_labor_rate"
+        human = f"нужна ставка ОЗП: {name}"
+    elif kind == "machinist":
+        action = "needs_machinist_rate"
+        human = f"нужна ставка ЗПМ: {name}"
+    elif kind == "machine":
+        action = "needs_fgis_price"
+        human = f"нужна цена эксплуатации машины: {name}"
+    else:
+        action = "needs_price"
+        human = f"нужна цена ресурса: {name}"
+    return {
+        "action": action,
+        "resource_kind": kind,
+        "resource_code": code,
+        "resource_name": name,
+        "resource_unit": unit,
+        "message": human,
+    }
 
 
 def _split_machinist_aggregates(resources: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -123,6 +154,7 @@ def compute_position(
     kac_map = kac_map or {}
     ozp = zpm = machine_only = mat = 0.0
     priced: list[dict[str, Any]] = []
+    price_requirements: list[dict[str, Any]] = []
     flags: list[str] = []
 
     # Норма ГЭСН → ресурсы: если ресурсы не заданы, но есть код — разворачиваем по норме.
@@ -142,7 +174,9 @@ def compute_position(
         qty = _f(res.get("qty"))
         price, src = _resource_price(res, pricebook, kac_map)
         if price is None:
-            flags.append(f"нет цены: {res.get('name','?')} ({res.get('code','—')})")
+            req = _price_requirement(res)
+            price_requirements.append(req)
+            flags.append(req["message"])
             cost = 0.0
         else:
             cost = round(qty * price, 2)
@@ -156,7 +190,13 @@ def compute_position(
             mat += cost
         else:
             flags.append(f"неизвестный вид ресурса: {kind!r}")
-        priced.append({**res, "price_used": price, "price_source": src, "cost": cost})
+        priced.append({
+            **res,
+            "price_used": price,
+            "price_source": src,
+            "price_action": price_requirements[-1]["action"] if price is None and price_requirements else "",
+            "cost": cost,
+        })
 
     em = round(machine_only + zpm, 2)
     pos_in = {
@@ -178,6 +218,7 @@ def compute_position(
         "total": chosen["total"],
         "uplift": res["uplift"],
         "flags": flags,
+        "price_requirements": price_requirements,
     }
 
 
@@ -218,6 +259,7 @@ def assembled_rows(result: dict[str, Any]) -> list[dict[str, Any]]:
                 "resource_qty": res.get("qty", ""),
                 "price_used": res.get("price_used", ""),
                 "price_source": res.get("price_source", ""),
+                "price_action": res.get("price_action", ""),
                 "cost": res.get("cost", ""),
             })
     return [{field: row.get(field, "") for field in _EXPORT_FIELDS} for row in rows]
@@ -334,6 +376,7 @@ def assemble(
     base_total = round(sum(c["base"]["total"] for c in computed), 2)
     total = round(sum(c["total"] for c in computed), 2)
     flags = [f for c in computed for f in c["flags"]]
+    price_requirements = [req for c in computed for req in c.get("price_requirements", [])]
     return {
         "k_ozp": k_ozp, "k_em": k_em, "condition": condition,
         "positions": computed,
@@ -344,6 +387,7 @@ def assemble(
             "total": total,
             "stesnennost_uplift": round(total - base_total, 2),
             "flags": flags,
-            "needs_price": len(flags),
+            "price_requirements": price_requirements,
+            "needs_price": len(price_requirements),
         },
     }

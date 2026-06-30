@@ -475,8 +475,10 @@ def test_harness_loop_end_to_end_parking():
     assert res["preliminary"] is True
     assert len(res["computed"]) == 1
     assert res["computed"][0]["qty"] > 0
-    assert res["total_status"] == "complete"       # одна accepted-позиция, критичных/нет-данных нет
-    assert res["final_total"]["grand_total"] > 0
+    assert res["total_status"] == "partial"        # принятая позиция есть, но цены ресурсов не закрыты
+    assert res["partial_total"]["grand_total"] > 0
+    assert res["final_total"] is None
+    assert any(req["action"] == "needs_kac" for req in res["price_requirements"])
     assert [t["tool"] for t in res["trace"]] == ["propose_schema", "add_position"]
 
 
@@ -509,7 +511,10 @@ def test_batch_plan_calls_model_once_and_surfaces_gesn_candidates():
     assert res["computed"][0]["code"].startswith("ГЭСН:06-02")
     assert any("требуется проверка" in a for a in res["computed"][0]["assumptions"])
     assert res["by_assumption"]
-    assert res["final_total"]["grand_total"] > 0
+    assert res["total_status"] == "partial"
+    assert res["partial_total"]["grand_total"] > 0
+    assert res["final_total"] is None
+    assert res["price_requirements"]
 
 
 def test_compact_batch_plan_array_contract():
