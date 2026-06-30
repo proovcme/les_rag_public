@@ -547,20 +547,28 @@ def test_direct_quantity_candidates_are_exposed_with_provenance():
 
 # ── end-to-end петля (скриптовая модель) ─────────────────────────────────────────────────
 
-def test_harness_loop_end_to_end_parking():
-    script = [
-        json.dumps({"tool": "propose_schema", "args": {"object_type": "underground_parking",
-                    "area_total_m2": 4800, "levels_below_ground": 2, "structural_system": "monolithic_rc",
-                    "missing_inputs": ["soil_category"]}}),
-        json.dumps({"tool": "add_position", "args": {"work": "Фунд. плита", "code": "06-02-001-01",
-                    "work_family": "concrete_monolithic", "physical_unit": "м3", "qty_formula": "S1*0.4"}}),
-        json.dumps({"final": True}),
-    ]
+def test_legacy_tool_call_is_repaired_to_batch_plan():
+    legacy = {"tool": "propose_schema", "args": {"object_type": "underground_parking",
+              "area_total_m2": 4800, "levels_below_ground": 2, "structural_system": "monolithic_rc",
+              "missing_inputs": ["soil_category"]}}
+    plan = {
+        "object": {"object_type": "underground_parking", "area_total_m2": 4800,
+                   "levels_below_ground": 2, "structural_system": "monolithic_rc"},
+        "works": [
+            ["Фунд. плита", "устройство монолитной железобетонной фундаментной плиты",
+             "concrete_monolithic", "foundation_slab", "устройство", "м3", {"slab_thickness_m": 0.4}],
+        ],
+    }
+    chooser = _complete_plan_with_norm_choice(plan)
     calls = {"i": 0}
 
-    def complete(_m):
-        i = calls["i"]; calls["i"] += 1
-        return script[i] if i < len(script) else json.dumps({"final": True})
+    def complete(messages):
+        calls["i"] += 1
+        if messages and "старый tool-call формат" in messages[-1]["content"]:
+            return json.dumps(plan, ensure_ascii=False)
+        if messages and "search_norm вернул список норм" in messages[-1]["content"]:
+            return chooser(messages)
+        return json.dumps(legacy, ensure_ascii=False)
 
     res = h.run_estimate_harness("подземный паркинг 4800 м² 2 уровня", complete, max_steps=8)
     assert res["preliminary"] is True
@@ -570,7 +578,14 @@ def test_harness_loop_end_to_end_parking():
     assert res["partial_total"]["grand_total"] > 0
     assert res["final_total"] is None
     assert any(req["action"] == "needs_kac" for req in res["price_requirements"])
-    assert [t["tool"] for t in res["trace"]] == ["propose_schema", "add_position"]
+    assert calls["i"] >= 2
+    assert [t["tool"] for t in res["trace"]] == [
+        "planner_legacy_repair",
+        "propose_schema",
+        "search_norm",
+        "model_norm_choice",
+        "add_position",
+    ]
 
 
 def test_batch_plan_asks_model_to_choose_when_search_is_ambiguous():

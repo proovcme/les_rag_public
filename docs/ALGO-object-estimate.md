@@ -41,6 +41,11 @@ longer rewrites them from text regexes before `search_norm`; it only normalizes 
 for action and unit. Text-based mismatches may appear as non-binding `intent_hints` in the trace,
 but they are not used as search or calculation inputs.
 
+Since 0.24.0.103 the older stepwise `{tool,args}` estimate loop is no longer an execution path.
+The product route has one model contract: `smeta_work_plan_v1`. If a model emits an old tool-call,
+the harness asks it to repair the same intent into the batch JSON contract; it does not run a second
+prompt or a parallel estimator protocol.
+
 If the model cannot produce enough checked positions, the answer must say what is missing. It must
 not substitute a prewritten object composition.
 

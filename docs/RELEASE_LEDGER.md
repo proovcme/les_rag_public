@@ -7,14 +7,20 @@
 ## Текущее состояние (2026-06-30)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.102  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.103  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.101 Smeta model-choice loop
-НЕ задеплоено:             0.24.0.102 Smeta intent-normalization cut
-рантайм /api/version:      0.24.0.101 · app 5.1.0 · h0.24 · runtime_alignment=aligned
+задеплоено на рантайм:     0.24.0.102 Smeta intent-normalization cut
+НЕ задеплоено:             0.24.0.103 Smeta single-contract cut
+рантайм /api/version:      0.24.0.102 · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.103 — сметный harness срезал второй старый протокол: legacy
+> `{tool,args}` loop и его отдельный prompt больше не исполняются как runtime-путь.
+> Если модель вернула старый tool-call, harness просит переписать тот же смысл
+> в единый `smeta_work_plan_v1` batch JSON. Так у сметного режима остаётся один
+> model-first контракт, а код не держит параллельного “маленького сметчика”
+> с отдельными подсказками и сценариями.
 > 0.24.0.102 — следующий срез смысловой автоправки: `_normalize_work_item`
 > больше не переписывает `work_family` и `element_type` по regex-сигналам из текста.
 > Эти поля остаются решением модели. Код нормализует только машинные алиасы действия

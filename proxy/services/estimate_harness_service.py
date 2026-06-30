@@ -1105,29 +1105,6 @@ def _smeta_service_source_status() -> dict[str, Any]:
 
 _REQUIRED_SCHEMA = ("object_type",)
 
-SYSTEM_PROMPT = (
-    "Ты — инженер-сметчик. Разложи строительный ОБЪЕКТ в смету через ИНСТРУМЕНТЫ. Числа сам НЕ "
-    "пиши и единицы НЕ пересчитывай — это делает код. Отвечай РОВНО одним JSON.\n\n"
-    "Шаги:\n"
-    "1) {\"tool\":\"propose_schema\",\"args\":{\"object_type\":..,\"area_total_m2\":..,"
-    "\"levels_below_ground\":..,\"structural_system\":..,\"missing_inputs\":[..]}} — ПЕРВЫМ. "
-    "Код вернёт геометрию {S,N,S1,P,H}.\n"
-    "2) {\"tool\":\"search_norm\",\"args\":{\"work_description\":\"..\",\"work_family\":"
-    "\"earthworks|foundation|concrete_monolithic|masonry|roofing|waterproofing|floors|mep\","
-    "\"element_type\":\"excavation|concrete_preparation|foundation_slab|monolithic_wall|"
-    "monolithic_slab|column|waterproofing\",\"action\":\"бетонирование|разработка|..\","
-    "\"unit_hint\":\"м3|м2\"}} — кандидаты ГЭСН + selection. Если selection.action="
-    "bind_top_candidate, можно брать selected_code; иначе выбери из shortlist или спроси данные.\n"
-    "3) {\"tool\":\"add_position\",\"args\":{\"work\":\"..\",\"code\":\"NN-NN-NNN-NN\","
-    "\"work_family\":\"..\",\"element_type\":\"<из списка>\",\"slots\":{\"slab_thickness_m\":0.4,..}}} "
-    "— объём считает КОД по element_type (формула в каталоге, НЕ ты). Слоты: что знаешь "
-    "(толщина/глубина/геометрия стен). Нет критичного слота → needs_input (НОРМАЛЬНО, не выдумывай; "
-    "это сигнал спросить пользователя). Геометрия (S,S1,P,H) подставляется сама.\n"
-    "4) {\"final\":true} — собрать (ПРЕДВАРИТЕЛЬНО).\n\n"
-    "Подземный паркинг: котлован(earthworks), гидроизоляция(waterproofing), фунд.плита+стены+"
-    "перекрытия(concrete_monolithic). Один JSON за ход; коды — только из search_norm."
-)
-
 BATCH_TOOL_CONTRACT = (
     "/no_think\n"
     "Верни только компактный JSON smeta_work_plan_v1, без markdown и пояснений. "
@@ -1539,11 +1516,26 @@ def _run_batch_plan(question: str, complete: Callable[[list[dict[str, str]]], st
         res["planner_status"] = "no_json"
         return res
 
-    # Совместимость с прежним tool-loop контрактом: если модель вернула один tool-call,
-    # исполняем старый режим, но только как fallback, не как основной прод-путь.
     if plan.get("tool") or plan.get("final"):
-        return _run_tool_loop(question, complete, state=state, max_steps=max_steps,
-                              first_call=plan, first_raw=raw)
+        messages.extend([
+            {"role": "assistant", "content": raw[:2000]},
+            {"role": "user", "content": (
+                "Это старый tool-call формат. В сметном режиме сейчас один контракт: "
+                "верни тот же смысл как smeta_work_plan_v1, ровно один JSON-объект "
+                "{\"object\": {...}, \"works\": [...]}. Не вызывай tool/final, не пиши коды норм, "
+                "markdown или пояснения."
+            )},
+        ])
+        retry_raw = complete(messages) or ""
+        retry_plan = _extract_json(retry_raw)
+        if retry_plan is not None and not (retry_plan.get("tool") or retry_plan.get("final")):
+            plan = retry_plan
+            trace.append({"tool": "planner_legacy_repair", "status": "ok"})
+        else:
+            res = _finalize(state, note="модель вернула старый tool-call вместо smeta_work_plan_v1")
+            res["trace"] = trace + [{"tool": "planner_legacy_repair", "status": "err"}]
+            res["planner_status"] = "legacy_tool_call"
+            return res
 
     missing_plan = _plan_missing_requirements(plan)
     if missing_plan:
@@ -1735,48 +1727,6 @@ def _finalize(state: dict[str, Any], *, note: str = "") -> dict[str, Any]:
         "note": note,
         "source": "harness",
     }
-
-
-def _run_tool_loop(question: str, complete: Callable[[list[dict[str, str]]], str],
-                   *, state: dict[str, Any], max_steps: int = 16,
-                   first_call: dict[str, Any] | None = None, first_raw: str = "") -> dict[str, Any]:
-    user_slots = state.get("user_slots", {})
-    _slots_note = (f" Известные параметры: {user_slots}." if user_slots else
-                   " Параметры (глубина/толщины/геометрия стен) НЕ заданы — где их нет, позиция станет needs_input.")
-    messages: list[dict[str, str]] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": f"Объект: {question}\nНачни с propose_schema.{_slots_note}"},
-    ]
-    trace: list[dict[str, Any]] = []
-    pending_call = first_call
-    pending_raw = first_raw
-    for _ in range(max_steps):
-        state["steps"] += 1
-        if pending_call is not None:
-            call = pending_call
-            raw = pending_raw
-            pending_call = None
-            pending_raw = ""
-        else:
-            raw = complete(messages) or ""
-            call = _extract_json(raw)
-        messages.append({"role": "assistant", "content": raw[:1500]})
-        if call is None:
-            obs: dict[str, Any] = {"ok": False, "error": "ответь РОВНО одним JSON {tool,args} или {final:true}"}
-        elif call.get("final") or call.get("tool") == "finalize":
-            res = _finalize(state)
-            res["trace"] = trace
-            return res
-        else:
-            tool = str(call.get("tool", ""))
-            obs = _exec_tool(tool, call.get("args", {}) or {}, state)
-            trace.append({"tool": tool, "status": obs.get("status") or ("ok" if obs.get("ok") else "err")})
-        messages.append({"role": "user", "content": json.dumps(obs, ensure_ascii=False)})
-    res = _finalize(state, note=f"достигнут лимит {max_steps} шагов")
-    res["trace"] = trace
-    return res
-
-
 def run_estimate_harness(question: str, complete: Callable[[list[dict[str, str]]], str],
                          *, max_steps: int = 16) -> dict[str, Any]:
     # Gate 4: параметры из запроса → слоты (уточнение в одном запросе:
