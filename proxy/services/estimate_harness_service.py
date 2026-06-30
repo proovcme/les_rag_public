@@ -312,35 +312,12 @@ def _is_optional_direct_work(work: str) -> bool:
 def _normalize_work_item(item: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """Нормализовать tool-аргументы модели перед поиском ГЭСН.
 
-    Это не состав работ и не выбор нормы: модель уже дала work item, а harness приводит
-    family/element/action/unit к словарю инструмента, чтобы `search_norm` не уходил в очевидно
-    чужой сборник из-за терминологического шума.
+    Модель отвечает за смысловые поля work_family/element_type. Harness не переписывает их по
+    regex-сигналам: он только нормализует машинные алиасы action/unit_hint, чтобы калькулятор и
+    поиск получили канонические единицы и действие.
     """
     norm = dict(item)
     corrections: list[str] = []
-    text = f"{norm.get('work', '')} {norm.get('work_description', '')}".lower()
-    family = str(norm.get("work_family") or "")
-    element = str(norm.get("element_type") or "")
-
-    for inferred_element, inferred_family, pattern in _ELEMENT_TEXT_SIGNALS:
-        if re.search(pattern, text):
-            if element != inferred_element:
-                corrections.append(f"element_type:{element or '—'}→{inferred_element}")
-                norm["element_type"] = inferred_element
-                element = inferred_element
-            if family != inferred_family:
-                corrections.append(f"work_family:{family or '—'}→{inferred_family}")
-                norm["work_family"] = inferred_family
-                family = inferred_family
-            break
-
-    default_family = _ELEMENT_DEFAULT_FAMILY.get(element)
-    if default_family and family and family != default_family:
-        corrections.append(f"work_family:{family}→{default_family}")
-        norm["work_family"] = default_family
-    elif default_family and not family:
-        corrections.append(f"work_family:—→{default_family}")
-        norm["work_family"] = default_family
 
     action = str(norm.get("action") or "")
     normalized_action = _normalize_action(action)
@@ -356,6 +333,26 @@ def _normalize_work_item(item: dict[str, Any]) -> tuple[dict[str, Any], list[str
     else:
         norm["unit_hint"] = normalized_unit
     return norm, corrections
+
+
+def _work_item_intent_hints(item: dict[str, Any]) -> list[str]:
+    """Non-binding trace hints for model/operator review; never used for calculation/search args."""
+    hints: list[str] = []
+    text = f"{item.get('work', '')} {item.get('work_description', '')}".lower()
+    family = str(item.get("work_family") or "")
+    element = str(item.get("element_type") or "")
+    for inferred_element, inferred_family, pattern in _ELEMENT_TEXT_SIGNALS:
+        if not re.search(pattern, text):
+            continue
+        if element != inferred_element:
+            hints.append(f"text suggests element_type={inferred_element}, model sent {element or '—'}")
+        if family != inferred_family:
+            hints.append(f"text suggests work_family={inferred_family}, model sent {family or '—'}")
+        break
+    default_family = _ELEMENT_DEFAULT_FAMILY.get(element)
+    if default_family and family and family != default_family:
+        hints.append(f"element_type={element} usually belongs to work_family={default_family}, model sent {family}")
+    return hints
 
 
 def _score_candidate(words: list[str], code: str, name: str, unit: str, *, work_family: str,
@@ -1143,16 +1140,25 @@ BATCH_TOOL_CONTRACT = (
     "foundation,floors,finishes,engineering_networks.\n"
     "Если пользователь явно просит придумать/прикинуть/посчитать по допущениям, можно задать "
     "типовой сценарий: area_total_m2 и slots как допущения, но обязательно добавь object.assumptions "
-    "и work assumptions с понятным текстом; это сценарная прикидка, не проектная смета.\n"
+    "и work assumptions с понятным текстом; это сценарная прикидка, не проектная смета. "
+    "В этом режиме НЕ отказывайся только потому, что нет проекта/ВОР/РД: выбери нейтральный "
+    "профессиональный сценарий по смыслу запроса, а если тип объекта не назван — назови object_type "
+    "\"условное здание/участок работ по допущениям\" и верни 3-6 укрупнённых работ с assumptions.\n"
     "ТЗ/ВОР/приложенный файл первичны: если там прямо названы разделы работ, включай их в works "
     "и используй ГЭСН notebook/search_norm для навигации по нормам; не схлопывай разделы в одну позицию "
     "только потому, что у них общий физический объём.\n"
+    "works — это выполняемые работы для поиска норм. Поставка оборудования, материалов, запасов, "
+    "огнетушащего вещества/жидкости/газа, покупка модулей/изделий и 100% резерв — это ценовые позиции "
+    "через ФГИС/КАЦ/КП/прайс, а не search_norm; заноси их в missing_inputs/assumptions как нужный "
+    "ценовой источник, если нет отдельной монтажной работы.\n"
     "Уже сказанные параметры из текущего запроса/истории обязательно переноси в slots; не спрашивай "
     "повторно глубину, толщину, массу или площадь, если они уже написаны словами вроде «2 метра».\n"
     "Разговорное «3000 метров» у здания трактуй как вероятную площадь 3000 м2: если пользователь "
     "просит придумать/прикинуть, можно принять это как допущение object.assumptions; иначе уточни.\n"
     "Инженерные сети не относить к отделке. Если раздел (ВК/ОВ/ЭОМ/СС), трассы, точки или "
     "оборудование не заданы, оставь slots пустыми: код запросит данные.\n"
+    "Ты сам отвечаешь за family и element. Код больше не переписывает их по словам в названии "
+    "работы: неверное family/element даст неверный shortlist или отказ, а не скрытую автоправку.\n"
     "Для металлических конструкций, если в тексте дана масса, используй element metal_assembly, "
     "unit т; код сам достанет mass_t из запроса и пересчитает кг в тонны.\n"
     "Если дана одна физическая масса/площадь/объём, не раскладывай её в несколько платных работ "
@@ -1497,7 +1503,9 @@ def _run_batch_plan(question: str, complete: Callable[[list[dict[str, str]]], st
                     system_prompt: str | None = None) -> dict[str, Any]:
     assumption_note = (
         "Пользователь явно разрешил сценарную прикидку по допущениям: можно задать недостающую "
-        "геометрию и слоты как assumptions, но не выдавай их за проектные исходные."
+        "геометрию и слоты как assumptions, но не выдавай их за проектные исходные. "
+        "Не отказывайся из-за отсутствия проекта/ВОР/РД; если тип объекта не назван, выбери "
+        "нейтральный сценарий «условное здание/участок работ по допущениям» и верни работы."
         if state.get("assumption_mode") else ""
     )
     _slots_note = (f"Известные параметры из текста: {state.get('user_slots')}."
@@ -1548,7 +1556,8 @@ def _run_batch_plan(question: str, complete: Callable[[list[dict[str, str]]], st
                 "\"levels_below_ground\":0,\"structural_system\":\"...\",\"missing_inputs\":[]},"
                 "\"works\":[[\"work\",\"search description\",\"family\",\"element\",\"action\",\"unit\",{}]]}. "
                 "Если площадь/габариты не даны в запросе, area_total_m2=null и missing_inputs включает "
-                "площадь/габариты. Без markdown и пояснений."
+                "площадь/габариты. Если пользователь разрешил допущения, не возвращай пустой works: "
+                "задай сценарные assumptions и 3-6 укрупнённых работ. Без markdown и пояснений."
             )},
         ])
         retry_raw = complete(messages) or ""
@@ -1568,6 +1577,7 @@ def _run_batch_plan(question: str, complete: Callable[[list[dict[str, str]]], st
 
     for raw_item in _work_items_from_plan(plan):
         item, corrections = _normalize_work_item(raw_item)
+        intent_hints = _work_item_intent_hints(item)
         work_description = str(item.get("work_description") or item.get("work") or "")
         if (
             item.get("element_type") == "metal_assembly"
@@ -1591,6 +1601,7 @@ def _run_batch_plan(question: str, complete: Callable[[list[dict[str, str]]], st
             "candidates": _candidate_codes(candidates),
             "selection": search.get("selection", {}),
             "normalized": corrections,
+            "intent_hints": intent_hints,
         })
         bind_candidate, bind_index, choice_trace = _model_select_candidate(
             item=item,

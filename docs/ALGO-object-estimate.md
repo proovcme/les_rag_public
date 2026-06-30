@@ -36,6 +36,11 @@ values (or an `ask_user` question). The harness rejects codes outside the shortl
 through to the first applicable candidate on its own. Only after this model choice does
 `add_position` run the calculator gates.
 
+Since 0.24.0.102 `work_family` and `element_type` are also owned by the model. The harness no
+longer rewrites them from text regexes before `search_norm`; it only normalizes mechanical aliases
+for action and unit. Text-based mismatches may appear as non-binding `intent_hints` in the trace,
+but they are not used as search or calculation inputs.
+
 If the model cannot produce enough checked positions, the answer must say what is missing. It must
 not substitute a prewritten object composition.
 

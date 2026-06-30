@@ -65,6 +65,10 @@ def test_smeta_prompt_is_model_first_and_has_no_object_templates():
     assert "не могут автоматически стать несколькими денежными позициями" in prompt
     assert "не одна самая заметная позиция" in prompt.lower()
     assert "счётные количества" in prompt.lower()
+    assert "не отказывайся только потому, что нет проекта/ВОР/РД".lower() in prompt.lower()
+    assert "условное здание/участок работ по допущениям" in prompt
+    assert "поставка оборудования" in prompt.lower()
+    assert "не ГЭСН search_norm" in prompt
     assert "object_templates" not in prompt
     assert "шаблон" not in low
 
@@ -78,6 +82,9 @@ def test_smeta_estimator_role_pack_is_json_contract():
     assert "works" in pack["output_contract"]["top_level_required"]
     assert "mass_t" in pack["direct_quantity_policy"]["slots"]
     assert pack["object_decomposition_policy"]["rule"]
+    assert any("не отказывайся" in item.lower() for item in pack["operating_principles"])
+    assert any("поставка оборудования" in item.lower() for item in pack["operating_principles"])
+    assert any("не проводи через search_norm" in item.lower() for item in pack["source_and_price_policy"])
     assert "dry" in pack["voice_policy"]["style"]
 
 

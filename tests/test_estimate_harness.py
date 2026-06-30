@@ -58,7 +58,7 @@ def test_search_rejects_wrong_collection_for_work_family():
     assert all(c["applicability_status"] == "rejected" for c in wrong)
 
 
-def test_work_item_normalization_repairs_frame_wall_family():
+def test_work_item_normalization_keeps_model_family_and_element():
     item = {
         "work": "каркасно-щитовые работы",
         "work_description": "каркасно-щитовые работы стены",
@@ -70,14 +70,17 @@ def test_work_item_normalization_repairs_frame_wall_family():
 
     norm, corrections = h._normalize_work_item(item)
 
-    assert norm["work_family"] == "wood"
-    assert norm["element_type"] == "wood_wall"
+    assert norm["work_family"] == "metal"
+    assert norm["element_type"] == "metal_assembly"
     assert norm["action"] == "монтаж"
     assert norm["unit_hint"] == "м2"
     assert corrections
+    hints = h._work_item_intent_hints(norm)
+    assert any("work_family=wood" in hint for hint in hints)
+    assert any("element_type=wood_wall" in hint for hint in hints)
 
 
-def test_normalized_frame_wall_search_stays_in_wood_collection():
+def test_wrong_frame_wall_family_is_not_silently_rerouted_to_wood():
     item = {
         "work": "каркасно-щитовые работы",
         "work_description": "каркасно-щитовые работы стены",
@@ -92,10 +95,14 @@ def test_normalized_frame_wall_search_stays_in_wood_collection():
                       unit_hint=norm["unit_hint"])
 
     assert r["candidates"]
-    assert r["candidates"][0]["collection"] == "10"
+    assert norm["work_family"] == "metal"
+    assert not (
+        r["status"] == "found"
+        and r["selection"].get("selected_code", "").startswith("ГЭСН:10-")
+    )
 
 
-def test_work_item_normalization_routes_engineering_networks_to_mep_not_finishes():
+def test_work_item_normalization_does_not_route_engineering_networks_to_mep():
     item = {
         "work": "устройство_инженерных_сетей",
         "work_description": "устройство инженерных сетей дома",
@@ -107,12 +114,15 @@ def test_work_item_normalization_routes_engineering_networks_to_mep_not_finishes
 
     norm, corrections = h._normalize_work_item(item)
 
-    assert norm["work_family"] == "mep"
-    assert norm["element_type"] == "engineering_networks"
-    assert corrections
+    assert norm["work_family"] == "finishes"
+    assert norm["element_type"] == "finishes"
+    assert corrections == []
+    hints = h._work_item_intent_hints(norm)
+    assert any("work_family=mep" in hint for hint in hints)
+    assert any("element_type=engineering_networks" in hint for hint in hints)
 
 
-def test_excavation_signal_wins_over_pile_when_work_is_pit():
+def test_excavation_signal_is_trace_hint_not_family_rewrite():
     item = {
         "work": "разработка котлована под свайный фундамент",
         "work_description": "разработка котлована под свайный фундамент",
@@ -124,9 +134,12 @@ def test_excavation_signal_wins_over_pile_when_work_is_pit():
 
     norm, corrections = h._normalize_work_item(item)
 
-    assert norm["work_family"] == "earthworks"
-    assert norm["element_type"] == "excavation"
-    assert corrections
+    assert norm["work_family"] == "foundation"
+    assert norm["element_type"] == "pile"
+    assert corrections == []
+    hints = h._work_item_intent_hints(norm)
+    assert any("work_family=earthworks" in hint for hint in hints)
+    assert any("element_type=excavation" in hint for hint in hints)
 
 
 def test_engineering_networks_do_not_bind_to_finishes_collection():
@@ -243,8 +256,26 @@ def test_smeta_planner_prompt_includes_gesn_notebook_and_no_object_templates(mon
     assert "[Блокнот ГЭСН]" in system
     assert "experienced_estimator_v1" in system
     assert "smeta_work_plan_v1" in system
+    assert "Не отказывайся из-за отсутствия проекта/ВОР/РД" not in system
     assert "object_templates" not in system
     assert res["notebook_context"]["service_notebooks"] == ["gesn"]
+
+
+def test_assumption_prompt_tells_model_not_to_refuse_without_project():
+    seen = []
+
+    def complete(messages):
+        seen.append(messages)
+        return '{"object":{"object_type":"object","area_total_m2":5000,"floors":1},"works":[]}'
+
+    res = h.run_estimate_harness("объект 5000 м2, придумай все сам и дай цены", complete)
+
+    first_user = seen[0][1]["content"]
+    repair_user = seen[1][-1]["content"]
+    assert "Не отказывайся из-за отсутствия проекта/ВОР/РД" in first_user
+    assert "условное здание/участок работ по допущениям" in first_user
+    assert "не возвращай пустой works" in repair_user
+    assert res["assumption_mode"] is True
 
 
 def test_batch_plan_repairs_incomplete_json_plan():
@@ -643,8 +674,10 @@ def test_batch_plan_trace_reports_tool_argument_normalization():
 
     search_trace = [t for t in res["trace"] if t["tool"] == "search_norm"][0]
     assert search_trace["normalized"]
-    assert res["computed"][0]["code"].startswith("ГЭСН:10-")
-    assert res["computed"][0]["phys_qty"] > 0
+    assert search_trace["intent_hints"]
+    assert any("work_family=wood" in hint for hint in search_trace["intent_hints"])
+    assert not any(p["code"].startswith("ГЭСН:10-") for p in res["computed"])
+    assert res["total_status"] == "blocked"
 
 
 def test_batch_plan_computes_mass_based_metal_assembly():

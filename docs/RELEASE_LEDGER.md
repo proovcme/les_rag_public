@@ -7,14 +7,21 @@
 ## Текущее состояние (2026-06-30)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.101  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.102  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.100 Smeta RAG-before-calculation cut
-НЕ задеплоено:             0.24.0.101 Smeta model-choice loop
-рантайм /api/version:      0.24.0.100 · app 5.1.0 · h0.24 · runtime_alignment=aligned
+задеплоено на рантайм:     0.24.0.101 Smeta model-choice loop
+НЕ задеплоено:             0.24.0.102 Smeta intent-normalization cut
+рантайм /api/version:      0.24.0.101 · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.102 — следующий срез смысловой автоправки: `_normalize_work_item`
+> больше не переписывает `work_family` и `element_type` по regex-сигналам из текста.
+> Эти поля остаются решением модели. Код нормализует только машинные алиасы действия
+> и единицы (`assemble`→`монтаж`, `m2`→`м2`) и кладёт несовпадения в trace как
+> `intent_hints`, не используя их для поиска или расчёта. Если модель назвала
+> деревянный каркас металлом или инженерные сети отделкой, harness не “починит”
+> это за неё: shortlist/отказ вернёт проблему обратно в модельный ход.
 > 0.24.0.101 — ещё один срез сметного “кода-няньки”: если `search_norm`
 > вернул неоднозначный shortlist, batch harness больше не проваливается к первому
 > применимому кандидату. Он делает второй короткий ход модели: выбрать `norm_code`
