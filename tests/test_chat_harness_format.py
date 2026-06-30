@@ -293,6 +293,26 @@ async def test_smeta_direct_rag_context_builds_compact_context(monkeypatch):
     assert packet["source_map"][0]["doc_name"] == "СКС.xlsx"
 
 
+@pytest.mark.asyncio
+async def test_smeta_direct_rag_context_skips_without_explicit_scope(monkeypatch):
+    async def fail_resolve_dataset_ids(*args, **kwargs):
+        raise AssertionError("direct smeta must not infer broad/table RAG without explicit scope")
+
+    monkeypatch.setattr("proxy.routers.chat.resolve_dataset_ids", fail_resolve_dataset_ids)
+
+    packet = await _smeta_direct_rag_context(
+        ChatRequest(question="сделай смету по приложенному Excel СКС", mode="smeta"),
+        rag_backend=SimpleNamespace(collection_name="test"),
+        dataset_ids=None,
+        state=SimpleNamespace(reranker_available=False, reranker_cls=None, llm_semaphore=None),
+    )
+
+    assert packet["text"] == ""
+    assert packet["trace"]["status"] == "skipped"
+    assert packet["trace"]["reason"] == "no_explicit_scope"
+    assert packet["sources"] == []
+
+
 def test_harness_voice_allows_visible_estimator_reasoning(monkeypatch):
     class FakeResponse:
         def raise_for_status(self):

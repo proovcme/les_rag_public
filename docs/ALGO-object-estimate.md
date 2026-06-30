@@ -87,6 +87,11 @@ project scope or target file: top retrieved chunks, source map and navigation me
 context for the estimator model, not a deterministic answer; the harness still does not pre-filter the
 visible estimate.
 
+Since 0.24.0.110 that RAG packet is guarded by explicit scope. An attachment-only estimate must not let
+query classification infer a generic TABLE/broad corpus and mix unrelated RAG fragments into the model
+answer. If the operator only attaches an XLSX/DOCX/PDF, the attachment itself is the input; RAG joins
+only after a dataset/project scope is selected.
+
 If the model cannot produce enough checked positions, the answer must say what is missing. It must
 not substitute a prewritten object composition.
 

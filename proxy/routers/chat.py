@@ -1641,7 +1641,22 @@ async def _smeta_direct_rag_context(
         dataset_ids=dataset_ids,
     )
     kot_decision = analyze_question(req.question)
-    effective_dataset_filter = req.dataset_filter or query_intent.dataset_filter or kot_decision.dataset_filter
+    explicit_scope = bool(dataset_ids or req.dataset_filter or req.project_id)
+    effective_dataset_filter = req.dataset_filter
+    if not explicit_scope:
+        return {
+            "text": "",
+            "trace": {
+                "schema": "smeta_direct_rag_context_v1",
+                "effective_dataset_filter": "",
+                "dataset_ids": [],
+                "status": "skipped",
+                "reason": "no_explicit_scope",
+                "router_hint": query_intent.dataset_filter or kot_decision.dataset_filter or "",
+            },
+            "sources": [],
+            "source_map": [],
+        }
     resolved_ids = await resolve_dataset_ids(
         rag_backend,
         dataset_ids,

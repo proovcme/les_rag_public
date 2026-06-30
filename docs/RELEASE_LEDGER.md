@@ -7,14 +7,18 @@
 ## Текущее состояние (2026-06-30)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.109  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.110  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.109 Smeta direct RAG packet
+задеплоено на рантайм:     0.24.0.110 Smeta direct RAG scope guard
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.109 · app 5.1.0 · h0.24 · runtime_alignment=aligned
+рантайм /api/version:      0.24.0.110 · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.110 — direct smeta RAG-пакет больше не включается по автоматическому
+> `TABLE`/широкому inference, если оператор только приложил файл. Без явного
+> dataset/project scope модель работает по вложению, а не по случайному соседнему
+> корпусу.
 > 0.24.0.109 — явный режим «Смета» при выбранном dataset/project/target-file
 > scope получает компактный RAG-пакет: top chunks, source map и навигационную
 > память датасета. Это контекст для сметчика-модели, а не детерминированный
