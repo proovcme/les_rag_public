@@ -7,14 +7,18 @@
 ## Текущее состояние (2026-06-30)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.113  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.114  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.113 Smeta table calculator removed
+задеплоено на рантайм:     0.24.0.114 Smeta model-primary failure guard
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.113 · app 5.1.0 · h0.24 · runtime_alignment=aligned
+рантайм /api/version:      0.24.0.114 · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.114 — при включённом direct model-first сметный код больше не
+> подменяет молча модель старым `run_estimate_harness`, если модель не вернула
+> видимый ответ. По умолчанию оператор видит сбой сметчика-модели; аварийный
+> code-fallback включается только явно через `LES_SMETA_CODE_FALLBACK_AFTER_MODEL_FAIL=1`.
 > 0.24.0.113 — short-lived `smeta_table_calculator` убит: direct smeta больше
 > не получает кодовую табличную подложку и не видит классификацию/арифметику,
 > собранную кодом. Табличное вложение читает модель через обычный

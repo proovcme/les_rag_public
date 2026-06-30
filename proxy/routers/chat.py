@@ -2574,6 +2574,29 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                         "total_status": "model_first",
                     },
                 )
+            if not _env_bool("LES_SMETA_CODE_FALLBACK_AFTER_MODEL_FAIL", False):
+                trace = {
+                    "mode": "estimate_harness",
+                    "direct_model_first": True,
+                    "harness_skipped": True,
+                    "code_fallback_skipped": True,
+                    "reason": "estimator model returned no visible answer; code fallback is disabled",
+                    "smeta_rag_context": rag_packet.get("trace") or {},
+                }
+                return _mode_reply(
+                    (
+                        "Сметчик-модель не вернула ответ по этому запросу. "
+                        "Кодовую смету вместо неё не собираю: пришлите запрос ещё раз или переключите модель."
+                    ),
+                    "estimate_harness",
+                    "harness_mode",
+                    extra={
+                        "retrieval_trace": trace,
+                        "sources": rag_packet.get("sources") or [],
+                        "source_map": rag_packet.get("source_map") or [],
+                        "total_status": "model_first_failed",
+                    },
+                )
 
         from proxy.services.estimate_harness_service import run_estimate_harness
         result = await asyncio.to_thread(run_estimate_harness, harness_question, _harness_complete)
