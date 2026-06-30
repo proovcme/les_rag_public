@@ -7,14 +7,23 @@
 ## Текущее состояние (2026-06-30)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.94  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.95  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
 задеплоено на рантайм:     0.24.0.94 Samovar operator indexing pass
-НЕ задеплоено:             нет
+НЕ задеплоено:             0.24.0.95 public showcase docs/version only
 рантайм /api/version:      0.24.0.94 · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.95 — публичная витрина GitHub/Pages без изменения рантайма: README переписан как
+> внешний продуктовый вход, добавлены `docs/index.md`, `docs/_config.yml` и `docs/public/*`
+> (overview, demo workflows, privacy boundaries, что нужно сметному модулю, чтобы считать).
+> Сметный документ больше не содержит заготовленных запросов: он фиксирует, чего не хватает
+> для уверенного расчёта без шаблонов — норм-навигации, цен ресурсов, связи с объёмами,
+> профессионального skill/prompt и eval-критериев. Можно давать сметчику оценивать ход рассуждения,
+> нормы, границу частично/готово и происхождение чисел, но нельзя
+> продавать как готовый автосметчик по любому объекту. В `ALGO-smeta.md` закрыт старый doc-drift
+> с удалённым `object_estimate_service.py`.
 > 0.24.0.94 — операторский контур индексации в С.А.М.О.В.А.Р.: play по датасету
 > создаёт настоящую background parse-job, GUI показывает live jobs/ETA/memory guard и
 > очередь `лёгкие/OCR`; настройки scheduler-а возвращены с предупреждением и сбросом

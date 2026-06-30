@@ -22,12 +22,12 @@ curl -fsS http://127.0.0.1:8050/api/version | python3 -m json.tool
 curl -fsS http://127.0.0.1:8050/api/service-sources | python3 -m json.tool
 ```
 
-3. Public access boundary, when `les.ovc.me` is exposed:
+3. Public access boundary, when a public host is exposed:
 
 ```bash
 uv run python tools/runtime_smoke.py \
-  --proxy-url https://les.ovc.me \
-  --ui-url https://les.ovc.me \
+  --proxy-url https://<public-host> \
+  --ui-url https://<public-host> \
   --qdrant-url http://127.0.0.1:6333 \
   --admin-key "$LES_ADMIN_KEY" \
   --expect-external-auth
@@ -46,18 +46,22 @@ uv run python tools/runtime_smoke.py \
 - Say that LLM connects evidence and language, while code computes numbers.
 - Say that final engineering/normcontrol decisions remain human decisions.
 - Show service-source requirements for smeta/normcontrol.
-- Link to `AGENTS.md`, `SKILL.md`, `ROADMAP_TO_V1.md`, `docs/MODULE_INDEX.md`,
-  and `docs/RELEASE_LEDGER.md`.
-- Do not include hostnames, keys, private paths, or private dataset names as
-  required public setup.
+- Link to public-facing docs first: `docs/index.md`, `docs/public/overview.md`,
+  `docs/public/demo-workflows.md`, `docs/public/privacy-and-data-boundaries.md`,
+  and `docs/public/smeta-expert-review.md`.
+- Keep internal runbooks available for developers, but do not make private hostnames,
+  keys, private paths, or private dataset names part of required public setup.
+- If GitHub Pages is enabled, use `docs/index.md` as the curated entry point.
 
 ## Current 0.24 Public-Ready Status
 
-`0.24.0.1` is a local-field public candidate:
+`0.24.0.95` is a public-showcase candidate:
 
 - SPDS doc-review baseline is in code and deployed locally.
 - JSON/HTML/XLSX reports are available.
 - `normalized_remarks` is exposed for future checklist/DOCX/PDF renderers.
 - Engineer decisions for doc-review remarks are persisted and exported.
 - Service sources are visible through `/api/service-sources`, the Admin GUI, and the chat panel.
+- README and `docs/public/*` provide a curated public surface.
+- `docs/public/smeta-expert-review.md` states what the smeta module still needs to calculate confidently without templates.
 - Full publication still requires owner approval and a final secret/data scrub.

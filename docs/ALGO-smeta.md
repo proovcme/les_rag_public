@@ -326,9 +326,9 @@ fallback с таймаутом ([[local-bases-untrusted-channel]]), сеть н�
 | Сборка ЛСР (позиция→Всего→свод) | [[ALGO-lsr-assembly]] | `proxy/services/lsr_assembly_service.py` |
 | РИМ-трасса (графы 2-12, evidence; многопозиц.) | [[ALGO-lsr-assembly]] | `proxy/services/rim_lsr_trace_service.py` |
 | Форма ЛСР Приложение № 4 (XLSX, разделы+свод) | [[ALGO-lsr-assembly]] | `proxy/services/rim_trace_xlsx_service.py` |
-| Объектная смета (фраза→ВСЕГО) | [[ALGO-object-estimate]] | `proxy/services/object_estimate_service.py` |
+| Объектная смета (фраза→ВСЕГО) | [[ALGO-object-estimate]] | `proxy/services/estimate_harness_service.py` |
 | Доменная онтология (что/зачем) | [[ALGO-smeta-ontology]] | `proxy/services/smeta_ontology_service.py` |
 | Чат-каналы сметы | — | `proxy/services/smeta_chat_service.py` |
 
 Тесты-эталоны: `tests/test_gesn_service.py`, `tests/test_lsr_assembly_service.py`,
-`tests/test_object_estimate_service.py` (gold = 11813.04).
+`tests/test_estimate_harness.py` (gold = 11813.04 для ЛСР-кирпича; object-route = model-first harness).

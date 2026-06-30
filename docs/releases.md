@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.95** | HEAD | Public showcase pass: README is now a curated external-facing product surface, GitHub Pages gets `docs/index.md`/`docs/_config.yml`, `docs/public/*` explains overview/demo workflows/privacy boundaries, and `smeta-expert-review` states what the estimate module needs to calculate confidently without templates or production autosmeta promises. |
 | **v0.24.0.94** | HEAD | Samovar operator indexing pass: dataset play creates a real background parse job, the GUI shows live parse jobs, ETA, memory guard, light-vs-OCR pending counts, and restores scheduler settings with a safe defaults reset. Pending parse order now prefers non-OCR documents before scan/OCR work. |
 | **v0.24.0.93** | HEAD | Volk admin hotfix: access-key refresh/create buttons and table events bind after `_volk_*` handlers are declared, fixing the second classic admin 500 from the same handler-order cleanup. |
 | **v0.24.0.92** | HEAD | Instrumenty admin hotfix: refresh buttons bind after their async handlers are declared, fixing the classic admin 500 caused by `UnboundLocalError` in `build_instrumenty`. |

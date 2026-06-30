@@ -103,6 +103,7 @@
 | ops/versioning | единый центр версий + divergence repo↔runtime | `version_service`; `GET /api/version` | [RELEASE_LEDGER.md](RELEASE_LEDGER.md), [VERSIONING.md](VERSIONING.md), [releases.md](releases.md) | 🟡 |
 | ops/service-sources | видимый реестр служебных источников для смет и нормоконтроля | `service_source_registry`; `routers/service_sources.py`; `config/service_sources.yaml`; GUI `sovushka/pages/instrumenty.py`, чат `sovushka/pages/chat.py` | [SKILL.md](../SKILL.md), [CODE_MAP.md](CODE_MAP.md) | ✅ |
 | ops/external-radar | радар внешних папок: configured roots + filemap + in-place `source_path` без reindex/OCR/LLM | `external_radar_service`; `GET /api/external-radar/summary`; GUI Самовар | [ALGO-external-radar.md](ALGO-external-radar.md) | ✅ |
+| ops/public-showcase | curated public GitHub/Pages surface без приватных датасетов и runtime-секретов | `README.md`, `docs/index.md`, `docs/public/*`, `tools/publication_check.py` | [PUBLICATION_CHECKLIST.md](PUBLICATION_CHECKLIST.md), [public/overview.md](public/overview.md) | ✅ |
 | ops/test | гейт (verify/test/smoke-basic) | `Makefile`, `tools/basic_function_smoke.py` | [TEST_INVENTORY.md](TEST_INVENTORY.md) 🟡 | 🟡 |
 | install | сборка/инсталляторы Mac/Win/Linux | `tools/build_*`, `installers/` | [INSTALL_RUNBOOK.md](INSTALL_RUNBOOK.md) ✅, [PLATFORMS.md](PLATFORMS.md) ✅ | 🟡 |
 
