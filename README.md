@@ -1,7 +1,7 @@
 # Л.Е.С. — evidence-harness for construction data
 
 ![Python](https://img.shields.io/badge/python-3.12-blue)
-![LES](https://img.shields.io/badge/LES-0.24.0.104-0b8f64)
+![LES](https://img.shields.io/badge/LES-0.24.0.105-0b8f64)
 ![Runtime](https://img.shields.io/badge/runtime-Apple%20Silicon-black)
 ![Local-first](https://img.shields.io/badge/local--first-yes-2ea44f)
 ![Numbers](https://img.shields.io/badge/numbers-computed%20by%20code-success)

@@ -54,6 +54,14 @@ line together with its detailed child work rows. Object-area extraction also ref
 work-row areas like `0.07 м2/шт` as object geometry; only explicit object/building/total-area wording
 can create `object_area_m2`.
 
+Since 0.24.0.105 raw numeric extraction and calculator slots are separated. `parse_params()` may find
+direct quantities (`volume_m3`, `area_m2`, `mass_t`, `piece_count`) in the question, file text or VOR
+snippets; the harness exposes them as `quantity_candidates` with provenance. Outside a narrow direct
+work request ("calculate this work with this quantity"), those direct quantities are not global
+calculator inputs. The estimator model must bind the right candidate into the `slots` of a specific
+work item. Geometry/applicability parameters such as depth, wall thickness, wall height/length,
+pile count and soil group may still flow as safe global slots.
+
 If the model cannot produce enough checked positions, the answer must say what is missing. It must
 not substitute a prewritten object composition.
 

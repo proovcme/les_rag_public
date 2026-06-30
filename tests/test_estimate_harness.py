@@ -539,7 +539,7 @@ def test_direct_quantity_candidates_are_exposed_with_provenance():
     }
 
     res = h.run_estimate_harness(
-        "регион Санкт-Петербург, разработка траншеи вручную, объем выработки грунта 200 м3",
+        "регион Санкт-Петербург, рассчитай стоимость разработки траншеи вручную, объем выработки грунта 200 м3",
         _complete_plan_with_norm_choice(plan),
     )
 
@@ -706,7 +706,7 @@ def test_batch_plan_computes_mass_based_metal_assembly():
         "object": {"object_type": "steel_structure"},
         "works": [
             ["Монтаж металлических конструкций", "Монтаж металлоконструкций",
-             "metal", "metal_assembly", "монтаж", "т", {}],
+             "metal", "metal_assembly", "монтаж", "т", {"mass_t": 664.711}],
         ],
     }
 
@@ -760,13 +760,13 @@ def test_direct_mass_can_price_explicit_distinct_operations():
         "works": [
             ["Контрольная сборка облицованных бронзой стальных каркасов",
              "Контрольная сборка стальных каркасов",
-             "metal", "metal_assembly", "монтаж", "т", {}],
+             "metal", "metal_assembly", "монтаж", "т", {"mass_t": 664.711}],
             ["Промежуточная разборка после контрольной сборки",
              "Промежуточная разборка стальных каркасов",
-             "metal", "metal_assembly", "демонтаж", "т", {}],
+             "metal", "metal_assembly", "демонтаж", "т", {"mass_t": 664.711}],
             ["Монтаж стальных каркасов на строительной площадке",
              "Монтаж стальных каркасов на строительной площадке",
-             "metal", "metal_assembly", "монтаж", "т", {}],
+             "metal", "metal_assembly", "монтаж", "т", {"mass_t": 664.711}],
         ],
     }
 
@@ -872,7 +872,7 @@ def test_direct_volume_with_confirmed_norm_conditions_can_complete():
     }
 
     res = h.run_estimate_harness(
-        "разработка траншеи вручную, объем 200 м3, грунт группы II, глубина 2 м, с креплениями, ширина 1 м",
+        "рассчитай стоимость разработки траншеи вручную, объем 200 м3, грунт группы II, глубина 2 м, с креплениями, ширина 1 м",
         _complete_plan_with_norm_choice(plan),
     )
 
@@ -930,6 +930,28 @@ def test_vor_line_area_per_piece_is_not_object_area():
 
     assert slots["area_m2"] == 0.07
     assert h._object_area_from_text(text, slots) is None
+
+
+def test_vor_quantities_are_candidates_until_model_binds_slots():
+    plan = {
+        "object": {"object_type": "bench_tz", "area_total_m2": None, "floors": 1},
+        "works": [
+            ["Устройство бетонного основания", "устройство бетонного основания",
+             "concrete_monolithic", "concrete_preparation", "устройство", "м3", {}],
+        ],
+    }
+
+    res = h.run_estimate_harness(
+        "ТЗ. Ведомость объемов работ: Сборка и монтаж скамьи тип 1.1 шт 3. "
+        "Ведомость скамьи тип 1.1 (для 1 скамьи). "
+        "Объём бетонного основания 0,4 м3. "
+        "Объём выравнивающей стяжки из ЦПС 0,07 м3.",
+        _complete_plan_with_norm_choice(plan),
+    )
+
+    assert any(c["slot"] == "volume_m3" for c in res["quantity_candidates"])
+    assert res["computed"] == []
+    assert res["needs_input"]
 
 
 def test_model_placeholder_area_does_not_create_fake_object_geometry():
@@ -1087,7 +1109,7 @@ def test_mass_metal_plan_passes_pricebook_and_metal_nr_sp(monkeypatch):
         "object": {"object_type": "steel_structure"},
         "works": [
             ["Монтаж металлоконструкций", "Монтаж металлоконструкций",
-             "metal", "metal_assembly", "монтаж", "т", {}],
+             "metal", "metal_assembly", "монтаж", "т", {"mass_t": 664.71112}],
         ],
     }
 

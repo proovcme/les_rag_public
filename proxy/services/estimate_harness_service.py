@@ -131,6 +131,16 @@ _DIRECT_QTY_SLOT_BY_UNIT = {
     "шт": "piece_count",
     "": "piece_count",
 }
+_DIRECT_QTY_SLOTS = frozenset(_DIRECT_QTY_SLOT_BY_UNIT.values())
+_CALCULATOR_SAFE_GLOBAL_SLOTS = frozenset({
+    "excavation_depth_m",
+    "slab_thickness_m",
+    "wall_thickness_m",
+    "wall_height_m",
+    "wall_length_m",
+    "pile_count",
+    "soil_group",
+})
 
 _SMETA_REASON_LABELS: dict[str, tuple[str, str]] = {
     "collection": ("сборник соответствует семейству работ", "сборник не соответствует семейству работ"),
@@ -758,7 +768,7 @@ def resolve_slots(element_type: str, geom: dict[str, Any], user_slots: dict[str,
 _NUM_TOKEN = r"\d[\d\s\xa0.,]*"
 _PARAM_PATTERNS = [
     ("mass_t",             rf"(?:масс\w*|вес)[^\d]{{0,80}}({_NUM_TOKEN})\s*(кг|т|тонн\w*)\b", None),
-    ("volume_m3",          rf"(?:об[ъь]е[мё]\w*|выработк\w*)[^\d]{{0,50}}({_NUM_TOKEN})\s*(м3|м³|куб\.?\s*м)\b", None),
+    ("volume_m3",          rf"(?:об[ъь][её]м\w*|выработк\w*)[^\d]{{0,50}}({_NUM_TOKEN})\s*(м3|м³|куб\.?\s*м)\b", None),
     ("area_m2",            rf"(?:площад\w*)[^\d]{{0,50}}({_NUM_TOKEN})\s*(м2|м²|кв\.?\s*м)\b", None),
     ("excavation_depth_m", rf"глубин\w*\D{{0,18}}({_NUM_TOKEN})\s*(м(?!\w)|метр\w*)", 1.0),
     ("slab_thickness_m",   rf"(?:плит\w*|фундамент\w*)\D{{0,16}}({_NUM_TOKEN})\s*(мм|см|м)\b", None),
@@ -1050,6 +1060,45 @@ def _quantity_candidates_from_slots(slots: dict[str, Any], question: str) -> lis
             "excerpt": q[:240],
         })
     return candidates
+
+
+def _calculator_slots_from_user_slots(
+    slots: dict[str, Any],
+    *,
+    explicit_direct_work: bool,
+) -> dict[str, Any]:
+    """Slots allowed to drive formulas before the model binds a quantity to a work item.
+
+    Raw text extraction is intentionally broad: Office/DOCX/TZ/VOR text can contain many
+    quantities from different rows. Outside a narrow direct-work request, direct physical
+    quantities are navigation candidates for the model, not global calculator inputs.
+    """
+    if explicit_direct_work:
+        return dict(slots or {})
+    return {
+        k: v for k, v in (slots or {}).items()
+        if k in _CALCULATOR_SAFE_GLOBAL_SLOTS
+    }
+
+
+def _quantity_candidates_prompt_note(candidates: list[dict[str, Any]]) -> str:
+    if not candidates:
+        return ""
+    bits: list[str] = []
+    for c in candidates[:8]:
+        slot = str(c.get("slot") or "")
+        value = c.get("value")
+        unit = str(c.get("unit") or "")
+        if not slot or not _is_number(value):
+            continue
+        bits.append(f"{slot}={_f(value):g} {unit}".strip())
+    if not bits:
+        return ""
+    return (
+        "Кандидаты количеств из текста: " + "; ".join(bits) + ". "
+        "В широком ТЗ/ВОР/объектной смете это только карта исходных чисел: "
+        "привяжи нужное количество в slots конкретной work-позиции, если оно относится именно к ней."
+    )
 
 
 def _quantity_candidate_by_slot(candidates: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -1454,9 +1503,12 @@ def _run_batch_plan(question: str, complete: Callable[[list[dict[str, str]]], st
     _slots_note = (f"Известные параметры из текста: {state.get('user_slots')}."
                    if state.get("user_slots") else
                    "Если параметров нет, оставь missing_inputs/пустые slots; код не будет выдумывать.")
+    quantity_note = _quantity_candidates_prompt_note(state.get("quantity_candidates", []))
     messages = [
         {"role": "system", "content": system_prompt or BATCH_SYSTEM_PROMPT},
-        {"role": "user", "content": f"Объект/контекст:\n{question}\n\n{_slots_note}\n{assumption_note}".strip()},
+        {"role": "user", "content": (
+            f"Объект/контекст:\n{question}\n\n{_slots_note}\n{quantity_note}\n{assumption_note}"
+        ).strip()},
     ]
     state["steps"] = 1
     raw = complete(messages) or ""
@@ -1697,21 +1749,21 @@ def run_estimate_harness(question: str, complete: Callable[[list[dict[str, str]]
                          *, max_steps: int = 16) -> dict[str, Any]:
     # Gate 4: параметры из запроса → слоты (уточнение в одном запросе:
     # «… глубина 6м плита 400мм»).
-    user_slots = parse_params(question)
-    object_area_m2 = _object_area_from_text(question, user_slots)
+    raw_user_slots = parse_params(question)
+    object_area_m2 = _object_area_from_text(question, raw_user_slots)
     assumption_mode = _assumptions_authorized(question)
     explicit_direct_work = is_explicit_work_estimate_request(question)
-    if not explicit_direct_work:
-        # "площадь 200 м2" in an object estimate is object metadata, not the physical
-        # quantity for every m2-rated position. Keep explicit count/geometry slots, but
-        # do not let generic object area bypass formula-catalog geometry.
-        user_slots.pop("area_m2", None)
-    quantity_candidates = _quantity_candidates_from_slots(user_slots, question)
+    quantity_candidates = _quantity_candidates_from_slots(raw_user_slots, question)
+    user_slots = _calculator_slots_from_user_slots(
+        raw_user_slots,
+        explicit_direct_work=explicit_direct_work,
+    )
     smeta_sources = _smeta_service_source_status()
     pricebook = parse_pricebook_hint(question)
     state: dict[str, Any] = {"schema": {}, "geom": {}, "positions": [], "steps": 0,
                              "object_area_m2": object_area_m2,
                              "question_text": question,
+                             "raw_user_slots": raw_user_slots,
                              "user_slots": user_slots, "pricebook": pricebook,
                              "quantity_candidates": quantity_candidates,
                              "smeta_service_sources": smeta_sources,
@@ -1720,7 +1772,7 @@ def run_estimate_harness(question: str, complete: Callable[[list[dict[str, str]]
     notebook_excerpt = gesn_notebook_prompt_excerpt()
     system_prompt = build_smeta_batch_system_prompt(BATCH_TOOL_CONTRACT, notebook_context=notebook_excerpt)
     result = _run_batch_plan(question, complete, state, max_steps=max_steps, system_prompt=system_prompt)
-    direct_slots = sorted(set(user_slots) & set(_DIRECT_QTY_SLOT_BY_UNIT.values()))
+    direct_slots = sorted(set(user_slots) & _DIRECT_QTY_SLOTS)
     result["direct_quantity_estimate"] = bool(explicit_direct_work and direct_slots)
     result["direct_quantity_slots"] = direct_slots
     result["quantity_candidates"] = quantity_candidates
