@@ -31,7 +31,7 @@
 | smeta/fgis | цена ресурса по коду из «Сплит-формы» ФГИС ЦС | `fgis_price_service`; `/api/prices/*`; MCP `les_price_lookup` | [ALGO-fgis-price.md](ALGO-fgis-price.md) | ✅ |
 | smeta/kac | конъюнктурный анализ цен (≥3 КП на материал) | `kac_service`; `/api/kac/*`; MCP `les_kac` | [ALGO-kac.md](ALGO-kac.md) | ✅ |
 | smeta/stesn | коэффициент стеснённости (k к ОЗП/ЭМ) | `stesnennost_service`; `/api/lsr/stesnennost/*`; MCP `les_stesnennost` | [ALGO-stesnennost.md](ALGO-stesnennost.md) | ✅ |
-| smeta/object | мутное ТЗ «дай смету на …» → model-first декомпозиция: модель сама раскладывает объект, харнесс даёт `search_norm`/`add_position`; `search_norm` использует typed SQLite-light `smeta_norm_store_v4` как широкий индекс норм с норм-карточками и навигацией (семья/элемент/действие/условия/ресурсы/provenance/`model_card`/`navigation`/`nearby_norms`) + общий `candidate_selection_v1`, код проверяет нормы/единицы/объёмы и считает только прошедшие gates | `estimate_harness_service`, `smeta_norm_store`, `candidate_selection_service`, `estimate_math_service`, `nr_sp_service`, `evidence_contract`; готовые объектные составы удалены | [ALGO-object-estimate.md](ALGO-object-estimate.md) 🟡 | 🟡 |
+| smeta/object | мутное ТЗ «дай смету на …» → model-first декомпозиция: модель сама раскладывает объект, харнесс даёт `search_norm`/`add_position`; `search_norm` использует typed SQLite-light `smeta_norm_store_v5` как широкий индекс норм с норм-карточками и навигацией (семья/элемент/действие/условия/ресурсы/provenance/`model_card`/`navigation`/`nearby_norms`/decision checklist) + общий `candidate_selection_v1`, код проверяет нормы/единицы/объёмы и считает только прошедшие gates; прямые объёмы идут как `quantity_candidates` с provenance, а статус ГЭСН/ФГИС/КАЦ/коэффициентов попадает в результат | `estimate_harness_service`, `smeta_norm_store`, `candidate_selection_service`, `estimate_math_service`, `nr_sp_service`, `evidence_contract`; готовые объектные составы удалены | [ALGO-object-estimate.md](ALGO-object-estimate.md) 🟡 | 🟡 |
 | smeta/ontology | доменные понятия (ВОР/КАЦ/ЛСР/КС) | `smeta_ontology_service`; MCP `les_glossary` | [ALGO-smeta-ontology.md](ALGO-smeta-ontology.md) ✅ · [smeta_ontology.md](smeta_ontology.md) ✅ (генерится) | ✅ |
 | smeta/bor | спецификация Ф9 → ВОР работ | `spec_to_bor_service`; `/api/bor/{id}/from-spec*` | [ALGO-spec-to-bor.md](ALGO-spec-to-bor.md) | ✅ |
 | smeta/indices | индексы изменения сметной стоимости (Минстрой ИФ/09) | 📋 v0.26+ ([../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md)) | — | 📋 |
@@ -41,6 +41,8 @@
 **0.24.0.85:** `add_position` переносит условия выбранной нормы в `norm_questions`: строка может быть рассчитана, но общий итог остаётся `partial`, пока пользователь/файл не подтвердит ключевые условия применимости нормы; модель видит эти вопросы и продолжает диалог по-русски.
 
 **0.24.0.86:** `smeta_norm_store_v4` и `search_norm.norm_navigation` дают модели карту нормы: сборник/подраздел, вопросы применимости, РИМ-границу и соседние нормы (`nearby_norms`), чтобы модель выбирала разделы/вопросы по нормам, а код оставался калькулятором и bind-проверкой.
+
+**0.24.0.97:** `smeta_norm_store_v5` добавляет в норм-карточку явные `applicability`, `price_inputs` и `decision_order`; `search_norm.norm_navigation` несёт `norm_decision_context`, а `estimate_harness` отдаёт `quantity_candidates` и `smeta_service_sources`, чтобы модель видела происхождение объёмов и состояние ценовых/нормативных источников без объектных шаблонов.
 
 ## 2. RAG-ядро и маршрутизация
 

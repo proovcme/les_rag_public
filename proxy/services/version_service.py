@@ -20,7 +20,7 @@ APP_VERSION = "5.1.0"                 # пользовательская «ма�
 HARNESS_VERSION = "0.24"             # веха roadmap (v0.NN); двигать на смене вехи
 # Гранулярная версия «где мы»: 0.<веха>.<фича>.<патч>. Двигать КАЖДУЮ фичу/фикс + строка в
 # docs/RELEASE_LEDGER.md. Это основной номер в /api/version и бейдже (см. docs/RELEASE_LEDGER.md).
-LES_VERSION = "0.24.0.96"
+LES_VERSION = "0.24.0.97"
 EVIDENCE_SCHEMA_VERSION = "1.0"
 EXTRACTION_SCHEMA_VERSION = "1.0"
 RESOURCE_CALC_VERSION = "0.6"

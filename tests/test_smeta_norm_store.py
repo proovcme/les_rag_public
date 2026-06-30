@@ -11,14 +11,14 @@ def test_smeta_norm_store_builds_typed_sqlite_projection():
     store = get_smeta_norm_store()
     payload = store.payload()
 
-    assert payload["schema"] == "smeta_norm_store_v4"
+    assert payload["schema"] == "smeta_norm_store_v5"
     assert payload["backend"] == "sqlite_light"
     assert payload["norm_count"] > 0
     assert "ГЭСН" in payload["by_base_type"]
     assert payload["collections"] > 0
     assert set(payload["profile_fields"]) >= {
         "family_hints", "element_hints", "resource_kinds", "condition_hints", "provenance", "model_card",
-        "navigation",
+        "navigation", "applicability", "price_inputs", "decision_order",
     }
 
 
@@ -53,9 +53,12 @@ def test_smeta_norm_store_profile_exposes_applicability_and_resources():
     assert profile["provenance"]
     assert profile["model_card"]["measure"] == "измеритель нормы: 100 м3; базовая единица: м3"
     assert "земляные работы" in profile["model_card"]["domain"]["families"]
+    assert profile["model_card"]["applicability"]["unit"] == "м3"
+    assert "материал без цены" in profile["model_card"]["price_inputs"]["material_gap"]
     assert "это навигационная карточка нормы, не расчёт стоимости" in profile["model_card"]["warnings"]
     assert profile["navigation"]["collection"]["label"].startswith("ГЭСН 01")
     assert "уточнить группу грунта" in profile["navigation"]["questions_to_ask"]
+    assert profile["navigation"]["decision_order"]
 
 
 def test_smeta_norm_store_metal_mounting_profile_keeps_gesnm_base():

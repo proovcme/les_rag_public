@@ -438,10 +438,11 @@ def test_search_norm_uses_sqlite_light_norm_store_trace():
     r = h.search_norm("устройство кровли", work_family="roofing", element_type="roofing", unit_hint="м2")
 
     assert r["candidates"]
-    assert r["norm_store"]["schema"] == "smeta_norm_store_v4"
+    assert r["norm_store"]["schema"] == "smeta_norm_store_v5"
     assert r["norm_store"]["backend"] == "sqlite_light"
     assert set(r["norm_store"]["profile_fields"]) >= {
         "family_hints", "element_hints", "resource_kinds", "model_card", "navigation",
+        "applicability", "price_inputs", "decision_order",
     }
     assert r["candidate_pool"]["searched"] >= r["candidate_pool"]["scored"] >= len(r["candidates"])
     top = r["candidates"][0]
@@ -450,8 +451,33 @@ def test_search_norm_uses_sqlite_light_norm_store_trace():
     assert "roofing" in top["norm_profile"]["family_hints"]
     assert top["norm_profile"]["provenance"]
     assert top["norm_profile"]["model_card"]["title"] == top["title"]
+    assert top["norm_profile"]["model_card"]["price_inputs"]["material_gap"].startswith("материал")
+    assert r["norm_navigation"]["decision_context"]["schema"] == "norm_decision_context_v1"
+    assert "цены ресурсов" in r["norm_navigation"]["decision_context"]["checks"][-1]
     assert "это навигационная карточка нормы, не расчёт стоимости" in top["norm_profile"]["model_card"]["warnings"]
     assert "profile_family" in top["score_parts"]
+
+
+def test_direct_quantity_candidates_are_exposed_with_provenance():
+    plan = {
+        "object": {"object_type": "earthworks", "area_total_m2": None, "floors": 1},
+        "works": [
+            ["Разработка траншеи", "разработка грунта вручную в траншее",
+             "earthworks", "excavation", "разработка", "м3", {}],
+        ],
+    }
+
+    res = h.run_estimate_harness(
+        "регион Санкт-Петербург, разработка траншеи вручную, объем выработки грунта 200 м3",
+        lambda _m: json.dumps(plan, ensure_ascii=False),
+    )
+
+    volume = next(c for c in res["quantity_candidates"] if c["slot"] == "volume_m3")
+    assert volume["value"] == 200
+    assert volume["source"] == "user_text"
+    assert res["computed"][0]["quantity_source"]["slot"] == "volume_m3"
+    assert res["computed"][0]["phys_qty"] == 200
+    assert res["smeta_service_sources"]["schema"] == "smeta_service_sources_v1"
 
 
 # ── end-to-end петля (скриптовая модель) ─────────────────────────────────────────────────

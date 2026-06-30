@@ -307,6 +307,16 @@ class SmetaNormRow:
                     "count": self.resource_count,
                     "kinds": _labels(resource_kinds, _RESOURCE_KIND_LABELS),
                 },
+                "applicability": {
+                    "check": "сверить семейство работ, элемент, действие, измеритель и условия нормы",
+                    "unit": self.base_unit or self.measure_unit,
+                    "questions": _condition_questions(condition_hints),
+                },
+                "price_inputs": {
+                    "rule": "после выбора нормы ресурсы раскрывает код; отсутствующие цены не выдумывать",
+                    "material_gap": "материал без цены помечается как нужен КАЦ",
+                    "labor_machine_gap": "труд, машинисты и машины требуют ставки/цены из служебных источников",
+                },
                 "warnings": [
                     "это навигационная карточка нормы, не расчёт стоимости",
                     *([f"проверить признаки ограничения: {', '.join(negative_hints)}"] if negative_hints else []),
@@ -325,12 +335,18 @@ class SmetaNormRow:
                     "физический объём, перевод в измеритель нормы, НР/СП и итог считает код",
                     "если условия нормы не подтверждены, спросить пользователя или оставить partial",
                 ],
+                "decision_order": [
+                    "1. Проверить, что сборник и семейство работ совпадают",
+                    "2. Проверить, что физическая единица совместима с измерителем нормы",
+                    "3. Сравнить с соседними нормами по названию и условиям",
+                    "4. Только после этого передать норму в add_position",
+                ],
             },
         }
 
 
 class SmetaNormStore:
-    schema = "smeta_norm_store_v4"
+    schema = "smeta_norm_store_v5"
     backend = "sqlite_light"
 
     def __init__(self, rows: list[SmetaNormRow]) -> None:
@@ -539,6 +555,7 @@ class SmetaNormStore:
             "profile_fields": [
                 "resource_kinds", "family_hints", "element_hints", "action_hints",
                 "condition_hints", "provenance", "model_card", "navigation",
+                "applicability", "price_inputs", "decision_order",
             ],
         }
 

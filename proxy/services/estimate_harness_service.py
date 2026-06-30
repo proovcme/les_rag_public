@@ -467,6 +467,43 @@ def _search_norm_navigation(candidates: list[dict[str, Any]], *, work_family: st
         "questions_to_ask": questions[:8],
         "next_step": next_step,
         "rim_boundary": "модель выбирает ход и вопросы; add_position/lsr_assembly считают объём, ресурсы, НР/СП и итог",
+        "decision_context": _norm_decision_context(candidates),
+    }
+
+
+def _norm_decision_context(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compact model-facing checklist for choosing a norm from a shortlist."""
+    accepted = [
+        c for c in candidates
+        if c.get("applicability_status") == "accepted" and c.get("unit_compatible") is not False
+    ]
+    rejected = [
+        c for c in candidates
+        if c.get("applicability_status") == "rejected" or c.get("unit_compatible") is False
+    ]
+    ambiguous = [
+        c for c in candidates
+        if c.get("applicability_status") not in {"accepted", "rejected"}
+        and c.get("unit_compatible") is not False
+    ]
+    checks = [
+        "сборник/тип базы соответствует семейству работ",
+        "измеритель нормы совместим с физическим объёмом",
+        "условия нормы подтверждены текстом, файлом или допущением",
+        "соседние нормы просмотрены, если лидер не очевиден",
+        "цены ресурсов будут проверены после раскрытия нормы",
+    ]
+    return {
+        "schema": "norm_decision_context_v1",
+        "accepted_count": len(accepted),
+        "ambiguous_count": len(ambiguous),
+        "rejected_count": len(rejected),
+        "checks": checks,
+        "recommended_action": (
+            "add_position"
+            if accepted else
+            "ask_or_refine_norm_search" if candidates else "rewrite_work_description"
+        ),
     }
 
 
@@ -844,6 +881,98 @@ def parse_pricebook_hint(question: str) -> str | None:
     return "spb_2kv2026"
 
 
+_SLOT_LABELS: dict[str, tuple[str, str]] = {
+    "mass_t": ("масса", "т"),
+    "volume_m3": ("объём", "м3"),
+    "area_m2": ("площадь", "м2"),
+    "piece_count": ("количество", "шт"),
+    "excavation_depth_m": ("глубина разработки", "м"),
+    "slab_thickness_m": ("толщина плиты", "м"),
+    "wall_thickness_m": ("толщина стен", "м"),
+    "wall_height_m": ("высота стен", "м"),
+    "wall_length_m": ("длина/периметр стен", "м"),
+    "pile_count": ("количество свай", "шт"),
+    "soil_group": ("группа грунта", ""),
+}
+
+
+def _quantity_candidates_from_slots(slots: dict[str, Any], question: str) -> list[dict[str, Any]]:
+    """User-provided quantities with provenance for the model and trace.
+
+    This is not a project-volume extractor. It only turns already parsed user text into
+    auditable candidates so the harness can say what quantity was used and where it came from.
+    """
+    candidates: list[dict[str, Any]] = []
+    q = re.sub(r"\s+", " ", str(question or "").strip())
+    for slot, value in sorted((slots or {}).items()):
+        if not _is_number(value):
+            continue
+        label, unit = _SLOT_LABELS.get(slot, (slot, ""))
+        candidates.append({
+            "schema": "quantity_candidate_v1",
+            "slot": slot,
+            "label": label,
+            "value": _f(value),
+            "unit": unit,
+            "source": "user_text",
+            "provenance": "текст запроса",
+            "confidence": "high",
+            "excerpt": q[:240],
+        })
+    return candidates
+
+
+def _quantity_candidate_by_slot(candidates: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {
+        str(c.get("slot")): c for c in candidates
+        if isinstance(c, dict) and str(c.get("slot") or "").strip()
+    }
+
+
+def _smeta_service_source_status() -> dict[str, Any]:
+    """Small status summary for the estimating data sources."""
+    try:
+        from proxy.services.service_source_registry import service_sources
+
+        sources = [
+            src for src in service_sources().get("sources", [])
+            if src.get("domain") == "smeta"
+        ]
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "schema": "smeta_service_sources_v1",
+            "status": "unknown",
+            "message": f"{type(exc).__name__}: {exc}",
+            "sources": [],
+            "missing_for_full_estimate": ["не удалось проверить служебные источники"],
+        }
+    missing = [
+        {
+            "id": src.get("id"),
+            "label": src.get("label"),
+            "status": src.get("status"),
+            "requiredness": src.get("requiredness"),
+            "action": src.get("operator_action") or src.get("operator_hint") or "",
+        }
+        for src in sources
+        if str(src.get("status") or "") != "ok"
+    ]
+    return {
+        "schema": "smeta_service_sources_v1",
+        "status": "ok" if not missing else "incomplete",
+        "sources": [
+            {
+                "id": src.get("id"),
+                "label": src.get("label"),
+                "status": src.get("status"),
+                "facts": src.get("facts") or {},
+            }
+            for src in sources
+        ],
+        "missing_for_full_estimate": missing,
+    }
+
+
 # ── планировщик ──────────────────────────────────────────────────────────────────────────
 
 _REQUIRED_SCHEMA = ("object_type",)
@@ -987,6 +1116,9 @@ def _add_position(args: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]
             phys = _f(user_slots.get(direct_slot))
             base_pos["physical_unit"] = _canon_unit(spec["unit"])
             base_pos["formula"] = direct_slot
+            source = _quantity_candidate_by_slot(state.get("quantity_candidates", [])).get(direct_slot)
+            if source:
+                base_pos["quantity_source"] = source
             base_pos["assumptions"] = list(base_pos.get("assumptions", [])) + [
                 f"{direct_slot}={round(phys, 6)} (прямой объём из запроса)"
             ]
@@ -1507,11 +1639,15 @@ def run_estimate_harness(question: str, complete: Callable[[list[dict[str, str]]
         # quantity for every m2-rated position. Keep explicit count/geometry slots, but
         # do not let generic object area bypass formula-catalog geometry.
         user_slots.pop("area_m2", None)
+    quantity_candidates = _quantity_candidates_from_slots(user_slots, question)
+    smeta_sources = _smeta_service_source_status()
     pricebook = parse_pricebook_hint(question)
     state: dict[str, Any] = {"schema": {}, "geom": {}, "positions": [], "steps": 0,
                              "object_area_m2": object_area_m2,
                              "question_text": question,
                              "user_slots": user_slots, "pricebook": pricebook,
+                             "quantity_candidates": quantity_candidates,
+                             "smeta_service_sources": smeta_sources,
                              "assumption_mode": assumption_mode,
                              "scenario_assumptions": []}
     notebook_excerpt = gesn_notebook_prompt_excerpt()
@@ -1520,6 +1656,8 @@ def run_estimate_harness(question: str, complete: Callable[[list[dict[str, str]]
     direct_slots = sorted(set(user_slots) & set(_DIRECT_QTY_SLOT_BY_UNIT.values()))
     result["direct_quantity_estimate"] = bool(explicit_direct_work and direct_slots)
     result["direct_quantity_slots"] = direct_slots
+    result["quantity_candidates"] = quantity_candidates
+    result["smeta_service_sources"] = smeta_sources
     result["notebook_context"] = {
         "schema": "notebook_context_v1",
         "role": "navigation",

@@ -7,14 +7,20 @@
 ## Текущее состояние (2026-06-30)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.96  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.97  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.94 Samovar operator indexing pass
-НЕ задеплоено:             0.24.0.95 public showcase + 0.24.0.96 smeta price-gap actions
-рантайм /api/version:      0.24.0.94 · app 5.1.0 · h0.24 · runtime_alignment=aligned
+задеплоено на рантайм:     0.24.0.97 Smeta confidence pass
+НЕ задеплоено:             —
+рантайм /api/version:      0.24.0.97 · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.97 — сметный режим получил следующий системный шаг без объектных шаблонов:
+> `smeta_norm_store_v5` добавляет в карточку нормы явные `applicability`, `price_inputs`
+> и `decision_order`; `search_norm` возвращает `norm_decision_context` для выбора нормы,
+> а `estimate_harness` отдаёт `quantity_candidates` с provenance и `smeta_service_sources`.
+> Модель видит происхождение прямых объёмов и состояние ГЭСН/ФГИС/КАЦ/коэффициентов, код
+> по-прежнему только проверяет и считает.
 > 0.24.0.96 — сметный расчёт теперь явно говорит, чего не хватает для полного итога:
 > отсутствующие цены ресурсов классифицируются как `needs_kac`, `needs_fgis_price`,
 > `needs_labor_rate`, `needs_machinist_rate`; в артефакте появляется “Что нужно добрать”.
