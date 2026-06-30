@@ -69,6 +69,19 @@ post-filtered, from claiming that a file or VOR is truncated unless that is pres
 payload. This prevents the visible layer from asking for "continuation of the TZ" just because it saw
 only the beginning of a long attachment.
 
+Since 0.24.0.107 a fully blocked harness is no longer allowed to be the visible smeta answer. If
+`add_position`/norm binding rejects every work item and no computed row exists, the same model gets the
+full harness question plus a compact "blocked harness advisory" and writes the visible estimator answer
+itself: work/quantity schedule, what is supply/material, what needs GESN/FGIS/KAC/quote/region, and the
+next practical step. The blocked harness remains trace/artifact evidence; it is not presented as the
+main answer.
+
+Since 0.24.0.108 explicit Smeta mode starts from the opposite end: the estimator model answers directly
+from the full question, attachment context and smeta skill, without first running the code harness. The
+old harness stays available as a fallback and future calculator/provenance layer, but it no longer
+pre-filters whether the visible answer may exist. This is controlled by `LES_SMETA_DIRECT_MODEL_FIRST`
+(default on for explicit Smeta, off for auto-routed work estimates).
+
 If the model cannot produce enough checked positions, the answer must say what is missing. It must
 not substitute a prewritten object composition.
 

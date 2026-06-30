@@ -1535,6 +1535,155 @@ def _harness_model_comment(result: dict, question: str) -> str:
 _harness_voice_comment = _harness_model_comment
 
 
+def _should_use_model_first_smeta(result: dict) -> bool:
+    if not isinstance(result, dict):
+        return False
+    return (
+        result.get("total_status") == "blocked"
+        and not (result.get("computed") or [])
+        and bool((result.get("rejected") or []) or (result.get("needs_input") or []))
+    )
+
+
+def _smeta_blocked_advisory(result: dict) -> dict[str, Any]:
+    pending = [*(result.get("rejected") or []), *(result.get("needs_input") or [])]
+    trace = result.get("trace") if isinstance(result.get("trace"), list) else []
+    return {
+        "schema": "smeta_blocked_advisory_v1",
+        "status": result.get("total_status"),
+        "planner_status": result.get("planner_status"),
+        "computed_count": len(result.get("computed") or []),
+        "pending_count": len(pending),
+        "pending": [
+            {
+                "work": str(p.get("work") or "")[:140],
+                "code": str(p.get("code") or "")[:50],
+                "unit": str(p.get("physical_unit") or "")[:20],
+                "reason": _smeta_humanize_text(p.get("reason") or p.get("status") or "")[:220],
+            }
+            for p in pending[:24] if isinstance(p, dict)
+        ],
+        "tools": [
+            {
+                "tool": str(t.get("tool") or ""),
+                "status": str(t.get("status") or ""),
+                "work": str(t.get("work") or "")[:120],
+                "candidates": [str(c)[:50] for c in (t.get("candidates") or [])[:4]],
+            }
+            for t in trace[:32] if isinstance(t, dict)
+        ],
+    }
+
+
+def _smeta_model_first_answer(harness_question: str, result: dict) -> str:
+    """Visible model-first estimate answer when the calculator path blocked all rows."""
+    runtime = _llm_runtime()
+    sys_prompt = build_mode_system_prompt(
+        "smeta_harness",
+        extra=(
+            "Сейчас кодовый расчётный harness не смог принять ни одной позиции к расчёту. "
+            "Это не финальный ответ, а только черновой протокол ограничений. Ты отвечаешь сам "
+            "как опытный сметчик: прочитай ТЗ/ВОР, сохрани структуру работ, посчитай простые "
+            "количества из текста, отдели работы от поставки материалов и покажи, где нужен "
+            "ГЭСН/ФГИС/КАЦ/КП/регион. Не повторяй фразу «ЛЕС не нашёл подходящих норм» как ответ. "
+            "Не проси продолжение файла и не говори, что исходные оборвались, если в тексте нет "
+            "явной отметки усечения. Если денег нет из-за отсутствия цен/региона/нормы, дай "
+            "сметную ведомость и статус ценовых пробелов, а не пустой отказ. Не выдумывай коды, "
+            "ресурсы, НР/СП и рубли; допускается простая арифметика объёмов/количеств из ТЗ."
+        ),
+    )
+    payload = {
+        "task": "model_first_smeta_answer",
+        "user_context": str(harness_question or "")[:18000],
+        "blocked_harness_advisory": _smeta_blocked_advisory(result),
+        "required_visible_shape": [
+            "коротко что понял",
+            "ведомость работ/количеств: на 1 изделие и итог по количеству изделий, если множитель явно есть",
+            "что является работой, что поставкой/материалом",
+            "что можно считать после выбора нормы/цены, что требует КАЦ/ФГИС/КП/регион",
+            "следующий практический шаг",
+        ],
+    }
+    body = {
+        "model": runtime.model,
+        "messages": [{"role": "system", "content": sys_prompt}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+        "temperature": 0.25,
+        "max_tokens": _env_int("LES_SMETA_MODEL_FIRST_MAX_TOKENS", 2200),
+    }
+    body = _cloud_body_for_model(body, runtime.model, runtime.provider)
+    headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
+    timeout_s = _env_float("LES_SMETA_MODEL_FIRST_TIMEOUT_SEC", 90.0)
+    try:
+        with httpx.Client(timeout=timeout_s) as c:
+            r = c.post(runtime.chat_url, headers=headers, json=body)
+            r.raise_for_status()
+            text = _assistant_text(r.json().get("choices", [{}])[0].get("message", {})).strip()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[HARNESS] model-first smeta answer failed: %s", e)
+        return ""
+    text = re.sub(r"\n{3,}", "\n\n", text).strip(" \n\t\"'")
+    if not text or _voice_claims_source_truncated(text):
+        return ""
+    return text[:10000]
+
+
+def _smeta_direct_model_answer(harness_question: str) -> str:
+    """Primary visible smeta answer: estimator model first, calculator/harness later if needed."""
+    runtime = _llm_runtime()
+    sys_prompt = build_mode_system_prompt(
+        "smeta_harness",
+        extra=(
+            "Экспериментальный режим ЛЕС: сначала отвечает сметчик-модель без кодового harness. "
+            "Код не должен решать за тебя, можно ли отвечать; он нужен позже как калькулятор, "
+            "проверка единиц, цен, НР/СП и provenance. Прочитай запрос, вложения и историю как "
+            "сметчик: разложи ВОР/ТЗ на работы и материалы, посчитай простую арифметику прямо из "
+            "исходных, покажи множители вроде «на 1 изделие × количество изделий», отдели монтаж "
+            "от поставки, отметь где нужны ГЭСН/РИМ, ФГИС/КАЦ/КП, регион и условия применения. "
+            "Если пользователь просит ориентировочно или разрешает допущения — можно дать сценарную "
+            "оценку/диапазон только с явной пометкой, что цены требуют источника. Не выдумывай "
+            "конкретные коды, ресурсы, НР/СП или рубли как проверенные, если их нет в контексте. "
+            "Не говори внутренними словами вроде dataset_memory, evidence_atoms, slots, element_type, "
+            "harness, trace. Не проси продолжение файла, если в предоставленном тексте видны нужные "
+            "строки; сначала используй то, что уже есть."
+        ),
+    )
+    payload = {
+        "task": "direct_model_smeta_answer",
+        "user_context": str(harness_question or "")[:22000],
+        "required_visible_shape": [
+            "что понял и какие исходные принял",
+            "таблица работ/материалов с количеством: на единицу и итог, если множитель есть",
+            "какие позиции являются поставкой/материалами, а какие работами",
+            "что можно посчитать сразу, а где нужны нормы/цены/КАЦ/ФГИС/КП/регион",
+            "где именно код-калькулятор понадобится следующим шагом",
+        ],
+    }
+    body = {
+        "model": runtime.model,
+        "messages": [
+            {"role": "system", "content": sys_prompt},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        ],
+        "temperature": 0.35,
+        "max_tokens": _env_int("LES_SMETA_DIRECT_MODEL_MAX_TOKENS", 2600),
+    }
+    body = _cloud_body_for_model(body, runtime.model, runtime.provider)
+    headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
+    timeout_s = _env_float("LES_SMETA_DIRECT_MODEL_TIMEOUT_SEC", 120.0)
+    try:
+        with httpx.Client(timeout=timeout_s) as c:
+            r = c.post(runtime.chat_url, headers=headers, json=body)
+            r.raise_for_status()
+            text = _assistant_text(r.json().get("choices", [{}])[0].get("message", {})).strip()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[HARNESS] direct model smeta answer failed: %s", e)
+        return ""
+    text = re.sub(r"\n{3,}", "\n\n", text).strip(" \n\t\"'")
+    if not text or _voice_claims_source_truncated(text):
+        return ""
+    return text[:12000]
+
+
 def _norm_code_label(code: Any) -> str:
     text = str(code or "").strip()
     return text if text else "—"
@@ -2213,15 +2362,49 @@ async def _run_chat(req: ChatRequest, token_sink=None):
 
     if _PROFILE == "estimate_harness" or _auto_estimate_work:
         # Model-first estimate: model decomposes the object, harness provides tools and gates.
-        from proxy.services.estimate_harness_service import run_estimate_harness
         harness_question = _smeta_harness_question(req)
+        if (
+            _PROFILE == "estimate_harness"
+            and not _auto_estimate_work
+            and _env_bool("LES_SMETA_DIRECT_MODEL_FIRST", True)
+        ):
+            answer = await asyncio.to_thread(_smeta_direct_model_answer, harness_question)
+            if answer:
+                trace = {
+                    "mode": "estimate_harness",
+                    "direct_model_first": True,
+                    "harness_skipped": True,
+                    "reason": "explicit smeta mode uses estimator model before code calculator",
+                }
+                return _mode_reply(
+                    answer,
+                    "estimate_harness",
+                    "harness_mode",
+                    extra={
+                        "retrieval_trace": trace,
+                        "total_status": "model_first",
+                    },
+                )
+
+        from proxy.services.estimate_harness_service import run_estimate_harness
         result = await asyncio.to_thread(run_estimate_harness, harness_question, _harness_complete)
-        answer = _format_harness(result)
-        voice = await asyncio.to_thread(_harness_model_comment, result, harness_question)
-        if voice:
-            answer = f"{voice}\n\n{answer}"
+        model_first_smeta = False
+        if _should_use_model_first_smeta(result):
+            model_answer = await asyncio.to_thread(_smeta_model_first_answer, harness_question, result)
+            if model_answer:
+                answer = model_answer
+                model_first_smeta = True
+            else:
+                answer = _format_harness(result)
+        else:
+            answer = _format_harness(result)
+        if not model_first_smeta:
+            voice = await asyncio.to_thread(_harness_model_comment, result, harness_question)
+            if voice:
+                answer = f"{voice}\n\n{answer}"
         trace = {
             "mode": "estimate_harness",
+            "model_first_smeta": model_first_smeta,
             "planner_status": result.get("planner_status"),
             "steps": result.get("steps"),
             "total_status": result.get("total_status"),

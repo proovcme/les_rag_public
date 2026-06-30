@@ -9,6 +9,9 @@ from proxy.routers.chat import (
     _format_harness_artifact,
     _format_smeta_dialog_state,
     _harness_voice_comment,
+    _smeta_direct_model_answer,
+    _should_use_model_first_smeta,
+    _smeta_model_first_answer,
     _smeta_dialog_state,
     _voice_claims_source_truncated,
 )
@@ -132,6 +135,115 @@ def test_harness_voice_suppresses_unsupported_attachment_truncation_claim(monkey
     text = _harness_voice_comment({"total_status": "blocked", "needs_input": [{}]}, "ВОР\n" + ("x" * 3000))
 
     assert text == ""
+
+
+def test_blocked_all_harness_switches_to_model_first_smeta():
+    assert _should_use_model_first_smeta({
+        "total_status": "blocked",
+        "computed": [],
+        "rejected": [{"work": "Монтаж"}],
+    })
+    assert not _should_use_model_first_smeta({
+        "total_status": "partial",
+        "computed": [{"work": "Монтаж"}],
+        "rejected": [{"work": "Окраска"}],
+    })
+
+
+def test_smeta_model_first_answer_uses_model_when_harness_blocks(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": (
+                "По ТЗ вижу 3 скамьи, а деталировка дана на одну.\n"
+                "| Работа | На 1 скамью | Итого |\n"
+                "|---|---:|---:|\n"
+                "| Бетонное основание | 0,4 м3 | 1,2 м3 |\n"
+                "| Стяжка ЦПС | 0,07 м3 | 0,21 м3 |\n"
+                "Деньги требуют региона, базы цен и КАЦ/КП по материалам."
+            )}}]}
+
+    class FakeClient:
+        last_json = None
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            FakeClient.last_json = kwargs.get("json")
+            return FakeResponse()
+
+    monkeypatch.setattr("proxy.routers.chat._llm_runtime", lambda: SimpleNamespace(
+        model="test-model", provider="openai", chat_url="http://127.0.0.1/test", api_key="",
+    ))
+    monkeypatch.setattr("proxy.routers.chat.httpx.Client", FakeClient)
+
+    text = _smeta_model_first_answer(
+        "Текущий запрос:\nСмета по скамье\n\nКонтекст прикреплённого файла:\nВОР: 3 скамьи, бетон 0,4 м3",
+        {"total_status": "blocked", "rejected": [{"work": "Бетон", "reason": "нужно уточнить норму"}]},
+    )
+
+    assert "3 скамьи" in text
+    assert "1,2 м3" in text
+    prompt_payload = FakeClient.last_json["messages"][1]["content"]
+    assert "blocked_harness_advisory" in prompt_payload
+    assert "ВОР: 3 скамьи" in prompt_payload
+
+
+def test_smeta_direct_model_answer_does_not_need_harness_result(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": (
+                "По ТЗ беру 3 скамьи, деталировка дана на одну.\n"
+                "| Позиция | На 1 скамью | Итого на 3 |\n"
+                "|---|---:|---:|\n"
+                "| Гранит Г1 | 4 шт | 12 шт |\n"
+                "| Бетон В25 | 0,4 м3 | 1,2 м3 |\n"
+                "Код-калькулятор понадобится дальше для норм, цен, НР/СП и проверки единиц."
+            )}}]}
+
+    class FakeClient:
+        last_json = None
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            FakeClient.last_json = kwargs.get("json")
+            return FakeResponse()
+
+    monkeypatch.setattr("proxy.routers.chat._llm_runtime", lambda: SimpleNamespace(
+        model="test-model", provider="openai", chat_url="http://127.0.0.1/test", api_key="",
+    ))
+    monkeypatch.setattr("proxy.routers.chat.httpx.Client", FakeClient)
+
+    text = _smeta_direct_model_answer(
+        "Текущий запрос:\nСделай смету по скамье\n\nКонтекст прикреплённого файла:\n3 скамьи; Г1 4 шт; бетон 0,4 м3"
+    )
+
+    assert "12 шт" in text
+    assert "1,2 м3" in text
+    prompt_payload = FakeClient.last_json["messages"][1]["content"]
+    assert "direct_model_smeta_answer" in prompt_payload
+    assert "3 скамьи" in prompt_payload
+    assert "blocked_harness_advisory" not in prompt_payload
 
 
 def test_harness_voice_allows_visible_estimator_reasoning(monkeypatch):

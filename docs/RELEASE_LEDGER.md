@@ -7,14 +7,25 @@
 ## Текущее состояние (2026-06-30)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.106  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.108  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.106 Smeta long-TZ orchestration fix
+задеплоено на рантайм:     0.24.0.108 Smeta direct model-first experiment
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.106 · app 5.1.0 · h0.24 · runtime_alignment=aligned
+рантайм /api/version:      0.24.0.108 · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.108 — явный режим «Смета» теперь идёт от обратного: видимый ответ
+> сначала пишет сметчик-модель по полному `harness_question`/вложению и smeta
+> skill, без запуска кодового harness как предварительного фильтра. Harness
+> остаётся fallback/калькулятором/проверкой provenance; флаг
+> `LES_SMETA_DIRECT_MODEL_FIRST` по умолчанию включён для explicit Smeta и не
+> трогает auto-routed work estimate.
+> 0.24.0.107 — если сметный harness полностью заблокировал все позиции
+> (`blocked`, 0 computed), видимый ответ больше не строится как кодовая таблица
+> отказов. Модель получает полный `harness_question` и компактный
+> `blocked_harness_advisory`, сама даёт сметный разбор/ведомость количеств/
+> ценовые пробелы, а кодовый blocked-протокол остаётся в trace/artifact.
 > 0.24.0.106 — сметный chat/harness перестал создавать ложный “обрыв ТЗ”:
 > work-plan получает динамический budget ответа для длинных ТЗ/ВОР/вложений, а
 > видимый smetnik-comment теперь строится от того же `harness_question`, что и
