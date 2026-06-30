@@ -46,6 +46,14 @@ The product route has one model contract: `smeta_work_plan_v1`. If a model emits
 the harness asks it to repair the same intent into the batch JSON contract; it does not run a second
 prompt or a parallel estimator protocol.
 
+Since 0.24.0.104 the batch tool contract is deliberately thin: it describes only the JSON transport
+shape and allowed machine ids. Estimator behavior belongs to `config/prompts/smeta_estimator_role.json`
+and `skills/smeta/SKILL.md`. The role-pack now tells the model how to treat nested BOR/BOM structures
+such as "quantity for 1 item" under a parent count, and how to avoid double-counting a parent assembly
+line together with its detailed child work rows. Object-area extraction also refuses to use arbitrary
+work-row areas like `0.07 м2/шт` as object geometry; only explicit object/building/total-area wording
+can create `object_area_m2`.
+
 If the model cannot produce enough checked positions, the answer must say what is missing. It must
 not substitute a prewritten object composition.
 

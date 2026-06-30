@@ -7,14 +7,22 @@
 ## Текущее состояние (2026-06-30)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.103  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.104  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.102 Smeta intent-normalization cut
-НЕ задеплоено:             0.24.0.103 Smeta single-contract cut
-рантайм /api/version:      0.24.0.102 · app 5.1.0 · h0.24 · runtime_alignment=aligned
+задеплоено на рантайм:     0.24.0.103 Smeta single-contract cut
+НЕ задеплоено:             0.24.0.104 Smeta thin-contract + nested BOR pass
+рантайм /api/version:      0.24.0.103 · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.104 — ещё один срез кода-няньки: `BATCH_TOOL_CONTRACT`
+> теперь описывает только машинный JSON shape и допустимые ids, а не профессию
+> сметчика. Поведение сметчика перенесено/закреплено в JSON role-pack и
+> `skills/smeta/SKILL.md`. Там же добавлено общее правило для вложенных ВОР/спецификаций:
+> если строка дана “для 1 изделия/узла”, родительское количество является множителем,
+> а родительскую строку сборки нельзя автоматически считать вместе с детальной
+> расшифровкой. `_object_area_from_text` больше не превращает площади отдельных
+> строк вроде `0,07 м²/шт` в площадь объекта.
 > 0.24.0.103 — сметный harness срезал второй старый протокол: legacy
 > `{tool,args}` loop и его отдельный prompt больше не исполняются как runtime-путь.
 > Если модель вернула старый tool-call, harness просит переписать тот же смысл

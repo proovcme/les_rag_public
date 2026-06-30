@@ -257,6 +257,10 @@ def test_smeta_planner_prompt_includes_gesn_notebook_and_no_object_templates(mon
     assert "experienced_estimator_v1" in system
     assert "smeta_work_plan_v1" in system
     assert "Не отказывайся из-за отсутствия проекта/ВОР/РД" not in system
+    assert "3000 метров" not in h.BATCH_TOOL_CONTRACT
+    assert "монолитного каркаса" not in h.BATCH_TOOL_CONTRACT
+    assert "Поставка оборудования" not in h.BATCH_TOOL_CONTRACT
+    assert "Это только машинный формат вызова сметных инструментов" in h.BATCH_TOOL_CONTRACT
     assert "object_templates" not in system
     assert res["notebook_context"]["service_notebooks"] == ["gesn"]
 
@@ -272,9 +276,11 @@ def test_assumption_prompt_tells_model_not_to_refuse_without_project():
 
     first_user = seen[0][1]["content"]
     repair_user = seen[1][-1]["content"]
-    assert "Не отказывайся из-за отсутствия проекта/ВОР/РД" in first_user
-    assert "условное здание/участок работ по допущениям" in first_user
-    assert "не возвращай пустой works" in repair_user
+    system = seen[0][0]["content"]
+    assert "не отказывайся только потому, что нет проекта/вор/рд" in system.lower()
+    assert "условное здание/участок работ по допущениям" in system
+    assert "Пользователь явно разрешил сценарную прикидку" in first_user
+    assert "используй правила role-pack" in repair_user
     assert res["assumption_mode"] is True
 
 
@@ -912,6 +918,18 @@ def test_object_area_can_be_read_from_bare_house_area_phrase():
 
     assert res["computed"]
     assert res["schema"]["area_total_m2"] == 200.0
+
+
+def test_vor_line_area_per_piece_is_not_object_area():
+    text = (
+        "Ведомость объемов работ: Сборка и монтаж скамьи тип 1.1 шт 3. "
+        "Ведомость скамьи тип 1.1 (для 1 скамьи). "
+        "Окраска пластин краской по металлу, площадь 0,07 м²/шт."
+    )
+    slots = h.parse_params(text)
+
+    assert slots["area_m2"] == 0.07
+    assert h._object_area_from_text(text, slots) is None
 
 
 def test_model_placeholder_area_does_not_create_fake_object_geometry():

@@ -69,6 +69,8 @@ def test_smeta_prompt_is_model_first_and_has_no_object_templates():
     assert "условное здание/участок работ по допущениям" in prompt
     assert "поставка оборудования" in prompt.lower()
     assert "не ГЭСН search_norm" in prompt
+    assert "для 1 изделия/узла" in prompt
+    assert "родительскую строку" in prompt
     assert "object_templates" not in prompt
     assert "шаблон" not in low
 
@@ -84,6 +86,7 @@ def test_smeta_estimator_role_pack_is_json_contract():
     assert pack["object_decomposition_policy"]["rule"]
     assert any("не отказывайся" in item.lower() for item in pack["operating_principles"])
     assert any("поставка оборудования" in item.lower() for item in pack["operating_principles"])
+    assert any("вложенную ведомость" in item.lower() for item in pack["operating_principles"])
     assert any("не проводи через search_norm" in item.lower() for item in pack["source_and_price_policy"])
     assert "dry" in pack["voice_policy"]["style"]
 

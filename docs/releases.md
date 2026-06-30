@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.104** | HEAD | Smeta thin-contract pass: `BATCH_TOOL_CONTRACT` now only describes the machine JSON shape, while estimator behavior lives in the JSON role-pack/skill. The role-pack gained nested BOR/BOM guidance for parent-child quantities ("for 1 item" × parent count) and parent assembly vs detailed child-row double-counting. Object-area extraction no longer treats arbitrary work-row areas such as `0.07 м²/шт` as project geometry. |
 | **v0.24.0.103** | HEAD | Smeta single-contract cut: the legacy stepwise `{tool,args}` estimate loop and its separate prompt were removed from the execution path. If a model emits an old tool-call, the harness asks it to repair the response into one `smeta_work_plan_v1` batch JSON instead of running a second estimator protocol. |
 | **v0.24.0.102** | HEAD | Smeta intent-normalization cut: work-plan normalization no longer rewrites `work_family` or `element_type` from regex text signals; those fields remain the model's decision, while code only normalizes action/unit aliases, exposes non-binding intent hints in trace, and keeps calculation in `add_position`. |
 | **v0.24.0.101** | HEAD | Smeta model-choice loop: ambiguous `search_norm` shortlists now go back to the model for a norm choice or user question; the batch harness no longer skips to the first applicable candidate by itself, and `add_position` calculates only after a selected shortlist code passes gates. |
