@@ -654,6 +654,39 @@ def test_direct_mass_duplicate_norms_need_separate_quantity_not_multiplied():
     assert res["direct_quantity_slots"] == ["mass_t"]
 
 
+def test_direct_mass_can_price_explicit_distinct_operations():
+    plan = {
+        "object": {"object_type": "metal_structure", "area_total_m2": 150},
+        "works": [
+            ["Контрольная сборка облицованных бронзой стальных каркасов",
+             "Контрольная сборка стальных каркасов",
+             "metal", "metal_assembly", "монтаж", "т", {}],
+            ["Промежуточная разборка после контрольной сборки",
+             "Промежуточная разборка стальных каркасов",
+             "metal", "metal_assembly", "демонтаж", "т", {}],
+            ["Монтаж стальных каркасов на строительной площадке",
+             "Монтаж стальных каркасов на строительной площадке",
+             "metal", "metal_assembly", "монтаж", "т", {}],
+        ],
+    }
+
+    res = h.run_estimate_harness(
+        "ТЗ: масса стальных каркасов 664 711 кг. Разделы: контрольная сборка; "
+        "промежуточная разборка после нее; монтаж на строительной площадке.",
+        lambda _m: json.dumps(plan, ensure_ascii=False),
+    )
+
+    assert len(res["computed"]) == 3
+    assert len(res["skipped"]) == 0
+    assert {p["operation_key"] for p in res["computed"]} == {
+        "контрольная сборка",
+        "промежуточная разборка",
+        "монтаж на площадке",
+    }
+    assert all(abs(p["phys_qty"] - 664.711) < 0.001 for p in res["computed"])
+    assert res["final_total"]["positions"] == 3
+
+
 def test_direct_volume_computes_without_object_geometry():
     st = {"schema": {}, "geom": {}, "positions": [], "steps": 0,
           "user_slots": {"volume_m3": 200.0}}

@@ -7,14 +7,21 @@
 ## Текущее состояние (2026-06-30)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.98  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.99  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.98 Smeta prompt-first repair
+задеплоено на рантайм:     0.24.0.99 Smeta model-freedom repair
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.98 · app 5.1.0 · h0.24 · runtime_alignment=aligned
+рантайм /api/version:      0.24.0.99 · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.99 — сметному режиму возвращена свобода профессиональной декомпозиции:
+> ТЗ/ВОР/приложенный файл и предыдущий диалог объявлены первичными исходными для модели.
+> Если в ТЗ явно перечислены самостоятельные операции над одним изделием (например контрольная
+> сборка, промежуточная разборка, монтаж на строительной площадке), одна физическая масса может
+> быть исходным количеством для каждой операции. Duplicate-guard теперь отличает такие операции
+> от настоящих дублей и опциональных “если требуется/уточнить долю”, а prompt/skill направляют
+> модель в ГЭСН notebook/search_norm вместо схлопывания разделов в одну позицию.
 > 0.24.0.98 — сметный режим усилен со стороны prompt/skill, а не объектных шаблонов:
 > `skills/smeta/SKILL.md`, JSON role-pack и компактный machine contract закрепляют,
 > что модель-сметчик переносит уже сказанные параметры в план, использует разрешённые
@@ -337,6 +344,7 @@ dev HEAD:                  HEAD  (см. git log -1)
 
 | Версия | commit | дата | что | деплой |
 |---|---|---|---|---|
+| 0.24.0.99 | HEAD | 2026-06-30 | Smeta model-freedom repair: ТЗ/ВОР/файл первичны для модели; прямой физический объём может использоваться несколькими явно названными самостоятельными операциями над тем же изделием; duplicate-guard отличает такие операции от опциональных дублей без доли/объёма | ✅ smeta focused 80/80 + verify |
 | 0.24.0.98 | HEAD | 2026-06-30 | Smeta prompt-first repair: сметный skill/role-pack и machine contract учат модель переносить уже сказанные параметры/допущения в work-plan, понимать разговорные площади/глубины и не выбирать сваи/ростверк без явного указания; код принимает русские формы метров, штрафует свайные нормы вне свайного контекста и не придумывает недостающие формульные слоты | ✅ full test 2272/2272 + verify/public-check |
 | 0.24.0.94 | HEAD | 2026-06-30 | Samovar operator indexing pass: dataset play creates a durable/background `rag_parse_batch` job, the GUI shows live parse jobs/ETA/memory guard/light-vs-OCR pending counts, scheduler settings return with safe defaults reset, and backend pending order prefers non-OCR documents before scan/OCR work | ✅ focused Sovushka/backend + ship/smoke |
 | 0.24.0.93 | HEAD | 2026-06-30 | Volk admin hotfix: кнопки и события таблицы В.О.Л.К. привязываются после объявления `_volk_*` async handlers; classic admin закрывает второй `UnboundLocalError` после cleanup-а async handlers | ✅ focused Sovushka + ship/smoke |

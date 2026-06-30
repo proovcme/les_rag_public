@@ -8,10 +8,11 @@
   "operating_principles": [
     "Сначала выясни, что считается: готовая смета/ВОР из таблицы, локальная позиция, объектная прикидка или вопрос по нормам.",
     "Для режима smeta_harness верни машинный JSON work-plan: это твой способ вызвать инструменты расчёта и проверки. Видимый ответ строится из результатов инструментов и твоего сметного комментария.",
+    "ТЗ, ВОР, приложенный файл и предыдущий диалог для тебя первичны: если там прямо перечислены разделы/операции, не выбрасывай их только из-за того, что они используют одну физическую массу или площадь.",
     "Коды ГЭСН, ресурсы, НР/СП, коэффициенты, цены и итоговые суммы не выдумывай.",
     "РИМ/ГЭСН применяй как цепочку: работа -> норма -> ресурсы -> цены -> прямые -> ФОТ -> НР/СП -> всего по позиции.",
     "Если пользователь дал физический объём/массу/площадь, считай это исходным количеством позиции; не требуй геометрию только ради пересчёта уже заданного объёма.",
-    "Одна масса, один объём или одна площадь не могут автоматически стать несколькими денежными позициями. Для каждой дополнительной работы нужна отдельная доля, отдельный объём или явное условие.",
+    "Одна масса, один объём или одна площадь не могут автоматически стать несколькими денежными позициями. Но если пользователь/ТЗ прямо перечисляет разные самостоятельные операции над тем же изделием (например сборка, разборка, монтаж), та же физическая масса может быть исходным количеством для каждой такой операции.",
     "Счётные количества в штуках нельзя выводить из площади, массы или объёма другого раздела; нужен явный счётный параметр или подтверждённый источник.",
     "Объектный запрос с площадью — это состав работ по явно названным разделам, а не одна самая заметная позиция. Не схлопывай дом/здание/помещение/участок работ в один яркий раздел, если пользователь назвал несколько разделов.",
     "Если раздел очевидно входит в запрос, но его параметры не заданы, не молчи и не выдумывай: добавь раздел в missing_inputs или верни work без слотов, чтобы код показал уточнение.",
@@ -33,6 +34,7 @@
     "rule": "For an object-level estimate, the model owns the work breakdown. It must extract explicitly mentioned sections and return a compact but multi-position plan when the request names multiple sections.",
     "required_behavior": [
       "For a direct work estimate, keep the plan narrow around the named work and direct quantity.",
+      "When a file/TZ explicitly lists estimate sections, include those sections as separate work items unless a section is plainly outside the requested scope.",
       "For an object scenario authorized by the user, create a professional coarse work breakdown with separate assumptions per section instead of waiting for project documentation.",
       "If the user names a frame/wood structural system, include a wood/frame work item unless the request is only asking about another isolated work.",
       "If the user names roof type or roofing, include roofing/waterproofing as separate work items when applicable.",
@@ -57,15 +59,16 @@
   },
   "direct_quantity_policy": {
     "slots": ["volume_m3", "area_m2", "mass_t", "piece_count"],
-    "rule": "Direct quantity is authoritative for the matching physical unit. The planner may propose candidate works, but must not reuse the same direct quantity across multiple billable positions unless it supplies a separate share or separate quantity.",
+    "rule": "Direct quantity is authoritative for the matching physical unit. The planner may propose candidate works, but must not reuse the same direct quantity across multiple billable positions unless it supplies a separate share, separate quantity, or the user/TZ explicitly named distinct paid operations over the same object.",
     "examples": [
       "масса 664.711,12 кг -> one metal_assembly work with unit т; optional welding/storage/subassembly need shares or separate quantities",
+      "масса металлоконструкций + контрольная сборка + промежуточная разборка + монтаж на площадке -> three distinct operations may use the same mass if they are all explicitly requested",
       "объем выработки грунта 200 м3 -> one excavation work with unit м3; width/depth are not required to convert 200 м3 to 100 м3 norm units"
     ]
   },
   "rim_gesn_policy": [
     "Use search_norm for normative candidates; do not put guessed codes into the plan.",
-    "Use the GESN notebook and norm_navigation as a map: choose the work family, likely collection, physical unit and applicability questions before trusting a candidate.",
+    "Use the GESN notebook, attached TZ wording and norm_navigation as a map: choose the work family, likely collection, physical unit and applicability questions before trusting a candidate.",
     "When search_norm returns nearby_norms, compare the first returned norm against nearby alternatives by title, measure unit and conditions instead of blindly taking the first lexical hit.",
     "When a norm card exposes conditions_to_check or navigation.questions_to_ask, ask those questions in normal estimator Russian if the user/file did not already answer them.",
     "When search_norm returns norm_decision_context, use it as a checklist: collection, unit, conditions, nearby norms, then price coverage.",
@@ -105,7 +108,7 @@
     },
     "anti_patterns": [
       "Do not output markdown, prose, totals, norm codes or resource prices.",
-      "Do not split one direct mass into монтаж + складирование + укрупнительная сборка + сварка unless shares/quantities are explicit.",
+      "Do not split one direct mass into монтаж + складирование + укрупнительная сборка + сварка when these works are optional or invented; if the user/TZ explicitly named distinct operations, keep them as separate work items.",
       "Do not ask for РД merely because the user gave a direct physical quantity; ask only for parameters needed for applicability or optional works.",
       "Do not invent project area for direct quantity requests as a meaningful visible parameter.",
       "Do not invent object area for broad object estimates unless the user explicitly requested a scenario by assumptions; then mark it as assumptions.",

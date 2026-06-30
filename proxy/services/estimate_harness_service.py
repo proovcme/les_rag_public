@@ -99,6 +99,9 @@ _ELEMENT_DEFAULT_FAMILY: dict[str, str] = {
 _ACTION_ALIASES: dict[str, str] = {
     "assemble": "монтаж",
     "assembly": "монтаж",
+    "disassemble": "демонтаж",
+    "dismantle": "демонтаж",
+    "demount": "демонтаж",
     "cast": "бетонирование",
     "pour": "бетонирование",
     "excavate": "разработка",
@@ -274,6 +277,36 @@ def _normalize_action(action: str) -> str:
 def _normalize_unit_hint(unit: str) -> str:
     u = _canon_unit(unit)
     return _UNIT_ALIASES.get(u, u if u in {"м3", "м2", "т", "шт"} else "")
+
+
+_OPTIONAL_WORK_RE = re.compile(
+    r"\b(?:если\s+требуется|при\s+необходимости|опциональн\w*|уточнить\s+дол\w*|"
+    r"уточнить\s+об[ъь]е[мё]\w*|требует\s+уточнен\w*)\b",
+    re.IGNORECASE,
+)
+
+_DIRECT_OPERATION_SIGNALS: tuple[tuple[str, str], ...] = (
+    ("промежуточная разборка", "промежуточн\\w*\\s+разборк"),
+    ("контрольная сборка", "контрольн\\w*\\s+сборк"),
+    ("разборка", "разборк|демонтаж|демонт"),
+    ("укрупнительная сборка", "укрупнительн\\w*\\s+сборк"),
+    ("монтаж на площадке", "монтаж.*(?:площадк|месте|объект|стройплощадк)"),
+    ("монтаж", "монтаж|установк"),
+    ("сварочные работы", "сварочн|сварк"),
+    ("погрузочно-разгрузочные работы", "погруз|разгруз|складирован"),
+)
+
+
+def _direct_operation_key(work: str) -> str:
+    text = (work or "").casefold().replace("ё", "е")
+    for key, pattern in _DIRECT_OPERATION_SIGNALS:
+        if re.search(pattern, text):
+            return key
+    return ""
+
+
+def _is_optional_direct_work(work: str) -> bool:
+    return bool(_OPTIONAL_WORK_RE.search((work or "").casefold().replace("ё", "е")))
 
 
 def _normalize_work_item(item: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
@@ -1029,6 +1062,9 @@ BATCH_TOOL_CONTRACT = (
     "Если пользователь явно просит придумать/прикинуть/посчитать по допущениям, можно задать "
     "типовой сценарий: area_total_m2 и slots как допущения, но обязательно добавь object.assumptions "
     "и work assumptions с понятным текстом; это сценарная прикидка, не проектная смета.\n"
+    "ТЗ/ВОР/приложенный файл первичны: если там прямо названы разделы работ, включай их в works "
+    "и используй ГЭСН notebook/search_norm для навигации по нормам; не схлопывай разделы в одну позицию "
+    "только потому, что у них общий физический объём.\n"
     "Уже сказанные параметры из текущего запроса/истории обязательно переноси в slots; не спрашивай "
     "повторно глубину, толщину, массу или площадь, если они уже написаны словами вроде «2 метра».\n"
     "Разговорное «3000 метров» у здания трактуй как вероятную площадь 3000 м2: если пользователь "
@@ -1039,7 +1075,9 @@ BATCH_TOOL_CONTRACT = (
     "unit т; код сам достанет mass_t из запроса и пересчитает кг в тонны.\n"
     "Если дана одна физическая масса/площадь/объём, не раскладывай её в несколько платных работ "
     "с тем же количеством без явных долей или отдельных количеств. Опциональные работы без доли "
-    "лучше укажи в missing_inputs, а не в works.\n"
+    "лучше укажи в missing_inputs, а не в works. Исключение: если пользователь/ТЗ прямо перечисляет "
+    "разные операции над тем же изделием (контрольная сборка, разборка, монтаж на площадке), оставь "
+    "их отдельными работами с той же физической массой.\n"
     "Если запрос объектный (дом, здание, помещение, участок работ) и дана площадь, works — это состав "
     "явно названных разделов объекта, а не одна самая заметная позиция. Если в запросе названо несколько "
     "разделов, верни их отдельными work items; разделы без параметров оставь как missing_inputs.\n"
@@ -1070,6 +1108,9 @@ def _add_position(args: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]
     base_pos = {"work": args.get("work", ""), "code": code, "work_family": family,
                 "physical_unit": _canon_unit(args.get("physical_unit", "")),
                 "assumptions": list(args.get("assumptions", []) or [])}
+    operation_key = _direct_operation_key(str(base_pos.get("work") or ""))
+    if operation_key:
+        base_pos["operation_key"] = operation_key
     spec_hint = FORMULA_CATALOG.get(et)
     expr_hint = str((spec_hint or {}).get("expr") or "")
     needs_geom = bool(re.search(r"\b(?:S|S1|P|H|N)\b", expr_hint))
@@ -1208,16 +1249,24 @@ def _add_position(args: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]
                     "reason": mag_reason + " — проверь формулу"}
     if is_direct_quantity:
         for prev in state.get("positions", []):
+            prev_operation = str(prev.get("operation_key") or _direct_operation_key(str(prev.get("work") or "")))
+            same_operation = (
+                not operation_key
+                or not prev_operation
+                or operation_key == prev_operation
+                or _is_optional_direct_work(str(base_pos.get("work") or ""))
+            )
             if (
                 prev.get("status") == "computed"
                 and prev.get("code") == code
                 and _canon_unit(prev.get("physical_unit", "")) == _canon_unit(base_pos["physical_unit"])
                 and str(prev.get("formula") or "") == str(base_pos.get("formula") or "")
                 and abs(_f(prev.get("phys_qty")) - _f(phys)) < 1e-9
+                and same_operation
             ):
                 reason = (
                     "дублирует уже посчитанную позицию с тем же кодом и физическим объёмом; "
-                    "нужна отдельная доля или отдельный объём"
+                    "нужна отдельная операция, доля или отдельный объём"
                 )
                 state["positions"].append({
                     **base_pos,
