@@ -4,7 +4,9 @@ from proxy.services.prompt_registry_service import (
     build_mode_system_prompt,
     build_smeta_batch_system_prompt,
     mode_tools,
+    normcontrol_role_pack,
     prompt_registry_snapshot,
+    rag_search_role_pack,
     reset_prompt_override,
     smeta_estimator_role_pack,
     update_prompt_override,
@@ -22,6 +24,8 @@ def test_prompt_registry_exposes_common_tone_modes_and_tools():
     assert "retrieval" in snap["modes"]["rag"]["tools"]
     assert snap["role_packs"]["smeta_harness"]["id"] == "experienced_estimator_v1"
     assert snap["role_packs"]["smeta_harness"]["output_contract"]["schema"] == "smeta_work_plan_v1"
+    assert snap["role_packs"]["rag_search"]["id"] == "rag_search_researcher_v1"
+    assert snap["role_packs"]["normcontrol"]["id"] == "normcontrol_reviewer_v1"
 
 
 def test_mode_system_prompt_includes_mode_tone_without_tool_contracts():
@@ -183,3 +187,45 @@ def test_smeta_estimator_role_pack_is_json_contract():
 
 def test_mode_tools_unknown_is_empty():
     assert mode_tools("unknown") == []
+
+
+def test_rag_search_role_pack_is_model_first_contract():
+    pack = rag_search_role_pack()
+
+    assert pack["schema"] == "les.prompt.role_pack.v1"
+    assert pack["mode"] == "rag"
+    assert "active_dataset" in pack["search_scopes"]
+    assert "target_file" in pack["search_scopes"]
+    assert "confirmed_by_source" in pack["evidence_statuses"]
+    assert "source_conflict" in pack["evidence_statuses"]
+    assert "missing_evidence" in pack["evidence_statuses"]
+    assert "source_table" in pack["required_answer_capabilities"]
+    assert "answer_with_sources" in pack["required_answer_capabilities"]
+    assert pack["hard_rules"]["model_links_sources"] is True
+    assert pack["hard_rules"]["code_only_retrieves_reranks_filters_and_calculates"] is True
+    assert pack["hard_rules"]["target_file_scope_is_strict"] is True
+    assert pack["hard_rules"]["missing_evidence_is_not_negative_fact"] is True
+    assert pack["hard_rules"]["table_numbers_require_deterministic_path"] is True
+    assert pack["hard_rules"]["do_not_show_internal_json_unless_requested"] is True
+    assert pack["hard_rules"]["do_not_expose_raw_rag_terms"] is True
+
+
+def test_normcontrol_role_pack_is_model_first_contract():
+    pack = normcontrol_role_pack()
+
+    assert pack["schema"] == "les.prompt.role_pack.v1"
+    assert pack["mode"] == "normcontrol"
+    assert "pass" in pack["review_statuses"]
+    assert "remark" in pack["review_statuses"]
+    assert "needs_more_evidence" in pack["review_statuses"]
+    assert "rule_or_source" in pack["remark_fields"]
+    assert "normalized_remarks" in pack["required_answer_capabilities"]
+    assert "computed_checks" in pack["required_answer_capabilities"]
+    assert "rag_review_findings" in pack["required_answer_capabilities"]
+    assert pack["hard_rules"]["model_formulates_engineering_remarks"] is True
+    assert pack["hard_rules"]["computed_checks_are_separate_from_rag_review"] is True
+    assert pack["hard_rules"]["defense_contract_required"] is True
+    assert pack["hard_rules"]["missing_evidence_is_unknown_not_pass"] is True
+    assert pack["hard_rules"]["missing_evidence_is_unknown_not_fail"] is True
+    assert pack["hard_rules"]["no_final_legal_verdict_without_complete_scope"] is True
+    assert pack["hard_rules"]["remark_requires_rule_or_source"] is True

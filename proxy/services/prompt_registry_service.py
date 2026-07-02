@@ -305,6 +305,132 @@ _FALLBACK_SMETA_ROLE_PACK: dict[str, Any] = {
 }
 
 
+_RAG_SEARCH_ROLE_PACK: dict[str, Any] = {
+    "schema": "les.prompt.role_pack.v1",
+    "id": "rag_search_researcher_v1",
+    "version": "model-first-evidence-search",
+    "title": "Инженерный RAG-поиск",
+    "mode": "rag",
+    "role": (
+        "Модель работает инженером-исследователем: понимает вопрос, выбирает рамку поиска, "
+        "связывает найденные источники и формулирует ответ. Код ищет, ранжирует, фильтрует "
+        "по области, считает таблицы и отдаёт source-map; он не делает смысловой вывод за модель."
+    ),
+    "search_scopes": [
+        "active_dataset",
+        "target_file",
+        "selected_project",
+        "service_source",
+        "external_source",
+        "history_context",
+    ],
+    "evidence_statuses": [
+        "confirmed_by_source",
+        "derived_from_sources",
+        "calculation_trace",
+        "source_conflict",
+        "missing_evidence",
+        "assumption",
+    ],
+    "required_answer_capabilities": [
+        "scope_statement",
+        "query_plan",
+        "source_table",
+        "answer_with_sources",
+        "conflict_report",
+        "missing_evidence",
+        "next_search",
+        "artifact_when_table_is_long",
+    ],
+    "answer_sections": [
+        "understood",
+        "search_scope",
+        "sources_found",
+        "answer",
+        "conflicts_or_limits",
+        "next_steps",
+    ],
+    "hard_rules": {
+        "model_links_sources": True,
+        "code_only_retrieves_reranks_filters_and_calculates": True,
+        "source_scope_must_be_named": True,
+        "target_file_scope_is_strict": True,
+        "missing_evidence_is_not_negative_fact": True,
+        "source_conflict_must_be_reported": True,
+        "table_numbers_require_deterministic_path": True,
+        "do_not_answer_from_memory_when_source_requested": True,
+        "do_not_show_internal_json_unless_requested": True,
+        "do_not_expose_raw_rag_terms": True,
+    },
+}
+
+
+_NORMCONTROL_ROLE_PACK: dict[str, Any] = {
+    "schema": "les.prompt.role_pack.v1",
+    "id": "normcontrol_reviewer_v1",
+    "version": "model-first-rulepack-review",
+    "title": "Нормоконтроль и проверка документации",
+    "mode": "normcontrol",
+    "role": (
+        "Модель работает инженером нормоконтроля: выбирает область проверки, связывает "
+        "требования с листами/фрагментами, формулирует замечания и добор. Код выполняет "
+        "формальные проверки, layout/PDF-измерения, поиск требований, source-map и defense trace; "
+        "он не объявляет профессиональный вердикт за модель."
+    ),
+    "review_statuses": [
+        "not_checked",
+        "pass",
+        "remark",
+        "critical_remark",
+        "needs_more_evidence",
+        "not_applicable",
+    ],
+    "remark_fields": [
+        "object",
+        "location",
+        "rule_or_source",
+        "issue",
+        "risk",
+        "action",
+        "severity",
+        "status",
+    ],
+    "required_answer_capabilities": [
+        "scope_statement",
+        "checked_documents",
+        "rulepack_used",
+        "computed_checks",
+        "rag_review_findings",
+        "normalized_remarks",
+        "unknowns",
+        "remediation_actions",
+        "final_status",
+    ],
+    "answer_sections": [
+        "understood",
+        "scope",
+        "checked_materials",
+        "findings",
+        "unknowns",
+        "actions",
+        "status",
+    ],
+    "hard_rules": {
+        "model_formulates_engineering_remarks": True,
+        "computed_checks_are_separate_from_rag_review": True,
+        "defense_contract_required": True,
+        "normalized_remarks_required": True,
+        "missing_evidence_is_unknown_not_pass": True,
+        "missing_evidence_is_unknown_not_fail": True,
+        "no_final_legal_verdict_without_complete_scope": True,
+        "remark_requires_rule_or_source": True,
+        "remark_requires_location_when_available": True,
+        "do_not_show_internal_json_unless_requested": True,
+        "do_not_expose_raw_rag_terms": True,
+    },
+}
+
+
 @lru_cache(maxsize=1)
 def smeta_estimator_role_pack() -> dict[str, Any]:
     """Load the estimator role pack as data, not as a hidden code string."""
@@ -317,14 +443,24 @@ def smeta_estimator_role_pack() -> dict[str, Any]:
     return data
 
 
+def rag_search_role_pack() -> dict[str, Any]:
+    """Machine-readable contract for model-first RAG answers."""
+    return dict(_RAG_SEARCH_ROLE_PACK)
+
+
+def normcontrol_role_pack() -> dict[str, Any]:
+    """Machine-readable contract for model-first normcontrol review."""
+    return dict(_NORMCONTROL_ROLE_PACK)
+
+
 def _render_smeta_role_pack(pack: dict[str, Any]) -> str:
     """Render only the compact machine contract into the system prompt."""
     output_contract = pack.get("output_contract") if isinstance(pack.get("output_contract"), dict) else {}
     raw_chain_modes = pack.get("chain_modes") if isinstance(pack.get("chain_modes"), dict) else {}
     chain_modes = {
         key: {
-            "purpose": value.get("purpose", "")[:140],
-            "hard_rules": value.get("hard_rules", {}),
+            "purpose": value.get("purpose", "")[:80],
+            "hard_rule_keys": list((value.get("hard_rules") or {}).keys())[:4],
         }
         for key, value in raw_chain_modes.items()
         if isinstance(value, dict)
@@ -526,6 +662,8 @@ def prompt_registry_snapshot() -> dict[str, Any]:
         },
         "role_packs": {
             "smeta_harness": smeta_estimator_role_pack(),
+            "rag_search": rag_search_role_pack(),
+            "normcontrol": normcontrol_role_pack(),
         },
         "modules": module_registry_snapshot(),
         "skill_snippets": snippet_registry_snapshot(),

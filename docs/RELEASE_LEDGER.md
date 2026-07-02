@@ -7,14 +7,22 @@
 ## Текущее состояние (2026-07-02)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.171  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.172  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
 задеплоено на рантайм:     0.24.0.171 smeta excel roundtrip contract
-НЕ задеплоено:             —
+НЕ задеплоено:             0.24.0.172 rag/normcontrol skill contracts
 рантайм /api/version:      0.24.0.171 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.172 — RAG-поиск и нормоконтроль получили такой же слой
+> prompt/skill-контракта, как сметный режим: `prompt_registry_service`
+> отдаёт role-pack'и `rag_search_researcher_v1` и `normcontrol_reviewer_v1`,
+> а подробная рабочая дисциплина вынесена в `skills/rag_search/SKILL.md` и
+> `skills/normcontrol/SKILL.md`. Инвариант общий: модель связывает источники
+> и формулирует вывод/замечания, код только ищет, ранжирует, считает,
+> проверяет layout/formal и отдаёт trace; missing не становится фактом,
+> pass или fail.
 > 0.24.0.171 — smeta skill/role-pack закрепили алгоритм сметчика для
 > Excel round-trip: таблица кандидатов разделена на блок `Данные ТЗ / ВОР`
 > и блок `Соответствие данным ТЗ / ГЭСН`; видимый `№ ВОР` не является
