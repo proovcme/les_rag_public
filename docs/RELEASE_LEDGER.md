@@ -7,14 +7,21 @@
 ## Текущее состояние (2026-07-02)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.163  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.164  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.163 smeta human-visible RIM fallback polish
+задеплоено на рантайм:     0.24.0.164 smeta RAG source discipline
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.163 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
+рантайм /api/version:      0.24.0.164 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.164 — smeta direct получил source discipline без региональных
+> костылей и без пост-редактора ответа: light prompt видит компактную карту
+> `SMETA_SERVICE`, полный список доступных локальных pricebook и правило
+> сначала проверять RAG/источники ЛЕС. Если книга, сборник или нормативная
+> база доступны, модель должна писать, что источник есть, а до финального РИМ
+> остаются выбор нормы, раскрытие ресурсов, exact-match ценовой строки,
+> регион/период или условия применимости.
 > 0.24.0.163 — smeta runtime polish после живых прогонов СКС/столпа:
 > быстрый `smeta_direct` fallback больше не выводит наружу машинные статусы
 > `scenario_estimate/priced_final`, а пишет человечески: предварительная

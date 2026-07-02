@@ -14,6 +14,7 @@ from proxy.routers.chat import (
     _smeta_active_state_from_answer,
     _smeta_direct_rag_context,
     _smeta_direct_model_answer,
+    _smeta_direct_user_prompt,
     _format_active_smeta_state,
     _smeta_harness_question,
     _should_use_model_first_smeta,
@@ -73,6 +74,33 @@ def test_mlx_runtime_defaults_to_mlx_model(monkeypatch):
     runtime = _mlx_runtime()
 
     assert runtime.model == "mlx-community/Qwen3.5-9B-MLX-4bit"
+
+
+def test_smeta_direct_prompt_includes_available_pricebooks_without_region_hardcode(monkeypatch):
+    monkeypatch.setattr(
+        "proxy.services.fgis_price_service.available_pricebooks",
+        lambda *args, **kwargs: [
+            "/tmp/moskva_2kv2026.parquet",
+            "/tmp/krasnodarskiy-kray_2kv2026.parquet",
+            "/tmp/spb_2kv2026.parquet",
+        ],
+    )
+
+    prompt = _smeta_direct_user_prompt(
+        "Дай оценку по РИМ, Краснодарский край, 2 кв. 2026",
+        "",
+        "",
+        light=True,
+    )
+
+    assert "krasnodarskiy-kray_2kv2026" in prompt
+    assert "moskva_2kv2026" in prompt
+    assert "spb_2kv2026" in prompt
+    assert "сначала смотри в эти книги и RAG" in prompt
+    assert "спроси именно регион/период" in prompt
+    assert "Карта сметного RAG ЛЕС" in prompt
+    assert "Основные карточки сборников" in prompt
+    assert "это карта доступных сметных источников ЛЕС, а не готовая смета" in prompt
 
 
 def test_harness_voice_allows_short_human_comment(monkeypatch):

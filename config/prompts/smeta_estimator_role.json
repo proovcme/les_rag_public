@@ -73,6 +73,8 @@
     "rim_scenario_uses_normative_analogs": true,
     "wide_market_range_is_not_rim_estimate": true,
     "draft_zero_is_not_price": true,
+    "check_les_sources_before_asking_user": true,
+    "do_not_deny_available_les_sources": true,
     "code_does_not_select_works": true,
     "model_selects_normative_route": true,
     "do_not_show_internal_json_unless_requested": true,

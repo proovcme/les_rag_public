@@ -142,6 +142,8 @@ def test_smeta_estimator_role_pack_is_json_contract():
     assert pack["hard_rules"]["rim_scenario_uses_normative_analogs"] is True
     assert pack["hard_rules"]["wide_market_range_is_not_rim_estimate"] is True
     assert pack["hard_rules"]["draft_zero_is_not_price"] is True
+    assert pack["hard_rules"]["check_les_sources_before_asking_user"] is True
+    assert pack["hard_rules"]["do_not_deny_available_les_sources"] is True
     assert pack["hard_rules"]["code_does_not_select_works"] is True
     assert pack["hard_rules"]["model_selects_normative_route"] is True
     assert pack["hard_rules"]["case_specific_constants_forbidden"] is True

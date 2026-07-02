@@ -1859,6 +1859,13 @@ def _smeta_direct_light_system_prompt() -> str:
         "Уточняющие вопросы идут после полезного расчёта, а не вместо него. "
         "Если пользователь просит коды/номера ГЭСН, работай по текущей ВОР и доступному RAG/поиску норм. "
         "Если точный код не подтверждён, дай кандидата или раздел с пометкой проверки, а не отказ. "
+        "Перед тем как писать, что чего-то нет, проверь RAG и сметные источники ЛЕС: карту ГЭСН/РИМ, "
+        "локальные ценовые книги ФГИС ЦС, КАЦ, предыдущую смету и вложения. У пользователя спрашивай только "
+        "то, чего нет ни в исходнике, ни в RAG/источниках ЛЕС. Нельзя писать «нет сплит-формы», "
+        "«нет ценовой базы» или «пользователь не приложил нормы», если блок источников ЛЕС показывает "
+        "доступную книгу, сборник или нормативную базу. Если источник в ЛЕС есть, говори точнее: "
+        "«источник есть, нужно выбрать норму/ресурс/ценовую строку или закрыть условия применимости». "
+        "Если регион/период не определён, спроси регион/период; если они определены, ищи подходящую книгу. "
         "Пиши по-русски как сметчик: ясно, проверяемо, без JSON и служебных внутренних терминов."
     )
 
@@ -1953,14 +1960,22 @@ def _smeta_direct_user_prompt(
     *,
     light: bool,
 ) -> str:
+    source_context = "\n\n".join(
+        x for x in (
+            _smeta_service_rag_map_context(),
+            _smeta_available_pricebook_context(),
+            str(rag_context or ""),
+        )
+        if x
+    )
     if light:
         return (
             "Исходные данные:\n"
             f"{str(harness_question or '')[:22000]}\n\n"
             "Расчётная проверка чисел, если есть:\n"
             f"{numeric_audit_context or 'нет детерминированной трассы; не объявляй длинные суммы проверенными без расчёта'}\n\n"
-            "Релевантные фрагменты RAG:\n"
-            f"{str(rag_context or '')[:12000]}\n\n"
+            "Релевантные фрагменты RAG и доступные сметные источники ЛЕС:\n"
+            f"{source_context[:12000]}\n\n"
             "Ответь как инженер-сметчик. Сначала определи: это новая задача или продолжение "
             "текущей сметы. Если новая задача — собери ВОР, отдели работы от поставки, дай "
             "нормативный ход, стоимость работ или сценарную оценку, допущения и добор. "
@@ -1973,8 +1988,8 @@ def _smeta_direct_user_prompt(
         f"{str(harness_question or '')[:22000]}\n\n"
         "Расчётная трасса арифметики исходника, если ЛЕС смог извлечь её детерминированно:\n"
         f"{numeric_audit_context or 'нет детерминированной трассы; не объявляй длинные суммы проверенными без расчёта'}\n\n"
-        "Фрагменты из выбранной базы, если они есть:\n"
-        f"{str(rag_context or '')[:12000]}\n\n"
+        "Фрагменты из выбранной базы и доступные сметные источники ЛЕС, если они есть:\n"
+        f"{source_context[:12000]}\n\n"
         "Ответь как сметчик, без служебных слов и без Markdown-заголовков #/##/###. Используй "
         "короткие жирные метки секций в таком порядке, пропуская только неприменимые блоки: "
         "1) Что понял; 2) Контроль исходных чисел; 3) Форма развилки исходных объёмов, если есть "
@@ -2251,6 +2266,77 @@ def _smeta_service_context_prompt() -> str:
     except Exception as exc:  # noqa: BLE001
         logger.warning("[SMETA] service source prompt skipped: %s", exc)
     return "\n\n".join(blocks)
+
+
+def _smeta_available_pricebook_context() -> str:
+    try:
+        from proxy.services import fgis_price_service as fps
+
+        books = fps.available_pricebooks()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[SMETA] pricebook context skipped: %s", exc)
+        return ""
+    if not books:
+        return ""
+    stems = sorted(Path(p).stem for p in books)
+    shown = stems[:80]
+    return (
+        "Доступные локальные ценовые книги ФГИС ЦС / сплит-формы: "
+        f"{', '.join(shown)}. Всего книг: {len(stems)}. "
+        "Рабочее правило: сначала смотри в эти книги и RAG, потом спрашивай пользователя. "
+        "Не пиши, что пользователь не приложил сплит-форму или что ценовой базы нет, если "
+        "подходящая книга уже есть в ЛЕС. Если нужного региона/периода нет среди доступных "
+        "книг, спроси именно регион/период или попроси загрузить недостающую книгу. Если книга "
+        "есть, но итог не закрыт, причина не в отсутствии сплит-формы, а в незакрытой связке "
+        "«норма -> ресурсы -> коды ресурсов -> цены»."
+    )
+
+
+def _smeta_service_rag_map_context() -> str:
+    """Compact, generic smeta RAG map for the direct estimator prompt.
+
+    This is navigation for the model. It does not choose works, norms or
+    contractual quantities; it only tells the model which LES sources exist
+    before it asks the user for missing files.
+    """
+    overview = Path("RAG_Content/TABLE_SMETA/SMETA_SERVICE/00_smeta_service_overview.md")
+    if not overview.exists():
+        return ""
+    try:
+        text = overview.read_text(encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[SMETA] service RAG map skipped: %s", exc)
+        return ""
+    lines: list[str] = []
+    in_collections = False
+    collection_count = 0
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("# "):
+            lines.append(line.lstrip("# ").strip())
+            continue
+        if line.startswith("- Норм в локальной базе") or line.startswith("- Коллекций/сборников") or line.startswith("- Ценовых книг"):
+            lines.append(line)
+            continue
+        if line.startswith("## Карточки сборников"):
+            in_collections = True
+            lines.append("Основные карточки сборников:")
+            continue
+        if line.startswith("## Карточки ценовых книг"):
+            in_collections = False
+            continue
+        if in_collections and line.startswith("- [") and collection_count < 80:
+            lines.append(line)
+            collection_count += 1
+    if not lines:
+        return ""
+    lines.extend([
+        "Правило: это карта доступных сметных источников ЛЕС, а не готовая смета.",
+        "Сначала используй эту карту и RAG для выбора нормативного маршрута; у пользователя спрашивай только то, чего в карте/источниках нет.",
+    ])
+    return "Карта сметного RAG ЛЕС:\n" + "\n".join(lines[:90])
 
 
 def _norm_code_label(code: Any) -> str:
