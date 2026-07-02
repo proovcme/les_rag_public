@@ -148,6 +148,48 @@ def test_selected_dataset_ids_preempt_glossary_deterministic_final():
     assert "dataset_filter=req.dataset_filter or \"\", candidate=_cand" not in source
 
 
+def test_notebook_study_prepares_reader_memory_and_keeps_artifact_visible():
+    source = inspect.getsource(chat_router._run_chat)
+
+    assert "_prepare_notebook_reader_memory" in source
+    assert "dataset_reader_prepare" in source
+    assert "inventory_requested or study_requested" in source
+    assert 'LES_NOTEBOOK_STUDY_ARTIFACT_VISIBLE", True' in source
+    assert "used_for_notebook_study" in source
+
+
+@pytest.mark.asyncio
+async def test_prepare_notebook_reader_memory_runs_or_schedules(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(chat_router, "_env_bool", lambda name, default=False: True)
+    monkeypatch.setattr(chat_router, "_env_int", lambda name, default, **_kw: default)
+    monkeypatch.setattr(chat_router, "_env_float", lambda name, default, **_kw: 0.01)
+    monkeypatch.setattr(chat_router, "get_typed_dataset_memory", lambda dataset_id: {
+        "dataset_id": dataset_id,
+        "reader_status": "bootstrap",
+    })
+
+    async def slow_reader(dataset_id, **_kw):
+        calls.append(dataset_id)
+        import asyncio
+        await asyncio.sleep(0.05)
+        return {"dataset_id": dataset_id, "reader_status": "model"}
+
+    monkeypatch.setattr(chat_router, "run_dataset_reader_pass", slow_reader)
+    monkeypatch.setattr(chat_router, "schedule_dataset_reader_pass", lambda dataset_id, **_kw: {
+        "scheduled": True,
+        "dataset_id": dataset_id,
+    })
+
+    result = await chat_router._prepare_notebook_reader_memory(["ds-1"])
+
+    assert result["schema"] == "dataset_reader_prepare_v1"
+    assert calls == ["ds-1"]
+    assert result["datasets"][0]["status"] == "scheduled_after_timeout"
+    assert result["datasets"][0]["scheduled"]["scheduled"] is True
+
+
 def test_samovar_pending_means_waiting_not_active_parsing():
     assert samovar_page._computed_index_status(total=10, indexed=2, pending=8) == "WAITING"
     assert samovar_page._computed_index_status(total=10, indexed=2, pending=8, active=True) == "PARSING"

@@ -47,6 +47,11 @@ from proxy.services.notebook_study_service import (
     is_notebook_study_query,
     prompt_block as notebook_study_prompt_block,
 )
+from proxy.services.dataset_memory_service import (
+    get_typed_dataset_memory,
+    run_dataset_reader_pass,
+    schedule_dataset_reader_pass,
+)
 from proxy.services.estimate_math_service import parse_ru_number, quantity_sum_audit
 from proxy.services.notebook_service import dataset_memory_prompt_excerpt
 from proxy.services.project_summary_service import (
@@ -1012,6 +1017,54 @@ def _notebook_study_validation_status(status: str, *, has_context: bool) -> str:
     if has_context and normalized in {"HALLUCINATION", "UNKNOWN"}:
         return "UNVALIDATED"
     return normalized
+
+
+async def _prepare_notebook_reader_memory(dataset_ids: list[str]) -> dict[str, Any]:
+    """Best-effort model reader-pass before broad dataset study.
+
+    Reader output is navigation only. It helps the final model choose files and
+    sections, but the answer still needs retrieved chunks/tables as evidence.
+    """
+    if not dataset_ids or not _env_bool("LES_NOTEBOOK_READER_ON_STUDY", True):
+        return {"schema": "dataset_reader_prepare_v1", "status": "disabled", "datasets": []}
+    limit = _env_int("LES_NOTEBOOK_READER_ON_STUDY_LIMIT", 2)
+    timeout_s = _env_float("LES_NOTEBOOK_READER_ON_STUDY_TIMEOUT", 35.0)
+    prepared: list[dict[str, Any]] = []
+    for dataset_id in [str(d) for d in dataset_ids if str(d).strip()][:limit]:
+        try:
+            memory = await asyncio.to_thread(get_typed_dataset_memory, dataset_id)
+            if memory.get("reader_status") == "model":
+                prepared.append({"dataset_id": dataset_id, "status": "ready"})
+                continue
+            try:
+                updated = await asyncio.wait_for(
+                    run_dataset_reader_pass(dataset_id, force=False),
+                    timeout=timeout_s,
+                )
+                prepared.append({
+                    "dataset_id": dataset_id,
+                    "status": str(updated.get("reader_status") or "unknown"),
+                })
+            except TimeoutError:
+                scheduled = schedule_dataset_reader_pass(
+                    dataset_id,
+                    reason="notebook_study_timeout",
+                    force=False,
+                    require_enabled=False,
+                )
+                prepared.append({
+                    "dataset_id": dataset_id,
+                    "status": "scheduled_after_timeout",
+                    "scheduled": scheduled,
+                })
+        except Exception as err:  # noqa: BLE001
+            logger.warning("[DATASET_READER] prepare skipped dataset=%s: %s", dataset_id, err)
+            prepared.append({
+                "dataset_id": dataset_id,
+                "status": "skipped",
+                "error": f"{type(err).__name__}: {err}",
+            })
+    return {"schema": "dataset_reader_prepare_v1", "status": "ok", "datasets": prepared}
 
 
 def _recoverable_stream_payload(req: ChatRequest, stream_state: dict[str, Any], err: BaseException) -> dict[str, Any] | None:
@@ -4419,6 +4472,18 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     project_inventory_prompt = ""
     project_inventory_artifact_text = ""
     project_inventory_payload: dict[str, Any] | None = None
+    if _dataset_ids and study_requested:
+        try:
+            retrieval_trace["dataset_reader_prepare"] = await _prepare_notebook_reader_memory(
+                [str(d) for d in _dataset_ids],
+            )
+        except Exception as reader_err:  # noqa: BLE001
+            logger.warning("[DATASET_READER] study prepare failed: %s", reader_err)
+            retrieval_trace["dataset_reader_prepare"] = {
+                "schema": "dataset_reader_prepare_v1",
+                "status": "skipped",
+                "error": f"{type(reader_err).__name__}: {reader_err}",
+            }
     if _dataset_ids:
         try:
             dataset_memory_prompt = await asyncio.to_thread(
@@ -4439,21 +4504,22 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 "status": "skipped",
                 "error": f"{type(memory_err).__name__}: {memory_err}",
             }
-    if _dataset_ids and inventory_requested:
+    if _dataset_ids and (inventory_requested or study_requested):
         try:
             project_inventory_payload = await asyncio.to_thread(
                 build_project_summary,
                 [str(d) for d in _dataset_ids],
                 storage_root=Path("./storage/datasets"),
             )
-            project_inventory_prompt = format_project_inventory_prompt(
-                project_inventory_payload,
-                label=", ".join(resolved_dataset_names or [str(d) for d in _dataset_ids]),
-            )
-            project_inventory_artifact_text = format_project_inventory_context(
-                project_inventory_payload,
-                label=", ".join(resolved_dataset_names or [str(d) for d in _dataset_ids]),
-            )
+            if inventory_requested:
+                project_inventory_prompt = format_project_inventory_prompt(
+                    project_inventory_payload,
+                    label=", ".join(resolved_dataset_names or [str(d) for d in _dataset_ids]),
+                )
+                project_inventory_artifact_text = format_project_inventory_context(
+                    project_inventory_payload,
+                    label=", ".join(resolved_dataset_names or [str(d) for d in _dataset_ids]),
+                )
             retrieval_trace["project_inventory"] = {
                 "schema": "project_inventory_context_v1",
                 "context_role": "deterministic_evidence",
@@ -4462,6 +4528,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 "by_ext": (project_inventory_payload.get("inventory") or {}).get("by_ext") or [],
                 "prompt_chars": len(project_inventory_prompt),
                 "artifact_chars": len(project_inventory_artifact_text),
+                "used_for_notebook_study": bool(study_requested),
             }
         except Exception as inv_err:  # noqa: BLE001
             logger.warning("[PROJECT_INVENTORY] skipped: %s", inv_err)
@@ -4515,7 +4582,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             if study_chunks:
                 chunks = [*study_chunks, *chunks]
             notebook_study_prompt = notebook_study_prompt_block(notebook_study_pack)
-            if _env_bool("LES_NOTEBOOK_STUDY_ARTIFACT_VISIBLE", False):
+            if _env_bool("LES_NOTEBOOK_STUDY_ARTIFACT_VISIBLE", True):
                 notebook_study_artifact = format_study_artifact(req.question, notebook_study_pack)
             retrieval_trace["notebook_study"] = notebook_study_pack.payload()
         except Exception as study_err:  # noqa: BLE001

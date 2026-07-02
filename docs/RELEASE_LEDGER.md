@@ -7,14 +7,21 @@
 ## Текущее состояние (2026-07-02)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.174  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.175  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.174 selected dataset scope preempts glossary
+задеплоено на рантайм:     0.24.0.175 notebook reader prepare for broad dataset study
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.174 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
+рантайм /api/version:      0.24.0.175 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.175 — broad-запросы по выбранному датасету/проекту перед
+> `notebook_study` теперь best-effort готовят модельный `reader-pass`
+> (`reader_output`) для карты корпуса: если он уже готов — используется
+> сразу, если не успевает за лимит — ставится фоновая задача, а ответ идёт
+> по bootstrap-карте и найденным источникам. Реестр MetaDB строится и для
+> `notebook_study` как навигация выбора файлов, но не перетирает видимый
+> инженерный артефакт. Артефакт «Инженерный блокнот» включён по умолчанию.
 > 0.24.0.174 — выбранный в UI датасет (`dataset_ids`) теперь считается
 > полноценной областью для `DeterministicFinalPolicy`: описательные
 > проектные вопросы вроде «расскажи про проект» не перехватываются

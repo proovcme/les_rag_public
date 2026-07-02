@@ -64,6 +64,12 @@ no-reindex backfill через `tools/build_lexical_index.py` из Qdrant payloa
 локальной базы. Идентификатор учитывает тип базы: обычный строительный `ГЭСН38` и монтажный
 `ГЭСНм38` не схлопываются в один раздел, потому что это разные нормативные области.
 
+`dataset_reader_map_v1` — модельный reader-pass поверх typed memory. Он сохраняется в
+`dataset_memory.reader_output` со статусом `reader_status=model` и содержит навигационную сводку:
+тип корпуса, какие файлы открывать под разные вопросы, роли ключевых файлов, пробелы и рекомендации
+ответчику. Это не evidence и не готовый ответ; broad RAG использует его, чтобы выбрать файлы/разделы,
+после чего всё равно делает обычный retrieval по источникам.
+
 Паспорт чата обновляется из факта сохранённого ответа: последний вопрос/ответ, route, scope, датасеты,
 статус, принятые допущения и MISSING/blockers, извлечённые простыми regex из ответа.
 
@@ -88,8 +94,10 @@ no-reindex backfill через `tools/build_lexical_index.py` из Qdrant payloa
 7. `warmup_dataset_profiles()` может заранее прогреть паспорта без запроса в чат.
 8. `benchmark_dataset_profile_warmup()` принудительно пересобирает паспорт, затем сразу читает кэш и
    возвращает разницу скорости. Это проверяет пользу прогрева без переиндексации и без запуска LLM.
-9. `build_dataset_notebook()` и `service_source_notebooks()` дают общий notebook-контекст для режимов.
-10. `estimate_harness` получает `LES_SYSTEM_PROMPT + smeta prompt + ГЭСН notebook excerpt + tool contract`.
+9. `run_dataset_reader_pass()` может обогатить typed memory модельной навигацией. В broad study-ответах
+   `/api/chat` best-effort запускает этот проход перед `notebook_study`; если не успевает, ставит фон.
+10. `build_dataset_notebook()` и `service_source_notebooks()` дают общий notebook-контекст для режимов.
+11. `estimate_harness` получает `LES_SYSTEM_PROMPT + smeta prompt + ГЭСН notebook excerpt + tool contract`.
 
 ## Границы
 
