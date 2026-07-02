@@ -61,6 +61,7 @@ from proxy.services.query_router import route_query
 from proxy.services.retrieval_service import resolve_dataset_ids, retrieve_chat_chunks
 from proxy.services.runtime_admission import count_active_jobs, evaluate_chat_admission, generation_semaphore
 from proxy.services.runtime_dispatcher import RuntimeDispatcher
+from proxy.services.smeta_artifact_service import build_smeta_artifact, compact_smeta_answer
 from proxy.services.smeta_fast_answer_service import smeta_fast_fallback_answer
 from proxy.services.saferag_service import (
     SAFE_FALLBACK,
@@ -3372,6 +3373,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 "Сейчас не смог собрать сметный ответ. Повторите запрос или сузьте исходные: "
                 "ВОР/спецификация, регион, период цен, что считать работой, а что поставкой."
             )
+        smeta_artifact = build_smeta_artifact(answer, question=req.question)
+        visible_answer = compact_smeta_answer(answer, smeta_artifact)
         trace = {
             "mode": "smeta",
             "model_rag_only": True,
@@ -3379,13 +3382,15 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             "active_smeta_state": _smeta_active_state_from_answer(harness_question, answer),
             "smeta_rag_context": direct_rag_packet.get("trace") or {},
             "smeta_dataset_filter": smeta_dataset_filter or "",
+            "smeta_artifact_present": bool(smeta_artifact),
         }
         return _mode_reply(
-            answer,
+            visible_answer,
             "smeta_auto_work" if _auto_estimate_work else "smeta",
             "smeta_mode",
             extra={
                 "retrieval_trace": trace,
+                **({"artifact": smeta_artifact} if smeta_artifact else {}),
                 "sources": direct_rag_packet.get("sources") or [],
                 "source_map": direct_rag_packet.get("source_map") or [],
             },

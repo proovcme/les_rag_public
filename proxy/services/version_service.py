@@ -20,7 +20,7 @@ APP_VERSION = "5.1.0"                 # пользовательская «ма�
 HARNESS_VERSION = "0.24"             # веха roadmap (v0.NN); двигать на смене вехи
 # Гранулярная версия «где мы»: 0.<веха>.<фича>.<патч>. Двигать КАЖДУЮ фичу/фикс + строка в
 # docs/RELEASE_LEDGER.md. Это основной номер в /api/version и бейдже (см. docs/RELEASE_LEDGER.md).
-LES_VERSION = "0.24.0.165"
+LES_VERSION = "0.24.0.166"
 EVIDENCE_SCHEMA_VERSION = "1.0"
 EXTRACTION_SCHEMA_VERSION = "1.0"
 RESOURCE_CALC_VERSION = "0.6"
@@ -64,6 +64,7 @@ _CRITICAL_FILES = (
     "proxy/services/skill_snippet_registry.py",
     "proxy/services/tool_trace_policy.py",
     "proxy/services/smeta_fast_answer_service.py",
+    "proxy/services/smeta_artifact_service.py",
     "proxy/services/smeta_norm_store.py",
     "proxy/services/sidecar_ops_service.py",
     "proxy/services/answer_form_service.py",
