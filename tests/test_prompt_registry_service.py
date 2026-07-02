@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from proxy.services.prompt_registry_service import (
     build_mode_system_prompt,
@@ -19,6 +20,9 @@ def test_prompt_registry_exposes_common_tone_modes_and_tools():
     assert snap["schema"] == "prompt_registry_v2"
     assert "модель связывает" in snap["common"].lower()
     assert "ирони" in snap["tone"].lower()
+    assert "бардак" in snap["tone"].lower()
+    assert "оператору — уважение" in snap["tone"].lower()
+    assert "пластикового техподдержечного голоса" in snap["tone"].lower()
     assert "smeta" in snap["modes"]
     assert "price_gap_summary" in snap["modes"]["smeta"]["tools"]
     assert "retrieval" in snap["modes"]["rag"]["tools"]
@@ -33,8 +37,18 @@ def test_mode_system_prompt_includes_mode_tone_without_tool_contracts():
 
     assert "evidence" in prompt.lower()
     assert "бардак" in prompt.lower()
+    assert "короткие едкие реплики" in prompt
+    assert "Официальные письма" in prompt
     assert "Доступные инструменты режима" not in prompt
     assert "Не показывай наружу" in prompt
+
+
+def test_local_normative_style_keeps_voice_without_balagaan():
+    source = Path("proxy/routers/chat.py").read_text(encoding="utf-8")
+
+    assert "без балагана" in source.lower()
+    assert "короткая живая реплика допустима" in source
+    assert "без шуток и постскриптумов" not in source
 
 
 def test_prompt_overrides_change_effective_prompts(monkeypatch, tmp_path):
