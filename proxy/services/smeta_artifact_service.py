@@ -28,6 +28,16 @@ class SmetaTable:
 
 _SEPARATOR_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$")
 _MONEY_HEADER_TOKENS = ("сумм", "стоим", "итого", "руб")
+_LSR_HEADERS = [
+    "№ п/п",
+    "Обоснование",
+    "Наименование работ и затрат",
+    "Ед. изм.",
+    "Кол-во",
+    "Цена на ед., руб.",
+    "Стоимость всего, руб.",
+    "Статус / источник",
+]
 
 
 def _split_cells(line: str) -> list[str]:
@@ -122,6 +132,156 @@ def _table_amount_total(headers: list[str], rows: list[list[str]]) -> float | No
     return total if found else None
 
 
+def _find_header_index(headers: list[str], *tokens: str) -> int | None:
+    for idx, header in enumerate(headers):
+        low = str(header or "").casefold()
+        if all(token in low for token in tokens):
+            return idx
+    return None
+
+
+def _first_index(*values: int | None) -> int | None:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def _cell(row: list[str], idx: int | None) -> str:
+    if idx is None or idx >= len(row):
+        return ""
+    return str(row[idx] or "").strip()
+
+
+def _looks_total_row(row: list[str]) -> bool:
+    first = str(row[0] if row else "").casefold()
+    return "итого" in first or "всего" in first
+
+
+def _normative_basis(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    match = re.search(
+        r"(ГЭСН(?:м|мр|п|р)?\s*\d{1,2}[-–]\d{2}[-–]\d{3}[-–]\d{2}|"
+        r"ГЭСН(?:м|мр|п|р)?\s*\d{1,2}|"
+        r"ФЕР(?:м|мр|п|р)?\s*\d{1,2}[-–]\d{2}[-–]\d{3}[-–]\d{2})",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return match.group(1).replace("–", "-") if match else text
+
+
+def _lsr_rows_from_table(table: SmetaTable) -> list[dict[str, Any]]:
+    headers = table.headers
+    work_idx = _first_index(
+        _find_header_index(headers, "работ"),
+        _find_header_index(headers, "наименование"),
+        _find_header_index(headers, "раздел"),
+    )
+    qty_idx = _first_index(_find_header_index(headers, "кол"), _find_header_index(headers, "объ"))
+    unit_idx = _find_header_index(headers, "ед")
+    basis_idx = _first_index(
+        _find_header_index(headers, "норма"),
+        _find_header_index(headers, "гэсн"),
+        _find_header_index(headers, "источник"),
+        _find_header_index(headers, "рим"),
+    )
+    price_idx = _first_index(_find_header_index(headers, "ставк"), _find_header_index(headers, "цена"))
+    amount_indexes = _amount_column_indexes(headers)
+    status_idx = _first_index(
+        _find_header_index(headers, "статус"),
+        _find_header_index(headers, "коммент"),
+        _find_header_index(headers, "источник"),
+    )
+    out: list[dict[str, Any]] = []
+    for row in table.rows:
+        if not row or _looks_total_row(row):
+            continue
+        title = _cell(row, work_idx)
+        if not title and len(row) > 1:
+            title = _cell(row, 1)
+        amount: float | None = None
+        for idx in amount_indexes:
+            if idx < len(row):
+                parsed = _parse_money_cell(row[idx])
+                if parsed is not None:
+                    amount = parsed
+        if not title and amount is None:
+            continue
+        out.append(
+            {
+                "basis": _normative_basis(_cell(row, basis_idx)),
+                "title": title or "Позиция сметы",
+                "unit": _cell(row, unit_idx),
+                "quantity": _cell(row, qty_idx),
+                "unit_price": _cell(row, price_idx),
+                "amount": amount,
+                "status": _cell(row, status_idx) or table.title,
+                "source_table": table.title,
+            }
+        )
+    return out
+
+
+def build_lsr_form(tables: list[SmetaTable]) -> dict[str, Any] | None:
+    """Build an additional LSR-shaped view from model-written cost tables.
+
+    This is a display form only: no works, norms, quantities or prices are
+    invented here. Rows are copied from visible estimate tables.
+    """
+    rows: list[dict[str, Any]] = []
+    for table in tables:
+        if table.kind not in {"work_cost", "method_comparison"}:
+            continue
+        rows.extend(_lsr_rows_from_table(table))
+    if not rows:
+        return None
+    total = sum(float(row["amount"] or 0.0) for row in rows if row.get("amount") is not None)
+    return {
+        "schema": "lsr_display_form_v1",
+        "title": "ЛСР (форма вывода)",
+        "note": (
+            "Дополнительная форма по видимым строкам сметного ответа. "
+            "Код не добавляет позиции и не выбирает нормы."
+        ),
+        "headers": _LSR_HEADERS,
+        "rows": rows,
+        "amount_total": total if total > 0 else None,
+    }
+
+
+def _lsr_markdown(lsr_form: dict[str, Any] | None) -> list[str]:
+    if not lsr_form:
+        return []
+    lines = [
+        "## Форма ЛСР",
+        "",
+        str(lsr_form.get("note") or ""),
+        "",
+        "| № п/п | Обоснование | Наименование работ и затрат | Ед. изм. | Кол-во | Цена на ед., руб. | Стоимость всего, руб. | Статус / источник |",
+        "|---:|---|---|---:|---:|---:|---:|---|",
+    ]
+    for idx, row in enumerate(lsr_form.get("rows") or [], 1):
+        amount = _fmt_money(float(row["amount"])) if row.get("amount") is not None else ""
+        cells = [
+            str(idx),
+            str(row.get("basis") or ""),
+            str(row.get("title") or ""),
+            str(row.get("unit") or ""),
+            str(row.get("quantity") or ""),
+            str(row.get("unit_price") or ""),
+            amount,
+            str(row.get("status") or ""),
+        ]
+        lines.append("| " + " | ".join(cell.replace("|", "/") for cell in cells) + " |")
+    if lsr_form.get("amount_total") is not None:
+        lines.append(
+            f"|  |  | **Итого по форме ЛСР** |  |  |  | **{_fmt_money(float(lsr_form['amount_total']))}** |  |"
+        )
+    return lines
+
+
 def _fmt_money(value: float) -> str:
     return f"{value:,.0f}".replace(",", " ") + " руб."
 
@@ -174,6 +334,7 @@ def build_smeta_artifact(answer: str, *, question: str = "") -> dict[str, Any] |
     tables = extract_smeta_tables(answer)
     if not tables:
         return None
+    lsr_form = build_lsr_form(tables)
     lines = ["# Сметный артефакт", ""]
     if question:
         lines += ["## Запрос", str(question).strip(), ""]
@@ -187,6 +348,8 @@ def build_smeta_artifact(answer: str, *, question: str = "") -> dict[str, Any] |
         lines.append(f"| {table.title} | {table.kind} | {len(table.rows)} | {amount} |")
     for num, table in enumerate(tables, start=1):
         lines += ["", f"## {num}. {table.title}", "", table.markdown]
+    if lsr_form:
+        lines += ["", *_lsr_markdown(lsr_form)]
     total = sum(table.amount_total or 0.0 for table in tables if table.kind in {"work_cost", "method_comparison"})
     if total > 0:
         lines += ["", "## Арифметика", f"Сумма по видимым строкам таблиц стоимости: **{_fmt_money(total)}**."]
@@ -205,6 +368,7 @@ def build_smeta_artifact(answer: str, *, question: str = "") -> dict[str, Any] |
             }
             for table in tables
         ],
+        **({"lsr_form": lsr_form} if lsr_form else {}),
     }
 
 
@@ -250,6 +414,27 @@ def persist_smeta_artifact_exports(
             table.get("amount_total") or "",
         ])
     used = {"Свод"}
+    lsr_form = artifact.get("lsr_form") if isinstance(artifact.get("lsr_form"), dict) else None
+    if lsr_form:
+        ws = wb.create_sheet("ЛСР")
+        ws.append([str(h) for h in lsr_form.get("headers") or _LSR_HEADERS])
+        for idx, row in enumerate(lsr_form.get("rows") or [], 1):
+            ws.append([
+                idx,
+                row.get("basis") or "",
+                row.get("title") or "",
+                row.get("unit") or "",
+                row.get("quantity") or "",
+                row.get("unit_price") or "",
+                row.get("amount") if row.get("amount") is not None else "",
+                row.get("status") or "",
+            ])
+        if lsr_form.get("amount_total") is not None:
+            ws.append(["", "", "Итого по форме ЛСР", "", "", "", lsr_form.get("amount_total"), ""])
+        for column_cells in ws.columns:
+            width = min(max(len(str(cell.value or "")) for cell in column_cells) + 2, 60)
+            ws.column_dimensions[column_cells[0].column_letter].width = width
+        used.add("ЛСР")
     for table in tables:
         ws = wb.create_sheet(_safe_sheet_title(str(table.get("title") or "Таблица"), used))
         ws.append([str(h) for h in table.get("headers") or []])
