@@ -205,6 +205,10 @@
       "purpose": "convert human BOR into normable BOR rows and candidate GESN/GESNm table before confirmed RIM pricing",
       "required_fields": [
         "bor_row_id",
+        "source_row_id",
+        "visible_bor_number",
+        "roundtrip_variant_id",
+        "row_change_status",
         "source_work_title",
         "normable_work_title",
         "norm_group",
@@ -234,8 +238,38 @@
         "candidate_norm_is_not_final_selection": true,
         "excel_roundtrip_can_confirm_or_reject_candidates": true,
         "confirmed_rows_drive_calculation": true,
+        "visible_bor_number_is_display_only": true,
+        "stable_vor_row_id_survives_renumbering": true,
+        "deleted_bor_row_removes_linked_candidates": true,
+        "new_or_changed_rows_get_new_candidates_only": true,
+        "multiple_candidate_variants_must_not_be_merged_silently": true,
         "missing_resource_price_can_be_shown_as_draft_gap_not_zero_price": true,
         "code_does_not_select_norms": true
+      },
+      "excel_roundtrip_policy": {
+        "editable_block": "Данные ТЗ / ВОР",
+        "machine_block": "Соответствие данным ТЗ / ГЭСН",
+        "stable_keys": [
+          "vor_row_id",
+          "source_row_id",
+          "candidate_norm_id",
+          "roundtrip_variant_id"
+        ],
+        "row_change_statuses": [
+          "unchanged",
+          "new",
+          "changed",
+          "deleted",
+          "candidate_rejected",
+          "candidate_confirmed"
+        ],
+        "rules": {
+          "visible_number_can_be_renumbered": true,
+          "new_rows_may_have_empty_norm_block": true,
+          "preserve_user_confirmed_candidates": true,
+          "do_not_rebuild_unchanged_rows_without_user_request": true,
+          "calculation_uses_selected_variant": true
+        }
       }
     },
     "rim_scenario_estimate": {

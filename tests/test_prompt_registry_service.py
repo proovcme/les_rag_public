@@ -130,6 +130,9 @@ def test_smeta_estimator_role_pack_is_json_contract():
     assert pack["chain_modes"]["specification_to_bor"]["hard_rules"]["build_bor_before_norm_selection"] is True
     assert pack["chain_modes"]["bor_to_norm_candidate_table"]["hard_rules"]["one_source_work_can_split_to_many_norms"] is True
     assert pack["chain_modes"]["bor_to_norm_candidate_table"]["hard_rules"]["candidate_norm_is_not_final_selection"] is True
+    assert pack["chain_modes"]["bor_to_norm_candidate_table"]["hard_rules"]["stable_vor_row_id_survives_renumbering"] is True
+    assert pack["chain_modes"]["bor_to_norm_candidate_table"]["hard_rules"]["new_or_changed_rows_get_new_candidates_only"] is True
+    assert pack["chain_modes"]["bor_to_norm_candidate_table"]["excel_roundtrip_policy"]["rules"]["calculation_uses_selected_variant"] is True
     assert "confirmed_by_user" in pack["chain_modes"]["bor_to_norm_candidate_table"]["applicability_statuses"]
     assert "missing_quantity" in pack["chain_modes"]["specification_to_bor"]["trace_statuses"]
     assert "understood" in pack["answer_sections"]

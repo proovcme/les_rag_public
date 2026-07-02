@@ -102,11 +102,30 @@ def test_bor_to_norm_candidate_table_contract():
     assert mode["hard_rules"]["one_source_work_can_split_to_many_norms"] is True
     assert mode["hard_rules"]["candidate_norm_is_not_final_selection"] is True
     assert mode["hard_rules"]["excel_roundtrip_can_confirm_or_reject_candidates"] is True
+    assert mode["hard_rules"]["visible_bor_number_is_display_only"] is True
+    assert mode["hard_rules"]["stable_vor_row_id_survives_renumbering"] is True
+    assert mode["hard_rules"]["deleted_bor_row_removes_linked_candidates"] is True
+    assert mode["hard_rules"]["new_or_changed_rows_get_new_candidates_only"] is True
+    assert mode["hard_rules"]["multiple_candidate_variants_must_not_be_merged_silently"] is True
     assert "candidate_norm_code" in mode["required_fields"]
+    assert "source_row_id" in mode["required_fields"]
+    assert "visible_bor_number" in mode["required_fields"]
+    assert "roundtrip_variant_id" in mode["required_fields"]
+    assert "row_change_status" in mode["required_fields"]
     assert "norm_quantity" in mode["required_fields"]
     assert "confirmed_by_user" in mode["applicability_statuses"]
+    assert mode["excel_roundtrip_policy"]["editable_block"] == "Данные ТЗ / ВОР"
+    assert mode["excel_roundtrip_policy"]["machine_block"] == "Соответствие данным ТЗ / ГЭСН"
+    assert "candidate_norm_id" in mode["excel_roundtrip_policy"]["stable_keys"]
+    assert "candidate_rejected" in mode["excel_roundtrip_policy"]["row_change_statuses"]
+    assert mode["excel_roundtrip_policy"]["rules"]["new_rows_may_have_empty_norm_block"] is True
+    assert mode["excel_roundtrip_policy"]["rules"]["do_not_rebuild_unchanged_rows_without_user_request"] is True
     assert "ВОР -> нормируемая ВОР -> таблица подбора норм" in SKILL_TEXT
     assert "Одна строка исходной ВОР может обоснованно разложиться на несколько ГЭСН" in SKILL_TEXT
+    assert "Видимый `№ ВОР` — только отображаемая нумерация" in SKILL_TEXT
+    assert "стабильный `vor_row_id`/`source_row_id`" in SKILL_TEXT
+    assert "Для новых или изменённых строк ЛЕС подбирает кандидатов заново" in SKILL_TEXT
+    assert "несколько вариантов таблицы" in SKILL_TEXT
 
 
 def test_bor_to_norm_candidate_table_columns_visible():
@@ -117,7 +136,7 @@ def test_bor_to_norm_candidate_table_columns_visible():
     assert "Нормируемая работа" in pack["norm_candidate_table_columns"]
     assert "Код ГЭСН" in pack["norm_candidate_table_columns"]
     assert "Статус применимости" in pack["norm_candidate_table_columns"]
-    assert "удаляет лишние ГЭСН" in SKILL_TEXT
+    assert "удаляет лишние кандидаты ГЭСН" in SKILL_TEXT
     assert "Расчёт РИМ/ЛСР выполняется только по подтверждённым" in SKILL_TEXT
 
 
