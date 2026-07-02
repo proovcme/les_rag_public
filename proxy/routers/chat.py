@@ -14,8 +14,8 @@ from pathlib import Path
 from typing import Any, Iterable, List, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, field_validator
 
 from backend.rag_config import rag_meta_db_path
@@ -61,7 +61,11 @@ from proxy.services.query_router import route_query
 from proxy.services.retrieval_service import resolve_dataset_ids, retrieve_chat_chunks
 from proxy.services.runtime_admission import count_active_jobs, evaluate_chat_admission, generation_semaphore
 from proxy.services.runtime_dispatcher import RuntimeDispatcher
-from proxy.services.smeta_artifact_service import build_smeta_artifact, compact_smeta_answer
+from proxy.services.smeta_artifact_service import (
+    build_smeta_artifact,
+    compact_smeta_answer,
+    persist_smeta_artifact_exports,
+)
 from proxy.services.smeta_fast_answer_service import smeta_fast_fallback_answer
 from proxy.services.saferag_service import (
     SAFE_FALLBACK,
@@ -86,6 +90,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["chat"])
 DEFAULT_OPENAI_MODEL = "gpt-4.1"
+_SMETA_ARTIFACT_DIR = Path("storage/smeta_artifacts")
+_XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 @router.get("/commands")
@@ -93,6 +99,16 @@ async def list_chat_commands(_user=Depends(require_user)):
     """Палитра /-команд для GUI (команда + ярлык + описание). W11.17."""
     from proxy.services.command_service import list_commands
     return {"commands": list_commands()}
+
+
+@router.get("/smeta-artifacts/download")
+async def smeta_artifact_download(path: str = Query(...), _user=Depends(require_user)):
+    out_dir = _SMETA_ARTIFACT_DIR.resolve()
+    target = (out_dir / Path(path).name).resolve()
+    if out_dir not in target.parents or not target.is_file():
+        raise HTTPException(404, "Файл не найден")
+    media = _XLSX_MEDIA if target.suffix.lower() == ".xlsx" else "text/csv; charset=utf-8"
+    return FileResponse(target, media_type=media, filename=target.name)
 
 
 class ChatRequest(BaseModel):
@@ -1856,6 +1872,8 @@ def _smeta_direct_light_system_prompt() -> str:
         "«ВОР» и «Оценка стоимости работ». В стоимости обязательна колонка «Норма/источник»: "
         "сборник/раздел/код-кандидат ГЭСН, pricebook/КП/КАЦ или «сценарное допущение». "
         "Если ставка взята из сборника или RAG, укажи сборник, раздел и норму/кандидата; "
+        "не пиши одиноко «ГЭСНм» или «ГЭСН»: минимум номер сборника и раздел/таблица "
+        "или код-кандидат, например «ГЭСНм10, раздел связи/СКС, кандидат ...». "
         "если точный код не подтверждён, дай кандидата или раздел с пометкой проверки. "
         "Уточняющие вопросы идут после полезного расчёта. Перед фразой «нет источника» проверь "
         "RAG, pricebook, КАЦ, историю и вложения. Не пиши «нет базы/норм», если блок источников "
@@ -1988,6 +2006,8 @@ def _smeta_direct_user_prompt(
             "| № | Работа | Кол-во | Ед. | Норма/источник | Ставка/допущение | Сумма | Комментарий |. "
             "В колонке «Норма/источник» укажи сборник/раздел/код-кандидат ГЭСН/ГЭСНм, "
             "локальную книгу/КАЦ/КП или прямо «сценарное допущение». "
+            "Не пиши только род базы вроде «ГЭСНм» или «ГЭСН 21»: уточняй до сборника/раздела/"
+            "таблицы/кода-кандидата, а если не уверен — помечай как кандидат для проверки. "
             "Не заменяй эти таблицы нумерованным пересказом, подзаголовками 1.1/1.2 "
             "или предложением «могу следующим сообщением сделать таблицу». "
             "После таблиц дай поставку/исключения, нормативный ход, допущения и добор. "
@@ -2027,6 +2047,8 @@ def _smeta_direct_user_prompt(
         "Сумма | Комментарий |. Не предлагай сделать эту таблицу следующим сообщением: сделай её сейчас. "
         "Если строка стоимости опирается на сборник, укажи сборник/раздел/код нормы или кандидата; "
         "если точной нормы нет, укажи нормативный раздел/аналог и что проверить. "
+        "Не оставляй в источнике только «ГЭСНм»/«ГЭСН»: это слишком общий источник; "
+        "нужен номер сборника, раздел/таблица или код-кандидат. "
         "Если ставка сценарная, так и напиши в источнике: «сценарное допущение», не маскируй её под РИМ. "
         "Если пользователь просит РИМ/ГЭСН, РИМ-колонка должна быть РИМ-сценарием по нормативным "
         "аналогам, а не рыночной вилкой: укажи нормируемую строку, сборник/аналог, объём в "
@@ -3391,7 +3413,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 "Сейчас не смог собрать сметный ответ. Повторите запрос или сузьте исходные: "
                 "ВОР/спецификация, регион, период цен, что считать работой, а что поставкой."
             )
-        smeta_artifact = build_smeta_artifact(answer, question=req.question)
+        smeta_artifact = persist_smeta_artifact_exports(
+            build_smeta_artifact(answer, question=req.question),
+            output_dir=_SMETA_ARTIFACT_DIR,
+        )
         visible_answer = compact_smeta_answer(answer, smeta_artifact)
         trace = {
             "mode": "smeta",

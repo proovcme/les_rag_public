@@ -2413,6 +2413,19 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                               on_click=lambda u=url, n=name: asyncio.create_task(_download_file_artifact(u, n))
                               ).props("flat round dense").tooltip("Скачать")
 
+    def _register_artifact_downloads(meta: dict | None) -> None:
+        artifact = (meta or {}).get("artifact") if isinstance(meta, dict) else {}
+        if not isinstance(artifact, dict):
+            return
+        downloads = artifact.get("downloads") or {}
+        if not isinstance(downloads, dict):
+            return
+        title = str(artifact.get("title") or "Сметный артефакт").strip() or "Сметный артефакт"
+        for ext, label in (("xlsx", "Excel"), ("csv", "CSV")):
+            url = str(downloads.get(ext) or "").strip()
+            if url:
+                _register_file_artifact(f"{title} · {label}.{ext}", url, ext)
+
     def _render_evidence_header(meta: dict | None, srcs: list | None) -> None:
         """v0.16: компактная статус-полоска ответа — статус + бейджи evidence (RETRIEVED/COMPUTED/
         ASSUMED/MISSING/BLOCKED) + источники + intent + свёрнутый trace. Нет evidence → ничего
@@ -3050,6 +3063,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             }
             state["chat_history"].append({"role": "ai", "text": ans, "srcs": srcs, "crag": crag, "meta": meta})
             _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, ans, srcs, crag, meta=meta)
+            _register_artifact_downloads(meta)
             explicit_artifact = _artifact_from_meta(meta)
             if explicit_artifact and (artifact_shell.visible or _inventory_file_rows_from_meta(meta)):
                 _show_meta_artifact(meta, str(explicit_artifact.get("content") or ""), str(explicit_artifact.get("mode") or "text"))

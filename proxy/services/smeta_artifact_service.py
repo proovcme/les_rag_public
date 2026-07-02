@@ -7,8 +7,10 @@ model, computes visible table totals, and prepares a separate artifact payload.
 
 from __future__ import annotations
 
+import csv
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from proxy.services.estimate_math_service import parse_ru_number
@@ -124,6 +126,20 @@ def _fmt_money(value: float) -> str:
     return f"{value:,.0f}".replace(",", " ") + " руб."
 
 
+def _safe_sheet_title(title: str, used: set[str]) -> str:
+    text = re.sub(r"[\[\]:*?/\\]", " ", str(title or "Таблица")).strip() or "Таблица"
+    text = re.sub(r"\s+", " ", text)[:31]
+    base = text or "Таблица"
+    candidate = base
+    idx = 2
+    while candidate in used:
+        suffix = f" {idx}"
+        candidate = (base[: 31 - len(suffix)] + suffix).strip()
+        idx += 1
+    used.add(candidate)
+    return candidate
+
+
 def extract_smeta_tables(answer: str) -> list[SmetaTable]:
     """Extract Markdown tables from a smeta answer without interpreting domain logic."""
     lines = str(answer or "").splitlines()
@@ -184,10 +200,85 @@ def build_smeta_artifact(answer: str, *, question: str = "") -> dict[str, Any] |
                 "kind": table.kind,
                 "rows": len(table.rows),
                 "amount_total": table.amount_total,
+                "headers": table.headers,
+                "data": table.rows,
             }
             for table in tables
         ],
     }
+
+
+def persist_smeta_artifact_exports(
+    artifact: dict[str, Any] | None,
+    *,
+    output_dir: str | Path = "storage/smeta_artifacts",
+    prefix: str = "smeta_artifact",
+) -> dict[str, Any] | None:
+    """Write XLSX and CSV downloads for an already built smeta artifact.
+
+    The export preserves model-written tables.  It does not add works, choose
+    norms, change rates, or recalculate hidden positions.
+    """
+    if not artifact:
+        return None
+    tables = [t for t in artifact.get("tables") or [] if t.get("headers") and t.get("data")]
+    if not tables:
+        return artifact
+
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    import time
+
+    stamp = int(time.time() * 1000)
+    safe_prefix = re.sub(r"[^A-Za-z0-9_.-]+", "_", prefix).strip("_") or "smeta_artifact"
+    xlsx_name = f"{safe_prefix}_{stamp}.xlsx"
+    csv_name = f"{safe_prefix}_{stamp}.csv"
+    xlsx_path = out_dir / xlsx_name
+    csv_path = out_dir / csv_name
+
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    summary_ws = wb.active
+    summary_ws.title = "Свод"
+    summary_ws.append(["Таблица", "Тип", "Строк", "Сумма по видимым строкам"])
+    for table in tables:
+        summary_ws.append([
+            table.get("title") or "",
+            table.get("kind") or "",
+            table.get("rows") or 0,
+            table.get("amount_total") or "",
+        ])
+    used = {"Свод"}
+    for table in tables:
+        ws = wb.create_sheet(_safe_sheet_title(str(table.get("title") or "Таблица"), used))
+        ws.append([str(h) for h in table.get("headers") or []])
+        for row in table.get("data") or []:
+            ws.append([str(cell) for cell in row])
+        for column_cells in ws.columns:
+            width = min(max(len(str(cell.value or "")) for cell in column_cells) + 2, 60)
+            ws.column_dimensions[column_cells[0].column_letter].width = width
+    wb.save(xlsx_path)
+
+    with csv_path.open("w", newline="", encoding="utf-8-sig") as fh:
+        writer = csv.writer(fh, delimiter=";")
+        for table in tables:
+            writer.writerow([str(table.get("title") or "Таблица")])
+            writer.writerow([str(h) for h in table.get("headers") or []])
+            for row in table.get("data") or []:
+                writer.writerow([str(cell) for cell in row])
+            writer.writerow([])
+
+    artifact = dict(artifact)
+    artifact["downloads"] = {
+        "xlsx": f"/api/smeta-artifacts/download?path={xlsx_name}",
+        "csv": f"/api/smeta-artifacts/download?path={csv_name}",
+    }
+    artifact["files"] = {
+        "xlsx_path": str(xlsx_path),
+        "csv_path": str(csv_path),
+    }
+    return artifact
 
 
 def compact_smeta_answer(answer: str, artifact: dict[str, Any] | None) -> str:

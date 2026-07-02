@@ -2,6 +2,7 @@ from proxy.services.smeta_artifact_service import (
     build_smeta_artifact,
     compact_smeta_answer,
     extract_smeta_tables,
+    persist_smeta_artifact_exports,
 )
 
 
@@ -56,3 +57,35 @@ def test_compact_smeta_answer_moves_long_tables_to_artifact_marker():
     assert "6 строк" in compact
     assert "Работа 6" not in compact
     assert "Сумма предварительная" in compact
+
+
+def test_smeta_artifact_persists_xlsx_and_csv_downloads(tmp_path):
+    answer = """
+**ВОР**
+| № | Раздел | Работа | Ед. | Кол-во | Основание | Статус |
+|---:|---|---|---:|---:|---|---|
+| 1 | СКС | Прокладка кабеля | м | 100 | спецификация | измеримо |
+
+**Оценка стоимости работ**
+| № | Работа | Кол-во | Ед. | Норма/источник | Ставка/допущение | Сумма | Комментарий |
+|---:|---|---:|---:|---|---:|---:|---|
+| 1 | Прокладка кабеля | 100 | м | ГЭСНм10, кандидат по кабелям связи | 120 руб./м | 12 000 руб. | сценарно |
+"""
+
+    artifact = build_smeta_artifact(answer, question="Дай ВОР")
+    exported = persist_smeta_artifact_exports(artifact, output_dir=tmp_path, prefix="unit")
+
+    assert exported is not None
+    assert exported["downloads"]["xlsx"].endswith(".xlsx")
+    assert exported["downloads"]["csv"].endswith(".csv")
+    xlsx_path = tmp_path / exported["downloads"]["xlsx"].split("path=")[1]
+    csv_path = tmp_path / exported["downloads"]["csv"].split("path=")[1]
+    assert xlsx_path.is_file()
+    assert csv_path.is_file()
+
+    import openpyxl
+
+    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+    assert "Свод" in wb.sheetnames
+    assert any("Оценка стоимости" in name for name in wb.sheetnames)
+    assert "ГЭСНм10" in csv_path.read_text(encoding="utf-8-sig")

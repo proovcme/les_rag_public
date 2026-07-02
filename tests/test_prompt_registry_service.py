@@ -155,6 +155,7 @@ def test_smeta_estimator_role_pack_is_json_contract():
     assert pack["hard_rules"]["do_not_expose_task_classification"] is True
     assert pack["hard_rules"]["work_cost_rows_require_norm_or_source"] is True
     assert pack["hard_rules"]["scenario_rate_must_be_labeled"] is True
+    assert pack["hard_rules"]["generic_norm_family_is_not_enough_source"] is True
     assert pack["hard_rules"]["code_does_not_select_works"] is True
     assert pack["hard_rules"]["model_selects_normative_route"] is True
     assert pack["hard_rules"]["case_specific_constants_forbidden"] is True

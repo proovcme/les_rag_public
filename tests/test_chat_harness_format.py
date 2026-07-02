@@ -371,6 +371,8 @@ def test_smeta_direct_light_prompt_cuts_heavy_contract_by_default(monkeypatch):
     assert "не запрет оценки работ" in sys_prompt
     assert "Норма/источник" in sys_prompt
     assert "сборник/раздел/код-кандидат" in sys_prompt
+    assert "не пиши одиноко" in sys_prompt
+    assert "ГЭСНм10" in sys_prompt
     assert "role-pack" not in sys_prompt
     assert "harness" not in sys_prompt
     assert "evidence" not in sys_prompt

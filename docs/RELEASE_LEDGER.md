@@ -7,14 +7,23 @@
 ## Текущее состояние (2026-07-02)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.166  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.168  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.166 smeta direct table artifact
+задеплоено на рантайм:     0.24.0.168 smeta artifact downloads in UI
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.166 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
+рантайм /api/version:      0.24.0.168 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.168 — Совушка регистрирует `artifact.downloads` сметного ответа
+> как файловые артефакты в панели «Файлы»: XLSX/CSV можно открыть в панели
+> или скачать кнопкой сразу после ответа.
+> 0.24.0.167 — `smeta_direct` artifact получил выгрузку XLSX и CSV:
+> `smeta_artifact_service` сохраняет модельные Markdown-таблицы как листы Excel
+> и CSV-разделы, а payload `artifact.downloads` отдаёт ссылки
+> `/api/smeta-artifacts/download`. Prompt/skill ужесточены по источникам строк
+> стоимости: нельзя писать одиноко `ГЭСНм`/`ГЭСН`; нужен сборник, раздел,
+> таблица или код-кандидат, а сценарная ставка маркируется явно.
 > 0.24.0.166 — `smeta_direct` получил отдельный Markdown-artifact для длинных
 > сметных таблиц. `smeta_artifact_service` извлекает уже написанные моделью
 > таблицы ВОР/стоимости/развилок, считает видимые суммы по колонкам
