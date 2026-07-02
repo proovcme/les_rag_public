@@ -369,6 +369,8 @@ def test_smeta_direct_light_prompt_cuts_heavy_contract_by_default(monkeypatch):
     assert "дай кандидата или раздел с пометкой проверки" in sys_prompt
     assert "Пустые ценовые колонки" in sys_prompt
     assert "не запрет оценки работ" in sys_prompt
+    assert "Норма/источник" in sys_prompt
+    assert "сборник/раздел/код-кандидат" in sys_prompt
     assert "role-pack" not in sys_prompt
     assert "harness" not in sys_prompt
     assert "evidence" not in sys_prompt
@@ -437,9 +439,11 @@ def test_smeta_direct_light_prompt_allows_followup_norm_numbers(monkeypatch):
 
     assert "Кандидат ГЭСН" in text
     prompt_payload = FakeClient.last_json["messages"][1]["content"]
-    assert "это новая задача или продолжение текущей сметы" in prompt_payload
+    assert "учти контекст диалога и текущую смету" in prompt_payload
+    assert "не пиши пользователю служебный разбор маршрута" in prompt_payload
     assert "выполни только команду пользователя поверх активной сметы" in prompt_payload
     assert "без повторения полного предыдущего ответа" in prompt_payload
+    assert "это новая задача или продолжение текущей сметы" not in prompt_payload
     assert "Используй короткие жирные метки секций" not in prompt_payload
     assert "Обязательно заверши разделом «Итог»" not in prompt_payload
 

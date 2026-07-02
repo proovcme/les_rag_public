@@ -117,6 +117,9 @@ def test_smeta_estimator_role_pack_is_json_contract():
     assert "normable_bor" in pack["required_answer_capabilities"]
     assert "norm_candidate_table" in pack["required_answer_capabilities"]
     assert "artifact_ready_tables" in pack["required_answer_capabilities"]
+    assert "bor_markdown_table" in pack["required_answer_capabilities"]
+    assert "work_cost_markdown_table" in pack["required_answer_capabilities"]
+    assert "norm_or_source_per_cost_row" in pack["required_answer_capabilities"]
     assert "rim_scenario_estimate" in pack["required_answer_capabilities"]
     assert "normative_analogue_basis" in pack["required_answer_capabilities"]
     assert "tolerance_basis" in pack["required_answer_capabilities"]
@@ -147,6 +150,11 @@ def test_smeta_estimator_role_pack_is_json_contract():
     assert pack["hard_rules"]["do_not_deny_available_les_sources"] is True
     assert pack["hard_rules"]["empty_price_columns_do_not_block_work_cost"] is True
     assert pack["hard_rules"]["long_tables_can_be_artifact_payload"] is True
+    assert pack["hard_rules"]["direct_bor_request_requires_markdown_table"] is True
+    assert pack["hard_rules"]["direct_work_cost_request_requires_markdown_table"] is True
+    assert pack["hard_rules"]["do_not_expose_task_classification"] is True
+    assert pack["hard_rules"]["work_cost_rows_require_norm_or_source"] is True
+    assert pack["hard_rules"]["scenario_rate_must_be_labeled"] is True
     assert pack["hard_rules"]["code_does_not_select_works"] is True
     assert pack["hard_rules"]["model_selects_normative_route"] is True
     assert pack["hard_rules"]["case_specific_constants_forbidden"] is True
