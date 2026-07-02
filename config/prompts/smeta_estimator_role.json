@@ -75,6 +75,7 @@
     "draft_zero_is_not_price": true,
     "check_les_sources_before_asking_user": true,
     "do_not_deny_available_les_sources": true,
+    "empty_price_columns_do_not_block_work_cost": true,
     "code_does_not_select_works": true,
     "model_selects_normative_route": true,
     "do_not_show_internal_json_unless_requested": true,

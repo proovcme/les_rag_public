@@ -367,12 +367,30 @@ def test_smeta_direct_light_prompt_cuts_heavy_contract_by_default(monkeypatch):
     assert "дай стоимость работ" in sys_prompt
     assert "Сценарная сумма должна иметь видимую расчётную базу" in sys_prompt
     assert "дай кандидата или раздел с пометкой проверки" in sys_prompt
+    assert "Пустые ценовые колонки" in sys_prompt
+    assert "не запрет оценки работ" in sys_prompt
     assert "role-pack" not in sys_prompt
     assert "harness" not in sys_prompt
     assert "evidence" not in sys_prompt
     assert "Компактный машинный контракт" not in sys_prompt
     assert "ВОР -> нормируемая ВОР -> таблица подбора норм" not in sys_prompt
-    assert len(sys_prompt) < 1600
+    assert len(sys_prompt) < 1900
+
+
+def test_smeta_direct_prompt_does_not_block_on_empty_spec_price_columns(monkeypatch):
+    monkeypatch.setattr("proxy.services.fgis_price_service.available_pricebooks", lambda *args, **kwargs: [])
+
+    prompt = _smeta_direct_user_prompt(
+        "Оцени стоимость по спецификации СКС: кабель 1200 м, розетки 80 шт, "
+        "колонки цена за ед. и итого стоимость пустые",
+        "",
+        "",
+        light=True,
+    )
+
+    assert "пустые ценовые колонки" in prompt
+    assert "missing-цены поставки" in prompt
+    assert "не причина отказаться от оценки работ" in prompt
 
 
 def test_smeta_direct_light_prompt_allows_followup_norm_numbers(monkeypatch):
