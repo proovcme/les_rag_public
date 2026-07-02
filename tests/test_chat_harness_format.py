@@ -373,6 +373,7 @@ def test_smeta_direct_light_prompt_cuts_heavy_contract_by_default(monkeypatch):
     assert "сборник/раздел/код-кандидат" in sys_prompt
     assert "не пиши одиноко" in sys_prompt
     assert "ГЭСНм10" in sys_prompt
+    assert "Раздел ВОР не равен одному сборнику" in sys_prompt
     assert "role-pack" not in sys_prompt
     assert "harness" not in sys_prompt
     assert "evidence" not in sys_prompt
