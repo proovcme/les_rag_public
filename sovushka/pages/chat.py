@@ -2088,37 +2088,53 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         except Exception:
             pass
 
-    def _show_meta_artifact(meta: dict | None, ans: str, mode: str) -> None:
+    def _source_notes_artifact_from_answer(ans: str, meta: dict | None, srcs: list | None = None) -> dict:
+        from sovushka.answer_render import source_notes_artifact
+
+        sources = list(srcs or [])
+        return source_notes_artifact(
+            ans,
+            sources=sources,
+            source_map=(meta or {}).get("source_map"),
+        )
+
+    def _show_meta_artifact(meta: dict | None, ans: str, mode: str, srcs: list | None = None) -> None:
         if _render_project_inventory_artifact(meta):
             return
         meta_artifact = _artifact_from_meta(meta)
+        if not meta_artifact:
+            meta_artifact = _source_notes_artifact_from_answer(ans, meta, srcs)
         _show_artifact(
             str(meta_artifact.get("content") or ans or ""),
             str(meta_artifact.get("mode") or mode or "text"),
         )
 
-    def _artifact_button(ans: str, mode: str, meta: dict | None = None) -> None:
+    def _artifact_button(ans: str, mode: str, meta: dict | None = None, srcs: list | None = None) -> None:
         """Кнопка-карточка артефакта в пузыре ответа (если артефакт есть)."""
         meta_artifact = _artifact_from_meta(meta)
-        content = str(meta_artifact.get("content") or ans or "")
-        artifact_mode = str(meta_artifact.get("mode") or mode or "text")
-        if not meta_artifact and not _artifact_present(ans, mode):
+        source_artifact = {} if meta_artifact else _source_notes_artifact_from_answer(ans, meta, srcs)
+        content = str((meta_artifact or source_artifact).get("content") or ans or "")
+        artifact_mode = str((meta_artifact or source_artifact).get("mode") or mode or "text")
+        if not meta_artifact and not source_artifact and not _artifact_present(ans, mode):
             return
         # В model-first сметах таблица внутри Markdown — часть человеческого ответа,
         # а не отдельный "артефакт". Иначе в пузыре появляется шумная кнопка
         # "Артефакт: Таблица" для обычной ВОР.
-        if not meta_artifact and str(mode or "text") == "text":
+        if not meta_artifact and not source_artifact and str(mode or "text") == "text":
             return
         has_inventory = bool(_inventory_file_rows_from_meta(meta))
         lbl = (
             "Реестр файлов"
             if has_inventory
-            else str(meta_artifact.get("title") or (OUTPUT_FORMATS[mode][0] if (mode in OUTPUT_FORMATS and mode != "text") else "Таблица"))
+            else str(
+                (meta_artifact or source_artifact).get("title")
+                or (OUTPUT_FORMATS[mode][0] if (mode in OUTPUT_FORMATS and mode != "text") else "Таблица")
+            )
         )
         ui.button(
             f"Артефакт: {lbl} — открыть",
-            icon="o_table_view",
-            on_click=lambda a=content, m=artifact_mode, md=meta: _show_meta_artifact(md, a, m),
+            icon="o_format_quote" if source_artifact else "o_table_view",
+            on_click=lambda a=content, m=artifact_mode, md=meta, ss=list(srcs or []): _show_meta_artifact(md, a, m, ss),
         ).props("no-caps flat dense").classes("sov-artifact-chip").style(
             "margin-top:6px;border:1px solid var(--border);border-radius:8px;"
             "background:var(--bg);color:var(--accent);font-size:.68rem;font-weight:700;padding:4px 10px;"
@@ -2135,24 +2151,15 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         t = re.sub(r"\n{3,}", "\n\n", t).strip()
         return t or "Готово — результат в артефакте (кнопка ниже)."
 
-    _INLINE_SOURCE_RE = re.compile(r"\[Источник\s+\d+(?:\s*\|[^\]]+)?\]")
-
     def _format_sources_as_quotes(text: str) -> str:
-        """Визуально отделить source-маркеры от прозы, не меняя смысл ответа."""
-        out: list[str] = []
-        for line in str(text or "").splitlines():
-            markers = _INLINE_SOURCE_RE.findall(line)
-            if not markers:
-                out.append(line)
-                continue
-            body = _INLINE_SOURCE_RE.sub("", line)
-            body = re.sub(r"\s+([,.;:])", r"\1", body)
-            body = re.sub(r"([,;:])\s*([,;:.])", r"\2", body)
-            body = re.sub(r"\s{2,}", " ", body).strip(" ,;")
-            if body:
-                out.append(body)
-            out.append("> Источники: " + " ".join(markers))
-        return "\n".join(out)
+        """Keep prose readable: source notes go to the artifact, inline markers stay inline."""
+        from sovushka.answer_render import split_inline_source_notes
+
+        body, notes = split_inline_source_notes(text)
+        if not notes:
+            return body
+        suffix = '_Полный перечень источников — в артефакте «Источники ответа»._'
+        return f"{body}\n\n{suffix}".strip()
 
     # ── Богатые формы ПРЯМО В ЧАТЕ (таблицы/mermaid → красиво, не сырой текст) ──
     # Ответ режется на сегменты по месту блока (mermaid-fence, markdown-таблица),
@@ -2530,7 +2537,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 _render_suggestions(meta)
                 _render_excerpts(meta)
                 if _is_ai:
-                    _artifact_button(str(text or ""), _mode, meta)
+                    _artifact_button(str(text or ""), _mode, meta, srcs or [])
             if _is_ai and str(text or "").strip():
                 _render_answer_actions(str(text or ""), srcs or [])
         return bubble
@@ -2575,7 +2582,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 _render_suggestions(meta)
                 _render_excerpts(meta)
                 if not error:
-                    _artifact_button(str(text or ""), meta.get("out_mode", "text"), meta)
+                    _artifact_button(str(text or ""), meta.get("out_mode", "text"), meta, srcs or [])
             if not error and str(text or "").strip():
                 _render_answer_actions(str(text or ""), srcs or [])
 
@@ -3058,6 +3065,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                 "answer_contract_check": d.get("answer_contract_check") or {},
                 "workflow_plan": d.get("workflow_plan") or {},
                 "artifact": d.get("artifact") or {},
+                "source_map": d.get("source_map") or {},
                 "project_inventory": d.get("project_inventory") or {},
                 "versions": d.get("versions") or {},
             }
@@ -3066,7 +3074,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             _register_artifact_downloads(meta)
             explicit_artifact = _artifact_from_meta(meta)
             if explicit_artifact and (artifact_shell.visible or _inventory_file_rows_from_meta(meta)):
-                _show_meta_artifact(meta, str(explicit_artifact.get("content") or ""), str(explicit_artifact.get("mode") or "text"))
+                _show_meta_artifact(meta, str(explicit_artifact.get("content") or ""), str(explicit_artifact.get("mode") or "text"), srcs)
             # Режим «Смета» выключен, но запрос похож на объектную смету → предложить
             # пересчитать капстоуном (детерминированный расчёт вместо RAG-осколков).
             _route_ch = (d.get("query_route") or {}).get("channel", "")

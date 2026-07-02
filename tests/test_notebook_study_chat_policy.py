@@ -39,12 +39,11 @@ def test_notebook_study_artifact_is_markdown_not_auto_table_text():
     assert '"mode": "markdown"' in source
 
 
-def test_sovushka_formats_source_markers_as_quotes():
+def test_sovushka_moves_source_notes_to_artifact_instead_of_quote_blocks():
     from pathlib import Path
 
     chat_ui = Path("sovushka/pages/chat.py").read_text()
-    styles = Path("sovushka/styles.py").read_text()
 
     assert "_format_sources_as_quotes" in chat_ui
-    assert "Источники:" in chat_ui
-    assert ".sov-chat-md blockquote" in styles
+    assert "source_notes_artifact" in chat_ui
+    assert "> Источники:" not in chat_ui

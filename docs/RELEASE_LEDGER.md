@@ -7,14 +7,21 @@
 ## Текущее состояние (2026-07-02)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.172  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.173  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
 задеплоено на рантайм:     0.24.0.171 smeta excel roundtrip contract
-НЕ задеплоено:             0.24.0.172 rag/normcontrol skill contracts
+НЕ задеплоено:             0.24.0.172 rag/normcontrol skill contracts; 0.24.0.173 source notes artifact UI
 рантайм /api/version:      0.24.0.171 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.173 — Совушка больше не превращает inline-маркеры
+> `[Источник N]` в зелёные blockquote-простыни внутри ответа. Явные строки
+> `Источники: ...` выносятся из пузыря в Markdown-артефакт
+> `Источники ответа`; в самом ответе остаётся короткая ссылка на артефакт,
+> source chips и кнопка «С источниками». Payload `source_map` теперь
+> прокидывается в UI meta, чтобы артефакт мог показать перечень источников
+> без повторной генерации и без подмены RAG-логики.
 > 0.24.0.172 — RAG-поиск и нормоконтроль получили такой же слой
 > prompt/skill-контракта, как сметный режим: `prompt_registry_service`
 > отдаёт role-pack'и `rag_search_researcher_v1` и `normcontrol_reviewer_v1`,
