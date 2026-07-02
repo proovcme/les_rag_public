@@ -1092,35 +1092,33 @@ def test_parse_pricebook_from_spb_q2_2026(monkeypatch):
     assert h.parse_pricebook_hint("Расчет выполнить в ценах 2-ого квартала 2026 года по Санкт-Петербургу") == "spb_2kv2026"
 
 
-def test_mass_metal_plan_passes_pricebook_and_metal_nr_sp(monkeypatch):
-    from proxy.services import fgis_price_service as fps
+def test_mass_metal_plan_passes_pricebook_and_collection_nr_sp(monkeypatch):
     from proxy.services import lsr_assembly_service as lsr
 
-    monkeypatch.setattr(fps, "available_pricebooks", lambda *a, **k: ["/tmp/spb_2kv2026.parquet"])
     captured = {}
 
     def fake_assemble(positions, *, book=None, **_kwargs):
         captured["positions"] = positions
         captured["book"] = book
-        return {"summary": {"total": 118799319.94}}
+        return {"summary": {"total": 110519705.74}}
 
     monkeypatch.setattr(lsr, "assemble", fake_assemble)
-    plan = {
-        "object": {"object_type": "steel_structure"},
-        "works": [
-            ["Монтаж металлоконструкций", "Монтаж металлоконструкций",
-             "metal", "metal_assembly", "монтаж", "т", {"mass_t": 664.71112}],
-        ],
+    state = {
+        "pricebook": "spb_2kv2026",
+        "positions": [{
+            "status": "computed",
+            "work": "Монтаж металлоконструкций",
+            "code": "ГЭСНм:38-01-001-01",
+            "qty": 664.71112,
+            "norm_unit": "т",
+        }],
     }
 
-    h.run_estimate_harness(
-        "Общая масса составляет 664 711,12 кг. Расчет в ценах 2-ого квартала 2026 года по Санкт-Петербургу.",
-        lambda _m: json.dumps(plan, ensure_ascii=False),
-    )
+    h._finalize(state)
 
     assert captured["book"] == "spb_2kv2026"
-    assert captured["positions"][0]["nr_pct"] == 93
-    assert captured["positions"][0]["sp_pct"] == 62
+    assert captured["positions"][0]["nr_pct"] == 90
+    assert captured["positions"][0]["sp_pct"] == 45
 
 
 def test_parse_pile_count_from_question():

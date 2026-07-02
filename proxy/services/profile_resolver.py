@@ -67,10 +67,10 @@ PROFILES: dict[str, Profile] = {
         validation_policy="fail_open", escalation_policy="none",
         failure_policy="mark_preliminary", output_contract="prose",
     ),
-    # Модель первична: она раскладывает объект → вызывает инструменты; харнесс проверяет числа.
+    # Совместимый id старого профиля; активный route режима «Смета» отвечает model+RAG.
     "estimate_harness": Profile(
-        id="estimate_harness", executor="cloud_large", role="сметчик-харнесс",
-        tools=("propose_schema", "search_norm", "add_position"), grounded=False,
+        id="estimate_harness", executor="cloud_large", role="сметчик",
+        tools=("rag_context", "estimate_reasoning", "search_norm", "add_position"), grounded=True,
         validation_policy="require_numeric_provenance", escalation_policy="none",
         failure_policy="mark_preliminary", output_contract="estimate_preliminary_v1",
     ),

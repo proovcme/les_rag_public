@@ -20,7 +20,7 @@ APP_VERSION = "5.1.0"                 # пользовательская «ма�
 HARNESS_VERSION = "0.24"             # веха roadmap (v0.NN); двигать на смене вехи
 # Гранулярная версия «где мы»: 0.<веха>.<фича>.<патч>. Двигать КАЖДУЮ фичу/фикс + строка в
 # docs/RELEASE_LEDGER.md. Это основной номер в /api/version и бейдже (см. docs/RELEASE_LEDGER.md).
-LES_VERSION = "0.24.0.116"
+LES_VERSION = "0.24.0.163"
 EVIDENCE_SCHEMA_VERSION = "1.0"
 EXTRACTION_SCHEMA_VERSION = "1.0"
 RESOURCE_CALC_VERSION = "0.6"
@@ -33,6 +33,7 @@ _RUNTIME_ROOT = Path(os.getenv("LES_RUNTIME_HOME", "/Users/ovc/LES"))
 # v0.22: + GUI-файлы (sovushka) — иначе deploy stamp слеп к фронт-правкам и не флипается в stale.
 _CRITICAL_FILES = (
     "backend/qdrant_adapter.py",
+    "backend/document_router.py",
     "proxy/app.py",
     "proxy/routers/external_radar.py",
     "proxy/routers/datasets.py",
@@ -56,6 +57,13 @@ _CRITICAL_FILES = (
     "proxy/services/candidate_selection_service.py",
     "proxy/services/estimate_harness_service.py",
     "proxy/services/estimate_math_service.py",
+    "proxy/services/quantity_trace_service.py",
+    "proxy/services/active_state_service.py",
+    "proxy/services/les_module_service.py",
+    "proxy/services/scoped_rag_builder.py",
+    "proxy/services/skill_snippet_registry.py",
+    "proxy/services/tool_trace_policy.py",
+    "proxy/services/smeta_fast_answer_service.py",
     "proxy/services/smeta_norm_store.py",
     "proxy/services/sidecar_ops_service.py",
     "proxy/services/answer_form_service.py",
@@ -71,7 +79,11 @@ _CRITICAL_FILES = (
     "proxy/services/workflow_plan_service.py",
     "proxy/routers/chat_history.py",
     "config/prompts/smeta_estimator_role.json",
+    "config/domain/nr_sp.yaml",
     "skills/smeta/SKILL.md",
+    "tools/smetnoedelo_rag_import.py",
+    "tools/smeta_ru_norm_download.py",
+    "tools/smeta_ru_norm_rag_ingest.py",
     "sovushka/pages/chat.py",
     "sovushka/pages/instrumenty.py",
     "sovushka/components/header.py",

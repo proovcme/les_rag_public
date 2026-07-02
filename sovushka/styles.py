@@ -832,10 +832,10 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
 .sov-chat-md { white-space: normal; }
 .sov-chat-md p { margin: .2rem 0; }
 .sov-chat-inline-table {
-  width: 100%;
-  min-width: 0;
-  max-width: 100%;
-  table-layout: fixed;
+  width: max-content;
+  min-width: 100%;
+  max-width: none;
+  table-layout: auto;
   background: var(--bg-panel);
   color: var(--text);
   font-size: .76rem;
@@ -860,18 +860,22 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
 }
 .sov-table-scroll .q-table {
   table-layout: auto;
-  min-width: 100%;
+  min-width: max-content;
   max-width: none;
 }
 .sov-table-scroll .q-table__bottom { display: none !important; }
 .sov-chat-inline-table td, .sov-chat-inline-table th,
 .sov-artifact-table td, .sov-artifact-table th {
-  min-width: 84px;
-  max-width: 360px;
+  min-width: 140px;
+  max-width: 420px;
   white-space: normal !important;
   overflow-wrap: break-word;
   word-break: normal;
   vertical-align: top;
+}
+.sov-chat-inline-table th:first-child,
+.sov-chat-inline-table td:first-child {
+  min-width: 220px;
 }
 .sov-chat-inline-table thead th { font-weight: 800; }
 .sov-chat-inline-mermaid {
@@ -1399,6 +1403,23 @@ body, .nicegui-content {
   line-height: 1.55;
 }
 .sov-chat-md code, .sov-chat-message-text code { font-family: var(--font) !important; }
+.sov-chat-md h1,
+.sov-chat-md h2,
+.sov-chat-md h3,
+.sov-chat-md h4,
+.sov-chat-md h5,
+.sov-chat-md h6 {
+  margin: 10px 0 6px;
+  font-size: .92rem;
+  line-height: 1.28;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-wrap: balance;
+}
+.sov-chat-md h1:first-child,
+.sov-chat-md h2:first-child,
+.sov-chat-md h3:first-child { margin-top: 0; }
+.sov-chat-md p { text-wrap: pretty; }
 .sov-chat-md table, .sov-artifact-markdown table {
   display: block;
   max-width: 100%;

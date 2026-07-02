@@ -76,6 +76,25 @@ def _resource_price(
     return None, "missing"
 
 
+def _resolve_nr_sp_for_position(position: dict[str, Any]) -> tuple[float, float]:
+    """НР/СП from explicit fields, otherwise from norm code/name."""
+    explicit_nr = position.get("nr_pct")
+    explicit_sp = position.get("sp_pct")
+    if explicit_nr not in (None, "") or explicit_sp not in (None, ""):
+        return _f(explicit_nr), _f(explicit_sp)
+
+    from proxy.services.gesn_service import get_norm
+    from proxy.services.nr_sp_service import resolve as resolve_nr_sp
+
+    norm = get_norm(position.get("code", "")) if position.get("code") else None
+    code = str(position.get("code") or (norm or {}).get("code") or "").strip()
+    name = str(position.get("name") or position.get("work") or "").strip()
+    rs = resolve_nr_sp(name, code=code)
+    if rs.get("default") and norm:
+        rs = resolve_nr_sp(str(norm.get("name") or ""), code=code)
+    return _f(rs.get("nr_pct")), _f(rs.get("sp_pct"))
+
+
 def _price_requirement(res: dict[str, Any]) -> dict[str, Any]:
     """Что нужно добрать, если цена ресурса не найдена."""
     kind = str(res.get("kind") or "")
@@ -199,9 +218,10 @@ def compute_position(
         })
 
     em = round(machine_only + zpm, 2)
+    nr_pct, sp_pct = _resolve_nr_sp_for_position(position)
     pos_in = {
         "ozp": round(ozp, 2), "em": em, "zpm": round(zpm, 2), "mat": round(mat, 2),
-        "nr_pct": _f(position.get("nr_pct")), "sp_pct": _f(position.get("sp_pct")),
+        "nr_pct": nr_pct, "sp_pct": sp_pct,
     }
     res = st.apply_position(pos_in, k_ozp=k_ozp, k_em=k_em)
     chosen = res["adjusted"] if (k_ozp != 1.0 or k_em != 1.0) else res["base"]

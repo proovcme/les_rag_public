@@ -187,7 +187,7 @@ def build_position_trace(
     work_code = position.get("code") or (norm or {}).get("code") or ""
     work_name = position.get("name") or (norm or {}).get("name") or ""
     work_unit = position.get("unit") or (norm or {}).get("unit") or ""
-    nr_sp = nr_sp_service.resolve(work_name)
+    nr_sp = nr_sp_service.resolve(work_name, code=work_code)
     nr_pct = _f(position.get("nr_pct") if position.get("nr_pct") not in (None, "") else (norm or {}).get("nr_pct", nr_sp["nr_pct"]))
     sp_pct = _f(position.get("sp_pct") if position.get("sp_pct") not in (None, "") else (norm or {}).get("sp_pct", nr_sp["sp_pct"]))
 

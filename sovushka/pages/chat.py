@@ -273,6 +273,44 @@ def _attachment_chat_payload(attachment: dict) -> dict:
     return payload
 
 
+def _split_pasted_context_for_payload(
+    question: str,
+    *,
+    mode: str,
+    has_attachment: bool,
+) -> tuple[str, str, str]:
+    """Длинная вставка в сметном чате: короткая задача отдельно, исходник отдельно.
+
+    Модель должна рассуждать по ВОР/спецификации как по данным, а не таскать весь
+    лист Excel внутри поля `question`, где живут роутинг, история и resource gate.
+    """
+    q = str(question or "").strip()
+    if has_attachment or mode != "smeta":
+        return q, "", ""
+    line_count = q.count("\n") + 1 if q else 0
+    if len(q) <= 3600 and line_count < 24:
+        return q, "", ""
+
+    paragraphs = re.split(r"\n\s*\n", q, maxsplit=1)
+    task = paragraphs[0].strip() if paragraphs else ""
+    if len(task) < 20 or len(task) > 1200:
+        task = q[:900].strip()
+    if not re.search(r"(сделай|составь|посчитай|рассчитай|смет|вор|ведомост|хочу|нужн)", task, re.IGNORECASE):
+        task = "Сделай сметный разбор, ВОР и сметную структуру по вставленному исходнику."
+
+    header = "Вставленный исходник из сообщения оператора:\n\n"
+    trunc_note = "\n\n[Исходник усечён интерфейсом до лимита контекста; нужен файл или более узкий фрагмент.]"
+    max_body = max(0, 20000 - len(header))
+    if len(q) > max_body:
+        max_body = max(0, 20000 - len(header) - len(trunc_note))
+        body = q[:max_body].rstrip() + trunc_note
+    else:
+        body = q
+    context = f"{header}{body}"[:20000]
+    suffix = f"📎 Длинный исходник перенесён в контекст сметчика: {len(q)} симв."
+    return task, context, suffix
+
+
 def _attachment_visible_text(data: dict) -> tuple[str, str, str]:
     """Текст видимого подтверждения: куда именно пойдёт файл после галочки upload."""
     name = str(data.get("name") or "файл").strip() or "файл"
@@ -2066,6 +2104,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         artifact_mode = str(meta_artifact.get("mode") or mode or "text")
         if not meta_artifact and not _artifact_present(ans, mode):
             return
+        # В model-first сметах таблица внутри Markdown — часть человеческого ответа,
+        # а не отдельный "артефакт". Иначе в пузыре появляется шумная кнопка
+        # "Артефакт: Таблица" для обычной ВОР.
+        if not meta_artifact and str(mode or "text") == "text":
+            return
         has_inventory = bool(_inventory_file_rows_from_meta(meta))
         lbl = (
             "Реестр файлов"
@@ -2871,10 +2914,6 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         advanced_btn.props("disabled")
         chat_input.props("disabled")
         sent_attachment = dict(attach_state) if attach_state.get("id") else {}
-        attachment_suffix = _attachment_user_suffix(sent_attachment)
-        question_display = question
-        if attachment_suffix:
-            question_display = f"{question}\n\n{attachment_suffix}"
         # Авто-GOST: «собери/составь спецификацию …» → формат спеки (ГОСТ 21.110), чтобы
         # артефакт был чистой таблицей по форме, а не прозой. Не липко — селектор вернём.
         _orig_mode = out_mode_val["v"]
@@ -2882,33 +2921,43 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             out_mode_val["v"] = "spec"
         out_mode = out_mode_val["v"]
         # МАРШРУТНЫЕ РЕЖИМЫ: backend форсит путь по полю mode (минуя угадайку роутера).
-        #   smeta/review → детерминированная таблица; kp → текст-задел; rag → заземлённый RAG;
+        #   smeta → model+RAG сметчик; review → таблица проверки; kp → текст-задел; rag → заземлённый RAG;
         #   free → вольный LLM без ретрива. Прочие out_mode (table/svg/…) — обычный формат-режим.
         _ROUTING_MODES = {"smeta", "review", "kp", "rag", "free", "doc_review"}
         _routing_mode = out_mode if out_mode in _ROUTING_MODES else None
         is_smeta_mode = (out_mode == "smeta")
-        _ph_map = {"smeta": "Считаю смету…", "review": "Проверяю проект…", "kp": "Готовлю КП…",
+        _ph_map = {"smeta": "Думаю как сметчик…", "review": "Проверяю проект…", "kp": "Готовлю КП…",
                    "free": "Думаю вольно…", "rag": "Ищу в документах…", "doc_review": "Проверяю по ГОСТ…"}
         _initial_status = _ph_map.get(out_mode, "Генерирую…")
-        # рендер ответа: смета/проверка → таблица; вольный/раг/кп → текст; иначе сам формат.
-        _render_mode = "table" if out_mode in ("smeta", "review") else ("text" if _routing_mode else out_mode)
+        # рендер ответа: смета теперь проза model+RAG; проверка → таблица; вольный/раг/кп → текст.
+        _render_mode = "table" if out_mode == "review" else ("text" if _routing_mode else out_mode)
+        payload_question, pasted_context, pasted_suffix = _split_pasted_context_for_payload(
+            question,
+            mode=out_mode,
+            has_attachment=bool(sent_attachment),
+        )
+        attachment_suffix = _attachment_user_suffix(sent_attachment)
+        question_display = payload_question if pasted_suffix else question
+        display_notes = [x for x in (attachment_suffix, pasted_suffix) if x]
+        if display_notes:
+            question_display = f"{question_display}\n\n" + "\n".join(display_notes)
 
         state["chat_history"].append({"role": "user", "text": question_display})
-        state["chat_pending"] = {"question": question, "started_at": time.time()}
+        state["chat_pending"] = {"question": payload_question, "started_at": time.time()}
 
         with chat_column:
             _render_chat_bubble(question_display, "chat-msg-user")
             ai_placeholder, ai_placeholder_label = _render_ai_placeholder(f"{_initial_status} 0с")
         chat_scroll.scroll_to(percent=1)
-        add_log(f'[AI] Запрос: "{question[:60]}"')
+        add_log(f'[AI] Запрос: "{payload_question[:60]}"')
 
         # Формат/стиль ответа — ОТДЕЛЬНЫМ полем (не клеим в текст вопроса): иначе бэкенд
         # видит мусор-шаблон как вопрос → авто-заметки/роутинг/ретрив плывут.
         # В маршрутном режиме формат-директива не нужна (backend сам решает, что вернуть).
-        extra_prompt = "" if (skip_resource_gate or _routing_mode) else _build_extra_prompt(question)
+        extra_prompt = "" if (skip_resource_gate or _routing_mode) else _build_extra_prompt(payload_question)
         out_mode_val["v"] = _orig_mode  # вернуть пользователю его выбор формата (авто-GOST не липкий)
         payload = {
-            "question": question,
+            "question": payload_question,
             "output_directive": extra_prompt or None,
             "reranker_enabled": reranker_sw.value,
             "validation_enabled": bool(validation_sw.value),
@@ -2931,6 +2980,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
         if project_state["id"]:  # back-compat: одиночный проект → project_id
             payload["project_id"] = project_state["id"]
         payload.update(_attachment_chat_payload(sent_attachment))
+        if pasted_context:
+            existing_ctx = str(payload.get("attachment_context") or "").strip()
+            payload["attachment_context"] = (
+                f"{existing_ctx}\n\n{pasted_context}" if existing_ctx else pasted_context
+            )[:20000]
         if sent_attachment:
             _clear_attachment(notify=False)
 
@@ -3180,6 +3234,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
             )
 
     def _render_artifact_error(detail: str):
+        detail = str(detail or "").strip()
+        if len(detail) > 1200:
+            detail = detail[:1200].rstrip() + "…"
         _open_artifacts()
         artifact_panel.clear()
         with artifact_panel:

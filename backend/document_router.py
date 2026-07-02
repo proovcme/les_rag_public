@@ -301,6 +301,9 @@ def _has_strong_normative_signal(text: str) -> bool:
 def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
     text = f"{' '.join(probe.path.parts)}\n{probe.text_sample}".casefold()
     name = probe.path.name.casefold()
+    smeta_ru_norm_domain = _smeta_ru_norm_domain(probe.path)
+    if smeta_ru_norm_domain:
+        return smeta_ru_norm_domain
 
     if (
         doc_type
@@ -473,6 +476,20 @@ def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
     if _is_ntd_source(probe):
         return "NTD_GENERAL"
     return "DOCS_OTHER"
+
+
+def _smeta_ru_norm_domain(path: Path) -> str:
+    parts = [part.casefold() for part in path.parts]
+    try:
+        index = parts.index("smeta_ru_norm")
+    except ValueError:
+        return ""
+    if index + 1 >= len(parts):
+        return "TABLE_SMETA"
+    category = re.sub(r"[^a-z0-9]+", "_", parts[index + 1]).strip("_").upper()
+    if not category or category.startswith("00_"):
+        return "TABLE_SMETA"
+    return f"SMETA_RU_NORM_{category}"
 
 
 _FIRE_TOKENS = (

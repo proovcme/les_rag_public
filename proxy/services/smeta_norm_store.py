@@ -168,10 +168,41 @@ _CONDITION_QUESTIONS: dict[str, str] = {
 }
 
 
+_COUNT_UNIT_PREFIXES = (
+    "шт", "штук", "компл", "комплект", "узел", "точ", "порт", "мест", "стык", "соедин",
+    "издел", "элемент", "прибор", "аппарат", "датчик", "насад", "розет", "шкаф",
+    "панел", "модул", "люк", "коробк", "кассет", "адаптер", "пигтейл", "разъем", "разъём",
+)
+
+
 def _canon_unit(unit: Any) -> str:
     s = str(unit or "").strip().lower().replace("³", "3").replace("²", "2")
     s = s.replace("куб.м", "м3").replace("кв.м", "м2").replace("куб м", "м3").replace("кв м", "м2")
-    return re.sub(r"\s+", "", s)
+    s = re.sub(r"\s+", "", s)
+    s = s.replace("п.м.", "м").replace("п.м", "м").replace("м.п.", "м").replace("м.п", "м")
+    s = re.sub(r"^\d+(?=[а-яa-z])", "", s).strip(".,;:")
+    aliases = {
+        "мп": "м", "пм": "м", "метр": "м", "метры": "м", "meters": "м", "meter": "м",
+        "piece": "шт", "pcs": "шт", "pc": "шт",
+    }
+    if s in aliases:
+        return aliases[s]
+    if s == "км" or s.startswith(("кмкаб", "кмтруб", "кмтрас", "кмпути", "кмсет")):
+        return "км"
+    for base in ("м3", "м2"):
+        if s == base or s.startswith(base + ".") or s.startswith(base):
+            return base
+    if s == "м" or s.startswith("м.") or s.startswith((
+        "мкаб", "мтруб", "млот", "мкороб", "мшв", "мпровод", "мтрас", "мсет", "мканал", "мжелоб", "мрукав",
+    )):
+        return "м"
+    if s.startswith(_COUNT_UNIT_PREFIXES):
+        return "шт"
+    if s == "т" or s.startswith(("тметалл", "тконструк", "тстали", "тарматур", "тиздел")):
+        return "т"
+    if s.startswith(("тонн", "kg", "кг")):
+        return "т" if s.startswith("тонн") else "кг"
+    return s
 
 
 def _norm_unit_factor(unit: Any) -> tuple[float, str]:
@@ -251,6 +282,54 @@ def _fts_query(words: Iterable[str]) -> str:
         if len(w) >= 3:
             clean.append(f"{w}*")
     return " OR ".join(clean[:12])
+
+
+def _search_terms(words: Iterable[str]) -> list[str]:
+    return [
+        re.sub(r"[^а-яёa-z0-9]", "", str(word or "").lower())
+        for word in words
+        if len(re.sub(r"[^а-яёa-z0-9]", "", str(word or "").lower())) >= 3
+    ][:12]
+
+
+def _candidate_score(row: "SmetaNormRow", terms: list[str]) -> tuple[int, str]:
+    """Rank lexical candidates; applicability remains a model/harness decision."""
+    if not terms:
+        return (0, row.code)
+    title = row.title.lower()
+    token_text = row.token_text.lower()
+    code = row.code.lower()
+    score = 0
+    title_hits = 0
+    token_hits = 0
+    for term in terms:
+        if term in title:
+            score += 8
+            title_hits += 1
+        if term in token_text:
+            score += 3
+            token_hits += 1
+        if term in code:
+            score += 6
+    if token_hits == len(terms):
+        score += 18
+    if title_hits == len(terms):
+        score += 24
+    phrase = " ".join(terms)
+    if phrase and phrase in title:
+        score += 12
+    telecom_terms = {
+        "волокон", "оптичес", "кабел", "кросс", "связ", "слаботоч", "перемыч", "шкаф", "статив"
+    }
+    if any(term.startswith(prefix) for term in terms for prefix in telecom_terms):
+        if row.collection_key == "ГЭСНм10":
+            score += 10
+        elif row.base_type.startswith("ГЭСНм"):
+            score += 4
+    negative_hits = len([h for h in _csv_list(row.negative_hints) if h and h in title])
+    if negative_hits:
+        score -= negative_hits * 2
+    return (score, row.code)
 
 
 @dataclass(frozen=True)
@@ -432,6 +511,17 @@ class SmetaNormStore:
         if not words:
             return []
         row_limit = len(self.rows) if limit is None else max(1, int(limit))
+        pool_limit = row_limit if limit is None else min(len(self.rows), max(row_limit * 12, 80))
+        terms = _search_terms(words)
+        strict_found: list[sqlite3.Row] = []
+        if terms:
+            strict_clauses = " AND ".join(["token_text LIKE ?" for _ in terms])
+            strict_params = [f"%{term}%" for term in terms]
+            with self._lock:
+                strict_found = self.conn.execute(
+                    f"SELECT * FROM norms WHERE {strict_clauses} LIMIT ?",
+                    (*strict_params, pool_limit),
+                ).fetchall()
         if self._has_fts:
             query = _fts_query(words)
             if query:
@@ -444,10 +534,14 @@ class SmetaNormStore:
                             WHERE norms_fts MATCH ?
                             LIMIT ?
                             """,
-                            (query, row_limit),
+                            (query, pool_limit),
                         ).fetchall()
-                    if found:
-                        return [_row_from_sql(r) for r in found]
+                    combined = [*strict_found, *found]
+                    if combined:
+                        rows_by_code = {_row_from_sql(r).code: _row_from_sql(r) for r in combined}
+                        rows = list(rows_by_code.values())
+                        rows.sort(key=lambda row: _candidate_score(row, terms), reverse=True)
+                        return rows[:row_limit]
                 except sqlite3.Error:
                     pass
         clauses = " OR ".join(["token_text LIKE ?" for _ in words[:12]])
@@ -455,9 +549,12 @@ class SmetaNormStore:
         with self._lock:
             found = self.conn.execute(
                 f"SELECT * FROM norms WHERE {clauses} LIMIT ?",
-                (*params, row_limit),
+                (*params, pool_limit),
             ).fetchall()
-        return [_row_from_sql(r) for r in found]
+        rows_by_code = {_row_from_sql(r).code: _row_from_sql(r) for r in [*strict_found, *found]}
+        rows = list(rows_by_code.values())
+        rows.sort(key=lambda row: _candidate_score(row, terms), reverse=True)
+        return rows[:row_limit]
 
     def by_code(self, code: str) -> SmetaNormRow | None:
         with self._lock:

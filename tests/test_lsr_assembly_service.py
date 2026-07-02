@@ -88,6 +88,20 @@ def test_assemble_rollup():
     assert res["sections"][0]["positions"] == 2
 
 
+def test_assemble_code_only_applies_nr_sp_from_norm_collection():
+    res = assemble([{
+        "code": "ГЭСНм38-01-001-01",
+        "qty": 664.71112,
+        "section": "Металлоконструкции",
+    }], book="spb_2kv2026")
+
+    pos = res["positions"][0]
+    assert pos["base"]["nr"] == 37258263.86
+    assert pos["base"]["sp"] == 18629131.93
+    assert pos["total"] == 110519705.74
+    assert res["summary"]["total"] == 110519705.74
+
+
 def test_machinist_aggregate_split_by_mapped_machines():
     class FakePriceBook:
         def lookup(self, code: str):

@@ -44,6 +44,30 @@ def test_santehnika_from_orders():
     assert r["default"] is False
 
 
+def test_code_collection_takes_priority_over_generic_words():
+    r = resolve("сборка конструкций", code="ГЭСНм38")
+    assert r["label"] == "Изготовление технологических металлических конструкций"
+    assert r["nr_pct"] == 90 and r["sp_pct"] == 45
+    assert r["default"] is False
+
+
+def test_code_collection_normalization():
+    assert resolve(code="ГЭСН12")["label"] == "Кровли"
+    assert resolve(code="ГЭСН:12")["label"] == "Кровли"
+    assert resolve(code="12-01-001-01")["label"] == "Кровли"
+
+
+def test_collection_subtype_can_override_general_collection():
+    r = resolve("устройство покрытий тротуаров", code="ГЭСН27")
+    assert r["label"] == "Покрытия дорожек, тротуаров, площадок"
+    assert r["nr_pct"] == 113 and r["sp_pct"] == 77
+
+
+def test_expanded_collections_cover_construction_and_montage():
+    assert resolve(code="ГЭСН22")["label"] == "Наружные сети (водопровод/канализация/теплоснабжение)"
+    assert resolve(code="ГЭСНм12")["label"] == "Технологические трубопроводы"
+
+
 def test_default_for_unknown():
     # Вид без своего ключа → дефолт (Отделочные, сб.15: 100/49). default=True.
     r = resolve("Пусконаладочные работы систем автоматики XYZ")

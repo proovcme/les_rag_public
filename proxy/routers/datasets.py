@@ -54,7 +54,7 @@ UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 DEFAULT_PARSE_BATCH_LIMIT = int(os.getenv("RAG_PARSE_BATCH_LIMIT", "5"))
 DEFAULT_PARSE_SCHEDULER_BATCH_LIMIT = int(os.getenv("RAG_PARSE_SCHEDULER_BATCH_LIMIT", "1"))
 DEFAULT_PARSE_SCHEDULER_MAX_BATCHES = int(os.getenv("RAG_PARSE_SCHEDULER_MAX_BATCHES", "25"))
-PARSE_MIN_FREE_GB = float(os.getenv("RAG_PARSE_MIN_FREE_GB", "8"))
+PARSE_MIN_FREE_GB = float(os.getenv("RAG_PARSE_MIN_FREE_GB", "7"))
 PARSE_MAX_SWAP_PCT = float(os.getenv("RAG_PARSE_MAX_SWAP_PCT", "45"))
 PARSE_POST_MAX_SWAP_PCT = float(os.getenv("RAG_PARSE_POST_MAX_SWAP_PCT", "60"))
 ACTIVE_PARSE_SCHEDULER_STATUSES = {"QUEUED", "PARSING", "RUNNING"}
@@ -2032,6 +2032,94 @@ _ATTACH_STORAGE_ROOT = Path("storage/datasets")
 _READ_ATTACH_MAX_CHARS = int(os.getenv("RAG_ATTACH_READ_MAX_CHARS", "18000"))
 
 
+def _compact_cell(value: Any, *, max_len: int = 240) -> str:
+    text = " ".join(str(value or "").replace("\u00a0", " ").split())
+    if len(text) > max_len:
+        return text[: max_len - 1].rstrip() + "…"
+    return text
+
+
+def _format_tabular_attachment_context(path: Path, original_name: str, *, max_chars: int) -> tuple[str, bool] | None:
+    """XLSX/CSV attachment → model-readable row context with sheet/row provenance.
+
+    Это не ВОР-генератор и не сметный шаблон: только более честный транспорт таблицы
+    в модель, чтобы она сама сделала спецификация → ВОР → сметный ход.
+    """
+    suffix = path.suffix.lower()
+    parts: list[str] = [
+        f"Файл: {original_name}",
+        "Тип данных: таблица/спецификация. Строки ниже сохранены с номерами листов/строк.",
+        "",
+    ]
+    truncated = False
+
+    def _append(line: str) -> bool:
+        nonlocal truncated
+        current = "\n".join(parts)
+        extra = ("\n" if current else "") + line
+        if len(current) + len(extra) > max_chars:
+            truncated = True
+            return False
+        parts.append(line)
+        return True
+
+    if suffix in {".xlsx", ".xlsm"}:
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+        except Exception as err:  # noqa: BLE001
+            logger.warning("[ATTACH] xlsx structured read failed for %s: %s", original_name, err)
+            return None
+        try:
+            for sheet in wb.sheetnames:
+                ws = wb[sheet]
+                if not _append(f"## Лист: {sheet}"):
+                    break
+                nonempty = 0
+                for ri, row in enumerate(ws.iter_rows(values_only=True), 1):
+                    vals = [_compact_cell(v) for v in row if v not in (None, "")]
+                    if not vals:
+                        continue
+                    nonempty += 1
+                    if not _append(f"{sheet}!R{ri}: " + " | ".join(vals)):
+                        break
+                _append(f"Итого непустых строк на листе «{sheet}»: {nonempty}")
+                if truncated:
+                    break
+        finally:
+            wb.close()
+    elif suffix == ".csv":
+        import csv
+        for enc in ("utf-8-sig", "utf-8", "cp1251", "latin-1"):
+            try:
+                text = path.read_text(encoding=enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        sample = text.splitlines()[0] if text.splitlines() else ""
+        delimiter = ";" if sample.count(";") >= sample.count(",") else ","
+        reader = csv.reader(text.splitlines(), delimiter=delimiter)
+        nonempty = 0
+        _append("## CSV")
+        for ri, row in enumerate(reader, 1):
+            vals = [_compact_cell(v) for v in row if str(v or "").strip()]
+            if not vals:
+                continue
+            nonempty += 1
+            if not _append(f"CSV!R{ri}: " + " | ".join(vals)):
+                break
+        _append(f"Итого непустых строк CSV: {nonempty}")
+    else:
+        return None
+
+    if truncated and parts[-1] != "[Табличный контекст усечён по лимиту; для полной сметы нужен файл как датасет или более узкий лист.]":
+        parts.append("[Табличный контекст усечён по лимиту; для полной сметы нужен файл как датасет или более узкий лист.]")
+    text = "\n".join(parts).strip()
+    return (text, truncated) if text else None
+
+
 async def _ensure_chat_attach_dataset(state) -> str:
     for d in await state.backend.list_datasets():
         if d.name == _CHAT_ATTACH_DATASET_NAME:
@@ -2072,17 +2160,28 @@ async def attach_chat_file(
 
     if mode == "read":
         try:
-            from backend.converter import convert_to_markdown
+            structured = await asyncio.to_thread(
+                _format_tabular_attachment_context,
+                temp_path,
+                original_name,
+                max_chars=_READ_ATTACH_MAX_CHARS,
+            )
+            if structured:
+                text, truncated = structured
+            else:
+                from backend.converter import convert_to_markdown
 
-            try:
-                text = await asyncio.to_thread(convert_to_markdown, temp_path)
-            except Exception as error:  # noqa: BLE001 - upload errors must stay operator-visible
-                logger.warning("[ATTACH] read conversion failed for %s: %s", original_name, error)
-                raise HTTPException(
-                    422,
-                    f"Не удалось прочитать файл «{original_name}»: {error}. "
-                    "Попробуй режим индексации/OCR или другой формат файла.",
-                ) from error
+                try:
+                    text = await asyncio.to_thread(convert_to_markdown, temp_path)
+                except Exception as error:  # noqa: BLE001 - upload errors must stay operator-visible
+                    logger.warning("[ATTACH] read conversion failed for %s: %s", original_name, error)
+                    raise HTTPException(
+                        422,
+                        f"Не удалось прочитать файл «{original_name}»: {error}. "
+                        "Попробуй режим индексации/OCR или другой формат файла.",
+                    ) from error
+                text = (text or "").strip()
+                truncated = len(text) > _READ_ATTACH_MAX_CHARS
         finally:
             temp_path.unlink(missing_ok=True)
         text = (text or "").strip()
@@ -2092,7 +2191,6 @@ async def attach_chat_file(
                 f"Не удалось прочитать текст из «{original_name}». "
                 "Для таблиц попробуй режим быстрой сверки, для сканов — индексацию/OCR.",
             )
-        truncated = len(text) > _READ_ATTACH_MAX_CHARS
         return {
             "attachment_id": f"read_{uuid4().hex[:12]}",
             "mode": "read",

@@ -70,13 +70,13 @@ ANSWER_CONTRACTS: dict[str, dict[str, Any]] = {
 SCENARIOS: dict[str, dict[str, Any]] = {
     "estimate_harness": {
         "id": "estimate_harness",
-        "label": "Сметная декомпозиция",
-        "contract": "estimate_preliminary_v1",
+        "label": "Сметчик",
+        "contract": "smeta_model_rag_answer_v1",
         "progress": [
-            "Думаю над составом работ",
-            "Подбираю нормы",
-            "Сверяю объёмы и единицы",
-            "Собираю черновик сметы",
+            "Читаю исходные",
+            "Разделяю работы, материалы и поставку",
+            "Формирую ВОР и ценовые пробелы",
+            "Готовлю сметный ответ",
         ],
     },
     "normcontrol": {

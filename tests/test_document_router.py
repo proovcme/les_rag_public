@@ -25,6 +25,21 @@ def test_route_csv_smeta_to_parquet(tmp_path):
     assert route.pipeline == "parquet"
 
 
+def test_route_smeta_ru_norm_archive_projection_to_category_dataset(tmp_path):
+    path = tmp_path / "RAG_Content/TABLE_SMETA/SMETA_RU_NORM/fsnb2022/00_dataset_card.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "# Smeta.RU norm dataset\n\nФСНБ-2022 ГЭСН ГЭСНм ФСБЦ ресурсы",
+        encoding="utf-8",
+    )
+
+    route = route_document(path)
+
+    assert route.domain == "SMETA_RU_NORM_FSNB2022"
+    assert route.dataset_name == "SMETA_RU_NORM_FSNB2022_Index"
+    assert route.doc_type in {"NORMATIVE", "SMETA"}
+
+
 def test_route_pdf_with_table_signals_to_markdown_pdf_tables():
     probe = DocumentProbe(
         path=Path("Спецификация.pdf"),

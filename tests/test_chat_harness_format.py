@@ -10,12 +10,17 @@ from proxy.routers.chat import (
     _format_harness_artifact,
     _format_smeta_dialog_state,
     _harness_voice_comment,
+    _mlx_prefill_no_think_messages,
+    _smeta_active_state_from_answer,
     _smeta_direct_rag_context,
     _smeta_direct_model_answer,
+    _format_active_smeta_state,
+    _smeta_harness_question,
     _should_use_model_first_smeta,
     _smeta_model_first_answer,
     _smeta_dialog_state,
     _voice_claims_source_truncated,
+    _mlx_runtime,
 )
 
 
@@ -48,6 +53,26 @@ def test_harness_answer_is_operator_facing_with_numbers():
     assert "Планировщик" not in text
     assert "search_norm" not in text
     assert "декомпозиция" not in text.lower()
+
+
+def test_mlx_prefill_no_think_messages_only_for_local_mlx():
+    messages = [{"role": "user", "content": "ответь"}]
+
+    mlx_messages = _mlx_prefill_no_think_messages(messages, "mlx")
+    cloud_messages = _mlx_prefill_no_think_messages(messages, "openai")
+
+    assert mlx_messages[-1]["role"] == "assistant"
+    assert "<think>" in mlx_messages[-1]["content"]
+    assert cloud_messages == messages
+
+
+def test_mlx_runtime_defaults_to_mlx_model(monkeypatch):
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.setenv("MLX_MODEL", "mlx-community/Qwen3.5-9B-MLX-4bit")
+
+    runtime = _mlx_runtime()
+
+    assert runtime.model == "mlx-community/Qwen3.5-9B-MLX-4bit"
 
 
 def test_harness_voice_allows_short_human_comment(monkeypatch):
@@ -235,6 +260,7 @@ def test_smeta_direct_model_answer_does_not_need_harness_result(monkeypatch):
         model="test-model", provider="openai", chat_url="http://127.0.0.1/test", api_key="",
     ))
     monkeypatch.setattr("proxy.routers.chat.httpx.Client", FakeClient)
+    monkeypatch.setenv("LES_SMETA_DIRECT_LIGHT_PROMPT", "0")
 
     text = _smeta_direct_model_answer(
         "Текущий запрос:\nСделай смету по скамье\n\nКонтекст прикреплённого файла:\n3 скамьи; Г1 4 шт; бетон 0,4 м3",
@@ -244,10 +270,218 @@ def test_smeta_direct_model_answer_does_not_need_harness_result(monkeypatch):
     assert "12 шт" in text
     assert "1,2 м3" in text
     prompt_payload = FakeClient.last_json["messages"][1]["content"]
-    assert "direct_model_smeta_answer" in prompt_payload
     assert "3 скамьи" in prompt_payload
     assert "Гранитные элементы требуют КАЦ" in prompt_payload
+    assert "Контроль исходных чисел" in prompt_payload
+    assert "Сравнительная таблица РИМ/ГЭСН vs рынок" in prompt_payload
+    assert "Обязательно заверши разделом «Итог»" in prompt_payload
+    assert "построчной таблицей" in prompt_payload
+    assert "Нормируемая ВОР / таблица подбора норм" in prompt_payload
+    assert "Не вводи новые спорные суммы/расхождения" in prompt_payload
+    assert "форму развилки исходных объёмов" in prompt_payload
+    assert "не заменяй демонтаж" in FakeClient.last_json["messages"][0]["content"]
+    assert "ВОР -> нормируемая ВОР -> таблица подбора норм" in FakeClient.last_json["messages"][0]["content"]
+    assert "Excel-таблицу подбора норм" in FakeClient.last_json["messages"][0]["content"]
+    assert "одна строка исходной вор может раскладываться" in FakeClient.last_json["messages"][0]["content"].lower()
+    assert "не пиши, что пользователь их не дал" in FakeClient.last_json["messages"][0]["content"]
+    assert "какие числа сложены" in FakeClient.last_json["messages"][0]["content"]
+    assert "прежняя оценка" in FakeClient.last_json["messages"][0]["content"]
+    assert "Упаковка, тара, такелаж и оснастка не становятся отдельными платными разделами" in FakeClient.last_json["messages"][0]["content"]
+    assert "scenario_estimate" in FakeClient.last_json["messages"][0]["content"]
+    assert "Не заменяй построчную ВОР одной крупной вилкой" in FakeClient.last_json["messages"][0]["content"]
+    assert "144*20%*10=288" not in FakeClient.last_json["messages"][0]["content"]
     assert "blocked_harness_advisory" not in prompt_payload
+
+
+def test_smeta_direct_light_prompt_cuts_heavy_contract_by_default(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": (
+                "Считаю РИМ-сценарием по нормативным аналогам, не финальная ЛСР.\n"
+                "| Работа | Объём | Нормативный ход | Сумма |\n"
+                "|---|---:|---|---:|\n"
+                "| Монтаж | 10 т | ГЭСН-аналог | 1 000 000 |\n"
+            )}}]}
+
+    class FakeClient:
+        last_json = None
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            FakeClient.last_json = kwargs.get("json")
+            return FakeResponse()
+
+    monkeypatch.setattr("proxy.routers.chat._llm_runtime", lambda: SimpleNamespace(
+        model="test-model", provider="openai", chat_url="http://127.0.0.1/test", api_key="",
+    ))
+    monkeypatch.setattr("proxy.routers.chat.httpx.Client", FakeClient)
+    monkeypatch.delenv("LES_SMETA_DIRECT_LIGHT_PROMPT", raising=False)
+
+    text = _smeta_direct_model_answer(
+        "Текущий запрос:\nДай оценку стоимости работ\n\nКонтекст прикреплённого файла:\nВОР: монтаж 10 т",
+        "Проверяемые фрагменты из выбранного RAG-корпуса:\nГЭСН, ФГИС, НР/СП доступны.",
+    )
+
+    assert "РИМ-сценарием" in text
+    sys_prompt = FakeClient.last_json["messages"][0]["content"]
+    assert "Работай как сметчик, а не как чат-бот" in sys_prompt
+    assert "дай стоимость работ" in sys_prompt
+    assert "Сценарная сумма должна иметь видимую расчётную базу" in sys_prompt
+    assert "дай кандидата или раздел с пометкой проверки" in sys_prompt
+    assert "role-pack" not in sys_prompt
+    assert "harness" not in sys_prompt
+    assert "evidence" not in sys_prompt
+    assert "Компактный машинный контракт" not in sys_prompt
+    assert "ВОР -> нормируемая ВОР -> таблица подбора норм" not in sys_prompt
+    assert len(sys_prompt) < 1600
+
+
+def test_smeta_direct_light_prompt_allows_followup_norm_numbers(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": (
+                "| Работа | Кандидат ГЭСН | Что проверить |\n"
+                "|---|---|---|\n"
+                "| Монтаж ярусов | ГЭСН на монтаж стальных конструкций | тип конструкции и кран |\n"
+            )}}]}
+
+    class FakeClient:
+        last_json = None
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            FakeClient.last_json = kwargs.get("json")
+            return FakeResponse()
+
+    monkeypatch.setattr("proxy.routers.chat._llm_runtime", lambda: SimpleNamespace(
+        model="test-model", provider="openai", chat_url="http://127.0.0.1/test", api_key="",
+    ))
+    monkeypatch.setattr("proxy.routers.chat.httpx.Client", FakeClient)
+    monkeypatch.delenv("LES_SMETA_DIRECT_LIGHT_PROMPT", raising=False)
+
+    text = _smeta_direct_model_answer(
+        "Контекст текущего диалога:\n"
+        "- Сделай оценку столпа по РИМ и рынку\n"
+        "- ВОР: контрольная сборка; упаковка; монтаж ярусов краном; болтовая сборка\n\n"
+        "Текущий запрос:\nдобавь номера ГЭСН",
+        "Проверяемые фрагменты из выбранного RAG-корпуса:\nГЭСН на монтаж стальных конструкций.",
+    )
+
+    assert "Кандидат ГЭСН" in text
+    prompt_payload = FakeClient.last_json["messages"][1]["content"]
+    assert "это новая задача или продолжение текущей сметы" in prompt_payload
+    assert "выполни только команду пользователя поверх активной сметы" in prompt_payload
+    assert "без повторения полного предыдущего ответа" in prompt_payload
+    assert "Используй короткие жирные метки секций" not in prompt_payload
+    assert "Обязательно заверши разделом «Итог»" not in prompt_payload
+
+
+def test_smeta_harness_question_includes_previous_answer_for_followups(monkeypatch):
+    monkeypatch.setattr(
+        "proxy.routers.chat._smeta_recent_dialog_context",
+        lambda session_id: (
+            "Предыдущий сметный диалог.\n"
+            "Ответ ЛЕС:\n| Работа | РИМ сумма |\n| Монтаж ярусов | 46 млн |"
+        ),
+    )
+    monkeypatch.setattr(
+        "proxy.routers.chat.session_user_questions",
+        lambda session_id, max_turns=6: ["Дай оценку столпа"],
+    )
+    monkeypatch.setattr("proxy.routers.chat.session_recent_retrieval_traces", lambda *args, **kwargs: [])
+
+    text = _smeta_harness_question(
+        ChatRequest(question="добавь номера ГЭСН", mode="smeta", session_id="s1")
+    )
+
+    assert "Ответ ЛЕС" in text
+    assert "Монтаж ярусов" in text
+    assert "46 млн" in text
+    assert "Текущий запрос:\nдобавь номера ГЭСН" in text
+
+
+def test_smeta_active_state_extracts_bor_from_direct_answer():
+    answer = (
+        "| № | Наименование работ | Ед. изм. | Кол-во | Примечание |\n"
+        "|---|---|---:|---:|---|\n"
+        "| 1 | Контрольная сборка смежных ярусов | стык | 10 | пары ярусов |\n"
+        "| 2 | Монтаж ярусов гусеничным краном | т | 696,892 | с колес |\n"
+        "\n"
+        "Открытая развилка: вариант А — 664,71172 т; вариант Б — 696,89172 т.\n"
+        "РИМ/ГЭСН-сценарий и рыночная оценка даны как предварительные ориентиры.\n"
+        "Допущение: монтаж считается по укрупнённой ставке за тонну.\n"
+        "- этап 3: погрузка/перевозка/выгрузка = 0 руб., исключено.\n"
+        "Статус: предварительная сценарная оценка, не финальная смета."
+    )
+
+    state = _smeta_active_state_from_answer("Дай оценку столпа", answer)
+    formatted = _format_active_smeta_state(state)
+
+    assert state["schema"] == "active_smeta_state_v1"
+    assert state["status"] == "scenario_estimate"
+    assert state["methodology"] == "РИМ/ГЭСН + рынок"
+    assert state["last_action"] == "предварительная оценка стоимости"
+    assert state["last_table"] == "таблица ВОР"
+    assert "вариант А" in state["open_conflicts"][0]
+    assert any("укрупнённой ставке" in item for item in state["assumptions"])
+    assert state["works"][0]["title"] == "Контрольная сборка смежных ярусов"
+    assert state["works"][0]["quantity"] == 10
+    assert state["works"][1]["unit"] == "т"
+    assert "погрузка/перевозка/выгрузка" in state["excluded"][0]
+    assert "Активная смета" in formatted
+    assert "Методика: РИМ/ГЭСН + рынок" in formatted
+    assert "Открытые развилки" in formatted
+    assert "Принятые допущения" in formatted
+    assert "Монтаж ярусов гусеничным краном" in formatted
+    assert "Монтаж ярусов гусеничным краном — 696,892 т" in formatted
+
+
+def test_smeta_harness_question_prefers_active_smeta_state_for_followups(monkeypatch):
+    active_state = {
+        "schema": "active_smeta_state_v1",
+        "task": "оценка стоимости 11 ярусов",
+        "accepted_variant": "вариант Б: 696,89172 т",
+        "excluded": ["давальческое сырьё = 0 руб"],
+        "works": [{"title": "Монтаж ярусов гусеничным краном", "unit": "т", "quantity": 696.89172}],
+        "status": "scenario_estimate",
+    }
+    monkeypatch.setattr("proxy.routers.chat._smeta_recent_dialog_context", lambda session_id: "")
+    monkeypatch.setattr("proxy.routers.chat.session_user_questions", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        "proxy.routers.chat.session_recent_retrieval_traces",
+        lambda *args, **kwargs: [{"active_smeta_state": active_state}],
+    )
+
+    text = _smeta_harness_question(
+        ChatRequest(question="номера ГЭСН подпиши", mode="smeta", session_id="s1")
+    )
+
+    assert "Активная смета" in text
+    assert "вариант Б" in text
+    assert "Монтаж ярусов гусеничным краном" in text
+    assert "Текущий запрос:\nномера ГЭСН подпиши" in text
 
 
 @pytest.mark.asyncio
@@ -613,6 +847,22 @@ def test_harness_answer_humanizes_internal_technical_terms():
     assert "wall_length_m" not in text
 
 
+def test_smeta_humanize_replaces_internal_selection_terms():
+    from proxy.routers.chat import _smeta_humanize_text
+
+    text = _smeta_humanize_text("shortlist пришёл из harness, slots в raw JSON, role-pack через tool-loop")
+
+    assert "кандидаты норм" in text
+    assert "расчётный слой" in text
+    assert "параметры" in text
+    assert "служебный JSON" in text
+    assert "сметный контракт" in text
+    assert "расчётный цикл" in text
+    assert "shortlist" not in text
+    assert "harness" not in text
+    assert "raw JSON" not in text
+
+
 def test_harness_answer_marks_assumption_scenario():
     text = _format_harness({
         "schema": {"object_type": "house", "area_total_m2": 200},
@@ -677,15 +927,15 @@ def test_harness_summary_points_to_resource_artifact():
         }],
         "needs_input": [],
         "rejected": [],
-        "partial_total": {"smr": 118799319.94, "grand_total": 145410367.61, "positions": 1},
-        "final_total": {"smr": 118799319.94, "grand_total": 145410367.61, "positions": 1},
+        "partial_total": {"smr": 110519705.74, "grand_total": 135276119.83, "positions": 1},
+        "final_total": {"smr": 110519705.74, "grand_total": 135276119.83, "positions": 1},
         "estimate": {
             "positions": [{
                 "code": "ГЭСНм:38-01-001-01",
                 "name": "Монтаж металлоконструкций",
                 "unit": "т",
                 "qty": 664.71112,
-                "total": 118799319.94,
+                "total": 110519705.74,
                 "base": {
                     "ozp": 36405429.06,
                     "em": 16216870.11,
@@ -693,9 +943,9 @@ def test_harness_summary_points_to_resource_artifact():
                     "mat": 2010010.78,
                     "direct": 54632309.95,
                     "fot": 41398070.96,
-                    "nr": 38500205.99,
-                    "sp": 25666804.00,
-                    "total": 118799319.94,
+                    "nr": 37258263.86,
+                    "sp": 18629131.93,
+                    "total": 110519705.74,
                 },
                 "adjusted": {
                     "ozp": 36405429.06,
@@ -704,9 +954,9 @@ def test_harness_summary_points_to_resource_artifact():
                     "mat": 2010010.78,
                     "direct": 54632309.95,
                     "fot": 41398070.96,
-                    "nr": 38500205.99,
-                    "sp": 25666804.00,
-                    "total": 118799319.94,
+                    "nr": 37258263.86,
+                    "sp": 18629131.93,
+                    "total": 110519705.74,
                 },
                 "resources": [
                     {
@@ -768,8 +1018,8 @@ def test_harness_summary_points_to_resource_artifact():
     assert "Полная ресурсная расшифровка" in summary
     assert "Средний разряд работы" not in summary
     assert "## Структура стоимости" in artifact
-    assert "| НР | 38 500 205.99 |" in artifact
-    assert "| СП | 25 666 804.00 |" in artifact
+    assert "| НР | 37 258 263.86 |" in artifact
+    assert "| СП | 18 629 131.93 |" in artifact
     assert "## Ресурсы" in artifact
     assert "Средний разряд работы" in artifact
     assert "Краны" in artifact

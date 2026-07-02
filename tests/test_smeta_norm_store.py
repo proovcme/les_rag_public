@@ -73,6 +73,14 @@ def test_smeta_norm_store_metal_mounting_profile_keeps_gesnm_base():
     assert "машины и механизмы" in profile["model_card"]["resources"]["kinds"]
 
 
+def test_smeta_norm_store_prioritizes_gesnm10_optical_candidates():
+    rows = get_smeta_norm_store().search_rows(["сварка", "волокон", "оптического"], limit=5)
+
+    assert rows
+    assert rows[0].code == "ГЭСНм:10-06-058-01"
+    assert rows[0].base_type == "ГЭСНм"
+
+
 def test_smeta_norm_store_cached_connection_can_be_read_from_worker_thread():
     store = get_smeta_norm_store()
     assert store.search_rows(["траншеи", "грунта"])

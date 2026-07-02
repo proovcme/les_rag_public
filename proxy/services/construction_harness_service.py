@@ -241,7 +241,7 @@ def lsr_assemble(positions: list[dict[str, Any]]) -> dict[str, Any]:
             continue
         phys = _f(p.get("qty"))
         qty_lsr = round(phys / factor, 6) if factor else phys
-        rs = resolve_nr_sp(norm.get("name", ""))
+        rs = resolve_nr_sp(norm.get("name", ""), code=code)
         asm.append({"code": code, "name": p.get("work") or norm.get("name", ""),
                     "unit": norm.get("unit", ""), "qty": qty_lsr, "section": "ВОР",
                     "nr_pct": rs["nr_pct"], "sp_pct": rs["sp_pct"],

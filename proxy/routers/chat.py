@@ -47,6 +47,7 @@ from proxy.services.notebook_study_service import (
     is_notebook_study_query,
     prompt_block as notebook_study_prompt_block,
 )
+from proxy.services.estimate_math_service import parse_ru_number, quantity_sum_audit
 from proxy.services.notebook_service import dataset_memory_prompt_excerpt
 from proxy.services.project_summary_service import (
     build_project_summary,
@@ -60,6 +61,7 @@ from proxy.services.query_router import route_query
 from proxy.services.retrieval_service import resolve_dataset_ids, retrieve_chat_chunks
 from proxy.services.runtime_admission import count_active_jobs, evaluate_chat_admission, generation_semaphore
 from proxy.services.runtime_dispatcher import RuntimeDispatcher
+from proxy.services.smeta_fast_answer_service import smeta_fast_fallback_answer
 from proxy.services.saferag_service import (
     SAFE_FALLBACK,
     build_context,
@@ -113,8 +115,10 @@ class ChatRequest(BaseModel):
         v = v.strip()
         if not v:
             raise ValueError("Пустой вопрос")
-        if len(v) > 4000:
-            raise ValueError(f"Вопрос слишком длинный ({len(v)} симв., макс. 4000)")
+        # Сметные исходники часто приходят как pasted ВОР/спецификация, а не как
+        # отдельный attachment_context. 4k ломал живой сценарий "спецификация -> ВОР".
+        if len(v) > 20000:
+            raise ValueError(f"Вопрос слишком длинный ({len(v)} симв., макс. 20000)")
         return v
 
     @field_validator("attachment_context")
@@ -288,7 +292,11 @@ def _llm_runtime() -> LlmRuntime:
 def _mlx_runtime() -> LlmRuntime:
     """Локальный MLX-провайдер — он же fallback политики маршрутизации (W3.3)."""
     base_url = os.getenv("MLX_URL", "http://127.0.0.1:8080").strip()
-    model = os.getenv("LLM_MODEL", "qwen3:14b").strip()
+    model = (
+        os.getenv("LLM_MODEL", "").strip()
+        or os.getenv("MLX_MODEL", "").strip()
+        or "mlx-community/Qwen3.5-9B-MLX-4bit"
+    )
     return LlmRuntime("mlx", base_url, _join_openai_path(base_url, "/chat/completions"), model, "", True)
 
 
@@ -631,6 +639,13 @@ def _assistant_text(message: dict) -> str:
         return content
     reasoning = message.get("reasoning") or message.get("reasoning_content") or ""
     return _strip_think(str(reasoning))
+
+
+def _mlx_prefill_no_think_messages(messages: list[dict[str, Any]], provider: str) -> list[dict[str, Any]]:
+    """Local Qwen reasoning models need a final-answer prefill to avoid empty visible content."""
+    if str(provider or "").lower() != "mlx":
+        return messages
+    return [*messages, {"role": "assistant", "content": "<think>\n\n</think>\n\n"}]
 
 
 # ── Нативный ollama /api/chat с think:false (#1b) ──────────────────────────────────────────
@@ -1406,7 +1421,7 @@ def _harness_model_comment(result: dict, question: str) -> str:
     }
     final_total = result.get("final_total") if isinstance(result.get("final_total"), dict) else {}
     partial_total = result.get("partial_total") if isinstance(result.get("partial_total"), dict) else {}
-    has_partial_total = bool(partial_total and partial_total.get("grand_total") and comp)
+    has_partial_protocol = bool(partial_total and comp)
     allowed_money = {
         _rub(total.get(key))
         for total in (final_total,)
@@ -1422,11 +1437,10 @@ def _harness_model_comment(result: dict, question: str) -> str:
         "scenario_assumptions": [str(x)[:160] for x in (result.get("scenario_assumptions") or [])[:5]],
         "computed_count": len(comp),
         "pending_count": len(pending),
-        "has_partial_total": has_partial_total,
+        "has_partial_protocol": has_partial_protocol,
         "visible_total_policy": (
-            "final_total_missing_but_partial_total_visible"
-            if has_partial_total and result.get("total_status") != "complete"
-            else "final_total_only" if result.get("total_status") == "complete"
+            "final_total_only" if result.get("total_status") == "complete"
+            else "partial_protocol_no_money" if has_partial_protocol
             else "no_money_visible"
         ),
         "computed": [
@@ -1465,12 +1479,16 @@ def _harness_model_comment(result: dict, question: str) -> str:
             "недостающие параметры/условия нормы. "
             "Если в payload есть norm_questions, спрашивай именно их как условия выбранной нормы. "
             "Если итог не complete, "
-            "не перечисляй рубли: только смысл, недостающие исходные и следующий шаг. "
-            "Если visible_total_policy=final_total_missing_but_partial_total_visible, не говори "
-            "«деньги не считаю», «расчёт невозможен» или «стоимость не считаю»: скажи, что финальный "
-            "итог не сформирован, а рассчитанная часть будет показана ниже расчётным слоем. "
+            "не перечисляй рубли и не обещай, что уже раскладываешь ресурсы, коэффициенты, НР/СП "
+            "или региональные цены: только смысл, принятые расчётным слоем строки, недостающие "
+            "исходные и следующий шаг. "
+            "Если visible_total_policy=partial_protocol_no_money, не говори "
+            "«деньги посчитаны», «есть рассчитанная сумма», «рассчитанная часть в рублях» или похожее: "
+            "скажи, что финальный итог не сформирован, а ниже будет протокол принятых строк и незакрытых условий. "
             "Коды и суммы можно "
             "упоминать только дословно из allowed_exact_facts; не округляй и не добавляй новые. "
+            "Не переформулируй условия нормы как новые границы: если в норме «до 2 м», а в исходнике "
+            "глубина 1,5 м, говори «глубина 1,5 м попадает в условие до 2 м», а не «норма до 1,5 м». "
             "Проценты, новые параметры и обещания не добавляй. Не переписывай таблицу и не делай "
             "финальный вывод вместо расчётного слоя. Не используй англицизмы и внутренние имена полей "
             "в видимом тексте: не пиши element_type, slots, missing_inputs, wall_length_m и т.п.; "
@@ -1519,13 +1537,15 @@ def _harness_model_comment(result: dict, question: str) -> str:
 
     if re.search(r"\d[\d\s.,]*\s*%", text):
         return ""
-    if has_partial_total and result.get("total_status") != "complete":
+    if has_partial_protocol and result.get("total_status") != "complete":
         contradiction_patterns = (
             r"деньг\w*\s+(?:сейчас\s+)?не\s+счита",
             r"стоимост\w*\s+(?:сейчас\s+)?не\s+счита",
             r"рубл\w*\s+(?:сейчас\s+)?не\s+счита",
             r"расч[её]т\s+невозможен",
             r"ничего\s+не\s+счита",
+            r"рассчитанн\w*\s+(?:част\w*|сумм\w*)",
+            r"част\w*\s+(?:сумм\w*|денег)\s+(?:есть|посчитан)",
         )
         if any(re.search(pat, text, flags=re.IGNORECASE) for pat in contradiction_patterns):
             return ""
@@ -1538,22 +1558,60 @@ _harness_voice_comment = _harness_model_comment
 def _should_use_model_first_smeta(result: dict) -> bool:
     if not isinstance(result, dict):
         return False
+    if not _env_bool("LES_SMETA_MODEL_FIRST_VISIBLE_ENABLED", True):
+        return False
+    status = str(result.get("total_status") or "")
+    if status not in {"complete", "partial", "blocked"}:
+        return False
+    if status == "partial" and result.get("computed"):
+        return False
     return (
-        result.get("total_status") == "blocked"
-        and not (result.get("computed") or [])
-        and bool((result.get("rejected") or []) or (result.get("needs_input") or []))
+        bool(result.get("computed") or [])
+        or bool((result.get("rejected") or []) or (result.get("needs_input") or []))
+        or bool(result.get("price_requirements") or [])
     )
 
 
 def _smeta_blocked_advisory(result: dict) -> dict[str, Any]:
+    computed = result.get("computed") or []
+    final_total = result.get("final_total") if isinstance(result.get("final_total"), dict) else {}
     pending = [*(result.get("rejected") or []), *(result.get("needs_input") or [])]
     trace = result.get("trace") if isinstance(result.get("trace"), list) else []
     return {
-        "schema": "smeta_blocked_advisory_v1",
+        "schema": "smeta_calculator_advisory_v1",
         "status": result.get("total_status"),
         "planner_status": result.get("planner_status"),
-        "computed_count": len(result.get("computed") or []),
+        "visible_money_policy": (
+            "final_total_allowed_from_this_payload"
+            if result.get("total_status") == "complete" and final_total
+            else "no_rubles_for_partial_or_blocked"
+        ),
+        "final_total": (
+            {
+                "direct": final_total.get("direct"),
+                "nr": final_total.get("nr"),
+                "sp": final_total.get("sp"),
+                "smr": final_total.get("smr"),
+                "vat": final_total.get("vat"),
+                "grand_total": final_total.get("grand_total"),
+            }
+            if result.get("total_status") == "complete" and final_total
+            else None
+        ),
+        "computed_count": len(computed),
         "pending_count": len(pending),
+        "computed": [
+            {
+                "work": str(p.get("work") or "")[:140],
+                "code": str(p.get("code") or "")[:50],
+                "qty": p.get("qty"),
+                "norm_unit": str(p.get("norm_unit") or "")[:30],
+                "phys_qty": p.get("phys_qty"),
+                "physical_unit": str(p.get("physical_unit") or "")[:20],
+                "norm_questions": [str(x)[:120] for x in (p.get("norm_questions") or [])[:6]],
+            }
+            for p in computed[:24] if isinstance(p, dict)
+        ],
         "pending": [
             {
                 "work": str(p.get("work") or "")[:140],
@@ -1576,14 +1634,20 @@ def _smeta_blocked_advisory(result: dict) -> dict[str, Any]:
 
 
 def _smeta_model_first_answer(harness_question: str, result: dict) -> str:
-    """Visible model-first estimate answer when the calculator path blocked all rows."""
+    """Visible model-first estimate answer; calculator output is only a protocol."""
     runtime = _llm_runtime()
     sys_prompt = build_mode_system_prompt(
         "smeta_direct",
         extra=(
-            "Расчётный слой не принял позиции как готовую смету. Не повторяй это как отказ. "
-            "Ответь как сметчик: сохрани структуру ТЗ/ВОР, отдели работы от поставки, посчитай "
-            "простые количества из текста и покажи, что нужно добрать до расчёта в рублях. "
+            "Ты основной видимый сметчик. Ниже будет расчётный протокол принятых строк, "
+            "проверок и незакрытых условий; не пересказывай его как готовую смету. Если статус "
+            "complete, можно назвать итог только из calculator_advisory.final_total. Если статус "
+            "partial или blocked, не называй рубли и не делай вид, что итог посчитан. "
+            "Не показывай пользователю внутренние слова complete, partial, blocked, shortlist, "
+            "calculator_advisory, status и «калькулятор». Пиши по-русски: итог сформирован, "
+            "итог не сформирован, расчётный протокол, найденные варианты норм, нужно выбрать норму. "
+            "Сохрани структуру ТЗ/ВОР, отдели работы от поставки, посчитай простые количества "
+            "из текста, если они прямо следуют из исходных, и покажи, что нужно добрать до рублей. "
             "Не проси продолжение файла и не говори, что исходные оборвались, если в тексте нет "
             "явной отметки усечения."
         ),
@@ -1591,18 +1655,23 @@ def _smeta_model_first_answer(harness_question: str, result: dict) -> str:
     payload = {
         "task": "model_first_smeta_answer",
         "user_context": str(harness_question or "")[:18000],
+        "calculator_advisory": _smeta_blocked_advisory(result),
         "blocked_harness_advisory": _smeta_blocked_advisory(result),
         "required_visible_shape": [
             "коротко что понял",
             "ведомость работ/количеств: на 1 изделие и итог по количеству изделий, если множитель явно есть",
             "что является работой, что поставкой/материалом",
-            "что можно считать после выбора нормы/цены, что требует КАЦ/ФГИС/КП/регион",
+            "что принято в расчётный протокол и что ещё не принято",
+            "если статус complete: краткий итог только из final_total; если нет: что требует КАЦ/ФГИС/КП/региона/выбора нормы",
             "следующий практический шаг",
         ],
     }
     body = {
         "model": runtime.model,
-        "messages": [{"role": "system", "content": sys_prompt}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+        "messages": _mlx_prefill_no_think_messages(
+            [{"role": "system", "content": sys_prompt}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+            runtime.provider,
+        ),
         "temperature": 0.25,
         "max_tokens": _env_int("LES_SMETA_MODEL_FIRST_MAX_TOKENS", 2200),
     }
@@ -1768,44 +1837,211 @@ async def _smeta_direct_rag_context(
         return {"text": "", "trace": trace, "sources": [], "source_map": []}
 
 
+def _smeta_direct_light_system_prompt() -> str:
+    return (
+        "Ты — опытный инженер-сметчик ЛЕС. "
+        "Твоя задача — по ТЗ, ВОР, спецификации, истории, активной смете и RAG дать "
+        "профессиональный сметный результат: понять исходник, собрать или уточнить ВОР, "
+        "отделить работы от поставки, выбрать нормативный и ценовой ход, посчитать или "
+        "оценить стоимость работ, показать допущения и добор до финальной сметы. "
+        "Работай как сметчик, а не как чат-бот. Если есть активная смета или предыдущая ВОР, "
+        "короткие команды пользователя применяй к ней, не начинай заново. "
+        "Спецификация не является сметой: сначала сделай мост «спецификация → ВОР». "
+        "ВОР не равна ЛСР: после ВОР нужен нормативный ход, нормы/ресурсы/цены или "
+        "сценарная оценка. "
+        "Код и инструменты считают арифметику, единицы, нормы, цены, НР/СП, НДС и trace "
+        "после твоего решения. Код не выбирает состав работ и применимость норм за тебя. "
+        "Деньги без источника, расчётной трассы или явного сценарного допущения не являются "
+        "фактом. Missing не равен 0. Давальческий материал или нулевой этап не обнуляют работы. "
+        "Если пользователь просит оценку и данные измеримы, дай стоимость работ: финальную, "
+        "частичную или сценарную. Сценарная сумма должна иметь видимую расчётную базу: "
+        "объём × ставка, укрупнённая калькуляция или явно указанное допущение. "
+        "Уточняющие вопросы идут после полезного расчёта, а не вместо него. "
+        "Если пользователь просит коды/номера ГЭСН, работай по текущей ВОР и доступному RAG/поиску норм. "
+        "Если точный код не подтверждён, дай кандидата или раздел с пометкой проверки, а не отказ. "
+        "Пиши по-русски как сметчик: ясно, проверяемо, без JSON и служебных внутренних терминов."
+    )
+
+
+def _smeta_direct_heavy_extra_prompt() -> str:
+    return (
+        "Ты отвечаешь как живой опытный инженер-сметчик. Не показывай внутренние JSON, "
+        "служебные маршруты и машинные поля ЛЕС, если пользователь не попросил JSON. "
+        "У тебя есть вопрос оператора, текст вложений, история диалога и RAG-фрагменты. "
+        "Используй их напрямую: разложи вход в ВОР, отдели работы от поставки, выбери разумный "
+        "сметный ход, объясни применимость норм/цен и задай только действительно нужные вопросы. "
+        "Если переданы фрагменты базы, используй их как источники норм, прайсов или проектных "
+        "объёмов; если фрагменты только навигационные, так и обращайся с ними. "
+        "Не показывай пользователю слова tool, raw JSON, blocked_harness_advisory, shortlist, "
+        "slots, element_type, selected_code, evidence, role-pack, harness, tool-loop, prompt, system prompt. "
+        "Вместо evidence говори «источник», "
+        "«подтверждение» или «расчётная трасса». Не пересказывай внутренние запреты и prompt-инструкции, "
+        "не объясняй пользователю, что тебе нельзя или велено делать. Не пиши фразы вида "
+        "«не пишу про ...»; просто дай профессиональный результат. "
+        "Машинные статусы и типы источников переводи на русский в видимой речи: "
+        "`scenario_assumption` -> «сценарное допущение», `scenario_estimate` -> «сценарная оценка», "
+        "`priced_partial` -> «частично оценено», `priced_final` -> «финально закрыто источниками», "
+        "`missing` -> «нет источника цены». Не оставляй машинный код статуса в видимой итоговой "
+        "строке; пиши человечески: предварительная оценка, частичный расчёт, финально закрыто источниками. "
+        "Не проси продолжение файла, если в предоставленном тексте видны нужные строки; сначала "
+        "используй то, что уже есть. Если ВОР содержит измеримые работы и пользователь просит "
+        "смету, стоимость, оценку или расчёт, дай стоимость работ хотя бы как сценарную оценку, "
+        "если пользователь не запретил допущения. Уточняющие вопросы идут после сценарных денег, "
+        "а не вместо них. Если оператор прямо просит прикинуть, придумать или принять допущения, "
+        "сам выбери нейтральные профессиональные assumptions и дай числовую таблицу. Если "
+        "оператор просто просит оценку/стоимость/смету строительных работ и не просит именно "
+        "рыночный метод, а в контексте есть ГЭСН/ФГИС/НР/СП или сметно-нормативная база, "
+        "основной числовой ответ должен быть РИМ-сценарием по нормативным аналогам. Рынок "
+        "можно дать как sanity-check или по отдельной просьбе, но не вместо РИМ. Если "
+        "исходник содержит ВОР/спецификацию/таблицу с измеримыми строками, стоимость работ "
+        "нужно дать построчно по ВОР: раздел, работа, количество, единица, ставка/источник, "
+        "статус источника, сумма. Диапазон допустим только как low/base/high ставка внутри строки или как итог после "
+        "построчных сумм. Не заменяй построчную ВОР одной крупной вилкой. "
+        "Если оператор задал строгие разделы сметы, сохрани именно их: не заменяй демонтаж "
+        "упаковкой или логистикой, не добавляй новый платный раздел без команды оператора. "
+        "Спорные и нулевые этапы вынеси отдельно как исключения или решение к подтверждению. "
+        "Если история диалога уже закрепила структуру разделов, она приоритетнее свежего "
+        "перечня этапов из ТЗ; не переписывай принятую структуру заново. "
+        "Упаковка, тара, такелаж и оснастка не становятся отдельными платными разделами, если "
+        "оператор не включил их в структуру; покажи их как пограничный вопрос или учти внутри "
+        "соответствующей операции только при явном основании. "
+        "Если в служебном контексте ЛЕС указано, что ГЭСН/ФГИС/ценовые книги доступны со статусом "
+        "ok, не пиши, что пользователь их не дал. Пиши точнее: база есть, но для рублёвого итога "
+        "нужно выбрать норму/ресурсы/ценовую строку или КАЦ. "
+        "Не объявляй расхождение массы, объёма или стоимости, если ты не проверил арифметику. "
+        "Если исходник противоречив, покажи расчётную трассу: какие числа сложены, результат, "
+        "с чем сравниваешь и размер расхождения. Не обвиняй итоговую строку автоматически: "
+        "проверь, не является ли она промежуточным итогом, суммой части строк или объёмом без "
+        "отдельного элемента. Если расчётная трасса содержит `source_delta` между исходными "
+        "итогами, обязательно назови это малое расхождение отдельно от крупного расхождения "
+        "состава строк. "
+        "Если конфликт исходных количеств влияет на деньги, сначала дай форму развилки исходных "
+        "объёмов и попроси выбрать вариант; не строй финальный рублёвый итог до выбора. "
+        "Не выдавай итоговые рубли как факт без источника и trace. Но дай сценарную стоимость "
+        "работ, если ВОР измерима и пользователь не запретил допущения. Сценарная оценка не "
+        "является финальной сметой. "
+        "Если исходная ВОР слишком разговорная для прямого подбора ГЭСН, сделай нормируемую ВОР "
+        "и таблицу подбора норм. Одна строка исходной ВОР может раскладываться на несколько "
+        "ГЭСН/ГЭСНм, если это следует из технологии или состава норм. Кандидаты норм показывай "
+        "как кандидаты, не как финальный РИМ. Если пользователь хочет править подбор, предложи "
+        "Excel-таблицу подбора норм: исходная работа, нормируемая работа, сборник/раздел, код "
+        "ГЭСН, измерители, пересчитанный объём, статус применимости, комментарий. Расчёт идёт "
+        "по подтверждённым строкам. "
+        "Если пользователь просит РИМ/ГЭСН, а полная расчётная трасса ещё не закрыта, не заменяй "
+        "РИМ свободной рыночной вилкой. Дай РИМ-сценарий по нормативным аналогам: нормируемая "
+        "операция, сборник/нормативный аналог, объём в измерителе нормы, базовая ставка или "
+        "удельный нормативный ориентир с пометкой допущения, НР/СП/индексы/НДС как явные "
+        "допущения, сумма и допуск. У РИМ-сценария должна быть базовая точка; нельзя давать "
+        "только широкий low-high диапазон без расчётной базы. Размах допуска объясняй "
+        "конкретной причиной: не выбран кран, не закрыт ресурс, не подтверждён коэффициент, "
+        "не выбрана норма или конфликтует объём. Если нормативные данные/ФГИС в контексте "
+        "доступны, пиши, что мешает priced_final, а не что РИМ невозможен. "
+        "Если пользователь просит рыночную и РИМ/ГЭСН оценки, дай одну Markdown-таблицу с колонками: "
+        "Раздел работ, Объём / вариант, РИМ/ГЭСН статус, РИМ/ГЭСН сумма, Рыночный статус, "
+        "Рыночная сумма с НДС, Комментарий. РИМ и рынок не смешивай в один итог. "
+        "Если в истории, вложении или RAG есть прежняя оценка, xlsx-обсчёт, форма развилки исходных объёмов или файл "
+        "со сметной раскладкой, используй его как источник сверки и не пиши, что оценки/файла нет. "
+        "Не начинай ответ с нытья о том, что денег нет: сначала дай ВОР, проверяемую арифметику "
+        "и нормативный маршрут, затем коротко назови ценовые пробелы."
+    )
+
+
+def _smeta_direct_user_prompt(
+    harness_question: str,
+    rag_context: str,
+    numeric_audit_context: str,
+    *,
+    light: bool,
+) -> str:
+    if light:
+        return (
+            "Исходные данные:\n"
+            f"{str(harness_question or '')[:22000]}\n\n"
+            "Расчётная проверка чисел, если есть:\n"
+            f"{numeric_audit_context or 'нет детерминированной трассы; не объявляй длинные суммы проверенными без расчёта'}\n\n"
+            "Релевантные фрагменты RAG:\n"
+            f"{str(rag_context or '')[:12000]}\n\n"
+            "Ответь как инженер-сметчик. Сначала определи: это новая задача или продолжение "
+            "текущей сметы. Если новая задача — собери ВОР, отдели работы от поставки, дай "
+            "нормативный ход, стоимость работ или сценарную оценку, допущения и добор. "
+            "Если продолжение — выполни только команду пользователя поверх активной сметы, "
+            "без повторения полного предыдущего ответа. Не показывай JSON и внутренние "
+            "служебные термины."
+        )
+    return (
+        "Задача оператора и текст вложений/диалога:\n"
+        f"{str(harness_question or '')[:22000]}\n\n"
+        "Расчётная трасса арифметики исходника, если ЛЕС смог извлечь её детерминированно:\n"
+        f"{numeric_audit_context or 'нет детерминированной трассы; не объявляй длинные суммы проверенными без расчёта'}\n\n"
+        "Фрагменты из выбранной базы, если они есть:\n"
+        f"{str(rag_context or '')[:12000]}\n\n"
+        "Ответь как сметчик, без служебных слов и без Markdown-заголовков #/##/###. Используй "
+        "короткие жирные метки секций в таком порядке, пропуская только неприменимые блоки: "
+        "1) Что понял; 2) Контроль исходных чисел; 3) Форма развилки исходных объёмов, если есть "
+        "конфликт; 4) ВОР / структура работ; 5) Нормируемая ВОР / таблица подбора норм, если "
+        "нужно подбирать ГЭСН; 6) Работы / поставка / исключения; 7) Сравнительная "
+        "таблица РИМ/ГЭСН vs рынок, если пользователь просит две оценки; 8) Допущения и источники; "
+        "9) Добор до финальной сметы; 10) Итог со статусом. "
+        "Не расписывай длинный чек-лист всех возможных уточнений; оставь только то, что реально "
+        "меняет выбор нормы или цену. Не вводи новые спорные суммы/расхождения по арифметике без "
+        "уверенной проверки. При конфликте исходных количеств, влияющем на стоимость, дай форму "
+        "развилки исходных объёмов таблицей: Вариант, Объём, Источник, Состав, Статус для расчёта. "
+        "Если пользователь попросил рынок и РИМ/ГЭСН, обязательно дай таблицу: | Раздел работ | "
+        "Объём / вариант | РИМ/ГЭСН статус | РИМ/ГЭСН сумма | Рыночный статус | Рыночная сумма с НДС | "
+        "Комментарий |. Вопросы и добор идут после таблицы, не вместо неё. Если пользователь просит "
+        "оценку и не запрещает допущения, дай сценарную оценку по работам до вопросов. Если в "
+        "исходнике есть спецификация или ВОР с измеримыми строками, блок стоимости работ должен "
+        "быть построчной таблицей с понятными строками работ, источниками и суммами. "
+        "Если пользователь просит РИМ/ГЭСН, РИМ-колонка должна быть РИМ-сценарием по нормативным "
+        "аналогам, а не рыночной вилкой: укажи нормируемую строку, сборник/аналог, объём в "
+        "измерителе нормы, базовую точку расчёта, допуск и недостающий trace до final. "
+        "Обязательно заверши разделом «Итог» со статусом результата."
+    )
+
+
 def _smeta_direct_model_answer(
     harness_question: str,
     rag_context: str = "",
 ) -> str:
-    """Primary visible smeta answer: estimator model first, calculator/harness later if needed."""
+    """Visible smeta answer from the estimator model over prompt + attachment + RAG."""
     runtime = _llm_runtime()
-    sys_prompt = build_mode_system_prompt(
-        "smeta_direct",
-        extra=(
-            "Это видимый ответ сметчика. Не описывай внутренние маршруты ЛЕС и не ссылайся на "
-            "протоколы. Если переданы фрагменты из базы, используй их как источники норм, прайсов "
-            "или проектных объёмов; если фрагменты только навигационные, так и обращайся с ними. "
-            "Не проси продолжение файла, если в предоставленном тексте видны нужные строки; сначала "
-            "используй то, что уже есть."
-        ),
-    )
-    user_prompt = (
-        "Задача оператора и текст вложений/диалога:\n"
-        f"{str(harness_question or '')[:22000]}\n\n"
-        "Фрагменты из выбранной базы, если они есть:\n"
-        f"{str(rag_context or '')[:12000]}\n\n"
-        "Ответь как сметчик. Дай стабильный результат в таком порядке: что понял; тип входа; "
-        "ВОР или мост к ВОР; проверяемая арифметика; работы отдельно от поставки; что нужно "
-        "для рублей; краткий итог. Если цен нет, не выдумывай деньги: покажи, какие цены надо "
-        "добрать и где нужен КАЦ, КП, ФГИС или прайс."
+    numeric_audit_context = _smeta_direct_numeric_audit_context(harness_question)
+    light_prompt = _env_bool("LES_SMETA_DIRECT_LIGHT_PROMPT", True)
+    if light_prompt:
+        sys_prompt = _smeta_direct_light_system_prompt()
+    else:
+        sys_prompt = build_mode_system_prompt(
+            "smeta_direct",
+            notebook_context=_smeta_service_context_prompt(),
+            extra=_smeta_direct_heavy_extra_prompt(),
+        )
+    user_prompt = _smeta_direct_user_prompt(
+        harness_question,
+        rag_context,
+        numeric_audit_context,
+        light=light_prompt,
     )
     body = {
         "model": runtime.model,
-        "messages": [
-            {"role": "system", "content": sys_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
+        "messages": _mlx_prefill_no_think_messages(
+            [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            runtime.provider,
+        ),
         "temperature": _env_float("LES_SMETA_DIRECT_MODEL_TEMPERATURE", 0.1),
-        "max_tokens": _env_int("LES_SMETA_DIRECT_MODEL_MAX_TOKENS", 2600),
+        "max_tokens": _env_int(
+            "LES_SMETA_DIRECT_MODEL_MAX_TOKENS",
+            900 if runtime.provider == "mlx" else 3200,
+        ),
     }
     body = _cloud_body_for_model(body, runtime.model, runtime.provider)
     headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
-    timeout_s = _env_float("LES_SMETA_DIRECT_MODEL_TIMEOUT_SEC", 120.0)
+    timeout_s = _env_float(
+        "LES_SMETA_DIRECT_MODEL_TIMEOUT_SEC",
+        30.0 if runtime.provider == "mlx" else 120.0,
+    )
     try:
         with httpx.Client(timeout=timeout_s) as c:
             r = c.post(runtime.chat_url, headers=headers, json=body)
@@ -1813,11 +2049,208 @@ def _smeta_direct_model_answer(
             text = _assistant_text(r.json().get("choices", [{}])[0].get("message", {})).strip()
     except Exception as e:  # noqa: BLE001
         logger.warning("[HARNESS] direct model smeta answer failed: %s", e)
-        return ""
+        return smeta_fast_fallback_answer(harness_question, rag_context, numeric_audit_context)
     text = re.sub(r"\n{3,}", "\n\n", text).strip(" \n\t\"'")
     if not text or _voice_claims_source_truncated(text):
-        return ""
+        return smeta_fast_fallback_answer(harness_question, rag_context, numeric_audit_context)
     return text[:12000]
+
+
+def _split_table_line(line: str) -> list[str]:
+    text = str(line or "")
+    text = re.sub(r"^[^|\n]{0,260}#t\d+r\d+:\s*", "", text)
+    cells = [cell.strip() for cell in text.split("|")]
+    if cells and not cells[0]:
+        cells = cells[1:]
+    if cells and not cells[-1]:
+        cells = cells[:-1]
+    return cells
+
+
+def _find_mass_column(header: list[str]) -> int | None:
+    best_idx: int | None = None
+    best_score = 0
+    for idx, cell in enumerate(header):
+        low = cell.casefold()
+        score = 0
+        if "масса" in low:
+            score += 3
+        if "итого" in low:
+            score += 2
+        if "кг" in low:
+            score += 1
+        if "вес" in low and "масса" not in low:
+            score += 1
+        if score > best_score:
+            best_score = score
+            best_idx = idx
+    return best_idx if best_score >= 3 else None
+
+
+def _smeta_direct_numeric_audit_context(text: str) -> str:
+    """Build deterministic numeric audit hints from obvious mass tables.
+
+    This is a calculator/provenance hint for the model. It does not choose
+    works, norms or contractual quantities.
+    """
+    source = str(text or "")
+    if "|" not in source or "масса" not in source.casefold():
+        return ""
+    lines = [line.strip() for line in source.splitlines() if "|" in line and line.strip()]
+    audits: list[dict[str, Any]] = []
+    header: list[str] | None = None
+    mass_idx: int | None = None
+    rows: list[dict[str, Any]] = []
+    table_total: dict[str, Any] | None = None
+
+    def flush_table() -> None:
+        nonlocal rows, table_total
+        if len(rows) < 2:
+            rows = []
+            table_total = None
+            return
+        compared: list[dict[str, Any]] = []
+        if table_total:
+            compared.append(table_total)
+        text_total = _extract_text_mass_total(source)
+        if text_total:
+            compared.append(text_total)
+        partial_groups = []
+        if len(rows) > 2:
+            partial_groups.append({
+                "label": f"rows_1_{len(rows) - 1}",
+                "input_labels": [row["label"] for row in rows[:-1]],
+            })
+        try:
+            audits.append(quantity_sum_audit(
+                name="mass_rows_sum",
+                inputs=rows,
+                unit="кг",
+                compared_to=compared,
+                partial_groups=partial_groups,
+            ))
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("[SMETA_DIRECT_AUDIT] mass audit skipped: %s", exc)
+        rows = []
+        table_total = None
+
+    for line in lines:
+        cells = _split_table_line(line)
+        if len(cells) < 3:
+            continue
+        if any("масса" in cell.casefold() for cell in cells):
+            flush_table()
+            header = cells
+            mass_idx = _find_mass_column(cells)
+            continue
+        if mass_idx is None or header is None or mass_idx >= len(cells):
+            continue
+        first = cells[0].casefold()
+        value = parse_ru_number(cells[mass_idx])
+        if value is None:
+            continue
+        if "итого" in first:
+            table_total = {"label": "table_total", "value": cells[mass_idx], "unit": "кг"}
+            continue
+        if not re.match(r"^\d+", cells[0]):
+            continue
+        label = f"row_{len(rows) + 1}"
+        if len(cells) > 1 and cells[1]:
+            safe_name = re.sub(r"\s+", "_", cells[1].strip().casefold())[:32]
+            label = f"{label}_{safe_name}" if safe_name else label
+        rows.append({"label": label, "value": cells[mass_idx], "unit": "кг"})
+    flush_table()
+
+    if not audits:
+        return ""
+    rendered: list[str] = []
+    for audit in audits[:2]:
+        rendered.append(
+            f"- {audit['name']}: {audit['operation']} -> {audit['result']['value']} {audit['result']['unit']}; "
+            f"alt={audit.get('result_alt_units', [])}; status={audit['status']}"
+        )
+        for cmp_item in audit.get("compared_to", []):
+            rendered.append(
+                f"  compare {cmp_item['label']}: {cmp_item['value']} {cmp_item['unit']}; "
+                f"delta={cmp_item['delta']} {cmp_item['unit']}"
+            )
+        comparisons = audit.get("compared_to", [])
+        if len(comparisons) >= 2:
+            base = comparisons[0]
+            for other in comparisons[1:]:
+                try:
+                    source_delta = round(float(base["value"]) - float(other["value"]), 2)
+                except Exception:  # noqa: BLE001
+                    continue
+                rendered.append(
+                    f"  source_delta {base['label']}_vs_{other['label']}: "
+                    f"{source_delta} {base['unit']}"
+                )
+        for match in audit.get("partial_matches", []):
+            if match.get("matches"):
+                rendered.append(
+                    f"  partial_match {match['label']}: {match['value']} {match['unit']} "
+                    f"matches {match['matches']}"
+                )
+    return "\n".join(rendered)
+
+
+def _extract_text_mass_total(text: str) -> dict[str, Any] | None:
+    for pattern in (
+        r"общая\s+масса[^\n]{0,120}?([0-9][0-9\s\xa0\u202f]*[,\.][0-9]+)\s*кг",
+        r"масса[^\n]{0,80}?составляет[^\n]{0,80}?([0-9][0-9\s\xa0\u202f]*[,\.][0-9]+)\s*кг",
+    ):
+        m = re.search(pattern, text, flags=re.IGNORECASE)
+        if m:
+            return {"label": "text_total", "value": m.group(1), "unit": "кг"}
+    return None
+
+
+def _smeta_service_context_prompt() -> str:
+    """Navigation context for direct smeta answers: GESN map + available pricebooks.
+
+    This is prompt/RAG context for the model, not a calculator and not a case template.
+    """
+    blocks: list[str] = []
+    try:
+        from proxy.services.notebook_service import gesn_notebook_prompt_excerpt
+
+        blocks.append(
+            "Сметный RAG-блокнот ГЭСН/РИМ (навигация, не готовый ответ):\n"
+            f"{gesn_notebook_prompt_excerpt()}"
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[SMETA] service GESN prompt skipped: %s", exc)
+    try:
+        from proxy.services.service_source_registry import service_sources
+
+        sources = [
+            src for src in service_sources().get("sources", [])
+            if src.get("domain") == "smeta"
+        ]
+        if sources:
+            lines = ["Сметные источники, доступные в ЛЕС:"]
+            for src in sources:
+                facts = src.get("facts") if isinstance(src.get("facts"), dict) else {}
+                fact_text = ", ".join(f"{k}: {v}" for k, v in facts.items()) or "факты не указаны"
+                file_paths = [
+                    str(f.get("path") or "")
+                    for f in src.get("files") or []
+                    if f.get("exists") and f.get("path")
+                ][:4]
+                file_text = f"; файлы: {', '.join(file_paths)}" if file_paths else ""
+                lines.append(f"- {src.get('label')}: {src.get('status')} ({fact_text}{file_text})")
+            lines.append(
+                "Правило для ответа: использовать эти источники как карту норм и цен. "
+                "Если источник со статусом ok, не говорить, что пользователь его не дал; говорить, "
+                "что источник в ЛЕС доступен, но для итоговых рублей нужно выбрать норму, раскрыть "
+                "ресурсы и привязать конкретную ценовую строку. Если нужной цены/нормы нет в RAG "
+                "или файле, показать ВОР и ценовой добор (КАЦ/КП/ФГИС/прайс), а не блокировать весь ответ."
+            )
+            blocks.append("\n".join(lines))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[SMETA] service source prompt skipped: %s", exc)
+    return "\n\n".join(blocks)
 
 
 def _norm_code_label(code: Any) -> str:
@@ -1882,6 +2315,11 @@ def _smeta_humanize_text(text: Any) -> str:
     out = out.replace("missing_inputs", "недостающие исходные")
     out = out.replace("missing_slots", "недостающие параметры")
     out = out.replace("slots", "параметры")
+    out = re.sub(r"\bshortlist\b", "кандидаты норм", out, flags=re.IGNORECASE)
+    out = re.sub(r"\bharness\b", "расчётный слой", out, flags=re.IGNORECASE)
+    out = re.sub(r"\brole-pack\b", "сметный контракт", out, flags=re.IGNORECASE)
+    out = re.sub(r"\btool-loop\b", "расчётный цикл", out, flags=re.IGNORECASE)
+    out = re.sub(r"\braw JSON\b", "служебный JSON", out, flags=re.IGNORECASE)
     out = out.replace("work items", "позиции работ")
     out = out.replace("work item", "позиция работ")
     return out
@@ -1896,8 +2334,15 @@ def _candidate_table_row(position: dict[str, Any]) -> str:
     rest = ", ".join(_norm_code_label(c.get("norm_code")) for c in candidates[1:4]) or "—"
     selection = position.get("selection") if isinstance(position.get("selection"), dict) else {}
     reason = str(selection.get("reason") or position.get("reason") or "нужна проверка применимости").strip()
-    if "кандидат" in reason.lower() or "применимость" in reason.lower():
-        reason = "нужно уточнить норму, измеритель или исходный объём"
+    reason_low = reason.lower()
+    if (
+        "кандидат" in reason_low
+        or "применим" in reason_low
+        or "лидер" in reason_low
+        or "отрыв" in reason_low
+        or "shortlist" in reason_low
+    ):
+        reason = "нужно выбрать применимую норму, измеритель или исходный объём"
     reason = _smeta_humanize_text(reason)
     return f"| {work} | {code} | {unit} | {rest} | {reason} |"
 
@@ -1934,6 +2379,38 @@ def _estimate_positions(r: dict) -> list[dict[str, Any]]:
 
 def _format_harness_artifact(r: dict) -> str:
     """Полная сметная расшифровка для панели артефактов."""
+    if r.get("total_status") != "complete":
+        computed = [p for p in (r.get("computed") or []) if isinstance(p, dict)]
+        if not computed:
+            return ""
+        lines = [
+            "# Расчётный протокол",
+            "",
+            "Это не смета и не стоимость объекта: состав работ, нормы или цены ещё не закрыты. "
+            "Рубли по неполному составу здесь намеренно не показываются.",
+            "",
+            "## Принятые расчётные строки",
+            "",
+            "| Работа | Код | Кол-во | Ед. |",
+            "|---|---:|---:|---:|",
+        ]
+        for pos in computed:
+            lines.append(
+                f"| {pos.get('work') or 'Работа'} | {pos.get('code') or '—'} "
+                f"| {_qty(pos.get('qty'))} | {pos.get('norm_unit') or pos.get('physical_unit') or '—'} |"
+            )
+        pending = [*(r.get("needs_input") or []), *(r.get("rejected") or [])]
+        if pending:
+            lines += ["", "## Что нужно добрать", "",
+                      "| Работа | Недостающие данные или проверка |",
+                      "|---|---|"]
+            for item in pending[:12]:
+                if not isinstance(item, dict):
+                    continue
+                work = str(item.get("work") or item.get("work_description") or "Работа")
+                reason = _smeta_humanize_text(item.get("reason") or item.get("detail") or item.get("status") or "")
+                lines.append(f"| {work} | {reason or 'нужно уточнить норму, параметр или цену'} |")
+        return "\n".join(lines)
     positions = _estimate_positions(r)
     if not positions:
         return ""
@@ -2056,7 +2533,13 @@ def _format_harness(r: dict) -> str:
     hide_planner_area = bool(r.get("direct_quantity_estimate"))
     area_text = f" · {area} м²" if area not in (None, "", 0) and not hide_planner_area else ""
     comp = r.get("computed", [])
-    title = "Предварительная сметная стоимость" if comp else "Смета пока не собрана"
+    status = r.get("total_status")
+    if status == "complete" and comp:
+        title = "Предварительная сметная стоимость"
+    elif comp:
+        title = "Расчётный протокол"
+    else:
+        title = "Смета пока не собрана"
     lines = [f"**{title}** — {obj_type}{area_text}", ""]
     scenario_assumptions = [str(x) for x in (r.get("scenario_assumptions") or []) if str(x).strip()]
     if r.get("assumption_mode"):
@@ -2067,14 +2550,17 @@ def _format_harness(r: dict) -> str:
             "",
         ]
     if comp:
-        lines += ["**Посчитано**", "",
+        lines += ["**Принятые расчётные строки**", "",
                   "| Работа | Код ГЭСН | Кол-во в измерителе нормы | Физический объём |",
                   "|---|---:|---:|---:|"]
         for p in comp:
             lines.append(f"| {p.get('work', '')} | {p.get('code')} | {p.get('qty')} {p.get('norm_unit','')} "
                          f"| {p.get('phys_qty','')} {p.get('physical_unit','')} |")
-        if _estimate_positions(r):
+        has_artifact_rows = bool(_estimate_positions(r) or r.get("computed"))
+        if _estimate_positions(r) and r.get("total_status") == "complete":
             lines += ["", "Полная ресурсная расшифровка, НР/СП, машины, труд и материалы — в артефакте."]
+        elif has_artifact_rows:
+            lines += ["", "Расчётный протокол и незакрытые позиции — в артефакте."]
         norm_checks = [p for p in comp if isinstance(p, dict) and p.get("norm_questions")]
         if norm_checks:
             lines += ["", "**Проверить по выбранным нормам**"]
@@ -2083,27 +2569,26 @@ def _format_harness(r: dict) -> str:
                 if qs:
                     lines.append(f"- {p.get('work') or p.get('code')}: {qs}.")
 
-    status = r.get("total_status")
     pt, ft = r.get("partial_total"), r.get("final_total")
     if status == "complete" and ft:
         lines += ["", f"**Итого: СМР {_rub(ft.get('smr'))} ₽ · всего с НДС {_rub(ft.get('grand_total'))} ₽** "
                   f"({ft.get('positions')} поз.)"]
     elif status == "partial" and pt:
-        lines += ["", f"**Итог не сформирован.** Есть рассчитанная часть: "
-                  f"~{_rub(pt.get('grand_total'))} ₽ ({pt.get('positions')} поз.). "
-                  "Это не смета: часть позиций ещё без подтверждённой нормы или параметров."]
+        lines += ["", f"**Частично оценено: ~{_rub(pt.get('grand_total'))} ₽** "
+                  f"по {pt.get('positions')} поз. Это не финальная смета: "
+                  "часть состава работ ещё без подтверждённой нормы, параметров или ценового источника."]
 
     rej = r.get("rejected", [])
     ni = r.get("needs_input", [])
     pending = [p for p in [*rej, *ni] if isinstance(p, dict)]
     if pending:
         lines += ["", "**Нужно выбрать норму или уточнить параметры**", "",
-                  "| Работа | Норма | Ед. | Другие варианты | Что не хватает |",
+                  "| Работа | Норма | Ед. | Другие варианты | Что нужно добрать |",
                   "|---|---:|---:|---|---|"]
         for p in pending:
             lines.append(_candidate_table_row(p))
     elif not comp:
-        lines += ["", "ЛЕС не нашёл подходящих норм по текущему описанию. Нужен проект, ВОР или более конкретное описание работ."]
+        lines += ["", "В протоколе пока нет расчётных строк: нужно выбрать норму из поиска или добрать исходные."]
 
     if ni:
         slots_needed: list[str] = []
@@ -2115,7 +2600,7 @@ def _format_harness(r: dict) -> str:
     if not ft and not pt:
         lines += ["", "Число не показываю, пока нормы и параметры не подтверждены."]
     elif not ft and pt:
-        lines += ["", "Финальную сумму не показываю, пока все ключевые нормы и параметры не подтверждены."]
+        lines += ["", "Финальную сумму не показываю: рубли показаны только по закрытой части протокола. До финальной сметы нужно закрыть нормы, параметры и ценовые источники."]
     return "\n".join(lines)
 
 
@@ -2191,6 +2676,230 @@ def _format_smeta_dialog_state(state: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _split_markdown_table_row(line: str) -> list[str]:
+    cells = [c.strip() for c in str(line or "").strip().strip("|").split("|")]
+    return [re.sub(r"\s+", " ", c).strip() for c in cells]
+
+
+def _smeta_active_state_from_answer(question: str, answer: str) -> dict[str, Any]:
+    """Build compact active estimate state from the visible direct answer.
+
+    This is working memory for follow-up edits, not a pricing/norm authority.
+    """
+    text = str(answer or "")
+    text_low = text.lower()
+    methodology = ""
+    has_rim = bool(re.search(r"\bрим\b|гэсн|фгис", text_low))
+    has_market = bool(re.search(r"рынок|рыноч", text_low))
+    if has_rim and has_market:
+        methodology = "РИМ/ГЭСН + рынок"
+    elif has_rim:
+        methodology = "РИМ/ГЭСН"
+    elif has_market:
+        methodology = "рынок"
+
+    if re.search(r"(код|номер|шифр)[^.\n]{0,80}гэсн|гэсн[^.\n]{0,80}(код|номер|шифр)|кандидат[^.\n]{0,80}гэсн", text_low):
+        last_action = "подбор кандидатов ГЭСН"
+    elif re.search(r"стоим|оцен|сумм|руб|рим-сценар|рыноч", text_low):
+        last_action = "предварительная оценка стоимости"
+    elif re.search(r"\bвор\b|ведомост[^.\n]{0,40}работ|структур[^.\n]{0,40}работ", text_low):
+        last_action = "формирование/уточнение ВОР"
+    elif re.search(r"развил|конфликт|расхожд", text_low):
+        last_action = "контроль исходных объёмов"
+    else:
+        last_action = ""
+
+    last_table = ""
+    works: list[dict[str, Any]] = []
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if not line.strip().startswith("|"):
+            i += 1
+            continue
+        header = _split_markdown_table_row(line)
+        low = [h.lower() for h in header]
+        if any("гэсн" in h or "норм" in h for h in low):
+            last_table = "таблица кандидатов норм/ГЭСН"
+        elif any("рим" in h for h in low) and any("рын" in h for h in low):
+            last_table = "сравнительная таблица РИМ/рынок"
+        elif any("вариант" in h for h in low) and any("объ" in h for h in low):
+            last_table = "форма развилки исходных объёмов"
+        elif any(("работ" in h or "наименование" in h) for h in low):
+            last_table = "таблица ВОР"
+        if not any(("работ" in h or "наименование" in h) for h in low):
+            i += 1
+            continue
+        title_idx = next((idx for idx, h in enumerate(low) if "работ" in h or "наименование" in h), 0)
+        unit_idx = next((idx for idx, h in enumerate(low) if "ед" in h or "измер" in h), None)
+        qty_idx = next((idx for idx, h in enumerate(low) if "кол" in h or "объ" in h), None)
+        j = i + 1
+        if j < len(lines) and re.fullmatch(r"\s*\|?[\s:\-\|]+\|?\s*", lines[j] or ""):
+            j += 1
+        while j < len(lines) and lines[j].strip().startswith("|"):
+            cells = _split_markdown_table_row(lines[j])
+            if len(cells) < len(header):
+                j += 1
+                continue
+            title = cells[title_idx] if title_idx < len(cells) else ""
+            if not title or title.lower() in ("итого", "итого вариант а", "итого вариант б"):
+                j += 1
+                continue
+            if len(title) > 180:
+                j += 1
+                continue
+            unit = cells[unit_idx] if unit_idx is not None and unit_idx < len(cells) else ""
+            qty_raw = cells[qty_idx] if qty_idx is not None and qty_idx < len(cells) else ""
+            qty = parse_ru_number(qty_raw) if qty_raw else None
+            works.append({
+                "title": title[:160],
+                "unit": unit[:30],
+                "quantity": qty,
+                "quantity_text": qty_raw[:50],
+            })
+            if len(works) >= 12:
+                break
+            j += 1
+        i = j
+        if len(works) >= 12:
+            break
+
+    excluded: list[str] = []
+    for line in lines:
+        clean = re.sub(r"^[\s\-•]+", "", line).strip()
+        if not clean:
+            continue
+        low = clean.lower()
+        if ("0 руб" in low or "исключ" in low or "не включ" in low) and len(clean) <= 220:
+            excluded.append(clean)
+        if len(excluded) >= 8:
+            break
+
+    assumptions: list[str] = []
+    open_conflicts: list[str] = []
+    for line in lines:
+        clean = re.sub(r"^[\s\-•]+", "", line).strip()
+        if not clean:
+            continue
+        low = clean.lower()
+        if (
+            re.search(r"допущ|принято|принимаю|ориентир|сценарн[^.\n]{0,80}став|ставк[^.\n]{0,80}сценарн|assumption", low)
+            and len(clean) <= 240
+        ):
+            assumptions.append(clean)
+        if (
+            re.search(r"развил|конфликт|расхожд|вариант", low)
+            and (re.search(r"\d", clean) or "конфликт" in low or "развил" in low)
+            and len(clean) <= 260
+        ):
+            open_conflicts.append(clean)
+        if len(assumptions) >= 6 and len(open_conflicts) >= 6:
+            break
+
+    accepted_variant = ""
+    m = re.search(r"(вариант\s+[А-ЯA-Z][^.\n]{0,140}(?:\d{2,4}[,\s]\d{2,6}\s*т)?)", text, flags=re.IGNORECASE)
+    if m:
+        accepted_variant = re.sub(r"\s+", " ", m.group(1)).strip()[:180]
+
+    status = "scenario_estimate" if re.search(r"сценарн|не финальн|не финальная", text, re.IGNORECASE) else "draft"
+    if not works and not excluded and not accepted_variant and not methodology and not assumptions and not open_conflicts:
+        return {}
+    return {
+        "schema": "active_smeta_state_v1",
+        "task": re.sub(r"\s+", " ", str(question or "")).strip()[:260],
+        "methodology": methodology,
+        "last_action": last_action,
+        "last_table": last_table,
+        "accepted_variant": accepted_variant,
+        "open_conflicts": open_conflicts[:6],
+        "assumptions": assumptions[:6],
+        "excluded": excluded,
+        "works": works,
+        "status": status,
+    }
+
+
+def _format_active_smeta_state(state: dict[str, Any]) -> str:
+    if not isinstance(state, dict) or state.get("schema") != "active_smeta_state_v1":
+        return ""
+    lines = [
+        "Активная смета для продолжения. Используй как рабочее состояние текущего расчёта; "
+        "нормы, цены и числа всё равно проверяй по RAG/trace:"
+    ]
+    if state.get("task"):
+        lines.append(f"Задача: {state.get('task')}.")
+    if state.get("methodology"):
+        lines.append(f"Методика: {state.get('methodology')}.")
+    table_action = "; ".join(
+        str(x) for x in (state.get("last_table"), state.get("last_action")) if str(x or "").strip()
+    )
+    if table_action:
+        lines.append(f"Последняя таблица/действие: {table_action}.")
+    if state.get("accepted_variant"):
+        lines.append(f"Принятый/рабочий вариант: {state.get('accepted_variant')}.")
+    open_conflicts = state.get("open_conflicts") if isinstance(state.get("open_conflicts"), list) else []
+    if open_conflicts:
+        lines.append("Открытые развилки: " + "; ".join(str(x) for x in open_conflicts[:4]) + ".")
+    if state.get("status"):
+        lines.append(f"Статус: {state.get('status')}.")
+    excluded = state.get("excluded") if isinstance(state.get("excluded"), list) else []
+    if excluded:
+        lines.append("Исключения/нулевые позиции: " + "; ".join(str(x) for x in excluded[:5]) + ".")
+    assumptions = state.get("assumptions") if isinstance(state.get("assumptions"), list) else []
+    if assumptions:
+        lines.append("Принятые допущения: " + "; ".join(str(x) for x in assumptions[:5]) + ".")
+    works = state.get("works") if isinstance(state.get("works"), list) else []
+    if works:
+        lines.append("Текущая ВОР:")
+        for idx, w in enumerate(works[:12], 1):
+            if not isinstance(w, dict):
+                continue
+            qty = w.get("quantity_text") or w.get("quantity")
+            unit = str(w.get("unit") or "").strip()
+            qty_text = f" — {qty} {unit}".rstrip() if qty not in (None, "") or unit else ""
+            lines.append(f"{idx}. {w.get('title') or 'работа'}{qty_text}")
+    return "\n".join(lines)
+
+
+def _smeta_recent_dialog_context(
+    session_id: str | None,
+    *,
+    max_turns: int = 4,
+    max_answer_chars: int = 2200,
+    max_total_chars: int = 9000,
+) -> str:
+    """Recent smeta Q/A context for follow-up edits like "add GESN numbers"."""
+    sid = str(session_id or "").strip()
+    if not sid:
+        return ""
+    try:
+        with sqlite3.connect(rag_meta_db_path()) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT question, answer FROM chat_history WHERE session_id=? "
+                "ORDER BY id DESC LIMIT ?",
+                (sid, max_turns),
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return ""
+    rows = list(reversed(rows))
+    if not rows:
+        return ""
+    parts: list[str] = [
+        "Предыдущий сметный диалог. Используй как рабочий контекст для продолжения, "
+        "но не как самостоятельный источник норм/цен без проверки:"
+    ]
+    for row in rows:
+        q = str(row["question"] or "").strip()
+        a = str(row["answer"] or "").strip()
+        if q:
+            parts.append("Пользователь:\n" + q[:900])
+        if a:
+            parts.append("Ответ ЛЕС:\n" + a[:max_answer_chars])
+    return "\n\n".join(parts)[:max_total_chars]
+
+
 def _smeta_harness_question(req: "ChatRequest") -> str:
     """Передать модели контекст диалога и прошлые tool results, не подсовывая готовый состав работ."""
     current = _question_with_attachment(req)
@@ -2204,14 +2913,22 @@ def _smeta_harness_question(req: "ChatRequest") -> str:
     try:
         traces = session_recent_retrieval_traces(req.session_id, max_turns=4)
         for trace in reversed(traces):
-            state = trace.get("smeta_dialog_state") if isinstance(trace, dict) else None
-            state_block = _format_smeta_dialog_state(state)
+            if not isinstance(trace, dict):
+                continue
+            active_state = trace.get("active_smeta_state")
+            state_block = _format_active_smeta_state(active_state)
+            if not state_block:
+                state = trace.get("smeta_dialog_state")
+                state_block = _format_smeta_dialog_state(state)
             if state_block:
                 break
     except Exception as err:  # noqa: BLE001
         logger.warning("[HARNESS] session smeta state failed: %s", err)
         state_block = ""
     blocks = []
+    recent_dialog = _smeta_recent_dialog_context(req.session_id)
+    if recent_dialog:
+        blocks.append(recent_dialog)
     if history:
         turns = "\n".join(f"- {q}" for q in history)
         blocks.append(f"Контекст текущего диалога:\n{turns}")
@@ -2497,10 +3214,34 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             )
 
     if _PROFILE == "estimate_harness" or _auto_estimate_work:
-        # Model-first estimate: model decomposes the object, harness provides tools and gates.
+        if _auto_estimate_work and _PROFILE == "auto":
+            from proxy.services.estimate_harness_service import run_estimate_harness
+
+            harness_question = _smeta_harness_question(req)
+            hres = await asyncio.to_thread(run_estimate_harness, harness_question, _harness_complete)
+            answer = _format_harness(hres)
+            artifact = _format_harness_artifact(hres)
+            trace = {
+                "mode": "smeta",
+                "model_rag_only": False,
+                "smeta_dialog_state": _smeta_dialog_state(hres),
+            }
+            return _mode_reply(
+                answer,
+                "estimate_harness_auto_work",
+                "harness_mode",
+                extra={
+                    **hres,
+                    "artifact": artifact,
+                    "retrieval_trace": trace,
+                },
+            )
+        # Smeta mode: visible answer is model + prompt + RAG. Calculation tools are not run here.
         harness_question = _smeta_harness_question(req)
         smeta_rag_backend = state.backend
         smeta_dataset_ids = req.dataset_ids
+        smeta_dataset_filter = req.dataset_filter
+        direct_rag_packet: dict[str, Any] = {}
         if req.project_id and not req.dataset_ids:
             try:
                 from proxy.services.project_service import project_dataset_ids
@@ -2509,111 +3250,56 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     smeta_dataset_ids = smeta_scope
             except Exception as proj_err:  # noqa: BLE001
                 logger.warning("[PROJECT] smeta scope resolve failed: %s", proj_err)
-        direct_model_first_enabled = (
-            (_PROFILE == "estimate_harness" and _env_bool("LES_SMETA_DIRECT_MODEL_FIRST", True))
-            or (_auto_estimate_work and _env_bool("LES_SMETA_DIRECT_MODEL_FIRST_AUTO", True))
+        smeta_has_scope = bool(smeta_dataset_ids or smeta_dataset_filter or req.project_id)
+        if (
+            smeta_has_scope
+            and _env_bool("LES_SMETA_HARNESS_RAG_CONTEXT_ENABLED", True)
+        ):
+            original_dataset_filter = req.dataset_filter
+            try:
+                req.dataset_filter = smeta_dataset_filter
+                direct_rag_packet = await _smeta_direct_rag_context(
+                    req,
+                    rag_backend=smeta_rag_backend,
+                    dataset_ids=smeta_dataset_ids,
+                    state=state,
+                )
+            finally:
+                req.dataset_filter = original_dataset_filter
+            rag_text = str(direct_rag_packet.get("text") or "").strip()
+            if rag_text:
+                harness_question = (
+                    f"{harness_question}\n\n"
+                    "RAG-контекст сметной области для сметного планирования "
+                    "(используй как источник/навигацию, не как готовую смету):\n"
+                    f"{rag_text}"
+                )
+        answer = await asyncio.to_thread(
+            _smeta_direct_model_answer,
+            harness_question,
+            str(direct_rag_packet.get("text") or ""),
         )
-        if direct_model_first_enabled:
-            rag_packet = await _smeta_direct_rag_context(
-                req,
-                rag_backend=smeta_rag_backend,
-                dataset_ids=smeta_dataset_ids,
-                state=state,
+        if not answer:
+            answer = (
+                "Сейчас не смог собрать сметный ответ. Повторите запрос или сузьте исходные: "
+                "ВОР/спецификация, регион, период цен, что считать работой, а что поставкой."
             )
-            answer = await asyncio.to_thread(
-                _smeta_direct_model_answer,
-                harness_question,
-                rag_packet.get("text") or "",
-            )
-            if answer:
-                trace = {
-                    "mode": "estimate_harness",
-                    "direct_model_first": True,
-                    "harness_skipped": True,
-                    "reason": (
-                        "auto-routed smeta work request uses estimator model before code calculator"
-                        if _auto_estimate_work
-                        else "explicit smeta mode uses estimator model before code calculator"
-                    ),
-                    "smeta_rag_context": rag_packet.get("trace") or {},
-                }
-                return _mode_reply(
-                    answer,
-                    "estimate_harness",
-                    "harness_mode",
-                    extra={
-                        "retrieval_trace": trace,
-                        "sources": rag_packet.get("sources") or [],
-                        "source_map": rag_packet.get("source_map") or [],
-                        "total_status": "model_first",
-                    },
-                )
-            if not _env_bool("LES_SMETA_CODE_FALLBACK_AFTER_MODEL_FAIL", False):
-                trace = {
-                    "mode": "estimate_harness",
-                    "direct_model_first": True,
-                    "harness_skipped": True,
-                    "code_fallback_skipped": True,
-                    "reason": "estimator model returned no visible answer; code fallback is disabled",
-                    "smeta_rag_context": rag_packet.get("trace") or {},
-                }
-                return _mode_reply(
-                    (
-                        "Сметчик-модель не вернула ответ по этому запросу. "
-                        "Кодовую смету вместо неё не собираю: пришлите запрос ещё раз или переключите модель."
-                    ),
-                    "estimate_harness",
-                    "harness_mode",
-                    extra={
-                        "retrieval_trace": trace,
-                        "sources": rag_packet.get("sources") or [],
-                        "source_map": rag_packet.get("source_map") or [],
-                        "total_status": "model_first_failed",
-                    },
-                )
-
-        from proxy.services.estimate_harness_service import run_estimate_harness
-        result = await asyncio.to_thread(run_estimate_harness, harness_question, _harness_complete)
-        model_first_smeta = False
-        if _should_use_model_first_smeta(result):
-            model_answer = await asyncio.to_thread(_smeta_model_first_answer, harness_question, result)
-            if model_answer:
-                answer = model_answer
-                model_first_smeta = True
-            else:
-                answer = _format_harness(result)
-        else:
-            answer = _format_harness(result)
-        if not model_first_smeta:
-            voice = await asyncio.to_thread(_harness_model_comment, result, harness_question)
-            if voice:
-                answer = f"{voice}\n\n{answer}"
         trace = {
-            "mode": "estimate_harness",
-            "model_first_smeta": model_first_smeta,
-            "planner_status": result.get("planner_status"),
-            "steps": result.get("steps"),
-            "total_status": result.get("total_status"),
-            "computed": len(result.get("computed") or []),
-            "needs_input": len(result.get("needs_input") or []),
-            "rejected": len(result.get("rejected") or []),
-            "tool_trace": result.get("trace") or [],
-            "notebook_context": result.get("notebook_context") or {},
-            "smeta_dialog_state": _smeta_dialog_state(result),
+            "mode": "smeta",
+            "model_rag_only": True,
+            "direct_model_answer_present": bool(answer),
+            "active_smeta_state": _smeta_active_state_from_answer(harness_question, answer),
+            "smeta_rag_context": direct_rag_packet.get("trace") or {},
+            "smeta_dataset_filter": smeta_dataset_filter or "",
         }
         return _mode_reply(
             answer,
-            "estimate_harness_auto_work" if _auto_estimate_work else "estimate_harness",
-            "harness_mode",
+            "smeta_auto_work" if _auto_estimate_work else "smeta",
+            "smeta_mode",
             extra={
                 "retrieval_trace": trace,
-                "notebook_context": result.get("notebook_context") or {},
-                "total_status": result.get("total_status"),
-                "artifact": {
-                    "title": "Сметная расшифровка",
-                    "mode": "text",
-                    "content": _format_harness_artifact(result),
-                },
+                "sources": direct_rag_packet.get("sources") or [],
+                "source_map": direct_rag_packet.get("source_map") or [],
             },
         )
 

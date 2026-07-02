@@ -169,7 +169,7 @@ def _answer_assemble(q: str) -> dict[str, Any]:
     nr_sp_note = ""
     if not nr_pct or not sp_pct:
         from proxy.services.nr_sp_service import resolve as _resolve_nr_sp
-        rs = _resolve_nr_sp(norm.get("name", ""))
+        rs = _resolve_nr_sp(norm.get("name", ""), code=code)
         nr_pct = nr_pct or rs["nr_pct"]
         sp_pct = sp_pct or rs["sp_pct"]
         nr_sp_note = f"вид работ: {rs['label']}" + (" (по умолчанию — уточнить)" if rs["default"] else "")
