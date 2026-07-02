@@ -9,12 +9,17 @@
 `metadata` или `deep`: глубокий слой читает только уже готовый lexical index, без reindex/OCR/LLM. С 0.24.0.17
 паспорт получает `quality`-оценку полезности и замер прогрева: cold rebuild против тёплого чтения кэша.
 Паспорта и блокноты ускоряют маршрутизацию и понимание задачи, но не являются источником фактов, норм или чисел.
+С 0.24.0.177 обычный prompt получает не полный служебный dump карты, а компактный
+`dataset_brief_for_model_v1`: brief объясняет модели, что за корпус выбран, какие файлы открыть первыми,
+как file cards связаны с реальными чанками, и какой маршрут чтения подходит под текущий вопрос. Модель и
+режимный prompt остаются главным слоем решения; brief только помогает не заблудиться в датасете.
 
 ## Точки входа
 
 - `proxy/services/context_memory_service.py` — сборка/хранение профилей.
 - `proxy/services/notebook_service.py` — `notebook_v1` поверх профилей и служебных источников;
-  ГЭСН-блокнот генерируется из локальной базы норм и даёт карту сборников.
+  ГЭСН-блокнот генерируется из локальной базы норм и даёт карту сборников; обычный prompt получает
+  `dataset_brief_for_model_v1` вместо полного технического dump typed memory.
 - `proxy/services/prompt_registry_service.py` — общий LES prompt и режимные prompts; smeta получает
   ГЭСН-блокнот перед tool-contract.
 - `proxy/services/memory_service.py` — короткая история текущей сессии (`session_memory`,
@@ -70,6 +75,12 @@ no-reindex backfill через `tools/build_lexical_index.py` из Qdrant payloa
 ответчику. Это не evidence и не готовый ответ; broad RAG использует его, чтобы выбрать файлы/разделы,
 после чего всё равно делает обычный retrieval по источникам.
 
+`dataset_brief_for_model_v1` — компактная упаковка для prompt. Он собирается из `dataset_memory`,
+`file_cards`, `important_files`, `known_gaps` и, если есть, `reader_output`. Связь с чанками явная:
+`file_name` в brief совпадает с `doc_name/file_name` в Qdrant payload и `lexical_chunks`, а точечный
+добор идёт через `doc_filter` по этому имени. Поэтому brief может подсказать, какой файл открыть, но
+утверждение в видимом ответе должно опираться уже на retrieved chunk/table row/graph atom/calculation trace.
+
 Паспорт чата обновляется из факта сохранённого ответа: последний вопрос/ответ, route, scope, датасеты,
 статус, принятые допущения и MISSING/blockers, извлечённые простыми regex из ответа.
 
@@ -96,13 +107,18 @@ no-reindex backfill через `tools/build_lexical_index.py` из Qdrant payloa
    возвращает разницу скорости. Это проверяет пользу прогрева без переиндексации и без запуска LLM.
 9. `run_dataset_reader_pass()` может обогатить typed memory модельной навигацией. В broad study-ответах
    `/api/chat` best-effort запускает этот проход перед `notebook_study`; если не успевает, ставит фон.
-10. `build_dataset_notebook()` и `service_source_notebooks()` дают общий notebook-контекст для режимов.
-11. `estimate_harness` получает `LES_SYSTEM_PROMPT + smeta prompt + ГЭСН notebook excerpt + tool contract`.
+10. `dataset_memory_prompt_excerpt()` строит `dataset_brief_for_model_v1` с учётом текущего вопроса:
+    для сметы, нормоконтроля, широкого обзора и табличного запроса меняется только маршрут чтения,
+    а не факты.
+11. `build_dataset_notebook()` и `service_source_notebooks()` дают общий notebook-контекст для режимов.
+12. `estimate_harness` получает `LES_SYSTEM_PROMPT + smeta prompt + ГЭСН notebook excerpt + tool contract`.
 
 ## Границы
 
 - Паспорт не доказывает ответ. Любая норма, цена, объём и расчёт должны идти из retrieved context,
   structured data или расчётного сервиса.
+- `dataset_brief_for_model_v1` не выбирает вывод за модель и не является контрактом ответа. Он помогает
+  выбрать файлы/слои, но модель и режимный prompt остаются выше.
 - Notebook не является отдельным механизмом под режим: это общий навигационный слой. Режимы только выбирают,
   какой excerpt добавить к своему prompt.
 - Паспорт чата не является долговременной памятью оператора. Команды `запомни:` остаются в

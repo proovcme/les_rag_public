@@ -19,7 +19,7 @@ from proxy.services.context_memory_service import (
 )
 from proxy.services.dataset_memory_service import (
     build_typed_dataset_memory,
-    typed_memory_prompt_block,
+    dataset_brief_for_model,
 )
 
 NOTEBOOK_SCHEMA = "notebook_v1"
@@ -148,14 +148,14 @@ def build_dataset_notebook(
     return notebook
 
 
-def dataset_memory_prompt_excerpt(dataset_ids: list[str]) -> str:
+def dataset_memory_prompt_excerpt(dataset_ids: list[str], *, question: str = "") -> str:
     memories = []
     for dataset_id in dataset_ids:
         try:
             memories.append(build_typed_dataset_memory(str(dataset_id)))
         except Exception:
             continue
-    return typed_memory_prompt_block(memories)
+    return dataset_brief_for_model(memories, question=question)
 
 
 def warmup_dataset_notebooks(

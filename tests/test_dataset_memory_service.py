@@ -4,7 +4,11 @@ from types import SimpleNamespace
 import pytest
 
 from proxy.services import dataset_memory_service
-from proxy.services.dataset_memory_service import build_typed_dataset_memory, chunk_payload_typing
+from proxy.services.dataset_memory_service import (
+    build_typed_dataset_memory,
+    chunk_payload_typing,
+    dataset_brief_for_model,
+)
 from proxy.services.project_summary_service import inventory_from_metadb
 
 
@@ -51,6 +55,41 @@ def test_build_typed_dataset_memory_multilayer(tmp_path):
     important = {item["document_role"] for item in memory["important_files"]}
     assert "состав проекта" in important
     assert "пояснительная записка" in important
+
+
+def test_dataset_brief_for_model_links_file_cards_to_chunks_and_keeps_model_primary(tmp_path):
+    db = tmp_path / "meta.db"
+    _seed_db(db)
+    memory = build_typed_dataset_memory("ds", meta_db_path=str(db), force=True)
+    memory["reader_status"] = "model"
+    memory["reader_output"] = {
+        "schema": "dataset_reader_map_v1",
+        "corpus_kind": "project",
+        "reader_summary": "Корпус похож на проектную документацию с ПЗ и ведомостью.",
+        "where_to_look": [
+            {
+                "question_type": "смета",
+                "target_files": ["BAI/OUT/АС/ведомость объемов работ.xlsx"],
+                "reason": "табличный файл с объёмами",
+            }
+        ],
+        "file_roles": [],
+        "known_gaps": [],
+        "answer_guidance": "Факты брать из найденных строк.",
+        "confidence": 0.8,
+    }
+
+    brief = dataset_brief_for_model([memory], question="дай смету по проекту")
+
+    assert "schema: dataset_brief_for_model_v1" in brief
+    assert "модель и текущий промпт принимают профессиональное решение" in brief
+    assert "file_name" in brief
+    assert "Qdrant" in brief
+    assert "lexical_chunks" in brief
+    assert "doc_filter" in brief
+    assert "BAI/OUT/АС/ведомость объемов работ.xlsx" in brief
+    assert "Для сметы сначала найди ВОР/спецификации/ЛСР/таблицы объёмов" in brief
+    assert "не источник фактов" in brief
 
 
 def test_inventory_from_metadb_includes_typed_fields(tmp_path):

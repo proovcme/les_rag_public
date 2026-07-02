@@ -7,14 +7,20 @@
 ## Текущее состояние (2026-07-02)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.176  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.177  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.176 smeta artifact LSR display form
+задеплоено на рантайм:     0.24.0.177 dataset brief for model prompt
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.176 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
+рантайм /api/version:      0.24.0.177 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.177 — prompt получает `dataset_brief_for_model_v1` вместо полного
+> служебного dump typed memory: brief компактно объясняет модели, что за корпус
+> выбран, какие файлы открывать первыми, как `file_name` связан с Qdrant /
+> `lexical_chunks` / `doc_filter`, и какой маршрут чтения подходит под текущий
+> вопрос. Это навигация, не evidence: модель и режимный prompt остаются выше,
+> факты берутся только из retrieved фрагментов, таблиц, графа или расчёта.
 > 0.24.0.176 — `smeta_direct` артефакт получил дополнительный вид
 > `lsr_display_form_v1`: по уже написанным моделью строкам стоимости строится
 > раздел «Форма ЛСР» и отдельный лист `ЛСР` в XLSX. Это форма вывода, не новый

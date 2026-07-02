@@ -156,6 +156,8 @@ def test_notebook_study_prepares_reader_memory_and_keeps_artifact_visible():
     assert "inventory_requested or study_requested" in source
     assert 'LES_NOTEBOOK_STUDY_ARTIFACT_VISIBLE", True' in source
     assert "used_for_notebook_study" in source
+    assert "question=req.question" in source
+    assert "dataset_brief_for_model_v1" in source
 
 
 @pytest.mark.asyncio

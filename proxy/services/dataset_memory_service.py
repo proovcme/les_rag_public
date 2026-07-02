@@ -24,6 +24,7 @@ TYPED_MEMORY_SCHEMA = "dataset_memory_v1"
 FILE_CARD_SCHEMA = "file_card_v1"
 EVIDENCE_ATOM_SCHEMA = "evidence_atom_v1"
 DATASET_READER_SCHEMA_ID = "dataset_reader_map_v1"
+DATASET_BRIEF_SCHEMA_ID = "dataset_brief_for_model_v1"
 
 logger = logging.getLogger(__name__)
 
@@ -864,3 +865,124 @@ def typed_memory_prompt_block(memories: list[dict[str, Any]]) -> str:
         if gaps:
             lines.append("Ограничения карты: " + "; ".join(str(g) for g in gaps[:4]))
     return "\n".join(lines)
+
+
+def _brief_join(items: list[str], *, limit: int = 8) -> str:
+    values = [str(item or "").strip() for item in items if str(item or "").strip()]
+    return ", ".join(values[:limit])
+
+
+def _file_card_by_name(memory: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        str(card.get("file_name") or ""): card
+        for card in (memory.get("file_cards") or [])
+        if str(card.get("file_name") or "")
+    }
+
+
+def _task_guidance(question: str) -> list[str]:
+    q = (question or "").casefold().replace("ё", "е")
+    guidance = []
+    if re.search(r"(смет|стоимост|вор\b|лср|гэсн|рим|расцен|цена)", q):
+        guidance.append(
+            "Для сметы сначала найди ВОР/спецификации/ЛСР/таблицы объёмов, затем добирай нормы и цены; "
+            "brief не заменяет строки источников и расчёт."
+        )
+    if re.search(r"(нормоконтрол|замечан|провер|гост|сп\s*\d|снип|требован)", q):
+        guidance.append(
+            "Для нормоконтроля сначала найди применимый раздел проекта и нормативный источник, "
+            "потом формулируй замечание с пунктом/фрагментом."
+        )
+    if re.search(r"(расскажи|обзор|изучи|проект|объект|корпус|датасет|документац)", q):
+        guidance.append(
+            "Для широкого обзора открой паспортные документы, состав проекта и пояснительные записки; "
+            "таблицы и чертежи используй как уточняющий слой."
+        )
+    if re.search(r"(таблиц|спецификац|ведомост|перечен|реестр|список)", q):
+        guidance.append(
+            "Для табличных вопросов ищи файлы со слоями tables/calculations и подтверждай числа строками таблиц."
+        )
+    return guidance
+
+
+def dataset_brief_for_model(
+    memories: list[dict[str, Any]],
+    *,
+    question: str = "",
+    max_files: int = 14,
+    max_chars: int = 7000,
+) -> str:
+    """Compact model-facing brief over dataset memory.
+
+    The brief is deliberately model-first: it helps the model decide what to
+    read next, but it is not evidence and does not choose conclusions.
+    """
+    clean_memories = [memory for memory in memories if memory]
+    if not clean_memories:
+        return ""
+    lines = [
+        "ПАСПОРТ ОБЛАСТИ ДЛЯ МОДЕЛИ (навигация, не источник фактов)",
+        f"schema: {DATASET_BRIEF_SCHEMA_ID}",
+        "Главное: модель и текущий промпт принимают профессиональное решение. "
+        "Этот brief только помогает понять корпус и выбрать файлы. "
+        "Факты, числа и выводы бери из найденных фрагментов документов, таблиц, графа или расчётной трассы.",
+        "Не пересказывай пользователю этот brief, его schema и служебные названия; в видимом ответе говори как инженер.",
+        "Связь с фрагментами: file_name из этого brief совпадает с doc_name/file_name в Qdrant и lexical_chunks; "
+        "для проверки открывай конкретный файл через retrieval/doc_filter и ссылайся уже на найденный фрагмент.",
+    ]
+    task_guidance = _task_guidance(question)
+    if task_guidance:
+        lines.append("Маршрут под текущий вопрос:")
+        lines.extend(f"- {item}" for item in task_guidance[:4])
+    for memory in clean_memories:
+        dataset_id = str(memory.get("dataset_id") or "")
+        lines.append(
+            f"\nОбласть {dataset_id}: файлов {memory.get('document_count', 0)}, "
+            f"проиндексировано {memory.get('indexed_count', 0)}, чанков {memory.get('chunk_count', 0)}."
+        )
+        layers = memory.get("data_layers") or []
+        if layers:
+            lines.append(
+                "Слои данных: "
+                + ", ".join(f"{x.get('label') or x.get('id')} ({x.get('files')})" for x in layers[:10])
+            )
+        roles = memory.get("document_roles") or []
+        if roles:
+            lines.append(
+                "Роли документов: "
+                + ", ".join(f"{x.get('role')} ({x.get('files')})" for x in roles[:10])
+            )
+        cards_by_name = _file_card_by_name(memory)
+        important = memory.get("important_files") or []
+        if important:
+            lines.append("Открывать в первую очередь:")
+            for item in important[:max_files]:
+                file_name = str(item.get("file_name") or "")
+                card = cards_by_name.get(file_name, {})
+                chunks = card.get("chunk_count")
+                layers_text = _brief_join(list(item.get("content_layers") or card.get("content_layers") or []), limit=4)
+                suffix = f"; чанков {chunks}" if chunks is not None else ""
+                if layers_text:
+                    suffix += f"; слои {layers_text}"
+                lines.append(f"- {file_name} — {item.get('document_role') or card.get('document_role') or 'документ'}{suffix}")
+        reader = memory.get("reader_output") if memory.get("reader_status") == "model" else None
+        if isinstance(reader, dict):
+            summary = str(reader.get("reader_summary") or "").strip()
+            if summary:
+                lines.append(f"Reader-pass модели: {summary[:700]}")
+            where = reader.get("where_to_look") or []
+            if where:
+                lines.append("Куда смотреть по типам вопросов:")
+                for item in where[:8]:
+                    files = _brief_join([str(f) for f in (item.get("target_files") or [])], limit=5)
+                    lines.append(f"- {item.get('question_type')}: {files} — {item.get('reason')}")
+            answer_guidance = str(reader.get("answer_guidance") or "").strip()
+            if answer_guidance:
+                lines.append(f"Подсказка reader-pass: {answer_guidance[:500]}")
+        gaps = [str(g) for g in (memory.get("known_gaps") or []) if str(g).strip()]
+        if gaps:
+            lines.append("Известные ограничения карты: " + "; ".join(gaps[:5]))
+    text = "\n".join(lines)
+    if len(text) > max_chars:
+        return text[:max_chars].rsplit("\n", 1)[0].rstrip() + "\n...BRIEF_TRUNCATED..."
+    return text

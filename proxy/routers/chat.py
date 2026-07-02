@@ -1865,6 +1865,7 @@ async def _smeta_direct_rag_context(
         memory_prompt = await asyncio.to_thread(
             dataset_memory_prompt_excerpt,
             [str(d) for d in resolved_ids],
+            question=req.question,
         )
         blocks = []
         if context:
@@ -4489,10 +4490,11 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             dataset_memory_prompt = await asyncio.to_thread(
                 dataset_memory_prompt_excerpt,
                 [str(d) for d in _dataset_ids],
+                question=req.question,
             )
             if dataset_memory_prompt:
                 retrieval_trace["dataset_memory"] = {
-                    "schema": "dataset_memory_context_v1",
+                    "schema": "dataset_brief_for_model_v1",
                     "context_role": "navigation",
                     "is_evidence": False,
                     "dataset_count": len(_dataset_ids),
@@ -5088,8 +5090,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                             )
                         if dataset_memory_prompt:
                             sys_msg += (
-                                " В служебных материалах есть карта корпуса ЛЕС: это навигация по файлам, слоям данных "
-                                "и ролям документов, а не источник фактов. Используй её, чтобы выбрать нужные файлы "
+                                " В служебных материалах есть паспорт выбранной области: это навигация по файлам, слоям данных "
+                                "и ролям документов, а не источник фактов. Используй его, чтобы выбрать нужные файлы "
                                 "и не объявлять данные отсутствующими преждевременно; факты, числа и выводы "
                                 "подтверждай только найденными документами, таблицами, графом или расчётным кодом."
                             )
