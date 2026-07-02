@@ -2372,7 +2372,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     with ui.row().classes("w-full items-center justify-between"):
                         _html(f'<div class="sov-panel-title">{esc(name)}</div>')
                         ui.button("Скачать", icon="o_download",
-                                  on_click=lambda u=url, n=name: asyncio.create_task(_download_file_artifact(u, n))
+                                  on_click=lambda u=url, n=name: _download_file_artifact(u, n)
                                   ).props("no-caps flat dense")
                     if rows:
                         _render_table(rows)
@@ -2407,10 +2407,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                         "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:.72rem;"
                     )
                     ui.button(icon="o_visibility",
-                              on_click=lambda u=url, n=name, k=kind: asyncio.create_task(_preview_file_artifact(u, n, k))
+                              on_click=lambda u=url, n=name, k=kind: _preview_file_artifact(u, n, k)
                               ).props("flat round dense").tooltip("Открыть в панели")
                     ui.button(icon="o_download",
-                              on_click=lambda u=url, n=name: asyncio.create_task(_download_file_artifact(u, n))
+                              on_click=lambda u=url, n=name: _download_file_artifact(u, n)
                               ).props("flat round dense").tooltip("Скачать")
 
     def _register_artifact_downloads(meta: dict | None) -> None:

@@ -7,14 +7,17 @@
 ## Текущее состояние (2026-07-02)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.168  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.169  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.168 smeta artifact downloads in UI
+задеплоено на рантайм:     0.24.0.169 smeta artifact download click fix
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.168 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
+рантайм /api/version:      0.24.0.169 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.169 — исправлена кнопка скачивания файловых артефактов Совушки:
+> `ui.download(...)` больше не вызывается из `asyncio.create_task`, поэтому
+> NiceGUI не теряет UI-контекст при скачивании XLSX/CSV.
 > 0.24.0.168 — Совушка регистрирует `artifact.downloads` сметного ответа
 > как файловые артефакты в панели «Файлы»: XLSX/CSV можно открыть в панели
 > или скачать кнопкой сразу после ответа.
