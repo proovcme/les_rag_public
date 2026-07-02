@@ -7,14 +7,20 @@
 ## Текущее состояние (2026-07-02)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.173  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.174  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.171 smeta excel roundtrip contract
-НЕ задеплоено:             0.24.0.172 rag/normcontrol skill contracts; 0.24.0.173 source notes artifact UI
-рантайм /api/version:      0.24.0.171 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
+задеплоено на рантайм:     0.24.0.173 source notes artifact UI
+НЕ задеплоено:             0.24.0.174 selected dataset scope preempts glossary
+рантайм /api/version:      0.24.0.173 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.174 — выбранный в UI датасет (`dataset_ids`) теперь считается
+> полноценной областью для `DeterministicFinalPolicy`: описательные
+> проектные вопросы вроде «расскажи про проект» не перехватываются
+> глоссарием даже при совпадении коротких стадийных/документных терминов
+> (`ПД`, `ИЦ`, `ИД` и т.п.). Явное «что такое ОЖР/КАЦ» по-прежнему идёт
+> в glossary.
 > 0.24.0.173 — Совушка больше не превращает inline-маркеры
 > `[Источник N]` в зелёные blockquote-простыни внутри ответа. Явные строки
 > `Источники: ...` выносятся из пузыря в Markdown-артефакт

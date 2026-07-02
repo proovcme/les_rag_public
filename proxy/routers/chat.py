@@ -3476,6 +3476,9 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     )
     reply, channel = None, ""
     _rejected_det: list[dict] = []   # v0.18: отклонённые policy детерминированные кандидаты (для trace)
+    _selected_scope_filter = req.dataset_filter or (
+        "__selected_dataset__" if (req.dataset_ids or _scope_snap.get("resolved_dataset_ids")) else ""
+    )
     # Шаг 2 инверсии (docs/AUDIT_DETERMINISM): роутер ОСНОВНОЙ — LLM (локальная Qwen3.5-4B, :8080)
     # выбирает инструмент ПЕРЕД keyword-каскадом. За флагом LES_ROUTER_PRIMARY; none/сбой/таймаут →
     # каскад/RAG (каскад сохранён фолбэком, обратимо). Роутер-бенч = 100% локально.
@@ -3497,7 +3500,15 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 _rp_eff = _rp and not _router_down   # → False: ниже работают _det_channels + keyword-гейты
                 _scope_snap.setdefault("warnings", []).append("router_unavailable_cascade_fallback")
             elif reply is not None:
-                channel = "agent"
+                from proxy.services.deterministic_policy_service import can_return_deterministic_final
+                _ok, _why = can_return_deterministic_final(
+                    _rt, req.question, project_id=pid, dataset_filter=_selected_scope_filter,
+                    candidate=reply)
+                if _ok:
+                    channel = "agent"
+                else:
+                    _rejected_det.append({"channel": _rt, "accepted": False, "reject_reason": _why})
+                    reply = None
         # ИНВЕРСИЯ (AUDIT_DETERMINISM, no-determinism-in-chat-directive): keyword-каскад — ТОЛЬКО
         # legacy-фолбэк. В режиме router_primary (дефолт ON) понимание делает LLM-роутер выше; его
         # «none» = это RAG-вопрос → НЕ запускаем гейты на свободный текст, уступаем дорогу RAG.
@@ -3511,7 +3522,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 if _cand is None:
                     continue
                 _ok, _why = can_return_deterministic_final(
-                    _ch, req.question, project_id=pid, dataset_filter=req.dataset_filter or "", candidate=_cand)
+                    _ch, req.question, project_id=pid, dataset_filter=_selected_scope_filter, candidate=_cand)
                 if not _ok:
                     _rejected_det.append({"channel": _ch, "accepted": False, "reject_reason": _why})
                     continue

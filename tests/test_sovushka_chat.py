@@ -138,6 +138,16 @@ def test_parse_batch_endpoint_can_create_background_job():
     assert "\"status\": \"queued\"" in source
 
 
+def test_selected_dataset_ids_preempt_glossary_deterministic_final():
+    source = inspect.getsource(chat_router._run_chat)
+
+    assert "_selected_scope_filter" in source
+    assert "__selected_dataset__" in source
+    assert "req.dataset_ids or _scope_snap.get(\"resolved_dataset_ids\")" in source
+    assert "dataset_filter=_selected_scope_filter" in source
+    assert "dataset_filter=req.dataset_filter or \"\", candidate=_cand" not in source
+
+
 def test_samovar_pending_means_waiting_not_active_parsing():
     assert samovar_page._computed_index_status(total=10, indexed=2, pending=8) == "WAITING"
     assert samovar_page._computed_index_status(total=10, indexed=2, pending=8, active=True) == "PARSING"
