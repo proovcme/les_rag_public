@@ -28,6 +28,11 @@
 и поисковыми синонимами; section map берёт bounded-сигналы `section_heading/parent_heading` из
 `lexical_chunks`, если они есть. Это верхняя навигация над чанками: тема ведёт к документу/разделу,
 а фактическое утверждение всё равно требует обычного retrieval по источнику.
+С 0.24.0.211 обычный RAG при выбранном датасете делает topic-guided retrieval pass: вопрос выбирает
+тему из `dataset_topic_map_v1`, её файлы/разделы идут в `doc_filter`, затем выполняется широкий fallback.
+Focus учитывает lexical `_rank_score` и поднимает лучший широкий fallback-документ вне выбранных картой
+файлов в видимое контекстное окно, чтобы тема не превращалась в закрытый фильтр. Trace пишет выбранную
+тему, файлы, разделы, targeted/fallback counts, promoted fallback и not-found files.
 
 ## Точки входа
 
@@ -184,10 +189,13 @@ memory, дублируется в `dataset_memory.memory_json`. Это не evid
     выбрала правильный слой/документ, а уже потом делала retrieval по источнику.
 12. Brief добавляет `topic_map` и `section_map`: модель видит тему, первые документы и внутренние заголовки
     как оглавление корпуса. Это помогает сделать NBLM-подобный source guide без подмены ответа кодом.
-13. Если у профиля датасета есть `operator_guidance`, brief и обычный context-memory block добавляют его
+13. Перед обычным широким retrieval чат выбирает topic source guide: `dataset_topic_selection_v1`
+    берёт matching topic, `top_files/top_sections`, запускает targeted `doc_filter` retrieval, а затем
+    добавляет широкий fallback. Это всё ещё навигация: выводы берутся только из retrieved chunks.
+14. Если у профиля датасета есть `operator_guidance`, brief и обычный context-memory block добавляют его
     как комментарий оператора для модели. Это влияет на чтение корпуса, но не повышает статус факта.
-14. `build_dataset_notebook()` и `service_source_notebooks()` дают общий notebook-контекст для режимов.
-15. `estimate_harness` получает `LES_SYSTEM_PROMPT + smeta prompt + ГЭСН notebook excerpt + tool contract`.
+15. `build_dataset_notebook()` и `service_source_notebooks()` дают общий notebook-контекст для режимов.
+16. `estimate_harness` получает `LES_SYSTEM_PROMPT + smeta prompt + ГЭСН notebook excerpt + tool contract`.
 
 ## Границы
 
@@ -215,7 +223,7 @@ memory, дублируется в `dataset_memory.memory_json`. Это не evid
   navigation-not-evidence.
 - `tests/test_dataset_memory_service.py` — typed memory, file cards, source layers, retrieval routes,
   `dataset_source_graph_v1`, `dataset_topic_map_v1`, `dataset_section_map_v1`, compact brief для модели,
-  normative route только при наличии normative-слоя, `operator_guidance` в model brief,
+  `dataset_topic_selection_v1`, normative route только при наличии normative-слоя, `operator_guidance` в model brief,
   `SMETA_RU_NORM` как normative source, роли ГЭСН/ФСЭМ/ФСБЦ, soft-downrank служебных files,
   обратная совместимость старой memory без новых полей.
 - `tests/test_notebook_api.py` — публичные notebook endpoints и endpoint сохранения `profile/guidance`.

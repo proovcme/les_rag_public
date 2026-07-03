@@ -116,14 +116,17 @@ def concentrate_sources(
         return chunks
     protected_docs = {_doc_family(str(name or "")) for name in (protected_doc_names or []) if str(name or "").strip()}
 
-    filtered = [c for c in chunks if getattr(c, "score", 1.0) >= min_score]
+    def _focus_score(chunk: SourceChunk) -> float:
+        return float(getattr(chunk, "_rank_score", getattr(chunk, "score", 0.0)) or 0.0)
+
+    filtered = [c for c in chunks if _focus_score(c) >= min_score]
     if not filtered:
-        best = max(getattr(c, "score", 0.0) for c in chunks)
-        filtered = [c for c in chunks if getattr(c, "score", 0.0) >= best * 0.8]
+        best = max(_focus_score(c) for c in chunks)
+        filtered = [c for c in chunks if _focus_score(c) >= best * 0.8]
 
     doc_max: dict[str, float] = {}
     for chunk in filtered:
-        score = getattr(chunk, "_rank_score", getattr(chunk, "score", 0.0))
+        score = _focus_score(chunk)
         doc_key = _doc_family(chunk.doc_name)
         if doc_key not in doc_max or doc_max[doc_key] < score:
             doc_max[doc_key] = score

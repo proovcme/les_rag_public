@@ -51,6 +51,7 @@ from proxy.services.dataset_memory_service import (
     get_typed_dataset_memory,
     run_dataset_reader_pass,
     schedule_dataset_reader_pass,
+    select_topic_retrieval_plan,
 )
 from proxy.services.estimate_math_service import parse_ru_number, quantity_sum_audit
 from proxy.services.notebook_service import dataset_memory_prompt_excerpt
@@ -4102,6 +4103,39 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         query_route_payload["notebook_study_requested"] = True
     if inventory_requested:
         query_route_payload["inventory_requested"] = True
+    topic_retrieval_plan: dict[str, Any] = {}
+    topic_doc_filter: list[str] = []
+    if _dataset_ids and not target_doc_filter:
+        try:
+            topic_memories = await asyncio.to_thread(
+                lambda: [get_typed_dataset_memory(str(dataset_id)) for dataset_id in _dataset_ids]
+            )
+            topic_retrieval_plan = await asyncio.to_thread(
+                select_topic_retrieval_plan,
+                topic_memories,
+                req.question,
+            )
+            topic_doc_filter = [
+                str(item.get("file_name") or "")
+                for item in (topic_retrieval_plan.get("selected_files") or [])
+                if str(item.get("file_name") or "").strip()
+            ]
+            topic_doc_filter = list(dict.fromkeys(topic_doc_filter))
+            if topic_doc_filter:
+                query_route_payload["topic_selection"] = {
+                    "schema": topic_retrieval_plan.get("schema"),
+                    "selected_topics": topic_retrieval_plan.get("selected_topics") or [],
+                    "selected_files": topic_retrieval_plan.get("selected_files") or [],
+                    "selected_sections": topic_retrieval_plan.get("selected_sections") or [],
+                    "fallback": topic_retrieval_plan.get("fallback"),
+                }
+        except Exception as topic_err:  # noqa: BLE001
+            logger.warning("[TOPIC_RETRIEVAL] topic selection skipped: %s", topic_err)
+            topic_retrieval_plan = {
+                "schema": "dataset_topic_selection_v1",
+                "status": "skipped",
+                "error": f"{type(topic_err).__name__}: {topic_err}",
+            }
     # #2: финальный resolved-канал = семантический RAG. default_rag (ни команда/regex/каскад
     # не поймали) → честный fallback; иначе keyword (route_query поймал по словарю). profile-
     # трейс кладём в payload — как у детерминированных каналов выше: один контракт в каждом route.
@@ -4118,11 +4152,12 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         if req.semantic_cache_enabled is not None
         else semantic_cache_enabled()
     )
-    if study_requested or inventory_requested or target_file_ref:
+    if study_requested or inventory_requested or target_file_ref or topic_doc_filter:
         # Broad project/object questions must re-read the selected area. A cached short RAG table
         # turns "расскажи про объект" into a stale narrow answer and hides the broad reading layer.
         # File-register questions need fresh MetaDB inventory, not an old aggregate RAG answer.
         # File-target questions must stay scoped to the named document.
+        # Topic-guided retrieval must not be bypassed by a previous flat semantic-cache answer.
         use_semantic_cache = False
     use_validation = (
         req.validation_enabled
@@ -4512,6 +4547,23 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             if req.reranker_enabled is not None
             else os.getenv("RERANKER_ENABLED", "true").lower() == "true"
         )
+        topic_retrieval = None
+        topic_chunks: list[Any] = []
+        if topic_doc_filter:
+            topic_retrieval = await retrieve_chat_chunks(
+                question=req.question,
+                dataset_ids=_dataset_ids,
+                rag_backend=rag_backend,
+                reranker_enabled=_reranker_on,
+                reranker_available=state.reranker_available,
+                reranker_cls=state.reranker_cls,
+                mlx_url=os.getenv("MLX_URL", "http://127.0.0.1:8080"),
+                logger=logger,
+                llm_semaphore=state.llm_semaphore,
+                return_trace=True,
+                doc_filter=topic_doc_filter,
+            )
+            topic_chunks = topic_retrieval.chunks
         retrieval = await retrieve_chat_chunks(
             question=req.question,
             dataset_ids=_dataset_ids,
@@ -4525,7 +4577,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             return_trace=True,
             doc_filter=target_doc_filter or None,
         )
-        chunks = retrieval.chunks
+        chunks = [*topic_chunks, *retrieval.chunks] if topic_chunks else retrieval.chunks
     except Exception as e:
         import traceback
 
@@ -4534,6 +4586,23 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         raise HTTPException(500, f"Поиск по датасету не удался: {type(e).__name__}: {e}")
     t_search = time.time() - t_search_start
     retrieval_trace = retrieval.payload()
+    if topic_retrieval_plan:
+        found_topic_docs = {str(getattr(chunk, "doc_name", "") or "") for chunk in topic_chunks}
+        retrieval_trace["topic_guided_retrieval"] = {
+            "schema": topic_retrieval_plan.get("schema") or "dataset_topic_selection_v1",
+            "context_role": "navigation",
+            "is_evidence": False,
+            "selected_topics": topic_retrieval_plan.get("selected_topics") or [],
+            "selected_files": topic_retrieval_plan.get("selected_files") or [],
+            "selected_sections": topic_retrieval_plan.get("selected_sections") or [],
+            "targeted_doc_filter": topic_doc_filter,
+            "targeted_trace": topic_retrieval.payload() if topic_retrieval else {},
+            "targeted_chunk_count": len(topic_chunks),
+            "wide_fallback_trace": retrieval.payload(),
+            "wide_fallback_chunk_count": len(retrieval.chunks),
+            "fallback": topic_retrieval_plan.get("fallback") or "wide_retrieval",
+            "not_found_files": [name for name in topic_doc_filter if name not in found_topic_docs],
+        }
     if validation_skip_reason:
         retrieval_trace["validation_policy"] = {
             "enabled": False,
@@ -4721,6 +4790,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
 
     chunks = rank_chunks_for_question(req.question, chunks)
     protected_doc_names: list[str] = list(target_doc_filter or [])
+    protected_doc_names.extend(topic_doc_filter)
     if notebook_study_pack is not None:
         protected_doc_names.extend([
             str(item.get("file_name") or "")
@@ -4728,13 +4798,48 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             if item.get("file_name")
         ])
     protected_doc_names = list(dict.fromkeys(name for name in protected_doc_names if name))
+    focus_max_docs = _env_int("RAG_CHAT_FOCUS_MAX_DOCS", 3)
+    if topic_doc_filter:
+        # Topic pass narrows the first read, but wide fallback must still have room for
+        # strong adjacent project volumes that were absent from the compact topic map.
+        focus_max_docs = max(focus_max_docs, 5)
     chunks = concentrate_sources(
         chunks,
-        max_docs=_env_int("RAG_CHAT_FOCUS_MAX_DOCS", 3),
+        max_docs=focus_max_docs,
         min_score=_env_float("RAG_CHAT_FOCUS_MIN_SCORE", 0.35),
         max_chunks=focus_max_chunks,
         protected_doc_names=protected_doc_names,
     )
+    if topic_doc_filter and retrieval.chunks:
+        topic_names = {str(name or "") for name in topic_doc_filter}
+        topic_basenames = {Path(name).name for name in topic_names}
+        focused_names = {str(getattr(chunk, "doc_name", "") or "") for chunk in chunks}
+        fallback_floor = _env_float("RAG_CHAT_FOCUS_MIN_SCORE", 0.35)
+        promoted_fallback = None
+        for candidate in rank_chunks_for_question(req.question, list(retrieval.chunks)):
+            candidate_name = str(getattr(candidate, "doc_name", "") or "")
+            if (
+                not candidate_name
+                or candidate_name in topic_names
+                or candidate_name in focused_names
+                or Path(candidate_name).name in topic_basenames
+            ):
+                continue
+            candidate_score = float(getattr(candidate, "_rank_score", getattr(candidate, "score", 0.0)) or 0.0)
+            if candidate_score < fallback_floor:
+                continue
+            insert_at = min(len(chunks), 5)
+            if focus_max_chunks is not None and len(chunks) >= focus_max_chunks:
+                chunks = [*chunks[:insert_at], candidate, *chunks[insert_at: max(focus_max_chunks - 1, insert_at)]]
+            else:
+                chunks = [*chunks[:insert_at], candidate, *chunks[insert_at:]]
+            promoted_fallback = {
+                "doc_name": candidate_name,
+                "rank_score": round(candidate_score, 4),
+            }
+            break
+        if promoted_fallback:
+            retrieval_trace.setdefault("topic_guided_retrieval", {})["wide_fallback_promoted"] = promoted_fallback
     if protected_doc_names:
         retrieval_trace.setdefault("notebook_study", {})["protected_doc_names"] = protected_doc_names
     logger.info(

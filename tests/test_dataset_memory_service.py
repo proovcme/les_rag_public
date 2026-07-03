@@ -10,6 +10,7 @@ from proxy.services.dataset_memory_service import (
     chunk_payload_typing,
     dataset_brief_for_model,
     infer_file_typing,
+    select_topic_retrieval_plan,
 )
 from proxy.services.project_summary_service import inventory_from_metadb
 
@@ -185,6 +186,62 @@ def test_topic_and_section_maps_use_lexical_headings(tmp_path):
     assert "пожарная сигнализация и противопожарная автоматика" in brief
     assert "Оглавление/разделы" in brief
     assert "Автоматическая установка пожарной сигнализации" in brief
+
+
+def test_topic_retrieval_plan_selects_topic_files_and_fallback(tmp_path):
+    db = tmp_path / "meta.db"
+    _seed_db(db)
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "INSERT INTO documents VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                "5",
+                "ds",
+                "BAI/IN/КСБ.pdf",
+                "INDEXED",
+                20,
+                "DOCUMENT",
+                "text",
+                "",
+                "",
+                "markdown",
+                "",
+            ),
+        )
+        conn.execute(
+            """
+            CREATE TABLE lexical_chunks (
+                dataset_id TEXT,
+                doc_name TEXT,
+                section_heading TEXT DEFAULT '',
+                parent_heading TEXT DEFAULT ''
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO lexical_chunks(dataset_id, doc_name, section_heading, parent_heading) VALUES (?,?,?,?)",
+            (
+                "ds",
+                "BAI/IN/КСБ.pdf",
+                "5.2 Автоматическая установка пожарной сигнализации (АУПС), противопожарная автоматика",
+                "",
+            ),
+        )
+        conn.commit()
+
+    memory = build_typed_dataset_memory("ds", meta_db_path=str(db), force=True)
+    plan = select_topic_retrieval_plan(
+        [memory],
+        "дай сводку технических решений по пожарной сигнализации и автоматике",
+    )
+
+    assert plan["schema"] == "dataset_topic_selection_v1"
+    assert plan["is_evidence"] is False
+    assert plan["fallback"] == "wide_retrieval"
+    assert plan["selected_topics"][0]["id"] == "fire_alarm_automation"
+    assert plan["selected_files"][0]["file_name"] == "BAI/IN/КСБ.pdf"
+    assert plan["selected_files"][0]["reason"] == "topic_section"
+    assert "АУПС" in plan["selected_sections"][0]["heading"]
 
 
 def test_dataset_brief_includes_operator_guidance_as_navigation(tmp_path):

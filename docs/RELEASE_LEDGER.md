@@ -7,13 +7,23 @@
 ## Текущее состояние (2026-07-03)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.210  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.211  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.210 topic/section source guide для typed dataset memory
+задеплоено на рантайм:     0.24.0.211 topic-guided retrieval через source guide typed memory
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.210 (deploy stamp после явного deploy --files, 2026-07-03)
+рантайм /api/version:      0.24.0.211 (deploy stamp после явного deploy --files, 2026-07-03)
 ```
+
+> 0.24.0.211 — карта тем стала рабочим retrieval layer: при выбранном
+> датасете `routers/chat.py` строит `dataset_topic_selection_v1`, выбирает
+> тему/файлы/разделы из `dataset_topic_map_v1`, сначала делает targeted
+> `doc_filter` retrieval, затем добавляет широкий fallback. Focus использует
+> lexical `_rank_score` и поднимает лучший внешний fallback-документ в видимое
+> окно контекста, чтобы карта не закрывала соседние проектные тома. В trace
+> `topic_guided_retrieval` пишутся selected topic/files/sections,
+> targeted/fallback counts, promoted fallback и not-found files. Semantic cache
+> отключается для таких запросов, чтобы старая плоская выдача не обходила карту.
 
 > 0.24.0.210 — typed dataset memory получил слой `dataset_topic_map_v1`
 > и `dataset_section_map_v1`: поверх file cards/source graph строится

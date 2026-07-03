@@ -27,6 +27,7 @@ DATASET_READER_SCHEMA_ID = "dataset_reader_map_v1"
 DATASET_BRIEF_SCHEMA_ID = "dataset_brief_for_model_v1"
 DATASET_TOPIC_MAP_SCHEMA_ID = "dataset_topic_map_v1"
 DATASET_SECTION_MAP_SCHEMA_ID = "dataset_section_map_v1"
+DATASET_TOPIC_SELECTION_SCHEMA_ID = "dataset_topic_selection_v1"
 
 logger = logging.getLogger(__name__)
 
@@ -744,6 +745,136 @@ def _build_topic_map(
         "dataset_id": dataset_id,
         "topics": topics[:24],
         "rule": "topic_map selects candidate files/sections; answers still need retrieved chunks/tables/graph/calculation trace",
+    }
+
+
+def select_topic_retrieval_plan(
+    memories: list[dict[str, Any]],
+    question: str,
+    *,
+    max_topics: int = 2,
+    max_files: int = 10,
+    max_sections: int = 12,
+) -> dict[str, Any]:
+    """Pick dataset topic files for a targeted retrieval pass.
+
+    This is navigation only: it chooses candidate files/sections from typed
+    memory, then normal retrieval must still fetch source chunks.
+    """
+    q = _norm_text(question)
+    if not q:
+        return {
+            "schema": DATASET_TOPIC_SELECTION_SCHEMA_ID,
+            "context_role": "navigation",
+            "is_evidence": False,
+            "selected_topics": [],
+            "selected_files": [],
+            "selected_sections": [],
+            "fallback": "wide_retrieval",
+        }
+
+    topic_hits: list[tuple[int, str, dict[str, Any], list[str]]] = []
+    for memory in memories:
+        memory = _ensure_memory_navigation(memory or {})
+        dataset_id = str(memory.get("dataset_id") or "")
+        topic_map = memory.get("topic_map") if isinstance(memory.get("topic_map"), dict) else {}
+        for topic in topic_map.get("topics") or []:
+            aliases = [
+                str(topic.get("id") or ""),
+                str(topic.get("label") or ""),
+                *[str(alias) for alias in (topic.get("query_aliases") or [])],
+            ]
+            score, hits = _topic_match_score(q, tuple(aliases))
+            if not score:
+                continue
+            score += int(float(topic.get("confidence") or 0) * 10)
+            score += min(4, len(topic.get("top_sections") or []))
+            score += min(3, len(topic.get("top_files") or []))
+            topic_hits.append((score, dataset_id, topic, hits))
+
+    topic_hits.sort(key=lambda item: (-item[0], str(item[2].get("label") or ""), item[1]))
+    selected_topics: list[dict[str, Any]] = []
+    selected_files: list[dict[str, Any]] = []
+    selected_sections: list[dict[str, Any]] = []
+    seen_topics: set[tuple[str, str]] = set()
+    seen_files: set[str] = set()
+    seen_sections: set[tuple[str, str]] = set()
+
+    def _add_file(file_name: str, *, dataset_id: str, topic_id: str, reason: str, heading: str = "") -> None:
+        clean_name = str(file_name or "").strip()
+        if not clean_name or clean_name in seen_files or len(selected_files) >= max_files:
+            return
+        seen_files.add(clean_name)
+        item = {
+            "dataset_id": dataset_id,
+            "file_name": clean_name,
+            "topic_id": topic_id,
+            "reason": reason,
+        }
+        if heading:
+            item["section_heading"] = heading[:220]
+        selected_files.append(item)
+
+    for score, dataset_id, topic, hits in topic_hits:
+        topic_id = str(topic.get("id") or "")
+        topic_key = (dataset_id, topic_id)
+        if topic_key in seen_topics:
+            continue
+        seen_topics.add(topic_key)
+        selected_topics.append(
+            {
+                "dataset_id": dataset_id,
+                "id": topic_id,
+                "label": topic.get("label") or topic_id,
+                "matched_terms": hits,
+                "score": int(score),
+                "confidence": topic.get("confidence"),
+            }
+        )
+        for section in topic.get("top_sections") or []:
+            file_name = str(section.get("file_name") or "").strip()
+            heading = str(section.get("heading") or "").strip()
+            section_key = (file_name, heading)
+            if not file_name or section_key in seen_sections:
+                continue
+            seen_sections.add(section_key)
+            if len(selected_sections) < max_sections:
+                selected_sections.append(
+                    {
+                        "dataset_id": dataset_id,
+                        "file_name": file_name,
+                        "heading": heading[:220],
+                        "topic_id": topic_id,
+                        "matched_terms": list(section.get("matched_terms") or [])[:8],
+                    }
+                )
+            _add_file(
+                file_name,
+                dataset_id=dataset_id,
+                topic_id=topic_id,
+                reason="topic_section",
+                heading=heading,
+            )
+        for file_item in topic.get("top_files") or []:
+            _add_file(
+                str(file_item.get("file_name") or ""),
+                dataset_id=dataset_id,
+                topic_id=topic_id,
+                reason="topic_file",
+            )
+        if len(selected_topics) >= max_topics:
+            break
+
+    return {
+        "schema": DATASET_TOPIC_SELECTION_SCHEMA_ID,
+        "context_role": "navigation",
+        "is_evidence": False,
+        "question_terms": q[:400],
+        "selected_topics": selected_topics,
+        "selected_files": selected_files,
+        "selected_sections": selected_sections,
+        "fallback": "wide_retrieval",
+        "rule": "selected files/sections guide doc_filter retrieval; final answer still requires retrieved source chunks",
     }
 
 
