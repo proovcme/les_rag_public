@@ -9,6 +9,7 @@ from datetime import datetime
 from urllib.parse import quote, urlencode
 from nicegui import context, ui
 
+from sovushka.config import UI_PORT
 from sovushka.state import (
     state,
     api_get,
@@ -43,6 +44,8 @@ _DEFAULT_INDEX_SETTINGS = {
     "unload_before_start": True,
     "row_batch_limit": 25,
 }
+
+_LOCAL_UI_BASE = f"http://127.0.0.1:{UI_PORT}"
 
 
 def _doc_layer_labels(item: dict) -> list[str]:
@@ -121,6 +124,17 @@ def build_samovar():
             add_log(f"[UI] уведомление не показано: {err}")
         except Exception:
             pass
+
+    async def _pick_local_folder(*, initial: str = "", title: str = "Выберите папку") -> str:
+        query = urlencode({"initial": initial or "", "title": title})
+        data = await api_get(f"/lite-runtime/pick-folder?{query}", base=_LOCAL_UI_BASE)
+        if isinstance(data, dict) and data.get("status") == "selected" and data.get("path"):
+            return str(data["path"])
+        if isinstance(data, dict) and data.get("status") == "cancelled":
+            return ""
+        detail = last_api_error_text("Локальный выбор папки недоступен")
+        _notify(f"{detail}. Используй Обзор…", type="warning")
+        return ""
 
     def _settings_changed() -> bool:
         cur = _S.get("index_settings") or {}
@@ -478,6 +492,9 @@ def build_samovar():
                 browse_btn = ui.button("Обзор…", icon="o_folder_open").props(
                     "no-caps flat dense"
                 ).style("color:var(--accent);")
+                native_btn = ui.button("Explorer/Finder…", icon="o_folder_special").props(
+                    "no-caps flat dense"
+                ).style("color:var(--accent);")
             parse_sw = ui.switch("Сразу индексировать", value=True)
 
             # вложенный браузер папок (клик-навигация по серверной ФС, без печати пути)
@@ -524,7 +541,18 @@ def build_samovar():
                 fdlg.open()
                 await _nav("")
 
+            async def _open_native_folder(*_event_args):
+                path = await _pick_local_folder(
+                    initial=picked["path"] or browse["path"],
+                    title="Выберите папку для датасета",
+                )
+                if path:
+                    picked["path"] = path
+                    path_lbl.set_text(path)
+                    path_lbl.style("color:var(--text);")
+
             browse_btn.on("click", _open_browser)
+            native_btn.on("click", _open_native_folder)
 
             async def _do_add():
                 nm = (name_in.value or "").strip()
@@ -1313,9 +1341,22 @@ def build_samovar_legacy():
                 ui.button("Обзор…", icon="o_folder_open", on_click=_open_folder_browser).props(
                     "dense no-caps flat"
                 ).tooltip("Выбрать папку кликами, без печати пути")
+                native_ext_btn = ui.button("Explorer/Finder…", icon="o_folder_special").props(
+                    "dense no-caps flat"
+                ).tooltip("Открыть системный выбор папки на локальной машине")
                 ext_limit_input = ui.number("parse", value=25, min=1, max=500, step=5).props(
                     "dense outlined"
                 ).style("width:96px;font-size:.7rem;").tooltip("Сколько файлов распарсить сразу")
+
+            async def _pick_external_native(*_event_args):
+                path = await _pick_local_folder(
+                    initial=(ext_path_input.value or "").strip(),
+                    title="Выберите внешнюю папку для индексации",
+                )
+                if path:
+                    _set_external_path(path)
+
+            native_ext_btn.on("click", _pick_external_native)
 
             with ui.row().classes("gap-2 w-full items-center"):
                 ext_dataset_select = ui.select(
@@ -1595,6 +1636,20 @@ def build_samovar_legacy():
                 ).props("dense outlined").classes("flex-1").style(
                     "background:var(--bg);font-size:.75rem;"
                 )
+                scan_native_btn = ui.button("Explorer/Finder…", icon="o_folder_special").props(
+                    "dense no-caps flat"
+                ).tooltip("Открыть системный выбор папки на локальной машине")
+
+                async def pick_scan_folder(*_event_args):
+                    path = await _pick_local_folder(
+                        initial=(scan_path_input.value or "").strip(),
+                        title="Выберите папку архива для сканирования",
+                    )
+                    if path:
+                        scan_path_input.value = path
+                        scan_path_input.update()
+
+                scan_native_btn.on("click", pick_scan_folder)
 
                 async def do_scan():
                     path = (scan_path_input.value or "").strip()

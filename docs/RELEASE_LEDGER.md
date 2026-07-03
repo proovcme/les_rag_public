@@ -7,13 +7,21 @@
 ## Текущее состояние (2026-07-03)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.186  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.187  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.185 Windows bootstrap model onboarding skip for Ollama/Lemonade
-НЕ задеплоено:             0.24.0.186 Windows/Mac runtime status portability
-рантайм /api/version:      0.24.0.185 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
+задеплоено на рантайм:     0.24.0.187 local Explorer/Finder folder picker for datasets
+НЕ задеплоено:             —
+рантайм /api/version:      0.24.0.187 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
+
+> 0.24.0.187 — Совушка получила локальный системный выбор папки
+> `Explorer/Finder…` для операторских сценариев: быстрое добавление датасета,
+> in-place индексация внешней папки и скан карты архива. Новый маршрут
+> `/lite-runtime/pick-folder` открывает native folder dialog только при
+> loopback-доступе к UI; удалённый trusted/public клиент не может случайно
+> открыть папку на сервере. Старый серверный `Обзор…` оставлен как fallback и
+> для безопасной навигации по разрешённым корням.
 
 > 0.24.0.186 — Windows/Mac runtime status portability pass: shared runtime
 > status no longer crashes on Windows when Unix `ps` is unavailable. Memory

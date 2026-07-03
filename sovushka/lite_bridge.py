@@ -19,6 +19,7 @@ import json
 import mimetypes
 import os
 import subprocess
+import sys
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable
@@ -133,6 +134,105 @@ def _local_runtime_request_allowed(request: Request) -> bool:
         is_loopback=_client_is_loopback(request),
         is_trusted_network=bool(trusted_role_for_request(request)),
     )
+
+
+def _local_folder_picker_allowed(request: Request) -> bool:
+    return _client_is_loopback(request)
+
+
+def _is_windows_host() -> bool:
+    return os.name == "nt"
+
+
+def _is_macos_host() -> bool:
+    return sys.platform == "darwin"
+
+
+def _native_pick_folder(*, initial: str = "", title: str = "Выберите папку") -> dict[str, Any]:
+    initial_dir = Path(initial).expanduser() if initial.strip() else Path.home()
+    if initial_dir.is_file():
+        initial_dir = initial_dir.parent
+    if not initial_dir.exists():
+        initial_dir = Path.home()
+
+    if _is_windows_host():
+        def ps_quote(value: str) -> str:
+            return "'" + value.replace("'", "''") + "'"
+
+        script = "\n".join(
+            [
+                "Add-Type -AssemblyName System.Windows.Forms",
+                "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog",
+                f"$dialog.Description = {ps_quote(title)}",
+                f"$dialog.SelectedPath = {ps_quote(str(initial_dir))}",
+                "$dialog.ShowNewFolderButton = $true",
+                "$result = $dialog.ShowDialog()",
+                "if ($result -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write($dialog.SelectedPath) }",
+            ]
+        )
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-Command", script],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,
+        )
+        if result.returncode != 0:
+            return {"status": "cancelled" if "cancel" in result.stderr.lower() else "error", "detail": result.stderr.strip()}
+        path = result.stdout.strip()
+        return {"status": "selected" if path else "cancelled", "path": path}
+
+    if _is_macos_host():
+        def osa_quote(value: str) -> str:
+            return json.dumps(value)
+
+        script = (
+            f"set theFolder to choose folder with prompt {osa_quote(title)} "
+            f"default location POSIX file {osa_quote(str(initial_dir))}\n"
+            "POSIX path of theFolder"
+        )
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,
+        )
+        if result.returncode != 0:
+            return {"status": "cancelled" if "User canceled" in result.stderr else "error", "detail": result.stderr.strip()}
+        path = result.stdout.strip()
+        return {"status": "selected" if path else "cancelled", "path": path}
+
+    import tkinter
+    import tkinter.filedialog
+
+    root = tkinter.Tk()
+    root.withdraw()
+    try:
+        root.attributes("-topmost", True)
+    except tkinter.TclError:
+        pass
+    try:
+        selected = tkinter.filedialog.askdirectory(
+            parent=root,
+            initialdir=str(initial_dir),
+            title=title,
+            mustexist=True,
+        )
+    finally:
+        root.destroy()
+    path = str(Path(selected).expanduser()) if selected else ""
+    return {"status": "selected" if path else "cancelled", "path": path}
+
+
+async def lite_pick_folder(request: Request, initial: str = "", title: str = "Выберите папку") -> JSONResponse:
+    if not _local_folder_picker_allowed(request):
+        return JSONResponse({"detail": "Folder picker requires local loopback access"}, status_code=403)
+    try:
+        result = await asyncio.to_thread(_native_pick_folder, initial=initial, title=title)
+    except Exception as error:  # noqa: BLE001
+        return JSONResponse({"status": "unsupported", "detail": str(error)}, status_code=501)
+    return JSONResponse(result)
 
 
 def _runtime_result_payload(value: Any) -> Any:
@@ -365,6 +465,10 @@ def register_lite_bridge_routes() -> None:
     @app.get("/lite-runtime/reindex-status")
     async def lite_reindex_status_page(request: Request):
         return await lite_reindex_status(request)
+
+    @app.get("/lite-runtime/pick-folder")
+    async def lite_pick_folder_page(request: Request, initial: str = "", title: str = "Выберите папку"):
+        return await lite_pick_folder(request, initial=initial, title=title)
 
     @app.post("/lite-runtime/action/{action}")
     async def lite_runtime_action_page(action: str, request: Request):
