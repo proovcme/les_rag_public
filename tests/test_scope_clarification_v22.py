@@ -103,6 +103,12 @@ def test_scope_selector_no_vague_dashes_label():
     src = open("sovushka/pages/chat.py", encoding="utf-8").read()
     assert '"Весь RAG"' in src
 
+
+def test_scope_selector_no_close_and_reopen_instruction():
+    src = open("sovushka/pages/chat.py", encoding="utf-8").read()
+    assert "закройте и откройте" not in src
+    assert "Обновить список" in src
+
 def test_scope_resolve_payload_shapes():
     # backend резолвит все формы payload из селектора
     PR = lambda pid: {1: ["d1", "d2"]}.get(pid, [])

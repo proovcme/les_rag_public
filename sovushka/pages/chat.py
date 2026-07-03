@@ -544,6 +544,73 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                         except NameError:
                             pass
 
+                    async def _load_scope_options() -> dict:
+                        data = await api_get("/api/scope/options")
+                        if isinstance(data, dict) and (
+                            data.get("projects") or data.get("datasets") or data.get("unassigned_datasets") or data.get("system_datasets")
+                        ):
+                            return data
+
+                        projects_payload = await api_get("/api/projects") or {}
+                        datasets_payload = await api_get("/api/rag/datasets") or []
+                        projects_raw = (
+                            projects_payload.get("projects", [])
+                            if isinstance(projects_payload, dict) else
+                            projects_payload if isinstance(projects_payload, list) else []
+                        )
+                        datasets_raw = (
+                            datasets_payload
+                            if isinstance(datasets_payload, list) else
+                            datasets_payload.get("datasets") or datasets_payload.get("value") or []
+                            if isinstance(datasets_payload, dict) else []
+                        )
+                        datasets = [
+                            {
+                                "id": str(d.get("id", "")),
+                                "name": str(d.get("name") or d.get("id") or ""),
+                                "source_type": str(d.get("group_name") or "dataset"),
+                                "file_count": int(d.get("files", d.get("doc_count", 0)) or 0),
+                                "sidecar_status": "unknown",
+                                "lexical_status": "unknown",
+                                "qdrant_status": "indexed" if int(d.get("chunk_count", d.get("chunks", 0)) or 0) else "unknown",
+                                "project_ids": [],
+                            }
+                            for d in datasets_raw
+                            if isinstance(d, dict) and d.get("id")
+                        ]
+                        projects = [
+                            {
+                                "id": int(p.get("id", 0)),
+                                "name": str(p.get("name") or p.get("id") or ""),
+                                "aliases": p.get("aliases") or [],
+                                "dataset_count": int(p.get("dataset_count", p.get("datasets", 0)) or 0),
+                                "dataset_ids": p.get("dataset_ids") or [],
+                                "dataset_roles": p.get("dataset_roles") or [],
+                                "warnings": p.get("warnings") or [],
+                            }
+                            for p in projects_raw
+                            if isinstance(p, dict) and p.get("id")
+                        ]
+                        return {
+                            "all": {"scope_type": "all", "label": "Весь RAG"},
+                            "projects": projects,
+                            "datasets": datasets,
+                            "unassigned_datasets": datasets,
+                            "system_datasets": [],
+                            "counts": {
+                                "projects_total": len(projects),
+                                "datasets_total": len(datasets),
+                                "datasets_unassigned": len(datasets),
+                                "datasets_system": 0,
+                            },
+                        }
+
+                    async def _prefetch_scope(force: bool = False) -> dict:
+                        if scope_opts_cache.get("data") and not force:
+                            return scope_opts_cache["data"]
+                        scope_opts_cache["data"] = await _load_scope_options()
+                        return scope_opts_cache["data"]
+
                     def _open_scope_dialog():
                         # СИНХРОННО строим диалог из prefetch-кэша (как version-диалог): создавать UI в
                         # фоновом asyncio-таске нельзя (slot stack empty). Данные тянет _prefetch_scope.
@@ -554,9 +621,15 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                             "max-height:72vh;padding:16px;"):
                             ui.label("Область поиска").style("font-weight:900;font-size:.85rem;margin-bottom:4px;")
                             if not data.get("projects") and not data.get("datasets"):
-                                ui.label("Загрузка списка проектов и датасетов… закройте и откройте ещё раз.").style(
+                                ui.label("Список проектов и датасетов пока не загрузился.").style(
                                     "font-size:.66rem;color:var(--warn);")
-                                asyncio.create_task(_prefetch_scope())
+                                async def _reload_scope_dialog():
+                                    await _prefetch_scope(force=True)
+                                    dlg.close()
+                                    _open_scope_dialog()
+                                ui.button("Обновить список", icon="o_refresh", on_click=_reload_scope_dialog).props(
+                                    "dense flat no-caps"
+                                ).style("font-size:.64rem;color:var(--accent);")
                             search = ui.input(placeholder="Найти проект или датасет…").props(
                                 "dense outlined clearable").style("width:100%;font-size:.7rem;")
                             with ui.scroll_area().style("max-height:46vh;width:100%;"):
@@ -602,11 +675,14 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                                 ui.button("Применить", on_click=lambda: (_apply_scope(sel_p, sel_d), dlg.close())).props("dense no-caps").style("color:var(--accent);font-size:.64rem;")
                         dlg.open()
 
-                    scope_btn.on("click", lambda: _open_scope_dialog())
+                    async def _scope_click():
+                        if not scope_opts_cache.get("data"):
+                            scope_btn.props("loading")
+                            await _prefetch_scope(force=True)
+                            scope_btn.props(remove="loading")
+                        _open_scope_dialog()
 
-                    async def _prefetch_scope():
-                        scope_opts_cache["data"] = await api_get("/api/scope/options") or {}
-
+                    scope_btn.on("click", _scope_click)
                     asyncio.create_task(_prefetch_scope())
 
                     # Граф знаний: /classic?scope=p:ID|ds:ID — предвыбор области поиска (2×клик в графе).

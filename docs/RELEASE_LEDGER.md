@@ -7,13 +7,18 @@
 ## Текущее состояние (2026-07-03)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.190  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.191  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.190 Windows folder picker encoding + non-MLX health polling
+задеплоено на рантайм:     0.24.0.191 scope selector loading/retry fix
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.190 ok · app 5.1.0 · h0.24 · Legion mojibake-path smoke ok; deploy_stamp_missing on Windows light
+рантайм /api/version:      0.24.0.191 ok · app 5.1.0 · h0.24 · Legion scope-options smoke ok; deploy_stamp_missing on Windows light
 ```
+
+> 0.24.0.191 — ScopeSelector в чате больше не показывает тупиковое
+> “закройте и откройте ещё раз”: по клику он дожидается `/api/scope/options`,
+> имеет кнопку “Обновить список” и fallback на прямые `/api/projects` +
+> `/api/rag/datasets`, если основной scope endpoint временно не ответил.
 
 > 0.24.0.190 — Windows light hotfix: Explorer/Finder folder picker on Windows
 > forces UTF-8 PowerShell stdout, while backend path validation repairs the
