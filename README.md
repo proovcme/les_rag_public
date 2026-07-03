@@ -1,115 +1,112 @@
-# Л.Е.С. — evidence-harness for construction data
+# Л.Е.С. — строительный evidence-harness для проектов, смет и норм
 
 ![Python](https://img.shields.io/badge/python-3.12-blue)
-![LES](https://img.shields.io/badge/LES-0.24.0.116-0b8f64)
-![Runtime](https://img.shields.io/badge/runtime-Apple%20Silicon-black)
+![LES](https://img.shields.io/badge/LES-0.24.0.192-0b8f64)
 ![Local-first](https://img.shields.io/badge/local--first-yes-2ea44f)
+![Evidence](https://img.shields.io/badge/evidence-first-success)
 ![Numbers](https://img.shields.io/badge/numbers-computed%20by%20code-success)
 ![MCP](https://img.shields.io/badge/MCP-server-orange)
 
-Л.Е.С. превращает папку строительного проекта в локальный центр доказательных ответов:
-модель связывает вопрос, документы и профессиональный язык, а код считает таблицы, сметы,
-сверки и отчёты. Это не “чат с PDF”, а harness: источник → workflow → расчёт → blockers →
-provenance → человеческий ответ.
+Л.Е.С. превращает строительные документы в рабочую инженерную среду: проектные тома,
+сметы, спецификации, таблицы, нормативы, переписку и CAD/BIM-данные можно спрашивать
+человеческим языком, а система показывает не только ответ, но и откуда он взялся.
 
-Код открыт как source-available. Приватные датасеты, нормативные корпуса, индексы, почта,
-проектные документы и runtime-секреты в репозиторий не входят.
-
-## Why It Exists
-
-В строительстве данные живут в разных мирах: ПЗ и тома РД, спецификации, ведомости,
-сметы, почта, сканы, CAD/BIM, нормативы. Обычный RAG хорошо пересказывает найденный
-фрагмент, но плохо отвечает на инженерный вопрос, где нужно одновременно:
-
-- найти правильный документ, раздел и строку;
-- не потерять одинокое число в таблице или примечании;
-- посчитать полный объём, а не top-k куски;
-- показать, чего не хватает для защищаемого вывода;
-- не выдать красивую догадку как проверенный результат.
-
-Л.Е.С. держит простое правило: **модель связывает и решает ход, код считает там, где нужен проверяемый расчёт, evidence всё объясняет**.
+Это не “чат с PDF”. Обычный RAG умеет пересказать похожий фрагмент. Л.Е.С. строит
+проверяемый путь:
 
 ```text
-Question
-  -> scope and dataset memory
-  -> retrieval / table / estimate / normcontrol workflow
-  -> source rows, chunks, graph facts or calculation trace
-  -> blockers and missing inputs
-  -> model answer with provenance
+вопрос → выбранный проект/датасет → нужные документы и строки
+       → расчёт кодом, если есть числа
+       → источники, blockers, missing inputs
+       → ответ инженеру или сметчику
 ```
 
-## What It Can Show
+Главный принцип короткий: **модель связывает и объясняет, код считает, источники
+доказывают**. Если данных не хватает, это должно быть видно, а не замазано красивой
+фразой.
 
-### Dataset-as-notebook RAG
+## Зачем это нужно
 
-После индексации датасет получает навигационную память: типы файлов, роли документов,
-карточки файлов, где искать паспорт объекта, состав проекта, ТЭП, инженерные разделы,
-сметы и спецификации. Память помогает модели выбрать ход, но не заменяет evidence:
-факты подтягиваются из конкретных файлов и строк.
+Строительный проект живёт не в одном аккуратном файле. Он размазан по ПЗ, РД, ВОР,
+локальным сметам, спецификациям, сканам, письмам, нормативам, BIM-выгрузкам и таблицам.
+В таком корпусе опасны две крайности:
 
-### Tables and quantities
+- модель уверенно отвечает по одному похожему куску и теряет остальной проект;
+- код пытается заменить сметчика/инженера жёсткими шаблонами и ломается на реальной задаче.
 
-Табличные вопросы считаются по полной структурированной выгрузке, а не по нескольким
-похожим чанкам. Поэтому “суммарный метраж кабеля” или “количество по ведомости” идёт
-через Parquet/SQL-код, с понятной трассой и без арифметики языковой модели.
+Л.Е.С. держит баланс. Модель остаётся профессиональным диспетчером задачи: понимает
+контекст, выбирает ход, строит ВОР, объясняет результат. Код остаётся скучным, но
+надёжным слоем: считает суммы, проценты, объёмы, НДС, НР/СП, ресурсные трассы,
+проверяет единицы и хранит provenance. Скучный код — редкий случай, когда это комплимент.
 
-### Smeta / GESN / RIM workflow
-
-Сметный режим direct model-first: в явном режиме «Смета» сначала отвечает сметчик-модель
-по полному вопросу, вложениям, skill и компактному RAG-пакету явно выбранного корпуса
-(фрагменты, source map, навигационная память). Если оператор только приложил файл,
-RAG не подмешивает соседний датасет по авто-инференсу. Кодовый harness подключается как fallback
-и как калькулятор/проверка норм, единиц, условий применимости, цен, НР/СП и provenance
-там, где модель уже показала, что именно нужно считать. Если данных не хватает, ответ
-показывает ведомость, допущения и ценовые пробелы, а не стену внутренних отказов.
-Если вход — спецификация или ведомость материалов, модель сначала предлагает ВОР как мост к смете;
-код только проверяет табличную арифметику вроде упаковок, множителей и минимальных поставок.
-
-Экспертная проверка сметного режима: [docs/public/smeta-expert-review.md](docs/public/smeta-expert-review.md).
-
-### Normcontrol and reports
-
-СПДС/normcontrol combines deterministic checks, retrieval and model synthesis. The system
-can prepare JSON/HTML/XLSX reports with normalized remarks and human decision status,
-while final engineering responsibility stays with the reviewer.
-
-### CAD/BIM graph demo
-
-The repository includes a public-safe standalone CAD/BIM viewer demo with synthetic data.
-Real customer models are intentionally not shipped.
-
-## Public Showcase
-
-- Product overview: [docs/public/overview.md](docs/public/overview.md)
-- Demo workflows: [docs/public/demo-workflows.md](docs/public/demo-workflows.md)
-- Privacy and data boundaries: [docs/public/privacy-and-data-boundaries.md](docs/public/privacy-and-data-boundaries.md)
-- Publication checklist: [docs/PUBLICATION_CHECKLIST.md](docs/PUBLICATION_CHECKLIST.md)
-- GitHub Pages entry: [docs/index.md](docs/index.md)
-
-## Architecture
+## Что внутри
 
 ```mermaid
 flowchart TB
-    U["Operator UI / API / MCP client"] --> P["FastAPI proxy"]
-    P --> M["Model orchestration"]
-    P --> R["Retrieval and dataset memory"]
-    P --> C["Code calculators and checkers"]
+    U["Пользователь: чат, API, MCP"] --> P["FastAPI proxy"]
+    P --> S["Совушка UI"]
+    P --> M["LLM orchestration"]
+    P --> R["RAG + dataset memory"]
+    P --> C["Calculators / validators / trace"]
     R --> Q["Qdrant vectors"]
-    R --> S["SQLite metadata, file cards, evidence atoms"]
-    C --> T["Parquet tables, GESN/RIM traces, reports"]
-    M --> A["Answer with provenance and blockers"]
-    C --> A
+    R --> DB["SQLite metadata, file cards, notebooks"]
+    C --> T["Parquet tables, ГЭСН/РИМ traces, XLSX/HTML reports"]
+    M --> A["Ответ с источниками, статусом и добором"]
     R --> A
+    C --> A
 ```
 
-The important boundary is intentional:
+Основные слои:
 
-- the model reads, decomposes, asks, explains and chooses the estimating path;
-- code stores graph/facts/versions/provenance and computes/checks numbers when the path needs it;
-- UI shows what was used: memory, files, tables, calculations, graph;
-- missing data is a first-class result, not an exception to hide.
+- **Совушка** — рабочий UI для чата, датасетов, документов, инструментов и диагностики.
+- **RAG и память датасета** — не только чанки, но и карточки файлов, типы документов,
+  навигационная карта корпуса и строгий выбор области поиска.
+- **Документы без ИИ** — отдельный просмотр датасетов, файлов и фрагментов, чтобы можно
+  было просто искать и читать, а не просить модель “ну найди же”.
+- **Табличный слой** — structured extract, Parquet/SQL и расчёт по полной таблице, а не
+  по top-k кускам.
+- **Сметный слой** — ВОР, спецификация → ВОР, ГЭСН/РИМ, ресурсы, НР/СП, цены, trace,
+  XLSX-артефакты и честные статусы частичной/сценарной/финальной оценки.
+- **Нормоконтроль** — проверка проектной документации, remarks, отчёты JSON/HTML/XLSX.
+- **CAD/BIM контур** — граф объектов и публичный standalone viewer на безопасных demo data.
+- **MCP/API** — машинный интерфейс для агентов и внешних инструментов.
 
-## Run Locally
+## Как работает ответ
+
+Л.Е.С. старается отвечать не “магически”, а прослеживаемо:
+
+1. Определяет задачу: поиск, проектная сводка, таблица, смета, нормоконтроль, CAD/BIM.
+2. Выбирает область: весь RAG, проект, датасет, конкретный файл или вложение.
+3. Поднимает evidence: фрагменты, строки таблиц, карточки документов, нормативные источники.
+4. Считает кодом всё, что должно быть числом: суммы, проценты, единицы, объёмы, ресурсы.
+5. Отдаёт ответ с источниками, допущениями, blockers и следующим шагом.
+
+Модель не обязана молчать, если не хватает финальной цены. Она должна дать ближайший
+полезный результат: ВОР, развилку объёмов, частичную ЛСР, сценарную оценку, список
+добора до final. Но число без источника, trace или явного сценарного допущения не
+считается фактом.
+
+## Что уже можно показывать
+
+- **Проектная сводка:** что за объект, какие тома и документы видны, где пробелы.
+- **Поиск по датасету и документам:** targeted retrieval, строгий файл, источники.
+- **Документный explorer:** датасет → документ → фрагменты, без вызова модели.
+- **Табличные вопросы:** суммы и выборки по полным выгрузкам.
+- **Спецификация → ВОР:** поставка отдельно, работы отдельно, trace количества.
+- **Сметы:** ГЭСН/РИМ-навигация, ресурсные traces, XLSX/CSV/табличные артефакты,
+  частичные и сценарные оценки с пометкой статуса.
+- **Нормоконтроль:** remarks, доказательная база, отчёты.
+- **CAD/BIM demo:** граф и viewer на публично безопасных данных.
+
+Подробные внешние страницы:
+
+- [Обзор продукта](docs/public/overview.md)
+- [Демо-сценарии](docs/public/demo-workflows.md)
+- [Сметный модуль: что нужно для уверенного расчёта](docs/public/smeta-expert-review.md)
+- [Границы приватности и данных](docs/public/privacy-and-data-boundaries.md)
+- [GitHub Pages entry](docs/index.md)
+
+## Быстрый запуск для разработки
 
 ```bash
 uv sync --extra mac-mlx
@@ -118,40 +115,50 @@ make verify
 uv run lesctl start
 ```
 
-Primary local surfaces:
+Локальные поверхности:
 
-- Sovushka UI: `http://127.0.0.1:8051/classic`
+- Совушка UI: `http://127.0.0.1:8051/classic`
 - API: `http://127.0.0.1:8050`
 - Qdrant: `http://127.0.0.1:6333`
 
-For development and agent work, start with [AGENTS.md](AGENTS.md), [SKILL.md](SKILL.md),
-[docs/MODULE_INDEX.md](docs/MODULE_INDEX.md), and [docs/CODE_MAP.md](docs/CODE_MAP.md).
+Для разработки агентам лучше начинать с:
 
-## Repository Boundaries
+- [AGENTS.md](AGENTS.md)
+- [SKILL.md](SKILL.md)
+- [docs/MODULE_INDEX.md](docs/MODULE_INDEX.md)
+- [docs/CODE_MAP.md](docs/CODE_MAP.md)
+- [docs/RELEASE_LEDGER.md](docs/RELEASE_LEDGER.md)
 
-This repository is a public-facing code and documentation surface, not a data dump.
+## Что не входит в публичный репозиторий
 
-Not included:
+Репозиторий открыт как source-available code/documentation surface. Это не дамп
+боевого RAG и не архив частных объектов.
 
-- customer PDFs, DOCX, XLSX, CAD/BIM and mail archives;
-- Qdrant snapshots, SQLite runtime databases, generated indexes and caches;
-- full normative corpora unless publishing rights are explicit;
-- secrets, admin keys, private network topology and runtime credentials.
+Не публикуются:
 
-Before changing visibility or publishing a snapshot, run:
+- клиентские PDF/DOCX/XLSX/CAD/BIM/почта;
+- Qdrant snapshots, SQLite runtime DB, индексы, caches;
+- приватные нормативные корпуса без права публикации;
+- `.env`, ключи, пароли, admin tokens, private runtime topology;
+- рабочие логи и storage.
+
+Перед публичной публикацией:
 
 ```bash
 make public-check
 git status --short
 ```
 
-Then complete the manual audit in [docs/PUBLICATION_CHECKLIST.md](docs/PUBLICATION_CHECKLIST.md).
+И ручной чеклист: [docs/PUBLICATION_CHECKLIST.md](docs/PUBLICATION_CHECKLIST.md).
 
-## Status
+## Текущий статус
 
-LES is a field research system moving toward v1. Stable pieces include table arithmetic,
-GESN/RIM calculation traces, dataset memory, strict file-target retrieval, normcontrol reports,
-MCP tooling and local-first runtime. Some workflows are intentionally marked partial until they
-collect enough evidence to be defended.
+Л.Е.С. — полевая инженерная система на пути к v1. Уже стабильно работают локальный
+runtime, RAG-диспетчер, датасеты, документный просмотр, табличная арифметика,
+сметные traces, нормоконтрольные отчёты, MCP/API и Mac/Windows сборки.
 
-License: source-available, see [LICENSE](LICENSE). Security policy: [SECURITY.md](SECURITY.md).
+Некоторые доменные сценарии намеренно остаются частичными, пока не хватает evidence:
+это не баг честности, это её цена. Финальное инженерное, нормативное и сметное решение
+остаётся за человеком.
+
+License: source-available, см. [LICENSE](LICENSE). Security policy: [SECURITY.md](SECURITY.md).
