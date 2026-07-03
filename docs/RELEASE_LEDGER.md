@@ -7,13 +7,23 @@
 ## Текущее состояние (2026-07-03)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.205  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.206  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.205 smeta norm RAG notebook for model navigation
+задеплоено на рантайм:     0.24.0.206 dataset source graph + retrieval routes
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.205 (deploy stamp после make ship, 2026-07-03; commit stamp до следующего git commit)
+рантайм /api/version:      0.24.0.206 (deploy stamp после make ship, 2026-07-03; commit stamp до следующего git commit)
 ```
+
+> 0.24.0.206 — общий слой typed dataset memory получил `source_layers`,
+> `retrieval_routes` и компактный `dataset_source_graph_v1`: датасет теперь
+> объясняет модели, какие слои есть (`text`, `tables`, `calculations`,
+> `normative`, `cad_bim` и т.д.), что они значат, для каких вопросов их
+> открывать и какие файлы являются первыми точками входа. `dataset_brief_for_model`
+> показывает маршруты поиска и связку `слой -> файлы`, но не выводит служебный
+> граф наружу и не делает фактических утверждений. Нормативный маршрут теперь
+> появляется только при наличии слоя `normative`, чтобы обычная ПЗ не
+> притворялась СП/ГОСТ.
 
 > 0.24.0.205 — service notebook для смет получил отдельный `smeta_norms`
 > слой: модель видит карту сметного RAG как рабочий стол сметчика — нормы,

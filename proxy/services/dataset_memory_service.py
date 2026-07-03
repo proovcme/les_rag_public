@@ -40,6 +40,93 @@ CONTENT_LAYER_LABELS = {
     "estimate": "сметы",
 }
 
+SOURCE_LAYER_ROLES: dict[str, dict[str, str]] = {
+    "text": {
+        "role": "пояснения, требования, описания решений и договорные условия",
+        "use_for": "широкие вопросы, паспорт объекта, технические решения, обоснования",
+        "evidence_rule": "подтверждать вывод найденным фрагментом документа",
+    },
+    "tables": {
+        "role": "строки спецификаций, ВОР, объёмы, перечни и числовые данные",
+        "use_for": "сметы, ведомости, реестры, суммы, количества",
+        "evidence_rule": "числа брать из строк таблицы и считать кодом",
+    },
+    "calculations": {
+        "role": "сметы, ЛСР, расчёты, балансы и формулы",
+        "use_for": "стоимость, расчётные итоги, сверка предыдущих оценок",
+        "evidence_rule": "итог проверять расчётной трассой, не пересказывать как факт без сверки",
+    },
+    "technical_docs": {
+        "role": "проектные и технические документы",
+        "use_for": "контекст проекта, состав документации, технические параметры",
+        "evidence_rule": "открывать целевой файл, а не отвечать по названию",
+    },
+    "drawings": {
+        "role": "чертежи и графические комплекты",
+        "use_for": "геометрия, марки, листы, схемы, места установки",
+        "evidence_rule": "для геометрии нужен лист/таблица/распознанный фрагмент",
+    },
+    "graphics": {
+        "role": "сканы, изображения, листы с графикой",
+        "use_for": "визуальная проверка, листы, схемы, OCR",
+        "evidence_rule": "не делать числовой вывод без OCR/табличной проверки",
+    },
+    "cad_bim": {
+        "role": "модельные элементы, свойства, связи CAD/BIM",
+        "use_for": "элементы, параметры, количества из модели, навигация по BIM/CAD",
+        "evidence_rule": "подтверждать через graph/properties/source_ref",
+    },
+    "normative": {
+        "role": "нормативные документы, требования, пункты, таблицы",
+        "use_for": "нормоконтроль, требования, применимость, запреты/разрешения",
+        "evidence_rule": "сначала документ, затем пункт/таблица, затем вывод",
+    },
+    "estimate": {
+        "role": "сметные формы, ВОР, ЛСР и стоимостные таблицы",
+        "use_for": "сметная структура, цены, разделы, прежние расчёты",
+        "evidence_rule": "отделять форму/сценарий от priced_final",
+    },
+}
+
+RETRIEVAL_ROUTE_TEMPLATES: list[dict[str, Any]] = [
+    {
+        "id": "project_overview",
+        "when": "рассказать про проект, объект, корпус, состав документации",
+        "prefer_layers": ["text", "technical_docs"],
+        "prefer_roles": ["состав проекта", "пояснительная записка", "задание на проектирование"],
+        "method": "сначала открыть паспортные/пояснительные документы, затем добрать таблицы и чертежи",
+    },
+    {
+        "id": "estimate_or_cost",
+        "when": "смета, стоимость, ВОР, ЛСР, цена, объёмы работ",
+        "prefer_layers": ["tables", "calculations", "estimate", "text"],
+        "prefer_roles": ["сметный расчёт", "ведомость", "спецификация", "пояснительная записка"],
+        "method": "сначала ВОР/спецификация/ЛСР, затем нормы/цены/расчётная трасса",
+    },
+    {
+        "id": "normative_answer",
+        "when": "нормоконтроль, требования, СП/ГОСТ/СНиП, требуется или не требуется",
+        "prefer_layers": ["normative", "text"],
+        "require_layers": ["normative"],
+        "prefer_roles": ["нормативный документ"],
+        "method": "сначала документ-кандидат, затем пункт/подпункт/таблица, затем вывод",
+    },
+    {
+        "id": "table_query",
+        "when": "реестр, спецификация, ведомость, перечень, количество, таблица",
+        "prefer_layers": ["tables", "calculations"],
+        "prefer_roles": ["ведомость", "спецификация", "сметный расчёт"],
+        "method": "искать табличный слой; суммы и проценты считать кодом",
+    },
+    {
+        "id": "cad_bim_query",
+        "when": "модель, BIM/CAD, элементы, свойства, марки, координаты",
+        "prefer_layers": ["cad_bim", "drawings", "graphics"],
+        "prefer_roles": ["чертёжный комплект", "документ"],
+        "method": "искать graph/properties/projection, затем связанные документы",
+    },
+]
+
 _TABLE_EXTS = {".xls", ".xlsx", ".xlsm", ".csv"}
 _CAD_EXTS = {".dwg", ".dxf", ".ifc", ".ifczip", ".rvt", ".rfa", ".nwc"}
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
@@ -472,6 +559,9 @@ def build_typed_dataset_memory(
                 ),
             )
 
+        source_layers = _source_layers_from_counts(by_layer)
+        retrieval_routes = _retrieval_routes_for_dataset(cards, source_layers)
+        source_graph = _source_graph_for_dataset(dataset_id, cards, source_layers)
         memory = {
             "schema": TYPED_MEMORY_SCHEMA,
             "dataset_id": dataset_id,
@@ -498,6 +588,9 @@ def build_typed_dataset_memory(
                 {"role": role, "files": count}
                 for role, count in sorted(roles.items(), key=lambda item: (-item[1], item[0]))[:20]
             ],
+            "source_layers": source_layers,
+            "retrieval_routes": retrieval_routes,
+            "source_graph": source_graph,
             "important_files": _important_files(cards),
             "file_cards": cards[:500],
             "known_gaps": _known_gaps(docs, by_layer),
@@ -564,7 +657,131 @@ def _important_files(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _ensure_memory_navigation(memory: dict[str, Any]) -> dict[str, Any]:
     if memory and not memory.get("important_files") and memory.get("file_cards"):
         memory["important_files"] = _important_files(list(memory.get("file_cards") or []))
+    if memory and memory.get("file_cards"):
+        cards = list(memory.get("file_cards") or [])
+        if not memory.get("source_layers"):
+            counts: dict[str, int] = {}
+            for card in cards:
+                for layer in card.get("content_layers") or []:
+                    counts[str(layer)] = counts.get(str(layer), 0) + 1
+            memory["source_layers"] = _source_layers_from_counts(counts)
+        if not memory.get("retrieval_routes"):
+            memory["retrieval_routes"] = _retrieval_routes_for_dataset(cards, memory.get("source_layers") or [])
+        if not memory.get("source_graph"):
+            memory["source_graph"] = _source_graph_for_dataset(str(memory.get("dataset_id") or ""), cards, memory.get("source_layers") or [])
     return memory
+
+
+def _source_layers_from_counts(by_layer: dict[str, int]) -> list[dict[str, Any]]:
+    layers = []
+    for layer, count in sorted(by_layer.items(), key=lambda item: (-item[1], item[0])):
+        role = SOURCE_LAYER_ROLES.get(layer, {})
+        layers.append(
+            {
+                "id": layer,
+                "label": CONTENT_LAYER_LABELS.get(layer, layer),
+                "files": int(count),
+                "role": role.get("role", "слой данных"),
+                "use_for": role.get("use_for", "выбор источника и workflow"),
+                "evidence_rule": role.get("evidence_rule", "подтверждать утверждения найденным источником"),
+            }
+        )
+    return layers
+
+
+def _retrieval_routes_for_dataset(cards: list[dict[str, Any]], source_layers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    available_layers = {str(layer.get("id") or "") for layer in source_layers}
+    routes = []
+    for template in RETRIEVAL_ROUTE_TEMPLATES:
+        required = set(template.get("require_layers") or [])
+        if required and not required.intersection(available_layers):
+            continue
+        layers = [layer for layer in template["prefer_layers"] if layer in available_layers]
+        if not layers:
+            continue
+        target_files = []
+        for card in cards:
+            card_layers = {str(layer) for layer in (card.get("content_layers") or [])}
+            role = str(card.get("document_role") or "")
+            layer_hit = bool(card_layers.intersection(layers))
+            role_hit = any(prefer in role for prefer in template["prefer_roles"])
+            if layer_hit and (role_hit or len(target_files) < 6):
+                target_files.append(
+                    {
+                        "file_name": card.get("file_name"),
+                        "role": role,
+                        "layers": list(card.get("content_layers") or []),
+                        "chunk_count": int(card.get("chunk_count") or 0),
+                    }
+                )
+            if len(target_files) >= 10:
+                break
+        routes.append(
+            {
+                "id": template["id"],
+                "when": template["when"],
+                "prefer_layers": layers,
+                "prefer_roles": template["prefer_roles"],
+                "method": template["method"],
+                "target_files": target_files,
+                "is_decision": False,
+            }
+        )
+    return routes
+
+
+def _source_graph_for_dataset(dataset_id: str, cards: list[dict[str, Any]], source_layers: list[dict[str, Any]]) -> dict[str, Any]:
+    edges: list[dict[str, Any]] = []
+    top_files_by_layer: dict[str, list[dict[str, Any]]] = {}
+    for layer in source_layers:
+        layer_id = str(layer.get("id") or "")
+        if not layer_id:
+            continue
+        edges.append(
+            {
+                "from": f"dataset:{dataset_id}",
+                "to": f"layer:{layer_id}",
+                "relation": "has_layer",
+                "count": int(layer.get("files") or 0),
+            }
+        )
+    by_role_layer: dict[tuple[str, str], int] = {}
+    files_by_layer: dict[str, list[dict[str, Any]]] = {}
+    for card in cards:
+        role = str(card.get("document_role") or "документ")
+        for layer in card.get("content_layers") or []:
+            layer_id = str(layer)
+            by_role_layer[(layer_id, role)] = by_role_layer.get((layer_id, role), 0) + 1
+            files_by_layer.setdefault(layer_id, []).append(card)
+    for (layer_id, role), count in sorted(by_role_layer.items(), key=lambda item: (-item[1], item[0][0], item[0][1]))[:80]:
+        edges.append(
+            {
+                "from": f"layer:{layer_id}",
+                "to": f"role:{role}",
+                "relation": "contains_role",
+                "count": int(count),
+            }
+        )
+    for layer_id, layer_cards in files_by_layer.items():
+        layer_cards.sort(key=lambda card: (-int(card.get("chunk_count") or 0), str(card.get("file_name") or "")))
+        top_files_by_layer[layer_id] = [
+            {
+                "file_name": card.get("file_name"),
+                "role": card.get("document_role"),
+                "chunk_count": int(card.get("chunk_count") or 0),
+                "status": card.get("status"),
+            }
+            for card in layer_cards[:8]
+        ]
+    return {
+        "schema": "dataset_source_graph_v1",
+        "context_role": "navigation",
+        "is_evidence": False,
+        "dataset_id": dataset_id,
+        "edges": edges,
+        "top_files_by_layer": top_files_by_layer,
+        "rule": "source_graph guides retrieval; final claims still require chunks/tables/graph/calculation trace",
+    }
 
 
 def _known_gaps(docs: list[dict[str, Any]], by_layer: dict[str, int]) -> list[str]:
@@ -640,6 +857,8 @@ def _reader_context(
             }
             for card in cards[:file_limit]
         ],
+        "retrieval_routes": memory.get("retrieval_routes") or [],
+        "source_graph": memory.get("source_graph") or {},
     }
     text = _json(payload)
     if len(text) > char_limit:
@@ -1006,12 +1225,35 @@ def dataset_brief_for_model(
                 "Слои данных: "
                 + ", ".join(f"{x.get('label') or x.get('id')} ({x.get('files')})" for x in layers[:10])
             )
+        source_layers = memory.get("source_layers") or []
+        if source_layers:
+            lines.append("Что означают слои:")
+            for layer in source_layers[:8]:
+                lines.append(
+                    f"- {layer.get('label') or layer.get('id')}: {layer.get('use_for')}; "
+                    f"проверка: {layer.get('evidence_rule')}"
+                )
         roles = memory.get("document_roles") or []
         if roles:
             lines.append(
                 "Роли документов: "
                 + ", ".join(f"{x.get('role')} ({x.get('files')})" for x in roles[:10])
             )
+        routes = memory.get("retrieval_routes") or []
+        if routes:
+            lines.append("Маршруты поиска по типам вопросов:")
+            for route in routes[:6]:
+                files = _brief_join([str(f.get("file_name") or "") for f in (route.get("target_files") or [])], limit=4)
+                tail = f"; первые файлы: {files}" if files else ""
+                lines.append(f"- {route.get('when')}: {route.get('method')}{tail}")
+        source_graph = memory.get("source_graph") or {}
+        graph_files = source_graph.get("top_files_by_layer") if isinstance(source_graph, dict) else {}
+        if isinstance(graph_files, dict) and graph_files:
+            lines.append("Связка слои -> файлы:")
+            for layer_id, files in list(graph_files.items())[:6]:
+                names = _brief_join([str(f.get("file_name") or "") for f in list(files)[:4]], limit=4)
+                if names:
+                    lines.append(f"- {CONTENT_LAYER_LABELS.get(layer_id, layer_id)}: {names}")
         norm_lines = _normative_navigation_lines(memory, question)
         if norm_lines:
             lines.extend(norm_lines)

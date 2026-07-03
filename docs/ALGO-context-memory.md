@@ -13,6 +13,10 @@
 `dataset_brief_for_model_v1`: brief объясняет модели, что за корпус выбран, какие файлы открыть первыми,
 как file cards связаны с реальными чанками, и какой маршрут чтения подходит под текущий вопрос. Модель и
 режимный prompt остаются главным слоем решения; brief только помогает не заблудиться в датасете.
+С 0.24.0.206 typed memory дополнительно хранит `source_layers`, `retrieval_routes` и компактный
+`dataset_source_graph_v1`: модель видит, что означает каждый слой данных, какой маршрут чтения подходит
+под тип вопроса и какие файлы являются первыми точками входа. Это системное улучшение RAG-навигации,
+а не режимный шаблон ответа.
 
 ## Точки входа
 
@@ -76,10 +80,26 @@ no-reindex backfill через `tools/build_lexical_index.py` из Qdrant payloa
 после чего всё равно делает обычный retrieval по источникам.
 
 `dataset_brief_for_model_v1` — компактная упаковка для prompt. Он собирается из `dataset_memory`,
-`file_cards`, `important_files`, `known_gaps` и, если есть, `reader_output`. Связь с чанками явная:
+`file_cards`, `important_files`, `known_gaps`, `source_layers`, `retrieval_routes`,
+`dataset_source_graph_v1` и, если есть, `reader_output`. Связь с чанками явная:
 `file_name` в brief совпадает с `doc_name/file_name` в Qdrant payload и `lexical_chunks`, а точечный
 добор идёт через `doc_filter` по этому имени. Поэтому brief может подсказать, какой файл открыть, но
 утверждение в видимом ответе должно опираться уже на retrieved chunk/table row/graph atom/calculation trace.
+
+`source_layers` — детерминированное описание слоёв корпуса: `text`, `tables`, `calculations`,
+`technical_docs`, `drawings`, `graphics`, `cad_bim`, `normative`, `estimate`. Для каждого слоя хранится
+роль, типичные вопросы и правило проверки evidence. Например `tables` говорит модели искать ВОР,
+спецификации, суммы и количества, но числа всё равно брать из строк таблицы и считать кодом.
+
+`retrieval_routes` — карта “тип вопроса → какие слои/роли/файлы открыть первыми”. Она не выбирает ответ:
+для project overview предпочитает состав проекта/ПЗ/задание; для сметы — tables/calculations/estimate;
+для табличного вопроса — tables/calculations; для CAD/BIM — cad_bim/drawings/graphics. Нормативный маршрут
+включается только если в датасете есть слой `normative`, чтобы обычный проектный текст не выдавался за
+СП/ГОСТ.
+
+`dataset_source_graph_v1` — компактный навигационный граф `dataset -> layer -> role -> top files`.
+Он нужен для ориентации модели и UI, не для доказательства фактов. В prompt наружу уходит человеческая
+связка “слой -> файлы”, а не служебный JSON-граф.
 
 Паспорт чата обновляется из факта сохранённого ответа: последний вопрос/ответ, route, scope, датасеты,
 статус, принятые допущения и MISSING/blockers, извлечённые простыми regex из ответа.
@@ -110,8 +130,10 @@ no-reindex backfill через `tools/build_lexical_index.py` из Qdrant payloa
 10. `dataset_memory_prompt_excerpt()` строит `dataset_brief_for_model_v1` с учётом текущего вопроса:
     для сметы, нормоконтроля, широкого обзора и табличного запроса меняется только маршрут чтения,
     а не факты.
-11. `build_dataset_notebook()` и `service_source_notebooks()` дают общий notebook-контекст для режимов.
-12. `estimate_harness` получает `LES_SYSTEM_PROMPT + smeta prompt + ГЭСН notebook excerpt + tool contract`.
+11. Brief добавляет `source_layers`, `retrieval_routes` и связку `слой -> файлы`, чтобы модель сначала
+    выбрала правильный слой/документ, а уже потом делала retrieval по источнику.
+12. `build_dataset_notebook()` и `service_source_notebooks()` дают общий notebook-контекст для режимов.
+13. `estimate_harness` получает `LES_SYSTEM_PROMPT + smeta prompt + ГЭСН notebook excerpt + tool contract`.
 
 ## Границы
 
@@ -136,4 +158,7 @@ no-reindex backfill через `tools/build_lexical_index.py` из Qdrant payloa
 - `tests/test_context_memory_service.py` — sidecar датасета, deep-профиль из bounded lexical index,
   quality-сигналы, warmup/benchmark/notebook, ГЭСН-блокнот, обновление chat-profile через
   `save_chat_history`, prompt-block с явной маркировкой `НЕ evidence`.
+- `tests/test_dataset_memory_service.py` — typed memory, file cards, source layers, retrieval routes,
+  `dataset_source_graph_v1`, compact brief для модели, normative route только при наличии normative-слоя,
+  обратная совместимость старой memory без новых полей.
 - `tests/test_notebook_api.py` — публичные notebook endpoints.

@@ -55,6 +55,16 @@ def test_build_typed_dataset_memory_multilayer(tmp_path):
     important = {item["document_role"] for item in memory["important_files"]}
     assert "состав проекта" in important
     assert "пояснительная записка" in important
+    source_layers = {item["id"]: item for item in memory["source_layers"]}
+    assert source_layers["tables"]["use_for"]
+    assert "числа" in source_layers["tables"]["evidence_rule"]
+    route_ids = {item["id"] for item in memory["retrieval_routes"]}
+    assert {"project_overview", "estimate_or_cost", "table_query", "cad_bim_query"} <= route_ids
+    assert "normative_answer" not in route_ids
+    graph = memory["source_graph"]
+    assert graph["schema"] == "dataset_source_graph_v1"
+    assert graph["is_evidence"] is False
+    assert graph["top_files_by_layer"]["tables"][0]["file_name"] == "BAI/OUT/АС/ведомость объемов работ.xlsx"
 
 
 def test_dataset_brief_for_model_links_file_cards_to_chunks_and_keeps_model_primary(tmp_path):
@@ -89,7 +99,37 @@ def test_dataset_brief_for_model_links_file_cards_to_chunks_and_keeps_model_prim
     assert "doc_filter" in brief
     assert "BAI/OUT/АС/ведомость объемов работ.xlsx" in brief
     assert "Для сметы сначала найди ВОР/спецификации/ЛСР/таблицы объёмов" in brief
+    assert "Что означают слои" in brief
+    assert "Маршруты поиска по типам вопросов" in brief
+    assert "Связка слои -> файлы" in brief
+    assert "сначала ВОР/спецификация/ЛСР" in brief
     assert "не источник фактов" in brief
+
+
+def test_dataset_brief_backfills_navigation_for_old_memory():
+    memory = {
+        "schema": "dataset_memory_v1",
+        "dataset_id": "legacy",
+        "document_count": 1,
+        "indexed_count": 1,
+        "chunk_count": 12,
+        "file_cards": [
+            {
+                "file_name": "legacy/ВОР.xlsx",
+                "status": "INDEXED",
+                "chunk_count": 12,
+                "file_kind": "table",
+                "content_layers": ["tables", "estimate"],
+                "document_role": "ведомость",
+            }
+        ],
+    }
+
+    brief = dataset_brief_for_model([memory], question="сделай смету")
+
+    assert "Маршруты поиска по типам вопросов" in brief
+    assert "legacy/ВОР.xlsx" in brief
+    assert "dataset_source_graph_v1" not in brief
 
 
 def test_dataset_brief_falls_back_to_chunk_rich_file_cards_when_important_missing(tmp_path):
@@ -140,6 +180,7 @@ def test_dataset_brief_for_model_adds_normative_navigation_without_answering():
     )
 
     assert "Нормативная навигация" in brief
+    assert "нормоконтроль, требования" in brief
     assert "Сначала выбери нормативный документ-кандидат" in brief
     assert "пункт, подпункт, таблицу или приложение" in brief
     assert "ищи обе стороны нормы" in brief
