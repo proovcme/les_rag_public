@@ -109,7 +109,24 @@ def _parse_money_cell(cell: str) -> float | None:
     text = str(cell or "")
     if not re.search(r"\d", text):
         return None
-    value = parse_ru_number(text.replace("**", ""))
+    cleaned = text.replace("**", "").replace("\xa0", " ").replace("\u202f", " ")
+    match = re.search(r"[-+]?\d[\d\s,.\u00a0\u202f]*", cleaned)
+    if not match:
+        return None
+    number = match.group(0).strip()
+    compact = number.replace(" ", "").replace("\xa0", "").replace("\u202f", "")
+    if "," in compact and "." in compact:
+        comma = compact.rfind(",")
+        dot = compact.rfind(".")
+        if comma < dot and len(compact) - dot - 1 in {1, 2}:
+            compact = compact.replace(",", "")
+        else:
+            compact = compact.replace(".", "").replace(",", ".")
+        try:
+            return float(compact)
+        except ValueError:
+            return None
+    value = parse_ru_number(number)
     if value is None:
         return None
     return float(value)
@@ -145,6 +162,14 @@ def _find_header_index(headers: list[str], *tokens: str) -> int | None:
     return None
 
 
+def _find_header_index_any(headers: list[str], *token_groups: tuple[str, ...]) -> int | None:
+    for group in token_groups:
+        found = _find_header_index(headers, *group)
+        if found is not None:
+            return found
+    return None
+
+
 def _first_index(*values: int | None) -> int | None:
     for value in values:
         if value is not None:
@@ -159,8 +184,8 @@ def _cell(row: list[str], idx: int | None) -> str:
 
 
 def _looks_total_row(row: list[str]) -> bool:
-    first = str(row[0] if row else "").casefold()
-    return "итого" in first or "всего" in first
+    joined = " ".join(str(cell or "") for cell in (row or [])).casefold()
+    return "итого" in joined or "всего по смете" in joined
 
 
 def _normative_basis(value: str) -> str:
@@ -179,12 +204,18 @@ def _normative_basis(value: str) -> str:
 
 def _lsr_rows_from_table(table: SmetaTable) -> list[dict[str, Any]]:
     headers = table.headers
+    joined_headers = " ".join(str(header or "").casefold() for header in headers)
+    is_lsr_12_graph = "кол-во всего" in joined_headers and "текущий всего" in joined_headers
     work_idx = _first_index(
         _find_header_index(headers, "работ"),
         _find_header_index(headers, "наименование"),
         _find_header_index(headers, "раздел"),
     )
-    qty_idx = _first_index(_find_header_index(headers, "кол"), _find_header_index(headers, "объ"))
+    qty_idx = (
+        _find_header_index(headers, "кол-во", "всего")
+        if is_lsr_12_graph
+        else _first_index(_find_header_index(headers, "кол"), _find_header_index(headers, "объ"))
+    )
     unit_idx = _find_header_index(headers, "ед")
     basis_idx = _first_index(
         _find_header_index(headers, "норма"),
@@ -192,7 +223,11 @@ def _lsr_rows_from_table(table: SmetaTable) -> list[dict[str, Any]]:
         _find_header_index(headers, "источник"),
         _find_header_index(headers, "рим"),
     )
-    price_idx = _first_index(_find_header_index(headers, "ставк"), _find_header_index(headers, "цена"))
+    price_idx = (
+        _find_header_index_any(headers, ("текущий", "на ед"), ("базис", "на ед"))
+        if is_lsr_12_graph
+        else _first_index(_find_header_index(headers, "ставк"), _find_header_index(headers, "цена"))
+    )
     amount_indexes = _amount_column_indexes(headers)
     status_idx = _first_index(
         _find_header_index(headers, "статус"),
@@ -359,6 +394,37 @@ def _lsr_markdown(lsr_form: dict[str, Any] | None) -> list[str]:
 
 def _fmt_money(value: float) -> str:
     return f"{value:,.0f}".replace(",", " ") + " руб."
+
+
+def _drop_conflicting_manual_totals(text: str, lsr_total: float | None) -> str:
+    """Remove prose totals that contradict the selected LSR row sum.
+
+    The artifact renderer is not allowed to choose works or prices, but it can
+    prevent two different "Итого" numbers from being shown side by side. The
+    selected LSR form is derived from visible rows; a conflicting prose total
+    without its own trace is display noise.
+    """
+    if lsr_total is None:
+        return text
+    result: list[str] = []
+    total_tokens = ("итого", "всего", "стоимость работ", "сметная стоимость", "сумма")
+    for line in str(text or "").splitlines():
+        low = line.casefold()
+        if low.lstrip().startswith(("лср-форма вынесена", "таблица вынесена")):
+            result.append(line)
+            continue
+        if "руб" not in low or not any(token in low for token in total_tokens):
+            result.append(line)
+            continue
+        parsed = _parse_money_cell(line)
+        if parsed is None or abs(float(parsed) - float(lsr_total)) <= 0.5:
+            result.append(line)
+            continue
+        if line.lstrip().startswith("|"):
+            result.append(line)
+            continue
+        continue
+    return "\n".join(result)
 
 
 def _safe_sheet_title(title: str, used: set[str]) -> str:
@@ -599,6 +665,8 @@ def persist_smeta_artifact_exports(
             src_ws.column_dimensions[column_cells[0].column_letter].width = width
         used.add("ЛСР РИМ")
         used.add("Источники ЛСР")
+        wb.move_sheet(ws, offset=-wb.index(ws))
+        wb.active = 0
     for table in tables:
         ws = wb.create_sheet(_safe_sheet_title(str(table.get("title") or "Таблица"), used))
         ws.append([str(h) for h in table.get("headers") or []])
@@ -711,5 +779,7 @@ def compact_smeta_answer(answer: str, artifact: dict[str, Any] | None) -> str:
         result_lines.append(lines[idx])
         idx += 1
     compacted = "\n".join(result_lines)
+    if lsr_form and lsr_form.get("amount_total") is not None:
+        compacted = _drop_conflicting_manual_totals(compacted, float(lsr_form["amount_total"]))
     compacted = re.sub(r"\n{3,}", "\n\n", compacted).strip()
     return compacted or answer

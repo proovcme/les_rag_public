@@ -320,9 +320,10 @@ def test_smeta_direct_model_answer_does_not_need_harness_result(monkeypatch):
     assert "Повтор одного и того же исходника должен сохранять базовый сценарий" in FakeClient.last_json["messages"][0]["content"]
     assert "не называй сценарную таблицу готовой лср" in FakeClient.last_json["messages"][0]["content"].lower()
     assert "Способ выдачи сметы для оператора — ЛСР-форма" in FakeClient.last_json["messages"][0]["content"]
-    assert "сохраняй уже принятые строки, ставки и итоги" in FakeClient.last_json["messages"][0]["content"]
+    assert "сохраняй уже принятые строки, ставки и итоги" in FakeClient.last_json["messages"][0]["content"].lower()
     assert "не сокращай 19 строк до 12" in FakeClient.last_json["messages"][0]["content"]
-    assert "ЛСР-таблицу, а не обещание оформить её потом" in FakeClient.last_json["messages"][0]["content"]
+    assert "заполненный шаблон ЛСР граф 1-12" in FakeClient.last_json["messages"][0]["content"]
+    assert "Строка ВСЕГО по смете обязательна" in FakeClient.last_json["messages"][0]["content"]
     assert "144*20%*10=288" not in FakeClient.last_json["messages"][0]["content"]
     assert "blocked_harness_advisory" not in prompt_payload
 
@@ -380,7 +381,8 @@ def test_smeta_direct_light_prompt_cuts_heavy_contract_by_default(monkeypatch):
     assert "Один и тот же исходник должен давать один и тот же базовый сценарий" in sys_prompt
     assert "Не называй сценарную таблицу готовой ЛСР" in sys_prompt
     assert "Способ выдачи сметы — ЛСР-форма" in sys_prompt
-    assert "сразу выдай ЛСР-таблицу" in sys_prompt
+    assert "сразу заполни размеченный шаблон ЛСР граф 1-12" in sys_prompt
+    assert "ВСЕГО по смете" in sys_prompt
     assert "сборник/раздел/код-кандидат" in sys_prompt
     assert "не пиши одиноко" in sys_prompt
     assert "ГЭСНм10" in sys_prompt

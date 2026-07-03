@@ -33,6 +33,41 @@ def test_smeta_artifact_extracts_work_cost_table_and_totals():
     assert artifact["tables"][0]["rows"] == 3
 
 
+def test_smeta_artifact_parses_english_money_separators():
+    answer = """
+**ЛСР**
+| № п/п | Обоснование | Наименование работ и затрат | Ед. изм. | Кол-во на ед. | коэф. | Кол-во всего | Базис на ед., руб. | Индекс | Текущий на ед., руб. | коэф. | Текущий всего, руб. |
+|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | ГЭСНм10, кандидат | Монтаж шкафа | шт | 1 | 1 | 2 | 8,500.00 | 1.00 | 8,500.00 | 1.00 | 17,000.00 |
+| 2 | ГЭСН15, кандидат | Отделка | м2 | 1 | 1 | 3 | 1,250.50 | 1.00 | 1,250.50 | 1.00 | 3,751.50 |
+"""
+
+    artifact = build_smeta_artifact(answer, question="сделай ЛСР")
+
+    assert artifact is not None
+    assert artifact["rim_lsr_form"]["amount_total"] == 20_751.5
+    assert artifact["rim_lsr_form"]["rows"][0]["quantity"] == "2"
+    assert artifact["rim_lsr_form"]["rows"][0]["unit_price"] == "8,500.00"
+
+
+def test_smeta_artifact_skips_visible_total_row_inside_lsr_table():
+    answer = """
+**ЛСР**
+| № п/п | Обоснование | Наименование работ и затрат | Ед. изм. | Кол-во на ед. | коэф. | Кол-во всего | Базис на ед., руб. | Индекс | Текущий на ед., руб. | коэф. | Текущий всего, руб. |
+|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | ГЭСНм08, кандидат | Прокладка кабеля | м | 1 | 1 | 100 | 120,00 | 1 | 120,00 | 1 | 12 000,00 |
+| 2 | ГЭСН15, кандидат | Окраска | м2 | 1 | 1 | 10 | 300,00 | 1 | 300,00 | 1 | 3 000,00 |
+|  |  | **ВСЕГО по смете** |  |  |  |  |  |  |  |  | **15 000,00** |
+"""
+
+    artifact = build_smeta_artifact(answer, question="сделай ЛСР")
+
+    assert artifact is not None
+    assert len(artifact["rim_lsr_form"]["rows"]) == 2
+    assert artifact["rim_lsr_form"]["amount_total"] == 15_000
+    assert artifact["rim_lsr_form"]["rows"][0]["quantity"] == "100"
+
+
 def test_compact_smeta_answer_moves_long_tables_to_artifact_marker():
     rows = "\n".join(
         f"| Работа {idx} | {idx} шт | {idx * 1000} руб. |"
@@ -57,6 +92,31 @@ def test_compact_smeta_answer_moves_long_tables_to_artifact_marker():
     assert "Таблица вынесена в артефакт" in compact
     assert "6 строк" in compact
     assert "Работа 6" not in compact
+    assert "Сумма предварительная" in compact
+
+
+def test_compact_smeta_answer_drops_conflicting_manual_total():
+    rows = "\n".join(
+        f"| {idx} | Работа {idx} | {idx} | шт | ГЭСН 08, кандидат | 1 000 руб./шт | {idx * 1000} руб. | scenario_assumption |"
+        for idx in range(1, 7)
+    )
+    answer = (
+        "**ЛСР**\n"
+        "| № | Работа | Кол-во | Ед. | Норма/источник | Ставка/допущение | Сумма | Комментарий |\n"
+        "|---:|---|---:|---:|---|---:|---:|---|\n"
+        f"{rows}\n\n"
+        "**Итог**\n"
+        "Итого стоимость работ: 31 000 руб.\n"
+        "Сумма предварительная."
+    )
+
+    artifact = build_smeta_artifact(answer, question="сделай ЛСР")
+    compact = compact_smeta_answer(answer, artifact)
+
+    assert artifact is not None
+    assert artifact["rim_lsr_form"]["amount_total"] == 21_000
+    assert "ЛСР-форма вынесена в артефакт/XLSX: 6 строк, сумма 21 000 руб." in compact
+    assert "31 000 руб" not in compact
     assert "Сумма предварительная" in compact
 
 
@@ -131,6 +191,7 @@ def test_smeta_artifact_adds_lsr_form_without_replacing_tables(tmp_path):
     csv_path = tmp_path / exported["downloads"]["csv"].split("path=")[1]
     wb = openpyxl.load_workbook(xlsx_path, data_only=True)
     assert "ЛСР РИМ" in wb.sheetnames
+    assert wb.sheetnames[0] == "ЛСР РИМ"
     assert "Источники ЛСР" in wb.sheetnames
     ws = wb["ЛСР РИМ"]
     assert ws.cell(row=1, column=10).value == "Приложение № 3"
