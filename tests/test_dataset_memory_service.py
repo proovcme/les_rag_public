@@ -92,6 +92,19 @@ def test_dataset_brief_for_model_links_file_cards_to_chunks_and_keeps_model_prim
     assert "не источник фактов" in brief
 
 
+def test_dataset_brief_falls_back_to_chunk_rich_file_cards_when_important_missing(tmp_path):
+    db = tmp_path / "meta.db"
+    _seed_db(db)
+    memory = build_typed_dataset_memory("ds", meta_db_path=str(db), force=True)
+    memory["important_files"] = []
+
+    brief = dataset_brief_for_model([memory], question="расскажи про проект")
+
+    assert "Открывать в первую очередь" in brief
+    assert "BAI/OUT/КР/03_Пояснительная записка.pdf" in brief
+    assert "чанков 40" in brief
+
+
 def test_dataset_brief_for_model_adds_normative_navigation_without_answering():
     memory = {
         "schema": "dataset_memory_v1",

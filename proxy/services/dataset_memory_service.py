@@ -393,7 +393,7 @@ def build_typed_dataset_memory(
             (dataset_id, revision_id),
         ).fetchone()
         if existing and not force:
-            return _loads(existing["memory_json"], {})
+            return _ensure_memory_navigation(_loads(existing["memory_json"], {}))
 
         indexed_count = sum(1 for d in docs if str(d.get("status") or "") == "INDEXED")
         chunk_count = sum(int(d.get("chunk_count") or 0) for d in docs)
@@ -538,17 +538,33 @@ def _important_files(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
         score = max((weight for term, weight in priority_weights.items() if term in role), default=0)
         score += min(4, int(card.get("chunk_count") or 0) // 250)
         if score:
-            ranked.append((score, card))
-    ranked.sort(key=lambda item: (-item[0], item[1].get("file_name", "")))
+            ranked.append((score, "role_priority", card))
+    if not ranked:
+        for card in cards:
+            if str(card.get("status") or "") != "INDEXED" and not int(card.get("chunk_count") or 0):
+                continue
+            score = min(40, int(card.get("chunk_count") or 0))
+            if str(card.get("status") or "") == "INDEXED":
+                score += 10
+            ranked.append((score, "indexed_chunk_rich", card))
+    ranked.sort(key=lambda item: (-item[0], item[2].get("file_name", "")))
     return [
-        {
-            "file_name": card["file_name"],
-            "document_role": card["document_role"],
-            "content_layers": card["content_layers"],
-            "summary": card["summary"],
-        }
-        for _score, card in ranked[:24]
+            {
+                "file_name": card["file_name"],
+                "document_role": card.get("document_role", ""),
+                "content_layers": card.get("content_layers") or [],
+                "summary": card.get("summary", ""),
+                "chunk_count": int(card.get("chunk_count") or 0),
+                "selection_reason": reason,
+            }
+        for _score, reason, card in ranked[:24]
     ]
+
+
+def _ensure_memory_navigation(memory: dict[str, Any]) -> dict[str, Any]:
+    if memory and not memory.get("important_files") and memory.get("file_cards"):
+        memory["important_files"] = _important_files(list(memory.get("file_cards") or []))
+    return memory
 
 
 def _known_gaps(docs: list[dict[str, Any]], by_layer: dict[str, int]) -> list[str]:
@@ -783,7 +799,7 @@ def get_typed_dataset_memory(dataset_id: str, *, meta_db_path: str | None = None
     with _connect(meta_db_path) as conn:
         row = conn.execute("SELECT memory_json FROM dataset_memory WHERE dataset_id=?", (dataset_id,)).fetchone()
         if row:
-            return _loads(row["memory_json"], {})
+            return _ensure_memory_navigation(_loads(row["memory_json"], {}))
     return build_typed_dataset_memory(dataset_id, meta_db_path=meta_db_path)
 
 
@@ -978,6 +994,7 @@ def dataset_brief_for_model(
         lines.append("Маршрут под текущий вопрос:")
         lines.extend(f"- {item}" for item in task_guidance[:4])
     for memory in clean_memories:
+        memory = _ensure_memory_navigation(memory)
         dataset_id = str(memory.get("dataset_id") or "")
         lines.append(
             f"\nОбласть {dataset_id}: файлов {memory.get('document_count', 0)}, "

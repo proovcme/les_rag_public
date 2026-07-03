@@ -82,6 +82,21 @@ def _dataset_notebook_summary(profile: dict[str, Any]) -> dict[str, Any]:
     terms = list(deep.get("content_keywords") or profile.get("keywords") or [])[:16]
     norm_refs = list(deep.get("norm_refs") or [])[:12]
     table_signal = int(deep.get("table_signal_chunks") or 0)
+    top_documents = list(deep.get("top_documents") or profile.get("top_documents") or profile.get("sample_files") or [])
+    priority_files = []
+    for item in top_documents[:16]:
+        name = str(item.get("doc_name") or item.get("file_name") or "")
+        if not name:
+            continue
+        priority_files.append(
+            {
+                "file_name": name,
+                "chunks": int(item.get("chunks") or item.get("chunk_count") or 0),
+                "status": str(item.get("status") or ""),
+                "role_hint": str(item.get("doc_type") or item.get("domain") or item.get("route_dataset") or ""),
+                "source": str(item.get("source") or "lexical_chunks"),
+            }
+        )
     limitations = [
         "Блокнот описывает индекс и навигацию; утверждения в ответе должны ссылаться на найденные источники.",
     ]
@@ -95,6 +110,7 @@ def _dataset_notebook_summary(profile: dict[str, Any]) -> dict[str, Any]:
         "subject_areas": [x for x in [*domains, *routes] if x][:10],
         "key_terms": terms,
         "norm_refs": norm_refs,
+        "priority_files": priority_files,
         "limitations": limitations,
         "search_hints": [
             "используй как фон для выбора источников и инструмента",
@@ -116,6 +132,9 @@ def _dataset_prompt_excerpt(notebook: dict[str, Any]) -> str:
         bits.append("Термины: " + ", ".join(summary["key_terms"][:10]) + ".")
     if summary.get("norm_refs"):
         bits.append("Частые нормы: " + ", ".join(summary["norm_refs"][:8]) + ".")
+    if summary.get("priority_files"):
+        names = [str(item.get("file_name") or "") for item in summary["priority_files"][:8]]
+        bits.append("Открывать в первую очередь: " + "; ".join(name for name in names if name) + ".")
     bits.append("Это навигация, не evidence.")
     return "\n".join(bits)
 
@@ -129,6 +148,7 @@ def build_dataset_notebook(
 ) -> dict[str, Any]:
     profile = build_dataset_profile(dataset_id, storage_root=storage_root, depth=depth, force=force)
     typed_memory = build_typed_dataset_memory(dataset_id, force=force)
+    summary = _dataset_notebook_summary(profile)
     notebook = {
         "schema": NOTEBOOK_SCHEMA,
         "kind": "dataset_notebook",
@@ -139,7 +159,8 @@ def build_dataset_notebook(
         "chunk_count": profile.get("chunk_count", 0),
         "profile": profile,
         "typed_memory": typed_memory,
-        "notebook_summary": _dataset_notebook_summary(profile),
+        "notebook_summary": summary,
+        "priority_files": summary.get("priority_files", []),
         "context_role": "navigation",
         "is_evidence": False,
         "updated_at": time.time(),

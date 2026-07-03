@@ -206,6 +206,7 @@ def _resolve_auth(request: Request):
 async def classic_chat_page(request: Request):
     from sovushka.components.header import build_header
     from sovushka.pages.chat import build_chat
+    from sovushka.pages.documents import build_documents
     from sovushka.pages.history import build_history
 
     allowed, role, holder, is_admin = _resolve_auth(request)
@@ -221,10 +222,12 @@ async def classic_chat_page(request: Request):
             role,
             holder,
             admin_tabs=False,
+            include_documents=is_admin,
             admin_link=is_admin,
         )
 
         tab_chat = tr["chat"]
+        tab_documents = tr.get("documents")
         tab_history = tr["history"]
 
         def _save_chat_tab(e):
@@ -242,11 +245,14 @@ async def classic_chat_page(request: Request):
         ):
             with ui.tab_panel(tab_chat):
                 build_chat(is_admin, tabs, None)
+            if tab_documents:
+                with ui.tab_panel(tab_documents):
+                    build_documents()
             with ui.tab_panel(tab_history):
                 build_history(tabs, tab_chat)
 
     _last_tab = app.storage.user.get("last_chat_tab", "AI ЧАТ")
-    _target = {"AI ЧАТ": tab_chat, "ИСТОРИЯ": tab_history}.get(_last_tab)
+    _target = {"AI ЧАТ": tab_chat, "Документы": tab_documents, "ИСТОРИЯ": tab_history}.get(_last_tab)
     if _target and _target != tab_chat:
         tabs.set_value(_target)
 

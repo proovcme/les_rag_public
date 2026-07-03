@@ -20,6 +20,7 @@ def build_header(
     *,
     admin_tabs: bool | None = None,
     include_chat: bool = True,
+    include_documents: bool = False,
     admin_link: bool = False,
     chat_link: bool = False,
     visualizer_url: str | None = None,
@@ -134,6 +135,8 @@ def build_header(
                 tab_refs["volk"]       = ui.tab("Доступ",    icon="o_vpn_key")  # В.О.Л.К. — контур доступа
             if include_chat:
                 tab_refs["chat"]     = ui.tab("AI ЧАТ",         icon="o_forum")
+                if include_documents and "documents" not in tab_refs:
+                    tab_refs["documents"] = ui.tab("Документы", icon="o_folder_open")
                 tab_refs["history"]  = ui.tab("ИСТОРИЯ",        icon="o_history")
 
         # ── Контролы (справа) ─────────────────────────────────────────────────

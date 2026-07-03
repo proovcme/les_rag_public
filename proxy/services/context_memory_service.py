@@ -177,6 +177,51 @@ def _document_rows(conn: sqlite3.Connection, dataset_id: str) -> list[dict[str, 
     return [dict(row) for row in rows]
 
 
+def _metadata_top_documents(docs: list[dict[str, Any]], *, limit: int = 12) -> list[dict[str, Any]]:
+    """Navigation fallback from MetaDB documents. Not evidence, just a file map."""
+    rows = []
+    for doc in docs:
+        file_name = str(doc.get("file_name") or "")
+        if not file_name:
+            continue
+        rows.append(
+            {
+                "doc_name": file_name,
+                "file_name": file_name,
+                "chunks": int(doc.get("chunk_count") or 0),
+                "status": str(doc.get("status") or ""),
+                "doc_type": str(doc.get("doc_type") or ""),
+                "domain": str(doc.get("domain") or ""),
+                "route_dataset": str(doc.get("route_dataset") or ""),
+                "source": "metadb.documents",
+            }
+        )
+    rows.sort(
+        key=lambda item: (
+            0 if item["status"] == "INDEXED" else 1,
+            -int(item["chunks"] or 0),
+            str(item["file_name"]),
+        )
+    )
+    return rows[:limit]
+
+
+def _ensure_profile_navigation(profile: dict[str, Any], docs: list[dict[str, Any]]) -> bool:
+    """Backfill navigation fields for cached profiles without rebuilding the index."""
+    changed = False
+    metadata_top = _metadata_top_documents(docs)
+    if metadata_top and not profile.get("top_documents"):
+        profile["top_documents"] = metadata_top
+        changed = True
+    deep = profile.get("deep") if isinstance(profile.get("deep"), dict) else {}
+    if deep.get("available") and metadata_top and not deep.get("top_documents"):
+        deep["top_documents"] = metadata_top
+        deep["top_documents_source"] = "metadb.documents_fallback"
+        profile["deep"] = deep
+        changed = True
+    return changed
+
+
 def dataset_signature(conn: sqlite3.Connection, dataset_id: str) -> str:
     payload = {"dataset": _dataset_row(conn, dataset_id), "documents": _document_rows(conn, dataset_id)}
     return hashlib.sha256(_json_text(payload).encode("utf-8")).hexdigest()[:16]
@@ -425,6 +470,8 @@ def build_dataset_profile(
         if stored and not force and stored["content_signature"] == signature:
             profile = _loads(stored["profile_json"], {})
             if isinstance(profile, dict) and profile:
+                docs = _document_rows(conn, dataset_id)
+                _ensure_profile_navigation(profile, docs)
                 profile.setdefault("profile_path", stored["profile_path"] or "")
                 if profile.get("depth") == depth:
                     profile.setdefault("quality", _profile_quality(profile))
@@ -476,6 +523,7 @@ def build_dataset_profile(
         }
         if depth == "deep":
             profile["deep"] = _lexical_deep_profile(dataset_id)
+        _ensure_profile_navigation(profile, docs)
         profile["quality"] = _profile_quality(profile)
         profile["build_elapsed_ms"] = round((time.perf_counter() - build_started) * 1000, 2)
         profile["cache_status"] = "rebuilt" if force else "miss"

@@ -7,14 +7,33 @@
 ## Текущее состояние (2026-07-03)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.182  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.184  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.182 Documents UI + doc_id document navigation
-НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.182 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
+задеплоено на рантайм:     0.24.0.183 dataset notebook priority-file fallback + Documents tab in chat shell
+НЕ задеплоено:             0.24.0.184 Windows light startup fix
+рантайм /api/version:      0.24.0.183 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.184 — Windows/Legion light startup fix: `start-light.ps1`
+> запускает proxy/UI через `cmd.exe /c uv run ...`, потому что прямой
+> `Start-Process uv -ArgumentList ...` на Legion мог завершать launcher после
+> build/sync, оставляя `8050/8051` закрытыми при почти пустых логах. Скрипт
+> теперь ждёт `/api/health` до 45 секунд и возвращает реальный startup status.
+> На Legion дополнительно снят старый `git sparse-checkout`, из-за которого
+> в `C:\Users\Oleg\les_rag` отсутствовали `proxy/`, `sovushka/` и
+> `installers/`; после восстановления полного checkout `8050`, `8051` и
+> `/classic` поднялись.
+> 0.24.0.183 — dataset notebooks/profile/brief перестали слепнуть, когда
+> deep lexical `top_documents` пустой или старый cached typed memory не имеет
+> `important_files`. `context_memory_service` добавляет `top_documents` из
+> MetaDB `documents` как navigation fallback и backfill-ит cached profiles на
+> чтении; `notebook_service` показывает `priority_files` и включает их в
+> prompt excerpt; `dataset_memory_service` выбирает role-priority файлы, а при
+> отсутствии ролей — indexed/chunk-rich файлы. Вкладка «Документы» добавлена
+> не только в админку, но и в chat shell `/classic` для admin/trusted
+> оператора. Это навигация для модели и оператора, не evidence и не готовый
+> ответ.
 > 0.24.0.182 — Совушка получила no-AI вкладку «Документы» в админке:
 > датасеты → документы → фрагменты, поиск по выбранному датасету/документу
 > или всему индексу и копирование списка источников для артефакта. Document

@@ -22,6 +22,39 @@ function Stop-LesPortProcess([int]$Port) {
   }
 }
 
+function Start-LesUvProcess([string[]]$UvArgs, [string]$StdOut, [string]$StdErr) {
+  # Start the command through cmd.exe so Windows keeps the real uv child alive.
+  # Direct Start-Process uv can exit after the launcher/build step on some uv installs.
+  $quoted = @("uv")
+  foreach ($arg in $UvArgs) {
+    if ($arg -match '[\s"&|<>^]') {
+      $quoted += '"' + ($arg -replace '"', '\"') + '"'
+    } else {
+      $quoted += $arg
+    }
+  }
+  $cmdLine = $quoted -join " "
+  Start-Process -FilePath "cmd.exe" `
+    -ArgumentList @("/d", "/s", "/c", $cmdLine) `
+    -WorkingDirectory $Root `
+    -PassThru `
+    -WindowStyle Hidden `
+    -RedirectStandardOutput $StdOut `
+    -RedirectStandardError $StdErr
+}
+
+function Wait-LesHttp([string]$Url, [int]$Seconds = 30) {
+  $deadline = (Get-Date).AddSeconds($Seconds)
+  do {
+    try {
+      return Invoke-RestMethod $Url
+    } catch {
+      Start-Sleep -Milliseconds 750
+    }
+  } while ((Get-Date) -lt $deadline)
+  return $null
+}
+
 if ($StartQdrant) {
   if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw "Docker is required when -StartQdrant is used."
@@ -81,7 +114,7 @@ switch ($Provider) {
 $proxyArgs = @("run", "uvicorn", "proxy_server:app", "--host", "127.0.0.1", "--port", "$ProxyPort")
 $proxyOut = Join-Path $Root "logs\windows-light-proxy.out.log"
 $proxyErr = Join-Path $Root "logs\windows-light-proxy.err.log"
-$proxy = Start-Process uv -ArgumentList $proxyArgs -WorkingDirectory $Root -PassThru -WindowStyle Hidden -RedirectStandardOutput $proxyOut -RedirectStandardError $proxyErr
+$proxy = Start-LesUvProcess -UvArgs $proxyArgs -StdOut $proxyOut -StdErr $proxyErr
 
 $ui = $null
 if (-not $NoUi) {
@@ -89,16 +122,12 @@ if (-not $NoUi) {
   $uiArgs = @("run", "python", "sovushka_ng.py")
   $uiOut = Join-Path $Root "logs\windows-light-ui.out.log"
   $uiErr = Join-Path $Root "logs\windows-light-ui.err.log"
-  $ui = Start-Process uv -ArgumentList $uiArgs -WorkingDirectory $Root -PassThru -WindowStyle Hidden -RedirectStandardOutput $uiOut -RedirectStandardError $uiErr
+  $ui = Start-LesUvProcess -UvArgs $uiArgs -StdOut $uiOut -StdErr $uiErr
 }
 
-Start-Sleep -Seconds 4
-
-$health = $null
-try {
-  $health = Invoke-RestMethod "http://127.0.0.1:$ProxyPort/api/health"
-} catch {
-  $health = @{ status = "error"; detail = $_.Exception.Message }
+$health = Wait-LesHttp "http://127.0.0.1:$ProxyPort/api/health" 45
+if ($null -eq $health) {
+  $health = @{ status = "error"; detail = "proxy did not answer /api/health within startup timeout" }
 }
 
 [pscustomobject]@{

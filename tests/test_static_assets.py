@@ -29,8 +29,10 @@ def test_admin_documents_tab_is_mounted():
     router = Path("proxy/routers/documents.py").read_text(encoding="utf-8")
 
     assert 'ui.tab("Документы"' in header
+    assert "include_documents" in header
     assert "from sovushka.pages.documents import build_documents" in app_shell
     assert "build_documents()" in app_shell
+    assert "include_documents=is_admin" in app_shell
     assert "датасет → документ → фрагменты, без модели" in page
     assert "do not call LLMs" in router
 

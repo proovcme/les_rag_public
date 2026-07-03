@@ -35,3 +35,13 @@ def test_bootstrap_ps1_is_utf8_bom(tmp_path):
     nsi = build_windows_installer.ROOT / "installers" / "windows" / "app" / "LES.nsi"
     assert ps1.read_bytes()[:3] == b"\xef\xbb\xbf"
     assert nsi.read_bytes()[:3] == b"\xef\xbb\xbf"
+
+
+def test_start_light_keeps_uv_server_processes_alive():
+    ps1 = build_windows_installer.ROOT / "installers" / "windows" / "start-light.ps1"
+    text = ps1.read_text(encoding="utf-8")
+
+    assert "function Start-LesUvProcess" in text
+    assert 'Start-Process -FilePath "cmd.exe"' in text
+    assert "Wait-LesHttp" in text
+    assert "Start-Process uv -ArgumentList" not in text

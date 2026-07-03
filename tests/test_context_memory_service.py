@@ -106,6 +106,8 @@ def test_dataset_profile_writes_sidecar(tmp_path, monkeypatch):
     assert profile["document_count"] == 2
     assert profile["chunk_count"] == 12
     assert "coverage_note" in profile
+    assert profile["top_documents"][0]["file_name"] == "01-ПЗ.pdf"
+    assert profile["top_documents"][0]["source"] == "metadb.documents"
     sidecar = storage_root / "ds-1" / DATASET_PROFILE_FILE
     assert sidecar.exists()
     saved = json.loads(sidecar.read_text())
@@ -152,6 +154,8 @@ def test_dataset_notebook_wraps_profile_as_navigation_not_evidence(tmp_path, mon
     assert notebook["is_evidence"] is False
     assert notebook["profile"]["dataset_id"] == "ds-1"
     assert notebook["notebook_summary"]["key_terms"]
+    assert notebook["notebook_summary"]["priority_files"]
+    assert "01-ПЗ.pdf" in notebook["prompt_excerpt"]
     assert "НЕ evidence" not in notebook["prompt_excerpt"]
     assert "не evidence" in notebook["prompt_excerpt"].lower()
 
