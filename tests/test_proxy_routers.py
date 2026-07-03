@@ -156,7 +156,7 @@ def test_seed_admin_key_is_idempotent(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_save_settings_updates_env_file_and_process_env(tmp_path, monkeypatch):
     env_path = tmp_path / ".env"
-    env_path.write_text("LLM_MODEL=old\nQDRANT_URL=http://qdrant:6333\n")
+    env_path.write_text("LLM_MODEL=old\nQDRANT_URL=http://qdrant:6333\n", encoding="utf-8")
     monkeypatch.setattr(settings, "ENV_PATH", env_path)
     monkeypatch.setattr(settings, "docker_control_enabled", lambda: False)
     monkeypatch.delenv("LLM_MODEL", raising=False)
@@ -172,15 +172,15 @@ async def test_save_settings_updates_env_file_and_process_env(tmp_path, monkeypa
         "updated": {"LLM_MODEL": "new-model", "MLX_URL": "http://mlx:8080"},
         "restarting": False,
     }
-    assert "LLM_MODEL=new-model" in env_path.read_text()
-    assert "MLX_URL=http://mlx:8080" in env_path.read_text()
+    assert "LLM_MODEL=new-model" in env_path.read_text(encoding="utf-8")
+    assert "MLX_URL=http://mlx:8080" in env_path.read_text(encoding="utf-8")
     assert os.environ["LLM_MODEL"] == "new-model"
 
 
 @pytest.mark.asyncio
 async def test_save_settings_updates_mail_imap_without_exposing_password(tmp_path, monkeypatch):
     env_path = tmp_path / ".env"
-    env_path.write_text("MAIL_IMAP_HOST=old.example.com\nMAIL_IMAP_PASSWORD=old-secret\n")
+    env_path.write_text("MAIL_IMAP_HOST=old.example.com\nMAIL_IMAP_PASSWORD=old-secret\n", encoding="utf-8")
     monkeypatch.setattr(settings, "ENV_PATH", env_path)
     monkeypatch.setenv("MAIL_IMAP_PASSWORD", "old-secret")
 
@@ -200,7 +200,7 @@ async def test_save_settings_updates_mail_imap_without_exposing_password(tmp_pat
 
     assert result["updated"]["MAIL_IMAP_HOST"] == "imap.yandex.ru"
     assert result["updated"]["MAIL_IMAP_PASSWORD"] == "***"
-    text = env_path.read_text()
+    text = env_path.read_text(encoding="utf-8")
     assert "MAIL_IMAP_HOST=imap.yandex.ru" in text
     assert "MAIL_IMAP_PASSWORD=app-secret" in text
     assert os.environ["MAIL_IMAP_LOGIN"] == "mail@yandex.ru"
@@ -213,7 +213,7 @@ async def test_save_settings_updates_mail_imap_without_exposing_password(tmp_pat
 @pytest.mark.asyncio
 async def test_save_settings_updates_provider_keys_without_exposing_secret(tmp_path, monkeypatch):
     env_path = tmp_path / ".env"
-    env_path.write_text("OPENROUTER_API_KEY=old-router\nOPENAI_API_KEY=old-openai\n")
+    env_path.write_text("OPENROUTER_API_KEY=old-router\nOPENAI_API_KEY=old-openai\n", encoding="utf-8")
     monkeypatch.setattr(settings, "ENV_PATH", env_path)
     monkeypatch.setenv("OPENROUTER_API_KEY", "old-router")
     monkeypatch.setenv("OPENAI_API_KEY", "old-openai")
@@ -234,7 +234,7 @@ async def test_save_settings_updates_provider_keys_without_exposing_secret(tmp_p
     assert result["updated"]["OPENROUTER_API_KEY"] == "***"
     assert result["updated"]["OPENAI_API_KEY"] == "***"
     assert result["updated"]["OPENROUTER_MODEL"] == "openrouter/model"
-    text = env_path.read_text()
+    text = env_path.read_text(encoding="utf-8")
     assert "OPENROUTER_API_KEY=router-secret" in text
     assert "OPENAI_API_KEY=openai-secret" in text
     assert os.environ["OPENAI_BASE_URL"] == "https://openai-compatible.example/v1"
@@ -251,7 +251,7 @@ async def test_save_settings_updates_provider_keys_without_exposing_secret(tmp_p
     )
 
     assert cleared["updated"]["OPENROUTER_API_KEY"] == "***"
-    assert "OPENROUTER_API_KEY=\n" in env_path.read_text()
+    assert "OPENROUTER_API_KEY=\n" in env_path.read_text(encoding="utf-8")
     assert os.environ["OPENROUTER_API_KEY"] == ""
 
 
@@ -282,6 +282,13 @@ async def test_save_settings_rejects_unsafe_values(tmp_path, monkeypatch):
             _admin=object(),
         )
     assert bad_provider_url.value.status_code == 400
+
+
+def test_settings_fields_set_supports_pydantic_v1_style():
+    class V1Request:
+        __fields_set__ = {"llm_provider", "ollama_model"}
+
+    assert settings._request_fields_set(V1Request()) == {"llm_provider", "ollama_model"}
 
 
 @pytest.mark.asyncio

@@ -91,6 +91,16 @@ CUSTOM_CSS = """
   --font-chat: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Courier New', monospace;
 }
 body, .nicegui-content { font-family: var(--font) !important; color: var(--text) !important; }
+body, .nicegui-content, .q-page, .q-layout, .q-card, .q-dialog, .q-menu,
+.q-table, .q-item, .sov-chat-md, .sov-chat-message-text, .sov-artifact-markdown,
+.card-les, .kpi-box, .diag-node, .diag-acronym-item {
+  user-select: text;
+  -webkit-user-select: text;
+}
+.q-btn, .q-tab, [role="button"], button {
+  user-select: none;
+  -webkit-user-select: none;
+}
 .les-header {
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
@@ -1235,8 +1245,19 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   color: var(--dim) !important;
 }
 /* Quasar select — выпадающий список */
-.q-menu { background: var(--bg-panel) !important; border: 1px solid var(--border) !important; }
-.q-item  { color: var(--text) !important; }
+.q-menu,
+.q-dialog__inner > .q-card,
+.q-dialog .q-card,
+.q-list,
+.q-virtual-scroll__content {
+  background: var(--bg-panel) !important;
+  color: var(--text) !important;
+  border-color: var(--border) !important;
+}
+.q-item  {
+  color: var(--text) !important;
+  background: transparent !important;
+}
 .q-item:hover, .q-item--active { background: var(--bg-mod) !important; color: var(--accent) !important; }
 /* Quasar select — выбранное значение */
 .q-field__native span, .q-select .q-field__native {
@@ -1279,7 +1300,10 @@ body, .nicegui-content { font-family: var(--font) !important; color: var(--text)
   white-space: nowrap !important;
 }
 /* Generic text */
-.q-card, .q-card__section { color: var(--text) !important; }
+.q-card, .q-card__section {
+  background: var(--bg-panel) !important;
+  color: var(--text) !important;
+}
 .q-field__control {
   background: var(--input-bg) !important;
 }

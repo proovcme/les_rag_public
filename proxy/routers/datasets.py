@@ -123,6 +123,15 @@ class IndexExternalRequest(BaseModel):
     background: bool = False  # True → регистрация+нарезка+парс в фоне, мгновенный ответ (большие папки)
 
 
+class ExternalDatasetSyncRequest(BaseModel):
+    path: str = Field(min_length=1)
+    dataset_id: str = Field(min_length=1)
+    parse: bool = True
+    parse_limit: int = Field(default=25, ge=1, le=500)
+    include_deleted: bool = True
+    limit: int = Field(default=50, ge=1, le=500)
+
+
 class ParseSchedulerRequest(BaseModel):
     batch_limit: int = Field(default=DEFAULT_PARSE_SCHEDULER_BATCH_LIMIT, ge=1, le=25)
     max_batches: int = Field(default=DEFAULT_PARSE_SCHEDULER_MAX_BATCHES, ge=1, le=500)
@@ -684,7 +693,7 @@ async def list_datasets(_user=Depends(require_user)):
 @router.get("/documents")
 async def list_documents(
     dataset_id: str | None = None,
-    status: str | None = Query(default=None, pattern="^(PENDING|INDEXED|ERROR)$"),
+    status: str | None = Query(default=None, pattern="^(PENDING|INDEXED|ERROR|MISSING)$"),
     q: str | None = Query(default=None, max_length=200),
     limit: int = Query(default=100, ge=1, le=5000),  # le=500 был тесен: диалог файлов датасета шлёт 1500
     offset: int = Query(default=0, ge=0),
@@ -1071,7 +1080,10 @@ async def list_sources(_user=Depends(require_user)):
                         "source_files": len(src_files),
                         "dataset_id": ds.id if ds else None,
                         "dataset_status": ds.status if ds else "NOT_CREATED",
-                        "indexed_files": ds.doc_count if ds else 0,
+                        "indexed_files": ds.indexed_files if ds else 0,
+                        "pending_files": ds.pending_files if ds else 0,
+                        "error_files": ds.error_files if ds else 0,
+                        "missing_files": ds.missing_files if ds else 0,
                         "chunk_count": ds.chunk_count if ds else 0,
                     }
                 )
@@ -1565,6 +1577,236 @@ async def _index_external_run(state, req, root, dataset) -> dict:
         "parse_limit": req.parse_limit,
         "samples": samples,
         "les_md": les_md_summary,  # auto-init: что ЛЕС сам понял о папке + директивы
+    }
+
+
+def _external_supported_files(root: Path) -> dict[str, dict[str, Any]]:
+    suffixes = rag_upload_suffixes()
+    files: dict[str, dict[str, Any]] = {}
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        if "_originals" in path.parts:
+            continue
+        if not is_within_external_root(path, root):
+            continue
+        resolved = path.resolve()
+        if resolved.suffix.lower() not in suffixes:
+            continue
+        file_name = resolved.relative_to(root.parent).as_posix()
+        try:
+            stat = resolved.stat()
+        except OSError:
+            continue
+        files[file_name] = {
+            "file_name": file_name,
+            "source_path": str(resolved),
+            "size_bytes": int(stat.st_size),
+            "mtime": float(stat.st_mtime),
+        }
+    return files
+
+
+def _external_dataset_docs(dataset_id: str) -> dict[str, dict[str, Any]]:
+    try:
+        with sqlite3.connect(rag_meta_db_path()) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT id, file_name, status, COALESCE(file_mtime, 0) AS file_mtime,
+                       COALESCE(file_size, 0) AS file_size, COALESCE(chunk_count, 0) AS chunk_count,
+                       COALESCE(source_path, '') AS source_path, COALESCE(last_error, '') AS last_error
+                FROM documents
+                WHERE dataset_id=? AND COALESCE(source_path, '') <> ''
+                """,
+                (dataset_id,),
+            ).fetchall()
+    except sqlite3.Error:
+        return {}
+    return {str(row["file_name"]): dict(row) for row in rows}
+
+
+def _external_dataset_diff(dataset_id: str, root: Path, *, limit: int = 50) -> dict[str, Any]:
+    current = _external_supported_files(root)
+    known = _external_dataset_docs(dataset_id)
+    new: list[dict[str, Any]] = []
+    changed: list[dict[str, Any]] = []
+    deleted: list[dict[str, Any]] = []
+    unchanged = 0
+    for file_name, item in current.items():
+        row = known.get(file_name)
+        if row is None:
+            new.append(item)
+            continue
+        size_changed = int(row.get("file_size") or 0) != int(item["size_bytes"])
+        mtime_changed = abs(float(row.get("file_mtime") or 0) - float(item["mtime"])) > 1.0
+        missing_before = str(row.get("status") or "").upper() == "MISSING"
+        if size_changed or mtime_changed or missing_before:
+            changed.append({**item, "previous": row})
+        else:
+            unchanged += 1
+    for file_name, row in known.items():
+        source_path = str(row.get("source_path") or "")
+        if file_name not in current and (not source_path or not Path(source_path).exists()):
+            deleted.append(row)
+    return {
+        "status": "ok",
+        "source_root": root.as_posix(),
+        "dataset_id": dataset_id,
+        "counts": {
+            "new": len(new),
+            "changed": len(changed),
+            "deleted": len(deleted),
+            "unchanged": unchanged,
+            "known_external": len(known),
+            "current_supported": len(current),
+        },
+        "pending_changes": len(new) + len(changed) + len(deleted),
+        "samples": {
+            "new": new[:limit],
+            "changed": changed[:limit],
+            "deleted": deleted[:limit],
+        },
+        "_files": {"new": new, "changed": changed, "deleted": deleted},
+    }
+
+
+def _mark_external_missing(dataset_id: str, rows: list[dict[str, Any]]) -> int:
+    if not rows:
+        return 0
+    count = 0
+    with sqlite3.connect(rag_meta_db_path()) as conn:
+        for row in rows:
+            cur = conn.execute(
+                """
+                UPDATE documents
+                SET status='MISSING', chunk_count=0, last_error='source file missing', stage=''
+                WHERE dataset_id=? AND file_name=?
+                """,
+                (dataset_id, str(row.get("file_name") or "")),
+            )
+            count += int(cur.rowcount or 0)
+    return count
+
+
+async def _delete_index_for_files(state: DatasetRouterState, dataset_id: str, file_names: list[str]) -> dict[str, Any]:
+    if not file_names:
+        return {"files": 0, "qdrant_deleted": 0, "sparse_deleted": 0, "lexical_deleted": 0, "errors": []}
+    qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
+    errors: list[str] = []
+    qdrant_deleted = 0
+    sparse_deleted = 0
+    lexical_deleted = 0
+    try:
+        from proxy.services.lexical_index_service import LexicalIndex
+
+        lexical = LexicalIndex()
+    except Exception:
+        lexical = None
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        for file_name in file_names:
+            file_filter = {
+                "must": [
+                    {"key": "dataset_id", "match": {"value": dataset_id}},
+                    {"key": "file_name", "match": {"value": file_name}},
+                ]
+            }
+            try:
+                response = await client.post(
+                    f"{qdrant_url}/collections/{rag_collection_name()}/points/delete",
+                    json={"filter": file_filter},
+                )
+                response.raise_for_status()
+                qdrant_deleted += 1
+            except Exception as error:
+                errors.append(f"Qdrant {file_name}: {error}")
+            try:
+                if await _delete_sparse_points_by_filter(client, qdrant_url, file_filter):
+                    sparse_deleted += 1
+            except Exception as error:
+                errors.append(f"Qdrant sparse {file_name}: {error}")
+            try:
+                if lexical is not None:
+                    lexical_deleted += int(
+                        await asyncio.to_thread(
+                            lexical.delete_file,
+                            rag_collection_name(),
+                            dataset_id=dataset_id,
+                            doc_name=file_name,
+                        )
+                    )
+            except Exception as error:
+                errors.append(f"Lexical {file_name}: {error}")
+    try:
+        backend = state.backend
+        if hasattr(backend, "db"):
+            backend.db.update_dataset_chunk_count(dataset_id)
+    except Exception as error:
+        errors.append(f"dataset chunk count: {error}")
+    return {
+        "files": len(file_names),
+        "qdrant_deleted": qdrant_deleted,
+        "sparse_deleted": sparse_deleted,
+        "lexical_deleted": lexical_deleted,
+        "errors": errors,
+    }
+
+
+@router.post("/external/check")
+async def check_external_dataset(req: ExternalDatasetSyncRequest, _admin=Depends(require_admin)):
+    root = validate_external_source(req.path)
+    state = get_dataset_state()
+    ds_list = await state.backend.list_datasets()
+    dataset = next((dataset for dataset in ds_list if dataset.id == req.dataset_id), None)
+    if dataset is None:
+        raise HTTPException(404, f"dataset_id не найден: {req.dataset_id}")
+    diff = await asyncio.to_thread(_external_dataset_diff, req.dataset_id, root, limit=req.limit)
+    diff.pop("_files", None)
+    diff["dataset_name"] = dataset.name
+    return diff
+
+
+@router.post("/external/sync")
+async def sync_external_dataset(req: ExternalDatasetSyncRequest, _admin=Depends(require_admin)):
+    root = validate_external_source(req.path)
+    state = get_dataset_state()
+    ds_list = await state.backend.list_datasets()
+    dataset = next((dataset for dataset in ds_list if dataset.id == req.dataset_id), None)
+    if dataset is None:
+        raise HTTPException(404, f"dataset_id не найден: {req.dataset_id}")
+    diff = await asyncio.to_thread(_external_dataset_diff, req.dataset_id, root, limit=req.limit)
+    files = diff.pop("_files")
+    registered = 0
+    for item in [*files["new"], *files["changed"]]:
+        await state.backend.register_external_file(req.dataset_id, Path(item["source_path"]), item["file_name"])
+        registered += 1
+    deleted_rows = files["deleted"] if req.include_deleted else []
+    missing_marked = await asyncio.to_thread(_mark_external_missing, req.dataset_id, deleted_rows)
+    cleanup = await _delete_index_for_files(
+        state,
+        req.dataset_id,
+        [str(row.get("file_name") or "") for row in deleted_rows if row.get("file_name")],
+    )
+    parse_started = False
+    if req.parse and registered:
+        async def _parse():
+            async with state.parse_semaphore:
+                await assert_parse_admission(state)
+                await state.backend.parse_dataset(req.dataset_id, limit=req.parse_limit)
+
+        asyncio.create_task(_parse())
+        parse_started = True
+    return {
+        "status": "synced",
+        "source_root": root.as_posix(),
+        "dataset_id": req.dataset_id,
+        "dataset_name": dataset.name,
+        "diff": diff,
+        "registered": registered,
+        "missing_marked": missing_marked,
+        "cleanup": cleanup,
+        "parse_started": parse_started,
+        "parse_limit": req.parse_limit,
     }
 
 

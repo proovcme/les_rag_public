@@ -39,7 +39,7 @@ def _current_mlx_model() -> str:
 
 def _persist_env(updates: dict[str, str]) -> None:
     """Идемпотентно обновляет ключи в .env (заменяет существующие, дописывает новые)."""
-    env_lines = ENV_PATH.read_text().splitlines() if ENV_PATH.exists() else []
+    env_lines = ENV_PATH.read_text(encoding="utf-8").splitlines() if ENV_PATH.exists() else []
     new_lines: list[str] = []
     seen: set[str] = set()
     for line in env_lines:
@@ -52,7 +52,7 @@ def _persist_env(updates: dict[str, str]) -> None:
     for key, val in updates.items():
         if key not in seen:
             new_lines.append(f"{key}={val}")
-    ENV_PATH.write_text("\n".join(new_lines) + "\n")
+    ENV_PATH.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
 
 
 class SettingsRequest(BaseModel):
@@ -127,7 +127,7 @@ async def get_settings(_user=Depends(require_user)):
 async def save_settings(req: SettingsRequest, restart: bool = False, _admin=Depends(require_admin)):
     env_lines = []
     if ENV_PATH.exists():
-        env_lines = ENV_PATH.read_text().splitlines()
+        env_lines = ENV_PATH.read_text(encoding="utf-8").splitlines()
 
     updates = {}
     if req.llm_model:
@@ -171,7 +171,7 @@ async def save_settings(req: SettingsRequest, restart: bool = False, _admin=Depe
         if key not in updated_keys:
             new_lines.append(f"{key}={val}")
 
-    ENV_PATH.write_text("\n".join(new_lines) + "\n")
+    ENV_PATH.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
     public_updates = _redact_sensitive_updates(updates)
     logger.info("[SETTINGS] Updated: %s", public_updates)
 
@@ -257,8 +257,16 @@ def _mail_settings_payload() -> dict[str, object]:
     }
 
 
+def _request_fields_set(req: BaseModel) -> set[str]:
+    """Pydantic v2 uses model_fields_set, v1 uses __fields_set__."""
+    fields = getattr(req, "model_fields_set", None)
+    if fields is None:
+        fields = getattr(req, "__fields_set__", set())
+    return {str(field) for field in (fields or set())}
+
+
 def _provider_updates(req: SettingsRequest) -> dict[str, str]:
-    fields = req.model_fields_set
+    fields = _request_fields_set(req)
     updates: dict[str, str] = {}
     string_map = {
         "llm_provider": "LES_LLM_PROVIDER",
@@ -304,7 +312,7 @@ def _provider_updates(req: SettingsRequest) -> dict[str, str]:
 
 
 def _mail_updates(req: SettingsRequest) -> dict[str, str]:
-    fields = req.model_fields_set
+    fields = _request_fields_set(req)
     updates: dict[str, str] = {}
     string_map = {
         "mail_imap_host": "MAIL_IMAP_HOST",
@@ -347,10 +355,10 @@ def _mail_updates(req: SettingsRequest) -> dict[str, str]:
 @router.get("/presets")
 async def list_presets(_user=Depends(require_user)):
     """Список режимов + текущий. Режим согласованно ставит чат-LLM, скан-OCR и приёмку ИД."""
-    from proxy.services.preset_service import PRESETS, current_preset, describe
+    from proxy.services.preset_service import PRESETS, _materialize_preset, current_preset, describe
     return {
         "current": current_preset(),
-        "presets": [{"name": n, "desc": describe(n), "env": PRESETS[n]} for n in PRESETS],
+        "presets": [{"name": n, "desc": describe(n), "env": _materialize_preset(n, PRESETS[n])} for n in PRESETS],
     }
 
 

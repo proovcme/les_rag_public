@@ -87,12 +87,15 @@ def _computed_index_status(
     indexed: int = 0,
     pending: int = 0,
     errors: int = 0,
+    missing: int = 0,
     active: bool = False,
 ) -> str:
     if active:
         return "PARSING"
     if errors:
         return "ERROR"
+    if missing:
+        return "MISSING"
     if pending:
         return "WAITING"
     if indexed or total:
@@ -301,6 +304,7 @@ def build_samovar():
                 "INDEXED": 0,
                 "PENDING": 0,
                 "ERROR": 0,
+                "MISSING": 0,
                 "chunks": 0,
                 "pending_ocr": 0,
                 "pending_light": 0,
@@ -342,16 +346,17 @@ def build_samovar():
                 "INDEXED": 0,
                 "PENDING": 0,
                 "ERROR": 0,
+                "MISSING": 0,
                 "chunks": 0,
                 "pending_ocr": 0,
                 "pending_light": 0,
                 "pending_unknown": 0,
             })
-            tot = a["INDEXED"] + a["PENDING"] + a["ERROR"]
+            tot = a["INDEXED"] + a["PENDING"] + a["ERROR"] + a["MISSING"]
             rows.append({"id": did, "name": d.get("name", "?"), "sensitivity": d.get("sensitivity", "P0"),
                          "group": d.get("group_name", ""), "indexed": a["INDEXED"], "pending": a["PENDING"],
                          "pending_ocr": a["pending_ocr"], "pending_light": a["pending_light"],
-                         "pending_unknown": a["pending_unknown"], "error": a["ERROR"],
+                         "pending_unknown": a["pending_unknown"], "error": a["ERROR"], "missing": a["MISSING"],
                          "chunks": a["chunks"] or int(d.get("chunk_count") or 0), "total": tot})
         rows.sort(key=lambda r: (0 if r["error"] else 1, 0 if r["pending"] else 1, r["name"].lower()))
         _S["rows"] = rows
@@ -359,6 +364,8 @@ def build_samovar():
     def _light(r):
         if r["error"]:
             return ("var(--err)", f"{r['error']} ошибок", "o_error")
+        if r.get("missing"):
+            return ("var(--err)", f"{r['missing']} источников пропало", "o_link_off")
         if r["pending"]:
             return ("var(--warn)", f"Ждёт {r['pending']} · готово {r['indexed']}/{r['total']}", "o_schedule")
         if r["indexed"]:
@@ -929,6 +936,7 @@ def build_samovar_legacy():
                 ("idx",    "В индексе",        "var(--ok)"),
                 ("pend",   "Ожидают",          "var(--warn)"),
                 ("err",    "Ошибок",           "var(--err)"),
+                ("miss",   "Пропало",          "var(--err)"),
                 ("chunks", "Чанков Qdrant",    "var(--text)"),
             ]:
                 with ui.card().classes("kpi-box flex-1"):
@@ -1022,6 +1030,7 @@ def build_samovar_legacy():
             {"name": "indexed",  "label": "В индексе", "field": "indexed",  "align": "right",  "sortable": True},
             {"name": "pending",  "label": "Ожидают",  "field": "pending",  "align": "right",  "sortable": True},
             {"name": "errors",   "label": "Ошибки",   "field": "errors",   "align": "right",  "sortable": True},
+            {"name": "missing",  "label": "Пропало",  "field": "missing",  "align": "right",  "sortable": True},
             {"name": "chunks",   "label": "Чанков",   "field": "chunks",   "align": "right",  "sortable": True},
             {"name": "status",   "label": "Статус",   "field": "status",   "align": "left"},
             {"name": "sensitivity", "label": "Данные", "field": "sensitivity", "align": "center"},
@@ -1056,9 +1065,13 @@ def build_samovar_legacy():
             <q-td :props="props">
               <span :style="{color: props.value > 0 ? '#ef4444' : '#94a3b8', fontWeight:'700'}">{{ props.value }}</span>
             </q-td>""")
+        sam_grid.add_slot("body-cell-missing", """
+            <q-td :props="props">
+              <span :style="{color: props.value > 0 ? '#ef4444' : '#94a3b8', fontWeight:'700'}">{{ props.value }}</span>
+            </q-td>""")
         sam_grid.add_slot("body-cell-status", """
             <q-td :props="props">
-              <span :style="{color: ['INDEXED','READY','COMPLETED'].includes(props.value)?'#10b981':['PARSING','SCANNING'].includes(props.value)?'#f59e0b':'#94a3b8'}">
+              <span :style="{color: ['INDEXED','READY','COMPLETED'].includes(props.value)?'#10b981':['PARSING','SCANNING','WAITING'].includes(props.value)?'#f59e0b':props.value==='MISSING'||props.value==='ERROR'?'#ef4444':'#94a3b8'}">
                 {{ props.value }}
               </span>
             </q-td>""")
@@ -1416,6 +1429,63 @@ def build_samovar_legacy():
                     else:
                         ui.notify(last_api_error_text("Ошибка in-place индексации"), type="negative")
 
+                async def do_check_external():
+                    path = (ext_path_input.value or "").strip()
+                    ds_id = (ext_dataset_select.value or "").strip()
+                    if not path or not ds_id:
+                        ui.notify("Выбери путь и датасет для проверки", type="warning")
+                        return
+                    ext_check_btn.props("loading")
+                    d = await api_post(
+                        "/api/rag/external/check",
+                        {"path": path, "dataset_id": ds_id, "parse": False, "limit": 25},
+                    )
+                    ext_check_btn.props(remove="loading")
+                    if d and d.get("status") == "ok":
+                        c = d.get("counts", {})
+                        ui.notify(
+                            f"Проверка: новых {c.get('new', 0)}, изменённых {c.get('changed', 0)}, "
+                            f"удалённых {c.get('deleted', 0)}, без изменений {c.get('unchanged', 0)}",
+                            type="info",
+                        )
+                        add_log(f"[EXT_CHECK] {path} → {ds_id}: {c}")
+                    else:
+                        ui.notify(last_api_error_text("Ошибка проверки внешней папки"), type="negative")
+
+                async def do_sync_external():
+                    path = (ext_path_input.value or "").strip()
+                    ds_id = (ext_dataset_select.value or "").strip()
+                    if not path or not ds_id:
+                        ui.notify("Выбери путь и датасет для синхронизации", type="warning")
+                        return
+                    payload = {
+                        "path": path,
+                        "dataset_id": ds_id,
+                        "parse": True,
+                        "parse_limit": int(ext_limit_input.value or 25),
+                        "include_deleted": True,
+                    }
+                    ext_sync_btn.props("loading")
+                    d = await api_post("/api/rag/external/sync", payload)
+                    ext_sync_btn.props(remove="loading")
+                    if d and d.get("status") == "synced":
+                        diff = d.get("diff", {})
+                        c = diff.get("counts", {})
+                        ui.notify(
+                            f"Синхронизация: +/∆ {d.get('registered', 0)}, "
+                            f"удалённых помечено {d.get('missing_marked', 0)}"
+                            f"{' · парсинг запущен' if d.get('parse_started') else ''}",
+                            type="positive",
+                        )
+                        add_log(
+                            f"[EXT_SYNC] {path} → {ds_id}: counts={c}, "
+                            f"registered={d.get('registered', 0)}, missing={d.get('missing_marked', 0)}"
+                        )
+                        await asyncio.sleep(1)
+                        await refresh_and_render()
+                    else:
+                        ui.notify(last_api_error_text("Ошибка синхронизации внешней папки"), type="negative")
+
                 ext_index_btn = ui.button(
                     "⤵ ИНДЕКСИРОВАТЬ IN-PLACE",
                     on_click=do_index_external,
@@ -1423,6 +1493,21 @@ def build_samovar_legacy():
                     "background:rgba(16,185,129,.15);border:1px solid var(--ok);"
                     "color:var(--ok);font-size:.7rem;font-weight:900;"
                 )
+                with ui.row().classes("gap-2 w-full"):
+                    ext_check_btn = ui.button(
+                        "ПРОВЕРИТЬ ПАПКУ",
+                        icon="o_fact_check",
+                        on_click=do_check_external,
+                    ).props("dense no-caps flat").style(
+                        "border:1px solid var(--border);color:var(--accent);font-size:.68rem;"
+                    )
+                    ext_sync_btn = ui.button(
+                        "СИНХРОНИЗИРОВАТЬ ИЗМЕНЕНИЯ",
+                        icon="o_sync",
+                        on_click=do_sync_external,
+                    ).props("dense no-caps flat").style(
+                        "border:1px solid var(--border);color:var(--ok);font-size:.68rem;"
+                    )
 
         # ── External Radar: обзор внешних корней/карты/уже in-place датасетов ──
         with ui.card().classes("card-les w-full"):
@@ -2176,7 +2261,7 @@ def build_samovar_legacy():
                     ext_dataset_select.value = None
                 ext_dataset_select.update()
 
-            tot_src = tot_idx = tot_pending = tot_errors = tot_chunks = 0
+            tot_src = tot_idx = tot_pending = tot_errors = tot_missing = tot_chunks = 0
             rows = []
             seen_ds = set()
             active_job_labels = {
@@ -2193,12 +2278,14 @@ def build_samovar_legacy():
                 indexed = ds.get("indexed_files", src.get("indexed_files", 0))
                 pending = ds.get("pending_files", max(0, total - indexed))
                 errors  = ds.get("error_files", 0)
+                missing = ds.get("missing_files", src.get("missing_files", 0))
                 chunks  = ds.get("chunks", ds.get("chunk_count", 0) or 0)
                 status  = ds.get("status", src.get("dataset_status", "NOT_CREATED"))
                 tot_src    += total
                 tot_idx    += indexed
                 tot_pending += pending
                 tot_errors  += errors
+                tot_missing += missing
                 tot_chunks += chunks
                 if src.get("dataset_id"):
                     seen_ds.add(src.get("dataset_id"))
@@ -2230,6 +2317,7 @@ def build_samovar_legacy():
                     "indexed":    indexed,
                     "pending":    pending,
                     "errors":     errors,
+                    "missing":    missing,
                     "chunks":     chunks,
                     "status":     _computed_index_status(
                         raw_status=status,
@@ -2237,6 +2325,7 @@ def build_samovar_legacy():
                         indexed=int(indexed or 0),
                         pending=int(pending or 0),
                         errors=int(errors or 0),
+                        missing=int(missing or 0),
                         active=active_row,
                     ),
                     "sensitivity": (ds_map.get(src.get("dataset_id", "")) or {}).get("sensitivity", "P0"),
@@ -2254,12 +2343,14 @@ def build_samovar_legacy():
                 indexed = ds.get("indexed_files", ds.get("doc_count", 0) or 0)
                 pending = ds.get("pending_files", 0)
                 errors = ds.get("error_files", 0)
+                missing = ds.get("missing_files", 0)
                 chunks = ds.get("chunks", ds.get("chunk_count", 0) or 0)
                 active_row = ds.get("name", ds_id) in active_job_labels or ds_id in active_job_labels
                 tot_src += total
                 tot_idx += indexed
                 tot_pending += pending
                 tot_errors += errors
+                tot_missing += missing
                 tot_chunks += chunks
                 rows.append({
                     "folder":     ds.get("name", ds_id),
@@ -2268,6 +2359,7 @@ def build_samovar_legacy():
                     "indexed":    indexed,
                     "pending":    pending,
                     "errors":     errors,
+                    "missing":    missing,
                     "chunks":     chunks,
                     "status":     _computed_index_status(
                         raw_status=ds.get("status", ""),
@@ -2275,6 +2367,7 @@ def build_samovar_legacy():
                         indexed=int(indexed or 0),
                         pending=int(pending or 0),
                         errors=int(errors or 0),
+                        missing=int(missing or 0),
                         active=active_row,
                     ),
                     "sensitivity": ds.get("sensitivity", "P0"),
@@ -2289,6 +2382,7 @@ def build_samovar_legacy():
                 tot_idx = totals.get("indexed_files", tot_idx)
                 tot_pending = totals.get("pending_files", tot_pending)
                 tot_errors = totals.get("error_files", tot_errors)
+                tot_missing = totals.get("missing_files", tot_missing)
                 tot_chunks = totals.get("chunks", tot_chunks)
 
             sam_kpi["ds"].set_text(str(totals.get("datasets", len(datasets) or len(sources))))
@@ -2296,6 +2390,7 @@ def build_samovar_legacy():
             sam_kpi["idx"].set_text(str(tot_idx))
             sam_kpi["pend"].set_text(str(tot_pending))
             sam_kpi["err"].set_text(str(tot_errors))
+            sam_kpi["miss"].set_text(str(tot_missing))
             sam_kpi["chunks"].set_text(str(tot_chunks))
             scheduler_jobs = [
                 (jid, j) for jid, j in jobs.items()
@@ -2334,7 +2429,7 @@ def build_samovar_legacy():
             else:
                 start_scheduler_btn.props(remove="disabled")
             scheduler_status.set_text(
-                f"pending: {tot_pending} · errors: {tot_errors} · "
+                f"pending: {tot_pending} · errors: {tot_errors} · missing: {tot_missing} · "
                 f"job: {(last_scheduler[0][:12] + ' ' + last_scheduler[1].get('status','')) if last_scheduler else '—'}"
                 + (" · старт заблокирован preflight guard" if parse_blocked else "")
             )

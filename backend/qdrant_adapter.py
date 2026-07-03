@@ -560,7 +560,11 @@ class MetaDB:
                 SELECT d.id, d.name, d.status, d.chunk_count,
                        COALESCE(d.sensitivity, 'P0') AS sensitivity,
                        COALESCE(d.group_name, '') AS group_name,
-                       SUM(CASE WHEN doc.status='INDEXED' THEN 1 ELSE 0 END) as indexed_count
+                       COUNT(doc.id) AS total_files,
+                       SUM(CASE WHEN doc.status='INDEXED' THEN 1 ELSE 0 END) AS indexed_files,
+                       SUM(CASE WHEN doc.status='PENDING' THEN 1 ELSE 0 END) AS pending_files,
+                       SUM(CASE WHEN doc.status='ERROR' THEN 1 ELSE 0 END) AS error_files,
+                       SUM(CASE WHEN doc.status='MISSING' THEN 1 ELSE 0 END) AS missing_files
                 FROM datasets d
                 LEFT JOIN documents doc ON d.id = doc.dataset_id
                 GROUP BY d.id
@@ -568,10 +572,15 @@ class MetaDB:
         return [
             DatasetInfo(
                 id=r["id"], name=r["name"], status=r["status"],
-                doc_count=r["indexed_count"] or 0,
+                doc_count=r["total_files"] or 0,
                 chunk_count=r["chunk_count"] or 0,
                 sensitivity=r["sensitivity"] or "P0",
                 group_name=r["group_name"] or "",
+                files=r["total_files"] or 0,
+                indexed_files=r["indexed_files"] or 0,
+                pending_files=r["pending_files"] or 0,
+                error_files=r["error_files"] or 0,
+                missing_files=r["missing_files"] or 0,
             )
             for r in rows
         ]
@@ -782,6 +791,7 @@ class MetaDB:
                        SUM(CASE WHEN doc.status='INDEXED' THEN 1 ELSE 0 END) AS indexed_files,
                        SUM(CASE WHEN doc.status='PENDING' THEN 1 ELSE 0 END) AS pending_files,
                        SUM(CASE WHEN doc.status='ERROR' THEN 1 ELSE 0 END) AS error_files,
+                       SUM(CASE WHEN doc.status='MISSING' THEN 1 ELSE 0 END) AS missing_files,
                        COALESCE(SUM(CASE WHEN doc.status='INDEXED' THEN doc.chunk_count ELSE 0 END), 0) AS indexed_chunks
                 FROM datasets d
                 LEFT JOIN documents doc ON d.id = doc.dataset_id
@@ -818,6 +828,7 @@ class MetaDB:
                 "indexed_files": row["indexed_files"] or 0,
                 "pending_files": row["pending_files"] or 0,
                 "error_files": row["error_files"] or 0,
+                "missing_files": row["missing_files"] or 0,
                 "chunks": row["indexed_chunks"] or 0,
             }
             for row in dataset_rows
@@ -828,6 +839,7 @@ class MetaDB:
             "indexed_files": sum(item["indexed_files"] for item in datasets),
             "pending_files": sum(item["pending_files"] for item in datasets),
             "error_files": sum(item["error_files"] for item in datasets),
+            "missing_files": sum(item["missing_files"] for item in datasets),
             "chunks": sum(item["chunks"] for item in datasets),
         }
         return {
@@ -853,7 +865,7 @@ class MetaDB:
             return "empty"
         if totals["indexed_files"] == 0:
             return "not_indexed"
-        if totals["pending_files"] or totals["error_files"]:
+        if totals["pending_files"] or totals["error_files"] or totals.get("missing_files", 0):
             return "degraded"
         if any(dataset["status"] not in ("COMPLETED", "IDLE") for dataset in datasets):
             return "degraded"

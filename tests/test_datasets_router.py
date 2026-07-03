@@ -47,6 +47,10 @@ class FakeBackend:
         self.uploads.append((dataset_id, file_path.name, relative_path))
         return f"doc-{len(self.uploads)}"
 
+    async def register_external_file(self, dataset_id, source_path, file_name):
+        self.uploads.append((dataset_id, source_path.name, file_name))
+        return f"doc-{len(self.uploads)}"
+
     async def parse_dataset(self, dataset_id, limit=None):
         self.parses.append((dataset_id, limit))
         pending = max(0, int(self.pending_files.get(dataset_id, 0)) - int(limit or 0))
@@ -342,6 +346,22 @@ async def test_list_sources_maps_folders_to_existing_datasets(tmp_path, monkeypa
             "chunk_count": 7,
         }
     ]
+
+
+def test_metadb_list_datasets_counts_pending_as_files(tmp_path):
+    from backend.qdrant_adapter import MetaDB
+
+    db = MetaDB(str(tmp_path / "data" / "les_meta.db"))
+    dataset_id = db.create_dataset("913")
+    db.add_document(dataset_id, "913/doc.txt", file_mtime=1.0, file_size=12, source_path="/tmp/doc.txt")
+
+    row = db.list_datasets()[0]
+
+    assert row.name == "913"
+    assert row.doc_count == 1
+    assert row.files == 1
+    assert row.indexed_files == 0
+    assert row.pending_files == 1
 
 
 @pytest.mark.asyncio
@@ -771,6 +791,56 @@ async def test_folder_watch_scan_skips_route_changed_files(tmp_path, monkeypatch
     assert result["sync"]["files"] == 0
     assert result["sync"]["skipped_route_changed"] == 1
     assert dataset_state.uploads == []
+
+
+@pytest.mark.asyncio
+async def test_external_dataset_check_reports_deleted_files(tmp_path, monkeypatch, dataset_state):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RAG_META_DB_PATH", str(tmp_path / "data" / "les_meta.db"))
+    monkeypatch.setenv("LES_EXTERNAL_ALLOW_ANY", "1")
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    source = tmp_path / "external" / "913"
+    source.mkdir(parents=True)
+    missing = source / "gone.txt"
+    missing.write_text("СП 1.13130 пожарная безопасность эвакуация", encoding="utf-8")
+    stat = missing.stat()
+    file_name = missing.resolve().relative_to(source.parent.resolve()).as_posix()
+    missing.unlink()
+    with sqlite3.connect(data_dir / "les_meta.db") as conn:
+        conn.execute("CREATE TABLE datasets (id TEXT PRIMARY KEY, name TEXT, status TEXT)")
+        conn.execute(
+            """
+            CREATE TABLE documents (
+                id TEXT PRIMARY KEY,
+                dataset_id TEXT,
+                file_name TEXT,
+                status TEXT,
+                file_mtime REAL,
+                file_size INTEGER,
+                chunk_count INTEGER DEFAULT 0,
+                source_path TEXT DEFAULT '',
+                last_error TEXT DEFAULT ''
+            )
+            """
+        )
+        conn.execute("INSERT INTO datasets (id, name, status) VALUES ('ds-913', '913', 'IDLE')")
+        conn.execute(
+            """
+            INSERT INTO documents (id, dataset_id, file_name, status, file_mtime, file_size, source_path)
+            VALUES ('doc-gone', 'ds-913', ?, 'INDEXED', ?, ?, ?)
+            """,
+            (file_name, stat.st_mtime, stat.st_size, str(missing.resolve())),
+        )
+    dataset_state.datasets.append(Dataset("ds-913", "913"))
+
+    result = await datasets.check_external_dataset(
+        datasets.ExternalDatasetSyncRequest(path=str(source), dataset_id="ds-913"),
+        _admin=object(),
+    )
+
+    assert result["counts"]["deleted"] == 1
+    assert result["samples"]["deleted"][0]["file_name"] == file_name
 
 
 @pytest.mark.asyncio

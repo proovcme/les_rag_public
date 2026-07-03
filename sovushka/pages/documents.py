@@ -194,6 +194,15 @@ def build_documents() -> None:
                     with ui.row().classes("items-center").style("gap:5px;margin-top:6px;flex-wrap:wrap;"):
                         _badge(str(row.get("status") or "status?"), "tag-acc" if str(row.get("status", "")).upper() in {"IDLE", "INDEXED"} else "tag-dim")
                         _badge(f"{int(row.get('document_count') or 0)} док.")
+                        pending = int(row.get("pending_count") or 0)
+                        errors = int(row.get("error_count") or 0)
+                        missing = int(row.get("missing_count") or 0)
+                        if pending:
+                            _badge(f"{pending} ждёт", "tag-warn")
+                        if errors:
+                            _badge(f"{errors} ошибок", "tag-err")
+                        if missing:
+                            _badge(f"{missing} пропало", "tag-err")
                         _badge(f"{int(row.get('chunk_count') or 0)} фраг.")
 
     def _render_documents() -> None:

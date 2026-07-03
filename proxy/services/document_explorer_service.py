@@ -52,7 +52,10 @@ class DocumentExplorer:
                     COALESCE(d.status, '') AS status,
                     COALESCE(d.chunk_count, 0) AS chunk_count,
                     COUNT(doc.id) AS document_count,
-                    SUM(CASE WHEN doc.status = 'INDEXED' THEN 1 ELSE 0 END) AS indexed_count
+                    SUM(CASE WHEN doc.status = 'INDEXED' THEN 1 ELSE 0 END) AS indexed_count,
+                    SUM(CASE WHEN doc.status = 'PENDING' THEN 1 ELSE 0 END) AS pending_count,
+                    SUM(CASE WHEN doc.status = 'ERROR' THEN 1 ELSE 0 END) AS error_count,
+                    SUM(CASE WHEN doc.status = 'MISSING' THEN 1 ELSE 0 END) AS missing_count
                 FROM datasets d
                 LEFT JOIN documents doc ON doc.dataset_id = d.id
                 {where}

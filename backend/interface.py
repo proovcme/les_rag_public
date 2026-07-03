@@ -18,10 +18,16 @@ class DatasetInfo:
     id:          str
     name:        str
     status:      str
+    # Total registered documents. Indexed-only count is exposed separately.
     doc_count:   int
     chunk_count: int
     sensitivity: str = "P0"  # W3.3 (ADR-9): P0 local-only / P1 cloud-ok / P2 cloud-с-согласия
     group_name:  str = ""    # пользовательская группа для организации списка в САМОВАРе
+    files:        int = 0
+    indexed_files: int = 0
+    pending_files: int = 0
+    error_files: int = 0
+    missing_files: int = 0
 
 
 class RAGBackend(ABC):

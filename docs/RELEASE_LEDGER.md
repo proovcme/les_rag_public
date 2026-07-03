@@ -7,13 +7,26 @@
 ## Текущее состояние (2026-07-03)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.188  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.189  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.187 local Explorer/Finder folder picker for datasets
-НЕ задеплоено:             0.24.0.188 Windows light dynamic ports
-рантайм /api/version:      0.24.0.187 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
+задеплоено на рантайм:     0.24.0.189 Windows/Mac dataset visibility/settings/UI parity
+НЕ задеплоено:             —
+рантайм /api/version:      0.24.0.189 ok · app 5.1.0 · h0.24 · Legion light smoke ok; deploy_stamp_missing on Windows light
 ```
+
+> 0.24.0.189 — общий Mac/Windows parity-pass для Совушки и датасетов:
+> pending-внешние датасеты больше не выглядят пустыми (`doc_count/files`
+> считает все зарегистрированные документы, `indexed_files/pending_files`
+> идут отдельно), вкладка «Документы» показывает pending/error/missing
+> статусы, внешняя in-place папка получила ручные `/api/rag/external/check`
+> и `/api/rag/external/sync` для new/changed/deleted файлов, удалённые
+> внешние источники помечаются `MISSING` и чистятся из Qdrant/lexical.
+> Settings-router стал совместим с Pydantic v1/v2 и пишет `.env` в UTF-8;
+> local preset сохраняет текущий локальный backend (MLX на Mac или Ollama
+> на Windows), а non-MLX runtime status больше не стучит в
+> `MLX_URL/api/host_memory`. UI разрешает выделение текста и добивает
+> Quasar dark-theme контраст в диалогах/меню/диагностике.
 
 > 0.24.0.188 — Windows light startup получил динамические порты:
 > если дефолтные `8050/8051` заняты и оператор не передал `-ProxyPort` /

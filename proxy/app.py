@@ -229,11 +229,13 @@ async def metrics_collector_loop():
 
             host_mem = {}
             try:
-                mlx_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
-                async with httpx.AsyncClient(timeout=2.0) as client:
-                    response = await client.get(f"{mlx_url}/api/host_memory")
-                    if response.status_code == 200:
-                        host_mem = response.json()
+                provider = os.getenv("LES_LLM_PROVIDER", "mlx").strip().lower() or "mlx"
+                if provider == "mlx":
+                    mlx_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
+                    async with httpx.AsyncClient(timeout=2.0) as client:
+                        response = await client.get(f"{mlx_url}/api/host_memory")
+                        if response.status_code == 200:
+                            host_mem = response.json()
             except Exception:
                 pass
 

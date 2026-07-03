@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+import psutil
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -348,6 +349,19 @@ async def _unload_mlx_models() -> dict[str, Any]:
 
 
 async def _host_memory() -> dict[str, Any]:
+    provider = os.getenv("LES_LLM_PROVIDER", "mlx").strip().lower() or "mlx"
+    if provider != "mlx":
+        vm = await asyncio.to_thread(psutil.virtual_memory)
+        return {
+            "provider": provider,
+            "ram_total_gb": vm.total / 1e9,
+            "ram_free_gb": vm.available / 1e9,
+            "ram_used_gb": vm.used / 1e9,
+            "swap_used_gb": 0,
+            "swap_total_gb": 0,
+            "swap_pct": 0,
+            "source": "psutil_non_mlx_provider",
+        }
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(f"{mlx_url()}/api/host_memory")
