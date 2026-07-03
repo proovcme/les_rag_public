@@ -1,101 +1,164 @@
-# LES / Л.Е.С.
+# Л.Е.С. — строительный evidence-harness для проектов, смет и норм
 
-Local Evidence System for construction documents, estimates and project data.
+![Python](https://img.shields.io/badge/python-3.12-blue)
+![LES](https://img.shields.io/badge/LES-0.24.0.192-0b8f64)
+![Local-first](https://img.shields.io/badge/local--first-yes-2ea44f)
+![Evidence](https://img.shields.io/badge/evidence-first-success)
+![Numbers](https://img.shields.io/badge/numbers-computed%20by%20code-success)
+![MCP](https://img.shields.io/badge/MCP-server-orange)
 
-Л.Е.С. is a local-first evidence harness for construction work. It helps an engineer search project documents, standards, estimates, tables, mail and CAD/BIM exports, then answer with sources, computed values and explicit gaps.
+Л.Е.С. превращает строительные документы в рабочую инженерную среду: проектные тома,
+сметы, спецификации, таблицы, нормативы, переписку и CAD/BIM-данные можно спрашивать
+человеческим языком, а система показывает не только ответ, но и откуда он взялся.
 
-The core rule is simple:
+Это не “чат с PDF”. Обычный RAG умеет пересказать похожий фрагмент. Л.Е.С. строит
+проверяемый путь:
 
-**the model connects language and evidence; code computes numbers.**
+```text
+вопрос → выбранный проект/датасет → нужные документы и строки
+       → расчёт кодом, если есть числа
+       → источники, blockers, missing inputs
+       → ответ инженеру или сметчику
+```
 
-## What It Is
+Главный принцип короткий: **модель связывает и объясняет, код считает, источники
+доказывают**. Если данных не хватает, это должно быть видно, а не замазано красивой
+фразой.
 
-LES is not "a chatbot over PDFs". It is a workflow layer around project data:
+## Зачем это нужно
 
-- document and table ingestion;
-- RAG over indexed project and normative corpora;
-- deterministic calculations over tables and Parquet;
-- estimate helpers for GESN/FGIS/LSR workflows;
-- document review and normcontrol reports;
-- project memory and dataset passports;
-- API, web UI and MCP tools for external agents.
+Строительный проект живёт не в одном аккуратном файле. Он размазан по ПЗ, РД, ВОР,
+локальным сметам, спецификациям, сканам, письмам, нормативам, BIM-выгрузкам и таблицам.
+В таком корпусе опасны две крайности:
 
-The system is designed for cases where a wrong confident answer is worse than no answer. A result should say where it came from:
+- модель уверенно отвечает по одному похожему куску и теряет остальной проект;
+- код пытается заменить сметчика/инженера жёсткими шаблонами и ломается на реальной задаче.
 
-- `RETRIEVED`: found in a source;
-- `COMPUTED`: calculated by code;
-- `ASSUMED`: accepted as an assumption;
-- `MISSING`: required data is absent;
-- `BLOCKED`: the workflow should not continue without more evidence.
+Л.Е.С. держит баланс. Модель остаётся профессиональным диспетчером задачи: понимает
+контекст, выбирает ход, строит ВОР, объясняет результат. Код остаётся скучным, но
+надёжным слоем: считает суммы, проценты, объёмы, НДС, НР/СП, ресурсные трассы,
+проверяет единицы и хранит provenance. Скучный код — редкий случай, когда это комплимент.
 
-## What It Does Well
-
-- Answers questions over indexed project/normative documents with source references.
-- Computes quantities, sums and reconciliations from structured tables.
-- Builds and checks bill-of-quantities style outputs from specifications.
-- Helps assemble estimate workflows using local GESN/FGIS/price data where available.
-- Keeps chat and dataset context as navigation memory, not as proof.
-- Exposes deterministic tools through HTTP and MCP.
-- Runs local-first on Apple Silicon with optional external model providers.
-
-## What It Does Not Promise
-
-- It does not make final engineering or normcontrol decisions for a human.
-- It does not treat LLM text as a reliable calculator.
-- It does not silently turn rough object analogues into defensible estimates.
-- It does not guarantee that every request is handled before RAG by a deterministic route.
-
-Some routes are intentionally deterministic and can answer before semantic search: commands, selected table calculations, selected estimate tools, task/memory commands and other explicit tool workflows. Other requests go through scope resolution, profile/router gates and then RAG. If a deterministic tool does not have enough structured evidence, LES should say so instead of pretending.
-
-## High-Level Flow
+## Что внутри
 
 ```mermaid
-flowchart TD
-    Q["User question"] --> S["Scope / mode resolution"]
-    S --> T{"Explicit tool route?"}
-    T -->|yes| C["Code tool<br/>tables, estimates, forms, review"]
-    T -->|no| R["RAG retrieval<br/>documents and chunks"]
-    C --> E["Evidence contract"]
-    R --> E
-    E --> A["Answer with sources, assumptions and gaps"]
+flowchart TB
+    U["Пользователь: чат, API, MCP"] --> P["FastAPI proxy"]
+    P --> S["Совушка UI"]
+    P --> M["LLM orchestration"]
+    P --> R["RAG + dataset memory"]
+    P --> C["Calculators / validators / trace"]
+    R --> Q["Qdrant vectors"]
+    R --> DB["SQLite metadata, file cards, notebooks"]
+    C --> T["Parquet tables, ГЭСН/РИМ traces, XLSX/HTML reports"]
+    M --> A["Ответ с источниками, статусом и добором"]
+    R --> A
+    C --> A
 ```
 
-## Typical Use Cases
+Основные слои:
 
-- "Find the fire-safety requirement and show the source."
-- "Sum this cable type across all estimate sheets."
-- "Compare BoQ, KS-2, estimate and field records."
-- "Prepare a rough object estimate and list what is not defensible yet."
-- "Review a project PDF against a normcontrol checklist."
-- "Create a dataset passport so the system can understand what is inside."
+- **Совушка** — рабочий UI для чата, датасетов, документов, инструментов и диагностики.
+- **RAG и память датасета** — не только чанки, но и карточки файлов, типы документов,
+  навигационная карта корпуса и строгий выбор области поиска.
+- **Документы без ИИ** — отдельный просмотр датасетов, файлов и фрагментов, чтобы можно
+  было просто искать и читать, а не просить модель “ну найди же”.
+- **Табличный слой** — structured extract, Parquet/SQL и расчёт по полной таблице, а не
+  по top-k кускам.
+- **Сметный слой** — ВОР, спецификация → ВОР, ГЭСН/РИМ, ресурсы, НР/СП, цены, trace,
+  XLSX-артефакты и честные статусы частичной/сценарной/финальной оценки.
+- **Нормоконтроль** — проверка проектной документации, remarks, отчёты JSON/HTML/XLSX.
+- **CAD/BIM контур** — граф объектов и публичный standalone viewer на безопасных demo data.
+- **MCP/API** — машинный интерфейс для агентов и внешних инструментов.
 
-## Local Runtime
+## Как работает ответ
 
-The usual local stack is:
+Л.Е.С. старается отвечать не “магически”, а прослеживаемо:
 
-- Python 3.12 with `uv`;
-- FastAPI proxy;
-- NiceGUI web UI;
-- Qdrant;
-- SQLite metadata;
-- Parquet for structured tables;
-- MLX/Core ML local models on Apple Silicon.
+1. Определяет задачу: поиск, проектная сводка, таблица, смета, нормоконтроль, CAD/BIM.
+2. Выбирает область: весь RAG, проект, датасет, конкретный файл или вложение.
+3. Поднимает evidence: фрагменты, строки таблиц, карточки документов, нормативные источники.
+4. Считает кодом всё, что должно быть числом: суммы, проценты, единицы, объёмы, ресурсы.
+5. Отдаёт ответ с источниками, допущениями, blockers и следующим шагом.
 
-Basic developer check:
+Модель не обязана молчать, если не хватает финальной цены. Она должна дать ближайший
+полезный результат: ВОР, развилку объёмов, частичную ЛСР, сценарную оценку, список
+добора до final. Но число без источника, trace или явного сценарного допущения не
+считается фактом.
+
+## Что уже можно показывать
+
+- **Проектная сводка:** что за объект, какие тома и документы видны, где пробелы.
+- **Поиск по датасету и документам:** targeted retrieval, строгий файл, источники.
+- **Документный explorer:** датасет → документ → фрагменты, без вызова модели.
+- **Табличные вопросы:** суммы и выборки по полным выгрузкам.
+- **Спецификация → ВОР:** поставка отдельно, работы отдельно, trace количества.
+- **Сметы:** ГЭСН/РИМ-навигация, ресурсные traces, XLSX/CSV/табличные артефакты,
+  частичные и сценарные оценки с пометкой статуса.
+- **Нормоконтроль:** remarks, доказательная база, отчёты.
+- **CAD/BIM demo:** граф и viewer на публично безопасных данных.
+
+Подробные внешние страницы:
+
+- [Обзор продукта](docs/public/overview.md)
+- [Демо-сценарии](docs/public/demo-workflows.md)
+- [Сметный модуль: что нужно для уверенного расчёта](docs/public/smeta-expert-review.md)
+- [Границы приватности и данных](docs/public/privacy-and-data-boundaries.md)
+- [GitHub Pages entry](docs/index.md)
+
+## Быстрый запуск для разработки
 
 ```bash
-uv sync
+uv sync --extra mac-mlx
+cp env.example .env
 make verify
+uv run lesctl start
 ```
 
-Runtime deployment and private operator procedures are intentionally not documented in this public README.
+Локальные поверхности:
 
-## Repository Status
+- Совушка UI: `http://127.0.0.1:8051/classic`
+- API: `http://127.0.0.1:8050`
+- Qdrant: `http://127.0.0.1:6333`
 
-This public repository is a source-available technical snapshot of LES code. It does not include private datasets, indexed corpora, customer files, runtime databases, model caches, logs or secrets.
+Для разработки агентам лучше начинать с:
 
-Some workflows require local service data such as GESN/FGIS price books, project datasets or layout references. Without those sources, LES should return a degraded or missing-data result rather than inventing evidence.
+- [AGENTS.md](AGENTS.md)
+- [SKILL.md](SKILL.md)
+- [docs/MODULE_INDEX.md](docs/MODULE_INDEX.md)
+- [docs/CODE_MAP.md](docs/CODE_MAP.md)
+- [docs/RELEASE_LEDGER.md](docs/RELEASE_LEDGER.md)
 
-## License And Security
+## Что не входит в публичный репозиторий
 
-See [LICENSE](LICENSE) and [SECURITY.md](SECURITY.md).
+Репозиторий открыт как source-available code/documentation surface. Это не дамп
+боевого RAG и не архив частных объектов.
+
+Не публикуются:
+
+- клиентские PDF/DOCX/XLSX/CAD/BIM/почта;
+- Qdrant snapshots, SQLite runtime DB, индексы, caches;
+- приватные нормативные корпуса без права публикации;
+- `.env`, ключи, пароли, admin tokens, private runtime topology;
+- рабочие логи и storage.
+
+Перед публичной публикацией:
+
+```bash
+make public-check
+git status --short
+```
+
+И ручной чеклист: [docs/PUBLICATION_CHECKLIST.md](docs/PUBLICATION_CHECKLIST.md).
+
+## Текущий статус
+
+Л.Е.С. — полевая инженерная система на пути к v1. Уже стабильно работают локальный
+runtime, RAG-диспетчер, датасеты, документный просмотр, табличная арифметика,
+сметные traces, нормоконтрольные отчёты, MCP/API и Mac/Windows сборки.
+
+Некоторые доменные сценарии намеренно остаются частичными, пока не хватает evidence:
+это не баг честности, это её цена. Финальное инженерное, нормативное и сметное решение
+остаётся за человеком.
+
+License: source-available, см. [LICENSE](LICENSE). Security policy: [SECURITY.md](SECURITY.md).
