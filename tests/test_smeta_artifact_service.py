@@ -243,3 +243,42 @@ def test_smeta_artifact_lsr_uses_one_primary_cost_table_not_duplicate_partial_ls
     assert "Сметная стоимость: **1 900 руб.**" in artifact["content"]
     assert "Сумма выбранной ЛСР-формы: **1 900 руб.**" in artifact["content"]
     assert "Сумма выбранной ЛСР-формы: **2 680 руб.**" not in artifact["content"]
+
+
+def test_smeta_artifact_prefers_rim_trace_when_model_selected_norm_code():
+    answer = """
+**ЛСР**
+| № п/п | Обоснование | Наименование работ и затрат | Ед. изм. | Кол-во на ед. | коэф. | Кол-во всего | Базис на ед., руб. | Индекс | Текущий на ед., руб. | коэф. | Текущий всего, руб. |
+|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | ГЭСН 12-01-034-02 | Устройство обрешетки | м2 | 1 | 1 | 61 | 1 000 | 1 | 1 000 | 1 | 61 000 |
+"""
+
+    artifact = build_smeta_artifact(answer, question="выдай цену в виде ЛСР по ценам СПб 2026")
+
+    assert artifact is not None
+    assert artifact["rim_lsr_form"]["schema"] == "lsr_rim_trace_form_v1"
+    assert artifact["rim_lsr_form"]["amount_total"] == 11_813.04
+    assert artifact["rim_lsr_form"]["is_priced_final"] is True
+    assert artifact["rim_lsr_form"]["rows"][0]["basis"] == "ГЭСН12-01-034-02"
+    assert artifact["model_lsr_form"]["amount_total"] == 61_000
+    assert "11 813 руб." in artifact["content"]
+
+
+def test_smeta_artifact_trace_does_not_invent_norms_for_unbound_rows():
+    answer = """
+**ЛСР**
+| № п/п | Обоснование | Наименование работ и затрат | Ед. изм. | Кол-во на ед. | коэф. | Кол-во всего | Базис на ед., руб. | Индекс | Текущий на ед., руб. | коэф. | Текущий всего, руб. |
+|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | ГЭСН 12-01-034-02 | Устройство обрешетки | м2 | 1 | 1 | 61 | 1 000 | 1 | 1 000 | 1 | 61 000 |
+| 2 | кандидат ГЭСНм 10 | Работа без выбранного шифра | шт | 1 | 1 | 2 | 5 000 | 1 | 5 000 | 1 | 10 000 |
+"""
+
+    artifact = build_smeta_artifact(answer, question="выдай цену в виде ЛСР по ценам СПб 2026")
+
+    assert artifact is not None
+    assert artifact["rim_lsr_form"]["schema"] == "lsr_rim_trace_form_v1"
+    assert artifact["rim_lsr_form"]["amount_total"] == 11_813.04
+    assert artifact["rim_lsr_form"]["finality"] == "priced_partial"
+    assert len(artifact["rim_lsr_form"]["rows"]) == 1
+    flags = artifact["rim_lsr_form"]["trace"]["summary"]["flags"]
+    assert any("нет шифра нормы" in flag for flag in flags)

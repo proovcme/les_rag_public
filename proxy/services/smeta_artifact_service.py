@@ -218,6 +218,7 @@ def _lsr_rows_from_table(table: SmetaTable) -> list[dict[str, Any]]:
     )
     unit_idx = _find_header_index(headers, "ед")
     basis_idx = _first_index(
+        _find_header_index(headers, "обоснование"),
         _find_header_index(headers, "норма"),
         _find_header_index(headers, "гэсн"),
         _find_header_index(headers, "источник"),
@@ -317,6 +318,119 @@ def build_lsr_form(tables: list[SmetaTable]) -> dict[str, Any] | None:
         "rows": rows,
         "source_tables": [table.title for table in source_tables],
         "amount_total": total if total > 0 else None,
+    }
+
+
+def _select_pricebook_for_question(question: str):
+    """Resolve an explicit local pricebook for trace calculation.
+
+    This is region/period selection, not work/norm selection. If the request
+    does not point to an available pricebook, the trace still runs with embedded
+    norm prices/manual prices where available.
+    """
+    q = str(question or "").casefold()
+    try:
+        from proxy.services import fgis_price_service as fps
+
+        books = fps.available_pricebooks()
+        if not books:
+            return None, ""
+        stems = {Path(path).stem: path for path in books}
+        preferred: list[str] = []
+        if any(token in q for token in ("спб", "санкт-петербург", "петербург", "sankt", "spb")):
+            if "2026" in q and any(token in q for token in ("2 кв", "2кв", "ii", "2 кварт", "2kv")):
+                preferred.extend(["spb_2kv2026"])
+            if "2026" in q:
+                preferred.extend([stem for stem in stems if stem.startswith("spb") and "2026" in stem])
+            preferred.extend(["spb_refresh", "spb_2kv2026", "spb_2kv2025"])
+        if "москва" in q or "мск" in q:
+            preferred.extend([stem for stem in stems if stem.startswith("moskva") and ("2026" in stem if "2026" in q else True)])
+        for stem in preferred:
+            path = stems.get(stem)
+            if path:
+                return fps.get_pricebook(path), stem
+    except Exception:
+        return None, ""
+    return None, ""
+
+
+def _build_rim_trace_form(lsr_form: dict[str, Any], *, question: str = "") -> dict[str, Any] | None:
+    """Build a checked RIM form from visible rows that already contain norm codes.
+
+    The model owns the visible row and selected norm code. This helper only
+    converts units, expands resources and prices them with the local pricebook.
+    """
+    rows = lsr_form.get("rows") if isinstance(lsr_form, dict) else None
+    if not rows:
+        return None
+    try:
+        from proxy.services.rim_lsr_trace_service import build_lsr_trace_from_visible_rows
+    except Exception:
+        return None
+
+    pricebook, pricebook_name = _select_pricebook_for_question(question)
+    trace = build_lsr_trace_from_visible_rows(
+        list(rows),
+        pricebook=pricebook,
+        name=str(lsr_form.get("title") or "Локальный сметный расчет (смета)"),
+    )
+    summary = trace.get("summary") if isinstance(trace, dict) else {}
+    bound_rows = int(summary.get("bound_rows") or 0)
+    if bound_rows <= 0:
+        return None
+
+    out_rows: list[dict[str, Any]] = []
+    for section in trace.get("sections") or []:
+        section_name = str(section.get("section") or "").strip()
+        for pos in section.get("positions") or []:
+            ps = pos.get("summary") or {}
+            qty = pos.get("qty")
+            amount = float(ps.get("total") or 0.0)
+            unit_price = amount / float(qty) if qty not in (None, "", 0) and float(qty) else None
+            flags = ps.get("flags") or []
+            status = str(summary.get("result_status") or "")
+            if flags and status == "priced_final":
+                status = "priced_partial"
+            out_rows.append(
+                {
+                    "basis": pos.get("code") or "",
+                    "title": pos.get("name") or "",
+                    "unit": pos.get("unit") or "",
+                    "quantity": qty,
+                    "unit_price": round(unit_price, 2) if unit_price is not None else "",
+                    "amount": amount,
+                    "status": status,
+                    "source_table": "РИМ trace",
+                    "section": section_name,
+                    "flags": "; ".join(str(flag) for flag in flags),
+                }
+            )
+    if not out_rows:
+        return None
+    total = float(summary.get("total") or sum(float(row.get("amount") or 0.0) for row in out_rows))
+    result_status = str(summary.get("result_status") or "priced_partial")
+    flags = [str(flag) for flag in (summary.get("flags") or []) if str(flag).strip()]
+    note = (
+        "ЛСР-форма построена по расчётной РИМ-трассе из видимых строк с выбранными шифрами норм: "
+        "код раскрыл ресурсы, цены/индексы, НР/СП и итог. Строки без выбранного шифра нормы "
+        "не попали в проверяемую сумму и перечислены в доборе."
+    )
+    if pricebook_name:
+        note += f" Книга цен: {pricebook_name}."
+    if flags:
+        note += " Добор: " + "; ".join(flags[:8])
+    return {
+        "schema": "lsr_rim_trace_form_v1",
+        "title": str(lsr_form.get("title") or "Локальный сметный расчет (смета)"),
+        "note": note,
+        "finality": result_status,
+        "is_priced_final": result_status == "priced_final",
+        "headers": [str(_LSR_FORM_HEADERS.get(col, "")) for col in range(1, _LSR_FORM_MAX_COL + 1)],
+        "rows": out_rows,
+        "source_tables": ["РИМ trace"],
+        "amount_total": total,
+        "trace": trace,
+        "pricebook": pricebook_name,
     }
 
 
@@ -475,7 +589,9 @@ def build_smeta_artifact(answer: str, *, question: str = "") -> dict[str, Any] |
     tables = extract_smeta_tables(answer)
     if not tables:
         return None
-    lsr_form = build_lsr_form(tables)
+    model_lsr_form = build_lsr_form(tables)
+    trace_lsr_form = _build_rim_trace_form(model_lsr_form, question=question) if model_lsr_form else None
+    lsr_form = trace_lsr_form or model_lsr_form
     lines = ["# Сметный артефакт", ""]
     if question:
         lines += ["## Запрос", str(question).strip(), ""]
@@ -511,7 +627,16 @@ def build_smeta_artifact(answer: str, *, question: str = "") -> dict[str, Any] |
             }
             for table in tables
         ],
-        **({"lsr_form": lsr_form, "rim_lsr_form": lsr_form} if lsr_form else {}),
+        **(
+            {
+                "lsr_form": lsr_form,
+                "rim_lsr_form": lsr_form,
+                **({"model_lsr_form": model_lsr_form} if model_lsr_form and trace_lsr_form else {}),
+                **({"rim_trace": trace_lsr_form.get("trace")} if trace_lsr_form else {}),
+            }
+            if lsr_form
+            else {}
+        ),
     }
 
 
