@@ -118,7 +118,7 @@ async def lsr_assemble(req: AssembleRequest, _user=Depends(require_user)):
 
 @router.post("/rim-trace")
 async def lsr_rim_trace(req: RimTraceRequest, _user=Depends(require_user)):
-    """РИМ-трасса ОДНОЙ позиции ЛСР: доказательные строки по графам Приложения 4 к 421/пр
+    """РИМ-трасса ОДНОЙ позиции ЛСР: доказательные строки по графам Приложения 3 к 421/пр
     (происхождение цены fgis_current/base_index/manual/kac/missing). Read-only evidence-слой —
     контракт /assemble НЕ меняется (handoff Codex, шаг #1). 0 LLM: код считает, missing виден."""
     try:
@@ -137,8 +137,8 @@ async def lsr_rim_trace(req: RimTraceRequest, _user=Depends(require_user)):
 
 @router.post("/rim-trace/export")
 async def lsr_rim_trace_export(req: RimTraceRequest, _user=Depends(require_user)):
-    """РИМ-трасса позиции → XLSX по форме Приложения 4 к 421/пр. Рендер ГОТОВОЙ трассы (не калькулятор):
-    те же числа, что /rim-trace, разложены по графам 1-12 + «Источник» (происхождение цены). Скачивание
+    """РИМ-трасса позиции → XLSX по форме Приложения 3 к 421/пр. Рендер ГОТОВОЙ трассы (не калькулятор):
+    те же числа, что /rim-trace, разложены по графам 1-12. Скачивание
     через /api/lsr/download. Контракт /assemble и /rim-trace не меняется."""
     try:
         pricebook = await asyncio.to_thread(la._resolve_book, req.book)
@@ -186,7 +186,7 @@ async def lsr_multi_trace(req: LsrTraceRequest, _user=Depends(require_user)):
 
 @router.post("/lsr-trace/export")
 async def lsr_multi_trace_export(req: LsrTraceRequest, _user=Depends(require_user)):
-    """МНОГОПОЗИЦИОННАЯ ЛСР → XLSX по форме Приложения 4 к 421/пр: шапка с общим итогом + разделы
+    """МНОГОПОЗИЦИОННАЯ ЛСР → XLSX по форме Приложения 3 к 421/пр: шапка с общим итогом + разделы
     («Раздел N» → позиции с непрерывной нумерацией → «Итого по разделу N») + «ВСЕГО по смете».
     Рендер ГОТОВОЙ трассы (не калькулятор). Скачивание через /api/lsr/download."""
     try:

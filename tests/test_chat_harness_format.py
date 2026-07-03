@@ -317,6 +317,12 @@ def test_smeta_direct_model_answer_does_not_need_harness_result(monkeypatch):
     assert "Упаковка, тара, такелаж и оснастка не становятся отдельными платными разделами" in FakeClient.last_json["messages"][0]["content"]
     assert "scenario_estimate" in FakeClient.last_json["messages"][0]["content"]
     assert "Не заменяй построчную ВОР одной крупной вилкой" in FakeClient.last_json["messages"][0]["content"]
+    assert "Повтор одного и того же исходника должен сохранять базовый сценарий" in FakeClient.last_json["messages"][0]["content"]
+    assert "не называй сценарную таблицу готовой лср" in FakeClient.last_json["messages"][0]["content"].lower()
+    assert "Способ выдачи сметы для оператора — ЛСР-форма" in FakeClient.last_json["messages"][0]["content"]
+    assert "сохраняй уже принятые строки, ставки и итоги" in FakeClient.last_json["messages"][0]["content"]
+    assert "не сокращай 19 строк до 12" in FakeClient.last_json["messages"][0]["content"]
+    assert "ЛСР-таблицу, а не обещание оформить её потом" in FakeClient.last_json["messages"][0]["content"]
     assert "144*20%*10=288" not in FakeClient.last_json["messages"][0]["content"]
     assert "blocked_harness_advisory" not in prompt_payload
 
@@ -370,6 +376,11 @@ def test_smeta_direct_light_prompt_cuts_heavy_contract_by_default(monkeypatch):
     assert "Пустые ценовые колонки" in sys_prompt
     assert "не запрет оценки работ" in sys_prompt
     assert "Норма/источник" in sys_prompt
+    assert FakeClient.last_json["temperature"] == 0.0
+    assert "Один и тот же исходник должен давать один и тот же базовый сценарий" in sys_prompt
+    assert "Не называй сценарную таблицу готовой ЛСР" in sys_prompt
+    assert "Способ выдачи сметы — ЛСР-форма" in sys_prompt
+    assert "сразу выдай ЛСР-таблицу" in sys_prompt
     assert "сборник/раздел/код-кандидат" in sys_prompt
     assert "не пиши одиноко" in sys_prompt
     assert "ГЭСНм10" in sys_prompt
@@ -379,7 +390,7 @@ def test_smeta_direct_light_prompt_cuts_heavy_contract_by_default(monkeypatch):
     assert "evidence" not in sys_prompt
     assert "Компактный машинный контракт" not in sys_prompt
     assert "ВОР -> нормируемая ВОР -> таблица подбора норм" not in sys_prompt
-    assert len(sys_prompt) < 1900
+    assert len(sys_prompt) < 2300
 
 
 def test_smeta_direct_prompt_does_not_block_on_empty_spec_price_columns(monkeypatch):
@@ -535,6 +546,31 @@ def test_smeta_harness_question_prefers_active_smeta_state_for_followups(monkeyp
     assert "вариант Б" in text
     assert "Монтаж ярусов гусеничным краном" in text
     assert "Текущий запрос:\nномера ГЭСН подпиши" in text
+
+
+def test_smeta_active_state_preserves_long_lsr_rows_and_amounts():
+    rows = "\n".join(
+        f"| {idx} | Работа {idx} | {idx} | м | ГЭСНм 08, кандидат | {idx * 100} руб./м | {idx * 1000} руб. | scenario_assumption |"
+        for idx in range(1, 20)
+    )
+    answer = (
+        "**Оценка стоимости работ**\n"
+        "| № | Работа | Кол-во | Ед. | Норма/источник | Ставка/допущение | Сумма | Комментарий |\n"
+        "|---:|---|---:|---:|---|---:|---:|---|\n"
+        f"{rows}\n"
+        "| Итого |  |  |  |  |  | 190 000 руб. |  |\n"
+    )
+
+    state = _smeta_active_state_from_answer("сделай ЛСР", answer)
+    formatted = _format_active_smeta_state(state)
+
+    assert len(state["works"]) == 19
+    assert state["works"][18]["title"] == "Работа 19"
+    assert state["works"][18]["unit_price"] == "1900 руб./м"
+    assert state["works"][18]["amount"] == "19000 руб."
+    assert "Работа 19" in formatted
+    assert "сумма: 19000 руб." in formatted
+    assert "сохраняй уже принятые строки, ставки и итоги" in formatted
 
 
 @pytest.mark.asyncio

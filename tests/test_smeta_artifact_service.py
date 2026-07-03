@@ -108,19 +108,45 @@ def test_smeta_artifact_adds_lsr_form_without_replacing_tables(tmp_path):
     exported = persist_smeta_artifact_exports(artifact, output_dir=tmp_path, prefix="lsr")
 
     assert lsr_form is not None
-    assert lsr_form["schema"] == "lsr_display_form_v1"
+    assert lsr_form["schema"] == "lsr_rim_display_form_v1"
     assert lsr_form["rows"][0]["basis"] == "ГЭСНм 10-06-037-01"
+    assert lsr_form["is_priced_final"] is False
+    assert lsr_form["finality"] == "scenario_display"
     assert artifact is not None
     assert "## 1. Оценка стоимости работ" in artifact["content"]
-    assert "## Форма ЛСР" in artifact["content"]
-    assert "Итого по форме ЛСР" in artifact["content"]
+    assert "## ЛСР РИМ (форма 421/пр)" in artifact["content"]
+    assert "Приложение № 3" in artifact["content"]
+    assert "ЛОКАЛЬНЫЙ СМЕТНЫЙ РАСЧЁТ (СМЕТА)" in artifact["content"]
+    assert "Сметная стоимость: **42 000 руб.**" in artifact["content"]
+    assert "| 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 |" in artifact["content"]
+    assert "ВСЕГО по смете" in artifact["content"]
+    assert "не финальная ЛСР" in artifact["content"]
+    assert artifact["content"].index("## ЛСР РИМ (форма 421/пр)") < artifact["content"].index("## 1. Оценка стоимости работ")
     assert artifact["lsr_form"]["amount_total"] == 42_000
+    assert artifact["rim_lsr_form"]["amount_total"] == 42_000
 
     import openpyxl
 
     xlsx_path = tmp_path / exported["downloads"]["xlsx"].split("path=")[1]
+    csv_path = tmp_path / exported["downloads"]["csv"].split("path=")[1]
     wb = openpyxl.load_workbook(xlsx_path, data_only=True)
-    assert "ЛСР" in wb.sheetnames
-    ws = wb["ЛСР"]
-    assert ws.cell(row=2, column=3).value == "Прокладка кабеля"
-    assert ws.cell(row=3, column=7).value == 30_000
+    assert "ЛСР РИМ" in wb.sheetnames
+    assert "Источники ЛСР" in wb.sheetnames
+    ws = wb["ЛСР РИМ"]
+    assert ws.cell(row=1, column=10).value == "Приложение № 3"
+    assert "421/пр" in ws.cell(row=2, column=8).value
+    assert ws.cell(row=7, column=1).value == "ЛОКАЛЬНЫЙ СМЕТНЫЙ РАСЧЁТ (СМЕТА) № ____"
+    assert "не финальная ЛСР" in ws.cell(row=10, column=1).value
+    assert ws.cell(row=15, column=3).value == "Наименование работ и затрат"
+    assert ws.cell(row=15, column=12).value == "Сметная стоимость в текущем уровне цен всего, руб."
+    assert ws.cell(row=16, column=12).value == 12
+    assert ws.cell(row=17, column=3).value == "Прокладка кабеля"
+    assert ws.cell(row=18, column=12).value == 30_000
+    assert ws.cell(row=19, column=3).value == "ВСЕГО по смете"
+    assert ws.cell(row=19, column=12).value == 42_000
+    sources = wb["Источники ЛСР"]
+    assert sources.cell(row=2, column=2).value == "scenario_assumption"
+    csv_text = csv_path.read_text(encoding="utf-8-sig")
+    assert "ЛСР РИМ (форма 421/пр)" in csv_text
+    assert "ВСЕГО по смете" in csv_text
+    assert "Источники ЛСР" in csv_text

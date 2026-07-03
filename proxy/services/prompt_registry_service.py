@@ -482,7 +482,6 @@ def _render_smeta_role_pack(pack: dict[str, Any]) -> str:
         "price_source_types": pack.get("price_source_types", []),
         "required_answer_capabilities": pack.get("required_answer_capabilities", []),
         "answer_sections": pack.get("answer_sections", []),
-        "visible_answer_order": pack.get("visible_answer_order", []),
         "quantity_conflict_form_columns": pack.get("quantity_conflict_form_columns", []),
         "comparison_table_columns": pack.get("comparison_table_columns", []),
         "rim_scenario_table_columns": pack.get("rim_scenario_table_columns", []),
@@ -491,7 +490,6 @@ def _render_smeta_role_pack(pack: dict[str, Any]) -> str:
         "work_plan_schema": output_contract.get("schema", "smeta_work_plan_v1"),
         "response_format": output_contract.get("response_format", "json_object"),
         "top_level_required": output_contract.get("top_level_required", ["object", "works"]),
-        "top_level_optional": output_contract.get("top_level_optional", []),
         "allowed_units": output_contract.get("allowed", {}).get("unit", []),
     }
     return (

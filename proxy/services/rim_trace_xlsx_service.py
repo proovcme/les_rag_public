@@ -1,4 +1,4 @@
-"""Рендерер РИМ-трассы ЛСР в XLSX по форме **Приложения № 4** к Методике 421/пр (форма ГРАНД-Сметы).
+"""Рендерер РИМ-трассы ЛСР в XLSX по форме **Приложения № 3** к Методике 421/пр.
 
 НЕ калькулятор: берёт ГОТОВУЮ трассу и раскладывает её строки по графам формы ЛСР. Два входа:
 
@@ -8,9 +8,9 @@
   разделу N») + общий свод «ВСЕГО по смете».
 
 Оба рендера делят шапку/графы/строки позиции/финализацию — числа НЕ пересчитываются (Σ уже сделана в
-трассе). 0 LLM. Графы формы (эталон): № п/п · Обоснование · Наименование · Ед.изм. · Кол-во (на ед./
-коэф./всего) · Сметная стоимость (на ед./всего). Колонки trace.columns 2-12 ложатся на них напрямую.
-ЛСР = Приложение № 4 (Прил.3 = объектный расчёт).
+трассе). 0 LLM. Графы формы РИМ: № п/п · Обоснование · Наименование · Ед. изм. · Количество
+(на ед./коэф./всего) · Сметная стоимость (базис/индекс/текущий уровень/коэф./всего).
+Колонки trace.columns 2-12 ложатся на графы формы напрямую.
 """
 
 from __future__ import annotations
@@ -18,22 +18,31 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
-# trace.columns (str) → колонка openpyxl (1-индекс) по форме Приложения 4.
-#  "2"Обоснование→B · "3"Наименование→C · "4"Ед→H · "5"кол/ед→I · "6"коэф→J · "7"всего→K
-#  "10"стоим/ед→L · "12"всего стоим→N.  Графа № п/п → A (col 1, только строки-работы).
-_COL: dict[str, int] = {"2": 2, "3": 3, "4": 8, "5": 9, "6": 10, "7": 11, "10": 12, "12": 14}
-_NUM_COLS = {9, 10, 11, 12, 14}  # I,J,K,L,N — числовые
+# trace.columns (str) → колонка openpyxl (1-индекс) по форме Приложения 3.
+# Графа № п/п → A (col 1, только строки-работы), графы 2-12 ложатся напрямую.
+_COL: dict[str, int] = {str(i): i for i in range(2, 13)}
+_NUM_COLS = {5, 6, 7, 8, 9, 10, 11, 12}
 
 _GROUP_TYPES = {"group_labor", "group_machine", "group_machinist", "group_material",
                 "direct_total", "fot", "nr", "sp", "position_total"}
 _TOTAL_TYPES = {"direct_total", "fot", "nr", "sp", "position_total"}
-# Формулировки трассы → формулировки формы ГРАНД (эталон).
 _LABEL_FIX = {"Итого по позиции": "Всего по позиции"}
 
-_TABLE_HEADERS = {1: "№ п/п", 2: "Обоснование", 3: "Наименование работ и затрат", 8: "Ед. изм.",
-                  9: "Кол-во на ед.", 10: "коэф.", 11: "Кол-во всего", 12: "Цена на ед., руб.",
-                  14: "Стоимость всего, руб."}
-_WIDTHS = {1: 6, 2: 18, 3: 40, 4: 10, 5: 8, 6: 6, 7: 6, 8: 9, 9: 11, 10: 7, 11: 12, 12: 13, 13: 7, 14: 15}
+_TABLE_HEADERS = {
+    1: "№ п/п",
+    2: "Обоснование",
+    3: "Наименование работ и затрат",
+    4: "Ед. изм.",
+    5: "Кол-во на ед.",
+    6: "коэф.",
+    7: "Кол-во всего",
+    8: "Сметная стоимость в базисном уровне цен на ед., руб.",
+    9: "Индекс",
+    10: "Сметная стоимость в текущем уровне цен на ед., руб.",
+    11: "коэф.",
+    12: "Сметная стоимость в текущем уровне цен всего, руб.",
+}
+_WIDTHS = {1: 6, 2: 18, 3: 44, 4: 9, 5: 11, 6: 7, 7: 12, 8: 16, 9: 9, 10: 16, 11: 7, 12: 18}
 
 
 def _f(value: Any) -> float:
@@ -79,8 +88,8 @@ def _make_put(ws, S: dict[str, Any]):
 
 
 def _border_row(ws, S: dict[str, Any], r: int, *, fill=None) -> None:
-    """Границы по графам 1-14 строки + опц. заливка (итоги/разделы)."""
-    for c in range(1, 15):
+    """Границы по графам 1-12 строки + опц. заливка (итоги/разделы)."""
+    for c in range(1, 13):
         cc = ws.cell(row=r, column=c)
         cc.border = S["border"]
         if fill is not None:
@@ -92,8 +101,8 @@ def _header_block(ws, put, S: dict[str, Any], *, name: str, summary: dict[str, A
     """Шапка формы (стройка/объект/ЛСР №/наименование/метод/уровень цен/субъект + сметная стоимость
     и её разбивка). Возвращает номер строки шапки таблицы (графы)."""
     r = 1
-    put(r, 12, "Приложение № 4", font=S["dim"], align="right"); r += 1
-    put(r, 12, "к Методике (приказ Минстроя России от 04.08.2020 № 421/пр)", font=S["dim"], align="right"); r += 2
+    put(r, 10, "Приложение № 3", font=S["dim"], align="right"); r += 1
+    put(r, 10, "к Методике (приказ Минстроя России от 04.08.2020 № 421/пр)", font=S["dim"], align="right"); r += 2
     put(r, 1, meta.get("stroika", "(наименование стройки)"), font=S["dim"]); r += 1
     put(r, 1, meta.get("object", "(наименование объекта капитального строительства)"), font=S["dim"]); r += 2
     put(r, 1, "ЛОКАЛЬНЫЙ СМЕТНЫЙ РАСЧЁТ (СМЕТА) № " + str(meta.get("lsr_no", "____")), font=S["bold"]); r += 1
@@ -161,7 +170,7 @@ def _section_title(ws, put, S: dict[str, Any], r: int, idx: int, sec_name: str) 
 def _section_subtotal(ws, put, S: dict[str, Any], r: int, idx: int, total: Any) -> int:
     """Строка «Итого по разделу N» с суммой по разделу в графе «Стоимость всего»."""
     put(r, 3, f"Итого по разделу {idx}", font=S["bold"])
-    put(r, 14, _f(total), font=S["bold"], num=True)
+    put(r, 12, _f(total), font=S["bold"], num=True)
     _border_row(ws, S, r, fill=S["fill_total"])
     return r + 1
 
@@ -171,11 +180,11 @@ def _grand_summary(ws, put, S: dict[str, Any], r: int, summary: dict[str, Any]) 
     for label, key in (("Итого прямые затраты по смете", "direct"), ("В том числе ФОТ", "fot"),
                        ("Накладные расходы", "nr"), ("Сметная прибыль", "sp")):
         put(r, 3, label, font=S["bold"])
-        put(r, 14, _f(summary.get(key, 0)), font=S["bold"], num=True)
+        put(r, 12, _f(summary.get(key, 0)), font=S["bold"], num=True)
         _border_row(ws, S, r, fill=S["fill_total"])
         r += 1
     put(r, 3, "ВСЕГО по смете", font=S["bold"])
-    put(r, 14, _f(summary.get("total", 0)), font=S["bold"], num=True)
+    put(r, 12, _f(summary.get("total", 0)), font=S["bold"], num=True)
     _border_row(ws, S, r, fill=S["fill_grand"])
     return r + 1
 
@@ -190,19 +199,19 @@ def _finalize(ws, head_r: int) -> None:
 
 
 def _new_sheet():
-    """Новая книга + лист «ЛСР (Прил.4)» + стили + `put`."""
+    """Новая книга + лист «ЛСР РИМ» + стили + `put`."""
     import openpyxl
 
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = "ЛСР (Прил.4)"
+    ws.title = "ЛСР РИМ"
     S = _styles()
     return wb, ws, S, _make_put(ws, S)
 
 
 def render_trace_xlsx(trace: dict[str, Any], out_path: str | Path, *,
                       title: str | None = None, meta: Optional[dict[str, Any]] = None) -> Path:
-    """Трасса ОДНОЙ позиции → XLSX по форме Приложения 4 к 421/пр (стиль ГРАНД). Возвращает путь."""
+    """Трасса ОДНОЙ позиции → XLSX по форме Приложения 3 к 421/пр. Возвращает путь."""
     meta = meta or {}
     path = Path(out_path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -218,7 +227,7 @@ def render_trace_xlsx(trace: dict[str, Any], out_path: str | Path, *,
 
 def render_lsr_xlsx(lsr: dict[str, Any], out_path: str | Path, *,
                     title: str | None = None, meta: Optional[dict[str, Any]] = None) -> Path:
-    """Многопозиционная ЛСР (``build_lsr_trace``) → XLSX по форме Приложения 4: шапка с общим итогом +
+    """Многопозиционная ЛСР (``build_lsr_trace``) → XLSX по форме Приложения 3: шапка с общим итогом +
     разделы (заголовок → позиции с непрерывной нумерацией → «Итого по разделу N») + «ВСЕГО по смете».
 
     Рендер ГОТОВОЙ трассы — числа те же, что у каждой позиции в /rim-trace, и Σ — в свод. 0 LLM."""

@@ -186,6 +186,83 @@ def test_metal_search_can_use_gesnm38_mounting_collection():
     assert "rim_boundary" in r["norm_navigation"]
 
 
+def test_electric_cable_search_routes_to_electromontage_collection():
+    r = h.search_norm(
+        "прокладка кабеля силового ППГнг FRHF 4х1,5",
+        work_family="electric",
+        element_type="cable",
+        action="прокладка",
+        unit_hint="м",
+        top_k=8,
+    )
+
+    codes = [c["norm_code"] for c in r["candidates"]]
+    assert any("08-05-038" in code or "08-04-744" in code for code in codes)
+    assert not codes[0].startswith("ГЭСН:27-09")
+    assert any(c["score_parts"].get("route") for c in r["candidates"])
+
+
+def test_electric_pipe_search_routes_to_cable_trace_pipes():
+    r = h.search_norm(
+        "прокладка гибкой гофрированной трубы ПВХ d20 с протяжкой для кабеля",
+        work_family="electric",
+        element_type="pipe",
+        action="прокладка",
+        unit_hint="м",
+        top_k=8,
+    )
+
+    codes = [c["norm_code"] for c in r["candidates"]]
+    assert any("08-05-044" in code for code in codes)
+    assert all(not code.startswith("ГЭСН:16-04-003") for code in codes[:3])
+
+
+def test_electric_box_search_routes_to_electrical_boxes():
+    r = h.search_norm(
+        "установка коробки огнестойкой о/п 100х100х50 для кабеля",
+        work_family="electric",
+        element_type="box",
+        action="установка",
+        unit_hint="шт",
+        top_k=8,
+    )
+
+    codes = [c["norm_code"] for c in r["candidates"]]
+    assert any("08-03-545" in code or "08-03-641" in code for code in codes)
+    assert not codes[0].startswith("ГЭСН:28-05")
+
+
+def test_electric_box_route_survives_inflected_wording():
+    r = h.search_norm(
+        "монтаж распределительной коробки",
+        work_family="electric",
+        element_type="box",
+        action="монтаж",
+        unit_hint="шт",
+        top_k=6,
+    )
+
+    candidates = r["candidates"]
+    codes = [c["norm_code"] for c in candidates]
+    assert any("08-03-545" in code or "08-03-641" in code for code in codes)
+    assert any(c["score_parts"].get("route") for c in candidates)
+
+
+def test_finish_painting_search_routes_to_painting_norms():
+    r = h.search_norm(
+        "окраска потолков водно-дисперсионной краской",
+        work_family="finish",
+        element_type="painting",
+        action="окраска",
+        unit_hint="м2",
+        top_k=8,
+    )
+
+    codes = [c["norm_code"] for c in r["candidates"]]
+    assert any("15-04-005" in code or "15-04-007" in code for code in codes)
+    assert not codes[0].startswith("ГЭСН:34-01-019")
+
+
 def test_mass_context_promotes_gesnm38_over_building_frame_codes():
     r = h.search_norm(
         "Монтаж металлоконструкций масса 664.711 т",

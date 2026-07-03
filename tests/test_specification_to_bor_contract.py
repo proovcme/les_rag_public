@@ -147,6 +147,17 @@ def test_smeta_visible_language_avoids_internal_terms():
     assert "расчётная проверка" in SKILL_TEXT
 
 
+def test_rim_lsr_form_order_is_documented_in_skill():
+    assert "Порядок заполнения ЛСР РИМ" in SKILL_TEXT
+    assert "ОТ(ЗТ)" in SKILL_TEXT
+    assert "ЭМ" in SKILL_TEXT
+    assert "ОТм(ЗТм)" in SKILL_TEXT
+    assert "Прямые затраты = ОТ + ЭМ + ОТм + М" in SKILL_TEXT
+    assert "ФОТ = ОТ + ОТм" in SKILL_TEXT
+    assert "Всего по позиции = прямые затраты + НР + СП" in SKILL_TEXT
+    assert "артефакт\nдолжен быть именно формой ЛСР РИМ" in SKILL_TEXT
+
+
 def test_specification_to_bor_unit_conversion_trace():
     assert parse_ru_number("27,3") == pytest.approx(27.3)
     assert convert_unit(27.3, "кг", "т") == pytest.approx(0.0273)

@@ -135,7 +135,10 @@ WORK_FAMILY_COLLECTIONS: dict[str, set[str]] = {
     "floors": {"11"},                           # полы
     "roofing": {"12"},                          # кровли
     "waterproofing": {"08", "12"},              # гидро/тепло-изоляция
-    "finishes": {"15"},                         # отделка
+    "finishes": {"15", "34", "46"},             # отделка + смежные потолки/разборки
+    "finish": {"15", "34", "46"},               # алиас/расширенная навигация отделки и демонтажа
+    "electric": {"08"},                         # ЭОМ/электромонтаж
+    "low_current": {"ГЭСНм10", "08", "10"},     # СС/СКС + смежные кабельные конструкции
     "mep": {"16", "17", "18", "20", "21", "22"},  # инженерные сети/системы
 }
 
@@ -154,7 +157,36 @@ _ELEMENT_DEFAULT_FAMILY: dict[str, str] = {
     "roofing": "roofing",
     "floors": "floors",
     "finishes": "finishes",
+    "finish": "finishes",
+    "cable": "electric",
+    "pipe": "electric",
+    "box": "electric",
+    "fastener": "electric",
+    "device": "electric",
+    "light": "electric",
+    "hatch": "finishes",
+    "primer": "finishes",
+    "putty": "finishes",
+    "wallpaper": "finishes",
+    "painting": "finishes",
+    "ceiling": "finishes",
     "engineering_networks": "mep",
+}
+
+_WORK_FAMILY_ALIASES: dict[str, str] = {
+    "finish": "finishes",
+    "finishing": "finishes",
+    "electricity": "electric",
+    "electrical": "electric",
+    "eom": "electric",
+    "эом": "electric",
+    "power": "electric",
+    "telecom": "low_current",
+    "communications": "low_current",
+    "sks": "low_current",
+    "скс": "low_current",
+    "cc": "low_current",
+    "сс": "low_current",
 }
 
 _ACTION_ALIASES: dict[str, str] = {
@@ -216,6 +248,7 @@ _SMETA_REASON_LABELS: dict[str, tuple[str, str]] = {
     "element": ("есть признаки нужного элемента", "есть признаки другого элемента"),
     "family": ("есть признаки семейства работ", "нет признаков семейства работ"),
     "action": ("совпало действие работы", "действие работы не совпало"),
+    "route": ("попало в навигацию по разделу/семейству", ""),
     "forbidden": ("", "есть признаки специальной/неподходящей нормы"),
     "denied_subsection": ("", "подраздел не подходит для семейства работ"),
 }
@@ -273,6 +306,9 @@ _FAMILY_POSITIVE_ANCHORS: dict[str, tuple[str, ...]] = {
     "roofing": ("кровл", "покрыт", "рулон", "мембран"),
     "waterproofing": ("гидроизол", "изоляц", "оклеечн", "обмазочн", "мастичн"),
     "finishes": ("отделк", "штукатур", "окрас", "облицов"),
+    "finish": ("отделк", "штукатур", "окрас", "облицов", "потол", "шпатлев", "грунтов", "обоя"),
+    "electric": ("кабел", "провод", "труб", "короб", "светиль", "электр", "скоб", "щит", "аппарат"),
+    "low_current": ("кабел", "связ", "волокон", "оптическ", "кросс", "измерен", "шкаф", "слаботоч"),
     "mep": ("трубопровод", "водопровод", "канализац", "отоплен", "вентиляц", "кабел", "электр", "слаботоч", "сеть", "систем"),
 }
 # Чёрный список подразделов под семейство (реальные провалы паркинга).
@@ -312,6 +348,82 @@ def _norm_index() -> list[tuple[str, str, str]]:
 
 def _norm_candidate_rows(words: list[str]) -> list[SmetaNormRow]:
     return get_smeta_norm_store().search_rows(words)
+
+
+def _normalize_work_family(family: str) -> str:
+    text = (family or "").strip().lower()
+    return _WORK_FAMILY_ALIASES.get(text, text)
+
+
+_ROUTE_TERM_SETS: dict[tuple[str, str], tuple[tuple[str, ...], ...]] = {
+    ("electric", "cable"): (("кабель",), ("кабель", "пролож"), ("кабель", "труб"), ("кабель", "креплен")),
+    ("electric", "pipe"): (("трубы", "кабельных", "трасс"), ("труб", "полиэтилен"), ("труб",)),
+    ("electric", "box"): (("коробка",), ("короб", "зажим")),
+    ("electric", "fastener"): (("скоб",), ("креплен",)),
+    ("electric", "device"): (("светильник",), ("аппарат",), ("питания",)),
+    ("electric", "light"): (("светильник",),),
+    ("low_current", "cable"): (("волоконно-оптических", "кабелей"), ("кабель", "связ"), ("кабель",)),
+    ("low_current", "device"): (("кросс",), ("шкаф",), ("станция",)),
+    ("finishes", "painting"): (("окраска", "потол"), ("окраска", "водо"), ("окраска",)),
+    ("finishes", "primer"): (("огрунтовка",), ("грунтовка",)),
+    ("finishes", "putty"): (("шпатлевка", "потол"), ("шпатлевка",)),
+    ("finishes", "wallpaper"): (("оклейка", "обоями"), ("обоями", "потол"), ("стеклоткан",)),
+    ("finishes", "ceiling"): (("подвесных", "потолков"), ("реек",), ("потолк",)),
+    ("finishes", "hatch"): (("люк",), ("ревизион",), ("проем",)),
+}
+
+_ROUTE_FORBIDDEN_TITLE_ANCHORS: dict[tuple[str, str], tuple[str, ...]] = {
+    ("electric", "cable"): ("подстанц", "трансформатор", "разметк", "дорожн"),
+    ("electric", "pipe"): (
+        "ошинов", "ору", "мусоропровод", "водоснаб", "отоплен", "инвентарн", "лес", "печ", "очаг",
+        "дымов", "кирпичн",
+    ),
+    ("electric", "box"): ("станок", "автомат для", "початочн"),
+    ("finishes", "painting"): ("экранирован", "медн", "алюминиев"),
+    ("finishes", "ceiling"): ("светильник", "спринклер", "пожаротуш"),
+}
+
+
+def _intent_route_candidate_rows(*, work_family: str, element_type: str, words: list[str], limit: int = 120) -> list[SmetaNormRow]:
+    """Навигационный pool по семейству/элементу.
+
+    Это не выбор нормы: helper только поднимает релевантные сборники/таблицы в shortlist, чтобы
+    модель выбирала из инженерно близких норм, а не из случайного FTS-шума.
+    """
+    family = _normalize_work_family(work_family)
+    element = (element_type or "").strip().lower()
+    if element == "finish":
+        element = "finishes"
+    allowed = WORK_FAMILY_COLLECTIONS.get(family) or set()
+    term_sets = list(_ROUTE_TERM_SETS.get((family, element), ()))
+    if not term_sets and family == "electric":
+        term_sets = [("кабел",), ("труб",), ("короб",), ("светиль",)]
+    if not term_sets and family == "finishes":
+        term_sets = [("потол",), ("окраска",), ("шпатлев",), ("грунтов",)]
+    if not term_sets and family == "low_current":
+        term_sets = [("кабел",), ("связ",), ("волокон",)]
+    if not allowed or not term_sets:
+        return []
+    out: list[SmetaNormRow] = []
+    seen: set[str] = set()
+    forbidden = _ROUTE_FORBIDDEN_TITLE_ANCHORS.get((family, element), ())
+    for row in get_smeta_norm_store().rows:
+        if row.code in seen:
+            continue
+        if _collection_key(row.code) not in allowed:
+            continue
+        title = row.title.casefold().replace("ё", "е")
+        if forbidden and any(anchor in title for anchor in forbidden):
+            continue
+        for terms in term_sets:
+            normalized_terms = [t.casefold().replace("ё", "е") for t in terms if t]
+            if normalized_terms and all(term in title for term in normalized_terms):
+                out.append(row)
+                seen.add(row.code)
+                break
+        if len(out) >= limit:
+            break
+    return out
 
 
 # Gate 3: позитивные/негативные признаки названия по ТИПУ ЭЛЕМЕНТА (точнее семьи).
@@ -436,10 +548,12 @@ def _work_item_intent_hints(item: dict[str, Any]) -> list[str]:
 
 def _score_candidate(words: list[str], code: str, name: str, unit: str, *, work_family: str,
                      element_type: str, action: str, phys_unit: str,
-                     norm_row: SmetaNormRow | None = None) -> tuple[float, dict[str, float]] | None:
+                     norm_row: SmetaNormRow | None = None,
+                     route_codes: set[str] | None = None) -> tuple[float, dict[str, float]] | None:
     """Структурный скоринг кандидата (прозрачный score_parts). Нет лексич. совпадения → None."""
     fts = sum(1 for w in words if w in name)
-    if not fts:
+    is_route_candidate = bool(route_codes and code in route_codes)
+    if not fts and not is_route_candidate:
         return None
     parts: dict[str, float] = {"fts": float(fts)}
     pos, neg = _ELEMENT_ANCHORS.get(element_type, ((), ()))
@@ -449,6 +563,8 @@ def _score_candidate(words: list[str], code: str, name: str, unit: str, *, work_
     parts["action"] = 0.8 if (action and action.lower()[:5] and action.lower()[:5] in name) else 0.0
     _, base = _norm_unit_factor(unit)
     parts["unit"] = 1.0 if (phys_unit and _units_compatible(phys_unit, base)) else 0.0
+    if is_route_candidate:
+        parts["route"] = 5.0
     if norm_row is not None:
         profile = norm_row.profile()
         families = set(profile.get("family_hints") or [])
@@ -489,6 +605,7 @@ def search_norm(work_description: str, *, work_family: str = "", element_type: s
     words = [w for w in re.findall(r"[а-яёa-z0-9]{3,}", (work_description or "").lower())]
     if not words:
         return {"status": "not_found", "candidates": [], "missing_inputs": ["work_description"]}
+    work_family = _normalize_work_family(work_family)
     uh = _canon_unit(unit_hint)
     if (
         _env_bool("LES_SMETA_SEARCH_QUERY_ENRICHMENT_ENABLED", True)
@@ -497,11 +614,18 @@ def search_norm(work_description: str, *, work_family: str = "", element_type: s
         and (uh == "т" or any(w.startswith(("масс", "тонн")) for w in words))
     ):
         words.extend(["массой", "сборка", "краном", "листовые", "конструкции"])
-    norm_rows = _norm_candidate_rows(words)
+    route_rows = _intent_route_candidate_rows(work_family=work_family, element_type=element_type, words=words)
+    lexical_rows = _norm_candidate_rows(words)
+    norm_rows_by_code = {row.code: row for row in route_rows}
+    for row in lexical_rows:
+        norm_rows_by_code.setdefault(row.code, row)
+    norm_rows = list(norm_rows_by_code.values())
+    route_codes = {row.code for row in route_rows}
     scored: list[tuple[float, dict, SmetaNormRow]] = []
     for row in norm_rows:
         sc = _score_candidate(words, row.code, row.title, row.measure_unit, work_family=work_family,
-                              element_type=element_type, action=action, phys_unit=uh, norm_row=row)
+                              element_type=element_type, action=action, phys_unit=uh, norm_row=row,
+                              route_codes=route_codes)
         if sc is None:
             continue
         scored.append((sc[0], sc[1], row))

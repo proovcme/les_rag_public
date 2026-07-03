@@ -73,7 +73,7 @@
 - Сервис: `proxy/services/lsr_assembly_service.py` (переиспользует `stesnennost`/`fgis_price`/`kac`).
 - РИМ-трасса: `proxy/services/rim_lsr_trace_service.py` (`build_position_trace` — позиция, графы 2-12;
   `build_lsr_trace` — смета: разделы + итоги разделов + общий свод).
-- Рендер формы Прил.4: `proxy/services/rim_trace_xlsx_service.py` (`render_trace_xlsx` — позиция;
+- Рендер формы ЛСР РИМ Приложения №3: `proxy/services/rim_trace_xlsx_service.py` (`render_trace_xlsx` — позиция;
   `render_lsr_xlsx` — многопозиционная смета).
 - API: `POST /api/lsr/assemble`; `POST /api/lsr/rim-trace[/export]` (позиция);
   `POST /api/lsr/lsr-trace[/export]` (смета → XLSX-форма) (`proxy/routers/lsr.py`).

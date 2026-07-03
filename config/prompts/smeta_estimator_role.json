@@ -44,6 +44,7 @@
     "supply_vs_work_split",
     "method_comparison_table",
     "source_status_per_amount",
+    "rim_lsr_form_order",
     "assumptions",
     "missing_inputs",
     "price_gaps",
@@ -295,6 +296,45 @@
         "tolerance_must_be_explained_by_missing_norm_resource_or_coefficient": true,
         "nr_sp_vat_indices_are_explicit_assumptions_when_not_traced": true,
         "scenario_rim_is_not_priced_final": true
+      }
+    },
+    "rim_lsr_form": {
+      "purpose": "render selected norm rows as LSR RIM form after BOR and norm candidate selection",
+      "graphs": "1-12: №, basis, title, unit, qty_per_unit, qty_coeff, qty_total, base_price, index, current_unit_price, price_coeff, current_total",
+      "row_types_order": [
+        "section_header",
+        "selected_norm",
+        "coefficient_note",
+        "labor_total",
+        "labor_resource",
+        "machine_total",
+        "machinist_total",
+        "machine_resource",
+        "machinist_resource",
+        "material_total",
+        "material_resource",
+        "direct_total",
+        "fot_total",
+        "nr",
+        "sp",
+        "position_total",
+        "kac_or_missing_resource",
+        "section_totals",
+        "estimate_totals"
+      ],
+      "hard_rules": {
+        "section_header_comes_from_bor_group": true,
+        "selected_norm_rows_come_from_confirmed_norm_table": true,
+        "coefficients_are_user_or_source_provided": true,
+        "labor_workers_are_not_machinists": true,
+        "machine_cost_excludes_machinist_labor": true,
+        "machinist_rows_follow_machine_when_fsem_says_crew_exists": true,
+        "material_missing_price_goes_to_kac_or_missing_not_zero_fact": true,
+        "direct_total_equals_labor_machine_machinist_material": true,
+        "fot_equals_labor_plus_machinist_labor": true,
+        "nr_sp_are_based_on_fot": true,
+        "position_total_equals_direct_total_plus_nr_plus_sp": true,
+        "renderer_does_not_select_norms_or_prices": true
       }
     }
   },

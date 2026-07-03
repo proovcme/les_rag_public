@@ -34,11 +34,11 @@
 |---|---|---|---|---|
 | smeta/mechanics | актуальная карта режима: direct answer, role-pack/skill, ВОР, specification→BOR, RAG, форма развилки исходных объёмов, quantity trace, ГЭСН/ФГИС/КАЦ, calculator/provenance и границы model↔code | `chat.py`, `prompt_registry_service`, `estimate_harness_service`, `smeta_norm_store`, `quantity_trace_service`, `lsr_assembly_service` | [SMETA_MECHANICS.md](SMETA_MECHANICS.md) | ✅ |
 | smeta (поток) | объём ВОР → … → ВСЕГО; чат-команды сметы | `smeta_chat_service` | [ALGO-smeta.md](ALGO-smeta.md) | ✅ |
-| smeta/lsr | сборка позиции→Всего→свод; РИМ-трасса (графы 2-12); XLSX форма **Прил.4** (одно/многопозиц.) | `lsr_assembly_service`, `rim_lsr_trace_service`, `rim_trace_xlsx_service`, `fsem_machinist_service`; `POST /api/lsr/{assemble,rim-trace,lsr-trace}[/export]`; MCP `les_lsr_assemble` | [ALGO-lsr-assembly.md](ALGO-lsr-assembly.md) | ✅ |
+| smeta/lsr | сборка позиции→Всего→свод; РИМ-трасса (графы 2-12); XLSX форма **ЛСР РИМ** по Приложению №3/421-пр (одно/многопозиц.) | `lsr_assembly_service`, `rim_lsr_trace_service`, `rim_trace_xlsx_service`, `fsem_machinist_service`; `POST /api/lsr/{assemble,rim-trace,lsr-trace}[/export]`; MCP `les_lsr_assemble` | [ALGO-lsr-assembly.md](ALGO-lsr-assembly.md) | ✅ |
 | smeta/gesn | норма ГЭСН → ресурсы (расход×объём); база 42408 норм | `gesn_service`; `GET /api/lsr/gesn[/{code}/expand]`; MCP `les_gesn_*` | [ALGO-gesn.md](ALGO-gesn.md) | ✅ |
 | smeta/fgis | цена ресурса по коду из «Сплит-формы» ФГИС ЦС | `fgis_price_service`; `/api/prices/*`; MCP `les_price_lookup` | [ALGO-fgis-price.md](ALGO-fgis-price.md) | ✅ |
 | smeta/fast-visible | аварийный видимый сценарный ответ при локальном LLM timeout/empty для измеримой СКС/тяжёлых ярусных ТЗ; статус только `scenario_estimate`, не финальная ЛСР | `smeta_fast_answer_service`, `_smeta_direct_model_answer` fallback | [SMETA_MECHANICS.md](SMETA_MECHANICS.md) | ✅ |
-| smeta/artifact | оформление длинных сметных таблиц в отдельный Markdown-artifact и выгрузку XLSX/CSV: извлекает уже написанные моделью ВОР/стоимость/развилки, считает видимые суммы, добавляет дополнительную форму `lsr_display_form_v1` по видимым строкам стоимости и лист `ЛСР` в XLSX, схлопывает длинные таблицы в чате, пишет `artifact.downloads`, а Совушка показывает файлы в панели «Файлы»; не выбирает работы, нормы или ставки | `smeta_artifact_service`, `chat.py` payload `artifact`, `sovushka/pages/chat.py`, `/api/smeta-artifacts/download` | [SMETA_MECHANICS.md](SMETA_MECHANICS.md) | ✅ |
+| smeta/artifact | оформление длинных сметных таблиц в отдельный Markdown-artifact и выгрузку XLSX/CSV: извлекает уже написанные моделью ВОР/стоимость/развилки, считает видимые суммы, делает `lsr_rim_display_form_v1` отдельным способом выдачи сметного артефакта, добавляет Markdown/XLSX ЛСР РИМ в 12-графной форме Приложения №3/421-пр и отдельные источники, а исходные таблицы оставляет расшифровкой; схлопывает длинные таблицы в чате, пишет `artifact.downloads`, а Совушка показывает файлы в панели «Файлы»; не выбирает работы, нормы или ставки | `smeta_artifact_service`, `chat.py` payload `artifact`, `sovushka/pages/chat.py`, `/api/smeta-artifacts/download` | [SMETA_MECHANICS.md](SMETA_MECHANICS.md) | ✅ |
 | smeta/kac | конъюнктурный анализ цен (≥3 КП на материал) | `kac_service`; `/api/kac/*`; MCP `les_kac` | [ALGO-kac.md](ALGO-kac.md) | ✅ |
 | smeta/stesn | коэффициент стеснённости (k к ОЗП/ЭМ) | `stesnennost_service`; `/api/lsr/stesnennost/*`; MCP `les_stesnennost` | [ALGO-stesnennost.md](ALGO-stesnennost.md) | ✅ |
 | smeta/object | мутное ТЗ «дай смету на …» → model-first декомпозиция: модель сама раскладывает объект, харнесс даёт `search_norm`/`add_position`; при приложенной таблице direct Smeta отдаёт модели само вложение, skill и scoped RAG без промежуточного табличного калькулятора; если это спецификация, модель сначала собирает мост specification→BOR: поставка/работы/parent-child/quantity trace, и только затем ведёт к нормам и смете; `search_norm` использует typed SQLite-light `smeta_norm_store_v5` как широкий индекс норм с норм-карточками и навигацией (семья/элемент/действие/условия/ресурсы/provenance/`model_card`/`navigation`/`nearby_norms`/decision checklist), ранжирует редкие технические совпадения поверх общих FTS-хитов и видит overlay `ГЭСНм10` для СКС/ВОЛС; общий `candidate_selection_v1`, код проверяет нормы/единицы/объёмы и считает только прошедшие gates; прямые объёмы идут как `quantity_candidates`/`quantity_trace` с provenance, а статус ГЭСН/ФГИС/КАЦ/коэффициентов попадает в результат | `estimate_harness_service`, `smeta_norm_store`, `candidate_selection_service`, `estimate_math_service`, `quantity_trace_service`, `nr_sp_service`, `evidence_contract`, `tools/gesn_fgis_overlay_import.py`; готовые объектные составы удалены | [ALGO-object-estimate.md](ALGO-object-estimate.md) 🟡 · [ALGO-gesn.md](ALGO-gesn.md) ✅ | 🟡 |
@@ -172,6 +172,20 @@ smeta direct должен назвать это малое расхождени�
 `_smeta_harness_question` добавляет последние Q/A текущей сессии, включая предыдущий ответ с ВОР
 и таблицами, а light prompt для follow-up-команд (`добавь номера ГЭСН`, `поправь таблицу`,
 `добавь НДС`) возвращает изменённый фрагмент без полного 10-блочного ритуала.
+
+**0.24.0.197:** `search_norm` получил навигацию по разделам для `electric`, `low_current` и
+`finishes`: кабель/трубы/коробки/светильники и отделочные операции сначала поднимают релевантные
+кандидаты из электромонтажных/связных/отделочных сборников, а уже потом проходят общий score и
+applicability. Код по-прежнему не выбирает норму, но перестаёт предлагать дорожную разметку вместо
+кабеля и буровые машины вместо коробки.
+
+**0.24.0.196:** smeta direct снижает дефолтную температуру до 0 и требует устойчивый базовый
+сценарий для одного и того же исходника. Сметный артефакт рендерит `ЛСР РИМ (форма 421/пр)` перед
+исходными таблицами и делает лист `ЛСР РИМ` основным XLSX-выводом; `lsr_rim_display_form_v1`
+использует 12-графную РИМ-форму Приложения №3 в Markdown и XLSX, строку `ВСЕГО по смете` и
+отдельные источники. Форматные follow-up команды больше не должны пересчитывать смету: active-state
+передаёт до 60 строк с обоснованием, ставкой, суммой и статусом. Сценарные строки явно не являются
+финальной ЛСР без выбранных норм, ресурсов, цен, НР/СП, НДС и расчётной трассы.
 
 **0.24.0.152:** direct smeta сохраняет `active_smeta_state` из видимого ответа: задача,
 рабочий вариант, исключения и строки ВОР из таблиц. Следующий smeta-turn получает это как

@@ -139,6 +139,7 @@ def test_smeta_estimator_role_pack_is_json_contract():
     assert "work_cost_markdown_table" in pack["required_answer_capabilities"]
     assert "norm_or_source_per_cost_row" in pack["required_answer_capabilities"]
     assert "rim_scenario_estimate" in pack["required_answer_capabilities"]
+    assert "rim_lsr_form_order" in pack["required_answer_capabilities"]
     assert "normative_analogue_basis" in pack["required_answer_capabilities"]
     assert "tolerance_basis" in pack["required_answer_capabilities"]
     assert "excel_roundtrip_review" in pack["required_answer_capabilities"]
@@ -196,6 +197,15 @@ def test_smeta_estimator_role_pack_is_json_contract():
     assert "Допуск" in pack["rim_scenario_table_columns"]
     assert "rim_scenario_estimate" in pack["chain_modes"]
     assert pack["chain_modes"]["rim_scenario_estimate"]["hard_rules"]["rim_request_cannot_be_answered_by_market_range_only"] is True
+    assert "rim_lsr_form" in pack["chain_modes"]
+    rim_lsr = pack["chain_modes"]["rim_lsr_form"]
+    assert "direct_total" in rim_lsr["row_types_order"]
+    assert "machinist_resource" in rim_lsr["row_types_order"]
+    assert "kac_or_missing_resource" in rim_lsr["row_types_order"]
+    assert rim_lsr["hard_rules"]["labor_workers_are_not_machinists"] is True
+    assert rim_lsr["hard_rules"]["machine_cost_excludes_machinist_labor"] is True
+    assert rim_lsr["hard_rules"]["material_missing_price_goes_to_kac_or_missing_not_zero_fact"] is True
+    assert rim_lsr["hard_rules"]["position_total_equals_direct_total_plus_nr_plus_sp"] is True
     assert not any("144*20%*10=288" in str(item) for item in pack.values())
 
 
