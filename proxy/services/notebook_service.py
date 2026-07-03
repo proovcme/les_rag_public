@@ -34,23 +34,124 @@ _STOPWORDS = frozenset(
 
 _GESN_COLLECTION_LABELS = {
     "01": "земляные работы",
+    "02": "горновскрышные работы",
+    "03": "буровзрывные работы",
+    "04": "скважины",
     "05": "свайные работы, фундаменты и основания",
     "06": "бетонные и железобетонные монолитные конструкции",
     "07": "бетонные и железобетонные сборные конструкции",
     "08": "конструкции из кирпича и блоков",
     "09": "металлические конструкции",
     "ГЭСНм38": "монтаж металлических и листовых конструкций, оборудования и тяжёлых узлов",
+    "ГЭСНм10": "монтаж оборудования связи, СКС, ВОЛС и слаботочных систем",
     "10": "деревянные конструкции",
     "11": "полы",
     "12": "кровли",
+    "13": "защита строительных конструкций и оборудования от коррозии",
+    "14": "конструкции в сельском строительстве",
     "15": "отделочные работы",
     "16": "трубопроводы внутренние",
     "17": "водопровод и канализация",
     "18": "отопление",
+    "19": "газоснабжение внутреннее",
     "20": "вентиляция и кондиционирование",
     "21": "электромонтажные работы",
-    "22": "сети связи и слаботочные системы",
+    "22": "водопровод наружный",
+    "23": "канализация наружная",
+    "24": "теплоснабжение и газопроводы наружные",
+    "34": "сооружения связи, радиовещания и телевидения",
+    "46": "работы при реконструкции зданий и сооружений",
 }
+
+_SMETA_SOURCE_LAYERS: list[dict[str, Any]] = [
+    {
+        "id": "norms",
+        "title": "Нормы ГЭСН/ГЭСНм/ГЭСНп/ГЭСНр",
+        "role": "состав работ, измеритель нормы и ресурсы на единицу",
+        "not_role": "не текущая цена и не финальный итог",
+    },
+    {
+        "id": "resources",
+        "title": "Ресурсы нормы",
+        "role": "труд, машины, материалы, оборудование для дальнейшей оценки",
+        "not_role": "не поставка пользователя и не замена ВОР",
+    },
+    {
+        "id": "fgis_split",
+        "title": "Сплит-формы / локальные книги ФГИС ЦС",
+        "role": "цены и индексы по ресурсам для региона и периода",
+        "not_role": "не выбирают работу и не подтверждают применимость нормы",
+    },
+    {
+        "id": "nr_sp",
+        "title": "НР/СП и методические документы",
+        "role": "правила начислений после раскрытия ресурсов и ФОТ",
+        "not_role": "не произвольный процент сверху",
+    },
+    {
+        "id": "lsr_form",
+        "title": "Форма ЛСР / Методика 421/пр",
+        "role": "форма вывода, графы, разделы, итоги и trace",
+        "not_role": "не источник состава работ",
+    },
+    {
+        "id": "project_sources",
+        "title": "Проектные ВОР, спецификации, ТЗ, история",
+        "role": "состав работ, объёмы и договорные исключения",
+        "not_role": "не нормативная база сама по себе",
+    },
+]
+
+_SMETA_DOMAIN_ROUTES: list[dict[str, Any]] = [
+    {
+        "domain": "СКС / связь / ВОЛС / слаботочные системы",
+        "keys": ["ГЭСНм10", "34"],
+        "route": "сначала ВОР по шкафам, трассам, кабелю, оконцеванию, маркировке, измерениям; затем поиск норм связи/монтажа",
+        "caution": "не заменять всю СКС одной строкой поставки кабеля; активное оборудование и ПНР отделять",
+    },
+    {
+        "domain": "ЭОМ / силовые сети / освещение",
+        "keys": ["21"],
+        "route": "кабельные линии, короба/лотки, светильники, щиты, подключение и испытания вести построчно",
+        "caution": "СКС и ЭОМ не смешивать в один сборник; проверять единицу м/100 м/шт",
+    },
+    {
+        "domain": "ОВ / вентиляция / кондиционирование",
+        "keys": ["18", "20"],
+        "route": "воздуховоды, оборудование, арматура, изоляция, испытания и ПНР разделять по действиям",
+        "caution": "монтаж оборудования и устройство сетей могут идти разными нормами",
+    },
+    {
+        "domain": "ВК / НВК / трубопроводы",
+        "keys": ["16", "17", "22", "23", "24"],
+        "route": "внутренние и наружные сети разделять; трубы, фасонные части, арматуру, испытания вести раздельно",
+        "caution": "материал трубы и диаметр часто являются условием применимости",
+    },
+    {
+        "domain": "Металлоконструкции и тяжёлый монтаж",
+        "keys": ["09", "ГЭСНм38"],
+        "route": "изготовление/поставка отдельно, монтаж/сборка/болтовые соединения/такелаж отдельно",
+        "caution": "давальческий металл 0 руб не обнуляет монтаж; масса может быть объёмом нескольких разных операций",
+    },
+    {
+        "domain": "Отделка / покрытия / защита",
+        "keys": ["13", "15", "46"],
+        "route": "подготовка основания, нанесение, окраска, защитные покрытия и демонтаж разделяются",
+        "caution": "слои, основание и материал покрытия влияют на норму",
+    },
+    {
+        "domain": "Кровля / гидроизоляция",
+        "keys": ["12"],
+        "route": "пирог, основание, примыкания, утепление и покрытия вести отдельными строками",
+        "caution": "площадь материала не всегда равна площади работы без нахлёстов/примыканий",
+    },
+    {
+        "domain": "Земляные, основания, бетон",
+        "keys": ["01", "05", "06", "07", "11"],
+        "route": "грунт, основания, бетон/арматура/опалубка, сборные элементы и полы разделять",
+        "caution": "группа грунта, глубина, крепления, класс бетона и геометрия часто блокируют priced_final",
+    },
+]
 
 
 def _top(values: list[str], *, limit: int = 10) -> list[str]:
@@ -311,6 +412,106 @@ def build_gesn_notebook() -> dict[str, Any]:
     return notebook
 
 
+@lru_cache(maxsize=1)
+def build_smeta_norm_rag_notebook() -> dict[str, Any]:
+    """Build a model-facing smeta RAG map.
+
+    This notebook is navigation only. It exposes what the smeta corpus contains
+    and how to move through it, but it does not choose a norm for any user row.
+    """
+    from proxy.services.smeta_norm_store import get_smeta_norm_store
+
+    store = get_smeta_norm_store()
+    payload = store.payload()
+    by_collection: dict[str, dict[str, Any]] = {}
+    for row in store.rows:
+        rec = by_collection.setdefault(
+            row.collection_key,
+            {
+                "collection": row.collection_key,
+                "area": _GESN_COLLECTION_LABELS.get(row.collection_key, f"сборник {row.collection_key}"),
+                "norms": 0,
+                "units": [],
+                "resource_kinds": [],
+                "examples": [],
+            },
+        )
+        rec["norms"] += 1
+        rec["units"].append(row.measure_unit)
+        rec["resource_kinds"].extend(str(row.resource_kinds or "").split(","))
+        if len(rec["examples"]) < 3:
+            card = row.profile().get("model_card") or {}
+            rec["examples"].append(
+                {
+                    "code": row.code,
+                    "name": row.title[:180],
+                    "unit": row.measure_unit,
+                    "resources": card.get("resources", {}),
+                    "conditions_to_check": card.get("conditions_to_check", [])[:6],
+                    "provenance": row.provenance,
+                }
+            )
+    collections = []
+    wanted = {key for route in _SMETA_DOMAIN_ROUTES for key in route["keys"]}
+    wanted.update(["01", "05", "06", "09", "12", "15", "21", "ГЭСНм10", "ГЭСНм38"])
+    for key in sorted(wanted):
+        rec = by_collection.get(key)
+        if not rec:
+            collections.append(
+                {
+                    "collection": key,
+                    "area": _GESN_COLLECTION_LABELS.get(key, f"сборник {key}"),
+                    "norms": 0,
+                    "units": [],
+                    "resource_kinds": [],
+                    "examples": [],
+                    "status": "not_in_current_store",
+                }
+            )
+            continue
+        collections.append(
+            {
+                "collection": rec["collection"],
+                "area": rec["area"],
+                "norms": rec["norms"],
+                "units": _top(rec["units"], limit=6),
+                "resource_kinds": _top(rec["resource_kinds"], limit=6),
+                "examples": rec["examples"],
+                "status": "available",
+            }
+        )
+
+    notebook = {
+        "schema": NOTEBOOK_SCHEMA,
+        "kind": "service_source_notebook",
+        "id": "smeta_norms",
+        "name": "Сметный RAG: нормы, ресурсы, цены и форма ЛСР",
+        "context_role": "navigation",
+        "is_evidence": False,
+        "notebook_summary": {
+            "purpose": "помочь модели идти по сметному датасету: ВОР → нормативный маршрут → полный шифр → ресурсы → цены → ЛСР",
+            "limitations": [
+                "Блокнот не выбирает норму за модель и не является evidence.",
+                "Полный шифр нормы становится расчётным входом только после решения модели.",
+                "Строки без полного шифра остаются scenario/partial/missing, а не priced_final.",
+            ],
+            "search_hints": [
+                "сначала определи раздел работ и физический объём",
+                "затем найди подходящую базу/сборник/таблицу и сравни соседние нормы",
+                "после принятия нормы пиши полный шифр в графе Обоснование",
+                "после полного шифра расчётный слой раскрывает ресурсы, ФГИС/индексы, НР/СП и ЛСР",
+            ],
+        },
+        "norm_store": payload,
+        "source_layers": _SMETA_SOURCE_LAYERS,
+        "domain_routes": _SMETA_DOMAIN_ROUTES,
+        "collections": collections,
+        "updated_at": time.time(),
+    }
+    notebook["prompt_excerpt"] = smeta_norm_rag_prompt_excerpt(notebook)
+    return notebook
+
+
 def gesn_notebook_prompt_excerpt(notebook: dict[str, Any] | None = None, *, collections: list[str] | None = None) -> str:
     nb = notebook or build_gesn_notebook()
     wanted = set(collections or ["01", "05", "06", "07", "08", "09", "ГЭСНм38", "10", "11", "12", "15", "16", "17", "18", "20", "21", "22"])
@@ -337,8 +538,49 @@ def gesn_notebook_prompt_excerpt(notebook: dict[str, Any] | None = None, *, coll
     return "\n".join(lines)
 
 
+def smeta_norm_rag_prompt_excerpt(notebook: dict[str, Any] | None = None) -> str:
+    nb = notebook or build_smeta_norm_rag_notebook()
+    lines = ["[Сметный RAG-блокнот: карта норм/ресурсов/цен, навигация НЕ evidence]"]
+    payload = nb.get("norm_store") or {}
+    by_base = payload.get("by_base_type") if isinstance(payload.get("by_base_type"), dict) else {}
+    if payload:
+        base_text = ", ".join(f"{k}: {v}" for k, v in sorted(by_base.items())) or "—"
+        lines.append(
+            f"Индекс норм: {payload.get('norm_count', 0)} норм; базы: {base_text}; "
+            f"коллекций: {payload.get('collections', 0)}."
+        )
+    lines.append("Слои источников: " + "; ".join(
+        f"{layer['title']} = {layer['role']}" for layer in (nb.get("source_layers") or [])[:6]
+    ) + ".")
+    lines.append("Маршруты по разделам:")
+    for route in (nb.get("domain_routes") or [])[:8]:
+        lines.append(
+            f"- {route.get('domain')}: искать в {', '.join(route.get('keys') or [])}; "
+            f"{route.get('route')}; осторожно: {route.get('caution')}"
+        )
+    available = [c for c in (nb.get("collections") or []) if c.get("status") == "available"]
+    if available:
+        lines.append("Доступные опорные сборники/коллекции:")
+        for col in available[:12]:
+            examples = [
+                str(ex.get("code") or "")
+                for ex in (col.get("examples") or [])[:2]
+                if ex.get("code")
+            ]
+            lines.append(
+                f"- {col.get('collection')}: {col.get('area')} · норм: {col.get('norms')} · "
+                f"ед.: {', '.join((col.get('units') or [])[:4]) or '—'} · примеры шифров: {', '.join(examples) or '—'}"
+            )
+    lines.extend([
+        "Порядок для модели: ВОР → база/сборник/таблица → сравнение условий → полный шифр в Обоснование → расчётный trace.",
+        "Если полного шифра нет, не изображай priced_final: дай кандидат/добор или scenario с маркировкой.",
+    ])
+    return "\n".join(lines)
+
+
 def service_source_notebooks() -> dict[str, Any]:
     gesn = build_gesn_notebook()
+    smeta = build_smeta_norm_rag_notebook()
     return {
         "schema": NOTEBOOK_SCHEMA,
         "kind": "service_source_notebooks",
@@ -351,6 +593,17 @@ def service_source_notebooks() -> dict[str, Any]:
                 "notebook_summary": gesn["notebook_summary"],
                 "collections": gesn["collections"],
                 "prompt_excerpt": gesn["prompt_excerpt"],
-            }
+            },
+            {
+                "id": "smeta_norms",
+                "name": smeta["name"],
+                "context_role": smeta["context_role"],
+                "is_evidence": smeta["is_evidence"],
+                "notebook_summary": smeta["notebook_summary"],
+                "source_layers": smeta["source_layers"],
+                "domain_routes": smeta["domain_routes"],
+                "collections": smeta["collections"],
+                "prompt_excerpt": smeta["prompt_excerpt"],
+            },
         ],
     }

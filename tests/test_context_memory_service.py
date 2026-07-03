@@ -15,7 +15,9 @@ from proxy.services.context_memory_service import (
 from proxy.services.notebook_service import (
     build_dataset_notebook,
     build_gesn_notebook,
+    build_smeta_norm_rag_notebook,
     service_source_notebooks,
+    smeta_norm_rag_prompt_excerpt,
     warmup_dataset_notebooks,
 )
 
@@ -217,6 +219,7 @@ def test_service_source_notebooks_returns_gesn_first(monkeypatch):
     from proxy.services import notebook_service as nb
 
     nb.build_gesn_notebook.cache_clear()
+    nb.build_smeta_norm_rag_notebook.cache_clear()
     monkeypatch.setattr(nb, "build_gesn_notebook", lambda: {
         "name": "ГЭСН: карта сборников",
         "context_role": "navigation",
@@ -225,10 +228,45 @@ def test_service_source_notebooks_returns_gesn_first(monkeypatch):
         "collections": [],
         "prompt_excerpt": "x",
     })
+    monkeypatch.setattr(nb, "build_smeta_norm_rag_notebook", lambda: {
+        "name": "Сметный RAG",
+        "context_role": "navigation",
+        "is_evidence": False,
+        "notebook_summary": {"purpose": "x"},
+        "source_layers": [],
+        "domain_routes": [],
+        "collections": [],
+        "prompt_excerpt": "x",
+    })
 
     result = service_source_notebooks()
 
     assert result["notebooks"][0]["id"] == "gesn"
+    assert result["notebooks"][1]["id"] == "smeta_norms"
+
+
+def test_smeta_norm_rag_notebook_is_navigation_map_not_candidate_selector():
+    from proxy.services import notebook_service as nb
+
+    nb.build_smeta_norm_rag_notebook.cache_clear()
+    notebook = build_smeta_norm_rag_notebook()
+
+    assert notebook["id"] == "smeta_norms"
+    assert notebook["context_role"] == "navigation"
+    assert notebook["is_evidence"] is False
+    layer_ids = {layer["id"] for layer in notebook["source_layers"]}
+    assert {"norms", "resources", "fgis_split", "lsr_form", "project_sources"} <= layer_ids
+    sks = next(route for route in notebook["domain_routes"] if "СКС" in route["domain"])
+    assert "ГЭСНм10" in sks["keys"]
+    assert "не заменять всю СКС" in sks["caution"]
+    by_collection = {item["collection"]: item for item in notebook["collections"]}
+    assert by_collection["ГЭСНм10"]["status"] == "available"
+    assert by_collection["ГЭСНм10"]["examples"]
+    assert any(str(ex["code"]).startswith("ГЭСНм:10-") for ex in by_collection["ГЭСНм10"]["examples"])
+    text = smeta_norm_rag_prompt_excerpt(notebook)
+    assert "ВОР → база/сборник/таблица" in text
+    assert "полный шифр" in text
+    assert "navigation" not in text.lower() or "НЕ evidence" in text
 
 
 def test_warmup_dataset_profiles_builds_all_requested(tmp_path, monkeypatch):

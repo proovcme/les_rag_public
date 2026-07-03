@@ -2377,11 +2377,11 @@ def _smeta_service_context_prompt() -> str:
     """
     blocks: list[str] = []
     try:
-        from proxy.services.notebook_service import gesn_notebook_prompt_excerpt
+        from proxy.services.notebook_service import smeta_norm_rag_prompt_excerpt
 
         blocks.append(
             "Сметный RAG-блокнот ГЭСН/РИМ (навигация, не готовый ответ):\n"
-            f"{gesn_notebook_prompt_excerpt()}"
+            f"{smeta_norm_rag_prompt_excerpt()}"
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("[SMETA] service GESN prompt skipped: %s", exc)
@@ -2448,9 +2448,16 @@ def _smeta_service_rag_map_context() -> str:
     contractual quantities; it only tells the model which LES sources exist
     before it asks the user for missing files.
     """
+    notebook_text = ""
+    try:
+        from proxy.services.notebook_service import smeta_norm_rag_prompt_excerpt
+
+        notebook_text = smeta_norm_rag_prompt_excerpt()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[SMETA] smeta norm RAG notebook skipped: %s", exc)
     overview = Path("RAG_Content/TABLE_SMETA/SMETA_SERVICE/00_smeta_service_overview.md")
     if not overview.exists():
-        return ""
+        return notebook_text
     try:
         text = overview.read_text(encoding="utf-8")
     except Exception as exc:  # noqa: BLE001
@@ -2480,12 +2487,13 @@ def _smeta_service_rag_map_context() -> str:
             lines.append(line)
             collection_count += 1
     if not lines:
-        return ""
+        return notebook_text
     lines.extend([
         "Правило: это карта доступных сметных источников ЛЕС, а не готовая смета.",
         "Сначала используй эту карту и RAG для выбора нормативного маршрута; у пользователя спрашивай только то, чего в карте/источниках нет.",
     ])
-    return "Карта сметного RAG ЛЕС:\n" + "\n".join(lines[:90])
+    overview_text = "Карта сметного RAG ЛЕС:\n" + "\n".join(lines[:90])
+    return "\n\n".join(x for x in (notebook_text, overview_text) if x)
 
 
 def _norm_code_label(code: Any) -> str:
