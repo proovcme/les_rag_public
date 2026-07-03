@@ -20,7 +20,7 @@ APP_VERSION = "5.1.0"                 # пользовательская «ма�
 HARNESS_VERSION = "0.24"             # веха roadmap (v0.NN); двигать на смене вехи
 # Гранулярная версия «где мы»: 0.<веха>.<фича>.<патч>. Двигать КАЖДУЮ фичу/фикс + строка в
 # docs/RELEASE_LEDGER.md. Это основной номер в /api/version и бейдже (см. docs/RELEASE_LEDGER.md).
-LES_VERSION = "0.24.0.181"
+LES_VERSION = "0.24.0.182"
 EVIDENCE_SCHEMA_VERSION = "1.0"
 EXTRACTION_SCHEMA_VERSION = "1.0"
 RESOURCE_CALC_VERSION = "0.6"
@@ -56,6 +56,7 @@ _CRITICAL_FILES = (
     "proxy/services/saferag_service.py",
     "proxy/services/external_radar_service.py",
     "proxy/services/doc_review_service.py",
+    "proxy/services/document_explorer_service.py",
     "proxy/services/candidate_selection_service.py",
     "proxy/services/estimate_harness_service.py",
     "proxy/services/estimate_math_service.py",
@@ -88,6 +89,7 @@ _CRITICAL_FILES = (
     "tools/smeta_ru_norm_download.py",
     "tools/smeta_ru_norm_rag_ingest.py",
     "sovushka/pages/chat.py",
+    "sovushka/pages/documents.py",
     "sovushka/pages/instrumenty.py",
     "sovushka/components/header.py",
     "sovushka/answer_render.py",

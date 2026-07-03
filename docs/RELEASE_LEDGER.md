@@ -7,14 +7,25 @@
 ## Текущее состояние (2026-07-03)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.181  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.182  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.181 no-AI document explorer API + Windows light Qdrant reuse
+задеплоено на рантайм:     0.24.0.182 Documents UI + doc_id document navigation
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.181 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
+рантайм /api/version:      0.24.0.182 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.182 — Совушка получила no-AI вкладку «Документы» в админке:
+> датасеты → документы → фрагменты, поиск по выбранному датасету/документу
+> или всему индексу и копирование списка источников для артефакта. Document
+> Explorer API расширен `doc_id`-маршрутами:
+> `GET /api/documents/by-id/{doc_id}` и
+> `GET /api/documents/by-id/{doc_id}/chunks`; `GET /api/documents/search`
+> принимает `doc_id`. Если в старом/живом индексе `documents.id` не совпал с
+> `lexical_chunks.doc_id`, чтение падает назад на устойчивую пару
+> `dataset_id + file_name`. Старые маршруты по `dataset_id/doc_name`
+> сохранены. Слой остаётся навигационным: модель отвечает, код только
+> показывает корпус.
 > 0.24.0.181 — Windows light installer/startup fix: `start-light.ps1 -StartQdrant`
 > больше не делает слепой `docker rm -f`, а переиспользует running/existing
 > `les-light-qdrant` или создаёт его при отсутствии. Это сохраняет локальный

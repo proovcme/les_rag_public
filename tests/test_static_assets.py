@@ -22,9 +22,23 @@ def test_admin_instruments_tab_is_mounted():
     assert "build_instrumenty()" in app_shell
 
 
+def test_admin_documents_tab_is_mounted():
+    header = Path("sovushka/components/header.py").read_text(encoding="utf-8")
+    app_shell = Path("sovushka_ng.py").read_text(encoding="utf-8")
+    page = Path("sovushka/pages/documents.py").read_text(encoding="utf-8")
+    router = Path("proxy/routers/documents.py").read_text(encoding="utf-8")
+
+    assert 'ui.tab("Документы"' in header
+    assert "from sovushka.pages.documents import build_documents" in app_shell
+    assert "build_documents()" in app_shell
+    assert "датасет → документ → фрагменты, без модели" in page
+    assert "do not call LLMs" in router
+
+
 def test_deploy_allows_sovushka_shell():
     from tools import deploy_to_runtime as deploy
 
     assert deploy._allowed("sovushka_ng.py")
+    assert deploy._allowed("sovushka/pages/documents.py")
     assert any(prefix == "sovushka_ng.py" and service == "com.les.sovushka"
                for prefix, service in deploy.SERVICE_BY_PREFIX)

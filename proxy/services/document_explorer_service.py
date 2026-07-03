@@ -108,6 +108,30 @@ class DocumentExplorer:
             ).fetchall()
         return {"dataset_id": dataset_id, "total": total, "limit": limit, "offset": offset, "documents": [dict(row) for row in rows]}
 
+    def get_document(self, doc_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            _ensure_tables(conn)
+            row = conn.execute(
+                """
+                SELECT
+                    id,
+                    dataset_id,
+                    file_name,
+                    COALESCE(status, '') AS status,
+                    COALESCE(file_size, 0) AS file_size,
+                    COALESCE(chunk_count, 0) AS chunk_count,
+                    COALESCE(doc_type, '') AS doc_type,
+                    COALESCE(content_type, '') AS content_type,
+                    COALESCE(domain, '') AS domain,
+                    COALESCE(source_path, '') AS source_path,
+                    COALESCE(last_error, '') AS last_error
+                FROM documents
+                WHERE id = ?
+                """,
+                (doc_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
     def document_chunks(
         self,
         dataset_id: str,
@@ -164,25 +188,136 @@ class DocumentExplorer:
             "chunks": [_chunk_payload(row, max_chars=max_chars) for row in rows],
         }
 
+    def document_chunks_by_id(
+        self,
+        doc_id: str,
+        *,
+        q: str = "",
+        limit: int = 80,
+        offset: int = 0,
+        max_chars: int = 4000,
+    ) -> dict[str, Any] | None:
+        document = self.get_document(doc_id)
+        if not document:
+            return None
+        dataset_id = str(document["dataset_id"])
+        doc_name = str(document["file_name"])
+        with self.connect() as conn:
+            _ensure_tables(conn)
+            if q.strip():
+                result = self._search_chunks(
+                    conn,
+                    q=q,
+                    dataset_ids=[dataset_id],
+                    doc_id=doc_id,
+                    limit=limit,
+                    max_chars=max_chars,
+                )
+                if int(result.get("count") or 0) == 0:
+                    result = self._search_chunks(
+                        conn,
+                        q=q,
+                        dataset_ids=[dataset_id],
+                        doc_name=doc_name,
+                        limit=limit,
+                        max_chars=max_chars,
+                    )
+                    result["warning"] = "doc_id_no_lexical_match_fallback_doc_name"
+                result["document"] = document
+                return result
+
+            total = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM lexical_chunks
+                    WHERE collection = ? AND doc_id = ?
+                    """,
+                    (self.collection_name, doc_id),
+                ).fetchone()[0]
+            )
+            params: tuple[Any, ...] = (self.collection_name, doc_id, limit, offset)
+            where = "collection = ? AND doc_id = ?"
+            warning = ""
+            if total == 0:
+                total = int(
+                    conn.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM lexical_chunks
+                        WHERE collection = ? AND dataset_id = ? AND doc_name = ?
+                        """,
+                        (self.collection_name, dataset_id, doc_name),
+                    ).fetchone()[0]
+                )
+                where = "collection = ? AND dataset_id = ? AND doc_name = ?"
+                params = (self.collection_name, dataset_id, doc_name, limit, offset)
+                if total:
+                    warning = "doc_id_no_lexical_match_fallback_doc_name"
+            rows = conn.execute(
+                f"""
+                SELECT
+                    point_id, dataset_id, doc_id, doc_name, text, chunk_ord,
+                    COALESCE(section_heading, '') AS section_heading,
+                    COALESCE(parent_heading, '') AS parent_heading,
+                    COALESCE(context_kind, '') AS context_kind
+                FROM lexical_chunks
+                WHERE {where}
+                ORDER BY COALESCE(chunk_ord, 0), id
+                LIMIT ? OFFSET ?
+                """,
+                params,
+            ).fetchall()
+        payload = {
+            "document": document,
+            "dataset_id": dataset_id,
+            "doc_id": doc_id,
+            "doc_name": doc_name,
+            "query": "",
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "chunks": [_chunk_payload(row, max_chars=max_chars) for row in rows],
+        }
+        if warning:
+            payload["warning"] = warning
+        return payload
+
     def search(
         self,
         q: str,
         *,
         dataset_ids: list[str] | None = None,
         doc_name: str = "",
+        doc_id: str = "",
         limit: int = 50,
         max_chars: int = 1200,
     ) -> dict[str, Any]:
         with self.connect() as conn:
             _ensure_tables(conn)
-            return self._search_chunks(
+            result = self._search_chunks(
                 conn,
                 q=q,
                 dataset_ids=dataset_ids or [],
                 doc_name=doc_name,
+                doc_id=doc_id,
                 limit=limit,
                 max_chars=max_chars,
             )
+            if doc_id and int(result.get("count") or 0) == 0:
+                document = self.get_document(doc_id)
+                if document:
+                    result = self._search_chunks(
+                        conn,
+                        q=q,
+                        dataset_ids=[str(document["dataset_id"])],
+                        doc_name=str(document["file_name"]),
+                        limit=limit,
+                        max_chars=max_chars,
+                    )
+                    result["doc_id"] = doc_id
+                    result["warning"] = "doc_id_no_lexical_match_fallback_doc_name"
+            return result
 
     def _search_chunks(
         self,
@@ -191,6 +326,7 @@ class DocumentExplorer:
         q: str,
         dataset_ids: list[str],
         doc_name: str = "",
+        doc_id: str = "",
         limit: int,
         max_chars: int,
     ) -> dict[str, Any]:
@@ -201,6 +337,7 @@ class DocumentExplorer:
                 q=q,
                 dataset_ids=dataset_ids,
                 doc_name=doc_name,
+                doc_id=doc_id,
                 limit=limit,
                 max_chars=max_chars,
                 warning="empty_fts_query",
@@ -214,6 +351,10 @@ class DocumentExplorer:
         if doc_name:
             doc_clause = " AND c.doc_name = ?"
             params.append(doc_name)
+        doc_id_clause = ""
+        if doc_id:
+            doc_id_clause = " AND c.doc_id = ?"
+            params.append(doc_id)
         params.append(limit)
         try:
             rows = conn.execute(
@@ -230,6 +371,7 @@ class DocumentExplorer:
                   AND c.collection = ?
                   {dataset_clause}
                   {doc_clause}
+                  {doc_id_clause}
                 ORDER BY bm25_score ASC
                 LIMIT ?
                 """,
@@ -241,6 +383,7 @@ class DocumentExplorer:
                 q=q,
                 dataset_ids=dataset_ids,
                 doc_name=doc_name,
+                doc_id=doc_id,
                 limit=limit,
                 max_chars=max_chars,
                 warning=f"fts_error: {str(exc)[:120]}",
@@ -259,6 +402,7 @@ class DocumentExplorer:
                 q=q,
                 dataset_ids=dataset_ids,
                 doc_name=doc_name,
+                doc_id=doc_id,
                 limit=limit,
                 max_chars=max_chars,
                 warning="fts_no_hits",
@@ -267,6 +411,7 @@ class DocumentExplorer:
             "query": q,
             "dataset_ids": dataset_ids,
             "doc_name": doc_name,
+            "doc_id": doc_id,
             "count": len(hits),
             "hits": hits,
         }
@@ -278,6 +423,7 @@ class DocumentExplorer:
         q: str,
         dataset_ids: list[str],
         doc_name: str,
+        doc_id: str,
         limit: int,
         max_chars: int,
         warning: str,
@@ -293,6 +439,9 @@ class DocumentExplorer:
         if doc_name:
             clauses.append("doc_name = ?")
             params.append(doc_name)
+        if doc_id:
+            clauses.append("doc_id = ?")
+            params.append(doc_id)
         for token in tokens:
             variants = _token_variants(token)
             clauses.append("(" + " OR ".join("text LIKE ?" for _ in variants) + ")")
@@ -323,6 +472,7 @@ class DocumentExplorer:
             "query": q,
             "dataset_ids": dataset_ids,
             "doc_name": doc_name,
+            "doc_id": doc_id,
             "count": len(hits),
             "hits": hits,
             "warning": warning,

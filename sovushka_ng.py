@@ -257,6 +257,7 @@ async def classic_admin_page(request: Request):
     from sovushka.components.header import build_header
     from sovushka.components.logterm import build_log_terminal
     from sovushka.pages.diag import build_diag
+    from sovushka.pages.documents import build_documents
     from sovushka.pages.instrumenty import build_instrumenty
     from sovushka.pages.samovar import build_samovar
     from sovushka.pages.volk import build_volk
@@ -288,6 +289,7 @@ async def classic_admin_page(request: Request):
 
         tab_diag       = tr.get("diag")
         tab_samovar    = tr.get("samovar")
+        tab_documents  = tr.get("documents")
         tab_instrumenty = tr.get("instrumenty")
         tab_qdrant_viz = tr.get("qdrant_viz")
         tab_volk       = tr.get("volk")
@@ -311,6 +313,8 @@ async def classic_admin_page(request: Request):
                 build_diag()
             with ui.tab_panel(tab_samovar):
                 build_samovar()
+            with ui.tab_panel(tab_documents):
+                build_documents()
             with ui.tab_panel(tab_instrumenty):
                 build_instrumenty()
             with ui.tab_panel(tab_qdrant_viz):
@@ -326,6 +330,7 @@ async def classic_admin_page(request: Request):
     _tab_map = {
         "Состояние": tab_diag,
         "Датасеты":  tab_samovar,
+        "Документы": tab_documents,
         "Инструменты": tab_instrumenty,
         "Визуал":    tab_qdrant_viz,
         "Доступ":    tab_volk,

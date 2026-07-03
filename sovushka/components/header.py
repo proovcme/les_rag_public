@@ -128,6 +128,7 @@ def build_header(
                 # иначе оператор не видит служебные источники, ВОР и нормоконтроль.
                 tab_refs["diag"]       = ui.tab("Состояние", icon="o_health_and_safety")
                 tab_refs["samovar"]    = ui.tab("Датасеты",  icon="o_inventory_2")
+                tab_refs["documents"]  = ui.tab("Документы", icon="o_folder_open")
                 tab_refs["instrumenty"] = ui.tab("Инструменты", icon="o_build")
                 tab_refs["qdrant_viz"] = ui.tab("Визуал",    icon="o_scatter_plot")
                 tab_refs["volk"]       = ui.tab("Доступ",    icon="o_vpn_key")  # В.О.Л.К. — контур доступа

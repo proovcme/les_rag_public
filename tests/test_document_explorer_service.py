@@ -47,6 +47,7 @@ def _seed_db(path):
         docs = [
             ("doc-1", "fire", "NTD/СП 7.13130.docx", "INDEXED", 1000, 2, "normative", "text", "NTD_FIRE", "/src/sp7.docx"),
             ("doc-2", "fire", "NTD/СП 1.13130.docx", "INDEXED", 800, 1, "normative", "text", "NTD_FIRE", "/src/sp1.docx"),
+            ("doc-3", "fire", "NTD/СП 2.13130.docx", "INDEXED", 900, 1, "normative", "text", "NTD_FIRE", "/src/sp2.docx"),
         ]
         conn.executemany(
             """
@@ -60,6 +61,7 @@ def _seed_db(path):
             ("p1", "fire", "doc-1", "NTD/СП 7.13130.docx", "Пункт 7.2. Требуется вытяжная противодымная вентиляция для удаления дыма из коридоров.", 1),
             ("p2", "fire", "doc-1", "NTD/СП 7.13130.docx", "Пункт 7.3. Допускается не выполнять дымоудаление при пожаре в одном помещении.", 2),
             ("p3", "fire", "doc-2", "NTD/СП 1.13130.docx", "Эвакуационные пути и выходы нормируются отдельным сводом правил.", 1),
+            ("p4", "fire", "lex-doc-3", "NTD/СП 2.13130.docx", "Огнестойкость строительных конструкций проверяется по проектным решениям.", 1),
         ]
         conn.executemany(
             """
@@ -93,8 +95,8 @@ def test_document_explorer_lists_datasets_and_documents(explorer):
             "name": "NTD_FIRE_Index",
             "status": "IDLE",
             "chunk_count": 3,
-            "document_count": 2,
-            "indexed_count": 2,
+            "document_count": 3,
+            "indexed_count": 3,
         }
     ]
 
@@ -123,12 +125,51 @@ def test_document_explorer_returns_ordered_document_chunks(explorer):
     assert "Допускается" in result["chunks"][1]["text"]
 
 
+def test_document_explorer_opens_document_and_chunks_by_id(explorer):
+    document = explorer.get_document("doc-1")
+    result = explorer.document_chunks_by_id("doc-1")
+
+    assert document is not None
+    assert document["file_name"] == "NTD/СП 7.13130.docx"
+    assert result is not None
+    assert result["document"]["id"] == "doc-1"
+    assert result["total"] == 2
+    assert [chunk["chunk_ord"] for chunk in result["chunks"]] == [1, 2]
+
+
+def test_document_explorer_doc_id_falls_back_to_dataset_and_file_name(explorer):
+    result = explorer.document_chunks_by_id("doc-3")
+
+    assert result is not None
+    assert result["total"] == 1
+    assert result["warning"] == "doc_id_no_lexical_match_fallback_doc_name"
+    assert result["chunks"][0]["doc_id"] == "lex-doc-3"
+    assert "Огнестойкость" in result["chunks"][0]["text"]
+
+
 def test_document_explorer_searches_inside_single_document(explorer):
     result = explorer.document_chunks("fire", "NTD/СП 7.13130.docx", q="допускается не выполнять")
 
     assert result["count"] == 1
     assert result["hits"][0]["chunk_ord"] == 2
     assert "Допускается" in result["hits"][0]["text"]
+
+
+def test_document_explorer_searches_inside_document_by_id(explorer):
+    result = explorer.search("дымоудаление", dataset_ids=["fire"], doc_id="doc-1")
+
+    assert result["count"] == 1
+    assert result["hits"][0]["doc_id"] == "doc-1"
+    assert "дымоудал" in result["hits"][0]["snippet"].lower()
+
+
+def test_document_explorer_search_by_doc_id_falls_back_to_file_name(explorer):
+    result = explorer.search("огнестойкость", doc_id="doc-3")
+
+    assert result["count"] == 1
+    assert result["doc_id"] == "doc-3"
+    assert result["warning"] == "doc_id_no_lexical_match_fallback_doc_name"
+    assert "Огнестойкость" in result["hits"][0]["snippet"]
 
 
 @pytest.mark.asyncio
@@ -150,6 +191,15 @@ async def test_documents_router_uses_explorer(monkeypatch, explorer):
         max_chars=4000,
         _user=object(),
     )
+    by_id = await documents_router.document_chunks_by_id(
+        doc_id="doc-1",
+        limit=80,
+        offset=0,
+        max_chars=4000,
+        _user=object(),
+    )
 
     assert found["count"] >= 1
     assert chunks["total"] == 2
+    assert by_id["document"]["id"] == "doc-1"
+    assert by_id["total"] == 2
