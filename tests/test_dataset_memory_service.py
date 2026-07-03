@@ -286,6 +286,24 @@ def test_smeta_norm_roles_distinguish_resource_bases():
     assert equipment["document_role"] == "ФСБЦ оборудование"
 
 
+def test_smeta_norm_nested_tables_have_human_roles():
+    norm_table = infer_file_typing(
+        {
+            "file_name": "TABLE_SMETA/SMETA_RU_NORM/fsnb2022/projected_nested/2022_18.vnbx/A_SRF_F.json.md",
+            "domain": "SMETA_RU_NORM_FSNB2022",
+        }
+    )
+    resource_table = infer_file_typing(
+        {
+            "file_name": "TABLE_SMETA/SMETA_RU_NORM/fsnb2022/projected_nested/2022_18.vnbx/A_SRF_TR.json.md",
+            "domain": "SMETA_RU_NORM_FSNB2022",
+        }
+    )
+
+    assert norm_table["document_role"] == "таблица норм/расценок ФСНБ"
+    assert resource_table["document_role"] == "таблица ресурсов нормы"
+
+
 def test_project_estimate_still_keeps_estimate_role():
     typing = infer_file_typing(
         {

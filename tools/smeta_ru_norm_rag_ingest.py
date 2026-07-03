@@ -49,6 +49,69 @@ CATEGORY_LABELS = {
 TEXT_PROJECTION_SUFFIXES = {".txt", ".csv", ".xml", ".json", ".html", ".htm", ".ini", ".cfg"}
 NESTED_ARCHIVE_SUFFIXES = {".vnbx"}
 
+NESTED_TABLE_HINTS: dict[str, dict[str, str]] = {
+    "A_SRF_F": {
+        "role": "таблица норм/расценок ФСНБ",
+        "base": "ГЭСН/ФЕР/ресурсная нормативная база",
+        "use": "искать шифр, наименование нормы, измеритель и связь с разделом перед раскрытием ресурсов",
+    },
+    "A_SRF_TR": {
+        "role": "таблица ресурсов нормы",
+        "base": "ресурсы ФСНБ",
+        "use": "связывать выбранную норму с трудом, машинами, материалами и ресурсными кодами",
+    },
+    "A_SRF_VR": {
+        "role": "таблица видов работ/разделов норм",
+        "base": "структура ФСНБ",
+        "use": "переходить от раздела и вида работ к таблицам норм",
+    },
+    "A_F3_VR": {
+        "role": "иерархия разделов и таблиц",
+        "base": "классификатор ФСНБ",
+        "use": "строить навигацию сборник → раздел → таблица → норма",
+    },
+    "B_NORMTYPE": {
+        "role": "тип нормативной базы",
+        "base": "классификатор ФСНБ",
+        "use": "понять редакцию и семейство нормативной базы",
+    },
+    "B_GROUP": {
+        "role": "группы нормативного классификатора",
+        "base": "классификатор ФСНБ",
+        "use": "группировать нормы и ресурсы по разделам",
+    },
+    "B_PUTNAME": {
+        "role": "наименования путей/разделов",
+        "base": "классификатор ФСНБ",
+        "use": "расшифровывать путь документа внутри базы",
+    },
+    "LEVEL_COST": {
+        "role": "ценовой уровень/стоимостные параметры",
+        "base": "стоимостные таблицы ФСНБ",
+        "use": "проверять, где лежит стоимость или уровень цены; не считать итог без trace",
+    },
+    "LEVEL_COMPOSE": {
+        "role": "состав уровня/ресурсная структура",
+        "base": "структурные таблицы ФСНБ",
+        "use": "связывать норму, уровень и состав ресурсов",
+    },
+    "LEVEL_PARAMS": {
+        "role": "параметры уровня/таблицы",
+        "base": "структурные таблицы ФСНБ",
+        "use": "читать параметры, но не выбирать применимость за модель",
+    },
+    "LEVEL_VC": {
+        "role": "вспомогательная таблица связей уровня",
+        "base": "структурные таблицы ФСНБ",
+        "use": "навигация по связям внутри архива",
+    },
+    "ARCTYPE": {
+        "role": "тип архива/служебный классификатор",
+        "base": "метаданные архива",
+        "use": "служебная проверка состава архива; обычно не первый источник для ответа",
+    },
+}
+
 
 def _json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True)
@@ -73,6 +136,37 @@ def _slug(value: str, *, fallback: str = "item") -> str:
     out = re.sub(r"[^0-9A-Za-zА-Яа-я._-]+", "_", value.strip())
     out = re.sub(r"_+", "_", out).strip("._-")
     return (out or fallback)[:160]
+
+
+def _nested_table_hint(inner_path: str, text: str = "") -> dict[str, str]:
+    """Human navigation label for Smeta.RU internal table names.
+
+    The vnbx archive uses DB-like file names (A_SRF_F, LEVEL_COST, ...). These
+    labels are navigation, not a decision about work composition or norm
+    applicability.
+    """
+    stem = Path(inner_path).stem.upper()
+    for prefix, hint in NESTED_TABLE_HINTS.items():
+        if stem.startswith(prefix):
+            return hint
+    probe = f"{inner_path}\n{text[:2000]}".casefold().replace("ё", "е")
+    if "shifr" in probe or "шифр" in probe or "code" in probe:
+        return {
+            "role": "таблица нормативных строк",
+            "base": "ФСНБ",
+            "use": "искать шифр и наименование; применимость подтверждать отдельной нормой/составом работ",
+        }
+    if "resource" in probe or "ресурс" in probe:
+        return {
+            "role": "таблица ресурсов",
+            "base": "ресурсы ФСНБ",
+            "use": "связывать норму с ресурсами после выбора нормативного маршрута",
+        }
+    return {
+        "role": "внутренняя таблица нормативной базы",
+        "base": "ФСНБ",
+        "use": "навигация по архиву; открыть соседние таблицы и manifest перед выводом",
+    }
 
 
 def _category_dataset_name(category: str) -> str:
@@ -268,6 +362,7 @@ def _project_nested_archives(
                     continue
                 inner_slug = _slug(info.filename, fallback="inner")
                 target = target_root / archive_slug / f"{inner_slug}.md"
+                hint = _nested_table_hint(info.filename, text)
                 body = [
                     "---",
                     "les_source: smeta_ru_norm_nested_archive_projection",
@@ -275,12 +370,22 @@ def _project_nested_archives(
                     f"inner_path: {info.filename}",
                     f"inner_suffix: {inner_suffix}",
                     f"inner_bytes: {info.file_size}",
+                    f"source_role: {hint['role']}",
+                    f"normative_base_hint: {hint['base']}",
                     "---",
                     "",
-                    f"# Smeta.RU nested projection: {info.filename}",
+                    f"# {hint['role']}: {info.filename}",
                     "",
                     f"Source archive: `{rel_archive.as_posix()}`.",
                     "Это текстовая проекция внутреннего файла из `.vnbx` для RAG.",
+                    "",
+                    "## Роль для модели",
+                    "",
+                    f"- Роль: {hint['role']}.",
+                    f"- База/семейство: {hint['base']}.",
+                    f"- Как использовать: {hint['use']}.",
+                    "- Это навигация/evidence к нормативному корпусу, а не готовый выбор нормы и не priced_final.",
+                    "- Для сметы сначала выбрать ВОР и нормативный маршрут, затем открыть норму, ресурсы, цены/индексы и trace.",
                     "",
                     "```json" if inner_suffix == ".json" else "```text",
                     text[:max_chars],

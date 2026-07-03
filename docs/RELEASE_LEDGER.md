@@ -7,13 +7,25 @@
 ## Текущее состояние (2026-07-03)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.207  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.208  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.207 documents dataset map UI + operator guidance + smeta norm typing
+задеплоено на рантайм:     0.24.0.208 FSNB human projection cards + notebook/RAG article
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.207 (deploy stamp после make ship, 2026-07-03; commit stamp до следующего git commit)
+рантайм /api/version:      0.24.0.208 (deploy stamp после make ship, 2026-07-03; commit stamp до следующего git commit)
 ```
+
+> 0.24.0.208 — добавлен публичный текст `docs/ARTICLE_NOTEBOOK_RAG_ARCHITECTURE.md`
+> о подходе LES: не просто поиск по нарезанным фрагментам, а блокноты
+> источников, карты датасетов, роли документов, веса навигации и баланс
+> “модель связывает, источники доказывают, код считает”. Для сметного RAG
+> projector `tools/smeta_ru_norm_rag_ingest.py` теперь пишет человеческие
+> карточки внутренних таблиц `.vnbx`: `A_SRF_F` = таблица норм/расценок ФСНБ,
+> `A_SRF_TR` = таблица ресурсов нормы, `A_SRF_VR/A_F3_VR` = иерархия разделов,
+> `B_NORMTYPE` = тип нормативной базы, `LEVEL_COST` = ценовой уровень. Typed
+> dataset memory умеет давать эти роли и для уже старых проекций без полного
+> переиндекса, чтобы модель открывала нормативный корпус по смыслу, а не по
+> служебным именам.
 
 > 0.24.0.207 — вкладка «Документы» получила человеческую витрину typed dataset
 > memory: справа можно переключаться между фрагментами и «Картой» датасета,

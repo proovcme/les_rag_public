@@ -149,6 +149,20 @@ _SERVICE_NOISE_RE = re.compile(
     r"(^|[/\\])(?:\.pdf_preprocess_state\.json|00_.*|.*(?:manifest|dataset_card|group_classifier|classifier|preprocess_state).*)$",
     re.I,
 )
+_SMETA_NESTED_ROLE_HINTS: tuple[tuple[str, str], ...] = (
+    ("a_srf_f", "таблица норм/расценок ФСНБ"),
+    ("a_srf_tr", "таблица ресурсов нормы"),
+    ("a_srf_vr", "таблица видов работ/разделов норм"),
+    ("a_f3_vr", "иерархия разделов и таблиц ФСНБ"),
+    ("b_normtype", "тип нормативной базы"),
+    ("b_group", "группы нормативного классификатора"),
+    ("b_putname", "наименования путей/разделов"),
+    ("level_cost", "ценовой уровень/стоимостные параметры"),
+    ("level_compose", "состав уровня/ресурсная структура"),
+    ("level_params", "параметры уровня/таблицы"),
+    ("level_vc", "вспомогательная таблица связей уровня"),
+    ("arctype", "тип архива/служебный классификатор"),
+)
 _RUNNING_READER_TASKS: set[str] = set()
 
 DATASET_READER_SCHEMA: dict[str, Any] = {
@@ -384,6 +398,14 @@ def _service_noise_penalty(card_or_file: dict[str, Any] | str) -> int:
     return 10_000 if _is_service_noise_file(file_name) else 0
 
 
+def _smeta_nested_role_hint(probe: str) -> str | None:
+    normalized = re.sub(r"[^0-9a-zа-я]+", "_", probe.casefold().replace("ё", "е"))
+    for token, role in _SMETA_NESTED_ROLE_HINTS:
+        if token in normalized:
+            return role
+    return None
+
+
 def infer_file_typing(doc: dict[str, Any]) -> dict[str, Any]:
     """Multi-label file typing from current metadata and file naming signals."""
     file_name = str(doc.get("file_name") or "")
@@ -453,6 +475,8 @@ def _document_role(low_name: str, layers: list[str], doc_type: str, domain: str 
     smeta_norm_source = _is_smeta_norm_source(low_name, domain, doc_type)
     if smeta_norm_source:
         probe = f"{domain} {low_name}".casefold().replace("ё", "е")
+        if nested_role := _smeta_nested_role_hint(probe):
+            return nested_role
         if "split" in probe or "сплит" in probe or "fgis" in probe or "фгис" in probe:
             return "сплит-форма/ФГИС"
         if "gesnmr" in probe or "гэснмр" in probe:

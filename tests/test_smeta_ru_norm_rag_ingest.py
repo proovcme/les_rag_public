@@ -95,6 +95,19 @@ def test_ingest_projects_archive_into_category_rag(monkeypatch, tmp_path: Path):
     nested = list((rag_root / "fsnb2022/FSNB-2022_i18_24.06.2026/projected_nested").rglob("*.md"))
     assert nested
     assert any("A_SRF_F" in item.name for item in nested)
+    asrf = next(item for item in nested if "A_SRF_F" in item.name)
+    asrf_text = asrf.read_text(encoding="utf-8")
+    assert "source_role: таблица норм/расценок ФСНБ" in asrf_text
+    assert "# таблица норм/расценок ФСНБ: A_SRF_F.json" in asrf_text
+    assert "## Роль для модели" in asrf_text
+    assert "не готовый выбор нормы" in asrf_text
+
+
+def test_nested_projection_humanizes_resource_tables(tmp_path: Path):
+    hint = ingest._nested_table_hint("A_SRF_TR.json", '{"Fields":[{"Name":"RESOURCE"}]}')
+
+    assert hint["role"] == "таблица ресурсов нормы"
+    assert "ресурс" in hint["use"]
 
 
 def test_ingest_skips_already_processed(monkeypatch, tmp_path: Path):
