@@ -1,6 +1,6 @@
 import pytest
 
-from proxy.routers import notebooks, prompts, service_sources
+from proxy.routers import datasets, notebooks, prompts, service_sources
 
 
 @pytest.mark.asyncio
@@ -51,6 +51,31 @@ async def test_dataset_memory_endpoints(monkeypatch):
 
     assert result["is_evidence"] is False
     assert refreshed["reader_status"] == "bootstrap"
+
+
+@pytest.mark.asyncio
+async def test_dataset_guidance_endpoint(monkeypatch):
+    calls = []
+
+    def fake_set(dataset_id, guidance, **kwargs):
+        calls.append((dataset_id, guidance, kwargs))
+        return {
+            "dataset_id": dataset_id,
+            "operator_guidance": guidance,
+            "operator_guidance_role": "navigation_not_evidence",
+        }
+
+    monkeypatch.setattr(datasets, "set_dataset_operator_guidance", fake_set)
+
+    result = await datasets.update_dataset_operator_guidance(
+        "ds-1",
+        datasets.DatasetGuidanceRequest(guidance="сначала смотреть ПЗ"),
+        _admin=object(),
+    )
+
+    assert result["operator_guidance_role"] == "navigation_not_evidence"
+    assert calls[0][0] == "ds-1"
+    assert calls[0][1] == "сначала смотреть ПЗ"
 
 
 @pytest.mark.asyncio

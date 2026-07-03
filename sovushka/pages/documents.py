@@ -11,7 +11,7 @@ from urllib.parse import quote, urlencode
 
 from nicegui import ui
 
-from sovushka.state import api_get, add_log, last_api_error_text
+from sovushka.state import api_get, api_patch, api_post, add_log, last_api_error_text
 
 
 def build_documents() -> None:
@@ -20,6 +20,10 @@ def build_documents() -> None:
         "documents": [],
         "chunks": [],
         "hits": [],
+        "dataset_memory": {},
+        "memory_loading": False,
+        "operator_guidance": "",
+        "view_mode": "map",
         "selected_dataset": "",
         "selected_doc_id": "",
         "selected_doc_name": "",
@@ -79,9 +83,66 @@ def build_documents() -> None:
         state["selected_doc_name"] = ""
         state["chunks"] = []
         state["hits"] = []
+        state["dataset_memory"] = {}
+        state["memory_loading"] = False
+        state["operator_guidance"] = ""
+        state["view_mode"] = "map"
         state["view_title"] = dataset_id or "Выберите датасет"
-        state["view_note"] = "Выберите документ или запустите поиск по выбранному датасету."
+        state["view_note"] = "Карта датасета показывает, как корпус видит модель."
         await _load_documents()
+        await _load_memory()
+
+    async def _load_memory() -> None:
+        dataset_id = state["selected_dataset"]
+        if not dataset_id:
+            state["dataset_memory"] = {}
+            _render_view()
+            return
+        state["memory_loading"] = True
+        _render_view()
+        data = await api_get(f"/api/notebooks/{quote(dataset_id, safe='')}/memory")
+        state["memory_loading"] = False
+        if not isinstance(data, dict):
+            _render_status_error()
+            return
+        state["dataset_memory"] = data
+        state["operator_guidance"] = str(data.get("operator_guidance") or "")
+        _render_view()
+
+    async def _refresh_memory() -> None:
+        dataset_id = state["selected_dataset"]
+        if not dataset_id:
+            ui.notify("Сначала выберите датасет", type="warning")
+            return
+        state["memory_loading"] = True
+        _render_view()
+        data = await api_post(f"/api/notebooks/{quote(dataset_id, safe='')}/memory/refresh")
+        state["memory_loading"] = False
+        if not isinstance(data, dict):
+            _render_status_error()
+            return
+        state["dataset_memory"] = data
+        state["operator_guidance"] = str(data.get("operator_guidance") or "")
+        ui.notify("Карта датасета обновлена", type="positive")
+        _render_view()
+
+    async def _save_guidance() -> None:
+        dataset_id = state["selected_dataset"]
+        if not dataset_id:
+            ui.notify("Сначала выберите датасет", type="warning")
+            return
+        payload = {"guidance": state["operator_guidance"], "depth": "deep"}
+        data = await api_patch(f"/api/rag/datasets/{quote(dataset_id, safe='')}/profile/guidance", payload)
+        if not isinstance(data, dict):
+            _render_status_error()
+            return
+        memory = dict(state.get("dataset_memory") or {})
+        memory["operator_guidance"] = str(data.get("operator_guidance") or "")
+        memory["operator_guidance_role"] = str(data.get("operator_guidance_role") or "navigation_not_evidence")
+        state["dataset_memory"] = memory
+        state["operator_guidance"] = memory["operator_guidance"]
+        ui.notify("Пояснение для модели сохранено", type="positive")
+        _render_view()
 
     async def _load_documents() -> None:
         dataset_id = state["selected_dataset"]
@@ -115,6 +176,7 @@ def build_documents() -> None:
         state["selected_doc_name"] = str(doc.get("file_name") or data.get("doc_name") or "")
         state["chunks"] = list(data.get("chunks") or [])
         state["hits"] = []
+        state["view_mode"] = "fragments"
         state["view_title"] = state["selected_doc_name"] or doc_id
         state["view_note"] = f"{data.get('total', 0)} фрагментов в документе. Показаны первые {len(state['chunks'])}."
         _render_all()
@@ -136,6 +198,7 @@ def build_documents() -> None:
             return
         state["hits"] = list(data.get("hits") or [])
         state["chunks"] = []
+        state["view_mode"] = "fragments"
         scope_label = {
             "document": "в документе",
             "dataset": "в датасете",
@@ -143,6 +206,16 @@ def build_documents() -> None:
         }.get(scope, "в индексе")
         state["view_title"] = f"Поиск {scope_label}: {query}"
         state["view_note"] = f"Найдено {data.get('count', len(state['hits']))}. Источник: lexical SQLite/FTS."
+        _render_view()
+
+    def _show_map() -> None:
+        state["view_mode"] = "map"
+        state["view_title"] = state["selected_dataset"] or "Выберите датасет"
+        state["view_note"] = "Карта датасета показывает слои, маршруты и первые файлы для чтения."
+        _render_view()
+
+    def _show_fragments() -> None:
+        state["view_mode"] = "fragments"
         _render_view()
 
     def _copy_sources() -> None:
@@ -240,6 +313,168 @@ def build_documents() -> None:
                     if row.get("last_error"):
                         _label(str(row["last_error"])[:180], size="11px", color="var(--err)")
 
+    def _render_map() -> None:
+        memory = state.get("dataset_memory") or {}
+        if state.get("memory_loading"):
+            with ui.element("div").style(
+                "border:1px solid var(--border);border-radius:8px;padding:18px;margin-top:12px;"
+            ):
+                with ui.row().classes("items-center").style("gap:8px;"):
+                    ui.spinner(size="sm")
+                    _label("Собираю карту датасета…", color="var(--dim)")
+            return
+        if not state["selected_dataset"]:
+            with ui.element("div").style(
+                "border:1px dashed var(--border);border-radius:8px;padding:18px;margin-top:12px;"
+            ):
+                _label("Выберите датасет слева — покажу карту слоёв и маршрутов.", color="var(--dim)")
+            return
+        if not memory:
+            with ui.element("div").style(
+                "border:1px dashed var(--border);border-radius:8px;padding:18px;margin-top:12px;"
+            ):
+                _label("Карта ещё не загружена. Нажмите обновить память датасета.", color="var(--dim)")
+            return
+
+        graph = memory.get("source_graph") if isinstance(memory.get("source_graph"), dict) else {}
+        source_layers = list(memory.get("source_layers") or [])
+        routes = list(memory.get("retrieval_routes") or [])
+        gaps = list(memory.get("known_gaps") or [])
+        top_files_by_layer = graph.get("top_files_by_layer") if isinstance(graph, dict) else {}
+
+        with ui.row().classes("items-stretch w-full").style("gap:8px;flex-wrap:wrap;margin-top:12px;"):
+            metrics = [
+                ("Файлов", memory.get("document_count", 0)),
+                ("В индексе", memory.get("indexed_count", 0)),
+                ("Фрагментов", memory.get("chunk_count", 0)),
+                ("Слоёв", len(source_layers)),
+                ("Маршрутов", len(routes)),
+            ]
+            for title, value in metrics:
+                with ui.element("div").style(
+                    "border:1px solid var(--border);border-radius:8px;padding:10px 12px;"
+                    "min-width:110px;background:var(--bg-panel);"
+                ):
+                    _label(str(value), size="17px", weight=900)
+                    _label(title, size="11px", color="var(--dim)")
+
+        with ui.row().classes("items-center").style("gap:6px;margin-top:12px;flex-wrap:wrap;"):
+            _badge(str(memory.get("schema") or "dataset_memory"), "tag-dim")
+            _badge(str(graph.get("schema") or "source_graph"), "tag-dim")
+            _badge("navigation, not evidence", "tag-warn" if graph.get("is_evidence") else "tag-acc")
+            if memory.get("reader_status"):
+                _badge(f"reader {memory.get('reader_status')}")
+
+        with ui.element("div").style(
+            "border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-top:12px;"
+            "background:var(--bg-panel);"
+        ):
+            with ui.row().classes("items-center w-full").style("gap:8px;"):
+                ui.icon("o_edit_note").style("font-size:18px;color:var(--accent);")
+                _label("Пояснение для модели", size="13px", weight=900)
+                _label("навигация, не источник фактов", size="11px", color="var(--dim)")
+                ui.element("div").style("flex:1;")
+                ui.button("Сохранить", icon="o_save", on_click=lambda: _schedule(_save_guidance())).props(
+                    "flat dense no-caps"
+                )
+            guidance_input = ui.textarea(
+                value=state.get("operator_guidance") or "",
+                placeholder=(
+                    "Например: это рабочая ПД по котельной; актуальные данные брать из ПЗ и ВОР, "
+                    "старые КП использовать только как ориентир."
+                ),
+            ).props("outlined autogrow clearable").style(
+                "width:100%;margin-top:8px;min-height:74px;background:var(--input-bg);"
+            )
+            guidance_input.on("update:model-value", lambda e: state.__setitem__("operator_guidance", str(e.args or "")))
+
+        if source_layers:
+            _label("Слои данных", size="13px", weight=900).style("margin-top:18px;")
+            for layer in source_layers:
+                with ui.element("div").style(
+                    "border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-top:8px;"
+                    "background:var(--bg-panel);"
+                ):
+                    with ui.row().classes("items-center").style("gap:7px;flex-wrap:wrap;"):
+                        _badge(str(layer.get("label") or layer.get("id")), "tag-acc")
+                        _badge(f"{int(layer.get('files') or 0)} файлов")
+                        _label(str(layer.get("role") or ""), size="12px", weight=800).style("flex:1;min-width:220px;")
+                    _label("Для чего: " + str(layer.get("use_for") or "выбор источника"), size="11.5px", color="var(--dim)").style("margin-top:5px;")
+                    _label("Проверка: " + str(layer.get("evidence_rule") or "утверждения подтверждать источником"), size="11.5px", color="var(--dim)").style("margin-top:3px;")
+
+        if routes:
+            _label("Маршруты чтения", size="13px", weight=900).style("margin-top:18px;")
+            for route in routes:
+                files = list(route.get("target_files") or [])
+                with ui.element("div").style(
+                    "border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-top:8px;"
+                    "background:var(--bg-panel);"
+                ):
+                    _label(str(route.get("when") or route.get("id") or "маршрут"), size="12.5px", weight=900)
+                    _label(str(route.get("method") or ""), size="11.5px", color="var(--dim)").style("margin-top:4px;")
+                    layers = ", ".join(str(x) for x in (route.get("prefer_layers") or [])[:6])
+                    if layers:
+                        _label(f"Слои: {layers}", size="11px", color="var(--dim)").style("margin-top:3px;")
+                    if files:
+                        with ui.column().classes("w-full gap-1").style("margin-top:7px;"):
+                            for file in files[:5]:
+                                _label(
+                                    f"• {file.get('file_name')} · {file.get('role') or 'документ'} · {int(file.get('chunk_count') or 0)} фраг.",
+                                    size="11.5px",
+                                ).style("overflow-wrap:anywhere;")
+
+        if isinstance(top_files_by_layer, dict) and top_files_by_layer:
+            _label("Первые файлы по слоям", size="13px", weight=900).style("margin-top:18px;")
+            for layer_id, files in list(top_files_by_layer.items())[:8]:
+                with ui.expansion(str(layer_id), icon="o_account_tree").classes("w-full").props("dense").style(
+                    "border:1px solid var(--border);border-radius:8px;margin-top:7px;background:var(--bg-panel);"
+                ):
+                    for file in list(files or [])[:8]:
+                        _label(
+                            f"{file.get('file_name')} · {file.get('role') or 'документ'} · {int(file.get('chunk_count') or 0)} фраг.",
+                            size="11.5px",
+                        ).style("padding:4px 8px;overflow-wrap:anywhere;")
+
+        if gaps:
+            _label("Ограничения карты", size="13px", weight=900).style("margin-top:18px;")
+            for gap in gaps:
+                with ui.row().classes("items-center").style("gap:6px;margin-top:5px;"):
+                    ui.icon("o_info").style("font-size:15px;color:var(--warn);")
+                    _label(str(gap), size="11.5px", color="var(--dim)")
+
+    def _render_fragments() -> None:
+        rows = state["hits"] or state["chunks"]
+        if not rows:
+            with ui.element("div").style(
+                "border:1px dashed var(--border);border-radius:8px;padding:18px;margin-top:12px;"
+            ):
+                _label(
+                    "Здесь будет текст документа или результаты поиска. Пока пусто, зато честно.",
+                    color="var(--dim)",
+                )
+            return
+
+        for item in rows:
+            title = item.get("section_heading") or item.get("parent_heading") or item.get("doc_name") or "фрагмент"
+            text = str(item.get("snippet") or item.get("text") or "")
+            with ui.element("div").classes("w-full").style(
+                "border-bottom:1px solid var(--border);padding:12px 0;"
+            ):
+                with ui.row().classes("items-center w-full").style("gap:6px;flex-wrap:wrap;"):
+                    _badge(f"chunk {item.get('chunk_ord')}", "tag-acc")
+                    if item.get("rank"):
+                        _badge(f"rank {item.get('rank')}")
+                    _label(str(title), size="12px", weight=800).style(
+                        "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:160px;flex:1;"
+                    )
+                _label(str(item.get("doc_name") or ""), size="11px", color="var(--dim)").style(
+                    "margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+                )
+                ui.label(text).style(
+                    "white-space:pre-wrap;font-size:12px;line-height:1.5;color:var(--text);"
+                    "margin-top:8px;font-family:var(--font-chat);"
+                )
+
     def _render_view() -> None:
         panel = refs.get("view")
         if panel is None:
@@ -251,42 +486,23 @@ def build_documents() -> None:
                 _label(state["view_title"], size="14px", weight=900).style(
                     "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;"
                 )
+                ui.button("Фрагменты", icon="o_article", on_click=_show_fragments).props(
+                    "flat dense no-caps"
+                ).classes("tag-acc" if state["view_mode"] == "fragments" else "")
+                ui.button("Карта", icon="o_hub", on_click=_show_map).props(
+                    "flat dense no-caps"
+                ).classes("tag-acc" if state["view_mode"] == "map" else "")
+                ui.button(icon="o_refresh", on_click=lambda: _schedule(_refresh_memory())).props(
+                    'flat dense round aria-label="Обновить карту датасета"'
+                ).tooltip("Пересобрать typed memory / карту датасета")
                 ui.button(icon="o_content_copy", on_click=_copy_sources).props(
                     'flat dense round aria-label="Скопировать источники"'
                 ).tooltip("Скопировать список источников")
             _label(state["view_note"], size="11.5px", color="var(--dim)")
-
-            rows = state["hits"] or state["chunks"]
-            if not rows:
-                with ui.element("div").style(
-                    "border:1px dashed var(--border);border-radius:8px;padding:18px;margin-top:12px;"
-                ):
-                    _label(
-                        "Здесь будет текст документа или результаты поиска. Пока пусто, зато честно.",
-                        color="var(--dim)",
-                    )
-                return
-
-            for item in rows:
-                title = item.get("section_heading") or item.get("parent_heading") or item.get("doc_name") or "фрагмент"
-                text = str(item.get("snippet") or item.get("text") or "")
-                with ui.element("div").classes("w-full").style(
-                    "border-bottom:1px solid var(--border);padding:12px 0;"
-                ):
-                    with ui.row().classes("items-center w-full").style("gap:6px;flex-wrap:wrap;"):
-                        _badge(f"chunk {item.get('chunk_ord')}", "tag-acc")
-                        if item.get("rank"):
-                            _badge(f"rank {item.get('rank')}")
-                        _label(str(title), size="12px", weight=800).style(
-                            "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:160px;flex:1;"
-                        )
-                    _label(str(item.get("doc_name") or ""), size="11px", color="var(--dim)").style(
-                        "margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
-                    )
-                    ui.label(text).style(
-                        "white-space:pre-wrap;font-size:12px;line-height:1.5;color:var(--text);"
-                        "margin-top:8px;font-family:var(--font-chat);"
-                    )
+            if state["view_mode"] == "map":
+                _render_map()
+            else:
+                _render_fragments()
 
     def _render_all() -> None:
         _render_datasets()

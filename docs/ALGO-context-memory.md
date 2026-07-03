@@ -17,10 +17,20 @@
 `dataset_source_graph_v1`: модель видит, что означает каждый слой данных, какой маршрут чтения подходит
 под тип вопроса и какие файлы являются первыми точками входа. Это системное улучшение RAG-навигации,
 а не режимный шаблон ответа.
+С 0.24.0.207 оператор может добавить к датасету `operator_guidance`: короткое человеческое пояснение
+для модели о том, как читать корпус. Это поле сохраняется в профиле/sidecar и попадает в prompt как
+навигационная подсказка, но не является evidence и не заменяет найденные фрагменты, таблицы или расчёт.
+В том же слое сметные нормативные архивы `SMETA_RU_NORM/FSNB` типизируются как `normative`, а служебные
+файлы `manifest/dataset_card/preprocess_state` понижаются в first-files, чтобы модель открывала нормы,
+а не упаковочную ведомость самой базы.
 
 ## Точки входа
 
 - `proxy/services/context_memory_service.py` — сборка/хранение профилей.
+- `PATCH /api/rag/datasets/{dataset_id}/profile/guidance` — сохранить операторское пояснение для модели;
+  no-reindex, пишет только профиль/sidecar и синхронизирует typed memory.
+- `sovushka/pages/documents.py` — no-AI вкладка «Документы»: документы/фрагменты и человеческая витрина
+  карты датасета (`source_layers`, `retrieval_routes`, `слой -> файлы`, `operator_guidance`).
 - `proxy/services/notebook_service.py` — `notebook_v1` поверх профилей и служебных источников;
   ГЭСН-блокнот генерируется из локальной базы норм и даёт карту сборников; обычный prompt получает
   `dataset_brief_for_model_v1` вместо полного технического dump typed memory.
@@ -90,6 +100,10 @@ no-reindex backfill через `tools/build_lexical_index.py` из Qdrant payloa
 `technical_docs`, `drawings`, `graphics`, `cad_bim`, `normative`, `estimate`. Для каждого слоя хранится
 роль, типичные вопросы и правило проверки evidence. Например `tables` говорит модели искать ВОР,
 спецификации, суммы и количества, но числа всё равно брать из строк таблицы и считать кодом.
+Для сметных нормативных архивов признаки `SMETA_RU_NORM`, `FSNB`, `ГЭСН/ФЕР/ФСЭМ/ФСБЦ/ФГИС` дают слой
+`normative` и роли конкретных баз (`ГЭСН`, `ГЭСНм`, `ГЭСНп`, `ФЕР`, `ФСЭМ`, `ФСБЦ материалы`,
+`ФСБЦ оборудование`, `сплит-форма/ФГИС`). Обычные проектные ЛСР/ВОР из `TABLE_SMETA` остаются
+`estimate/calculations`; код не превращает любую смету в нормативный корпус.
 
 `retrieval_routes` — карта “тип вопроса → какие слои/роли/файлы открыть первыми”. Она не выбирает ответ:
 для project overview предпочитает состав проекта/ПЗ/задание; для сметы — tables/calculations/estimate;
@@ -100,6 +114,18 @@ no-reindex backfill через `tools/build_lexical_index.py` из Qdrant payloa
 `dataset_source_graph_v1` — компактный навигационный граф `dataset -> layer -> role -> top files`.
 Он нужен для ориентации модели и UI, не для доказательства фактов. В prompt наружу уходит человеческая
 связка “слой -> файлы”, а не служебный JSON-граф.
+
+`operator_guidance` — комментарий оператора для модели. Примеры: “это рабочая ПД, актуальные данные брать
+из ПЗ и ВОР”, “старые КП использовать только как ориентир”, “сначала читать том ИОС 5.2”. Поле хранится
+в `les_dataset_profiles.profile_json`, sidecar `_les_dataset_profile.json` и, при наличии cached typed
+memory, дублируется в `dataset_memory.memory_json`. Это не evidence: модель может использовать подсказку
+для навигации, но фактические утверждения всё равно подтверждаются retrieved chunks/table rows/graph atoms
+или расчётной трассой.
+
+Служебные файлы индекса (`.pdf_preprocess_state.json`, `manifest`, `dataset_card`, `group_classifier`) не
+удаляются из карты, но получают soft-downrank в `important_files`, `retrieval_routes`,
+`dataset_source_graph_v1.top_files_by_layer` и notebook `priority_files`. Если полезных файлов нет, они
+остаются fallback; если есть реальные нормы/ПЗ/ВОР, модель сначала видит их.
 
 Паспорт чата обновляется из факта сохранённого ответа: последний вопрос/ответ, route, scope, датасеты,
 статус, принятые допущения и MISSING/blockers, извлечённые простыми regex из ответа.
@@ -132,8 +158,10 @@ no-reindex backfill через `tools/build_lexical_index.py` из Qdrant payloa
     а не факты.
 11. Brief добавляет `source_layers`, `retrieval_routes` и связку `слой -> файлы`, чтобы модель сначала
     выбрала правильный слой/документ, а уже потом делала retrieval по источнику.
-12. `build_dataset_notebook()` и `service_source_notebooks()` дают общий notebook-контекст для режимов.
-13. `estimate_harness` получает `LES_SYSTEM_PROMPT + smeta prompt + ГЭСН notebook excerpt + tool contract`.
+12. Если у профиля датасета есть `operator_guidance`, brief и обычный context-memory block добавляют его
+    как комментарий оператора для модели. Это влияет на чтение корпуса, но не повышает статус факта.
+13. `build_dataset_notebook()` и `service_source_notebooks()` дают общий notebook-контекст для режимов.
+14. `estimate_harness` получает `LES_SYSTEM_PROMPT + smeta prompt + ГЭСН notebook excerpt + tool contract`.
 
 ## Границы
 
@@ -157,8 +185,11 @@ no-reindex backfill через `tools/build_lexical_index.py` из Qdrant payloa
 
 - `tests/test_context_memory_service.py` — sidecar датасета, deep-профиль из bounded lexical index,
   quality-сигналы, warmup/benchmark/notebook, ГЭСН-блокнот, обновление chat-profile через
-  `save_chat_history`, prompt-block с явной маркировкой `НЕ evidence`.
+  `save_chat_history`, prompt-block с явной маркировкой `НЕ evidence`, `operator_guidance` как
+  navigation-not-evidence.
 - `tests/test_dataset_memory_service.py` — typed memory, file cards, source layers, retrieval routes,
   `dataset_source_graph_v1`, compact brief для модели, normative route только при наличии normative-слоя,
-  обратная совместимость старой memory без новых полей.
-- `tests/test_notebook_api.py` — публичные notebook endpoints.
+  `operator_guidance` в model brief, `SMETA_RU_NORM` как normative source, роли ГЭСН/ФСЭМ/ФСБЦ,
+  soft-downrank служебных files, обратная совместимость старой memory без новых полей.
+- `tests/test_notebook_api.py` — публичные notebook endpoints и endpoint сохранения `profile/guidance`.
+- `tests/test_static_assets.py` — вкладка «Документы», карта датасета и поле пояснения для модели.

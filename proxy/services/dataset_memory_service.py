@@ -141,6 +141,14 @@ _TECH_RE = re.compile(
 _CALC_RE = re.compile(r"(расчет|расч[её]т|калькуляц|лср|кац|баланс|формул|смет|стоимост|итого)", re.I)
 _SPEC_RE = re.compile(r"(спецификац|ведомост|вор\b|оборудован|материал|таблиц)", re.I)
 _NORM_RE = re.compile(r"(гост|сп\s*\d|снип|санпин|гэсн|фер|тер|норматив|свод\s+правил)", re.I)
+_SMETA_NORM_RE = re.compile(
+    r"(smeta_ru_norm|fsnb|фснб|gesn|гэсн|fer|фер|fsem|фсэм|fsbc|фсбц|fssc|фссц|fgis|фгис)",
+    re.I,
+)
+_SERVICE_NOISE_RE = re.compile(
+    r"(^|[/\\])(?:\.pdf_preprocess_state\.json|00_.*|.*(?:manifest|dataset_card|group_classifier|classifier|preprocess_state).*)$",
+    re.I,
+)
 _RUNNING_READER_TASKS: set[str] = set()
 
 DATASET_READER_SCHEMA: dict[str, Any] = {
@@ -288,6 +296,27 @@ def _loads(value: str | None, default: Any) -> Any:
         return default
 
 
+def _operator_guidance_from_profiles(conn: sqlite3.Connection, dataset_id: str) -> dict[str, Any]:
+    try:
+        row = conn.execute(
+            "SELECT profile_json FROM les_dataset_profiles WHERE dataset_id=?",
+            (dataset_id,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return {}
+    profile = _loads(row["profile_json"], {}) if row else {}
+    if not isinstance(profile, dict):
+        return {}
+    guidance = " ".join(str(profile.get("operator_guidance") or "").replace("\r", "\n").split())[:4000].strip()
+    if not guidance:
+        return {}
+    return {
+        "operator_guidance": guidance,
+        "operator_guidance_role": "navigation_not_evidence",
+        "operator_guidance_updated_at": profile.get("operator_guidance_updated_at") or 0,
+    }
+
+
 def _documents(conn: sqlite3.Connection, dataset_id: str) -> list[dict[str, Any]]:
     columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(documents)").fetchall()}
     if not columns:
@@ -336,6 +365,25 @@ def _add(layers: list[str], *items: str) -> None:
             layers.append(item)
 
 
+def _is_smeta_norm_source(file_name: str, domain: str, doc_type: str) -> bool:
+    probe = f"{domain} {doc_type} {file_name}".casefold().replace("ё", "е")
+    return domain.startswith("SMETA_RU_NORM") or bool(_SMETA_NORM_RE.search(probe))
+
+
+def _is_service_noise_file(file_name: str) -> bool:
+    name = str(file_name or "").strip()
+    if not name:
+        return False
+    low_name = name.casefold().replace("ё", "е")
+    base = Path(low_name).name
+    return bool(_SERVICE_NOISE_RE.search(low_name) or base in {"manifest.json", "index.json"})
+
+
+def _service_noise_penalty(card_or_file: dict[str, Any] | str) -> int:
+    file_name = card_or_file if isinstance(card_or_file, str) else str(card_or_file.get("file_name") or "")
+    return 10_000 if _is_service_noise_file(file_name) else 0
+
+
 def infer_file_typing(doc: dict[str, Any]) -> dict[str, Any]:
     """Multi-label file typing from current metadata and file naming signals."""
     file_name = str(doc.get("file_name") or "")
@@ -346,6 +394,7 @@ def infer_file_typing(doc: dict[str, Any]) -> dict[str, Any]:
     content_type = str(doc.get("content_type") or "").lower()
     domain = str(doc.get("domain") or "").upper()
     pipeline = str(doc.get("pipeline") or "").lower()
+    smeta_norm_source = _is_smeta_norm_source(file_name, domain, doc_type)
     layers: list[str] = []
 
     if ext in _TABLE_EXTS or content_type == "table" or doc_type in {"TABLE", "SPEC", "KS2"}:
@@ -360,9 +409,9 @@ def infer_file_typing(doc: dict[str, Any]) -> dict[str, Any]:
             _add(layers, "graphics")
     if ext in {".doc", ".docx", ".txt", ".md"} or content_type in {"text", "mixed", "email"}:
         _add(layers, "text")
-    if doc_type == "NORMATIVE" or domain.startswith("NTD_") or _NORM_RE.search(low):
+    if doc_type == "NORMATIVE" or domain.startswith("NTD_") or smeta_norm_source or _NORM_RE.search(low):
         _add(layers, "normative", "text")
-    if doc_type == "SMETA" or "SMETA" in domain or _CALC_RE.search(low):
+    if not smeta_norm_source and (doc_type == "SMETA" or "SMETA" in domain or _CALC_RE.search(low)):
         _add(layers, "calculations", "estimate")
     if _SPEC_RE.search(low):
         _add(layers, "tables", "technical_docs")
@@ -375,10 +424,10 @@ def infer_file_typing(doc: dict[str, Any]) -> dict[str, Any]:
 
     if "cad_bim" in layers:
         file_kind = "model_or_cad"
+    elif smeta_norm_source or "normative" in layers:
+        file_kind = "normative"
     elif "estimate" in layers:
         file_kind = "estimate"
-    elif "normative" in layers:
-        file_kind = "normative"
     elif "drawings" in layers:
         file_kind = "drawing_set"
     elif "tables" in layers and layers == ["tables"]:
@@ -388,7 +437,7 @@ def infer_file_typing(doc: dict[str, Any]) -> dict[str, Any]:
     else:
         file_kind = "document"
 
-    role = _document_role(low, layers, doc_type)
+    role = _document_role(low, layers, doc_type, domain)
     return {
         "file_kind": file_kind,
         "content_layers": layers,
@@ -400,7 +449,39 @@ def infer_file_typing(doc: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _document_role(low_name: str, layers: list[str], doc_type: str) -> str:
+def _document_role(low_name: str, layers: list[str], doc_type: str, domain: str = "") -> str:
+    smeta_norm_source = _is_smeta_norm_source(low_name, domain, doc_type)
+    if smeta_norm_source:
+        probe = f"{domain} {low_name}".casefold().replace("ё", "е")
+        if "split" in probe or "сплит" in probe or "fgis" in probe or "фгис" in probe:
+            return "сплит-форма/ФГИС"
+        if "gesnmr" in probe or "гэснмр" in probe:
+            return "ГЭСНмр"
+        if "gesnm" in probe or "гэснм" in probe:
+            return "ГЭСНм"
+        if "gesnp" in probe or "гэснп" in probe:
+            return "ГЭСНп"
+        if "gesnr" in probe or "гэснр" in probe:
+            return "ГЭСНр"
+        if "gesn" in probe or "гэсн" in probe:
+            return "ГЭСН"
+        if "fermr" in probe or "фермр" in probe:
+            return "ФЕРмр"
+        if "ferm" in probe or "ферм" in probe:
+            return "ФЕРм"
+        if "ferp" in probe or "ферп" in probe:
+            return "ФЕРп"
+        if "ferr" in probe or "ферр" in probe:
+            return "ФЕРр"
+        if "fer" in probe or "фер" in probe:
+            return "ФЕР"
+        if "fsem" in probe or "fsbcmm" in probe or "фсэм" in probe:
+            return "ФСЭМ"
+        if "fsbco" in probe or "fssco" in probe or "оборуд" in probe:
+            return "ФСБЦ оборудование"
+        if "fsbcm" in probe or "fsscm" in probe or "материал" in probe:
+            return "ФСБЦ материалы"
+        return "сметно-нормативная база"
     if "состав" in low_name and "проект" in low_name:
         return "состав проекта"
     if "пояснительн" in low_name or re.search(r"(^|[/_\-\s])пз($|[/_\-\s.])", low_name):
@@ -562,6 +643,7 @@ def build_typed_dataset_memory(
         source_layers = _source_layers_from_counts(by_layer)
         retrieval_routes = _retrieval_routes_for_dataset(cards, source_layers)
         source_graph = _source_graph_for_dataset(dataset_id, cards, source_layers)
+        operator_guidance = _operator_guidance_from_profiles(conn, dataset_id)
         memory = {
             "schema": TYPED_MEMORY_SCHEMA,
             "dataset_id": dataset_id,
@@ -596,6 +678,7 @@ def build_typed_dataset_memory(
             "known_gaps": _known_gaps(docs, by_layer),
             "updated_at": now,
         }
+        memory.update(operator_guidance)
         conn.execute(
             """
             INSERT INTO dataset_memory(dataset_id, revision_id, schema, memory_json, reader_status, is_evidence, updated_at)
@@ -621,6 +704,14 @@ def _important_files(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "задание на проектирование": 90,
         "ведомость": 72,
         "спецификация": 70,
+        "ГЭСН": 66,
+        "ГЭСНм": 66,
+        "ГЭСНп": 66,
+        "ФЕР": 64,
+        "ФСЭМ": 62,
+        "ФСБЦ": 62,
+        "сплит-форма/ФГИС": 60,
+        "сметно-нормативная база": 58,
         "нормативный документ": 55,
         "чертёжный комплект": 50,
         "сметный расчёт": 40,
@@ -630,6 +721,7 @@ def _important_files(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
         role = str(card.get("document_role") or "")
         score = max((weight for term, weight in priority_weights.items() if term in role), default=0)
         score += min(4, int(card.get("chunk_count") or 0) // 250)
+        score -= _service_noise_penalty(card)
         if score:
             ranked.append((score, "role_priority", card))
     if not ranked:
@@ -639,6 +731,7 @@ def _important_files(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
             score = min(40, int(card.get("chunk_count") or 0))
             if str(card.get("status") or "") == "INDEXED":
                 score += 10
+            score -= _service_noise_penalty(card)
             ranked.append((score, "indexed_chunk_rich", card))
     ranked.sort(key=lambda item: (-item[0], item[2].get("file_name", "")))
     return [
@@ -691,6 +784,14 @@ def _source_layers_from_counts(by_layer: dict[str, int]) -> list[dict[str, Any]]
 
 def _retrieval_routes_for_dataset(cards: list[dict[str, Any]], source_layers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     available_layers = {str(layer.get("id") or "") for layer in source_layers}
+    sorted_cards = sorted(
+        cards,
+        key=lambda card: (
+            _service_noise_penalty(card),
+            -int(card.get("chunk_count") or 0),
+            str(card.get("file_name") or ""),
+        ),
+    )
     routes = []
     for template in RETRIEVAL_ROUTE_TEMPLATES:
         required = set(template.get("require_layers") or [])
@@ -700,7 +801,7 @@ def _retrieval_routes_for_dataset(cards: list[dict[str, Any]], source_layers: li
         if not layers:
             continue
         target_files = []
-        for card in cards:
+        for card in sorted_cards:
             card_layers = {str(layer) for layer in (card.get("content_layers") or [])}
             role = str(card.get("document_role") or "")
             layer_hit = bool(card_layers.intersection(layers))
@@ -763,7 +864,13 @@ def _source_graph_for_dataset(dataset_id: str, cards: list[dict[str, Any]], sour
             }
         )
     for layer_id, layer_cards in files_by_layer.items():
-        layer_cards.sort(key=lambda card: (-int(card.get("chunk_count") or 0), str(card.get("file_name") or "")))
+        layer_cards.sort(
+            key=lambda card: (
+                _service_noise_penalty(card),
+                -int(card.get("chunk_count") or 0),
+                str(card.get("file_name") or ""),
+            )
+        )
         top_files_by_layer[layer_id] = [
             {
                 "file_name": card.get("file_name"),
@@ -1018,7 +1125,10 @@ def get_typed_dataset_memory(dataset_id: str, *, meta_db_path: str | None = None
     with _connect(meta_db_path) as conn:
         row = conn.execute("SELECT memory_json FROM dataset_memory WHERE dataset_id=?", (dataset_id,)).fetchone()
         if row:
-            return _ensure_memory_navigation(_loads(row["memory_json"], {}))
+            memory = _ensure_memory_navigation(_loads(row["memory_json"], {}))
+            if isinstance(memory, dict) and not memory.get("operator_guidance"):
+                memory.update(_operator_guidance_from_profiles(conn, dataset_id))
+            return memory
     return build_typed_dataset_memory(dataset_id, meta_db_path=meta_db_path)
 
 
@@ -1165,6 +1275,7 @@ def _normative_navigation_lines(memory: dict[str, Any], question: str, *, max_fi
             score += 100
         if str(card.get("status") or "") == "INDEXED":
             score += 5
+        score -= _service_noise_penalty(card)
         candidates.append((score, card))
     if not candidates:
         return []
@@ -1219,6 +1330,13 @@ def dataset_brief_for_model(
             f"\nОбласть {dataset_id}: файлов {memory.get('document_count', 0)}, "
             f"проиндексировано {memory.get('indexed_count', 0)}, чанков {memory.get('chunk_count', 0)}."
         )
+        guidance = str(memory.get("operator_guidance") or "").strip()
+        if guidance:
+            lines.append(
+                "Комментарий оператора для модели: "
+                + guidance[:900]
+                + " (это навигация/пояснение к чтению корпуса, не evidence для фактов)."
+            )
         layers = memory.get("data_layers") or []
         if layers:
             lines.append(

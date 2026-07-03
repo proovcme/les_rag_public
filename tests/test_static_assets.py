@@ -35,6 +35,9 @@ def test_admin_documents_tab_is_mounted():
     assert "include_documents=True" in app_shell
     assert "tab_documents" in app_shell
     assert "датасет → документ → фрагменты, без модели" in page
+    assert "Пояснение для модели" in page
+    assert "profile/guidance" in page
+    assert 'ui.button("Карта"' in page
     assert "do not call LLMs" in router
 
 

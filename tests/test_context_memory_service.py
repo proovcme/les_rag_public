@@ -10,6 +10,7 @@ from proxy.services.context_memory_service import (
     build_context_memory_block,
     build_dataset_profile,
     get_chat_profile,
+    set_dataset_operator_guidance,
     warmup_dataset_profiles,
 )
 from proxy.services.notebook_service import (
@@ -117,6 +118,30 @@ def test_dataset_profile_writes_sidecar(tmp_path, monkeypatch):
     assert saved["sample_files"][0]["file_name"]
 
 
+def test_dataset_operator_guidance_is_navigation_not_evidence(tmp_path, monkeypatch):
+    db_path = tmp_path / "data" / "les_meta.db"
+    storage_root = tmp_path / "storage" / "datasets"
+    monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+    _seed_meta_db(db_path)
+
+    profile = set_dataset_operator_guidance(
+        "ds-1",
+        "Это ПД котельной; сначала смотреть ПЗ и спецификацию, архивные КП не считать актуальными.",
+        storage_root=storage_root,
+    )
+
+    assert profile["operator_guidance_role"] == "navigation_not_evidence"
+    assert "ПД котельной" in profile["operator_guidance"]
+    saved = json.loads((storage_root / "ds-1" / DATASET_PROFILE_FILE).read_text(encoding="utf-8"))
+    assert saved["operator_guidance"] == profile["operator_guidance"]
+
+    block = build_context_memory_block(dataset_ids=["ds-1"], storage_root=storage_root)
+
+    assert "комментарий оператора для модели" in block
+    assert "не evidence" in block
+    assert "архивные КП" in block
+
+
 def test_deep_dataset_profile_uses_bounded_lexical_index(tmp_path, monkeypatch):
     db_path = tmp_path / "data" / "les_meta.db"
     storage_root = tmp_path / "storage" / "datasets"
@@ -160,6 +185,32 @@ def test_dataset_notebook_wraps_profile_as_navigation_not_evidence(tmp_path, mon
     assert "01-ПЗ.pdf" in notebook["prompt_excerpt"]
     assert "НЕ evidence" not in notebook["prompt_excerpt"]
     assert "не evidence" in notebook["prompt_excerpt"].lower()
+
+
+def test_dataset_notebook_priority_files_downrank_service_noise(monkeypatch):
+    from proxy.services import notebook_service as nb
+
+    monkeypatch.setattr(nb, "build_dataset_profile", lambda *args, **kwargs: {
+        "dataset_id": "norms",
+        "name": "Нормы",
+        "document_count": 2,
+        "chunk_count": 902,
+        "deep": {
+            "available": True,
+            "top_documents": [
+                {"doc_name": "fsnb2022/00_dataset_card.md", "chunks": 900},
+                {"doc_name": "fsnb2022/projected_text/gesnm10-06-001-01.md", "chunks": 2},
+            ],
+        },
+        "document_types": [],
+        "domains": [],
+        "routes": [],
+        "keywords": [],
+    })
+
+    notebook = nb.build_dataset_notebook("norms")
+
+    assert notebook["notebook_summary"]["priority_files"][0]["file_name"].endswith("gesnm10-06-001-01.md")
 
 
 def test_warmup_dataset_notebooks_uses_profiles_without_reindex(tmp_path, monkeypatch):

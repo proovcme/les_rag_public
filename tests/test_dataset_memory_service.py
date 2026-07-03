@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from types import SimpleNamespace
 
@@ -8,6 +9,7 @@ from proxy.services.dataset_memory_service import (
     build_typed_dataset_memory,
     chunk_payload_typing,
     dataset_brief_for_model,
+    infer_file_typing,
 )
 from proxy.services.project_summary_service import inventory_from_metadb
 
@@ -104,6 +106,44 @@ def test_dataset_brief_for_model_links_file_cards_to_chunks_and_keeps_model_prim
     assert "Связка слои -> файлы" in brief
     assert "сначала ВОР/спецификация/ЛСР" in brief
     assert "не источник фактов" in brief
+
+
+def test_dataset_brief_includes_operator_guidance_as_navigation(tmp_path):
+    db = tmp_path / "meta.db"
+    _seed_db(db)
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE les_dataset_profiles (
+                dataset_id TEXT PRIMARY KEY,
+                profile_json TEXT NOT NULL,
+                content_signature TEXT NOT NULL DEFAULT '',
+                profile_path TEXT NOT NULL DEFAULT '',
+                updated_at REAL NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO les_dataset_profiles(dataset_id, profile_json, updated_at) VALUES(?,?,0)",
+            (
+                "ds",
+                json.dumps(
+                    {
+                        "operator_guidance": "Сначала смотреть ВОР и ПЗ; архивные КП не считать актуальными.",
+                        "operator_guidance_role": "navigation_not_evidence",
+                    },
+                    ensure_ascii=False,
+                ),
+            ),
+        )
+        conn.commit()
+
+    memory = build_typed_dataset_memory("ds", meta_db_path=str(db), force=True)
+    brief = dataset_brief_for_model([memory], question="расскажи про проект")
+
+    assert "Комментарий оператора для модели" in brief
+    assert "архивные КП" in brief
+    assert "не evidence" in brief
 
 
 def test_dataset_brief_backfills_navigation_for_old_memory():
@@ -211,6 +251,96 @@ def test_chunk_payload_typing_for_table_row():
     assert "tables" in payload["content_layers"]
     assert "estimate" in payload["content_layers"]
     assert payload["source_granularity"] == "table_row"
+
+
+def test_smeta_norm_archives_are_normative_not_generic_estimate():
+    typing = infer_file_typing(
+        {
+            "file_name": "TABLE_SMETA/SMETA_RU_NORM/fsnb2022/gesnm10-06-001-01.md",
+            "domain": "SMETA_RU_NORM_FSNB2022",
+            "doc_type": "SMETA",
+            "content_type": "text",
+        }
+    )
+
+    assert typing["file_kind"] == "normative"
+    assert "normative" in typing["content_layers"]
+    assert "estimate" not in typing["content_layers"]
+    assert "calculations" not in typing["content_layers"]
+    assert typing["document_role"] == "ГЭСНм"
+
+
+def test_smeta_norm_roles_distinguish_resource_bases():
+    machine = infer_file_typing(
+        {"file_name": "fsnb2022/fsbcmm/resources.md", "domain": "SMETA_RU_NORM_FSNB2022"}
+    )
+    materials = infer_file_typing(
+        {"file_name": "fsnb2022/fsbcm/materials.md", "domain": "SMETA_RU_NORM_FSNB2022"}
+    )
+    equipment = infer_file_typing(
+        {"file_name": "fsnb2022/fsbco/equipment.md", "domain": "SMETA_RU_NORM_FSNB2022"}
+    )
+
+    assert machine["document_role"] == "ФСЭМ"
+    assert materials["document_role"] == "ФСБЦ материалы"
+    assert equipment["document_role"] == "ФСБЦ оборудование"
+
+
+def test_project_estimate_still_keeps_estimate_role():
+    typing = infer_file_typing(
+        {
+            "file_name": "project/ЛСР.xlsx",
+            "domain": "TABLE_SMETA",
+            "doc_type": "SMETA",
+            "content_type": "table",
+        }
+    )
+
+    assert typing["file_kind"] == "estimate"
+    assert "estimate" in typing["content_layers"]
+    assert typing["document_role"] == "сметный расчёт"
+
+
+def test_smeta_norm_memory_downranks_service_noise(tmp_path):
+    db = tmp_path / "meta.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        """
+        CREATE TABLE documents (
+            id TEXT,
+            dataset_id TEXT,
+            file_name TEXT,
+            status TEXT,
+            chunk_count INTEGER,
+            doc_type TEXT,
+            content_type TEXT,
+            domain TEXT,
+            route_dataset TEXT,
+            pipeline TEXT,
+            source_path TEXT
+        )
+        """
+    )
+    rows = [
+        ("1", "norms", "TABLE_SMETA/SMETA_RU_NORM/fsnb2022/00_dataset_card.md", "INDEXED", 900, "SMETA", "text", "SMETA_RU_NORM_FSNB2022", "", "markdown", ""),
+        ("2", "norms", "TABLE_SMETA/SMETA_RU_NORM/fsnb2022/01_archive_manifest.md", "INDEXED", 800, "SMETA", "text", "SMETA_RU_NORM_FSNB2022", "", "markdown", ""),
+        ("3", "norms", "TABLE_SMETA/SMETA_RU_NORM/fsnb2022/projected_text/gesnm10-06-001-01.md", "INDEXED", 3, "SMETA", "text", "SMETA_RU_NORM_FSNB2022", "", "markdown", ""),
+    ]
+    conn.executemany("INSERT INTO documents VALUES (?,?,?,?,?,?,?,?,?,?,?)", rows)
+    conn.commit()
+    conn.close()
+
+    memory = build_typed_dataset_memory("norms", meta_db_path=str(db), force=True)
+
+    assert "normative" in {item["id"] for item in memory["source_layers"]}
+    assert memory["important_files"][0]["file_name"].endswith("gesnm10-06-001-01.md")
+    norm_files = memory["source_graph"]["top_files_by_layer"]["normative"]
+    assert norm_files[0]["file_name"].endswith("gesnm10-06-001-01.md")
+    route = next(item for item in memory["retrieval_routes"] if item["id"] == "normative_answer")
+    assert route["target_files"][0]["file_name"].endswith("gesnm10-06-001-01.md")
+    brief = dataset_brief_for_model([memory], question="найди нормативное требование")
+    nav = brief.split("Нормативная навигация:", 1)[1]
+    assert nav.find("gesnm10-06-001-01.md") < nav.find("00_dataset_card.md")
 
 
 def test_reader_context_uses_env_limits(monkeypatch):

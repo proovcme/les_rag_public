@@ -7,13 +7,27 @@
 ## Текущее состояние (2026-07-03)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.206  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.207  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.206 dataset source graph + retrieval routes
+задеплоено на рантайм:     0.24.0.207 documents dataset map UI + operator guidance + smeta norm typing
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.206 (deploy stamp после make ship, 2026-07-03; commit stamp до следующего git commit)
+рантайм /api/version:      0.24.0.207 (deploy stamp после make ship, 2026-07-03; commit stamp до следующего git commit)
 ```
+
+> 0.24.0.207 — вкладка «Документы» получила человеческую витрину typed dataset
+> memory: справа можно переключаться между фрагментами и «Картой» датасета,
+> видеть слои, маршруты чтения, первые файлы по слоям, ограничения карты и
+> статус `navigation, not evidence`. Добавлен комментарий оператора для модели:
+> `PATCH /api/rag/datasets/{id}/profile/guidance` сохраняет пояснение в
+> `les_dataset_profiles` и sidecar `_les_dataset_profile.json`, а
+> `dataset_brief_for_model_v1` и context-memory prompt читают его как
+> навигационную подсказку, не как источник фактов. Сметные нормативные архивы
+> `SMETA_RU_NORM/FSNB` теперь типизируются как `normative` с ролями
+> `ГЭСН/ГЭСНм/ГЭСНп/ФЕР/ФСЭМ/ФСБЦ/сплит-форма ФГИС`, а служебные
+> `manifest/dataset_card/preprocess_state` мягко понижаются в top-files.
+> Это делает RAG менее чёрным ящиком: оператор и модель смотрят на одну карту
+> корпуса, а нормы видятся нормами, не “сметным расчётом”.
 
 > 0.24.0.206 — общий слой typed dataset memory получил `source_layers`,
 > `retrieval_routes` и компактный `dataset_source_graph_v1`: датасет теперь

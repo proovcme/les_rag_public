@@ -41,6 +41,7 @@ _STOPWORDS = frozenset(
     "пожалуйста сделай покажи проверь посчитай ответь весь всех очень для при или "
     "смета сметы проект объекта документ файл".split()
 )
+OPERATOR_GUIDANCE_MAX_CHARS = 4000
 
 
 def _connect() -> sqlite3.Connection:
@@ -87,6 +88,11 @@ def _loads(raw: str | None, default: Any) -> Any:
         return json.loads(raw or "")
     except Exception:
         return default
+
+
+def _normalize_operator_guidance(text: str | None) -> str:
+    value = " ".join(str(text or "").replace("\r", "\n").split())
+    return value[:OPERATOR_GUIDANCE_MAX_CHARS].strip()
 
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
@@ -467,11 +473,18 @@ def build_dataset_profile(
             "FROM les_dataset_profiles WHERE dataset_id=?",
             (dataset_id,),
         ).fetchone()
+        stored_profile = _loads(stored["profile_json"], {}) if stored else {}
+        stored_guidance = ""
+        if isinstance(stored_profile, dict):
+            stored_guidance = _normalize_operator_guidance(stored_profile.get("operator_guidance"))
         if stored and not force and stored["content_signature"] == signature:
-            profile = _loads(stored["profile_json"], {})
+            profile = stored_profile
             if isinstance(profile, dict) and profile:
                 docs = _document_rows(conn, dataset_id)
                 _ensure_profile_navigation(profile, docs)
+                if stored_guidance:
+                    profile["operator_guidance"] = stored_guidance
+                    profile["operator_guidance_role"] = "navigation_not_evidence"
                 profile.setdefault("profile_path", stored["profile_path"] or "")
                 if profile.get("depth") == depth:
                     profile.setdefault("quality", _profile_quality(profile))
@@ -518,6 +531,8 @@ def build_dataset_profile(
                 "Паспорт описывает индекс и файлы по метаданным. Это ускоряет выбор маршрута, "
                 "но не является evidence для ответа."
             ),
+            "operator_guidance": stored_guidance,
+            "operator_guidance_role": "navigation_not_evidence",
             "content_signature": signature,
             "updated_at": now,
         }
@@ -552,6 +567,91 @@ def build_dataset_profile(
             """,
             (dataset_id, _json_text(profile), signature, profile_path, now),
         )
+        conn.commit()
+        return profile
+
+
+def set_dataset_operator_guidance(
+    dataset_id: str,
+    guidance: str,
+    *,
+    storage_root: Path = Path("storage/datasets"),
+    depth: str = "deep",
+) -> dict[str, Any]:
+    """Save an operator navigation note for the dataset.
+
+    The note is model guidance, not evidence. It is kept in the cached dataset
+    profile and sidecar, without touching source documents or vector indexes.
+    """
+    dataset_id = (dataset_id or "").strip()
+    if not dataset_id:
+        raise ValueError("dataset_id is required")
+    note = _normalize_operator_guidance(guidance)
+    depth = _normalize_depth(depth)
+    now = time.time()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT profile_json, content_signature, profile_path FROM les_dataset_profiles WHERE dataset_id=?",
+            (dataset_id,),
+        ).fetchone()
+        if row:
+            profile = _loads(row["profile_json"], {})
+            if not isinstance(profile, dict) or not profile:
+                profile = build_dataset_profile(dataset_id, storage_root=storage_root, depth=depth)
+            signature = str(row["content_signature"] or profile.get("content_signature") or "")
+            profile_path = str(row["profile_path"] or profile.get("profile_path") or "")
+        else:
+            profile = build_dataset_profile(dataset_id, storage_root=storage_root, depth=depth)
+            signature = str(profile.get("content_signature") or "")
+            profile_path = str(profile.get("profile_path") or "")
+
+        profile["operator_guidance"] = note
+        profile["operator_guidance_role"] = "navigation_not_evidence"
+        profile["operator_guidance_updated_at"] = now if note else 0
+        profile["updated_at"] = now
+
+        if not profile_path:
+            try:
+                ds_dir = _safe_dataset_dir(dataset_id, storage_root)
+                ds_dir.mkdir(parents=True, exist_ok=True)
+                profile_path = str(ds_dir / DATASET_PROFILE_FILE)
+                profile["profile_path"] = profile_path
+            except Exception as err:  # noqa: BLE001
+                logger.warning("[CONTEXT_MEMORY] guidance sidecar path skipped for %s: %s", dataset_id, err)
+                profile_path = ""
+        if profile_path:
+            try:
+                Path(profile_path).write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception as err:  # noqa: BLE001
+                logger.warning("[CONTEXT_MEMORY] guidance sidecar write skipped for %s: %s", dataset_id, err)
+
+        conn.execute(
+            """
+            INSERT INTO les_dataset_profiles(dataset_id, profile_json, content_signature, profile_path, updated_at)
+            VALUES(?,?,?,?,?)
+            ON CONFLICT(dataset_id) DO UPDATE SET
+                profile_json=excluded.profile_json,
+                content_signature=excluded.content_signature,
+                profile_path=excluded.profile_path,
+                updated_at=excluded.updated_at
+            """,
+            (dataset_id, _json_text(profile), signature or _content_signature(conn, dataset_id, depth=depth), profile_path, now),
+        )
+        if _table_exists(conn, "dataset_memory"):
+            memory_row = conn.execute(
+                "SELECT memory_json FROM dataset_memory WHERE dataset_id=?",
+                (dataset_id,),
+            ).fetchone()
+            if memory_row:
+                memory = _loads(memory_row["memory_json"], {})
+                if isinstance(memory, dict) and memory:
+                    memory["operator_guidance"] = note
+                    memory["operator_guidance_role"] = "navigation_not_evidence"
+                    memory["operator_guidance_updated_at"] = profile["operator_guidance_updated_at"]
+                    conn.execute(
+                        "UPDATE dataset_memory SET memory_json=?, updated_at=? WHERE dataset_id=?",
+                        (_json_text(memory), now, dataset_id),
+                    )
         conn.commit()
         return profile
 
@@ -818,10 +918,16 @@ def _dataset_profile_block(profile: dict[str, Any]) -> str:
     doc_types = ", ".join(f"{x['value']}:{x['count']}" for x in profile.get("document_types", [])[:5])
     exts = ", ".join(f"{x['value']}:{x['count']}" for x in profile.get("file_extensions", [])[:5])
     keywords = ", ".join(profile.get("keywords", [])[:10])
+    guidance = _normalize_operator_guidance(profile.get("operator_guidance"))
     parts = [
         f"- {profile.get('name') or profile.get('dataset_id')} ({profile.get('dataset_id')}): "
         f"{profile.get('document_count', 0)} файлов, {profile.get('chunk_count', 0)} чанков",
     ]
+    if guidance:
+        parts.append(
+            "  комментарий оператора для модели: "
+            f"{guidance} (навигация/пояснение, не evidence)"
+        )
     if doc_types:
         parts.append(f"  типы: {doc_types}")
     if exts:

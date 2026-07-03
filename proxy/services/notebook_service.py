@@ -31,6 +31,10 @@ _STOPWORDS = frozenset(
     "работ устройство устройств монтаж демонтаж конструкций конструкция при для или над под без "
     "выполнение изготовление установка прокладка разных группе групп".split()
 )
+_SERVICE_NOISE_RE = re.compile(
+    r"(^|[/\\])(?:\.pdf_preprocess_state\.json|00_.*|.*(?:manifest|dataset_card|group_classifier|classifier|preprocess_state).*)$",
+    re.I,
+)
 
 _GESN_COLLECTION_LABELS = {
     "01": "земляные работы",
@@ -164,6 +168,17 @@ def _top(values: list[str], *, limit: int = 10) -> list[str]:
     return [key for key, _count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:limit]]
 
 
+def _service_noise_penalty(file_name: str) -> int:
+    name = str(file_name or "").strip()
+    if not name:
+        return 0
+    low_name = name.casefold().replace("ё", "е")
+    base = Path(low_name).name
+    if _SERVICE_NOISE_RE.search(low_name) or base in {"manifest.json", "index.json"}:
+        return 10_000
+    return 0
+
+
 def _keywords(texts: list[str], *, limit: int = 12) -> list[str]:
     counts: dict[str, int] = {}
     for text in texts:
@@ -184,6 +199,13 @@ def _dataset_notebook_summary(profile: dict[str, Any]) -> dict[str, Any]:
     norm_refs = list(deep.get("norm_refs") or [])[:12]
     table_signal = int(deep.get("table_signal_chunks") or 0)
     top_documents = list(deep.get("top_documents") or profile.get("top_documents") or profile.get("sample_files") or [])
+    top_documents.sort(
+        key=lambda item: (
+            _service_noise_penalty(str(item.get("doc_name") or item.get("file_name") or "")),
+            -int(item.get("chunks") or item.get("chunk_count") or 0),
+            str(item.get("doc_name") or item.get("file_name") or ""),
+        )
+    )
     priority_files = []
     for item in top_documents[:16]:
         name = str(item.get("doc_name") or item.get("file_name") or "")

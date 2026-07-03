@@ -31,6 +31,7 @@ from proxy.services.context_memory_service import (
     benchmark_dataset_profile_warmup,
     build_dataset_profile,
     get_dataset_profile,
+    set_dataset_operator_guidance,
     warmup_dataset_profiles,
 )
 from proxy.services.dataset_memory_service import latest_file_cards, schedule_dataset_reader_pass
@@ -155,6 +156,11 @@ class DatasetProfileWarmupRequest(BaseModel):
     depth: str = "deep"
     force: bool = False
     limit: int = Field(default=0, ge=0, le=500)
+
+
+class DatasetGuidanceRequest(BaseModel):
+    guidance: str = Field(default="", max_length=4000)
+    depth: str = "deep"
 
 
 _state: DatasetRouterState | None = None
@@ -1103,6 +1109,21 @@ async def dataset_context_profile(dataset_id: str, depth: str = "deep", _user=De
 async def refresh_dataset_context_profile(dataset_id: str, depth: str = "deep", _admin=Depends(require_admin)):
     """Пересобрать паспорт датасета и записать sidecar рядом с датасетом."""
     return build_dataset_profile(dataset_id, storage_root=Path("storage/datasets"), force=True, depth=depth)
+
+
+@router.patch("/datasets/{dataset_id}/profile/guidance")
+async def update_dataset_operator_guidance(
+    dataset_id: str,
+    req: DatasetGuidanceRequest,
+    _admin=Depends(require_admin),
+):
+    """Сохранить комментарий оператора для модели. Навигация, не evidence."""
+    return set_dataset_operator_guidance(
+        dataset_id,
+        req.guidance,
+        storage_root=Path("storage/datasets"),
+        depth=req.depth,
+    )
 
 
 @router.post("/datasets/profiles/warmup")
