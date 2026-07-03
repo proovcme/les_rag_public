@@ -10,9 +10,9 @@
 версия (схема 0.N.FEATURE.PATCH): 0.24.0.185  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.184 dataset navigation + Documents tab in chat shell + Windows light startup fix
-НЕ задеплоено:             0.24.0.185 Windows bootstrap model onboarding skip for Ollama/Lemonade
-рантайм /api/version:      0.24.0.184 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
+задеплоено на рантайм:     0.24.0.185 Windows bootstrap model onboarding skip for Ollama/Lemonade
+НЕ задеплоено:             —
+рантайм /api/version:      0.24.0.185 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
 > 0.24.0.185 — Windows installer/bootstrap no longer fails with
