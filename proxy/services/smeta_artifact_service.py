@@ -229,6 +229,30 @@ def _lsr_rows_from_table(table: SmetaTable) -> list[dict[str, Any]]:
     return out
 
 
+def _select_lsr_source_tables(tables: list[SmetaTable]) -> list[SmetaTable]:
+    """Pick the visible table(s) that should feed the display LSR form.
+
+    The model may output both a detailed work-cost table and a shorter
+    "preliminary LSR" table. Those are alternate presentations of the same
+    estimate, not additive sections. Keep the artifact renderer shallow: select
+    the most complete visible cost table and do not merge duplicate forms.
+    """
+    candidates = [table for table in tables if table.kind in {"work_cost", "method_comparison"}]
+    if not candidates:
+        return []
+    explicit_lsr = [table for table in candidates if "лср" in table.title.casefold()]
+    non_lsr = [table for table in candidates if table not in explicit_lsr]
+    if explicit_lsr and not non_lsr:
+        return [max(explicit_lsr, key=lambda table: (len(table.rows), table.amount_total or 0.0))]
+    if explicit_lsr and non_lsr:
+        best_non_lsr = max(non_lsr, key=lambda table: (len(table.rows), table.amount_total or 0.0))
+        best_lsr = max(explicit_lsr, key=lambda table: (len(table.rows), table.amount_total or 0.0))
+        if len(best_lsr.rows) >= len(best_non_lsr.rows):
+            return [best_lsr]
+        return [best_non_lsr]
+    return [max(candidates, key=lambda table: (len(table.rows), table.amount_total or 0.0))]
+
+
 def build_lsr_form(tables: list[SmetaTable]) -> dict[str, Any] | None:
     """Build an LSR-shaped output view from model-written cost tables.
 
@@ -236,9 +260,8 @@ def build_lsr_form(tables: list[SmetaTable]) -> dict[str, Any] | None:
     invented here. Rows are copied from visible estimate tables.
     """
     rows: list[dict[str, Any]] = []
-    for table in tables:
-        if table.kind not in {"work_cost", "method_comparison"}:
-            continue
+    source_tables = _select_lsr_source_tables(tables)
+    for table in source_tables:
         rows.extend(_lsr_rows_from_table(table))
     if not rows:
         return None
@@ -257,6 +280,7 @@ def build_lsr_form(tables: list[SmetaTable]) -> dict[str, Any] | None:
         "is_priced_final": False,
         "headers": [str(_LSR_FORM_HEADERS.get(col, "")) for col in range(1, _LSR_FORM_MAX_COL + 1)],
         "rows": rows,
+        "source_tables": [table.title for table in source_tables],
         "amount_total": total if total > 0 else None,
     }
 
@@ -401,9 +425,11 @@ def build_smeta_artifact(answer: str, *, question: str = "") -> dict[str, Any] |
         lines += ["", *_lsr_markdown(lsr_form)]
     for num, table in enumerate(tables, start=1):
         lines += ["", f"## {num}. {table.title}", "", table.markdown]
-    total = sum(table.amount_total or 0.0 for table in tables if table.kind in {"work_cost", "method_comparison"})
-    if total > 0:
-        lines += ["", "## Арифметика", f"Сумма по видимым строкам таблиц стоимости: **{_fmt_money(total)}**."]
+    total = lsr_form.get("amount_total") if lsr_form else None
+    if total is not None and total > 0:
+        source_tables = ", ".join(str(x) for x in (lsr_form.get("source_tables") or []) if x) if lsr_form else ""
+        source_note = f" Источник ЛСР: {source_tables}." if source_tables else ""
+        lines += ["", "## Арифметика", f"Сумма выбранной ЛСР-формы: **{_fmt_money(total)}**.{source_note}"]
     return {
         "mode": "markdown",
         "title": "Сметный артефакт",
@@ -657,8 +683,11 @@ def compact_smeta_answer(answer: str, artifact: dict[str, Any] | None) -> str:
     if lsr_form and lsr_form.get("rows"):
         rows_count = len(lsr_form.get("rows") or [])
         amount = f", сумма {_fmt_money(float(lsr_form['amount_total']))}" if lsr_form.get("amount_total") is not None else ""
+        source_tables = ", ".join(str(x) for x in (lsr_form.get("source_tables") or []) if x)
+        source_note = f" Источник: {source_tables}." if source_tables else ""
         result_lines.extend([
             f"ЛСР-форма вынесена в артефакт/XLSX: {rows_count} строк{amount}.",
+            f"Проверка строк артефакта имеет приоритет над ручным итогом в тексте ответа.{source_note}",
             "Исходные таблицы ниже сокращены в чате, полная форма и источники лежат в артефакте.",
             "",
         ])

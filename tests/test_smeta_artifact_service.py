@@ -150,3 +150,35 @@ def test_smeta_artifact_adds_lsr_form_without_replacing_tables(tmp_path):
     assert "ЛСР РИМ (форма 421/пр)" in csv_text
     assert "ВСЕГО по смете" in csv_text
     assert "Источники ЛСР" in csv_text
+
+
+def test_smeta_artifact_lsr_uses_one_primary_cost_table_not_duplicate_partial_lsr():
+    cost_rows = "\n".join(
+        f"| {idx} | Работа {idx} | 1 | шт. | ГЭСН 08, кандидат | {idx * 10} руб./шт. | {idx * 10} руб. | scenario_assumption |"
+        for idx in range(1, 20)
+    )
+    partial_lsr_rows = "\n".join(
+        f"| {idx} | ГЭСН 08 | Работа {idx} | шт. | 1 | {idx * 10} руб. | {idx * 10} руб. | предварительно |"
+        for idx in range(1, 13)
+    )
+    answer = f"""
+**Оценка стоимости работ**
+| № | Работа | Кол-во | Ед. | Норма/источник | Ставка/допущение | Сумма | Комментарий |
+|---:|---|---:|---:|---|---:|---:|---|
+{cost_rows}
+
+## ЛСР (предварительная форма)
+| № | Обоснование | Наименование работ и затрат | Ед. | Кол-во | Цена ед. | Стоимость всего | Статус/источник |
+|---:|---|---|---:|---:|---:|---:|---|
+{partial_lsr_rows}
+"""
+
+    artifact = build_smeta_artifact(answer, question="сделай ЛСР")
+
+    assert artifact is not None
+    assert artifact["rim_lsr_form"]["source_tables"] == ["Оценка стоимости работ"]
+    assert len(artifact["rim_lsr_form"]["rows"]) == 19
+    assert artifact["rim_lsr_form"]["amount_total"] == 1_900
+    assert "Сметная стоимость: **1 900 руб.**" in artifact["content"]
+    assert "Сумма выбранной ЛСР-формы: **1 900 руб.**" in artifact["content"]
+    assert "Сумма выбранной ЛСР-формы: **2 680 руб.**" not in artifact["content"]
