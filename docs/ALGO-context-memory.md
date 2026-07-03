@@ -23,6 +23,11 @@
 В том же слое сметные нормативные архивы `SMETA_RU_NORM/FSNB` типизируются как `normative`, а служебные
 файлы `manifest/dataset_card/preprocess_state` понижаются в first-files, чтобы модель открывала нормы,
 а не упаковочную ведомость самой базы.
+С 0.24.0.210 typed memory добавляет `dataset_topic_map_v1` и `dataset_section_map_v1`: модель получает
+аналог source guide/оглавления уровня датасета. Topic map связывает инженерные темы с файлами, разделами
+и поисковыми синонимами; section map берёт bounded-сигналы `section_heading/parent_heading` из
+`lexical_chunks`, если они есть. Это верхняя навигация над чанками: тема ведёт к документу/разделу,
+а фактическое утверждение всё равно требует обычного retrieval по источнику.
 
 ## Точки входа
 
@@ -108,6 +113,21 @@ no-reindex backfill через `tools/build_lexical_index.py` из Qdrant payloa
 `LEVEL_COST` и т.п.) memory добавляет человеческие роли: таблица норм/расценок, таблица
 ресурсов нормы, иерархия разделов, тип нормативной базы, ценовой уровень. Это навигация
 для модели по корпусу, не автоматический выбор нормы и не расчёт.
+File cards дополнительно несут `navigation_terms`: короткие поисковые синонимы для модели
+и target retrieval. Например `A_SRF_F` получает “нормы/расценки/шифр нормы”, `A_SRF_TR` —
+“ресурсы нормы/машины/материалы”, pricebook — “ФГИС ЦС/цены ресурсов/регион/квартал”.
+Это не evidence и не расширение фактов; это оглавление, по каким словам открывать нужный файл.
+
+`dataset_topic_map_v1` — карта предметных тем датасета: “паспорт объекта”, “пожарная сигнализация и
+противопожарная автоматика”, “слаботочные системы”, “ОВ/противодымная вентиляция”, “электроснабжение”,
+“ВОР/сметы” и т.п. Каждая тема хранит aliases, первые файлы, видимые headings и confidence. Карта не
+говорит, что решение подтверждено; она говорит модели, где искать. Поэтому запрос вида “сводка по
+пожарной автоматике” должен сначала попасть в тему и её файлы/разделы, а не в случайный общий чанк.
+
+`dataset_section_map_v1` — компактное оглавление из `lexical_chunks.section_heading/parent_heading`.
+Оно не читает исходные PDF/DOCX заново и не запускает OCR/reindex. Если headings отсутствуют, карта честно
+остаётся пустой, а модель опирается на file cards/reader-pass. Если headings есть, brief показывает
+документ → разделы, чтобы второй проход retrieval мог открывать конкретный файл через `doc_filter`.
 
 `retrieval_routes` — карта “тип вопроса → какие слои/роли/файлы открыть первыми”. Она не выбирает ответ:
 для project overview предпочитает состав проекта/ПЗ/задание; для сметы — tables/calculations/estimate;
@@ -162,10 +182,12 @@ memory, дублируется в `dataset_memory.memory_json`. Это не evid
     а не факты.
 11. Brief добавляет `source_layers`, `retrieval_routes` и связку `слой -> файлы`, чтобы модель сначала
     выбрала правильный слой/документ, а уже потом делала retrieval по источнику.
-12. Если у профиля датасета есть `operator_guidance`, brief и обычный context-memory block добавляют его
+12. Brief добавляет `topic_map` и `section_map`: модель видит тему, первые документы и внутренние заголовки
+    как оглавление корпуса. Это помогает сделать NBLM-подобный source guide без подмены ответа кодом.
+13. Если у профиля датасета есть `operator_guidance`, brief и обычный context-memory block добавляют его
     как комментарий оператора для модели. Это влияет на чтение корпуса, но не повышает статус факта.
-13. `build_dataset_notebook()` и `service_source_notebooks()` дают общий notebook-контекст для режимов.
-14. `estimate_harness` получает `LES_SYSTEM_PROMPT + smeta prompt + ГЭСН notebook excerpt + tool contract`.
+14. `build_dataset_notebook()` и `service_source_notebooks()` дают общий notebook-контекст для режимов.
+15. `estimate_harness` получает `LES_SYSTEM_PROMPT + smeta prompt + ГЭСН notebook excerpt + tool contract`.
 
 ## Границы
 
@@ -192,8 +214,9 @@ memory, дублируется в `dataset_memory.memory_json`. Это не evid
   `save_chat_history`, prompt-block с явной маркировкой `НЕ evidence`, `operator_guidance` как
   navigation-not-evidence.
 - `tests/test_dataset_memory_service.py` — typed memory, file cards, source layers, retrieval routes,
-  `dataset_source_graph_v1`, compact brief для модели, normative route только при наличии normative-слоя,
-  `operator_guidance` в model brief, `SMETA_RU_NORM` как normative source, роли ГЭСН/ФСЭМ/ФСБЦ,
-  soft-downrank служебных files, обратная совместимость старой memory без новых полей.
+  `dataset_source_graph_v1`, `dataset_topic_map_v1`, `dataset_section_map_v1`, compact brief для модели,
+  normative route только при наличии normative-слоя, `operator_guidance` в model brief,
+  `SMETA_RU_NORM` как normative source, роли ГЭСН/ФСЭМ/ФСБЦ, soft-downrank служебных files,
+  обратная совместимость старой memory без новых полей.
 - `tests/test_notebook_api.py` — публичные notebook endpoints и endpoint сохранения `profile/guidance`.
 - `tests/test_static_assets.py` — вкладка «Документы», карта датасета и поле пояснения для модели.

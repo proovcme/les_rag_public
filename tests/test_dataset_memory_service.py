@@ -67,6 +67,13 @@ def test_build_typed_dataset_memory_multilayer(tmp_path):
     assert graph["schema"] == "dataset_source_graph_v1"
     assert graph["is_evidence"] is False
     assert graph["top_files_by_layer"]["tables"][0]["file_name"] == "BAI/OUT/АС/ведомость объемов работ.xlsx"
+    assert memory["topic_map"]["schema"] == "dataset_topic_map_v1"
+    assert memory["topic_map"]["is_evidence"] is False
+    topic_ids = {item["id"] for item in memory["topic_map"]["topics"]}
+    assert "project_overview" in topic_ids
+    assert "estimate_cost" in topic_ids
+    assert memory["section_map"]["schema"] == "dataset_section_map_v1"
+    assert memory["section_map"]["is_evidence"] is False
 
 
 def test_dataset_brief_for_model_links_file_cards_to_chunks_and_keeps_model_primary(tmp_path):
@@ -104,8 +111,80 @@ def test_dataset_brief_for_model_links_file_cards_to_chunks_and_keeps_model_prim
     assert "Что означают слои" in brief
     assert "Маршруты поиска по типам вопросов" in brief
     assert "Связка слои -> файлы" in brief
+    assert "Карта тем датасета" in brief
     assert "сначала ВОР/спецификация/ЛСР" in brief
     assert "не источник фактов" in brief
+
+
+def test_topic_and_section_maps_use_lexical_headings(tmp_path):
+    db = tmp_path / "meta.db"
+    _seed_db(db)
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "INSERT INTO documents VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                "5",
+                "ds",
+                "BAI/OUT/ИОС 5.2/03_Пояснительная записка.docx",
+                "INDEXED",
+                32,
+                "DOCUMENT",
+                "text",
+                "",
+                "",
+                "markdown",
+                "",
+            ),
+        )
+        conn.execute(
+            """
+            CREATE TABLE lexical_chunks (
+                dataset_id TEXT,
+                doc_name TEXT,
+                section_heading TEXT DEFAULT '',
+                parent_heading TEXT DEFAULT ''
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO lexical_chunks(dataset_id, doc_name, section_heading, parent_heading) VALUES (?,?,?,?)",
+            [
+                (
+                    "ds",
+                    "BAI/OUT/ИОС 5.2/03_Пояснительная записка.docx",
+                    "5.2 Автоматическая установка пожарной сигнализации и противопожарная автоматика",
+                    "",
+                ),
+                (
+                    "ds",
+                    "BAI/OUT/ИОС 5.2/03_Пояснительная записка.docx",
+                    "Алгоритмы управления пожаротушением и противодымной вентиляцией",
+                    "",
+                ),
+                (
+                    "ds",
+                    "BAI/OUT/ИОС 5.2/03_Пояснительная записка.docx",
+                    "Интеграция АУПС с ОПС, СКУД и инженерным оборудованием",
+                    "",
+                ),
+            ],
+        )
+        conn.commit()
+
+    memory = build_typed_dataset_memory("ds", meta_db_path=str(db), force=True)
+    topic = next(item for item in memory["topic_map"]["topics"] if item["id"] == "fire_alarm_automation")
+
+    assert topic["is_evidence"] is False
+    assert topic["top_sections"]
+    assert any("Автоматическая установка пожарной сигнализации" in item["heading"] for item in topic["top_sections"])
+    assert topic["top_sections"][0]["file_name"].endswith("03_Пояснительная записка.docx")
+    assert memory["section_map"]["coverage"]["files_with_sections"] == 1
+
+    brief = dataset_brief_for_model([memory], question="сводка технических решений по пожарной сигнализации")
+    assert "Карта тем датасета" in brief
+    assert "пожарная сигнализация и противопожарная автоматика" in brief
+    assert "Оглавление/разделы" in brief
+    assert "Автоматическая установка пожарной сигнализации" in brief
 
 
 def test_dataset_brief_includes_operator_guidance_as_navigation(tmp_path):
@@ -268,6 +347,7 @@ def test_smeta_norm_archives_are_normative_not_generic_estimate():
     assert "estimate" not in typing["content_layers"]
     assert "calculations" not in typing["content_layers"]
     assert typing["document_role"] == "ГЭСНм"
+    assert "шифр" in typing["navigation_terms"]
 
 
 def test_smeta_norm_roles_distinguish_resource_bases():
@@ -302,6 +382,24 @@ def test_smeta_norm_nested_tables_have_human_roles():
 
     assert norm_table["document_role"] == "таблица норм/расценок ФСНБ"
     assert resource_table["document_role"] == "таблица ресурсов нормы"
+    assert "шифр нормы" in norm_table["navigation_terms"]
+    assert "ресурсы нормы" in resource_table["navigation_terms"]
+    assert "машины" in resource_table["navigation_terms"]
+
+
+def test_pricebook_files_get_navigation_terms():
+    typing = infer_file_typing(
+        {
+            "file_name": "RAG_Content/TABLE_SMETA/SMETA_SERVICE/pricebook_spb_2kv2026.md",
+            "domain": "TABLE_SMETA",
+            "doc_type": "SMETA",
+            "content_type": "text",
+        }
+    )
+
+    assert "ФГИС ЦС" in typing["navigation_terms"]
+    assert "цены ресурсов" in typing["navigation_terms"]
+    assert "квартал" in typing["navigation_terms"]
 
 
 def test_project_estimate_still_keeps_estimate_role():
@@ -352,13 +450,17 @@ def test_smeta_norm_memory_downranks_service_noise(tmp_path):
 
     assert "normative" in {item["id"] for item in memory["source_layers"]}
     assert memory["important_files"][0]["file_name"].endswith("gesnm10-06-001-01.md")
+    assert "шифр" in memory["important_files"][0]["navigation_terms"]
     norm_files = memory["source_graph"]["top_files_by_layer"]["normative"]
     assert norm_files[0]["file_name"].endswith("gesnm10-06-001-01.md")
+    assert "шифр" in norm_files[0]["navigation_terms"]
     route = next(item for item in memory["retrieval_routes"] if item["id"] == "normative_answer")
     assert route["target_files"][0]["file_name"].endswith("gesnm10-06-001-01.md")
+    assert "шифр" in route["target_files"][0]["navigation_terms"]
     brief = dataset_brief_for_model([memory], question="найди нормативное требование")
     nav = brief.split("Нормативная навигация:", 1)[1]
     assert nav.find("gesnm10-06-001-01.md") < nav.find("00_dataset_card.md")
+    assert "искать как" in nav
 
 
 def test_reader_context_uses_env_limits(monkeypatch):

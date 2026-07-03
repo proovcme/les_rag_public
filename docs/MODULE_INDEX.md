@@ -254,6 +254,21 @@ Typed memory теперь объясняет модели не только сп
 проиндексированных старых файлов, чтобы модель видела нормативную карту, а
 не экскурсию по подсобке базы.
 
+**0.24.0.209:** typed dataset memory получил `navigation_terms` в file cards,
+routes, source graph и compact brief: модель видит не только имя файла и роль,
+но и короткие поисковые синонимы. Для FSNB `A_SRF_F` раскрывается как
+“нормы/расценки/шифр нормы”, `A_SRF_TR` — как “ресурсы нормы/машины/материалы”,
+pricebook — как “ФГИС ЦС/цены ресурсов/регион/квартал”. Старые cached memory
+дообогащаются без reindex; это навигация, не evidence и не выбор нормы кодом.
+
+**0.24.0.210:** typed dataset memory получил `dataset_topic_map_v1` и
+`dataset_section_map_v1`: карта тем связывает инженерные вопросы с файлами,
+разделами и поисковыми aliases, а section map берёт `section_heading/parent_heading`
+из `lexical_chunks` как лёгкое оглавление без OCR/reindex. `dataset_brief_for_model_v1`
+показывает модели темы и видимые разделы как source guide уровня датасета:
+сначала выбрать тему/документ/раздел, затем открыть источник через retrieval/doc_filter.
+Это NBLM-подобная навигация, не готовый ответ и не evidence.
+
 **0.24.0.196:** smeta direct снижает дефолтную температуру до 0 и требует устойчивый базовый
 сценарий для одного и того же исходника. Сметный артефакт рендерит `ЛСР РИМ (форма 421/пр)` перед
 исходными таблицами и делает лист `ЛСР РИМ` основным XLSX-выводом; `lsr_rim_display_form_v1`
@@ -344,7 +359,7 @@ inventory + markdown-проекции внутренних `.json/.xml/.txt/...`
 | rag/table | детерм. SUM по полному Parquet (числа — код) | `table_query_service`; MCP `les_table_*` | [ALGO-table-query.md](ALGO-table-query.md) | ✅ |
 | rag/pdf | layout-aware PDF (колонки/таблицы→pipe) | `backend/pdf_layout`; флаг `LES_LAYOUT_PDF` | [ALGO-pdf-layout.md](ALGO-pdf-layout.md) | ✅ |
 | rag/harvest | verify-правки → train-set + таксономия ошибок | `harvest_service`; `tools/harvest_dataset.py` | [ALGO-harvest.md](ALGO-harvest.md) | ✅ |
-| rag/context-memory | паспорт чата + metadata/deep паспорт датасета (`_les_dataset_profile.json`) + общий `notebook_v1`; typed dataset memory хранит `dataset_revisions`/`dataset_memory`/`file_cards`/`evidence_atoms`, мультислои данных и file cards; model reader-pass сохраняет `reader_output` как navigation-not-evidence; `dataset_brief_for_model_v1` упаковывает это для модели и явно связывает `file_name` с Qdrant/`lexical_chunks`/`doc_filter`; deep-слой читает FTS-проекцию `lexical_chunks`, а при пустой lexical-карте берёт `top_documents`/`priority_files` из MetaDB/file_cards; оператор может сохранить `operator_guidance` как навигационное пояснение для модели, не evidence; UI-вкладка «Документы» показывает карту датасета, typed-бейджи в реестре файлов и в Самоваре | `context_memory_service`, `dataset_memory_service`, `notebook_service`, `prompt_registry_service`, `lexical_index_service`, `backend/qdrant_adapter`; `GET /api/chat/memory/{session_id}`; `GET/POST /api/rag/datasets/{id}/profile*`; `PATCH /api/rag/datasets/{id}/profile/guidance`; `GET /api/notebooks/{dataset_id}`; `GET/POST /api/notebooks/{dataset_id}/memory*`; `POST /api/notebooks/{dataset_id}/memory/read`; `POST /api/notebooks/warmup`; `GET /api/service-sources/notebooks`; `routers/chat.py`; `sovushka/pages/chat.py`; `sovushka/pages/documents.py`; `sovushka/pages/samovar.py` | [ALGO-context-memory.md](ALGO-context-memory.md) · [CODE_MAP.md](CODE_MAP.md) | ✅ |
+| rag/context-memory | паспорт чата + metadata/deep паспорт датасета (`_les_dataset_profile.json`) + общий `notebook_v1`; typed dataset memory хранит `dataset_revisions`/`dataset_memory`/`file_cards`/`evidence_atoms`, мультислои данных, file cards, `navigation_terms`, `dataset_topic_map_v1` и `dataset_section_map_v1`; model reader-pass сохраняет `reader_output` как navigation-not-evidence; `dataset_brief_for_model_v1` упаковывает это для модели и явно связывает `file_name` с Qdrant/`lexical_chunks`/`doc_filter`; deep-слой читает FTS-проекцию `lexical_chunks`, а при пустой lexical-карте берёт `top_documents`/`priority_files` из MetaDB/file_cards; оператор может сохранить `operator_guidance` как навигационное пояснение для модели, не evidence; UI-вкладка «Документы» показывает карту датасета, typed-бейджи в реестре файлов и в Самоваре | `context_memory_service`, `dataset_memory_service`, `notebook_service`, `prompt_registry_service`, `lexical_index_service`, `backend/qdrant_adapter`; `GET /api/chat/memory/{session_id}`; `GET/POST /api/rag/datasets/{id}/profile*`; `PATCH /api/rag/datasets/{id}/profile/guidance`; `GET /api/notebooks/{dataset_id}`; `GET/POST /api/notebooks/{dataset_id}/memory*`; `POST /api/notebooks/{dataset_id}/memory/read`; `POST /api/notebooks/warmup`; `GET /api/service-sources/notebooks`; `routers/chat.py`; `sovushka/pages/chat.py`; `sovushka/pages/documents.py`; `sovushka/pages/samovar.py` | [ALGO-context-memory.md](ALGO-context-memory.md) · [CODE_MAP.md](CODE_MAP.md) | ✅ |
 | rag/notebook-study | NotebookLM-подобное чтение проекта: broad-запрос → best-effort model reader-pass над картой датасета → адаптивный reading plan по блокноту → параллельный section retrieval + точечный `doc_filter`-проход по паспортным файлам из memory/inventory → модельная сводка + artifact с источниками/пробелами; не deterministic final | `notebook_study_service`; `dataset_memory_service`; `routers/chat.py`; payload `notebook_context`, `notebook_context.targeted_files`, `artifact`, `retrieval_trace.dataset_reader_prepare` | [ALGO-notebook-study.md](ALGO-notebook-study.md) | ✅ |
 | rag/vision | вердикт по VL-LoRA (пока не нужна) | — | [ALGO-vl-lora.md](ALGO-vl-lora.md) | ✅ (решение) |
 | rag/scan-mining | поиск данных в сканах + различение типа (verify) | `verify_service`, `table_detect`, `doc_classifier`; `routers/verify.py` | [scan_data_mining.md](scan_data_mining.md) | ✅ |

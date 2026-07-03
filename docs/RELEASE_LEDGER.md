@@ -7,13 +7,32 @@
 ## Текущее состояние (2026-07-03)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.208  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.210  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.208 FSNB human projection cards + notebook/RAG article
+задеплоено на рантайм:     0.24.0.210 topic/section source guide для typed dataset memory
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.208 (deploy stamp после make ship, 2026-07-03; commit stamp до следующего git commit)
+рантайм /api/version:      0.24.0.210 (deploy stamp после явного deploy --files, 2026-07-03)
 ```
+
+> 0.24.0.210 — typed dataset memory получил слой `dataset_topic_map_v1`
+> и `dataset_section_map_v1`: поверх file cards/source graph строится
+> NBLM-подобный source guide датасета. Topic map связывает инженерные темы
+> (`пожарная сигнализация и противопожарная автоматика`, `ОВ/противодымная
+> вентиляция`, `электроснабжение`, `ВОР/сметы` и т.д.) с первыми файлами,
+> aliases и видимыми headings. Section map берёт bounded-сигналы
+> `section_heading/parent_heading` из `lexical_chunks`, без OCR/reindex.
+> `dataset_brief_for_model_v1` теперь показывает модели тему -> файлы ->
+> разделы -> doc_filter маршрут. Это навигация и оглавление корпуса, не
+> evidence и не ответ кодом.
+
+> 0.24.0.209 — typed dataset memory получил `navigation_terms` в file cards,
+> routes, source graph и compact brief: модель видит не только имя файла и
+> роль, но и короткие поисковые синонимы. Для FSNB `A_SRF_F` раскрывается как
+> “нормы/расценки/шифр нормы”, `A_SRF_TR` — как
+> “ресурсы нормы/машины/материалы”, pricebook — как
+> “ФГИС ЦС/цены ресурсов/регион/квартал”. Старые cached memory дообогащаются
+> без reindex; это навигация, не evidence и не выбор нормы кодом.
 
 > 0.24.0.208 — добавлен публичный текст `docs/ARTICLE_NOTEBOOK_RAG_ARCHITECTURE.md`
 > о подходе LES: не просто поиск по нарезанным фрагментам, а блокноты

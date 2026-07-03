@@ -25,6 +25,8 @@ FILE_CARD_SCHEMA = "file_card_v1"
 EVIDENCE_ATOM_SCHEMA = "evidence_atom_v1"
 DATASET_READER_SCHEMA_ID = "dataset_reader_map_v1"
 DATASET_BRIEF_SCHEMA_ID = "dataset_brief_for_model_v1"
+DATASET_TOPIC_MAP_SCHEMA_ID = "dataset_topic_map_v1"
+DATASET_SECTION_MAP_SCHEMA_ID = "dataset_section_map_v1"
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +166,60 @@ _SMETA_NESTED_ROLE_HINTS: tuple[tuple[str, str], ...] = (
     ("arctype", "тип архива/служебный классификатор"),
 )
 _RUNNING_READER_TASKS: set[str] = set()
+
+TOPIC_DEFINITIONS: tuple[dict[str, Any], ...] = (
+    {
+        "id": "project_overview",
+        "label": "паспорт объекта и состав проекта",
+        "terms": ("состав проекта", "пояснительная записка", "паспорт", "тэп", "исходные данные", "задание"),
+        "prefer_layers": ("text", "technical_docs"),
+    },
+    {
+        "id": "fire_alarm_automation",
+        "label": "пожарная сигнализация и противопожарная автоматика",
+        "terms": (
+            "пожар", "пожарная сигнализация", "апс", "аупс", "опс", "противопожарная автоматика",
+            "пожаротушение", "извещатель", "дым", "соуэ", "противодым", "пдв", "сту",
+        ),
+        "prefer_layers": ("text", "technical_docs", "normative", "tables"),
+    },
+    {
+        "id": "security_low_current",
+        "label": "слаботочные системы и безопасность",
+        "terms": ("ксб", "скуд", "сот", "видеонаблюдение", "охранная сигнализация", "слаботоч", "опс"),
+        "prefer_layers": ("text", "technical_docs", "tables"),
+    },
+    {
+        "id": "hvac_smoke_control",
+        "label": "ОВ/противодымная вентиляция",
+        "terms": ("ов", "вентиляция", "противодым", "дымоудаление", "подпор", "пдв", "сп 7.13130"),
+        "prefer_layers": ("text", "technical_docs", "normative", "drawings"),
+    },
+    {
+        "id": "electrical_power",
+        "label": "электроснабжение и питание",
+        "terms": ("эом", "эм", "электроснабжение", "электрооборудование", "питание", "кабель", "щит"),
+        "prefer_layers": ("text", "technical_docs", "tables", "drawings"),
+    },
+    {
+        "id": "water_fire",
+        "label": "водоснабжение и пожаротушение",
+        "terms": ("вк", "водопровод", "пожаротушение", "спринклер", "внутренний противопожарный", "насос"),
+        "prefer_layers": ("text", "technical_docs", "tables", "drawings"),
+    },
+    {
+        "id": "estimate_cost",
+        "label": "ВОР, сметы и стоимость",
+        "terms": ("вор", "лср", "смета", "стоимость", "цена", "гэсн", "рим", "ресурсы", "фгис"),
+        "prefer_layers": ("tables", "calculations", "estimate", "normative"),
+    },
+    {
+        "id": "normative_requirements",
+        "label": "нормы и требования",
+        "terms": ("сп ", "гост", "снип", "норматив", "требования", "пункт", "таблица", "приложение"),
+        "prefer_layers": ("normative", "text"),
+    },
+)
 
 DATASET_READER_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -406,6 +462,291 @@ def _smeta_nested_role_hint(probe: str) -> str | None:
     return None
 
 
+def _dedupe_terms(items: list[str], *, limit: int = 12) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        term = re.sub(r"\s+", " ", str(item or "").strip())
+        if not term:
+            continue
+        key = term.casefold().replace("ё", "е")
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(term)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _navigation_terms_for_file(file_name: str, role: str, layers: list[str], doc_type: str = "", domain: str = "") -> list[str]:
+    """Human retrieval aliases for model navigation, not evidence."""
+    probe = f"{domain} {doc_type} {file_name} {role}".casefold().replace("ё", "е")
+    terms: list[str] = []
+    role_low = role.casefold().replace("ё", "е")
+    if "normative" in layers or _is_smeta_norm_source(file_name, domain, doc_type):
+        terms.extend(["нормативная база", "норма", "шифр", "сборник", "таблица"])
+    if "таблица норм/расценок" in role_low or "a_srf_f" in probe:
+        terms.extend(["нормы", "расценки", "шифр нормы", "наименование нормы", "единица измерения", "ГЭСН", "ФЕР"])
+    if "таблица ресурсов" in role_low or "a_srf_tr" in probe:
+        terms.extend(["ресурсы нормы", "затраты труда", "машины", "материалы", "ресурсный код", "состав ресурсов"])
+    if "видов работ" in role_low or "иерархия" in role_low or "a_srf_vr" in probe or "a_f3_vr" in probe:
+        terms.extend(["вид работ", "раздел", "таблица", "сборник", "навигация по нормам"])
+    if "тип нормативной базы" in role_low or "b_normtype" in probe:
+        terms.extend(["редакция базы", "тип нормы", "ФСНБ-2022"])
+    if "ценовой уровень" in role_low or "level_cost" in probe:
+        terms.extend(["ценовой уровень", "стоимость", "цена ресурса", "индекс", "ФГИС ЦС"])
+    if "фсэм" in role_low:
+        terms.extend(["машины", "механизмы", "машино-час", "ФСЭМ"])
+    if "фсбц материалы" in role_low:
+        terms.extend(["материалы", "базовая цена материалов", "ФСБЦм"])
+    if "фсбц оборудование" in role_low:
+        terms.extend(["оборудование", "базовая цена оборудования", "ФСБЦо"])
+    if "сплит" in role_low or "фгис" in role_low or "pricebook" in probe:
+        terms.extend(["ФГИС ЦС", "сплит-форма", "цены ресурсов", "регион", "квартал", "pricebook"])
+    if "ведомость" in role_low:
+        terms.extend(["ВОР", "объёмы работ", "ведомость", "количество", "единица"])
+    if "спецификация" in role_low:
+        terms.extend(["спецификация", "поставка", "материалы", "оборудование", "монтаж"])
+    if "сметный расчет" in role_low or "estimate" in layers:
+        terms.extend(["ЛСР", "смета", "стоимость", "позиция", "обоснование"])
+    if "состав проекта" in role_low:
+        terms.extend(["состав проекта", "тома", "разделы", "комплект документации"])
+    if "пояснительная записка" in role_low:
+        terms.extend(["пояснительная записка", "технические решения", "исходные данные"])
+    if "чертеж" in role_low or "drawings" in layers:
+        terms.extend(["лист", "чертёж", "схема", "марка", "геометрия"])
+    return _dedupe_terms(terms)
+
+
+def _norm_text(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "").casefold().replace("ё", "е")).strip()
+
+
+def _topic_match_score(probe: str, terms: tuple[str, ...]) -> tuple[int, list[str]]:
+    score = 0
+    hits: list[str] = []
+    for term in terms:
+        normalized = _norm_text(term)
+        if not normalized:
+            continue
+        if normalized in probe:
+            hits.append(term)
+            score += 8 if " " in normalized else 5
+            continue
+        if normalized.endswith(" "):
+            continue
+        token = re.escape(normalized)
+        if re.search(rf"(^|[^0-9a-zа-я]){token}", probe):
+            hits.append(term)
+            score += 4
+    return score, _dedupe_terms(hits, limit=8)
+
+
+def _lexical_section_signals(conn: sqlite3.Connection, dataset_id: str, *, limit: int = 600) -> list[dict[str, Any]]:
+    """Bounded section/heading signals from lexical_chunks. No source-file reads."""
+    tables = {
+        str(row[0])
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type IN ('table','view')").fetchall()
+    }
+    if "lexical_chunks" not in tables:
+        return []
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                doc_name,
+                COALESCE(NULLIF(section_heading,''), NULLIF(parent_heading,''), '') AS heading,
+                COUNT(*) AS chunks
+            FROM lexical_chunks
+            WHERE dataset_id=?
+              AND COALESCE(NULLIF(section_heading,''), NULLIF(parent_heading,''), '') <> ''
+            GROUP BY doc_name, heading
+            ORDER BY chunks DESC, doc_name, heading
+            LIMIT ?
+            """,
+            (dataset_id, int(limit)),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        heading = str(row["heading"] or "").strip()
+        doc_name = str(row["doc_name"] or "").strip()
+        if not heading or not doc_name:
+            continue
+        out.append({"file_name": doc_name, "heading": heading, "chunk_count": int(row["chunks"] or 0)})
+    return out
+
+
+def _build_section_map(dataset_id: str, section_signals: list[dict[str, Any]], cards: list[dict[str, Any]]) -> dict[str, Any]:
+    by_file: dict[str, list[dict[str, Any]]] = {}
+    for signal in section_signals:
+        file_name = str(signal.get("file_name") or "")
+        heading = str(signal.get("heading") or "").strip()
+        if not file_name or not heading:
+            continue
+        by_file.setdefault(file_name, []).append(
+            {
+                "heading": heading[:220],
+                "chunk_count": int(signal.get("chunk_count") or 0),
+                "topic_hints": _section_topic_hints(heading),
+            }
+        )
+
+    card_names = {str(card.get("file_name") or "") for card in cards}
+    files = []
+    for file_name, sections in sorted(
+        by_file.items(),
+        key=lambda item: (-sum(int(sec.get("chunk_count") or 0) for sec in item[1]), item[0]),
+    )[:80]:
+        if card_names and file_name not in card_names:
+            # Lexical may contain legacy aliases. Keep only sections that can be opened via doc_filter.
+            continue
+        sections.sort(key=lambda item: (-int(item.get("chunk_count") or 0), str(item.get("heading") or "")))
+        files.append({"file_name": file_name, "sections": sections[:12]})
+
+    return {
+        "schema": DATASET_SECTION_MAP_SCHEMA_ID,
+        "context_role": "navigation",
+        "is_evidence": False,
+        "dataset_id": dataset_id,
+        "source": "lexical_chunks.section_heading",
+        "files": files,
+        "coverage": {
+            "files_with_sections": len(files),
+            "section_count": sum(len(item.get("sections") or []) for item in files),
+        },
+        "rule": "section_map guides target retrieval; final claims require retrieved source fragments",
+    }
+
+
+def _section_topic_hints(text: str) -> list[str]:
+    probe = _norm_text(text)
+    hints: list[str] = []
+    for topic in TOPIC_DEFINITIONS:
+        score, _hits = _topic_match_score(probe, tuple(topic.get("terms") or ()))
+        if score:
+            hints.append(str(topic.get("label") or topic.get("id") or ""))
+    return _dedupe_terms(hints, limit=5)
+
+
+def _build_topic_map(
+    dataset_id: str,
+    cards: list[dict[str, Any]],
+    section_signals: list[dict[str, Any]],
+) -> dict[str, Any]:
+    cards_by_name = {str(card.get("file_name") or ""): card for card in cards}
+    topics: list[dict[str, Any]] = []
+    for topic in TOPIC_DEFINITIONS:
+        terms = tuple(str(term) for term in (topic.get("terms") or ()))
+        prefer_layers = {str(layer) for layer in (topic.get("prefer_layers") or ())}
+        file_hits: list[tuple[int, dict[str, Any], list[str]]] = []
+        section_hits: list[tuple[int, dict[str, Any], list[str]]] = []
+
+        for card in cards:
+            probe = _norm_text(
+                " ".join(
+                    [
+                        str(card.get("file_name") or ""),
+                        str(card.get("document_role") or ""),
+                        " ".join(str(term) for term in (card.get("navigation_terms") or [])),
+                        str(card.get("summary") or ""),
+                    ]
+                )
+            )
+            score, hits = _topic_match_score(probe, terms)
+            card_layers = {str(layer) for layer in (card.get("content_layers") or [])}
+            if score and card_layers.intersection(prefer_layers):
+                score += 4
+            if score:
+                score += min(6, int(card.get("chunk_count") or 0) // 80)
+                score -= _service_noise_penalty(card)
+                file_hits.append((score, card, hits))
+
+        for signal in section_signals:
+            heading = str(signal.get("heading") or "")
+            file_name = str(signal.get("file_name") or "")
+            card = cards_by_name.get(file_name)
+            if not card:
+                continue
+            probe = _norm_text(f"{file_name} {heading}")
+            score, hits = _topic_match_score(probe, terms)
+            if not score:
+                continue
+            score += min(5, int(signal.get("chunk_count") or 0))
+            section_hits.append((score, signal, hits))
+
+        file_hits.sort(key=lambda item: (-item[0], str(item[1].get("file_name") or "")))
+        section_hits.sort(key=lambda item: (-item[0], str(item[1].get("file_name") or ""), str(item[1].get("heading") or "")))
+        if not file_hits and not section_hits:
+            continue
+
+        top_files = []
+        seen_files: set[str] = set()
+        for score, card, hits in file_hits[:10]:
+            file_name = str(card.get("file_name") or "")
+            if file_name in seen_files:
+                continue
+            seen_files.add(file_name)
+            top_files.append(
+                {
+                    "file_name": file_name,
+                    "role": card.get("document_role") or "документ",
+                    "layers": list(card.get("content_layers") or []),
+                    "navigation_terms": list(card.get("navigation_terms") or [])[:8],
+                    "matched_terms": hits,
+                    "chunk_count": int(card.get("chunk_count") or 0),
+                    "score": int(score),
+                }
+            )
+        top_sections = [
+            {
+                "file_name": str(signal.get("file_name") or ""),
+                "heading": str(signal.get("heading") or "")[:220],
+                "matched_terms": hits,
+                "chunk_count": int(signal.get("chunk_count") or 0),
+                "score": int(score),
+            }
+            for score, signal, hits in section_hits[:12]
+        ]
+        confidence = 0.35
+        if top_sections:
+            confidence += 0.25
+        if top_files:
+            confidence += 0.2
+        if len(top_files) >= 3 or len(top_sections) >= 3:
+            confidence += 0.1
+        topics.append(
+            {
+                "id": topic["id"],
+                "label": topic["label"],
+                "query_aliases": list(terms)[:12],
+                "top_files": top_files,
+                "top_sections": top_sections,
+                "confidence": round(min(confidence, 0.9), 2),
+                "is_evidence": False,
+            }
+        )
+
+    topics.sort(
+        key=lambda item: (
+            -float(item.get("confidence") or 0),
+            -len(item.get("top_sections") or []),
+            -len(item.get("top_files") or []),
+            str(item.get("label") or ""),
+        )
+    )
+    return {
+        "schema": DATASET_TOPIC_MAP_SCHEMA_ID,
+        "context_role": "navigation",
+        "is_evidence": False,
+        "dataset_id": dataset_id,
+        "topics": topics[:24],
+        "rule": "topic_map selects candidate files/sections; answers still need retrieved chunks/tables/graph/calculation trace",
+    }
+
+
 def infer_file_typing(doc: dict[str, Any]) -> dict[str, Any]:
     """Multi-label file typing from current metadata and file naming signals."""
     file_name = str(doc.get("file_name") or "")
@@ -460,11 +801,13 @@ def infer_file_typing(doc: dict[str, Any]) -> dict[str, Any]:
         file_kind = "document"
 
     role = _document_role(low, layers, doc_type, domain)
+    navigation_terms = _navigation_terms_for_file(file_name, role, layers, doc_type, domain)
     return {
         "file_kind": file_kind,
         "content_layers": layers,
         "content_layer_labels": [CONTENT_LAYER_LABELS.get(layer, layer) for layer in layers],
         "document_role": role,
+        "navigation_terms": navigation_terms,
         "source_granularity": _source_granularity(layers),
         "confidence": 0.78 if doc_type or content_type else 0.58,
         "classified_by": "metadata_name_bootstrap",
@@ -555,6 +898,7 @@ def chunk_payload_typing(file_name: str, route_metadata: dict[str, Any] | None, 
         "content_layers": typing["content_layers"],
         "content_layer_labels": typing["content_layer_labels"],
         "document_role": typing["document_role"],
+        "navigation_terms": typing.get("navigation_terms") or [],
         "source_granularity": source_granularity,
         "typed_by": typing["classified_by"],
     }
@@ -620,6 +964,7 @@ def build_typed_dataset_memory(
                 "content_layers": typing["content_layers"],
                 "content_layer_labels": typing["content_layer_labels"],
                 "document_role": role,
+                "navigation_terms": typing.get("navigation_terms") or [],
                 "summary": _file_summary(doc, typing),
                 "key_entities": [],
                 "confidence": typing["confidence"],
@@ -664,9 +1009,12 @@ def build_typed_dataset_memory(
                 ),
             )
 
+        section_signals = _lexical_section_signals(conn, dataset_id)
         source_layers = _source_layers_from_counts(by_layer)
         retrieval_routes = _retrieval_routes_for_dataset(cards, source_layers)
         source_graph = _source_graph_for_dataset(dataset_id, cards, source_layers)
+        section_map = _build_section_map(dataset_id, section_signals, cards)
+        topic_map = _build_topic_map(dataset_id, cards, section_signals)
         operator_guidance = _operator_guidance_from_profiles(conn, dataset_id)
         memory = {
             "schema": TYPED_MEMORY_SCHEMA,
@@ -697,6 +1045,8 @@ def build_typed_dataset_memory(
             "source_layers": source_layers,
             "retrieval_routes": retrieval_routes,
             "source_graph": source_graph,
+            "topic_map": topic_map,
+            "section_map": section_map,
             "important_files": _important_files(cards),
             "file_cards": cards[:500],
             "known_gaps": _known_gaps(docs, by_layer),
@@ -763,6 +1113,7 @@ def _important_files(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "file_name": card["file_name"],
                 "document_role": card.get("document_role", ""),
                 "content_layers": card.get("content_layers") or [],
+                "navigation_terms": list(card.get("navigation_terms") or [])[:8],
                 "summary": card.get("summary", ""),
                 "chunk_count": int(card.get("chunk_count") or 0),
                 "selection_reason": reason,
@@ -776,6 +1127,16 @@ def _ensure_memory_navigation(memory: dict[str, Any]) -> dict[str, Any]:
         memory["important_files"] = _important_files(list(memory.get("file_cards") or []))
     if memory and memory.get("file_cards"):
         cards = list(memory.get("file_cards") or [])
+        for card in cards:
+            if not card.get("navigation_terms"):
+                card["navigation_terms"] = _navigation_terms_for_file(
+                    str(card.get("file_name") or ""),
+                    str(card.get("document_role") or ""),
+                    [str(layer) for layer in (card.get("content_layers") or [])],
+                    str((card.get("provenance") or {}).get("doc_type") or ""),
+                    str((card.get("provenance") or {}).get("domain") or ""),
+                )
+        memory["file_cards"] = cards
         if not memory.get("source_layers"):
             counts: dict[str, int] = {}
             for card in cards:
@@ -786,6 +1147,10 @@ def _ensure_memory_navigation(memory: dict[str, Any]) -> dict[str, Any]:
             memory["retrieval_routes"] = _retrieval_routes_for_dataset(cards, memory.get("source_layers") or [])
         if not memory.get("source_graph"):
             memory["source_graph"] = _source_graph_for_dataset(str(memory.get("dataset_id") or ""), cards, memory.get("source_layers") or [])
+        if not memory.get("topic_map"):
+            memory["topic_map"] = _build_topic_map(str(memory.get("dataset_id") or ""), cards, [])
+        if not memory.get("section_map"):
+            memory["section_map"] = _build_section_map(str(memory.get("dataset_id") or ""), [], cards)
     return memory
 
 
@@ -836,6 +1201,7 @@ def _retrieval_routes_for_dataset(cards: list[dict[str, Any]], source_layers: li
                         "file_name": card.get("file_name"),
                         "role": role,
                         "layers": list(card.get("content_layers") or []),
+                        "navigation_terms": list(card.get("navigation_terms") or [])[:6],
                         "chunk_count": int(card.get("chunk_count") or 0),
                     }
                 )
@@ -899,6 +1265,7 @@ def _source_graph_for_dataset(dataset_id: str, cards: list[dict[str, Any]], sour
             {
                 "file_name": card.get("file_name"),
                 "role": card.get("document_role"),
+                "navigation_terms": list(card.get("navigation_terms") or [])[:6],
                 "chunk_count": int(card.get("chunk_count") or 0),
                 "status": card.get("status"),
             }
@@ -984,12 +1351,15 @@ def _reader_context(
                 "file_kind": card.get("file_kind"),
                 "content_layers": card.get("content_layers") or [],
                 "document_role": card.get("document_role"),
+                "navigation_terms": list(card.get("navigation_terms") or [])[:8],
                 "summary": card.get("summary"),
             }
             for card in cards[:file_limit]
         ],
         "retrieval_routes": memory.get("retrieval_routes") or [],
         "source_graph": memory.get("source_graph") or {},
+        "topic_map": memory.get("topic_map") or {},
+        "section_map": memory.get("section_map") or {},
     }
     text = _json(payload)
     if len(text) > char_limit:
@@ -1004,7 +1374,8 @@ def _reader_instruction() -> str:
         "Определи тип корпуса: проект, нормы, сметы, техничка, смешанный корпус или неизвестно. "
         "Укажи, какие файлы открывать для широких вопросов: паспорт объекта, состав проекта, ТЭП, "
         "инженерные разделы, сметы, спецификации, нормы. Если корпус похож на набор норм, не описывай его "
-        "как строительный объект. Выбери 10-30 конкретных file_roles из имён, которые есть во входе. "
+        "как строительный объект. Используй topic_map и section_map как оглавление: тема сначала ведёт "
+        "к файлам и разделам, а не сразу к случайным чанкам. Выбери 10-30 конкретных file_roles из имён, которые есть во входе. "
         "Не добавляй в known_gaps фразу о том, что file_cards/file list ограничен или выбран частично: "
         "это нормальная навигационная выборка, а не отсутствие данных. Если для широкого вопроса файл "
         "виден в карте, советуй добрать его точечно, а не писать «данных нет». Верни только JSON по схеме."
@@ -1219,6 +1590,21 @@ def typed_memory_prompt_block(memories: list[dict[str, Any]]) -> str:
             lines.append("Ключевые файлы для широких вопросов:")
             for item in important[:12]:
                 lines.append(f"- {item.get('file_name')} — {item.get('document_role')}")
+        topic_map = memory.get("topic_map") if isinstance(memory.get("topic_map"), dict) else {}
+        topics = topic_map.get("topics") if isinstance(topic_map, dict) else []
+        if topics:
+            lines.append("Карта тем:")
+            for topic in list(topics)[:8]:
+                files = _brief_join(
+                    [str(f.get("file_name") or "") for f in (topic.get("top_files") or [])],
+                    limit=3,
+                )
+                sections = _brief_join(
+                    [str(s.get("heading") or "") for s in (topic.get("top_sections") or [])],
+                    limit=2,
+                )
+                tail = "; ".join(part for part in [f"файлы: {files}" if files else "", f"разделы: {sections}" if sections else ""] if part)
+                lines.append(f"- {topic.get('label') or topic.get('id')}: {tail}")
         reader = memory.get("reader_output") if memory.get("reader_status") == "model" else None
         if isinstance(reader, dict):
             summary = str(reader.get("reader_summary") or "").strip()
@@ -1314,7 +1700,12 @@ def _normative_navigation_lines(memory: dict[str, Any], question: str, *, max_fi
     for _score, card in candidates[:max_files]:
         chunks = int(card.get("chunk_count") or 0)
         status = str(card.get("status") or "")
-        lines.append(f"- {card.get('file_name')} — {card.get('document_role') or 'нормативный документ'}; status {status}; чанков {chunks}")
+        terms = _brief_join([str(term) for term in (card.get("navigation_terms") or [])], limit=6)
+        terms_tail = f"; искать как: {terms}" if terms else ""
+        lines.append(
+            f"- {card.get('file_name')} — {card.get('document_role') or 'нормативный документ'}; "
+            f"status {status}; чанков {chunks}{terms_tail}"
+        )
     return lines
 
 
@@ -1396,6 +1787,37 @@ def dataset_brief_for_model(
                 names = _brief_join([str(f.get("file_name") or "") for f in list(files)[:4]], limit=4)
                 if names:
                     lines.append(f"- {CONTENT_LAYER_LABELS.get(layer_id, layer_id)}: {names}")
+        topic_map = memory.get("topic_map") if isinstance(memory.get("topic_map"), dict) else {}
+        topics = topic_map.get("topics") if isinstance(topic_map, dict) else []
+        if topics:
+            lines.append("Карта тем датасета:")
+            for topic in list(topics)[:8]:
+                files = _brief_join(
+                    [str(f.get("file_name") or "") for f in (topic.get("top_files") or [])],
+                    limit=4,
+                )
+                sections = _brief_join(
+                    [str(s.get("heading") or "") for s in (topic.get("top_sections") or [])],
+                    limit=3,
+                )
+                aliases = _brief_join([str(a) for a in (topic.get("query_aliases") or [])], limit=5)
+                tail_parts = []
+                if files:
+                    tail_parts.append(f"первые файлы: {files}")
+                if sections:
+                    tail_parts.append(f"разделы: {sections}")
+                if aliases:
+                    tail_parts.append(f"искать как: {aliases}")
+                tail = "; ".join(tail_parts)
+                lines.append(f"- {topic.get('label') or topic.get('id')}: {tail}")
+        section_map = memory.get("section_map") if isinstance(memory.get("section_map"), dict) else {}
+        section_files = section_map.get("files") if isinstance(section_map, dict) else []
+        if section_files:
+            lines.append("Оглавление/разделы, уже видимые в индексе:")
+            for item in list(section_files)[:6]:
+                headings = _brief_join([str(s.get("heading") or "") for s in (item.get("sections") or [])], limit=4)
+                if headings:
+                    lines.append(f"- {item.get('file_name')}: {headings}")
         norm_lines = _normative_navigation_lines(memory, question)
         if norm_lines:
             lines.extend(norm_lines)
@@ -1411,6 +1833,9 @@ def dataset_brief_for_model(
                 suffix = f"; чанков {chunks}" if chunks is not None else ""
                 if layers_text:
                     suffix += f"; слои {layers_text}"
+                terms = _brief_join([str(term) for term in (item.get("navigation_terms") or card.get("navigation_terms") or [])], limit=6)
+                if terms:
+                    suffix += f"; искать как {terms}"
                 lines.append(f"- {file_name} — {item.get('document_role') or card.get('document_role') or 'документ'}{suffix}")
         reader = memory.get("reader_output") if memory.get("reader_status") == "model" else None
         if isinstance(reader, dict):
