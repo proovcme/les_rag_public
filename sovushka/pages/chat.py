@@ -827,6 +827,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 chat_input = ui.textarea(
                     placeholder="Спросить по нормативам, проекту или базе знаний..."
                 ).classes("sov-composer-input").props("rows=2 autogrow borderless")
+                try:
+                    preset_question = (context.client.request.query_params.get("question") or "").strip()
+                    if preset_question:
+                        chat_input.value = preset_question[:4000]
+                except Exception:
+                    pass
                 with ui.row().classes("sov-attachment-strip") as attach_strip:
                     ui.icon("o_attach_file").classes("sov-attachment-icon")
                     with ui.column().classes("sov-attachment-copy"):

@@ -37,8 +37,15 @@ def test_admin_documents_tab_is_mounted():
     assert "датасет → документ → фрагменты, без модели" in page
     assert "Пояснение для модели" in page
     assert "profile/guidance" in page
+    assert "Темы датасета" in page
+    assert "Разделы внутри файлов" in page
+    assert "Спросить по теме" in page
+    assert 'f"ds:{dataset_id}"' in page
+    assert "topic_map" in page and "section_map" in page
     assert 'ui.button("Карта"' in page
     assert "do not call LLMs" in router
+    assert "request.query_params.get(\"question\")" in app_shell
+    assert "request.query_params.get(\"tab\")" in app_shell
 
 
 def test_chat_exposes_documents_navigation():

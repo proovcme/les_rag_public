@@ -7,13 +7,20 @@
 ## Текущее состояние (2026-07-03)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.211  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.212  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.211 topic-guided retrieval через source guide typed memory
+задеплоено на рантайм:     0.24.0.212 topic map UI + trace summary
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.211 (deploy stamp после явного deploy --files, 2026-07-03)
+рантайм /api/version:      0.24.0.212 (deploy stamp после явного deploy --files, 2026-07-03)
 ```
+
+> 0.24.0.212 — карта источников стала видимой оператору: вкладка
+> «Документы» показывает `dataset_topic_map_v1` и `dataset_section_map_v1`
+> как темы, файлы и разделы, а кнопка «Спросить по теме» открывает чат с
+> `scope=ds:<dataset_id>` и предзаполненным вопросом. Trace summary в чате
+> теперь показывает topic-guided retrieval: выбранную тему, targeted/fallback
+> counts и promoted fallback-документ.
 
 > 0.24.0.211 — карта тем стала рабочим retrieval layer: при выбранном
 > датасете `routers/chat.py` строит `dataset_topic_selection_v1`, выбирает

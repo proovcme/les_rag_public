@@ -357,6 +357,27 @@ def trace_summary(unified_trace: dict | None) -> str:
     parts = []
     if ut.get("intent"):
         parts.append(f"route: {ut['intent']}")
+    topic_trace = ut.get("topic_guided_retrieval") if isinstance(ut.get("topic_guided_retrieval"), dict) else {}
+    if topic_trace:
+        selected_topics = topic_trace.get("selected_topics") or []
+        topic_labels = [
+            str(item.get("label") or item.get("id") or "")
+            for item in selected_topics
+            if isinstance(item, dict) and str(item.get("label") or item.get("id") or "").strip()
+        ]
+        topic_part = ", ".join(topic_labels[:2]) if topic_labels else "topic-guided"
+        targeted = topic_trace.get("targeted_chunk_count")
+        fallback = topic_trace.get("wide_fallback_chunk_count")
+        promoted = topic_trace.get("wide_fallback_promoted") if isinstance(topic_trace.get("wide_fallback_promoted"), dict) else {}
+        promoted_doc = str(promoted.get("doc_name") or "").rsplit("/", 1)[-1]
+        suffix = []
+        if targeted is not None:
+            suffix.append(f"targeted {targeted}")
+        if fallback is not None:
+            suffix.append(f"fallback {fallback}")
+        if promoted_doc:
+            suffix.append(f"promoted {promoted_doc}")
+        parts.append("topic: " + topic_part + (f" ({', '.join(suffix)})" if suffix else ""))
     tiers = ut.get("searched_tiers") or []
     if tiers:
         parts.append("tiers: " + ", ".join(tiers))

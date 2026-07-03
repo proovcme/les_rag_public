@@ -1,13 +1,13 @@
 # TEST_INVENTORY — тесты Unified Construction Harness v0.16–v0.24
 
-Гейт: `make verify` (офлайн, синтаксис+импорт-смоук). Полная сюита: `uv run python -m pytest tests/ -q` (~2461 тестов).
+Гейт: `make verify` (офлайн, синтаксис+импорт-смоук). Полная сюита: `uv run python -m pytest tests/ -q` (~2462 тестов).
 Все тесты ниже офлайн (без живых Qdrant/MLX), flag `LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED` OFF.
 
-**Профильные таблицы v0.16–v0.22: 230 тестов** (+ регрессия v0.3–v0.15 и chat/router при OFF). `make verify` на h0.24 собирает **2461 тест**.
+**Профильные таблицы v0.16–v0.22: 230 тестов** (+ регрессия v0.3–v0.15 и chat/router при OFF). `make verify` на h0.24 собирает **2462 теста**.
 
 | Файл | Тестов | Покрывает |
 |---|---:|---|
-| `tests/test_answer_render_v16.py` | 25 | render-хелперы Совушки: strip markdown из ячеек, source-chips, evidence-секции, citation/conflict-блоки, citation drawer payload, `answer_copy_text` (Копировать без trace/тела письма) |
+| `tests/test_answer_render_v16.py` | 26 | render-хелперы Совушки: strip markdown из ячеек, source-chips, evidence-секции, citation/conflict-блоки, citation drawer payload, compact trace включая topic-guided retrieval, `answer_copy_text` (Копировать без trace/тела письма) |
 | `tests/test_sidecar_ops_v16.py` | 50 | sidecar-операции: инвентарь датасетов, heading-классификатор, extraction-state (7 кейсов), lexical `extracted_fts`, OCR-детект, `run_extraction`/`extract_body_op` (gate env+confirm), originals read-only (shasum), legacy `.xls` |
 | `tests/test_route_and_runtime_v17.py` | 34 | runtime alignment (extract-эндпоинты зарегистрированы), route-fix «реестр документации» ≠ глобальный реестр, doc_type_classifier, honest `.xls`, регрессии v0.3–v0.16 |
 | `tests/test_deterministic_policy_v18.py` | 27 | DeterministicFinalPolicy: glossary-final только при литеральном термине, registry только глобальный, source-scoped/descriptive→reject; «расскажи про котельную»≠ОЖР; ОЖР/КАЦ/ЛСР работают |
@@ -29,6 +29,7 @@
 | `tests/test_context_memory_service.py` | 9 | dataset/service notebooks including GESN collection map prompt excerpt, typed dataset memory context, warmup, and navigation-not-evidence behavior |
 | `tests/test_dataset_memory_service.py` | 18 | typed dataset memory source guide: file cards, source layers, retrieval routes, source graph, `navigation_terms`, `dataset_topic_map_v1`, `dataset_section_map_v1`, `dataset_topic_selection_v1`, lexical heading use, operator guidance, FSNB human roles, service-noise downrank, reader-pass storage |
 | `tests/test_saferag_service.py` | 12 | SafeRAG context/source helpers: lexical rank boost, source concentration, low raw-score lexical matches, protected opened documents, deduplicated copied docs, context builders and source-name order |
+| `tests/test_static_assets.py` | 5 | статическая проводка UI: вкладки «Инструменты»/«Документы», topic/section map в Documents UI, deep-link «Спросить по теме», разрешения deploy для shell |
 | `tests/test_proxy_security.py`, `tests/test_proxy_routers.py` | 43 focused with Sovushka | trust/auth guardrails: ZeroTier/trusted admin, API-key roles, protected `les-admin-` root-admin keys without device binding, and trusted-only mutation of protected keys |
 | `tests/test_sovushka_chat.py` | 30+ | Sovushka chat/UI regressions: markdown rendering, new-chat/model-chip/table wrapping, editable prompt controls, attachment context, no project-summary final hijack, additive MetaDB inventory context, clickable file-register RAG, selected-dataset file panel, Samovar parse/play slot-context guard, scheduler-start endpoint guard, WAITING-vs-PARSING status, and file-layer labels |
 

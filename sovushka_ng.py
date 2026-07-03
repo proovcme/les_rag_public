@@ -253,7 +253,10 @@ async def classic_chat_page(request: Request):
             with ui.tab_panel(tab_history):
                 build_history(tabs, tab_chat)
 
-    _last_tab = app.storage.user.get("last_chat_tab", "AI ЧАТ")
+    _forced_chat_tab = bool((request.query_params.get("question") or "").strip()) or (
+        (request.query_params.get("tab") or "").strip().casefold() == "chat"
+    )
+    _last_tab = "AI ЧАТ" if _forced_chat_tab else app.storage.user.get("last_chat_tab", "AI ЧАТ")
     _target = {"AI ЧАТ": tab_chat, "Документы": tab_documents, "ИСТОРИЯ": tab_history}.get(_last_tab)
     if _target and _target != tab_chat:
         tabs.set_value(_target)

@@ -9,7 +9,7 @@ import asyncio
 import json
 from urllib.parse import quote, urlencode
 
-from nicegui import ui
+from nicegui import context, ui
 
 from sovushka.state import api_get, api_patch, api_post, add_log, last_api_error_text
 
@@ -214,6 +214,18 @@ def build_documents() -> None:
         state["view_note"] = "Карта датасета показывает слои, маршруты и первые файлы для чтения."
         _render_view()
 
+    def _ask_about_topic(topic: dict) -> None:
+        dataset_id = str(state.get("selected_dataset") or "").strip()
+        label = str(topic.get("label") or topic.get("id") or "").strip()
+        if not dataset_id or not label:
+            ui.notify("Сначала выберите датасет и тему", type="warning")
+            return
+        question = f"дай сводку по теме «{label}»"
+        params = urlencode({"scope": f"ds:{dataset_id}", "question": question, "tab": "chat"})
+        path = str(getattr(context.client.request, "url", "") or "")
+        target_path = "/les/classic" if "/les/classic" in path else "/classic"
+        ui.navigate.to(f"{target_path}?{params}")
+
     def _show_fragments() -> None:
         state["view_mode"] = "fragments"
         _render_view()
@@ -337,9 +349,13 @@ def build_documents() -> None:
             return
 
         graph = memory.get("source_graph") if isinstance(memory.get("source_graph"), dict) else {}
+        topic_map = memory.get("topic_map") if isinstance(memory.get("topic_map"), dict) else {}
+        section_map = memory.get("section_map") if isinstance(memory.get("section_map"), dict) else {}
         source_layers = list(memory.get("source_layers") or [])
         routes = list(memory.get("retrieval_routes") or [])
         gaps = list(memory.get("known_gaps") or [])
+        topics = list(topic_map.get("topics") or [])
+        section_files = list(section_map.get("files") or [])
         top_files_by_layer = graph.get("top_files_by_layer") if isinstance(graph, dict) else {}
 
         with ui.row().classes("items-stretch w-full").style("gap:8px;flex-wrap:wrap;margin-top:12px;"):
@@ -348,6 +364,7 @@ def build_documents() -> None:
                 ("В индексе", memory.get("indexed_count", 0)),
                 ("Фрагментов", memory.get("chunk_count", 0)),
                 ("Слоёв", len(source_layers)),
+                ("Тем", len(topics)),
                 ("Маршрутов", len(routes)),
             ]
             for title, value in metrics:
@@ -364,6 +381,43 @@ def build_documents() -> None:
             _badge("navigation, not evidence", "tag-warn" if graph.get("is_evidence") else "tag-acc")
             if memory.get("reader_status"):
                 _badge(f"reader {memory.get('reader_status')}")
+
+        if topics:
+            _label("Темы датасета", size="13px", weight=900).style("margin-top:18px;")
+            for topic in topics[:12]:
+                topic_label = str(topic.get("label") or topic.get("id") or "тема")
+                top_files = list(topic.get("top_files") or [])
+                top_sections = list(topic.get("top_sections") or [])
+                aliases = ", ".join(str(x) for x in (topic.get("query_aliases") or [])[:8])
+                with ui.element("div").style(
+                    "border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-top:8px;"
+                    "background:var(--bg-panel);"
+                ):
+                    with ui.row().classes("items-center w-full").style("gap:7px;flex-wrap:wrap;"):
+                        _badge(topic_label, "tag-acc")
+                        _badge(f"{len(top_files)} файлов")
+                        _badge(f"{len(top_sections)} разделов")
+                        if topic.get("confidence") is not None:
+                            _badge(f"conf {topic.get('confidence')}")
+                        ui.element("div").style("flex:1;")
+                        ui.button(
+                            "Спросить по теме",
+                            icon="o_chat",
+                            on_click=lambda t=topic: _ask_about_topic(t),
+                        ).props("flat dense no-caps")
+                    if aliases:
+                        _label(f"Синонимы: {aliases}", size="11px", color="var(--dim)").style("margin-top:5px;")
+                    for file in top_files[:4]:
+                        _label(
+                            f"• {file.get('file_name')} · {file.get('role') or 'документ'} · {int(file.get('chunk_count') or 0)} фраг.",
+                            size="11.5px",
+                        ).style("margin-top:5px;overflow-wrap:anywhere;")
+                    for section in top_sections[:4]:
+                        _label(
+                            f"§ {section.get('heading')} · {section.get('file_name')}",
+                            size="11.5px",
+                            color="var(--dim)",
+                        ).style("margin-top:4px;overflow-wrap:anywhere;")
 
         with ui.element("div").style(
             "border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-top:12px;"
@@ -432,6 +486,25 @@ def build_documents() -> None:
                     for file in list(files or [])[:8]:
                         _label(
                             f"{file.get('file_name')} · {file.get('role') or 'документ'} · {int(file.get('chunk_count') or 0)} фраг.",
+                            size="11.5px",
+                        ).style("padding:4px 8px;overflow-wrap:anywhere;")
+
+        if section_files:
+            _label("Разделы внутри файлов", size="13px", weight=900).style("margin-top:18px;")
+            for file in section_files[:14]:
+                file_name = str(file.get("file_name") or "")
+                sections = list(file.get("sections") or [])
+                if not file_name or not sections:
+                    continue
+                with ui.expansion(file_name.rsplit("/", 1)[-1], icon="o_format_list_bulleted").classes("w-full").props("dense").style(
+                    "border:1px solid var(--border);border-radius:8px;margin-top:7px;background:var(--bg-panel);"
+                ):
+                    _label(file_name, size="11px", color="var(--dim)").style("padding:4px 8px;overflow-wrap:anywhere;")
+                    for section in sections[:10]:
+                        hints = ", ".join(str(x) for x in (section.get("topic_hints") or [])[:4])
+                        suffix = f" · {hints}" if hints else ""
+                        _label(
+                            f"§ {section.get('heading')} · {int(section.get('chunk_count') or 0)} фраг.{suffix}",
                             size="11.5px",
                         ).style("padding:4px 8px;overflow-wrap:anywhere;")
 

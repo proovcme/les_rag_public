@@ -96,6 +96,22 @@ def test_trace_summary_no_mail_body():
     s = ar.trace_summary({"intent": "mail_entity_search", "adapter_statuses": {"mail": "unavailable"}})
     assert "body" not in s.lower() and "mail=unavailable" in s
 
+
+def test_trace_summary_shows_topic_guided_retrieval():
+    s = ar.trace_summary({
+        "topic_guided_retrieval": {
+            "selected_topics": [{"label": "пожарная сигнализация и автоматика"}],
+            "targeted_chunk_count": 24,
+            "wide_fallback_chunk_count": 24,
+            "wide_fallback_promoted": {"doc_name": "BAI/OUT/ИОС 5.4/СО1Б-17.05-ИОС5.4.pdf"},
+        }
+    })
+
+    assert "topic: пожарная сигнализация" in s
+    assert "targeted 24" in s and "fallback 24" in s
+    assert "promoted СО1Б-17.05-ИОС5.4.pdf" in s
+
+
 def test_trace_summary_empty():
     assert ar.trace_summary(None) == "" and ar.trace_summary({}) == ""
 
