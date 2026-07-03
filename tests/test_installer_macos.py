@@ -47,6 +47,23 @@ def test_is_cloud_only(tmp_path, monkeypatch):
     assert onboard_models.is_cloud_only() is False
 
 
+def test_onboard_models_skips_ollama_provider_on_windows_bootstrap(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(onboard_models, "ROOT", tmp_path)
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "LES_LLM_PROVIDER=ollama",
+                "MLX_MODEL=mlx-community/Qwen3.5-4B-OptiQ-4bit",
+                "OLLAMA_MODEL=qwen3.5:9b",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert onboard_models.main(["--skip-if-cloud"]) == 0
+    assert "does not need local HF weights" in capsys.readouterr().out
+
+
 def test_info_plist_is_valid_and_versioned(tmp_path):
     contents = tmp_path / "Contents"
     contents.mkdir()

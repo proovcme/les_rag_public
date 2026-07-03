@@ -5,8 +5,10 @@ hang on a lazy download. Weights are fetched into the standard Hugging Face cach
 via ``snapshot_download`` — idempotent (cached repos are skipped) and resumable.
 
 Model ids are read from ``.env`` (falling back to ``env.example``), so this stays
-in sync with whatever models the runtime is configured to use. Cloud-only setups
-(no local MLX) can skip everything with ``--skip-if-cloud``.
+in sync with whatever models the runtime is configured to use. Setups that do
+not use local Hugging Face / MLX weights can skip everything with
+``--skip-if-cloud``; the flag name is historical and also covers Ollama,
+Lemonade and OpenAI-compatible local servers.
 
 Usage:
     uv run python tools/onboard_models.py            # download configured weights
@@ -62,10 +64,32 @@ def resolve_models() -> list[str]:
     return repos
 
 
-def is_cloud_only() -> bool:
+def active_provider() -> str:
     env = _read_env_file(ROOT / ".env")
-    provider = (env.get("LES_PROVIDER") or env.get("PROVIDER") or "").lower()
+    return (
+        env.get("LES_LLM_PROVIDER")
+        or env.get("LES_PROVIDER")
+        or env.get("PROVIDER")
+        or ""
+    ).strip().lower()
+
+
+def is_cloud_only() -> bool:
+    provider = active_provider()
     return provider in {"openai", "openrouter", "cloud"}
+
+
+def should_skip_local_weight_download() -> bool:
+    provider = active_provider()
+    return provider in {
+        "openai",
+        "openrouter",
+        "cloud",
+        "ollama",
+        "lemonade",
+        "openai-compatible",
+        "openai_compatible",
+    }
 
 
 def download(repo_id: str) -> bool:
@@ -90,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--skip-if-cloud",
         action="store_true",
-        help="do nothing when the active provider is cloud (openai/openrouter)",
+        help="do nothing when the active provider does not need local HF weights",
     )
     args = parser.parse_args(argv)
 
@@ -100,8 +124,9 @@ def main(argv: list[str] | None = None) -> int:
             print(repo)
         return 0
 
-    if args.skip_if_cloud and is_cloud_only():
-        print("[onboard] cloud provider active — skipping local weight download")
+    if args.skip_if_cloud and should_skip_local_weight_download():
+        provider = active_provider() or "unknown"
+        print(f"[onboard] provider {provider} does not need local HF weights — skipping")
         return 0
 
     if not models:

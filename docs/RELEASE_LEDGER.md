@@ -7,14 +7,24 @@
 ## Текущее состояние (2026-07-03)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.184  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.185  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
 задеплоено на рантайм:     0.24.0.184 dataset navigation + Documents tab in chat shell + Windows light startup fix
-НЕ задеплоено:             —
+НЕ задеплоено:             0.24.0.185 Windows bootstrap model onboarding skip for Ollama/Lemonade
 рантайм /api/version:      0.24.0.184 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.185 — Windows installer/bootstrap no longer fails with
+> “загрузка моделей не удалась” when the active provider is Ollama,
+> Lemonade or another OpenAI-compatible local server. The historical
+> `tools/onboard_models.py --skip-if-cloud` flag now skips Hugging Face /
+> MLX weight downloads for providers that do not need local HF weights. Root
+> cause on Legion: `%LOCALAPPDATA%\LES\logs\bootstrap.log` showed failure at
+> `uv run python tools\onboard_models.py --skip-if-cloud`; `.env` had
+> `LES_LLM_PROVIDER=ollama`, but the old script still tried to resolve/download
+> `MLX_MODEL=mlx-community/Qwen3.5-4B-OptiQ-4bit` and failed because the
+> Windows desktop extra does not install `huggingface_hub`.
 > 0.24.0.184 — Windows/Legion light startup fix: `start-light.ps1`
 > запускает proxy/UI через `cmd.exe /c uv run ...`, потому что прямой
 > `Start-Process uv -ArgumentList ...` на Legion мог завершать launcher после
