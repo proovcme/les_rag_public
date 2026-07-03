@@ -184,6 +184,12 @@ applicability. Код по-прежнему не выбирает норму, н
 где полная оценка работ и короткая предварительная ЛСР одного и того же состава
 склеивались в 30+ строк и завышали сметную стоимость.
 
+**0.24.0.199:** `rim_lsr_trace_service` получил мост `visible/BOR/LSR rows -> RIM trace`:
+если строка уже содержит выбранный шифр нормы, код раскрывает норму, переводит физическое
+количество в измеритель нормы, ищет цены и собирает `priced_partial`/`priced_final` trace.
+Строки без шифра или с конфликтом единиц остаются `row_bindings`/добором; код не выбирает
+работы и нормы за модель.
+
 **0.24.0.196:** smeta direct снижает дефолтную температуру до 0 и требует устойчивый базовый
 сценарий для одного и того же исходника. Сметный артефакт рендерит `ЛСР РИМ (форма 421/пр)` перед
 исходными таблицами и делает лист `ЛСР РИМ` основным XLSX-выводом; `lsr_rim_display_form_v1`
@@ -325,7 +331,7 @@ inventory + markdown-проекции внутренних `.json/.xml/.txt/...`
 | ops/deploy | dev→рантайм cp-деплой + stamp; откат | `tools/deploy_to_runtime.py`, `tools/restore_runtime.sh` | [SKILL.md](../SKILL.md) 🟡, [RELEASE_LEDGER.md](RELEASE_LEDGER.md) | 🟡 |
 | ops/versioning | единый центр версий + divergence repo↔runtime | `version_service`; `GET /api/version` | [RELEASE_LEDGER.md](RELEASE_LEDGER.md), [VERSIONING.md](VERSIONING.md), [releases.md](releases.md) | 🟡 |
 | ops/service-sources | видимый реестр служебных источников для смет и нормоконтроля | `service_source_registry`; `routers/service_sources.py`; `config/service_sources.yaml`; GUI `sovushka/pages/instrumenty.py`, чат `sovushka/pages/chat.py` | [SKILL.md](../SKILL.md), [CODE_MAP.md](CODE_MAP.md) | ✅ |
-| ops/external-radar | радар внешних папок: configured roots + filemap + in-place `source_path` без reindex/OCR/LLM; ручная сверка in-place датасета по папке показывает new/changed/deleted и может синхронизировать изменения без фонового watcher-а | `external_radar_service`; `GET /api/external-radar/summary`; `POST /api/rag/external/check`; `POST /api/rag/external/sync`; GUI Самовар | [ALGO-external-radar.md](ALGO-external-radar.md) | ✅ |
+| ops/external-radar | радар внешних папок: configured roots + filemap + in-place `source_path` без reindex/OCR/LLM; ручная сверка in-place датасета по папке показывает new/changed/deleted и может синхронизировать изменения без фонового watcher-а. С 0.24.0.200 добавление/синк внешней папки с `parse=true` создаёт видимый dataset-scoped `rag_parse_drain` job и продолжает bounded партии, а одиночный `parse-batch` честно показывает `PARTIAL`, если pending ещё остался | `external_radar_service`; `GET /api/external-radar/summary`; `POST /api/rag/index-external`; `POST /api/rag/external/check`; `POST /api/rag/external/sync`; `POST /api/rag/parse-batch/{dataset_id}`; GUI Самовар | [ALGO-external-radar.md](ALGO-external-radar.md) | ✅ |
 | ops/public-showcase | curated public GitHub/Pages surface без приватных датасетов и runtime-секретов | `README.md`, `docs/index.md`, `docs/public/*`, `tools/publication_check.py` | [PUBLICATION_CHECKLIST.md](PUBLICATION_CHECKLIST.md), [public/overview.md](public/overview.md) | ✅ |
 | ops/test | гейт (verify/test/smoke-basic) | `Makefile`, `tools/basic_function_smoke.py` | [TEST_INVENTORY.md](TEST_INVENTORY.md) 🟡 | 🟡 |
 | install | сборка/инсталляторы Mac/Win/Linux; Windows-light выбирает свободные proxy/UI порты и передаёт их shell через state-файл; Lemonade-профиль поднимает совместимый adapter-host для chat/embeddings/rerank/unload/switch вместо несуществующего MLX на Windows | `tools/build_*`, `installers/`, `tools/les_shell.py`, `lemonade_host.py` | [INSTALL_RUNBOOK.md](INSTALL_RUNBOOK.md) ✅, [PLATFORMS.md](PLATFORMS.md) ✅, [CODE_MAP.md](CODE_MAP.md) | 🟡 |

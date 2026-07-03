@@ -7,13 +7,32 @@
 ## Текущее состояние (2026-07-03)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.198  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.200  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.198 LSR artifact primary cost table fix
+задеплоено на рантайм:     0.24.0.200 Legion parsing drain + RIM trace from selected visible rows
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.198 (deploy stamp cfb89bd0, 2026-07-03)
+рантайм /api/version:      0.24.0.200 (deploy stamp после make ship, 2026-07-03)
 ```
+
+> 0.24.0.200 — Windows/Legion parsing drain: `parse-batch` больше не
+> показывает `processed=0` на больших очередях, когда партия реально разобрала
+> часть файлов, а статус job становится `PARTIAL`, если после партии остался
+> хвост `PENDING`. In-place добавление/синк внешней папки с `parse=true`
+> создаёт видимый `rag_parse_drain` job и продолжает партии по конкретному
+> датасету до исчерпания pending или bounded `max_batches`; Совушка логирует
+> job id/batch/max. Это не полный reindex и не watcher: ручной контроль папки
+> остаётся операторским действием, но свежий датасет больше не выглядит пустым
+> после первого скрытого батча. В runtime divergence добавлены `lsr.py`,
+> `rim_lsr_trace_service.py` и `rim_trace_xlsx_service.py`, чтобы сметный
+> RIM-слой был виден в deploy-stamp, а не жил в зоне “ну вроде же скопировали”.
+
+> 0.24.0.199 — добавлен короткий RIM-trace мост из уже выбранных/видимых строк
+> ЛСР/ВОР: `POST /api/lsr/lsr-trace/from-rows[/export]` принимает строки с
+> `basis/code` и количеством, не выбирает нормы за модель, переводит физические
+> единицы в измеритель нормы (`61 м2` при норме `100 м2` → `0.61`) и строит
+> `priced_partial`/`priced_final` trace. Строки без шифра или с конфликтом единиц
+> остаются в `row_bindings` как добор, поэтому не могут тихо стать финальной ЛСР.
 
 > 0.24.0.198 — артефакт ЛСР больше не складывает несколько альтернативных
 > стоимостных таблиц одного ответа. Если модель дала полную `Оценку стоимости работ`

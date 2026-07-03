@@ -70,6 +70,17 @@ class LsrTraceRequest(BaseModel):
     meta: Optional[dict[str, Any]] = None       # шапка формы: stroika/object/lsr_no/subject/price_level/osnovanie
 
 
+class LsrRowsTraceRequest(BaseModel):
+    rows: list[dict[str, Any]]                  # видимые/выбранные строки ЛСР/ВОР с basis/code + quantity/unit
+    name: Optional[str] = None
+    book: Optional[str] = None
+    kac_prices: Optional[dict[str, float]] = None
+    k_ozp: Optional[float] = None
+    k_em: Optional[float] = None
+    coefficient_basis: Optional[str] = None
+    meta: Optional[dict[str, Any]] = None
+
+
 @router.get("/stesnennost/conditions")
 async def stesn_conditions(_user=Depends(require_user)):
     """Каталог условий стеснённости (коэф. к ОЗП/ЭМ) — из config/domain/stesnennost.yaml."""
@@ -184,6 +195,28 @@ async def lsr_multi_trace(req: LsrTraceRequest, _user=Depends(require_user)):
         raise HTTPException(400, str(e))
 
 
+@router.post("/lsr-trace/from-rows")
+async def lsr_multi_trace_from_rows(req: LsrRowsTraceRequest, _user=Depends(require_user)):
+    """Видимые/подтверждённые строки ЛСР/ВОР с уже выбранным шифром нормы → РИМ-трасса.
+
+    Код не выбирает норму: строки без ``basis/code`` возвращаются как ``norm_selection_required``.
+    Физические количества переводятся в измеритель нормы (например 61 м2 / 100 м2 = 0.61).
+    """
+    try:
+        pricebook = await asyncio.to_thread(la._resolve_book, req.book)
+        return await asyncio.to_thread(
+            rim.build_lsr_trace_from_visible_rows, req.rows,
+            pricebook=pricebook,
+            kac_map=req.kac_prices,
+            k_ozp=(req.k_ozp if req.k_ozp is not None else 1.0),
+            k_em=(req.k_em if req.k_em is not None else 1.0),
+            coefficient_basis=(req.coefficient_basis or ""),
+            name=(req.name or ""),
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @router.post("/lsr-trace/export")
 async def lsr_multi_trace_export(req: LsrTraceRequest, _user=Depends(require_user)):
     """МНОГОПОЗИЦИОННАЯ ЛСР → XLSX по форме Приложения 3 к 421/пр: шапка с общим итогом + разделы
@@ -204,6 +237,35 @@ async def lsr_multi_trace_export(req: LsrTraceRequest, _user=Depends(require_use
         raise HTTPException(400, str(e))
     _EXPORT_DIR.mkdir(parents=True, exist_ok=True)
     name = f"lsr_trace_{int(time.time())}.xlsx"
+    out = _EXPORT_DIR / name
+    await asyncio.to_thread(rim_xlsx.render_lsr_xlsx, lsr, out, meta=(req.meta or {}))
+    return {
+        "name": lsr.get("name"),
+        "summary": lsr["summary"],
+        "sections": [{"section": s["section"], "total": s["total"]} for s in lsr.get("sections", [])],
+        "path": str(out),
+        "download": f"/api/lsr/download?path={name}",
+    }
+
+
+@router.post("/lsr-trace/from-rows/export")
+async def lsr_multi_trace_from_rows_export(req: LsrRowsTraceRequest, _user=Depends(require_user)):
+    """Строки ЛСР/ВОР с выбранными шифрами → XLSX ЛСР РИМ по форме Приложения 3."""
+    try:
+        pricebook = await asyncio.to_thread(la._resolve_book, req.book)
+        lsr = await asyncio.to_thread(
+            rim.build_lsr_trace_from_visible_rows, req.rows,
+            pricebook=pricebook,
+            kac_map=req.kac_prices,
+            k_ozp=(req.k_ozp if req.k_ozp is not None else 1.0),
+            k_em=(req.k_em if req.k_em is not None else 1.0),
+            coefficient_basis=(req.coefficient_basis or ""),
+            name=(req.name or ""),
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    _EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    name = f"lsr_trace_rows_{int(time.time())}.xlsx"
     out = _EXPORT_DIR / name
     await asyncio.to_thread(rim_xlsx.render_lsr_xlsx, lsr, out, meta=(req.meta or {}))
     return {

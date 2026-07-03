@@ -49,6 +49,12 @@
 `render_trace_xlsx`; смета — `render_lsr_xlsx` (шапка с общим итогом + разделы с заголовком и «Итого
 по разделу N» + «ВСЕГО по смете»). Числа не пересчитываются (рендер ГОТОВОЙ трассы, 0 LLM).
 
+`build_lsr_trace_from_visible_rows(rows)` — мост из уже выбранных/видимых строк ЛСР/ВОР в трассу.
+Он не ищет и не выбирает норму: строка должна содержать `basis`/`code` с шифром. Код только
+нормализует шифр, переводит физическое количество в измеритель нормы (`61 м2` при норме `100 м2`
+→ `0.61`), раскрывает ресурсы, ищет цены и возвращает `row_bindings`. Строки без шифра, без
+количества или с конфликтом единиц не попадают в финальный расчёт и блокируют `priced_final`.
+
 ## Индекс ГЭСН/ГЭСНм
 
 Ключ нормы в parquet — не голый номер `38-01-001-01`, а `norm_key = <base_type>:<код>`, например
@@ -72,11 +78,14 @@
 
 - Сервис: `proxy/services/lsr_assembly_service.py` (переиспользует `stesnennost`/`fgis_price`/`kac`).
 - РИМ-трасса: `proxy/services/rim_lsr_trace_service.py` (`build_position_trace` — позиция, графы 2-12;
-  `build_lsr_trace` — смета: разделы + итоги разделов + общий свод).
+  `build_lsr_trace` — смета: разделы + итоги разделов + общий свод;
+  `build_lsr_trace_from_visible_rows` — выбранные строки ЛСР/ВОР → `priced_partial` trace).
 - Рендер формы ЛСР РИМ Приложения №3: `proxy/services/rim_trace_xlsx_service.py` (`render_trace_xlsx` — позиция;
   `render_lsr_xlsx` — многопозиционная смета).
 - API: `POST /api/lsr/assemble`; `POST /api/lsr/rim-trace[/export]` (позиция);
-  `POST /api/lsr/lsr-trace[/export]` (смета → XLSX-форма) (`proxy/routers/lsr.py`).
+  `POST /api/lsr/lsr-trace[/export]` (смета → XLSX-форма);
+  `POST /api/lsr/lsr-trace/from-rows[/export]` (видимые строки с выбранными шифрами → trace)
+  (`proxy/routers/lsr.py`).
 - GUI: «Инструменты» → карточка «Сборка ЛСР» (позиции JSON + книга/условие → свод по разделам).
 - MCP: `les_lsr_assemble`.
 - Тесты: `tests/test_lsr_assembly_service.py`, `tests/test_rim_lsr_trace_service.py`,

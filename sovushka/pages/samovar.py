@@ -579,6 +579,12 @@ def build_samovar():
                                     "parse_limit": 25, "background": True})
                 add_dialog.close()
                 if r and r.get("status") in ("started", "registered"):
+                    parse_job = r.get("parse_job") if isinstance(r.get("parse_job"), dict) else {}
+                    if parse_job.get("job_id"):
+                        add_log(
+                            f"[EXT_INDEX] «{nm}»: parse job {parse_job.get('job_id')} · "
+                            f"batch {parse_job.get('batch_limit')} · max {parse_job.get('max_batches')}"
+                        )
                     ui.notify(f"Индексация «{nm}» запущена — файлы появятся в датасете", type="positive")
                     await _refresh()
                 else:
@@ -1412,6 +1418,7 @@ def build_samovar_legacy():
                     d = await api_post("/api/rag/index-external", payload)
                     ext_index_btn.props(remove="loading")
                     if d and d.get("status") == "registered":
+                        parse_job = d.get("parse_job") if isinstance(d.get("parse_job"), dict) else {}
                         ui.notify(
                             f"In-place: +{d.get('registered_files', 0)} файлов из "
                             f"«{d.get('source_root', '')}» (без копии)"
@@ -1423,6 +1430,11 @@ def build_samovar_legacy():
                             f"пропущено типов {d.get('skipped_unsupported', 0)} · "
                             f"вне корня {d.get('skipped_outside_root', 0)}"
                         )
+                        if parse_job.get("job_id"):
+                            add_log(
+                                f"[EXT_INDEX] parse job {parse_job.get('job_id')} · "
+                                f"batch {parse_job.get('batch_limit')} · max {parse_job.get('max_batches')}"
+                            )
                         ext_new_ds_input.value = ""
                         await asyncio.sleep(2)
                         await refresh_and_render()

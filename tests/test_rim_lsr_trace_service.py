@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from proxy.services.rim_lsr_trace_service import build_lsr_trace, build_position_trace
+from proxy.services.rim_lsr_trace_service import (
+    build_lsr_trace,
+    build_lsr_trace_from_visible_rows,
+    build_position_trace,
+    positions_from_visible_lsr_rows,
+)
 
 
 CODE = "ГЭСН12-01-034-02"
@@ -160,3 +165,60 @@ def test_build_lsr_trace_default_section_when_unspecified():
     lsr = build_lsr_trace([{"code": CODE, "qty": 0.61}])
     assert [s["section"] for s in lsr["sections"]] == ["Без раздела"]
     assert lsr["summary"]["total"] == 11813.04
+
+
+def test_positions_from_visible_lsr_rows_converts_physical_unit_to_norm_qty():
+    bound = positions_from_visible_lsr_rows([
+        {"basis": "ГЭСН 12-01-034-02", "title": "Устройство обрешетки", "quantity": "61", "unit": "м2"}
+    ])
+
+    assert bound["row_bindings"][0]["status"] == "bound"
+    assert bound["positions"][0]["code"] == CODE
+    assert bound["positions"][0]["qty"] == 0.61
+    assert bound["row_bindings"][0]["quantity_trace"]["formula"] == "61.0 м2 × 1 / 100 = 0.61"
+
+
+def test_lsr_trace_from_visible_rows_builds_priced_trace_from_selected_norms():
+    lsr = build_lsr_trace_from_visible_rows(
+        [
+            {
+                "basis": "ГЭСН 12-01-034-02",
+                "title": "Устройство обрешетки",
+                "quantity": "61",
+                "unit": "м2",
+                "section": "Кровля",
+            }
+        ],
+        name="Видимые строки",
+    )
+
+    assert lsr["summary"]["result_status"] == "priced_final"
+    assert lsr["summary"]["input_rows"] == 1
+    assert lsr["summary"]["bound_rows"] == 1
+    assert lsr["summary"]["total"] == 11813.04
+    assert lsr["sections"][0]["section"] == "Кровля"
+
+
+def test_lsr_trace_from_visible_rows_keeps_unbound_rows_out_of_priced_final():
+    lsr = build_lsr_trace_from_visible_rows(
+        [
+            {"basis": "ГЭСН 12-01-034-02", "title": "Устройство обрешетки", "quantity": "61", "unit": "м2"},
+            {"title": "Работа без выбранной нормы", "quantity": "1", "unit": "шт"},
+        ]
+    )
+
+    assert lsr["summary"]["result_status"] == "priced_partial"
+    assert lsr["summary"]["bound_rows"] == 1
+    assert lsr["summary"]["unbound_rows"] == 1
+    assert lsr["row_bindings"][1]["status"] == "norm_selection_required"
+
+
+def test_lsr_trace_from_visible_rows_does_not_bind_unknown_norm_code():
+    lsr = build_lsr_trace_from_visible_rows(
+        [{"basis": "ГЭСН 99-99-999-99", "title": "Неизвестная норма", "quantity": "1", "unit": "шт"}]
+    )
+
+    assert lsr["summary"]["result_status"] == "norm_selection_required"
+    assert lsr["summary"]["bound_rows"] == 0
+    assert lsr["summary"]["unbound_rows"] == 1
+    assert lsr["row_bindings"][0]["status"] == "norm_not_found"

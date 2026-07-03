@@ -54,6 +54,7 @@ UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 DEFAULT_PARSE_BATCH_LIMIT = int(os.getenv("RAG_PARSE_BATCH_LIMIT", "5"))
 DEFAULT_PARSE_SCHEDULER_BATCH_LIMIT = int(os.getenv("RAG_PARSE_SCHEDULER_BATCH_LIMIT", "1"))
 DEFAULT_PARSE_SCHEDULER_MAX_BATCHES = int(os.getenv("RAG_PARSE_SCHEDULER_MAX_BATCHES", "25"))
+DEFAULT_PARSE_DRAIN_MAX_BATCHES = int(os.getenv("RAG_PARSE_DRAIN_MAX_BATCHES", "500"))
 PARSE_MIN_FREE_GB = float(os.getenv("RAG_PARSE_MIN_FREE_GB", "7"))
 PARSE_MAX_SWAP_PCT = float(os.getenv("RAG_PARSE_MAX_SWAP_PCT", "45"))
 PARSE_POST_MAX_SWAP_PCT = float(os.getenv("RAG_PARSE_POST_MAX_SWAP_PCT", "60"))
@@ -464,6 +465,154 @@ def _schedule_reader_after_parse(dataset_id: str, *, reason: str, parse_result: 
         return None
     result = schedule_dataset_reader_pass(dataset_id, reason=reason, force=True, require_enabled=True)
     return result if result.get("scheduled") else None
+
+
+def _processed_from_parse_result(result: Any, *, pending_before: int, batch_limit: int, fallback_total: int) -> int:
+    if isinstance(result, dict):
+        parsed = result.get("files_parsed")
+        if parsed is not None:
+            try:
+                return max(0, int(parsed))
+            except (TypeError, ValueError):
+                pass
+        remaining = result.get("remaining_pending")
+        if remaining is not None:
+            try:
+                return max(0, min(batch_limit, pending_before - int(remaining)))
+            except (TypeError, ValueError):
+                pass
+    return max(0, int(fallback_total or 0))
+
+
+async def run_dataset_parse_drain(
+    state: DatasetRouterState,
+    *,
+    dataset_id: str,
+    dataset_name: str,
+    batch_limit: int,
+    max_batches: int = DEFAULT_PARSE_DRAIN_MAX_BATCHES,
+    job_id: str | None = None,
+    reason: str = "dataset_parse_drain",
+) -> dict[str, Any]:
+    """Drain one dataset's PENDING queue in bounded batches.
+
+    This is intentionally dataset-scoped, unlike the global parse scheduler. It is
+    used after registering an external folder so Windows/Sovushka does not leave
+    a newly-created dataset looking empty after the first 25-file batch.
+    """
+    batches: list[dict[str, Any]] = []
+    parsed_batches = 0
+    processed_files = 0
+    errors = 0
+    stop_reason = ""
+    remaining_pending = await _pending_count_for_dataset(state, dataset_id)
+
+    for batch_no in range(1, max(1, int(max_batches)) + 1):
+        pending_before = await _pending_count_for_dataset(state, dataset_id)
+        remaining_pending = pending_before
+        if pending_before <= 0:
+            break
+
+        message = (
+            f"Dataset drain {batch_no}/{max_batches}: {dataset_name} "
+            f"pending={pending_before}, limit={batch_limit}"
+        )
+        if job_id:
+            state.job_tracker[job_id].update(
+                {
+                    "status": "PARSING",
+                    "processed": processed_files,
+                    "total": max(processed_files + pending_before, processed_files + batch_limit),
+                    "message": message,
+                }
+            )
+            state.job_service.update(
+                job_id,
+                status="running",
+                processed=processed_files,
+                total=max(processed_files + pending_before, processed_files + batch_limit),
+                message=message,
+            )
+
+        await assert_parse_admission(state)
+        async with state.parse_semaphore:
+            result = await state.backend.parse_dataset(dataset_id, limit=batch_limit)
+
+        parsed_batches += 1
+        batch_errors = int(result.get("errors") or 0) if isinstance(result, dict) else 1
+        if not isinstance(result, dict) or result.get("status") != "completed":
+            batch_errors += 1
+        errors += batch_errors
+        batch_processed = _processed_from_parse_result(
+            result,
+            pending_before=pending_before,
+            batch_limit=batch_limit,
+            fallback_total=min(batch_limit, pending_before),
+        )
+        processed_files += batch_processed
+        remaining_pending = int(result.get("remaining_pending") or 0) if isinstance(result, dict) else pending_before
+        batches.append(
+            {
+                "batch": batch_no,
+                "dataset_id": dataset_id,
+                "dataset_name": dataset_name,
+                "pending_before": pending_before,
+                "processed": batch_processed,
+                "limit": batch_limit,
+                "result": result,
+            }
+        )
+        reader_job = _schedule_reader_after_parse(dataset_id, reason=reason, parse_result=result)
+        if reader_job:
+            batches[-1]["dataset_reader"] = reader_job
+        if batch_errors:
+            stop_reason = "batch errors"
+            break
+
+    if remaining_pending > 0 and parsed_batches >= max_batches:
+        stop_reason = stop_reason or f"max_batches={max_batches} reached"
+
+    status = "completed" if remaining_pending == 0 and errors == 0 else "partial" if parsed_batches else "idle"
+    if errors:
+        status = "partial"
+    result = {
+        "status": status,
+        "dataset_id": dataset_id,
+        "dataset_name": dataset_name,
+        "batch_limit": batch_limit,
+        "max_batches": max_batches,
+        "batches": batches,
+        "batches_run": parsed_batches,
+        "processed_files": processed_files,
+        "errors": errors,
+        "remaining_pending": remaining_pending,
+        "stop_reason": stop_reason,
+    }
+    if job_id:
+        tracker_status = "COMPLETED" if status == "completed" else "PARTIAL" if status == "partial" else "IDLE"
+        service_status = "failed" if errors else "completed"
+        state.job_tracker[job_id].update(
+            {
+                "status": tracker_status,
+                "processed": processed_files,
+                "errors": errors,
+                "finished_at": datetime.now().isoformat(),
+                "message": (
+                    f"Готово: {dataset_name} · batches={parsed_batches} · "
+                    f"файлов={processed_files} · pending={remaining_pending} · errors={errors}"
+                ),
+                "result": result,
+            }
+        )
+        state.job_service.update(
+            job_id,
+            status=service_status,
+            processed=processed_files,
+            errors=errors,
+            message=state.job_tracker[job_id]["message"],
+            result=result,
+        )
+    return result
 
 
 async def run_parse_scheduler(
@@ -1552,14 +1701,69 @@ async def _index_external_run(state, req, root, dataset) -> dict:
         logger.warning("[LES.md] auto-init при индексации %s: %s", root, err)
 
     parse_started = False
+    parse_job = None
     if req.parse:
+        batch_limit = max(1, int(req.parse_limit or DEFAULT_PARSE_BATCH_LIMIT))
+        max_batches = min(
+            DEFAULT_PARSE_DRAIN_MAX_BATCHES,
+            max(1, (registered + batch_limit - 1) // batch_limit),
+        )
+        job = state.job_service.create(
+            "rag_parse_drain",
+            source="external",
+            dataset_id=req.dataset_id,
+            dataset_name=dataset.name,
+            status="running",
+            total=registered,
+            message=f"Парсинг внешней папки: {dataset.name} · {registered} файлов",
+        )
+        job_id = job["id"]
+        state.job_tracker[job_id] = {
+            "id": job_id,
+            "type": "rag_parse_drain",
+            "status": "QUEUED",
+            "source": "external",
+            "dataset_id": req.dataset_id,
+            "dataset_name": dataset.name,
+            "total": registered,
+            "processed": 0,
+            "errors": 0,
+            "started_at": job.get("started_at"),
+            "message": f"Парсинг внешней папки: {dataset.name} · {registered} файлов",
+        }
+
         async def _parse():
-            async with state.parse_semaphore:
-                await assert_parse_admission(state)
-                await state.backend.parse_dataset(req.dataset_id, limit=req.parse_limit)
+            try:
+                await run_dataset_parse_drain(
+                    state,
+                    dataset_id=req.dataset_id,
+                    dataset_name=dataset.name,
+                    batch_limit=batch_limit,
+                    max_batches=max_batches,
+                    job_id=job_id,
+                    reason="index_external_drain",
+                )
+            except Exception as error:
+                message = f"Ошибка парсинга внешней папки: {error}"
+                state.job_tracker[job_id].update(
+                    {
+                        "status": "FAILED",
+                        "errors": 1,
+                        "finished_at": datetime.now().isoformat(),
+                        "message": message,
+                    }
+                )
+                state.job_service.update(job_id, status="failed", errors=1, message=message)
+                logger.error("[INDEX-EXT PARSE %s] FAILED: %s", job_id, error, exc_info=True)
 
         asyncio.create_task(_parse())
         parse_started = True
+        parse_job = {
+            "job_id": job_id,
+            "type": "rag_parse_drain",
+            "batch_limit": batch_limit,
+            "max_batches": max_batches,
+        }
 
     return {
         "status": "registered",
@@ -1575,6 +1779,7 @@ async def _index_external_run(state, req, root, dataset) -> dict:
         "copied_to_storage": False,
         "parse_started": parse_started,
         "parse_limit": req.parse_limit,
+        "parse_job": parse_job,
         "samples": samples,
         "les_md": les_md_summary,  # auto-init: что ЛЕС сам понял о папке + директивы
     }
@@ -1788,14 +1993,69 @@ async def sync_external_dataset(req: ExternalDatasetSyncRequest, _admin=Depends(
         [str(row.get("file_name") or "") for row in deleted_rows if row.get("file_name")],
     )
     parse_started = False
+    parse_job = None
     if req.parse and registered:
+        batch_limit = max(1, int(req.parse_limit or DEFAULT_PARSE_BATCH_LIMIT))
+        max_batches = min(
+            DEFAULT_PARSE_DRAIN_MAX_BATCHES,
+            max(1, (registered + batch_limit - 1) // batch_limit),
+        )
+        job = state.job_service.create(
+            "rag_parse_drain",
+            source="external_sync",
+            dataset_id=req.dataset_id,
+            dataset_name=dataset.name,
+            status="running",
+            total=registered,
+            message=f"Парсинг изменений внешней папки: {dataset.name} · {registered} файлов",
+        )
+        job_id = job["id"]
+        state.job_tracker[job_id] = {
+            "id": job_id,
+            "type": "rag_parse_drain",
+            "status": "QUEUED",
+            "source": "external_sync",
+            "dataset_id": req.dataset_id,
+            "dataset_name": dataset.name,
+            "total": registered,
+            "processed": 0,
+            "errors": 0,
+            "started_at": job.get("started_at"),
+            "message": f"Парсинг изменений внешней папки: {dataset.name} · {registered} файлов",
+        }
+
         async def _parse():
-            async with state.parse_semaphore:
-                await assert_parse_admission(state)
-                await state.backend.parse_dataset(req.dataset_id, limit=req.parse_limit)
+            try:
+                await run_dataset_parse_drain(
+                    state,
+                    dataset_id=req.dataset_id,
+                    dataset_name=dataset.name,
+                    batch_limit=batch_limit,
+                    max_batches=max_batches,
+                    job_id=job_id,
+                    reason="external_sync_drain",
+                )
+            except Exception as error:
+                message = f"Ошибка парсинга изменений внешней папки: {error}"
+                state.job_tracker[job_id].update(
+                    {
+                        "status": "FAILED",
+                        "errors": 1,
+                        "finished_at": datetime.now().isoformat(),
+                        "message": message,
+                    }
+                )
+                state.job_service.update(job_id, status="failed", errors=1, message=message)
+                logger.error("[EXT_SYNC PARSE %s] FAILED: %s", job_id, error, exc_info=True)
 
         asyncio.create_task(_parse())
         parse_started = True
+        parse_job = {
+            "job_id": job_id,
+            "type": "rag_parse_drain",
+            "batch_limit": batch_limit,
+            "max_batches": max_batches,
+        }
     return {
         "status": "synced",
         "source_root": root.as_posix(),
@@ -1807,6 +2067,7 @@ async def sync_external_dataset(req: ExternalDatasetSyncRequest, _admin=Depends(
         "cleanup": cleanup,
         "parse_started": parse_started,
         "parse_limit": req.parse_limit,
+        "parse_job": parse_job,
     }
 
 
@@ -2092,17 +2353,25 @@ async def parse_dataset_batch(
                 errors = int(result.get("errors") or 0) if isinstance(result, dict) else 1
                 remaining = int(result.get("remaining_pending") or 0) if isinstance(result, dict) else 0
                 status = str(result.get("status") or "unknown") if isinstance(result, dict) else "unknown"
-                processed = max(0, total - min(remaining, total)) if total else limit
-                if status == "completed" and not errors:
+                processed = _processed_from_parse_result(
+                    result,
+                    pending_before=pending,
+                    batch_limit=limit,
+                    fallback_total=total,
+                )
+                if status == "completed" and not errors and remaining <= 0:
                     service_status = "completed"
                     tracker_status = "COMPLETED"
+                elif status == "completed" and not errors:
+                    service_status = "completed"
+                    tracker_status = "PARTIAL"
                 else:
                     service_status = "failed"
                     tracker_status = "FAILED"
                     errors = max(errors, 1)
                 message = (
-                    f"Готово: {dataset_name} · +{chunks} чанков · "
-                    f"ошибок {errors} · осталось pending={remaining}"
+                    f"Партия готова: {dataset_name} · файлов {processed}/{total} · "
+                    f"+{chunks} чанков · ошибок {errors} · осталось pending={remaining}"
                 )
                 state.job_tracker[job_id].update(
                     {

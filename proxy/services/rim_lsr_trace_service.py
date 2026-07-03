@@ -7,9 +7,11 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from proxy.services.estimate_math_service import parse_ru_number
 from proxy.services import gesn_service, nr_sp_service
 
 
@@ -37,6 +39,93 @@ def _norm_name(s: Any) -> str:
     import re
 
     return re.sub(r"\s+", " ", str(s or "").strip().lower().replace("ё", "е")).strip(" .,;:")
+
+
+_NORM_REF_RE = re.compile(
+    r"(ГЭСН(?:мр|м|п|р)?|ФЕР(?:мр|м|п|р)?|ТЕР(?:мр|м|п|р)?)?\s*"
+    r"(\d{2}[-–]\d{2}[-–]\d{3}[-–]\d{2})",
+    flags=re.IGNORECASE,
+)
+
+
+def _norm_prefix(prefix: str) -> str:
+    raw = str(prefix or "").strip().replace(" ", "")
+    if not raw:
+        return ""
+    upper = raw.upper()
+    for base in ("ГЭСН", "ФЕР", "ТЕР"):
+        if upper.startswith(base):
+            suffix = upper.replace(base, "", 1).lower()
+            return base + suffix
+    return raw
+
+
+def _extract_norm_code(value: Any) -> str:
+    """Extract a norm code from a visible LSR/BOR cell without choosing a norm."""
+    match = _NORM_REF_RE.search(str(value or ""))
+    if not match:
+        return ""
+    prefix = _norm_prefix(match.group(1) or "")
+    bare = match.group(2).replace("–", "-")
+    return f"{prefix}{bare}" if prefix else bare
+
+
+def _canon_unit(unit: Any) -> str:
+    s = str(unit or "").strip().lower().replace("³", "3").replace("²", "2")
+    s = s.replace("куб.м", "м3").replace("кв.м", "м2").replace("куб м", "м3").replace("кв м", "м2")
+    s = re.sub(r"\s+", "", s)
+    s = s.replace("п.м.", "м").replace("п.м", "м").replace("м.п.", "м").replace("м.п", "м")
+    s = re.sub(r"^\d+(?=[а-яa-z])", "", s).strip(".,;:")
+    aliases = {"мп": "м", "пм": "м", "meter": "м", "meters": "м", "m": "м", "m2": "м2", "m3": "м3"}
+    if s in aliases:
+        return aliases[s]
+    if s.startswith(("шт", "штук", "компл", "комплект", "порт", "точк")):
+        return "шт"
+    if s.startswith("кг"):
+        return "кг"
+    if s.startswith(("тонн", "т")):
+        return "т"
+    if s.startswith("км"):
+        return "км"
+    if s.startswith("м3"):
+        return "м3"
+    if s.startswith("м2"):
+        return "м2"
+    if s == "м" or s.startswith(("м.", "мкаб", "мтруб", "мкороб", "мпровод")):
+        return "м"
+    return s
+
+
+def _norm_unit_factor(unit: Any) -> tuple[float, str]:
+    match = re.match(r"\s*(\d+(?:[.,]\d+)?)?\s*(.+)", str(unit or "").strip())
+    if not match:
+        return 1.0, _canon_unit(unit)
+    factor = _num(match.group(1)) if match.group(1) else 1.0
+    return float(factor or 1.0), _canon_unit(match.group(2))
+
+
+def _same_unit_text(left: Any, right: Any) -> bool:
+    a = re.sub(r"\s+", "", str(left or "").strip().lower().replace("³", "3").replace("²", "2"))
+    b = re.sub(r"\s+", "", str(right or "").strip().lower().replace("³", "3").replace("²", "2"))
+    return bool(a and a == b)
+
+
+def _unit_conversion_factor(src: str, dst: str) -> float | None:
+    if src == dst:
+        return 1.0
+    return {
+        ("м", "км"): 0.001,
+        ("км", "м"): 1000.0,
+        ("кг", "т"): 0.001,
+        ("т", "кг"): 1000.0,
+    }.get((src, dst))
+
+
+def _first_value(row: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in row and row.get(key) not in (None, ""):
+            return row.get(key)
+    return None
 
 
 @dataclass(frozen=True)
@@ -360,5 +449,202 @@ def build_lsr_trace(
             count += 1
     summary["positions"] = count
     summary["flags"] = flags
+    if count and not flags:
+        summary["result_status"] = "priced_final"
+    elif count:
+        summary["result_status"] = "priced_partial"
+    else:
+        summary["result_status"] = "norm_selection_required"
 
     return {"name": name or "", "sections": sections, "summary": summary}
+
+
+def _code_from_visible_row(row: dict[str, Any]) -> str:
+    explicit = _first_value(row, "code", "norm_code", "basis", "justification", "обоснование")
+    return _extract_norm_code(explicit)
+
+
+def _quantity_from_visible_row(row: dict[str, Any]) -> tuple[float | None, str, str]:
+    raw_qty = _first_value(
+        row,
+        "qty",
+        "quantity",
+        "quantity_total",
+        "volume",
+        "amount_qty",
+        "количество",
+        "кол-во",
+        "объем",
+        "объём",
+    )
+    qty = parse_ru_number(raw_qty)
+    unit = str(_first_value(row, "unit", "ед", "ед.", "единица", "единица измерения") or "").strip()
+    return qty, unit, str(raw_qty or "")
+
+
+def _norm_qty_from_visible_row(row: dict[str, Any], code: str, norm: dict[str, Any] | None) -> tuple[float | None, dict[str, Any]]:
+    """Convert a visible physical quantity into the norm quantity.
+
+    The model/user owns the row and norm binding. Code only converts units after
+    that binding: e.g. 61 м2 with a norm unit 100 м2 becomes 0.61.
+    """
+    raw_qty, source_unit, raw_qty_text = _quantity_from_visible_row(row)
+    if raw_qty is None:
+        return None, {
+            "status": "missing_quantity",
+            "source_quantity": raw_qty_text,
+            "source_unit": source_unit,
+            "message": "нет количества для расчёта строки",
+        }
+    if norm is None:
+        return float(raw_qty), {
+            "status": "norm_not_found",
+            "source_quantity": raw_qty,
+            "source_unit": source_unit,
+            "norm_unit": "",
+            "formula": str(raw_qty),
+        }
+
+    norm_unit = str(norm.get("unit") or "")
+    factor, norm_base_unit = _norm_unit_factor(norm_unit)
+    if not source_unit:
+        return float(raw_qty), {
+            "status": "assumed_norm_quantity",
+            "source_quantity": raw_qty,
+            "source_unit": "",
+            "norm_unit": norm_unit,
+            "formula": f"{raw_qty} норм.-ед.",
+            "message": "единица строки не указана; количество принято как количество нормы",
+        }
+    if _same_unit_text(source_unit, norm_unit):
+        return float(raw_qty), {
+            "status": "direct_norm_quantity",
+            "source_quantity": raw_qty,
+            "source_unit": source_unit,
+            "norm_unit": norm_unit,
+            "formula": f"{raw_qty} {source_unit}",
+        }
+
+    source_base_unit = _canon_unit(source_unit)
+    conv = _unit_conversion_factor(source_base_unit, norm_base_unit)
+    if conv is None:
+        return None, {
+            "status": "unit_conflict",
+            "source_quantity": raw_qty,
+            "source_unit": source_unit,
+            "norm_unit": norm_unit,
+            "message": f"единица строки {source_unit!r} не переводится в измеритель нормы {norm_unit!r}",
+        }
+    converted = round(float(raw_qty) * conv, 9)
+    norm_qty = round(converted / factor, 9)
+    return norm_qty, {
+        "status": "unit_conversion" if conv != 1.0 or factor != 1.0 else "direct_from_row",
+        "source_quantity": raw_qty,
+        "source_unit": source_unit,
+        "norm_unit": norm_unit,
+        "formula": f"{raw_qty} {source_unit} × {conv:g} / {factor:g} = {norm_qty}",
+    }
+
+
+def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Bind already visible/selected LSR rows to trace positions.
+
+    This function does not search or select norms. It only accepts rows that
+    already contain a norm code, converts their quantities to the norm unit and
+    returns skipped rows as explicit bindings for the model/user to fix.
+    """
+    positions: list[dict[str, Any]] = []
+    bindings: list[dict[str, Any]] = []
+    for idx, row in enumerate(rows or [], 1):
+        code = _code_from_visible_row(row)
+        if not code:
+            bindings.append({
+                "row": idx,
+                "status": "norm_selection_required",
+                "message": "в строке нет шифра нормы",
+                "source_row": row,
+            })
+            continue
+        norm = gesn_service.get_norm(code)
+        if norm is None:
+            bindings.append({
+                "row": idx,
+                "code": code,
+                "status": "norm_not_found",
+                "message": "шифр нормы не найден в нормативной базе",
+                "source_row": row,
+            })
+            continue
+        norm_qty, qty_trace = _norm_qty_from_visible_row(row, code, norm)
+        if norm_qty is None:
+            bindings.append({
+                "row": idx,
+                "code": code,
+                "status": qty_trace.get("status") or "needs_input",
+                "quantity_trace": qty_trace,
+                "source_row": row,
+            })
+            continue
+        title = str(_first_value(row, "title", "name", "work", "наименование", "работа") or "")
+        position = {
+            "code": code,
+            "qty": norm_qty,
+            "section": str(_first_value(row, "section", "раздел") or "").strip() or "Без раздела",
+            "source_row": idx,
+            "quantity_trace": qty_trace,
+        }
+        if title:
+            position["name"] = title
+        if norm and norm.get("unit"):
+            position["unit"] = norm.get("unit")
+        positions.append(position)
+        bindings.append({
+            "row": idx,
+            "code": code,
+            "status": "bound",
+            "quantity_trace": qty_trace,
+            "position": {k: v for k, v in position.items() if k != "source_row"},
+        })
+    return {"positions": positions, "row_bindings": bindings}
+
+
+def build_lsr_trace_from_visible_rows(
+    rows: list[dict[str, Any]],
+    *,
+    pricebook=None,
+    kac_map: dict[str, float] | None = None,
+    k_ozp: float = 1.0,
+    k_em: float = 1.0,
+    coefficient_basis: str = "",
+    name: str = "",
+) -> dict[str, Any]:
+    """Visible/BOR/LSR rows with selected norm codes -> priced_partial/final RIM trace."""
+    bound = positions_from_visible_lsr_rows(rows)
+    lsr = build_lsr_trace(
+        bound["positions"],
+        pricebook=pricebook,
+        kac_map=kac_map,
+        k_ozp=k_ozp,
+        k_em=k_em,
+        coefficient_basis=coefficient_basis,
+        name=name,
+    )
+    binding_flags = [
+        f"строка {b.get('row')}: {b.get('message') or b.get('status')}"
+        for b in bound["row_bindings"]
+        if b.get("status") != "bound"
+    ]
+    summary = lsr.setdefault("summary", {})
+    summary["input_rows"] = len(rows or [])
+    summary["bound_rows"] = len(bound["positions"])
+    summary["unbound_rows"] = max(0, len(rows or []) - len(bound["positions"]))
+    if binding_flags:
+        summary["flags"] = list(summary.get("flags") or []) + binding_flags
+    if not bound["positions"]:
+        summary["result_status"] = "norm_selection_required"
+    elif summary.get("flags"):
+        summary["result_status"] = "priced_partial"
+    else:
+        summary["result_status"] = "priced_final"
+    lsr["row_bindings"] = bound["row_bindings"]
+    return lsr

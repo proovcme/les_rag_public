@@ -3,6 +3,7 @@ import sqlite3
 from collections import deque
 from dataclasses import dataclass
 from io import BytesIO
+from pathlib import Path
 
 import pytest
 from fastapi import UploadFile
@@ -49,6 +50,7 @@ class FakeBackend:
 
     async def register_external_file(self, dataset_id, source_path, file_name):
         self.uploads.append((dataset_id, source_path.name, file_name))
+        self.pending_files[dataset_id] = int(self.pending_files.get(dataset_id, 0)) + 1
         return f"doc-{len(self.uploads)}"
 
     async def parse_dataset(self, dataset_id, limit=None):
@@ -1005,6 +1007,129 @@ async def test_parse_scheduler_runs_pending_batches(monkeypatch, dataset_state):
     assert result["stop_reason"] == ""
     assert dataset_state.parses == [("ds-1", 2), ("ds-1", 2)]
     assert len(unloads) == 2
+
+
+@pytest.mark.asyncio
+async def test_parse_batch_background_reports_partial_large_queue(monkeypatch, dataset_state):
+    dataset_state.pending_files["ds-1"] = 251
+
+    async def _admit(state, **kwargs):
+        return None
+
+    monkeypatch.setattr(datasets, "assert_parse_admission", _admit)
+
+    response = await datasets.parse_dataset_batch(
+        "ds-1",
+        limit=25,
+        background=True,
+        _admin=object(),
+    )
+    await asyncio.sleep(0.05)
+
+    job = datasets.get_dataset_state().job_tracker[response["job_id"]]
+    assert job["status"] == "PARTIAL"
+    assert job["processed"] == 25
+    assert "осталось pending=226" in job["message"]
+    assert dataset_state.parses == [("ds-1", 25)]
+
+
+@pytest.mark.asyncio
+async def test_dataset_parse_drain_continues_until_dataset_empty(monkeypatch, dataset_state):
+    dataset_state.pending_files["ds-1"] = 60
+    state = datasets.get_dataset_state()
+
+    async def _admit(state, **kwargs):
+        return None
+
+    monkeypatch.setattr(datasets, "assert_parse_admission", _admit)
+
+    result = await datasets.run_dataset_parse_drain(
+        state,
+        dataset_id="ds-1",
+        dataset_name="NTD_Index",
+        batch_limit=25,
+        max_batches=3,
+        job_id=None,
+    )
+
+    assert result["status"] == "completed"
+    assert result["batches_run"] == 3
+    assert result["processed_files"] == 60
+    assert result["remaining_pending"] == 0
+    assert dataset_state.parses == [("ds-1", 25), ("ds-1", 25), ("ds-1", 25)]
+
+
+@pytest.mark.asyncio
+async def test_dataset_parse_drain_stops_at_max_batches(monkeypatch, dataset_state):
+    dataset_state.pending_files["ds-1"] = 80
+    state = datasets.get_dataset_state()
+
+    async def _admit(state, **kwargs):
+        return None
+
+    monkeypatch.setattr(datasets, "assert_parse_admission", _admit)
+
+    result = await datasets.run_dataset_parse_drain(
+        state,
+        dataset_id="ds-1",
+        dataset_name="NTD_Index",
+        batch_limit=25,
+        max_batches=2,
+        job_id=None,
+    )
+
+    assert result["status"] == "partial"
+    assert result["batches_run"] == 2
+    assert result["processed_files"] == 50
+    assert result["remaining_pending"] == 30
+    assert result["stop_reason"] == "max_batches=2 reached"
+
+
+@pytest.mark.asyncio
+async def test_index_external_starts_dataset_scoped_parse_drain(tmp_path, monkeypatch, dataset_state):
+    root = tmp_path / "913"
+    root.mkdir()
+    for idx in range(3):
+        (root / f"doc_{idx}.txt").write_text(f"Документ {idx}", encoding="utf-8")
+
+    async def _admit(state, **kwargs):
+        return None
+
+    import proxy.services.les_md_service as les_md_service
+
+    monkeypatch.setattr(datasets, "assert_parse_admission", _admit)
+    monkeypatch.setattr(les_md_service, "read_and_bind", lambda *_args, **_kwargs: {"found": False})
+    monkeypatch.setenv("LES_AUTO_PIPELINES", "0")
+
+    result = await datasets.index_external(
+        datasets.IndexExternalRequest(
+            path=str(root),
+            dataset_id="ds-1",
+            parse=True,
+            parse_limit=2,
+            auto_split=False,
+        ),
+        _admin=object(),
+    )
+    await asyncio.sleep(0.05)
+
+    parse_job = result["parse_job"]
+    job = datasets.get_dataset_state().job_tracker[parse_job["job_id"]]
+    assert result["status"] == "registered"
+    assert result["registered_files"] == 3
+    assert result["parse_started"] is True
+    assert parse_job["type"] == "rag_parse_drain"
+    assert parse_job["batch_limit"] == 2
+    assert parse_job["max_batches"] == 2
+    assert job["status"] == "COMPLETED"
+    assert job["processed"] == 3
+    assert dataset_state.pending_files["ds-1"] == 0
+    assert dataset_state.parses == [("ds-1", 2), ("ds-1", 2)]
+    assert dataset_state.uploads == [
+        ("ds-1", "doc_0.txt", Path(root.name, "doc_0.txt").as_posix()),
+        ("ds-1", "doc_1.txt", Path(root.name, "doc_1.txt").as_posix()),
+        ("ds-1", "doc_2.txt", Path(root.name, "doc_2.txt").as_posix()),
+    ]
 
 
 @pytest.mark.asyncio
