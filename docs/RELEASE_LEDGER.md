@@ -10,9 +10,9 @@
 версия (схема 0.N.FEATURE.PATCH): 0.24.0.184  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.183 dataset notebook priority-file fallback + Documents tab in chat shell
-НЕ задеплоено:             0.24.0.184 Windows light startup fix
-рантайм /api/version:      0.24.0.183 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
+задеплоено на рантайм:     0.24.0.184 dataset navigation + Documents tab in chat shell + Windows light startup fix
+НЕ задеплоено:             —
+рантайм /api/version:      0.24.0.184 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
 > 0.24.0.184 — Windows/Legion light startup fix: `start-light.ps1`
