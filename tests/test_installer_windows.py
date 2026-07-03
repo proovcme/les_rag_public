@@ -42,6 +42,12 @@ def test_start_light_keeps_uv_server_processes_alive():
     text = ps1.read_text(encoding="utf-8")
 
     assert "function Start-LesUvProcess" in text
+    assert "function Get-LesFreePort" in text
+    assert '$ProxyPortExplicit = $PSBoundParameters.ContainsKey("ProxyPort")' in text
+    assert '$env:PROXY_URL = "http://127.0.0.1:$ProxyPort"' in text
+    assert "$payload = [pscustomobject]@{" in text
+    assert "windows-light-state.json" in text
+    assert "ui_health_url" in text
     assert 'Start-Process -FilePath "cmd.exe"' in text
     assert "Wait-LesHttp" in text
     assert "Start-Process uv -ArgumentList" not in text

@@ -10,8 +10,24 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$ProxyPortExplicit = $PSBoundParameters.ContainsKey("ProxyPort")
+$UiPortExplicit = $PSBoundParameters.ContainsKey("UiPort")
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 Set-Location $Root
+
+function Test-LesPortFree([int]$Port) {
+  $connection = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+  return $null -eq $connection
+}
+
+function Get-LesFreePort([int]$StartPort, [int[]]$Reserved = @()) {
+  for ($port = $StartPort; $port -lt ($StartPort + 100); $port++) {
+    if (($Reserved -notcontains $port) -and (Test-LesPortFree -Port $port)) {
+      return $port
+    }
+  }
+  throw "No free TCP port found in range $StartPort-$($StartPort + 99)."
+}
 
 function Stop-LesPortProcess([int]$Port) {
   $connections = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
@@ -55,6 +71,20 @@ function Wait-LesHttp([string]$Url, [int]$Seconds = 30) {
   return $null
 }
 
+if ($ProxyPortExplicit) {
+  Stop-LesPortProcess -Port $ProxyPort
+} elseif (-not (Test-LesPortFree -Port $ProxyPort)) {
+  $ProxyPort = Get-LesFreePort -StartPort ($ProxyPort + 1)
+}
+
+if (-not $NoUi) {
+  if ($UiPortExplicit) {
+    Stop-LesPortProcess -Port $UiPort
+  } elseif ((-not (Test-LesPortFree -Port $UiPort)) -or ($UiPort -eq $ProxyPort)) {
+    $UiPort = Get-LesFreePort -StartPort ($UiPort + 1) -Reserved @($ProxyPort)
+  }
+}
+
 if ($StartQdrant) {
   if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw "Docker is required when -StartQdrant is used."
@@ -70,17 +100,13 @@ if ($StartQdrant) {
   }
 }
 
-Stop-LesPortProcess -Port $ProxyPort
-if (-not $NoUi) {
-  Stop-LesPortProcess -Port $UiPort
-}
-
 $env:QDRANT_URL = "http://127.0.0.1:$QdrantPort"
 $env:MLX_URL = "http://127.0.0.1:18080"
 $env:LES_LLM_PROVIDER = $Provider
 $env:CHAT_VALIDATION_ENABLED = "false"
 $env:RAG_OCR_ENABLED = "false"
 $env:SPECKLE_ENABLED = "false"
+$env:PROXY_URL = "http://127.0.0.1:$ProxyPort"
 $env:CORS_ALLOWED_ORIGINS = "http://127.0.0.1:$ProxyPort,http://127.0.0.1:$UiPort,http://localhost:$ProxyPort,http://localhost:$UiPort"
 New-Item -ItemType Directory -Force -Path (Join-Path $Root "logs") | Out-Null
 
@@ -130,12 +156,16 @@ if ($null -eq $health) {
   $health = @{ status = "error"; detail = "proxy did not answer /api/health within startup timeout" }
 }
 
-[pscustomobject]@{
+$payload = [pscustomobject]@{
   status = "started"
   provider = $Provider
   proxy_port = $ProxyPort
   ui_port = if ($NoUi) { $null } else { $UiPort }
   qdrant_url = $env:QDRANT_URL
+  proxy_url = "http://127.0.0.1:$ProxyPort"
+  ui_url = if ($NoUi) { $null } else { "http://127.0.0.1:$UiPort/les" }
+  ui_health_url = if ($NoUi) { $null } else { "http://127.0.0.1:$UiPort/healthz" }
+  dynamic_ports = (-not $ProxyPortExplicit) -or ((-not $NoUi) -and (-not $UiPortExplicit))
   proxy_pid = $proxy.Id
   ui_pid = if ($ui) { $ui.Id } else { $null }
   proxy_alive = -not $proxy.HasExited
@@ -143,4 +173,8 @@ if ($null -eq $health) {
   proxy_log = $proxyErr
   ui_log = if ($ui) { $uiErr } else { $null }
   health = $health
-} | ConvertTo-Json -Depth 8
+}
+
+$statePath = Join-Path $Root "logs\windows-light-state.json"
+$payload | ConvertTo-Json -Depth 8 | Set-Content -Path $statePath -Encoding utf8
+$payload | ConvertTo-Json -Depth 8

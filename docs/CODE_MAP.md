@@ -134,7 +134,7 @@ Proxy       :8050  (FastAPI)  ── /api/chat, /api/datasets, /api/runtime, /ap
 
 - **Гейт:** `make verify` → `compileall` (синтаксис) + `pytest --collect-only` (импорт-смоук всех ~2046 тестов, офлайн, без сервисов). Полная сюита: `make test` (часть тестов требует живых Qdrant/MLX).
 - **Тесты:** [tests/](../tests/) — 218 файлов / ~2046 тестов, `pytest-asyncio`; ~25 требуют живых сервисов/сети. Конфиг [pytest.ini](../pytest.ini) (`testpaths=tests`).
-- **Сборка/деплой:** hatchling (wheel: backend/proxy/sovushka/tools), [docker-compose.yml](../docker-compose.yml) (Qdrant+Proxy), [Dockerfile.proxy](../Dockerfile.proxy), `installers/{macos,linux,windows}/`, `deploy/pauk/`, `standalone/cad_bim_viewer/`. Windows light (`installers/windows/start-light.ps1`) запускает proxy/UI через uv и при `-StartQdrant` переиспользует существующий контейнер `les-light-qdrant`, не удаляя локальный Qdrant на каждом старте.
+- **Сборка/деплой:** hatchling (wheel: backend/proxy/sovushka/tools), [docker-compose.yml](../docker-compose.yml) (Qdrant+Proxy), [Dockerfile.proxy](../Dockerfile.proxy), `installers/{macos,linux,windows}/`, `deploy/pauk/`, `standalone/cad_bim_viewer/`. Windows light (`installers/windows/start-light.ps1`) запускает proxy/UI через uv, при `-StartQdrant` переиспользует существующий контейнер `les-light-qdrant`, а при занятых дефолтных `8050/8051` без явных портов берёт свободные и пишет выбранные URL в `logs/windows-light-state.json` для `tools/les_shell.py`.
 - **CI:** нет (намеренно — локальная система).
 
 ## Сквозные механизмы

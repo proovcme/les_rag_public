@@ -7,13 +7,22 @@
 ## Текущее состояние (2026-07-03)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.187  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.188  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
 задеплоено на рантайм:     0.24.0.187 local Explorer/Finder folder picker for datasets
-НЕ задеплоено:             —
+НЕ задеплоено:             0.24.0.188 Windows light dynamic ports
 рантайм /api/version:      0.24.0.187 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
+
+> 0.24.0.188 — Windows light startup получил динамические порты:
+> если дефолтные `8050/8051` заняты и оператор не передал `-ProxyPort` /
+> `-UiPort` явно, `start-light.ps1` берёт ближайшие свободные порты,
+> прокидывает `PROXY_URL`, `SOVUSHKA_UI_PORT` и CORS под выбранную пару,
+> пишет `logs/windows-light-state.json`, а `tools.les_shell` читает этот
+> state-файл и открывает фактический URL Совушки. Явно переданные порты
+> сохраняют старое поведение: процесс на указанном порту останавливается и
+> порт переиспользуется.
 
 > 0.24.0.187 — Совушка получила локальный системный выбор папки
 > `Explorer/Finder…` для операторских сценариев: быстрое добавление датасета,
