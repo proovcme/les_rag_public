@@ -97,6 +97,9 @@ def test_document_explorer_lists_datasets_and_documents(explorer):
             "chunk_count": 3,
             "document_count": 3,
             "indexed_count": 3,
+            "pending_count": 0,
+            "error_count": 0,
+            "missing_count": 0,
         }
     ]
 

@@ -32,9 +32,18 @@ def test_admin_documents_tab_is_mounted():
     assert "include_documents" in header
     assert "from sovushka.pages.documents import build_documents" in app_shell
     assert "build_documents()" in app_shell
-    assert "include_documents=is_admin" in app_shell
+    assert "include_documents=True" in app_shell
+    assert "tab_documents" in app_shell
     assert "датасет → документ → фрагменты, без модели" in page
     assert "do not call LLMs" in router
+
+
+def test_chat_exposes_documents_navigation():
+    chat = Path("sovushka/pages/chat.py").read_text(encoding="utf-8")
+
+    assert "tab_documents=None" in chat
+    assert 'aria-label="Документы"' in chat
+    assert "Открыть документы датасетов" in chat
 
 
 def test_deploy_allows_sovushka_shell():

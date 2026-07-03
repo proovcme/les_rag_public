@@ -1862,11 +1862,20 @@ async def _smeta_direct_rag_context(
         max_chars = _env_int("LES_SMETA_RAG_CONTEXT_CHARS", 9000)
         context = build_context(ctx_chunks, max_chars, include_metadata=True)
         source_map = source_map_for_context(ctx_chunks, max_chars, include_metadata=True)
-        memory_prompt = await asyncio.to_thread(
-            dataset_memory_prompt_excerpt,
-            [str(d) for d in resolved_ids],
-            question=req.question,
-        )
+        try:
+            memory_prompt = await asyncio.to_thread(
+                dataset_memory_prompt_excerpt,
+                [str(d) for d in resolved_ids],
+                question=req.question,
+            )
+        except TypeError:
+            # Compatibility for tests/older notebook providers with the pre-question
+            # signature. Notebook memory is navigation, so a missing query hint must
+            # not collapse the whole smeta RAG context.
+            memory_prompt = await asyncio.to_thread(
+                dataset_memory_prompt_excerpt,
+                [str(d) for d in resolved_ids],
+            )
         blocks = []
         if context:
             blocks.append(

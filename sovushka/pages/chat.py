@@ -406,7 +406,7 @@ def should_skip_chat_resource_gate(question: str, dataset_filter: str | None = N
         return mail_hint or (table_hint and aggregate_hint)
 
 
-def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
+def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
     """Строит автономный экран чата: история слева, чат по центру, артефакты справа."""
 
     out_mode_val = {"v": "text"}
@@ -483,6 +483,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                     ui.button(icon="o_folder_open", on_click=lambda: _toggle_files()).props(
                         'flat round dense aria-label="Файлы"'
                     ).classes("sov-icon-btn")
+                    if tabs is not None and tab_documents is not None:
+                        ui.button(icon="o_article", on_click=lambda: tabs.set_value(tab_documents)).props(
+                            'flat round dense aria-label="Документы"'
+                        ).classes("sov-icon-btn").tooltip("Документы датасетов")
                     _html('<div class="sov-chat-title">С.О.В.У.Ш.К.А.</div>')
                     _html('<div class="sov-chat-subtitle">нормативный RAG-диспетчер</div>')
                 with ui.row().classes("items-center gap-2"):
@@ -912,6 +916,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None):
                         icon="o_folder_open",
                         on_click=lambda: _toggle_files(),
                     ).props("no-caps flat round").tooltip("Открыть файлы и папки")
+                    if tabs is not None and tab_documents is not None:
+                        ui.button(
+                            icon="o_article",
+                            on_click=lambda: tabs.set_value(tab_documents),
+                        ).props("no-caps flat round").tooltip("Открыть документы датасетов")
                     ui.button(
                         icon="o_inventory_2",
                         on_click=lambda: asyncio.create_task(_show_service_sources()),

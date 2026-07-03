@@ -215,14 +215,16 @@ async def classic_chat_page(request: Request):
 
     _apply_theme()
 
-    # Public shell: only chat/history. It stays lean and avoids mounting admin pages.
+    # Chat shell: chat/history plus the no-AI Documents explorer.
+    # Documents are a reader UI, not an admin-only console; API permissions still
+    # stay on the backend routes.
     with ui.column().classes("w-full h-screen no-wrap gap-0"):
         tabs, tr = build_header(
             is_admin,
             role,
             holder,
             admin_tabs=False,
-            include_documents=is_admin,
+            include_documents=True,
             admin_link=is_admin,
         )
 
@@ -244,7 +246,7 @@ async def classic_chat_page(request: Request):
             "background:var(--bg);overflow-y:auto;padding:0;"
         ):
             with ui.tab_panel(tab_chat):
-                build_chat(is_admin, tabs, None)
+                build_chat(is_admin, tabs, None, tab_documents)
             if tab_documents:
                 with ui.tab_panel(tab_documents):
                     build_documents()

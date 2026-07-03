@@ -7,13 +7,18 @@
 ## Текущее состояние (2026-07-03)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.191  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.192  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.191 scope selector loading/retry fix
+задеплоено на рантайм:     0.24.0.192 Documents UI visible in classic chat
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.191 ok · app 5.1.0 · h0.24 · Legion scope-options smoke ok; deploy_stamp_missing on Windows light
+рантайм /api/version:      0.24.0.192 ok · app 5.1.0 · h0.24 · Legion proxy/UI/Documents API smoke ok; deploy_stamp_missing on Windows light
 ```
+
+> 0.24.0.192 — вкладка «Документы» больше не прячется в `/classic`
+> за admin-флагом: no-AI просмотр датасетов монтируется в обычной чат-оболочке,
+> а в верхней панели чата есть явная кнопка «Документы». Backend-права
+> документов остаются на API; это исправление видимости и навигации.
 
 > 0.24.0.191 — ScopeSelector в чате больше не показывает тупиковое
 > “закройте и откройте ещё раз”: по клику он дожидается `/api/scope/options`,

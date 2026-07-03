@@ -1080,11 +1080,11 @@ async def list_sources(_user=Depends(require_user)):
                         "source_files": len(src_files),
                         "dataset_id": ds.id if ds else None,
                         "dataset_status": ds.status if ds else "NOT_CREATED",
-                        "indexed_files": ds.indexed_files if ds else 0,
-                        "pending_files": ds.pending_files if ds else 0,
-                        "error_files": ds.error_files if ds else 0,
-                        "missing_files": ds.missing_files if ds else 0,
-                        "chunk_count": ds.chunk_count if ds else 0,
+                        "indexed_files": getattr(ds, "indexed_files", getattr(ds, "doc_count", 0)) if ds else 0,
+                        "pending_files": getattr(ds, "pending_files", 0) if ds else 0,
+                        "error_files": getattr(ds, "error_files", 0) if ds else 0,
+                        "missing_files": getattr(ds, "missing_files", 0) if ds else 0,
+                        "chunk_count": getattr(ds, "chunk_count", 0) if ds else 0,
                     }
                 )
     return sources

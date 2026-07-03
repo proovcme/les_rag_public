@@ -343,6 +343,9 @@ async def test_list_sources_maps_folders_to_existing_datasets(tmp_path, monkeypa
             "dataset_id": "ds-1",
             "dataset_status": "IDLE",
             "indexed_files": 3,
+            "pending_files": 0,
+            "error_files": 0,
+            "missing_files": 0,
             "chunk_count": 7,
         }
     ]
