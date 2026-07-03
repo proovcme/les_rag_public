@@ -1,6 +1,7 @@
 param(
   [int]$ProxyPort = 8050,
-  [int]$UiPort = 8051
+  [int]$UiPort = 8051,
+  [int]$LemonadeHostPort = 18080
 )
 
 # Stop the LES windows-light stack started by start-light.ps1 by terminating the
@@ -19,5 +20,6 @@ function Stop-LesPortProcess([int]$Port) {
 
 Stop-LesPortProcess -Port $ProxyPort
 Stop-LesPortProcess -Port $UiPort
+Stop-LesPortProcess -Port $LemonadeHostPort
 
-Write-Host "LES windows-light stopped (proxy:$ProxyPort ui:$UiPort)."
+Write-Host "LES windows-light stopped (proxy:$ProxyPort ui:$UiPort lemonade-adapter:$LemonadeHostPort)."

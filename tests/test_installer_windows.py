@@ -14,6 +14,7 @@ def test_stage_runtime_copies_clean_export_with_app_files(tmp_path):
     assert (dest / "installers" / "windows" / "app" / "bootstrap.ps1").is_file()
     assert (dest / "installers" / "windows" / "app" / "launcher.vbs").is_file()
     assert (dest / "installers" / "windows" / "app" / "LES.nsi").is_file()
+    assert (dest / "lemonade_host.py").is_file()
     assert (dest / "tools" / "onboard_models.py").is_file()
 
     # No secrets / local data leak into the package.
@@ -45,6 +46,11 @@ def test_start_light_keeps_uv_server_processes_alive():
     assert "function Get-LesFreePort" in text
     assert '$ProxyPortExplicit = $PSBoundParameters.ContainsKey("ProxyPort")' in text
     assert '$env:PROXY_URL = "http://127.0.0.1:$ProxyPort"' in text
+    assert '[int]$LemonadeHostPort = 18080' in text
+    assert '"run", "python", "lemonade_host.py"' in text
+    assert "windows-light-lemonade-host.err.log" in text
+    assert "lemonade_adapter_url" in text
+    assert "lemonade_host_pid" in text
     assert "$payload = [pscustomobject]@{" in text
     assert "windows-light-state.json" in text
     assert "ui_health_url" in text

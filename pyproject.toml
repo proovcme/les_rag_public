@@ -84,6 +84,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["backend", "proxy", "proxy.clients", "proxy.repositories", "proxy.routers", "proxy.services", "proxy.storage", "proxy.workers", "sovushka", "tools"]
-include = ["mlx_host.py", "proxy_server.py", "sovushka_ng.py"]
+include = ["mlx_host.py", "lemonade_host.py", "proxy_server.py", "sovushka_ng.py"]
 
 [tool.uv]

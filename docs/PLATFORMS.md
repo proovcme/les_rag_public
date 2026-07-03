@@ -8,7 +8,7 @@ LES should ship as a product family, not as one Mac workstation script.
 |---|---|---|---|---|---|
 | macOS Apple Silicon native | Current reference | launchd | MLX/Core ML | local Qdrant binary | Best local private workstation profile |
 | Linux server | Packaging target | systemd or Docker Compose | OpenAI-compatible local host, Ollama, llama.cpp, vLLM, remote provider | Qdrant Docker/native | Primary production box target |
-| Windows workstation | Packaging target | PowerShell + Windows service or Docker Desktop | remote LES/model host, Ollama/llama.cpp, OpenAI-compatible provider | Qdrant named Docker volume or remote Qdrant | Best paired with Revit/ARTEL add-ins |
+| Windows workstation | Packaging target | PowerShell + Windows service or Docker Desktop | remote LES/model host, Ollama/llama.cpp, Lemonade adapter, OpenAI-compatible provider | Qdrant named Docker volume or remote Qdrant | Best paired with Revit/ARTEL add-ins |
 | Lite mode | Packaging target | any | remote/OpenRouter/OpenAI-compatible | local or remote Qdrant | No local heavy model requirement |
 
 ## Runtime Abstractions
@@ -18,8 +18,8 @@ LES must not hard-code platform decisions in product code. Platform profiles sho
 | Adapter | macOS Native | Linux Server | Windows Workstation |
 |---|---|---|---|
 | service manager | launchd | systemd / Docker Compose | PowerShell service / Docker Desktop |
-| model host | MLX/Core ML | Ollama, llama.cpp, vLLM, OpenAI-compatible | remote provider, Ollama/llama.cpp, OpenAI-compatible |
-| embeddings | Core ML Qwen | sentence-transformers, remote embeddings, OpenAI-compatible | remote embeddings, sentence-transformers |
+| model host | MLX/Core ML | Ollama, llama.cpp, vLLM, OpenAI-compatible | remote provider, Ollama/llama.cpp, Lemonade via `lemonade_host.py`, OpenAI-compatible |
+| embeddings | Core ML Qwen | sentence-transformers, remote embeddings, OpenAI-compatible | Ollama/Lemonade-compatible `/v1/embeddings`, remote embeddings, sentence-transformers |
 | vector store | Qdrant binary | Qdrant Docker/native | Qdrant Docker named volume or remote |
 | UI | Sovushka Lite | Sovushka Lite | browser to local/remote LES |
 
@@ -43,6 +43,9 @@ Use these names consistently in docs, install scripts and future config files:
 - Keep model downloads outside Docker images.
 - Keep private corpora out of install packages.
 - Treat launchd/systemd/Windows service logic as adapters behind `lesctl`.
+- On Windows with `Provider=lemonade`, keep `lemonade_host.py` between LES and
+  Lemonade so `MLX_URL` still exposes embeddings, rerank, unload and model
+  switch endpoints expected by shared runtime code.
 
 ## Minimum Smoke
 

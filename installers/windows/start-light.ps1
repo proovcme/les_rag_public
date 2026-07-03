@@ -2,6 +2,7 @@ param(
   [int]$ProxyPort = 8050,
   [int]$UiPort = 8051,
   [int]$QdrantPort = 6333,
+  [int]$LemonadeHostPort = 18080,
   [ValidateSet("mlx", "openrouter", "openai", "ollama", "lemonade", "openai-compatible")]
   [string]$Provider = "lemonade",
   [string]$Model = "",
@@ -101,7 +102,7 @@ if ($StartQdrant) {
 }
 
 $env:QDRANT_URL = "http://127.0.0.1:$QdrantPort"
-$env:MLX_URL = "http://127.0.0.1:18080"
+$env:MLX_URL = "http://127.0.0.1:$LemonadeHostPort"
 $env:LES_LLM_PROVIDER = $Provider
 $env:CHAT_VALIDATION_ENABLED = "false"
 $env:RAG_OCR_ENABLED = "false"
@@ -133,7 +134,27 @@ switch ($Provider) {
   "lemonade" {
     $env:LEMONADE_BASE_URL = if ($env:LEMONADE_BASE_URL) { $env:LEMONADE_BASE_URL } else { "http://127.0.0.1:13305/api/v1" }
     $env:LEMONADE_API_KEY = if ($env:LEMONADE_API_KEY) { $env:LEMONADE_API_KEY } else { "lemonade" }
+    $env:LEMONADE_HOST_PORT = "$LemonadeHostPort"
     if ($Model) { $env:LEMONADE_MODEL = $Model }
+  }
+}
+
+$lemonadeHost = $null
+if ($Provider -eq "lemonade") {
+  if ($PSBoundParameters.ContainsKey("LemonadeHostPort")) {
+    Stop-LesPortProcess -Port $LemonadeHostPort
+  } elseif (-not (Test-LesPortFree -Port $LemonadeHostPort)) {
+    $LemonadeHostPort = Get-LesFreePort -StartPort ($LemonadeHostPort + 1) -Reserved @($ProxyPort, $UiPort)
+    $env:LEMONADE_HOST_PORT = "$LemonadeHostPort"
+    $env:MLX_URL = "http://127.0.0.1:$LemonadeHostPort"
+  }
+  $lemonadeHostArgs = @("run", "python", "lemonade_host.py")
+  $lemonadeHostOut = Join-Path $Root "logs\windows-light-lemonade-host.out.log"
+  $lemonadeHostErr = Join-Path $Root "logs\windows-light-lemonade-host.err.log"
+  $lemonadeHost = Start-LesUvProcess -UvArgs $lemonadeHostArgs -StdOut $lemonadeHostOut -StdErr $lemonadeHostErr
+  $lemonadeHealth = Wait-LesHttp "http://127.0.0.1:$LemonadeHostPort/api/health" 25
+  if ($null -eq $lemonadeHealth) {
+    Write-Warning "Lemonade adapter did not answer /api/health within startup timeout."
   }
 }
 
@@ -162,14 +183,19 @@ $payload = [pscustomobject]@{
   proxy_port = $ProxyPort
   ui_port = if ($NoUi) { $null } else { $UiPort }
   qdrant_url = $env:QDRANT_URL
+  mlx_url = $env:MLX_URL
+  lemonade_adapter_url = if ($Provider -eq "lemonade") { "http://127.0.0.1:$LemonadeHostPort" } else { $null }
   proxy_url = "http://127.0.0.1:$ProxyPort"
   ui_url = if ($NoUi) { $null } else { "http://127.0.0.1:$UiPort/les" }
   ui_health_url = if ($NoUi) { $null } else { "http://127.0.0.1:$UiPort/healthz" }
   dynamic_ports = (-not $ProxyPortExplicit) -or ((-not $NoUi) -and (-not $UiPortExplicit))
+  lemonade_host_pid = if ($lemonadeHost) { $lemonadeHost.Id } else { $null }
   proxy_pid = $proxy.Id
   ui_pid = if ($ui) { $ui.Id } else { $null }
+  lemonade_host_alive = if ($lemonadeHost) { -not $lemonadeHost.HasExited } else { $null }
   proxy_alive = -not $proxy.HasExited
   ui_alive = if ($ui) { -not $ui.HasExited } else { $null }
+  lemonade_host_log = if ($lemonadeHost) { $lemonadeHostErr } else { $null }
   proxy_log = $proxyErr
   ui_log = if ($ui) { $uiErr } else { $null }
   health = $health
