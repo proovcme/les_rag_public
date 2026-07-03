@@ -81,6 +81,27 @@ def test_runtime_actions_allow_loopback_or_trusted_network():
     assert local_runtime_action_allowed(is_loopback=False, is_trusted_network=True)
 
 
+def test_windows_folder_picker_forces_utf8_stdout(monkeypatch):
+    calls = {}
+
+    def fake_run(args, **kwargs):
+        calls["args"] = args
+        calls["kwargs"] = kwargs
+        return SimpleNamespace(returncode=0, stdout="C:\\Users\\Oleg\\Лесной", stderr="")
+
+    monkeypatch.setattr(lite_bridge, "_is_windows_host", lambda: True)
+    monkeypatch.setattr(lite_bridge, "_is_macos_host", lambda: False)
+    monkeypatch.setattr(lite_bridge.subprocess, "run", fake_run)
+
+    result = lite_bridge._native_pick_folder(initial="", title="Выберите папку")
+
+    assert result == {"status": "selected", "path": "C:\\Users\\Oleg\\Лесной"}
+    assert calls["kwargs"]["encoding"] == "utf-8"
+    assert calls["kwargs"]["errors"] == "replace"
+    script = calls["args"][-1]
+    assert "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8" in script
+
+
 def test_native_folder_picker_uses_windows_folder_dialog(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(lite_bridge, "_is_windows_host", lambda: True)

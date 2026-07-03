@@ -161,6 +161,8 @@ def _native_pick_folder(*, initial: str = "", title: str = "Выберите п�
 
         script = "\n".join(
             [
+                "$OutputEncoding = [System.Text.Encoding]::UTF8",
+                "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
                 "Add-Type -AssemblyName System.Windows.Forms",
                 "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog",
                 f"$dialog.Description = {ps_quote(title)}",
@@ -174,6 +176,8 @@ def _native_pick_folder(*, initial: str = "", title: str = "Выберите п�
             ["powershell", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-Command", script],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=300,
             check=False,
         )

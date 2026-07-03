@@ -7,13 +7,20 @@
 ## Текущее состояние (2026-07-03)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.189  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.190  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.189 Windows/Mac dataset visibility/settings/UI parity
+задеплоено на рантайм:     0.24.0.190 Windows folder picker encoding + non-MLX health polling
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.189 ok · app 5.1.0 · h0.24 · Legion light smoke ok; deploy_stamp_missing on Windows light
+рантайм /api/version:      0.24.0.190 ok · app 5.1.0 · h0.24 · Legion mojibake-path smoke ok; deploy_stamp_missing on Windows light
 ```
+
+> 0.24.0.190 — Windows light hotfix: Explorer/Finder folder picker on Windows
+> forces UTF-8 PowerShell stdout, while backend path validation repairs the
+> common CP866-as-CP1251 mojibake for Cyrillic paths before failing `path not
+> found`. Sovushka no longer polls `MLX_URL/api/health` when the active provider
+> is Ollama/OpenAI/OpenRouter, removing the misleading `/api/health 404 page not
+> found` noise from non-MLX Windows runs.
 
 > 0.24.0.189 — общий Mac/Windows parity-pass для Совушки и датасетов:
 > pending-внешние датасеты больше не выглядят пустыми (`doc_count/files`

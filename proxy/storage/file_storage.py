@@ -13,6 +13,24 @@ SAFE_FOLDER_RE = re.compile(r"^[\w\-]+$")
 SAFE_STORAGE_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
+def repair_windows_mojibake_path(path: str) -> str:
+    """Repair common Windows PowerShell stdout mojibake for Cyrillic paths.
+
+    Windows PowerShell 5 may write redirected console output as CP866 while the
+    Python parent decodes it as CP1251. The visible symptom is a path like
+    ``‹Ґб­®©`` instead of ``Лесной``. This helper is deliberately narrow:
+    it only returns a different string when the CP1251→CP866 round-trip works.
+    """
+    raw = path or ""
+    if not raw:
+        return raw
+    try:
+        repaired = raw.encode("cp1251").decode("cp866")
+    except UnicodeError:
+        return raw
+    return repaired if repaired != raw else raw
+
+
 def validate_source_folder(folder: str, base: Path = Path("./RAG_Content")) -> Path:
     if not SAFE_FOLDER_RE.match(folder):
         raise HTTPException(400, "Недопустимое имя папки")
@@ -48,7 +66,16 @@ def validate_external_source(path: str) -> Path:
     try:
         candidate = Path(raw).expanduser().resolve(strict=True)
     except FileNotFoundError as error:
-        raise HTTPException(404, f"путь не найден: {raw}") from error
+        repaired = repair_windows_mojibake_path(raw)
+        if repaired != raw:
+            try:
+                candidate = Path(repaired).expanduser().resolve(strict=True)
+            except FileNotFoundError:
+                raise HTTPException(404, f"путь не найден: {raw}") from error
+            except (OSError, RuntimeError) as repair_error:
+                raise HTTPException(400, f"некорректный путь: {raw}") from repair_error
+        else:
+            raise HTTPException(404, f"путь не найден: {raw}") from error
     except (OSError, RuntimeError) as error:
         raise HTTPException(400, f"некорректный путь: {raw}") from error
     if not candidate.is_dir():
