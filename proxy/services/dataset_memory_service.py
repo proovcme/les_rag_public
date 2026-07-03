@@ -890,8 +890,8 @@ def _task_guidance(question: str) -> list[str]:
         )
     if re.search(r"(нормоконтрол|замечан|провер|гост|сп\s*\d|снип|требован)", q):
         guidance.append(
-            "Для нормоконтроля сначала найди применимый раздел проекта и нормативный источник, "
-            "потом формулируй замечание с пунктом/фрагментом."
+            "Для нормативного вопроса сначала выбери документ-кандидат, затем пункт/таблицу/приложение, "
+            "и только потом формулируй вывод."
         )
     if re.search(r"(расскажи|обзор|изучи|проект|объект|корпус|датасет|документац)", q):
         guidance.append(
@@ -903,6 +903,49 @@ def _task_guidance(question: str) -> list[str]:
             "Для табличных вопросов ищи файлы со слоями tables/calculations и подтверждай числа строками таблиц."
         )
     return guidance
+
+
+def _normative_navigation_lines(memory: dict[str, Any], question: str, *, max_files: int = 24) -> list[str]:
+    q = (question or "").casefold().replace("ё", "е")
+    if not re.search(r"(норм|требован|гост|сп\s*\d|снип|пуэ|пункт|раздел|допускается|предусматрив|обязател|нужно|следует)", q):
+        return []
+    try:
+        from proxy.services.kot_service import extract_norm_refs
+
+        norm_refs = [str(ref).casefold().replace(" ", "") for ref in extract_norm_refs(question)]
+    except Exception:  # noqa: BLE001
+        norm_refs = []
+
+    candidates: list[tuple[int, dict[str, Any]]] = []
+    for card in memory.get("file_cards") or []:
+        layers = {str(layer) for layer in (card.get("content_layers") or [])}
+        file_kind = str(card.get("file_kind") or "")
+        role = str(card.get("document_role") or "").casefold()
+        file_name = str(card.get("file_name") or "")
+        low_name = file_name.casefold().replace(" ", "")
+        if "normative" not in layers and file_kind != "normative" and "норматив" not in role:
+            continue
+        score = 10 + min(10, int(card.get("chunk_count") or 0) // 40)
+        if norm_refs and any(ref in low_name for ref in norm_refs):
+            score += 100
+        if str(card.get("status") or "") == "INDEXED":
+            score += 5
+        candidates.append((score, card))
+    if not candidates:
+        return []
+
+    candidates.sort(key=lambda item: (-item[0], str(item[1].get("file_name") or "")))
+    lines = [
+        "Нормативная навигация:",
+        "- Сначала выбери нормативный документ-кандидат по предмету вопроса; затем ищи внутри него пункт, подпункт, таблицу или приложение; затем формулируй вывод.",
+        "- Если вопрос содержит развилку «требуется / не требуется», ищи обе стороны нормы. Если одна сторона не найдена в открытых фрагментах, не додумывай её.",
+        "- Список ниже не доказательство и не полный реестр; это карта, какие файлы открыть через retrieval/doc_filter.",
+    ]
+    for _score, card in candidates[:max_files]:
+        chunks = int(card.get("chunk_count") or 0)
+        status = str(card.get("status") or "")
+        lines.append(f"- {card.get('file_name')} — {card.get('document_role') or 'нормативный документ'}; status {status}; чанков {chunks}")
+    return lines
 
 
 def dataset_brief_for_model(
@@ -952,6 +995,9 @@ def dataset_brief_for_model(
                 "Роли документов: "
                 + ", ".join(f"{x.get('role')} ({x.get('files')})" for x in roles[:10])
             )
+        norm_lines = _normative_navigation_lines(memory, question)
+        if norm_lines:
+            lines.extend(norm_lines)
         cards_by_name = _file_card_by_name(memory)
         important = memory.get("important_files") or []
         if important:

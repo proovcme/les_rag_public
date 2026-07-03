@@ -12,6 +12,9 @@ def test_rag_search_skill_keeps_search_model_first():
     assert "Missing evidence не является отрицательным фактом" in text
     assert "Если пользователь указал конкретный файл, ответ строится строго по нему" in text
     assert "детерминированный табличный путь" in text
+    assert "норма → пункт → вывод" in text
+    assert "Требуется" in text
+    assert "Не требуется / исключения" in text
     assert "Не отвечать из памяти" in text
     assert "Не считать таблицы вручную" in text
 

@@ -26,8 +26,15 @@ if ($StartQdrant) {
   if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw "Docker is required when -StartQdrant is used."
   }
-  docker rm -f les-light-qdrant 2>$null | Out-Null
-  docker run -d --name les-light-qdrant -p "${QdrantPort}:6333" qdrant/qdrant:latest | Out-Null
+  $existingQdrant = docker ps -a --filter "name=les-light-qdrant" --quiet
+  $runningQdrant = docker ps --filter "name=les-light-qdrant" --quiet
+  if ($runningQdrant) {
+    Write-Host "les-light-qdrant is already running."
+  } elseif ($existingQdrant) {
+    docker start les-light-qdrant | Out-Null
+  } else {
+    docker run -d --name les-light-qdrant -p "${QdrantPort}:6333" qdrant/qdrant:latest | Out-Null
+  }
 }
 
 Stop-LesPortProcess -Port $ProxyPort

@@ -4,17 +4,43 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-07-02)
+## Текущее состояние (2026-07-03)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.178  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.181  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.178 LES voice tone restored
+задеплоено на рантайм:     0.24.0.181 no-AI document explorer API + Windows light Qdrant reuse
 НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.178 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
+рантайм /api/version:      0.24.0.181 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
 
+> 0.24.0.181 — Windows light installer/startup fix: `start-light.ps1 -StartQdrant`
+> больше не делает слепой `docker rm -f`, а переиспользует running/existing
+> `les-light-qdrant` или создаёт его при отсутствии. Это сохраняет локальный
+> Windows Qdrant между запусками и убирает падение первого запуска, если
+> контейнер ещё не существовал.
+> 0.24.0.180 — добавлен no-AI Document Explorer API: прямой
+> просмотр и поиск по датасетам/документам через MetaDB `datasets` /
+> `documents` и SQLite `lexical_chunks`, без вызова модели. Эндпоинты:
+> `GET /api/documents/datasets`, `GET /api/documents/datasets/{dataset_id}/documents`,
+> `GET /api/documents/datasets/{dataset_id}/chunks/{doc_name}` и
+> `GET /api/documents/search`. Это база для нормального проводника документов,
+> поиска по документу/датасету и будущего read-only WebDAV; выводы и ответы
+> по-прежнему делает модель в RAG-режиме, а этот слой показывает источники.
+> 0.24.0.179 — RAG-поиск закрепляет model-first нормативный маршрут:
+> модель идёт `норма → пункт → вывод`, а код помогает навигацией по
+> датасету, не готовым ответом. `dataset_brief_for_model_v1` теперь
+> добавляет «Нормативную навигацию»: список нормативных файлов-кандидатов
+> из file cards, напоминание открыть документ через retrieval/doc_filter и
+> искать внутри пункт/таблицу/приложение; для развилок «требуется / не
+> требуется» модель должна искать обе стороны нормы и не додумывать
+> отсутствующую. RAG skill/role-pack фиксируют этот контракт. `clause_lookup`
+> остаётся deterministic final только для явных запросов «найди пункт /
+> раздел / приложение» и узкого established shortcut «исключения
+> дымоудаления → СП 7.13130 п. 7.3». `retrieval_service` и
+> `clause_lookup_service` включены в deploy-stamp critical files, чтобы
+> drift нормативного поиска был виден в `/api/version`.
 > 0.24.0.178 — центральный `LES_TONE_PROMPT` вернул фирменный голос:
 > живой инженерный тон, короткая едкость к бардаку в данных/пустым таблицам/
 > мутным ТЗ и канцеляриту, но уважение к оператору и строгая дисциплина для

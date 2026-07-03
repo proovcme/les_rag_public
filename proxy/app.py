@@ -45,6 +45,7 @@ from proxy.routers.normcontrol import router as normcontrol_router
 from proxy.routers.notebooks import router as notebooks_router
 from proxy.routers.prompts import router as prompts_router
 from proxy.routers.doc_review import router as doc_review_router
+from proxy.routers.documents import router as documents_router
 from proxy.routers.chat import ChatRouterState, ensure_chat_history_schema, router as chat_router, set_chat_state
 from proxy.routers.chat_history import router as chat_history_router
 from proxy.routers.datasets import DatasetRouterState, router as datasets_router, search_router, set_dataset_state
@@ -444,6 +445,7 @@ def create_app():
     fastapi_app.include_router(notebooks_router)
     fastapi_app.include_router(prompts_router)
     fastapi_app.include_router(doc_review_router)
+    fastapi_app.include_router(documents_router)
     fastapi_app.include_router(service_sources_router)
     fastapi_app.include_router(settings_router)
     fastapi_app.include_router(cad_bim_router)

@@ -338,6 +338,9 @@ _RAG_SEARCH_ROLE_PACK: dict[str, Any] = {
     "required_answer_capabilities": [
         "scope_statement",
         "query_plan",
+        "normative_route",
+        "clause_level_answer",
+        "two_sided_norm_table",
         "source_table",
         "answer_with_sources",
         "conflict_report",
@@ -357,6 +360,8 @@ _RAG_SEARCH_ROLE_PACK: dict[str, Any] = {
         "model_links_sources": True,
         "code_only_retrieves_reranks_filters_and_calculates": True,
         "source_scope_must_be_named": True,
+        "normative_answer_requires_norm_then_clause": True,
+        "two_sided_norm_question_requires_both_sides": True,
         "target_file_scope_is_strict": True,
         "missing_evidence_is_not_negative_fact": True,
         "source_conflict_must_be_reported": True,

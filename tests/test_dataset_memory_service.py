@@ -92,6 +92,49 @@ def test_dataset_brief_for_model_links_file_cards_to_chunks_and_keeps_model_prim
     assert "не источник фактов" in brief
 
 
+def test_dataset_brief_for_model_adds_normative_navigation_without_answering():
+    memory = {
+        "schema": "dataset_memory_v1",
+        "dataset_id": "fire",
+        "document_count": 3,
+        "indexed_count": 3,
+        "chunk_count": 300,
+        "data_layers": [{"id": "normative", "label": "нормы", "files": 2}],
+        "document_roles": [{"role": "нормативный документ", "files": 2}],
+        "file_cards": [
+            {
+                "file_name": "NTD/СП 7.13130.docx",
+                "status": "INDEXED",
+                "chunk_count": 216,
+                "file_kind": "normative",
+                "content_layers": ["normative", "text"],
+                "document_role": "нормативный документ",
+            },
+            {
+                "file_name": "NTD/СП 1.13130.docx",
+                "status": "INDEXED",
+                "chunk_count": 180,
+                "file_kind": "normative",
+                "content_layers": ["normative", "text"],
+                "document_role": "нормативный документ",
+            },
+        ],
+    }
+
+    brief = dataset_brief_for_model(
+        [memory],
+        question="Для каких случаев предусматривать вытяжную противодымную вентиляцию не требуется а для каких требуется",
+    )
+
+    assert "Нормативная навигация" in brief
+    assert "Сначала выбери нормативный документ-кандидат" in brief
+    assert "пункт, подпункт, таблицу или приложение" in brief
+    assert "ищи обе стороны нормы" in brief
+    assert "NTD/СП 7.13130.docx" in brief
+    assert "это карта" in brief
+    assert "готовый ответ" not in brief.lower()
+
+
 def test_inventory_from_metadb_includes_typed_fields(tmp_path):
     db = tmp_path / "meta.db"
     _seed_db(db)

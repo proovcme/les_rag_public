@@ -215,8 +215,13 @@ def test_rag_search_role_pack_is_model_first_contract():
     assert "missing_evidence" in pack["evidence_statuses"]
     assert "source_table" in pack["required_answer_capabilities"]
     assert "answer_with_sources" in pack["required_answer_capabilities"]
+    assert "normative_route" in pack["required_answer_capabilities"]
+    assert "clause_level_answer" in pack["required_answer_capabilities"]
+    assert "two_sided_norm_table" in pack["required_answer_capabilities"]
     assert pack["hard_rules"]["model_links_sources"] is True
     assert pack["hard_rules"]["code_only_retrieves_reranks_filters_and_calculates"] is True
+    assert pack["hard_rules"]["normative_answer_requires_norm_then_clause"] is True
+    assert pack["hard_rules"]["two_sided_norm_question_requires_both_sides"] is True
     assert pack["hard_rules"]["target_file_scope_is_strict"] is True
     assert pack["hard_rules"]["missing_evidence_is_not_negative_fact"] is True
     assert pack["hard_rules"]["table_numbers_require_deterministic_path"] is True
