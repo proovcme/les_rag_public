@@ -187,6 +187,8 @@ def _pid_running(pid: int) -> bool:
         os.kill(pid, 0)
     except OSError:
         return False
+    if os.name == "nt":
+        return True
     try:
         status = subprocess.run(
             ["ps", "-p", str(pid), "-o", "stat="],

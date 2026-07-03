@@ -106,6 +106,13 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _background_popen_kwargs() -> dict[str, Any]:
+    if os.name == "nt":
+        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        return {"creationflags": creationflags} if creationflags else {}
+    return {"start_new_session": True, "close_fds": True}
+
+
 def _pid_running(pid: int) -> bool:
     if pid <= 0:
         return False
@@ -113,6 +120,8 @@ def _pid_running(pid: int) -> bool:
         os.kill(pid, 0)
     except OSError:
         return False
+    if os.name == "nt":
+        return True
     try:
         status = subprocess.run(
             ["ps", "-p", str(pid), "-o", "stat="],
@@ -335,9 +344,8 @@ class RuntimeDispatcher:
                 stdout=output,
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,
-                start_new_session=True,
-                close_fds=True,
                 env=env,
+                **_background_popen_kwargs(),
             )
         _write_json(
             self.pid_file,
@@ -500,9 +508,8 @@ class RuntimeDispatcher:
                 stdout=output,
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,
-                start_new_session=True,
-                close_fds=True,
                 env=env,
+                **_background_popen_kwargs(),
             )
         _write_json(
             self.route_change_pid_file,

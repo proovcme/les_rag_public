@@ -7,8 +7,10 @@ les-proxy is down and needs to be started.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
+import platform
 import plistlib
 import re
 import signal
@@ -147,6 +149,17 @@ SERVICES: dict[str, ServiceDef] = {
 START_ORDER = ("qdrant", "mlx", "proxy", "indexer")
 STOP_ORDER = ("indexer", "proxy", "mlx", "qdrant")
 PROTECTED_PROCESS_NAMES = {
+    "System",
+    "Registry",
+    "Memory Compression",
+    "smss.exe",
+    "csrss.exe",
+    "wininit.exe",
+    "services.exe",
+    "lsass.exe",
+    "winlogon.exe",
+    "dwm.exe",
+    "MsMpEng.exe",
     "kernel_task",
     "launchd",
     "WindowServer",
@@ -162,7 +175,10 @@ PROTECTED_PROCESS_NAMES = {
 
 
 def _run(args: list[str], timeout: int = 20) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    try:
+        return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    except FileNotFoundError as exc:
+        return subprocess.CompletedProcess(args=args, returncode=127, stdout="", stderr=str(exc))
 
 
 def _host_memory() -> tuple[float | None, float | None, float | None]:
@@ -189,6 +205,8 @@ def _is_les_owned_process(command: str) -> bool:
 
 
 def _is_protected_process(command: str) -> bool:
+    if command.strip() in PROTECTED_PROCESS_NAMES:
+        return True
     name = _process_name(command)
     if name in PROTECTED_PROCESS_NAMES:
         return True
@@ -222,7 +240,39 @@ def _parse_ps_memory_processes(output: str) -> list[MemoryProcess]:
     return sorted(processes, key=lambda item: item.rss_mb, reverse=True)
 
 
+def _parse_tasklist_memory_processes(output: str) -> list[MemoryProcess]:
+    processes: list[MemoryProcess] = []
+    for row in csv.reader(output.splitlines()):
+        if len(row) < 5 or row[1].strip().lower() == "pid":
+            continue
+        image_name, pid_raw, _session_name, _session_num, mem_raw = row[:5]
+        if not pid_raw.strip().isdigit():
+            continue
+        mem_digits = re.sub(r"[^\d]", "", mem_raw)
+        if not mem_digits:
+            continue
+        pid = int(pid_raw.strip())
+        rss_mb = int(mem_digits) / 1024
+        command = image_name.strip()
+        processes.append(
+            MemoryProcess(
+                pid=pid,
+                user="",
+                rss_mb=round(rss_mb, 1),
+                command=command,
+                les_owned=_is_les_owned_process(command),
+                protected=_is_protected_process(command) or pid == os.getpid(),
+            )
+        )
+    return sorted(processes, key=lambda item: item.rss_mb, reverse=True)
+
+
 def memory_processes(limit: int = 10) -> list[MemoryProcess]:
+    if platform.system().lower().startswith("win"):
+        result = _run(["tasklist", "/FO", "CSV", "/NH"], timeout=8)
+        if result.returncode != 0:
+            return []
+        return _parse_tasklist_memory_processes(result.stdout)[:limit]
     result = _run(["ps", "-axo", "pid=,rss=,user=,command="], timeout=8)
     if result.returncode != 0:
         return []
@@ -444,6 +494,14 @@ def _health(url: str | None, timeout: float = 6.0) -> tuple[str, str]:
 
 
 def _process_command(pid: int) -> str:
+    if platform.system().lower().startswith("win"):
+        result = _run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], timeout=5)
+        if result.returncode != 0:
+            return ""
+        for process in _parse_tasklist_memory_processes(result.stdout):
+            if process.pid == pid:
+                return process.command
+        return ""
     result = _run(["ps", "-o", "command=", "-p", str(pid)], timeout=5)
     return result.stdout.strip()
 

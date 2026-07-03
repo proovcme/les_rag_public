@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from proxy.services import runtime_dispatcher as dispatcher_mod
 from proxy.services.runtime_dispatcher import DEFAULT_DATASETS, DispatcherError, RuntimeDispatcher
 from tools.les_runtime_control import MemoryPreflight, MemoryProcess, ServiceStatus
 
@@ -91,6 +92,16 @@ def test_dispatcher_status_without_campaign(tmp_path):
     assert status["actions"]["can_start"] is True
     assert status["services"][0]["key"] == "proxy"
     assert status["memory"]["recommendations"]["policy"] == "wait_only"
+
+
+def test_background_popen_kwargs_are_platform_specific(monkeypatch):
+    monkeypatch.setattr(dispatcher_mod.os, "name", "posix")
+    assert dispatcher_mod._background_popen_kwargs() == {"start_new_session": True, "close_fds": True}
+
+    monkeypatch.setattr(dispatcher_mod.os, "name", "nt")
+    kwargs = dispatcher_mod._background_popen_kwargs()
+    assert "start_new_session" not in kwargs
+    assert "close_fds" not in kwargs
 
 
 def test_dispatcher_public_reindex_status_payload(tmp_path):

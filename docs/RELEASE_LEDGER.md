@@ -7,13 +7,23 @@
 ## Текущее состояние (2026-07-03)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.185  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.186  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
 задеплоено на рантайм:     0.24.0.185 Windows bootstrap model onboarding skip for Ollama/Lemonade
-НЕ задеплоено:             —
+НЕ задеплоено:             0.24.0.186 Windows/Mac runtime status portability
 рантайм /api/version:      0.24.0.185 ok · app 5.1.0 · h0.24 · runtime_alignment=aligned
 ```
+
+> 0.24.0.186 — Windows/Mac runtime status portability pass: shared runtime
+> status no longer crashes on Windows when Unix `ps` is unavailable. Memory
+> preflight now uses Windows `tasklist` for process inventory and command
+> re-checks, treats core Windows processes such as `Memory Compression` as
+> protected, and returns empty inventories instead of 500s when a platform
+> command is missing. Runtime dispatcher background jobs now use
+> platform-specific `Popen` kwargs (`start_new_session`/`close_fds` on POSIX,
+> Windows process-group flags when available), and PID status checks avoid
+> zombie-only `ps` probing on Windows.
 
 > 0.24.0.185 — Windows installer/bootstrap no longer fails with
 > “загрузка моделей не удалась” when the active provider is Ollama,
