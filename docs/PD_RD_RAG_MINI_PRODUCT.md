@@ -8,7 +8,9 @@
 
 ## Что уже сделано
 
-Версия: `0.24.0.278`, dev only.
+Версия: `0.24.0.279`, dev only.
+
+Нормативный источник для СПДС/normcontrol в живом LES: `ГОСТ Р 21.101-2026 СПДС Основные требования к проектной и рабочей документации.pdf` проиндексирован в `NTD_SPDS_Index` (`dataset_id=10ccce5f-99c5-4231-b1ff-0a2115371859`, `doc_id=7177fcf6-631e-4e21-bf07-2a3f5ea77b0b`, `127` chunks). Старый `ГОСТ Р 21.101-2020.docx` остаётся в датасете как исторический/устаревший источник, но актуальный профиль должен опираться на 2026.
 
 Код:
 
@@ -123,14 +125,17 @@
 
 ## Ближайший backlog
 
-1. Сверка `volume_contents_register` против фактических штампов листов.
-2. Merge continuation lines в приложениях и длинных названиях.
-3. Dataset-level registry: все PDF проекта → общий graph `section/volume/document/sheet`.
-4. UI во вкладке “Документы”: состав проекта, содержание тома, оглавление ПЗ, листы.
-5. Tool-harness: `read_pd_rd_map`, `find_sheet`, `find_volume_section`, `read_pz_section`.
-6. Retrieval: сначала map selection, потом targeted page/section/doc retrieval, потом wide fallback.
-7. Таблицы ПЗ: расчёты нагрузок, КЗ, заземления, кабельных линий.
-8. Графическая часть: drawn tables, equipment schedules, схемы, связи щитов/кабелей.
+1. Нормативный профиль по ПП №87 и ГОСТ Р 21.101-2026: ожидаемые разделы ПД, физическая структура ПД/РД, основные надписи, ведомости, шифры, изменения.
+2. Сверка `volume_contents_register` против фактических штампов листов.
+3. Merge continuation lines в приложениях и длинных названиях.
+4. Dataset-level registry: все PDF проекта → общий graph `section/volume/document/sheet`.
+5. UI во вкладке “Документы”: состав проекта, содержание тома, оглавление ПЗ, листы.
+6. Tool-harness: `read_pd_rd_map`, `find_sheet`, `find_volume_section`, `read_pz_section`.
+7. Retrieval: сначала map selection, потом targeted page/section/doc retrieval, потом wide fallback.
+8. Таблицы ПЗ: расчёты нагрузок, КЗ, заземления, кабельных линий.
+9. Графическая часть: drawn tables, equipment schedules, схемы, связи щитов/кабелей.
+
+Нормативная вычитка и продуктовые сущности: [PD_RD_REGULATORY_BASE.md](PD_RD_REGULATORY_BASE.md).
 
 ## Public packaging
 

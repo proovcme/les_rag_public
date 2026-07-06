@@ -7,13 +7,43 @@
 ## Текущее состояние (2026-07-06)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.278  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.279  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
 задеплоено на рантайм:     0.24.0.276 FGIS work-steps backfill path
-НЕ задеплоено:             0.24.0.278 PD/RD manifest for RAG + 0.24.0.277 drawing sheet manifest MVP; runtime_alignment остаётся divergent по старым unrelated файлам: `proxy/routers/runtime.py`, `proxy/services/document_explorer_service.py`, `sovushka/styles.py`
+НЕ задеплоено:             0.24.0.279 ГОСТ Р 21.101-2026 normative profile for PD/RD + 0.24.0.278 PD/RD manifest for RAG + 0.24.0.277 drawing sheet manifest MVP; runtime_alignment остаётся divergent по старым unrelated файлам: `proxy/routers/runtime.py`, `proxy/services/document_explorer_service.py`, `sovushka/styles.py`
 рантайм /api/version:      0.24.0.276, deploy stamp ok
 ```
+
+> 0.24.0.279 — ГОСТ Р 21.101-2026 as PD/RD normative source
+>
+> Дата: 2026-07-06
+> Статус: dev only для кода/доков; live RAG source обновлён без деплоя proxy
+> Причина: ГОСТ Р 21.101-2026 сам по себе является базовым источником для
+> нормоконтроля, штампов, ведомостей, комплектования ПД/РД, шифров, изменений
+> и электронных пакетов. В PD/RD source-map он должен быть первым нормативным
+> профилем вместе с ПП N 87, а не случайной справкой в промпте.
+> Правки: добавлен `docs/PD_RD_REGULATORY_BASE.md`, в `PD_RD_RAG_MINI_PRODUCT`
+> и `MODULE_INDEX` закреплено, что актуальный профиль использует ПП N 87 и
+> ГОСТ Р 21.101-2026. Уточнены сущности: раздел/подраздел/часть/книга/том,
+> шифры ПД, формы основных надписей 3/5/6, графы штампа, состав ПД по форме 13,
+> RD main set + attached docs.
+> Live RAG: скачан PDF ГОСТ Р 21.101-2026, добавлен в `NTD_SPDS_Index`
+> (`dataset_id=10ccce5f-99c5-4231-b1ff-0a2115371859`,
+> `doc_id=7177fcf6-631e-4e21-bf07-2a3f5ea77b0b`), проиндексирован через
+> `parse-scheduler` одним batch: `127` chunks, `files_parsed=1`, `errors=0`.
+> Старый `ГОСТ Р 21.101-2020.docx` в датасете оставлен как исторический
+> источник; актуальные проверки должны таргетить 2026.
+> Проверки:
+> - `curl /api/documents/datasets/.../documents?q=21.101-2026` → `INDEXED`, `chunk_count=127`
+> - `POST /api/search` по “основные надписи форма 3 форма 5 форма 6” → top hit page 18, `quality_status=good`
+> - `POST /api/search` по “состав проектной документации номер тома форма 13” → top hit page 34, `quality_status=good`
+> - `git diff --check -- docs/PD_RD_REGULATORY_BASE.md docs/PD_RD_RAG_MINI_PRODUCT.md` → ok
+> Остаточный риск/TODO: memory guard был в CRITICAL (`ram_free_gb≈5.3`,
+> `swap_pct≈82` после batch), поэтому дальнейший mass-parse не запускался.
+> Следующий кодовый слой — сделать ГОСТ 21.101-2026 explicit rulepack/source
+> для `doc_review_retrieval_service` и `normcontrol_service`, а не только
+> общим NTD-документом.
 
 > 0.24.0.278 — PD/RD manifest for RAG
 >
