@@ -4,16 +4,1323 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-07-03)
+## Текущее состояние (2026-07-06)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.212  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.278  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.212 topic map UI + trace summary
-НЕ задеплоено:             —
-рантайм /api/version:      0.24.0.212 (deploy stamp после явного deploy --files, 2026-07-03)
+задеплоено на рантайм:     0.24.0.276 FGIS work-steps backfill path
+НЕ задеплоено:             0.24.0.278 PD/RD manifest for RAG + 0.24.0.277 drawing sheet manifest MVP; runtime_alignment остаётся divergent по старым unrelated файлам: `proxy/routers/runtime.py`, `proxy/services/document_explorer_service.py`, `sovushka/styles.py`
+рантайм /api/version:      0.24.0.276, deploy stamp ok
 ```
+
+> 0.24.0.278 — PD/RD manifest for RAG
+>
+> Дата: 2026-07-06
+> Статус: dev only, runtime не обновлялся
+> Причина: для ПД/РД в RAG нужен слой source-map до чанков: модель должна
+> видеть состав проекта, состав тома и оглавление ПЗ как навигацию, а не
+> искать это в случайных фрагментах. `ПЗ` трактуется только как тип документа
+> "пояснительная записка"; домен берётся из шифра (`ИОС.ЭС`), а темы — из
+> оглавления ПЗ.
+> Правки: добавлен `proxy/services/pd_rd_manifest_service.py` и CLI
+> `tools/pd_rd_manifest.py`. Новый `pd_rd_manifest_v1` использует sheet
+> manifest и строит `volume_contents_register_v1`,
+> `project_composition_register_v1`, `pz_toc_v1`, compact `sheet_summary`,
+> source refs и warnings. `Содержание тома` читается многостранично, а не
+> только по первой странице; `Состав проектной документации` получает второй
+> PDF-mojibake repair-pass для glyph-слоя вида `ɋɉ`→`СП`, `ɂɈɋ`→`ИОС`.
+> Это read-only navigation layer: без LLM, без reindex, без финального ответа
+> за модель и без интерпретации графических схем.
+> Проверки:
+> - `uv run pytest tests/test_pd_rd_manifest_service.py tests/test_drawing_manifest_service.py -q` → `12 passed`
+> - `make verify` → ok (`2561 tests collected`)
+> - real spot-check на
+>   `5. ИОС/2_PDF/5.1. ЭС и ЭО/5.1.1. Здание ИЦ/395.01-B481.120100.2.4-ИОС.ЭС.pdf`
+>   → `volume_contents_register.row_count=92` на страницах `5-8`,
+>   `declared_total_sheets=242`; `project_composition_register.row_count=49`
+>   на страницах `9-12`, включая `5.1.1 ИОС.ЭС`, `5.5.5 ИОС.СС5`,
+>   `11 СМ`; `pz_toc.row_count=32` на странице `13`.
+> Остаточный риск/TODO: в хвосте `Прилагаемые документы` ещё есть шум от
+> многострочных названий приложений; следующий слой — merge continuation lines
+> и сверка `volume_contents_register` ↔ фактические штампы листов.
+
+> 0.24.0.277 — drawing sheet manifest MVP
+>
+> Дата: 2026-07-06
+> Статус: dev only, runtime не обновлялся
+> Причина: для отдельного pipeline чертежей нужен первый проверяемый слой
+> навигации: не понимать весь лист, а собрать паспорт листа по стабильным
+> признакам СПДС/ЕСКД — формат A4-A0/кратный, штамп справа снизу, текстовые
+> блоки и шифр как ключ группировки.
+> Правки: добавлен `proxy/services/drawing_manifest_service.py`. Сервис
+> read-only читает PDF через PyMuPDF, режет ожидаемую правую нижнюю зону
+> штампа, возвращает positioned text blocks, кандидаты `object_name`,
+> `object_address`, `volume`, `cipher`, `stage`, `sheet_no`, `sheet_count`
+> с `source_ref`/`confidence`, нормализует `cipher_norm` и группирует страницы
+> по шифру. Если объект/название листа в штампе идут строками после шифра без
+> явных меток, сервис добавляет structural-кандидаты с пониженной уверенностью.
+> Для реальных PDF с кириллическим text-layer mojibake добавлен repair-pass
+> cp1251→Unicode до извлечения полей. Batch-реестр
+> `drawing_manifest_registry_v1` собирает PDF по `cipher_norm` и показывает
+> `no_cipher`, `no_stamp`, `cipher_conflicts`. Штампы текстовой и графической
+> частей теперь читают `stage`, `sheet_no`, `sheet_count`, `source_file_name`,
+> `declared_format`; рыхлые шифры графики вида `...- ИОС .ЭС`
+> нормализуются в `...-ИОС.ЭС`. `Содержание тома` извлекается как
+> `volume_contents_row_v1`: обозначение, название, примечание, section,
+> `sheet_no`/`sheet_count`, `source_ref`; это заявленный реестр состава тома
+> для будущей сверки с фактически найденными листами. CLI
+> `tools/drawing_manifest.py` даёт консольные рычаги `scan-path` и
+> `scan-dataset` через Documents API. Код не вызывает модель, не делает
+> reindex и не выдаёт финальный пользовательский ответ.
+> Проверки:
+> - `uv run pytest tests/test_drawing_manifest_service.py -q` → `10 passed`
+> - `make verify` → ok (`2559 tests collected`)
+> - read-only spot-check на случайном PDF из `ПД_Инновационный центр`:
+>   `5. ИОС/2_PDF/5.5. СС/.../395.01-В481.120100.6.4-ИОС.СС4.ВОР.pdf`
+>   → формат `А4`, штамп найден справа снизу, из штампа извлечён
+>   `395.01/В481.120000.6.4-ИОС.СС4.ВОР`, из имени файла отдельный кандидат
+>   `395-01-В481-120100-6-4-ИОС-СС4`; расхождение сохранено как provenance,
+>   а не скрыто нормализацией.
+> - read-only spot-check на ЭОМ/ЭО:
+>   `5. ИОС/2_PDF/5.1. ЭС и ЭО/5.1.1. Здание ИЦ/395.01-B481.120100.6.4-ИОС.ЭС-СО.pdf`
+>   → формат `А3`, 16 страниц, после mojibake repair штамп читается, найден
+>   `volume=5. ИОС`, `object_name=Здание инновационного центра`,
+>   `sheet_title=Система электроснабжения...`, `cipher_norm=395.01/B481.120100.6.4-ИОС.ЭС.СО`.
+> - read-only spot-check на томе
+>   `5. ИОС/2_PDF/5.1. ЭС и ЭО/5.1.1. Здание ИЦ/395.01-B481.120100.2.4-ИОС.ЭС.pdf`:
+>   страница 5 дала `volume_contents=27` строк (`ПЗ`, графическая часть,
+>   `ГРЩ/ЩЭ/ЩР` с листами); страница 84 дала
+>   `cipher_norm=395.01/B481.120100.1.4-ИОС.ЭС`, `stage=П`,
+>   `sheet_no=24.1`, `sheet_count=7`, `object_name=Здание инновационного центра`,
+>   `sheet_title=ЩО 1.1.1. Схема электрическая принципиальная`,
+>   `source_file_name=395_01_B481_120100_1_4_IOS_ES_24_00.dwg`,
+>   `declared_format=А3х3`; страница 85 дала continuation-штамп
+>   `sheet_no=24.2`, `source_file_name=...dwg`, `declared_format=A3`.
+> - CLI smoke: `uv run python tools/drawing_manifest.py scan-dataset <ПД_ИЦ> --q ЭО --limit 3 --max-pages-per-pdf 1`
+>   → `files_read=3`, `pages_read=3`, `ciphers_total=3`, найдены группы
+>   `395-01-B481-120100-2-4-ИОС`,
+>   `395.01/B481.120100.6.4-ИОС.ЭС.ВОР`,
+>   `395.01/B481.120100.6.4-ИОС.ЭС.СО`, issues: `no_stamp=1`,
+>   `cipher_conflicts=2`.
+
+> 0.24.0.276 — FGIS work-steps backfill path
+>
+> Дата: 2026-07-06
+> Статус: deployed to runtime 2026-07-06, deploy stamp ok; overnight backfill running under launchd
+> Причина: `0.24.0.275` научил norm-card показывать `work_composition`, но
+> существующая runtime база была залита раньше без `work_steps`. Официальный
+> ФГИС ЦС `SearchEstimatedRates` уже отдаёт `normCatalogWorkTableJson` —
+> состав работ по `NormNumber`.
+> Правки: `tools/gesn_pdf_import.py::parse_fgis_json` сохраняет
+> `normCatalogWorkTableJson` в поле `work_steps` каждой ресурсной строки нормы.
+> Это источник данных для модели, не правило выбора нормы. Начата дозаливка
+> runtime parquet: сборник 15 закрыт без ошибок; сборник 08 закрыт без ошибок;
+> следующий шаг — ночной `--all --no-resume` backfill в фоне с логом, без
+> Qdrant/RAG reindex.
+> Проверки:
+> - `uv run pytest tests/test_gesn_pdf_import.py tests/test_gesn_import.py tests/test_smeta_norm_store.py -q` → `22 passed`
+> - runtime `/api/version` → `les_version=0.24.0.276`, deploy stamp ok, `hash_mismatch_files=[]`
+> - runtime spot-check после дозаливки сборника 15: `15-02-036-02`,
+>   `15-01-052-01`, `15-01-054-01` читаются через `gesn_service.get_norm(...)`
+>   с непустыми `work_steps`
+> - runtime spot-check после дозаливки сборника 08: `ГЭСНм08-05-041-01`,
+>   `ГЭСНм08-03-641-06`, `ГЭСНм08-01-125-01`, `ГЭСНм08-03-545-06`
+>   читаются с непустыми `work_steps`
+> - night backfill: `launchctl submit` label
+>   `me.ovc.les.gesn.worksteps.backfill.20260706`, log
+>   `/tmp/les_gesn_work_steps_backfill_launchd_20260706.log`, command:
+>   `uv run python -u -m tools.gesn_bulk_import --all --no-resume --rate 0.5 --out /Users/ovc/LES/data/gesn_base/gesn2022.parquet`.
+>   Это обновляет только parquet, без Qdrant/RAG reindex; после завершения нужен proxy restart.
+
+> 0.24.0.275 — smeta norm work-composition cards
+>
+> Дата: 2026-07-06
+> Статус: deployed to runtime 2026-07-06, deploy stamp ok
+> Причина: в БАП модель не видела настоящий `Состав работ` нормы: быстрый
+> `search_norm -> structured norm-choice` передавал title/unit/resources/hints,
+> но не пункты состава работ. Из-за этого выбор шёл по похожему названию и
+> слабым hints, а не по технологическому содержанию нормы.
+> Правки: `tools/gesn_import.py`/`gesn_api_service` получили поле `work_steps`;
+> `gesn_service` читает его из parquet; `smeta_norm_store_v5` поднимает
+> `work_steps` в `model_card.work_composition.steps` и дополнительно умеет
+> читать `## Состав работ` из
+> `RAG_Content/TABLE_SMETA/SMETA_SERVICE/smetnoedelo_api/**/codes/*.md`.
+> `_smeta_norm_candidate_card` больше не выкидывает title/work_composition, а
+> structured norm-choice сверяет их моделью. Код по-прежнему не выбирает нормы:
+> он только доставляет источник состава работ модели и считает после видимого
+> выбора.
+> Проверки:
+> - `uv run pytest tests/test_gesn_api_service.py tests/test_smeta_norm_store.py tests/test_chat_harness_format.py::test_smeta_structured_norm_choice_gets_norm_card_and_mismatch_rule -q` → `13 passed`
+> - `uv run pytest tests/test_gesn_import.py tests/test_gesn_pdf_import.py tests/test_gesn_api_service.py -q` → `13 passed`
+> - `uv run pytest tests/test_chat_harness_format.py::test_smeta_structured_norm_choice_gets_norm_card_and_mismatch_rule tests/test_chat_harness_format.py::test_smeta_structured_norm_choice_keeps_unreturned_lookup_as_unbound_row tests/test_chat_harness_format.py::test_smeta_structured_norm_choice_validates_model_code_from_lookup -q` → `3 passed`
+> - `uv run pytest tests/test_gesn_api_service.py tests/test_smeta_norm_store.py tests/test_gesn_import.py tests/test_gesn_pdf_import.py tests/test_chat_harness_format.py tests/test_smeta_artifact_service.py -q` → `102 passed`
+> - `make verify` → ok (`2548 tests collected`)
+> - runtime `/api/version` → `les_version=0.24.0.275`, deploy stamp ok, `hash_mismatch_files=[]`
+> - runtime norm store payload → `schema=smeta_norm_store_v5`, `norm_count=42572`, `work_composition` in `profile_fields`
+> Примечание: простой переиндекс текущего SMETA_SERVICE не добавит составы,
+> потому что в папке сейчас нет `smetnoedelo_api/codes/*.md`; нужен импорт/Play
+> карточек норм с `## Состав работ` или обновление parquet с `work_steps`.
+
+> 0.24.0.274 — smeta preserve unbound lookup rows
+>
+> Дата: 2026-07-06
+> Статус: deployed to runtime 2026-07-06, deploy stamp ok
+> Причина: после 0.24.0.273 модель перестала выбирать часть явно неверных
+> норм, но structured norm-choice отдавал в `rows` только accepted строки.
+> В live БАП это превратило 19-row lookup в 2-row ЛСР: непрошедшие строки
+> исчезали вместо того, чтобы остаться в форме с `нужен подбор нормы`.
+> Правки: `_smeta_direct_structured_norm_choice` теперь добавляет unbound row
+> для каждого lookup, который модель не вернула, вернула без `norm_code`,
+> вернула с кодом вне candidates или без количества. Это не выбор нормы кодом:
+> код только сохраняет строку ВОР в ЛСР с `0.00`/пустыми полями и причиной.
+> Проверки:
+> - `uv run pytest tests/test_chat_harness_format.py::test_smeta_structured_norm_choice_keeps_unreturned_lookup_as_unbound_row tests/test_chat_harness_format.py::test_smeta_structured_norm_choice_gets_norm_card_and_mismatch_rule tests/test_chat_harness_format.py::test_smeta_structured_norm_choice_validates_model_code_from_lookup -q` → `3 passed`
+> - `uv run pytest tests/test_chat_harness_format.py tests/test_smeta_artifact_service.py -q` → `79 passed`
+> - `make verify` → ok (`2546 tests collected`)
+> - runtime `/api/version` → `les_version=0.24.0.274`, deploy stamp ok, `hash_mismatch_files=[]`
+> - live BAP PDF-read smoke, обычный запрос `Дай оценку стоимости и ЛСР`: lookup `source_rows_expected=19`, `results=19`, `coverage_missing=0`; structured choice `accepted=2`, `unbound_rows_added=17`, `rejected=17`; checked ЛСР `input_rows=19`, `bound_rows=2`, `unbound_rows=17`, сумма `1 963 434 руб.`. Плохие коды из пользовательской разметки (`ГЭСН15-02-036-02`, `ГЭСН15-01-052-01`, `ГЭСН15-01-054-01`, `ГЭСН08-05-041-01`) в видимую priced ЛСР не попали. Остаточный риск: coverage слишком низкий, нужен следующий слой качества norm retrieval/composition cards.
+
+> 0.24.0.273 — smeta norm-choice card/mismatch guard
+>
+> Дата: 2026-07-06
+> Статус: dev, готовится к runtime deploy
+> Причина: БАП ЛСР после закрытия 19-row coverage всё ещё выбирала явно
+> неверные нормы: защитное укрытие плёнкой → штукатурка по сетке, демонтаж
+> кабеля → монтаж электропроводки, проём в ГКЛ → отверстия в натяжном/реечном
+> потолке. Причина не в арифметике, а в выборе нормы: structured norm-choice
+> видел только `norm_code/title/unit/score/status` и был прямо проинструктирован
+> выбирать ближайший candidate даже при неполном совпадении.
+> Правки: в norm lookup/choice payload добавлена компактная `norm_card`
+> (`domain/actions`, conditions, resources, collection navigation). Prompt
+> выбора нормы теперь требует сверять карточку и оставлять `norm_code` пустым,
+> если candidate описывает другую операцию; `score` больше не permission to
+> price a wrong norm. Norm-store action hints расширены для демонтажа,
+> грунтования, шпатлевки и оклейки; search score штрафует очевидный конфликт
+> действий вроде `демонтаж` vs `монтаж`.
+> Проверки:
+> - `uv run pytest tests/test_chat_harness_format.py::test_smeta_structured_norm_choice_gets_norm_card_and_mismatch_rule tests/test_chat_harness_format.py::test_smeta_action_title_score_penalizes_demolition_vs_installation tests/test_chat_harness_format.py::test_smeta_structured_norm_choice_validates_model_code_from_lookup -q` → `3 passed`
+
+> 0.24.0.272 — smeta PDF/Markdown VOR row coverage
+>
+> Дата: 2026-07-06
+> Статус: deployed to runtime 2026-07-06, deploy stamp ok
+> Причина: 0.24.0.271 проверил искусственный JSON/source_no path, но реальный
+> пользовательский сценарий "скрепка read PDF -> Дай оценку стоимости и ЛСР"
+> отдаёт модели Markdown-таблицу без JSON `source_no`. Поэтому coverage detector
+> видел `source_rows_expected=0`, selector не получал контракт "19 строк ВОР" и
+> модель могла снова выбрать только 10 lookup-групп.
+> Правки: `_smeta_source_row_count` считает рабочие строки не только по
+> `source_no`, но и по Markdown/PDF-таблице `| № | Наименование | Ед. | Кол-во |`.
+> Source-row contract и norm lookup policy теперь говорят про табличную
+> ВОР/PDF table/source_no, а не только про JSON. Это не выбор норм кодом:
+> код только сохраняет входной row coverage, чтобы модель не теряла строки.
+> Проверки:
+> - `uv run pytest tests/test_chat_harness_format.py::test_smeta_source_row_count_reads_markdown_pdf_vor_rows tests/test_chat_harness_format.py::test_smeta_norm_lookup_max_calls_does_not_cut_source_rows_to_ten tests/test_chat_harness_format.py::test_smeta_direct_prompt_requires_source_row_coverage_for_tabular_vor -q` → `3 passed`
+> - real PDF converter output `/Users/ovc/Downloads/ВОР монтаж БАП П1 13.05.pdf` → `_smeta_source_row_count=19`, `_smeta_norm_lookup_max_calls=38`, selector tokens `4980`
+> - `uv run pytest tests/test_chat_harness_format.py tests/test_smeta_artifact_service.py -q` → `76 passed`
+> - `make verify` → ok (`2543 tests collected`)
+> - runtime `/api/version` → `les_version=0.24.0.272`, deploy stamp ok, `hash_mismatch_files=[]`
+> - live BAP PDF-read smoke, обычный запрос `Дай оценку стоимости и ЛСР` + `attachment_context` из PDF converter, без JSON: workflow `stage=pricing`, lookup `source_rows_expected=19`, `selected_calls=19`, `results=19`, `coverage_missing=0`, `max_calls=38`; visible checked ЛСР: `18/19` рассчитано, сумма `4 719 778 руб.`
+
+> 0.24.0.271 — smeta lookup no ten-row cap
+>
+> Дата: 2026-07-06
+> Статус: deployed to runtime 2026-07-06, deploy stamp ok
+> Причина: полный БАП PDF содержит 19 строк ВОР, но norm lookup selector
+> получал дефолтный `max_calls=10`, поэтому кодовая обвязка сама обрезала
+> модельный `search_norm` plan до 10 групп. Это нарушало source-row coverage и
+> давало красивую partial ЛСР вместо полной 19-строчной оценки.
+> Правки: дефолт smeta norm lookup calls поднят до 30, а при наличии
+> `source_no` технический лимит масштабируется от числа исходных строк
+> (`source_rows * 2`, ceiling 300). Это не выбор норм и не stage logic, а
+> removal of truncation: модель может покрыть все source rows, код больше не
+> режет обычную ВОР до 10.
+> Проверки:
+> - `uv run pytest tests/test_chat_harness_format.py::test_smeta_norm_lookup_max_calls_does_not_cut_source_rows_to_ten tests/test_chat_harness_format.py::test_smeta_workflow_decision_is_model_owned_pricing_reuse -q` → `2 passed`
+> - `uv run python -m py_compile proxy/routers/chat.py` → ok
+> - `uv run pytest tests/test_chat_harness_format.py tests/test_smeta_artifact_service.py -q` → `75 passed`
+> - `make verify` → ok (`2542 tests collected`)
+> - runtime `/api/version` → `les_version=0.24.0.271`, deploy stamp ok, `hash_mismatch_files=[]`
+> - live BAP full-PDF smoke, stage 1 (`/Users/ovc/Downloads/ВОР монтаж БАП П1 13.05.pdf`, 19 ВОР rows extracted): `smeta_norm_lookup.source_rows_expected=19`, `selected_calls=19`, `results=19`, `coverage_missing=0`, `max_calls=38`
+> - live BAP follow-up pricing in same session: model-owned workflow `stage=pricing`, `use_previous_candidates=true`, `previous_candidate_groups=19`; visible checked ЛСР: `18/19` рассчитано, сумма `3 790 263 руб.`
+
+> 0.24.0.270 — smeta model-owned workflow decision
+>
+> Дата: 2026-07-06
+> Статус: deployed to runtime 2026-07-06, deploy stamp ok
+> Причина: в smeta direct route всё ещё оставался код, который “думал”:
+> regex решал `norm_candidates` vs `pricing`, а другой regex решал, что
+> “деньги по ним” надо привязать к предыдущим candidates. Это противоречило
+> контракту “модель выбирает смысл/workflow, код исполняет”.
+> Правки: добавлен model-owned `smeta_workflow_decision` JSON-step:
+> `stage=norm_candidates|pricing|explanation`, `use_previous_candidates`.
+> Live route больше не определяет stage regex-ом; при `pricing` и
+> `use_previous_candidates=true` код только достаёт уже существующий candidate
+> state и считает по нему. `explanation` не запускает norm choice / РИМ-расчёт.
+> Regex-функции оставлены как legacy helpers/tests/rollback, но рабочий route
+> по умолчанию управляется модельным workflow decision.
+> Проверки:
+> - `uv run pytest tests/test_chat_harness_format.py::test_smeta_workflow_decision_is_model_owned_pricing_reuse tests/test_chat_harness_format.py::test_smeta_user_prompt_respects_model_explanation_stage tests/test_chat_harness_format.py::test_smeta_direct_followup_prefers_previous_candidate_trace tests/test_smeta_artifact_service.py::test_smeta_artifact_prefers_full_spb_pricebook_over_refresh_without_period -q` → `4 passed`
+> - `uv run pytest tests/test_chat_harness_format.py tests/test_smeta_artifact_service.py -q` → `74 passed`
+> - `uv run python -m py_compile proxy/routers/chat.py` → ok
+> - `make verify` → compileall + pytest collect-only, `2541 tests collected`
+> - runtime `/api/version` → `0.24.0.270`, deployed `0.24.0.270`, stamp `ok`
+> - live explanation smoke: model chose `stage=explanation`,
+>   `smeta_norm_lookup.status=workflow_stage_explanation`, norm choice blocked
+>   by model workflow stage; no РИМ calculation.
+> - live BAP workflow smoke: stage 1 → model-owned `norm_candidates`,
+>   `lookup_results=5`; pricing #1/#2 → model-owned `pricing`,
+>   `use_previous_candidates=True`, `lookup_results=5`, `reused_from_session=True`,
+>   both totals `731 434.03`, `bound_rows=4`, `unbound_rows=1`.
+
+> 0.24.0.269 — smeta candidate trace stability
+>
+> Дата: 2026-07-06
+> Статус: deployed to runtime 2026-07-06, deploy stamp ok
+> Причина: после 0.24.0.268 live BAP перестал быть нулевым, но повтор
+> “Теперь деньги по ним” мог заново запускать `search_norm` по накопленной
+> истории и получать другую нарезку ВОР: один pricing trace имел 9 lookup rows,
+> другой 10 lookup rows. Это ломало повторяемость суммы ещё до выбора конкретных
+> норм.
+> Правки: для явных follow-up команд “деньги по ним / ЛСР по этим кандидатам”
+> smeta route сначала переиспользует последний `smeta_norm_lookup.results` из
+> session trace и не запускает новый lookup, если candidates уже есть. Модель
+> по-прежнему выбирает `norm_code` из candidates; код только фиксирует тот же
+> candidate set/source rows между повторами.
+> Проверки:
+> - `uv run pytest tests/test_chat_harness_format.py::test_smeta_direct_prices_previous_candidates_request_detects_followup tests/test_chat_harness_format.py::test_smeta_direct_previous_norm_lookup_trace_reuses_latest_session_candidates tests/test_chat_harness_format.py::test_smeta_direct_followup_prefers_previous_candidate_trace tests/test_smeta_artifact_service.py::test_smeta_artifact_prefers_full_spb_pricebook_over_refresh_without_period -q` → `4 passed`
+> - `uv run python -m py_compile proxy/routers/chat.py proxy/services/smeta_artifact_service.py` → ok
+> - `uv run pytest tests/test_chat_harness_format.py tests/test_smeta_artifact_service.py -q` → `72 passed`
+> - `make verify` → compileall + pytest collect-only, `2539 tests collected`
+> - runtime `/api/version` → `0.24.0.269`, deployed `0.24.0.269`, stamp `ok`
+> - live BAP stability smoke на новой сессии:
+>   stage 1 → `norm_candidates`, `lookup_results=5`;
+>   pricing #1 → `lookup_results=5`, `reused_from_session=True`,
+>   `amount_total=268 193.44`, `bound_rows=4`, `unbound_rows=1`;
+>   pricing #2 → те же `lookup_results=5`, `reused_from_session=True`,
+>   `amount_total=268 193.44`.
+
+> 0.24.0.268 — smeta SPb pricebook default fix
+>
+> Дата: 2026-07-06
+> Статус: deployed to runtime 2026-07-06, deploy stamp ok
+> Причина: live БАП pricing после “деньги по ним” вернул `0 руб.`, хотя
+> `smeta_structured_rim_trace` имел `bound_rows=9`, `unbound_rows=0` и
+> ненулевые трудозатраты. Trace показал, что расчёт ушёл в книгу
+> `spb_refresh`; это scratch parquet на 2 строки, поэтому не находились ставки
+> ОЗП, цены машин и материалы. Триггер: контекст БАП содержит `СПб`, но без
+> явного периода; селектор для СПб ставил `spb_refresh` перед полноценной
+> `spb_2kv2026`.
+> Правки: для СПб без явного периода `smeta_artifact_service` теперь выбирает
+> `spb_2kv2026` перед `spb_2kv2025` и только затем `spb_refresh`.
+> Проверки:
+> - те же 9 accepted BAP rows из live trace после фикса: книга `spb_2kv2026`,
+>   `amount_total=10 663 956.52`, `bound_rows=9`, `unbound_rows=0`,
+>   `result_status=priced_partial`.
+> - `uv run pytest tests/test_smeta_artifact_service.py::test_smeta_artifact_prefers_full_spb_pricebook_over_refresh_without_period tests/test_smeta_artifact_service.py::test_smeta_artifact_uses_default_system_pricebook_without_region tests/test_smeta_artifact_service.py::test_smeta_artifact_prefers_rim_trace_when_model_selected_norm_code -q` → `3 passed`
+> - `uv run pytest tests/test_smeta_artifact_service.py -q` → `16 passed`
+> - `make verify` → compileall + pytest collect-only, `2538 tests collected`
+> - runtime `/api/version` → `0.24.0.268`, deployed `0.24.0.268`, stamp `ok`
+> - live `/api/chat` повтор “Теперь деньги по ним” в BAP-сессии:
+>   `smeta_tz_stage=pricing`, книга `spb_2kv2026`, `amount_total=3 688 325.16`,
+>   `bound_rows=10`, `unbound_rows=0`, `priced_partial`. Отличается от replay
+>   старых 9 rows, потому что модель заново выбрала строки/нормы; нулевой
+>   `spb_refresh` больше не воспроизводится.
+
+> 0.24.0.267 — smeta continuation stage boundary
+>
+> Дата: 2026-07-06
+> Статус: deployed to runtime 2026-07-06; live СКС/БАП smoke всё ещё fail на LLM model-call/selector
+> Причина: live smoke 0.24.0.266 показал, что второй ход “Теперь деньги по ним”
+> всё ещё мог уходить в `norm_candidates`, потому что stage detector смотрел
+> на весь `harness_question` с историей, где уже были слова “дай кандидатов”.
+> Правки: stage `norm_candidates` теперь определяется только по текущему
+> сообщению/вложению (`_question_with_attachment(req)`), а не по истории
+> диалога. История по-прежнему доступна модели и trace-continuity для “по ним”,
+> но не может сама вернуть второй ход в этап 1.
+> Проверки:
+> - `uv run pytest tests/test_chat_harness_format.py::test_smeta_direct_prices_previous_candidates_request_detects_followup tests/test_chat_harness_format.py::test_smeta_direct_previous_norm_lookup_trace_reuses_latest_session_candidates tests/test_smeta_artifact_service.py::test_norm_candidate_artifact_formats_lookup_trace_for_excel_roundtrip -q` → `3 passed`
+> - `uv run pytest tests/test_skill_snippet_registry.py tests/test_smeta_module.py tests/test_prompt_registry_service.py tests/test_chat_harness_format.py tests/test_smeta_artifact_service.py tests/test_estimate_harness.py tests/test_rim_lsr_trace_service.py tests/test_v020_deploy_stamp_ui.py -q` → `215 passed`
+> - deployed runtime `/api/version` → `0.24.0.267`, deploy stamp `ok`
+> - live СКС/БАП smoke на активном `mlx-community/Qwen3.5-9B-MLX-4bit`:
+>   - СКС ход 1 → `norm_candidates`, candidates artifact/XLSX есть, но финальный LLM-текст пустой (`PARTIAL`).
+>   - СКС ход 2 “деньги по ним” → `pricing`, previous lookup reused, но `structured_norm_choice` упал `selector_error`; ЛСР/суммы нет.
+>   - БАП PDF ход 1/2 → LLM lookup/model-call failure, candidates artifact и ЛСР не построены.
+>   Текущий effective provider: `mlx`, cloud key не активен (`api_key_present=false`). Следующий блокер — не арифметика, а LLM/provider reliability для selector/model JSON.
+
+> 0.24.0.266 — smeta candidate trace continuity
+>
+> Дата: 2026-07-06
+> Статус: dev, готовится к runtime deploy/smoke
+> Причина: live СКС/БАП после 0.24.0.265 показал два runtime-gap:
+> stage 1 мог уже выполнить `search_norm` и получить candidates, но при
+> пустом финальном LLM-тексте возвращал только `smeta_model_failed` без
+> artifact; ход “деньги по ним” мог сорваться на новом selector-error вместо
+> использования предыдущего candidates trace из той же сессии.
+> Правки: если stage `norm_candidates` уже имеет lookup results, но финальный
+> LLM-текст не сгенерирован, чат возвращает partial candidates artifact/XLSX/CSV
+> вместо пустого failure. Для pricing follow-up “деньги по ним / ЛСР по этим
+> кандидатам” smeta route переиспользует последний `smeta_norm_lookup.results`
+> из session trace, если текущий lookup пустой или selector failed. Код не
+> выбирает нормы: модельный `structured_norm_choice` всё равно выбирает
+> `norm_code` из candidates, а код только валидирует и считает.
+> Проверки:
+> - focused tests/deploy/live smoke будут зафиксированы ниже после прогона.
+
+> 0.24.0.265 — smeta candidates-then-money default
+>
+> Дата: 2026-07-06
+> Статус: deployed to runtime 2026-07-06, live two-step smoke прошёл
+> Причина: UX-решение оператора: ручная Excel-проверка candidates не должна
+> быть обязательным барьером. Базовый сценарий — сначала показать, что
+> найдено, затем по команде “деньги по ним” считать по доступным candidates;
+> чего нет, остаётся 0.00/пусто с примечанием.
+> Правки: smeta direct prompt, TZ-stage context и `norm_candidates` artifact
+> больше не требуют “ручной приемки/загрузки проверенного варианта” как
+> обязательный следующий шаг. Stage 1 теперь формулирует следующий ход как:
+> “деньги по ним”; Excel-правка остаётся опциональной. Расчётный слой не
+> изменён: модель выбирает candidates, код раскрывает ресурсы/цены и считает,
+> missing остаётся нулём/примечанием.
+> Проверки:
+> - `uv run pytest tests/test_chat_harness_format.py::test_smeta_direct_prompt_does_not_block_on_empty_spec_price_columns tests/test_chat_harness_format.py::test_smeta_direct_prompt_keeps_norm_selection_model_first tests/test_chat_harness_format.py::test_smeta_direct_explicit_candidate_table_stays_stage_one tests/test_smeta_artifact_service.py::test_norm_candidate_artifact_formats_lookup_trace_for_excel_roundtrip -q` → `4 passed`
+> - `uv run pytest tests/test_skill_snippet_registry.py tests/test_smeta_module.py tests/test_prompt_registry_service.py tests/test_chat_harness_format.py tests/test_smeta_artifact_service.py tests/test_estimate_harness.py tests/test_rim_lsr_trace_service.py tests/test_v020_deploy_stamp_ui.py -q` → `213 passed`
+> - deployed runtime `/api/version` → `0.24.0.265`, deploy stamp `ok`
+> - live `/api/chat/stream` smoke:
+>   - ход 1 “Дай кандидатов ГЭСН” → `smeta_tz_stage=norm_candidates`, artifact `stage=norm_candidates`, downloads есть.
+>   - ход 2 “Теперь деньги по ним” → `smeta_tz_stage=pricing`, `lsr_rim_trace_form_v1`, `82 767.02 руб.`, `rows=5`, downloads есть.
+
+> 0.24.0.264 — smeta explicit candidate-table stage boundary
+>
+> Дата: 2026-07-06
+> Статус: deployed to runtime 2026-07-06, live stage-1 artifact smoke прошёл
+> Причина: live-smoke 0.24.0.263 показал, что запрос вида “сделай этап 1 /
+> верни таблицу кандидатов ГЭСН по ВОР” не попадал в stage
+> `norm_candidates`: predicate сначала требовал ЛСР/деньги, поэтому чистая
+> проверочная таблица кандидатов уходила в pricing.
+> Правки: явный запрос `таблица кандидатов` / `кандидаты ГЭСН` / `этап 1`
+> при наличии ВОР/сырого источника теперь включает stage 1 сам по себе.
+> Pricing по-прежнему разрешён только для проверенной таблицы с кодами норм
+> или явного bypass “прими кандидатов модели / без ручной проверки”.
+> Проверки:
+> - `uv run pytest tests/test_chat_harness_format.py::test_smeta_direct_explicit_candidate_table_stays_stage_one tests/test_chat_harness_format.py::test_smeta_direct_raw_vor_stops_at_norm_candidate_stage tests/test_chat_harness_format.py::test_smeta_direct_checked_norm_table_allows_pricing_stage tests/test_smeta_artifact_service.py::test_norm_candidate_artifact_formats_lookup_trace_for_excel_roundtrip -q` → `4 passed`
+> - `uv run pytest tests/test_skill_snippet_registry.py tests/test_smeta_module.py tests/test_prompt_registry_service.py tests/test_chat_harness_format.py tests/test_smeta_artifact_service.py tests/test_estimate_harness.py tests/test_rim_lsr_trace_service.py tests/test_v020_deploy_stamp_ui.py -q` → `213 passed`
+> - deployed runtime `/api/version` → `0.24.0.264`, deploy stamp `ok`
+> - live `/api/chat/stream` smoke на сыром ВОР “этап 1 / таблица кандидатов ГЭСН” → `smeta_tz_stage=norm_candidates`, `smeta_norm_choice.status=blocked_by_tz_stage_gate`, artifact `stage=norm_candidates`, table `kind=norm_candidates`, `rows=10`, downloads XLSX/CSV отдают HTTP 200.
+
+> 0.24.0.263 — smeta norm-candidate artifact/XLSX
+>
+> Дата: 2026-07-06
+> Статус: deployed to runtime 2026-07-06; live-smoke нашёл boundary gap, закрыт в 0.24.0.264
+> Причина: 0.24.0.262 правильно остановил сырой ТЗ/ВОР на этапе кандидатов
+> ГЭСН, но пользователю нужен поставляемый результат, а не только текст:
+> проверочная таблица кандидатов должна быть артефактом/XLSX для ручной
+> приемки и повторной загрузки.
+> Правки: `smeta_artifact_service` строит `norm_candidates` artifact из
+> executed `search_norm` trace: колонки `№ ВОР`, исходная/нормируемая работа,
+> единицы, группа сборников, сборник/раздел, код/наименование/единица ГЭСН,
+> статус применимости и комментарий. `chat.py` в stage
+> `norm_candidates` сохраняет именно этот artifact через существующий
+> XLSX/CSV exporter. Код не выбирает финальную норму, не считает деньги и не
+> скрывает строки без кандидатов: такие строки остаются в таблице с пустым
+> кодом и примечанием.
+> Проверки:
+> - `uv run pytest tests/test_smeta_artifact_service.py tests/test_chat_harness_format.py -q` → `67 passed`
+> - `uv run pytest tests/test_skill_snippet_registry.py tests/test_smeta_module.py tests/test_prompt_registry_service.py tests/test_chat_harness_format.py tests/test_smeta_artifact_service.py tests/test_estimate_harness.py tests/test_rim_lsr_trace_service.py tests/test_v020_deploy_stamp_ui.py -q` → `212 passed`
+> - deployed runtime `/api/version` → `0.24.0.263`, deploy stamp `ok`
+> - live `/api/chat/stream` smoke на формулировке “этап 1 / таблица кандидатов ГЭСН” вернул `smeta_tz_stage=pricing`, что неверно для чистой проверочной таблицы; regression зафиксирован и исправлен в 0.24.0.264.
+
+> 0.24.0.262 — smeta TZ stage gate before pricing
+>
+> Дата: 2026-07-06
+> Статус: deployed to runtime 2026-07-06, stage-gate smoke прошёл
+> Причина: 0.24.0.261 доказал, что модель может дать живую ЛСР с деньгами, но
+> это шло вразрез с ТЗ сметного модуля. По ТЗ default flow: сырой
+> ТЗ/ВОР/спецификация -> таблица `ВОР ↔ кандидаты ГЭСН` -> ручная проверка в
+> Excel -> загрузка проверенного варианта -> раскрытие ресурсов/ФГИС -> добор
+> КАЦ/коэффициентов -> финальная смета. Runtime же сразу запускал structured
+> norm-choice и checked РИМ-деньги.
+> Правки: smeta direct получил stage gate. Если вход не содержит признака
+> вручную проверенной таблицы соответствия ВОР-ГЭСН, structured norm-choice и
+> checked `lsr_rim_trace_form_v1` не запускаются. Модель получает явный контракт
+> этапа 1: выдать таблицу кандидатов норм для Excel round-trip без рублей,
+> строки ВСЕГО и финального выбора одного `norm_code`. Pricing stage разрешён
+> только для проверенной таблицы с полными кодами ГЭСН/ГЭСНм или по явной
+> команде оператора принять candidates модели без ручной проверки.
+> Проверки:
+> - `uv run pytest tests/test_chat_harness_format.py::test_smeta_direct_raw_vor_stops_at_norm_candidate_stage tests/test_chat_harness_format.py::test_smeta_direct_checked_norm_table_allows_pricing_stage tests/test_chat_harness_format.py::test_smeta_direct_prompt_requires_source_row_coverage_for_tabular_vor tests/test_chat_harness_format.py::test_smeta_structured_norm_choice_validates_model_code_from_lookup -q` → `4 passed`
+> - `uv run pytest tests/test_skill_snippet_registry.py tests/test_smeta_module.py tests/test_prompt_registry_service.py tests/test_chat_harness_format.py tests/test_smeta_artifact_service.py tests/test_estimate_harness.py tests/test_rim_lsr_trace_service.py tests/test_v020_deploy_stamp_ui.py -q` → `211 passed`
+> - deployed runtime `/api/version` → `0.24.0.262`, deploy stamp `ok`
+> - live `/api/chat/stream` smoke:
+>   - raw СКС ВОР → `smeta_tz_stage=norm_candidates`, `amount_total=None`, `rows=0`, `smeta_norm_choice.status=blocked_by_tz_stage_gate`.
+>   - проверенная таблица ВОР-ГЭСН (`ГЭСНм:10-01-052-07`) → `smeta_tz_stage=pricing`, `lsr_rim_trace_form_v1`, `4 047.15 руб.`, `bound_rows=1/1`.
+
+> 0.24.0.261 — smeta direct piece-dimension quantity conversion
+>
+> Дата: 2026-07-06
+> Статус: deployed to runtime 2026-07-06, live СКС/БАП smoke прошёл
+> Причина: live БАП на 0.24.0.260 стал живой (`2.28–2.58 млн руб.`), но две
+> строки по лючкам/проёмам выпадали как `unit_conflict`: модель выбрала
+> `ГЭСН15-01-052-01` (`100 отверстий`) и `ГЭСН15-01-059-01` (`100 м2`), а
+> исходная ВОР задавала `шт`.
+> Правки: РИМ trace принимает `отверстия` как count alias и после модельного
+> выбора нормы переводит поштучные элементы с габаритом вида `400x400 мм` в
+> площадь (`шт × м2/шт / измеритель нормы`). Это арифметика количества, а не
+> выбор нормы кодом.
+> Проверки:
+> - `uv run pytest tests/test_rim_lsr_trace_service.py::test_visible_rows_convert_piece_dimensions_to_area_norm_qty tests/test_rim_lsr_trace_service.py::test_visible_rows_accept_engineering_count_unit_aliases tests/test_chat_harness_format.py::test_smeta_structured_norm_choice_validates_model_code_from_lookup -q` → `3 passed`
+> - direct builder smoke: `ГЭСН15-01-052-01`, `10 шт`, `400х400 мм` + `ГЭСН15-01-059-01`, `10 шт`, `400х400 мм` → checked `lsr_rim_trace_form_v1`, `6 929.83 руб.`, `bound_rows=2/2`.
+> - `uv run pytest tests/test_skill_snippet_registry.py tests/test_smeta_module.py tests/test_prompt_registry_service.py tests/test_chat_harness_format.py tests/test_smeta_artifact_service.py tests/test_estimate_harness.py tests/test_rim_lsr_trace_service.py tests/test_v020_deploy_stamp_ui.py -q` → `209 passed`
+> - deployed runtime `/api/version` → `0.24.0.261`, deploy stamp `ok`
+> - final live `/api/chat/stream` smoke:
+>   - СКС → `lsr_rim_trace_form_v1`, `3 741 981.42 руб.`, `rows=6`, `nonzero_rows=6`, `bound_rows=6/6`, `norm_lookup_calls=6`, `norm_choice_rows=6`.
+>   - БАП ВОР PDF (таблица извлечена локальным `pdfplumber`) → `lsr_rim_trace_form_v1`, `1 932 794.62 руб.`, `rows=10`, `nonzero_rows=10`, `bound_rows=10/10`, `norm_lookup_calls=10`, `norm_choice_rows=10`.
+
+> 0.24.0.260 — smeta direct unit aliases and no-empty approximate norm choice
+>
+> Дата: 2026-07-06
+> Статус: dev, готовится к runtime smoke
+> Причина: live 0.24.0.259 доказал, что structured norm-choice работает, но СКС
+> считал только одну строку: модель выбрала нормы для шкафа/линий, а РИМ trace
+> отбрасывал их как `unit_conflict` (`шт` против `статив`, `линия` против
+> `цепь (линия)`). Также prompt selector разрешал модели оставлять строку пустой,
+> если кандидат технически приблизительный.
+> Правки: РИМ trace принимает инженерные счётные измерители (`статив`,
+> `система`, `объект`, `цепь (линия)` и т.п.) как count/line aliases после
+> модельного выбора нормы. Structured norm-choice теперь требует выбрать
+> ближайший candidate при наличии объёма и candidates; пустой `norm_code` только
+> когда candidates пустой или нет количества. Код по-прежнему не выбирает норму:
+> он валидирует выбранный моделью `norm_code` и считает.
+> Проверки:
+> - `uv run pytest tests/test_rim_lsr_trace_service.py::test_visible_rows_accept_engineering_count_unit_aliases tests/test_rim_lsr_trace_service.py::test_visible_rows_accept_colon_prefixed_norm_codes tests/test_chat_harness_format.py::test_smeta_structured_norm_choice_validates_model_code_from_lookup -q` → `3 passed`
+> - direct builder smoke: СКС-фрагмент с model-selected `ГЭСНм:10-01-052-07`,
+>   `ГЭСНм:10-02-050-01`, `ГЭСН:10-03-032-02` → checked
+>   `lsr_rim_trace_form_v1`, `34 119.25 руб.`, `bound_rows=3/3`,
+>   `priced_partial`.
+> - focused suite/deploy/live smoke будут зафиксированы ниже после прогона.
+
+> 0.24.0.259 — smeta direct structured norm-choice loop
+>
+> Дата: 2026-07-06
+> Статус: dev, готовится к runtime smoke
+> Причина: 0.24.0.258 закрыл ложные модельные цены, но не давал живые деньги:
+> модель видела lookup candidates, но не переносила полный `norm_code` в ЛСР.
+> Правки: direct smeta loop теперь замкнут до расчёта. После model-selected
+> `search_norm` запускается отдельный JSON-шаг `structured norm_choice`: модель
+> выбирает `norm_code` только из lookup candidates и задаёт quantity/unit. Код
+> валидирует, что выбранный код был в candidates, затем строит checked
+> `lsr_rim_trace_form_v1` через РИМ trace. Colon-коды `ГЭСНм:38-...` и
+> `ГЭСНм:10-...` нормализуются в trace extractor.
+> Проверки:
+> - `uv run pytest tests/test_rim_lsr_trace_service.py::test_visible_rows_accept_colon_prefixed_norm_codes tests/test_chat_harness_format.py::test_smeta_structured_norm_choice_validates_model_code_from_lookup tests/test_chat_harness_format.py::test_smeta_direct_norm_lookup_is_model_selected -q` → `3 passed`
+> - direct builder smoke: model-selected `ГЭСНм:38-01-001-01`, `2 т` → checked `lsr_rim_trace_form_v1`, `297 232.88 руб.`, `priced_partial`.
+> - focused suite/deploy/live smoke будут зафиксированы ниже после прогона.
+
+> 0.24.0.258 — smeta direct no model-made prices
+>
+> Дата: 2026-07-06
+> Статус: deployed to runtime 2026-07-06, live smoke показал no-fake-price pass / priced-trace gap
+> Причина: live 2×3 после 0.24.0.257 доказал, что model-selected lookup
+> срабатывает (`norm_lookup_calls=5..10`), но финальная модель всё ещё может
+> не копировать полный `norm_code` в ЛСР и иногда придумывать unit_price
+> (`СКС run1 = 133 300.00`) без `trace`/`pricebook`.
+> Правки: direct smeta prompt и norm-lookup context теперь явно запрещают
+> модельные ставки/рубли без checked trace. Если есть lookup results, модель
+> должна либо скопировать полный `norm_code` буквально в `Обоснование`, чтобы
+> расчётный слой построил `lsr_rim_trace_form_v1`, либо оставить строку с
+> `0.00` и примечанием. Общие `ГЭСН 09`/`ГЭСН 15`/`ГЭСНм10` не считаются
+> основанием для денег.
+> Проверки:
+> - `uv run pytest tests/test_chat_harness_format.py::test_smeta_direct_norm_lookup_is_model_selected tests/test_chat_harness_format.py::test_smeta_direct_prompt_keeps_norm_selection_model_first tests/test_skill_snippet_registry.py tests/test_smeta_module.py tests/test_prompt_registry_service.py tests/test_v020_deploy_stamp_ui.py -q` → `43 passed`
+> - `uv run pytest tests/test_skill_snippet_registry.py tests/test_smeta_module.py tests/test_prompt_registry_service.py tests/test_chat_harness_format.py tests/test_smeta_artifact_service.py tests/test_estimate_harness.py tests/test_v020_deploy_stamp_ui.py -q` → `195 passed`
+> - deployed runtime `/api/version` → `0.24.0.258`, deploy stamp `ok`
+> - live `/api/chat/stream` 2×3 (`аварийное питание` PDF, СКС, столп) → HTTP `200` везде,
+>   `norm_lookup_calls=4..10`, все ответы `lsr_rim_display_form_v1`, все суммы `0.00`/`None`,
+>   `nonzero_rows=0`. Ложные модельные ставки закрыты. Priced trace gap остаётся: модель
+>   видит lookup, но не переносит полный `norm_code` в `Обоснование`; `lsr_rim_trace_form_v1`
+>   не строится.
+
+> 0.24.0.257 — smeta direct model-selected norm lookup
+>
+> Дата: 2026-07-06
+> Статус: deployed to runtime 2026-07-06, live smoke показал gap переноса norm_code
+> Причина: live 2×3 после 0.24.0.256 показал, что prompt/skill snippets
+> улучшают форму, но не дают устойчивого priced trace: все 6 ответов остались
+> `display_form`; единственная ненулевая сумма `28 703.50` была взята из
+> модельной таблицы без `trace`/`pricebook`, а не из расчёта.
+> Правки: direct smeta перед финальным ответом запускает model-selected
+> `search_norm` lookup. Модель сама возвращает JSON-вызовы по нормируемым
+> работам; код только исполняет read-only lookup и передаёт найденные нормы
+> обратно модели. Результаты фиксируются в `retrieval_trace.smeta_norm_lookup`.
+> Это не code-side выбор нормы и не финальная смета: полный шифр всё равно
+> должен выбрать и написать visible estimator.
+> Проверки:
+> - `uv run pytest tests/test_chat_harness_format.py::test_smeta_direct_norm_lookup_is_model_selected tests/test_chat_harness_format.py::test_smeta_direct_prompt_keeps_norm_selection_model_first tests/test_skill_snippet_registry.py tests/test_smeta_module.py -q` → `10 passed`
+> - `uv run pytest tests/test_skill_snippet_registry.py tests/test_smeta_module.py tests/test_prompt_registry_service.py tests/test_chat_harness_format.py tests/test_smeta_artifact_service.py tests/test_estimate_harness.py tests/test_v020_deploy_stamp_ui.py -q` → `195 passed`
+> - повтор того же focused suite → `195 passed`
+> - deployed runtime `/api/version` → `0.24.0.257`, deploy stamp `ok`
+> - live `/api/chat/stream` 2×3 → lookup сработал во всех 6 ответах
+>   (`norm_lookup_calls=5..10`), но quality fail: все ответы остались
+>   `display_form`, trace не появился; СКС run1 дал `133 300.00` из model
+>   table без `pricebook`, СКС run2 `0.00`, столп и аварийное питание `0.00`.
+
+> 0.24.0.256 — smeta direct skill-snippet delivery
+>
+> Дата: 2026-07-06
+> Статус: deployed to runtime 2026-07-06, live smoke показал quality gap
+> Правки: direct smeta prompt теперь физически получает компактные
+> `skill_snippets` через `skill_snippet_registry`, включая сметный workflow:
+> модель сама выбирает нормируемую работу и полный шифр нормы; код после этого
+> только раскрывает ресурсы/цены/НР/СП и считает арифметику. Snippet указывает
+> ход `исходная работа -> нормируемая работа -> семейство ГЭСН/ГЭСНм/ГЭСНп/ГЭСНр
+> -> сборник/таблица/код -> ресурсы нормы -> книга ФГИС/КАЦ/КП -> ЛСР` и
+> доступные локальные источники (`ГЭСН-2022`, `ГЭСНм10/ГЭСНм38`,
+> `spb_2kv2026/moskva_2kv2026`, НР/СП, коэффициенты). Это не shortlist норм к
+> конкретной строке и не кейсовый шаблон; это доставка skill-методики до
+> runtime-модели.
+> Проверки:
+> - `uv run pytest tests/test_skill_snippet_registry.py tests/test_smeta_module.py tests/test_prompt_registry_service.py tests/test_chat_harness_format.py tests/test_smeta_artifact_service.py tests/test_estimate_harness.py -q` → `170 passed`
+> - повтор того же focused suite → `170 passed`
+> - deployed runtime `/api/version` → `0.24.0.256`, deploy stamp `ok`
+> - live `/api/chat/stream` 2×3 (`аварийное питание` PDF, СКС, столп) → HTTP `200` везде, но quality fail:
+>   все 6 ответов `display_form`, ни одного `lsr_rim_trace_form_v1`;
+>   аварийное питание run1 `19` строк, `28 703.50` из model table без trace;
+>   аварийное питание run2 `19` строк, `0.00`; СКС оба раза `6` строк,
+>   `0.00`; столп `7` и `5` строк, `0.00`.
+
+> 0.24.0.255 — smeta estimator skill and prompt boundary
+>
+> Дата: 2026-07-06
+> Статус: dev, готовится к runtime smoke
+> Правки: `skills/smeta/SKILL.md` получил предметный skill сметчика:
+> как устроено ценообразование РИМ/ГЭСН, как строка проходит через норму,
+> ресурсы, ФГИС/pricebook, НР/СП, КАЦ/КП и ЛСР; отдельно указана локальная
+> база ЛЕС (`data/gesn_base/gesn2022*.parquet`, `data/price_base/*.parquet`,
+> `config/domain/*.yaml`, `RAG_Content/TABLE_SMETA/SMETA_SERVICE`).
+> System/common prompt теперь только маршрутизирует smeta-задачи к
+> `skills/smeta/SKILL.md`, не тащит предметную базу в system prompt. Role-pack
+> фиксирует `code_does_not_select_norms`, `code_arithmetic_only_after_visible_model_choice`,
+> `no_global_stop_cranes_for_incomplete_estimates` и partial-ЛСР: рассчитанные
+> строки остаются рассчитанными, незакрытые строки остаются с `0.00`/пустой
+> ценой и примечанием. Активные частные шаблоны аварийного питания убраны из prompt/skill/code/tests.
+> Проверки:
+> - `python3 -m json.tool config/prompts/smeta_estimator_role.json` → ok
+> - `uv run pytest tests/test_prompt_registry_service.py tests/test_chat_harness_format.py tests/test_smeta_artifact_service.py tests/test_estimate_harness.py -q` → `162 passed`
+> - `rg -n "БАП|бап" proxy config skills tests docs --glob '!docs/RELEASE_LEDGER.md' --glob '!docs/archive/**'` → no matches
+> - `git diff --check ...` → clean
+
+> 0.24.0.254 — smeta BAP source-row coverage
+>
+> Дата: 2026-07-05
+> Статус: deployed to runtime 2026-07-05 (manual patch+stamp, proxy restart)
+> Тест: реальный файл `/Users/ovc/Downloads/ВОР монтаж БАП П1 13.05.pdf`
+> извлекается как 19 строк ВОР; два одинаковых live-запроса до фикса дали
+> разные partial-ЛСР: 9 строк / `1 553 051.56 руб.` и 2 строки /
+> `93 034.06 руб.`. Это признано невалидным для пользовательского критерия
+> “тот же файл -> та же построчная ЛСР”.
+> Правки: direct smeta prompt получает source-row coverage contract для
+> табличной ВОР (`section/source_no/name/unit/qty`) и требует `SRC`-маркер на
+> каждую исходную строку; лимит генерации direct smeta растёт для длинных ВОР;
+> checked RIM visible answer показывает покрытие `bound/input` при partial trace
+> и не маскирует потерю строк под полную ЛСР. Если табличная ВОР не содержит
+> исходных полных шифров норм, а модель выбрала нормы только для части строк,
+> частичная случайная цена подавляется: все строки остаются в ЛСР с `0.00`, а
+> статус становится `norm_selection_required`.
+> Проверки:
+> - `uv run pytest tests/test_chat_harness_format.py tests/test_smeta_artifact_service.py -q` → `61 passed`
+> - `uv run pytest tests/test_smeta_artifact_service.py tests/test_chat_harness_format.py -q` → `62 passed`
+> - `make verify` → `2525 collected`
+> - live `/api/chat/stream` BAP same-file 2/2 after final fix → canonical artifact digest equal
+>   `958317c2dc1c078e`; `rows=19/19`, `SRC=19/19`, `total=0.0`, `bound=0/19`,
+>   `status=norm_selection_required`, `same_rows=true`, `same_total=true`.
+
+> 0.24.0.253 — smeta checked RIM LSR visible output
+>
+> Дата: 2026-07-05
+> Статус: deployed to runtime 2026-07-05 (`make ship`)
+> Тесты: live `/api/chat/stream` три запроса ЛСР с выбранной нормой показали,
+> что расчётная РИМ-трасса, сумма и артефакт уже строятся, но видимый ответ
+> смешивал проверенную форму с модельной placeholder-ЛСР и текстом про
+> “приоритет” артефакта.
+> Правки: `compact_smeta_answer()` при наличии `lsr_rim_trace_form_v1` теперь
+> показывает пользователю только проверенную РИМ-ЛСР из trace: сумма, книга
+> цен, статус, форма Приложения №3/421-пр и графы 1–12. Модельные нули и
+> конфликтующая черновая ЛСР не остаются в visible answer. Markdown-заголовки
+> граф стоимости расширены до формулировок “Сметная стоимость …”.
+>
+> Проверки:
+> - `uv run pytest tests/test_smeta_artifact_service.py tests/test_rim_lsr_trace_service.py tests/test_rim_trace_xlsx.py -q` → `29 passed`
+> - `uv run pytest tests/test_smeta_artifact_service.py tests/test_rim_lsr_trace_service.py tests/test_rim_trace_xlsx.py tests/test_lsr_rim_trace_api.py -q` → `33 passed`
+> - `make verify` → `2522 collected`
+> - `make ship` → focused `183 passed`, pre-smoke `9/9`, post-deploy smoke `9/9`
+> - live `/api/chat/stream` LSR priced smoke → `3/3`: one-position
+>   `11 813 руб.`, two-section `23 626 руб.`, visible-row `11 813 руб.`;
+>   each answer starts with checked RIM LSR, includes Appendix №3/421-pr
+>   form/graphs/artifact, no placeholder noise.
+> - live `/api/chat/stream` SKS/BAP smoke → checked RIM LSR starts the answer,
+>   amount `6 721 447 руб.`, status `priced_partial`; long resource-gap list is
+>   not shown before the form and is reduced to a note after the LSR/artifact.
+
+> 0.24.0.252 — smeta process-explanation intent fix
+>
+> Дата: 2026-07-05
+> Статус: deployed to runtime 2026-07-05 (`make ship`)
+> Тесты: live `/api/chat/stream` вопрос “объясни, как ты работаешь по сметам”
+> на `0.24.0.251`; затем unit/focused prompt tests.
+> Выводы: `0.24.0.251` правильно различал `без расчёта/без рублей`, но вопрос
+> класса `объясни процесс / как ты работаешь / что выбираешь ты / что считает
+> код` всё ещё попадал в расчётную ЛСР-ветку, потому что содержал слова
+> `сметы` и `ЛСР`.
+> Правки: `_smeta_request_needs_lsr_output()` получил отдельный
+> `process-explanation` intent. Такие запросы идут в method-ветку даже при
+> упоминании ЛСР/сметы/нулей; явные команды `сделай/оформи/рассчитай/дай
+> ЛСР|смету|стоимость` остаются расчётными.
+>
+> Проверки:
+> - `uv run pytest tests/test_chat_harness_format.py::test_smeta_direct_process_explanation_prompt_does_not_force_lsr tests/test_chat_harness_format.py::test_smeta_direct_method_prompt_does_not_force_lsr_or_zero_money tests/test_chat_harness_format.py::test_smeta_direct_prompt_does_not_block_on_empty_spec_price_columns -q` → `3 passed`
+> - `uv run pytest tests/test_chat_harness_format.py tests/test_prompt_registry_service.py tests/test_smeta_quantity_audit.py -q` → `68 passed`
+> - `make verify` → `2522 collected`
+> - `make ship` → focused `183 passed`, pre-smoke `9/9`, post-deploy smoke `9/9`
+> - live `/api/chat/stream` process-explanation probe → pass: no LSR header, no
+>   `0.00`, model explains model-vs-code split, norm families and resource gap.
+
+> 0.24.0.251 — smeta prompt tests, conclusions, fixes
+>
+> Дата: 2026-07-05
+> Статус: deployed to runtime 2026-07-05 (`make ship`)
+> Тесты: live `/api/chat/stream` smeta-method probe, затем focused pytest по
+> `tests/test_chat_harness_format.py`, `tests/test_prompt_registry_service.py`,
+> `tests/test_smeta_quantity_audit.py`.
+> Выводы: method-запрос с явным `без расчёта/без рублей` всё равно превращался
+> в ЛСР с нулевыми рублями; модель сужала семейства норм до `ГЭСН/ГЭСНм` и
+> путала ведомость добора с нераспознанными работами. Второй провал — batch
+> smeta prompt раздулся до `10210` символов при тестовом лимите `9000`.
+> Правки: light direct prompt различает методический запрос и расчёт/ЛСР; для
+> методического запроса запрещает ЛСР/нулевые рубли и закрепляет `несколько
+> ВОР → одна норма`, полный набор семейств `ГЭСН/ГЭСНм/ГЭСНп/ГЭСНр/ГЭСНмр`,
+> маршрут поиска нормы и точное значение ведомости добора. Compact render
+> role-pack теперь отдаёт ключи правил и имена chain modes без лишнего JSON:
+> batch prompt сжат до `7714` символов. Финальный live-probe также закрепил
+> запрет на отложенное “следующим сообщением” для методического smeta-ответа.
+>
+> Проверки:
+> - `uv run pytest tests/test_chat_harness_format.py tests/test_prompt_registry_service.py tests/test_smeta_quantity_audit.py -q` → `67 passed`
+> - `make verify` → `2521 collected`
+> - `make ship` → focused `183 passed`, pre-smoke `9/9`, post-deploy smoke `9/9`
+> - `GET /api/version` → `les_version=0.24.0.251`
+> - live `/api/chat/stream` smeta-method probe → pass: no LSR table, no zero rubles,
+>   `many ВОР → one norm`, all norm families, precise resource gap wording,
+>   no “следующим сообщением”, no markdown headings.
+
+> 0.24.0.250 — estimator roundtrip refinements from new DOCX notes
+>
+> Дата: 2026-07-05
+> Статус: deployed to runtime 2026-07-05 (`make ship`)
+> Причина: дополнительные DOCX уточнили первый этап живого сметчика: связь
+> `ВОР ↔ ГЭСН` не обязана быть один-ко-многим; несколько строк ВОР могут
+> ссылаться на одну норму, если норма покрывает общий состав работ. Подбор
+> норм должен идти маршрутом `семейство работ → группа сборников → сборник →
+> раздел/таблица → конкретная норма`, с учётом `ГЭСН`, `ГЭСНм`, `ГЭСНп`,
+> `ГЭСНр`, `ГЭСНмр`. Ведомость добора относится к ресурсам выбранной нормы,
+> которых нет в сплит-форме/ценовой книге/КП, а не к нераспознанным работам.
+> Режим качества расчёта фиксируется как `rough_cost`, `stage_p`, `stage_rd`.
+>
+> Проверки:
+> - `uv run python -m json.tool config/prompts/smeta_estimator_role.json`
+> - `uv run pytest tests/test_prompt_registry_service.py::test_smeta_estimator_role_pack_is_json_contract -q`
+> - `make verify`
+> - `make ship` → post-deploy smoke `9/9`
+> - `GET /api/version` → `les_version=0.24.0.250`, `runtime_alignment.status=divergent`
+>   только по старым unrelated файлам: `proxy/routers/runtime.py`,
+>   `proxy/services/document_explorer_service.py`, `sovushka/styles.py`
+> - `GET /api/prompts` → `smeta_harness.version=0.24.0.250-live-estimator-roundtrip`,
+>   families `ГЭСН/ГЭСНм/ГЭСНп/ГЭСНр/ГЭСНмр`, modes `rough_cost/stage_p/stage_rd`,
+>   route `work_family → collection_group → collection → collection_section_or_table → specific_norm`
+
+> 0.24.0.249 — live estimator TZ skill/prompt/algorithm
+>
+> Дата: 2026-07-05
+> Статус: deployed to runtime 2026-07-05 (`make ship`; затем точечно
+> `skills/smeta/SKILL.md` после allowlist fix)
+> Причина: присланные рабочие DOCX описывают не “одну правильную сумму”, а
+> процесс живого сметчика: сначала прочитать все источники, затем собрать ВОР,
+> таблицу кандидатов ГЭСН, дать пользователю выбрать/исправить вариант, только
+> потом раскрывать ресурсы, делать первый ЛСР, принимать коэффициенты/КАЦ/КП и
+> доводить до `priced_final`. Этот контракт закреплён в `skills/smeta/SKILL.md`,
+> `config/prompts/smeta_estimator_role.json` и `docs/ALGO-smeta.md`. Код по-прежнему
+> не выбирает работы и нормы; он считает после решения модели и хранит trace.
+> `tools/deploy_to_runtime.py` добавил `skills/` в allowlist, потому что
+> `version_service` уже считает smeta skill критичным файлом, а deploy tool
+> раньше не умел штатно копировать skill-файлы.
+>
+> Проверки:
+> - `uv run python -m json.tool config/prompts/smeta_estimator_role.json`
+> - `uv run pytest tests/test_prompt_registry_service.py::test_smeta_estimator_role_pack_is_json_contract -q`
+> - `make verify`
+> - `make ship` → focused `183 passed`, pre-smoke `9/9`, post-deploy smoke `9/9`
+> - `GET /api/version` → `les_version=0.24.0.249`
+> - `GET /api/prompts` → `smeta_harness.version=0.24.0.249-live-estimator-workflow`,
+>   `live_estimator_workflow=True`
+> - `uv run python tools/basic_function_smoke.py` → `9/9`
+
+> 0.24.0.248 — provider effective config visibility
+>
+> Дата: 2026-07-05
+> Статус: deployed with 0.24.0.249 runtime ship, 2026-07-05
+> Причина: диагностика через `launchctl getenv` дала ложный вывод, что GPT не
+> подключена, хотя runtime `/Users/ovc/LES/.env` содержит `LES_LLM_PROVIDER=openai`
+> и OpenAI-compatible ключ/модель. `/api/settings` теперь отдаёт
+> `providers.effective` из того же `_llm_runtime()`, которым пользуется чат:
+> configured/effective provider, model, `chat_url_set`, fallback и причину fallback
+> без раскрытия ключей.
+>
+> Проверки:
+> - `uv run pytest tests/test_proxy_routers.py::test_settings_reports_effective_openai_provider tests/test_proxy_routers.py::test_settings_reports_cloud_provider_fallback_without_key -q`
+
+> 0.24.0.247 — smeta visible system RIM total
+>
+> Дата: 2026-07-05
+> Статус: deployed to runtime 2026-07-05 (`smeta_artifact_service.py`, `version_service.py`)
+> Причина: после подключения физически доступных системных источников artifact
+> уже считал РИМ/ЛСР по `spb_2kv2026`, но видимый модельный ответ мог оставаться
+> с `0.00` placeholders. Теперь `compact_smeta_answer()` всегда добавляет в
+> начало ответа строку системного РИМ-расчёта из `rim_lsr_form`, даже когда
+> сжатие длинных таблиц выключено. Модельная ЛСР остаётся видимой ниже как
+> черновик/выбор норм, но расчётная сумма системы не прячется в artifact.
+>
+> Проверки:
+> - `uv run pytest tests/test_smeta_artifact_service.py::test_compact_smeta_answer_prepends_trace_total_when_compaction_off -q`
+> - `uv run pytest tests/test_smeta_artifact_service.py tests/test_chat_harness_format.py -q`
+> - `make verify`
+> - `uv run python tools/basic_function_smoke.py` → 9/9
+>
+> Live caveat: длинный live `/api/chat` запрос `СКС/БАП system sources v247`
+> дважды упёрся в клиентский timeout (120s и 300s). Runtime живой, `/api/version`
+> и `/api/service-sources` отвечают; это latency локальной генерации, не отсутствие
+> системных сметных источников.
+
+> 0.24.0.246 — smeta uses physically installed service sources by default
+>
+> Дата: 2026-07-05
+> Статус: deployed to runtime 2026-07-05 (`chat.py`, `smeta_artifact_service.py`, `version_service.py`)
+> Причина: оператор справедливо потребовал подключить всё, что физически есть
+> в системе, а missing перечислять отдельно. `/api/service-sources` показывает:
+> ГЭСН ok (`609987` parquet rows, `42572` base norms), ФГИС ЦС ok (`47`
+> pricebooks, `12816756` price rows), сметные YAML ok. Direct smeta prompt
+> теперь явно сообщает модели о физически подключённых системных источниках.
+> Artifact/RIM trace теперь выбирает системную книгу цен по умолчанию даже
+> без региона в вопросе: `LES_DEFAULT_PRICEBOOK` → `spb_2kv2026` →
+> `spb_refresh` → `spb_2kv2025` → первая доступная 2026 → первая доступная.
+> Если после этого сумма всё ещё нулевая, причина не “нет базы”, а разрыв
+> связки `выбранная норма -> ресурсы -> коды ресурсов -> цены`.
+>
+> Физически не хватает по service-sources: `config/normcontrol/layout_reference.yaml`
+> для строгого нормоконтроля лист/рамка/основная надпись; это не блокирует
+> сметный РИМ/ЛСР расчёт.
+>
+> Проверки:
+> - `uv run pytest tests/test_chat_harness_format.py::test_smeta_direct_prompt_includes_available_pricebooks_without_region_hardcode tests/test_chat_harness_format.py::test_smeta_direct_prompt_exposes_physical_service_source_readiness tests/test_smeta_artifact_service.py::test_smeta_artifact_uses_default_system_pricebook_without_region -q`
+
+> 0.24.0.245 — smeta LSR zero placeholders instead of missing amounts
+>
+> Дата: 2026-07-05
+> Статус: dev, ждёт deploy
+> Причина: оператору нужна сумма в ЛСР, а не объяснение отсутствия суммы.
+> Direct smeta contract теперь запрещает `missing` в числовых/денежных графах
+> ЛСР: если нет ставки, индекса или цены ресурса, ставится `0.00`, строка
+> `ВСЕГО` тоже числовая, а причина уходит в примечания/добор. Это не делает
+> нулевую цену фактом; это видимый placeholder для продолжения работы.
+>
+> Проверки:
+> - `uv run pytest tests/test_chat_harness_format.py::test_smeta_direct_light_prompt_cuts_heavy_contract_by_default tests/test_chat_harness_format.py::test_smeta_direct_prompt_does_not_block_on_empty_spec_price_columns -q`
+
+> 0.24.0.244 — smeta candidate card binding guard
+>
+> Дата: 2026-07-05
+> Статус: dev, ждёт deploy
+> Причина: live `СКС/БАП ЛСР` после 0.24.0.243 показал, что БАП-карточки
+> стали доходить и модель выбрала `ГЭСН:08-01-125-01`, но по СКС она
+> перенесла кандидат кроссировки на кабель и переписала формат шифра без
+> двоеточия. Теперь карточки нормативного поиска явно запрещают переносить
+> шифр между работами и требуют копировать норму буквально из карточки.
+> Это guardrail привязки evidence, не кодовый выбор нормы.
+>
+> Проверки:
+> - `uv run pytest tests/test_chat_harness_format.py::test_smeta_direct_prompt_includes_norm_search_cards_for_sks_bap tests/test_estimate_harness.py::test_direct_smeta_norm_search_context_exposes_sks_bap_candidate_cards -q`
+
+> 0.24.0.243 — smeta norm cards before source maps
+>
+> Дата: 2026-07-05
+> Статус: dev, ждёт deploy
+> Причина: live `СКС/БАП ЛСР` после 0.24.0.242 показал, что ЛСР-форма
+> появилась, но БАП всё ещё уходил в общий `ГЭСН 21`: не потому что модель
+> не могла выбрать, а потому что конкретные карточки БАП стояли после общей
+> карты сметных источников и обрезались лимитом контекста на блоке СКС.
+> Теперь конкретные карточки нормативного поиска по работам запроса идут
+> перед общей source-map/pricebook картой; тест требует, чтобы `08-01-125`
+> по БАП был виден в direct prompt.
+>
+> Проверки:
+> - `uv run pytest tests/test_chat_harness_format.py::test_smeta_direct_prompt_includes_norm_search_cards_for_sks_bap -q`
+
+> 0.24.0.242 — smeta LSR-first output and BAP candidate cleanup
+>
+> Дата: 2026-07-05
+> Статус: dev, ждёт deploy
+> Причина: после live `СКС/БАП тест 3-3` модель начала видеть конкретные
+> `ГЭСНм:10-*` кандидаты по СКС, но форма ответа оставалась ВОР/оценкой с
+> ЛСР только по явной просьбе, а БАП конкурировал с шумными строками
+> `08-03-594-*` про светильники блоками. Теперь direct smeta contract
+> требует ЛСР-черновик граф 1-12 как основную форму выдачи любой сметной
+> оценки; ВОР остаётся исходной расшифровкой. Для БАП добавлен элемент
+> `backup_power`: кандидатные карточки поднимают `08-01-125-*` по системе
+> бесперебойного электропитания и штрафуют светильниковый/подстанционный шум.
+> User-facing prompt больше не показывает имя внутреннего инструмента
+> `search_norm`, только «нормативный поиск ЛЕС».
+>
+> Проверки:
+> - `uv run pytest tests/test_estimate_harness.py::test_electric_bap_search_prefers_backup_power_over_lighting_blocks tests/test_estimate_harness.py::test_direct_smeta_norm_search_context_exposes_sks_bap_candidate_cards tests/test_chat_harness_format.py::test_smeta_direct_prompt_includes_norm_search_cards_for_sks_bap tests/test_chat_harness_format.py::test_smeta_direct_light_prompt_cuts_heavy_contract_by_default -q`
+
+> 0.24.0.241 — smeta direct answers get search_norm candidate cards
+>
+> Дата: 2026-07-05
+> Статус: dev, ждёт deploy
+> Причина: live `СКС/БАП тест 3-3` после восстановления cloud key дал
+> нормальный ВОР/ЛСР-черновик, но конкретные шифры норм оставались текстовыми
+> догадками модели (`ГЭСНм10/ГЭСН 21 кандидат, уточнить`). Теперь direct smeta
+> prompt получает компактный навигационный блок из реального `search_norm`:
+> candidate cards с `norm_code`, измерителем, применимостью и collection.
+> Код не выбирает норму и не пишет ответ; модель видит shortlist и должна
+> выбрать кандидата или оставить `missing`. Для low-current route scoring
+> `ГЭСНм10` поднят выше строительного/силового шума, а БАП идёт через
+> электромонтажные candidate cards без маскировки под финальный шифр.
+>
+> Проверки:
+> - `uv run pytest tests/test_estimate_harness.py tests/test_chat_harness_format.py tests/test_smeta_norm_store.py -q`
+> - `uv run python -m py_compile proxy/services/estimate_harness_service.py proxy/routers/chat.py`
+> - `git diff --check -- proxy/services/estimate_harness_service.py proxy/routers/chat.py tests/test_estimate_harness.py tests/test_chat_harness_format.py`
+>
+> 0.24.0.240 — compact dataset reader-pass input + diagnostic local extraction
+>
+> Дата: 2026-07-05
+> Статус: dev, ждёт deploy
+> Причина: NS golden dataset показал, что `memory/read` возвращал
+> `reader_status=model_failed`: модельный reader-pass не строил собственную
+> навигационную карту, а system счётчики маскировали это как готовность
+> корпуса. `_reader_context()` теперь передаёт модели компактный source-guide
+> вместо полного технического JSON: operator guidance, top files, bounded
+> routes/topics/sections и явное правило `navigation != evidence`. Параллельно
+> `extract_service` сохраняет диагностируемый provider error даже когда
+> исключение провайдера имеет пустой `str(exc)`, а локальный MLX structured
+> extraction получает default timeout 300s вместо cloud-oriented 120s.
+>
+> Проверки:
+> - `uv run pytest tests/test_dataset_memory_service.py tests/test_extract_service.py -q`
+> - `uv run python -m py_compile proxy/services/dataset_memory_service.py proxy/services/extract_service.py proxy/services/version_service.py`
+>
+> 0.24.0.239 — project PDF typing repair for NTD datasets
+>
+> Дата: 2026-07-04
+> Статус: dev, ждёт deploy
+> Причина: NS quality audit показал, что индекс физически полон (`999`
+> chunks в SQLite/Qdrant), но typed memory/Qdrant payloads помечали проектные
+> ЭОМ PDF как `normative` из-за домена `NTD_ELECTRICAL`. Теперь `NTD_*`
+> сам по себе означает техническую область поиска, а не нормативный документ:
+> `NORMATIVE` ставится только по явному doc_type/имени/сметно-нормативному
+> источнику. Router также не переводит проектный PDF с `Заказчик` +
+> `Рабочая документация` в нормативку только из-за внутренних ссылок на
+> СП/ГОСТ/своды правил.
+>
+> Проверки:
+> - `uv run pytest tests/test_document_router.py tests/test_dataset_memory_service.py -q`
+>
+> 0.24.0.238 — broad dataset overview включается для вопросов “что это за датасет”
+>
+> Дата: 2026-07-04
+> Статус: dev, ждёт deploy
+> Причина: NS live probe показал, что общий вопрос `что это за датасет`
+> не включал notebook-study/project-inventory слой и модель отвечала по
+> случайному page chunk схемы. `notebook_study_service.is_notebook_study_query`
+> теперь считает `что это за датасет/что за проект` broad-study запросом при
+> выбранной области, а `project_summary_service.is_project_inventory_query`
+> включает компактную MetaDB-карту для вопросов вида `что это за датасет`.
+> Точные lookup/сметные запросы (`где лежит`, `найди`, `дай смету`) не
+> расширяются.
+>
+> Проверки:
+> - `uv run pytest tests/test_notebook_study_service.py tests/test_project_summary_inventory.py -q`
+>
+> 0.24.0.237 — embedding timeout/batch defaults for PDF indexing
+>
+> Дата: 2026-07-04
+> Статус: deployed to runtime 2026-07-04
+> Причина: NS retry после 0.24.0.236 успешно индексировал первые PDF, но два
+> больших файла падали `last_error=timed out`: legacy `BAAI/bge-m3`
+> sentence-transformers CPU batch иногда считает один `/v1/embeddings` request
+> дольше жёстких 60 секунд. `RAG_EMBED_BATCH` default синхронизирован с
+> `env.example` до 16, добавлен `RAG_EMBED_TIMEOUT_SEC=300`.
+>
+> Проверки:
+> - `uv run pytest tests/test_qdrant_adapter_parse.py tests/test_converter_process_isolation.py -q`
+>
+> 0.24.0.236 — PDF page-node bound for embedder stability
+>
+> Дата: 2026-07-04
+> Статус: deployed to runtime 2026-07-04
+> Причина: runtime NS parse после 0.24.0.235 показал, что page-node strategy
+> уже не падает на PDF conversion, но default `RAG_PDF_PAGE_NODE_MAX_CHARS=5000`
+> слишком крупный для текущего sentence-transformers embedder batch: `/v1/embeddings`
+> упал с `Invalid buffer size: 15.18 GiB`. Default снижен до 1800 chars /
+> overlap 150, чтобы PDF ingestion масштабировался по памяти.
+>
+> Проверки:
+> - `uv run pytest tests/test_document_router.py tests/test_qdrant_adapter_parse.py tests/test_converter_process_isolation.py tests/test_datasets_router.py::test_external_intake_plan_keeps_maps_out_of_accepted_count tests/test_datasets_router.py::test_index_external_starts_dataset_scoped_parse_drain -q`
+>
+> 0.24.0.235 — external folder service maps are not indexed as corpus documents
+>
+> Дата: 2026-07-04
+> Статус: deployed to runtime 2026-07-04
+> Причина: NS должен быть “4 файла”, но `index-external` создавал `LES.md` /
+> `00_dataset_map.md` до регистрации и затем регистрировал markdown-карту как
+> обычный RAG-документ. Теперь эти файлы остаются прозрачным служебным слоем
+> папки и не попадают в document count / parse queue. Это общий фикс GUI-пути
+> `+ папка`, не smeta-specific.
+>
+> Проверки:
+> - `uv run pytest tests/test_datasets_router.py::test_external_intake_plan_keeps_maps_out_of_accepted_count tests/test_datasets_router.py::test_index_external_starts_dataset_scoped_parse_drain -q`
+> - `make verify`
+>
+> 0.24.0.234 — PDF page-node indexing + general PDF router fix
+>
+> Дата: 2026-07-04
+> Статус: deployed to runtime 2026-07-04
+> Причина: NS показал второй дефект общего PDF path: после baseline-first обычные
+> проектные PDF всё ещё уходили в `TABLE_SMETA` по слабым словам (`смета затрат`) и
+> substring-сигналам (`тер` внутри других слов), а markdown heading splitter делал
+> сотни плотных chunks на файл. Новый контракт общий для PDF: `qdrant_adapter`
+> индексирует PDF/P7M page-text слой как bounded `pdf_page_text` nodes с page anchors,
+> а `document_router` требует explicit estimate signals для `SMETA`/`TABLE_SMETA`.
+>
+> Локальный NS-бенч dev-кода на 4 PDF: старые 550/561/649/737 chunks заменяются
+> на 104/104/116/143 page nodes; route для трёх проектных ЭОМ PDF — `DOCUMENT` /
+> `NTD_ELECTRICAL`, сметные PDF по явному имени остаются `SMETA`.
+>
+> Проверки:
+> - `uv run pytest tests/test_document_router.py tests/test_qdrant_adapter_parse.py tests/test_converter_process_isolation.py -q`
+> - `make verify`
+>
+> 0.24.0.233 — PDF ingestion baseline-first: page-text не блокируется table/layout timeout
+>
+> Дата: 2026-07-04
+> Статус: dev, не задеплоено на runtime
+> Причина: NS показал дефект текущего PDF path: 4 проектных PDF уходили в `ERROR`
+> из-за `markdown_pdf_tables`/isolated converter timeout. Новый контракт:
+> реальный PDF в index path сначала получает быстрый PyMuPDF page-text слой с page anchors;
+> Docling/pymupdf4llm/layout/table/OCR считаются enrichment, а не gate. Если тяжёлый
+> isolated converter падает по timeout, `convert_to_markdown_for_indexing()` пробует
+> page-text fallback вместо `ERROR`. Док-канон: `docs/ALGO-pdf-ingestion.md`.
+>
+> Проверки:
+> - `uv run pytest tests/test_converter_process_isolation.py -q`
+> - `uv run python -m py_compile backend/converter.py`
+>
+> 0.24.0.232 — `+ папка` показывает transparent intake plan перед индексацией
+>
+> Дата: 2026-07-04
+> Статус: dev, не задеплоено на runtime
+> Причина: основной GUI-путь добавления проектных документов теперь получает
+> `POST /api/rag/external/intake-plan`: до Play оператор видит, какой проект/dataset
+> будет создан, сколько файлов принято/пропущено, какие карты `LES.md`/`00_dataset_map.md`
+> будут использованы, какие дисциплины распознаны и чего не хватает для сметных расчётов.
+> `index-external` создаёт/обновляет `00_dataset_map.md` до регистрации файлов, поэтому карта
+> попадает в тот же dataset первой волной. В roadmap добавлен refactor `document_router`:
+> выбранная папка/датасет/`LES.md` владеют scope, router остаётся file-role/parse-pipeline hints.
+>
+> Проверки:
+> - `uv run pytest tests/test_datasets_router.py::test_external_intake_plan_keeps_maps_out_of_accepted_count tests/test_datasets_router.py::test_index_external_starts_dataset_scoped_parse_drain -q`
+> - `uv run python -m py_compile proxy/routers/datasets.py sovushka/pages/samovar.py`
+>
+> 0.24.0.231 — `SMETA_SERVICE` Play показывает требуемые сметные документы и форматы
+>
+> Дата: 2026-07-04
+> Статус: dev, не задеплоено на runtime
+> Причина: roadmap v0.24D зафиксировал отдельный служебный сметный датасет:
+> оператор кладёт постоянные нормы/цены/индексы/методики/формы в `SMETA_SERVICE`
+> и нажимает Play. `config/service_sources.yaml` получил источник
+> `smeta_service_dataset` с manifest классов `norms/prices/methodology/forms`.
+> `service_source_registry` теперь рекурсивно понимает `**` globs, отдаёт
+> `required_documents` со статусами `ready/partial/missing_blocking/missing_degraded`,
+> а Play возвращает понятное summary без мутации базы. UI «Инструменты» показывает
+> раскрываемый блок «Какие документы нужны» с preferred/raw форматами.
+>
+> Проверки:
+> - `uv run pytest tests/test_service_source_registry.py -q`
+> - `make verify`
+>
+> 0.24.0.230 — `first_ordinal_guard` переживает общий chat lexical rerank
+>
+> Дата: 2026-07-04
+> Статус: deployed to runtime 2026-07-04
+> Причина: live CAD smoke показал, что retrieval ставит `drawn_table_1 first positions`
+> первым, но `chat.py` затем снова вызывает `rank_chunks_for_question`, и lexical boost
+> поднимает `drawn_table_3` по score/терминам. `retrieval_service` теперь помечает выбранный
+> first-position evidence `_rank_pin`, а `saferag_service.rank_chunks_for_question` уважает
+> этот pin при последующем ранжировании.
+>
+> Проверки:
+> - `uv run pytest tests/test_retrieval_service.py::test_retrieve_chat_chunks_promotes_earliest_first_positions_with_doc_filter tests/test_context_expander_service.py tests/test_cad_bim_aggregate_w61.py::test_render_projection_includes_drawn_tables_before_elements -q`
+> - direct retrieval → `rank_chunks_for_question` → `concentrate_sources` → `expand_context_windows` smoke
+> - `make verify`
+> - `make ship`
+>
+> 0.24.0.229 — context-window больше не выталкивает основной найденный chunk соседним контекстом
+>
+> Дата: 2026-07-04
+> Статус: deployed to runtime 2026-07-04
+> Причина: live CAD smoke после 0.24.0.228 показал, что retrieval уже ставит
+> `drawn_table_1 first positions` первым, но `expand_context_windows` рендерит длинный
+> `Контекст до` перед `Основной фрагмент` и режет окно до того, как до evidence доходит
+> модель. `context_expander_service` теперь всегда пишет `Основной фрагмент` сразу после
+> `Раздел`, а соседей добавляет после него; длинные соседи режутся первыми. Заголовок окна
+> берётся из точного `section_heading` перед более общим `parent_heading`.
+>
+> Проверки:
+> - `uv run pytest tests/test_context_expander_service.py tests/test_retrieval_service.py::test_retrieve_chat_chunks_promotes_earliest_first_positions_with_doc_filter tests/test_cad_bim_aggregate_w61.py::test_render_projection_includes_drawn_tables_before_elements -q`
+> - `make verify`
+> - `make ship`
+>
+> 0.24.0.228 — first-position guard ранжирует CAD-таблицы по фактической `position N`, а не по `chunk_ord`
+>
+> Дата: 2026-07-04
+> Статус: deployed to runtime 2026-07-04
+> Причина: live CAD smoke показал, что `first_ordinal_guard` помечался, но выбирал лист/продолжение
+> таблицы с меньшим `chunk_ord` (`position 6/21`) вместо фактического начала спецификации
+> (`position 1`). `retrieval_service` теперь промотит первый CAD-чунк по минимальному найденному
+> номеру позиции, а `chunk_ord` использует только как tie-breaker.
+>
+> Проверки:
+> - `uv run pytest tests/test_retrieval_service.py::test_retrieve_chat_chunks_promotes_earliest_first_positions_with_doc_filter tests/test_context_expander_service.py::test_context_expander_accepts_runtime_metadata_alias tests/test_cad_bim_aggregate_w61.py::test_render_projection_includes_drawn_tables_before_elements -q`
+> - `make verify`
+> - `make ship`
+>
+> 0.24.0.227 — `context_expander_service` тоже принимает runtime alias
+> `metadata` наряду со старым `meta`, чтобы context-window видел
+> `chunk_ord`/heading/context_before/context_after у настоящих Qdrant chunks.
+> Это закрывает следующий live-провал: retrieval trace уже содержал
+> `first_ordinal_guard`, но prompt/source-map после expansion всё равно
+> начинались с соседних drawn tables. Checks:
+> `uv run pytest tests/test_context_expander_service.py
+> tests/test_retrieval_service.py tests/test_cad_bim_extract_dxf.py
+> tests/test_cad_bim_aggregate_w61.py -q`.
+
+> 0.24.0.226 — `first_ordinal_guard` читает оба runtime-варианта
+> метаданных chunk (`meta` и `metadata`). Live `0.24.0.225` уже показывал
+> `first_ordinal_guard` в trace, но на настоящих Qdrant chunks не видел
+> `chunk_ord`, поэтому не поднимал начало `drawn_table_1`. Тест
+> `test_retrieve_chat_chunks_promotes_earliest_first_positions_with_doc_filter`
+> переведён на `metadata`, чтобы ловить этот класс регрессии. Checks:
+> `uv run pytest tests/test_retrieval_service.py
+> tests/test_cad_bim_extract_dxf.py tests/test_cad_bim_aggregate_w61.py -q`
+> 32/32.
+
+> 0.24.0.225 — CAD drawn-table projection получил отдельные
+> `first positions / первые три позиции` и `logical positions / позиции
+> спецификации` узлы: для таблиц, нарисованных линиями, projection теперь
+> выводит нормализованные строки `position N | name | mark | manufacturer |
+> unit | qty | source_row`, включая случаи, где номер позиции слипся с
+> текстом в одной CAD-ячейке. `retrieval_service` добавил generic
+> `first_ordinal_guard`: при `target_file/doc_filter` и запросах про первые
+> строки/позиции среди уже найденных chunks поднимается самый ранний
+> подходящий табличный chunk по `chunk_ord`, чтобы модель получала начало
+> выбранной таблицы, а не середину соседней. Checks:
+> `uv run pytest tests/test_retrieval_service.py
+> tests/test_cad_bim_extract_dxf.py tests/test_cad_bim_aggregate_w61.py -q`
+> 32/32. Live before guard: projection contained correct positions 1-3, but
+> chat still chose drawn_table_2/3; guard is the runtime fix to ship next.
+
+> 0.24.0.224 — DWG/DXF extractor восстанавливает таблицы, нарисованные
+> примитивами `LINE`/`LWPOLYLINE` плюс `TEXT`/`MTEXT`: ищет связные
+> горизонтально-вертикальные сетки, кластеризует границы строк/колонок,
+> раскладывает текст по ячейкам и пишет `tables[]` +
+> `properties.drawn_tables_detected` в `cad_bim_graph.json`. CAD/BIM importer
+> не разворачивает этот слой в шумные graph-properties, а рендерит отдельный
+> блок `CAD drawn tables` в projection перед элементами, чтобы RAG видел
+> спецификацию как строки таблицы, а не как сотни примитивов; перед широкой
+> markdown-таблицей добавляются `First data rows / первые позиции`, data
+> row-lines и compact row-lines, чтобы context-window/rerank не уводил модель
+> в середину таблицы и не обрезал позиции после одной шапки. Live dry probe на уже извлечённом
+> `kotelnaya_repair_gsv_spec.cad_bim_graph.json`: 3 таблицы; первая 37 строк /
+> 19 колонок / 168 непустых ячеек, включая заголовки и позиции газового
+> оборудования. Checks:
+> `uv run pytest tests/test_cad_bim_extract_dxf.py
+> tests/test_cad_bim_aggregate_w61.py -q` 10/10; `make verify` collected
+> 2495; `make ship` green (`179 passed`, smoke 9/9, post-deploy smoke 9/9).
+
+> 0.24.0.223 — вкладка «Документы» получила режим `CAD`: GUI-рычаг
+> поверх `GET /api/cad-bim/imports` с метриками imports/elements/projection
+> docs, списком слабых импортов, duplicate groups, duplicate indexed
+> projections, кнопками «Открыть projection» и «Спросить» по конкретному
+> CAD/DWG import. Chat page теперь принимает query-param `target_file`, чтобы
+> переход из CAD inventory мог сразу сузить RAG к выбранной projection-карточке.
+> Checks: `uv run pytest tests/test_static_assets.py
+> tests/test_cad_bim_import_inventory.py -q` 8/8; `make verify` collected
+> 2493; `make ship` green (`179 passed`, smoke 9/9, post-deploy smoke 9/9).
+
+> 0.24.0.222 — CAD/BIM получил read-only inventory для контроля качества
+> конвейера `import → graph DB → markdown projection → CAD_BIM_Index`:
+> `GET /api/cad-bim/imports` сверяет `cad_bim_imports` с MetaDB
+> `documents`, показывает `quality_status` (`ok/minimal/suspicious/empty`),
+> `projection_index_status` (`indexed/not_indexed/duplicate_indexed/...`),
+> indexed-документы, слабые импорты и duplicate groups по нормализованному
+> source-фингерпринту. Это диагностический слой для GUI/консоли: он ничего не
+> удаляет, не чистит Qdrant и не запускает реиндекс. `cad_bim_graph.py` и
+> `routers/speckle.py` добавлены в critical version alignment, чтобы deploy
+> stamp видел CAD/BIM-правки.
+> Checks: `uv run pytest tests/test_cad_bim_import_inventory.py
+> tests/test_cad_bim_extract_dxf.py
+> tests/test_retrieval_service.py::test_retrieve_chat_chunks_promotes_cad_source_name_with_compact_path
+> tests/test_retrieval_service.py::test_retrieve_chat_chunks_promotes_cad_source_name_after_rerank
+> tests/test_retrieval_service.py::test_retrieve_chat_chunks_promotes_exact_source_after_rerank -q`
+> 9/9; `make verify` collected 2493; `make ship` green
+> (`179 passed`, smoke 9/9). Live `GET /api/cad-bim/imports?limit=200`:
+> 23 imports, 27 projection documents, 3 duplicate groups, 7 weak imports,
+> 1 duplicate-indexed import.
+
+> 0.24.0.221 — DWG/DXF extractor получил repair-pass для реальных
+> LibreDWG DXF с битой кириллицей/MTEXT: если строгий `ezdxf.readfile()`
+> падает на нечисловой group-code line, инструмент чинит ASCII DXF,
+> склеивая оборванную строку обратно в предыдущее значение, добавляет EOF при
+> необходимости и пишет trace `dxf_read_mode`/`dxf_strict_error` в
+> `cad_bim_graph.json`. JSON output дополнительно проходит `_json_safe`, чтобы
+> surrogate bytes из старых DWG не ломали запись. Live CAD probe:
+> ранее падавшая `лесной ГСВ Спецификация.dwg` извлеклась в 533 элемента и
+> импортировалась как `502617b60ad4`; пять ранее падавших DWG из первой пачки
+> Котельной теперь доходят до import, хотя два дают пустой/minimal graph.
+> Retrieval получил CAD/BIM source-name boost: generic projection больше не
+> должен заслонять chunk, в source path/content которого совпали специфичные
+> термины запроса (`ГСВ`, `АТМ`, `Лесной`, `Спецификация`), при этом нормативные
+> ссылки не попадают в этот guard; compact-нормализация склеивает `Лесной_64`
+> и `Лесной64`. Checks:
+> `uv run pytest tests/test_retrieval_service.py::test_retrieve_chat_chunks_promotes_cad_source_name_with_compact_path tests/test_retrieval_service.py::test_retrieve_chat_chunks_promotes_cad_source_name_after_rerank tests/test_retrieval_service.py::test_retrieve_chat_chunks_promotes_exact_source_after_rerank tests/test_cad_bim_extract_dxf.py -q`
+> 7/7.
+
+> 0.24.0.220 — CAD/BIM DWG получил штатный инструментальный вход:
+> `tools/cad_bim_extract_dxf.py` теперь принимает `.dwg`, вызывает LibreDWG
+> `dwg2dxf`, сохраняет trace конвертации в `cad_bim_graph.json` и дальше
+> использует существующий `/api/cad-bim/import`. Retrieval получил
+> source-exact guard: если в запросе/выбранном scope есть точное имя projection,
+> DWG/DXF/JSON/MD или import/source id, такой chunk поднимается после merge и
+> после rerank, чтобы большой старый CAD/BIM projection не заслонял точный новый
+> источник. Live CAD smoke: `03_00-14-АПС_ТА.dwg` → DXF → JSON →
+> import `db1941fd7ee6`; `sync-smart` для `RAG_Content/CAD_BIM/exports`
+> распарсил 3 projection-файла в `CAD_BIM_Index`, 900 chunks, errors=0.
+> Checks: `uv run pytest tests/test_retrieval_service.py::test_retrieve_chat_chunks_promotes_exact_source_after_rerank tests/test_cad_bim_extract_dxf.py -q`
+> 3/3; `make verify` 2487 collected; `make ship` green with post-deploy
+> smoke 9/9. Live retrieval check after deploy: exact query
+> `cad_bim_json_db1941fd7ee6.md` returns that projection at rank 1 with trace
+> `qdrant_native_hybrid+source_exact+source_exact_guard+rerank`.
+> Follow-up regression: первый полный `make test` показал, что guard слишком
+> широко ловил нормативные ссылки `СП 1.13130` как source-id; regex сужен до
+> filenames/paths/import-id/long hex/underscore/colon source terms. Final checks:
+> `uv run pytest tests/test_retrieval_service.py tests/test_cad_bim_extract_dxf.py -q`
+> 21/21; `make test` 2487 passed.
+
+> 0.24.0.219 — закрывает вторую причину XLS/XLSX chunk explosion:
+> Excel route `pipeline=parquet` сохраняет полный Parquet для точных строк,
+> фильтров, сумм и группировок, но больше не обязан класть каждую parquet-строку
+> в Qdrant. Если нормализованных row chunks больше
+> `RAG_TABLE_ROW_INDEX_MAX_CHUNKS` (default 600), Qdrant получает один
+> `table_navigation_projection` с `parquet_path`, числом строк, листов и
+> примерами ключевых полей. Это сохраняет точность расчётов в Parquet и убирает
+> доминирование больших таблиц в semantic retrieval. Checks:
+> `uv run pytest tests/test_qdrant_adapter_parse.py::test_sync_table_nodes_projects_large_row_sets tests/test_converter_process_isolation.py tests/test_qdrant_adapter_parse.py -q`
+> 28/28.
+
+> 0.24.0.218 — большие Excel/CSV больше не разворачиваются в тысячи
+> равноправных markdown-row чанков. `converter._parse_spreadsheet()` оставляет
+> маленькие листы полными markdown-таблицами, а большие листы рендерит как
+> `spreadsheet_navigation_projection`: список колонок, размеры прочитанного
+> окна, профили колонок, числовые min/max/sum и небольшой образец строк. Это
+> навигационный слой для выбора файла/листа/колонки; точные строки и расчёты
+> должны читаться из исходного файла табличным reader/tool. В Qdrant payload
+> такие узлы маркируются `type=spreadsheet_projection`. Live-проба на тяжёлом
+> `РТ1.xlsx` из ПД ИЦ: было 2405 chunks, новая проекция даёт ~15 final nodes
+> до эмбеддинга. Checks: `uv run pytest tests/test_converter_process_isolation.py tests/test_qdrant_adapter_parse.py -q`
+> 27/27.
+
+> 0.24.0.217 — индексатор переводит рискованную markdown-конвертацию
+> PDF/P7M/XLS/XLSX/XLSM в отдельный killable subprocess
+> (`RAG_CONVERT_SUBPROCESS_ENABLED`, default true). Timeout дочернего
+> процесса берётся из `RAG_CONVERT_SUBPROCESS_TIMEOUT_SEC` или 90% от
+> `RAG_PARSE_FILE_TIMEOUT_SEC`, чтобы зависший `pymupdf4llm`/OCR/MarkItDown/
+> pandas-openpyxl не оставался брошенным потоком внутри proxy. Обычные
+> текстовые/JSON/DOCX/почтовые пути не менялись. Для Excel/CSV порядок
+> конвертации изменён на `pandas/openpyxl -> MarkItDown`, потому что реальный
+> `РТ1.xlsx` из ПД ИЦ читается прямым spreadsheet parser за 0.84с, тогда как
+> старый вход мог тратить timeout на MarkItDown до fallback. Checks:
+> Parent process читает `multiprocessing.Queue` до `join()`, чтобы большой
+> markdown-результат не блокировал завершение дочернего процесса. Checks:
+> `uv run pytest tests/test_converter_process_isolation.py -q` 8/8,
+> `uv run pytest tests/test_parse_pipeline_w14.py -q` 8/8,
+> focused converter+parse+adapter 35/35, `make verify` 2485 collected,
+> `make test` 2481 passed before spreadsheet-projection follow-up.
+> Live read-only XLSX probe after fix: 12/12 проблемных workbook из ПД ИЦ
+> сконвертированы subprocess-путём за ~0.4-0.9с каждый, без оставшихся
+> `les-convert` процессов.
+> Live read-only probe: проблемный `РТ3.xlsx` из ПД ИЦ сконвертирован
+> subprocess-путём за 5.67с (~49k chars); проблемный PDF с timeout 45с
+> завершился `convert subprocess timeout` без оставшегося `les-convert`
+> процесса.
+
+> 0.24.0.216 — parse-контур больше не записывает raw CAD/BIM
+> исходники (`.dwg/.dxf/.rvt/.rfa/.ifc/.ifczip/.nwc`) как `INDEXED`
+> с `0` чанков. Такие файлы получают явный `ERROR` с маршрутом
+> `export/import as canonical CAD/BIM JSON/JSONL projection`, чтобы
+> документы не выглядели проиндексированными до typed CAD/BIM-конвертера.
+> Текстовые/JSON/Markdown проекции внутри `CAD_BIM` остаются штатным входом.
+> Live MetaDB cleanup 2026-07-04: 119 существующих raw CAD/BIM документов
+> в `BAI`/`Котельная_Лесной64` переведены из ложного `INDEXED 0` в `ERROR`;
+> backup создан рядом с `les_meta_qwen.db` перед транзакцией.
+> Checks: `uv run pytest tests/test_parse_pipeline_w14.py -q` 8/8,
+> `uv run pytest tests/test_qdrant_adapter_parse.py -q` 18/18,
+> `make verify` 2475 collected.
+
+> 0.24.0.214 — удалён smeta fast visible fallback как кодовая подмена
+> модельного ответа. При timeout/empty `_smeta_direct_model_answer()` больше
+> не генерирует case-specific сценарии, а явный smeta-mode возвращает
+> технический failure с trace `code_fallback_disabled=true`. `КП` больше не
+> ведёт в старый stub-профиль; professional-domain deterministic candidates (`smeta`,
+> `asbuilt`, `doc_registry`, `field`) не могут стать финальным visible answer
+> без модели. Корневой дефект надо чинить в provider/key routing, model call,
+> prompt/contract, retrieval или tool layer; ЛСР/ВОР не собираются regex/code-
+> ответом.
+
+> 0.24.0.215 — общий чат получил bounded model-selected tool loop:
+> `shortlist` строит доступные read-only tools, модель возвращает JSON calls,
+> код исполняет только выбранные tools, а финальный visible answer снова пишет
+> модель. `retrieval_trace.tool_loop` хранит shortlist, selected calls,
+> provider/model selector и tool results. Qdrant visualizer в Совушке починен:
+> `/graph` редиректит на mounted `/qdrant-visualizer/index.html`, поэтому
+> `visualizer.js/pca.js/data.js` грузятся same-origin. Mermaid-вкладка получила
+> live `Граф знаний` из `/api/rag/graph/full`. Сметный compact-ответ выключен
+> по умолчанию (`LES_SMETA_COMPACT_CHAT_TABLES=1` для legacy), XLSX sidecar
+> extraction больше не имеет молчаливого `5000` rows cap
+> (`LES_XLSX_EXTRACT_MAX_ROWS` только opt-in). Аудит лимитов зафиксирован в
+> `docs/ANSWER_LIMIT_AUDIT.md`. Checks: focused 96/96, `make verify`
+> 2474 collected, `make test` 2474 passed, FIRE/HVAC golden 16/16,
+> `git diff --check`, `uv lock --check`.
+
+> 0.24.0.213 — добавлен controlled tool-harness без автономного agent loop:
+> `proxy/services/tool_harness_service.py` регистрирует `dataset_map`,
+> `search_sources`, `read_source`, `read_pdf_source`, `read_excel_source` и
+> read-only filesystem tools (`roots/list/stat/read_text/search/hash`), а каждый
+> вызов возвращает `les_tool_result_v1` с `sources`, `missing`, `warnings`,
+> `trace` и `contract_check`. API `/api/tools/{registry,shortlist,call}` и CLI
+> `tools/les_tool_harness.py` дают оператору консольные рычаги, а вкладка
+> «Документы» получила блок `Tool-harness dry-run`. Filesystem работает только
+> по whitelist-root и без write; PDF/Excel tools пока честно читают indexed
+> chunks и отмечают raw page/table или sheet/range extraction как следующий слой.
 
 > 0.24.0.212 — карта источников стала видимой оператору: вкладка
 > «Документы» показывает `dataset_topic_map_v1` и `dataset_section_map_v1`

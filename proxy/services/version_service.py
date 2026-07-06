@@ -20,7 +20,7 @@ APP_VERSION = "5.1.0"                 # пользовательская «ма�
 HARNESS_VERSION = "0.24"             # веха roadmap (v0.NN); двигать на смене вехи
 # Гранулярная версия «где мы»: 0.<веха>.<фича>.<патч>. Двигать КАЖДУЮ фичу/фикс + строка в
 # docs/RELEASE_LEDGER.md. Это основной номер в /api/version и бейдже (см. docs/RELEASE_LEDGER.md).
-LES_VERSION = "0.24.0.212"
+LES_VERSION = "0.24.0.278"
 EVIDENCE_SCHEMA_VERSION = "1.0"
 EXTRACTION_SCHEMA_VERSION = "1.0"
 RESOURCE_CALC_VERSION = "0.6"
@@ -39,7 +39,9 @@ _CRITICAL_FILES = (
     "proxy/routers/datasets.py",
     "proxy/routers/lsr.py",
     "proxy/routers/chat.py",
+    "proxy/routers/speckle.py",
     "proxy/routers/doc_review.py",
+    "proxy/routers/tools.py",
     "proxy/routers/runtime.py",
     "proxy/routers/service_sources.py",
     "proxy/routers/notebooks.py",
@@ -49,6 +51,7 @@ _CRITICAL_FILES = (
     "proxy/services/context_memory_service.py",
     "proxy/services/lexical_index_service.py",
     "proxy/services/retrieval_service.py",
+    "proxy/services/cad_bim_graph.py",
     "proxy/services/clause_lookup_service.py",
     "proxy/services/notebook_service.py",
     "proxy/services/dataset_memory_service.py",
@@ -58,6 +61,7 @@ _CRITICAL_FILES = (
     "proxy/services/external_radar_service.py",
     "proxy/services/doc_review_service.py",
     "proxy/services/document_explorer_service.py",
+    "proxy/services/tool_harness_service.py",
     "proxy/services/candidate_selection_service.py",
     "proxy/services/estimate_harness_service.py",
     "proxy/services/estimate_math_service.py",
@@ -67,7 +71,6 @@ _CRITICAL_FILES = (
     "proxy/services/scoped_rag_builder.py",
     "proxy/services/skill_snippet_registry.py",
     "proxy/services/tool_trace_policy.py",
-    "proxy/services/smeta_fast_answer_service.py",
     "proxy/services/smeta_artifact_service.py",
     "proxy/services/smeta_norm_store.py",
     "proxy/services/rim_lsr_trace_service.py",
@@ -82,6 +85,8 @@ _CRITICAL_FILES = (
     "proxy/services/service_source_registry.py",
     "proxy/services/scope_service.py",
     "proxy/services/title_block_extract_service.py",
+    "proxy/services/drawing_manifest_service.py",
+    "proxy/services/pd_rd_manifest_service.py",
     "proxy/services/version_service.py",
     "proxy/services/workflow_plan_service.py",
     "proxy/routers/chat_history.py",
@@ -89,6 +94,9 @@ _CRITICAL_FILES = (
     "config/domain/nr_sp.yaml",
     "skills/smeta/SKILL.md",
     "tools/smetnoedelo_rag_import.py",
+    "tools/les_tool_harness.py",
+    "tools/drawing_manifest.py",
+    "tools/pd_rd_manifest.py",
     "tools/smeta_ru_norm_download.py",
     "tools/smeta_ru_norm_rag_ingest.py",
     "sovushka/pages/chat.py",
