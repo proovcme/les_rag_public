@@ -1,41 +1,50 @@
 # PD/RD RAG Source Map
 
-`PD/RD RAG Source Map` is a document-structure layer for retrieval over project and working documentation.
+`PD/RD RAG Source Map` — слой структурной карты для RAG по проектной и рабочей документации.
 
-The goal is simple: do not throw a 200-page construction PDF into a vector index as a bag of chunks. Project documentation already contains a machine-readable structure: volume contents, project composition, explanatory-note table of contents, sheet stamps, ciphers, sheet numbers, source file names and declared sheet counts. This layer extracts that structure first and gives the model a map before retrieval.
+Идея простая: не надо бросать 200-страничный том ПД/РД в векторный индекс как мешок чанков. В строительной документации уже есть внутренняя навигация: состав проекта, содержание тома, оглавление пояснительной записки, штампы, шифры, номера листов, имена исходных `.doc/.dwg` и заявленное количество листов.
 
-## What It Extracts
+Этот слой сначала снимает такую карту, а уже потом отдаёт её модели и retrieval.
 
-- Volume contents: designation, title, note, section, sheet number and sheet count.
-- Project composition: volume number, designation and section/subsection title.
-- Explanatory note TOC: section number, title and target sheet.
-- Sheet passport: sheet format, stamp presence, cipher, stage, sheet number, sheet count, document kind and source file name.
-- PDF text repair for common Cyrillic extraction failures.
-- Source references for every extracted row.
+## Что извлекается
 
-## Why It Matters
+- **Содержание тома:** обозначение, наименование, примечание, раздел, номер листа, количество листов.
+- **Состав проектной документации:** номер тома, обозначение, название раздела/подраздела.
+- **Оглавление ПЗ:** номер раздела, заголовок, целевой лист.
+- **Паспорт листа:** формат, наличие штампа, шифр, стадия, лист, листов, тип документа, имя исходного файла.
+- **Шифры:** нормализация и разбор на дисциплину/поддисциплину/тип документа.
+- **PDF text repair:** восстановление типичных поломок кириллического text-layer.
+- **Source refs:** ссылка на страницу/слой для каждой извлечённой строки.
 
-Typical RAG over project PDFs fails because the model sees isolated fragments without knowing where it is in the documentation set. For construction documents this is avoidable: the document set already has formal navigation.
+Важно: `.ПЗ` — это не домен и не “проект”. Это тип документа: **пояснительная записка**. Домен берётся из шифра, например `ИОС.ЭС`, а темы берутся из оглавления ПЗ.
 
-This source-map layer lets a RAG system answer questions through a structured path:
+## Зачем это нужно
 
-1. Identify the relevant discipline or volume.
-2. Choose the document type, for example explanatory note or graphical sheet.
-3. Use the declared table of contents and sheet register.
-4. Retrieve exact pages/sections.
-5. Let the model answer using sources.
+Обычный RAG по проектным PDF часто ломается не потому, что модель плохая, а потому что она видит разрозненные фрагменты без карты документа. Для ПД/РД это особенно обидно: карта уже лежит внутри самого тома.
 
-## Current MVP
+Правильный маршрут выглядит так:
 
-The current MVP is read-only and deterministic. It does not call an LLM and does not replace the model's answer. It only prepares navigation data.
+1. Найти дисциплину или том.
+2. Выбрать тип документа: ПЗ, графическая часть, спецификация, ВОР и т.д.
+3. Использовать содержание тома и оглавление.
+4. Перейти к нужному листу/разделу.
+5. Выполнить targeted retrieval.
+6. Дать модели ответить по источникам.
 
-Supported input:
+## Текущий MVP
 
-- PDF volumes with text layer.
-- Russian PD/RD style documentation.
-- SPDS/ESKD-like title blocks and volume registers.
+Текущий слой read-only и детерминированный. Он не вызывает LLM и не заменяет ответ модели. Он только готовит навигационные данные.
 
-Current output schemas:
+Поддерживается:
+
+- PDF-тома с текстовым слоем;
+- русская ПД/РД;
+- СПДС/ЕСКД-подобные штампы и реестры;
+- многостраничное содержание тома;
+- многостраничный состав проектной документации;
+- оглавление пояснительной записки.
+
+Текущие схемы:
 
 - `pd_rd_manifest_v1`
 - `volume_contents_register_v1`
@@ -43,28 +52,32 @@ Current output schemas:
 - `pz_toc_v1`
 - `pd_rd_sheet_summary_v1`
 
-## CLI Shape
+## CLI
 
 ```bash
 python tools/pd_rd_manifest.py path/to/volume.pdf --output pd_rd_manifest.json
 ```
 
-The JSON output can be stored as a sidecar next to the indexed document and used by retrieval, UI navigation or agent tools.
+JSON можно хранить как sidecar рядом с документом и использовать в RAG, UI-навигации или agent/tool harness.
 
 ## Roadmap
 
-- Cross-check declared contents against actual sheet stamps.
-- Build a document graph: project section -> volume -> document kind -> sheet/page.
-- Add table extraction for calculation tables in explanatory notes.
-- Add graphical-sheet reader for drawn tables, equipment schedules and electrical schemes.
-- Expose the map in UI as a human-readable document navigator.
-- Use the map to constrain retrieval before broad vector fallback.
+- Сверка заявленного содержания тома с фактическими штампами листов.
+- Граф документа: раздел проекта -> том -> тип документа -> лист/страница.
+- Извлечение расчётных таблиц из ПЗ.
+- Reader графической части: drawn tables, ведомости, схемы, оборудование.
+- UI-навигатор по ПД/РД.
+- Retrieval через карту перед широким vector fallback.
 
-## Non-Goals
+## Не цели
 
-- It is not an OCR engine.
-- It is not a CAD/DWG parser.
-- It does not make engineering conclusions by itself.
-- It does not generate final answers without a model.
+- Это не OCR-движок.
+- Это не CAD/DWG parser.
+- Это не инженерный эксперт, который сам делает выводы.
+- Это не генератор финальных ответов без модели.
 
-The model still reads, reasons and answers. The source map gives it rails.
+Модель всё ещё читает, рассуждает и отвечает. Source map даёт ей рельсы.
+
+## English Summary
+
+`PD/RD RAG Source Map` is a deterministic pre-RAG structure extractor for Russian construction project and working documentation. It extracts volume contents, project composition, explanatory-note TOC, sheet stamps, ciphers, sheet numbers and source references before vector retrieval. The goal is to give the model a document map first, then run targeted retrieval and source-grounded answering. It is read-only, does not call an LLM, and does not replace the final model answer.
