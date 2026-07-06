@@ -13,6 +13,7 @@
 | Файл | Что это |
 |---|---|
 | `SESSION_SUMMARY*.md` (×12) | датированные саммари сессий (06-19); хронология, не текущее состояние |
+| `SESSION_HANDOFF_2026-07-06_PD_RD_RAG.md` | хендофф по ветке `feat/les3-p1`: PD/RD source-map, drawing manifest MVP, ГОСТ Р 21.101-2026 в live RAG, что продолжать |
 | `SESSION_HANDOFF_2026-06-27.md`, `HANDOFF.md` | хендоффы конкретных сессий — заменены ROADMAP_TO_V1 + git-историей |
 | `DOCS_SESSIONS_AUDIT_REPORT_2026-06-25.md` | аудит доков/сессий на дату |
 | `PROJECT_HISTORY_REPORT_2026-06-26.md` | исторический отчёт по проекту |
