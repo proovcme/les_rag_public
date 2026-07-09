@@ -7,14 +7,40 @@
 ## Текущее состояние (2026-07-09)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.325  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.326  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.325 smeta BAP norm-candidate visibility + review boundary
+задеплоено на рантайм:     0.24.0.326 smeta BAP false-analog guard
 НЕ задеплоено:             нет по runtime-critical bundle; рабочее дерево ещё не закоммичено
-рантайм /api/version:      0.24.0.325, deploy stamp ok, runtime_alignment aligned
+рантайм /api/version:      0.24.0.326, deploy stamp ok, runtime_alignment aligned
 ```
 
+> 0.24.0.326 — smeta BAP false-analog guard
+>
+> Дата: 2026-07-09
+> Статус: deployed to runtime.
+> Причина: fresh БАП после 0.24.0.325 поднялся до 17/19 строк, но итог
+> раздулся до 2 697 674 руб. из-за ложных слабых аналогов: временное защитное
+> укрытие плёнкой было посчитано декоративной ПВХ-плёнкой, а ГКЛ-проём под
+> ревизионный люк — люком на крыше. Монтаж ревизионного лючка из-за слов
+> “под покраску” уходил в окраску, а не в люки.
+> Правки: `search_norm` для `finish/hatch` теперь маршрутизирует `люк/люч/ревизион`
+> раньше окраски и поднимает `ГЭСН17-01-010-*`; защитное укрытие плёнкой
+> штрафует декоративную/самоклеящуюся ПВХ-плёнку, натяжные потолки и отделочные
+> операции; prompt/review явно запрещает крыши/фасады/оконные и дверные проёмы
+> как аналоги ГКЛ-проёма и декоративную плёнку как аналог временного укрытия.
+> Проверки: `uv run pytest tests/test_chat_harness_format.py::test_smeta_direct_norm_lookup_is_model_selected
+> tests/test_chat_harness_format.py::test_smeta_norm_lookup_prompt_keeps_deeper_candidate_window
+> tests/test_chat_harness_format.py::test_smeta_structured_norm_review_keeps_model_chosen_analog
+> tests/test_chat_harness_format.py::test_smeta_structured_norm_review_can_replace_empty_finish_draft
+> tests/test_chat_harness_format.py::test_smeta_structured_norm_choice_gets_norm_card_and_mismatch_rule
+> tests/test_estimate_harness.py::test_search_norm_routes_revision_hatch_to_gesn17
+> tests/test_estimate_harness.py::test_search_norm_routes_hidden_hatch_even_when_under_painting
+> tests/test_estimate_harness.py::test_search_norm_routes_reed_ceiling_demolition_to_repair_collection -q` → `8 passed`;
+> `py_compile` + `git diff --check` по затронутым файлам → ok. Runtime:
+> `/api/version` → `0.24.0.326`, deploy stamp ok,
+> `runtime_alignment=aligned`; fresh БАП cloud rerun pending in this session.
+>
 > 0.24.0.325 — smeta BAP norm-candidate visibility + review boundary
 >
 > Дата: 2026-07-09
