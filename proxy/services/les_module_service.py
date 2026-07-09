@@ -50,6 +50,7 @@ MODULE_REGISTRY: dict[str, ModuleSpec] = {
             "работ final/partial/scenario, покажи допущения и добор."
         ),
         skill_snippets=(
+            "smeta.gesn_pricing_workflow",
             "smeta.specification_to_bor",
             "smeta.quantity_conflict",
             "smeta.rim_scenario_estimate",

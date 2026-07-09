@@ -33,6 +33,8 @@
 from __future__ import annotations
 
 import re
+import os
+import json
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -271,6 +273,14 @@ class PriceBook:
 
 
 DEFAULT_PRICE_ROOT = Path("data/price_base")
+PRICEBOOK_MANIFEST_PATH = Path("config/domain/pricebook_manifest.json")
+_SCRATCH_PRICEBOOK_STEMS = {"spb_refresh"}
+_DEFAULT_PRICEBOOK_STEMS = (
+    "sankt-peterburg_2kv2026",
+    "spb_2kv2026",
+    "spb_2kv2025",
+    "sankt-peterburg_2kv2025",
+)
 
 
 @lru_cache(maxsize=8)
@@ -279,8 +289,132 @@ def get_pricebook(parquet_path: str) -> PriceBook:
     return PriceBook.from_parquet(parquet_path)
 
 
-def available_pricebooks(root: str | Path = DEFAULT_PRICE_ROOT) -> list[str]:
+def _is_scratch_pricebook(path: str | Path) -> bool:
+    return Path(path).stem in _SCRATCH_PRICEBOOK_STEMS or Path(path).stem.endswith("_refresh")
+
+
+@lru_cache(maxsize=1)
+def pricebook_manifest() -> dict[str, Any]:
+    """Operator-maintained visibility/alias manifest for local pricebooks."""
+    try:
+        if PRICEBOOK_MANIFEST_PATH.exists():
+            data = json.loads(PRICEBOOK_MANIFEST_PATH.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+    except Exception:
+        return {}
+    return {}
+
+
+def _manifest_aliases() -> dict[str, str]:
+    raw = pricebook_manifest().get("aliases")
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key, val in raw.items():
+        src = str(key or "").strip()
+        dst = str(val or "").strip()
+        if src and dst and src != dst:
+            out[src] = dst
+    return out
+
+
+def _manifest_hidden_stems() -> set[str]:
+    raw = pricebook_manifest().get("hidden_stems")
+    if not isinstance(raw, list):
+        return set()
+    return {str(item or "").strip() for item in raw if str(item or "").strip()}
+
+
+def _canonical_stem(stem: str, stems: set[str]) -> str:
+    aliases = _manifest_aliases()
+    seen: set[str] = set()
+    current = str(stem or "").strip()
+    while current and current in aliases and current not in seen:
+        seen.add(current)
+        candidate = aliases[current]
+        if candidate not in stems:
+            break
+        current = candidate
+    return current or stem
+
+
+def _is_hidden_pricebook(path: str | Path, stems: set[str]) -> bool:
+    stem = Path(path).stem
+    if _is_scratch_pricebook(path):
+        return False
+    if stem not in _manifest_hidden_stems():
+        return False
+    canonical = _canonical_stem(stem, stems)
+    # Do not hide a legacy alias in isolated test/dev roots unless its canonical
+    # replacement is physically present in the same root.
+    return canonical != stem and canonical in stems
+
+
+def available_pricebooks(
+    root: str | Path = DEFAULT_PRICE_ROOT,
+    *,
+    include_scratch: bool = False,
+    include_hidden: bool = False,
+) -> list[str]:
     root = Path(root)
     if not root.exists():
         return []
-    return sorted(str(p) for p in root.glob("*.parquet"))
+    paths = sorted(root.glob("*.parquet"))
+    stems = {p.stem for p in paths}
+    if not include_scratch:
+        paths = [p for p in paths if not _is_scratch_pricebook(p)]
+    if not include_hidden:
+        paths = [p for p in paths if not _is_hidden_pricebook(p, stems)]
+    return [str(p) for p in paths]
+
+
+def resolve_pricebook_path(
+    book: str | None = None,
+    *,
+    root: str | Path = DEFAULT_PRICE_ROOT,
+    allow_scratch: bool = False,
+) -> Optional[str]:
+    """Resolve a pricebook stem/path to a local Parquet path.
+
+    With no explicit book use the deterministic system default. This keeps
+    chat, LSR traces and price lookup on the same region/period instead of
+    accidentally using the first alphabetic Parquet file.
+    """
+    try:
+        books = available_pricebooks(
+            root,
+            include_scratch=allow_scratch or bool(book),
+            include_hidden=bool(book),
+        )
+    except TypeError:
+        # Backward-compatible with old tests/plugins that monkeypatch the
+        # function before the include_scratch keyword existed.
+        books = available_pricebooks(root)
+    if not books:
+        return None
+    stems = {Path(path).stem: path for path in books}
+    if book:
+        stem = _canonical_stem(Path(book).stem, set(stems))
+        return stems.get(stem)
+
+    preferred: list[str] = []
+    configured = os.getenv("LES_DEFAULT_PRICEBOOK", "").strip()
+    if configured:
+        preferred.append(Path(configured).stem)
+    manifest_default = str(pricebook_manifest().get("default_book") or "").strip()
+    if manifest_default:
+        preferred.append(Path(manifest_default).stem)
+    preferred.extend(_DEFAULT_PRICEBOOK_STEMS)
+    preferred.extend(stem for stem in sorted(stems) if "2026" in stem)
+    preferred.extend(sorted(stems))
+
+    seen: set[str] = set()
+    for stem in preferred:
+        if stem in seen:
+            continue
+        seen.add(stem)
+        path = stems.get(stem)
+        if path:
+            return path
+    return books[0]

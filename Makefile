@@ -1,17 +1,21 @@
 # Л.Е.С. (LES_v2) — dev-гейт. Офлайн, без живых сервисов (Qdrant/MLX не нужны).
 # Требует uv. `make verify` — перед объявлением правки готовой.
-.PHONY: verify test test-focused smoke-basic public-check ship-check ship-full-check deploy-runtime post-deploy-smoke ship ship-full help
+.PHONY: verify test test-focused smeta-base smeta-base-source smeta-base-update smoke-basic public-check ship-check ship-full-check deploy-runtime post-deploy-smoke ship ship-full help
 
 PKGS := backend proxy sovushka tools sovushka_ng.py proxy_server.py mlx_host.py
 SMOKE_ARGS ?=
 FOCUS_TESTS ?= tests/test_sovushka_chat.py tests/test_static_assets.py tests/test_smeta_chat_service.py tests/test_estimate_harness.py tests/test_profile_resolver.py tests/test_doc_review_gost_21_101_2026.py tests/test_doc_review_chat_tool.py tests/test_title_block_extract.py tests/test_service_source_registry.py
 POST_DEPLOY_RETRIES ?= 12
 POST_DEPLOY_DELAY ?= 1
+SMETA_BASE_UPDATE_ARGS ?= --all --rate 1.0
 
 help:
 	@echo "make verify       — офлайн-гейт: compileall (синтаксис) + pytest --collect-only (импорт-смоук)"
 	@echo "make test         — полная сюита pytest (часть тестов требует живых Qdrant/MLX)"
 	@echo "make test-focused — быстрые профильные pytest; переопредели FOCUS_TESTS='tests/test_x.py ...'"
+	@echo "make smeta-base   — пересобрать checked unified parquet → structured SQLite → SMETA_SERVICE cards без скачивания"
+	@echo "make smeta-base-source — пересобрать raw/cache → unified parquet → smeta-base без скачивания"
+	@echo "make smeta-base-update — скачать/обновить ГЭСН из ФГИС и прогнать полный smeta-base pipeline; args: SMETA_BASE_UPDATE_ARGS='--all --rate 1.0'"
 	@echo "make smoke-basic  — L1 HTTP-smoke базовых функций против живого runtime (:8050/:8051)"
 	@echo "make public-check — guardrail перед публичным git: tracked data/secrets/license/docs"
 	@echo "make ship-check   — быстрый гейт без деплоя: verify → test-focused → smoke-basic"
@@ -30,6 +34,17 @@ test:
 
 test-focused:
 	uv run python -m pytest $(FOCUS_TESTS)
+
+smeta-base:
+	uv run python -m tools.build_smeta_structured_base
+	uv run python -m tools.build_smeta_service_rag
+
+smeta-base-source:
+	uv run python -m tools.gesn_unify_base
+	$(MAKE) smeta-base
+
+smeta-base-update:
+	uv run python -m tools.gesn_update_from_fgis $(SMETA_BASE_UPDATE_ARGS)
 
 smoke-basic:
 	uv run python tools/basic_function_smoke.py $(SMOKE_ARGS)

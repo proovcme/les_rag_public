@@ -78,6 +78,20 @@ SNIPPETS: dict[str, SkillSnippet] = {
         ),
         ("rim", "scenario"),
     ),
+    "smeta.gesn_pricing_workflow": SkillSnippet(
+        "smeta.gesn_pricing_workflow",
+        "smeta",
+        "Use LES norm and price sources without code-side norm decisions.",
+        (
+            "Сметчик сам выбирает нормируемую работу и полный шифр нормы; код после этого только "
+            "раскрывает ресурсы, цены, НР/СП и арифметику. Ход по строке: исходная работа -> "
+            "нормируемая работа -> семейство ГЭСН/ГЭСНм/ГЭСНп/ГЭСНр -> сборник/таблица/код -> "
+            "ресурсы нормы -> книга ФГИС/КАЦ/КП -> ЛСР. В ЛЕС физически есть нормы ГЭСН-2022 "
+            "и ГЭСНм10/ГЭСНм38, книги цен вроде spb_2kv2026/moskva_2kv2026, НР/СП и коэффициенты; "
+            "неполная база вроде 'ГЭСНм10' оставляет строку в ЛСР с 0.00 и примечанием."
+        ),
+        ("gesn", "rim", "pricing", "sources"),
+    ),
     "smeta.active_continuation": SkillSnippet(
         "smeta.active_continuation",
         "smeta",

@@ -42,7 +42,7 @@ def _norm_name(s: Any) -> str:
 
 
 _NORM_REF_RE = re.compile(
-    r"(ГЭСН(?:мр|м|п|р)?|ФЕР(?:мр|м|п|р)?|ТЕР(?:мр|м|п|р)?)?\s*"
+    r"(ГЭСН(?:мр|м|п|р)?|ФЕР(?:мр|м|п|р)?|ТЕР(?:мр|м|п|р)?)?\s*:?\s*"
     r"(\d{2}[-–]\d{2}[-–]\d{3}[-–]\d{2})",
     flags=re.IGNORECASE,
 )
@@ -76,9 +76,14 @@ def _canon_unit(unit: Any) -> str:
     s = re.sub(r"\s+", "", s)
     s = s.replace("п.м.", "м").replace("п.м", "м").replace("м.п.", "м").replace("м.п", "м")
     s = re.sub(r"^\d+(?=[а-яa-z])", "", s).strip(".,;:")
+    s = re.sub(r"[()]", "", s)
     aliases = {"мп": "м", "пм": "м", "meter": "м", "meters": "м", "m": "м", "m2": "м2", "m3": "м3"}
     if s in aliases:
         return aliases[s]
+    if "линия" in s or "цепь" in s or s.startswith(("канал", "измерен")):
+        return "линия"
+    if s.startswith(("систем", "объект", "комплекс", "статив", "шкаф", "устройств", "аппарат", "точк", "порт", "мест", "номер", "отверст")):
+        return "шт"
     if s.startswith(("шт", "штук", "компл", "комплект", "порт", "точк")):
         return "шт"
     if s.startswith("кг"):
@@ -126,6 +131,30 @@ def _first_value(row: dict[str, Any], *keys: str) -> Any:
         if key in row and row.get(key) not in (None, ""):
             return row.get(key)
     return None
+
+
+def _piece_area_m2_from_visible_row(row: dict[str, Any]) -> float | None:
+    text = " ".join(
+        str(_first_value(row, key) or "")
+        for key in ("title", "name", "work", "наименование", "работа", "description")
+    )
+    text = text.replace(",", ".").lower()
+    match = re.search(r"(\d+(?:\.\d+)?)\s*[xх×]\s*(\d+(?:\.\d+)?)\s*(мм|mm|см|cm|м|m)?", text)
+    if not match:
+        return None
+    left = float(match.group(1))
+    right = float(match.group(2))
+    unit = (match.group(3) or "мм").lower()
+    if unit in {"мм", "mm"}:
+        scale = 0.001
+    elif unit in {"см", "cm"}:
+        scale = 0.01
+    else:
+        scale = 1.0
+    area = left * scale * right * scale
+    if area <= 0:
+        return None
+    return area
 
 
 @dataclass(frozen=True)
@@ -424,6 +453,8 @@ def build_lsr_trace(
         )
         sec_name = str(pos.get("section") or "").strip() or "Без раздела"
         trace = {**trace, "section": sec_name}
+        if pos.get("source_row") is not None:
+            trace["source_row"] = pos.get("source_row")
         entry = by_section.get(sec_name)
         if entry is None:
             entry = {"section": sec_name, "positions": [], "total": 0.0}
@@ -526,6 +557,18 @@ def _norm_qty_from_visible_row(row: dict[str, Any], code: str, norm: dict[str, A
         }
 
     source_base_unit = _canon_unit(source_unit)
+    if source_base_unit == "шт" and norm_base_unit == "м2":
+        area_m2 = _piece_area_m2_from_visible_row(row)
+        if area_m2 is not None:
+            converted = round(float(raw_qty) * area_m2, 9)
+            norm_qty = round(converted / factor, 9)
+            return norm_qty, {
+                "status": "piece_area_conversion",
+                "source_quantity": raw_qty,
+                "source_unit": source_unit,
+                "norm_unit": norm_unit,
+                "formula": f"{raw_qty} {source_unit} × {area_m2:g} м2/шт / {factor:g} = {norm_qty}",
+            }
     conv = _unit_conversion_factor(source_base_unit, norm_base_unit)
     if conv is None:
         return None, {

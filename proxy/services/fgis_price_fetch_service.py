@@ -241,10 +241,9 @@ def lookup_local_first(
     """
     path: Optional[str] = None
     if book:
-        path = next((p for p in fps.available_pricebooks() if Path(p).stem == book), None)
+        path = fps.resolve_pricebook_path(book, root=fps.DEFAULT_PRICE_ROOT, allow_scratch=True)
     else:
-        books = fps.available_pricebooks()
-        path = books[0] if books else None
+        path = fps.resolve_pricebook_path(root=fps.DEFAULT_PRICE_ROOT)
 
     if path:
         rec = fps.get_pricebook(path).lookup(code)

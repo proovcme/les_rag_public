@@ -51,11 +51,10 @@ def _resolve_book(book: str | None):
     """Имя книги цен → PriceBook | None (для lookup по коду)."""
     from proxy.services import fgis_price_service as fps
 
-    books = fps.available_pricebooks()
-    if not books:
+    path = fps.resolve_pricebook_path(book, allow_scratch=bool(book))
+    if not path:
         return None
-    path = next((p for p in books if Path(p).stem == book), None) if book else books[0]
-    return fps.get_pricebook(path) if path else None
+    return fps.get_pricebook(path)
 
 
 def _resource_price(

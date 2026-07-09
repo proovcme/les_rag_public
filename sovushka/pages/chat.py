@@ -696,6 +696,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                             _apply_scope({int(_sc[2:])}, set())
                         elif _sc.startswith("ds:") and _sc[3:]:
                             _apply_scope(set(), {_sc[3:]})
+                        _tf = (context.client.request.query_params.get("target_file") or "").strip()
+                        if _tf:
+                            _pending_target_file["v"] = _tf[:512]
                     except Exception:
                         pass
                     # «Карта объекта» убрана из чата (Олег).

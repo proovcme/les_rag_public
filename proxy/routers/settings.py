@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 ENV_PATH = Path(".env")
-DEFAULT_OPENAI_MODEL = "gpt-4.1"
+DEFAULT_OPENAI_MODEL = "gpt-5.4"
 
 # Локальные MLX-модели чата под Apple M4/24GB: лёгкий 4B — основной (≈20 ток/с, 2.6 ГБ),
 # тяжёлый 9B — резерв под качество (≈5 ток/с, 5.6 ГБ; душит память бокса). Переключение
@@ -209,8 +209,10 @@ def _env_bool(name: str, default: str = "false") -> bool:
 
 
 def _provider_settings_payload() -> dict[str, object]:
+    active = os.getenv("LES_LLM_PROVIDER", "mlx")
     return {
-        "active": os.getenv("LES_LLM_PROVIDER", "mlx"),
+        "active": active,
+        "effective": _effective_provider_payload(active),
         "openrouter": {
             "base_url": os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
             "model": os.getenv("OPENROUTER_MODEL", ""),
@@ -234,6 +236,40 @@ def _provider_settings_payload() -> dict[str, object]:
             "model": os.getenv("LEMONADE_MODEL", ""),
             "api_key_set": bool(os.getenv("LEMONADE_API_KEY", "")),
         },
+    }
+
+
+def _effective_provider_payload(configured_provider: str | None = None) -> dict[str, object]:
+    """Provider actually used by chat generation, with no secrets exposed."""
+    configured = (configured_provider or os.getenv("LES_LLM_PROVIDER", "mlx")).strip().lower() or "mlx"
+    try:
+        from proxy.routers.chat import _llm_runtime
+
+        runtime = _llm_runtime()
+        provider = runtime.provider
+        model = runtime.model
+        chat_url = runtime.chat_url
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "configured_provider": configured,
+            "provider": "unknown",
+            "model": "",
+            "chat_url_set": False,
+            "fallback": False,
+            "reason": f"{type(exc).__name__}: {str(exc)[:160]}",
+        }
+    reason = ""
+    if configured in {"openai", "openai-compatible", "openai_compatible", "openrouter"} and provider == "mlx":
+        reason = "cloud_provider_without_api_key_fell_back_to_mlx"
+    return {
+        "configured_provider": configured,
+        "provider": provider,
+        "model": model,
+        "chat_url_set": bool(chat_url),
+        "fallback": provider != configured and not (
+            configured in {"openai-compatible", "openai_compatible"} and provider == "openai-compatible"
+        ),
+        "reason": reason,
     }
 
 

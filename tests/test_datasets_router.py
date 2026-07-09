@@ -131,6 +131,57 @@ def _upload(filename: str, content: bytes) -> UploadFile:
     return UploadFile(file=BytesIO(content), filename=filename)
 
 
+def test_external_intake_plan_keeps_maps_out_of_accepted_count(tmp_path):
+    root = tmp_path / "ns"
+    root.mkdir()
+    (root / ".DS_Store").write_bytes(b"mac")
+    for name in (
+        "22_27-05-22-Р-ЭОМ.1_19.04.2025.pdf",
+        "27_05_22_Р_ЭОМ.1 изм_7 Система бесперебойного гарантированного электропитания.pdf",
+        "27_05-22-Р-ЭОМ.1 Изм.8.3 полный.pdf",
+        "27_05-22-Р-ЭОМ.1_19.06.2025.pdf",
+    ):
+        (root / name).write_bytes(b"%PDF-1.7\n")
+    (root / "LES.md").write_text("# НС", encoding="utf-8")
+    (root / "00_dataset_map.md").write_text("# Карта", encoding="utf-8")
+
+    plan = datasets._external_intake_plan(root, dataset_name="НС_Проект")
+
+    assert plan["will_create"] == {"project": "НС", "dataset": "НС_Проект"}
+    assert plan["accepted_count"] == 4
+    assert plan["skipped_count"] == 1
+    assert plan["skipped"][0]["file_name"] == ".DS_Store"
+    assert plan["skipped"][0]["reason"] == "hidden/system"
+    assert plan["maps"] == [
+        {"file_name": "LES.md", "status": "existing"},
+        {"file_name": "00_dataset_map.md", "status": "existing"},
+    ]
+    assert "ЭОМ" in plan["disciplines"]
+    assert "ВОР/Ф9" in plan["missing_for_estimate"]
+
+
+def test_external_intake_plan_skips_raw_cad_bim_sources(tmp_path):
+    root = tmp_path / "cad"
+    root.mkdir()
+    (root / "projection.json").write_text('{"ok": true}', encoding="utf-8")
+    for name in ("model.dwg", "model.rvt", "model.ifc", "model.ifczip"):
+        (root / name).write_bytes(b"raw cad/bim")
+
+    plan = datasets._external_intake_plan(root, dataset_name="CAD_BIM_Index")
+
+    assert plan["accepted_count"] == 1
+    assert plan["accepted"][0]["file_name"] == "projection.json"
+    assert {
+        (item["file_name"], item["reason"], item.get("suffix"))
+        for item in plan["skipped"]
+    } == {
+        ("model.dwg", "unsupported_suffix", ".dwg"),
+        ("model.rvt", "unsupported_suffix", ".rvt"),
+        ("model.ifc", "unsupported_suffix", ".ifc"),
+        ("model.ifczip", "unsupported_suffix", ".ifczip"),
+    }
+
+
 class FakeHTTPResponse:
     def __init__(self, status_code: int = 200):
         self.status_code = status_code
@@ -1118,6 +1169,7 @@ async def test_index_external_starts_dataset_scoped_parse_drain(tmp_path, monkey
     assert result["status"] == "registered"
     assert result["registered_files"] == 3
     assert result["parse_started"] is True
+    assert result["dataset_map"]["status"] == "created"
     assert parse_job["type"] == "rag_parse_drain"
     assert parse_job["batch_limit"] == 2
     assert parse_job["max_batches"] == 2

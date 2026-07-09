@@ -54,6 +54,16 @@ def test_chat_admission_allows_stale_macos_swap_when_ram_is_plentiful():
     assert result.memory_state == "GREEN"
 
 
+def test_chat_admission_allows_realistic_stale_macos_swap_default():
+    result = evaluate_chat_admission(
+        current_mode={"mode": "chat"},
+        metrics_cache={"ram_free_gb": 18.6, "swap_used_gb": 4.1, "swap_pct": 75.8},
+    )
+
+    assert result.allowed is True
+    assert result.memory_state == "GREEN"
+
+
 def test_chat_admission_blocks_indexing_mode_before_memory_checks(monkeypatch):
     monkeypatch.setenv("LES_LLM_PROVIDER", "mlx")
     monkeypatch.setenv("EMBED_BACKEND", "sentence_transformers")

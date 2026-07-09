@@ -31,8 +31,16 @@ from proxy.services.context_memory_service import (
     benchmark_dataset_profile_warmup,
     build_dataset_profile,
     get_dataset_profile,
+    set_dataset_kind,
     set_dataset_operator_guidance,
     warmup_dataset_profiles,
+)
+from proxy.services.cloud_drive_service import (
+    CloudDriveError,
+    cloud_drive_provider_status,
+    discover_cloud_drive_roots,
+    list_cloud_drive_folder,
+    sync_cloud_drive_folder,
 )
 from proxy.services.dataset_memory_service import latest_file_cards, schedule_dataset_reader_pass
 from proxy.services.resource_governor import active_parse_priority_order, current_runtime_profile
@@ -125,6 +133,15 @@ class IndexExternalRequest(BaseModel):
     background: bool = False  # True → регистрация+нарезка+парс в фоне, мгновенный ответ (большие папки)
 
 
+class ExternalIntakePlanRequest(BaseModel):
+    path: str = Field(min_length=1)
+    dataset_name: str = Field(min_length=1, max_length=160)
+    project_name: str = Field(default="", max_length=160)
+
+
+EXTERNAL_SERVICE_FILENAMES = {"LES.md", "ЛЕС.md", "les.md", "лес.md", "00_dataset_map.md"}
+
+
 class ExternalDatasetSyncRequest(BaseModel):
     path: str = Field(min_length=1)
     dataset_id: str = Field(min_length=1)
@@ -132,6 +149,24 @@ class ExternalDatasetSyncRequest(BaseModel):
     parse_limit: int = Field(default=25, ge=1, le=500)
     include_deleted: bool = True
     limit: int = Field(default=50, ge=1, le=500)
+
+
+class CloudDriveListRequest(BaseModel):
+    provider: str = Field(pattern="^(google_drive|yandex_disk)$")
+    locator: str = Field(default="", max_length=2000)
+    limit: int = Field(default=200, ge=1, le=1000)
+
+
+class CloudDriveSyncRequest(BaseModel):
+    provider: str = Field(pattern="^(google_drive|yandex_disk)$")
+    locator: str = Field(min_length=1, max_length=2000)
+    dataset_id: str = Field(default="", max_length=160)
+    dataset_name: str = Field(default="", max_length=160)
+    parse: bool = True
+    parse_limit: int = Field(default=25, ge=1, le=500)
+    max_files: int = Field(default=500, ge=1, le=5000)
+    max_depth: int = Field(default=6, ge=0, le=20)
+    background: bool = False
 
 
 class ParseSchedulerRequest(BaseModel):
@@ -160,6 +195,11 @@ class DatasetProfileWarmupRequest(BaseModel):
 
 class DatasetGuidanceRequest(BaseModel):
     guidance: str = Field(default="", max_length=4000)
+    depth: str = "deep"
+
+
+class DatasetKindRequest(BaseModel):
+    kind: str = Field(default="", max_length=40)
     depth: str = "deep"
 
 
@@ -848,7 +888,7 @@ async def list_datasets(_user=Depends(require_user)):
 @router.get("/documents")
 async def list_documents(
     dataset_id: str | None = None,
-    status: str | None = Query(default=None, pattern="^(PENDING|INDEXED|ERROR|MISSING)$"),
+    status: str | None = Query(default=None, pattern="^(PENDING|INDEXED|ERROR|MISSING|SKIPPED)$"),
     q: str | None = Query(default=None, max_length=200),
     limit: int = Query(default=100, ge=1, le=5000),  # le=500 был тесен: диалог файлов датасета шлёт 1500
     offset: int = Query(default=0, ge=0),
@@ -939,6 +979,7 @@ async def list_documents(
                     WHEN 'ERROR' THEN 0
                     WHEN 'INDEXED' THEN 1
                     WHEN 'PENDING' THEN 2
+                    WHEN 'SKIPPED' THEN 3
                     ELSE 3
                 END,
                 doc.chunk_count DESC,
@@ -1126,6 +1167,21 @@ async def update_dataset_operator_guidance(
     )
 
 
+@router.patch("/datasets/{dataset_id}/profile/kind")
+async def update_dataset_kind(
+    dataset_id: str,
+    req: DatasetKindRequest,
+    _admin=Depends(require_admin),
+):
+    """Сохранить ручной тип датасета для сортировки и группировки операторского списка."""
+    return set_dataset_kind(
+        dataset_id,
+        req.kind,
+        storage_root=Path("storage/datasets"),
+        depth=req.depth,
+    )
+
+
 @router.post("/datasets/profiles/warmup")
 async def warmup_dataset_context_profiles(req: DatasetProfileWarmupRequest, _admin=Depends(require_admin)):
     """Прогреть паспорта датасетов. No-reindex: читает только MetaDB/lexical index."""
@@ -1203,6 +1259,51 @@ async def extract_body_write(dataset_id: str, confirm_runtime_write: bool = Fals
     # blocked → 200 с самоописывающим отчётом (write_blocked + wrote_sidecars=0 + dry_run=True),
     # GUI показывает причину и следующее действие; оригиналы не тронуты в любом случае.
     return rep
+
+
+@router.get("/datasets/{dataset_id}/pdf-extract/status")
+async def pdf_extract_status_endpoint(dataset_id: str, _admin=Depends(require_admin)):
+    """Read-only статус PDF source-map: есть ли sidecar, stale и покрытие. Без reindex."""
+    from proxy.services.project_pdf_extract_service import project_pdf_extract_status
+
+    return await asyncio.to_thread(
+        project_pdf_extract_status,
+        dataset_id,
+        storage_root=_EXTRACT_STORAGE_ROOT,
+    )
+
+
+@router.post("/datasets/{dataset_id}/pdf-extract/run")
+async def pdf_extract_run_endpoint(
+    dataset_id: str,
+    force: bool = False,
+    max_files: int = Query(80, ge=1, le=500),
+    max_pages: int = Query(260, ge=1, le=2000),
+    _admin=Depends(require_admin),
+):
+    """Построить project_pdf_extract_v1 sidecars. Пишет только _les_pdf_extract, индекс не трогает."""
+    from proxy.services.project_pdf_extract_service import run_project_pdf_extract
+
+    return await asyncio.to_thread(
+        run_project_pdf_extract,
+        dataset_id,
+        storage_root=_EXTRACT_STORAGE_ROOT,
+        max_files=max_files,
+        max_pages=max_pages,
+        force=force,
+    )
+
+
+@router.get("/datasets/{dataset_id}/pdf-extract/summary")
+async def pdf_extract_summary_endpoint(dataset_id: str, _admin=Depends(require_admin)):
+    """Последняя PDF source-map summary для датасета. Missing возвращается как 200 с warnings."""
+    from proxy.services.project_pdf_extract_service import project_pdf_extract_summary
+
+    return await asyncio.to_thread(
+        project_pdf_extract_summary,
+        dataset_id,
+        storage_root=_EXTRACT_STORAGE_ROOT,
+    )
 
 
 @router.get("/graph/edges")
@@ -1630,6 +1731,206 @@ def _auto_run_pipelines(root, les_md: dict | None) -> None:
         logger.info("[AUTO-PIPELINE] ид→asbuilt запущен в фоне: %s", root)
 
 
+def _project_name_from_dataset(dataset_name: str, explicit: str = "") -> str:
+    value = (explicit or "").strip()
+    if value:
+        return value
+    value = (dataset_name or "").strip()
+    for suffix in ("_Проект", " Проект", "_Project", " Project", "_Index"):
+        if value.endswith(suffix):
+            value = value[: -len(suffix)]
+            break
+    return value.strip(" _-") or (dataset_name or "Проект").strip()
+
+
+def _discipline_hints(name: str) -> list[str]:
+    text = re.sub(r"[^A-ZА-Я0-9]+", "_", name.upper())
+    parts = {part for part in text.split("_") if part}
+    hints: list[str] = []
+    for token in ("ЭОМ", "ЭО", "ИОС", "ОВ", "ВК", "АР", "КР", "СС", "АПС", "СОУЭ", "СКС", "ТМ"):
+        if any(part == token or (token in {"ИОС", "ЭОМ"} and part.startswith(token)) for part in parts):
+            hints.append(token)
+    if "БЕСПЕРЕБО" in text and "ЭОМ" not in hints:
+        hints.append("ЭОМ")
+    return hints
+
+
+def _estimate_role_hint(name: str) -> str:
+    text = name.casefold()
+    if any(token in text for token in ("вор", "ведомость объем", "ведомость объём", "ф9", "форма 9")):
+        return "ВОР/Ф9"
+    if any(token in text for token in ("лср", "локальн", "смет")):
+        return "ЛСР"
+    if "специф" in text:
+        return "спецификация"
+    if any(token in text for token in ("коммерчес", "кп", "кац")):
+        return "КП/КАЦ"
+    if any(token in text for token in ("тз", "техническ")):
+        return "ТЗ"
+    if any(token in text.upper() for token in ("ЭОМ", "ИОС", "ОВ", "ВК", "АР", "КР")):
+        return "проектная документация"
+    return "unknown"
+
+
+def _external_intake_plan(root: Path, *, dataset_name: str, project_name: str = "") -> dict[str, Any]:
+    suffixes = rag_upload_suffixes()
+    accepted: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    disciplines: set[str] = set()
+    role_counts: dict[str, int] = {}
+    bytes_total = 0
+
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root).as_posix()
+        if path.name in {"LES.md", "ЛЕС.md", "les.md", "лес.md", "00_dataset_map.md"}:
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            skipped.append({"file_name": rel, "reason": "stat_failed"})
+            continue
+        if path.name.startswith("."):
+            skipped.append({"file_name": rel, "reason": "hidden/system"})
+            continue
+        if "_originals" in path.parts:
+            skipped.append({"file_name": rel, "reason": "original_archive"})
+            continue
+        if not is_within_external_root(path, root):
+            skipped.append({"file_name": rel, "reason": "outside_root"})
+            continue
+        suffix = path.suffix.lower()
+        if suffix not in suffixes:
+            skipped.append({"file_name": rel, "reason": "unsupported_suffix", "suffix": suffix, "size_bytes": size})
+            continue
+
+        role = _estimate_role_hint(path.name)
+        for hint in _discipline_hints(path.name):
+            disciplines.add(hint)
+        role_counts[role] = role_counts.get(role, 0) + 1
+        bytes_total += size
+        accepted.append(
+            {
+                "file_name": rel,
+                "suffix": suffix,
+                "size_bytes": size,
+                "role_hint": role,
+                "discipline_hints": _discipline_hints(path.name),
+            }
+        )
+
+    has_estimate_inputs = any(
+        item["role_hint"] in {"ВОР/Ф9", "ЛСР", "спецификация", "КП/КАЦ"}
+        for item in accepted
+    )
+    missing_for_estimate = [] if has_estimate_inputs else [
+        "XLSX/XML сметные выгрузки",
+        "локальные сметы",
+        "ВОР/Ф9",
+        "спецификации",
+        "КП/ресурсные ведомости",
+    ]
+    return {
+        "status": "ok",
+        "source_root": root.as_posix(),
+        "project_name": _project_name_from_dataset(dataset_name, project_name),
+        "dataset_name": dataset_name.strip(),
+        "will_create": {
+            "project": _project_name_from_dataset(dataset_name, project_name),
+            "dataset": dataset_name.strip(),
+        },
+        "accepted_count": len(accepted),
+        "accepted_bytes": bytes_total,
+        "skipped_count": len(skipped),
+        "accepted": accepted[:200],
+        "skipped": skipped[:200],
+        "maps": [
+            {"file_name": "LES.md", "status": "existing" if (root / "LES.md").exists() else "planned"},
+            {
+                "file_name": "00_dataset_map.md",
+                "status": "existing" if (root / "00_dataset_map.md").exists() else "planned",
+            },
+        ],
+        "disciplines": sorted(disciplines),
+        "role_counts": dict(sorted(role_counts.items())),
+        "missing_for_estimate": missing_for_estimate,
+        "warnings": [] if accepted else ["supported_documents_not_found"],
+    }
+
+
+def _render_external_dataset_map(plan: dict[str, Any]) -> str:
+    lines = [
+        "<!-- generated: les_external_intake_plan_v1 -->",
+        f"# Карта датасета: {plan.get('dataset_name') or ''}",
+        "",
+        "## План загрузки",
+        "",
+        f"- Будет создано/обновлено: проект `{plan.get('project_name')}`, dataset `{plan.get('dataset_name')}`.",
+        f"- Источник: `{plan.get('source_root')}`.",
+        f"- Принято файлов: {plan.get('accepted_count', 0)}.",
+        f"- Пропущено файлов: {plan.get('skipped_count', 0)}.",
+        f"- Дисциплины: {', '.join(plan.get('disciplines') or []) or 'не распознаны'}.",
+        "",
+        "## Принято",
+        "",
+        "| Файл | Тип | Роль | Размер |",
+        "|---|---|---|---:|",
+    ]
+    for item in plan.get("accepted") or []:
+        lines.append(
+            f"| `{item.get('file_name')}` | `{item.get('suffix')}` | "
+            f"{item.get('role_hint') or 'unknown'} | {int(item.get('size_bytes') or 0)} |"
+        )
+    lines.extend(["", "## Пропущено", "", "| Файл | Причина |", "|---|---|"])
+    for item in plan.get("skipped") or []:
+        lines.append(f"| `{item.get('file_name')}` | {item.get('reason') or ''} |")
+    missing = plan.get("missing_for_estimate") or []
+    lines.extend(["", "## Не хватает для сметы", ""])
+    if missing:
+        lines.extend(f"- {item}" for item in missing)
+    else:
+        lines.append("- Базовые сметные входы в папке распознаны.")
+    lines.extend(
+        [
+            "",
+            "## Правило работы",
+            "",
+            "Эта карта — навигационный слой. Для ответа использовать конкретные документы и source_refs; "
+            "для расчётов не заменять отсутствующие ВОР/ЛСР/спецификации проектными PDF.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _ensure_external_dataset_map(root: Path, plan: dict[str, Any]) -> dict[str, Any]:
+    path = root / "00_dataset_map.md"
+    text = _render_external_dataset_map(plan)
+    action = "created"
+    if path.exists():
+        try:
+            current = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            current = ""
+        if "generated: les_external_intake_plan_v1" not in current:
+            return {"path": path.as_posix(), "status": "kept_existing"}
+        action = "updated"
+    path.write_text(text, encoding="utf-8")
+    return {"path": path.as_posix(), "status": action}
+
+
+@router.post("/external/intake-plan")
+async def external_intake_plan(req: ExternalIntakePlanRequest, _admin=Depends(require_admin)):
+    root = validate_external_source(req.path)
+    return await asyncio.to_thread(
+        _external_intake_plan,
+        root,
+        dataset_name=req.dataset_name,
+        project_name=req.project_name,
+    )
+
+
 @router.post("/index-external")
 async def index_external(req: IndexExternalRequest, _admin=Depends(require_admin)):
     """In-place индексация одобренной внешней папки.
@@ -1676,6 +1977,31 @@ async def _index_external_run(state, req, root, dataset) -> dict:
         except Exception as err:  # noqa: BLE001 — нарезка не должна ронять индексацию
             logger.warning("[INDEX-EXT] авто-нарезка пропущена: %s", err)
 
+    # Auto-init ДО регистрации: дал папку индексировать → LES.md и карта появляются как
+    # первые документы датасета, а не остаются вне индекса до следующего синка.
+    les_md_summary = None
+    map_summary = None
+    intake_plan = await asyncio.to_thread(_external_intake_plan, root, dataset_name=dataset.name)
+    if int(intake_plan.get("accepted_count") or 0) <= 0:
+        raise HTTPException(400, f"в папке нет поддерживаемых документов: {root}")
+    try:
+        from proxy.services.les_md_service import read_and_bind
+
+        les_md_summary = await asyncio.to_thread(read_and_bind, root, write_draft=True)
+        intake_plan = await asyncio.to_thread(_external_intake_plan, root, dataset_name=dataset.name)
+        map_summary = await asyncio.to_thread(_ensure_external_dataset_map, root, intake_plan)
+        # #2 симметрия: привязать СОЗДАННЫЙ датасет к объекту (kind='dataset'), а не только папку.
+        # Иначе датасет и проект жили раздельно → режим датасета терял LES.md, обратный поиск пуст.
+        _md_pid = int((les_md_summary or {}).get("project_id") or 0)
+        if _md_pid:
+            from proxy.services.project_service import link_entity
+
+            await asyncio.to_thread(link_entity, _md_pid, "dataset", req.dataset_id)
+        if os.getenv("LES_AUTO_PIPELINES", "true").lower() in ("1", "true", "yes", "on"):
+            _auto_run_pipelines(root, les_md_summary)
+    except Exception as err:  # noqa: BLE001 — auto-init не должен ронять регистрацию документов
+        logger.warning("[LES.md] auto-init при индексации %s: %s", root, err)
+
     suffixes = rag_upload_suffixes()
     registered = 0
     skipped_unsupported = 0
@@ -1691,6 +2017,9 @@ async def _index_external_run(state, req, root, dataset) -> dict:
             skipped_outside_root += 1
             continue
         resolved = path.resolve()
+        if resolved.name in EXTERNAL_SERVICE_FILENAMES:
+            skipped_unsupported += 1
+            continue
         if resolved.suffix.lower() not in suffixes:
             skipped_unsupported += 1
             continue
@@ -1703,23 +2032,6 @@ async def _index_external_run(state, req, root, dataset) -> dict:
 
     if registered == 0:
         raise HTTPException(400, f"в папке нет поддерживаемых документов: {root}")
-
-    # Auto-init: дал папку индексировать → LES.md появляется сам + привязка к проекту,
-    # затем авто-исполнение директив (ид→asbuilt и т.п.) в фоне. 0 команд от оператора.
-    les_md_summary = None
-    try:
-        from proxy.services.les_md_service import read_and_bind
-        les_md_summary = await asyncio.to_thread(read_and_bind, root, write_draft=True)
-        # #2 симметрия: привязать СОЗДАННЫЙ датасет к объекту (kind='dataset'), а не только папку.
-        # Иначе датасет и проект жили раздельно → режим датасета терял LES.md, обратный поиск пуст.
-        _md_pid = int((les_md_summary or {}).get("project_id") or 0)
-        if _md_pid:
-            from proxy.services.project_service import link_entity
-            await asyncio.to_thread(link_entity, _md_pid, "dataset", req.dataset_id)
-        if os.getenv("LES_AUTO_PIPELINES", "true").lower() in ("1", "true", "yes", "on"):
-            _auto_run_pipelines(root, les_md_summary)
-    except Exception as err:  # noqa: BLE001 — авто-init не должен ронять индексацию
-        logger.warning("[LES.md] auto-init при индексации %s: %s", root, err)
 
     parse_started = False
     parse_job = None
@@ -1803,6 +2115,8 @@ async def _index_external_run(state, req, root, dataset) -> dict:
         "parse_job": parse_job,
         "samples": samples,
         "les_md": les_md_summary,  # auto-init: что ЛЕС сам понял о папке + директивы
+        "dataset_map": map_summary,
+        "intake_plan": intake_plan,
     }
 
 
@@ -2100,6 +2414,101 @@ def _count_dir_files(d: Path) -> int:
         return 0
 
 
+@router.get("/cloud-drives")
+async def cloud_drives(_admin=Depends(require_admin)):
+    """Cloud drive integrations available for dataset intake."""
+    roots = discover_cloud_drive_roots()
+    return {
+        "status": "ok",
+        "providers": cloud_drive_provider_status(),
+        "local_sync_roots": roots,
+        "local_sync_count": len(roots),
+        "mirror_root": os.getenv("LES_CLOUD_DRIVE_MIRROR_ROOT", "storage/cloud_drives"),
+        "note": "Web-доступ использует OAuth-токены из env; локальные sync-папки остаются fallback.",
+    }
+
+
+@router.post("/cloud-drives/list")
+async def cloud_drive_list(req: CloudDriveListRequest, _admin=Depends(require_admin)):
+    try:
+        return await asyncio.to_thread(
+            list_cloud_drive_folder,
+            req.provider,
+            req.locator,
+            limit=req.limit,
+        )
+    except CloudDriveError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/cloud-drives/sync")
+async def cloud_drive_sync(req: CloudDriveSyncRequest, _admin=Depends(require_admin)):
+    state = get_dataset_state()
+    ds_list = await state.backend.list_datasets()
+    dataset = None
+    if req.dataset_id:
+        dataset = next((item for item in ds_list if item.id == req.dataset_id), None)
+        if dataset is None:
+            raise HTTPException(404, f"dataset_id не найден: {req.dataset_id}")
+    else:
+        if not req.dataset_name.strip():
+            raise HTTPException(400, "нужно указать dataset_id или dataset_name")
+        ds_id = await state.backend.create_dataset(req.dataset_name.strip())
+        dataset = DatasetInfo(id=ds_id, name=req.dataset_name.strip(), status="IDLE", doc_count=0, chunk_count=0)
+
+    if req.background:
+        asyncio.create_task(_cloud_drive_sync_run(state, req, dataset))
+        return {
+            "status": "started",
+            "provider": req.provider,
+            "dataset_id": dataset.id,
+            "dataset_name": dataset.name,
+            "note": "облачная папка синхронизируется в фоне, затем будет зарегистрирована как датасет",
+        }
+    return await _cloud_drive_sync_run(state, req, dataset)
+
+
+async def _cloud_drive_sync_run(state, req: CloudDriveSyncRequest, dataset: DatasetInfo) -> dict[str, Any]:
+    try:
+        sync = await asyncio.to_thread(
+            sync_cloud_drive_folder,
+            req.provider,
+            req.locator,
+            dataset_name=dataset.name,
+            max_files=req.max_files,
+            max_depth=req.max_depth,
+        )
+    except CloudDriveError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    local_path = str(sync.get("local_path") or "")
+    if not local_path:
+        raise HTTPException(500, "cloud sync did not return local_path")
+    if int(sync.get("downloaded_count") or 0) <= 0:
+        return {
+            "status": "empty",
+            "provider": req.provider,
+            "dataset_id": dataset.id,
+            "dataset_name": dataset.name,
+            "sync": sync,
+        }
+    index_req = IndexExternalRequest(
+        path=local_path,
+        dataset_id=dataset.id,
+        parse=req.parse,
+        parse_limit=req.parse_limit,
+        background=False,
+    )
+    indexed = await _index_external_run(state, index_req, Path(local_path), dataset)
+    return {
+        "status": "registered",
+        "provider": req.provider,
+        "dataset_id": dataset.id,
+        "dataset_name": dataset.name,
+        "sync": sync,
+        "index": indexed,
+    }
+
+
 @router.get("/browse-external")
 async def browse_external(path: str = "", _admin=Depends(require_admin)):
     """Серверный браузер папок для выбора внешней папки кликами (без печати пути).
@@ -2111,11 +2520,24 @@ async def browse_external(path: str = "", _admin=Depends(require_admin)):
     from proxy.config import external_source_roots, external_allow_any, external_browse_default
 
     roots = external_source_roots()
+    cloud_roots = discover_cloud_drive_roots()
     allow_any = external_allow_any()
     if not roots and not allow_any:
         raise HTTPException(403, "внешняя индексация выключена: LES_EXTERNAL_SOURCE_ROOTS пуст")
 
     if not (path or "").strip():
+        cloud_dirs = [
+            {
+                "name": str(item.get("label") or item.get("provider_title") or "Облачный диск"),
+                "path": str(item.get("path") or ""),
+                "file_count": _count_dir_files(Path(str(item.get("path") or ""))),
+                "source": "cloud_drive",
+                "provider": item.get("provider"),
+                "provider_title": item.get("provider_title"),
+            }
+            for item in cloud_roots
+            if item.get("is_dir") and item.get("path")
+        ]
         if allow_any:
             start = external_browse_default()      # $HOME — отсюда видно любую папку
             dirs = []
@@ -2125,10 +2547,18 @@ async def browse_external(path: str = "", _admin=Depends(require_admin)):
                         dirs.append({"name": child.name, "path": str(child), "file_count": _count_dir_files(child)})
             except OSError:
                 pass
+            known = {item["path"] for item in cloud_dirs}
+            dirs = cloud_dirs + [item for item in dirs if item.get("path") not in known]
             return {"path": str(start), "parent": str(start.parent) if start.parent != start else None,
-                    "roots": [str(r) for r in roots], "dirs": dirs}
+                    "roots": [str(r) for r in roots], "cloud_roots": cloud_roots, "dirs": dirs}
+        known = {item["path"] for item in cloud_dirs}
+        root_dirs = [
+            {"name": r.name or str(r), "path": str(r), "file_count": _count_dir_files(r)}
+            for r in roots
+            if str(r) not in known
+        ]
         return {"path": "", "parent": None, "roots": [str(r) for r in roots],
-                "dirs": [{"name": r.name or str(r), "path": str(r), "file_count": _count_dir_files(r)} for r in roots]}
+                "cloud_roots": cloud_roots, "dirs": cloud_dirs + root_dirs}
 
     current = validate_external_source(path)  # resolve+isdir guard (+ allowlist если строгий режим)
     dirs = []

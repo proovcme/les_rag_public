@@ -32,7 +32,7 @@ RT = Path(os.getenv("LES_RUNTIME_HOME", "/Users/ovc/LES"))
 # tracked-файл, который я уже выкатил, иначе метится «рантайм ≠ HEAD» (а рантайм = МОЯ копия).
 MANIFEST = DEV / ".deploy_manifest.json"
 
-ALLOWED_DIRS = ("proxy/", "backend/", "sovushka/", "tools/", "config/", "docs/")
+ALLOWED_DIRS = ("proxy/", "backend/", "sovushka/", "tools/", "config/", "docs/", "skills/")
 ALLOWED_FILES = {"sovushka_ng.py", "proxy_server.py", "mlx_host.py"}
 ALLOWED_SUFFIX = {".py", ".yaml", ".yml", ".json", ".md", ".txt"}
 

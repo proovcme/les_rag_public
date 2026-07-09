@@ -20,19 +20,16 @@ router = APIRouter(prefix="/api/prices", tags=["prices"])
 
 
 def _resolve_book(book: Optional[str]) -> Path:
-    """Имя книги (stem) → путь к Parquet в data/price_base. Без имени — единственная."""
+    """Имя книги (stem) → путь к Parquet в data/price_base. Без имени — системный дефолт."""
+    path = fps.resolve_pricebook_path(book, allow_scratch=bool(book))
+    if path:
+        return Path(path)
     books = fps.available_pricebooks()
     if not books:
         raise HTTPException(404, "Ценовых баз нет — импортируйте «Сплит-форму» через /api/prices/import")
     if book:
-        for path in books:
-            if Path(path).stem == book:
-                return Path(path)
         raise HTTPException(404, f"Книга цен {book!r} не найдена")
-    if len(books) > 1:
-        names = ", ".join(Path(p).stem for p in books)
-        raise HTTPException(400, f"Уточните book — доступно: {names}")
-    return Path(books[0])
+    raise HTTPException(404, "Системная книга цен не найдена")
 
 
 class PriceImport(BaseModel):

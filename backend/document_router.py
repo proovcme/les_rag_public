@@ -232,6 +232,8 @@ def _probe_text_like(path: Path, size_bytes: int) -> DocumentProbe:
 def _classify_doc_type(probe: DocumentProbe) -> str:
     text = f"{probe.path.name}\n{probe.text_sample}".lower()
     name = probe.path.name.lower()
+    if _smeta_ru_norm_domain(probe.path):
+        return "NORMATIVE"
     if _is_artel_fop_source(probe):
         return "FOP_PROFILE"
     if _is_artel_revit_model_guide_source(probe):
@@ -257,6 +259,8 @@ def _classify_doc_type(probe: DocumentProbe) -> str:
     normative_name_prefixes = ("гост", "сп ", "снип", "санпин", "постановление", "приказ")
     if name.startswith(normative_name_prefixes):
         return "NORMATIVE"
+    if probe.suffix in PDF_SUFFIXES and _has_project_design_signal(text):
+        return "DOCUMENT"
     if probe.suffix not in TABLE_SUFFIXES and _has_strong_normative_signal(text):
         return "NORMATIVE"
     has_price_amount = any(token in text for token in ("цена", "сумма", "стоимость", "расценка"))
@@ -268,21 +272,53 @@ def _classify_doc_type(probe: DocumentProbe) -> str:
         return "KS2"
     if any(token in text for token in ("аоср", "скрытых работ", "освидетельствования")):
         return "AOSR"
-    if any(token in text for token in ("постановление", "федеральный закон", "приказ росстандарта", "свод правил")):
+    if (
+        not _has_project_design_signal(text)
+        and any(token in text for token in ("постановление", "федеральный закон", "приказ росстандарта", "свод правил"))
+    ):
         return "NORMATIVE"
-    if any(token in text for token in ("смета", "локальный сметный", "гэсн", "фер", "тер", "расценка")):
+    if _has_explicit_smeta_signal(probe, text, name):
         return "SMETA"
     if has_position_qty and not has_price_amount:
         return "SPEC"
     if any(token in text for token in ("спецификация", "ведомость оборудования", "масса единицы")):
         return "SPEC"
-    if has_price_amount and probe.has_tables:
+    if has_price_amount and probe.has_tables and probe.suffix not in PDF_SUFFIXES:
         return "SMETA"
-    if any(token in text for token in ("гост", "сп ", "снип", "санпин", "норматив", "постановление")):
+    if not _has_project_design_signal(text) and any(token in text for token in ("гост", "сп ", "снип", "санпин", "норматив", "постановление")):
         return "NORMATIVE"
     if probe.suffix in TABLE_SUFFIXES:
         return "TABLE"
     return "DOCUMENT"
+
+
+def _has_explicit_smeta_signal(probe: DocumentProbe, text: str, name: str) -> bool:
+    """Avoid routing ordinary design PDFs to TABLE_SMETA on weak words.
+
+    Project PDFs often contain words like "смета затрат" or price-like table
+    boilerplate in notes/title blocks. A PDF becomes SMETA only when the file
+    name or text has explicit estimate/norm-source signals.
+    """
+    strong_terms = (
+        "локальный сметный",
+        "локальная смета",
+        "локальный сметный расчет",
+        "локальный сметный расчёт",
+        "сметный расчет",
+        "сметный расчёт",
+        "гранд-смет",
+        "гранд смет",
+        "расценка",
+    )
+    if any(token in text for token in strong_terms):
+        return True
+    if re.search(r"(^|[^а-яa-z])(гэсн|фер|тер)\s*\d", text):
+        return True
+    if probe.suffix in TABLE_SUFFIXES and "смета" in text:
+        return True
+    if probe.suffix in PDF_SUFFIXES:
+        return bool(re.search(r"(^|[^а-яa-z])смет[аы]?([^а-яa-z]|$)", name))
+    return "смета" in text
 
 
 def _is_estimate_norm_source(name: str) -> bool:
@@ -296,6 +332,13 @@ def _has_strong_normative_signal(text: str) -> bool:
     if any(token in text for token in ("национальный стандарт", "межгосударственный стандарт", "свод правил")):
         return True
     return bool(re.search(r"\b(гост|гост\s*р|сп|снип|санпин)\s*(?:iec|iso|р)?\s*\d", text))
+
+
+def _has_project_design_signal(text: str) -> bool:
+    """Detect ordinary project/design PDFs that contain normative references."""
+    has_stage = any(token in text for token in ("рабочая документация", "проектная документация"))
+    has_project_anchor = any(token in text for token in ("заказчик", "объект", "центр обработки данных", "шифр", "главный инженер проекта"))
+    return bool(has_stage and has_project_anchor)
 
 
 def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
@@ -523,6 +566,7 @@ _FIRE_TEXT_TOKENS = (
 )
 
 _ELECTRICAL_TOKENS = (
+    "эом",
     "пуэ",
     "iec",
     "мэк",

@@ -1,8 +1,8 @@
 """ГЭСН-2022 из ОФИЦИАЛЬНОГО ФГИС ЦС (fgiscs.minstroyrf.ru) — БЕЗ квоты/auth. База как есть. 0 LLM.
 
 `GET /api/FullTextSearch/SearchEstimatedRates?search=<код>` → структурный JSON расхода нормы(норм).
-Это авторитетный бесплатный источник (Приказ 1046/пр) — основной on-demand: код встретился →
-дёрнули, закешировали в `data/gesn_base/gesn2022.parquet`. smetnoedelo остаётся для апдейтов/резерва.
+Это авторитетный бесплатный источник (Приказ 1046/пр). Query-time не пишет в боевую базу:
+сырой добор уходит в `storage/cache/gesn_fgis/`, а боевой слой — только unified parquet.
 
 Парс/запись переиспользуют `tools.gesn_pdf_import` (parse_fgis_json/build_parquet, схема gesn_import,
 эталон 12-01-034-02 воспроизводится ТОЧНО). Сеть прямая (API доступен и из не-РФ); опц. через VPS
@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 API = "https://fgiscs.minstroyrf.ru/api/FullTextSearch/SearchEstimatedRates?search="
-CACHE_PARQUET = Path("data/gesn_base/gesn2022.parquet")
+CACHE_PARQUET = Path("storage/cache/gesn_fgis/gesn2022_fgis_raw.parquet")
 
 # Принцип: query-time работаем ТОЛЬКО из локальной базы; канал (ФГИС/Cloudflare режутся из
 # рантайма) — лишь для ОБНОВЛЕНИЯ базы по запросу, и ему НЕ доверяем. Короткий таймаут, чтобы

@@ -87,6 +87,19 @@ def _folder_text(item: dict) -> str:
     return "папка не задана"
 
 
+def _required_docs_text(item: dict) -> str:
+    req = item.get("required_documents") or {}
+    summary = req.get("summary") or {}
+    total = int(summary.get("total") or 0)
+    if not total:
+        return ""
+    return (
+        f"документы: готово {summary.get('ready', 0)} · "
+        f"частично {summary.get('partial', 0)} · "
+        f"нет {int(summary.get('missing_blocking') or 0) + int(summary.get('missing_degraded') or 0)}"
+    )
+
+
 def _prompt_text(value: object, *, limit: int = 2200) -> str:
     text = str(value or "").strip()
     if len(text) > limit:
@@ -138,11 +151,23 @@ def build_instrumenty():
             ui.notify(d.get("message") or "Проверка источника выполнена", type="positive" if d.get("ok") else "warning")
             await _refresh()
 
+        async def _update_gesn_from_fgis() -> None:
+            d = await api_post("/api/service-sources/gesn_base/fgis-update", {})
+            if not isinstance(d, dict) or not d.get("ok"):
+                ui.notify(last_api_error_text("Обновление ГЭСН не запущено"), type="negative")
+                return
+            if d.get("started"):
+                ui.notify("ГЭСН: запущено скачивание/обновление из ФГИС ЦС", type="positive")
+            else:
+                ui.notify("ГЭСН: обновление уже выполняется", type="info")
+            await _refresh()
+
         def _render_source(item: dict) -> None:
             label, color = _SRC_STATUS.get(item.get("status"), (str(item.get("status") or "?"), "var(--dim)"))
             folders = [f for f in item.get("folders") or [] if f.get("path")]
             needed = "; ".join(item.get("needed_for") or []) or "служебная работа ЛЕС"
             accepted = ", ".join(item.get("accepted_files") or []) or "поддерживаемые файлы источника"
+            required_docs = ((item.get("required_documents") or {}).get("items") or [])
             with ui.card().classes("w-full").style("border-radius:8px;box-shadow:none;border:1px solid var(--line);"):
                 with ui.row().classes("w-full items-start justify-between gap-3"):
                     with ui.column().classes("gap-1").style("min-width:0;"):
@@ -159,6 +184,9 @@ def build_instrumenty():
                         if action:
                             ui.label(action).style("font-size:.68rem;color:var(--fg);")
                         ui.label(_facts_text(item)).style("font-size:.68rem;color:var(--dim);")
+                        req_text = _required_docs_text(item)
+                        if req_text:
+                            ui.label(req_text).style("font-size:.68rem;color:var(--dim);font-weight:700;")
                     with ui.row().classes("items-center gap-1"):
                         if folders:
                             ui.button(icon="folder_open", on_click=_ui_handler(_open_folder, folders[0]["path"])).props(
@@ -167,6 +195,43 @@ def build_instrumenty():
                         ui.button(icon="play_arrow", on_click=_ui_handler(_process_source, str(item.get("id")))).props(
                             "dense flat round"
                         ).tooltip(item.get("process_label") or "Проверить источник")
+                        if str(item.get("id") or "") == "gesn_base":
+                            ui.button(icon="cloud_download", on_click=_ui_handler(_update_gesn_from_fgis)).props(
+                                "dense flat round"
+                            ).tooltip("Скачать/обновить базу ГЭСН из ФГИС ЦС")
+                if required_docs:
+                    with ui.expansion("Какие документы нужны", icon="inventory_2").classes("w-full").props("dense"):
+                        for req in required_docs:
+                            req_label, req_color = _SRC_STATUS.get(
+                                req.get("status"),
+                                (str(req.get("status") or "?"), "var(--dim)"),
+                            )
+                            preferred = ", ".join(req.get("preferred_files") or []) or "не задано"
+                            accepted_raw = ", ".join(req.get("accepted_files") or []) or "не задано"
+                            found = int(req.get("found_preferred_count") or 0) + int(req.get("found_raw_count") or 0)
+                            with ui.element("div").classes("w-full").style(
+                                "border-top:1px solid var(--line);padding:6px 0;"
+                            ):
+                                with ui.row().classes("w-full items-start justify-between gap-2"):
+                                    with ui.column().classes("gap-0").style("min-width:0;"):
+                                        ui.label(str(req.get("label") or req.get("id") or "Документ")).style(
+                                            "font-size:.76rem;font-weight:800;"
+                                        )
+                                        ui.label(f"preferred: {preferred}").style(
+                                            "font-size:.66rem;color:var(--dim);"
+                                        )
+                                        ui.label(f"raw accepted: {accepted_raw}").style(
+                                            "font-size:.66rem;color:var(--dim);"
+                                        )
+                                        if req.get("needed_for"):
+                                            ui.label("нужно для: " + "; ".join(req.get("needed_for") or [])).style(
+                                                "font-size:.66rem;color:var(--fg);"
+                                            )
+                                    with ui.column().classes("items-end gap-0"):
+                                        ui.label(req_label).style(
+                                            f"font-size:.68rem;font-weight:900;color:{req_color};"
+                                        )
+                                        ui.label(f"найдено: {found}").style("font-size:.64rem;color:var(--dim);")
 
         def _render_prompt_block(title: str, text: str, *, tools: list[str] | None = None) -> None:
             with ui.expansion(title, icon="article").classes("w-full").props("dense"):

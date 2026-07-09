@@ -2,7 +2,7 @@ from types import SimpleNamespace
 from email.message import EmailMessage
 
 import pytest
-from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
 
 from backend.qdrant_adapter import MetaDB, QdrantLlamaIndexAdapter, _embedding_cache_fingerprint
 from backend.document_router import route_document
@@ -60,6 +60,126 @@ def test_sync_parse_does_not_parse_all_files_when_no_pending(tmp_path):
         "errors": 0,
         "elapsed_sec": 0,
     }
+
+
+def test_sync_markdown_nodes_marks_spreadsheet_projection_payload(tmp_path):
+    source = tmp_path / "table.csv"
+    source.write_text(
+        "Name,Qty,Note\n"
+        "Cable,12,Огнестойкий кабель для системы пожарной сигнализации\n"
+        "Tray,3,Лоток металлический с крышкой для трассировки кабельных линий\n",
+        encoding="utf-8",
+    )
+    adapter = SimpleNamespace()
+    adapter._route_payload = QdrantLlamaIndexAdapter._route_payload.__get__(adapter)
+
+    nodes = QdrantLlamaIndexAdapter._sync_markdown_nodes(
+        adapter,
+        source,
+        "table.csv",
+        "ds-1",
+        MarkdownNodeParser(),
+        SentenceSplitter(chunk_size=800, chunk_overlap=120),
+        None,
+        {},
+    )
+
+    assert nodes
+    assert {node["payload"]["type"] for node in nodes} == {"spreadsheet_projection"}
+
+
+def test_sync_markdown_nodes_uses_pdf_page_nodes(tmp_path, monkeypatch):
+    source = tmp_path / "project.pdf"
+    source.write_bytes(b"%PDF placeholder")
+
+    import backend.qdrant_adapter as qa
+
+    monkeypatch.setattr(
+        qa,
+        "convert_to_markdown_for_indexing",
+        lambda *_args, **_kwargs: "\n\n".join([
+            "# PDF text projection: project.pdf",
+            "## Page 1",
+            "A" * 320,
+            "## Page 2",
+            "B" * 2600,
+        ]),
+    )
+    monkeypatch.setenv("RAG_PDF_PAGE_NODE_MAX_CHARS", "1000")
+    monkeypatch.setenv("RAG_PDF_PAGE_NODE_OVERLAP_CHARS", "50")
+    adapter = SimpleNamespace()
+    adapter._route_payload = QdrantLlamaIndexAdapter._route_payload.__get__(adapter)
+    adapter._sync_pdf_page_text_nodes = QdrantLlamaIndexAdapter._sync_pdf_page_text_nodes.__get__(adapter)
+    adapter._split_pdf_page_markdown = QdrantLlamaIndexAdapter._split_pdf_page_markdown
+    adapter._split_pdf_page_text = QdrantLlamaIndexAdapter._split_pdf_page_text
+
+    nodes = QdrantLlamaIndexAdapter._sync_markdown_nodes(
+        adapter,
+        source,
+        "project.pdf",
+        "ds-1",
+        MarkdownNodeParser(),
+        SentenceSplitter(chunk_size=200, chunk_overlap=20),
+        None,
+        {},
+    )
+
+    assert len(nodes) == 4
+    assert {node["payload"]["type"] for node in nodes} == {"pdf_page_text"}
+    assert nodes[0]["payload"]["page"] == 1
+    assert nodes[-1]["payload"]["page"] == 2
+    assert nodes[-1]["payload"]["page_parts"] == 3
+    assert nodes[0]["doc_id"] == nodes[0]["doc_id"]
+
+
+def test_sync_table_nodes_projects_large_row_sets(tmp_path, monkeypatch):
+    source = tmp_path / "big.xlsx"
+    source.write_text("placeholder", encoding="utf-8")
+
+    class FakeNormalizer:
+        def __init__(self, parquet_dir, use_llm=False):
+            self.parquet_dir = parquet_dir
+
+        async def process(self, file_path, dataset_id="", doc_type_override=None):
+            parquet = tmp_path / "ds-1" / "_parquet" / "big.parquet"
+            parquet.parent.mkdir(parents=True)
+            parquet.write_text("parquet", encoding="utf-8")
+            return {
+                "parquet_path": parquet.as_posix(),
+                "rows": 3,
+                "sheets": 1,
+                "chunks": [
+                    {"text": "row 1", "metadata": {"name": "Cable", "code": "C1", "unit": "m"}},
+                    {"text": "row 2", "metadata": {"name": "Tray", "code": "T1", "unit": "pcs"}},
+                    {"text": "row 3", "metadata": {"name": "Panel", "code": "P1", "unit": "pcs"}},
+                ],
+            }
+
+    import backend.qdrant_adapter as qa
+
+    monkeypatch.setattr(qa, "TableNormalizer", FakeNormalizer)
+    monkeypatch.setattr(qa, "TABLE_ROW_INDEX_MAX_CHUNKS", 2)
+    adapter = SimpleNamespace()
+    adapter._route_payload = QdrantLlamaIndexAdapter._route_payload.__get__(adapter)
+    adapter._table_kind = lambda route: QdrantLlamaIndexAdapter._table_kind(route)
+    adapter._table_navigation_projection_nodes = (
+        QdrantLlamaIndexAdapter._table_navigation_projection_nodes.__get__(adapter)
+    )
+
+    nodes = QdrantLlamaIndexAdapter._sync_table_nodes(
+        adapter,
+        source,
+        tmp_path / "ds-1",
+        "big.xlsx",
+        "ds-1",
+        None,
+        {},
+    )
+
+    assert len(nodes) == 1
+    assert nodes[0]["payload"]["type"] == "table_navigation_projection"
+    assert nodes[0]["payload"]["table_rows"] == 3
+    assert "Cable" in nodes[0]["text"]
 
 
 def test_sync_parse_updates_legacy_pending_file_name(tmp_path, monkeypatch):

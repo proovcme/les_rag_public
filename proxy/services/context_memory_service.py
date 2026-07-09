@@ -42,6 +42,42 @@ _STOPWORDS = frozenset(
     "смета сметы проект объекта документ файл".split()
 )
 OPERATOR_GUIDANCE_MAX_CHARS = 4000
+DATASET_KIND_LABELS = {
+    "project": "Проект",
+    "norm": "Норма",
+    "estimate": "Сметы",
+    "catalog": "Каталог",
+    "cad_bim": "CAD/BIM",
+    "correspondence": "Переписка",
+    "mixed": "Смешанный",
+    "other": "Другое",
+}
+DATASET_KIND_ALIASES = {
+    "проект": "project",
+    "projects": "project",
+    "project": "project",
+    "норма": "norm",
+    "нормы": "norm",
+    "norm": "norm",
+    "norms": "norm",
+    "норматив": "norm",
+    "смета": "estimate",
+    "сметы": "estimate",
+    "estimate": "estimate",
+    "estimates": "estimate",
+    "каталог": "catalog",
+    "catalog": "catalog",
+    "cad": "cad_bim",
+    "bim": "cad_bim",
+    "cad_bim": "cad_bim",
+    "cad/bim": "cad_bim",
+    "переписка": "correspondence",
+    "correspondence": "correspondence",
+    "смешанный": "mixed",
+    "mixed": "mixed",
+    "другое": "other",
+    "other": "other",
+}
 
 
 def _connect() -> sqlite3.Connection:
@@ -93,6 +129,12 @@ def _loads(raw: str | None, default: Any) -> Any:
 def _normalize_operator_guidance(text: str | None) -> str:
     value = " ".join(str(text or "").replace("\r", "\n").split())
     return value[:OPERATOR_GUIDANCE_MAX_CHARS].strip()
+
+
+def _normalize_dataset_kind(kind: str | None) -> str:
+    value = str(kind or "").strip().casefold().replace("ё", "е")
+    value = re.sub(r"[\s\-]+", "_", value)
+    return DATASET_KIND_ALIASES.get(value, "")
 
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
@@ -475,8 +517,10 @@ def build_dataset_profile(
         ).fetchone()
         stored_profile = _loads(stored["profile_json"], {}) if stored else {}
         stored_guidance = ""
+        stored_kind = ""
         if isinstance(stored_profile, dict):
             stored_guidance = _normalize_operator_guidance(stored_profile.get("operator_guidance"))
+            stored_kind = _normalize_dataset_kind(stored_profile.get("dataset_kind"))
         if stored and not force and stored["content_signature"] == signature:
             profile = stored_profile
             if isinstance(profile, dict) and profile:
@@ -485,6 +529,9 @@ def build_dataset_profile(
                 if stored_guidance:
                     profile["operator_guidance"] = stored_guidance
                     profile["operator_guidance_role"] = "navigation_not_evidence"
+                if stored_kind:
+                    profile["dataset_kind"] = stored_kind
+                    profile["dataset_kind_label"] = DATASET_KIND_LABELS[stored_kind]
                 profile.setdefault("profile_path", stored["profile_path"] or "")
                 if profile.get("depth") == depth:
                     profile.setdefault("quality", _profile_quality(profile))
@@ -531,6 +578,8 @@ def build_dataset_profile(
                 "Паспорт описывает индекс и файлы по метаданным. Это ускоряет выбор маршрута, "
                 "но не является evidence для ответа."
             ),
+            "dataset_kind": stored_kind,
+            "dataset_kind_label": DATASET_KIND_LABELS.get(stored_kind, ""),
             "operator_guidance": stored_guidance,
             "operator_guidance_role": "navigation_not_evidence",
             "content_signature": signature,
@@ -648,6 +697,91 @@ def set_dataset_operator_guidance(
                     memory["operator_guidance"] = note
                     memory["operator_guidance_role"] = "navigation_not_evidence"
                     memory["operator_guidance_updated_at"] = profile["operator_guidance_updated_at"]
+                    conn.execute(
+                        "UPDATE dataset_memory SET memory_json=?, updated_at=? WHERE dataset_id=?",
+                        (_json_text(memory), now, dataset_id),
+                    )
+        conn.commit()
+        return profile
+
+
+def set_dataset_kind(
+    dataset_id: str,
+    kind: str,
+    *,
+    storage_root: Path = Path("storage/datasets"),
+    depth: str = "deep",
+) -> dict[str, Any]:
+    """Save an operator dataset type used for UI grouping/sorting.
+
+    This is corpus metadata, not evidence. It lives beside operator guidance so
+    dataset lists, notebooks and model navigation see the same manual label.
+    """
+    dataset_id = (dataset_id or "").strip()
+    if not dataset_id:
+        raise ValueError("dataset_id is required")
+    normalized = _normalize_dataset_kind(kind)
+    depth = _normalize_depth(depth)
+    now = time.time()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT profile_json, content_signature, profile_path FROM les_dataset_profiles WHERE dataset_id=?",
+            (dataset_id,),
+        ).fetchone()
+        if row:
+            profile = _loads(row["profile_json"], {})
+            if not isinstance(profile, dict) or not profile:
+                profile = build_dataset_profile(dataset_id, storage_root=storage_root, depth=depth)
+            signature = str(row["content_signature"] or profile.get("content_signature") or "")
+            profile_path = str(row["profile_path"] or profile.get("profile_path") or "")
+        else:
+            profile = build_dataset_profile(dataset_id, storage_root=storage_root, depth=depth)
+            signature = str(profile.get("content_signature") or "")
+            profile_path = str(profile.get("profile_path") or "")
+
+        profile["dataset_kind"] = normalized
+        profile["dataset_kind_label"] = DATASET_KIND_LABELS.get(normalized, "")
+        profile["dataset_kind_updated_at"] = now if normalized else 0
+        profile["updated_at"] = now
+
+        if not profile_path:
+            try:
+                ds_dir = _safe_dataset_dir(dataset_id, storage_root)
+                ds_dir.mkdir(parents=True, exist_ok=True)
+                profile_path = str(ds_dir / DATASET_PROFILE_FILE)
+                profile["profile_path"] = profile_path
+            except Exception as err:  # noqa: BLE001
+                logger.warning("[CONTEXT_MEMORY] dataset kind sidecar path skipped for %s: %s", dataset_id, err)
+                profile_path = ""
+        if profile_path:
+            try:
+                Path(profile_path).write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception as err:  # noqa: BLE001
+                logger.warning("[CONTEXT_MEMORY] dataset kind sidecar write skipped for %s: %s", dataset_id, err)
+
+        conn.execute(
+            """
+            INSERT INTO les_dataset_profiles(dataset_id, profile_json, content_signature, profile_path, updated_at)
+            VALUES(?,?,?,?,?)
+            ON CONFLICT(dataset_id) DO UPDATE SET
+                profile_json=excluded.profile_json,
+                content_signature=excluded.content_signature,
+                profile_path=excluded.profile_path,
+                updated_at=excluded.updated_at
+            """,
+            (dataset_id, _json_text(profile), signature or _content_signature(conn, dataset_id, depth=depth), profile_path, now),
+        )
+        if _table_exists(conn, "dataset_memory"):
+            memory_row = conn.execute(
+                "SELECT memory_json FROM dataset_memory WHERE dataset_id=?",
+                (dataset_id,),
+            ).fetchone()
+            if memory_row:
+                memory = _loads(memory_row["memory_json"], {})
+                if isinstance(memory, dict) and memory:
+                    memory["dataset_kind"] = normalized
+                    memory["dataset_kind_label"] = DATASET_KIND_LABELS.get(normalized, "")
+                    memory["dataset_kind_updated_at"] = profile["dataset_kind_updated_at"]
                     conn.execute(
                         "UPDATE dataset_memory SET memory_json=?, updated_at=? WHERE dataset_id=?",
                         (_json_text(memory), now, dataset_id),
@@ -919,10 +1053,13 @@ def _dataset_profile_block(profile: dict[str, Any]) -> str:
     exts = ", ".join(f"{x['value']}:{x['count']}" for x in profile.get("file_extensions", [])[:5])
     keywords = ", ".join(profile.get("keywords", [])[:10])
     guidance = _normalize_operator_guidance(profile.get("operator_guidance"))
+    dataset_kind = _normalize_dataset_kind(profile.get("dataset_kind"))
     parts = [
         f"- {profile.get('name') or profile.get('dataset_id')} ({profile.get('dataset_id')}): "
         f"{profile.get('document_count', 0)} файлов, {profile.get('chunk_count', 0)} чанков",
     ]
+    if dataset_kind:
+        parts.append(f"  тип датасета: {DATASET_KIND_LABELS[dataset_kind]}")
     if guidance:
         parts.append(
             "  комментарий оператора для модели: "

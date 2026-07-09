@@ -16,7 +16,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 ENV_PATH = Path(".env")
-DEFAULT_OPENAI_MODEL = "gpt-4.1"
+DEFAULT_OPENAI_MODEL = "gpt-5.4"
 
 # Пресет → согласованный набор env. Ключи: провайдер чата, скан-OCR, движок приёмки ИД.
 PRESETS: dict[str, dict[str, str]] = {

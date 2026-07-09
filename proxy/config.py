@@ -54,10 +54,6 @@ DEFAULT_RAG_UPLOAD_SUFFIXES = (
     ".jsonl",
     ".md",
     ".txt",
-    ".dwg",
-    ".rvt",
-    ".ifc",
-    ".ifczip",
 )
 
 TRUSTED_NETWORKS = tuple(

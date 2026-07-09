@@ -17,9 +17,16 @@
    - **Семя** `config/domain/gesn_seed.yaml`: норма = {code, name, unit, resources:[…]}.
      Ресурс: kind (labor|machinist|machine|material), per_unit, code (для цены ФГИС ЦС),
      price (тариф ОЗП/ОТм; для машин/материалов — опц. снимок цены).
-   - **Полная база** — parquet-слой `data/gesn_base/` (десятки тысяч норм, в gitignore как ФГИС ЦС):
-     `gesn2022.parquet` + опц. `gesn2022_v2.parquet` поверх (если файл есть — `_default_base_paths`
-     грузит оба, v2 дополняет старый слой). При совпадении кода **семя побеждает** (эталон точен).
+   - **Canonical machine base** `data/smeta_base/les_smeta_base.sqlite`: одна структурированная
+     SQLite-база с таблицами `norms` и `resources`. Ключ нормы:
+     `norm_key=<base_type>:<bare_code>`. `ГЭСН:38-01-001-01` и `ГЭСНм:38-01-001-01` — разные нормы;
+     bare-код при multi-family collision не раскрывается strict lookup. При совпадении кода
+     **семя побеждает** (эталон точен).
+   `data/gesn_base/gesn2022_unified.parquet` теперь source/staging слой, а не runtime-facing база:
+   он собирается из raw ФГИС/ручных импортов через `tools/gesn_unify_base.py`, затем очищается и
+   раскладывается в SQLite через `tools/build_smeta_structured_base.py`. Нормы без `norm_name` или
+   `norm_unit` не выдаются машине; они попадают в `data/smeta_base/les_smeta_base_manifest.json`
+   как excluded source debt.
 2. **Разворот** (`expand_position`): qty_строки = per_unit × объём; kind/name/code/price переносятся.
 3. **Интеграция**: `lsr_assembly.compute_position` — если у позиции есть `code`, но нет `resources`,
    разворачивает по норме; дальше штатный пайплайн (цены→ОЗП/ЭМ/М→стеснённость→НР/СП→Всего).
@@ -28,7 +35,7 @@
 
 `tools/gesn_import.py` — CLI: выгрузка (xlsx/csv) → нормализованный Parquet (аналог импорта ФГИС ЦС).
 
-    uv run python -m tools.gesn_import IN.xlsx --out data/gesn_base/gesn2022.parquet
+    uv run python -m tools.gesn_import IN.xlsx --out storage/cache/gesn_fgis/gesn2022_manual_raw.parquet
     uv run python -m tools.gesn_import IN.csv  --layout flat     # строка=ресурс, явная шапка
     uv run python -m tools.gesn_import IN.xlsx --layout blocks   # норма-блоками (стиль ГРАНД)
 
@@ -43,6 +50,31 @@ cs.smetnoedelo.ru дают **постраничный HTML** на каждую �
 Импортёр читает его как `flat` (строка=ресурс, явная шапка) или `blocks` (норма-блоками, вид
 ресурса — по русской метке категории). Файл-выгрузку предоставляет пользователь.
 
+## Storage contract: source похож на ФГИС, runtime похож на сметную модель
+
+Для автоматизации обновления структура должна быть близкой к источнику, а для ответа/расчёта —
+близкой к предметной области:
+
+1. `storage/cache/gesn_fgis/` — raw/source cache. Здесь допустимы исходные payload/parquet ФГИС,
+   overlay и промежуточные файлы. Это не runtime base и не часть репо.
+2. `data/gesn_base/gesn2022_unified.parquet` — checked source/staging snapshot: одна строка =
+   ресурс нормы, typed `norm_key=<base_type>:<bare_code>`, удобно для bulk merge/diff/audit.
+3. `data/smeta_base/les_smeta_base.sqlite` — canonical machine base: `norms` и `resources`,
+   индексы, точный lookup, manifest исключений. Это читает `gesn_service` в нормальном режиме.
+4. `RAG_Content/TABLE_SMETA/SMETA_SERVICE` — generated markdown-карты для модели. Они строятся
+   из machine/source state и не являются расчётной базой.
+
+Команды:
+
+    # быстро: из уже проверенного unified parquet в runtime SQLite + service cards
+    make smeta-base
+
+    # без скачивания: raw/cache → unified parquet → SQLite → service cards
+    make smeta-base-source
+
+    # долго: скачать/обновить ФГИС → unified parquet → SQLite → service cards
+    make smeta-base-update
+
 ## Полная база из ФГИС ЦС — `tools/gesn_bulk_import.py` (рекомендуемый путь)
 
 Структурный расход ВСЕХ норм бесплатно отдаёт сам ФГИС ЦС через
@@ -55,10 +87,19 @@ cs.smetnoedelo.ru дают **постраничный HTML** на каждую �
 отбрасываются (защита от шума fulltext).
 
     # один сборник (проверка):
-    uv run python -m tools.gesn_bulk_import --sbornik 12 --out data/gesn_base/gesn2022.parquet
+    uv run python -m tools.gesn_bulk_import --sbornik 12
 
     # ПОЛНАЯ база (47 сборников, ~часы — оценка ниже):
-    uv run python -m tools.gesn_bulk_import --all --rate 1.0 --out data/gesn_base/gesn2022.parquet
+    uv run python -m tools.gesn_bulk_import --all --rate 1.0
+
+После bulk/import raw-слой пересобирается в единый source parquet и canonical SQLite:
+
+    uv run python -m tools.gesn_unify_base
+    uv run python -m tools.build_smeta_structured_base
+
+Операторский путь в GUI: **Инструменты → Источники данных → ГЭСН-2022 → скачать/обновить из ФГИС ЦС**.
+API: `POST /api/service-sources/gesn_base/fgis-update`, статус:
+`GET /api/service-sources/gesn_base/fgis-update/status`.
 
 Свойства: **резюмируемость** (уже залитые отделы пропускаются — прогон можно прерывать/продолжать),
 rate-limit + retry с backoff, прогресс-лог, идемпотентный append с дедупом по ключу нормы.
@@ -71,17 +112,29 @@ rate-limit + retry с backoff, прогресс-лог, идемпотентны
 ## Точечный overlay ГЭСНм/ГЭСНп
 
 Когда нужна не вся база, а недостающая монтажная семья с правильным типом базы
-(`ГЭСНм`, `ГЭСНп`), используется overlay поверх старого parquet:
+(`ГЭСНм`, `ГЭСНп`), используется cache overlay:
 
     uv run python -m tools.gesn_fgis_overlay_import --preset sks \
-      --out data/gesn_base/gesn2022_v2.parquet
+      --out storage/cache/gesn_fgis/gesn2022_overlay_raw.parquet
 
 Инструмент тянет официальный `SearchEstimatedRates` по точным шифрам норм/таблиц,
 парсит структурный JSON и сохраняет `base_type`, `norm_key`, `source_doc`,
 `source_guid`. Это важно для сборников с одинаковым голым номером: `ГЭСН10`
 и `ГЭСНм10` не являются одной базой. Старый широкий bulk остаётся для полного
 строительного слоя; overlay — для аккуратной дозаливки конкретных монтажных
-разделов без полного реимпорта.
+разделов без полного реимпорта. После этого обязательно пересобирается unified parquet.
+
+С 0.24.0.300 strict lookup (`get_norm(..., strict_family=True)`) не раскрывает голый шифр
+без семейства (`38-01-001-01`) молча, если такой номер есть в нескольких семействах (`ГЭСН`,
+`ГЭСНм`, `ГЭСНр`, `ГЭСНп` и т.д.). Обычный `get_norm()` оставлен совместимым для legacy API,
+но model-facing candidate-store должен показывать typed-шифры; модель выбирает typed-шифр,
+а код только проверяет ключ и раскрывает ресурсы.
+
+С 0.24.0.301 overlay parquet (`gesn2022_v2.parquet`) не может пустыми `norm_name`/`norm_unit`
+перетереть заполненные поля старой базы. Новый слой может добавить `work_steps`, typed key и
+ресурсы, но имя и измеритель нормы сохраняются из предыдущего источника, если в overlay они
+пустые. Это нужно, чтобы `add_position` доходил до формул/слотов и РИМ-расчёта, а не падал в
+ложный `ambiguous` из-за пустого названия нормы.
 
 ## RAG-карточки из Smetnoedelo API v2.0
 

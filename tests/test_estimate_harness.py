@@ -47,6 +47,66 @@ def test_search_norm_thin_and_no_match():
 def test_collection_of_prefixed_norm_code():
     assert h._collection_of("ГЭСН:10-02-024-02") == "10"
     assert h._collection_of("12-01-023-01") == "12"
+    assert h._collection_key("ГЭСНм:08-05-044-02") == "ГЭСНм08"
+
+
+def test_electric_accepts_gesnm08_from_current_fsnb_base():
+    status, reasons = h.check_applicability(
+        "ГЭСНм:08-05-044-02",
+        "Трубы стальные или полиэтиленовые для монтажа кабельных трасс диаметром до 50 мм",
+        "electric",
+    )
+
+    assert status == "accepted"
+    assert reasons == []
+
+
+def test_search_norm_routes_revision_hatch_to_gesn17():
+    r = h.search_norm(
+        "установка люков сантехнических ревизионных",
+        work_family="mep",
+        element_type="device",
+        action="монтаж",
+        unit_hint="шт",
+        top_k=5,
+    )
+
+    assert [c["norm_code"] for c in r["candidates"][:2]] == [
+        "ГЭСН:17-01-010-01",
+        "ГЭСН:17-01-010-02",
+    ]
+
+
+def test_search_norm_routes_hidden_hatch_even_when_under_painting():
+    r = h.search_norm(
+        "Монтаж ревизионного лючка под покраску скрытого типа 400х400 мм",
+        work_family="finishes",
+        element_type="finish",
+        action="монтаж",
+        unit_hint="шт",
+        top_k=5,
+    )
+
+    assert r["element_type"] == "hatch"
+    assert [c["norm_code"] for c in r["candidates"][:2]] == [
+        "ГЭСН:17-01-010-01",
+        "ГЭСН:17-01-010-02",
+    ]
+
+
+def test_search_norm_routes_reed_ceiling_demolition_to_repair_collection():
+    r = h.search_norm(
+        "демонтаж реечного потолка с сохранением материалов",
+        work_family="finishes",
+        element_type="finish",
+        action="демонтаж",
+        unit_hint="м2",
+        top_k=8,
+    )
+
+    codes = [c["norm_code"] for c in r["candidates"]]
+    assert "ГЭСНр:63-03-008-02" in codes[:3]
+    assert all(code.startswith("ГЭСНр:63-") for code in codes[:3])
 
 
 def test_search_rejects_wrong_collection_for_work_family():
@@ -248,6 +308,72 @@ def test_electric_box_route_survives_inflected_wording():
     assert any(c["score_parts"].get("route") for c in candidates)
 
 
+def test_low_current_sks_cable_prefers_gesnm10_mounting_candidates():
+    r = h.search_norm(
+        "прокладка кабеля связи Cat.6A СКС внутри здания",
+        work_family="low_current",
+        element_type="cable",
+        action="прокладка",
+        unit_hint="м",
+        top_k=6,
+    )
+
+    candidates = r["candidates"]
+    assert candidates
+    assert candidates[0]["norm_code"].startswith("ГЭСНм:10-")
+    assert candidates[0]["score_parts"].get("low_current_mounting_base") > 0
+    assert not candidates[0]["title"].lower().startswith("кабель силовой")
+
+
+def test_direct_smeta_norm_search_context_exposes_sks_candidate_cards():
+    text = h.direct_smeta_norm_search_context(
+        "СКС: кабель Cat.6A 1200 м, розетки RJ-45 80 шт, патч-панели 4 шт, "
+        "шкаф 42U 1 шт, измерения линий."
+    )
+
+    assert "Карточки нормативного поиска ЛЕС" in text
+    assert "СКС кабель" in text
+    assert "ГЭСНм:10-" in text
+    assert "модель должна выбрать кандидата или оставить missing" in text
+    assert "не переноси шифры между кабелем, розетками, шкафом, аварийным питанием и ПНР" in text
+    assert "Шифр нормы копируй буквально из карточки" in text
+    assert "search_norm" not in text
+
+
+def test_electric_backup_power_search_prefers_power_over_lighting_blocks():
+    r = h.search_norm(
+        "монтаж блока аварийного питания для сети освещения",
+        work_family="electric",
+        element_type="backup_power",
+        action="монтаж",
+        unit_hint="шт",
+        top_k=6,
+    )
+
+    candidates = r["candidates"]
+    assert candidates
+    assert candidates[0]["norm_code"].startswith("ГЭСН:08-01-125")
+    assert candidates[0]["score_parts"].get("backup_power_match") > 0
+    assert "светильники, устанавливаемые блоками" not in candidates[0]["title"].casefold()
+
+
+def test_electric_backup_power_for_luminaire_prefers_small_power_supply_block():
+    r = h.search_norm(
+        "монтаж блока аварийного питания для светодиодного светильника",
+        work_family="electric",
+        element_type="backup_power",
+        action="монтаж",
+        unit_hint="шт",
+        top_k=6,
+    )
+
+    candidates = r["candidates"]
+    assert candidates
+    assert "10-02-016-06" in candidates[0]["norm_code"]
+    assert candidates[0]["score_parts"].get("backup_power_small_block") > 0
+    assert "квт" not in candidates[0]["title"].casefold()
+
+
 def test_finish_painting_search_routes_to_painting_norms():
     r = h.search_norm(
         "окраска потолков водно-дисперсионной краской",
@@ -261,6 +387,30 @@ def test_finish_painting_search_routes_to_painting_norms():
     codes = [c["norm_code"] for c in r["candidates"]]
     assert any("15-04-005" in code or "15-04-007" in code for code in codes)
     assert not codes[0].startswith("ГЭСН:34-01-019")
+
+
+def test_generic_finish_search_infers_standard_finish_operations():
+    cases = [
+        (
+            "Грунтование поверхности потолков из ГКЛ водно-дисперсионной грунтовкой в 2 слоя",
+            "15-04-006-02",
+        ),
+        ("Шпатлевка поверхности потолков из ГКЛ в 2 слоя", "15-04-027"),
+        ("Оклейка поверхности потолков из ГКЛ стеклохолстом", "15-06"),
+        ("Окраска потолков в 2 слоя", "15-04"),
+    ]
+    for description, expected in cases:
+        r = h.search_norm(
+            description,
+            work_family="finishes",
+            element_type="finish",
+            action="устройство",
+            unit_hint="м2",
+            top_k=10,
+        )
+        codes = [c["norm_code"] for c in r["candidates"]]
+        assert any(expected in code for code in codes), (description, codes)
+        assert any(c["score_parts"].get("finish_same_operation") for c in r["candidates"])
 
 
 def test_mass_context_promotes_gesnm38_over_building_frame_codes():
@@ -657,9 +807,9 @@ def test_legacy_tool_call_is_repaired_to_batch_plan():
     assert res["preliminary"] is True
     assert len(res["computed"]) == 1
     assert res["computed"][0]["qty"] > 0
-    assert res["total_status"] == "partial"        # принятая позиция есть, но цены ресурсов не закрыты
+    assert res["total_status"] == "complete"       # ценовой gap не блокирует итог, а остаётся row-level требованием
     assert res["partial_total"]["grand_total"] > 0
-    assert res["final_total"] is None
+    assert res["final_total"]["grand_total"] > 0
     assert any(req["action"] == "needs_kac" for req in res["price_requirements"])
     assert calls["i"] >= 2
     assert [t["tool"] for t in res["trace"]] == [
@@ -708,9 +858,9 @@ def test_batch_plan_asks_model_to_choose_when_search_is_ambiguous():
     assert res["computed"][0]["code"].startswith("ГЭСН:06-02")
     assert any("моделью из shortlist" in a for a in res["computed"][0]["assumptions"])
     assert res["by_assumption"]
-    assert res["total_status"] == "partial"
+    assert res["total_status"] == "complete"
     assert res["partial_total"]["grand_total"] > 0
-    assert res["final_total"] is None
+    assert res["final_total"]["grand_total"] > 0
     assert res["price_requirements"]
 
 

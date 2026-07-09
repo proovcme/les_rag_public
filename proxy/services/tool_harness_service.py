@@ -1,0 +1,715 @@
+"""Controlled LES tool harness.
+
+The harness exposes small, typed, read-only tools that return evidence packets
+and traces. It is intentionally not an autonomous agent loop: the model may use
+these results later, but this layer only executes bounded operations.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable
+
+from proxy.services.document_explorer_service import explorer
+from proxy.services.notebook_service import build_dataset_notebook
+from proxy.services.tool_trace_policy import make_tool_trace, validate_tool_result
+
+
+TOOL_RESULT_SCHEMA = "les_tool_result_v1"
+TOOL_REGISTRY_SCHEMA = "les_tool_registry_v1"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_TEXT_EXT = {
+    ".txt", ".md", ".json", ".jsonl", ".csv", ".tsv", ".xml", ".yaml", ".yml",
+    ".html", ".svg", ".py", ".ini", ".cfg", ".sql", ".log",
+}
+_EXCEL_EXT = {".xlsx", ".xlsm", ".xls", ".csv", ".tsv"}
+_PDF_EXT = {".pdf"}
+_MAX_TEXT_BYTES = 1_000_000
+_FORBIDDEN_PARTS = {
+    ".env",
+    ".git",
+    ".venv",
+    "__pycache__",
+    "data",
+    "dist",
+    "logs",
+    "local_private_archive",
+}
+
+
+@dataclass(frozen=True)
+class ToolSpec:
+    name: str
+    title: str
+    category: str
+    summary: str
+    args_schema: dict[str, Any]
+    returns: str
+    side_effects: str = "none"
+    approval_required: bool = False
+    tags: tuple[str, ...] = field(default_factory=tuple)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "title": self.title,
+            "category": self.category,
+            "summary": self.summary,
+            "args_schema": self.args_schema,
+            "returns": self.returns,
+            "side_effects": self.side_effects,
+            "approval_required": self.approval_required,
+            "tags": list(self.tags),
+        }
+
+
+class ToolHarness:
+    """Registry + executor for bounded LES tools."""
+
+    def __init__(self) -> None:
+        self._tools: dict[str, tuple[ToolSpec, Callable[[dict[str, Any]], dict[str, Any]]]] = {}
+        self._register_defaults()
+
+    def registry(self, *, category: str = "") -> dict[str, Any]:
+        tools = [spec.to_dict() for spec, _handler in self._tools.values()]
+        if category:
+            tools = [tool for tool in tools if tool.get("category") == category]
+        return {
+            "schema": TOOL_REGISTRY_SCHEMA,
+            "tool_count": len(tools),
+            "tools": sorted(tools, key=lambda item: (str(item["category"]), str(item["name"]))),
+            "policy": {
+                "model_owns_workflow": True,
+                "tools_return_evidence_not_final_domain_answers": True,
+                "write_tools_require_approval": True,
+            },
+        }
+
+    def shortlist(self, question: str, *, mode: str = "", limit: int = 5) -> dict[str, Any]:
+        terms = _tokens(" ".join([question, mode]))
+        scored: list[tuple[int, ToolSpec]] = []
+        for spec, _handler in self._tools.values():
+            haystack = " ".join([spec.name, spec.title, spec.summary, *spec.tags]).casefold()
+            score = sum(1 for term in terms if term in haystack)
+            if spec.category in {"dataset", "source"} and any(t in terms for t in ("датасет", "документ", "источник", "pdf", "excel")):
+                score += 2
+            if spec.category == "filesystem" and any(t in terms for t in ("файл", "папк", "filesystem", "диск")):
+                score += 2
+            if score:
+                scored.append((score, spec))
+        scored.sort(key=lambda item: (-item[0], item[1].name))
+        selected = [spec.to_dict() | {"score": score} for score, spec in scored[: max(1, limit)]]
+        if not selected:
+            selected = [
+                self._tools[name][0].to_dict() | {"score": 0}
+                for name in ("dataset_map", "search_sources", "read_source")
+                if name in self._tools
+            ][: max(1, limit)]
+        return {"schema": "les_tool_shortlist_v1", "question": question, "mode": mode, "tools": selected}
+
+    def call(self, tool: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
+        args = dict(args or {})
+        if tool not in self._tools:
+            return _result(tool=tool, operation="call", inputs=[args], status="missing",
+                           result={}, missing=[f"unknown tool: {tool}"], trace="tool not registered")
+        spec, handler = self._tools[tool]
+        try:
+            payload = handler(args)
+        except Exception as exc:  # noqa: BLE001 - tool errors must become traceable payloads
+            payload = _result(
+                tool=spec.name,
+                operation="call",
+                inputs=[_redact_args(args)],
+                status="error",
+                result={},
+                warnings=[str(exc)[:240]],
+                trace=f"{spec.name} failed: {type(exc).__name__}",
+            )
+        payload.setdefault("spec", spec.to_dict())
+        payload["contract_check"] = validate_tool_result(payload)
+        return payload
+
+    def _register(self, spec: ToolSpec, handler: Callable[[dict[str, Any]], dict[str, Any]]) -> None:
+        self._tools[spec.name] = (spec, handler)
+
+    def _register_defaults(self) -> None:
+        self._register(
+            ToolSpec(
+                name="dataset_map",
+                title="Dataset map",
+                category="dataset",
+                summary="Return the typed dataset navigation map: topics, sections, routes and operator guidance.",
+                args_schema={"dataset_id": "str", "depth": "deep|shallow"},
+                returns="dataset navigation packet, not evidence",
+                tags=("dataset", "topic_map", "section_map", "notebook", "navigation"),
+            ),
+            _tool_dataset_map,
+        )
+        self._register(
+            ToolSpec(
+                name="search_sources",
+                title="Search indexed sources",
+                category="source",
+                summary="Search lexical chunks inside the selected dataset/document scope.",
+                args_schema={"q": "str", "dataset_ids": "list[str]", "doc_name": "str", "doc_id": "str", "limit": "int"},
+                returns="ranked indexed chunks with source ids",
+                tags=("retrieval", "source", "search", "fts", "doc_filter"),
+            ),
+            _tool_search_sources,
+        )
+        self._register(
+            ToolSpec(
+                name="read_source",
+                title="Read indexed source",
+                category="source",
+                summary="Read ordered indexed chunks from one document by doc_id or dataset_id+doc_name.",
+                args_schema={"doc_id": "str", "dataset_id": "str", "doc_name": "str", "q": "str", "limit": "int"},
+                returns="ordered chunks or in-document search hits",
+                tags=("read", "document", "chunks", "source"),
+            ),
+            _tool_read_source,
+        )
+        self._register(
+            ToolSpec(
+                name="read_pdf_source",
+                title="Read PDF source",
+                category="source",
+                summary="Read indexed text chunks for a PDF document and mark raw page/table extraction as missing when unavailable.",
+                args_schema={"doc_id": "str", "dataset_id": "str", "doc_name": "str", "q": "str", "limit": "int"},
+                returns="PDF indexed text chunks with warnings about raw extraction limits",
+                tags=("pdf", "read", "document", "source"),
+            ),
+            _tool_read_pdf_source,
+        )
+        self._register(
+            ToolSpec(
+                name="read_excel_source",
+                title="Read Excel source",
+                category="source",
+                summary="Read indexed text/table chunks for Excel-like sources and mark sheet/range extraction as missing when unavailable.",
+                args_schema={"doc_id": "str", "dataset_id": "str", "doc_name": "str", "q": "str", "limit": "int"},
+                returns="Excel indexed chunks with warnings about raw sheet/range limits",
+                tags=("excel", "xlsx", "csv", "table", "read", "source"),
+            ),
+            _tool_read_excel_source,
+        )
+        self._register(
+            ToolSpec(
+                name="filesystem_roots",
+                title="Filesystem roots",
+                category="filesystem",
+                summary="List read-only filesystem roots allowed for tool access.",
+                args_schema={},
+                returns="allowed root keys and paths",
+                tags=("filesystem", "roots", "whitelist"),
+            ),
+            _tool_filesystem_roots,
+        )
+        self._register(
+            ToolSpec(
+                name="filesystem_list",
+                title="Filesystem list",
+                category="filesystem",
+                summary="List files under an allowed root without leaving the whitelist.",
+                args_schema={"root": "str", "path": "str", "depth": "int"},
+                returns="bounded directory tree",
+                tags=("filesystem", "list", "tree"),
+            ),
+            _tool_filesystem_list,
+        )
+        self._register(
+            ToolSpec(
+                name="filesystem_stat",
+                title="Filesystem stat",
+                category="filesystem",
+                summary="Return metadata for a file or directory under an allowed root.",
+                args_schema={"root": "str", "path": "str"},
+                returns="file metadata without content",
+                tags=("filesystem", "stat", "metadata"),
+            ),
+            _tool_filesystem_stat,
+        )
+        self._register(
+            ToolSpec(
+                name="filesystem_read_text",
+                title="Filesystem read text",
+                category="filesystem",
+                summary="Read a small text file under an allowed root.",
+                args_schema={"root": "str", "path": "str", "max_chars": "int"},
+                returns="text content with truncation flag",
+                tags=("filesystem", "read", "text"),
+            ),
+            _tool_filesystem_read_text,
+        )
+        self._register(
+            ToolSpec(
+                name="filesystem_search",
+                title="Filesystem search",
+                category="filesystem",
+                summary="Search names and optionally text content under an allowed root.",
+                args_schema={"root": "str", "path": "str", "q": "str", "content": "bool", "limit": "int"},
+                returns="bounded file hits",
+                tags=("filesystem", "search", "find"),
+            ),
+            _tool_filesystem_search,
+        )
+        self._register(
+            ToolSpec(
+                name="filesystem_hash",
+                title="Filesystem hash",
+                category="filesystem",
+                summary="Calculate SHA-256 for a file under an allowed root.",
+                args_schema={"root": "str", "path": "str"},
+                returns="sha256 digest and file size",
+                tags=("filesystem", "hash", "sha256"),
+            ),
+            _tool_filesystem_hash,
+        )
+
+
+def _tool_dataset_map(args: dict[str, Any]) -> dict[str, Any]:
+    dataset_id = str(args.get("dataset_id") or "").strip()
+    if not dataset_id:
+        return _result(tool="dataset_map", operation="build", inputs=[args], status="missing",
+                       result={}, missing=["dataset_id"], trace="dataset_id is required")
+    notebook = build_dataset_notebook(
+        dataset_id,
+        storage_root=Path(str(args.get("storage_root") or "storage/datasets")),
+        depth=str(args.get("depth") or "deep"),
+    )
+    typed = notebook.get("typed_memory") if isinstance(notebook.get("typed_memory"), dict) else {}
+    result = {
+        "dataset_id": dataset_id,
+        "schema": notebook.get("schema") or "notebook_v1",
+        "summary": notebook.get("notebook_summary") or {},
+        "operator_guidance": typed.get("operator_guidance") or notebook.get("operator_guidance") or "",
+        "topic_map": typed.get("topic_map") or {},
+        "section_map": typed.get("section_map") or {},
+        "source_layers": typed.get("source_layers") or [],
+        "retrieval_routes": typed.get("retrieval_routes") or [],
+        "known_gaps": typed.get("known_gaps") or [],
+    }
+    return _result(
+        tool="dataset_map",
+        operation="build",
+        inputs=[{"dataset_id": dataset_id, "depth": str(args.get("depth") or "deep")}],
+        status="ok",
+        result=result,
+        evidence=[{"kind": "navigation", "dataset_id": dataset_id, "is_evidence": False}],
+        trace="built dataset navigation map from notebook/typed memory",
+    )
+
+
+def _tool_search_sources(args: dict[str, Any]) -> dict[str, Any]:
+    q = str(args.get("q") or "").strip()
+    if not q:
+        return _result(tool="search_sources", operation="search", inputs=[args], status="missing",
+                       result={}, missing=["q"], trace="query is required")
+    dataset_ids = _list_arg(args.get("dataset_ids") or args.get("dataset_id"))
+    result = explorer().search(
+        q,
+        dataset_ids=dataset_ids,
+        doc_name=str(args.get("doc_name") or ""),
+        doc_id=str(args.get("doc_id") or ""),
+        limit=_int_arg(args.get("limit"), 50, min_value=1, max_value=200),
+        max_chars=_int_arg(args.get("max_chars"), 1200, min_value=200, max_value=8000),
+    )
+    return _result(
+        tool="search_sources",
+        operation="search",
+        inputs=[{"q": q, "dataset_ids": dataset_ids, "doc_name": args.get("doc_name") or "", "doc_id": args.get("doc_id") or ""}],
+        status="ok" if result.get("count") else "missing",
+        result=result,
+        sources=_sources_from_rows(result.get("hits") or []),
+        missing=[] if result.get("count") else ["no indexed chunks matched query"],
+        warnings=[str(result.get("warning"))] if result.get("warning") else [],
+        trace="searched lexical chunks through DocumentExplorer",
+    )
+
+
+def _tool_read_source(args: dict[str, Any]) -> dict[str, Any]:
+    return _read_source_payload("read_source", args)
+
+
+def _tool_read_pdf_source(args: dict[str, Any]) -> dict[str, Any]:
+    payload = _read_source_payload("read_pdf_source", args)
+    doc_name = _result_doc_name(payload)
+    warnings = list(payload.get("warnings") or [])
+    if doc_name and Path(doc_name).suffix.casefold() not in _PDF_EXT:
+        warnings.append("source extension is not pdf")
+    warnings.append("raw PDF page/table extraction is not part of this first tool pass; using indexed chunks")
+    payload["warnings"] = list(dict.fromkeys(warnings))
+    payload["trace"] = str(payload.get("trace") or "") + "; pdf indexed-chunk read"
+    if isinstance(payload.get("tool_trace"), dict):
+        payload["tool_trace"]["warnings"] = payload["warnings"]
+        payload["tool_trace"]["trace"] = payload["trace"]
+    payload["contract_check"] = validate_tool_result(payload)
+    return payload
+
+
+def _tool_read_excel_source(args: dict[str, Any]) -> dict[str, Any]:
+    payload = _read_source_payload("read_excel_source", args)
+    doc_name = _result_doc_name(payload)
+    warnings = list(payload.get("warnings") or [])
+    if doc_name and Path(doc_name).suffix.casefold() not in _EXCEL_EXT:
+        warnings.append("source extension is not excel/csv-like")
+    warnings.append("raw sheet/range extraction is not part of this first tool pass; using indexed chunks")
+    payload["warnings"] = list(dict.fromkeys(warnings))
+    payload["trace"] = str(payload.get("trace") or "") + "; excel indexed-chunk read"
+    if isinstance(payload.get("tool_trace"), dict):
+        payload["tool_trace"]["warnings"] = payload["warnings"]
+        payload["tool_trace"]["trace"] = payload["trace"]
+    payload["contract_check"] = validate_tool_result(payload)
+    return payload
+
+
+def _read_source_payload(tool: str, args: dict[str, Any]) -> dict[str, Any]:
+    doc_id = str(args.get("doc_id") or "").strip()
+    q = str(args.get("q") or "").strip()
+    limit = _int_arg(args.get("limit"), 80, min_value=1, max_value=500)
+    max_chars = _int_arg(args.get("max_chars"), 4000, min_value=200, max_value=12000)
+    if doc_id:
+        result = explorer().document_chunks_by_id(doc_id, q=q, limit=limit, max_chars=max_chars)
+        if result is None:
+            return _result(tool=tool, operation="read", inputs=[args], status="missing",
+                           result={}, missing=[f"document not found: {doc_id}"], trace="doc_id lookup returned no document")
+    else:
+        dataset_id = str(args.get("dataset_id") or "").strip()
+        doc_name = str(args.get("doc_name") or "").strip()
+        if not dataset_id or not doc_name:
+            return _result(tool=tool, operation="read", inputs=[args], status="missing",
+                           result={}, missing=["doc_id or dataset_id+doc_name"], trace="document selector is required")
+        result = explorer().document_chunks(dataset_id, doc_name, q=q, limit=limit, max_chars=max_chars)
+    rows = result.get("hits") or result.get("chunks") or []
+    return _result(
+        tool=tool,
+        operation="read",
+        inputs=[{"doc_id": doc_id, "dataset_id": args.get("dataset_id") or "", "doc_name": args.get("doc_name") or "", "q": q}],
+        status="ok" if rows else "missing",
+        result=result,
+        sources=_sources_from_rows(rows),
+        missing=[] if rows else ["document has no indexed chunks for this selector"],
+        warnings=[str(result.get("warning"))] if isinstance(result, dict) and result.get("warning") else [],
+        trace="read indexed document chunks through DocumentExplorer",
+    )
+
+
+def _tool_filesystem_roots(args: dict[str, Any]) -> dict[str, Any]:
+    roots = _allowed_roots()
+    result = {
+        "roots": [
+            {"key": key, "path": str(path), "exists": path.exists(), "read_only": True}
+            for key, path in roots.items()
+        ],
+        "forbidden_parts": sorted(_FORBIDDEN_PARTS),
+    }
+    return _result(tool="filesystem_roots", operation="list_roots", inputs=[{}], status="ok",
+                   result=result, trace="listed whitelist filesystem roots")
+
+
+def _tool_filesystem_list(args: dict[str, Any]) -> dict[str, Any]:
+    root_key = str(args.get("root") or "docs")
+    target = _safe_path(root_key, str(args.get("path") or ""))
+    if not target.exists():
+        return _result(tool="filesystem_list", operation="list", inputs=[_redact_args(args)], status="missing",
+                       result={}, missing=[f"path not found: {args.get('path') or ''}"], trace="filesystem path not found")
+    depth = _int_arg(args.get("depth"), 1, min_value=0, max_value=4)
+    result = _fs_node(root_key, target, depth=depth)
+    return _result(tool="filesystem_list", operation="list", inputs=[_redact_args(args)], status="ok",
+                   result=result, sources=[_fs_source(root_key, target)], trace="listed whitelisted filesystem path")
+
+
+def _tool_filesystem_stat(args: dict[str, Any]) -> dict[str, Any]:
+    root_key = str(args.get("root") or "docs")
+    target = _safe_path(root_key, str(args.get("path") or ""))
+    if not target.exists():
+        return _result(tool="filesystem_stat", operation="stat", inputs=[_redact_args(args)], status="missing",
+                       result={}, missing=[f"path not found: {args.get('path') or ''}"], trace="filesystem path not found")
+    return _result(tool="filesystem_stat", operation="stat", inputs=[_redact_args(args)], status="ok",
+                   result=_fs_metadata(root_key, target), sources=[_fs_source(root_key, target)],
+                   trace="read filesystem metadata")
+
+
+def _tool_filesystem_read_text(args: dict[str, Any]) -> dict[str, Any]:
+    root_key = str(args.get("root") or "docs")
+    target = _safe_path(root_key, str(args.get("path") or ""))
+    if not target.is_file():
+        return _result(tool="filesystem_read_text", operation="read_text", inputs=[_redact_args(args)], status="missing",
+                       result={}, missing=["file not found"], trace="filesystem file not found")
+    if target.suffix.casefold() not in _TEXT_EXT:
+        return _result(tool="filesystem_read_text", operation="read_text", inputs=[_redact_args(args)], status="missing",
+                       result={}, missing=["not a supported text file"], trace="binary or unsupported text extension")
+    size = target.stat().st_size
+    if size > _MAX_TEXT_BYTES:
+        return _result(tool="filesystem_read_text", operation="read_text", inputs=[_redact_args(args)], status="missing",
+                       result={}, missing=["file too large for text tool"], trace="text file exceeds safety limit")
+    max_chars = _int_arg(args.get("max_chars"), 20000, min_value=200, max_value=100000)
+    text = target.read_text(encoding="utf-8", errors="replace")
+    result = _fs_metadata(root_key, target) | {"text": text[:max_chars], "text_truncated": len(text) > max_chars}
+    return _result(tool="filesystem_read_text", operation="read_text", inputs=[_redact_args(args)], status="ok",
+                   result=result, sources=[_fs_source(root_key, target)], trace="read whitelisted text file")
+
+
+def _tool_filesystem_search(args: dict[str, Any]) -> dict[str, Any]:
+    q = str(args.get("q") or "").strip()
+    if not q:
+        return _result(tool="filesystem_search", operation="search", inputs=[_redact_args(args)], status="missing",
+                       result={}, missing=["q"], trace="query is required")
+    root_key = str(args.get("root") or "docs")
+    base = _safe_path(root_key, str(args.get("path") or ""))
+    if not base.exists():
+        return _result(tool="filesystem_search", operation="search", inputs=[_redact_args(args)], status="missing",
+                       result={}, missing=["path not found"], trace="filesystem search base not found")
+    limit = _int_arg(args.get("limit"), 50, min_value=1, max_value=200)
+    include_content = bool(args.get("content"))
+    hits = _fs_search(root_key, base, q=q, include_content=include_content, limit=limit)
+    return _result(
+        tool="filesystem_search",
+        operation="search",
+        inputs=[_redact_args(args)],
+        status="ok" if hits else "missing",
+        result={"query": q, "hits": hits, "count": len(hits), "content": include_content},
+        sources=[_fs_source(root_key, base)],
+        missing=[] if hits else ["no files matched query"],
+        trace="searched whitelisted filesystem path",
+    )
+
+
+def _tool_filesystem_hash(args: dict[str, Any]) -> dict[str, Any]:
+    root_key = str(args.get("root") or "docs")
+    target = _safe_path(root_key, str(args.get("path") or ""))
+    if not target.is_file():
+        return _result(tool="filesystem_hash", operation="hash", inputs=[_redact_args(args)], status="missing",
+                       result={}, missing=["file not found"], trace="hash target is not a file")
+    digest = hashlib.sha256(target.read_bytes()).hexdigest()
+    result = _fs_metadata(root_key, target) | {"sha256": digest}
+    return _result(tool="filesystem_hash", operation="hash", inputs=[_redact_args(args)], status="ok",
+                   result=result, sources=[_fs_source(root_key, target)], trace="calculated sha256 for whitelisted file")
+
+
+def _allowed_roots() -> dict[str, Path]:
+    roots: dict[str, Path] = {
+        "docs": (_REPO_ROOT / "docs").resolve(),
+        "storage_datasets": (_REPO_ROOT / "storage" / "datasets").resolve(),
+        "rag_content": (_REPO_ROOT / "RAG_Content").resolve(),
+        "artifacts": (_REPO_ROOT / "storage" / "artifacts").resolve(),
+    }
+    raw = os.getenv("LES_TOOL_FS_EXTRA_ROOTS", "")
+    for item in (part.strip() for part in raw.split(",")):
+        if not item:
+            continue
+        if "=" in item:
+            key, value = item.split("=", 1)
+        else:
+            value = item
+            key = Path(value).name or "extra"
+        key = re.sub(r"[^0-9A-Za-z_-]+", "_", key.strip())[:40] or "extra"
+        roots[key] = Path(value).expanduser().resolve()
+    return roots
+
+
+def _safe_path(root_key: str, rel_path: str) -> Path:
+    roots = _allowed_roots()
+    if root_key not in roots:
+        raise ValueError(f"unknown filesystem root: {root_key}")
+    clean_parts = [part for part in Path(rel_path or "").parts if part not in ("", ".")]
+    if any(part == ".." or part.startswith(".") or part in _FORBIDDEN_PARTS for part in clean_parts):
+        raise ValueError("filesystem path contains a forbidden segment")
+    root = roots[root_key]
+    target = (root / Path(*clean_parts)).resolve() if clean_parts else root
+    if target != root and root not in target.parents:
+        raise ValueError("filesystem path escapes allowed root")
+    if any(part in _FORBIDDEN_PARTS for part in target.parts):
+        raise ValueError("filesystem path crosses a forbidden directory")
+    return target
+
+
+def _fs_node(root_key: str, path: Path, *, depth: int) -> dict[str, Any]:
+    meta = _fs_metadata(root_key, path)
+    if path.is_dir() and depth > 0:
+        children: list[dict[str, Any]] = []
+        try:
+            entries = sorted(path.iterdir(), key=lambda p: (not p.is_dir(), p.name.casefold()))
+        except OSError:
+            entries = []
+        for child in entries:
+            if child.name.startswith(".") or child.name in _FORBIDDEN_PARTS:
+                continue
+            children.append(_fs_node(root_key, child, depth=depth - 1))
+            if len(children) >= 500:
+                break
+        meta["children"] = children
+    return meta
+
+
+def _fs_metadata(root_key: str, path: Path) -> dict[str, Any]:
+    root = _allowed_roots()[root_key]
+    rel = "" if path == root else str(path.relative_to(root))
+    stat = path.stat()
+    return {
+        "root": root_key,
+        "path": rel,
+        "name": path.name or root_key,
+        "is_dir": path.is_dir(),
+        "is_file": path.is_file(),
+        "suffix": path.suffix,
+        "size": stat.st_size,
+        "mtime": stat.st_mtime,
+    }
+
+
+def _fs_search(root_key: str, base: Path, *, q: str, include_content: bool, limit: int) -> list[dict[str, Any]]:
+    needle = q.casefold()
+    hits: list[dict[str, Any]] = []
+    stack = [base]
+    visited = 0
+    while stack and len(hits) < limit and visited < 5000:
+        current = stack.pop()
+        visited += 1
+        try:
+            meta = _fs_metadata(root_key, current)
+        except OSError:
+            continue
+        name_hit = needle in current.name.casefold()
+        content_snippet = ""
+        if include_content and current.is_file() and current.suffix.casefold() in _TEXT_EXT:
+            try:
+                if current.stat().st_size <= 200_000:
+                    text = current.read_text(encoding="utf-8", errors="replace")
+                    pos = text.casefold().find(needle)
+                    if pos >= 0:
+                        start = max(0, pos - 120)
+                        end = min(len(text), pos + len(q) + 120)
+                        content_snippet = text[start:end].strip()
+            except OSError:
+                content_snippet = ""
+        if name_hit or content_snippet:
+            hit = meta | {"match": "content" if content_snippet else "name"}
+            if content_snippet:
+                hit["snippet"] = content_snippet
+            hits.append(hit)
+        if current.is_dir():
+            try:
+                children = sorted(current.iterdir(), key=lambda p: p.name.casefold(), reverse=True)
+            except OSError:
+                children = []
+            for child in children:
+                if child.name.startswith(".") or child.name in _FORBIDDEN_PARTS:
+                    continue
+                stack.append(child)
+    return hits
+
+
+def _result(
+    *,
+    tool: str,
+    operation: str,
+    inputs: list[Any],
+    status: str,
+    result: Any,
+    trace: str,
+    evidence: list[dict[str, Any]] | None = None,
+    sources: list[dict[str, Any]] | None = None,
+    missing: list[str] | None = None,
+    warnings: list[str] | None = None,
+) -> dict[str, Any]:
+    warnings = list(warnings or [])
+    trace_obj = make_tool_trace(
+        tool=tool,
+        operation=operation,
+        inputs=inputs,
+        result=result,
+        trace=trace,
+        status=status,
+        warnings=warnings,
+        decision_required_from_model=True,
+        source="les_tool_harness",
+    ).to_dict()
+    payload = {
+        "schema": TOOL_RESULT_SCHEMA,
+        "tool": tool,
+        "operation": operation,
+        "inputs": inputs,
+        "status": status,
+        "result": result,
+        "evidence": list(evidence or []),
+        "sources": list(sources or []),
+        "missing": list(missing or []),
+        "warnings": warnings,
+        "trace": trace,
+        "tool_trace": trace_obj,
+        "decision_required_from_model": True,
+    }
+    payload["contract_check"] = validate_tool_result(payload)
+    return payload
+
+
+def _sources_from_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for row in rows:
+        key = (str(row.get("dataset_id") or ""), str(row.get("doc_name") or ""), str(row.get("chunk_ord") or ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(
+            {
+                "kind": "indexed_chunk",
+                "dataset_id": row.get("dataset_id"),
+                "doc_id": row.get("doc_id"),
+                "doc_name": row.get("doc_name"),
+                "chunk_ord": row.get("chunk_ord"),
+                "point_id": row.get("point_id"),
+                "section_heading": row.get("section_heading") or row.get("parent_heading") or "",
+            }
+        )
+    return out
+
+
+def _result_doc_name(payload: dict[str, Any]) -> str:
+    result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+    document = result.get("document") if isinstance(result.get("document"), dict) else {}
+    return str(document.get("file_name") or result.get("doc_name") or "")
+
+
+def _fs_source(root_key: str, path: Path) -> dict[str, Any]:
+    meta = _fs_metadata(root_key, path)
+    return {"kind": "filesystem", "root": root_key, "path": meta["path"], "name": meta["name"]}
+
+
+def _list_arg(value: Any) -> list[str]:
+    if value is None or value == "":
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    return [str(value)]
+
+
+def _int_arg(value: Any, default: int, *, min_value: int, max_value: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(min_value, min(max_value, parsed))
+
+
+def _tokens(text: str) -> set[str]:
+    return {token.casefold() for token in re.findall(r"[0-9A-Za-zА-Яа-яЁё_.-]{3,}", text)}
+
+
+def _redact_args(args: dict[str, Any]) -> dict[str, Any]:
+    redacted = {}
+    for key, value in args.items():
+        if "secret" in key.casefold() or "password" in key.casefold() or "token" in key.casefold():
+            redacted[key] = "***"
+        else:
+            redacted[key] = value
+    return redacted
+
+
+def harness() -> ToolHarness:
+    return ToolHarness()

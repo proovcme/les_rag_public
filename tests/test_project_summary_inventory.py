@@ -90,6 +90,7 @@ def test_project_inventory_intent_is_file_register_not_project_summary_hijack():
     assert is_project_inventory_query("дай перечень файлов в датасете и описание проекта")
     assert is_project_inventory_query("составь реестр документации котельной")
     assert is_project_inventory_query("какие документы в датасете BAI")
+    assert is_project_inventory_query("что это за датасет НС")
     assert not is_project_inventory_query("расскажи про проект котельной")
 
 

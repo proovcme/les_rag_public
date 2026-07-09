@@ -2,20 +2,21 @@
 
 # ЛЕС v1.0 — дорожная карта до стабильной локальной версии
 
-Статус: рабочий roadmap после ветки `feat/les3-p1`; актуализирован 2026-06-26 после runtime `h0.23`
-и `docs/MODULE_AUDIT_2026-06-26.md`.
+Статус: рабочий roadmap после ветки `feat/les3-p1`; актуализирован 2026-07-04 после runtime
+`0.24.0.230` и `docs/RELEASE_LEDGER.md`.
 
 Цель документа — перестать идти «по наитию» и зафиксировать, что именно считается версией 1.0, какие этапы ведут к ней, что блокирует релиз и какие вещи сознательно остаются после v1.
 
 ---
 
-## 0. Актуализация 2026-06-26
+## 0. Актуализация 2026-07-04
 
-Фактический runtime уже дошёл до `h0.23`, но номера ниже частично исторические: часть пунктов
-v0.19–v0.22 закрыта, часть Evidence UI осталась незакрытой, а свежий аудит модулей добавил
-операционные P0, которых в первом release-plan не хватало.
+Фактический runtime дошёл до `0.24.0.230`. Старый milestone-план ниже остаётся полезным как
+история, но текущая траектория v1 изменилась: кроме evidence UI и normcontrol появился новый
+рабочий центр тяжести — корпусная навигация, controlled tool-harness, системный слой PDF/XLS и
+CAD/DWG projections. Актуальная правда по версии и деплою — `docs/RELEASE_LEDGER.md`.
 
-### Что уже фактически сделано
+### Что уже фактически закрыто
 
 ```text
 version/deploy stamp есть
@@ -25,16 +26,33 @@ scope_model и scope_clarification работают
 DeterministicFinalPolicy закрывает старые hijack-баги
 sidecar/source operations частично выведены в API/UI
 copy у ответа есть
+Operational Trust Hardening закрыт как gate 0.23A
+SPDS doc-review baseline работает через чат/API/GUI с JSON/HTML/XLSX отчётом
+typed dataset memory вырос в notebook/source-guide слой: file cards, source graph, topic/section map
+Document Explorer показывает датасеты, документы, chunks, поиск и CAD inventory
+controlled tool-harness даёт model-selected read/search tools без автономного agent loop
+PDF/P7M/XLS/XLSX/XLSM parse вынесен в killable subprocess
+большие Excel/CSV индексируются как navigation projections, а не row-chunk flood
+raw CAD/BIM больше не становится ложным INDEXED 0; DWG/DXF идут через canonical JSON projection
+CAD/DWG drawn tables извлекаются из line/polyline grids и попадают в RAG до element noise
+target-file CAD smoke на `drawn_table_1 first positions` закрыт на runtime `0.24.0.230`
 ```
 
 ### Что не считать закрытым
 
 ```text
-Evidence UI не закрыт целиком: source drawer / открыть источник / Stop ещё не v1-ready
+Evidence UI не закрыт целиком: "Открыть", preview, source drawer и Stop ещё не v1-ready
 Real Dataset Acceptance не закрыт как системная матрица 3–5 датасетов
 Retrieval/Citation Quality не закрыт: used/found/rejected, preview, weak/strong ещё требуют прохода
 Estimate Workflow Hardening не закрыт как release gate
-операционные P0 из MODULE_AUDIT не были частью старого milestone-плана
+загрузка сметных документов не прозрачна для пользователя как отдельный intake-workflow
+document_router устарел как владелец dataset routing: для `+ папка` граница датасета задаётся
+оператором/LES.md, а router должен давать только file-role/parse-pipeline hints
+PDF/XLS system layer ещё не равен полноценному пользовательскому reader/tool workflow
+CAD tables beyond simple grids остаются риском: сложные merged cells, multi-sheet specs, rotated/fragmented grids
+latency локальной генерации остаётся продуктовым риском
+`tool_loop NameError` остаётся отдельным хвостом до стабилизации общего tool loop
+runtime divergence остаётся дисциплиной: dev-правка не равна runtime, деплой только через `make ship`
 ```
 
 ### Стабилизационный вектор сессии 2026-06-27
@@ -52,8 +70,10 @@ happy path плюс управляемый fail path там, где возмож
 
 ```text
 Сначала доверие и воспроизводимость.
-Потом кликабельный evidence.
-Потом нормоконтроль СПДС как первый доменный workflow.
+Потом прозрачный intake документов: пользователь должен видеть, что именно загружено, прочитано,
+проиндексировано, приложено к вопросу или заблокировано.
+Потом кликабельный evidence и строгий target-file/source workflow.
+Потом довести PDF/XLS/CAD readers до пользовательских инструментов, а не только index internals.
 Потом retrieval quality и сметный workflow.
 Потом RC.
 ```
@@ -61,17 +81,21 @@ happy path плюс управляемый fail path там, где возмож
 Новые pre-RC gates:
 
 ```text
-v0.23A — Operational Trust Hardening
-v0.23B — Clickable Sources + Citation Drawer
-v0.23C — Real Dataset Acceptance
-v0.24  — SPDS Documentation Normcontrol: ГОСТ Р 21.101-2026
-v0.25  — Retrieval and Citation Quality
-v0.26  — Estimate Workflow Hardening
-v0.90  — Release Candidate
-v1.0   — Local Evidence Assistant
+v0.23A — Operational Trust Hardening                         ✅ closed
+v0.23B — Clickable Sources + Citation Drawer                  🟡 partial
+v0.23C — Real Dataset Acceptance                              🟡 partial, needs matrix
+v0.24  — SPDS Documentation Normcontrol: ГОСТ Р 21.101-2026   ✅ baseline, deeper profile open
+v0.24D — Transparent Smeta Document Intake                    📋 next
+v0.24E — PDF/XLS Reader Tools + System Table Layer            🟡 started: project PDF source-map + ES/EOM; next OV ХВС, VK water balances, room explications
+v0.24F — CAD/DWG Table Hardening                              📋 next
+v0.25  — Retrieval and Citation Quality                       📋
+v0.26  — Estimate Workflow Hardening                          📋
+v0.90  — Release Candidate                                    📋
+v1.0   — Local Evidence Assistant                             📋
 ```
 
-Источник P0 для v0.23A — `docs/MODULE_AUDIT_2026-06-26.md`.
+Источник текущего состояния — `docs/RELEASE_LEDGER.md`; источник P0 для v0.23A —
+`docs/MODULE_AUDIT_2026-06-26.md`.
 
 ---
 
@@ -302,6 +326,37 @@ e19cc409 — 22 sidecar, 20 054 paragraphs
 
 Но policy должна оставаться release blocker до v1.
 
+### 3.7. Runtime 0.24 core: navigation, tools, PDF/XLS, CAD/DWG
+
+После старого плана v0.24 стал не только normcontrol-веткой. В runtime уже появились новые ядра,
+которые теперь считаются частью дороги к v1:
+
+```text
+typed dataset memory / notebook_v1:
+  file cards, source layers, source graph, topic map, section map, dataset brief for model
+
+Document Explorer:
+  no-AI обзор датасетов/документов/chunks, поиск, topic/section map, "Спросить по теме"
+
+controlled tool-harness:
+  dataset_map, indexed source search/read, PDF/Excel indexed readers, read-only filesystem tools
+
+PDF/XLS parse safety:
+  killable subprocess for risky conversions, spreadsheet_navigation_projection,
+  table_navigation_projection вместо тысячи row chunks
+
+CAD/DWG pipeline:
+  DWG -> DXF -> canonical JSON -> CAD_BIM projection -> CAD_BIM_Index
+  drawn CAD tables from LINE/LWPOLYLINE + TEXT/MTEXT
+  first positions/logical positions anchors
+  first_ordinal rank pin survives chat rerank and context expansion
+```
+
+Живой smoke на `0.24.0.230` доказал узкий сценарий: вопрос по target-file
+`drawn_table_1 first positions` получает начало нужной drawn table, а не соседние таблицы.
+Это не означает, что весь CAD/DWG table layer закрыт: сложные сетки, merged cells, повернутые
+таблицы и многостраничные спецификации остаются отдельной стабилизацией.
+
 ---
 
 ## 4. Что НЕ входит в v1.0
@@ -317,9 +372,10 @@ multi-user режим
 облачную эксплуатацию
 полный WorkflowRuntime/ProfileRegistry
 идеальный Qdrant ranking
-полноценный BIM graph
+полноценный BIM graph / CAD modeller
 автоматическое удаление мусорных документов
 полную поддержку всех legacy .xls вариантов
+автоматическое распознавание любых чертёжных таблиц без ручного контроля
 ```
 
 Если что-то из этого начато раньше v1, оно не должно блокировать v1, если не является критическим для уже заявленных сценариев.
@@ -930,6 +986,233 @@ HTML отчёт; importer достаточно универсален, чтоб�
 
 ---
 
+## v0.24D — Transparent Smeta Document Intake
+
+Цель: загрузка сметных документов должна быть прозрачной для пользователя. Оператор должен видеть не
+только "файл загружен", а весь статус: куда файл попал, как будет использован, прочитан ли текст,
+нужен ли parse/index, приложен ли он к следующему вопросу, и почему workflow заблокирован, если
+документ пока непригоден.
+
+Фокус — два разных входа, которые нельзя смешивать:
+
+```text
+служебный сметный датасет:
+  постоянная база ЛЕС для смет — нормы, цены, индексы, формы, методики, шаблоны
+  оператор кладёт файлы в служебный датасет и нажимает Play
+  Play проверяет состав, форматы, parse/readiness, строит паспорт и показывает MISSING/BLOCKED
+
+проектный сметный intake:
+  ВОР, Ф9, ЛСР, спецификация, ТЗ, КП и ресурсные ведомости конкретного объекта
+  файл идёт в проектный датасет или как одноразовое вложение к вопросу
+  вопрос "по этому файлу" должен работать строго по этому файлу или явно блокироваться
+```
+
+### Какие документы нужны
+
+```text
+служебный датасет SMETA_SERVICE:
+  нормы: ГЭСН/ФЕР/ТЕР, ресурсные части, локальные norm cards
+    preferred: parquet/json/sqlite
+    accepted raw: xlsx/csv/pdf/docx
+
+  цены: ФГИС ЦС сплит-формы, ресурсные ведомости, КП/КАЦ, индексы Минстроя
+    preferred: parquet/xlsx/csv
+    accepted raw: pdf/docx для писем/КП с обязательным parse-status
+
+  методика: 421/пр, НР/СП, правила РИМ, коэффициенты, КАЦ, локальные регламенты
+    preferred: md/yaml/json для rule/config layer
+    accepted raw: pdf/docx как source layer, не как исполняемый rule engine
+
+  формы: ЛСР РИМ, ВОР, КАЦ, КС-2/КС-3, шаблоны экспорта
+    preferred: xlsx
+
+проектный intake:
+  ВОР / Ф9 / ЛСР / ресурсная ведомость / спецификация / ТЗ / КП
+    preferred: xlsx/xlsm/csv/docx
+    accepted: pdf with text layer
+    blocked/actionable: scanned pdf -> OCR/manual_required, corrupt/encrypted -> blocked
+```
+
+### Router refactor
+
+Текущий `document_router` оставить на refactor: он устарел для основного GUI-пути `+ папка`.
+Пользовательская папка/датасет/`LES.md` задают ownership и scope; router не должен перекладывать
+проектные документы в глобальные `DOCS_OTHER_Index`, `NTD_ELECTRICAL_Index` и т.п. по своим
+эвристикам. Его новая роль — классифицировать файл внутри выбранной области:
+
+```text
+dataset ownership:
+  источник истины — выбранный оператором dataset/project/folder + LES.md
+  `+ папка` создаёт/обновляет этот dataset, не отдавая boundary на эвристики имени файла
+  sync-smart остаётся служебным/legacy/import инструментом, не основным проектным intake
+
+file classification:
+  document_role: ВОР / ЛСР / спецификация / КП / ТЗ / РД / НТД / unknown
+  content_type: text / table / drawing / scan / mixed
+  parse_pipeline: markdown / table_projection / pdf_reader / cad_projection / manual_required
+  warnings: scanned_pdf / encrypted / no_text_layer / huge_file / likely_revision
+
+trace contract:
+  сохранять route hints в metadata документа
+  показывать оператору, что router решил и что можно override
+  не менять dataset_id без явного operator action
+```
+
+### Сделать
+
+```text
+service dataset Play:
+  отдельный SMETA_SERVICE dataset/type или профиль служебного источника
+  кнопка Play запускает bounded validation/parse, не полный reindex всего RAG_Content
+  показывает manifest: found/ready/partial/missing/blocked по каждому классу источников
+  строит/обновляет service notebook/passport для smeta prompt/tool shortlist
+  не смешивает служебные источники с проектными доказательствами конкретного объекта
+
+composer upload strip:
+  файл виден сразу после выбора/загрузки
+  режим виден явно: "в чат" / "прочитать" / "индексировать" / "сметный intake"
+  есть remove/change mode до отправки
+
+intake status card:
+  original filename, size, type, target dataset/session
+  parse state: not_needed / pending / running / ready / blocked / failed
+  text/table layer: available / partial / missing / OCR/manual required
+  next action: ask with attachment / prepare to search / open document / open artifact
+
+smeta classification:
+  ВОР / ЛСР / спецификация / КП / ресурсная ведомость / ТЗ / unknown
+  classification is a hint, not final professional answer
+  user can override type before asking
+  classification must not move project files to another dataset
+
+required-docs guidance:
+  UI показывает, какие служебные документы нужны для РИМ/ГЭСН/КАЦ/индексов/форм
+  для отсутствующего класса есть понятное MISSING: "нужна сплит-форма ФГИС ЦС" / "нужен шаблон ЛСР"
+  для сырого PDF/XLSX есть status: raw / parsed / table-ready / indexed / manual_required
+
+trace and evidence:
+  chat payload records attachment ids, parse ids, doc ids and source_refs
+  answer explains whether it used attachment text, indexed chunks, table reader, or only filename
+  no silent fallback to neighboring dataset/source when uploaded document is unreadable
+
+fail path:
+  legacy .xls, scanned PDF, encrypted/corrupt files and parser timeout produce actionable message
+  no workflow crash; no fake "indexed" document with zero usable text
+```
+
+### Acceptance
+
+```text
+Оператор видит SMETA_SERVICE, кладёт туда нормы/цены/формы/методики и нажимает Play.
+После Play есть отчёт: какие классы источников готовы, какие partial, какие MISSING/BLOCKED.
+Служебный датасет подмешивается в сметный workflow как база/навигация, но не как evidence объекта.
+Пользователь загружает ВОР/XLSX и до вопроса видит, что файл готов как табличный источник.
+Пользователь загружает PDF-ЛСР без текста и видит "нужен OCR/manual", а не пустой ответ.
+Вопрос "сделай смету по этому файлу" использует именно этот файл или явно говорит, почему нет.
+В composer/user bubble есть видимый статус вложения; после отправки одноразовое вложение снимается.
+Trace/source_refs позволяют открыть исходник или сметный artifact.
+`+ папка` сохраняет проектную границу датасета; router даёт metadata/hints, но не уводит файлы
+в соседние глобальные индексы без явного действия оператора.
+Regression test покрывает service Play, happy upload path, parser fail path и "не ушло в соседний датасет".
+```
+
+### Статус 2026-07-04 — 0.24.0.231
+
+```text
+SMETA_SERVICE: добавлен как служебный источник в config/service_sources.yaml.
+required docs: Play показывает manifest по классам norms/prices/methodology/forms.
+formats: для каждого класса указаны preferred и accepted raw форматы.
+UI: в «Инструменты» появился раскрываемый блок «Какие документы нужны».
+API: /api/service-sources* отдаёт required_documents, /process возвращает Play summary.
+router refactor: добавлен в roadmap как precondition transparent project intake.
+external intake plan: `+ папка` перед Play показывает project/dataset, accepted/skipped, maps,
+discipline hints и missing для сметы; `00_dataset_map.md` создаётся до регистрации файлов.
+open: проектный upload/intake ВОР/ЛСР/КП с видимым статусом в composer ещё не реализован.
+```
+
+### Не делать в этом блоке
+
+```text
+не строить новую сметную математику
+не выбирать работы/нормы кодом
+не делать широкий OCR pipeline
+не запускать полный reindex без явного действия оператора
+```
+
+---
+
+## v0.24E — PDF/XLS Reader Tools + System Table Layer
+
+Цель: довести уже сделанную parse/index защиту до пользовательского workflow. Большие таблицы и PDF
+должны быть не только безопасно проиндексированы, но и читаемы инструментом по листу/строке/таблице,
+чтобы модель могла выбирать источник, а код доставал точные строки и считал.
+
+### Сделать
+
+```text
+Excel reader:
+  list sheets / columns / table profiles
+  read rows by filter/range
+  aggregate numeric columns with source refs
+  preserve full Parquet/source file path outside semantic chunks
+
+PDF reader:
+  page/table locator
+  extracted text/table status
+  page preview/open where available
+  manual_required for scanned/ambiguous pages
+
+tool-harness integration:
+  model sees available readers from shortlist
+  tool result returns source_refs, missing, warnings, trace
+  final answer stays model-written; code only reads/counts
+```
+
+### Acceptance
+
+```text
+Большой XLSX не засоряет RAG, но конкретная строка/сумма доступна reader tool.
+PDF с таблицей даёт page/table source_ref или честный manual_required.
+Сметный workflow может ссылаться на строки ВОР/ЛСР без угадывания из markdown excerpt.
+```
+
+---
+
+## v0.24F — CAD/DWG Table Hardening
+
+Цель: расширить доказанный smoke `drawn_table_1 first positions` до устойчивого CAD-table workflow.
+Не нужно обещать "любой DWG"; нужно закрыть самые частые инженерные таблицы без ухода в соседние
+projection-и и без сотен графических примитивов в prompt.
+
+### Сделать
+
+```text
+drawn table variants:
+  merged cells / multi-line cell text / split text by columns
+  repeated headers / multi-page continuation
+  rotated or shifted grids where safely detectable
+
+projection quality:
+  table summary before element noise
+  first positions, logical positions, compact rows, source_row/source_cell refs
+  weak/minimal import status visible in CAD inventory
+
+retrieval quality:
+  target_file/doc_filter stays strict
+  first ordinal pins survive rerank, source concentration and context expansion
+  neighboring tables remain visible as alternatives, not as replacement evidence
+```
+
+### Acceptance
+
+```text
+3-5 real DWG/DXF specs: first positions, middle position and named equipment answer from target table.
+Weak/minimal drawings do not pretend to be complete.
+CAD inventory points to projection and chat target_file without manual path copying.
+```
+
+---
+
 ## v0.25 — Retrieval and Citation Quality
 
 Цель: улучшить качество источников и доверие к ответу.
@@ -1122,6 +1405,8 @@ v1 блокируется, если есть хотя бы один пункт:
 22. Diagnostics/doctor нормализуют реальные FAIL в OK/WARN без raw_status.
 23. Нормоконтроль СПДС ставит pass/fail без source_ref или при layout uncertainty.
 24. Проверка ГОСТ Р 21.101-2026 молча использует/цитирует устаревший ГОСТ Р 21.101-2020.
+25. Загруженный сметный документ исчезает из UI или используется неочевидно.
+26. Вопрос "по этому файлу" отвечает по соседнему датасету/таблице без явного blocker.
 ```
 
 ---
@@ -1159,6 +1444,8 @@ v1 блокируется, если есть хотя бы один пункт:
 извлеки ВОР из Ф9
 собери предварительную ЛСР по Ф9
 почему итог partial/blocked
+загрузи ВОР/XLSX → файл виден → "сделай смету по этому файлу" использует именно его
+загрузи PDF без текстового слоя → виден blocker OCR/manual_required
 ```
 
 ### SPDS normcontrol smoke
@@ -1374,6 +1661,23 @@ Production price DB deferred after v1.
 
 Дубли, битые таблицы, Revit/API шум требуют post-v1 курирования.
 
+### R8. Upload transparency
+
+Сметный файл может быть технически загружен, но пользователь не понимает, попал ли он в следующий
+запрос, прочитан ли текст/таблицы, нужен ли parse/index/OCR и почему ответ ушёл не туда. Это v1-риск,
+потому что "по этому файлу" является базовым пользовательским контрактом.
+
+### R9. Tool-loop stability
+
+Общий model-selected tool loop уже стал ядром для чтения источников, но `tool_loop NameError` и похожие
+ошибки должны закрываться отдельными regression tests. Инструментальный слой не должен падать молча
+и не должен заменять модельный финальный ответ кодовой заглушкой.
+
+### R10. Local generation latency
+
+Локальная генерация остаётся продуктовым риском: даже правильный workflow не v1-ready, если пользователь
+не видит понятного progress/status и не может остановить долгий ответ.
+
 ---
 
 ## 12. Definition of Done for v1.0
@@ -1388,6 +1692,7 @@ v1.0 можно выпускать, если:
 [ ] evidence smoke green
 [ ] SPDS normcontrol ГОСТ Р 21.101-2026 smoke green
 [ ] estimate smoke green
+[ ] transparent smeta upload smoke green
 [ ] resource workbook smoke green
 [ ] sidecar workflow smoke green
 [ ] UI smoke green
@@ -1416,6 +1721,9 @@ v0.23B — Clickable Sources + Citation Drawer
 v0.23C — Real Dataset Acceptance
 v0.24 — SPDS Documentation Normcontrol: ГОСТ Р 21.101-2026
 v0.24+ — Checklist Review ПД (профиль БУП/ГИП поверх Doc Review) → docs/CHECKLIST_REVIEW_PD_TASK.md
+v0.24D — Transparent Smeta Document Intake
+v0.24E — PDF/XLS Reader Tools + System Table Layer
+v0.24F — CAD/DWG Table Hardening
 v0.25 — Retrieval and Citation Quality
 v0.26 — Estimate Workflow Hardening
 v0.26+ — Источник: индексы изменения сметной стоимости (Минстрой ИФ/09, локаль-первый, egress через РФ-VPS)
@@ -1441,6 +1749,7 @@ v1.0 — это момент, когда ЛЕС:
 не ломает маршрут,
 не показывает числа без происхождения,
 не прячет MISSING/BLOCKED,
+прозрачно показывает, что случилось с загруженным документом,
 даёт открыть и скопировать доказательства,
 и позволяет понять, какая версия сейчас запущена.
 ```

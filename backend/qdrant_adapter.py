@@ -29,7 +29,7 @@ from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
 from llama_index.core.schema import Document, TextNode
 from qdrant_client import models
 
-from .converter import convert_to_markdown
+from .converter import convert_to_markdown_for_indexing
 from .document_router import DocumentRoute, route_document
 from .interface import Chunk, DatasetInfo, RAGBackend
 from .mail_profile import build_mail_vector_profile, deterministic_mail_node_id
@@ -45,6 +45,56 @@ from .rag_config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+RAW_CAD_BIM_SUFFIXES = {".dwg", ".dxf", ".rvt", ".rfa", ".ifc", ".ifczip", ".nwc"}
+PDF_PAGE_NODE_SUFFIXES = {".pdf", ".p7m"}
+
+
+def _pdf_page_nodes_enabled(file_path: Path, route: DocumentRoute | None = None) -> bool:
+    if file_path.suffix.lower() not in PDF_PAGE_NODE_SUFFIXES:
+        return False
+    if os.getenv("RAG_PDF_PAGE_NODES_ENABLED", "true").lower() not in ("1", "true", "yes", "on"):
+        return False
+    if route and route.pipeline == "markdown_needs_ocr":
+        return False
+    return True
+
+
+def _pdf_page_node_max_chars() -> int:
+    try:
+        return max(800, int(os.getenv("RAG_PDF_PAGE_NODE_MAX_CHARS", "1800")))
+    except ValueError:
+        return 1800
+
+
+def _pdf_page_node_overlap_chars() -> int:
+    try:
+        return max(0, int(os.getenv("RAG_PDF_PAGE_NODE_OVERLAP_CHARS", "150")))
+    except ValueError:
+        return 150
+
+
+class UnsupportedIndexingSourceError(RuntimeError):
+    """Raised when intake accepted a source that needs a typed converter first."""
+
+
+def _is_raw_cad_bim_source(file_path: Path, route: DocumentRoute | None) -> bool:
+    suffix = file_path.suffix.lower()
+    return suffix in RAW_CAD_BIM_SUFFIXES and (
+        route is None
+        or route.content_type == "cad_bim"
+        or route.pipeline == "json_graph_projection"
+        or route.doc_type == "CAD_BIM"
+    )
+
+
+def _raw_cad_bim_error(file_path: Path) -> str:
+    suffix = file_path.suffix.lower() or "raw"
+    return (
+        f"raw CAD/BIM source unsupported by text RAG indexing ({suffix}); "
+        "export/import it as canonical CAD/BIM JSON/JSONL projection before indexing"
+    )
 
 
 class StructureAwareSplitter:
@@ -221,9 +271,11 @@ class StructureAwareSplitter:
                 
         return all_nodes
 
-EMBED_BATCH  = int(os.getenv("RAG_EMBED_BATCH", "32"))      # чанков за один запрос к MLX embeddings
+EMBED_BATCH  = int(os.getenv("RAG_EMBED_BATCH", "16"))      # чанков за один запрос к MLX embeddings
+EMBED_TIMEOUT = float(os.getenv("RAG_EMBED_TIMEOUT_SEC", "300"))
 MIN_CHUNK    = int(os.getenv("RAG_MIN_CHUNK_CHARS", "100"))  # W2.5: <100 симв — шум («Приложение», «А»), не индексируем
 UPSERT_BATCH = int(os.getenv("RAG_UPSERT_BATCH", "100"))    # точек за один upsert в Qdrant
+TABLE_ROW_INDEX_MAX_CHUNKS = int(os.getenv("RAG_TABLE_ROW_INDEX_MAX_CHUNKS", "600"))
 VERIFY_POINTS_EVERY = max(1, int(os.getenv("RAG_VERIFY_POINTS_EVERY", "1")))  # P0: exact-count каждый файл by default
 # W1.4: конвейер — конвертация следующего файла параллельно с эмбеддингом текущего,
 # per-file таймаут конвертации (зависший файл помечается ERROR, индексация продолжается).
@@ -412,7 +464,7 @@ class EmbedClient:
         r = _httpx.post(
             self.url,
             json={"model": self.model, "input": texts},
-            timeout=60.0,
+            timeout=EMBED_TIMEOUT,
         )
         r.raise_for_status()
         data = r.json()["data"]
@@ -1450,6 +1502,14 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     )
                     _add_timing("db_sec", phase_start)
 
+                except UnsupportedIndexingSourceError as file_err:
+                    logger.info("[PARSE] SKIPPED %s: %s", file_key, file_err)
+                    phase_start = _t.time()
+                    self.db.update_document_status(
+                        dataset_id, db_file_key, "SKIPPED", 0, last_error=str(file_err)
+                    )
+                    _add_timing("db_sec", phase_start)
+
                 except Exception as file_err:
                     logger.error(f"[PARSE] ERROR {file_key}: {file_err}", exc_info=True)
                     try:
@@ -1529,6 +1589,9 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             route.complexity,
             route.pipeline,
         )
+
+        if _is_raw_cad_bim_source(file_path, route):
+            raise UnsupportedIndexingSourceError(_raw_cad_bim_error(file_path))
 
         if route.pipeline == "markdown_needs_ocr" and not allow_ocr:
             return route, None
@@ -1923,13 +1986,20 @@ class QdrantLlamaIndexAdapter(RAGBackend):
     ) -> list[dict]:
         import time as _t
         phase_start = _t.time()
-        md_content = convert_to_markdown(file_path, route=route)
+        md_content = convert_to_markdown_for_indexing(file_path, route=route)
         if timings is not None:
             timings["convert_sec"] = timings.get("convert_sec", 0.0) + (_t.time() - phase_start)
         if not md_content:
             return []
 
         phase_start = _t.time()
+        if _pdf_page_nodes_enabled(file_path, route):
+            file_nodes = self._sync_pdf_page_text_nodes(file_key, dataset_id, md_content, route)
+            if timings is not None:
+                timings["chunk_sec"] = timings.get("chunk_sec", 0.0) + (_t.time() - phase_start)
+            if file_nodes:
+                return file_nodes
+
         doc = Document(
             text=md_content,
             metadata={"file_name": file_key, "dataset_id": dataset_id},
@@ -1937,6 +2007,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         nodes = md_parser.get_nodes_from_documents([doc])
 
         file_nodes = []
+        payload_type = "spreadsheet_projection" if file_path.suffix.lower() in {".xlsx", ".xlsm", ".xls", ".csv"} else "markdown"
         for node in nodes:
             node.metadata.update(doc.metadata)
             if len(node.text) > 2000:
@@ -1945,7 +2016,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     {
                         "text": split_node.text,
                         "doc_id": split_node.node_id,
-                        "payload": self._route_payload(route, {"type": "markdown"}),
+                        "payload": self._route_payload(route, {"type": payload_type}),
                     }
                     for split_node in split_nodes
                     if len(split_node.text) >= MIN_CHUNK
@@ -1954,11 +2025,89 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 file_nodes.append({
                     "text": node.text,
                     "doc_id": node.node_id,
-                    "payload": self._route_payload(route, {"type": "markdown"}),
+                    "payload": self._route_payload(route, {"type": payload_type}),
                 })
         if timings is not None:
             timings["chunk_sec"] = timings.get("chunk_sec", 0.0) + (_t.time() - phase_start)
         return file_nodes
+
+    def _sync_pdf_page_text_nodes(
+        self,
+        file_key: str,
+        dataset_id: str,
+        md_content: str,
+        route: DocumentRoute | None = None,
+    ) -> list[dict]:
+        page_blocks = self._split_pdf_page_markdown(md_content)
+        if not page_blocks:
+            return []
+        max_chars = _pdf_page_node_max_chars()
+        overlap = min(_pdf_page_node_overlap_chars(), max_chars // 3)
+        nodes: list[dict] = []
+        for page_no, page_text in page_blocks:
+            text = page_text.strip()
+            if not text or text == "[no text extracted]":
+                continue
+            chunks = self._split_pdf_page_text(text, max_chars=max_chars, overlap=overlap)
+            part_count = len(chunks)
+            for part_no, chunk_text in enumerate(chunks, start=1):
+                if len(chunk_text.strip()) < MIN_CHUNK:
+                    continue
+                title = f"## Page {page_no}"
+                if part_count > 1:
+                    title += f" part {part_no}/{part_count}"
+                text_for_index = f"{title}\n\n{chunk_text.strip()}"
+                payload = {
+                    "type": "pdf_page_text",
+                    "source_layer": "pdf_fast_text",
+                    "page": page_no,
+                    "page_part": part_no,
+                    "page_parts": part_count,
+                }
+                nodes.append({
+                    "text": text_for_index,
+                    "doc_id": str(uuid.uuid5(
+                        uuid.NAMESPACE_URL,
+                        f"{dataset_id}:{file_key}:pdf-page:{page_no}:{part_no}",
+                    )),
+                    "payload": self._route_payload(route, payload),
+                })
+        return nodes
+
+    @staticmethod
+    def _split_pdf_page_markdown(md_content: str) -> list[tuple[int, str]]:
+        matches = list(re.finditer(r"(?m)^## Page (\d+)\s*$", md_content or ""))
+        pages: list[tuple[int, str]] = []
+        for index, match in enumerate(matches):
+            start = match.end()
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(md_content)
+            try:
+                page_no = int(match.group(1))
+            except ValueError:
+                continue
+            pages.append((page_no, md_content[start:end].strip()))
+        return pages
+
+    @staticmethod
+    def _split_pdf_page_text(text: str, *, max_chars: int, overlap: int) -> list[str]:
+        value = (text or "").strip()
+        if len(value) <= max_chars:
+            return [value] if value else []
+        chunks: list[str] = []
+        start = 0
+        while start < len(value):
+            end = min(len(value), start + max_chars)
+            if end < len(value):
+                boundary = max(value.rfind("\n", start, end), value.rfind(". ", start, end))
+                if boundary > start + max_chars // 2:
+                    end = boundary + (1 if value[boundary] == "\n" else 2)
+            chunk = value[start:end].strip()
+            if chunk:
+                chunks.append(chunk)
+            if end >= len(value):
+                break
+            start = max(end - overlap, start + 1)
+        return chunks
 
     def _sync_mail_nodes(
         self,
@@ -2086,8 +2235,22 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 parquet_rel = parquet_path
 
         phase_start = _t.time()
+        chunks = list(result.get("chunks") or [])
+        if len(chunks) > TABLE_ROW_INDEX_MAX_CHUNKS:
+            return self._table_navigation_projection_nodes(
+                file_path=file_path,
+                file_key=file_key,
+                dataset_id=dataset_id,
+                route=route,
+                parquet_rel=parquet_rel,
+                result=result,
+                chunks=chunks,
+                timings=timings,
+                phase_start=phase_start,
+            )
+
         nodes = []
-        for i, chunk in enumerate(result.get("chunks") or []):
+        for i, chunk in enumerate(chunks):
             text = str(chunk.get("text") or "")
             if len(text) < MIN_CHUNK:
                 continue
@@ -2124,6 +2287,67 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         if timings is not None:
             timings["chunk_sec"] = timings.get("chunk_sec", 0.0) + (_t.time() - phase_start)
         return nodes
+
+    def _table_navigation_projection_nodes(
+        self,
+        *,
+        file_path: Path,
+        file_key: str,
+        dataset_id: str,
+        route: DocumentRoute | None,
+        parquet_rel: str,
+        result: dict[str, Any],
+        chunks: list[dict[str, Any]],
+        timings: dict[str, float] | None,
+        phase_start: float,
+    ) -> list[dict]:
+        import time as _t
+
+        rows = int(result.get("rows") or len(chunks))
+        names: list[str] = []
+        codes: list[str] = []
+        units: list[str] = []
+        sections: list[str] = []
+        for chunk in chunks:
+            meta = dict(chunk.get("metadata") or {})
+            for target, key in ((names, "name"), (codes, "code"), (units, "unit"), (sections, "section")):
+                value = str(meta.get(key) or "").strip()
+                if value and value not in target:
+                    target.append(value[:160])
+                if len(target) >= 20:
+                    break
+
+        text = "\n".join(
+            part
+            for part in [
+                f"Табличный файл: {file_key}",
+                "Тип: table_navigation_projection",
+                f"Строк нормализовано: {rows}",
+                f"Листов/таблиц: {result.get('sheets') or ''}",
+                f"Parquet: {parquet_rel or '[не создан]'}",
+                "Назначение: навигация по таблице и выбор источника; точные строки, фильтры, суммы и группировки читать из parquet/source table reader.",
+                "Разделы: " + "; ".join(sections[:20]) if sections else "",
+                "Коды/обозначения: " + "; ".join(codes[:20]) if codes else "",
+                "Наименования: " + "; ".join(names[:20]) if names else "",
+                "Единицы: " + "; ".join(units[:20]) if units else "",
+            ]
+            if part
+        )
+        payload = {
+            "type": "table_navigation_projection",
+            "parquet_path": parquet_rel,
+            "table_kind": self._table_kind(route),
+            "table_rows": rows,
+            "table_sheets": result.get("sheets") or 0,
+            "source_file": file_path.name,
+        }
+        if timings is not None:
+            timings["chunk_sec"] = timings.get("chunk_sec", 0.0) + (_t.time() - phase_start)
+        return [{
+            "text": text,
+            "doc_id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"{dataset_id}:{file_path}:table_projection")),
+            "payload": self._route_payload(route, payload),
+        }]
 
     @staticmethod
     def _docx_table_extraction_enabled(file_path: Path, route: DocumentRoute | None) -> bool:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -21,6 +22,49 @@ from proxy.services.retrieval_quality_service import (
 CHAT_TOP_K = int(os.getenv("RAG_CHAT_TOP_K", "8"))
 RERANK_POOL_K = int(os.getenv("RAG_CHAT_RERANK_POOL_K", "12"))
 RERANK_TOP_K = int(os.getenv("RAG_CHAT_RERANK_TOP_K", "6"))
+_SOURCE_EXACT_RE = re.compile(
+    r"(?iu)(?:"
+    r"[\w./\\:-]+\.(?:md|json|jsonl|dwg|dxf|rvt|rfa|ifc|ifczip|pdf|xlsx?|docx?)"
+    r"|[\w./\\:-]*[/\\:_][\w./\\:-]{3,}"
+    r"|[a-f0-9]{10,}"
+    r"|[a-f0-9]{8}-[a-f0-9-]{8,}"
+    r")"
+)
+_SOURCE_NAME_TOKEN_RE = re.compile(r"(?iu)[\wа-яё]{3,}")
+_SOURCE_NAME_STOPWORDS = {
+    "cad",
+    "bim",
+    "json",
+    "projection",
+    "source",
+    "import",
+    "domain",
+    "canonical",
+    "format",
+    "formats",
+    "dxf",
+    "dwg",
+    "rvt",
+    "ifc",
+    "md",
+    "les",
+    "rag",
+    "content",
+    "users",
+    "овс",
+    "для",
+    "или",
+    "как",
+    "что",
+    "это",
+    "где",
+    "дай",
+    "покажи",
+    "план",
+}
+_FIRST_ORDINAL_QUERY_RE = re.compile(r"(?iu)(?:\bfirst\b|перв\w*|начал\w*)")
+_TABLE_ROW_QUERY_RE = re.compile(r"(?iu)(?:позици\w*|строк\w*|\brows?\b|\bitems?\b)")
+_CAD_POSITION_RE = re.compile(r"(?iu)(?:\bposition\s+|\bпозиция\s+)(\d{1,5})")
 
 
 @dataclass
@@ -47,6 +91,169 @@ class RetrievalResult:
         trace = self.trace.payload()
         trace["quality"] = self.quality.payload()
         return trace
+
+
+def _source_exact_terms(question: str) -> list[str]:
+    terms: list[str] = []
+    for match in _SOURCE_EXACT_RE.findall(question or ""):
+        term = match.strip(" \t\r\n\"'`.,;()[]{}<>")
+        if len(term) < 6:
+            continue
+        folded = term.casefold()
+        if folded not in terms:
+            terms.append(folded)
+    return terms[:12]
+
+
+def _chunk_exact_source_score(chunk: Any, terms: list[str]) -> int:
+    if not terms:
+        return 0
+    meta = getattr(chunk, "meta", {}) or {}
+    doc_name = str(getattr(chunk, "doc_name", "") or meta.get("file_name") or meta.get("doc_name") or "")
+    doc_haystack = doc_name.casefold()
+    content_haystack = str(getattr(chunk, "content", "") or "").casefold()
+    score = 0
+    for term in terms:
+        if term in doc_haystack:
+            score += 4
+        elif term in content_haystack:
+            score += 2
+    return score
+
+
+def _promote_exact_source_matches(chunks: list[Any], question: str) -> tuple[list[Any], list[str]]:
+    terms = _source_exact_terms(question)
+    if not terms or len(chunks) < 2:
+        return chunks, []
+    scored = [(_chunk_exact_source_score(chunk, terms), index, chunk) for index, chunk in enumerate(chunks)]
+    matched = [term for term in terms if any(_chunk_exact_source_score(chunk, [term]) > 0 for chunk in chunks)]
+    if not matched:
+        return chunks, []
+    ordered = [chunk for _score, _index, chunk in sorted(scored, key=lambda item: (-item[0], item[1]))]
+    return ordered, matched
+
+
+def _source_name_terms(question: str) -> list[str]:
+    terms: list[str] = []
+    for token in _SOURCE_NAME_TOKEN_RE.findall(question or ""):
+        folded = token.casefold().replace("ё", "е")
+        if folded in _SOURCE_NAME_STOPWORDS or folded.isdigit():
+            continue
+        has_cyrillic = any("а" <= ch <= "я" for ch in folded)
+        if len(folded) < 4 and not has_cyrillic and not any(ch.isdigit() for ch in folded):
+            continue
+        if folded not in terms:
+            terms.append(folded)
+    return terms[:16]
+
+
+def _source_name_haystack(chunk: Any) -> str:
+    meta = getattr(chunk, "meta", {}) or {}
+    parts = [
+        getattr(chunk, "doc_name", "") or "",
+        meta.get("file_name") or "",
+        meta.get("doc_name") or "",
+        meta.get("source_path") or "",
+        str(getattr(chunk, "content", "") or "")[:5000],
+    ]
+    haystack = " ".join(str(part) for part in parts if part).casefold().replace("ё", "е")
+    compact = re.sub(r"(?iu)[\W_]+", "", haystack)
+    return f"{haystack} {compact}"
+
+
+def _chunk_source_name_score(chunk: Any, terms: list[str]) -> int:
+    if len(terms) < 2:
+        return 0
+    haystack = _source_name_haystack(chunk)
+    matched = sum(1 for term in terms if term in haystack)
+    if matched < 2:
+        return 0
+    return matched
+
+
+def _promote_source_name_matches(chunks: list[Any], question: str) -> tuple[list[Any], list[str]]:
+    terms = _source_name_terms(question)
+    if len(terms) < 2 or len(chunks) < 2:
+        return chunks, []
+    scored = [(_chunk_source_name_score(chunk, terms), index, chunk) for index, chunk in enumerate(chunks)]
+    max_score = max((score for score, _index, _chunk in scored), default=0)
+    if max_score < 2:
+        return chunks, []
+    ordered = [chunk for _score, _index, chunk in sorted(scored, key=lambda item: (-item[0], item[1]))]
+    matched = [term for term in terms if any(term in _source_name_haystack(chunk) for chunk in ordered[:3])]
+    return ordered, matched[:8]
+
+
+def _chunk_meta(chunk: Any) -> dict[str, Any]:
+    meta = getattr(chunk, "meta", {}) or {}
+    if not meta:
+        meta = getattr(chunk, "metadata", {}) or {}
+    return meta if isinstance(meta, dict) else {}
+
+
+def _chunk_ordinal(chunk: Any, fallback: int) -> int:
+    meta = _chunk_meta(chunk)
+    for key in ("chunk_ord", "child_ord", "ordinal"):
+        try:
+            return int(meta.get(key))
+        except (AttributeError, TypeError, ValueError):
+            continue
+    return fallback
+
+
+def _first_ordinal_haystack(chunk: Any) -> str:
+    meta = _chunk_meta(chunk)
+    parts = [
+        meta.get("section_heading") or "",
+        meta.get("parent_heading") or "",
+        str(getattr(chunk, "content", "") or "")[:4000],
+    ]
+    return " ".join(str(part) for part in parts if part).casefold()
+
+
+def _first_position_number(text: str) -> int | None:
+    values: list[int] = []
+    for match in _CAD_POSITION_RE.finditer(text or ""):
+        try:
+            values.append(int(match.group(1)))
+        except (TypeError, ValueError):
+            continue
+    return min(values) if values else None
+
+
+def _promote_first_ordinal_chunks(
+    chunks: list[Any],
+    question: str,
+    *,
+    doc_filter: list[str] | None = None,
+) -> tuple[list[Any], bool]:
+    if not doc_filter or len(chunks) < 2:
+        return chunks, False
+    if not (_FIRST_ORDINAL_QUERY_RE.search(question or "") and _TABLE_ROW_QUERY_RE.search(question or "")):
+        return chunks, False
+    scored: list[tuple[int, int, int, Any]] = []
+    for index, chunk in enumerate(chunks):
+        haystack = _first_ordinal_haystack(chunk)
+        if "first positions" not in haystack and "первые три позиции" not in haystack:
+            continue
+        if "position " not in haystack and "позиция " not in haystack:
+            continue
+        first_position = _first_position_number(haystack)
+        position_rank = first_position if first_position is not None else 1_000_000
+        scored.append((position_rank, _chunk_ordinal(chunk, index), index, chunk))
+    if not scored:
+        return chunks, False
+    promoted = min(scored, key=lambda item: (item[0], item[1], item[2]))[3]
+    try:
+        setattr(promoted, "_rank_pin", 1000.0)
+        setattr(promoted, "_rank_pin_reason", "first_ordinal_guard")
+    except Exception:
+        pass
+    if chunks[0] is promoted:
+        return chunks, False
+    ordered = [promoted]
+    ordered.extend(chunk for chunk in chunks if chunk is not promoted)
+    return ordered, True
 
 
 def _kot_reason_alias(dataset_filter: str | None, reason: str) -> str:
@@ -489,6 +696,18 @@ async def retrieve_chat_chunks(
             trace.exact_refs.extend([f"file:{name}" for name in effective_doc_filter])
         _rt["merge"] = round(time.monotonic() - _s, 3)
     logger.info("[RETR] подфазы=%s", _rt)
+    chunks, exact_terms = _promote_exact_source_matches(chunks, question)
+    if exact_terms:
+        if "source_exact" not in trace.mode:
+            trace.mode = f"{trace.mode}+source_exact"
+        for term in exact_terms:
+            ref = f"source:{term}"
+            if ref not in trace.exact_refs:
+                trace.exact_refs.append(ref)
+    elif any(token in question.casefold() for token in ("cad", "bim", "dwg", "dxf", "rvt", "ifc", "атм", "гсв")):
+        chunks, source_name_terms = _promote_source_name_matches(chunks, question)
+        if source_name_terms and "source_name_boost" not in trace.mode:
+            trace.mode = f"{trace.mode}+source_name_boost"
     # ADR-12 (Ц9): подъём ТАБЛИЧНЫХ ПРИЛОЖЕНИЙ норм. Если узлы-документы известны
     # (doc_filter из стадии-1) и запрос «табличный» (перечень/приложение/категория
     # помещений) — аддитивно подмешиваем pipe-table чанки ЭТИХ узлов в пул, чтобы
@@ -583,6 +802,13 @@ async def retrieve_chat_chunks(
                 if idx not in seen:
                     reordered.append(chunk)
             chunks = reordered
+            chunks, exact_terms = _promote_exact_source_matches(chunks, question)
+            if exact_terms and "source_exact_guard" not in trace.mode:
+                trace.mode = f"{trace.mode}+source_exact_guard"
+            elif not exact_terms and any(token in question.casefold() for token in ("cad", "bim", "dwg", "dxf", "rvt", "ifc", "атм", "гсв")):
+                chunks, source_name_terms = _promote_source_name_matches(chunks, question)
+                if source_name_terms and "source_name_boost" not in trace.mode:
+                    trace.mode = f"{trace.mode}+source_name_boost"
             trace.mode = f"{trace.mode}+rerank"
             logger.info("[RERANK-CE] гибридный пул %s переупорядочен", len(chunks))
         except Exception as rerank_error:
@@ -604,6 +830,14 @@ async def retrieve_chat_chunks(
                     trace.mode = f"{trace.mode}+table_appendix_guarantee"
         except Exception as _g_err:  # noqa: BLE001 — best-effort
             logger.warning("[TABLE_APPENDIX] guarantee fallback: %s", _g_err)
+
+    chunks, ordinal_promoted = _promote_first_ordinal_chunks(
+        chunks,
+        question,
+        doc_filter=effective_doc_filter or None,
+    )
+    if ordinal_promoted and "first_ordinal_guard" not in trace.mode:
+        trace.mode = f"{trace.mode}+first_ordinal_guard"
 
     trace.quality_status = quality.status
     trace.quality_detail = quality.detail

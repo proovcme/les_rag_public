@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from html import escape
 from datetime import datetime
 from urllib.parse import quote, urlencode
@@ -415,6 +416,21 @@ def build_samovar():
             _notify(f"Удалён: {r['name']}", type="warning")
             await _refresh()
 
+    async def _ask_project(r):
+        ds_id = str((r or {}).get("id") or (r or {}).get("dataset_id") or "").strip()
+        name = str((r or {}).get("name") or (r or {}).get("folder") or ds_id).strip()
+        if not ds_id:
+            ui.notify("У датасета нет id", type="warning")
+            return
+        question = (
+            f"прочитай проектный датасет «{name}»: что это за проект, "
+            "какие тома/разделы/таблицы/чертежи видны, где искать ключевые данные и что не прочитано"
+        )
+        params = urlencode({"scope": f"ds:{ds_id}", "question": question, "tab": "chat"})
+        path = str(getattr(context.client.request, "url", "") or "")
+        target_path = "/les/classic" if "/les/classic" in path else "/classic"
+        ui.navigate.to(f"{target_path}?{params}")
+
     async def _start_all():
         payload = _scheduler_payload()
         add_log("[PARSE_SCHEDULER] top Пуск → /api/rag/parse-scheduler")
@@ -484,6 +500,35 @@ def build_samovar():
 
     add_dialog = ui.dialog()
 
+    def _format_intake_plan(plan: dict) -> str:
+        will = plan.get("will_create") or {}
+        maps = plan.get("maps") or []
+        disciplines = plan.get("disciplines") or []
+        missing = plan.get("missing_for_estimate") or []
+        skipped = plan.get("skipped") or []
+        skipped_bits = []
+        for item in skipped[:5]:
+            skipped_bits.append(f"{item.get('file_name')} ({item.get('reason')})")
+        lines = [
+            "План загрузки перед Play:",
+            "",
+            f"будет создано: проект {will.get('project') or plan.get('project_name')}, "
+            f"dataset {will.get('dataset') or plan.get('dataset_name')}",
+            f"принято: {plan.get('accepted_count', 0)} файлов",
+            f"пропущено: {plan.get('skipped_count', 0)}"
+            + (f" — {', '.join(skipped_bits)}" if skipped_bits else ""),
+            "карта: " + ", ".join(
+                f"{item.get('file_name')} ({item.get('status')})" for item in maps
+            ),
+            "дисциплины: " + (", ".join(disciplines) if disciplines else "не распознаны"),
+        ]
+        if missing:
+            lines.append("не хватает для сметы: " + ", ".join(missing))
+        else:
+            lines.append("не хватает для сметы: базовые сметные входы распознаны")
+        lines.extend(["", "Продолжить индексацию?"])
+        return "\n".join(lines)
+
     def _open_add():
         add_dialog.clear()
         picked = {"path": ""}
@@ -503,6 +548,55 @@ def build_samovar():
                     "no-caps flat dense"
                 ).style("color:var(--accent);")
             parse_sw = ui.switch("Сразу индексировать", value=True)
+
+            with ui.expansion("Google / Яндекс через веб", icon="o_cloud", value=False).classes("w-full"):
+                ui.label(
+                    "Укажи ссылку или ID папки Google Drive, либо путь Яндекс Диска вида disk:/Проекты/ПД. "
+                    "LES скачает папку в mirror-кэш и сделает из неё датасет."
+                ).classes("sov-muted")
+                with ui.row().classes("items-center w-full").style("gap:8px;"):
+                    cloud_provider = ui.select(
+                        options={"google_drive": "Google Drive", "yandex_disk": "Яндекс Диск"},
+                        value="google_drive",
+                        label="Провайдер",
+                    ).props("dense outlined emit-value map-options").style("min-width:170px;")
+                    cloud_locator = ui.input(
+                        "Ссылка / ID / путь папки",
+                        placeholder="https://drive.google.com/drive/folders/... или disk:/Проекты/ПД",
+                    ).props("dense outlined clearable").classes("flex-1")
+
+                async def _do_cloud_add():
+                    nm = (name_in.value or "").strip()
+                    locator = (cloud_locator.value or "").strip()
+                    if not nm or not locator:
+                        ui.notify("Нужны название датасета и ссылка/путь облачной папки", type="warning")
+                        return
+                    payload = {
+                        "provider": cloud_provider.value,
+                        "locator": locator,
+                        "dataset_name": nm,
+                        "parse": bool(parse_sw.value),
+                        "parse_limit": 25,
+                        "max_files": 500,
+                        "background": True,
+                    }
+                    d = await api_post("/api/rag/cloud-drives/sync", payload)
+                    if d and d.get("status") in {"started", "registered"}:
+                        add_dialog.close()
+                        ui.notify(f"Облачная папка «{nm}» подключается как датасет", type="positive")
+                        add_log(f"[CLOUD_DRIVE] {cloud_provider.value}: {locator} → «{nm}»")
+                        await _refresh()
+                    else:
+                        ui.notify(last_api_error_text("Не удалось подключить облачную папку"), type="negative")
+
+                with ui.row().classes("justify-end w-full").style("gap:8px;margin-top:6px;"):
+                    ui.button(
+                        "Подключить веб-папку",
+                        icon="o_cloud_sync",
+                        on_click=_do_cloud_add,
+                    ).props("no-caps dense").style(
+                        "background:var(--accent);color:var(--bg);border-radius:8px;"
+                    )
 
             # вложенный браузер папок (клик-навигация по серверной ФС, без печати пути)
             with ui.dialog() as fdlg, ui.card().style("min-width:520px;max-width:92vw;"):
@@ -530,7 +624,10 @@ def build_samovar():
                                   on_click=_ui_handler(_nav, d.get("parent") or "")
                                   ).props("flat dense no-caps").classes("w-full")
                     for e in d.get("dirs", []):
-                        ui.button(f"{e['name']}   ·   {e.get('file_count', 0)} файл.", icon="o_folder",
+                        is_cloud = e.get("source") == "cloud_drive"
+                        icon = "o_cloud" if is_cloud else "o_folder"
+                        suffix = f" · {e.get('provider_title')}" if is_cloud and e.get("provider_title") else ""
+                        ui.button(f"{e['name']}{suffix}   ·   {e.get('file_count', 0)} файл.", icon=icon,
                                   on_click=_ui_handler(_nav, e["path"])
                                   ).props("flat dense no-caps align=left").classes("w-full")
                     if not d.get("dirs") and d.get("path"):
@@ -567,6 +664,17 @@ def build_samovar():
                 if not nm or not pth:
                     ui.notify("Нужны название и выбранная папка (Обзор…)", type="negative")
                     return
+                plan = await api_post("/api/rag/external/intake-plan", {"path": pth, "dataset_name": nm})
+                if not isinstance(plan, dict) or plan.get("status") != "ok":
+                    ui.notify(last_api_error_text("Не удалось построить план загрузки"), type="negative")
+                    return
+                ok = await ui.run_javascript(
+                    f"confirm({json.dumps(_format_intake_plan(plan), ensure_ascii=False)})",
+                    timeout=30,
+                )
+                if not ok:
+                    ui.notify("Индексация отменена", type="info")
+                    return
                 ds = await api_post(f"/api/rag/datasets?name={quote(nm)}", {})
                 did = (ds or {}).get("id")
                 if not did:
@@ -601,6 +709,8 @@ def build_samovar():
         add_dialog.open()
 
     def _row_actions(r):
+        ui.button("Проект", icon="o_account_tree", on_click=_ui_handler(_ask_project, r)).props(
+            "flat dense no-caps").style("font-size:11px;padding:2px 6px;color:var(--accent);")
         ui.button(icon="o_folder_open", on_click=_ui_handler(_open_files, r)).props(
             'flat dense round aria-label="Файлы"').style("color:var(--dim);")
         if r["error"]:
@@ -1542,11 +1652,21 @@ def build_samovar_legacy():
                     return
                 roots = d.get("roots", [])
                 cands = d.get("candidates", [])
+                cloud = d.get("cloud_drives") if isinstance(d.get("cloud_drives"), dict) else {}
+                providers = cloud.get("providers") if isinstance(cloud.get("providers"), dict) else {}
                 radar_status.text = (
                     f"{len(roots)} корн. · external docs {d.get('external_documents', 0)} · "
                     f"кандидатов {len(cands)}"
                 )
                 with radar_box:
+                    if providers:
+                        with ui.row().classes("items-center w-full").style("gap:6px;flex-wrap:wrap;"):
+                            ui.label("Web-диски:").style("font-size:.65rem;color:var(--dim);")
+                            for key, item in providers.items():
+                                configured = bool(item.get("configured"))
+                                ui.label(
+                                    f"{item.get('label') or key}: {'готов' if configured else 'нужен токен'}"
+                                ).classes("tag-acc" if configured else "tag-warn")
                     if not roots:
                         ui.label("Корней нет: задай LES_EXTERNAL_SOURCE_ROOTS или выбери папку через Обзор.").style(
                             "font-size:.7rem;color:var(--dim);"

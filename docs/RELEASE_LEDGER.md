@@ -4,16 +4,1207 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-07-06)
+## Текущее состояние (2026-07-09)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.279  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.325  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.276 FGIS work-steps backfill path
-НЕ задеплоено:             0.24.0.279 ГОСТ Р 21.101-2026 normative profile for PD/RD + 0.24.0.278 PD/RD manifest for RAG + 0.24.0.277 drawing sheet manifest MVP; runtime_alignment остаётся divergent по старым unrelated файлам: `proxy/routers/runtime.py`, `proxy/services/document_explorer_service.py`, `sovushka/styles.py`
-рантайм /api/version:      0.24.0.276, deploy stamp ok
+задеплоено на рантайм:     0.24.0.325 smeta BAP norm-candidate visibility + review boundary
+НЕ задеплоено:             нет по runtime-critical bundle; рабочее дерево ещё не закоммичено
+рантайм /api/version:      0.24.0.325, deploy stamp ok, runtime_alignment aligned
 ```
+
+> 0.24.0.325 — smeta BAP norm-candidate visibility + review boundary
+>
+> Дата: 2026-07-09
+> Статус: deployed to runtime.
+> Причина: fresh БАП ЛСР на облачной модели принимал 19 строк ВОР, но priced-часть
+> собиралась только 12/19; review-промпт содержал скрытый стоп-кран `unbound`
+> для демонтажа/неточных строк, а `search_norm` показывал модели слишком узкое
+> окно candidates и не доводил до ремонтных `ГЭСНр63`/ревизионных люков.
+> Правки: дефолт norm lookup расширен до 25 найденных и 20 model-visible
+> candidates; structured choice/review получают больше токенов; review boundary
+> заменён на сметческий аналог из candidates вместо `unbound` по умолчанию;
+> `search_norm` поднимает ремонтные потолки `ГЭСНр63`, ревизионные люки
+> `ГЭСН17-01-010-*`, защитную плёнку не разрешает закрывать штукатуркой/
+> грунтовкой/окраской. Код по-прежнему не выбирает норму: он приносит карточки,
+> проверяет provenance выбранного моделью шифра и считает арифметику.
+> Проверки: `uv run pytest tests/test_chat_harness_format.py::test_smeta_direct_norm_lookup_is_model_selected
+> tests/test_chat_harness_format.py::test_smeta_norm_lookup_prompt_keeps_deeper_candidate_window
+> tests/test_chat_harness_format.py::test_smeta_structured_norm_review_keeps_model_chosen_analog
+> tests/test_chat_harness_format.py::test_smeta_structured_norm_review_can_replace_empty_finish_draft -q` → `4 passed`;
+> `uv run pytest tests/test_estimate_harness.py::test_search_norm_routes_revision_hatch_to_gesn17
+> tests/test_estimate_harness.py::test_search_norm_routes_reed_ceiling_demolition_to_repair_collection -q` → `2 passed`.
+> Runtime: `/api/version` → `0.24.0.325`, deploy stamp ok,
+> `runtime_alignment=aligned`; fresh БАП cloud rerun pending in this session.
+>
+> 0.24.0.324 — cloud provider model/key preservation
+>
+> Дата: 2026-07-09
+> Статус: deployed to runtime.
+> Причина: live `.env` оказался обрезан до `MLX_MODEL`/`LLM_MODEL`; cloud
+> provider снова показывал fallback `gpt-4.1` и `api_key_set=false`, хотя
+> оператор вводил ключ и модель 5.4. Старый дефолт `gpt-4.1` всплывал из
+> settings/chat/runtime fallback и мог перезаписываться UI при сохранении.
+> Правки: OpenAI-compatible fallback model в settings/chat/runtime/service
+> точках обновлён до `gpt-5.4`; добавлена регрессия, что переключение MLX-модели
+> не выбрасывает `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_BASE_URL`,
+> `LES_LLM_PROVIDER`, `LES_CLOUD_CONSENT` из `.env`.
+> Проверки: `uv run pytest tests/test_proxy_routers.py::test_save_settings_updates_provider_keys_without_exposing_secret
+> tests/test_proxy_routers.py::test_set_mlx_model_preserves_cloud_provider_settings
+> tests/test_proxy_routers.py::test_settings_openai_default_model_is_current
+> tests/test_runtime_router.py::test_openai_provider_status_defaults_to_gpt_model
+> tests/test_chat_harness_format.py::test_smeta_workflow_decision_routes_explicit_lsr_without_selector -q` → `5 passed`;
+> `compileall` + `git diff --check` по затронутым файлам → ok. Runtime:
+> `/api/settings` → active/effective `openai`, model `gpt-5.4-mini`,
+> `api_key_set=true`, fallback `false`; `/api/version` → `0.24.0.324`,
+> deploy stamp ok, `runtime_alignment=aligned`.
+>
+> 0.24.0.323 — macOS stale swap chat admission
+>
+> Дата: 2026-07-09
+> Статус: deployed to runtime.
+> Причина: fresh БАП smoke после `0.24.0.322` был заблокирован на входе
+> `/api/chat` с HTTP 503: `ram_free_gb=4.8 < 8.0; swap_pct=75.8 > 60.0`.
+> После штатного рестарта MLX RAM стала 18.6 GB free, но macOS сохранила
+> 4.1 GB swap; старый допуск stale swap `2.0 GB` всё ещё блокировал чат,
+> хотя давления памяти уже не было.
+> Правки: дефолт `LES_CHAT_MAX_SWAP_USED_GB` поднят до `6.0`, добавлена
+> регрессия на реальное состояние `18.6 GB free / 4.1 GB swap / 75.8% swap`.
+> Проверки: pending.
+>
+> 0.24.0.322 — smeta explicit LSR route bypass
+>
+> Дата: 2026-07-09
+> Статус: deployed to runtime.
+> Причина: первый запрос вида «сделай оценку стоимости и ЛСР по ВОР» зависал на
+> локальном smeta workflow-selector до таймаута и возвращал пустой workflow stage,
+> хотя это буквальная команда на pricing-этап. Это ломало fresh БАП smoke до
+> подбора норм/расчёта.
+> Правки: `_smeta_direct_workflow_decision()` теперь без selector отправляет
+> явные запросы ЛСР/стоимости/«деньги по ним» в `pricing`. Это только
+> маршрутизация этапа; выбор норм/аналогов и применимости остаётся за моделью,
+> код занимается lookup/provenance/арифметикой.
+> Проверки: pending.
+>
+> 0.24.0.321 — smeta base pipeline
+>
+> Дата: 2026-07-09
+> Статус: deployed to runtime.
+> Причина: после перехода runtime на structured SQLite нужно, чтобы ФГИС-update
+> не останавливался на unified parquet и не оставлял машинную базу/RAG-карты
+> устаревшими.
+> Правки: `tools/gesn_update_from_fgis.py` теперь ведёт полный pipeline
+> `ФГИС/raw → unified parquet → structured SQLite → SMETA_SERVICE cards`;
+> добавлены CLI-флаги `--structured-out`, `--structured-manifest-out`,
+> `--service-rag-out`, `--skip-structured`, `--skip-service-rag`.
+> `gesn_update_service.status()` показывает unified/audit/structured/manifest/
+> service_rag слои. Make targets: `make smeta-base` (checked unified →
+> SQLite → cards), `make smeta-base-source` (raw/cache → unified → SQLite →
+> cards), `make smeta-base-update` (ФГИС → полный pipeline).
+> Доп. правки перед деплоем: `estimate_harness_service` больше не переводит
+> весь расчёт в `partial` только из-за `price_requirements`: ценовые gaps
+> остаются row-level требованиями, а инженерные blockers (`needs_input`,
+> rejected, `norm_questions`) по-прежнему блокируют `final_total`. Роутинг
+> силового кабеля уточнён под новую structured base: запрос с `силовой кабель`
+> поднимает нормы силового кабеля, а `накладные скобы` не получают бонус без
+> явного признака крепления/скоб.
+> Проверки: `uv run pytest tests/test_estimate_harness.py -q` → `94 passed`;
+> focused deploy set `uv run pytest tests/test_sovushka_chat.py
+> tests/test_static_assets.py tests/test_smeta_chat_service.py
+> tests/test_estimate_harness.py tests/test_profile_resolver.py
+> tests/test_doc_review_gost_21_101_2026.py tests/test_doc_review_chat_tool.py
+> tests/test_title_block_extract.py tests/test_service_source_registry.py -x
+> --tb=short -q` → `187 passed`; `make verify` → ok (`2664 tests collected`);
+> `git diff --check` → ok. Runtime data copied manually:
+> `data/gesn_base/gesn2022_unified.parquet` and
+> `data/smeta_base/les_smeta_base.sqlite`. Deploy: `tools.deploy_to_runtime
+> --apply --restart --force`, then explicit clean sync for
+> `proxy/routers/runtime.py` and `sovushka/styles.py`; live `/api/version` →
+> `0.24.0.321`, deploy stamp ok, `runtime_alignment=aligned`.
+> Post-deploy smoke: `make post-deploy-smoke` → `8 pass`, `1 warn`,
+> `0 fail`; warning is transient `chat_project_noscope memory-guard`.
+>
+> 0.24.0.320 — smeta structured machine base
+>
+> Дата: 2026-07-09
+> Статус: dev only, не задеплоено.
+> Причина: unified parquet был хорошим source/staging снимком, но runtime и модель
+> видели слишком рыхлый слой: нормы и ресурсы были смешаны строками, пустые
+> `norm_name`/`norm_unit` оставались в низовой базе, а exact lookup требовал
+> загрузки parquet целиком.
+> Правки: добавлен canonical SQLite `data/smeta_base/les_smeta_base.sqlite`
+> (`norms` + `resources`) и manifest качества
+> `data/smeta_base/les_smeta_base_manifest.json`; `tools/build_smeta_structured_base.py`
+> собирает SQLite из `data/gesn_base/gesn2022_unified.parquet`, исключая нормы
+> без имени/единицы вместо показа их машине. `gesn_service.load_base_norms()`
+> без явного пути теперь читает structured SQLite first, parquet остаётся
+> source/debug fallback и совместимостью тестов. Текущий снимок: source
+> `773727` rows / `58886` norm_key; runtime base `47037` norms / `664597`
+> resources; excluded `11849` norm_key with missing name/unit.
+> Проверки: `uv run pytest tests/test_smeta_structured_base.py
+> tests/test_gesn_unify_base.py tests/test_gesn_service.py
+> tests/test_gesn_import.py::test_missing_base_falls_back_to_seed
+> tests/test_smeta_norm_store.py::test_smeta_norm_store_demotes_legacy_untyped_and_hides_empty_norms
+> tests/test_version_service_v19.py -q` → `33 passed`;
+> `python3 -m compileall -q proxy/services/gesn_service.py
+> proxy/services/version_service.py tools/build_smeta_structured_base.py
+> tests/test_smeta_structured_base.py tests/test_gesn_unify_base.py` → ok;
+> `git diff --check` по затронутым файлам → ok; `make verify` → ok
+> (`2662 tests collected`). Smoke: `load_base_norms()` → `47037` norms,
+> source_kind `structured_sqlite`; SQLite counts → `47037` norms / `664597`
+> resources.
+>
+> 0.24.0.319 — smeta pricebook cleanup
+>
+> Дата: 2026-07-09
+> Статус: dev only, не задеплоено.
+> Причина: аудит сметной базы нашёл лишние/ошибочно названные книги цен,
+> засорявшие `SMETA_SERVICE` и model-facing source map.
+> Правки: добавлен `config/domain/pricebook_manifest.json` с canonical default
+> `sankt-peterburg_2kv2026`, hidden stems и aliases для дублей; `fgis_price_service`
+> скрывает duplicate/scratch books из обычного discovery, но explicit alias
+> `spb_2kv2026` резолвит в canonical Санкт-Петербург. `tools/build_smeta_service_rag.py`
+> перед пересборкой чистит только generated cards (`00_smeta_service_overview.md`,
+> `collection_*.md`, `pricebook_*.md`) и пишет `SMETA_SERVICE` по visible-книгам.
+> Из рабочей `data/price_base` в quarantine перенесены `spb_refresh.parquet`,
+> `spb_2kv2026.parquet`, `omskaya-oblast_2kv2026.parquet`,
+> `nizhegorodskaya-oblast_2kv2026.parquet`; рабочее discovery видит 85 книг.
+> Проверки: `uv run pytest tests/test_fgis_price_service.py
+> tests/test_smeta_artifact_service.py::test_smeta_artifact_uses_default_system_pricebook_without_region
+> tests/test_smeta_artifact_service.py::test_smeta_artifact_prefers_full_spb_pricebook_over_refresh_without_period
+> tests/test_service_source_registry.py tests/test_version_service_v19.py -q` →
+> `36 passed`; `python3 -m compileall -q proxy/services/fgis_price_service.py
+> proxy/services/version_service.py tools/build_smeta_service_rag.py` → ok;
+> `git diff --check` по затронутым файлам → ok; `make verify` → ok
+> (`2660 tests collected`). Smoke: `available_pricebooks()` → 85 visible books,
+> default → `sankt-peterburg_2kv2026`; `SMETA_SERVICE` overview больше не
+> содержит `spb_refresh`, `spb_2kv2026`, `omskaya-oblast_2kv2026`,
+> `nizhegorodskaya-oblast_2kv2026`.
+>
+> 0.24.0.318 — L.I.S.T. dataset registry/kinds UI
+>
+> Дата: 2026-07-09
+> Статус: dev only, не задеплоено отдельно от pending `0.24.0.316`/`0.24.0.317`.
+> Правки: ручной тип датасета (`project`, `norm`, `estimate`, `catalog`,
+> `cad_bim`, `correspondence`, `mixed`, `other`) сохраняется в
+> `_les_dataset_profile.json`/`les_dataset_profiles`, отдаётся в
+> `/api/documents/datasets` как поле сортировки и меняется через
+> `PATCH /api/rag/datasets/{dataset_id}/profile/kind`. Совушка «Документы»
+> получила фильтр датасетов по типу, control «Тип датасета», сворачиваемый
+> верхний «Реестр файлов» по разделам/типам и порядок `реестр → карта`; штатный
+> экран убрал diagnostic tool-harness controls и дублирующие кнопки карточек
+> датасета.
+> Проверки: `python3 -m compileall -q ...` по затронутым backend/UI/tests → ok;
+> `uv run pytest tests/test_document_explorer_service.py
+> tests/test_context_memory_service.py::test_dataset_kind_is_manual_navigation_metadata
+> tests/test_notebook_api.py::test_dataset_kind_endpoint
+> tests/test_static_assets.py::test_admin_documents_tab_is_mounted -q` →
+> `13 passed`; `make verify` → ok (`2660 tests collected`).
+
+> 0.24.0.317 — L.I.S.T. module naming
+>
+> Дата: 2026-07-09
+> Статус: dev only, не задеплоено отдельно от pending `0.24.0.316`.
+> Причина: выбран пользовательский нейминг слоя разбора документации:
+> **Л.И.С.Т. · Локальный индекс структуры томов**.
+> Правки: в Совушке «Документы» карта проекта, Mermaid-схема, подсказки и кнопка
+> датасета называют слой `Л.И.С.Т.`; `MODULE_INDEX` и `CODE_MAP` закрепляют
+> Л.И.С.Т. как пользовательское имя `project_pdf_extract` / project source-map
+> слоя. Технические JSON/API контракты не переименовывались.
+> Проверки: `python3 -m compileall -q sovushka/pages/documents.py
+> tests/test_static_assets.py proxy/services/version_service.py` → ok;
+> `uv run pytest tests/test_static_assets.py -q` → `7 passed`;
+> `git diff --check` по затронутым файлам → ok. Deploy отдельно не выполнялся,
+> чтобы не смешивать с pending `0.24.0.316` GESN bundle.
+
+> 0.24.0.316 — GESN unified base and FGIS updater
+>
+> Дата: 2026-07-09
+> Статус: dev only, не задеплоено.
+> Причина: старые слои `gesn2022.parquet`/`gesn2022_v2.parquet` смешивали typed и untyped нормы; одинаковые bare-коды разных семейств (`ГЭСН:38-...` и `ГЭСНм:38-...`) должны жить в одной нормальной базе без схлопывания.
+> Правки: добавлен tracked `data/gesn_base/gesn2022_unified.parquet` + `gesn2022_unified_audit.json`; `gesn_service` предпочитает unified-файл и оставляет legacy/v2 только fallback, если unified отсутствует. Старые parquet удалены из `data/gesn_base`; raw ФГИС/ручные импорты перенесены в `storage/cache/gesn_fgis/`. Добавлены `tools/gesn_unify_base.py`, `tools/gesn_update_from_fgis.py`, `gesn_update_service`, API `POST/GET /api/service-sources/gesn_base/fgis-update[/status]` и кнопка GUI «скачать/обновить из ФГИС ЦС» в «Инструменты → Источники данных». Старые launchd backfill labels остановлены.
+> Проверки: `uv run pytest tests/test_gesn_unify_base.py
+> tests/test_gesn_import.py::test_base_type_prevents_gesn_gesnm_collision
+> tests/test_gesn_service.py tests/test_smeta_norm_store.py tests/test_static_assets.py -q`
+> → `25 passed`; локальный smoke `load_base_norms=58886`, strict bare
+> `38-01-001-01` → `None`, typed `ГЭСН38...`/`ГЭСНм38...` раскрываются отдельно;
+> `python3 -m compileall -q` по изменённым GESN/API/UI файлам → ok;
+> `git diff --check` по затронутым файлам → ok; `make verify` → ok
+> (`2656 tests collected`); `uv run pytest tests/test_service_source_registry.py
+> tests/test_proxy_routers.py tests/test_version_service_v19.py -q` → `41 passed`.
+
+> 0.24.0.315 — Google/Yandex Drive web dataset intake
+>
+> Дата: 2026-07-09
+> Статус: deployed to runtime точечно (`cloud_drive_service.py`,
+> `datasets.py`, `external_radar_service.py`, `samovar.py`, `version_service.py`).
+> Причина: оператору нужны папки Google Drive / Яндекс Диска как датасеты не
+> через desktop-sync папку, а через web/API.
+> Правки: добавлен `cloud_drive_service`: web-status провайдеров, list/sync для
+> Google Drive и Яндекс Диска по env OAuth-токенам (`LES_GOOGLE_DRIVE_ACCESS_TOKEN`,
+> `LES_YANDEX_DISK_TOKEN`), mirror-кэш `storage/cloud_drives/...`,
+> экспорт Google Docs/Sheets/Slides в Office/PDF и последующая регистрация mirror
+> через существующий in-place `index-external`. API: `GET /api/rag/cloud-drives`,
+> `POST /api/rag/cloud-drives/list`, `POST /api/rag/cloud-drives/sync`. Самовар
+> получил блок «Google / Яндекс через веб» в диалоге добавления датасета и
+> статус web-дисков в External Radar. Локальные sync-папки Google/Yandex остаются
+> fallback-путём в браузере папок.
+> Проверки: `python3 -m compileall -q` по изменённым backend/UI/test файлам → ok;
+> `uv run pytest tests/test_cloud_drive_service.py tests/test_static_assets.py
+> tests/test_external_radar_service.py tests/test_datasets_router.py -q` →
+> `58 passed`; `make verify` → ok (`2656 tests collected`); `git diff --check`
+> по затронутым файлам → ok. Deploy tool copied 5 files and restarted
+> `com.les.sovushka` + `me.ovc.les.proxy`; live `/api/version` →
+> `0.24.0.315`, deploy stamp ok. Smoke: `GET /api/rag/cloud-drives` → providers
+> visible, tokens not configured; `GET /api/external-radar/summary?limit=2` →
+> `status=ok`, `cloud_local=1`; `POST /api/rag/cloud-drives/list` without Google
+> token → HTTP `400` with `LES_GOOGLE_DRIVE_ACCESS_TOKEN` message; `GET /classic`
+> → NiceGUI HTML (`144389` bytes).
+
+> 0.24.0.314 — Documents dataset Mermaid structure
+>
+> Дата: 2026-07-09
+> Статус: deployed to runtime точечно (`sovushka/pages/documents.py`,
+> `version_service.py`).
+> Причина: вкладка «Документы» должна показывать оператору красивую
+> человекочитаемую структуру датасета, а не только длинный список файлов и
+> диагностические рычаги.
+> Правки: в «Карту проекта» добавлен нативный `ui.mermaid`-блок «Структура
+> датасета»: датасет → проекты/папки → разделы → найденные сущности
+> (`PDF`, таблицы, ПЗ, ВОР, СО, экспликации, водные балансы, ХВС) и отдельный
+> узел «Что проверить» для проблемных PDF/неизвестных таблиц. Это остаётся
+> обзорной навигацией для человека и модели, не evidence и не шаблон ответа.
+> Проверки: `python3 -m compileall -q sovushka/pages/documents.py
+> tests/test_static_assets.py proxy/services/version_service.py` → ok;
+> `uv run pytest tests/test_static_assets.py -q` → `6 passed`;
+> `make verify` → ok; `git diff --check` по затронутым файлам → ok.
+> Deploy tool copied 2 files and restarted `com.les.sovushka` +
+> `me.ovc.les.proxy`; live `/api/version` → `0.24.0.314`, deploy stamp ok;
+> runtime_alignment остаётся `divergent` по файлам вне этого UI-bundle
+> (`chat.py`, `runtime.py`, `document_explorer_service.py` и др.);
+> `GET /classic` → NiceGUI HTML (`144389` bytes).
+
+> 0.24.0.313 — final IC table semantic cleanup pass 2
+>
+> Дата: 2026-07-09
+> Статус: deployed to runtime точечно (`project_pdf_table_service.py`,
+> `project_pdf_extract_service.py`, `version_service.py`); ИЦ PDF extract
+> rebuilt live.
+> Причина: первый живой rebuild `0.24.0.312` нашёл больше таблиц, чем replay
+> по старому sidecar (`5754` вместо `5340`), поэтому остались obvious-хвосты:
+> `dB(A)` акустика, координатные таблицы ООС, СС2/СС5 графические labels,
+> каталожные панели/оборудование, микроклимат ОВ, ТХ спецификационные строки.
+> Правки: расширены существующие buckets `ENV/ACOUSTIC`, `ENV/AIR`, `GEO`,
+> `HVAC`, `CATALOG`, `SPEC`, `ROOM`, `FIRE/RISK`, `NOISE` без добавления
+> answer templates. Replay по свежему live sidecar: `5754` candidates,
+> `UNKNOWN=374`; оставшийся хвост считаем честным `manual/visual required`, а
+> не поводом бесконечно расширять эвристику.
+> Проверки: `python3 -m compileall -q` по изменённым сервисам/тестам → ok;
+> `uv run pytest tests/test_project_pdf_table_service.py
+> tests/test_project_pdf_extract_service.py tests/test_tool_harness_service.py
+> tests/test_static_assets.py -q` → `59 passed`; `git diff --check` по
+> затронутым файлам → ok. Deploy tool copied 3 files and restarted
+> `me.ovc.les.proxy`; live `/api/version` → `0.24.0.313`, deploy stamp ok.
+> Финальный живой rebuild ИЦ:
+> `POST /api/rag/datasets/1728e431-56d1-410f-8bf9-fdbf2543dce0/pdf-extract/run?force=true&max_files=500&max_pages=260`
+> → `154` PDF, `153` ok, `1` extract error, `detected_tables=5754`,
+> `UNKNOWN=268`, `ENV/ACOUSTIC=968`, `SERVICE=2195`, `NOISE=296`, `NAV=323`.
+> `GET pdf-extract/status` → `stale=false`, `updated_at=2026-07-09T09:37:24+00:00`.
+> `POST /api/notebooks/.../memory/refresh` подтвердил `project_pdf_extract`
+> в `dataset_memory_v1` с теми же `5754/268`.
+
+> 0.24.0.312 — final IC table semantic cleanup
+>
+> Дата: 2026-07-09
+> Статус: superseded by `0.24.0.313`; deployed/rebuilt промежуточно.
+> Причина: после `0.24.0.311` в ИЦ оставался крупный obvious-хвост
+> `UNKNOWN`: СС5/СС2 графические обрезки, ПБ АУПТ/риски, ООС акустика/почвы,
+> ЭЭ энергопаспорт и ЭС КЕО/освещение.
+> Правки: `project_pdf_table_service` получил последние стабильные buckets:
+> `FIRE/AUPT`, `FIRE/RISK`, `ELEC/LIGHT`, `ENV/SOIL`, `TEP/STAFF`, расширенные
+> `ENV/ACOUSTIC`, `ENERGY`, `STRUCT/*` и `NOISE` для графических fragments.
+> Это остаётся navigation/source-map layer: код классифицирует тип таблицы и
+> source_ref, но не пишет инженерный ответ за модель.
+> Проверки: pending. Replay по live ИЦ sidecar без rebuild: `5340` candidates,
+> `UNKNOWN=316` против старого сохранённого `1242`; top buckets:
+> `TEXT=1634`, `ENV/ACOUSTIC=796`, `SERVICE=492`, `AUTOMATION=344`,
+> `NOISE=268`, `NAV=243`, `STRUCT/REINF=226`, `SPEC=157`,
+> `ENV/AIR=151`.
+
+> 0.24.0.311 — tool-harness dry-run interface + one-row table cleanup
+>
+> Дата: 2026-07-09
+> Статус: deployed to runtime точечно (`sovushka/pages/documents.py`,
+> `project_pdf_table_service.py`, `project_pdf_extract_service.py`,
+> `version_service.py`).
+> Причина: операторский `Tool-harness dry-run` должен нормально показывать тот
+> же интерфейс, который получает модель, включая первый шаг `shortlist`, а PDF
+> table classifier не должен отбрасывать длинные однострочные таблицы/абзацы
+> PyMuPDF, потому что они сильно искажают статистику ИЦ.
+> Правки: в Sovushka «Документы» добавлена кнопка `Shortlist` и компактное
+> описание interface contract рядом с `Registry/Dataset map/Search/Read doc/FS
+> roots`. `ALGO-tool-harness.md` расширен до полноценного описания GUI/API/CLI,
+> auth policy, request/response и tool args. `project_pdf_table_service`
+> классифицирует длинные one-row samples как `NAV`/`TEXT`/discipline candidates
+> вместо silent drop; добавлены regression tests. `PROJECT_PDF_EXTRACT_ALGO_VERSION`
+> поднят до `0.24.0.311`, так что старые sidecars честно stale до rebuild.
+> Проверки: `python3 -m compileall -q sovushka/pages/documents.py
+> proxy/services/project_pdf_table_service.py
+> tests/test_project_pdf_table_service.py` → ok; `uv run pytest
+> tests/test_tool_harness_service.py tests/test_static_assets.py
+> tests/test_project_pdf_table_service.py tests/test_project_pdf_extract_service.py
+> -q` → `44 passed`; `git diff --check` по затронутым файлам → ok. Deploy tool
+> copied 4 files and restarted `me.ovc.les.proxy` + `com.les.sovushka`; live
+> `/api/version` → `0.24.0.311`, deploy stamp ok. Replay новым classifier по
+> live ИЦ sidecar без rebuild: `5340` candidates, `UNKNOWN=773`, `TEXT=1638`,
+> `ENV/ACOUSTIC=759`, `NAV=238`, `SPEC=157`, `HVAC/HEAT=55`. Live
+> `pdf-extract/status` остаётся `stale=true`; сохранённый sidecar всё ещё
+> показывает старую статистику до rebuild (`UNKNOWN=1242`).
+
+> 0.24.0.310 — СОД dataset project map + table semantic cleanup
+>
+> Дата: 2026-07-09
+> Статус: deployed to runtime точечно (`sovushka/pages/documents.py`,
+> `proxy/routers/documents.py`, `project_pdf_table_service.py`,
+> `project_pdf_extract_service.py`, `version_service.py`).
+> Причина: при выборе датасета оператору нужна не только выдача chunks, а СОД:
+> карта корпуса, описание, перечень проектов/корней, PDF/тома с
+> характеристиками, поиск и быстрые действия открыть/спросить.
+> Правки: `sovushka/pages/documents.py` делает вкладку `СОД` первым видом
+> датасета, автоматически поднимает `project_pdf_extract/summary`, показывает
+> coverage, project roots, discipline summaries и фильтруемый список PDF/томов
+> с действиями `Открыть в LES`, `Открыть системно`, `Спросить`. Добавлен
+> admin-only endpoint `POST /api/documents/by-id/{doc_id}/open-native`, который
+> открывает системно только `source_path` документа из MetaDB.
+> Дополнительно: table semantic classifier получил bounded cleanup по ИЦ
+> sidecar samples: состав томов уходит в `NAV`, короткие слаботочные выноски
+> схем в `NOISE`, спецификационные шапки в `SPEC`, воздухообмен в `HVAC`,
+> теплопотери в `HVAC/HEAT`, абзацы ПЗ в `TEXT`, крупные акустические/КР
+> buckets меньше тонут в `UNKNOWN`/`CATALOG`. `PROJECT_PDF_EXTRACT_ALGO_VERSION`
+> поднят до `0.24.0.310`, поэтому старые sidecars честно `stale=true`.
+> Проверки: `python3 -m compileall -q` по изменённым сервисам/UI/тестам → ok;
+> `uv run pytest tests/test_project_pdf_table_service.py
+> tests/test_project_pdf_extract_service.py tests/test_static_assets.py -q`
+> → `32 passed`; `git diff --check` по затронутым файлам → ok; deploy tool
+> copied 5 files and restarted `me.ovc.les.proxy` + `com.les.sovushka`;
+> live `/api/version` → `0.24.0.310`, deploy stamp ok; live ИЦ
+> `pdf-extract/status` → `stale=true`, `154` PDF, `153` ok, `1` extract error.
+> `POST /api/documents/by-id/__missing__/open-native` → `404`, route mounted
+> without opening a real file.
+
+> 0.24.0.309 — heavy-vector table detection guard
+>
+> Дата: 2026-07-09
+> Статус: deployed to runtime точечно (`project_pdf_table_service.py`,
+> `project_pdf_extract_service.py`, `version_service.py`).
+> Причина: полный `pdf-extract/run` по `ПД_Инновационный центр` должен идти по
+> всем 154 PDF, но `PyMuPDF page.find_tables()` может зависать на тяжёлых
+> векторных планах. Ранее разовый аудит шёл с внешним timeout; runtime endpoint
+> такой защиты не имел.
+> Правки: `project_pdf_table_service` перед `find_tables()` считает vector
+> drawings страницы и пропускает чрезмерно тяжёлые страницы с warning
+> `table_detection_skipped_heavy_vector_page`, вместо блокировки всего run.
+> Проверки: `python3 -m compileall -q` по изменённым сервисам/тестам → ok;
+> `uv run pytest tests/test_project_pdf_table_service.py
+> tests/test_project_pdf_extract_service.py -q` → `15 passed`; `git diff --check`
+> по затронутым файлам → ok; live `/api/version` → `0.24.0.309`, deploy stamp
+> ok. Полный живой прогон ИЦ ПД:
+> `POST /api/rag/datasets/1728e431-56d1-410f-8bf9-fdbf2543dce0/pdf-extract/run?force=true&max_files=500&max_pages=260`
+> завершён: `154` PDF, `153` ok, `1` пустой/битый PDF, `stale=false`.
+> `project_table_summary`: `detected_tables=5340`, `hvs_rows=85`,
+> `water_balance_rows=2`, `room_explication_rows=119`. Top semantic table
+> classes: `UNKNOWN=1242`, `SERVICE=988`, `CATALOG=592`,
+> `ENV/ACOUSTIC=490`, `AUTOMATION=303`, `QTY=282`, `FIRE=232`,
+> `ENV/AIR=214`, `ELEC/LINE=125`, `ENV/WASTE=118`, `STRUCT/CALC=113`,
+> `LOWCURRENT=110`, `ELEC=46`, `HVAC=16`, `ROOM=14`. В sidecar warnings
+> ожидаемо попали тяжёлые векторные страницы с
+> `table_detection_skipped_heavy_vector_page`. `POST
+> /api/notebooks/1728e431-56d1-410f-8bf9-fdbf2543dce0/memory/refresh`
+> подтвердил `project_pdf_extract_brief_v1` в `dataset_memory_v1`.
+> Попытка `max_pages=2000` была остановлена после зависания на гигантском
+> векторном листе; рабочий production-safe прогон сейчас ограничен
+> `max_pages=260`, без reindex.
+
+> 0.24.0.308 — semantic table type candidates for PDF projects
+>
+> Дата: 2026-07-08
+> Статус: deployed to runtime точечно (`project_pdf_table_service.py`,
+> `project_pdf_extract_service.py`, `version_service.py`).
+> Причина: первый проход по `ПД_Инновационный центр` нашёл `7446`
+> tabular objects, но сырые сигнатуры и служебные рамки не дают модели
+> компактную карту типов таблиц. Нужен слой "какая это таблица" без
+> нормализации всех строк и без answer-template.
+> Правки: `project_pdf_table_service` теперь для каждой найденной PDF-таблицы
+> пишет compact `project_pdf_table_type_candidate_v1` с `semantic_type`,
+> `category`, `source_ref` и sample; dataset summary агрегирует
+> `semantic_table_types` и добавляет model-facing navigation по инженерным
+> классам. Sidecar `project_pdf_table_manifest` теперь сохраняется при любых
+> найденных таблицах, не только при ХВС/ВК/экспликациях. Классы покрывают
+> КР расчёты/арматуру/грунты, ООС шум/выбросы/отходы, ПБ эвакуацию/АУПТ/
+> токопотребление, ИОС automation/слаботочку/спецификации, а также
+> `SERVICE`/`NAV`/`NOISE` как неинженерные группы.
+> Дополнительно: `PROJECT_PDF_EXTRACT_ALGO_VERSION` включён в input signature,
+> поэтому старые sidecars после смены extraction logic становятся `stale=true`.
+> Проверки: `compileall` по изменённым сервисам/тестам ok;
+> `uv run pytest tests/test_project_pdf_table_service.py
+> tests/test_project_pdf_extract_service.py -q` → 15 passed; `git diff --check`
+> по затронутым файлам → ok; live `/api/version` → `0.24.0.308`, deploy stamp
+> ok; live ИЦ ПД targeted runtime extraction: `ИОС.ОВ.pdf` → `detected_tables=136`,
+> `hvs_rows=85`, `HVAC: характеристики воздушных систем ХВС=10`; `ООС1.pdf`
+> → `detected_tables=148`, `ENV/WASTE=49`, `ENV/AIR=32`, `water_balance_rows=2`;
+> `ПБ.pdf` → `detected_tables=69`, `room_explication_rows=25`,
+> `FIRE: эвакуация, АУПТ и пожарный риск=30`. ИЦ sidecar status после смены
+> algo signature → `stale=true`, полный `run` не запускался.
+
+> 0.24.0.307 — HVS table row quality for OVK
+>
+> Дата: 2026-07-08
+> Статус: deployed to runtime точечно (`project_pdf_table_service.py`,
+> `version_service.py`).
+> Причина: живая проверка `ОВК` ИЦ ПД подтвердила правильный принцип
+> `find table -> header/context -> classify -> read rows`, но в ХВС/ОВК
+> попадали строки-нумераторы колонок и секционные строки.
+> Правки: `project_pdf_table_service` теперь читает multi-row/stacked table
+> headers, классифицирует таблицу до нормализации и фильтрует ХВС-строки:
+> чистые номера и разделы без обслуживаемой зоны/оборудования/числовой
+> характеристики не попадают в normalized rows.
+> Проверки: `compileall` по изменённым сервисам/тестам ok;
+> `uv run pytest tests/test_project_pdf_table_service.py
+> tests/test_project_pdf_extract_service.py -q` → 9 passed;
+> live ИЦ ПД runtime: ОВК `ИОС.ОВ.pdf` → `hvs_rows=8`,
+> `water_balance_rows=0`, пример строк `У1, У3`, `У2`, `У4`, `А1-А10`;
+> live ИЦ ПД runtime: СС2 `ИОС.СС2.pdf` → `room_explication_rows=374`.
+> ВС/ВО ИЦ ПД быстрый поиск по `баланс/водопотреб/водоотвед` нашёл только
+> страницы состава проекта, без реального водного баланса в текстовом слое.
+
+> 0.24.0.306 — shared project PDF table extractor
+>
+> Дата: 2026-07-08
+> Статус: deployed to runtime точечно (`project_pdf_table_service.py`;
+> `project_pdf_extract_service.py` и `version_service.py` уже совпадали).
+> Причина: PDF Project Reader должен извлекать общие проектные таблицы, которые
+> есть не только в ЭС: ОВ `ХВС`/характеристики воздушных систем, ВК водные
+> балансы и экспликации помещений на графических листах.
+> Правки: добавлен `project_pdf_table_service` с нормализацией
+> `hvs_air_system_row_v1`, `vk_water_balance_row_v1`,
+> `room_explication_row_v1`; `project_pdf_extract_service` пишет
+> `project_pdf_table_manifest.json`, агрегирует `project_pdf_table_summary`
+> в coverage/source_navigation и не подменяет ответ модели.
+> Проверки: `python3 -m compileall -q proxy/services/project_pdf_table_service.py
+> proxy/services/project_pdf_extract_service.py proxy/services/version_service.py
+> tests/test_project_pdf_table_service.py tests/test_project_pdf_extract_service.py`
+> → ok; `uv run pytest tests/test_project_pdf_table_service.py
+> tests/test_project_pdf_extract_service.py -q` → `8 passed`; `git diff --check`
+> по затронутым файлам → ok; live `/api/version` → `0.24.0.306`, deploy
+> stamp ok. Живая проверка на `ПД_Инновационный центр`: runtime extractor по
+> `395.01-B481.120100.2.4-ИОС.СС2.pdf` дал `room_explication_rows=374`;
+> ложные чтения состава проекта как ВК/экспликации отфильтрованы через
+> классификацию `find table -> header/context -> table_type -> rows`.
+
+> 0.24.0.305 — PDF reader contract for OV/VK/room explications
+>
+> Дата: 2026-07-08
+> Статус: deployed to runtime точечно (`version_service.py`); документационный
+> контракт обновлён в dev.
+> Причина: project PDF reader должен покрывать не только ЭС/ЭОМ. Для реальной
+> ПД/РД базовыми машиночитаемыми слоями являются ОВ таблицы `ХВС`
+> (характеристики воздушных систем), ВК водные балансы и экспликации помещений
+> на графических листах с планировками: номер, имя, площадь, категории.
+> Правки: `ALGO-pdf-ingestion.md` фиксирует эти слои как контракт следующих
+> extractors; `MODULE_INDEX` и `ROADMAP_TO_V1` обновлены, чтобы не свести
+> PDF Project Reader к электрическим шаблонам.
+> Проверки: `python3 -m compileall -q proxy/services/version_service.py` → ok;
+> `git diff --check` по затронутым файлам → ok; live `/api/version` →
+> `0.24.0.305`, deploy stamp ok.
+
+> 0.24.0.304 — project PDF extract fail-open on broken PDFs
+>
+> Дата: 2026-07-08
+> Статус: deployed to runtime точечно (`project_pdf_extract_service`,
+> `version_service`).
+> Причина: прогон `ПД_Инновационный центр` показал реальный архивный случай:
+> один нулевой PDF (`Приложение Д_tmp.pdf`) валил весь `pdf-extract/run`.
+> Правки: `project_pdf_extract_service` теперь помечает пустой/битый PDF как
+> `extract_error` с warning и продолжает строить source-map по остальному
+> комплекту; добавлен coverage-счётчик `extract_errors`.
+> Проверки: `python3 -m compileall -q proxy/services/project_pdf_extract_service.py
+> proxy/services/version_service.py tests/test_project_pdf_extract_service.py` → ok;
+> `uv run pytest tests/test_project_pdf_extract_service.py -q` → `2 passed`;
+> `git diff --check` по затронутым файлам → ok; live `/api/version` →
+> `0.24.0.304`, deploy stamp ok.
+> Реальный прогон: `ПД_Инновационный центр`
+> (`1728e431-56d1-410f-8bf9-fdbf2543dce0`) `pdf-extract/run` построил
+> sidecar по `154` PDF: `153` ok, `1` `extract_error`
+> (`Приложение Д_tmp.pdf` пустой), `17` ПЗ, `12` ВОР, `17` СО. Electrical
+> summary: `1731` load rows, `226` candidate circuits, `680` material rows,
+> `55` cable material rows, `394` SO rows, `284` VOR rows, `386`
+> SO→draft-VOR seed rows. `POST /api/notebooks/{dataset_id}/memory/refresh`
+> подтвердил, что `project_pdf_extract` попал в `dataset_memory_v1`.
+
+> 0.24.0.303 — project shortcut from dataset lists
+>
+> Дата: 2026-07-08
+> Статус: deployed to runtime точечно (`sovushka/pages/documents.py`,
+> `sovushka/pages/samovar.py`, `proxy/services/version_service.py`).
+> Причина: операторский action “Проект” был доступен из RAG/chat-контекста,
+> но на списках датасетов не было прямого входа “спросить модель про весь
+> проектный датасет”.
+> Правки: в `sovushka/pages/documents.py` добавлена кнопка “Проект” на
+> карточку датасета; в `sovushka/pages/samovar.py` добавлен такой же action
+> в строку действий нового экрана датасетов. Переход открывает чат со
+> `scope=ds:{dataset_id}` и общим проектным вопросом, без предметного
+> answer-template.
+> Проверки: `python3 -m compileall -q sovushka/pages/documents.py
+> sovushka/pages/samovar.py proxy/services/version_service.py` → ok;
+> `git diff --check` по затронутым файлам → ok; live `/api/version` →
+> `0.24.0.303`, deploy stamp ok.
+
+> 0.24.0.302 — project PDF extract source-map for RAG
+>
+> Дата: 2026-07-08
+> Статус: deployed to runtime точечно (`project_pdf_extract_service`,
+> `drawing_manifest_service`, `pd_rd_manifest_service`,
+> `electrical_*_service`, `config/domain/electrical_schema_terms.yaml`,
+> `proxy/routers/datasets.py`, `dataset_memory_service`,
+> `sovushka/pages/documents.py`, CLI tools).
+> Причина: PDF-проект должен попадать в RAG не как случайные чанки, а как
+> source-map: состав томов, листы/штампы, ПЗ/оглавления, ВОР/СО/таблицы и
+> дисциплинные подсказки для открытия нужных файлов. Код не должен отвечать за
+> модель и не должен reindex-ить корпус ради этой карты.
+> Правки: добавлен `project_pdf_extract_service` с sidecar
+> `storage/datasets/{dataset_id}/_les_pdf_extract/project_pdf_extract_v1`, API
+> `/api/rag/datasets/{dataset_id}/pdf-extract/{status,run,summary}`, compact
+> `project_pdf_extract` в `dataset_brief_for_model`, операторская панель
+> “PDF extract” в «Документы», critical bundle обновлён.
+> Проверки: `python3 -m compileall -q` по затронутым Python-файлам;
+> `uv run pytest tests/test_project_pdf_extract_service.py
+> tests/test_dataset_memory_service.py -q` → `22 passed`; `git diff --check`
+> по затронутым файлам → ok; live `/api/version` → `0.24.0.302`, deploy
+> stamp ok; live `GET /api/rag/datasets/449190eb-050e-422f-91a6-54852469201a/pdf-extract/status`
+> → 37 PDF, summary not built yet.
+
+> 0.24.0.301 — smeta cleanup: prompt boundaries, checked model code, norm source merge
+>
+> Дата: 2026-07-08
+> Статус: dev, deploy pending.
+> Причина: после чистки pricebook/norm identity оставались ошибки обвязки:
+> отсутствие pricebook слишком широко откатывало `сделай ЛСР` в этап
+> candidates; batch harness мог заменить выбранный моделью шифр первым
+> кандидатом shortlist; `gesn2022_v2.parquet` с пустыми `norm_name/norm_unit`
+> стирал заполненные поля старой базы; одиночные typed-нормы вроде
+> `ГЭСНм:38-01-001-01` давали пустую nearby-навигацию.
+> Правки: `_smeta_direct_user_prompt` разводит raw source без найденных
+> норм/ценников в `ВОР -> кандидаты`, но проверенную таблицу ВОР-ГЭСН и
+> MODEL-SELECTED NORM LOOKUP оставляет в pricing с 0.00/добором; scoped
+> empty retrieval возвращает честный `NO_DATA` без падения на тестовом
+> semaphore. `estimate_harness_service` проверяет явный шифр, выбранный
+> моделью, по локальной базе и считает именно его, не подменяя первым
+> search-кандидатом; ranking труб кабельных трасс снова держит `08-05-044`
+> в candidate pool. `gesn_service.load_base_norms()` больше не даёт пустому
+> overlay стирать название/измеритель, а `smeta_norm_store.nearby_rows()`
+> даёт broad fallback по typed базе/element hints для навигации.
+> Проверки: compact regression `6 passed`; focused failed-regression set
+> `11 passed`; `tests/test_chat_harness_format.py
+> tests/test_clarification_service.py tests/test_estimate_harness.py -q`
+> → `179 passed`.
+
+> 0.24.0.300 — smeta data/lookup consistency audit fix
+>
+> Дата: 2026-07-08
+> Статус: dev, deploy pending.
+> Причина: аудит БАП/нормативной базы показал внутренние расхождения, которые
+> мешают модели и расчёту: low-level LSR/API без `book` мог брать первый
+> parquet по алфавиту (например, не СПб), scratch `spb_refresh` висел как
+> обычная ценовая книга, а bare-нормы старого parquet могли молча
+> трактоваться как `ГЭСН` при наличии нескольких семейств норм.
+> Правки: добавлен единый `fgis_price_service.resolve_pricebook_path()` с
+> дефолтом `LES_DEFAULT_PRICEBOOK` → `spb_2kv2026`/
+> `sankt-peterburg_2kv2026` → доступные 2026; `available_pricebooks()` по
+> умолчанию скрывает scratch/`*_refresh`; `lsr_assembly_service`,
+> `/api/prices` и `lookup_local_first` используют тот же resolver.
+> `gesn_service.get_norm(..., strict_family=True)` больше не возвращает
+> `ГЭСН:<bare>`, если bare-код найден в нескольких семействах; обычный
+> `get_norm()` оставлен совместимым для legacy API. Parquet без
+> `base_type/norm_key` помечается как `legacy_untyped_parquet`.
+> `smeta_norm_store_v5` не показывает пустые
+> карточки и демотирует legacy-untyped candidates ниже typed-кандидатов.
+> Код не выбирает нормы за модель, а выравнивает источники, ключи и расчетный
+> default.
+> Проверки: focused pytest
+> `tests/test_fgis_price_service.py tests/test_gesn_import.py
+> tests/test_smeta_norm_store.py tests/test_lsr_assembly_service.py -q`
+> → `36 passed`.
+
+> 0.24.0.299 — smeta finish operation retrieval exposure
+>
+> Дата: 2026-07-07
+> Статус: deployed to runtime точечно (`proxy/routers/chat.py`,
+> `proxy/services/estimate_harness_service.py`,
+> `proxy/services/version_service.py`).
+> Причина: live БАП на `0.24.0.298` доказал, что review-pass снимает
+> неверные аналоги (`демонтаж кабеля` как прокладку, `люк ГКЛ` как чужую
+> монтажную норму), но стандартная отделка 6/7/8/10/13/14 оставалась нулём:
+> model-owned lookup передавал общий `element_type=finish`, `action=устройство`,
+> и `search_norm` показывал модели штукатурку/каркасы/потолки вместо
+> грунтовки/шпатлевки/оклейки/окраски. Это retrieval exposure, не выбор нормы.
+> Правки: `search_norm` для `work_family=finishes` теперь уточняет generic
+> `finish/устройство` по видимой операции в тексте (`primer`, `putty`,
+> `wallpaper`, `painting`) и поднимает same-operation candidates с
+> поверхностью/единицей в score_parts, чтобы модель видела правильный участок
+> базы. Review prompt дополнен общей сметной проверкой: строку «подготовка
+> поверхности к восстановлению отделки» не закрывать штукатуркой/каркасом/
+> устройством потолка, если candidates не описывают именно подготовку этой
+> поверхности; при отсутствии точной нормы — `unbound` со строкой `0.00`.
+> Проверки: focused pytest
+> `tests/test_estimate_harness.py::test_generic_finish_search_infers_standard_finish_operations
+> tests/test_estimate_harness.py::test_finish_painting_search_routes_to_painting_norms -q`
+> → `2 passed`; focused review+finish+electric ranking → `7 passed`;
+> `git diff --check` clean; `make verify` → compileall ok, pytest
+> collect-only `2597 tests collected`; deploy copied `chat.py`,
+> `estimate_harness_service.py`, `version_service.py`, proxy restarted;
+> `/api/version` → `les_version=0.24.0.299`,
+> `deployed_les_version=0.24.0.299`, stamp ok. Live БАП SSE:
+> workflow/lookup/choice/review provider `openai gpt-5.4`, stage `pricing`,
+> visible 19 строк, `review.status=ok`, `approved=12`, `replaced=0`,
+> `unbound=7`, `missing_review_rows=0`; ЛСР РИМ `12/19`, итог
+> `483 720 руб.`. Остались нулём только строки без честного кандидата:
+> защитное укрытие пленкой, демонтаж кабеля, проём ГКЛ под люк, монтаж
+> скрытого лючка, подготовка поверхности как общая строка, демонтаж реечного
+> потолка, отдельные скобы. Live artifact сохранён:
+> `/tmp/bap_live_chat_final_299.json`, SSE `/tmp/bap_live_chat_stream_299.sse`;
+> XLSX выгружен в `/Users/ovc/Downloads/BAP_LSR_LES_live_0.24.0.299.xlsx`.
+
+> 0.24.0.298 — smeta model-owned norm review before pricing
+>
+> Дата: 2026-07-07
+> Статус: deployed to runtime точечно (`proxy/routers/chat.py`,
+> `proxy/services/version_service.py`).
+> Причина: после `0.24.0.297` live БАП route/provider/retrieval стали
+> рабочими, но первичный norm-choice иногда одновременно принимал чужие
+> аналоги (демонтаж кабеля как прокладку, люк ГКЛ как другую технологию) и
+> оставлял нормируемую отделку пустой. Это не задача для кода-решателя:
+> пользовательская граница остаётся прежней — модель выбирает нормы, код
+> считает и проверяет provenance.
+> Правки: `_smeta_direct_structured_norm_choice()` теперь после чернового
+> выбора запускает второй model-owned review-pass. Ревизор получает тот же
+> `lookup_results` с `norm_card` и черновые строки и возвращает JSON
+> `approve|replace|unbound` по каждой позиции. `replace` разрешён только шифром,
+> дословно присутствующим в candidates этого lookup; код не выбирает лучший
+> кандидат и не делает смысловой фильтр, а только валидирует наличие шифра,
+> переносит подтверждённые строки в расчёт или оставляет строку `нужен подбор
+> нормы` с `0.00`/причиной. Prompt ревизора закрепляет общие сметные проверки:
+> не менять действие/элемент/технологию, не считать демонтаж монтажом, не
+> закрывать ГКЛ-люки нормами другого потолка, добирать стандартную отделку
+> same-operation analog при совместимой единице, предпочитать малый БАП
+> светильника крупной UPS-системе без исходного признака системы/шкафа/кВт.
+> Trace `smeta_norm_choice.review` показывает provider/model, timeout,
+> selector_text, approved/replaced/unbound, missing review rows и invalid
+> norm_code rows.
+> Проверки: focused pytest
+> `tests/test_chat_harness_format.py::test_smeta_structured_norm_choice_validates_model_code_from_lookup
+> tests/test_chat_harness_format.py::test_smeta_structured_norm_choice_gets_norm_card_and_mismatch_rule
+> tests/test_chat_harness_format.py::test_smeta_structured_norm_choice_keeps_unreturned_lookup_as_unbound_row
+> tests/test_chat_harness_format.py::test_smeta_structured_norm_review_can_unbind_wrong_action_draft
+> tests/test_chat_harness_format.py::test_smeta_structured_norm_review_can_replace_empty_finish_draft -q`
+> → `5 passed`; focused smeta route/ranking/review → `12 passed`;
+> `git diff --check` clean; `make verify` → compileall ok, pytest
+> collect-only `2596 tests collected`; deploy copied `chat.py` and
+> `version_service.py`, proxy restarted; `/api/version` →
+> `les_version=0.24.0.298`, `deployed_les_version=0.24.0.298`, stamp ok.
+> Live БАП SSE: route/provider ok, review ok (`approved=5`, `replaced=2`,
+> `unbound=12`, `missing_review_rows=0`), visible 19 строк, сумма
+> `489 729 руб.`, `7/19` priced. Review снял неверные строки 2 и 4, но
+> отделочные строки 6/7/8/10/13/14 остались нулём из-за generic finish lookup;
+> закрывается следующим патчем `0.24.0.299`.
+
+> 0.24.0.297 — smeta norm retrieval/ranking for live ЛСР
+>
+> Дата: 2026-07-07
+> Статус: deployed to runtime точечно (`proxy/services/estimate_harness_service.py`,
+> `proxy/routers/chat.py`, `proxy/services/version_service.py`).
+> Причина: после `0.24.0.296` live БАП chat-route перестал уходить в candidate
+> stage и выдал ЛСР на 19 строк, но сумма отличалась от проверенного golden:
+> модель брала крупную UPS-норму для БАП светильника, клеммную коробку вместо
+> ответвительной и indoor гофру могла заменить подземной трубой. Это не
+> арифметика, а model-facing norm retrieval/ranking: расчётная база нормы знала,
+> но lookup-витрина поднимала шумные аналоги.
+> Правки: smeta model runtime больше не игнорирует подключённый cloud:
+> если глобальный `LES_LLM_PROVIDER` указывает на usable cloud runtime с ключом,
+> smeta workflow/lookup/choice/final используют его; явный
+> `LES_SMETA_PROVIDER=mlx` по-прежнему принудительно оставляет локальную модель,
+> а отсутствие ключа падает в MLX. `search_norm` точечно допускает `ГЭСНм10/10` для
+> `electric+backup_power` и поднимает `преобразователь/блок питания` над
+> крупной UPS-системой для светильников; для гофрированной ПВХ-трубы поднимает
+> indoor route `для защиты проводов и кабелей` и штрафует `в земле`, если
+> исходник не про траншею; для коробок открытой проводки поднимает
+> `ответвительную` и штрафует `клеммную`, если нет клемм/зажимов; для кабеля
+> поднимает прокладку `с креплением накладными скобами` и штрафует
+> `маслонаполненный/высокого давления` и `без креплений`, когда исходник не про
+> эти условия. Structured
+> norm-choice prompt запрещает аналоги с обратным или чужим действием
+> (`демонтаж` через монтаж/облицовку, `шпатлевка` через облицовку), требует
+> предпочитать совпадающую поверхность (`потолки` над `стены`) и малый БАП
+> светильника над кВт UPS-системой. Candidate window для smeta lookup/choice
+> расширено до 10, чтобы модель видела не только шумный top-5; для стандартной
+> отделки (`грунтовка`, `шпатлевка`, `оклейка`, `окраска`) prompt требует брать
+> same-operation/same-surface analog при совместимой единице, а проёмы/люки ГКЛ
+> оставлять нулём, если candidates про другой тип потолка/люка. Код по-прежнему
+> не выбирает норму строки:
+> он только ранжирует read-only candidates; выбор остаётся у модели.
+> Проверки: focused pytest
+> `tests/test_chat_harness_format.py::test_smeta_model_runtime_defaults_to_global_cloud_when_api_key_is_available
+> tests/test_chat_harness_format.py::test_smeta_model_runtime_explicit_mlx_overrides_global_cloud
+> tests/test_chat_harness_format.py::test_smeta_model_runtime_can_explicitly_follow_global_provider`
+> плюс
+> `tests/test_estimate_harness.py::test_electric_backup_power_search_prefers_power_over_lighting_blocks
+> tests/test_estimate_harness.py::test_electric_backup_power_for_luminaire_prefers_small_power_supply_block
+> tests/test_estimate_harness.py::test_electric_pipe_search_routes_to_cable_trace_pipes
+> tests/test_estimate_harness.py::test_electric_box_search_routes_to_electrical_boxes
+> tests/test_chat_harness_format.py::test_smeta_structured_norm_choice_gets_norm_card_and_mismatch_rule
+> tests/test_chat_harness_format.py::test_smeta_norm_lookup_policy_keeps_eom_containment_out_of_metal_family -q`
+> → `6 passed`; доп. focused runtime/default-provider tests → `10 passed`;
+> `make verify` → compileall ok, pytest collect-only `2594 tests collected`;
+> deploy copied `estimate_harness_service.py`/`chat.py`, proxy restarted;
+> `/api/version` → `les_version=0.24.0.297`,
+> `deployed_les_version=0.24.0.297`, stamp ok.
+> Runtime spot-check `search_norm`: БАП → `ГЭСНм10-02-016-06`, кабель →
+> `ГЭСНм08-02-146-04`, гофра → `ГЭСНм08-02-409-09`, коробка →
+> `ГЭСНм08-02-420-01` в top. Live БАП SSE после cloud-default: route/provider
+> исправлены (`workflow/lookup/choice provider=openai gpt-5.4`, 19 rows
+> covered), но golden ещё не достигнут. Лучший cloud smoke:
+> `7/19`, `482 132.69 руб.`; после расширения candidate window:
+> `8/19`, `581 586.99 руб.`. Остаток: model-choice stability — модель
+> иногда принимает чужие аналоги (демонтаж кабеля как прокладку, лючок как
+> лепные детали) и одновременно оставляет нормируемую отделку пустой. Следующий
+> фикс нужен как model-owned review/approval-pass выбранных норм перед расчётом,
+> не как кодовый выбор нормы.
+
+> 0.24.0.296 — smeta chat ЛСР-pricing priority
+>
+> Дата: 2026-07-07
+> Статус: deployed to runtime точечно (`proxy/routers/chat.py`,
+> `proxy/services/version_service.py`).
+> Причина: live `/api/chat/stream mode=smeta` по БАП завершался candidate-stage:
+> `smeta_norm_choice.status=blocked_by_tz_stage_gate`, без RIM total. Это
+> противоречит текущему правилу: явное «сделай ЛСР/смету/стоимость» должно
+> давать `priced_partial`, а КАЦ/missing остаются строками добора.
+> Правки: `_smeta_direct_norm_candidate_stage_required()` больше не трактует
+> raw ВОР + ЛСР как обязательный этап кандидатов; candidate-stage остаётся
+> только для явного «кандидаты/этап 1/без денег». Workflow selector prompt
+> закрепляет pricing для явных ЛСР/стоимость запросов, а ошибочный
+> `norm_candidates` корректируется в `pricing` с trace
+> `stage_correction=explicit_lsr_request_has_pricing_priority`. Norm lookup
+> prompt получил системную ЭОМ-границу: гофра/скобы крепления гофры/коробки
+> проводки/БАП маршрутизируются как `electric`, не как `metal/ГЭСН09`;
+> отдельная скоба без нормы остаётся normative gap, а не бункеры/опорные
+> металлоконструкции.
+> Проверки: focused pytest
+> `tests/test_chat_harness_format.py::test_smeta_direct_raw_vor_lsr_goes_to_pricing_stage
+> tests/test_chat_harness_format.py::test_smeta_direct_explicit_candidate_table_stays_stage_one
+> tests/test_chat_harness_format.py::test_smeta_workflow_decision_corrects_candidate_stage_for_explicit_lsr
+> tests/test_chat_harness_format.py::test_smeta_norm_lookup_policy_keeps_eom_containment_out_of_metal_family
+> tests/test_chat_harness_format.py::test_smeta_direct_norm_lookup_is_model_selected
+> tests/test_chat_harness_format.py::test_smeta_direct_checked_norm_table_allows_pricing_stage
+> tests/test_smeta_artifact_service.py::test_checked_rim_form_keeps_source_row_order_across_sections -q`
+> → `7 passed`; `make verify` → compileall ok, pytest collect-only
+> `2592 tests collected`; deploy copied 2 files, proxy restarted;
+> `/api/version` → `les_version=0.24.0.296`, `deployed_les_version=0.24.0.296`,
+> stamp ok. Live БАП SSE на `0.24.0.296`: route исправлен
+> (`workflow.stage=pricing`, artifact `rim_lsr_form`, 19 rows), но результат
+> ещё расходится с golden из-за norm retrieval/ranking (`14/19`,
+> `1 062 700.79 руб.` вместо проверенных `12/19`, `491 737.47 руб.`);
+> закрывается следующим патчем `0.24.0.297`.
+
+> 0.24.0.295 — RIM artifact source-row mapping
+>
+> Дата: 2026-07-07
+> Статус: deployed to runtime точечно (`proxy/services/rim_lsr_trace_service.py`,
+> `proxy/services/smeta_artifact_service.py`, `proxy/services/version_service.py`).
+> Причина: при checked RIM-артефакте рассчитанные позиции группировались по
+> разделам, а видимая ЛСР сопоставляла их с исходными строками последовательным
+> iterator-ом. Если ВОР содержала несколько разделов и незакрытые строки, сумма
+> оставалась общей, но отдельные строки могли получить чужой шифр/цену. На БАП
+> это маскировало нормативную проверку строк.
+> Правки: `build_lsr_trace()` сохраняет `source_row`, а
+> `smeta_artifact_service._build_rim_trace_form()` мапит рассчитанную позицию
+> по исходному номеру строки; fallback на старый порядок оставлен только для
+> legacy trace без `source_row`. Код по-прежнему не выбирает нормы.
+> Проверки: focused pytest
+> `tests/test_smeta_artifact_service.py::test_checked_rim_form_keeps_source_row_order_across_sections
+> tests/test_smeta_artifact_service.py::test_smeta_artifact_keeps_calculated_rows_when_source_rows_are_partial
+> tests/test_smeta_artifact_service.py::test_smeta_artifact_trace_does_not_invent_norms_for_unbound_rows
+> tests/test_rim_lsr_trace_service.py -q` → `16 passed`; `make verify` →
+> compileall ok, pytest collect-only `2590 tests collected`. Deploy copied
+> 3 files, proxy restarted; `/api/version` → `les_version=0.24.0.295`,
+> `deployed_les_version=0.24.0.295`, stamp ok, `hash_mismatch_files=[]`.
+> БАП checked endpoint smoke: `POST /api/lsr/lsr-trace/from-rows`
+> (`spb_2kv2026`) → `19` row bindings, `12/19` bound, total
+> `491 737.47 руб.`. Chat SSE smoke по той же ВОР завершился candidate-stage
+> artifact без RIM total: `smeta_norm_choice.status=blocked_by_tz_stage_gate`,
+> что соответствует текущему ТЗ "ВОР → кандидаты" без ручного подтверждения.
+
+> 0.24.0.294 — smeta local MLX path and BAP smoke
+>
+> Дата: 2026-07-07
+> Статус: deployed to runtime точечно (`proxy/routers/chat.py`,
+> `proxy/services/version_service.py`) поверх `0.24.0.289`.
+> Причина: после фикса `ГЭСНм08` live БАП всё ещё падал до расчёта на cloud
+> `402 Payment Required`. Сметные model-owned шаги теперь по умолчанию идут в
+> local MLX через smeta runtime helper: workflow decision, norm lookup,
+> structured norm choice и финальный smeta answer. Cloud можно вернуть только
+> явным `LES_SMETA_*_PROVIDER`, но глобальный `LES_LLM_PROVIDER=openai` больше
+> не должен сам утаскивать smeta-контур в cloud.
+> Правки: default `LES_SMETA_PROVIDER=mlx`; `LES_SMETA_NORM_LOOKUP_TIMEOUT_SEC`
+> и `LES_SMETA_DIRECT_MODEL_TIMEOUT_SEC` для MLX — `1200s`, workflow для MLX —
+> `300s`; trace пишет provider/model/timeout для lookup/choice/workflow.
+> Selector выбора норм смягчён для pricing-stage: модель может брать
+> технически близкий нормативный аналог из candidates и помечать проверку,
+> вместо глобального отказа. Код по-прежнему не выбирает норму: он выполняет
+> read-only lookup, проверяемую арифметику и provenance.
+> Проверки: `python3 -m compileall -q proxy/routers/chat.py
+> proxy/services/version_service.py tests/test_chat_harness_format.py` → ok;
+> `git diff --check -- proxy/routers/chat.py proxy/services/version_service.py
+> tests/test_chat_harness_format.py` → ok; focused pytest
+> `tests/test_chat_harness_format.py::test_smeta_workflow_decision_is_model_owned_pricing_reuse
+> tests/test_chat_harness_format.py::test_smeta_model_runtime_defaults_to_local_even_when_global_provider_is_cloud
+> tests/test_chat_harness_format.py::test_smeta_model_runtime_can_explicitly_follow_global_provider
+> tests/test_estimate_harness.py -q` → `95 passed`.
+> Runtime: deploy copied 2 files, proxy restarted; `/api/version` →
+> `les_version=0.24.0.294`, `deployed_les_version=0.24.0.294`, stamp ok,
+> `hash_mismatch_files=[]`.
+> Live БАП smoke на `0.24.0.293` перед финальным workflow-local patch:
+> PDF read `25` table rows / `19` work rows; elapsed `864.5s`; norm lookup
+> `provider=mlx`, `results=19`, `coverage_missing=0`; norm choice
+> `provider=mlx`, `status=ok`, selected/priced `13/19`; RIM total
+> `422 866 руб.`; visible LSR kept all `19` source rows with `0.00` on
+> unclosed rows. Остаток: workflow trace в этом smoke ещё был cloud
+> (`openai gpt-5.4`); это закрыто в `0.24.0.294`, но полный 15-минутный БАП
+> повтор после `0.24.0.294` не запускался.
+
+> 0.24.0.289 — smeta ГЭСНм08 candidate boundary
+>
+> Дата: 2026-07-07
+> Статус: deployed to runtime точечно (`proxy/services/estimate_harness_service.py`,
+> `proxy/services/version_service.py`)
+> Причина: live БАП smoke на runtime `0.24.0.288` прочитал 19 строк ВОР,
+> но priced только `3/19` и дал `4 700 руб.`. Диагноз: новая runtime-база
+> маркирует электромонтажные нормы как `ГЭСНм:08-...` (`collection_key=ГЭСНм08`),
+> а smeta search gate разрешал для `electric` только старый `08`. Правильные
+> нормы `08-05-044`, `08-03-641`, `08-01-125` выпадали из route-кандидатов,
+> а FTS-шум внутри строительного `08` (печи/мусоропровод) оставался в shortlist.
+> Правки: `electric` и смежный `low_current` допускают `ГЭСНм08`; route priority
+> считает `ГЭСНм08` электромонтажной базой. Это не выбор нормы кодом: модель
+> по-прежнему выбирает норму, код только не выбрасывает релевантный сборник из
+> candidate pool.
+> Проверки: focused pytest
+> `tests/test_estimate_harness.py::test_collection_of_prefixed_norm_code
+> tests/test_estimate_harness.py::test_electric_accepts_gesnm08_from_current_fsnb_base
+> tests/test_estimate_harness.py::test_electric_pipe_search_routes_to_cable_trace_pipes
+> tests/test_estimate_harness.py::test_electric_box_search_routes_to_electrical_boxes
+> tests/test_estimate_harness.py::test_electric_backup_power_search_prefers_power_over_lighting_blocks -q`
+> → `5 passed`; `git diff --check -- proxy/services/estimate_harness_service.py
+> tests/test_estimate_harness.py proxy/services/version_service.py
+> docs/RELEASE_LEDGER.md` → ok; deploy
+> `uv run python -m tools.deploy_to_runtime --apply --restart --force --files
+> proxy/services/estimate_harness_service.py proxy/services/version_service.py`
+> → copied 2 files, proxy restarted; `/api/version` →
+> `les_version=0.24.0.289`, `deployed_les_version=0.24.0.289`,
+> stamp ok, hash_mismatch_files=[].
+> Runtime search spot-check после deploy: гофра БАП поднимает
+> `ГЭСНм:08-02-409-09`/`ГЭСНм:08-05-044-*`, коробка —
+> `ГЭСНм:08-02-420-01`/`ГЭСНм:08-03-641-*`, БАП —
+> `ГЭСНм:08-01-125-01`; печи/мусоропровод ушли из top.
+> Повторный live БАП smoke: 19 строк прочитаны, `smeta_norm_lookup` сделал
+> 19 вызовов, но `smeta_norm_choice` упал на `402 Payment Required` от
+> `https://openai.api.proxyapi.ru/v1/chat/completions`, поэтому проверенная
+> расчётная РИМ-трасса не построилась (`accepted_rows=0`); видимый ответ —
+> ЛСР-черновик, не priced-final.
+
+> 0.24.0.288 — raw CAD/BIM skip boundary
+>
+> Дата: 2026-07-07
+> Статус: deployed to runtime точечно (`backend/qdrant_adapter.py`,
+> `proxy/config.py`, `proxy/routers/datasets.py`,
+> `proxy/services/version_service.py`)
+> Причина: raw `.dwg/.rvt/.ifc/.ifczip` через `+ папку` попадали в общий RAG
+> intake и светились как `ERROR`, хотя LES не индексирует эти бинарные исходники
+> как текстовые документы. Рабочий CAD/BIM вход — canonical JSON/JSONL projection
+> или специализированный extractor/import.
+> Правки: default `RAG_UPLOAD_SUFFIXES` больше не содержит raw CAD/BIM
+> расширения; external intake-plan показывает их как `unsupported_suffix`; если
+> старый raw CAD/BIM уже стоит в parse queue, `_sync_parse` помечает его
+> `SKIPPED`, а не `ERROR`; `/api/rag/documents` принимает фильтр `SKIPPED`.
+> Проверки: focused pytest
+> `tests/test_datasets_router.py::test_external_intake_plan_keeps_maps_out_of_accepted_count
+> tests/test_datasets_router.py::test_external_intake_plan_skips_raw_cad_bim_sources
+> tests/test_parse_pipeline_w14.py::test_raw_cad_bim_source_is_skipped_not_indexed_zero -q`
+> → `3 passed`; `git diff --check -- ...` → ok; `make verify` →
+> compileall ok, pytest collect-only `2586 tests collected`; deploy
+> `uv run python -m tools.deploy_to_runtime --apply --restart --force --files
+> backend/qdrant_adapter.py proxy/config.py proxy/routers/datasets.py
+> proxy/services/version_service.py` → copied 4 files, proxy restarted;
+> `/api/version` → `les_version=0.24.0.288`,
+> `deployed_les_version=0.24.0.288`, stamp ok, hash_mismatch_files=[].
+> Runtime DB cleanup: raw CAD/BIM `.dwg/.dxf/.rvt/.rfa/.ifc/.ifczip/.nwc`
+> entries in `ERROR`/`PENDING` converted to `SKIPPED` (`453` rows);
+> post-check raw CAD/BIM `ERROR=0`, documents API accepts
+> `status=SKIPPED`.
+>
+> 0.24.0.287 — chat validator fail-open final
+>
+> Дата: 2026-07-07
+> Статус: deployed to runtime точечно (`proxy/routers/chat.py`,
+> `proxy/services/version_service.py`), без полного bundle
+> Причина: даже после снятия scope/empty-retrieval stop финальный слой SafeRAG
+> мог заменить уже полученный модельный ответ на TOSKA fallback при
+> `UNKNOWN`/`HALLUCINATION`, либо уйти в повторный строгий прогон. Это снова
+> превращало инженерный вопрос в отказ/таймаут.
+> Правки: `/api/chat` больше не вызывает `final_answer_for_status` как
+> финальный фильтр видимого ответа. Новый локальный helper
+> `_chat_model_final_answer` чистит текст, но сохраняет непустой модельный
+> ответ; статусы `UNKNOWN`/`HALLUCINATION` понижаются до `UNVALIDATED`, а trace
+> получает `final_answer_policy=chat_model_final_preservation_v1`.
+> Если валидатор вернул непринятый статус после непустого ответа и
+> `TOSKA_FAIL_OPEN=true`, чат завершает попытку как `UNVALIDATED` вместо
+> дорогого retry.
+> Проверки: `python3 -m compileall -q proxy/routers/chat.py
+> proxy/services/version_service.py tests/test_chat_harness_format.py` → ok;
+> `uv run pytest tests/test_chat_harness_format.py::test_chat_model_final_answer_preserves_text_on_validator_block
+> tests/test_chat_harness_format.py::test_chat_model_final_answer_preserves_hallucination_label_as_warning
+> tests/test_scope_clarification_v22.py -q` → ok;
+> `git diff --check -- proxy/routers/chat.py proxy/services/version_service.py
+> tests/test_chat_harness_format.py docs/RELEASE_LEDGER.md docs/CODE_MAP.md
+> docs/MODULE_INDEX.md` → ok. Live deploy:
+> `uv run python -m tools.deploy_to_runtime --apply --restart --force --files
+> proxy/routers/chat.py proxy/services/version_service.py` → copied 2 files,
+> proxy restarted, `/api/version` → `0.24.0.287`, deploy stamp ok.
+> Полный `make test`/`make verify` не запускались: оператор попросил не гонять
+> долгие тесты в этом цикле.
+> Остаточный риск/TODO: deterministic tool-finals для явных table/mail/field/
+> reconcile/doc-review команд остаются, потому что это инструментальные ветки;
+> если они начнут перехватывать обычный вопрос, резать надо их policy-гейтом,
+> не предметным шаблоном.
+
+> 0.24.0.286 — model-first chat unthrottle
+>
+> Дата: 2026-07-06
+> Статус: deployed to runtime точечно (`proxy/routers/chat.py`,
+> `proxy/services/version_service.py`,
+> `proxy/services/electrical_evidence_summary_service.py`), полный bundle не
+> выкатывался
+> Причина: защитные слои начали душить модель: проектный вопрос при `scope=all`
+> мог завершаться `scope_clarification`, пустой retrieval — generic `NO_DATA`,
+> а electrical summary отдавал тысячи gap rows как будто это инженерный verdict.
+> На живом сценарии это ломало “расскажи про котельную” и давало отписки вместо
+> модельного инженерного разбора.
+> Правки: `chat.py` больше не возвращает финальный `scope_clarification` для
+> обычных проектных вопросов — warning `scope_all_for_project_query` остаётся
+> только в trace, дальше идут RAG/модель. Generic empty retrieval больше не
+> возвращает кодовый `Нет данных в выбранных источниках`; он помечается
+> `empty_retrieval_model_first_v1` и продолжает к модели с памятью/навигацией
+> (точный `target_file` mismatch/ambiguity по-прежнему уточняется кодом).
+> Unified construction harness visible final оставлен только за явным
+> `LES_UNIFIED_CONSTRUCTION_HARNESS_FINAL_ENABLED=1`.
+> RAG prompt ослаблен с “только найденные материалы” до model-first: не выдумывать
+> числа/источники, но и не превращать неполный поиск в отказ.
+> `electrical_evidence_summary_v1` теперь model-facing navigation: добавлены
+> `model_reading_contract`, `source_navigation`, `issue_counts`, а `issues` —
+> только capped examples с семантикой extractor gap, не design/code verdict.
+> Реальный `tmp/electrical_pd_ic_20260706/evidence_summary.json` обновлён:
+> полный `issue_count=3845`, но в prompt-facing `issues` только 24 примера,
+> `source_navigation=6`.
+> Проверки: `python3 -m compileall -q proxy/routers/chat.py
+> proxy/services/electrical_evidence_summary_service.py
+> tests/test_scope_clarification_v22.py
+> tests/test_electrical_evidence_summary_service.py` → ok;
+> `uv run pytest tests/test_scope_clarification_v22.py
+> tests/test_electrical_evidence_summary_service.py
+> tests/test_deterministic_policy_v18.py
+> tests/test_project_summary_inventory.py -q` → `60 passed`;
+> `make verify` → ok (`2583 tests collected`). Live deploy:
+> `uv run python -m tools.deploy_to_runtime --apply --restart --force --files
+> proxy/routers/chat.py proxy/services/version_service.py
+> proxy/services/electrical_evidence_summary_service.py` → copied 3 files,
+> proxy restarted, `/api/version` → `0.24.0.286`, deploy stamp ok.
+> Полный `make test` не запускался: оператор попросил не гонять получасовую
+> сюиту.
+> Post-deploy smoke: `tools/basic_function_smoke.py` → P0 ok, 8/9 passed,
+> P1 `chat_project_noscope` timed out at 120s. Это подтверждает, что старый
+> мгновенный кодовый stop снят и запрос пошёл в модель, но latency полного
+> model answer для “расскажи про котельную” надо отдельно ограничить без
+> возврата шаблонного отказа.
+> Остаточный риск/TODO: сделать быстрый bounded model-first ответ для широких
+> проектных вопросов без финального `scope_clarification`/`NO_DATA` fallback.
+
+> 0.24.0.285 — electrical evidence summary and gap layer
+>
+> Дата: 2026-07-06
+> Статус: dev only, runtime не обновлялся
+> Причина: после извлечения таблиц нагрузок, схемных кандидатов и ВОР/СО нужен
+> слой “что есть / чего не хватает”: агрегаты по щитам, inventory кабелей и
+> оборудования, SO→draft ВОР seeds, дырки по кабелю/аппарату/длине/марке.
+> Правки: добавлены `electrical_evidence_summary_service` и CLI
+> `tools/electrical_evidence_summary.py`. Контракт
+> `electrical_evidence_summary_v1` принимает уже готовые manifest JSON и отдаёт
+> `load_aggregates_by_panel`, `cable_inventory`, `equipment_inventory`,
+> `load_to_material_cable_matches`, `so_to_vor_seeds`, `issues`.
+> Из имени файлов `Таблица расчета нагрузок ГРЩ1/ГРЩ2` берётся честный
+> `panel_source=file_name`, если в строках таблицы нет отдельной колонки щита.
+> В `ALGO-electrical-schematics.md` записана полная карта извлечения: состав
+> тома/шифры/ПЗ-навигация, planned ПЗ-решения, ЭОМ/ЭС tables/labels, ВОР/СО
+> materials и summary/gap layer.
+> Реальный прогон ПД ИЦ: `tmp/electrical_pd_ic_20260706/evidence_summary.json`
+> и `.md`. Сводка: 1727 load rows, 209 candidate circuits, 678 material rows,
+> 55 cable material rows, 394 SO rows, 284 VOR rows, 386 SO→VOR seed rows.
+> После panel hint и фикса `КунРс Внг(А)-FRLS` issue_count=3845: 1727 load rows без cable, 1727 без
+> protection, 206 circuit missing cable, 181 circuit missing protection,
+> 1 material cable missing mark, 3 circuit missing cable length.
+> Проверки: `uv run pytest tests/test_electrical_evidence_summary_service.py -q`
+> → `3 passed`; `uv run pytest tests/test_electrical_evidence_summary_service.py
+> tests/test_electrical_materials_service.py tests/test_electrical_schematic_service.py -q`
+> → `17 passed`; `uv run pytest tests/test_electrical_materials_service.py
+> tests/test_electrical_evidence_summary_service.py -q` → `10 passed`;
+> `python3 -m compileall -q proxy/services/electrical_evidence_summary_service.py
+> tools/electrical_evidence_summary.py tests/test_electrical_evidence_summary_service.py`
+> → ok; `uv run python tools/electrical_evidence_summary.py --help` → ok;
+> `make verify` → ok (`2581 tests collected`). Полный `make test` не запускался:
+> оператор попросил не гонять получасовую сюиту.
+> Остаточный риск/TODO: это presence/gap layer, не row-level reconciliation.
+> Следующий шаг — matcher по panel/line/consumer/cable и ПЗ-project-decisions
+> extractor.
+
+> 0.24.0.284 — electrical materials technical attributes
+>
+> Дата: 2026-07-06
+> Статус: dev only, runtime не обновлялся
+> Причина: ВОР и СО не надо суммировать. Следующая задача — уметь сверять
+> ВОР↔СО и делать draft ВОР из СО/спецификации, поэтому строкам ведомостей
+> нужны технические признаки и роль документа.
+> Правки: `electrical_materials_service` расширяет строки
+> `electrical_material_manifest_v1`: `doc_role` (`vor`/`so`), `work_action`,
+> `ip_rating`, `rated_current_a`, `voltage_v`, `voltages_v`, `rated_power_w`,
+> `rated_power_kw`, `rated_reactive_power_kvar`, `install_height_m`,
+> `cable_diameter_mm`, `dimensions_mm`, `unit_mass_kg`, `total_mass_kg`.
+> Задачи записаны в `ALGO-electrical-schematics.md`: сверка ВОР↔СО
+> (`missing-in-VOR`, `missing-in-SO`, quantity/attribute mismatch) и
+> СО→draft ВОР без выбора норм кодом.
+> Реальный прогон ПД ИЦ обновил `tmp/electrical_pd_ic_20260706/materials/*.json`
+> и `summary.md`: `ИОС.ЭС-ВОР` сохранил 284 rows/26 cable rows/36 690 м и
+> дополнительно дал 182 work actions, 118 IP, 15 токов, 3 напряжения, 16 W,
+> 2 kVAr, 33 высоты монтажа, 44 dкаб, 119 габаритов, 84 удельные/общие массы;
+> `ИОС.ЭС-СО` сохранил 394 rows/29 cable rows/84 460 м и дал 41 IP, 25 токов,
+> 7 напряжений, 16 W, 2 kVAr, 7 габаритов, 39 type marks, 214 product codes,
+> 379 suppliers.
+> Проверки: `uv run pytest tests/test_electrical_materials_service.py -q`
+> → `6 passed`; `uv run pytest tests/test_electrical_materials_service.py
+> tests/test_electrical_schematic_service.py -q` → `13 passed`;
+> `python3 -m compileall -q proxy/services/electrical_materials_service.py
+> tests/test_electrical_materials_service.py` → ok; `make verify` → ok
+> (`2577 tests collected`); `make test` → `2577 passed, 6 warnings in 281.60s`.
+> Остаточный риск/TODO: нужен matcher ВОР↔СО и генератор draft ВОР из СО,
+> но без code-side выбора ГЭСН/норм.
+
+> 0.24.0.283 — electrical VOR/SO materials reader
+>
+> Дата: 2026-07-06
+> Статус: dev only, runtime не обновлялся
+> Причина: длины кабелей не читаются как `L/длина` на однолинейках и в таблицах нагрузок
+> ПД ИЦ, но присутствуют в ВОР/СО как строки `м`. Нужен отдельный evidence-layer
+> для ведомостей, а не попытка угадать длины по графике.
+> Правки: добавлен `electrical_materials_service` и CLI `tools/electrical_materials.py`.
+> Новый `electrical_material_manifest_v1` нормализует таблицы ВОР/СО:
+> `position/name/unit/quantity/section/source_ref`, чинит PDF mojibake в СО,
+> классифицирует строки `cable/panel/lighting/containment/busbar/protection/equipment`,
+> вытаскивает `cable_mark`, `cable_cores`, `cable_section_mm2`, `quantity_m`.
+> Реальный прогон ПД ИЦ: `tmp/electrical_pd_ic_20260706/materials/*.json`,
+> сводка `tmp/electrical_pd_ic_20260706/materials/summary.md`.
+> Результат: `ИОС.ЭС-ВОР` → 284 rows, 26 cable rows, 36 690 м кабеля,
+> 5 panel rows, 31 lighting rows, 58 containment rows, 6 busbar rows;
+> `ИОС.ЭС-СО` → 394 rows, 29 cable rows, 84 460 м кабеля,
+> 95 panel rows, 26 lighting rows, 63 containment rows, 5 busbar rows.
+> ВОР и СО не суммируются как общий итог без workflow-решения: это разные
+> роли документов.
+> Проверки: `uv run pytest tests/test_electrical_materials_service.py tests/test_electrical_schematic_service.py -q`
+> → `11 passed`; `python3 -m compileall -q proxy/services/electrical_materials_service.py
+> tools/electrical_materials.py tests/test_electrical_materials_service.py` → ok;
+> `uv run python tools/electrical_materials.py --help` → ok; `make verify` → ok
+> (`2575 tests collected`); `make test` → `2575 passed, 6 warnings in 279.15s`.
+> Остаточный риск/TODO: следующий слой — связать `load_rows` из таблиц
+> нагрузок с кабельными строками ВОР/СО по щитам/линиям/потребителям.
+
+> 0.24.0.282 — PD IC electrical real-run fixes
+>
+> Дата: 2026-07-06
+> Статус: dev only, runtime не обновлялся
+> Причина: реальный прогон ПД ИЦ (`5.1. ЭС и ЭО / 5.1.1. Здание ИЦ`) показал две проблемы:
+> типовые таблицы расчёта нагрузок имеют 11 колонок с потерянными PDF-подзаголовками
+> `Pр/Qр/Sр/Iр`, а panel-regex принимал слово `ручки` за `РУ`.
+> Правки: `electrical_schematic_service` теперь распознаёт 11-колоночную форму
+> расчёта нагрузок (`Pуст`, `Pр`, `Qр`, `Sр`, `Iр`) и выкидывает строку
+> нумерации колонок; panel-кандидаты дополнительно фильтруются от обычных
+> lowercase-слов. Прогнаны 5 PDF: основной `ИОС.ЭС`, `ВОР`, `СО`,
+> `Таблица расчета нагрузок ГРЩ1`, `Таблица расчета нагрузок ГРЩ2`.
+> Артефакты: `tmp/electrical_pd_ic_20260706/*.json`, сводка
+> `tmp/electrical_pd_ic_20260706/summary.md`.
+> Результат прогона: основной том 242 стр. → 183 single-line pages, 150
+> candidate circuits; таблицы ГРЩ1/ГРЩ2 → 31 таблица, 1727 строк нагрузок,
+> 1312 строк с `Pр/Iр`. Длины кабелей не извлечены (`0`): в этих PDF нет
+> читаемой колонки/подписи `L`/`длина`; вероятно, длины сидят в графике,
+> ВОР или требуют отдельного table/OCR-слоя.
+> Проверки:
+> - `uv run pytest tests/test_electrical_schematic_service.py -q` → `7 passed`
+> - `make verify` → ok (`2571 tests collected`)
+> - `make test` → `2571 passed, 6 warnings in 275.23s`
+> Остаточный риск/TODO: добавить специализированный extractor для кабельных
+> строк ВОР/СО и геометрическую/OCR-привязку длин кабеля к линиям схем.
+
+> 0.24.0.281 — electrical single-line/load reader MVP
+>
+> Дата: 2026-07-06
+> Статус: dev only, runtime не обновлялся
+> Причина: реальный ЭОМ/ИОС.ЭС нельзя читать как табличные однолинейки. Нужен отдельный
+> source-backed reader: графическая схема + таблица расчёта нагрузок + длины кабелей.
+> Правки: добавлен `electrical_schematic_service` и CLI `tools/electrical_schematic.py`.
+> Manifest `electrical_schematic_manifest_v1` читает PDF text blocks, vector line primitives,
+> text nodes (`panel/protection/cable/line`), candidate circuits и normalized load rows.
+> `cable_length_m` стал отдельным полем и для подписи на схеме (`L=35 м`), и для таблиц расчёта
+> нагрузок (`L, м`/`длина`). Добавлен словарь `config/domain/electrical_schema_terms.yaml`:
+> `Руст/Pуст` → `p_installed_kw` (установленная мощность), `Рр/Pр` → `p_calc_kw`,
+> `Iр` → `i_calc_a`, `L/длина` → `cable_length_m`. Сервис и словарь добавлены в
+> runtime-alignment bundle.
+> Проверки:
+> - `uv run pytest tests/test_electrical_schematic_service.py -q` → `5 passed`
+> - `make verify` → ok (`2569 tests collected`)
+> - `make test` → `2569 passed, 6 warnings in 280.43s`
+> Остаточный риск/TODO: нужен прогон на реальных листах `ИОС.ЭС` и накопление словаря
+> обозначений/false positives; пока геометрическая топология не утверждается без читаемых подписей.
+
+> 0.24.0.280 — explicit ГОСТ Р 21.101-2026 source for doc-review retrieval
+>
+> Дата: 2026-07-06
+> Статус: dev only, runtime не обновлялся
+> Причина: live `NTD_SPDS_Index` уже содержит актуальный ГОСТ Р 21.101-2026, но retrieval-подфаза
+> doc-review брала `requirement.snippet` из проверяемого проектного датасета. Это смешивало
+> "где проверяем факты комплекта" и "откуда берём текст нормы".
+> Правки: `doc_review_retrieval_service` теперь отдельно ищет факты корпуса в project dataset
+> (устаревший ГОСТ 2020, стадия ПД/РД) и текст требования в нормативном SPDS RAG:
+> env `LES_NORMCONTROL_SPDS_DATASET_IDS`, затем auto-discovery датасетов с `ГОСТ Р 21.101-2026`
+> в `NTD_SPDS_Index`/доменах `NTD_SPDS`/`NTD_GENERAL`. Если нормативный источник настроен, проектный
+> датасет не используется как fallback для `requirement`; legacy fallback остаётся только для стендов
+> без найденного нормативного dataset. `doc_review_retrieval_service.py` добавлен в critical
+> runtime-alignment bundle.
+> Проверки:
+> - `python3 -m compileall -q proxy/services/doc_review_retrieval_service.py tests/test_doc_review_retrieval.py` → ok
+> - `uv run pytest tests/test_doc_review_retrieval.py -q` → `14 passed`
+> - `uv run pytest tests/test_doc_review_retrieval.py tests/test_doc_review_gost_21_101_2026.py tests/test_doc_review_chat_tool.py tests/test_doc_review_api.py tests/test_normcontrol_service.py tests/test_version_service_v19.py -q` → `68 passed`
+> - `make verify` → ok (`2564 tests collected`)
+> - `make test` → `2564 passed, 6 warnings in 292.66s`
+> - live `/api/version` → `les_version=0.24.0.276`, `deployed_les_version=0.24.0.276`,
+>   `runtime_alignment.status=divergent`
+> Остаточный риск/TODO: live proxy всё ещё 0.24.0.276 до `make ship`; после деплоя нужен live
+> doc-review smoke на проектном датасете с source_ref требования из `NTD_SPDS_Index`.
 
 > 0.24.0.279 — ГОСТ Р 21.101-2026 as PD/RD normative source
 >

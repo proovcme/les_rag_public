@@ -42,7 +42,7 @@
 | Нормоконтроль | `normcontrol` | doc-review по rulepack |
 | Поиск (default) | `grounded_rag` | RAG с цитатами |
 | (свободный) | `free_llm` | прямой LLM |
-| КП | `kp_stub` | заглушка КП |
+| КП | `grounded_rag` | модельный/RAG-контур; кодовая заглушка КП удалена |
 
 `query_route.profile` несёт честный `route_source` + `channel` в trace каждого ответа.
 
@@ -56,7 +56,7 @@
 
 - Резолвер профиля: `proxy/services/profile_resolver.py`
 - Агент-роутер (каталог инструментов + LLM-выбор): `proxy/services/agent_router_service.py` (`router_primary()` — флаг `LES_ROUTER_PRIMARY`, дефолт **OFF**, только явный opt-in)
-- Детерм. политика финала: `proxy/services/deterministic_policy_service.py` (legacy-каналы дают final ТОЛЬКО при явном намерении/команде/точном термине)
+- Детерм. политика финала: `proxy/services/deterministic_policy_service.py` (legacy control-plane каналы дают final только при явном намерении/команде/точном термине; professional-domain tool candidates не становятся visible answer без модели)
 - Область поиска: `proxy/services/scope_service.py` (all/project/dataset…; проектный запрос при scope=all → не искать молча, спросить)
 - Поток: `proxy/routers/chat.py` (`_run_chat`: роутер ПЕРЕД каскадом; каскад =
   `not effective_router_primary`, то есть `LES_ROUTER_PRIMARY=false` или router `unavailable`)

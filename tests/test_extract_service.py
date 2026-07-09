@@ -177,6 +177,21 @@ def test_run_structured_extraction_uses_provider_call(monkeypatch):
     assert seen["rf"] is not None and seen["rf"]["type"] == "json_schema"
 
 
+def test_run_structured_extraction_passes_max_tokens(monkeypatch):
+    monkeypatch.setattr(svc, "_endpoint", lambda: ("http://x", "m", {}, False))
+    seen = {}
+
+    async def fake_call(prompt, response_format, *, max_tokens=None):
+        seen["max_tokens"] = max_tokens
+        return json.dumps({"poz": 1, "qty": 9})
+
+    monkeypatch.setattr(svc, "_provider_call", fake_call)
+    res = asyncio.run(svc.run_structured_extraction(SCHEMA, "i", "doc", max_tokens=777))
+
+    assert res.ok and res.data["qty"] == 9
+    assert seen["max_tokens"] == 777
+
+
 def test_run_structured_extraction_falls_back_when_cloud_structured_returns_no_json(monkeypatch):
     monkeypatch.setattr(svc, "_endpoint", lambda: ("http://x/v1/chat/completions", "gpt-5.4-mini", {}, True))
     seen = []
@@ -203,6 +218,24 @@ def test_run_structured_extraction_transport_error(monkeypatch):
     monkeypatch.setattr(svc, "_provider_call", boom)
     res = asyncio.run(svc.run_structured_extraction(SCHEMA, "i", "doc"))
     assert res.ok is False and any("provider error" in e for e in res.errors)
+
+
+def test_run_structured_extraction_blank_transport_error_is_diagnostic(monkeypatch):
+    monkeypatch.setattr(svc, "_endpoint", lambda: ("http://x", "m", {}, False))
+
+    class BlankError(Exception):
+        def __str__(self):
+            return ""
+
+    async def boom(prompt, response_format):
+        raise BlankError()
+
+    monkeypatch.setattr(svc, "_provider_call", boom)
+    res = asyncio.run(svc.run_structured_extraction(SCHEMA, "i", "doc"))
+
+    assert res.ok is False
+    assert any("BlankError" in e for e in res.errors)
+    assert all(e.strip() != "provider error:" for e in res.errors)
 
 
 def test_router_handler(monkeypatch):

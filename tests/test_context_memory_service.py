@@ -10,6 +10,7 @@ from proxy.services.context_memory_service import (
     build_context_memory_block,
     build_dataset_profile,
     get_chat_profile,
+    set_dataset_kind,
     set_dataset_operator_guidance,
     warmup_dataset_profiles,
 )
@@ -140,6 +141,24 @@ def test_dataset_operator_guidance_is_navigation_not_evidence(tmp_path, monkeypa
     assert "комментарий оператора для модели" in block
     assert "не evidence" in block
     assert "архивные КП" in block
+
+
+def test_dataset_kind_is_manual_navigation_metadata(tmp_path, monkeypatch):
+    db_path = tmp_path / "data" / "les_meta.db"
+    storage_root = tmp_path / "storage" / "datasets"
+    monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+    _seed_meta_db(db_path)
+
+    profile = set_dataset_kind("ds-1", "проект", storage_root=storage_root)
+
+    assert profile["dataset_kind"] == "project"
+    assert profile["dataset_kind_label"] == "Проект"
+    saved = json.loads((storage_root / "ds-1" / DATASET_PROFILE_FILE).read_text(encoding="utf-8"))
+    assert saved["dataset_kind"] == "project"
+
+    block = build_context_memory_block(dataset_ids=["ds-1"], storage_root=storage_root)
+
+    assert "тип датасета: Проект" in block
 
 
 def test_deep_dataset_profile_uses_bounded_lexical_index(tmp_path, monkeypatch):

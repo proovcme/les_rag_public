@@ -47,6 +47,69 @@ def test_rim_trace_from_gesn_seed_reproduces_gold_position():
     assert rows["sp"]["source"] == "Пр/774"
 
 
+def test_visible_rows_accept_colon_prefixed_norm_codes():
+    trace = build_lsr_trace_from_visible_rows([
+        {
+            "basis": "ГЭСНм:38-01-001-01",
+            "title": "Монтаж листовых металлических конструкций",
+            "unit": "т",
+            "quantity": 1,
+        }
+    ])
+
+    summary = trace["summary"]
+    assert summary["bound_rows"] == 1
+    assert trace["row_bindings"][0]["status"] == "bound"
+    assert trace["sections"][0]["positions"][0]["code"] == "ГЭСНм38-01-001-01"
+
+
+def test_visible_rows_accept_engineering_count_unit_aliases():
+    trace = build_lsr_trace_from_visible_rows([
+        {
+            "basis": "ГЭСНм:10-02-050-01",
+            "title": "Установка телекоммуникационного шкафа",
+            "unit": "шт",
+            "quantity": 1,
+        },
+        {
+            "basis": "ГЭСН:10-03-032-02",
+            "title": "Проверка линий связи",
+            "unit": "линия",
+            "quantity": 80,
+        },
+    ])
+
+    summary = trace["summary"]
+    assert summary["bound_rows"] == 2
+    assert trace["row_bindings"][0]["quantity_trace"]["status"] == "direct_from_row"
+    assert trace["row_bindings"][1]["quantity_trace"]["status"] == "direct_from_row"
+    assert trace["sections"][0]["positions"][0]["code"] == "ГЭСНм10-02-050-01"
+    assert trace["sections"][0]["positions"][1]["code"] == "ГЭСН10-03-032-02"
+
+
+def test_visible_rows_convert_piece_dimensions_to_area_norm_qty():
+    trace = build_lsr_trace_from_visible_rows([
+        {
+            "basis": "ГЭСН:15-01-052-01",
+            "title": "Разработка проема 400х400 мм",
+            "unit": "шт",
+            "quantity": 10,
+        },
+        {
+            "basis": "ГЭСН:15-01-059-01",
+            "title": "Монтаж ревизионного лючка 400х400 мм скрытого типа",
+            "unit": "шт",
+            "quantity": 10,
+        },
+    ])
+
+    assert trace["summary"]["bound_rows"] == 2
+    assert trace["row_bindings"][0]["position"]["qty"] == 0.1
+    assert trace["row_bindings"][1]["position"]["qty"] == 0.016
+    assert trace["row_bindings"][0]["quantity_trace"]["status"] == "unit_conversion"
+    assert trace["row_bindings"][1]["quantity_trace"]["status"] == "piece_area_conversion"
+
+
 def test_rim_trace_applies_resource_coefficients_by_kind():
     trace = build_position_trace({"code": CODE, "qty": 0.61}, k_ozp=1.15, k_em=1.15)
     summary = trace["summary"]

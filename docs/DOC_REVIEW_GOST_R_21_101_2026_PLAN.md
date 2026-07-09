@@ -175,13 +175,17 @@ proxy/services/document_set_model.py
  proxy/services/remark_normalization_service.py     # (позже, если контракт разрастётся)
 ```
 
-**Retrieval-подфаза (`doc_review_retrieval_service`).** Для целей `kind: retrieval` ищет в корпусе
-проекта ДВА вкуса (через `source_adapters`, лексика; vector в sync-пути пока UNAVAILABLE/отложен):
+**Retrieval-подфаза (`doc_review_retrieval_service`).** Для целей `kind: retrieval` ищет два разных
+класса источников (через `source_adapters`, лексика; vector в sync-пути пока UNAVAILABLE/отложен):
 1) **факты** — D0-002 устаревший `ГОСТ Р 21.101-2020` в корпусе (найден → `computed_issue` warning с
    source_ref+snippet; не найден → `supported`), D1-010 стадия ПД/РД по маркерам (однозначно →
    `supported`, иначе `manual`);
-2) **текст требования** (flavor B) — лексический поиск пункта ГОСТ в корпусе → заполняет
-   `requirement.snippet`+source_ref (если стандарт проиндексирован), иначе пусто.
+2) **текст требования** (flavor B) — лексический поиск пункта ГОСТ в явном нормативном SPDS RAG:
+   сначала `LES_NORMCONTROL_SPDS_DATASET_IDS`, затем auto-discovery датасетов с
+   `ГОСТ Р 21.101-2026` в `NTD_SPDS_Index`/доменах `NTD_SPDS`/`NTD_GENERAL`.
+   Это заполняет `requirement.snippet`+source_ref из актуального ГОСТ 2026. Если нормативный dataset
+   настроен, project dataset НЕ используется как fallback для текста требования; legacy fallback остаётся
+   только для стендов без найденного нормативного dataset.
 Подфаза живёт в ОРКЕСТРАТОРЕ (`review_dataset`) и инъектирует `retrieval_evidence` в чистую
 `run_review`. **Анти-галлюцинация:** поиск UNAVAILABLE → факт `None` → цель остаётся `review_needed`
 (не утверждаем «не найдено», если искать не смогли). 0 LLM; числа/факты — детерминированная лексика.

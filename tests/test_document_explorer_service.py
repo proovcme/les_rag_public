@@ -100,6 +100,9 @@ def test_document_explorer_lists_datasets_and_documents(explorer):
             "pending_count": 0,
             "error_count": 0,
             "missing_count": 0,
+            "dataset_kind": "",
+            "dataset_kind_label": "",
+            "dataset_kind_sort": 999,
         }
     ]
 
@@ -108,6 +111,33 @@ def test_document_explorer_lists_datasets_and_documents(explorer):
     assert docs["total"] == 1
     assert docs["documents"][0]["file_name"] == "NTD/СП 7.13130.docx"
     assert docs["documents"][0]["source_path"] == "/src/sp7.docx"
+
+
+def test_document_explorer_reads_dataset_kind_for_sorting(explorer):
+    with explorer.connect() as conn:
+        conn.execute(
+            """
+            CREATE TABLE les_dataset_profiles (
+                dataset_id TEXT PRIMARY KEY,
+                profile_json TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO datasets (id, name, status, chunk_count) VALUES (?, ?, ?, ?)",
+            ("project", "ПД ИЦ", "IDLE", 0),
+        )
+        conn.execute(
+            "INSERT INTO les_dataset_profiles(dataset_id, profile_json) VALUES (?, ?)",
+            ("project", '{"dataset_kind":"project","dataset_kind_label":"Проект"}'),
+        )
+        conn.commit()
+
+    datasets = explorer.list_datasets()
+
+    assert datasets[0]["id"] == "project"
+    assert datasets[0]["dataset_kind"] == "project"
+    assert datasets[0]["dataset_kind_label"] == "Проект"
 
 
 def test_document_explorer_searches_lexical_chunks_without_llm(explorer):

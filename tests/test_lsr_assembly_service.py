@@ -88,6 +88,33 @@ def test_assemble_rollup():
     assert res["sections"][0]["positions"] == 2
 
 
+def test_default_pricebook_prefers_spb_over_first_alphabetic(monkeypatch):
+    from proxy.services import fgis_price_service as fps
+    from proxy.services import lsr_assembly_service as la
+
+    chosen = {}
+
+    class FakeBook:
+        region = "Санкт-Петербург"
+        quarter = "2 квартал 2026 г."
+
+    monkeypatch.setattr(
+        fps,
+        "available_pricebooks",
+        lambda *a, **k: ["/tmp/altayskiy-kray_2kv2026.parquet", "/tmp/spb_2kv2026.parquet"],
+    )
+    def _fake_get_pricebook(path):
+        chosen["path"] = path
+        return FakeBook()
+
+    monkeypatch.setattr(fps, "get_pricebook", _fake_get_pricebook)
+
+    book = la._resolve_book(None)
+
+    assert isinstance(book, FakeBook)
+    assert chosen["path"] == "/tmp/spb_2kv2026.parquet"
+
+
 def test_assemble_code_only_applies_nr_sp_from_norm_collection():
     res = assemble([{
         "code": "ГЭСНм38-01-001-01",

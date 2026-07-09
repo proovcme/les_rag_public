@@ -67,18 +67,20 @@ from proxy.services.query_router import route_query
 from proxy.services.retrieval_service import resolve_dataset_ids, retrieve_chat_chunks
 from proxy.services.runtime_admission import count_active_jobs, evaluate_chat_admission, generation_semaphore
 from proxy.services.runtime_dispatcher import RuntimeDispatcher
+from proxy.services.skill_snippet_registry import render_snippets, select_skill_snippets
 from proxy.services.smeta_artifact_service import (
+    build_checked_rim_form_from_visible_rows,
+    build_norm_candidate_artifact_from_lookup,
     build_smeta_artifact,
+    build_smeta_artifact_from_rim_form,
     compact_smeta_answer,
     persist_smeta_artifact_exports,
 )
-from proxy.services.smeta_fast_answer_service import smeta_fast_fallback_answer
 from proxy.services.saferag_service import (
     SAFE_FALLBACK,
     build_context,
     build_validation_context,
     concentrate_sources,
-    final_answer_for_status,
     rank_chunks_for_question,
     source_map_for_context,
     source_names,
@@ -95,7 +97,7 @@ from proxy.services.table_query_service import maybe_answer_table_query, parquet
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["chat"])
-DEFAULT_OPENAI_MODEL = "gpt-4.1"
+DEFAULT_OPENAI_MODEL = "gpt-5.4"
 _SMETA_ARTIFACT_DIR = Path("storage/smeta_artifacts")
 _XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -237,6 +239,62 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+_SMETA_ROW_UNITS_RE = re.compile(
+    r"^(?:"
+    r"м|м2|м²|м3|м³|мм|см|км|шт\.?|компл\.?|комплект|ед\.?|"
+    r"т|кг|100\s*м|100\s*м2|100\s*м²|100\s*шт|100\s*отверстий"
+    r")$",
+    re.IGNORECASE,
+)
+
+
+def _smeta_source_row_count(text: str) -> int:
+    raw = str(text or "")
+    json_rows = len(re.findall(r'"source_no"\s*:', raw))
+    if json_rows:
+        return json_rows
+    markdown_rows = 0
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not (stripped.startswith("|") and stripped.endswith("|")):
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if len(cells) < 4:
+            continue
+        first = cells[0]
+        if not re.fullmatch(r"\d+[.)]?", first):
+            continue
+        name = cells[1] if len(cells) > 1 else ""
+        unit = cells[2] if len(cells) > 2 else ""
+        qty = cells[3] if len(cells) > 3 else ""
+        if not name or name.isdigit() or set(name) <= {"-"}:
+            continue
+        if not _SMETA_ROW_UNITS_RE.match(unit.replace(" ", "")) and not re.search(r"[А-Яа-яA-Za-z]", unit):
+            continue
+        if not re.search(r"\d", qty):
+            continue
+        markdown_rows += 1
+    return markdown_rows
+
+
+def _smeta_norm_lookup_max_calls(text: str) -> int:
+    source_rows = _smeta_source_row_count(text)
+    configured = max(1, _env_int("LES_SMETA_NORM_LOOKUP_MAX_CALLS", 30))
+    if source_rows <= 0:
+        return configured
+    # This is a technical runaway guard, not a workflow decision. The model owns
+    # how many lookup calls are needed; code must not truncate ordinary VOR rows.
+    return max(configured, min(300, source_rows * 2))
+
+
+def _smeta_norm_lookup_selector_tokens(text: str) -> int:
+    source_rows = _smeta_source_row_count(text)
+    configured = max(256, _env_int("LES_SMETA_NORM_LOOKUP_SELECTOR_MAX_TOKENS", 1800))
+    if source_rows <= 10:
+        return configured
+    return max(configured, min(6000, 800 + source_rows * 220))
+
+
 @dataclass(frozen=True)
 class LlmRuntime:
     provider: str
@@ -323,6 +381,27 @@ def _mlx_runtime() -> LlmRuntime:
     return LlmRuntime("mlx", base_url, _join_openai_path(base_url, "/chat/completions"), model, "", True)
 
 
+def _smeta_model_runtime(env_name: str) -> LlmRuntime:
+    """Runtime for smeta model-owned steps.
+
+    Explicit LES_SMETA_* provider still wins. Without explicit smeta override,
+    use the configured global cloud runtime when it is actually usable; otherwise
+    fall back to local MLX. The model still owns workflow/lookup/choice/final text.
+    """
+    provider = (
+        os.getenv(env_name, "").strip().lower()
+        or os.getenv("LES_SMETA_PROVIDER", "").strip().lower()
+    )
+    if provider in {"", "local", "mlx"}:
+        if provider:
+            return _mlx_runtime()
+        global_runtime = _llm_runtime()
+        if is_cloud_provider(global_runtime.provider) and global_runtime.api_key:
+            return global_runtime
+        return _mlx_runtime()
+    return _llm_runtime()
+
+
 def cloud_fallback_models(runtime: LlmRuntime) -> list[str]:
     """Цепочка моделей облачного фолбэка: primary (`*_MODEL`) первым, затем
     `OPENROUTER_MODELS`/`OPENAI_MODELS` (через запятую). Зависшая/ошибившаяся
@@ -384,6 +463,112 @@ def source_excerpts(chunks, *, max_n: int = 6, max_chars: int = 700) -> list[dic
         if len(out) >= max_n:
             break
     return out
+
+
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, flags=re.DOTALL | re.IGNORECASE)
+    if fence:
+        raw = fence.group(1).strip()
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        parsed = json.loads(raw[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _parse_model_tool_calls(text: str, *, allowed_tools: set[str], max_calls: int = 3) -> list[dict[str, Any]]:
+    parsed = _extract_json_object(text)
+    if not parsed:
+        return []
+    calls_raw = parsed.get("calls")
+    if isinstance(calls_raw, dict):
+        calls_raw = [calls_raw]
+    if not isinstance(calls_raw, list):
+        return []
+    calls: list[dict[str, Any]] = []
+    for item in calls_raw:
+        if not isinstance(item, dict):
+            continue
+        tool = str(item.get("tool") or item.get("name") or "").strip()
+        if tool not in allowed_tools:
+            continue
+        args = item.get("args") if isinstance(item.get("args"), dict) else {}
+        calls.append({"tool": tool, "args": dict(args)})
+        if len(calls) >= max(1, max_calls):
+            break
+    return calls
+
+
+def _augment_model_tool_args(
+    call: dict[str, Any],
+    *,
+    question: str,
+    dataset_ids: list[str],
+    target_file_ref: dict[str, Any] | None,
+) -> dict[str, Any]:
+    tool = str(call.get("tool") or "")
+    args = dict(call.get("args") or {})
+    if tool == "dataset_map" and dataset_ids and not args.get("dataset_id"):
+        args["dataset_id"] = dataset_ids[0]
+    if tool in {"search_sources", "read_source", "read_pdf_source", "read_excel_source"}:
+        if question and not args.get("q"):
+            args["q"] = question
+        if dataset_ids:
+            if tool == "search_sources" and not args.get("dataset_ids") and not args.get("dataset_id"):
+                args["dataset_ids"] = dataset_ids
+            elif tool != "search_sources" and not args.get("dataset_id") and not args.get("doc_id"):
+                args["dataset_id"] = dataset_ids[0]
+        if target_file_ref and target_file_ref.get("match_status") == "matched":
+            if not args.get("doc_id") and not args.get("doc_name"):
+                args["doc_name"] = target_file_ref.get("file_name") or ""
+            if not args.get("doc_id") and target_file_ref.get("dataset_id"):
+                args["dataset_id"] = target_file_ref.get("dataset_id")
+    return {"tool": tool, "args": args}
+
+
+def _compact_tool_result_for_prompt(payload: dict[str, Any], *, max_chars: int = 7000) -> dict[str, Any]:
+    keep = {
+        "tool": payload.get("tool"),
+        "status": payload.get("status"),
+        "result": payload.get("result") or {},
+        "sources": payload.get("sources") or [],
+        "missing": payload.get("missing") or [],
+        "warnings": payload.get("warnings") or [],
+        "trace": payload.get("trace") or "",
+    }
+    text = json.dumps(keep, ensure_ascii=False, default=str)
+    if len(text) <= max_chars:
+        return keep
+    trimmed = dict(keep)
+    trimmed["result"] = {
+        "summary": "tool result trimmed for prompt only; full result is in retrieval_trace.tool_loop",
+        "text": text[:max_chars].rsplit(" ", 1)[0].rstrip(),
+        "prompt_truncated": True,
+    }
+    return trimmed
+
+
+def _format_tool_results_for_model(results: list[dict[str, Any]]) -> str:
+    if not results:
+        return ""
+    compacted = [
+        _compact_tool_result_for_prompt(
+            result,
+            max_chars=max(1000, _env_int("LES_CHAT_TOOL_RESULT_PROMPT_CHARS", 7000)),
+        )
+        for result in results
+    ]
+    return (
+        "РЕЗУЛЬТАТЫ ИНСТРУМЕНТОВ LES (read-only; это материалы для модели, не готовый ответ):\n"
+        + json.dumps(compacted, ensure_ascii=False, indent=2, default=str)
+    )
 
 
 def _local_context_budget(*, local_big: bool, big_context: bool) -> dict[str, int]:
@@ -1020,6 +1205,22 @@ def _notebook_study_validation_status(status: str, *, has_context: bool) -> str:
     return normalized
 
 
+def _chat_model_final_answer(answer: str, status: str) -> tuple[str, str, dict[str, Any]]:
+    """Chat route policy: validation may label, but must not replace a model answer."""
+    cleaned = clean_visible_text(answer)
+    normalized = (status or "UNKNOWN").upper()
+    if not cleaned:
+        return cleaned, normalized, {}
+    if normalized in {"VERIFIED", "NO_DATA", "UNVALIDATED"}:
+        return cleaned, normalized, {}
+    return cleaned, "UNVALIDATED", {
+        "schema": "chat_model_final_preservation_v1",
+        "original_status": normalized,
+        "final_status": "UNVALIDATED",
+        "reason": "validator_warns_without_replacing_model_answer",
+    }
+
+
 async def _prepare_notebook_reader_memory(dataset_ids: list[str]) -> dict[str, Any]:
     """Best-effort model reader-pass before broad dataset study.
 
@@ -1278,7 +1479,7 @@ async def _run_project_normcontrol(req: "ChatRequest", pid: int) -> str:
 async def _run_free_mode(req: "ChatRequest", token_sink=None) -> str:
     """Режим «Свободный»: прямой вызов LLM БЕЗ ретрива (ответ из знаний модели) + мягкая
     плашка. Изолирован — RAG-конвейер не задействуется. Стримит токены, если token_sink задан."""
-    runtime = _llm_runtime()
+    runtime = _smeta_model_runtime("LES_SMETA_WORKFLOW_DECISION_PROVIDER")
     disclaimer = ("⚠️ Вольный режим — ответ модели без обращения к базе документов; "
                   "возможны неточности, проверяй факты.\n\n")
     sys_prompt = build_mode_system_prompt("free")
@@ -1369,7 +1570,7 @@ def _question_with_attachment(req: "ChatRequest") -> str:
 
 async def _run_attachment_mode(req: "ChatRequest", token_sink=None) -> str:
     """Direct LLM over the attached file text only. No global RAG sources."""
-    runtime = _llm_runtime()
+    runtime = _smeta_model_runtime("LES_SMETA_WORKFLOW_DECISION_PROVIDER")
     try:
         session_block = session_memory(req.session_id, max_turns=4, max_chars=1600)
     except Exception as err:
@@ -1921,36 +2122,33 @@ async def _smeta_direct_rag_context(
 def _smeta_direct_light_system_prompt() -> str:
     return (
         "Ты — опытный инженер-сметчик ЛЕС. Работай как сметчик, а не как чат-бот: "
-        "дай ВОР, работы/поставка, нормативный ход, стоимость работ, допущения и добор. "
-        "Не сообщай пользователю тип маршрута и память. "
-        "Спецификация не смета: сначала мост «спецификация → ВОР». Код после твоего решения "
-        "только считает и проверяет; работы, нормы и применимость выбираешь ты. "
-        "Деньги без источника, trace или явного сценарного допущения не факт. Missing не 0. "
-        "Пустые ценовые колонки в спецификации означают missing-цены поставки, а не запрет "
-        "оценки работ: строй ВОР и дай стоимость работ. "
-        "Если просят оценку и данные измеримы, дай стоимость работ: финальную, "
-        "частичную или сценарную. Сценарная сумма должна иметь видимую расчётную базу. "
-        "Один и тот же исходник должен давать один и тот же базовый сценарий: не меняй "
-        "ставки, нормы-кандидаты и группировку без нового источника или команды. "
-        "Если команда форматная — «оформи», «в ЛСР», «добавь шифры/колонки» — сохраняй уже "
-        "принятые строки, ставки и итоги; не пересчитывай и не сокращай состав. "
-        "Для ВОР/стоимости дай Markdown-таблицы «ВОР» и «Оценка стоимости работ». "
-        "В стоимости обязательна колонка «Норма/источник»: "
-        "сборник/раздел/код-кандидат ГЭСН, pricebook/КП/КАЦ или «сценарное допущение». "
-        "Если просят ЛСР, не обещай потом: сразу заполни размеченный шаблон ЛСР граф 1-12: "
-        "№ п/п; Обоснование; Наименование работ и затрат; Ед. изм.; Кол-во на ед.; коэф.; "
-        "Кол-во всего; Базис на ед., руб.; Индекс; Текущий на ед., руб.; коэф.; "
-        "Текущий всего, руб. Строка ВСЕГО по смете обязательна. "
-        "Способ выдачи сметы — ЛСР-форма в артефакте/XLSX: твои строки должны быть пригодны "
-        "для граф ЛСР. Если ставка из сборника/RAG, укажи сборник, раздел и норму/кандидата; "
-        "если принял норму, пиши полный шифр, чтобы расчётный слой раскрыл ресурсы. "
-        "не пиши одиноко «ГЭСНм» или «ГЭСН»: нужен сборник/раздел/код-кандидат. "
-        "Раздел ВОР не равен одному сборнику: по каждой работе давай нормативных кандидатов. "
-        "ЭОМ/силовые — электромонтажные кандидаты; связь/СКС/ВОЛС — ГЭСНм10; "
+        "по сырому ТЗ/ВОР/спецификации сначала выдавай этап «ВОР -> кандидаты ГЭСН»; "
+        "ЛСР с рублями — следующим ходом по candidates модели или загруженной таблице ВОР-ГЭСН. "
+        "Для методики, теста, таблицы кандидатов или «без расчёта/без рублей» не делай ЛСР и нулевые деньги: дай ВОР, "
+        "нормируемую ВОР, кандидаты норм и добор. Не сообщай тип маршрута и память. "
+        "Спецификация не смета: сначала мост «спецификация → ВОР». Код только считает; работы, нормы и применимость выбираешь ты. "
+        "Деньги без источника, trace или явного сценарного допущения не факт. В ЛСР нет данных -> ставь 0.00 "
+        "и примечание/добор. Пустые ценовые колонки в спецификации не запрет: строй ВОР и дай ЛСР с нулями. "
+        "По сырому измеримому исходнику сначала дай candidates ГЭСН; "
+        "деньги считаются следующим сообщением по тем candidates, что есть; missing нормы/цены остаются 0.00 с примечанием. "
+        "Один и тот же исходник должен давать один и тот же базовый сценарий: не меняй ставки, нормы и группировку без нового источника. "
+        "Для подтверждённой сметной таблицы дай Markdown-таблицу «ЛСР-черновик» граф 1-12; "
+        "В ЛСР обязательна графа «Обоснование»: выбранная моделью норма, аналог/раздел, "
+        "pricebook/КП/КАЦ или допущение. "
+        "Для pricing-stage сразу заполни ЛСР граф 1-12: "
+        "№ п/п; Обоснование; Наименование работ и затрат; Ед.; Кол-во; коэф.; Базис; Индекс; Текущий; Всего. Строка ВСЕГО по смете обязательна. "
+        "Нет ставки/индекса/цены ресурса -> 0.00; ВСЕГО тоже 0.00, причина после ЛСР. "
+        "Способ выдачи сметы — ЛСР-форма в ответе и артефакте/XLSX. Указывай сборник, раздел и выбранную норму/аналог; пиши полный шифр, если выбрал его. "
+        "не пиши одиноко «ГЭСНм» или «ГЭСН»: нужен сборник/раздел/таблица или полный код. "
+        "Раздел ВОР не равен одному сборнику: по каждой работе выбирай нормативный маршрут. "
+        "Подбор нормы делает модель: семейство работ -> группа сборников -> сборник -> раздел/таблица -> конкретная норма. "
+        "Одна ВОР может иметь несколько кандидатов; несколько ВОР могут ссылаться на одну норму, если она покрывает общий состав работ. "
+        "ЭОМ/силовые/аварийное питание — электромонтажные кандидаты; связь/СКС/ВОЛС — ГЭСНм10; "
         "отделка — ГЭСН15; демонтаж — ГЭСНр/ГЭСНмр. Если точный код не подтверждён, "
-        "дай кандидата или раздел с пометкой проверки. Вопросы идут после расчёта. "
+        "дай нормативный аналог или раздел с пометкой проверки. "
+        "Ведомость добора — ресурсы выбранной нормы/ресурсной строки без цены/индекса/КАЦ/КП, не нераспознанные работы. "
         "Не называй сценарную таблицу готовой ЛСР: это предварительная форма до "
-        "выбранных норм, ресурсов, цен/индексов, НР/СП, НДС и trace. Пиши без JSON и внутренних терминов."
+        "норм, ресурсов, цен/индексов, НР/СП, НДС и trace."
     )
 
 
@@ -1999,6 +2197,8 @@ def _smeta_direct_heavy_extra_prompt() -> str:
         "Markdown-таблицей с колонками №, Работа, Кол-во, Ед., Ставка/допущение, Сумма, Комментарий. "
         "Если пользователь прямо просит «ЛСР», «сделай ЛСР» или «оформи в ЛСР», текущий ответ "
         "обязан содержать заполненный шаблон ЛСР граф 1-12, а не обещание оформить её потом. "
+        "Если пользователь просит порядок, аудит подхода, таблицу кандидатов или пишет «без расчёта»/«без рублей», "
+        "не подменяй это ЛСР: покажи workflow, ВОР/нормируемую ВОР, кандидаты норм и добор без денежных граф. "
         "Графы: № п/п; Обоснование; Наименование работ и затрат; Ед. изм.; Кол-во на ед.; "
         "коэф.; Кол-во всего; Базис на ед., руб.; Индекс; Текущий на ед., руб.; коэф.; "
         "Текущий всего, руб. Строка ВСЕГО по смете обязательна. Сохраняй уже принятые строки, ставки и итоги; не сокращай 19 строк до 12 и не "
@@ -2060,22 +2260,412 @@ def _smeta_direct_heavy_extra_prompt() -> str:
     )
 
 
+def _smeta_request_needs_lsr_output(text: str) -> bool:
+    low = str(text or "").casefold().replace("ё", "е")
+    no_money = bool(re.search(
+        r"\bбез\s+(?:расчет[а-я]*|рубл[а-я]*|стоимост[а-я]*|денег)\b|"
+        r"\bне\s+(?:считай|рассчитывай|оценивай)\b",
+        low,
+    ))
+    asks_method = bool(re.search(
+        r"\b(?:порядок|алгоритм|методик[а-я]*|как\s+работа[а-я]*|тест|провер[а-я]*|"
+        r"таблиц[а-я]*\s+кандидат[а-я]*|без\s+расчет[а-я]*)\b",
+        low,
+    ))
+    asks_process_explanation = bool(re.search(
+        r"\b(?:объясни|расскажи|опиши|процесс|workflow|как\s+(?:ты\s+)?работа[а-я]*|"
+        r"как\s+устроен[а-я]*|что\s+выбираешь|что\s+считает\s+код|что\s+делаешь)\b",
+        low,
+    ))
+    explicit_lsr_or_money_action = bool(re.search(
+        r"\b(?:сделай|составь|оформи|сформируй|подготовь|рассчитай|посчитай|оцени|дай)\b"
+        r"[^.\n]{0,100}\b(?:лср|смет[ауыеой]*|стоимост[ьяиюе]*|оценк[ауи]|сумм[ауыеой]*|рубл[яей]*|цен[ауыеой]*|итог[а-я]*)\b",
+        low,
+    ))
+    asks_lsr_or_money = bool(re.search(
+        r"\b(?:лср|смет[ауыеой]*|стоимост[ьяиюе]*|оценк[ауи]|рассчит[а-я]*|посчитай|"
+        r"сумм[ауыеой]*|рубл[яей]*|цен[ауыеой]*|итог[а-я]*)\b",
+        low,
+    ))
+    if asks_process_explanation and not explicit_lsr_or_money_action:
+        return False
+    if no_money and asks_method:
+        return False
+    return asks_lsr_or_money and not no_money
+
+
+def _smeta_direct_has_confirmed_norm_table(text: str) -> bool:
+    """Whether the user supplied a manually checked VOR<->GESN variant for pricing."""
+    low = str(text or "").casefold().replace("ё", "е")
+    has_norm_code = bool(re.search(
+        r"\b(?:гэсн(?:мр|м|п|р)?|фер(?:мр|м|п|р)?|тер(?:мр|м|п|р)?)\s*:?\s*"
+        r"\d{2}[-–]\d{2}[-–]\d{3}[-–]\d{2}\b",
+        low,
+        flags=re.IGNORECASE,
+    ))
+    has_checked_marker = bool(re.search(
+        r"\b(?:проверенн[а-я]*|подтвержденн[а-я]*|подтвержденн[а-я]*|ручн[а-я]*\s+"
+        r"(?:провер[а-я]*|выбран[а-я]*|загруз[а-я]*)|после\s+проверки|вариант\s*\d+|"
+        r"выбранн[а-я]*\s+вариант|таблиц[а-я]*\s+соответстви[а-я]*|вор\s*[-↔<>=]+\s*гэсн|"
+        r"рассчитай\s+по\s+(?:этой|проверенн[а-я]*|загруженн[а-я]*)\s+таблиц[а-я]*)\b",
+        low,
+    ))
+    return has_norm_code and has_checked_marker
+
+
+def _smeta_direct_norm_candidate_stage_required(text: str) -> bool:
+    """Return True only when the user explicitly asks for the candidate stage.
+
+    A raw VOR plus "сделай ЛСР/смету/стоимость" is a pricing request: the
+    estimator may use normative analogs and the calculator returns
+    priced_partial with row-level gaps. Candidate-only is reserved for explicit
+    "кандидаты/этап 1/без денег" turns.
+    """
+    if not _env_bool("LES_SMETA_TZ_STAGED_WORKFLOW_ENABLED", True):
+        return False
+    low = str(text or "").casefold().replace("ё", "е")
+    explicit_model_assumption_bypass = bool(re.search(
+        r"\b(?:прими\s+кандидат[а-я]*\s+модел[а-я]*|без\s+ручн[а-я]*\s+проверки|"
+        r"сразу\s+(?:считай|рассчитай|обсчитай)\s+по\s+допущени[а-я]*)\b",
+        low,
+    ))
+    if explicit_model_assumption_bypass:
+        return False
+    if _smeta_direct_has_confirmed_norm_table(text):
+        return False
+    method_without_calculation = bool(re.search(
+        r"\b(?:без\s+(?:расчет[а-я]*|рубл[а-я]*|стоимост[а-я]*|денег)|"
+        r"порядок|алгоритм|методик[а-я]*|как\s+работа[а-я]*)\b",
+        low,
+    )) and bool(re.search(
+        r"\b(?:порядок|алгоритм|методик[а-я]*|как\s+работа[а-я]*|тест|провер[а-я]*)\b",
+        low,
+    ))
+    if method_without_calculation:
+        return False
+    explicit_candidate_table = bool(re.search(
+        r"\b(?:таблиц[а-я]*\s+кандидат[а-я]*|кандидат[а-я]*\s+гэсн|"
+        r"вор\s*(?:[-→>]+|в|к)\s*кандидат[а-я]*|этап\s*1|"
+        r"(?:добавь|дай|покажи)\s+(?:номер[а-я]*|шифр[а-я]*|код[а-я]*)\s+гэсн)\b",
+        low,
+    ))
+    has_raw_source = bool(re.search(
+        r"\b(?:тз|вор|ведомост[ьяи]|спецификаци[яи]|pdf|пдф|исходн[а-я]*\s+работ[а-я]*|"
+        r"приложенн[а-я]*|составь|сделай|оформи|рассчитай|посчитай|оцени|лср|смет[а-я]*)\b",
+        low,
+    ))
+    if explicit_candidate_table and has_raw_source:
+        return True
+    if not _smeta_request_needs_lsr_output(text):
+        return False
+    return False
+
+
+def _smeta_direct_norm_candidate_stage_context(norm_lookup_trace: dict[str, Any]) -> str:
+    results = norm_lookup_trace.get("results") if isinstance(norm_lookup_trace, dict) else None
+    row_count = len(results) if isinstance(results, list) else 0
+    return (
+        "SMETA TZ STAGE GATE:\n"
+        "Текущий вход является сырым ТЗ/ВОР/спецификацией. По ТЗ это этап 1: "
+        "ВОР -> кандидаты ГЭСН, а не расчёт денег.\n"
+        "Запрещено в этом ответе: считать ЛСР, писать текущие рубли, строку ВСЕГО по смете, "
+        "выбирать один финальный norm_code для расчёта или запускать ресурсный расчёт.\n"
+        "Нужно: дать таблицу доступных кандидатов. Колонки: № ВОР, Исходная работа, "
+        "Ед. ВОР, Кол-во ВОР, Нормируемая работа, Группа сборников, Сборник/раздел, Код ГЭСН, "
+        "Наименование ГЭСН, Ед. ГЭСН, Кол-во в измерителе нормы, Статус применимости, Комментарий. "
+        "Одна строка ВОР может повторяться для нескольких кандидатов; несколько строк ВОР могут "
+        "ссылаться на одну норму, если она покрывает общий состав работ. В конце дай следующий шаг: "
+        "следующим сообщением можно сказать «деньги по ним» — ЛЕС посчитает по доступным candidates; "
+        "чего не хватает, останется 0.00/пусто с примечанием. Excel-правка таблицы опциональна. "
+        f"Количество lookup-групп кандидатов в текущем проходе: {row_count}."
+    )
+
+
+def _smeta_direct_prices_previous_candidates_request(text: str) -> bool:
+    low = str(text or "").casefold().replace("ё", "е")
+    return bool(re.search(
+        r"\b(?:деньг[а-я]*|сумм[а-я]*|цен[а-я]*|лср|смет[а-я]*|рассч[а-я]*|посчит[а-я]*)\b"
+        r"[^.\n]{0,80}\b(?:по\s+ним|по\s+этим\s+кандидат[а-я]*|по\s+кандидат[а-я]*)\b|"
+        r"\bпо\s+(?:ним|этим\s+кандидат[а-я]*|кандидат[а-я]*)\b"
+        r"[^.\n]{0,80}\b(?:деньг[а-я]*|сумм[а-я]*|цен[а-я]*|лср|смет[а-я]*|рассч[а-я]*|посчит[а-я]*)\b",
+        low,
+    ))
+
+
+def _smeta_direct_previous_norm_lookup_trace(session_id: str | None) -> dict[str, Any] | None:
+    try:
+        traces = session_recent_retrieval_traces(session_id or "", max_turns=6)
+    except Exception as err:  # noqa: BLE001
+        logger.warning("[SMETA] previous norm lookup trace read failed: %s", err)
+        return None
+    for trace in reversed(traces):
+        if not isinstance(trace, dict):
+            continue
+        lookup = trace.get("smeta_norm_lookup")
+        if not isinstance(lookup, dict):
+            continue
+        results = lookup.get("results")
+        if isinstance(results, list) and results:
+            reused = dict(lookup)
+            reused["reused_from_session"] = True
+            return reused
+    return None
+
+
+def _smeta_direct_lookup_has_results(norm_lookup_trace: dict[str, Any] | None) -> bool:
+    results = norm_lookup_trace.get("results") if isinstance(norm_lookup_trace, dict) else None
+    return isinstance(results, list) and bool(results)
+
+
+def _smeta_direct_previous_norm_lookup_packet_for_followup(
+    current_question: str,
+    session_id: str | None,
+    *,
+    force: bool = False,
+) -> dict[str, Any] | None:
+    """Reuse the exact candidate table behind "money by them" follow-ups.
+
+    The model still chooses the final norm codes from candidates. This only
+    freezes the candidate set/source rows so repeated pricing turns do not
+    re-slice the original VOR into a different lookup plan.
+    """
+    if not force and not _smeta_direct_prices_previous_candidates_request(current_question):
+        return None
+    previous_lookup_trace = _smeta_direct_previous_norm_lookup_trace(session_id)
+    if not previous_lookup_trace:
+        return None
+    return {
+        "text": _format_smeta_norm_lookup_results_for_model(
+            list(previous_lookup_trace.get("results") or [])
+        ),
+        "trace": previous_lookup_trace,
+    }
+
+
+def _smeta_direct_workflow_decision(
+    current_question: str,
+    harness_question: str,
+    session_id: str | None,
+) -> dict[str, Any]:
+    """Resolve the smeta workflow step without letting code choose norms.
+
+    Literal user commands ("сделай ЛСР/стоимость", "деньги по ним") are route
+    selection, not smeta reasoning. The model still owns norm applicability and
+    the estimate content; this guard only prevents the local selector from
+    spending minutes before an obvious pricing turn.
+    """
+    if not _env_bool("LES_SMETA_MODEL_WORKFLOW_DECISION_ENABLED", True):
+        stage = "norm_candidates" if _smeta_direct_norm_candidate_stage_required(current_question) else "pricing"
+        return {
+            "enabled": False,
+            "stage": stage,
+            "use_previous_candidates": _smeta_direct_prices_previous_candidates_request(current_question),
+            "source": "legacy_disabled",
+        }
+    use_previous_candidates = _smeta_direct_prices_previous_candidates_request(current_question)
+    if (
+        not _smeta_direct_norm_candidate_stage_required(current_question)
+        and (_smeta_request_needs_lsr_output(current_question) or use_previous_candidates)
+    ):
+        return {
+            "enabled": True,
+            "status": "explicit_pricing_route",
+            "stage": "pricing",
+            "use_previous_candidates": use_previous_candidates,
+            "source": "literal_user_request",
+            "reason": "explicit_lsr_or_money_request",
+            "model_owns_workflow": False,
+        }
+    previous_lookup = _smeta_direct_previous_norm_lookup_trace(session_id)
+    runtime = _smeta_model_runtime("LES_SMETA_WORKFLOW_DECISION_PROVIDER")
+    body = {
+        "model": runtime.model,
+        "messages": _mlx_prefill_no_think_messages([
+            {
+                "role": "system",
+                "content": (
+                    "Ты ведущий сметчик и управляешь workflow. Код не должен решать этап по словам. "
+                    "Верни только JSON: {\"stage\":\"norm_candidates|pricing|explanation\","
+                    "\"use_previous_candidates\":true|false,\"reason\":\"...\"}. "
+                    "norm_candidates: пользователь дал сырой источник/ВОР/ТЗ и просит кандидатов или первый этап. "
+                    "pricing: пользователь просит деньги/ЛСР/расчёт по уже данным или текущим работам. "
+                    "Если пользователь явно просит ЛСР/смету/стоимость/расчёт, ставь pricing даже для сырой ВОР: "
+                    "незакрытые нормы/КАЦ останутся 0.00/пусто с примечанием. "
+                    "Не выбирай norm_candidates только потому, что источник сырой. "
+                    "norm_candidates выбирай только когда пользователь явно просит кандидатов, этап 1 или без денег. "
+                    "explanation: пользователь спрашивает как работает процесс/методика, без расчёта денег. "
+                    "Если пользователь говорит «по ним/по этим кандидатам/деньги по ним» и previous_candidates_available=true, "
+                    "ставь pricing и use_previous_candidates=true."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "current_user_message": str(current_question or "")[:4000],
+                        "task_context": str(harness_question or "")[:12000],
+                        "previous_candidates_available": bool(previous_lookup),
+                        "previous_candidate_groups": len((previous_lookup or {}).get("results") or []),
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        ], runtime.provider),
+        "temperature": 0,
+        "max_tokens": max(128, _env_int("LES_SMETA_WORKFLOW_DECISION_MAX_TOKENS", 500)),
+    }
+    body = _cloud_body_for_model(body, runtime.model, runtime.provider)
+    headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
+    try:
+        timeout_sec = _env_float(
+            "LES_SMETA_WORKFLOW_DECISION_TIMEOUT_SEC",
+            300.0 if runtime.provider == "mlx" else 45.0,
+        )
+        with httpx.Client(timeout=timeout_sec) as c:
+            r = c.post(runtime.chat_url, headers=headers, json=body)
+            r.raise_for_status()
+            selector_text = _assistant_text(r.json().get("choices", [{}])[0].get("message", {})).strip()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[SMETA] workflow decision failed: %s", e)
+        fallback_stage = "norm_candidates" if _smeta_direct_norm_candidate_stage_required(current_question) else ""
+        fallback_reason = "candidate_stage_explicit_request" if fallback_stage else ""
+        if not fallback_stage and _smeta_request_needs_lsr_output(current_question):
+            fallback_stage = "pricing"
+            fallback_reason = "selector_error_explicit_pricing_request"
+        return {
+            "enabled": True,
+            "status": "selector_error",
+            "stage": fallback_stage,
+            "use_previous_candidates": False,
+            "provider": runtime.provider,
+            "model": runtime.model,
+            "error": f"{type(e).__name__}: {e}",
+            "fallback_reason": fallback_reason,
+            "model_owns_workflow": False,
+        }
+    parsed = _extract_json_object(selector_text) or {}
+    stage = str(parsed.get("stage") or "").strip()
+    if stage not in {"norm_candidates", "pricing", "explanation"}:
+        stage = ""
+    stage_correction = ""
+    if (
+        stage == "norm_candidates"
+        and not _smeta_direct_norm_candidate_stage_required(current_question)
+        and _smeta_request_needs_lsr_output(current_question)
+    ):
+        stage = "pricing"
+        stage_correction = "explicit_lsr_request_has_pricing_priority"
+    return {
+        "enabled": True,
+        "status": "ok" if stage else "invalid_stage",
+        "stage": stage,
+        **({"stage_correction": stage_correction} if stage_correction else {}),
+        "use_previous_candidates": bool(parsed.get("use_previous_candidates")),
+        "reason": str(parsed.get("reason") or "")[:1000],
+        "previous_candidates_available": bool(previous_lookup),
+        "previous_candidate_groups": len((previous_lookup or {}).get("results") or []),
+        "selector_text": selector_text[:2000],
+        "provider": runtime.provider,
+        "model": runtime.model,
+        "model_owns_workflow": True,
+    }
+
+
 def _smeta_direct_user_prompt(
     harness_question: str,
     rag_context: str,
     numeric_audit_context: str,
     *,
     light: bool,
+    workflow_stage: str = "",
 ) -> str:
+    skill_context = render_snippets(select_skill_snippets("smeta", user_input=harness_question, limit=5))
     source_context = "\n\n".join(
         x for x in (
+            str(rag_context or ""),
+            skill_context,
+            _smeta_system_source_readiness_context(),
             _smeta_service_rag_map_context(),
             _smeta_available_pricebook_context(),
-            str(rag_context or ""),
         )
         if x
     )
+    candidate_stage = workflow_stage == "norm_candidates" if workflow_stage else _smeta_direct_norm_candidate_stage_required(harness_question)
+    if not workflow_stage and not candidate_stage:
+        try:
+            from proxy.services import fgis_price_service as fps
+
+            no_pricebooks = not fps.available_pricebooks()
+        except Exception:
+            no_pricebooks = False
+        lookup_present = "MODEL-SELECTED NORM LOOKUP" in str(rag_context or "")
+        raw_source = bool(re.search(
+            r"\b(?:тз|вор|ведомост[ьяи]|спецификаци[яи]|исходн[а-я]*\s+работ[а-я]*|"
+            r"составь|сделай|оформи|рассчитай|посчитай|оцени|лср|смет[а-я]*)\b",
+            str(harness_question or "").casefold().replace("ё", "е"),
+        ))
+        confirmed_norm_table = _smeta_direct_has_confirmed_norm_table(harness_question)
+        if (
+            no_pricebooks
+            and raw_source
+            and not lookup_present
+            and not confirmed_norm_table
+            and _smeta_request_needs_lsr_output(harness_question)
+        ):
+            candidate_stage = True
+    needs_lsr = (workflow_stage == "pricing") if workflow_stage else (_smeta_request_needs_lsr_output(harness_question) and not candidate_stage)
+    source_row_contract = _smeta_source_row_contract(harness_question) if needs_lsr else ""
+    candidate_guidance = (
+        "Если текущий ход — подбор норм или добавление номеров ГЭСН: ВОР -> кандидаты ГЭСН. "
+        "Не считай деньги, не делай строку ВСЕГО; дай таблицу доступных candidates и явно напиши, "
+        "что следующий ход «деньги по ним» раскрывает ресурсы и считает по выбранным candidates. "
+    )
+    if candidate_stage:
+        return (
+            "Исходные данные:\n"
+            f"{str(harness_question or '')[:22000]}\n\n"
+            "Расчётная проверка чисел, если есть:\n"
+            f"{numeric_audit_context or 'нет детерминированной трассы; не объявляй длинные суммы проверенными без расчёта'}\n\n"
+            "Релевантные фрагменты RAG, candidates и доступные сметные источники ЛЕС:\n"
+            f"{source_context[:14000]}\n\n"
+            "Ответь как инженер-сметчик строго по этапу 1 ТЗ: ВОР -> кандидаты ГЭСН. "
+            "Не считай деньги, не делай ЛСР, не пиши строку ВСЕГО и не называй один кандидат финальным. "
+            "Сначала покажи, что понял по источнику и какой нормативный маршрут нужен, "
+            "затем таблицу доступных candidates с колонками: "
+            "| № ВОР | Исходная работа | Ед. ВОР | Кол-во ВОР | Нормируемая работа | "
+            "Группа сборников | Сборник / раздел | Код ГЭСН | Наименование ГЭСН | Ед. ГЭСН | "
+            "Кол-во в измерителе нормы | Статус применимости | Комментарий |. "
+            "Если у одной строки ВОР несколько кандидатов, повтори строку ВОР для каждого кандидата. "
+            "Если одна норма покрывает несколько строк ВОР, укажи список № ВОР и объясни общий состав. "
+            "После таблицы дай коротко: следующий ход «деньги по ним» раскрывает ресурсы и считает по "
+            "ГЭСН/ФГИС для найденных candidates; незакрытые нормы, цены, КАЦ и коэффициенты остаются "
+            "0.00/пусто с примечанием. "
+            "Не используй JSON и внутренние служебные термины."
+        )
     if light:
+        if not needs_lsr:
+            return (
+                "Исходные данные:\n"
+                f"{str(harness_question or '')[:22000]}\n\n"
+                "Расчётная проверка чисел, если есть:\n"
+                f"{numeric_audit_context or 'нет детерминированной трассы; не объявляй длинные суммы проверенными без расчёта'}\n\n"
+                "Релевантные фрагменты RAG и доступные сметные источники ЛЕС:\n"
+                f"{source_context[:12000]}\n\n"
+                f"{candidate_guidance}"
+                "Ответь как инженер-сметчик. Этот запрос не является командой посчитать или оформить ЛСР, "
+                "если пользователь прямо не просит деньги. Не делай ЛСР-таблицу, не ставь нулевые рубли "
+                "и не пиши строку ВСЕГО. Дай проверяемый порядок: 1) чтение источников; 2) ВОР; "
+                "3) нормируемая ВОР; 4) таблица кандидатов норм; 5) пользовательский выбор варианта; "
+                "6) раскрытие ресурсов и цен; 7) первый ЛСР; 8) коэффициенты/КАЦ; 9) статус финальности. "
+                "Обязательно укажи, что одна строка ВОР может иметь несколько кандидатов, а несколько строк ВОР "
+                "могут ссылаться на одну норму через общий состав работ. Семейства норм: ГЭСН, ГЭСНм, "
+                "ГЭСНп, ГЭСНр, ГЭСНмр. Маршрут поиска нормы: семейство работ -> группа сборников -> "
+                "сборник -> раздел/таблица -> конкретная норма. Ведомость добора — это ресурсы выбранной "
+                "нормы или пользовательской ресурсной строки без цены/индекса/КАЦ/КП, а не нераспознанные работы. "
+                "Если нужны таблицы workflow/ВОР/кандидатов/добора, дай их в текущем ответе; не обещай "
+                "сделать это следующим сообщением. Не используй Markdown-заголовки #/##/###. "
+                "Не показывай JSON и внутренние служебные термины."
+            )
         return (
             "Исходные данные:\n"
             f"{str(harness_question or '')[:22000]}\n\n"
@@ -2085,30 +2675,38 @@ def _smeta_direct_user_prompt(
             f"{source_context[:12000]}\n\n"
             "Ответь как инженер-сметчик. Внутренне учти контекст диалога и текущую смету, "
             "но не пиши пользователю служебный разбор маршрута. "
-            "Если пользователь просит ВОР и/или стоимость работ, начни с результата: "
-            "короткая строка «что считаю», затем Markdown-таблица ВОР. Формат ВОР: "
-            "| № | Раздел | Работа | Ед. | Кол-во | Основание | Статус |. "
-            "Следом дай Markdown-таблицу оценки работ. Формат стоимости: "
-            "| № | Работа | Кол-во | Ед. | Норма/источник | Ставка/допущение | Сумма | Комментарий |. "
-            "Если пользователь просит ЛСР или оформить активную смету в ЛСР, вместо обещания "
-            "следующего шага сразу дай таблицу ЛСР граф 1-12: | № п/п | Обоснование | "
+            f"{source_row_contract}"
+            "Основная форма выдачи сметы — ЛСР-черновик. Начни с результата: короткая строка "
+            "«что считаю», затем Markdown-таблица ЛСР граф 1-12: | № п/п | Обоснование | "
             "Наименование работ и затрат | Ед. изм. | Кол-во на ед. | коэф. | Кол-во всего | "
             "Базис на ед., руб. | Индекс | Текущий на ед., руб. | коэф. | Текущий всего, руб. |. "
-            "Строка ВСЕГО по смете обязательна. "
-            "В колонке «Норма/источник» укажи сборник/раздел/код-кандидат ГЭСН/ГЭСНм, "
+            "Строка ВСЕГО по смете обязательна. Если нет ставки, индекса или цены ресурса, "
+            "в денежных графах ставь 0.00; ВСЕГО тоже числом 0.00 по незаполненным строкам, "
+            "а причину вынеси в примечания после ЛСР. "
+            "Не придумывай ставки и текущие цены сама: рубли допустимы только если строка может "
+            "быть раскрыта расчетным слоем по полному шифру нормы/книге цен/КАЦ/КП. "
+            "Если есть результаты MODEL-SELECTED NORM LOOKUP, в Обосновании либо копируй полный "
+            "`norm_code` буквально из результатов, либо оставляй 0.00 и примечание; не заменяй "
+            "полный код общим `ГЭСН 09`, `ГЭСН 15` или `ГЭСНм10`. "
+            "Не отказывайся от ЛСР из-за неполных норм/цен: что можешь защитить — оцени и считай, "
+            "что не можешь — оставь строкой с 0.00/пустой ценой и коротким примечанием. "
+            "Если нужна ВОР, дай её кратко перед ЛСР как исходную расшифровку: "
+            "| № | Раздел | Работа | Ед. | Кол-во | Основание | Статус |. "
+            "В графе «Обоснование» укажи выбранную норму, нормативный аналог/раздел, "
             "локальную книгу/КАЦ/КП или прямо «сценарное допущение». "
             "Если принимаешь конкретную норму, пиши полный шифр нормы, иначе расчётный слой "
-            "не сможет раскрыть ресурсы и строка останется в доборе. "
+            "не сможет раскрыть ресурсы и строка останется в доборе. Выбирай шифр сама по RAG, "
+            "вложениям и доступным источникам; не переноси норму между разными работами. "
             "Не пиши только род базы вроде «ГЭСНм» или «ГЭСН 21»: уточняй до сборника/раздела/"
-            "таблицы/кода-кандидата, а если не уверен — помечай как кандидат для проверки. "
-            "Раздел ВОР не мапится на один сборник: для каждой работы дай свой "
-            "shortlist. ЭОМ/силовые кабели/гофры/скобы/коробки не закрывай ГЭСНм10 "
+            "таблицы/кода, а если не уверен — помечай как нормативный аналог для проверки. "
+            "Раздел ВОР не мапится на один сборник: для каждой работы выбери свой нормативный маршрут. "
+            "ЭОМ/силовые кабели/гофры/скобы/коробки/аварийное питание не закрывай ГЭСНм10 "
             "связи без явной применимости; сначала ищи электромонтажный кандидат. "
-            "Не заменяй эти таблицы нумерованным пересказом, подзаголовками 1.1/1.2 "
+            "Не заменяй ЛСР нумерованным пересказом, подзаголовками 1.1/1.2 "
             "или предложением «могу следующим сообщением сделать таблицу». "
             "После таблиц дай поставку/исключения, нормативный ход, допущения и добор. "
-            "Если в спецификации пустые ценовые колонки, это missing-цены поставки, а не причина "
-            "отказаться от оценки работ. "
+            "Если в спецификации пустые ценовые колонки, ставь 0.00 в ЛСР и примечание, "
+            "а не отказывайся от оценки работ. "
             "Если продолжение — выполни только команду пользователя поверх активной сметы, "
             "без повторения полного предыдущего ответа. Не показывай JSON и внутренние "
             "служебные термины."
@@ -2118,9 +2716,13 @@ def _smeta_direct_user_prompt(
         f"{str(harness_question or '')[:22000]}\n\n"
         "Расчётная трасса арифметики исходника, если ЛЕС смог извлечь её детерминированно:\n"
         f"{numeric_audit_context or 'нет детерминированной трассы; не объявляй длинные суммы проверенными без расчёта'}\n\n"
-        "Фрагменты из выбранной базы и доступные сметные источники ЛЕС, если они есть:\n"
-        f"{source_context[:12000]}\n\n"
-        "Ответь как сметчик, без служебных слов и без Markdown-заголовков #/##/###. Используй "
+            "Фрагменты из выбранной базы и доступные сметные источники ЛЕС, если они есть:\n"
+            f"{source_context[:12000]}\n\n"
+            f"{candidate_guidance}"
+            "Ответь как сметчик, без служебных слов и без Markdown-заголовков #/##/###. Основная форма "
+        "выдачи сметы — ЛСР-черновик граф 1-12; ВОР и подбор норм нужны как основание, а не как "
+        f"{source_row_contract}"
+        "замена ЛСР. Используй "
         "короткие жирные метки секций в таком порядке, пропуская только неприменимые блоки: "
         "1) Что понял; 2) Контроль исходных чисел; 3) Форма развилки исходных объёмов, если есть "
         "конфликт; 4) ВОР / структура работ; 5) Нормируемая ВОР / таблица подбора норм, если "
@@ -2136,24 +2738,32 @@ def _smeta_direct_user_prompt(
         "Комментарий |. Вопросы и добор идут после таблицы, не вместо неё. Если пользователь просит "
         "оценку и не запрещает допущения, дай сценарную оценку по работам до вопросов. Если в "
         "исходнике есть спецификация или ВОР с измеримыми строками, блок стоимости работ должен "
-        "быть построчной таблицей с понятными строками работ, источниками и суммами. "
+        "быть построчной ЛСР: без цены ставь 0.00 и примечание, а не `missing`. "
         "При прямом запросе «сделай ВОР» ВОР обязана быть таблицей: | № | Раздел | Работа | Ед. | "
-        "Кол-во | Основание | Статус |. При прямом запросе «дай оценку стоимости работ» "
-        "стоимость обязана быть таблицей: | № | Работа | Кол-во | Ед. | Норма/источник | Ставка/допущение | "
-        "Сумма | Комментарий |. Не предлагай сделать эту таблицу следующим сообщением: сделай её сейчас. "
-        "При прямом запросе «ЛСР» или «оформи в ЛСР» сделай ЛСР в текущем ответе таблицей "
+        "Кол-во | Основание | Статус |, но итоговую сметную выдачу всё равно оформи ЛСР. "
+        "При прямом запросе «дай оценку стоимости работ» стоимость обязана быть ЛСР-таблицей, "
+        "а не свободной таблицей стоимости. Не предлагай сделать эту таблицу следующим сообщением: сделай её сейчас. "
+        "В текущем ответе сделай ЛСР таблицей "
         "граф 1-12: | № п/п | Обоснование | Наименование работ и затрат | Ед. изм. | "
         "Кол-во на ед. | коэф. | Кол-во всего | Базис на ед., руб. | Индекс | "
-        "Текущий на ед., руб. | коэф. | Текущий всего, руб. |. Строка ВСЕГО по смете обязательна. "
+        "Текущий на ед., руб. | коэф. | Текущий всего, руб. |. Строка ВСЕГО по смете обязательна; "
+        "нет данных по цене/индексу -> 0.00 в числовой графе и примечание после таблицы. "
+        "Не придумывай ставки и текущие цены сама: рубли допустимы только если строка может "
+        "быть раскрыта расчетным слоем по полному шифру нормы/книге цен/КАЦ/КП. "
+        "Если есть результаты MODEL-SELECTED NORM LOOKUP, в Обосновании либо копируй полный "
+        "`norm_code` буквально из результатов, либо оставляй 0.00 и примечание; не заменяй "
+        "полный код общим `ГЭСН 09`, `ГЭСН 15` или `ГЭСНм10`. "
+        "Не превращай неполные данные в отказ: оцени и рассчитай всё, что можешь защитить нормой, "
+        "аналогом, локальной ценой или явным сценарием; незакрытые строки оставь в той же ЛСР с 0.00. "
         "Не пиши «если нужно, следующим сообщением "
         "соберу ЛСР»: это уже запрошено. Не теряй строки активной ВОР и не меняй сумму без "
         "нового источника или расчётной проверки. "
-        "Если строка стоимости опирается на сборник, укажи сборник/раздел/код нормы или кандидата; "
+        "Если строка стоимости опирается на сборник, укажи сборник/раздел/код нормы или нормативный аналог; "
         "если выбран конкретный шифр, укажи его полностью, чтобы ЛЕС мог раскрыть ресурсы и цены; "
         "если точной нормы нет, укажи нормативный раздел/аналог и что проверить. "
         "Не оставляй в источнике только «ГЭСНм»/«ГЭСН»: это слишком общий источник; "
-        "нужен номер сборника, раздел/таблица или код-кандидат. "
-        "Раздел ВОР не равен одному сборнику: подбирай кандидатов по каждой работе. "
+        "нужен номер сборника, раздел/таблица или полный код. "
+        "Раздел ВОР не равен одному сборнику: выбирай нормативный маршрут по каждой работе. "
         "ЭОМ/силовые линии не закрывай ГЭСНм10 связи без явной применимости; "
         "для СКС/ВОЛС проверяй ГЭСНм10, для отделки ГЭСН15, для демонтажа ГЭСНр/ГЭСНмр. "
         "Если ставка сценарная, так и напиши в источнике: «сценарное допущение», не маскируй её под РИМ. "
@@ -2164,14 +2774,61 @@ def _smeta_direct_user_prompt(
     )
 
 
+def _smeta_source_row_contract(text: str) -> str:
+    raw = str(text or "")
+    row_count = _smeta_source_row_count(raw)
+    if row_count < 2:
+        return ""
+    return (
+        f"Во входе есть табличная ВОР: {row_count} исходных строк. "
+        "Это contract coverage: каждая исходная строка должна попасть в текущую ЛСР. "
+        "Если строка пришла как JSON `section/source_no/name/unit/qty`, в наименовании строки ЛСР начни "
+        "с маркера `[SRC: <Раздел>; <source_no>]`, затем работа. Если строка пришла как PDF/Markdown-таблица, "
+        "сохрани её раздел, номер, работу, единицу и количество в видимой строке ЛСР. "
+        "Если для исходной строки нет полного шифра нормы, всё равно выведи строку с тем же SRC-маркером, "
+        "количеством и единицей; сначала попробуй подобрать норму/аналог из контекста ЛЕС, "
+        "а если не можешь защитить выбор — в Обосновании напиши нормативный аналог/раздел или `нужен подбор нормы`, "
+        "денежные графы поставь 0.00 и причину перенеси в примечания. "
+        "ЛСР всё равно выведи полностью: рассчитанные строки с суммами, незакрытые строки с 0.00. "
+        "Не сокращай таблицу и не выбирай только строки с понятными нормами. "
+    )
+
+
+def _smeta_direct_max_tokens(harness_question: str, *, runtime_provider: str) -> int:
+    default = 900 if runtime_provider == "mlx" else 3200
+    configured = os.getenv("LES_SMETA_DIRECT_MODEL_MAX_TOKENS", "").strip()
+    if configured:
+        try:
+            return int(configured)
+        except ValueError:
+            return default
+    row_count = len(re.findall(r'"source_no"\s*:', str(harness_question or "")))
+    if row_count >= 15:
+        return 3600 if runtime_provider == "mlx" else 6000
+    if row_count >= 5:
+        return 2400 if runtime_provider == "mlx" else 4500
+    return default
+
+
 def _smeta_direct_model_answer(
     harness_question: str,
     rag_context: str = "",
+    workflow_stage: str = "",
 ) -> str:
     """Visible smeta answer from the estimator model over prompt + attachment + RAG."""
-    runtime = _llm_runtime()
+    runtime = _smeta_model_runtime("LES_SMETA_DIRECT_MODEL_PROVIDER")
     numeric_audit_context = _smeta_direct_numeric_audit_context(harness_question)
     light_prompt = _env_bool("LES_SMETA_DIRECT_LIGHT_PROMPT", True)
+    if not light_prompt and not workflow_stage:
+        raw = str(harness_question or "").casefold().replace("ё", "е")
+        heavy_raw_source = bool(re.search(
+            r"\b(?:тз|вор|ведомост[ьяи]|спецификаци[яи]|контекст\s+прикрепленн[а-я]*\s+файл[а-я]*)\b",
+            raw,
+        ))
+        if _smeta_direct_norm_candidate_stage_required(harness_question) or (
+            heavy_raw_source and not _smeta_direct_has_confirmed_norm_table(harness_question)
+        ):
+            workflow_stage = "norm_candidates"
     if light_prompt:
         sys_prompt = _smeta_direct_light_system_prompt()
     else:
@@ -2185,6 +2842,7 @@ def _smeta_direct_model_answer(
         rag_context,
         numeric_audit_context,
         light=light_prompt,
+        workflow_stage=workflow_stage,
     )
     body = {
         "model": runtime.model,
@@ -2196,16 +2854,13 @@ def _smeta_direct_model_answer(
             runtime.provider,
         ),
         "temperature": _env_float("LES_SMETA_DIRECT_MODEL_TEMPERATURE", 0.0),
-        "max_tokens": _env_int(
-            "LES_SMETA_DIRECT_MODEL_MAX_TOKENS",
-            900 if runtime.provider == "mlx" else 3200,
-        ),
+        "max_tokens": _smeta_direct_max_tokens(harness_question, runtime_provider=runtime.provider),
     }
     body = _cloud_body_for_model(body, runtime.model, runtime.provider)
     headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
     timeout_s = _env_float(
         "LES_SMETA_DIRECT_MODEL_TIMEOUT_SEC",
-        30.0 if runtime.provider == "mlx" else 120.0,
+        1200.0 if runtime.provider == "mlx" else 120.0,
     )
     try:
         with httpx.Client(timeout=timeout_s) as c:
@@ -2214,11 +2869,738 @@ def _smeta_direct_model_answer(
             text = _assistant_text(r.json().get("choices", [{}])[0].get("message", {})).strip()
     except Exception as e:  # noqa: BLE001
         logger.warning("[HARNESS] direct model smeta answer failed: %s", e)
-        return smeta_fast_fallback_answer(harness_question, rag_context, numeric_audit_context)
+        return ""
     text = re.sub(r"\n{3,}", "\n\n", text).strip(" \n\t\"'")
     if not text or _voice_claims_source_truncated(text):
-        return smeta_fast_fallback_answer(harness_question, rag_context, numeric_audit_context)
+        return ""
     return text[:12000]
+
+
+def _smeta_direct_norm_lookup_context(harness_question: str) -> dict[str, Any]:
+    """Let the model choose norm lookup calls, then return lookup evidence for final smeta answer.
+
+    This deliberately does not map source rows to norms in code. The selector model
+    decides which `search_norm` calls are needed; code only executes the read-only
+    lookup and passes compact results back to the final estimator prompt.
+    """
+    if not _env_bool("LES_SMETA_DIRECT_NORM_LOOKUP_ENABLED", True):
+        return {"text": "", "trace": {"enabled": False}}
+    question = str(harness_question or "").strip()
+    if not question:
+        return {"text": "", "trace": {"enabled": True, "selected_calls": []}}
+    runtime = _smeta_model_runtime("LES_SMETA_NORM_LOOKUP_PROVIDER")
+    source_row_count = _smeta_source_row_count(question)
+    max_calls = _smeta_norm_lookup_max_calls(question)
+    tool_spec = {
+        "tool": "search_norm",
+        "args": {
+            "work_description": "описание одной нормируемой работы",
+            "work_family": "electric|low_current|metal|finishes|mep|earthworks|foundation|...",
+            "element_type": "cable|pipe|box|device|backup_power|metal_assembly|finish|...",
+            "action": "монтаж|демонтаж|устройство|проверка|...",
+            "unit_hint": "м|м2|м3|т|шт|...",
+        },
+    }
+    body = {
+        "model": runtime.model,
+        "messages": _mlx_prefill_no_think_messages([
+            {
+                "role": "system",
+                "content": (
+                    "Ты инженер-сметчик и выбираешь только read-only lookup-вызовы перед ЛСР. "
+                    "Код не выбирает нормы за тебя. Верни только JSON вида "
+                    "{\"calls\":[{\"tool\":\"search_norm\",\"args\":{...}}]}. "
+                    "Каждый вызов — одна нормируемая работа, а не весь объект. "
+                    "Если поиск норм не нужен, верни {\"calls\":[]}."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "task": question[:18000],
+                        "available_tool": tool_spec,
+                        "source_rows_expected": source_row_count,
+                        "max_calls": max_calls,
+                        "policy": (
+                            "выбирай lookup-запросы сам; не ставь цены; не финализируй ЛСР; "
+                            "цель — получить реальные коды норм-кандидатов из базы ЛЕС; "
+                            "если во входе есть табличная ВОР/PDF table/source_no, не сокращай покрытие: нужен lookup "
+                            "по каждой исходной строке или явное объединение нескольких строк только если это одна "
+                            "нормируемая операция; "
+                            "ЭОМ/силовые кабели/гофротрубы/скобы крепления гофры/коробки проводки/аварийное питание "
+                            "маршрутизируй как electric, а не как metal: metal/ГЭСН09 нужен только для строительных "
+                            "металлоконструкций по массе. Для коробки открытой проводки используй element_type=box; "
+                            "для гофры pipe; для кабеля cable; для БАП backup_power. Если отдельной нормы на скобу нет, "
+                            "ищи электромонтажный containment/pipe fastening route или оставляй нормативный gap, "
+                            "не уводи строку в бункеры/опорные металлоконструкции ГЭСН09."
+                        ),
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        ], runtime.provider),
+        "temperature": 0,
+        "max_tokens": _smeta_norm_lookup_selector_tokens(question),
+    }
+    body = _cloud_body_for_model(body, runtime.model, runtime.provider)
+    headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
+    try:
+        timeout_sec = _env_float(
+            "LES_SMETA_NORM_LOOKUP_TIMEOUT_SEC",
+            1200.0 if runtime.provider == "mlx" else 90.0,
+        )
+        with httpx.Client(timeout=timeout_sec) as c:
+            r = c.post(runtime.chat_url, headers=headers, json=body)
+            r.raise_for_status()
+            selector_text = _assistant_text(r.json().get("choices", [{}])[0].get("message", {})).strip()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[SMETA] norm lookup selector failed: %s", e)
+        return {
+            "text": "",
+            "trace": {
+                "enabled": True,
+                "status": "selector_error",
+                "provider": runtime.provider,
+                "model": runtime.model,
+                "timeout_sec": timeout_sec,
+                "error": f"{type(e).__name__}: {e}",
+            },
+        }
+    calls = _parse_model_tool_calls(selector_text, allowed_tools={"search_norm"}, max_calls=max_calls)
+    if not calls:
+        return {
+            "text": "",
+            "trace": {
+                "enabled": True,
+                "model_owns_selection": True,
+                "selected_calls": [],
+                "source_rows_expected": source_row_count,
+                "source_rows_covered": 0,
+                "max_calls": max_calls,
+                "selector_text": selector_text[:1000],
+                "provider": runtime.provider,
+                "model": runtime.model,
+            },
+        }
+    from proxy.services.estimate_harness_service import search_norm
+
+    results: list[dict[str, Any]] = []
+    top_k = max(1, _env_int("LES_SMETA_NORM_LOOKUP_TOP_K", 25))
+    for call in calls:
+        args = dict(call.get("args") or {})
+        result = search_norm(
+            str(args.get("work_description", "")),
+            work_family=str(args.get("work_family", "")),
+            element_type=str(args.get("element_type", "")),
+            action=str(args.get("action", "")),
+            unit_hint=str(args.get("unit_hint", "")),
+            top_k=top_k,
+        )
+        results.append({"call": {"tool": "search_norm", "args": args}, "result": result})
+    return {
+        "text": _format_smeta_norm_lookup_results_for_model(results),
+        "trace": {
+            "enabled": True,
+            "model_owns_selection": True,
+            "selected_calls": calls,
+            "results": results,
+            "source_rows_expected": source_row_count,
+            "source_rows_covered": len(results),
+            "coverage_missing": max(0, source_row_count - len(results)) if source_row_count else 0,
+            "max_calls": max_calls,
+            "provider": runtime.provider,
+            "model": runtime.model,
+        },
+    }
+
+
+def _format_smeta_norm_lookup_results_for_model(results: list[dict[str, Any]]) -> str:
+    if not results:
+        return ""
+    compact: list[dict[str, Any]] = []
+    for item in results:
+        result = item.get("result") if isinstance(item.get("result"), dict) else {}
+        candidates = []
+        for cand in (result.get("candidates") or [])[: max(1, _env_int("LES_SMETA_NORM_LOOKUP_PROMPT_CANDIDATES", 20))]:
+            if not isinstance(cand, dict):
+                continue
+            candidates.append(
+                {
+                    "norm_code": cand.get("norm_code"),
+                    "title": cand.get("title"),
+                    "measure_unit": cand.get("measure_unit"),
+                    "unit_compatible": cand.get("unit_compatible"),
+                    "applicability_status": cand.get("applicability_status"),
+                    "score_total": cand.get("score_total"),
+                    "norm_card": _smeta_norm_candidate_card(cand),
+                }
+            )
+        compact.append(
+            {
+                "model_selected_lookup": item.get("call"),
+                "status": result.get("status"),
+                "work_family": result.get("work_family"),
+                "element_type": result.get("element_type"),
+                "norm_store": result.get("norm_store"),
+                "candidates": candidates,
+                "navigation": result.get("norm_navigation"),
+            }
+        )
+    text = json.dumps(compact, ensure_ascii=False, indent=2, default=str)
+    return (
+        "MODEL-SELECTED NORM LOOKUP RESULTS (read-only; это найденные записи базы норм, "
+        "не готовая смета и не выбор кода):\n"
+        "Модель должна сама выбрать полный шифр из этих результатов или оставить строку ЛСР с 0.00.\n"
+        "Запрещено ставить модельную ставку/рубли по строке, если полный norm_code не скопирован в Обоснование.\n"
+        f"{text[: max(2000, _env_int('LES_SMETA_NORM_LOOKUP_CONTEXT_CHARS', 32000))]}"
+    )
+
+
+def _smeta_norm_candidate_card(candidate: dict[str, Any]) -> dict[str, Any]:
+    profile = candidate.get("norm_profile") if isinstance(candidate.get("norm_profile"), dict) else {}
+    card = profile.get("model_card") if isinstance(profile.get("model_card"), dict) else {}
+    navigation = profile.get("navigation") if isinstance(profile.get("navigation"), dict) else {}
+    return {
+        "title": card.get("title") or "",
+        "domain": card.get("domain") or {},
+        "work_composition": card.get("work_composition") or {},
+        "conditions_to_check": card.get("conditions_to_check") or [],
+        "resources": card.get("resources") or {},
+        "applicability_check": (card.get("applicability") or {}).get("check", ""),
+        "navigation": navigation.get("collection") or {},
+    }
+
+
+def _smeta_norm_choice_tokens(text: str) -> int:
+    source_rows = _smeta_source_row_count(text)
+    configured = max(512, _env_int("LES_SMETA_NORM_CHOICE_MAX_TOKENS", 9000))
+    if source_rows <= 10:
+        return configured
+    return max(configured, min(14000, 2400 + source_rows * 420))
+
+
+def _smeta_norm_choice_runtime() -> LlmRuntime:
+    return _smeta_model_runtime("LES_SMETA_NORM_CHOICE_PROVIDER")
+
+
+def _smeta_norm_review_timeout(runtime: LlmRuntime) -> float:
+    default = 1200.0 if runtime.provider in {"mlx", "local"} else 180.0
+    return _env_float("LES_SMETA_NORM_REVIEW_TIMEOUT_SEC", default)
+
+
+def _smeta_review_structured_norm_choice(
+    harness_question: str,
+    compact_results: list[dict[str, Any]],
+    allowed_by_lookup: dict[int, set[str]],
+    draft_rows: list[dict[str, Any]],
+    runtime: LlmRuntime,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Run a second model-owned audit over draft norm choices before pricing."""
+    if not _env_bool("LES_SMETA_NORM_REVIEW_ENABLED", True):
+        return draft_rows, {"enabled": False}
+    if not compact_results:
+        return draft_rows, {"enabled": True, "status": "empty_compact_lookup"}
+
+    draft_by_lookup: dict[int, dict[str, Any]] = {}
+    for row in draft_rows:
+        if not isinstance(row, dict):
+            continue
+        try:
+            lookup_index = int(row.get("lookup_index") or 0)
+        except (TypeError, ValueError):
+            lookup_index = 0
+        if lookup_index > 0 and lookup_index not in draft_by_lookup:
+            draft_by_lookup[lookup_index] = row
+
+    def lookup_context(lookup_index: int) -> dict[str, Any]:
+        return compact_results[lookup_index - 1] if 1 <= lookup_index <= len(compact_results) else {}
+
+    def unbound_row(lookup_index: int, *, title: str = "", unit: str = "", qty: Any = "", reason: str = "") -> dict[str, Any]:
+        lookup = lookup_context(lookup_index)
+        return {
+            "basis": "нужен подбор нормы",
+            "title": title or str(lookup.get("work_description") or f"Работа lookup {lookup_index}"),
+            "unit": unit or str(lookup.get("unit_hint") or ""),
+            "quantity": qty if qty not in (None, "") else "",
+            "unit_price": "0.00",
+            "amount": 0.0,
+            "status": "norm_selection_required",
+            "source_table": "structured model norm review",
+            "lookup_index": lookup_index,
+            "flags": reason or "ревизия модели не подтвердила норму из candidates",
+        }
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Ты главный сметчик-ревизор. Перед расчётом ЛСР проверь черновой выбор норм. "
+                "Решение принимает модель, код только проверит, что norm_code скопирован из candidates. "
+                "Верни строго JSON вида {\"rows\":[{\"lookup_index\":1,\"decision\":\"approve|replace|unbound\","
+                "\"norm_code\":\"...\",\"title\":\"...\",\"unit\":\"...\",\"quantity\":1.0,\"reason\":\"...\"}]}. "
+                "approve — оставить draft norm_code; replace — заменить на другой norm_code, но только из candidates "
+                "этого lookup; unbound — оставить строку с нулём/пустой ценой и причиной. "
+                "Обязательная проверка: норма не должна менять элемент и технологию на явно чужие. "
+                "Но это pricing-stage: если точной нормы нет, сметчик должен выбрать ближайший защитимый "
+                "нормативный аналог из candidates, когда совпадают семейство, физическая операция или ремонтный "
+                "смысл, измеритель и ресурсная логика; в reason явно напиши, что это аналог и что проверить. "
+                "unbound — только если все candidates пустые, без количества, с несовместимой единицей или "
+                "описывают очевидно чужую операцию/объект. "
+                "Для демонтажа/восстановления допускай ремонтные нормы ГЭСНр и разборку/замену как сметческий "
+                "аналог, если они ближе монтажа нового элемента. Для скрытых ревизионных люков ищи нормы "
+                "ревизионных/сантехнических люков или ближайший штучный монтаж люка; не выбирай шумоглушители, "
+                "фланцы, люки на крышах, фасадные/оконные/дверные проёмы или просто отверстия другого типа. "
+                "Для защитного укрытия плёнкой выбирай норму только если candidate говорит именно о временном "
+                "укрытии/защитном укрытии поверхности; декоративная самоклеящаяся ПВХ-плёнка, натяжной потолок, "
+                "штукатурка, грунтовка или окраска не являются аналогом этой строки. "
+                "Общую строку 'подготовка поверхности к восстановлению отделки' можно закрывать ближайшей "
+                "операцией подготовки/ремонта поверхности, если она есть в candidates; не превращай её в "
+                "устройство нового потолка/каркаса без такой связи. "
+                "Если строка обычной отделки (грунтовка, шпатлевка, оклейка стеклохолстом/обоями, окраска), "
+                "выбери same-operation analog из candidates при совместимой единице; потолки предпочтительнее "
+                "стен для потолочных работ. Для БАП светильника предпочитай малый преобразователь/блок питания, "
+                "а не крупную UPS-систему, если исходник не говорит про систему/шкаф/кВт. Для открытой коробки "
+                "проводки предпочитай ответвительную коробку, а не клеммную, если нет клемм/зажимов. "
+                "Не пиши Markdown и не ставь цены."
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "task": str(harness_question or "")[:18000],
+                    "lookup_results": compact_results,
+                    "draft_rows": draft_rows,
+                    "rules": [
+                        "return exactly one review row per lookup_index where a source work quantity exists",
+                        "norm_code for replace must be copied exactly from that lookup candidates",
+                        "approve if draft norm_code is technically defensible by title, norm_card, work_composition, element, unit and source-row intent",
+                        "replace unbound draft rows when candidates contain a defensible normative analog, including repair/dismantling/replacement analogs",
+                        "unbound only when candidates are empty, unit-incompatible, quantity-less or all clearly foreign operations/objects",
+                        "do not price protective film covering with plaster, primer or painting candidates",
+                        "quantity and unit should stay from source/draft unless draft is empty and source gives them",
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+        },
+    ]
+    body = {
+        "model": runtime.model,
+        "messages": _mlx_prefill_no_think_messages(messages, runtime.provider),
+        "temperature": 0,
+        "max_tokens": _smeta_norm_choice_tokens(harness_question),
+    }
+    body = _cloud_body_for_model(body, runtime.model, runtime.provider)
+    headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
+    timeout_sec = _smeta_norm_review_timeout(runtime)
+    try:
+        with httpx.Client(timeout=timeout_sec) as c:
+            r = c.post(runtime.chat_url, headers=headers, json=body)
+            r.raise_for_status()
+            review_text = _assistant_text(r.json().get("choices", [{}])[0].get("message", {})).strip()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[SMETA] structured norm review failed: %s", e)
+        return draft_rows, {
+            "enabled": True,
+            "status": "review_error",
+            "provider": runtime.provider,
+            "model": runtime.model,
+            "timeout_sec": timeout_sec,
+            "error": f"{type(e).__name__}: {e}",
+        }
+
+    parsed = _extract_json_object(review_text) or {}
+    raw_rows = parsed.get("rows") if isinstance(parsed.get("rows"), list) else []
+    reviewed_by_lookup: dict[int, dict[str, Any]] = {}
+    invalid_rows: list[dict[str, Any]] = []
+    for raw in raw_rows:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            lookup_index = int(raw.get("lookup_index") or 0)
+        except (TypeError, ValueError):
+            lookup_index = 0
+        if lookup_index <= 0 or lookup_index > len(compact_results):
+            invalid_rows.append({"lookup_index": lookup_index, "reason": "invalid_lookup_index"})
+            continue
+        reviewed_by_lookup[lookup_index] = raw
+
+    final_rows: list[dict[str, Any]] = []
+    approved = replaced = unbound = 0
+    invalid_norm_codes: list[dict[str, Any]] = []
+    for lookup_index in range(1, len(compact_results) + 1):
+        draft = draft_by_lookup.get(lookup_index) or unbound_row(
+            lookup_index,
+            reason="черновой выбор не вернул строку для этого lookup",
+        )
+        review = reviewed_by_lookup.get(lookup_index)
+        if not review:
+            final_rows.append(draft)
+            continue
+        decision = str(review.get("decision") or "").strip().casefold()
+        reason = str(review.get("reason") or "").strip()
+        title = str(review.get("title") or draft.get("title") or "").strip()
+        unit = str(review.get("unit") or draft.get("unit") or "").strip()
+        qty = review.get("quantity")
+        if qty in (None, ""):
+            qty = draft.get("quantity")
+        if decision == "approve":
+            basis = str(draft.get("basis") or "").strip()
+            if basis and basis != "нужен подбор нормы" and basis in (allowed_by_lookup.get(lookup_index) or set()):
+                approved += 1
+                row = dict(draft)
+                row["source_table"] = "structured model norm review"
+                row["review_reason"] = reason
+                final_rows.append(row)
+            else:
+                unbound += 1
+                final_rows.append(unbound_row(
+                    lookup_index,
+                    title=title,
+                    unit=unit,
+                    qty=qty,
+                    reason=reason or "review approve без допустимого draft norm_code",
+                ))
+            continue
+        if decision == "replace":
+            code = str(review.get("norm_code") or "").strip()
+            allowed = allowed_by_lookup.get(lookup_index) or set()
+            if not code or code not in allowed:
+                invalid_norm_codes.append({
+                    "lookup_index": lookup_index,
+                    "norm_code": code,
+                    "reason": reason or "review_norm_code_not_in_lookup_candidates",
+                })
+                unbound += 1
+                final_rows.append(unbound_row(
+                    lookup_index,
+                    title=title,
+                    unit=unit,
+                    qty=qty,
+                    reason=reason or "review_norm_code_not_in_lookup_candidates",
+                ))
+                continue
+            if qty in (None, "", 0, "0"):
+                unbound += 1
+                final_rows.append(unbound_row(
+                    lookup_index,
+                    title=title,
+                    unit=unit,
+                    reason=reason or "review replace без количества для расчёта",
+                ))
+                continue
+            replaced += 1
+            final_rows.append(
+                {
+                    "basis": code,
+                    "title": title or f"Работа lookup {lookup_index}",
+                    "unit": unit,
+                    "quantity": qty,
+                    "unit_price": "",
+                    "amount": None,
+                    "status": "model_reviewed_norm_code",
+                    "source_table": "structured model norm review",
+                    "lookup_index": lookup_index,
+                    "choice_reason": str(draft.get("choice_reason") or ""),
+                    "review_reason": reason,
+                }
+            )
+            continue
+        if decision == "unbound":
+            unbound += 1
+            final_rows.append(unbound_row(
+                lookup_index,
+                title=title,
+                unit=unit,
+                qty=qty,
+                reason=reason or "review rejected draft norm_code",
+            ))
+            continue
+        invalid_rows.append({"lookup_index": lookup_index, "decision": decision, "reason": "invalid_decision"})
+        final_rows.append(draft)
+
+    return final_rows, {
+        "enabled": True,
+        "status": "ok",
+        "provider": runtime.provider,
+        "model": runtime.model,
+        "timeout_sec": timeout_sec,
+        "selector_text": review_text[:4000],
+        "approved": approved,
+        "replaced": replaced,
+        "unbound": unbound,
+        "missing_review_rows": len(compact_results) - len(reviewed_by_lookup),
+        "invalid_rows": invalid_rows,
+        "invalid_norm_codes": invalid_norm_codes,
+    }
+
+
+def _smeta_direct_structured_norm_choice(
+    harness_question: str,
+    norm_lookup_trace: dict[str, Any],
+) -> dict[str, Any]:
+    """Ask the model to choose concrete norm codes from lookup results as JSON."""
+    if not _env_bool("LES_SMETA_STRUCTURED_NORM_CHOICE_ENABLED", True):
+        return {"rows": [], "trace": {"enabled": False}}
+    results = norm_lookup_trace.get("results") if isinstance(norm_lookup_trace, dict) else None
+    if not isinstance(results, list) or not results:
+        return {"rows": [], "trace": {"enabled": True, "status": "no_lookup_results"}}
+
+    compact_results: list[dict[str, Any]] = []
+    allowed_by_lookup: dict[int, set[str]] = {}
+    for idx, item in enumerate(results, 1):
+        if not isinstance(item, dict):
+            continue
+        call = item.get("call") if isinstance(item.get("call"), dict) else {}
+        args = call.get("args") if isinstance(call.get("args"), dict) else {}
+        result = item.get("result") if isinstance(item.get("result"), dict) else {}
+        candidates = []
+        allowed: set[str] = set()
+        for cand in (result.get("candidates") or [])[: max(1, _env_int("LES_SMETA_NORM_CHOICE_CANDIDATES", 20))]:
+            if not isinstance(cand, dict):
+                continue
+            code = str(cand.get("norm_code") or "").strip()
+            if code:
+                allowed.add(code)
+            candidates.append(
+                {
+                    "norm_code": code,
+                    "title": cand.get("title"),
+                    "measure_unit": cand.get("measure_unit"),
+                    "unit_compatible": cand.get("unit_compatible"),
+                    "applicability_status": cand.get("applicability_status"),
+                    "score_total": cand.get("score_total"),
+                    "norm_card": _smeta_norm_candidate_card(cand),
+                }
+            )
+        allowed_by_lookup[idx] = allowed
+        compact_results.append(
+            {
+                "lookup_index": idx,
+                "work_description": args.get("work_description"),
+                "work_family": args.get("work_family"),
+                "element_type": args.get("element_type"),
+                "unit_hint": args.get("unit_hint"),
+                "candidates": candidates,
+            }
+        )
+    if not compact_results:
+        return {"rows": [], "trace": {"enabled": True, "status": "empty_compact_lookup"}}
+
+    runtime = _smeta_norm_choice_runtime()
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Ты сметчик. Выбери нормы для расчёта, но только из candidates. "
+                "Верни строго JSON вида {\"rows\":[{\"lookup_index\":1,\"title\":\"...\","
+                "\"unit\":\"м\",\"quantity\":160,\"norm_code\":\"ГЭСНм:...\","
+                "\"reason\":\"...\"}]}. Сверяй не только название, но и norm_card: title, "
+                "work_composition.steps, domain/actions, измеритель, resources и conditions_to_check. "
+                "Это pricing-stage: если точной нормы нет, но есть технически близкий accepted "
+                "или unit_compatible candidate из правильного семейства/сборника, выбери лучший "
+                "как нормативный аналог для расчёта и напиши в reason «нормативный аналог, проверить ...». "
+                "Не обнуляй строку только потому, что основание/материал/условие не совпадает идеально. "
+                "norm_code пустой только если все candidates описывают явно чужую операцию/чужое семейство "
+                "или несовместимую единицу, candidates пустой, либо нет количества работы. "
+                "Для демонтажа/восстановления сначала ищи ремонтные нормы ГЭСНр, разборку/замену или "
+                "ближайший демонтажный смысл; монтаж нового элемента бери только как явно помеченный слабый "
+                "аналог, если ничего ближе нет и единица совместима. Шпатлевку нельзя считать облицовкой или "
+                "устройством потолка. "
+                "Если исходная строка говорит 'потолок/потолков', предпочитай candidate с потолками; "
+                "candidate по стенам бери только если потолочного варианта нет среди candidates и явно "
+                "пометь это как аналог. Для простых коробок открытой проводки предпочитай ответвительную "
+                "коробку; клеммную коробку выбирай только когда в исходнике есть клеммы/зажимы. Для БАП "
+                "светильника сначала сравни малый 'преобразователь или блок питания' с крупной системой "
+                "бесперебойного электропитания; крупную UPS-норму выбирай только если по исходнику это "
+                "именно система/шкаф/кВт-класс, а не блок внутри светильника. "
+                "Для обычной отделки не будь чрезмерно строгим: грунтовка, шпатлевка, оклейка стеклохолстом/"
+                "обоями и окраска — нормируемые операции; если candidate совпадает по операции, поверхности "
+                "и измерителю, выбирай его как нормативный аналог даже при отличии материала/состава. "
+                "Для защитного укрытия плёнкой выбирай norm_code только если candidate описывает именно "
+                "временное укрытие/защитное укрытие поверхности; декоративная самоклеящаяся ПВХ-плёнка, "
+                "натяжной потолок, штукатурка, грунтовка и окраска не подходят. "
+                "Но проемы/люки в ГКЛ не считай нормами для натяжных или реечных потолков, если candidate "
+                "не описывает такой же тип проема/люка; люки на крышах, фасадные/оконные/дверные проёмы и "
+                "акустические двери не подходят для ГКЛ-проёма под ревизионный люк. Ревизионный люк можно "
+                "считать нормой ревизионного/сантехнического люка при штучном измерителе и явной пометке аналога. "
+                "Не ставь цены и не пиши Markdown."
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "task": str(harness_question or "")[:18000],
+                    "lookup_results": compact_results,
+                        "rules": [
+                            "norm_code must be copied exactly from candidates",
+                            "pricing stage prefers a usable normative analog over empty norm_code when candidate family, collection and unit are technically close",
+                            "if exact title/work_composition is missing, choose the closest accepted/unit-compatible candidate and mark reason as нормативный аналог for verification",
+                            "do not select a candidate whose title/norm_card/work_composition is an obviously foreign operation or foreign family; leave norm_code empty and explain mismatch",
+                            "for dismantling/restoration prefer repair/dismantling/replacement candidates; installation can be only a weak marked analog when nothing closer exists",
+                            "do not use lining/ceiling-device candidates for putty works when action differs",
+                            "do not price protective film covering with decorative PVC film, stretch ceiling, plaster, primer or painting candidates",
+                            "do not price GKL inspection-hatch openings with roof hatches, facade openings, acoustic doors or window/door opening finishes",
+                            "prefer same surface in candidates: потолки over стены for ceiling works",
+                            "for open wiring boxes prefer ответвительная коробка over клеммная unless source mentions terminals/clamps",
+                            "for emergency light backup-power blocks prefer small converter/power-supply candidates over large UPS system candidates unless source says system/kW/cabinet",
+                            "for standard finishing operations грунтовка, шпатлевка, оклейка стеклохолстом/обоями, окраска choose a same-operation same-surface analog instead of empty norm_code when unit is compatible",
+                            "for GKL openings or hidden inspection hatches leave empty if candidates are for stretch/reed ceilings or another hatch type",
+                            "prefer candidates with unit_compatible=true and applicability_status accepted, but score is only retrieval evidence, not permission to price a wrong norm",
+                            "quantity and unit come from the source task/work description",
+                            "one output row per lookup where a work quantity exists",
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+        },
+    ]
+    body = {
+        "model": runtime.model,
+        "messages": _mlx_prefill_no_think_messages(messages, runtime.provider),
+        "temperature": 0,
+        "max_tokens": _smeta_norm_choice_tokens(harness_question),
+    }
+    body = _cloud_body_for_model(body, runtime.model, runtime.provider)
+    headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
+    try:
+        timeout_sec = _env_float("LES_SMETA_NORM_CHOICE_TIMEOUT_SEC", 1200.0)
+        with httpx.Client(timeout=timeout_sec) as c:
+            r = c.post(runtime.chat_url, headers=headers, json=body)
+            r.raise_for_status()
+            selector_text = _assistant_text(r.json().get("choices", [{}])[0].get("message", {})).strip()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[SMETA] structured norm choice failed: %s", e)
+        return {
+            "rows": [],
+            "trace": {
+                "enabled": True,
+                "status": "selector_error",
+                "provider": runtime.provider,
+                "model": runtime.model,
+                "timeout_sec": _env_float("LES_SMETA_NORM_CHOICE_TIMEOUT_SEC", 1200.0),
+                "error": f"{type(e).__name__}: {e}",
+            },
+        }
+
+    parsed = _extract_json_object(selector_text) or {}
+    raw_rows = parsed.get("rows") if isinstance(parsed.get("rows"), list) else []
+    out_rows: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    handled_lookup_indexes: set[int] = set()
+
+    def unbound_row(lookup_index: int, *, title: str = "", unit: str = "", qty: Any = "", reason: str = "") -> dict[str, Any]:
+        lookup = compact_results[lookup_index - 1] if 1 <= lookup_index <= len(compact_results) else {}
+        return {
+            "basis": "нужен подбор нормы",
+            "title": title or str(lookup.get("work_description") or f"Работа lookup {lookup_index}"),
+            "unit": unit or str(lookup.get("unit_hint") or ""),
+            "quantity": qty if qty not in (None, "") else "",
+            "unit_price": "0.00",
+            "amount": 0.0,
+            "status": "norm_selection_required",
+            "source_table": "structured model norm choice",
+            "lookup_index": lookup_index,
+            "flags": reason or "модель не выбрала технически защитимый norm_code из candidates",
+        }
+
+    for raw in raw_rows:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            lookup_index = int(raw.get("lookup_index") or 0)
+        except (TypeError, ValueError):
+            lookup_index = 0
+        code = str(raw.get("norm_code") or "").strip()
+        title = str(raw.get("title") or "").strip()
+        unit = str(raw.get("unit") or "").strip()
+        qty = raw.get("quantity")
+        allowed = allowed_by_lookup.get(lookup_index) or set()
+        if not code or code not in allowed:
+            handled_lookup_indexes.add(lookup_index)
+            rejected.append(
+                {
+                    "lookup_index": lookup_index,
+                    "title": title,
+                    "norm_code": code,
+                    "reason": str(raw.get("reason") or "missing_or_not_in_lookup_candidates"),
+                }
+            )
+            out_rows.append(unbound_row(
+                lookup_index,
+                title=title,
+                unit=unit,
+                qty=qty,
+                reason=str(raw.get("reason") or "norm_code пустой или отсутствует в lookup candidates"),
+            ))
+            continue
+        if qty in (None, "", 0, "0"):
+            handled_lookup_indexes.add(lookup_index)
+            rejected.append(
+                {
+                    "lookup_index": lookup_index,
+                    "title": title,
+                    "norm_code": code,
+                    "reason": "missing_quantity",
+                }
+            )
+            out_rows.append(unbound_row(
+                lookup_index,
+                title=title,
+                unit=unit,
+                reason="нет количества для расчёта строки",
+            ))
+            continue
+        handled_lookup_indexes.add(lookup_index)
+        out_rows.append(
+            {
+                "basis": code,
+                "title": title or f"Работа lookup {lookup_index}",
+                "unit": unit,
+                "quantity": qty,
+                "unit_price": "",
+                "amount": None,
+                "status": "model_selected_norm_code",
+                "source_table": "structured model norm choice",
+                "lookup_index": lookup_index,
+                "choice_reason": str(raw.get("reason") or ""),
+            }
+        )
+    for lookup_index in range(1, len(compact_results) + 1):
+        if lookup_index in handled_lookup_indexes:
+            continue
+        out_rows.append(unbound_row(
+            lookup_index,
+            reason="модель не вернула строку выбора нормы для этого lookup",
+        ))
+    reviewed_rows, review_trace = _smeta_review_structured_norm_choice(
+        harness_question,
+        compact_results,
+        allowed_by_lookup,
+        out_rows,
+        runtime,
+    )
+    return {
+        "rows": reviewed_rows,
+        "trace": {
+            "enabled": True,
+            "status": "ok" if reviewed_rows else "no_valid_choices",
+            "model_owns_selection": True,
+            "provider": runtime.provider,
+            "model": runtime.model,
+            "timeout_sec": _env_float("LES_SMETA_NORM_CHOICE_TIMEOUT_SEC", 1200.0),
+            "selector_text": selector_text[:4000],
+            "accepted_rows": [row for row in reviewed_rows if row.get("basis") != "нужен подбор нормы"],
+            "draft_accepted_rows": [row for row in out_rows if row.get("basis") != "нужен подбор нормы"],
+            "unbound_rows_added": len([row for row in reviewed_rows if row.get("basis") == "нужен подбор нормы"]),
+            "draft_unbound_rows_added": len([row for row in out_rows if row.get("basis") == "нужен подбор нормы"]),
+            "rejected_rows": rejected,
+            "review": review_trace,
+        },
+    }
 
 
 def _split_table_line(line: str) -> list[str]:
@@ -2430,9 +3812,11 @@ def _smeta_available_pricebook_context() -> str:
         return ""
     stems = sorted(Path(p).stem for p in books)
     shown = stems[:80]
+    default_book = _smeta_default_pricebook_name(stems)
     return (
         "Доступные локальные ценовые книги ФГИС ЦС / сплит-формы: "
         f"{', '.join(shown)}. Всего книг: {len(stems)}. "
+        f"Системная книга по умолчанию при неуказанном регионе: {default_book or 'нет'}. "
         "Рабочее правило: сначала смотри в эти книги и RAG, потом спрашивай пользователя. "
         "Не пиши, что пользователь не приложил сплит-форму или что ценовой базы нет, если "
         "подходящая книга уже есть в ЛЕС. Если нужного региона/периода нет среди доступных "
@@ -2440,6 +3824,64 @@ def _smeta_available_pricebook_context() -> str:
         "есть, но итог не закрыт, причина не в отсутствии сплит-формы, а в незакрытой связке "
         "«норма -> ресурсы -> коды ресурсов -> цены»."
     )
+
+
+def _smeta_default_pricebook_name(stems: list[str]) -> str:
+    configured = os.getenv("LES_DEFAULT_PRICEBOOK", "").strip()
+    preferred: list[str] = []
+    if configured:
+        preferred.append(Path(configured).stem)
+    preferred.extend(["spb_2kv2026", "sankt-peterburg_2kv2026", "spb_2kv2025", "sankt-peterburg_2kv2025"])
+    preferred.extend([stem for stem in stems if "2026" in stem])
+    preferred.extend(stems)
+    seen: set[str] = set()
+    for stem in preferred:
+        if stem in seen:
+            continue
+        seen.add(stem)
+        if stem in stems:
+            return stem
+    return ""
+
+
+def _smeta_system_source_readiness_context() -> str:
+    try:
+        from proxy.services.service_source_registry import service_sources
+
+        sources = service_sources().get("sources", [])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[SMETA] service source readiness skipped: %s", exc)
+        return ""
+    smeta_ids = {"gesn_base", "fgis_price_base", "smeta_coefficients", "smeta_service_dataset"}
+    ready: list[str] = []
+    missing: list[str] = []
+    for src in sources:
+        if not isinstance(src, dict) or str(src.get("id") or "") not in smeta_ids:
+            continue
+        label = str(src.get("label") or src.get("id") or "")
+        status = str(src.get("status") or "")
+        facts = src.get("facts") if isinstance(src.get("facts"), dict) else {}
+        fact_bits: list[str] = []
+        for key in ("parquet_rows", "base_norms", "pricebooks", "price_rows"):
+            if facts.get(key) not in (None, ""):
+                fact_bits.append(f"{key}={facts.get(key)}")
+        line = f"{label}: {status}" + (f" ({', '.join(fact_bits)})" if fact_bits else "")
+        if status == "ok":
+            ready.append(line)
+        else:
+            missing.append(line)
+    if not ready and not missing:
+        return ""
+    text = [
+        "Системные сметные источники ЛЕС физически подключены:",
+        *[f"- {line}" for line in ready[:8]],
+    ]
+    if missing:
+        text.append("Чего не хватает в системном слое:")
+        text.extend(f"- {line}" for line in missing[:8])
+    else:
+        text.append("Чего не хватает в системном сметном слое: нет blocking-missing по ГЭСН/ФГИС/НРСП.")
+    return "\n".join(text)
 
 
 def _smeta_service_rag_map_context() -> str:
@@ -3010,11 +4452,12 @@ def _smeta_active_state_from_answer(question: str, answer: str) -> dict[str, Any
                 "amount": (cells[amount_idx] if amount_idx is not None and amount_idx < len(cells) else "")[:80],
                 "status": (cells[status_idx] if status_idx is not None and status_idx < len(cells) else "")[:120],
             })
-            if len(works) >= 60:
+            max_active_works = max(1, _env_int("LES_SMETA_ACTIVE_STATE_MAX_WORKS", 500))
+            if len(works) >= max_active_works:
                 break
             j += 1
         i = j
-        if len(works) >= 60:
+        if len(works) >= max(1, _env_int("LES_SMETA_ACTIVE_STATE_MAX_WORKS", 500)):
             break
 
     excluded: list[str] = []
@@ -3112,7 +4555,8 @@ def _format_active_smeta_state(state: dict[str, Any]) -> str:
     works = state.get("works") if isinstance(state.get("works"), list) else []
     if works:
         lines.append("Текущая ВОР:")
-        for idx, w in enumerate(works[:40], 1):
+        prompt_works_limit = max(1, _env_int("LES_SMETA_ACTIVE_STATE_PROMPT_WORKS", 200))
+        for idx, w in enumerate(works[:prompt_works_limit], 1):
             if not isinstance(w, dict):
                 continue
             qty = w.get("quantity_text") or w.get("quantity")
@@ -3129,8 +4573,8 @@ def _format_active_smeta_state(state: dict[str, Any]) -> str:
                 details.append(f"статус: {w.get('status')}")
             suffix = f" ({'; '.join(str(x) for x in details)})" if details else ""
             lines.append(f"{idx}. {w.get('title') or 'работа'}{qty_text}{suffix}")
-        if len(works) > 40:
-            lines.append(f"... ещё {len(works) - 40} строк ВОР в предыдущем ответе/артефакте.")
+        if len(works) > prompt_works_limit:
+            lines.append(f"... ещё {len(works) - prompt_works_limit} строк ВОР в предыдущем ответе/артефакте.")
     return "\n".join(lines)
 
 
@@ -3377,13 +4821,16 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         )
 
     # ── Unified Construction Harness v0.3 (feature-flag LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED,
-    # OFF дефолт). Только дефолтный путь (auto/grounded_rag) — явные режимы смета/review/КП/free НЕ
-    # трогаем. Поддержанный строительный intent → evidence-ответ (RETRIEVED/COMPUTED/MISSING/BLOCKED),
-    # честный no_data вместо фантазии. Не поддержан/none → None → старый путь (поведение прежнее).
+    # OFF дефолт). В обычном чате харнесс больше не имеет права становиться visible final:
+    # модель должна получить источники/инструменты и ответить сама. Для старого smoke-контракта
+    # оставлен явный opt-in LES_UNIFIED_CONSTRUCTION_HARNESS_FINAL_ENABLED=1.
     # ВАЖНО: импорт unified-харнесса ТОЛЬКО при включённом флаге — иначе в рантайме (где unified-стек
     # не задеплоен, флаг OFF) каждый /chat падал бы ModuleNotFoundError. env-проверка ДО импорта +
     # try/except: флаг OFF или модуль отсутствует → старый RAG-путь (поведение прежнее).
-    _uns_on = os.getenv("LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
+    _uns_on = (
+        os.getenv("LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
+        and _env_bool("LES_UNIFIED_CONSTRUCTION_HARNESS_FINAL_ENABLED", False)
+    )
     if _PROFILE in ("auto", "grounded_rag") and _uns_on:
         try:
             from proxy.services.unified_construction_harness_service import (
@@ -3450,22 +4897,6 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         # Нормоконтроль документов проекта (формальный, без LLM) → таблица замечаний.
         answer = await _run_project_normcontrol(req, pid)
         return _mode_reply(answer, "normcontrol", "review_mode")
-
-    if _PROFILE == "kp_stub":
-        # КП = генерация коммерческого предложения по материалам. Задел на будущее —
-        # честная заглушка, НЕ фейковый КП.
-        attach_note = (
-            "Прикреплённый файл я вижу, но генератор КП ещё не включён в рабочий контур. "
-            if req.attachment_context else ""
-        )
-        answer = (
-            attach_note
-            + "Режим «КП» (генерация коммерческого предложения по приложенным/указанным "
-            "материалам) — в разработке. Он соберёт исходящее КП из позиций сметы/прайса "
-            "для заказчика. Пока для расчёта используй режим «Смета», а для разбора входящих "
-            "КП в КАЦ — вложение в Outlook→ЛЕС или вопрос «нужен ли КАЦ для <код>»."
-        )
-        return _mode_reply(answer, "kp_stub", "kp_mode")
 
     if _PROFILE == "free_llm":
         # Свободный: прямой LLM БЕЗ ретрива (отвечает из своих знаний) + мягкая плашка.
@@ -3546,18 +4977,195 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     "(используй как источник/навигацию, не как готовую смету):\n"
                     f"{rag_text}"
                 )
+        current_smeta_question = _question_with_attachment(req)
+        workflow_decision = await asyncio.to_thread(
+            _smeta_direct_workflow_decision,
+            current_smeta_question,
+            harness_question,
+            req.session_id,
+        )
+        workflow_stage = str(workflow_decision.get("stage") or "")
+        if workflow_stage not in {"norm_candidates", "pricing", "explanation"}:
+            return _mode_reply(
+                "Сметный workflow не выбран моделью: этап не определён. Повтори запрос или укажи, нужен этап кандидатов, деньги по ним или объяснение процесса.",
+                "smeta_workflow_failed",
+                "smeta_mode",
+                crag="ERROR",
+                extra={
+                    "retrieval_trace": {
+                        "mode": "smeta",
+                        "model_rag_only": True,
+                        "smeta_workflow_decision": workflow_decision,
+                    },
+                    "sources": direct_rag_packet.get("sources") or [],
+                    "source_map": direct_rag_packet.get("source_map") or [],
+                },
+            )
+        norm_candidate_stage = workflow_stage == "norm_candidates"
+        pricing_stage = workflow_stage == "pricing"
+        norm_lookup_packet = None
+        if pricing_stage and workflow_decision.get("use_previous_candidates"):
+            norm_lookup_packet = _smeta_direct_previous_norm_lookup_packet_for_followup(
+                current_smeta_question,
+                req.session_id,
+                force=True,
+            )
+        if norm_lookup_packet is None and workflow_stage != "explanation":
+            norm_lookup_packet = await asyncio.to_thread(
+                _smeta_direct_norm_lookup_context,
+                harness_question,
+            )
+        if norm_lookup_packet is None:
+            norm_lookup_packet = {"text": "", "trace": {"enabled": False, "status": "workflow_stage_explanation"}}
+        if norm_candidate_stage:
+            norm_choice_packet = {
+                "rows": [],
+                "trace": {
+                    "enabled": False,
+                    "status": "blocked_by_tz_stage_gate",
+                    "reason": "raw_source_requires_vor_to_gesn_candidate_table_before_pricing",
+                },
+            }
+            structured_rim_form = None
+        elif pricing_stage:
+            norm_choice_packet = await asyncio.to_thread(
+                _smeta_direct_structured_norm_choice,
+                harness_question,
+                norm_lookup_packet.get("trace") or {},
+            )
+            structured_rim_form = build_checked_rim_form_from_visible_rows(
+                list(norm_choice_packet.get("rows") or []),
+                question=harness_question,
+            )
+        else:
+            norm_choice_packet = {
+                "rows": [],
+                "trace": {
+                    "enabled": False,
+                    "status": "blocked_by_model_workflow_stage",
+                    "reason": "model_selected_explanation_stage",
+                },
+            }
+            structured_rim_form = None
+        structured_rim_context = ""
+        if structured_rim_form:
+            structured_rim_context = (
+                "CHECKED RIM CALCULATION FROM MODEL-SELECTED NORM CODES:\n"
+                + json.dumps(
+                    {
+                        "schema": structured_rim_form.get("schema"),
+                        "amount_total": structured_rim_form.get("amount_total"),
+                        "finality": structured_rim_form.get("finality"),
+                        "pricebook": structured_rim_form.get("pricebook"),
+                        "rows": structured_rim_form.get("rows"),
+                        "trace_summary": (structured_rim_form.get("trace") or {}).get("summary"),
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                )
+            )
+        smeta_model_context = "\n\n".join(
+            x for x in (
+                _smeta_direct_norm_candidate_stage_context(norm_lookup_packet.get("trace") or {})
+                if norm_candidate_stage else "",
+                str(direct_rag_packet.get("text") or "").strip(),
+                str(norm_lookup_packet.get("text") or "").strip(),
+                structured_rim_context,
+            )
+            if x
+        )
         answer = await asyncio.to_thread(
             _smeta_direct_model_answer,
             harness_question,
-            str(direct_rag_packet.get("text") or ""),
+            smeta_model_context,
+            workflow_stage,
         )
         if not answer:
-            answer = (
-                "Сейчас не смог собрать сметный ответ. Повторите запрос или сузьте исходные: "
-                "ВОР/спецификация, регион, период цен, что считать работой, а что поставкой."
+            candidate_artifact = (
+                build_norm_candidate_artifact_from_lookup(
+                    norm_lookup_packet.get("trace") or {},
+                    question=req.question,
+                )
+                if norm_candidate_stage
+                else None
             )
+            smeta_artifact = persist_smeta_artifact_exports(
+                candidate_artifact,
+                output_dir=_SMETA_ARTIFACT_DIR,
+            )
+            runtime = _smeta_model_runtime("LES_SMETA_DIRECT_MODEL_PROVIDER")
+            configured_provider = (
+                os.getenv("LES_SMETA_DIRECT_MODEL_PROVIDER", "").strip().lower()
+                or os.getenv("LES_SMETA_PROVIDER", "").strip().lower()
+                or os.getenv("LES_LLM_PROVIDER", "mlx").strip().lower()
+                or "mlx"
+            )
+            cloud_config_warning = ""
+            if configured_provider in {"openai", "openai-compatible", "openai_compatible", "openrouter"} and runtime.provider == "mlx":
+                cloud_config_warning = "cloud_provider_without_api_key_fell_back_to_mlx"
+            trace = {
+                "mode": "smeta",
+                "model_rag_only": True,
+                "direct_model_answer_present": False,
+                "smeta_failure": "llm_returned_empty_or_failed",
+                "configured_provider": configured_provider,
+                "effective_provider": runtime.provider,
+                "effective_model": runtime.model,
+                "cloud_config_warning": cloud_config_warning,
+                "smeta_rag_context": direct_rag_packet.get("trace") or {},
+                "smeta_workflow_decision": workflow_decision,
+                "smeta_norm_lookup": norm_lookup_packet.get("trace") or {},
+                "smeta_norm_choice": norm_choice_packet.get("trace") or {},
+                "smeta_dataset_filter": smeta_dataset_filter or "",
+                "smeta_tz_stage": workflow_stage,
+                "code_fallback_disabled": True,
+                "smeta_norm_candidate_artifact_present": bool(candidate_artifact),
+                "smeta_model_text_failed_artifact_returned": bool(smeta_artifact),
+            }
+            if smeta_artifact:
+                return _mode_reply(
+                    "Таблица кандидатов ГЭСН сформирована из уже выполненного нормативного поиска. "
+                    "Финальный текст модели не сгенерирован, поэтому отдаю то, что есть: artifact/XLSX/CSV. "
+                    "Следующий ход: «деньги по ним».",
+                    "smeta_norm_candidates_partial",
+                    "smeta_mode",
+                    crag="PARTIAL",
+                    extra={
+                        "retrieval_trace": trace,
+                        "sources": direct_rag_packet.get("sources") or [],
+                        "source_map": direct_rag_packet.get("source_map") or [],
+                        "artifact": smeta_artifact,
+                    },
+                )
+            return _mode_reply(
+                "Сметный ответ не сгенерирован: модель не вернула текст или вызов модели упал. "
+                "Кодовый fallback для ЛСР/ВОР отключён, чтобы не подменять модель hardcoded-ответом. "
+                "Проверь провайдера/ключ и повтори запрос.",
+                "smeta_model_failed",
+                "smeta_mode",
+                crag="ERROR",
+                extra={
+                    "retrieval_trace": trace,
+                    "sources": direct_rag_packet.get("sources") or [],
+                    "source_map": direct_rag_packet.get("source_map") or [],
+                },
+            )
+        model_artifact = build_smeta_artifact(answer, question=req.question)
+        structured_artifact = (
+            build_smeta_artifact_from_rim_form(structured_rim_form, question=req.question)
+            if structured_rim_form
+            else None
+        )
+        candidate_artifact = (
+            build_norm_candidate_artifact_from_lookup(
+                norm_lookup_packet.get("trace") or {},
+                question=req.question,
+            )
+            if norm_candidate_stage
+            else None
+        )
         smeta_artifact = persist_smeta_artifact_exports(
-            build_smeta_artifact(answer, question=req.question),
+            candidate_artifact or structured_artifact or model_artifact,
             output_dir=_SMETA_ARTIFACT_DIR,
         )
         visible_answer = compact_smeta_answer(answer, smeta_artifact)
@@ -3567,8 +5175,14 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             "direct_model_answer_present": bool(answer),
             "active_smeta_state": _smeta_active_state_from_answer(harness_question, answer),
             "smeta_rag_context": direct_rag_packet.get("trace") or {},
+            "smeta_workflow_decision": workflow_decision,
+            "smeta_norm_lookup": norm_lookup_packet.get("trace") or {},
+            "smeta_norm_choice": norm_choice_packet.get("trace") or {},
+            "smeta_structured_rim_trace": (structured_rim_form or {}).get("trace") or {},
+            "smeta_tz_stage": workflow_stage,
             "smeta_dataset_filter": smeta_dataset_filter or "",
             "smeta_artifact_present": bool(smeta_artifact),
+            "smeta_norm_candidate_artifact_present": bool(candidate_artifact),
         }
         return _mode_reply(
             visible_answer,
@@ -3677,19 +5291,12 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             reply = maybe_agent_route(req.question, project_id=pid)
             if reply is not None:
                 channel = "agent"
-        # v0.22: проектный запрос при scope=all → не искать молча весь корпус, а попросить выбрать
-        # область (нормы/глоссарий/глобальный реестр сюда не попадают — им весь RAG разрешён).
+        # v0.22 был финальным стопом: проектный запрос при scope=all → "выбери область".
+        # Model-first v0.286: это только warning в trace. Не блокируем RAG/LLM, потому что иначе
+        # обычные вопросы вроде "расскажи про котельную" вообще не доходят до модели.
         if reply is None and not _rp_eff and _scope_snap.get("scope_type") == "all":
-            from proxy.services.scope_service import needs_project_scope, scope_clarification
+            from proxy.services.scope_service import needs_project_scope
             if needs_project_scope(req.question):
-                try:
-                    from proxy.services.project_service import build_registry
-                    _projs = build_registry().get("projects", [])
-                except Exception:  # noqa: BLE001
-                    _projs = []
-                _clar = scope_clarification(req.question, projects=_projs)
-                reply = {"answer": _clar["answer"], "operation": "scope_clarification"}
-                channel = "scope_clarification"
                 _scope_snap.setdefault("warnings", []).append("scope_all_for_project_query")
     if reply is not None:
         det_route = _profile_route(channel, reply.get("operation"),
@@ -3914,11 +5521,17 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         clar_answer = clarification.answer
         if memory_block:
             clar_answer = f"{clar_answer}\n\n{memory_block}"
+        clar_route = _profile_route(
+            "scope_clarification",
+            "scope_clarification",
+            base={"scope": _scope_snap},
+        )
         return {
             "answer": clar_answer,
-            "crag_status": "NEEDS_CLARIFICATION",
+            "crag_status": "DETERMINISTIC",
             "sources": [],
             "effective_dataset_filter": clarification.classification.dataset_filter,
+            "query_route": clar_route,
             "clarification": clarification.payload(),
             "clarifying_questions": clarification.questions,
             "suggested_filters": clarification.suggested_filters,
@@ -4919,7 +6532,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             use_validation=use_validation,
         )
 
-    if not chunks:
+    if not chunks and target_file_ref and target_file_ref.get("match_status") in {"matched", "ambiguous"}:
         state.crag_stats["no_data"] += 1
         state.chat_metrics["latency_search"].append(t_search)
         state.chat_metrics["latency_gen"].append(0.0)
@@ -4977,6 +6590,57 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             "retrieval_trace": retrieval_trace,
             "cache": cache_marker,
             "history_id": history_id,
+        }
+    if not chunks and effective_dataset_filter:
+        state.crag_stats["no_data"] += 1
+        state.chat_metrics["latency_search"].append(t_search)
+        state.chat_metrics["latency_gen"].append(0.0)
+        state.chat_metrics["crag_fail"] += 1
+        for key in ("latency_search", "latency_gen", "tokens"):
+            state.chat_metrics[key] = state.chat_metrics[key][-100:]
+        retrieval_trace["empty_retrieval"] = {
+            "schema": "empty_scoped_retrieval_no_data_v1",
+            "model_final_allowed": False,
+            "note": "Explicit scoped retrieval returned no chunks and no navigation/memory context.",
+        }
+        no_data_answer = "В выбранных источниках ничего не найдено по этому вопросу."
+        history_id = None
+        try:
+            history_id = save_chat_history(
+                question=req.question,
+                answer=no_data_answer,
+                sources=[],
+                crag_status="NO_DATA",
+                latency_sec=t_search,
+                tokens=0,
+                session_id=req.session_id,
+                requested_dataset_filter=req.dataset_filter,
+                effective_dataset_filter=effective_dataset_filter,
+                resolved_dataset_ids=_dataset_ids,
+                resolved_dataset_names=resolved_dataset_names,
+                query_route=query_route_payload,
+                retrieval_trace=retrieval_trace,
+                cache_type=cache_marker,
+                validation_enabled=use_validation,
+                success=0,
+            )
+        except Exception as db_err:
+            logger.warning("[CHAT] History save error: %s", db_err)
+        return {
+            "answer": no_data_answer,
+            "crag_status": "NO_DATA",
+            "sources": [],
+            "effective_dataset_filter": effective_dataset_filter,
+            "query_route": query_route_payload,
+            "retrieval_trace": retrieval_trace,
+            "cache": cache_marker,
+            "history_id": history_id,
+        }
+    if not chunks:
+        retrieval_trace["empty_retrieval"] = {
+            "schema": "empty_retrieval_model_first_v1",
+            "model_final_allowed": True,
+            "note": "No retrieved chunks; continue to model with memory/navigation instead of code NO_DATA final.",
         }
 
     t_ctx_start = time.time()
@@ -5090,8 +6754,11 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     sys_normal = build_mode_system_prompt(
         "rag",
         extra=(
-            "Отвечай ТОЛЬКО на основе найденных материалов из базы знаний. "
-            "Используй только те фрагменты документов, которые прямо относятся к вопросу. "
+            "Отвечай как инженерная модель: сначала используй найденные материалы из базы знаний, "
+            "рабочую память и навигацию по выбранной области. "
+            "Не превращай неполный поиск или слабый retrieval в кодовый отказ; если данных мало, "
+            "дай лучший предметный разбор по найденному и явно отдели ограничения. "
+            "Для чисел, требований и проектных утверждений не выдумывай источник. "
             "Называй конкретные нормативы, документы и условия из найденных материалов, а не общий фон. "
             "Для важных чисел, требований и перечней указывай краткий источник из заголовка блока. "
             "Когда данные сопоставимы, оформляй их MARKDOWN-ТАБЛИЦЕЙ; прозу оставляй для выводов. "
@@ -5104,10 +6771,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     sys_strict = build_mode_system_prompt(
         "rag",
         extra=(
-            "Строгий повтор: можно формулировать и обобщать найденное своими словами, но нельзя "
-            "добавлять факты вне найденных материалов. У каждого требования/числа указывай источник. "
-            "Если по теме есть хоть что-то, синтезируй полезный ответ; если реально ничего нет, "
-            "скажи прямо. Не используй в видимом ответе слова evidence, dataset, датасет, context, "
+            "Строгий повтор: можно формулировать и обобщать найденное своими словами. "
+            "Числа, требования и проектные факты привязывай к источнику; если источник не найден, "
+            "не изображай это как доказательство отсутствия раздела, а скажи, какой слой надо открыть. "
+            "Если по теме есть хоть что-то, синтезируй полезный ответ. Не используй в видимом ответе слова evidence, dataset, датасет, context, "
             "контекст, RAG, CRAG, notebook, блокнот, retrieval, trace, payload."
         ),
     )
@@ -5134,7 +6801,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 crag_status = "UNKNOWN"
                 tokens = 0
 
-                async def _post_llm(runtime, model, hdrs, body):
+                async def _post_llm(runtime, model, hdrs, body, *, allow_stream: bool = True):
                     """Один вызов LLM. token_sink задан → стрим (токены клиенту по
                     мере генерации), иначе — обычный POST (поведение неизменно).
                     Возвращает (answer_text, usage_dict)."""
@@ -5146,9 +6813,9 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                             client, runtime, body["messages"],
                             max_tokens=int(body.get("max_tokens", 1400)),
                             temperature=float(body.get("temperature", 0.7)),
-                            headers=hdrs, token_sink=token_sink)
+                            headers=hdrs, token_sink=token_sink if allow_stream else None)
                     _body = _cloud_body_for_model(body, model, runtime.provider)
-                    if token_sink is not None:
+                    if token_sink is not None and allow_stream:
                         sbody = {**_body, "model": model, "stream": True}
                         # include_usage нужен только облаку (учёт $); MLX/локальные —
                         # не шлём, чтобы не рисковать 400 на незнакомом поле.
@@ -5210,6 +6877,106 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                             last_err = e
                             logger.warning("[ROUTE] облако: %s не ответила (%s) — следующая модель", m, type(e).__name__)
                     raise last_err
+
+                tool_results_for_model: list[dict[str, Any]] = []
+                tool_context = ""
+                if _env_bool("LES_CHAT_TOOL_LOOP_ENABLED", True):
+                    try:
+                        from proxy.services.tool_harness_service import harness
+
+                        tool_harness = harness()
+                        shortlist = await asyncio.to_thread(
+                            tool_harness.shortlist,
+                            req.question,
+                            mode=str(req.mode or route.intent or ""),
+                            limit=max(1, _env_int("LES_CHAT_TOOL_SHORTLIST_LIMIT", 6)),
+                        )
+                        allowed_tools = {
+                            str(tool.get("name") or "")
+                            for tool in shortlist.get("tools", [])
+                            if isinstance(tool, dict) and tool.get("name")
+                        }
+                        selector_body = {
+                            "messages": [
+                                {
+                                    "role": "system",
+                                    "content": (
+                                        "Ты выбираешь, какие read-only инструменты LES нужны перед ответом. "
+                                        "Инструменты не отвечают за тебя и не заменяют источники. "
+                                        "Верни только JSON вида {\"calls\":[{\"tool\":\"...\",\"args\":{...}}]}. "
+                                        "Если хватает уже найденных материалов, верни {\"calls\":[]}. "
+                                        "Не выбирай инструмент вне списка."
+                                    ),
+                                },
+                                {
+                                    "role": "user",
+                                    "content": json.dumps(
+                                        {
+                                            "question": req.question,
+                                            "mode": req.mode or route.intent or "",
+                                            "dataset_ids": _dataset_ids,
+                                            "target_file": target_file_ref if target_file_ref else {},
+                                            "available_tools": shortlist.get("tools") or [],
+                                        },
+                                        ensure_ascii=False,
+                                        default=str,
+                                    ),
+                                },
+                            ],
+                            "stream": False,
+                            "temperature": 0,
+                            "max_tokens": max(128, _env_int("LES_CHAT_TOOL_SELECTOR_MAX_TOKENS", 700)),
+                        }
+                        selector_headers = {}
+                        if llm_runtime.api_key:
+                            selector_headers["Authorization"] = f"Bearer {llm_runtime.api_key}"
+                        t_tool_selector = time.time()
+                        selector_text, selector_usage = await _post_llm(
+                            llm_runtime,
+                            llm_model,
+                            selector_headers,
+                            selector_body,
+                            allow_stream=False,
+                        )
+                        t_llm += time.time() - t_tool_selector
+                        calls = [
+                            _augment_model_tool_args(
+                                call,
+                                question=req.question,
+                                dataset_ids=[str(d) for d in _dataset_ids],
+                                target_file_ref=target_file_ref,
+                            )
+                            for call in _parse_model_tool_calls(
+                                selector_text,
+                                allowed_tools=allowed_tools,
+                                max_calls=max(1, _env_int("LES_CHAT_TOOL_MAX_CALLS", 3)),
+                            )
+                        ]
+                        for call in calls:
+                            payload = await asyncio.to_thread(tool_harness.call, call["tool"], call.get("args") or {})
+                            tool_results_for_model.append(payload)
+                        tool_context = _format_tool_results_for_model(tool_results_for_model)
+                        retrieval_trace["tool_loop"] = {
+                            "schema": "les_model_tool_loop_v1",
+                            "enabled": True,
+                            "model_owns_selection": True,
+                            "selector_model": llm_model,
+                            "selector_provider": llm_runtime.provider,
+                            "shortlist": shortlist,
+                            "selected_calls": calls,
+                            "selector_usage": selector_usage,
+                            "results": tool_results_for_model,
+                        }
+                    except Exception as tool_err:  # noqa: BLE001 - tool loop must degrade into trace, not block chat
+                        logger.warning("[TOOLS] model tool loop skipped: %s", tool_err)
+                        retrieval_trace["tool_loop"] = {
+                            "schema": "les_model_tool_loop_v1",
+                            "enabled": True,
+                            "status": "error",
+                            "error": f"{type(tool_err).__name__}: {tool_err}",
+                        }
+                else:
+                    retrieval_trace["tool_loop"] = {"schema": "les_model_tool_loop_v1", "enabled": False}
 
                 max_attempts = 2
                 for attempt in range(1, max_attempts + 1):
@@ -5281,6 +7048,12 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                                 "и не объявлять данные отсутствующими преждевременно; факты, числа и выводы "
                                 "подтверждай только найденными документами, таблицами, графом или расчётным кодом."
                             )
+                        if tool_context:
+                            sys_msg += (
+                                " Перед финальным ответом модель выбрала и получила результаты read-only инструментов LES. "
+                                "Используй их как дополнительные материалы/навигацию; не переписывай JSON, не называй "
+                                "инструменты финальным ответом и не скрывай отсутствие найденных данных."
+                            )
                         if project_inventory_prompt:
                             sys_msg += (
                                 " Если вопрос просит перечень файлов, реестр документации или состав датасета, "
@@ -5313,6 +7086,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                             "role": "user",
                             "content": (
                                 f"Материалы из найденных документов:\n{context}\n\n"
+                                + (f"{tool_context}\n\n" if tool_context else "")
                                 + (f"{dataset_memory_prompt}\n\n" if dataset_memory_prompt else "")
                                 + (f"{project_inventory_prompt}\n\n" if project_inventory_prompt else "")
                                 + (f"{notebook_study_prompt}\n\n" if notebook_study_prompt else "")
@@ -5335,7 +7109,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                                 + f"Вопрос: {req.question}\n\n"
                                 "/no_think\n"
                                 "Ответь сразу итоговым ответом без скрытых рассуждений. "
-                                "Не используй знания вне найденных материалов. "
+                                "Не выдумывай проектные факты, числа и источники; если найденных материалов мало, "
+                                "ответь по существу и явно отдели ограничения от выводов. "
                                 "Если ссылаешься на источник, используй только номера из заголовков "
                                 "материалов вида [Источник N | ...]; не придумывай номера источников. "
                                 "Видимый текст должен быть без служебных слов: evidence, dataset, датасет, "
@@ -5441,6 +7216,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                                 validation_context = f"{validation_context}\n\n{memory_block}"
                             if project_inventory_prompt:
                                 validation_context = f"{validation_context}\n\n{project_inventory_prompt}"
+                            if tool_context:
+                                validation_context = f"{validation_context}\n\n{tool_context}"
                             t_val_call = time.time()
                             verdict_source = "coreml"
                             if validate_via_llm:
@@ -5510,6 +7287,16 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     if crag_status in ("VERIFIED", "NO_DATA", "UNVALIDATED"):
                         break
 
+                    if answer and _env_bool("TOSKA_FAIL_OPEN", True):
+                        retrieval_trace["validation_fail_open"] = {
+                            "schema": "chat_validation_fail_open_v1",
+                            "original_status": crag_status,
+                            "final_status": "UNVALIDATED",
+                            "reason": "model_answer_exists",
+                        }
+                        crag_status = "UNVALIDATED"
+                        break
+
                     if attempt < max_attempts:
                         logger.warning("[SAFERAG] attempt=%s HALLUCINATION — retry...", attempt)
 
@@ -5518,9 +7305,9 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                         crag_status,
                         has_context=bool(validation_context.strip() or context.strip()),
                     )
-                answer, crag_status = final_answer_for_status(clean_visible_text(answer), crag_status)
-                if answer == SAFE_FALLBACK:
-                    logger.error("[SAFERAG] Ответ не подтверждён (%s) — блокируем", crag_status)
+                answer, crag_status, final_policy = _chat_model_final_answer(answer, crag_status)
+                if final_policy:
+                    retrieval_trace["final_answer_policy"] = final_policy
 
                 t_gen = time.time() - t_gen_start
 

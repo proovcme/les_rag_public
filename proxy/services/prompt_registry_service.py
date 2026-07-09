@@ -29,7 +29,10 @@ LES_SYSTEM_PROMPT = (
     "экспорт; предметное решение за модель они не выбирают. Если есть активное состояние, короткие "
     "команды применяй к нему, не начинай заново. Факты, числа и выводы должны опираться на "
     "источник, расчётную трассу или явное допущение. Missing не превращай в 0 или фиктивные "
-    "значения. Пиши по-русски ясно, без внутренних служебных терминов и JSON, если JSON не просили."
+    "значения. Для специальных областей читай соответствующий skill: сметы/ЛСР/ГЭСН/ФГИС/КАЦ — "
+    "`skills/smeta/SKILL.md`; RAG/датасеты — профиль RAG и карту корпуса; нормоконтроль — "
+    "normcontrol skill/rulepack. Пиши по-русски ясно, без внутренних служебных терминов и JSON, "
+    "если JSON не просили."
 )
 
 LES_TONE_PROMPT = (
@@ -147,7 +150,12 @@ MODE_PROMPTS: dict[str, str] = {
         "сценарные деньги final. Спецификация не является готовой сметой: сначала собери мост "
         "спецификация -> ВОР. Если исходная ВОР ещё не готова для подбора ГЭСН, сделай мост "
         "ВОР -> нормируемая ВОР -> таблица подбора норм; одна строка исходной ВОР может "
-        "разложиться на несколько норм, если это следует из технологии или состава нормы. Кандидат "
+        "разложиться на несколько норм, если это следует из технологии или состава нормы, а несколько "
+        "строк ВОР могут ссылаться на одну норму, если одна норма покрывает общий состав работ. "
+        "Подбор нормы идёт маршрутом: семейство работ -> группа сборников -> сборник -> раздел/таблица -> "
+        "конкретная норма; проверяемые семейства — ГЭСН, ГЭСНм, ГЭСНп, ГЭСНр, ГЭСНмр. "
+        "Ведомость добора — это ресурсы выбранной нормы или пользовательской ресурсной строки без "
+        "цены/индекса/КАЦ/КП, а не нераспознанные работы. Кандидат "
         "ГЭСН не является финальным РИМ-расчётом до проверки применимости, ресурсов, цен и "
         "подтверждения выбранных строк. Можно предложить Excel-таблицу подбора норм для ручной "
         "правки: пользователь удаляет лишние кандидаты, добавляет свои, а расчёт идёт по "
@@ -162,7 +170,9 @@ MODE_PROMPTS: dict[str, str] = {
         "Если пользователь просит обычную оценку стоимости и не задаёт рыночный метод, при "
         "доступной нормативной базе выбирай РИМ-сценарий как основной ход. "
         "Если исходная ВОР слишком разговорная для прямого подбора норм, сформируй нормируемую ВОР "
-        "и таблицу кандидатов ГЭСН/ГЭСНм; одна строка ВОР может раскладываться на несколько норм. "
+        "и таблицу кандидатов ГЭСН/ГЭСНм/ГЭСНп/ГЭСНр/ГЭСНмр; одна строка ВОР может раскладываться "
+        "на несколько норм, а несколько строк ВОР могут ссылаться на одну норму. "
+        "Маршрут поиска нормы: семейство работ -> группа сборников -> сборник -> раздел/таблица -> конкретная норма. "
         "Код не выбирает работы, нормы и применимость; он считает только после твоего решения. "
         "Если ВОР измерима, попытка стоимости работ обязательна: priced_final, priced_partial, "
         "resources_expanded или scenario_estimate. При запросе рынка и РИМ/ГЭСН нужны две отдельные "
@@ -465,14 +475,43 @@ def _render_smeta_role_pack(pack: dict[str, Any]) -> str:
     """Render only the compact machine contract into the system prompt."""
     output_contract = pack.get("output_contract") if isinstance(pack.get("output_contract"), dict) else {}
     raw_chain_modes = pack.get("chain_modes") if isinstance(pack.get("chain_modes"), dict) else {}
-    chain_modes = {
-        key: {
-            "purpose": value.get("purpose", "")[:80],
-            "hard_rule_keys": list((value.get("hard_rules") or {}).keys())[:4],
+    chain_modes = [key for key, value in raw_chain_modes.items() if isinstance(value, dict)]
+    hard_rule_keys = list((pack.get("hard_rules") or {}).keys())
+    prompt_hard_rules = [
+        key for key in hard_rule_keys
+        if key in {
+            "missing_price_is_not_zero",
+            "scenario_is_not_fact",
+            "quantity_conflict_blocks_priced_final",
+            "long_sums_require_calculator_or_trace",
+            "measurable_bor_requires_cost_attempt",
+            "two_estimates_require_comparison_table",
+            "bor_to_normable_bor_before_norm_selection",
+            "one_bor_line_may_split_to_many_norms",
+            "many_bor_lines_may_map_to_one_norm",
+            "norm_search_must_walk_family_group_collection_section_norm",
+            "norm_families_include_gesn_gesnm_gesnp_gesnr_gesnmr",
+            "candidate_norm_table_before_confirmed_rim",
+            "draft_zero_is_not_price",
+            "rim_requested_requires_rim_based_estimate",
+            "generic_cost_estimate_defaults_to_rim_when_normative_data_available",
+            "rim_scenario_uses_normative_analogs",
+            "wide_market_range_is_not_rim_estimate",
+            "do_not_expose_task_classification",
+            "work_cost_rows_require_norm_or_source",
+            "scenario_rate_must_be_labeled",
+            "generic_norm_family_is_not_enough_source",
+            "code_does_not_select_works",
+            "code_does_not_select_norms",
+            "code_does_not_build_norm_shortlist_as_decision",
+            "code_arithmetic_only_after_visible_model_choice",
+            "model_selects_normative_route",
+            "no_global_stop_cranes_for_incomplete_estimates",
+            "partial_estimate_keeps_calculated_rows",
+            "missing_data_stays_in_lsr_row_as_zero_or_blank",
+            "case_specific_constants_forbidden",
         }
-        for key, value in raw_chain_modes.items()
-        if isinstance(value, dict)
-    }
+    ]
     compact = {
         "id": pack.get("id", "experienced_estimator_v1"),
         "version": pack.get("version"),
@@ -482,10 +521,8 @@ def _render_smeta_role_pack(pack: dict[str, Any]) -> str:
         "price_source_types": pack.get("price_source_types", []),
         "required_answer_capabilities": pack.get("required_answer_capabilities", []),
         "answer_sections": pack.get("answer_sections", []),
-        "quantity_conflict_form_columns": pack.get("quantity_conflict_form_columns", []),
         "comparison_table_columns": pack.get("comparison_table_columns", []),
-        "rim_scenario_table_columns": pack.get("rim_scenario_table_columns", []),
-        "hard_rules": pack.get("hard_rules", {}),
+        "hard_rules": prompt_hard_rules,
         "chain_modes": chain_modes,
         "work_plan_schema": output_contract.get("schema", "smeta_work_plan_v1"),
         "response_format": output_contract.get("response_format", "json_object"),

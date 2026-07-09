@@ -58,6 +58,8 @@ def is_project_summary_query(question: str) -> bool:
 def is_project_inventory_query(question: str) -> bool:
     """Intent: list/register dataset/project files, optionally with a project description."""
     q = _norm(question)
+    if "датасет" in q and any(t in q for t in ("что за", "что это за", "что внутри", "что есть")):
+        return True
     has_inventory = any(t in q for t in (
         "перечен", "реестр", "список", "перечисли", "какие файлы", "файлы в датасете",
         "документы в датасете", "состав документац", "комплект документац",

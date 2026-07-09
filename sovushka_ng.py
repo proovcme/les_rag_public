@@ -26,6 +26,10 @@ static_dir = Path(__file__).resolve().parent / "static"
 if static_dir.exists():
     app.add_static_files("/static", str(static_dir))
 
+qdrant_visualizer_dir = Path(__file__).resolve().parent / "qdrant_visualizer"
+if qdrant_visualizer_dir.exists():
+    app.add_static_files("/qdrant-visualizer", str(qdrant_visualizer_dir))
+
 # Регистрируем /login (отдельная страница, без обвязки main_page)
 register_login_page()
 # W5.4/5.5: HTML-шеллы lite_chat/lite_admin удалены — мост, рантайм-роуты,
@@ -59,15 +63,14 @@ def _start_qdrant_visualizer() -> None:
         with socket.create_connection(("127.0.0.1", QDRANT_VISUALIZER_PORT), timeout=0.2):
             return
 
-    visualizer_dir = Path(__file__).resolve().parent / "qdrant_visualizer"
-    if not visualizer_dir.exists():
+    if not qdrant_visualizer_dir.exists():
         return
 
     class QuietHandler(SimpleHTTPRequestHandler):
         def log_message(self, format, *args):
             return
 
-    handler = partial(QuietHandler, directory=str(visualizer_dir))
+    handler = partial(QuietHandler, directory=str(qdrant_visualizer_dir))
     server = ThreadingHTTPServer(("0.0.0.0", QDRANT_VISUALIZER_PORT), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -75,11 +78,15 @@ def _start_qdrant_visualizer() -> None:
 
 @app.get("/graph")
 async def knowledge_graph_page():
-    """W5.7: граф знаний same-origin — данные ходят через /lite-api без CORS."""
-    graph_file = Path(__file__).resolve().parent / "qdrant_visualizer" / "index.html"
+    """Qdrant visualizer same-origin entrypoint.
+
+    Keep the browser at /qdrant-visualizer/index.html so relative ES modules
+    (visualizer.js, pca.js, data.js) resolve under the mounted static folder.
+    """
+    graph_file = qdrant_visualizer_dir / "index.html"
     if not graph_file.exists():
         return RedirectResponse(f"http://127.0.0.1:{QDRANT_VISUALIZER_PORT}/")
-    return HTMLResponse(graph_file.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
+    return RedirectResponse("/qdrant-visualizer/index.html")
 
 
 _COSMOS_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>Граф ЛЕС</title>

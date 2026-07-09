@@ -35,7 +35,7 @@
 
 Запуск
 ------
-    uv run python -m tools.gesn_import IN.xlsx --out data/gesn_base/gesn2022.parquet
+    uv run python -m tools.gesn_import IN.xlsx --out storage/cache/gesn_fgis/gesn2022_manual_raw.parquet
     uv run python -m tools.gesn_import IN.csv  --layout flat
     uv run python -m tools.gesn_import IN.xlsx --layout blocks --sheet 0
 
@@ -55,6 +55,7 @@ RESOURCE_FIELDS = (
     "norm_code",       # код нормы (ключ), напр. ГЭСН12-01-034-02
     "norm_name",       # наименование нормы
     "norm_unit",       # единица нормы, напр. «100 м2»
+    "work_steps",      # состав работ нормы: JSON/list text, если источник его дал
     "kind",            # labor | machinist | machine | material
     "per_unit",        # расход на единицу нормы
     "resource_code",   # код ресурса (для цены ФГИС ЦС); для labor — пусто
@@ -67,7 +68,7 @@ RESOURCE_FIELDS = (
     "source_guid",     # GUID/ID источника (опц., для аудита)
 )
 
-DEFAULT_OUT = Path("data/gesn_base/gesn2022.parquet")
+DEFAULT_OUT = Path("storage/cache/gesn_fgis/gesn2022_manual_raw.parquet")
 
 # ── нормализация полей ───────────────────────────────────────────────
 

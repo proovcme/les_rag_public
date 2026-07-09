@@ -9,16 +9,19 @@ sources:
     label: "ГЭСН-2022: нормы и ресурсы"
     status_if_missing: blocking
     paths:
-      - data/gesn_base/gesn2022.parquet
+      - data/smeta_base/les_smeta_base.sqlite
+      - data/smeta_base/les_smeta_base_manifest.json
+      - data/gesn_base/gesn2022_unified.parquet
       - config/domain/gesn_seed.yaml
     folders:
+      - data/smeta_base
       - data/gesn_base
-    accepted_files: ["*.parquet", "*.xlsx", "*.csv", "*.json", "*.pdf"]
+    accepted_files: ["*.sqlite", "*.parquet", "*.json", "*.xlsx", "*.csv", "*.pdf"]
     needed_for:
       - "ГЭСН-код → ресурсы"
       - "ЛСР от нормы"
       - "объектная прикидка"
-    operator_action: "Положи официальную базу ГЭСН/ФЕР/ТЕР в папку ГЭСН. Семя нужно только как аварийный минимум."
+    operator_action: "Рабочая машинная база: data/smeta_base/les_smeta_base.sqlite. Source/staging: data/gesn_base/gesn2022_unified.parquet. Обновление: ФГИС/raw → unified parquet → SQLite → SMETA_SERVICE cards."
     process_label: "Проверить ГЭСН"
 
   - id: fgis_price_base
@@ -27,6 +30,7 @@ sources:
     status_if_missing: degraded
     paths:
       - data/price_base/*.parquet
+      - config/domain/pricebook_manifest.json
     folders:
       - data/price_base
     accepted_files: ["*.xlsx", "*.parquet"]
@@ -54,6 +58,111 @@ sources:
       - "сметная онтология"
     operator_action: "Проверяются служебные YAML: НР/СП, стеснённость и сметная онтология."
     process_label: "Проверить правила"
+
+  - id: smeta_service_dataset
+    domain: smeta
+    label: "SMETA_SERVICE: служебный сметный датасет"
+    status_if_missing: degraded
+    paths:
+      - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*.md
+      - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*.json
+      - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*.parquet
+      - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*.xlsx
+      - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*.csv
+      - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*.pdf
+      - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*.docx
+    folders:
+      - RAG_Content/TABLE_SMETA/SMETA_SERVICE
+    accepted_files: ["*.parquet", "*.json", "*.sqlite", "*.xlsx", "*.xlsm", "*.csv", "*.pdf", "*.docx", "*.md", "*.yaml"]
+    needed_for:
+      - "навигационная карта сметных источников"
+      - "Рим/ГЭСН/ФГИС/КАЦ readiness перед сметным ответом"
+      - "подсказка оператору, каких служебных документов не хватает"
+    operator_action: "Положи постоянные сметные источники в SMETA_SERVICE и нажми Play. Проектные ВОР/ЛСР/КП конкретного объекта сюда не складывать."
+    process_label: "Play SMETA_SERVICE"
+    required_documents:
+      - id: norms
+        label: "Нормы и ресурсы"
+        requiredness: blocking
+        preferred_files: ["*.parquet", "*.json", "*.sqlite"]
+        accepted_files: ["*.xlsx", "*.csv", "*.pdf", "*.docx", "*.md"]
+        preferred_paths:
+          - data/smeta_base/les_smeta_base.sqlite
+          - data/gesn_base/gesn2022_unified.parquet
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*norm*.parquet
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*gesn*.json
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*norm*.json
+        raw_paths:
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*gesn*.xlsx
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*fer*.xlsx
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*ter*.xlsx
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*gesn*.pdf
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*norm*.md
+        needed_for:
+          - "поиск норм-кандидатов"
+          - "раскрытие ресурсов"
+          - "проверка применимости нормы"
+      - id: prices
+        label: "Цены, ФГИС ЦС, КП/КАЦ и индексы"
+        requiredness: degraded
+        preferred_files: ["*.parquet", "*.xlsx", "*.csv"]
+        accepted_files: ["*.pdf", "*.docx", "*.md"]
+        preferred_paths:
+          - data/price_base/*.parquet
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*price*.parquet
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*fgis*.xlsx
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*split*.xlsx
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*индекс*.xlsx
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*кац*.xlsx
+        raw_paths:
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*кп*.pdf
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*кац*.pdf
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*минстрой*.pdf
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*иф09*.pdf
+        needed_for:
+          - "ресурсно-индексный расчёт"
+          - "понимание MISSING по ценам"
+          - "КАЦ/КП добор"
+      - id: methodology
+        label: "Методика, НР/СП, коэффициенты, правила РИМ"
+        requiredness: blocking
+        preferred_files: ["*.yaml", "*.json", "*.md"]
+        accepted_files: ["*.pdf", "*.docx"]
+        preferred_paths:
+          - config/domain/nr_sp.yaml
+          - config/domain/stesnennost.yaml
+          - config/domain/smeta_ontology.yaml
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*method*.md
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*rim*.json
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*коэффициент*.yaml
+        raw_paths:
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*421*.pdf
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*рим*.pdf
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*нр*.pdf
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*сп*.pdf
+        needed_for:
+          - "НР/СП"
+          - "коэффициенты"
+          - "правила формы ЛСР РИМ"
+      - id: forms
+        label: "Формы и шаблоны выгрузки"
+        requiredness: degraded
+        preferred_files: ["*.xlsx"]
+        accepted_files: ["*.md", "*.json"]
+        preferred_paths:
+          - config/forms/templates/*.xlsx
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*lsr*.xlsx
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*лср*.xlsx
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*вор*.xlsx
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*кац*.xlsx
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*кс2*.xlsx
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*кс3*.xlsx
+        raw_paths:
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*форма*.md
+          - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*template*.json
+        needed_for:
+          - "ЛСР/ВОР/КАЦ/XLSX оформление"
+          - "контроль формы результата"
 
   - id: normcontrol_spds_rulepack
     domain: normcontrol

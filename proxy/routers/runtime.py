@@ -124,7 +124,7 @@ class RuntimeRouterState:
 
 
 _state: RuntimeRouterState | None = None
-DEFAULT_OPENAI_MODEL = "gpt-4.1"
+DEFAULT_OPENAI_MODEL = "gpt-5.4"
 
 
 def set_runtime_state(state: RuntimeRouterState) -> None:

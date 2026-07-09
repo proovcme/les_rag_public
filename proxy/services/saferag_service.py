@@ -72,7 +72,7 @@ def rank_chunks_for_question(question: str, chunks: list[SourceChunk]) -> list[S
         matches = sum(1 for term in terms if term in haystack)
         title_matches = sum(1 for term in terms if term in chunk.doc_name.casefold())
         score = float(getattr(chunk, "score", 0.0) or 0.0)
-        boosted = score + matches * 0.12 + title_matches * 0.03
+        boosted = float(getattr(chunk, "_rank_pin", 0.0) or 0.0) + score + matches * 0.12 + title_matches * 0.03
         try:
             setattr(chunk, "_rank_score", boosted)
         except Exception:

@@ -91,6 +91,42 @@ def test_extract_xlsx_rows(tmp_path):
     r = de.extract_xlsx_generic(tmp_path / "f.xlsx", ds="ds", rel="f.xlsx")
     assert r.status == "ok" and any("#ВОР!R" in i.source_ref for i in r.items)
 
+
+def test_extract_xlsx_rows_not_capped_by_default(tmp_path, monkeypatch):
+    monkeypatch.delenv("LES_XLSX_EXTRACT_MAX_ROWS", raising=False)
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "ВОР"
+    for idx in range(1, 12):
+        ws.append([f"Строка {idx}", idx])
+    wb.save(tmp_path / "many.xlsx")
+
+    r = de.extract_xlsx_generic(tmp_path / "many.xlsx", ds="ds", rel="many.xlsx")
+
+    assert r.status == "ok"
+    assert len(r.items) == 11
+    assert not r.warnings
+
+
+def test_extract_xlsx_rows_cap_is_explicit(tmp_path, monkeypatch):
+    monkeypatch.setenv("LES_XLSX_EXTRACT_MAX_ROWS", "5")
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "ВОР"
+    for idx in range(1, 12):
+        ws.append([f"Строка {idx}", idx])
+    wb.save(tmp_path / "many.xlsx")
+
+    r = de.extract_xlsx_generic(tmp_path / "many.xlsx", ds="ds", rel="many.xlsx")
+
+    assert r.status == "ok"
+    assert len(r.items) == 5
+    assert "capped at 5" in r.warnings[0]
+
 def test_every_sidecar_item_has_source_ref(tmp_path):
     _docx(tmp_path / "d.docx")
     r = de.extract_docx(tmp_path / "d.docx", ds="ds", rel="d.docx")

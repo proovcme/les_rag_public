@@ -11,6 +11,7 @@ from proxy.services.retrieval_service import (
     retrieve_chat_chunks,
 )
 from proxy.services.lexical_index_service import LexicalIndex
+from proxy.services.saferag_service import rank_chunks_for_question
 
 
 @dataclass
@@ -24,6 +25,7 @@ class Chunk:
     content: str
     doc_name: str
     score: float
+    meta: dict | None = None
 
 
 class FakeBackend:
@@ -91,6 +93,98 @@ class NativeHybridBackend(FakeBackend):
             {"question": question, "dataset_ids": dataset_ids, "top_k": top_k, "doc_filter": doc_filter}
         )
         return [Chunk("native text", "native.docx", 0.99)]
+
+
+class ExactSourceBackend(FakeBackend):
+    async def retrieve(self, question, dataset_ids=None, top_k=5, doc_filter=None):
+        self.calls.append({"question": question, "dataset_ids": dataset_ids, "top_k": top_k})
+        self.doc_filters.append(doc_filter)
+        chunks = [
+            Chunk("old Revit projection", "cad_bim_json_8f98ad7e9242.md", 0.99),
+            Chunk("Import ID: db1941fd7ee6\nObject type: ACAD_TABLE", "cad_bim_json_db1941fd7ee6.md", 0.1),
+        ]
+        chunks.extend(Chunk(f"tail-{idx}", f"tail-{idx}.md", 0.05) for idx in range(max(top_k - 2, 0)))
+        return chunks[:top_k]
+
+
+class CadSourceNameBackend(FakeBackend):
+    async def retrieve(self, question, dataset_ids=None, top_k=5, doc_filter=None):
+        self.calls.append({"question": question, "dataset_ids": dataset_ids, "top_k": top_k})
+        self.doc_filters.append(doc_filter)
+        chunks = [
+            Chunk(
+                "# CAD/BIM JSON projection\nSource formats: DWG, DXF, RVT, IFC",
+                "cad_bim_json_8f98ad7e9242.md",
+                0.99,
+            ),
+            Chunk(
+                "Source path: /RAG/00_Лесной 64_Котельная/04_ГСВ/лесной ГСВ Спецификация.dwg\n"
+                "Object type: DXFModel\nProperties: dxf_read_mode=repaired_group_codes",
+                "cad_bim_json_502617b60ad4.md",
+                0.1,
+            ),
+        ]
+        chunks.extend(Chunk(f"tail-{idx}", f"tail-{idx}.md", 0.05) for idx in range(max(top_k - 2, 0)))
+        return chunks[:top_k]
+
+
+class CadAtmSourceNameBackend(FakeBackend):
+    async def retrieve(self, question, dataset_ids=None, top_k=5, doc_filter=None):
+        self.calls.append({"question": question, "dataset_ids": dataset_ids, "top_k": top_k})
+        self.doc_filters.append(doc_filter)
+        chunks = [
+            Chunk(
+                "# CAD/BIM JSON projection\nSource formats: DWG, DXF, RVT, IFC",
+                "cad_bim_json_8f98ad7e9242.md",
+                0.99,
+            ),
+            Chunk(
+                "Source path: /RAG/00_Лесной 64_Котельная/АТМ/3.Лесной_64-АТМ-Р-Планы.dwg\n"
+                "Import ID: e9c1e1822523",
+                "cad_bim_json_e9c1e1822523.md",
+                0.1,
+            ),
+        ]
+        chunks.extend(Chunk(f"tail-{idx}", f"tail-{idx}.md", 0.05) for idx in range(max(top_k - 2, 0)))
+        return chunks[:top_k]
+
+
+class FirstOrdinalBackend(FakeBackend):
+    async def retrieve(self, question, dataset_ids=None, top_k=5, doc_filter=None):
+        self.calls.append({"question": question, "dataset_ids": dataset_ids, "top_k": top_k})
+        self.doc_filters.append(doc_filter)
+        return [
+            SimpleNamespace(
+                content=(
+                    "### CAD drawn table drawn_table_3 first positions / первые три позиции\n"
+                    "- position 6 / позиция 6 | name: later"
+                ),
+                doc_name="cad_bim_json_db1ce53f08be.md",
+                score=0.99,
+                metadata={
+                    "chunk_ord": 3,
+                    "section_heading": "CAD drawn table drawn_table_3 first positions / первые три позиции",
+                },
+            ),
+            SimpleNamespace(
+                content=(
+                    "### CAD drawn table drawn_table_1 first positions / первые три позиции\n"
+                    "- position 1 / позиция 1 | name: first"
+                ),
+                doc_name="cad_bim_json_db1ce53f08be.md",
+                score=0.4,
+                metadata={
+                    "chunk_ord": 30,
+                    "section_heading": "CAD drawn table drawn_table_1 first positions / первые три позиции",
+                },
+            ),
+            SimpleNamespace(
+                content="## Element noise",
+                doc_name="cad_bim_json_db1ce53f08be.md",
+                score=0.3,
+                metadata={"chunk_ord": 100, "section_heading": "Element noise"},
+            ),
+        ][:top_k]
 
 
 @pytest.mark.asyncio
@@ -356,6 +450,97 @@ async def test_retrieve_chat_chunks_keeps_hybrid_order_on_reranker_error():
 
     # W2.3: сбой реранкера → исходный гибридный порядок без усечения.
     assert [chunk.content for chunk in chunks] == [f"text-{i}" for i in range(8)]
+
+
+@pytest.mark.asyncio
+async def test_retrieve_chat_chunks_promotes_exact_source_after_rerank(monkeypatch):
+    monkeypatch.setenv("RAG_HYBRID_RETRIEVAL_ENABLED", "false")
+    backend = ExactSourceBackend()
+
+    result = await retrieve_chat_chunks(
+        question="cad_bim_json_db1941fd7ee6.md",
+        dataset_ids=["ds-1"],
+        rag_backend=backend,
+        reranker_enabled=True,
+        reranker_available=True,
+        reranker_cls=FakeReranker,
+        mlx_url="http://mlx",
+        logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+        return_trace=True,
+    )
+
+    assert result.chunks[0].doc_name == "cad_bim_json_db1941fd7ee6.md"
+    assert "source_exact" in result.trace.mode
+    assert "source:cad_bim_json_db1941fd7ee6.md" in result.trace.exact_refs
+
+
+@pytest.mark.asyncio
+async def test_retrieve_chat_chunks_promotes_cad_source_name_after_rerank(monkeypatch):
+    monkeypatch.setenv("RAG_HYBRID_RETRIEVAL_ENABLED", "false")
+    backend = CadSourceNameBackend()
+
+    result = await retrieve_chat_chunks(
+        question="лесной ГСВ Спецификация CAD BIM",
+        dataset_ids=["ds-1"],
+        rag_backend=backend,
+        reranker_enabled=True,
+        reranker_available=True,
+        reranker_cls=FakeReranker,
+        mlx_url="http://mlx",
+        logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+        return_trace=True,
+    )
+
+    assert result.chunks[0].doc_name == "cad_bim_json_502617b60ad4.md"
+    assert "source_name_boost" in result.trace.mode
+
+
+@pytest.mark.asyncio
+async def test_retrieve_chat_chunks_promotes_cad_source_name_with_compact_path(monkeypatch):
+    monkeypatch.setenv("RAG_HYBRID_RETRIEVAL_ENABLED", "false")
+    backend = CadAtmSourceNameBackend()
+
+    result = await retrieve_chat_chunks(
+        question="АТМ планы Лесной64 CAD BIM 3.Лесной64-АТМ-Р-Планы",
+        dataset_ids=["ds-1"],
+        rag_backend=backend,
+        reranker_enabled=True,
+        reranker_available=True,
+        reranker_cls=FakeReranker,
+        mlx_url="http://mlx",
+        logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+        return_trace=True,
+    )
+
+    assert result.chunks[0].doc_name == "cad_bim_json_e9c1e1822523.md"
+    assert "source_name_boost" in result.trace.mode
+
+
+@pytest.mark.asyncio
+async def test_retrieve_chat_chunks_promotes_earliest_first_positions_with_doc_filter(monkeypatch):
+    monkeypatch.setenv("RAG_HYBRID_RETRIEVAL_ENABLED", "false")
+    backend = FirstOrdinalBackend()
+
+    result = await retrieve_chat_chunks(
+        question="назови первые три позиции спецификации",
+        dataset_ids=["ds-1"],
+        rag_backend=backend,
+        reranker_enabled=False,
+        reranker_available=False,
+        reranker_cls=None,
+        mlx_url="http://mlx",
+        logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+        return_trace=True,
+        doc_filter=["cad_bim_json_db1ce53f08be.md"],
+    )
+
+    assert "drawn_table_1 first positions" in result.chunks[0].content
+    reranked = rank_chunks_for_question(
+        "первые три позиции из таблицы спецификации ГСВ",
+        list(result.chunks),
+    )
+    assert "drawn_table_1 first positions" in reranked[0].content
+    assert "first_ordinal_guard" in result.trace.mode
 
 
 @pytest.mark.asyncio

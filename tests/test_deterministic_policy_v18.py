@@ -35,7 +35,13 @@ def test_policy_explicit_term_with_context_not_blocked_by_scope():
 def test_policy_command_channels_pass_through():
     assert P("tasks", "создай задачу проверить АОСР")[0] is True
     assert P("preset", "переключись на облако")[0] is True
-    assert P("smeta", "цена 91.05.01-017")[0] is True
+
+
+def test_professional_domain_channels_do_not_return_code_final():
+    for channel in ("smeta", "asbuilt", "doc_registry", "field"):
+        ok, why = P(channel, "цена 91.05.01-017", candidate={"operation": "price"})
+        assert ok is False
+        assert why == "professional_domain_requires_model_final"
 
 def test_policy_classifiers():
     assert pol.is_source_scoped_query("найди х в спецификации")

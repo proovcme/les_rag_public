@@ -147,13 +147,15 @@ curl -X POST http://127.0.0.1:8050/api/chat \
 
 | Метод | Путь | Назначение |
 |---|---|---|
-| `GET` | `/api/service-sources` | Реестр файлов/датасетов, нужных ЛЕСу для смет и нормоконтроля |
-| `GET` | `/api/service-sources/{source_id}` | Один служебный источник: status, файлы, факты, missing-action |
-| `POST` | `/api/service-sources/{source_id}/process` | Безопасная операторская проверка источника: найдено/не найдено, что положить в папку |
+| `GET` | `/api/service-sources` | Реестр файлов/датасетов, нужных ЛЕСу для смет и нормоконтроля; для сложных источников отдаёт `required_documents` manifest |
+| `GET` | `/api/service-sources/{source_id}` | Один служебный источник: status, файлы, факты, missing-action, manifest требуемых документов |
+| `POST` | `/api/service-sources/{source_id}/process` | Безопасная операторская Play-проверка источника: найдено/не найдено, какие классы документов ready/partial/missing/blocked |
 
 Реестр задаётся в `config/service_sources.yaml`: ГЭСН, ФГИС ЦС, сметные коэффициенты/шаблоны,
-СПДС rulepack, нормативный RAG и layout-reference. В GUI это блок **Инструменты → Служебные источники данных**
-и кнопка **Служебные источники** в чате.
+`SMETA_SERVICE`, СПДС rulepack, нормативный RAG и layout-reference. В GUI это блок
+**Инструменты → Служебные источники данных** и кнопка **Служебные источники** в чате. Для
+`SMETA_SERVICE` Play проверяет классы: нормы/ресурсы, цены/ФГИС/КАЦ/индексы, методика/НР/СП/РИМ
+и формы/шаблоны.
 
 ## CAD/BIM
 
@@ -212,8 +214,11 @@ curl -X POST http://127.0.0.1:8050/api/chat \
 | Метод | Путь | Назначение |
 |---|---|---|
 | `GET` | `/api/external-radar/summary?limit=15` | Обзор внешних корней, filemap-кандидатов и уже in-place документов без reindex/OCR/LLM |
+| `GET` | `/api/rag/cloud-drives` | Статус web-провайдеров Google Drive / Яндекс Диск и найденные локальные sync-папки |
+| `POST` | `/api/rag/cloud-drives/list` | Посмотреть содержимое облачной папки по Google folder id/link или `disk:/...` пути Яндекс Диска |
+| `POST` | `/api/rag/cloud-drives/sync` | Синхронизировать облачную папку в mirror-кэш и зарегистрировать её как датасет через `index-external` |
 
-Радар объединяет `LES_EXTERNAL_SOURCE_ROOTS`, `file_map.db` и MetaDB `documents.source_path`.
+Радар объединяет `LES_EXTERNAL_SOURCE_ROOTS`, web/sync cloud roots, `file_map.db` и MetaDB `documents.source_path`.
 Он делает только shallow-статистику корней; глубокий обход диска остаётся явным действием
 `POST /api/filemap/scan`.
 

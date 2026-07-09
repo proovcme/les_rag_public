@@ -21,7 +21,7 @@ _DOC_PURPOSE = {
     "aosr": "освидетельствование скрытых работ перед закрытием (исполнительная документация)",
 }
 
-# Реестр команд. kind: form | rewrite | stub | help.
+# Реестр команд. kind: form | rewrite | info | help.
 COMMANDS: tuple[dict[str, Any], ...] = (
     {"cmd": "/спецификация", "aliases": ("/спека", "/spec"), "kind": "form", "form": "spec_gost21110",
      "title": "Спецификация (ГОСТ 21.110)", "desc": "Бланк спецификации оборудования/материалов"},
@@ -35,7 +35,7 @@ COMMANDS: tuple[dict[str, Any], ...] = (
      "title": "Сводка проекта", "desc": "Стадия, ТЭП, состав документов"},
     {"cmd": "/сверка", "aliases": ("/сверь",), "kind": "rewrite", "rewrite": "сверь ведомости и акты, где расхождения",
      "title": "Сверка документов", "desc": "ВОР ↔ КС-2 ↔ смета ↔ ИД по количествам"},
-    {"cmd": "/мсп", "aliases": ("/mcp", "/mcp-server", "/мсп-сервер"), "kind": "stub",
+    {"cmd": "/мсп", "aliases": ("/mcp", "/mcp-server", "/мсп-сервер"), "kind": "info",
      "title": "MCP-сервер ЛЕС", "desc": "Инструменты ЛЕС наружу по Model Context Protocol (готов)"},
     {"cmd": "/исполнительная", "aliases": ("/ид", "/объём-ид", "/asbuilt"), "kind": "asbuilt",
      "title": "Смонтированный объём из ИД", "desc": "Приёмка объёмов из сканов исполнительных схем/чек-листов"},
@@ -117,7 +117,7 @@ def handle_command(question: str, *, project_id: int | None = None) -> dict[str,
         return {"rewrite": text.lstrip("/")}
     if kind == "help":
         return {"answer": _help_text(), "command": {"action": "help", "commands": list_commands()}}
-    if kind == "stub":
+    if kind == "info":
         return {
             "answer": ("✅ MCP-сервер ЛЕС готов — инструменты доступны внешним агентам по Model "
                        "Context Protocol (Claude Code/Desktop, IDE):\n"

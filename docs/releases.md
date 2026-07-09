@@ -7,6 +7,7 @@
 
 | версия | commit | что |
 |---|---|---|
+| **v0.24.0.231** | HEAD | SMETA_SERVICE Play manifest: service-source registry now exposes required smeta service documents and formats by class (norms, prices, methodology, forms), recursively checks `SMETA_SERVICE` globs, returns ready/partial/missing status in `/api/service-sources*`, and shows the document matrix in Sovushka Instruments without mutating the knowledge base. |
 | **v0.24.0.116** | HEAD | RAG prompt engineering pass: RAG mode now speaks as an experienced construction engineer/designer, treats dataset memory and inventories as navigation, answers broad project questions with object/composition/technical-solutions/conflicts, stays strict on target-file questions, and hides machine payload wording from visible answers. |
 | **v0.24.0.115** | HEAD | Smeta direct prompt engineering pass: visible direct Smeta now uses a separate experienced-estimator prompt with role, work loop, spec→VOR→estimate path, source/price discipline and stable answer shape. The user prompt is plain Russian instead of machine JSON, and direct temperature defaults lower for repeatability. |
 | **v0.24.0.114** | HEAD | Smeta model-primary failure guard: when direct estimator-model answering is enabled and the model returns no visible answer, the old code harness no longer writes a replacement estimate by default. Operators see a model-failure message instead; emergency code fallback requires `LES_SMETA_CODE_FALLBACK_AFTER_MODEL_FAIL=1`. |

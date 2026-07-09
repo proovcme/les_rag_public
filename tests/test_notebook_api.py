@@ -79,6 +79,31 @@ async def test_dataset_guidance_endpoint(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_dataset_kind_endpoint(monkeypatch):
+    calls = []
+
+    def fake_set(dataset_id, kind, **kwargs):
+        calls.append((dataset_id, kind, kwargs))
+        return {
+            "dataset_id": dataset_id,
+            "dataset_kind": "project",
+            "dataset_kind_label": "Проект",
+        }
+
+    monkeypatch.setattr(datasets, "set_dataset_kind", fake_set)
+
+    result = await datasets.update_dataset_kind(
+        "ds-1",
+        datasets.DatasetKindRequest(kind="проект"),
+        _admin=object(),
+    )
+
+    assert result["dataset_kind"] == "project"
+    assert calls[0][0] == "ds-1"
+    assert calls[0][1] == "проект"
+
+
+@pytest.mark.asyncio
 async def test_dataset_memory_reader_endpoint(monkeypatch):
     async def fake_reader(dataset_id, **_kw):
         return {

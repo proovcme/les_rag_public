@@ -1,11 +1,11 @@
 """ГЭСН-2022 из API cs.smetnoedelo.ru: код → состав нормы (расход) → кеш в базу. 0 LLM.
 
-API v2.0: GET api.smetnoedelo.ru/cs/?token=&base=gesn2&code= → JSON {CODE, NAME, COMPOSITION.RESOURCES
+API v2.0: GET api.smetnoedelo.ru/cs/?token=&base=gesn2&code= → JSON {CODE, NAME, COMPOSITION.JOBS/RESOURCES
 [{CODE,NAME,QUAN,UNIT}], REQUESTS{USED,BALANCE}}. Сверено на эталоне (12-01-034-02): расход совпал
 с семенем (труд 12.94, краны 0.97/0.01, гвозди 0.0015, бруски 0.4).
 
-КВОТА мала (≈100 запросов) → НЕ bulk-краул, а **on-demand + кеш**: код встретился — дёрнули раз,
-закешировали в `data/gesn_base/gesn2022.parquet` (схема gesn_import) → дальше gesn_service берёт оттуда.
+КВОТА мала (≈100 запросов) → НЕ bulk-краул, а **on-demand + кеш**. Кеш больше не является боевой
+базой: он пишется в `storage/cache/gesn_fgis/`, а расчётный источник для LES — только unified parquet.
 
 Токен — СЕКРЕТ: env `LES_SMETNOE_TOKEN` (в гит/код не кладём). Сеть прямая (API не за гео-блоком);
 опц. через VPS: env `LES_SMETNOE_VIA_SSH=root@host` (для не-РФ egress).
@@ -27,8 +27,8 @@ from typing import Any, Optional
 
 API_URL = "https://api.smetnoedelo.ru/cs/"
 DEFAULT_BASE = "gesn2"   # ГЭСН-2022 строительные
-CACHE_PARQUET = Path("data/gesn_base/gesn2022.parquet")
-RESOURCE_FIELDS = ["norm_code", "norm_name", "norm_unit", "kind", "per_unit",
+CACHE_PARQUET = Path("storage/cache/gesn_fgis/gesn2022_smetnoedelo_raw.parquet")
+RESOURCE_FIELDS = ["norm_code", "norm_name", "norm_unit", "work_steps", "kind", "per_unit",
                    "resource_code", "resource_name", "resource_unit", "price"]
 
 
@@ -68,8 +68,14 @@ def map_norm(payload: dict) -> dict[str, Any]:
 
     code = re.sub(r"^ГЭСН\w*\s*", "", str(payload.get("CODE") or "").strip(), flags=re.I).strip()
     name = html.unescape(payload.get("NAME") or payload.get("BASE_NAME") or "")   # &mdash; → —
+    comp = payload.get("COMPOSITION") or {}
+    work_steps = [
+        html.unescape(str(item or "").strip())
+        for item in (comp.get("JOBS") or comp.get("jobs") or [])
+        if str(item or "").strip()
+    ]
     resources: list[dict[str, Any]] = []
-    for r in (payload.get("COMPOSITION") or {}).get("RESOURCES", []) or []:
+    for r in (comp.get("RESOURCES") or comp.get("resources") or []):
         resources.append({
             "kind": _kind(r),
             "name": r.get("NAME", ""),
@@ -77,7 +83,7 @@ def map_norm(payload: dict) -> dict[str, Any]:
             "per_unit": _f(r.get("QUAN")),
             "code": (r.get("CODE") or None),
         })
-    return {"code": code, "name": name, "unit": _unit_from_name(name), "resources": resources}
+    return {"code": code, "name": name, "unit": _unit_from_name(name), "work_steps": work_steps, "resources": resources}
 
 
 def fetch_raw(*, code: str | None = None, section: str | None = None, base: str = DEFAULT_BASE) -> dict:
@@ -115,6 +121,7 @@ def cache_norms(norms: list[dict], *, parquet_path: str | Path = CACHE_PARQUET) 
         for r in n.get("resources", []) or []:
             rows.append({
                 "norm_code": n["code"], "norm_name": n.get("name", ""), "norm_unit": n.get("unit", ""),
+                "work_steps": json.dumps(n.get("work_steps") or [], ensure_ascii=False),
                 "kind": r.get("kind"), "per_unit": r.get("per_unit"), "resource_code": r.get("code"),
                 "resource_name": r.get("name", ""), "resource_unit": r.get("unit", ""), "price": r.get("price"),
             })

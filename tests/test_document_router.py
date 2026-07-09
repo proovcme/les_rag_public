@@ -61,6 +61,68 @@ def test_route_pdf_with_table_signals_to_markdown_pdf_tables():
     assert route.pipeline == "markdown_pdf_tables"
 
 
+def test_project_pdf_with_weak_smeta_word_is_not_table_smeta():
+    probe = DocumentProbe(
+        path=Path("27_05-22-Р-ЭОМ.1_19.06.2025.pdf"),
+        suffix=".pdf",
+        size_bytes=27_000_000,
+        page_count=83,
+        text_sample=(
+            "Центр обработки данных. Система бесперебойного гарантированного "
+            "электроснабжения. В пояснениях встречается смета затрат."
+        ),
+        has_text_layer=True,
+        has_tables=True,
+        table_count_hint=3,
+    )
+
+    route = classify_document(probe)
+
+    assert route.doc_type == "DOCUMENT"
+    assert route.domain == "NTD_ELECTRICAL"
+    assert route.dataset_name == "NTD_ELECTRICAL_Index"
+    assert route.pipeline == "markdown_pdf_tables"
+
+
+def test_project_pdf_with_normative_references_stays_project_document():
+    probe = DocumentProbe(
+        path=Path("27_05-22-Р-ЭОМ.1 Изм.8.3 полный.pdf"),
+        suffix=".pdf",
+        size_bytes=33_000_000,
+        page_count=117,
+        text_sample=(
+            "Заказчик: ООО «Научный центр «Большая цифра». Центр обработки данных. "
+            "РАБОЧАЯ ДОКУМЕНТАЦИЯ. Система бесперебойного гарантированного "
+            "электропитания. Технические решения соответствуют сводам правил, "
+            "ГОСТ и СП, действующим на территории Российской Федерации."
+        ),
+        has_text_layer=True,
+        has_tables=True,
+    )
+
+    route = classify_document(probe)
+
+    assert route.doc_type == "DOCUMENT"
+    assert route.domain == "NTD_ELECTRICAL"
+
+
+def test_pdf_named_smeta_still_routes_to_table_smeta():
+    probe = DocumentProbe(
+        path=Path("Локальная смета ЭОМ.pdf"),
+        suffix=".pdf",
+        size_bytes=2_000_000,
+        page_count=12,
+        text_sample="Наименование работ Ед.изм. Количество Стоимость",
+        has_text_layer=True,
+        has_tables=True,
+    )
+
+    route = classify_document(probe)
+
+    assert route.doc_type == "SMETA"
+    assert route.domain == "TABLE_SMETA"
+
+
 def test_route_scan_pdf_to_needs_ocr():
     probe = DocumentProbe(
         path=Path("scan.pdf"),

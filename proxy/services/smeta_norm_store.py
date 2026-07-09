@@ -9,14 +9,18 @@ base type, collection, unit, resources and model-readable norm cards.
 from __future__ import annotations
 
 import re
+import json
+import os
 import sqlite3
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from threading import RLock
 from typing import Any, Iterable
 
 
 _BARE_CODE_RE = re.compile(r"(?<!\d)(\d{2}-\d{2}-\d{3}-\d{2})")
+_MARKDOWN_HEADING_RE = re.compile(r"^##\s+(.+?)\s*$")
 
 _COLLECTION_FAMILY_HINTS: dict[str, tuple[str, ...]] = {
     "01": ("earthworks",),
@@ -74,10 +78,14 @@ _ELEMENT_TITLE_HINTS: dict[str, tuple[str, ...]] = {
 _ACTION_TITLE_HINTS: dict[str, tuple[str, ...]] = {
     "разработка": ("разработ", "выемк"),
     "монтаж": ("монтаж", "установ", "сборк"),
+    "демонтаж": ("демонтаж", "демонт", "разборк", "сняти"),
     "устройство": ("устройств", "покрыт", "укладк"),
     "бетонирование": ("бетонирован", "бетон"),
     "изоляция": ("изоляц", "гидроизол"),
     "окраска": ("окрас", "окраш"),
+    "грунтование": ("грунт", "огрунтов"),
+    "шпатлевка": ("шпатлев", "шпаклев"),
+    "оклейка": ("оклейк", "обоями", "стеклохолст"),
 }
 
 _NEGATIVE_TITLE_HINTS = (
@@ -263,6 +271,108 @@ def _csv_list(csv_text: Any) -> list[str]:
     return [x for x in str(csv_text or "").split(",") if x]
 
 
+def _work_steps_list(value: Any) -> list[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value or "").strip()
+    if not text:
+        return []
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        parsed = None
+    if isinstance(parsed, list):
+        return [str(item).strip() for item in parsed if str(item).strip()]
+    return [line.strip(" -\t") for line in text.splitlines() if line.strip(" -\t")]
+
+
+def _base_type_from_smetnoedelo_base(base: str) -> str:
+    low = str(base or "").casefold()
+    if low.startswith("gesnmr"):
+        return "ГЭСНмр"
+    if low.startswith("gesnm"):
+        return "ГЭСНм"
+    if low.startswith("gesnp"):
+        return "ГЭСНп"
+    if low.startswith("gesnr"):
+        return "ГЭСНр"
+    if low.startswith("fermr"):
+        return "ФЕРмр"
+    if low.startswith("ferm"):
+        return "ФЕРм"
+    if low.startswith("ferp"):
+        return "ФЕРп"
+    if low.startswith("ferr"):
+        return "ФЕРр"
+    if low.startswith("fer"):
+        return "ФЕР"
+    if low.startswith("ter"):
+        return "ТЕР"
+    return "ГЭСН"
+
+
+def _composition_steps_from_markdown(text: str) -> list[str]:
+    lines = str(text or "").splitlines()
+    steps: list[str] = []
+    in_section = False
+    for line in lines:
+        heading = _MARKDOWN_HEADING_RE.match(line.strip())
+        if heading:
+            title = heading.group(1).strip().casefold()
+            if in_section and title != "состав работ":
+                break
+            in_section = title == "состав работ"
+            continue
+        if not in_section:
+            continue
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith(("-", "*")):
+            item = stripped[1:].strip()
+            if item:
+                steps.append(item)
+    return steps
+
+
+def _composition_card_roots() -> list[Path]:
+    raw = os.getenv("LES_SMETA_COMPOSITION_CARD_ROOTS", "").strip()
+    if raw:
+        return [Path(part).expanduser() for part in raw.split(os.pathsep) if part.strip()]
+    return [Path("RAG_Content/TABLE_SMETA/SMETA_SERVICE/smetnoedelo_api")]
+
+
+@lru_cache(maxsize=2)
+def _composition_steps_from_cards() -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for root in _composition_card_roots():
+        if not root.exists():
+            continue
+        for path in root.glob("**/codes/*.md"):
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            steps = _composition_steps_from_markdown(text)
+            if not steps:
+                continue
+            code = _bare_code(text) or _bare_code(path.stem.replace("_", "-"))
+            if not code:
+                continue
+            base = "gesn2"
+            if "codes" in path.parts:
+                idx = path.parts.index("codes")
+                if idx > 0:
+                    base = path.parts[idx - 1]
+            base_type = _base_type_from_smetnoedelo_base(base)
+            out.setdefault(code, steps)
+            out[f"{base_type}:{code}"] = steps
+            out[f"{base_type}{code}"] = steps
+    return out
+
+
 def _labels(values: Iterable[str], labels: dict[str, str]) -> list[str]:
     return [labels.get(v, v) for v in values if v]
 
@@ -329,6 +439,8 @@ def _candidate_score(row: "SmetaNormRow", terms: list[str]) -> tuple[int, str]:
     negative_hits = len([h for h in _csv_list(row.negative_hints) if h and h in title])
     if negative_hits:
         score -= negative_hits * 2
+    if row.source_kind == "legacy_untyped_parquet":
+        score -= 30
     return (score, row.code)
 
 
@@ -351,6 +463,7 @@ class SmetaNormRow:
     action_hints: str
     negative_hints: str
     condition_hints: str
+    work_steps: str
     token_text: str
 
     def profile(self) -> dict[str, Any]:
@@ -360,6 +473,7 @@ class SmetaNormRow:
         action_hints = _csv_list(self.action_hints)
         negative_hints = _csv_list(self.negative_hints)
         condition_hints = _csv_list(self.condition_hints)
+        work_steps = _work_steps_list(self.work_steps)
         return {
             "base_type": self.base_type,
             "collection_key": self.collection_key,
@@ -373,9 +487,14 @@ class SmetaNormRow:
             "action_hints": action_hints,
             "negative_hints": negative_hints,
             "condition_hints": condition_hints,
+            "work_steps": work_steps,
             "model_card": {
                 "title": self.title,
                 "measure": f"измеритель нормы: {self.measure_unit}; базовая единица: {self.base_unit or '—'}",
+                "work_composition": {
+                    "steps": work_steps[:12],
+                    "source": self.provenance if work_steps else "",
+                },
                 "domain": {
                     "families": _labels(family_hints, _FAMILY_LABELS),
                     "elements": _labels(element_hints, _ELEMENT_LABELS),
@@ -457,6 +576,7 @@ class SmetaNormStore:
                 action_hints TEXT NOT NULL,
                 negative_hints TEXT NOT NULL,
                 condition_hints TEXT NOT NULL,
+                work_steps TEXT NOT NULL,
                 token_text TEXT NOT NULL
             )
             """
@@ -467,9 +587,9 @@ class SmetaNormStore:
             (
                 code, title, measure_unit, base_unit, base_type, collection, collection_key, subsection,
                 source_kind, provenance, resource_count, resource_kinds, family_hints, element_hints,
-                action_hints, negative_hints, condition_hints, token_text
+                action_hints, negative_hints, condition_hints, work_steps, token_text
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -490,6 +610,7 @@ class SmetaNormStore:
                     r.action_hints,
                     r.negative_hints,
                     r.condition_hints,
+                    r.work_steps,
                     r.token_text,
                 )
                 for r in self.rows
@@ -614,6 +735,36 @@ class SmetaNormStore:
                 seen.add(candidate.code)
             if len(peers) >= limit:
                 break
+        if len(peers) >= limit:
+            return peers[:limit]
+        broad_where = ["code <> ?", "base_type = ?"]
+        broad_params: list[Any] = [row.code, row.base_type]
+        if element_hint:
+            broad_where.append("(',' || element_hints || ',') LIKE ?")
+            broad_params.append(f"%,{element_hint},%")
+        elif family_hint:
+            broad_where.append("(',' || family_hints || ',') LIKE ?")
+            broad_params.append(f"%,{family_hint},%")
+        with self._lock:
+            broad = self.conn.execute(
+                f"""
+                SELECT * FROM norms
+                WHERE {' AND '.join(broad_where)}
+                ORDER BY
+                  CASE WHEN measure_unit = ? THEN 0 ELSE 1 END,
+                  collection_key,
+                  subsection,
+                  code
+                LIMIT ?
+                """,
+                (*broad_params, row.measure_unit, max(1, int(limit) * 4)),
+            ).fetchall()
+        for candidate in (_row_from_sql(r) for r in broad):
+            if candidate.code not in seen:
+                peers.append(candidate)
+                seen.add(candidate.code)
+            if len(peers) >= limit:
+                break
         return peers[:limit]
 
     def navigation_for(self, row: SmetaNormRow, *, family_hint: str = "", element_hint: str = "",
@@ -652,7 +803,7 @@ class SmetaNormStore:
             "profile_fields": [
                 "resource_kinds", "family_hints", "element_hints", "action_hints",
                 "condition_hints", "provenance", "model_card", "navigation",
-                "applicability", "price_inputs", "decision_order",
+                "applicability", "price_inputs", "decision_order", "work_composition",
             ],
         }
 
@@ -676,6 +827,7 @@ def _row_from_sql(row: sqlite3.Row) -> SmetaNormRow:
         action_hints=str(row["action_hints"]),
         negative_hints=str(row["negative_hints"]),
         condition_hints=str(row["condition_hints"]),
+        work_steps=str(row["work_steps"]),
         token_text=str(row["token_text"]),
     )
 
@@ -722,7 +874,11 @@ def _build_rows() -> list[SmetaNormRow]:
 
     base_norms = dict(load_base_norms() or {})
     seed_norms = dict(load_norms() or {})
-    norm_sources: dict[str, str] = {key: "base_parquet" for key in base_norms}
+    composition_cards = _composition_steps_from_cards()
+    norm_sources: dict[str, str] = {
+        key: str(norm.get("_source_kind") or "base_parquet")
+        for key, norm in base_norms.items()
+    }
     norms = dict(base_norms)
     for key, norm in seed_norms.items():
         norms[key] = norm
@@ -732,6 +888,7 @@ def _build_rows() -> list[SmetaNormRow]:
         code = str(key or norm.get("code") or "").strip()
         title = str(norm.get("name") or "").strip()
         unit = str(norm.get("unit") or "").strip()
+        source_kind = norm_sources.get(key, "unknown")
         _factor, base_unit = _norm_unit_factor(unit)
         base_type = _base_type_from_code(code or norm.get("code"), norm)
         bare = _bare_code(code or norm.get("code"))
@@ -740,7 +897,18 @@ def _build_rows() -> list[SmetaNormRow]:
         family_hints, element_hints, action_hints, negative_hints = _infer_hints(title, collection_key)
         condition_hints = _infer_condition_hints(title)
         resource_count, resource_kinds, resource_text = _resource_projection(norm)
-        source_kind = norm_sources.get(key, "unknown")
+        if not title or resource_count <= 0:
+            continue
+        work_steps = _work_steps_list(norm.get("work_steps"))
+        if not work_steps:
+            work_steps = (
+                composition_cards.get(code)
+                or composition_cards.get(str(norm.get("code") or ""))
+                or composition_cards.get(f"{base_type}:{bare}")
+                or composition_cards.get(f"{base_type}{bare}")
+                or composition_cards.get(bare)
+                or []
+            )
         provenance = "config/domain/gesn_seed.yaml" if source_kind == "seed_yaml" else "data/gesn_base/*.parquet"
         rows.append(
             SmetaNormRow(
@@ -761,9 +929,10 @@ def _build_rows() -> list[SmetaNormRow]:
                 action_hints=action_hints,
                 negative_hints=negative_hints,
                 condition_hints=condition_hints,
+                work_steps=json.dumps(work_steps, ensure_ascii=False),
                 token_text=_tokens(
                     f"{title} {unit} {base_type} {bare} {family_hints} {element_hints} "
-                    f"{action_hints} {condition_hints} {resource_kinds} {resource_text}"
+                    f"{action_hints} {condition_hints} {' '.join(work_steps)} {resource_kinds} {resource_text}"
                 ),
             )
         )

@@ -18,7 +18,7 @@ def test_explicit_modes_map_to_profiles():
     cases = {
         "smeta": "estimate_harness",
         "review": "normcontrol",
-        "kp": "kp_stub",
+        "kp": "grounded_rag",
         "rag": "grounded_rag",
         "free": "free_llm",
     }

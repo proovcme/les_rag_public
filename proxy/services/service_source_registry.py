@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import glob
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -59,8 +60,12 @@ def _folders_for_source(src: dict[str, Any], files: list[dict[str, Any]]) -> lis
     return out
 
 
+def _glob_matches(pattern: str) -> list[str]:
+    return sorted(glob.glob(pattern, recursive="**" in pattern))
+
+
 def _glob_infos(pattern: str) -> list[dict[str, Any]]:
-    matches = sorted(glob.glob(pattern))
+    matches = _glob_matches(pattern)
     if not matches:
         return [{**_file_info(pattern), "matches": 0}]
     return [{**_file_info(m), "matches": len(matches)} for m in matches]
@@ -71,6 +76,13 @@ def _load_config(path: Path | str = DEFAULT_CONFIG) -> dict[str, Any]:
     data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
     data.setdefault("sources", [])
     return data
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
 
 
 def _status(required_mode: str, present: bool) -> str:
@@ -118,6 +130,46 @@ def _dataset_hits(query: dict[str, Any] | None) -> dict[str, Any]:
     return {"datasets": sorted(by_ds.values(), key=lambda x: x["name"]), "documents": docs}
 
 
+def _required_document_manifest(src: dict[str, Any]) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    summary = {"ready": 0, "partial": 0, "missing_blocking": 0, "missing_degraded": 0}
+    for req in src.get("required_documents") or []:
+        preferred_paths = [str(x) for x in req.get("preferred_paths") or [] if str(x).strip()]
+        raw_paths = [str(x) for x in req.get("raw_paths") or [] if str(x).strip()]
+        preferred_hits = [m for pattern in preferred_paths for m in _glob_matches(pattern)]
+        raw_hits = [m for pattern in raw_paths for m in _glob_matches(pattern)]
+        requiredness = str(req.get("requiredness") or "degraded")
+        if preferred_hits:
+            status = "ready"
+        elif raw_hits:
+            status = "partial"
+        else:
+            status = "missing_blocking" if requiredness == "blocking" else "missing_degraded"
+        summary[status] = summary.get(status, 0) + 1
+        rows.append(
+            {
+                "id": req.get("id"),
+                "label": req.get("label") or req.get("id"),
+                "status": status,
+                "requiredness": requiredness,
+                "preferred_files": req.get("preferred_files") or [],
+                "accepted_files": req.get("accepted_files") or [],
+                "preferred_paths": preferred_paths,
+                "raw_paths": raw_paths,
+                "found_preferred": preferred_hits[:50],
+                "found_raw": raw_hits[:50],
+                "found_preferred_count": len(preferred_hits),
+                "found_raw_count": len(raw_hits),
+                "needed_for": req.get("needed_for") or [],
+            }
+        )
+    return {
+        "schema": "service_source_required_documents_v1",
+        "summary": {"total": len(rows), **summary},
+        "items": rows,
+    }
+
+
 def _facts_for_source(source_id: str, files: list[dict[str, Any]], dataset: dict[str, Any]) -> dict[str, Any]:
     facts: dict[str, Any] = {}
     existing = [f for f in files if f.get("exists")]
@@ -128,6 +180,15 @@ def _facts_for_source(source_id: str, files: list[dict[str, Any]], dataset: dict
                 if rows is not None:
                     facts.setdefault("parquet_rows", 0)
                     facts["parquet_rows"] += rows
+            elif f["path"].endswith("les_smeta_base_manifest.json"):
+                manifest = _read_json(Path(f["path"]))
+                output = manifest.get("output") or {}
+                excluded = manifest.get("excluded") or {}
+                if output:
+                    facts["structured_norms"] = output.get("norms")
+                    facts["structured_resources"] = output.get("resources")
+                if excluded:
+                    facts["excluded_norms_missing_name_or_unit"] = excluded.get("norms_missing_name_or_unit")
         try:
             from proxy.services.gesn_service import load_base_norms, load_norms
 
@@ -168,10 +229,20 @@ def service_sources(path: Path | str = DEFAULT_CONFIG) -> dict[str, Any]:
         for p in src.get("paths") or []:
             files.extend(_glob_infos(str(p)))
         dataset = _dataset_hits(src.get("dataset_query"))
+        required_documents = _required_document_manifest(src)
+        req_summary = required_documents.get("summary") or {}
         has_files = any(f.get("exists") for f in files) if files else False
         has_dataset = bool(dataset.get("documents"))
         present = has_files or has_dataset
-        status = _status(str(src.get("status_if_missing") or "degraded"), present)
+        if req_summary.get("total"):
+            if int(req_summary.get("missing_blocking") or 0):
+                status = "missing_blocking"
+            elif int(req_summary.get("missing_degraded") or 0) or int(req_summary.get("partial") or 0):
+                status = "missing_degraded"
+            else:
+                status = "ok"
+        else:
+            status = _status(str(src.get("status_if_missing") or "degraded"), present)
         totals[status] = totals.get(status, 0) + 1
         item = {
             "id": src.get("id"),
@@ -187,6 +258,7 @@ def service_sources(path: Path | str = DEFAULT_CONFIG) -> dict[str, Any]:
             "operator_hint": src.get("operator_hint") or "",
             "operator_action": src.get("operator_action") or "",
             "process_label": src.get("process_label") or "Проверить источник",
+            "required_documents": required_documents,
         }
         item["facts"] = _facts_for_source(str(item["id"]), files, dataset)
         out.append(item)
@@ -220,8 +292,18 @@ def process_service_source(source_id: str, path: Path | str = DEFAULT_CONFIG) ->
     folders = [f["path"] for f in item.get("folders") or [] if f.get("path")]
     missing_files = [f["path"] for f in item.get("files") or [] if not f.get("exists")]
     found_files = [f["path"] for f in item.get("files") or [] if f.get("exists")]
+    required_documents = item.get("required_documents") or {}
+    req_summary = required_documents.get("summary") or {}
     label = item.get("label") or source_id
-    if status == "ok":
+    if req_summary.get("total"):
+        ready = int(req_summary.get("ready") or 0)
+        partial = int(req_summary.get("partial") or 0)
+        missing = int(req_summary.get("missing_blocking") or 0) + int(req_summary.get("missing_degraded") or 0)
+        if missing:
+            msg = f"{label}: Play проверил состав. Готово {ready}, частично {partial}, не хватает {missing}."
+        else:
+            msg = f"{label}: Play проверил состав. Готово {ready}, частично {partial}, критичных пропусков нет."
+    elif status == "ok":
         msg = f"{label}: источник найден. ЛЕС может использовать эти данные."
     elif status == "missing_blocking":
         where = ", ".join(folders[:3]) or ", ".join(missing_files[:3]) or "служебную папку источника"
@@ -238,4 +320,5 @@ def process_service_source(source_id: str, path: Path | str = DEFAULT_CONFIG) ->
         "missing_files": missing_files,
         "found_files": found_files,
         "facts": item.get("facts") or {},
+        "required_documents": required_documents,
     }

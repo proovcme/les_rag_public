@@ -20,7 +20,7 @@ APP_VERSION = "5.1.0"                 # пользовательская «ма�
 HARNESS_VERSION = "0.24"             # веха roadmap (v0.NN); двигать на смене вехи
 # Гранулярная версия «где мы»: 0.<веха>.<фича>.<патч>. Двигать КАЖДУЮ фичу/фикс + строка в
 # docs/RELEASE_LEDGER.md. Это основной номер в /api/version и бейдже (см. docs/RELEASE_LEDGER.md).
-LES_VERSION = "0.24.0.279"
+LES_VERSION = "0.24.0.325"
 EVIDENCE_SCHEMA_VERSION = "1.0"
 EXTRACTION_SCHEMA_VERSION = "1.0"
 RESOURCE_CALC_VERSION = "0.6"
@@ -60,6 +60,7 @@ _CRITICAL_FILES = (
     "proxy/services/saferag_service.py",
     "proxy/services/external_radar_service.py",
     "proxy/services/doc_review_service.py",
+    "proxy/services/doc_review_retrieval_service.py",
     "proxy/services/document_explorer_service.py",
     "proxy/services/tool_harness_service.py",
     "proxy/services/candidate_selection_service.py",
@@ -82,23 +83,39 @@ _CRITICAL_FILES = (
     "proxy/services/memory_service.py",
     "proxy/services/notebook_study_service.py",
     "proxy/services/smeta_chat_service.py",
+    "proxy/services/gesn_service.py",
+    "proxy/services/gesn_update_service.py",
     "proxy/services/service_source_registry.py",
     "proxy/services/scope_service.py",
     "proxy/services/title_block_extract_service.py",
     "proxy/services/drawing_manifest_service.py",
     "proxy/services/pd_rd_manifest_service.py",
+    "proxy/services/project_pdf_extract_service.py",
+    "proxy/services/project_pdf_table_service.py",
+    "proxy/services/electrical_schematic_service.py",
+    "proxy/services/electrical_materials_service.py",
+    "proxy/services/electrical_evidence_summary_service.py",
     "proxy/services/version_service.py",
     "proxy/services/workflow_plan_service.py",
     "proxy/routers/chat_history.py",
     "config/prompts/smeta_estimator_role.json",
     "config/domain/nr_sp.yaml",
+    "config/domain/pricebook_manifest.json",
+    "config/domain/electrical_schema_terms.yaml",
     "skills/smeta/SKILL.md",
     "tools/smetnoedelo_rag_import.py",
     "tools/les_tool_harness.py",
     "tools/drawing_manifest.py",
     "tools/pd_rd_manifest.py",
+    "tools/electrical_schematic.py",
+    "tools/electrical_materials.py",
+    "tools/electrical_evidence_summary.py",
     "tools/smeta_ru_norm_download.py",
     "tools/smeta_ru_norm_rag_ingest.py",
+    "tools/build_smeta_structured_base.py",
+    "tools/build_smeta_service_rag.py",
+    "tools/gesn_unify_base.py",
+    "tools/gesn_update_from_fgis.py",
     "sovushka/pages/chat.py",
     "sovushka/pages/documents.py",
     "sovushka/pages/instrumenty.py",

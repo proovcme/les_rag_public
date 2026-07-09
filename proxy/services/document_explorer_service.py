@@ -6,6 +6,7 @@ not infer facts for the user.
 """
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from dataclasses import dataclass
@@ -14,6 +15,28 @@ from typing import Any
 
 from backend.rag_config import rag_collection_name, rag_meta_db_path
 from proxy.services.lexical_index_service import build_fts_query, lexical_db_path
+
+DATASET_KIND_LABELS = {
+    "project": "Проект",
+    "norm": "Норма",
+    "estimate": "Сметы",
+    "catalog": "Каталог",
+    "cad_bim": "CAD/BIM",
+    "correspondence": "Переписка",
+    "mixed": "Смешанный",
+    "other": "Другое",
+}
+DATASET_KIND_ORDER = {
+    "project": 10,
+    "norm": 20,
+    "estimate": 30,
+    "catalog": 40,
+    "cad_bim": 50,
+    "correspondence": 60,
+    "mixed": 70,
+    "other": 80,
+    "": 999,
+}
 
 
 @dataclass(frozen=True)
@@ -65,7 +88,20 @@ class DocumentExplorer:
                 """,
                 params,
             ).fetchall()
-        return [dict(row) for row in rows]
+            result = [dict(row) for row in rows]
+            kinds = _dataset_profile_kinds(conn, [str(row.get("id") or "") for row in result])
+        for row in result:
+            kind = kinds.get(str(row.get("id") or ""), "")
+            row["dataset_kind"] = kind
+            row["dataset_kind_label"] = DATASET_KIND_LABELS.get(kind, "")
+            row["dataset_kind_sort"] = DATASET_KIND_ORDER.get(kind, DATASET_KIND_ORDER[""])
+        return sorted(
+            result,
+            key=lambda row: (
+                int(row.get("dataset_kind_sort") or DATASET_KIND_ORDER[""]),
+                str(row.get("name") or row.get("id") or "").casefold(),
+            ),
+        )
 
     def list_documents(
         self,
@@ -494,6 +530,33 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
             missing.append(table)
     if missing:
         raise RuntimeError("document explorer requires tables: " + ", ".join(missing))
+
+
+def _dataset_profile_kinds(conn: sqlite3.Connection, dataset_ids: list[str]) -> dict[str, str]:
+    ids = [item for item in dataset_ids if item]
+    if not ids:
+        return {}
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE name = 'les_dataset_profiles' AND type = 'table'",
+    ).fetchone()
+    if not exists:
+        return {}
+    placeholders = ",".join("?" for _ in ids)
+    rows = conn.execute(
+        f"SELECT dataset_id, profile_json FROM les_dataset_profiles WHERE dataset_id IN ({placeholders})",
+        ids,
+    ).fetchall()
+    result: dict[str, str] = {}
+    for row in rows:
+        try:
+            profile = json.loads(str(row["profile_json"] or "{}"))
+        except Exception:
+            profile = {}
+        if not isinstance(profile, dict):
+            continue
+        kind = str(profile.get("dataset_kind") or "").strip()
+        result[str(row["dataset_id"] or "")] = kind if kind in DATASET_KIND_LABELS else ""
+    return result
 
 
 def _chunk_payload(row: sqlite3.Row, *, max_chars: int) -> dict[str, Any]:

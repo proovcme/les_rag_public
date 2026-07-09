@@ -1,4 +1,4 @@
-"""Import a small official FGIS/FSNB norm overlay into ``gesn2022_v2.parquet``.
+"""Import a small official FGIS/FSNB norm overlay into cache raw parquet.
 
 This is intentionally narrower than ``gesn_bulk_import``.  Use it when the
 runtime already has a broad legacy base, but a specific normative family needs a
@@ -20,7 +20,7 @@ from typing import Any, Iterable
 from tools.gesn_pdf_import import build_parquet, parse_fgis_json
 
 API = "https://fgiscs.minstroyrf.ru/api/FullTextSearch/SearchEstimatedRates?search="
-DEFAULT_OUT = Path("data/gesn_base/gesn2022_v2.parquet")
+DEFAULT_OUT = Path("storage/cache/gesn_fgis/gesn2022_overlay_raw.parquet")
 
 PRESETS: dict[str, tuple[str, ...]] = {
     # GESNm10 candidates used by SCS/telecom estimates.  These are navigation

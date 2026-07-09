@@ -52,7 +52,7 @@ def chat_max_swap_pct() -> float:
 
 
 def chat_max_swap_used_gb() -> float:
-    return _env_float("LES_CHAT_MAX_SWAP_USED_GB", 2.0)
+    return _env_float("LES_CHAT_MAX_SWAP_USED_GB", 6.0)
 
 
 def chat_swap_relief_free_gb() -> float:

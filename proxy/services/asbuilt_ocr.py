@@ -5,7 +5,7 @@
 код (ADR-11, LLM-минимализм). Движок выбирается параметром:
 
 - ``local``  — OpenAI-совместимый vision у локального ollama (`OLLAMA_BASE_URL`, gemma4:12b);
-- ``cloud``  — OpenAI-совместимый vision в облаке через proxyapi (`OPENAI_BASE_URL`, gpt-4.1).
+- ``cloud``  — OpenAI-совместимый vision в облаке через proxyapi (`OPENAI_BASE_URL`, gpt-5.4).
 
 Тело запроса переиспользует ``backend.ocr_parser.build_vlm_ocr_body`` (движко-агностично).
 """
@@ -55,7 +55,7 @@ def resolve_engine(engine: str = "local", *, model: Optional[str] = None) -> Ocr
         base = os.getenv("OPENAI_BASE_URL", "https://openai.api.proxyapi.ru/v1").rstrip("/")
         return OcrEngine(
             name="cloud",
-            model=model or os.getenv("LES_ASBUILT_CLOUD_MODEL", os.getenv("OPENAI_MODEL", "gpt-4.1")),
+            model=model or os.getenv("LES_ASBUILT_CLOUD_MODEL", os.getenv("OPENAI_MODEL", "gpt-5.4")),
             base_url=base,
             api_key=os.getenv("OPENAI_API_KEY", "").strip(),
             timeout=float(os.getenv("LES_ASBUILT_OCR_TIMEOUT", "180")),

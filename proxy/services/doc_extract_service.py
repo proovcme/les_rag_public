@@ -10,6 +10,7 @@ extractor_version фиксируется в каждом item; пустой/би
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -129,7 +130,7 @@ def extract_docx(path: Path, *, ds: str, rel: str) -> ExtractResult:
 
 # ── XLSX generic (openpyxl; НЕ resource-workbook, общий табличный) ───────────────────────
 
-def extract_xlsx_generic(path: Path, *, ds: str, rel: str, max_rows: int = 5000) -> ExtractResult:
+def extract_xlsx_generic(path: Path, *, ds: str, rel: str, max_rows: int | None = None) -> ExtractResult:
     try:
         import openpyxl
     except Exception:
@@ -138,11 +139,19 @@ def extract_xlsx_generic(path: Path, *, ds: str, rel: str, max_rows: int = 5000)
         wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
     except Exception as e:  # noqa: BLE001
         return ExtractResult("failed", "xlsx_row", warnings=[f"xlsx_open_failed: {str(e)[:60]}"])
+    if max_rows is None:
+        try:
+            env_limit = int(os.getenv("LES_XLSX_EXTRACT_MAX_ROWS", "0"))
+        except ValueError:
+            env_limit = 0
+        max_rows = env_limit if env_limit > 0 else 0
     items, seen = [], 0
+    limited = False
     for sheet in wb.sheetnames:
         ws = wb[sheet]
         for ri, row in enumerate(ws.iter_rows(values_only=True), 1):
-            if seen >= max_rows:
+            if max_rows and seen >= max_rows:
+                limited = True
                 break
             vals = [str(v) for v in row if v not in (None, "")]
             if not vals:
@@ -151,10 +160,13 @@ def extract_xlsx_generic(path: Path, *, ds: str, rel: str, max_rows: int = 5000)
             line = " | ".join(vals)
             items.append(SidecarItem(ds, path.name, rel, "xlsx_row", line,
                                      f"{ds}/{rel}#{sheet}!R{ri}", row_index=ri, sheet_name=sheet))
+        if limited:
+            break
     wb.close()
     if not items:
         return ExtractResult("no_text_layer", "xlsx_row", warnings=["xlsx без непустых строк"])
-    return ExtractResult("ok", "xlsx_row", items=items)
+    warnings = [f"xlsx extraction capped at {max_rows} non-empty rows"] if limited and max_rows else []
+    return ExtractResult("ok", "xlsx_row", items=items, warnings=warnings)
 
 
 # ── txt/md/csv (тривиально — для полноты sidecar; .md/.txt также читает file_body напрямую) ─

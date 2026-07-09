@@ -49,9 +49,89 @@ def test_service_sources_report_required_files(tmp_path):
 def test_canonical_service_sources_include_smeta_and_normcontrol():
     out = service_sources()
     ids = {x["id"] for x in out["sources"]}
-    assert {"gesn_base", "fgis_price_base", "normcontrol_spds_rulepack", "normcontrol_spds_rag"} <= ids
+    assert {
+        "gesn_base",
+        "fgis_price_base",
+        "smeta_service_dataset",
+        "normcontrol_spds_rulepack",
+        "normcontrol_spds_rag",
+    } <= ids
     assert out["summary"]["total"] >= 5
     gesn = service_source("gesn_base")
     assert gesn["folders"]
     assert gesn["process_label"]
     assert "tools/" not in str(gesn.get("operator_action", ""))
+    smeta_service = service_source("smeta_service_dataset")
+    required = smeta_service["required_documents"]
+    assert required["schema"] == "service_source_required_documents_v1"
+    assert {x["id"] for x in required["items"]} >= {"norms", "prices", "methodology", "forms"}
+    processed = process_service_source("smeta_service_dataset")
+    assert processed["required_documents"]["summary"]["total"] >= 4
+    assert "Play проверил состав" in processed["message"]
+
+
+def test_service_source_play_reports_required_document_manifest(tmp_path):
+    service_root = tmp_path / "SMETA_SERVICE"
+    service_root.mkdir()
+    (service_root / "gesn_norms.parquet").write_bytes(b"not-real-parquet-but-present")
+    (service_root / "kp_raw.pdf").write_bytes(b"%PDF")
+    cfg = {
+        "meta": {"version": 1, "title": "test"},
+        "sources": [
+            {
+                "id": "smeta_service_dataset",
+                "domain": "smeta",
+                "label": "SMETA_SERVICE",
+                "status_if_missing": "degraded",
+                "paths": [str(service_root / "**/*.parquet"), str(service_root / "**/*.pdf")],
+                "folders": [str(service_root)],
+                "required_documents": [
+                    {
+                        "id": "norms",
+                        "label": "Нормы",
+                        "requiredness": "blocking",
+                        "preferred_files": ["*.parquet"],
+                        "accepted_files": ["*.pdf"],
+                        "preferred_paths": [str(service_root / "**/*norm*.parquet")],
+                        "raw_paths": [str(service_root / "**/*norm*.pdf")],
+                    },
+                    {
+                        "id": "prices",
+                        "label": "Цены",
+                        "requiredness": "degraded",
+                        "preferred_files": ["*.xlsx"],
+                        "accepted_files": ["*.pdf"],
+                        "preferred_paths": [str(service_root / "**/*price*.xlsx")],
+                        "raw_paths": [str(service_root / "**/*kp*.pdf")],
+                    },
+                    {
+                        "id": "forms",
+                        "label": "Формы",
+                        "requiredness": "degraded",
+                        "preferred_files": ["*.xlsx"],
+                        "accepted_files": ["*.md"],
+                        "preferred_paths": [str(service_root / "**/*lsr*.xlsx")],
+                        "raw_paths": [str(service_root / "**/*form*.md")],
+                    },
+                ],
+            }
+        ],
+    }
+    cfg_path = tmp_path / "sources.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg, allow_unicode=True), encoding="utf-8")
+
+    item = service_source("smeta_service_dataset", cfg_path)
+    manifest = item["required_documents"]
+    by_id = {row["id"]: row for row in manifest["items"]}
+    assert by_id["norms"]["status"] == "ready"
+    assert by_id["prices"]["status"] == "partial"
+    assert by_id["forms"]["status"] == "missing_degraded"
+    assert manifest["summary"]["ready"] == 1
+    assert manifest["summary"]["partial"] == 1
+    assert manifest["summary"]["missing_degraded"] == 1
+    assert item["status"] == "missing_degraded"
+
+    processed = process_service_source("smeta_service_dataset", cfg_path)
+    assert processed["status"] == "missing_degraded"
+    assert "Готово 1, частично 1, не хватает 1" in processed["message"]
+    assert processed["required_documents"]["items"][0]["found_preferred_count"] == 1

@@ -16,6 +16,15 @@ def test_measurable_bor_gets_cost_attempt_snippet():
     assert "РИМ-сценарий" in text
 
 
+def test_gesn_pricing_workflow_snippet_keeps_model_first_boundary():
+    snippets = select_skill_snippets("smeta", user_input="Сделай ЛСР по ГЭСН и РИМ")
+    text = "\n".join(s.text for s in snippets)
+    assert "Сметчик сам выбирает" in text
+    assert "код после этого только" in text
+    assert "spb_2kv2026" in text
+    assert "неполная база" in text
+
+
 def test_norm_candidate_is_not_final_selection_in_tool_policy():
     spec = module_spec("smeta")
     assert "after the model decision" in spec.tool_policy

@@ -378,14 +378,23 @@ def _operator_guidance_from_profiles(conn: sqlite3.Connection, dataset_id: str) 
     profile = _loads(row["profile_json"], {}) if row else {}
     if not isinstance(profile, dict):
         return {}
+    result: dict[str, Any] = {}
+    kind = str(profile.get("dataset_kind") or "").strip()
+    kind_label = str(profile.get("dataset_kind_label") or "").strip()
+    if kind:
+        result["dataset_kind"] = kind
+        result["dataset_kind_label"] = kind_label
+        result["dataset_kind_updated_at"] = profile.get("dataset_kind_updated_at") or 0
     guidance = " ".join(str(profile.get("operator_guidance") or "").replace("\r", "\n").split())[:4000].strip()
-    if not guidance:
-        return {}
-    return {
-        "operator_guidance": guidance,
-        "operator_guidance_role": "navigation_not_evidence",
-        "operator_guidance_updated_at": profile.get("operator_guidance_updated_at") or 0,
-    }
+    if guidance:
+        result.update(
+            {
+                "operator_guidance": guidance,
+                "operator_guidance_role": "navigation_not_evidence",
+                "operator_guidance_updated_at": profile.get("operator_guidance_updated_at") or 0,
+            }
+        )
+    return result
 
 
 def _documents(conn: sqlite3.Connection, dataset_id: str) -> list[dict[str, Any]]:
@@ -511,6 +520,12 @@ def _navigation_terms_for_file(file_name: str, role: str, layers: list[str], doc
         terms.extend(["спецификация", "поставка", "материалы", "оборудование", "монтаж"])
     if "сметный расчет" in role_low or "estimate" in layers:
         terms.extend(["ЛСР", "смета", "стоимость", "позиция", "обоснование"])
+    if "technical_docs" in layers:
+        terms.extend(["проектная документация", "рабочая документация", "технические решения", "общие данные", "ведомость чертежей"])
+        if domain.startswith("NTD_"):
+            terms.extend(["инженерный раздел", "комплект документации"])
+        if "ELECTRICAL" in domain.upper() or "эом" in probe:
+            terms.extend(["ЭОМ", "электроснабжение", "электропитание"])
     if "состав проекта" in role_low:
         terms.extend(["состав проекта", "тома", "разделы", "комплект документации"])
     if "пояснительная записка" in role_low:
@@ -903,7 +918,9 @@ def infer_file_typing(doc: dict[str, Any]) -> dict[str, Any]:
             _add(layers, "graphics")
     if ext in {".doc", ".docx", ".txt", ".md"} or content_type in {"text", "mixed", "email"}:
         _add(layers, "text")
-    if doc_type == "NORMATIVE" or domain.startswith("NTD_") or smeta_norm_source or _NORM_RE.search(low):
+    if domain.startswith("NTD_"):
+        _add(layers, "technical_docs", "text")
+    if doc_type == "NORMATIVE" or smeta_norm_source or _NORM_RE.search(low):
         _add(layers, "normative", "text")
     if not smeta_norm_source and (doc_type == "SMETA" or "SMETA" in domain or _CALC_RE.search(low)):
         _add(layers, "calculations", "estimate")
@@ -1147,6 +1164,7 @@ def build_typed_dataset_memory(
         section_map = _build_section_map(dataset_id, section_signals, cards)
         topic_map = _build_topic_map(dataset_id, cards, section_signals)
         operator_guidance = _operator_guidance_from_profiles(conn, dataset_id)
+        project_pdf_extract = _project_pdf_extract_for_memory(dataset_id)
         memory = {
             "schema": TYPED_MEMORY_SCHEMA,
             "dataset_id": dataset_id,
@@ -1178,6 +1196,7 @@ def build_typed_dataset_memory(
             "source_graph": source_graph,
             "topic_map": topic_map,
             "section_map": section_map,
+            "project_pdf_extract": project_pdf_extract,
             "important_files": _important_files(cards),
             "file_cards": cards[:500],
             "known_gaps": _known_gaps(docs, by_layer),
@@ -1282,7 +1301,26 @@ def _ensure_memory_navigation(memory: dict[str, Any]) -> dict[str, Any]:
             memory["topic_map"] = _build_topic_map(str(memory.get("dataset_id") or ""), cards, [])
         if not memory.get("section_map"):
             memory["section_map"] = _build_section_map(str(memory.get("dataset_id") or ""), [], cards)
+    if memory and not memory.get("project_pdf_extract"):
+        project_pdf_extract = _project_pdf_extract_for_memory(str(memory.get("dataset_id") or ""))
+        if project_pdf_extract:
+            memory["project_pdf_extract"] = project_pdf_extract
     return memory
+
+
+def _project_pdf_extract_for_memory(dataset_id: str) -> dict[str, Any]:
+    if not dataset_id:
+        return {}
+    try:
+        from proxy.services.project_pdf_extract_service import (
+            compact_project_pdf_extract_for_model,
+            project_pdf_extract_summary,
+        )
+
+        return compact_project_pdf_extract_for_model(project_pdf_extract_summary(dataset_id))
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("project_pdf_extract memory load failed for %s: %s", dataset_id, exc)
+        return {}
 
 
 def _source_layers_from_counts(by_layer: dict[str, int]) -> list[dict[str, Any]]:
@@ -1442,9 +1480,9 @@ def _reader_context(
     char_limit: int | None = None,
 ) -> str:
     if file_limit is None:
-        file_limit = _env_int("LES_DATASET_READER_FILE_LIMIT", 240, minimum=20)
+        file_limit = _env_int("LES_DATASET_READER_FILE_LIMIT", 24, minimum=4)
     if char_limit is None:
-        char_limit = _env_int("LES_DATASET_READER_CONTEXT_CHARS", 64000, minimum=8000)
+        char_limit = _env_int("LES_DATASET_READER_CONTEXT_CHARS", 12000, minimum=4000)
     important_names = {str(item.get("file_name") or "") for item in memory.get("important_files") or []}
     cards = list(memory.get("file_cards") or [])
     cards.sort(
@@ -1454,6 +1492,9 @@ def _reader_context(
             str(card.get("file_name") or ""),
         )
     )
+    topic_map = memory.get("topic_map") if isinstance(memory.get("topic_map"), dict) else {}
+    section_map = memory.get("section_map") if isinstance(memory.get("section_map"), dict) else {}
+    routes = memory.get("retrieval_routes") if isinstance(memory.get("retrieval_routes"), list) else []
     payload = {
         "schema": "dataset_reader_input_v1",
         "dataset_id": memory.get("dataset_id"),
@@ -1461,10 +1502,21 @@ def _reader_context(
         "document_count": memory.get("document_count", 0),
         "indexed_count": memory.get("indexed_count", 0),
         "chunk_count": memory.get("chunk_count", 0),
+        "dataset_kind": memory.get("dataset_kind") or "",
+        "dataset_kind_label": memory.get("dataset_kind_label") or "",
+        "operator_guidance": str(memory.get("operator_guidance") or "")[:1200],
+        "operator_guidance_role": memory.get("operator_guidance_role") or "",
         "data_layers": memory.get("data_layers") or [],
         "file_kinds": memory.get("file_kinds") or [],
         "document_roles": memory.get("document_roles") or [],
-        "important_files": memory.get("important_files") or [],
+        "important_files": [
+            {
+                "file_name": item.get("file_name"),
+                "role": item.get("document_role") or item.get("role"),
+            }
+            for item in (memory.get("important_files") or [])[:8]
+            if isinstance(item, dict)
+        ],
         "known_gaps": memory.get("known_gaps") or [],
         "file_cards_scope": {
             "included": min(len(cards), file_limit),
@@ -1482,15 +1534,18 @@ def _reader_context(
                 "file_kind": card.get("file_kind"),
                 "content_layers": card.get("content_layers") or [],
                 "document_role": card.get("document_role"),
-                "navigation_terms": list(card.get("navigation_terms") or [])[:8],
-                "summary": card.get("summary"),
+                "navigation_terms": list(card.get("navigation_terms") or [])[:5],
+                "summary": str(card.get("summary") or "")[:180],
             }
             for card in cards[:file_limit]
         ],
-        "retrieval_routes": memory.get("retrieval_routes") or [],
-        "source_graph": memory.get("source_graph") or {},
-        "topic_map": memory.get("topic_map") or {},
-        "section_map": memory.get("section_map") or {},
+        "retrieval_routes": [_reader_route_ref(route) for route in routes[:2] if isinstance(route, dict)],
+        "topic_map": _reader_topic_map(topic_map),
+        "section_map": _reader_section_map(section_map),
+        "reader_task": {
+            "goal": "build navigation memory only; do not answer user questions",
+            "evidence_rule": "facts still require retrieved chunks, table rows, graph atoms or calculation trace",
+        },
     }
     text = _json(payload)
     if len(text) > char_limit:
@@ -1498,29 +1553,166 @@ def _reader_context(
     return text
 
 
+def _reader_file_ref(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "file_name": item.get("file_name"),
+        "role": item.get("document_role") or item.get("role"),
+        "layers": list(item.get("content_layers") or [])[:4],
+        "navigation_terms": list(item.get("navigation_terms") or [])[:5],
+        "chunk_count": int(item.get("chunk_count") or 0),
+        "summary": str(item.get("summary") or "")[:160],
+    }
+
+
+def _reader_route_ref(route: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": route.get("id"),
+        "when": str(route.get("when") or "")[:140],
+        "method": route.get("method"),
+        "prefer_layers": list(route.get("prefer_layers") or [])[:4],
+        "prefer_roles": list(route.get("prefer_roles") or [])[:4],
+        "target_files": [
+            item.get("file_name")
+            for item in (route.get("target_files") or [])[:4]
+            if isinstance(item, dict)
+        ],
+    }
+
+
+def _reader_topic_map(topic_map: dict[str, Any]) -> dict[str, Any]:
+    topics = []
+    for topic in (topic_map.get("topics") or [])[:2]:
+        if not isinstance(topic, dict):
+            continue
+        topics.append(
+            {
+                "id": topic.get("id"),
+                "label": topic.get("label"),
+                "aliases": list(topic.get("query_aliases") or [])[:4],
+                "top_files": [
+                    {
+                        "file_name": item.get("file_name"),
+                        "role": item.get("document_role") or item.get("role"),
+                        "chunk_count": int(item.get("chunk_count") or 0),
+                    }
+                    for item in (topic.get("top_files") or [])[:3]
+                    if isinstance(item, dict)
+                ],
+                "top_sections": [
+                    {
+                        "file_name": section.get("file_name"),
+                        "heading": section.get("heading"),
+                        "score": section.get("score"),
+                    }
+                    for section in (topic.get("top_sections") or [])[:3]
+                    if isinstance(section, dict)
+                ],
+            }
+        )
+    return {
+        "schema": topic_map.get("schema") or "dataset_topic_map_v1",
+        "context_role": "navigation",
+        "topics": topics,
+    }
+
+
+def _reader_section_map(section_map: dict[str, Any]) -> dict[str, Any]:
+    files = []
+    for file_item in (section_map.get("files") or [])[:2]:
+        if not isinstance(file_item, dict):
+            continue
+        files.append(
+            {
+                "file_name": file_item.get("file_name"),
+                "sections": [
+                    {
+                        "heading": section.get("heading"),
+                        "chunk_count": section.get("chunk_count"),
+                    }
+                    for section in (file_item.get("sections") or [])[:5]
+                    if isinstance(section, dict)
+                ],
+            }
+        )
+    return {
+        "schema": section_map.get("schema") or "dataset_section_map_v1",
+        "context_role": "navigation",
+        "coverage": section_map.get("coverage") or {},
+        "files": files,
+    }
+
+
 def _reader_instruction() -> str:
     return (
-        "Ты reader-pass Л.Е.С.: изучаешь карту датасета и составляешь навигационную память. "
-        "Это НЕ evidence и НЕ финальный ответ пользователю. Не выдумывай факты, которых нет во входе. "
-        "Определи тип корпуса: проект, нормы, сметы, техничка, смешанный корпус или неизвестно. "
-        "Укажи, какие файлы открывать для широких вопросов: паспорт объекта, состав проекта, ТЭП, "
-        "инженерные разделы, сметы, спецификации, нормы. Если корпус похож на набор норм, не описывай его "
-        "как строительный объект. Используй topic_map и section_map как оглавление: тема сначала ведёт "
-        "к файлам и разделам, а не сразу к случайным чанкам. Выбери 10-30 конкретных file_roles из имён, которые есть во входе. "
-        "Не добавляй в known_gaps фразу о том, что file_cards/file list ограничен или выбран частично: "
-        "это нормальная навигационная выборка, а не отсутствие данных. Если для широкого вопроса файл "
-        "виден в карте, советуй добрать его точечно, а не писать «данных нет». Верни только JSON по схеме."
+        "Ты reader-pass Л.Е.С.: читаешь карту датасета и составляешь навигационную память, НЕ evidence. "
+        "Не выдумывай факты и файлы. Определи corpus_kind. Для широких вопросов укажи, какие видимые "
+        "файлы/разделы открывать первыми. topic_map/section_map используй как оглавление. "
+        "Для малого корпуса перечисли все видимые файлы в file_roles. known_gaps — только реальные "
+        "пробелы из входа, не пиши что выборка ограничена. Верни только JSON."
     )
 
 
 async def _run_reader_extraction(schema: dict[str, Any], instruction: str, context: str, *, max_attempts: int):
-    from proxy.services.extract_service import run_structured_extraction
+    from proxy.services import structured_extract as se
+    from proxy.services.extract_service import _format_exception, _provider_call
 
-    return await run_structured_extraction(
-        schema,
-        instruction,
-        context,
-        max_attempts=max_attempts,
+    max_tokens = _env_int("LES_DATASET_READER_MAX_TOKENS", 768, minimum=384)
+    prompt = _reader_compact_prompt(instruction, context)
+    errors: list[str] = []
+    previous = ""
+    for attempt in range(1, max_attempts + 1):
+        try:
+            reply = await _provider_call(prompt, None, max_tokens=max_tokens)
+        except Exception as exc:
+            return se.ExtractResult(
+                ok=False,
+                data=None,
+                attempts=attempt - 1,
+                errors=[f"provider error: {_format_exception(exc)}"],
+            )
+        previous = reply
+        data = se.parse_json(reply)
+        if data is None:
+            errors = ["ответ не содержит валидного JSON-объекта"]
+        else:
+            errors = se.validate(data, schema)
+            if not errors:
+                return se.ExtractResult(ok=True, data=data, attempts=attempt, errors=[])
+        if attempt < max_attempts:
+            prompt = _reader_repair_prompt(previous, errors)
+    return se.ExtractResult(ok=False, data=None, attempts=max_attempts, errors=errors)
+
+
+def _reader_compact_prompt(instruction: str, context: str) -> str:
+    return (
+        f"{instruction.strip()}\n\n"
+        "ВХОДНАЯ КАРТА ДАТАСЕТА JSON:\n"
+        f"{context.strip()}\n\n"
+        "Верни только один JSON-объект без markdown и пояснений. Формат:\n"
+        "{\n"
+        f'  "schema": "{DATASET_READER_SCHEMA_ID}",\n'
+        '  "corpus_kind": "project|normative|estimate|technical_catalog|mixed|unknown",\n'
+        '  "reader_summary": "1-3 предложения о корпусе",\n'
+        '  "where_to_look": [\n'
+        '    {"question_type": "тип вопроса", "target_files": ["имя файла из входа"], "reason": "почему туда"}\n'
+        "  ],\n"
+        '  "file_roles": [\n'
+        '    {"file_name": "имя файла из входа", "role": "роль", "what_inside": "что искать", "confidence": 0.8}\n'
+        "  ],\n"
+        '  "known_gaps": ["только реальные пробелы из входа"],\n'
+        '  "answer_guidance": "как отвечать: сначала retrieval/source chunks, затем вывод",\n'
+        '  "confidence": 0.8\n'
+        "}\n"
+        "Для малого корпуса перечисли все видимые файлы. Не выдумывай отсутствующие файлы."
+        " Начни ответ символом { и закончи символом }."
+    )
+
+
+def _reader_repair_prompt(previous: str, errors: list[str]) -> str:
+    return (
+        "Исправь предыдущий reader-pass ответ. Верни только JSON-объект, без markdown.\n"
+        f"Ошибки валидации:\n- " + "\n- ".join(errors) + "\n\n"
+        f"Предыдущий ответ:\n{previous[:4000]}"
     )
 
 
@@ -1652,7 +1844,7 @@ def get_typed_dataset_memory(dataset_id: str, *, meta_db_path: str | None = None
         row = conn.execute("SELECT memory_json FROM dataset_memory WHERE dataset_id=?", (dataset_id,)).fetchone()
         if row:
             memory = _ensure_memory_navigation(_loads(row["memory_json"], {}))
-            if isinstance(memory, dict) and not memory.get("operator_guidance"):
+            if isinstance(memory, dict) and (not memory.get("operator_guidance") or not memory.get("dataset_kind")):
                 memory.update(_operator_guidance_from_profiles(conn, dataset_id))
             return memory
     return build_typed_dataset_memory(dataset_id, meta_db_path=meta_db_path)
@@ -1710,6 +1902,12 @@ def typed_memory_prompt_block(memories: list[dict[str, Any]]) -> str:
             f"\nДатасет {memory.get('dataset_id')}: "
             f"{memory.get('document_count', 0)} файлов, {memory.get('chunk_count', 0)} чанков."
         )
+        if memory.get("dataset_kind_label") or memory.get("dataset_kind"):
+            lines.append(
+                "Тип датасета: "
+                f"{memory.get('dataset_kind_label') or memory.get('dataset_kind')} "
+                "(ручная метка оператора, навигация)."
+            )
         layers = memory.get("data_layers") or []
         if layers:
             lines.append(
@@ -1903,6 +2101,30 @@ def dataset_brief_for_model(
                 "Роли документов: "
                 + ", ".join(f"{x.get('role')} ({x.get('files')})" for x in roles[:10])
             )
+        project_pdf = memory.get("project_pdf_extract") if isinstance(memory.get("project_pdf_extract"), dict) else {}
+        if project_pdf:
+            coverage = project_pdf.get("coverage") if isinstance(project_pdf.get("coverage"), dict) else {}
+            lines.append(
+                "PDF project source-map (навигация, не evidence): "
+                f"PDF {coverage.get('pdf_documents', 0)}, разобрано {coverage.get('files_extracted', 0)}, "
+                f"ПЗ {coverage.get('pz_files', 0)}, ВОР {coverage.get('vor_files', 0)}, "
+                f"СО {coverage.get('so_files', 0)}."
+            )
+            nav = [item for item in (project_pdf.get("source_navigation") or []) if isinstance(item, dict)]
+            if nav:
+                lines.append("Где искать в PDF-проекте:")
+                for item in nav[:8]:
+                    refs = _brief_join([str(ref) for ref in (item.get("source_refs") or [])], limit=2)
+                    refs_tail = f"; refs: {refs}" if refs else ""
+                    lines.append(
+                        f"- {item.get('file_name')} — {item.get('role') or item.get('doc_role') or 'PDF'}; "
+                        f"{item.get('use_for') or 'открыть как источник'}{refs_tail}"
+                    )
+            pdf_files = [item for item in (project_pdf.get("files") or []) if isinstance(item, dict)]
+            if pdf_files:
+                names = _brief_join([str(item.get("file_name") or "") for item in pdf_files], limit=6)
+                if names:
+                    lines.append(f"PDF-файлы с source-map: {names}")
         routes = memory.get("retrieval_routes") or []
         if routes:
             lines.append("Маршруты поиска по типам вопросов:")

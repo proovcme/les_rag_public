@@ -5,9 +5,12 @@ They do not call LLMs; they read LES metadata and the lexical SQLite index.
 """
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from proxy.security import require_user
+from proxy.security import require_admin, require_user
 from proxy.services.document_explorer_service import explorer
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
@@ -52,6 +55,36 @@ async def document_by_id(
     if document is None:
         raise HTTPException(status_code=404, detail="document not found")
     return {"document": document}
+
+
+@router.post("/by-id/{doc_id}/open-native")
+async def open_document_native(
+    doc_id: str,
+    _admin=Depends(require_admin),
+):
+    try:
+        document = explorer().get_document(doc_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if document is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    source_path_raw = str(document.get("source_path") or "").strip()
+    if not source_path_raw:
+        raise HTTPException(status_code=404, detail="document has no source_path")
+    source_path = Path(source_path_raw).expanduser()
+    if not source_path.exists() or not source_path.is_file():
+        raise HTTPException(status_code=404, detail="source file not found")
+    try:
+        completed = subprocess.run(["open", str(source_path)], check=False, timeout=5)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"open failed: {type(exc).__name__}: {exc}") from exc
+    return {
+        "status": "opened" if completed.returncode == 0 else "open_failed",
+        "doc_id": doc_id,
+        "file_name": document.get("file_name") or "",
+        "source_path": source_path.as_posix(),
+        "returncode": completed.returncode,
+    }
 
 
 @router.get("/by-id/{doc_id}/chunks")

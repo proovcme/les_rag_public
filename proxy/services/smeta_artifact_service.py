@@ -8,6 +8,7 @@ model, computes visible table totals, and prepares a separate artifact payload.
 from __future__ import annotations
 
 import csv
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -193,13 +194,17 @@ def _normative_basis(value: str) -> str:
     if not text:
         return ""
     match = re.search(
-        r"(ГЭСН(?:м|мр|п|р)?\s*\d{1,2}[-–]\d{2}[-–]\d{3}[-–]\d{2}|"
+        r"(ГЭСН(?:м|мр|п|р)?\s*:?\s*\d{1,2}[-–]\d{2}[-–]\d{3}[-–]\d{2}|"
         r"ГЭСН(?:м|мр|п|р)?\s*\d{1,2}|"
         r"ФЕР(?:м|мр|п|р)?\s*\d{1,2}[-–]\d{2}[-–]\d{3}[-–]\d{2})",
         text,
         flags=re.IGNORECASE,
     )
     return match.group(1).replace("–", "-") if match else text
+
+
+def _stable_lsr_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
 def _lsr_rows_from_table(table: SmetaTable) -> list[dict[str, Any]]:
@@ -253,7 +258,7 @@ def _lsr_rows_from_table(table: SmetaTable) -> list[dict[str, Any]]:
         out.append(
             {
                 "basis": _normative_basis(_cell(row, basis_idx)),
-                "title": title or "Позиция сметы",
+                "title": _stable_lsr_text(title) or "Позиция сметы",
                 "unit": _cell(row, unit_idx),
                 "quantity": _cell(row, qty_idx),
                 "unit_price": _cell(row, price_idx),
@@ -325,8 +330,9 @@ def _select_pricebook_for_question(question: str):
     """Resolve an explicit local pricebook for trace calculation.
 
     This is region/period selection, not work/norm selection. If the request
-    does not point to an available pricebook, the trace still runs with embedded
-    norm prices/manual prices where available.
+    does not point to an available pricebook, use a deterministic system
+    default from the physically installed books instead of leaving the trace
+    unpriced.
     """
     q = str(question or "").casefold()
     try:
@@ -339,13 +345,23 @@ def _select_pricebook_for_question(question: str):
         preferred: list[str] = []
         if any(token in q for token in ("спб", "санкт-петербург", "петербург", "sankt", "spb")):
             if "2026" in q and any(token in q for token in ("2 кв", "2кв", "ii", "2 кварт", "2kv")):
-                preferred.extend(["spb_2kv2026"])
+                preferred.extend(["spb_2kv2026", "sankt-peterburg_2kv2026"])
             if "2026" in q:
-                preferred.extend([stem for stem in stems if stem.startswith("spb") and "2026" in stem])
-            preferred.extend(["spb_refresh", "spb_2kv2026", "spb_2kv2025"])
+                preferred.extend([stem for stem in stems if stem.startswith(("spb", "sankt-peterburg")) and "2026" in stem])
+            preferred.extend(["spb_2kv2026", "sankt-peterburg_2kv2026", "spb_2kv2025", "sankt-peterburg_2kv2025"])
         if "москва" in q or "мск" in q:
             preferred.extend([stem for stem in stems if stem.startswith("moskva") and ("2026" in stem if "2026" in q else True)])
+        configured_default = os.getenv("LES_DEFAULT_PRICEBOOK", "").strip()
+        if configured_default:
+            preferred.append(Path(configured_default).stem)
+        preferred.extend(["spb_2kv2026", "sankt-peterburg_2kv2026", "spb_2kv2025", "sankt-peterburg_2kv2025"])
+        preferred.extend([stem for stem in sorted(stems) if "2026" in stem])
+        preferred.extend(sorted(stems))
+        seen: set[str] = set()
         for stem in preferred:
+            if stem in seen:
+                continue
+            seen.add(stem)
             path = stems.get(stem)
             if path:
                 return fps.get_pricebook(path), stem
@@ -378,11 +394,35 @@ def _build_rim_trace_form(lsr_form: dict[str, Any], *, question: str = "") -> di
     bound_rows = int(summary.get("bound_rows") or 0)
     if bound_rows <= 0:
         return None
-
-    out_rows: list[dict[str, Any]] = []
+    input_rows = int(summary.get("input_rows") or len(rows))
+    trace_positions: list[dict[str, Any]] = []
+    trace_positions_by_source_row: dict[int, dict[str, Any]] = {}
     for section in trace.get("sections") or []:
         section_name = str(section.get("section") or "").strip()
         for pos in section.get("positions") or []:
+            item = {"section": section_name, "position": pos}
+            trace_positions.append(item)
+            try:
+                source_row_idx = int(pos.get("source_row") or 0)
+            except (TypeError, ValueError):
+                source_row_idx = 0
+            if source_row_idx > 0:
+                trace_positions_by_source_row[source_row_idx] = item
+    bound_positions = iter(trace_positions)
+    out_rows: list[dict[str, Any]] = []
+    for idx, source_row in enumerate(rows, 1):
+        binding = next(
+            (item for item in (trace.get("row_bindings") or []) if int(item.get("row") or 0) == idx),
+            {},
+        )
+        if binding.get("status") == "bound":
+            trace_item = trace_positions_by_source_row.get(idx)
+            if not trace_item:
+                try:
+                    trace_item = next(bound_positions)
+                except StopIteration:
+                    trace_item = {"section": str(source_row.get("section") or ""), "position": {}}
+            pos = trace_item.get("position") or {}
             ps = pos.get("summary") or {}
             qty = pos.get("qty")
             amount = float(ps.get("total") or 0.0)
@@ -393,18 +433,33 @@ def _build_rim_trace_form(lsr_form: dict[str, Any], *, question: str = "") -> di
                 status = "priced_partial"
             out_rows.append(
                 {
-                    "basis": pos.get("code") or "",
-                    "title": pos.get("name") or "",
-                    "unit": pos.get("unit") or "",
+                    "basis": pos.get("code") or source_row.get("basis") or "",
+                    "title": _stable_lsr_text(pos.get("name") or source_row.get("title") or ""),
+                    "unit": pos.get("unit") or source_row.get("unit") or "",
                     "quantity": qty,
                     "unit_price": round(unit_price, 2) if unit_price is not None else "",
                     "amount": amount,
                     "status": status,
                     "source_table": "РИМ trace",
-                    "section": section_name,
+                    "section": trace_item.get("section") or source_row.get("section") or "",
                     "flags": "; ".join(str(flag) for flag in flags),
                 }
             )
+            continue
+        out_rows.append(
+            {
+                "basis": "нужен подбор нормы",
+                "title": _stable_lsr_text(source_row.get("title") or source_row.get("name")) or "Позиция сметы",
+                "unit": source_row.get("unit") or "",
+                "quantity": source_row.get("quantity") or "",
+                "unit_price": "0.00",
+                "amount": 0.0,
+                "status": binding.get("status") or "norm_selection_required",
+                "source_table": source_row.get("source_table") or "видимая ЛСР модели",
+                "section": source_row.get("section") or "",
+                "flags": binding.get("message") or "строка не вошла в проверяемую РИМ-сумму",
+            }
+        )
     if not out_rows:
         return None
     total = float(summary.get("total") or sum(float(row.get("amount") or 0.0) for row in out_rows))
@@ -434,6 +489,73 @@ def _build_rim_trace_form(lsr_form: dict[str, Any], *, question: str = "") -> di
     }
 
 
+def build_checked_rim_form_from_visible_rows(rows: list[dict[str, Any]], *, question: str = "") -> dict[str, Any] | None:
+    """Build checked RIM LSR from rows where the model already selected norm codes."""
+    if not rows:
+        return None
+    lsr_form = {
+        "schema": "lsr_rim_display_form_v1",
+        "title": "Локальный сметный расчет (смета)",
+        "rows": rows,
+        "source_tables": ["structured model norm choice"],
+    }
+    return _build_rim_trace_form(lsr_form, question=question)
+
+
+def build_smeta_artifact_from_rim_form(
+    rim_form: dict[str, Any],
+    *,
+    question: str = "",
+    title: str = "Сметный артефакт",
+) -> dict[str, Any] | None:
+    """Create an artifact around an already checked RIM form."""
+    if not rim_form:
+        return None
+    rows = rim_form.get("rows") or []
+    table_headers = [str(_LSR_FORM_HEADERS.get(col, "")) for col in range(1, _LSR_FORM_MAX_COL + 1)]
+    table_data = []
+    for idx, row in enumerate(rows, 1):
+        table_data.append([
+            str(idx),
+            str(row.get("basis") or ""),
+            str(row.get("title") or ""),
+            str(row.get("unit") or ""),
+            "1",
+            "1",
+            str(row.get("quantity") or ""),
+            "",
+            "",
+            str(row.get("unit_price") or ""),
+            "1",
+            str(row.get("amount") or "0.00"),
+        ])
+    lines = ["# Сметный артефакт", ""]
+    if question:
+        lines += ["## Запрос", str(question).strip(), ""]
+    lines += [*_lsr_markdown(rim_form)]
+    total = rim_form.get("amount_total")
+    if total is not None and float(total or 0.0) > 0:
+        lines += ["", "## Арифметика", f"Сумма проверенной РИМ-формы: **{_fmt_money(float(total))}**."]
+    return {
+        "mode": "markdown",
+        "title": title,
+        "content": "\n".join(lines).strip(),
+        "tables": [
+            {
+                "title": "Structured model norm choice",
+                "kind": "norm_choice",
+                "rows": len(table_data),
+                "amount_total": rim_form.get("amount_total"),
+                "headers": table_headers,
+                "data": table_data,
+            }
+        ],
+        "lsr_form": rim_form,
+        "rim_lsr_form": rim_form,
+        "rim_trace": rim_form.get("trace"),
+    }
+
+
 def _lsr_markdown(lsr_form: dict[str, Any] | None) -> list[str]:
     if not lsr_form:
         return []
@@ -457,7 +579,7 @@ def _lsr_markdown(lsr_form: dict[str, Any] | None) -> list[str]:
             "",
         ]
     lines += [
-        "| № п/п | Обоснование | Наименование работ и затрат | Ед. изм. | Кол-во на ед. | коэф. | Кол-во всего | Базис на ед., руб. | Индекс | Текущий на ед., руб. | коэф. | Текущий всего, руб. |",
+        "| № п/п | Обоснование | Наименование работ и затрат | Ед. изм. | Кол-во на ед. | коэф. | Кол-во всего | Сметная стоимость в базисном уровне цен на ед., руб. | Индекс | Сметная стоимость в текущем уровне цен на ед., руб. | коэф. | Сметная стоимость в текущем уровне цен всего, руб. |",
         "|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
         "| 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 |",
     ]
@@ -637,6 +759,162 @@ def build_smeta_artifact(answer: str, *, question: str = "") -> dict[str, Any] |
             if lsr_form
             else {}
         ),
+    }
+
+
+_NORM_CANDIDATE_HEADERS = [
+    "№ ВОР",
+    "Исходная работа",
+    "Ед. ВОР",
+    "Кол-во ВОР",
+    "Нормируемая работа",
+    "Группа сборников",
+    "Сборник/раздел",
+    "Код ГЭСН",
+    "Наименование ГЭСН",
+    "Ед. ГЭСН",
+    "Кол-во в измерителе нормы",
+    "Статус применимости",
+    "Комментарий",
+]
+
+
+def _md_cell(value: Any) -> str:
+    text = str(value if value is not None else "").replace("\n", " ").strip()
+    return text.replace("|", "\\|")
+
+
+def _norm_candidate_section(candidate: dict[str, Any]) -> str:
+    profile = candidate.get("norm_profile") if isinstance(candidate.get("norm_profile"), dict) else {}
+    navigation = profile.get("navigation") if isinstance(profile.get("navigation"), list) else []
+    nav_titles = []
+    for item in navigation[:2]:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or item.get("heading") or item.get("name") or "").strip()
+        if title:
+            nav_titles.append(title)
+    base = str(candidate.get("collection") or "").strip()
+    if nav_titles:
+        return " / ".join([x for x in [base, *nav_titles] if x])
+    return base
+
+
+def _norm_candidate_comment(candidate: dict[str, Any]) -> str:
+    parts: list[str] = []
+    if candidate.get("unit_compatible") is not None:
+        parts.append("ед. изм. совместима" if candidate.get("unit_compatible") else "проверить ед. изм.")
+    score = candidate.get("score_total")
+    if score is not None:
+        try:
+            parts.append(f"score={float(score):.2f}")
+        except (TypeError, ValueError):
+            parts.append(f"score={score}")
+    reasons = candidate.get("rejection_reasons")
+    if isinstance(reasons, list) and reasons:
+        parts.append("; ".join(str(x) for x in reasons[:3] if x))
+    selection = candidate.get("selection_note")
+    if selection:
+        parts.append(str(selection))
+    return "; ".join(x for x in parts if x)
+
+
+def build_norm_candidate_artifact_from_lookup(
+    norm_lookup_trace: dict[str, Any],
+    *,
+    question: str = "",
+) -> dict[str, Any] | None:
+    """Build the stage-1 ВОР -> ГЭСН candidate table from executed lookup trace.
+
+    The function formats already returned search_norm candidates. It does not
+    pick the final norm, bind rows, price resources, or infer missing quantities.
+    """
+    results = norm_lookup_trace.get("results") if isinstance(norm_lookup_trace, dict) else None
+    if not isinstance(results, list):
+        return None
+
+    rows: list[list[str]] = []
+    for lookup_idx, item in enumerate(results, start=1):
+        if not isinstance(item, dict):
+            continue
+        call = item.get("call") if isinstance(item.get("call"), dict) else {}
+        args = call.get("args") if isinstance(call.get("args"), dict) else {}
+        result = item.get("result") if isinstance(item.get("result"), dict) else {}
+        work = str(args.get("work_description") or "").strip()
+        unit_hint = str(args.get("unit_hint") or "").strip()
+        family = str(result.get("work_family") or args.get("work_family") or "").strip()
+        candidates = result.get("candidates") if isinstance(result.get("candidates"), list) else []
+        if not candidates:
+            rows.append([
+                str(lookup_idx),
+                work,
+                unit_hint,
+                "",
+                work,
+                family,
+                "",
+                "",
+                "",
+                "",
+                "",
+                str(result.get("status") or "not_found"),
+                str(result.get("hint") or "кандидаты ГЭСН не найдены; строка останется 0.00/пусто с примечанием"),
+            ])
+            continue
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            rows.append([
+                str(lookup_idx),
+                work,
+                unit_hint,
+                "",
+                work,
+                family,
+                _norm_candidate_section(candidate),
+                str(candidate.get("norm_code") or ""),
+                str(candidate.get("title") or ""),
+                str(candidate.get("measure_unit") or ""),
+                "",
+                str(candidate.get("applicability_status") or result.get("status") or ""),
+                _norm_candidate_comment(candidate),
+            ])
+    if not rows and norm_lookup_trace.get("enabled") is False:
+        return None
+
+    lines = ["# Таблица кандидатов ГЭСН", ""]
+    if question:
+        lines += ["## Запрос", str(question).strip(), ""]
+    lines += [
+        "## Этап 1: ВОР -> кандидаты ГЭСН",
+        "Это рабочая таблица доступных кандидатов. Это не ЛСР и не расчет денег.",
+        "",
+        "| " + " | ".join(_NORM_CANDIDATE_HEADERS) + " |",
+        "| " + " | ".join("---" for _ in _NORM_CANDIDATE_HEADERS) + " |",
+    ]
+    for row in rows:
+        lines.append("| " + " | ".join(_md_cell(cell) for cell in row) + " |")
+    lines += [
+        "",
+        "## Следующий шаг",
+        "Можно сразу сказать: «деньги по ним». ЛЕС посчитает по доступным кандидатам; "
+        "чего не хватает, останется 0.00/пусто с примечанием.",
+    ]
+    table = {
+        "title": "ВОР ↔ кандидаты ГЭСН",
+        "kind": "norm_candidates",
+        "rows": len(rows),
+        "amount_total": None,
+        "headers": list(_NORM_CANDIDATE_HEADERS),
+        "data": rows,
+    }
+    return {
+        "mode": "markdown",
+        "stage": "norm_candidates",
+        "title": "Таблица кандидатов ГЭСН",
+        "content": "\n".join(lines).strip(),
+        "tables": [table],
+        "norm_candidate_table": table,
     }
 
 
@@ -858,12 +1136,19 @@ def persist_smeta_artifact_exports(
 
 
 def compact_smeta_answer(answer: str, artifact: dict[str, Any] | None) -> str:
-    """Keep chat readable when the answer contains long estimate tables.
+    """Optionally compact long estimate tables in chat.
 
-    Short tables stay in the chat. Long tables are replaced with a short marker;
-    the full table remains in the artifact payload.
+    Default is deliberately full-visible: the model's estimate answer is the
+    answer. Operators may opt into legacy compaction for very small screens via
+    LES_SMETA_COMPACT_CHAT_TABLES=1; artifacts still stay attached either way.
     """
     if not artifact:
+        return answer
+    trace_visible = _trace_lsr_visible_answer(artifact)
+    if trace_visible:
+        return trace_visible
+    answer = _prepend_trace_lsr_summary(answer, artifact)
+    if str(os.getenv("LES_SMETA_COMPACT_CHAT_TABLES", "0")).strip().lower() not in {"1", "true", "yes", "on"}:
         return answer
     tables = extract_smeta_tables(answer)
     if not tables or sum(len(table.rows) for table in tables) < 5:
@@ -908,3 +1193,70 @@ def compact_smeta_answer(answer: str, artifact: dict[str, Any] | None) -> str:
         compacted = _drop_conflicting_manual_totals(compacted, float(lsr_form["amount_total"]))
     compacted = re.sub(r"\n{3,}", "\n\n", compacted).strip()
     return compacted or answer
+
+
+def _trace_lsr_visible_answer(artifact: dict[str, Any]) -> str:
+    """Render the checked RIM trace as the visible chat answer when it exists."""
+    lsr_form = artifact.get("rim_lsr_form") if isinstance(artifact.get("rim_lsr_form"), dict) else None
+    if not lsr_form or lsr_form.get("schema") != "lsr_rim_trace_form_v1":
+        return ""
+    total = lsr_form.get("amount_total")
+    if total is None:
+        return ""
+    trace_summary = (lsr_form.get("trace") or {}).get("summary") or {}
+    try:
+        input_rows = int(trace_summary.get("input_rows") or 0)
+        bound_rows = int(trace_summary.get("bound_rows") or len(lsr_form.get("rows") or []))
+    except (TypeError, ValueError):
+        input_rows = 0
+        bound_rows = len(lsr_form.get("rows") or [])
+    coverage = ""
+    if input_rows and bound_rows < input_rows:
+        coverage = f" ({bound_rows}/{input_rows} строк ВОР рассчитано)"
+    lines = [f"ЛСР РИМ сформирована по расчетной трассе{coverage}: **{_fmt_money(float(total))}**."]
+    details: list[str] = []
+    pricebook = str(lsr_form.get("pricebook") or "").strip()
+    finality = str(lsr_form.get("finality") or "").strip()
+    if pricebook:
+        details.append(f"книга цен: {pricebook}")
+    if finality:
+        details.append(f"статус: {finality}")
+    if details:
+        lines.append("; ".join(details) + ".")
+    flags = [
+        str(flag).strip()
+        for flag in ((lsr_form.get("trace") or {}).get("summary") or {}).get("flags", [])
+        if str(flag).strip()
+    ]
+    lines += ["", *_lsr_markdown(lsr_form)]
+    if flags:
+        lines += [
+            "",
+            "Примечания: есть незакрытые строки/ресурсные цены/ставки; подробный перечень сохранён в артефакте.",
+        ]
+    return "\n".join(lines).strip()
+
+
+def _prepend_trace_lsr_summary(answer: str, artifact: dict[str, Any]) -> str:
+    lsr_form = artifact.get("rim_lsr_form") if isinstance(artifact.get("rim_lsr_form"), dict) else None
+    if not lsr_form or lsr_form.get("schema") != "lsr_rim_trace_form_v1":
+        return answer
+    total = lsr_form.get("amount_total")
+    if total is None:
+        return answer
+    marker = "Системный РИМ-расчёт по подключённым источникам"
+    if marker in str(answer or ""):
+        return answer
+    pricebook = str(lsr_form.get("pricebook") or "").strip()
+    finality = str(lsr_form.get("finality") or "").strip()
+    details = []
+    if pricebook:
+        details.append(f"книга цен: {pricebook}")
+    if finality and finality != "priced_final":
+        details.append(f"статус: {finality}")
+    suffix = f" ({'; '.join(details)})" if details else ""
+    return (
+        f"{marker}: **{_fmt_money(float(total))}**{suffix}.\n"
+        "Расчётная РИМ-форма построена по выбранным строкам и подключённым источникам.\n\n"
+        f"{str(answer or '').strip()}"
+    ).strip()

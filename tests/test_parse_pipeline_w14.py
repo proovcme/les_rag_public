@@ -156,6 +156,24 @@ def test_convert_failure_keeps_old_points(tmp_path, monkeypatch):
     assert deleted.count("bad.md") <= 1
 
 
+def test_raw_cad_bim_source_is_skipped_not_indexed_zero(tmp_path, monkeypatch):
+    dataset_dir = tmp_path / "ds-1" / "raw"
+    dataset_dir.mkdir(parents=True)
+    (dataset_dir / "model.dwg").write_bytes(b"AC1027 binary dwg placeholder")
+    db = TrackingDB(["raw/model.dwg"])
+    deleted = []
+
+    monkeypatch.setattr("backend.qdrant_adapter.qdrant_client.QdrantClient", FakeQdrant)
+    result = QdrantLlamaIndexAdapter._sync_parse(
+        _adapter(tmp_path, db, deleted=deleted), "ds-1", limit=1
+    )
+
+    assert result["errors"] == 0
+    assert db.statuses[-1][0:3] == ("raw/model.dwg", "SKIPPED", 0)
+    assert "raw CAD/BIM source unsupported" in db.statuses[-1][3]
+    assert all(status != "INDEXED" for _, status, *_ in db.statuses)
+
+
 def test_resume_after_crash_no_duplicate_points(tmp_path, monkeypatch):
     """kill посреди файла → файл остаётся PENDING → повторный прогон удаляет старые точки и доводит."""
     _make_files(tmp_path, ["a.md"])

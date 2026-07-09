@@ -117,6 +117,36 @@ def test_dataset_brief_for_model_links_file_cards_to_chunks_and_keeps_model_prim
     assert "не источник фактов" in brief
 
 
+def test_dataset_brief_includes_project_pdf_extract_as_navigation(tmp_path):
+    db = tmp_path / "meta.db"
+    _seed_db(db)
+    memory = build_typed_dataset_memory("ds", meta_db_path=str(db), force=True)
+    memory["project_pdf_extract"] = {
+        "context_role": "navigation_not_evidence",
+        "coverage": {"pdf_documents": 2, "files_extracted": 2, "pz_files": 1, "vor_files": 1, "so_files": 0},
+        "source_navigation": [
+            {
+                "file_name": "PD/ИОС.ЭС.ПЗ.pdf",
+                "role": "пояснительная записка",
+                "use_for": "проектные решения",
+                "source_refs": ["PD/ИОС.ЭС.ПЗ.pdf#page=1"],
+            }
+        ],
+        "files": [
+            {"file_name": "PD/ИОС.ЭС.ПЗ.pdf", "status": "ok"},
+            {"file_name": "PD/ИОС.ЭС.ВОР.pdf", "status": "ok"},
+        ],
+    }
+
+    brief = dataset_brief_for_model([memory], question="что есть в проекте по ЭС?")
+
+    assert "PDF project source-map" in brief
+    assert "навигация, не evidence" in brief
+    assert "Где искать в PDF-проекте" in brief
+    assert "PD/ИОС.ЭС.ПЗ.pdf" in brief
+    assert "проектные решения" in brief
+
+
 def test_topic_and_section_maps_use_lexical_headings(tmp_path):
     db = tmp_path / "meta.db"
     _seed_db(db)
@@ -474,6 +504,25 @@ def test_project_estimate_still_keeps_estimate_role():
     assert typing["document_role"] == "сметный расчёт"
 
 
+def test_project_ntd_domain_is_technical_not_normative_without_norm_doc_type():
+    typing = infer_file_typing(
+        {
+            "file_name": "ns/27_05-22-Р-ЭОМ.1_19.06.2025.pdf",
+            "domain": "NTD_ELECTRICAL",
+            "doc_type": "DOCUMENT",
+            "content_type": "mixed",
+            "pipeline": "markdown_pdf_tables",
+        }
+    )
+
+    assert typing["file_kind"] == "technical_document"
+    assert "technical_docs" in typing["content_layers"]
+    assert "normative" not in typing["content_layers"]
+    assert typing["document_role"] == "документ"
+    assert "рабочая документация" in typing["navigation_terms"]
+    assert "электроснабжение" in typing["navigation_terms"]
+
+
 def test_smeta_norm_memory_downranks_service_noise(tmp_path):
     db = tmp_path / "meta.db"
     conn = sqlite3.connect(db)
@@ -540,18 +589,42 @@ def test_reader_context_uses_env_limits(monkeypatch):
         "document_count": 25,
         "indexed_count": 25,
         "chunk_count": 250,
+        "operator_guidance": "Сначала читать состав проекта и ПЗ.",
+        "operator_guidance_role": "navigation_not_evidence",
         "file_cards": cards,
+        "section_map": {
+            "schema": "dataset_section_map_v1",
+            "coverage": {"files_with_sections": 1, "section_count": 30},
+            "files": [
+                {
+                    "file_name": "file_24.docx",
+                    "sections": [{"heading": f"Раздел {idx}", "chunk_count": 1} for idx in range(30)],
+                }
+            ],
+        },
     }
     monkeypatch.setenv("LES_DATASET_READER_FILE_LIMIT", "20")
     monkeypatch.setenv("LES_DATASET_READER_CONTEXT_CHARS", "8000")
 
     context = dataset_memory_service._reader_context(memory)
 
+    assert "Сначала читать состав проекта и ПЗ." in context
     assert '"included": 20' in context
     assert '"total": 25' in context
     assert "file_24.docx" in context
     assert "file_4.docx" not in context
+    assert "Раздел 4" in context
+    assert "Раздел 5" not in context
     assert "TRUNCATED" not in context
+
+
+def test_reader_compact_prompt_avoids_full_json_schema():
+    prompt = dataset_memory_service._reader_compact_prompt("Инструкция", '{"dataset_id":"ds"}')
+
+    assert "ВХОДНАЯ КАРТА ДАТАСЕТА JSON" in prompt
+    assert '"schema": "dataset_reader_map_v1"' in prompt
+    assert "JSON-схема" not in prompt
+    assert '"properties"' not in prompt
 
 
 @pytest.mark.asyncio

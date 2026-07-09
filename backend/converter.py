@@ -6,19 +6,29 @@ converter.py — конвертация документов в Markdown для 
 """
 import json
 import logging
+import multiprocessing
 import os
+import queue
 import re
+import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
 # Лимит текста на файл — защита от огромных документов
 MAX_FILE_CHARS = 500_000  # ~125k токенов
 PDF_MAX_FILE_CHARS = 2_000_000
+PDF_FAST_TEXT_MAX_FILE_CHARS = 50_000_000
 BOOK_PDF_MIN_PAGES = 200
+SPREADSHEET_READ_ROWS = int(os.getenv("RAG_SPREADSHEET_READ_ROWS", "2000"))
+SPREADSHEET_FULL_TABLE_MAX_CELLS = int(os.getenv("RAG_SPREADSHEET_FULL_TABLE_MAX_CELLS", "800"))
+SPREADSHEET_PROFILE_MAX_COLUMNS = int(os.getenv("RAG_SPREADSHEET_PROFILE_MAX_COLUMNS", "60"))
+SPREADSHEET_PROFILE_MAX_VALUES = int(os.getenv("RAG_SPREADSHEET_PROFILE_MAX_VALUES", "12"))
+SPREADSHEET_SAMPLE_ROWS = int(os.getenv("RAG_SPREADSHEET_SAMPLE_ROWS", "8"))
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
+ISOLATED_CONVERT_SUFFIXES = {".pdf", ".p7m", ".xlsx", ".xlsm", ".xls"}
 
 SUPPORTED = {
     ".pdf", ".docx", ".doc",
@@ -67,7 +77,7 @@ def convert_to_markdown(file_path: Path, route=None) -> Optional[str]:
         elif suffix in (".eml", ".emlx", ".msg"):
             result = _parse_email(file_path)
         elif suffix in (".xlsx", ".xlsm", ".xls", ".csv"):
-            result = _parse_with_markitdown(file_path) or _parse_spreadsheet(file_path)
+            result = _parse_spreadsheet(file_path) or _parse_with_markitdown(file_path)
         elif suffix == ".pptx":
             result = _parse_with_markitdown(file_path)
         elif suffix in (".json", ".jsonl"):
@@ -77,15 +87,182 @@ def convert_to_markdown(file_path: Path, route=None) -> Optional[str]:
         else:
             return None
 
-        max_chars = _max_file_chars(file_path)
-        if result and len(result) > max_chars:
-            logger.warning(f"[CONVERT] {file_path.name}: обрезан до {max_chars} символов")
-            result = result[:max_chars]
-
-        return result if result and result.strip() else None
+        return _limit_file_chars(file_path, result)
 
     except Exception as e:
         logger.error(f"[CONVERT] Ошибка {file_path.name}: {e}", exc_info=True)
+        return None
+
+
+def convert_to_markdown_for_indexing(file_path: Path, route=None) -> Optional[str]:
+    """Indexing entrypoint: risky PDF/Excel converters run in a killable child."""
+    if not _isolated_conversion_enabled(file_path):
+        return convert_to_markdown(file_path, route=route)
+    if _pdf_index_fast_text_first(file_path, route=route):
+        fast = _parse_pdf_fast_text_layer(file_path, reason="pdf_index_text_first")
+        if fast and fast.strip():
+            return _limit_file_chars(
+                file_path,
+                fast,
+                env_name="RAG_PDF_FAST_TEXT_MAX_FILE_CHARS",
+                default=PDF_FAST_TEXT_MAX_FILE_CHARS,
+            )
+    try:
+        return convert_to_markdown_isolated(file_path, route=route)
+    except RuntimeError as error:
+        if _pdf_fast_text_fallback_enabled(file_path):
+            fast = _parse_pdf_fast_text_layer(file_path, reason=f"isolated_convert_failed: {error}")
+            if fast and fast.strip():
+                logger.warning(
+                    "[CONVERT] %s: isolated converter failed (%s), indexed fast page-text fallback",
+                    file_path.name,
+                    error,
+                )
+                return _limit_file_chars(
+                    file_path,
+                    fast,
+                    env_name="RAG_PDF_FAST_TEXT_MAX_FILE_CHARS",
+                    default=PDF_FAST_TEXT_MAX_FILE_CHARS,
+                )
+        raise
+
+
+def convert_to_markdown_isolated(
+    file_path: Path,
+    route=None,
+    timeout_sec: float | None = None,
+) -> Optional[str]:
+    timeout = timeout_sec if timeout_sec is not None else _isolated_conversion_timeout_sec()
+    ctx = multiprocessing.get_context(os.getenv("RAG_CONVERT_PROCESS_START_METHOD", "spawn"))
+    result_queue = ctx.Queue(maxsize=1)
+    process = ctx.Process(
+        target=_convert_to_markdown_worker,
+        args=(str(file_path), route, result_queue),
+        name=f"les-convert-{file_path.suffix.lower().lstrip('.') or 'file'}",
+    )
+    process.start()
+    deadline = time.monotonic() + timeout
+    result: tuple[str, Any] | None = None
+    while process.is_alive() and time.monotonic() < deadline:
+        try:
+            result = result_queue.get(timeout=min(0.2, max(0.01, deadline - time.monotonic())))
+            break
+        except queue.Empty:
+            continue
+
+    if result is not None:
+        process.join(5)
+    elif process.is_alive():
+        process.terminate()
+        process.join(5)
+        if process.is_alive():
+            process.kill()
+            process.join(5)
+        raise RuntimeError(f"convert subprocess timeout: >{timeout:.0f}s")
+    else:
+        process.join(5)
+        try:
+            result = result_queue.get_nowait()
+        except queue.Empty:
+            if process.exitcode == 0:
+                return None
+            raise RuntimeError(f"convert subprocess exited with code {process.exitcode}")
+
+    status, payload = result
+    if status == "ok":
+        return payload
+    raise RuntimeError(str(payload))
+
+
+def _convert_to_markdown_worker(file_path: str, route: Any, result_queue: Any) -> None:
+    try:
+        result_queue.put(("ok", convert_to_markdown(Path(file_path), route=route)))
+    except BaseException as error:  # noqa: BLE001 - cross-process boundary
+        result_queue.put(("error", f"{type(error).__name__}: {error}"))
+
+
+def _isolated_conversion_enabled(file_path: Path) -> bool:
+    raw = os.getenv("RAG_CONVERT_SUBPROCESS_ENABLED", "true").strip().lower()
+    if raw not in {"1", "true", "yes", "on"}:
+        return False
+    return file_path.suffix.lower() in ISOLATED_CONVERT_SUFFIXES
+
+
+def _isolated_conversion_timeout_sec() -> float:
+    raw = os.getenv("RAG_CONVERT_SUBPROCESS_TIMEOUT_SEC")
+    if raw:
+        try:
+            return max(1.0, float(raw))
+        except ValueError:
+            pass
+    try:
+        parse_timeout = float(os.getenv("RAG_PARSE_FILE_TIMEOUT_SEC", "1800"))
+    except ValueError:
+        parse_timeout = 1800.0
+    return max(1.0, parse_timeout * 0.9)
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _pdf_fast_text_fallback_enabled(file_path: Path) -> bool:
+    return file_path.suffix.lower() == ".pdf" and _env_bool("RAG_PDF_FAST_TEXT_FALLBACK_ENABLED", True)
+
+
+def _pdf_index_fast_text_first(file_path: Path, route=None) -> bool:
+    if file_path.suffix.lower() != ".pdf":
+        return False
+    if not _env_bool("RAG_PDF_INDEX_FAST_TEXT_FIRST", True):
+        return False
+    if route and getattr(route, "pipeline", None) == "markdown_needs_ocr":
+        return False
+    page_count = _pdf_page_count(file_path)
+    try:
+        min_pages = max(1, int(os.getenv("RAG_PDF_FAST_TEXT_FIRST_MIN_PAGES", "1")))
+    except ValueError:
+        min_pages = 30
+    try:
+        min_mb = max(0.1, float(os.getenv("RAG_PDF_FAST_TEXT_FIRST_MIN_MB", "1")))
+    except ValueError:
+        min_mb = 15.0
+    size_mb = file_path.stat().st_size / (1024 * 1024) if file_path.exists() else 0.0
+    pipeline = str(getattr(route, "pipeline", "") or "")
+    return page_count >= min_pages or size_mb >= min_mb or pipeline == "markdown_pdf_tables"
+
+
+def _parse_pdf_fast_text_layer(path: Path, *, reason: str = "") -> Optional[str]:
+    try:
+        import fitz
+
+        pages = []
+        chars = 0
+        sort_text = _env_bool("RAG_PDF_FAST_TEXT_SORT", False)
+        with fitz.open(str(path)) as doc:
+            page_count = int(doc.page_count)
+            for idx, page in enumerate(doc, start=1):
+                text = page.get_text("text", sort=sort_text).strip()
+                chars += len(text)
+                pages.append(f"## Page {idx}\n\n{text or '[no text extracted]'}")
+        header = [
+            f"# PDF text projection: {path.name}",
+            "",
+            f"- extraction: fast PyMuPDF page text",
+            f"- reason: {reason or 'indexing'}",
+            f"- pages: {page_count}",
+            f"- extracted_chars: {chars}",
+            "- note: tables/layout may require a separate enrichment pass; this layer is the searchable baseline.",
+            "",
+        ]
+        # Do not run the legal-boilerplate multiline regex here: project PDFs can
+        # yield tens of megabytes of page text, and that cleanup is not worth
+        # turning the guaranteed baseline into another slow path.
+        return "\n\n".join([*header, *pages])
+    except Exception as error:  # noqa: BLE001 - fallback must not hide original failure if it also fails
+        logger.warning("[CONVERT] fast PDF text fallback failed for %s: %s", path.name, error)
         return None
 
 
@@ -270,6 +447,26 @@ def _max_file_chars(path: Path) -> int:
         return default
 
 
+def _limit_file_chars(
+    file_path: Path,
+    result: Optional[str],
+    *,
+    env_name: str | None = None,
+    default: int | None = None,
+) -> Optional[str]:
+    if env_name:
+        try:
+            max_chars = max(1, int(os.getenv(env_name, str(default or _max_file_chars(file_path)))))
+        except ValueError:
+            max_chars = default or _max_file_chars(file_path)
+    else:
+        max_chars = _max_file_chars(file_path)
+    if result and len(result) > max_chars:
+        logger.warning(f"[CONVERT] {file_path.name}: обрезан до {max_chars} символов")
+        result = result[:max_chars]
+    return result if result and result.strip() else None
+
+
 def _pdf_image_extraction_enabled(path: Path) -> bool:
     raw = os.getenv("PDF_IMAGE_EXTRACTION_ENABLED")
     if raw is not None:
@@ -418,25 +615,120 @@ def _parse_spreadsheet(path: Path) -> str:
     try:
         if path.suffix.lower() == ".csv":
             # Пробуем несколько кодировок
+            df = None
             for enc in ("utf-8", "cp1251", "latin-1"):
                 try:
-                    df = pd.read_csv(path, encoding=enc, nrows=2000)
+                    df = pd.read_csv(path, encoding=enc, nrows=SPREADSHEET_READ_ROWS)
                     break
                 except UnicodeDecodeError:
                     continue
-            md_parts.append(f"## Таблица: {path.stem}\n{df.to_markdown(index=False)}")
+            if df is None:
+                raise ValueError("CSV encoding is not utf-8/cp1251/latin-1")
+            md_parts.append(_render_spreadsheet_sheet(path.stem, df))
         else:
             xls = pd.ExcelFile(path)
             for sheet in xls.sheet_names:
-                df = pd.read_excel(xls, sheet_name=sheet, nrows=2000)
+                df = pd.read_excel(xls, sheet_name=sheet, nrows=SPREADSHEET_READ_ROWS)
                 if df.empty:
                     continue
-                md_parts.append(f"## Лист: {sheet}\n{df.to_markdown(index=False)}")
+                md_parts.append(_render_spreadsheet_sheet(sheet, df))
     except Exception as e:
         logger.error(f"[CONVERT] spreadsheet error {path.name}: {e}")
         return f"[ERROR] Не удалось прочитать таблицу: {e}"
 
     return "\n\n".join(md_parts) if md_parts else f"[WARN] {path.name}: таблица пуста"
+
+
+def _render_spreadsheet_sheet(sheet_name: str, df: Any) -> str:
+    """Render spreadsheet data for navigation RAG.
+
+    Small sheets stay as full markdown tables. Large sheets become compact
+    structural projections so a workbook cannot dominate the vector index with
+    thousands of near-identical row chunks. Exact rows/sums must be read by a
+    table reader/tool from the source file.
+    """
+    cleaned = df.dropna(how="all").dropna(axis=1, how="all")
+    if cleaned.empty:
+        return f"## Лист: {sheet_name}\n[WARN] лист пуст"
+
+    rows, cols = cleaned.shape
+    if rows * cols <= SPREADSHEET_FULL_TABLE_MAX_CELLS:
+        return f"## Лист: {sheet_name}\n{cleaned.to_markdown(index=False)}"
+
+    parts = [
+        f"## Лист: {sheet_name}",
+        "Тип: spreadsheet_navigation_projection",
+        f"Размер прочитанного окна: строк {rows}, колонок {cols}",
+        "Назначение: навигация по книге и выбор листа/колонок; точные строки и расчеты читать из исходного файла табличным reader/tool.",
+        "",
+        "### Колонки",
+        ", ".join(_safe_cell_text(col, max_len=80) for col in cleaned.columns),
+    ]
+    if rows >= SPREADSHEET_READ_ROWS:
+        parts.append(f"Примечание: прочитано первые {SPREADSHEET_READ_ROWS} строк; исходный лист может быть длиннее.")
+
+    profiles = []
+    for col in list(cleaned.columns)[:SPREADSHEET_PROFILE_MAX_COLUMNS]:
+        series = cleaned[col].dropna()
+        if series.empty:
+            continue
+        profile = _spreadsheet_column_profile(col, series)
+        if profile:
+            profiles.append(profile)
+    if profiles:
+        parts.extend(["", "### Профили колонок", *profiles])
+
+    samples = cleaned.head(SPREADSHEET_SAMPLE_ROWS)
+    if not samples.empty:
+        parts.extend(["", "### Образец строк", samples.to_markdown(index=False)])
+
+    return "\n".join(parts)
+
+
+def _spreadsheet_column_profile(col: Any, series: Any) -> str:
+    import pandas as pd
+
+    name = _safe_cell_text(col, max_len=80)
+    numeric = pd.to_numeric(series, errors="coerce").dropna()
+    bits = [f"- {name}: заполнено {int(series.shape[0])}"]
+    if len(numeric) >= max(3, int(series.shape[0] * 0.5)):
+        bits.append(
+            "числа "
+            f"min={_safe_number(numeric.min())}, "
+            f"max={_safe_number(numeric.max())}, "
+            f"sum={_safe_number(numeric.sum())}"
+        )
+    values = []
+    seen = set()
+    for value in series:
+        text = _safe_cell_text(value)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        values.append(text)
+        if len(values) >= SPREADSHEET_PROFILE_MAX_VALUES:
+            break
+    if values:
+        bits.append("примеры: " + "; ".join(values))
+    return " · ".join(bits)
+
+
+def _safe_cell_text(value: Any, max_len: int = 120) -> str:
+    text = str(value).replace("\n", " ").strip()
+    text = re.sub(r"\s+", " ", text)
+    if text.lower() == "nan":
+        return ""
+    return text[:max_len]
+
+
+def _safe_number(value: Any) -> str:
+    try:
+        number = float(value)
+    except Exception:
+        return str(value)
+    if number.is_integer():
+        return str(int(number))
+    return f"{number:.3f}".rstrip("0").rstrip(".")
 
 
 def _parse_json(path: Path) -> str:

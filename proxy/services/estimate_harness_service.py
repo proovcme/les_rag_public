@@ -135,10 +135,10 @@ WORK_FAMILY_COLLECTIONS: dict[str, set[str]] = {
     "floors": {"11"},                           # полы
     "roofing": {"12"},                          # кровли
     "waterproofing": {"08", "12"},              # гидро/тепло-изоляция
-    "finishes": {"15", "34", "46"},             # отделка + смежные потолки/разборки
-    "finish": {"15", "34", "46"},               # алиас/расширенная навигация отделки и демонтажа
-    "electric": {"08"},                         # ЭОМ/электромонтаж
-    "low_current": {"ГЭСНм10", "08", "10"},     # СС/СКС + смежные кабельные конструкции
+    "finishes": {"15", "17", "34", "46", "ГЭСНр63"},  # отделка + люки + ремонтные потолки/разборки
+    "finish": {"15", "17", "34", "46", "ГЭСНр63"},    # алиас/расширенная навигация отделки и демонтажа
+    "electric": {"08", "ГЭСНм08"},              # ЭОМ/электромонтаж; ГЭСНм10 допускается точечно для backup_power
+    "low_current": {"ГЭСНм10", "ГЭСНм08", "08", "10"},  # СС/СКС + смежные кабельные конструкции
     "mep": {"16", "17", "18", "20", "21", "22"},  # инженерные сети/системы
 }
 
@@ -163,6 +163,7 @@ _ELEMENT_DEFAULT_FAMILY: dict[str, str] = {
     "box": "electric",
     "fastener": "electric",
     "device": "electric",
+    "backup_power": "electric",
     "light": "electric",
     "hatch": "finishes",
     "primer": "finishes",
@@ -251,6 +252,23 @@ _SMETA_REASON_LABELS: dict[str, tuple[str, str]] = {
     "route": ("попало в навигацию по разделу/семейству", ""),
     "forbidden": ("", "есть признаки специальной/неподходящей нормы"),
     "denied_subsection": ("", "подраздел не подходит для семейства работ"),
+    "action_conflict": ("", "действие нормы явно противоречит исходной операции"),
+}
+
+_ACTION_TITLE_POSITIVE: dict[str, tuple[str, ...]] = {
+    "демонтаж": ("демонтаж", "демонт", "разборк", "сняти", "вытягиван"),
+    "монтаж": ("монтаж", "установ", "сборк"),
+    "устройство": ("устройств", "укладк", "покрыт"),
+    "грунтование": ("грунт", "огрунтов"),
+    "шпатлевка": ("шпатлев", "шпаклев"),
+    "оклейка": ("оклейк", "обоями", "стеклохолст"),
+    "окраска": ("окрас", "окраш"),
+}
+
+_ACTION_TITLE_CONFLICTS: dict[str, tuple[str, ...]] = {
+    "демонтаж": ("монтаж", "установ", "сборк", "устройств", "прокладк"),
+    "монтаж": ("демонтаж", "демонт", "разборк", "сняти"),
+    "устройство": ("демонтаж", "демонт", "разборк", "сняти"),
 }
 
 
@@ -305,8 +323,8 @@ _FAMILY_POSITIVE_ANCHORS: dict[str, tuple[str, ...]] = {
     "floors": ("пол", "стяжк", "покрыт"),
     "roofing": ("кровл", "покрыт", "рулон", "мембран"),
     "waterproofing": ("гидроизол", "изоляц", "оклеечн", "обмазочн", "мастичн"),
-    "finishes": ("отделк", "штукатур", "окрас", "облицов"),
-    "finish": ("отделк", "штукатур", "окрас", "облицов", "потол", "шпатлев", "грунтов", "обоя"),
+    "finishes": ("отделк", "штукатур", "окрас", "окраш", "облицов", "грунтов", "огрунтов", "шпатлев", "шпаклев", "оклейк", "обоя"),
+    "finish": ("отделк", "штукатур", "окрас", "окраш", "облицов", "потол", "шпатлев", "шпаклев", "грунтов", "огрунтов", "обоя", "оклейк"),
     "electric": ("кабел", "провод", "труб", "короб", "светиль", "электр", "скоб", "щит", "аппарат"),
     "low_current": ("кабел", "связ", "волокон", "оптическ", "кросс", "измерен", "шкаф", "слаботоч"),
     "mep": ("трубопровод", "водопровод", "канализац", "отоплен", "вентиляц", "кабел", "электр", "слаботоч", "сеть", "систем"),
@@ -318,14 +336,19 @@ _FAMILY_DENIED_PREFIXES: dict[str, tuple[str, ...]] = {
 }
 
 
-def check_applicability(code: str, norm_name: str, work_family: str) -> tuple[str, list[str]]:
+def check_applicability(code: str, norm_name: str, work_family: str, element_type: str = "") -> tuple[str, list[str]]:
     """Кандидат → accepted | ambiguous | rejected (+ причины). Барьер перед привязкой нормы."""
     name = (norm_name or "").lower()
     plain_code = _plain_norm_code(code)
     allowed = WORK_FAMILY_COLLECTIONS.get(work_family)
     collection = _collection_of(code)
     collection_key = _collection_key(code)
-    if allowed and collection_key and collection_key not in allowed:
+    backup_power_secondary_base = (
+        work_family == "electric"
+        and element_type == "backup_power"
+        and collection_key in {"10", "ГЭСНм10"}
+    )
+    if allowed and collection_key and collection_key not in allowed and not backup_power_secondary_base:
         return "rejected", [f"сборник {collection_key} не разрешён для {work_family}"]
     for a in _FORBIDDEN_TITLE_ANCHORS:
         if a in name:
@@ -355,21 +378,76 @@ def _normalize_work_family(family: str) -> str:
     return _WORK_FAMILY_ALIASES.get(text, text)
 
 
+def _infer_finish_operation_route(words: list[str], element_type: str, action: str) -> tuple[str, str]:
+    """Tighten generic finish lookup to the visible operation in the source text.
+
+    This is retrieval enrichment only: it changes which norm cards the model sees, not which norm
+    is selected or priced.
+    """
+    element = (element_type or "").strip().lower()
+    normalized_action = _normalize_action(action)
+    if element not in {"", "finish", "finishes"} and normalized_action not in {"", "устройство"}:
+        return element_type, normalized_action
+    text = " ".join(words).casefold().replace("ё", "е")
+    if "грунт" in text or "огрунтов" in text:
+        return "primer", "грунтование"
+    if "шпатлев" in text or "шпаклев" in text:
+        return "putty", "шпатлевка"
+    if any(anchor in text for anchor in ("люк", "люч", "ревизион", "проем")):
+        return "hatch", normalized_action or "монтаж"
+    if "потол" in text and any(anchor in text for anchor in ("рееч", "подвес", "демонтаж", "демонт", "разбор", "замен", "восстанов")):
+        return "ceiling", normalized_action or "устройство"
+    if any(anchor in text for anchor in ("пленк", "укрыт", "защит")):
+        return "protective_cover", normalized_action or "защита"
+    if "оклей" in text or "обоя" in text or "стеклохолст" in text or "стеклооб" in text:
+        return "wallpaper", "оклейка"
+    if "окрас" in text or "окраш" in text:
+        return "painting", "окраска"
+    return element_type, normalized_action
+
+
 _ROUTE_TERM_SETS: dict[tuple[str, str], tuple[tuple[str, ...], ...]] = {
     ("electric", "cable"): (("кабель",), ("кабель", "пролож"), ("кабель", "труб"), ("кабель", "креплен")),
     ("electric", "pipe"): (("трубы", "кабельных", "трасс"), ("труб", "полиэтилен"), ("труб",)),
     ("electric", "box"): (("коробка",), ("короб", "зажим")),
     ("electric", "fastener"): (("скоб",), ("креплен",)),
     ("electric", "device"): (("светильник",), ("аппарат",), ("питания",)),
+    ("electric", "backup_power"): (
+        ("бесперебойного", "электропитания"),
+        ("аккумуляторной", "батареей"),
+        ("система", "электропитания"),
+        ("блок", "питания"),
+        ("аварийного", "питания"),
+        ("преобразователь",),
+        ("питания",),
+    ),
     ("electric", "light"): (("светильник",),),
-    ("low_current", "cable"): (("волоконно-оптических", "кабелей"), ("кабель", "связ"), ("кабель",)),
-    ("low_current", "device"): (("кросс",), ("шкаф",), ("станция",)),
+    ("low_current", "cable"): (
+        ("кабел", "связ"), ("кабел", "линии"), ("кабел",), ("провод", "связ"),
+        ("волоконно-оптических", "кабелей"),
+    ),
+    ("low_current", "socket"): (("розет",), ("абонент", "устройств"), ("оконечн", "устройств")),
+    ("low_current", "panel"): (("кросс",), ("кроссировка",), ("коммутац",), ("панел",)),
+    ("low_current", "rack"): (("шкаф",), ("стойк",), ("статив",)),
+    ("low_current", "device"): (("кросс",), ("шкаф",), ("станция",), ("абонент", "устройств")),
     ("finishes", "painting"): (("окраска", "потол"), ("окраска", "водо"), ("окраска",)),
-    ("finishes", "primer"): (("огрунтовка",), ("грунтовка",)),
+    ("finishes", "primer"): (("грунтовка", "потол"), ("нанесение", "грунтовки"), ("огрунтовка",), ("грунтовка",)),
     ("finishes", "putty"): (("шпатлевка", "потол"), ("шпатлевка",)),
-    ("finishes", "wallpaper"): (("оклейка", "обоями"), ("обоями", "потол"), ("стеклоткан",)),
-    ("finishes", "ceiling"): (("подвесных", "потолков"), ("реек",), ("потолк",)),
-    ("finishes", "hatch"): (("люк",), ("ревизион",), ("проем",)),
+    ("finishes", "wallpaper"): (("оклейка", "обоями"), ("обоями", "потол"), ("стеклооб",), ("стеклохолст",), ("стеклоткан",)),
+    ("finishes", "ceiling"): (
+        ("замена", "элементов", "облицовки", "потолков"),
+        ("разборка", "элементов", "облицовки", "потолков"),
+        ("замена", "элементов", "облицовки"),
+        ("разборка", "элементов", "облицовки"),
+        ("реечных", "без", "замены", "каркаса"),
+        ("рееч",),
+        ("подвесных", "потолков"),
+        ("реек",),
+        ("потолк",),
+    ),
+    ("finishes", "hatch"): (("люков", "сантехнических"), ("ревизионных",), ("люк",), ("люч",), ("ревизион",), ("проем",)),
+    ("finishes", "protective_cover"): (("укрыт",), ("защит",), ("пленк",)),
+    ("mep", "device"): (("люков", "сантехнических"), ("ревизионных",), ("люк",), ("ревизион",)),
 }
 
 _ROUTE_FORBIDDEN_TITLE_ANCHORS: dict[tuple[str, str], tuple[str, ...]] = {
@@ -379,6 +457,7 @@ _ROUTE_FORBIDDEN_TITLE_ANCHORS: dict[tuple[str, str], tuple[str, ...]] = {
         "дымов", "кирпичн",
     ),
     ("electric", "box"): ("станок", "автомат для", "початочн"),
+    ("electric", "backup_power"): ("светильники, устанавливаемые блоками", "комплектных подстанций", "шинными аппаратами"),
     ("finishes", "painting"): ("экранирован", "медн", "алюминиев"),
     ("finishes", "ceiling"): ("светильник", "спринклер", "пожаротуш"),
 }
@@ -395,15 +474,24 @@ def _intent_route_candidate_rows(*, work_family: str, element_type: str, words: 
     if element == "finish":
         element = "finishes"
     allowed = WORK_FAMILY_COLLECTIONS.get(family) or set()
+    if family == "electric" and element == "backup_power":
+        allowed = {*allowed, "10", "ГЭСНм10"}
     term_sets = list(_ROUTE_TERM_SETS.get((family, element), ()))
     if not term_sets and family == "electric":
         term_sets = [("кабел",), ("труб",), ("короб",), ("светиль",)]
     if not term_sets and family == "finishes":
         term_sets = [("потол",), ("окраска",), ("шпатлев",), ("грунтов",)]
+    if not term_sets and family == "mep":
+        term_sets = [("люк",), ("ревизион",), ("установ",)]
     if not term_sets and family == "low_current":
-        term_sets = [("кабел",), ("связ",), ("волокон",)]
+        term_sets = [("кабел",), ("связ",), ("волокон",), ("кросс",), ("шкаф",)]
     if not allowed or not term_sets:
         return []
+    effective_limit = limit
+    if family == "finishes" and element in {"ceiling", "hatch", "protective_cover", "finishes", "finish"}:
+        effective_limit = max(effective_limit, 2000)
+    if family == "mep" and element == "device":
+        effective_limit = max(effective_limit, 1200)
     out: list[SmetaNormRow] = []
     seen: set[str] = set()
     forbidden = _ROUTE_FORBIDDEN_TITLE_ANCHORS.get((family, element), ())
@@ -421,9 +509,107 @@ def _intent_route_candidate_rows(*, work_family: str, element_type: str, words: 
                 out.append(row)
                 seen.add(row.code)
                 break
-        if len(out) >= limit:
+        if len(out) >= effective_limit:
             break
+    out.sort(key=lambda row: _route_row_priority(row, family=family, element=element, words=words), reverse=True)
     return out
+
+
+def _route_row_priority(row: SmetaNormRow, *, family: str, element: str, words: list[str]) -> tuple[int, int, str]:
+    title = row.title.casefold().replace("ё", "е")
+    word_hits = sum(1 for word in words if word and word.casefold().replace("ё", "е") in title)
+    priority = 0
+    key = _collection_key(row.code)
+    if family == "low_current":
+        if key == "ГЭСНм10":
+            priority += 100
+        elif key == "10":
+            priority += 20
+        elif key in {"08", "ГЭСНм08"}:
+            priority += 10
+        if element == "cable" and any(anchor in title for anchor in ("кабел", "связ", "провод")):
+            priority += 12
+        if element in {"panel", "socket", "rack", "device"} and any(
+            anchor in title for anchor in ("кросс", "шкаф", "статив", "абонент", "устройств")
+        ):
+            priority += 12
+    if family == "electric":
+        if key in {"08", "ГЭСНм08"}:
+            priority += 80
+        if element == "backup_power" and key in {"10", "ГЭСНм10"}:
+            priority += 70
+        if element == "light" and "светиль" in title:
+            priority += 10
+        if element == "device" and any(anchor in title for anchor in ("питан", "аппарат", "светиль", "устройств")):
+            priority += 8
+        if element == "cable":
+            if "с креплением накладными скобами" in title:
+                if any(w.startswith(("скоб", "крепл", "накладн")) for w in words):
+                    priority += 35
+                else:
+                    priority -= 5
+            if "кабель силовой" in title and any(w.startswith("силов") for w in words):
+                priority += 45
+            if "кабель контрольный" in title and not any(w.startswith(("контрол", "сигнал")) for w in words):
+                priority -= 15
+            if "без креплений" in title and not any(w.startswith(("канал", "лотк", "без")) for w in words):
+                priority -= 25
+            if any(anchor in title for anchor in ("маслонаполненный", "высокого давления")) and not any(
+                w.startswith(("масл", "давлен", "110", "220", "500")) for w in words
+            ):
+                priority -= 35
+            if "электропроводки в камерах" in title and not any(w.startswith("камер") for w in words):
+                priority -= 20
+        if element == "backup_power":
+            if "преобразователь" in title or "блок питания" in title:
+                priority += 80
+            if "бесперебойного электропитания" in title:
+                priority += 30
+            if "аккумулятор" in title:
+                priority += 12
+            if any(w.startswith(("светиль", "светодиод", "бап")) for w in words) and any(
+                anchor in title for anchor in ("квт", "литий-ион", "общим весом")
+            ):
+                priority -= 45
+            if any(anchor in title for anchor in ("светильники, устанавливаемые блоками", "комплектных подстанций", "шинными аппаратами")):
+                priority -= 25
+        if element == "pipe":
+            if "гофрирован" in title and "пвх" in title and any(anchor in title for anchor in ("проводов", "кабелей")):
+                priority += 70
+            if "в земле" in title and not any(w.startswith(("земл", "транше")) for w in words):
+                priority -= 35
+        if element == "box":
+            if "ответвительн" in title:
+                priority += 35
+            if "клемм" in title and not any(w.startswith(("клемм", "зажим")) for w in words):
+                priority -= 20
+        if element == "fastener":
+            if "скоб" in title or "креплен" in title:
+                priority += 40
+            if _canon_unit(row.measure_unit) == "шт" and any(w.startswith("скоб") for w in words):
+                priority += 25
+    if family == "finishes":
+        if key == "ГЭСНр63" and any(w.startswith(("демонт", "разбор", "замен", "восстанов", "сохран")) for w in words):
+            priority += 85
+        if element == "hatch" and any(w.startswith(("люк", "люч", "ревиз")) for w in words):
+            if key == "17" and "люк" in title and "ревиз" in title:
+                priority += 95
+            elif any(anchor in title for anchor in ("крыш", "фасад", "двер", "окон", "акустич")):
+                priority -= 70
+        if "замена элементов облицовки потолков" in title and any(w.startswith(("рееч", "потол")) for w in words):
+            priority += 70
+        if any(w.startswith(("пленк", "укрыт", "защит")) for w in words):
+            if any(anchor in title for anchor in ("укрыт", "защитн", "временн")):
+                priority += 40
+            elif any(anchor in title for anchor in ("натяжн", "декоратив", "самокле", "оклейк", "штукатур", "грунт", "окраск", "шпатлев", "облицов")):
+                priority -= 70
+    if family == "mep":
+        if element == "device" and any(w.startswith(("люк", "ревиз")) for w in words):
+            if "люк" in title and "ревиз" in title:
+                priority += 85
+            elif any(anchor in title for anchor in ("шумоглуш", "фланцев", "трубопровод")):
+                priority -= 60
+    return priority, word_hits, row.code
 
 
 # Gate 3: позитивные/негативные признаки названия по ТИПУ ЭЛЕМЕНТА (точнее семьи).
@@ -442,6 +628,15 @@ _ELEMENT_ANCHORS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "waterproofing":       (("гидроизол", "изоляц", "оклеечн", "обмазочн", "мастичн"), ()),
     "roofing":             (("кровл", "покрыт", "рулон", "мембран"), ()),
     "engineering_networks": (("трубопровод", "водопровод", "канализац", "отоплен", "вентиляц", "кабел", "электр", "слаботоч", "сеть", "систем"), ("отделк", "штукатур", "окрас")),
+    "cable":               (("кабел", "связ", "провод", "линия"), ("силовой", "шахт")),
+    "socket":              (("розет", "абонент", "оконечн", "устройств"), ("силовой", "штепсель")),
+    "panel":               (("кросс", "панел", "коммутац", "расключ"), ("станция", "тыс")),
+    "rack":                (("шкаф", "стойк", "статив", "связ"), ("пожаротуш", "распределительн", "вакуум")),
+    "backup_power":        (("бесперебой", "электропит", "аккумулятор", "питания"), ("светильники, устанавливаемые блоками", "подстанц", "шинн")),
+    "primer":              (("грунт", "огрунтов"), ("оклейк", "обоями", "лак", "штукатур")),
+    "putty":               (("шпатлев", "шпаклев"), ("облицов", "каркас", "устройство потолков")),
+    "wallpaper":           (("оклейк", "обоя", "стеклохолст", "стеклооб"), ("штукатур", "каркас", "облицов")),
+    "painting":            (("окрас", "окраш"), ("штукатур", "облицов", "каркас")),
 }
 
 _ELEMENT_TEXT_SIGNALS: tuple[tuple[str, str, str], ...] = (
@@ -462,6 +657,27 @@ _ELEMENT_TEXT_SIGNALS: tuple[tuple[str, str, str], ...] = (
 def _normalize_action(action: str) -> str:
     a = (action or "").strip().lower()
     return _ACTION_ALIASES.get(a, action)
+
+
+def _action_title_score(action: str, title: str) -> float:
+    normalized = _normalize_action(action)
+    if not normalized:
+        return 0.0
+    text = title.casefold().replace("ё", "е")
+    positives = _ACTION_TITLE_POSITIVE.get(normalized, ())
+    conflicts = _ACTION_TITLE_CONFLICTS.get(normalized, ())
+    score = 0.0
+    if positives and any(_action_anchor_in_title(anchor, text) for anchor in positives):
+        score += 1.2
+    if conflicts and any(_action_anchor_in_title(anchor, text) for anchor in conflicts):
+        score -= 4.0
+    return score
+
+
+def _action_anchor_in_title(anchor: str, title: str) -> bool:
+    if anchor == "монтаж":
+        return bool(re.search(r"(?<!де)монтаж", title))
+    return anchor in title
 
 
 def _normalize_unit_hint(unit: str) -> str:
@@ -560,7 +776,7 @@ def _score_candidate(words: list[str], code: str, name: str, unit: str, *, work_
     parts["element"] = 1.5 * sum(1 for a in pos if a in name)
     parts["element_neg"] = -2.0 * sum(1 for a in neg if a in name)
     parts["family"] = 1.0 if any(a in name for a in _FAMILY_POSITIVE_ANCHORS.get(work_family, ())) else 0.0
-    parts["action"] = 0.8 if (action and action.lower()[:5] and action.lower()[:5] in name) else 0.0
+    parts["action"] = _action_title_score(action, name)
     _, base = _norm_unit_factor(unit)
     parts["unit"] = 1.0 if (phys_unit and _units_compatible(phys_unit, base)) else 0.0
     if is_route_candidate:
@@ -581,6 +797,8 @@ def _score_candidate(words: list[str], code: str, name: str, unit: str, *, work_
         normalized_action = _normalize_action(action)
         if normalized_action and normalized_action in actions:
             parts["profile_action"] = 0.9
+        elif normalized_action and actions:
+            parts["profile_action"] = -0.7
         if profile.get("resource_count"):
             parts["resource_profile"] = 0.2
         if element_type != "pile" and "pile" in elements and not any(w.startswith(("сва", "ростверк")) for w in words):
@@ -589,7 +807,119 @@ def _score_candidate(words: list[str], code: str, name: str, unit: str, *, work_
     parts["forbidden"] = -5.0 * sum(1 for a in _FORBIDDEN_TITLE_ANCHORS if a in name)
     plain_code = _plain_norm_code(code)
     parts["denied_subsection"] = -5.0 if any(plain_code.startswith(p) for p in _FAMILY_DENIED_PREFIXES.get(work_family, ())) else 0.0
-    parts["collection"] = 1.0 if _collection_key(code) in WORK_FAMILY_COLLECTIONS.get(work_family, set()) else -3.0
+    collection_key = _collection_key(code)
+    collection_allowed = collection_key in WORK_FAMILY_COLLECTIONS.get(work_family, set())
+    if work_family == "electric" and element_type == "backup_power" and collection_key in {"10", "ГЭСНм10"}:
+        collection_allowed = True
+    parts["collection"] = 1.0 if collection_allowed else -3.0
+    if work_family == "low_current":
+        if collection_key == "ГЭСНм10":
+            parts["low_current_mounting_base"] = 9.0
+        elif collection_key == "10":
+            parts["low_current_general_base"] = 1.5
+        elif collection_key in {"08", "ГЭСНм08"}:
+            parts["low_current_power_base"] = -3.0
+        if any(w.startswith(("скс", "cat", "rj", "связ", "слаботоч")) for w in words):
+            if any(anchor in name for anchor in ("силовой", "распределительн", "вакуум", "пожаротуш")):
+                parts["low_current_noise"] = -4.0
+    if work_family == "electric" and element_type == "backup_power":
+        if _collection_key(code) in {"10", "ГЭСНм10"} and (
+            "преобразователь" in name or "блок питания" in name
+        ):
+            parts["backup_power_small_block"] = 10.0
+        if "бесперебойного электропитания" in name:
+            parts["backup_power_match"] = 8.0
+        if "аккумулятор" in name:
+            parts["backup_power_battery"] = 2.0
+        if any(w.startswith(("светиль", "светодиод", "бап")) for w in words) and any(
+            anchor in name for anchor in ("квт", "литий-ион", "общим весом")
+        ):
+            parts["backup_power_large_ups_noise"] = -8.0
+        if any(anchor in name for anchor in ("светильники, устанавливаемые блоками", "комплектных подстанций", "шинными аппаратами")):
+            parts["backup_power_noise"] = -6.0
+    if work_family == "electric" and element_type == "cable":
+        if "с креплением накладными скобами" in name:
+            if any(w.startswith(("скоб", "крепл", "накладн")) for w in words):
+                parts["cable_fastened_by_clamps"] = 5.0
+            else:
+                parts["cable_fastening_method_noise"] = -1.5
+        if "кабель силовой" in name and any(w.startswith("силов") for w in words):
+            parts["power_cable_match"] = 5.0
+        if "кабель контрольный" in name and not any(w.startswith(("контрол", "сигнал")) for w in words):
+            parts["control_cable_noise"] = -3.0
+        if "без креплений" in name and not any(w.startswith(("канал", "лотк", "без")) for w in words):
+            parts["cable_without_fastening_noise"] = -4.0
+        if any(anchor in name for anchor in ("маслонаполненный", "высокого давления")) and not any(
+            w.startswith(("масл", "давлен", "110", "220", "500")) for w in words
+        ):
+            parts["high_voltage_oil_cable_noise"] = -5.0
+        if "электропроводки в камерах" in name and not any(w.startswith("камер") for w in words):
+            parts["chamber_wiring_noise"] = -3.0
+    if work_family == "electric" and element_type == "pipe":
+        if "кабельных трасс" in name or ("кабель" in name and "труб" in name):
+            parts["cable_trace_pipe"] = 3.0
+        if "гофрирован" in name and "пвх" in name and any(anchor in name for anchor in ("проводов", "кабелей")):
+            parts["indoor_corrugated_pvc"] = 9.0
+        if "в земле" in name and not any(w.startswith(("земл", "транше")) for w in words):
+            parts["underground_pipe_noise"] = -7.0
+    if work_family == "electric" and element_type == "box":
+        if "ответвительн" in name:
+            parts["junction_box_match"] = 5.0
+        if "клемм" in name and not any(w.startswith(("клемм", "зажим")) for w in words):
+            parts["terminal_box_noise"] = -4.0
+    if work_family == "electric" and element_type == "fastener":
+        if "скоб" in name or "креплен" in name:
+            parts["fastener_match"] = 6.0
+        if any(w.startswith("скоб") for w in words) and _canon_unit(unit) == "шт":
+            parts["fastener_unit"] = 3.0
+    if work_family == "finishes":
+        wants_ceiling = any(w.startswith(("потол", "запотол")) for w in words)
+        wants_repair = any(w.startswith(("демонт", "разбор", "замен", "восстанов", "сохран")) for w in words)
+        wants_cover = any(w.startswith(("пленк", "укрыт", "защит")) for w in words)
+        if _collection_key(code) == "ГЭСНр63" and wants_repair:
+            parts["repair_finish_match"] = 10.0
+        if "замена элементов облицовки потолков" in name and wants_ceiling:
+            parts["ceiling_repair_match"] = 8.0
+        if wants_cover:
+            if any(anchor in name for anchor in ("укрыт", "защитн", "временн")):
+                parts["protective_cover_match"] = 8.0
+            elif any(anchor in name for anchor in ("натяжн", "декоратив", "самокле", "оклейк", "штукатур", "грунт", "окраск", "шпатлев", "облицов")):
+                parts["protective_cover_foreign_operation_noise"] = -12.0
+        if element_type == "hatch" and any(w.startswith(("люк", "люч", "ревиз")) for w in words):
+            if _collection_key(code) == "17" and "люк" in name and "ревиз" in name:
+                parts["revision_hatch_match"] = 10.0
+            elif any(anchor in name for anchor in ("крыш", "фасад", "двер", "окон", "акустич")):
+                parts["revision_hatch_noise"] = -8.0
+        if wants_ceiling and "потол" in name:
+            parts["finish_ceiling_surface"] = 2.0
+        if wants_ceiling and "стен" in name and "потол" not in name:
+            parts["finish_wall_surface_noise"] = -1.5
+        if element_type == "primer":
+            if any(anchor in name for anchor in ("грунтовк", "огрунтовк", "нанесение водно-дисперсионной грунтовки")):
+                parts["finish_same_operation"] = 8.0
+            if "предварительной огрунтовкой" in name or "оклеиваемой поверхности" in name:
+                parts["finish_auxiliary_operation_noise"] = -6.0
+        if element_type == "putty":
+            if "шпатлев" in name or "шпаклев" in name:
+                parts["finish_same_operation"] = 8.0
+            if any(anchor in name for anchor in ("облицов", "каркас", "устройство потолков")):
+                parts["finish_foreign_operation_noise"] = -5.0
+        if element_type == "wallpaper":
+            if any(anchor in name for anchor in ("оклейк", "обоя", "стеклооб", "стеклохолст")):
+                parts["finish_same_operation"] = 8.0
+            if any(anchor in name for anchor in ("штукатур", "каркас", "облицов")) and not any(anchor in name for anchor in ("оклейк", "обоя")):
+                parts["finish_foreign_operation_noise"] = -5.0
+        if element_type == "painting":
+            if "окрас" in name or "окраш" in name:
+                parts["finish_same_operation"] = 8.0
+            if any(anchor in name for anchor in ("штукатур", "каркас", "облицов")):
+                parts["finish_foreign_operation_noise"] = -5.0
+    if work_family == "mep" and element_type == "device":
+        if any(w.startswith(("люк", "ревиз")) for w in words):
+            if "люк" in name and "ревиз" in name:
+                parts["revision_hatch_match"] = 10.0
+            elif any(anchor in name for anchor in ("шумоглуш", "фланцев", "трубопровод")):
+                parts["revision_hatch_noise"] = -8.0
     if work_family == "metal" and element_type == "metal_assembly" and _collection_key(code) == "ГЭСНм38":
         parts["mounting_base"] = 2.0 if _canon_unit(phys_unit) == "т" else 0.0
         if any(w.startswith(("масс", "кран", "тяжел")) for w in words):
@@ -607,6 +937,8 @@ def search_norm(work_description: str, *, work_family: str = "", element_type: s
         return {"status": "not_found", "candidates": [], "missing_inputs": ["work_description"]}
     work_family = _normalize_work_family(work_family)
     uh = _canon_unit(unit_hint)
+    if work_family == "finishes":
+        element_type, action = _infer_finish_operation_route(words, element_type, action)
     if (
         _env_bool("LES_SMETA_SEARCH_QUERY_ENRICHMENT_ENABLED", True)
         and work_family == "metal"
@@ -638,7 +970,7 @@ def search_norm(work_description: str, *, work_family: str = "", element_type: s
     for total, parts, row in scored[:top_k]:
         c, nm, u = row.code, row.title, row.measure_unit
         factor, base = _norm_unit_factor(u)
-        appl, reasons = check_applicability(c, nm, work_family)
+        appl, reasons = check_applicability(c, nm, work_family, element_type)
         profile = row.profile()
         profile["navigation"] = store.navigation_for(
             row,
@@ -665,6 +997,99 @@ def search_norm(work_description: str, *, work_family: str = "", element_type: s
             "candidate_pool": {"searched": len(norm_rows), "scored": len(scored)},
             "norm_navigation": navigation,
             "candidates": candidates, "selection": selection}
+
+
+def direct_smeta_norm_search_context(question: str, *, limit: int = 8, candidates_per_probe: int = 4) -> str:
+    """Model-facing norm shortlist for direct smeta answers.
+
+    This is navigation only: it gives the visible estimator concrete search_norm cards but does
+    not choose works, bind norms, calculate resources or write the answer for the model.
+    """
+    probes = _direct_norm_search_probes(question)
+    if not probes:
+        return ""
+    lines = [
+        "Карточки нормативного поиска ЛЕС по явным работам/терминам запроса.",
+        "Это не расчёт и не выбранные нормы: модель должна выбрать кандидата или оставить missing.",
+        "Правило: используй кандидата только для той numbered-card работы, под которой он выдан; не переноси шифры между кабелем, розетками, шкафом, аварийным питанием и ПНР.",
+        "Шифр нормы копируй буквально из карточки, включая префикс и двоеточие.",
+    ]
+    for idx, probe in enumerate(probes[:limit], start=1):
+        result = search_norm(
+            probe["work_description"],
+            work_family=probe.get("work_family", ""),
+            element_type=probe.get("element_type", ""),
+            action=probe.get("action", ""),
+            unit_hint=probe.get("unit_hint", ""),
+            top_k=candidates_per_probe,
+        )
+        candidates = _as_items(result.get("candidates"))[:candidates_per_probe]
+        lines.append(
+            f"\n{idx}. {probe['label']} — {probe['work_description']} "
+            f"(family={probe.get('work_family') or '—'}, element={probe.get('element_type') or '—'}, "
+            f"unit={probe.get('unit_hint') or '—'})"
+        )
+        if not candidates:
+            lines.append("- candidates: нет; в ответе оставь missing и скажи, как искать.")
+            continue
+        for candidate in candidates:
+            profile = candidate.get("norm_profile") if isinstance(candidate.get("norm_profile"), dict) else {}
+            nav = profile.get("navigation") if isinstance(profile.get("navigation"), dict) else {}
+            collection = nav.get("collection") if isinstance(nav.get("collection"), dict) else {}
+            lines.append(
+                "- "
+                f"{candidate.get('norm_code')} | {candidate.get('measure_unit')} | "
+                f"{candidate.get('applicability_status')} | "
+                f"{'unit ok' if candidate.get('unit_compatible') is not False else 'unit mismatch'} | "
+                f"{collection.get('label') or candidate.get('collection') or 'сборник?'} | "
+                f"{str(candidate.get('title') or '')[:180]}"
+            )
+        nav = result.get("norm_navigation") if isinstance(result.get("norm_navigation"), dict) else {}
+        questions = [str(q) for q in (nav.get("questions_to_ask") or [])[:3] if str(q).strip()]
+        if questions:
+            lines.append("- проверить: " + "; ".join(questions))
+    return "\n".join(lines)[:12000]
+
+
+def _direct_norm_search_probes(question: str) -> list[dict[str, str]]:
+    text = str(question or "")
+    low = text.casefold().replace("ё", "е")
+    probes: list[dict[str, str]] = []
+
+    def add(label: str, desc: str, family: str, element: str, action: str, unit: str) -> None:
+        key = (label, desc, family, element, action, unit)
+        if any((p["label"], p["work_description"], p["work_family"], p["element_type"], p["action"], p["unit_hint"]) == key for p in probes):
+            return
+        probes.append({
+            "label": label,
+            "work_description": desc,
+            "work_family": family,
+            "element_type": element,
+            "action": action,
+            "unit_hint": unit,
+        })
+
+    has_sks = any(token in low for token in ("скс", "cat.6", "cat6", "rj-45", "rj45", "патч", "структурирован"))
+    if has_sks or ("кабел" in low and "связ" in low):
+        if any(token in low for token in ("кабел", "cat.6", "cat6")):
+            add("СКС кабель", "прокладка кабеля связи СКС Cat.6A внутри здания", "low_current", "cable", "прокладка", "м")
+        if any(token in low for token in ("розет", "rj-45", "rj45")):
+            add("СКС розетки", "оконцевание кабеля связи на информационных розетках RJ-45", "low_current", "socket", "монтаж", "шт")
+        if any(token in low for token in ("патч", "панел")):
+            add("СКС патч-панели", "монтаж кроссового коммутационного оборудования патч-панель СКС", "low_current", "panel", "монтаж", "шт")
+        if any(token in low for token in ("шкаф", "42u", "стойк")):
+            add("СКС шкаф", "монтаж телекоммуникационного шкафа стойки связи", "low_current", "rack", "монтаж", "шт")
+        if any(token in low for token in ("измер", "провер", "тест", "сертифик")):
+            add("СКС измерения", "измерение и проверка линий связи СКС", "low_current", "cable", "измерение", "линия")
+
+    has_backup_power = any(token in low for token in ("аварийн", "блок", "питания", "беспереб"))
+    if has_backup_power:
+        add("Аварийное питание монтаж", "монтаж системы бесперебойного электропитания с аккумуляторной батареей", "electric", "backup_power", "монтаж", "шт")
+        add("Аварийное питание подключение", "подключение системы бесперебойного электропитания к сети освещения", "electric", "backup_power", "подключение", "шт")
+        if any(token in low for token in ("пусконал", "пнр", "налад")):
+            add("Аварийное питание ПНР", "пусконаладка системы бесперебойного электропитания проверка автономии", "electric", "backup_power", "пусконаладка", "шт")
+
+    return probes
 
 
 def _search_norm_navigation(candidates: list[dict[str, Any]], *, work_family: str,
@@ -811,6 +1236,34 @@ def _candidate_by_code(candidates: list[dict[str, Any]], code: str) -> tuple[dic
     return None, -1
 
 
+def _candidate_from_checked_model_code(code: str) -> dict[str, Any] | None:
+    """Turn an explicit model-selected norm code into a calculator candidate.
+
+    Search shortlist is retrieval/navigation; if the model names a real code that the current
+    shortlist missed, the harness may verify the code in the norm store and let add_position run
+    the normal collection/applicability/unit/calculation gates. It must not replace that code with
+    the first search hit.
+    """
+    wanted = str(code or "").strip()
+    if not wanted:
+        return None
+    row = get_smeta_norm_store().by_code(wanted)
+    if row is None:
+        return None
+    return {
+        "norm_code": row.code,
+        "title": row.title,
+        "measure_unit": row.measure_unit,
+        "score_total": 0.0,
+        "score_parts": {"model_selected_code": 1.0},
+        "applicability_status": "model_selected_checked",
+        "unit_compatible": None,
+        "reasons": ["шифр выбран моделью и найден в локальной базе норм"],
+        "norm_profile": row.profile(),
+        "outside_shortlist": True,
+    }
+
+
 def _strong_candidate_is_safely_bindable(item: dict[str, Any], candidate: dict[str, Any]) -> bool:
     if candidate.get("applicability_status") != "accepted" or candidate.get("unit_compatible") is not True:
         return False
@@ -917,7 +1370,11 @@ def _model_select_candidate(
     ])
     raw = complete(choice_messages) or ""
     choice = _extract_json(raw) or {}
-    chosen, chosen_index = _candidate_by_code(candidates, str(choice.get("selected_code") or ""))
+    selected_code = str(choice.get("selected_code") or "").strip()
+    chosen, chosen_index = _candidate_by_code(candidates, selected_code)
+    if not chosen and selected_code:
+        chosen = _candidate_from_checked_model_code(selected_code)
+        chosen_index = -1 if chosen else -1
     if not chosen and not choice.get("ask_user"):
         top = candidates[0] if candidates else {}
         if top and _strong_candidate_is_safely_bindable(item, top):
@@ -1005,7 +1462,11 @@ def _model_select_candidates_batch(
         if work_index < 0 or work_index >= len(entries):
             continue
         candidates = _as_items(entries[work_index].get("candidates"))
-        chosen, chosen_index = _candidate_by_code(candidates, str(choice.get("selected_code") or ""))
+        selected_code = str(choice.get("selected_code") or "").strip()
+        chosen, chosen_index = _candidate_by_code(candidates, selected_code)
+        if not chosen and selected_code:
+            chosen = _candidate_from_checked_model_code(selected_code)
+            chosen_index = -1 if chosen else -1
         trace = {
             "tool": "model_norm_choice",
             "status": "selected" if chosen else ("needs_input" if choice.get("ask_user") else "invalid"),
@@ -2144,7 +2605,7 @@ def _is_critical_status(status: Any) -> bool:
 def _finalize(state: dict[str, Any], *, note: str = "") -> dict[str, Any]:
     """Сборка с Gate 1+2: считаем ТОЛЬКО computed (accepted-норма). Итог:
     complete (всё посчитано) | partial (есть computed + критичные/нет данных) | blocked (ничего).
-    partial_total — только протокол принятых строк без денег; final_total — только при complete."""
+    Ценовые требования остаются row-level подсказками и не блокируют final_total."""
     from proxy.services.gesn_service import get_norm
     from proxy.services.lsr_assembly_service import assemble
     from proxy.services.nr_sp_service import resolve as resolve_nr_sp
@@ -2179,8 +2640,7 @@ def _finalize(state: dict[str, Any], *, note: str = "") -> dict[str, Any]:
     lsr_probe = assemble(asm, book=state.get("pricebook")) if asm else {"summary": {"total": 0.0}}
     norm_checks = [p for p in buckets["computed"] if p.get("norm_questions")]
     price_requirements = list(lsr_probe.get("summary", {}).get("price_requirements") or [])
-    has_price_gaps = bool(price_requirements)
-    has_critical = bool(buckets["rejected"]) or bool(buckets["needs_input"]) or bool(norm_checks) or has_price_gaps
+    has_critical = bool(buckets["rejected"]) or bool(buckets["needs_input"]) or bool(norm_checks)
     if not buckets["computed"]:
         total_status = "blocked"
     elif has_critical:

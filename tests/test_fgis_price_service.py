@@ -13,9 +13,11 @@ import pytest
 
 from proxy.services.fgis_price_service import (
     PriceBook,
+    available_pricebooks,
     build_price_parquet,
     normalize_code,
     parse_split_form,
+    resolve_pricebook_path,
 )
 
 HEADERS = [
@@ -114,3 +116,28 @@ def test_search_by_name(split_form: Path, tmp_path: Path):
     hits = pb.search("гвозди", limit=5)
     assert len(hits) == 1
     assert hits[0]["code"] == "01.7.15.06-0111"
+
+
+def test_available_pricebooks_hides_scratch_and_default_prefers_spb(tmp_path: Path):
+    for name in ("altayskiy-kray_2kv2026", "spb_refresh", "spb_2kv2026"):
+        (tmp_path / f"{name}.parquet").write_bytes(b"x")
+
+    visible = [Path(p).stem for p in available_pricebooks(tmp_path)]
+    all_books = [Path(p).stem for p in available_pricebooks(tmp_path, include_scratch=True)]
+
+    assert "spb_refresh" not in visible
+    assert "spb_refresh" in all_books
+    assert Path(resolve_pricebook_path(root=tmp_path)).stem == "spb_2kv2026"
+
+
+def test_pricebook_manifest_hides_duplicate_alias_when_canonical_exists(tmp_path: Path):
+    for name in ("sankt-peterburg_2kv2026", "spb_2kv2026", "kostromskaya-oblast_2kv2026", "omskaya-oblast_2kv2026"):
+        (tmp_path / f"{name}.parquet").write_bytes(b"x")
+
+    visible = [Path(p).stem for p in available_pricebooks(tmp_path)]
+
+    assert "sankt-peterburg_2kv2026" in visible
+    assert "kostromskaya-oblast_2kv2026" in visible
+    assert "spb_2kv2026" not in visible
+    assert "omskaya-oblast_2kv2026" not in visible
+    assert Path(resolve_pricebook_path("spb_2kv2026", root=tmp_path)).stem == "sankt-peterburg_2kv2026"

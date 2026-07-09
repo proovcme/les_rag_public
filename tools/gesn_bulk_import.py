@@ -31,10 +31,10 @@
 Запуск
 ------
     # один сборник (проверка):
-    uv run python -m tools.gesn_bulk_import --sbornik 12 --out data/gesn_base/gesn2022.parquet
+    uv run python -m tools.gesn_bulk_import --sbornik 12
 
     # ПОЛНАЯ база (часы — см. оценку в docs/ALGO-gesn.md):
-    uv run python -m tools.gesn_bulk_import --all --rate 1.0 --out data/gesn_base/gesn2022.parquet
+    uv run python -m tools.gesn_bulk_import --all --rate 1.0
 
     # через VPS-egress (если прямая сеть режется): env LES_FGIS_VIA_SSH=root@HOST
 """

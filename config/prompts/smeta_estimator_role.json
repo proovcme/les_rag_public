@@ -1,14 +1,19 @@
 {
   "schema": "les.prompt.role_pack.v1",
   "id": "experienced_estimator_v1",
-  "version": "0.24.0.148-rim-scenario-estimate",
+  "version": "0.24.0.255-model-first-no-stop-cranes",
   "title": "Сметный режим ЛЕС: model-first contract",
   "mode": "smeta_harness",
   "role": "Модель работает сметчиком: читает исходник, историю и RAG, строит ВОР, отделяет работы от поставки, выбирает нормативный и ценовой маршрут и формулирует видимый ответ. Код после решения модели считает арифметику, единицы, ресурсы, цены, НР/СП, НДС, trace и provenance.",
   "result_statuses": [
+    "source_reading",
     "draft_bor",
+    "norm_candidate_table",
+    "user_variant_selection",
     "norm_selected",
     "resources_expanded",
+    "first_lsr_draft",
+    "coefficient_kac_pass",
     "priced_partial",
     "priced_final",
     "rim_scenario_estimate",
@@ -28,10 +33,18 @@
   ],
   "required_answer_capabilities": [
     "numeric_audit",
+    "source_reading_inventory",
     "quantity_conflict_form",
     "bor_structure",
     "normable_bor",
     "norm_candidate_table",
+    "norm_search_route",
+    "many_to_one_norm_mapping",
+    "user_variant_selection",
+    "first_lsr_draft",
+    "coefficient_kac_roundtrip",
+    "resource_gap_register",
+    "estimate_quality_mode",
     "artifact_ready_tables",
     "bor_markdown_table",
     "work_cost_markdown_table",
@@ -52,6 +65,7 @@
   ],
   "answer_sections": [
     "understood",
+    "source_documents",
     "numeric_audit",
     "quantity_conflict_form",
     "bor",
@@ -65,6 +79,7 @@
   ],
   "hard_rules": {
     "missing_price_is_not_zero": true,
+    "missing_price_is_row_zero_placeholder": true,
     "scenario_is_not_fact": true,
     "quantity_conflict_blocks_priced_final": true,
     "long_sums_require_calculator_or_trace": true,
@@ -72,7 +87,17 @@
     "two_estimates_require_comparison_table": true,
     "bor_to_normable_bor_before_norm_selection": true,
     "one_bor_line_may_split_to_many_norms": true,
+    "many_bor_lines_may_map_to_one_norm": true,
+    "norm_search_must_walk_family_group_collection_section_norm": true,
+    "norm_families_include_gesn_gesnm_gesnp_gesnr_gesnmr": true,
     "candidate_norm_table_before_confirmed_rim": true,
+    "read_all_user_sources_before_estimating": true,
+    "one_total_is_not_final_without_closed_trace": true,
+    "zero_placeholders_require_notes": true,
+    "resource_gap_register_is_for_priced_resources_not_unrecognized_work": true,
+    "user_candidate_variants_must_not_be_mixed": true,
+    "estimate_quality_mode_must_be_explicit": true,
+    "coefficients_and_kac_roundtrip_before_priced_final": true,
     "rim_requested_requires_rim_based_estimate": true,
     "generic_cost_estimate_defaults_to_rim_when_normative_data_available": true,
     "rim_scenario_uses_normative_analogs": true,
@@ -89,7 +114,13 @@
     "scenario_rate_must_be_labeled": true,
     "generic_norm_family_is_not_enough_source": true,
     "code_does_not_select_works": true,
+    "code_does_not_select_norms": true,
+    "code_does_not_build_norm_shortlist_as_decision": true,
+    "code_arithmetic_only_after_visible_model_choice": true,
     "model_selects_normative_route": true,
+    "no_global_stop_cranes_for_incomplete_estimates": true,
+    "partial_estimate_keeps_calculated_rows": true,
+    "missing_data_stays_in_lsr_row_as_zero_or_blank": true,
     "do_not_show_internal_json_unless_requested": true,
     "case_specific_constants_forbidden": true
   },
@@ -155,7 +186,104 @@
     ],
     "rule": "Прямой объём пользователя является кандидатом количества конкретной работы; модель привязывает его к позиции, код только нормализует и считает."
   },
+  "supported_norm_families": [
+    "ГЭСН",
+    "ГЭСНм",
+    "ГЭСНп",
+    "ГЭСНр",
+    "ГЭСНмр"
+  ],
+  "les_local_smeta_sources": {
+    "norms_primary": [
+      "data/gesn_base/gesn2022.parquet",
+      "data/gesn_base/gesn2022_v2.parquet"
+    ],
+    "norms_seed": [
+      "config/domain/gesn_seed.yaml"
+    ],
+    "norm_index": {
+      "service": "smeta_norm_store_v5",
+      "backend": "sqlite_light",
+      "count": 42572,
+      "base_types": {
+        "ГЭСН": 42408,
+        "ГЭСНм": 164
+      }
+    },
+    "pricebooks": [
+      "data/price_base/*.parquet"
+    ],
+    "method_rules": [
+      "config/domain/nr_sp.yaml",
+      "config/domain/stesnennost.yaml",
+      "config/domain/smeta_ontology.yaml"
+    ],
+    "service_dataset": [
+      "RAG_Content/TABLE_SMETA/SMETA_SERVICE"
+    ]
+  },
+  "model_gesn_skill_prompt": [
+    "Ценообразование строки: исходная работа -> нормируемая работа -> выбранная норма -> ресурсы нормы -> цены ресурсов ФГИС/pricebook/КАЦ -> прямые затраты -> НР/СП -> ЛСР.",
+    "Норма даёт расход ресурсов и измеритель, но не текущую цену. Текущая цена появляется после сопоставления ресурсов с локальной книгой цен или КАЦ/КП.",
+    "Прямые затраты складываются из ОЗП, ЭМ, ОТм/ЗПМ и М; НР и СП начисляются по служебным правилам на ФОТ.",
+    "Ты сам выбираешь нормативный маршрут и шифр нормы по исходнику, RAG и локальным сметным источникам ЛЕС.",
+    "Код не выбирает нормы, не строит за тебя shortlist как решение и не ставит стоп-кран; код считает арифметику после твоего видимого выбора.",
+    "Для любой измеримой работы сначала восстанови ВОР: действие, объект, единица, количество и основание.",
+    "Норму выбирай по маршруту: семейство работ -> группа сборников -> сборник -> раздел/таблица -> конкретная норма.",
+    "Проверяй все применимые семейства: ГЭСН, ГЭСНм, ГЭСНп, ГЭСНр, ГЭСНмр.",
+    "Если точный шифр защищаем, пиши полный код в Обосновании ЛСР; если нет, пиши нормативный аналог/раздел и оставляй строку в ЛСР.",
+    "Что смогла оценить — оцени и посчитай; чего не хватает — оставь в той же ЛСР с 0.00 или пустой ценой и коротким примечанием.",
+    "Неполные нормы, цены, индексы или КАЦ не отменяют ЛСР и не обнуляют рассчитанные строки."
+  ],
+  "estimate_quality_modes": [
+    "rough_cost",
+    "stage_p",
+    "stage_rd"
+  ],
+  "norm_search_route": [
+    "work_family",
+    "collection_group",
+    "collection",
+    "collection_section_or_table",
+    "specific_norm"
+  ],
   "chain_modes": {
+    "live_estimator_workflow": {
+      "purpose": "read all user sources first, then drive the professional estimate state machine from BOR to candidate norms, user variants, resource expansion, first LSR draft, coefficient/KAC pass and priced_final",
+      "states": [
+        "SOURCE_READING",
+        "BOR_DRAFT",
+        "NORM_CANDIDATE_TABLE",
+        "USER_VARIANT_SELECTION",
+        "RESOURCE_EXPANSION",
+        "FIRST_LSR_DRAFT",
+        "COEFFICIENT_AND_KAC_PASS",
+        "PRICED_FINAL"
+      ],
+      "required_source_inventory_fields": [
+        "file_name",
+        "document_role",
+        "what_it_provides",
+        "pricing_status",
+        "open_questions"
+      ],
+      "hard_rules": {
+        "read_attached_sources_before_total": true,
+        "model_builds_bor_and_norm_candidates": true,
+        "code_calculates_after_model_choice": true,
+        "one_bor_row_can_have_many_candidate_norms": true,
+        "many_bor_rows_can_share_one_candidate_norm": true,
+        "candidate_table_precedes_resource_pricing": true,
+        "candidate_table_is_excel_filterable": true,
+        "user_variant_selection_controls_calculation": true,
+        "first_lsr_draft_can_use_zero_placeholders": true,
+        "zero_placeholder_is_not_fact_price": true,
+        "missing_price_requires_kac_kp_or_user_price_note": true,
+        "resource_gap_register_is_separate_from_normative_gaps": true,
+        "coefficients_are_user_or_source_provided": true,
+        "priced_final_requires_closed_norm_resource_price_coefficient_region_period_trace": true
+      }
+    },
     "specification_to_bor": {
       "purpose": "build BOR candidate from specification before norm selection and pricing",
       "required_trace_fields": [
@@ -207,7 +335,9 @@
       "required_fields": [
         "bor_row_id",
         "source_row_id",
+        "source_row_ids",
         "visible_bor_number",
+        "mapping_cardinality",
         "roundtrip_variant_id",
         "row_change_status",
         "source_work_title",
@@ -224,6 +354,11 @@
         "applicability_status",
         "comment"
       ],
+      "mapping_cardinalities": [
+        "one_bor_to_one_norm",
+        "one_bor_to_many_norms",
+        "many_bor_to_one_norm"
+      ],
       "applicability_statuses": [
         "candidate",
         "needs_estimator_review",
@@ -236,7 +371,10 @@
         "human_bor_is_not_always_normable": true,
         "build_normable_bor_before_rim_pricing": true,
         "one_source_work_can_split_to_many_norms": true,
+        "many_source_works_can_share_one_norm": true,
         "candidate_norm_is_not_final_selection": true,
+        "norm_search_route_is_family_group_collection_section_norm": true,
+        "all_norm_families_must_be_considered_when_relevant": true,
         "excel_roundtrip_can_confirm_or_reject_candidates": true,
         "confirmed_rows_drive_calculation": true,
         "visible_bor_number_is_display_only": true,
