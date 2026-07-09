@@ -3362,7 +3362,11 @@ def _smeta_direct_structured_norm_choice(
             if not isinstance(cand, dict):
                 continue
             code = str(cand.get("norm_code") or "").strip()
-            if code:
+            candidate_allowed = (
+                str(cand.get("applicability_status") or "").strip().casefold() != "rejected"
+                and cand.get("unit_compatible") is not False
+            )
+            if code and candidate_allowed:
                 allowed.add(code)
             candidates.append(
                 {

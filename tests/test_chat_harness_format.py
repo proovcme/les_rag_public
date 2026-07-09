@@ -966,6 +966,71 @@ def test_smeta_structured_norm_choice_gets_norm_card_and_mismatch_rule(monkeypat
     assert "roof hatches" in payload
 
 
+def test_smeta_structured_norm_choice_rejects_rejected_or_unit_mismatch_candidate(monkeypatch):
+    monkeypatch.setenv("LES_SMETA_NORM_REVIEW_ENABLED", "0")
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"rows":[{"lookup_index":1,"title":"Защитное укрытие",'
+                                '"unit":"100 м2","quantity":1.16,"norm_code":"ГЭСН46-05-001-03",'
+                                '"reason":"выбран rejected candidate"}]}'
+                            )
+                        }
+                    }
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr("proxy.routers.chat._llm_runtime", lambda: SimpleNamespace(
+        model="test-model", provider="openai", chat_url="http://127.0.0.1/test", api_key="",
+    ))
+    monkeypatch.setattr("proxy.routers.chat.httpx.Client", FakeClient)
+    lookup_trace = {
+        "results": [
+            {
+                "call": {"tool": "search_norm", "args": {"work_description": "защитное укрытие", "unit_hint": "м2"}},
+                "result": {
+                    "candidates": [
+                        {
+                            "norm_code": "ГЭСН46-05-001-03",
+                            "title": "устройство временных защитных ограждений",
+                            "measure_unit": "100 м2",
+                            "unit_compatible": True,
+                            "applicability_status": "rejected",
+                        }
+                    ]
+                },
+            }
+        ]
+    }
+
+    packet = _smeta_direct_structured_norm_choice("защитное укрытие пленкой 116 м2", lookup_trace)
+
+    assert packet["rows"][0]["basis"] == "нужен подбор нормы"
+    assert packet["rows"][0]["amount"] == 0.0
+    assert packet["trace"]["rejected_rows"][0]["norm_code"] == "ГЭСН46-05-001-03"
+
+
 def test_smeta_structured_norm_choice_keeps_unreturned_lookup_as_unbound_row(monkeypatch):
     monkeypatch.setenv("LES_SMETA_NORM_REVIEW_ENABLED", "0")
 

@@ -7,14 +7,30 @@
 ## Текущее состояние (2026-07-09)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.326  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.327  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.326 smeta BAP false-analog guard
+задеплоено на рантайм:     0.24.0.327 smeta rejected-candidate gate
 НЕ задеплоено:             нет по runtime-critical bundle; рабочее дерево ещё не закоммичено
-рантайм /api/version:      0.24.0.326, deploy stamp ok, runtime_alignment aligned
+рантайм /api/version:      0.24.0.327, deploy stamp ok, runtime_alignment aligned
 ```
 
+> 0.24.0.327 — smeta rejected-candidate gate
+>
+> Дата: 2026-07-09
+> Статус: deployed to runtime.
+> Причина: fresh БАП после 0.24.0.326 стал 16/19 и 1 403 680 руб.,
+> но строка 1 всё ещё попала в расчёт через `ГЭСН46-05-001-03`, хотя сам
+> `search_norm` уже пометил этот candidate как `applicability_status=rejected`.
+> Правки: structured norm-choice теперь разрешает к расчёту только candidates,
+> которые были видимы модели и не имеют `applicability_status=rejected` и
+> `unit_compatible=false`. Это не выбор нормы кодом: код остаётся provenance/
+> validity gate и не даёт заведомо отвергнутой карточке превратиться в деньги.
+> Проверки: focused smeta gate с rejected-candidate регрессией → `9 passed`;
+> `py_compile` + `git diff --check` по затронутым файлам → ok. Runtime:
+> `/api/version` → `0.24.0.327`, deploy stamp ok,
+> `runtime_alignment=aligned`; fresh БАП cloud rerun pending in this session.
+>
 > 0.24.0.326 — smeta BAP false-analog guard
 >
 > Дата: 2026-07-09
