@@ -20,7 +20,7 @@ APP_VERSION = "5.1.0"                 # пользовательская «ма�
 HARNESS_VERSION = "0.24"             # веха roadmap (v0.NN); двигать на смене вехи
 # Гранулярная версия «где мы»: 0.<веха>.<фича>.<патч>. Двигать КАЖДУЮ фичу/фикс + строка в
 # docs/RELEASE_LEDGER.md. Это основной номер в /api/version и бейдже (см. docs/RELEASE_LEDGER.md).
-LES_VERSION = "0.24.0.327"
+LES_VERSION = "0.24.0.352"
 EVIDENCE_SCHEMA_VERSION = "1.0"
 EXTRACTION_SCHEMA_VERSION = "1.0"
 RESOURCE_CALC_VERSION = "0.6"
@@ -32,6 +32,8 @@ _RUNTIME_ROOT = Path(os.getenv("LES_RUNTIME_HOME", "/Users/ovc/LES"))
 # критичные файлы, по которым ловим расхождение repo↔runtime (хэш, не полный diff).
 # v0.22: + GUI-файлы (sovushka) — иначе deploy stamp слеп к фронт-правкам и не флипается в stale.
 _CRITICAL_FILES = (
+    "backend/interface.py",
+    "backend/rag_config.py",
     "backend/qdrant_adapter.py",
     "backend/document_router.py",
     "proxy/app.py",
@@ -47,9 +49,11 @@ _CRITICAL_FILES = (
     "proxy/routers/notebooks.py",
     "proxy/routers/prompts.py",
     "proxy/services/doc_extract_service.py",
+    "proxy/services/evidence_packet_service.py",
     "proxy/services/extract_service.py",
     "proxy/services/context_memory_service.py",
     "proxy/services/lexical_index_service.py",
+    "proxy/services/retrieval_quality_service.py",
     "proxy/services/retrieval_service.py",
     "proxy/services/cad_bim_graph.py",
     "proxy/services/clause_lookup_service.py",
@@ -123,6 +127,7 @@ _CRITICAL_FILES = (
     "sovushka/answer_render.py",
     "sovushka/styles.py",
     "sovushka_ng.py",
+    "mlx_host.py",
     "config/service_sources.yaml",
 )
 # файлы, которых в рантайме намеренно НЕТ (flag-OFF, dev-only) — их отсутствие НЕ divergence

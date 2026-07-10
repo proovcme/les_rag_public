@@ -179,17 +179,20 @@ async def test_query_route_carries_honest_profile_for_glossary():
 
 @pytest.mark.asyncio
 async def test_query_route_carries_profile_for_explicit_mode(monkeypatch):
-    # явный режим «Смета» → профиль estimate_harness, источник explicit_mode. В тесте петлю
-    # закрываем сразу, чтобы не дергать живую LLM.
+    # Explicit-mode trace must be testable without entering any model/tool workflow.
     from proxy.routers import chat as chat_router
     _mock_chat_state(chat_router)
-    monkeypatch.setattr(chat_router, "_harness_complete", lambda messages: '{"final": true}')
+
+    async def fake_free_mode(req, token_sink=None):
+        return "offline explicit-mode probe"
+
+    monkeypatch.setattr(chat_router, "_run_free_mode", fake_free_mode)
     resp = await chat_router.chat(
-        chat_router.ChatRequest(question="что такое ОЖР", mode="smeta"), _user=object())
+        chat_router.ChatRequest(question="что такое ОЖР", mode="free"), _user=object())
     prof = resp["query_route"]["profile"]
-    assert prof["profile_id"] == "estimate_harness"
+    assert prof["profile_id"] == "free_llm"
     assert prof["route_source"] == "explicit_mode"
-    assert prof["executor"] == "cloud_large"
+    assert prof["executor"] == "local_large"
 
 
 @pytest.mark.asyncio

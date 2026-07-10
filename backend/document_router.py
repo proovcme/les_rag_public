@@ -344,6 +344,8 @@ def _has_project_design_signal(text: str) -> bool:
 def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
     text = f"{' '.join(probe.path.parts)}\n{probe.text_sample}".casefold()
     name = probe.path.name.casefold()
+    if _is_smeta_service_source(probe.path):
+        return "SMETA_SERVICE"
     smeta_ru_norm_domain = _smeta_ru_norm_domain(probe.path)
     if smeta_ru_norm_domain:
         return smeta_ru_norm_domain
@@ -533,6 +535,11 @@ def _smeta_ru_norm_domain(path: Path) -> str:
     if not category or category.startswith("00_"):
         return "TABLE_SMETA"
     return f"SMETA_RU_NORM_{category}"
+
+
+def _is_smeta_service_source(path: Path) -> bool:
+    parts = {part.casefold() for part in path.parts}
+    return "smeta_service" in parts
 
 
 _FIRE_TOKENS = (

@@ -116,3 +116,33 @@ def test_gesn_service_prefers_unified_default(tmp_path: Path, monkeypatch):
 
     norms = gs.load_base_norms()
     assert set(norms) == {"ГЭСН:03-01-001-01"}
+
+
+def test_unified_collapses_same_resource_code_despite_display_name_variants(tmp_path: Path):
+    legacy = tmp_path / "legacy.parquet"
+    overlay = tmp_path / "overlay.parquet"
+    out = tmp_path / "unified.parquet"
+    audit = tmp_path / "audit.json"
+    rows = [
+        _row(
+            norm_code="ГЭСН01-01-001-01", norm_key="ГЭСН:01-01-001-01", base_type="ГЭСН",
+            norm_name="Разработка грунта", norm_unit="100 м3", kind="machine",
+            resource_code="91.05.01-017", resource_name="Кран башенный", resource_unit="маш.-ч",
+            per_unit=3.0,
+        ),
+        _row(
+            norm_code="ГЭСН01-01-001-01", norm_key="ГЭСН:01-01-001-01", base_type="ГЭСН",
+            norm_name="Разработка грунта", norm_unit="100 м3", kind="machine",
+            resource_code="91.05.01-017", resource_name="КРАН  БАШЕННЫЙ", resource_unit="маш.-ч",
+            per_unit=3.0,
+        ),
+    ]
+    pd.DataFrame([rows[0]], columns=list(RESOURCE_FIELDS)).to_parquet(legacy, index=False)
+    pd.DataFrame([rows[1]], columns=list(RESOURCE_FIELDS)).to_parquet(overlay, index=False)
+
+    result = build_unified(legacy=legacy, overlay=overlay, out=out, audit_out=audit)
+
+    assert result["resource_identity_duplicates_dropped"] == 1
+    df = pd.read_parquet(out)
+    assert len(df) == 1
+    assert df.iloc[0]["resource_name"] == "КРАН  БАШЕННЫЙ"

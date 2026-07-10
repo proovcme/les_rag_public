@@ -237,10 +237,7 @@ DATASET_READER_SCHEMA: dict[str, Any] = {
     ],
     "properties": {
         "schema": {"type": "string", "enum": [DATASET_READER_SCHEMA_ID]},
-        "corpus_kind": {
-            "type": "string",
-            "enum": ["project", "normative", "estimate", "technical_catalog", "mixed", "unknown"],
-        },
+        "corpus_kind": {"type": "string", "maxLength": 120},
         "reader_summary": {"type": "string"},
         "where_to_look": {
             "type": "array",
@@ -1480,21 +1477,12 @@ def _reader_context(
     char_limit: int | None = None,
 ) -> str:
     if file_limit is None:
-        file_limit = _env_int("LES_DATASET_READER_FILE_LIMIT", 24, minimum=4)
+        file_limit = _env_int("LES_DATASET_READER_FILE_LIMIT", 32, minimum=4)
     if char_limit is None:
         char_limit = _env_int("LES_DATASET_READER_CONTEXT_CHARS", 12000, minimum=4000)
-    important_names = {str(item.get("file_name") or "") for item in memory.get("important_files") or []}
     cards = list(memory.get("file_cards") or [])
-    cards.sort(
-        key=lambda card: (
-            0 if str(card.get("file_name") or "") in important_names else 1,
-            -int(card.get("chunk_count") or 0),
-            str(card.get("file_name") or ""),
-        )
-    )
-    topic_map = memory.get("topic_map") if isinstance(memory.get("topic_map"), dict) else {}
+    selected_cards, corpus_groups, corpus_group_total = _reader_card_coverage(cards, file_limit=file_limit)
     section_map = memory.get("section_map") if isinstance(memory.get("section_map"), dict) else {}
-    routes = memory.get("retrieval_routes") if isinstance(memory.get("retrieval_routes"), list) else []
     payload = {
         "schema": "dataset_reader_input_v1",
         "dataset_id": memory.get("dataset_id"),
@@ -1519,12 +1507,18 @@ def _reader_context(
         ],
         "known_gaps": memory.get("known_gaps") or [],
         "file_cards_scope": {
-            "included": min(len(cards), file_limit),
+            "included": len(selected_cards),
             "total": len(cards),
             "selection": (
-                "important files first, then indexed/chunk-rich files; use as navigation, "
-                "not as proof that omitted files do not exist"
+                "all files if they fit; otherwise one readable representative from each actual "
+                "folder group, then chunk-rich files. This is navigation, not proof that omitted files do not exist"
             ),
+        },
+        "corpus_groups": corpus_groups,
+        "corpus_groups_scope": {
+            "included": len(corpus_groups),
+            "total": corpus_group_total,
+            "truncated": len(corpus_groups) < corpus_group_total,
         },
         "file_cards": [
             {
@@ -1537,10 +1531,8 @@ def _reader_context(
                 "navigation_terms": list(card.get("navigation_terms") or [])[:5],
                 "summary": str(card.get("summary") or "")[:180],
             }
-            for card in cards[:file_limit]
+            for card in selected_cards
         ],
-        "retrieval_routes": [_reader_route_ref(route) for route in routes[:2] if isinstance(route, dict)],
-        "topic_map": _reader_topic_map(topic_map),
         "section_map": _reader_section_map(section_map),
         "reader_task": {
             "goal": "build navigation memory only; do not answer user questions",
@@ -1551,6 +1543,47 @@ def _reader_context(
     if len(text) > char_limit:
         return text[:char_limit] + "\n...TRUNCATED..."
     return text
+
+
+def _reader_group_key(file_name: str) -> str:
+    parent = Path(str(file_name or "").replace("\\", "/")).parent
+    return str(parent) if str(parent) not in {"", "."} else "(root)"
+
+
+def _reader_card_coverage(
+    cards: list[dict[str, Any]], *, file_limit: int
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
+    """Summarise every actual file group and select a bounded representative spread."""
+    readable = [card for card in cards if isinstance(card, dict) and str(card.get("file_name") or "").strip()]
+    readable.sort(key=lambda card: (-int(card.get("chunk_count") or 0), str(card.get("file_name") or "")))
+    by_group: dict[str, list[dict[str, Any]]] = {}
+    for card in readable:
+        by_group.setdefault(_reader_group_key(str(card.get("file_name") or "")), []).append(card)
+    groups = [
+        {
+            "group": group,
+            "files": len(group_cards),
+            "indexed_files": sum(1 for card in group_cards if str(card.get("status") or "").upper() == "INDEXED"),
+            "chunks": sum(int(card.get("chunk_count") or 0) for card in group_cards),
+            "examples": [str(card.get("file_name") or "") for card in group_cards[:3]],
+        }
+        for group, group_cards in by_group.items()
+    ]
+    groups.sort(key=lambda item: (-int(item["chunks"]), -int(item["files"]), str(item["group"])))
+    group_total = len(groups)
+    selected: list[dict[str, Any]] = []
+    for group in groups:
+        group_cards = by_group[str(group["group"])]
+        selected.append(group_cards[0])
+        if len(selected) >= file_limit:
+            return selected, groups[:48], group_total
+    for card in readable:
+        if card in selected:
+            continue
+        selected.append(card)
+        if len(selected) >= file_limit:
+            break
+    return selected, groups[:48], group_total
 
 
 def _reader_file_ref(item: dict[str, Any]) -> dict[str, Any]:
@@ -1645,10 +1678,10 @@ def _reader_section_map(section_map: dict[str, Any]) -> dict[str, Any]:
 def _reader_instruction() -> str:
     return (
         "Ты reader-pass Л.Е.С.: читаешь карту датасета и составляешь навигационную память, НЕ evidence. "
-        "Не выдумывай факты и файлы. Определи corpus_kind. Для широких вопросов укажи, какие видимые "
-        "файлы/разделы открывать первыми. topic_map/section_map используй как оглавление. "
-        "Для малого корпуса перечисли все видимые файлы в file_roles. known_gaps — только реальные "
-        "пробелы из входа, не пиши что выборка ограничена. Верни только JSON."
+        "Не выдумывай факты, типы корпуса и файлы. Дай corpus_kind свободной короткой меткой только по "
+        "входной карте. Для широкого вопроса опиши, какие реальные группы файлов и разделы стоит читать; "
+        "не предполагая проект, нормативку, смету или иной заранее заданный состав. Для малого корпуса "
+        "перечисли все видимые файлы в file_roles. known_gaps — только реальные пробелы из входа. Верни только JSON."
     )
 
 
@@ -1691,7 +1724,7 @@ def _reader_compact_prompt(instruction: str, context: str) -> str:
         "Верни только один JSON-объект без markdown и пояснений. Формат:\n"
         "{\n"
         f'  "schema": "{DATASET_READER_SCHEMA_ID}",\n'
-        '  "corpus_kind": "project|normative|estimate|technical_catalog|mixed|unknown",\n'
+        '  "corpus_kind": "короткая нейтральная метка по входной карте",\n'
         '  "reader_summary": "1-3 предложения о корпусе",\n'
         '  "where_to_look": [\n'
         '    {"question_type": "тип вопроса", "target_files": ["имя файла из входа"], "reason": "почему туда"}\n'
@@ -1746,6 +1779,46 @@ def _store_reader_update(
         return memory
 
 
+def _sanitize_reader_output(data: dict[str, Any], memory: dict[str, Any]) -> dict[str, Any]:
+    """Keep model reader navigation attached to files that really exist in the map."""
+    known_files = {
+        str(card.get("file_name") or "")
+        for card in (memory.get("file_cards") or [])
+        if str(card.get("file_name") or "")
+    }
+    clean = dict(data)
+    roles = []
+    for item in data.get("file_roles") or []:
+        if not isinstance(item, dict) or str(item.get("file_name") or "") not in known_files:
+            continue
+        roles.append({
+            "file_name": str(item.get("file_name") or ""),
+            "role": str(item.get("role") or "")[:180],
+            "what_inside": str(item.get("what_inside") or "")[:360],
+            "confidence": max(0.0, min(1.0, float(item.get("confidence") or 0))),
+        })
+    routes = []
+    for item in data.get("where_to_look") or []:
+        if not isinstance(item, dict):
+            continue
+        files = [str(name) for name in (item.get("target_files") or []) if str(name) in known_files]
+        if not files:
+            continue
+        routes.append({
+            "question_type": str(item.get("question_type") or "")[:180],
+            "target_files": files[:12],
+            "reason": str(item.get("reason") or "")[:360],
+        })
+    clean["corpus_kind"] = str(data.get("corpus_kind") or "unknown")[:120]
+    clean["reader_summary"] = str(data.get("reader_summary") or "")[:900]
+    clean["file_roles"] = roles[:40]
+    clean["where_to_look"] = routes[:16]
+    clean["known_gaps"] = [str(item)[:240] for item in (data.get("known_gaps") or []) if str(item).strip()][:20]
+    clean["answer_guidance"] = str(data.get("answer_guidance") or "")[:600]
+    clean["confidence"] = max(0.0, min(1.0, float(data.get("confidence") or 0)))
+    return clean
+
+
 async def run_dataset_reader_pass(
     dataset_id: str,
     *,
@@ -1770,6 +1843,7 @@ async def run_dataset_reader_pass(
     )
     revision_id = str(memory.get("revision_id") or "")
     if result.ok and isinstance(result.data, dict):
+        reader_output = _sanitize_reader_output(result.data, memory)
         return await asyncio.to_thread(
             _store_reader_update,
             dataset_id,
@@ -1777,7 +1851,7 @@ async def run_dataset_reader_pass(
             status="model",
             updates={
                 "reader_schema": DATASET_READER_SCHEMA_ID,
-                "reader_output": result.data,
+                "reader_output": reader_output,
                 "reader_errors": [],
                 "reader_attempts": result.attempts,
                 "reader_note": (
@@ -1979,8 +2053,8 @@ def _task_guidance(question: str) -> list[str]:
         )
     if re.search(r"(расскажи|обзор|изучи|проект|объект|корпус|датасет|документац)", q):
         guidance.append(
-            "Для широкого обзора открой паспортные документы, состав проекта и пояснительные записки; "
-            "таблицы и чертежи используй как уточняющий слой."
+            "Для широкого обзора сначала используй реальные file cards, заголовки и reader-pass карты корпуса; "
+            "затем открой выбранные ими файлы. Не предполагай паспорт, проектный том, таблицу или иной тип документа."
         )
     if re.search(r"(таблиц|спецификац|ведомост|перечен|реестр|список)", q):
         guidance.append(

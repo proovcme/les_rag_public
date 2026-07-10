@@ -851,10 +851,12 @@ def build_documents() -> None:
                 _badge(f"{int(selected.get('document_count') or memory.get('document_count') or 0)} документов")
                 _badge(f"{int(selected.get('chunk_count') or memory.get('chunk_count') or 0)} текстовых частей")
                 if coverage:
+                    read_count = int(coverage.get("files_ok") or coverage.get("files_extracted") or 0)
+                    issue_count = int(coverage.get("extract_errors") or 0) + int(coverage.get("missing_source") or 0)
                     _badge(f"PDF {coverage.get('pdf_documents', 0)}")
-                    _badge(f"прочитано {coverage.get('files_extracted', 0)}")
-                    if coverage.get("extract_errors"):
-                        _badge(f"проверить {coverage.get('extract_errors')}", "tag-warn")
+                    _badge(f"прочитано {read_count}")
+                    if issue_count:
+                        _badge(f"проверить {issue_count}", "tag-warn")
             note = str(memory.get("reader_note") or "")
             if note:
                 _label(note, size="11px", color="var(--dim)").style("margin-top:7px;")
@@ -1137,21 +1139,26 @@ def build_documents() -> None:
                 ).props("flat dense no-caps")
             if coverage:
                 with ui.row().classes("items-center").style("gap:5px;margin-top:8px;flex-wrap:wrap;"):
-                    for title, key in (
-                        ("PDF", "pdf_documents"),
-                        ("Прочитано", "files_extracted"),
-                        ("ПЗ", "pz_files"),
-                        ("ВОР", "vor_files"),
-                        ("СО", "so_files"),
-                        ("Нет файла", "missing_source"),
-                    ):
+                    read_count = int(coverage.get("files_ok") or coverage.get("files_extracted") or 0)
+                    _badge(f"PDF: {coverage.get('pdf_documents', 0)}", "tag-dim")
+                    _badge(f"Прочитано: {read_count}", "tag-dim")
+                    for title, key in (("ПЗ", "pz_files"), ("ВОР", "vor_files"), ("СО", "so_files")):
                         if key in coverage:
-                            _badge(f"{title}: {coverage.get(key)}", "tag-warn" if key == "missing_source" and coverage.get(key) else "tag-dim")
+                            _badge(f"{title}: {coverage.get(key)}", "tag-dim")
+                    for title, key in (("Ошибка", "extract_errors"), ("Нет файла", "missing_source")):
+                        if coverage.get(key):
+                            _badge(f"{title}: {coverage.get(key)}", "tag-warn")
             warnings = [str(x) for x in (project_pdf.get("warnings") or []) if str(x).strip()]
             if warnings:
                 _label("Что проверить: " + "; ".join(warnings[:4]), size="11px", color="var(--warn)").style(
                     "margin-top:7px;overflow-wrap:anywhere;"
                 )
+            if project_pdf.get("warnings_truncated"):
+                _label(
+                    f"Показаны не все предупреждения: {int(project_pdf.get('warnings_total') or len(warnings))} всего.",
+                    size="11px",
+                    color="var(--warn)",
+                ).style("margin-top:5px;")
             nav = [item for item in (project_pdf.get("source_navigation") or []) if isinstance(item, dict)]
             for item in nav[:6]:
                 file_name = str(item.get("file_name") or "")
@@ -1560,7 +1567,10 @@ def build_documents() -> None:
                     lambda e: (state.__setitem__("dataset_kind_filter", str(e.args or "")), _render_datasets()),
                 )
                 dataset_filter = ui.input(placeholder="фильтр").props("dense outlined clearable").style("width:100%;")
-                dataset_filter.on("update:model-value", lambda e: state.__setitem__("dataset_filter", str(e.args or "")))
+                dataset_filter.on(
+                    "update:model-value",
+                    lambda e: (state.__setitem__("dataset_filter", str(e.args or "")), _render_datasets()),
+                )
                 dataset_filter.on("keydown.enter", lambda _e: _schedule(_load_datasets(select_first=True)))
                 with ui.column().classes("w-full gap-2").style("overflow:auto;min-height:0;flex:1;") as datasets_panel:
                     refs["datasets"] = datasets_panel

@@ -130,3 +130,40 @@ def test_gesn_service_prefers_structured_base(tmp_path: Path, monkeypatch):
     assert norm["_source_kind"] == "structured_sqlite"
     assert norm["unit"] == "шт"
     assert norm["resources"][0]["code"] == "1-100-40"
+
+
+def test_structured_base_defensively_collapses_duplicate_resource_identity(tmp_path: Path):
+    source = tmp_path / "source.parquet"
+    out = tmp_path / "base.sqlite"
+    manifest_out = tmp_path / "manifest.json"
+    rows = [
+        _row(
+            norm_code="ГЭСН08-01-001-01", norm_key="ГЭСН:08-01-001-01", base_type="ГЭСН",
+            norm_name="Монтаж оборудования", norm_unit="шт", kind="machine",
+            resource_code="91.01.01-001", resource_name="Кран монтажный", resource_unit="маш.-ч",
+            per_unit=3.0,
+        ),
+        _row(
+            norm_code="ГЭСН08-01-001-01", norm_key="ГЭСН:08-01-001-01", base_type="ГЭСН",
+            norm_name="Монтаж оборудования", norm_unit="шт", kind="machine",
+            resource_code="91.01.01-001", resource_name="КРАН  МОНТАЖНЫЙ", resource_unit="маш.-ч",
+            per_unit=3.0,
+        ),
+        _row(
+            norm_code="ГЭСН08-01-001-01", norm_key="ГЭСН:08-01-001-01", base_type="ГЭСН",
+            norm_name="Монтаж оборудования", norm_unit="шт", kind="material",
+            resource_code="01.1.01.01-0001", resource_name="Материал", resource_unit="шт",
+            per_unit=1.0,
+        ),
+    ]
+    pd.DataFrame(rows, columns=list(RESOURCE_FIELDS)).to_parquet(source, index=False)
+
+    manifest = build_structured_base(source=source, out=out, manifest_out=manifest_out)
+
+    assert manifest["excluded"]["resource_identity_duplicates_dropped"] == 1
+    assert manifest["output"]["resources"] == 2
+    conn = sqlite3.connect(out)
+    try:
+        assert conn.execute("SELECT count(*) FROM resources").fetchone()[0] == 2
+    finally:
+        conn.close()

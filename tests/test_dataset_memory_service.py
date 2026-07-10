@@ -611,11 +611,35 @@ def test_reader_context_uses_env_limits(monkeypatch):
     assert "Сначала читать состав проекта и ПЗ." in context
     assert '"included": 20' in context
     assert '"total": 25' in context
+    assert '"corpus_groups"' in context
+    assert '"corpus_groups_scope"' in context
     assert "file_24.docx" in context
     assert "file_4.docx" not in context
     assert "Раздел 4" in context
     assert "Раздел 5" not in context
     assert "TRUNCATED" not in context
+
+
+def test_reader_context_spreads_cards_across_actual_folder_groups(monkeypatch):
+    memory = {
+        "dataset_id": "arbitrary",
+        "file_cards": [
+            {"file_name": "alpha/high.pdf", "status": "INDEXED", "chunk_count": 90},
+            {"file_name": "alpha/low.pdf", "status": "INDEXED", "chunk_count": 1},
+            {"file_name": "beta/table.xlsx", "status": "INDEXED", "chunk_count": 8},
+            {"file_name": "gamma/scan.pdf", "status": "PENDING", "chunk_count": 0},
+            {"file_name": "delta/notes.txt", "status": "INDEXED", "chunk_count": 2},
+        ],
+        "section_map": {},
+    }
+    monkeypatch.setenv("LES_DATASET_READER_FILE_LIMIT", "4")
+
+    context = dataset_memory_service._reader_context(memory)
+    reader_input = json.loads(context)
+    selected_names = [item["file_name"] for item in reader_input["file_cards"]]
+
+    assert selected_names == ["alpha/high.pdf", "beta/table.xlsx", "delta/notes.txt", "gamma/scan.pdf"]
+    assert reader_input["corpus_groups_scope"]["total"] == 4
 
 
 def test_reader_compact_prompt_avoids_full_json_schema():
@@ -674,3 +698,36 @@ async def test_run_dataset_reader_pass_stores_navigation_json(tmp_path, monkeypa
     assert memory["is_evidence"] is False
     assert memory["reader_output"]["corpus_kind"] == "project"
     assert persisted["reader_output"]["answer_guidance"] == "Для фактов сначала открыть целевой файл."
+
+
+def test_reader_output_discards_model_file_names_absent_from_real_corpus(tmp_path):
+    db = tmp_path / "meta.db"
+    _seed_db(db)
+    memory = build_typed_dataset_memory("ds", meta_db_path=str(db), force=True)
+
+    clean = dataset_memory_service._sanitize_reader_output(
+        {
+            "schema": "dataset_reader_map_v1",
+            "corpus_kind": "смешанный комплект",
+            "reader_summary": "Карта корпуса",
+            "where_to_look": [
+                {"question_type": "обзор", "target_files": ["BAI/OUT/КР/03_Пояснительная записка.pdf", "invented.pdf"], "reason": "test"}
+            ],
+            "file_roles": [
+                {"file_name": "BAI/OUT/КР/03_Пояснительная записка.pdf", "role": "документ", "what_inside": "текст", "confidence": 0.8},
+                {"file_name": "invented.pdf", "role": "ложный", "what_inside": "нет", "confidence": 1},
+            ],
+            "known_gaps": [],
+            "answer_guidance": "Открыть реальные файлы.",
+            "confidence": 0.7,
+        },
+        memory,
+    )
+
+    assert clean["file_roles"] == [{
+        "file_name": "BAI/OUT/КР/03_Пояснительная записка.pdf",
+        "role": "документ",
+        "what_inside": "текст",
+        "confidence": 0.8,
+    }]
+    assert clean["where_to_look"][0]["target_files"] == ["BAI/OUT/КР/03_Пояснительная записка.pdf"]

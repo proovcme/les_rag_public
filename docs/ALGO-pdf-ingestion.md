@@ -195,6 +195,37 @@ facts without normalized rows/source fragments.
 The model may use candidates to decide where to look next, but row-level claims
 still need normalized rows or retrieved source fragments with `source_ref`.
 
+## L.I.S.T. reliability contract
+
+Since `0.24.0.344`, file roles and disciplines are recognized only from
+delimited filename/cipher codes and a whitelist of project disciplines. Short
+substrings such as `ВОР`, `СО`, `ПЗ` and `ОВ` must not match ordinary words
+(`договор`, `состав`, `ПЗУ`, `условия`). A project-composition row mentioning
+ЭС does not make the current PDF an electrical document.
+
+Dataset summaries distinguish attempted and successfully extracted files:
+
+```text
+status=ok       every PDF was extracted
+status=partial  at least one PDF succeeded and at least one failed/missing
+status=failed   PDFs were supplied but none succeeded
+status=empty    no PDFs were supplied
+```
+
+`coverage.files_attempted` is the number processed;
+`coverage.files_extracted/files_ok` is the successful count;
+`files_unattempted/files_limit_truncated` expose a `max_files` cut instead of
+silently calling it complete. Bounded
+`warnings`, `source_refs` and `volume_register` arrays expose matching
+`*_total` and `*_truncated` fields. Row/table refs are kept ahead of generic
+page refs. `dataset_id` is one safe path component and cannot escape the
+sidecar storage root.
+
+Generic manual tables are not promoted from weak words alone: a cable table
+requires explicit cable fields, and a VOR table requires work name, unit and
+quantity together. This keeps `line/length` parameters and a lone `quantity`
+column in software or equipment manuals out of project navigation.
+
 ## Anti-pattern
 
 Do not fix project PDF failures by only increasing

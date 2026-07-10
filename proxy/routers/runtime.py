@@ -253,6 +253,8 @@ async def _live_datasets_and_projects():
                         "chunk_count": getattr(d, "chunk_count", 0),
                         "source_type": getattr(d, "group_name", "") or "dataset",
                         "qdrant_status": "indexed" if getattr(d, "chunk_count", 0) else "unknown",
+                        "dataset_scope": getattr(d, "dataset_scope", "user") or "user",
+                        "module_id": getattr(d, "module_id", "") or "",
                     })
     except Exception as e:  # noqa: BLE001
         logger.warning("[SCOPE] list_datasets failed: %s", e)

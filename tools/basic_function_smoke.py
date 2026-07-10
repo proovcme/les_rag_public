@@ -85,15 +85,15 @@ def check_scope(c, base):
         return _r("scope_options", "P0", "fail", t0, f"{type(e).__name__}: {e}")
 
 
-def _chat(c, base, question):
-    resp = c.post(f"{base}/api/chat", json={"question": question})
+def _chat(c, base, question, *, timeout: float):
+    resp = c.post(f"{base}/api/chat", json={"question": question}, timeout=timeout)
     return resp
 
 
-def check_chat_glossary(c, base):
+def check_chat_glossary(c, base, *, timeout: float):
     t0 = time.monotonic()
     try:
-        resp = _chat(c, base, "что такое ОЖР")
+        resp = _chat(c, base, "что такое ОЖР", timeout=timeout)
         if resp.status_code == 503:
             return _r("chat_glossary", "P0", "warn", t0, f"memory-guard (транзиент): {resp.json().get('detail','')[:80]}",
                       {"http": 503})
@@ -110,11 +110,11 @@ def check_chat_glossary(c, base):
         return _r("chat_glossary", "P0", "fail", t0, f"{type(e).__name__}: {e}")
 
 
-def check_chat_project_noscope(c, base):
+def check_chat_project_noscope(c, base, *, timeout: float):
     """Проектный вопрос без scope → ответ ИЛИ честный clarification/MISSING, не падение."""
     t0 = time.monotonic()
     try:
-        resp = _chat(c, base, "расскажи про котельную на лесном 64")
+        resp = _chat(c, base, "расскажи про котельную на лесном 64", timeout=timeout)
         if resp.status_code == 503:
             return _r("chat_project_noscope", "P1", "warn", t0, "memory-guard (транзиент)", {"http": 503})
         d = resp.json()
@@ -151,19 +151,23 @@ def main() -> int:
     ap.add_argument("--ui-url", default="http://127.0.0.1:8051")
     ap.add_argument("--json", default="artifacts/basic_function_smoke.json")
     ap.add_argument("--release", action="store_true", help="P1 fail → exit 1 (перед релизом)")
+    ap.add_argument("--http-timeout", type=float, default=20.0, help="таймаут обычного HTTP check")
+    ap.add_argument("--chat-timeout", type=float, default=45.0, help="отдельный конечный budget одного chat check")
     args = ap.parse_args()
+    if args.http_timeout <= 0 or args.chat_timeout <= 0:
+        ap.error("--http-timeout и --chat-timeout должны быть положительными")
 
     base = args.proxy_url.rstrip("/")
     results = []
-    with httpx.Client(timeout=120.0, follow_redirects=True) as c:
+    with httpx.Client(timeout=args.http_timeout, follow_redirects=True) as c:
         results.append(check_version(c, base))
         results.append(check_health(c, base))
         results.append(check_simple(c, base, "/api/status", "status_endpoint", "P1"))
         results.append(check_simple(c, base, "/api/metrics", "metrics_endpoint", "P1"))
         results.append(check_simple(c, base, "/api/diag", "diagnostics_endpoint", "P1"))
         results.append(check_scope(c, base))
-        results.append(check_chat_glossary(c, base))
-        results.append(check_chat_project_noscope(c, base))
+        results.append(check_chat_glossary(c, base, timeout=args.chat_timeout))
+        results.append(check_chat_project_noscope(c, base, timeout=args.chat_timeout))
         # UI достижим
         t0 = time.monotonic()
         try:

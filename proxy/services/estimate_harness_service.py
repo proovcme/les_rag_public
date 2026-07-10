@@ -351,12 +351,18 @@ def check_applicability(code: str, norm_name: str, work_family: str, element_typ
     if allowed and collection_key and collection_key not in allowed and not backup_power_secondary_base:
         return "rejected", [f"сборник {collection_key} не разрешён для {work_family}"]
     for a in _FORBIDDEN_TITLE_ANCHORS:
+        if element_type == "protective_cover" and a == "защитн":
+            continue
         if a in name:
             return "rejected", [f"запретный признак в названии: «{a}»"]
     for pref in _FAMILY_DENIED_PREFIXES.get(work_family, ()):
         if plain_code.startswith(pref):
             return "rejected", [f"подраздел {pref} не для {work_family}"]
     pos = _FAMILY_POSITIVE_ANCHORS.get(work_family, ())
+    if element_type == "protective_cover" and any(
+        anchor in name for anchor in ("укрыт", "временн", "огражден")
+    ):
+        return "accepted", []
     if pos and not any(a in name for a in pos):
         return "ambiguous", [f"в названии нет признаков семейства {work_family}"]
     return "accepted", []
@@ -393,10 +399,12 @@ def _infer_finish_operation_route(words: list[str], element_type: str, action: s
         return "primer", "грунтование"
     if "шпатлев" in text or "шпаклев" in text:
         return "putty", "шпатлевка"
-    if any(anchor in text for anchor in ("люк", "люч", "ревизион", "проем")):
-        return "hatch", normalized_action or "монтаж"
     if "потол" in text and any(anchor in text for anchor in ("рееч", "подвес", "демонтаж", "демонт", "разбор", "замен", "восстанов")):
         return "ceiling", normalized_action or "устройство"
+    if "потол" in text and any(anchor in text for anchor in ("подготов", "ремонт")):
+        return "ceiling", normalized_action or "подготовка"
+    if any(anchor in text for anchor in ("люк", "люч", "ревизион", "проем")):
+        return "hatch", normalized_action or "монтаж"
     if any(anchor in text for anchor in ("пленк", "укрыт", "защит")):
         return "protective_cover", normalized_action or "защита"
     if "оклей" in text or "обоя" in text or "стеклохолст" in text or "стеклооб" in text:
@@ -457,6 +465,7 @@ _ROUTE_FORBIDDEN_TITLE_ANCHORS: dict[tuple[str, str], tuple[str, ...]] = {
         "дымов", "кирпичн",
     ),
     ("electric", "box"): ("станок", "автомат для", "початочн"),
+    ("electric", "fastener"): ("светильник", "светильники", "изолятор", "розетк", "выключател"),
     ("electric", "backup_power"): ("светильники, устанавливаемые блоками", "комплектных подстанций", "шинными аппаратами"),
     ("finishes", "painting"): ("экранирован", "медн", "алюминиев"),
     ("finishes", "ceiling"): ("светильник", "спринклер", "пожаротуш"),
@@ -599,9 +608,9 @@ def _route_row_priority(row: SmetaNormRow, *, family: str, element: str, words: 
         if "замена элементов облицовки потолков" in title and any(w.startswith(("рееч", "потол")) for w in words):
             priority += 70
         if any(w.startswith(("пленк", "укрыт", "защит")) for w in words):
-            if any(anchor in title for anchor in ("укрыт", "защитн", "временн")):
+            if any(anchor in title for anchor in ("укрыт", "временн", "огражден")):
                 priority += 40
-            elif any(anchor in title for anchor in ("натяжн", "декоратив", "самокле", "оклейк", "штукатур", "грунт", "окраск", "шпатлев", "облицов")):
+            elif any(anchor in title for anchor in ("натяжн", "декоратив", "самокле", "оклейк", "штукатур", "грунт", "окраск", "шпатлев", "облицов", "химстойк", "граффити")):
                 priority -= 70
     if family == "mep":
         if element == "device" and any(w.startswith(("люк", "ревиз")) for w in words):
@@ -637,6 +646,7 @@ _ELEMENT_ANCHORS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "putty":               (("шпатлев", "шпаклев"), ("облицов", "каркас", "устройство потолков")),
     "wallpaper":           (("оклейк", "обоя", "стеклохолст", "стеклооб"), ("штукатур", "каркас", "облицов")),
     "painting":            (("окрас", "окраш"), ("штукатур", "облицов", "каркас")),
+    "protective_cover":    (("укрыт", "защит", "временн", "огражден"), ("граффити", "наклеек", "грязи", "химстойк", "огнезащит", "натяжн", "декоратив", "самокле")),
 }
 
 _ELEMENT_TEXT_SIGNALS: tuple[tuple[str, str, str], ...] = (
@@ -872,6 +882,8 @@ def _score_candidate(words: list[str], code: str, name: str, unit: str, *, work_
             parts["fastener_match"] = 6.0
         if any(w.startswith("скоб") for w in words) and _canon_unit(unit) == "шт":
             parts["fastener_unit"] = 3.0
+        if any(anchor in name for anchor in ("светильник", "светильники", "изолятор", "розетк", "выключател")):
+            parts["fastener_device_noise"] = -9.0
     if work_family == "finishes":
         wants_ceiling = any(w.startswith(("потол", "запотол")) for w in words)
         wants_repair = any(w.startswith(("демонт", "разбор", "замен", "восстанов", "сохран")) for w in words)
@@ -881,10 +893,10 @@ def _score_candidate(words: list[str], code: str, name: str, unit: str, *, work_
         if "замена элементов облицовки потолков" in name and wants_ceiling:
             parts["ceiling_repair_match"] = 8.0
         if wants_cover:
-            if any(anchor in name for anchor in ("укрыт", "защитн", "временн")):
-                parts["protective_cover_match"] = 8.0
-            elif any(anchor in name for anchor in ("натяжн", "декоратив", "самокле", "оклейк", "штукатур", "грунт", "окраск", "шпатлев", "облицов")):
+            if any(anchor in name for anchor in ("натяжн", "декоратив", "самокле", "оклейк", "штукатур", "грунт", "окраск", "шпатлев", "облицов", "химстойк", "граффити")):
                 parts["protective_cover_foreign_operation_noise"] = -12.0
+            elif any(anchor in name for anchor in ("укрыт", "временн", "огражден")):
+                parts["protective_cover_match"] = 8.0
         if element_type == "hatch" and any(w.startswith(("люк", "люч", "ревиз")) for w in words):
             if _collection_key(code) == "17" and "люк" in name and "ревиз" in name:
                 parts["revision_hatch_match"] = 10.0
@@ -937,6 +949,13 @@ def search_norm(work_description: str, *, work_family: str = "", element_type: s
         return {"status": "not_found", "candidates": [], "missing_inputs": ["work_description"]}
     work_family = _normalize_work_family(work_family)
     uh = _canon_unit(unit_hint)
+    if (
+        work_family == "electric"
+        and element_type == "pipe"
+        and uh == "шт"
+        and any(w.startswith(("скоб", "крепл", "однолап")) for w in words)
+    ):
+        element_type = "fastener"
     if work_family == "finishes":
         element_type, action = _infer_finish_operation_route(words, element_type, action)
     if (
@@ -2605,7 +2624,9 @@ def _is_critical_status(status: Any) -> bool:
 def _finalize(state: dict[str, Any], *, note: str = "") -> dict[str, Any]:
     """Сборка с Gate 1+2: считаем ТОЛЬКО computed (accepted-норма). Итог:
     complete (всё посчитано) | partial (есть computed + критичные/нет данных) | blocked (ничего).
-    Ценовые требования остаются row-level подсказками и не блокируют final_total."""
+    Незакрытая цена остаётся видимой в строке и не отменяет рассчитанную часть.
+    Финальность состава/количеств отделена от pricing_status: отсутствующая цена
+    требует строкового добора, но не превращает посчитанные позиции в global stop."""
     from proxy.services.gesn_service import get_norm
     from proxy.services.lsr_assembly_service import assemble
     from proxy.services.nr_sp_service import resolve as resolve_nr_sp
@@ -2640,7 +2661,17 @@ def _finalize(state: dict[str, Any], *, note: str = "") -> dict[str, Any]:
     lsr_probe = assemble(asm, book=state.get("pricebook")) if asm else {"summary": {"total": 0.0}}
     norm_checks = [p for p in buckets["computed"] if p.get("norm_questions")]
     price_requirements = list(lsr_probe.get("summary", {}).get("price_requirements") or [])
-    has_critical = bool(buckets["rejected"]) or bool(buckets["needs_input"]) or bool(norm_checks)
+    all_quantities_direct = bool(buckets["computed"]) and all(
+        str((position.get("quantity_source") or {}).get("source") or "") == "user_text"
+        and str((position.get("quantity_source") or {}).get("slot") or "") in _DIRECT_QTY_SLOTS
+        for position in buckets["computed"]
+    )
+    has_critical = (
+        bool(buckets["rejected"])
+        or bool(buckets["needs_input"])
+        or bool(norm_checks)
+        or (bool(price_requirements) and not all_quantities_direct)
+    )
     if not buckets["computed"]:
         total_status = "blocked"
     elif has_critical:
@@ -2651,7 +2682,9 @@ def _finalize(state: dict[str, Any], *, note: str = "") -> dict[str, Any]:
     cont = round(smr * 0.02, 2)
     vat = round((smr + cont) * 0.20, 2)
     final = {"smr": smr, "contingency": cont, "vat": vat,
-             "grand_total": round(smr + cont + vat, 2), "positions": len(buckets["computed"])}
+             "grand_total": round(smr + cont + vat, 2), "positions": len(buckets["computed"]),
+             "known_cost_only": bool(price_requirements),
+             "unpriced_resource_count": len(price_requirements)}
     partial = {
         "positions": len(buckets["computed"]),
         "money_visible": True,
@@ -2660,6 +2693,8 @@ def _finalize(state: dict[str, Any], *, note: str = "") -> dict[str, Any]:
         "vat": vat,
         "grand_total": round(smr + cont + vat, 2),
         "reason": "неполный состав работ, нормы, параметры или цены",
+        "known_cost_only": bool(price_requirements),
+        "unpriced_resource_count": len(price_requirements),
     }
     blockers = [{"position": p.get("work", ""), "reason": p.get("status"),
                  "candidate": p.get("code"), "detail": p.get("reason", "")} for p in buckets["rejected"]]
@@ -2676,11 +2711,14 @@ def _finalize(state: dict[str, Any], *, note: str = "") -> dict[str, Any]:
         "rejected": buckets["rejected"],
         "norm_checks": norm_checks,
         "price_requirements": price_requirements,
+        "pricing_status": "partial" if price_requirements else "complete",
         "skipped": buckets["skipped"],
         "by_assumption": buckets["by_assumption"],
         "assumption_mode": bool(state.get("assumption_mode")),
         "scenario_assumptions": list(state.get("scenario_assumptions") or []),
-        "estimate": lsr_probe if total_status == "complete" else {},
+        # Trace stays available for a partial result as provenance for the
+        # calculated rows and their explicit price gaps; it is not finality.
+        "estimate": lsr_probe if buckets["computed"] else {},
         "steps": state.get("steps", 0),
         "note": note,
         "source": "harness",

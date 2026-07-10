@@ -57,6 +57,46 @@ def _f(value: Any) -> float:
         return 0.0
 
 
+def _resource_text_key(value: Any) -> str:
+    return " ".join(str(value or "").replace("\xa0", " ").split()).casefold()
+
+
+def _resource_number_key(value: Any) -> str:
+    if value in (None, ""):
+        return ""
+    return format(_f(value), ".12g")
+
+
+def _resource_identity(resource: dict[str, Any]) -> tuple[str, str, str, str, str]:
+    """Identity guard for stale bases which predate canonical source dedupe.
+
+    It only collapses rows with the same coded (or, if no code exists, named)
+    resource, unit, consumption and explicit price. It does not infer or alter
+    a norm's resource composition.
+    """
+    code = _resource_text_key(resource.get("code"))
+    name = _resource_text_key(resource.get("name"))
+    return (
+        _resource_text_key(resource.get("kind")),
+        "code" if code else "name",
+        code or name,
+        _resource_text_key(resource.get("unit")),
+        f"{_resource_number_key(resource.get('per_unit'))}|{_resource_number_key(resource.get('price'))}",
+    )
+
+
+def _dedupe_resources(resources: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    seen: set[tuple[str, str, str, str, str]] = set()
+    unique: list[dict[str, Any]] = []
+    for resource in resources:
+        identity = _resource_identity(resource)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        unique.append(resource)
+    return unique, len(resources) - len(unique)
+
+
 def _base_type(prefix: Any, *, default: str = "ГЭСН") -> str:
     raw = str(prefix or "").strip().upper().replace(" ", "")
     if not raw:
@@ -196,6 +236,7 @@ def load_structured_base_norms(sqlite_path: str | None = None) -> dict[str, dict
     out: dict[str, dict[str, Any]] = {}
     for row in norm_rows:
         key = str(row["norm_key"])
+        resources, duplicates_dropped = _dedupe_resources(resources_by_key.get(key, []))
         out[key] = {
             "code": row["display_code"],
             "base_type": row["base_type"],
@@ -203,7 +244,8 @@ def load_structured_base_norms(sqlite_path: str | None = None) -> dict[str, dict
             "name": row["norm_name"] or "",
             "unit": row["norm_unit"] or "",
             "work_steps": _work_steps(row["work_steps"]),
-            "resources": resources_by_key.get(key, []),
+            "resources": resources,
+            "_resource_identity_duplicates_dropped": duplicates_dropped,
             "_source_kind": "structured_sqlite",
             "_source_path": str(p),
         }
@@ -273,6 +315,8 @@ def load_base_norms(parquet_path: str | None = None) -> dict[str, dict[str, Any]
                 res["price"] = rec["price"]
             norm["resources"].append(res)
         for key, norm in local.items():
+            norm["resources"], duplicates_dropped = _dedupe_resources(norm["resources"])
+            norm["_resource_identity_duplicates_dropped"] = duplicates_dropped
             existing = out.get(key)
             if existing:
                 for field in ("name", "unit"):

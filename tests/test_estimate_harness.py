@@ -109,6 +109,58 @@ def test_search_norm_routes_reed_ceiling_demolition_to_repair_collection():
     assert all(code.startswith("ГЭСНр:63-") for code in codes[:3])
 
 
+def test_search_norm_routes_ceiling_surface_prep_after_hatch_to_repair_collection():
+    r = h.search_norm(
+        "Подготовка поверхности потолка из ГКЛ к восстановлению отделки после монтажа лючков",
+        work_family="finishes",
+        element_type="finish",
+        action="подготовка",
+        unit_hint="м2",
+        top_k=8,
+    )
+
+    codes = [c["norm_code"] for c in r["candidates"]]
+    assert r["element_type"] == "ceiling"
+    assert any(code.startswith("ГЭСНр:63-03-006") for code in codes[:8])
+    assert "ГЭСН:17-01-010-01" not in codes[:3]
+
+
+def test_search_norm_routes_temporary_protective_cover_to_collection_46_not_decorative_film():
+    r = h.search_norm(
+        "Защитное укрытие поверхностей технической полиэтиленовой пленкой",
+        work_family="finishes",
+        element_type="finish",
+        action="устройство",
+        unit_hint="м2",
+        top_k=8,
+    )
+
+    codes = [c["norm_code"] for c in r["candidates"]]
+    assert r["element_type"] == "protective_cover"
+    assert codes[:3] == [
+        "ГЭСН:46-05-001-01",
+        "ГЭСН:46-05-001-02",
+        "ГЭСН:46-05-001-03",
+    ]
+    assert all("15-01-051" not in code and "15-06-003" not in code for code in codes[:4])
+
+
+def test_search_norm_routes_piece_pipe_clamps_to_fastener_candidates():
+    r = h.search_norm(
+        "Монтаж металлических однолапковых скоб для крепления гофрированной трубы d19-20 мм",
+        work_family="electric",
+        element_type="pipe",
+        action="монтаж",
+        unit_hint="шт",
+        top_k=8,
+    )
+
+    codes = [c["norm_code"] for c in r["candidates"]]
+    assert r["element_type"] == "fastener"
+    assert codes[:2] == ["ГЭСНм:08-02-152-13", "ГЭСНм:08-02-152-14"]
+    assert all("светиль" not in c["title"].casefold() for c in r["candidates"][:4])
+
+
 def test_search_rejects_wrong_collection_for_work_family():
     r = h.search_norm("каркасные стены деревянные", work_family="wood",
                       element_type="wood_wall", unit_hint="м2")
@@ -807,9 +859,10 @@ def test_legacy_tool_call_is_repaired_to_batch_plan():
     assert res["preliminary"] is True
     assert len(res["computed"]) == 1
     assert res["computed"][0]["qty"] > 0
-    assert res["total_status"] == "complete"       # ценовой gap не блокирует итог, а остаётся row-level требованием
+    assert res["total_status"] == "partial"        # строка рассчитана, но цена не даёт назвать итог финальным
     assert res["partial_total"]["grand_total"] > 0
-    assert res["final_total"]["grand_total"] > 0
+    assert res["final_total"] is None
+    assert res["estimate"]["summary"]["needs_price"] > 0
     assert any(req["action"] == "needs_kac" for req in res["price_requirements"])
     assert calls["i"] >= 2
     assert [t["tool"] for t in res["trace"]] == [
@@ -858,9 +911,9 @@ def test_batch_plan_asks_model_to_choose_when_search_is_ambiguous():
     assert res["computed"][0]["code"].startswith("ГЭСН:06-02")
     assert any("моделью из shortlist" in a for a in res["computed"][0]["assumptions"])
     assert res["by_assumption"]
-    assert res["total_status"] == "complete"
+    assert res["total_status"] == "partial"
     assert res["partial_total"]["grand_total"] > 0
-    assert res["final_total"]["grand_total"] > 0
+    assert res["final_total"] is None
     assert res["price_requirements"]
 
 

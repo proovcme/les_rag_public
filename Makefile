@@ -1,10 +1,11 @@
 # Л.Е.С. (LES_v2) — dev-гейт. Офлайн, без живых сервисов (Qdrant/MLX не нужны).
 # Требует uv. `make verify` — перед объявлением правки готовой.
-.PHONY: verify test test-focused smeta-base smeta-base-source smeta-base-update smoke-basic public-check ship-check ship-full-check deploy-runtime post-deploy-smoke ship ship-full help
+.PHONY: verify test test-focused test-rag-core smeta-base smeta-base-source smeta-base-update smoke-basic public-check ship-check ship-full-check deploy-runtime post-deploy-smoke ship ship-full help
 
 PKGS := backend proxy sovushka tools sovushka_ng.py proxy_server.py mlx_host.py
 SMOKE_ARGS ?=
 FOCUS_TESTS ?= tests/test_sovushka_chat.py tests/test_static_assets.py tests/test_smeta_chat_service.py tests/test_estimate_harness.py tests/test_profile_resolver.py tests/test_doc_review_gost_21_101_2026.py tests/test_doc_review_chat_tool.py tests/test_title_block_extract.py tests/test_service_source_registry.py
+RAG_CORE_TESTS ?= tests/test_datasets_router.py tests/test_rag_config.py tests/test_qdrant_adapter_parse.py tests/test_build_rag_contract_sibling.py tests/test_system_dataset_service.py tests/test_retrieval_quality_service.py tests/test_retrieval_service.py tests/test_saferag_service.py tests/test_source_excerpts.py tests/test_evidence_packet_service.py tests/test_rag_golden_set.py tests/test_rag_index_contract_audit.py tests/test_notebook_study_service.py
 POST_DEPLOY_RETRIES ?= 12
 POST_DEPLOY_DELAY ?= 1
 SMETA_BASE_UPDATE_ARGS ?= --all --rate 1.0
@@ -13,6 +14,7 @@ help:
 	@echo "make verify       — офлайн-гейт: compileall (синтаксис) + pytest --collect-only (импорт-смоук)"
 	@echo "make test         — полная сюита pytest (часть тестов требует живых Qdrant/MLX)"
 	@echo "make test-focused — быстрые профильные pytest; переопредели FOCUS_TESTS='tests/test_x.py ...'"
+	@echo "make test-rag-core — обязательный offline integrity-гейт RAG-ядра"
 	@echo "make smeta-base   — пересобрать checked unified parquet → structured SQLite → SMETA_SERVICE cards без скачивания"
 	@echo "make smeta-base-source — пересобрать raw/cache → unified parquet → smeta-base без скачивания"
 	@echo "make smeta-base-update — скачать/обновить ГЭСН из ФГИС и прогнать полный smeta-base pipeline; args: SMETA_BASE_UPDATE_ARGS='--all --rate 1.0'"
@@ -30,10 +32,13 @@ verify:
 	@echo "OK — verify зелёный (синтаксис + импорт-смоук). Полные тесты: make test."
 
 test:
-	uv run python -m pytest
+	uv run python -m pytest --durations=20
 
 test-focused:
 	uv run python -m pytest $(FOCUS_TESTS)
+
+test-rag-core:
+	uv run python -m pytest -q --durations=15 $(RAG_CORE_TESTS)
 
 smeta-base:
 	uv run python -m tools.build_smeta_structured_base
@@ -53,9 +58,9 @@ public-check:
 	uv run python tools/publication_check.py
 
 # Быстрый prod-гейт без деплоя: для малых итераций внутри версии.
-ship-check: verify test-focused smoke-basic
+ship-check: verify test-focused test-rag-core smoke-basic
 	@echo ""
-	@echo "== ship-check ЗЕЛЁНЫЙ: verify → test-focused → smoke-basic."
+	@echo "== ship-check ЗЕЛЁНЫЙ: verify → test-focused → test-rag-core → smoke-basic."
 
 # Полный prod-гейт без деплоя: запускать на границе версии/релиза и перед большими изменениями.
 ship-full-check: verify test smoke-basic

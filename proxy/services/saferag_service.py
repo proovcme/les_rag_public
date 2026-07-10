@@ -209,16 +209,64 @@ def numeric_provenance_check(answer: str, context: str, *, max_flags: int = 5) -
     return flagged
 
 
-def build_context(chunks: Iterable[SourceChunk], max_chars: int, *, include_metadata: bool = False) -> str:
-    parts: list[str] = []
+def _context_candidates(chunks: Iterable[SourceChunk]) -> list[tuple[int, SourceChunk]]:
+    """Put one chunk per source first, then fill with remaining evidence."""
+    items = list(enumerate(chunks))
+    first: list[tuple[int, SourceChunk]] = []
+    rest: list[tuple[int, SourceChunk]] = []
+    seen_docs: set[str] = set()
+    for item in items:
+        doc = _doc_family(str(getattr(item[1], "doc_name", "")))
+        if doc not in seen_docs:
+            seen_docs.add(doc)
+            first.append(item)
+        else:
+            rest.append(item)
+    return first + rest
+
+
+def _visible_context_parts(
+    chunks: Iterable[SourceChunk],
+    max_chars: int,
+    *,
+    include_metadata: bool,
+) -> list[tuple[int, int, SourceChunk, str, str]]:
+    """Return exact visible evidence; an oversized chunk cannot block later ones."""
+    visible: list[tuple[int, int, SourceChunk, str, str]] = []
     total = 0
-    for index, chunk in enumerate(chunks, 1):
-        part = f"{_source_label(index, chunk, include_metadata)}:\n{_clean_chunk_text(chunk.content)}"
-        if total + len(part) > max_chars:
+    for original_index, chunk in _context_candidates(chunks):
+        visible_index = len(visible) + 1
+        meta = getattr(chunk, "meta", {}) or {}
+        clean = _clean_chunk_text(chunk.content)
+        table_header = str(meta.get("table_header") or "").strip() if isinstance(meta, dict) else ""
+        if table_header and table_header not in clean[: max(len(table_header) + 40, 200)]:
+            clean = f"[Заголовок таблицы] {table_header}\n{clean}"
+        label = _source_label(visible_index, chunk, include_metadata)
+        prefix = f"{label}:\n"
+        remaining = max_chars - total
+        if len(prefix) + len(clean) > remaining:
+            # Do not spend a citation slot on an unusably tiny tail. Continue to
+            # later (possibly shorter) evidence instead of stopping the pack.
+            if remaining <= len(prefix) + 80:
+                continue
+            clean = clean[: max(0, remaining - len(prefix) - 1)].rstrip() + "…"
+        part = prefix + clean
+        if len(part) > remaining:
+            continue
+        visible.append((visible_index, original_index, chunk, clean, label))
+        total += len(part) + (2 if visible_index > 1 else 0)
+        if total >= max_chars:
             break
-        parts.append(part)
-        total += len(part)
-    return "\n\n".join(parts)
+    return visible
+
+
+def build_context(chunks: Iterable[SourceChunk], max_chars: int, *, include_metadata: bool = False) -> str:
+    return "\n\n".join(
+        f"{label}:\n{clean}"
+        for _visible_index, _original_index, _chunk, clean, label in _visible_context_parts(
+            chunks, max_chars, include_metadata=include_metadata
+        )
+    )
 
 
 def source_map_for_context(
@@ -234,16 +282,13 @@ def source_map_for_context(
     headers as "Источник N". This map keeps those two surfaces explainable.
     """
     out: list[dict[str, object]] = []
-    total = 0
-    for index, chunk in enumerate(chunks, 1):
-        clean = _clean_chunk_text(chunk.content)
-        label = _source_label(index, chunk, include_metadata)
-        part = f"{label}:\n{clean}"
-        if total + len(part) > max_chars:
-            break
+    for index, original_index, chunk, clean, label in _visible_context_parts(
+        chunks, max_chars, include_metadata=include_metadata
+    ):
         meta = getattr(chunk, "meta", {}) or {}
         item: dict[str, object] = {
             "index": index,
+            "original_chunk_index": original_index,
             "label": f"Источник {index}",
             "doc_name": chunk.doc_name,
             "header": label,
@@ -257,7 +302,6 @@ def source_map_for_context(
                 if meta.get(key):
                     item[key] = meta[key]
         out.append(item)
-        total += len(part)
     return out
 
 

@@ -434,7 +434,8 @@ def _resolve_home(service: ServiceDef) -> str:
     return str(ROOT)
 
 
-def _install(service: ServiceDef, *, force: bool | None = None) -> None:
+def _install(service: ServiceDef, *, force: bool | None = None) -> bool:
+    """Install a rendered plist and report whether launchd must reload it."""
     src = _repo_plist_path(service)
     if not src.exists():
         raise FileNotFoundError(f"missing plist template: {src}")
@@ -444,11 +445,15 @@ def _install(service: ServiceDef, *, force: bool | None = None) -> None:
     # КОРЕНЬ «танцев»: существующий рабочий плист НЕ перезаписываем (иначе start/restart из любого
     # клона переустанавливает его с чужими путями → MLX/эмбеддер мрут). Только если нет / явный force.
     if dst.exists() and not force:
-        return
+        return False
     home = _resolve_home(service)
     rendered = _render_plist_template(src, home).encode("utf-8")
     if not dst.exists() or rendered != dst.read_bytes():
         dst.write_bytes(rendered)
+        return True
+    # ``LES_PLIST_FORCE`` also heals the case where a previous tool revision
+    # wrote the file but only kickstarted the old in-memory launchd definition.
+    return bool(force)
 
 
 def _launchctl_print(service: ServiceDef) -> subprocess.CompletedProcess[str]:
@@ -606,9 +611,36 @@ def start_service(service_key: str, wait: bool = True) -> ActionResult:
 def restart_service(service_key: str, wait: bool = True) -> ActionResult:
     service = SERVICES[service_key]
     try:
-        _install(service)
+        plist_changed = bool(_install(service))
     except Exception as error:
         return ActionResult("restart", service.key, False, str(error), status(service_key))
+
+    # launchctl kickstart restarts the old in-memory job definition; it does not
+    # reread an already bootstrapped plist. A forced config update therefore needs
+    # bootout -> bootstrap, otherwise EMBED_* changes look applied on disk but the
+    # MLX host continues to run its previous model.
+    if plist_changed and _loaded(service):
+        stopped = stop_service(service_key, wait=True, terminate_listener=True)
+        if not stopped.ok:
+            return ActionResult(
+                "restart",
+                service.key,
+                False,
+                "plist updated but launchctl bootout failed",
+                stopped.status,
+                stopped.stdout,
+                stopped.stderr,
+            )
+        started = start_service(service_key, wait=wait)
+        return ActionResult(
+            "restart",
+            service.key,
+            started.ok,
+            "reloaded plist and restarted" if started.ok else "plist reloaded; restart requested",
+            started.status,
+            started.stdout,
+            started.stderr,
+        )
 
     before = status(service_key)
     if _port_owner_conflict(service, before):

@@ -436,6 +436,46 @@ async def test_retrieve_debug_returns_ranked_chunks_and_inferred_dataset(dataset
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("doc_name", "content", "forbidden"),
+    [
+        ("СП 7.13130.docx", "исходный фрагмент", "дымоудаление"),
+        ("ГОСТ Р 59639.docx", "исходный фрагмент", "СП 3.13130"),
+        ("СП 60.13330.docx", "исходный фрагмент", "кондиционирование"),
+    ],
+)
+async def test_retrieve_debug_never_injects_expected_terms(
+    dataset_state,
+    doc_name,
+    content,
+    forbidden,
+):
+    async def retrieve(question, dataset_ids=None, top_k=5, doc_filter=None):
+        return [
+            Chunk(
+                content=content,
+                doc_id="doc-integrity",
+                doc_name=doc_name,
+                score=0.73,
+                meta={"doc_type": "NORMATIVE", "content_type": "text"},
+            )
+        ]
+
+    dataset_state.retrieve = retrieve
+
+    result = await datasets.retrieve_debug(
+        datasets.RetrievalDebugRequest(question="нейтральный запрос"),
+        _user=object(),
+    )
+
+    chunk = result["chunks"][0]
+    assert chunk["doc_name"] == doc_name
+    assert chunk["preview"] == content
+    assert forbidden not in chunk["doc_name"]
+    assert forbidden not in chunk["preview"]
+
+
+@pytest.mark.asyncio
 async def test_search_returns_ranked_chunks_without_generation(dataset_state):
     result = await datasets.search(
         datasets.SearchRequest(query="ширина путей эвакуации", top_k=3, include_trace=True),

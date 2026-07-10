@@ -9,6 +9,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from backend.interface import EmbeddingContractError
+from backend.rag_config import query_embedding_instruction_id
 from proxy.services.kot_service import analyze_question, extract_norm_refs
 from proxy.services.lexical_index_service import LexicalIndex, RetrievalTrace, lexical_enabled, merge_rrf
 from proxy.services.query_router import route_query
@@ -133,6 +135,56 @@ def _promote_exact_source_matches(chunks: list[Any], question: str) -> tuple[lis
     return ordered, matched
 
 
+def _normalise_norm_reference(value: str) -> str:
+    """Canonical comparison key for a user-specified СП/ГОСТ reference."""
+    return re.sub(r"[^a-zа-яё0-9]+", "", str(value or "").casefold().replace("ё", "е"))
+
+
+def _promote_explicit_norm_reference_matches(chunks: list[Any], question: str) -> tuple[list[Any], list[str]]:
+    """Keep the named normative document ahead of documents that merely cite it.
+
+    Dense and lexical search legitimately return related documents that mention a
+    standard. When the user explicitly names a standard, its own file is the
+    target evidence. The rule is generic for extracted norm references, applies
+    after reranking too, and never invents a source outside the candidate pool.
+    """
+    refs = [ref for ref in extract_norm_refs(question) if _normalise_norm_reference(ref)]
+    if not refs or len(chunks) < 2:
+        return chunks, []
+
+    ref_keys = [_normalise_norm_reference(ref) for ref in refs]
+    scored: list[tuple[int, int, Any]] = []
+    matched: set[str] = set()
+    for index, chunk in enumerate(chunks):
+        meta = getattr(chunk, "meta", {}) or {}
+        doc_name = str(getattr(chunk, "doc_name", "") or meta.get("file_name") or "")
+        doc_key = _normalise_norm_reference(doc_name)
+        content_key = _normalise_norm_reference(str(getattr(chunk, "content", "") or ""))
+        score = 0
+        for ref, ref_key in zip(refs, ref_keys):
+            if ref_key in doc_key:
+                score += 8
+                matched.add(ref)
+            elif ref_key in content_key:
+                score += 2
+                matched.add(ref)
+        scored.append((score, index, chunk))
+    if not matched:
+        return chunks, []
+    ordered = [chunk for _score, _index, chunk in sorted(scored, key=lambda item: (-item[0], item[1]))]
+    return ordered, sorted(matched)
+
+
+def _record_exact_norm_refs(trace: RetrievalTrace, refs: list[str]) -> None:
+    if not refs:
+        return
+    if "norm_ref_exact" not in trace.mode:
+        trace.mode = f"{trace.mode}+norm_ref_exact"
+    for ref in refs:
+        if ref not in trace.exact_refs:
+            trace.exact_refs.append(ref)
+
+
 def _source_name_terms(question: str) -> list[str]:
     terms: list[str] = []
     for token in _SOURCE_NAME_TOKEN_RE.findall(question or ""):
@@ -189,6 +241,28 @@ def _chunk_meta(chunk: Any) -> dict[str, Any]:
     if not meta:
         meta = getattr(chunk, "metadata", {}) or {}
     return meta if isinstance(meta, dict) else {}
+
+
+def _rerank_evidence_text(chunk: Any, question: str, *, limit: int = 1600) -> str:
+    """Heading plus a query-centred window, instead of a blind text prefix."""
+    meta = _chunk_meta(chunk)
+    text = str(getattr(chunk, "content", "") or "")
+    heading = str(meta.get("section_heading") or meta.get("parent_heading") or "").strip()
+    tokens = [token.casefold() for token in re.findall(r"(?iu)[\wа-яё]{4,}", question or "")]
+    folded = text.casefold()
+    offsets = [folded.find(token) for token in tokens if folded.find(token) >= 0]
+    if offsets and len(text) > limit:
+        centre = min(offsets)
+        start = max(0, centre - limit // 3)
+        end = min(len(text), start + limit)
+        window = text[start:end]
+        if start:
+            window = "…" + window
+        if end < len(text):
+            window += "…"
+    else:
+        window = text[:limit] + ("…" if len(text) > limit else "")
+    return f"{heading}\n{window}".strip() if heading else window
 
 
 def _chunk_ordinal(chunk: Any, fallback: int) -> int:
@@ -573,6 +647,7 @@ async def retrieve_chat_chunks(
     retrieval_query = expand_retrieval_query(question)
     if dataset_ids == []:
         trace = RetrievalTrace(mode="empty", fallback_reason="no_datasets")
+        trace.query_embedding = query_embedding_instruction_id()
         quality = evaluate_retrieval_quality(question=question, chunks=[], trace=trace, kot=kot)
         trace.quality_status = quality.status
         trace.quality_detail = quality.detail
@@ -613,6 +688,7 @@ async def retrieve_chat_chunks(
             effective_doc_filter = effective_doc_filter or []
         _rt["route"] = round(time.monotonic() - _s, 3)
     used_native_hybrid = False
+    embedding_contract_error = ""
     if hybrid_backend() == "qdrant_native" and hasattr(rag_backend, "retrieve_native_hybrid"):
         _s = time.monotonic()
         try:
@@ -628,6 +704,7 @@ async def retrieve_chat_chunks(
                 vector_count=len(native_chunks),
                 lexical_count=0,
                 merged_count=len(native_chunks),
+                score_kind="qdrant_rrf",
             )
             if effective_doc_filter:
                 trace.exact_refs.extend([f"file:{name}" for name in effective_doc_filter])
@@ -656,21 +733,32 @@ async def retrieve_chat_chunks(
             except Exception as native_merge_error:  # noqa: BLE001
                 logger.warning("[HYBRID] qdrant_native lexical safety merge skipped: %s", native_merge_error)
             used_native_hybrid = True
+        except EmbeddingContractError as native_contract_error:
+            embedding_contract_error = str(native_contract_error)
+            logger.error("[RETR] dense retrieval disabled: %s", embedding_contract_error)
         except Exception as native_error:  # noqa: BLE001
             logger.warning("[HYBRID] qdrant_native fallback to legacy hybrid: %s", native_error)
     if not used_native_hybrid:
-        _s = time.monotonic()
-        vector_chunks = await rag_backend.retrieve(
-            retrieval_query,
-            dataset_ids=dataset_ids,
-            top_k=vector_top_k,
-            doc_filter=effective_doc_filter or None,
-        )
-        _rt["vec"] = round(time.monotonic() - _s, 3)
+        vector_chunks: list[Any] = []
+        if not embedding_contract_error:
+            _s = time.monotonic()
+            try:
+                vector_chunks = await rag_backend.retrieve(
+                    retrieval_query,
+                    dataset_ids=dataset_ids,
+                    top_k=vector_top_k,
+                    doc_filter=effective_doc_filter or None,
+                )
+                _rt["vec"] = round(time.monotonic() - _s, 3)
+            except EmbeddingContractError as contract_error:
+                embedding_contract_error = str(contract_error)
+                _rt["vec"] = round(time.monotonic() - _s, 3)
+                logger.error("[RETR] dense retrieval disabled: %s", embedding_contract_error)
+
         # W2.4: BGE-M3 learned-sparse рядом с dense (Qdrant-native гибрид). За флагом
         # RAG_SPARSE_ENABLED; при сбое/пустом sparse — молча падаем на dense+FTS.
         _s = time.monotonic()
-        sparse_chunks = await _retrieve_sparse_safe(
+        sparse_chunks = [] if embedding_contract_error else await _retrieve_sparse_safe(
             rag_backend,
             retrieval_query,
             dataset_ids,
@@ -692,10 +780,15 @@ async def retrieve_chat_chunks(
             sparse_chunks=sparse_chunks,
             doc_filter=effective_doc_filter or None,
         )
+        if embedding_contract_error:
+            trace.mode = "lexical_only"
+            trace.fallback_reason = "embedding_contract_mismatch"
+            trace.embedding_contract = embedding_contract_error
         if effective_doc_filter:
             trace.exact_refs.extend([f"file:{name}" for name in effective_doc_filter])
         _rt["merge"] = round(time.monotonic() - _s, 3)
     logger.info("[RETR] подфазы=%s", _rt)
+    trace.query_embedding = query_embedding_instruction_id()
     chunks, exact_terms = _promote_exact_source_matches(chunks, question)
     if exact_terms:
         if "source_exact" not in trace.mode:
@@ -704,7 +797,9 @@ async def retrieve_chat_chunks(
             ref = f"source:{term}"
             if ref not in trace.exact_refs:
                 trace.exact_refs.append(ref)
-    elif any(token in question.casefold() for token in ("cad", "bim", "dwg", "dxf", "rvt", "ifc", "атм", "гсв")):
+    chunks, exact_norm_refs = _promote_explicit_norm_reference_matches(chunks, question)
+    _record_exact_norm_refs(trace, exact_norm_refs)
+    if not exact_terms and not exact_norm_refs and any(token in question.casefold() for token in ("cad", "bim", "dwg", "dxf", "rvt", "ifc", "атм", "гсв")):
         chunks, source_name_terms = _promote_source_name_matches(chunks, question)
         if source_name_terms and "source_name_boost" not in trace.mode:
             trace.mode = f"{trace.mode}+source_name_boost"
@@ -736,36 +831,70 @@ async def retrieve_chat_chunks(
     # (tools/ingestion_quality_report). Кросс-датасетные дубли — задача ingestion QA, не рантайма.
     quality = evaluate_retrieval_quality(question=question, chunks=chunks, trace=trace, kot=kot)
 
-    if return_trace and quality.status == "weak":
+    if return_trace and quality.status == "weak" and not embedding_contract_error:
         retry_query = expanded_quality_query(question, kot)
         if retry_query != question:
-            retry_vector = await rag_backend.retrieve(
-                retry_query,
-                dataset_ids=dataset_ids,
-                top_k=vector_top_k,
-                doc_filter=effective_doc_filter or None,
-            )
-            retry_sparse = await _retrieve_sparse_safe(
-                rag_backend,
-                retry_query,
-                dataset_ids,
-                pool_k,
-                logger,
-                doc_filter=effective_doc_filter or None,
-            )
-            retry_chunks, retry_trace = _hybrid_merge(
-                retry_query,
-                retry_vector,
-                dataset_ids,
-                rag_backend,
-                logger,
-                retrieval_query=retry_query,
-                pool_k=pool_k,
-                limit=merged_top_k,
-                sparse_chunks=retry_sparse,
-                doc_filter=effective_doc_filter or None,
-            )
+            if used_native_hybrid:
+                retry_native = await rag_backend.retrieve_native_hybrid(
+                    retry_query,
+                    dataset_ids=dataset_ids,
+                    top_k=merged_top_k,
+                    doc_filter=effective_doc_filter or None,
+                )
+                retry_chunks, retry_trace = _hybrid_merge(
+                    retry_query,
+                    retry_native,
+                    dataset_ids,
+                    rag_backend,
+                    logger,
+                    retrieval_query=retry_query,
+                    pool_k=pool_k,
+                    limit=merged_top_k,
+                    sparse_chunks=None,
+                    doc_filter=effective_doc_filter or None,
+                )
+                retry_trace.mode = (
+                    f"qdrant_native_{retry_trace.mode}"
+                    if retry_trace.lexical_count
+                    else "qdrant_native_hybrid"
+                )
+                retry_trace.vector_count = len(retry_native)
+                retry_trace.score_kind = "rrf" if retry_trace.lexical_count else "qdrant_rrf"
+            else:
+                retry_vector = await rag_backend.retrieve(
+                    retry_query,
+                    dataset_ids=dataset_ids,
+                    top_k=vector_top_k,
+                    doc_filter=effective_doc_filter or None,
+                )
+                retry_sparse = await _retrieve_sparse_safe(
+                    rag_backend,
+                    retry_query,
+                    dataset_ids,
+                    pool_k,
+                    logger,
+                    doc_filter=effective_doc_filter or None,
+                )
+                retry_chunks, retry_trace = _hybrid_merge(
+                    retry_query,
+                    retry_vector,
+                    dataset_ids,
+                    rag_backend,
+                    logger,
+                    retrieval_query=retry_query,
+                    pool_k=pool_k,
+                    limit=merged_top_k,
+                    sparse_chunks=retry_sparse,
+                    doc_filter=effective_doc_filter or None,
+                )
             retry_trace.retry_count = 1
+            retry_trace.retry = {
+                "reason": quality.detail,
+                "query_changed": True,
+                "backend_preserved": True,
+                "mode_before": trace.mode,
+                "mode_after": retry_trace.mode,
+            }
             retry_quality = evaluate_retrieval_quality(question=question, chunks=retry_chunks, trace=retry_trace, kot=kot)
             if retry_quality.status != "weak" or len(retry_chunks) >= len(chunks):
                 chunks, trace, quality = retry_chunks, retry_trace, retry_quality
@@ -778,7 +907,7 @@ async def retrieve_chat_chunks(
             reranker = reranker_cls(mlx_url=mlx_url, mode="batch")
             rerank_input = [
                 {
-                    "text": chunk.content,
+                    "text": _rerank_evidence_text(chunk, question),
                     "metadata": {"doc_name": chunk.doc_name, "_idx": idx},
                     "score": getattr(chunk, "score", 0.0),
                 }
@@ -788,16 +917,36 @@ async def retrieve_chat_chunks(
             needs_semaphore = llm_semaphore is not None and reranker_cls.__name__ == "Reranker"
             if needs_semaphore:
                 async with llm_semaphore:
-                    ranked = await reranker.rerank(question, rerank_input, top_k=len(chunks))
+                    ranked = await reranker.rerank(
+                        question, rerank_input, top_k=min(max(RERANK_TOP_K, 1), len(chunks))
+                    )
             else:
-                ranked = await reranker.rerank(question, rerank_input, top_k=len(chunks))
+                ranked = await reranker.rerank(
+                    question, rerank_input, top_k=min(max(RERANK_TOP_K, 1), len(chunks))
+                )
             reordered = []
             seen = set()
+            rerank_items: list[dict[str, Any]] = []
             for ranked_chunk in ranked:
                 idx = ranked_chunk.metadata.get("_idx")
                 if isinstance(idx, int) and 0 <= idx < len(chunks) and idx not in seen:
                     seen.add(idx)
-                    reordered.append(chunks[idx])
+                    original = chunks[idx]
+                    meta = _chunk_meta(original)
+                    meta["rerank_original_rank"] = idx + 1
+                    meta["rerank_rank"] = len(reordered) + 1
+                    rerank_score = float(getattr(ranked_chunk, "score", 0.0) or 0.0)
+                    meta["rerank_score"] = rerank_score
+                    meta["rerank_model"] = reranker_cls.__name__
+                    reordered.append(original)
+                    rerank_items.append(
+                        {
+                            "doc_name": str(getattr(original, "doc_name", "")),
+                            "original_rank": idx + 1,
+                            "rank": len(reordered),
+                            "score": rerank_score,
+                        }
+                    )
             for idx, chunk in enumerate(chunks):  # хвост, не вернувшийся из реранка
                 if idx not in seen:
                     reordered.append(chunk)
@@ -805,15 +954,26 @@ async def retrieve_chat_chunks(
             chunks, exact_terms = _promote_exact_source_matches(chunks, question)
             if exact_terms and "source_exact_guard" not in trace.mode:
                 trace.mode = f"{trace.mode}+source_exact_guard"
-            elif not exact_terms and any(token in question.casefold() for token in ("cad", "bim", "dwg", "dxf", "rvt", "ifc", "атм", "гсв")):
+            chunks, exact_norm_refs = _promote_explicit_norm_reference_matches(chunks, question)
+            _record_exact_norm_refs(trace, exact_norm_refs)
+            if not exact_terms and not exact_norm_refs and any(token in question.casefold() for token in ("cad", "bim", "dwg", "dxf", "rvt", "ifc", "атм", "гсв")):
                 chunks, source_name_terms = _promote_source_name_matches(chunks, question)
                 if source_name_terms and "source_name_boost" not in trace.mode:
                     trace.mode = f"{trace.mode}+source_name_boost"
             trace.mode = f"{trace.mode}+rerank"
+            trace.rerank = {
+                "status": "applied",
+                "model": reranker_cls.__name__,
+                "input_count": len(rerank_input),
+                "returned_count": len(ranked),
+                "items": rerank_items,
+            }
+            trace.score_kind = "rerank_logit"
             logger.info("[RERANK-CE] гибридный пул %s переупорядочен", len(chunks))
         except Exception as rerank_error:
             logger.warning("[RERANKER] Ошибка, гибридный порядок без реранка: %s", rerank_error)
             trace.fallback_reason = trace.fallback_reason or "rerank_error"
+            trace.rerank = {"status": "error", "model": reranker_cls.__name__, "error": type(rerank_error).__name__}
 
     # ADR-12 (Ц9): после реранка гарантируем табличным приложениям места в видимом
     # окне ответа — иначе cross-encoder топит сырой текст таблицы под прозой и
@@ -839,6 +999,10 @@ async def retrieve_chat_chunks(
     if ordinal_promoted and "first_ordinal_guard" not in trace.mode:
         trace.mode = f"{trace.mode}+first_ordinal_guard"
 
+    # A weak-query retry may replace the trace; record the actual query contract
+    # only after every dense pass has completed.
+    quality = evaluate_retrieval_quality(question=question, chunks=chunks, trace=trace, kot=kot)
+    trace.query_embedding = query_embedding_instruction_id()
     trace.quality_status = quality.status
     trace.quality_detail = quality.detail
     if return_trace:

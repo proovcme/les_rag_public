@@ -93,7 +93,7 @@ def test_mlx_runtime_defaults_to_mlx_model(monkeypatch):
     assert runtime.model == "mlx-community/Qwen3.5-9B-MLX-4bit"
 
 
-def test_smeta_model_runtime_defaults_to_global_cloud_when_api_key_is_available(monkeypatch):
+def test_smeta_model_runtime_defaults_to_local_even_when_global_cloud_is_available(monkeypatch):
     monkeypatch.setenv("LES_LLM_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://openai.api.proxyapi.ru/v1")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
@@ -103,8 +103,7 @@ def test_smeta_model_runtime_defaults_to_global_cloud_when_api_key_is_available(
 
     runtime = _smeta_model_runtime("LES_SMETA_DIRECT_MODEL_PROVIDER")
 
-    assert runtime.provider == "openai"
-    assert runtime.model == "gpt-5.4"
+    assert runtime.provider == "mlx"
 
 
 def test_smeta_model_runtime_explicit_mlx_overrides_global_cloud(monkeypatch):
@@ -875,6 +874,7 @@ def test_smeta_structured_norm_choice_validates_model_code_from_lookup(monkeypat
 
     assert packet["trace"]["model_owns_selection"] is True
     assert packet["rows"][0]["basis"] == "ГЭСНм:38-01-001-01"
+    assert packet["rows"][0]["title"] == "монтаж стальных конструкций"
     assert packet["rows"][0]["quantity"] == 2
 
 
@@ -1027,8 +1027,12 @@ def test_smeta_structured_norm_choice_rejects_rejected_or_unit_mismatch_candidat
     packet = _smeta_direct_structured_norm_choice("защитное укрытие пленкой 116 м2", lookup_trace)
 
     assert packet["rows"][0]["basis"] == "нужен подбор нормы"
+    assert packet["rows"][0]["title"] == "защитное укрытие"
     assert packet["rows"][0]["amount"] == 0.0
     assert packet["trace"]["rejected_rows"][0]["norm_code"] == "ГЭСН46-05-001-03"
+    assert packet["trace"]["rejected_rows"][0]["title"] == "защитное укрытие"
+    assert packet["trace"]["rejected_rows"][0]["model_title"] == "Защитное укрытие"
+    assert packet["trace"]["rejected_rows"][0]["reason"] == "candidate_rejected_by_lookup"
 
 
 def test_smeta_structured_norm_choice_keeps_unreturned_lookup_as_unbound_row(monkeypatch):
@@ -1106,6 +1110,169 @@ def test_smeta_structured_norm_choice_keeps_unreturned_lookup_as_unbound_row(mon
     assert packet["rows"][1]["basis"] == "нужен подбор нормы"
     assert packet["rows"][1]["title"] == "защитное укрытие пленкой"
     assert packet["trace"]["unbound_rows_added"] == 1
+
+
+def test_smeta_structured_norm_choice_batches_local_lookup_rows(monkeypatch):
+    monkeypatch.setenv("LES_SMETA_NORM_REVIEW_ENABLED", "0")
+    monkeypatch.setenv("LES_SMETA_NORM_CHOICE_BATCH_SIZE", "5")
+
+    class FakeResponse:
+        def __init__(self, content):
+            self.content = content
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": self.content}}]}
+
+    class FakeClient:
+        batch_sizes = []
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            payload = kwargs["json"]["messages"][1]["content"]
+            lookup_results = __import__("json").loads(payload)["lookup_results"]
+            FakeClient.batch_sizes.append(len(lookup_results))
+            rows = []
+            for item in lookup_results:
+                idx = item["lookup_index"]
+                code = item["candidates"][0]["norm_code"]
+                rows.append({
+                    "lookup_index": idx,
+                    "title": item["work_description"],
+                    "unit": "шт",
+                    "quantity": idx,
+                    "norm_code": code,
+                    "reason": "batch test",
+                })
+            return FakeResponse(__import__("json").dumps({"rows": rows}, ensure_ascii=False))
+
+    monkeypatch.setattr("proxy.routers.chat.httpx.Client", FakeClient)
+    lookup_trace = {"results": []}
+    for idx in range(1, 7):
+        lookup_trace["results"].append({
+            "call": {
+                "tool": "search_norm",
+                "args": {
+                    "work_description": f"работа {idx}",
+                    "work_family": "generic",
+                    "element_type": "generic",
+                    "unit_hint": "шт",
+                },
+            },
+            "result": {
+                "candidates": [{
+                    "norm_code": f"ГЭСН01-01-001-0{idx if idx <= 5 else 1}",
+                    "title": f"Норма {idx}",
+                    "measure_unit": "шт",
+                    "unit_compatible": True,
+                    "applicability_status": "accepted",
+                }]
+            },
+        })
+    lookup_trace["results"][5]["result"]["candidates"][0]["norm_code"] = "ГЭСН01-01-001-01"
+
+    progress_events = []
+
+    packet = _smeta_direct_structured_norm_choice(
+        "шесть строк",
+        lookup_trace,
+        lambda ev: progress_events.append(ev),
+    )
+
+    assert FakeClient.batch_sizes == [5, 1]
+    assert packet["trace"]["batched"] is True
+    assert packet["trace"]["batch_size"] == 5
+    assert [row["lookup_index"] for row in packet["rows"]] == [1, 2, 3, 4, 5, 6]
+    assert [row["title"] for row in packet["rows"]] == [f"работа {idx}" for idx in range(1, 7)]
+    assert packet["trace"]["batch_count"] == 2
+    assert [ev["event"] for ev in progress_events] == ["smeta_batch"] * 4
+    assert [ev["data"]["status"] for ev in progress_events] == ["started", "done", "started", "done"]
+    assert progress_events[0]["data"]["start_lookup_index"] == 1
+    assert progress_events[1]["data"]["accepted"] == 5
+    assert progress_events[2]["data"]["start_lookup_index"] == 6
+    assert progress_events[3]["data"]["accepted"] == 1
+
+
+def test_smeta_structured_norm_choice_local_default_limits_candidates(monkeypatch):
+    monkeypatch.delenv("LES_SMETA_NORM_CHOICE_CANDIDATES", raising=False)
+    monkeypatch.setenv("LES_SMETA_NORM_REVIEW_ENABLED", "0")
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"rows":[{"lookup_index":1,"title":"работа","unit":"шт",'
+                                '"quantity":1,"norm_code":"ГЭСН01-01-001-01","reason":"ok"}]}'
+                            )
+                        }
+                    }
+                ]
+            }
+
+    class FakeClient:
+        seen_candidate_count = 0
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            payload = kwargs["json"]["messages"][1]["content"]
+            lookup_results = __import__("json").loads(payload)["lookup_results"]
+            FakeClient.seen_candidate_count = len(lookup_results[0]["candidates"])
+            return FakeResponse()
+
+    monkeypatch.setattr("proxy.routers.chat._llm_runtime", lambda: SimpleNamespace(
+        model="local-test", provider="mlx", chat_url="http://127.0.0.1/test", api_key="",
+    ))
+    monkeypatch.setattr("proxy.routers.chat.httpx.Client", FakeClient)
+    lookup_trace = {
+        "results": [
+            {
+                "call": {"tool": "search_norm", "args": {"work_description": "работа", "unit_hint": "шт"}},
+                "result": {
+                    "candidates": [
+                        {
+                            "norm_code": f"ГЭСН01-01-001-{idx:02d}",
+                            "title": f"Норма {idx}",
+                            "measure_unit": "шт",
+                            "unit_compatible": True,
+                            "applicability_status": "accepted",
+                        }
+                        for idx in range(1, 12)
+                    ]
+                },
+            }
+        ]
+    }
+
+    packet = _smeta_direct_structured_norm_choice("работа 1 шт", lookup_trace)
+
+    assert FakeClient.seen_candidate_count == 5
+    assert packet["trace"]["candidate_limit"] == 5
+    assert packet["trace"]["candidate_count"] == 5
+    assert packet["trace"]["prompt_chars"] > 0
 
 
 def test_smeta_structured_norm_review_keeps_model_chosen_analog(monkeypatch):
@@ -1244,6 +1411,7 @@ def test_smeta_structured_norm_review_can_replace_empty_finish_draft(monkeypatch
     packet = _smeta_direct_structured_norm_choice("грунтование потолков 3,2 м2", lookup_trace)
 
     assert packet["rows"][0]["basis"] == "ГЭСН15-04-006-02"
+    assert packet["rows"][0]["title"] == "грунтование потолков 3,2 м2"
     assert packet["rows"][0]["quantity"] == 0.032
     assert packet["trace"]["review"]["status"] == "ok"
     assert packet["trace"]["review"]["replaced"] == 1
@@ -2149,7 +2317,7 @@ def test_harness_partial_total_does_not_contradict_visible_number():
 def test_harness_summary_points_to_resource_artifact():
     result = {
         "schema": {"object_type": "metal_structure"},
-        "total_status": "complete",
+        "total_status": "partial",
         "computed": [{
             "work": "Монтаж металлоконструкций",
             "code": "ГЭСНм:38-01-001-01",
@@ -2161,7 +2329,7 @@ def test_harness_summary_points_to_resource_artifact():
         "needs_input": [],
         "rejected": [],
         "partial_total": {"smr": 110519705.74, "grand_total": 135276119.83, "positions": 1},
-        "final_total": {"smr": 110519705.74, "grand_total": 135276119.83, "positions": 1},
+        "final_total": None,
         "estimate": {
             "positions": [{
                 "code": "ГЭСНм:38-01-001-01",
@@ -2248,18 +2416,13 @@ def test_harness_summary_points_to_resource_artifact():
     summary = _format_harness(result)
     artifact = _format_harness_artifact(result)
 
-    assert "Полная ресурсная расшифровка" in summary
+    assert "Расчётный протокол и незакрытые позиции" in summary
     assert "Средний разряд работы" not in summary
-    assert "## Структура стоимости" in artifact
-    assert "| НР | 37 258 263.86 |" in artifact
-    assert "| СП | 18 629 131.93 |" in artifact
-    assert "## Ресурсы" in artifact
-    assert "Средний разряд работы" in artifact
-    assert "Краны" in artifact
-    assert "Электроды" in artifact
-    assert "## Что нужно добрать для полного расчёта" in artifact
+    assert "# Частичный расчётный протокол" in artifact
+    assert "Учтено в частичном расчёте" in artifact
+    assert "110 519 705.74" in artifact
+    assert "## Ценовой добор" in artifact
     assert "нужен КАЦ: Нестандартный материал" in artifact
-    assert "Коэффициент не применён" in artifact
 
 
 def test_smeta_dialog_state_preserves_tool_result_for_next_turn():

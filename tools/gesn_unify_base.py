@@ -47,6 +47,34 @@ def _text_key(value: Any) -> str:
     return " ".join(str(value or "").replace("\xa0", " ").split()).lower()
 
 
+def _number_key(value: Any) -> str:
+    """Stable numeric part of a resource identity without changing its value."""
+    text = _text_key(value).replace(" ", "").replace(",", ".")
+    try:
+        return format(float(text), ".12g")
+    except (TypeError, ValueError):
+        return text
+
+
+def _resource_identity(row: Any) -> tuple[str, str, str, str, str, str]:
+    """Conservative identity for one resource within one norm.
+
+    A resource code is stronger than a spelling of its name. Unit, normative
+    consumption and an explicit price remain part of the identity, so two
+    genuinely different source rows are never silently merged.
+    """
+    code = _text_key(row.get("resource_code"))
+    name = _text_key(row.get("resource_name"))
+    return (
+        _text_key(row.get("norm_key")),
+        _text_key(row.get("kind")),
+        "code" if code else "name",
+        code or name,
+        _text_key(row.get("resource_unit")),
+        f"{_number_key(row.get('per_unit'))}|{_number_key(row.get('price'))}",
+    )
+
+
 def _has_base_prefix(value: Any) -> bool:
     return bool(_EXPLICIT_BASE_RE.match(str(value or "").strip().upper().replace(" ", "")))
 
@@ -153,6 +181,7 @@ def _audit_identity(
     *,
     remapped_legacy_rows: int,
     dropped_conflict_rows: int,
+    resource_identity_duplicates_dropped: int,
 ) -> dict[str, Any]:
     bare_base = (
         df[["norm_key", "base_type", "norm_code", "norm_name", "norm_unit"]]
@@ -189,6 +218,7 @@ def _audit_identity(
         },
         "legacy_rows_remapped_by_typed_metadata": remapped_legacy_rows,
         "metadata_conflict_rows_dropped": dropped_conflict_rows,
+        "resource_identity_duplicates_dropped": resource_identity_duplicates_dropped,
         "same_norm_key_metadata_conflicts_total": len(conflicts),
         "same_norm_key_metadata_conflicts": conflicts[:100],
     }
@@ -249,7 +279,13 @@ def build_unified(
         df[field] = [meta_rows.get(str(key), {}).get(field, "") for key in df["norm_key"]]
 
     df = df.sort_values(["norm_key", "_source_priority"], kind="stable")
-    df = df.drop_duplicates(subset=["norm_key", "kind", "resource_code", "resource_name"], keep="last")
+    before_resource_dedup = len(df)
+    df["_resource_identity"] = [
+        _resource_identity(row)
+        for row in df.to_dict(orient="records")
+    ]
+    df = df.drop_duplicates(subset=["_resource_identity"], keep="last")
+    resource_identity_duplicates_dropped = before_resource_dedup - len(df)
     df = df[list(RESOURCE_FIELDS)]
 
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -262,6 +298,7 @@ def build_unified(
         conflicts,
         remapped_legacy_rows=remapped_legacy_rows,
         dropped_conflict_rows=dropped_conflict_rows,
+        resource_identity_duplicates_dropped=resource_identity_duplicates_dropped,
     )
     audit["sources"] = [str(p) for p in (legacy, overlay) if p.exists()]
     audit["out"] = str(out)
@@ -293,6 +330,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         "bare_code_collisions_count": audit["bare_code_collisions"]["count"],
         "legacy_rows_remapped_by_typed_metadata": audit["legacy_rows_remapped_by_typed_metadata"],
         "metadata_conflict_rows_dropped": audit["metadata_conflict_rows_dropped"],
+        "resource_identity_duplicates_dropped": audit["resource_identity_duplicates_dropped"],
         "metadata_conflicts_count": audit["same_norm_key_metadata_conflicts_total"],
         "audit": str(args.audit_out),
         "out": str(args.out),

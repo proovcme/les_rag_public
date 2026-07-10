@@ -130,6 +130,41 @@ Dense chunks подходят для поиска. Для профессиона
 Гейты могут помечать `UNVALIDATED`, `PARTIAL`, `MISSING`, `CONFLICT`, но не должны стирать
 проверяемый контекст без объяснения.
 
+### 6a. Dense-вектор имеет контракт модели
+
+Имя модели, запрошенное клиентом у `/v1/embeddings`, не выбирает модель на сервере само по
+себе. Сервер обязан вернуть фактические `embedding_model` и backend; клиент обязан сравнить их
+с моделью активной Qdrant-коллекции до поиска.
+
+```text
+expected Qwen + actual Qwen -> dense/hybrid search allowed
+expected Qwen + actual BGE  -> dense disabled, lexical-only, status=degraded
+missing actual model         -> dense disabled, status=degraded
+```
+
+Нельзя сравнивать вектора разных embedding-моделей только потому, что у них одинаковая
+размерность. Режим `lexical_only` — честный временный ответ, а не `quality=good`; восстановление
+dense требует выравнивания runtime-конфига и целевого reindex, а не скрытого fallback.
+
+С 0.24.0.350 совместимость фиксирует `les.rag.index-contract.v1`: collection, модель/vector size,
+raw document mode, tokenizer budget, chunker и sparse revision. Missing/mismatch manifest также
+запрещает dense. Совпадение количества SQLite chunks и Qdrant points не доказывает совместимость.
+
+До embedding каждый parser output обязан пройти единый финальный gate: реальные токены не выше
+budget, mixed base64/data URI удалены, координаты и parent/child provenance сохранены. PDF/table/mail
+не могут иметь отдельный обход этого инварианта.
+
+### 6b. Reranker обязан получать меньший top-k, чем входной пул
+
+Reranker полезен только если переупорядочивает широкий пул до видимого окна. Передавать ему
+`top_k=len(pool)` — фактически no-op для cross-encoder и нельзя отмечать это как успешный rerank.
+Хвост может сохраниться для downstream-readers, но первые позиции должны быть реальным top-k
+reranker-а, а trace обязан отражать применённый режим.
+
+Явно названная норма (`СП 7.13130`, `ГОСТ Р 21.101`) имеет ещё одно общее правило: файл самой
+нормы приоритетнее документов, которые только ссылаются на неё. Это reorder уже найденного пула,
+не ручной ответ и не подстановка источника вне retrieval.
+
 ### 7. Model reader-pass обязателен для эталонных датасетов
 
 Typed memory - это кодовая карта. Этого мало. Для golden dataset должен проходить модельный reader-pass:
@@ -141,6 +176,21 @@ Typed memory - это кодовая карта. Этого мало. Для gol
 
 Если reader-pass падает, нельзя говорить "модель знает датасет". Можно говорить только:
 "индекс и карта готовы, модельное чтение не закрыто".
+
+### 7a. Research guide измеряет путь чтения, а не заменяет его
+
+У notebook-study может быть `notebook_research_guide_v1`. Это производная навигационная
+карта текущей сессии, а не summary источников и не новый knowledge store. Она может показать:
+
+- revision-id и наличие topic/section map для каждого выбранного датасета;
+- был ли успешен model reader-pass;
+- сколько запланированных разделов и точечных файлов действительно дали retrieved chunks;
+- с каких файлов начать и какие source-grounded вопросы задать дальше.
+
+Контракт guide всегда `context_role=navigation`, `is_evidence=false`. Поле coverage означает
+только полноту маршрута в этом проходе: `ready` не доказывает полноту проекта, а `partial` не
+обнуляет найденные источники. Любой факт, вывод или citation по-прежнему должен происходить из
+retrieved chunk/page/row/element либо calculation trace.
 
 ### 8. Модель выбирает ход, код выполняет инструменты
 
@@ -311,3 +361,11 @@ PDF table/layout reader: baseline only
 ```text
 датасет подготовлен как корпус, но модельное чтение ещё не принято.
 ```
+# Qwen query embedding contract
+
+Для `Qwen/Qwen3-Embedding-0.6B` документы индексируются raw. Query-side instruction
+является отдельным, измеряемым контрактом: `RAG_QUERY_EMBEDDING_MODE=raw-v1` — текущий
+baseline, `qwen-retrieval-v1` добавляет английский retrieval instruction только к запросу.
+Режим и его id пишутся в `retrieval_trace.query_embedding` и runtime embedding config.
+Не менять его одновременно с ingestion, collection или embedder: A/B сравнивает один и тот же
+индекс на FIRE, BAI, ПД ИЦ и сметах, затем фиксирует source/section/table-row recall и latency.

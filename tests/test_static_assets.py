@@ -41,6 +41,9 @@ def test_admin_documents_tab_is_mounted():
     assert "Заметка к проекту" in page
     assert "Л.И.С.Т. проекта" in page
     assert "Структура Л.И.С.Т." in page
+    assert 'coverage.get("files_ok") or coverage.get("files_extracted")' in page
+    assert 'state.__setitem__("dataset_filter", str(e.args or "")), _render_datasets()' in page
+    assert "warnings_truncated" in page
     assert "ui.mermaid(diagram)" in page
     assert "profile/guidance" in page
     assert "Темы датасета" in page

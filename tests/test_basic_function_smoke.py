@@ -1,7 +1,7 @@
 """Юнит-тест критериев basic_function_smoke: парсинг результатов + exit-логика (P0/P1/warn)."""
 import time
 
-from tools.basic_function_smoke import _r, compute_exit, failures
+from tools.basic_function_smoke import _chat, _r, compute_exit, failures
 
 
 def _mk(name, severity, status):
@@ -40,3 +40,21 @@ def test_result_shape():
     assert set(r) == {"name", "status", "severity", "elapsed_ms", "evidence", "reason"}
     assert r["name"] == "x" and r["severity"] == "P0" and r["status"] == "pass"
     assert r["evidence"] == {"k": 1} and r["reason"] == "ok"
+
+
+def test_chat_uses_explicit_bounded_timeout():
+    class Client:
+        def __init__(self):
+            self.call = None
+
+        def post(self, url, **kwargs):
+            self.call = (url, kwargs)
+            return object()
+
+    client = Client()
+    _chat(client, "http://example.test", "вопрос", timeout=12.5)
+
+    assert client.call == (
+        "http://example.test/api/chat",
+        {"json": {"question": "вопрос"}, "timeout": 12.5},
+    )

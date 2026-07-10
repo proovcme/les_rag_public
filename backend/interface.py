@@ -4,6 +4,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
+class EmbeddingContractError(RuntimeError):
+    """The embedding server returned vectors from a different model than requested."""
+
+
 @dataclass
 class Chunk:
     content:  str
@@ -28,6 +32,8 @@ class DatasetInfo:
     pending_files: int = 0
     error_files: int = 0
     missing_files: int = 0
+    dataset_scope: str = "user"  # user | system; ownership, not content kind
+    module_id: str = ""         # owner for system datasets (smeta, normcontrol, ...)
 
 
 class RAGBackend(ABC):

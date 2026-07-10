@@ -12,6 +12,7 @@ from proxy.services.retrieval_service import (
 )
 from proxy.services.lexical_index_service import LexicalIndex
 from proxy.services.saferag_service import rank_chunks_for_question
+from backend.interface import EmbeddingContractError
 
 
 @dataclass
@@ -63,6 +64,13 @@ class EmptyBackend:
         raise AssertionError("empty retrieval should not call backend.retrieve")
 
 
+class ContractMismatchBackend(FakeBackend):
+    async def retrieve(self, question, dataset_ids=None, top_k=5, doc_filter=None):
+        raise EmbeddingContractError(
+            "embedding contract mismatch: expected=qwen3-embedding-0.6b, actual=BAAI/bge-m3"
+        )
+
+
 class FakeReranker:
     def __init__(self, mlx_url, mode):
         self.mlx_url = mlx_url
@@ -104,6 +112,18 @@ class ExactSourceBackend(FakeBackend):
             Chunk("Import ID: db1941fd7ee6\nObject type: ACAD_TABLE", "cad_bim_json_db1941fd7ee6.md", 0.1),
         ]
         chunks.extend(Chunk(f"tail-{idx}", f"tail-{idx}.md", 0.05) for idx in range(max(top_k - 2, 0)))
+        return chunks[:top_k]
+
+
+class ExactNormBackend(FakeBackend):
+    async def retrieve(self, question, dataset_ids=None, top_k=5, doc_filter=None):
+        self.calls.append({"question": question, "dataset_ids": dataset_ids, "top_k": top_k})
+        self.doc_filters.append(doc_filter)
+        chunks = [
+            Chunk("Ссылка на СП 7.13130 в требованиях", "СП 484.1311500.docx", 0.99),
+            Chunk("Пункт 7.3 противодымной вентиляции", "СП 7.13130.docx", 0.10),
+        ]
+        chunks.extend(Chunk(f"tail-{idx}", f"tail-{idx}.docx", 0.05) for idx in range(max(top_k - 2, 0)))
         return chunks[:top_k]
 
 
@@ -387,6 +407,96 @@ async def test_retrieve_chat_chunks_reranks_pool_when_available():
 
 
 @pytest.mark.asyncio
+async def test_retrieve_chat_chunks_reranker_receives_a_smaller_top_k():
+    backend = FakeBackend()
+    seen_top_k = []
+
+    class PoolReranker:
+        def __init__(self, mlx_url, mode):
+            pass
+
+        async def rerank(self, question, chunks, top_k=5):
+            seen_top_k.append(top_k)
+            return [SimpleNamespace(text=chunks[3]["text"], metadata=chunks[3]["metadata"])]
+
+    chunks = await retrieve_chat_chunks(
+        question="q",
+        dataset_ids=None,
+        rag_backend=backend,
+        reranker_enabled=True,
+        reranker_available=True,
+        reranker_cls=PoolReranker,
+        mlx_url="http://mlx",
+        logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+    )
+
+    assert seen_top_k == [6]
+    assert chunks[0].content == "text-3"
+
+
+@pytest.mark.asyncio
+async def test_retrieve_chat_chunks_uses_lexical_only_on_embedding_contract_mismatch(monkeypatch, tmp_path):
+    db_path = tmp_path / "lex.db"
+    monkeypatch.setenv("RAG_LEXICAL_DB_PATH", str(db_path))
+    monkeypatch.setenv("RAG_HYBRID_BACKEND", "lexical")
+    index = LexicalIndex(str(db_path))
+    index.upsert_chunks(
+        "test_collection",
+        [
+            {
+                "point_id": "lex-1",
+                "dataset_id": "ds-1",
+                "doc_id": "doc-lex",
+                "doc_name": "СП 1.13130.docx",
+                "text": "СП 1.13130 ширина путей эвакуации",
+            }
+        ],
+    )
+    index.mark_collection("test_collection", point_count=1, indexed_count=1)
+
+    result = await retrieve_chat_chunks(
+        question="ширина путей эвакуации по СП 1.13130",
+        dataset_ids=["ds-1"],
+        rag_backend=ContractMismatchBackend(),
+        reranker_enabled=False,
+        reranker_available=False,
+        reranker_cls=None,
+        mlx_url="http://mlx",
+        logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None, error=lambda *a: None),
+        return_trace=True,
+    )
+
+    assert result.chunks[0].doc_name == "СП 1.13130.docx"
+    assert result.trace.mode == "lexical_only"
+    assert result.trace.fallback_reason == "embedding_contract_mismatch"
+    assert "expected=qwen3-embedding-0.6b" in result.trace.embedding_contract
+    assert result.trace.query_embedding == "raw-v1"
+    assert result.quality.status == "degraded"
+
+
+@pytest.mark.asyncio
+async def test_retrieval_trace_records_opt_in_qwen_query_contract(monkeypatch):
+    monkeypatch.setenv("LES_EMBED_PROFILE", "qwen")
+    monkeypatch.setenv("RAG_QUERY_EMBEDDING_MODE", "qwen-retrieval-v1")
+    monkeypatch.setenv("RAG_HYBRID_RETRIEVAL_ENABLED", "false")
+
+    result = await retrieve_chat_chunks(
+        question="Какие документы есть?",
+        dataset_ids=["ds-1"],
+        rag_backend=FakeBackend(),
+        reranker_enabled=False,
+        reranker_available=False,
+        reranker_cls=None,
+        mlx_url="http://mlx",
+        logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+        return_trace=True,
+    )
+
+    assert result.trace.query_embedding == "qwen-retrieval-v1"
+    assert result.trace.payload()["query_embedding"] == "qwen-retrieval-v1"
+
+
+@pytest.mark.asyncio
 async def test_retrieve_chat_chunks_runs_reranker_inside_llm_budget():
     backend = FakeBackend()
 
@@ -472,6 +582,28 @@ async def test_retrieve_chat_chunks_promotes_exact_source_after_rerank(monkeypat
     assert result.chunks[0].doc_name == "cad_bim_json_db1941fd7ee6.md"
     assert "source_exact" in result.trace.mode
     assert "source:cad_bim_json_db1941fd7ee6.md" in result.trace.exact_refs
+
+
+@pytest.mark.asyncio
+async def test_retrieve_chat_chunks_promotes_explicit_norm_document_over_citations(monkeypatch):
+    monkeypatch.setenv("RAG_HYBRID_RETRIEVAL_ENABLED", "false")
+    backend = ExactNormBackend()
+
+    result = await retrieve_chat_chunks(
+        question="Найди пункт 7.3 в СП 7.13130",
+        dataset_ids=["ds-1"],
+        rag_backend=backend,
+        reranker_enabled=False,
+        reranker_available=False,
+        reranker_cls=None,
+        mlx_url="http://mlx",
+        logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+        return_trace=True,
+    )
+
+    assert result.chunks[0].doc_name == "СП 7.13130.docx"
+    assert "norm_ref_exact" in result.trace.mode
+    assert "сп 7.13130" in result.trace.exact_refs
 
 
 @pytest.mark.asyncio
@@ -575,7 +707,7 @@ async def test_retrieve_chat_chunks_returns_hybrid_trace(monkeypatch, tmp_path):
         return_trace=True,
     )
 
-    assert result.trace.mode == "hybrid"
+    assert result.trace.mode.startswith("hybrid")
     assert result.trace.lexical_count == 1
     assert result.payload()["quality"]["status"] == "good"
     assert any(chunk.doc_name == "СП 1.13130.docx" for chunk in result.chunks)
@@ -612,6 +744,6 @@ async def test_retrieve_chat_chunks_uses_lexical_with_minor_stale_drift(monkeypa
         return_trace=True,
     )
 
-    assert result.trace.mode == "hybrid"
+    assert result.trace.mode.startswith("hybrid")
     assert result.trace.lexical_count >= 1
     assert any(chunk.doc_name == "СП 4.13130.docx" for chunk in result.chunks)

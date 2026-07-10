@@ -285,6 +285,44 @@ def test_start_service_enables_disabled_launch_agent(monkeypatch):
     assert any(call[:2] == ["launchctl", "bootstrap"] for call in calls if isinstance(call, list) and len(call) >= 2)
 
 
+def test_restart_service_reloads_launchd_when_forced_plist_changed(monkeypatch):
+    service = runtime_control.SERVICES["mlx"]
+    status = runtime_control.ServiceStatus(
+        key=service.key,
+        title=service.title,
+        label=service.label,
+        loaded=True,
+        running=True,
+        pid=123,
+        port=8080,
+        port_pid=123,
+        health="ok",
+        detail="HTTP 200",
+    )
+    calls = []
+
+    monkeypatch.setattr(runtime_control, "_install", lambda svc: True)
+    monkeypatch.setattr(runtime_control, "_loaded", lambda svc: True)
+    monkeypatch.setattr(
+        runtime_control,
+        "stop_service",
+        lambda key, wait, terminate_listener: calls.append(("stop", key, wait, terminate_listener))
+        or runtime_control.ActionResult("stop", key, True, "stopped", status),
+    )
+    monkeypatch.setattr(
+        runtime_control,
+        "start_service",
+        lambda key, wait: calls.append(("start", key, wait))
+        or runtime_control.ActionResult("start", key, True, "started", status),
+    )
+
+    result = runtime_control.restart_service("mlx")
+
+    assert result.ok is True
+    assert result.message == "reloaded plist and restarted"
+    assert calls == [("stop", "mlx", True, True), ("start", "mlx", True)]
+
+
 def test_ui_service_uses_lightweight_health_endpoint():
     assert runtime_control.SERVICES["ui"].health_url == "http://127.0.0.1:8051/healthz"
 

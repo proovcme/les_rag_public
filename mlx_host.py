@@ -1904,9 +1904,16 @@ async def embeddings_ollama(req: EmbeddingRequest):
         logger.error(f"[EMBED] /api/embeddings error: {e}", exc_info=True)
         raise HTTPException(500, f"Embedding error: {e}")
 
+    actual_model = str(getattr(embedder, "model_id", BGE_MODEL))
+    metadata = {
+        "model": actual_model,
+        "embedding_model": actual_model,
+        "requested_model": req.model,
+        "embedding_backend": getattr(embedder, "backend", "unknown"),
+    }
     if len(texts) == 1:
-        return {"model": req.model, "embedding": vectors[0]}
-    return {"model": req.model, "data": [{"embedding": v, "index": i} for i, v in enumerate(vectors)]}
+        return {**metadata, "embedding": vectors[0]}
+    return {**metadata, "data": [{"embedding": v, "index": i} for i, v in enumerate(vectors)]}
 
 
 @app.post("/v1/embeddings")
@@ -1920,10 +1927,14 @@ async def embeddings_openai(req: OAIEmbeddingRequest):
         raise HTTPException(500, f"Embedding error: {e}")
 
     total_tokens = sum(len(t.split()) for t in texts)
+    actual_model = str(getattr(embedder, "model_id", BGE_MODEL))
     return {
         "object": "list",
         "data":   [{"object": "embedding", "embedding": v, "index": i} for i, v in enumerate(vectors)],
-        "model":  req.model,
+        "model":  actual_model,
+        "embedding_model": actual_model,
+        "requested_model": req.model,
+        "embedding_backend": getattr(embedder, "backend", "unknown"),
         "usage":  {"prompt_tokens": total_tokens, "total_tokens": total_tokens},
     }
 

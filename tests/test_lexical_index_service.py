@@ -72,6 +72,21 @@ def test_lexical_index_delete_file_removes_only_matching_doc(tmp_path):
     }
 
 
+def test_lexical_index_delete_dataset_removes_only_matching_dataset(tmp_path):
+    index = LexicalIndex(str(tmp_path / "lex.db"))
+    index.upsert_chunks(
+        "collection",
+        [
+            {"point_id": "p1", "dataset_id": "test", "doc_id": "d1", "doc_name": "a.xls", "text": "ведомость"},
+            {"point_id": "p2", "dataset_id": "test", "doc_id": "d2", "doc_name": "b.xls", "text": "ведомость"},
+            {"point_id": "p3", "dataset_id": "keep", "doc_id": "d3", "doc_name": "c.xls", "text": "ведомость"},
+        ],
+    )
+    assert index.delete_dataset("collection", dataset_id="test") == 2
+    chunks = index.search("ведомость", collection="collection", limit=10)
+    assert [(chunk.meta["dataset_id"], chunk.doc_name) for chunk in chunks] == [("keep", "c.xls")]
+
+
 def test_qdrant_adapter_maps_points_to_lexical_rows():
     point = models.PointStruct(
         id="p1",

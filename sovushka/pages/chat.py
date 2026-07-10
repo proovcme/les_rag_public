@@ -3219,6 +3219,50 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 ai_placeholder_label.set_text(f"{_status_text['v']} {elapsed}с")
                 ai_placeholder_label.update()
                 chat_scroll.scroll_to(percent=1)
+            elif event == "smeta_step":
+                stream_state["got_progress"] = True
+                if isinstance(payload, dict):
+                    label = str(payload.get("label") or "").strip() or "Смета: выполняю этап..."
+                    _status_text["v"] = label
+                    add_log(
+                        f"[СМЕТА] этап {payload.get('phase', '?')} {payload.get('status', '')}: {label}"
+                    )
+                else:
+                    _status_text["v"] = str(payload or "Смета: выполняю этап...")
+                elapsed = int(time.monotonic() - _t0)
+                ai_placeholder_label.set_text(f"{_status_text['v']} {elapsed}с")
+                ai_placeholder_label.update()
+                chat_scroll.scroll_to(percent=1)
+            elif event == "smeta_batch":
+                stream_state["got_progress"] = True
+                if isinstance(payload, dict):
+                    label = str(payload.get("label") or "").strip()
+                    if not label:
+                        batch = payload.get("batch") or "?"
+                        total = payload.get("batch_count") or "?"
+                        start = payload.get("start_lookup_index") or "?"
+                        end = payload.get("end_lookup_index") or "?"
+                        status = str(payload.get("status") or "working")
+                        label = f"Смета: батч {batch}/{total}, строки {start}-{end}, {status}"
+                    _status_text["v"] = label
+                    if payload.get("status") == "started":
+                        add_log(
+                            f"[СМЕТА] нормы батч {payload.get('batch')}/{payload.get('batch_count')} "
+                            f"строки {payload.get('start_lookup_index')}-{payload.get('end_lookup_index')} старт"
+                        )
+                    elif payload.get("status") == "done":
+                        add_log(
+                            f"[СМЕТА] нормы батч {payload.get('batch')}/{payload.get('batch_count')} "
+                            f"строки {payload.get('start_lookup_index')}-{payload.get('end_lookup_index')} "
+                            f"готово: принято {payload.get('accepted', 0)}, добор {payload.get('unbound', 0)}, "
+                            f"{payload.get('elapsed_sec', 0)}с"
+                        )
+                else:
+                    _status_text["v"] = str(payload or "Смета: выбираю нормы...")
+                elapsed = int(time.monotonic() - _t0)
+                ai_placeholder_label.set_text(f"{_status_text['v']} {elapsed}с")
+                ai_placeholder_label.update()
+                chat_scroll.scroll_to(percent=1)
             elif event == "sources":
                 if isinstance(payload, dict) and not early_sources["el"]:
                     srcs = payload.get("sources") or []

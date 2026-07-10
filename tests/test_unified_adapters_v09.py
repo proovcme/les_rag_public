@@ -22,6 +22,7 @@ MONEY = 1.0
 @pytest.fixture
 def live_chat(monkeypatch):
     monkeypatch.setenv("LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED", "1")
+    monkeypatch.setenv("LES_UNIFIED_CONSTRUCTION_HARNESS_FINAL_ENABLED", "1")
     chat_router.set_chat_state(chat_router.ChatRouterState(
         rag_backend=SimpleNamespace(), llm_semaphore=SimpleNamespace(_value=1),
         crag_stats={"verified": 0, "no_data": 0, "hallucination": 0},

@@ -40,6 +40,11 @@ class RetrievalTrace:
     quality_status: str = "unchecked"
     quality_detail: str = ""
     exact_refs: list[str] = field(default_factory=list)
+    embedding_contract: str = ""
+    query_embedding: str = ""
+    score_kind: str = "unknown"
+    rerank: dict[str, Any] = field(default_factory=dict)
+    retry: dict[str, Any] = field(default_factory=dict)
 
     def payload(self) -> dict[str, Any]:
         return {
@@ -52,6 +57,11 @@ class RetrievalTrace:
             "quality_status": self.quality_status,
             "quality_detail": self.quality_detail,
             "exact_refs": self.exact_refs,
+            "embedding_contract": self.embedding_contract,
+            "query_embedding": self.query_embedding,
+            "score_kind": self.score_kind,
+            "rerank": self.rerank,
+            "retry": self.retry,
         }
 
 
@@ -286,6 +296,17 @@ class LexicalIndex:
             )
             return int(cur.rowcount or 0)
 
+    def delete_dataset(self, collection: str, *, dataset_id: str) -> int:
+        """Remove every lexical row for a deleted dataset."""
+        if not collection or not dataset_id:
+            return 0
+        with self.connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM lexical_chunks WHERE collection=? AND dataset_id=?",
+                (collection, dataset_id),
+            )
+            return int(cur.rowcount or 0)
+
     def upsert_chunks(self, collection: str, rows: Iterable[dict[str, Any]]) -> int:
         now = time.time()
         count = 0
@@ -511,6 +532,9 @@ def merge_rrf(
                 meta = getattr(chosen[key], "meta", None)
                 if isinstance(meta, dict):
                     meta.setdefault("retrieval_sources", set()).add(source)
+                    meta.setdefault(f"{source}_rank", rank)
+                    if source == "vector":
+                        meta.setdefault("dense_score", float(getattr(chunk, "score", 0.0) or 0.0))
             except Exception:
                 pass
 
@@ -532,6 +556,7 @@ def merge_rrf(
         lexical_count=len(lexical_chunks),
         merged_count=len(merged),
         exact_refs=refs,
+        score_kind="rrf" if lexical_chunks else "dense_similarity",
     )
     if not lexical_chunks:
         trace.fallback_reason = "lexical_index_empty_or_unavailable"

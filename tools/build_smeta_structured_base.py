@@ -39,6 +39,33 @@ def _optional_float(value: Any) -> float | None:
     return parsed if parsed or str(value).strip() in {"0", "0.0", "0,0"} else None
 
 
+def _number_key(value: Any) -> str:
+    if value in (None, ""):
+        return ""
+    try:
+        return format(_f(value), ".12g")
+    except (TypeError, ValueError):
+        return _text(value).replace(",", ".")
+
+
+def _resource_identity(resource: dict[str, Any]) -> tuple[str, str, str, str, str]:
+    """Conservative dedupe key for a resource in one canonical norm.
+
+    Code wins over display spelling, but unit, normative consumption and an
+    explicit price stay in the key. This is a source-integrity guard, not a
+    heuristic that changes a norm's resource composition.
+    """
+    code = _text(resource.get("resource_code")).casefold()
+    name = _text(resource.get("resource_name")).casefold()
+    return (
+        _text(resource.get("kind")).casefold(),
+        "code" if code else "name",
+        code or name,
+        _text(resource.get("resource_unit")).casefold(),
+        f"{_number_key(resource.get('per_unit'))}|{_number_key(resource.get('price'))}",
+    )
+
+
 def _sha256(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
@@ -123,6 +150,7 @@ def build_structured_base(
     grouped: dict[str, dict[str, Any]] = {}
     skipped_rows_missing_key = 0
     skipped_resource_rows = 0
+    resource_identity_duplicates_dropped = 0
     for rec in df.to_dict(orient="records"):
         norm_key, base_type, bare_code, display_code = _norm_identity(rec)
         if not norm_key or not bare_code:
@@ -141,6 +169,7 @@ def build_structured_base(
                 "source_doc": "",
                 "source_guid": "",
                 "resources": [],
+                "resource_identities": set(),
             },
         )
         norm["norm_name"] = norm["norm_name"] or _text(rec.get("norm_name"))
@@ -155,18 +184,22 @@ def build_structured_base(
         if not kind or not name:
             skipped_resource_rows += 1
             continue
-        norm["resources"].append(
-            {
-                "kind": kind,
-                "resource_code": _text(rec.get("resource_code")),
-                "resource_name": name,
-                "resource_unit": _text(rec.get("resource_unit")),
-                "per_unit": _f(rec.get("per_unit")),
-                "price": _optional_float(rec.get("price")),
-                "source_doc": _text(rec.get("source_doc")),
-                "source_guid": _text(rec.get("source_guid")),
-            }
-        )
+        resource = {
+            "kind": kind,
+            "resource_code": _text(rec.get("resource_code")),
+            "resource_name": name,
+            "resource_unit": _text(rec.get("resource_unit")),
+            "per_unit": _f(rec.get("per_unit")),
+            "price": _optional_float(rec.get("price")),
+            "source_doc": _text(rec.get("source_doc")),
+            "source_guid": _text(rec.get("source_guid")),
+        }
+        identity = _resource_identity(resource)
+        if identity in norm["resource_identities"]:
+            resource_identity_duplicates_dropped += 1
+            continue
+        norm["resource_identities"].add(identity)
+        norm["resources"].append(resource)
 
     missing_metadata_norms = [
         key for key, norm in grouped.items() if not norm["norm_name"] or not norm["norm_unit"]
@@ -261,6 +294,7 @@ def build_structured_base(
         "excluded": {
             "rows_missing_norm_key": skipped_rows_missing_key,
             "resource_rows_missing_kind_or_name": skipped_resource_rows,
+            "resource_identity_duplicates_dropped": resource_identity_duplicates_dropped,
             "norms_missing_name_or_unit": len(missing_metadata_norms),
             "norms_without_resources": len(no_resource_norms),
         },

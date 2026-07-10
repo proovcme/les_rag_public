@@ -4,17 +4,479 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-07-09)
+## Текущее состояние (2026-07-10)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.327  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.352  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.327 smeta rejected-candidate gate
-НЕ задеплоено:             нет по runtime-critical bundle; рабочее дерево ещё не закоммичено
-рантайм /api/version:      0.24.0.327, deploy stamp ok, runtime_alignment aligned
+задеплоено на рантайм:     0.24.0.352 module-owned system datasets
+НЕ задеплоено:             нет; production dense collection намеренно не переключена на bounded canary
+рантайм /api/version:      0.24.0.352; финальный alignment подтверждается повторным `make ship`
 ```
 
+> 0.24.0.344 — Л.И.С.Т. reliability hardening
+>
+> Дата: 2026-07-10
+> Статус: готово локально, не задеплоено; source-map не перестраивался.
+> Причина: аудит живого sidecar выявил системные ложные роли/дисциплины из substring matching
+> (`ДОГОВОР→ВОР`, `СОСТАВ→СО`, `ПЗУ→ПЗ`, почти все PDF→ОВ), завышение
+> `files_extracted`, неполные bounded-массивы без total/truncated, слабые
+> `line/length`/`quantity` признаки таблиц и незащищённый path component `dataset_id`.
+> Правка: filename/cipher tokens и whitelist заменили подстроки; composition rows больше не
+> делают соседний файл электрическим. Summary различает attempted/successful и
+> `ok/partial/failed/empty`; warnings/source refs/volume register имеют total+truncated, а
+> row/table refs идут первыми. Dataset ID проверяется как один безопасный компонент. Shared
+> table classifier требует составные признаки кабеля и ВОР. Совушка показывает успешные,
+> error/missing и truncation честно, фильтр датасетов применяется сразу. Публичный `les-list`
+> получил те же guards, installable CLI, wheel data fallback, CI и package version `0.1.1`.
+> Проверки: focused LES `79 passed`; public `105 passed`; public compileall, lock/diff checks,
+> wheel build + isolated install/CLI/YAML smoke; `make verify` green (`2728 collected`). Полный
+> `make test`: `2711 passed`, `17 failed`; все падения вне Л.И.С.Т. — 2 в параллельно изменённом
+> estimate finality, 1 в retrieval `exact_refs`, 14 в legacy live-unified/fake-backend маршрутах.
+> Профиль Л.И.С.Т. в полном прогоне green (`24 + 48 + 7`). Runtime/reindex/rebuild не запускались.
+> Историческая пометка evidence-core о конкретной архитектурной ведомости BAI отменена в
+> dev `0.24.0.345`: broad RAG не зависит от ожидаемого имени или типа файла. До deploy `0.24.0.344`
+> не получает эту отмену и остаётся только текущим runtime Л.И.С.Т. bundle.
+
+> 0.24.0.345 — corpus-first notebook read
+>
+> Дата: 2026-07-10
+> Статус: dev only, runtime не обновлялся.
+> Причина: broad RAG не может предполагать, что в следующем датасете есть АР, ВОР, паспорт,
+> инженерный том или иной заранее известный тип файла. BAI-specific negative case и требование
+> внешней архитектурной ведомости были сняты как неверная архитектурная развилка.
+> Правки: `notebook_study_service` строит section plan из фактических topic/section maps, file
+> cards и folder groups, а bounded target-file pass берёт представителей реальных групп без
+> штрафа смет/таблиц. `EvidencePacket` при `partial` использует найденные фрагменты, но явно
+> не называет их полным покрытием; при `missing` не изображает отсутствующий факт. BAI canary
+> проверяет реально доступную таблицу, не вымышленный ожидаемый документ.
+> Проверки: focused notebook/evidence/golden tests и `make verify` — выполнить перед deploy.
+
+> 0.24.0.347 — corpus-first dataset reader
+>
+> Дата: 2026-07-10
+> Статус: dev only, runtime не обновлялся.
+> Причина: первый NotebookLM-сценарий должен отвечать на «что в выбранном датасете?», не
+> предполагая заранее проект, паспорт, нормативку, смету или какой-либо иной состав корпуса.
+> Правки: model reader-pass получает только реальные file cards, section map и summary фактических
+> folder groups; при лимите сначала покрывается по одному представителю группы. Input явно сообщает
+> его границу. Model output очищается от имён файлов, отсутствующих в карте корпуса. Wide prompt
+> требует от модели рассказать, какие материалы представлены, что в них содержится, какие источники
+> важны и где граница чтения; карта остаётся navigation, а факты — только retrieved evidence.
+> Проверки: focused dataset-memory/notebook/evidence/chat/version suite `89 passed`; `make verify`
+> green (`2737 tests collected`). Ни reindex, ни OCR, ни parse, ни deploy не запускались.
+
+> 0.24.0.348 — target-file evidence identity
+>
+> Дата: 2026-07-10
+> Статус: dev only, runtime не обновлялся.
+> Причина: `doc_filter` и непустой retrieval-result сами по себе не доказывают, что модель прочла
+> выбранный файл. Иначе соседний файл мог ложно закрыть target-file coverage в любом корпусе.
+> Правки: notebook-study сверяет `chunk.doc_name`/source metadata с target file по нормализованному
+> full-path reference; basename-only совпадение запрещено. Mismatched chunks исключаются из evidence,
+> становятся явным gap, а research guide показывает source-identity diagnostics и coverage реальных
+> file groups. Ни reindex, ни OCR, ни parse, ни deploy не запускались.
+> Проверки: focused notebook/dataset/evidence/chat/version suite `90 passed`; `make verify` green
+> (`2738 tests collected`). Попытка `make ship` не дошла до deploy: profile pytest оставил
+> незавершившиеся процессы, а отдельно запущенный L1 smoke завис на chat path >70s. Оба прогона
+> остановлены вручную; runtime намеренно остаётся `0.24.0.343`, пока smoke не даст честный результат.
+
+> 0.24.0.349 — bounded live smoke
+>
+> Дата: 2026-07-10
+> Статус: dev only, runtime не обновлялся.
+> Причина: live smoke наследовал общий HTTP timeout 120s для каждого chat check и мог оставлять
+> ship-gate без диагностического результата. Это скрывало runtime problem вместо честного fail/warn.
+> Правки: smoke получил отдельный configurable `--chat-timeout` (45s default) и более короткий
+> обычный HTTP timeout; chat timeout остаётся результатом smoke и не переводится в success.
+> Проверки: focused `96 passed`; `make verify` green (`2739 tests collected`); live smoke с
+> `--chat-timeout 15` — `9/9 pass` (glossary 6ms, broad no-scope chat 3929ms). Runtime ещё не
+> обновлялся этой версией.
+
+> 0.24.0.350 — integrity-first RAG core
+>
+> Дата: 2026-07-10
+> Статус: dev only; runtime и индекс не изменялись.
+> Причина: повторный аудит обнаружил, что `/api/rag/retrieve-debug` дописывал ожидаемые FIRE/HVAC
+> термины в имена/preview. Прежний debug-based `16/16` и остальные такие отчёты аннулированы.
+> Правки: debug точно отражает chunks; индекс получил versioned manifest и fail-closed dense guard;
+> все parser outputs проходят общий tokenizer-budget и mixed-base64 gate. Retrieval различает
+> dense/RRF/rerank шкалы, retry сохраняет backend, reranker пишет score/rank, quality считается
+> после него. Evidence assembler сохраняет source diversity/table header; tool loop стал bounded
+> research loop до трёх раундов; ответ получает citation-integrity check.
+> Проверки: объединённый RAG/chat focused gate `210 passed`; обязательный `make test-rag-core`
+> `151 passed`; `make verify` green (`2751 collected`). Первый full run: `2733 passed / 16 failed`;
+> 14 stale unified-final tests исправлены и затем прошли focused `81 passed`; остаются 2 известных
+> сметных finality failure вне RAG-core. Reindex/OCR/parse и deploy не запускались.
+
+> 0.24.0.351 — contract-clean Qwen sibling canary
+>
+> Дата: 2026-07-10
+> Статус: dev + отдельная canary-коллекция; production collection не переключена.
+> Причина: активная `les_rag_qwen3_06b_native_v1` содержит пять несовместимых embedding
+> fingerprints и не может получить новый manifest задним числом. Полный синхронный re-embed
+> четырёх корпусов занял бы 1–2 часа и мешал бы живому MLX-чату.
+> Правки: `tools/build_rag_contract_sibling.py` читает только payload старой коллекции,
+> прогоняет текст через общий sanitation/token-budget gate, заново получает Qwen vectors,
+> строит native dense+sparse points с детерминированными id и migration provenance. Источник,
+> MetaDB и исходные vectors не меняются; повторный запуск идемпотентен. Обязательный
+> `test-rag-core` включает тесты resolver/id contract мигратора.
+> Приёмка: dry-run точно разрешил BAI, `ПД_Инновационный центр`, `NTD_FIRE_Index` и
+> `TABLE_SMETA_Index`; 4×4 initial canary создал 19 clean points и manifest fingerprint
+> `33507479e43bd3ba8afc3b3bfeb86ad8033c7e1b3912d92a6a894b8ae288cb3c`.
+> Расширенный bounded canary: по 256 source points каждого корпуса дали BAI `397`, ПД ИЦ `297`,
+> FIRE `278`, TABLE_SMETA `310` clean points; destination total `1282`. Sample audit:
+> `1000/1000` один Qwen/Core ML fingerprint, token-budget и sanitation metadata, manifest
+> compatible. Прямой filtered dense retrieval вернул по `3/3` chunks для всех четырёх scopes.
+> TABLE_SMETA при этом признан смешанным: 3 реальные ВОР + test table, norms, price cards и
+> service files в одном scope; classifier попал в top-3. Production не переключать, пока
+> canary не покрывает требуемый scope и TABLE_SMETA не разделён по назначению.
+> Проверки кода: `make test-rag-core` — `154 passed`; `make verify` — `2754 collected`;
+> `uv lock --check` и `git diff --check` green.
+
+> 0.24.0.352 — module-owned system datasets + test corpus removal
+>
+> Дата: 2026-07-10
+> Статус: runtime `0.24.0.352`; system dataset зарегистрирован без parse.
+> Причина: аудит `TABLE_SMETA_Index` показал, что 3 ВОР и CSV — пользовательские тесты, а
+> остальные документы — generated module cards. Смешение project/table и module navigation
+> делало classifier конкурентом factual retrieval.
+> Правки: MetaDB `datasets` получил `dataset_scope`/`module_id`; registry типизирует
+> `SMETA_SERVICE_Index`, `SMETA_RU_NORM_*` и `GESN_NORMS_2022_PDF` как `system/smeta`.
+> Scope показывает их отдельно, smeta-turn добавляет только свои system dataset ids, а router
+> направляет `SMETA_SERVICE/**` в `SMETA_SERVICE_Index`. Dataset deletion теперь чистит Qdrant,
+> FTS, structured rules и project links. Pricing gaps отделены в `pricing_status` и остаются
+> row-level: они не превращают завершённый состав/количества в global stop.
+> Runtime cleanup: `TABLE_SMETA_Index` удалён — active Qdrant `690→0`, canary `310→0`,
+> FTS `690`, MetaDB documents `103`, dataset row `1`, storage dir; ГЭСН/ФГИС sources сохранены.
+> `SMETA_SERVICE_Index` создан как `system/smeta`: зарегистрировано `98` generated service files,
+> parse не запускался до совместимого production index contract. `/api/scope/options` показывает
+> датасет отдельно от проектов и пользовательских корпусов.
+> Canary после cleanup: BAI/ПД ИЦ/FIRE `397/297/278`, total `972`; audit `972/972` compatible.
+> Focused system/router/delete/smeta suite: `204 passed`; `make test-rag-core` — `157 passed`;
+> `make verify` — `2760 collected`; lock/diff checks green. `make ship` green; pre-deploy smoke
+> честно зафиксировал один P1 `45s ReadTimeout`, после рестарта post-deploy smoke — `9/9` green,
+> включая broad-chat probe `728ms`.
+
+> 0.24.0.346 — Qwen query embedding contract
+>
+> Дата: 2026-07-10
+> Статус: dev only, runtime не обновлялся.
+> Причина: Qwen3-Embedding supports query-side instructions, but the existing Qwen collection
+> stores raw document vectors. Prefixing queries without a visible contract would make retrieval
+> non-reproducible and tempt an unmeasured production change.
+> Правки: `raw-v1` remains default; opt-in `qwen-retrieval-v1` formats only dense queries as
+> `Instruct ... / Query ...`, documents remain raw. Runtime config and `RetrievalTrace` expose
+> the instruction id; dense/sparse model mismatch safety is unchanged. No reindex/OCR/parse.
+> Проверки: focused Qwen config/embed/retrieval/evidence/notebook suite `65 passed`, один
+> известный независимый `test_retrieve_chat_chunks_promotes_exact_source_after_rerank` trace
+> regression исключён из focused run; `make verify` green (`2734 tests collected`).
+> Live CoreML embedding probe: raw documents против трёх русских query pairs (security/HVAC/table)
+> дали correct top-1 `3/3` и в `raw-v1`, и с Qwen instruction. Similarity целевого источника
+> выросла для security `0.5397→0.6018` и HVAC `0.6578→0.6879`, для table слегка снизилась
+> `0.5712→0.5634`; это smoke механизма, не corpus A/B verdict.
+
+> 0.24.0.343 — scattered low-score honesty gate
+>
+> Дата: 2026-07-10
+> Статус: deployed to runtime.
+> Причина: BAI canary exposed a retrieval result with no expected work-volume source, yet
+> `quality_status=good`: low-score neighbours happened to cover some lexical terms. This is a
+> false confidence problem in the common RAG core, not a BAI-specific answer rule.
+> Правка: `retrieval_quality_service` returns `weak/low_score_scattered_sources` when the best
+> candidate is below `0.42` and the pool spans four or more documents. Model-first generation
+> continues; `EvidencePacket.evidence_status` becomes `partial`, so UI/trace cannot call such a
+> result complete evidence. Regression tests cover weak scatter and a high-score hybrid control.
+> Проверки: targeted 121 passed (quality/evidence/source-map/chat/version); `make verify`
+> (`2727 tests collected`); selective runtime probe returns `0.24.0.343`, deploy stamp `ok`,
+> BAI failure is now `quality_status=weak`, and a normal BAI chat returns
+> `les.evidence_packet.v1` with a separate navigation boundary. No reindex/OCR/parse/embedding
+> change. Full `make test` was stopped after it stalled on an outbound HTTPS test; its result is
+> not claimed. An existing independent retrieval regression remains:
+> `test_retrieve_chat_chunks_promotes_exact_source_after_rerank` lacks expected `trace.exact_refs`.
+
+> 0.24.0.342 — common evidence packet for normal RAG
+>
+> Дата: 2026-07-10
+> Статус: deployed to runtime; superseded by `0.24.0.343` only for scattered low-score status.
+> Причина: source map, retrieved context, navigation and retrieval trace existed as independent
+> surfaces. The model could cite `Источник N`, but no explicit common contract proved which
+> retrieved material it saw or prevented navigation from being presented as evidence.
+> Правка: `proxy/services/evidence_packet_service.py` adds `les.evidence_packet.v1` above
+> already selected/context-expanded chunks. The model renderer and response `source_map` share
+> exact source numbering; payload exposes source locator, retrieval quality, separate navigation
+> (`is_evidence=false`), deterministic inventory facts, `evidence_status`, and distinct
+> answer/calculation status. `retrieval_trace.evidence_packet` is compact enough for history.
+> BAI receives a four-case no-LLM retrieval canary in `golden/bai_evidence_core_set.json`; no
+> parse, OCR, reindex, embedding or collection change is part of the release.
+> Проверки: focused evidence/chat/source-map/golden/version tests; `make verify`; BAI live canary
+> after selective deploy. Initial BAI canary is 3/4: architecture work-volume query retrieves
+> low-score neighbouring documents rather than the expected table. The release therefore adds a
+> generic `weak/low_score_scattered_sources` quality state; it is not an index repair.
+
+> 0.24.0.341 — read-only priority corpus inventory
+>
+> Дата: 2026-07-10
+> Статус: deployed to runtime.
+> Причина: общий runtime health показывал только агрегат `PENDING/ERROR`; нельзя было
+> объективно выбрать первый evidence-core датасет и отличить незакрытую очередь от служебной
+> записи без прямого чтения внутренних БД или ручной археологии.
+> Правка: `tools/priority_corpus_inventory.py` строит `priority_corpus_inventory_v1` и
+> generated `docs/EVIDENCE_CORE_PRIORITY_INVENTORY.md` исключительно из operator API:
+> `/api/health`, Document Explorer и Dataset Notebook. Карточка несёт revision/reader/maps,
+> statuses/types/chunks, pending/error/zero-chunk samples и operator disposition; она всегда
+> `navigation`, не evidence, не читает SQLite/Qdrant напрямую, не запускает parse/OCR/reindex
+> и не делает automatic quarantine. Service maps/state исключаются из zero-chunk defect,
+> а duplicate pending basenames и dataset-status drift видны явно.
+> Первый снимок выбрал BAI как index-quality canary; Fire остаётся golden, ПД ИЦ ждёт triage
+> 49 pending и stale `ERROR`, сметная нормативка — решения по двум одинаково названным pending XLSX.
+> Проверки: targeted 60 passed (`priority_corpus_inventory`, Document Explorer, dataset memory,
+> version service); `make verify` (`2698 tests collected`); `git diff --check`.
+> Runtime: `/api/version` = `0.24.0.341`, deploy stamp `ok`, runtime alignment `aligned`;
+> runtime-clone probe построил BAI card с `baseline_candidate` и исключил service state из
+> zero-chunk defect. Ни parse, ни OCR, ни reindex не запускались.
+
+> 0.24.0.340 — notebook research guide
+>
+> Дата: 2026-07-10
+> Статус: deployed to runtime.
+> Причина: notebook-study уже строил хороший план и добирал источники, но оператор не видел
+> revision/source-map выбранной области, фактическое покрытие маршрута чтения и следующие
+> source-grounded шаги. Это затрудняло отличить «блокнот подготовлен» от «по нему уже читали».
+> Правка: `notebook_research_guide_v1` выводится в `notebook_context` и markdown artifact:
+> revision/source-map/reader status, coverage плановых разделов и точечных файлов, стартовые
+> источники и вопросы продолжения. Guide вычисляется только из карты и результатов текущего
+> retrieval, не создаёт нового индекса/LLM-вызова и строго помечен
+> `context_role=navigation`, `is_evidence=false`; `ready` означает полноту текущего маршрута,
+> не полноту проекта.
+> Проверки: targeted 33 passed (`notebook_study`, chat policy, Sovushka visibility,
+> dataset memory); `make verify` (`2692 tests collected`); `make ship-check` green.
+> Runtime: `/api/version` = `0.24.0.340`, deploy stamp `ok`, runtime alignment `aligned`;
+> direct runtime probe подтвердил `notebook_research_guide_v1`, navigation-only contract и
+> model reader-pass/revision flags.
+
+> 0.24.0.339 — smeta resource identity and honest finality
+>
+> Дата: 2026-07-09
+> Статус: deployed to runtime.
+> Причина: audit воспроизвёл завышение позиции `ГЭСНм38-01-001-01`: старая SQLite-база содержала
+> семантические дубли ресурсов, а harness мог назвать итог `final_total`, хотя уже вернул
+> `needs_kac`/отсутствующую ресурсную цену.
+> Правка: unified Parquet, structured SQLite builder и runtime reader используют консервативный
+> resource identity: код ресурса (либо нормализованное имя без кода), единица, расход и явная цена.
+> Число схлопнутых строк идёт в audit/manifest; guard чинит уже собранную базу при чтении без
+> мутирующего rebuild. `price_requirements` оставляют строку, trace и частичную сумму видимыми,
+> но переводят статус в `partial` и не создают `final_total`; partial artifact отдельно называет
+> ценовой добор и не подменяет его нулевой ценой.
+> Проверки: targeted 7/7: source/structured/runtime identity guards, live-base ГЭСНм38 control,
+> два end-to-end harness finality cases и partial artifact; `make verify` (`2692 tests collected`).
+> Live `/api/lsr/assemble` для `ГЭСНм38-01-001-01 @ 664.71112` вернул 110519705.74 ₽
+> (НР 37258263.86, СП 18629131.93), не старое завышение. Один ресурс без цены остался
+> `needs_price=1` и потому не даёт finality. Полный focused smeta set был
+> остановлен из-за зависания в существующем тяжёлом наборе после 23%; результат полного прогона
+> не заявляется.
+
+> 0.24.0.338 — explicit norm-reference promotion
+>
+> Дата: 2026-07-09
+> Статус: deployed to runtime.
+> Причина: после выравнивания Qwen/CoreML live FIRE/HVAC golden выявил реальный дефект:
+> для запроса `Найди пункт 7.3 в СП 7.13130` документ СП попадал в кандидатный пул, но
+> reranker оставлял его на 7–8 месте после документов, которые лишь ссылаются на СП.
+> Правка: generic extracted СП/ГОСТ ref поднимает уже найденный файл самой нормы над
+> документами-цитатами до и после rerank; trace получает `norm_ref_exact`. Это не lookup
+> вне пула и не hardcoded fire rule.
+> Проверки: focused `53 passed` (`test_retrieval_service`, `test_rag_golden_set`,
+> `test_mlx_host_embeddings`, `test_qdrant_adapter_parse`); `make verify` (`2689 tests collected`);
+> live FIRE/HVAC golden `16/16`; `git diff --check`. Full `make test` был остановлен на 67%:
+> до остановки обнаружен ранее известный независимый failure `test_lsr_assembly_service` по НР/СП.
+>
+> 0.24.0.337 — retrieval embedding-contract gate
+>
+> Дата: 2026-07-09
+> Статус: deployed to runtime.
+> Причина: live audit выявил, что active Qwen-коллекция могла получать query-вектор от
+> BGE-M3: MLX endpoint принимал имя модели в запросе, но возвращал вектора глобального
+> embedder и эхо requested model. При одинаковой размерности это давало тихий неверный dense
+> поиск. Cross-encoder reranker одновременно получал `top_k=len(pool)` и был no-op.
+> Правка: `/v1/embeddings` публикует фактические `embedding_model`/backend; клиент сверяет
+> контракт до использования вектора. Mismatch или старый endpoint выключает dense/sparse,
+> оставляет только lexical retrieval и пишет `mode=lexical_only`,
+> `fallback_reason=embedding_contract_mismatch`, `quality=degraded`. Reranker получает
+> `RAG_CHAT_RERANK_TOP_K`, меньший входного пула. Критичный deploy bundle теперь включает
+> MLX host, embedding interface и retrieval-quality service; `deploy_to_runtime --restart` также
+> перезапускает MLX host при изменении `mlx_host.py`, а не только proxy/UI.
+> `les_runtime_control restart` при реально изменённом/force-rendered plist делает
+> `bootout → bootstrap`: один `kickstart` не перечитывает новые `EnvironmentVariables`.
+> Проверки: targeted `73 passed`; `make verify` (`2685 tests collected`); isolated Qwen/CoreML
+> probe → 1024d L2-normalized vector. Runtime MLX reloaded through force-rendered plist as
+> Qwen/CoreML, live embedding contract confirmed, and direct dense Qdrant query succeeded.
+>
+> 0.24.0.336 — smeta compact norm-choice payload
+>
+> Дата: 2026-07-09
+> Статус: deployed to runtime.
+> Причина: audit БАП показал, что проблема не в 2 строках батча, а в
+> размере payload: current compact при 20 candidates на 2 строки даёт около
+> 47k JSON chars только candidates; local 9B тонет до выбора норм.
+> Правка: local default `LES_SMETA_NORM_CHOICE_CANDIDATES` уменьшен до 5
+> candidates на строку (cloud default 8, env override сохранён), `norm_card`
+> сжат до коротких `domain/work_steps/conditions/resources/collection`, а
+> `[SMETA_NORM_CHOICE]` пишет rows/candidates/prompt_chars/prompt_est_tokens.
+> Код не выбирает нормы: он только уменьшает меню для model-owned выбора.
+> Проверки: `uv run pytest -q tests/test_chat_harness_format.py::test_smeta_structured_norm_choice_local_default_limits_candidates tests/test_chat_harness_format.py::test_smeta_structured_norm_choice_batches_local_lookup_rows tests/test_chat_harness_format.py::test_smeta_structured_norm_choice_validates_model_code_from_lookup tests/test_chat_harness_format.py::test_smeta_structured_norm_review_keeps_model_chosen_analog`; `python3 -m py_compile proxy/routers/chat.py proxy/services/version_service.py`; `git diff --check`; `make verify`.
+>
+> 0.24.0.335 — smeta pre-batch SSE/log visibility
+>
+> Дата: 2026-07-09
+> Статус: deployed to runtime.
+> Причина: live БАП на `0.24.0.334` показал, что `smeta_batch` работает, но
+> первые 164.6 с до первого batch event всё ещё были непрозрачными; это
+> оказался участок workflow/norm-lookup до structured norm-choice.
+> Правка: `/api/chat/stream` отдаёт `smeta_step` для крупных стадий сметного
+> маршрута (`rag_context`, `workflow`, `norm_lookup`, `norm_choice`,
+> `final_answer`), backend пишет `[SMETA_STEP]`, Совушка показывает этап в
+> пузыре и пишет его в операторский лог. Это не меняет выбор норм: модель
+> выбирает, код только трассирует этапы и считает.
+> Проверки: `python3 -m py_compile proxy/routers/chat.py sovushka/pages/chat.py proxy/services/version_service.py`; `uv run pytest -q tests/test_chat_harness_format.py::test_smeta_structured_norm_choice_batches_local_lookup_rows tests/test_chat_harness_format.py::test_smeta_structured_norm_choice_validates_model_code_from_lookup tests/test_chat_harness_format.py::test_smeta_structured_norm_review_keeps_model_chosen_analog`; `git diff --check`; `make verify`.
+>
+> 0.24.0.334 — smeta batch SSE/log visibility
+>
+> Дата: 2026-07-09
+> Статус: deployed to runtime.
+> Причина: local БАП/СКС через `/api/chat/stream` слишком долго молчали на
+> тяжёлом structured norm-choice: оператор не видел, на каком диапазоне строк
+> модель зависла и сколько строк принято/ушло в добор.
+> Правка: `_smeta_direct_structured_norm_choice` отдаёт start/done каждого
+> batch как SSE `smeta_batch`, пишет `[SMETA_BATCH]` в backend log, а Совушка
+> показывает текущий диапазон строк и пишет батчи в операторский лог. Если
+> batch не вернул строк, строки не теряются: они идут дальше как `нужен подбор
+> нормы` с причиной, без кодового выбора нормы.
+> Проверки: `uv run pytest -q tests/test_chat_harness_format.py::test_smeta_structured_norm_choice_batches_local_lookup_rows tests/test_chat_harness_format.py::test_smeta_structured_norm_choice_validates_model_code_from_lookup tests/test_chat_harness_format.py::test_smeta_structured_norm_review_keeps_model_chosen_analog`; `python3 -m py_compile proxy/routers/chat.py proxy/services/version_service.py sovushka/pages/chat.py`; `git diff --check`; `make verify`.
+>
+> 0.24.0.333 — smeta smaller local norm-choice batches
+>
+> Дата: 2026-07-09
+> Статус: code, not deployed.
+> Причина: live БАП на `0.24.0.332` подтвердил, что batching включился, но
+> batch size 5 всё ещё слишком тяжёлый для локального MLX с текущими norm-card
+> payload: final payload не пришёл, MLX снова ушёл в memory pressure/main model
+> busy. Лог: `tmp/smeta_local_0_24_0_332/bap_batched_log.md`.
+> Правка: local default `LES_SMETA_NORM_CHOICE_BATCH_SIZE` уменьшен до 2, а
+> `max_tokens` selector-а внутри батча считается от строк текущего батча, не от
+> всей ВОР. Если машина тянет, оператор может вернуть 5 явным env override.
+> Проверки: pending.
+>
+> 0.24.0.332 — smeta batched local norm-choice
+>
+> Дата: 2026-07-09
+> Статус: code, not deployed.
+> Причина: live БАП на локальном `0.24.0.331` дважды не вернул final payload:
+> SSE показывал только 4 progress events, а затем монолитный local smeta step
+> зависал дольше 10 минут; в первом прогоне MLX ушёл в memory pressure, во
+> втором после restart генерация всё равно не дошла до final trace. Поэтому
+> “куда модель смотрит” не было видно до конца запроса.
+> Правка: structured norm-choice/review для локального MLX режет `lookup_results`
+> батчами по 5 строк (`LES_SMETA_NORM_CHOICE_BATCH_SIZE`, default 5 для local,
+> 0 для cloud). Каждый батч выбирает нормы моделью только из своих candidates,
+> review идёт на том же батче, затем код склеивает строки обратно с глобальными
+> `lookup_index` и отдаёт batch trace. Код по-прежнему не выбирает нормы.
+> Проверки: pending.
+>
+> 0.24.0.331 — smeta local-by-default model runtime
+>
+> Дата: 2026-07-09
+> Статус: deployed to runtime.
+> Причина: СКС smoke не был честным тестом локальной модели: structured
+> norm-choice ушёл в global cloud runtime из-за доступного API key и упал на
+> `402 Payment Required`. Локальный MLX endpoint при этом жив: `/v1/models`
+> показывает `Qwen3.5-9B-MLX-4bit`, короткая генерация ответила за 33.7 с.
+> Правка: smeta model-owned steps (`LES_SMETA_DIRECT_MODEL_PROVIDER`,
+> `LES_SMETA_NORM_CHOICE_PROVIDER` и общий `LES_SMETA_PROVIDER`) теперь по
+> умолчанию используют локальный MLX. Cloud остаётся доступен только через явный
+> smeta provider override; наличие глобального cloud key больше не меняет смету
+> молча. Это не меняет правило выбора норм: модель выбирает, код считает и
+> проверяет provenance/арифметику.
+> Проверки: focused `tests/test_chat_harness_format.py` passed; `py_compile` +
+> `git diff --check` → ok; `make verify` → ok (`2676 tests collected`);
+> `make ship` → verify ok, focused `193 passed`, basic/post smoke accepted by
+> ship with `8/9` pass and non-blocking P1 `chat_project_noscope` timeout.
+> Initial ship deploy skipped divergent runtime files after writing deploy stamp,
+> then runtime-critical files were synchronized with explicit force deploy.
+>
+> 0.24.0.330 — smeta protective-cover + fastener candidates
+>
+> Дата: 2026-07-09
+> Статус: deployed to runtime.
+> Причина: fresh БАП 0.24.0.329 оставил 3 нуля. Два из них были не отсутствием
+> базы, а плохой model-facing картой candidates: временное защитное укрытие
+> полиэтиленовой плёнкой резалось глобальным forbidden-якорем `защитн`, а
+> строка скоб приходила от модели как `pipe` и показывала трубы/светильники
+> вместо штучных крепёжных конструкций.
+> Правки: `protective_cover` получил отдельные applicability/score anchors для
+> временного укрытия/ограждения, не поднимая декоративную ПВХ-плёнку и натяжные
+> потолки; `electric pipe + шт + скобы/крепление` маршрутизируется как
+> `fastener`, а светильники/изоляторы штрафуются в fastener-route. Код не
+> выбирает норму: он показывает модели правильные candidates и оставляет
+> selector/review владельцами выбора.
+> Проверки: focused regression `4 passed`; `py_compile` + `git diff --check` → ok.
+> Runtime `/api/version` → `0.24.0.330`, deploy stamp ok,
+> `runtime_alignment=aligned`. Fresh БАП через `/api/chat/stream`: HTTP 200
+> за 131.6 с, lookup `19/19`, review `approved=0`, `replaced=18`,
+> `unbound=1`, visible ЛСР `18/19`, сумма `1 471 554 руб.`. Строка 1
+> рассчитана через `ГЭСН46-05-001-03`, строка 18 — через
+> `ГЭСНм08-02-152-13`; единственный ноль остался по строке 3
+> “Разработка проема в потолке из ГКЛ...” из-за отсутствия точной штучной
+> нормы/размера для перевода в м2. Ответ сохранён:
+> `tmp/bap_fresh_test/0_24_0_330_cloud_body.json`.
+>
+> 0.24.0.329 — smeta source-row display contract
+>
+> Дата: 2026-07-09
+> Статус: deployed to runtime.
+> Причина: fresh БАП на 0.24.0.328 подтвердил, что lookup coverage полный
+> (`19/19`) и строка 5 начала считаться через ремонтный `ГЭСНр63`, но visible
+> ЛСР всё ещё могла показывать title выбранной/отклонённой карточки нормы
+> вместо исходной строки ВОР. Draft norm-choice уже сохранял source title, но
+> второй model-owned review (`approve|replace|unbound`) перетирал его своим
+> `title`.
+> Правки: direct selector и review audit теперь для всех строк с
+> `work_description` сохраняют в видимой ЛСР исходное название/единицу ВОР;
+> chosen/replaced norm_code остаётся в `Обоснование`, а карточка нормы/состав
+> работ остаются в evidence. Это display/provenance contract, не выбор нормы
+> кодом.
+> Проверки: focused regression `4 passed`; `py_compile` + `git diff --check` → ok;
+> `make verify` → ok (`2674 tests collected`). Runtime `/api/version` →
+> `0.24.0.329`, deploy stamp ok, `runtime_alignment=aligned`. Fresh БАП
+> через `/api/chat/stream`: HTTP 200 за 105.4 с, lookup `19/19`,
+> review `approved=8`, `replaced=8`, `unbound=3`, visible ЛСР `16/19`,
+> сумма `1 152 416 руб.`; строки 1/3/18 остались нулевыми с исходными
+> названиями ВОР. Ответ сохранён:
+> `tmp/bap_fresh_test/0_24_0_329_cloud_body.json`.
+>
+> 0.24.0.328 — smeta surface-prep visibility + rejected-row provenance
+>
+> Дата: 2026-07-09
+> Статус: deployed to runtime.
+> Причина: БАП после 0.24.0.327 уже не пропускал rejected/unit-mismatch
+> карточки в деньги, но две вещи искажали результат для оператора: строка
+> “подготовка поверхности потолка ... после монтажа лючков” уходила в hatch
+> lookup из-за слова “лючков” и не показывала модели ремонтные `ГЭСНр63`, а
+> rejected-норма могла подменить в нулевой строке ЛСР исходное название ВОР.
+> Это выглядело как “код/SQL душит модель”, хотя SQL/parquet не был главным
+> узлом: lookup cold может занимать секунды, но повторный cached lookup быстрее,
+> а live БАП в основном тратит время на модельный выбор/review и РИМ trace.
+> Правки: `search_norm` для generic finish теперь маршрутизирует подготовку/
+> ремонт потолочной поверхности в ceiling/repair до hatch-route; structured
+> norm-choice при rejected/unit-mismatch сохраняет в видимой нулевой строке
+> исходное описание/единицу ВОР и пишет машинную причину (`candidate_rejected_by_lookup`
+> или `candidate_unit_mismatch_by_lookup`). Код по-прежнему не выбирает норму:
+> он только не даёт отвергнутой карточке стать суммой и не теряет исходную строку.
+> Проверки: focused regression `2 passed`; `py_compile` + `git diff --check` → ok;
+> runtime `/api/version` → `0.24.0.328`, deploy stamp ok,
+> `runtime_alignment=aligned`; fresh БАП rerun saved under `tmp/bap_fresh_test/`.
+>
 > 0.24.0.327 — smeta rejected-candidate gate
 >
 > Дата: 2026-07-09

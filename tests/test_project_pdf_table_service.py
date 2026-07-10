@@ -596,6 +596,28 @@ def test_semantic_classifier_marks_numeric_grid_as_noise():
     assert result["category"] == "noise"
 
 
+def test_semantic_classifier_does_not_treat_generic_line_parameters_as_cable_table():
+    table = [
+        ["Параметр", "Описание", "Количество линий"],
+        ["Шаблон линии", "Длина линии", "1"],
+    ]
+
+    result = classify_project_table_semantic(table, source_ref="revit-guide.pdf#page=12#table=1")
+
+    assert result["semantic_type"] != "ELEC/LINE: кабельные и линейные таблицы"
+
+
+def test_semantic_classifier_requires_work_unit_and_quantity_for_vor():
+    table = [
+        ["Параметр", "Описание", "Количество"],
+        ["Типоразмер", "Количество экземпляров элемента", "2"],
+    ]
+
+    result = classify_project_table_semantic(table, source_ref="revit-guide.pdf#page=18#table=1")
+
+    assert result["semantic_type"] != "QTY: ведомости объёмов/работ"
+
+
 def test_semantic_navigation_skips_text_noise_rows():
     manifest = {
         "schema": "project_pdf_table_manifest_v1",

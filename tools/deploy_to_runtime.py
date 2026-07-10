@@ -58,6 +58,7 @@ def _save_manifest(m: dict[str, str]) -> None:
 SERVICE_BY_PREFIX = (
     ("sovushka_ng.py", "com.les.sovushka"),
     ("sovushka/", "com.les.sovushka"),
+    ("mlx_host.py", "me.ovc.les.mlx"),
     ("proxy/", "me.ovc.les.proxy"),
     ("backend/", "me.ovc.les.proxy"),
     ("config/", "me.ovc.les.proxy"),
@@ -95,6 +96,13 @@ def _head_bytes(path: str) -> bytes | None:
 
 def _allowed(path: str) -> bool:
     return (path in ALLOWED_FILES or path.startswith(ALLOWED_DIRS)) and Path(path).suffix in ALLOWED_SUFFIX
+
+
+def _service_for_path(path: str) -> str | None:
+    for prefix, service in SERVICE_BY_PREFIX:
+        if path.startswith(prefix):
+            return service
+    return None
 
 
 def classify(path: str, manifest: dict[str, str]) -> tuple[str, bool]:
@@ -152,10 +160,8 @@ def main(argv: list[str] | None = None) -> int:
             shutil.copy2(DEV / f, RT / f)
             manifest[f] = _sha((DEV / f).read_bytes())   # запомнить, что выкатил
             copied.append(f)
-        for prefix, svc in SERVICE_BY_PREFIX:
-            if f.startswith(prefix):
-                services.add(svc)
-                break
+        if service := _service_for_path(f):
+            services.add(service)
 
     print()
     if diverged:

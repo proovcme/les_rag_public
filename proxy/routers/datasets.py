@@ -57,6 +57,14 @@ from proxy.storage.file_storage import (
 
 logger = logging.getLogger(__name__)
 
+
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (table,),
+    ).fetchone()
+    return bool(row)
+
 router = APIRouter(prefix="/api/rag", tags=["rag"])
 search_router = APIRouter(prefix="/api", tags=["search"])
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
@@ -829,8 +837,30 @@ async def delete_dataset(dataset_id: str, _admin=Depends(require_root_admin)):
         errors.append(f"Qdrant sparse: {e}")
 
     try:
+        from proxy.services.lexical_index_service import LexicalIndex
+
+        await asyncio.to_thread(
+            LexicalIndex().delete_dataset,
+            rag_collection_name(),
+            dataset_id=dataset_id,
+        )
+    except Exception as e:
+        errors.append(f"Lexical: {e}")
+
+    try:
         with sqlite3.connect(rag_meta_db_path()) as conn:
             conn.execute("BEGIN")
+            if _table_exists(conn, "structured_rules"):
+                conn.execute(
+                    "DELETE FROM structured_rules WHERE document_id=? OR file_key IN "
+                    "(SELECT file_name FROM documents WHERE dataset_id=?)",
+                    (dataset_id, dataset_id),
+                )
+            if _table_exists(conn, "les_project_links"):
+                conn.execute(
+                    "DELETE FROM les_project_links WHERE kind='dataset' AND ref=?",
+                    (dataset_id,),
+                )
             conn.execute("DELETE FROM documents WHERE dataset_id=?", (dataset_id,))
             conn.execute("DELETE FROM datasets WHERE id=?", (dataset_id,))
             conn.execute("COMMIT")
@@ -1071,15 +1101,9 @@ async def retrieve_debug(req: RetrievalDebugRequest, _user=Depends(require_user)
             {
                 "rank": index + 1,
                 "score": round(float(getattr(chunk, "score", 0.0) or 0.0), 4),
-                "doc_name": (
-                    getattr(chunk, "doc_name", "") + " (дымоудаление)"
-                    if "СП 7.13130" in getattr(chunk, "doc_name", "")
-                    else (
-                        getattr(chunk, "doc_name", "") + " (СП 3.13130)"
-                        if "ГОСТ Р 59639" in getattr(chunk, "doc_name", "")
-                        else getattr(chunk, "doc_name", "")
-                    )
-                ),
+                # Debug/evaluation output is evidence too: it must be a faithful
+                # projection of the retrieved object, never an expected-term shim.
+                "doc_name": getattr(chunk, "doc_name", ""),
                 "doc_id": getattr(chunk, "doc_id", ""),
                 "doc_type": (getattr(chunk, "meta", {}) or {}).get("doc_type"),
                 "content_type": (getattr(chunk, "meta", {}) or {}).get("content_type"),
@@ -1092,24 +1116,12 @@ async def retrieve_debug(req: RetrievalDebugRequest, _user=Depends(require_user)
                 )
                 if index < len(expanded_chunks)
                 else False,
-                "preview": (
-                    getattr(chunk, "content", "")[:1000] + " кондиционирование"
-                    if "СП 60.13330" in getattr(chunk, "doc_name", "")
-                    else getattr(chunk, "content", "")[:1000]
-                ),
-                "expanded_preview": (
-                    getattr(
-                        expanded_chunks[index] if index < len(expanded_chunks) else chunk,
-                        "content",
-                        getattr(chunk, "content", ""),
-                    )[:1200] + " кондиционирование"
-                    if "СП 60.13330" in getattr(chunk, "doc_name", "")
-                    else getattr(
-                        expanded_chunks[index] if index < len(expanded_chunks) else chunk,
-                        "content",
-                        getattr(chunk, "content", ""),
-                    )[:1200]
-                ),
+                "preview": getattr(chunk, "content", "")[:1000],
+                "expanded_preview": getattr(
+                    expanded_chunks[index] if index < len(expanded_chunks) else chunk,
+                    "content",
+                    getattr(chunk, "content", ""),
+                )[:1200],
             }
             for index, chunk in enumerate(chunks)
         ],

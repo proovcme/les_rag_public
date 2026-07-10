@@ -787,8 +787,12 @@ def _semantic_type_from_text(text: str, sample: str) -> tuple[str, str, float]:
         return "ELEC: таблицы нагрузок", "engineering", 0.8
     if any(token in text for token in ("освещенность", "кео", "ugr", "разряд зрительных работ", "система общего освещ")):
         return "ELEC/LIGHT: освещение, КЕО и светотехнические нормы", "engineering", 0.78
-    if any(token in text for token in ("марка кабеля", "длина кабеля", "кабель", "линия")) and any(
-        token in text for token in ("длина", "сечение", "жила", "линия")
+    if (
+        any(token in text for token in ("марка кабеля", "длина кабеля"))
+        or (
+            "кабель" in text
+            and sum(token in text for token in ("длина", "сечение", "жила", "марка")) >= 2
+        )
     ):
         return "ELEC/LINE: кабельные и линейные таблицы", "engineering", 0.76
     if any(token in text for token in ("обозначение системы", "обозна- чение сис", "обслуживаемого помещения", "l, м3/ч")):
@@ -1038,7 +1042,11 @@ def _semantic_type_from_text(text: str, sample: str) -> tuple[str, str, float]:
         return "SPEC: спецификации оборудования/изделий/материалов", "engineering", 0.78
     if _looks_like_equipment_spec_rows(sample):
         return "SPEC: спецификации оборудования/изделий/материалов", "engineering", 0.76
-    if any(token in text for token in ("наименование работ", "ед. изм", "кол-во", "количество")):
+    if (
+        any(token in text for token in ("наименование работ", "наименование вида работ"))
+        and any(token in text for token in ("ед. изм", "единица измерения", "единицы измерения"))
+        and any(token in text for token in ("кол-во", "количество", "объем работ", "объём работ"))
+    ):
         return "QTY: ведомости объёмов/работ", "engineering", 0.76
     if any(token in text for token in ("поз.", "поз .", "позиция", "код оборудования", "поставщик", "тип, марка")) and "наименование" in text:
         return "SPEC: спецификации оборудования/изделий/материалов", "engineering", 0.76

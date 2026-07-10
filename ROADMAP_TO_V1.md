@@ -7,6 +7,10 @@
 
 Цель документа — перестать идти «по наитию» и зафиксировать, что именно считается версией 1.0, какие этапы ведут к ней, что блокирует релиз и какие вещи сознательно остаются после v1.
 
+Текущий исполнимый порядок работы evidence-контура и его живой статус ведутся отдельно в
+[docs/PLAN_EVIDENCE_CORE.md](docs/PLAN_EVIDENCE_CORE.md). Этот файл уточняет текущие
+retrieval/evidence gates, но не заменяет roadmap v1 или release ledger.
+
 ---
 
 ## 0. Актуализация 2026-07-04
@@ -36,6 +40,8 @@ PDF/P7M/XLS/XLSX/XLSM parse вынесен в killable subprocess
 raw CAD/BIM больше не становится ложным INDEXED 0; DWG/DXF идут через canonical JSON projection
 CAD/DWG drawn tables извлекаются из line/polyline grids и попадают в RAG до element noise
 target-file CAD smoke на `drawn_table_1 first positions` закрыт на runtime `0.24.0.230`
+dev `0.24.0.352`: integrity-first RAG core, fail-closed index contract, отдельный `test-rag-core`,
+безопасный Qwen sibling-canary и типизированные системные датасеты модулей
 ```
 
 ### Что не считать закрытым
@@ -44,6 +50,8 @@ target-file CAD smoke на `drawn_table_1 first positions` закрыт на run
 Evidence UI не закрыт целиком: "Открыть", preview, source drawer и Stop ещё не v1-ready
 Real Dataset Acceptance не закрыт как системная матрица 3–5 датасетов
 Retrieval/Citation Quality не закрыт: used/found/rejected, preview, weak/strong ещё требуют прохода
+активная Qdrant-коллекция имеет смешанные embedding fingerprints и не может быть усыновлена новым
+manifest; нужен sibling canary index для BAI/ПД ИЦ/FIRE/смет
 Estimate Workflow Hardening не закрыт как release gate
 загрузка сметных документов не прозрачна для пользователя как отдельный intake-workflow
 document_router устарел как владелец dataset routing: для `+ папка` граница датасета задаётся
@@ -51,7 +59,7 @@ document_router устарел как владелец dataset routing: для `
 PDF/XLS system layer ещё не равен полноценному пользовательскому reader/tool workflow
 CAD tables beyond simple grids остаются риском: сложные merged cells, multi-sheet specs, rotated/fragmented grids
 latency локальной генерации остаётся продуктовым риском
-`tool_loop NameError` остаётся отдельным хвостом до стабилизации общего tool loop
+чистые source-verified retrieval goldens ещё не пересобраны; прежний debug-based FIRE/HVAC baseline аннулирован
 runtime divergence остаётся дисциплиной: dev-правка не равна runtime, деплой только через `make ship`
 ```
 
@@ -86,7 +94,7 @@ v0.23B — Clickable Sources + Citation Drawer                  🟡 partial
 v0.23C — Real Dataset Acceptance                              🟡 partial, needs matrix
 v0.24  — SPDS Documentation Normcontrol: ГОСТ Р 21.101-2026   ✅ baseline, deeper profile open
 v0.24D — Transparent Smeta Document Intake                    📋 next
-v0.24E — PDF/XLS Reader Tools + System Table Layer            🟡 started: project PDF source-map + ES/EOM; next OV ХВС, VK water balances, room explications
+v0.24E — PDF/XLS Reader Tools + System Table Layer            🟡 PDF source-map + ES/EOM/ОВ/ВК/rooms done; next exact XLS/PDF reader APIs
 v0.24F — CAD/DWG Table Hardening                              📋 next
 v0.25  — Retrieval and Citation Quality                       📋
 v0.26  — Estimate Workflow Hardening                          📋
@@ -1146,6 +1154,13 @@ open: проектный upload/intake ВОР/ЛСР/КП с видимым ст
 Цель: довести уже сделанную parse/index защиту до пользовательского workflow. Большие таблицы и PDF
 должны быть не только безопасно проиндексированы, но и читаемы инструментом по листу/строке/таблице,
 чтобы модель могла выбирать источник, а код доставал точные строки и считал.
+
+Текущее состояние: Л.И.С.Т. уже строит bounded project PDF source-map, читает
+ЭС/ЭОМ, ОВ ХВС, ВК water balance и экспликации помещений, честно различает
+`ok/partial/failed/empty` и не выдаёт слабые слова из технических руководств за
+кабельную таблицу или ВОР. Открытый остаток этапа — точные XLS/PDF reader API
+по диапазону/строке/таблице и `manual_required` для сканов, а не новые
+эвристические категории.
 
 ### Сделать
 

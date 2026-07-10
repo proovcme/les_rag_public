@@ -37,6 +37,15 @@ def test_route_smeta_ru_norm_archive_projection_to_category_dataset(tmp_path):
 
     assert route.domain == "SMETA_RU_NORM_FSNB2022"
     assert route.dataset_name == "SMETA_RU_NORM_FSNB2022_Index"
+
+
+def test_smeta_service_cards_route_to_separate_system_dataset(tmp_path):
+    path = tmp_path / "RAG_Content/TABLE_SMETA/SMETA_SERVICE/collection_01.md"
+    path.parent.mkdir(parents=True)
+    path.write_text("# ГЭСН 01\nНавигационная карточка сборника", encoding="utf-8")
+    route = route_document(path)
+    assert route.domain == "SMETA_SERVICE"
+    assert route.dataset_name == "SMETA_SERVICE_Index"
     assert route.doc_type in {"NORMATIVE", "SMETA"}
 
 

@@ -4,7 +4,9 @@ from email.message import EmailMessage
 import pytest
 from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
 
-from backend.qdrant_adapter import MetaDB, QdrantLlamaIndexAdapter, _embedding_cache_fingerprint
+from backend.interface import EmbeddingContractError
+import backend.qdrant_adapter as qdrant_adapter
+from backend.qdrant_adapter import EmbedClient, MetaDB, QdrantLlamaIndexAdapter, _embedding_cache_fingerprint
 from backend.document_router import route_document
 
 
@@ -36,6 +38,72 @@ class LegacyNamePendingDB:
 class StatusTrackingDB(LegacyNamePendingDB):
     def update_document_status(self, dataset_id, file_name, status, chunk_count, route=None, last_error=""):
         self.updated.append((dataset_id, file_name, status, chunk_count, last_error))
+
+
+def test_embed_client_accepts_actual_qwen_model_contract():
+    client = EmbedClient("http://mlx", model="qwen3-embedding-0.6b")
+
+    vectors = client._vectors_from_response(
+        {
+            "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+            "data": [{"index": 0, "embedding": [0.1, 0.2]}],
+        }
+    )
+
+    assert vectors == [[0.1, 0.2]]
+
+
+def test_embed_client_rejects_mixed_embedding_models():
+    client = EmbedClient("http://mlx", model="qwen3-embedding-0.6b")
+
+    with pytest.raises(EmbeddingContractError, match="expected=qwen3-embedding-0.6b, actual=BAAI/bge-m3"):
+        client._vectors_from_response(
+            {
+                "embedding_model": "BAAI/bge-m3",
+                "data": [{"index": 0, "embedding": [0.1, 0.2]}],
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_embed_client_applies_qwen_instruction_only_to_query(monkeypatch):
+    captured = []
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+                "data": [{"index": 0, "embedding": [0.1, 0.2]}],
+            }
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def post(self, _url, *, json):
+            captured.append(json["input"])
+            return Response()
+
+    monkeypatch.setenv("LES_EMBED_PROFILE", "qwen")
+    monkeypatch.setenv("RAG_QUERY_EMBEDDING_MODE", "qwen-retrieval-v1")
+    monkeypatch.setattr(qdrant_adapter.httpx, "AsyncClient", Client)
+    client = EmbedClient("http://mlx", model="qwen3-embedding-0.6b")
+
+    await client.encode_async(["Какие системы есть?"], query=True)
+    await client.encode_async(["Фрагмент документа"], query=False)
+
+    assert captured[0][0].startswith("Instruct: Given a search query")
+    assert captured[0][0].endswith("Query: Какие системы есть?")
+    assert captured[1] == ["Фрагмент документа"]
 
 
 def test_sync_parse_does_not_parse_all_files_when_no_pending(tmp_path):
@@ -749,3 +817,48 @@ def test_adapter_builds_mail_profile_nodes_with_attachment_payload(tmp_path, mon
     assert attachment_payload["mail_attachment_needs_ocr"] is True
     assert attachment_payload["mail_attachment_needs_vlm"] is True
     assert any("требует OCR/VLM" in node["text"] for node in nodes)
+
+
+def test_final_embedding_gate_applies_real_budget_to_every_node():
+    nodes = [
+        {
+            "text": " ".join(f"слово-{index}" for index in range(70)),
+            "doc_id": "source-node",
+            "payload": {"type": "table_row", "table_header": "Наименование | Количество"},
+        }
+    ]
+
+    finalized = QdrantLlamaIndexAdapter._finalize_embedding_nodes(
+        nodes,
+        chunking={"unit": "tokens", "chunk_size": 20, "chunk_overlap": 2, "len_fn": lambda text: len(text.split())},
+    )
+
+    assert len(finalized) > 1
+    assert all(len(node["text"].split()) <= 20 for node in finalized)
+    assert all(node["payload"]["embedding_budget_enforced"] is True for node in finalized)
+    assert all(node["payload"]["embedding_chunk_unit"] == "tokens" for node in finalized)
+    assert len({node["doc_id"] for node in finalized}) == len(finalized)
+    assert all(node["payload"]["table_header"] == "Наименование | Количество" for node in finalized)
+
+
+def test_final_embedding_gate_removes_mixed_base64_payload():
+    encoded = "A" * 600
+    nodes = [
+        {
+            "text": f"Полезный нормативный текст до вложения и описание требования. {encoded} "
+            "Полезный нормативный текст после вложения и дополнительные условия применения.",
+            "doc_id": "binary-node",
+            "payload": {"type": "markdown"},
+        }
+    ]
+
+    finalized = QdrantLlamaIndexAdapter._finalize_embedding_nodes(
+        nodes,
+        chunking={"unit": "chars", "chunk_size": 1000, "chunk_overlap": 0, "len_fn": None},
+    )
+
+    assert len(finalized) == 1
+    assert encoded not in finalized[0]["text"]
+    assert "Полезный нормативный текст" in finalized[0]["text"]
+    assert finalized[0]["payload"]["content_sanitized"] is True
+    assert finalized[0]["payload"]["content_quality"]["base64_runs_removed"] == 1
