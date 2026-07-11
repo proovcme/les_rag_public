@@ -62,6 +62,7 @@ def test_documents_ui_is_a_visual_read_only_dataset_browser():
     assert "min-height: 40px" in styles
     assert "scale: .96" in styles
     assert "Состав датасета" in page
+    assert '"Файлы и папки"' in page
     assert "_composition_files" in page
     assert 'value=True' in page
     assert "sov-composition-folder" in page
@@ -85,6 +86,7 @@ def test_documents_ui_is_a_visual_read_only_dataset_browser():
     assert ".sov-composition-table" in styles
     assert ".sov-index-brief--dataset" in styles
     assert ".sov-index-brief--file" in styles
+    assert "grid-template-columns: minmax(0, 1fr)" in styles
     assert "Л.И.С.Т. проекта" in page
     assert "Структура Л.И.С.Т." in page
     assert 'coverage.get("files_ok") or coverage.get("files_extracted")' in page

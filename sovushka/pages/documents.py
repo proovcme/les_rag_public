@@ -1392,16 +1392,17 @@ def build_documents() -> None:
                                 size="11.3px",
                                 color="var(--dim)",
                             ).classes("sov-index-brief-empty-text")
-                    with ui.row().classes("items-center w-full sov-composition-folder-context"):
-                        with ui.element("div").classes("sov-composition-folder-icon"):
-                            ui.icon("o_folder_open")
-                        with ui.column().classes("gap-0").style("min-width:0;flex:1;"):
-                            _label(str(current.get("name") or "Весь датасет"), size="12px", weight=850)
-                            if selected_folder:
-                                _label(selected_folder, size="10.5px", color="var(--dim)").classes("sov-composition-file-path")
-                    _label(_folder_summary(selected_folder or "Корень датасета", files), size="11.5px").classes(
-                        "sov-composition-folder-description"
-                    )
+                    if not file_data:
+                        with ui.row().classes("items-center w-full sov-composition-folder-context"):
+                            with ui.element("div").classes("sov-composition-folder-icon"):
+                                ui.icon("o_folder_open")
+                            with ui.column().classes("gap-0").style("min-width:0;flex:1;"):
+                                _label(str(current.get("name") or "Весь датасет"), size="12px", weight=850)
+                                if selected_folder:
+                                    _label(selected_folder, size="10.5px", color="var(--dim)").classes("sov-composition-file-path")
+                        _label(_folder_summary(selected_folder or "Корень датасета", files), size="11.5px").classes(
+                            "sov-composition-folder-description"
+                        )
 
     def _render_dataset_kind_control() -> None:
         with ui.element("div").classes("sov-list-overview").style(
@@ -2153,7 +2154,7 @@ def build_documents() -> None:
             with ui.column().classes("h-full no-wrap sov-docs-files-panel"):
                 with ui.row().classes("items-center w-full sov-docs-panel-title"):
                     ui.icon("o_folder_copy")
-                    _label("Файлы", size="12px", color="var(--dim)", weight=900)
+                    _label("Файлы и папки", size="12px", color="var(--dim)", weight=900)
                 document_filter = ui.input(placeholder="Название файла…").props("outlined clearable").classes("sov-docs-filter")
                 document_filter.on("update:model-value", lambda e: state.__setitem__("document_filter", str(e.args or "")))
                 document_filter.on("keydown.enter", lambda _e: _schedule(_load_documents()))

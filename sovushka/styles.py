@@ -1912,8 +1912,7 @@ body, .nicegui-content {
   min-height: 28px;
   gap: 7px;
   padding-inline: 4px;
-  letter-spacing: .08em;
-  text-transform: uppercase;
+  letter-spacing: .01em;
 }
 .sov-docs-panel-title .q-icon { color: var(--accent); font-size: 18px; }
 .sov-docs-filter { width: 100%; }
@@ -2112,8 +2111,8 @@ body, .nicegui-content {
 }
 .sov-composition-browser {
   display: grid;
-  grid-template-columns: minmax(280px, 1.15fr) minmax(260px, .85fr);
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
   align-items: start;
 }
 .sov-composition-navigation,
@@ -2122,14 +2121,13 @@ body, .nicegui-content {
   gap: 10px !important;
 }
 .sov-composition-inspector {
-  position: sticky;
-  top: 108px;
-  max-height: 620px;
-  overflow: auto;
-  padding: 10px;
-  border-radius: 16px;
-  background: color-mix(in srgb, var(--bg) 78%, var(--bg-panel));
-  box-shadow: 0 0 0 1px rgba(138,162,184,.11), 0 10px 30px rgba(3,10,18,.045);
+  position: static;
+  max-height: none;
+  overflow: visible;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 .sov-composition-inspector-head { gap: 8px; }
 .sov-composition-folder-description {
