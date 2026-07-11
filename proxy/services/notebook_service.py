@@ -503,6 +503,26 @@ def build_smeta_norm_rag_notebook() -> dict[str, Any]:
             }
         )
 
+    available_keys = {
+        str(item["collection"])
+        for item in collections
+        if item.get("status") == "available"
+    }
+    resolved_routes = []
+    for route in _SMETA_DOMAIN_ROUTES:
+        item = dict(route)
+        route_keys = [str(key) for key in route.get("keys") or []]
+        item["available_keys"] = [key for key in route_keys if key in available_keys]
+        item["missing_keys"] = [key for key in route_keys if key not in available_keys]
+        if not item["available_keys"]:
+            item["status"] = "unavailable"
+        elif item["missing_keys"]:
+            item["status"] = "partial"
+        else:
+            item["status"] = "available"
+        resolved_routes.append(item)
+
+    required_keys = {str(key) for route in _SMETA_DOMAIN_ROUTES for key in route.get("keys") or []}
     notebook = {
         "schema": NOTEBOOK_SCHEMA,
         "kind": "service_source_notebook",
@@ -526,7 +546,13 @@ def build_smeta_norm_rag_notebook() -> dict[str, Any]:
         },
         "norm_store": payload,
         "source_layers": _SMETA_SOURCE_LAYERS,
-        "domain_routes": _SMETA_DOMAIN_ROUTES,
+        "availability": {
+            "status": "complete" if required_keys <= available_keys else "partial",
+            "available_collections": sorted(available_keys),
+            "missing_route_collections": sorted(required_keys - available_keys),
+            "rule": "available означает наличие реальных карточек в активном norm store; маршрут сам по себе доступность не доказывает",
+        },
+        "domain_routes": resolved_routes,
         "collections": collections,
         "updated_at": time.time(),
     }
@@ -576,8 +602,11 @@ def smeta_norm_rag_prompt_excerpt(notebook: dict[str, Any] | None = None) -> str
     ) + ".")
     lines.append("Маршруты по разделам:")
     for route in (nb.get("domain_routes") or [])[:8]:
+        available_keys = route.get("available_keys") or []
+        missing_keys = route.get("missing_keys") or []
         lines.append(
-            f"- {route.get('domain')}: искать в {', '.join(route.get('keys') or [])}; "
+            f"- {route.get('domain')}: реально доступны {', '.join(available_keys) or 'нет'}; "
+            f"отсутствуют {', '.join(missing_keys) or 'нет'}; "
             f"{route.get('route')}; осторожно: {route.get('caution')}"
         )
     available = [c for c in (nb.get("collections") or []) if c.get("status") == "available"]

@@ -75,12 +75,15 @@ def _resource_price(
     return None, "missing"
 
 
-def _resolve_nr_sp_for_position(position: dict[str, Any]) -> tuple[float, float]:
+def _resolve_nr_sp_for_position(position: dict[str, Any]) -> tuple[float, float, dict[str, Any]]:
     """НР/СП from explicit fields, otherwise from norm code/name."""
     explicit_nr = position.get("nr_pct")
     explicit_sp = position.get("sp_pct")
     if explicit_nr not in (None, "") or explicit_sp not in (None, ""):
-        return _f(explicit_nr), _f(explicit_sp)
+        return _f(explicit_nr), _f(explicit_sp), {
+            "status": "explicit",
+            "basis": position.get("nr_sp_basis") or "",
+        }
 
     from proxy.services.gesn_service import get_norm
     from proxy.services.nr_sp_service import resolve as resolve_nr_sp
@@ -88,10 +91,14 @@ def _resolve_nr_sp_for_position(position: dict[str, Any]) -> tuple[float, float]
     norm = get_norm(position.get("code", "")) if position.get("code") else None
     code = str(position.get("code") or (norm or {}).get("code") or "").strip()
     name = str(position.get("name") or position.get("work") or "").strip()
-    rs = resolve_nr_sp(name, code=code)
+    rs = resolve_nr_sp(name, code=code, rule_id=str(position.get("nr_sp_rule_id") or "") or None)
     if rs.get("default") and norm:
-        rs = resolve_nr_sp(str(norm.get("name") or ""), code=code)
-    return _f(rs.get("nr_pct")), _f(rs.get("sp_pct"))
+        rs = resolve_nr_sp(
+            str(norm.get("name") or ""),
+            code=code,
+            rule_id=str(position.get("nr_sp_rule_id") or "") or None,
+        )
+    return _f(rs.get("nr_pct")), _f(rs.get("sp_pct")), rs
 
 
 def _price_requirement(res: dict[str, Any]) -> dict[str, Any]:
@@ -169,6 +176,10 @@ def compute_position(
     k_em: float = 1.0,
 ) -> dict[str, Any]:
     """Одна позиция: ресурсы → цены → ОЗП/ЭМ/ЗПМ/М → стеснённость → НР/СП → Всего."""
+    if pricebook is None and position.get("code") and not position.get("resources"):
+        # Code-only calculation is a user-facing entrypoint too; keep it on
+        # the same manifest-default region/period as assemble/core.
+        pricebook = _resolve_book(None)
     kac_map = kac_map or {}
     ozp = zpm = machine_only = mat = 0.0
     priced: list[dict[str, Any]] = []
@@ -177,15 +188,27 @@ def compute_position(
 
     # Норма ГЭСН → ресурсы: если ресурсы не заданы, но есть код — разворачиваем по норме.
     resources = position.get("resources") or []
+    norm_source_integrity: dict[str, Any] = {}
     if not resources and position.get("code"):
         from proxy.services import gesn_service
 
+        norm = gesn_service.get_norm(position["code"], strict_family=True)
+        if norm and str(norm.get("_source_kind") or "") == "structured_sqlite":
+            from proxy.smeta_core.integrity import normative_base_integrity
+
+            norm_source_integrity = normative_base_integrity(base_path=str(norm.get("_source_path") or ""))
+            if not norm_source_integrity.get("trusted_for_pricing"):
+                flags.append("нормативная база в карантине: semantic integrity gate не пройден")
         expanded = gesn_service.expand_position(position["code"], _f(position.get("qty")))
         if expanded is None:
             flags.append(f"норма ГЭСН не найдена: {position.get('code')}")
         else:
             resources = expanded
-    resources = _split_machinist_aggregates([dict(r) for r in resources])
+    resources = [dict(r) for r in resources]
+    resources, fsem_trace = fsem.enrich_machinists(resources, quantity_field="qty")
+    if fsem_trace.get("status") == "unresolved":
+        details = list(fsem_trace.get("reasons") or fsem_trace.get("missing_machine_codes") or [])
+        flags.append("ФСЭМ не смог детализировать ОТм: " + "; ".join(str(item) for item in details))
 
     for res in resources:
         kind = str(res.get("kind") or "")
@@ -217,7 +240,9 @@ def compute_position(
         })
 
     em = round(machine_only + zpm, 2)
-    nr_pct, sp_pct = _resolve_nr_sp_for_position(position)
+    nr_pct, sp_pct, nr_sp_trace = _resolve_nr_sp_for_position(position)
+    if not str(nr_sp_trace.get("status") or "").startswith("resolved") and nr_sp_trace.get("status") != "explicit":
+        flags.append("НР/СП не разрешены по виду работ: нужен нормативный источник/явный выбор")
     pos_in = {
         "ozp": round(ozp, 2), "em": em, "zpm": round(zpm, 2), "mat": round(mat, 2),
         "nr_pct": nr_pct, "sp_pct": sp_pct,
@@ -238,6 +263,9 @@ def compute_position(
         "uplift": res["uplift"],
         "flags": flags,
         "price_requirements": price_requirements,
+        "nr_sp_trace": nr_sp_trace,
+        "norm_source_integrity": norm_source_integrity,
+        "fsem_trace": fsem_trace,
     }
 
 
@@ -396,6 +424,11 @@ def assemble(
     total = round(sum(c["total"] for c in computed), 2)
     flags = [f for c in computed for f in c["flags"]]
     price_requirements = [req for c in computed for req in c.get("price_requirements", [])]
+    unsafe_source = any(
+        item.get("norm_source_integrity")
+        and not item["norm_source_integrity"].get("trusted_for_pricing")
+        for item in computed
+    )
     return {
         "k_ozp": k_ozp, "k_em": k_em, "condition": condition,
         "positions": computed,
@@ -408,5 +441,8 @@ def assemble(
             "flags": flags,
             "price_requirements": price_requirements,
             "needs_price": len(price_requirements),
+            "result_status": (
+                "unsafe_source" if unsafe_source else "priced_partial" if flags else "priced_final"
+            ),
         },
     }

@@ -125,7 +125,7 @@ def test_smoke_lsr_with_scope(tmp_path):
     ds = _fixture(tmp_path)
     r = u.run_unified_construction_harness("собери предварительную ЛСР по Ф9",
                                            dataset_ids=[ds], storage_root=tmp_path)
-    assert r.total_status == "complete" and r.final_total is not None
+    assert r.total_status == "blocked" and r.final_total is None
 
 
 # ── регрессии ────────────────────────────────────────────────────────────────────────────
@@ -142,7 +142,7 @@ def test_v06_resource_real_workbook_still_validates():
     assert rc.validate_real_workbook()["matches"] is True
 
 def test_v03_unit_gate_still_passes():
-    assert ch.lsr_assemble([{"code": "06-02-001-01", "work": "плита", "unit": "м3", "qty": 720}])["asm_positions"][0]["qty"] == 7.2
+    assert ch.lsr_assemble([{"code": "ГЭСН12-01-034-02", "work": "обрешётка", "unit": "м2", "qty": 720}])["asm_positions"][0]["qty"] == 7.2
 
 def test_resource_grand_complete_via_chat():
     r = u.run_unified_construction_harness("проверь пример обсчёта")

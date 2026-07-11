@@ -225,40 +225,6 @@ def get_dataset_state() -> DatasetRouterState:
     return _state
 
 
-def _sparse_enabled() -> bool:
-    return os.getenv("RAG_SPARSE_ENABLED", "false").strip().lower() in _TRUE_ENV_VALUES
-
-
-def _sparse_collection_name() -> str:
-    return os.getenv("RAG_SPARSE_COLLECTION", "").strip() or f"{rag_collection_name()}_sparse"
-
-
-async def _sparse_sidecar_exists(client: httpx.AsyncClient, qdrant_url: str, collection_name: str) -> bool:
-    if not _sparse_enabled():
-        return False
-    response = await client.get(f"{qdrant_url}/collections/{collection_name}")
-    if response.status_code == 404:
-        return False
-    response.raise_for_status()
-    return True
-
-
-async def _delete_sparse_points_by_filter(
-    client: httpx.AsyncClient,
-    qdrant_url: str,
-    filter_payload: dict[str, Any],
-) -> bool:
-    sparse_collection = _sparse_collection_name()
-    if not await _sparse_sidecar_exists(client, qdrant_url, sparse_collection):
-        return False
-    response = await client.post(
-        f"{qdrant_url}/collections/{sparse_collection}/points/delete",
-        json={"filter": filter_payload},
-    )
-    response.raise_for_status()
-    return True
-
-
 def _chunk_payload(chunk: Any, *, rank: int, max_chars: int, expanded_chunk: Any | None = None) -> dict[str, Any]:
     meta = dict(getattr(chunk, "meta", {}) or {})
     content = str(getattr(chunk, "content", "") or "")
@@ -831,12 +797,6 @@ async def delete_dataset(dataset_id: str, _admin=Depends(require_root_admin)):
         errors.append(f"Qdrant: {e}")
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            await _delete_sparse_points_by_filter(client, qdrant_url, dataset_filter)
-    except Exception as e:
-        errors.append(f"Qdrant sparse: {e}")
-
-    try:
         from proxy.services.lexical_index_service import LexicalIndex
 
         await asyncio.to_thread(
@@ -884,12 +844,6 @@ async def delete_all_datasets(_admin=Depends(require_root_admin)):
             await client.delete(f"{qdrant_url}/collections/{rag_collection_name()}")
     except Exception as e:
         errors.append(f"Qdrant delete: {e}")
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            await _delete_sparse_points_by_filter(client, qdrant_url, {"must": []})
-    except Exception as e:
-        errors.append(f"Qdrant sparse delete: {e}")
 
     try:
         with sqlite3.connect(rag_meta_db_path()) as conn:
@@ -2243,11 +2197,10 @@ def _mark_external_missing(dataset_id: str, rows: list[dict[str, Any]]) -> int:
 
 async def _delete_index_for_files(state: DatasetRouterState, dataset_id: str, file_names: list[str]) -> dict[str, Any]:
     if not file_names:
-        return {"files": 0, "qdrant_deleted": 0, "sparse_deleted": 0, "lexical_deleted": 0, "errors": []}
+        return {"files": 0, "qdrant_deleted": 0, "lexical_deleted": 0, "errors": []}
     qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
     errors: list[str] = []
     qdrant_deleted = 0
-    sparse_deleted = 0
     lexical_deleted = 0
     try:
         from proxy.services.lexical_index_service import LexicalIndex
@@ -2273,11 +2226,6 @@ async def _delete_index_for_files(state: DatasetRouterState, dataset_id: str, fi
             except Exception as error:
                 errors.append(f"Qdrant {file_name}: {error}")
             try:
-                if await _delete_sparse_points_by_filter(client, qdrant_url, file_filter):
-                    sparse_deleted += 1
-            except Exception as error:
-                errors.append(f"Qdrant sparse {file_name}: {error}")
-            try:
                 if lexical is not None:
                     lexical_deleted += int(
                         await asyncio.to_thread(
@@ -2298,7 +2246,6 @@ async def _delete_index_for_files(state: DatasetRouterState, dataset_id: str, fi
     return {
         "files": len(file_names),
         "qdrant_deleted": qdrant_deleted,
-        "sparse_deleted": sparse_deleted,
         "lexical_deleted": lexical_deleted,
         "errors": errors,
     }
@@ -3133,6 +3080,7 @@ async def attach_chat_file(
     temp_path = await save_upload_tmp(file, allowed_suffixes=rag_upload_suffixes(), max_bytes=max_upload_bytes())
 
     if mode == "read":
+        attach_id = f"read_{uuid4().hex[:12]}"
         try:
             structured = await asyncio.to_thread(
                 _format_tabular_attachment_context,
@@ -3156,6 +3104,15 @@ async def attach_chat_file(
                     ) from error
                 text = (text or "").strip()
                 truncated = len(text) > _READ_ATTACH_MAX_CHARS
+            from proxy.services.chat_attachment_service import cleanup_expired, preserve_read_attachment
+
+            await asyncio.to_thread(cleanup_expired)
+            await asyncio.to_thread(
+                preserve_read_attachment,
+                temp_path,
+                attachment_id=attach_id,
+                original_name=original_name,
+            )
         finally:
             temp_path.unlink(missing_ok=True)
         text = (text or "").strip()
@@ -3166,7 +3123,7 @@ async def attach_chat_file(
                 "Для таблиц попробуй режим быстрой сверки, для сканов — индексацию/OCR.",
             )
         return {
-            "attachment_id": f"read_{uuid4().hex[:12]}",
+            "attachment_id": attach_id,
             "mode": "read",
             "name": original_name,
             "chars": len(text),

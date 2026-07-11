@@ -71,7 +71,6 @@ from proxy.services.query_router import route_query
 from proxy.services.retrieval_service import resolve_dataset_ids, retrieve_chat_chunks
 from proxy.services.runtime_admission import count_active_jobs, evaluate_chat_admission, generation_semaphore
 from proxy.services.runtime_dispatcher import RuntimeDispatcher
-from proxy.services.skill_snippet_registry import render_snippets, select_skill_snippets
 from proxy.services.smeta_artifact_service import (
     build_checked_rim_form_from_visible_rows,
     build_norm_candidate_artifact_from_lookup,
@@ -80,6 +79,7 @@ from proxy.services.smeta_artifact_service import (
     compact_smeta_answer,
     persist_smeta_artifact_exports,
 )
+from proxy.services.smeta_user_message_service import format_document_lsr_message
 from proxy.services.saferag_service import (
     SAFE_FALLBACK,
     build_context,
@@ -136,6 +136,7 @@ class ChatRequest(BaseModel):
     output_directive: Optional[str] = None  # формат/стиль ответа — ТОЛЬКО в генерацию (не в роутинг/заметки/ретрив)
     mode: Optional[str] = None  # явный РЕЖИМ из UI («smeta» → форс сметного пути минуя роутер/RAG)
     attachment_context: Optional[str] = None  # текст файла из скрепки (read-mode), без индексации
+    attachment_id: Optional[str] = None  # server-owned read_<id>; клиентский путь не принимается
     target_file: Optional[str] = None  # точный file_name из MetaDB documents (для клика по реестру/узкого RAG)
 
     @field_validator("question")
@@ -161,6 +162,16 @@ class ChatRequest(BaseModel):
         if len(v) > 20000:
             raise ValueError(f"Контекст вложения слишком длинный ({len(v)} симв., макс. 20000)")
         return v
+
+    @field_validator("attachment_id")
+    @classmethod
+    def attachment_id_limits(cls, v):
+        if v is None:
+            return None
+        value = v.strip().lower()
+        if not re.fullmatch(r"read_[0-9a-f]{12}", value):
+            raise ValueError("Некорректный идентификатор вложения")
+        return value
 
     @field_validator("target_file")
     @classmethod
@@ -329,7 +340,7 @@ def _is_local_llm_url(base_url: str) -> bool:
 def _model_needs_completion_tokens(model: str) -> bool:
     """GPT-5.x и reasoning o-серия (o1/o3/o4) требуют `max_completion_tokens`
     вместо `max_tokens` — иначе OpenAI/proxyapi отвечает 400."""
-    m = (model or "").strip().lower()
+    m = (model or "").strip().lower().rsplit("/", 1)[-1]
     return m.startswith("gpt-5") or (len(m) >= 2 and m[0] == "o" and m[1].isdigit())
 
 
@@ -397,9 +408,47 @@ def _smeta_model_runtime(env_name: str) -> LlmRuntime:
         os.getenv(env_name, "").strip().lower()
         or os.getenv("LES_SMETA_PROVIDER", "").strip().lower()
     )
+    if not provider and env_name == "LES_SMETA_DOCUMENT_PROVIDER" and _env_bool("LES_CLOUD_CONSENT", False):
+        configured = _llm_runtime()
+        if is_cloud_provider(configured.provider) and configured.api_key:
+            document_model = os.getenv("LES_SMETA_DOCUMENT_MODEL", "").strip()
+            if document_model:
+                return LlmRuntime(
+                    configured.provider,
+                    configured.base_url,
+                    configured.chat_url,
+                    document_model,
+                    configured.api_key,
+                    configured.supports_validation,
+                )
+            return configured
     if provider in {"", "local", "mlx"}:
-        return _mlx_runtime()
-    return _llm_runtime()
+        runtime = _mlx_runtime()
+        if env_name == "LES_SMETA_DOCUMENT_PROVIDER":
+            document_model = os.getenv("LES_SMETA_DOCUMENT_MODEL", "").strip()
+            if document_model.startswith("mlx-") or document_model.startswith("mlx/"):
+                return LlmRuntime(
+                    runtime.provider,
+                    runtime.base_url,
+                    runtime.chat_url,
+                    document_model,
+                    runtime.api_key,
+                    runtime.supports_validation,
+                )
+        return runtime
+    runtime = _llm_runtime()
+    if env_name == "LES_SMETA_DOCUMENT_PROVIDER":
+        document_model = os.getenv("LES_SMETA_DOCUMENT_MODEL", "").strip()
+        if document_model:
+            return LlmRuntime(
+                runtime.provider,
+                runtime.base_url,
+                runtime.chat_url,
+                document_model,
+                runtime.api_key,
+                runtime.supports_validation,
+            )
+    return runtime
 
 
 def cloud_fallback_models(runtime: LlmRuntime) -> list[str]:
@@ -845,6 +894,18 @@ def _assistant_text(message: dict) -> str:
     content = _strip_think(str(message.get("content") or ""))
     if content:
         return content
+    for call in message.get("tool_calls") or []:
+        if not isinstance(call, dict):
+            continue
+        function = call.get("function") or {}
+        arguments = function.get("arguments") if isinstance(function, dict) else ""
+        if isinstance(arguments, dict):
+            return json.dumps(arguments, ensure_ascii=False)
+        if str(arguments or "").strip():
+            return str(arguments).strip()
+    legacy_call = message.get("function_call") or {}
+    if isinstance(legacy_call, dict) and str(legacy_call.get("arguments") or "").strip():
+        return str(legacy_call["arguments"]).strip()
     reasoning = message.get("reasoning") or message.get("reasoning_content") or ""
     return _strip_think(str(reasoning))
 
@@ -1628,7 +1689,7 @@ def _harness_complete(messages: list[dict]) -> str:
     timeout_s = float(os.getenv("LES_ESTIMATE_HARNESS_TIMEOUT_SEC", "35"))
     body = {
         "model": runtime.model,
-        "messages": messages,
+        "messages": _mlx_prefill_no_think_messages(messages, runtime.provider),
         "temperature": 0.0,
         "max_tokens": _estimate_harness_plan_tokens(messages),
     }
@@ -1642,6 +1703,66 @@ def _harness_complete(messages: list[dict]) -> str:
     except Exception as e:  # noqa: BLE001 — петля переживёт пустой ответ (учтёт как «нет JSON»)
         logger.warning("[HARNESS] llm call failed: %s", e)
         return ""
+
+
+def _smeta_document_complete(messages: list[dict]) -> str:
+    """Local-by-default model call for the zero-state document workflow."""
+    runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
+    body = {
+        "model": runtime.model,
+        "messages": _mlx_prefill_no_think_messages(messages, runtime.provider),
+        "temperature": 0.0,
+        "max_tokens": _env_int(
+            "LES_SMETA_DOCUMENT_MAX_TOKENS",
+            3200 if is_cloud_provider(runtime.provider) else 900,
+        ),
+    }
+    body = _cloud_body_for_model(body, runtime.model, runtime.provider)
+    if is_cloud_provider(runtime.provider) and "glm" in str(runtime.model or "").casefold():
+        body["thinking"] = {"type": "disabled"}
+    headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
+    try:
+        with httpx.Client(timeout=_env_float("LES_SMETA_DOCUMENT_TIMEOUT_SEC", 180.0)) as client:
+            response = client.post(runtime.chat_url, headers=headers, json=body)
+            if response.status_code == 400 and "thinking" in body:
+                fallback_body = dict(body)
+                fallback_body.pop("thinking", None)
+                response = client.post(runtime.chat_url, headers=headers, json=fallback_body)
+            response.raise_for_status()
+            message = response.json().get("choices", [{}])[0].get("message", {})
+            return _assistant_text(message)
+    except Exception as error:  # one failed model step must remain visible in the final trace
+        logger.warning("[SMETA_DOCUMENT] model call failed: %s", error)
+        return ""
+
+
+def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[str, Any]:
+    """Native tool-call exchange for one continuous smeta conversation."""
+    runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
+    body = {
+        "model": runtime.model,
+        "messages": _mlx_prefill_no_think_messages(messages, runtime.provider),
+        "tools": tools,
+        "temperature": 0.0,
+        "max_tokens": _env_int("LES_SMETA_DOCUMENT_MAX_TOKENS", 3200),
+    }
+    body = _cloud_body_for_model(body, runtime.model, runtime.provider)
+    if is_cloud_provider(runtime.provider) and "glm" in str(runtime.model or "").casefold():
+        body["thinking"] = {"type": "disabled"}
+    headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
+    try:
+        with httpx.Client(timeout=_env_float("LES_SMETA_DOCUMENT_TIMEOUT_SEC", 180.0)) as client:
+            response = client.post(runtime.chat_url, headers=headers, json=body)
+            if response.status_code == 400 and "thinking" in body:
+                fallback_body = dict(body)
+                fallback_body.pop("thinking", None)
+                response = client.post(runtime.chat_url, headers=headers, json=fallback_body)
+            response.raise_for_status()
+            message = response.json().get("choices", [{}])[0].get("message", {})
+            return message if isinstance(message, dict) else {}
+    except Exception as error:
+        logger.warning("[SMETA_DOCUMENT] native agent exchange failed: %s", error)
+        return {}
 
 
 def _estimate_harness_plan_tokens(messages: list[dict]) -> int:
@@ -2123,142 +2244,11 @@ async def _smeta_direct_rag_context(
 
 def _smeta_direct_light_system_prompt() -> str:
     return (
-        "Ты — опытный инженер-сметчик ЛЕС. Работай как сметчик, а не как чат-бот: "
-        "по сырому ТЗ/ВОР/спецификации сначала выдавай этап «ВОР -> кандидаты ГЭСН»; "
-        "ЛСР с рублями — следующим ходом по candidates модели или загруженной таблице ВОР-ГЭСН. "
-        "Для методики, теста, таблицы кандидатов или «без расчёта/без рублей» не делай ЛСР и нулевые деньги: дай ВОР, "
-        "нормируемую ВОР, кандидаты норм и добор. Не сообщай тип маршрута и память. "
-        "Спецификация не смета: сначала мост «спецификация → ВОР». Код только считает; работы, нормы и применимость выбираешь ты. "
-        "Деньги без источника, trace или явного сценарного допущения не факт. В ЛСР нет данных -> ставь 0.00 "
-        "и примечание/добор. Пустые ценовые колонки в спецификации не запрет: строй ВОР и дай ЛСР с нулями. "
-        "По сырому измеримому исходнику сначала дай candidates ГЭСН; "
-        "деньги считаются следующим сообщением по тем candidates, что есть; missing нормы/цены остаются 0.00 с примечанием. "
-        "Один и тот же исходник должен давать один и тот же базовый сценарий: не меняй ставки, нормы и группировку без нового источника. "
-        "Для подтверждённой сметной таблицы дай Markdown-таблицу «ЛСР-черновик» граф 1-12; "
-        "В ЛСР обязательна графа «Обоснование»: выбранная моделью норма, аналог/раздел, "
-        "pricebook/КП/КАЦ или допущение. "
-        "Для pricing-stage сразу заполни ЛСР граф 1-12: "
-        "№ п/п; Обоснование; Наименование работ и затрат; Ед.; Кол-во; коэф.; Базис; Индекс; Текущий; Всего. Строка ВСЕГО по смете обязательна. "
-        "Нет ставки/индекса/цены ресурса -> 0.00; ВСЕГО тоже 0.00, причина после ЛСР. "
-        "Способ выдачи сметы — ЛСР-форма в ответе и артефакте/XLSX. Указывай сборник, раздел и выбранную норму/аналог; пиши полный шифр, если выбрал его. "
-        "не пиши одиноко «ГЭСНм» или «ГЭСН»: нужен сборник/раздел/таблица или полный код. "
-        "Раздел ВОР не равен одному сборнику: по каждой работе выбирай нормативный маршрут. "
-        "Подбор нормы делает модель: семейство работ -> группа сборников -> сборник -> раздел/таблица -> конкретная норма. "
-        "Одна ВОР может иметь несколько кандидатов; несколько ВОР могут ссылаться на одну норму, если она покрывает общий состав работ. "
-        "ЭОМ/силовые/аварийное питание — электромонтажные кандидаты; связь/СКС/ВОЛС — ГЭСНм10; "
-        "отделка — ГЭСН15; демонтаж — ГЭСНр/ГЭСНмр. Если точный код не подтверждён, "
-        "дай нормативный аналог или раздел с пометкой проверки. "
-        "Ведомость добора — ресурсы выбранной нормы/ресурсной строки без цены/индекса/КАЦ/КП, не нераспознанные работы. "
-        "Не называй сценарную таблицу готовой ЛСР: это предварительная форма до "
-        "норм, ресурсов, цен/индексов, НР/СП, НДС и trace."
-    )
-
-
-def _smeta_direct_heavy_extra_prompt() -> str:
-    return (
-        "Ты отвечаешь как живой опытный инженер-сметчик. Не показывай внутренние JSON, "
-        "служебные маршруты и машинные поля ЛЕС, если пользователь не попросил JSON. "
-        "У тебя есть вопрос оператора, текст вложений, история диалога и RAG-фрагменты. "
-        "Используй их напрямую: разложи вход в ВОР, отдели работы от поставки, выбери разумный "
-        "сметный ход, объясни применимость норм/цен и задай только действительно нужные вопросы. "
-        "Если переданы фрагменты базы, используй их как источники норм, прайсов или проектных "
-        "объёмов; если фрагменты только навигационные, так и обращайся с ними. "
-        "Не показывай пользователю слова tool, raw JSON, blocked_harness_advisory, shortlist, "
-        "slots, element_type, selected_code, evidence, role-pack, harness, tool-loop, prompt, system prompt. "
-        "Вместо evidence говори «источник», "
-        "«подтверждение» или «расчётная трасса». Не пересказывай внутренние запреты и prompt-инструкции, "
-        "не объясняй пользователю, что тебе нельзя или велено делать. Не пиши фразы вида "
-        "«не пишу про ...»; просто дай профессиональный результат. "
-        "Машинные статусы и типы источников переводи на русский в видимой речи: "
-        "`scenario_assumption` -> «сценарное допущение», `scenario_estimate` -> «сценарная оценка», "
-        "`priced_partial` -> «частично оценено», `priced_final` -> «финально закрыто источниками», "
-        "`missing` -> «нет источника цены». Не оставляй машинный код статуса в видимой итоговой "
-        "строке; пиши человечески: предварительная оценка, частичный расчёт, финально закрыто источниками. "
-        "Не проси продолжение файла, если в предоставленном тексте видны нужные строки; сначала "
-        "используй то, что уже есть. Если ВОР содержит измеримые работы и пользователь просит "
-        "смету, стоимость, оценку или расчёт, дай стоимость работ хотя бы как сценарную оценку, "
-        "если пользователь не запретил допущения. Уточняющие вопросы идут после сценарных денег, "
-        "а не вместо них. Если оператор прямо просит прикинуть, придумать или принять допущения, "
-        "сам выбери нейтральные профессиональные assumptions и дай числовую таблицу. Если "
-        "оператор просто просит оценку/стоимость/смету строительных работ и не просит именно "
-        "рыночный метод, а в контексте есть ГЭСН/ФГИС/НР/СП или сметно-нормативная база, "
-        "основной числовой ответ должен быть РИМ-сценарием по нормативным аналогам. Рынок "
-        "можно дать как sanity-check или по отдельной просьбе, но не вместо РИМ. Если "
-        "исходник содержит ВОР/спецификацию/таблицу с измеримыми строками, стоимость работ "
-        "нужно дать построчно по ВОР: раздел, работа, количество, единица, ставка/источник, "
-        "статус источника, сумма. Диапазон допустим только как low/base/high ставка внутри строки или как итог после "
-        "построчных сумм. Не заменяй построчную ВОР одной крупной вилкой. "
-        "Повтор одного и того же исходника должен сохранять базовый сценарий: не меняй "
-        "ставки, норм-кандидаты и порядок строк без нового источника, расчётной трассы или "
-        "прямой команды оператора. Для сценарной оценки выбирай одну базовую ставку с "
-        "понятным допуском, а не новую вилку каждый раз. "
-        "Если пользователь прямо просит «сделай ВОР», ВОР должна быть Markdown-таблицей с колонками "
-        "№, Раздел, Работа, Ед., Кол-во, Основание, Статус. Список, подзаголовки 1.1/1.2 "
-        "и пересказ состава спецификации не заменяют ВОР. "
-        "Если пользователь прямо просит «дай оценку стоимости работ», стоимость должна быть "
-        "Markdown-таблицей с колонками №, Работа, Кол-во, Ед., Ставка/допущение, Сумма, Комментарий. "
-        "Если пользователь прямо просит «ЛСР», «сделай ЛСР» или «оформи в ЛСР», текущий ответ "
-        "обязан содержать заполненный шаблон ЛСР граф 1-12, а не обещание оформить её потом. "
-        "Если пользователь просит порядок, аудит подхода, таблицу кандидатов или пишет «без расчёта»/«без рублей», "
-        "не подменяй это ЛСР: покажи workflow, ВОР/нормируемую ВОР, кандидаты норм и добор без денежных граф. "
-        "Графы: № п/п; Обоснование; Наименование работ и затрат; Ед. изм.; Кол-во на ед.; "
-        "коэф.; Кол-во всего; Базис на ед., руб.; Индекс; Текущий на ед., руб.; коэф.; "
-        "Текущий всего, руб. Строка ВСЕГО по смете обязательна. Сохраняй уже принятые строки, ставки и итоги; не сокращай 19 строк до 12 и не "
-        "меняй итог без нового источника, команды или расчётной проверки. "
-        "Способ выдачи сметы для оператора — ЛСР-форма в артефакте/XLSX; таблицы ВОР/стоимости "
-        "остаются исходной расшифровкой, а не заменой ЛСР-выдачи. "
-        "Если в спецификации пустые колонки цены за единицу, итого материалов или итого работ, "
-        "не отвечай «оценку дать нельзя». Это означает, что цены поставки missing; работы "
-        "по измеримым строкам нужно оценить отдельно по ВОР/РИМ-сценарию или частично. "
-        "Если оператор задал строгие разделы сметы, сохрани именно их: не заменяй демонтаж "
-        "упаковкой или логистикой, не добавляй новый платный раздел без команды оператора. "
-        "Спорные и нулевые этапы вынеси отдельно как исключения или решение к подтверждению. "
-        "Если история диалога уже закрепила структуру разделов, она приоритетнее свежего "
-        "перечня этапов из ТЗ; не переписывай принятую структуру заново. "
-        "Упаковка, тара, такелаж и оснастка не становятся отдельными платными разделами, если "
-        "оператор не включил их в структуру; покажи их как пограничный вопрос или учти внутри "
-        "соответствующей операции только при явном основании. "
-        "Если в служебном контексте ЛЕС указано, что ГЭСН/ФГИС/ценовые книги доступны со статусом "
-        "ok, не пиши, что пользователь их не дал. Пиши точнее: база есть, но для рублёвого итога "
-        "нужно выбрать норму/ресурсы/ценовую строку или КАЦ. "
-        "Не называй сценарную таблицу готовой ЛСР по форме Минстроя: это предварительная "
-        "форма ЛСР/стоимостная ведомость до расчётной трассы. Готовая ЛСР возможна только "
-        "после выбранных норм, раскрытых ресурсов, цен/индексов, НР/СП, НДС и trace. "
-        "Не объявляй расхождение массы, объёма или стоимости, если ты не проверил арифметику. "
-        "Если исходник противоречив, покажи расчётную трассу: какие числа сложены, результат, "
-        "с чем сравниваешь и размер расхождения. Не обвиняй итоговую строку автоматически: "
-        "проверь, не является ли она промежуточным итогом, суммой части строк или объёмом без "
-        "отдельного элемента. Если расчётная трасса содержит `source_delta` между исходными "
-        "итогами, обязательно назови это малое расхождение отдельно от крупного расхождения "
-        "состава строк. "
-        "Если конфликт исходных количеств влияет на деньги, сначала дай форму развилки исходных "
-        "объёмов и попроси выбрать вариант; не строй финальный рублёвый итог до выбора. "
-        "Не выдавай итоговые рубли как факт без источника и trace. Но дай сценарную стоимость "
-        "работ, если ВОР измерима и пользователь не запретил допущения. Сценарная оценка не "
-        "является финальной сметой. "
-        "Если исходная ВОР слишком разговорная для прямого подбора ГЭСН, сделай нормируемую ВОР "
-        "и таблицу подбора норм. Одна строка исходной ВОР может раскладываться на несколько "
-        "ГЭСН/ГЭСНм, если это следует из технологии или состава норм. Кандидаты норм показывай "
-        "как кандидаты, не как финальный РИМ. Если пользователь хочет править подбор, предложи "
-        "Excel-таблицу подбора норм: исходная работа, нормируемая работа, сборник/раздел, код "
-        "ГЭСН, измерители, пересчитанный объём, статус применимости, комментарий. Расчёт идёт "
-        "по подтверждённым строкам. "
-        "Если пользователь просит РИМ/ГЭСН, а полная расчётная трасса ещё не закрыта, не заменяй "
-        "РИМ свободной рыночной вилкой. Дай РИМ-сценарий по нормативным аналогам: нормируемая "
-        "операция, сборник/нормативный аналог, объём в измерителе нормы, базовая ставка или "
-        "удельный нормативный ориентир с пометкой допущения, НР/СП/индексы/НДС как явные "
-        "допущения, сумма и допуск. У РИМ-сценария должна быть базовая точка; нельзя давать "
-        "только широкий low-high диапазон без расчётной базы. Размах допуска объясняй "
-        "конкретной причиной: не выбран кран, не закрыт ресурс, не подтверждён коэффициент, "
-        "не выбрана норма или конфликтует объём. Если нормативные данные/ФГИС в контексте "
-        "доступны, пиши, что мешает priced_final, а не что РИМ невозможен. "
-        "Если пользователь просит рыночную и РИМ/ГЭСН оценки, дай одну Markdown-таблицу с колонками: "
-        "Раздел работ, Объём / вариант, РИМ/ГЭСН статус, РИМ/ГЭСН сумма, Рыночный статус, "
-        "Рыночная сумма с НДС, Комментарий. РИМ и рынок не смешивай в один итог. "
-        "Если в истории, вложении или RAG есть прежняя оценка, xlsx-обсчёт, форма развилки исходных объёмов или файл "
-        "со сметной раскладкой, используй его как источник сверки и не пиши, что оценки/файла нет. "
-        "Не начинай ответ с нытья о том, что денег нет: сначала дай ВОР, проверяемую арифметику "
-        "и нормативный маршрут, затем коротко назови ценовые пробелы."
+        "Ты работаешь в сметном модуле ЛЕС. Самостоятельно реши задачу пользователя по переданному "
+        "исходнику, доступным источникам и расчётной трассе. Используй источники и инструменты по "
+        "необходимости; не следуй заранее заданному нормативному маршруту. Профессиональные решения "
+        "принимает модель, код выполняет поиск, проверяет provenance и считает. Не подменяй отсутствующие "
+        "данные выдуманными фактами. Верни непосредственно запрошенный пользователем результат."
     )
 
 
@@ -2296,505 +2286,25 @@ def _smeta_request_needs_lsr_output(text: str) -> bool:
     return asks_lsr_or_money and not no_money
 
 
-def _smeta_direct_has_confirmed_norm_table(text: str) -> bool:
-    """Whether the user supplied a manually checked VOR<->GESN variant for pricing."""
-    low = str(text or "").casefold().replace("ё", "е")
-    has_norm_code = bool(re.search(
-        r"\b(?:гэсн(?:мр|м|п|р)?|фер(?:мр|м|п|р)?|тер(?:мр|м|п|р)?)\s*:?\s*"
-        r"\d{2}[-–]\d{2}[-–]\d{3}[-–]\d{2}\b",
-        low,
-        flags=re.IGNORECASE,
-    ))
-    has_checked_marker = bool(re.search(
-        r"\b(?:проверенн[а-я]*|подтвержденн[а-я]*|подтвержденн[а-я]*|ручн[а-я]*\s+"
-        r"(?:провер[а-я]*|выбран[а-я]*|загруз[а-я]*)|после\s+проверки|вариант\s*\d+|"
-        r"выбранн[а-я]*\s+вариант|таблиц[а-я]*\s+соответстви[а-я]*|вор\s*[-↔<>=]+\s*гэсн|"
-        r"рассчитай\s+по\s+(?:этой|проверенн[а-я]*|загруженн[а-я]*)\s+таблиц[а-я]*)\b",
-        low,
-    ))
-    return has_norm_code and has_checked_marker
-
-
-def _smeta_direct_norm_candidate_stage_required(text: str) -> bool:
-    """Return True only when the user explicitly asks for the candidate stage.
-
-    A raw VOR plus "сделай ЛСР/смету/стоимость" is a pricing request: the
-    estimator may use normative analogs and the calculator returns
-    priced_partial with row-level gaps. Candidate-only is reserved for explicit
-    "кандидаты/этап 1/без денег" turns.
-    """
-    if not _env_bool("LES_SMETA_TZ_STAGED_WORKFLOW_ENABLED", True):
-        return False
-    low = str(text or "").casefold().replace("ё", "е")
-    explicit_model_assumption_bypass = bool(re.search(
-        r"\b(?:прими\s+кандидат[а-я]*\s+модел[а-я]*|без\s+ручн[а-я]*\s+проверки|"
-        r"сразу\s+(?:считай|рассчитай|обсчитай)\s+по\s+допущени[а-я]*)\b",
-        low,
-    ))
-    if explicit_model_assumption_bypass:
-        return False
-    if _smeta_direct_has_confirmed_norm_table(text):
-        return False
-    method_without_calculation = bool(re.search(
-        r"\b(?:без\s+(?:расчет[а-я]*|рубл[а-я]*|стоимост[а-я]*|денег)|"
-        r"порядок|алгоритм|методик[а-я]*|как\s+работа[а-я]*)\b",
-        low,
-    )) and bool(re.search(
-        r"\b(?:порядок|алгоритм|методик[а-я]*|как\s+работа[а-я]*|тест|провер[а-я]*)\b",
-        low,
-    ))
-    if method_without_calculation:
-        return False
-    explicit_candidate_table = bool(re.search(
-        r"\b(?:таблиц[а-я]*\s+кандидат[а-я]*|кандидат[а-я]*\s+гэсн|"
-        r"вор\s*(?:[-→>]+|в|к)\s*кандидат[а-я]*|этап\s*1|"
-        r"(?:добавь|дай|покажи)\s+(?:номер[а-я]*|шифр[а-я]*|код[а-я]*)\s+гэсн)\b",
-        low,
-    ))
-    has_raw_source = bool(re.search(
-        r"\b(?:тз|вор|ведомост[ьяи]|спецификаци[яи]|pdf|пдф|исходн[а-я]*\s+работ[а-я]*|"
-        r"приложенн[а-я]*|составь|сделай|оформи|рассчитай|посчитай|оцени|лср|смет[а-я]*)\b",
-        low,
-    ))
-    if explicit_candidate_table and has_raw_source:
-        return True
-    if not _smeta_request_needs_lsr_output(text):
-        return False
-    return False
-
-
-def _smeta_direct_norm_candidate_stage_context(norm_lookup_trace: dict[str, Any]) -> str:
-    results = norm_lookup_trace.get("results") if isinstance(norm_lookup_trace, dict) else None
-    row_count = len(results) if isinstance(results, list) else 0
-    return (
-        "SMETA TZ STAGE GATE:\n"
-        "Текущий вход является сырым ТЗ/ВОР/спецификацией. По ТЗ это этап 1: "
-        "ВОР -> кандидаты ГЭСН, а не расчёт денег.\n"
-        "Запрещено в этом ответе: считать ЛСР, писать текущие рубли, строку ВСЕГО по смете, "
-        "выбирать один финальный norm_code для расчёта или запускать ресурсный расчёт.\n"
-        "Нужно: дать таблицу доступных кандидатов. Колонки: № ВОР, Исходная работа, "
-        "Ед. ВОР, Кол-во ВОР, Нормируемая работа, Группа сборников, Сборник/раздел, Код ГЭСН, "
-        "Наименование ГЭСН, Ед. ГЭСН, Кол-во в измерителе нормы, Статус применимости, Комментарий. "
-        "Одна строка ВОР может повторяться для нескольких кандидатов; несколько строк ВОР могут "
-        "ссылаться на одну норму, если она покрывает общий состав работ. В конце дай следующий шаг: "
-        "следующим сообщением можно сказать «деньги по ним» — ЛЕС посчитает по доступным candidates; "
-        "чего не хватает, останется 0.00/пусто с примечанием. Excel-правка таблицы опциональна. "
-        f"Количество lookup-групп кандидатов в текущем проходе: {row_count}."
-    )
-
-
-def _smeta_direct_prices_previous_candidates_request(text: str) -> bool:
-    low = str(text or "").casefold().replace("ё", "е")
-    return bool(re.search(
-        r"\b(?:деньг[а-я]*|сумм[а-я]*|цен[а-я]*|лср|смет[а-я]*|рассч[а-я]*|посчит[а-я]*)\b"
-        r"[^.\n]{0,80}\b(?:по\s+ним|по\s+этим\s+кандидат[а-я]*|по\s+кандидат[а-я]*)\b|"
-        r"\bпо\s+(?:ним|этим\s+кандидат[а-я]*|кандидат[а-я]*)\b"
-        r"[^.\n]{0,80}\b(?:деньг[а-я]*|сумм[а-я]*|цен[а-я]*|лср|смет[а-я]*|рассч[а-я]*|посчит[а-я]*)\b",
-        low,
-    ))
-
-
-def _smeta_direct_previous_norm_lookup_trace(session_id: str | None) -> dict[str, Any] | None:
-    try:
-        traces = session_recent_retrieval_traces(session_id or "", max_turns=6)
-    except Exception as err:  # noqa: BLE001
-        logger.warning("[SMETA] previous norm lookup trace read failed: %s", err)
-        return None
-    for trace in reversed(traces):
-        if not isinstance(trace, dict):
-            continue
-        lookup = trace.get("smeta_norm_lookup")
-        if not isinstance(lookup, dict):
-            continue
-        results = lookup.get("results")
-        if isinstance(results, list) and results:
-            reused = dict(lookup)
-            reused["reused_from_session"] = True
-            return reused
-    return None
-
-
-def _smeta_direct_lookup_has_results(norm_lookup_trace: dict[str, Any] | None) -> bool:
-    results = norm_lookup_trace.get("results") if isinstance(norm_lookup_trace, dict) else None
-    return isinstance(results, list) and bool(results)
-
-
-def _smeta_direct_previous_norm_lookup_packet_for_followup(
-    current_question: str,
-    session_id: str | None,
-    *,
-    force: bool = False,
-) -> dict[str, Any] | None:
-    """Reuse the exact candidate table behind "money by them" follow-ups.
-
-    The model still chooses the final norm codes from candidates. This only
-    freezes the candidate set/source rows so repeated pricing turns do not
-    re-slice the original VOR into a different lookup plan.
-    """
-    if not force and not _smeta_direct_prices_previous_candidates_request(current_question):
-        return None
-    previous_lookup_trace = _smeta_direct_previous_norm_lookup_trace(session_id)
-    if not previous_lookup_trace:
-        return None
-    return {
-        "text": _format_smeta_norm_lookup_results_for_model(
-            list(previous_lookup_trace.get("results") or [])
-        ),
-        "trace": previous_lookup_trace,
-    }
-
-
-def _smeta_direct_workflow_decision(
-    current_question: str,
-    harness_question: str,
-    session_id: str | None,
-) -> dict[str, Any]:
-    """Resolve the smeta workflow step without letting code choose norms.
-
-    Literal user commands ("сделай ЛСР/стоимость", "деньги по ним") are route
-    selection, not smeta reasoning. The model still owns norm applicability and
-    the estimate content; this guard only prevents the local selector from
-    spending minutes before an obvious pricing turn.
-    """
-    if not _env_bool("LES_SMETA_MODEL_WORKFLOW_DECISION_ENABLED", True):
-        stage = "norm_candidates" if _smeta_direct_norm_candidate_stage_required(current_question) else "pricing"
-        return {
-            "enabled": False,
-            "stage": stage,
-            "use_previous_candidates": _smeta_direct_prices_previous_candidates_request(current_question),
-            "source": "legacy_disabled",
-        }
-    use_previous_candidates = _smeta_direct_prices_previous_candidates_request(current_question)
-    if (
-        not _smeta_direct_norm_candidate_stage_required(current_question)
-        and (_smeta_request_needs_lsr_output(current_question) or use_previous_candidates)
-    ):
-        return {
-            "enabled": True,
-            "status": "explicit_pricing_route",
-            "stage": "pricing",
-            "use_previous_candidates": use_previous_candidates,
-            "source": "literal_user_request",
-            "reason": "explicit_lsr_or_money_request",
-            "model_owns_workflow": False,
-        }
-    previous_lookup = _smeta_direct_previous_norm_lookup_trace(session_id)
-    runtime = _smeta_model_runtime("LES_SMETA_WORKFLOW_DECISION_PROVIDER")
-    body = {
-        "model": runtime.model,
-        "messages": _mlx_prefill_no_think_messages([
-            {
-                "role": "system",
-                "content": (
-                    "Ты ведущий сметчик и управляешь workflow. Код не должен решать этап по словам. "
-                    "Верни только JSON: {\"stage\":\"norm_candidates|pricing|explanation\","
-                    "\"use_previous_candidates\":true|false,\"reason\":\"...\"}. "
-                    "norm_candidates: пользователь дал сырой источник/ВОР/ТЗ и просит кандидатов или первый этап. "
-                    "pricing: пользователь просит деньги/ЛСР/расчёт по уже данным или текущим работам. "
-                    "Если пользователь явно просит ЛСР/смету/стоимость/расчёт, ставь pricing даже для сырой ВОР: "
-                    "незакрытые нормы/КАЦ останутся 0.00/пусто с примечанием. "
-                    "Не выбирай norm_candidates только потому, что источник сырой. "
-                    "norm_candidates выбирай только когда пользователь явно просит кандидатов, этап 1 или без денег. "
-                    "explanation: пользователь спрашивает как работает процесс/методика, без расчёта денег. "
-                    "Если пользователь говорит «по ним/по этим кандидатам/деньги по ним» и previous_candidates_available=true, "
-                    "ставь pricing и use_previous_candidates=true."
-                ),
-            },
-            {
-                "role": "user",
-                "content": json.dumps(
-                    {
-                        "current_user_message": str(current_question or "")[:4000],
-                        "task_context": str(harness_question or "")[:12000],
-                        "previous_candidates_available": bool(previous_lookup),
-                        "previous_candidate_groups": len((previous_lookup or {}).get("results") or []),
-                    },
-                    ensure_ascii=False,
-                ),
-            },
-        ], runtime.provider),
-        "temperature": 0,
-        "max_tokens": max(128, _env_int("LES_SMETA_WORKFLOW_DECISION_MAX_TOKENS", 500)),
-    }
-    body = _cloud_body_for_model(body, runtime.model, runtime.provider)
-    headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
-    try:
-        timeout_sec = _env_float(
-            "LES_SMETA_WORKFLOW_DECISION_TIMEOUT_SEC",
-            300.0 if runtime.provider == "mlx" else 45.0,
-        )
-        with httpx.Client(timeout=timeout_sec) as c:
-            r = c.post(runtime.chat_url, headers=headers, json=body)
-            r.raise_for_status()
-            selector_text = _assistant_text(r.json().get("choices", [{}])[0].get("message", {})).strip()
-    except Exception as e:  # noqa: BLE001
-        logger.warning("[SMETA] workflow decision failed: %s", e)
-        fallback_stage = "norm_candidates" if _smeta_direct_norm_candidate_stage_required(current_question) else ""
-        fallback_reason = "candidate_stage_explicit_request" if fallback_stage else ""
-        if not fallback_stage and _smeta_request_needs_lsr_output(current_question):
-            fallback_stage = "pricing"
-            fallback_reason = "selector_error_explicit_pricing_request"
-        return {
-            "enabled": True,
-            "status": "selector_error",
-            "stage": fallback_stage,
-            "use_previous_candidates": False,
-            "provider": runtime.provider,
-            "model": runtime.model,
-            "error": f"{type(e).__name__}: {e}",
-            "fallback_reason": fallback_reason,
-            "model_owns_workflow": False,
-        }
-    parsed = _extract_json_object(selector_text) or {}
-    stage = str(parsed.get("stage") or "").strip()
-    if stage not in {"norm_candidates", "pricing", "explanation"}:
-        stage = ""
-    stage_correction = ""
-    if (
-        stage == "norm_candidates"
-        and not _smeta_direct_norm_candidate_stage_required(current_question)
-        and _smeta_request_needs_lsr_output(current_question)
-    ):
-        stage = "pricing"
-        stage_correction = "explicit_lsr_request_has_pricing_priority"
-    return {
-        "enabled": True,
-        "status": "ok" if stage else "invalid_stage",
-        "stage": stage,
-        **({"stage_correction": stage_correction} if stage_correction else {}),
-        "use_previous_candidates": bool(parsed.get("use_previous_candidates")),
-        "reason": str(parsed.get("reason") or "")[:1000],
-        "previous_candidates_available": bool(previous_lookup),
-        "previous_candidate_groups": len((previous_lookup or {}).get("results") or []),
-        "selector_text": selector_text[:2000],
-        "provider": runtime.provider,
-        "model": runtime.model,
-        "model_owns_workflow": True,
-    }
-
-
 def _smeta_direct_user_prompt(
     harness_question: str,
     rag_context: str,
     numeric_audit_context: str,
     *,
     light: bool,
-    workflow_stage: str = "",
 ) -> str:
-    skill_context = render_snippets(select_skill_snippets("smeta", user_input=harness_question, limit=5))
-    source_context = "\n\n".join(
-        x for x in (
-            str(rag_context or ""),
-            skill_context,
-            _smeta_system_source_readiness_context(),
-            _smeta_service_rag_map_context(),
-            _smeta_available_pricebook_context(),
+    """Pass source, evidence, and calculations without prescribing a workflow."""
+    sections = [
+        f"Запрос пользователя и исходные документы:\n{str(harness_question or '')[:22000]}"
+    ]
+    if rag_context:
+        sections.append(
+            "Доступные фрагменты источников и результаты инструментов:\n"
+            f"{str(rag_context)[:16000]}"
         )
-        if x
-    )
-    candidate_stage = workflow_stage == "norm_candidates" if workflow_stage else _smeta_direct_norm_candidate_stage_required(harness_question)
-    if not workflow_stage and not candidate_stage:
-        try:
-            from proxy.services import fgis_price_service as fps
-
-            no_pricebooks = not fps.available_pricebooks()
-        except Exception:
-            no_pricebooks = False
-        lookup_present = "MODEL-SELECTED NORM LOOKUP" in str(rag_context or "")
-        raw_source = bool(re.search(
-            r"\b(?:тз|вор|ведомост[ьяи]|спецификаци[яи]|исходн[а-я]*\s+работ[а-я]*|"
-            r"составь|сделай|оформи|рассчитай|посчитай|оцени|лср|смет[а-я]*)\b",
-            str(harness_question or "").casefold().replace("ё", "е"),
-        ))
-        confirmed_norm_table = _smeta_direct_has_confirmed_norm_table(harness_question)
-        if (
-            no_pricebooks
-            and raw_source
-            and not lookup_present
-            and not confirmed_norm_table
-            and _smeta_request_needs_lsr_output(harness_question)
-        ):
-            candidate_stage = True
-    needs_lsr = (workflow_stage == "pricing") if workflow_stage else (_smeta_request_needs_lsr_output(harness_question) and not candidate_stage)
-    source_row_contract = _smeta_source_row_contract(harness_question) if needs_lsr else ""
-    candidate_guidance = (
-        "Если текущий ход — подбор норм или добавление номеров ГЭСН: ВОР -> кандидаты ГЭСН. "
-        "Не считай деньги, не делай строку ВСЕГО; дай таблицу доступных candidates и явно напиши, "
-        "что следующий ход «деньги по ним» раскрывает ресурсы и считает по выбранным candidates. "
-    )
-    if candidate_stage:
-        return (
-            "Исходные данные:\n"
-            f"{str(harness_question or '')[:22000]}\n\n"
-            "Расчётная проверка чисел, если есть:\n"
-            f"{numeric_audit_context or 'нет детерминированной трассы; не объявляй длинные суммы проверенными без расчёта'}\n\n"
-            "Релевантные фрагменты RAG, candidates и доступные сметные источники ЛЕС:\n"
-            f"{source_context[:14000]}\n\n"
-            "Ответь как инженер-сметчик строго по этапу 1 ТЗ: ВОР -> кандидаты ГЭСН. "
-            "Не считай деньги, не делай ЛСР, не пиши строку ВСЕГО и не называй один кандидат финальным. "
-            "Сначала покажи, что понял по источнику и какой нормативный маршрут нужен, "
-            "затем таблицу доступных candidates с колонками: "
-            "| № ВОР | Исходная работа | Ед. ВОР | Кол-во ВОР | Нормируемая работа | "
-            "Группа сборников | Сборник / раздел | Код ГЭСН | Наименование ГЭСН | Ед. ГЭСН | "
-            "Кол-во в измерителе нормы | Статус применимости | Комментарий |. "
-            "Если у одной строки ВОР несколько кандидатов, повтори строку ВОР для каждого кандидата. "
-            "Если одна норма покрывает несколько строк ВОР, укажи список № ВОР и объясни общий состав. "
-            "После таблицы дай коротко: следующий ход «деньги по ним» раскрывает ресурсы и считает по "
-            "ГЭСН/ФГИС для найденных candidates; незакрытые нормы, цены, КАЦ и коэффициенты остаются "
-            "0.00/пусто с примечанием. "
-            "Не используй JSON и внутренние служебные термины."
-        )
-    if light:
-        if not needs_lsr:
-            return (
-                "Исходные данные:\n"
-                f"{str(harness_question or '')[:22000]}\n\n"
-                "Расчётная проверка чисел, если есть:\n"
-                f"{numeric_audit_context or 'нет детерминированной трассы; не объявляй длинные суммы проверенными без расчёта'}\n\n"
-                "Релевантные фрагменты RAG и доступные сметные источники ЛЕС:\n"
-                f"{source_context[:12000]}\n\n"
-                f"{candidate_guidance}"
-                "Ответь как инженер-сметчик. Этот запрос не является командой посчитать или оформить ЛСР, "
-                "если пользователь прямо не просит деньги. Не делай ЛСР-таблицу, не ставь нулевые рубли "
-                "и не пиши строку ВСЕГО. Дай проверяемый порядок: 1) чтение источников; 2) ВОР; "
-                "3) нормируемая ВОР; 4) таблица кандидатов норм; 5) пользовательский выбор варианта; "
-                "6) раскрытие ресурсов и цен; 7) первый ЛСР; 8) коэффициенты/КАЦ; 9) статус финальности. "
-                "Обязательно укажи, что одна строка ВОР может иметь несколько кандидатов, а несколько строк ВОР "
-                "могут ссылаться на одну норму через общий состав работ. Семейства норм: ГЭСН, ГЭСНм, "
-                "ГЭСНп, ГЭСНр, ГЭСНмр. Маршрут поиска нормы: семейство работ -> группа сборников -> "
-                "сборник -> раздел/таблица -> конкретная норма. Ведомость добора — это ресурсы выбранной "
-                "нормы или пользовательской ресурсной строки без цены/индекса/КАЦ/КП, а не нераспознанные работы. "
-                "Если нужны таблицы workflow/ВОР/кандидатов/добора, дай их в текущем ответе; не обещай "
-                "сделать это следующим сообщением. Не используй Markdown-заголовки #/##/###. "
-                "Не показывай JSON и внутренние служебные термины."
-            )
-        return (
-            "Исходные данные:\n"
-            f"{str(harness_question or '')[:22000]}\n\n"
-            "Расчётная проверка чисел, если есть:\n"
-            f"{numeric_audit_context or 'нет детерминированной трассы; не объявляй длинные суммы проверенными без расчёта'}\n\n"
-            "Релевантные фрагменты RAG и доступные сметные источники ЛЕС:\n"
-            f"{source_context[:12000]}\n\n"
-            "Ответь как инженер-сметчик. Внутренне учти контекст диалога и текущую смету, "
-            "но не пиши пользователю служебный разбор маршрута. "
-            f"{source_row_contract}"
-            "Основная форма выдачи сметы — ЛСР-черновик. Начни с результата: короткая строка "
-            "«что считаю», затем Markdown-таблица ЛСР граф 1-12: | № п/п | Обоснование | "
-            "Наименование работ и затрат | Ед. изм. | Кол-во на ед. | коэф. | Кол-во всего | "
-            "Базис на ед., руб. | Индекс | Текущий на ед., руб. | коэф. | Текущий всего, руб. |. "
-            "Строка ВСЕГО по смете обязательна. Если нет ставки, индекса или цены ресурса, "
-            "в денежных графах ставь 0.00; ВСЕГО тоже числом 0.00 по незаполненным строкам, "
-            "а причину вынеси в примечания после ЛСР. "
-            "Не придумывай ставки и текущие цены сама: рубли допустимы только если строка может "
-            "быть раскрыта расчетным слоем по полному шифру нормы/книге цен/КАЦ/КП. "
-            "Если есть результаты MODEL-SELECTED NORM LOOKUP, в Обосновании либо копируй полный "
-            "`norm_code` буквально из результатов, либо оставляй 0.00 и примечание; не заменяй "
-            "полный код общим `ГЭСН 09`, `ГЭСН 15` или `ГЭСНм10`. "
-            "Не отказывайся от ЛСР из-за неполных норм/цен: что можешь защитить — оцени и считай, "
-            "что не можешь — оставь строкой с 0.00/пустой ценой и коротким примечанием. "
-            "Если нужна ВОР, дай её кратко перед ЛСР как исходную расшифровку: "
-            "| № | Раздел | Работа | Ед. | Кол-во | Основание | Статус |. "
-            "В графе «Обоснование» укажи выбранную норму, нормативный аналог/раздел, "
-            "локальную книгу/КАЦ/КП или прямо «сценарное допущение». "
-            "Если принимаешь конкретную норму, пиши полный шифр нормы, иначе расчётный слой "
-            "не сможет раскрыть ресурсы и строка останется в доборе. Выбирай шифр сама по RAG, "
-            "вложениям и доступным источникам; не переноси норму между разными работами. "
-            "Не пиши только род базы вроде «ГЭСНм» или «ГЭСН 21»: уточняй до сборника/раздела/"
-            "таблицы/кода, а если не уверен — помечай как нормативный аналог для проверки. "
-            "Раздел ВОР не мапится на один сборник: для каждой работы выбери свой нормативный маршрут. "
-            "ЭОМ/силовые кабели/гофры/скобы/коробки/аварийное питание не закрывай ГЭСНм10 "
-            "связи без явной применимости; сначала ищи электромонтажный кандидат. "
-            "Не заменяй ЛСР нумерованным пересказом, подзаголовками 1.1/1.2 "
-            "или предложением «могу следующим сообщением сделать таблицу». "
-            "После таблиц дай поставку/исключения, нормативный ход, допущения и добор. "
-            "Если в спецификации пустые ценовые колонки, ставь 0.00 в ЛСР и примечание, "
-            "а не отказывайся от оценки работ. "
-            "Если продолжение — выполни только команду пользователя поверх активной сметы, "
-            "без повторения полного предыдущего ответа. Не показывай JSON и внутренние "
-            "служебные термины."
-        )
-    return (
-        "Задача оператора и текст вложений/диалога:\n"
-        f"{str(harness_question or '')[:22000]}\n\n"
-        "Расчётная трасса арифметики исходника, если ЛЕС смог извлечь её детерминированно:\n"
-        f"{numeric_audit_context or 'нет детерминированной трассы; не объявляй длинные суммы проверенными без расчёта'}\n\n"
-            "Фрагменты из выбранной базы и доступные сметные источники ЛЕС, если они есть:\n"
-            f"{source_context[:12000]}\n\n"
-            f"{candidate_guidance}"
-            "Ответь как сметчик, без служебных слов и без Markdown-заголовков #/##/###. Основная форма "
-        "выдачи сметы — ЛСР-черновик граф 1-12; ВОР и подбор норм нужны как основание, а не как "
-        f"{source_row_contract}"
-        "замена ЛСР. Используй "
-        "короткие жирные метки секций в таком порядке, пропуская только неприменимые блоки: "
-        "1) Что понял; 2) Контроль исходных чисел; 3) Форма развилки исходных объёмов, если есть "
-        "конфликт; 4) ВОР / структура работ; 5) Нормируемая ВОР / таблица подбора норм, если "
-        "нужно подбирать ГЭСН; 6) Работы / поставка / исключения; 7) Сравнительная "
-        "таблица РИМ/ГЭСН vs рынок, если пользователь просит две оценки; 8) Допущения и источники; "
-        "9) Добор до финальной сметы; 10) Итог со статусом. "
-        "Не расписывай длинный чек-лист всех возможных уточнений; оставь только то, что реально "
-        "меняет выбор нормы или цену. Не вводи новые спорные суммы/расхождения по арифметике без "
-        "уверенной проверки. При конфликте исходных количеств, влияющем на стоимость, дай форму "
-        "развилки исходных объёмов таблицей: Вариант, Объём, Источник, Состав, Статус для расчёта. "
-        "Если пользователь попросил рынок и РИМ/ГЭСН, обязательно дай таблицу: | Раздел работ | "
-        "Объём / вариант | РИМ/ГЭСН статус | РИМ/ГЭСН сумма | Рыночный статус | Рыночная сумма с НДС | "
-        "Комментарий |. Вопросы и добор идут после таблицы, не вместо неё. Если пользователь просит "
-        "оценку и не запрещает допущения, дай сценарную оценку по работам до вопросов. Если в "
-        "исходнике есть спецификация или ВОР с измеримыми строками, блок стоимости работ должен "
-        "быть построчной ЛСР: без цены ставь 0.00 и примечание, а не `missing`. "
-        "При прямом запросе «сделай ВОР» ВОР обязана быть таблицей: | № | Раздел | Работа | Ед. | "
-        "Кол-во | Основание | Статус |, но итоговую сметную выдачу всё равно оформи ЛСР. "
-        "При прямом запросе «дай оценку стоимости работ» стоимость обязана быть ЛСР-таблицей, "
-        "а не свободной таблицей стоимости. Не предлагай сделать эту таблицу следующим сообщением: сделай её сейчас. "
-        "В текущем ответе сделай ЛСР таблицей "
-        "граф 1-12: | № п/п | Обоснование | Наименование работ и затрат | Ед. изм. | "
-        "Кол-во на ед. | коэф. | Кол-во всего | Базис на ед., руб. | Индекс | "
-        "Текущий на ед., руб. | коэф. | Текущий всего, руб. |. Строка ВСЕГО по смете обязательна; "
-        "нет данных по цене/индексу -> 0.00 в числовой графе и примечание после таблицы. "
-        "Не придумывай ставки и текущие цены сама: рубли допустимы только если строка может "
-        "быть раскрыта расчетным слоем по полному шифру нормы/книге цен/КАЦ/КП. "
-        "Если есть результаты MODEL-SELECTED NORM LOOKUP, в Обосновании либо копируй полный "
-        "`norm_code` буквально из результатов, либо оставляй 0.00 и примечание; не заменяй "
-        "полный код общим `ГЭСН 09`, `ГЭСН 15` или `ГЭСНм10`. "
-        "Не превращай неполные данные в отказ: оцени и рассчитай всё, что можешь защитить нормой, "
-        "аналогом, локальной ценой или явным сценарием; незакрытые строки оставь в той же ЛСР с 0.00. "
-        "Не пиши «если нужно, следующим сообщением "
-        "соберу ЛСР»: это уже запрошено. Не теряй строки активной ВОР и не меняй сумму без "
-        "нового источника или расчётной проверки. "
-        "Если строка стоимости опирается на сборник, укажи сборник/раздел/код нормы или нормативный аналог; "
-        "если выбран конкретный шифр, укажи его полностью, чтобы ЛЕС мог раскрыть ресурсы и цены; "
-        "если точной нормы нет, укажи нормативный раздел/аналог и что проверить. "
-        "Не оставляй в источнике только «ГЭСНм»/«ГЭСН»: это слишком общий источник; "
-        "нужен номер сборника, раздел/таблица или полный код. "
-        "Раздел ВОР не равен одному сборнику: выбирай нормативный маршрут по каждой работе. "
-        "ЭОМ/силовые линии не закрывай ГЭСНм10 связи без явной применимости; "
-        "для СКС/ВОЛС проверяй ГЭСНм10, для отделки ГЭСН15, для демонтажа ГЭСНр/ГЭСНмр. "
-        "Если ставка сценарная, так и напиши в источнике: «сценарное допущение», не маскируй её под РИМ. "
-        "Если пользователь просит РИМ/ГЭСН, РИМ-колонка должна быть РИМ-сценарием по нормативным "
-        "аналогам, а не рыночной вилкой: укажи нормируемую строку, сборник/аналог, объём в "
-        "измерителе нормы, базовую точку расчёта, допуск и недостающий trace до final. "
-        "Обязательно заверши разделом «Итог» со статусом результата."
-    )
-
-
-def _smeta_source_row_contract(text: str) -> str:
-    raw = str(text or "")
-    row_count = _smeta_source_row_count(raw)
-    if row_count < 2:
-        return ""
-    return (
-        f"Во входе есть табличная ВОР: {row_count} исходных строк. "
-        "Это contract coverage: каждая исходная строка должна попасть в текущую ЛСР. "
-        "Если строка пришла как JSON `section/source_no/name/unit/qty`, в наименовании строки ЛСР начни "
-        "с маркера `[SRC: <Раздел>; <source_no>]`, затем работа. Если строка пришла как PDF/Markdown-таблица, "
-        "сохрани её раздел, номер, работу, единицу и количество в видимой строке ЛСР. "
-        "Если для исходной строки нет полного шифра нормы, всё равно выведи строку с тем же SRC-маркером, "
-        "количеством и единицей; сначала попробуй подобрать норму/аналог из контекста ЛЕС, "
-        "а если не можешь защитить выбор — в Обосновании напиши нормативный аналог/раздел или `нужен подбор нормы`, "
-        "денежные графы поставь 0.00 и причину перенеси в примечания. "
-        "ЛСР всё равно выведи полностью: рассчитанные строки с суммами, незакрытые строки с 0.00. "
-        "Не сокращай таблицу и не выбирай только строки с понятными нормами. "
-    )
-
+    if numeric_audit_context:
+        sections.append(f"Проверенная кодом расчётная трасса:\n{numeric_audit_context}")
+    return "\n\n".join(sections)
 
 def _smeta_direct_max_tokens(harness_question: str, *, runtime_provider: str) -> int:
     default = 900 if runtime_provider == "mlx" else 3200
@@ -2815,36 +2325,16 @@ def _smeta_direct_max_tokens(harness_question: str, *, runtime_provider: str) ->
 def _smeta_direct_model_answer(
     harness_question: str,
     rag_context: str = "",
-    workflow_stage: str = "",
 ) -> str:
     """Visible smeta answer from the estimator model over prompt + attachment + RAG."""
     runtime = _smeta_model_runtime("LES_SMETA_DIRECT_MODEL_PROVIDER")
     numeric_audit_context = _smeta_direct_numeric_audit_context(harness_question)
-    light_prompt = _env_bool("LES_SMETA_DIRECT_LIGHT_PROMPT", True)
-    if not light_prompt and not workflow_stage:
-        raw = str(harness_question or "").casefold().replace("ё", "е")
-        heavy_raw_source = bool(re.search(
-            r"\b(?:тз|вор|ведомост[ьяи]|спецификаци[яи]|контекст\s+прикрепленн[а-я]*\s+файл[а-я]*)\b",
-            raw,
-        ))
-        if _smeta_direct_norm_candidate_stage_required(harness_question) or (
-            heavy_raw_source and not _smeta_direct_has_confirmed_norm_table(harness_question)
-        ):
-            workflow_stage = "norm_candidates"
-    if light_prompt:
-        sys_prompt = _smeta_direct_light_system_prompt()
-    else:
-        sys_prompt = build_mode_system_prompt(
-            "smeta_direct",
-            notebook_context=_smeta_service_context_prompt(),
-            extra=_smeta_direct_heavy_extra_prompt(),
-        )
+    sys_prompt = _smeta_direct_light_system_prompt()
     user_prompt = _smeta_direct_user_prompt(
         harness_question,
         rag_context,
         numeric_audit_context,
-        light=light_prompt,
-        workflow_stage=workflow_stage,
+        light=True,
     )
     body = {
         "model": runtime.model,
@@ -2898,7 +2388,7 @@ def _smeta_direct_norm_lookup_context(harness_question: str) -> dict[str, Any]:
         "args": {
             "work_description": "описание одной нормируемой работы",
             "work_family": "electric|low_current|metal|finishes|mep|earthworks|foundation|...",
-            "element_type": "cable|pipe|box|device|backup_power|metal_assembly|finish|...",
+            "element_type": "фактический тип элемента из строки источника",
             "action": "монтаж|демонтаж|устройство|проверка|...",
             "unit_hint": "м|м2|м3|т|шт|...",
         },
@@ -2930,12 +2420,9 @@ def _smeta_direct_norm_lookup_context(harness_question: str) -> dict[str, Any]:
                             "если во входе есть табличная ВОР/PDF table/source_no, не сокращай покрытие: нужен lookup "
                             "по каждой исходной строке или явное объединение нескольких строк только если это одна "
                             "нормируемая операция; "
-                            "ЭОМ/силовые кабели/гофротрубы/скобы крепления гофры/коробки проводки/аварийное питание "
-                            "маршрутизируй как electric, а не как metal: metal/ГЭСН09 нужен только для строительных "
-                            "металлоконструкций по массе. Для коробки открытой проводки используй element_type=box; "
-                            "для гофры pipe; для кабеля cable; для БАП backup_power. Если отдельной нормы на скобу нет, "
-                            "ищи электромонтажный containment/pipe fastening route или оставляй нормативный gap, "
-                            "не уводи строку в бункеры/опорные металлоконструкции ГЭСН09."
+                            "не выводи семейство/сборник из названия раздела или файла; описывай фактический элемент, "
+                            "операцию и единицу каждой строки. Если строка не является отдельной нормируемой операцией, "
+                            "оставь явный gap или объясни объединение, не подменяя её похожей работой."
                         ),
                     },
                     ensure_ascii=False,
@@ -3180,21 +2667,9 @@ def _smeta_review_structured_norm_choice(
                 "смысл, измеритель и ресурсная логика; в reason явно напиши, что это аналог и что проверить. "
                 "unbound — только если все candidates пустые, без количества, с несовместимой единицей или "
                 "описывают очевидно чужую операцию/объект. "
-                "Для демонтажа/восстановления допускай ремонтные нормы ГЭСНр и разборку/замену как сметческий "
-                "аналог, если они ближе монтажа нового элемента. Для скрытых ревизионных люков ищи нормы "
-                "ревизионных/сантехнических люков или ближайший штучный монтаж люка; не выбирай шумоглушители, "
-                "фланцы, люки на крышах, фасадные/оконные/дверные проёмы или просто отверстия другого типа. "
-                "Для защитного укрытия плёнкой выбирай норму только если candidate говорит именно о временном "
-                "укрытии/защитном укрытии поверхности; декоративная самоклеящаяся ПВХ-плёнка, натяжной потолок, "
-                "штукатурка, грунтовка или окраска не являются аналогом этой строки. "
-                "Общую строку 'подготовка поверхности к восстановлению отделки' можно закрывать ближайшей "
-                "операцией подготовки/ремонта поверхности, если она есть в candidates; не превращай её в "
-                "устройство нового потолка/каркаса без такой связи. "
-                "Если строка обычной отделки (грунтовка, шпатлевка, оклейка стеклохолстом/обоями, окраска), "
-                "выбери same-operation analog из candidates при совместимой единице; потолки предпочтительнее "
-                "стен для потолочных работ. Для БАП светильника предпочитай малый преобразователь/блок питания, "
-                "а не крупную UPS-систему, если исходник не говорит про систему/шкаф/кВт. Для открытой коробки "
-                "проводки предпочитай ответвительную коробку, а не клеммную, если нет клемм/зажимов. "
+                "Для аналога должны быть защитимы фактическая операция, назначение элемента, измеритель и "
+                "ресурсная логика. Не заменяй отсутствующую норму технологически чужой работой ради заполнения строки. "
+                "В reason перечисли совпадения, различия и условия, которые должен проверить сметчик. "
                 "Не пиши Markdown и не ставь цены."
             ),
         },
@@ -3447,8 +2922,9 @@ def _smeta_direct_structured_norm_choice(
     if not compact_results:
         return {"rows": [], "trace": {"enabled": True, "status": "empty_compact_lookup"}}
 
-    default_batch_size = 2 if runtime.provider in {"mlx", "local"} else 0
-    batch_size = max(0, _env_int("LES_SMETA_NORM_CHOICE_BATCH_SIZE", default_batch_size))
+    # The model sees the whole professional task. Tool execution may batch,
+    # but fixed row windows must not split norm selection into isolated worlds.
+    batch_size = 0
     if batch_size and len(compact_results) > batch_size:
         total_batches = (len(results) + batch_size - 1) // batch_size
         all_rows: list[dict[str, Any]] = []
@@ -3679,27 +3155,9 @@ def _smeta_direct_structured_norm_choice(
                 "Не обнуляй строку только потому, что основание/материал/условие не совпадает идеально. "
                 "norm_code пустой только если все candidates описывают явно чужую операцию/чужое семейство "
                 "или несовместимую единицу, candidates пустой, либо нет количества работы. "
-                "Для демонтажа/восстановления сначала ищи ремонтные нормы ГЭСНр, разборку/замену или "
-                "ближайший демонтажный смысл; монтаж нового элемента бери только как явно помеченный слабый "
-                "аналог, если ничего ближе нет и единица совместима. Шпатлевку нельзя считать облицовкой или "
-                "устройством потолка. "
-                "Если исходная строка говорит 'потолок/потолков', предпочитай candidate с потолками; "
-                "candidate по стенам бери только если потолочного варианта нет среди candidates и явно "
-                "пометь это как аналог. Для простых коробок открытой проводки предпочитай ответвительную "
-                "коробку; клеммную коробку выбирай только когда в исходнике есть клеммы/зажимы. Для БАП "
-                "светильника сначала сравни малый 'преобразователь или блок питания' с крупной системой "
-                "бесперебойного электропитания; крупную UPS-норму выбирай только если по исходнику это "
-                "именно система/шкаф/кВт-класс, а не блок внутри светильника. "
-                "Для обычной отделки не будь чрезмерно строгим: грунтовка, шпатлевка, оклейка стеклохолстом/"
-                "обоями и окраска — нормируемые операции; если candidate совпадает по операции, поверхности "
-                "и измерителю, выбирай его как нормативный аналог даже при отличии материала/состава. "
-                "Для защитного укрытия плёнкой выбирай norm_code только если candidate описывает именно "
-                "временное укрытие/защитное укрытие поверхности; декоративная самоклеящаяся ПВХ-плёнка, "
-                "натяжной потолок, штукатурка, грунтовка и окраска не подходят. "
-                "Но проемы/люки в ГКЛ не считай нормами для натяжных или реечных потолков, если candidate "
-                "не описывает такой же тип проема/люка; люки на крышах, фасадные/оконные/дверные проёмы и "
-                "акустические двери не подходят для ГКЛ-проёма под ревизионный люк. Ревизионный люк можно "
-                "считать нормой ревизионного/сантехнического люка при штучном измерителе и явной пометке аналога. "
+                "Для аналога сопоставь фактическую операцию, назначение элемента, поверхность/среду, "
+                "измеритель, состав работ, ресурсы и условия применения. Отличия явно перечисли в reason. "
+                "Не выбирай технологически чужую работу только потому, что совпало одно слово или единица. "
                 "Не ставь цены и не пиши Markdown."
             ),
         },
@@ -3714,15 +3172,9 @@ def _smeta_direct_structured_norm_choice(
                             "pricing stage prefers a usable normative analog over empty norm_code when candidate family, collection and unit are technically close",
                             "if exact title/work_composition is missing, choose the closest accepted/unit-compatible candidate and mark reason as нормативный аналог for verification",
                             "do not select a candidate whose title/norm_card/work_composition is an obviously foreign operation or foreign family; leave norm_code empty and explain mismatch",
-                            "for dismantling/restoration prefer repair/dismantling/replacement candidates; installation can be only a weak marked analog when nothing closer exists",
-                            "do not use lining/ceiling-device candidates for putty works when action differs",
-                            "do not price protective film covering with decorative PVC film, stretch ceiling, plaster, primer or painting candidates",
-                            "do not price GKL inspection-hatch openings with roof hatches, facade openings, acoustic doors or window/door opening finishes",
-                            "prefer same surface in candidates: потолки over стены for ceiling works",
-                            "for open wiring boxes prefer ответвительная коробка over клеммная unless source mentions terminals/clamps",
-                            "for emergency light backup-power blocks prefer small converter/power-supply candidates over large UPS system candidates unless source says system/kW/cabinet",
-                            "for standard finishing operations грунтовка, шпатлевка, оклейка стеклохолстом/обоями, окраска choose a same-operation same-surface analog instead of empty norm_code when unit is compatible",
-                            "for GKL openings or hidden inspection hatches leave empty if candidates are for stretch/reed ceilings or another hatch type",
+                            "an analog must preserve the physical operation, element purpose, measure, resource logic and applicable conditions",
+                            "state every material, technology, surface, environment or scope difference in reason",
+                            "do not select a technologically foreign candidate merely to avoid an unbound row",
                             "prefer candidates with unit_compatible=true and applicability_status accepted, but score is only retrieval evidence, not permission to price a wrong norm",
                             "quantity and unit come from the source task/work description",
                             "one output row per lookup where a work quantity exists",
@@ -5283,10 +4735,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
 
     if _PROFILE == "estimate_harness" or _auto_estimate_work:
         if _auto_estimate_work and _PROFILE == "auto":
-            from proxy.services.estimate_harness_service import run_estimate_harness
+            from proxy.smeta_core.workflow import run_smeta_workflow
 
             harness_question = _smeta_harness_question(req)
-            hres = await asyncio.to_thread(run_estimate_harness, harness_question, _harness_complete)
+            hres = await asyncio.to_thread(run_smeta_workflow, harness_question, _harness_complete)
             answer = _format_harness(hres)
             artifact = _format_harness_artifact(hres)
             trace = {
@@ -5304,7 +4756,142 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     "retrieval_trace": trace,
                 },
             )
-        # Smeta mode: visible answer is model + prompt + RAG. Calculation tools are not run here.
+        if req.attachment_id and _smeta_request_needs_lsr_output(req.question):
+            from proxy.services.chat_attachment_service import (
+                consume_read_attachment,
+                resolve_read_attachment,
+            )
+            from proxy.smeta_core.document_workflow import run_vor_pdf_workflow
+
+            try:
+                source_path, attachment_meta = await asyncio.to_thread(
+                    resolve_read_attachment, req.attachment_id
+                )
+            except (FileNotFoundError, ValueError, json.JSONDecodeError) as error:
+                return _mode_reply(
+                    f"Не могу открыть исходное вложение для ЛСР: {error}. Прикрепи файл заново.",
+                    "smeta_document_attachment_missing",
+                    "smeta_mode",
+                    crag="ERROR",
+                    extra={"retrieval_trace": {"mode": "smeta_document", "error": str(error)}},
+                )
+            if source_path.suffix.lower() == ".pdf":
+                _SMETA_ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+                stamp = f"{req.attachment_id}_{int(time.time() * 1000)}"
+                xlsx_path = _SMETA_ARTIFACT_DIR / f"LSR_{stamp}.xlsx"
+                report_path = _SMETA_ARTIFACT_DIR / f"LSR_{stamp}.json"
+                if token_sink is not None:
+                    await token_sink({
+                        "event": "smeta_step",
+                        "data": {"phase": "document_workflow", "status": "started", "label": "Смета: читаю PDF с нуля и собираю ЛСР"},
+                    })
+                loop = asyncio.get_running_loop()
+                document_runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
+                document_model_calls = 0
+                document_started = time.monotonic()
+
+                def admit_document_model_call() -> None:
+                    nonlocal document_model_calls
+                    document_model_calls += 1
+
+                def document_complete(messages: list[dict]) -> str:
+                    admit_document_model_call()
+                    result = _smeta_document_complete(messages)
+                    if not result and is_cloud_provider(document_runtime.provider):
+                        raise RuntimeError("cloud smeta model returned an empty or failed structured response")
+                    return result
+
+                def document_exchange(messages: list[dict], tools: list[dict]) -> dict[str, Any]:
+                    admit_document_model_call()
+                    result = _smeta_document_exchange(messages, tools)
+                    if not result:
+                        raise RuntimeError("smeta model returned no native tool response")
+                    return result
+
+                def document_progress(event: dict[str, Any]) -> None:
+                    if token_sink is None:
+                        return
+                    payload = {
+                        "phase": str(event.get("phase") or "document_workflow"),
+                        "status": "running",
+                        "label": "Смета: модель обрабатывает строки ВОР",
+                        **event,
+                    }
+                    try:
+                        asyncio.run_coroutine_threadsafe(
+                            token_sink({"event": "smeta_step", "data": payload}), loop
+                        ).result(timeout=1.0)
+                    except Exception as progress_error:  # noqa: BLE001
+                        logger.warning("[SMETA_DOCUMENT] progress bridge failed: %s", progress_error)
+                try:
+                    workflow = await asyncio.to_thread(
+                        run_vor_pdf_workflow,
+                        source_path,
+                        document_complete,
+                        exchange=document_exchange,
+                        batch_size=20 if is_cloud_provider(document_runtime.provider) else 6,
+                        candidate_limit=12 if is_cloud_provider(document_runtime.provider) else 8,
+                        out_xlsx=xlsx_path,
+                        out_report=report_path,
+                        progress=document_progress,
+                        source_name=str(attachment_meta.get("original_name") or source_path.name),
+                    )
+                    workflow.setdefault("agent_trace", {})["document_model_calls"] = document_model_calls
+                    workflow["agent_trace"]["document_elapsed_ms"] = round(
+                        (time.monotonic() - document_started) * 1000, 2
+                    )
+                except Exception as error:  # fail visibly; preserve source for a retry
+                    logger.exception("[SMETA_DOCUMENT] workflow failed")
+                    return _mode_reply(
+                        f"ЛСР не собрана: {type(error).__name__}: {error}. Вложение сохранено для повторной попытки.",
+                        "smeta_document_failed",
+                        "smeta_mode",
+                        crag="ERROR",
+                        extra={"retrieval_trace": {"mode": "smeta_document", "error": str(error)}},
+                    )
+                await asyncio.to_thread(consume_read_attachment, req.attachment_id)
+                summary = (workflow.get("lsr") or {}).get("summary") or {}
+                status = str(summary.get("result_status") or "unknown")
+                answer = format_document_lsr_message(
+                    str(attachment_meta.get("original_name") or source_path.name),
+                    summary,
+                )
+                artifact = {
+                    "mode": "xlsx",
+                    "stage": "priced_lsr",
+                    "title": f"ЛСР — {attachment_meta.get('original_name') or source_path.name}",
+                    "downloads": {
+                        "xlsx": f"/api/smeta-artifacts/download?path={xlsx_path.name}",
+                    },
+                    "files": {"xlsx_path": str(xlsx_path), "trace_path": str(report_path)},
+                    "rim_trace": json.loads(json.dumps(workflow.get("lsr") or {}, ensure_ascii=False, default=str)),
+                }
+                return _mode_reply(
+                    answer,
+                    "smeta_document_lsr",
+                    "smeta_mode",
+                    crag="SUPPORTED" if status == "priced_final" else "PARTIAL",
+                    extra={
+                        "artifact": artifact,
+                        "retrieval_trace": {
+                            "mode": "smeta_document",
+                            "schema": workflow.get("schema"),
+                            "zero_state": True,
+                            "previous_revision_read": False,
+                            "source_sha256": attachment_meta.get("sha256"),
+                            "result_status": status,
+                            "summary": summary,
+                            "model_provider": document_runtime.provider,
+                            "model": document_runtime.model,
+                            "model_calls": (
+                                len(workflow.get("model_trace") or [])
+                                + len(((workflow.get("resource_plan") or {}).get("model_trace") or []))
+                            ),
+                        },
+                    },
+                )
+        # Ordinary smeta mode: the model receives source/RAG/tool results; code calculates only
+        # when the user explicitly requests money or an LSR.
         harness_question = _smeta_harness_question(req)
         smeta_rag_backend = state.backend
         smeta_dataset_ids = req.dataset_ids
@@ -5388,94 +4975,31 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 text_chars=len(str(direct_rag_packet.get("text") or "")),
             )
         current_smeta_question = _question_with_attachment(req)
+        pricing_requested = _smeta_request_needs_lsr_output(current_smeta_question)
+        execution_mode = "priced_lsr" if pricing_requested else "answer"
         await emit_smeta_step(
-            "workflow",
+            "norm_lookup",
             "started",
-            "Смета: определяю этап workflow",
+            "Смета: модель формирует поисковые запросы к нормам",
         )
-        workflow_decision = await asyncio.to_thread(
-            _smeta_direct_workflow_decision,
-            current_smeta_question,
+        norm_lookup_packet = await asyncio.to_thread(
+            _smeta_direct_norm_lookup_context,
             harness_question,
-            req.session_id,
         )
-        workflow_stage = str(workflow_decision.get("stage") or "")
+        lookup_trace = norm_lookup_packet.get("trace") if isinstance(norm_lookup_packet, dict) else {}
         await emit_smeta_step(
-            "workflow",
-            "done" if workflow_stage else "error",
-            f"Смета: workflow этап {workflow_stage or 'не выбран'}",
-            stage=workflow_stage,
-            decision_status=workflow_decision.get("status"),
-            provider=workflow_decision.get("provider"),
-            model=workflow_decision.get("model"),
+            "norm_lookup",
+            "done",
+            "Смета: нормативный поиск завершён",
+            lookup_status=lookup_trace.get("status") if isinstance(lookup_trace, dict) else "",
+            calls=len(lookup_trace.get("results") or []) if isinstance(lookup_trace, dict) else 0,
         )
-        if workflow_stage not in {"norm_candidates", "pricing", "explanation"}:
-            return _mode_reply(
-                "Сметный workflow не выбран моделью: этап не определён. Повтори запрос или укажи, нужен этап кандидатов, деньги по ним или объяснение процесса.",
-                "smeta_workflow_failed",
-                "smeta_mode",
-                crag="ERROR",
-                extra={
-                    "retrieval_trace": {
-                        "mode": "smeta",
-                        "model_rag_only": True,
-                        "smeta_workflow_decision": workflow_decision,
-                    },
-                    "sources": direct_rag_packet.get("sources") or [],
-                    "source_map": direct_rag_packet.get("source_map") or [],
-                },
-            )
-        norm_candidate_stage = workflow_stage == "norm_candidates"
-        pricing_stage = workflow_stage == "pricing"
-        norm_lookup_packet = None
-        if pricing_stage and workflow_decision.get("use_previous_candidates"):
-            await emit_smeta_step(
-                "norm_lookup",
-                "started",
-                "Смета: беру кандидаты норм из текущей сессии",
-            )
-            norm_lookup_packet = _smeta_direct_previous_norm_lookup_packet_for_followup(
-                current_smeta_question,
-                req.session_id,
-                force=True,
-            )
-            await emit_smeta_step(
-                "norm_lookup",
-                "done" if norm_lookup_packet else "miss",
-                "Смета: проверил кандидаты норм из текущей сессии",
-                lookup_status=(norm_lookup_packet.get("trace") or {}).get("status") if isinstance(norm_lookup_packet, dict) else "",
-            )
-        if norm_lookup_packet is None and workflow_stage != "explanation":
-            await emit_smeta_step(
-                "norm_lookup",
-                "started",
-                "Смета: модель формирует поисковые запросы к нормам",
-            )
-            norm_lookup_packet = await asyncio.to_thread(
-                _smeta_direct_norm_lookup_context,
-                harness_question,
-            )
-            lookup_trace = norm_lookup_packet.get("trace") if isinstance(norm_lookup_packet, dict) else {}
-            await emit_smeta_step(
-                "norm_lookup",
-                "done",
-                "Смета: кандидаты норм найдены",
-                lookup_status=lookup_trace.get("status") if isinstance(lookup_trace, dict) else "",
-                calls=len(lookup_trace.get("results") or []) if isinstance(lookup_trace, dict) else 0,
-            )
-        if norm_lookup_packet is None:
-            norm_lookup_packet = {"text": "", "trace": {"enabled": False, "status": "workflow_stage_explanation"}}
-        if norm_candidate_stage:
-            norm_choice_packet = {
-                "rows": [],
-                "trace": {
-                    "enabled": False,
-                    "status": "blocked_by_tz_stage_gate",
-                    "reason": "raw_source_requires_vor_to_gesn_candidate_table_before_pricing",
-                },
-            }
-            structured_rim_form = None
-        elif pricing_stage:
+        norm_choice_packet = {
+            "rows": [],
+            "trace": {"enabled": False, "status": "not_requested"},
+        }
+        structured_rim_form = None
+        if pricing_requested:
             smeta_progress_sink: Callable[[dict[str, Any]], None] | None = None
             if token_sink is not None:
                 loop = asyncio.get_running_loop()
@@ -5485,12 +5009,12 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                         future = asyncio.run_coroutine_threadsafe(token_sink(ev), loop)
                         future.result(timeout=1.0)
                     except Exception as err:  # noqa: BLE001
-                        logger.warning("[SMETA_BATCH] stream bridge failed: %s", err)
+                        logger.warning("[SMETA] stream bridge failed: %s", err)
 
             await emit_smeta_step(
                 "norm_choice",
                 "started",
-                "Смета: модель выбирает нормы из candidates",
+                "Смета: модель работает с найденными нормами",
                 calls=len((norm_lookup_packet.get("trace") or {}).get("results") or []),
             )
             norm_choice_packet = await asyncio.to_thread(
@@ -5499,29 +5023,22 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 norm_lookup_packet.get("trace") or {},
                 smeta_progress_sink,
             )
-            norm_choice_trace = norm_choice_packet.get("trace") if isinstance(norm_choice_packet.get("trace"), dict) else {}
+            norm_choice_trace = (
+                norm_choice_packet.get("trace")
+                if isinstance(norm_choice_packet.get("trace"), dict)
+                else {}
+            )
             await emit_smeta_step(
                 "norm_choice",
                 "done",
-                "Смета: выбор норм завершён",
+                "Смета: работа с нормами завершена",
                 norm_choice_status=norm_choice_trace.get("status"),
                 rows=len(norm_choice_packet.get("rows") or []),
-                batch_count=norm_choice_trace.get("batch_count"),
             )
             structured_rim_form = build_checked_rim_form_from_visible_rows(
                 list(norm_choice_packet.get("rows") or []),
                 question=harness_question,
             )
-        else:
-            norm_choice_packet = {
-                "rows": [],
-                "trace": {
-                    "enabled": False,
-                    "status": "blocked_by_model_workflow_stage",
-                    "reason": "model_selected_explanation_stage",
-                },
-            }
-            structured_rim_form = None
         structured_rim_context = ""
         if structured_rim_form:
             structured_rim_context = (
@@ -5541,8 +5058,6 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             )
         smeta_model_context = "\n\n".join(
             x for x in (
-                _smeta_direct_norm_candidate_stage_context(norm_lookup_packet.get("trace") or {})
-                if norm_candidate_stage else "",
                 str(direct_rag_packet.get("text") or "").strip(),
                 str(norm_lookup_packet.get("text") or "").strip(),
                 structured_rim_context,
@@ -5553,13 +5068,12 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             "final_answer",
             "started",
             "Смета: модель готовит видимый ответ",
-            workflow_stage=workflow_stage,
+            execution_mode=execution_mode,
         )
         answer = await asyncio.to_thread(
             _smeta_direct_model_answer,
             harness_question,
             smeta_model_context,
-            workflow_stage,
         )
         await emit_smeta_step(
             "final_answer",
@@ -5568,18 +5082,6 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             answer_chars=len(str(answer or "")),
         )
         if not answer:
-            candidate_artifact = (
-                build_norm_candidate_artifact_from_lookup(
-                    norm_lookup_packet.get("trace") or {},
-                    question=req.question,
-                )
-                if norm_candidate_stage
-                else None
-            )
-            smeta_artifact = persist_smeta_artifact_exports(
-                candidate_artifact,
-                output_dir=_SMETA_ARTIFACT_DIR,
-            )
             runtime = _smeta_model_runtime("LES_SMETA_DIRECT_MODEL_PROVIDER")
             configured_provider = (
                 os.getenv("LES_SMETA_DIRECT_MODEL_PROVIDER", "").strip().lower()
@@ -5592,7 +5094,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 cloud_config_warning = "cloud_provider_without_api_key_fell_back_to_mlx"
             trace = {
                 "mode": "smeta",
-                "model_rag_only": True,
+                "model_first": True,
                 "direct_model_answer_present": False,
                 "smeta_failure": "llm_returned_empty_or_failed",
                 "configured_provider": configured_provider,
@@ -5600,30 +5102,12 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 "effective_model": runtime.model,
                 "cloud_config_warning": cloud_config_warning,
                 "smeta_rag_context": direct_rag_packet.get("trace") or {},
-                "smeta_workflow_decision": workflow_decision,
                 "smeta_norm_lookup": norm_lookup_packet.get("trace") or {},
                 "smeta_norm_choice": norm_choice_packet.get("trace") or {},
                 "smeta_dataset_filter": smeta_dataset_filter or "",
-                "smeta_tz_stage": workflow_stage,
+                "smeta_execution_mode": execution_mode,
                 "code_fallback_disabled": True,
-                "smeta_norm_candidate_artifact_present": bool(candidate_artifact),
-                "smeta_model_text_failed_artifact_returned": bool(smeta_artifact),
             }
-            if smeta_artifact:
-                return _mode_reply(
-                    "Таблица кандидатов ГЭСН сформирована из уже выполненного нормативного поиска. "
-                    "Финальный текст модели не сгенерирован, поэтому отдаю то, что есть: artifact/XLSX/CSV. "
-                    "Следующий ход: «деньги по ним».",
-                    "smeta_norm_candidates_partial",
-                    "smeta_mode",
-                    crag="PARTIAL",
-                    extra={
-                        "retrieval_trace": trace,
-                        "sources": direct_rag_packet.get("sources") or [],
-                        "source_map": direct_rag_packet.get("source_map") or [],
-                        "artifact": smeta_artifact,
-                    },
-                )
             return _mode_reply(
                 "Сметный ответ не сгенерирован: модель не вернула текст или вызов модели упал. "
                 "Кодовый fallback для ЛСР/ВОР отключён, чтобы не подменять модель hardcoded-ответом. "
@@ -5643,33 +5127,23 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             if structured_rim_form
             else None
         )
-        candidate_artifact = (
-            build_norm_candidate_artifact_from_lookup(
-                norm_lookup_packet.get("trace") or {},
-                question=req.question,
-            )
-            if norm_candidate_stage
-            else None
-        )
         smeta_artifact = persist_smeta_artifact_exports(
-            candidate_artifact or structured_artifact or model_artifact,
+            structured_artifact or model_artifact,
             output_dir=_SMETA_ARTIFACT_DIR,
         )
         visible_answer = compact_smeta_answer(answer, smeta_artifact)
         trace = {
             "mode": "smeta",
-            "model_rag_only": True,
+            "model_first": True,
             "direct_model_answer_present": bool(answer),
             "active_smeta_state": _smeta_active_state_from_answer(harness_question, answer),
             "smeta_rag_context": direct_rag_packet.get("trace") or {},
-            "smeta_workflow_decision": workflow_decision,
             "smeta_norm_lookup": norm_lookup_packet.get("trace") or {},
             "smeta_norm_choice": norm_choice_packet.get("trace") or {},
             "smeta_structured_rim_trace": (structured_rim_form or {}).get("trace") or {},
-            "smeta_tz_stage": workflow_stage,
+            "smeta_execution_mode": execution_mode,
             "smeta_dataset_filter": smeta_dataset_filter or "",
             "smeta_artifact_present": bool(smeta_artifact),
-            "smeta_norm_candidate_artifact_present": bool(candidate_artifact),
         }
         return _mode_reply(
             visible_answer,

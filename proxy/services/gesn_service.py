@@ -169,7 +169,9 @@ def _default_base_paths() -> list[Path]:
 
 
 def _structured_base_path() -> Path:
-    return Path(os.getenv("LES_SMETA_STRUCTURED_BASE", str(DEFAULT_STRUCTURED_BASE_PATH)))
+    from proxy.smeta_core.base_registry import active_base
+
+    return Path(active_base()["base_path"])
 
 
 @lru_cache(maxsize=4)

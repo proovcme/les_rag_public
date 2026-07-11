@@ -1,0 +1,459 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://les.local/schema/smeta_agent_trace.schema.json",
+  "title": "LES smeta agent tool trace",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "mode",
+    "mapping_status",
+    "pricing_status",
+    "object_context",
+    "work_contexts",
+    "source_rows",
+    "operations",
+    "estimate_positions",
+    "coefficients",
+    "planning_output"
+  ],
+  "properties": {
+    "schema": {"const": "smeta_agent_trace_v1"},
+    "mode": {"enum": ["estimate", "candidate_review", "continue_reviewed"]},
+    "mapping_status": {
+      "enum": ["candidates_ready", "mapping_selected", "mapping_user_reviewed", "mapping_locked"]
+    },
+    "pricing_status": {
+      "enum": ["unpriced", "priced_partial", "priced_draft", "priced_final"]
+    },
+    "object_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["object_id", "region", "period", "stage", "source_refs"],
+      "properties": {
+        "object_id": {"type": "string", "minLength": 1},
+        "region": {"type": ["string", "null"]},
+        "period": {"type": ["string", "null"]},
+        "stage": {"type": ["string", "null"]},
+        "construction_conditions": {"type": "array", "items": {"type": "string"}},
+        "source_refs": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "work_contexts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "scope_id",
+          "source_row_ids",
+          "operation_ids",
+          "candidate_cards_released",
+          "compact_carry_forward"
+        ],
+        "properties": {
+          "scope_id": {"type": "string", "minLength": 1},
+          "source_row_ids": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "string"}},
+          "operation_ids": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "string"}},
+          "candidate_ids": {"type": "array", "items": {"type": "string"}},
+          "source_refs": {"type": "array", "items": {"type": "string"}},
+          "candidate_cards_released": {"type": "boolean"},
+          "compact_carry_forward": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["object_context_ref", "coverage_decisions", "source_refs"],
+            "properties": {
+              "object_context_ref": {"type": "string"},
+              "coverage_decisions": {"type": "array", "items": {"type": "string"}},
+              "source_refs": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        }
+      }
+    },
+    "source_rows": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/sourceRow"}
+    },
+    "operations": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/operation"}
+    },
+    "estimate_positions": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/estimatePosition"}
+    },
+    "coefficients": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/coefficient"}
+    },
+    "planning_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mapping"],
+      "properties": {
+        "mapping": {"type": "object"}
+      }
+    },
+    "execution_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lsr_xlsx", "trace", "open_register"],
+      "properties": {
+        "lsr_xlsx": {"type": ["string", "null"]},
+        "trace": {"type": "object"},
+        "open_register": {"type": "array", "items": {"type": "object"}}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"mode": {"const": "continue_reviewed"}}},
+      "then": {"required": ["mapping_status"], "properties": {"mapping_status": {"const": "mapping_locked"}}}
+    },
+    {
+      "if": {"properties": {"mode": {"enum": ["estimate", "continue_reviewed"]}}},
+      "then": {
+        "required": ["execution_result"],
+        "properties": {
+          "execution_result": {
+            "properties": {"lsr_xlsx": {"type": "string", "minLength": 1}}
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"pricing_status": {"const": "priced_final"}}},
+      "then": {
+        "properties": {
+          "source_rows": {
+            "not": {
+              "contains": {
+                "type": "object",
+                "required": ["blocks_priced_final"],
+                "properties": {"blocks_priced_final": {"const": true}}
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sourceRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_row_id",
+        "title",
+        "unit",
+        "quantity",
+        "quantity_origin",
+        "quantity_formula",
+        "quantity_evidence_refs",
+        "blocks_priced_final"
+      ],
+      "properties": {
+        "source_row_id": {"type": "string", "minLength": 1},
+        "title": {"type": "string", "minLength": 1},
+        "unit": {"type": ["string", "null"]},
+        "quantity": {"type": ["number", "null"]},
+        "quantity_origin": {
+          "enum": ["source_explicit", "source_calculated", "user_provided", "inferred", "missing"]
+        },
+        "quantity_formula": {"type": ["string", "null"]},
+        "quantity_evidence_refs": {"type": "array", "items": {"type": "string"}},
+        "blocks_priced_final": {"type": "boolean"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"quantity_origin": {"const": "inferred"}}},
+          "then": {"properties": {"blocks_priced_final": {"const": true}}}
+        },
+        {
+          "if": {"properties": {"quantity_origin": {"const": "source_calculated"}}},
+          "then": {
+            "properties": {
+              "quantity_formula": {"type": "string", "minLength": 1},
+              "quantity_evidence_refs": {"minItems": 1}
+            }
+          }
+        }
+      ]
+    },
+    "operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation_id", "source_row_ids", "title"],
+      "properties": {
+        "operation_id": {"type": "string", "minLength": 1},
+        "source_row_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "title": {"type": "string", "minLength": 1},
+        "conditions": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "estimatePosition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "estimate_position_id",
+        "operation_ids",
+        "pricing_basis",
+        "relationship_type",
+        "applicability_status",
+        "decision",
+        "resolution_status",
+        "review_level",
+        "full_review_triggers",
+        "triage",
+        "norm_code",
+        "resources",
+        "price",
+        "pricing_evidence",
+        "source_refs"
+      ],
+      "properties": {
+        "estimate_position_id": {"type": "string", "minLength": 1},
+        "operation_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "pricing_basis": {
+          "enum": ["norm", "analog_norm", "commercial_offer", "calculation", null]
+        },
+        "relationship_type": {
+          "enum": ["alternative", "complementary", "partial_coverage", "covered_by"]
+        },
+        "applicability_status": {"enum": ["exact", "close_analog", "weak_analog", "not_applicable"]},
+        "decision": {"enum": ["triaged", "opened", "selected", "rejected", "conflict"]},
+        "resolution_status": {"enum": ["priced", "covered_by", "partially_resolved", "unresolved", "excluded"]},
+        "review_level": {"enum": ["triage", "full"]},
+        "full_review_triggers": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "selected",
+              "significant_complementary",
+              "analog",
+              "top_cost_contributor",
+              "cumulative_cost_majority",
+              "alternative_cost_sensitivity",
+              "anomalous_labor_machines_or_cost",
+              "rejection_changes_coverage_or_cost"
+            ]
+          }
+        },
+        "triage": {"$ref": "#/$defs/triage"},
+        "full_applicability": {"$ref": "#/$defs/fullApplicability"},
+        "norm_code": {"type": ["string", "null"]},
+        "resource_review_status": {
+          "enum": ["keep_all_confirmed", "actions_confirmed", "unresolved", null]
+        },
+        "resource_review_reason": {"type": ["string", "null"]},
+        "labor_review_status": {"enum": ["confirmed", "not_present", "unresolved", "rejected", null]},
+        "labor_review_reason": {"type": ["string", "null"]},
+        "machine_review_status": {"enum": ["confirmed", "not_present", "unresolved", "rejected", null]},
+        "machine_review_reason": {"type": ["string", "null"]},
+        "material_review_status": {"enum": ["confirmed", "not_present", "unresolved", "rejected", null]},
+        "material_review_reason": {"type": ["string", "null"]},
+        "dominant_review_status": {"enum": ["not_required", "confirmed", "unresolved", null]},
+        "dominant_review_reason": {"type": ["string", "null"]},
+        "resources": {"type": "array", "items": {"$ref": "#/$defs/resource"}},
+        "price": {"$ref": "#/$defs/price"},
+        "pricing_evidence": {"type": "array", "items": {"type": "string"}},
+        "source_refs": {"type": "array", "items": {"type": "string"}}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"review_level": {"const": "full"}}},
+          "then": {"required": ["full_applicability"], "properties": {"full_review_triggers": {"minItems": 1}}}
+        },
+        {
+          "if": {"properties": {"full_review_triggers": {"minItems": 1}}},
+          "then": {
+            "required": ["full_applicability"],
+            "properties": {"review_level": {"const": "full"}}
+          }
+        },
+        {
+          "if": {"properties": {"pricing_basis": {"enum": ["norm", "analog_norm"]}}},
+          "then": {"properties": {"norm_code": {"type": "string", "minLength": 1}}}
+        },
+        {
+          "if": {"properties": {"resolution_status": {"enum": ["priced", "partially_resolved"]}}},
+          "then": {
+            "properties": {
+              "pricing_basis": {"enum": ["norm", "analog_norm", "commercial_offer", "calculation"]},
+              "pricing_evidence": {"minItems": 1}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"resolution_status": {"enum": ["covered_by", "unresolved", "excluded"]}}},
+          "then": {"properties": {"pricing_basis": {"type": "null"}, "pricing_evidence": {"maxItems": 0}}}
+        }
+      ]
+    },
+    "triage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation_match", "measure_match", "obvious_conflict", "reason"],
+      "properties": {
+        "operation_match": {"enum": ["yes", "partial", "no", "unknown"]},
+        "measure_match": {"enum": ["yes", "convertible", "no", "unknown"]},
+        "obvious_conflict": {"type": "boolean"},
+        "reason": {"type": "string"}
+      }
+    },
+    "fullApplicability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_operation",
+        "norm_domain",
+        "purpose_technology",
+        "measure",
+        "quantity_conversion",
+        "work_steps",
+        "resource_composition",
+        "technical_conditions",
+        "coverage_exclusions",
+        "analogue_risk_decision"
+      ],
+      "properties": {
+        "source_operation": {"type": "string"},
+        "norm_domain": {"type": "string"},
+        "purpose_technology": {"type": "string"},
+        "measure": {"type": "string"},
+        "quantity_conversion": {"type": "string"},
+        "work_steps": {"type": "string"},
+        "resource_composition": {"type": "string"},
+        "technical_conditions": {"type": "string"},
+        "coverage_exclusions": {"type": "string"},
+        "analogue_risk_decision": {"type": "string"}
+      }
+    },
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resource_id", "kind", "quantity", "unit", "price"],
+      "properties": {
+        "resource_id": {"type": "string", "minLength": 1},
+        "kind": {"enum": ["worker_labor", "machine", "machinist_labor", "material", "other"]},
+        "quantity": {"type": ["number", "null"]},
+        "unit": {"type": ["string", "null"]},
+        "machine_resource_code": {"type": ["string", "null"]},
+        "machinist_resource_code": {"type": ["string", "null"]},
+        "machine_hours": {"type": ["number", "null"]},
+        "machinist_labor_per_machine_hour": {"type": ["number", "null"], "minimum": 0},
+        "machinist_hours": {"type": ["number", "null"]},
+        "price": {"$ref": "#/$defs/price"}
+      }
+    },
+    "price": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "source_ref", "zero_reason", "status", "application"],
+      "properties": {
+        "value": {"type": ["number", "null"]},
+        "source_ref": {"type": ["string", "null"]},
+        "zero_reason": {"enum": ["actual_zero", "covered", "excluded", null]},
+        "status": {"enum": ["confirmed", "draft", "missing", "actual_zero", "not_applicable"]},
+        "application": {"enum": ["main", "draft_main", "not_applied"]}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "confirmed"}}},
+          "then": {
+            "properties": {
+              "value": {"type": "number", "exclusiveMinimum": 0},
+              "source_ref": {"type": "string", "minLength": 1},
+              "application": {"const": "main"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "draft"}}},
+          "then": {
+            "properties": {
+              "value": {"type": "number", "exclusiveMinimum": 0},
+              "source_ref": {"type": "string", "minLength": 1},
+              "application": {"const": "draft_main"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"enum": ["missing", "not_applicable"]}}},
+          "then": {
+            "properties": {
+              "value": {"type": "null"},
+              "zero_reason": {"type": "null"},
+              "application": {"const": "not_applied"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "actual_zero"}}},
+          "then": {
+            "properties": {
+              "value": {"const": 0},
+              "zero_reason": {"enum": ["actual_zero", "covered", "excluded"]},
+              "application": {"const": "main"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"value": {"const": 0}}},
+          "then": {"properties": {"zero_reason": {"enum": ["actual_zero", "covered", "excluded"]}}}
+        },
+        {
+          "if": {"properties": {"value": {"type": "null"}}},
+          "then": {"properties": {"zero_reason": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"value": {"type": "number", "not": {"const": 0}}}},
+          "then": {"properties": {"zero_reason": {"type": "null"}}}
+        }
+      ]
+    },
+    "coefficient": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "coefficient_id",
+        "value",
+        "status",
+        "source_ref",
+        "scope",
+        "already_in_source_quantity",
+        "application",
+        "variant_impact"
+      ],
+      "properties": {
+        "coefficient_id": {"type": "string", "minLength": 1},
+        "value": {"type": "number"},
+        "status": {"enum": ["confirmed", "user_provided_draft", "missing_evidence", "not_applicable", "conflict"]},
+        "source_ref": {"type": ["string", "null"]},
+        "scope": {"type": "array", "items": {"type": "string"}},
+        "already_in_source_quantity": {"type": "boolean"},
+        "application": {"enum": ["main", "draft_main", "variant_only", "not_applied"]},
+        "variant_impact": {"type": ["number", "null"]}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "confirmed"}}},
+          "then": {"properties": {"application": {"const": "main"}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "user_provided_draft"}}},
+          "then": {"properties": {"application": {"const": "draft_main"}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "missing_evidence"}}},
+          "then": {"properties": {"application": {"const": "variant_only"}}}
+        },
+        {
+          "if": {"properties": {"status": {"enum": ["not_applicable", "conflict"]}}},
+          "then": {"properties": {"application": {"const": "not_applied"}}}
+        }
+      ]
+    }
+  }
+}

@@ -68,6 +68,8 @@ class SettingsRequest(BaseModel):
     openai_base_url: Optional[str] = None
     openai_model: Optional[str] = None
     openai_models: Optional[str] = None  # цепочка фолбэка (через запятую)
+    smeta_document_provider: Optional[str] = None
+    smeta_document_model: Optional[str] = None
     openai_api_key: Optional[str] = None
     openai_api_key_clear: Optional[bool] = None
     llm_provider: Optional[str] = None
@@ -117,6 +119,8 @@ async def get_settings(_user=Depends(require_user)):
             "mlx_model_choices": MLX_MODEL_CHOICES,
             "cloud_consent": _env_bool("LES_CLOUD_CONSENT", "false"),
             "providers": _provider_settings_payload(),
+            "smeta_document_provider": os.getenv("LES_SMETA_DOCUMENT_PROVIDER", "").strip(),
+            "smeta_document_model": os.getenv("LES_SMETA_DOCUMENT_MODEL", "").strip(),
             "mail": _mail_settings_payload(),
         }
     except Exception as e:
@@ -142,6 +146,10 @@ async def save_settings(req: SettingsRequest, restart: bool = False, _admin=Depe
     for key, val in updates.items():
         if "\n" in str(val) or "\r" in str(val):
             raise HTTPException(400, f"Недопустимое значение {key}")
+    if req.smeta_document_provider is not None and req.smeta_document_provider.strip().lower() not in {
+        "", "local", "mlx", "openai", "openrouter", "ollama", "lemonade",
+    }:
+        raise HTTPException(400, "Недопустимый провайдер документной сметы")
     if req.mlx_url and not req.mlx_url.startswith(("http://", "https://")):
         raise HTTPException(400, "MLX_URL должен начинаться с http:// или https://")
     for field, env_key in (
@@ -312,6 +320,8 @@ def _provider_updates(req: SettingsRequest) -> dict[str, str]:
         "openai_base_url": "OPENAI_BASE_URL",
         "openai_model": "OPENAI_MODEL",
         "openai_models": "OPENAI_MODELS",
+        "smeta_document_provider": "LES_SMETA_DOCUMENT_PROVIDER",
+        "smeta_document_model": "LES_SMETA_DOCUMENT_MODEL",
         "ollama_base_url": "OLLAMA_BASE_URL",
         "ollama_model": "OLLAMA_MODEL",
         "lemonade_base_url": "LEMONADE_BASE_URL",

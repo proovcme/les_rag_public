@@ -225,6 +225,8 @@ async def test_save_settings_updates_provider_keys_without_exposing_secret(tmp_p
             openrouter_api_key="router-secret",
             openai_base_url="https://openai-compatible.example/v1",
             openai_model="compatible-model",
+            smeta_document_provider="mlx",
+            smeta_document_model="mlx-community/Qwen3.5-9B-MLX-4bit",
             openai_api_key="openai-secret",
         ),
         restart=False,
@@ -234,8 +236,10 @@ async def test_save_settings_updates_provider_keys_without_exposing_secret(tmp_p
     assert result["updated"]["OPENROUTER_API_KEY"] == "***"
     assert result["updated"]["OPENAI_API_KEY"] == "***"
     assert result["updated"]["OPENROUTER_MODEL"] == "openrouter/model"
+    assert result["updated"]["LES_SMETA_DOCUMENT_PROVIDER"] == "mlx"
     text = env_path.read_text(encoding="utf-8")
     assert "OPENROUTER_API_KEY=router-secret" in text
+    assert "LES_SMETA_DOCUMENT_PROVIDER=mlx" in text
     assert "OPENAI_API_KEY=openai-secret" in text
     assert os.environ["OPENAI_BASE_URL"] == "https://openai-compatible.example/v1"
 
@@ -360,6 +364,14 @@ async def test_save_settings_rejects_unsafe_values(tmp_path, monkeypatch):
             _admin=object(),
         )
     assert bad_provider_url.value.status_code == 400
+
+    with pytest.raises(HTTPException) as bad_smeta_provider:
+        await settings.save_settings(
+            settings.SettingsRequest(smeta_document_provider="unknown-cloud"),
+            restart=False,
+            _admin=object(),
+        )
+    assert bad_smeta_provider.value.status_code == 400
 
 
 def test_settings_fields_set_supports_pydantic_v1_style():

@@ -69,7 +69,7 @@ EMBEDDING_PROFILES: dict[str, EmbeddingProfile] = {
 RAW_QUERY_EMBEDDING_MODE = "raw-v1"
 QWEN_RETRIEVAL_QUERY_EMBEDDING_MODE = "qwen-retrieval-v1"
 QWEN_RETRIEVAL_INSTRUCTION = "Given a search query, retrieve relevant passages from the selected corpus"
-INDEX_CONTRACT_SCHEMA = "les.rag.index-contract.v1"
+INDEX_CONTRACT_SCHEMA = "les.rag.index-contract.v2"
 DOCUMENT_EMBEDDING_MODE = "raw-v1"
 CHUNKER_REVISION = "structure-aware-final-budget-v2"
 
@@ -234,7 +234,8 @@ def index_contract_path() -> Path:
     if configured:
         return Path(configured)
     db_path = Path(rag_meta_db_path())
-    return db_path.with_name(f"{db_path.name}.index-contract.json")
+    collection = re.sub(r"[^a-zA-Z0-9_.-]+", "_", rag_collection_name()).strip("._")
+    return db_path.with_name(f"{db_path.name}.{collection}.index-contract.json")
 
 
 def index_contract_payload() -> dict[str, Any]:
@@ -251,7 +252,12 @@ def index_contract_payload() -> dict[str, Any]:
         "chunk_size": int(chunking["chunk_size"]),
         "chunk_overlap": int(chunking["chunk_overlap"]),
         "chunker_revision": CHUNKER_REVISION,
+        "qdrant_schema": "named",
+        "dense_vector_name": os.getenv("RAG_DENSE_VECTOR_NAME", "dense").strip() or "dense",
+        "sparse_vector_name": os.getenv("RAG_SPARSE_VECTOR_NAME", "bm25_sparse").strip()
+        or "bm25_sparse",
         "sparse_tokenizer_revision": os.getenv("RAG_SPARSE_TOKENIZER_REVISION", "les-bm25-v1"),
+        "point_embedding_fingerprint": point_embedding_fingerprint(),
     }
     if payload["embedding_backend"] == "coreml":
         payload.update(
@@ -265,6 +271,33 @@ def index_contract_payload() -> dict[str, Any]:
     stable = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     payload["fingerprint"] = hashlib.sha256(stable.encode("utf-8")).hexdigest()
     return payload
+
+
+def point_embedding_descriptor() -> dict[str, str]:
+    """Canonical point-level embedding identity shared by ingestion and manifest."""
+    backend = os.getenv("EMBED_BACKEND", "sentence_transformers").strip().lower()
+    descriptor = {
+        "backend": backend,
+        "model_id": embedding_model_id(),
+        "profile": embed_profile_name(),
+        "vector_size": str(rag_vector_size()),
+    }
+    if backend == "coreml":
+        descriptor.update(
+            {
+                "coreml_model": os.getenv("COREML_EMBED_MODEL", ""),
+                "coreml_seq_len": os.getenv("COREML_EMBED_SEQ_LEN", ""),
+                "coreml_compute_units": os.getenv("COREML_EMBED_COMPUTE_UNITS", ""),
+                "coreml_fallback": os.getenv("COREML_EMBED_FALLBACK", ""),
+            }
+        )
+    return descriptor
+
+
+def point_embedding_fingerprint(descriptor: dict[str, str] | None = None) -> str:
+    data = descriptor or point_embedding_descriptor()
+    stable = "\n".join(f"{key}={data.get(key, '')}" for key in sorted(data))
+    return hashlib.sha1(stable.encode("utf-8", errors="ignore")).hexdigest()
 
 
 def read_index_contract() -> dict[str, Any] | None:

@@ -171,4 +171,4 @@ def test_v04_source_scope_regression():
     assert u.route_construction_intent("правила расстановки ОЗК").intent == "norm_qa"
 
 def test_unit_gate_regression():
-    assert ch.lsr_assemble([{"code": "06-02-001-01", "work": "плита", "unit": "м3", "qty": 720}])["asm_positions"][0]["qty"] == 7.2
+    assert ch.lsr_assemble([{"code": "ГЭСН12-01-034-02", "work": "обрешётка", "unit": "м2", "qty": 720}])["asm_positions"][0]["qty"] == 7.2

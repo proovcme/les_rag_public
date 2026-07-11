@@ -49,6 +49,40 @@ folder/project/dataset
   -> trace, sources, missing, blockers
 ```
 
+## Единственный production retrieval path
+
+```text
+model/user query
+  -> format-agnostic normalization
+  -> selected dataset/file/version scope
+  -> Qdrant named dense + BM25 sparse prefetch
+  -> RRF fusion
+  -> SQLite FTS exact-reference/file safety merge
+  -> reranker over a wider candidate pool
+  -> parent/neighbor context expansion
+  -> compact evidence packet
+  -> model reads, may call search/read again, then answers
+```
+
+Typed SQLite, PDF/table/CAD readers и exact lookup являются инструментами того же evidence-контура.
+Они могут вернуть точную карточку, строку или координату, но не выбирают норму, аналог, состав работ
+или профессиональный вывод. Отдельной альтернативной RAG-архитектуры для модуля или датасета нет.
+
+Запрещено:
+
+- unnamed production vectors и отдельный sparse sidecar;
+- копировать legacy dense в новую коллекцию без полного contract-clean re-embed;
+- включать/выключать обязательный RRF env-флагом;
+- дописывать в query готовые доменные утверждения или ожидаемые golden-термины;
+- выбирать top-1, норму, аналог, coverage или ответ кодовым score/boost/regex;
+- дробить профессиональное решение фиксированными окнами строк; batching допустим только внутри
+  исполнения независимых tool calls и не меняет видимую модели задачу;
+- считать navigation maps доказательством или отдавать модели сырой бесконечный registry;
+- маркировать single-channel fallback как hybrid/RRF.
+
+При нарушении embedding/index contract система работает только в явном degraded режиме до clean
+rebuild. Аварийный fallback не становится поддерживаемой второй архитектурой.
+
 Главная граница:
 
 ```text
@@ -60,6 +94,19 @@ navigation != evidence
 CAD/BIM atoms, normative clauses или calculation trace.
 
 ## Принципы
+
+### 0. Исправлять систему, а не симптом
+
+Конкретный провал датасета, документа или запроса является regression-кейсом, но не границей ремонта.
+Изменение RAG считается архитектурным только тогда, когда инвариант выполнен для всего текущего
+корпуса и автоматически применяется к будущим датасетам. Объектные boosts, отдельные обходы FIRE,
+BAI, ПД или смет и ручное включение обязательного retrieval-слоя не являются исправлением ядра.
+
+Для штатного LES каждый индексируемый evidence-chunk обязан иметь совместимые named dense и sparse
+vectors, production retrieval обязан выполнять RRF, а смена embedding/chunking/vector schema обязана
+создавать новую contract-versioned коллекцию. Частный кейс используется только для измеримого гейта.
+Нормализация запроса ограничена Unicode/whitespace/exact-reference формой; код не дописывает в query
+готовые FIRE/HVAC/ПП87 утверждения. Переформулировать поиск может модель через следующий tool-call.
 
 ### 1. Корпус важнее чанка
 

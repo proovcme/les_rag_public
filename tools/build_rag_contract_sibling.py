@@ -19,13 +19,6 @@ from typing import Any, Iterable
 
 
 MIGRATION_NAMESPACE = uuid.UUID("e40ed045-32cd-48b2-a15d-e523c64921bc")
-DEFAULT_DATASETS = (
-    "BAI",
-    "ПД_Инновационный центр",
-    "NTD_FIRE_Index",
-)
-
-
 def resolve_datasets(db_path: Path, names: Iterable[str]) -> list[dict[str, str]]:
     requested = [str(name).strip() for name in names if str(name).strip()]
     if not requested:
@@ -42,6 +35,27 @@ def resolve_datasets(db_path: Path, names: Iterable[str]) -> list[dict[str, str]
     if missing:
         raise ValueError(f"datasets not found: {', '.join(missing)}")
     return [{"id": found[name], "name": name} for name in requested]
+
+
+def resolve_indexed_datasets(db_path: Path) -> list[dict[str, str]]:
+    """Return every dataset that currently owns indexed chunks.
+
+    This is the default migration scope.  A clean production sibling must not
+    silently cover only a hand-picked canary subset.
+    """
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT DISTINCT d.id, d.name
+            FROM datasets d
+            LEFT JOIN documents doc ON doc.dataset_id = d.id
+            WHERE COALESCE(d.chunk_count, 0) > 0
+               OR (doc.status = 'INDEXED' AND COALESCE(doc.chunk_count, 0) > 0)
+            ORDER BY d.name
+            """
+        ).fetchall()
+    return [{"id": str(row["id"]), "name": str(row["name"])} for row in rows]
 
 
 def deterministic_point_id(
@@ -82,7 +96,12 @@ def _ensure_destination(client: Any, args: argparse.Namespace) -> bool:
                 args.sparse_name: models.SparseVectorParams(modifier=models.Modifier.IDF)
             },
         )
-    for field in ("dataset_id", "file_name", "migration_source_point_id"):
+    for field in (
+        "dataset_id",
+        "file_name",
+        "embedding_fingerprint",
+        "migration_source_point_id",
+    ):
         client.create_payload_index(
             args.dst,
             field_name=field,
@@ -144,19 +163,48 @@ def _migrate_dataset(client: Any, embed: Any, args: argparse.Namespace, dataset:
     fingerprint = _embedding_cache_fingerprint(descriptor)
     chunking = chunking_config()
     pending: list[dict[str, Any]] = []
-    read = written = dropped = 0
+    read = written = dropped = skipped_existing = 0
 
     def flush() -> None:
-        nonlocal written
+        nonlocal written, skipped_existing
         if not pending:
             return
-        vectors = embed.encode_sync([item["text"] for item in pending])
-        if len(vectors) != len(pending):
+        for item in pending:
+            item["point_id"] = deterministic_point_id(
+                source_collection=args.src,
+                source_point_id=item["source_point_id"],
+                child_ord=int((item.get("payload") or {}).get("migration_child_ord") or 0),
+                text=item["text"],
+            )
+        existing = {
+            str(point.id)
+            for point in client.retrieve(
+                collection_name=args.dst,
+                ids=[item["point_id"] for item in pending],
+                with_payload=False,
+                with_vectors=False,
+            )
+        }
+        missing = [item for item in pending if item["point_id"] not in existing]
+        skipped_existing += len(pending) - len(missing)
+        if not missing:
+            pending.clear()
+            return
+        sparse_vectors = []
+        for item in missing:
+            sparse = encode_bm25(item["text"])
+            if not sparse:
+                raise RuntimeError(
+                    f"empty sparse vector for source point {item['source_point_id']}"
+                )
+            sparse_vectors.append(sparse)
+        vectors = embed.encode_sync([item["text"] for item in missing])
+        if len(vectors) != len(missing):
             raise RuntimeError(
-                f"embedding count mismatch: got {len(vectors)}, expected {len(pending)}"
+                f"embedding count mismatch: got {len(vectors)}, expected {len(missing)}"
             )
         points = []
-        for item, dense in zip(pending, vectors):
+        for item, dense, sparse in zip(missing, vectors, sparse_vectors, strict=True):
             payload = dict(item["payload"])
             payload.update(
                 {
@@ -175,20 +223,15 @@ def _migrate_dataset(client: Any, embed: Any, args: argparse.Namespace, dataset:
                     "migration_source_point_id": str(item["source_point_id"]),
                 }
             )
-            sparse = encode_bm25(item["text"])
-            point_vector: dict[str, Any] = {args.dense_name: dense}
-            if sparse:
-                point_vector[args.sparse_name] = models.SparseVector(
+            point_vector: dict[str, Any] = {
+                args.dense_name: dense,
+                args.sparse_name: models.SparseVector(
                     indices=list(sparse.keys()), values=list(sparse.values())
-                )
+                ),
+            }
             points.append(
                 models.PointStruct(
-                    id=deterministic_point_id(
-                        source_collection=args.src,
-                        source_point_id=item["source_point_id"],
-                        child_ord=int(payload.get("migration_child_ord") or 0),
-                        text=item["text"],
-                    ),
+                    id=item["point_id"],
                     vector=point_vector,
                     payload=payload,
                 )
@@ -251,6 +294,7 @@ def _migrate_dataset(client: Any, embed: Any, args: argparse.Namespace, dataset:
         "dataset": dataset["name"],
         "source_points_read": read,
         "points_written": written,
+        "points_already_present": skipped_existing,
         "dropped": dropped,
     }
 
@@ -272,20 +316,28 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--create", action="store_true")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--report-path", type=Path)
     args = parser.parse_args(argv)
-    args.datasets = args.datasets or list(DEFAULT_DATASETS)
+    args.datasets = args.datasets or []
     if args.create and args.dry_run:
         parser.error("--create and --dry-run are mutually exclusive")
     if not args.source_db.is_file():
         parser.error(f"source db not found: {args.source_db}")
 
-    datasets = resolve_datasets(args.source_db, args.datasets)
+    datasets = (
+        resolve_datasets(args.source_db, args.datasets)
+        if args.datasets
+        else resolve_indexed_datasets(args.source_db)
+    )
+    if not datasets:
+        parser.error("no indexed datasets found")
     plan = {
         "schema": "les.rag.contract-sibling-plan.v1",
         "source_collection": args.src,
         "destination_collection": args.dst,
         "contract_path": str(args.contract_path),
         "datasets": datasets,
+        "scope": "selected" if args.datasets else "all_indexed_datasets",
         "limit_per_dataset": args.limit,
         "mutates_source": False,
     }
@@ -308,6 +360,15 @@ def main(argv: list[str] | None = None) -> int:
 
     embed = EmbedClient(args.embed_url, model=embedding_api_model())
     results = [_migrate_dataset(client, embed, args, dataset) for dataset in datasets]
+    source_points = int(client.count(args.src, exact=True).count)
+    source_points_read = sum(int(item["source_points_read"]) for item in results)
+    dropped = sum(int(item["dropped"]) for item in results)
+    if source_points_read != source_points:
+        raise RuntimeError(
+            f"incomplete source coverage: read={source_points_read}, source={source_points}"
+        )
+    if dropped:
+        raise RuntimeError(f"migration dropped {dropped} source points")
     report = {
         "schema": "les.rag.contract-sibling-result.v1",
         "status": "completed",
@@ -315,8 +376,19 @@ def main(argv: list[str] | None = None) -> int:
         "destination_collection": args.dst,
         "contract": contract,
         "datasets": results,
+        "source_points": source_points,
+        "source_points_read": source_points_read,
+        "source_coverage": 1.0,
         "destination_points": int(client.count(args.dst, exact=True).count),
     }
+    if args.report_path:
+        args.report_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = args.report_path.with_suffix(args.report_path.suffix + ".tmp")
+        tmp.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        tmp.replace(args.report_path)
     print(json.dumps(report, ensure_ascii=False, indent=2), flush=True)
     return 0
 

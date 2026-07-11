@@ -48,48 +48,29 @@ SNIPPETS: dict[str, SkillSnippet] = {
     "smeta.specification_to_bor": SkillSnippet(
         "smeta.specification_to_bor",
         "smeta",
-        "Build BOR candidate from specification before norm selection and pricing.",
-        (
-            "Спецификация не является сметой. Сначала сделай мост спецификация -> ВОР: "
-            "поставка отдельно, работы отдельно, parent/child количества сохраняй, missing "
-            "quantity не превращай в 1, missing price не превращай в 0."
-        ),
+        "Keep source-derived work and quantity decisions traceable.",
+        "Самостоятельно определи, какие расчётные строки следуют из источника; сохрани связь с исходными данными.",
         ("specification", "bor"),
     ),
     "smeta.quantity_conflict": SkillSnippet(
         "smeta.quantity_conflict",
         "smeta",
-        "Show source quantity split when quantities conflict.",
-        (
-            "Если исходные количества конфликтуют и влияют на стоимость, покажи развилку "
-            "объёмов с источником, составом и статусом. Не выбирай договорный объём молча; "
-            "сценарные деньги можно дать по вариантам, но не как финал."
-        ),
+        "Keep quantity decisions traceable.",
+        "Количества и их преобразования должны сохранять ссылку на источник или явное допущение модели.",
         ("quantity", "conflict"),
     ),
     "smeta.rim_scenario_estimate": SkillSnippet(
         "smeta.rim_scenario_estimate",
         "smeta",
-        "Give RIM-based scenario when final trace is not closed.",
-        (
-            "Если пользователь просит смету/оценку и не запретил допущения, измеримая ВОР "
-            "должна получить попытку стоимости работ. При доступной нормативной базе основной "
-            "ход — РИМ-сценарий по нормативным аналогам, с видимой базой и допуском."
-        ),
+        "Let the model choose the estimating method.",
+        "Метод расчёта и необходимость допущений выбирает модель по задаче и доступным источникам.",
         ("rim", "scenario"),
     ),
     "smeta.gesn_pricing_workflow": SkillSnippet(
         "smeta.gesn_pricing_workflow",
         "smeta",
-        "Use LES norm and price sources without code-side norm decisions.",
-        (
-            "Сметчик сам выбирает нормируемую работу и полный шифр нормы; код после этого только "
-            "раскрывает ресурсы, цены, НР/СП и арифметику. Ход по строке: исходная работа -> "
-            "нормируемая работа -> семейство ГЭСН/ГЭСНм/ГЭСНп/ГЭСНр -> сборник/таблица/код -> "
-            "ресурсы нормы -> книга ФГИС/КАЦ/КП -> ЛСР. В ЛЕС физически есть нормы ГЭСН-2022 "
-            "и ГЭСНм10/ГЭСНм38, книги цен вроде spb_2kv2026/moskva_2kv2026, НР/СП и коэффициенты; "
-            "неполная база вроде 'ГЭСНм10' оставляет строку в ЛСР с 0.00 и примечанием."
-        ),
+        "Use available estimating tools without code-side professional decisions.",
+        "Модель выбирает работы, нормы и применимость; инструменты ищут источники, раскрывают данные и считают.",
         ("gesn", "rim", "pricing", "sources"),
     ),
     "smeta.active_continuation": SkillSnippet(
@@ -158,13 +139,6 @@ def select_skill_snippets(
         if module_id == "smeta":
             candidates.append("smeta.active_continuation")
     candidates.extend(spec.skill_snippets)
-
-    text = str(user_input or "").casefold()
-    if module_id == "smeta":
-        if any(word in text for word in ("спецификац", "оборудован", "кабель", "материал")):
-            candidates.insert(1, "smeta.specification_to_bor")
-        if any(word in text for word in ("рим", "гэсн", "смет", "стоим", "оцен")):
-            candidates.insert(1, "smeta.rim_scenario_estimate")
 
     out: list[SkillSnippet] = []
     seen: set[str] = set()

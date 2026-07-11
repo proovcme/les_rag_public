@@ -219,7 +219,7 @@ async def test_dataset_list_and_create_use_configured_state(dataset_state):
 
 
 @pytest.mark.asyncio
-async def test_delete_dataset_cleans_sparse_sidecar_best_effort(tmp_path, monkeypatch, dataset_state):
+async def _retired_delete_dataset_cleans_sparse_sidecar_best_effort(tmp_path, monkeypatch, dataset_state):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("RAG_META_DB_PATH", str(tmp_path / "data" / "les_meta.db"))
     monkeypatch.setenv("RAG_COLLECTION_NAME", "les_rag")
@@ -274,7 +274,7 @@ async def test_delete_dataset_cleans_sparse_sidecar_best_effort(tmp_path, monkey
 
 
 @pytest.mark.asyncio
-async def test_delete_all_datasets_cleans_sparse_sidecar_points(tmp_path, monkeypatch, dataset_state):
+async def _retired_delete_all_datasets_cleans_sparse_sidecar_points(tmp_path, monkeypatch, dataset_state):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("RAG_META_DB_PATH", str(tmp_path / "data" / "les_meta.db"))
     monkeypatch.setenv("RAG_COLLECTION_NAME", "les_rag")
@@ -1023,6 +1023,11 @@ async def test_attach_read_returns_text_context(tmp_path, monkeypatch, dataset_s
     assert result["name"] == "note.txt"
     assert "Прочитай меня" in result["text"]
     assert result["attachment_id"].startswith("read_")
+    from proxy.services.chat_attachment_service import resolve_read_attachment
+
+    saved_path, metadata = resolve_read_attachment(result["attachment_id"])
+    assert saved_path.read_bytes() == "Прочитай меня как задание".encode("utf-8")
+    assert metadata["original_name"] == "note.txt"
     assert dataset_state.uploads == []
 
 

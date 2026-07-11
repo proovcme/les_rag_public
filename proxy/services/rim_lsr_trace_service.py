@@ -246,6 +246,7 @@ def _position_resources(position: dict[str, Any]) -> tuple[dict[str, Any] | None
             return None, []
         return norm, list(norm.get("resources") or [])
 
+    norm = gesn_service.get_norm(code) if code else None
     work_qty = _f(position.get("qty")) or 1.0
     resources: list[dict[str, Any]] = []
     for res in position.get("resources") or []:
@@ -253,7 +254,7 @@ def _position_resources(position: dict[str, Any]) -> tuple[dict[str, Any] | None
         if line.get("per_unit") in (None, ""):
             line["per_unit"] = _f(line.get("qty")) / work_qty if work_qty else _f(line.get("qty"))
         resources.append(line)
-    return None, resources
+    return norm, resources
 
 
 def _row(
@@ -298,16 +299,82 @@ def build_position_trace(
     kac_lookup = {_norm_name(k): _f(v) for k, v in (kac_map or {}).items()}
     work_qty = _f(position.get("qty")) or 0.0
     norm, resources = _position_resources(position)
+    from proxy.services import fsem_machinist_service as fsem
+
+    if pricebook is not None:
+        resources, fsem_trace = fsem.enrich_machinists(resources, quantity_field="per_unit")
+    else:
+        # A raw trace without a pricebook preserves explicit legacy/manual
+        # machinist prices. Full FSEM replacement is meaningful only together
+        # with the active tariff book that prices the derived driver codes.
+        resources = [dict(item) for item in resources]
+        fsem_trace = {
+            "schema": "fsem_enrichment_v1",
+            "status": "not_applied_without_pricebook",
+        }
     flags: list[str] = []
+    completeness_reasons: list[str] = []
+    if fsem_trace.get("status") == "unresolved":
+        details = list(fsem_trace.get("reasons") or fsem_trace.get("missing_machine_codes") or [])
+        flags.append("ФСЭМ не смог детализировать ОТм: " + "; ".join(str(item) for item in details))
+        completeness_reasons.append("fsem_unresolved")
+    norm_source_integrity: dict[str, Any] = {}
+    if norm and str(norm.get("_source_kind") or "") == "structured_sqlite":
+        from proxy.smeta_core.integrity import normative_base_integrity
+
+        norm_source_integrity = normative_base_integrity(base_path=str(norm.get("_source_path") or ""))
+        if not norm_source_integrity.get("trusted_for_pricing"):
+            flags.append("нормативная база в карантине: semantic integrity gate не пройден")
+            completeness_reasons.append("normative_source_untrusted")
     if position.get("code") and norm is None and not position.get("resources"):
         flags.append(f"норма ГЭСН не найдена: {position.get('code')}")
+        completeness_reasons.append("norm_missing")
+
+    review_was_required = "resource_review_status" in position
+    resource_review_status = str(position.get("resource_review_status") or "not_required_raw_trace")
+    resource_review_reason = str(position.get("resource_review_reason") or "")
+    if review_was_required and resource_review_status not in {"keep_all_confirmed", "actions_confirmed"}:
+        flags.append("ресурсный состав нормы не подтверждён моделью" + (f": {resource_review_reason}" if resource_review_reason else ""))
+        completeness_reasons.append("resource_review_unresolved")
+    component_review = {
+        "labor": (
+            str(position.get("labor_review_status") or ""),
+            str(position.get("labor_review_reason") or ""),
+        ),
+        "machine": (
+            str(position.get("machine_review_status") or ""),
+            str(position.get("machine_review_reason") or ""),
+        ),
+        "material": (
+            str(position.get("material_review_status") or ""),
+            str(position.get("material_review_reason") or ""),
+        ),
+    }
+    for component, (status, reason) in component_review.items():
+        if status and status not in {"confirmed", "not_present"}:
+            flags.append(
+                f"компонент {component} не подтверждён моделью"
+                + (f": {reason}" if reason else "")
+            )
+            completeness_reasons.append(f"{component}_review_unresolved")
 
     work_code = position.get("code") or (norm or {}).get("code") or ""
     work_name = position.get("name") or (norm or {}).get("name") or ""
     work_unit = position.get("unit") or (norm or {}).get("unit") or ""
-    nr_sp = nr_sp_service.resolve(work_name, code=work_code)
+    nr_sp = nr_sp_service.resolve(
+        work_name,
+        code=work_code,
+        rule_id=str(position.get("nr_sp_rule_id") or "") or None,
+    )
     nr_pct = _f(position.get("nr_pct") if position.get("nr_pct") not in (None, "") else (norm or {}).get("nr_pct", nr_sp["nr_pct"]))
     sp_pct = _f(position.get("sp_pct") if position.get("sp_pct") not in (None, "") else (norm or {}).get("sp_pct", nr_sp["sp_pct"]))
+    if (
+        not str(nr_sp.get("status") or "").startswith("resolved")
+        and position.get("nr_pct") in (None, "")
+        and position.get("sp_pct") in (None, "")
+    ):
+        flags.append("НР/СП не разрешены по виду работ: нужен нормативный источник/явный выбор")
+        completeness_reasons.append("nr_sp_unresolved")
 
     detail_rows: dict[str, list[dict[str, Any]]] = {"labor": [], "machine": [], "machinist": [], "material": []}
     sums = {"labor": 0.0, "machine": 0.0, "machinist": 0.0, "material": 0.0}
@@ -328,6 +395,7 @@ def build_position_trace(
                 "needs_fgis_price": "нужна цена эксплуатации машины",
             }.get(price.action or price.source, "нужна цена")
             flags.append(f"{action_label}: {res.get('name','?')} ({res.get('code','—')})")
+            completeness_reasons.append(f"price_missing:{res.get('code') or res.get('name') or '?'}")
         if kind not in detail_rows:
             flags.append(f"неизвестный вид ресурса: {kind!r}")
             continue
@@ -351,7 +419,13 @@ def build_position_trace(
                     12: cost,
                 },
                 source=price.source,
-                meta={"basis": price.basis, "kind": kind, "price_action": price.action},
+                meta={
+                    "basis": price.basis,
+                    "kind": kind,
+                    "price_action": price.action,
+                    "price_source_ref": res.get("price_source_ref") or "",
+                    "resource_binding": res.get("resource_binding") or {},
+                },
             )
         )
 
@@ -364,9 +438,22 @@ def build_position_trace(
     nr = round(fot * nr_pct / 100, 2)
     sp = round(fot * sp_pct / 100, 2)
     total = round(direct + nr + sp, 2)
+    full_amount = total if not completeness_reasons else None
+    position_total_label = "Всего по позиции" if full_amount is not None else "Известная стоимость позиции"
 
     rows: list[dict[str, Any]] = [
-        _row("work", work_name, columns={2: work_code, 3: work_name, 4: work_unit, 5: work_qty, 6: 1, 7: work_qty}, source="gesn"),
+        _row(
+            "work",
+            work_name,
+            columns={2: work_code, 3: work_name, 4: work_unit, 5: work_qty, 6: 1, 7: work_qty},
+            source="gesn",
+            meta={
+                "selection_kind": position.get("selection_kind") or "",
+                "is_analog": bool(position.get("is_analog")),
+                "analog_limitations": list(position.get("analog_limitations") or []),
+                "binding_reason": position.get("binding_reason") or "",
+            },
+        ),
     ]
     if k_ozp != 1.0 or k_em != 1.0:
         rows.append(
@@ -393,7 +480,15 @@ def build_position_trace(
             _row("fot", "ФОТ", columns={3: "ФОТ", 12: fot}),
             _row("nr", "НР", columns={3: "НР", 4: "%", 5: nr_pct, 7: nr_pct, 12: nr}, source="Пр/812"),
             _row("sp", "СП", columns={3: "СП", 4: "%", 5: sp_pct, 7: sp_pct, 12: sp}, source="Пр/774"),
-            _row("position_total", "Итого по позиции", columns={3: "Итого по позиции", 12: total}),
+            _row(
+                "position_total",
+                position_total_label,
+                columns={3: position_total_label, 12: total},
+                meta={
+                    "amount_status": "complete" if full_amount is not None else "partial",
+                    "completeness_reasons": list(dict.fromkeys(completeness_reasons)),
+                },
+            ),
         ]
     )
 
@@ -416,9 +511,19 @@ def build_position_trace(
             "nr": nr,
             "sp": sp,
             "total": total,
+            "known_amount": total,
+            "full_amount": full_amount,
+            "amount_status": "complete" if full_amount is not None else "partial",
+            "completeness_reasons": list(dict.fromkeys(completeness_reasons)),
+            "resource_review_status": resource_review_status,
+            "resource_review_reason": resource_review_reason,
+            "component_review": component_review,
             "labor_qty": qty_sums["labor"],
             "machinist_qty": qty_sums["machinist"],
             "flags": flags,
+            "norm_source_integrity": norm_source_integrity,
+            "nr_sp_trace": nr_sp,
+            "fsem_trace": fsem_trace,
         },
     }
 
@@ -453,8 +558,12 @@ def build_lsr_trace(
         )
         sec_name = str(pos.get("section") or "").strip() or "Без раздела"
         trace = {**trace, "section": sec_name}
+        if pos.get("work_id") is not None:
+            trace["work_id"] = pos.get("work_id")
         if pos.get("source_row") is not None:
             trace["source_row"] = pos.get("source_row")
+        if pos.get("source_refs") is not None:
+            trace["source_refs"] = list(pos.get("source_refs") or [])
         entry = by_section.get(sec_name)
         if entry is None:
             entry = {"section": sec_name, "positions": [], "total": 0.0}
@@ -468,6 +577,7 @@ def build_lsr_trace(
     summary["labor_qty"] = 0.0
     summary["machinist_qty"] = 0.0
     flags: list[str] = []
+    all_positions_complete = True
     count = 0
     for entry in sections:
         for trace in entry["positions"]:
@@ -477,10 +587,14 @@ def build_lsr_trace(
             summary["labor_qty"] = round(summary["labor_qty"] + _f(s.get("labor_qty")), 6)
             summary["machinist_qty"] = round(summary["machinist_qty"] + _f(s.get("machinist_qty")), 6)
             flags.extend(s.get("flags") or [])
+            all_positions_complete = all_positions_complete and s.get("full_amount") is not None
             count += 1
     summary["positions"] = count
     summary["flags"] = flags
-    if count and not flags:
+    summary["known_amount"] = summary["total"]
+    summary["full_amount"] = summary["total"] if count and all_positions_complete else None
+    summary["amount_status"] = "complete" if summary["full_amount"] is not None else "partial"
+    if count and all_positions_complete and not flags:
         summary["result_status"] = "priced_final"
     elif count:
         summary["result_status"] = "priced_partial"

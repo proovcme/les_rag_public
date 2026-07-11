@@ -7,6 +7,7 @@ from proxy.services.retrieval_service import (
     classify_query,
     expand_retrieval_query,
     infer_dataset_filter,
+    hybrid_backend,
     resolve_dataset_ids,
     retrieve_chat_chunks,
 )
@@ -247,22 +248,21 @@ def test_classify_query_explains_route():
     assert route.expanded_query == "какое сечение кабеля заземления"
 
 
-def test_expand_retrieval_query_for_pp87_section_list():
-    expanded = expand_retrieval_query("список разделов проектной документации по постановлению 87")
+def test_retrieval_query_normalization_never_injects_domain_answer():
+    expanded = expand_retrieval_query(
+        "  список   разделов проектной документации по постановлению 87  "
+    )
 
-    assert "Проектная документация на объекты капитального строительства состоит из 12 разделов" in expanded
-    assert "Раздел 1: Пояснительная записка" in expanded
-    assert "линейные объекты" in expanded
+    assert expanded == "список разделов проектной документации по постановлению 87"
+    assert "Пояснительная записка" not in expanded
 
 
-def test_expand_retrieval_query_for_fire_and_hvac_normative_anchors():
+def test_retrieval_query_normalization_keeps_fire_and_hvac_questions_intact():
     fire = expand_retrieval_query("В каких случаях допускается не выполнять систему дымоудаления?")
     hvac = expand_retrieval_query("Где смотреть требования к воздухообмену и расходу воздуха?")
 
-    assert "СП 7.13130" in fire
-    assert "противодымная вентиляция" in fire
-    assert "СП 60.13330" in hvac
-    assert "воздухообмен" in hvac
+    assert fire == "В каких случаях допускается не выполнять систему дымоудаления?"
+    assert hvac == "Где смотреть требования к воздухообмену и расходу воздуха?"
 
 
 @pytest.mark.asyncio
@@ -377,11 +377,25 @@ async def test_retrieve_chat_chunks_can_use_qdrant_native_hybrid(monkeypatch):
     )
 
     assert result.trace.mode == "qdrant_native_hybrid"
+    assert result.trace.retrieval_channels == ["dense", "qdrant_sparse"]
+    assert result.trace.fusion == "rrf"
     assert result.chunks[0].doc_name == "native.docx"
     assert backend.native_calls == [
         {"question": "q", "dataset_ids": ["ds-1"], "top_k": 24, "doc_filter": ["doc.md"]}
     ]
     assert backend.calls == []
+
+
+def test_qdrant_native_rrf_is_the_default_hybrid_backend(monkeypatch):
+    monkeypatch.delenv("RAG_HYBRID_BACKEND", raising=False)
+
+    assert hybrid_backend() == "qdrant_native"
+
+
+def test_legacy_hybrid_backend_env_cannot_change_native_rrf(monkeypatch):
+    monkeypatch.setenv("RAG_HYBRID_BACKEND", "sidecar_sparse")
+
+    assert hybrid_backend() == "qdrant_native"
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,4 @@
-"""ГЭСН: норма→ресурсы и сборка ЛСР прямо от кода (gold = позиция эталона = 11813.04)."""
+"""ГЭСН: норма→ресурсы и сборка ЛСР прямо от кода с полным ФСЭМ."""
 
 from __future__ import annotations
 
@@ -32,10 +32,10 @@ def test_assemble_from_code_reproduces_etalon():
     assert r["flags"] == []
     b = r["base"]
     assert b["ozp"] == 3750.23
-    assert b["em"] == 992.40
+    assert b["em"] == 1023.72
     assert b["mat"] == 83.62
-    assert b["fot"] == 4208.91
-    assert r["total"] == 11813.04                        # Всего по позиции — как в эталоне
+    assert b["fot"] == 4240.23
+    assert r["total"] == 11896.35
 
 
 def test_unknown_code_flagged():

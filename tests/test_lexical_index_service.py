@@ -135,8 +135,34 @@ def test_rrf_merge_adds_lexical_exact_hit_and_deduplicates():
     merged, trace = merge_rrf(vector, lexical, question="ширина по СП 1.13130", limit=3)
 
     assert trace.mode == "hybrid"
+    assert trace.retrieval_channels == ["dense", "lexical"]
+    assert trace.fusion == "rrf"
     assert trace.lexical_count == 1
+    assert trace.retrieval_channels == ["lexical"]
+    assert trace.fusion == "none"
     assert [chunk.doc_name for chunk in merged] == ["СП 1.13130.docx", "doc-a"]
+
+
+def test_single_lexical_ranking_is_not_reported_as_hybrid_rrf():
+    lexical = [Chunk("ширина эвакуации", "СП 1.13130.docx", 0.5, meta={})]
+
+    merged, trace = merge_rrf([], lexical, question="ширина эвакуации", limit=3)
+
+    assert [chunk.doc_name for chunk in merged] == ["СП 1.13130.docx"]
+    assert trace.mode == "lexical_only"
+    assert trace.score_kind == "lexical_rank"
+    assert trace.vector_count == 0
+    assert trace.lexical_count == 1
+
+
+def test_single_dense_ranking_is_not_reported_as_rrf():
+    dense = [Chunk("эвакуационный выход", "СП 1.13130.docx", 0.8, meta={})]
+
+    merged, trace = merge_rrf(dense, [], question="эвакуационный выход", limit=3)
+
+    assert [chunk.doc_name for chunk in merged] == ["СП 1.13130.docx"]
+    assert trace.mode == "vector"
+    assert trace.score_kind == "dense_similarity"
 
 
 def test_lexical_index_returns_context_window_by_parent(tmp_path):

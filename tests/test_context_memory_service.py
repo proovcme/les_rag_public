@@ -317,10 +317,13 @@ def test_service_source_notebooks_returns_gesn_first(monkeypatch):
 
 def test_smeta_norm_rag_notebook_is_navigation_map_not_candidate_selector():
     from proxy.services import notebook_service as nb
+    from proxy.smeta_core.base_registry import active_base
 
     nb.build_smeta_norm_rag_notebook.cache_clear()
     notebook = build_smeta_norm_rag_notebook()
 
+    assert active_base()["base_path"].endswith("les_smeta_base.sqlite")
+    assert "_v2" not in active_base()["base_path"]
     assert notebook["id"] == "smeta_norms"
     assert notebook["context_role"] == "navigation"
     assert notebook["is_evidence"] is False
@@ -328,11 +331,17 @@ def test_smeta_norm_rag_notebook_is_navigation_map_not_candidate_selector():
     assert {"norms", "resources", "fgis_split", "lsr_form", "project_sources"} <= layer_ids
     sks = next(route for route in notebook["domain_routes"] if "СКС" in route["domain"])
     assert "ГЭСНм10" in sks["keys"]
+    assert "ГЭСНм10" in sks["available_keys"]
+    assert sks["status"] == "available"
     assert "не заменять всю СКС" in sks["caution"]
     by_collection = {item["collection"]: item for item in notebook["collections"]}
     assert by_collection["ГЭСНм10"]["status"] == "available"
     assert by_collection["ГЭСНм10"]["examples"]
     assert any(str(ex["code"]).startswith("ГЭСНм:10-") for ex in by_collection["ГЭСНм10"]["examples"])
+    assert notebook["availability"]["rule"].startswith("available означает наличие реальных карточек")
+    assert notebook["availability"]["missing_route_collections"] == []
+    assert notebook["norm_store"]["norm_count"] >= 47_000
+    assert notebook["norm_store"]["collections"] >= 100
     text = smeta_norm_rag_prompt_excerpt(notebook)
     assert "ВОР → база/сборник/таблица" in text
     assert "полный шифр" in text

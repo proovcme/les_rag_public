@@ -144,6 +144,50 @@ OUTPUT_FORMATS = {
 }
 
 
+CHAT_MODE_GUIDANCE = {
+    "text": {
+        "title": "Авто",
+        "description": "Опишите задачу обычным языком — ЛЕС сам выберет подходящий рабочий путь.",
+        "data_hint": "Если вопрос относится к проекту, выберите область поиска или прикрепите файл.",
+        "examples": (
+            "Расскажи, что есть в выбранном проекте",
+            "Найди нужный документ и объясни вывод",
+            "Что требует моего внимания?",
+        ),
+    },
+    "rag": {
+        "title": "Поиск по источникам",
+        "description": "Ищет ответ в выбранных проектах, датасетах и документах и показывает источники.",
+        "data_hint": "Лучше всего: вопрос + объект, раздел, шифр или название документа.",
+        "examples": (
+            "Где описана система дымоудаления?",
+            "Найди требования к пределу огнестойкости",
+            "Что сказано о котельной в проекте?",
+        ),
+    },
+    "smeta": {
+        "title": "Сметы",
+        "description": "Работает с ВОР, спецификациями, ЛСР и перечнями работ.",
+        "data_hint": "Помогут файл, объёмы и единицы; для цен — регион и период расчёта.",
+        "examples": (
+            "Подбери нормы к работам из файла",
+            "Проверь объёмы и единицы",
+            "Собери первую ЛСР по приложенной ВОР",
+        ),
+    },
+    "doc_review": {
+        "title": "Нормоконтроль",
+        "description": "Проверяет проектные документы и формирует замечания со ссылками на требования.",
+        "data_hint": "Выберите комплект или приложите PDF; желательно указать стадию и вид проверки.",
+        "examples": (
+            "Проверь комплектность проектной документации",
+            "Проверь основные надписи на листах",
+            "Найди нарушения требований СПДС",
+        ),
+    },
+}
+
+
 def _operator_status_chips(crag: str, meta: dict | None, srcs: list | None = None) -> list[dict[str, str]]:
     """Human-facing chips for the answer footer.
 
@@ -268,6 +312,7 @@ def _attachment_chat_payload(attachment: dict) -> dict:
     if mode in {"quick", "index"}:
         payload["dataset_ids"] = [str(attachment["id"])]
     if mode == "read" and attachment.get("text"):
+        payload["attachment_id"] = str(attachment["id"])
         name = str(attachment.get("name") or "вложение").strip() or "вложение"
         payload["attachment_context"] = f"Файл: {name}\n\n{str(attachment['text']).strip()}"
     return payload
@@ -480,25 +525,17 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     ui.button(icon="o_history", on_click=lambda: _toggle_history()).props(
                         'flat round dense aria-label="История чата"'
                     ).classes("sov-icon-btn")
-                    ui.button(icon="o_folder_open", on_click=lambda: _toggle_files()).props(
-                        'flat round dense aria-label="Файлы"'
-                    ).classes("sov-icon-btn")
-                    if tabs is not None and tab_documents is not None:
-                        ui.button(icon="o_article", on_click=lambda: tabs.set_value(tab_documents)).props(
-                            'flat round dense aria-label="Документы"'
-                        ).classes("sov-icon-btn").tooltip("Документы датасетов")
-                    _html('<div class="sov-chat-title">С.О.В.У.Ш.К.А.</div>')
-                    _html('<div class="sov-chat-subtitle">нормативный RAG-диспетчер</div>')
+                    with ui.column().classes("sov-chat-heading"):
+                        _html('<div class="sov-chat-title">Чат</div>')
+                        _html('<div class="sov-chat-subtitle">Документы, расчёты и проверка</div>')
                 with ui.row().classes("items-center gap-2"):
                     # v0.22 ScopeSelector — ОБЛАСТЬ ПОИСКА (весь RAG / проект(ы) / датасет(ы) / mixed).
                     # Заменяет неясную выпадашку: явные группы Проекты/Датасеты/Непривязанные/Системные.
-                    scope_state = {"scope_type": "all", "project_ids": [], "dataset_ids": [], "label": "Весь RAG"}
+                    scope_state = {"scope_type": "all", "project_ids": [], "dataset_ids": [], "label": "Все источники"}
                     scope_opts_cache: dict = {"data": None}
 
-                    scope_btn = ui.button("Весь RAG", icon="o_travel_explore").props(
-                        "flat dense no-caps").style(
-                        "min-width:140px;font-size:.66rem;color:var(--accent);border:1px solid var(--border);"
-                        "border-radius:8px;padding:2px 10px;").tooltip(
+                    scope_btn = ui.button("Все источники", icon="o_travel_explore").props(
+                        "flat dense no-caps").classes("sov-scope-btn").tooltip(
                         "Область поиска: в каких проектах и датасетах ЛЕС будет искать источники.")
 
                     def _scope_label() -> str:
@@ -506,7 +543,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         np, nd = len(scope_state["project_ids"]), len(scope_state["dataset_ids"])
                         data = scope_opts_cache["data"] or {}
                         if st == "all":
-                            return "Весь RAG"
+                            return "Все источники"
                         if st == "project" and np == 1:
                             for p in data.get("projects", []):
                                 if int(p["id"]) == scope_state["project_ids"][0]:
@@ -521,7 +558,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                             return f"{nd} датасета"
                         if st == "mixed":
                             return "Смешанная область"
-                        return "Весь RAG"
+                        return "Все источники"
 
                     def _apply_scope(sel_projects: set, sel_datasets: set) -> None:
                         scope_state["project_ids"] = sorted(sel_projects)
@@ -674,7 +711,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                                             _cb(str(d["name"])[:40], str(d["id"]), sel_d,
                                                 sub=str(d.get("hidden_reason", "служебный")))
                             with ui.row().style("gap:8px;margin-top:10px;justify-content:flex-end;width:100%;"):
-                                ui.button("Весь RAG", on_click=lambda: (_apply_scope(set(), set()), dlg.close())).props("flat dense no-caps").style("color:var(--dim);font-size:.64rem;")
+                                ui.button("Все источники", on_click=lambda: (_apply_scope(set(), set()), dlg.close())).props("flat dense no-caps").style("color:var(--dim);font-size:.64rem;")
                                 ui.button("Сбросить", on_click=lambda: (sel_p.clear(), sel_d.clear())).props("flat dense no-caps").style("color:var(--dim);font-size:.64rem;")
                                 ui.button("Применить", on_click=lambda: (_apply_scope(sel_p, sel_d), dlg.close())).props("dense no-caps").style("color:var(--accent);font-size:.64rem;")
                         dlg.open()
@@ -701,19 +738,13 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                             _pending_target_file["v"] = _tf[:512]
                     except Exception:
                         pass
-                    # «Карта объекта» убрана из чата (Олег).
-                    mode_chip = ui.label("RAG").classes("sov-chip")
-                    mode_chip.tooltip("Режим ответа: заземлённый поиск по документам (RAG)")
-                    validation_chip = ui.label("CRAG ON").classes("sov-chip")
-                    validation_chip.tooltip("Т.О.С.К.А.: проверка ответа на галлюцинации включена")
-                    model_chip = ui.label("MODEL -").classes("sov-chip sov-model-chip")
-                    model_chip.tooltip("Активная модель/провайдер чата")
-                    ui.button(
-                        icon="o_article",
-                        on_click=lambda: asyncio.create_task(_open_scope_passport()),
-                    ).props('flat round dense aria-label="Блокнот области"').classes("sov-icon-btn").tooltip(
-                        "Блокнот области: карта выбранного чата, датасетов и служебных источников"
-                    )
+                    # Служебные статусы нужны действующему UI-контракту, но не конкурируют с задачей
+                    # пользователя. Они остаются доступными коду и техническим деталям ответа.
+                    with ui.row().classes("sov-technical-status") as technical_status:
+                        mode_chip = ui.label("RAG").classes("sov-chip")
+                        validation_chip = ui.label("CRAG ON").classes("sov-chip")
+                        model_chip = ui.label("MODEL -").classes("sov-chip sov-model-chip")
+                    technical_status.set_visibility(False)
                     ui.button("Новый чат", icon="o_add_comment", on_click=lambda: _clear_chat()).props(
                         'flat dense no-caps aria-label="Новый чат"'
                     ).classes("sov-new-chat-btn").tooltip("Новая сессия без памяти прошлого диалога")
@@ -725,7 +756,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             with chat_scroll:
                 chat_column = ui.column().classes("sov-chat-thread")
                 with chat_column:
-                    _html('<div class="chat-msg-sys">Система активирована. Ожидание запросов.</div>')
+                    empty_state_ref = {"el": _html(
+                        '<div class="sov-chat-empty">'
+                        '<div class="sov-chat-empty-title">С чего начнём?</div>'
+                        '<div class="sov-chat-empty-copy">Выберите режим, область поиска или прикрепите файл.</div>'
+                        '</div>'
+                    )}
 
             indexing_banner = ui.label("").classes("sov-indexing-banner")
             indexing_banner.set_visibility(False)
@@ -846,107 +882,105 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     ).classes("sov-icon-btn").tooltip("Снять вложение")
                 attach_strip.set_visibility(False)
 
-                # ── Codex-style режим-чипы: ставят DOMAIN-режим (сильный хинт роутеру/профилю).
-                # Модель остаётся моделью — режим биасит выбор инструмента, не жёсткий keyword-гейт.
-                # Клик по активному чипу → «Авто» (роутер решает сам). Реюзают out_mode→payload.mode.
-                _MODE_CHIPS = (("rag", "🔍", "Поиск"), ("smeta", "📐", "Сметы"), ("doc_review", "📋", "Нормоконтроль"))
+                # Режим только направляет модель к подходящему workflow. Подсказки объясняют
+                # ожидаемые данные, но не превращаются в шаблон ответа или keyword-gate.
+                _MODE_CHIPS = (
+                    ("text", "o_auto_awesome", "Авто"),
+                    ("rag", "o_search", "Поиск"),
+                    ("smeta", "o_calculate", "Сметы"),
+                    ("doc_review", "o_fact_check", "Нормоконтроль"),
+                )
                 _mode_chip_refs: dict = {}
+                _mode_hint_refs: dict = {}
 
                 def _chip_style(on: bool) -> str:
                     base = ("border:1px solid var(--accent);color:var(--accent);background:rgba(52,211,153,.12);"
                             if on else "border:1px solid var(--border);color:var(--dim);background:transparent;")
-                    return base + "border-radius:14px;font-size:.64rem;font-weight:700;padding:1px 10px;min-height:0;"
+                    return base
 
                 def _set_mode(m: str) -> None:
                     new = "text" if out_mode_val["v"] == m else m  # повторный клик по активному → авто
                     out_mode_val["v"] = new
                     for _k, _btn in _mode_chip_refs.items():
                         _btn.style(_chip_style(_k == new))
-                    _lbl = dict((mm, lb) for mm, _, lb in _MODE_CHIPS).get(new, "Авто (роутер решает)")
-                    ui.notify(f"Режим чата: {_lbl}", type="info")
+                    for _k, _panel in _mode_hint_refs.items():
+                        _panel.set_visibility(_k == new)
 
-                with ui.row().style("gap:6px;margin:5px 0 2px;align-items:center;flex-wrap:wrap;"):
-                    ui.label("Режим").style("font-size:.58rem;color:var(--dim);font-weight:800;letter-spacing:.04em;")
-                    for _m, _ic, _lb in _MODE_CHIPS:
-                        _cb = ui.button(f"{_ic} {_lb}", on_click=lambda mm=_m: _set_mode(mm)).props(
-                            "flat dense no-caps").style(_chip_style(False))
-                        _mode_chip_refs[_m] = _cb
-
-                # Шпаргалка: кликабельные примеры (детерминированные каналы) — заполняют ввод и шлют.
-                def _fill_send(text: str) -> None:
+                def _fill_prompt(text: str) -> None:
                     chat_input.value = text
                     chat_input.update()
-                    asyncio.create_task(send_chat())
 
-                # v0.20: устаревшие inline-демо-чипы → компактное меню «Примеры» по задачам.
-                _EXAMPLE_GROUPS = (
-                    ("Нормы", ("что такое ОЖР", "правила огнестойкости стен", "требования к кровлям")),
-                    ("Проект", ("расскажи про котельную на лесном 64", "составь реестр документации котельной")),
-                    ("Смета", ("цена 91.05.01-017", "нужен ли КАЦ для 91.05.01-017",
-                               "коэффициент стеснённости для города")),
-                    ("ВОР/ЛСР", ("извлеки ВОР из Ф9", "собери ГЭСН12-01-034-02 объём 0.61")),
-                    ("Почта", ("что писали по котельной в почте",)),
-                    ("Поиск в источнике", ("найди ОЗК в актах", "найди насос в спецификации")),
-                )
-                with ui.row().classes("sov-hints").style("gap:6px;margin:2px 0 4px;align-items:center;"):
-                    with ui.button("Примеры", icon="o_lightbulb").props("flat dense no-caps").style(
-                        "font-size:.62rem;padding:1px 8px;min-height:0;color:var(--dim);"
-                    ):
-                        with ui.menu().classes("sov-examples-menu"):
-                            for _grp, _items in _EXAMPLE_GROUPS:
-                                ui.menu_item(_grp).props("dense").style(
-                                    "color:var(--dim);font-size:.58rem;font-weight:800;pointer-events:none;"
-                                    "min-height:0;padding-top:6px;")
-                                for _ex in _items:
-                                    ui.menu_item(_ex, on_click=lambda e=_ex: _fill_send(e)).props("dense").style(
-                                        "font-size:.66rem;color:var(--accent);")
-                    ui.label("Shift+Enter — перенос строки · Enter — отправить").classes("sov-composer-hint")
+                with ui.row().classes("sov-mode-picker"):
+                    for _m, _ic, _lb in _MODE_CHIPS:
+                        _cb = ui.button(_lb, icon=_ic, on_click=lambda _event, mm=_m: _set_mode(mm)).props(
+                            "flat dense no-caps").classes("sov-mode-btn").style(
+                            _chip_style(_m == out_mode_val["v"])
+                        )
+                        _mode_chip_refs[_m] = _cb
+
+                with ui.element("div").classes("sov-mode-guides"):
+                    for _mode_key, _guide in CHAT_MODE_GUIDANCE.items():
+                        with ui.element("div").classes("sov-mode-guide") as _guide_panel:
+                            with ui.row().classes("sov-mode-guide-head"):
+                                ui.label(str(_guide["title"])).classes("sov-mode-guide-title")
+                                ui.label(str(_guide["description"])).classes("sov-mode-guide-copy")
+                            ui.label(str(_guide["data_hint"])).classes("sov-mode-data-hint")
+                            with ui.row().classes("sov-mode-examples"):
+                                for _example in _guide["examples"]:
+                                    ui.button(
+                                        str(_example),
+                                        on_click=lambda _event, example=_example: _fill_prompt(str(example)),
+                                    ).props("flat dense no-caps").classes("sov-mode-example")
+                        _guide_panel.set_visibility(_mode_key == out_mode_val["v"])
+                        _mode_hint_refs[_mode_key] = _guide_panel
+
+                ui.label("Shift+Enter — перенос строки · Enter — отправить").classes("sov-composer-hint")
 
                 with ui.row().classes("sov-composer-actions"):
-                    with ui.row().classes("sov-guard-controls"):
-                        validation_sw = ui.switch("Т.О.С.К.А.", value=True).props("dense")
-                        validation_state = ui.label("ON").classes("sov-chip")
-                    # W11.17 + причёска (Олег): /-команды и «Расширенный запрос» под одной кнопкой.
-                    advanced_btn = ui.button(icon="o_tune").props("no-caps flat round").tooltip("Команды и формат")
+                    ui.button(
+                        icon="o_travel_explore",
+                        on_click=lambda: _open_scope_dialog(),
+                    ).props('no-caps flat round aria-label="Выбрать область"').classes(
+                        "sov-composer-action"
+                    ).tooltip("Выбрать проект или датасет")
+                    ui.button(
+                        icon="o_attach_file",
+                        on_click=lambda: attach_dialog.open(),
+                    ).props('no-caps flat round aria-label="Прикрепить файл"').classes(
+                        "sov-composer-action"
+                    ).tooltip("Прикрепить файл")
+                    advanced_btn = ui.button(icon="o_more_horiz").props(
+                        'no-caps flat round aria-label="Дополнительные действия"'
+                    ).classes("sov-composer-action").tooltip("Дополнительные действия")
                     with advanced_btn:
-                        with ui.menu():
+                        with ui.menu().classes("sov-tools-menu"):
+                            ui.label("Дополнительно").classes("sov-tools-title")
+                            with ui.row().classes("sov-validation-control"):
+                                validation_sw = ui.switch("Проверка ответа", value=True).props("dense")
+                                validation_state = ui.label("Включена").classes("sov-validation-state")
+                            ui.separator().style("border-color:var(--border);margin:4px 0;")
                             cmd_menu_box = ui.column().classes("gap-0")
                             with cmd_menu_box:
                                 ui.menu_item("Загрузка команд…", on_click=lambda: None)
                             ui.separator().style("border-color:var(--border);margin:4px 0;")
-                            ui.menu_item("⚙ Расширенный запрос…",
-                                         on_click=lambda: advanced_dialog.open()).props("dense").style(
-                                "font-size:.66rem;color:var(--accent);font-weight:700;")
-                    ui.button(
-                        icon="o_travel_explore",
-                        on_click=lambda: _open_scope_dialog(),
-                    ).props("no-caps flat round").tooltip("Выбрать проект или датасет")
-                    ui.button(
-                        icon="o_folder_open",
-                        on_click=lambda: _toggle_files(),
-                    ).props("no-caps flat round").tooltip("Открыть файлы и папки")
-                    if tabs is not None and tab_documents is not None:
-                        ui.button(
-                            icon="o_article",
-                            on_click=lambda: tabs.set_value(tab_documents),
-                        ).props("no-caps flat round").tooltip("Открыть документы датасетов")
-                    ui.button(
-                        icon="o_inventory_2",
-                        on_click=lambda: asyncio.create_task(_show_service_sources()),
-                    ).props("no-caps flat round").tooltip("Служебные источники: ГЭСН, ФГИС, СПДС")
-                    ui.button(
-                        icon="o_attach_file",
-                        on_click=lambda: attach_dialog.open(),
-                    ).props("no-caps flat round").tooltip("Прикрепить файл")
-                    ui.button(
-                        icon="o_view_sidebar",
-                        on_click=lambda: _open_artifacts(),
-                    ).props("no-caps flat round").tooltip("Показать артефакты")
+                            ui.menu_item("Расширенный запрос…", on_click=lambda: advanced_dialog.open()).props("dense")
+                            ui.menu_item("Блокнот области", on_click=lambda: asyncio.create_task(_open_scope_passport())).props("dense")
+                            ui.menu_item("Файлы и папки", on_click=lambda: _toggle_files()).props("dense")
+                            if tabs is not None and tab_documents is not None:
+                                ui.menu_item(
+                                    "Документы датасетов",
+                                    on_click=lambda: tabs.set_value(tab_documents),
+                                ).props('dense aria-label="Документы"').tooltip("Открыть документы датасетов")
+                            ui.menu_item(
+                                "Служебные источники",
+                                on_click=lambda: asyncio.create_task(_show_service_sources()),
+                            ).props("dense")
+                            ui.menu_item("Артефакты ответа", on_click=lambda: _open_artifacts()).props("dense")
                     send_btn = ui.button(
                         "Отправить",
                         icon="o_send",
                         on_click=lambda: asyncio.create_task(send_chat()),
-                    ).props("no-caps")
+                    ).props("no-caps").classes("sov-send-btn")
 
         # Резиновый layout: разделитель между чатом и артефактами (таскать по ширине).
         artifact_divider = ui.element("div").classes("sov-resize-divider")
@@ -1138,7 +1172,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         spec_opts_row.set_visibility(key == "spec")
         schema_opts_row.set_visibility(key == "schema")
         template_row.set_visibility(key == "template")
-        _html_set_artifact_mode(label, hint)
+        if key == "text":
+            _set_artifacts_visible(False)
+        else:
+            _html_set_artifact_mode(label, hint)
         _update_prompt_preview()
 
     for _key in OUTPUT_FORMATS:
@@ -2860,7 +2897,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
 
         chat_column.clear()
         with chat_column:
-            _html('<div class="chat-msg-sys">Чат очищен. Новая сессия готова.</div>')
+            empty_state_ref["el"] = _html(
+                '<div class="sov-chat-empty">'
+                '<div class="sov-chat-empty-title">Новый чат</div>'
+                '<div class="sov-chat-empty-copy">Выберите режим, область поиска или прикрепите файл.</div>'
+                '</div>'
+            )
         artifact_panel.clear()
         with artifact_panel:
             _render_empty_artifacts()
@@ -2921,7 +2963,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
     def _sync_validation_ui():
         enabled = bool(validation_sw.value)
         validation_chip.set_text("CRAG ON" if enabled else "CRAG OFF")
-        validation_state.set_text("ON" if enabled else "OFF")
+        validation_state.set_text("Включена" if enabled else "Выключена")
         if enabled:
             validation_chip.classes(remove="sov-chip-warn")
             validation_state.classes(remove="sov-chip-warn")
@@ -3008,6 +3050,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
     async def _do_send(question: str):
         if _sending["v"]:
             return
+        try:
+            empty_state_ref["el"].set_visibility(False)
+        except Exception:
+            pass
         # Верификация объёмов — tool-действие: распознать скан + открыть спец-артефакт.
         if _is_verify_request(question):
             await _do_verify(question)
@@ -3695,15 +3741,17 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         with cmd_menu_box:
             if not cmds:
                 ui.menu_item("Команды недоступны", on_click=lambda: None)
-            for c in cmds:
-                label = f"{c['cmd']} — {c['desc']}"
+            else:
+                with ui.expansion("Команды", icon="o_terminal").props("dense").classes("sov-command-expansion"):
+                    for c in cmds:
+                        label = f"{c['cmd']} — {c['desc']}"
 
-                def _run(cmd=c["cmd"]):
-                    chat_input.value = cmd
-                    _update_prompt_preview()
-                    asyncio.create_task(send_chat())
+                        def _run(cmd=c["cmd"]):
+                            chat_input.value = cmd
+                            _update_prompt_preview()
+                            asyncio.create_task(send_chat())
 
-                ui.menu_item(label, on_click=_run)
+                        ui.menu_item(label, on_click=_run)
 
     asyncio.create_task(_load_commands())  # W11.17: наполнить /-палитру
     asyncio.create_task(_refresh_active_model_chip())

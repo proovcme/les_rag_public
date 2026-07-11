@@ -34,22 +34,67 @@ def test_admin_documents_tab_is_mounted():
     assert "build_documents()" in app_shell
     assert "include_documents=True" in app_shell
     assert "tab_documents" in app_shell
-    assert "Л.И.С.Т.: карта проекта, файлы и вопросы по источникам" in page
-    assert "Реестр файлов" in page
-    assert "Тип датасета" in page
-    assert "profile/kind" in page
-    assert "Заметка к проекту" in page
+    assert "Датасеты, файлы и карта проекта" in page
+
+
+def test_documents_ui_is_a_visual_read_only_dataset_browser():
+    page = Path("sovushka/pages/documents.py").read_text(encoding="utf-8")
+    styles = Path("sovushka/styles.py").read_text(encoding="utf-8")
+    router = Path("proxy/routers/documents.py").read_text(encoding="utf-8")
+    app_shell = Path("sovushka_ng.py").read_text(encoding="utf-8")
+
+    for class_name in (
+        "sov-docs-shell",
+        "sov-docs-topbar",
+        "sov-docs-search",
+        "sov-docs-workspace",
+        "sov-dataset-card",
+        "sov-document-card",
+        "sov-docs-view-tabs",
+    ):
+        assert class_name in page
+        assert f".{class_name}" in styles
+
+    assert 'return name or "Без названия"' in page
+    assert 'f"{name} · {did}"' not in page
+    assert page.count("_render_dataset_kind_control()") == 1  # definition only, not the main surface
+    assert 'on_click=lambda: _schedule(_run_pdf_extract())' not in page
+    assert "min-height: 40px" in styles
+    assert "scale: .96" in styles
+    assert "Состав датасета" in page
+    assert "_composition_files" in page
+    assert 'value=True' in page
+    assert "sov-composition-folder" in page
+    assert ".sov-composition-folder" in styles
+    assert "Корень датасета" in page
+    assert "DATASET_GROUP_OPTIONS" in page
+    assert "_dataset_group" in page
+    assert "sov-dataset-group-filter" in page
+    assert "sov-composition-view-switch" in page
+    for label in (
+        "Дерево", "Плитка", "Список", "Таблица", "Справка о датасете", "Справка о файле",
+        "Все папки", "Все форматы", "Все статусы", "Тип документа", "Qdrant/LES",
+    ):
+        assert label in page
+    assert "sov-composition-table" in page
+    assert "sov-composition-filters" in page
+    assert "_inspect_composition_file" in page
+    assert "_load_dataset_index_brief" in page
+    assert "_indexed_dataset_brief" in page
+    assert "def _plain_index_text" in page
+    assert ".sov-composition-table" in styles
+    assert ".sov-index-brief--dataset" in styles
+    assert ".sov-index-brief--file" in styles
     assert "Л.И.С.Т. проекта" in page
     assert "Структура Л.И.С.Т." in page
     assert 'coverage.get("files_ok") or coverage.get("files_extracted")' in page
     assert 'state.__setitem__("dataset_filter", str(e.args or "")), _render_datasets()' in page
     assert "warnings_truncated" in page
     assert "ui.mermaid(diagram)" in page
-    assert "profile/guidance" in page
     assert "Темы датасета" in page
     assert "Разделы внутри файлов" in page
     assert "Спросить по теме" in page
-    assert 'ui.button("CAD"' in page
+    assert 'ui.button("CAD/BIM"' in page
     assert "/api/cad-bim/imports?limit=300" in page
     assert "Слабые импорты" in page
     assert "Диагностика чтения" not in page
@@ -57,7 +102,7 @@ def test_admin_documents_tab_is_mounted():
     assert "_ask_about_cad_import" in page
     assert 'f"ds:{dataset_id}"' in page
     assert "topic_map" in page and "section_map" in page
-    assert 'ui.button("Карта"' in page
+    assert 'ui.button("Л.И.С.Т."' in page
     assert "do not call LLMs" in router
     assert "request.query_params.get(\"question\")" in app_shell
     assert "request.query_params.get(\"tab\")" in app_shell

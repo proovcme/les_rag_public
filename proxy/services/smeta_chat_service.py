@@ -48,12 +48,12 @@ def _first_code(q: str) -> Optional[str]:
 def _answer_price(code: str) -> dict[str, Any]:
     from proxy.services import fgis_price_service as fps
 
-    books = fps.available_pricebooks()
-    if not books:
+    book_path = fps.resolve_pricebook_path()
+    if not book_path:
         return {"answer": f"Код {code}: нет книги цен ФГИС ЦС — импортируйте «Сплит-форму» "
                           f"(Инструменты → ФГИС ЦС или POST /api/prices/import).",
                 "operation": "price"}
-    pb = fps.get_pricebook(books[0])
+    pb = fps.get_pricebook(book_path)
     rec = pb.lookup(code)
     if rec is None:
         return {"answer": f"Код {code} не найден в ФГИС ЦС ({pb.region} {pb.quarter}). "
@@ -62,7 +62,7 @@ def _answer_price(code: str) -> dict[str, Any]:
     return {"answer": (f"{rec.get('name','')} · {rec.get('unit','')}\n"
                        f"Сметная цена (текущая): {_fmt_num(rec.get('price_current_eff'))} руб. "
                        f"(базовая {_fmt_num(rec.get('price_base'))} × индекс {rec.get('index')})\n"
-                       f"{pb.region} · {pb.quarter} · книга {Path(books[0]).stem}"),
+                       f"{pb.region} · {pb.quarter} · книга {Path(book_path).stem}"),
             "operation": "price"}
 
 
@@ -131,66 +131,66 @@ def _detect_condition(q: str) -> Optional[str]:
 
 def _answer_assemble(q: str) -> dict[str, Any]:
     from proxy.services.gesn_service import get_norm
-    from proxy.services.lsr_assembly_service import assemble
-
-    import os
+    from proxy.smeta_core.calculator import calculate_scenario
+    from proxy.smeta_core.contracts import NormBinding, WorkItem
 
     code = _GESN_RE.search(q).group(0).strip()
+    if not re.match(r"^(?:ГЭСН(?:мр|м|п|р)?|ФЕР(?:мр|м|п|р)?|ТЕР(?:мр|м|п|р)?)", code, re.I):
+        return {
+            "answer": f"Для расчёта нужен полный шифр с типом базы, например ГЭСНм{code}. "
+            "Код не будет угадывать семейство нормы по голому номеру.",
+            "operation": "assemble",
+            "evidence_status": "partial",
+            "calculation_status": "not_calculated",
+        }
     norm = get_norm(code)
     if norm is None:
-        from proxy.services.gesn_service import _norm_code
-        ac = _norm_code(code)
-        # 1) официальный ФГИС ЦС — БЕСПЛАТНО, без квоты (основной источник базы как есть)
-        try:
-            from proxy.services.gesn_fgis_service import fetch_and_cache as _fgis
-            _fgis(ac)
-            norm = get_norm(code)
-        except Exception:
-            pass
-        # 2) cs.smetnoedelo — резерв/апдейты (квота, нужен токен)
-        if norm is None and os.getenv("LES_SMETNOE_TOKEN", "").strip():
-            try:
-                from proxy.services.gesn_api_service import fetch_and_cache as _sm
-                _sm(ac)
-                norm = get_norm(code)
-            except Exception:
-                pass
-    if norm is None:
-        return {"answer": f"Норма ГЭСН {code} не найдена (семя/база/ФГИС ЦС/smetnoedelo). "
-                          f"Проверь шифр или импортируй базу (tools/gesn_pdf_import).",
-                "operation": "assemble"}
+        return {
+            "answer": f"Норма {code} не найдена в локальной trusted machine base. Расчёт не запускался.",
+            "operation": "assemble",
+            "evidence_status": "partial",
+            "calculation_status": "not_calculated",
+        }
     qty = _parse_qty(q, code)
     if qty is None:
         return {"answer": f"Норма {code} найдена ({norm.get('name','')}). Укажи объём: "
                           f"«собери {code} объём <число>».", "operation": "assemble"}
-    cond = _detect_condition(q) if ("стеснён" in q.lower() or "стеснен" in q.lower()) else None
-    # НР/СП по виду работ (норма их не несёт) — из наименования
-    nr_pct, sp_pct = _f(norm.get("nr_pct")), _f(norm.get("sp_pct"))
-    nr_sp_note = ""
-    if not nr_pct or not sp_pct:
-        from proxy.services.nr_sp_service import resolve as _resolve_nr_sp
-        rs = _resolve_nr_sp(norm.get("name", ""), code=code)
-        nr_pct = nr_pct or rs["nr_pct"]
-        sp_pct = sp_pct or rs["sp_pct"]
-        nr_sp_note = f"вид работ: {rs['label']}" + (" (по умолчанию — уточнить)" if rs["default"] else "")
-    pos = {"code": code, "name": norm.get("name", ""), "unit": norm.get("unit", ""), "qty": qty,
-           "nr_pct": nr_pct, "sp_pct": sp_pct}
-    res = assemble([pos], condition=cond)
-    p = res["positions"][0]
-    b = p["base"]
-    used = p["adjusted"] if cond else b
+    measure = re.match(r"\s*(?:\d+(?:[.,]\d+)?)?\s*(.+?)\s*$", str(norm.get("unit") or ""))
+    physical_unit = measure.group(1) if measure else str(norm.get("unit") or "")
+    scenario = calculate_scenario(
+        [WorkItem(work_id="quick-1", title=str(norm.get("name") or code), quantity=qty, unit=physical_unit)],
+        [NormBinding(
+            work_id="quick-1",
+            norm_code=code,
+            selected_by="user",
+            selection_kind="exact",
+            is_analog=False,
+            reason="полный шифр указан пользователем",
+        )],
+        title=str(norm.get("name") or code),
+    )
+    trace = scenario.trace
+    positions = [position for section in trace.get("sections") or [] for position in section.get("positions") or []]
+    p = positions[0] if positions else {"summary": {}}
+    b = p.get("summary") or {}
     lines = [
         f"{norm.get('name','')} · {code} · объём {qty} {norm.get('unit','')}",
-        f"ОЗП {_fmt_num(b['ozp'])} + ЭМ {_fmt_num(b['em'])} + М {_fmt_num(b['mat'])} = "
-        f"прямые {_fmt_num(b['direct'])}",
-        f"ФОТ {_fmt_num(b['fot'])} → НР {_fmt_num(b['nr'])} ({_fmt_num(nr_pct)}%) + "
-        f"СП {_fmt_num(b['sp'])} ({_fmt_num(sp_pct)}%)" + (f" · {nr_sp_note}" if nr_sp_note else ""),
-        f"ИТОГО по позиции: {_fmt_num(used['total'])} руб."
-        + (f"  (стеснённость ×{res['k_ozp']}: было {_fmt_num(b['total'])})" if cond else ""),
+        f"ОЗП {_fmt_num(b.get('ozp'))} + ЭМ {_fmt_num(b.get('em'))} + М {_fmt_num(b.get('mat'))} = "
+        f"прямые {_fmt_num(b.get('direct'))}",
+        f"ФОТ {_fmt_num(b.get('fot'))} → НР {_fmt_num(b.get('nr'))} + СП {_fmt_num(b.get('sp'))}",
+        f"ИТОГО по позиции: {_fmt_num(b.get('total'))} руб.",
     ]
-    if p.get("flags"):
-        lines.append("⚠ " + "; ".join(p["flags"]))
-    return {"answer": "\n".join(lines), "operation": "assemble"}
+    if b.get("flags"):
+        lines.append("⚠ " + "; ".join(str(item) for item in b["flags"]))
+    if scenario.calculation_status.value == "unsafe_source":
+        lines.append("⚠ Сумма является непроверенным черновиком: нормативная база в карантине.")
+    return {
+        "answer": "\n".join(lines),
+        "operation": "assemble",
+        "evidence_status": scenario.evidence_status.value,
+        "calculation_status": scenario.calculation_status.value,
+        "scenario": scenario.as_dict(),
+    }
 
 
 def maybe_handle_smeta_query(
@@ -212,8 +212,10 @@ def maybe_handle_smeta_query(
     r: Optional[dict[str, Any]] = None
     if any(w in ql for w in _ASSEMBLE_WORDS) and _GESN_RE.search(q):  # сборка от кода ГЭСН
         r = _answer_assemble(q)
-    elif r is None and any(w in ql for w in _STESN_WORDS) and ("коэф" in ql or "стесн" in ql):  # стеснённость
-        r = _answer_stesnennost(q)
+    elif r is None and any(w in ql for w in _STESN_WORDS) and ("коэф" in ql or "стесн" in ql):
+        # Selection of an applicable coefficient belongs to the model/user and must
+        # be based on project conditions. The deterministic channel does not guess it.
+        return None
     elif r is None and code and any(w in ql for w in _KAC_WORDS):     # нужен ли КАЦ
         r = _answer_needs_kac(code)
     elif r is None and code and any(w in ql for w in _PRICE_WORDS):   # цена по коду

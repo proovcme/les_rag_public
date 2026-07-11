@@ -18,13 +18,9 @@ from proxy.routers.chat import (
     _smeta_direct_model_answer,
     _smeta_direct_max_tokens,
     _smeta_model_runtime,
-    _smeta_direct_norm_candidate_stage_required,
-    _smeta_direct_previous_norm_lookup_packet_for_followup,
-    _smeta_direct_previous_norm_lookup_trace,
-    _smeta_direct_prices_previous_candidates_request,
+    _smeta_document_complete,
     _smeta_direct_structured_norm_choice,
     _smeta_direct_user_prompt,
-    _smeta_direct_workflow_decision,
     _smeta_norm_lookup_max_calls,
     _smeta_source_row_count,
     _format_active_smeta_state,
@@ -39,7 +35,6 @@ from proxy.routers.chat import (
     _format_tool_results_for_model,
     _chat_model_final_answer,
 )
-from proxy.services.estimate_harness_service import _action_title_score
 
 
 def test_harness_answer_is_operator_facing_with_numbers():
@@ -104,6 +99,111 @@ def test_smeta_model_runtime_defaults_to_local_even_when_global_cloud_is_availab
     runtime = _smeta_model_runtime("LES_SMETA_DIRECT_MODEL_PROVIDER")
 
     assert runtime.provider == "mlx"
+
+
+def test_smeta_document_runtime_uses_configured_cloud_only_with_consent(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://openai.api.proxyapi.ru/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
+    monkeypatch.setenv("LES_CLOUD_CONSENT", "true")
+    monkeypatch.delenv("LES_SMETA_PROVIDER", raising=False)
+    monkeypatch.delenv("LES_SMETA_DOCUMENT_PROVIDER", raising=False)
+    monkeypatch.delenv("LES_SMETA_DOCUMENT_MODEL", raising=False)
+
+    runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
+
+    assert runtime.provider == "openai"
+    assert runtime.model == "gpt-5.4-mini"
+
+
+def test_smeta_document_runtime_can_use_dedicated_cloud_model(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.provod.ai/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("OPENAI_MODEL", "z-ai/glm-5.2")
+    monkeypatch.setenv("LES_CLOUD_CONSENT", "true")
+    monkeypatch.setenv("LES_SMETA_DOCUMENT_MODEL", "openai/gpt-5.4")
+    monkeypatch.delenv("LES_SMETA_PROVIDER", raising=False)
+    monkeypatch.delenv("LES_SMETA_DOCUMENT_PROVIDER", raising=False)
+
+    runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
+
+    assert runtime.provider == "openai"
+    assert runtime.model == "openai/gpt-5.4"
+
+
+def test_smeta_document_explicit_cloud_provider_keeps_dedicated_model(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.provod.ai/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("OPENAI_MODEL", "z-ai/glm-5.2")
+    monkeypatch.setenv("LES_SMETA_DOCUMENT_PROVIDER", "openai")
+    monkeypatch.setenv("LES_SMETA_DOCUMENT_MODEL", "openai/gpt-5.4")
+
+    runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
+
+    assert runtime.provider == "openai"
+    assert runtime.model == "openai/gpt-5.4"
+
+
+def test_smeta_document_runtime_can_use_dedicated_local_model(monkeypatch):
+    monkeypatch.setenv("LES_SMETA_DOCUMENT_PROVIDER", "mlx")
+    monkeypatch.setenv("LES_SMETA_DOCUMENT_MODEL", "mlx-community/Qwen3.5-4B-MLX-4bit")
+    monkeypatch.setenv("LLM_MODEL", "mlx-community/Qwen3.5-9B-MLX-4bit")
+
+    runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
+
+    assert runtime.provider == "mlx"
+    assert runtime.model == "mlx-community/Qwen3.5-4B-MLX-4bit"
+
+
+def test_smeta_document_glm_call_disables_thinking_without_forced_structured_contract(monkeypatch):
+    from proxy.routers import chat
+
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def raise_for_status():
+            return None
+
+        @staticmethod
+        def json():
+            return {"choices": [{"message": {"content": '{"rows":[]}'}}]}
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def post(self, _url, *, headers, json):
+            captured.update(json)
+            assert headers["Authorization"] == "Bearer test-key"
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        chat,
+        "_smeta_model_runtime",
+        lambda _name: chat.LlmRuntime(
+            "openai", "https://example.test/v1", "https://example.test/v1/chat/completions",
+            "z-ai/glm-5.2", "test-key", False,
+        ),
+    )
+    monkeypatch.setattr(chat.httpx, "Client", FakeClient)
+
+    assert _smeta_document_complete([{"role": "user", "content": "JSON"}]) == '{"rows":[]}'
+    assert captured["thinking"] == {"type": "disabled"}
+    assert "response_format" not in captured
+    assert "tools" not in captured
+    assert "tool_choice" not in captured
 
 
 def test_smeta_model_runtime_explicit_mlx_overrides_global_cloud(monkeypatch):
@@ -195,72 +295,6 @@ def test_tool_results_prompt_block_is_material_not_final_answer():
     assert "РЕЗУЛЬТАТЫ ИНСТРУМЕНТОВ LES" in text
     assert "не готовый ответ" in text
     assert "search_sources" in text
-
-
-def test_smeta_direct_prompt_includes_available_pricebooks_without_region_hardcode(monkeypatch):
-    monkeypatch.setattr(
-        "proxy.services.fgis_price_service.available_pricebooks",
-        lambda *args, **kwargs: [
-            "/tmp/moskva_2kv2026.parquet",
-            "/tmp/krasnodarskiy-kray_2kv2026.parquet",
-            "/tmp/spb_2kv2026.parquet",
-        ],
-    )
-
-    prompt = _smeta_direct_user_prompt(
-        "Дай оценку по РИМ, Краснодарский край, 2 кв. 2026",
-        "",
-        "",
-        light=True,
-    )
-
-    assert "krasnodarskiy-kray_2kv2026" in prompt
-    assert "moskva_2kv2026" in prompt
-    assert "spb_2kv2026" in prompt
-    assert "сначала смотри в эти книги и RAG" in prompt
-    assert "Системная книга по умолчанию при неуказанном регионе: spb_2kv2026" in prompt
-    assert "спроси именно регион/период" in prompt
-    assert "Карта сметного RAG ЛЕС" in prompt
-    assert "Основные карточки сборников" in prompt
-    assert "это карта доступных сметных источников ЛЕС, а не готовая смета" in prompt
-
-
-def test_smeta_direct_prompt_exposes_physical_service_source_readiness(monkeypatch):
-    monkeypatch.setattr(
-        "proxy.services.service_source_registry.service_sources",
-        lambda: {
-            "sources": [
-                {
-                    "id": "gesn_base",
-                    "label": "ГЭСН-2022: нормы и ресурсы",
-                    "status": "ok",
-                    "facts": {"parquet_rows": 609987, "base_norms": 42572},
-                },
-                {
-                    "id": "fgis_price_base",
-                    "label": "ФГИС ЦС: Сплит-формы цен",
-                    "status": "ok",
-                    "facts": {"pricebooks": 47, "price_rows": 12816756},
-                },
-                {
-                    "id": "smeta_coefficients",
-                    "label": "Сметные коэффициенты и правила",
-                    "status": "ok",
-                    "facts": {},
-                },
-            ]
-        },
-    )
-    monkeypatch.setattr("proxy.services.fgis_price_service.available_pricebooks", lambda *args, **kwargs: [])
-
-    prompt = _smeta_direct_user_prompt("сделай ЛСР", "", "", light=True)
-
-    assert "Системные сметные источники ЛЕС физически подключены" in prompt
-    assert "ГЭСН-2022: нормы и ресурсы: ok" in prompt
-    assert "base_norms=42572" in prompt
-    assert "ФГИС ЦС: Сплит-формы цен: ok" in prompt
-    assert "pricebooks=47" in prompt
-    assert "нет blocking-missing по ГЭСН/ФГИС/НРСП" in prompt
 
 
 def test_harness_voice_allows_short_human_comment(monkeypatch):
@@ -413,79 +447,6 @@ def test_smeta_model_first_answer_uses_model_when_harness_blocks(monkeypatch):
     assert "ВОР: 3 скамьи" in prompt_payload
 
 
-def test_smeta_direct_model_answer_does_not_need_harness_result(monkeypatch):
-    class FakeResponse:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {"choices": [{"message": {"content": (
-                "По ТЗ беру 3 скамьи, деталировка дана на одну.\n"
-                "| Позиция | На 1 скамью | Итого на 3 |\n"
-                "|---|---:|---:|\n"
-                "| Гранит Г1 | 4 шт | 12 шт |\n"
-                "| Бетон В25 | 0,4 м3 | 1,2 м3 |\n"
-                "Код-калькулятор понадобится дальше для норм, цен, НР/СП и проверки единиц."
-            )}}]}
-
-    class FakeClient:
-        last_json = None
-
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-        def post(self, *args, **kwargs):
-            FakeClient.last_json = kwargs.get("json")
-            return FakeResponse()
-
-    monkeypatch.setattr("proxy.routers.chat._llm_runtime", lambda: SimpleNamespace(
-        model="test-model", provider="openai", chat_url="http://127.0.0.1/test", api_key="",
-    ))
-    monkeypatch.setattr("proxy.routers.chat.httpx.Client", FakeClient)
-    monkeypatch.setenv("LES_SMETA_DIRECT_LIGHT_PROMPT", "0")
-
-    text = _smeta_direct_model_answer(
-        "Текущий запрос:\nСделай смету по скамье\n\nКонтекст прикреплённого файла:\n3 скамьи; Г1 4 шт; бетон 0,4 м3",
-        "Проверяемые фрагменты из выбранного RAG-корпуса:\n[Источник 1 | нормы.docx]:\nГранитные элементы требуют КАЦ.",
-    )
-
-    assert "12 шт" in text
-    assert "1,2 м3" in text
-    prompt_payload = FakeClient.last_json["messages"][1]["content"]
-    assert "3 скамьи" in prompt_payload
-    assert "Гранитные элементы требуют КАЦ" in prompt_payload
-    assert "ВОР -> кандидаты ГЭСН" in prompt_payload
-    assert "Не считай деньги" in prompt_payload
-    assert "таблицу доступных candidates" in prompt_payload
-    assert "следующий ход «деньги по ним»" in prompt_payload
-    assert "Строка ВСЕГО" not in prompt_payload
-    assert "не заменяй демонтаж" in FakeClient.last_json["messages"][0]["content"]
-    assert "ВОР -> нормируемая ВОР -> таблица подбора норм" in FakeClient.last_json["messages"][0]["content"]
-    assert "Excel-таблицу подбора норм" in FakeClient.last_json["messages"][0]["content"]
-    assert "одна строка исходной вор может раскладываться" in FakeClient.last_json["messages"][0]["content"].lower()
-    assert "не пиши, что пользователь их не дал" in FakeClient.last_json["messages"][0]["content"]
-    assert "какие числа сложены" in FakeClient.last_json["messages"][0]["content"]
-    assert "прежняя оценка" in FakeClient.last_json["messages"][0]["content"]
-    assert "Упаковка, тара, такелаж и оснастка не становятся отдельными платными разделами" in FakeClient.last_json["messages"][0]["content"]
-    assert "scenario_estimate" in FakeClient.last_json["messages"][0]["content"]
-    assert "Не заменяй построчную ВОР одной крупной вилкой" in FakeClient.last_json["messages"][0]["content"]
-    assert "Повтор одного и того же исходника должен сохранять базовый сценарий" in FakeClient.last_json["messages"][0]["content"]
-    assert "не называй сценарную таблицу готовой лср" in FakeClient.last_json["messages"][0]["content"].lower()
-    assert "Способ выдачи сметы для оператора — ЛСР-форма" in FakeClient.last_json["messages"][0]["content"]
-    assert "сохраняй уже принятые строки, ставки и итоги" in FakeClient.last_json["messages"][0]["content"].lower()
-    assert "не сокращай 19 строк до 12" in FakeClient.last_json["messages"][0]["content"]
-    assert "заполненный шаблон ЛСР граф 1-12" in FakeClient.last_json["messages"][0]["content"]
-    assert "Строка ВСЕГО по смете обязательна" in FakeClient.last_json["messages"][0]["content"]
-    assert "144*20%*10=288" not in FakeClient.last_json["messages"][0]["content"]
-    assert "blocked_harness_advisory" not in prompt_payload
-
-
 def test_smeta_direct_model_answer_returns_empty_on_model_failure(monkeypatch):
     class FakeClient:
         def __init__(self, *args, **kwargs):
@@ -511,159 +472,6 @@ def test_smeta_direct_model_answer_returns_empty_on_model_failure(monkeypatch):
     )
 
     assert text == ""
-
-
-def test_smeta_direct_light_prompt_cuts_heavy_contract_by_default(monkeypatch):
-    class FakeResponse:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {"choices": [{"message": {"content": (
-                "Считаю РИМ-сценарием по нормативным аналогам, не финальная ЛСР.\n"
-                "| Работа | Объём | Нормативный ход | Сумма |\n"
-                "|---|---:|---|---:|\n"
-                "| Монтаж | 10 т | ГЭСН-аналог | 1 000 000 |\n"
-            )}}]}
-
-    class FakeClient:
-        last_json = None
-
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-        def post(self, *args, **kwargs):
-            FakeClient.last_json = kwargs.get("json")
-            return FakeResponse()
-
-    monkeypatch.setattr("proxy.routers.chat._llm_runtime", lambda: SimpleNamespace(
-        model="test-model", provider="openai", chat_url="http://127.0.0.1/test", api_key="",
-    ))
-    monkeypatch.setattr("proxy.routers.chat.httpx.Client", FakeClient)
-    monkeypatch.delenv("LES_SMETA_DIRECT_LIGHT_PROMPT", raising=False)
-
-    text = _smeta_direct_model_answer(
-        "Текущий запрос:\nДай оценку стоимости работ\n\nКонтекст прикреплённого файла:\nВОР: монтаж 10 т",
-        "Проверяемые фрагменты из выбранного RAG-корпуса:\nГЭСН, ФГИС, НР/СП доступны.",
-    )
-
-    assert "РИМ-сценарием" in text
-    sys_prompt = FakeClient.last_json["messages"][0]["content"]
-    assert "Работай как сметчик, а не как чат-бот" in sys_prompt
-    assert "по сырому ТЗ/ВОР/спецификации сначала выдавай этап" in sys_prompt
-    assert "ЛСР с рублями — следующим ходом по candidates модели" in sys_prompt
-    assert "дай нормативный аналог или раздел с пометкой проверки" in sys_prompt
-    assert "Пустые ценовые колонки" in sys_prompt
-    assert "строй ВОР" in sys_prompt
-    assert "нет данных -> ставь 0.00" in sys_prompt
-    assert "графа «Обоснование»" in sys_prompt
-    assert FakeClient.last_json["temperature"] == 0.0
-    assert "Один и тот же исходник должен давать один и тот же базовый сценарий" in sys_prompt
-    assert "Не называй сценарную таблицу готовой ЛСР" in sys_prompt
-    assert "Способ выдачи сметы — ЛСР-форма" in sys_prompt
-    assert "Для pricing-stage сразу заполни ЛСР граф 1-12" in sys_prompt
-    assert "ВСЕГО по смете" in sys_prompt
-    assert "выбранная моделью норма, аналог/раздел" in sys_prompt
-    assert "не пиши одиноко" in sys_prompt
-    assert "ГЭСНм10" in sys_prompt
-    assert "Раздел ВОР не равен одному сборнику" in sys_prompt
-    assert "role-pack" not in sys_prompt
-    assert "harness" not in sys_prompt
-    assert "evidence" not in sys_prompt
-    assert "Компактный машинный контракт" not in sys_prompt
-    assert "ВОР -> нормируемая ВОР -> таблица подбора норм" not in sys_prompt
-    assert len(sys_prompt) < 2500
-
-
-def test_smeta_direct_prompt_does_not_block_on_empty_spec_price_columns(monkeypatch):
-    monkeypatch.setattr("proxy.services.fgis_price_service.available_pricebooks", lambda *args, **kwargs: [])
-
-    prompt = _smeta_direct_user_prompt(
-        "Оцени стоимость по спецификации СКС: кабель 1200 м, розетки 80 шт, "
-        "колонки цена за ед. и итого стоимость пустые",
-        "",
-        "",
-        light=True,
-    )
-
-    assert "ВОР -> кандидаты ГЭСН" in prompt
-    assert "Не считай деньги" in prompt
-    assert "таблицу доступных candidates" in prompt
-    assert "следующий ход «деньги по ним»" in prompt
-
-
-def test_smeta_direct_method_prompt_does_not_force_lsr_or_zero_money(monkeypatch):
-    monkeypatch.setattr("proxy.services.fgis_price_service.available_pricebooks", lambda *args, **kwargs: [])
-
-    prompt = _smeta_direct_user_prompt(
-        "Сметный тест без расчета: покажи порядок работы, таблицу кандидатов норм и добор ресурсов. Без рублей.",
-        "",
-        "",
-        light=True,
-    )
-
-    assert "не является командой посчитать или оформить ЛСР" in prompt
-    assert "Не делай ЛСР-таблицу" in prompt
-    assert "не ставь нулевые рубли" in prompt
-    assert "не пиши строку ВСЕГО" in prompt
-    assert "несколько строк ВОР могут ссылаться на одну норму" in prompt
-    assert "ГЭСН, ГЭСНм, ГЭСНп, ГЭСНр, ГЭСНмр" in prompt
-    assert "семейство работ -> группа сборников -> сборник -> раздел/таблица -> конкретная норма" in prompt
-    assert "ресурсы выбранной" in prompt
-    assert "не нераспознанные работы" in prompt
-    assert "не обещай" in prompt
-    assert "следующим сообщением" in prompt
-    assert "Не используй Markdown-заголовки" in prompt
-    assert "Строка ВСЕГО по смете обязательна" not in prompt
-    assert "ВСЕГО тоже числом 0.00" not in prompt
-
-
-def test_smeta_direct_process_explanation_prompt_does_not_force_lsr(monkeypatch):
-    monkeypatch.setattr("proxy.services.fgis_price_service.available_pricebooks", lambda *args, **kwargs: [])
-
-    prompt = _smeta_direct_user_prompt(
-        "Объясни оператору, как ты работаешь по сметам в ЛЕС: какие шаги делаешь от исходников "
-        "до ЛСР, что выбираешь ты, что считает код, когда нужны нули и примечания.",
-        "",
-        "",
-        light=True,
-    )
-
-    assert "не является командой посчитать или оформить ЛСР" in prompt
-    assert "Не делай ЛСР-таблицу" in prompt
-    assert "не ставь нулевые рубли" in prompt
-    assert "что считает код" in prompt
-    assert "Строка ВСЕГО по смете обязательна" not in prompt
-    assert "ВСЕГО тоже числом 0.00" not in prompt
-
-
-def test_smeta_direct_prompt_keeps_norm_selection_model_first(monkeypatch):
-    monkeypatch.setattr("proxy.services.fgis_price_service.available_pricebooks", lambda *args, **kwargs: [])
-
-    prompt = _smeta_direct_user_prompt(
-        "Этап 1: дай таблицу кандидатов ГЭСН. СКС кабель Cat.6A 1200 м, розетки RJ-45 80 шт, "
-        "патч-панели 4 шт, шкаф 42U 1 шт. аварийное питание 30 шт, подключение и пусконаладка.",
-        "",
-        "",
-        light=True,
-        workflow_stage="norm_candidates",
-    )
-
-    assert "search_norm" not in prompt
-    assert "Карточки нормативного поиска ЛЕС" not in prompt
-    assert "ВОР -> кандидаты ГЭСН" in prompt
-    assert "Не считай деньги" in prompt
-    assert "| № ВОР | Исходная работа | Ед. ВОР" in prompt
-    assert "Если у одной строки ВОР несколько кандидатов" in prompt
-    assert "нормативный маршрут" in prompt
-    assert "деньги по ним" in prompt
-    assert "Нормы из локальной базы ЛЕС к исходным работам" not in prompt
 
 
 def test_smeta_direct_norm_lookup_is_model_selected(monkeypatch):
@@ -798,9 +606,9 @@ def test_smeta_norm_lookup_policy_keeps_eom_containment_out_of_metal_family(monk
     )
 
     user_payload = captured["json"]["messages"][-2]["content"]
-    assert "скобы крепления гофры/коробки проводки/аварийное питание" in user_payload
-    assert "маршрутизируй как electric, а не как metal" in user_payload
-    assert "не уводи строку в бункеры/опорные металлоконструкции ГЭСН09" in user_payload
+    assert "не выводи семейство/сборник из названия раздела или файла" in user_payload
+    assert "описывай фактический элемент, операцию и единицу" in user_payload
+    assert "не подменяя её похожей работой" in user_payload
 
 
 def test_smeta_structured_norm_choice_validates_model_code_from_lookup(monkeypatch):
@@ -957,13 +765,9 @@ def test_smeta_structured_norm_choice_gets_norm_card_and_mismatch_rule(monkeypat
     assert "norm_card" in payload
     assert "work_composition" in payload
     assert "do not select a candidate whose title/norm_card/work_composition is an obviously foreign operation" in payload
-    assert "dismantling/restoration prefer repair/dismantling/replacement candidates" in payload
-    assert "ответвительная коробка over клеммная" in payload
-    assert "small converter/power-supply candidates over large UPS system candidates" in payload
-    assert "standard finishing operations грунтовка, шпатлевка" in payload
-    assert "GKL openings or hidden inspection hatches" in payload
-    assert "decorative PVC film" in payload
-    assert "roof hatches" in payload
+    assert "an analog must preserve the physical operation" in payload
+    assert "state every material, technology, surface, environment or scope difference" in payload
+    assert "do not select a technologically foreign candidate" in payload
 
 
 def test_smeta_structured_norm_choice_rejects_rejected_or_unit_mismatch_candidate(monkeypatch):
@@ -1112,7 +916,7 @@ def test_smeta_structured_norm_choice_keeps_unreturned_lookup_as_unbound_row(mon
     assert packet["trace"]["unbound_rows_added"] == 1
 
 
-def test_smeta_structured_norm_choice_batches_local_lookup_rows(monkeypatch):
+def test_smeta_structured_norm_choice_ignores_legacy_row_batch_env(monkeypatch):
     monkeypatch.setenv("LES_SMETA_NORM_REVIEW_ENABLED", "0")
     monkeypatch.setenv("LES_SMETA_NORM_CHOICE_BATCH_SIZE", "5")
 
@@ -1189,18 +993,11 @@ def test_smeta_structured_norm_choice_batches_local_lookup_rows(monkeypatch):
         lambda ev: progress_events.append(ev),
     )
 
-    assert FakeClient.batch_sizes == [5, 1]
-    assert packet["trace"]["batched"] is True
-    assert packet["trace"]["batch_size"] == 5
+    assert FakeClient.batch_sizes == [6]
+    assert not packet["trace"].get("batched")
     assert [row["lookup_index"] for row in packet["rows"]] == [1, 2, 3, 4, 5, 6]
     assert [row["title"] for row in packet["rows"]] == [f"работа {idx}" for idx in range(1, 7)]
-    assert packet["trace"]["batch_count"] == 2
-    assert [ev["event"] for ev in progress_events] == ["smeta_batch"] * 4
-    assert [ev["data"]["status"] for ev in progress_events] == ["started", "done", "started", "done"]
-    assert progress_events[0]["data"]["start_lookup_index"] == 1
-    assert progress_events[1]["data"]["accepted"] == 5
-    assert progress_events[2]["data"]["start_lookup_index"] == 6
-    assert progress_events[3]["data"]["accepted"] == 1
+    assert progress_events == []
 
 
 def test_smeta_structured_norm_choice_local_default_limits_candidates(monkeypatch):
@@ -1418,216 +1215,6 @@ def test_smeta_structured_norm_review_can_replace_empty_finish_draft(monkeypatch
     assert packet["trace"]["draft_unbound_rows_added"] == 1
 
 
-def test_smeta_action_title_score_penalizes_demolition_vs_installation():
-    assert _action_title_score("демонтаж", "монтаж электропроводки кабелем") < 0
-    assert _action_title_score("демонтаж", "демонтаж электропроводки") > 0
-
-
-def test_smeta_direct_raw_vor_lsr_goes_to_pricing_stage(monkeypatch):
-    monkeypatch.setattr("proxy.services.fgis_price_service.available_pricebooks", lambda *args, **kwargs: [])
-
-    prompt = _smeta_direct_user_prompt(
-        "Сделай ЛСР по ВОР: прокладка кабеля 100 м",
-        "MODEL-SELECTED NORM LOOKUP RESULTS: ГЭСНм:10-06-048-06",
-        "",
-        light=True,
-    )
-
-    assert _smeta_direct_norm_candidate_stage_required("Сделай ЛСР по ВОР: прокладка кабеля 100 м") is False
-    assert "ЛСР-черновик" in prompt
-    assert "Строка ВСЕГО по смете обязательна" in prompt
-    assert "Не считай деньги" not in prompt
-    assert "не делай ЛСР" not in prompt
-
-
-def test_smeta_direct_explicit_candidate_table_stays_stage_one():
-    question = (
-        "Сделай сметный этап 1 по ВОР: 1) Прокладка кабеля UTP 100 м. "
-        "Верни таблицу кандидатов ГЭСН."
-    )
-
-    assert _smeta_direct_norm_candidate_stage_required(question) is True
-
-
-def test_smeta_direct_prices_previous_candidates_request_detects_followup():
-    assert _smeta_direct_prices_previous_candidates_request("Теперь деньги по ним.") is True
-    assert _smeta_direct_prices_previous_candidates_request("Посчитай ЛСР по этим кандидатам") is True
-    assert _smeta_direct_prices_previous_candidates_request("Дай кандидатов ГЭСН") is False
-    assert _smeta_direct_norm_candidate_stage_required("Теперь деньги по ним.") is False
-
-
-def test_smeta_direct_previous_norm_lookup_trace_reuses_latest_session_candidates(monkeypatch):
-    traces = [
-        {"mode": "smeta", "smeta_norm_lookup": {"enabled": True, "results": []}},
-        {
-            "mode": "smeta",
-            "smeta_norm_lookup": {
-                "enabled": True,
-                "results": [
-                    {
-                        "call": {"tool": "search_norm", "args": {"work_description": "кабель"}},
-                        "result": {"candidates": [{"norm_code": "ГЭСНм10-06-034-01"}]},
-                    }
-                ],
-            },
-        },
-    ]
-    monkeypatch.setattr("proxy.routers.chat.session_recent_retrieval_traces", lambda *args, **kwargs: traces)
-
-    lookup = _smeta_direct_previous_norm_lookup_trace("s1")
-
-    assert lookup is not None
-    assert lookup["reused_from_session"] is True
-    assert lookup["results"][0]["result"]["candidates"][0]["norm_code"] == "ГЭСНм10-06-034-01"
-
-
-def test_smeta_direct_followup_prefers_previous_candidate_trace(monkeypatch):
-    traces = [
-        {
-            "mode": "smeta",
-            "smeta_norm_lookup": {
-                "enabled": True,
-                "results": [
-                    {
-                        "call": {
-                            "tool": "search_norm",
-                            "args": {"work_description": "монтаж БАП", "unit_hint": "шт"},
-                        },
-                        "result": {
-                            "candidates": [
-                                {
-                                    "norm_code": "ГЭСН08-03-481-01",
-                                    "title": "Установка блока аварийного питания",
-                                    "measure_unit": "шт",
-                                }
-                            ]
-                        },
-                    }
-                ],
-            },
-        },
-    ]
-    monkeypatch.setattr("proxy.routers.chat.session_recent_retrieval_traces", lambda *args, **kwargs: traces)
-
-    packet = _smeta_direct_previous_norm_lookup_packet_for_followup("Теперь деньги по ним.", "s1")
-
-    assert packet is not None
-    assert packet["trace"]["reused_from_session"] is True
-    assert packet["trace"]["results"][0]["call"]["args"]["work_description"] == "монтаж БАП"
-    assert "ГЭСН08-03-481-01" in packet["text"]
-    assert _smeta_direct_previous_norm_lookup_packet_for_followup("Сделай ЛСР по БАП", "s1") is None
-
-
-def test_smeta_workflow_decision_routes_previous_candidates_without_selector(monkeypatch):
-    class FakeClient:
-        def __init__(self, *args, **kwargs):
-            raise AssertionError("workflow selector must not run for explicit money-by-candidates turns")
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-        def post(self, *args, **kwargs):
-            raise AssertionError("workflow selector must not run for explicit money-by-candidates turns")
-
-    monkeypatch.setattr("proxy.routers.chat._llm_runtime", lambda: SimpleNamespace(
-        model="test-model", provider="openai", chat_url="http://127.0.0.1/test", api_key="",
-    ))
-    monkeypatch.setattr("proxy.routers.chat.httpx.Client", FakeClient)
-    monkeypatch.setattr(
-        "proxy.routers.chat._smeta_direct_previous_norm_lookup_trace",
-        lambda session_id: {"results": [{"result": {"candidates": [{"norm_code": "ГЭСН08-03-481-01"}]}}]},
-    )
-
-    decision = _smeta_direct_workflow_decision("Теперь деньги по ним.", "context", "s1")
-
-    assert decision["model_owns_workflow"] is False
-    assert decision["status"] == "explicit_pricing_route"
-    assert decision["stage"] == "pricing"
-    assert decision["use_previous_candidates"] is True
-    assert decision["source"] == "literal_user_request"
-
-
-def test_smeta_workflow_decision_routes_explicit_lsr_without_selector(monkeypatch):
-    class FakeClient:
-        def __init__(self, *args, **kwargs):
-            raise AssertionError("workflow selector must not run for explicit LSR turns")
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-        def post(self, *args, **kwargs):
-            raise AssertionError("workflow selector must not run for explicit LSR turns")
-
-    monkeypatch.setattr("proxy.routers.chat._llm_runtime", lambda: SimpleNamespace(
-        model="test-model", provider="openai", chat_url="http://127.0.0.1/test", api_key="",
-    ))
-    monkeypatch.setattr("proxy.routers.chat.httpx.Client", FakeClient)
-    monkeypatch.setattr("proxy.routers.chat._smeta_direct_previous_norm_lookup_trace", lambda session_id: None)
-
-    decision = _smeta_direct_workflow_decision(
-        "Сделай оценку стоимости и ЛСР по ВОР. Верни все строки.",
-        "ВОР: прокладка кабеля 100 м",
-        "s1",
-    )
-
-    assert decision["stage"] == "pricing"
-    assert decision["status"] == "explicit_pricing_route"
-    assert decision["model_owns_workflow"] is False
-
-
-def test_smeta_workflow_decision_timeout_still_fails_open_for_non_literal_lsr(monkeypatch):
-    class FakeClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-        def post(self, *args, **kwargs):
-            raise TimeoutError("timed out")
-
-    monkeypatch.setattr("proxy.routers.chat._llm_runtime", lambda: SimpleNamespace(
-        model="test-model", provider="openai", chat_url="http://127.0.0.1/test", api_key="",
-    ))
-    monkeypatch.setattr("proxy.routers.chat.httpx.Client", FakeClient)
-    monkeypatch.setattr("proxy.routers.chat._smeta_direct_previous_norm_lookup_trace", lambda session_id: None)
-
-    decision = _smeta_direct_workflow_decision(
-        "Нужно понять, нужен ли расчёт или кандидаты.",
-        "ВОР: монтаж БАП 16 шт",
-        "s1",
-    )
-
-    assert decision["status"] == "selector_error"
-    assert decision["stage"] == ""
-    assert decision["fallback_reason"] == ""
-    assert decision["model_owns_workflow"] is False
-
-
-def test_smeta_user_prompt_respects_model_explanation_stage(monkeypatch):
-    monkeypatch.setattr("proxy.services.fgis_price_service.available_pricebooks", lambda *args, **kwargs: [])
-
-    prompt = _smeta_direct_user_prompt(
-        "Объясни, как ты работаешь по сметам и ЛСР",
-        "",
-        "",
-        light=True,
-        workflow_stage="explanation",
-    )
-
-    assert "Этот запрос не является командой посчитать" in prompt
-    assert "Строка ВСЕГО по смете обязательна" not in prompt
-
-
 def test_smeta_norm_lookup_max_calls_does_not_cut_source_rows_to_ten(monkeypatch):
     monkeypatch.delenv("LES_SMETA_NORM_LOOKUP_MAX_CALLS", raising=False)
     rows = ", ".join(
@@ -1674,21 +1261,7 @@ def test_smeta_source_row_count_reads_markdown_pdf_vor_rows(monkeypatch):
     assert _smeta_norm_lookup_max_calls(table) == 38
 
 
-def test_smeta_direct_checked_norm_table_allows_pricing_stage(monkeypatch):
-    monkeypatch.setattr("proxy.services.fgis_price_service.available_pricebooks", lambda *args, **kwargs: [])
-
-    question = (
-        "Рассчитай по проверенной таблице соответствия ВОР-ГЭСН: "
-        "ВОР 1 прокладка кабеля 100 м -> ГЭСНм:10-06-048-06"
-    )
-    prompt = _smeta_direct_user_prompt(question, "", "", light=True)
-
-    assert _smeta_direct_norm_candidate_stage_required(question) is False
-    assert "ЛСР-черновик" in prompt
-    assert "Строка ВСЕГО по смете обязательна" in prompt
-
-
-def test_smeta_direct_prompt_requires_source_row_coverage_for_tabular_vor(monkeypatch):
+def test_smeta_direct_prompt_passes_tabular_vor_without_hidden_contract(monkeypatch):
     monkeypatch.setattr("proxy.services.fgis_price_service.available_pricebooks", lambda *args, **kwargs: [])
     rows = ", ".join(
         f'{{"section":"Раздел 4. Монтажные работы ЭОМ","source_no":"{idx}","name":"Работа {idx}",'
@@ -1703,12 +1276,10 @@ def test_smeta_direct_prompt_requires_source_row_coverage_for_tabular_vor(monkey
         light=True,
     )
 
-    assert "19 исходных строк" in prompt
-    assert "contract coverage" in prompt
-    assert "[SRC: <Раздел>; <source_no>]" in prompt
-    assert "Не сокращай таблицу" in prompt
-    assert "денежные графы поставь 0.00" in prompt
-    assert "ЛСР всё равно выведи полностью" in prompt
+    assert '"source_no":"1"' in prompt
+    assert '"source_no":"19"' in prompt
+    assert "contract coverage" not in prompt
+    assert "денежные графы поставь 0.00" not in prompt
 
 
 def test_smeta_direct_max_tokens_scales_for_long_tabular_vor(monkeypatch):
@@ -1720,58 +1291,6 @@ def test_smeta_direct_max_tokens_scales_for_long_tabular_vor(monkeypatch):
 
     assert _smeta_direct_max_tokens(f"[{rows}]", runtime_provider="mlx") == 3600
     assert _smeta_direct_max_tokens(f"[{rows}]", runtime_provider="openai") == 6000
-
-
-def test_smeta_direct_light_prompt_allows_followup_norm_numbers(monkeypatch):
-    class FakeResponse:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {"choices": [{"message": {"content": (
-                "| Работа | Кандидат ГЭСН | Что проверить |\n"
-                "|---|---|---|\n"
-                "| Монтаж ярусов | ГЭСН на монтаж стальных конструкций | тип конструкции и кран |\n"
-            )}}]}
-
-    class FakeClient:
-        last_json = None
-
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-        def post(self, *args, **kwargs):
-            FakeClient.last_json = kwargs.get("json")
-            return FakeResponse()
-
-    monkeypatch.setattr("proxy.routers.chat._llm_runtime", lambda: SimpleNamespace(
-        model="test-model", provider="openai", chat_url="http://127.0.0.1/test", api_key="",
-    ))
-    monkeypatch.setattr("proxy.routers.chat.httpx.Client", FakeClient)
-    monkeypatch.delenv("LES_SMETA_DIRECT_LIGHT_PROMPT", raising=False)
-
-    text = _smeta_direct_model_answer(
-        "Контекст текущего диалога:\n"
-        "- Сделай оценку столпа по РИМ и рынку\n"
-        "- ВОР: контрольная сборка; упаковка; монтаж ярусов краном; болтовая сборка\n\n"
-        "Текущий запрос:\nдобавь номера ГЭСН",
-        "Проверяемые фрагменты из выбранного RAG-корпуса:\nГЭСН на монтаж стальных конструкций.",
-    )
-
-    assert "Кандидат ГЭСН" in text
-    prompt_payload = FakeClient.last_json["messages"][1]["content"]
-    assert "ВОР -> кандидаты ГЭСН" in prompt_payload
-    assert "Не считай деньги" in prompt_payload
-    assert "таблицу доступных candidates" in prompt_payload
-    assert "это новая задача или продолжение текущей сметы" not in prompt_payload
-    assert "Используй короткие жирные метки секций" not in prompt_payload
-    assert "Обязательно заверши разделом «Итог»" not in prompt_payload
 
 
 def test_smeta_harness_question_includes_previous_answer_for_followups(monkeypatch):

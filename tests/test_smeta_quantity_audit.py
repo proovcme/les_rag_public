@@ -62,44 +62,14 @@ def test_smeta_stolp_quantity_conflict_form_blocks_priced_final():
     assert "priced_final" in data["forbidden_answer_markers"]
 
 
-def test_smeta_stolp_two_estimates_table_required():
+def test_smeta_direct_prompt_leaves_estimation_strategy_to_model():
     prompt = build_mode_system_prompt("smeta_direct")
 
-    assert "Раздел работ" in prompt
-    assert "Объём / вариант" in prompt
-    assert "РИМ/ГЭСН статус" in prompt
-    assert "Рыночная сумма с НДС" in prompt
-    assert "не смешивай" in prompt.lower()
-
-
-def test_smeta_stolp_scenario_market_before_questions():
-    prompt = build_mode_system_prompt("smeta_direct")
-
-    assert "стоимость работ является обязательной попыткой" in prompt
-    assert "сценарную оценку" in prompt
-    assert "Уточняющие вопросы идут после сценарных денег" in prompt
-    assert "source_delta" in prompt
-    assert "малое расхождение отдельно" in prompt
-
-
-def test_smeta_direct_requires_line_item_work_cost_for_measurable_bor():
-    prompt = build_mode_system_prompt("smeta_direct")
-
-    assert "построчную таблицу работ" in prompt
-    assert "разделом, работой, количеством" in prompt
-    assert "не схлопывай работы" not in prompt
-    assert "слово evidence" in prompt
-    assert "внутренние prompt-запреты" in prompt
-    assert "профессиональный результат" in prompt
-
-
-def test_smeta_stolp_rim_not_final_without_trace():
-    prompt = build_smeta_batch_system_prompt("Верни JSON.")
-
-    assert "scenario_is_not_fact" in prompt
-    assert "quantity_conflict_blocks_priced_final" in prompt
-    assert "priced_final" in prompt
-    assert "calculation_trace" in prompt
+    assert "Модель выбирает работы, нормы, аналоги, покрытия и цены" in prompt
+    assert "код только исполняет, проверяет, считает и экспортирует" in prompt
+    assert "основной метод оценки" not in prompt
+    assert "таблица двух оценок" not in prompt.lower()
+    assert "маршрут поиска нормы" not in prompt.lower()
 
 
 def test_smeta_stolp_bolt_counts_split_correctly():

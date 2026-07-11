@@ -327,44 +327,14 @@ def build_lsr_form(tables: list[SmetaTable]) -> dict[str, Any] | None:
 
 
 def _select_pricebook_for_question(question: str):
-    """Resolve an explicit local pricebook for trace calculation.
-
-    This is region/period selection, not work/norm selection. If the request
-    does not point to an available pricebook, use a deterministic system
-    default from the physically installed books instead of leaving the trace
-    unpriced.
-    """
-    q = str(question or "").casefold()
+    """Use the operator manifest default; code does not infer region from prose."""
+    del question
     try:
         from proxy.services import fgis_price_service as fps
 
-        books = fps.available_pricebooks()
-        if not books:
-            return None, ""
-        stems = {Path(path).stem: path for path in books}
-        preferred: list[str] = []
-        if any(token in q for token in ("спб", "санкт-петербург", "петербург", "sankt", "spb")):
-            if "2026" in q and any(token in q for token in ("2 кв", "2кв", "ii", "2 кварт", "2kv")):
-                preferred.extend(["spb_2kv2026", "sankt-peterburg_2kv2026"])
-            if "2026" in q:
-                preferred.extend([stem for stem in stems if stem.startswith(("spb", "sankt-peterburg")) and "2026" in stem])
-            preferred.extend(["spb_2kv2026", "sankt-peterburg_2kv2026", "spb_2kv2025", "sankt-peterburg_2kv2025"])
-        if "москва" in q or "мск" in q:
-            preferred.extend([stem for stem in stems if stem.startswith("moskva") and ("2026" in stem if "2026" in q else True)])
-        configured_default = os.getenv("LES_DEFAULT_PRICEBOOK", "").strip()
-        if configured_default:
-            preferred.append(Path(configured_default).stem)
-        preferred.extend(["spb_2kv2026", "sankt-peterburg_2kv2026", "spb_2kv2025", "sankt-peterburg_2kv2025"])
-        preferred.extend([stem for stem in sorted(stems) if "2026" in stem])
-        preferred.extend(sorted(stems))
-        seen: set[str] = set()
-        for stem in preferred:
-            if stem in seen:
-                continue
-            seen.add(stem)
-            path = stems.get(stem)
-            if path:
-                return fps.get_pricebook(path), stem
+        path = fps.resolve_pricebook_path(None)
+        if path:
+            return fps.get_pricebook(path), Path(path).stem
     except Exception:
         return None, ""
     return None, ""
@@ -380,15 +350,18 @@ def _build_rim_trace_form(lsr_form: dict[str, Any], *, question: str = "") -> di
     if not rows:
         return None
     try:
-        from proxy.services.rim_lsr_trace_service import build_lsr_trace_from_visible_rows
+        from proxy.smeta_core.workflow import calculate_visible_rows_revision
     except Exception:
         return None
 
-    pricebook, pricebook_name = _select_pricebook_for_question(question)
-    trace = build_lsr_trace_from_visible_rows(
+    _pricebook, pricebook_name = _select_pricebook_for_question(question)
+    trace = calculate_visible_rows_revision(
         list(rows),
-        pricebook=pricebook,
-        name=str(lsr_form.get("title") or "Локальный сметный расчет (смета)"),
+        selected_by="model",
+        created_by="model",
+        change_note="smeta artifact from visible model rows",
+        book=pricebook_name or None,
+        title=str(lsr_form.get("title") or "Локальный сметный расчет (смета)"),
     )
     summary = trace.get("summary") if isinstance(trace, dict) else {}
     bound_rows = int(summary.get("bound_rows") or 0)

@@ -220,6 +220,8 @@ async def test_auto_work_estimate_goes_to_harness_not_retrieval(monkeypatch):
             )
             return json.dumps({
                 "selected_code": candidate["norm_code"],
+                "selection_kind": "exact",
+                "analog_limitations": [],
                 "reason": "выбрано моделью из shortlist",
                 "ask_user": "",
             }, ensure_ascii=False)
@@ -246,7 +248,7 @@ async def test_auto_work_estimate_goes_to_harness_not_retrieval(monkeypatch):
     assert resp["total_status"] == "partial"
     assert resp.get("final_total") is None
     answer = resp["answer"]
-    assert "Проверить по выбранным нормам" in answer
+    assert "Расчётный протокол" in answer
     assert "группа грунта" in answer
     assert "глубина разработки" in answer
     assert "крепления траншей/котлована" in answer

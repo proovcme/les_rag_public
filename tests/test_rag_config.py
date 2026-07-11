@@ -6,6 +6,7 @@ from backend.rag_config import (
     embedding_api_model,
     embedding_model_id,
     prepare_query_for_embedding,
+    point_embedding_fingerprint,
     query_embedding_instruction_id,
     query_embedding_mode,
     rag_collection_name,
@@ -88,12 +89,17 @@ def test_index_contract_is_versioned_and_detects_runtime_drift(monkeypatch, tmp_
     monkeypatch.setenv("RAG_INDEX_CONTRACT_PATH", str(contract_path))
     monkeypatch.setenv("LES_EMBED_PROFILE", "qwen")
     monkeypatch.setenv("RAG_COLLECTION_NAME", "contract-test")
+    monkeypatch.setenv("RAG_QDRANT_SCHEMA", "named")
     monkeypatch.setenv("RAG_CHUNK_UNIT", "chars")
     monkeypatch.setenv("RAG_CHUNK_SIZE", "900")
 
     payload = index_contract_payload()
-    assert payload["schema"] == "les.rag.index-contract.v1"
+    assert payload["schema"] == "les.rag.index-contract.v2"
     assert payload["document_embedding_mode"] == "raw-v1"
+    assert payload["qdrant_schema"] == "named"
+    assert payload["dense_vector_name"] == "dense"
+    assert payload["sparse_vector_name"] == "bm25_sparse"
+    assert payload["point_embedding_fingerprint"] == point_embedding_fingerprint()
     write_index_contract()
     assert index_contract_status()["compatible"] is True
 

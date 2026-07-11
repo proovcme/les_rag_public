@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import time
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -354,8 +355,11 @@ def classify_query(question: str) -> QueryRoute:
 
     kot = analyze_question(question)
     if kot.dataset_filter:
-        expanded = _expand_query_for_dataset(question, kot.dataset_filter)
-        return QueryRoute(kot.dataset_filter, expanded, _kot_reason_alias(kot.dataset_filter, kot.reason))
+        return QueryRoute(
+            kot.dataset_filter,
+            expand_retrieval_query(question),
+            _kot_reason_alias(kot.dataset_filter, kot.reason),
+        )
 
     q = question.casefold()
     # Нормализуем разделители, чтобы ловить ПП87 в любом написании: «пп87», «пп 87»,
@@ -369,9 +373,9 @@ def classify_query(question: str) -> QueryRoute:
         or "градостроительн" in q
         or "гкрф" in q
     ):
-        return QueryRoute("GKRF", _expand_gkrf_query(question), "gkrf_keyword")
+        return QueryRoute("GKRF", expand_retrieval_query(question), "gkrf_keyword")
     if any(token in q for token in ("эвакуац", "пожар", "огнестойк", "противодым", "дымоудал", "13130")):
-        return QueryRoute("NTD_FIRE", _expand_fire_query(question), "fire_safety_keyword")
+        return QueryRoute("NTD_FIRE", expand_retrieval_query(question), "fire_safety_keyword")
     if any(token in q for token in ("пуэ", "электр", "кабел", "заземл", "молниезащит", "освещен", "напряжен")):
         return QueryRoute("NTD_ELECTRICAL", question, "electrical_keyword")
     if any(token in q for token in ("конструкц", "нагрузк", "фундамент", "основан", "железобетон")):
@@ -399,7 +403,7 @@ def classify_query(question: str) -> QueryRoute:
             "60.13330",
         )
     ):
-        return QueryRoute("NTD_HVAC", _expand_hvac_query(question), "hvac_keyword")
+        return QueryRoute("NTD_HVAC", expand_retrieval_query(question), "hvac_keyword")
     if any(token in q for token in ("водоснаб", "водоотвед", "канализац", "гидротех", "мелиоратив")):
         return QueryRoute("NTD_WATER", question, "water_keyword")
     if any(token in q for token in ("трубопровод", "газопровод", "нефтепровод", "магистральн")):
@@ -426,9 +430,9 @@ def infer_dataset_filter(question: str) -> Optional[str]:
 
 
 def expand_retrieval_query(question: str) -> str:
-    from proxy.services.kot_service import expand_query_synonyms
-    expanded = classify_query(question).expanded_query
-    return expand_query_synonyms(expanded)
+    """Format-agnostic normalization without injected domain prose."""
+    normalized = unicodedata.normalize("NFKC", str(question or ""))
+    return re.sub(r"\s+", " ", normalized).strip()
 
 
 def _expand_gkrf_query(question: str) -> str:
@@ -470,13 +474,8 @@ def _expand_gkrf_query(question: str) -> str:
 
 
 def _expand_query_for_dataset(question: str, dataset_filter: str) -> str:
-    if dataset_filter == "GKRF":
-        return _expand_gkrf_query(question)
-    if dataset_filter == "NTD_FIRE":
-        return _expand_fire_query(question)
-    if dataset_filter == "NTD_HVAC":
-        return _expand_hvac_query(question)
-    return question
+    del dataset_filter
+    return expand_retrieval_query(question)
 
 
 def _append_query_hints(question: str, hints: list[str]) -> str:
@@ -705,6 +704,8 @@ async def retrieve_chat_chunks(
                 lexical_count=0,
                 merged_count=len(native_chunks),
                 score_kind="qdrant_rrf",
+                retrieval_channels=["dense", "qdrant_sparse"],
+                fusion="rrf",
             )
             if effective_doc_filter:
                 trace.exact_refs.extend([f"file:{name}" for name in effective_doc_filter])
@@ -719,7 +720,6 @@ async def retrieve_chat_chunks(
                     retrieval_query=retrieval_query,
                     pool_k=pool_k,
                     limit=merged_top_k,
-                    sparse_chunks=None,
                     doc_filter=effective_doc_filter or None,
                 )
                 if merged_trace.lexical_count:
@@ -727,6 +727,8 @@ async def retrieve_chat_chunks(
                     trace = merged_trace
                     trace.mode = f"qdrant_native_{merged_trace.mode}"
                     trace.vector_count = len(native_chunks)
+                    trace.retrieval_channels = ["dense", "qdrant_sparse", "lexical"]
+                    trace.fusion = "qdrant_rrf+lexical_safety_rrf"
                     if effective_doc_filter:
                         trace.exact_refs.extend([f"file:{name}" for name in effective_doc_filter])
                     _rt["native_lexical"] = merged_trace.lexical_count
@@ -755,18 +757,6 @@ async def retrieve_chat_chunks(
                 _rt["vec"] = round(time.monotonic() - _s, 3)
                 logger.error("[RETR] dense retrieval disabled: %s", embedding_contract_error)
 
-        # W2.4: BGE-M3 learned-sparse рядом с dense (Qdrant-native гибрид). За флагом
-        # RAG_SPARSE_ENABLED; при сбое/пустом sparse — молча падаем на dense+FTS.
-        _s = time.monotonic()
-        sparse_chunks = [] if embedding_contract_error else await _retrieve_sparse_safe(
-            rag_backend,
-            retrieval_query,
-            dataset_ids,
-            pool_k,
-            logger,
-            doc_filter=effective_doc_filter or None,
-        )
-        _rt["sparse"] = round(time.monotonic() - _s, 3)
         _s = time.monotonic()
         chunks, trace = _hybrid_merge(
             question,
@@ -777,7 +767,6 @@ async def retrieve_chat_chunks(
             retrieval_query=retrieval_query,
             pool_k=pool_k,
             limit=merged_top_k,
-            sparse_chunks=sparse_chunks,
             doc_filter=effective_doc_filter or None,
         )
         if embedding_contract_error:
@@ -850,7 +839,6 @@ async def retrieve_chat_chunks(
                     retrieval_query=retry_query,
                     pool_k=pool_k,
                     limit=merged_top_k,
-                    sparse_chunks=None,
                     doc_filter=effective_doc_filter or None,
                 )
                 retry_trace.mode = (
@@ -860,19 +848,21 @@ async def retrieve_chat_chunks(
                 )
                 retry_trace.vector_count = len(retry_native)
                 retry_trace.score_kind = "rrf" if retry_trace.lexical_count else "qdrant_rrf"
+                retry_trace.retrieval_channels = (
+                    ["dense", "qdrant_sparse", "lexical"]
+                    if retry_trace.lexical_count
+                    else ["dense", "qdrant_sparse"]
+                )
+                retry_trace.fusion = (
+                    "qdrant_rrf+lexical_safety_rrf"
+                    if retry_trace.lexical_count
+                    else "rrf"
+                )
             else:
                 retry_vector = await rag_backend.retrieve(
                     retry_query,
                     dataset_ids=dataset_ids,
                     top_k=vector_top_k,
-                    doc_filter=effective_doc_filter or None,
-                )
-                retry_sparse = await _retrieve_sparse_safe(
-                    rag_backend,
-                    retry_query,
-                    dataset_ids,
-                    pool_k,
-                    logger,
                     doc_filter=effective_doc_filter or None,
                 )
                 retry_chunks, retry_trace = _hybrid_merge(
@@ -884,7 +874,6 @@ async def retrieve_chat_chunks(
                     retrieval_query=retry_query,
                     pool_k=pool_k,
                     limit=merged_top_k,
-                    sparse_chunks=retry_sparse,
                     doc_filter=effective_doc_filter or None,
                 )
             retry_trace.retry_count = 1
@@ -1010,14 +999,9 @@ async def retrieve_chat_chunks(
     return chunks
 
 
-def sparse_enabled() -> bool:
-    """W2.4: BGE-M3 learned-sparse в гибриде (флаг; включается после миграции коллекции)."""
-    return os.getenv("RAG_SPARSE_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
-
-
 def hybrid_backend() -> str:
-    value = os.getenv("RAG_HYBRID_BACKEND", "lexical").strip().lower()
-    return value if value in {"lexical", "sidecar_sparse", "qdrant_native"} else "lexical"
+    """There is one production retrieval architecture."""
+    return "qdrant_native"
 
 
 def _lexical_status_usable(status: dict[str, Any]) -> tuple[bool, str]:
@@ -1039,20 +1023,6 @@ def _lexical_status_usable(status: dict[str, Any]) -> tuple[bool, str]:
     return False, f"stale:{missing_ratio:.6f}"
 
 
-async def _retrieve_sparse_safe(rag_backend, query: str, dataset_ids, pool_k: int, logger: logging.Logger, doc_filter=None) -> list[Any]:
-    if (
-        hybrid_backend() != "sidecar_sparse"
-        or not sparse_enabled()
-        or not hasattr(rag_backend, "retrieve_sparse")
-    ):
-        return []
-    try:
-        return await rag_backend.retrieve_sparse(query, dataset_ids=dataset_ids, top_k=pool_k, doc_filter=doc_filter)
-    except Exception as error:
-        logger.warning("[HYBRID] sparse fallback: %s", error)
-        return []
-
-
 def _hybrid_merge(
     question: str,
     vector_chunks: list[Any],
@@ -1063,16 +1033,8 @@ def _hybrid_merge(
     retrieval_query: str = "",
     pool_k: int = RERANK_POOL_K,
     limit: int = CHAT_TOP_K,
-    sparse_chunks: Optional[list[Any]] = None,
     doc_filter: Optional[list[str]] = None,
 ) -> tuple[list[Any], RetrievalTrace]:
-    # W2.4: learned-sparse (BGE-M3) ЗАМЕНЯЕТ самописный FTS в гибриде (план: FTS
-    # остаётся для clause lookup). Если sparse пуст/выключен — падаем на FTS.
-    if sparse_chunks:
-        merged, trace = merge_rrf(vector_chunks, sparse_chunks, question=retrieval_query or question, limit=limit)
-        trace.mode = "hybrid+sparse"
-        return merged, trace
-
     if not lexical_enabled():
         trace = RetrievalTrace(
             mode="vector",

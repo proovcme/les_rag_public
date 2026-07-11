@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from urllib.parse import quote, urlencode
 
 from nicegui import context, ui
@@ -35,6 +36,11 @@ DATASET_KIND_EDIT_OPTIONS = {
     "mixed": "Смешанный",
     "other": "Другое",
 }
+DATASET_GROUP_OPTIONS = {
+    "": "Все",
+    "project": "Проекты",
+    "other": "Не проекты",
+}
 
 
 def build_documents() -> None:
@@ -60,11 +66,23 @@ def build_documents() -> None:
         "selected_doc_name": "",
         "dataset_filter": "",
         "dataset_kind_filter": "",
+        "dataset_group_filter": "",
         "document_filter": "",
         "project_filter": "",
+        "composition_view": "tree",
+        "selected_folder": "",
+        "composition_folder_filter": "",
+        "composition_extension_filter": "",
+        "composition_status_filter": "",
+        "composition_role_filter": "",
+        "composition_name_filter": "",
+        "composition_file": {},
+        "composition_file_loading": False,
+        "dataset_index_brief": {},
+        "dataset_index_brief_loading": False,
         "query": "",
         "view_title": "Выберите датасет",
-        "view_note": "Л.И.С.Т.: карта проекта, файлы и быстрые вопросы по выбранным источникам.",
+        "view_note": "Л.И.С.Т. — файловый проводник проекта: структура, данные документов и поиск по индексу.",
     }
     refs: dict[str, object] = {}
 
@@ -91,8 +109,28 @@ def build_documents() -> None:
 
     def _dataset_title(row: dict) -> str:
         name = str(row.get("name") or row.get("id") or "")
-        did = str(row.get("id") or "")
-        return name if name == did else f"{name} · {did}"
+        return name or "Без названия"
+
+    def _file_icon(file_name: str) -> str:
+        suffix = str(file_name or "").lower().rsplit(".", 1)[-1]
+        return {
+            "pdf": "o_picture_as_pdf",
+            "doc": "o_description",
+            "docx": "o_description",
+            "xls": "o_table_view",
+            "xlsx": "o_table_view",
+            "csv": "o_table_view",
+            "dwg": "o_architecture",
+            "dxf": "o_architecture",
+            "ifc": "o_view_in_ar",
+            "rvt": "o_view_in_ar",
+            "msg": "o_mail",
+            "eml": "o_mail",
+        }.get(suffix, "o_draft")
+
+    def _file_kind(file_name: str) -> str:
+        parts = str(file_name or "").rsplit(".", 1)
+        return parts[-1].upper() if len(parts) > 1 else "Файл"
 
     def _selected_dataset_row() -> dict:
         dataset_id = str(state.get("selected_dataset") or "")
@@ -125,6 +163,23 @@ def build_documents() -> None:
         row = _selected_dataset_row()
         return str(memory.get("dataset_kind") or row.get("dataset_kind") or state.get("dataset_kind") or "")
 
+    def _dataset_group(row: dict) -> str:
+        kind = str(row.get("dataset_kind") or "").strip()
+        if kind:
+            return "project" if kind == "project" else "other"
+        name = str(row.get("name") or row.get("id") or "").strip().upper()
+        non_project_prefixes = (
+            "ARTEL", "BOOKS", "CAD_BIM", "DOCS_OTHER", "EXPORTS", "GESN_", "GKRF",
+            "MAIL", "NTD_", "SMETA_", "КАТАЛОГ",
+        )
+        return "other" if name.startswith(non_project_prefixes) else "project"
+
+    def _file_sort_key(item: dict) -> tuple[bool, str]:
+        file_name = str(item.get("file_name") or "")
+        basename = file_name.rsplit("/", 1)[-1]
+        technical = basename.startswith(".") or basename.startswith("_les_")
+        return technical, file_name.casefold()
+
     def _source_map_files(memory: dict, project_pdf: dict) -> list[dict]:
         files = [item for item in (project_pdf.get("files") or []) if isinstance(item, dict)]
         if not files and isinstance(memory.get("project_pdf_extract"), dict):
@@ -145,7 +200,7 @@ def build_documents() -> None:
                     "layers": [str(row.get("content_type") or "")] if row.get("content_type") else [],
                 }
             )
-        return result
+        return sorted(result, key=_file_sort_key)
 
     def _file_group_key(item: dict) -> tuple[str, str]:
         section = str(item.get("discipline") or item.get("domain") or item.get("route_dataset") or "").strip()
@@ -172,6 +227,148 @@ def build_documents() -> None:
             if len(group["samples"]) < 4:
                 group["samples"].append(str(item.get("file_name") or ""))
         return sorted(groups.values(), key=lambda item: (str(item.get("section") or ""), -int(item.get("files") or 0), str(item.get("role") or "")))
+
+    def _composition_files(memory: dict, project_pdf: dict) -> list[dict]:
+        """Full dataset inventory enriched by LIST metadata when available."""
+        list_files = _source_map_files(memory, project_pdf)
+        list_by_name = {str(item.get("file_name") or ""): item for item in list_files}
+        result: list[dict] = []
+        seen: set[str] = set()
+        for row in state.get("documents") or []:
+            file_name = str(row.get("file_name") or "")
+            enriched = {
+                "file_name": file_name,
+                "doc_id": str(row.get("id") or ""),
+                "status": str(row.get("status") or ""),
+                "file_size": row.get("file_size"),
+                "doc_type": str(row.get("doc_type") or row.get("content_type") or ""),
+                **dict(list_by_name.get(file_name) or {}),
+            }
+            result.append(enriched)
+            seen.add(file_name)
+        for item in list_files:
+            file_name = str(item.get("file_name") or "")
+            if file_name not in seen:
+                result.append(dict(item))
+        return result
+
+    def _set_composition_view(view: str) -> None:
+        state["composition_view"] = view if view in {"tree", "grid", "list", "table"} else "tree"
+        _render_view()
+
+    def _select_composition_folder(folder: str) -> None:
+        state["selected_folder"] = str(folder or "")
+        _render_view()
+
+    def _set_composition_filter(key: str, value: str) -> None:
+        state[key] = str(value or "")
+        state["selected_folder"] = ""
+        _render_view()
+
+    async def _inspect_composition_file(doc_id: str, file_name: str) -> None:
+        if not doc_id:
+            return
+        state["view_mode"] = "map"
+        state["view_title"] = _dataset_title(_selected_dataset_row())
+        state["view_note"] = "Л.И.С.Т. — файловый проводник проекта: структура, данные документов и поиск по индексу."
+        state["composition_file_loading"] = True
+        state["composition_file"] = {"doc_id": doc_id, "file_name": file_name}
+        _render_documents()
+        _render_view()
+        data = await api_get(
+            f"/api/documents/by-id/{quote(doc_id, safe='')}/chunks?"
+            + urlencode({"limit": 12, "max_chars": 1800})
+        )
+        state["composition_file_loading"] = False
+        if not isinstance(data, dict):
+            _render_status_error()
+            _render_view()
+            return
+        state["composition_file"] = {
+            "doc_id": doc_id,
+            "file_name": file_name,
+            "document": dict(data.get("document") or {}),
+            "chunks": list(data.get("chunks") or []),
+            "total": int(data.get("total") or 0),
+        }
+        _render_documents()
+        _render_view()
+
+    def _plain_index_text(value: object) -> str:
+        text = " ".join(str(value or "").split())
+        text = re.sub(r"^#{1,6}\s*", "", text)
+        text = re.sub(r"[*_`]+", "", text)
+        return text.strip()
+
+    def _indexed_file_brief(file_data: dict) -> str:
+        chunks = [item for item in (file_data.get("chunks") or []) if isinstance(item, dict)]
+        headings: list[str] = []
+        excerpts: list[str] = []
+        for item in chunks:
+            heading = _plain_index_text(item.get("section_heading") or item.get("parent_heading"))
+            if heading and heading not in headings and not heading.lower().startswith("ооо "):
+                headings.append(heading)
+            text = _plain_index_text(item.get("snippet") or item.get("text"))
+            if text:
+                excerpts.append(text)
+        parts: list[str] = []
+        if excerpts:
+            excerpt = excerpts[0]
+            parts.append(excerpt[:460].rstrip() + ("…" if len(excerpt) > 460 else ""))
+        lead = parts[0].casefold() if parts else ""
+        sections = [heading for heading in headings if heading.casefold() not in lead][:4]
+        if sections:
+            parts.append("Разделы: " + "; ".join(sections) + ".")
+        return "\n\n".join(parts) or "В проиндексированных фрагментах пока нет текста для краткой справки."
+
+    def _indexed_dataset_brief(brief_data: dict) -> str:
+        chunks = [
+            chunk
+            for document in (brief_data.get("documents") or [])
+            if isinstance(document, dict)
+            for chunk in (document.get("chunks") or [])
+            if isinstance(chunk, dict)
+        ]
+        headings: list[str] = []
+        excerpts: list[str] = []
+        for item in chunks:
+            heading = _plain_index_text(item.get("section_heading") or item.get("parent_heading"))
+            if heading and heading not in headings and not heading.lower().startswith("ооо "):
+                headings.append(heading)
+            excerpt = _plain_index_text(item.get("snippet") or item.get("text"))
+            if excerpt and excerpt not in excerpts:
+                excerpts.append(excerpt)
+        if not excerpts and not headings:
+            return "В Qdrant пока нет текстовых фрагментов, из которых можно собрать справку."
+        parts: list[str] = []
+        if excerpts:
+            lead = excerpts[0]
+            parts.append(lead[:430].rstrip() + ("…" if len(lead) > 430 else ""))
+        lead_heading = headings[0] if headings else ""
+        topics = [heading for heading in headings[1:] if heading.casefold() != lead_heading.casefold()][:4]
+        if topics:
+            parts.append("В составе индекса: " + "; ".join(topics) + ".")
+        return " ".join(parts)
+
+    def _folder_summary(folder: str, files: list[dict]) -> str:
+        prefix = "" if folder == "Корень датасета" else folder.rstrip("/") + "/"
+        selected = [item for item in files if not prefix or str(item.get("file_name") or "").startswith(prefix)]
+        types: dict[str, int] = {}
+        roles: dict[str, int] = {}
+        for item in selected:
+            kind = _file_kind(str(item.get("file_name") or ""))
+            role = str(item.get("doc_role") or item.get("doc_type") or item.get("discipline") or "").strip()
+            types[kind] = int(types.get(kind) or 0) + 1
+            if role:
+                roles[role] = int(roles.get(role) or 0) + 1
+        type_text = ", ".join(f"{key} — {value}" for key, value in sorted(types.items(), key=lambda pair: -pair[1])[:4])
+        role_text = ", ".join(key for key, _ in sorted(roles.items(), key=lambda pair: -pair[1])[:3])
+        parts = [f"{len(selected)} файлов"]
+        if type_text:
+            parts.append(type_text)
+        if role_text:
+            parts.append(f"содержание: {role_text}")
+        return ". ".join(parts) + "."
 
     def _short_path(value: str, *, parts: int = 3) -> str:
         chunks = [x for x in str(value or "").split("/") if x]
@@ -332,13 +529,75 @@ def build_documents() -> None:
         state["pdf_extract"] = {}
         state["pdf_extract_loading"] = False
         state["operator_guidance"] = ""
+        state["selected_folder"] = ""
+        state["composition_file"] = {}
+        state["composition_file_loading"] = False
+        state["dataset_index_brief"] = {}
+        state["dataset_index_brief_loading"] = False
         state["dataset_kind"] = str(_selected_dataset_row().get("dataset_kind") or "")
         state["view_mode"] = "map"
-        state["view_title"] = dataset_id or "Выберите датасет"
-        state["view_note"] = "Л.И.С.Т.: что найдено, где искать и какие файлы открыть."
+        state["view_title"] = _dataset_title(_selected_dataset_row()) if dataset_id else "Выберите датасет"
+        state["view_note"] = "Л.И.С.Т. — файловый проводник проекта: структура, данные документов и поиск по индексу."
         await _load_documents()
-        await _load_memory()
-        await _load_pdf_extract_summary()
+        await asyncio.gather(_load_memory(), _load_pdf_extract_summary(), _load_dataset_index_brief())
+
+    async def _load_dataset_index_brief() -> None:
+        documents = [
+            item for item in (state.get("documents") or [])
+            if str(item.get("id") or "") and int(item.get("chunk_count") or 0) > 0
+        ]
+        state["dataset_index_brief_loading"] = True
+        state["dataset_index_brief"] = {}
+        _render_view()
+        ranked = sorted(documents, key=lambda item: -int(item.get("chunk_count") or 0))
+        selected: list[dict] = []
+        seen_folders: set[str] = set()
+        for item in ranked:
+            file_name = str(item.get("file_name") or "")
+            folder = file_name.rsplit("/", 1)[0] if "/" in file_name else ""
+            if folder in seen_folders:
+                continue
+            seen_folders.add(folder)
+            selected.append(item)
+            if len(selected) >= 4:
+                break
+        if len(selected) < 4:
+            selected_ids = {str(item.get("id") or "") for item in selected}
+            selected.extend(item for item in ranked if str(item.get("id") or "") not in selected_ids)
+            selected = selected[:4]
+        requests = [
+            api_get(
+                f"/api/documents/by-id/{quote(str(item.get('id') or ''), safe='')}/chunks?"
+                + urlencode({"limit": 8, "max_chars": 1400})
+            )
+            for item in selected
+        ]
+        responses = await asyncio.gather(*requests, return_exceptions=True)
+        sampled: list[dict] = []
+        for document, data in zip(selected, responses):
+            if not isinstance(data, dict):
+                continue
+            sampled.append(
+                {
+                    "doc_id": str(document.get("id") or ""),
+                    "file_name": str(document.get("file_name") or ""),
+                    "chunks": list(data.get("chunks") or []),
+                    "total": int(data.get("total") or document.get("chunk_count") or 0),
+                }
+            )
+        state["dataset_index_brief_loading"] = False
+        state["dataset_index_brief"] = {
+            "documents": sampled,
+            "sampled_documents": len(sampled),
+            "total_fragments": sum(int(item.get("chunk_count") or 0) for item in documents),
+            "qdrant": any(
+                chunk.get("point_id")
+                for item in sampled
+                for chunk in (item.get("chunks") or [])
+                if isinstance(chunk, dict)
+            ),
+        }
+        _render_view()
 
     async def _load_memory() -> None:
         dataset_id = state["selected_dataset"]
@@ -421,8 +680,8 @@ def build_documents() -> None:
     async def _load_cad_inventory() -> None:
         state["cad_loading"] = True
         state["view_mode"] = "cad"
-        state["view_title"] = "CAD/BIM imports"
-        state["view_note"] = "Read-only сверка CAD graph DB и CAD_BIM_Index: импорты, projection, слабые графы и дубли."
+        state["view_title"] = "CAD/BIM модели"
+        state["view_note"] = "Модели, их состав и связь с документами датасета."
         _render_view()
         data = await api_get("/api/cad-bim/imports?limit=300")
         state["cad_loading"] = False
@@ -550,7 +809,7 @@ def build_documents() -> None:
         if not isinstance(data, dict):
             _render_status_error()
             return
-        state["documents"] = list(data.get("documents") or [])
+        state["documents"] = sorted(list(data.get("documents") or []), key=_file_sort_key)
         _render_all()
 
     async def _open_document(doc_id: str) -> None:
@@ -622,14 +881,14 @@ def build_documents() -> None:
 
     def _show_map() -> None:
         state["view_mode"] = "map"
-        state["view_title"] = state["selected_dataset"] or "Выберите датасет"
+        state["view_title"] = _dataset_title(_selected_dataset_row()) if state["selected_dataset"] else "Выберите датасет"
         state["view_note"] = "Л.И.С.Т. показывает карту корпуса: описание, проекты, тома, файлы и маршруты чтения."
         _render_view()
 
     def _show_cad_inventory() -> None:
         state["view_mode"] = "cad"
-        state["view_title"] = "CAD/BIM imports"
-        state["view_note"] = "Read-only сверка CAD graph DB и CAD_BIM_Index: импорты, projection, слабые графы и дубли."
+        state["view_title"] = "CAD/BIM модели"
+        state["view_note"] = "Модели, их состав и связь с документами датасета."
         if not state.get("cad_inventory"):
             _schedule(_load_cad_inventory())
         else:
@@ -770,44 +1029,382 @@ def build_documents() -> None:
         ui.notify(err, type="negative")
 
     def _render_file_registry(memory: dict, project_pdf: dict) -> None:
-        files = _source_map_files(memory, project_pdf)
-        groups = _file_registry(files)
-        with ui.expansion("Реестр файлов", icon="o_inventory_2", value=True).classes("w-full").props("dense").style(
+        all_files = _composition_files(memory, project_pdf)
+        folder_options = sorted(
+            {
+                "/".join(str(item.get("file_name") or "").split("/")[:-1])
+                for item in all_files
+                if "/" in str(item.get("file_name") or "")
+            }
+        )
+        extension_options = sorted({_file_kind(str(item.get("file_name") or "")) for item in all_files})
+        status_options = sorted({str(item.get("status") or "").upper() for item in all_files if item.get("status")})
+        role_options = sorted(
+            {
+                str(item.get("doc_role") or item.get("doc_type") or item.get("discipline") or "").strip()
+                for item in all_files
+                if str(item.get("doc_role") or item.get("doc_type") or item.get("discipline") or "").strip()
+            }
+        )
+        folder_filter = str(state.get("composition_folder_filter") or "")
+        extension_filter = str(state.get("composition_extension_filter") or "")
+        status_filter = str(state.get("composition_status_filter") or "")
+        role_filter = str(state.get("composition_role_filter") or "")
+        name_filter = str(state.get("composition_name_filter") or "").strip().lower()
+        files = []
+        for item in all_files:
+            file_name = str(item.get("file_name") or "")
+            directory = "/".join(file_name.split("/")[:-1])
+            role = str(item.get("doc_role") or item.get("doc_type") or item.get("discipline") or "").strip()
+            if folder_filter and directory != folder_filter and not directory.startswith(folder_filter.rstrip("/") + "/"):
+                continue
+            if extension_filter and _file_kind(file_name) != extension_filter:
+                continue
+            if status_filter and str(item.get("status") or "").upper() != status_filter:
+                continue
+            if role_filter and role != role_filter:
+                continue
+            if name_filter and name_filter not in file_name.lower():
+                continue
+            files.append(item)
+        folders: dict[str, dict] = {"": {"name": "Весь датасет", "path": "", "parent": "", "files": []}}
+        direct_files: dict[str, list[dict]] = {"": []}
+        type_counts: dict[str, int] = {}
+        ready = waiting = issues = 0
+        for item in files:
+            file_name = str(item.get("file_name") or "")
+            parts = [part for part in file_name.split("/") if part]
+            directory_parts = parts[:-1]
+            directory = "/".join(directory_parts)
+            direct_files.setdefault(directory, []).append(item)
+            for depth in range(1, len(directory_parts) + 1):
+                path = "/".join(directory_parts[:depth])
+                parent = "/".join(directory_parts[: depth - 1])
+                folders.setdefault(path, {"name": directory_parts[depth - 1], "path": path, "parent": parent, "files": []})
+            suffix = _file_kind(file_name)
+            status = str(item.get("status") or "").upper()
+            is_ready = status in {"OK", "INDEXED", "IDLE"}
+            is_waiting = status in {"PENDING", "WAITING", "PARSING"}
+            ready += int(is_ready)
+            waiting += int(is_waiting)
+            issues += int(not is_ready and not is_waiting and bool(status))
+            type_counts[suffix] = int(type_counts.get(suffix) or 0) + 1
+            folders[""]["files"].append(item)
+            for depth in range(1, len(directory_parts) + 1):
+                folders["/".join(directory_parts[:depth])]["files"].append(item)
+
+        children: dict[str, list[dict]] = {}
+        for path, folder in folders.items():
+            if not path:
+                continue
+            children.setdefault(str(folder["parent"]), []).append(folder)
+        for rows in children.values():
+            rows.sort(key=lambda row: str(row["name"]).lower())
+
+        selected_folder = str(state.get("selected_folder") or "")
+        if selected_folder not in folders:
+            selected_folder = ""
+            state["selected_folder"] = ""
+        current = folders[selected_folder]
+        current_files = list(current.get("files") or [])
+        current_direct_files = list(direct_files.get(selected_folder) or [])
+
+        def _render_file_row(item: dict, *, compact: bool = False) -> None:
+            file_name = str(item.get("file_name") or "")
+            doc_id = str(item.get("doc_id") or _document_by_file_name(file_name).get("id") or "")
+            inspected = doc_id and doc_id == str((state.get("composition_file") or {}).get("doc_id") or "")
+            row_class = "sov-composition-file-row sov-composition-file-row--selected" if inspected else "sov-composition-file-row"
+            with ui.element("div").classes(row_class).on(
+                "click", lambda _e, value=doc_id, name=file_name: _schedule(_inspect_composition_file(value, name))
+            ):
+                with ui.element("div").classes("sov-composition-file-icon"):
+                    ui.icon(_file_icon(file_name))
+                with ui.column().classes("sov-composition-file-copy"):
+                    _label(file_name.rsplit("/", 1)[-1], size="11.8px", weight=800).classes("sov-composition-file-name")
+                    meta = f"{_file_kind(file_name)} · {_format_size(item.get('file_size'))}"
+                    if not compact:
+                        meta = f"{_short_path(file_name, parts=4)} · {meta}"
+                    _label(meta, size="10.3px", color="var(--dim)").classes("sov-composition-file-path")
+
+        def _render_tree(parent: str = "", depth: int = 0) -> None:
+            for folder in children.get(parent, []):
+                path = str(folder["path"])
+                count = len(folder.get("files") or [])
+                with ui.expansion(
+                    f"{folder['name']} · {count}",
+                    icon="o_folder",
+                    value=depth == 0,
+                ).classes("w-full sov-composition-tree-node").props("dense"):
+                    with ui.element("div").classes("sov-composition-folder-summary-link").on(
+                        "click", lambda _e, value=path: _select_composition_folder(value)
+                    ):
+                        _label(_folder_summary(path, files), size="10.5px", color="var(--dim)")
+                    for item in direct_files.get(path, [])[:30]:
+                        _render_file_row(item, compact=True)
+                    if depth < 5:
+                        _render_tree(path, depth + 1)
+
+        with ui.expansion("Состав датасета", icon="o_inventory_2", value=True).classes("w-full sov-file-registry").props("dense").style(
             "border:1px solid var(--border);border-radius:8px;margin-top:12px;background:var(--bg-panel);"
         ):
-            with ui.row().classes("items-center w-full").style("gap:7px;flex-wrap:wrap;padding:10px 12px 4px;"):
-                _badge(f"{len(files)} файлов", "tag-acc" if files else "tag-dim")
-                _badge(f"{len(groups)} групп")
-                kind = _selected_dataset_kind()
-                if kind:
-                    _badge(_dataset_kind_label(kind), "tag-acc")
-            if not groups:
+            with ui.column().classes("sov-composition-summary"):
+                dataset_brief = state.get("dataset_index_brief") or {}
+                with ui.element("section").classes("sov-index-brief sov-index-brief--dataset"):
+                    with ui.row().classes("items-center w-full sov-index-brief-kicker"):
+                        ui.icon("o_auto_stories")
+                        _label("Справка о датасете", size="10.5px", color="var(--dim)", weight=850)
+                    _label(_dataset_title(_selected_dataset_row()), size="15px", weight=900).classes(
+                        "sov-index-brief-title"
+                    )
+                    if state.get("dataset_index_brief_loading"):
+                        with ui.row().classes("items-center sov-composition-file-loading"):
+                            ui.spinner(size="sm")
+                            _label("Собираю справку из фрагментов Qdrant…", size="11px", color="var(--dim)")
+                    else:
+                        _label(_indexed_dataset_brief(dataset_brief), size="11.5px").classes(
+                            "sov-index-brief-text"
+                        )
+                        source_name = "Qdrant/LES" if dataset_brief.get("qdrant") else "Индекс LES"
+                        fragment_count = f"{int(dataset_brief.get('total_fragments') or 0):,}".replace(",", " ")
+                        _label(
+                            f"{source_name} · {fragment_count} фрагментов · "
+                            f"прочитано {int(dataset_brief.get('sampled_documents') or 0)} файла",
+                            size="10.3px",
+                            color="var(--dim)",
+                        ).classes("sov-composition-file-index-source")
+                with ui.element("div").classes("sov-composition-overview"):
+                    metrics = [
+                        (str(len(files)), "файлов" if len(files) == len(all_files) else f"из {len(all_files)} файлов", ""),
+                        (str(max(len(folders) - 1, 0)), "папок", ""),
+                        (str(ready), "доступно", "good"),
+                    ]
+                    if waiting:
+                        metrics.append((str(waiting), "ожидает", "warn"))
+                    if issues:
+                        metrics.append((str(issues), "требует внимания", "danger"))
+                    for value, caption, tone in metrics:
+                        with ui.element("div").classes(f"sov-composition-stat sov-composition-stat--{tone}" if tone else "sov-composition-stat"):
+                            _label(value, size="20px", weight=850).classes("sov-composition-stat-value")
+                            _label(caption, size="10.5px", color="var(--dim)").classes("sov-composition-stat-caption")
+                if type_counts:
+                    _label(
+                        "  ·  ".join(
+                            f"{suffix} {count}" for suffix, count in sorted(type_counts.items(), key=lambda pair: (-pair[1], pair[0]))[:8]
+                        ),
+                        size="10.7px",
+                        color="var(--dim)",
+                    ).classes("sov-composition-type-line")
+                with ui.row().classes("sov-composition-filters"):
+                    folder_select = ui.select(
+                        {"": "Все папки", **{value: value for value in folder_options}},
+                        value=folder_filter,
+                        label="Папка",
+                    ).props("outlined dense options-dense")
+                    folder_select.on(
+                        "update:model-value",
+                        lambda e: _set_composition_filter("composition_folder_filter", str(e.args or "")),
+                    )
+                    extension_select = ui.select(
+                        {"": "Все форматы", **{value: value for value in extension_options}},
+                        value=extension_filter,
+                        label="Расширение",
+                    ).props("outlined dense options-dense")
+                    extension_select.on(
+                        "update:model-value",
+                        lambda e: _set_composition_filter("composition_extension_filter", str(e.args or "")),
+                    )
+                    status_select = ui.select(
+                        {"": "Все статусы", **{value: value for value in status_options}},
+                        value=status_filter,
+                        label="Статус",
+                    ).props("outlined dense options-dense")
+                    status_select.on(
+                        "update:model-value",
+                        lambda e: _set_composition_filter("composition_status_filter", str(e.args or "")),
+                    )
+                    role_select = ui.select(
+                        {"": "Все типы", **{value: value for value in role_options}},
+                        value=role_filter,
+                        label="Тип документа",
+                    ).props("outlined dense options-dense")
+                    role_select.on(
+                        "update:model-value",
+                        lambda e: _set_composition_filter("composition_role_filter", str(e.args or "")),
+                    )
+                    name_input = ui.input(
+                        value=name_filter,
+                        placeholder="Файл или часть пути…",
+                    ).props("outlined dense clearable")
+                    name_input.on(
+                        "keydown.enter",
+                        lambda _e: _set_composition_filter("composition_name_filter", str(name_input.value or "")),
+                    )
+                with ui.row().classes("sov-composition-view-switch"):
+                    for view, icon, label in (
+                        ("tree", "o_account_tree", "Дерево"),
+                        ("grid", "o_grid_view", "Плитка"),
+                        ("list", "o_view_list", "Список"),
+                        ("table", "o_table_rows", "Таблица"),
+                    ):
+                        active = state.get("composition_view") == view
+                        ui.button(
+                            label,
+                            icon=icon,
+                            on_click=lambda _e, value=view: _set_composition_view(value),
+                        ).props("flat no-caps").classes(
+                            "sov-composition-view-btn sov-composition-view-btn--active" if active else "sov-composition-view-btn"
+                        )
+            if not files:
                 _label("Файлы появятся здесь после загрузки списка документов.", size="11.5px", color="var(--dim)").style(
                     "padding:4px 12px 12px;"
                 )
                 return
-            for group in groups[:48]:
-                samples = [name for name in (group.get("samples") or []) if name]
-                with ui.element("div").style(
-                    "border-top:1px solid var(--border);padding:8px 12px;background:var(--bg-panel);"
-                ):
-                    with ui.row().classes("items-center w-full").style("gap:6px;flex-wrap:wrap;"):
-                        _badge(str(group.get("section") or "раздел"), "tag-acc")
-                        _badge(str(group.get("role") or "тип"))
-                        _badge(f"{int(group.get('files') or 0)} файлов")
-                        if group.get("warnings"):
-                            _badge(f"{int(group.get('warnings') or 0)} проверить", "tag-warn")
-                    if samples:
-                        _label("; ".join(_short_path(name, parts=4) for name in samples), size="11px", color="var(--dim)").style(
-                            "margin-top:5px;overflow-wrap:anywhere;"
+            with ui.element("div").classes("sov-composition-browser"):
+                with ui.column().classes("sov-composition-navigation"):
+                    if state.get("composition_view") == "tree":
+                        _render_tree()
+                    elif state.get("composition_view") == "table":
+                        with ui.element("div").classes("sov-composition-table-wrap"):
+                            with ui.element("table").classes("sov-composition-table"):
+                                with ui.element("thead"):
+                                    with ui.element("tr"):
+                                        for heading in ("Файл", "Папка", "Формат", "Статус", "Тип", "Размер"):
+                                            with ui.element("th"):
+                                                ui.label(heading)
+                                with ui.element("tbody"):
+                                    for item in current_files[:160]:
+                                        file_name = str(item.get("file_name") or "")
+                                        doc_id = str(item.get("doc_id") or _document_by_file_name(file_name).get("id") or "")
+                                        role = str(item.get("doc_role") or item.get("doc_type") or item.get("discipline") or "—")
+                                        with ui.element("tr").on(
+                                            "click", lambda _e, value=doc_id, name=file_name: _schedule(
+                                                _inspect_composition_file(value, name)
+                                            )
+                                        ):
+                                            for value in (
+                                                file_name.rsplit("/", 1)[-1],
+                                                _short_path(file_name.rsplit("/", 1)[0] if "/" in file_name else "—", parts=3),
+                                                _file_kind(file_name),
+                                                str(item.get("status") or "—"),
+                                                role,
+                                                _format_size(item.get("file_size")),
+                                            ):
+                                                with ui.element("td"):
+                                                    ui.label(value)
+                    else:
+                        visible_folders = children.get(selected_folder, [])
+                        container_cls = "sov-composition-folders" if state.get("composition_view") == "grid" else "sov-composition-folder-list"
+                        with ui.column().classes(container_cls):
+                            if selected_folder:
+                                parent = str(current.get("parent") or "")
+                                ui.button(
+                                    "На уровень выше",
+                                    icon="o_arrow_upward",
+                                    on_click=lambda _e, value=parent: _select_composition_folder(value),
+                                ).props("flat no-caps").classes("sov-composition-up")
+                            for folder in visible_folders:
+                                path = str(folder["path"])
+                                folder_files = list(folder.get("files") or [])
+                                with ui.element("div").classes("sov-composition-folder").on(
+                                    "click", lambda _e, value=path: _select_composition_folder(value)
+                                ):
+                                    with ui.row().classes("items-center w-full sov-composition-folder-head"):
+                                        with ui.element("div").classes("sov-composition-folder-icon"):
+                                            ui.icon("o_folder")
+                                        _label(str(folder["name"]), size="12.5px", weight=850).classes("sov-composition-folder-name")
+                                        _label(f"{len(folder_files)} файлов", size="10.5px", color="var(--dim)").classes(
+                                            "sov-composition-folder-count"
+                                        )
+                                    _label(_folder_summary(path, files), size="10.8px", color="var(--dim)").classes("sov-composition-samples")
+                            for item in current_direct_files[:40]:
+                                _render_file_row(item)
+
+                with ui.column().classes("sov-composition-inspector"):
+                    file_data = state.get("composition_file") or {}
+                    if file_data:
+                        file_name = str(file_data.get("file_name") or "")
+                        doc_id = str(file_data.get("doc_id") or "")
+                        document_meta = dict(file_data.get("document") or {})
+                        inventory_meta = next(
+                            (item for item in all_files if str(item.get("file_name") or "") == file_name),
+                            {},
                         )
-            if len(groups) > 48:
-                _label(f"Показаны первые 48 групп из {len(groups)}.", size="11px", color="var(--dim)").style(
-                    "padding:8px 12px 12px;"
-                )
+                        with ui.element("section").classes("sov-index-brief sov-index-brief--file"):
+                            with ui.row().classes("items-center w-full sov-index-brief-kicker"):
+                                ui.icon("o_description")
+                                _label("Справка о файле", size="10.5px", color="var(--dim)", weight=850)
+                            with ui.row().classes("items-center w-full sov-composition-inspector-head"):
+                                with ui.element("div").classes("sov-composition-file-icon"):
+                                    ui.icon(_file_icon(file_name))
+                                with ui.column().classes("gap-0").style("min-width:0;flex:1;"):
+                                    _label(file_name.rsplit("/", 1)[-1], size="13px", weight=900).classes(
+                                        "sov-composition-file-name"
+                                    )
+                                    _label(_short_path(file_name, parts=4), size="10.5px", color="var(--dim)").classes(
+                                        "sov-composition-file-path"
+                                    )
+                            size = inventory_meta.get("file_size") or document_meta.get("file_size")
+                            role = str(
+                                inventory_meta.get("doc_role")
+                                or inventory_meta.get("doc_type")
+                                or inventory_meta.get("discipline")
+                                or document_meta.get("doc_type")
+                                or ""
+                            )
+                            file_meta = [
+                                _file_kind(file_name),
+                                _format_size(size) if size else "",
+                                role,
+                            ]
+                            _label("  ·  ".join(value for value in file_meta if value), size="10.5px", color="var(--dim)").classes(
+                                "sov-index-brief-meta"
+                            )
+                            if state.get("composition_file_loading"):
+                                with ui.row().classes("items-center sov-composition-file-loading"):
+                                    ui.spinner(size="sm")
+                                    _label("Читаю проиндексированные фрагменты…", size="11px", color="var(--dim)")
+                            else:
+                                chunks = list(file_data.get("chunks") or [])
+                                indexed_in_qdrant = any(item.get("point_id") for item in chunks if isinstance(item, dict))
+                                _label(_indexed_file_brief(file_data), size="11.4px").classes("sov-index-brief-text")
+                                _label(
+                                    (
+                                        f"Qdrant/LES: {int(file_data.get('total') or 0)} фрагментов"
+                                        if indexed_in_qdrant
+                                        else f"Индекс LES: {int(file_data.get('total') or 0)} фрагментов"
+                                    ),
+                                    size="10.3px",
+                                    color="var(--dim)",
+                                ).classes("sov-composition-file-index-source")
+                                if doc_id:
+                                    ui.button(
+                                        "Открыть текст",
+                                        icon="o_article",
+                                        on_click=lambda _e, value=doc_id: _schedule(_open_document(value)),
+                                    ).props("flat no-caps").classes("sov-composition-open-file")
+                    else:
+                        with ui.element("section").classes("sov-index-brief sov-index-brief--empty"):
+                            with ui.row().classes("items-center w-full sov-index-brief-kicker"):
+                                ui.icon("o_description")
+                                _label("Справка о файле", size="10.5px", color="var(--dim)", weight=850)
+                            _label(
+                                "Выберите файл в дереве, списке или таблице — здесь появятся его содержание и источник Qdrant.",
+                                size="11.3px",
+                                color="var(--dim)",
+                            ).classes("sov-index-brief-empty-text")
+                    with ui.row().classes("items-center w-full sov-composition-folder-context"):
+                        with ui.element("div").classes("sov-composition-folder-icon"):
+                            ui.icon("o_folder_open")
+                        with ui.column().classes("gap-0").style("min-width:0;flex:1;"):
+                            _label(str(current.get("name") or "Весь датасет"), size="12px", weight=850)
+                            if selected_folder:
+                                _label(selected_folder, size="10.5px", color="var(--dim)").classes("sov-composition-file-path")
+                    _label(_folder_summary(selected_folder or "Корень датасета", files), size="11.5px").classes(
+                        "sov-composition-folder-description"
+                    )
 
     def _render_dataset_kind_control() -> None:
-        with ui.element("div").style(
+        with ui.element("div").classes("sov-list-overview").style(
             "border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-top:12px;"
             "background:var(--bg-panel);"
         ):
@@ -838,7 +1435,7 @@ def build_documents() -> None:
         selected = _selected_dataset_row()
         disciplines = [item for item in (project_pdf.get("discipline_summaries") or []) if isinstance(item, dict)]
 
-        with ui.element("div").style(
+        with ui.element("div").classes("sov-list-map").style(
             "border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-top:12px;"
             "background:var(--bg-panel);"
         ):
@@ -849,7 +1446,6 @@ def build_documents() -> None:
             with ui.row().classes("items-center").style("gap:6px;margin-top:9px;flex-wrap:wrap;"):
                 _badge(str(selected.get("name") or state.get("selected_dataset") or "проект"), "tag-acc")
                 _badge(f"{int(selected.get('document_count') or memory.get('document_count') or 0)} документов")
-                _badge(f"{int(selected.get('chunk_count') or memory.get('chunk_count') or 0)} текстовых частей")
                 if coverage:
                     read_count = int(coverage.get("files_ok") or coverage.get("files_extracted") or 0)
                     issue_count = int(coverage.get("extract_errors") or 0) + int(coverage.get("missing_source") or 0)
@@ -857,10 +1453,6 @@ def build_documents() -> None:
                     _badge(f"прочитано {read_count}")
                     if issue_count:
                         _badge(f"проверить {issue_count}", "tag-warn")
-            note = str(memory.get("reader_note") or "")
-            if note:
-                _label(note, size="11px", color="var(--dim)").style("margin-top:7px;")
-
         diagram = _dataset_structure_mermaid(memory, project_pdf, coverage, files)
         with ui.element("div").style(
             "border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-top:10px;"
@@ -888,7 +1480,7 @@ def build_documents() -> None:
                 for root in roots[:8]:
                     roles = ", ".join(f"{k} {v}" for k, v in list((root.get("roles") or {}).items())[:3])
                     disciplines_text = ", ".join(f"{k} {v}" for k, v in list((root.get("disciplines") or {}).items())[:5])
-                    with ui.element("div").style(
+                    with ui.element("div").classes("sov-list-root-card").style(
                         "border:1px solid var(--border);border-radius:8px;padding:10px 12px;"
                         "background:var(--bg-panel);min-width:220px;max-width:360px;flex:1;"
                     ):
@@ -913,7 +1505,7 @@ def build_documents() -> None:
                     layers = item.get("layers") if isinstance(item.get("layers"), dict) else {}
                     role_text = ", ".join(f"{k} {v}" for k, v in list(roles.items())[:3])
                     layer_text = ", ".join(f"{k} {v}" for k, v in list(layers.items())[:3])
-                    with ui.element("div").style(
+                    with ui.element("div").classes("sov-list-discipline-card").style(
                         "border:1px solid var(--border);border-radius:8px;padding:9px 11px;"
                         "background:var(--bg-panel);min-width:170px;max-width:280px;flex:1;"
                     ):
@@ -962,7 +1554,7 @@ def build_documents() -> None:
                 layers = [str(x) for x in (item.get("layers") or []) if str(x)]
                 warnings = [str(x) for x in (item.get("warnings") or []) if str(x)]
                 status = str(item.get("status") or "")
-                with ui.element("div").style(
+                with ui.element("div").classes("sov-list-file-card").style(
                     "border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-top:8px;"
                     "background:var(--bg-panel);"
                 ):
@@ -1006,9 +1598,11 @@ def build_documents() -> None:
                 _label("Датасетов не найдено", color="var(--dim)")
                 return
             kind_filter = str(state.get("dataset_kind_filter") or "")
+            group_filter = str(state.get("dataset_group_filter") or "")
             rows = [
                 row for row in state["datasets"]
-                if not kind_filter or str(row.get("dataset_kind") or "") == kind_filter
+                if (not kind_filter or str(row.get("dataset_kind") or "") == kind_filter)
+                and (not group_filter or _dataset_group(row) == group_filter)
             ]
             if not rows:
                 _label("Датасетов с такой меткой нет", color="var(--dim)")
@@ -1016,31 +1610,42 @@ def build_documents() -> None:
             for row in rows:
                 did = str(row.get("id") or "")
                 selected = did == state["selected_dataset"]
-                with ui.element("div").classes("w-full").style(
-                    "border:1px solid var(--border);border-radius:7px;padding:9px 10px;"
-                    f"background:{'var(--bg-mod)' if selected else 'var(--bg-panel)'};cursor:pointer;"
-                ).on("click", lambda _e, value=did: _schedule(_select_dataset(value))):
-                    with ui.row().classes("items-center w-full").style("gap:7px;flex-wrap:nowrap;"):
-                        ui.icon("o_dataset").style("font-size:17px;color:var(--accent);")
-                        _label(_dataset_title(row), size="12.5px", weight=800).style(
-                            "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;"
-                        )
-                    with ui.row().classes("items-center").style("gap:5px;margin-top:6px;flex-wrap:wrap;"):
-                        if row.get("dataset_kind_label"):
-                            _badge(str(row.get("dataset_kind_label")), "tag-acc")
-                        status_ready = str(row.get("status", "")).upper() in {"IDLE", "INDEXED"}
-                        _badge("готов" if status_ready else "читается", "tag-acc" if status_ready else "tag-dim")
-                        _badge(f"{int(row.get('document_count') or 0)} док.")
-                        pending = int(row.get("pending_count") or 0)
-                        errors = int(row.get("error_count") or 0)
-                        missing = int(row.get("missing_count") or 0)
-                        if pending:
-                            _badge(f"{pending} ждёт", "tag-warn")
-                        if errors:
-                            _badge(f"{errors} ошибок", "tag-err")
-                        if missing:
-                            _badge(f"{missing} пропало", "tag-err")
-                        _badge(f"{int(row.get('chunk_count') or 0)} частей")
+                selected_cls = " sov-dataset-card--selected" if selected else ""
+                with ui.element("div").classes(f"w-full sov-dataset-card{selected_cls}").on(
+                    "click", lambda _e, value=did: _schedule(_select_dataset(value))
+                ):
+                    with ui.row().classes("items-center w-full sov-dataset-card-head"):
+                        with ui.element("div").classes("sov-dataset-icon"):
+                            ui.icon("o_folder_open")
+                        _label(_dataset_title(row), size="13px", weight=850).classes("sov-dataset-name")
+                        ui.icon("o_chevron_right").classes("sov-dataset-chevron")
+                    status_ready = str(row.get("status", "")).upper() in {"IDLE", "INDEXED"}
+                    meta = [
+                        "проект" if _dataset_group(row) == "project" else "база знаний",
+                        f"{int(row.get('document_count') or 0)} файлов",
+                        "готов" if status_ready else "индексируется",
+                    ]
+                    _label("  ·  ".join(meta), size="10.5px", color="var(--dim)").classes("sov-dataset-meta-text")
+                    pending = int(row.get("pending_count") or 0)
+                    errors = int(row.get("error_count") or 0)
+                    missing = int(row.get("missing_count") or 0)
+                    attention = []
+                    if pending:
+                        attention.append(f"{pending} ожидает")
+                    if errors:
+                        attention.append(f"{errors} ошибок")
+                    if missing:
+                        attention.append(f"{missing} отсутствует")
+                    if attention:
+                        _label(" · ".join(attention), size="10.3px", color="var(--warn)").classes("sov-dataset-attention")
+
+    def _set_dataset_group_filter(group: str) -> None:
+        state["dataset_group_filter"] = group
+        for value, button in (refs.get("dataset_group_buttons") or {}).items():
+            button.classes(remove="sov-dataset-group-btn--active")
+            if value == group:
+                button.classes(add="sov-dataset-group-btn--active")
+        _render_datasets()
 
     def _render_documents() -> None:
         panel = refs.get("documents")
@@ -1056,25 +1661,33 @@ def build_documents() -> None:
                 return
             for row in state["documents"]:
                 doc_id = str(row.get("id") or "")
-                selected = doc_id == state["selected_doc_id"]
-                with ui.element("div").classes("w-full").style(
-                    "border:1px solid var(--border);border-radius:7px;padding:9px 10px;"
-                    f"background:{'var(--bg-mod)' if selected else 'var(--bg-panel)'};cursor:pointer;"
-                ).on("click", lambda _e, value=doc_id: _schedule(_open_document(value))):
-                    with ui.row().classes("items-center w-full").style("gap:7px;flex-wrap:nowrap;"):
-                        ui.icon("o_description").style("font-size:17px;color:var(--accent);")
-                        _label(str(row.get("file_name") or doc_id), size="12px", weight=800).style(
-                            "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;"
+                selected = doc_id in {
+                    str(state.get("selected_doc_id") or ""),
+                    str((state.get("composition_file") or {}).get("doc_id") or ""),
+                }
+                file_name = str(row.get("file_name") or doc_id)
+                basename = file_name.rsplit("/", 1)[-1]
+                folder = file_name.rsplit("/", 1)[0] if "/" in file_name else ""
+                selected_cls = " sov-document-card--selected" if selected else ""
+                with ui.element("div").classes(f"w-full sov-document-card{selected_cls}").on(
+                    "click", lambda _e, value=doc_id, name=file_name: _schedule(_inspect_composition_file(value, name))
+                ):
+                    with ui.row().classes("items-center w-full sov-document-card-head"):
+                        with ui.element("div").classes("sov-document-icon"):
+                            ui.icon(_file_icon(file_name))
+                        with ui.column().classes("sov-document-copy"):
+                            _label(basename, size="12.5px", weight=850).classes("sov-document-name")
+                            if folder:
+                                _label(_short_path(folder, parts=3), size="10.5px", color="var(--dim)").classes(
+                                    "sov-document-path"
+                                )
+                    indexed = str(row.get("status", "")).upper() == "INDEXED"
+                    meta = [_file_kind(file_name), _format_size(row.get("file_size")), "в индексе" if indexed else "нужна проверка"]
+                    _label("  ·  ".join(meta), size="10.4px", color="var(--dim)").classes("sov-document-meta-text")
+                    if str(row.get("status") or "").upper() == "SKIPPED" and _file_kind(file_name) in {"RVT", "DWG", "IFC"}:
+                        _label("Для просмотра нужна CAD/BIM-проекция", size="10.3px", color="var(--warn)").classes(
+                            "sov-document-attention"
                         )
-                    with ui.row().classes("items-center").style("gap:5px;margin-top:6px;flex-wrap:wrap;"):
-                        indexed = str(row.get("status", "")).upper() == "INDEXED"
-                        _badge("готов" if indexed else "проверить", "tag-acc" if indexed else "tag-warn")
-                        if row.get("content_type"):
-                            _badge(str(row.get("content_type")).upper())
-                        _badge(f"{int(row.get('chunk_count') or 0)} частей")
-                        _badge(_format_size(row.get("file_size")))
-                    if row.get("last_error"):
-                        _label(str(row["last_error"])[:180], size="11px", color="var(--err)")
 
     def _render_map() -> None:
         memory = state.get("dataset_memory") or {}
@@ -1113,30 +1726,15 @@ def build_documents() -> None:
         if not project_pdf:
             project_pdf = memory.get("project_pdf_extract") if isinstance(memory.get("project_pdf_extract"), dict) else {}
         coverage = project_pdf.get("coverage") if isinstance(project_pdf.get("coverage"), dict) else {}
-        _render_dataset_kind_control()
         _render_file_registry(memory, project_pdf)
         _render_project_source_map(memory, project_pdf, coverage)
-        with ui.element("div").style(
-            "border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-top:12px;"
-            "background:var(--bg-panel);"
-        ):
-            with ui.row().classes("items-center w-full").style("gap:7px;flex-wrap:wrap;"):
+        with ui.element("div").classes("sov-docs-coverage"):
+            with ui.row().classes("items-center w-full sov-docs-coverage-head"):
                 ui.icon("o_picture_as_pdf").style("font-size:18px;color:var(--accent);")
-                _label("Чтение PDF", size="13px", weight=900)
-                _label("обновить карту томов, таблиц и листов", size="11px", color="var(--dim)")
+                _label("Покрытие документов", size="13px", weight=900)
+                _label("что уже доступно для просмотра", size="11px", color="var(--dim)")
                 if state.get("pdf_extract_loading"):
                     ui.spinner(size="sm")
-                ui.element("div").style("flex:1;")
-                ui.button(
-                    "Обновить",
-                    icon="o_refresh",
-                    on_click=lambda: _schedule(_load_pdf_extract_summary()),
-                ).props("flat dense no-caps")
-                ui.button(
-                    "Перечитать",
-                    icon="o_play_arrow",
-                    on_click=lambda: _schedule(_run_pdf_extract()),
-                ).props("flat dense no-caps")
             if coverage:
                 with ui.row().classes("items-center").style("gap:5px;margin-top:8px;flex-wrap:wrap;"):
                     read_count = int(coverage.get("files_ok") or coverage.get("files_extracted") or 0)
@@ -1209,29 +1807,6 @@ def build_documents() -> None:
                             size="11.5px",
                             color="var(--dim)",
                         ).style("margin-top:4px;overflow-wrap:anywhere;")
-
-        with ui.element("div").style(
-            "border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-top:12px;"
-            "background:var(--bg-panel);"
-        ):
-            with ui.row().classes("items-center w-full").style("gap:8px;"):
-                ui.icon("o_edit_note").style("font-size:18px;color:var(--accent);")
-                _label("Заметка к проекту", size="13px", weight=900)
-                _label("что важно учитывать при чтении", size="11px", color="var(--dim)")
-                ui.element("div").style("flex:1;")
-                ui.button("Сохранить", icon="o_save", on_click=lambda: _schedule(_save_guidance())).props(
-                    "flat dense no-caps"
-                )
-            guidance_input = ui.textarea(
-                value=state.get("operator_guidance") or "",
-                placeholder=(
-                    "Например: это рабочая ПД по котельной; актуальные данные брать из ПЗ и ВОР, "
-                    "старые КП использовать только как ориентир."
-                ),
-            ).props("outlined autogrow clearable").style(
-                "width:100%;margin-top:8px;min-height:74px;background:var(--input-bg);"
-            )
-            guidance_input.on("update:model-value", lambda e: state.__setitem__("operator_guidance", str(e.args or "")))
 
         if source_layers:
             _label("Слои данных", size="13px", weight=900).style("margin-top:18px;")
@@ -1497,27 +2072,29 @@ def build_documents() -> None:
             return
         panel.clear()
         with panel:
-            with ui.row().classes("items-center w-full").style("gap:8px;margin-bottom:8px;"):
-                ui.icon("o_article").style("font-size:19px;color:var(--accent);")
-                _label(state["view_title"], size="14px", weight=900).style(
+            with ui.row().classes("items-center w-full sov-docs-view-head"):
+                with ui.element("div").classes("sov-docs-view-icon"):
+                    ui.icon("o_folder_open")
+                _label(state["view_title"], size="15px", weight=900).classes("sov-docs-view-title").style(
                     "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;"
                 )
-                ui.button("Текст", icon="o_article", on_click=_show_fragments).props(
-                    "flat dense no-caps"
-                ).classes("tag-acc" if state["view_mode"] == "fragments" else "")
-                ui.button("CAD", icon="o_architecture", on_click=_show_cad_inventory).props(
-                    "flat dense no-caps"
-                ).classes("tag-acc" if state["view_mode"] == "cad" else "")
-                ui.button("Карта", icon="o_hub", on_click=_show_map).props(
-                    "flat dense no-caps"
-                ).classes("tag-acc" if state["view_mode"] == "map" else "")
-                ui.button(icon="o_refresh", on_click=lambda: _schedule(_refresh_memory())).props(
-                    'flat dense round aria-label="Обновить карту датасета"'
-                ).tooltip("Пересобрать typed memory / карту датасета")
-                ui.button(icon="o_content_copy", on_click=_copy_sources).props(
-                    'flat dense round aria-label="Скопировать источники"'
-                ).tooltip("Скопировать список источников")
-            _label(state["view_note"], size="11.5px", color="var(--dim)")
+                with ui.row().classes("sov-docs-view-tabs"):
+                    ui.button("Л.И.С.Т.", icon="o_account_tree", on_click=_show_map).props(
+                        "flat no-caps"
+                    ).classes("sov-docs-view-tab sov-docs-view-tab--active" if state["view_mode"] == "map" else "sov-docs-view-tab")
+                    ui.button("Текст", icon="o_article", on_click=_show_fragments).props(
+                        "flat no-caps"
+                    ).classes("sov-docs-view-tab sov-docs-view-tab--active" if state["view_mode"] == "fragments" else "sov-docs-view-tab")
+                    ui.button("CAD/BIM", icon="o_view_in_ar", on_click=_show_cad_inventory).props(
+                        "flat no-caps"
+                    ).classes("sov-docs-view-tab sov-docs-view-tab--active" if state["view_mode"] == "cad" else "sov-docs-view-tab")
+                with ui.button(icon="o_more_horiz").props(
+                    'flat round aria-label="Дополнительные действия"'
+                ).classes("sov-docs-more"):
+                    with ui.menu().classes("sov-tools-menu"):
+                        ui.menu_item("Обновить карту", lambda: _schedule(_refresh_memory()))
+                        ui.menu_item("Скопировать источники", _copy_sources)
+            _label(state["view_note"], size="11.5px", color="var(--dim)").classes("sov-docs-view-note")
             if state["view_mode"] == "map":
                 _render_map()
             elif state["view_mode"] == "cad":
@@ -1530,64 +2107,60 @@ def build_documents() -> None:
         _render_documents()
         _render_view()
 
-    with ui.column().classes("w-full h-full gap-0").style("min-height:calc(100vh - 112px);background:var(--bg);"):
-        with ui.row().classes("items-center w-full").style(
-            "gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--bg-panel);"
-        ):
-            ui.icon("o_folder_open").style("font-size:20px;color:var(--accent);")
-            _label("Документы", size="15px", weight=900)
-            _label("Л.И.С.Т.: карта проекта, файлы и вопросы по источникам", size="11.5px", color="var(--dim)")
-            ui.element("div").style("flex:1;")
-            q_input = ui.input(placeholder="поиск по корпусу, датасету или документу").props("dense outlined clearable").style(
-                "min-width:320px;max-width:520px;flex:1;background:var(--input-bg);"
+    with ui.column().classes("w-full h-full gap-0 sov-docs-shell"):
+        with ui.row().classes("items-center w-full sov-docs-topbar"):
+            with ui.column().classes("sov-docs-heading"):
+                _label("Документы", size="16px", weight=900).classes("sov-docs-title")
+                _label("Датасеты, файлы и карта проекта", size="11.5px", color="var(--dim)").classes(
+                    "sov-docs-subtitle"
+                )
+            q_input = ui.input(placeholder="Найти файл, шифр, раздел или текст…").props("outlined clearable").classes(
+                "sov-docs-search"
             )
+            with q_input.add_slot("prepend"):
+                ui.icon("o_search")
             q_input.on("update:model-value", lambda e: state.__setitem__("query", str(e.args or "")))
             q_input.on("keydown.enter", lambda _e: _schedule(_search("dataset" if state["selected_dataset"] else "all")))
-            ui.button(icon="o_search", on_click=lambda: _schedule(_search("dataset" if state["selected_dataset"] else "all"))).props(
-                'flat dense round aria-label="Искать"'
-            ).tooltip("Искать в выбранном датасете или во всём индексе")
-            ui.button(icon="o_find_in_page", on_click=lambda: _schedule(_search("document"))).props(
-                'flat dense round aria-label="Искать в документе"'
-            ).tooltip("Искать в открытом документе")
-            ui.button(icon="o_refresh", on_click=lambda: _schedule(_load_datasets(select_first=False))).props(
-                'flat dense round aria-label="Обновить"'
-            ).tooltip("Обновить список")
+            ui.button("Найти", icon="o_search", on_click=lambda: _schedule(_search("dataset" if state["selected_dataset"] else "all"))).props(
+                'flat no-caps aria-label="Искать"'
+            ).classes("sov-docs-search-btn")
 
-        with ui.row().classes("w-full flex-1 no-wrap").style("min-height:0;overflow:hidden;"):
-            with ui.column().classes("h-full no-wrap").style(
-                "width:300px;min-width:260px;border-right:1px solid var(--border);padding:12px;gap:10px;overflow:hidden;"
-            ):
-                _label("Датасеты", size="12px", color="var(--dim)", weight=900)
-                kind_filter = ui.select(
-                    DATASET_KIND_OPTIONS,
-                    value=state.get("dataset_kind_filter") or "",
-                ).props("dense outlined emit-value map-options").style("width:100%;background:var(--input-bg);")
-                kind_filter.on(
-                    "update:model-value",
-                    lambda e: (state.__setitem__("dataset_kind_filter", str(e.args or "")), _render_datasets()),
-                )
-                dataset_filter = ui.input(placeholder="фильтр").props("dense outlined clearable").style("width:100%;")
+        with ui.row().classes("w-full flex-1 no-wrap sov-docs-workspace"):
+            with ui.column().classes("h-full no-wrap sov-docs-datasets-panel"):
+                with ui.row().classes("items-center w-full sov-docs-panel-title"):
+                    ui.icon("o_dataset")
+                    _label("Датасеты", size="12px", color="var(--dim)", weight=900)
+                with ui.row().classes("sov-dataset-group-filter"):
+                    refs["dataset_group_buttons"] = {}
+                    for value, label in DATASET_GROUP_OPTIONS.items():
+                        active = str(state.get("dataset_group_filter") or "") == value
+                        group_button = ui.button(
+                            label,
+                            on_click=lambda _e, group=value: _set_dataset_group_filter(group),
+                        ).props("flat no-caps").classes(
+                            "sov-dataset-group-btn sov-dataset-group-btn--active" if active else "sov-dataset-group-btn"
+                        )
+                        refs["dataset_group_buttons"][value] = group_button
+                dataset_filter = ui.input(placeholder="Название датасета…").props("outlined clearable").classes("sov-docs-filter")
                 dataset_filter.on(
                     "update:model-value",
                     lambda e: (state.__setitem__("dataset_filter", str(e.args or "")), _render_datasets()),
                 )
                 dataset_filter.on("keydown.enter", lambda _e: _schedule(_load_datasets(select_first=True)))
-                with ui.column().classes("w-full gap-2").style("overflow:auto;min-height:0;flex:1;") as datasets_panel:
+                with ui.column().classes("w-full gap-2 sov-docs-list") as datasets_panel:
                     refs["datasets"] = datasets_panel
 
-            with ui.column().classes("h-full no-wrap").style(
-                "width:390px;min-width:320px;border-right:1px solid var(--border);padding:12px;gap:10px;overflow:hidden;"
-            ):
-                _label("Документы", size="12px", color="var(--dim)", weight=900)
-                document_filter = ui.input(placeholder="фильтр по имени файла").props("dense outlined clearable").style("width:100%;")
+            with ui.column().classes("h-full no-wrap sov-docs-files-panel"):
+                with ui.row().classes("items-center w-full sov-docs-panel-title"):
+                    ui.icon("o_folder_copy")
+                    _label("Файлы", size="12px", color="var(--dim)", weight=900)
+                document_filter = ui.input(placeholder="Название файла…").props("outlined clearable").classes("sov-docs-filter")
                 document_filter.on("update:model-value", lambda e: state.__setitem__("document_filter", str(e.args or "")))
                 document_filter.on("keydown.enter", lambda _e: _schedule(_load_documents()))
-                with ui.column().classes("w-full gap-2").style("overflow:auto;min-height:0;flex:1;") as documents_panel:
+                with ui.column().classes("w-full gap-2 sov-docs-list") as documents_panel:
                     refs["documents"] = documents_panel
 
-            with ui.column().classes("h-full no-wrap").style(
-                "flex:1;min-width:0;padding:12px 16px;overflow:auto;"
-            ) as view_panel:
+            with ui.column().classes("h-full no-wrap sov-docs-view-panel") as view_panel:
                 refs["view"] = view_panel
 
     ui.timer(0.15, lambda: _schedule(_load_datasets()), once=True)

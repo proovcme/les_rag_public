@@ -6,6 +6,15 @@
 
 ## Сейчас
 
+- [ ] Перевести весь текущий общий корпус, а не только canary-датасеты, в contract-v2 collection:
+  все source points представлены, каждый destination point имеет named `dense` + `bm25_sparse`,
+  каждый активный dataset проходит filtered live RRF. После этого переключить production и запретить
+  дозапись при drift контракта. Любой будущий dataset получает этот путь автоматически.
+- [x] Удалить альтернативные RAG-архитектуры из runtime: unnamed schema, sparse sidecar,
+  vector-copy migration, env-переключение на legacy backend и domain-prose query expansion.
+  Неактивные Qdrant `les_rag`, `les_rag_qwen3_06b`, `contract_v1`, `_sparse` и smeta v1 удалены;
+  текущие `native_v1`/smeta v2 живут только до успешного clean switch.
+
 - [x] Убран BAI-specific negative contract: широкое чтение не зависит от ожидаемого имени,
   типа или отсутствия конкретного файла.
 - [x] Notebook reading plan и target-file spread строятся из реальных headings/file groups
@@ -35,6 +44,10 @@
   возвращают по `3/3` chunks без debug-подмены. Production не переключён: canary покрывает лишь
   bounded subset, а missing/mismatch намеренно оставляет старый dense выключенным; не обходить
   `RAG_INDEX_CONTRACT_ENFORCE=true`.
+- [x] Подтвердить настоящий native dense+sparse RRF на clean canary: FIRE-запрос дал разные
+  dense/sparse top-5 (пересечение `2/5`), fused top-5 получил кандидатов из обоих каналов и поднял
+  релевантный фрагмент СП 1.13130 на первое место. Production по-прежнему lexical-only из-за
+  загрязнённой коллекции; single-channel выдачу больше не маркировать как hybrid/RRF.
 - [ ] Пересобрать чистые FIRE/HVAC оценки из неизменённого debug output и вручную проверить
   первоисточники ожидаемых кейсов.
 - [ ] Добавить к factual golden cases reviewer, source file/page/section и дату проверки; без

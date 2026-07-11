@@ -1,10 +1,8 @@
 """Build one typed GESN parquet from legacy and overlay sources.
 
-The output has a single identity rule: ``norm_key = <base_type>:<bare_code>``.
-Legacy untyped rows are treated as ``ГЭСН`` only; typed overlay rows keep their
-family (``ГЭСНм``, ``ГЭСНп``, ``ГЭСНр``...). Empty overlay names/units never erase
-filled legacy values. Rows are deduped per norm/resource identity, preferring the
-typed source when both sources provide the same resource.
+The output has one identity rule: ``norm_key = <base_type>:<bare_code>``. A bare
+legacy code is never assumed to be ГЭСН. It can be promoted only by an exact,
+unique metadata match against a typed row; otherwise the row is quarantined.
 """
 
 from __future__ import annotations
@@ -39,8 +37,8 @@ def _display_code(base_type: Any, code: Any) -> str:
     bare = _bare_norm_code(code)
     if not bare:
         return str(code or "").strip()
-    bt = str(base_type or "ГЭСН").strip() or "ГЭСН"
-    return f"{bt}{bare}"
+    bt = str(base_type or "").strip()
+    return f"{bt}{bare}" if bt else bare
 
 
 def _text_key(value: Any) -> str:
@@ -108,10 +106,17 @@ def _normalize_frame(path: Path, *, source_label: str, priority: int) -> pd.Data
     for rec in df[["norm_code", "base_type", "norm_key"]].to_dict(orient="records"):
         base_type = str(rec.get("base_type") or "").strip()
         identity_source = "provided"
-        if not base_type:
-            base_type = _base_type_from_code(rec.get("norm_code"), default="ГЭСН")
-            identity_source = "code_prefix" if _has_base_prefix(rec.get("norm_code")) else "default"
-        key = str(rec.get("norm_key") or "").strip() or _norm_key(rec.get("norm_code"), base_type=base_type)
+        if not base_type and _has_base_prefix(rec.get("norm_code")):
+            base_type = _base_type_from_code(rec.get("norm_code"), default="")
+            identity_source = "code_prefix"
+        elif not base_type:
+            identity_source = "untyped_bare"
+        bare = _bare_norm_code(rec.get("norm_code") or rec.get("norm_key"))
+        key = str(rec.get("norm_key") or "").strip()
+        if not key and base_type and bare:
+            key = _norm_key(rec.get("norm_code"), base_type=base_type)
+        elif not key and bare:
+            key = f"UNRESOLVED:{bare}"
         base_values.append(base_type)
         key_values.append(key)
         code_values.append(_display_code(base_type, rec.get("norm_code") or key))
@@ -136,21 +141,23 @@ def _first_filled(values: Iterable[Any]) -> str:
 
 def _remap_legacy_rows_by_typed_metadata(df: pd.DataFrame) -> int:
     typed_meta: dict[tuple[str, str, str], set[str]] = {}
-    typed = df[~df["_legacy_untyped"].astype(bool)].copy()
+    typed = df[df["_identity_source"].isin({"provided", "code_prefix"})].copy()
     for row in typed[["norm_key", "base_type", "norm_name", "norm_unit"]].drop_duplicates().itertuples():
         name_key = _text_key(row.norm_name)
-        if not name_key:
+        unit_key = _text_key(row.norm_unit)
+        if not name_key or not unit_key or not row.base_type:
             continue
         bare = str(row.norm_key).split(":", 1)[-1]
-        typed_meta.setdefault((bare, name_key, _text_key(row.norm_unit)), set()).add(str(row.base_type))
+        typed_meta.setdefault((bare, name_key, unit_key), set()).add(str(row.base_type))
 
     remapped = 0
-    for idx, row in df[df["_identity_source"].eq("default")].iterrows():
+    for idx, row in df[df["_identity_source"].eq("untyped_bare")].iterrows():
         name_key = _text_key(row.get("norm_name"))
-        if not name_key:
+        unit_key = _text_key(row.get("norm_unit"))
+        if not name_key or not unit_key:
             continue
         bare = str(row.get("norm_key") or "").split(":", 1)[-1]
-        base_types = typed_meta.get((bare, name_key, _text_key(row.get("norm_unit"))), set())
+        base_types = typed_meta.get((bare, name_key, unit_key), set())
         if len(base_types) != 1:
             continue
         base_type = next(iter(base_types))
@@ -182,6 +189,7 @@ def _audit_identity(
     remapped_legacy_rows: int,
     dropped_conflict_rows: int,
     resource_identity_duplicates_dropped: int,
+    untyped_rows_quarantined: list[dict[str, Any]],
 ) -> dict[str, Any]:
     bare_base = (
         df[["norm_key", "base_type", "norm_code", "norm_name", "norm_unit"]]
@@ -219,6 +227,14 @@ def _audit_identity(
         "legacy_rows_remapped_by_typed_metadata": remapped_legacy_rows,
         "metadata_conflict_rows_dropped": dropped_conflict_rows,
         "resource_identity_duplicates_dropped": resource_identity_duplicates_dropped,
+        "untyped_rows_quarantined": {
+            "count": len(untyped_rows_quarantined),
+            "examples": untyped_rows_quarantined[:100],
+        },
+        "identity_source_counts": {
+            str(key): int(value)
+            for key, value in df["_identity_source"].value_counts(dropna=False).to_dict().items()
+        },
         "same_norm_key_metadata_conflicts_total": len(conflicts),
         "same_norm_key_metadata_conflicts": conflicts[:100],
     }
@@ -242,6 +258,20 @@ def build_unified(
     df = pd.concat(frames, ignore_index=True)
     df = df.astype(object).where(pd.notnull(df), None)
     remapped_legacy_rows = _remap_legacy_rows_by_typed_metadata(df)
+    unresolved = df[df["_identity_source"].eq("untyped_bare")].copy()
+    untyped_rows_quarantined = [
+        {
+            "bare_code": str(row.get("norm_key") or "").split(":", 1)[-1],
+            "norm_name": str(row.get("norm_name") or "")[:160],
+            "norm_unit": str(row.get("norm_unit") or ""),
+            "resource_code": str(row.get("resource_code") or ""),
+            "resource_name": str(row.get("resource_name") or "")[:160],
+            "source": str(row.get("_source_label") or ""),
+            "reason": "bare code has no explicit or uniquely matched base_type",
+        }
+        for row in unresolved.to_dict(orient="records")
+    ]
+    df = df[~df["_identity_source"].eq("untyped_bare")].copy()
 
     conflicts: list[dict[str, Any]] = []
     meta_rows: dict[str, dict[str, str]] = {}
@@ -286,7 +316,8 @@ def build_unified(
     ]
     df = df.drop_duplicates(subset=["_resource_identity"], keep="last")
     resource_identity_duplicates_dropped = before_resource_dedup - len(df)
-    df = df[list(RESOURCE_FIELDS)]
+    output_fields = [*RESOURCE_FIELDS, "_identity_source", "_source_label"]
+    df = df[output_fields]
 
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp_out = out.with_suffix(out.suffix + ".tmp")
@@ -299,6 +330,7 @@ def build_unified(
         remapped_legacy_rows=remapped_legacy_rows,
         dropped_conflict_rows=dropped_conflict_rows,
         resource_identity_duplicates_dropped=resource_identity_duplicates_dropped,
+        untyped_rows_quarantined=untyped_rows_quarantined,
     )
     audit["sources"] = [str(p) for p in (legacy, overlay) if p.exists()]
     audit["out"] = str(out)
@@ -331,6 +363,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         "legacy_rows_remapped_by_typed_metadata": audit["legacy_rows_remapped_by_typed_metadata"],
         "metadata_conflict_rows_dropped": audit["metadata_conflict_rows_dropped"],
         "resource_identity_duplicates_dropped": audit["resource_identity_duplicates_dropped"],
+        "untyped_rows_quarantined": audit["untyped_rows_quarantined"]["count"],
         "metadata_conflicts_count": audit["same_norm_key_metadata_conflicts_total"],
         "audit": str(args.audit_out),
         "out": str(args.out),

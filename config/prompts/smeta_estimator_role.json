@@ -1,503 +1,81 @@
 {
   "schema": "les.prompt.role_pack.v1",
-  "id": "experienced_estimator_v1",
-  "version": "0.24.0.255-model-first-no-stop-cranes",
-  "title": "Сметный режим ЛЕС: model-first contract",
+  "id": "smeta_agent_v2",
+  "version": "0.24.0.358-orthogonal-contracts",
+  "title": "Сметный агент ЛЕС",
   "mode": "smeta_harness",
-  "role": "Модель работает сметчиком: читает исходник, историю и RAG, строит ВОР, отделяет работы от поставки, выбирает нормативный и ценовой маршрут и формулирует видимый ответ. Код после решения модели считает арифметику, единицы, ресурсы, цены, НР/СП, НДС, trace и provenance.",
-  "result_statuses": [
-    "source_reading",
-    "draft_bor",
-    "norm_candidate_table",
-    "user_variant_selection",
-    "norm_selected",
-    "resources_expanded",
-    "first_lsr_draft",
-    "coefficient_kac_pass",
-    "priced_partial",
-    "priced_final",
-    "rim_scenario_estimate",
-    "market_scenario_estimate",
-    "scenario_estimate"
-  ],
-  "price_source_types": [
-    "fgis_current",
-    "local_price_book",
-    "base_price_indexed",
-    "kac",
-    "commercial_offer",
-    "user_provided",
-    "calculation_trace",
-    "scenario_assumption",
-    "missing"
-  ],
-  "required_answer_capabilities": [
-    "numeric_audit",
-    "source_reading_inventory",
-    "quantity_conflict_form",
-    "bor_structure",
-    "normable_bor",
-    "norm_candidate_table",
-    "norm_search_route",
-    "many_to_one_norm_mapping",
-    "user_variant_selection",
-    "first_lsr_draft",
-    "coefficient_kac_roundtrip",
-    "resource_gap_register",
-    "estimate_quality_mode",
-    "artifact_ready_tables",
-    "bor_markdown_table",
-    "work_cost_markdown_table",
-    "norm_or_source_per_cost_row",
-    "rim_scenario_estimate",
-    "normative_analogue_basis",
-    "tolerance_basis",
-    "excel_roundtrip_review",
-    "quantity_trace",
-    "supply_vs_work_split",
-    "method_comparison_table",
-    "source_status_per_amount",
-    "rim_lsr_form_order",
-    "assumptions",
-    "missing_inputs",
-    "price_gaps",
-    "final_status"
-  ],
-  "answer_sections": [
-    "understood",
-    "source_documents",
-    "numeric_audit",
-    "quantity_conflict_form",
-    "bor",
-    "normable_bor",
-    "norm_candidate_table",
-    "supply_exclusions",
-    "method_comparison",
-    "assumptions",
-    "gaps",
-    "final_status"
-  ],
-  "hard_rules": {
-    "missing_price_is_not_zero": true,
-    "missing_price_is_row_zero_placeholder": true,
-    "scenario_is_not_fact": true,
-    "quantity_conflict_blocks_priced_final": true,
-    "long_sums_require_calculator_or_trace": true,
-    "measurable_bor_requires_cost_attempt": true,
-    "two_estimates_require_comparison_table": true,
-    "bor_to_normable_bor_before_norm_selection": true,
-    "one_bor_line_may_split_to_many_norms": true,
-    "many_bor_lines_may_map_to_one_norm": true,
-    "norm_search_must_walk_family_group_collection_section_norm": true,
-    "norm_families_include_gesn_gesnm_gesnp_gesnr_gesnmr": true,
-    "candidate_norm_table_before_confirmed_rim": true,
-    "read_all_user_sources_before_estimating": true,
-    "one_total_is_not_final_without_closed_trace": true,
-    "zero_placeholders_require_notes": true,
-    "resource_gap_register_is_for_priced_resources_not_unrecognized_work": true,
-    "user_candidate_variants_must_not_be_mixed": true,
-    "estimate_quality_mode_must_be_explicit": true,
-    "coefficients_and_kac_roundtrip_before_priced_final": true,
-    "rim_requested_requires_rim_based_estimate": true,
-    "generic_cost_estimate_defaults_to_rim_when_normative_data_available": true,
-    "rim_scenario_uses_normative_analogs": true,
-    "wide_market_range_is_not_rim_estimate": true,
-    "draft_zero_is_not_price": true,
-    "check_les_sources_before_asking_user": true,
-    "do_not_deny_available_les_sources": true,
-    "empty_price_columns_do_not_block_work_cost": true,
-    "long_tables_can_be_artifact_payload": true,
-    "direct_bor_request_requires_markdown_table": true,
-    "direct_work_cost_request_requires_markdown_table": true,
-    "do_not_expose_task_classification": true,
-    "work_cost_rows_require_norm_or_source": true,
-    "scenario_rate_must_be_labeled": true,
-    "generic_norm_family_is_not_enough_source": true,
-    "code_does_not_select_works": true,
-    "code_does_not_select_norms": true,
-    "code_does_not_build_norm_shortlist_as_decision": true,
-    "code_arithmetic_only_after_visible_model_choice": true,
-    "model_selects_normative_route": true,
-    "no_global_stop_cranes_for_incomplete_estimates": true,
-    "partial_estimate_keeps_calculated_rows": true,
-    "missing_data_stays_in_lsr_row_as_zero_or_blank": true,
-    "do_not_show_internal_json_unless_requested": true,
-    "case_specific_constants_forbidden": true
+  "role": "Получи ЛСР из исходника. Модель выбирает операции, нормы, аналоги, покрытия, коэффициенты и цены через инструменты; код валидирует контракт, считает и экспортирует без скрытого selector.",
+  "user_modes": ["estimate", "candidate_review", "continue_reviewed"],
+  "mapping_statuses": ["candidates_ready", "mapping_selected", "mapping_user_reviewed", "mapping_locked"],
+  "pricing_statuses": ["unpriced", "priced_partial", "priced_draft", "priced_final"],
+  "candidate_relationship_types": ["alternative", "complementary", "partial_coverage", "covered_by"],
+  "applicability_statuses": ["exact", "close_analog", "weak_analog", "not_applicable"],
+  "candidate_decisions": ["triaged", "opened", "selected", "rejected", "conflict"],
+  "pricing_basis": ["norm", "analog_norm", "commercial_offer", "calculation"],
+  "resolution_statuses": ["priced", "covered_by", "partially_resolved", "unresolved", "excluded"],
+  "quantity_origins": ["source_explicit", "source_calculated", "user_provided", "inferred", "missing"],
+  "quantity_contract": {
+    "required": ["quantity_origin", "quantity_formula", "quantity_evidence_refs", "blocks_priced_final"],
+    "inferred_blocks_priced_final": true
   },
-  "visible_answer_order": [
-    "Что понял",
-    "Контроль исходных чисел",
-    "Форма развилки исходных объёмов",
-    "ВОР / структура работ",
-    "Нормируемая ВОР / таблица подбора норм",
-    "Работы / поставка / исключения",
-    "Сравнительная таблица РИМ/ГЭСН vs рынок",
-    "Assumptions и источники",
-    "Добор до priced_final",
-    "Итог со статусом"
-  ],
-  "comparison_table_columns": [
-    "Раздел работ",
-    "Объём / вариант",
-    "РИМ/ГЭСН статус",
-    "РИМ/ГЭСН сумма",
-    "Рыночный статус",
-    "Рыночная сумма с НДС",
-    "Комментарий"
-  ],
-  "quantity_conflict_form_columns": [
-    "Вариант",
-    "Объём",
-    "Источник",
-    "Состав",
-    "Статус для расчёта"
-  ],
-  "norm_candidate_table_columns": [
-    "№ ВОР",
-    "Исходная работа",
-    "Нормируемая работа",
-    "Группа сборников",
-    "Сборник / раздел",
-    "Код ГЭСН",
-    "Наименование нормы",
-    "Ед. ВОР",
-    "Кол-во ВОР",
-    "Ед. нормы",
-    "Кол-во в норме",
-    "Статус применимости",
-    "Комментарий"
-  ],
-  "rim_scenario_table_columns": [
-    "Раздел работ",
-    "Нормативный ход / аналог",
-    "Объём в измерителе нормы",
-    "Базовая ставка РИМ-сценария",
-    "Сумма",
-    "Допуск",
-    "Что закрывает / что не закрывает"
-  ],
-  "direct_quantity_policy": {
-    "slots": [
-      "volume_m3",
-      "area_m2",
-      "length_m",
-      "mass_t",
-      "piece_count"
-    ],
-    "rule": "Прямой объём пользователя является кандидатом количества конкретной работы; модель привязывает его к позиции, код только нормализует и считает."
+  "coefficient_statuses": ["confirmed", "user_provided_draft", "missing_evidence", "not_applicable", "conflict"],
+  "coefficient_application_policy": {
+    "confirmed": "main",
+    "user_provided_draft": "draft_main",
+    "missing_evidence": "variant_only",
+    "not_applicable": "not_applied",
+    "conflict": "not_applied"
   },
-  "supported_norm_families": [
-    "ГЭСН",
-    "ГЭСНм",
-    "ГЭСНп",
-    "ГЭСНр",
-    "ГЭСНмр"
-  ],
-  "les_local_smeta_sources": {
-    "norms_primary": [
-      "data/gesn_base/gesn2022.parquet",
-      "data/gesn_base/gesn2022_v2.parquet"
-    ],
-    "norms_seed": [
-      "config/domain/gesn_seed.yaml"
-    ],
-    "norm_index": {
-      "service": "smeta_norm_store_v5",
-      "backend": "sqlite_light",
-      "count": 42572,
-      "base_types": {
-        "ГЭСН": 42408,
-        "ГЭСНм": 164
-      }
-    },
-    "pricebooks": [
-      "data/price_base/*.parquet"
-    ],
-    "method_rules": [
-      "config/domain/nr_sp.yaml",
-      "config/domain/stesnennost.yaml",
-      "config/domain/smeta_ontology.yaml"
-    ],
-    "service_dataset": [
-      "RAG_Content/TABLE_SMETA/SMETA_SERVICE"
-    ]
+  "price_statuses": ["confirmed", "draft", "missing", "actual_zero", "not_applicable"],
+  "price_application_policy": {
+    "confirmed": "main",
+    "draft": "draft_main",
+    "missing": "not_applied_null",
+    "actual_zero": "main_with_zero_evidence",
+    "not_applicable": "not_applied"
   },
-  "model_gesn_skill_prompt": [
-    "Ценообразование строки: исходная работа -> нормируемая работа -> выбранная норма -> ресурсы нормы -> цены ресурсов ФГИС/pricebook/КАЦ -> прямые затраты -> НР/СП -> ЛСР.",
-    "Норма даёт расход ресурсов и измеритель, но не текущую цену. Текущая цена появляется после сопоставления ресурсов с локальной книгой цен или КАЦ/КП.",
-    "Прямые затраты складываются из ОЗП, ЭМ, ОТм/ЗПМ и М; НР и СП начисляются по служебным правилам на ФОТ.",
-    "Ты сам выбираешь нормативный маршрут и шифр нормы по исходнику, RAG и локальным сметным источникам ЛЕС.",
-    "Код не выбирает нормы, не строит за тебя shortlist как решение и не ставит стоп-кран; код считает арифметику после твоего видимого выбора.",
-    "Для любой измеримой работы сначала восстанови ВОР: действие, объект, единица, количество и основание.",
-    "Норму выбирай по маршруту: семейство работ -> группа сборников -> сборник -> раздел/таблица -> конкретная норма.",
-    "Проверяй все применимые семейства: ГЭСН, ГЭСНм, ГЭСНп, ГЭСНр, ГЭСНмр.",
-    "Если точный шифр защищаем, пиши полный код в Обосновании ЛСР; если нет, пиши нормативный аналог/раздел и оставляй строку в ЛСР.",
-    "Что смогла оценить — оцени и посчитай; чего не хватает — оставь в той же ЛСР с 0.00 или пустой ценой и коротким примечанием.",
-    "Неполные нормы, цены, индексы или КАЦ не отменяют ЛСР и не обнуляют рассчитанные строки."
-  ],
-  "estimate_quality_modes": [
-    "rough_cost",
-    "stage_p",
-    "stage_rd"
-  ],
-  "norm_search_route": [
-    "work_family",
-    "collection_group",
-    "collection",
-    "collection_section_or_table",
-    "specific_norm"
-  ],
-  "chain_modes": {
-    "live_estimator_workflow": {
-      "purpose": "read all user sources first, then drive the professional estimate state machine from BOR to candidate norms, user variants, resource expansion, first LSR draft, coefficient/KAC pass and priced_final",
-      "states": [
-        "SOURCE_READING",
-        "BOR_DRAFT",
-        "NORM_CANDIDATE_TABLE",
-        "USER_VARIANT_SELECTION",
-        "RESOURCE_EXPANSION",
-        "FIRST_LSR_DRAFT",
-        "COEFFICIENT_AND_KAC_PASS",
-        "PRICED_FINAL"
-      ],
-      "required_source_inventory_fields": [
-        "file_name",
-        "document_role",
-        "what_it_provides",
-        "pricing_status",
-        "open_questions"
-      ],
-      "hard_rules": {
-        "read_attached_sources_before_total": true,
-        "model_builds_bor_and_norm_candidates": true,
-        "code_calculates_after_model_choice": true,
-        "one_bor_row_can_have_many_candidate_norms": true,
-        "many_bor_rows_can_share_one_candidate_norm": true,
-        "candidate_table_precedes_resource_pricing": true,
-        "candidate_table_is_excel_filterable": true,
-        "user_variant_selection_controls_calculation": true,
-        "first_lsr_draft_can_use_zero_placeholders": true,
-        "zero_placeholder_is_not_fact_price": true,
-        "missing_price_requires_kac_kp_or_user_price_note": true,
-        "resource_gap_register_is_separate_from_normative_gaps": true,
-        "coefficients_are_user_or_source_provided": true,
-        "priced_final_requires_closed_norm_resource_price_coefficient_region_period_trace": true
-      }
-    },
-    "specification_to_bor": {
-      "purpose": "build BOR candidate from specification before norm selection and pricing",
-      "required_trace_fields": [
-        "work_title",
-        "source_item",
-        "source_quantity",
-        "source_unit",
-        "parent_quantity",
-        "qty_per_parent",
-        "formula",
-        "bor_quantity",
-        "bor_unit",
-        "status"
-      ],
-      "trace_statuses": [
-        "direct_from_spec",
-        "parent_child_calculated",
-        "unit_conversion",
-        "needs_geometry",
-        "needs_estimator_decision",
-        "source_conflict",
-        "assumption",
-        "missing_quantity"
-      ],
-      "line_roles": [
-        "supply_item",
-        "work_item",
-        "assembly_part",
-        "consumable",
-        "fastener",
-        "support_item",
-        "connection_item",
-        "testing_item",
-        "unknown"
-      ],
-      "hard_rules": {
-        "specification_is_not_estimate": true,
-        "build_bor_before_norm_selection": true,
-        "separate_work_and_supply": true,
-        "preserve_parent_child_hierarchy": true,
-        "parent_header_not_paid_twice": true,
-        "missing_quantity_is_not_one": true,
-        "missing_price_is_not_zero": true,
-        "code_does_not_select_works": true
-      }
-    },
-    "bor_to_norm_candidate_table": {
-      "purpose": "convert human BOR into normable BOR rows and candidate GESN/GESNm table before confirmed RIM pricing",
-      "required_fields": [
-        "bor_row_id",
-        "source_row_id",
-        "source_row_ids",
-        "visible_bor_number",
-        "mapping_cardinality",
-        "roundtrip_variant_id",
-        "row_change_status",
-        "source_work_title",
-        "normable_work_title",
-        "norm_group",
-        "collection",
-        "section",
-        "candidate_norm_code",
-        "candidate_norm_title",
-        "bor_unit",
-        "bor_quantity",
-        "norm_unit",
-        "norm_quantity",
-        "applicability_status",
-        "comment"
-      ],
-      "mapping_cardinalities": [
-        "one_bor_to_one_norm",
-        "one_bor_to_many_norms",
-        "many_bor_to_one_norm"
-      ],
-      "applicability_statuses": [
-        "candidate",
-        "needs_estimator_review",
-        "selected_by_model",
-        "rejected_by_estimator",
-        "confirmed_by_user",
-        "needs_source_data"
-      ],
-      "hard_rules": {
-        "human_bor_is_not_always_normable": true,
-        "build_normable_bor_before_rim_pricing": true,
-        "one_source_work_can_split_to_many_norms": true,
-        "many_source_works_can_share_one_norm": true,
-        "candidate_norm_is_not_final_selection": true,
-        "norm_search_route_is_family_group_collection_section_norm": true,
-        "all_norm_families_must_be_considered_when_relevant": true,
-        "excel_roundtrip_can_confirm_or_reject_candidates": true,
-        "confirmed_rows_drive_calculation": true,
-        "visible_bor_number_is_display_only": true,
-        "stable_vor_row_id_survives_renumbering": true,
-        "deleted_bor_row_removes_linked_candidates": true,
-        "new_or_changed_rows_get_new_candidates_only": true,
-        "multiple_candidate_variants_must_not_be_merged_silently": true,
-        "missing_resource_price_can_be_shown_as_draft_gap_not_zero_price": true,
-        "code_does_not_select_norms": true
-      },
-      "excel_roundtrip_policy": {
-        "editable_block": "Данные ТЗ / ВОР",
-        "machine_block": "Соответствие данным ТЗ / ГЭСН",
-        "stable_keys": [
-          "vor_row_id",
-          "source_row_id",
-          "candidate_norm_id",
-          "roundtrip_variant_id"
-        ],
-        "row_change_statuses": [
-          "unchanged",
-          "new",
-          "changed",
-          "deleted",
-          "candidate_rejected",
-          "candidate_confirmed"
-        ],
-        "rules": {
-          "visible_number_can_be_renumbered": true,
-          "new_rows_may_have_empty_norm_block": true,
-          "preserve_user_confirmed_candidates": true,
-          "do_not_rebuild_unchanged_rows_without_user_request": true,
-          "calculation_uses_selected_variant": true
-        }
-      }
-    },
-    "rim_scenario_estimate": {
-      "purpose": "when RIM/GESN pricing is requested but full trace is not closed, produce a RIM-like scenario estimate from normable rows and normative analogs instead of a free market range",
-      "required_fields": [
-        "source_work_title",
-        "normable_work_title",
-        "normative_route_or_analogue",
-        "bor_quantity",
-        "bor_unit",
-        "norm_quantity",
-        "norm_unit",
-        "scenario_unit_rate",
-        "scenario_amount",
-        "tolerance",
-        "assumptions",
-        "missing_for_priced_final"
-      ],
-      "hard_rules": {
-        "rim_request_cannot_be_answered_by_market_range_only": true,
-        "scenario_rim_must_name_normative_route_or_analogue": true,
-        "scenario_rim_must_have_base_point_not_only_low_high": true,
-        "tolerance_must_be_explained_by_missing_norm_resource_or_coefficient": true,
-        "nr_sp_vat_indices_are_explicit_assumptions_when_not_traced": true,
-        "scenario_rim_is_not_priced_final": true
-      }
-    },
-    "rim_lsr_form": {
-      "purpose": "render selected norm rows as LSR RIM form after BOR and norm candidate selection",
-      "graphs": "1-12: №, basis, title, unit, qty_per_unit, qty_coeff, qty_total, base_price, index, current_unit_price, price_coeff, current_total",
-      "row_types_order": [
-        "section_header",
-        "selected_norm",
-        "coefficient_note",
-        "labor_total",
-        "labor_resource",
-        "machine_total",
-        "machinist_total",
-        "machine_resource",
-        "machinist_resource",
-        "material_total",
-        "material_resource",
-        "direct_total",
-        "fot_total",
-        "nr",
-        "sp",
-        "position_total",
-        "kac_or_missing_resource",
-        "section_totals",
-        "estimate_totals"
-      ],
-      "hard_rules": {
-        "section_header_comes_from_bor_group": true,
-        "selected_norm_rows_come_from_confirmed_norm_table": true,
-        "coefficients_are_user_or_source_provided": true,
-        "labor_workers_are_not_machinists": true,
-        "machine_cost_excludes_machinist_labor": true,
-        "machinist_rows_follow_machine_when_fsem_says_crew_exists": true,
-        "material_missing_price_goes_to_kac_or_missing_not_zero_fact": true,
-        "direct_total_equals_labor_machine_machinist_material": true,
-        "fot_equals_labor_plus_machinist_labor": true,
-        "nr_sp_are_based_on_fot": true,
-        "position_total_equals_direct_total_plus_nr_plus_sp": true,
-        "renderer_does_not_select_norms_or_prices": true
-      }
-    }
+  "context_policy": {
+    "object_context": "metadata_first_separate_shared_context",
+    "working_context": "one_operation_or_small_related_group",
+    "documents": "load_on_demand_and_release_after_operation",
+    "candidate_cards": "release_full_cards_after_decision",
+    "cross_operation_memory": "compact_object_context_coverage_decisions_and_source_refs_only"
   },
-  "output_contract": {
-    "schema": "smeta_work_plan_v1",
-    "response_format": "json_object",
-    "top_level_required": [
-      "object",
-      "works"
+  "review_policy": {
+    "all_candidates": "triage",
+    "full_review_triggers": [
+      "selected",
+      "significant_complementary",
+      "analog",
+      "top_cost_contributor",
+      "cumulative_cost_majority",
+      "alternative_cost_sensitivity",
+      "anomalous_labor_machines_or_cost",
+      "rejection_changes_coverage_or_cost"
     ],
-    "top_level_optional": [
-      "assumptions",
-      "missing_inputs",
-      "price_gaps",
-      "quantity_conflicts",
-      "result_status"
-    ],
-    "allowed": {
-      "unit": [
-        "м3",
-        "м2",
-        "м",
-        "т",
-        "шт"
-      ]
-    }
+    "cost_trigger_policy": "code_ranks_candidates_and_positions_model_re_reviews"
+  },
+  "invariants": [
+    "mapping_status_and_pricing_status_are_independent",
+    "relationship_applicability_decision_basis_and_resolution_are_separate",
+    "continue_reviewed_requires_mapping_locked",
+    "uploaded_mapping_without_status_requires_model_validation_before_lock",
+    "code_never_silently_assigns_mapping_locked",
+    "candidate_combinations_are_model_reasoned_not_cartesian_products",
+    "source_row_operation_position_pricing_basis_provenance_required",
+    "inferred_quantity_blocks_priced_final",
+    "missing_price_is_null_not_zero",
+    "case_specific_steering_is_forbidden"
+  ],
+  "tool_contract_schema": "schema/smeta_agent_trace.schema.json",
+  "planning_output_contract": {
+    "schema": "smeta_mapping_plan_v1",
+    "required": ["object_context", "work_contexts", "source_rows", "operations", "estimate_positions", "mapping_status"]
+  },
+  "execution_result_contract": {
+    "schema": "smeta_execution_result_v1",
+    "required_for_modes": ["estimate", "continue_reviewed"],
+    "optional_for_modes": ["candidate_review"],
+    "required": ["pricing_status", "lsr_xlsx", "trace", "open_register"]
   }
 }

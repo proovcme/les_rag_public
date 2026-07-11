@@ -181,7 +181,7 @@ def test_resource_grand_via_chat():
     assert r.total_status == "complete" and abs(r.final_total - 16827283.19) < MONEY
 
 def test_unit_gate_regression():
-    assert ch.lsr_assemble([{"code": "06-02-001-01", "work": "плита", "unit": "м3", "qty": 720}])["asm_positions"][0]["qty"] == 7.2
+    assert ch.lsr_assemble([{"code": "ГЭСН12-01-034-02", "work": "обрешётка", "unit": "м2", "qty": 720}])["asm_positions"][0]["qty"] == 7.2
 
 def test_unknown_family_regression():
     assert ch.gesn_expand({"work": "некие работы общего вида", "unit": "м3"})["status"] == "needs_classification"

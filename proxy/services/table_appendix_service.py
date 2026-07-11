@@ -94,7 +94,15 @@ async def fetch_table_appendix_chunks(
     try:
         # Тянем заведомо БОЛЬШЕ, чем нужно: дальше отфильтруем по pipe-плотности.
         over_k = max(pool_n * 4, 24)
-        candidates = await rag_backend.retrieve(
+        from proxy.services.retrieval_service import hybrid_backend
+
+        retrieve = (
+            rag_backend.retrieve_native_hybrid
+            if hybrid_backend() == "qdrant_native"
+            and hasattr(rag_backend, "retrieve_native_hybrid")
+            else rag_backend.retrieve
+        )
+        candidates = await retrieve(
             retrieval_query or question,
             dataset_ids=dataset_ids,
             top_k=over_k,

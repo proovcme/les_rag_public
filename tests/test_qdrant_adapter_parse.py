@@ -40,12 +40,14 @@ class StatusTrackingDB(LegacyNamePendingDB):
         self.updated.append((dataset_id, file_name, status, chunk_count, last_error))
 
 
-def test_embed_client_accepts_actual_qwen_model_contract():
+def test_embed_client_accepts_actual_qwen_model_contract(monkeypatch):
+    monkeypatch.setenv("EMBED_BACKEND", "coreml")
     client = EmbedClient("http://mlx", model="qwen3-embedding-0.6b")
 
     vectors = client._vectors_from_response(
         {
             "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+            "embedding_backend": "coreml",
             "data": [{"index": 0, "embedding": [0.1, 0.2]}],
         }
     )
@@ -53,13 +55,15 @@ def test_embed_client_accepts_actual_qwen_model_contract():
     assert vectors == [[0.1, 0.2]]
 
 
-def test_embed_client_rejects_mixed_embedding_models():
+def test_embed_client_rejects_mixed_embedding_models(monkeypatch):
+    monkeypatch.setenv("EMBED_BACKEND", "coreml")
     client = EmbedClient("http://mlx", model="qwen3-embedding-0.6b")
 
     with pytest.raises(EmbeddingContractError, match="expected=qwen3-embedding-0.6b, actual=BAAI/bge-m3"):
         client._vectors_from_response(
             {
                 "embedding_model": "BAAI/bge-m3",
+                "embedding_backend": "coreml",
                 "data": [{"index": 0, "embedding": [0.1, 0.2]}],
             }
         )
@@ -76,6 +80,7 @@ async def test_embed_client_applies_qwen_instruction_only_to_query(monkeypatch):
         def json(self):
             return {
                 "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+                "embedding_backend": "coreml",
                 "data": [{"index": 0, "embedding": [0.1, 0.2]}],
             }
 
@@ -94,6 +99,7 @@ async def test_embed_client_applies_qwen_instruction_only_to_query(monkeypatch):
             return Response()
 
     monkeypatch.setenv("LES_EMBED_PROFILE", "qwen")
+    monkeypatch.setenv("EMBED_BACKEND", "coreml")
     monkeypatch.setenv("RAG_QUERY_EMBEDDING_MODE", "qwen-retrieval-v1")
     monkeypatch.setattr(qdrant_adapter.httpx, "AsyncClient", Client)
     client = EmbedClient("http://mlx", model="qwen3-embedding-0.6b")
@@ -104,6 +110,20 @@ async def test_embed_client_applies_qwen_instruction_only_to_query(monkeypatch):
     assert captured[0][0].startswith("Instruct: Given a search query")
     assert captured[0][0].endswith("Query: Какие системы есть?")
     assert captured[1] == ["Фрагмент документа"]
+
+
+def test_embed_client_rejects_backend_drift(monkeypatch):
+    monkeypatch.setenv("EMBED_BACKEND", "coreml")
+    client = EmbedClient("http://mlx", model="qwen3-embedding-0.6b")
+
+    with pytest.raises(EmbeddingContractError, match="expected=coreml, actual=sentence_transformers"):
+        client._vectors_from_response(
+            {
+                "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+                "embedding_backend": "sentence_transformers",
+                "data": [{"index": 0, "embedding": [0.1, 0.2]}],
+            }
+        )
 
 
 def test_sync_parse_does_not_parse_all_files_when_no_pending(tmp_path):
@@ -371,6 +391,7 @@ def test_sync_parse_marks_error_when_qdrant_count_mismatches(tmp_path, monkeypat
 
 
 def test_sync_parse_reuses_existing_vector_by_content_hash(tmp_path, monkeypatch):
+    monkeypatch.setenv("RAG_QDRANT_SCHEMA", "named")
     text = "content with enough text for a chunk"
     dataset_dir = tmp_path / "ds-1"
     dataset_dir.mkdir()
@@ -408,7 +429,7 @@ def test_sync_parse_reuses_existing_vector_by_content_hash(tmp_path, monkeypatch
             return [
                 SimpleNamespace(
                     payload={"text": text, "embedding_fingerprint": _embedding_cache_fingerprint()},
-                    vector=vector,
+                    vector={"dense": vector},
                 )
             ], None
 
@@ -423,11 +444,13 @@ def test_sync_parse_reuses_existing_vector_by_content_hash(tmp_path, monkeypatch
     assert result["embedding_cache_hits"] == 1
     assert result["embedded_chunks"] == 0
     assert embedded["calls"] == 0
-    assert upserts[0].vector == vector
+    assert upserts[0].vector["dense"] == vector
+    assert upserts[0].vector["bm25_sparse"].indices
     assert upserts[0].payload["embedding_fingerprint"] == _embedding_cache_fingerprint()
 
 
 def test_sync_parse_ignores_cached_vector_with_different_embedding_fingerprint(tmp_path, monkeypatch):
+    monkeypatch.setenv("RAG_QDRANT_SCHEMA", "named")
     text = "content with enough text for a chunk"
     dataset_dir = tmp_path / "ds-1"
     dataset_dir.mkdir()
@@ -468,7 +491,7 @@ def test_sync_parse_ignores_cached_vector_with_different_embedding_fingerprint(t
             return [
                 SimpleNamespace(
                     payload={"text": text, "embedding_fingerprint": "old-fingerprint"},
-                    vector=old_vector,
+                    vector={"dense": old_vector},
                 )
             ], None
 
@@ -483,10 +506,11 @@ def test_sync_parse_ignores_cached_vector_with_different_embedding_fingerprint(t
     assert result["embedding_cache_hits"] == 0
     assert result["embedded_chunks"] == 1
     assert embedded["calls"] == 1
-    assert upserts[0].vector == new_vector
+    assert upserts[0].vector["dense"] == new_vector
+    assert upserts[0].vector["bm25_sparse"].indices
 
 
-def test_sparse_sidecar_delete_noops_when_disabled(monkeypatch):
+def _retired_sparse_sidecar_delete_noops_when_disabled(monkeypatch):
     monkeypatch.setenv("RAG_SPARSE_ENABLED", "false")
     calls = []
     adapter = SimpleNamespace(collection_name="les_rag")
@@ -507,7 +531,7 @@ def test_sparse_sidecar_delete_noops_when_disabled(monkeypatch):
     assert calls == []
 
 
-def test_sparse_sidecar_delete_uses_same_file_filter(monkeypatch):
+def _retired_sparse_sidecar_delete_uses_same_file_filter(monkeypatch):
     monkeypatch.setenv("RAG_SPARSE_ENABLED", "true")
     calls = []
     adapter = SimpleNamespace(collection_name="les_rag")
@@ -536,7 +560,7 @@ def test_sparse_sidecar_delete_uses_same_file_filter(monkeypatch):
     ]
 
 
-def test_sparse_sidecar_upsert_uses_dense_point_ids_and_payload(monkeypatch):
+def _retired_sparse_sidecar_upsert_uses_dense_point_ids_and_payload(monkeypatch):
     monkeypatch.setenv("RAG_SPARSE_ENABLED", "true")
     upserts = []
     adapter = SimpleNamespace(collection_name="les_rag")
@@ -568,7 +592,7 @@ def test_sparse_sidecar_upsert_uses_dense_point_ids_and_payload(monkeypatch):
     assert sparse_point.vector["bm25_sparse"].indices
 
 
-def test_reconcile_reports_and_cleans_sparse_drift(monkeypatch):
+def _retired_reconcile_reports_and_cleans_sparse_drift(monkeypatch):
     monkeypatch.setenv("RAG_SPARSE_ENABLED", "true")
 
     class FakeDB:
@@ -633,7 +657,7 @@ def test_reconcile_reports_and_cleans_sparse_drift(monkeypatch):
     assert fake_qdrant.deletes[0]["collection_name"] == "les_rag_sparse"
 
 
-def test_reconcile_allows_dense_chunks_without_sparse_terms(monkeypatch):
+def _retired_reconcile_allows_dense_chunks_without_sparse_terms(monkeypatch):
     monkeypatch.setenv("RAG_SPARSE_ENABLED", "true")
 
     class FakeDB:

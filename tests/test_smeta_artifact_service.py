@@ -395,11 +395,11 @@ def test_smeta_artifact_prefers_rim_trace_when_model_selected_norm_code():
 
     assert artifact is not None
     assert artifact["rim_lsr_form"]["schema"] == "lsr_rim_trace_form_v1"
-    assert artifact["rim_lsr_form"]["amount_total"] == 11_813.04
+    assert artifact["rim_lsr_form"]["amount_total"] == 11_896.35
     assert artifact["rim_lsr_form"]["is_priced_final"] is True
     assert artifact["rim_lsr_form"]["rows"][0]["basis"] == "ГЭСН12-01-034-02"
     assert artifact["model_lsr_form"]["amount_total"] == 61_000
-    assert "11 813 руб." in artifact["content"]
+    assert "11 896 руб." in artifact["content"]
 
 
 def test_compact_smeta_answer_shows_checked_trace_lsr_without_model_placeholders(monkeypatch):
@@ -417,7 +417,7 @@ def test_compact_smeta_answer_shows_checked_trace_lsr_without_model_placeholders
 
     assert artifact is not None
     assert compact.startswith("ЛСР РИМ сформирована по расчетной трассе")
-    assert "11 813 руб." in compact
+    assert "11 896 руб." in compact
     assert "Приложение № 3" in compact
     assert "Сметная стоимость в текущем уровне цен всего" in compact
     assert "**ВСЕГО по смете**" in compact
@@ -438,7 +438,7 @@ def test_smeta_artifact_trace_does_not_invent_norms_for_unbound_rows():
 
     assert artifact is not None
     assert artifact["rim_lsr_form"]["schema"] == "lsr_rim_trace_form_v1"
-    assert artifact["rim_lsr_form"]["amount_total"] == 11_813.04
+    assert artifact["rim_lsr_form"]["amount_total"] == 11_896.35
     assert artifact["rim_lsr_form"]["finality"] == "priced_partial"
     assert len(artifact["rim_lsr_form"]["rows"]) == 2
     assert artifact["rim_lsr_form"]["rows"][1]["title"] == "Работа без выбранного шифра"
@@ -446,7 +446,7 @@ def test_smeta_artifact_trace_does_not_invent_norms_for_unbound_rows():
     assert artifact["rim_lsr_form"]["rows"][1]["amount"] == 0.0
     assert artifact["rim_lsr_form"]["rows"][1]["status"] == "norm_selection_required"
     flags = artifact["rim_lsr_form"]["trace"]["summary"]["flags"]
-    assert any("нет шифра нормы" in flag for flag in flags)
+    assert "norm_selection_required: row-2" in flags
 
     compact = compact_smeta_answer(answer, artifact)
     assert compact.startswith("ЛСР РИМ сформирована по расчетной трассе")
@@ -472,11 +472,11 @@ def test_smeta_artifact_keeps_calculated_rows_when_source_rows_are_partial():
     artifact = build_smeta_artifact(answer, question=question)
 
     assert artifact is not None
-    assert artifact["rim_lsr_form"]["amount_total"] == 11_813.04
+    assert artifact["rim_lsr_form"]["amount_total"] == 11_896.35
     assert artifact["rim_lsr_form"]["finality"] == "priced_partial"
     assert len(artifact["rim_lsr_form"]["rows"]) == 2
     assert artifact["rim_lsr_form"]["rows"][0]["basis"] == "ГЭСН12-01-034-02"
-    assert artifact["rim_lsr_form"]["rows"][0]["amount"] == 11_813.04
+    assert artifact["rim_lsr_form"]["rows"][0]["amount"] == 11_896.35
     assert artifact["rim_lsr_form"]["rows"][1]["basis"] == "нужен подбор нормы"
     assert artifact["rim_lsr_form"]["rows"][1]["amount"] == 0.0
     summary = artifact["rim_lsr_form"]["trace"]["summary"]

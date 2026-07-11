@@ -40,8 +40,9 @@ PDF/P7M/XLS/XLSX/XLSM parse вынесен в killable subprocess
 raw CAD/BIM больше не становится ложным INDEXED 0; DWG/DXF идут через canonical JSON projection
 CAD/DWG drawn tables извлекаются из line/polyline grids и попадают в RAG до element noise
 target-file CAD smoke на `drawn_table_1 first positions` закрыт на runtime `0.24.0.230`
-dev `0.24.0.352`: integrity-first RAG core, fail-closed index contract, отдельный `test-rag-core`,
-безопасный Qwen sibling-canary и типизированные системные датасеты модулей
+dev `0.24.0.353`: integrity-first RAG core, fail-closed index contract, отдельный `test-rag-core`,
+безопасный Qwen sibling-canary, типизированные системные датасеты и начатое единое smeta-core;
+текущая normative SQLite в quarantine до semantic integrity report
 ```
 
 ### Что не считать закрытым
@@ -97,7 +98,7 @@ v0.24D — Transparent Smeta Document Intake                    📋 next
 v0.24E — PDF/XLS Reader Tools + System Table Layer            🟡 PDF source-map + ES/EOM/ОВ/ВК/rooms done; next exact XLS/PDF reader APIs
 v0.24F — CAD/DWG Table Hardening                              📋 next
 v0.25  — Retrieval and Citation Quality                       📋
-v0.26  — Estimate Workflow Hardening                          📋
+v0.26  — Estimate Workflow Hardening                          🟡 Phase 0/1 started; [TODO](docs/TODO_SMETA_CORE.md)
 v0.90  — Release Candidate                                    📋
 v1.0   — Local Evidence Assistant                             📋
 ```

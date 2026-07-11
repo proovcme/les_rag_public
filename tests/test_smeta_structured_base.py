@@ -12,6 +12,7 @@ from tools.gesn_import import RESOURCE_FIELDS
 
 def _row(**overrides):
     row = {field: None for field in RESOURCE_FIELDS}
+    row.update(source_doc="synthetic-fixture", source_guid="fixture-guid")
     row.update(overrides)
     return row
 
@@ -68,17 +69,26 @@ def test_structured_base_excludes_norms_without_machine_metadata(tmp_path: Path)
     assert manifest["output"]["norms"] == 1
     assert manifest["output"]["resources"] == 2
     assert manifest["excluded"]["norms_missing_name_or_unit"] == 1
-    assert json.loads(manifest_out.read_text(encoding="utf-8"))["schema"] == "les_smeta_base_v1"
+    assert json.loads(manifest_out.read_text(encoding="utf-8"))["schema"] == "les_smeta_base_v2"
+    integrity_path = tmp_path / "les_smeta_base_integrity.json"
+    integrity = json.loads(integrity_path.read_text(encoding="utf-8"))
+    assert integrity["schema"] == "les_smeta_base_integrity_v1"
+    assert integrity["verdict"] == "passed"
+    assert all(check["failures"] == 0 for check in integrity["checks"].values())
 
     conn = sqlite3.connect(out)
     try:
         assert conn.execute("SELECT count(*) FROM norms").fetchone()[0] == 1
         assert conn.execute("SELECT count(*) FROM resources").fetchone()[0] == 2
-        row = conn.execute("SELECT norm_key, work_steps FROM norms").fetchone()
+        row = conn.execute("SELECT norm_key, norm_id, edition, work_steps FROM norms").fetchone()
+        parent = conn.execute("SELECT DISTINCT parent_norm_id FROM resources").fetchone()[0]
     finally:
         conn.close()
     assert row[0] == "ГЭСН:08-01-001-01"
-    assert json.loads(row[1]) == ["Разметка", "Установка"]
+    assert row[1] == "FSNB-2022|ГЭСН|08-01-001-01"
+    assert row[2] == "FSNB-2022"
+    assert json.loads(row[3]) == ["Разметка", "Установка"]
+    assert parent == row[1]
 
 
 def test_gesn_service_prefers_structured_base(tmp_path: Path, monkeypatch):
@@ -167,3 +177,53 @@ def test_structured_base_defensively_collapses_duplicate_resource_identity(tmp_p
         assert conn.execute("SELECT count(*) FROM resources").fetchone()[0] == 2
     finally:
         conn.close()
+
+
+def test_structured_base_quarantines_family_mismatch_and_metadata_conflict(tmp_path: Path):
+    source = tmp_path / "source.parquet"
+    out = tmp_path / "base.sqlite"
+    manifest_out = tmp_path / "manifest.json"
+    rows = [
+        _row(
+            norm_code="ГЭСНм08-01-001-01",
+            norm_key="ГЭСН:08-01-001-01",
+            base_type="ГЭСНм",
+            norm_name="Wrong family",
+            norm_unit="шт",
+            kind="labor",
+            resource_name="Рабочий",
+            per_unit=1,
+        ),
+        _row(
+            norm_code="ГЭСН08-02-001-01",
+            norm_key="ГЭСН:08-02-001-01",
+            base_type="ГЭСН",
+            norm_name="Название А",
+            norm_unit="шт",
+            kind="labor",
+            resource_name="Рабочий",
+            per_unit=1,
+        ),
+        _row(
+            norm_code="ГЭСН08-02-001-01",
+            norm_key="ГЭСН:08-02-001-01",
+            base_type="ГЭСН",
+            norm_name="Название Б",
+            norm_unit="шт",
+            kind="material",
+            resource_name="Материал",
+            per_unit=1,
+        ),
+    ]
+    pd.DataFrame(rows, columns=list(RESOURCE_FIELDS)).to_parquet(source, index=False)
+
+    manifest = build_structured_base(source=source, out=out, manifest_out=manifest_out)
+
+    assert manifest["output"]["norms"] == 0
+    assert manifest["excluded"]["family_mismatch_rows_quarantined"] == 1
+    assert manifest["excluded"]["metadata_conflict_norms"] == 1
+    integrity = json.loads((tmp_path / "base_integrity.json").read_text(encoding="utf-8"))
+    assert integrity["verdict"] == "failed"
+    assert integrity["checks"]["empty_machine_base"]["failures"] == 1
+    assert integrity["quarantine"]["family_mismatch_rows"] == 1
+    assert integrity["quarantine"]["metadata_conflict_norms"] == 1

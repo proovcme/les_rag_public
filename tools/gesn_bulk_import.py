@@ -57,9 +57,11 @@ from tools.gesn_pdf_import import DEFAULT_OUT, build_parquet, parse_fgis_json
 
 API = "https://fgiscs.minstroyrf.ru/api/FullTextSearch/SearchEstimatedRates?search="
 
-# Строительные сборники ГЭСН-2022 (Приказ 1046/пр): 01..47. Диапазон отделов в сборнике РАЗРЕЖЕН
-# (напр. сб.12: 01,02,03,09,20…), поэтому отделы не перечисляем жёстко — сканируем с допуском.
+# Numeric collection prefixes across ГЭСН/ГЭСНм/ГЭСНп/ГЭСНр/ГЭСНмр. Building ГЭСН ends at 47,
+# while repair families use later prefixes (for example 63/67). FGIS metadata owns the family;
+# the numeric prefix never does.
 SBORNIKI = tuple(range(1, 48))
+ALL_COLLECTION_PREFIXES = tuple(range(1, 70))
 DEFAULT_OTDEL_MAX = 40          # верхняя граница номера отдела при сканировании NN-01..NN-MAX
 DEFAULT_OTDEL_GAP = 8           # подряд пустых отделов → конец сборника (разрежены, но не бесконечно)
 
@@ -171,6 +173,7 @@ def run(
     otdel_gap: int = DEFAULT_OTDEL_GAP,
     limit: Optional[int] = None,
     resume: bool = True,
+    flush_every: int = 20,
     log: Any = sys.stderr,
 ) -> dict[str, Any]:
     """Перебрать отделы сборников → ФГИС ЦС → дозалить в Parquet. Возвращает сводку.
@@ -184,9 +187,23 @@ def run(
 
     stats = {"otdels_done": 0, "otdels_skipped": 0, "otdels_empty": 0,
              "errors": 0, "norms": 0, "resources": 0}
+    pending_rows: list[dict[str, Any]] = []
+    pending_prefixes: list[str] = []
 
     def _emit(msg: str) -> None:
         print(msg, file=log, flush=True)
+
+    def _flush() -> None:
+        if not pending_rows:
+            return
+        summary = build_parquet(pending_rows, out_path, append=True)
+        done_prefixes.update(pending_prefixes)
+        _emit(
+            f"[flush] отделов={len(pending_prefixes)} строк={len(pending_rows)} "
+            f"итого_строк={summary.get('resources') or 0}"
+        )
+        pending_rows.clear()
+        pending_prefixes.clear()
 
     for sb in sborniki:
         gap = 0
@@ -220,21 +237,28 @@ def run(
                 if delay:
                     time.sleep(delay)
                 continue
-            summary = build_parquet(rows, out_path, append=True)
-            n_norms = summary.get("norms") or 0
+            n_norms = len({
+                str(row.get("norm_key") or row.get("norm_code") or "")
+                for row in rows
+                if str(row.get("norm_key") or row.get("norm_code") or "")
+            })
             stats["otdels_done"] += 1
             stats["norms"] += n_norms
-            stats["resources"] += summary.get("resources") or 0
-            done_prefixes.add(prefix)
-            total_norms = summary.get("resources")  # это всего строк в базе
-            _emit(f"[ok  ] {prefix}: +{n_norms} норм / {len(rows)} строк "
-                  f"(база: {total_norms} строк, отделов done={stats['otdels_done']} "
-                  f"err={stats['errors']})")
+            stats["resources"] += len(rows)
+            pending_rows.extend(rows)
+            pending_prefixes.append(prefix)
+            _emit(f"[queue] {prefix}: +{n_norms} норм / {len(rows)} строк "
+                  f"(batch={len(pending_prefixes)}/{max(1, flush_every)}, "
+                  f"done={stats['otdels_done']} err={stats['errors']})")
+            if len(pending_prefixes) >= max(1, flush_every):
+                _flush()
             if limit is not None and stats["otdels_done"] >= limit:
+                _flush()
                 _emit(f"[stop] достигнут --limit {limit}")
                 return stats
             if delay:
                 time.sleep(delay)
+    _flush()
     return stats
 
 
@@ -251,14 +275,16 @@ def _main(argv: Optional[Iterable[str]] = None) -> int:
     ap.add_argument("--otdel-gap", type=int, default=DEFAULT_OTDEL_GAP,
                     help=f"подряд пустых отделов → конец сборника (дефолт {DEFAULT_OTDEL_GAP})")
     ap.add_argument("--no-resume", action="store_true", help="не пропускать уже залитые отделы")
+    ap.add_argument("--flush-every", type=int, default=20,
+                    help="сколько отделов накапливать перед atomic Parquet append (дефолт 20)")
     args = ap.parse_args(list(argv) if argv is not None else None)
 
-    sborniki = list(SBORNIKI) if args.all else [args.sbornik]
+    sborniki = list(ALL_COLLECTION_PREFIXES) if args.all else [args.sbornik]
     try:
         stats = run(
             sborniki=sborniki, out_path=args.out, rate=args.rate,
             otdel_max=args.otdel_max, otdel_gap=args.otdel_gap,
-            limit=args.limit, resume=not args.no_resume,
+            limit=args.limit, resume=not args.no_resume, flush_every=args.flush_every,
         )
     except KeyboardInterrupt:
         print("\nпрервано пользователем (база сохранена по отделам — резюмируемо)", file=sys.stderr)

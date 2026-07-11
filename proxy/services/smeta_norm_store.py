@@ -869,10 +869,10 @@ def _resource_projection(norm: dict[str, Any]) -> tuple[int, str, str]:
     return len(resources), kinds, _tokens(text)
 
 
-def _build_rows() -> list[SmetaNormRow]:
+def _build_rows(base_path: str | None = None) -> list[SmetaNormRow]:
     from proxy.services.gesn_service import load_base_norms, load_norms
 
-    base_norms = dict(load_base_norms() or {})
+    base_norms = dict(load_base_norms(base_path) or {})
     seed_norms = dict(load_norms() or {})
     composition_cards = _composition_steps_from_cards()
     norm_sources: dict[str, str] = {
@@ -939,9 +939,22 @@ def _build_rows() -> list[SmetaNormRow]:
     return rows
 
 
-@lru_cache(maxsize=1)
+@lru_cache(maxsize=4)
+def _norm_store_for_signature(base_path: str, mtime_ns: int, size: int) -> SmetaNormStore:
+    del mtime_ns, size  # cache-key components
+    return SmetaNormStore(_build_rows(base_path or None))
+
+
 def get_smeta_norm_store() -> SmetaNormStore:
-    return SmetaNormStore(_build_rows())
+    from proxy.smeta_core.base_registry import active_base
+
+    path = Path(active_base()["base_path"])
+    try:
+        stat = path.stat()
+        signature = (str(path), stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        signature = (str(path), 0, 0)
+    return _norm_store_for_signature(*signature)
 
 
 def norm_store_payload() -> dict[str, Any]:

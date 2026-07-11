@@ -180,7 +180,7 @@ def _facts_for_source(source_id: str, files: list[dict[str, Any]], dataset: dict
                 if rows is not None:
                     facts.setdefault("parquet_rows", 0)
                     facts["parquet_rows"] += rows
-            elif f["path"].endswith("les_smeta_base_manifest.json"):
+            elif Path(f["path"]).name.startswith("les_smeta_base") and f["path"].endswith("_manifest.json"):
                 manifest = _read_json(Path(f["path"]))
                 output = manifest.get("output") or {}
                 excluded = manifest.get("excluded") or {}
@@ -223,7 +223,7 @@ def _facts_for_source(source_id: str, files: list[dict[str, Any]], dataset: dict
 def service_sources(path: Path | str = DEFAULT_CONFIG) -> dict[str, Any]:
     cfg = _load_config(path)
     out: list[dict[str, Any]] = []
-    totals = {"ok": 0, "missing_blocking": 0, "missing_degraded": 0}
+    totals = {"ok": 0, "missing_blocking": 0, "missing_degraded": 0, "quarantined_blocking": 0}
     for src in cfg.get("sources", []):
         files: list[dict[str, Any]] = []
         for p in src.get("paths") or []:
@@ -243,6 +243,23 @@ def service_sources(path: Path | str = DEFAULT_CONFIG) -> dict[str, Any]:
                 status = "ok"
         else:
             status = _status(str(src.get("status_if_missing") or "degraded"), present)
+        integrity: dict[str, Any] = {}
+        if src.get("integrity_required"):
+            from proxy.smeta_core.integrity import normative_base_integrity
+
+            configured_paths = [str(value) for value in (src.get("paths") or [])]
+            base_path = str(src.get("structured_base_path") or (configured_paths[0] if configured_paths else ""))
+            manifest_path = str(
+                src.get("base_manifest_path")
+                or (configured_paths[1] if len(configured_paths) > 1 else "")
+            )
+            integrity = normative_base_integrity(
+                base_path=base_path,
+                manifest_path=manifest_path,
+                report_path=str(src.get("integrity_report") or "data/smeta_base/les_smeta_base_integrity.json"),
+            )
+            if present and not integrity.get("trusted_for_pricing"):
+                status = "quarantined_blocking"
         totals[status] = totals.get(status, 0) + 1
         item = {
             "id": src.get("id"),
@@ -259,6 +276,7 @@ def service_sources(path: Path | str = DEFAULT_CONFIG) -> dict[str, Any]:
             "operator_action": src.get("operator_action") or "",
             "process_label": src.get("process_label") or "Проверить источник",
             "required_documents": required_documents,
+            "integrity": integrity,
         }
         item["facts"] = _facts_for_source(str(item["id"]), files, dataset)
         out.append(item)
@@ -305,6 +323,12 @@ def process_service_source(source_id: str, path: Path | str = DEFAULT_CONFIG) ->
             msg = f"{label}: Play проверил состав. Готово {ready}, частично {partial}, критичных пропусков нет."
     elif status == "ok":
         msg = f"{label}: источник найден. ЛЕС может использовать эти данные."
+    elif status == "quarantined_blocking":
+        reasons = "; ".join(str(x) for x in ((item.get("integrity") or {}).get("reasons") or [])[:4])
+        msg = (
+            f"{label}: файлы найдены, но база помещена в карантин и не может подтверждать "
+            f"финальную стоимость. {reasons or 'Нет пройденного semantic integrity report.'}"
+        )
     elif status == "missing_blocking":
         where = ", ".join(folders[:3]) or ", ".join(missing_files[:3]) or "служебную папку источника"
         msg = f"{label}: данных нет. Положи нужные файлы в {where} и запусти проверку ещё раз."
@@ -321,4 +345,5 @@ def process_service_source(source_id: str, path: Path | str = DEFAULT_CONFIG) ->
         "found_files": found_files,
         "facts": item.get("facts") or {},
         "required_documents": required_documents,
+        "integrity": item.get("integrity") or {},
     }

@@ -44,6 +44,8 @@ from .rag_config import (
     rag_meta_db_path,
     rag_vector_size,
     prepare_query_for_embedding,
+    point_embedding_descriptor,
+    point_embedding_fingerprint,
     write_index_contract,
 )
 
@@ -297,38 +299,15 @@ def _content_hash(text: str) -> str:
 
 
 def _embedding_cache_descriptor() -> dict[str, str]:
-    backend = os.getenv("EMBED_BACKEND", "sentence_transformers").strip().lower()
-    descriptor = {
-        "backend": backend,
-        "model_id": os.getenv("EMBEDDING_MODEL") or os.getenv("EMBED_MODEL", ""),
-        "profile": os.getenv("LES_EMBED_PROFILE", ""),
-        "vector_size": str(rag_vector_size()),
-    }
-    if backend == "coreml":
-        descriptor.update(
-            {
-                "coreml_model": os.getenv("COREML_EMBED_MODEL", ""),
-                "coreml_seq_len": os.getenv("COREML_EMBED_SEQ_LEN", ""),
-                "coreml_compute_units": os.getenv("COREML_EMBED_COMPUTE_UNITS", ""),
-                "coreml_fallback": os.getenv("COREML_EMBED_FALLBACK", ""),
-            }
-        )
-    return descriptor
+    return point_embedding_descriptor()
 
 
 def _embedding_cache_fingerprint(descriptor: dict[str, str] | None = None) -> str:
-    data = descriptor or _embedding_cache_descriptor()
-    stable = "\n".join(f"{key}={data.get(key, '')}" for key in sorted(data))
-    return hashlib.sha1(stable.encode("utf-8", errors="ignore")).hexdigest()
-
-
-def _sparse_enabled() -> bool:
-    return os.getenv("RAG_SPARSE_ENABLED", "false").strip().lower() in _TRUE_ENV_VALUES
+    return point_embedding_fingerprint(descriptor)
 
 
 def _qdrant_schema_mode() -> str:
-    value = os.getenv("RAG_QDRANT_SCHEMA", "unnamed").strip().lower()
-    return value if value in {"unnamed", "named"} else "unnamed"
+    return "named"
 
 
 def _dense_vector_name() -> str:
@@ -544,6 +523,7 @@ class EmbedClient:
         safety failure, not a reason to score Qwen and BGE vectors together.
         """
         actual_model = str(payload.get("embedding_model") or "").strip()
+        actual_backend = str(payload.get("embedding_backend") or "").strip().lower()
         expected = self._normalise_model_id(self.model)
         actual = self._normalise_model_id(actual_model)
         if not actual_model:
@@ -553,6 +533,16 @@ class EmbedClient:
         if not expected or not actual or (expected not in actual and actual not in expected):
             raise EmbeddingContractError(
                 f"embedding contract mismatch: expected={self.model}, actual={actual_model}"
+            )
+        expected_backend = os.getenv("EMBED_BACKEND", "sentence_transformers").strip().lower()
+        if not actual_backend:
+            raise EmbeddingContractError(
+                f"embedding backend not reported by {self.url}; expected={expected_backend}"
+            )
+        if actual_backend != expected_backend:
+            raise EmbeddingContractError(
+                "embedding backend mismatch: "
+                f"expected={expected_backend}, actual={actual_backend}"
             )
         data = payload.get("data") or []
         data.sort(key=lambda x: x["index"])
@@ -1161,7 +1151,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             # file_name). БЕЗ индекса query_points с фильтром проверяет фильтр по ВСЕМ точкам
             # (~1.6с на 179k) — с индексом ~30мс. create_payload_index идемпотентен (повторный
             # вызов — no-op/обновление). Best-effort: сбой не должен блокировать старт.
-            for _field in ("dataset_id", "file_name"):
+            for _field in ("dataset_id", "file_name", "embedding_fingerprint"):
                 try:
                     await self.aclient.create_payload_index(
                         collection_name=self.collection_name,
@@ -1174,8 +1164,6 @@ class QdrantLlamaIndexAdapter(RAGBackend):
 
     @staticmethod
     def _assert_dense_index_contract() -> None:
-        if os.getenv("RAG_INDEX_CONTRACT_ENFORCE", "true").strip().lower() not in _TRUE_ENV_VALUES:
-            return
         status = index_contract_status()
         if not status.get("compatible"):
             raise EmbeddingContractError(
@@ -1448,11 +1436,6 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 if delete_lexical is not None:
                     delete_lexical(dataset_id, file_key)
 
-            def _upsert_file_sparse(points: list[Any]) -> None:
-                upsert_sparse = getattr(self, "_sync_upsert_sparse_points", None)
-                if upsert_sparse is not None:
-                    upsert_sparse(sync_qdrant, points)
-
             def _upsert_file_lexical(points: list[Any]) -> None:
                 upsert_lexical = getattr(self, "_sync_upsert_file_lexical", None)
                 if upsert_lexical is not None:
@@ -1510,6 +1493,22 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                         chunking=_chunking,
                     )
                     _add_timing("chunk_sec", phase_start)
+
+                    # Native RRF is a corpus-wide invariant: a named-schema
+                    # point is never allowed to enter the collection without
+                    # its sparse companion.  Validate before deleting the old
+                    # file points, so an invalid replacement cannot erase a
+                    # previously usable document.
+                    if _qdrant_schema_mode() == "named":
+                        from backend.inference.bm25_sparse import encode_bm25
+
+                        for node in file_nodes:
+                            sparse_vec = encode_bm25(str(node["text"]))
+                            if not sparse_vec:
+                                raise RuntimeError(
+                                    f"empty sparse vector for {file_key}: {node.get('doc_id', '')}"
+                                )
+                            node["_rrf_sparse_vector"] = sparse_vec
 
                     phase_start = _t.time()
                     existing_vectors = (
@@ -1619,15 +1618,16 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                             })
                             point_vector: Any = vec
                             if _qdrant_schema_mode() == "named":
-                                from backend.inference.bm25_sparse import encode_bm25
-
-                                sparse_vec = encode_bm25(str(node["text"]))
-                                point_vector = {_dense_vector_name(): vec}
-                                if sparse_vec:
-                                    point_vector[_sparse_vector_name()] = models.SparseVector(
+                                sparse_vec = node.pop("_rrf_sparse_vector", None)
+                                if not sparse_vec:
+                                    raise RuntimeError("missing prevalidated sparse vector")
+                                point_vector = {
+                                    _dense_vector_name(): vec,
+                                    _sparse_vector_name(): models.SparseVector(
                                         indices=list(sparse_vec.keys()),
                                         values=list(sparse_vec.values()),
-                                    )
+                                    ),
+                                }
                             points.append(models.PointStruct(
                                 id=str(uuid.uuid4()),
                                 vector=point_vector,
@@ -1643,7 +1643,6 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                             points=points[point_start:point_start + UPSERT_BATCH],
                         )
                         _add_timing("upsert_sec", phase_start)
-                    _upsert_file_sparse(points)
                     _upsert_file_lexical(points)
 
                     file_chunk_count = len(file_nodes)
@@ -1817,19 +1816,6 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             ),
         ])
 
-    def _sparse_collection_name(self) -> str:
-        return os.getenv("RAG_SPARSE_COLLECTION", "").strip() or f"{self.collection_name}_sparse"
-
-    def _sync_sparse_sidecar_exists(self, sync_qdrant: qdrant_client.QdrantClient) -> bool:
-        if not _sparse_enabled():
-            return False
-        collection = self._sparse_collection_name()
-        try:
-            return bool(sync_qdrant.collection_exists(collection))
-        except Exception as error:  # noqa: BLE001
-            logger.warning("[SPARSE] sidecar existence check skipped collection=%s: %s", collection, error)
-            return False
-
     def _sync_delete_file_points(
         self,
         sync_qdrant: qdrant_client.QdrantClient,
@@ -1843,114 +1829,6 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             ),
             wait=True,
         )
-        self._sync_delete_sparse_file_points(sync_qdrant, dataset_id, file_key)
-
-    def _sync_delete_sparse_file_points(
-        self,
-        sync_qdrant: qdrant_client.QdrantClient,
-        dataset_id: str,
-        file_key: str,
-    ) -> bool:
-        if not self._sync_sparse_sidecar_exists(sync_qdrant):
-            return False
-        sparse_collection = self._sparse_collection_name()
-        sync_qdrant.delete(
-            collection_name=sparse_collection,
-            points_selector=models.FilterSelector(
-                filter=self._file_filter(dataset_id, file_key)
-            ),
-            wait=True,
-        )
-        logger.debug("[SPARSE] deleted sidecar points %s/%s from %s", dataset_id, file_key, sparse_collection)
-        return True
-
-    def _sync_count_sparse_file_points(
-        self,
-        sync_qdrant: qdrant_client.QdrantClient,
-        dataset_id: str,
-        file_key: str,
-    ) -> int | None:
-        if not self._sync_sparse_sidecar_exists(sync_qdrant):
-            return None
-        result = sync_qdrant.count(
-            collection_name=self._sparse_collection_name(),
-            count_filter=self._file_filter(dataset_id, file_key),
-            exact=True,
-        )
-        return int(result.count)
-
-    def _sync_count_expected_sparse_file_points(
-        self,
-        sync_qdrant: qdrant_client.QdrantClient,
-        dataset_id: str,
-        file_key: str,
-    ) -> int:
-        from backend.inference.bm25_sparse import encode_bm25
-
-        expected = 0
-        offset = None
-        while True:
-            points, offset = sync_qdrant.scroll(
-                collection_name=self.collection_name,
-                scroll_filter=self._file_filter(dataset_id, file_key),
-                limit=256,
-                offset=offset,
-                with_payload=["text"],
-                with_vectors=False,
-            )
-            if not points:
-                break
-            for point in points:
-                payload = getattr(point, "payload", None) or {}
-                if encode_bm25(str(payload.get("text") or "")):
-                    expected += 1
-            if offset is None:
-                break
-        return expected
-
-    @staticmethod
-    def _sparse_point_from_dense(point: Any) -> models.PointStruct | None:
-        from backend.inference.bm25_sparse import encode_bm25
-
-        payload = dict(getattr(point, "payload", None) or {})
-        point_id = getattr(point, "id", None)
-        text = str(payload.get("text") or "")
-        vec = encode_bm25(text)
-        if point_id is None or not vec:
-            return None
-        return models.PointStruct(
-            id=point_id,
-            vector={
-                _sparse_vector_name(): models.SparseVector(
-                    indices=list(vec.keys()),
-                    values=list(vec.values()),
-                )
-            },
-            payload=payload,
-        )
-
-    def _sync_upsert_sparse_points(
-        self,
-        sync_qdrant: qdrant_client.QdrantClient,
-        points: list[Any],
-    ) -> int:
-        if not points or not self._sync_sparse_sidecar_exists(sync_qdrant):
-            return 0
-        sparse_points = [
-            sparse_point
-            for point in points
-            if (sparse_point := self._sparse_point_from_dense(point)) is not None
-        ]
-        if not sparse_points:
-            return 0
-        sparse_collection = self._sparse_collection_name()
-        for point_start in range(0, len(sparse_points), UPSERT_BATCH):
-            sync_qdrant.upsert(
-                collection_name=sparse_collection,
-                points=sparse_points[point_start:point_start + UPSERT_BATCH],
-            )
-        logger.debug("[SPARSE] upserted sidecar points collection=%s count=%s", sparse_collection, len(sparse_points))
-        return len(sparse_points)
 
     def _sync_delete_file_lexical(self, dataset_id: str, file_key: str) -> None:
         try:
@@ -2029,9 +1907,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         files = self.db.indexed_files_with_counts(dataset_id)
         checked = 0
         mismatched: list[dict] = []
-        sparse_mismatched: list[dict] = []
         requeued_files: set[str] = set()
-        sparse_cleaned = 0
         for file_name, sqlite_cc in files:
             checked += 1
             try:
@@ -2039,51 +1915,19 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             except Exception as error:  # noqa: BLE001
                 logger.warning("[RECONCILE] count failed %s: %s", file_name, error)
                 continue
-            sparse_points = self._sync_count_sparse_file_points(sync_qdrant, dataset_id, file_name)
-            expected_sparse_points = None
-            if sparse_points is not None:
-                try:
-                    expected_sparse_points = self._sync_count_expected_sparse_file_points(
-                        sync_qdrant,
-                        dataset_id,
-                        file_name,
-                    )
-                except Exception as error:  # noqa: BLE001
-                    logger.warning("[RECONCILE] sparse expected-count failed %s: %s", file_name, error)
             dense_mismatch = qpoints != sqlite_cc
-            sparse_mismatch = (
-                sparse_points is not None
-                and expected_sparse_points is not None
-                and sparse_points != expected_sparse_points
-            )
-            if sparse_mismatch:
-                sparse_mismatched.append({
-                    "file": file_name,
-                    "qdrant": qpoints,
-                    "expected_sparse": expected_sparse_points,
-                    "sparse": sparse_points,
-                })
             if dense_mismatch:
                 mismatched.append({"file": file_name, "sqlite": sqlite_cc, "qdrant": qpoints})
-            if dense_mismatch or sparse_mismatch:
+            if dense_mismatch:
                 self.db.update_document_status(dataset_id, file_name, "PENDING", 0)
                 requeued_files.add(file_name)
-                if sparse_points is not None:
-                    try:
-                        if self._sync_delete_sparse_file_points(sync_qdrant, dataset_id, file_name):
-                            sparse_cleaned += 1
-                    except Exception as error:  # noqa: BLE001
-                        logger.warning("[RECONCILE] sparse cleanup failed %s: %s", file_name, error)
-        if mismatched or sparse_mismatched:
+        if mismatched:
             self.db.update_dataset_chunk_count(dataset_id)
-        logger.info("[RECONCILE] dataset=%s checked=%s mismatched=%s sparse_mismatched=%s (→PENDING)",
-                    dataset_id, checked, len(mismatched), len(sparse_mismatched))
+        logger.info("[RECONCILE] dataset=%s checked=%s mismatched=%s (→PENDING)",
+                    dataset_id, checked, len(mismatched))
         return {"dataset_id": dataset_id, "checked": checked,
                 "mismatched": len(mismatched), "requeued": len(requeued_files),
-                "sparse_mismatched": len(sparse_mismatched),
-                "sparse_cleaned": sparse_cleaned,
-                "details": mismatched[:50],
-                "sparse_details": sparse_mismatched[:50]}
+                "details": mismatched[:50]}
 
     def _sync_existing_file_vectors_by_hash(
         self,
@@ -2653,54 +2497,6 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             if not _is_binary_garbage(p.payload.get("text", ""))
         ]
 
-    async def retrieve_sparse(
-        self,
-        query:       str,
-        dataset_ids: Optional[List[str]] = None,
-        top_k:       int = 5,
-        doc_filter:  Optional[List[str]] = None,
-    ) -> List[Chunk]:
-        """W2.4: поиск по BGE-M3 learned-sparse вектору (Qdrant-native), параллельно dense.
-
-        Возвращает Chunk-и той же формы, что `retrieve`. Пустой sparse-запрос или
-        отсутствие sparse-вектора в коллекции → [] (гибрид молча падает на dense+FTS).
-        """
-        from backend.inference.bm25_sparse import encode_bm25
-
-        # Sparse-сайдкар: отдельная коллекция {main}_sparse (те же id), dense не дублируем.
-        # BM25/IDF (W2.4): TF термов, IDF считает Qdrant (modifier=Idf). Токенизация — CPU.
-        sparse_collection = os.getenv("RAG_SPARSE_COLLECTION", "").strip() or f"{self.collection_name}_sparse"
-        sv = encode_bm25(query)
-        if not sv:
-            return []
-
-        must = []
-        if dataset_ids:
-            must.append(models.FieldCondition(key="dataset_id", match=models.MatchAny(any=dataset_ids)))
-        if doc_filter:
-            must.append(models.FieldCondition(key="file_name", match=models.MatchAny(any=doc_filter)))
-        query_filter = models.Filter(must=must) if must else None
-
-        results = await self.aclient.query_points(
-            collection_name=sparse_collection,
-            query=models.SparseVector(indices=list(sv.keys()), values=list(sv.values())),
-            using=_sparse_vector_name(),
-            query_filter=query_filter,
-            limit=top_k,
-            with_payload=True,
-        )
-        return [
-            Chunk(
-                content=p.payload.get("text", ""),
-                doc_id=p.payload.get("doc_id", ""),
-                doc_name=p.payload.get("file_name", "unknown"),
-                score=p.score,
-                meta=p.payload,
-            )
-            for p in results.points
-            if len(p.payload.get("text", "")) >= 1
-        ]
-
     async def retrieve_native_hybrid(
         self,
         query: str,
@@ -2723,7 +2519,10 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         dense_vec = vecs[0]
         sparse = encode_bm25(query)
         if not sparse:
-            return await self.retrieve(query, dataset_ids=dataset_ids, top_k=top_k, doc_filter=doc_filter)
+            # Do not let the caller label a dense-only query as native RRF.
+            # The retrieval service will use its explicit dense+FTS fallback
+            # and expose the actual channels in trace.
+            raise RuntimeError("native RRF requires a non-empty sparse query")
 
         must = []
         if dataset_ids:

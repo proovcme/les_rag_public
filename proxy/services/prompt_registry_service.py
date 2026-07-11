@@ -18,6 +18,7 @@ from proxy.services.skill_snippet_registry import snippet_registry_snapshot
 PROMPT_REGISTRY_SCHEMA = "prompt_registry_v2"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SMETA_ROLE_PACK_PATH = _REPO_ROOT / "config" / "prompts" / "smeta_estimator_role.json"
+_SMETA_STORAGE_REFERENCE_PATH = _REPO_ROOT / "skills" / "smeta" / "references" / "gesn-storage.md"
 _PROMPT_OVERRIDES_PATH = _REPO_ROOT / "config" / "prompts" / "prompt_overrides.json"
 PROMPT_OVERRIDES_SCHEMA = "prompt_overrides_v1"
 
@@ -94,90 +95,21 @@ MODE_PROMPTS: dict[str, str] = {
         "следующий разумный поиск: конкретный файл, раздел, таблицу, шифр, лист или запрос."
     ),
     "smeta": (
-        "Ты — сметный агент ЛЕС. Работай как опытный сметчик: читай исходник, вложения, "
-        "историю и RAG; строй или уточняй ВОР; отделяй работы от поставки; выбирай нормативный "
-        "и ценовой маршрут; проверяй применимость норм; веди РИМ-логику; объясняй пользователю "
-        "проверяемый результат. Модель принимает профессиональные сметные решения. Инструменты "
-        "и код используются после решения модели: поиск источников, раскрытие норм, получение цен, "
-        "арифметика, проверка единиц, НР/СП, НДС, trace, provenance и выгрузка. Код не выбирает "
-        "работы, нормы и применимость. Деньги без источника или trace не являются фактом; "
-        "сценарное допущение допустимо как сценарий, но не как финально закрытая цена. Если ВОР содержит "
-        "измеримые работы, стоимость работ является обязательной попыткой расчёта. Если закрытых "
-        "источников нет, дай сценарную оценку с явными допущениями, если пользователь не запретил "
-        "допущения. Незакрытая поставка или материалы не блокируют стоимость работ. Если исходная "
-        "ВОР написана человеческими формулировками, сначала сделай нормируемую ВОР и таблицу "
-        "подбора норм: одна исходная строка может обоснованно раскладываться на несколько ГЭСН."
+        "Ты — сметный агент ЛЕС. Получи ЛСР из исходника. Если ВОР нет, создай её из "
+        "спецификации, ТЗ или другого документа. Сам выбирай работы, поисковые запросы, нормы, "
+        "аналоги, покрытия и источники цен; вызывай доступные инструменты итеративно. Код исполняет "
+        "инструменты, проверяет структуру и единицы, считает и экспортирует. Сохраняй происхождение "
+        "денег и все строки исходника; незакрытые строки не должны скрывать рассчитанную часть."
     ),
     "smeta_direct": (
-        "Ты — сметный агент ЛЕС. Работай как опытный сметчик: читай исходник, вложения, "
-        "историю и RAG; строй или уточняй ВОР; отделяй работы от поставки; выбирай нормативный "
-        "и ценовой маршрут; проверяй применимость норм; веди РИМ-логику; объясняй пользователю "
-        "проверяемый результат. Модель принимает профессиональные сметные решения; код после этого "
-        "считает арифметику, единицы, НР/СП, НДС, trace и provenance. Деньги без источника или trace "
-        "не являются фактом. Допустимые источники цены: ФГИС ЦС, локальная книга, база×индекс, КАЦ, "
-        "КП, пользовательская цена, calculation_trace, scenario_assumption, missing. Missing не равен "
-        "0. Scenario assumption не является priced_final. В видимом ответе переводи эти machine ids "
-        "на русский: «сценарное допущение», «сценарная оценка», «нет источника цены», «финально "
-        "закрыто источниками». Если ВОР содержит измеримые работы, "
-        "стоимость работ является обязательной попыткой расчёта; если закрытых источников нет, дай "
-        "сценарную оценку с явными допущениями, если пользователь не запретил допущения. Если "
-        "исходник содержит ВОР, спецификацию или таблицу с измеримыми строками, дай построчную "
-        "таблицу работ с разделом, работой, количеством, "
-        "единицей, ставкой/источником, статусом и суммой; итоги по разделам идут после строк. "
-        "Если пользователь просто просит оценку/стоимость/смету строительных работ и не просит "
-        "именно рынок, а в контексте доступны ГЭСН/ФГИС/НР/СП или нормативная база, основной "
-        "метод оценки — РИМ-сценарий по нормативным аналогам; рынок можно показать только как "
-        "дополнительную проверку или отдельную колонку по просьбе пользователя. "
-        "Не используй в видимом ответе слово evidence: говори «источник», «подтверждение» или "
-        "«расчётная трасса». "
-        "Не пересказывай внутренние prompt-запреты наружу и не объясняй пользователю, что тебе нельзя "
-        "или велено делать; просто дай профессиональный результат. Не пиши наружу role-pack, harness, "
-        "slots, raw JSON, shortlist, tool-loop, prompt, system prompt и похожие служебные слова: "
-        "говори «таблица подбора норм», «исходные параметры», «расчётная проверка», «источники», "
-        "«добор цен». "
-        "Если deterministic numeric audit даёт `source_delta`, покажи это малое расхождение отдельно "
-        "от крупного расхождения состава строк. Если пользователь просит рынок и РИМ/ГЭСН, "
-        "выведи одну сравнительную таблицу и не смешивай "
-        "методики в один итог. Таблица двух оценок: Раздел работ, Объём / вариант, РИМ/ГЭСН статус, "
-        "РИМ/ГЭСН сумма, Рыночный статус, Рыночная сумма с НДС, Комментарий. Уточняющие вопросы "
-        "идут после сценарных денег, а не вместо них. Если просили РИМ/ГЭСН, сценарная оценка должна "
-        "быть РИМ-сценарием по нормативным аналогам: нормируемая строка, сборник/аналог, объём "
-        "в измерителе нормы, базовая точка расчёта, НР/СП/индексы/НДС как допущения, сумма и "
-        "объяснённый допуск. Нельзя заменять РИМ свободной рыночной вилкой или давать размах "
-        "без расчётной базы. Любое числовое утверждение, влияющее на вывод, должно иметь "
-        "расчётную проверку; длинные ряды чисел не суммируются вручную. Если исходные количества "
-        "конфликтуют и это влияет на стоимость, дай форму развилки исходных объёмов и не называй "
-        "сценарные деньги final. Спецификация не является готовой сметой: сначала собери мост "
-        "спецификация -> ВОР. Если исходная ВОР ещё не готова для подбора ГЭСН, сделай мост "
-        "ВОР -> нормируемая ВОР -> таблица подбора норм; одна строка исходной ВОР может "
-        "разложиться на несколько норм, если это следует из технологии или состава нормы, а несколько "
-        "строк ВОР могут ссылаться на одну норму, если одна норма покрывает общий состав работ. "
-        "Подбор нормы идёт маршрутом: семейство работ -> группа сборников -> сборник -> раздел/таблица -> "
-        "конкретная норма; проверяемые семейства — ГЭСН, ГЭСНм, ГЭСНп, ГЭСНр, ГЭСНмр. "
-        "Ведомость добора — это ресурсы выбранной нормы или пользовательской ресурсной строки без "
-        "цены/индекса/КАЦ/КП, а не нераспознанные работы. Кандидат "
-        "ГЭСН не является финальным РИМ-расчётом до проверки применимости, ресурсов, цен и "
-        "подтверждения выбранных строк. Можно предложить Excel-таблицу подбора норм для ручной "
-        "правки: пользователь удаляет лишние кандидаты, добавляет свои, а расчёт идёт по "
-        "подтверждённым строкам. Одна физическая масса может быть объёмом нескольких самостоятельных "
-        "операций, если они прямо названы в ТЗ. Видимый ответ — речь сметчика, не служебный JSON. "
-        "Не используй Markdown-заголовки #, ## или ###; секции оформляй короткими жирными метками."
+        "Ты — сметный агент ЛЕС. Получи ЛСР из исходника, самостоятельно используя RAG и "
+        "инструменты. Если ВОР отсутствует, создай её из переданного документа. Модель выбирает "
+        "работы, нормы, аналоги, покрытия и цены; код только исполняет, проверяет, считает и "
+        "экспортирует. Сохраняй источник каждого денежного значения и честно показывай незакрытые строки."
     ),
     "smeta_harness": (
-        "Режим «Смета»: модель работает сметчиком и возвращает принятое сметное решение для "
-        "дальнейшей калькуляции. Собери или уточни ВОР, отдели работы от поставки, выбери "
-        "нормативный и ценовой маршрут, привяжи объёмы к работам и отметь missing/assumptions. "
-        "Если пользователь просит обычную оценку стоимости и не задаёт рыночный метод, при "
-        "доступной нормативной базе выбирай РИМ-сценарий как основной ход. "
-        "Если исходная ВОР слишком разговорная для прямого подбора норм, сформируй нормируемую ВОР "
-        "и таблицу кандидатов ГЭСН/ГЭСНм/ГЭСНп/ГЭСНр/ГЭСНмр; одна строка ВОР может раскладываться "
-        "на несколько норм, а несколько строк ВОР могут ссылаться на одну норму. "
-        "Маршрут поиска нормы: семейство работ -> группа сборников -> сборник -> раздел/таблица -> конкретная норма. "
-        "Код не выбирает работы, нормы и применимость; он считает только после твоего решения. "
-        "Если ВОР измерима, попытка стоимости работ обязательна: priced_final, priced_partial, "
-        "resources_expanded или scenario_estimate. При запросе рынка и РИМ/ГЭСН нужны две отдельные "
-        "методики и сравнительная таблица в видимом ответе. РИМ-сценарий строится по нормативным "
-        "аналогам и нормируемым строкам, а не по свободной рыночной вилке. Не используй Markdown-заголовки #/##/###."
+        "Получить ЛСР из исходника. Модель сама решает, какие работы выделить и какие инструменты "
+        "поиска норм и цен вызвать. Код исполняет выбранный ход и возвращает расчётную трассу."
     ),
     "normcontrol": (
         "Режим Нормоконтроль: проверяй проектную документацию по правилам, чек-листам, PDF/layout "
@@ -228,93 +160,28 @@ MODE_LABELS: dict[str, str] = {
 
 _FALLBACK_SMETA_ROLE_PACK: dict[str, Any] = {
     "schema": "les.prompt.role_pack.v1",
-    "id": "experienced_estimator_v1",
-    "version": "fallback-model-first",
-    "title": "Опытный сметчик РИМ/ГЭСН",
+    "id": "smeta_agent_v2",
+    "version": "fallback-orthogonal-contracts",
+    "title": "Сметный агент ЛЕС",
     "mode": "smeta_harness",
-    "role": (
-        "Модель работает сметчиком: строит ВОР, отделяет работы от поставки, выбирает "
-        "нормативный маршрут. Код считает после решения модели."
-    ),
-    "result_statuses": [
-        "draft_bor",
-        "norm_selected",
-        "resources_expanded",
-        "priced_partial",
-        "priced_final",
-        "scenario_estimate",
+    "role": "Модель получает ЛСР из исходника и выбирает предметные решения через инструменты. Код валидирует, считает и экспортирует.",
+    "user_modes": ["estimate", "candidate_review", "continue_reviewed"],
+    "mapping_statuses": ["candidates_ready", "mapping_selected", "mapping_user_reviewed", "mapping_locked"],
+    "pricing_statuses": ["unpriced", "priced_partial", "priced_draft", "priced_final"],
+    "candidate_relationship_types": ["alternative", "complementary", "partial_coverage", "covered_by"],
+    "applicability_statuses": ["exact", "close_analog", "weak_analog", "not_applicable"],
+    "candidate_decisions": ["triaged", "opened", "selected", "rejected", "conflict"],
+    "pricing_basis": ["norm", "analog_norm", "commercial_offer", "calculation"],
+    "resolution_statuses": ["priced", "covered_by", "partially_resolved", "unresolved", "excluded"],
+    "invariants": [
+        "mapping_status_and_pricing_status_are_independent",
+        "relationship_applicability_decision_basis_and_resolution_are_separate",
+        "continue_reviewed_requires_mapping_locked",
+        "case_specific_steering_is_forbidden",
     ],
-    "price_source_types": [
-        "fgis_current",
-        "local_price_book",
-        "base_price_indexed",
-        "kac",
-        "commercial_offer",
-        "user_provided",
-        "calculation_trace",
-        "scenario_assumption",
-        "missing",
-    ],
-    "required_answer_capabilities": [
-        "numeric_audit",
-        "quantity_conflict_form",
-        "bor_structure",
-        "normable_bor",
-        "norm_candidate_table",
-        "excel_roundtrip_review",
-        "supply_vs_work_split",
-        "method_comparison_table",
-        "rim_scenario_estimate",
-        "normative_analogue_basis",
-        "tolerance_basis",
-        "source_status_per_amount",
-        "assumptions",
-        "missing_inputs",
-        "price_gaps",
-        "final_status",
-    ],
-    "answer_sections": [
-        "understood",
-        "numeric_audit",
-        "quantity_conflict_form",
-        "bor",
-        "normable_bor",
-        "norm_candidate_table",
-        "supply_exclusions",
-        "method_comparison",
-        "assumptions",
-        "gaps",
-        "final_status",
-    ],
-    "hard_rules": {
-        "missing_price_is_not_zero": True,
-        "scenario_is_not_fact": True,
-        "quantity_conflict_blocks_priced_final": True,
-        "long_sums_require_calculator_or_trace": True,
-        "measurable_bor_requires_cost_attempt": True,
-        "two_estimates_require_comparison_table": True,
-        "bor_to_normable_bor_before_norm_selection": True,
-        "one_bor_line_may_split_to_many_norms": True,
-        "candidate_norm_table_before_confirmed_rim": True,
-        "rim_requested_requires_rim_based_estimate": True,
-        "rim_scenario_uses_normative_analogs": True,
-        "wide_market_range_is_not_rim_estimate": True,
-        "draft_zero_is_not_price": True,
-        "code_does_not_select_works": True,
-        "model_selects_normative_route": True,
-        "do_not_show_internal_json_unless_requested": True,
-        "case_specific_constants_forbidden": True,
-    },
-    "direct_quantity_policy": {
-        "slots": ["volume_m3", "area_m2", "length_m", "mass_t", "piece_count"],
-    },
-    "output_contract": {
-        "schema": "smeta_work_plan_v1",
-        "response_format": "json_object",
-        "allowed": {
-            "unit": ["м3", "м2", "м", "т", "шт"],
-        },
-    },
+    "tool_contract_schema": "schema/smeta_agent_trace.schema.json",
+    "planning_output_contract": {"schema": "smeta_mapping_plan_v1"},
+    "execution_result_contract": {"schema": "smeta_execution_result_v1"},
 }
 
 
@@ -472,65 +339,30 @@ def normcontrol_role_pack() -> dict[str, Any]:
 
 
 def _render_smeta_role_pack(pack: dict[str, Any]) -> str:
-    """Render only the compact machine contract into the system prompt."""
-    output_contract = pack.get("output_contract") if isinstance(pack.get("output_contract"), dict) else {}
-    raw_chain_modes = pack.get("chain_modes") if isinstance(pack.get("chain_modes"), dict) else {}
-    chain_modes = [key for key, value in raw_chain_modes.items() if isinstance(value, dict)]
-    hard_rule_keys = list((pack.get("hard_rules") or {}).keys())
-    prompt_hard_rules = [
-        key for key in hard_rule_keys
-        if key in {
-            "missing_price_is_not_zero",
-            "scenario_is_not_fact",
-            "quantity_conflict_blocks_priced_final",
-            "long_sums_require_calculator_or_trace",
-            "measurable_bor_requires_cost_attempt",
-            "two_estimates_require_comparison_table",
-            "bor_to_normable_bor_before_norm_selection",
-            "one_bor_line_may_split_to_many_norms",
-            "many_bor_lines_may_map_to_one_norm",
-            "norm_search_must_walk_family_group_collection_section_norm",
-            "norm_families_include_gesn_gesnm_gesnp_gesnr_gesnmr",
-            "candidate_norm_table_before_confirmed_rim",
-            "draft_zero_is_not_price",
-            "rim_requested_requires_rim_based_estimate",
-            "generic_cost_estimate_defaults_to_rim_when_normative_data_available",
-            "rim_scenario_uses_normative_analogs",
-            "wide_market_range_is_not_rim_estimate",
-            "do_not_expose_task_classification",
-            "work_cost_rows_require_norm_or_source",
-            "scenario_rate_must_be_labeled",
-            "generic_norm_family_is_not_enough_source",
-            "code_does_not_select_works",
-            "code_does_not_select_norms",
-            "code_does_not_build_norm_shortlist_as_decision",
-            "code_arithmetic_only_after_visible_model_choice",
-            "model_selects_normative_route",
-            "no_global_stop_cranes_for_incomplete_estimates",
-            "partial_estimate_keeps_calculated_rows",
-            "missing_data_stays_in_lsr_row_as_zero_or_blank",
-            "case_specific_constants_forbidden",
-        }
-    ]
+    """Render the minimal estimator/tool boundary without prescribing reasoning."""
+    planning = pack.get("planning_output_contract") if isinstance(pack.get("planning_output_contract"), dict) else {}
+    execution = pack.get("execution_result_contract") if isinstance(pack.get("execution_result_contract"), dict) else {}
     compact = {
-        "id": pack.get("id", "experienced_estimator_v1"),
+        "id": pack.get("id", "smeta_agent_v2"),
         "version": pack.get("version"),
-        "role": "smeta_estimator",
-        "result_statuses": pack.get("result_statuses")
-        or pack.get("estimate_status_policy", {}).get("allowed", []),
-        "price_source_types": pack.get("price_source_types", []),
-        "required_answer_capabilities": pack.get("required_answer_capabilities", []),
-        "answer_sections": pack.get("answer_sections", []),
-        "comparison_table_columns": pack.get("comparison_table_columns", []),
-        "hard_rules": prompt_hard_rules,
-        "chain_modes": chain_modes,
-        "work_plan_schema": output_contract.get("schema", "smeta_work_plan_v1"),
-        "response_format": output_contract.get("response_format", "json_object"),
-        "top_level_required": output_contract.get("top_level_required", ["object", "works"]),
-        "allowed_units": output_contract.get("allowed", {}).get("unit", []),
+        "role": pack.get("role"),
+        "user_modes": pack.get("user_modes", []),
+        "mapping_statuses": pack.get("mapping_statuses", []),
+        "pricing_statuses": pack.get("pricing_statuses", []),
+        "candidate_relationship_types": pack.get("candidate_relationship_types", []),
+        "applicability_statuses": pack.get("applicability_statuses", []),
+        "candidate_decisions": pack.get("candidate_decisions", []),
+        "pricing_basis": pack.get("pricing_basis", []),
+        "resolution_statuses": pack.get("resolution_statuses", []),
+        "context_policy": pack.get("context_policy", {}),
+        "review_policy": pack.get("review_policy", {}),
+        "invariants": pack.get("invariants", []),
+        "tool_contract_schema": pack.get("tool_contract_schema"),
+        "planning_output_schema": planning.get("schema", "smeta_mapping_plan_v1"),
+        "execution_result_schema": execution.get("schema", "smeta_execution_result_v1"),
     }
     return (
-        "Компактный машинный контракт сметчика (данные prompt registry; это инструкция, не evidence):\n"
+        "Контракт сметного агента (инструкция, не источник данных):\n"
         + json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
     )
 
@@ -564,11 +396,26 @@ def build_mode_system_prompt(mode: str, *, notebook_context: str = "", extra: st
 def build_smeta_batch_system_prompt(tool_contract: str, *, notebook_context: str | None = None) -> str:
     nb = notebook_context if notebook_context is not None else gesn_notebook_prompt_excerpt()
     contract = tool_contract.replace("/no_think", "", 1).lstrip()
-    return "/no_think\n" + build_mode_system_prompt(
+    return build_mode_system_prompt(
         "smeta_harness",
         notebook_context=nb,
         extra=_render_smeta_role_pack(smeta_estimator_role_pack()) + "\n\n" + contract,
     )
+
+
+@lru_cache(maxsize=1)
+def smeta_native_skill_excerpt() -> str:
+    """Load the compact machine/storage reference used by the live native agent.
+
+    The long workflow remains in ``skills/smeta/SKILL.md``. The native tool loop
+    receives its one-level GESN/storage reference so the documented skill and the
+    runtime prompt cannot silently describe different stores.
+    """
+    try:
+        reference = _SMETA_STORAGE_REFERENCE_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    return "Справка активного smeta skill (инструкция, не evidence):\n" + reference
 
 
 def _prompt_defaults() -> dict[str, str]:

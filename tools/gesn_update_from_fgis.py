@@ -52,7 +52,7 @@ def run_update(
 ) -> dict:
     raw_out.parent.mkdir(parents=True, exist_ok=True)
     _write_status(status_out, {"status": "running", "stage": "download", "raw_out": str(raw_out)})
-    sborniki = list(gesn_bulk_import.SBORNIKI) if all_sborniki else [int(sbornik or 0)]
+    sborniki = list(gesn_bulk_import.ALL_COLLECTION_PREFIXES) if all_sborniki else [int(sbornik or 0)]
     stats = gesn_bulk_import.run(
         sborniki=sborniki,
         out_path=raw_out,

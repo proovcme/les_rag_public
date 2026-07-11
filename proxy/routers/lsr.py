@@ -114,15 +114,42 @@ async def gesn_expand(code: str, qty: float = Query(1.0), _user=Depends(require_
     return {"code": code, "qty": qty, "resources": lines}
 
 
+@router.get("/norms/browse")
+async def smeta_norm_browse(
+    q: str = Query(""),
+    family: str = Query(""),
+    collection: str = Query(""),
+    table: str = Query(""),
+    limit: int = Query(50, ge=1, le=1000),
+    _user=Depends(require_user),
+):
+    """Read-only typed norm browser. It returns cards/navigation and never selects a norm."""
+    from proxy.smeta_core.norm_browser import browse_norm_catalog, browse_norms
+
+    if q.strip():
+        return await asyncio.to_thread(browse_norms, q, limit=min(limit, 50))
+    return await asyncio.to_thread(
+        browse_norm_catalog,
+        family=family,
+        collection=collection,
+        table=table,
+        limit=limit,
+    )
+
+
 @router.post("/assemble")
 async def lsr_assemble(req: AssembleRequest, _user=Depends(require_user)):
     """Собрать ЛСР из позиций: ресурсы→цены (ФГИС ЦС/КАЦ)→стеснённость→НР/СП→Всего→свод."""
     try:
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             la.assemble, req.positions,
             book=req.book, kac_prices=req.kac_prices,
             condition=req.condition, k_ozp=req.k_ozp, k_em=req.k_em,
         )
+        result["api_contract"] = "calculation_only"
+        result["workflow_authority"] = False
+        result["evidence_status"] = "not_asserted"
+        return result
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -182,7 +209,7 @@ async def lsr_multi_trace(req: LsrTraceRequest, _user=Depends(require_user)):
     Read-only evidence-слой — контракт /assemble не меняется."""
     try:
         pricebook = await asyncio.to_thread(la._resolve_book, req.book)
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             rim.build_lsr_trace, req.positions,
             pricebook=pricebook,
             kac_map=req.kac_prices,
@@ -191,6 +218,10 @@ async def lsr_multi_trace(req: LsrTraceRequest, _user=Depends(require_user)):
             coefficient_basis=(req.coefficient_basis or ""),
             name=(req.name or ""),
         )
+        result["api_contract"] = "calculation_only"
+        result["workflow_authority"] = False
+        result["evidence_status"] = "not_asserted"
+        return result
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -203,15 +234,19 @@ async def lsr_multi_trace_from_rows(req: LsrRowsTraceRequest, _user=Depends(requ
     Физические количества переводятся в измеритель нормы (например 61 м2 / 100 м2 = 0.61).
     """
     try:
-        pricebook = await asyncio.to_thread(la._resolve_book, req.book)
+        from proxy.smeta_core.workflow import calculate_visible_rows_revision
+
         return await asyncio.to_thread(
-            rim.build_lsr_trace_from_visible_rows, req.rows,
-            pricebook=pricebook,
+            calculate_visible_rows_revision, req.rows,
+            selected_by="user",
+            created_by="user",
+            change_note="API /api/lsr/lsr-trace/from-rows",
+            book=req.book,
             kac_map=req.kac_prices,
             k_ozp=(req.k_ozp if req.k_ozp is not None else 1.0),
             k_em=(req.k_em if req.k_em is not None else 1.0),
             coefficient_basis=(req.coefficient_basis or ""),
-            name=(req.name or ""),
+            title=(req.name or "Локальный сметный расчет (смета)"),
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -252,15 +287,19 @@ async def lsr_multi_trace_export(req: LsrTraceRequest, _user=Depends(require_use
 async def lsr_multi_trace_from_rows_export(req: LsrRowsTraceRequest, _user=Depends(require_user)):
     """Строки ЛСР/ВОР с выбранными шифрами → XLSX ЛСР РИМ по форме Приложения 3."""
     try:
-        pricebook = await asyncio.to_thread(la._resolve_book, req.book)
+        from proxy.smeta_core.workflow import calculate_visible_rows_revision
+
         lsr = await asyncio.to_thread(
-            rim.build_lsr_trace_from_visible_rows, req.rows,
-            pricebook=pricebook,
+            calculate_visible_rows_revision, req.rows,
+            selected_by="user",
+            created_by="user",
+            change_note="API /api/lsr/lsr-trace/from-rows/export",
+            book=req.book,
             kac_map=req.kac_prices,
             k_ozp=(req.k_ozp if req.k_ozp is not None else 1.0),
             k_em=(req.k_em if req.k_em is not None else 1.0),
             coefficient_basis=(req.coefficient_basis or ""),
-            name=(req.name or ""),
+            title=(req.name or "Локальный сметный расчет (смета)"),
         )
     except ValueError as e:
         raise HTTPException(400, str(e))

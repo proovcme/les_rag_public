@@ -115,18 +115,20 @@ def test_default_pricebook_prefers_spb_over_first_alphabetic(monkeypatch):
     assert chosen["path"] == "/tmp/spb_2kv2026.parquet"
 
 
-def test_assemble_code_only_applies_nr_sp_from_norm_collection():
+def test_assemble_code_only_applies_explicit_nr_sp_rule_from_typed_collection():
     res = assemble([{
-        "code": "ГЭСНм38-01-001-01",
-        "qty": 664.71112,
-        "section": "Металлоконструкции",
+        "code": "ГЭСНм08-03-575-01",
+        "qty": 1,
+        "nr_sp_rule_id": "nrsp-49.3",
+        "section": "Электромонтаж",
     }], book="spb_2kv2026")
 
     pos = res["positions"][0]
-    assert pos["base"]["nr"] == 37258263.86
-    assert pos["base"]["sp"] == 18629131.93
-    assert pos["total"] == 110519705.74
-    assert res["summary"]["total"] == 110519705.74
+    assert pos["nr_sp_trace"]["rule_id"] == "nrsp-49.3"
+    assert pos["base"]["nr"] == 613.86
+    assert pos["base"]["sp"] == 322.75
+    assert pos["total"] == 1573.24
+    assert res["summary"]["total"] == 1573.24
 
 
 def test_machinist_aggregate_split_by_mapped_machines():
@@ -162,7 +164,7 @@ def test_machinist_aggregate_stays_missing_without_complete_mapping():
     res = compute_position(pos)
 
     assert res["base"]["zpm"] == 0
-    assert res["flags"] and "Затраты труда машинистов" in res["flags"][0]
+    assert any("Затраты труда машинистов" in flag for flag in res["flags"])
 
 
 def test_export_assembled_csv_and_xlsx(tmp_path):

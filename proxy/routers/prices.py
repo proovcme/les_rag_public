@@ -79,11 +79,19 @@ async def prices_search(
     limit: int = Query(20, ge=1, le=100),
     _user=Depends(require_user),
 ):
-    """Поиск позиций по наименованию — когда точный код неизвестен."""
+    """Model-visible кандидаты ФГИС по коду/наименованию; endpoint не выбирает ресурс."""
     path = _resolve_book(book)
     pb = await asyncio.to_thread(fps.get_pricebook, str(path))
-    hits = pb.search(q, limit=limit)
-    return {"book": path.stem, "count": len(hits), "rows": hits}
+    hits = pb.browse(q, limit=limit)
+    return {
+        "schema": "fgis_price_browse_v1",
+        "book": path.stem,
+        "region": pb.region,
+        "quarter": pb.quarter,
+        "selection_owner": "model_or_user",
+        "count": len(hits),
+        "rows": hits,
+    }
 
 
 @router.post("/import")

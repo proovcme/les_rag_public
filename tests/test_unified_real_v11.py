@@ -153,7 +153,7 @@ def test_v04_source_scope_regression():
 def test_v03_lsr_regression(tmp_path):
     ds = ch.write_demo_project_doc(tmp_path)
     r = u.run_unified_construction_harness("собери предварительную ЛСР по Ф9", dataset_ids=[ds], storage_root=tmp_path)
-    assert r.total_status == "complete" and r.final_total is not None
+    assert r.total_status == "blocked" and r.final_total is None
 
 def test_unit_gate_regression():
-    assert ch.lsr_assemble([{"code": "06-02-001-01", "work": "плита", "unit": "м3", "qty": 720}])["asm_positions"][0]["qty"] == 7.2
+    assert ch.lsr_assemble([{"code": "ГЭСН12-01-034-02", "work": "обрешётка", "unit": "м2", "qty": 720}])["asm_positions"][0]["qty"] == 7.2

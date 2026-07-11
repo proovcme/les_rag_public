@@ -22,7 +22,9 @@ from proxy.services.gesn_service import _display_code, _f, _norm_code, _split_no
 DEFAULT_SOURCE = Path("data/gesn_base/gesn2022_unified.parquet")
 DEFAULT_OUT = Path("data/smeta_base/les_smeta_base.sqlite")
 DEFAULT_MANIFEST = Path("data/smeta_base/les_smeta_base_manifest.json")
-SCHEMA = "les_smeta_base_v1"
+DEFAULT_EDITION = "FSNB-2022"
+SCHEMA = "les_smeta_base_v2"
+INTEGRITY_SCHEMA = "les_smeta_base_integrity_v1"
 
 
 def _text(value: Any) -> str:
@@ -75,19 +77,18 @@ def _sha256(path: Path) -> str:
 
 
 def _norm_identity(rec: dict[str, Any]) -> tuple[str, str, str, str]:
-    base_type = _text(rec.get("base_type")) or _split_norm_ref(rec.get("norm_code"))[0]
+    base_type = _text(rec.get("base_type"))
     key = _text(rec.get("norm_key"))
     bare = key.split(":", 1)[-1] if ":" in key else ""
-    if not bare:
-        bare = _norm_code(rec.get("norm_code"))
-    if not key and bare:
-        key = f"{base_type}:{bare}"
+    if not key or not base_type or not bare:
+        return "", "", "", ""
     return key, base_type, bare, _display_code(rec.get("norm_code") or bare, base_type)
 
 
 def _create_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
+        PRAGMA foreign_keys = ON;
         PRAGMA journal_mode = WAL;
         PRAGMA synchronous = NORMAL;
 
@@ -98,6 +99,8 @@ def _create_schema(conn: sqlite3.Connection) -> None:
 
         CREATE TABLE norms (
             norm_key TEXT PRIMARY KEY,
+            norm_id TEXT NOT NULL UNIQUE,
+            edition TEXT NOT NULL,
             display_code TEXT NOT NULL,
             base_type TEXT NOT NULL,
             bare_code TEXT NOT NULL,
@@ -112,6 +115,7 @@ def _create_schema(conn: sqlite3.Connection) -> None:
 
         CREATE TABLE resources (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            parent_norm_id TEXT NOT NULL,
             norm_key TEXT NOT NULL,
             kind TEXT NOT NULL,
             resource_code TEXT NOT NULL DEFAULT '',
@@ -121,6 +125,7 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             price REAL,
             source_doc TEXT,
             source_guid TEXT,
+            FOREIGN KEY(parent_norm_id) REFERENCES norms(norm_id),
             FOREIGN KEY(norm_key) REFERENCES norms(norm_key)
         );
 
@@ -128,9 +133,17 @@ def _create_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX idx_norms_bare_code ON norms(bare_code);
         CREATE INDEX idx_norms_family_bare ON norms(base_type, bare_code);
         CREATE INDEX idx_resources_norm_key ON resources(norm_key);
+        CREATE INDEX idx_resources_parent_norm_id ON resources(parent_norm_id);
         CREATE INDEX idx_resources_kind ON resources(kind);
         CREATE INDEX idx_resources_code ON resources(resource_code);
         CREATE INDEX idx_resources_name ON resources(resource_name);
+
+        CREATE VIRTUAL TABLE norms_fts USING fts5(
+            norm_key UNINDEXED,
+            norm_name,
+            work_steps,
+            tokenize='unicode61'
+        );
         """
     )
 
@@ -140,6 +153,8 @@ def build_structured_base(
     source: Path = DEFAULT_SOURCE,
     out: Path = DEFAULT_OUT,
     manifest_out: Path = DEFAULT_MANIFEST,
+    integrity_out: Path | None = None,
+    edition: str = DEFAULT_EDITION,
 ) -> dict[str, Any]:
     if not source.exists():
         raise FileNotFoundError(source)
@@ -151,15 +166,28 @@ def build_structured_base(
     skipped_rows_missing_key = 0
     skipped_resource_rows = 0
     resource_identity_duplicates_dropped = 0
+    untrusted_identity_rows_quarantined = 0
+    family_mismatch_rows_quarantined = 0
     for rec in df.to_dict(orient="records"):
         norm_key, base_type, bare_code, display_code = _norm_identity(rec)
         if not norm_key or not bare_code:
             skipped_rows_missing_key += 1
             continue
+        identity_source = _text(rec.get("_identity_source")) or "provided"
+        if identity_source in {"untyped_bare", "default"}:
+            untrusted_identity_rows_quarantined += 1
+            continue
+        key_base = norm_key.split(":", 1)[0]
+        if key_base != base_type:
+            family_mismatch_rows_quarantined += 1
+            continue
+        norm_id = f"{edition}|{base_type}|{bare_code}"
         norm = grouped.setdefault(
             norm_key,
             {
                 "norm_key": norm_key,
+                "norm_id": norm_id,
+                "edition": edition,
                 "display_code": display_code,
                 "base_type": base_type,
                 "bare_code": bare_code,
@@ -170,10 +198,20 @@ def build_structured_base(
                 "source_guid": "",
                 "resources": [],
                 "resource_identities": set(),
+                "norm_names": set(),
+                "norm_units": set(),
+                "base_types": set(),
             },
         )
-        norm["norm_name"] = norm["norm_name"] or _text(rec.get("norm_name"))
-        norm["norm_unit"] = norm["norm_unit"] or _text(rec.get("norm_unit"))
+        row_name = _text(rec.get("norm_name"))
+        row_unit = _text(rec.get("norm_unit"))
+        if row_name:
+            norm["norm_names"].add(row_name)
+        if row_unit:
+            norm["norm_units"].add(row_unit)
+        norm["base_types"].add(base_type)
+        norm["norm_name"] = norm["norm_name"] or row_name
+        norm["norm_unit"] = norm["norm_unit"] or row_unit
         norm["source_doc"] = norm["source_doc"] or _text(rec.get("source_doc"))
         norm["source_guid"] = norm["source_guid"] or _text(rec.get("source_guid"))
         if not norm["work_steps"]:
@@ -205,10 +243,15 @@ def build_structured_base(
         key for key, norm in grouped.items() if not norm["norm_name"] or not norm["norm_unit"]
     ]
     no_resource_norms = [key for key, norm in grouped.items() if not norm["resources"]]
+    metadata_conflict_norms = [
+        key
+        for key, norm in grouped.items()
+        if len(norm["norm_names"]) > 1 or len(norm["norm_units"]) > 1 or len(norm["base_types"]) > 1
+    ]
     included = {
         key: norm
         for key, norm in grouped.items()
-        if norm["norm_name"] and norm["norm_unit"] and norm["resources"]
+        if norm["norm_name"] and norm["norm_unit"] and norm["resources"] and key not in metadata_conflict_norms
     }
 
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -221,6 +264,7 @@ def build_structured_base(
         now = datetime.now(timezone.utc).isoformat()
         meta = {
             "schema": SCHEMA,
+            "edition": edition,
             "created_at": now,
             "source_path": str(source),
             "source_sha256": _sha256(source),
@@ -232,12 +276,14 @@ def build_structured_base(
             conn.execute(
                 """
                 INSERT INTO norms(
-                    norm_key, display_code, base_type, bare_code, norm_name, norm_unit,
+                    norm_key, norm_id, edition, display_code, base_type, bare_code, norm_name, norm_unit,
                     work_steps, source_doc, source_guid, resource_count, resource_kinds
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     norm["norm_key"],
+                    norm["norm_id"],
+                    norm["edition"],
                     norm["display_code"],
                     norm["base_type"],
                     norm["bare_code"],
@@ -250,15 +296,24 @@ def build_structured_base(
                     json.dumps(resource_kinds, ensure_ascii=False),
                 ),
             )
+            conn.execute(
+                "INSERT INTO norms_fts(norm_key, norm_name, work_steps) VALUES(?, ?, ?)",
+                (
+                    norm["norm_key"],
+                    norm["norm_name"],
+                    json.dumps(norm["work_steps"], ensure_ascii=False),
+                ),
+            )
             conn.executemany(
                 """
                 INSERT INTO resources(
-                    norm_key, kind, resource_code, resource_name, resource_unit,
+                    parent_norm_id, norm_key, kind, resource_code, resource_name, resource_unit,
                     per_unit, price, source_doc, source_guid
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
+                        norm["norm_id"],
                         norm["norm_key"],
                         res["kind"],
                         res["resource_code"],
@@ -277,17 +332,94 @@ def build_structured_base(
         conn.close()
     tmp_out.replace(out)
 
+    source_sha256 = _sha256(source)
+    base_sha256 = _sha256(out)
+    with sqlite3.connect(out) as check_conn:
+        check_conn.execute("PRAGMA foreign_keys = ON")
+        orphan_resources = int(
+            check_conn.execute(
+                """
+                SELECT count(*) FROM resources r
+                LEFT JOIN norms n ON n.norm_id = r.parent_norm_id
+                WHERE n.norm_id IS NULL
+                """
+            ).fetchone()[0]
+        )
+        duplicate_norm_keys = int(
+            check_conn.execute(
+                "SELECT count(*) FROM (SELECT norm_key FROM norms GROUP BY norm_key HAVING count(*) > 1)"
+            ).fetchone()[0]
+        )
+        resource_parent_mismatch = int(
+            check_conn.execute(
+                """
+                SELECT count(*) FROM resources r
+                JOIN norms n ON n.norm_id = r.parent_norm_id
+                WHERE r.norm_key <> n.norm_key
+                """
+            ).fetchone()[0]
+        )
+        cross_family_contamination = int(
+            check_conn.execute(
+                "SELECT count(*) FROM norms WHERE substr(norm_key, 1, instr(norm_key, ':') - 1) <> base_type"
+            ).fetchone()[0]
+        )
+        machine_norm_count = int(check_conn.execute("SELECT count(*) FROM norms").fetchone()[0])
+        missing_provenance = int(
+            check_conn.execute(
+                "SELECT count(*) FROM norms WHERE source_doc = '' OR source_guid = ''"
+            ).fetchone()[0]
+        ) + int(
+            check_conn.execute(
+                "SELECT count(*) FROM resources WHERE source_doc = '' OR source_guid = ''"
+            ).fetchone()[0]
+        )
+        fts_coverage = abs(
+            machine_norm_count - int(check_conn.execute("SELECT count(*) FROM norms_fts").fetchone()[0])
+        )
+
+    checks = {
+        "cross_family_contamination": {"failures": cross_family_contamination},
+        "orphan_resources": {"failures": orphan_resources},
+        "duplicate_norm_keys": {"failures": duplicate_norm_keys},
+        "resource_parent_mismatch": {"failures": resource_parent_mismatch},
+        "empty_machine_base": {"failures": 0 if machine_norm_count else 1},
+        "missing_provenance": {"failures": missing_provenance},
+        "fts_coverage": {"failures": fts_coverage},
+    }
+    integrity = {
+        "schema": INTEGRITY_SCHEMA,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "verdict": "passed" if not any(item["failures"] for item in checks.values()) else "failed",
+        "edition": edition,
+        "source_sha256": source_sha256,
+        "base_sha256": base_sha256,
+        "checks": checks,
+        "quarantine": {
+            "untrusted_identity_rows": untrusted_identity_rows_quarantined,
+            "family_mismatch_rows": family_mismatch_rows_quarantined,
+            "metadata_conflict_norms": len(metadata_conflict_norms),
+        },
+    }
+    integrity_out = integrity_out or out.with_name(f"{out.stem}_integrity.json")
+    integrity_out.parent.mkdir(parents=True, exist_ok=True)
+    tmp_integrity = integrity_out.with_suffix(integrity_out.suffix + ".tmp")
+    tmp_integrity.write_text(json.dumps(integrity, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_integrity.replace(integrity_out)
+
     manifest = {
         "schema": SCHEMA,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "source": {
             "path": str(source),
-            "sha256": _sha256(source),
+            "sha256": source_sha256,
             "rows": int(len(df)),
             "norm_keys": int(df["norm_key"].nunique()) if "norm_key" in df.columns else len(grouped),
         },
         "output": {
             "path": str(out),
+            "sha256": base_sha256,
+            "edition": edition,
             "norms": len(included),
             "resources": sum(len(norm["resources"]) for norm in included.values()),
         },
@@ -297,11 +429,16 @@ def build_structured_base(
             "resource_identity_duplicates_dropped": resource_identity_duplicates_dropped,
             "norms_missing_name_or_unit": len(missing_metadata_norms),
             "norms_without_resources": len(no_resource_norms),
+            "untrusted_identity_rows_quarantined": untrusted_identity_rows_quarantined,
+            "family_mismatch_rows_quarantined": family_mismatch_rows_quarantined,
+            "metadata_conflict_norms": len(metadata_conflict_norms),
         },
         "examples": {
             "missing_metadata_norm_keys": sorted(missing_metadata_norms)[:50],
             "norms_without_resources": sorted(no_resource_norms)[:50],
+            "metadata_conflict_norm_keys": sorted(metadata_conflict_norms)[:50],
         },
+        "integrity": {"path": str(integrity_out), "schema": INTEGRITY_SCHEMA, "verdict": integrity["verdict"]},
     }
     tmp_manifest = manifest_out.with_suffix(manifest_out.suffix + ".tmp")
     manifest_out.parent.mkdir(parents=True, exist_ok=True)
@@ -315,12 +452,16 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument("--source", default=str(DEFAULT_SOURCE))
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     parser.add_argument("--manifest-out", default=str(DEFAULT_MANIFEST))
+    parser.add_argument("--integrity-out", default="")
+    parser.add_argument("--edition", default=DEFAULT_EDITION)
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     manifest = build_structured_base(
         source=Path(args.source),
         out=Path(args.out),
         manifest_out=Path(args.manifest_out),
+        integrity_out=Path(args.integrity_out) if args.integrity_out else None,
+        edition=str(args.edition),
     )
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
     return 0

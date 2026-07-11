@@ -52,6 +52,39 @@ def test_chat_ui_has_new_chat_model_chip_answer_badge_and_wrapping_tables():
     assert "serr = stream_state[\"error\"] or {}" in source
 
 
+def test_chat_ui_mode_guidance_is_compact_and_input_focused():
+    guidance = chat_page.CHAT_MODE_GUIDANCE
+
+    assert set(guidance) == {"text", "rag", "smeta", "doc_review"}
+    for item in guidance.values():
+        assert item["title"]
+        assert item["description"]
+        assert item["data_hint"]
+        assert 1 <= len(item["examples"]) <= 3
+
+
+def test_chat_ui_primary_surface_uses_progressive_disclosure():
+    source = inspect.getsource(chat_page.build_chat)
+    styles = Path("sovushka/styles.py").read_text(encoding="utf-8")
+
+    assert '<div class="sov-chat-title">Чат</div>' in source
+    assert "Документы, расчёты и проверка" in source
+    assert "technical_status.set_visibility(False)" in source
+    assert 'classes("sov-mode-guide")' in source
+    assert 'classes("sov-mode-example")' in source
+    assert "lambda _event, mm=_m: _set_mode(mm)" in source
+    assert "lambda _event, example=_example: _fill_prompt(str(example))" in source
+    assert 'icon="o_more_horiz"' in source
+    assert 'ui.expansion("Команды"' in source
+    assert 'if key == "text":' in source
+    assert "_set_artifacts_visible(False)" in source
+    assert ".sov-mode-guide" in styles
+    assert ".sov-mode-example" in styles
+    assert "min-height: 40px" in styles
+    assert "scale: .96" in styles
+    assert "max-width: 1440px" in styles
+
+
 def test_instrumenty_has_editable_prompt_controls():
     source = inspect.getsource(instrumenty_page.build_instrumenty)
     styles = Path("sovushka/styles.py").read_text(encoding="utf-8")
@@ -234,8 +267,9 @@ def test_attachment_payload_scopes_quick_and_index_files():
 
 def test_attachment_payload_passes_read_context():
     assert _attachment_chat_payload(
-        {"id": "read_1", "mode": "read", "name": "ТЗ.docx", "text": "Текст файла"}
+        {"id": "read_123456abcdef", "mode": "read", "name": "ТЗ.docx", "text": "Текст файла"}
     ) == {
+        "attachment_id": "read_123456abcdef",
         "attachment_context": "Файл: ТЗ.docx\n\nТекст файла"
     }
 

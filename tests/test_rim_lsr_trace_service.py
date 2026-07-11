@@ -50,9 +50,9 @@ def test_rim_trace_from_gesn_seed_reproduces_gold_position():
 def test_visible_rows_accept_colon_prefixed_norm_codes():
     trace = build_lsr_trace_from_visible_rows([
         {
-            "basis": "ГЭСНм:38-01-001-01",
-            "title": "Монтаж листовых металлических конструкций",
-            "unit": "т",
+            "basis": "ГЭСНм:08-03-575-01",
+            "title": "Монтаж прибора или аппарата",
+            "unit": "шт",
             "quantity": 1,
         }
     ])
@@ -60,31 +60,31 @@ def test_visible_rows_accept_colon_prefixed_norm_codes():
     summary = trace["summary"]
     assert summary["bound_rows"] == 1
     assert trace["row_bindings"][0]["status"] == "bound"
-    assert trace["sections"][0]["positions"][0]["code"] == "ГЭСНм38-01-001-01"
+    assert trace["sections"][0]["positions"][0]["code"] == "ГЭСНм08-03-575-01"
 
 
 def test_visible_rows_accept_engineering_count_unit_aliases():
     trace = build_lsr_trace_from_visible_rows([
         {
-            "basis": "ГЭСНм:10-02-050-01",
-            "title": "Установка телекоммуникационного шкафа",
-            "unit": "шт",
+            "basis": "ГЭСНм:08-03-575-01",
+            "title": "Установка электротехнического аппарата",
+            "unit": "компл",
             "quantity": 1,
         },
         {
-            "basis": "ГЭСН:10-03-032-02",
-            "title": "Проверка линий связи",
-            "unit": "линия",
-            "quantity": 80,
+            "basis": "ГЭСН:17-01-010-01",
+            "title": "Установка ревизионных люков",
+            "unit": "шт",
+            "quantity": 10,
         },
     ])
 
     summary = trace["summary"]
     assert summary["bound_rows"] == 2
     assert trace["row_bindings"][0]["quantity_trace"]["status"] == "direct_from_row"
-    assert trace["row_bindings"][1]["quantity_trace"]["status"] == "direct_from_row"
-    assert trace["sections"][0]["positions"][0]["code"] == "ГЭСНм10-02-050-01"
-    assert trace["sections"][0]["positions"][1]["code"] == "ГЭСН10-03-032-02"
+    assert trace["row_bindings"][1]["quantity_trace"]["status"] == "unit_conversion"
+    assert trace["sections"][0]["positions"][0]["code"] == "ГЭСНм08-03-575-01"
+    assert trace["sections"][0]["positions"][1]["code"] == "ГЭСН17-01-010-01"
 
 
 def test_visible_rows_convert_piece_dimensions_to_area_norm_qty():
@@ -181,6 +181,30 @@ def test_rim_trace_preserves_fgis_current_vs_base_index_columns():
     assert trace["summary"]["direct"] == 3509.13
 
 
+def test_missing_price_and_unresolved_resource_review_separate_known_and_full_amount():
+    trace = build_position_trace({
+        "code": "ГЭСН00-00-000-00",
+        "name": "Тестовая аналоговая работа",
+        "unit": "шт",
+        "qty": 2,
+        "nr_pct": 0,
+        "sp_pct": 0,
+        "resource_review_status": "unresolved",
+        "resource_review_reason": "не проверен чужой материал",
+        "resources": [
+            {"kind": "material", "code": "01.1", "name": "Материал без цены", "unit": "шт", "per_unit": 1},
+        ],
+    })
+
+    summary = trace["summary"]
+    assert summary["known_amount"] == 0.0
+    assert summary["full_amount"] is None
+    assert summary["amount_status"] == "partial"
+    assert "resource_review_unresolved" in summary["completeness_reasons"]
+    assert any(str(reason).startswith("price_missing:") for reason in summary["completeness_reasons"])
+    assert _rows_by_type(trace)["position_total"]["columns"]["3"] == "Известная стоимость позиции"
+
+
 def test_build_lsr_trace_multi_position_sections_and_grand_total():
     # две gold-позиции в двух разделах → общий итог = 2× эталон; итоги разделов и свод — Σ позиций
     positions = [
@@ -274,6 +298,21 @@ def test_lsr_trace_from_visible_rows_keeps_unbound_rows_out_of_priced_final():
     assert lsr["summary"]["bound_rows"] == 1
     assert lsr["summary"]["unbound_rows"] == 1
     assert lsr["row_bindings"][1]["status"] == "norm_selection_required"
+
+
+def test_unbound_lsr_placeholder_uses_blank_missing_price_not_zero():
+    from proxy.smeta_core.contracts import WorkItem
+    from proxy.smeta_core.lsr_renderer import _placeholder
+
+    missing = _placeholder(
+        WorkItem(work_id="row-2", title="Работа без нормы", quantity=1, unit="шт"),
+        "norm_selection_required",
+        "норма не выбрана",
+    )
+
+    assert missing["summary"]["total"] is None
+    assert missing["rows"][0]["columns"]["12"] is None
+    assert missing["rows"][1]["columns"]["12"] is None
 
 
 def test_lsr_trace_from_visible_rows_does_not_bind_unknown_norm_code():

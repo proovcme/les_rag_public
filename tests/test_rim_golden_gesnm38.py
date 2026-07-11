@@ -46,4 +46,4 @@ def test_missing_material_price_is_marked_as_kac():
     row = next(r for r in trace["rows"] if r["type"] == "resource_material")
     assert row["source"] == "needs_kac"
     assert row["meta"]["price_action"] == "needs_kac"
-    assert "нужен КАЦ" in trace["summary"]["flags"][0]
+    assert any("нужен КАЦ" in flag for flag in trace["summary"]["flags"])

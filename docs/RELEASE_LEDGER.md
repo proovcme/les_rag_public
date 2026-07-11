@@ -4,16 +4,210 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-07-10)
+## Текущее состояние (2026-07-11)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.352  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.364  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.352 module-owned system datasets
-НЕ задеплоено:             нет; production dense collection намеренно не переключена на bounded canary
-рантайм /api/version:      0.24.0.352; финальный alignment подтверждается повторным `make ship`
+задеплоено на рантайм:     0.24.0.364 UI-only поверх runtime-базы 0.24.0.357
+НЕ задеплоено:             RRF contract-v2 0.24.0.360, smeta-изменения 0.24.0.358 и прочий dev divergence
+рантайм /api/version:      0.24.0.364, stamp ok, public/local подтверждены
 ```
+
+> 0.24.0.364 — читаемые Qdrant-справки Л.И.С.Т.
+>
+> Дата: 2026-07-11
+> Статус: dev + runtime, UI-only deploy 2026-07-11.
+> Л.И.С.Т. закреплён как файловый проводник проекта: без ИИ показывает структуру и извлечённые
+> проектные данные, а через существующий индекс Qdrant/LES даёт проверяемые справки. Справка
+> о датасете теперь всегда находится над статистикой и собирается из фрагментов нескольких
+> индексированных документов; справка о файле открывается кликом по строке. Карточки датасетов,
+> файлов, дерева и статистики очищены от россыпи контурных меток, raw CAD/BIM error заменён
+> человеческим пояснением, служебные dot-файлы отсортированы в конец. BAI browser smoke:
+> справка датасета `Qdrant/LES · 5 955 фрагментов · прочитано 4 файла`, справка выбранного PDF —
+> `Qdrant/LES: 100 фрагментов`, selected-state один, чипов в карточках датасетов/файлов — `0`.
+> Проверки: `18 passed`; `make verify` — `2741 tests collected`; `make test` не запускался по
+> указанию пользователя. Deploy: `documents.py`, `styles.py`, `version_service.py`; local/public
+> `/api/version=0.24.0.364`, deploy stamp `ok`, hash mismatch `[]`.
+
+> 0.24.0.363 — проводник состава датасета
+>
+> Дата: 2026-07-11
+> Статус: dev + runtime, UI-only deploy 2026-07-11.
+> «Состав датасета» стал read-only проводником Л.И.С.Т.: иерархия папок с вложенными файлами,
+> переключатели `Дерево / Плитка / Список / Таблица`, статистика по форматам и состоянию, фильтры
+> по папке, расширению, статусу, типу metadata и имени/пути, а также инспектор выбранной папки.
+> Для файла инспектор показывает metadata и краткую справку по индексированным фрагментам; при
+> наличии `point_id` источник честно маркируется `Qdrant/LES`, иначе — `Индекс LES`. В левую панель
+> возвращён явный фильтр `Все / Проекты / Не проекты`; пока `dataset_kind` у всех живых корпусов
+> пуст, UI использует ограниченный fallback по известным системным префиксам, не меняя metadata.
+> Browser smoke на BAI: 80 файлов, пять полей фильтрации, таблица на 80 строк и чистая справка
+> проектного PDF из 100 Qdrant/LES-фрагментов. Проверки: `18 passed`; `make verify` —
+> `2741 tests collected`; `make test` не запускался по указанию пользователя. Deploy:
+> `documents.py`, `styles.py`, `version_service.py`; local/public `/api/version=0.24.0.363`,
+> deploy stamp `ok`, hash mismatch `[]`.
+
+> 0.24.0.362 — информативный состав датасета
+>
+> Дата: 2026-07-11
+> Статус: dev + runtime, UI-only deploy 2026-07-11.
+> «Состав датасета» больше не подменяет полный корпус коротким PDF-source-map Л.И.С.Т. Блок строится
+> по всему реестру документов и только обогащает его LIST-метаданными. Сразу раскрыты: общее число
+> файлов и папок, доступно/ожидает/проверить, распределение форматов и карточки первых 12 папок с
+> количеством, форматами и тремя примерами файлов. Для ARTEL_Index UI показывает 134 файла,
+> 74 папки, 87 доступных, 47 ожидающих, MD 132/PDF 2 вместо прежнего малоинформативного заголовка.
+> Проверки: `18 passed`; `make verify` — `2747 tests collected`; browser smoke на ARTEL_Index;
+> `make test` не запускался по указанию пользователя. Deploy: `documents.py`, `styles.py`,
+> `version_service.py`; local/public `/api/version=0.24.0.362`, stamp `ok`, mismatch `[]`.
+
+> 0.24.0.361 — визуальная СОД документов и широкий композер
+>
+> Дата: 2026-07-11
+> Статус: dev + runtime, UI-only deploy 2026-07-11.
+> Вкладка «Документы» перестроена поверх существующего read-only Document Explorer: единый поиск,
+> три панели `Датасеты / Файлы / Обзор`, карточки без UUID и chunk chrome, типовые иконки файлов,
+> режимы `Обзор/Текст/CAD-BIM` и вторичные действия через меню. Л.И.С.Т. остаётся source-map и
+> показывает состав датасета, проектную структуру, разделы и файлы; mutation-кнопки классификации,
+> перечитывания PDF и операторской заметки убраны из первого слоя. Композер чата расширен до
+> адаптивных `1440px`, чтобы совпадать с рабочей шириной ленты. Backend API/retrieval не менялись.
+> Проверки: `51 passed`; `make verify` — `2744 tests collected`; browser smoke на отдельном `:8052`
+> и live `:8051`: 36 карточек датасетов, 134 файла в выбранном корпусе, UUID/chunk chrome скрыты,
+> все видимые действия ≥40 px, chat composer `1170/1248px` (`94%`, max `1440px`). `make test`
+> не запускался по прямому указанию пользователя. Deploy: `documents.py`, `styles.py`,
+> `version_service.py`; local/public `/api/version=0.24.0.361`, stamp `ok`, mismatch `[]`.
+
+> 0.24.0.360 — corpus-wide contract-v2 native RRF
+>
+> Дата: 2026-07-11
+> Статус: dev; deploy заблокирован до полного re-embed/readiness gate.
+> Причина: активная production collection физически содержит dense vectors, но sample-аудит выявил
+> пять несовместимых embedding fingerprints и два backend-а. Fail-closed contract поэтому корректно
+> оставляет runtime в lexical-only. Частный canary доказал, что Qwen dense + BM25 sparse + Qdrant RRF
+> работает, но три датасета не являются системным исправлением.
+> Правки: native RRF стал кодовым default; contract v2 привязан к collection и фиксирует embedding,
+> chunking, named dense/sparse schema и point fingerprint. Parse больше нельзя запустить без
+> совместимого contract и нельзя записать named-point без обоих vector channels. Мигратор по умолчанию
+> берёт все indexed datasets, умеет настоящий resume, пишет migration report и требует 100% source
+> coverage без dropped points. `rag_rrf_readiness.py` блокирует activation без полного migration
+> report, единого fingerprint, dense+sparse у каждой точки и покрытия каждого dataset. Старый CLI,
+> копировавший legacy dense vectors, выведен из эксплуатации. Trace различает настоящий RRF и
+> single-channel fallback.
+> Read-only приёмка scope: `34` indexed datasets покрывают `228017/228017` production points,
+> orphan scope `0`. Canary live probe: dense/sparse top-5 пересеклись на `2/5`, fused top-5 получил
+> кандидатов из обоих каналов и поднял релевантный СП 1.13130 на первое место.
+> После решения «один системный курс» удалены runtime sparse-sidecar, unnamed/legacy backend env
+> choices, vector-copy/sparse-reindex CLI и domain-prose query expansion; фиксированные окна строк
+> старого smeta selector обезврежены. Из Qdrant удалены неактивные `les_rag`, старый unnamed Qwen,
+> bounded contract-v1, sparse-sidecar и smeta v1. До clean switch сохранены только активный общий
+> `native_v1`, активный smeta v2 и строящийся с нуля CoreML+BM25 smeta v3; общий contract-v2 будет
+> создан очередью после readiness v3.
+> Проверки на этом этапе: `py_compile` изменённых Python-модулей; тесты намеренно отложены до
+> завершения уже идущего smeta dense build. Runtime, Qdrant production collection и сервисы не менялись.
+
+> 0.24.0.359 — conversation-first UI чата
+>
+> Дата: 2026-07-11
+> Статус: dev + runtime, UI-only deploy 2026-07-11.
+> Верхний слой чата очищен от инженерных меток и вторичных действий. Добавлены четыре явных режима
+> `Auto/Search/Estimates/Normcontrol` с коротким объяснением ожидаемых запросов и данных и максимум
+> тремя примерами, которые заполняют ввод без автоматической отправки. Команды, документы, служебные
+> источники и артефакты перенесены в компактное меню; технические `RAG/CRAG/MODEL` сохранены скрыто,
+> чтобы не менять текущую механику. Панель артефактов больше не открывается для обычного текста.
+> Backend payload, retrieval, model routing и живой runtime не менялись.
+> Проверки: браузерный smoke на отдельном NiceGUI `:8052` (переключение режима, заполнение примера,
+> закрытый artifact panel, свёрнутые команды, размеры действий); `64 passed`; `make verify` —
+> `2737 tests collected`; полный `make test` — `2735 passed`, два устаревших ожидания старого меню,
+> после замены этих контрактов затронутый набор зелёный.
+> Деплой: точечно перенесены `sovushka/pages/chat.py`, `sovushka/styles.py` и
+> `proxy/services/version_service.py`; перезапущены только Sovushka и proxy. Local/public
+> `/api/version` показывают `0.24.0.359`, deploy stamp `ok`, mismatch-файлов нет. Публичный
+> `/classic` сохраняет штатный `307 → /login`; новый UI проверен в том же runtime на `:8051/classic`.
+
+> 0.24.0.358 — архитектурный инвариант первой денежной ЛСР
+>
+> Дата: 2026-07-11
+> Статус: dev, deploy после полного gate.
+> Основной `estimate` закреплён как `model + skill/prompt → RAG/tools → calculator → formula XLSX`.
+> Модель выбирает работы, нормы, аналоги и coverage; код проверяет показанный/открытый код, единицы
+> и арифметику. Resource/component review, dominant review и пользовательское согласование отложены
+> до последующей ревизии и не могут блокировать первую ЛСР. `bind_norm` больше не требует расширенный
+> technology/component JSON. Native workflow сохраняет полный evidence открытых карточек и не имеет
+> короткого лимита, завершающего модель до решений. Архитектура описана в `ALGO-smeta`, `SMETA_MECHANICS`,
+> `modules/smeta-core`, `CODE_MAP`, `MODULE_INDEX` и smeta skill/reference. Регрессии проверяют отсутствие
+> pre-LSR reviewers, минимальный model-owned bind и одну задачу на 50 строк.
+
+> 0.24.0.357 — исполнимый resource review и честная полнота ЛСР
+>
+> Дата: 2026-07-11
+> Статус: dev + runtime targeted port; полный 7/10 live-gate не закрыт.
+> Живой native-agent теперь получает reference-карту структуры ГЭСН и хранилища LES. `bind_norm`
+> требует явное model decision `selected` и машинный conclusion применимости. Каждая выбранная норма
+> требует `keep_all_confirmed|actions_confirmed|unresolved`; пустые actions аналога больше не означают
+> молчаливое принятие чужих ресурсов. РИМ хранит `known_amount/full_amount`; missing цена, ФСЭМ/ОТм
+> или resource review делают полную стоимость null и меняют подписи XLSX на известную часть.
+> Первый fresh GPT-5.4 БАП: 207,7 с, 19 visible, 8 bound / 11 open, известная часть
+> 35 174,65 / 42 913,07 руб., full null. Он вскрыл отсутствие runtime ФСЭМ и несовпадение имён полей
+> resource actions. После исправления ФСЭМ (1 576 строк) и точного action contract второй fresh запуск
+> остановлен provod.ai с HTTP 402 на третьем ходу. 7/10 пока не заявляется.
+> Проверки: focused финальный smeta/service-source/prompt/artifact/FSEM/RIM gate `80 passed`; расширенный
+> smeta/chat gate ранее `153 passed`; `make verify` green (`2722 collected`); skill validation green.
+> Полный `make test` до последнего boundary-fix: `2694 passed, 28 failed`; один новый artifact-fail затем
+> исправлен и его focused test green, остаются прежние 27 legacy construction/spec/unified/context failures.
+> Runtime: `0.24.0.357`, alignment 102/102, FSEM service source `ok`.
+
+> 0.24.0.356 — человеческий ответ ЛСР и промежуточная цель качества 7/10
+>
+> Дата: 2026-07-11
+> Статус: dev only.
+> Машинный `smeta_document_workflow_v2` не пересказывается пользователю: отдельный детерминированный
+> formatter сообщает покрытие строк, стоимость рассчитанной части и подготовленный Excel русским
+> текстом и форматом денег. Skill закрепляет ту же границу. Живой БАП 14 bound / 5 open зафиксирован
+> как промежуточный успех, а resource review аналогов, `known_amount/full_amount`, ФСЭМ/ЗПМ и
+> согласованность текста решения с binding — как обязательный гейт к 7/10.
+> Проверки: formatter/core/chat focused suite `86 passed`; skill validation passed; `make verify`
+> green (`2719 collected`). Полный `make test`: `2692 passed, 27 failed`; новый formatter и smeta-core
+> green, падения находятся в ранее дрейфующих legacy F9/specification/unified/profile/retrieval слоях.
+
+> 0.24.0.355 — model-direct smeta RAG, quantity contract и живой БАП
+>
+> Дата: 2026-07-11
+> Статус: dev + targeted runtime port, полный ship gate выполняется после живой ЛСР.
+> GPT получает исходник, skill и native search/read/bind/coverage tools без code-side stage selector.
+> Все search_norms одного хода дедуплицируются и исполняются batch; mass triage использует hybrid/RRF
+> без последовательного rerank, узкий повторный поиск сохраняет rerank. `quantity_multiplier` удалён:
+> source/unit conversion/norm quantity разделены и покрыты тестами 8 шт, 3,2 м² и 160 м. Missing price
+> остаётся null. Technology binding fail-closed, когда модель сама указала missing/extra/foreign.
+> Live БАП: 419 с до дальнейшего latency-долга. Созданная позднее аудиторская ревизия не считается
+> результатом модели и не подменяет raw ЛСР; актуальный промежуточный результат зафиксирован в 0.24.0.356.
+
+> 0.24.0.354 — zero-state PDF → ЛСР в штатном чате
+>
+> Дата: 2026-07-10
+> Статус: dev, deploy только после полного gate.
+> Правки: `mode=read` сохраняет исходный файл на 6 часов под server-owned `read_<id>` с hash/size
+> проверкой; UI передаёт opaque id, не путь. В режиме «Смета» явный запрос ЛСР по PDF идёт в
+> `smeta_core.document_workflow`: новый intake без истории/предыдущей ревизии, model-owned выбор
+> exact/analog/НР-СП, coverage, множителей и resource actions, model-owned binding точного кода
+> ФГИС, fail-closed web-КАЦ по минимум трём exact-product supplier domains, затем кодовая РИМ/НДС
+> арифметика и формульный XLSX. Успешное вложение одноразовое; при ошибке сохраняется для retry.
+> Объектных/БАП-специфичных правил нет. Focused gate: `92 passed`; живой локальный BAP smoke
+> остаётся обязательным до ship, так как Qwen 9B показала высокую batch latency.
+
+> 0.24.0.353 — smeta-core phase 0/1: fail-closed normative integrity
+>
+> Дата: 2026-07-10
+> Статус: dev only до полного gate/deploy.
+> Причина: аудит доказал cross-family contamination текущей structured ГЭСН-базы и скрытый
+> fallback выбора первого сильного кандидата после невалидного ответа модели.
+> Правки: добавлен `proxy/smeta_core` с typed contracts, `smeta_norm_browse_v1`, canonical workflow
+> adapter и раздельными `evidence_status`/`calculation_status`. Любая code-owned `NormBinding`
+> запрещена. Fallback/не-модельные env-bind пути удалены. ГЭСН source registry теперь требует
+> совпадающий `les_smeta_base_integrity_v1`; без него текущая база получает
+> `quarantined_blocking`, structured money остаётся `priced_partial/unsafe_source`. Quick price
+> lookup использует manifest-default pricebook. Остаток фаз записан в `docs/TODO_SMETA_CORE.md`.
+> Проверки: focused smeta/core/chat/version suite `250 passed`; `make verify` — `2768 collected`;
+> полный `make test` — `2768 passed / 6 warnings`; lock/diff checks — выполнить перед ship.
 
 > 0.24.0.344 — Л.И.С.Т. reliability hardening
 >

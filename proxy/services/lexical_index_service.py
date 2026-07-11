@@ -43,6 +43,8 @@ class RetrievalTrace:
     embedding_contract: str = ""
     query_embedding: str = ""
     score_kind: str = "unknown"
+    retrieval_channels: list[str] = field(default_factory=list)
+    fusion: str = "none"
     rerank: dict[str, Any] = field(default_factory=dict)
     retry: dict[str, Any] = field(default_factory=dict)
 
@@ -60,6 +62,8 @@ class RetrievalTrace:
             "embedding_contract": self.embedding_contract,
             "query_embedding": self.query_embedding,
             "score_kind": self.score_kind,
+            "retrieval_channels": self.retrieval_channels,
+            "fusion": self.fusion,
             "rerank": self.rerank,
             "retry": self.retry,
         }
@@ -510,6 +514,13 @@ def merge_rrf(
     limit: int,
     k: int = 60,
 ) -> tuple[list[Any], RetrievalTrace]:
+    """Merge independent dense and lexical rankings when both are present.
+
+    A single ranking is returned unchanged (apart from deduplication and exact
+    reference promotion) and must not be reported as hybrid/RRF.  This keeps
+    degraded lexical-only retrieval observable instead of making a one-channel
+    fallback look like successful fusion.
+    """
     refs = list(extract_norm_refs(question))
     scores: dict[str, float] = {}
     chosen: dict[str, Any] = {}
@@ -550,13 +561,32 @@ def merge_rrf(
                 meta["retrieval_sources"] = sorted(sources)
             meta["rrf_rank"] = rank
             meta["rrf_score"] = round(scores[key_for(chunk)], 6)
+    has_vector = bool(vector_chunks)
+    has_lexical = bool(lexical_chunks)
+    if has_vector and has_lexical:
+        mode = "hybrid"
+        score_kind = "rrf"
+        channels = ["dense", "lexical"]
+        fusion = "rrf"
+    elif has_lexical:
+        mode = "lexical_only"
+        score_kind = "lexical_rank"
+        channels = ["lexical"]
+        fusion = "none"
+    else:
+        mode = "vector"
+        score_kind = "dense_similarity"
+        channels = ["dense"] if has_vector else []
+        fusion = "none"
     trace = RetrievalTrace(
-        mode="hybrid" if lexical_chunks else "vector",
+        mode=mode,
         vector_count=len(vector_chunks),
         lexical_count=len(lexical_chunks),
         merged_count=len(merged),
         exact_refs=refs,
-        score_kind="rrf" if lexical_chunks else "dense_similarity",
+        score_kind=score_kind,
+        retrieval_channels=channels,
+        fusion=fusion,
     )
     if not lexical_chunks:
         trace.fallback_reason = "lexical_index_empty_or_unavailable"

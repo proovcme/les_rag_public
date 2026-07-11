@@ -160,5 +160,5 @@ def test_v06_resource_real_workbook_regression():
 
 def test_v03_lsr_regression():
     from proxy.services import construction_harness_service as ch
-    asm = ch.lsr_assemble([{"code": "06-02-001-01", "work": "плита", "unit": "м3", "qty": 720}])
+    asm = ch.lsr_assemble([{"code": "ГЭСН12-01-034-02", "work": "обрешётка", "unit": "м2", "qty": 720}])
     assert asm["asm_positions"][0]["qty"] == 7.2

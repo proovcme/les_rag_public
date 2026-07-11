@@ -217,7 +217,8 @@ def test_lsr_from_xlsx_bor(tmp_path):
                                ("разработка грунта в котловане", "м3", 7200),
                                ("устройство монолитной фундаментной плиты", "м3", 720)))
     r = u.run_unified_construction_harness("собери предварительную ЛСР по Ф9", dataset_ids=["ds"], storage_root=tmp_path)
-    assert r.total_status in ("complete", "partial")        # ЛСР пошла из xlsx-строк
+    assert r.total_status == "blocked"
+    assert r.final_total is None  # legacy 0-LLM harness cannot select a norm for the model
 
 
 # ── index health v0.13 ───────────────────────────────────────────────────────────────────
@@ -310,4 +311,4 @@ def test_v04_source_scope_regression():
 def test_v03_lsr_parquet_regression(tmp_path):
     dsid = ch.write_demo_project_doc(tmp_path)
     r = u.run_unified_construction_harness("собери предварительную ЛСР по Ф9", dataset_ids=[dsid], storage_root=tmp_path)
-    assert r.total_status == "complete" and r.final_total is not None
+    assert r.total_status == "blocked" and r.final_total is None

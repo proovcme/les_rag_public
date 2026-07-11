@@ -319,8 +319,16 @@ async def _warmup_models():
 
     await asyncio.sleep(3)  # дать бэкенду/MLX-хосту подняться
     try:
-        await rag_backend.retrieve("прогрев системы при запуске", dataset_ids=None, top_k=2)
-        logger.info("[WARMUP] эмбеддер/ретрив прогрет")
+        from proxy.services.retrieval_service import hybrid_backend
+
+        retrieve = (
+            rag_backend.retrieve_native_hybrid
+            if hybrid_backend() == "qdrant_native"
+            and hasattr(rag_backend, "retrieve_native_hybrid")
+            else rag_backend.retrieve
+        )
+        await retrieve("прогрев системы при запуске", dataset_ids=None, top_k=2)
+        logger.info("[WARMUP] dense+sparse RRF прогрет")
     except Exception as exc:
         logger.warning("[WARMUP] embed: %s", exc)
     try:

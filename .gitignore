@@ -53,6 +53,7 @@ Thumbs.db
 .aider*
 
 # Generated local workbench exports
+.codex_tmp/
 qdrant_visualizer/data.js
 scratch/
 

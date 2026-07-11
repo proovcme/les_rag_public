@@ -19,10 +19,9 @@ def test_needs_kac_route():
 
 
 def test_stesnennost_route():
-    r = h("коэффициент стеснённости для города")
-    assert r is not None and r["operation"] == "stesnennost"
-    assert "1.15" in r["answer"]
-    assert h("какой коэффициент стеснённости")["operation"] == "stesnennost"
+    # Код не выбирает применимость коэффициента из короткой фразы.
+    assert h("коэффициент стеснённости для города") is None
+    assert h("какой коэффициент стеснённости") is None
 
 
 def test_code_extraction():
@@ -34,15 +33,16 @@ def test_code_extraction():
 
 
 def test_assemble_from_code_reproduces_etalon():
-    r = h("собери ГЭСН12-01-034-02 объём 0.61")
+    r = h("собери ГЭСН12-01-034-02 объём 61 м2")
     assert r is not None and r["operation"] == "assemble"
-    assert "11 813.04" in r["answer"]
+    assert "11 896.35" in r["answer"]
 
 
-def test_assemble_with_stesnennost():
-    r = h("собери ГЭСН12-01-034-02 объём 0.61 стеснённость город")
+def test_assemble_does_not_guess_stesnennost_from_phrase():
+    r = h("собери ГЭСН12-01-034-02 объём 61 м2 стеснённость город")
     assert r["operation"] == "assemble"
-    assert "13 572.45" in r["answer"] and "11 813.04" in r["answer"]
+    assert "11 896.35" in r["answer"]
+    assert "13 572.45" not in r["answer"]
 
 
 def test_assemble_needs_volume():

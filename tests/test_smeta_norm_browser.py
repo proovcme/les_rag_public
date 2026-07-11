@@ -1,0 +1,317 @@
+import hashlib
+import json
+import sqlite3
+from pathlib import Path
+
+
+def _base(path):
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE norms(
+            norm_key TEXT PRIMARY KEY, norm_id TEXT, edition TEXT, display_code TEXT,
+            base_type TEXT, bare_code TEXT, norm_name TEXT, norm_unit TEXT,
+            work_steps TEXT, source_doc TEXT, source_guid TEXT, resource_count INTEGER,
+            resource_kinds TEXT
+        );
+        CREATE TABLE resources(
+            parent_norm_id TEXT, norm_key TEXT, kind TEXT, resource_code TEXT,
+            resource_name TEXT, resource_unit TEXT
+        );
+        CREATE VIRTUAL TABLE norms_fts USING fts5(
+            norm_key UNINDEXED, norm_name, work_steps, tokenize='unicode61'
+        );
+        """
+    )
+    return conn
+
+
+def test_sparse_only_manifest_is_explicit_not_hybrid(tmp_path):
+    from proxy.smeta_core.norm_browser import _rag_index_mode
+
+    base = tmp_path / "base.sqlite"
+    base.write_bytes(b"base")
+    base.with_name("les_smeta_norm_rag_manifest.json").write_text(
+        json.dumps({"index_mode": "sparse_only"}), encoding="utf-8"
+    )
+
+    assert _rag_index_mode(Path(base)) == "sparse_only"
+
+
+def _insert_norm(conn, *, key="ГЭСНм:08-02-001-01", name="Прокладывание кабелей", steps=None):
+    steps = steps or ["Разметка трассы", "Прокладывание кабеля"]
+    base_type, bare_code = key.split(":", 1)
+    norm_id = "n1" if key == "ГЭСНм:08-02-001-01" else "n-" + key
+    conn.execute(
+        "INSERT INTO norms VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (key, norm_id, "FSNB-2022", key.replace(":", ""), base_type, bare_code,
+         name, "100 м", json.dumps(steps, ensure_ascii=False), "source.xml", "guid-1", 0, "[]"),
+    )
+    conn.execute(
+        "INSERT INTO norms_fts VALUES(?,?,?)",
+        (key, name, json.dumps(steps, ensure_ascii=False)),
+    )
+
+
+def test_typed_fts_uses_russian_prefix_fallback(tmp_path):
+    from proxy.smeta_core.norm_browser import _typed_cards
+
+    path = tmp_path / "base.sqlite"
+    conn = _base(path)
+    _insert_norm(conn)
+    conn.commit()
+    conn.close()
+
+    cards = _typed_cards("прокладка кабеля", limit=5, base_path=path)
+
+    assert cards
+    assert cards[0]["title"] == "Прокладывание кабелей"
+
+
+def test_typed_search_can_be_filtered_by_model_selected_family_and_collection(tmp_path):
+    from proxy.smeta_core.norm_browser import _typed_cards
+
+    path = tmp_path / "base.sqlite"
+    conn = _base(path)
+    _insert_norm(conn, key="ГЭСНм:08-02-001-01", name="Прокладывание кабеля внутри здания")
+    _insert_norm(conn, key="ГЭСНм:17-02-001-01", name="Прокладывание кабеля специальной установки")
+    conn.commit()
+    conn.close()
+
+    cards = _typed_cards(
+        "прокладывание кабеля",
+        limit=10,
+        base_path=path,
+        base_types=("ГЭСНм",),
+        collections=("08",),
+    )
+
+    assert [item["norm_code"] for item in cards] == ["ГЭСНм08-02-001-01"]
+
+
+def test_norm_card_exposes_resource_names_for_technology_audit(tmp_path):
+    from proxy.smeta_core.norm_browser import _typed_cards
+
+    path = tmp_path / "base.sqlite"
+    conn = _base(path)
+    _insert_norm(conn, name="Монтаж коробки")
+    conn.execute(
+        "INSERT INTO resources VALUES(?,?,?,?,?,?)",
+        ("n1", "ГЭСНм:08-02-001-01", "machine", "91.01.01", "Кран башенный", "маш.-ч"),
+    )
+    conn.execute(
+        "INSERT INTO resources VALUES(?,?,?,?,?,?)",
+        ("n1", "ГЭСНм:08-02-001-01", "material", "01.01", "Электроды сварочные", "кг"),
+    )
+    conn.execute("UPDATE norms SET resource_count=2")
+    conn.commit()
+    conn.close()
+
+    card = _typed_cards("монтаж коробки", limit=1, base_path=path)[0]
+
+    assert card["resource_kinds"] == {"machine": 1, "material": 1}
+    assert [item["name"] for item in card["resource_preview"]] == [
+        "Кран башенный", "Электроды сварочные",
+    ]
+
+
+def test_browse_keeps_wide_pool_until_reranker(monkeypatch, tmp_path):
+    from proxy.smeta_core import norm_browser
+
+    lexical = [
+        {"norm_key": f"l:{i}", "norm_code": f"L-{i}", "title": f"lex {i}"}
+        for i in range(20)
+    ]
+    semantic = [
+        {"norm_key": f"s:{i}", "norm_code": f"S-{i}", "title": f"sem {i}"}
+        for i in range(20)
+    ]
+    seen = {}
+    monkeypatch.setattr(norm_browser, "_typed_cards", lambda *_args, **_kwargs: lexical)
+    monkeypatch.setattr(
+        norm_browser, "_rag_cards_many",
+        lambda queries, **_kwargs: {query: semantic for query in queries},
+    )
+
+    def rerank(_query, cards, *, limit):
+        seen["input"] = len(cards)
+        return list(reversed(cards))[:limit], True
+
+    monkeypatch.setattr(norm_browser, "_rerank_cards", rerank)
+    monkeypatch.setattr(
+        norm_browser, "normative_base_integrity",
+        lambda **_kwargs: {"status": "trusted", "trusted_for_pricing": True},
+    )
+
+    result = norm_browser.browse_norms("обычная работа", limit=5, base_path=tmp_path / "base.sqlite")
+
+    assert seen["input"] == 24
+    assert len(result["cards"]) == 5
+    assert result["retrieval_trace"]["fusion_candidates"] == 24
+    assert result["retrieval_trace"]["reranked"] is True
+
+
+def test_mass_triage_defers_single_query_reranker(monkeypatch, tmp_path):
+    from proxy.smeta_core import norm_browser
+
+    queries = [f"query {index}" for index in range(5)]
+    lexical = [{"norm_key": "l:1", "norm_code": "L-1", "title": "lex"}]
+    semantic = [{"norm_key": "s:1", "norm_code": "S-1", "title": "sem"}]
+    monkeypatch.setattr(norm_browser, "_typed_cards", lambda *_args, **_kwargs: lexical)
+    monkeypatch.setattr(
+        norm_browser, "_rag_cards_many",
+        lambda values, **_kwargs: {query: semantic for query in values},
+    )
+    monkeypatch.setattr(
+        norm_browser, "_rerank_cards",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("reranker must be deferred")),
+    )
+    monkeypatch.setattr(
+        norm_browser, "normative_base_integrity",
+        lambda **_kwargs: {"status": "trusted", "trusted_for_pricing": True},
+    )
+
+    results = norm_browser.browse_norms_many(queries, limit=5, base_path=tmp_path / "base.sqlite")
+
+    assert set(results) == set(queries)
+    assert all(item["retrieval_trace"]["rerank_deferred"] for item in results.values())
+    assert all("rerank_deferred" in item["backend"] for item in results.values())
+
+
+def test_agent_can_explicitly_skip_reranker_for_narrow_search(monkeypatch, tmp_path):
+    from proxy.smeta_core import norm_browser
+
+    lexical = [{"norm_key": "l:1", "norm_code": "L-1", "title": "lex"}]
+    semantic = [{"norm_key": "s:1", "norm_code": "S-1", "title": "sem"}]
+    monkeypatch.setattr(norm_browser, "_typed_cards", lambda *_args, **_kwargs: lexical)
+    monkeypatch.setattr(
+        norm_browser, "_rag_cards_many",
+        lambda values, **_kwargs: {query: semantic for query in values},
+    )
+    monkeypatch.setattr(
+        norm_browser, "_rerank_cards",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("reranker requires explicit opt-in")),
+    )
+    monkeypatch.setattr(
+        norm_browser, "normative_base_integrity",
+        lambda **_kwargs: {"status": "trusted", "trusted_for_pricing": True},
+    )
+
+    result = norm_browser.browse_norms_many(
+        ["спорная работа"], limit=5, base_path=tmp_path / "base.sqlite", rerank=False,
+    )["спорная работа"]
+
+    assert result["retrieval_trace"]["reranked"] is False
+    assert result["retrieval_trace"]["rerank_deferred"] is True
+
+
+def test_reranker_partial_response_is_filled_from_fused_order(monkeypatch):
+    from proxy.smeta_core import norm_browser
+
+    cards = [{"norm_code": f"N-{i}", "title": str(i)} for i in range(6)]
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"results": [{"index": 4}, {"index": 4}, {"index": 999}]}
+
+    monkeypatch.setattr(norm_browser.httpx, "post", lambda *_args, **_kwargs: Response())
+
+    ranked, used = norm_browser._rerank_cards("query", cards, limit=4)
+
+    assert used is True
+    assert [item["norm_code"] for item in ranked] == ["N-4", "N-0", "N-1", "N-2"]
+
+
+def test_rrf_uses_typed_norm_identity_not_display_code():
+    from proxy.smeta_core.norm_browser import _rrf_cards
+
+    cards = _rrf_cards(
+        [{"norm_key": "ГЭСН:01", "norm_code": "01", "title": "one"}],
+        [{"norm_key": "ФЕР:01", "norm_code": "01", "title": "two"}],
+        limit=5,
+    )
+
+    assert {item["norm_key"] for item in cards} == {"ГЭСН:01", "ФЕР:01"}
+
+
+def test_rag_manifest_rejects_embedding_or_base_mismatch(tmp_path):
+    from proxy.smeta_core.norm_browser import _rag_manifest_status
+
+    base = tmp_path / "base.sqlite"
+    base.write_bytes(b"current-base")
+    manifest = tmp_path / "les_smeta_norm_rag_manifest.json"
+    manifest.write_text(json.dumps({
+        "status": "passed",
+        "collection": "norms",
+        "embedding_model": "old-embedder",
+        "base_sha256": hashlib.sha256(base.read_bytes()).hexdigest(),
+    }), encoding="utf-8")
+
+    assert _rag_manifest_status(
+        base_path=base, collection="norms", embedding_model="new-embedder"
+    ) == (False, "embedding_model_mismatch")
+
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["embedding_model"] = "new-embedder"
+    payload["base_sha256"] = "stale"
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    assert _rag_manifest_status(
+        base_path=base, collection="norms", embedding_model="new-embedder"
+    ) == (False, "base_revision_mismatch")
+
+
+def test_smeta_dense_requires_same_or_explicitly_verified_embedding_space(tmp_path, monkeypatch):
+    from proxy.smeta_core.norm_browser import _rag_dense_compatibility
+
+    base = tmp_path / "base.sqlite"
+    base.write_bytes(b"base")
+    manifest = tmp_path / "les_smeta_norm_rag_manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "embedding_backend": "sentence_transformers_mps",
+                "embedding_space_verified": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("EMBED_BACKEND", "coreml")
+    monkeypatch.delenv("LES_SMETA_EMBEDDING_SPACE_ID", raising=False)
+
+    compatible, reason = _rag_dense_compatibility(base)
+    assert compatible is False
+    assert "embedding_backend_mismatch" in reason
+
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload.update(
+        {
+            "embedding_space_verified": True,
+            "embedding_space_id": "qwen-space-v1",
+        }
+    )
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setenv("LES_SMETA_EMBEDDING_SPACE_ID", "qwen-space-v1")
+
+    assert _rag_dense_compatibility(base) == (True, "verified_embedding_space")
+
+
+def test_norm_rag_projection_does_not_embed_incidental_resources(tmp_path):
+    from tools.build_smeta_norm_rag import _rows
+
+    path = tmp_path / "base.sqlite"
+    conn = _base(path)
+    _insert_norm(conn, name="Установка небольшого устройства")
+    conn.execute(
+        "INSERT INTO resources VALUES(?,?,?,?,?,?)",
+        ("n1", "ГЭСНм:08-02-001-01", "machine", "91.01", "Башенный кран", "маш.-ч"),
+    )
+    conn.commit()
+    conn.close()
+
+    row = _rows(path)[0]
+
+    assert "Башенный кран" not in row["text"]
+    assert "Башенный кран" in row["resource_text"]

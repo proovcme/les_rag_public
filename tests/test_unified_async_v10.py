@@ -207,4 +207,4 @@ def test_v06_resource_real_workbook_regression():
     assert rc.validate_real_workbook()["matches"] is True
 
 def test_unit_gate_regression():
-    assert ch.lsr_assemble([{"code": "06-02-001-01", "work": "плита", "unit": "м3", "qty": 720}])["asm_positions"][0]["qty"] == 7.2
+    assert ch.lsr_assemble([{"code": "ГЭСН12-01-034-02", "work": "обрешётка", "unit": "м2", "qty": 720}])["asm_positions"][0]["qty"] == 7.2

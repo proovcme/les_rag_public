@@ -133,8 +133,9 @@ def test_estimate_from_bor_retrieval_backed(tmp_path):
     ds = _kotelnaya(tmp_path)
     r = u.run_unified_construction_harness("собери предварительную ЛСР по Ф9", dataset_ids=[ds], storage_root=tmp_path)
     types = {b.type for b in r.evidence_blocks}
-    assert EvidenceType.RETRIEVED in types and EvidenceType.COMPUTED in types
-    assert r.total_status == "complete" and r.final_total is not None
+    assert EvidenceType.RETRIEVED in types and EvidenceType.BLOCKED in types
+    assert EvidenceType.COMPUTED not in types
+    assert r.total_status == "blocked" and r.final_total is None
 
 def test_estimate_missing_without_source(tmp_path):
     # нет Ф9/ВОР в scope → MISSING, не LLM-декомпозиция
@@ -179,7 +180,7 @@ def test_composer_only_uses_evidence(tmp_path):
     ds = _kotelnaya(tmp_path)
     r = u.run_unified_construction_harness("собери ЛСР по Ф9", dataset_ids=[ds], storage_root=tmp_path)
     txt = u.compose_unified_answer(r)
-    assert "ИТОГО" in txt and "₽" in txt
+    assert "Найдено в источниках" in txt and "Отклонено" in txt
     # все числа в COMPUTED имеют формулу/источник
     for b in r.evidence_blocks:
         for it in b.items:

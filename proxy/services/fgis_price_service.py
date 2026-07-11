@@ -98,6 +98,26 @@ def normalize_code(code: Any) -> str:
     return stripped or text
 
 
+def _search_text(value: Any) -> str:
+    """Canonical lexical form for model-visible price browsing, never a selector."""
+    text = str(value or "").casefold().replace("ё", "е")
+    return " ".join(re.findall(r"[0-9a-zа-я]+", text))
+
+
+def _search_tokens(value: Any) -> list[str]:
+    return [token for token in _search_text(value).split() if len(token) >= 2]
+
+
+def _is_transport_row(rec: dict[str, Any]) -> bool:
+    code = normalize_code(rec.get("code"))
+    name = _search_text(rec.get("name"))
+    return bool(re.fullmatch(r"\d{6}-\d{2}-\d{4}-\d{4}", code)) or name.startswith("перевозка ")
+
+
+def _is_resource_code(code: str) -> bool:
+    return bool(re.fullmatch(r"\d{2}(?:\.\d+)+-\d+", normalize_code(code)))
+
+
 def _looks_like_code(value: Any) -> bool:
     return bool(_CODE_RE.search(str(value or "")))
 
@@ -268,6 +288,61 @@ class PriceBook:
                     break
         return out
 
+    def browse(self, query: str, *, limit: int = 20) -> list[dict[str, Any]]:
+        """Ranked lexical candidates for a model/user to inspect.
+
+        This is deliberately not fuzzy auto-binding. The method returns multiple
+        FGIS rows with an explicit lexical trace; only a model or user may bind a
+        project material to one exact resource code afterwards.
+        """
+        phrase = _search_text(query)
+        tokens = _search_tokens(query)
+        exact_code = normalize_code(query)
+        if not phrase and not exact_code:
+            return []
+        asks_transport = any(token in {"перевозка", "доставка", "транспорт", "транспортировка"} for token in tokens)
+        ranked: list[tuple[tuple[int, int, int, int, int], str, dict[str, Any]]] = []
+        for rec in self._rows:
+            code = normalize_code(rec.get("code"))
+            name = _search_text(rec.get("name"))
+            hay = f"{code.casefold()} {name}"
+            hay_tokens = set(_search_tokens(hay))
+            matched = [token for token in tokens if token in hay_tokens]
+            code_match = int(bool(exact_code and code == exact_code))
+            phrase_match = int(bool(phrase and phrase in hay))
+            all_tokens = int(bool(tokens) and len(matched) == len(tokens))
+            if not (code_match or phrase_match or matched):
+                continue
+            transport_row = _is_transport_row(rec)
+            # A material browser must not rank haulage tariffs as material prices.
+            # They stay available for an explicit transport query or exact code.
+            if transport_row and not (asks_transport or code_match):
+                continue
+            resource_code = int(_is_resource_code(code))
+            # Sort keys are evidence only: exact code, resource-code family, full
+            # phrase, complete token coverage, token count. No applicability lives here.
+            payload = dict(rec)
+            payload["match"] = {
+                "schema": "fgis_price_lexical_match_v1",
+                "query": str(query or ""),
+                "exact_code": bool(code_match),
+                "phrase_match": bool(phrase_match),
+                "all_tokens": bool(all_tokens),
+                "matched_tokens": matched,
+                "query_tokens": tokens,
+                "resource_code": bool(resource_code),
+                "transport_row": bool(transport_row),
+            }
+            key = (code_match, resource_code, phrase_match, all_tokens, len(matched))
+            ranked.append((key, name, payload))
+        ranked.sort(
+            key=lambda item: (
+                -item[0][0], -item[0][1], -item[0][2], -item[0][3], -item[0][4],
+                item[1], normalize_code(item[2].get("code")),
+            )
+        )
+        return [item[2] for item in ranked[: max(1, int(limit))]]
+
     def lookup_many(self, codes: Iterable[str]) -> dict[str, Optional[dict[str, Any]]]:
         return {c: self.lookup(c) for c in codes}
 
@@ -321,9 +396,11 @@ def _manifest_aliases() -> dict[str, str]:
 
 def _manifest_hidden_stems() -> set[str]:
     raw = pricebook_manifest().get("hidden_stems")
-    if not isinstance(raw, list):
-        return set()
-    return {str(item or "").strip() for item in raw if str(item or "").strip()}
+    hidden = {str(item or "").strip() for item in raw if str(item or "").strip()} if isinstance(raw, list) else set()
+    quarantined = pricebook_manifest().get("quarantined_stems")
+    if isinstance(quarantined, dict):
+        hidden.update(str(item or "").strip() for item in quarantined if str(item or "").strip())
+    return hidden
 
 
 def _canonical_stem(stem: str, stems: set[str]) -> str:
@@ -343,6 +420,12 @@ def _is_hidden_pricebook(path: str | Path, stems: set[str]) -> bool:
     stem = Path(path).stem
     if _is_scratch_pricebook(path):
         return False
+    manifest = pricebook_manifest()
+    quarantined = manifest.get("quarantined_stems")
+    if isinstance(quarantined, dict) and stem in quarantined:
+        # A quarantined regional identity is unsafe even when there is no
+        # canonical alias in this particular directory.
+        return True
     if stem not in _manifest_hidden_stems():
         return False
     canonical = _canonical_stem(stem, stems)

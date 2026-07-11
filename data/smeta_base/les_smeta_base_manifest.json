@@ -1,22 +1,28 @@
 {
-  "schema": "les_smeta_base_v1",
-  "created_at": "2026-07-09T12:59:58.491051+00:00",
+  "schema": "les_smeta_base_v2",
+  "created_at": "2026-07-11T14:10:03.533006+00:00",
   "source": {
     "path": "data/gesn_base/gesn2022_unified.parquet",
-    "sha256": "70aa3b51824c33051ca1e830ac3b325106b14361ec5ac6bb64682ba0ebef97a5",
-    "rows": 773727,
+    "sha256": "e0c2714ca68ecfdafec8b3974332742765e2e9945ae36be346d99b9c85fa3603",
+    "rows": 693192,
     "norm_keys": 58886
   },
   "output": {
     "path": "data/smeta_base/les_smeta_base.sqlite",
-    "norms": 47037,
-    "resources": 664597
+    "sha256": "0f5cbf8c89f19731857c6c64aa207b1b58d7ee8069aa562176137f1f2341ea43",
+    "edition": "FSNB-2022",
+    "norms": 47191,
+    "resources": 588979
   },
   "excluded": {
     "rows_missing_norm_key": 0,
     "resource_rows_missing_kind_or_name": 0,
-    "norms_missing_name_or_unit": 11849,
-    "norms_without_resources": 0
+    "resource_identity_duplicates_dropped": 0,
+    "norms_missing_name_or_unit": 11695,
+    "norms_without_resources": 0,
+    "untrusted_identity_rows_quarantined": 0,
+    "family_mismatch_rows_quarantined": 0,
+    "metadata_conflict_norms": 0
   },
   "examples": {
     "missing_metadata_norm_keys": [
@@ -71,6 +77,12 @@
       "ГЭСН:01-01-009-08",
       "ГЭСН:01-01-009-09"
     ],
-    "norms_without_resources": []
+    "norms_without_resources": [],
+    "metadata_conflict_norm_keys": []
+  },
+  "integrity": {
+    "path": "data/smeta_base/les_smeta_base_integrity.json",
+    "schema": "les_smeta_base_integrity_v1",
+    "verdict": "failed"
   }
 }

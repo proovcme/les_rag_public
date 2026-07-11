@@ -216,14 +216,14 @@ def test_find_ozk_in_bor_source_scoped(tmp_path):
 def test_v03_f9_to_lsr_golden_still_passes(tmp_path):
     ds = ch.write_demo_project_doc(tmp_path)
     r = u.run_unified_construction_harness("собери предварительную ЛСР по Ф9", dataset_ids=[ds], storage_root=tmp_path)
-    assert r.total_status == "complete" and r.final_total is not None
+    assert r.total_status == "blocked" and r.final_total is None
 
 def test_unknown_family_not_computed_still_passes():
     exp = ch.gesn_expand({"work": "некие работы общего вида", "unit": "м3"})
     assert exp["status"] == "needs_classification"
 
 def test_unit_conversion_still_passes():
-    res = ch.lsr_assemble([{"code": "06-02-001-01", "work": "плита", "unit": "м3", "qty": 720}])
+    res = ch.lsr_assemble([{"code": "ГЭСН12-01-034-02", "work": "обрешётка", "unit": "м2", "qty": 720}])
     assert res["asm_positions"][0]["qty"] == 7.2
 
 

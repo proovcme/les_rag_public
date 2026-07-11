@@ -135,3 +135,34 @@ def test_service_source_play_reports_required_document_manifest(tmp_path):
     assert processed["status"] == "missing_degraded"
     assert "Готово 1, частично 1, не хватает 1" in processed["message"]
     assert processed["required_documents"]["items"][0]["found_preferred_count"] == 1
+
+
+def test_present_normative_base_is_quarantined_without_integrity_report(tmp_path):
+    base = tmp_path / "base.sqlite"
+    manifest = tmp_path / "manifest.json"
+    base.write_bytes(b"unverified")
+    manifest.write_text('{"source":{"sha256":"source"}}', encoding="utf-8")
+    cfg = {
+        "meta": {"version": 1, "title": "test"},
+        "sources": [
+            {
+                "id": "gesn_base",
+                "domain": "smeta",
+                "label": "ГЭСН",
+                "status_if_missing": "blocking",
+                "paths": [str(base), str(manifest)],
+                "structured_base_path": str(base),
+                "base_manifest_path": str(manifest),
+                "integrity_report": str(tmp_path / "integrity.json"),
+                "integrity_required": True,
+            }
+        ],
+    }
+    cfg_path = tmp_path / "sources.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg, allow_unicode=True), encoding="utf-8")
+
+    item = service_source("gesn_base", cfg_path)
+
+    assert item["status"] == "quarantined_blocking"
+    assert item["integrity"]["trusted_for_pricing"] is False
+    assert process_service_source("gesn_base", cfg_path)["ok"] is False

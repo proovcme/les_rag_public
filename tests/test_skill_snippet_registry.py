@@ -5,12 +5,10 @@ from proxy.services.skill_snippet_registry import (
 )
 
 
-def test_skill_snippet_selected_by_mode():
-    snippets = select_skill_snippets("smeta", user_input="Есть спецификация кабелей, сделай смету")
-    ids = [s.snippet_id for s in snippets]
-    assert "smeta.gesn_pricing_workflow" in ids
-    assert "smeta.specification_to_bor" in ids
-    assert "smeta.rim_scenario_estimate" in ids
+def test_smeta_snippets_do_not_route_by_user_keywords():
+    specification = select_skill_snippets("smeta", user_input="Есть спецификация кабелей, сделай смету")
+    estimate = select_skill_snippets("smeta", user_input="Дай оценку стоимости")
+    assert [s.snippet_id for s in specification] == [s.snippet_id for s in estimate]
 
 
 def test_full_skill_not_injected_in_default_snippet():

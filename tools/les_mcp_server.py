@@ -179,12 +179,9 @@ def les_price_lookup(code: str, book: str | None = None, method: str = "index") 
     from pathlib import Path as _P
     from proxy.services import fgis_price_service as fps
 
-    books = fps.available_pricebooks()
-    if not books:
+    path = fps.resolve_pricebook_path(book, allow_scratch=bool(book))
+    if not path:
         return {"found": False, "note": "нет книг цен — импортируйте «Сплит-форму»"}
-    path = next((p for p in books if _P(p).stem == book), None) if book else books[0]
-    if path is None:
-        return {"found": False, "note": f"книга {book!r} не найдена"}
     pb = fps.get_pricebook(path)
     rec = pb.lookup(code)
     if rec is None:
@@ -194,6 +191,31 @@ def les_price_lookup(code: str, book: str | None = None, method: str = "index") 
         "method": method,
         "price": rec.get("price_current_eff") if method == "index" else rec.get("price_base"),
         "row": rec,
+    }
+
+
+def les_price_browse(query: str, book: str | None = None, limit: int = 20) -> dict[str, Any]:
+    """Кандидаты ресурсов ФГИС по наименованию/коду; решение остаётся за моделью.
+
+    Возвращает lexical match trace и точные коды/цены активной региональной книги.
+    Инструмент ничего не привязывает к ЛСР автоматически.
+    """
+    from pathlib import Path as _P
+    from proxy.services import fgis_price_service as fps
+
+    path = fps.resolve_pricebook_path(book, allow_scratch=bool(book))
+    if not path:
+        return {"schema": "fgis_price_browse_v1", "count": 0, "note": "книга цен не найдена"}
+    pb = fps.get_pricebook(path)
+    rows = pb.browse(query, limit=max(1, min(int(limit), 100)))
+    return {
+        "schema": "fgis_price_browse_v1",
+        "book": _P(path).stem,
+        "region": pb.region,
+        "quarter": pb.quarter,
+        "selection_owner": "model_or_user",
+        "count": len(rows),
+        "rows": rows,
     }
 
 
@@ -241,6 +263,7 @@ TOOLS: dict[str, tuple[str, Any]] = {
     "les_project_summary": ("Сводка проекта: ТЭП/стадии/состав", les_project_summary),
     "les_form_generate": ("Генерация формы: спецификация/ВОР/смета/АОСР", les_form_generate),
     "les_price_lookup": ("Цена ФГИС ЦС по коду ресурса (Сплит-форма)", les_price_lookup),
+    "les_price_browse": ("Кандидаты ресурсов ФГИС по наименованию/коду; без автопривязки", les_price_browse),
     "les_glossary": ("Что такое ВОР/КАЦ/ЛСР/КС: определение + деривация", les_glossary),
     "les_kac": ("КАЦ: ≥3 КП на материал → выбор экономичного + линии ЛСР", les_kac),
     "les_stesnennost": ("Коэф. стеснённости → пересчёт позиций ЛСР (ОЗП/ЭМ/НР/СП)", les_stesnennost),

@@ -146,3 +146,48 @@ def test_unified_collapses_same_resource_code_despite_display_name_variants(tmp_
     df = pd.read_parquet(out)
     assert len(df) == 1
     assert df.iloc[0]["resource_name"] == "КРАН  БАШЕННЫЙ"
+
+
+def test_untyped_bare_resource_without_metadata_is_quarantined_not_defaulted_to_gesn(tmp_path: Path):
+    legacy = tmp_path / "legacy.parquet"
+    overlay = tmp_path / "overlay.parquet"
+    out = tmp_path / "unified.parquet"
+    audit = tmp_path / "audit.json"
+    pd.DataFrame(
+        [
+            {
+                "norm_code": "01-01-001-02",
+                "norm_name": "",
+                "norm_unit": "",
+                "kind": "machine",
+                "resource_code": "91.01.01-001",
+                "resource_name": "Экскаватор",
+                "resource_unit": "маш.-ч",
+                "per_unit": 3.0,
+            }
+        ]
+    ).to_parquet(legacy, index=False)
+    pd.DataFrame(
+        [
+            _row(
+                norm_code="01-01-001-02",
+                norm_key="ГЭСНм:01-01-001-02",
+                base_type="ГЭСНм",
+                norm_name="Монтаж оборудования",
+                norm_unit="шт",
+                kind="labor",
+                resource_name="Рабочий",
+                resource_unit="чел.-ч",
+                per_unit=1.0,
+            )
+        ],
+        columns=list(RESOURCE_FIELDS),
+    ).to_parquet(overlay, index=False)
+
+    result = build_unified(legacy=legacy, overlay=overlay, out=out, audit_out=audit)
+
+    df = pd.read_parquet(out)
+    assert set(df["norm_key"]) == {"ГЭСНм:01-01-001-02"}
+    assert "Экскаватор" not in set(df["resource_name"])
+    assert result["untyped_rows_quarantined"]["count"] == 1
+    assert result["identity_source_counts"] == {"provided": 1}
