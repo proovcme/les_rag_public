@@ -1,11 +1,210 @@
+import pytest
+
 from proxy.services.project_pdf_table_service import (
+    PROJECT_PDF_TABLE_ALGO_VERSION,
+    _drawing_annotation_candidates,
     classify_project_table,
     classify_project_table_semantic,
+    extract_project_pdf_table_manifest,
+    merge_adjacent_project_table_fragments,
     normalize_hvs_table,
     normalize_room_explication_table,
     normalize_water_balance_table,
     summarize_project_table_manifests,
 )
+
+
+def test_table_manifest_exposes_algorithm_version(tmp_path):
+    manifest = extract_project_pdf_table_manifest(tmp_path / "missing.pdf")
+
+    assert manifest["algo_version"] == PROJECT_PDF_TABLE_ALGO_VERSION
+
+
+def test_cable_journal_fragments_merge_repeated_and_inherited_headers():
+    fragments = [
+        {
+            "matrix": [["Имя панели", "Помещение"], ["N1", "Серверная 044"]],
+            "table_indices": [2],
+            "context": "Кабельный журнал",
+        },
+        {
+            "matrix": [["Имя панели", "Помещение"], ["N2", "Ниша СС 1, 01"]],
+            "table_indices": [3],
+            "context": "",
+        },
+        {
+            "matrix": [["N3", "Ниша СС 2, 02"], ["N4", "Ниша СС 3, 03"]],
+            "table_indices": [4],
+            "context": "",
+        },
+    ]
+
+    result = merge_adjacent_project_table_fragments(fragments)
+
+    assert len(result) == 1
+    assert result[0]["matrix"] == [
+        ["Имя панели", "Помещение"],
+        ["N1", "Серверная 044"],
+        ["N2", "Ниша СС 1, 01"],
+        ["N3", "Ниша СС 2, 02"],
+        ["N4", "Ниша СС 3, 03"],
+    ]
+    assert result[0]["table_indices"] == [2, 3, 4]
+    assert result[0]["inherited_header"] is True
+
+
+def test_semantic_classifier_marks_panel_room_grid_as_cable_journal():
+    table = [
+        ["Имя панели", "Помещение"],
+        ["N1", "Серверная 044"],
+        ["N2", "Ниша СС 1, 01"],
+    ]
+
+    result = classify_project_table_semantic(table, source_ref="project/СС.pdf#page=15#tables=2-6")
+
+    assert result["semantic_type"] == "ELEC/CABLE_JOURNAL: панели и помещения кабельного журнала"
+    assert result["category"] == "engineering"
+
+
+def test_semantic_classifier_marks_section_name_executor_as_project_composition():
+    table = [
+        ["Раздел", "Наименование", "Исполнитель"],
+        ["10", "Состав проекта", "ООО Проект"],
+    ]
+
+    result = classify_project_table_semantic(table, source_ref="project/00.pdf#page=3#table=1")
+
+    assert result["semantic_type"] == "NAV: состав/содержание/ведомости документации"
+    assert result["category"] == "navigation"
+
+
+@pytest.mark.parametrize(
+    ("table", "source_ref", "expected", "category"),
+    [
+        (
+            [[str(value) for value in range(1, 12)], ["24", "ТССЦ-301-1527", "Светильник", "61", "8762,5"]],
+            "/project/Сметы/PDF/локальная-смета.pdf#page=6#table=1",
+            "ESTIMATE: сметные расчёты и ресурсные строки",
+            "engineering",
+        ),
+        (
+            [["Модель", "Количество", "блок", "Описание"], ["LUM-HE252", "1", "шт", "Наружный блок"]],
+            "/project/ОВ.pdf#page=10#table=1",
+            "HVAC/EQUIPMENT: подбор и характеристики оборудования",
+            "engineering",
+        ),
+        (
+            [["Изделие", "Поправочный коэффициент"], ["Трубопровод (охлаждение)", "0,948"]],
+            "/project/ОВ.pdf#page=11#table=1",
+            "HVAC/CALC: поправочные коэффициенты подбора",
+            "engineering",
+        ),
+        (
+            [["№", "Длина(m)", "Диаметр трубопровода"], ["1", "26,00", "Φ22.2/Φ12.7"]],
+            "/project/ОВ.pdf#page=12#table=1",
+            "HVAC/PIPE: длины и диаметры трубопроводов",
+            "engineering",
+        ),
+        (
+            [["Номер", "Наименование изделия", "Комплектность"], ["110102", "Колодец ККС", "Верхний элемент"]],
+            "/project/ЛКС.pdf#page=15#table=1",
+            "SPEC: спецификации оборудования/изделий/материалов",
+            "engineering",
+        ),
+        (
+            [["Обозначение", "Наименование", "Примечание"], ["ГОСТ Р 53295-2009", "Средства огнезащиты", ""]],
+            "/project/ОЗР.pdf#page=2#table=1",
+            "NORM: перечни нормативных документов",
+            "navigation",
+        ),
+        (
+            [["Обозначение", "Наименование", "Примечание"], ["395.01/B481.120100.1.6-КЖ", "Конструкции железобетонные", ""]],
+            "/project/КЖ.pdf#page=5#table=1",
+            "NAV: состав/содержание/ведомости документации",
+            "navigation",
+        ),
+        (
+            [["ИНН 7814723298", "КПП 781401001"], ["Банк получателя", "Сч. № 40702810455000010281"]],
+            "/project/КП.pdf#page=1#table=1",
+            "SERVICE: банковские реквизиты/счета",
+            "service",
+        ),
+        (
+            [["Поз.", "Эскиз"], ["4", "505 805"], ["5", "440"]],
+            "/project/КЖ.pdf#page=8#table=2",
+            "NOISE: фрагменты схем/выноски без табличной структуры",
+            "noise",
+        ),
+        (
+            [["NN п.п.", "Перечень актов освидетельствования скрытых работ", "Примечание"], ["1", "Акт на подготовку основания", ""]],
+            "/project/КЖ.pdf#page=5#table=4",
+            "NAV: перечень актов скрытых работ",
+            "navigation",
+        ),
+        (
+            [["Лист", "Наименование", "Примечание"], ["3", "Спецификация к схеме расположения элементов", ""]],
+            "/project/КЖ.pdf#page=5#table=5",
+            "NAV: ведомость листов комплекта",
+            "navigation",
+        ),
+        (
+            [["№", "Товары (работы, услуги)", "Количество", "Цена", "Сумма"], ["1", "Кабель", "300 м", "66,14", "19 841,02"]],
+            "/project/Сметы/КП.pdf#page=2#table=1",
+            "COMMERCIAL: коммерческие предложения и цены",
+            "engineering",
+        ),
+        (
+            [["Изделие", "Функциональные возможности", "Фактическое значение"], ["Общая длина трубопровода", "250 м", "89 м"]],
+            "/project/ОВ.pdf#page=205#table=2",
+            "HVAC/CALC: проверка ограничений трассы",
+            "engineering",
+        ),
+        (
+            [["(9)", "3,00", "Φ12.7/Φ6.35"], ["(10)", "5,00", "Φ25.4/Φ12.7"]],
+            "/project/ОВ.pdf#page=194#table=1",
+            "HVAC/PIPE: длины и диаметры трубопроводов",
+            "engineering",
+        ),
+        (
+            [["Обозначение", "Профиль", "Предел огнестойкости, мин", "Плита ТЕХНО ОЗМ, м3"], ["Б1", "I35Ш1", "90", "24,7"]],
+            "/project/ОЗР.pdf#page=13#table=1",
+            "FIRE/STRUCT: огнезащита металлоконструкций",
+            "engineering",
+        ),
+        (
+            [["Марка элемента", "Изделия арматурные", "Всего"], ["Фм3", "A500C ∅16", "3575"]],
+            "/project/КЖ2.pdf#page=19#table=9",
+            "STRUCT/REINF: арматура, сечения, материалы",
+            "engineering",
+        ),
+        (
+            [["Код сокращения", "Описание"], ["Tmp-C", "Indoor temperature in cooling"]],
+            "/project/ОВ.pdf#page=207#table=5",
+            "NAV: условные обозначения и сокращения",
+            "navigation",
+        ),
+    ],
+)
+def test_semantic_classifier_recovers_high_signal_unknown_families(table, source_ref, expected, category):
+    result = classify_project_table_semantic(table, source_ref=source_ref)
+
+    assert result["semantic_type"] == expected
+    assert result["category"] == category
+
+
+def test_zero_level_mark_is_emitted_as_drawing_annotation_not_title_block_data():
+    table = [
+        ["ОТМ. 0.000 =", "Уровень чистого пола"],
+        ["Изм. Кол. уч. Лист № док.", "Подпись", "Дата"],
+    ]
+
+    annotations = _drawing_annotation_candidates(table, source_ref="project/АР.pdf#page=1#table=2")
+
+    assert len(annotations) == 1
+    assert annotations[0]["semantic_type"] == "ANNOTATION: нулевая отметка чертежа"
+    assert annotations[0]["category"] == "drawing_annotation"
+    assert annotations[0]["sample"] == "отм. 0.000 ="
+    assert annotations[0]["source_ref"] == "project/АР.pdf#page=1#table=2#row=1#cell=1"
 
 
 def test_normalize_hvs_table_extracts_air_system_characteristics():

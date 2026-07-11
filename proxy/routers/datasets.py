@@ -1272,6 +1272,118 @@ async def pdf_extract_summary_endpoint(dataset_id: str, _admin=Depends(require_a
     )
 
 
+@router.post("/datasets/{dataset_id}/table-registry/build")
+async def table_registry_build_endpoint(dataset_id: str, _admin=Depends(require_admin)):
+    """Build searchable Л.И.С.Т. table cards from sidecars; Qdrant is not changed."""
+    from proxy.services.project_table_registry_service import build_project_table_registry
+
+    return await asyncio.to_thread(
+        build_project_table_registry,
+        dataset_id,
+        storage_root=_EXTRACT_STORAGE_ROOT,
+    )
+
+
+@router.get("/datasets/{dataset_id}/table-registry/summary")
+async def table_registry_summary_endpoint(dataset_id: str, _user=Depends(require_user)):
+    from proxy.services.project_table_registry_service import project_table_registry_summary
+
+    return await asyncio.to_thread(
+        project_table_registry_summary,
+        dataset_id,
+        storage_root=_EXTRACT_STORAGE_ROOT,
+    )
+
+
+@router.get("/datasets/{dataset_id}/tables/search")
+async def table_registry_search_endpoint(
+    dataset_id: str,
+    q: str = Query(default="", max_length=1000),
+    semantic_type: str = Query(default="", max_length=160),
+    file: str = Query(default="", max_length=500),
+    include_noise: bool = False,
+    limit: int = Query(default=20, ge=1, le=100),
+    _user=Depends(require_user),
+):
+    from proxy.services.project_table_registry_service import search_project_tables
+
+    return await asyncio.to_thread(
+        search_project_tables,
+        dataset_id,
+        q,
+        semantic_type=semantic_type,
+        file_filter=file,
+        include_noise=include_noise,
+        limit=limit,
+        storage_root=_EXTRACT_STORAGE_ROOT,
+    )
+
+
+@router.get("/datasets/{dataset_id}/tables/{table_id}")
+async def table_registry_read_endpoint(
+    dataset_id: str,
+    table_id: str,
+    max_rows: int = Query(default=100, ge=1, le=500),
+    _user=Depends(require_user),
+):
+    from proxy.services.project_table_registry_service import read_project_table
+
+    try:
+        result = await asyncio.to_thread(
+            read_project_table,
+            dataset_id,
+            table_id,
+            max_rows=max_rows,
+            storage_root=_EXTRACT_STORAGE_ROOT,
+        )
+        if result.get("status") == "stale":
+            raise HTTPException(409, detail=result)
+        return result
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/datasets/{dataset_id}/document-registry/build")
+async def document_registry_build_endpoint(dataset_id: str, _admin=Depends(require_admin)):
+    """Classify dataset documents and group a virtual volume register by metadata."""
+    from proxy.services.project_document_registry_service import build_project_document_registry
+
+    return await asyncio.to_thread(
+        build_project_document_registry,
+        dataset_id,
+        storage_root=_EXTRACT_STORAGE_ROOT,
+    )
+
+
+@router.get("/datasets/{dataset_id}/document-registry")
+async def document_registry_endpoint(dataset_id: str, _user=Depends(require_user)):
+    from proxy.services.project_document_registry_service import project_document_registry
+
+    return await asyncio.to_thread(
+        project_document_registry,
+        dataset_id,
+        storage_root=_EXTRACT_STORAGE_ROOT,
+    )
+
+
+@router.get("/datasets/{dataset_id}/virtual-volume")
+async def virtual_volume_endpoint(
+    dataset_id: str,
+    index: str = Query(min_length=1, max_length=300),
+    _user=Depends(require_user),
+):
+    from proxy.services.project_document_registry_service import assemble_virtual_volume
+
+    return await asyncio.to_thread(
+        assemble_virtual_volume,
+        dataset_id,
+        index,
+        storage_root=_EXTRACT_STORAGE_ROOT,
+    )
+
+
 @router.get("/graph/edges")
 async def graph_reference_edges(_user=Depends(require_user)):
     """W5.7-v2: рёбра «документ → документ» по упоминаниям номеров НТД (FTS, без LLM)."""

@@ -127,14 +127,25 @@ def run_project_pdf_extract(
     It never updates the vector index, source PDFs or MetaDB rows.
     """
     docs = _dataset_pdf_documents(dataset_id, meta_db_path=meta_db_path)
-    files_to_process = docs[: max(0, int(max_files))]
     root = project_pdf_extract_root(dataset_id, storage_root=storage_root)
     root.mkdir(parents=True, exist_ok=True)
     signature = _input_signature(docs)
     summary_path = root / "summary.json"
-    if not force:
-        existing = _read_json(summary_path)
-        if isinstance(existing, dict) and existing.get("input_signature") == signature:
+    existing = _read_json(summary_path) if not force else None
+    existing_matches = isinstance(existing, dict) and existing.get("input_signature") == signature
+    if existing_matches:
+        existing_coverage = existing.get("coverage") if isinstance(existing.get("coverage"), dict) else {}
+        checkpoints_current = int(existing_coverage.get("files_unattempted") or 0) == 0 and all(
+            _checkpoint_matches(
+                _read_json(_file_checkpoint_path(doc, dataset_id=dataset_id, storage_root=storage_root, root=root)),
+                doc,
+                dataset_id=dataset_id,
+                storage_root=storage_root,
+                max_pages=max_pages,
+            )
+            for doc in docs
+        )
+        if checkpoints_current:
             existing["cache"] = "hit"
             return existing
 
@@ -144,9 +155,54 @@ def run_project_pdf_extract(
     project_table_manifests: list[dict[str, Any]] = []
     volume_register: list[dict[str, Any]] = []
     warnings: list[str] = []
+    batch_limit = max(0, int(max_files))
+    new_files = 0
+    reused_files = 0
+    existing_by_doc_id = {
+        str(item.get("doc_id") or ""): item
+        for item in (existing.get("files") or [] if existing_matches else [])
+        if isinstance(item, dict) and item.get("doc_id")
+    }
 
-    for doc in files_to_process:
-        file_extract = _extract_pdf_file(doc, dataset_id=dataset_id, storage_root=storage_root, root=root, max_pages=max_pages)
+    for doc in docs:
+        checkpoint_path = _file_checkpoint_path(doc, dataset_id=dataset_id, storage_root=storage_root, root=root)
+        file_extract = None
+        if not force:
+            checkpoint = _read_json(checkpoint_path)
+            if _checkpoint_matches(checkpoint, doc, dataset_id=dataset_id, storage_root=storage_root, max_pages=max_pages):
+                file_extract = checkpoint
+            elif not checkpoint_path.exists() and existing_matches:
+                legacy = existing_by_doc_id.get(str(doc.get("id") or ""))
+                if isinstance(legacy, dict):
+                    file_extract = _with_checkpoint_metadata(
+                        legacy,
+                        doc,
+                        dataset_id=dataset_id,
+                        storage_root=storage_root,
+                        max_pages=max_pages,
+                    )
+                    _write_json(checkpoint_path, file_extract)
+        if isinstance(file_extract, dict):
+            reused_files += 1
+        elif new_files < batch_limit:
+            file_extract = _extract_pdf_file(
+                doc,
+                dataset_id=dataset_id,
+                storage_root=storage_root,
+                root=root,
+                max_pages=max_pages,
+            )
+            file_extract = _with_checkpoint_metadata(
+                file_extract,
+                doc,
+                dataset_id=dataset_id,
+                storage_root=storage_root,
+                max_pages=max_pages,
+            )
+            _write_json(checkpoint_path, file_extract)
+            new_files += 1
+        else:
+            continue
         files.append(file_extract)
         warnings.extend(str(w) for w in file_extract.get("warnings") or [])
         pd_manifest = _read_json(_artifact_path(file_extract, "pd_rd_manifest"))
@@ -187,6 +243,13 @@ def run_project_pdf_extract(
         "is_evidence": False,
         "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "input_signature": signature,
+        "cache": "resumed" if reused_files else "miss",
+        "batch": {
+            "new_files": new_files,
+            "reused_files": reused_files,
+            "max_new_files": batch_limit,
+        },
+        "max_pages": max(0, int(max_pages)),
         "sidecar_root": root.as_posix(),
         "files": files,
         "volume_register": volume_register[:VOLUME_REGISTER_LIMIT],
@@ -430,6 +493,78 @@ def _file_key(doc: dict[str, Any], source_path: Path | None) -> str:
     return f"{safe}_{digest}"
 
 
+def _file_checkpoint_path(
+    doc: dict[str, Any],
+    *,
+    dataset_id: str,
+    storage_root: Path,
+    root: Path,
+) -> Path:
+    source_path = _document_source_path(doc, dataset_id=dataset_id, storage_root=storage_root)
+    return root / _file_key(doc, source_path) / "file_extract.json"
+
+
+def _with_checkpoint_metadata(
+    payload: dict[str, Any],
+    doc: dict[str, Any],
+    *,
+    dataset_id: str,
+    storage_root: Path,
+    max_pages: int,
+) -> dict[str, Any]:
+    enriched = dict(payload)
+    source_path = _document_source_path(doc, dataset_id=dataset_id, storage_root=storage_root)
+    fingerprint = _source_fingerprint(source_path)
+    enriched["checkpoint"] = {
+        "doc_id": str(doc.get("id") or ""),
+        "file_name": str(doc.get("file_name") or ""),
+        "source_path": source_path.as_posix() if source_path else "",
+        "source_size": fingerprint.get("size"),
+        "source_mtime_ns": fingerprint.get("mtime_ns"),
+        "max_pages": max(0, int(max_pages)),
+        "algo_version": PROJECT_PDF_EXTRACT_ALGO_VERSION,
+    }
+    return enriched
+
+
+def _checkpoint_matches(
+    payload: dict[str, Any] | None,
+    doc: dict[str, Any],
+    *,
+    dataset_id: str,
+    storage_root: Path,
+    max_pages: int,
+) -> bool:
+    if not isinstance(payload, dict) or payload.get("schema") != PROJECT_PDF_FILE_EXTRACT_SCHEMA:
+        return False
+    checkpoint = payload.get("checkpoint") if isinstance(payload.get("checkpoint"), dict) else {}
+    if checkpoint.get("algo_version") != PROJECT_PDF_EXTRACT_ALGO_VERSION:
+        return False
+    if str(checkpoint.get("doc_id") or "") != str(doc.get("id") or ""):
+        return False
+    if str(checkpoint.get("file_name") or "") != str(doc.get("file_name") or ""):
+        return False
+    if int(checkpoint.get("max_pages") or 0) < max(0, int(max_pages)):
+        return False
+    source_path = _document_source_path(doc, dataset_id=dataset_id, storage_root=storage_root)
+    fingerprint = _source_fingerprint(source_path)
+    return (
+        str(checkpoint.get("source_path") or "") == (source_path.as_posix() if source_path else "")
+        and checkpoint.get("source_size") == fingerprint.get("size")
+        and checkpoint.get("source_mtime_ns") == fingerprint.get("mtime_ns")
+    )
+
+
+def _source_fingerprint(source_path: Path | None) -> dict[str, int | None]:
+    if source_path is None:
+        return {"size": None, "mtime_ns": None}
+    try:
+        stat = source_path.stat()
+    except OSError:
+        return {"size": None, "mtime_ns": None}
+    return {"size": int(stat.st_size), "mtime_ns": int(stat.st_mtime_ns)}
+
+
 def _input_signature(docs: list[dict[str, Any]]) -> str:
     payload = {
         "algo_version": PROJECT_PDF_EXTRACT_ALGO_VERSION,
@@ -462,7 +597,9 @@ def _validated_dataset_id(value: str) -> str:
 
 def _write_json(path: Path, payload: dict[str, Any]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary = path.with_name(f".{path.name}.{time.time_ns()}.tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(path)
     return path
 
 

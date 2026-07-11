@@ -109,6 +109,15 @@ Discipline readers are additive plugins. They must never block the whole
 project source-map: a missing/empty/broken PDF or a failed discipline reader is
 a file-level warning/status.
 
+Large datasets are processed as resumable batches. After each PDF the
+orchestrator atomically writes `file_extract.json` beside that file's manifests.
+The checkpoint is reusable only when `doc_id`, file name/path, size, mtime,
+algorithm version and requested page depth still match. `max_files` limits new
+PDF work in one invocation; valid checkpoints are included without consuming
+that budget. A partial summary therefore resumes instead of returning a cache
+hit, and a lost dataset-level summary can be rebuilt from file checkpoints.
+Coverage always reports the aggregate attempted/unattempted set.
+
 Current and planned normalized layers:
 
 ```text
@@ -170,6 +179,16 @@ QTY, SPEC, TEP, TEP/STAFF, ENERGY, GEO, LEGAL/GPU, CATALOG
 SERVICE, NAV, NOISE, TEXT, UNKNOWN
 ```
 
+Before classification, consecutive PDF table fragments with the same header
+are joined into one logical candidate. A headerless continuation of the known
+`Имя панели / Помещение` grid inherits that header and is classified as
+`ELEC/CABLE_JOURNAL`; its primary locator is `#tables=N-M` and `source_refs`
+retains every original table locator. `Раздел / Наименование / Исполнитель` is
+navigation (`NAV`, project composition). `ОТМ. 0.000` is emitted separately as
+`ANNOTATION` with row/cell coordinates, even when it is embedded in a title
+block. New manifests use the source path rather than a basename-only locator so
+same-named files in different folders remain distinguishable.
+
 `SERVICE`, `NAV` and `NOISE` are deliberately separated from engineering table
 types:
 
@@ -194,6 +213,43 @@ facts without normalized rows/source fragments.
 
 The model may use candidates to decide where to look next, but row-level claims
 still need normalized rows or retrieved source fragments with `source_ref`.
+
+## Addressable table registry
+
+`project_table_registry_service` converts completed per-file table manifests into
+a bounded JSONL search registry. A search hit is only a navigation card. `table_id`
+binds document SHA-256, page, bbox, full normalized header, algorithm and detector
+versions. For an engineering claim, `read_project_table(table_id)` validates size,
+mtime, SHA-256, manifest/source linkage, versions, geometry and header before opening
+the original PDF. A changed source/detector or fragments that no longer merge return
+`stale`, never evidence. Only the exact verified matrix/normalized rows are evidence.
+
+## Documentation metadata model
+
+`project_document_registry_service` builds a read-only JSON projection; it does not
+claim to be a transactional database and does not invent a second document taxonomy.
+It combines existing MetaDB classification, filename classifier, SPDS designation,
+drawing-manifest fields, page-level sheet records and the LIST volume register:
+
+```text
+Documentation
+└── Project (explicit link; else cipher, object name or address)
+    └── Stage
+        └── Virtual volume (metadata selection, never a merged PDF)
+            └── Section
+                └── Document + page/sheet properties
+```
+
+Contracts, commercial offers, estimates and correspondence stay related entities
+under Documentation instead of being forced into a project stage. Stage values are
+canonical (`ПД`, `РД`, `ИД`, etc.); a dataset explicitly named as working/project/
+as-built documentation may provide a fallback stage with `stage_source=dataset_name`.
+Sheet number/count values that exceed the real PDF page count are discarded at the
+document-card level; their page-local raw source remains available in the sheet
+register. The entire registry and virtual-volume result are navigation, not evidence.
+Issued PDFs anchor volumes by canonical cipher+discipline. Supporting files join by
+exact identity, then unique discipline/stage; directory path is the final fallback.
+Every volume exposes `association_basis` and confidence.
 
 ## L.I.S.T. reliability contract
 

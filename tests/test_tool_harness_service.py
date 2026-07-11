@@ -82,7 +82,10 @@ def test_tool_registry_is_typed_and_read_only_first():
     registry = ToolHarness().registry()
 
     names = {tool["name"] for tool in registry["tools"]}
-    assert {"dataset_map", "search_sources", "read_source", "filesystem_list", "filesystem_read_text"} <= names
+    assert {
+        "dataset_map", "search_sources", "read_source", "filesystem_list", "filesystem_read_text",
+        "search_project_tables", "read_project_table", "assemble_project_volume",
+    } <= names
     assert all(tool["side_effects"] == "none" for tool in registry["tools"])
     assert registry["policy"]["tools_return_evidence_not_final_domain_answers"] is True
 

@@ -199,6 +199,42 @@ class ToolHarness:
         )
         self._register(
             ToolSpec(
+                name="search_project_tables",
+                title="Search project tables",
+                category="source",
+                summary="Search Л.И.С.Т. table cards by meaning, headers, file and semantic type before reading the original table.",
+                args_schema={"dataset_id": "str", "q": "str", "semantic_type": "str", "file": "str", "limit": "int"},
+                returns="navigation-only table cards with table_id and source_ref",
+                tags=("table", "project", "list", "search", "registry", "headers", "смета", "спецификация"),
+            ),
+            _tool_search_project_tables,
+        )
+        self._register(
+            ToolSpec(
+                name="read_project_table",
+                title="Read original project table",
+                category="source",
+                summary="Open one table from its table_id and return exact bounded rows from the original PDF with source_ref.",
+                args_schema={"dataset_id": "str", "table_id": "str", "max_rows": "int"},
+                returns="source-evidence table headers and rows",
+                tags=("table", "project", "read", "pdf", "rows", "source_ref"),
+            ),
+            _tool_read_project_table,
+        )
+        self._register(
+            ToolSpec(
+                name="assemble_project_volume",
+                title="Assemble virtual project volume",
+                category="dataset",
+                summary="Select a virtual project volume by cipher, section or discipline from documentation metadata; never merges files.",
+                args_schema={"dataset_id": "str", "index": "str"},
+                returns="metadata selection of project stage, volume, sections, components and gaps",
+                tags=("project", "documentation", "volume", "cipher", "stage", "section", "metadata", "том", "шифр"),
+            ),
+            _tool_assemble_project_volume,
+        )
+        self._register(
+            ToolSpec(
                 name="filesystem_roots",
                 title="Filesystem roots",
                 category="filesystem",
@@ -365,6 +401,110 @@ def _tool_read_excel_source(args: dict[str, Any]) -> dict[str, Any]:
         payload["tool_trace"]["trace"] = payload["trace"]
     payload["contract_check"] = validate_tool_result(payload)
     return payload
+
+
+def _tool_search_project_tables(args: dict[str, Any]) -> dict[str, Any]:
+    from proxy.services.project_table_registry_service import search_project_tables
+
+    dataset_id = str(args.get("dataset_id") or "").strip()
+    q = str(args.get("q") or "").strip()
+    semantic_type = str(args.get("semantic_type") or "").strip()
+    file_filter = str(args.get("file") or "").strip()
+    if not dataset_id:
+        return _result(tool="search_project_tables", operation="search", inputs=[args], status="missing",
+                       result={}, missing=["dataset_id"], trace="dataset_id is required")
+    if not (q or semantic_type or file_filter):
+        return _result(tool="search_project_tables", operation="search", inputs=[args], status="missing",
+                       result={}, missing=["q, semantic_type or file"], trace="table selector is required")
+    result = search_project_tables(
+        dataset_id,
+        q,
+        semantic_type=semantic_type,
+        file_filter=file_filter,
+        limit=_int_arg(args.get("limit"), 20, min_value=1, max_value=100),
+        storage_root=Path(str(args.get("storage_root") or "storage/datasets")),
+    )
+    items = result.get("items") or []
+    return _result(
+        tool="search_project_tables",
+        operation="search",
+        inputs=[{"dataset_id": dataset_id, "q": q, "semantic_type": semantic_type, "file": file_filter}],
+        status="ok" if items else "missing",
+        result=result,
+        evidence=[{"kind": "navigation", "dataset_id": dataset_id, "is_evidence": False}],
+        sources=[{"kind": "project_table_card", "table_id": item.get("table_id"), "source_ref": item.get("source_ref")} for item in items],
+        missing=[] if items else ["no project tables matched selector"],
+        trace="searched Л.И.С.Т. table registry; cards are navigation, not evidence",
+    )
+
+
+def _tool_read_project_table(args: dict[str, Any]) -> dict[str, Any]:
+    from proxy.services.project_table_registry_service import read_project_table
+
+    dataset_id = str(args.get("dataset_id") or "").strip()
+    table_id = str(args.get("table_id") or "").strip()
+    if not dataset_id or not table_id:
+        return _result(tool="read_project_table", operation="read", inputs=[args], status="missing",
+                       result={}, missing=["dataset_id and table_id"], trace="table selector is required")
+    try:
+        result = read_project_table(
+            dataset_id,
+            table_id,
+            max_rows=_int_arg(args.get("max_rows"), 100, min_value=1, max_value=500),
+            storage_root=Path(str(args.get("storage_root") or "storage/datasets")),
+        )
+    except (KeyError, ValueError, FileNotFoundError) as exc:
+        return _result(tool="read_project_table", operation="read", inputs=[args], status="missing",
+                       result={}, missing=[str(exc)], trace="project table could not be read")
+    if result.get("status") == "stale":
+        return _result(
+            tool="read_project_table",
+            operation="read",
+            inputs=[{"dataset_id": dataset_id, "table_id": table_id}],
+            status="blocked",
+            result=result,
+            evidence=[],
+            sources=[{"kind": "project_pdf_table", "source_ref": result.get("source_ref")}],
+            missing=[f"stale table evidence: {result.get('reason') or 'registry rebuild required'}"],
+            trace="refused stale project table; rebuild registry before exact read",
+        )
+    return _result(
+        tool="read_project_table",
+        operation="read",
+        inputs=[{"dataset_id": dataset_id, "table_id": table_id}],
+        status="ok" if result.get("matrix") else "missing",
+        result=result,
+        evidence=[{"kind": "project_pdf_table", "source_ref": result.get("source_ref"), "is_evidence": True}],
+        sources=[{"kind": "project_pdf_table", "source_ref": result.get("source_ref"), "source_path": result.get("source_path")}],
+        missing=[] if result.get("matrix") else ["table has no readable rows"],
+        trace="read exact bounded rows from original project PDF table",
+    )
+
+
+def _tool_assemble_project_volume(args: dict[str, Any]) -> dict[str, Any]:
+    from proxy.services.project_document_registry_service import assemble_virtual_volume
+
+    dataset_id = str(args.get("dataset_id") or "").strip()
+    index = str(args.get("index") or "").strip()
+    if not dataset_id or not index:
+        return _result(tool="assemble_project_volume", operation="select", inputs=[args], status="missing",
+                       result={}, missing=["dataset_id and index"], trace="volume selector is required")
+    result = assemble_virtual_volume(
+        dataset_id,
+        index,
+        storage_root=Path(str(args.get("storage_root") or "storage/datasets")),
+    )
+    ok = result.get("status") not in {"missing", "error"}
+    return _result(
+        tool="assemble_project_volume",
+        operation="select",
+        inputs=[{"dataset_id": dataset_id, "index": index}],
+        status="ok" if ok else "missing",
+        result=result,
+        evidence=[{"kind": "navigation", "dataset_id": dataset_id, "is_evidence": False}],
+        missing=list(result.get("missing") or []),
+        trace="selected metadata-only virtual volume; no files were merged",
+    )
 
 
 def _read_source_payload(tool: str, args: dict[str, Any]) -> dict[str, Any]:

@@ -2,6 +2,7 @@ import sqlite3
 
 import pytest
 
+import proxy.services.project_pdf_extract_service as project_pdf_extract_service
 from proxy.services.project_pdf_extract_service import (
     PROJECT_PDF_EXTRACT_SCHEMA,
     PROJECT_PDF_FILE_EXTRACT_SCHEMA,
@@ -69,6 +70,33 @@ def _seed_db(path, dataset_id, file_name):
     conn.close()
 
 
+def _seed_db_many(path, dataset_id, files):
+    conn = sqlite3.connect(path)
+    conn.execute(
+        """
+        CREATE TABLE documents (
+            id TEXT,
+            dataset_id TEXT,
+            file_name TEXT,
+            status TEXT,
+            chunk_count INTEGER,
+            doc_type TEXT,
+            content_type TEXT,
+            domain TEXT,
+            pipeline TEXT,
+            source_path TEXT
+        )
+        """
+    )
+    for idx, file_name in enumerate(files, 1):
+        conn.execute(
+            "INSERT INTO documents VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (f"doc-{idx}", dataset_id, file_name, "PENDING", 0, "DOCUMENT", "text", "", "markdown", ""),
+        )
+    conn.commit()
+    conn.close()
+
+
 def test_run_project_pdf_extract_writes_sidecars_without_reindex(tmp_path):
     dataset_id = "ds-pdf"
     storage_root = tmp_path / "storage"
@@ -130,6 +158,83 @@ def test_run_project_pdf_extract_keeps_going_on_empty_pdf(tmp_path):
     assert summary["coverage"]["extract_errors"] == 1
     assert summary["files"][0]["status"] == "extract_error"
     assert any("empty_pdf_source" in warning for warning in summary["files"][0]["warnings"])
+
+
+def test_run_project_pdf_extract_resumes_from_file_checkpoints_after_summary_loss(tmp_path, monkeypatch):
+    dataset_id = "ds-resume"
+    storage_root = tmp_path / "storage"
+    dataset_root = storage_root / dataset_id
+    dataset_root.mkdir(parents=True)
+    for file_name in ("a.pdf", "b.pdf"):
+        (dataset_root / file_name).write_bytes(b"%PDF checkpoint fixture")
+    db = tmp_path / "meta.db"
+    _seed_db_many(db, dataset_id, ["a.pdf", "b.pdf"])
+    calls = []
+
+    def fake_extract(doc, **kwargs):
+        calls.append(doc["file_name"])
+        return {
+            "schema": PROJECT_PDF_FILE_EXTRACT_SCHEMA,
+            "file_name": doc["file_name"],
+            "doc_id": doc["id"],
+            "source_path": (dataset_root / doc["file_name"]).as_posix(),
+            "doc_role": "проектный PDF",
+            "cipher": "",
+            "stage": "",
+            "discipline": "",
+            "layers": [],
+            "artifact_paths": {},
+            "source_refs": [],
+            "source_refs_total": 0,
+            "source_refs_truncated": False,
+            "status": "ok",
+            "warnings": [],
+            "warnings_total": 0,
+            "warnings_truncated": False,
+            "sidecar_dir": "",
+        }
+
+    monkeypatch.setattr(project_pdf_extract_service, "_extract_pdf_file", fake_extract)
+
+    first = run_project_pdf_extract(
+        dataset_id,
+        storage_root=storage_root,
+        meta_db_path=str(db),
+        max_files=1,
+        max_pages=3,
+        force=True,
+    )
+    assert first["status"] == "partial"
+    assert first["coverage"]["files_attempted"] == 1
+    assert first["batch"] == {"new_files": 1, "reused_files": 0, "max_new_files": 1}
+    (storage_root / dataset_id / "_les_pdf_extract" / "summary.json").unlink()
+
+    resumed = run_project_pdf_extract(
+        dataset_id,
+        storage_root=storage_root,
+        meta_db_path=str(db),
+        max_files=1,
+        max_pages=3,
+        force=False,
+    )
+
+    assert calls == ["a.pdf", "b.pdf"]
+    assert resumed["status"] == "ok"
+    assert resumed["coverage"]["files_attempted"] == 2
+    assert resumed["coverage"]["files_unattempted"] == 0
+    assert resumed["batch"] == {"new_files": 1, "reused_files": 1, "max_new_files": 1}
+
+    (dataset_root / "a.pdf").write_bytes(b"%PDF changed fixture")
+    changed = run_project_pdf_extract(
+        dataset_id,
+        storage_root=storage_root,
+        meta_db_path=str(db),
+        max_files=1,
+        max_pages=3,
+        force=False,
+    )
+    assert calls == ["a.pdf", "b.pdf", "a.pdf"]
+    assert changed["batch"] == {"new_files": 1, "reused_files": 1, "max_new_files": 1}
 
 
 @pytest.mark.parametrize(

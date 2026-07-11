@@ -7,6 +7,7 @@ conclusions; it only emits source-referenced facts for RAG navigation.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ from proxy.services.pd_rd_manifest_service import repair_pd_rd_text
 
 _DASHES = str.maketrans({"–": "-", "—": "-", "−": "-", "‑": "-"})
 _MAX_TABLE_DETECTION_DRAWINGS = 3000
+PROJECT_PDF_TABLE_ALGO_VERSION = "0.24.0.375"
 
 
 def extract_project_pdf_table_manifest(
@@ -26,6 +28,7 @@ def extract_project_pdf_table_manifest(
     path = Path(pdf_path)
     manifest: dict[str, Any] = {
         "schema": "project_pdf_table_manifest_v1",
+        "algo_version": PROJECT_PDF_TABLE_ALGO_VERSION,
         "source_path": path.as_posix(),
         "file_name": path.name,
         "pages": [],
@@ -46,14 +49,16 @@ def extract_project_pdf_table_manifest(
     except Exception:
         manifest["warnings"].append("fitz_unavailable")
         return manifest
+    manifest["detector_version"] = f"pymupdf:{getattr(fitz, 'VersionBind', 'unknown')}"
     try:
         with fitz.open(str(path)) as doc:
             total = int(getattr(doc, "page_count", 0) or 0)
             limit = total if max_pages is None else min(total, max(0, int(max_pages)))
             manifest["page_count"] = total
             manifest["pages_read"] = limit
+            source_ref_base = path.as_posix()
             for page_index in range(limit):
-                page_payload = _extract_page(path.name, doc[page_index], page_index + 1)
+                page_payload = _extract_page(source_ref_base, doc[page_index], page_index + 1)
                 manifest["pages"].append(page_payload)
                 summary = manifest["summary"]
                 summary["detected_tables"] += page_payload["detected_tables_total"]
@@ -225,28 +230,53 @@ def _extract_page(source_name: str, page: Any, page_no: int) -> dict[str, Any]:
     table_type_candidates: list[dict[str, Any]] = []
     found, table_warning = _find_page_tables(page)
     text_norm = _norm_text(page.get_text("text") or "")
+    fragments: list[dict[str, Any]] = []
     for table_idx, table in enumerate(found, 1):
         try:
             matrix = table.extract()
         except Exception:
             continue
-        source_ref = f"{source_name}#page={page_no}#table={table_idx}"
-        context_norm = _norm_text(_table_context(page, table))
+        fragments.append(
+            {
+                "matrix": matrix or [],
+                "table_indices": [table_idx],
+                "context": _table_context(page, table),
+                "bbox": _bbox_values(getattr(table, "bbox", None)),
+            }
+        )
+    for fragment in merge_adjacent_project_table_fragments(fragments):
+        table_indices = [int(value) for value in fragment.get("table_indices") or []]
+        table_locator = (
+            f"table={table_indices[0]}"
+            if len(table_indices) == 1
+            else f"tables={table_indices[0]}-{table_indices[-1]}"
+        )
+        source_ref = f"{source_name}#page={page_no}#{table_locator}"
+        context_norm = _norm_text(str(fragment.get("context") or ""))
+        matrix = fragment.get("matrix") or []
         normalized = _normalize_classified_table(
-            matrix or [],
+            matrix,
             source_ref=source_ref,
             page_text_norm=text_norm,
             context_norm=context_norm,
         )
         semantic = classify_project_table_semantic(
-            matrix or [],
+            matrix,
             source_ref=source_ref,
             context_norm=context_norm,
             page_text_norm=text_norm,
         )
         semantic = _semantic_from_normalized_tables(normalized, semantic)
         if semantic:
+            semantic["source_refs"] = [
+                f"{source_name}#page={page_no}#table={table_idx}" for table_idx in table_indices
+            ]
+            if fragment.get("inherited_header"):
+                semantic["inherited_header"] = True
+            semantic["bbox"] = list(fragment.get("bbox") or [])
+            semantic["header_signature"] = _identity_header_signature(matrix)
             table_type_candidates.append(semantic)
+        table_type_candidates.extend(_drawing_annotation_candidates(matrix, source_ref=source_ref))
         tables.extend(normalized)
     hvs_rows = [row for table in tables if table["schema"] == "hvs_air_system_table_v1" for row in table.get("rows") or []]
     water_rows = [row for table in tables if table["schema"] == "vk_water_balance_table_v1" for row in table.get("rows") or []]
@@ -287,6 +317,136 @@ def _find_page_tables(page: Any) -> tuple[list[Any], str]:
         return [], f"table_detection_failed:{type(exc).__name__}"
 
 
+def merge_adjacent_project_table_fragments(fragments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Join consecutive pieces of one logical table before classification.
+
+    PDF drawing grids are often returned by PyMuPDF as several tables. Repeated
+    headers are safe merge boundaries. A headerless continuation may inherit a
+    known drawing-table header, currently the two-column cable journal header.
+    """
+    merged: list[dict[str, Any]] = []
+    for raw_fragment in fragments:
+        matrix = _clean_matrix(raw_fragment.get("matrix") or [])
+        if not matrix:
+            continue
+        current = {
+            "matrix": matrix,
+            "table_indices": list(raw_fragment.get("table_indices") or []),
+            "context": str(raw_fragment.get("context") or ""),
+            "inherited_header": False,
+            "bbox": _bbox_values(raw_fragment.get("bbox")),
+        }
+        current_signature = _repeatable_header_signature(matrix)
+        if not merged:
+            merged.append(current)
+            continue
+        previous = merged[-1]
+        previous_matrix = previous.get("matrix") or []
+        previous_signature = _repeatable_header_signature(previous_matrix)
+        same_repeated_header = bool(current_signature and current_signature == previous_signature)
+        inherited_header = bool(
+            not _is_inheritable_header(current_signature)
+            and _is_inheritable_header(previous_signature)
+            and _matrix_width(matrix) == _matrix_width(previous_matrix)
+            and _looks_like_cable_journal_rows(matrix)
+        )
+        if not (same_repeated_header or inherited_header):
+            merged.append(current)
+            continue
+        data_rows = matrix[1:] if same_repeated_header else matrix
+        previous["matrix"].extend(data_rows)
+        previous["table_indices"].extend(current["table_indices"])
+        previous["inherited_header"] = bool(previous.get("inherited_header") or inherited_header)
+        previous["bbox"] = _bbox_union(previous.get("bbox"), current.get("bbox"))
+        if current["context"] and current["context"] not in previous["context"]:
+            previous["context"] = _clean_text(f"{previous['context']} {current['context']}")
+    return merged
+
+
+def _clean_matrix(matrix: list[list[Any]]) -> list[list[str]]:
+    return [[_clean_cell(cell) for cell in row] for row in matrix if any(_clean_cell(cell) for cell in row)]
+
+
+def _matrix_width(matrix: list[list[Any]]) -> int:
+    return max((len(row) for row in matrix), default=0)
+
+
+def _identity_header_signature(matrix: list[list[Any]]) -> str:
+    cleaned = _clean_matrix(matrix)
+    if not cleaned:
+        return ""
+    header = [" ".join(str(value or "").casefold().replace("ё", "е").split()) for value in cleaned[0]]
+    return hashlib.sha256("|".join(header).encode("utf-8")).hexdigest()[:24]
+
+
+def _bbox_values(value: Any) -> list[float]:
+    try:
+        values = [round(float(item), 3) for item in value]
+    except (TypeError, ValueError):
+        return []
+    return values if len(values) == 4 else []
+
+
+def _bbox_union(left: Any, right: Any) -> list[float]:
+    a = _bbox_values(left)
+    b = _bbox_values(right)
+    if not a:
+        return b
+    if not b:
+        return a
+    return [min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3])]
+
+
+def _repeatable_header_signature(matrix: list[list[Any]]) -> tuple[str, ...]:
+    if not matrix:
+        return ()
+    signature = tuple(_norm_header(_clean_cell(cell)) for cell in matrix[0])
+    nonempty = [value for value in signature if value]
+    if len(nonempty) < 2 or not all(any(char.isalpha() for char in value) for value in nonempty):
+        return ()
+    return signature
+
+
+def _is_inheritable_header(signature: tuple[str, ...]) -> bool:
+    values = set(signature)
+    return "имяпанели" in values and "помещение" in values
+
+
+def _looks_like_cable_journal_rows(matrix: list[list[Any]]) -> bool:
+    checked = 0
+    for row in matrix[:4]:
+        values = [_clean_cell(cell) for cell in row]
+        if len(values) < 2 or not values[0] or not values[1]:
+            continue
+        checked += 1
+        if len(values[0]) > 32 or not re.search(r"[A-Za-zА-Яа-я0-9]", values[0]):
+            return False
+        if not re.search(r"[A-Za-zА-Яа-я]", values[1]):
+            return False
+    return checked > 0
+
+
+def _drawing_annotation_candidates(matrix: list[list[Any]], *, source_ref: str) -> list[dict[str, Any]]:
+    annotations: list[dict[str, Any]] = []
+    for row_no, row in enumerate(_clean_matrix(matrix), 1):
+        for cell_no, cell in enumerate(row, 1):
+            match = re.search(r"\bотм\.?\s*0[.,]000\s*=*", _norm_text(cell), flags=re.IGNORECASE)
+            if not match:
+                continue
+            annotations.append(
+                {
+                    "schema": "project_pdf_table_type_candidate_v1",
+                    "source_ref": f"{source_ref}#row={row_no}#cell={cell_no}",
+                    "source_refs": [f"{source_ref}#row={row_no}#cell={cell_no}"],
+                    "semantic_type": "ANNOTATION: нулевая отметка чертежа",
+                    "category": "drawing_annotation",
+                    "confidence": 0.96,
+                    "sample": _clean_text(match.group(0)),
+                }
+            )
+    return annotations
+
+
 def classify_project_table_semantic(
     matrix: list[list[Any]],
     *,
@@ -309,7 +469,11 @@ def classify_project_table_semantic(
     # neighboring sections and causes false table roles on dense drawing sheets.
     _ = page_text_norm
     text = _norm_text(f"{context_norm} {sample}")
-    semantic_type, category, confidence = _semantic_type_from_text(text, sample)
+    strong_semantic = _strong_semantic_from_rows(rows, source_ref=source_ref, text=text)
+    if strong_semantic:
+        semantic_type, category, confidence = strong_semantic
+    else:
+        semantic_type, category, confidence = _semantic_type_from_text(text, sample)
     return {
         "schema": "project_pdf_table_type_candidate_v1",
         "source_ref": source_ref,
@@ -689,6 +853,9 @@ def _discipline_from_semantic_type(semantic_type: str) -> str:
         "SPEC": "СО",
         "TEP": "ПЗ/ЭЭ",
         "CATALOG": "каталоги",
+        "ESTIMATE": "СМ",
+        "NORM": "нормативные перечни",
+        "COMMERCIAL": "КП/КАЦ",
     }.get(prefix, "")
 
 
@@ -713,6 +880,14 @@ def _use_for_semantic_type(semantic_type: str) -> str:
         return "спецификации оборудования, изделий и материалов"
     if semantic_type.startswith("ENERGY"):
         return "энергоэффективность и теплотехнические расчёты"
+    if semantic_type.startswith("ESTIMATE"):
+        return "локальные и объектные сметы, ресурсные строки и итоги"
+    if semantic_type.startswith("NORM"):
+        return "навигация по перечням нормативных документов"
+    if semantic_type.startswith("CATALOG"):
+        return "каталожные характеристики, комплектация и цены"
+    if semantic_type.startswith("COMMERCIAL"):
+        return "коммерческие предложения, номенклатура, количества и цены"
     return "навигация по найденным таблицам проекта"
 
 
@@ -736,6 +911,129 @@ def _sample_rows(rows: list[list[str]], *, limit: int = 5) -> str:
     return " / ".join(lines)
 
 
+def _strong_semantic_from_rows(
+    rows: list[list[str]],
+    *,
+    source_ref: str,
+    text: str,
+) -> tuple[str, str, float] | None:
+    """Classify high-signal table families before generic text heuristics."""
+    full_text = _norm_text(_sample_rows(rows, limit=24)[:6000])
+    header = _norm_text(" | ".join(rows[0])) if rows else ""
+    source_norm = source_ref.replace("\\", "/").lower()
+
+    if _looks_like_estimate_table(rows, source_norm=source_norm, full_text=full_text):
+        return "ESTIMATE: сметные расчёты и ресурсные строки", "engineering", 0.94
+    if "сметная стоимость" in full_text and "наименование работ и затрат" in full_text:
+        return "ESTIMATE: сводные и объектные сметные расчёты", "engineering", 0.94
+    if _looks_like_commercial_offer(header):
+        return "COMMERCIAL: коммерческие предложения и цены", "engineering", 0.94
+    if (
+        all(token in full_text for token in ("модель", "количество", "описание"))
+        or all(token in full_text for token in ("название вб", "модель"))
+        or all(token in full_text for token in ("нагрузка(kw)", "модель"))
+        or all(token in full_text for token in ("электропитание", "mca(a)", "mfa(a)"))
+        or all(token in full_text for token in ("pi-h", "воздушный поток", "звуковое давление"))
+    ):
+        return "HVAC/EQUIPMENT: подбор и характеристики оборудования", "engineering", 0.9
+    if "изделие" in header and "поправочный коэффициент" in header:
+        return "HVAC/CALC: поправочные коэффициенты подбора", "engineering", 0.92
+    if all(token in full_text for token in ("изделие", "функциональные возможности", "фактическое значение")):
+        return "HVAC/CALC: проверка ограничений трассы", "engineering", 0.92
+    if "длина(m)" in header and "диаметр трубопровода" in header:
+        return "HVAC/PIPE: длины и диаметры трубопроводов", "engineering", 0.92
+    if "φ" in full_text and re.search(r"\(\d+\)\s*\|\s*[\d,.]+\s*\|\s*φ", full_text):
+        return "HVAC/PIPE: длины и диаметры трубопроводов", "engineering", 0.88
+    if "предел огнестойкости" in header and any(
+        token in header for token in ("профиль", "металлоконструкц", "плита", "материал требуемый")
+    ):
+        return "FIRE/STRUCT: огнезащита металлоконструкций", "engineering", 0.92
+    if "марка элемента" in header and "арматур" in header:
+        return "STRUCT/REINF: арматура, сечения, материалы", "engineering", 0.92
+    if "номер" in header and "наименование изделия" in header and "комплектность" in header:
+        return "SPEC: спецификации оборудования/изделий/материалов", "engineering", 0.94
+    if ("поз." in header or "обозначение" in header) and "наименован" in header and (
+        "масса" in header or "кол. ед." in header
+    ):
+        return "SPEC: спецификации оборудования/изделий/материалов", "engineering", 0.9
+    if all(token in header for token in ("размер", "вес", "упаковка", "цена")):
+        return "CATALOG/PRICE: каталожные цены и упаковка", "engineering", 0.9
+    if header == "технические характеристики" or header.startswith("технические характеристики |"):
+        return "CATALOG: каталожные таблицы оборудования", "engineering", 0.86
+    if "код сокращения" in header and "описание" in header:
+        return "NAV: условные обозначения и сокращения", "navigation", 0.92
+    if any(token in full_text for token in ("банк получателя", "сч. №")) and "инн" in full_text and "кпп" in full_text:
+        return "SERVICE: банковские реквизиты/счета", "service", 0.96
+    if (
+        "уровне ответственности члена саморегулируемой организации" in full_text
+        or ("подготовка проектной документации" in full_text and "двадцать пять миллионов" in full_text)
+    ):
+        return "LEGAL/SRO: допуски и уровни ответственности", "navigation", 0.92
+    if all(token in header for token in ("обозначение", "наименование", "примечание")):
+        if _contains_project_document_cipher(full_text):
+            return "NAV: состав/содержание/ведомости документации", "navigation", 0.9
+        if re.search(r"\b(?:гост|сп|фз)(?:\s*[a-zа-я])?\s*\d", full_text, flags=re.IGNORECASE):
+            return "NORM: перечни нормативных документов", "navigation", 0.9
+    if "обозначение" in header and "наименование" in header and _contains_project_document_cipher(full_text):
+        return "NAV: состав/содержание/ведомости документации", "navigation", 0.88
+    if "перечень актов освидетельствования скрытых работ" in full_text:
+        return "NAV: перечень актов скрытых работ", "navigation", 0.94
+    if all(token in header for token in ("лист", "наименование", "примечание")) and any(
+        row and _clean_cell(row[0]).strip().isdigit() for row in rows[1:]
+    ):
+        return "NAV: ведомость листов комплекта", "navigation", 0.9
+    if "поз." in header and "эскиз" in header:
+        return "NOISE: фрагменты схем/выноски без табличной структуры", "noise", 0.9
+    if _looks_like_sparse_numeric_fragment(rows, full_text):
+        return "NOISE: строки-нумераторы/разорванные табличные сетки", "noise", 0.9
+    return None
+
+
+def _looks_like_estimate_table(rows: list[list[str]], *, source_norm: str, full_text: str) -> bool:
+    if not rows:
+        return False
+    numbers: list[int] = []
+    for cell in rows[0]:
+        value = _clean_cell(cell).strip()
+        if value.isdigit():
+            numbers.append(int(value))
+    sequential_grid = len(numbers) >= 8 and numbers[:8] == list(range(1, 9))
+    estimate_folder = "/сметы/" in source_norm
+    signals = sum(
+        token in full_text
+        for token in (
+            "терм", "терп", "тер", "фер", "гэсн", "тссц", "озп=", "зпм=",
+            "индекс к позиции", "накладные расходы", "сметная прибыль", "всего с нр и сп",
+        )
+    )
+    estimate_continuation = estimate_folder and signals >= 1 and sum(len(row) for row in rows[:3]) >= 6
+    return (sequential_grid and (estimate_folder or signals >= 2)) or estimate_continuation
+
+
+def _looks_like_commercial_offer(header: str) -> bool:
+    product_signal = any(
+        token in header
+        for token in ("товары (работы, услуги)", "товар |", "товары |", "наименование | ед. | кол-во")
+    )
+    quantity_signal = "кол-во" in header or "количество" in header
+    return product_signal and quantity_signal and "цена" in header and "сумма" in header
+
+
+def _contains_project_document_cipher(text: str) -> bool:
+    codes = "АР|КЖ|КМ|КР|ОВ|ВК|СС|ТХ|ПЗУ|ИОС|ЭОМ|ЭС|АПС|АОВ|СОУЭ|АУПТ"
+    return bool(re.search(rf"\d{{2,}}[./-].{{0,100}}(?:{codes})(?:\b|\d)", text, flags=re.IGNORECASE))
+
+
+def _looks_like_sparse_numeric_fragment(rows: list[list[str]], text: str) -> bool:
+    if len(rows) > 6 or len(text) > 220:
+        return False
+    if re.search(r"\d+\.\s*\d+", text):
+        return False
+    letters = re.findall(r"[a-zа-яё]", text, flags=re.IGNORECASE)
+    digits = re.findall(r"\d", text)
+    return len(letters) <= 2 and len(digits) >= 2
+
+
 def _semantic_type_from_text(text: str, sample: str) -> tuple[str, str, float]:
     if (
         "состав проектной документации" in text
@@ -750,6 +1048,7 @@ def _semantic_type_from_text(text: str, sample: str) -> tuple[str, str, float]:
         or ("обозначение" in text and "наименование раздела" in text and "приме- чание" in text)
         or ("схема электрическая принципиальная" in text and "лист" in text)
         or ("содержание" in text and "материалы" in text and "основные параметры" in text)
+        or ("раздел" in text and "наименование" in text and "исполнитель" in text)
         or _looks_like_toc_fragment(sample)
     ):
         return "NAV: состав/содержание/ведомости документации", "navigation", 0.9
@@ -787,6 +1086,8 @@ def _semantic_type_from_text(text: str, sample: str) -> tuple[str, str, float]:
         return "ELEC: таблицы нагрузок", "engineering", 0.8
     if any(token in text for token in ("освещенность", "кео", "ugr", "разряд зрительных работ", "система общего освещ")):
         return "ELEC/LIGHT: освещение, КЕО и светотехнические нормы", "engineering", 0.78
+    if "имя панели" in text and "помещение" in text:
+        return "ELEC/CABLE_JOURNAL: панели и помещения кабельного журнала", "engineering", 0.92
     if (
         any(token in text for token in ("марка кабеля", "длина кабеля"))
         or (
