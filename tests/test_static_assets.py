@@ -61,10 +61,10 @@ def test_documents_ui_is_a_visual_read_only_dataset_browser():
     assert 'on_click=lambda: _schedule(_run_pdf_extract())' not in page
     assert "min-height: 40px" in styles
     assert "scale: .96" in styles
-    assert "Состав датасета" in page
+    assert "Реестр датасета" in page
     assert '"Файлы и папки"' in page
     assert "_composition_files" in page
-    assert 'value=True' in page
+    assert "value=not bool(file_data)" in page
     assert "sov-composition-folder" in page
     assert ".sov-composition-folder" in styles
     assert "Корень датасета" in page
@@ -73,7 +73,7 @@ def test_documents_ui_is_a_visual_read_only_dataset_browser():
     assert "sov-dataset-group-filter" in page
     assert "sov-composition-view-switch" in page
     for label in (
-        "Дерево", "Плитка", "Список", "Таблица", "Справка о датасете", "Справка о файле",
+        "Дерево", "Плитка", "Список", "Таблица", "О датасете", "Выбранный файл",
         "Все папки", "Все форматы", "Все статусы", "Тип документа", "Qdrant/LES",
     ):
         assert label in page
@@ -87,6 +87,14 @@ def test_documents_ui_is_a_visual_read_only_dataset_browser():
     assert ".sov-index-brief--dataset" in styles
     assert ".sov-index-brief--file" in styles
     assert "grid-template-columns: minmax(0, 1fr)" in styles
+    assert "sov-doc-tree-folder" in page
+    assert ".sov-doc-tree-folder" in styles
+    tree_folder_css = styles.split(".sov-doc-tree-folder {", 1)[1].split("}", 1)[0]
+    assert "flex: 0 0 auto" in tree_folder_css
+    assert ".sov-selected-file-dock" in styles
+    assert "--docs-border-strong" in styles
+    assert "--docs-muted-strong" in styles
+    assert "border: 1px solid var(--docs-border-strong)" in styles
     assert "Л.И.С.Т. проекта" in page
     assert "Структура Л.И.С.Т." in page
     assert 'coverage.get("files_ok") or coverage.get("files_extracted")' in page

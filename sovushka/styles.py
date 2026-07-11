@@ -1836,6 +1836,9 @@ body, .nicegui-content {
 
 /* Documents — calm, read-only common data environment */
 .sov-docs-shell {
+  --docs-border-strong: color-mix(in srgb, var(--text) 24%, transparent);
+  --docs-border-soft: color-mix(in srgb, var(--text) 15%, transparent);
+  --docs-muted-strong: color-mix(in srgb, var(--text) 78%, var(--bg-panel));
   min-height: calc(100vh - 112px);
   background:
     radial-gradient(circle at 18% 0%, rgba(52,211,153,.055), transparent 28%),
@@ -1847,13 +1850,17 @@ body, .nicegui-content {
   min-height: 76px;
   gap: 14px;
   padding: 12px 18px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-bottom: 1px solid var(--docs-border-strong);
   background: color-mix(in srgb, var(--bg-panel) 88%, transparent);
   backdrop-filter: blur(18px);
 }
 .sov-docs-heading { min-width: 230px; gap: 1px !important; }
 .sov-docs-title { letter-spacing: .02em; text-wrap: balance; }
-.sov-docs-subtitle { text-wrap: pretty; }
+.sov-docs-subtitle {
+  color: var(--docs-muted-strong) !important;
+  font-weight: 600 !important;
+  text-wrap: pretty;
+}
 .sov-docs-search {
   width: min(620px, 52vw);
   margin-left: auto;
@@ -1863,6 +1870,23 @@ body, .nicegui-content {
   min-height: 42px !important;
   border-radius: 12px !important;
   background: color-mix(in srgb, var(--input-bg) 92%, transparent);
+}
+.sov-docs-shell .q-field--outlined .q-field__control::before {
+  border: 1px solid var(--docs-border-strong) !important;
+}
+.sov-docs-shell .q-field--outlined:hover .q-field__control::before {
+  border-color: color-mix(in srgb, var(--text) 38%, transparent) !important;
+}
+.sov-docs-shell .q-field__native,
+.sov-docs-shell .q-field__input,
+.sov-docs-shell .q-field__label {
+  color: var(--text) !important;
+  font-weight: 600;
+}
+.sov-docs-shell .q-field__native::placeholder,
+.sov-docs-shell .q-field__input::placeholder {
+  color: var(--docs-muted-strong) !important;
+  opacity: 1;
 }
 .sov-docs-search-btn {
   min-height: 42px !important;
@@ -1885,6 +1909,7 @@ body, .nicegui-content {
   min-height: 0;
   gap: 10px !important;
   overflow: hidden;
+  border: 1px solid var(--docs-border-strong);
   border-radius: 16px;
   background: color-mix(in srgb, var(--bg-panel) 94%, transparent);
   box-shadow:
@@ -1893,13 +1918,13 @@ body, .nicegui-content {
     0 12px 30px rgba(3,10,18,.05);
 }
 .sov-docs-datasets-panel {
-  width: 282px;
-  min-width: 250px;
+  width: 250px;
+  min-width: 230px;
   padding: 14px 12px;
 }
 .sov-docs-files-panel {
-  width: 350px;
-  min-width: 310px;
+  width: 420px;
+  min-width: 360px;
   padding: 14px 12px;
 }
 .sov-docs-view-panel {
@@ -1913,6 +1938,11 @@ body, .nicegui-content {
   gap: 7px;
   padding-inline: 4px;
   letter-spacing: .01em;
+  color: var(--text);
+}
+.sov-docs-panel-title .q-label {
+  color: var(--text) !important;
+  font-weight: 850 !important;
 }
 .sov-docs-panel-title .q-icon { color: var(--accent); font-size: 18px; }
 .sov-docs-filter { width: 100%; }
@@ -1921,6 +1951,7 @@ body, .nicegui-content {
   gap: 2px;
   padding: 3px;
   border-radius: 11px;
+  border: 1px solid var(--docs-border-soft);
   background: color-mix(in srgb, var(--bg) 72%, var(--bg-panel));
   box-shadow: inset 0 0 0 1px rgba(138,162,184,.14);
 }
@@ -1929,12 +1960,14 @@ body, .nicegui-content {
   flex: 1;
   padding-inline: 8px !important;
   border-radius: 8px !important;
-  color: var(--dim) !important;
+  color: var(--docs-muted-strong) !important;
+  font-weight: 700 !important;
 }
 .sov-dataset-group-btn--active {
   color: var(--text) !important;
   background: var(--bg-panel) !important;
-  box-shadow: 0 0 0 1px rgba(138,162,184,.16), 0 3px 10px rgba(3,10,18,.05);
+  border: 1px solid var(--docs-border-strong) !important;
+  box-shadow: 0 3px 10px rgba(3,10,18,.05);
 }
 .sov-docs-list {
   flex: 1;
@@ -1948,6 +1981,7 @@ body, .nicegui-content {
   cursor: pointer;
   padding: 11px;
   border-radius: 13px;
+  border: 1px solid var(--docs-border-soft);
   background: color-mix(in srgb, var(--bg-panel) 92%, var(--bg) 8%);
   box-shadow: 0 0 0 1px rgba(138,162,184,.14);
   transition-property: scale, background-color, box-shadow;
@@ -1956,11 +1990,13 @@ body, .nicegui-content {
 }
 .sov-dataset-card:hover,
 .sov-document-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--docs-border-strong));
   background: color-mix(in srgb, var(--bg-panel) 86%, var(--accent) 14%);
   box-shadow: 0 0 0 1px rgba(52,211,153,.28), 0 7px 20px rgba(3,10,18,.06);
 }
 .sov-dataset-card--selected,
 .sov-document-card--selected {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--docs-border-strong));
   background: color-mix(in srgb, var(--bg-panel) 76%, var(--accent) 24%);
   box-shadow: 0 0 0 1px rgba(52,211,153,.46), 0 9px 24px rgba(16,185,129,.09);
 }
@@ -1975,6 +2011,7 @@ body, .nicegui-content {
   height: 36px;
   min-width: 36px;
   border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--docs-border-soft));
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, var(--bg-panel));
   box-shadow: inset 0 0 0 1px rgba(52,211,153,.16);
@@ -1993,7 +2030,39 @@ body, .nicegui-content {
 .sov-dataset-name { flex: 1; }
 .sov-dataset-chevron { color: var(--dim); opacity: .55; }
 .sov-document-copy { min-width: 0; flex: 1; gap: 1px !important; }
+.sov-doc-tree-folder {
+  border: 1px solid var(--docs-border-strong);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--bg-panel) 96%, var(--bg));
+  flex: 0 0 auto;
+  overflow: hidden;
+}
+.sov-doc-tree-folder > .q-expansion-item__container > .q-item {
+  min-height: 44px;
+  color: var(--text);
+  font-weight: 800;
+}
+.sov-doc-tree-folder .q-expansion-item__content {
+  padding: 2px 6px 8px 14px;
+  border-top: 1px solid var(--docs-border-soft);
+  background: color-mix(in srgb, var(--bg) 24%, var(--bg-panel));
+}
+.sov-doc-tree-folder .sov-document-card--tree,
+.sov-doc-tree-folder .sov-doc-tree-folder {
+  margin-top: 6px;
+}
+.sov-document-card--tree {
+  flex: 0 0 auto;
+  padding: 8px 9px;
+  border-radius: 10px;
+}
+.sov-document-card--tree .sov-document-meta-text,
+.sov-document-card--tree .sov-document-attention {
+  padding-left: 39px;
+}
 .sov-document-path {
+  color: var(--docs-muted-strong) !important;
+  font-weight: 600 !important;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2006,6 +2075,8 @@ body, .nicegui-content {
   margin-top: 5px;
   padding-left: 45px;
   line-height: 1.35;
+  color: var(--docs-muted-strong) !important;
+  font-weight: 600 !important;
   font-variant-numeric: tabular-nums;
   text-wrap: pretty;
 }
@@ -2018,13 +2089,14 @@ body, .nicegui-content {
   padding: 12px 18px 10px;
   background: color-mix(in srgb, var(--bg-panel) 92%, transparent);
   backdrop-filter: blur(18px);
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-bottom: 1px solid var(--docs-border-strong);
 }
 .sov-docs-view-title { text-wrap: balance; }
 .sov-docs-view-tabs {
   gap: 2px;
   padding: 3px;
   border-radius: 12px;
+  border: 1px solid var(--docs-border-soft);
   background: color-mix(in srgb, var(--bg) 72%, var(--bg-panel));
   box-shadow: inset 0 0 0 1px rgba(138,162,184,.14);
 }
@@ -2032,16 +2104,23 @@ body, .nicegui-content {
 .sov-docs-more {
   min-height: 40px !important;
   border-radius: 9px !important;
-  color: var(--dim) !important;
+  color: var(--docs-muted-strong) !important;
+  font-weight: 700 !important;
   transition-property: scale, color, background-color, box-shadow !important;
   transition-duration: 150ms !important;
 }
 .sov-docs-view-tab--active {
   color: var(--text) !important;
   background: var(--bg-panel) !important;
-  box-shadow: 0 0 0 1px rgba(138,162,184,.16), 0 4px 12px rgba(3,10,18,.06);
+  border: 1px solid var(--docs-border-strong) !important;
+  box-shadow: 0 4px 12px rgba(3,10,18,.06);
 }
-.sov-docs-view-note { margin: 12px 2px 2px; text-wrap: pretty; }
+.sov-docs-view-note {
+  margin: 12px 2px 2px;
+  color: var(--docs-muted-strong) !important;
+  font-weight: 650 !important;
+  text-wrap: pretty;
+}
 .sov-file-registry,
 .sov-list-overview,
 .sov-list-map,
@@ -2049,7 +2128,7 @@ body, .nicegui-content {
 .sov-list-root-card,
 .sov-list-discipline-card,
 .sov-list-file-card {
-  border: 0 !important;
+  border: 1px solid var(--docs-border-strong) !important;
   background: color-mix(in srgb, var(--bg-panel) 94%, transparent) !important;
   box-shadow: 0 0 0 1px rgba(138,162,184,.14), 0 8px 24px rgba(3,10,18,.045);
 }
@@ -2066,6 +2145,7 @@ body, .nicegui-content {
   width: 100%;
   overflow: hidden;
   border-radius: 12px;
+  border: 1px solid var(--docs-border-strong);
   background: color-mix(in srgb, var(--border) 55%, transparent);
   box-shadow: 0 0 0 1px rgba(138,162,184,.08);
 }
@@ -2074,11 +2154,16 @@ body, .nicegui-content {
   padding: 10px 12px;
   background: var(--bg-panel);
 }
+.sov-composition-stat + .sov-composition-stat { border-left: 1px solid var(--docs-border-strong); }
 .sov-composition-stat-value {
   letter-spacing: -.035em;
   font-variant-numeric: tabular-nums;
 }
-.sov-composition-stat-caption { margin-top: 1px; }
+.sov-composition-stat-caption {
+  margin-top: 1px;
+  color: var(--docs-muted-strong) !important;
+  font-weight: 650 !important;
+}
 .sov-composition-stat--good .sov-composition-stat-value { color: var(--accent) !important; }
 .sov-composition-stat--warn .sov-composition-stat-value { color: var(--warn) !important; }
 .sov-composition-stat--danger .sov-composition-stat-value { color: var(--err) !important; }
@@ -2086,6 +2171,8 @@ body, .nicegui-content {
   padding-inline: 2px;
   font-variant-numeric: tabular-nums;
   letter-spacing: .01em;
+  color: var(--docs-muted-strong) !important;
+  font-weight: 600 !important;
 }
 .sov-composition-folders {
   display: grid !important;
@@ -2097,17 +2184,20 @@ body, .nicegui-content {
   width: fit-content;
   padding: 3px;
   border-radius: 11px;
+  border: 1px solid var(--docs-border-soft);
   background: color-mix(in srgb, var(--bg) 72%, var(--bg-panel));
 }
 .sov-composition-view-btn {
   min-height: 38px !important;
   border-radius: 8px !important;
-  color: var(--dim) !important;
+  color: var(--docs-muted-strong) !important;
+  font-weight: 700 !important;
 }
 .sov-composition-view-btn--active {
   color: var(--text) !important;
   background: var(--bg-panel) !important;
-  box-shadow: 0 0 0 1px rgba(138,162,184,.16), 0 3px 10px rgba(3,10,18,.05);
+  border: 1px solid var(--docs-border-strong) !important;
+  box-shadow: 0 3px 10px rgba(3,10,18,.05);
 }
 .sov-composition-browser {
   display: grid;
@@ -2137,6 +2227,7 @@ body, .nicegui-content {
 .sov-composition-inspector-files { gap: 5px !important; }
 .sov-composition-tree-node {
   border-radius: 9px;
+  border: 1px solid var(--docs-border-soft);
   background: color-mix(in srgb, var(--bg-panel) 97%, transparent);
   box-shadow: inset 0 -1px 0 rgba(138,162,184,.11);
 }
@@ -2161,12 +2252,14 @@ body, .nicegui-content {
   min-height: 42px;
   padding: 6px 7px;
   border-radius: 9px;
-  background: transparent;
+  border: 1px solid var(--docs-border-soft);
+  background: color-mix(in srgb, var(--bg-panel) 97%, var(--bg));
   transition-property: background-color, box-shadow, scale;
   transition-duration: 140ms;
   transition-timing-function: cubic-bezier(.2, 0, 0, 1);
 }
 .sov-composition-file-row:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--docs-border-strong));
   background: color-mix(in srgb, var(--accent) 7%, var(--bg-panel));
   box-shadow: inset 0 0 0 1px rgba(52,211,153,.12);
 }
@@ -2178,6 +2271,7 @@ body, .nicegui-content {
   height: 30px;
   min-width: 30px;
   border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--docs-border-soft));
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));
 }
@@ -2188,10 +2282,15 @@ body, .nicegui-content {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.sov-composition-file-path {
+  color: var(--docs-muted-strong) !important;
+  font-weight: 600 !important;
+}
 .sov-composition-folder {
   min-width: 0;
   padding: 11px;
   border-radius: 12px;
+  border: 1px solid var(--docs-border-strong);
   background: color-mix(in srgb, var(--bg-panel) 88%, var(--bg) 12%);
   box-shadow: 0 0 0 1px rgba(138,162,184,.14);
 }
@@ -2213,12 +2312,18 @@ body, .nicegui-content {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.sov-composition-folder-count {
+  color: var(--docs-muted-strong) !important;
+  font-weight: 650 !important;
+}
 .sov-composition-samples {
   margin: 7px 0 0 40px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   text-wrap: pretty;
+  color: var(--docs-muted-strong) !important;
+  font-weight: 600 !important;
 }
 .sov-composition-filters {
   display: grid !important;
@@ -2228,6 +2333,7 @@ body, .nicegui-content {
 }
 .sov-composition-filters > * { min-width: 0; }
 .sov-composition-file-row--selected {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--docs-border-strong));
   background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));
   box-shadow: inset 3px 0 0 var(--accent);
 }
@@ -2235,6 +2341,7 @@ body, .nicegui-content {
   width: 100%;
   overflow: auto;
   border-radius: 11px;
+  border: 1px solid var(--docs-border-strong);
   box-shadow: 0 0 0 1px rgba(138,162,184,.16);
 }
 .sov-composition-table {
@@ -2255,7 +2362,7 @@ body, .nicegui-content {
   position: sticky;
   top: 0;
   z-index: 1;
-  color: var(--dim);
+  color: var(--docs-muted-strong);
   font-weight: 800;
   background: var(--bg-panel);
 }
@@ -2274,21 +2381,43 @@ body, .nicegui-content {
 .sov-index-brief {
   padding: 14px;
   border-radius: 13px;
+  border: 1px solid var(--docs-border-strong);
   background: var(--bg-panel);
   box-shadow: 0 0 0 1px rgba(138,162,184,.11), 0 5px 16px rgba(3,10,18,.035);
 }
 .sov-index-brief--dataset {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--docs-border-strong));
   background: color-mix(in srgb, var(--accent) 7%, var(--bg-panel));
   box-shadow: 0 0 0 1px rgba(52,211,153,.18), 0 6px 18px rgba(16,185,129,.045);
 }
 .sov-index-brief--file {
   background: color-mix(in srgb, var(--bg-panel) 97%, var(--bg));
 }
+.sov-selected-file-dock {
+  position: sticky;
+  top: 62px;
+  z-index: 3;
+  margin-top: 12px;
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--docs-border-strong));
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-panel));
+  box-shadow: 0 8px 24px rgba(3,10,18,.08);
+}
+.sov-dataset-brief-fixed {
+  margin-top: 10px;
+  background: var(--bg-panel);
+}
+.sov-dataset-brief-fixed .sov-index-brief-text {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
 .sov-index-brief-kicker {
   gap: 6px;
   margin-bottom: 7px;
   letter-spacing: .045em;
   text-transform: uppercase;
+  color: var(--docs-muted-strong) !important;
 }
 .sov-index-brief-kicker .q-icon { font-size: 16px; color: var(--accent); }
 .sov-index-brief-title {
@@ -2298,19 +2427,39 @@ body, .nicegui-content {
 }
 .sov-index-brief-text {
   line-height: 1.55;
+  color: var(--text) !important;
+  font-weight: 600 !important;
   text-wrap: pretty;
   white-space: pre-wrap;
 }
-.sov-index-brief-meta { margin: 5px 0 8px 38px; font-variant-numeric: tabular-nums; }
-.sov-index-brief-empty-text { line-height: 1.5; text-wrap: pretty; }
-.sov-composition-file-index-source { font-variant-numeric: tabular-nums; }
+.sov-index-brief-meta {
+  margin: 5px 0 8px 38px;
+  color: var(--docs-muted-strong) !important;
+  font-weight: 600 !important;
+  font-variant-numeric: tabular-nums;
+}
+.sov-index-brief-empty-text {
+  color: var(--docs-muted-strong) !important;
+  font-weight: 600 !important;
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+.sov-composition-file-index-source {
+  color: var(--docs-muted-strong) !important;
+  font-weight: 650 !important;
+  font-variant-numeric: tabular-nums;
+}
 .sov-composition-open-file { min-height: 38px !important; width: fit-content; color: var(--accent) !important; }
 .sov-composition-folder-context {
   gap: 8px;
   margin-top: 2px;
   padding: 8px 4px 0;
 }
-.sov-composition-folder-description { padding: 0 4px 4px 44px; color: var(--dim) !important; }
+.sov-composition-folder-description {
+  padding: 0 4px 4px 44px;
+  color: var(--docs-muted-strong) !important;
+  font-weight: 600 !important;
+}
 .sov-docs-coverage { margin-top: 12px; padding: 12px 14px; }
 .sov-docs-coverage-head { gap: 8px; flex-wrap: wrap; }
 .sov-list-root-card,
@@ -2331,8 +2480,8 @@ body, .nicegui-content {
 .sov-docs-shell button { min-height: 40px; }
 
 @media (max-width: 1180px) {
-  .sov-docs-datasets-panel { width: 250px; min-width: 230px; }
-  .sov-docs-files-panel { width: 310px; min-width: 280px; }
+  .sov-docs-datasets-panel { width: 230px; min-width: 220px; }
+  .sov-docs-files-panel { width: 350px; min-width: 320px; }
   .sov-docs-view-tab { padding-inline: 9px !important; }
 }
 
