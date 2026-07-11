@@ -1,0 +1,3 @@
+[submodule "modules/les-list"]
+	path = modules/les-list
+	url = https://github.com/proovcme/les-list.git
