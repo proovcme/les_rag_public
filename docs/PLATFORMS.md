@@ -21,7 +21,7 @@ LES must not hard-code platform decisions in product code. Platform profiles sho
 | model host | MLX/Core ML | Ollama, llama.cpp, vLLM, OpenAI-compatible | remote provider, Ollama/llama.cpp, Lemonade via `lemonade_host.py`, OpenAI-compatible |
 | embeddings | Core ML Qwen | sentence-transformers, remote embeddings, OpenAI-compatible | Ollama/Lemonade-compatible `/v1/embeddings`, remote embeddings, sentence-transformers |
 | vector store | Qdrant binary | Qdrant Docker/native | Qdrant Docker named volume or remote |
-| UI | Sovushka Lite | Sovushka Lite | browser to local/remote LES |
+| UI | Tauri 2 shell → NiceGUI Sovushka | NiceGUI Sovushka in browser | Tauri 2 shell → NiceGUI Sovushka |
 
 ## Profile Names
 
@@ -65,13 +65,16 @@ For profiles without local generation, `/api/chat` may be disabled or routed to 
 
 ## Installer Entrypoints
 
+The canonical desktop package is `desktop/tauri`: Rust/Tauri owns the native
+window, tray and lifecycle; Python/FastAPI/NiceGUI remains the shared runtime.
+
 | Profile | Installer |
 |---|---|
-| `mac-native` | `uv run lesctl init --profile mac-native` then `installers/macos/install.sh` or `uv run lesctl install --profile mac-native` |
+| `mac-native` | `uv run python tools/build_tauri_app.py --version X.Y.Z --bundles app,dmg` |
 | `linux-docker` | `installers/linux/install.sh --profile linux-docker` |
 | `linux-systemd` | `installers/linux/install.sh --profile linux-systemd --install-units` |
 | `windows-docker` | `installers/windows/install.ps1 -Profile windows-docker` |
-| `windows-lite` | `installers/windows/install.ps1 -Profile windows-lite` |
+| `windows-lite` | on Windows: `uv run python tools/build_windows_installer.py --version X.Y.Z` |
 | `server-remote-model` | `uv run lesctl install --profile server-remote-model` |
 
 Docker profiles use `installers/<platform>/docker-compose.yml` and a named

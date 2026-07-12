@@ -285,6 +285,59 @@ class LexicalIndex:
             conn.execute("DELETE FROM lexical_chunks WHERE collection=?", (collection,))
             conn.execute("DELETE FROM lexical_index_meta WHERE collection=?", (collection,))
 
+    def promote_collection(
+        self, source: str, target: str, *, expected_count: int
+    ) -> dict[str, Any]:
+        """Atomically publish a verified physical FTS projection under an alias key."""
+        if not source or not target or source == target:
+            raise ValueError("source and target lexical collections must be distinct")
+        with self.connect() as conn:
+            observed = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS n FROM lexical_chunks WHERE collection=?",
+                    (source,),
+                ).fetchone()["n"]
+            )
+            if observed != expected_count:
+                raise ValueError(
+                    f"lexical source coverage mismatch: expected={expected_count}, observed={observed}"
+                )
+            conn.execute("DELETE FROM lexical_chunks WHERE collection=?", (target,))
+            conn.execute("DELETE FROM lexical_index_meta WHERE collection=?", (target,))
+            conn.execute(
+                """
+                INSERT INTO lexical_chunks (
+                    collection, point_id, dataset_id, doc_id, doc_name, text, content_hash,
+                    chunk_ord, section_heading, parent_id, parent_ord, child_ord,
+                    parent_heading, context_before, context_after, context_kind, updated_at
+                )
+                SELECT ?, point_id, dataset_id, doc_id, doc_name, text, content_hash,
+                       chunk_ord, section_heading, parent_id, parent_ord, child_ord,
+                       parent_heading, context_before, context_after, context_kind, ?
+                FROM lexical_chunks WHERE collection=?
+                """,
+                (target, time.time(), source),
+            )
+            copied = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS n FROM lexical_chunks WHERE collection=?",
+                    (target,),
+                ).fetchone()["n"]
+            )
+            if copied != expected_count:
+                raise RuntimeError(
+                    f"lexical promotion copy mismatch: expected={expected_count}, copied={copied}"
+                )
+            conn.execute(
+                """
+                INSERT INTO lexical_index_meta
+                    (collection, point_count, indexed_count, cursor_json, updated_at)
+                VALUES (?, ?, ?, '', ?)
+                """,
+                (target, expected_count, copied, time.time()),
+            )
+        return self.status(target)
+
     def delete_file(self, collection: str, *, dataset_id: str, doc_name: str) -> int:
         """Remove lexical rows for one indexed source file.
 

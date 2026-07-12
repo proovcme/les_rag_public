@@ -3,7 +3,7 @@
 Карта сметного режима: как запрос превращается в ВОР, нормативный ход, цены, расчётную трассу и
 видимый ответ.
 
-> **Статус 2026-07-11: частично актуален.** Верхняя схема ниже описывает текущий живой PDF→ЛСР
+> **Статус 2026-07-12: актуален для dev batch-контура.** Верхняя схема ниже описывает PDF→ЛСР
 > контур. Разделы про РИМ, quantities, ресурсы и форму ЛСР остаются полезной предметной механикой.
 > В нижней части ещё присутствуют исторические direct/harness-слои; они не являются доказательством
 > текущего runtime. Канонический долг и порядок удаления legacy — [TODO_SMETA_CORE.md](TODO_SMETA_CORE.md),
@@ -94,10 +94,9 @@
 1. Совушка сохраняет read-вложение под server-owned `attachment_id`.
 2. `proxy/routers/chat.py` вызывает `smeta_core.document_workflow.run_vor_pdf_workflow`.
 3. `source_intake` сохраняет строки, количества, разделы и координаты без выбора норм.
-4. Одна модельная native-tool сессия сама вызывает `search_norms`, `read_norm`, `bind_norm`,
-   `mark_covered_by`, `leave_unbound` и завершает mapping.
-5. Отдельные модельные решения описывают проектные ресурсы и точную строку цены; код применяет
-   bindings, считает РИМ/НР/СП/НДС и рендерит формульный XLSX.
+4. Одна модельная native-tool сессия сама вызывает `search_norms_batch`, `read_norms_batch`, затем
+   одним `submit_lsr_mapping` передаёт `bind|covered_by|unbound` и ресурсные действия по всем строкам.
+5. Код один раз применяет решение модели, считает РИМ/НР/СП/НДС и рендерит формульный XLSX.
 6. `smeta_user_message_service` переводит готовую summary в короткий пользовательский текст. Machine
    statuses, blockers и trace остаются в payload/журнале проверки.
 
@@ -111,7 +110,7 @@
 - `skills/smeta/SKILL.md` — профессиональный workflow и правила для агента.
 - `proxy/services/prompt_registry_service.py` — рендер compact role-pack в system prompt.
 - `proxy/routers/chat.py` — direct smeta answer, RAG packet, видимый ответ.
-- `proxy/smeta_core/document_workflow.py` — native model-agent PDF→mapping→resource decisions→ЛСР.
+- `proxy/smeta_core/document_workflow.py` — тонкий batch model-agent PDF→mapping→один расчёт→ЛСР.
 - `proxy/services/smeta_user_message_service.py` — детерминированный человеческий ответ из summary.
 - `proxy/services/estimate_harness_service.py` — model-owned work-plan + calculator gates.
 - `proxy/services/estimate_math_service.py` — generic arithmetic/quantity audit:

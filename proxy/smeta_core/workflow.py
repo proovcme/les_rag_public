@@ -1,4 +1,8 @@
-"""Single finality policy for legacy adapters entering the new smeta core."""
+"""Typed calculation and finality implementation for the smeta core.
+
+New application callers use :mod:`proxy.smeta_core.application`.  The
+``run_smeta_workflow`` symbol below remains a compatibility import only.
+"""
 
 from __future__ import annotations
 
@@ -179,10 +183,10 @@ def _coverage_binding(row: dict[str, Any], work_id: str, selected_by: str) -> Co
 
 
 def run_smeta_workflow(question: str, complete, *, max_steps: int = 16) -> dict[str, Any]:
-    """Canonical adapter entry while the legacy harness is split into core components."""
-    from proxy.services.estimate_harness_service import run_estimate_harness
+    """Compatibility wrapper; use ``smeta_core.application`` for new callers."""
+    from proxy.smeta_core.application import run_smeta_workflow as run_application
 
-    return run_estimate_harness(question, complete, max_steps=max_steps)
+    return run_application(question, complete, max_steps=max_steps)
 
 
 def calculate_visible_rows(

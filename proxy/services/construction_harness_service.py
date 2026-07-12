@@ -1,4 +1,8 @@
-"""Construction EVIDENCE Harness v0.1 — evidence-driven контур поверх существующих сервисов.
+"""Legacy construction evidence experiment (private, feature-off).
+
+This module is not a smeta application entrypoint.  New estimate requests enter
+``proxy.smeta_core.application``; this file remains for non-smeta evidence
+fixtures and compatibility tests until those consumers are migrated.
 
 ВАЖНО (честный статус, Codex): это Construction EVIDENCE Harness, ещё НЕ полноценный RAG Harness —
 `retrieve_project_doc` пока FIXTURE/STUB (источник подаётся, не добывается). Контур и контракт
@@ -30,6 +34,8 @@ from proxy.services.evidence_contract import (
     EvidenceType,
     block_of,
 )
+
+LEGACY_PRIVATE = True
 
 # ── work_family инференс (грубый, для gesn_expand) ───────────────────────────────────────
 
@@ -189,38 +195,38 @@ def spec_to_bor(rows: list[dict]) -> dict[str, Any]:
 
 
 def gesn_expand(position: dict[str, Any]) -> dict[str, Any]:
-    """ВОР-позиция → кандидаты ГЭСН + bind (переиспользует Gate 2/3 харнесса). Плохая норма НЕ
-    проходит: accepted → code; rejected/ambiguous → blocked. НЕ ослабляет применимость/ranking."""
-    from proxy.services import estimate_harness_service as hns
+    """Legacy ВОР-позиция → model-visible candidates, never a code-side binding."""
+    from proxy.smeta_core.norm_browser import browse_norms_many
 
     work = str(position.get("work", ""))
     family = _infer_family(work)
-    unit = position.get("unit", "")
     # SAFETY (Codex): НЕОПРЕДЕЛЁННАЯ семья работ НЕ даёт COMPUTED. Без классификации
     # applicability была бы пермиссивна (приняла бы по «работа/монтаж») — дыра. Блокируем.
+    browse = browse_norms_many([work], limit=8, rerank=False).get(work, {})
+    cards = list(browse.get("cards") or [])
     if not family:
-        res = hns.search_norm(work, work_family="", unit_hint=unit)
-        return {"status": "needs_classification", "work_family": "", "candidates": res.get("candidates", []),
+        return {"status": "needs_classification", "work_family": "", "candidates": cards,
                 "reason": "не удалось классифицировать вид работ (work_family unknown) — норма не привязана"}
-    res = hns.search_norm(work, work_family=family, unit_hint=unit)
-    cands = res.get("candidates", [])
-    accepted = [c for c in cands if c.get("applicability_status") == "accepted"]
-    if not accepted:
-        why = "нет применимой нормы (все кандидаты rejected/ambiguous)" if cands else "норма не найдена"
-        return {"status": "blocked", "work_family": family, "candidates": cands, "reason": why}
-    top = accepted[0]
-    return {"status": "accepted", "work_family": family, "norm_code": top["norm_code"],
-            "norm_title": top["title"], "measure_unit": top["measure_unit"], "candidates": cands}
+    return {
+        "status": "candidates_ready" if cards else "blocked",
+        "work_family": family,
+        "candidates": cards,
+        "selection_owner": "model_or_user",
+        "reason": (
+            "legacy evidence facade stops before professional norm selection"
+            if cards else "норма не найдена"
+        ),
+    }
 
 
 def lsr_assemble(positions: list[dict[str, Any]]) -> dict[str, Any]:
     """Позиции (accepted code + qty из документа) → ЛСР. Считает ТОЛЬКО код. Цена из ГЭСН.
     final запрещён при blockers (нет кода/qty). Числа — COMPUTED/RETRIEVED, не из модели."""
-    from proxy.services.estimate_harness_service import _norm_unit_factor, _units_compatible
     from proxy.services.gesn_service import get_norm
     from proxy.services.lsr_assembly_service import assemble
     from proxy.services.nr_sp_service import resolve as resolve_nr_sp
     from proxy.services.estimate_math_service import _f
+    from proxy.smeta_core.unit_contract import measure_units_compatible, norm_measure
 
     asm, blockers = [], []
     for p in positions:
@@ -234,8 +240,8 @@ def lsr_assemble(positions: list[dict[str, Any]]) -> dict[str, Any]:
             continue
         # UNIT GATE (Gate 1, НЕ ослабляем): физ.объём документа → измеритель нормы.
         # «100 м3» factor=100 → qty_lsr = phys/100. Несовместимая единица → blocker.
-        factor, base = _norm_unit_factor(norm.get("unit", ""))
-        if not _units_compatible(p.get("unit", ""), base):
+        factor, base = norm_measure(norm.get("unit", ""))
+        if not measure_units_compatible(p.get("unit", ""), norm.get("unit", "")):
             blockers.append({"work": p.get("work"),
                              "reason": f"единица документа {p.get('unit')} ≠ {base} нормы"})
             continue

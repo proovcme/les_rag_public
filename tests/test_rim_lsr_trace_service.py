@@ -205,6 +205,59 @@ def test_missing_price_and_unresolved_resource_review_separate_known_and_full_am
     assert _rows_by_type(trace)["position_total"]["columns"]["3"] == "Известная стоимость позиции"
 
 
+def test_explicit_empty_resource_revision_is_not_rehydrated_from_norm(monkeypatch):
+    """An empty model revision is data, not a request to restore raw norm resources."""
+    from proxy.services import gesn_service
+
+    norm = {
+        "code": "ГЭСНм08-02-409-09",
+        "name": "Прокладка труб гофрированных",
+        "unit": "100 м",
+        "resources": [
+            {"kind": "labor", "code": "1-100-36", "name": "Средний разряд", "unit": "чел.-ч", "per_unit": 15.2, "price": 500},
+        ],
+        "_source_kind": "seed_yaml",
+    }
+    monkeypatch.setattr(gesn_service, "get_norm", lambda *_args, **_kwargs: norm)
+
+    trace = build_position_trace({
+        "code": norm["code"], "qty": 1.6, "resources": [], "nr_pct": 0, "sp_pct": 0,
+        "resource_review_status": "unresolved",
+        "resource_review_reason": "модель не подтвердила компоненты",
+    })
+
+    assert not [row for row in trace["rows"] if str(row.get("type") or "").startswith("resource_")]
+    assert trace["summary"]["labor_qty"] == 0
+    assert trace["summary"]["known_amount"] == 0
+
+
+def test_hydrated_norm_resources_are_labor_normalized_at_render_boundary(monkeypatch):
+    """The final renderer must not add average, aggregate and grade detail together."""
+    from proxy.services import gesn_service
+
+    norm = {
+        "code": "ГЭСНм08-02-409-09",
+        "name": "Прокладка труб гофрированных",
+        "unit": "100 м",
+        "resources": [
+            {"kind": "labor", "code": "1-100-36", "name": "Средний разряд работы 3.6", "unit": "чел.-ч", "per_unit": 15.2, "price": 500},
+            {"kind": "labor", "code": "", "name": "ЗАТРАТЫ ТРУДА РАБОЧИХ, ВСЕГО: В ТОМ ЧИСЛЕ:", "unit": "чел.-ч", "per_unit": 15.6, "price": 500},
+            {"kind": "labor", "code": "2-100-02", "name": "Рабочий 2 разряда", "unit": "чел.-ч", "per_unit": 0.02, "price": 500},
+            {"kind": "labor", "code": "2-100-03", "name": "Рабочий 3 разряда", "unit": "чел.-ч", "per_unit": 10.75, "price": 500},
+            {"kind": "labor", "code": "2-100-04", "name": "Рабочий 4 разряда", "unit": "чел.-ч", "per_unit": 4.83, "price": 500},
+        ],
+        "_source_kind": "seed_yaml",
+    }
+    monkeypatch.setattr(gesn_service, "get_norm", lambda *_args, **_kwargs: norm)
+
+    trace = build_position_trace({"code": norm["code"], "qty": 1, "nr_pct": 0, "sp_pct": 0})
+
+    labor_rows = [row for row in trace["rows"] if row.get("type") == "resource_labor"]
+    assert [row["columns"]["2"] for row in labor_rows] == ["2-100-02", "2-100-03", "2-100-04"]
+    assert trace["summary"]["labor_qty"] == 15.6
+    assert trace["summary"]["ozp"] == 7800
+
+
 def test_build_lsr_trace_multi_position_sections_and_grand_total():
     # две gold-позиции в двух разделах → общий итог = 2× эталон; итоги разделов и свод — Σ позиций
     positions = [

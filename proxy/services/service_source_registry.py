@@ -197,9 +197,10 @@ def _facts_for_source(source_id: str, files: list[dict[str, Any]], dataset: dict
         except Exception:
             pass
     elif source_id == "fgis_price_base":
-        facts["pricebooks"] = len(existing)
+        pricebooks = [f for f in existing if str(f.get("path") or "").endswith(".parquet")]
+        facts["pricebooks"] = len(pricebooks)
         total = 0
-        for f in existing:
+        for f in pricebooks:
             rows = _parquet_rows(f["path"])
             if rows:
                 total += rows

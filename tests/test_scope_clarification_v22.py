@@ -72,8 +72,8 @@ def test_scope_resolution_warning_in_trace():
 
 
 def test_empty_retrieval_no_generic_code_no_data_final():
-    from proxy.routers import chat as chat_mod
-    src = inspect.getsource(chat_mod)
+    from proxy.services import chat_evidence_application_service
+    src = inspect.getsource(chat_evidence_application_service._execute_chat_evidence_application)
     assert 'if not chunks and target_file_ref and target_file_ref.get("match_status") in {"matched", "ambiguous"}' in src
     assert "empty_retrieval_model_first_v1" in src
 

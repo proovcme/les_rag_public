@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from proxy.routers import chat as chat_router
+from proxy.services import chat_evidence_application_service
 from proxy.routers import datasets as datasets_router
 from sovushka.pages import chat as chat_page
 from sovushka.pages import instrumenty as instrumenty_page
@@ -27,6 +28,16 @@ def test_ai_plain_markdown_is_rendered_as_markdown_widget():
 
     assert "ui.markdown(_format_sources_as_quotes(_disp)).classes(\"sov-chat-message-text sov-chat-md\")" in source
     assert "ui.markdown(_format_sources_as_quotes(_bubble_text(str(text or \"\"), _mode)))" in source
+
+
+def test_smeta_operator_sees_live_tool_and_rrf_telemetry():
+    source = inspect.getsource(chat_page.build_chat)
+
+    assert "sov-smeta-operator-log" in source
+    assert 'phase == "retrieval"' in source
+    assert "model_wait_ms" in source
+    assert "unique_queries_count" in source
+    assert "RRF" in source
 
 
 def test_chat_ui_has_new_chat_model_chip_answer_badge_and_wrapping_tables():
@@ -182,7 +193,9 @@ def test_selected_dataset_ids_preempt_glossary_deterministic_final():
 
 
 def test_notebook_study_prepares_reader_memory_and_keeps_artifact_visible():
-    source = inspect.getsource(chat_router._run_chat)
+    source = inspect.getsource(chat_router._run_chat) + inspect.getsource(
+        chat_evidence_application_service._execute_chat_evidence_application
+    )
 
     assert "_prepare_notebook_reader_memory" in source
     assert "dataset_reader_prepare" in source
@@ -385,7 +398,9 @@ def test_chat_no_longer_auto_hijacks_project_summary():
 
 
 def test_chat_adds_metadb_inventory_context_without_project_summary_hijack():
-    source = inspect.getsource(chat_router._run_chat)
+    source = inspect.getsource(chat_router._run_chat) + inspect.getsource(
+        chat_evidence_application_service._execute_chat_evidence_application
+    )
 
     assert "is_project_inventory_query(req.question)" in source
     assert "format_project_inventory_prompt" in source
@@ -453,6 +468,14 @@ def test_chat_ui_shows_selected_dataset_files_panel():
     assert ".sov-scope-file-chip" in styles
     assert ".sov-scope-file-badge" in styles
     assert ".sov-scope-file-ask" in styles
+
+
+def test_chat_history_restores_saved_file_artifacts():
+    source = inspect.getsource(chat_page.build_chat)
+
+    assert '_register_artifact_downloads(msg.get("meta"))' in source
+    assert "def _clear_file_artifacts" in source
+    assert "_clear_file_artifacts()" in source
 
 
 def test_operator_status_chips_hide_internal_trace_from_first_layer():

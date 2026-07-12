@@ -120,6 +120,14 @@ def _write_manifest(base_path: Path, result: dict[str, object]) -> None:
     target.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _write_build_status(base_path: Path, result: dict[str, object]) -> None:
+    """Publish sibling-build progress without replacing the active manifest."""
+    target = base_path.with_name("les_smeta_norm_rag_build.json")
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    tmp.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(target)
+
+
 def build(
     *,
     collection: str,
@@ -205,6 +213,20 @@ def build(
             os.getenv("MLX_URL", "http://127.0.0.1:8080"), model=embed_model
         )
     total_expected = len(_rows(base_path))
+    build_status = {
+        "schema": "smeta_norm_rag_build_v1",
+        "status": "building",
+        "collection": collection,
+        "expected_points": total_expected,
+        "points": int(client.count(collection, exact=True).count),
+        "dense_points": _dense_count(client, collection),
+        "sparse_points": _sparse_count(client, collection),
+        "embedding_model": embed_model,
+        "embedding_backend": embedding_backend,
+        "started_at": time.time(),
+        "updated_at": time.time(),
+    }
+    _write_build_status(base_path, build_status)
     for offset in range(0, len(rows), max(1, batch_size)):
         batch = rows[offset : offset + max(1, batch_size)]
         if sparse_only:
@@ -250,6 +272,16 @@ def build(
                 "updated_at": time.time(),
             }
             _write_manifest(base_path, progress)
+            _write_build_status(
+                base_path,
+                {
+                    **build_status,
+                    "points": int(client.count(collection, exact=True).count),
+                    "dense_points": dense_points,
+                    "sparse_points": _sparse_count(client, collection),
+                    "updated_at": time.time(),
+                },
+            )
             print(f"[smeta-norm-rag] dense {dense_points}/{total_expected}")
             continue
         points = []
@@ -275,6 +307,18 @@ def build(
                 },
             ))
         client.upsert(collection, points=points, wait=True)
+        completed = min(offset + len(batch), len(rows))
+        if completed == len(rows) or completed % max(256, batch_size) == 0:
+            _write_build_status(
+                base_path,
+                {
+                    **build_status,
+                    "points": completed if recreate else int(client.count(collection, exact=True).count),
+                    "dense_points": 0 if sparse_only else completed,
+                    "sparse_points": completed,
+                    "updated_at": time.time(),
+                },
+            )
         print(f"[smeta-norm-rag] {min(offset + len(batch), len(rows))}/{len(rows)}")
     count = int(client.count(collection, exact=True).count)
     dense_points = _dense_count(client, collection)
@@ -301,6 +345,17 @@ def build(
         ) else "failed",
     }
     _write_manifest(base_path, result)
+    _write_build_status(
+        base_path,
+        {
+            **build_status,
+            "status": "completed" if result["status"] == "passed" else "failed",
+            "points": count,
+            "dense_points": dense_points,
+            "sparse_points": sparse_points,
+            "updated_at": time.time(),
+        },
+    )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     client.close()
     return result

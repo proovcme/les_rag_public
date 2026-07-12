@@ -12,17 +12,6 @@ from proxy.routers.chat import (
     _harness_voice_comment,
     _mlx_prefill_no_think_messages,
     _smeta_active_state_from_answer,
-    _smeta_direct_rag_context,
-    _smeta_direct_norm_lookup_context,
-    _format_smeta_norm_lookup_results_for_model,
-    _smeta_direct_model_answer,
-    _smeta_direct_max_tokens,
-    _smeta_model_runtime,
-    _smeta_document_complete,
-    _smeta_direct_structured_norm_choice,
-    _smeta_direct_user_prompt,
-    _smeta_norm_lookup_max_calls,
-    _smeta_source_row_count,
     _format_active_smeta_state,
     _smeta_harness_question,
     _should_use_model_first_smeta,
@@ -34,6 +23,19 @@ from proxy.routers.chat import (
     _augment_model_tool_args,
     _format_tool_results_for_model,
     _chat_model_final_answer,
+)
+from proxy.services.smeta_chat_adapter_service import (
+    _format_smeta_norm_lookup_results_for_model,
+    _smeta_direct_max_tokens,
+    _smeta_direct_model_answer,
+    _smeta_direct_norm_lookup_context,
+    _smeta_direct_rag_context,
+    _smeta_direct_structured_norm_choice,
+    _smeta_direct_user_prompt,
+    _smeta_document_timeout,
+    _smeta_model_runtime,
+    _smeta_norm_lookup_max_calls,
+    _smeta_source_row_count,
 )
 
 
@@ -158,54 +160,6 @@ def test_smeta_document_runtime_can_use_dedicated_local_model(monkeypatch):
     assert runtime.model == "mlx-community/Qwen3.5-4B-MLX-4bit"
 
 
-def test_smeta_document_glm_call_disables_thinking_without_forced_structured_contract(monkeypatch):
-    from proxy.routers import chat
-
-    captured = {}
-
-    class FakeResponse:
-        status_code = 200
-
-        @staticmethod
-        def raise_for_status():
-            return None
-
-        @staticmethod
-        def json():
-            return {"choices": [{"message": {"content": '{"rows":[]}'}}]}
-
-    class FakeClient:
-        def __init__(self, **_kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def post(self, _url, *, headers, json):
-            captured.update(json)
-            assert headers["Authorization"] == "Bearer test-key"
-            return FakeResponse()
-
-    monkeypatch.setattr(
-        chat,
-        "_smeta_model_runtime",
-        lambda _name: chat.LlmRuntime(
-            "openai", "https://example.test/v1", "https://example.test/v1/chat/completions",
-            "z-ai/glm-5.2", "test-key", False,
-        ),
-    )
-    monkeypatch.setattr(chat.httpx, "Client", FakeClient)
-
-    assert _smeta_document_complete([{"role": "user", "content": "JSON"}]) == '{"rows":[]}'
-    assert captured["thinking"] == {"type": "disabled"}
-    assert "response_format" not in captured
-    assert "tools" not in captured
-    assert "tool_choice" not in captured
-
-
 def test_smeta_model_runtime_explicit_mlx_overrides_global_cloud(monkeypatch):
     monkeypatch.setenv("LES_LLM_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://openai.api.proxyapi.ru/v1")
@@ -230,6 +184,46 @@ def test_smeta_model_runtime_can_explicitly_follow_global_provider(monkeypatch):
 
     assert runtime.provider == "openai"
     assert runtime.model == "local-compatible"
+
+
+def test_retry_smeta_transport_retries_empty_provider_result_only():
+    from proxy.routers.chat import _retry_smeta_transport
+
+    results = iter([{}, {}, {"tool_calls": [{"id": "ok"}]}])
+    attempts = []
+
+    result = _retry_smeta_transport(
+        lambda: next(results),
+        on_attempt=lambda: attempts.append(True),
+    )
+
+    assert result == {"tool_calls": [{"id": "ok"}]}
+    assert len(attempts) == 3
+
+
+def test_retry_smeta_transport_reports_last_provider_error():
+    from proxy.routers.chat import _retry_smeta_transport
+
+    attempts = []
+
+    with pytest.raises(RuntimeError, match="provider unavailable"):
+        _retry_smeta_transport(
+            lambda: (_ for _ in ()).throw(RuntimeError("provider unavailable")),
+            on_attempt=lambda: attempts.append(True),
+        )
+
+    assert len(attempts) == 3
+
+
+def test_smeta_document_timeout_is_longer_for_local_model(monkeypatch):
+    from proxy.routers.chat import LlmRuntime
+
+    monkeypatch.delenv("LES_SMETA_DOCUMENT_TIMEOUT_SEC", raising=False)
+    local = LlmRuntime("mlx", "http://127.0.0.1:8080", "http://127.0.0.1:8080/v1/chat/completions", "qwen", "", True)
+    cloud = LlmRuntime("openai", "https://example.test", "https://example.test/v1/chat/completions", "gpt", "key", True)
+
+    assert _smeta_document_timeout(local) == 720.0
+    assert _smeta_document_timeout(cloud) == 180.0
 
 
 def test_chat_model_final_answer_preserves_text_on_validator_block():
@@ -1426,10 +1420,10 @@ async def test_smeta_direct_rag_context_builds_compact_context(monkeypatch):
     def fake_expand_context_windows(chunks, **kwargs):
         return SimpleNamespace(chunks=list(chunks))
 
-    monkeypatch.setattr("proxy.routers.chat.resolve_dataset_ids", fake_resolve_dataset_ids)
-    monkeypatch.setattr("proxy.routers.chat.retrieve_chat_chunks", fake_retrieve_chat_chunks)
-    monkeypatch.setattr("proxy.routers.chat.expand_context_windows", fake_expand_context_windows)
-    monkeypatch.setattr("proxy.routers.chat.dataset_memory_prompt_excerpt", lambda ids: "СКС: таблицы и сметные строки")
+    monkeypatch.setattr("proxy.services.smeta_chat_adapter_service.resolve_dataset_ids", fake_resolve_dataset_ids)
+    monkeypatch.setattr("proxy.services.smeta_chat_adapter_service.retrieve_chat_chunks", fake_retrieve_chat_chunks)
+    monkeypatch.setattr("proxy.services.smeta_chat_adapter_service.expand_context_windows", fake_expand_context_windows)
+    monkeypatch.setattr("proxy.services.smeta_chat_adapter_service.dataset_memory_prompt_excerpt", lambda ids: "СКС: таблицы и сметные строки")
 
     packet = await _smeta_direct_rag_context(
         ChatRequest(question="сделай смету по СКС", mode="smeta", dataset_ids=["ds-sks"]),

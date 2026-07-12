@@ -68,6 +68,9 @@ def test_canonical_service_sources_include_smeta_and_normcontrol():
     processed = process_service_source("smeta_service_dataset")
     assert processed["required_documents"]["summary"]["total"] >= 4
     assert "Play проверил состав" in processed["message"]
+    fgis = service_source("fgis_price_base")
+    assert "Скачать ФГИС ЦС" in fgis["operator_action"]
+    assert "Положи сплит-формы" not in fgis["operator_action"]
 
 
 def test_service_source_play_reports_required_document_manifest(tmp_path):

@@ -46,6 +46,7 @@ from proxy.services.dataset_memory_service import latest_file_cards, schedule_da
 from proxy.services.resource_governor import active_parse_priority_order, current_runtime_profile
 from proxy.services.runtime_admission import evaluate_memory_pressure
 from proxy.services.retrieval_service import classify_query, resolve_dataset_ids, retrieve_chat_chunks
+from proxy.services.rag_readiness_service import rag_readiness
 from proxy.storage.file_storage import (
     is_within_external_root,
     safe_dataset_storage_dir,
@@ -209,6 +210,16 @@ class DatasetGuidanceRequest(BaseModel):
 class DatasetKindRequest(BaseModel):
     kind: str = Field(default="", max_length=40)
     depth: str = "deep"
+
+
+@router.get("/readiness")
+async def get_rag_readiness(
+    dataset_id: str | None = Query(default=None, max_length=160),
+    force: bool = Query(default=False),
+    _user=Depends(require_user),
+):
+    """Operator-visible dense/sparse/RRF and contract readiness."""
+    return await asyncio.to_thread(rag_readiness, dataset_id=dataset_id, force=force)
 
 
 _state: DatasetRouterState | None = None

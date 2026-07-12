@@ -1,111 +1,121 @@
 # Smeta Core — единое сметное ядро
 
-## Граница ответственности
+> **Статус 2026-07-12: ✅ код и документ синхронизированы.** Канонический PDF→ЛСР путь — один
+> model-owned batch-диалог и один расчёт. Старый поштучный оркестратор физически удалён.
 
-`proxy/smeta_core` не является сметчиком. Модель или пользователь создаёт `NormBinding`; код
-проверяет source integrity, единицы и формальные ограничения, затем считает и сохраняет provenance.
-`NormBinding(selected_by="code")` является ошибкой контракта.
-
-Живой native-agent получает не отдельный несвязанный prompt, а компактную reference-карту из
-`skills/smeta/references/gesn-storage.md`: идентичность нормы, схему `norms/resources`, роль typed
-SQLite и hybrid sibling, формулу количеств и источники РИМ. Это инструкция навигации, не evidence.
-
-## Текущий поток
+## Архитектурная граница
 
 ```text
-project/source evidence
-  → одна задача модели + smeta skill + native RAG tools
-  → batch search_norms (deduplicated embeddings + hybrid/RRF)
-  → read_norm только для содержательной проверки
-  → explicit model/user norm/coverage binding
-  → legacy calculator adapter
-  → smeta_workflow_result_v1
-  → LSR / partial LSR / blockers
+исходник / ВОР / спецификация
+  → source_intake: строки, количества, единицы, координаты
+  → модель + smeta skill
+  → search_norms_batch: RRF dense+sparse, только кандидаты
+  → read_norms_batch: фактические карточки Typed SQLite
+  → submit_lsr_mapping: решения модели по всем строкам
+  → calculator: единицы, ресурсы, цены, РИМ, НР/СП, НДС
+  → formula XLSX + журнал проверки + короткий ответ
 ```
 
-Для нового PDF-вложения действует отдельный zero-state вход:
+Модель выбирает работы, декомпозицию, запросы, нормы, аналоги, coverage и ресурсные действия
+`add|replace|exclude|reuse`. Код не выбирает и не переписывает профессиональное решение. Он может
+отклонить только технически несостоятельную ссылку: неизвестный `work_id`, дубликат, неоткрытую
+карточку нормы, битую единицу или неполный mapping.
+
+Отдельных обязательных resource-review, impact-review, dominant-review и
+`finish_norm_selection` нет. После полного `submit_lsr_mapping` выполняется один расчёт без нового
+обращения к модели.
+
+## Точки входа
+
+- `proxy.smeta_core.application` — единственная публичная application-граница смет: model-first
+  workflow, расчёт уже принятых решений, immutable revision и finality.
+- `proxy.smeta_core.document_workflow.run_vor_pdf_workflow` — zero-state PDF→ЛСР.
+- `proxy.smeta_core.document_workflow._run_batch_norm_agent` — тонкий tool-loop модели.
+- `proxy.services.smeta_chat_application_service` — application flows ordinary smeta и PDF→ЛСР:
+  безопасно открывает одноразовое вложение, координирует RAG/model/progress, сохраняет artifact/trace
+  и возвращает response envelope. Профессиональных решений не принимает.
+- `proxy.services.smeta_chat_adapter_service` — smeta transport/RAG adapters, prompts и parsers:
+  runtime провайдера, document exchange, evidence packet, model-owned lookup/choice и numeric audit.
+  Router этих реализаций не содержит и не собирает их вручную.
+- `proxy.smeta_core.norm_browser.browse_norms_many` — пакетный RRF-поиск.
+- `proxy.smeta_core.calculator.calculate_visible_rows_revision` — один расчёт решения модели.
+- `proxy.services.smeta_user_message_service` — человеческое сообщение из готовой summary.
+- `proxy.routers.chat` — request context, вызов application flow и общий history/response contract.
+
+`estimate_harness_service` временно исполняет старый tool-loop только за
+`smeta_core.application`; это implementation adapter, а не самостоятельная точка входа.
+`construction_harness_service` и `unified_construction_harness_service` помечены
+`LEGACY_PRIVATE`, остаются feature-off для старых evidence-fixtures и не входят в сметный маршрут.
+Их старый `gesn_expand` больше не выбирает первый candidate кодом: он останавливается на
+model-visible candidate list.
+
+## Инструменты модели
+
+### `search_norms_batch`
+
+Принимает любое число независимых `work_id` и поисковых формулировок. Одинаковые запросы
+дедуплицируются, embedding/retrieval выполняются пакетно. Результаты не смешиваются между строками.
+Score и порядок кандидатов не являются выбором нормы.
+
+### `read_norms_batch`
+
+Открывает выбранные карточки из Typed SQLite: идентичность, измеритель, состав работ, ресурсы и
+источники. Норму нельзя связать со строкой, пока модель её не открыла.
+
+### `submit_lsr_mapping`
+
+Один раз передаёт решение по каждой исходной строке:
+
+- `bind` — выбранная открытая норма, exact/analog и необязательные ресурсные действия;
+- `covered_by` — доказанное покрытие другой исходной строкой;
+- `unbound` — модель осознанно оставила работу открытой.
+
+Число строк и поисковых ходов не зашито под один тестовый объект. Транспорт поддерживает минимум
+50 строк тем же контрактом. `max_turns` — только аварийный предел сетевого диалога, по умолчанию 64,
+а не профессиональный workflow.
+
+## Нормативное хранилище и retrieval
+
+Typed SQLite — расчётная истина. `norm_key = base_type:bare_code` отделяет одинаковые цифровые коды
+разных семейств. Qdrant является навигационным sibling-индексом. Поиск использует dense+sparse и RRF;
+при несовпадении fingerprint/контракта dense не маскируется как исправный.
+
+Структура базы, формула количества и источники РИМ описаны в
+[`skills/smeta/references/gesn-storage.md`](../../skills/smeta/references/gesn-storage.md).
+
+## Количества и деньги
 
 ```text
-server-owned PDF attachment
-  → lossless source_intake (rows + locators + source hash)
-  → model-owned search/read/bind/covered/unbound loop без code-side selector
-  → deterministic resources/RIM/tax calculation
-  → first immutable trace + formula XLSX
-  → optional resource/dominant audit
-  → optional revised LSR
+norm_quantity = source_quantity × unit_conversion_factor
+resource_quantity = norm_quantity × per_unit × quantity_coefficient
 ```
 
-Точка входа — `proxy.smeta_core.document_workflow.run_vor_pdf_workflow`; чат вызывает её только
-для явного smeta/ЛСР-запроса с server-issued `read_<id>`. Клиентский путь не является API.
-Workflow не читает историю, старую ревизию или prepared decisions. `chat_attachment_service`
-проверяет TTL, size и SHA-256; файл удаляется только после успешного артефакта.
+Исходное количество входит в расчёт один раз. `quantity_multiplier` в tool-контракте отсутствует.
+Альтернативные представления одного трудового ресурса дедуплицируются до денег.
 
-Нормативный browse использует широкие независимые пулы typed SQLite FTS и dedicated
-Qdrant dense+sparse и объединяет их RRF. Все `search_norms` одного ответа модели сначала
-дедуплицируются и исполняются одним batch: embedding строится списком, Qdrant-запросы относятся
-к своим query/work_id и затем раскладываются обратно по исходным tool calls. Для массового triage
-single-query reranker откладывается; он включается на узком повторном поиске (до четырёх запросов),
-но никогда не выбирает норму за модель. Qdrant считается
-совместимым лишь при совпадении collection, embedding model и SHA-256 активной SQLite-базы в
-`les_smeta_norm_rag_manifest.json`; иначе browse честно остаётся в lexical-only. Векторная
-проекция содержит название, измеритель и состав работ, но не список случайных ресурсов нормы:
-ресурсы возвращаются в `resource_preview` как evidence для проверки технологии и входят в
-reranker-контекст, а не служат самостоятельным retrieval-якорем.
+Missing price хранится как `null`, не как бесплатный ресурс. В частичной ЛСР показывается известная
+рассчитанная часть, а не ложная полная стоимость. НДС задаётся параметром расчёта; для текущего
+сценария используется 22%.
 
-Количество имеет однозначную трассу: `source_quantity × unit_conversion_factor = norm_quantity`;
-ресурс считается от `norm_quantity × consumption`. Поле `quantity_multiplier` удалено из binding/tool
-contract. Для `8 шт`, `3,2 м² / 100 м²` и `160 м / 100 м` тестируются промежуточные значения
-`8`, `0,032` и `1,6`. Незакрытая цена хранится как `null`; ноль допустим для `covered_by`.
+## Артефакт и история
 
-Technology check и ограничения аналога могут сохраняться как решение модели и audit trace. Код не ищет
-слова «сварка/кран», не отклоняет норму по ресурсам и не переписывает модельную ЛСР. Формальный bind
-проверяет только открытый candidate, тип exact/analog, шифр, единицу, количество и source integrity.
-`bind_norm` требует только показанную и открытую карточку, `decision=selected`, exact/analog и причину.
-Расширенный technology JSON не является допуском к первой ЛСР; отрицательное решение оформляется
-`leave_unbound` самой моделью.
+Формульный XLSX, trace и download contract сохраняются вместе с сообщением. При открытии истории
+Совушка должна восстановить карточку того же файла без повторного расчёта и без вызова модели.
+Внешний ответ формируется отдельно от машинного JSON и не показывает служебные имена полей.
 
-Для денег отдельно хранятся `known_amount` и `full_amount`. Missing цена, нерешённый ФСЭМ/ОТм или
-неподтверждённый ресурсный состав оставляют известную арифметическую часть, но делают полную стоимость
-позиции и сметы `null`. В XLSX такая строка называется «Известная стоимость позиции», а общий итог —
-«Известная рассчитанная часть».
+## Гейты
 
-Resource review и dominant review не вызываются до первой ЛСР. Они могут использовать те же поля, что
-`ResourceBinding`, только в последующей ревизии. ФСЭМ зарегистрирован отдельным service source;
-отсутствие его SQLite даёт построчный gap, но не отменяет первую рассчитанную часть.
+- `tests/test_smeta_core.py` — три инструмента, model-owned выбор, 50 строк, единицы и один расчёт.
+- `tests/test_smeta_prompt_freedom.py` — отсутствие объектных якорей и скрытого selector.
+- `tests/test_prompt_registry_service.py` — runtime skill и prompt registry.
+- `tests/test_specification_to_bor_contract.py` — model-owned декомпозиция и quantity trace.
+- `make verify` и `make test` — релизный офлайн-гейт.
 
-## Архитектурный инвариант первой ЛСР
+## Открытые долги
 
-`run_vor_pdf_workflow` обязан после model-owned mapping вызвать calculator/XLSX напрямую. Функции
-resource/dominant review не могут быть precondition этого вызова. Тест должен падать, если первый
-workflow обращается к дополнительному reviewer или если tool contract требует component-review до денег.
+- Завершить integrity gate нормативной SQLite и полный ценовой контур ФГИС/ФСЭМ/КАЦ.
+- Подтвердить новый batch-путь живым zero-state прогоном и качественным аудитом ЛСР.
+- Завершить clean dense+sparse reindex общего RAG и только после гейтов переключить alias.
 
-## Пользовательский ответ
-
-Машинный контракт и сообщение в чате разделены. `smeta_document_workflow_v2`, внутренние статусы,
-blockers и trace остаются в payload и журнале проверки. `smeta_user_message_service` детерминированно
-формирует один короткий русский абзац из готовой summary: покрытие строк, стоимость рассчитанной части
-без НДС/с НДС и подготовленный Excel. Он не выбирает нормы, не меняет решения модели и не пересчитывает
-суммы. В частичной смете известная сумма не называется общей стоимостью работ.
-
-Точка входа auto-smeta: `proxy.smeta_core.workflow.run_smeta_workflow`. Старый
-`estimate_harness_service` пока остаётся adapter и переносится по частям; обходные direct/artifact/API
-пути перечислены в [TODO_SMETA_CORE.md](../TODO_SMETA_CORE.md).
-
-## Integrity gate
-
-Structured base доверяется только при наличии `data/smeta_base/les_smeta_base_integrity.json` с
-`schema=les_smeta_base_integrity_v1`, `verdict=passed`, совпадающими SHA-256 source/base и нулевыми
-failure counts для cross-family, orphan, duplicate-key и parent mismatch checks. SQLite/manifest
-сам по себе не означает готовность.
-
-Историческая SQLite без такого отчёта остаётся доступной для аудита/навигации, получает
-`quarantined_blocking` и не может подтверждать `priced_final`.
-
-## Статусы результата
-
-- `evidence_status`: `supported | partial | blocked`.
-- `calculation_status`: `complete | partial | unsafe_source | not_calculated`.
-- `total_status` остаётся legacy-проекцией до завершения миграции.
-
-Непроверенная сумма может быть показана только как черновик с `unsafe_source`; она не является
-финальной стоимостью.
+Эти долги влияют на качество/полноту денег, но не дают права возвращать кодовый выбор норм или
+многоступенчатый оркестратор.

@@ -1,4 +1,5 @@
 import importlib
+import json
 import sys
 import time
 
@@ -25,6 +26,83 @@ def test_unload_peer_for_val_unloads_main(monkeypatch):
 
     assert mlx_host._unload_peer_for(val) == ["main"]
     assert main.unloaded is True
+
+
+def test_messages_to_prompt_passes_openai_tools_to_qwen_template():
+    mlx_host = importlib.import_module("mlx_host")
+    captured = {}
+
+    class Engine:
+        def apply_chat_template(self, messages, enable_thinking=False, tools=None):
+            captured["messages"] = messages
+            captured["tools"] = tools
+            return "prompt"
+
+    tools = [{"type": "function", "function": {"name": "search_norms", "parameters": {"type": "object"}}}]
+    prompt = mlx_host._messages_to_prompt(
+        [mlx_host.OAIMessage(role="user", content="Найди норму")],
+        Engine(),
+        tools=tools,
+    )
+
+    assert prompt == "prompt"
+    assert captured["tools"] == tools
+
+
+def test_messages_to_prompt_preserves_tool_conversation_for_qwen_template():
+    mlx_host = importlib.import_module("mlx_host")
+    captured = {}
+
+    class Engine:
+        tokenizer = object()
+
+        def apply_chat_template(self, messages, enable_thinking=False, tools=None):
+            captured["messages"] = messages
+            return "prompt"
+
+    messages = [
+        mlx_host.OAIMessage(role="user", content="Найди норму"),
+        mlx_host.OAIMessage(
+            role="assistant",
+            content=None,
+            tool_calls=[{
+                "id": "call-1",
+                "type": "function",
+                "function": {"name": "search_norms", "arguments": '{"work_id":"w1","queries":["монтаж"]}'},
+            }],
+        ),
+        mlx_host.OAIMessage(role="tool", content='{"ok":true}', tool_call_id="call-1", name="search_norms"),
+    ]
+
+    assert mlx_host._messages_to_prompt(messages, Engine(), tools=[{"type": "function"}]) == "prompt"
+    assistant = captured["messages"][1]
+    assert assistant["content"] is None
+    assert assistant["tool_calls"][0]["function"]["arguments"] == {
+        "work_id": "w1", "queries": ["монтаж"]
+    }
+    assert captured["messages"][2]["tool_call_id"] == "call-1"
+
+
+def test_qwen_xml_tool_calls_become_openai_native_calls():
+    mlx_host = importlib.import_module("mlx_host")
+    content = (
+        "<tool_call>\n<function=search_norms>\n"
+        "<parameter=work_id>\nw1\n</parameter>\n"
+        "<parameter=queries>\n[\"монтаж блока питания\", \"преобразователь\"]\n</parameter>\n"
+        "</function>\n</tool_call>\n"
+        "<tool_call>\n<function=leave_unbound>\n"
+        "<parameter=work_id>\nw2\n</parameter>\n"
+        "<parameter=reason>\nнет защищаемой нормы\n</parameter>\n"
+        "</function>\n</tool_call>"
+    )
+
+    response = mlx_host._oai_response(content, "local-qwen")
+    message = response["choices"][0]["message"]
+
+    assert response["choices"][0]["finish_reason"] == "tool_calls"
+    assert [call["function"]["name"] for call in message["tool_calls"]] == ["search_norms", "leave_unbound"]
+    first_args = json.loads(message["tool_calls"][0]["function"]["arguments"])
+    assert first_args == {"work_id": "w1", "queries": ["монтаж блока питания", "преобразователь"]}
 
 
 def test_unload_peer_for_main_unloads_val(monkeypatch):

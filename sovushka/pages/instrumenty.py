@@ -124,10 +124,15 @@ def build_instrumenty():
                 ui.label(
                     "Папки и датасеты, на которых ЛЕС считает сметы и проверяет документацию."
                 ).style("font-size:.72rem;color:var(--dim);")
-            refresh_btn = ui.button("ОБНОВИТЬ").props("dense no-caps")
+            with ui.row().classes("items-center gap-2"):
+                fgis_update_btn = ui.button("СКАЧАТЬ ФГИС ЦС", icon="cloud_download").props("dense no-caps")
+                refresh_btn = ui.button("ОБНОВИТЬ").props("dense no-caps")
 
         with ui.card().classes("card-les w-full"):
             summary = ui.label("Загрузка источников…").style("font-size:.74rem;color:var(--dim);")
+            fgis_status = ui.label(
+                "ФГИС ЦС: проверка состояния общего обновления…"
+            ).style("font-size:.7rem;color:var(--dim);")
             cards = ui.column().classes("w-full gap-2")
 
         with ui.card().classes("card-les w-full"):
@@ -161,6 +166,20 @@ def build_instrumenty():
             else:
                 ui.notify("ГЭСН: обновление уже выполняется", type="info")
             await _refresh()
+
+        async def _update_all_fgis() -> None:
+            d = await api_post("/api/service-sources/fgis/update", {})
+            if not isinstance(d, dict) or not d.get("ok"):
+                ui.notify(last_api_error_text("Обновление ФГИС ЦС не запущено"), type="negative")
+                return
+            if d.get("started"):
+                ui.notify(
+                    "ФГИС ЦС: в фоне обновляются каталог, Сплит-формы всех ценовых зон и ГЭСН",
+                    type="positive",
+                )
+            else:
+                ui.notify("Обновление ФГИС ЦС уже выполняется", type="info")
+            await _refresh_fgis_status()
 
         def _render_source(item: dict) -> None:
             label, color = _SRC_STATUS.get(item.get("status"), (str(item.get("status") or "?"), "var(--dim)"))
@@ -326,7 +345,32 @@ def build_instrumenty():
                 for item in d.get("sources") or []:
                     _render_source(item)
 
+        async def _refresh_fgis_status() -> None:
+            d = await api_get("/api/service-sources/fgis/update/status")
+            if not isinstance(d, dict):
+                fgis_status.text = "ФГИС ЦС: статус обновления недоступен"
+                return
+            state = d.get("status") or {}
+            if d.get("running"):
+                stage = str(state.get("stage") or "подготовка")
+                completed = state.get("completed")
+                total = state.get("total")
+                progress = f" · {completed}/{total}" if completed is not None and total else ""
+                fgis_status.text = f"ФГИС ЦС: обновление выполняется · {stage}{progress}"
+            elif state.get("status") in {"done", "partial"}:
+                prices = state.get("prices") or {}
+                fgis_status.text = (
+                    "ФГИС ЦС: последнее обновление "
+                    f"{state.get('status')} · книг цен {prices.get('done', 0)}/{prices.get('requested', 0)} · "
+                    f"строк {prices.get('rows', 0)}"
+                )
+            else:
+                fgis_status.text = "ФГИС ЦС: общее обновление ещё не запускалось"
+
         refresh_btn.on("click", _refresh)
+        fgis_update_btn.on("click", _update_all_fgis)
         refresh_prompts_btn.on("click", _refresh_prompts)
         ui.timer(0.2, _refresh, once=True)
+        ui.timer(0.25, _refresh_fgis_status, once=True)
+        ui.timer(3.0, _refresh_fgis_status)
         ui.timer(0.35, _refresh_prompts, once=True)

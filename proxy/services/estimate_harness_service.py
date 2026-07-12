@@ -1002,7 +1002,6 @@ _NORM_CONDITION_NONBLOCKING = {
     "материал/основание",
 }
 
-
 def _norm_profile_for_code(code: str, norm: dict[str, Any] | None = None) -> dict[str, Any]:
     store = get_smeta_norm_store()
     variants = [str(code or "").strip()]
@@ -2019,7 +2018,7 @@ def run_estimate_harness(question: str, complete: Callable[[list[dict[str, str]]
         "service_notebooks": ["gesn"],
         "excerpt": notebook_excerpt,
     }
-    from proxy.smeta_core.workflow import finalize_estimate_result
+    from proxy.smeta_core.application import finalize_estimate_result
 
     return finalize_estimate_result(result, source_status=smeta_sources)
 

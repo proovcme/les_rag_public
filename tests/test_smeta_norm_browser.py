@@ -38,6 +38,35 @@ def test_sparse_only_manifest_is_explicit_not_hybrid(tmp_path):
     assert _rag_index_mode(Path(base)) == "sparse_only"
 
 
+def test_query_variants_translate_user_terms_to_normative_vocabulary():
+    from proxy.smeta_core.norm_browser import _query_variants
+
+    assert _query_variants("Монтаж БАП светильника") == [
+        "отдельно устанавливаемый преобразователь или блок питания",
+        "Монтаж БАП светильника",
+    ]
+    assert "монтаж кросса кроссировка линий панель коммутации" in _query_variants(
+        "Монтаж патч-панели на 24 порта"
+    )
+
+
+def test_unrelated_query_is_not_expanded():
+    from proxy.smeta_core.norm_browser import _query_variants
+
+    assert _query_variants("Кладка кирпичной стены") == ["Кладка кирпичной стены"]
+
+
+def test_variant_coverage_merge_keeps_each_variant_head_visible():
+    from proxy.smeta_core.norm_browser import _coverage_merge
+
+    first = [{"norm_key": f"a:{index}"} for index in range(5)]
+    second = [{"norm_key": f"b:{index}"} for index in range(5)]
+
+    assert [item["norm_key"] for item in _coverage_merge(first, second, limit=4)] == [
+        "a:0", "b:0", "a:1", "b:1",
+    ]
+
+
 def _insert_norm(conn, *, key="ГЭСНм:08-02-001-01", name="Прокладывание кабелей", steps=None):
     steps = steps or ["Разметка трассы", "Прокладывание кабеля"]
     base_type, bare_code = key.split(":", 1)
@@ -176,6 +205,33 @@ def test_mass_triage_defers_single_query_reranker(monkeypatch, tmp_path):
     assert set(results) == set(queries)
     assert all(item["retrieval_trace"]["rerank_deferred"] for item in results.values())
     assert all("rerank_deferred" in item["backend"] for item in results.values())
+
+
+def test_mass_triage_defers_even_explicit_rerank_request(monkeypatch, tmp_path):
+    from proxy.smeta_core import norm_browser
+
+    queries = [f"query {index}" for index in range(5)]
+    lexical = [{"norm_key": "l:1", "norm_code": "L-1", "title": "lex"}]
+    semantic = [{"norm_key": "s:1", "norm_code": "S-1", "title": "sem"}]
+    monkeypatch.setattr(norm_browser, "_typed_cards", lambda *_args, **_kwargs: lexical)
+    monkeypatch.setattr(
+        norm_browser, "_rag_cards_many",
+        lambda values, **_kwargs: {query: semantic for query in values},
+    )
+    monkeypatch.setattr(
+        norm_browser, "_rerank_cards",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("mass reranker must be deferred")),
+    )
+    monkeypatch.setattr(
+        norm_browser, "normative_base_integrity",
+        lambda **_kwargs: {"status": "trusted", "trusted_for_pricing": True},
+    )
+
+    results = norm_browser.browse_norms_many(
+        queries, limit=5, base_path=tmp_path / "base.sqlite", rerank=True,
+    )
+
+    assert all(item["retrieval_trace"]["rerank_deferred"] for item in results.values())
 
 
 def test_agent_can_explicitly_skip_reranker_for_narrow_search(monkeypatch, tmp_path):

@@ -79,7 +79,7 @@ class TestBackupSuharik(unittest.TestCase):
 
     def test_qdrant_rotation(self):
         mock_client = MagicMock()
-        mock_collection = "les_rag_qwen3_06b"
+        mock_collection = "les_rag"
         
         # Mock snapshots returned from list_snapshots
         snap1 = MagicMock()

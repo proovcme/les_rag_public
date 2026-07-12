@@ -21,6 +21,31 @@
         <string>8081</string>
         <key>MLX_EMBED_ONLY</key>
         <string>1</string>
+        <!-- Embed-only worker must use the same point identity as the main
+             query embedder.  Otherwise parse-time vectors poison the shared
+             collection or fail the embedding contract. -->
+        <key>LES_EMBED_PROFILE</key>
+        <string>qwen</string>
+        <key>EMBEDDING_MODEL</key>
+        <string>Qwen/Qwen3-Embedding-0.6B</string>
+        <key>EMBED_MODEL</key>
+        <string>qwen3-embedding-0.6b</string>
+        <key>EMBED_BACKEND</key>
+        <string>coreml</string>
+        <key>COREML_EMBED_MODEL</key>
+        <string>artifacts/coreml/qwen3_embedding_06b_b1_s512_static.mlpackage</string>
+        <key>COREML_EMBED_SEQ_LEN</key>
+        <string>512</string>
+        <key>COREML_EMBED_BATCH_SIZE</key>
+        <string>1</string>
+        <key>COREML_EMBED_COMPUTE_UNITS</key>
+        <string>all</string>
+        <key>COREML_EMBED_ISOLATE_PROCESS</key>
+        <string>true</string>
+        <key>COREML_EMBED_LOCAL_FILES_ONLY</key>
+        <string>true</string>
+        <key>COREML_EMBED_FALLBACK</key>
+        <string>false</string>
     </dict>
 
     <key>RunAtLoad</key>

@@ -4,7 +4,7 @@ This folder contains boxed-install entrypoints for platform profiles.
 
 The installers are intentionally thin adapters around the repository runtime:
 
-- `macos/app/` + `tools/build_macos_app.py` build a double-click `LES.app` (see below).
+- `desktop/tauri/` + `tools/build_tauri_app.py` build the canonical native Mac/Windows shell.
 - `linux/install.sh` prepares Linux Docker/systemd/server-remote-model profiles.
 - `windows/install.ps1` prepares Windows Docker/lite profiles.
 - `tools/build_release_artifacts.py` builds distributable archives without local data.
@@ -18,26 +18,23 @@ The goal is AnythingLLM/LM-Studio-grade UX: drag `LES.app` to Applications,
 double-click, and the stack (Qdrant + MLX host + proxy + Sovushka) comes up and
 opens in the browser. No `uv` dance, no terminal.
 
-Design: a **lightweight bootstrap** (chosen over a fully self-contained
-PyInstaller bundle). The `.app` carries a clean code export plus
+Design: a **Tauri 2 native shell** around the existing NiceGUI application.
+The `.app` carries a Rust window/tray, a clean code export plus
 `macos/app/bootstrap.sh`, which on first launch installs `uv` if missing, runs
-`uv sync --extra mac-mlx --extra desktop`, downloads model weights
-(`tools/onboard_models.py`, download-on-first-run), then launches the **desktop
-shell** (`tools/les_shell.py`). Progress shows as macOS notifications; failures
-as a dialog; full detail in `~/Library/Logs/LES/bootstrap.log`. The runtime is
+`uv sync --extra mac-mlx`, downloads model weights and starts LES services.
+Tauri waits for `:8051/healthz`, then navigates the same native webview to
+Совушка. Progress starts with an embedded splash; full bootstrap detail is in
+`~/Library/Logs/LES/bootstrap.log`. The runtime is
 materialized into `~/Library/Application Support/LES` (override with `LES_HOME`).
 
-The shell is a thin native window + tray (pywebview + pystray) **around** the
-existing Sovushka web UI — not a reimplementation. It owns lifecycle
-(start / restart / stop / open logs from the tray, so no terminal is needed),
-shows a splash while the stack comes up, then loads `127.0.0.1:8051/les`. With
-the `desktop` extra absent it degrades to opening the default browser
-(`python -m tools.les_shell --no-gui`).
+The shell is not a UI rewrite and contains no RAG/smeta/domain decisions. It
+owns only lifecycle, health waiting, navigation and the tray. `tools/les_shell.py`
+is retained as a legacy browser/pywebview fallback, not the release entrypoint.
 
 ```bash
 # Build the bundle and a drag-to-install .dmg (macOS only):
-uv run python tools/build_macos_app.py --version 0.1.0 --sign   # -> dist/LES.app
-uv run python tools/build_macos_dmg.py --version 0.1.0          # -> dist/LES.dmg
+uv run python tools/build_tauri_app.py --version 5.1.0 --bundles app,dmg
+# -> dist/LES.app + dist/LES.dmg
 ```
 
 Model weights and venv are NOT bundled — the `.dmg` stays ~20 MB; weights are
@@ -64,24 +61,20 @@ Qdrant and model runtime can be native, Docker or remote depending on `.env`.
 Same UX goal as macOS, but Windows has no Apple MLX — the engine is
 cloud / ollama / lemonade, picked in the Sovushka GUI (no weights bundled).
 
-Design mirrors the mac bundle: an NSIS per-user installer (`LES-Setup.exe`,
-no admin) drops the clean code export under `%LOCALAPPDATA%\Programs\LES` and a
-Start-Menu/Desktop shortcut → `app/launcher.vbs` (runs hidden) → `app/bootstrap.ps1`,
-which on first launch installs `uv` (winget or the official script), runs
-`uv sync`, `lesctl init --profile windows-lite`, optionally starts Qdrant
-(Docker if present), brings up proxy + UI via `start-light.ps1`, and opens the
-browser. Progress shows as tray balloons, failures as a dialog; full detail in
-`%LOCALAPPDATA%\LES\logs\bootstrap.log`.
+The same Tauri source builds an NSIS per-user installer (`LES-Setup.exe`, no
+admin) on a Windows host. Its Rust shell invokes the existing PowerShell
+bootstrap, waits for the dynamic Windows-light UI port and owns the native
+window/tray. Python remains the backend sidecar; pywebview is not installed.
 
 ```bash
-# Stage + build (NSIS auto-detected; without it, writes a portable zip + the
-# makensis command to run on a Windows box). Runs on any OS for staging:
-uv run python tools/build_windows_installer.py --version 0.1.0   # -> dist/LES-Setup.exe | LES-windows-portable.zip
+# Build on Windows; other hosts only create a transfer bundle:
+uv run python tools/build_windows_installer.py --version 5.1.0
+# Windows -> dist/LES-Setup.exe
+# macOS/Linux -> dist/LES-windows-tauri-source.zip for transfer to Windows
 ```
 
-`bootstrap.ps1` and `LES.nsi` carry Cyrillic UI strings and are stored UTF-8
-**with BOM** so Windows PowerShell 5.1 / NSIS render them correctly. Drop an icon
-at `windows/app/LES.ico` to brand the shortcuts.
+`bootstrap.ps1` carries Cyrillic UI strings and is stored UTF-8 with BOM for
+Windows PowerShell 5.1. `windows/app/LES.ico` brands the Tauri bundle.
 
 ## Windows (advanced: docker / lite profiles)
 

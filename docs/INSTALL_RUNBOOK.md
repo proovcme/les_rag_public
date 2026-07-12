@@ -15,8 +15,8 @@ ships to.
 | Stage | Automated (build box) | [ручками] on target / needs signature |
 |---|---|---|
 | Icons | `tools/build_icons.py` (Pillow fallback or cairosvg) | — |
-| Build `.app` / `.dmg` | `tools/build_macos_app.py` + `build_macos_dmg.py` | — |
-| Build Win installer | `tools/build_windows_installer.py` (stages; NSIS if present) | `makensis` run on a Windows box if no NSIS on the Mac |
+| Build `.app` / `.dmg` | `tools/build_tauri_app.py --bundles app,dmg` | — |
+| Build Win installer | `tools/build_windows_installer.py` on Windows | Windows host/VM is required for the final Tauri/NSIS EXE |
 | First launch / bootstrap | `bootstrap.sh` / `bootstrap.ps1` (uv, sync, onboarding, weights, shell) | runs **only on the target**, needs network |
 | Provider/key/model | `tools/onboard_provider.py` (first-run default) + GUI «Настройки» | cloud key is pasted by a human |
 | Gatekeeper / SmartScreen | — | **[ручками]** unblock, or buy Developer ID / Authenticode |
@@ -51,13 +51,13 @@ make verify        # syntax + import smoke + pytest collect (no Qdrant/MLX)
 ## 2. Build the macOS bundle (on the Mac build box)
 
 ```bash
-uv run python tools/build_macos_app.py --version X.Y.Z --sign   # -> dist/LES.app
-uv run python tools/build_macos_dmg.py --version X.Y.Z          # -> dist/LES.dmg
+uv run python tools/build_tauri_app.py --version X.Y.Z --bundles app,dmg
+# -> dist/LES.app + dist/LES.dmg
 ```
 
 - `--sign` = **ad-hoc** codesign (`codesign --sign -`). Enough to run locally;
   **not** enough to clear Gatekeeper on someone else's Mac without §4.
-- Weights and the venv are NOT bundled → the `.dmg` stays ~20 MB. The runtime is
+- Weights and the venv are NOT bundled. The clean Python runtime source is bundled and
   materialized into `~/Library/Application Support/LES` on first launch.
 
 **[ручками]** Copy `dist/LES.dmg` to the clean Mac (AirDrop / USB / download).
@@ -66,17 +66,16 @@ uv run python tools/build_macos_dmg.py --version X.Y.Z          # -> dist/LES.dm
 
 ## 3. Build the Windows installer
 
-You can **stage** the Windows package from the Mac, but producing the real
-`LES-Setup.exe` needs `makensis`.
+The final Tauri/NSIS `LES-Setup.exe` must be built on Windows. A Mac build does
+not produce an old look-alike EXE under the same name.
 
 ```bash
 uv run python tools/build_windows_installer.py --version X.Y.Z
 ```
 
-- If `makensis` is on PATH → `dist/LES-Setup.exe`.
-- If not → `dist/LES-windows-portable.zip` + the exact `makensis` command to run.
-  **[ручками]** run that command on a Windows box (or a Windows VM) with NSIS
-  installed. NSIS does not run on macOS.
+- Windows → `dist/LES-Setup.exe` through Tauri/NSIS.
+- macOS/Linux → `dist/LES-windows-tauri-source.zip`; transfer it to Windows and
+  run the same command there.
 
 **[ручками]** Copy the installer/zip to the clean Windows machine.
 
@@ -95,11 +94,11 @@ model-weight download). After that it can run offline (local provider).
    `System Settings → Privacy & Security → Open Anyway`). One time per machine.
 3. The bootstrap runs with no terminal:
    - installs `uv` if missing,
-   - `uv sync --extra mac-mlx --extra desktop`,
+   - `uv sync --extra mac-mlx` (Tauri is already the desktop shell),
    - `lesctl init --profile mac-native`,
    - `onboard_provider.py --skip-if-configured` → sets a **local MLX** default,
    - `onboard_models.py` → downloads weights (first run only, resumable),
-   - launches the desktop shell (native window + tray), loads `:8051/les`.
+   - Tauri waits for health and loads `:8051/les` in the native window.
    Progress = macOS notifications; errors = a dialog; full log in
    `~/Library/Logs/LES/bootstrap.log`.
 
@@ -111,13 +110,13 @@ model-weight download). After that it can run offline (local provider).
    Run anyway**. One time per machine.
 3. The shortcut → `launcher.vbs` (hidden) → `bootstrap.ps1`:
    - installs `uv` (winget or official script),
-   - `uv sync --extra desktop` (no MLX on Windows),
+   - `uv sync` (no MLX and no pywebview on Windows),
    - `lesctl init --profile windows-lite`,
    - `onboard_provider.py --skip-if-configured --provider ollama` → local
      **ollama** default (no cloud key needed to boot),
    - `onboard_models.py --skip-if-cloud`,
    - optional Qdrant via Docker if Docker is present,
-   - brings the stack up via `start-light.ps1`, opens the shell.
+   - brings the stack up via `start-light.ps1`; Tauri opens the live UI.
    Progress = tray balloons; errors = a dialog; log in
    `%LOCALAPPDATA%\LES\logs\bootstrap.log`.
 
@@ -156,8 +155,8 @@ real target hardware:
   can do.
 - **Windows Authenticode** — needs a paid code-signing cert + `signtool`. Until
   then SmartScreen warns once per machine.
-- **`makensis` on Windows** — building the real `.exe` needs NSIS, which only
-  runs on Windows. From the Mac you get the staged zip + the command to run.
+- **Windows Tauri/NSIS build host** — the final `.exe` requires Windows. From
+  the Mac the builder emits a staged Tauri source zip, not a misleading EXE.
 - **Clean-machine smoke** — the only true test of the boxed install is running
   it on a Mac/Windows that has never seen the repo. This **[ручками]** step is
   Олег's: do not assume its result. `tools/clean_install_smoke.py` rehearses the
@@ -172,7 +171,7 @@ real target hardware:
 |---|---|
 | Regenerate icons | `uv run --with pillow python tools/build_icons.py` |
 | Offline gate | `make verify` |
-| Build Mac app + dmg | `tools/build_macos_app.py --sign` → `tools/build_macos_dmg.py` |
+| Build Mac app + dmg | `tools/build_tauri_app.py --version X.Y.Z --bundles app,dmg` |
 | Stage/build Win installer | `tools/build_windows_installer.py --version X.Y.Z` |
 | Set provider (first run) | `tools/onboard_provider.py [--provider …]` |
 | Pre-pull weights | `tools/onboard_models.py [--skip-if-cloud]` |

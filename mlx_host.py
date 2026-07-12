@@ -23,7 +23,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Any, List, Optional, Union
 
 # Грузим .env из директории проекта — независимо от того, кто запустил процесс
 _env_file = Path(__file__).parent / ".env"
@@ -1384,7 +1384,10 @@ class EmbeddingRequest(BaseModel):
 
 class OAIMessage(BaseModel):
     role:    str
-    content: Union[str, List]
+    content: Optional[Union[str, List]] = None
+    tool_calls: Optional[List[dict[str, Any]]] = None
+    tool_call_id: Optional[str] = None
+    name: Optional[str] = None
 
 
 class OAIChatRequest(BaseModel):
@@ -1393,6 +1396,9 @@ class OAIChatRequest(BaseModel):
     stream:      bool           = False
     temperature: Optional[float] = 0.7
     max_tokens:  Optional[int]   = 2048
+    tools: Optional[List[dict[str, Any]]] = None
+    tool_choice: Optional[Union[str, dict[str, Any]]] = None
+    parallel_tool_calls: Optional[bool] = None
 
 
 class OAIEmbeddingRequest(BaseModel):
@@ -1492,12 +1498,19 @@ async def _generate_with_llm_policy(
     return _strip_think_tags(answer), unloaded_peer
 
 
-def _messages_to_prompt(messages: List[OAIMessage], engine: "MLXMemoryManager", enable_thinking: bool = False) -> str:
+def _messages_to_prompt(
+    messages: List[OAIMessage],
+    engine: "MLXMemoryManager",
+    enable_thinking: bool = False,
+    tools: list[dict[str, Any]] | None = None,
+) -> str:
     """
     Строит промпт через chat_template токенизатора движка.
     Токенизатор загружен в engine.start() — без весов модели, быстро.
     enable_thinking=False по умолчанию — RAG-система не нуждается в цепочке рассуждений.
     """
+    if tools and getattr(engine, "tokenizer", None) is None and hasattr(engine, "reload_tokenizer"):
+        engine.reload_tokenizer()
     msgs = []
     for m in messages:
         if isinstance(m.content, str):
@@ -1507,15 +1520,88 @@ def _messages_to_prompt(messages: List[OAIMessage], engine: "MLXMemoryManager", 
                 p.get("text", "") for p in m.content
                 if isinstance(p, dict) and p.get("type") == "text"
             )
+        elif m.content is None:
+            text = None
         else:
             text = str(m.content)
-        msgs.append({"role": m.role, "content": text})
+        message: dict[str, Any] = {"role": m.role, "content": text}
+        if m.tool_calls:
+            normalized_calls = []
+            for raw_call in m.tool_calls:
+                call = dict(raw_call)
+                function = call.get("function") if isinstance(call.get("function"), dict) else {}
+                function = dict(function)
+                arguments = function.get("arguments")
+                if isinstance(arguments, str):
+                    try:
+                        parsed_arguments = json.loads(arguments)
+                    except json.JSONDecodeError:
+                        parsed_arguments = {}
+                    function["arguments"] = parsed_arguments if isinstance(parsed_arguments, dict) else {}
+                elif not isinstance(arguments, dict):
+                    function["arguments"] = {}
+                call["function"] = function
+                normalized_calls.append(call)
+            message["tool_calls"] = normalized_calls
+        if m.tool_call_id:
+            message["tool_call_id"] = m.tool_call_id
+        if m.name:
+            message["name"] = m.name
+        msgs.append(message)
 
+    if tools:
+        return engine.apply_chat_template(msgs, enable_thinking=enable_thinking, tools=tools)
     return engine.apply_chat_template(msgs, enable_thinking=enable_thinking)
+
+
+_TOOL_CALL_BLOCK_RE = re.compile(
+    r"<tool_call>\s*<function=([^>\s]+)>\s*(.*?)</function>\s*</tool_call>",
+    re.DOTALL,
+)
+_TOOL_PARAMETER_RE = re.compile(
+    r"<parameter=([^>\s]+)>\s*(.*?)\s*</parameter>",
+    re.DOTALL,
+)
+
+
+def _tool_parameter_value(raw: str) -> Any:
+    value = raw.strip()
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return value
+
+
+def _assistant_message(content: str) -> tuple[dict[str, Any], str]:
+    """Translate Qwen XML tool calls into the OpenAI-compatible message contract."""
+    tool_calls: list[dict[str, Any]] = []
+    call_prefix = time.time_ns()
+    for index, match in enumerate(_TOOL_CALL_BLOCK_RE.finditer(content), start=1):
+        arguments = {
+            parameter.group(1): _tool_parameter_value(parameter.group(2))
+            for parameter in _TOOL_PARAMETER_RE.finditer(match.group(2))
+        }
+        tool_calls.append({
+            "id": f"call_local_{call_prefix}_{index}",
+            "type": "function",
+            "function": {
+                "name": match.group(1),
+                "arguments": json.dumps(arguments, ensure_ascii=False),
+            },
+        })
+    if not tool_calls:
+        return {"role": "assistant", "content": content}, "stop"
+    visible_content = _TOOL_CALL_BLOCK_RE.sub("", content).strip() or None
+    return {
+        "role": "assistant",
+        "content": visible_content,
+        "tool_calls": tool_calls,
+    }, "tool_calls"
 
 
 def _oai_response(content: str, model: str, prompt_tokens: int = 0) -> dict:
     completion_tokens = len(content.split())
+    message, finish_reason = _assistant_message(content)
     return {
         "id":      f"chatcmpl-les-{int(time.time())}",
         "object":  "chat.completion",
@@ -1523,8 +1609,8 @@ def _oai_response(content: str, model: str, prompt_tokens: int = 0) -> dict:
         "model":   model,
         "choices": [{
             "index":         0,
-            "message":       {"role": "assistant", "content": content},
-            "finish_reason": "stop",
+            "message":       message,
+            "finish_reason": finish_reason,
         }],
         "usage": {
             "prompt_tokens":     prompt_tokens,
@@ -1678,7 +1764,7 @@ async def chat_completions(req: OAIChatRequest):
     if MLX_EMBED_ONLY:
         raise HTTPException(503, "embed-only instance: генерация отключена (используй основной :8080)")
     engine = _get_engine(req.model or MAIN_MODEL)
-    prompt = _messages_to_prompt(req.messages, engine)
+    prompt = _messages_to_prompt(req.messages, engine, tools=req.tools)
     
     if req.stream:
         from fastapi.responses import StreamingResponse

@@ -2564,6 +2564,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             if url:
                 _register_file_artifact(f"{title} · {label}.{ext}", url, ext)
 
+    def _clear_file_artifacts() -> None:
+        _file_artifacts.clear()
+        files_artifacts_panel.clear()
+        files_artifacts_panel.set_visibility(False)
+
     def _render_evidence_header(meta: dict | None, srcs: list | None) -> None:
         """v0.16: компактная статус-полоска ответа — статус + бейджи evidence (RETRIEVED/COMPUTED/
         ASSUMED/MISSING/BLOCKED) + источники + intent + свёрнутый trace. Нет evidence → ничего
@@ -2731,9 +2736,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             msg.get("crag", ""),
             msg.get("meta"),
         )
+        _register_artifact_downloads(msg.get("meta"))
 
     def _render_chat_history(system_msg: str = "История загружена."):
         chat_column.clear()
+        _clear_file_artifacts()
         with chat_column:
             _render_chat_bubble(system_msg, "chat-msg-sys")
             for msg in state.get("chat_history", []):
@@ -2906,9 +2913,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         artifact_panel.clear()
         with artifact_panel:
             _render_empty_artifacts()
-        _file_artifacts.clear()
-        files_artifacts_panel.clear()
-        files_artifacts_panel.set_visibility(False)
+        _clear_file_artifacts()
         state["chat_history"].clear()
         state["session_id"] = _new_session_id()
         state["load_session_id"] = None
@@ -3108,6 +3113,15 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         with chat_column:
             _render_chat_bubble(question_display, "chat-msg-user")
             ai_placeholder, ai_placeholder_label = _render_ai_placeholder(f"{_initial_status} 0с")
+            smeta_operator_lines: list[str] = []
+            smeta_operator_log = None
+            if is_smeta_mode:
+                with ai_placeholder:
+                    smeta_operator_log = ui.label("").classes("sov-smeta-operator-log").style(
+                        "display:none;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
+                        "font-size:.62rem;line-height:1.45;color:var(--dim);margin-top:8px;padding-top:7px;"
+                        "border-top:1px dashed var(--border);max-height:190px;overflow:auto;"
+                    )
         chat_scroll.scroll_to(percent=1)
         add_log(f'[AI] Запрос: "{payload_question[:60]}"')
 
@@ -3270,6 +3284,29 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 if isinstance(payload, dict):
                     label = str(payload.get("label") or "").strip() or "Смета: выполняю этап..."
                     _status_text["v"] = label
+                    if smeta_operator_log is not None:
+                        phase = str(payload.get("phase") or "step")
+                        elapsed_line = int(time.monotonic() - _t0)
+                        detail_bits = []
+                        if payload.get("turn") is not None:
+                            detail_bits.append(f"ход {payload.get('turn')}")
+                        if payload.get("done") is not None and payload.get("total") is not None:
+                            detail_bits.append(f"{payload.get('done')}/{payload.get('total')}")
+                        if payload.get("model_wait_ms"):
+                            detail_bits.append(f"модель {float(payload.get('model_wait_ms')) / 1000:.1f}с")
+                        if payload.get("tool_count"):
+                            detail_bits.append(f"tools {payload.get('tool_count')}")
+                        if payload.get("unique_queries_count"):
+                            detail_bits.append(f"запросов {payload.get('unique_queries_count')}")
+                        if phase == "retrieval" and payload.get("status") == "done":
+                            rag_ms = sum(float(payload.get(key) or 0.0) for key in ("embedding_ms", "retrieval_ms", "rerank_ms"))
+                            detail_bits.append(f"RRF {rag_ms / 1000:.2f}с")
+                        suffix = f" · {' · '.join(detail_bits)}" if detail_bits else ""
+                        smeta_operator_lines.append(f"{elapsed_line:>4}с  {phase}: {label}{suffix}")
+                        del smeta_operator_lines[:-14]
+                        smeta_operator_log.set_text("\n".join(smeta_operator_lines))
+                        smeta_operator_log.style(remove="display:none;")
+                        smeta_operator_log.update()
                     add_log(
                         f"[СМЕТА] этап {payload.get('phase', '?')} {payload.get('status', '')}: {label}"
                     )

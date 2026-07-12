@@ -187,6 +187,44 @@ def test_force_unload_drops_everything(monkeypatch):
     assert cleared == [True]
 
 
+def test_chat_template_passes_native_tools_to_tokenizer():
+    captured = {}
+
+    class Tokenizer:
+        def apply_chat_template(self, messages, **kwargs):
+            captured["messages"] = messages
+            captured["kwargs"] = kwargs
+            return "tool-aware-prompt"
+
+    manager = mlx_adapter.MLXMemoryManager("local-model")
+    manager.tokenizer = Tokenizer()
+    tools = [{"type": "function", "function": {"name": "search_norms", "parameters": {"type": "object"}}}]
+
+    prompt = manager.apply_chat_template(
+        [{"role": "user", "content": "Найди норму"}],
+        enable_thinking=False,
+        tools=tools,
+    )
+
+    assert prompt == "tool-aware-prompt"
+    assert captured["kwargs"]["tools"] == tools
+    assert captured["kwargs"]["enable_thinking"] is False
+
+
+def test_chat_template_fallback_keeps_tool_contract_without_loaded_tokenizer():
+    manager = mlx_adapter.MLXMemoryManager("local-model")
+    tools = [{"type": "function", "function": {"name": "read_norm", "parameters": {"type": "object"}}}]
+
+    prompt = manager.apply_chat_template(
+        [{"role": "user", "content": "Открой норму"}],
+        tools=tools,
+    )
+
+    assert '"name": "read_norm"' in prompt
+    assert "<tool_call>" in prompt
+    assert "Открой норму" in prompt
+
+
 # ── generate_text требует start() (event-loop guard) ──────────────────────────
 
 @pytest.mark.asyncio

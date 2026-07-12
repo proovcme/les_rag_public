@@ -46,7 +46,16 @@ def _model_complete(plan: dict):
     return complete
 
 
-def test_search_norm_no_match_is_honest():
+def test_search_norm_no_match_is_honest(monkeypatch):
+    # Unit contract must not depend on live Qdrant/manifest state or suite order.
+    # Native RRF quality is covered by the norm-browser integration/golden tests.
+    from proxy.smeta_core import norm_browser
+
+    monkeypatch.setattr(
+        norm_browser,
+        "browse_norms",
+        lambda *_args, **_kwargs: {"cards": [], "backend": "isolated_no_match"},
+    )
     assert h.search_norm("жжжыыы щщщъъъ ёёёххх")["status"] == "not_found"
 
 

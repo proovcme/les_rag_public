@@ -1,4 +1,8 @@
-"""LES Unified Construction Harness v0.3 — единый evidence-driven слой по строительным intent'ам.
+"""Legacy feature-off evidence router for non-smeta compatibility.
+
+It is not allowed to become a second estimate application.  The historical
+``estimate_from_bor`` handler is retained only until its fixtures migrate to
+``proxy.smeta_core.application``.
 
 НЕ Profile→Workflow→Runtime rewrite, НЕ свободный агент, НЕ публичный режим. Тонкий слой за
 feature-flag (LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED, OFF дефолт): keyword-роутинг intent →
@@ -28,6 +32,8 @@ from proxy.services.evidence_contract import (
     EvidenceType,
     block_of,
 )
+
+LEGACY_PRIVATE = True
 
 # ── feature flag ─────────────────────────────────────────────────────────────────────────
 

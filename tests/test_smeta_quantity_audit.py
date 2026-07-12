@@ -9,7 +9,7 @@ from proxy.services.estimate_math_service import (
     quantity_sum_audit,
 )
 from proxy.services.prompt_registry_service import build_mode_system_prompt, build_smeta_batch_system_prompt
-from proxy.routers.chat import _smeta_direct_numeric_audit_context
+from proxy.services.smeta_chat_adapter_service import _smeta_direct_numeric_audit_context
 
 
 FIXTURE = Path("tests/fixtures/smeta/stolp_quantity_conflict.json")

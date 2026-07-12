@@ -42,7 +42,7 @@ def test_complete_lsr_message_calls_total_the_estimate():
         },
     )
 
-    assert "Все 3 позиции учтены: 2 рассчитаны, 1 вошли в состав других работ" in message
+    assert "Все 3 позиции учтены: 2 рассчитаны, 1 позиция учтена в составе других работ" in message
     assert "Стоимость сметы составляет 1 000,00 руб." in message
     assert "Стоимость рассчитанной части" not in message
 
@@ -59,8 +59,23 @@ def test_partial_lsr_message_mentions_covered_rows_without_hiding_open_rows():
         },
     )
 
-    assert "рассчитаны 13, ещё 2 учтены в составе других работ, 4 позиции оставлены незакрытыми" in message
+    assert "рассчитаны 13, ещё 2 позиции учтены в составе других работ, 4 позиции оставлены незакрытыми" in message
     assert "Стоимость рассчитанной части без НДС составляет 100,00 руб." in message
+
+
+def test_partial_lsr_message_uses_singular_for_one_covered_position():
+    message = format_document_lsr_message(
+        "ВОР.pdf",
+        {
+            "input_rows": 19,
+            "bound_rows": 16,
+            "covered_rows": 1,
+            "open_rows": 2,
+            "total_without_vat": 100,
+        },
+    )
+
+    assert "ещё 1 позиция учтена в составе других работ" in message
 
 
 def test_format_rub_uses_spaces_and_decimal_comma():

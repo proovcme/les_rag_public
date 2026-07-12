@@ -485,7 +485,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--api-key", default=os.getenv("LES_USER_KEY", os.getenv("LES_ADMIN_KEY", "")))
     parser.add_argument("--mode", choices=("retrieval", "chat", "both"), default="retrieval")
     parser.add_argument("--expect-profile", default=os.getenv("LES_EXPECT_PROFILE", "qwen"))
-    parser.add_argument("--expect-collection", default=os.getenv("LES_EXPECT_COLLECTION", "les_rag_qwen3_06b"))
+    parser.add_argument("--expect-collection", default=os.getenv("LES_EXPECT_COLLECTION", "les_rag"))
     parser.add_argument("--skip-profile-guard", action="store_true")
     parser.add_argument("--reranker", choices=("off", "on"), default="off")
     parser.add_argument("--semantic-cache", choices=("off", "on"), default="off")

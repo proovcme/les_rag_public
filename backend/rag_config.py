@@ -6,6 +6,7 @@ import logging
 import os
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -50,7 +51,7 @@ EMBEDDING_PROFILES: dict[str, EmbeddingProfile] = {
         name="qwen",
         model="Qwen/Qwen3-Embedding-0.6B",
         api_model="qwen3-embedding-0.6b",
-        collection="les_rag_qwen3_06b",
+        collection="les_rag",
         vector_size=1024,
         chunk_size=1550,
         chunk_overlap=70,

@@ -147,6 +147,38 @@ def _rag_embedding_model() -> str:
     )
 
 
+@lru_cache(maxsize=1)
+def _retrieval_vocabulary() -> tuple[dict[str, Any], ...]:
+    path = Path(__file__).resolve().parents[2] / "config" / "domain" / "smeta_retrieval_vocabulary.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ()
+    rules = payload.get("rules") if isinstance(payload, dict) else []
+    return tuple(rule for rule in (rules or []) if isinstance(rule, dict))
+
+
+def _query_variants(query: str) -> list[str]:
+    """Expose documented user-language → normative-language search variants."""
+    original = " ".join(str(query or "").split()).strip()
+    if not original:
+        return []
+    low = original.casefold().replace("ё", "е")
+    expansions_found: list[str] = []
+    for rule in _retrieval_vocabulary():
+        triggers = [str(value or "").casefold().replace("ё", "е") for value in rule.get("match_any") or []]
+        expansions = [rule.get("query")] if rule.get("query") else list(rule.get("queries") or [])
+        if any(trigger and trigger in low for trigger in triggers):
+            expansions_found.extend(
+                expansion
+                for value in expansions
+                if (expansion := " ".join(str(value or "").split()).strip())
+            )
+    # Normative-language variants lead retrieval; the untouched user query is
+    # retained as the final recall channel and remains visible in trace.
+    return list(dict.fromkeys([*expansions_found, original]))
+
+
 @lru_cache(maxsize=8)
 def _sha256_for_stat(path: str, mtime_ns: int, size: int) -> str:
     del mtime_ns, size
@@ -325,6 +357,26 @@ def _rrf_cards(*rankings: list[dict[str, Any]], limit: int) -> list[dict[str, An
             scores[identity] = scores.get(identity, 0.0) + 1.0 / (60.0 + rank)
     ordered = sorted(cards, key=lambda identity: (-scores[identity], identity))
     return [cards[identity] for identity in ordered[:limit]]
+
+
+def _coverage_merge(*rankings: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    """Round-robin variant heads before RRF remainder so no variant is hidden by a tie."""
+    output: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    max_depth = max((len(ranking) for ranking in rankings), default=0)
+    for depth in range(max_depth):
+        for ranking in rankings:
+            if depth >= len(ranking):
+                continue
+            card = ranking[depth]
+            identity = str(card.get("norm_key") or card.get("norm_code") or "")
+            if not identity or identity in seen:
+                continue
+            seen.add(identity)
+            output.append(card)
+            if len(output) >= limit:
+                return output
+    return output
 
 
 def _rerank_cards(query: str, cards: list[dict[str, Any]], *, limit: int) -> tuple[list[dict[str, Any]], bool]:
@@ -553,19 +605,33 @@ def browse_norms_many(
     # local reranker endpoint is single-query and would serialize dozens of
     # independent 4-7 second calls. Defer it to later narrow searches where it
     # materially reduces a small candidate set; the model still opens cards.
-    rerank_enabled = bool(rerank) if rerank is not None else len(clean_queries) <= 4
+    # The endpoint is single-query. A model may request rerank, but a mass
+    # batch stays RRF-only; the model can issue a later disputed shortlist of
+    # at most four queries and receive the reranker there. This changes no
+    # candidate decision and prevents serialized multi-minute execution.
+    rerank_enabled = (bool(rerank) if rerank is not None else True) and len(clean_queries) <= 4
+    variants_by_query = {query: _query_variants(query) for query in clean_queries}
+    all_variants = list(dict.fromkeys(
+        variant for query in clean_queries for variant in variants_by_query.get(query) or [query]
+    ))
     rag_trace: dict[str, Any] = {}
-    rag_by_query = _rag_cards_many(clean_queries, limit=pool_limit, base_path=path, trace=rag_trace)
+    rag_by_query = _rag_cards_many(all_variants, limit=pool_limit, base_path=path, trace=rag_trace)
     out: dict[str, dict[str, Any]] = {}
     rerank_ms = 0.0
     for query in clean_queries:
-        lexical = _typed_cards(
-            query,
-            limit=pool_limit,
-            base_path=path,
-            base_types=clean_base_types,
-            collections=clean_collections,
-        )
+        query_variants = variants_by_query.get(query) or [query]
+        lexical_rankings = [
+            _typed_cards(
+                variant,
+                limit=pool_limit,
+                base_path=path,
+                base_types=clean_base_types,
+                collections=clean_collections,
+            )
+            for variant in query_variants
+        ]
+        lexical_lists = [ranking for ranking in lexical_rankings if ranking is not None]
+        lexical = _coverage_merge(*lexical_lists, limit=pool_limit) if lexical_lists else None
         backend = "typed_sqlite_fts"
         if lexical is None:
             backend = "legacy_navigation_only"
@@ -579,14 +645,19 @@ def browse_norms_many(
                 }
                 for row in search_rows(words)[:pool_limit]
             ]
+        rag_variant_lists = [rag_by_query.get(variant) or [] for variant in query_variants]
+        rag_merged = _coverage_merge(*rag_variant_lists, limit=pool_limit) if rag_variant_lists else []
         rag_cards = [
-            card for card in (rag_by_query.get(query) or [])
+            card for card in rag_merged
             if (not clean_base_types or str(card.get("base_type") or "") in clean_base_types)
             and (
                 not clean_collections
                 or re.sub(r"\D", "", str(card.get("norm_code") or ""))[:2] in clean_collections
             )
         ]
+        # Qdrant performs dense+sparse RRF internally; fuse that hybrid ranking
+        # with the independent typed/FTS safety channel through RRF as well.
+        # No channel is allowed to become a hidden selector for the model.
         fused = _rrf_cards(lexical, rag_cards, limit=pool_limit) if rag_cards else lexical
         cards = fused[:bounded_limit]
         reranked = False
@@ -616,6 +687,7 @@ def browse_norms_many(
                 "reranked": reranked,
                 "rag": dict(rag_trace),
                 "filters": {"base_types": list(clean_base_types), "collections": list(clean_collections)},
+                "query_variants": query_variants,
                 "embedding_ms": float(rag_trace.get("embedding_ms") or 0.0),
                 "retrieval_ms": float(rag_trace.get("retrieval_ms") or 0.0),
                 "rerank_ms": round(rerank_ms, 2),

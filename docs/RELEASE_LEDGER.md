@@ -7,14 +7,138 @@
 ## Текущее состояние (2026-07-12)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.376  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.384  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.369 (live /api/version, 2026-07-12)
-НЕ задеплоено:             Л.И.С.Т. evidence identity/projection 0.24.0.376 и прочий dev divergence
-рантайм /api/version:      0.24.0.369, runtime_alignment=divergent
+задеплоено на рантайм:     0.24.0.381 (live /api/version, 2026-07-12)
+НЕ задеплоено:             0.24.0.384 и прочий dev divergence вне этого ремонта
+рантайм /api/version:      0.24.0.381, deploy_stamp=ok, runtime_alignment=divergent по ранее существующим файлам
 ```
 
+> 0.24.0.384 — единые application boundaries и supervised general RRF
+>
+> Дата: 2026-07-12
+> Статус: dev release candidate; общий clean RRF строится supervised, runtime остаётся на
+> `0.24.0.381` до полного migration/readiness/FTS/live-RRF gate и атомарной активации alias.
+> `chat.py` больше не владеет сметным и общим evidence-исполнением: PDF/ordinary smeta вынесены в
+> `smeta_chat_application_service`, prompts/transport/retrieval adapters — в отдельный smeta adapter;
+> general retrieval→evidence→model→sources/trace вынесен в `chat_evidence_application_service`.
+> Публичная general boundary использует три типизированных контракта request/runtime/response;
+> `globals()`/`locals()` namespace injection запрещён regression-тестом. `chat.py` сокращён с
+> `7 595` до `4 276` строк без изменения model-first поведения.
+> Добавлен единый `smeta_core.application`; новые PDF/chat/API/artifact входы идут через него.
+> Legacy construction paths помечены private и больше не выбирают top-1 ГЭСН кодом: без решения
+> модели они возвращают candidates/BLOCKED. Общий измерительный контракт вынесен отдельно.
+> General RRF generation теперь имеет immutable remote embed identity gate, атомарные checkpoints,
+> bounded retries, audited noise quarantine, canonical dataset ownership из MetaDB, очистку legacy
+> `TABLE_SMETA`, exact dense+sparse/fingerprint/source accounting, физическую FTS-проекцию, live RRF
+> по каждому датасету и атомарное продвижение Qdrant+FTS под стабильный alias `les_rag` с rollback.
+> Сборка `les_rag_qwen3_06b_native_v2` запущена launchd job
+> `me.ovc.les.rag-generation`; alias до полного gate не активируется.
+> Интеграционный gate: полный `make test` — `2 839 passed`, `make verify` — `2 839 collected`;
+> RAG-core — `163 passed`; broad smeta/application — `222 passed`; Tauri `cargo check`,
+> public-check, `uv lock --check` и `git diff --check` зелёные. На контрольной точке commit-кандидата
+> завершены ARTEL и BAI, идёт BOOKS; destination `53 142` points, Qdrant green, failures `0`.
+
+> 0.24.0.383 — каноническая desktop-оболочка Tauri 2
+>
+> Дата: 2026-07-12
+> Статус: dev release candidate; Mac Tauri app/DMG собраны, ad-hoc codesign и DMG checksum прошли;
+> Windows Tauri/NSIS config готов, финальная EXE-сборка требует Windows host.
+> Добавлен `desktop/tauri`: Rust shell владеет только окном, tray, lifecycle, health wait и переходом
+> на NiceGUI. Python остаётся backend sidecar; smeta/RAG/model logic в Rust отсутствует. Tauri mode
+> больше не устанавливает и не запускает pywebview/pystray. `tools/build_tauri_app.py` staging-ит
+> clean runtime без data/secrets/local NiceGUI state и публикует `dist/LES.app`/`dist/LES.dmg`.
+> Старые Mac build entrypoints делегируют Tauri; non-Windows builder больше не выпускает старый NSIS
+> EXE под видом нового, а создаёт переносимый `LES-windows-tauri-source.zip`.
+> Проверки: `cargo check`; desktop/installer focused `23 passed`; полный `make test` — `2808 passed`;
+> `make verify` — `2808 collected`; public-check и `git diff --check` зелёные. Финальный Mac smoke
+> запустил Rust `les-desktop`, подтвердил Sovushka health и закрыл только shell-процесс. DMG SHA-256:
+> `639e1c86ac8d54040b4cc03bffe7afd22b04e137234cc161c776aa98fb7c67f3`.
+
+> 0.24.0.382 — физическое удаление старого сметного оркестратора
+>
+> Дата: 2026-07-12
+> Статус: dev release candidate; focused gate `111 passed`, полный gate `2802 passed`, `make verify`,
+> public-check, RAG-core `157 passed` и runtime smoke `9/9` зелёные. Собраны и проверены macOS
+> `LES.app`/`LES.dmg` и Windows `LES-Setup.exe`. Живой zero-state ЛСР и deploy ещё не выполнялись.
+> Из `document_workflow.py` удалены старые per-row tools, отдельные resource/price/impact reviewers и
+> недостижимое legacy-тело. Канонический контракт оставляет модели три batch-инструмента:
+> `search_norms_batch`, `read_norms_batch`, `submit_lsr_mapping`; код после полного mapping выполняет
+> один расчёт и XLSX. Skill, runtime reference, CODE_MAP и smeta docs синхронизированы. Добавлен
+> regression-контракт на 50 строк, отсутствие старых tools и отсутствие второго модельного допуска.
+> Generated нормативные parquet/audit/manifest сняты только с Git-публикации и сохранены локально;
+> публичная сборка больше не включает runtime data.
+
+> 0.24.0.380 — компактный агентный RAG и model-owned повторный подбор
+
+> 0.24.0.381 — снята ошибочная многоступенчатая оркестрация сметной модели. Удалены обязательные
+> resource/impact review и автоматический повторный подбор; модель принимает mapping и ресурсные
+> действия в одном свободном tool-диалоге, после чего код один раз считает и формирует XLSX.
+> Убраны фиксированные лимиты числа поисковых формулировок, открываемых карточек и страниц; размер
+> candidate menu выбирает модель. Задеплоено локально 2026-07-12, deploy stamp `ok`.
+>
+> Дата: 2026-07-12
+> Статус: dev; deploy и новый zero-state БАП после полного gate.
+> Живой пользовательский прогон показал рост активного prompt с 19 625 до 320 278 символов:
+> 57 запросов, 228 кандидатов и 19 карточек оставались в истории одновременно. Теперь candidate menu
+> выдаётся страницами по 4–6 карточек, следующую `page` запрашивает модель, а старые подробные tool
+> results заменяются компактным snapshot. `rerank=false` передаётся явно; batch timing больше не
+> суммируется повторно по каждому запросу. Impact review получил явный `next_action=reopen_norm`:
+> только модель может снова открыть RAG и создать новую mapping-ревизию слабой доминирующей нормы.
+> Focused smeta tests перед полным gate: `58 passed`.
+
+> 0.24.0.379 — статусы проверки больше не обнуляют ресурсы нормы
+>
+> Дата: 2026-07-12
+> Статус: runtime deployed; post-deploy smoke `9/9`.
+> Найден скрытый code-side veto: `calculator` удалял целиком труд, машины или материалы при
+> component status `unresolved/rejected`. Из-за этого 16 связанных строк объявлялись рассчитанными,
+> но проём ГКЛ, монтаж потолка и 16 БАП получали нулевую стоимость, а итог падал до 86 218,46 руб.
+> Теперь статусы влияют только на полноту и предупреждения; состав денег меняют только явные
+> model-owned `exclude|replace|add|reuse`. Добавлен регрессионный тест на сохранение отклонённого
+> компонента до явного действия модели.
+> Проверки: focused `61 passed`; `make verify` — `2813 collected`; полный `make test` —
+> `2813 passed`; `make ship` — focused `120 passed`, RAG-core `155 passed`, pre/post smoke `9/9`.
+> Новый GPT-5.4 zero-state БАП: 14 норм, 1 `covered_by`, 4 открытых строки, 354 858,53 руб. без
+> НДС. Нулевые связанные позиции из-за code-side component filter исчезли, но приёмочный порог
+> покрытия 17/19 не достигнут; тяжёлый аналог БАП остаётся профессионально слабым и видимым.
+
+> 0.24.0.378 — модельные решения не теряются, XLSX живёт в истории, ФГИС обновляется одной задачей
+>
+> Дата: 2026-07-12
+> Статус: runtime deployed; внешний и локальный `/api/version` показывают `0.24.0.378`.
+> Ресурсный JSON GPT-5.4 на 16 строк был обрезан провайдером после 11 завершённых решений; старый
+> parser отбрасывал весь пакет и подставлял 16 `unresolved`. Теперь полные строки принимаются, а
+> повтор получает только отсутствующие `work_id`. Пустая model revision `resources=[]` больше не
+> вызывает обратную гидратацию сырой нормы; renderer нормализует альтернативные строки труда и на
+> последней границе. XLSX download contract хранится в `chat_history.artifact_json` и Совушка
+> восстанавливает файл при открытии сессии. «Источники данных» получили общий публичный FGIS updater:
+> каталог, свежая Сплит-форма каждой ценовой зоны и существующий полный ГЭСН pipeline; закрытые
+> Bearer/captcha-разделы не обходятся. Текущий UX-ориентир live БАП — около 120 секунд с видимыми
+> этапами; число и свобода профессиональных решений модели не ограничены.
+> Проверки: focused smeta/history/UI/FGIS `136 passed`, после сетевого retry ещё `52 passed`;
+> `make verify` — `2812 collected`; `make test` — `2811 passed`, 6 warnings, 267,75 с до
+> добавления последнего focused retry-теста. Basic smoke: P0 `8/8`, P1 no-scope chat timeout остаётся
+> отдельным предупреждением. Браузерный smoke подтвердил XLSX в загруженной истории и live-статус
+> фонового FGIS update. Текущий Excel backfilled в history id `1892`; download отвечает HTTP 200.
+>
+> 0.24.0.377 — модель завершает ресурсное решение до основного XLSX
+>
+> Дата: 2026-07-12
+> Статус: dev, targeted runtime deploy после полного gate и нового zero-state БАП.
+> Первичный model-owned mapping сохраняется immutable-ревизией, но больше не превращается кодом
+> автоматически в деньги по полному составу аналога. Код возвращает модели рассчитанные труд,
+> машины, материалы и влияние; только модель подтверждает `keep_all_confirmed`, задаёт
+> `add/replace/exclude/reuse` либо оставляет компонент нерешённым. Основной XLSX строится по последней
+> модельной ревизии. Механический normalizer исключает двойное сложение альтернативных форм труда
+> (`1-100-*`, текстовое «всего», `2-100-*`) без семантического выбора ресурсов. Сметный typed+hybrid
+> канал объединяется RRF. Объектных правил БАП/кабеля/крана нет.
+> Проверки на момент записи: smeta core/resource `40 passed`; skill validation, py_compile,
+> `git diff --check`, `make verify` green (`2801 collected`); первый полный `make test` —
+> `2796 passed, 5 failed`, после обновления изменённых контрактов все пять focused tests green.
+> Повторный полный gate и live БАП следуют перед статусом runtime.
+>
 > 0.24.0.376 — независимые от папок тома и fail-closed table evidence Л.И.С.Т.
 >
 > Дата: 2026-07-12

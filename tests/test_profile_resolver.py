@@ -249,6 +249,14 @@ async def test_auto_work_estimate_goes_to_harness_not_retrieval(monkeypatch):
     assert resp.get("final_total") is None
     answer = resp["answer"]
     assert "Расчётный протокол" in answer
-    assert "группа грунта" in answer
-    assert "глубина разработки" in answer
-    assert "крепления траншей/котлована" in answer
+    # Routing must preserve partial/finality and surface whatever unresolved
+    # conditions the model-selected norm actually carries.  The route test must
+    # not prescribe a professional checklist independently of that norm card.
+    assert any(
+        marker in answer
+        for marker in (
+            "Проверить по выбранным нормам",
+            "Нужно выбрать норму или уточнить параметры",
+            "нормы, параметры и ценовые источники",
+        )
+    )

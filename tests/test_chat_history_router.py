@@ -153,6 +153,34 @@ def test_save_chat_history_uses_active_meta_db_path(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_smeta_artifact_survives_chat_history_round_trip(tmp_path, monkeypatch):
+    (tmp_path / "data").mkdir()
+    db_path = tmp_path / "data" / "les_meta_qwen.db"
+    monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+    _init_chat_history(db_path)
+    artifact = {
+        "mode": "xlsx",
+        "title": "ЛСР — тестовая ВОР",
+        "downloads": {"xlsx": "/api/smeta-artifacts/download?path=LSR_test.xlsx"},
+        "files": {"xlsx_path": "storage/smeta_artifacts/LSR_test.xlsx"},
+    }
+    save_chat_history(
+        question="Сделай ЛСР",
+        answer="Смета готова.",
+        sources=[],
+        crag_status="PARTIAL",
+        latency_sec=120,
+        tokens=0,
+        session_id="smeta-session",
+        artifact=artifact,
+    )
+
+    messages = await get_chat_history(session_id="smeta-session", _user=object())
+
+    assert messages[-1]["meta"]["artifact"] == artifact
+
+
+@pytest.mark.asyncio
 async def test_save_chat_feedback_updates_history_row(tmp_path, monkeypatch):
     (tmp_path / "data").mkdir()
     (tmp_path / "logs").mkdir()

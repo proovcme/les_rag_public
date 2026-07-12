@@ -88,6 +88,16 @@ def start(*, rate: float = 1.0, limit: int | None = None) -> dict[str, Any]:
     current = status()
     if current.get("running"):
         return {"ok": True, "started": False, **current}
+    from proxy.services import fgis_update_service
+
+    if fgis_update_service.status().get("running"):
+        return {
+            "ok": False,
+            "started": False,
+            "reason": "fgis_update_running",
+            "message": "Общее обновление ФГИС ЦС уже включает ГЭСН.",
+            **current,
+        }
     _LOG.parent.mkdir(parents=True, exist_ok=True)
     cmd = [sys.executable, "-m", "tools.gesn_update_from_fgis", "--all", "--rate", str(rate)]
     if limit is not None:

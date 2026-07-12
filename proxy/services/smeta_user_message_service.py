@@ -29,6 +29,11 @@ def _positions(count: int) -> str:
     return f"{int(count)} {word}"
 
 
+def _covered(count: int, *, lead: str) -> str:
+    verb = "учтена" if int(count) == 1 else "учтены"
+    return f"{lead}{_positions(count)} {verb} в составе других работ"
+
+
 def format_document_lsr_message(source_name: str, summary: dict[str, Any]) -> str:
     total_rows = int(summary.get("input_rows") or 0)
     priced_rows = int(summary.get("bound_rows") or 0)
@@ -44,13 +49,13 @@ def format_document_lsr_message(source_name: str, summary: dict[str, Any]) -> st
     if open_rows:
         coverage = f"Из {_positions(total_rows)} рассчитаны {priced_rows}"
         if covered_rows:
-            coverage += f", ещё {covered_rows} учтены в составе других работ"
+            coverage += ", " + _covered(covered_rows, lead="ещё ")
         coverage += f", {_positions(open_rows)} оставлены незакрытыми. "
         parts.append(coverage)
     elif total_rows and covered_rows:
         parts.append(
             f"Все {_positions(total_rows)} учтены: {priced_rows} рассчитаны, "
-            f"{covered_rows} вошли в состав других работ. "
+            f"{_covered(covered_rows, lead='')}. "
         )
     elif total_rows:
         parts.append(f"Все {_positions(total_rows)} рассчитаны. ")

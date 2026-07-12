@@ -20,8 +20,9 @@ def test_native_smeta_agent_loads_gesn_storage_reference():
 
     assert "norm_key = base_type:bare_code" in excerpt
     assert "Typed SQLite" in excerpt
-    assert "dense + BM25" in excerpt
-    assert "не блокирует первую ЛСР" in excerpt
+    assert "RRF-навигацию по dense+sparse" in excerpt
+    assert "submit_lsr_mapping" in excerpt
+    assert "Отсутствие модельного решения не считается подтверждением состава" in excerpt
 
 
 def test_prompt_registry_exposes_common_tone_modes_and_tools():
@@ -51,7 +52,7 @@ def test_mode_system_prompt_includes_mode_tone_without_tool_contracts():
 
 
 def test_local_normative_style_keeps_voice_without_balagaan():
-    source = Path("proxy/routers/chat.py").read_text(encoding="utf-8")
+    source = Path("proxy/services/chat_evidence_application_service.py").read_text(encoding="utf-8")
 
     assert "без балагана" in source.lower()
     assert "короткая живая реплика допустима" in source
@@ -178,8 +179,8 @@ def test_smeta_role_pack_file_is_valid_json_and_has_no_case_anchors():
 
     assert "Декартово произведение кандидатов запрещено" in skill
     assert "source_row → technological_operation → estimate_position → resolution_status → pricing_basis → pricing_evidence" in skill
-    assert "Никакая дополнительная" in skill
-    assert "не может блокировать её создание" in skill
+    assert "после завершения моделью mapping он один раз считает и формирует XLSX" in skill
+    assert "Отдельного обязательного resource-review, impact-review или повторного допуска нет" in skill
     assert "machinist_labor_per_machine_hour" in skill
     assert "коэффициенты `0.9` к нр и `0.85` к сп" in skill.casefold()
     assert "исключения пункта 26 №812/пр" in skill

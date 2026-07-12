@@ -38,6 +38,8 @@ def test_registry_build_search_and_exact_source_read(tmp_path):
     source = tmp_path / "project" / "panel.pdf"
     source.parent.mkdir(parents=True)
     _make_table_pdf(source)
+    with fitz.open(source) as document:
+        detected_bbox = [round(float(value), 3) for value in document[0].find_tables().tables[0].bbox]
     manifest_root = storage_root / dataset_id / "_les_pdf_extract" / "panel"
     manifest_root.mkdir(parents=True)
     manifest = {
@@ -56,7 +58,7 @@ def test_registry_build_search_and_exact_source_read(tmp_path):
                         "category": "engineering",
                         "confidence": 0.92,
                         "sample": "Panel | Room / N1 | Server / N2 | Office",
-                        "bbox": [10.0, 10.0, 210.0, 110.0],
+                            "bbox": detected_bbox,
                     }
                 ],
             }
@@ -73,7 +75,7 @@ def test_registry_build_search_and_exact_source_read(tmp_path):
     assert summary["normalized_sample_tables"] == 1
     assert result["returned"] == 1
     assert result["is_evidence"] is False
-    assert read["is_evidence"] is True
+    assert read["is_evidence"] is True, read
     assert read["status"] == "ok"
     assert len(table_id) == 32
     assert read["headers"] == ["Panel", "Room"]

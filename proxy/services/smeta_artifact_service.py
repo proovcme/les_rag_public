@@ -350,7 +350,7 @@ def _build_rim_trace_form(lsr_form: dict[str, Any], *, question: str = "") -> di
     if not rows:
         return None
     try:
-        from proxy.smeta_core.workflow import calculate_visible_rows_revision
+        from proxy.smeta_core.application import calculate_visible_rows_revision
     except Exception:
         return None
 

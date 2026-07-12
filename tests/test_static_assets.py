@@ -64,7 +64,7 @@ def test_documents_ui_is_a_visual_read_only_dataset_browser():
     assert "Реестр датасета" in page
     assert '"Файлы и папки"' in page
     assert "_composition_files" in page
-    assert "value=not bool(file_data)" in page
+    assert 'ui.expansion("Реестр датасета", icon="o_inventory_2", value=False)' in page
     assert "sov-composition-folder" in page
     assert ".sov-composition-folder" in styles
     assert "Корень датасета" in page
@@ -95,15 +95,32 @@ def test_documents_ui_is_a_visual_read_only_dataset_browser():
     assert "--docs-border-strong" in styles
     assert "--docs-muted-strong" in styles
     assert "border: 1px solid var(--docs-border-strong)" in styles
-    assert "Л.И.С.Т. проекта" in page
-    assert "Структура Л.И.С.Т." in page
+    assert "Л.И.С.Т. проекта" not in page
+    assert "Карта проекта" in page
+    assert "Папки и разделы можно открыть" in page
+    assert "Данные о датасете" in page
+    assert '"map_target": "dataset"' in page
+    assert 'state["map_target"] = "file"' in page
+    assert "Открыть оригинал" in page
+    assert "sov-file-content-preview" in page
+    assert ".sov-project-map" in styles
+    assert ".sov-project-map-node:hover" in styles
+    assert "def _list_warning_messages" in page
+    assert '"Проверить: " + "; ".join(warnings[:3])' not in page
+    assert "таблицы не выделены автоматически" in page
+    assert "sampled_documents') or 0)} файла" not in page
     assert 'coverage.get("files_ok") or coverage.get("files_extracted")' in page
     assert 'state.__setitem__("dataset_filter", str(e.args or "")), _render_datasets()' in page
     assert "warnings_truncated" in page
-    assert "ui.mermaid(diagram)" in page
+    assert "ui.mermaid(" not in page
     assert "Темы датасета" in page
     assert "Разделы внутри файлов" in page
     assert "Спросить по теме" in page
+    assert "/api/rag/readiness" in page
+    assert "Готовность поиска" in page
+    assert "RRF не готов" in page
+    assert "Сметные нормы" in page
+    assert "Это проверка retrieval, а не подтверждение применимости норм" in page
     assert 'ui.button("CAD/BIM"' in page
     assert "/api/cad-bim/imports?limit=300" in page
     assert "Слабые импорты" in page

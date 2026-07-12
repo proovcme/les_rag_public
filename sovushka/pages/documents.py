@@ -69,6 +69,8 @@ def build_documents() -> None:
         "dataset_group_filter": "",
         "document_filter": "",
         "document_tree_open": [],
+        "document_map_files": [],
+        "document_map_label": "",
         "project_filter": "",
         "composition_view": "tree",
         "selected_folder": "",
@@ -79,8 +81,11 @@ def build_documents() -> None:
         "composition_name_filter": "",
         "composition_file": {},
         "composition_file_loading": False,
+        "map_target": "dataset",
         "dataset_index_brief": {},
         "dataset_index_brief_loading": False,
+        "rag_readiness": {},
+        "rag_readiness_loading": False,
         "query": "",
         "view_title": "Выберите датасет",
         "view_note": "Л.И.С.Т. — файловый проводник проекта: структура, данные документов и поиск по индексу.",
@@ -265,6 +270,47 @@ def build_documents() -> None:
             current.discard(path)
         state["document_tree_open"] = sorted(current)
 
+    def _focus_document_folder(path: str) -> None:
+        normalized = str(path or "").strip("/")
+        state["document_filter"] = ""
+        state["document_map_files"] = []
+        state["document_map_label"] = ""
+        state["document_tree_open"] = [
+            "/".join(normalized.split("/")[:index])
+            for index in range(1, len(normalized.split("/")) + 1)
+            if normalized
+        ]
+        document_filter = refs.get("document_filter")
+        if document_filter is not None:
+            document_filter.set_value("")
+        _render_documents()
+
+    def _filter_documents_from_map(value: str) -> None:
+        query = str(value or "").strip()
+        memory = state.get("dataset_memory") if isinstance(state.get("dataset_memory"), dict) else {}
+        project_pdf = state.get("pdf_extract") if isinstance(state.get("pdf_extract"), dict) else {}
+        if not project_pdf and isinstance(memory, dict):
+            project_pdf = memory.get("project_pdf_extract") if isinstance(memory.get("project_pdf_extract"), dict) else {}
+        matches = (
+            [
+                str(item.get("file_name") or "")
+                for item in _composition_files(memory, project_pdf)
+                if str(item.get("discipline") or "").strip() == query
+            ]
+            if query
+            else []
+        )
+        state["document_filter"] = ""
+        state["document_map_files"] = matches
+        state["document_map_label"] = query
+        _render_documents()
+
+    def _set_document_text_filter(value: str) -> None:
+        state["document_filter"] = str(value or "")
+        state["document_map_files"] = []
+        state["document_map_label"] = ""
+        _render_documents()
+
     def _select_composition_folder(folder: str) -> None:
         state["selected_folder"] = str(folder or "")
         _render_view()
@@ -278,8 +324,9 @@ def build_documents() -> None:
         if not doc_id:
             return
         state["view_mode"] = "map"
+        state["map_target"] = "file"
         state["view_title"] = _dataset_title(_selected_dataset_row())
-        state["view_note"] = "Л.И.С.Т. — файловый проводник проекта: структура, данные документов и поиск по индексу."
+        state["view_note"] = "Краткая справка, содержание и переход к оригиналу файла."
         state["composition_file_loading"] = True
         state["composition_file"] = {"doc_id": doc_id, "file_name": file_name}
         _render_documents()
@@ -300,6 +347,16 @@ def build_documents() -> None:
             "chunks": list(data.get("chunks") or []),
             "total": int(data.get("total") or 0),
         }
+        _render_documents()
+        _render_view()
+
+    def _show_dataset_data() -> None:
+        state["view_mode"] = "map"
+        state["map_target"] = "dataset"
+        state["composition_file"] = {}
+        state["composition_file_loading"] = False
+        state["view_title"] = _dataset_title(_selected_dataset_row()) if state["selected_dataset"] else "Выберите датасет"
+        state["view_note"] = "Паспорт, состав и извлечённые данные датасета."
         _render_documents()
         _render_view()
 
@@ -357,7 +414,72 @@ def build_documents() -> None:
         topics = [heading for heading in headings[1:] if heading.casefold() != lead_heading.casefold()][:4]
         if topics:
             parts.append("В составе индекса: " + "; ".join(topics) + ".")
-        return " ".join(parts)
+        documents = [item for item in (state.get("documents") or []) if isinstance(item, dict)]
+        folders: set[str] = set()
+        for item in documents:
+            parts = [part for part in str(item.get("file_name") or "").replace("\\", "/").split("/") if part]
+            for depth in range(1, len(parts)):
+                folders.add("/".join(parts[:depth]))
+        project_pdf = state.get("pdf_extract") if isinstance(state.get("pdf_extract"), dict) else {}
+        coverage = project_pdf.get("coverage") if isinstance(project_pdf.get("coverage"), dict) else {}
+        pdf_count = int(coverage.get("pdf_documents") or 0)
+        if documents:
+            composition = f"Состав: {len(documents)} файлов"
+            if folders:
+                composition += f", {len(folders)} папок"
+            if pdf_count:
+                composition += f", {pdf_count} PDF"
+            parts.append(composition + ".")
+        disciplines: list[str] = []
+        for item in project_pdf.get("discipline_summaries") or []:
+            if not isinstance(item, dict) or not item.get("files"):
+                continue
+            discipline = str(item.get("discipline") or "").strip()
+            if discipline and discipline not in {"UNKNOWN", "PROJECT_TABLES"}:
+                disciplines.append(f"{discipline} — {int(item.get('files') or 0)} файлов")
+        if disciplines:
+            parts.append("Разделы: " + "; ".join(disciplines[:6]) + ".")
+        table_summary = coverage.get("project_table_summary") if isinstance(coverage.get("project_table_summary"), dict) else {}
+        extracted: list[str] = []
+        if int(table_summary.get("detected_tables") or 0):
+            extracted.append(f"таблиц — {int(table_summary.get('detected_tables') or 0)}")
+        if int(table_summary.get("water_balance_rows") or 0):
+            extracted.append(f"строк водного баланса — {int(table_summary.get('water_balance_rows') or 0)}")
+        electrical = coverage.get("electrical_summary") if isinstance(coverage.get("electrical_summary"), dict) else {}
+        if int(electrical.get("candidate_circuits") or 0):
+            extracted.append(f"электрических цепей-кандидатов — {int(electrical.get('candidate_circuits') or 0)}")
+        if extracted:
+            parts.append("Из документов выделено: " + "; ".join(extracted) + ".")
+        return "\n\n".join(parts)
+
+    def _list_warning_messages(warnings: list[str]) -> list[tuple[str, str]]:
+        """Turn parser diagnostics into user-facing reading status."""
+        values = [str(value or "").strip() for value in warnings if str(value or "").strip()]
+        messages: list[tuple[str, str]] = []
+        heavy_pages = sum("table_detection_skipped_heavy_vector_page" in value for value in values)
+        if heavy_pages:
+            messages.append(
+                (
+                    "info",
+                    f"Плотная чертёжная графика на {heavy_pages} стр.: таблицы не выделены автоматически, "
+                    "но страницы и текст доступны.",
+                )
+            )
+        if any("missing_pdf_source" in value or "not_pdf_or_missing" in value for value in values):
+            messages.append(("action", "Исходный PDF не найден — проверьте путь к файлу."))
+        if any("empty_pdf_source" in value for value in values):
+            messages.append(("action", "PDF пустой — замените исходный файл."))
+        known = (
+            "table_detection_skipped_heavy_vector_page",
+            "missing_pdf_source",
+            "not_pdf_or_missing",
+            "empty_pdf_source",
+            "project_tables_not_detected",
+        )
+        other = [value for value in values if not any(marker in value for marker in known)]
+        if other:
+            messages.append(("action", "Часть структуры не распознана автоматически — откройте документ для проверки."))
+        return messages
 
     def _folder_summary(folder: str, files: list[dict]) -> str:
         prefix = "" if folder == "Корень датасета" else folder.rstrip("/") + "/"
@@ -389,7 +511,11 @@ def build_documents() -> None:
         roots: dict[str, dict] = {}
         for item in files:
             file_name = str(item.get("file_name") or "")
-            root_name = file_name.split("/", 1)[0] if "/" in file_name else "без папки"
+            parts = [part for part in file_name.replace("\\", "/").split("/") if part]
+            dataset_name = _dataset_title(_selected_dataset_row()).casefold()
+            if parts and parts[0].casefold() == dataset_name:
+                parts = parts[1:]
+            root_name = parts[0] if len(parts) > 1 else "Корень"
             row = roots.setdefault(
                 root_name,
                 {
@@ -412,104 +538,6 @@ def build_documents() -> None:
             if discipline:
                 row["disciplines"][discipline] = int(row["disciplines"].get(discipline) or 0) + 1
         return sorted(roots.values(), key=lambda item: (-int(item.get("files") or 0), str(item.get("name") or "")))
-
-    def _mermaid_label(value: object, *, limit: int = 54) -> str:
-        text = str(value or "").replace("\n", " ").replace("\r", " ").strip()
-        text = " ".join(text.split())
-        if len(text) > limit:
-            text = text[: limit - 1].rstrip() + "…"
-        return text.replace('"', "'")
-
-    def _dataset_structure_mermaid(memory: dict, project_pdf: dict, coverage: dict, files: list[dict]) -> str:
-        selected = _selected_dataset_row()
-        dataset_title = selected.get("name") or state.get("selected_dataset") or "Датасет"
-        roots = _project_roots(files)
-        disciplines = [
-            item for item in (project_pdf.get("discipline_summaries") or []) if isinstance(item, dict)
-        ]
-        table_summary = coverage.get("project_table_summary") if isinstance(coverage.get("project_table_summary"), dict) else {}
-        electrical_summary = coverage.get("electrical_summary") if isinstance(coverage.get("electrical_summary"), dict) else {}
-        found_rows = [
-            ("Документов", selected.get("document_count") or memory.get("document_count") or len(state.get("documents") or [])),
-            ("PDF", coverage.get("pdf_documents")),
-            ("Текстовых частей", selected.get("chunk_count") or memory.get("chunk_count")),
-            ("Таблиц", table_summary.get("detected_tables")),
-            ("ПЗ", coverage.get("pz_files")),
-            ("ВОР", coverage.get("vor_files")),
-            ("СО", coverage.get("so_files")),
-            ("Экспликаций", table_summary.get("room_explication_rows")),
-            ("Водных балансов", table_summary.get("water_balance_rows")),
-            ("ХВС", table_summary.get("hvs_rows")),
-            ("Электрика", electrical_summary.get("files") or electrical_summary.get("load_tables")),
-        ]
-        lines = [
-            "flowchart LR",
-            f'    ds["{_mermaid_label(dataset_title, limit=48)}"]',
-            '    roots["Проекты и папки"]',
-            '    discs["Разделы"]',
-            '    found["Что найдено"]',
-            "    ds --> roots",
-            "    ds --> discs",
-            "    ds --> found",
-        ]
-        if roots:
-            for index, root in enumerate(roots[:6]):
-                status = " · проверить" if root.get("warnings") else ""
-                label = f"{root.get('name') or 'папка'} · {root.get('files', 0)} PDF{status}"
-                lines.append(f'    root{index}["{_mermaid_label(label)}"]')
-                lines.append(f"    roots --> root{index}")
-        else:
-            lines.extend(['    root0["Файлы пока не разобраны"]', "    roots --> root0"])
-
-        if disciplines:
-            for index, item in enumerate(disciplines[:8]):
-                label = f"{item.get('discipline') or 'Раздел'} · {int(item.get('files') or 0)} файлов"
-                lines.append(f'    disc{index}["{_mermaid_label(label)}"]')
-                lines.append(f"    discs --> disc{index}")
-        else:
-            lines.extend(['    disc0["Разделы появятся после чтения PDF"]', "    discs --> disc0"])
-
-        added = 0
-        for title, value in found_rows:
-            try:
-                count = int(value or 0)
-            except (TypeError, ValueError):
-                count = 0
-            if count <= 0:
-                continue
-            lines.append(f'    found{added}["{_mermaid_label(title)}: {count}"]')
-            lines.append(f"    found --> found{added}")
-            added += 1
-            if added >= 10:
-                break
-        if not added:
-            lines.extend(['    found0["Карта появится после разбора PDF"]', "    found --> found0"])
-
-        warnings = int(coverage.get("extract_errors") or 0) + int(coverage.get("missing_source") or 0)
-        unknown_tables = 0
-        try:
-            unknown_tables = int((table_summary.get("by_type") or {}).get("UNKNOWN") or 0)
-        except (TypeError, ValueError, AttributeError):
-            unknown_tables = 0
-        if warnings or unknown_tables:
-            lines.extend(['    check["Что проверить"]', "    ds --> check"])
-            if warnings:
-                lines.append(f'    checkFiles["PDF: {warnings}"]')
-                lines.append("    check --> checkFiles")
-            if unknown_tables:
-                lines.append(f'    checkTables["Таблицы: {unknown_tables}"]')
-                lines.append("    check --> checkTables")
-        lines.extend(
-            [
-                "    classDef main fill:#eff6ff,stroke:#3b82f6,color:#0f172a,stroke-width:1px;",
-                "    classDef group fill:#f8fafc,stroke:#94a3b8,color:#0f172a;",
-                "    classDef warn fill:#fff7ed,stroke:#f97316,color:#7c2d12;",
-                "    class ds main;",
-                "    class roots,discs,found group;",
-                "    class check,checkFiles,checkTables warn;",
-            ]
-        )
-        return "\n".join(lines)
 
     async def _load_datasets(select_first: bool = True) -> None:
         params = {"limit": 400}
@@ -541,15 +569,38 @@ def build_documents() -> None:
         state["selected_folder"] = ""
         state["composition_file"] = {}
         state["composition_file_loading"] = False
+        state["map_target"] = "dataset"
         state["document_tree_open"] = []
+        state["document_map_files"] = []
+        state["document_map_label"] = ""
         state["dataset_index_brief"] = {}
         state["dataset_index_brief_loading"] = False
         state["dataset_kind"] = str(_selected_dataset_row().get("dataset_kind") or "")
         state["view_mode"] = "map"
         state["view_title"] = _dataset_title(_selected_dataset_row()) if dataset_id else "Выберите датасет"
-        state["view_note"] = "Л.И.С.Т. — файловый проводник проекта: структура, данные документов и поиск по индексу."
+        state["view_note"] = "Паспорт, состав и извлечённые данные датасета."
         await _load_documents()
-        await asyncio.gather(_load_memory(), _load_pdf_extract_summary(), _load_dataset_index_brief())
+        await asyncio.gather(
+            _load_memory(),
+            _load_pdf_extract_summary(),
+            _load_dataset_index_brief(),
+            _load_rag_readiness(dataset_id),
+        )
+
+    async def _load_rag_readiness(dataset_id: str = "", *, force: bool = False) -> None:
+        state["rag_readiness_loading"] = True
+        params = {}
+        if dataset_id:
+            params["dataset_id"] = dataset_id
+        if force:
+            params["force"] = "true"
+        suffix = "?" + urlencode(params) if params else ""
+        data = await api_get("/api/rag/readiness" + suffix)
+        state["rag_readiness_loading"] = False
+        state["rag_readiness"] = data if isinstance(data, dict) else {}
+        _render_readiness_summary()
+        _render_datasets()
+        _render_view()
 
     async def _load_dataset_index_brief() -> None:
         documents = [
@@ -890,10 +941,7 @@ def build_documents() -> None:
         _render_view()
 
     def _show_map() -> None:
-        state["view_mode"] = "map"
-        state["view_title"] = _dataset_title(_selected_dataset_row()) if state["selected_dataset"] else "Выберите датасет"
-        state["view_note"] = "Л.И.С.Т. показывает карту корпуса: описание, проекты, тома, файлы и маршруты чтения."
-        _render_view()
+        _show_dataset_data()
 
     def _show_cad_inventory() -> None:
         state["view_mode"] = "cad"
@@ -1171,12 +1219,43 @@ def build_documents() -> None:
                         size="10.3px",
                         color="var(--dim)",
                     ).classes("sov-composition-file-index-source")
-                    if doc_id:
+                    content_rows: list[tuple[str, str, str]] = []
+                    seen_content: set[str] = set()
+                    for index, item in enumerate(chunks):
+                        if not isinstance(item, dict):
+                            continue
+                        heading = _plain_index_text(item.get("section_heading") or item.get("parent_heading"))
+                        excerpt = _plain_index_text(item.get("snippet") or item.get("text"))
+                        if not excerpt:
+                            continue
+                        key = f"{heading}|{excerpt[:120]}"
+                        if key in seen_content:
+                            continue
+                        seen_content.add(key)
+                        page = item.get("page") or item.get("source_page") or item.get("page_number")
+                        anchor = f"Стр. {page}" if page else f"Фрагмент {index + 1}"
+                        content_rows.append((heading or anchor, excerpt, anchor))
+                        if len(content_rows) >= 6:
+                            break
+                    if content_rows:
+                        with ui.element("section").classes("sov-file-content-preview"):
+                            _label("Содержание", size="12.5px", weight=900).classes("sov-file-content-title")
+                            for heading, excerpt, anchor in content_rows:
+                                with ui.element("article").classes("sov-file-content-item"):
+                                    with ui.row().classes("items-center w-full sov-file-content-head"):
+                                        _label(heading, size="11.4px", weight=850).classes("sov-file-content-heading")
+                                        if heading != anchor:
+                                            _label(anchor, size="10px", color="var(--dim)").classes("sov-file-content-anchor")
+                                    preview = excerpt[:420].rstrip() + ("…" if len(excerpt) > 420 else "")
+                                    _label(preview, size="10.8px", color="var(--dim)").classes("sov-file-content-text")
+                    if doc_id and file_name:
                         ui.button(
-                            "Открыть текст",
-                            icon="o_article",
-                            on_click=lambda _e, value=doc_id: _schedule(_open_document(value)),
-                        ).props("flat no-caps").classes("sov-composition-open-file")
+                            "Открыть оригинал",
+                            icon="o_open_in_new",
+                            on_click=lambda _e, name=file_name, value=doc_id: _schedule(
+                                _open_native_file_name(name, value)
+                            ),
+                        ).props("unelevated no-caps").classes("sov-composition-open-file")
 
         def _render_file_row(item: dict, *, compact: bool = False) -> None:
             file_name = str(item.get("file_name") or "")
@@ -1213,18 +1292,9 @@ def build_documents() -> None:
                     if depth < 5:
                         _render_tree(path, depth + 1)
 
-        if file_data:
+        if state.get("map_target") == "file" and file_data:
             _render_file_brief_card()
-        else:
-            with ui.element("section").classes("sov-index-brief sov-index-brief--empty"):
-                with ui.row().classes("items-center w-full sov-index-brief-kicker"):
-                    ui.icon("o_description")
-                    _label("Файл не выбран", size="10.5px", color="var(--dim)", weight=850)
-                _label(
-                    "Выберите файл в дереве «Файлы и папки» — здесь сразу появятся его содержание и источник Qdrant.",
-                    size="11.3px",
-                    color="var(--dim)",
-                ).classes("sov-index-brief-empty-text")
+            return
 
         dataset_brief = state.get("dataset_index_brief") or {}
         with ui.element("section").classes("sov-index-brief sov-index-brief--dataset sov-dataset-brief-fixed"):
@@ -1242,12 +1312,12 @@ def build_documents() -> None:
                 fragment_count = f"{int(dataset_brief.get('total_fragments') or 0):,}".replace(",", " ")
                 _label(
                     f"{source_name} · {fragment_count} фрагментов · "
-                    f"прочитано {int(dataset_brief.get('sampled_documents') or 0)} файла",
+                    f"{len(state.get('documents') or [])} файлов в датасете",
                     size="10.3px",
                     color="var(--dim)",
                 ).classes("sov-composition-file-index-source")
 
-        with ui.expansion("Реестр датасета", icon="o_inventory_2", value=not bool(file_data)).classes("w-full sov-file-registry").props("dense").style(
+        with ui.expansion("Реестр датасета", icon="o_inventory_2", value=False).classes("w-full sov-file-registry").props("dense").style(
             "border:1px solid var(--border);border-radius:8px;margin-top:12px;background:var(--bg-panel);"
         ):
             with ui.column().classes("sov-composition-summary"):
@@ -1425,50 +1495,189 @@ def build_documents() -> None:
                     on_click=lambda: _schedule(_refresh_memory()),
                 ).props("flat dense no-caps")
 
+    def _readiness_label(value: dict) -> tuple[str, str]:
+        state_name = str(value.get("state") or "unknown")
+        return {
+            "ready": ("RRF готов", "tag-ok"),
+            "awaiting_activation": ("Готов к включению", "tag-acc"),
+            "building": ("Индексируется", "tag-acc"),
+            "degraded": ("Режим деградации", "tag-warn"),
+            "blocked": ("Не готов", "tag-warn"),
+            "missing": ("Индекс отсутствует", "tag-warn"),
+        }.get(state_name, ("Статус неизвестен", "tag-dim"))
+
+    def _render_readiness_summary() -> None:
+        panel = refs.get("readiness_summary")
+        if panel is None:
+            return
+        panel.clear()
+        with panel:
+            if state.get("rag_readiness_loading"):
+                ui.spinner(size="sm")
+                return
+            readiness = state.get("rag_readiness") if isinstance(state.get("rag_readiness"), dict) else {}
+            general = readiness.get("general") if isinstance(readiness.get("general"), dict) else {}
+            smeta = readiness.get("smeta") if isinstance(readiness.get("smeta"), dict) else {}
+            general_label, general_cls = _readiness_label(general)
+            smeta_label, smeta_cls = _readiness_label(smeta)
+            _badge(f"RAG: {general_label}", general_cls)
+            _badge(f"Сметы: {smeta_label}", smeta_cls)
+
+    def _render_rag_readiness_card() -> None:
+        readiness = state.get("rag_readiness") if isinstance(state.get("rag_readiness"), dict) else {}
+        general = readiness.get("general") if isinstance(readiness.get("general"), dict) else {}
+        smeta = readiness.get("smeta") if isinstance(readiness.get("smeta"), dict) else {}
+        with ui.element("section").style(
+            "border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-top:12px;"
+            "background:var(--bg-panel);"
+        ):
+            with ui.row().classes("items-center w-full").style("gap:8px;flex-wrap:wrap;"):
+                ui.icon("o_hub").style("font-size:18px;color:var(--accent);")
+                _label("Готовность поиска", size="13px", weight=900)
+                if state.get("rag_readiness_loading"):
+                    ui.spinner(size="sm")
+                ui.element("div").style("flex:1;")
+                ui.button(
+                    "Проверить",
+                    icon="o_refresh",
+                    on_click=lambda: _schedule(
+                        _load_rag_readiness(str(state.get("selected_dataset") or ""), force=True)
+                    ),
+                ).props("flat dense no-caps")
+            if not readiness:
+                _label("Статус RAG пока недоступен.", size="11px", color="var(--dim)").style("margin-top:8px;")
+                return
+            general_label, general_cls = _readiness_label(general)
+            smeta_label, smeta_cls = _readiness_label(smeta)
+            with ui.row().classes("items-center w-full").style("gap:6px;margin-top:9px;flex-wrap:wrap;"):
+                _badge(general_label, general_cls)
+                _badge(f"dense {int(general.get('dense_points') or 0)}/{int(general.get('points') or 0)}")
+                _badge(f"sparse {int(general.get('sparse_points') or 0)}/{int(general.get('points') or 0)}")
+                _badge("RRF" if general.get("rrf_ready") else "RRF не готов", "tag-ok" if general.get("rrf_ready") else "tag-warn")
+                contract = str(general.get("contract_status") or "unknown")
+                _badge(f"contract: {contract}", "tag-ok" if general.get("contract_compatible") else "tag-warn")
+            expected = general.get("expected_source_points")
+            if expected is not None and int(expected or 0) != int(general.get("points") or 0):
+                _label(
+                    f"Датасет: в реестре {int(expected or 0)} частей, в активном индексе {int(general.get('points') or 0)}.",
+                    size="11px",
+                    color="var(--warn)",
+                ).style("margin-top:7px;")
+            with ui.row().classes("items-center w-full").style("gap:6px;margin-top:10px;flex-wrap:wrap;"):
+                _badge(f"Сметные нормы: {smeta_label}", smeta_cls)
+                _badge(f"{float(smeta.get('progress_pct') or 0):.1f}%")
+                _badge(f"dense {int(smeta.get('dense_points') or 0)}/{int(smeta.get('expected_points') or 0)}")
+                _badge(f"sparse {int(smeta.get('sparse_points') or 0)}/{int(smeta.get('expected_points') or 0)}")
+                _badge("RRF" if smeta.get("rrf_ready") else "RRF не готов", "tag-ok" if smeta.get("rrf_ready") else "tag-warn")
+            quality = smeta.get("quality_probe") if isinstance(smeta.get("quality_probe"), dict) else {}
+            if quality.get("status") == "measured":
+                _label(
+                    "Диагностика каналов: "
+                    f"dense и sparse участвовали в top-5 для {int(quality.get('both_channels_in_rrf_top5') or 0)} "
+                    f"из {int(quality.get('queries') or 0)} запросов. "
+                    "Это проверка retrieval, а не подтверждение применимости норм.",
+                    size="10.8px",
+                    color="var(--dim)",
+                ).style("margin-top:7px;")
+            with ui.expansion("Технические детали", icon="o_tune").props("dense").classes("w-full").style("margin-top:7px;"):
+                _label(
+                    f"Общий alias: {general.get('alias') or '—'} → {general.get('physical_generation') or '—'}",
+                    size="10.5px",
+                    color="var(--dim)",
+                )
+                _label(
+                    f"Сметный alias: {smeta.get('alias') or '—'} → {smeta.get('physical_generation') or '—'}",
+                    size="10.5px",
+                    color="var(--dim)",
+                )
+                _label(
+                    f"Embedding: {smeta.get('embedding_model') or '—'} · backend {smeta.get('embedding_backend') or '—'}",
+                    size="10.5px",
+                    color="var(--dim)",
+                )
+
+    def _render_interactive_project_map(
+        files: list[dict],
+        disciplines: list[dict],
+        coverage: dict,
+    ) -> None:
+        selected = _selected_dataset_row()
+        roots = _project_roots(files)
+        sections = [
+            item
+            for item in disciplines
+            if int(item.get("files") or 0) > 0
+            and str(item.get("discipline") or "") not in {"UNKNOWN", "PROJECT_TABLES"}
+        ]
+        table_summary = coverage.get("project_table_summary") if isinstance(coverage.get("project_table_summary"), dict) else {}
+        electrical = coverage.get("electrical_summary") if isinstance(coverage.get("electrical_summary"), dict) else {}
+        metrics = [
+            ("Таблицы", int(table_summary.get("detected_tables") or 0), "o_table_view"),
+            ("Водный баланс", int(table_summary.get("water_balance_rows") or 0), "o_water_drop"),
+            ("Электрические цепи", int(electrical.get("candidate_circuits") or 0), "o_electrical_services"),
+            ("Спецификации", int(coverage.get("so_files") or 0), "o_format_list_numbered"),
+        ]
+        metrics = [item for item in metrics if item[1] > 0]
+
+        with ui.element("section").classes("sov-project-map"):
+            with ui.row().classes("items-center w-full sov-project-map-heading"):
+                with ui.element("div").classes("sov-project-map-heading-icon"):
+                    ui.icon("o_hub")
+                with ui.column().classes("gap-0"):
+                    _label("Карта проекта", size="13px", weight=900)
+                    _label("Папки и разделы можно открыть", size="10.5px", color="var(--dim)")
+            with ui.element("div").classes("sov-project-map-root"):
+                ui.icon("o_dataset")
+                with ui.column().classes("gap-0"):
+                    _label(str(selected.get("name") or state.get("selected_dataset") or "Датасет"), size="14px", weight=900)
+                    _label(
+                        f"{len(state.get('documents') or [])} файлов · {int(coverage.get('pdf_documents') or 0)} PDF",
+                        size="10.5px",
+                        color="var(--dim)",
+                    )
+            with ui.element("div").classes("sov-project-map-branches"):
+                with ui.element("section").classes("sov-project-map-branch"):
+                    with ui.row().classes("items-center sov-project-map-branch-title"):
+                        ui.icon("o_folder_open")
+                        _label("Папки", size="11px", weight=900)
+                    for root in roots[:8]:
+                        root_name = str(root.get("name") or "Корень")
+                        ui.button(
+                            f"{root_name}  ·  {int(root.get('files') or 0)}",
+                            icon="o_folder",
+                            on_click=lambda _e, path=root_name: _focus_document_folder("" if path == "Корень" else path),
+                        ).props("flat no-caps").classes("w-full sov-project-map-node")
+                with ui.element("section").classes("sov-project-map-branch"):
+                    with ui.row().classes("items-center sov-project-map-branch-title"):
+                        ui.icon("o_account_tree")
+                        _label("Разделы", size="11px", weight=900)
+                    if sections:
+                        for item in sections[:8]:
+                            code = str(item.get("discipline") or "Раздел")
+                            ui.button(
+                                f"{code}  ·  {int(item.get('files') or 0)}",
+                                icon="o_description",
+                                on_click=lambda _e, value=code: _filter_documents_from_map(value),
+                            ).props("flat no-caps").classes("w-full sov-project-map-node")
+                    else:
+                        _label("Разделы ещё не определены", size="10.5px", color="var(--dim)").classes(
+                            "sov-project-map-empty"
+                        )
+                with ui.element("section").classes("sov-project-map-branch"):
+                    with ui.row().classes("items-center sov-project-map-branch-title"):
+                        ui.icon("o_data_object")
+                        _label("Извлечено", size="11px", weight=900)
+                    for title, value, icon in metrics[:8]:
+                        with ui.element("div").classes("sov-project-map-stat"):
+                            ui.icon(icon)
+                            _label(title, size="10.8px", weight=800).classes("sov-project-map-stat-title")
+                            _label(str(value), size="13px", weight=900).classes("sov-project-map-stat-value")
+
     def _render_project_source_map(memory: dict, project_pdf: dict, coverage: dict) -> None:
         files = _source_map_files(memory, project_pdf)
-        selected = _selected_dataset_row()
+        map_files = _composition_files(memory, project_pdf)
         disciplines = [item for item in (project_pdf.get("discipline_summaries") or []) if isinstance(item, dict)]
-
-        with ui.element("div").classes("sov-list-map").style(
-            "border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-top:12px;"
-            "background:var(--bg-panel);"
-        ):
-            with ui.row().classes("items-center w-full").style("gap:8px;flex-wrap:wrap;"):
-                ui.icon("o_account_tree").style("font-size:19px;color:var(--accent);")
-                _label("Л.И.С.Т. проекта", size="14px", weight=900)
-                _label("локальный индекс структуры томов", size="11px", color="var(--dim)")
-            with ui.row().classes("items-center").style("gap:6px;margin-top:9px;flex-wrap:wrap;"):
-                _badge(str(selected.get("name") or state.get("selected_dataset") or "проект"), "tag-acc")
-                _badge(f"{int(selected.get('document_count') or memory.get('document_count') or 0)} документов")
-                if coverage:
-                    read_count = int(coverage.get("files_ok") or coverage.get("files_extracted") or 0)
-                    issue_count = int(coverage.get("extract_errors") or 0) + int(coverage.get("missing_source") or 0)
-                    _badge(f"PDF {coverage.get('pdf_documents', 0)}")
-                    _badge(f"прочитано {read_count}")
-                    if issue_count:
-                        _badge(f"проверить {issue_count}", "tag-warn")
-        diagram = _dataset_structure_mermaid(memory, project_pdf, coverage, files)
-        with ui.element("div").style(
-            "border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-top:10px;"
-            "background:var(--bg-panel);"
-        ):
-            with ui.row().classes("items-center w-full").style("gap:8px;flex-wrap:wrap;"):
-                ui.icon("o_schema").style("font-size:18px;color:var(--accent);")
-                _label("Структура Л.И.С.Т.", size="13px", weight=900)
-                _label("как проект разложен для чтения", size="11px", color="var(--dim)")
-            _label(
-                "Схема показывает папки, разделы и найденные таблицы. По ней удобно выбрать том или сразу спросить проект.",
-                size="11px",
-                color="var(--dim)",
-            ).style("margin-top:6px;")
-            with ui.element("div").style(
-                "margin-top:10px;border:1px solid var(--border);border-radius:8px;"
-                "background:var(--bg);overflow:auto;padding:10px;min-height:260px;"
-            ):
-                ui.mermaid(diagram).classes("w-full").style("min-width:760px;")
-
-        roots = _project_roots(files)
+        roots = _project_roots(map_files)
         if roots:
             _label("Проекты и папки", size="13px", weight=900).style("margin-top:14px;")
             with ui.row().classes("items-stretch w-full").style("gap:8px;flex-wrap:wrap;"):
@@ -1578,8 +1787,12 @@ def build_documents() -> None:
                             on_click=lambda name=file_name, r=role: _ask_about_file(name, r),
                         ).props('flat dense round aria-label="Спросить по файлу"').tooltip("Спросить модель по этому файлу")
                     _label(_short_path(file_name, parts=5), size="11px", color="var(--dim)").style("margin-top:5px;overflow-wrap:anywhere;")
-                    if warnings:
-                        _label("Проверить: " + "; ".join(warnings[:3]), size="10.5px", color="var(--warn)").style("margin-top:4px;overflow-wrap:anywhere;")
+                    for tone, message in _list_warning_messages(warnings):
+                        _label(
+                            message,
+                            size="10.5px",
+                            color="var(--warn)" if tone == "action" else "var(--dim)",
+                        ).style("margin-top:4px;overflow-wrap:anywhere;")
             if len(filtered) > 90:
                 _label(f"Показаны первые 90 из {len(filtered)}. Уточните фильтр.", size="11px", color="var(--dim)").style("margin-top:8px;")
 
@@ -1620,6 +1833,10 @@ def build_documents() -> None:
                         f"{int(row.get('document_count') or 0)} файлов",
                         "готов" if status_ready else "индексируется",
                     ]
+                    if selected:
+                        readiness = state.get("rag_readiness") if isinstance(state.get("rag_readiness"), dict) else {}
+                        general = readiness.get("general") if isinstance(readiness.get("general"), dict) else {}
+                        meta.append("RRF готов" if general.get("rrf_ready") else "RRF не готов")
                     _label("  ·  ".join(meta), size="10.5px", color="var(--dim)").classes("sov-dataset-meta-text")
                     pending = int(row.get("pending_count") or 0)
                     errors = int(row.get("error_count") or 0)
@@ -1654,11 +1871,32 @@ def build_documents() -> None:
             if not state["documents"]:
                 _label("Документы не найдены", color="var(--dim)")
                 return
+            dataset_data_button = refs.get("dataset_data_button")
+            if dataset_data_button is not None:
+                dataset_data_button.classes(remove="sov-dataset-data-button--active")
+                if state.get("view_mode") == "map" and state.get("map_target") == "dataset":
+                    dataset_data_button.classes(add="sov-dataset-data-button--active")
             needle = str(state.get("document_filter") or "").strip().casefold()
+            map_files = {str(value) for value in (state.get("document_map_files") or []) if str(value)}
             rows = [
                 row for row in state["documents"]
-                if not needle or needle in str(row.get("file_name") or "").casefold()
+                if (
+                    (map_files and str(row.get("file_name") or "") in map_files)
+                    or (not map_files and (not needle or needle in str(row.get("file_name") or "").casefold()))
+                )
             ]
+            if state.get("document_map_label"):
+                with ui.row().classes("items-center w-full sov-document-map-filter"):
+                    ui.icon("o_filter_alt")
+                    _label(
+                        f"Раздел {state.get('document_map_label')} · {len(rows)} файлов",
+                        size="10.8px",
+                        weight=800,
+                    ).style("flex:1;")
+                    ui.button(
+                        icon="o_close",
+                        on_click=lambda: _filter_documents_from_map(""),
+                    ).props('flat round dense aria-label="Сбросить фильтр раздела"')
             selected_dataset_name = _dataset_title(_selected_dataset_row()).casefold()
             folders: dict[str, dict] = {"": {"name": "", "path": "", "parent": "", "files": []}}
             direct_files: dict[str, list[dict]] = {"": []}
@@ -1744,6 +1982,12 @@ def build_documents() -> None:
 
     def _render_map() -> None:
         memory = state.get("dataset_memory") or {}
+        project_pdf = state.get("pdf_extract") if isinstance(state.get("pdf_extract"), dict) else {}
+        if not project_pdf and isinstance(memory, dict):
+            project_pdf = memory.get("project_pdf_extract") if isinstance(memory.get("project_pdf_extract"), dict) else {}
+        if state.get("map_target") == "file" and state.get("composition_file"):
+            _render_file_registry(memory, project_pdf)
+            return
         if state.get("memory_loading"):
             with ui.element("div").style(
                 "border:1px solid var(--border);border-radius:8px;padding:18px;margin-top:12px;"
@@ -1758,6 +2002,7 @@ def build_documents() -> None:
             ):
                 _label("Выберите датасет слева — покажу карту слоёв и маршрутов.", color="var(--dim)")
             return
+        _render_rag_readiness_card()
         if not memory:
             with ui.element("div").style(
                 "border:1px dashed var(--border);border-radius:8px;padding:18px;margin-top:12px;"
@@ -1775,10 +2020,9 @@ def build_documents() -> None:
         section_files = list(section_map.get("files") or [])
         top_files_by_layer = graph.get("top_files_by_layer") if isinstance(graph, dict) else {}
 
-        project_pdf = state.get("pdf_extract") if isinstance(state.get("pdf_extract"), dict) else {}
-        if not project_pdf:
-            project_pdf = memory.get("project_pdf_extract") if isinstance(memory.get("project_pdf_extract"), dict) else {}
         coverage = project_pdf.get("coverage") if isinstance(project_pdf.get("coverage"), dict) else {}
+        disciplines = [item for item in (project_pdf.get("discipline_summaries") or []) if isinstance(item, dict)]
+        _render_interactive_project_map(_composition_files(memory, project_pdf), disciplines, coverage)
         _render_file_registry(memory, project_pdf)
         _render_project_source_map(memory, project_pdf, coverage)
         with ui.element("div").classes("sov-docs-coverage"):
@@ -1801,9 +2045,12 @@ def build_documents() -> None:
                             _badge(f"{title}: {coverage.get(key)}", "tag-warn")
             warnings = [str(x) for x in (project_pdf.get("warnings") or []) if str(x).strip()]
             if warnings:
-                _label("Что проверить: " + "; ".join(warnings[:4]), size="11px", color="var(--warn)").style(
-                    "margin-top:7px;overflow-wrap:anywhere;"
-                )
+                for tone, message in _list_warning_messages(warnings):
+                    _label(
+                        message,
+                        size="11px",
+                        color="var(--warn)" if tone == "action" else "var(--dim)",
+                    ).style("margin-top:7px;overflow-wrap:anywhere;")
             if project_pdf.get("warnings_truncated"):
                 _label(
                     f"Показаны не все предупреждения: {int(project_pdf.get('warnings_total') or len(warnings))} всего.",
@@ -2174,6 +2421,8 @@ def build_documents() -> None:
                 ui.icon("o_search")
             q_input.on("update:model-value", lambda e: state.__setitem__("query", str(e.args or "")))
             q_input.on("keydown.enter", lambda _e: _schedule(_search("dataset" if state["selected_dataset"] else "all")))
+            with ui.row().classes("items-center").style("gap:5px;flex-wrap:wrap;") as readiness_summary:
+                refs["readiness_summary"] = readiness_summary
             ui.button("Найти", icon="o_search", on_click=lambda: _schedule(_search("dataset" if state["selected_dataset"] else "all"))).props(
                 'flat no-caps aria-label="Искать"'
             ).classes("sov-docs-search-btn")
@@ -2207,10 +2456,16 @@ def build_documents() -> None:
                 with ui.row().classes("items-center w-full sov-docs-panel-title"):
                     ui.icon("o_folder_copy")
                     _label("Файлы и папки", size="12px", color="var(--dim)", weight=900)
+                refs["dataset_data_button"] = ui.button(
+                    "Данные о датасете",
+                    icon="o_dataset",
+                    on_click=_show_dataset_data,
+                ).props("flat no-caps").classes("w-full sov-dataset-data-button")
                 document_filter = ui.input(placeholder="Название файла…").props("outlined clearable").classes("sov-docs-filter")
+                refs["document_filter"] = document_filter
                 document_filter.on(
                     "update:model-value",
-                    lambda e: (state.__setitem__("document_filter", str(e.args or "")), _render_documents()),
+                    lambda e: _set_document_text_filter(str(e.args or "")),
                 )
                 document_filter.on("keydown.enter", lambda _e: _schedule(_load_documents()))
                 with ui.column().classes("w-full gap-2 sov-docs-list") as documents_panel:

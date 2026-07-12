@@ -51,6 +51,24 @@ def test_lexical_index_search_returns_matching_chunks(tmp_path):
     assert chunks[0].meta["dataset_id"] == "ds-fire"
 
 
+def test_lexical_generation_promotion_is_complete_and_keeps_source(tmp_path):
+    index = LexicalIndex(str(tmp_path / "lex.db"))
+    index.upsert_chunks(
+        "physical-v2",
+        [
+            {"point_id": "p1", "dataset_id": "a", "doc_name": "a.pdf", "text": "насос"},
+            {"point_id": "p2", "dataset_id": "b", "doc_name": "b.pdf", "text": "кабель"},
+        ],
+    )
+    index.mark_collection("physical-v2", point_count=2, indexed_count=2)
+
+    promoted = index.promote_collection("physical-v2", "les_rag", expected_count=2)
+
+    assert promoted["ready"] is True
+    assert promoted["chunks"] == promoted["point_count"] == 2
+    assert index.status("physical-v2")["chunks"] == 2
+
+
 def test_lexical_index_delete_file_removes_only_matching_doc(tmp_path):
     index = LexicalIndex(str(tmp_path / "lex.db"))
     index.upsert_chunks(
@@ -138,8 +156,6 @@ def test_rrf_merge_adds_lexical_exact_hit_and_deduplicates():
     assert trace.retrieval_channels == ["dense", "lexical"]
     assert trace.fusion == "rrf"
     assert trace.lexical_count == 1
-    assert trace.retrieval_channels == ["lexical"]
-    assert trace.fusion == "none"
     assert [chunk.doc_name for chunk in merged] == ["СП 1.13130.docx", "doc-a"]
 
 

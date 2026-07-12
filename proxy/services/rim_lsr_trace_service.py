@@ -240,11 +240,19 @@ def _resolve_price_trace(
 def _position_resources(position: dict[str, Any]) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     """Вернуть норму и ресурсы с ``per_unit``; explicit resources поддержаны для тестов/ручного ввода."""
     code = str(position.get("code") or "").strip()
-    if code and not position.get("resources"):
+    # ``resources`` is a tri-state contract:
+    # - key absent: hydrate the norm's source resources;
+    # - non-empty list: use the explicit model revision;
+    # - empty list: the revision intentionally contains no confirmed resources.
+    # Treating [] as "not supplied" resurrected the raw norm after an unresolved
+    # model review and bypassed labor normalization.
+    if code and "resources" not in position:
         norm = gesn_service.get_norm(code)
         if norm is None:
             return None, []
-        return norm, list(norm.get("resources") or [])
+        from proxy.smeta_core.resource_normalizer import normalize_norm_resources
+
+        return norm, normalize_norm_resources(list(norm.get("resources") or []))
 
     norm = gesn_service.get_norm(code) if code else None
     work_qty = _f(position.get("qty")) or 1.0

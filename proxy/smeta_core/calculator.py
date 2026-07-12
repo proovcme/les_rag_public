@@ -23,6 +23,7 @@ from proxy.smeta_core.contracts import (
     WorkItem,
 )
 from proxy.smeta_core.norm_validator import validate_binding
+from proxy.smeta_core.resource_normalizer import normalize_norm_resources
 
 
 def _resource_key(value: Any) -> str:
@@ -293,7 +294,7 @@ def calculate_scenario(
         norm_record = gesn_service.get_norm(binding.norm_code, strict_family=True) or {}
         norm_quantity = float(validation.get("norm_quantity") or 0.0)
         explicit_resources, resource_problems = _apply_resource_bindings(
-            list(norm_record.get("resources") or []),
+            normalize_norm_resources(list(norm_record.get("resources") or [])),
             resources_by_work.get(work.work_id, []),
             work_qty=norm_quantity,
             physical_quantity=work.quantity,
@@ -302,20 +303,11 @@ def calculate_scenario(
         if resource_problems:
             blockers.extend(resource_problems)
         resource_review = resource_review_by_work.get(work.work_id)
-        if resource_review is not None:
-            explicit_resources = [
-                resource for resource in explicit_resources
-                if (
-                    str(resource.get("kind") or "") == "labor"
-                    and resource_review.component_confirmed("labor")
-                ) or (
-                    str(resource.get("kind") or "") in {"machine", "machinist"}
-                    and resource_review.component_confirmed("machine")
-                ) or (
-                    str(resource.get("kind") or "") == "material"
-                    and resource_review.component_confirmed("material")
-                )
-            ]
+        # Review statuses describe evidence/completeness; they are not hidden
+        # edit commands.  Only explicit model-owned ResourceBinding actions may
+        # add, replace, reuse or exclude a norm resource.  Filtering a whole
+        # component here made a bound position look calculated while silently
+        # reducing its labor/machines/materials to zero.
         nr_sp_binding = nr_sp_binding_by_work.get(work.work_id)
         positions.append({
             "work_id": work.work_id,

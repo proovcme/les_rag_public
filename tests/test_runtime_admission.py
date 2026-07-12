@@ -151,8 +151,9 @@ def test_chat_admission_allows_cloud_generation_during_indexing(monkeypatch):
     assert "active_jobs=1" not in result.reason
 
 
-def test_chat_admission_blocks_unconfigured_cloud_fallback_during_indexing(monkeypatch):
+def test_chat_admission_treats_unconfigured_cloud_as_local_coreml_fallback(monkeypatch):
     monkeypatch.setenv("LES_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("EMBED_BACKEND", "coreml")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     result = evaluate_chat_admission(
         current_mode={"mode": "indexing"},
@@ -163,9 +164,12 @@ def test_chat_admission_blocks_unconfigured_cloud_fallback_during_indexing(monke
         max_swap_pct=60.0,
     )
 
-    assert result.allowed is False
-    assert "Indexing mode is active" in result.reason
-    assert "active_jobs=1" in result.reason
+    # An unconfigured cloud provider resolves to local MLX.  The local path is
+    # allowed only because indexing is isolated in Core ML and memory is green;
+    # the sentence-transformers case above remains blocked.
+    assert result.allowed is True
+    assert result.indexing_chat_policy["provider_is_cloud"] is False
+    assert result.indexing_chat_policy["reason"] == "coreml_index_green_memory"
 
 
 def test_chat_admission_blocks_active_jobs_and_busy_llm():

@@ -21,6 +21,7 @@ EXCLUDE_PATTERNS = (
     "__pycache__/*",
     "*.pyc",
     ".pytest_cache/*",
+    ".nicegui/*",
     ".mypy_cache/*",
     ".DS_Store",
     "*/.DS_Store",
@@ -45,6 +46,8 @@ EXCLUDE_PATTERNS = (
     "exporters/artifacts/*",
     "standalone/cad_bim_viewer/ifc-sample/*",
     "dist/*",
+    "desktop/tauri/src-tauri/target/*",
+    "desktop/tauri/src-tauri/resources/*",
 )
 
 

@@ -28,10 +28,10 @@ def test_model_owns_specification_decomposition_and_code_does_not_select_norms()
     assert "Скрытого selector норм, операций или режима нет" in SKILL_TEXT
 
 
-def test_first_money_lsr_is_not_blocked_by_review_workflow():
-    assert "Первая денежная ЛСР является обязательным результатом" in SKILL_TEXT
-    assert "не может блокировать её создание" in SKILL_TEXT
-    assert "после первой ЛСР" in SKILL_TEXT
+def test_model_submits_mapping_and_resource_actions_before_one_calculation_pass():
+    assert "mapping и явные ресурсные действия сохраняются вместе" in SKILL_TEXT
+    assert "после завершения моделью mapping он один раз считает и формирует XLSX" in SKILL_TEXT
+    assert "Отдельного обязательного resource-review, impact-review или повторного допуска нет" in SKILL_TEXT
 
 
 def test_specification_parent_child_quantity_is_code_calculated():

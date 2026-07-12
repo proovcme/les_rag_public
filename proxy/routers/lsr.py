@@ -234,7 +234,7 @@ async def lsr_multi_trace_from_rows(req: LsrRowsTraceRequest, _user=Depends(requ
     Физические количества переводятся в измеритель нормы (например 61 м2 / 100 м2 = 0.61).
     """
     try:
-        from proxy.smeta_core.workflow import calculate_visible_rows_revision
+        from proxy.smeta_core.application import calculate_visible_rows_revision
 
         return await asyncio.to_thread(
             calculate_visible_rows_revision, req.rows,
@@ -287,7 +287,7 @@ async def lsr_multi_trace_export(req: LsrTraceRequest, _user=Depends(require_use
 async def lsr_multi_trace_from_rows_export(req: LsrRowsTraceRequest, _user=Depends(require_user)):
     """Строки ЛСР/ВОР с выбранными шифрами → XLSX ЛСР РИМ по форме Приложения 3."""
     try:
-        from proxy.smeta_core.workflow import calculate_visible_rows_revision
+        from proxy.smeta_core.application import calculate_visible_rows_revision
 
         lsr = await asyncio.to_thread(
             calculate_visible_rows_revision, req.rows,

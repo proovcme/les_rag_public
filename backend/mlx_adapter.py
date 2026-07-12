@@ -7,6 +7,7 @@ MLXMemoryManager — управление памятью Metal для LLM.
 """
 import asyncio
 import gc
+import json
 import logging
 import os
 import time
@@ -156,7 +157,12 @@ class MLXMemoryManager:
             logger.info(f"[LOAD] Готово: {self.model_path}")
         self.last_used = time.time()
 
-    def apply_chat_template(self, messages: list, enable_thinking: bool = True) -> str:
+    def apply_chat_template(
+        self,
+        messages: list,
+        enable_thinking: bool = True,
+        tools: list[dict] | None = None,
+    ) -> str:
         """
         Применяет chat template токенизатора.
         enable_thinking=False отключает <think> блоки у Qwen3 — используй для валидатора.
@@ -164,12 +170,25 @@ class MLXMemoryManager:
         if self.tokenizer is None:
             # Fallback: Qwen3 ChatML формат
             parts = []
+            if tools:
+                parts.append(
+                    "<|im_start|>system\n# Tools\n\n"
+                    "You have access to the following functions:\n<tools>\n"
+                    + "\n".join(json.dumps(tool, ensure_ascii=False) for tool in tools)
+                    + "\n</tools>\n\n"
+                    "If you call functions, reply only with one or more blocks in this format:\n"
+                    "<tool_call>\n<function=function_name>\n"
+                    "<parameter=parameter_name>\nvalue\n</parameter>\n"
+                    "</function>\n</tool_call><|im_end|>"
+                )
             for m in messages:
                 parts.append(f"<|im_start|>{m['role']}\n{m['content']}<|im_end|>")
             parts.append("<|im_start|>assistant\n")
             return "\n".join(parts)
 
         kwargs = {"tokenize": False, "add_generation_prompt": True}
+        if tools:
+            kwargs["tools"] = tools
         if not enable_thinking:
             kwargs["enable_thinking"] = False
         try:

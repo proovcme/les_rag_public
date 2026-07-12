@@ -1,4 +1,7 @@
-from proxy.routers.chat import _smeta_direct_light_system_prompt, _smeta_direct_user_prompt
+from proxy.services.smeta_chat_adapter_service import (
+    _smeta_direct_light_system_prompt,
+    _smeta_direct_user_prompt,
+)
 
 
 def test_smeta_direct_prompt_passes_inputs_without_prescribing_workflow():

@@ -45,7 +45,7 @@ def test_qwen_profile_uses_qwen_defaults_without_mixing_bge_env(monkeypatch):
 
     assert embedding_model_id() == "Qwen/Qwen3-Embedding-0.6B"
     assert embedding_api_model() == "qwen3-embedding-0.6b"
-    assert rag_collection_name() == "les_rag_qwen3_06b"
+    assert rag_collection_name() == "les_rag"
     assert rag_meta_db_path() == "./data/les_meta_qwen.db"
     assert rag_vector_size() == 1024
 
@@ -58,7 +58,7 @@ def test_runtime_config_exposes_single_active_profile_trace(monkeypatch):
     config = rag_runtime_config()
 
     assert config["profile"] == "qwen"
-    assert config["collection"] == "les_rag_qwen3_06b"
+    assert config["collection"] == "les_rag"
     assert config["meta_db"] == "./data/les_meta_qwen.db"
     assert config["embedding_api_model"] == "qwen3-embedding-0.6b"
     assert config["query_embedding_mode"] == "raw-v1"

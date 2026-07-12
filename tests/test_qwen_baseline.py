@@ -9,23 +9,23 @@ def test_active_profile_trace_reads_embedding_block():
         {
             "embedding": {
                 "profile": "qwen",
-                "collection": "les_rag_qwen3_06b",
+                "collection": "les_rag",
                 "meta_db": "./data/les_meta_qwen.db",
             }
         }
     )
 
     assert trace["profile"] == "qwen"
-    assert trace["collection"] == "les_rag_qwen3_06b"
+    assert trace["collection"] == "les_rag"
 
 
 def test_active_profile_trace_falls_back_to_health_qdrant_collection():
     trace = baseline.active_profile_trace(
-        {"rag": {"qdrant": {"collection": "les_rag_qwen3_06b"}}}
+        {"rag": {"qdrant": {"collection": "les_rag"}}}
     )
 
     assert trace["profile"] == ""
-    assert trace["collection"] == "les_rag_qwen3_06b"
+    assert trace["collection"] == "les_rag"
 
 
 def test_chat_payload_disables_cache_and_reranker_explicitly():

@@ -70,9 +70,30 @@ Log "uv: $Uv"
 # --- 2. Environment ---------------------------------------------------------
 # --extra desktop pulls the native shell (pywebview + tray). No mac-mlx on Windows.
 Toast "Готовлю окружение…"
-Log "uv sync --extra desktop"
-& $Uv sync --extra desktop
+if ($env:LES_TAURI_SHELL -eq "1") {
+  Log "uv sync (Tauri owns desktop shell)"
+  & $Uv sync
+} else {
+  Log "uv sync --extra desktop (legacy fallback)"
+  & $Uv sync --extra desktop
+}
 if ($LASTEXITCODE -ne 0) { Fail "uv sync не удался" }
+
+# Tauri owns the native window. Lifecycle actions stay in the same bootstrap,
+# but must not launch the legacy pywebview shell.
+if ($env:LES_TAURI_SHELL -eq "1") {
+  if ($env:LES_TAURI_ACTION -eq "stop") {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Root "installers\windows\stop-light.ps1")
+    if ($LASTEXITCODE -ne 0) { Fail "не удалось остановить службы" }
+    exit 0
+  }
+  if ($env:LES_TAURI_ACTION -eq "restart") {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Root "installers\windows\stop-light.ps1")
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Root "installers\windows\start-light.ps1")
+    if ($LASTEXITCODE -ne 0) { Fail "не удалось перезапустить службы" }
+    exit 0
+  }
+}
 
 # --- 3. .env + directories --------------------------------------------------
 & $Uv run lesctl init --profile windows-lite 2>$null | Out-Null
@@ -105,9 +126,15 @@ if (-not $qdrantUp -and (Get-Command docker -ErrorAction SilentlyContinue)) {
 # via start-light.ps1, shows the native window + tray, and degrades to a browser
 # tab if the GUI deps are missing.
 Toast "Запускаю Совушку…"
-Log "les_shell"
-& $Uv run python -m tools.les_shell | Out-File -FilePath $Log -Append -Encoding utf8
-if ($LASTEXITCODE -ne 0) { Fail "не удалось запустить шелл" }
+if ($env:LES_TAURI_SHELL -eq "1") {
+  Log "start-light (Tauri shell)"
+  & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Root "installers\windows\start-light.ps1") | Out-File -FilePath $Log -Append -Encoding utf8
+  if ($LASTEXITCODE -ne 0) { Fail "не удалось поднять службы" }
+} else {
+  Log "les_shell (legacy fallback)"
+  & $Uv run python -m tools.les_shell | Out-File -FilePath $Log -Append -Encoding utf8
+  if ($LASTEXITCODE -ne 0) { Fail "не удалось запустить шелл" }
+}
 
 Log "===== bootstrap done ====="
 exit 0

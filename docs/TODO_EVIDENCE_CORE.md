@@ -1,15 +1,33 @@
 # TODO · healthy LES evidence core
 
-Последнее обновление: 2026-07-10. Это короткая рабочая очередь; обоснование и границы — в
+Последнее обновление: 2026-07-12. Это короткая рабочая очередь; обоснование и границы — в
 [PLAN_EVIDENCE_CORE.md](PLAN_EVIDENCE_CORE.md). Перед каждой новой RAG- или сметной задачей
 сначала открывать этот файл и начинать с первого незакрытого пункта.
 
 ## Сейчас
 
 - [ ] Перевести весь текущий общий корпус, а не только canary-датасеты, в contract-v2 collection:
-  все source points представлены, каждый destination point имеет named `dense` + `bm25_sparse`,
+  все source points учтены как searchable либо audited exclusion, каждый searchable destination
+  point имеет named `dense` + `bm25_sparse`,
   каждый активный dataset проходит filtered live RRF. После этого переключить production и запретить
   дозапись при drift контракта. Любой будущий dataset получает этот путь автоматически.
+  Полный clean re-embed в `les_rag_qwen3_06b_native_v2` явно разрешён оператором 2026-07-12 и
+  запущен по всем 34 датасетам с индексированными чанками из живой MetaDB. Source snapshot:
+  `228 017`; до supervised resume был завершён ARTEL (`34 208` source → `34 938` child points).
+  Job `me.ovc.les.rag-generation` пишет atomic state/progress в `logs/rag_generation_v2.*`,
+  использует identity-проверенные Qwen/Core ML workers `:8080/:8081` и сам не удаляет старое
+  поколение. Noise child
+  без BM25-токенов учитывается как audited exclusion, а не synthetic token/drop. Alias переключится
+  только после полного source/child accounting и filtered live RRF по каждому dataset.
+- [ ] После зелёных readiness-отчётов атомарно назначить стабильный alias `les_rag`, опубликовать
+  проверенную FTS-проекцию под тем же alias, затем выполнить runtime/golden gate. Сметный alias
+  `les_smeta_norm_cards` уже активирован и проходит отдельный readiness.
+  Физические имена поколений не возвращать в конфигурацию потребителей; старые active generations
+  удалить только после подтверждённого переключения и известного rollback.
+- [x] Сметный sibling завершён и активирован через `les_smeta_norm_cards`: `47 191/47 191`
+  dense+sparse/fingerprint, live RRF ready, 12/12 диагностических запросов получили вклад обоих
+  каналов, все карточки rehydrated из typed SQLite. GUI показывает прогресс, alias, contract,
+  dense/sparse и RRF отдельно. Решение о полном общем re-embed принято 2026-07-12.
 - [x] Удалить альтернативные RAG-архитектуры из runtime: unnamed schema, sparse sidecar,
   vector-copy migration, env-переключение на legacy backend и domain-prose query expansion.
   Неактивные Qdrant `les_rag`, `les_rag_qwen3_06b`, `contract_v1`, `_sparse` и smeta v1 удалены;
@@ -75,8 +93,8 @@
 
 - [x] Сделать bounded dry-run/canary QA по oversize/base64/fingerprint для BAI, ПД ИЦ и Fire;
   полный reindex не запускался.
-- [ ] Продолжить resumable sibling migration после разделения scope; полный production switch
-  только при покрытии нужных datasets и чистых retrieval/evidence gates.
+- [ ] Дождаться resumable sibling migration `les_rag_qwen3_06b_native_v2`; production switch
+  выполнять только после полного покрытия всех indexed datasets, contract/readiness и live RRF.
 - [ ] Добавить retrieval/evidence golden для ПД ИЦ, Fire и смет. Fire `domain_fire_hvac_set.json`
   остаётся обязательным domain gate.
 - [ ] Добавить conflict и domain missing-input contract после измерений; source versions и
@@ -86,7 +104,8 @@
 
 ## Не делать без отдельного решения
 
-- Полный reindex, OCR/parse-batch, новую vector DB или замену embedding-модели.
+- Новый полный reindex, OCR/parse-batch, новую vector DB или замену embedding-модели. Текущий
+  contract-v2 re-embed отдельно разрешён оператором 2026-07-12 и не расширяет это разрешение.
 - GraphRAG, multi-agent orchestration, крупную новую модель или prompt-only «улучшение».
 - Hardcoded профессиональные ответы. Модель выбирает и отвечает; код ищет, хранит provenance,
   выполняет формальные проверки и считает.

@@ -30,19 +30,21 @@ sources:
 
   - id: fgis_price_base
     domain: smeta
-    label: "ФГИС ЦС: Сплит-формы цен"
+    label: "ФГИС ЦС: каталог и Сплит-формы цен"
     status_if_missing: degraded
     paths:
       - data/price_base/*.parquet
+      - data/price_base/fgis_catalog.json
+      - data/price_base/fgis_latest_manifest.json
       - config/domain/pricebook_manifest.json
     folders:
       - data/price_base
-    accepted_files: ["*.xlsx", "*.parquet"]
+    accepted_files: ["*.xlsx", "*.parquet", "*.json"]
     needed_for:
       - "цены ресурсов по коду"
       - "ресурсно-индексный расчёт"
       - "понимание, нужен ли КАЦ"
-    operator_action: "Положи сплит-формы цен нужного региона и квартала в папку цен. ЛЕС не ходит за ними в интернет во время расчёта."
+    operator_action: "Нажми «Скачать ФГИС ЦС»: ЛЕС сам сохранит открытый каталог субъектов/ценовых зон/периодов и свежую Сплит-форму каждой зоны. Во время расчёта используются только локальные проверяемые файлы."
     process_label: "Проверить цены"
 
   - id: smeta_coefficients

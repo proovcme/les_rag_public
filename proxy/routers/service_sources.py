@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from proxy.security import require_user
-from proxy.services import gesn_update_service
+from proxy.services import fgis_update_service, gesn_update_service
 from proxy.services.notebook_service import service_source_notebooks
 from proxy.services.service_source_registry import process_service_source, service_source, service_sources
 
@@ -46,3 +46,14 @@ async def gesn_fgis_update_status(_user=Depends(require_user)):
 @router.post("/gesn_base/fgis-update")
 async def gesn_fgis_update(_user=Depends(require_user)):
     return gesn_update_service.start()
+
+
+@router.get("/fgis/update/status")
+async def fgis_update_status(_user=Depends(require_user)):
+    return fgis_update_service.status()
+
+
+@router.post("/fgis/update")
+async def fgis_update(_user=Depends(require_user)):
+    """Refresh all public FGIS sources; current price books are the safe default."""
+    return fgis_update_service.start(include_gesn=True, all_periods=False)
