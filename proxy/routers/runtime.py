@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from backend.metrics_collector import DB_PATH, heartbeats
 from backend.rag_config import rag_meta_db_path, rag_runtime_config
 from proxy.config import docker_control_enabled, mlx_url
+from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
 from proxy.security import require_admin, require_root_admin
 from proxy.services.resource_governor import (
     active_parse_priority_order,
@@ -37,6 +38,7 @@ from proxy.services.runtime_admission import (
     generation_semaphore,
 )
 from proxy.services.runtime_dispatcher import DEFAULT_DATASETS, DispatcherError, RuntimeDispatcher
+from proxy.services.version_service import version_info
 
 logger = logging.getLogger(__name__)
 
@@ -231,7 +233,6 @@ async def health():
 async def version():
     """v0.19: единый version-объект ЛЕС (product/harness/schema + git + флаги + runtime-divergence).
     Без секретов, без падений — git недоступен → 'unknown'."""
-    from proxy.services.version_service import version_info
     return version_info()
 
 
@@ -298,7 +299,7 @@ async def warmup_models(_admin=Depends(require_admin)):
     results = {}
     async with httpx.AsyncClient(timeout=120.0) as client:
         for name, model in [
-            ("main", os.getenv("LLM_MODEL", "mlx-community/Qwen3-14B-4bit")),
+            ("main", os.getenv("LLM_MODEL", DEFAULT_LOCAL_MLX_MODEL)),
             ("val", os.getenv("MLX_VAL_MODEL", "mlx-community/Qwen3-4B-4bit")),
         ]:
             try:

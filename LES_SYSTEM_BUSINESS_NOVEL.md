@@ -248,7 +248,7 @@ VPS не хранит RAG, SQLite, Qdrant, документы или модел�
 
 | Модель | Роль |
 |---|---|
-| `mlx-community/Qwen3.5-9B-MLX-4bit` | основной генератор ответов |
+| `mlx-community/Qwen3.5-9B-OptiQ-4bit` | основной генератор ответов |
 | `mlx-community/Qwen3-4B-Instruct-2507-4bit` | validator/reranker |
 | `Qwen/Qwen3-Embedding-0.6B` | embeddings для Qdrant |
 | `BAAI/bge-m3` | legacy baseline |
@@ -525,7 +525,7 @@ system prompt
 
 ```text
 /v1/chat/completions
-model = mlx-community/Qwen3.5-9B-MLX-4bit
+model = mlx-community/Qwen3.5-9B-OptiQ-4bit
 ```
 
 UI поддерживает форматы:

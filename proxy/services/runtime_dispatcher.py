@@ -61,6 +61,7 @@ def compute_eta(started_at: Any, completed: Any, total: Any, *, running: bool = 
 from backend.rag_config import rag_collection_name, rag_meta_db_path
 from proxy.services.resource_governor import current_runtime_profile, is_indexing_mode
 from proxy.services.runtime_admission import evaluate_memory_pressure
+from proxy.services.process_status import pid_running
 from tools import les_runtime_control
 from tools import reindex_datasets_guarded as guarded
 
@@ -114,11 +115,7 @@ def _background_popen_kwargs() -> dict[str, Any]:
 
 
 def _pid_running(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except OSError:
+    if not pid_running(pid):
         return False
     if os.name == "nt":
         return True

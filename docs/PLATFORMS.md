@@ -7,8 +7,8 @@ LES should ship as a product family, not as one Mac workstation script.
 | Target | Status | Runtime Manager | Model Runtime | Vector DB | Notes |
 |---|---|---|---|---|---|
 | macOS Apple Silicon native | Current reference | launchd | MLX/Core ML | local Qdrant binary | Best local private workstation profile |
-| Linux server | Packaging target | systemd or Docker Compose | OpenAI-compatible local host, Ollama, llama.cpp, vLLM, remote provider | Qdrant Docker/native | Primary production box target |
-| Windows workstation | Packaging target | PowerShell + Windows service or Docker Desktop | remote LES/model host, Ollama/llama.cpp, Lemonade adapter, OpenAI-compatible provider | Qdrant named Docker volume or remote Qdrant | Best paired with Revit/ARTEL add-ins |
+| Linux server | Packaging target | systemd or Docker Compose | OpenAI-compatible local host, Ollama, llama.cpp, vLLM, remote provider | Qdrant Docker/native | Secondary server profile |
+| Windows workstation | **Primary production target (Legion)** | PowerShell + Tauri bootstrap / Docker Desktop for Qdrant | Ollama is required local runtime; OpenAI-compatible provider is explicit opt-in | Qdrant in named Docker volume | Canonical production profile; `uv`, Ollama and Docker are first-launch requirements |
 | Lite mode | Packaging target | any | remote/OpenRouter/OpenAI-compatible | local or remote Qdrant | No local heavy model requirement |
 
 ## Runtime Abstractions
@@ -46,6 +46,16 @@ Use these names consistently in docs, install scripts and future config files:
 - On Windows with `Provider=lemonade`, keep `lemonade_host.py` between LES and
   Lemonade so `MLX_URL` still exposes embeddings, rerank, unload and model
   switch endpoints expected by shared runtime code.
+- On `windows-lite` with Ollama, keep `OLLAMA_MODEL` and the provider-neutral
+  `LLM_MODEL` identical. Model-owned document/smeta turns follow that configured
+  local runtime; embeddings use `bge-m3` at 1024 dimensions.
+- The canonical Windows/Tauri bootstrap requires `uv`, Ollama and Docker Desktop,
+  installs missing components through winget where possible, and must fail with
+  an explicit installation URL instead of opening a UI with unavailable RAG.
+- Legion production additionally requires the native multilingual cross-encoder
+  `BAAI/bge-reranker-v2-m3`: the answer model must not rerank its own
+  evidence pool. The production RAG path remains named dense + BM25 sparse,
+  native RRF, common rerank and parent/context expansion.
 
 ## Minimum Smoke
 
@@ -80,6 +90,11 @@ window, tray and lifecycle; Python/FastAPI/NiceGUI remains the shared runtime.
 Docker profiles use `installers/<platform>/docker-compose.yml` and a named
 Qdrant volume. Systemd profile installs user units for `les-proxy` and `les-ui`;
 Qdrant/model runtime remain explicit operator choices for now.
+
+The canonical Windows/Tauri profile also keeps mutable state outside the
+replaceable NSIS application tree: `%LOCALAPPDATA%\LES` owns `.env`, uv venv,
+MetaDB, source/storage data, artifacts and logs. Runtime-relative directories
+are junctions to that root; Qdrant uses `les-qdrant-data`.
 
 Mac reinstall stress is documented in `docs/MAC_REINSTALL_STRESS.md`; the
 uninstall script is dry-run by default and requires explicit confirmation before

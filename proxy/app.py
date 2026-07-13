@@ -19,6 +19,7 @@ from backend.metrics_collector import init_db, metrics_loop
 from backend.qdrant_adapter import QdrantLlamaIndexAdapter
 from backend.rag_config import embedding_api_model, rag_meta_db_path
 from proxy.config import CORS_ALLOWED_ORIGIN_REGEX, CORS_ALLOWED_ORIGINS
+from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
 from proxy.routers.auth import router as auth_router, seed_admin_key
 from proxy.routers.bor import router as bor_router
 from proxy.routers.diff import router as diff_router
@@ -75,6 +76,7 @@ def _select_reranker_cls():
 
 from proxy.routers.runtime import RuntimeRouterState, router as runtime_router, set_runtime_state
 from proxy.routers.settings import router as settings_router
+from proxy.routers.updates import router as updates_router
 from proxy.routers.service_sources import router as service_sources_router
 from proxy.routers.speckle import cad_bim_router
 from proxy.routers.status_page import StatusPageState, router as status_page_router, set_status_page_state
@@ -108,7 +110,7 @@ job_service = JobService()
 current_mode = {
     "mode": CHAT_MODE,
     "runtime_profile": PROFILE_CHAT,
-    "model": os.getenv("LLM_MODEL", "mlx-community/Qwen3-14B-4bit"),
+    "model": os.getenv("LLM_MODEL", DEFAULT_LOCAL_MLX_MODEL),
     "chat_generation": "allowed",
 }
 
@@ -345,7 +347,7 @@ async def _warmup_models():
         # Прогрев основной LLM: грузит main-движок на старте, иначе первый реальный
         # запрос после рестарта платил холодную загрузку модели (~100-120с).
         mlx = os.getenv("MLX_URL", "http://127.0.0.1:8080")
-        model = os.getenv("LLM_MODEL", "mlx-community/Qwen3.5-4B-MLX-4bit")
+        model = os.getenv("LLM_MODEL", DEFAULT_LOCAL_MLX_MODEL)
         async with httpx.AsyncClient(timeout=180) as client:
             await client.post(
                 f"{mlx}/v1/chat/completions",
@@ -460,6 +462,7 @@ def create_app():
     fastapi_app.include_router(tools_router)
     fastapi_app.include_router(service_sources_router)
     fastapi_app.include_router(settings_router)
+    fastapi_app.include_router(updates_router)
     fastapi_app.include_router(cad_bim_router)
     fastapi_app.include_router(chat_history_router)
     fastapi_app.include_router(datasets_router)

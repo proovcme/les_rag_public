@@ -10,6 +10,8 @@ import os
 from datetime import datetime
 from typing import Any
 
+from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
+
 CHAT_MODE = "chat"
 INDEXING_MODE = "indexing"
 MAINTENANCE_MODE = "maintenance"
@@ -165,7 +167,7 @@ def enter_chat_mode(current_mode: dict[str, Any], *, reason: str = "manual") -> 
         {
             "mode": CHAT_MODE,
             "runtime_profile": PROFILE_CHAT,
-            "model": os.getenv("LLM_MODEL", "mlx-community/Qwen3-14B-4bit"),
+            "model": os.getenv("LLM_MODEL", DEFAULT_LOCAL_MLX_MODEL),
             "reason": reason,
             "chat_generation": "allowed",
             "switched_at": datetime.now().isoformat(),

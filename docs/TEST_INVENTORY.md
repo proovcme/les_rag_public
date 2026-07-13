@@ -1,15 +1,17 @@
 # TEST_INVENTORY — тесты Unified Construction Harness v0.16–v0.24
 
-Гейт: `make verify` (офлайн, синтаксис+импорт-смоук). Полная сюита: `uv run python -m pytest tests/ -q` (2756 тестов собрано 2026-07-11).
+Гейт: `make verify` (офлайн, синтаксис+импорт-смоук). Полная сюита: `uv run python -m pytest tests/ -q` (`2908 passed` для `.406`, 2026-07-13).
 Все тесты ниже офлайн (без живых Qdrant/MLX), flag `LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED` OFF.
 
 RAG-ядро имеет отдельный обязательный профиль `make test-rag-core`; offline defaults задаются в
 `tests/conftest.py`. Аудит достоверности гейтов: [RAG_TEST_PROGRAM_AUDIT.md](RAG_TEST_PROGRAM_AUDIT.md).
 
-**Профильные таблицы v0.16–v0.24: 308 тестов** (+ регрессия v0.3–v0.15 и chat/router при OFF). `make verify` на h0.24 собирает **2756 тестов**.
+**Профильные таблицы v0.16–v0.24: 308 тестов** (+ регрессия v0.3–v0.15 и chat/router при OFF). `make verify` на h0.24 собирает **2908 тестов**.
 
 | Файл | Тестов | Покрывает |
 |---|---:|---|
+| `tests/test_installer_windows.py`, `tests/test_tauri_desktop.py`, `tests/test_install_les.py`, `tests/test_onboard_reranker.py` | focused | Windows/Tauri release contract: `%LOCALAPPDATA%\LES` persistent state, backup-first junction migration, обязательные uv/Ollama/Docker/Qdrant, winget/официальные адреса установки, машинный bootstrap-status, скрытый PowerShell, named Qdrant volume, dynamic-port lifecycle, four-part LES→desktop SemVer, external `.env`, resumable SHA-256/model-load verified BGE onboarding and corrupt-weight quarantine |
+| `tests/test_local_inference_benchmark.py` | 8 | офлайн-контракт direct OpenAI benchmark и OptiQ probe: p50/p95, usage/cache normalization, MTP summary, tool/prefix profiles, sampler forwarding и чтение per-request telemetry JSONL; live model-series запускаются отдельно через `tools/local_inference_benchmark.py` + `tools/optiq_mtp_probe_server.py` |
 | `tests/test_answer_render_v16.py` | 26 | render-хелперы Совушки: strip markdown из ячеек, source-chips, evidence-секции, citation/conflict-блоки, citation drawer payload, compact trace включая topic-guided retrieval, `answer_copy_text` (Копировать без trace/тела письма) |
 | `tests/test_sidecar_ops_v16.py` | 50 | sidecar-операции: инвентарь датасетов, heading-классификатор, extraction-state (7 кейсов), lexical `extracted_fts`, OCR-детект, `run_extraction`/`extract_body_op` (gate env+confirm), originals read-only (shasum), legacy `.xls` |
 | `tests/test_route_and_runtime_v17.py` | 34 | runtime alignment (extract-эндпоинты зарегистрированы), route-fix «реестр документации» ≠ глобальный реестр, doc_type_classifier, honest `.xls`, регрессии v0.3–v0.16 |
@@ -30,6 +32,8 @@ RAG-ядро имеет отдельный обязательный профил
 | `tests/test_smeta_core.py` | focused | smeta-core boundaries: code cannot own norm binding; bind requires selected/applicable; invalid model output never falls back to top candidate; document workflow applies explicit model coverage/resource decisions; analog with empty actions remains unresolved; valid target/resource/quantity action contract reaches calculation |
 | `tests/test_smeta_user_message_service.py` | focused | машинные smeta-статусы не попадают в обычный ответ; частичная сумма названа стоимостью рассчитанной части; рубли форматируются по-русски; covered/open строки описываются человеческим языком |
 | `tests/test_chat_attachment_service.py` | 3 | server-owned read attachments: opaque id/path containment, SHA/size validation, consume and TTL cleanup |
+| `tests/test_request_idempotency_service.py` | focused | внешний контракт ЛСР: пользовательское временное вложение, привязка ключа к файлу/телу/пользователю, replay готового ответа без второго model call, `409` на конкурентный или конфликтующий повтор |
+| `tests/test_prices_router_batch.py`, `tests/test_fgis_price_service.py`, `tests/test_les_mcp_server.py` | focused | пакетный exact lookup ФГИС: одна загрузка книги, сохранение missing, дедупликация кодов и наличие `les_price_lookup_batch` в MCP-каталоге |
 | `tests/test_kac_web_service.py` | 2 | fail-closed web-KAC: strong exact-product identifier and three distinct suppliers with VAT normalization |
 | `tests/test_smeta_norm_store.py` | 7 | typed SQLite-light smeta norm projection over existing GESN/FSM/TER sources: schema payload, FTS/LIKE candidate search, norm-card profiles with hints/resources/condition_hints/provenance/model_card/navigation, nearby norms, worker-thread cached reads, no heavy row leak in trace |
 | `tests/test_smeta_structured_base.py` | 2 | canonical smeta machine base: builds `data/smeta_base/les_smeta_base.sqlite` from unified GESN parquet, excludes norms without name/unit, writes manifest counts, and makes `gesn_service.load_base_norms()` prefer structured SQLite |

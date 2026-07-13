@@ -55,6 +55,43 @@ def test_embed_client_accepts_actual_qwen_model_contract(monkeypatch):
     assert vectors == [[0.1, 0.2]]
 
 
+def test_embed_client_accepts_ollama_openai_model_contract():
+    client = EmbedClient("http://ollama", model="bge-m3:latest", backend="ollama")
+
+    vectors = client._vectors_from_response(
+        {
+            "model": "bge-m3:latest",
+            "data": [{"index": 0, "embedding": [0.1, 0.2]}],
+        }
+    )
+
+    assert vectors == [[0.1, 0.2]]
+
+
+def test_embed_client_does_not_accept_openai_model_field_for_les_owned_backend():
+    client = EmbedClient("http://mlx", model="bge-m3", backend="coreml")
+
+    with pytest.raises(EmbeddingContractError, match="contract not reported"):
+        client._vectors_from_response(
+            {
+                "model": "bge-m3",
+                "data": [{"index": 0, "embedding": [0.1, 0.2]}],
+            }
+        )
+
+
+def test_embed_client_rejects_wrong_ollama_model():
+    client = EmbedClient("http://ollama", model="bge-m3:latest", backend="ollama")
+
+    with pytest.raises(EmbeddingContractError, match="expected=bge-m3:latest, actual=nomic-embed-text"):
+        client._vectors_from_response(
+            {
+                "model": "nomic-embed-text",
+                "data": [{"index": 0, "embedding": [0.1, 0.2]}],
+            }
+        )
+
+
 def test_embed_client_rejects_mixed_embedding_models(monkeypatch):
     monkeypatch.setenv("EMBED_BACKEND", "coreml")
     client = EmbedClient("http://mlx", model="qwen3-embedding-0.6b")

@@ -14,10 +14,10 @@ import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import httpx
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from backend.interface import DatasetInfo
@@ -3164,6 +3164,140 @@ def _format_tabular_attachment_context(path: Path, original_name: str, *, max_ch
     return (text, truncated) if text else None
 
 
+async def _prepare_read_attachment(
+    temp_path: Path,
+    original_name: str,
+    *,
+    attachment_id: str | None = None,
+) -> dict[str, Any]:
+    """Convert and preserve one lossless, server-owned read attachment."""
+    from uuid import uuid4
+
+    attach_id = attachment_id or f"read_{uuid4().hex[:12]}"
+    structured = await asyncio.to_thread(
+        _format_tabular_attachment_context,
+        temp_path,
+        original_name,
+        max_chars=_READ_ATTACH_MAX_CHARS,
+    )
+    if structured:
+        text, truncated = structured
+    else:
+        from backend.converter import convert_to_markdown
+
+        try:
+            text = await asyncio.to_thread(convert_to_markdown, temp_path)
+        except Exception as error:  # noqa: BLE001 - upload errors must stay operator-visible
+            logger.warning("[ATTACH] read conversion failed for %s: %s", original_name, error)
+            raise HTTPException(
+                422,
+                f"Не удалось прочитать файл «{original_name}»: {error}. "
+                "Попробуй режим индексации/OCR или другой формат файла.",
+            ) from error
+        text = (text or "").strip()
+        truncated = len(text) > _READ_ATTACH_MAX_CHARS
+
+    text = (text or "").strip()
+    if not text:
+        raise HTTPException(
+            422,
+            f"Не удалось прочитать текст из «{original_name}». "
+            "Для таблиц попробуй режим быстрой сверки, для сканов — индексацию/OCR.",
+        )
+
+    from proxy.services.chat_attachment_service import cleanup_expired, preserve_read_attachment
+
+    await asyncio.to_thread(cleanup_expired)
+    await asyncio.to_thread(
+        preserve_read_attachment,
+        temp_path,
+        attachment_id=attach_id,
+        original_name=original_name,
+    )
+    return {
+        "attachment_id": attach_id,
+        "mode": "read",
+        "name": original_name,
+        "chars": len(text),
+        "text": text[:_READ_ATTACH_MAX_CHARS],
+        "truncated": truncated,
+    }
+
+
+@search_router.post("/chat/attachments", status_code=201)
+async def create_chat_attachment(
+    file: UploadFile = File(...),
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")] = "",
+    _user=Depends(require_user),
+):
+    """Official external intake: one temporary read attachment for the next chat turn."""
+    from proxy.services.request_idempotency_service import (
+        IdempotencyConflict,
+        begin,
+        caller_scope,
+        complete,
+        file_sha256,
+        release,
+        request_fingerprint,
+    )
+
+    original_name = safe_upload_name(file.filename or "upload.bin", rag_upload_suffixes())
+    temp_path = await save_upload_tmp(
+        file,
+        allowed_suffixes=rag_upload_suffixes(),
+        max_bytes=max_upload_bytes(),
+    )
+    caller = caller_scope(_user)
+    fingerprint = request_fingerprint(
+        {
+            "name": original_name,
+            "size": temp_path.stat().st_size,
+            "sha256": await asyncio.to_thread(file_sha256, temp_path),
+        }
+    )
+    try:
+        try:
+            state, cached = await asyncio.to_thread(
+                begin,
+                operation="chat_attachment",
+                caller=caller,
+                idempotency_key=idempotency_key,
+                request_hash=fingerprint,
+            )
+        except (ValueError, IdempotencyConflict) as error:
+            raise HTTPException(409, str(error)) from error
+        if state == "completed" and cached is not None:
+            return cached
+        if state == "in_progress":
+            raise HTTPException(
+                409,
+                "Вложение с этим Idempotency-Key уже обрабатывается",
+                headers={"Retry-After": "2"},
+            )
+        try:
+            result = await _prepare_read_attachment(temp_path, original_name)
+            await asyncio.to_thread(
+                complete,
+                operation="chat_attachment",
+                caller=caller,
+                idempotency_key=idempotency_key,
+                request_hash=fingerprint,
+                response=result,
+            )
+            return result
+        except Exception:
+            await asyncio.to_thread(
+                release,
+                operation="chat_attachment",
+                caller=caller,
+                idempotency_key=idempotency_key,
+                request_hash=fingerprint,
+            )
+            raise
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
 async def _ensure_chat_attach_dataset(state) -> str:
     for d in await state.backend.list_datasets():
         if d.name == _CHAT_ATTACH_DATASET_NAME:
@@ -3203,56 +3337,10 @@ async def attach_chat_file(
     temp_path = await save_upload_tmp(file, allowed_suffixes=rag_upload_suffixes(), max_bytes=max_upload_bytes())
 
     if mode == "read":
-        attach_id = f"read_{uuid4().hex[:12]}"
         try:
-            structured = await asyncio.to_thread(
-                _format_tabular_attachment_context,
-                temp_path,
-                original_name,
-                max_chars=_READ_ATTACH_MAX_CHARS,
-            )
-            if structured:
-                text, truncated = structured
-            else:
-                from backend.converter import convert_to_markdown
-
-                try:
-                    text = await asyncio.to_thread(convert_to_markdown, temp_path)
-                except Exception as error:  # noqa: BLE001 - upload errors must stay operator-visible
-                    logger.warning("[ATTACH] read conversion failed for %s: %s", original_name, error)
-                    raise HTTPException(
-                        422,
-                        f"Не удалось прочитать файл «{original_name}»: {error}. "
-                        "Попробуй режим индексации/OCR или другой формат файла.",
-                    ) from error
-                text = (text or "").strip()
-                truncated = len(text) > _READ_ATTACH_MAX_CHARS
-            from proxy.services.chat_attachment_service import cleanup_expired, preserve_read_attachment
-
-            await asyncio.to_thread(cleanup_expired)
-            await asyncio.to_thread(
-                preserve_read_attachment,
-                temp_path,
-                attachment_id=attach_id,
-                original_name=original_name,
-            )
+            return await _prepare_read_attachment(temp_path, original_name)
         finally:
             temp_path.unlink(missing_ok=True)
-        text = (text or "").strip()
-        if not text:
-            raise HTTPException(
-                422,
-                f"Не удалось прочитать текст из «{original_name}». "
-                "Для таблиц попробуй режим быстрой сверки, для сканов — индексацию/OCR.",
-            )
-        return {
-            "attachment_id": attach_id,
-            "mode": "read",
-            "name": original_name,
-            "chars": len(text),
-            "text": text[:_READ_ATTACH_MAX_CHARS],
-            "truncated": truncated,
-        }
 
     if mode == "index":
         ds_id = await _ensure_chat_attach_dataset(state)

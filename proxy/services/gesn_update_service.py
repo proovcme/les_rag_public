@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -14,18 +13,11 @@ from tools.build_smeta_structured_base import DEFAULT_OUT as DEFAULT_STRUCTURED_
 from tools.build_smeta_service_rag import DEFAULT_OUT as DEFAULT_SERVICE_RAG_OUT
 from tools.gesn_update_from_fgis import DEFAULT_STATUS
 from tools.gesn_unify_base import DEFAULT_AUDIT, DEFAULT_OUT
+from proxy.services.process_status import pid_running
 
 _ROOT = Path(__file__).resolve().parents[2]
 _LOG = Path("storage/jobs/gesn_fgis_update.log")
 _PID = Path("storage/jobs/gesn_fgis_update.pid")
-
-
-def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -44,7 +36,7 @@ def _tail(path: Path, limit: int = 30) -> list[str]:
 
 def status() -> dict[str, Any]:
     pid = int(_PID.read_text().strip()) if _PID.exists() and _PID.read_text().strip().isdigit() else 0
-    running = bool(pid and _alive(pid))
+    running = bool(pid and pid_running(pid))
     unified = DEFAULT_OUT
     audit = DEFAULT_AUDIT
     structured = DEFAULT_STRUCTURED_OUT

@@ -13,6 +13,30 @@ Services may be alive, but models are not resident unless a current operation
 has an explicit lease for them.
 ```
 
+Memory-state thresholds below are operator signals and concurrency policy, not
+the hard stop for a single local generation. On a 24 GB Apple Silicon machine a
+resident MLX model normally lowers `ram_free_gb` below the RED boundary. The
+chat hard stop therefore defaults to `ram_free_gb < 4` or `swap_pct > 85` and is
+configurable through `LES_CHAT_MIN_FREE_GB` / `LES_CHAT_MAX_SWAP_PCT`. Indexing
+still requires GREEN memory; the MLX host independently unloads idle LES models
+under pressure. This distinction prevents the invalid sequence “load model →
+reject the same request because the loaded model uses memory”.
+
+MLX chat streaming is real token streaming: the host uses
+`mlx_lm.stream_generate` and records TTFT, prompt throughput, decode throughput,
+and peak model memory. A client must not infer model speed from total chat wall
+time alone because retrieval and prefill are separate phases. The allocator
+cache is cleared after each turn while resident model weights remain available.
+
+Current 24 GB production defaults use `Qwen3.5-9B-OptiQ-4bit` and keep it resident for up to one hour,
+use the deterministic `rules` validator, warn below 6 GB available RAM, and
+unload the main model only below 4 GB or under genuine swap pressure. Its measured
+warm peak is about 7.84 GB, versus 5.78 GB for the slower uniform 4-bit build. This prevents a second
+validator LLM from evicting the chat model after every answer.
+An already allocated macOS swap pool is treated as stale rather than critical
+when at least 5 GB RAM is available and absolute swap use is below 12 GB; this
+matches proxy admission and prevents a 30-second unload/reload cycle.
+
 No runtime guard is allowed to kill unrelated macOS, GUI, IDE, browser, or user
 processes. Guards may unload LES-owned models and stop LES-owned jobs/services.
 
@@ -89,7 +113,7 @@ Before starting chat, validation, retrieval, or indexing:
 |---|---|---|---|
 | Read-only status | any non-stopped profile | any | any |
 | Retrieval debug | `RETRIEVAL`, `CHAT`, `CHAT_VALIDATED`, `OBSERVE_UI` | not `RED` | no index job |
-| Chat without validator | `CHAT` | `GREEN` or `YELLOW` | `active_jobs = 0` |
+| Chat without validator | `CHAT` | one local generation above the chat hard-stop; pressure state remains visible | `active_jobs = 0` |
 | Chat with validator | `CHAT_VALIDATED` | preferably `GREEN`; `YELLOW` only with sequential unload | `active_jobs = 0` |
 | Light indexing | `INDEX_LIGHT` | `GREEN` or high `YELLOW` | no chat/validator job |
 | Heavy PDF indexing | `INDEX_HEAVY_PDF` | `GREEN` strongly preferred | no chat/validator job; UI off by default |

@@ -77,6 +77,21 @@ uv run python tools/build_windows_installer.py --version X.Y.Z
 - macOS/Linux → `dist/LES-windows-tauri-source.zip`; transfer it to Windows and
   run the same command there.
 
+### Ручное обновление Windows
+
+ЛЕС не проверяет обновления в фоне. Оператор открывает настройки и нажимает
+`Проверить обновление`; только после найденной новой версии становится доступна отдельная
+кнопка `Обновить`. Публичный выпуск GitHub обязан содержать три файла с точными именами:
+
+- `latest.json` — версия и краткое описание выпуска по схеме `les.update.v1`;
+- `LES-Setup.exe`;
+- `LES-Setup.exe.sha256` — строка `<sha256>  LES-Setup.exe`.
+
+Проверка обновления читает `latest.json` напрямую, без GitHub API. Затем серверная часть скачивает
+установщик и контрольную сумму в `%LOCALAPPDATA%\LES\artifacts\updates\<version>`, принимает
+только адреса GitHub по HTTPS, сверяет SHA-256 и открывает обычный установщик NSIS. Фоновая
+загрузка, downgrade и установка неполного/непроверенного выпуска запрещены.
+
 **[ручками]** Copy the installer/zip to the clean Windows machine.
 
 ---
@@ -104,21 +119,63 @@ model-weight download). After that it can run offline (local provider).
 
 ### Windows
 
+This is the canonical production install path for **Legion**. Mac builds remain
+development/reference artifacts; release readiness is decided by the live
+Windows RAG/chat smoke and the Windows Tauri/NSIS artifact.
+
 1. Run `LES-Setup.exe` (per-user, **no admin**). It drops the code export under
    `%LOCALAPPDATA%\Programs\LES` + Start-Menu/Desktop shortcuts.
 2. First launch: SmartScreen warns (unsigned). **[ручками]** **More info →
    Run anyway**. One time per machine.
 3. The shortcut → `launcher.vbs` (hidden) → `bootstrap.ps1`:
-   - installs `uv` (winget or official script),
+   - separates replaceable code from persistent state: `data`, `storage`,
+     `RAG_Content`, `logs`, `artifacts`, `.env` and the uv environment live in
+     `%LOCALAPPDATA%\LES`; update-safe directory junctions preserve existing
+     relative Python paths,
+   - on the first updated launch, moves legacy runtime state into a timestamped
+     backup, merges only missing files, and records `migration/last_state_init.json`;
+     repeated launch is idempotent,
+   - проверяет обязательные компоненты Windows: `uv`, Ollama и Docker Desktop;
+     отсутствующий `uv` ставит через winget или официальный скрипт, Ollama и Docker Desktop —
+     через winget; если автоматическая установка недоступна, окно ЛЕС показывает точную причину,
+     официальный адрес установки и путь к журналу,
+   - после установки Docker Desktop ждёт запуска движка; незавершённая настройка WSL 2 или
+     необходимость перезагрузки считаются явной ошибкой первого запуска, а не «ограниченным RAG»,
    - `uv sync` (no MLX and no pywebview on Windows),
    - `lesctl init --profile windows-lite`,
    - `onboard_provider.py --skip-if-configured --provider ollama` → local
      **ollama** default (no cloud key needed to boot),
+   - `start-light.ps1` keeps the selected Ollama tag in both `OLLAMA_MODEL` and
+     the provider-neutral `LLM_MODEL`; all model-owned attachment/smeta steps
+     therefore use the same local runtime instead of falling back to a Mac MLX
+     name,
+   - embeddings use Ollama `bge-m3` (`1024` dimensions) for the shared
+     dense+sparse/RRF index contract,
+   - bootstrap verifies/pulls the local answer model `qwen3.5:9b`, embedding
+     model `bge-m3:latest` and installs/prefetches the native multilingual
+     cross-encoder `BAAI/bge-reranker-v2-m3`; its weights are checksum-verified,
+     corrupt cache entries are quarantined, an interrupted `.incomplete` download
+     resumes, and a semantic load-probe runs before the cache is marked ready,
+     with bounded `HF_MIRROR_ENDPOINT` fallback when the official Hub is unavailable,
    - `onboard_models.py --skip-if-cloud`,
-   - optional Qdrant via Docker if Docker is present,
+   - запускает обязательный Qdrant в Docker с постоянным именованным томом
+     `les-qdrant-data` и ждёт ответа `/collections`,
    - brings the stack up via `start-light.ps1`; Tauri opens the live UI.
-   Progress = tray balloons; errors = a dialog; log in
-   `%LOCALAPPDATA%\LES\logs\bootstrap.log`.
+   Ход запуска виден через уведомления. При ошибке Tauri показывает её код, официальный адрес
+   установки недостающего компонента и путь к журналу. Подробный журнал:
+   `%LOCALAPPDATA%\LES\logs\bootstrap.log`; машинный статус:
+   `%LOCALAPPDATA%\LES\logs\bootstrap-status.json`.
+
+На чистой Windows Docker Desktop может запросить повышение прав и завершение настройки WSL 2.
+Это штатное системное требование Docker. После установки или перезагрузки достаточно снова открыть
+ЛЕС: bootstrap идемпотентен и продолжит с незавершённого предусловия.
+
+After first launch, **Инструменты → Источники данных → СКАЧАТЬ ФГИС ЦС** starts
+the bounded public update: catalogue, latest Split Form for every official price
+zone, and the GESN update pipeline. Closed Bearer/captcha surfaces are reported
+as unavailable; the updater does not bypass access protection. On Windows the
+status endpoint uses a read-only Win32 process probe; polling progress does not
+send a signal to or terminate the updater.
 
 ---
 
@@ -177,3 +234,4 @@ real target hardware:
 | Pre-pull weights | `tools/onboard_models.py [--skip-if-cloud]` |
 | Logs (Mac) | `~/Library/Logs/LES/bootstrap.log` |
 | Logs (Win) | `%LOCALAPPDATA%\LES\logs\bootstrap.log` |
+| Windows persistent data | `%LOCALAPPDATA%\LES\{data,storage,RAG_Content,logs,artifacts}` |

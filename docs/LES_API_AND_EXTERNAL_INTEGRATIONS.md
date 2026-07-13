@@ -1,7 +1,7 @@
 # API и внешние подключения Л.Е.С.
 
-> **Статус:** актуально по коду и живому OpenAPI на 2026-07-12.
-> **Снимок runtime:** LES `0.24.0.381`, proxy OpenAPI `5.1.0`.
+> **Статус:** актуально по коду на 2026-07-13.
+> **Версия кода:** LES `0.24.0.406`, proxy OpenAPI `5.1.0`.
 > При расхождении этого файла с `GET /api/version`, `GET /openapi.json` или кодом роутера правы runtime и код.
 
 ## Назначение
@@ -74,7 +74,7 @@ OpenAPI показывает заголовки, но не кодирует то
 
 ## 3. Основной proxy API
 
-Живой proxy на момент снимка содержит **253 paths**, **274 HTTP methods** и **42 tags**.
+Proxy на момент снимка содержит **257 маршрутов**, **278 методов HTTP** и **43 группы**.
 Интерактивная схема: `http://127.0.0.1:8050/docs`; машинная схема:
 `http://127.0.0.1:8050/openapi.json`.
 
@@ -87,6 +87,42 @@ OpenAPI показывает заголовки, но не кодирует то
 - `doc-review`, `normcontrol`, `verify`, `extract` — проверка документации;
 - `projects`, `worklog`, `field`, `incoming-control`, `forms` — проектные данные;
 - `runtime`, `settings`, `auth`, `jobs`, `logs` — эксплуатация.
+
+### Официальный сценарий внешней ЛСР
+
+Внешняя интеграция не загружает разовый исходник в датасет и не использует административный
+`/api/rag/attach`. Единственный поддерживаемый сценарий:
+
+1. `POST /api/chat/attachments` — `multipart/form-data`, поле `file`, пользовательский ключ доступа и
+   обязательный заголовок `Idempotency-Key`. Ответ содержит временный `read_<id>`; файл не попадает
+   в индекс.
+2. `POST /api/chat` — JSON с `question`, `mode: "smeta"`, полученным `attachment_id` и тем же
+   `Idempotency-Key`.
+3. Ответ чата содержит обычный человеческий текст и `artifact.downloads.xlsx`. Файл скачивается
+   авторизованным `GET /api/smeta-artifacts/download?path=...`.
+
+Одинаковый ключ и одинаковое тело возвращают исходный результат без повторного вызова модели.
+Повтор во время ещё выполняющегося запроса получает `409` и `Retry-After`; тот же ключ с другим
+файлом или телом также получает `409`. Временное вложение одноразовое: после успешной сборки ЛСР
+оно удаляется, а повтор всего запроса обслуживается сохранённым идемпотентным ответом.
+
+```bash
+JOB_ID="lsr-20260713-001"
+ATTACHMENT_ID="$(curl -fsS -X POST "https://les.ovc.me/api/chat/attachments" \
+  -H "Authorization: Bearer $LES_API_KEY" \
+  -H "Idempotency-Key: $JOB_ID" \
+  -F "file=@ВОР.pdf" | python3 -c 'import json,sys; print(json.load(sys.stdin)["attachment_id"])')"
+
+curl -fsS -X POST "https://les.ovc.me/api/chat" \
+  -H "Authorization: Bearer $LES_API_KEY" \
+  -H "Idempotency-Key: $JOB_ID" \
+  -H "Content-Type: application/json" \
+  -d "{\"question\":\"Сделай ЛСР\",\"mode\":\"smeta\",\"attachment_id\":\"$ATTACHMENT_ID\"}"
+```
+
+`POST /api/rag/attach?mode=read|quick|index` остаётся административным маршрутом Совушки и
+совместимости. Передача файла в base64 внутри `/api/chat` не поддерживается: она обходит единый
+контракт размера, формата, срока жизни и целостности вложения.
 
 ## 4. Совушка и Lite bridge
 
@@ -180,7 +216,7 @@ MLX host имеет отдельный OpenAPI `3.2.0` на `:8080/openapi.json`
 Снимок на 2026-07-12:
 
 - cloud LLM включён через OpenAI-compatible ProxyAPI, модель `gpt-5.4`;
-- локальный основной MLX в settings — `mlx-community/Qwen3.5-9B-MLX-4bit`;
+- локальный основной MLX в settings — `mlx-community/Qwen3.5-9B-OptiQ-4bit`;
 - Google Drive и Яндекс Disk Web API не настроены, локальная папка Яндекс Диска обнаружена;
 - IMAP не настроен; Speckle-коннектор отсутствует;
 - `/api/version` показывает `runtime_alignment.status=divergent`;
@@ -251,6 +287,7 @@ MLX host имеет отдельный OpenAPI `3.2.0` на `:8080/openapi.json`
 | `GET` | `/api/cad-bim/imports` | cad-bim | Cad Bim Imports |
 | `GET` | `/api/cad-bim/source` | cad-bim | Cad Bim Source |
 | `POST` | `/api/chat` | chat | Chat |
+| `POST` | `/api/chat/attachments` | search | Create Chat Attachment |
 | `GET` | `/api/chat/history` | chat | Get Chat History |
 | `POST` | `/api/chat/history/{history_id}/feedback` | chat | Save Chat Feedback |
 | `GET` | `/api/chat/learning` | chat | Get Learning History |
@@ -374,6 +411,7 @@ MLX host имеет отдельный OpenAPI `3.2.0` на `:8080/openapi.json`
 | `GET` | `/api/prices/books` | prices | Prices Books |
 | `POST` | `/api/prices/import` | prices | Prices Import |
 | `GET` | `/api/prices/lookup` | prices | Prices Lookup |
+| `POST` | `/api/prices/lookup-batch` | prices | Prices Lookup Batch |
 | `GET` | `/api/prices/needs` | prices | Prices Needs |
 | `GET` | `/api/prices/search` | prices | Prices Search |
 | `GET` | `/api/prices/sources/periods` | prices | Prices Sources Periods |

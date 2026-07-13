@@ -15,21 +15,20 @@ from pydantic import BaseModel
 
 from proxy.config import docker_control_enabled
 from proxy.security import require_admin, require_user
+from proxy.local_model_registry import (
+    DEFAULT_LOCAL_MLX_MODEL,
+    LOCAL_MLX_MODEL_CHOICES,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
-ENV_PATH = Path(".env")
+ENV_PATH = Path(os.getenv("LES_ENV_PATH", ".env")).expanduser()
 DEFAULT_OPENAI_MODEL = "gpt-5.4"
 
-# Локальные MLX-модели чата под Apple M4/24GB: лёгкий 4B — основной (≈20 ток/с, 2.6 ГБ),
-# тяжёлый 9B — резерв под качество (≈5 ток/с, 5.6 ГБ; душит память бокса). Переключение
-# в GUI применяется вживую через MLX-host /api/switch_model (без рестарта процесса).
-MLX_MODEL_CHOICES = {
-    "mlx-community/Qwen3.5-4B-MLX-4bit": "4B — быстрый (≈20 ток/с, 2.6 ГБ) · основной",
-    "mlx-community/Qwen3.5-9B-MLX-4bit": "9B — качество (≈5 ток/с, 5.6 ГБ) · тяжёлый резерв",
-}
+# Совместимый alias оставлен для API/UI; источник истины — local_model_registry.
+MLX_MODEL_CHOICES = LOCAL_MLX_MODEL_CHOICES
 
 
 def _current_mlx_model() -> str:
@@ -111,7 +110,7 @@ async def get_settings(_user=Depends(require_user)):
             pass
 
         return {
-            "llm_model": os.getenv("LLM_MODEL", "qwen3:14b"),
+            "llm_model": os.getenv("LLM_MODEL", DEFAULT_LOCAL_MLX_MODEL),
             "embed_model": os.getenv("EMBED_MODEL", "bge-m3:latest"),
             "mlx_url": mlx_url,
             "available_models": available,
@@ -436,22 +435,29 @@ async def set_mlx_model(req: MlxModelRequest, _admin=Depends(require_admin)):
     if model not in MLX_MODEL_CHOICES:
         raise HTTPException(400, f"Неизвестная MLX-модель: {model}")
 
-    # 1) persist: MLX_MODEL — что хост грузит на старте; LLM_MODEL — имя в запросах proxy.
-    await asyncio.to_thread(_persist_env, {"MLX_MODEL": model, "LLM_MODEL": model})
-    os.environ["MLX_MODEL"] = model
-    os.environ["LLM_MODEL"] = model
-
-    # 2) применить вживую на хосте (force_unload + reload_tokenizer; веса лениво на след. генерации).
+    # Сначала применить вживую. Занятый host отвечает 409: активную генерацию не прерываем
+    # и persisted configuration не рассинхронизируем с реально загруженной моделью.
     mlx_url = os.getenv("MLX_URL", "http://127.0.0.1:8080").rstrip("/")
     switched_live = False
     detail = ""
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
             r = await client.post(f"{mlx_url}/api/switch_model", json={"target": "main", "model": model})
+            if r.status_code == 409:
+                raise HTTPException(409, "Модель занята генерацией; повторите переключение после ответа")
+            if r.status_code != 200:
+                raise HTTPException(502, f"MLX host отклонил переключение: HTTP {r.status_code}")
             switched_live = r.status_code == 200
             detail = r.text[:200]
-    except Exception as exc:  # хост недоступен — .env уже записан, подхватится при старте
+    except HTTPException:
+        raise
+    except Exception as exc:  # host недоступен — persist ниже, настройка подхватится при старте
         detail = str(exc)[:200]
+
+    # Host переключён или недоступен: persist для следующего старта.
+    await asyncio.to_thread(_persist_env, {"MLX_MODEL": model, "LLM_MODEL": model})
+    os.environ["MLX_MODEL"] = model
+    os.environ["LLM_MODEL"] = model
 
     logger.info("[SETTINGS] MLX main model → %s (live=%s)", model, switched_live)
     return {

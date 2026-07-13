@@ -107,6 +107,9 @@ def test_lookup_prefix_and_miss(split_form: Path, tmp_path: Path):
     # префикс базы снимается → тот же код
     assert pb.lookup("ФСБЦ-91.05.01-017")["code"] == "91.05.01-017"
     assert pb.lookup("99.99.99-999") is None
+    batch = pb.lookup_many(["91.05.01-017", "99.99.99-999"])
+    assert batch["91.05.01-017"]["code"] == "91.05.01-017"
+    assert batch["99.99.99-999"] is None
 
 
 def test_search_by_name(split_form: Path, tmp_path: Path):

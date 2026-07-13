@@ -7,11 +7,13 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
+
 
 ROOT = Path(".")
 DATA_DIR = ROOT / "data"
 META_DB_PATH = DATA_DIR / "les_meta.db"
-ENV_PATH = ROOT / ".env"
+ENV_PATH = Path(os.getenv("LES_ENV_PATH", str(ROOT / ".env"))).expanduser()
 load_dotenv(ENV_PATH, override=False)
 
 PUBLIC_ROLE = "public"
@@ -158,7 +160,7 @@ def qdrant_url() -> str:
 
 
 def llm_model() -> str:
-    return os.getenv("LLM_MODEL", "mlx-community/Qwen3-14B-4bit")
+    return os.getenv("LLM_MODEL", DEFAULT_LOCAL_MLX_MODEL)
 
 
 def embed_model() -> str:

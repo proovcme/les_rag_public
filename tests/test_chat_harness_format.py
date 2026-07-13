@@ -103,6 +103,21 @@ def test_smeta_model_runtime_defaults_to_local_even_when_global_cloud_is_availab
     assert runtime.provider == "mlx"
 
 
+def test_smeta_model_runtime_follows_configured_local_ollama(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen3.5:9b")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.5:9b")
+    monkeypatch.delenv("LES_SMETA_PROVIDER", raising=False)
+    monkeypatch.delenv("LES_SMETA_WORKFLOW_DECISION_PROVIDER", raising=False)
+
+    runtime = _smeta_model_runtime("LES_SMETA_WORKFLOW_DECISION_PROVIDER")
+
+    assert runtime.provider == "ollama"
+    assert runtime.model == "qwen3.5:9b"
+    assert runtime.base_url == "http://127.0.0.1:11434"
+
+
 def test_smeta_document_runtime_uses_configured_cloud_only_with_consent(monkeypatch):
     monkeypatch.setenv("LES_LLM_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://openai.api.proxyapi.ru/v1")

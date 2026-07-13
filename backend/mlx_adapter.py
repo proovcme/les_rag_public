@@ -47,6 +47,35 @@ def _mlx_generate(model, tokenizer, *, prompt: str, max_tokens: int):
     )
 
 
+def _mlx_stream_generate(model, tokenizer, *, prompt: str, max_tokens: int):
+    """Ленивый импорт настоящего токенного генератора MLX."""
+    from mlx_lm import stream_generate
+
+    prefill_started = time.perf_counter()
+    progress_started = False
+
+    def _prefill_progress(processed: int, total: int) -> None:
+        nonlocal progress_started
+        if not progress_started:
+            progress_started = True
+            logger.info("[PREFILL] model=%s tokens=%s started", getattr(model, "model_type", type(model).__name__), total)
+        if processed >= total:
+            logger.info(
+                "[PREFILL] model=%s tokens=%s completed=%.2fs",
+                getattr(model, "model_type", type(model).__name__),
+                total,
+                time.perf_counter() - prefill_started,
+            )
+
+    return stream_generate(
+        model,
+        tokenizer,
+        prompt=prompt,
+        max_tokens=max_tokens,
+        prompt_progress_callback=_prefill_progress,
+    )
+
+
 def _clear_metal_cache():
     """
     Освобождает кэш буферов Metal после выгрузки весов.
@@ -212,11 +241,74 @@ class MLXMemoryManager:
                         prompt=prompt,
                         max_tokens=max_tokens,
                     )
-                result = await asyncio.to_thread(_run)
-                self.last_used = time.time()
+                try:
+                    result = await asyncio.to_thread(_run)
+                    self.last_used = time.time()
+                finally:
+                    # ``mlx_lm.generate`` creates transient KV/prefill buffers.
+                    # Keeping the model warm is useful, keeping the allocator's
+                    # high-water cache between independent turns is not: on a
+                    # 24 GB Mac it pushes otherwise fitting 4B/9B models into
+                    # swap. Referenced model weights remain resident.
+                    _clear_metal_cache()
 
         # Обрезаем stop-токены если модель их включила в ответ
         for stop in STOP_TOKENS:
             if stop in result:
                 result = result[:result.index(stop)]
         return result.strip()
+
+    async def stream_text(self, prompt: str, max_tokens: int = 2048):
+        """Стримит реальные токены MLX и финальные метрики генерации.
+
+        Синхронный ``mlx_lm.stream_generate`` выполняется в worker thread, а
+        ответы передаются в event loop через очередь. В отличие от прежней
+        имитации SSE, первый токен доходит до клиента сразу после prefill.
+        """
+        if self._lock is None:
+            raise RuntimeError("MLXMemoryManager не запущен — вызови start() внутри lifespan.")
+
+        async with self._lock:
+            async with metal_semaphore:
+                loop = asyncio.get_running_loop()
+                queue: asyncio.Queue = asyncio.Queue()
+                sentinel = object()
+
+                def _run():
+                    try:
+                        self._load_model_if_needed()
+                        for response in _mlx_stream_generate(
+                            self.model,
+                            self.tokenizer,
+                            prompt=prompt,
+                            max_tokens=max_tokens,
+                        ):
+                            loop.call_soon_threadsafe(queue.put_nowait, response)
+                    except BaseException as exc:  # передать ошибку в async consumer
+                        loop.call_soon_threadsafe(queue.put_nowait, exc)
+                    finally:
+                        loop.call_soon_threadsafe(queue.put_nowait, sentinel)
+
+                task = asyncio.create_task(asyncio.to_thread(_run))
+                try:
+                    while True:
+                        item = await queue.get()
+                        if item is sentinel:
+                            break
+                        if isinstance(item, BaseException):
+                            raise item
+                        metrics = {
+                            "prompt_tokens": int(getattr(item, "prompt_tokens", 0) or 0),
+                            "prompt_tps": float(getattr(item, "prompt_tps", 0.0) or 0.0),
+                            "generation_tokens": int(getattr(item, "generation_tokens", 0) or 0),
+                            "generation_tps": float(getattr(item, "generation_tps", 0.0) or 0.0),
+                            "peak_memory_gb": float(getattr(item, "peak_memory", 0.0) or 0.0),
+                            "finish_reason": getattr(item, "finish_reason", None),
+                        }
+                        yield str(getattr(item, "text", "") or ""), metrics
+                    await task
+                    self.last_used = time.time()
+                finally:
+                    if not task.done():
+                        task.cancel()
+                    _clear_metal_cache()

@@ -7,13 +7,279 @@
 ## Текущее состояние (2026-07-13)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.387  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.406  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.0.387 (`959e31ac`, live /api/version, 2026-07-13)
-НЕ задеплоено:             только этот docs-only ledger commit после фактической проверки runtime
-рантайм /api/version:      0.24.0.387, deploy_stamp=ok, runtime_alignment=aligned
+задеплоено на рантайм:     0.24.0.396 (live, 2026-07-13)
+Windows-выпуск:            0.24.0.405 (public, 2026-07-13); .406 готовится
+НЕ задеплоено на Mac:      0.24.0.397–0.24.0.406 (Mac runtime остаётся .396)
+рантайм /api/version:      0.24.0.396, deploy_stamp=ok, runtime_alignment=divergent (ожидаемо: dev .397–.403 не ship)
 ```
+
+> 0.24.0.406 — обязательный Windows-RAG bootstrap и официальный внешний вход ЛСР
+>
+> Дата: 2026-07-13
+> Статус: кодовая версия; выпускной EXE собирается на Legion после локальных гейтов. Windows
+> bootstrap требует `uv`, Ollama и Docker Desktop, ставит отсутствующие компоненты через winget
+> (для `uv` сохранён официальный резервный установщик), ждёт Docker/Qdrant и больше не открывает
+> вводящий в заблуждение интерфейс без RAG. Машинный `bootstrap-status.json` передаёт Tauri точную
+> причину, код, официальный адрес установки и журнал; PowerShell запускается без видимой консоли.
+> Для интеграторов добавлен пользовательский `POST /api/chat/attachments`, затем обычный
+> `POST /api/chat` с `attachment_id`; постоянный `Idempotency-Key` возвращает завершённый ответ
+> до модели, блокирует конкурентный дубль и не допускает повторного списания. Административный
+> `/api/rag/attach` сохранён для Совушки. ФГИС lookup получил пакетный API и MCP-инструмент,
+> загружающий книгу цен один раз на расчётный ход. Проверки кода: focused gate — `36 passed`;
+> RAG-core — `168 passed`; полный `make test` — `2908 passed, 6 warnings`; `make verify`,
+> `public-check`, `uv lock --check`, `git diff --check` и Windows `cargo check` — зелёные.
+> SHA выпуска дописывается после
+> Windows-сборки.
+
+> 0.24.0.405 — ручное проверяемое обновление из публичного GitHub Release
+>
+> Дата: 2026-07-13
+> Статус: публичный Windows-выпуск; Mac production не изменён. В настройках появились только
+> явные действия оператора: «Проверить обновление» и «Обновить»; фоновой проверки нет.
+> `update_service` читает прямой публичный `latest.json` без GitHub API и его лимитов, принимает
+> Windows-пакет только вместе с `LES-Setup.exe.sha256`, скачивает оба файла в постоянное хранилище,
+> проверяет SHA-256 и лишь затем запускает обычный установщик. Проверка доступна пользователю,
+> запуск установщика — только администратору. Недоверенный адрес, неполный выпуск, понижение версии
+> и несовпадение контрольной суммы отклоняются. Финальный `LES-Setup.exe`: `11 931 827` байт,
+> SHA-256 `4853797e3ed00ce9d7b623bc2c21525494dee34301083cbf2ceb4357c04b2ee5`.
+> Тихое обновление завершилось с кодом `0`, сохранило `.env` и marker; установленная `.405`
+> успешно прочитала опубликованный `latest.json` и не предложила обновление на себя.
+> Живой поиск: `qdrant_native_hybrid+rerank`, `dense` + `qdrant_sparse`, `fusion=rrf`,
+> BGE-реранжирование применено, `quality=good`. Вес BGE проверен по SHA-256
+> `d9e3e081faff1eefb84019509b2f5558fd74c1a05a2c7db22f74174fcedb5286`, marker записан,
+> model-load probe дал `0,951604` против `0,000016`; отдельный живой semantic probe —
+> `0,999349` против `0,000016`, cold/warm `12,728/0,114 с`. Проверки: `make verify` — `2902 collected`,
+> `make test` — `2902 passed`, `public-check`, `uv lock --check` и `git diff --check` зелёные.
+> Выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.24.0.405
+
+> 0.24.0.404 — README фиксирует современную архитектуру продукта
+>
+> Дата: 2026-07-13
+> Статус: docs/version RC, Mac production не изменён. Главная страница описывает единый
+> contract-versioned `dense + bm25_sparse → native RRF → rerank → parent/context` путь,
+> роль точного чтения структурированных данных, Л.И.С.Т., публичное обновление ФГИС ЦС,
+> границу model↔code в сметах
+> и update-safe Windows state. Публичный README не раскрывает целевую машину и не пересказывает
+> внутренний выпускной чеклист. Выпускной упаковщик теперь
+> системно исключает `.codex_tmp/**` и `tmp/**`: аудит `.403` обнаружил, что временные
+> диагностические файлы могли попасть внутрь installer, поэтому `.403` запрещён к публикации,
+> а `.404` собирается из очищенного состава. Поскольку NSIS сохраняет неизвестные новой версии
+> файлы при обновлении поверх старой, Windows state bootstrap дополнительно удаляет эти два
+> временных каталога только из заменяемого runtime и отказывается проходить через reparse point;
+> `%LOCALAPPDATA%\\LES` не затрагивается.
+
+> 0.24.0.403 — Windows persistent RAG state и проверяемый reranker onboarding
+>
+> Дата: 2026-07-13
+> Статус: Windows RC, Mac production не изменён. `onboard_reranker.py` проверяет SHA-256
+> `BAAI/bge-reranker-v2-m3`, убирает повреждённый вес из опубликованного имени в quarantine,
+> возобновляет Hub `.incomplete`, атомарно пишет verification marker и делает реальный semantic
+> load-probe; повторный bootstrap использует быстрый marker-path без перечитывания 2,27 ГБ.
+> `stop-light.ps1` читает динамические порты из persistent state. На Legion существующий Qdrant
+> без mount безопасно перенесён в named volume `les-qdrant-data`: до/после `6/6` points,
+> старый контейнер и файловый backup сохранены. Установленный `.402` RC на persistent state увидел
+> `6 SQLite chunks = 6 Qdrant points`, compatible contract-v2 и `dense_available=true`; live native
+> probe: dense `1`, sparse `1`, RRF `3`. Финальный installer `.403` / Tauri `5.1.403`:
+> `18 295 881` байт, SHA-256
+> `b7491f086a7a2508478530aca1c8406520ea93c5a05cfae242be3d4227c7c37a`. Silent update
+> завершился `0`, версия/runtime marker/junction/.env сохранились; `.403` повторно увидел тот же
+> compatible index и live RRF. Dynamic-port stop по persistent state прошёл. Проверки:
+> `make verify` — `2894 collected`, `make test` — `2894 passed`, `uv lock --check` и
+> `git diff --check` зелёные. Artifact остаётся unsigned RC до BGE/ФГИС/signing gates.
+
+> 0.24.0.402 — Windows app/state разделены перед production-релизом
+>
+> Дата: 2026-07-13
+> Статус: Windows RC, Mac production не изменён. Tauri/NSIS runtime сохраняет изменяемые
+> `data`, `storage`, `RAG_Content`, `logs`, `artifacts`, `.env` и uv-окружение в
+> `%LOCALAPPDATA%\LES`; каталог приложения содержит только update-safe junctions. Миграция
+> сначала переносит legacy state в неизменяемый backup, затем сливает только отсутствующие
+> файлы и при повторном запуске ничего не переносит. Новый Qdrant создаётся с named volume
+> `les-qdrant-data`. Четырёхчастная версия LES теперь детерминированно отображается в Tauri
+> SemVer `5.1.PATCH`. Изолированный Windows smoke подтвердил: marker и `.env` пережили смену
+> runtime-v1→runtime-v2, обе версии получили junction к одному state, повторная миграция пуста.
+> Installer/update и живой RRF smoke фиксируются ниже после сборки.
+
+> 0.24.0.401 — исправленный production sampler отклоняет OptiQ MTP 0.3.3
+>
+> Дата: 2026-07-13
+> Статус: dev-only probe/docs, production не изменён. Найдено, что upstream MTP hook теряет
+> request sampler: прежние `5,47 tok/s` и `84,24 с`, подписанные production, фактически были
+> greedy и недействительны. Изолированный probe принудительно выключил batch-path без `seed`,
+> передал sampler `0.7/0.8/20` в engine и измерил acceptance/Metal memory. Исправленный depth-1:
+> p50 decode `3,83 tok/s` против stock `3,73` (`+2,6%`), p50 wall `113,74 с` против `114,95`
+> (`-1,1%`), acceptance `67,4%`, peak `8,82 ГБ`. Кандидат провалил обязательные `15%` и порог
+> отказа `10%`; 20/20 не запускался после terminal performance fail. MTP также игнорирует
+> server prompt cache. Штатный MLX восстановлен и отвечает `HTTP 200`.
+> Проверки: focused benchmark/version `31 passed`; полный `make test` — `2885 passed`;
+> `make verify` — `2885 collected`; `uv lock --check` и `git diff --check` зелёные.
+
+> 0.24.0.400 — production wall A/B закрывает practical-benefit подгейт OptiQ MTP
+>
+> Дата: 2026-07-13
+> Статус: dev-only benchmark/docs, production не изменён. На одном snapshot, prompt `1041→384`,
+> production sampler, cache-state и stream-режиме stock MLX дал p50/p95 wall
+> `114,95/123,96 с`, OptiQ MTP — `84,24/85,38 с`: MTP быстрее на `26,7%` по p50 и `31,1%`
+> по p95. Обязательное `p50_wall_mtp <= p50_wall_stock` выполнено. Production-допуск остаётся
+> закрыт из-за отсутствия acceptance/drafted telemetry, peak Metal memory, prefix-cache reuse
+> и серии 20/20.
+>
+> Windows RC этой же версии собран как Tauri desktop `5.1.400`: silent install и импорт
+> runtime-модулей прошли, artifact SHA-256 —
+> `6754d527e4345d4c19c57b85a551d5c831b067fb5ba31e7916fbe7df38575abd`. Публичный release
+> закрыт: clean-install smoke показал пустую MetaDB рядом с новым кодом при сохранённых `6`
+> points в Qdrant, из-за чего index contract стал missing и dense выключился. Требуется единый
+> persistent Windows state в `%LOCALAPPDATA%\LES`; отдельный гейт —
+> `docs/TODO_WINDOWS_PRODUCTION.md`.
+
+> 0.24.0.399 — OptiQ MTP получил обязательный practical-benefit wall-time gate
+>
+> Дата: 2026-07-13
+> Статус: dev-only documentation/acceptance contract, production не изменён. Повторный допуск
+> MTP теперь требует не только decode uplift, acceptance и tool-call стабильность, но и
+> `p50_wall_mtp <= p50_wall_stock` на идентичном snapshot/prompt/production sampler/cache-state/
+> output/stream профиле. Текущий greedy-контроль проходит (`88,68 с` против `115,86 с`,
+> `-23,5%`), но production stock-baseline не снят, поэтому общий гейт остаётся открытым.
+
+> 0.24.0.398 — OptiQ MTP 0.3.3 измерен изолированно и не допущен в production
+>
+> Дата: 2026-07-13
+> Статус: dev-only benchmark, production model host не изменён. Добавлен воспроизводимый
+> direct OpenAI harness с точными профилями `1041→384`/`8192→256`, stream/non-stream,
+> greedy/production sampler, cache и tool-call проверками. На M4/24 ГБ MTP depth 2 дал
+> p50 `5,20 tok/s` greedy и `5,47 tok/s` production против OptiQ AR `3,71 tok/s`
+> (`+40,2%`), tool call/continuation прошли. В production не вводится: без request `seed`
+> `mlx-lm` batch-path обходит MTP hook, OpenAI response не публикует acceptance/peak memory,
+> повтор 6k-префикса вернул `cached_tokens=0`; обязательный гейт 20/20 не закрыт.
+> Проверки: focused benchmark/version `29 passed`, `make verify` — `2882 collected`,
+> полный `make test` — `2882 passed`.
+
+> 0.24.0.397 — Windows Ollama/Tauri использует единый model и embedding contract
+>
+> Дата: 2026-07-13
+> Статус: Windows release candidate на Legion, Mac production не переключён. `start-light.ps1`
+> синхронизирует provider-specific модель с `LLM_MODEL` и закрепляет Ollama `bge-m3`/1024;
+> smeta/document model-owned шаги следуют выбранному локальному Ollama/Lemonade, но облачный
+> провайдер без согласия по-прежнему не подхватывается. Живой Windows smoke: Tauri-sidecar
+> proxy/UI/Qdrant healthy, DOCX `11 859` символов прочитан без OCR, ответ Qwen3.5 9B получен
+> за `25,86 с` без вывода hidden reasoning. ФГИС ЦС реально скачал Сплит-форму Москвы за
+> 2 квартал 2026: `13 358 КБ`, `281 223` строки, источник виден `ok` в service-sources.
+> Tauri/NSIS artifact и финальные gates фиксируются ниже после сборки.
+
+> 0.24.0.396 — OptiQ принят основным локальным MLX-профилем без двухмодельного оркестратора
+>
+> Дата: 2026-07-13
+> Статус: задеплоено локально и доступно через `les.ovc.me`. Единый реестр
+> `proxy/local_model_registry.py` устраняет разные defaults в host, chat, smeta, router,
+> settings и startup warmup; env/GUI-выбор оператора сохраняет приоритет, launchd его не
+> перетирает. Warm benchmark `512/384 × 3`: OptiQ `152,53 tok/s` prefill,
+> `11,19 tok/s` decode, `7,84 ГБ` peak; uniform 4-bit `91,13/7,19 tok/s`, `5,78 ГБ`.
+> Пройдены русский ответ, OpenAI tool calls, tool-result continuation и живой BAI native-RRF smoke.
+> Проверки: focused `138 passed`, полный pytest `2856 passed`, `make verify` — `2856 collected`;
+> `make ship` — focused `120 passed`, RAG-core `164 passed`, pre/post smoke `9/9`.
+> Divergence guard сохранил живые runtime-правки; четыре затронутых code-файла слиты точечно,
+> deploy stamp переписан после слияния: `status=ok`, `hash_mismatch_files=[]`.
+
+> 0.24.0.395 — накопленный macOS swap больше не выгружает тёплую 9B каждые 30 секунд
+>
+> Дата: 2026-07-13
+> Статус: задеплоено локально и доступно через `les.ovc.me`. MLX Host теперь использует ту же stale-swap семантику, что proxy
+> admission: высокий процент уже выделенного swap не считается текущим давлением при достаточной
+> свободной RAM. Live-кейс ремонта: `6,7 ГБ` available RAM, `3,8 ГБ` swap, `87,9%` — модель
+> остаётся тёплой; реальная граница `RAM < 4 ГБ` сохраняет аварийную выгрузку.
+> Проверки: focused memory/MLX `77 passed`, `make verify` — `2855 collected`, `make ship` —
+> focused `120 passed`, RAG-core `164 passed`, pre/post-deploy smoke `9/9`.
+> Live guard-cycle: после загрузки main при `7,4 ГБ` RAM / `87,7%` swap модель осталась
+> загруженной и после следующего 30-секундного цикла (`10,2 ГБ` RAM / `87,7%` swap).
+
+> 0.24.0.394 — задержка notebook/RRF отделена от реальной скорости локальной модели
+>
+> Дата: 2026-07-13
+> Статус: задеплоено локально и доступно через `les.ovc.me`. Query-time context memory больше не пересобирает глубокий профиль
+> выбранного датасета: готовая typed-карта добавляется один раз в evidence application layer.
+> Для широкого обзора корпуса default retrieval сохраняет native RRF, но не запускает дорогой
+> cross-encoder, который сужал разнообразие источников; явный выбор оператора сохраняется.
+> Навигационный блок ограничен компактным line-safe представлением, а trace показывает размер
+> каждого prompt layer. Удалён искусственный минимум `2048` output tokens для кратких реестров.
+> Live BAI: notebook preparation `0,011 с`, правильный ответ `80 файлов / 75 проиндексировано`.
+> Прямой A/B показал, что Ollama с той же Qwen3.5 9B медленнее MLX; смена backend отклонена.
+> Проверки: полный pytest `2853/2854`, единственный stale literal-test исправлен и повторно
+> прошёл; итоговый focused gate `113 passed`, `make verify` — `2854 collected`, `make ship` —
+> focused `120 passed`, RAG-core `164 passed`, pre/post-deploy smoke `9/9`.
+
+> 0.24.0.393 — локальная 9B больше не выгружается validator-моделью после каждого ответа
+>
+> Дата: 2026-07-13
+> Статус: dev, ждёт focused gate и deploy. Фактический runtime после рестарта поднял
+> `VALIDATOR_BACKEND=mlx`: второй LLM-движок вытеснял main 9B из-за single-LLM policy, а следующий
+> вопрос снова платил cold load. Launchd и code default закрепляют `rules`; main TTL увеличен до
+> `3600 с`, 24-ГБ memory-guard предупреждает ниже `6 ГБ`, но выгружает main только ниже `4 ГБ`
+> или выше `85%` swap. Старые live-логи показывают warm TTFT 9B `0,49 с` на коротком prompt;
+> длинный prompt около `6 900` токенов отдельно тратит около `43 с` на prefill. Core ML embed worker
+> больше не компилирует `.mlpackage` в новый случайный temp-каталог при каждом старте: оба процесса
+> используют один revision-keyed cache в `~/Library/Caches/LES/coreml`, старые ревизии удаляются.
+> Переключение MLX-модели во время активной генерации теперь отклоняется с HTTP 409 вместо
+> `force_unload` работающей main-модели и зависшего пользовательского stream.
+
+> 0.24.0.392 — старый notebook fan-out удалён из production chat-path, а не спрятан флагом
+>
+> Дата: 2026-07-13
+> Статус: задеплоено локально и доступно через `les.ovc.me`. Общий чат больше не содержит вызовов topic-target,
+> section или file prefetch до первого модельного хода. Study-pack остаётся офлайн-функцией
+> подготовки/диагностики карты корпуса. Живой runtime-поток неизменен относительно проверенной
+> `.391`: готовая карта и реестр → один RRF → evidence-пакет → модель.
+> Проверки: focused notebook/chat `45 passed`; `make ship` — verify `2 849 collected`,
+> focused `120 passed`, RAG-core `164 passed`, pre/post-deploy smoke `9/9`.
+
+> 0.24.0.391 — notebook-карта больше не запускает retrieval вместо модели
+>
+> Дата: 2026-07-13
+> Статус: задеплоено локально и доступно через `les.ovc.me`. Живой BAI-прогон на уже исправленном MLX stream
+> показал `TTFT 156,36 с`, при этом сама локальная модель затем сформировала `6 553`
+> символа примерно за `19 с`; proxy до генерации держал высокий CPU. Причина — старый
+> query-time notebook fan-out: topic-target retrieval + wide retrieval + section/file retrieval.
+> Production default теперь model-first: готовая карта/реестр + один native RRF + модель.
+> Topic/file prefetch оставлен только явными диагностическими opt-in флагами.
+> Голос ЛЕСа снова прямо разрешает называть кривой исходник и абсурдное решение своими именами,
+> сохраняя строгими нормы, числа, суммы и цитаты. На Mac M4/24 ГБ целевой runtime — Qwen3.5 9B;
+> 4B остаётся диагностическим/малопамятным профилем.
+> Проверки: `make ship` — verify `2 849 collected`, focused `120 passed`, RAG-core `164 passed`,
+> pre/post-deploy smoke `9/9`. Live BAI/Qwen3.5-9B: cold TTFT `54,57 с`, total `94,36 с`,
+> `10 835` символов; warm TTFT `57,02 с`, total `66,99 с`, `3 587` символов;
+> notebook preparation `0,115/0,036 с`, channels `dense+qdrant_sparse+lexical`.
+
+> 0.24.0.390 — MLX отдаёт настоящий токенный stream и измеряет фактическую скорость
+>
+> Дата: 2026-07-13
+> Статус: dev, ждёт гейт и deploy. Живой raw-probe на Mac mini M4/24 ГБ показал:
+> Qwen3.5-4B-MLX-4bit отвечает за `5,37 с` на коротком cold/warm запросе и за `30,76 с`
+> на искусственном контексте `32 000` символов. Прежний `/v1/chat/completions stream=true`
+> сначала полностью выполнял `mlx_lm.generate`, а затем одним SSE chunk изображал stream.
+> Теперь host использует `mlx_lm.stream_generate`, отдаёт первый токен после prefill и пишет
+> в лог `ttft`, `prompt_tokens/prompt_tps`, `generation_tokens/generation_tps`, peak memory.
+> Дополнительно зафиксировано состояние машины: нативные arm64 Python/MLX, thermal warnings нет;
+> системный диск имеет лишь около `12 ГБ` свободного места и требует очистки вне LES.
+
+> 0.24.0.389 — локальный RAG больше не запускает скрытую вторую модельную работу
+>
+> Дата: 2026-07-13
+> Статус: dev, ждёт гейт и deploy. Живой аудит показал, что при облачном финальном ответе
+> notebook-study параллельно грузил MLX reader, после 35-секундного таймаута ставил его повторно
+> в фон и удерживал 9B в swap. Reader и selector fan-out для локального профиля теперь opt-in;
+> targeted section/file retrieval сохраняет native RRF, но не повторяет cross-encoder для каждого
+> файла. `mlx_lm.generate` очищает transient Metal cache после каждого хода, сохраняя веса тёплыми.
+> В latency trace добавлено полное время notebook-study, ранее выпадавшее из фаз.
+
+> 0.24.0.388 — локальная модель больше не блокирует собственный запрос после загрузки
+>
+> Дата: 2026-07-13
+> Статус: dev, ждёт гейт и deploy. Операторские границы GREEN/YELLOW/RED сохранены для
+> телеметрии и конкуренции с индексатором, а hard-stop одиночной локальной генерации
+> согласован с защитой MLX Host (`4 ГБ` RAM / `85%` swap по умолчанию). Regression-тест
+> фиксирует живой профиль 24-ГБ Mac: `4,8 ГБ` свободно, `75,7%` swap после загрузки Qwen 9B.
 
 > 0.24.0.387 — deploy различает старый runtime и настоящий runtime-only drift
 >

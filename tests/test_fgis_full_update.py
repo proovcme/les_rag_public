@@ -97,3 +97,15 @@ def test_full_update_persists_catalog_and_manifest_without_gesn(tmp_path: Path, 
     assert (tmp_path / "catalog.json").exists()
     assert (tmp_path / "manifest.json").exists()
     assert "Bearer" in (tmp_path / "manifest.json").read_text(encoding="utf-8")
+
+
+def test_full_fgis_update_is_wired_to_operator_api_and_gui():
+    root = Path(__file__).resolve().parents[1]
+    routes = (root / "proxy/routers/service_sources.py").read_text(encoding="utf-8")
+    ui = (root / "sovushka/pages/instrumenty.py").read_text(encoding="utf-8")
+
+    assert '@router.post("/fgis/update")' in routes
+    assert "fgis_update_service.start(include_gesn=True, all_periods=False)" in routes
+    assert "СКАЧАТЬ ФГИС ЦС" in ui
+    assert 'api_post("/api/service-sources/fgis/update", {})' in ui
+    assert "каталог, Сплит-формы всех ценовых зон и ГЭСН" in ui

@@ -14,7 +14,10 @@ from typing import Any
 from dotenv import load_dotenv
 
 
-load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
+load_dotenv(
+    Path(os.getenv("LES_ENV_PATH", str(Path(__file__).resolve().parents[1] / ".env"))).expanduser(),
+    override=False,
+)
 
 
 @dataclass(frozen=True)

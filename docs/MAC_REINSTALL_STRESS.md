@@ -273,8 +273,8 @@ Core ML артефактов) и с **неоптимальным квантом*
 
 **Требуемые .env (НЕ в гите):**
 ```
-MLX_MODEL=mlx-community/Qwen3.5-4B-MLX-4bit      # НЕ OptiQ: тот медленный + раздувает <think>
-LLM_MODEL=mlx-community/Qwen3.5-4B-MLX-4bit
+MLX_MODEL=mlx-community/Qwen3.5-9B-OptiQ-4bit    # измеренный основной профиль M4/24 ГБ
+LLM_MODEL=mlx-community/Qwen3.5-9B-OptiQ-4bit
 MLX_VAL_MODEL=mlx-community/Qwen3.5-4B-OptiQ-4bit # ВАЖНО: ≠ MLX_MODEL (иначе chat → val-движок ttl120)
 MLX_MAIN_TTL_SEC=86400                            # держать LLM тёплой (один оператор)
 VALIDATOR_BACKEND=coreml                          # NLI cross-encoder, ~0.1с (было 6-12с)

@@ -52,6 +52,10 @@ mac-mlx = [
     "torchvision>=0.17.0",
     "coremltools>=9.0",
 ]
+windows-reranker = [
+    "sentence-transformers>=3.0.0",
+    "torch>=2.2.0",
+]
 parsers = [
     "docling>=2.101.0",
 ]

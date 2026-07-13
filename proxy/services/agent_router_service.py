@@ -25,6 +25,8 @@ import os
 import re
 from typing import Any, Callable, Optional
 
+from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
+
 logger = logging.getLogger(__name__)
 
 
@@ -306,7 +308,7 @@ def _router_runtime_config() -> dict[str, Any]:
 
     if explicit_base:
         base = explicit_base
-        model = explicit_model or openai_model or os.getenv("MLX_MODEL", "mlx-community/Qwen3.5-9B-MLX-4bit")
+        model = explicit_model or openai_model or os.getenv("MLX_MODEL", DEFAULT_LOCAL_MLX_MODEL)
         key = explicit_key or openai_key or "local"
     elif openai_base and openai_key:
         base = openai_base
@@ -315,7 +317,7 @@ def _router_runtime_config() -> dict[str, Any]:
     else:
         mlx_url = os.getenv("MLX_URL", "http://127.0.0.1:8080").rstrip("/")
         base = mlx_url if mlx_url.endswith("/v1") else f"{mlx_url}/v1"
-        model = explicit_model or os.getenv("MLX_MODEL", os.getenv("LLM_MODEL", "mlx-community/Qwen3.5-9B-MLX-4bit"))
+        model = explicit_model or os.getenv("MLX_MODEL", os.getenv("LLM_MODEL", DEFAULT_LOCAL_MLX_MODEL))
         key = explicit_key or "local"
 
     try:

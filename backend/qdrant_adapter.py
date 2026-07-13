@@ -21,6 +21,7 @@ import sqlite3
 import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -320,6 +321,27 @@ def _sparse_vector_name() -> str:
     return os.getenv("RAG_SPARSE_VECTOR_NAME", SPARSE_VECTOR_NAME).strip() or SPARSE_VECTOR_NAME
 
 
+def _field(value: Any, name: str, default: Any = None) -> Any:
+    if isinstance(value, Mapping):
+        return value.get(name, default)
+    return getattr(value, name, default)
+
+
+def _named_collection_layout(info: Any, *, vector_size: int) -> tuple[bool, int]:
+    """Return named dense+sparse compatibility and point count for a collection."""
+    config = _field(info, "config", {})
+    params = _field(config, "params", {})
+    vectors = _field(params, "vectors", {})
+    sparse_vectors = _field(params, "sparse_vectors", {})
+    points_count = int(_field(info, "points_count", 0) or 0)
+    if not isinstance(vectors, Mapping) or not isinstance(sparse_vectors, Mapping):
+        return False, points_count
+    dense = vectors.get(_dense_vector_name())
+    dense_size = int(_field(dense, "size", 0) or 0) if dense is not None else 0
+    compatible = dense_size == vector_size and _sparse_vector_name() in sparse_vectors
+    return compatible, points_count
+
+
 _MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.{2,160})$")
 _NUM_HEADING_RE = re.compile(r"^(\d+(?:\.\d+){0,4})[.\s]+([А-ЯЁA-Z].{1,150})$")
 _DATA_URI_RE = re.compile(
@@ -533,8 +555,16 @@ class EmbedClient:
         ``embedding_model`` explicitly.  Missing or incompatible metadata is a
         safety failure, not a reason to score Qwen and BGE vectors together.
         """
-        actual_model = str(payload.get("embedding_model") or "").strip()
+        reported_embedding_model = str(payload.get("embedding_model") or "").strip()
+        reported_openai_model = str(payload.get("model") or "").strip()
+        # Ollama's OpenAI-compatible endpoint selects the requested model and
+        # reports it in the standard ``model`` field.  LES-owned MLX/CoreML
+        # hosts must keep reporting the stronger explicit contract fields.
+        ollama_contract = self.backend == "ollama" and bool(reported_openai_model)
+        actual_model = reported_embedding_model or (reported_openai_model if ollama_contract else "")
         actual_backend = str(payload.get("embedding_backend") or "").strip().lower()
+        if not actual_backend and ollama_contract:
+            actual_backend = "ollama"
         expected = self._normalise_model_id(self.model)
         actual = self._normalise_model_id(actual_model)
         if not actual_model:
@@ -1124,10 +1154,29 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             if self._collection_ready:
                 return
             created = False
+            collection_info = None
             try:
-                await self.aclient.get_collection(self.collection_name)
+                collection_info = await self.aclient.get_collection(self.collection_name)
             except Exception:
                 logger.info(f"[INIT] Создаём коллекцию {self.collection_name}")
+            if collection_info is not None and _qdrant_schema_mode() == "named":
+                compatible, points_count = _named_collection_layout(
+                    collection_info,
+                    vector_size=self.vector_size,
+                )
+                if not compatible:
+                    if points_count:
+                        raise EmbeddingContractError(
+                            f"collection {self.collection_name} has {points_count} points in an "
+                            "incompatible vector schema; explicit migration is required"
+                        )
+                    logger.warning(
+                        "[INIT] Пересоздаём пустую legacy-коллекцию %s как named dense+sparse",
+                        self.collection_name,
+                    )
+                    await self.aclient.delete_collection(self.collection_name)
+                    collection_info = None
+            if collection_info is None:
                 if _qdrant_schema_mode() == "named":
                     await self.aclient.create_collection(
                         collection_name=self.collection_name,
@@ -1151,7 +1200,10 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                         ),
                     )
                 created = True
-            if created:
+            if created or (
+                collection_info is not None
+                and _named_collection_layout(collection_info, vector_size=self.vector_size)[1] == 0
+            ):
                 try:
                     write_index_contract(replace=False)
                 except FileExistsError:

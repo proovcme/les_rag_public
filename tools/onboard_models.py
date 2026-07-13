@@ -21,6 +21,8 @@ import argparse
 import sys
 from pathlib import Path
 
+from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
+
 ROOT = Path(__file__).resolve().parents[1]
 
 # Env keys that name a Hugging Face repo we want present locally on first run.
@@ -29,7 +31,7 @@ MODEL_ENV_KEYS = ("MLX_MODEL", "LLM_MODEL", "EMBEDDING_MODEL")
 
 # Fallbacks if the key is absent from both .env and env.example.
 DEFAULTS = {
-    "MLX_MODEL": "mlx-community/Qwen3.5-4B-OptiQ-4bit",
+    "MLX_MODEL": DEFAULT_LOCAL_MLX_MODEL,
     "EMBEDDING_MODEL": "Qwen/Qwen3-Embedding-0.6B",
 }
 

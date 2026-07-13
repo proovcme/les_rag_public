@@ -192,7 +192,7 @@ def test_selected_dataset_ids_preempt_glossary_deterministic_final():
     assert "dataset_filter=req.dataset_filter or \"\", candidate=_cand" not in source
 
 
-def test_notebook_study_prepares_reader_memory_and_keeps_artifact_visible():
+def test_notebook_study_uses_ready_navigation_without_query_time_artifact_fanout():
     source = inspect.getsource(chat_router._run_chat) + inspect.getsource(
         chat_evidence_application_service._execute_chat_evidence_application
     )
@@ -200,7 +200,9 @@ def test_notebook_study_prepares_reader_memory_and_keeps_artifact_visible():
     assert "_prepare_notebook_reader_memory" in source
     assert "dataset_reader_prepare" in source
     assert "inventory_requested or study_requested" in source
-    assert 'LES_NOTEBOOK_STUDY_ARTIFACT_VISIBLE", True' in source
+    assert '"reason": "model_first_single_rrf"' in source
+    assert "LES_NOTEBOOK_STUDY_ARTIFACT_VISIBLE" not in source
+    assert "build_notebook_study_pack(" not in source
     assert "used_for_notebook_study" in source
     assert "question=req.question" in source
     assert "dataset_brief_for_model_v1" in source
@@ -405,11 +407,11 @@ def test_chat_adds_metadb_inventory_context_without_project_summary_hijack():
     assert "is_project_inventory_query(req.question)" in source
     assert "format_project_inventory_prompt" in source
     assert "format_project_inventory_context" in source
-    assert "КАРТА РЕЕСТРА ДАТАСЕТА" in source
+    assert 'retrieval_trace["project_inventory"]' in source
+    assert 'f"{project_inventory_prompt}\\n\\n"' in source
     assert "project_inventory_artifact_text" in source
-    assert "Полный реестр файлов доступен отдельным артефактом/project_inventory" in source
-    assert "без markdown-таблиц" in source
-    assert "generation_budget = max(generation_budget, 2048)" in source
+    assert 'response["project_inventory"] = project_inventory_payload or {}' in source
+    assert "generation_budget = max(generation_budget, 2048)" not in source
     assert "Опись файлов датасета (MetaDB documents)" in source
     assert "inventory_requested = bool" in source
     assert "study_requested or inventory_requested" in source
@@ -419,11 +421,12 @@ def test_chat_adds_metadb_inventory_context_without_project_summary_hijack():
     assert 'validation_context = ""' in source
     assert 'response["project_inventory"] = project_inventory_payload or {}' in source
     assert 'response["notebook_artifact"]' in source
-    assert 'LES_NOTEBOOK_STUDY_ARTIFACT_VISIBLE' in source
+    assert '"reason": "model_first_single_rrf"' in source
+    assert "LES_NOTEBOOK_STUDY_ARTIFACT_VISIBLE" not in source
     assert 'if project_inventory_prompt:' in source
     assert '"title": "Реестр файлов"' in source
-    assert "Не выводи наружу служебные слова" in source
-    assert "evidence, dataset, датасет" in source
+    assert 'retrieval_trace["prompt_layers"]' in source
+    assert '"inventory_navigation"' in source
 
 
 def test_chat_ui_renders_clickable_project_inventory_artifact():

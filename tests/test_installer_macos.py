@@ -12,8 +12,8 @@ def test_resolve_models_reads_env_and_skips_non_hf(tmp_path, monkeypatch):
     env.write_text(
         "\n".join(
             [
-                "MLX_MODEL=mlx-community/Qwen3.5-4B-OptiQ-4bit",
-                "LLM_MODEL=mlx-community/Qwen3.5-4B-OptiQ-4bit  # same as MLX",
+                "MLX_MODEL=mlx-community/Qwen3.5-9B-OptiQ-4bit",
+                "LLM_MODEL=mlx-community/Qwen3.5-9B-OptiQ-4bit  # same as MLX",
                 "EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B",
                 "RAG_OCR_MODEL=gemma4:12b",  # ollama tag — not an HF repo
                 "COREML_EMBED_MODEL=artifacts/coreml/x.mlpackage",  # local path
@@ -27,7 +27,7 @@ def test_resolve_models_reads_env_and_skips_non_hf(tmp_path, monkeypatch):
 
     # Dedup of MLX/LLM, ollama tag and local path dropped.
     assert models == [
-        "mlx-community/Qwen3.5-4B-OptiQ-4bit",
+        "mlx-community/Qwen3.5-9B-OptiQ-4bit",
         "Qwen/Qwen3-Embedding-0.6B",
     ]
 
@@ -35,7 +35,7 @@ def test_resolve_models_reads_env_and_skips_non_hf(tmp_path, monkeypatch):
 def test_resolve_models_falls_back_to_defaults(tmp_path, monkeypatch):
     monkeypatch.setattr(onboard_models, "ROOT", tmp_path)  # no .env, no env.example
     models = onboard_models.resolve_models()
-    assert "mlx-community/Qwen3.5-4B-OptiQ-4bit" in models
+    assert "mlx-community/Qwen3.5-9B-OptiQ-4bit" in models
     assert "Qwen/Qwen3-Embedding-0.6B" in models
 
 
@@ -53,7 +53,7 @@ def test_onboard_models_skips_ollama_provider_on_windows_bootstrap(tmp_path, mon
         "\n".join(
             [
                 "LES_LLM_PROVIDER=ollama",
-                "MLX_MODEL=mlx-community/Qwen3.5-4B-OptiQ-4bit",
+                "MLX_MODEL=mlx-community/Qwen3.5-9B-OptiQ-4bit",
                 "OLLAMA_MODEL=qwen3.5:9b",
             ]
         ),

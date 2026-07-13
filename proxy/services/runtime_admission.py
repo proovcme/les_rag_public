@@ -44,19 +44,26 @@ def _env_float(name: str, default: float) -> float:
 
 
 def chat_min_free_gb() -> float:
-    return _env_float("LES_CHAT_MIN_FREE_GB", 8.0)
+    # This is the hard stop for an admitted local generation, not the GREEN
+    # memory-profile boundary.  A loaded MLX model legitimately reduces
+    # ``available`` RAM below 8 GB on a 24 GB Mac; using the profile boundary
+    # here made LES load the model and then reject the same request.
+    return _env_float("LES_CHAT_MIN_FREE_GB", 4.0)
 
 
 def chat_max_swap_pct() -> float:
-    return _env_float("LES_CHAT_MAX_SWAP_PCT", 60.0)
+    # Match the MLX host's own hard-pressure stop.  YELLOW/RED pressure remains
+    # visible in telemetry and still prevents concurrent indexing, but does not
+    # make a single already-admitted local chat impossible.
+    return _env_float("LES_CHAT_MAX_SWAP_PCT", 85.0)
 
 
 def chat_max_swap_used_gb() -> float:
-    return _env_float("LES_CHAT_MAX_SWAP_USED_GB", 6.0)
+    return _env_float("LES_CHAT_MAX_SWAP_USED_GB", 12.0)
 
 
 def chat_swap_relief_free_gb() -> float:
-    return _env_float("LES_CHAT_SWAP_RELIEF_FREE_GB", 10.0)
+    return _env_float("LES_CHAT_SWAP_RELIEF_FREE_GB", 5.0)
 
 
 def chat_block_active_jobs() -> bool:

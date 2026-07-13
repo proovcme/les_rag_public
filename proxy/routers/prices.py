@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from proxy.security import require_user
 from proxy.services import fgis_price_fetch_service as pf
@@ -37,6 +37,28 @@ class PriceImport(BaseModel):
     name: str                       # имя книги (stem parquet), напр. spb_2kv2025
     region: Optional[str] = None
     quarter: Optional[str] = None
+
+
+class PriceLookupBatch(BaseModel):
+    codes: list[str] = Field(min_length=1, max_length=500)
+    book: Optional[str] = None
+    method: str = Field(default="index", pattern="^(index|base)$")
+
+    @field_validator("codes")
+    @classmethod
+    def normalize_codes(cls, values: list[str]) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+        for raw in values:
+            code = str(raw or "").strip()
+            if not code:
+                raise ValueError("Пустой код ресурса")
+            if len(code) > 120:
+                raise ValueError("Код ресурса слишком длинный")
+            if code not in seen:
+                result.append(code)
+                seen.add(code)
+        return result
 
 
 @router.get("/books")
@@ -69,6 +91,41 @@ async def prices_lookup(
         "method": method,
         "price": rec.get("price_current_eff") if method == "index" else rec.get("price_base"),
         "row": rec,
+    }
+
+
+@router.post("/lookup-batch")
+async def prices_lookup_batch(req: PriceLookupBatch, _user=Depends(require_user)):
+    """Одна загрузка книги и один пакет точных цен для расчётного хода модели."""
+    path = _resolve_book(req.book)
+    pb = await asyncio.to_thread(fps.get_pricebook, str(path))
+    records = await asyncio.to_thread(pb.lookup_many, req.codes)
+    rows: list[dict[str, Any]] = []
+    found = 0
+    for code in req.codes:
+        rec = records.get(code)
+        if rec is None:
+            rows.append({"found": False, "code": code})
+            continue
+        found += 1
+        rows.append(
+            {
+                "found": True,
+                "code": code,
+                "price": rec.get("price_current_eff") if req.method == "index" else rec.get("price_base"),
+                "row": rec,
+            }
+        )
+    return {
+        "schema": "fgis_price_lookup_batch_v1",
+        "book": path.stem,
+        "region": pb.region,
+        "quarter": pb.quarter,
+        "method": req.method,
+        "requested": len(req.codes),
+        "found": found,
+        "missing": len(req.codes) - found,
+        "rows": rows,
     }
 
 

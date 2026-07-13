@@ -405,6 +405,72 @@ def build_header(
 
                     asyncio.create_task(_load_settings())
                     ui.separator().style("border-color:var(--border);margin:12px 0;")
+                    ui.label("Обновление ЛЕС").style(
+                        "color:var(--dim);font-size:.65rem;font-weight:900;text-transform:uppercase;"
+                    )
+                    update_status = ui.label(
+                        "Проверка выполняется только по нажатию кнопки."
+                    ).style("color:var(--dim);font-size:.68rem;width:100%;")
+
+                    async def _check_application_update() -> None:
+                        from sovushka.state import api_get
+
+                        update_button.disable()
+                        update_status.set_text("Проверяю опубликованные версии…")
+                        result = await api_get("/api/update/check")
+                        if not isinstance(result, dict):
+                            update_status.set_text(last_api_error_text("Не удалось проверить обновление"))
+                            return
+                        if not result.get("available"):
+                            update_status.set_text(
+                                f"Установлена актуальная версия {result.get('current_version', '')}."
+                            )
+                            return
+                        latest = result.get("latest_version", "?")
+                        if not result.get("package_complete"):
+                            update_status.set_text(
+                                f"Найдена версия {latest}, но пакет обновления опубликован не полностью."
+                            )
+                            return
+                        if not result.get("install_supported"):
+                            update_status.set_text(
+                                f"Найдена версия {latest}; установка этой кнопкой доступна в Windows."
+                            )
+                            return
+                        update_status.set_text(f"Доступна версия {latest}.")
+                        update_button.enable()
+
+                    async def _install_application_update() -> None:
+                        from sovushka.state import api_post
+
+                        update_button.disable()
+                        update_status.set_text("Скачиваю и проверяю обновление…")
+                        result = await api_post("/api/update/install", {})
+                        if not isinstance(result, dict):
+                            update_status.set_text(last_api_error_text("Не удалось запустить обновление"))
+                            return
+                        update_status.set_text(
+                            "Проверенный установщик запущен. Завершите обновление в открывшемся окне."
+                        )
+                        ui.notify("Установщик обновления запущен", type="positive")
+
+                    with ui.row().classes("w-full gap-2").style("margin:6px 0 12px;"):
+                        ui.button(
+                            "Проверить обновление",
+                            icon="o_system_update_alt",
+                            on_click=_check_application_update,
+                        ).props("no-caps flat").style(
+                            "border:1px solid var(--border);color:var(--accent);background:transparent;"
+                        )
+                        update_button = ui.button(
+                            "Обновить",
+                            icon="o_download",
+                            on_click=_install_application_update,
+                        ).props("no-caps disable").style(
+                            "border:1px solid var(--accent);color:var(--accent);background:transparent;"
+                        )
+
+                    ui.separator().style("border-color:var(--border);margin:12px 0;")
                     ui.label("⚠ Опасная зона").style("color:var(--err);font-size:.65rem;font-weight:900;text-transform:uppercase;")
 
                     async def _reset_all():

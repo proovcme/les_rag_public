@@ -6,6 +6,23 @@ import time
 import pytest
 
 
+def test_mlx_memory_guard_ignores_stale_swap_when_ram_has_recovered(monkeypatch):
+    mlx_host = importlib.import_module("mlx_host")
+    monkeypatch.setattr(mlx_host, "SWAP_RELIEF_FREE_GB", 5.0)
+    monkeypatch.setattr(mlx_host, "SWAP_STALE_MAX_USED_GB", 12.0)
+
+    assert mlx_host._stale_swap_allocation(
+        ram_free_gb=6.7,
+        swap_used_gb=3.8,
+        swap_pct=87.9,
+    ) is True
+    assert mlx_host._stale_swap_allocation(
+        ram_free_gb=3.9,
+        swap_used_gb=3.8,
+        swap_pct=87.9,
+    ) is False
+
+
 def test_unload_peer_for_val_unloads_main(monkeypatch):
     mlx_host = importlib.import_module("mlx_host")
 
@@ -229,6 +246,36 @@ async def test_validate_answer_rules_backend_verified(monkeypatch):
 
     assert result["status"] == "VERIFIED"
     assert result["backend"] == "rules"
+
+
+def test_validator_backend_defaults_to_rules(monkeypatch):
+    mlx_host = importlib.import_module("mlx_host")
+    monkeypatch.delenv("VALIDATOR_BACKEND", raising=False)
+
+    assert mlx_host._validator_backend_name() == "rules"
+
+
+@pytest.mark.asyncio
+async def test_switch_model_rejects_active_generation(monkeypatch):
+    mlx_host = importlib.import_module("mlx_host")
+
+    class BusyEngine:
+        def is_busy(self):
+            return True
+
+        def force_unload(self):
+            raise AssertionError("active model must not be unloaded")
+
+    monkeypatch.setattr(mlx_host, "main_engine", BusyEngine())
+    monkeypatch.setattr(mlx_host, "_llm_policy_lock", None)
+    monkeypatch.setattr(mlx_host, "_llm_policy_lock_loop", None)
+
+    with pytest.raises(mlx_host.HTTPException) as exc:
+        await mlx_host.switch_model(
+            mlx_host.SwitchModelRequest(target="main", model="new-model")
+        )
+
+    assert exc.value.status_code == 409
 
 
 @pytest.mark.asyncio

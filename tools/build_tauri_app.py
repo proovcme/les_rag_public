@@ -15,6 +15,40 @@ from tools.build_release_artifacts import ROOT, iter_files
 TAURI_ROOT = ROOT / "desktop" / "tauri"
 SRC_TAURI = TAURI_ROOT / "src-tauri"
 RESOURCES = SRC_TAURI / "resources"
+DESKTOP_VERSION_MAJOR = 5
+DESKTOP_VERSION_MINOR = 1
+
+
+def desktop_semver(version: str) -> str:
+    """Map the four-part LES runtime version to Tauri's three-part SemVer.
+
+    LES uses ``0.milestone.feature.patch``. The desktop shell has its own
+    stable product line and advances with the LES patch: ``5.1.patch``.
+    Three-part versions remain accepted for standalone shell builds.
+    """
+    parts = version.split(".")
+    if len(parts) == 3 and all(part.isdigit() for part in parts):
+        return version
+    if len(parts) == 4 and all(part.isdigit() for part in parts):
+        return f"{DESKTOP_VERSION_MAJOR}.{DESKTOP_VERSION_MINOR}.{int(parts[-1])}"
+    raise ValueError(f"version must be numeric X.Y.Z or W.X.Y.Z, got {version!r}")
+
+
+def npm_executable(platform: str | None = None) -> str:
+    """Resolve npm without relying on POSIX executable semantics.
+
+    The Windows Node installer exposes ``npm.cmd``.  ``subprocess`` does not
+    reliably resolve the bare ``npm`` command through PATHEXT when shell=False,
+    so a release build from an ordinary PowerShell otherwise fails after the
+    expensive runtime staging step.
+    """
+    target = platform or os.sys.platform
+    candidates = ("npm.cmd", "npm.exe", "npm") if target.startswith("win") else ("npm",)
+    for candidate in candidates:
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+    raise RuntimeError("npm executable not found; install Node.js before building Tauri")
 
 
 def stage_runtime() -> int:
@@ -53,11 +87,15 @@ def set_version(version: str) -> None:
 
 
 def build(version: str, bundles: str | None) -> Path:
-    set_version(version)
+    desktop_version = desktop_semver(version)
+    set_version(desktop_version)
+    if desktop_version != version:
+        print(f"[tauri] LES {version} -> desktop {desktop_version}")
     count = stage_runtime()
     print(f"[tauri] staged clean runtime: {count} files")
-    subprocess.run(["npm", "install"], cwd=TAURI_ROOT, check=True)
-    command = ["npm", "run", "tauri", "--", "build"]
+    npm = npm_executable()
+    subprocess.run([npm, "install"], cwd=TAURI_ROOT, check=True)
+    command = [npm, "run", "tauri", "--", "build"]
     tauri_bundles = bundles
     if os.sys.platform == "darwin" and bundles:
         requested = [item.strip() for item in bundles.split(",") if item.strip()]

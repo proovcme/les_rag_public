@@ -26,10 +26,15 @@ def test_tauri_rust_shell_owns_only_lifecycle_and_navigation():
 
     assert 'const UI_URL: &str = "http://127.0.0.1:8051/les"' in source
     assert 'windows-light-state.json' in source
+    assert 'std::env::var_os("LOCALAPPDATA")' in source
+    assert 'join("LES")' in source
     assert 'payload.get("ui_url")' in source
     assert 'response.contains("\\\"service\\\":\\\"sovushka\\\"")' in source
     assert 'env("LES_TAURI_SHELL", "1")' in source
     assert 'env("LES_TAURI_ACTION", action)' in source
+    assert 'bootstrap-status.json' in source
+    assert '.get("install_url")' in source
+    assert 'creation_flags(0x0800_0000)' in source
     assert '"restart" => run_action' in source
     assert '"stop" => run_action' in source
     assert "search_norm" not in source
@@ -61,6 +66,11 @@ def test_tauri_runtime_stage_excludes_recursive_shell_and_local_ui_state(tmp_pat
     assert build_release_artifacts.should_exclude(nicegui_file)
 
 
+def test_release_stage_excludes_agent_and_runtime_temporary_files():
+    assert build_release_artifacts.should_exclude(ROOT / ".codex_tmp" / "private-probe.json")
+    assert build_release_artifacts.should_exclude(ROOT / "tmp" / "runtime-diagnostic.txt")
+
+
 def test_legacy_macos_builder_delegates_to_tauri():
     source = (ROOT / "tools/build_macos_app.py").read_text(encoding="utf-8")
     assert "from tools.build_tauri_app import build" in source
@@ -72,3 +82,21 @@ def test_windows_builder_never_emits_old_shell_exe_on_non_windows():
     assert 'build_tauri(version, "nsis")' in source
     assert "LES-windows-tauri-source" in source
     assert "makensis" not in source
+
+
+def test_tauri_builder_resolves_windows_npm_cmd(monkeypatch):
+    seen: list[str] = []
+
+    def fake_which(name: str):
+        seen.append(name)
+        return r"C:\Program Files\nodejs\npm.cmd" if name == "npm.cmd" else None
+
+    monkeypatch.setattr(build_tauri_app.shutil, "which", fake_which)
+
+    assert build_tauri_app.npm_executable("win32").endswith("npm.cmd")
+    assert seen == ["npm.cmd"]
+
+
+def test_tauri_builder_maps_four_part_les_version_to_desktop_semver():
+    assert build_tauri_app.desktop_semver("0.24.0.401") == "5.1.401"
+    assert build_tauri_app.desktop_semver("5.1.401") == "5.1.401"

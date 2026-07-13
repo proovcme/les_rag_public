@@ -38,7 +38,7 @@ if ! uv sync --quiet --group coreml; then
     exit 1
 fi
 
-export MLX_MODEL="${MLX_MODEL:-mlx-community/Qwen3.5-9B-MLX-4bit}"
+export MLX_MODEL="${MLX_MODEL:-mlx-community/Qwen3.5-9B-OptiQ-4bit}"
 export MLX_VAL_MODEL="${MLX_VAL_MODEL:-mlx-community/Qwen3-4B-Instruct-2507-4bit}"
 
 echo "[MLX] Запускаем MLX Host v3 для Л.Е.С...."

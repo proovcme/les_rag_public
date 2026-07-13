@@ -19,7 +19,7 @@ from typing import Any
 
 
 DEFAULT_ROOT = Path(os.getenv("LES_CHAT_ATTACHMENT_ROOT", "storage/chat_attachments"))
-DEFAULT_MAX_AGE_SEC = 6 * 3600
+DEFAULT_MAX_AGE_SEC = int(os.getenv("LES_CHAT_ATTACHMENT_MAX_AGE_SEC", str(7 * 24 * 3600)))
 _ID_RE = re.compile(r"^read_[0-9a-f]{12}$")
 
 

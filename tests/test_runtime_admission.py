@@ -64,6 +64,32 @@ def test_chat_admission_allows_realistic_stale_macos_swap_default():
     assert result.memory_state == "GREEN"
 
 
+def test_chat_admission_allows_loaded_local_model_on_24gb_mac_default(monkeypatch):
+    """The hard guard must not reject the request after MLX consumed its lease.
+
+    Memory pressure is still reported as CRITICAL and the MLX host keeps its
+    own 85% swap hard stop; this only separates operator state from admission.
+    """
+    monkeypatch.setenv("LES_LLM_PROVIDER", "mlx")
+    for name in (
+        "LES_CHAT_MIN_FREE_GB",
+        "LES_CHAT_MAX_SWAP_PCT",
+        "LES_CHAT_MAX_SWAP_USED_GB",
+        "LES_CHAT_SWAP_RELIEF_FREE_GB",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    result = evaluate_chat_admission(
+        current_mode={"mode": "chat"},
+        metrics_cache={"ram_free_gb": 4.8, "swap_used_gb": 2.4, "swap_pct": 75.7},
+        active_jobs=0,
+        llm_available=True,
+    )
+
+    assert result.allowed is True
+    assert result.memory_state == "CRITICAL"
+
+
 def test_chat_admission_blocks_indexing_mode_before_memory_checks(monkeypatch):
     monkeypatch.setenv("LES_LLM_PROVIDER", "mlx")
     monkeypatch.setenv("EMBED_BACKEND", "sentence_transformers")

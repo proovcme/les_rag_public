@@ -421,6 +421,33 @@ async def test_retrieve_chat_chunks_reranks_pool_when_available():
 
 
 @pytest.mark.asyncio
+async def test_retrieve_chat_chunks_reranks_two_candidate_pool_when_available():
+    class TwoChunkBackend(FakeBackend):
+        async def retrieve(self, question, dataset_ids=None, top_k=5, doc_filter=None):
+            return [Chunk("first", "first.pdf", 0.9), Chunk("second", "second.pdf", 0.8)]
+
+    class TwoChunkReranker:
+        def __init__(self, mlx_url, mode):
+            pass
+
+        async def rerank(self, question, chunks, top_k=5):
+            return [SimpleNamespace(text=chunks[1]["text"], metadata=chunks[1]["metadata"])]
+
+    chunks = await retrieve_chat_chunks(
+        question="second",
+        dataset_ids=None,
+        rag_backend=TwoChunkBackend(),
+        reranker_enabled=True,
+        reranker_available=True,
+        reranker_cls=TwoChunkReranker,
+        mlx_url="http://reranker",
+        logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+    )
+
+    assert chunks[0].content == "second"
+
+
+@pytest.mark.asyncio
 async def test_retrieve_chat_chunks_reranker_receives_a_smaller_top_k():
     backend = FakeBackend()
     seen_top_k = []

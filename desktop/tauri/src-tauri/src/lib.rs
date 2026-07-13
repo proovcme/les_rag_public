@@ -50,14 +50,22 @@ fn endpoint_ready(url: &str) -> bool {
 
 fn runtime_urls(_app: &AppHandle) -> (String, String) {
     #[cfg(target_os = "windows")]
-    if let Ok(resources) = resource_dir(_app) {
-        let state = resources.join("runtime/logs/windows-light-state.json");
-        if let Ok(text) = std::fs::read_to_string(state) {
-            if let Ok(payload) = serde_json::from_str::<serde_json::Value>(&text) {
-                let ui = payload.get("ui_url").and_then(|value| value.as_str());
-                let health = payload.get("ui_health_url").and_then(|value| value.as_str());
-                if let (Some(ui), Some(health)) = (ui, health) {
-                    return (ui.to_string(), health.to_string());
+    {
+        let persistent_state = std::env::var_os("LES_WINDOWS_STATE_ROOT")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("LOCALAPPDATA").map(|path| PathBuf::from(path).join("LES")))
+            .map(|root| root.join("logs/windows-light-state.json"));
+        let legacy_state = resource_dir(_app)
+            .ok()
+            .map(|resources| resources.join("runtime/logs/windows-light-state.json"));
+        for state in persistent_state.into_iter().chain(legacy_state) {
+            if let Ok(text) = std::fs::read_to_string(state) {
+                if let Ok(payload) = serde_json::from_str::<serde_json::Value>(&text) {
+                    let ui = payload.get("ui_url").and_then(|value| value.as_str());
+                    let health = payload.get("ui_health_url").and_then(|value| value.as_str());
+                    if let (Some(ui), Some(health)) = (ui, health) {
+                        return (ui.to_string(), health.to_string());
+                    }
                 }
             }
         }
@@ -74,6 +82,45 @@ fn resource_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path().resource_dir().map_err(|error| error.to_string())
 }
 
+#[cfg(target_os = "windows")]
+fn bootstrap_status_path() -> Option<PathBuf> {
+    std::env::var_os("LES_WINDOWS_STATE_ROOT")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("LOCALAPPDATA").map(|path| PathBuf::from(path).join("LES")))
+        .map(|root| root.join("logs/bootstrap-status.json"))
+}
+
+fn bootstrap_failure_message(status: &std::process::ExitStatus) -> String {
+    #[cfg(target_os = "windows")]
+    if let Some(path) = bootstrap_status_path() {
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            if let Ok(payload) = serde_json::from_str::<serde_json::Value>(&text) {
+                let message = payload.get("message").and_then(|value| value.as_str()).unwrap_or("");
+                let code = payload.get("code").and_then(|value| value.as_str()).unwrap_or("");
+                let install_url = payload
+                    .get("install_url")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                let log_path = payload.get("log_path").and_then(|value| value.as_str()).unwrap_or("");
+                if !message.is_empty() {
+                    let mut lines = vec![message.to_string()];
+                    if !code.is_empty() {
+                        lines.push(format!("Код: {code}"));
+                    }
+                    if !install_url.is_empty() {
+                        lines.push(format!("Установка: {install_url}"));
+                    }
+                    if !log_path.is_empty() {
+                        lines.push(format!("Журнал: {log_path}"));
+                    }
+                    return lines.join("\n");
+                }
+            }
+        }
+    }
+    format!("bootstrap завершился с кодом {status}")
+}
+
 fn bootstrap_command(app: &AppHandle, action: &str) -> Result<Command, String> {
     let resources = resource_dir(app)?;
 
@@ -86,9 +133,12 @@ fn bootstrap_command(app: &AppHandle, action: &str) -> Result<Command, String> {
 
     #[cfg(target_os = "windows")]
     let mut command = {
+        use std::os::windows::process::CommandExt;
+
         let mut value = Command::new("powershell.exe");
         value.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]);
         value.arg(resources.join("runtime/installers/windows/app/bootstrap.ps1"));
+        value.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         value
     };
 
@@ -115,7 +165,7 @@ fn run_bootstrap(app: &AppHandle, action: &str) -> Result<(), String> {
     if status.success() {
         Ok(())
     } else {
-        Err(format!("bootstrap завершился с кодом {status}"))
+        Err(bootstrap_failure_message(&status))
     }
 }
 
@@ -128,7 +178,14 @@ fn show_main(app: &AppHandle) {
 
 fn show_error(app: &AppHandle, message: &str) {
     if let Some(window) = app.get_webview_window("main") {
-        let safe = message.replace('\\', "\\\\").replace('`', "\\`").replace('\n', "<br>");
+        let safe = message
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('\\', "\\\\")
+            .replace('`', "\\`")
+            .replace("${", "\\${")
+            .replace('\n', "<br>");
         let _ = window.eval(format!(
             "document.querySelector('main').innerHTML = `<div class='mark'>!</div><h1>ЛЕС не запустился</h1><p>{safe}</p>`;"
         ));

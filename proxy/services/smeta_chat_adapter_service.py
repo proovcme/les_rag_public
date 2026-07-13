@@ -11,6 +11,7 @@ from backend.inference.routing import is_cloud_provider
 from proxy.services.context_expander_service import expand_context_windows
 from proxy.services.estimate_math_service import parse_ru_number, quantity_sum_audit
 from proxy.services.kot_service import analyze_question
+from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
 from proxy.services.notebook_service import dataset_memory_prompt_excerpt
 from proxy.services.project_summary_service import resolve_inventory_file_reference
 from proxy.services.query_router import route_query
@@ -159,17 +160,18 @@ def _mlx_runtime() -> LlmRuntime:
     model = (
         os.getenv("LLM_MODEL", "").strip()
         or os.getenv("MLX_MODEL", "").strip()
-        or "mlx-community/Qwen3.5-9B-MLX-4bit"
+        or DEFAULT_LOCAL_MLX_MODEL
     )
     return LlmRuntime("mlx", base_url, _join_openai_path(base_url, "/chat/completions"), model, "", True)
 
 def _smeta_model_runtime(env_name: str) -> LlmRuntime:
     """Runtime for smeta model-owned steps.
 
-    Explicit LES_SMETA_* provider still wins. Without explicit smeta override,
-    keep smeta model-owned steps on local MLX even when the global chat runtime is
-    cloud-backed. The model still owns workflow/lookup/choice/final text; this
-    resolver only prevents API-key presence from silently moving smeta off-local.
+    Explicit LES_SMETA_* provider still wins. Without an override, follow the
+    configured *local* runtime (MLX on macOS, Ollama/Lemonade on Windows).  A
+    cloud-backed global chat still does not silently move smeta off-local unless
+    the document consent rule below permits it.  This is transport selection;
+    the model continues to own workflow/lookup/choice/final text.
     """
     provider = (
         os.getenv(env_name, "").strip().lower()
@@ -189,7 +191,23 @@ def _smeta_model_runtime(env_name: str) -> LlmRuntime:
                     configured.supports_validation,
                 )
             return configured
-    if provider in {"", "local", "mlx"}:
+    if provider in {"", "local"}:
+        configured = _llm_runtime()
+        runtime = configured if not is_cloud_provider(configured.provider) else _mlx_runtime()
+        if env_name == "LES_SMETA_DOCUMENT_PROVIDER":
+            document_model = os.getenv("LES_SMETA_DOCUMENT_MODEL", "").strip()
+            if document_model.startswith("mlx-") or document_model.startswith("mlx/"):
+                mlx_runtime = _mlx_runtime()
+                return LlmRuntime(
+                    mlx_runtime.provider,
+                    mlx_runtime.base_url,
+                    mlx_runtime.chat_url,
+                    document_model,
+                    mlx_runtime.api_key,
+                    mlx_runtime.supports_validation,
+                )
+        return runtime
+    if provider == "mlx":
         runtime = _mlx_runtime()
         if env_name == "LES_SMETA_DOCUMENT_PROVIDER":
             document_model = os.getenv("LES_SMETA_DOCUMENT_MODEL", "").strip()

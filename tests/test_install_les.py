@@ -34,6 +34,19 @@ def test_init_env_can_create_env(tmp_path, monkeypatch):
     assert (tmp_path / ".env").read_text(encoding="utf-8") == "ADMIN_PASSWORD=example\n"
 
 
+def test_init_env_honors_persistent_env_path(tmp_path, monkeypatch):
+    runtime = tmp_path / "runtime"
+    state_env = tmp_path / "state" / ".env"
+    runtime.mkdir()
+    (runtime / "env.example").write_text("LES_LLM_PROVIDER=ollama\n", encoding="utf-8")
+    monkeypatch.setattr(install_les, "ROOT", runtime)
+    monkeypatch.setenv("LES_ENV_PATH", str(state_env))
+
+    assert install_les.init_env() == ".env created from env.example"
+    assert state_env.read_text(encoding="utf-8") == "LES_LLM_PROVIDER=ollama\n"
+    assert not (runtime / ".env").exists()
+
+
 def test_profile_checks_include_profile_result():
     checks = install_les.build_profile_checks("server-remote-model")
 

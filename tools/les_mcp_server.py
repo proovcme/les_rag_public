@@ -194,6 +194,61 @@ def les_price_lookup(code: str, book: str | None = None, method: str = "index") 
     }
 
 
+def les_price_lookup_batch(
+    codes: list[str], book: str | None = None, method: str = "index"
+) -> dict[str, Any]:
+    """Пакет точных цен ФГИС ЦС; одна книга читается один раз для всего расчётного хода."""
+    from pathlib import Path as _P
+    from proxy.services import fgis_price_service as fps
+
+    if method not in {"index", "base"}:
+        return {"schema": "fgis_price_lookup_batch_v1", "error": "method должен быть index или base"}
+    unique_codes = list(dict.fromkeys(str(code or "").strip() for code in codes if str(code or "").strip()))
+    if not unique_codes:
+        return {"schema": "fgis_price_lookup_batch_v1", "requested": 0, "found": 0, "missing": 0, "rows": []}
+    if len(unique_codes) > 500:
+        return {"schema": "fgis_price_lookup_batch_v1", "error": "не более 500 кодов за вызов"}
+    path = fps.resolve_pricebook_path(book, allow_scratch=bool(book))
+    if not path:
+        return {
+            "schema": "fgis_price_lookup_batch_v1",
+            "requested": len(unique_codes),
+            "found": 0,
+            "missing": len(unique_codes),
+            "rows": [{"found": False, "code": code} for code in unique_codes],
+            "note": "нет книг цен — импортируйте «Сплит-форму»",
+        }
+    pb = fps.get_pricebook(path)
+    records = pb.lookup_many(unique_codes)
+    rows: list[dict[str, Any]] = []
+    found = 0
+    for code in unique_codes:
+        rec = records.get(code)
+        if rec is None:
+            rows.append({"found": False, "code": code})
+            continue
+        found += 1
+        rows.append(
+            {
+                "found": True,
+                "code": code,
+                "price": rec.get("price_current_eff") if method == "index" else rec.get("price_base"),
+                "row": rec,
+            }
+        )
+    return {
+        "schema": "fgis_price_lookup_batch_v1",
+        "book": _P(path).stem,
+        "region": pb.region,
+        "quarter": pb.quarter,
+        "method": method,
+        "requested": len(unique_codes),
+        "found": found,
+        "missing": len(unique_codes) - found,
+        "rows": rows,
+    }
+
+
 def les_price_browse(query: str, book: str | None = None, limit: int = 20) -> dict[str, Any]:
     """Кандидаты ресурсов ФГИС по наименованию/коду; решение остаётся за моделью.
 
@@ -263,6 +318,7 @@ TOOLS: dict[str, tuple[str, Any]] = {
     "les_project_summary": ("Сводка проекта: ТЭП/стадии/состав", les_project_summary),
     "les_form_generate": ("Генерация формы: спецификация/ВОР/смета/АОСР", les_form_generate),
     "les_price_lookup": ("Цена ФГИС ЦС по коду ресурса (Сплит-форма)", les_price_lookup),
+    "les_price_lookup_batch": ("Пакет цен ФГИС ЦС по кодам ресурсов (один вызов)", les_price_lookup_batch),
     "les_price_browse": ("Кандидаты ресурсов ФГИС по наименованию/коду; без автопривязки", les_price_browse),
     "les_glossary": ("Что такое ВОР/КАЦ/ЛСР/КС: определение + деривация", les_glossary),
     "les_kac": ("КАЦ: ≥3 КП на материал → выбор экономичного + линии ЛСР", les_kac),

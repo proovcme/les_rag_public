@@ -793,7 +793,7 @@ async def retrieve_chat_chunks(
     # W2.3: cross-encoder реранк гибридного пула — переупорядочивает, не режет
     # (downstream-фокусировка сама сузит). Сопоставление по индексу через
     # metadata._idx (не по тексту). Сбой → исходный гибридный порядок.
-    if reranker_available and reranker_enabled and len(chunks) > 3:
+    if reranker_available and reranker_enabled and len(chunks) > 1:
         try:
             reranker = reranker_cls(mlx_url=mlx_url, mode="batch")
             rerank_input = [

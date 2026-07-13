@@ -25,18 +25,21 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
+from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
+
 ROOT = Path(__file__).resolve().parents[1]
-ENV_PATH = ROOT / ".env"
+ENV_PATH = Path(os.getenv("LES_ENV_PATH", str(ROOT / ".env"))).expanduser()
 
 # provider -> (label, is_cloud, default_model, default_base_url)
 PROVIDERS: dict[str, tuple[str, bool, str, str]] = {
     "mlx": ("MLX (локально, Apple Silicon) — рекомендуется на Mac", False,
-            "mlx-community/Qwen3.5-4B-MLX-4bit", ""),
+            DEFAULT_LOCAL_MLX_MODEL, ""),
     "ollama": ("Ollama (локально, любой ПК) — рекомендуется на Windows", False,
-               "", "http://127.0.0.1:11434"),
+               "qwen3.5:9b", "http://127.0.0.1:11434"),
     "openrouter": ("OpenRouter (облако) — нужен ключ", True,
                    "", "https://openrouter.ai/api/v1"),
     "openai": ("OpenAI / OpenAI-совместимый (облако) — нужен ключ", True,
@@ -113,6 +116,8 @@ def build_updates(provider: str, *, api_key: str = "", model: str = "", base_url
         chosen_model = (model or default_model).strip()
         if chosen_model:
             updates[f"{prefix}_MODEL"] = chosen_model
+            if provider in {"ollama", "lemonade"}:
+                updates["LLM_MODEL"] = chosen_model
         if api_key.strip():
             updates[f"{prefix}_API_KEY"] = api_key.strip()
 

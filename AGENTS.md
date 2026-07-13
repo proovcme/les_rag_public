@@ -5,6 +5,8 @@
 ## Что это
 Локальный **строительный evidence-harness** (RAG — один из слоёв, не продукт): проект/датасет → вопрос → правильный workflow → источники → расчёт КОДОМ → blockers/MISSING → проверяемое evidence → ответ. FastAPI (proxy :8050 + MLX-host :8080) + NiceGUI UI «Совушка» (:8051) + Qdrant (:6333), Python 3.12 на **uv**. Сервисы — launchd. Принцип: **модель связывает, код считает**; число без происхождения — не результат.
 
+Целевой production-хост — **Legion / Windows**: Tauri + FastAPI/NiceGUI, Ollama для генерации/эмбеддингов/выделенного reranker и Qdrant в Docker. Mac остаётся dev/reference-контуром и не определяет production defaults.
+
 Инвариант RAG: любой текущий и будущий dataset индексируется в единую contract-versioned named
 collection как `dense + bm25_sparse`; production retrieval всегда выполняет native RRF, затем общий
 rerank и parent/context expansion. Typed SQLite/reader tools дают exact rows/cards; они не выбирают

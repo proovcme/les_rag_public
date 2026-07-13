@@ -42,6 +42,18 @@
         <string>true</string>
         <key>COREML_EMBED_FALLBACK</key>
         <string>false</string>
+        <key>VALIDATOR_BACKEND</key>
+        <string>rules</string>
+        <key>MLX_MAIN_TTL_SEC</key>
+        <string>3600</string>
+        <key>MLX_RAM_WARN_FREE_GB</key>
+        <string>6</string>
+        <key>MLX_RAM_KILL_FREE_GB</key>
+        <string>4</string>
+        <key>MLX_SWAP_RELIEF_FREE_GB</key>
+        <string>5</string>
+        <key>MLX_SWAP_STALE_MAX_USED_GB</key>
+        <string>12</string>
     </dict>
 
     <key>RunAtLoad</key>

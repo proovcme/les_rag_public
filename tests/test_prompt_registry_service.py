@@ -52,10 +52,11 @@ def test_mode_system_prompt_includes_mode_tone_without_tool_contracts():
 
 
 def test_local_normative_style_keeps_voice_without_balagaan():
-    source = Path("proxy/services/chat_evidence_application_service.py").read_text(encoding="utf-8")
+    prompt = build_mode_system_prompt("rag")
 
-    assert "без балагана" in source.lower()
-    assert "короткая живая реплика допустима" in source
+    assert "бардак" in prompt.lower()
+    assert "короткие едкие реплики" in prompt
+    assert "ЛСР/КС/таблицы пиши сухо" in prompt
 
 
 def test_prompt_overrides_change_effective_prompts(monkeypatch, tmp_path):

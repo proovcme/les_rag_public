@@ -15,7 +15,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-ENV_PATH = Path(".env")
+ENV_PATH = Path(os.getenv("LES_ENV_PATH", ".env")).expanduser()
 DEFAULT_OPENAI_MODEL = "gpt-5.4"
 
 # Пресет → согласованный набор env. Ключи: провайдер чата, скан-OCR, движок приёмки ИД.

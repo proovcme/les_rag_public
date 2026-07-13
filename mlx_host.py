@@ -41,6 +41,7 @@ from pydantic import BaseModel
 
 from backend.mlx_adapter import MLXMemoryManager
 from backend.rag_config import embed_profile_name, embedding_model_id
+from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
 
 logging.basicConfig(
     level=logging.INFO,
@@ -83,7 +84,7 @@ def _env_bool(name: str, default: bool) -> bool:
 # (страховка от OOM; LLM и так lazy, но гард надёжнее случайного вызова на :8081).
 MLX_PORT = int(os.getenv("MLX_PORT", "8080"))
 MLX_EMBED_ONLY = os.getenv("MLX_EMBED_ONLY", "").strip().lower() in ("1", "true", "yes")
-MAIN_MODEL = os.getenv("MLX_MODEL",     "mlx-community/Qwen3-14B-4bit")
+MAIN_MODEL = os.getenv("MLX_MODEL", DEFAULT_LOCAL_MLX_MODEL)
 VAL_MODEL  = os.getenv("MLX_VAL_MODEL", "mlx-community/Qwen3-4B-4bit")
 BGE_MODEL  = embedding_model_id()
 BGE_BATCH_SIZE = int(os.getenv("BGE_BATCH_SIZE", "32"))
@@ -103,7 +104,7 @@ COREML_EMBED_MAX_FAILURES = _env_int("COREML_EMBED_MAX_FAILURES", 2)
 COREML_EMBED_FAILURE_COOLDOWN_SEC = _env_float("COREML_EMBED_FAILURE_COOLDOWN_SEC", 300.0)
 COREML_EMBED_FALLBACK = _env_bool("COREML_EMBED_FALLBACK", True)
 COREML_EMBED_LOCAL_FILES_ONLY = _env_bool("COREML_EMBED_LOCAL_FILES_ONLY", True)
-VALIDATOR_BACKEND = os.getenv("VALIDATOR_BACKEND", "mlx").strip().lower()
+VALIDATOR_BACKEND = os.getenv("VALIDATOR_BACKEND", "rules").strip().lower()
 VALIDATOR_MODEL_VERSION = os.getenv("VALIDATOR_MODEL_VERSION", "main")
 COREML_VALIDATOR_MODEL = os.getenv("COREML_VALIDATOR_MODEL", "artifacts/coreml/validator_minilm_l6_b1_s512.mlpackage")
 COREML_VALIDATOR_TOKENIZER = os.getenv("COREML_VALIDATOR_TOKENIZER", "MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli")
@@ -133,15 +134,17 @@ COREML_VALIDATOR_LOCAL_FILES_ONLY = _env_bool("COREML_VALIDATOR_LOCAL_FILES_ONLY
 COREML_VALIDATOR_FALLBACK = _env_bool("COREML_VALIDATOR_FALLBACK", True)
 KEEP_SINGLE_LLM_LOADED = _env_bool("MLX_KEEP_SINGLE_LLM_LOADED", True)
 MLX_HOST_BIND = os.getenv("MLX_HOST_BIND", "127.0.0.1")
-RAM_WARN_FREE_GB = _env_float("MLX_RAM_WARN_FREE_GB", 8.0)
-RAM_KILL_FREE_GB = _env_float("MLX_RAM_KILL_FREE_GB", 6.0)
+RAM_WARN_FREE_GB = _env_float("MLX_RAM_WARN_FREE_GB", 6.0)
+RAM_KILL_FREE_GB = _env_float("MLX_RAM_KILL_FREE_GB", 4.0)
+SWAP_RELIEF_FREE_GB = _env_float("MLX_SWAP_RELIEF_FREE_GB", 5.0)
+SWAP_STALE_MAX_USED_GB = _env_float("MLX_SWAP_STALE_MAX_USED_GB", 12.0)
 EMBED_TTL_SEC = _env_int("MLX_EMBED_TTL_SEC", 300)
 # TTL основной LLM. Дефолт 300с выгружал модель после 5 мин простоя → следующий запрос
-# платил ХОЛОДНУЮ загрузку (~12 ток/с эффективно + время загрузки, выбросы 100-190с).
-# Один оператор на M4/24GB — держим тёплой (MLX_MAIN_TTL_SEC велик); тёплый декод ~27 ток/с.
+# платил повторную холодную загрузку. Один оператор на M4/24GB — держим тёплой
+# (MLX_MAIN_TTL_SEC велик), пока есть реальная свободная RAM.
 # ВАЖНО: MLX_VAL_MODEL не должна равняться MLX_MODEL — иначе _get_engine() маршрутит все
 # chat-запросы на val-движок (ttl 120) вместо main, и модель циклически выгружается.
-MAIN_TTL_SEC = _env_int("MLX_MAIN_TTL_SEC", 300)
+MAIN_TTL_SEC = _env_int("MLX_MAIN_TTL_SEC", 3600)
 
 main_engine = MLXMemoryManager(model_path=MAIN_MODEL, ttl_seconds=MAIN_TTL_SEC)
 val_engine  = MLXMemoryManager(model_path=VAL_MODEL,  ttl_seconds=120)
@@ -1287,6 +1290,19 @@ SWAP_WARN_PCT  = 70
 SWAP_KILL_PCT  = 85
 
 
+def _stale_swap_allocation(*, ram_free_gb: float, swap_used_gb: float, swap_pct: float) -> bool:
+    """macOS не обязан сразу освобождать swap после исчезновения давления.
+
+    Высокий накопленный процент сам по себе не причина выгружать тёплую модель,
+    когда доступной RAM достаточно и абсолютный swap остаётся в безопасной границе.
+    """
+    return bool(
+        swap_pct >= SWAP_WARN_PCT
+        and ram_free_gb >= SWAP_RELIEF_FREE_GB
+        and swap_used_gb <= SWAP_STALE_MAX_USED_GB
+    )
+
+
 async def memory_guard_loop():
     """Мониторит RAM/swap каждые 30с и освобождает только память MLX Host."""
     import psutil
@@ -1296,6 +1312,12 @@ async def memory_guard_loop():
             sw = psutil.swap_memory()
             vm = psutil.virtual_memory()
             ram_free_gb = vm.available / 1e9
+            swap_used_gb = sw.used / 1e9
+            stale_swap = _stale_swap_allocation(
+                ram_free_gb=ram_free_gb,
+                swap_used_gb=swap_used_gb,
+                swap_pct=sw.percent,
+            )
             embed_idle = embedder.idle_seconds()
             if _embedder_loaded() and embed_idle >= embedder.ttl_seconds:
                 logger.info("[MEM] Embedder idle %.0fs >= %ss — выгружаю", embed_idle, embedder.ttl_seconds)
@@ -1306,8 +1328,8 @@ async def memory_guard_loop():
                 logger.info("[MEM] Reranker idle %.0fs >= %ss — выгружаю", rerank_idle, reranker_engine.ttl_seconds)
                 reranker_engine.force_unload()
 
-            critical = sw.percent >= SWAP_KILL_PCT or ram_free_gb < RAM_KILL_FREE_GB
-            warning = sw.percent >= SWAP_WARN_PCT or ram_free_gb < RAM_WARN_FREE_GB
+            critical = ram_free_gb < RAM_KILL_FREE_GB or (sw.percent >= SWAP_KILL_PCT and not stale_swap)
+            warning = ram_free_gb < RAM_WARN_FREE_GB or (sw.percent >= SWAP_WARN_PCT and not stale_swap)
             if critical:
                 logger.warning(
                     "[MEM] pressure critical: ram_free=%.1fGB, swap=%.0f%% — выгружаю idle MLX Host models",
@@ -1324,6 +1346,13 @@ async def memory_guard_loop():
                     sw.percent,
                 )
                 _unload_engine_if_idle(val_engine, "val")
+            elif stale_swap:
+                logger.debug(
+                    "[MEM] stale swap allocation ignored: ram_free=%.1fGB, swap_used=%.1fGB, swap=%.0f%%",
+                    ram_free_gb,
+                    swap_used_gb,
+                    sw.percent,
+                )
             else:
                 logger.debug("[MEM] ram_free=%.1fGB, swap=%.0f%% — норма", ram_free_gb, sw.percent)
         except Exception as e:
@@ -1496,6 +1525,19 @@ async def _generate_with_llm_policy(
         unloaded_peer = _unload_peer_for(engine)
         answer = await engine.generate_text(prompt=prompt, max_tokens=max_tokens)
     return _strip_think_tags(answer), unloaded_peer
+
+
+async def _stream_with_llm_policy(
+    engine: "MLXMemoryManager",
+    *,
+    prompt: str,
+    max_tokens: int,
+):
+    """Сохраняет single-LLM policy, но отдаёт настоящие токены MLX."""
+    async with _get_llm_policy_lock():
+        _unload_peer_for(engine)
+        async for piece, metrics in engine.stream_text(prompt=prompt, max_tokens=max_tokens):
+            yield piece, metrics
 
 
 def _messages_to_prompt(
@@ -1721,16 +1763,17 @@ async def api_ps():
 async def switch_model(req: SwitchModelRequest):
     if MLX_EMBED_ONLY:
         raise HTTPException(503, "embed-only instance: смена модели отключена")
-    if req.target == "val":
-        val_engine.force_unload()
-        val_engine.model_path = req.model
-        val_engine.reload_tokenizer()
-        logger.info(f"[SWITCH] val → {req.model}")
-    else:
-        main_engine.force_unload()
-        main_engine.model_path = req.model
-        main_engine.reload_tokenizer()
-        logger.info(f"[SWITCH] main → {req.model}")
+    policy_lock = _get_llm_policy_lock()
+    if policy_lock.locked():
+        raise HTTPException(409, "Модель занята генерацией; повторите переключение после ответа")
+    async with policy_lock:
+        engine = val_engine if req.target == "val" else main_engine
+        if _engine_is_busy(engine):
+            raise HTTPException(409, "Модель занята генерацией; повторите переключение после ответа")
+        engine.force_unload()
+        engine.model_path = req.model
+        engine.reload_tokenizer()
+        logger.info("[SWITCH] %s → %s", req.target, req.model)
     return {"status": "switched", "target": req.target, "model": req.model}
 
 
@@ -1765,28 +1808,28 @@ async def chat_completions(req: OAIChatRequest):
         raise HTTPException(503, "embed-only instance: генерация отключена (используй основной :8080)")
     engine = _get_engine(req.model or MAIN_MODEL)
     prompt = _messages_to_prompt(req.messages, engine, tools=req.tools)
+    logger.info(
+        "[GEN_START] model=%s stream=%s prompt_chars=%s max_tokens=%s loaded=%s",
+        engine.model_path,
+        req.stream,
+        len(prompt),
+        req.max_tokens or 2048,
+        engine.model is not None,
+    )
     
     if req.stream:
         from fastapi.responses import StreamingResponse
         
         async def stream_generator():
-            try:
-                answer, _ = await _generate_with_llm_policy(
-                    engine,
-                    prompt=prompt,
-                    max_tokens=req.max_tokens or 2048,
-                )
-            except Exception as e:
-                err_data = {"error": {"message": str(e), "type": "server_error", "code": 500}}
-                yield f"data: {json.dumps(err_data, ensure_ascii=False)}\n\n"
-                yield "data: [DONE]\n\n"
-                return
-
             req_id = f"chatcmpl-les-{int(time.time())}"
             created_time = int(time.time())
             model_path = engine.model_path
+            started_at = time.perf_counter()
+            first_token_at = None
+            final_metrics: dict[str, Any] = {}
 
-            # 1. Роль
+            # Роль отправляется сразу: соединение и SSE действительно открыты,
+            # пока MLX выполняет cold load/prefill.
             chunk_role = {
                 "id": req_id,
                 "object": "chat.completion.chunk",
@@ -1800,21 +1843,49 @@ async def chat_completions(req: OAIChatRequest):
             }
             yield f"data: {json.dumps(chunk_role, ensure_ascii=False)}\n\n"
 
-            # 2. Контент целиком (имитируем выдачу стрима)
-            chunk_content = {
-                "id": req_id,
-                "object": "chat.completion.chunk",
-                "created": created_time,
-                "model": model_path,
-                "choices": [{
-                    "index": 0,
-                    "delta": {"content": answer},
-                    "finish_reason": None
-                }]
-            }
-            yield f"data: {json.dumps(chunk_content, ensure_ascii=False)}\n\n"
+            try:
+                async for piece, metrics in _stream_with_llm_policy(
+                    engine,
+                    prompt=prompt,
+                    max_tokens=req.max_tokens or 2048,
+                ):
+                    final_metrics = metrics
+                    if not piece:
+                        continue
+                    if first_token_at is None:
+                        first_token_at = time.perf_counter()
+                    chunk_content = {
+                        "id": req_id,
+                        "object": "chat.completion.chunk",
+                        "created": created_time,
+                        "model": model_path,
+                        "choices": [{
+                            "index": 0,
+                            "delta": {"content": piece},
+                            "finish_reason": None
+                        }]
+                    }
+                    yield f"data: {json.dumps(chunk_content, ensure_ascii=False)}\n\n"
+            except Exception as e:
+                err_data = {"error": {"message": str(e), "type": "server_error", "code": 500}}
+                yield f"data: {json.dumps(err_data, ensure_ascii=False)}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+            total_sec = time.perf_counter() - started_at
+            ttft_sec = (first_token_at - started_at) if first_token_at is not None else total_sec
+            logger.info(
+                "[GEN] model=%s ttft=%.2fs total=%.2fs prompt_tokens=%s prompt_tps=%.1f "
+                "generation_tokens=%s generation_tps=%.1f peak_memory_gb=%.2f",
+                model_path,
+                ttft_sec,
+                total_sec,
+                final_metrics.get("prompt_tokens", 0),
+                final_metrics.get("prompt_tps", 0.0),
+                final_metrics.get("generation_tokens", 0),
+                final_metrics.get("generation_tps", 0.0),
+                final_metrics.get("peak_memory_gb", 0.0),
+            )
 
-            # 3. Завершение
             chunk_stop = {
                 "id": req_id,
                 "object": "chat.completion.chunk",

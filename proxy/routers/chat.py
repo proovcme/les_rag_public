@@ -11,10 +11,10 @@ import time
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterable, List, Optional
+from typing import Annotated, Any, Callable, Iterable, List, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, field_validator
 
@@ -50,6 +50,7 @@ from proxy.services.memory_service import (
     recall_context, session_memory, session_recent_retrieval_traces, session_user_questions)
 from proxy.services.kot_service import analyze_question
 from proxy.services.lexical_index_service import retrieval_fingerprint
+from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
 from proxy.services.mail_query_service import maybe_answer_mail_query
 from proxy.services.notebook_study_service import (
     build_notebook_study_pack,
@@ -360,7 +361,7 @@ def _mlx_runtime() -> LlmRuntime:
     model = (
         os.getenv("LLM_MODEL", "").strip()
         or os.getenv("MLX_MODEL", "").strip()
-        or "mlx-community/Qwen3.5-9B-MLX-4bit"
+        or DEFAULT_LOCAL_MLX_MODEL
     )
     return LlmRuntime("mlx", base_url, _join_openai_path(base_url, "/chat/completions"), model, "", True)
 
@@ -1207,7 +1208,11 @@ async def _prepare_notebook_reader_memory(dataset_ids: list[str]) -> dict[str, A
     Reader output is navigation only. It helps the final model choose files and
     sections, but the answer still needs retrieved chunks/tables as evidence.
     """
-    if not dataset_ids or not _env_bool("LES_NOTEBOOK_READER_ON_STUDY", True):
+    # The reader pass is an additional LLM job, not retrieval.  Running it by
+    # default made a broad chat silently start a second local model generation
+    # and, after timeout, schedule it again in background.  Typed notebook
+    # memory + RRF remain available; explicit warmup can opt this job back in.
+    if not dataset_ids or not _env_bool("LES_NOTEBOOK_READER_ON_STUDY", False):
         return {"schema": "dataset_reader_prepare_v1", "status": "disabled", "datasets": []}
     limit = _env_int("LES_NOTEBOOK_READER_ON_STUDY_LIMIT", 2)
     timeout_s = _env_float("LES_NOTEBOOK_READER_ON_STUDY_TIMEOUT", 35.0)
@@ -1286,10 +1291,74 @@ def _recoverable_stream_payload(req: ChatRequest, stream_state: dict[str, Any], 
 
 
 @router.post("/chat")
-async def chat(req: ChatRequest, _user=Depends(require_user)):
+async def chat(
+    req: ChatRequest,
+    _user=Depends(require_user),
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+):
     """W5.1: нестриминговый эндпоинт — поведение неизменно (M5, смоуки, АРТЕЛЬ,
-    chat_format_smoke). token_sink=None → путь stream:False, как раньше."""
-    return decorate_payload(await _run_chat(req))
+    chat_format_smoke). token_sink=None → путь stream:False, как раньше.
+
+    Внешний клиент может передать ``Idempotency-Key``. Повтор с тем же телом
+    получит исходный ответ без нового вызова модели; тот же ключ с другим телом
+    отклоняется.
+    """
+    if not idempotency_key:
+        return decorate_payload(await _run_chat(req))
+
+    from proxy.services.request_idempotency_service import (
+        IdempotencyConflict,
+        begin,
+        caller_scope,
+        complete,
+        release,
+        request_fingerprint,
+    )
+
+    caller = caller_scope(_user)
+    fingerprint = request_fingerprint(req.model_dump(mode="json"))
+    try:
+        idem_state, cached = await asyncio.to_thread(
+            begin,
+            operation="chat",
+            caller=caller,
+            idempotency_key=idempotency_key,
+            request_hash=fingerprint,
+        )
+    except (ValueError, IdempotencyConflict) as error:
+        raise HTTPException(409, str(error)) from error
+    if idem_state == "completed" and cached is not None:
+        return cached
+    if idem_state == "in_progress":
+        raise HTTPException(
+            409,
+            "Запрос с этим Idempotency-Key уже выполняется",
+            headers={"Retry-After": "2"},
+        )
+
+    try:
+        result = decorate_payload(await _run_chat(req))
+    except Exception:
+        await asyncio.to_thread(
+            release,
+            operation="chat",
+            caller=caller,
+            idempotency_key=idempotency_key,
+            request_hash=fingerprint,
+        )
+        raise
+    try:
+        await asyncio.to_thread(
+            complete,
+            operation="chat",
+            caller=caller,
+            idempotency_key=idempotency_key,
+            request_hash=fingerprint,
+            response=result,
+        )
+    except Exception as error:  # noqa: BLE001 - first caller still receives paid result
+        logger.error("[IDEMPOTENCY] chat response persistence failed: %s", error)
+    return result
 
 
 @router.post("/chat/stream")
@@ -3283,7 +3352,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     _selected_scope_filter = req.dataset_filter or (
         "__selected_dataset__" if (req.dataset_ids or _scope_snap.get("resolved_dataset_ids")) else ""
     )
-    # Шаг 2 инверсии (docs/AUDIT_DETERMINISM): роутер ОСНОВНОЙ — LLM (локальная Qwen3.5-4B, :8080)
+    # Шаг 2 инверсии (docs/AUDIT_DETERMINISM): роутер ОСНОВНОЙ — LLM (локальная main, :8080)
     # выбирает инструмент ПЕРЕД keyword-каскадом. За флагом LES_ROUTER_PRIMARY; none/сбой/таймаут →
     # каскад/RAG (каскад сохранён фолбэком, обратимо). Роутер-бенч = 100% локально.
     # Режим «РАГ» (явно выбран): форсим заземлённый RAG — пропускаем роутер/каскад/автозаметку,
@@ -3639,6 +3708,11 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             dataset_ids=_dataset_ids,
             dataset_names=resolved_dataset_names,
             storage_root=Path("./storage/datasets"),
+            # Typed dataset memory is added once by the evidence application.
+            # Rebuilding the deep dataset profile here duplicated navigation and
+            # cost 30-40 seconds on BAI before retrieval even started.  Keep only
+            # the cheap chat-session passport in this layer.
+            max_datasets=0,
         )
         if context_memory_block:
             memory_block = memory_block + ("\n\n" if memory_block else "") + context_memory_block

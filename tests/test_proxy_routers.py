@@ -293,6 +293,45 @@ async def test_set_mlx_model_preserves_cloud_provider_settings(tmp_path, monkeyp
     assert "LLM_MODEL=mlx-community/Qwen3.5-9B-MLX-4bit" in text
 
 
+def test_mlx_model_registry_exposes_measured_optiq_default():
+    from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
+
+    assert DEFAULT_LOCAL_MLX_MODEL == "mlx-community/Qwen3.5-9B-OptiQ-4bit"
+    assert settings.MLX_MODEL_CHOICES[DEFAULT_LOCAL_MLX_MODEL].startswith("9B OptiQ")
+
+
+@pytest.mark.asyncio
+async def test_set_mlx_model_does_not_persist_while_generation_is_busy(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    env_path.write_text("MLX_MODEL=old-model\nLLM_MODEL=old-model\n", encoding="utf-8")
+    monkeypatch.setattr(settings, "ENV_PATH", env_path)
+
+    class Response:
+        status_code = 409
+        text = "busy"
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr(settings.httpx, "AsyncClient", lambda **kwargs: Client())
+
+    with pytest.raises(settings.HTTPException) as exc:
+        await settings.set_mlx_model(
+            settings.MlxModelRequest(model="mlx-community/Qwen3.5-9B-MLX-4bit"),
+            _admin=object(),
+        )
+
+    assert exc.value.status_code == 409
+    assert env_path.read_text(encoding="utf-8") == "MLX_MODEL=old-model\nLLM_MODEL=old-model\n"
+
+
 @pytest.mark.asyncio
 async def test_settings_reports_effective_openai_provider(monkeypatch):
     monkeypatch.setenv("LES_LLM_PROVIDER", "openai")
