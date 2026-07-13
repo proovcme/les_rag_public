@@ -116,7 +116,7 @@ uv run python tools/build_windows_installer.py --version X.Y.Z
 
    RRF-smoke не доверяет уже лежащим в Qdrant чужим коллекциям. До bootstrap он задаёт уникальную
    `RAG_COLLECTION_NAME`, через API установленного runtime создаёт временный датасет, индексирует
-   контрольный UTF-8-документ, выполняет scoped `dense + qdrant_sparse → RRF → rerank`, а затем
+   контрольный UTF-8-документ, выполняет scoped `dense + qdrant_sparse → RRF`, а затем
    удаляет и свой датасет, и свою одноразовую коллекцию. Это не позволяет локальному паспорту
    индекса случайно проверять общую непустую коллекцию другого контура.
 

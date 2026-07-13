@@ -196,7 +196,7 @@ projection под тем же alias; при rollback старый FTS восст
 
 - **Windows release smoke:** `tools/windows_release_smoke.ps1` запускает установленный runtime
   отдельным bootstrap-процессом, ждёт terminal `ready`, проверяет `/api/version`, UI, Qdrant и
-  фактический `dense + qdrant_sparse → RRF → rerank` на собственной одноразовой Qdrant-коллекции,
+  фактический `dense + qdrant_sparse → RRF` на собственной одноразовой Qdrant-коллекции,
   затем удаляет её и останавливает только выбранные динамические порты. Русский JSON передаётся
   явными UTF-8 bytes; stdout bootstrap не читается через pipe, который могут удерживать
   долгоживущие proxy/UI-процессы. Фоновые upload-пути через
