@@ -1,12 +1,12 @@
 # TODO · healthy LES evidence core
 
-Последнее обновление: 2026-07-12. Это короткая рабочая очередь; обоснование и границы — в
+Последнее обновление: 2026-07-13. Это короткая рабочая очередь; обоснование и границы — в
 [PLAN_EVIDENCE_CORE.md](PLAN_EVIDENCE_CORE.md). Перед каждой новой RAG- или сметной задачей
 сначала открывать этот файл и начинать с первого незакрытого пункта.
 
 ## Сейчас
 
-- [ ] Перевести весь текущий общий корпус, а не только canary-датасеты, в contract-v2 collection:
+- [x] Перевести весь текущий общий корпус, а не только canary-датасеты, в contract-v2 collection:
   все source points учтены как searchable либо audited exclusion, каждый searchable destination
   point имеет named `dense` + `bm25_sparse`,
   каждый активный dataset проходит filtered live RRF. После этого переключить production и запретить
@@ -19,11 +19,14 @@
   поколение. Noise child
   без BM25-токенов учитывается как audited exclusion, а не synthetic token/drop. Alias переключится
   только после полного source/child accounting и filtered live RRF по каждому dataset.
-- [ ] После зелёных readiness-отчётов атомарно назначить стабильный alias `les_rag`, опубликовать
+  Завершено 2026-07-13: `34/34` datasets, `258 367/258 367` dense+sparse/fingerprint,
+  `0` legacy `TABLE_SMETA`, live RRF `34/34`.
+- [x] После зелёных readiness-отчётов атомарно назначить стабильный alias `les_rag`, опубликовать
   проверенную FTS-проекцию под тем же alias, затем выполнить runtime/golden gate. Сметный alias
   `les_smeta_norm_cards` уже активирован и проходит отдельный readiness.
   Физические имена поколений не возвращать в конфигурацию потребителей; старые active generations
-  удалить только после подтверждённого переключения и известного rollback.
+  удалить только после подтверждённого переключения и известного rollback. Qdrant alias и FTS
+  активированы на `les_rag_qwen3_06b_native_v2`; старое поколение сохранено для отката.
 - [x] Сметный sibling завершён и активирован через `les_smeta_norm_cards`: `47 191/47 191`
   dense+sparse/fingerprint, live RRF ready, 12/12 диагностических запросов получили вклад обоих
   каналов, все карточки rehydrated из typed SQLite. GUI показывает прогресс, alias, contract,
@@ -93,8 +96,8 @@
 
 - [x] Сделать bounded dry-run/canary QA по oversize/base64/fingerprint для BAI, ПД ИЦ и Fire;
   полный reindex не запускался.
-- [ ] Дождаться resumable sibling migration `les_rag_qwen3_06b_native_v2`; production switch
-  выполнять только после полного покрытия всех indexed datasets, contract/readiness и live RRF.
+- [x] Дождаться resumable sibling migration `les_rag_qwen3_06b_native_v2`; production switch
+  выполнен после полного покрытия, contract/readiness, FTS и live RRF `34/34`.
 - [ ] Добавить retrieval/evidence golden для ПД ИЦ, Fire и смет. Fire `domain_fire_hvac_set.json`
   остаётся обязательным domain gate.
 - [ ] Добавить conflict и domain missing-input contract после измерений; source versions и

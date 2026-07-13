@@ -126,6 +126,24 @@ def test_embed_client_rejects_backend_drift(monkeypatch):
         )
 
 
+def test_embed_client_can_validate_backend_from_immutable_collection_contract():
+    client = EmbedClient(
+        "http://mlx",
+        model="qwen3-embedding-0.6b",
+        backend="coreml",
+    )
+
+    vectors = client._vectors_from_response(
+        {
+            "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+            "embedding_backend": "coreml",
+            "data": [{"index": 0, "embedding": [0.25]}],
+        }
+    )
+
+    assert vectors == [[0.25]]
+
+
 def test_sync_parse_does_not_parse_all_files_when_no_pending(tmp_path):
     dataset_dir = tmp_path / "ds-1"
     dataset_dir.mkdir()

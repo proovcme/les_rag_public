@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from qdrant_client import models
 
+import tools.rag_rrf_readiness as readiness
 from tools.rag_rrf_readiness import audit_rrf_readiness, select_compatible_embed_url
 
 
@@ -198,3 +199,35 @@ def test_live_probe_selects_one_identity_checked_url_from_parallel_build_list():
     assert selected == "http://127.0.0.1:8081"
     assert checked == ["http://127.0.0.1:8080", "http://127.0.0.1:8081"]
     assert failures[0]["url"].endswith("8080")
+
+
+def test_live_probe_uses_collection_contract_model_not_runtime_default(monkeypatch):
+    captured = {}
+
+    class FakeEmbedClient:
+        def __init__(self, url, *, model, backend):
+            captured.update(url=url, model=model, backend=backend)
+
+        def encode_sync(self, texts):
+            assert texts == []
+            return []
+
+    monkeypatch.setattr(readiness, "EmbedClient", FakeEmbedClient)
+
+    report = readiness.live_rrf_probe(
+        client=object(),
+        collection="clean-v2",
+        datasets=[],
+        dense_name="dense",
+        sparse_name="bm25_sparse",
+        embed_url="http://127.0.0.1:8080",
+        embed_model="qwen3-embedding-0.6b",
+        embed_backend="coreml",
+    )
+
+    assert captured == {
+        "url": "http://127.0.0.1:8080",
+        "model": "qwen3-embedding-0.6b",
+        "backend": "coreml",
+    }
+    assert report["ready"] is True

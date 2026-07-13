@@ -14,7 +14,7 @@ from qdrant_client import QdrantClient, models
 
 from backend.inference.bm25_sparse import encode_bm25
 from backend.qdrant_adapter import EmbedClient
-from backend.rag_config import embedding_api_model, prepare_query_for_embedding
+from backend.rag_config import prepare_query_for_embedding
 from tools.build_rag_contract_sibling import (
     resolve_indexed_datasets,
     verify_embedding_runtime_identity,
@@ -246,6 +246,8 @@ def live_rrf_probe(
     dense_name: str,
     sparse_name: str,
     embed_url: str,
+    embed_model: str,
+    embed_backend: str,
 ) -> dict[str, Any]:
     samples: list[tuple[dict[str, str], str]] = []
     failures: list[dict[str, str]] = []
@@ -264,7 +266,10 @@ def live_rrf_probe(
         else:
             samples.append((dataset, query))
 
-    embed = EmbedClient(embed_url, model=embedding_api_model())
+    # The live probe must use the immutable identity recorded for the
+    # collection being activated.  Runtime defaults may still describe the
+    # currently active (older) generation and must not override this contract.
+    embed = EmbedClient(embed_url, model=embed_model, backend=embed_backend)
     vectors = embed.encode_sync(
         [prepare_query_for_embedding(query) for _dataset, query in samples]
     )
@@ -371,6 +376,12 @@ def main() -> int:
                 dense_name=str(contract.get("dense_vector_name") or "dense"),
                 sparse_name=str(contract.get("sparse_vector_name") or "bm25_sparse"),
                 embed_url=compatible_url,
+                embed_model=str(
+                    contract.get("embedding_api_model")
+                    or contract.get("embedding_model")
+                    or ""
+                ),
+                embed_backend=str(contract.get("embedding_backend") or ""),
             )
             live["endpoint_failures"] = endpoint_failures
         else:

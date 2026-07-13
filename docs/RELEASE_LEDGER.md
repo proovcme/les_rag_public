@@ -4,16 +4,29 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-07-12)
+## Текущее состояние (2026-07-13)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.384  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.385  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
 задеплоено на рантайм:     0.24.0.381 (live /api/version, 2026-07-12)
-НЕ задеплоено:             0.24.0.384 и прочий dev divergence вне этого ремонта
+НЕ задеплоено:             0.24.0.385 и прочий dev divergence вне этого ремонта
 рантайм /api/version:      0.24.0.381, deploy_stamp=ok, runtime_alignment=divergent по ранее существующим файлам
 ```
+
+> 0.24.0.385 — общий RRF активирован после полного contract gate
+>
+> Дата: 2026-07-13
+> Статус: release candidate; `les_rag_qwen3_06b_native_v2` завершил все 34 датасета и содержит
+> `258 367/258 367` точек с named dense+sparse и единым Qwen/Core ML fingerprint. Физическая
+> FTS-проекция также содержит `258 367` строк; filtered live native RRF прошёл `34/34`.
+> Readiness исправлен системно: model/backend live embedder берутся из immutable index-contract,
+> а не из старого runtime default (`bge-m3`/environment). Стабильный Qdrant alias `les_rag` и
+> SQLite FTS опубликованы согласованно на `native_v2`; legacy `TABLE_SMETA` points — `0`.
+> Прямая аварийная активация теперь умеет согласовать job-state supervisor после успешного gate.
+> Проверки: RAG-core `164 passed`; полный `make test` — `2 843 passed`; `make verify` —
+> `2 843 collected`; focused activation/readiness/embed-contract — `38 passed`.
 
 > 0.24.0.384 — единые application boundaries и supervised general RRF
 >

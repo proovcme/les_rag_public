@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -107,6 +108,34 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
+def mark_generation_job_activated(
+    path: Path,
+    *,
+    alias: str,
+    target: str,
+) -> None:
+    """Reconcile supervisor state after a successful direct activation."""
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        state = {}
+    if not isinstance(state, dict):
+        state = {}
+    state.update(
+        {
+            "schema": "les.rag.generation-job.v1",
+            "status": "activated",
+            "stage": "complete",
+            "alias": alias,
+            "destination_collection": target,
+            "failures": 0,
+            "error": "",
+            "updated_at": time.time(),
+        }
+    )
+    _write_json_atomic(path, state)
+
+
 def _restore_file(path: Path, previous: bytes | None) -> None:
     if previous is None:
         path.unlink(missing_ok=True)
@@ -132,6 +161,21 @@ def _restore_lexical_alias(index: Any, *, alias: str, previous_target: str | Non
         index.clear_collection(alias)
 
 
+def has_physical_alias_blocker(
+    client: Any,
+    *,
+    alias: str,
+    target: str,
+    existing_aliases: dict[str, str],
+) -> bool:
+    """Distinguish a real collection from Qdrant's alias-resolved existence check."""
+    return bool(
+        alias != target
+        and alias not in existing_aliases
+        and client.collection_exists(alias)
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--alias", required=True)
@@ -144,6 +188,7 @@ def main() -> int:
     parser.add_argument("--manifest-destination", type=Path)
     parser.add_argument("--lexical-db", type=Path, required=True)
     parser.add_argument("--lexical-source-collection", required=True)
+    parser.add_argument("--job-state-path", type=Path)
     parser.add_argument(
         "--drop-empty-alias-placeholder",
         action="store_true",
@@ -190,7 +235,12 @@ def main() -> int:
         contract=contract_source_payload,
     )
     existing = {item.alias_name: item.collection_name for item in client.get_aliases().aliases}
-    if args.alias != args.target and client.collection_exists(args.alias):
+    if has_physical_alias_blocker(
+        client,
+        alias=args.alias,
+        target=args.target,
+        existing_aliases=existing,
+    ):
         placeholder_points = int(client.count(args.alias, exact=True).count)
         if placeholder_points or not args.drop_empty_alias_placeholder:
             raise ValueError(
@@ -277,6 +327,12 @@ def main() -> int:
         raise
 
     print(json.dumps({"status": "activated", "alias": args.alias, "target": args.target}))
+    if args.job_state_path:
+        mark_generation_job_activated(
+            args.job_state_path,
+            alias=args.alias,
+            target=args.target,
+        )
     return 0
 
 

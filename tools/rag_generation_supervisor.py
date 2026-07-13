@@ -187,6 +187,7 @@ def run(args: argparse.Namespace) -> int:
                 "--contract-destination", str(args.alias_contract_path),
                 "--lexical-db", str(args.lexical_db),
                 "--lexical-source-collection", args.dst,
+                "--job-state-path", str(args.state_path),
                 "--drop-empty-alias-placeholder",
             ],
         )

@@ -506,9 +506,20 @@ class EmbedClient:
     Тонкий клиент к /v1/embeddings MLX Host.
     Работает асинхронно и синхронно (для _sync_parse в threadpool).
     """
-    def __init__(self, base_url: str, model: str = "bge-m3"):
+    def __init__(
+        self,
+        base_url: str,
+        model: str = "bge-m3",
+        *,
+        backend: str | None = None,
+    ):
         self.url   = f"{base_url.rstrip('/')}/v1/embeddings"
         self.model = model
+        self.backend = (
+            str(backend).strip().lower()
+            if backend is not None
+            else os.getenv("EMBED_BACKEND", "sentence_transformers").strip().lower()
+        )
 
     @staticmethod
     def _normalise_model_id(value: object) -> str:
@@ -534,7 +545,7 @@ class EmbedClient:
             raise EmbeddingContractError(
                 f"embedding contract mismatch: expected={self.model}, actual={actual_model}"
             )
-        expected_backend = os.getenv("EMBED_BACKEND", "sentence_transformers").strip().lower()
+        expected_backend = self.backend
         if not actual_backend:
             raise EmbeddingContractError(
                 f"embedding backend not reported by {self.url}; expected={expected_backend}"

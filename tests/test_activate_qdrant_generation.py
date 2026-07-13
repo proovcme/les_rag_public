@@ -9,6 +9,8 @@ from tools.activate_qdrant_generation import (
     _restore_lexical_alias,
     alias_contract,
     alias_manifest,
+    has_physical_alias_blocker,
+    mark_generation_job_activated,
 )
 
 
@@ -119,3 +121,44 @@ def test_activation_rollback_clears_new_alias_fts_when_no_previous_generation():
     index = Index()
     _restore_lexical_alias(index, alias="les_rag", previous_target=None)
     assert index.cleared == ["les_rag"]
+
+
+def test_direct_activation_reconciles_supervisor_state(tmp_path):
+    path = tmp_path / "state.json"
+    path.write_text(
+        json.dumps({"status": "blocked", "failures": 12, "error": "old"}),
+        encoding="utf-8",
+    )
+
+    mark_generation_job_activated(
+        path,
+        alias="les_rag",
+        target="physical_v2",
+    )
+
+    state = json.loads(path.read_text(encoding="utf-8"))
+    assert state["status"] == "activated"
+    assert state["stage"] == "complete"
+    assert state["failures"] == 0
+    assert state["error"] == ""
+    assert state["alias"] == "les_rag"
+    assert state["destination_collection"] == "physical_v2"
+
+
+def test_existing_qdrant_alias_is_not_mistaken_for_physical_blocker():
+    class Client:
+        def collection_exists(self, _name):
+            return True  # Qdrant resolves aliases through this API.
+
+    assert has_physical_alias_blocker(
+        Client(),
+        alias="les_rag",
+        target="physical_v2",
+        existing_aliases={"les_rag": "physical_v2"},
+    ) is False
+    assert has_physical_alias_blocker(
+        Client(),
+        alias="les_rag",
+        target="physical_v2",
+        existing_aliases={},
+    ) is True
