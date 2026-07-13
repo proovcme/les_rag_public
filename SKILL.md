@@ -138,6 +138,12 @@ deployed_at=datetime.now(timezone.utc).isoformat(timespec='seconds')))"
   хранить отдельно в `%LOCALAPPDATA%\LES`. Видимое имя «ЛЕС» не менять; найденную старую Tauri
   установку обновлять на месте, чтобы не ломать реестр и updater.
 - Публиковать `latest.json`, `LES-Setup.exe` и `LES-Setup.exe.sha256` только после живого smoke.
+- Живой gate запускать `tools/windows_release_smoke.ps1 -RuntimeRoot <installed-runtime>
+  -StateRoot <isolated-state> -ExpectedVersion <LES_VERSION>`. Скрипт обязан сам получить `ready`,
+  проверить точное значение `les_version` в `/api/version`,
+  `/healthz`, Qdrant и `dense + qdrant_sparse` с `fusion=rrf`, затем остановить только поднятые им
+  динамические порты. Не читать bootstrap через pipe: дочерние proxy/UI удерживают его открытым.
+  JSON с русским вопросом из Windows PowerShell 5 отправлять только явными UTF-8 bytes.
 
 Инвентарь тестов v0.16–v0.23 (~2067 тестов, 218 файлов) — **[docs/TEST_INVENTORY.md](docs/TEST_INVENTORY.md)**. Гейт `make verify` (офлайн); базовый L1 HTTP-смоук — `make smoke-basic` (`tools/basic_function_smoke.py`). Run before finalizing meaningful changes:
 

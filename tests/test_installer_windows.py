@@ -39,6 +39,27 @@ def test_bootstrap_ps1_is_utf8_bom(tmp_path):
     assert nsi.read_bytes()[:3] == b"\xef\xbb\xbf"
 
 
+def test_windows_release_smoke_executes_installed_runtime_and_real_rrf():
+    smoke = build_windows_installer.ROOT / "tools" / "windows_release_smoke.ps1"
+    raw = smoke.read_bytes()
+    text = raw.decode("utf-8-sig")
+
+    # Windows PowerShell 5 needs the BOM for the Russian smoke question.
+    assert raw[:3] == b"\xef\xbb\xbf"
+    assert 'Start-Process -FilePath "powershell.exe"' in text
+    assert 'bootstrapStatus.state -in @("ready", "failed")' in text
+    assert 'windows-light-state.json' in text
+    assert '/api/version' in text
+    assert '[string]$ExpectedVersion' in text
+    assert '$version.les_version -eq $ExpectedVersion' in text
+    assert '/healthz' in text
+    assert '/api/rag/retrieve-debug' in text
+    assert '[System.Text.Encoding]::UTF8.GetBytes($body)' in text
+    assert '$channels -contains "dense"' in text
+    assert '$channels -contains "qdrant_sparse"' in text
+    assert 'retrieval_trace.fusion -match "rrf"' in text
+
+
 def test_start_light_keeps_uv_server_processes_alive():
     ps1 = build_windows_installer.ROOT / "installers" / "windows" / "start-light.ps1"
     text = ps1.read_text(encoding="utf-8")

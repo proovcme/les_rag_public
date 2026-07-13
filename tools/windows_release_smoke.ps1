@@ -1,0 +1,140 @@
+﻿param(
+  [Parameter(Mandatory = $true)]
+  [string]$RuntimeRoot,
+  [Parameter(Mandatory = $true)]
+  [string]$StateRoot,
+  [Parameter(Mandatory = $true)]
+  [string]$ExpectedVersion,
+  [string]$Question = "ширина путей эвакуации",
+  [int]$TopK = 3,
+  [int]$BootstrapTimeoutSeconds = 240,
+  [int]$RetrievalTimeoutSeconds = 180
+)
+
+# Live release smoke for an installed Windows runtime.  This intentionally
+# launches bootstrap out-of-process and polls its machine-readable status:
+# piping bootstrap stdout can keep the pipe open through long-lived proxy/UI
+# descendants and turn a healthy launch into a false hang.
+$ErrorActionPreference = "Stop"
+$RuntimeRoot = [System.IO.Path]::GetFullPath($RuntimeRoot)
+$StateRoot = [System.IO.Path]::GetFullPath($StateRoot)
+$LogDir = Join-Path $StateRoot "logs"
+$StatusPath = Join-Path $LogDir "bootstrap-status.json"
+$RuntimeStatePath = Join-Path $LogDir "windows-light-state.json"
+$ReportPath = Join-Path $LogDir "release-smoke.json"
+$Bootstrap = Join-Path $RuntimeRoot "installers\windows\app\bootstrap.ps1"
+$StopScript = Join-Path $RuntimeRoot "installers\windows\stop-light.ps1"
+
+New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+Remove-Item $StatusPath, $RuntimeStatePath, $ReportPath -Force -ErrorAction SilentlyContinue
+
+$env:LES_WINDOWS_STATE_ROOT = $StateRoot
+$env:LES_TAURI_SHELL = "1"
+$env:LES_TAURI_ACTION = "start"
+
+$result = [ordered]@{
+  schema = "les_windows_release_smoke_v1"
+  ok = $false
+  stage = "bootstrap"
+  runtime_root = $RuntimeRoot
+  state_root = $StateRoot
+}
+$bootstrapProcess = $null
+$runtimeState = $null
+
+try {
+  if (-not (Test-Path -LiteralPath $Bootstrap)) {
+    throw "bootstrap not found: $Bootstrap"
+  }
+
+  $bootstrapProcess = Start-Process -FilePath "powershell.exe" `
+    -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $Bootstrap) `
+    -PassThru -WindowStyle Hidden `
+    -RedirectStandardOutput (Join-Path $LogDir "release-smoke-bootstrap.out.log") `
+    -RedirectStandardError (Join-Path $LogDir "release-smoke-bootstrap.err.log")
+
+  $deadline = (Get-Date).AddSeconds($BootstrapTimeoutSeconds)
+  $bootstrapStatus = $null
+  do {
+    Start-Sleep -Milliseconds 500
+    if (Test-Path -LiteralPath $StatusPath) {
+      try {
+        $bootstrapStatus = Get-Content -LiteralPath $StatusPath -Raw | ConvertFrom-Json
+      } catch { }
+    }
+    if ($bootstrapStatus -and $bootstrapStatus.state -in @("ready", "failed")) { break }
+  } while ((Get-Date) -lt $deadline)
+
+  if (-not $bootstrapStatus) { throw "bootstrap status was not created" }
+  $result.bootstrap_state = $bootstrapStatus.state
+  $result.bootstrap_phase = $bootstrapStatus.phase
+  $result.bootstrap_code = $bootstrapStatus.code
+  if ($bootstrapStatus.state -ne "ready") {
+    throw "bootstrap failed: $($bootstrapStatus.code) $($bootstrapStatus.message)"
+  }
+  if (-not (Test-Path -LiteralPath $RuntimeStatePath)) {
+    throw "windows-light-state.json was not created"
+  }
+
+  $runtimeState = Get-Content -LiteralPath $RuntimeStatePath -Raw | ConvertFrom-Json
+  $proxyPort = [int]$runtimeState.proxy_port
+  $uiPort = [int]$runtimeState.ui_port
+  $result.proxy_port = $proxyPort
+  $result.ui_port = $uiPort
+
+  $result.stage = "api"
+  $proxy = Invoke-RestMethod -Uri "http://127.0.0.1:$proxyPort/api/health" -TimeoutSec 30
+  $version = Invoke-RestMethod -Uri "http://127.0.0.1:$proxyPort/api/version" -TimeoutSec 30
+  $ui = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$uiPort/healthz" -TimeoutSec 30
+  $qdrant = Invoke-RestMethod -Uri "http://127.0.0.1:6333/collections" -TimeoutSec 30
+  $result.proxy_status = $proxy.status
+  $result.les_version = $version.les_version
+  $result.app_version = $version.app_version
+  $result.harness_version = $version.harness_version
+  $result.git_commit = $version.git_commit
+  $result.ui_status = [int]$ui.StatusCode
+  $result.qdrant_collections = @($qdrant.result.collections).Count
+
+  $result.stage = "rrf"
+  $body = @{ question = $Question; top_k = $TopK } | ConvertTo-Json -Compress
+  # Windows PowerShell 5 may otherwise send a string body in the active ANSI
+  # codepage.  Russian text then reaches FastAPI corrupted and BM25 is empty.
+  $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+  $rrf = Invoke-RestMethod -Method Post `
+    -Uri "http://127.0.0.1:$proxyPort/api/rag/retrieve-debug" `
+    -ContentType "application/json; charset=utf-8" `
+    -Body $bodyBytes -TimeoutSec $RetrievalTimeoutSeconds
+  $channels = @($rrf.retrieval_trace.retrieval_channels)
+  $result.rrf_chunks = @($rrf.chunks).Count
+  $result.rrf_channels = $channels
+  $result.rrf_fusion = $rrf.retrieval_trace.fusion
+  $result.rrf_mode = $rrf.retrieval_trace.mode
+  $result.ok = (
+    $bootstrapStatus.state -eq "ready" -and
+    $version.les_version -eq $ExpectedVersion -and
+    [int]$ui.StatusCode -eq 200 -and
+    @($rrf.chunks).Count -gt 0 -and
+    $rrf.retrieval_trace.fusion -match "rrf" -and
+    $channels -contains "dense" -and
+    $channels -contains "qdrant_sparse"
+  )
+  $result.stage = "done"
+} catch {
+  $result.error = $_.Exception.Message
+  $result.error_type = $_.Exception.GetType().FullName
+} finally {
+  $json = $result | ConvertTo-Json -Depth 10
+  $json | Set-Content -LiteralPath $ReportPath -Encoding UTF8
+  Write-Output $json
+
+  if ($runtimeState -and (Test-Path -LiteralPath $StopScript)) {
+    try {
+      & $StopScript -ProxyPort ([int]$runtimeState.proxy_port) -UiPort ([int]$runtimeState.ui_port) | Out-Null
+    } catch { }
+  }
+  if ($bootstrapProcess -and -not $bootstrapProcess.HasExited) {
+    Stop-Process -Id $bootstrapProcess.Id -Force -ErrorAction SilentlyContinue
+  }
+}
+
+if (-not $result.ok) { exit 1 }

@@ -193,6 +193,12 @@ projection под тем же alias; при rollback старый FTS восст
 ### `tools/` (~48) — установка, сборка, ML, smoke, индексация
 Группы: рантайм-контроль (`install_les`, `les_runtime_control`, `lesctl`, `les_doctor` — W7.2 health-отчёт: порты/RAM/диск/GPU/инференс/провайдеры/коллекции, офлайн-безопасный, переиспользует `les_runtime_control`; `deploy_to_runtime` — манифест-деплой dev→рантайм-клон с защитой дивергентных файлов, `--apply/--restart`, Ц2; `onboard_provider` — мастер выбора LLM-провайдера до GUI, Ц15) · релизы (`build_*_release`, `build_release_artifacts`, `check_*_budget`, `build_icons` — SVG→.icns/.ico, Ц15) · сметное (`gesn_bulk_import` — полная база ГЭСН-2022 из ФГИС ЦС, резюмируемый; `gesn_import` — XLSX/CSV ГРАНД/НСИ; `gesn_pdf_import` — PDF/JSON; `harvest_dataset` — verify→train-set) · почта (`legion_mail_tunnel.sh` — обратный SSH Legion-Outlook→Мак) · CAD/BIM экстракторы (`cad_bim_extract_dxf` — DXF и DWG через `dwg2dxf`; `cad_bim_extract_ifc`) · Core ML/эмбеддинги (`coreml_*`) · smoke (`browser_smoke`, `chat_format_smoke`, `clean_install_smoke`, `runtime_smoke`) · индексация/eval (`build_lexical_index`, `reindex_*_guarded`, `rag_golden_set`, `rag_eval_report`, `measure_weak_retry` — W2.7: доля weak, закрываемой словарём, на golden → go/no-go по LLM-ступени) · сиды (`seed_artel_*`).
 
+- **Windows release smoke:** `tools/windows_release_smoke.ps1` запускает установленный runtime
+  отдельным bootstrap-процессом, ждёт terminal `ready`, проверяет `/api/version`, UI, Qdrant и
+  фактический `dense + qdrant_sparse → RRF → rerank`, затем останавливает только выбранные
+  динамические порты. Русский JSON передаётся явными UTF-8 bytes; stdout bootstrap не читается
+  через pipe, который могут удерживать долгоживущие proxy/UI-процессы.
+
 ## Данные и конфиг
 
 - **Env:** [env.example](../env.example) (~190 ключей) — модели (`MLX_MODEL`, `LES_EMBED_PROFILE`, `EMBEDDING_MODEL`), Qdrant (`QDRANT_URL`, `RAG_COLLECTION_NAME`, `RAG_VECTOR_SIZE`), чанкинг (`RAG_CHUNK_SIZE/OVERLAP/BATCH`), Core ML (`COREML_*`), почта (`MAIL_*`), безопасность (`JWT_SECRET`, `ADMIN_PASSWORD`, `TRUSTED_NETWORKS`). Единый default/список локальных chat-моделей: `proxy/local_model_registry.py`; env и GUI сохраняют право переключения. Профили эмбеддингов: `qwen|legacy|fast|quality` → разные коллекции/размерности.

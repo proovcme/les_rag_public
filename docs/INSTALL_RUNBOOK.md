@@ -141,6 +141,22 @@ EXE под новую версию или публиковать `latest.json` �
    - обновление поверх предыдущего выпуска: сохраняются `.env`, Qdrant volume, MetaDB,
      `RAG_Content`, `storage` и артефакты, после запуска `/api/version` показывает новую версию.
 
+   После установки выполнить живой машинный gate из checkout. Не подменять его `pytest`,
+   `cargo check` или простым запросом `/api/health`:
+
+   ```powershell
+   .\tools\windows_release_smoke.ps1 `
+     -RuntimeRoot C:\Path\To\Installed\runtime `
+     -StateRoot C:\Path\To\Isolated\LES-state `
+     -ExpectedVersion 0.24.0.406
+   ```
+
+   Успех — только `ok=true`, `bootstrap_state=ready`, точный `les_version`, HTTP 200 интерфейса, доступный Qdrant и
+   `rrf_channels=[dense,qdrant_sparse]`, `rrf_fusion=rrf`. Скрипт запускает bootstrap отдельно,
+   потому что stdout-pipe удерживается долгоживущими proxy/UI-процессами, и отправляет русский
+   JSON явными UTF-8 bytes: Windows PowerShell 5 иначе способен дать ложный dense-only результат
+   из-за повреждения текста запроса.
+
 5. Создать `dist\latest.json` по схеме `les.update.v1`. Обязательны `version`, `name`, `notes`,
    `published_at`, `html_url`; дополнительно фиксировать `build_commit`. Затем опубликовать ровно
    три файла с неизменными именами:
