@@ -53,11 +53,16 @@ def test_windows_release_smoke_executes_installed_runtime_and_real_rrf():
     assert '[string]$ExpectedVersion' in text
     assert '$version.les_version -eq $ExpectedVersion' in text
     assert '/healthz' in text
+    assert '/api/rag/datasets?name=' in text
+    assert '/api/rag/upload/$smokeDatasetId' in text
+    assert 'status -eq "INDEXED"' in text
+    assert 'dataset_ids = @($smokeDatasetId)' in text
     assert '/api/rag/retrieve-debug' in text
     assert '[System.Text.Encoding]::UTF8.GetBytes($body)' in text
     assert '$channels -contains "dense"' in text
     assert '$channels -contains "qdrant_sparse"' in text
     assert 'retrieval_trace.fusion -match "rrf"' in text
+    assert 'Invoke-RestMethod -Method Delete' in text
 
 
 def test_start_light_keeps_uv_server_processes_alive():

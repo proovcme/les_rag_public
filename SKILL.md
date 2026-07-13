@@ -142,12 +142,21 @@ deployed_at=datetime.now(timezone.utc).isoformat(timespec='seconds')))"
   хранить отдельно в `%LOCALAPPDATA%\LES`. Видимое имя «ЛЕС» не менять; найденную старую Tauri
   установку обновлять на месте, чтобы не ломать реестр и updater.
 - Публиковать `latest.json`, `LES-Setup.exe` и `LES-Setup.exe.sha256` только после живого smoke.
+- `config/version.json` — единственный ручной вход версии. После его правки запускать
+  `make version-sync`; `make verify` обязан остановить drift Cargo/Tauri/паспорта. Тесты не
+  хранят текущий номер сборки как второй источник правды.
+- Сложную PowerShell-программу не передавать через Windows OpenSSH обычным `-Command`:
+  кавычки и `$variables` искажаются. Канон — `-EncodedCommand` и UTF-16LE/base64, затем точная
+  сверка remote HEAD и нового машинного отчёта. SSH code `0` не является доказательством:
+  Windows PowerShell может вернуть его даже для `-File not found`.
 - Живой gate запускать `tools/windows_release_smoke.ps1 -RuntimeRoot <installed-runtime>
   -StateRoot <isolated-state> -ExpectedVersion <LES_VERSION>`. Скрипт обязан сам получить `ready`,
   проверить точное значение `les_version` в `/api/version`,
   `/healthz`, Qdrant и `dense + qdrant_sparse` с `fusion=rrf`, затем остановить только поднятые им
   динамические порты. Не читать bootstrap через pipe: дочерние proxy/UI удерживают его открытым.
-  JSON с русским вопросом из Windows PowerShell 5 отправлять только явными UTF-8 bytes.
+  JSON с русским вопросом из Windows PowerShell 5 отправлять только явными UTF-8 bytes. Чистый
+  state не имеет локального каталога: smoke сам создаёт через API, индексирует и затем удаляет
+  свой seed-датасет; наличие чужих коллекций в Qdrant не засчитывается.
 
 Инвентарь — **[docs/TEST_INVENTORY.md](docs/TEST_INVENTORY.md)**; аудит соответствия фактической
 архитектуре — **[docs/TEST_ARCHITECTURE_AUDIT_2026-07-14.md](docs/TEST_ARCHITECTURE_AUDIT_2026-07-14.md)**.

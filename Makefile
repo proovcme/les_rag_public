@@ -1,6 +1,6 @@
 # Л.Е.С. (LES_v2) — dev-гейт. Офлайн, без живых сервисов (Qdrant/MLX не нужны).
 # Требует uv. `make verify` — перед объявлением правки готовой.
-.PHONY: verify test test-architecture test-focused test-rag-core test-tauri smeta-base smeta-base-source smeta-base-update smoke-basic public-check ship-check ship-full-check deploy-runtime post-deploy-smoke ship ship-full patch-release help
+.PHONY: version-sync verify test test-architecture test-focused test-rag-core test-tauri smeta-base smeta-base-source smeta-base-update smoke-basic public-check ship-check ship-full-check deploy-runtime post-deploy-smoke ship ship-full patch-release help
 
 PATCH_RELEASE_ARGS ?=
 
@@ -32,8 +32,13 @@ help:
 	@echo "make ship         — быстрый выкат: ship-check → deploy-runtime → post-deploy-smoke"
 	@echo "make ship-full    — полный выкат версии: ship-full-check → deploy-runtime → post-deploy-smoke"
 	@echo "make patch-release — Windows: gates → Legion build/install/RRF-smoke → artifacts; публикация только PATCH_RELEASE_ARGS='--publish --notes-file ...'"
+	@echo "make version-sync — синхронизировать Cargo/Tauri/паспорт версий из config/version.json"
+
+version-sync:
+	uv run python tools/sync_version_contract.py
 
 verify:
+	uv run python tools/sync_version_contract.py --check
 	uv run python -m compileall -q $(PKGS)
 	uv run python -m pytest --collect-only -q
 	@echo "OK — verify зелёный (синтаксис + импорт-смоук). Полные тесты: make test."

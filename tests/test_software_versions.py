@@ -5,6 +5,7 @@ from pathlib import Path
 
 from proxy.services import version_service
 from tools import build_tauri_app
+from tools import sync_version_contract
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,9 +46,15 @@ def test_qdrant_runtime_is_pinned_everywhere():
 
 
 def test_software_version_passport_records_required_runtime():
+    contract = json.loads((ROOT / "config/version.json").read_text(encoding="utf-8"))
     text = (ROOT / "docs/SOFTWARE_VERSIONS.md").read_text(encoding="utf-8")
     for marker in (
-        "0.24.1", "407", "Python", "uv", "Docker", "Qdrant", "1.17.1",
+        contract["product_version"], contract["desktop_version"],
+        "Python", "uv", "Docker", "Qdrant", "1.17.1",
         "Ollama", "0.31.1", "qwen3.5:9b", "bge-m3:latest", "BAAI/bge-reranker-v2-m3",
     ):
         assert marker in text
+
+
+def test_version_surfaces_have_no_drift():
+    assert sync_version_contract.drifted_surfaces() == []

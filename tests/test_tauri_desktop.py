@@ -132,5 +132,6 @@ def test_tauri_builder_maps_four_part_les_version_to_desktop_semver():
 def test_tauri_builder_separates_product_version_from_monotonic_build():
     assert build_tauri_app.desktop_semver("0.24.1", 407) == "5.1.407"
     contract = build_tauri_app.release_contract()
-    assert contract["product_version"] == "0.24.1"
-    assert contract["build_number"] == 407
+    assert contract["desktop_version"] == build_tauri_app.desktop_semver(
+        str(contract["product_version"]), int(contract["build_number"])
+    )

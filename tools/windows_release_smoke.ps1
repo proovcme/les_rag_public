@@ -41,6 +41,8 @@ $result = [ordered]@{
 }
 $bootstrapProcess = $null
 $runtimeState = $null
+$smokeDatasetId = $null
+$smokeSeedPath = $null
 
 try {
   if (-not (Test-Path -LiteralPath $Bootstrap)) {
@@ -95,8 +97,58 @@ try {
   $result.ui_status = [int]$ui.StatusCode
   $result.qdrant_collections = @($qdrant.result.collections).Count
 
+  # A clean release state has no local dataset catalog. Looking only at the
+  # shared Qdrant collections would test somebody else's data and can return an
+  # empty result even when indexing is healthy. Seed one isolated dataset
+  # through the installed API, wait for its own dense+sparse indexing, query it
+  # explicitly, then remove it in finally.
+  $result.stage = "rrf_seed"
+  $seedMarker = "les release smoke эвакуационный проход контрольный маркер"
+  $datasetName = "LES release smoke $([guid]::NewGuid().ToString('N'))"
+  $encodedDatasetName = [System.Uri]::EscapeDataString($datasetName)
+  $dataset = Invoke-RestMethod -Method Post `
+    -Uri "http://127.0.0.1:$proxyPort/api/rag/datasets?name=$encodedDatasetName" `
+    -TimeoutSec 30
+  $smokeDatasetId = [string]$dataset.id
+  if (-not $smokeDatasetId) { throw "release smoke dataset was not created" }
+  $result.rrf_dataset_id = $smokeDatasetId
+
+  $smokeSeedPath = Join-Path $StateRoot "release-smoke-rag.txt"
+  [System.IO.File]::WriteAllText(
+    $smokeSeedPath,
+    "$seedMarker. Ширина путей эвакуации проверяется по нормативному источнику.",
+    (New-Object System.Text.UTF8Encoding($false))
+  )
+  $uploadJson = & curl.exe --silent --show-error --fail `
+    --form "file=@$smokeSeedPath;type=text/plain" `
+    "http://127.0.0.1:$proxyPort/api/rag/upload/$smokeDatasetId"
+  if ($LASTEXITCODE -ne 0) { throw "release smoke upload failed with curl exit code $LASTEXITCODE" }
+  $upload = ($uploadJson -join "`n") | ConvertFrom-Json
+  if (-not $upload.doc_id) { throw "release smoke upload did not return doc_id" }
+
+  $indexDeadline = (Get-Date).AddSeconds($RetrievalTimeoutSeconds)
+  $indexedDocument = $null
+  do {
+    Start-Sleep -Milliseconds 750
+    $documents = Invoke-RestMethod `
+      -Uri "http://127.0.0.1:$proxyPort/api/rag/documents?dataset_id=$smokeDatasetId&limit=10" `
+      -TimeoutSec 30
+    $indexedDocument = @($documents.documents) | Where-Object { $_.status -eq "INDEXED" } | Select-Object -First 1
+    $failedDocument = @($documents.documents) | Where-Object { $_.status -eq "ERROR" } | Select-Object -First 1
+    if ($failedDocument) {
+      throw "release smoke indexing failed: $($failedDocument.last_error)"
+    }
+    if ($indexedDocument) { break }
+  } while ((Get-Date) -lt $indexDeadline)
+  if (-not $indexedDocument) { throw "release smoke dataset was not indexed before timeout" }
+  $result.rrf_seed_chunks = [int]$indexedDocument.chunk_count
+
   $result.stage = "rrf"
-  $body = @{ question = $Question; top_k = $TopK } | ConvertTo-Json -Compress
+  $body = @{
+    question = $Question
+    dataset_ids = @($smokeDatasetId)
+    top_k = $TopK
+  } | ConvertTo-Json -Compress
   # Windows PowerShell 5 may otherwise send a string body in the active ANSI
   # codepage.  Russian text then reaches FastAPI corrupted and BM25 is empty.
   $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($body)
@@ -123,6 +175,19 @@ try {
   $result.error = $_.Exception.Message
   $result.error_type = $_.Exception.GetType().FullName
 } finally {
+  if ($smokeDatasetId -and $runtimeState) {
+    try {
+      Invoke-RestMethod -Method Delete `
+        -Uri "http://127.0.0.1:$([int]$runtimeState.proxy_port)/api/rag/datasets/$smokeDatasetId" `
+        -TimeoutSec 30 | Out-Null
+    } catch {
+      $result.cleanup_error = $_.Exception.Message
+      $result.ok = $false
+    }
+  }
+  if ($smokeSeedPath) {
+    Remove-Item -LiteralPath $smokeSeedPath -Force -ErrorAction SilentlyContinue
+  }
   $json = $result | ConvertTo-Json -Depth 10
   $json | Set-Content -LiteralPath $ReportPath -Encoding UTF8
   Write-Output $json

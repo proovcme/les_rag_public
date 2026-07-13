@@ -15,7 +15,7 @@ from proxy.services import version_service as vs
 
 def test_version_has_app_and_harness_versions():
     vi = vs.version_info()
-    assert vi["product_version"] == "0.24.1" and vi["build_number"] == 407
+    assert vi["product_version"] == vs.PRODUCT_VERSION and vi["build_number"] == vs.BUILD_NUMBER
     assert vi["app_version"] == vs.APP_VERSION and vi["harness_version"] == vs.HARNESS_VERSION
     assert vi["evidence_schema_version"] and vi["extraction_schema_version"]
 
@@ -42,7 +42,7 @@ def test_version_git_unavailable_safe(monkeypatch):
 
 def test_version_brief_format():
     b = vs.version_brief()
-    assert b.startswith("Л.Е.С.") and vs.PRODUCT_VERSION in b and "сборка 407" in b
+    assert b.startswith("Л.Е.С.") and vs.PRODUCT_VERSION in b and f"сборка {vs.BUILD_NUMBER}" in b
 
 
 # ── §2 endpoint (через TestClient, без живого прокси) ──────────────────────────────────────

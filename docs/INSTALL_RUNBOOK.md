@@ -114,6 +114,10 @@ uv run python tools/build_windows_installer.py --version X.Y.Z
    Выпуск содержит `latest.json`, `LES-Setup.exe` и `LES-Setup.exe.sha256`; затем эти assets
    скачиваются обратно и сверяются повторно.
 
+   RRF-smoke не доверяет уже лежащим в Qdrant чужим коллекциям. Он через API установленного
+   runtime создаёт временный датасет, индексирует контрольный UTF-8-документ, выполняет scoped
+   `dense + qdrant_sparse → RRF → rerank` и удаляет только свой seed-датасет.
+
 #### Грабли Windows OpenSSH / PowerShell
 
 Удалённый bootstrap намеренно находится в `tools/patch_release.py`, а не только в PowerShell-файле
@@ -134,6 +138,18 @@ uv run python tools/build_windows_installer.py --version X.Y.Z
   `windows-patch-release.json`, совпадение commit/SHA и `smoke.ok=true`.
 - Не скачивать и не публиковать лежащий в `dist` EXE без нового отчёта: там может оставаться
   артефакт предыдущего выпуска.
+
+#### Номер сборки меняется один раз
+
+`config/version.json` — единственный вход. После правки версии или номера сборки выполнить:
+
+```bash
+make version-sync
+```
+
+Команда синхронизирует `pyproject.toml`, `package.json`, Cargo, Tauri и паспорт версий. `make verify`
+запускает тот же механизм в режиме `--check` и останавливает выпуск при любом расхождении. Тесты не
+хранят текущее число сборки вручную, а сверяются с контрактом.
 
 Ручной вызов `build_windows_installer.py` допустим для разработки, но не является выпуском.
 
