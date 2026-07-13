@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -43,7 +44,6 @@ def _sha(b: bytes) -> str:
 
 
 def _load_manifest() -> dict[str, str]:
-    import json
     try:
         return json.loads(MANIFEST.read_text(encoding="utf-8"))
     except Exception:
@@ -51,7 +51,6 @@ def _load_manifest() -> dict[str, str]:
 
 
 def _save_manifest(m: dict[str, str]) -> None:
-    import json
     MANIFEST.write_text(json.dumps(m, ensure_ascii=False, indent=0), encoding="utf-8")
 
 # путь-префикс → launchd-сервис для рестарта
@@ -70,8 +69,7 @@ def _git(args: list[str]) -> str:
                           capture_output=True, text=True).stdout
 
 
-def _changed_files() -> list[str]:
-    out = _git(["status", "--porcelain"])
+def _paths_from_status(out: str) -> list[str]:
     files: list[str] = []
     for line in out.splitlines():
         if len(line) < 4:
@@ -86,6 +84,41 @@ def _changed_files() -> list[str]:
         else:
             files.append(path)
     return files
+
+
+def _deployed_commit() -> str:
+    try:
+        payload = json.loads((RT / ".les_deploy_stamp.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return ""
+    return str(payload.get("deployed_commit") or "").strip() if isinstance(payload, dict) else ""
+
+
+def _changed_files() -> list[str]:
+    """Return committed changes since the live stamp plus working-tree changes.
+
+    Deploying from a clean release commit must not become a no-op merely because
+    ``git status`` is empty.  The runtime stamp is the baseline for publication.
+    """
+    files = _paths_from_status(_git(["status", "--porcelain"]))
+    deployed = _deployed_commit()
+    if deployed and deployed != "unknown":
+        diff = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(DEV),
+                "diff",
+                "--name-only",
+                "--diff-filter=ACMRT",
+                f"{deployed}..HEAD",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if diff.returncode == 0:
+            files.extend(line.strip() for line in diff.stdout.splitlines() if line.strip())
+    return sorted(set(files))
 
 
 def _head_bytes(path: str) -> bytes | None:

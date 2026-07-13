@@ -7,13 +7,23 @@
 ## Текущее состояние (2026-07-13)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.385  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.386  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
 задеплоено на рантайм:     0.24.0.381 (live /api/version, 2026-07-12)
-НЕ задеплоено:             0.24.0.385 и прочий dev divergence вне этого ремонта
+НЕ задеплоено:             0.24.0.386 и прочий dev divergence вне этого ремонта
 рантайм /api/version:      0.24.0.381, deploy_stamp=ok, runtime_alignment=divergent по ранее существующим файлам
 ```
+
+> 0.24.0.386 — чистый release commit больше не превращает deploy в no-op
+>
+> Дата: 2026-07-13
+> Статус: release candidate. `deploy_to_runtime` формирует scope не только из working tree, но и
+> из committed diff `deploy_stamp.deployed_commit..HEAD`. Поэтому `make ship` после обязательного
+> commit действительно переносит новую версию в `/Users/ovc/LES`, сохраняя manifest-защиту
+> runtime-only divergence. Добавлен regression-тест чистого release commit.
+> Проверки: полный `make test` — `2 844 passed`; `make verify` — `2 844 collected`;
+> focused deploy/activation/readiness/embed-contract — `41 passed`.
 
 > 0.24.0.385 — общий RRF активирован после полного contract gate
 >
