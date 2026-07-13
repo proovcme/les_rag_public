@@ -173,6 +173,9 @@ def test_windows_bootstrap_writes_machine_readable_status_for_tauri():
     assert text.index('Log "===== bootstrap start') < text.index('. $StateScript')
     assert 'windows_state_helper_missing' in text
     assert 'windows_state_helper_failed' in text
+    assert '$serviceOutput = @(& (Join-Path $Root "installers\\windows\\start-light.ps1"))' in text
+    assert '& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Root "installers\\windows\\start-light.ps1") | Out-File' not in text
+    assert 'services_start_failed' in text
     assert 'schema = "les_windows_bootstrap_status_v1"' in text
     assert 'install_url = $InstallUrl' in text
     assert 'Write-Status -Phase "ready" -State "ready"' in text

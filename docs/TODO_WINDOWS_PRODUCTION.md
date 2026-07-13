@@ -58,6 +58,8 @@ release-gate; детали эксплуатации находятся в `SKILL
 - [x] Платформенный staging больше не кладёт macOS `bootstrap.sh` в Windows EXE; свежий NSIS
   использует латинский `%LOCALAPPDATA%\Programs\LES`, сохраняя русское видимое имя и обновляя
   существующую `.405` на месте; лог и status создаются до подключения state helper.
+- [x] Живой bootstrap-smoke устранил зависание `services/running`: `start-light.ps1` вызывается
+  в текущем PowerShell без нативного конвейера, который удерживали долгоживущие proxy/UI процессы.
 
 ## После выпуска
 

@@ -347,8 +347,15 @@ Toast "Запускаю Совушку…"
 Write-Status -Phase "services" -State "running" -Message "Запускаю службы ЛЕС"
 if ($env:LES_TAURI_SHELL -eq "1") {
   Log "start-light (Tauri shell)"
-  & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Root "installers\windows\start-light.ps1") | Out-File -FilePath $Log -Append -Encoding utf8
-  if ($LASTEXITCODE -ne 0) { Fail "не удалось поднять службы" }
+  try {
+    # Run the PowerShell script in-process. A native `powershell ... | Out-File`
+    # pipeline can stay open after start-light exits because long-lived proxy/UI
+    # descendants inherit its output handle, leaving bootstrap stuck at services/running.
+    $serviceOutput = @(& (Join-Path $Root "installers\windows\start-light.ps1"))
+    $serviceOutput | Out-File -FilePath $Log -Append -Encoding utf8
+  } catch {
+    Fail "не удалось поднять службы: $($_.Exception.Message)" "services_start_failed"
+  }
 } else {
   Log "les_shell (legacy fallback)"
   & $Uv run python -m tools.les_shell | Out-File -FilePath $Log -Append -Encoding utf8

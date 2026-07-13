@@ -132,6 +132,8 @@ deployed_at=datetime.now(timezone.utc).isoformat(timespec='seconds')))"
   `installers/macos`; Mac не должен получать Windows bootstrap.
 - `%LOCALAPPDATA%\LES\logs\bootstrap.log` и `bootstrap-status.json` создавать до подключения
   state/helper-модулей. Общий `exit code: 1` без журнала считать дефектом выпуска.
+- Smoke считать пройденным только после терминального `bootstrap-status.state=ready`; запущенные
+  сервисы при вечном `services/running` означают зависший bootstrap, а не успех.
 - Свежую Windows-установку направлять в латинский `%LOCALAPPDATA%\Programs\LES`, постоянный state
   хранить отдельно в `%LOCALAPPDATA%\LES`. Видимое имя «ЛЕС» не менять; найденную старую Tauri
   установку обновлять на месте, чтобы не ломать реестр и updater.
