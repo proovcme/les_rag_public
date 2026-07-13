@@ -63,6 +63,7 @@ def test_windows_release_smoke_executes_installed_runtime_and_real_rrf():
     assert '[System.Text.Encoding]::UTF8.GetBytes($body)' in text
     assert '$channels -contains "dense"' in text
     assert '$channels -contains "qdrant_sparse"' in text
+    assert '[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)' in text
     assert 'retrieval_trace.fusion -match "rrf"' in text
     assert 'Invoke-RestMethod -Method Delete' in text
     assert 'collections/$smokeCollection' in text
@@ -144,6 +145,7 @@ def test_start_light_keeps_provider_model_and_ollama_embedding_contract_aligned(
     # A direct start-light launch (including Tauri) must have the same embedding
     # contract as `lesctl init --profile windows-lite`: Ollama bge-m3, 1024 dims.
     assert '$env:MLX_URL = $env:OLLAMA_BASE_URL' in text
+    assert '$env:EMBED_URL_PARSE = $env:OLLAMA_BASE_URL' in text
     assert '"bge-m3:latest"' in text
     assert '$env:EMBED_BACKEND = "ollama"' in text
     assert '$env:RAG_VECTOR_SIZE = "1024"' in text

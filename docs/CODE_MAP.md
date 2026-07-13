@@ -201,7 +201,9 @@ projection под тем же alias; при rollback старый FTS восст
   явными UTF-8 bytes; stdout bootstrap не читается через pipe, который могут удерживать
   долгоживущие proxy/UI-процессы. Фоновые upload-пути через
   `proxy/routers/datasets._record_background_parse_error` переводят документ в `ERROR`, а не
-  оставляют вечный `PENDING` при сбое admission/контракта/парсинга.
+  оставляют вечный `PENDING` при сбое admission/контракта/парсинга. Windows/Ollama startup
+  выравнивает query/parse embedding URL на один `OLLAMA_BASE_URL`; `env.example` sidecar `:8081`
+  не протекает в production.
 
 ## Данные и конфиг
 

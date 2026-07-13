@@ -16,6 +16,8 @@
 # piping bootstrap stdout can keep the pipe open through long-lived proxy/UI
 # descendants and turn a healthy launch into a false hang.
 $ErrorActionPreference = "Stop"
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+$OutputEncoding = [Console]::OutputEncoding
 $RuntimeRoot = [System.IO.Path]::GetFullPath($RuntimeRoot)
 $StateRoot = [System.IO.Path]::GetFullPath($StateRoot)
 $LogDir = Join-Path $StateRoot "logs"

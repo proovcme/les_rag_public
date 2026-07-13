@@ -12,6 +12,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+$OutputEncoding = [Console]::OutputEncoding
 if (-not $InstallRoot) {
   $InstallRoot = Join-Path $env:LOCALAPPDATA "LES-release-smoke\app"
 }

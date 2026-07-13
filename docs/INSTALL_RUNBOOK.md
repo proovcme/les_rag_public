@@ -143,6 +143,10 @@ uv run python tools/build_windows_installer.py --version X.Y.Z
 - Фоновый upload не считается успешным по ответу `queued`. Ошибка admission/контракта/парсинга
   должна переводить конкретный документ из `PENDING` в `ERROR` с `last_error`; вечный `PENDING`
   является дефектом наблюдаемости и должен останавливать smoke.
+- Общий `env.example` содержит `EMBED_URL_PARSE=:8081` для отдельного Mac/dev-эмбеддера. В
+  Windows/Ollama `start-light.ps1` обязан переопределить и `MLX_URL`, и `EMBED_URL_PARSE` на
+  `OLLAMA_BASE_URL`; иначе query dense работает, а индексация новых документов падает на
+  несуществующем sidecar. Проверять нужно upload→INDEXED, а не только retrieval старых точек.
 
 #### Номер сборки меняется один раз
 

@@ -159,7 +159,8 @@ deployed_at=datetime.now(timezone.utc).isoformat(timespec='seconds')))"
   свой seed-датасет в уникальной одноразовой `RAG_COLLECTION_NAME`, затем удаляет dataset и
   collection; наличие чужих коллекций в Qdrant не засчитывается. Ответ upload `queued` не успех:
   admission/contract/parse failure обязан дать документу terminal `ERROR` + `last_error`, а не
-  вечный `PENDING`.
+  вечный `PENDING`. В Windows/Ollama query и parse embeddings обязаны оба указывать на
+  `OLLAMA_BASE_URL`; не наследовать Mac/dev `EMBED_URL_PARSE=:8081` из `env.example`.
 
 Инвентарь — **[docs/TEST_INVENTORY.md](docs/TEST_INVENTORY.md)**; аудит соответствия фактической
 архитектуре — **[docs/TEST_ARCHITECTURE_AUDIT_2026-07-14.md](docs/TEST_ARCHITECTURE_AUDIT_2026-07-14.md)**.

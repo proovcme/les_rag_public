@@ -20,6 +20,11 @@ scripts/smoke_unified_v08.py` (фикстура) или `--dataset-id <ds>` (р�
 фонового intake должна атомарно переводить конкретный document id в `ERROR` с `last_error`;
 `queued` и HTTP 200 не являются доказательством индексации.
 
+**Follow-up:** первый изолированный прогон обнаружил второй drift: Windows/Ollama переписывал
+`MLX_URL`, но оставлял parse-only `EMBED_URL_PARSE=:8081` из Mac/dev-профиля. Query dense был
+жив, а новые документы не индексировались. Windows startup теперь атомарно направляет оба пути
+на `OLLAMA_BASE_URL`; выпускной smoke обязан доказать именно upload→INDEXED→RRF.
+
 ## Operational incident 2026-06-27: partial runtime deploy with divergent app.py
 
 During v0.23.6.12 rollout, `make ship` copied the new `service_sources` router and service, but
