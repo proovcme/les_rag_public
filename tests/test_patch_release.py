@@ -64,6 +64,26 @@ def test_windows_patch_release_creates_missing_tracking_branch():
     assert '@("pull", "--ff-only", "origin", $Branch)' in source
 
 
+def test_remote_build_bootstraps_branch_before_versioned_script(monkeypatch):
+    calls = []
+    monkeypatch.setattr(patch_release, "run", lambda command, **kwargs: calls.append(list(command)))
+
+    patch_release.remote_build(
+        host="legion",
+        repo_root=r"C:\Users\Oleg\les_rag",
+        branch="main",
+        version="0.24.1",
+        build_number=407,
+        commit="abc123",
+    )
+
+    assert len(calls) == 2
+    assert "fetch origin $branch" in calls[0][-1]
+    assert "checkout -b $branch --track" in calls[0][-1]
+    assert calls[1][6] == "-File"
+    assert calls[1][7].endswith(r"tools\windows_patch_release.ps1")
+
+
 def test_makefile_exposes_one_patch_release_entrypoint():
     source = (ROOT / "Makefile").read_text(encoding="utf-8")
 

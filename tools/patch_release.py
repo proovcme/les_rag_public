@@ -92,6 +92,27 @@ def run_local_gates() -> None:
 def remote_build(
     *, host: str, repo_root: str, branch: str, version: str, build_number: int, commit: str
 ) -> None:
+    # The release script itself may not exist in an older checkout. Prepare the
+    # canonical branch with an inline bootstrap first, then execute the
+    # versioned script from the exact requested commit.
+    prepare = (
+        "$ErrorActionPreference='Stop'; try { "
+        f"$repo='{repo_root}'; $branch='{branch}'; $commit='{commit}'; "
+        "$dirty=(& git -C $repo status --porcelain)-join \"`n\"; "
+        "if($dirty){throw \"Legion checkout is dirty before release: $dirty\"}; "
+        "& git -C $repo fetch origin $branch; if($LASTEXITCODE -ne 0){throw 'git fetch failed'}; "
+        "& git -C $repo show-ref --verify --quiet \"refs/heads/$branch\"; "
+        "if($LASTEXITCODE -eq 0){"
+        "& git -C $repo checkout $branch"
+        "}else{"
+        "& git -C $repo checkout -b $branch --track \"origin/$branch\""
+        "}; if($LASTEXITCODE -ne 0){throw 'git checkout failed'}; "
+        "& git -C $repo pull --ff-only origin $branch; if($LASTEXITCODE -ne 0){throw 'git pull failed'}; "
+        "$head=(& git -C $repo rev-parse HEAD).Trim(); "
+        "if($head -ne $commit){throw \"Legion HEAD $head does not match $commit\"}; "
+        "exit 0 } catch { Write-Error $_; exit 1 }"
+    )
+    run(["ssh", host, "powershell", "-NoProfile", "-Command", prepare])
     remote_script = f"{repo_root.rstrip('\\/')}\\tools\\windows_patch_release.ps1"
     run(
         [
