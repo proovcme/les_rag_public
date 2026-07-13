@@ -44,11 +44,11 @@ def stage_runtime(dest: Path) -> int:
     return count
 
 
-def build(version: str) -> Path:
+def build(version: str, build_number: int | None = None) -> Path:
     if sys.platform.startswith("win"):
         from tools.build_tauri_app import build as build_tauri
 
-        build_tauri(version, "nsis")
+        build_tauri(version, "nsis", build_number=build_number)
         target = DIST / "LES-Setup.exe"
         if not target.exists():
             raise SystemExit("Tauri NSIS build finished without LES-Setup.exe")
@@ -63,16 +63,21 @@ def build(version: str) -> Path:
     portable = Path(archive)
     print(f"[win] staged Tauri source bundle for a Windows build host: {portable}")
     print("[win] final installer command on Windows:")
-    print(f"      uv run python tools/build_windows_installer.py --version {version}")
+    suffix = f" --build-number {build_number}" if build_number is not None else ""
+    print(f"      uv run python tools/build_windows_installer.py --version {version}{suffix}")
     return portable
 
 
 def main(argv: list[str] | None = None) -> int:
+    from tools.build_tauri_app import release_contract
+
+    contract = release_contract()
     parser = argparse.ArgumentParser(description="Build the Windows LES installer.")
-    parser.add_argument("--version", default="0.1.0")
+    parser.add_argument("--version", default=str(contract["product_version"]))
+    parser.add_argument("--build-number", type=int, default=int(contract["build_number"]))
     args = parser.parse_args(argv)
 
-    artifact = build(args.version)
+    artifact = build(args.version, args.build_number)
     print(artifact)
     return 0
 

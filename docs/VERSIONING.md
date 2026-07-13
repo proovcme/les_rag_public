@@ -1,69 +1,37 @@
-# LES Versioning
+# Версионирование ЛЕС
 
-LES uses SemVer-style product releases for boxed/private builds.
+Канонический машинный источник — [`config/version.json`](../config/version.json).
 
-## Private LES
+## Три разных назначения
 
-Private release tags use plain SemVer:
+| Поле | Пример | Для чего |
+|---|---:|---|
+| `product_version` | `0.24.1` | Единственная версия, которую видит пользователь; обычный SemVer `X.Y.Z` |
+| `build_number` | `407` | Монотонный номер Windows-сборки; не является четвёртой частью версии |
+| `desktop_version` | `5.1.407` | Внутренняя версия Tauri/NSIS для обновления ранее выпущенных `5.1.x` пакетов |
+| `harness_schema_version` | `0.24` | Версия внутреннего строительного контракта, а не продукта |
 
-```text
-vMAJOR.MINOR.PATCH
-```
+`proxy/services/version_service.py` читает этот файл и сохраняет старые поля API только для
+совместимости клиентов. Новый код использует `product_version` и `build_number`.
 
-Examples:
+## Когда менять номер
 
-```text
-v0.1.0
-v0.1.1
-v0.2.0
-```
+- `PATCH`: исправление, документация, установщик, регрессия без нового несовместимого контракта;
+- `MINOR`: новая совместимая возможность продукта;
+- `MAJOR`: несовместимое изменение публичного API или формата пользовательских данных;
+- `build_number`: увеличивается при каждой опубликованной Windows-сборке независимо от типа версии.
 
-Rules:
+Следующая версия и номер сборки задаются один раз в `config/version.json`. Точные версии Qdrant,
+Ollama, моделей, Python, uv и Tauri ведутся в [`SOFTWARE_VERSIONS.md`](SOFTWARE_VERSIONS.md).
 
-- `MAJOR` changes for incompatible API/runtime contract changes.
-- `MINOR` changes for new boxed capabilities, platform support or product
-  integrations.
-- `PATCH` changes for installer, packaging, docs, regression and runtime fixes.
-- After publishing `vX.Y.Z`, `pyproject.toml` should move to the next
-  development version, for example `X.Y.(Z+1).dev0`.
+## Выпуск
 
-## Public Snapshot
-
-Public-safe releases use a descriptive suffix because they are not identical to
-the private product release:
-
-```text
-vMAJOR.MINOR.PATCH-public-<scope>
-```
-
-Examples:
-
-```text
-v0.1.1-public-atlas
-v0.1.2-public-boxed-install
-```
-
-Public releases must not contain `.env`, corpora, indexes, logs, model weights,
-private archives, local deployment state or secrets.
-
-## Release Gates
-
-Before a private boxed release:
+Из чистой отправленной ветки `main`:
 
 ```bash
-uv run pytest -q
-uv lock --check
-git diff --check
-uv run lesctl doctor --profile mac-native
-uv run python tools/build_release_artifacts.py --profile mac-native --name les-vX.Y.Z-mac-native
+make patch-release PATCH_RELEASE_ARGS='--publish --notes-file dist/release-notes.md'
 ```
 
-For Linux and Windows releases, mark artifacts as `hardware-smoked` only after
-they pass on a real matching host. Otherwise use `packaged/not hardware-smoked`
-in release notes.
-
-## Current Baseline
-
-- Latest private release: `v0.1.0`.
-- Current development version: `0.1.1.dev0`.
-- Latest public snapshot release: `v0.1.2-public-boxed-install`.
+Команда не публикует результат, пока не пройдены локальные тесты, Windows-сборка, изолированная
+установка, живой RRF-smoke и проверка SHA-256. Фактический commit и результат записываются в
+[`RELEASE_LEDGER.md`](RELEASE_LEDGER.md).

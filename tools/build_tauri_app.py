@@ -19,13 +19,22 @@ DESKTOP_VERSION_MAJOR = 5
 DESKTOP_VERSION_MINOR = 1
 
 
-def desktop_semver(version: str) -> str:
-    """Map the four-part LES runtime version to Tauri's three-part SemVer.
+def release_contract() -> dict[str, object]:
+    path = ROOT / "config" / "version.json"
+    return json.loads(path.read_text(encoding="utf-8"))
 
-    LES uses ``0.milestone.feature.patch``. The desktop shell has its own
-    stable product line and advances with the LES patch: ``5.1.patch``.
-    Three-part versions remain accepted for standalone shell builds.
+
+def desktop_semver(version: str, build_number: int | None = None) -> str:
+    """Return the internal Tauri/NSIS version for a product release.
+
+    New releases pass the separate monotonic build number and map it to the
+    established ``5.1.BUILD`` desktop line. Legacy four-part inputs remain
+    accepted only so old build callers fail neither silently nor abruptly.
     """
+    if build_number is not None:
+        if int(build_number) < 0:
+            raise ValueError("build number must be non-negative")
+        return f"{DESKTOP_VERSION_MAJOR}.{DESKTOP_VERSION_MINOR}.{int(build_number)}"
     parts = version.split(".")
     if len(parts) == 3 and all(part.isdigit() for part in parts):
         return version
@@ -95,8 +104,8 @@ def set_version(version: str) -> None:
     cargo_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def build(version: str, bundles: str | None) -> Path:
-    desktop_version = desktop_semver(version)
+def build(version: str, bundles: str | None, *, build_number: int | None = None) -> Path:
+    desktop_version = desktop_semver(version, build_number)
     set_version(desktop_version)
     if desktop_version != version:
         print(f"[tauri] LES {version} -> desktop {desktop_version}")
@@ -145,11 +154,13 @@ def build(version: str, bundles: str | None) -> Path:
 
 
 def main() -> int:
+    contract = release_contract()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", default="5.1.0")
+    parser.add_argument("--version", default=str(contract["product_version"]))
+    parser.add_argument("--build-number", type=int, default=int(contract["build_number"]))
     parser.add_argument("--bundles", default=None, help="Tauri bundle list, e.g. app,dmg or nsis")
     args = parser.parse_args()
-    print(build(args.version, args.bundles))
+    print(build(args.version, args.bundles, build_number=args.build_number))
     return 0
 
 

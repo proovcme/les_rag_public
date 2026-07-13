@@ -1,16 +1,27 @@
-# TEST_INVENTORY — тесты Unified Construction Harness v0.16–v0.24
+# TEST_INVENTORY — карта тестов Л.Е.С.
 
-Гейт: `make verify` (офлайн, синтаксис+импорт-смоук). Полная сюита: `uv run python -m pytest tests/ -q` (`2913 passed` для `.406`, 2026-07-13).
-Все тесты ниже офлайн (без живых Qdrant/MLX), flag `LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED` OFF.
+Гейт: `make verify` (офлайн, синтаксис+сбор коллекции). Полная сюита: `make test`.
+На срезе 2026-07-14 собираются **2926 тестов из 303 файлов**; полный контролируемый прогон:
+`2926 passed, 6 warnings`. Это регрессионная коллекция, а не 2926 равноценных release-гейтов.
+
+Архитектурный разбор и список исторического долга:
+[TEST_ARCHITECTURE_AUDIT_2026-07-14.md](TEST_ARCHITECTURE_AUDIT_2026-07-14.md).
+
+- `make test-architecture` — текущие тесты без 11 файлов выключенного Unified/Construction Harness;
+- `make test-rag-core` — короткий обязательный RAG integrity-профиль;
+- `make test` — всё, включая 288 исторических тестов, пока legacy adapters не удалены;
+- живые Qdrant/модель/Windows release-smoke запускаются отдельными инструментами и не подменяются
+  зелёным offline pytest.
 
 RAG-ядро имеет отдельный обязательный профиль `make test-rag-core`; offline defaults задаются в
 `tests/conftest.py`. Аудит достоверности гейтов: [RAG_TEST_PROGRAM_AUDIT.md](RAG_TEST_PROGRAM_AUDIT.md).
 
-**Профильные таблицы v0.16–v0.24: 308 тестов** (+ регрессия v0.3–v0.15 и chat/router при OFF). `make verify` на h0.24 собирает **2913 тестов**.
+Ниже сохранена подробная карта профильных наборов. Строки v0.16–v0.24 являются исторически
+сложившимися именами файлов, а не текущей версией архитектуры.
 
 | Файл | Тестов | Покрывает |
 |---|---:|---|
-| `tests/test_installer_windows.py`, `tests/test_tauri_desktop.py`, `tests/test_install_les.py`, `tests/test_onboard_reranker.py`; live `tools/windows_release_smoke.ps1` | focused + Windows live | Windows/Tauri release contract: `%LOCALAPPDATA%\LES` persistent state, backup-first junction migration, обязательные uv/Ollama/Docker/Qdrant, winget/официальные адреса установки, машинный bootstrap-status, скрытый PowerShell, named Qdrant volume, dynamic-port lifecycle, four-part LES→desktop SemVer, external `.env`, resumable SHA-256/model-load verified BGE onboarding and corrupt-weight quarantine. Live gate запускает установленный runtime, ждёт `ready`, сверяет точный `les_version`, проверяет API/UI/Qdrant и настоящий `dense + qdrant_sparse → RRF → rerank`; русский JSON передаётся UTF-8 bytes |
+| `tests/test_installer_windows.py`, `tests/test_tauri_desktop.py`, `tests/test_install_les.py`, `tests/test_onboard_reranker.py`, `tests/test_software_versions.py`; live `tools/windows_release_smoke.ps1` | focused + Windows live | Windows/Tauri release contract: `%LOCALAPPDATA%\LES` persistent state, обязательные uv/Ollama/Docker/Qdrant, закреплённый Qdrant image, единый SemVer продукта + отдельный build, машинный bootstrap-status, named Qdrant volume, dynamic-port lifecycle, external `.env`, verified BGE onboarding. Live gate запускает установленный runtime, ждёт `ready`, сверяет точную версию, проверяет API/UI/Qdrant и настоящий `dense + qdrant_sparse → RRF → rerank` |
 | `tests/test_local_inference_benchmark.py` | 8 | офлайн-контракт direct OpenAI benchmark и OptiQ probe: p50/p95, usage/cache normalization, MTP summary, tool/prefix profiles, sampler forwarding и чтение per-request telemetry JSONL; live model-series запускаются отдельно через `tools/local_inference_benchmark.py` + `tools/optiq_mtp_probe_server.py` |
 | `tests/test_answer_render_v16.py` | 26 | render-хелперы Совушки: strip markdown из ячеек, source-chips, evidence-секции, citation/conflict-блоки, citation drawer payload, compact trace включая topic-guided retrieval, `answer_copy_text` (Копировать без trace/тела письма) |
 | `tests/test_sidecar_ops_v16.py` | 50 | sidecar-операции: инвентарь датасетов, heading-классификатор, extraction-state (7 кейсов), lexical `extracted_fts`, OCR-детект, `run_extraction`/`extract_body_op` (gate env+confirm), originals read-only (shasum), legacy `.xls` |
@@ -114,8 +125,8 @@ diagnostics does not hide FAIL
 
 ## Чек-лист перед коммитом версии
 
-1. `HARNESS_VERSION` в `version_service.py` поднят (двигать КАЖДУЮ версию).
+1. `product_version` и `build_number` согласованно подняты в `config/version.json`.
 2. `make verify` зелёный.
 3. Профильные тесты версии + регрессия зелёные.
 4. Deploy stamp пишется на `--apply` (или вручную `write_deploy_stamp` при cp).
-5. `docs/releases.md` обновлён (commit для отката).
+5. `docs/RELEASE_LEDGER.md` обновлён; версии внешнего ПО сверены с `docs/SOFTWARE_VERSIONS.md`.

@@ -16,8 +16,46 @@ from typing import Any
 import yaml
 
 from backend.rag_config import rag_meta_db_path
+from proxy.smeta_core.base_registry import active_base
 
 DEFAULT_CONFIG = Path("config/service_sources.yaml")
+
+
+def _active_base_tokens() -> dict[str, str]:
+    active = active_base()
+    return {
+        "${SMETA_BASE}": str(active.get("base_path") or ""),
+        "${SMETA_BASE_MANIFEST}": str(active.get("manifest_path") or ""),
+        "${SMETA_BASE_INTEGRITY}": str(active.get("integrity_path") or ""),
+        "${SMETA_BASE_SOURCE}": str(active.get("source_path") or ""),
+    }
+
+
+def _expand_active_path(value: Any) -> str:
+    raw = str(value or "").strip()
+    return _active_base_tokens().get(raw, raw)
+
+
+def _resolve_source_paths(src: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the canonical smeta-base pointer once for every registry consumer."""
+    resolved = dict(src)
+    resolved["paths"] = [
+        path for value in (src.get("paths") or []) if (path := _expand_active_path(value))
+    ]
+    for key in ("structured_base_path", "base_manifest_path", "integrity_report"):
+        if key in src:
+            resolved[key] = _expand_active_path(src.get(key))
+    required_documents: list[dict[str, Any]] = []
+    for item in src.get("required_documents") or []:
+        row = dict(item)
+        for key in ("preferred_paths", "raw_paths"):
+            row[key] = [
+                path for value in (item.get(key) or []) if (path := _expand_active_path(value))
+            ]
+        required_documents.append(row)
+    if required_documents:
+        resolved["required_documents"] = required_documents
+    return resolved
 
 
 def _file_info(path: str) -> dict[str, Any]:
@@ -225,7 +263,8 @@ def service_sources(path: Path | str = DEFAULT_CONFIG) -> dict[str, Any]:
     cfg = _load_config(path)
     out: list[dict[str, Any]] = []
     totals = {"ok": 0, "missing_blocking": 0, "missing_degraded": 0, "quarantined_blocking": 0}
-    for src in cfg.get("sources", []):
+    for configured_src in cfg.get("sources", []):
+        src = _resolve_source_paths(configured_src)
         files: list[dict[str, Any]] = []
         for p in src.get("paths") or []:
             files.extend(_glob_infos(str(p)))
@@ -259,6 +298,11 @@ def service_sources(path: Path | str = DEFAULT_CONFIG) -> dict[str, Any]:
                 manifest_path=manifest_path,
                 report_path=str(src.get("integrity_report") or "data/smeta_base/les_smeta_base_integrity.json"),
             )
+            # Supporting seed/config/source files are not a machine normative
+            # base.  Without the actual SQLite file this is missing, not a
+            # misleading "files found, quarantined" state.
+            present = bool(base_path and Path(base_path).is_file())
+            status = _status(str(src.get("status_if_missing") or "degraded"), present)
             if present and not integrity.get("trusted_for_pricing"):
                 status = "quarantined_blocking"
         totals[status] = totals.get(status, 0) + 1

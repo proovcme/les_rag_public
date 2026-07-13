@@ -26,6 +26,10 @@ Use `/Users/ovc/Projects/LES_v2` as the project root for development.
 
 Current runtime posture:
 
+- Канон версий — `config/version.json`: пользователь видит только SemVer `product_version`
+  и отдельный номер сборки. Версии Qdrant, Ollama, моделей, Python/uv и Tauri зафиксированы в
+  `docs/SOFTWARE_VERSIONS.md`; не угадывать их по старым release notes.
+
 - **Production target: Legion / Windows.** Canonical stack: Tauri + FastAPI/NiceGUI,
   Ollama `qwen3.5:9b`, Ollama `bge-m3:latest` embeddings, dedicated
   native cross-encoder `BAAI/bge-reranker-v2-m3`, Qdrant Docker container
@@ -145,10 +149,16 @@ deployed_at=datetime.now(timezone.utc).isoformat(timespec='seconds')))"
   динамические порты. Не читать bootstrap через pipe: дочерние proxy/UI удерживают его открытым.
   JSON с русским вопросом из Windows PowerShell 5 отправлять только явными UTF-8 bytes.
 
-Инвентарь тестов v0.16–v0.23 (~2067 тестов, 218 файлов) — **[docs/TEST_INVENTORY.md](docs/TEST_INVENTORY.md)**. Гейт `make verify` (офлайн); базовый L1 HTTP-смоук — `make smoke-basic` (`tools/basic_function_smoke.py`). Run before finalizing meaningful changes:
+Инвентарь — **[docs/TEST_INVENTORY.md](docs/TEST_INVENTORY.md)**; аудит соответствия фактической
+архитектуре — **[docs/TEST_ARCHITECTURE_AUDIT_2026-07-14.md](docs/TEST_ARCHITECTURE_AUDIT_2026-07-14.md)**.
+`make verify` проверяет синтаксис и сбор коллекции; `make test-architecture` запускает текущий
+контур без 11 файлов feature-off Unified/Construction Harness; `make test` сохраняет полную
+регрессию вместе с историей. Базовый L1 HTTP-смоук — `make smoke-basic`
+(`tools/basic_function_smoke.py`). Run before finalizing meaningful changes:
 
 ```bash
 uv run pytest -q
+make test-architecture
 make verify
 git diff --check
 uv lock --check
@@ -229,6 +239,7 @@ Switch the chat LLM (provider/model) — **no restart needed**, applies per-requ
 - Локальная RAG-модель — `MLX_MODEL=mlx-community/Qwen3.5-9B-OptiQ-4bit`. Единый default/список GUI хранится в `proxy/local_model_registry.py`; env-выбор оператора имеет приоритет. OptiQ прошёл русский ответ, OpenAI tool calls, tool-result continuation и живой BAI RRF smoke. Gemma 4 12B в Ollama (`gemma4:12b`) остаётся vision/грязным входом, не автоматическим вторым агентом.
 - Windows `windows-lite`: bootstrap требует полный локальный контур `uv + Ollama + Docker Desktop + Qdrant`; отсутствующие компоненты ставит через winget (для `uv` есть официальный скрипт), а при невозможности пишет точный `bootstrap-status.json` с официальным адресом установки. Полурабочий GUI без Qdrant запрещён. `start-light.ps1 -Provider ollama -Model qwen3.5:9b` синхронизирует `OLLAMA_MODEL=LLM_MODEL`, model-owned attachment/smeta следует выбранному локальному Ollama (не фиктивному MLX fallback), embeddings — `bge-m3:latest`, `EMBED_BACKEND=ollama`, `RAG_VECTOR_SIZE=1024`. Реранкер допускается только после SHA-256 + semantic load-probe `tools/onboard_reranker.py`; повреждённый вес не оставлять под published именем.
 - Windows update — только вручную из настроек: `GET /api/update/check`, затем отдельный admin `POST /api/update/install`. Публичный выпуск обязан содержать прямой `latest.json`, `LES-Setup.exe` и `LES-Setup.exe.sha256`; серверная часть не зависит от GitHub API, проверяет адрес GitHub и SHA-256 до запуска NSIS. Не добавлять таймер, фоновую проверку или автоустановку.
+- Исправительный Windows-выпуск — `make patch-release PATCH_RELEASE_ARGS='--publish --notes-file <file>'` только из чистой, отправленной `main`. Команда сама запускает гейты, собирает на Windows, ставит EXE в изолированный каталог, выполняет живой smoke, проверяет SHA-256 и только потом публикует. Ручная сборка не считается выпуском.
 - Облако: **из РФ Cloudflare и OpenRouter режутся** → используем OpenAI-совместимый `proxyapi.ru` (`OPENAI_BASE_URL=https://openai.api.proxyapi.ru/v1`, `OPENAI_MODEL=gpt-4.1`, `LES_LLM_PROVIDER=openai`). `LES_CLOUD_MODEL_TIMEOUT_SEC=8` чтобы мёртвое облако не висело.
 
 Task tracker from chat (deterministic regex+SQL, no LLM, works even under memory-guard): «поставь задачу …» / «что по задачам?» / «задача N готова». API: `POST/GET /api/tasks`, `PATCH /api/tasks/{id}`.
@@ -329,7 +340,7 @@ curl -fsS "http://127.0.0.1:8050/api/cad-bim/highlight" | python3 -m json.tool  
 - **Приёмка смонтированного объёма из исполнительных/чек-листов (сканов):** `POST /api/field/extract-asbuilt` (admin; path внутри `LES_EXTERNAL_SOURCE_ROOTS`; `write=false` → превью, `write=true` → строки в журнал объёмов как `status=pending`). CLI: `uv run python tools/asbuilt_extract.py "<pdf|папка>" --engine local|cloud --rotate auto|90 --preview|--write [--xlsx out]`. Конвейер: рендер→авто-поворот→**locate-then-read** (найти bbox таблицы «…смонтированного…» → прочитать целиком; vision-OCR — единственный LLM-шаг, числа/свод считает код, ADR-11). `local`=gemma4:12b (приватно, но медленно на больших листах — риск таймаута), `cloud`=gpt-4.1 через proxyapi (точнее/быстрее, исполнительная уходит наружу). Строки тегируются `zahvatka=floor/system/line` → свод `/api/field/summary`. **Чат вызывает сам** (канал `asbuilt`, `asbuilt_chat_service`): «вытащи смонтированный объём из «/путь/папка»» (+«облаком» → cloud-движок) → фоновый прогон + запись pending, ack сразу; команда-палитра `/исполнительная`. Канон — `docs/ALGO-asbuilt-intake.md`.
 - **Форматы (расширено для реальных проектных архивов):** конвертер берёт legacy `.doc` (через нативный `textutil`; mammoth/markitdown их НЕ читают — раньше тихо индексировались пустыми), `.xlsm`, картинки `jpg/png/tiff`→vision-OCR, `.p7m` (openssl→PDF; открепл. подпись рядом с оригиналом — скип). Архивы `.7z/.zip` — препроцесс `uv run python tools/unpack_archives.py "<папка>"` (`.7z` нужен `uv pip install py7zr`). **DWG не парсится напрямую** (нужен внешний DWG→DXF/JSON). Аудит покрытия типов: гейт `backend/smart_index.SUPPORTED_SUFFIXES`.
 - **Выбор vision-OCR-модели тестами:** `uv run python tools/asbuilt_ocr_bench.py --dir "<папка АУПС-СОУЭ>" --models cloud:gpt-4.1 local:gemma4:12b local:qwen3-vl:8b` — recall по числовым якорям (ground-truth 4 листов) + латентность, рейтинг. Кандидаты — текущее поколение (**Qwen3-VL** 4B/8B и сородичи; Qwen2.5-VL — устар.). `--model` есть и в `asbuilt_extract.py`/`process_path`.
-- **Env-ручки:** `RAG_OCR_BACKEND` (ollama|mlx), `RAG_OCR_MODEL`, `LES_AUTONOTE_ENABLED` (авто-заметки фактов из чата); приёмка ИД — `LES_ASBUILT_OCR_ENGINE`/`LES_ASBUILT_STRATEGY`/`LES_ASBUILT_DPI`/`LES_ASBUILT_LOCATE_PAD`/`LES_ASBUILT_TILES`. Сметное/ретрив/ярус-3 (`feat/les3-p1`): `LES_LAYOUT_PDF` (layout-aware PDF, дефолт on; +`LES_LAYOUT_COLUMN_GAP_RATIO`/`LES_LAYOUT_MIN_TABLE_ROWS`/`_COLS`), `LES_TABLE_APPENDIX` (подъём pipe-таблиц в ретрив, дефолт true; +`LES_TABLE_APPENDIX_MIN_PIPES`/`_POOL_N`/`_GUARANTEE`), `LES_FGIS_TIMEOUT`/`LES_FGIS_FILE_TIMEOUT`/`LES_FGIS_VIA_SSH` (добор ФГИС ЦС), `LES_SMETNOE_TOKEN`/`LES_SMETNOE_VIA_SSH` (smetnoedelo, квота), `LES_AGENT_LOOP` (Ярус 2/3: агент-роутер + action-инструменты). См. env.example.
+- **Env-ручки:** `RAG_OCR_BACKEND` (ollama|mlx), `RAG_OCR_MODEL`, `LES_AUTONOTE_ENABLED` (авто-заметки фактов из чата); приёмка ИД — `LES_ASBUILT_OCR_ENGINE`/`LES_ASBUILT_STRATEGY`/`LES_ASBUILT_DPI`/`LES_ASBUILT_LOCATE_PAD`/`LES_ASBUILT_TILES`. Сметное/ретрив/ярус-3: `LES_LAYOUT_PDF` (layout-aware PDF, дефолт on; +`LES_LAYOUT_COLUMN_GAP_RATIO`/`LES_LAYOUT_MIN_TABLE_ROWS`/`_COLS`), `LES_TABLE_APPENDIX` (подъём pipe-таблиц в ретрив, дефолт true; +`LES_TABLE_APPENDIX_MIN_PIPES`/`_POOL_N`/`_GUARANTEE`), `LES_FGIS_TIMEOUT`/`LES_FGIS_FILE_TIMEOUT`/`LES_FGIS_VIA_SSH` (добор ФГИС ЦС), `LES_SMETNOE_TOKEN`/`LES_SMETNOE_VIA_SSH` (smetnoedelo, квота), `LES_AGENT_LOOP` (Ярус 2/3: агент-роутер + action-инструменты). См. env.example.
 - **Алгоритм-доки:** `docs/ALGO-table-query.md` (счёт по ячейкам), `docs/ALGO-spec-to-bor.md` (спец→ВОР), `docs/ALGO-{gesn,fgis-price,kac,stesnennost,lsr-assembly,object-estimate,smeta-ontology,harvest}.md` (сметное ядро), `docs/ALGO-mail-intake.md` (почта), `docs/ALGO-pdf-layout.md` (Ц11), `docs/ALGO-vl-lora.md` (Ц12/Ц13 — решение) — читать перед правкой соответствующего сервиса.
 
 ## Documentation
@@ -338,7 +349,8 @@ When closing a LES session, update the **living** canon (датированны�
 не плодим новые, история в `git log` + `docs/archive/`):
 
 - `ROADMAP_TO_V1.md` — бэклог/состояние до v1
-- `docs/releases.md` — версии/что вошло
+- `docs/RELEASE_LEDGER.md` — текущий выпуск и фактический deploy
+- `docs/SOFTWARE_VERSIONS.md` — версии инфраструктуры, моделей и сборочных средств
 - `docs/CODE_MAP.md` — при структурных правках
 - auto-memory (`MEMORY.md`) — непроизводные факты сессии
 

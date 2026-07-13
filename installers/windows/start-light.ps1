@@ -128,8 +128,9 @@ if ($StartQdrant) {
   } elseif ($existingQdrant) {
     docker start les-light-qdrant | Out-Null
   } else {
+    $qdrantImage = if ($env:LES_QDRANT_IMAGE) { $env:LES_QDRANT_IMAGE } else { "qdrant/qdrant:v1.17.1" }
     docker volume create les-qdrant-data | Out-Null
-    docker run -d --name les-light-qdrant -p "${QdrantPort}:6333" -v "les-qdrant-data:/qdrant/storage" qdrant/qdrant:latest | Out-Null
+    docker run -d --name les-light-qdrant -p "${QdrantPort}:6333" -v "les-qdrant-data:/qdrant/storage" $qdrantImage | Out-Null
   }
 }
 

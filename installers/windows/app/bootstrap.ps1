@@ -321,7 +321,8 @@ if (-not $qdrantUp) {
   if ($existingQdrant) {
     & $Docker start les-light-qdrant | Out-Null
   } else {
-    & $Docker run -d --name les-light-qdrant -p "6333:6333" -v "les-qdrant-data:/qdrant/storage" qdrant/qdrant:latest | Out-Null
+    $qdrantImage = if ($env:LES_QDRANT_IMAGE) { $env:LES_QDRANT_IMAGE } else { "qdrant/qdrant:v1.17.1" }
+    & $Docker run -d --name les-light-qdrant -p "6333:6333" -v "les-qdrant-data:/qdrant/storage" $qdrantImage | Out-Null
   }
   if ($LASTEXITCODE -ne 0) { Fail "не удалось запустить контейнер Qdrant" "qdrant_start_failed" }
   $qdrantDeadline = [DateTime]::UtcNow.AddMinutes(2)

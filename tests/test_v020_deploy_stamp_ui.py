@@ -66,8 +66,10 @@ def test_version_no_secrets():
     for m in ("password", "secret", "token", "api_key", "apikey", "sk-", "openrouter"):
         assert m not in blob
 
-def test_version_brief_has_harness():
-    assert f"h{vs.HARNESS_VERSION}" in vs.version_brief() and vs.LES_VERSION in vs.version_brief()
+def test_version_brief_has_one_product_version_and_build():
+    brief = vs.version_brief()
+    assert vs.PRODUCT_VERSION in brief and f"сборка {vs.BUILD_NUMBER}" in brief
+    assert " · app " not in brief and " · h" not in brief
 
 
 # ── §5 copy answer ────────────────────────────────────────────────────────────────────────

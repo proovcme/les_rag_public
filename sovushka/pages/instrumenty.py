@@ -159,7 +159,12 @@ def build_instrumenty():
         async def _update_gesn_from_fgis() -> None:
             d = await api_post("/api/service-sources/gesn_base/fgis-update", {})
             if not isinstance(d, dict) or not d.get("ok"):
-                ui.notify(last_api_error_text("Обновление ГЭСН не запущено"), type="negative")
+                message = (
+                    str(d.get("message") or d.get("reason") or "").strip()
+                    if isinstance(d, dict)
+                    else ""
+                )
+                ui.notify(message or last_api_error_text("Обновление ГЭСН не запущено"), type="negative")
                 return
             if d.get("started"):
                 ui.notify("ГЭСН: запущено скачивание/обновление из ФГИС ЦС", type="positive")

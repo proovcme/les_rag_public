@@ -169,3 +169,74 @@ def test_present_normative_base_is_quarantined_without_integrity_report(tmp_path
     assert item["status"] == "quarantined_blocking"
     assert item["integrity"]["trusted_for_pricing"] is False
     assert process_service_source("gesn_base", cfg_path)["ok"] is False
+
+
+def test_supporting_gesn_files_do_not_hide_missing_structured_base(tmp_path):
+    seed = tmp_path / "gesn_seed.yaml"
+    seed.write_text("norms: []\n", encoding="utf-8")
+    cfg = {
+        "meta": {"version": 1, "title": "test"},
+        "sources": [
+            {
+                "id": "gesn_base",
+                "domain": "smeta",
+                "label": "ГЭСН",
+                "status_if_missing": "blocking",
+                "paths": [str(tmp_path / "missing.sqlite"), str(seed)],
+                "structured_base_path": str(tmp_path / "missing.sqlite"),
+                "base_manifest_path": str(tmp_path / "missing_manifest.json"),
+                "integrity_report": str(tmp_path / "missing_integrity.json"),
+                "integrity_required": True,
+            }
+        ],
+    }
+    cfg_path = tmp_path / "sources.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg, allow_unicode=True), encoding="utf-8")
+
+    item = service_source("gesn_base", cfg_path)
+
+    assert item["status"] == "missing_blocking"
+    assert item["integrity"]["trusted_for_pricing"] is False
+
+
+def test_active_base_tokens_resolve_to_registry_paths(tmp_path, monkeypatch):
+    base = tmp_path / "active.sqlite"
+    manifest = tmp_path / "active_manifest.json"
+    integrity = tmp_path / "active_integrity.json"
+    source = tmp_path / "source.parquet"
+    base.write_bytes(b"sqlite")
+    manifest.write_text("{}", encoding="utf-8")
+    source.write_bytes(b"source")
+    cfg = {
+        "meta": {"version": 1, "title": "test"},
+        "sources": [
+            {
+                "id": "gesn_base",
+                "domain": "smeta",
+                "label": "ГЭСН",
+                "status_if_missing": "blocking",
+                "paths": ["${SMETA_BASE}", "${SMETA_BASE_MANIFEST}", "${SMETA_BASE_SOURCE}"],
+                "structured_base_path": "${SMETA_BASE}",
+                "base_manifest_path": "${SMETA_BASE_MANIFEST}",
+                "integrity_report": "${SMETA_BASE_INTEGRITY}",
+                "integrity_required": True,
+            }
+        ],
+    }
+    cfg_path = tmp_path / "sources.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg, allow_unicode=True), encoding="utf-8")
+    monkeypatch.setattr(
+        "proxy.services.service_source_registry.active_base",
+        lambda: {
+            "base_path": str(base),
+            "manifest_path": str(manifest),
+            "integrity_path": str(integrity),
+            "source_path": str(source),
+        },
+    )
+
+    item = service_source("gesn_base", cfg_path)
+
+    paths = {row["path"] for row in item["files"]}
+    assert {str(base), str(manifest), str(source)} <= paths
+    assert item["status"] == "quarantined_blocking"

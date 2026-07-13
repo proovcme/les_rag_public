@@ -1,13 +1,14 @@
 """version_service (v0.19) — ЕДИНЫЙ центр версий ЛЕС: product/harness/schema + git + флаги + runtime-
 divergence. Чтобы оператор сразу видел, ЧТО запущено и какой commit откатывать. Без секретов, без падений.
 
-Версии берутся отсюда (не хардкодятся по UI). `/api/version` отдаёт version_info(); чат кладёт version_info
-в trace; бейдж в шапке показывает version_brief().
+Версии читаются из config/version.json (не хардкодятся по UI). `/api/version` отдаёт version_info();
+чат кладёт version_info в trace; бейдж в шапке показывает version_brief().
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import subprocess
 from datetime import datetime, timezone
@@ -16,11 +17,16 @@ from typing import Any
 
 # ── центральные версии ────────────────────────────────────────────────────────────────────
 
-APP_VERSION = "5.1.0"                 # пользовательская «маркетинговая» версия ЛЕС
-HARNESS_VERSION = "0.24"             # веха roadmap (v0.NN); двигать на смене вехи
-# Гранулярная версия «где мы»: 0.<веха>.<фича>.<патч>. Двигать КАЖДУЮ фичу/фикс + строка в
-# docs/RELEASE_LEDGER.md. Это основной номер в /api/version и бейдже (см. docs/RELEASE_LEDGER.md).
-LES_VERSION = "0.24.0.406"
+_VERSION_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "version.json"
+_VERSION_CONFIG = json.loads(_VERSION_CONFIG_PATH.read_text(encoding="utf-8"))
+PRODUCT_VERSION = str(_VERSION_CONFIG["product_version"])
+BUILD_NUMBER = int(_VERSION_CONFIG["build_number"])
+DESKTOP_VERSION = str(_VERSION_CONFIG["desktop_version"])
+HARNESS_VERSION = str(_VERSION_CONFIG["harness_schema_version"])
+# Backward-compatible field names for API clients. Both now identify the same
+# public product; the independent Windows build number is BUILD_NUMBER.
+APP_VERSION = PRODUCT_VERSION
+LES_VERSION = PRODUCT_VERSION
 EVIDENCE_SCHEMA_VERSION = "1.0"
 EXTRACTION_SCHEMA_VERSION = "1.0"
 RESOURCE_CALC_VERSION = "0.6"
@@ -257,6 +263,8 @@ def write_deploy_stamp(*, dev_root: Path | None = None, runtime_root: Path | Non
         if h is not None:
             bundle[rel] = h
     stamp = {
+        "product_version": PRODUCT_VERSION, "build_number": BUILD_NUMBER,
+        "desktop_version": DESKTOP_VERSION,
         "les_version": LES_VERSION, "app_version": APP_VERSION, "harness_version": HARNESS_VERSION,
         "deployed_commit": deployed_commit, "deployed_branch": deployed_branch,
         "deployed_at": deployed_at or "unknown", "deployed_by": "local",
@@ -302,6 +310,9 @@ def version_info() -> dict[str, Any]:
     ds = deploy_stamp()
     import sys
     return {
+        "product_version": PRODUCT_VERSION,
+        "build_number": BUILD_NUMBER,
+        "desktop_version": DESKTOP_VERSION,
         "les_version": LES_VERSION,
         "app_version": APP_VERSION,
         "harness_version": HARNESS_VERSION,
@@ -334,6 +345,8 @@ def version_info_trace() -> dict[str, Any]:
     """Лёгкий version_info для trace каждого ответа (без runtime-divergence-сканов, дёшево)."""
     gi = git_info()
     return {
+        "product_version": PRODUCT_VERSION,
+        "build_number": BUILD_NUMBER,
         "les_version": LES_VERSION,
         "app_version": APP_VERSION,
         "harness_version": HARNESS_VERSION,
@@ -345,8 +358,8 @@ def version_info_trace() -> dict[str, Any]:
 
 
 def version_brief() -> str:
-    """Короткая строка для бейджа: «Л.Е.С. 5.1.0 · h0.20 · 5ded539»."""
+    """Короткая строка для бейджа: одна версия продукта + номер сборки."""
     gi = git_info()
     c = gi["git_commit"]
-    return (f"Л.Е.С. {LES_VERSION} · app {APP_VERSION} · h{HARNESS_VERSION}"
+    return (f"Л.Е.С. {PRODUCT_VERSION} · сборка {BUILD_NUMBER}"
             + (f" · {c}" if c and c != "unknown" else ""))

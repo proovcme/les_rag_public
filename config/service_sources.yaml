@@ -9,9 +9,10 @@ sources:
     label: "ГЭСН-2022: нормы и ресурсы"
     status_if_missing: blocking
     paths:
-      - data/smeta_base/les_smeta_base_v2.sqlite
-      - data/smeta_base/les_smeta_base_v2_manifest.json
-      - data/gesn_base/gesn2022_typed_v2.parquet
+      - ${SMETA_BASE}
+      - ${SMETA_BASE_MANIFEST}
+      - ${SMETA_BASE_INTEGRITY}
+      - ${SMETA_BASE_SOURCE}
       - config/domain/gesn_seed.yaml
     folders:
       - data/smeta_base
@@ -21,11 +22,11 @@ sources:
       - "ГЭСН-код → ресурсы"
       - "ЛСР от нормы"
       - "объектная прикидка"
-    operator_action: "Активная база задаётся config/domain/smeta_base_active.json. v2 строится sibling-пайплайном из typed FGIS rows; v1 остаётся только quarantine/audit."
+    operator_action: "Активная база задаётся только config/domain/smeta_base_active.json; реестр, расчёт и обновление обязаны читать один указатель."
     process_label: "Проверить ГЭСН"
-    structured_base_path: data/smeta_base/les_smeta_base_v2.sqlite
-    base_manifest_path: data/smeta_base/les_smeta_base_v2_manifest.json
-    integrity_report: data/smeta_base/les_smeta_base_v2_integrity.json
+    structured_base_path: ${SMETA_BASE}
+    base_manifest_path: ${SMETA_BASE_MANIFEST}
+    integrity_report: ${SMETA_BASE_INTEGRITY}
     integrity_required: true
 
   - id: fgis_price_base
@@ -110,8 +111,8 @@ sources:
         preferred_files: ["*.parquet", "*.json", "*.sqlite"]
         accepted_files: ["*.xlsx", "*.csv", "*.pdf", "*.docx", "*.md"]
         preferred_paths:
-          - data/smeta_base/les_smeta_base_v2.sqlite
-          - data/gesn_base/gesn2022_typed_v2.parquet
+          - ${SMETA_BASE}
+          - ${SMETA_BASE_SOURCE}
           - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*norm*.parquet
           - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*gesn*.json
           - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*norm*.json

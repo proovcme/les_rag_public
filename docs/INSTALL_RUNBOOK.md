@@ -94,95 +94,27 @@ uv run python tools/build_windows_installer.py --version X.Y.Z
 
 ### Каноническая сборка и публикация Windows-выпуска
 
-Собирать выпуск только из чистого, отправленного в `origin` коммита. Нельзя переименовывать старый
-EXE под новую версию или публиковать `latest.json` раньше проверенного установщика.
+Собирать выпуск только из чистой, отправленной ветки `main`. Версия продукта и номер сборки задаются
+в `config/version.json`; версии обязательной инфраструктуры — в `docs/SOFTWARE_VERSIONS.md`.
 
-1. На машине разработки закрыть кодовый гейт и отправить коммит:
-
-   ```bash
-   make test
-   make verify
-   make test-rag-core
-   make public-check
-   uv lock --check
-   git diff --check
-   git push origin feat/les3-p1
-   ```
-
-2. На Legion обновить чистый checkout строго fast-forward и собрать Tauri/NSIS:
-
-   ```powershell
-   Set-Location C:\Users\Oleg\les_rag
-   git fetch origin
-   git checkout feat/les3-p1
-   git pull --ff-only origin feat/les3-p1
-   git status --short
-   uv run python tools/build_windows_installer.py --version 0.24.0.406
-   ```
-
-   Результат обязан находиться в `dist\LES-Setup.exe`. Перед публикацией проверить, что
-   `proxy\services\version_service.py` и staged runtime содержат ту же версию, Tauri получил
-   desktop-версию `5.1.406`, а checkout всё ещё указывает на выпускной commit.
-
-3. Получить размер и контрольную сумму, создать соседний файл:
-
-   ```powershell
-   $exe = Resolve-Path .\dist\LES-Setup.exe
-   $sha = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
-   "$sha  LES-Setup.exe" | Set-Content .\dist\LES-Setup.exe.sha256 -Encoding ascii
-   Get-Item $exe | Select-Object FullName,Length,LastWriteTime
-   Get-Content .\dist\LES-Setup.exe.sha256
-   ```
-
-4. Проверить установщик на Legion двумя путями:
-
-   - чистая установка без готового состояния: bootstrap либо ставит обязательные `uv`, Ollama и
-     Docker Desktop через winget, либо показывает точную причину, официальный адрес и журнал;
-   - обновление поверх предыдущего выпуска: сохраняются `.env`, Qdrant volume, MetaDB,
-     `RAG_Content`, `storage` и артефакты, после запуска `/api/version` показывает новую версию.
-
-   После установки выполнить живой машинный gate из checkout. Не подменять его `pytest`,
-   `cargo check` или простым запросом `/api/health`:
-
-   ```powershell
-   .\tools\windows_release_smoke.ps1 `
-     -RuntimeRoot C:\Path\To\Installed\runtime `
-     -StateRoot C:\Path\To\Isolated\LES-state `
-     -ExpectedVersion 0.24.0.406
-   ```
-
-   Успех — только `ok=true`, `bootstrap_state=ready`, точный `les_version`, HTTP 200 интерфейса, доступный Qdrant и
-   `rrf_channels=[dense,qdrant_sparse]`, `rrf_fusion=rrf`. Скрипт запускает bootstrap отдельно,
-   потому что stdout-pipe удерживается долгоживущими proxy/UI-процессами, и отправляет русский
-   JSON явными UTF-8 bytes: Windows PowerShell 5 иначе способен дать ложный dense-only результат
-   из-за повреждения текста запроса.
-
-5. Создать `dist\latest.json` по схеме `les.update.v1`. Обязательны `version`, `name`, `notes`,
-   `published_at`, `html_url`; дополнительно фиксировать `build_commit`. Затем опубликовать ровно
-   три файла с неизменными именами:
+1. Подготовить короткое описание выпуска и выполнить:
 
    ```bash
-   gh release create v0.24.0.406 \
-     dist/LES-Setup.exe \
-     dist/LES-Setup.exe.sha256 \
-     dist/latest.json \
-     --repo proovcme/les_rag_public \
-     --title "ЛЕС 0.24.0.406" \
-     --notes-file dist/release-notes.md
+   make patch-release PATCH_RELEASE_ARGS='--publish --notes-file dist/release-notes.md'
    ```
 
-6. После публикации проверить не страницу, а реальные assets и updater:
+2. `tools/patch_release.py` сам проверяет clean/pushed commit и запускает `make test`, `make verify`,
+   `make test-rag-core`, `make public-check`, `uv lock --check` и `git diff --check`.
 
-   ```bash
-   gh release view v0.24.0.406 --repo proovcme/les_rag_public --json tagName,assets,url
-   curl -fsSL https://github.com/proovcme/les_rag_public/releases/latest/download/latest.json
-   curl -fsSL https://github.com/proovcme/les_rag_public/releases/download/v0.24.0.406/LES-Setup.exe.sha256
-   ```
+3. `tools/windows_patch_release.ps1` на Windows строго обновляет `main` до запрошенного commit,
+   собирает Tauri/NSIS, устанавливает EXE в изолированный `%LOCALAPPDATA%\LES-release-smoke`,
+   запускает `windows_release_smoke.ps1` и возвращает SHA-256 с машинным отчётом.
 
-   Установленный предыдущий выпуск должен показать `.406` по кнопке «Проверить обновление»,
-   скачать EXE, самостоятельно сверить SHA-256 и только затем запустить NSIS. Фактический размер,
-   SHA-256, commit, результаты чистой установки и обновления записываются в
-   `docs/RELEASE_LEDGER.md` в том же выпускном коммите.
+4. Публикация начинается только после проверки версии, номера сборки, commit, живого RRF и SHA-256.
+   Выпуск содержит `latest.json`, `LES-Setup.exe` и `LES-Setup.exe.sha256`; затем эти assets
+   скачиваются обратно и сверяются повторно.
+
+Ручной вызов `build_windows_installer.py` допустим для разработки, но не является выпуском.
 
 **[ручками]** Copy the installer/zip to the clean Windows machine.
 

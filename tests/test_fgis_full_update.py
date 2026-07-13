@@ -109,3 +109,4 @@ def test_full_fgis_update_is_wired_to_operator_api_and_gui():
     assert "СКАЧАТЬ ФГИС ЦС" in ui
     assert 'api_post("/api/service-sources/fgis/update", {})' in ui
     assert "каталог, Сплит-формы всех ценовых зон и ГЭСН" in ui
+    assert 'd.get("message") or d.get("reason")' in ui

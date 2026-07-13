@@ -106,7 +106,7 @@ def test_legacy_macos_builder_delegates_to_tauri():
 
 def test_windows_builder_never_emits_old_shell_exe_on_non_windows():
     source = (ROOT / "tools/build_windows_installer.py").read_text(encoding="utf-8")
-    assert 'build_tauri(version, "nsis")' in source
+    assert 'build_tauri(version, "nsis", build_number=build_number)' in source
     assert "LES-windows-tauri-source" in source
     assert "makensis" not in source
 
@@ -127,3 +127,10 @@ def test_tauri_builder_resolves_windows_npm_cmd(monkeypatch):
 def test_tauri_builder_maps_four_part_les_version_to_desktop_semver():
     assert build_tauri_app.desktop_semver("0.24.0.401") == "5.1.401"
     assert build_tauri_app.desktop_semver("5.1.401") == "5.1.401"
+
+
+def test_tauri_builder_separates_product_version_from_monotonic_build():
+    assert build_tauri_app.desktop_semver("0.24.1", 407) == "5.1.407"
+    contract = build_tauri_app.release_contract()
+    assert contract["product_version"] == "0.24.1"
+    assert contract["build_number"] == 407
