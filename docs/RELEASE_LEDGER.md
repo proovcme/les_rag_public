@@ -11,7 +11,7 @@
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
 задеплоено на рантайм:     0.24.0.396 (live, 2026-07-13)
-Windows-выпуск:            0.24.0.405 (public, 2026-07-13); .406 готовится
+Windows-выпуск:            0.24.0.406 (public, 2026-07-13)
 НЕ задеплоено на Mac:      0.24.0.397–0.24.0.406 (Mac runtime остаётся .396)
 рантайм /api/version:      0.24.0.396, deploy_stamp=ok, runtime_alignment=divergent (ожидаемо: dev .397–.403 не ship)
 ```
@@ -19,7 +19,7 @@ Windows-выпуск:            0.24.0.405 (public, 2026-07-13); .406 гото�
 > 0.24.0.406 — обязательный Windows-RAG bootstrap и официальный внешний вход ЛСР
 >
 > Дата: 2026-07-13
-> Статус: кодовая версия; выпускной EXE собирается на Legion после локальных гейтов. Windows
+> Статус: публичный Windows-выпуск; Mac production не изменён. Windows
 > bootstrap требует `uv`, Ollama и Docker Desktop, ставит отсутствующие компоненты через winget
 > (для `uv` сохранён официальный резервный установщик), ждёт Docker/Qdrant и больше не открывает
 > вводящий в заблуждение интерфейс без RAG. Машинный `bootstrap-status.json` передаёт Tauri точную
@@ -28,16 +28,17 @@ Windows-выпуск:            0.24.0.405 (public, 2026-07-13); .406 гото�
 > `POST /api/chat` с `attachment_id`; постоянный `Idempotency-Key` возвращает завершённый ответ
 > до модели, блокирует конкурентный дубль и не допускает повторного списания. Административный
 > `/api/rag/attach` сохранён для Совушки. ФГИС lookup получил пакетный API и MCP-инструмент,
-> загружающий книгу цен один раз на расчётный ход. Проверки кода: focused gate — `46 passed`;
-> RAG-core — `168 passed`; полный `make test` — `2913 passed, 6 warnings`; `make verify`,
-> `public-check`, `uv lock --check`, `git diff --check` и Windows `cargo check` — зелёные.
+> загружающий книгу цен один раз на расчётный ход. Проверки кода: Windows installer gate —
+> `13 passed`; RAG-core — `168 passed`; полный `make test` — `2914 passed, 6 warnings`; `make verify`
+> собрал `2914` тестов; `public-check`, `uv lock --check`, `git diff --check` и Windows
+> `cargo check` — зелёные.
 > Первый реальный `.406` NSIS-smoke выявил два связанных дефекта Windows state: provider onboarding
 > мог сохранить несовместимый Mac-only `mlx`, а `onboard_models.py` читал runtime `.env` вместо
 > постоянного `LES_ENV_PATH` и поэтому не видел уже настроенный Ollama. Это запускало загрузку
-> MLX-весов. Выпуск не опубликован; bootstrap исправлен на platform-compatibility gate:
+> MLX-весов. До публикации bootstrap исправлен на platform-compatibility gate:
 > Windows сохраняет совместимый Ollama/Lemonade/cloud, но заменяет только несовместимый `mlx`
-> на Ollama до model onboarding; загрузчик моделей читает persistent env. SHA финальной пересборки
-> дописывается после повторного smoke. Интеграторский «лог» оказался не журналом, а macOS
+> на Ollama до model onboarding; загрузчик моделей читает persistent env. Интеграторский «лог»
+> оказался не журналом, а macOS
 > `bootstrap.sh`, ошибочно упакованным как общий Tauri-resource. Staging теперь платформенный:
 > Windows получает только PowerShell-bootstrap, а чистая установка использует латинский каталог
 > `%LOCALAPPDATA%\Programs\LES` без смены видимого имени продукта или поломки обновления `.405`.
@@ -46,6 +47,15 @@ Windows-выпуск:            0.24.0.405 (public, 2026-07-13); .406 гото�
 > зависание после успешного `start-light`: вложенный нативный PowerShell-конвейер удерживался
 > долгоживущими proxy/UI-процессами. Bootstrap теперь вызывает `start-light.ps1` в своём процессе,
 > пишет конечный результат в журнал и обязан перейти из `services/running` в `ready`.
+> Финальный установщик собран на Legion из commit
+> `d6c36872722c9016ab45c76cc7e5a376067a0b54`: `6 043 030` байт, SHA-256
+> `c42164d2e3fce2f31aa9cdac44984f6131aa9196bebfdf6c254cabb396bf2bd1`.
+> Живой smoke установленного runtime завершён `ok=true`: точный `les_version=0.24.0.406`,
+> bootstrap `ready`, UI `200`, Qdrant `2` коллекции, `3` фрагмента, каналы `dense` и
+> `qdrant_sparse`, `fusion=rrf`, режим `qdrant_native_hybrid+rerank`; проверочный скрипт после
+> прогона остановил только собственные динамические порты. Прямая проверка updater для текущей
+> версии `.405` увидела `.406`, скачала `6 043 030` байт и подтвердила опубликованный SHA-256.
+> Выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.24.0.406
 
 > 0.24.0.405 — ручное проверяемое обновление из публичного GitHub Release
 >
