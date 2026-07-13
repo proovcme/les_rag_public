@@ -92,6 +92,82 @@ uv run python tools/build_windows_installer.py --version X.Y.Z
 только адреса GitHub по HTTPS, сверяет SHA-256 и открывает обычный установщик NSIS. Фоновая
 загрузка, downgrade и установка неполного/непроверенного выпуска запрещены.
 
+### Каноническая сборка и публикация Windows-выпуска
+
+Собирать выпуск только из чистого, отправленного в `origin` коммита. Нельзя переименовывать старый
+EXE под новую версию или публиковать `latest.json` раньше проверенного установщика.
+
+1. На машине разработки закрыть кодовый гейт и отправить коммит:
+
+   ```bash
+   make test
+   make verify
+   make test-rag-core
+   make public-check
+   uv lock --check
+   git diff --check
+   git push origin feat/les3-p1
+   ```
+
+2. На Legion обновить чистый checkout строго fast-forward и собрать Tauri/NSIS:
+
+   ```powershell
+   Set-Location C:\Users\Oleg\les_rag
+   git fetch origin
+   git checkout feat/les3-p1
+   git pull --ff-only origin feat/les3-p1
+   git status --short
+   uv run python tools/build_windows_installer.py --version 0.24.0.406
+   ```
+
+   Результат обязан находиться в `dist\LES-Setup.exe`. Перед публикацией проверить, что
+   `proxy\services\version_service.py` и staged runtime содержат ту же версию, Tauri получил
+   desktop-версию `5.1.406`, а checkout всё ещё указывает на выпускной commit.
+
+3. Получить размер и контрольную сумму, создать соседний файл:
+
+   ```powershell
+   $exe = Resolve-Path .\dist\LES-Setup.exe
+   $sha = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+   "$sha  LES-Setup.exe" | Set-Content .\dist\LES-Setup.exe.sha256 -Encoding ascii
+   Get-Item $exe | Select-Object FullName,Length,LastWriteTime
+   Get-Content .\dist\LES-Setup.exe.sha256
+   ```
+
+4. Проверить установщик на Legion двумя путями:
+
+   - чистая установка без готового состояния: bootstrap либо ставит обязательные `uv`, Ollama и
+     Docker Desktop через winget, либо показывает точную причину, официальный адрес и журнал;
+   - обновление поверх предыдущего выпуска: сохраняются `.env`, Qdrant volume, MetaDB,
+     `RAG_Content`, `storage` и артефакты, после запуска `/api/version` показывает новую версию.
+
+5. Создать `dist\latest.json` по схеме `les.update.v1`. Обязательны `version`, `name`, `notes`,
+   `published_at`, `html_url`; дополнительно фиксировать `build_commit`. Затем опубликовать ровно
+   три файла с неизменными именами:
+
+   ```bash
+   gh release create v0.24.0.406 \
+     dist/LES-Setup.exe \
+     dist/LES-Setup.exe.sha256 \
+     dist/latest.json \
+     --repo proovcme/les_rag_public \
+     --title "ЛЕС 0.24.0.406" \
+     --notes-file dist/release-notes.md
+   ```
+
+6. После публикации проверить не страницу, а реальные assets и updater:
+
+   ```bash
+   gh release view v0.24.0.406 --repo proovcme/les_rag_public --json tagName,assets,url
+   curl -fsSL https://github.com/proovcme/les_rag_public/releases/latest/download/latest.json
+   curl -fsSL https://github.com/proovcme/les_rag_public/releases/download/v0.24.0.406/LES-Setup.exe.sha256
+   ```
+
+   Установленный предыдущий выпуск должен показать `.406` по кнопке «Проверить обновление»,
+   скачать EXE, самостоятельно сверить SHA-256 и только затем запустить NSIS. Фактический размер,
+   SHA-256, commit, результаты чистой установки и обновления записываются в
+   `docs/RELEASE_LEDGER.md` в том же выпускном коммите.
+
 **[ручками]** Copy the installer/zip to the clean Windows machine.
 
 ---
