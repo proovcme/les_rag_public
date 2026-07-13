@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import base64
 from pathlib import Path
 
 import pytest
@@ -78,8 +79,10 @@ def test_remote_build_bootstraps_branch_before_versioned_script(monkeypatch):
     )
 
     assert len(calls) == 2
-    assert "fetch origin $branch" in calls[0][-1]
-    assert "checkout -b $branch --track" in calls[0][-1]
+    assert calls[0][-2] == "-EncodedCommand"
+    decoded = base64.b64decode(calls[0][-1]).decode("utf-16le")
+    assert "fetch origin $branch" in decoded
+    assert "checkout -b $branch --track" in decoded
     assert calls[1][6] == "-File"
     assert calls[1][7].endswith(r"tools\windows_patch_release.ps1")
 

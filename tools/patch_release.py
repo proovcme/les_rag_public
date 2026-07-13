@@ -8,6 +8,7 @@ product-version component.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import shutil
@@ -112,7 +113,8 @@ def remote_build(
         "if($head -ne $commit){throw \"Legion HEAD $head does not match $commit\"}; "
         "exit 0 } catch { Write-Error $_; exit 1 }"
     )
-    run(["ssh", host, "powershell", "-NoProfile", "-Command", prepare])
+    encoded_prepare = base64.b64encode(prepare.encode("utf-16le")).decode("ascii")
+    run(["ssh", host, "powershell", "-NoProfile", "-EncodedCommand", encoded_prepare])
     remote_script = f"{repo_root.rstrip('\\/')}\\tools\\windows_patch_release.ps1"
     run(
         [
