@@ -56,6 +56,14 @@ def test_windows_patch_release_is_fail_closed_and_isolated():
     assert '"--build-number", [string]$BuildNumber' in source
 
 
+def test_windows_patch_release_creates_missing_tracking_branch():
+    source = (ROOT / "tools/windows_patch_release.ps1").read_text(encoding="utf-8")
+
+    assert 'git show-ref --verify --quiet "refs/heads/$Branch"' in source
+    assert '@("checkout", "-b", $Branch, "--track", "origin/$Branch")' in source
+    assert '@("pull", "--ff-only", "origin", $Branch)' in source
+
+
 def test_makefile_exposes_one_patch_release_entrypoint():
     source = (ROOT / "Makefile").read_text(encoding="utf-8")
 
