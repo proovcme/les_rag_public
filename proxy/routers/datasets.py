@@ -3039,6 +3039,43 @@ def _upload_intake_response(temp_path: Path, original_name: str) -> dict[str, An
     }
 
 
+async def _record_background_parse_error(
+    state: DatasetRouterState,
+    *,
+    dataset_id: str,
+    document_id: str,
+    error: Exception,
+) -> None:
+    """Make an asynchronous intake failure visible to API/UI operators."""
+    marker = getattr(state.backend, "mark_document_error", None)
+    if not callable(marker):
+        logger.error(
+            "[UPLOAD PARSE] dataset=%s document=%s failed and backend cannot persist the error: %s",
+            dataset_id,
+            document_id,
+            error,
+            exc_info=True,
+        )
+        return
+    try:
+        await marker(dataset_id, document_id, str(error))
+    except Exception as marker_error:  # noqa: BLE001 - retain the original failure in logs
+        logger.error(
+            "[UPLOAD PARSE] failed to persist dataset=%s document=%s error: %s",
+            dataset_id,
+            document_id,
+            marker_error,
+            exc_info=True,
+        )
+    logger.error(
+        "[UPLOAD PARSE] dataset=%s document=%s failed: %s",
+        dataset_id,
+        document_id,
+        error,
+        exc_info=True,
+    )
+
+
 @router.post("/upload/{dataset_id}")
 async def upload_file(dataset_id: str, file: UploadFile = File(...), _admin=Depends(require_admin)):
     state = get_dataset_state()
@@ -3061,6 +3098,13 @@ async def upload_file(dataset_id: str, file: UploadFile = File(...), _admin=Depe
             async with state.parse_semaphore:
                 await assert_parse_admission(state)
                 await state.backend.parse_dataset(dataset_id, limit=limit)
+        except Exception as error:  # noqa: BLE001 - background task must reach a terminal state
+            await _record_background_parse_error(
+                state,
+                dataset_id=dataset_id,
+                document_id=doc_id,
+                error=error,
+            )
         finally:
             temp_path.unlink(missing_ok=True)
 
@@ -3351,6 +3395,13 @@ async def attach_chat_file(
                 async with state.parse_semaphore:
                     await assert_parse_admission(state)
                     await state.backend.parse_dataset(ds_id, limit=25)
+            except Exception as error:  # noqa: BLE001 - background task must reach a terminal state
+                await _record_background_parse_error(
+                    state,
+                    dataset_id=ds_id,
+                    document_id=doc_id,
+                    error=error,
+                )
             finally:
                 temp_path.unlink(missing_ok=True)
 
@@ -3406,6 +3457,13 @@ async def upload_file_smart(
                     async with state.parse_semaphore:
                         await assert_parse_admission(state)
                         await state.backend.parse_dataset(dataset_id, limit=1)
+                except Exception as error:  # noqa: BLE001 - background task must reach a terminal state
+                    await _record_background_parse_error(
+                        state,
+                        dataset_id=dataset_id,
+                        document_id=doc_id,
+                        error=error,
+                    )
                 finally:
                     temp_path.unlink(missing_ok=True)
 

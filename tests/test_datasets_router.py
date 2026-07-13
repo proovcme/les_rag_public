@@ -39,6 +39,8 @@ class FakeBackend:
         self.uploads = []
         self.parses = []
         self.pending_files = {}
+        self.document_errors = []
+        self.parse_error = None
 
     async def list_datasets(self):
         return self.datasets
@@ -58,10 +60,15 @@ class FakeBackend:
         return f"doc-{len(self.uploads)}"
 
     async def parse_dataset(self, dataset_id, limit=None):
+        if self.parse_error is not None:
+            raise self.parse_error
         self.parses.append((dataset_id, limit))
         pending = max(0, int(self.pending_files.get(dataset_id, 0)) - int(limit or 0))
         self.pending_files[dataset_id] = pending
         return {"status": "completed", "chunks": 0, "remaining_pending": pending, "errors": 0}
+
+    async def mark_document_error(self, dataset_id, document_id, error):
+        self.document_errors.append((dataset_id, document_id, error))
 
     async def health(self):
         return True
@@ -904,6 +911,29 @@ async def test_upload_smart_routes_file_to_classified_dataset(tmp_path, monkeypa
     assert dataset_state.uploads[0][0] == "ds-2"
     assert dataset_state.uploads[0][1].endswith("_local_smeta.csv")
     assert dataset_state.uploads[0][2] == "local_smeta.csv"
+
+
+@pytest.mark.asyncio
+async def test_upload_background_parse_failure_is_persisted(tmp_path, monkeypatch, dataset_state):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "storage" / "datasets").mkdir(parents=True)
+    dataset_state.parse_error = RuntimeError("index contract missing")
+    tasks = []
+    monkeypatch.setattr(datasets.asyncio, "create_task", tasks.append)
+
+    response = await datasets.upload_file(
+        "ds-1",
+        file=_upload("release-smoke.txt", b"release smoke"),
+        _admin=object(),
+    )
+    assert response == {"doc_id": "doc-1", "status": "queued"}
+    assert len(tasks) == 1
+
+    await tasks[0]
+
+    assert dataset_state.document_errors == [
+        ("ds-1", "doc-1", "index contract missing"),
+    ]
 
 
 @pytest.mark.asyncio

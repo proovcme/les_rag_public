@@ -9,6 +9,17 @@ scripts/smoke_unified_v08.py` (фикстура) или `--dataset-id <ds>` (р�
 `query_route.version=unified_construction_harness_v0_8` + `unified_trace` + `evidence_summary`.
 Выключить: убрать env-переменную. Runtime (`/Users/ovc/LES/.env`) НЕ трогался — флаг ставит оператор.
 
+## Operational incident 2026-07-14: clean Windows smoke reused shared Qdrant collection
+
+Изолированная Windows-установка получила собственные MetaDB/storage, но сохранила дефолтную
+`RAG_COLLECTION_NAME=les_rag` и подключилась к общей непустой Qdrant-коллекции. Локальный паспорт
+индекса отсутствовал, фоновый parse упал на fail-closed contract gate, а upload-документ остался
+`PENDING`, поэтому выпускной smoke ждал таймаут вместо немедленной диагностируемой ошибки.
+
+**Rule:** release-smoke обязан владеть и state, и одноразовой Qdrant-коллекцией. Любая ошибка
+фонового intake должна атомарно переводить конкретный document id в `ERROR` с `last_error`;
+`queued` и HTTP 200 не являются доказательством индексации.
+
 ## Operational incident 2026-06-27: partial runtime deploy with divergent app.py
 
 During v0.23.6.12 rollout, `make ship` copied the new `service_sources` router and service, but

@@ -93,6 +93,10 @@ def desired_surfaces(contract: dict[str, object] | None = None) -> dict[Path, st
         passport_text, label="software passport product version",
     )
     passport_text = _replace(
+        r'^(\| Номер сборки \| `)[^`]+(` \|)', rf"\g<1>{build}\g<2>",
+        passport_text, label="software passport build number",
+    )
+    passport_text = _replace(
         r'^(\| Версия пакета Tauri/NSIS \| `)[^`]+(` \|)', rf"\g<1>{desktop}\g<2>",
         passport_text, label="software passport desktop version",
     )

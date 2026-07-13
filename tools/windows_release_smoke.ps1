@@ -31,6 +31,8 @@ Remove-Item $StatusPath, $RuntimeStatePath, $ReportPath -Force -ErrorAction Sile
 $env:LES_WINDOWS_STATE_ROOT = $StateRoot
 $env:LES_TAURI_SHELL = "1"
 $env:LES_TAURI_ACTION = "start"
+$smokeCollection = "les_release_smoke_$([guid]::NewGuid().ToString('N'))"
+$env:RAG_COLLECTION_NAME = $smokeCollection
 
 $result = [ordered]@{
   schema = "les_windows_release_smoke_v1"
@@ -38,11 +40,13 @@ $result = [ordered]@{
   stage = "bootstrap"
   runtime_root = $RuntimeRoot
   state_root = $StateRoot
+  qdrant_collection = $smokeCollection
 }
 $bootstrapProcess = $null
 $runtimeState = $null
 $smokeDatasetId = $null
 $smokeSeedPath = $null
+$smokeCollectionCreated = $false
 
 try {
   if (-not (Test-Path -LiteralPath $Bootstrap)) {
@@ -96,6 +100,12 @@ try {
   $result.git_commit = $version.git_commit
   $result.ui_status = [int]$ui.StatusCode
   $result.qdrant_collections = @($qdrant.result.collections).Count
+  $smokeCollectionCreated = @(
+    $qdrant.result.collections | Where-Object { $_.name -eq $smokeCollection }
+  ).Count -eq 1
+  if (-not $smokeCollectionCreated) {
+    throw "isolated Qdrant collection was not created: $smokeCollection"
+  }
 
   # A clean release state has no local dataset catalog. Looking only at the
   # shared Qdrant collections would test somebody else's data and can return an
@@ -182,6 +192,16 @@ try {
         -TimeoutSec 30 | Out-Null
     } catch {
       $result.cleanup_error = $_.Exception.Message
+      $result.ok = $false
+    }
+  }
+  if ($smokeCollectionCreated) {
+    try {
+      Invoke-RestMethod -Method Delete `
+        -Uri "http://127.0.0.1:6333/collections/$smokeCollection" `
+        -TimeoutSec 30 | Out-Null
+    } catch {
+      $result.collection_cleanup_error = $_.Exception.Message
       $result.ok = $false
     }
   }

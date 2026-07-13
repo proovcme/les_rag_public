@@ -49,6 +49,10 @@ class RAGBackend(ABC):
     @abstractmethod
     async def upload_file(self, dataset_id: str, file_path: Path, relative_path: Optional[str] = None) -> str: ...
 
+    async def mark_document_error(self, dataset_id: str, document_id: str, error: str) -> None:
+        """Persist a background intake failure instead of leaving the document PENDING."""
+        raise NotImplementedError
+
     @abstractmethod
     async def register_external_file(self, dataset_id: str, source_path: Path, file_name: str) -> str:
         """Регистрирует внешний файл как источник БЕЗ копирования в storage.

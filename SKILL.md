@@ -156,7 +156,10 @@ deployed_at=datetime.now(timezone.utc).isoformat(timespec='seconds')))"
   динамические порты. Не читать bootstrap через pipe: дочерние proxy/UI удерживают его открытым.
   JSON с русским вопросом из Windows PowerShell 5 отправлять только явными UTF-8 bytes. Чистый
   state не имеет локального каталога: smoke сам создаёт через API, индексирует и затем удаляет
-  свой seed-датасет; наличие чужих коллекций в Qdrant не засчитывается.
+  свой seed-датасет в уникальной одноразовой `RAG_COLLECTION_NAME`, затем удаляет dataset и
+  collection; наличие чужих коллекций в Qdrant не засчитывается. Ответ upload `queued` не успех:
+  admission/contract/parse failure обязан дать документу terminal `ERROR` + `last_error`, а не
+  вечный `PENDING`.
 
 Инвентарь — **[docs/TEST_INVENTORY.md](docs/TEST_INVENTORY.md)**; аудит соответствия фактической
 архитектуре — **[docs/TEST_ARCHITECTURE_AUDIT_2026-07-14.md](docs/TEST_ARCHITECTURE_AUDIT_2026-07-14.md)**.

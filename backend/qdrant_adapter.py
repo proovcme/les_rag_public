@@ -891,6 +891,20 @@ class MetaDB:
                     f"for dataset_id={dataset_id}, file_name={file_name}"
                 )
 
+    def mark_document_error(self, dataset_id: str, document_id: str, error: str) -> None:
+        """Mark one uploaded document as failed by its stable public id."""
+        with self._get_conn() as conn:
+            cur = conn.execute(
+                "UPDATE documents SET status='ERROR', chunk_count=0, last_error=?, stage='' "
+                "WHERE dataset_id=? AND id=?",
+                (str(error)[:2000], dataset_id, document_id),
+            )
+            if cur.rowcount != 1:
+                raise RuntimeError(
+                    f"document error update affected {cur.rowcount} rows "
+                    f"for dataset_id={dataset_id}, document_id={document_id}"
+                )
+
     def requeue_error_documents(self, dataset_id: str) -> int:
         """«Ремонт» датасета: ERROR-документы → PENDING (очистка last_error/stage/chunk_count),
         чтобы перепарсить их БЕЗ удаления датасета/индекса. Возвращает число сброшенных."""
@@ -1312,6 +1326,9 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         except Exception as error:
             logger.warning("[DOC_ROUTE] upload classification skipped for %s: %s", rel_path.as_posix(), error)
         return doc_id
+
+    async def mark_document_error(self, dataset_id: str, document_id: str, error: str) -> None:
+        await asyncio.to_thread(self.db.mark_document_error, dataset_id, document_id, error)
 
     async def register_external_file(self, dataset_id: str, source_path: Path, file_name: str) -> str:
         """Регистрирует внешний файл как источник БЕЗ копии в storage.

@@ -50,6 +50,8 @@ def test_windows_release_smoke_executes_installed_runtime_and_real_rrf():
     assert 'bootstrapStatus.state -in @("ready", "failed")' in text
     assert 'windows-light-state.json' in text
     assert '/api/version' in text
+    assert '$env:RAG_COLLECTION_NAME = $smokeCollection' in text
+    assert 'isolated Qdrant collection was not created' in text
     assert '[string]$ExpectedVersion' in text
     assert '$version.les_version -eq $ExpectedVersion' in text
     assert '/healthz' in text
@@ -63,6 +65,7 @@ def test_windows_release_smoke_executes_installed_runtime_and_real_rrf():
     assert '$channels -contains "qdrant_sparse"' in text
     assert 'retrieval_trace.fusion -match "rrf"' in text
     assert 'Invoke-RestMethod -Method Delete' in text
+    assert 'collections/$smokeCollection' in text
 
 
 def test_start_light_keeps_uv_server_processes_alive():

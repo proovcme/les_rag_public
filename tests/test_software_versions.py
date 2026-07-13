@@ -49,11 +49,12 @@ def test_software_version_passport_records_required_runtime():
     contract = json.loads((ROOT / "config/version.json").read_text(encoding="utf-8"))
     text = (ROOT / "docs/SOFTWARE_VERSIONS.md").read_text(encoding="utf-8")
     for marker in (
-        contract["product_version"], contract["desktop_version"],
+        contract["product_version"], str(contract["build_number"]), contract["desktop_version"],
         "Python", "uv", "Docker", "Qdrant", "1.17.1",
         "Ollama", "0.31.1", "qwen3.5:9b", "bge-m3:latest", "BAAI/bge-reranker-v2-m3",
     ):
         assert marker in text
+    assert f'| Номер сборки | `{contract["build_number"]}` |' in text
 
 
 def test_version_surfaces_have_no_drift():

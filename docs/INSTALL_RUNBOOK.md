@@ -114,9 +114,11 @@ uv run python tools/build_windows_installer.py --version X.Y.Z
    Выпуск содержит `latest.json`, `LES-Setup.exe` и `LES-Setup.exe.sha256`; затем эти assets
    скачиваются обратно и сверяются повторно.
 
-   RRF-smoke не доверяет уже лежащим в Qdrant чужим коллекциям. Он через API установленного
-   runtime создаёт временный датасет, индексирует контрольный UTF-8-документ, выполняет scoped
-   `dense + qdrant_sparse → RRF → rerank` и удаляет только свой seed-датасет.
+   RRF-smoke не доверяет уже лежащим в Qdrant чужим коллекциям. До bootstrap он задаёт уникальную
+   `RAG_COLLECTION_NAME`, через API установленного runtime создаёт временный датасет, индексирует
+   контрольный UTF-8-документ, выполняет scoped `dense + qdrant_sparse → RRF → rerank`, а затем
+   удаляет и свой датасет, и свою одноразовую коллекцию. Это не позволяет локальному паспорту
+   индекса случайно проверять общую непустую коллекцию другого контура.
 
 #### Грабли Windows OpenSSH / PowerShell
 
@@ -138,6 +140,9 @@ uv run python tools/build_windows_installer.py --version X.Y.Z
   `windows-patch-release.json`, совпадение commit/SHA и `smoke.ok=true`.
 - Не скачивать и не публиковать лежащий в `dist` EXE без нового отчёта: там может оставаться
   артефакт предыдущего выпуска.
+- Фоновый upload не считается успешным по ответу `queued`. Ошибка admission/контракта/парсинга
+  должна переводить конкретный документ из `PENDING` в `ERROR` с `last_error`; вечный `PENDING`
+  является дефектом наблюдаемости и должен останавливать smoke.
 
 #### Номер сборки меняется один раз
 

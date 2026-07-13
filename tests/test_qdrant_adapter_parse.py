@@ -603,6 +603,25 @@ def test_recover_interrupted_parsing_resets_dataset_status(tmp_path):
     assert dataset.status == "IDLE"
 
 
+def test_mark_document_error_uses_stable_document_id(tmp_path):
+    db = MetaDB(str(tmp_path / "meta.db"))
+    dataset_id = db.create_dataset("RELEASE_SMOKE_Index")
+    document_id, _, _ = db.add_document(dataset_id, "seed.txt", file_mtime=1.0, file_size=4)
+
+    db.mark_document_error(dataset_id, document_id, "index contract missing")
+
+    with db._get_conn() as conn:
+        row = conn.execute(
+            "SELECT status, chunk_count, last_error FROM documents WHERE id=?",
+            (document_id,),
+        ).fetchone()
+    assert dict(row) == {
+        "status": "ERROR",
+        "chunk_count": 0,
+        "last_error": "index contract missing",
+    }
+
+
 @pytest.mark.asyncio
 async def test_parse_dataset_rejects_unbounded_parse_by_default(monkeypatch):
     monkeypatch.delenv("ALLOW_UNBOUNDED_PARSE", raising=False)
