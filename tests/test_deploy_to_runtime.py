@@ -29,3 +29,25 @@ def test_clean_commit_deploy_uses_runtime_stamp_as_diff_baseline(monkeypatch, tm
         "backend/qdrant_adapter.py",
         "proxy/services/version_service.py",
     ]
+
+
+def test_runtime_file_matching_deployed_commit_is_safe(monkeypatch, tmp_path):
+    dev = tmp_path / "dev"
+    runtime = tmp_path / "runtime"
+    (dev / "proxy").mkdir(parents=True)
+    (runtime / "proxy").mkdir(parents=True)
+    (dev / "proxy/app.py").write_text("new", encoding="utf-8")
+    (runtime / "proxy/app.py").write_text("old", encoding="utf-8")
+    monkeypatch.setattr(deploy_to_runtime, "DEV", dev)
+    monkeypatch.setattr(deploy_to_runtime, "RT", runtime)
+    monkeypatch.setattr(
+        deploy_to_runtime,
+        "_commit_bytes",
+        lambda commit, _path: b"old" if commit == "old123" else b"new",
+    )
+
+    assert deploy_to_runtime.classify(
+        "proxy/app.py",
+        {},
+        deployed_commit="old123",
+    ) == ("clean@deployed", True)

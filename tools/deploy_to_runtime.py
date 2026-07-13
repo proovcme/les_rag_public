@@ -121,8 +121,8 @@ def _changed_files() -> list[str]:
     return sorted(set(files))
 
 
-def _head_bytes(path: str) -> bytes | None:
-    r = subprocess.run(["git", "-C", str(DEV), "show", f"HEAD:{path}"],
+def _commit_bytes(commit: str, path: str) -> bytes | None:
+    r = subprocess.run(["git", "-C", str(DEV), "show", f"{commit}:{path}"],
                        capture_output=True)
     return r.stdout if r.returncode == 0 else None
 
@@ -138,7 +138,12 @@ def _service_for_path(path: str) -> str | None:
     return None
 
 
-def classify(path: str, manifest: dict[str, str]) -> tuple[str, bool]:
+def classify(
+    path: str,
+    manifest: dict[str, str],
+    *,
+    deployed_commit: str = "",
+) -> tuple[str, bool]:
     """(класс, безопасно_копировать)."""
     dev_p, rt_p = DEV / path, RT / path
     if not dev_p.is_file():
@@ -150,7 +155,10 @@ def classify(path: str, manifest: dict[str, str]) -> tuple[str, bool]:
         return "identical", False
     if manifest.get(path) == _sha(rt_b):
         return "deployed", True              # рантайм = МОЯ прошлая выкатка (без рантайм-онли правок)
-    head = _head_bytes(path)
+    deployed = _commit_bytes(deployed_commit, path) if deployed_commit else None
+    if deployed is not None and rt_b == deployed:
+        return "clean@deployed", True        # runtime = файл из deploy stamp commit
+    head = _commit_bytes("HEAD", path)
     if head is None:
         return "session(new)", True          # untracked: рантайм = моя прежняя копия
     if rt_b == head:
@@ -173,12 +181,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     manifest = _load_manifest()
+    deployed_commit = _deployed_commit()
     copied: list[str] = []
     services: set[str] = set()
     diverged: list[str] = []
     print(f"Рантайм: {RT}\n{'ВЫКАТКА' if args.apply else 'DRY-RUN (--apply чтобы применить)'}\n")
     for f in sorted(candidates):
-        kind, safe = classify(f, manifest)
+        kind, safe = classify(f, manifest, deployed_commit=deployed_commit)
         forced = (not safe) and kind == "DIVERGENT" and args.force
         ok = safe or forced
         verb = "FORCE-копирую" if forced else "копирую"

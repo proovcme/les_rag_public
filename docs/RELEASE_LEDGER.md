@@ -7,13 +7,23 @@
 ## Текущее состояние (2026-07-13)
 
 ```
-версия (схема 0.N.FEATURE.PATCH): 0.24.0.386  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
+версия (схема 0.N.FEATURE.PATCH): 0.24.0.387  (в КОДЕ: LES_VERSION; в /api/version поле les_version)
 ветка:                     feat/les3-p1
 dev HEAD:                  HEAD  (см. git log -1)
 задеплоено на рантайм:     0.24.0.381 (live /api/version, 2026-07-12)
-НЕ задеплоено:             0.24.0.386 и прочий dev divergence вне этого ремонта
+НЕ задеплоено:             0.24.0.387 и прочий dev divergence вне этого ремонта
 рантайм /api/version:      0.24.0.381, deploy_stamp=ok, runtime_alignment=divergent по ранее существующим файлам
 ```
+
+> 0.24.0.387 — deploy различает старый runtime и настоящий runtime-only drift
+>
+> Дата: 2026-07-13
+> Статус: release candidate. Классификатор безопасной выкладки сравнивает runtime-файл не только
+> с локальным manifest, но и с содержимым файла в `deploy_stamp.deployed_commit`. Поэтому штатно
+> устаревший runtime получает новый commit, а неизвестная ручная правка по-прежнему остаётся
+> `DIVERGENT` и требует явного решения. Добавлен отдельный regression-тест этой границы.
+> Проверки: полный `make test` — `2 845 passed`; `make verify` — `2 845 collected`;
+> deploy-классификатор — `4 passed`.
 
 > 0.24.0.386 — чистый release commit больше не превращает deploy в no-op
 >
