@@ -54,14 +54,14 @@ try {
   $dirty = (& git status --porcelain) -join "`n"
   if ($dirty) { throw "Legion checkout is dirty before build:`n$dirty" }
 
-  Invoke-Checked "git" @("fetch", "origin", $Branch)
+  Invoke-Checked "git" @("fetch", "origin", "${Branch}:refs/remotes/origin/${Branch}")
   & git show-ref --verify --quiet "refs/heads/$Branch"
   if ($LASTEXITCODE -eq 0) {
     Invoke-Checked "git" @("checkout", $Branch)
   } else {
     # A clean release host may still be checked out on the previous feature
     # branch. Create the canonical local branch from the fetched remote.
-    Invoke-Checked "git" @("checkout", "-b", $Branch, "--track", "origin/$Branch")
+    Invoke-Checked "git" @("checkout", "-b", $Branch, "refs/remotes/origin/$Branch")
   }
   Invoke-Checked "git" @("pull", "--ff-only", "origin", $Branch)
   $head = (& git rev-parse HEAD).Trim()

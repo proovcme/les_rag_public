@@ -114,6 +114,27 @@ uv run python tools/build_windows_installer.py --version X.Y.Z
    Выпуск содержит `latest.json`, `LES-Setup.exe` и `LES-Setup.exe.sha256`; затем эти assets
    скачиваются обратно и сверяются повторно.
 
+#### Грабли Windows OpenSSH / PowerShell
+
+Удалённый bootstrap намеренно находится в `tools/patch_release.py`, а не только в PowerShell-файле
+репозитория. На старом checkout новый `windows_patch_release.ps1` ещё отсутствует, поэтому сначала
+нужно синхронизировать точный commit, и только затем вызывать versioned script.
+
+- Сложную команду нельзя передавать как обычный `PowerShell -Command` через Windows OpenSSH:
+  удалённый shell разрушает кавычки и переменные вроде `$repo`. Канонический путь —
+  `PowerShell -EncodedCommand`, UTF-16LE → base64.
+- `git fetch origin main` при узком fetchspec обновляет только `FETCH_HEAD` и не обязан создавать
+  `origin/main`. Использовать явный refspec `main:refs/remotes/origin/main`, затем создавать
+  локальную `main` непосредственно от `refs/remotes/origin/main`. Не использовать `--track`:
+  Git с узким fetchspec может не признать даже существующий ref tracking-веткой и оставить
+  незавершённый checkout в рабочем дереве. Release-flow всё равно обновляет ветку явным
+  `pull --ff-only origin main`.
+- Windows PowerShell 5 может вернуть SSH код `0`, когда файл из `-File` не найден. Нельзя считать
+  этот код достаточным доказательством: обязательны точный remote HEAD, новый машинный
+  `windows-patch-release.json`, совпадение commit/SHA и `smoke.ok=true`.
+- Не скачивать и не публиковать лежащий в `dist` EXE без нового отчёта: там может оставаться
+  артефакт предыдущего выпуска.
+
 Ручной вызов `build_windows_installer.py` допустим для разработки, но не является выпуском.
 
 **[ручками]** Copy the installer/zip to the clean Windows machine.

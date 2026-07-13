@@ -40,6 +40,13 @@ Windows-выпуск:            0.24.0.406 (public, 2026-07-13)
 > Третий прогон показал, что Windows OpenSSH разрушает кавычки сложного `PowerShell -Command` и
 > превращает `$repo` в буквальный путь. Bootstrap теперь передаётся штатным
 > `PowerShell -EncodedCommand` (UTF-16LE/base64), без зависимости от удалённого shell quoting.
+> Проверочный запуск encoded bootstrap обнаружил ещё одну особенность narrow fetchspec на Legion:
+> `git fetch origin main` обновил только `FETCH_HEAD`, но не создал `origin/main`. Оба bootstrap-слоя
+> теперь используют явный refspec `main:refs/remotes/origin/main`; грабли закреплены в
+> `INSTALL_RUNBOOK.md`.
+> На этом же узком fetchspec `checkout --track origin/main` не признал созданный ref remote-веткой
+> и частично разложил новый commit до ошибки. Release-checkout возвращён к доказанно чистому HEAD;
+> новая локальная `main` создаётся от явного `refs/remotes/origin/main` без `--track`.
 > После regression-тестов этих случаев коллекция содержит `2928` тестов.
 > Реальный commit, размер, SHA-256 и ссылка выпуска будут записаны только после успешного gate.
 

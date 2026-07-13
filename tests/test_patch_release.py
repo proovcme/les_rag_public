@@ -61,7 +61,8 @@ def test_windows_patch_release_creates_missing_tracking_branch():
     source = (ROOT / "tools/windows_patch_release.ps1").read_text(encoding="utf-8")
 
     assert 'git show-ref --verify --quiet "refs/heads/$Branch"' in source
-    assert '@("checkout", "-b", $Branch, "--track", "origin/$Branch")' in source
+    assert '"${Branch}:refs/remotes/origin/${Branch}"' in source
+    assert '@("checkout", "-b", $Branch, "refs/remotes/origin/$Branch")' in source
     assert '@("pull", "--ff-only", "origin", $Branch)' in source
 
 
@@ -81,8 +82,8 @@ def test_remote_build_bootstraps_branch_before_versioned_script(monkeypatch):
     assert len(calls) == 2
     assert calls[0][-2] == "-EncodedCommand"
     decoded = base64.b64decode(calls[0][-1]).decode("utf-16le")
-    assert "fetch origin $branch" in decoded
-    assert "checkout -b $branch --track" in decoded
+    assert 'fetch origin "${branch}:refs/remotes/origin/${branch}"' in decoded
+    assert 'checkout -b $branch "refs/remotes/origin/$branch"' in decoded
     assert calls[1][6] == "-File"
     assert calls[1][7].endswith(r"tools\windows_patch_release.ps1")
 
