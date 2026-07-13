@@ -1,12 +1,12 @@
 # TEST_INVENTORY — тесты Unified Construction Harness v0.16–v0.24
 
-Гейт: `make verify` (офлайн, синтаксис+импорт-смоук). Полная сюита: `uv run python -m pytest tests/ -q` (`2908 passed` для `.406`, 2026-07-13).
+Гейт: `make verify` (офлайн, синтаксис+импорт-смоук). Полная сюита: `uv run python -m pytest tests/ -q` (`2913 passed` для `.406`, 2026-07-13).
 Все тесты ниже офлайн (без живых Qdrant/MLX), flag `LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED` OFF.
 
 RAG-ядро имеет отдельный обязательный профиль `make test-rag-core`; offline defaults задаются в
 `tests/conftest.py`. Аудит достоверности гейтов: [RAG_TEST_PROGRAM_AUDIT.md](RAG_TEST_PROGRAM_AUDIT.md).
 
-**Профильные таблицы v0.16–v0.24: 308 тестов** (+ регрессия v0.3–v0.15 и chat/router при OFF). `make verify` на h0.24 собирает **2908 тестов**.
+**Профильные таблицы v0.16–v0.24: 308 тестов** (+ регрессия v0.3–v0.15 и chat/router при OFF). `make verify` на h0.24 собирает **2913 тестов**.
 
 | Файл | Тестов | Покрывает |
 |---|---:|---|

@@ -18,7 +18,12 @@ def test_tauri_config_is_the_canonical_les_desktop_shell():
     assert config["build"]["frontendDist"] == "../web"
     assert config["app"]["windows"][0]["url"] == "index.html"
     assert config["bundle"]["windows"]["nsis"]["installMode"] == "currentUser"
+    assert config["bundle"]["windows"]["nsis"]["installerHooks"] == "windows-installer-hooks.nsh"
     assert config["bundle"]["resources"] == {"resources/": "."}
+
+    hooks = (TAURI / "src-tauri" / "windows-installer-hooks.nsh").read_text(encoding="utf-8")
+    assert '$LOCALAPPDATA\\Programs\\LES' in hooks
+    assert '${FileExists} "$INSTDIR\\${MAINBINARYNAME}.exe"' in hooks
 
 
 def test_tauri_rust_shell_owns_only_lifecycle_and_navigation():
@@ -60,10 +65,32 @@ def test_tauri_runtime_stage_excludes_recursive_shell_and_local_ui_state(tmp_pat
     monkeypatch.setattr(build_tauri_app, "RESOURCES", tmp_path / "resources")
     monkeypatch.setattr(build_tauri_app, "iter_files", lambda: [repo_file, tauri_file])
 
-    assert build_tauri_app.stage_runtime() == 1
+    assert build_tauri_app.stage_runtime("linux") == 1
     assert (tmp_path / "resources/runtime/README.md").is_file()
     assert not (tmp_path / "resources/runtime/desktop/tauri/package.json").exists()
     assert build_release_artifacts.should_exclude(nicegui_file)
+
+
+def test_tauri_runtime_stage_is_platform_specific(tmp_path, monkeypatch):
+    mac_bootstrap = ROOT / "installers/macos/app/bootstrap.sh"
+    windows_bootstrap = ROOT / "installers/windows/app/bootstrap.ps1"
+    resources = tmp_path / "resources"
+    monkeypatch.setattr(build_tauri_app, "RESOURCES", resources)
+    monkeypatch.setattr(
+        build_tauri_app,
+        "iter_files",
+        lambda: [mac_bootstrap, windows_bootstrap],
+    )
+
+    assert build_tauri_app.stage_runtime("win32") == 1
+    assert not (resources / "bootstrap.sh").exists()
+    assert not (resources / "runtime/installers/macos/app/bootstrap.sh").exists()
+    assert (resources / "runtime/installers/windows/app/bootstrap.ps1").is_file()
+
+    assert build_tauri_app.stage_runtime("darwin") == 1
+    assert (resources / "bootstrap.sh").is_file()
+    assert (resources / "runtime/installers/macos/app/bootstrap.sh").is_file()
+    assert not (resources / "runtime/installers/windows/app/bootstrap.ps1").exists()
 
 
 def test_release_stage_excludes_agent_and_runtime_temporary_files():

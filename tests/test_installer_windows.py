@@ -137,7 +137,7 @@ def test_windows_bootstrap_preloads_complete_local_rag_model_set():
     bootstrap = build_windows_installer.ROOT / "installers" / "windows" / "app" / "bootstrap.ps1"
     text = bootstrap.read_text(encoding="utf-8-sig")
 
-    assert "--skip-if-configured --provider ollama" in text
+    assert "--provider ollama --ensure-platform windows" in text
     assert '"qwen3.5:9b"' in text
     assert '"bge-m3:latest"' in text
     assert "--extra windows-reranker" in text
@@ -169,6 +169,10 @@ def test_windows_bootstrap_writes_machine_readable_status_for_tauri():
     text = bootstrap.read_text(encoding="utf-8-sig")
 
     assert 'bootstrap-status.json' in text
+    assert text.index('New-Item -ItemType Directory -Force -Path $LogDir') < text.index('. $StateScript')
+    assert text.index('Log "===== bootstrap start') < text.index('. $StateScript')
+    assert 'windows_state_helper_missing' in text
+    assert 'windows_state_helper_failed' in text
     assert 'schema = "les_windows_bootstrap_status_v1"' in text
     assert 'install_url = $InstallUrl' in text
     assert 'Write-Status -Phase "ready" -State "ready"' in text

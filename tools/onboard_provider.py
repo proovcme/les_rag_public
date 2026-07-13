@@ -48,6 +48,11 @@ PROVIDERS: dict[str, tuple[str, bool, str, str]] = {
                  "", "http://127.0.0.1:13305/api/v1"),
 }
 
+PLATFORM_PROVIDERS: dict[str, frozenset[str]] = {
+    "windows": frozenset({"ollama", "openrouter", "openai", "lemonade"}),
+    "macos": frozenset(PROVIDERS),
+}
+
 # Per-provider env-key prefixes (mlx has no key/base_url — it runs in-process).
 _PREFIX = {
     "ollama": "OLLAMA",
@@ -130,6 +135,14 @@ def already_configured(path: Path | None = None) -> bool:
     return bool(read_env(path).get("LES_LLM_PROVIDER", "").strip())
 
 
+def provider_compatible_with_platform(provider: str, platform: str) -> bool:
+    """Return whether an existing provider can run on the target platform."""
+    allowed = PLATFORM_PROVIDERS.get(platform)
+    if allowed is None:
+        raise ValueError(f"unknown platform {platform!r}; choose from {sorted(PLATFORM_PROVIDERS)}")
+    return provider.strip().lower() in allowed
+
+
 # ── interactive ─────────────────────────────────────────────────────────────
 def _prompt(msg: str, default: str = "") -> str:
     suffix = f" [{default}]" if default else ""
@@ -178,6 +191,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--show", action="store_true", help="print current provider and exit")
     parser.add_argument("--skip-if-configured", action="store_true",
                         help="do nothing if .env already names a provider (first-run guard)")
+    parser.add_argument(
+        "--ensure-platform",
+        choices=sorted(PLATFORM_PROVIDERS),
+        help="keep an existing compatible provider, but replace a provider unavailable on this platform",
+    )
     args = parser.parse_args(argv)
 
     if args.show:
@@ -185,8 +203,17 @@ def main(argv: list[str] | None = None) -> int:
         print(env.get("LES_LLM_PROVIDER", "(none)"))
         return 0
 
-    if args.skip_if_configured and already_configured():
-        print(f"[onboard] провайдер уже настроен ({read_env().get('LES_LLM_PROVIDER')}) — пропускаю")
+    current_provider = read_env().get("LES_LLM_PROVIDER", "").strip().lower()
+    if args.ensure_platform and current_provider:
+        if provider_compatible_with_platform(current_provider, args.ensure_platform):
+            print(f"[onboard] провайдер уже совместим с {args.ensure_platform} ({current_provider}) — пропускаю")
+            return 0
+        print(
+            f"[onboard] провайдер {current_provider} несовместим с {args.ensure_platform}; "
+            f"переключаю на {args.provider or 'локальный default'}"
+        )
+    elif args.skip_if_configured and current_provider:
+        print(f"[onboard] провайдер уже настроен ({current_provider}) — пропускаю")
         return 0
 
     if args.provider:

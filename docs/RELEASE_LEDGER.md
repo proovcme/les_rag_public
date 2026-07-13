@@ -28,11 +28,21 @@ Windows-выпуск:            0.24.0.405 (public, 2026-07-13); .406 гото�
 > `POST /api/chat` с `attachment_id`; постоянный `Idempotency-Key` возвращает завершённый ответ
 > до модели, блокирует конкурентный дубль и не допускает повторного списания. Административный
 > `/api/rag/attach` сохранён для Совушки. ФГИС lookup получил пакетный API и MCP-инструмент,
-> загружающий книгу цен один раз на расчётный ход. Проверки кода: focused gate — `36 passed`;
-> RAG-core — `168 passed`; полный `make test` — `2908 passed, 6 warnings`; `make verify`,
+> загружающий книгу цен один раз на расчётный ход. Проверки кода: focused gate — `46 passed`;
+> RAG-core — `168 passed`; полный `make test` — `2913 passed, 6 warnings`; `make verify`,
 > `public-check`, `uv lock --check`, `git diff --check` и Windows `cargo check` — зелёные.
-> SHA выпуска дописывается после
-> Windows-сборки.
+> Первый реальный `.406` NSIS-smoke выявил два связанных дефекта Windows state: provider onboarding
+> мог сохранить несовместимый Mac-only `mlx`, а `onboard_models.py` читал runtime `.env` вместо
+> постоянного `LES_ENV_PATH` и поэтому не видел уже настроенный Ollama. Это запускало загрузку
+> MLX-весов. Выпуск не опубликован; bootstrap исправлен на platform-compatibility gate:
+> Windows сохраняет совместимый Ollama/Lemonade/cloud, но заменяет только несовместимый `mlx`
+> на Ollama до model onboarding; загрузчик моделей читает persistent env. SHA финальной пересборки
+> дописывается после повторного smoke. Интеграторский «лог» оказался не журналом, а macOS
+> `bootstrap.sh`, ошибочно упакованным как общий Tauri-resource. Staging теперь платформенный:
+> Windows получает только PowerShell-bootstrap, а чистая установка использует латинский каталог
+> `%LOCALAPPDATA%\Programs\LES` без смены видимого имени продукта или поломки обновления `.405`.
+> Журнал и машинный статус создаются до загрузки `state.ps1`, поэтому ранняя ошибка bootstrap
+> больше не оставляет оператора только с безымянным `exit code: 1`.
 
 > 0.24.0.405 — ручное проверяемое обновление из публичного GitHub Release
 >

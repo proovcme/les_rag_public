@@ -200,7 +200,9 @@ development/reference artifacts; release readiness is decided by the live
 Windows RAG/chat smoke and the Windows Tauri/NSIS artifact.
 
 1. Run `LES-Setup.exe` (per-user, **no admin**). It drops the code export under
-   `%LOCALAPPDATA%\Programs\LES` + Start-Menu/Desktop shortcuts.
+   the ASCII-only `%LOCALAPPDATA%\Programs\LES` + Start-Menu/Desktop shortcuts. The visible
+   product and window name remain «ЛЕС». An already installed Tauri release is updated in its
+   existing directory instead of being orphaned during the path transition.
 2. First launch: SmartScreen warns (unsigned). **[ручками]** **More info →
    Run anyway**. One time per machine.
 3. The shortcut → `launcher.vbs` (hidden) → `bootstrap.ps1`:
@@ -208,6 +210,8 @@ Windows RAG/chat smoke and the Windows Tauri/NSIS artifact.
      `RAG_Content`, `logs`, `artifacts`, `.env` and the uv environment live in
      `%LOCALAPPDATA%\LES`; update-safe directory junctions preserve existing
      relative Python paths,
+   - запускает только `installers\windows\app\bootstrap.ps1`; macOS `bootstrap.sh` и
+     `installers/macos` исключаются из Windows-пакета во время сборки,
    - on the first updated launch, moves legacy runtime state into a timestamped
      backup, merges only missing files, and records `migration/last_state_init.json`;
      repeated launch is idempotent,
@@ -219,8 +223,10 @@ Windows RAG/chat smoke and the Windows Tauri/NSIS artifact.
      необходимость перезагрузки считаются явной ошибкой первого запуска, а не «ограниченным RAG»,
    - `uv sync` (no MLX and no pywebview on Windows),
    - `lesctl init --profile windows-lite`,
-   - `onboard_provider.py --skip-if-configured --provider ollama` → local
-     **ollama** default (no cloud key needed to boot),
+   - `onboard_provider.py --provider ollama --ensure-platform windows` → local
+     **ollama** default (no cloud key needed to boot); Windows сохраняет уже настроенные
+     Ollama/Lemonade/cloud-провайдеры, но автоматически заменяет унаследованный Mac-only `mlx`
+     на Ollama до загрузки моделей,
    - `start-light.ps1` keeps the selected Ollama tag in both `OLLAMA_MODEL` and
      the provider-neutral `LLM_MODEL`; all model-owned attachment/smeta steps
      therefore use the same local runtime instead of falling back to a Mac MLX
@@ -241,6 +247,9 @@ Windows RAG/chat smoke and the Windows Tauri/NSIS artifact.
    установки недостающего компонента и путь к журналу. Подробный журнал:
    `%LOCALAPPDATA%\LES\logs\bootstrap.log`; машинный статус:
    `%LOCALAPPDATA%\LES\logs\bootstrap-status.json`.
+   Оба файла создаются до подключения state helper, поэтому даже самая ранняя ошибка запуска
+   должна оставить читаемую причину. `%LOCALAPPDATA%\ЛЕС` — возможный старый каталог программы,
+   а не каталог постоянных журналов.
 
 На чистой Windows Docker Desktop может запросить повышение прав и завершение настройки WSL 2.
 Это штатное системное требование Docker. После установки или перезагрузки достаточно снова открыть

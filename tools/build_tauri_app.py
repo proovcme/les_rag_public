@@ -51,7 +51,8 @@ def npm_executable(platform: str | None = None) -> str:
     raise RuntimeError("npm executable not found; install Node.js before building Tauri")
 
 
-def stage_runtime() -> int:
+def stage_runtime(platform: str | None = None) -> int:
+    target_platform = platform or os.sys.platform
     runtime = RESOURCES / "runtime"
     if runtime.exists():
         shutil.rmtree(runtime)
@@ -61,12 +62,20 @@ def stage_runtime() -> int:
         relative = source.relative_to(ROOT)
         if relative.parts[:2] == ("desktop", "tauri"):
             continue
+        if target_platform.startswith("win") and relative.parts[:2] == ("installers", "macos"):
+            continue
+        if target_platform == "darwin" and relative.parts[:2] == ("installers", "windows"):
+            continue
         target = runtime / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
         count += 1
-    shutil.copy2(ROOT / "installers/macos/app/bootstrap.sh", RESOURCES / "bootstrap.sh")
-    (RESOURCES / "bootstrap.sh").chmod(0o755)
+    bootstrap = RESOURCES / "bootstrap.sh"
+    if target_platform == "darwin":
+        shutil.copy2(ROOT / "installers/macos/app/bootstrap.sh", bootstrap)
+        bootstrap.chmod(0o755)
+    else:
+        bootstrap.unlink(missing_ok=True)
     return count
 
 

@@ -120,6 +120,23 @@ deployed_at=datetime.now(timezone.utc).isoformat(timespec='seconds')))"
 
 ## Tests
 
+### Windows release gate
+
+- `pytest`, `make verify`, `cargo check` и успешная компиляция не доказывают готовность Windows
+  выпуска: они не исполняют фактический NSIS/EXE.
+- Каждый публичный Windows-выпуск собирать на Legion и до публикации выполнять живой smoke
+  собранного `LES-Setup.exe`: тихая установка в изолированный каталог, установленная версия и
+  состав ресурсов, ранний отказ bootstrap с log/status, затем нормальный запуск до
+  `/api/version`, Qdrant/RRF и интерфейса.
+- Windows staged payload не должен содержать корневой macOS `bootstrap.sh` или
+  `installers/macos`; Mac не должен получать Windows bootstrap.
+- `%LOCALAPPDATA%\LES\logs\bootstrap.log` и `bootstrap-status.json` создавать до подключения
+  state/helper-модулей. Общий `exit code: 1` без журнала считать дефектом выпуска.
+- Свежую Windows-установку направлять в латинский `%LOCALAPPDATA%\Programs\LES`, постоянный state
+  хранить отдельно в `%LOCALAPPDATA%\LES`. Видимое имя «ЛЕС» не менять; найденную старую Tauri
+  установку обновлять на месте, чтобы не ломать реестр и updater.
+- Публиковать `latest.json`, `LES-Setup.exe` и `LES-Setup.exe.sha256` только после живого smoke.
+
 Инвентарь тестов v0.16–v0.23 (~2067 тестов, 218 файлов) — **[docs/TEST_INVENTORY.md](docs/TEST_INVENTORY.md)**. Гейт `make verify` (офлайн); базовый L1 HTTP-смоук — `make smoke-basic` (`tools/basic_function_smoke.py`). Run before finalizing meaningful changes:
 
 ```bash

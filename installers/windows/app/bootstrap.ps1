@@ -13,14 +13,19 @@ $ErrorActionPreference = "Stop"
 $AppDir   = Split-Path -Parent $MyInvocation.MyCommand.Definition          # ...\installers\windows\app
 $Root     = (Resolve-Path (Join-Path $AppDir "..\..\..")).Path             # install root (runtime export)
 $UiUrl    = "http://127.0.0.1:8051/les"
-$StateScript = Join-Path $Root "installers\windows\state.ps1"
-if (-not (Test-Path -LiteralPath $StateScript)) { throw "Windows state helper is missing: $StateScript" }
-. $StateScript
-$StateRoot = Get-LesWindowsStateRoot
+$StateRoot = if ($env:LES_WINDOWS_STATE_ROOT) {
+  [System.IO.Path]::GetFullPath($env:LES_WINDOWS_STATE_ROOT)
+} elseif ($env:LOCALAPPDATA) {
+  [System.IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA "LES"))
+} else {
+  [System.IO.Path]::GetFullPath((Join-Path $env:TEMP "LES"))
+}
 $LogDir   = Join-Path $StateRoot "logs"
 $Log      = Join-Path $LogDir "bootstrap.log"
 $Status   = Join-Path $LogDir "bootstrap-status.json"
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+
+$StateScript = Join-Path $Root "installers\windows\state.ps1"
 
 function Log([string]$m) { "$([DateTime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))  $m" | Out-File -FilePath $Log -Append -Encoding utf8 }
 
@@ -75,6 +80,15 @@ trap {
 
 Log "===== bootstrap start (Root=$Root) ====="
 Write-Status -Phase "bootstrap" -State "running" -Message "Проверяю окружение Windows"
+if (-not (Test-Path -LiteralPath $StateScript)) {
+  Fail "не найден модуль состояния Windows: $StateScript" "windows_state_helper_missing"
+}
+try {
+  . $StateScript
+  $StateRoot = Get-LesWindowsStateRoot
+} catch {
+  Fail "не удалось загрузить модуль состояния Windows: $($_.Exception.Message)" "windows_state_helper_failed"
+}
 Set-Location $Root
 
 # Code is replaceable; state survives NSIS/Tauri updates. Junctions preserve the
@@ -229,8 +243,10 @@ if ($LASTEXITCODE -ne 0) { Fail "не удалось инициализиров�
 # --- 3b. Provider onboarding (first run only) -------------------------------
 # No MLX on Windows. Non-interactive default = local ollama so the first chat
 # works without a cloud key; the operator switches provider/key/model in the
-# Sovushka GUI «Настройки» afterwards. Skips if a provider is already set.
-& $Uv run python tools\onboard_provider.py --skip-if-configured --provider ollama 2>$null | Out-Null
+# Sovushka GUI «Настройки» afterwards. Existing Windows-compatible cloud,
+# Ollama or Lemonade settings are preserved; a stale Mac-only MLX setting is
+# replaced before model onboarding so Windows never downloads MLX weights.
+& $Uv run python tools\onboard_provider.py --provider ollama --ensure-platform windows 2>$null | Out-Null
 if ($LASTEXITCODE -ne 0) { Fail "не удалось настроить локальный провайдер Ollama" "provider_init_failed" }
 
 # --- 4. Model weights (only if a local HF model is configured) --------------

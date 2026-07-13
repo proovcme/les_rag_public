@@ -18,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -34,6 +35,12 @@ DEFAULTS = {
     "MLX_MODEL": DEFAULT_LOCAL_MLX_MODEL,
     "EMBEDDING_MODEL": "Qwen/Qwen3-Embedding-0.6B",
 }
+
+
+def configured_env_path() -> Path:
+    """Use the persistent installer env when bootstrap separated code and state."""
+    configured = os.getenv("LES_ENV_PATH", "").strip()
+    return Path(configured).expanduser() if configured else ROOT / ".env"
 
 
 def _read_env_file(path: Path) -> dict[str, str]:
@@ -54,7 +61,7 @@ def _read_env_file(path: Path) -> dict[str, str]:
 
 def resolve_models() -> list[str]:
     env = _read_env_file(ROOT / "env.example")
-    env.update(_read_env_file(ROOT / ".env"))  # .env wins
+    env.update(_read_env_file(configured_env_path()))  # persistent .env wins
     repos: list[str] = []
     for key in MODEL_ENV_KEYS:
         repo = env.get(key) or DEFAULTS.get(key, "")
@@ -67,7 +74,7 @@ def resolve_models() -> list[str]:
 
 
 def active_provider() -> str:
-    env = _read_env_file(ROOT / ".env")
+    env = _read_env_file(configured_env_path())
     return (
         env.get("LES_LLM_PROVIDER")
         or env.get("LES_PROVIDER")

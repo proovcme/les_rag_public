@@ -48,9 +48,16 @@ release-gate; детали эксплуатации находятся в `SKILL
   повтор не создаёт новое вложение и не вызывает платную модель второй раз.
 - [x] Цены ФГИС доступны пакетно через `/api/prices/lookup-batch` и
   `les_price_lookup_batch`, без десятков последовательных обращений на одну ЛСР.
-- [x] Кодовый гейт `.406`: focused `36 passed`, RAG-core `168 passed`, полный `make test` —
-  `2908 passed`, `make verify` — `2908 collected`; `public-check`, `uv lock --check`,
+- [x] Кодовый гейт `.406`: focused `46 passed`, RAG-core `168 passed`, полный `make test` —
+  `2913 passed`, `make verify` — `2913 collected`; `public-check`, `uv lock --check`,
   `git diff --check` и `cargo check` зелёные.
+- [x] Живой NSIS/bootstrap-smoke поймал и закрыл перенос Mac-only `LES_LLM_PROVIDER=mlx` в
+  Windows state: совместимые старые провайдеры сохраняются, несовместимый `mlx` заменяется на
+  Ollama до `onboard_models`; сам загрузчик читает постоянный `LES_ENV_PATH`, а не отсутствующий
+  runtime `.env`, поэтому Windows не скачивает MLX-веса.
+- [x] Платформенный staging больше не кладёт macOS `bootstrap.sh` в Windows EXE; свежий NSIS
+  использует латинский `%LOCALAPPDATA%\Programs\LES`, сохраняя русское видимое имя и обновляя
+  существующую `.405` на месте; лог и status создаются до подключения state helper.
 
 ## После выпуска
 

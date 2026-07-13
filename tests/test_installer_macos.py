@@ -64,6 +64,24 @@ def test_onboard_models_skips_ollama_provider_on_windows_bootstrap(tmp_path, mon
     assert "does not need local HF weights" in capsys.readouterr().out
 
 
+def test_onboard_models_reads_persistent_installer_env(tmp_path, monkeypatch, capsys):
+    runtime = tmp_path / "runtime"
+    state = tmp_path / "state"
+    runtime.mkdir()
+    state.mkdir()
+    (runtime / "env.example").write_text(
+        "MLX_MODEL=mlx-community/Qwen3.5-9B-OptiQ-4bit\n",
+        encoding="utf-8",
+    )
+    persistent_env = state / ".env"
+    persistent_env.write_text("LES_LLM_PROVIDER=ollama\n", encoding="utf-8")
+    monkeypatch.setattr(onboard_models, "ROOT", runtime)
+    monkeypatch.setenv("LES_ENV_PATH", str(persistent_env))
+
+    assert onboard_models.main(["--skip-if-cloud"]) == 0
+    assert "provider ollama" in capsys.readouterr().out
+
+
 def test_info_plist_is_valid_and_versioned(tmp_path):
     contents = tmp_path / "Contents"
     contents.mkdir()
