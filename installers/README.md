@@ -12,6 +12,10 @@ The installers are intentionally thin adapters around the repository runtime:
 Local corpora, `.env`, model files, Qdrant data, logs, snapshots and private samples
 must never be packed into release archives.
 
+ARTEL is a separate Revit product with its own installer and release lifecycle. LES boxed artifacts
+exclude `products/artel`, ARTEL-only tools, fixtures and tests; the canonical LES release gate is
+`make test-release`. The repository-wide `make test` remains available and still includes ARTEL.
+
 ## macOS — double-click app (no terminal)
 
 The goal is AnythingLLM/LM-Studio-grade UX: drag `LES.app` to Applications,

@@ -149,6 +149,7 @@ class ResourceBinding:
     explicit_price: float | None = None
     price_source_ref: str = ""
     reason: str = ""
+    basis_ref: str = ""
     source_refs: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:

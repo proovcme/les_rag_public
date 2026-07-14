@@ -73,6 +73,7 @@ def _resource_bindings(row: dict[str, Any], work_id: str, selected_by: str) -> l
                 explicit_price=_number(item.get("explicit_price")),
                 price_source_ref=str(item.get("price_source_ref") or ""),
                 reason=str(item.get("reason") or ""),
+                basis_ref=str(item.get("basis_ref") or ""),
                 source_refs=tuple(str(ref) for ref in (item.get("source_refs") or ()) if str(ref)),
             ))
         except (TypeError, ValueError) as error:

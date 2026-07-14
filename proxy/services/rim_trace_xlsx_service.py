@@ -109,7 +109,12 @@ def _header_block(ws, put, S: dict[str, Any], *, name: str, summary: dict[str, A
     put(r, 1, meta.get("object", "(наименование объекта капитального строительства)"), font=S["dim"]); r += 2
     put(r, 1, "ЛОКАЛЬНЫЙ СМЕТНЫЙ РАСЧЁТ (СМЕТА) № " + str(meta.get("lsr_no", "____")), font=S["bold"]); r += 1
     put(r, 1, name or "(наименование работ и затрат)", font=S["small"]); r += 1
-    put(r, 1, "Составлен ресурсным методом", font=S["dim"]); r += 1
+    put(
+        r,
+        1,
+        str(meta.get("calculation_method") or "Составлен ресурсно-индексным методом (РИМ)"),
+        font=S["dim"],
+    ); r += 1
     basis = str(meta.get("osnovanie", "—"))
     if basis.startswith(("/", "file://")) or ":\\" in basis:
         basis = Path(basis.replace("file://", "")).name
@@ -152,6 +157,14 @@ def _sum_formula(rows: list[int], column: str = "L") -> str:
     return "=SUM(" + ",".join(f"{column}{row}" for row in rows) + ")" if rows else "=0"
 
 
+def _xlsx_work_name(row: dict[str, Any], value: Any) -> Any:
+    source = str(value or "").strip()
+    official = str((row.get("meta") or {}).get("official_name") or "").strip()
+    if official and source and " ".join(official.lower().split()) != " ".join(source.lower().split()):
+        return f"{official} / {source}"
+    return official or value
+
+
 def _position_rows(ws, put, S: dict[str, Any], rows: list[dict[str, Any]], start_r: int,
                    pp_start: int) -> tuple[int, int, dict[str, list[int]]]:
     """Строки одной позиции (работа → ОТ/ЭМ/ОТм/М → прямые/ФОТ/НР/СП/Всего) из готовой трассы.
@@ -171,6 +184,8 @@ def _position_rows(ws, put, S: dict[str, Any], rows: list[dict[str, Any]], start
         for key, xc in _COL.items():
             if key in cols:
                 val = _LABEL_FIX.get(str(cols[key]), cols[key]) if key == "3" else cols[key]
+                if rtype == "work" and key == "3":
+                    val = _xlsx_work_name(row, val)
                 put(r, xc, val, font=(S["bold"] if is_group else S["small"]), num=(xc in _NUM_COLS))
         # наименование группы/итога, если в columns нет "3"
         if "3" not in cols:
@@ -185,7 +200,10 @@ def _position_rows(ws, put, S: dict[str, Any], rows: list[dict[str, Any]], start
         for row_no in by_type.get(rtype, []):
             if ws.cell(row=row_no, column=8).value not in (None, "") and ws.cell(row=row_no, column=9).value not in (None, ""):
                 ws.cell(row=row_no, column=10, value=f"=ROUND(H{row_no}*I{row_no},2)")
-            ws.cell(row=row_no, column=12, value=f"=ROUND(G{row_no}*J{row_no}*K{row_no},2)")
+            if ws.cell(row=row_no, column=10).value not in (None, "") and ws.cell(row=row_no, column=11).value not in (None, ""):
+                ws.cell(row=row_no, column=12, value=f"=ROUND(G{row_no}*J{row_no}*K{row_no},2)")
+            else:
+                ws.cell(row=row_no, column=12).value = None
     group_rows = {
         "labor": (by_type.get("group_labor") or [None])[0],
         "machine": (by_type.get("group_machine") or [None])[0],
@@ -347,7 +365,7 @@ def _review_sheet(wb, lsr: dict[str, Any]) -> None:
         resource_text = "\n".join(
             f"{entry.get('action')}: {entry.get('resource_code') or entry.get('resource_name')} "
             f"{entry.get('quantity') if entry.get('quantity') is not None else ''} {entry.get('unit') or ''}; "
-            f"{entry.get('reason') or ''}"
+            f"{entry.get('reason') or ''}; основание: {entry.get('basis_ref') or '—'}"
             for entry in (item.get("resource_bindings") or [])
         )
         ws.append([

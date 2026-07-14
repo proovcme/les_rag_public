@@ -456,6 +456,7 @@ def build_position_trace(
             columns={2: work_code, 3: work_name, 4: work_unit, 5: work_qty, 6: 1, 7: work_qty},
             source="gesn",
             meta={
+                "official_name": position.get("official_name") or (norm or {}).get("name") or "",
                 "selection_kind": position.get("selection_kind") or "",
                 "is_analog": bool(position.get("is_analog")),
                 "analog_limitations": list(position.get("analog_limitations") or []),

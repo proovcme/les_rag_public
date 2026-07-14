@@ -94,6 +94,20 @@ try {
   ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
   if (-not $RuntimeRoot) { throw "Installed runtime was not found under $InstallRoot" }
 
+  $ForbiddenArtel = @(
+    (Join-Path $RuntimeRoot "products\artel"),
+    (Join-Path $RuntimeRoot "schema\artel_family_manifest.schema.json"),
+    (Join-Path $RuntimeRoot "golden\artel_family_manifest_golden.json"),
+    (Join-Path $RuntimeRoot "examples\artel")
+  ) | Where-Object { Test-Path -LiteralPath $_ }
+  $ForbiddenArtel += @(
+    Get-ChildItem -LiteralPath (Join-Path $RuntimeRoot "tools") -Filter "*artel*.py" -ErrorAction SilentlyContinue
+    Get-ChildItem -LiteralPath (Join-Path $RuntimeRoot "tests") -Filter "test_artel*.py" -ErrorAction SilentlyContinue
+  ) | ForEach-Object { $_.FullName }
+  if ($ForbiddenArtel.Count -gt 0) {
+    throw "ARTEL must not be bundled in the LES release runtime: $($ForbiddenArtel -join ', ')"
+  }
+
   Invoke-Checked "powershell.exe" @(
     "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
     (Join-Path $RepoRoot "tools\windows_release_smoke.ps1"),

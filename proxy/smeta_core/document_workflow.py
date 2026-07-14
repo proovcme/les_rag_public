@@ -142,6 +142,71 @@ def _opened_norm_card(code: str, candidate: dict[str, Any]) -> dict[str, Any] | 
     }
 
 
+_TECHNOLOGY_CHECK_FIELDS = {
+    "matched_operations": list,
+    "missing_operations": list,
+    "extra_operations": list,
+    "foreign_resources": list,
+    "overlaps_with_work_ids": list,
+    "overlap_resolution": str,
+    "conditions_checked": list,
+    "unresolved_conditions": list,
+    "conclusion": str,
+}
+
+
+def _bind_submission_errors(item: dict[str, Any]) -> list[str]:
+    """Validate completeness of the model's evidence, never its professional choice."""
+    errors: list[str] = []
+    reason = str(item.get("reason") or "").strip()
+    if not reason:
+        errors.append("bind requires a non-empty reason")
+    kind = str(item.get("selection_kind") or "")
+    if not isinstance(item.get("analog_limitations"), list):
+        errors.append("bind requires explicit analog_limitations array")
+    limitations = [str(value).strip() for value in (item.get("analog_limitations") or []) if str(value).strip()]
+    if kind not in {"exact", "analog"}:
+        errors.append("bind requires explicit selection_kind exact|analog")
+    elif kind == "analog" and not limitations:
+        errors.append("analog requires explicit analog_limitations")
+    elif kind == "exact" and limitations:
+        errors.append("exact binding cannot carry analog_limitations")
+    applicability = str(item.get("applicability") or "")
+    if applicability not in {"exact", "close_analog", "weak_analog"}:
+        errors.append("bind requires explicit applicability")
+    elif kind == "exact" and applicability != "exact":
+        errors.append("exact selection requires exact applicability")
+    elif kind == "analog" and applicability not in {"close_analog", "weak_analog"}:
+        errors.append("analog selection requires analog applicability")
+
+    if not isinstance(item.get("resource_actions"), list):
+        errors.append("bind requires explicit resource_actions array")
+
+    check = item.get("technology_check")
+    if not isinstance(check, dict):
+        errors.append("bind requires a structured technology_check")
+    else:
+        for field, expected_type in _TECHNOLOGY_CHECK_FIELDS.items():
+            if field not in check or not isinstance(check.get(field), expected_type):
+                errors.append(f"technology_check.{field} is required")
+        conclusion = str(check.get("conclusion") or "")
+        if conclusion not in {"applicable", "applicable_with_limitations"}:
+            errors.append("technology_check.conclusion must be applicable|applicable_with_limitations")
+        overlap_ids = [str(value) for value in (check.get("overlaps_with_work_ids") or []) if str(value)]
+        if overlap_ids and not str(check.get("overlap_resolution") or "").strip():
+            errors.append("technology_check.overlap_resolution is required for overlaps")
+
+    for index, action in enumerate(item.get("resource_actions") or []):
+        if not isinstance(action, dict):
+            errors.append(f"resource_actions[{index}] must be an object")
+            continue
+        if not str(action.get("reason") or "").strip():
+            errors.append(f"resource_actions[{index}].reason is required")
+        if not str(action.get("basis_ref") or "").strip():
+            errors.append(f"resource_actions[{index}].basis_ref is required")
+    return errors
+
+
 
 
 def _tool_arguments(call: dict[str, Any]) -> dict[str, Any]:
@@ -315,18 +380,27 @@ def _run_batch_norm_agent(
                         errors.append({"work_id": work_id, "error": "unknown or duplicate work_id"})
                         continue
                     if decision == "unbound":
+                        reason = str(item.get("reason") or "").strip()
+                        if not reason:
+                            errors.append({"work_id": work_id, "error": "unbound requires a non-empty reason"})
+                            continue
                         proposed[work_id] = {
                             "norm_code": "", "selection_kind": "", "analog_limitations": [],
-                            "reason": str(item.get("reason") or "норма не выбрана"),
+                            "reason": reason,
                             "review_status": "model_batch_unbound", "resource_bindings": [],
                         }
                         continue
                     if decision == "covered_by":
+                        covered_by = str(item.get("covered_by_work_id") or "")
+                        reason = str(item.get("reason") or "").strip()
+                        if not covered_by or covered_by == work_id or not reason:
+                            errors.append({"work_id": work_id, "error": "covered_by requires another work_id and a non-empty reason"})
+                            continue
                         proposed[work_id] = {
                             "norm_code": "", "selection_kind": "", "analog_limitations": [],
-                            "covered_by_work_id": str(item.get("covered_by_work_id") or ""),
-                            "coverage_reason": str(item.get("reason") or ""),
-                            "reason": str(item.get("reason") or ""),
+                            "covered_by_work_id": covered_by,
+                            "coverage_reason": reason,
+                            "reason": reason,
                             "review_status": "model_batch_covered", "resource_bindings": [],
                         }
                         continue
@@ -334,7 +408,11 @@ def _run_batch_norm_agent(
                     if decision != "bind" or code not in opened.get(work_id, {}):
                         errors.append({"work_id": work_id, "error": "bound norm must be returned by RAG and opened by the model"})
                         continue
-                    kind = str(item.get("selection_kind") or "exact")
+                    bind_errors = _bind_submission_errors(item)
+                    if bind_errors:
+                        errors.extend({"work_id": work_id, "error": error} for error in bind_errors)
+                        continue
+                    kind = str(item.get("selection_kind") or "")
                     proposed[work_id] = {
                         "norm_code": code,
                         "selection_kind": kind,
@@ -395,6 +473,7 @@ def _model_resource_bindings(work_id: str, item: dict[str, Any], source_row: dic
             "target_resource_code": str(action.get("target_resource_code") or ""),
             "target_resource_name": str(action.get("target_resource_name") or ""),
             "reason": str(action.get("reason") or ""),
+            "basis_ref": str(action.get("basis_ref") or ""),
             "explicit_price": action.get("explicit_price"),
             "price_source_ref": str(action.get("price_source_ref") or ""),
             "source_refs": tuple(str(ref) for ref in (source_row.get("source_refs") or ()) if str(ref)),
@@ -403,10 +482,45 @@ def _model_resource_bindings(work_id: str, item: dict[str, Any], source_row: dic
         if isinstance(action, dict)
         and str(action.get("action") or "") in {"add", "replace", "exclude", "reuse"}
         and str(action.get("reason") or "").strip()
+        and str(action.get("basis_ref") or "").strip()
     ]
 
 
 def _batch_norm_tools() -> list[dict[str, Any]]:
+    string_array = {"type": "array", "items": {"type": "string"}}
+    technology_check = {
+        "type": "object",
+        "properties": {
+            "matched_operations": string_array,
+            "missing_operations": string_array,
+            "extra_operations": string_array,
+            "foreign_resources": string_array,
+            "overlaps_with_work_ids": string_array,
+            "overlap_resolution": {"type": "string"},
+            "conditions_checked": string_array,
+            "unresolved_conditions": string_array,
+            "conclusion": {"type": "string", "enum": ["applicable", "applicable_with_limitations"]},
+        },
+        "required": list(_TECHNOLOGY_CHECK_FIELDS),
+    }
+    resource_action = {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["add", "replace", "exclude", "reuse"]},
+            "resource_name": {"type": "string"},
+            "resource_code": {"type": "string"},
+            "unit": {"type": "string"},
+            "quantity": {"type": "number"},
+            "quantity_basis": {"type": "string", "enum": ["explicit", "target_norm", "source_work"]},
+            "target_resource_code": {"type": "string"},
+            "target_resource_name": {"type": "string"},
+            "reason": {"type": "string"},
+            "basis_ref": {"type": "string"},
+            "explicit_price": {"type": "number"},
+            "price_source_ref": {"type": "string"},
+        },
+        "required": ["action", "reason", "basis_ref"],
+    }
     mapping_row = {
         "type": "object",
         "properties": {
@@ -415,11 +529,11 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
             "norm_code": {"type": "string"},
             "selection_kind": {"type": "string", "enum": ["exact", "analog"]},
             "applicability": {"type": "string", "enum": ["exact", "close_analog", "weak_analog"]},
-            "analog_limitations": {"type": "array", "items": {"type": "string"}},
-            "technology_check": {"type": "object"},
+            "analog_limitations": string_array,
+            "technology_check": technology_check,
             "nr_sp_rule_id": {"type": "string"},
             "covered_by_work_id": {"type": "string"},
-            "resource_actions": {"type": "array", "items": {"type": "object"}},
+            "resource_actions": {"type": "array", "items": resource_action},
             "reason": {"type": "string"},
         },
         "required": ["work_id", "decision", "reason"],

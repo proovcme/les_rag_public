@@ -108,6 +108,7 @@ def complete_lsr_trace(scenario: LSRScenario) -> dict[str, Any]:
                     "target_resource_code": item.target_resource_code,
                     "target_resource_name": item.target_resource_name,
                     "reason": item.reason,
+                    "basis_ref": item.basis_ref,
                     "source_refs": list(item.source_refs),
                     "price_source_ref": item.price_source_ref,
                 }

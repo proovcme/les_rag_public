@@ -1,6 +1,6 @@
 # Л.Е.С. (LES_v2) — dev-гейт. Офлайн, без живых сервисов (Qdrant/MLX не нужны).
 # Требует uv. `make verify` — перед объявлением правки готовой.
-.PHONY: version-sync verify test test-architecture test-focused test-rag-core test-tauri smeta-base smeta-base-source smeta-base-update smoke-basic public-check ship-check ship-full-check deploy-runtime post-deploy-smoke ship ship-full patch-release help
+.PHONY: version-sync verify test test-release test-architecture test-focused test-rag-core test-tauri smeta-base smeta-base-source smeta-base-update smoke-basic public-check ship-check ship-full-check deploy-runtime post-deploy-smoke ship ship-full patch-release help
 
 PATCH_RELEASE_ARGS ?=
 
@@ -10,6 +10,8 @@ FOCUS_TESTS ?= tests/test_sovushka_chat.py tests/test_static_assets.py tests/tes
 RAG_CORE_TESTS ?= tests/test_datasets_router.py tests/test_rag_config.py tests/test_qdrant_adapter_parse.py tests/test_build_rag_contract_sibling.py tests/test_system_dataset_service.py tests/test_retrieval_quality_service.py tests/test_retrieval_service.py tests/test_saferag_service.py tests/test_source_excerpts.py tests/test_evidence_packet_service.py tests/test_rag_golden_set.py tests/test_rag_index_contract_audit.py tests/test_notebook_study_service.py
 LEGACY_ARCHITECTURE_TESTS ?= tests/test_construction_harness.py tests/test_resource_cost_v05.py tests/test_resource_cost_v06.py tests/test_unified_adapters_v09.py tests/test_unified_async_v10.py tests/test_unified_construction_harness.py tests/test_unified_construction_v04.py tests/test_unified_filebody_v12.py tests/test_unified_live_v07.py tests/test_unified_operational_v08.py tests/test_unified_real_v11.py
 ARCHITECTURE_IGNORE_ARGS := $(foreach test,$(LEGACY_ARCHITECTURE_TESTS),--ignore=$(test))
+ARTEL_TESTS := $(wildcard tests/test_artel*.py)
+LES_RELEASE_IGNORE_ARGS := $(foreach test,$(ARTEL_TESTS),--ignore=$(test))
 POST_DEPLOY_RETRIES ?= 12
 POST_DEPLOY_DELAY ?= 1
 SMETA_BASE_UPDATE_ARGS ?= --all --rate 1.0
@@ -17,6 +19,7 @@ SMETA_BASE_UPDATE_ARGS ?= --all --rate 1.0
 help:
 	@echo "make verify       — офлайн-гейт: compileall (синтаксис) + pytest --collect-only (импорт-смоук)"
 	@echo "make test         — полная сюита pytest (часть тестов требует живых Qdrant/MLX)"
+	@echo "make test-release — LES release-suite без отдельного продукта ARTEL"
 	@echo "make test-architecture — текущая архитектура без feature-off Unified/Construction Harness"
 	@echo "make test-focused — быстрые профильные pytest; переопредели FOCUS_TESTS='tests/test_x.py ...'"
 	@echo "make test-rag-core — обязательный offline integrity-гейт RAG-ядра"
@@ -45,6 +48,9 @@ verify:
 
 test:
 	uv run python -m pytest --durations=20
+
+test-release:
+	uv run python -m pytest --durations=20 $(LES_RELEASE_IGNORE_ARGS)
 
 test-architecture:
 	uv run python -m pytest --durations=20 $(ARCHITECTURE_IGNORE_ARGS)

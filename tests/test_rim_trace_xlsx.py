@@ -56,6 +56,40 @@ def test_appendix3_rim_header_and_graphs_present(tmp_path):
     assert "Обоснование" in txt and "Наименование работ и затрат" in txt
     assert "Индекс" in txt and "Сметная стоимость в текущем уровне цен всего" in txt
     assert "Всего по позиции" in txt and "ОТ(ЗТ)" in txt and "ЭМ" in txt
+    assert "Составлен ресурсно-индексным методом (РИМ)" in txt
+
+
+def test_missing_resource_price_stays_blank_in_editable_xlsx(tmp_path):
+    import openpyxl
+
+    trace = rim.build_position_trace({
+        "code": "ГЭСН00-00-000-00",
+        "name": "Тестовая работа",
+        "unit": "шт",
+        "qty": 1,
+        "nr_pct": 0,
+        "sp_pct": 0,
+        "resources": [{
+            "kind": "material", "code": "01.1", "name": "Материал без цены",
+            "unit": "шт", "per_unit": 1,
+        }],
+    })
+    out = rim_xlsx.render_trace_xlsx(trace, tmp_path / "missing-price.xlsx")
+    ws = openpyxl.load_workbook(out, data_only=False).active
+    row = next(row for row in ws.iter_rows() if row[2].value == "Материал без цены")
+    assert row[9].value is None
+    assert row[11].value is None
+
+
+def test_xlsx_work_row_keeps_official_norm_title_and_source_description(tmp_path):
+    import openpyxl
+
+    trace = rim.build_position_trace({"code": CODE, "qty": 0.61, "name": "Фактическая работа из ВОР"})
+    out = rim_xlsx.render_trace_xlsx(trace, tmp_path / "official-and-source.xlsx")
+    ws = openpyxl.load_workbook(out).active
+    work_row = next(row for row in ws.iter_rows() if row[1].value == CODE)
+    assert str(work_row[2].value).endswith(" / Фактическая работа из ВОР")
+    assert str(work_row[2].value) != "Фактическая работа из ВОР"
 
 
 def test_endpoint_export_returns_download():

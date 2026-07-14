@@ -80,6 +80,8 @@ def _bound_resource_line(
             "quantity_basis": binding.quantity_basis,
         },
     }
+    if binding.basis_ref:
+        line["resource_binding"]["basis_ref"] = binding.basis_ref
     if binding.resource_code:
         line["code"] = binding.resource_code
     if binding.explicit_price is not None:
@@ -164,6 +166,8 @@ def _apply_resource_bindings(
                     "source_refs": list(decision.source_refs),
                     "price_source_ref": decision.price_source_ref or "reuse decision",
                 }
+                if decision.basis_ref:
+                    reused["resource_binding"]["basis_ref"] = decision.basis_ref
                 resources.append(reused)
     return resources, problems
 
@@ -309,13 +313,15 @@ def calculate_scenario(
         # component here made a bound position look calculated while silently
         # reducing its labor/machines/materials to zero.
         nr_sp_binding = nr_sp_binding_by_work.get(work.work_id)
+        official_name = str(norm_record.get("name") or norm.get("name") or "").strip()
         positions.append({
             "work_id": work.work_id,
             "source_row": work.source_row or index,
             "source_refs": list(work.source_refs),
             "section": work.section or "Без раздела",
             "code": binding.norm_code,
-            "name": work.title or norm.get("name") or "",
+            "name": work.title or official_name,
+            "official_name": official_name,
             "unit": norm.get("unit") or work.unit,
             "qty": norm_quantity,
             "source_quantity": work.quantity,

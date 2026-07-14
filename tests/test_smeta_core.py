@@ -21,6 +21,22 @@ def _native_call(call_id, name, **arguments):
     }
 
 
+def _technology_check(**overrides):
+    value = {
+        "matched_operations": ["Установка элемента"],
+        "missing_operations": [],
+        "extra_operations": [],
+        "foreign_resources": [],
+        "overlaps_with_work_ids": [],
+        "overlap_resolution": "пересечений нет",
+        "conditions_checked": ["измеритель и состав работ"],
+        "unresolved_conditions": [],
+        "conclusion": "applicable",
+    }
+    value.update(overrides)
+    return value
+
+
 def test_norm_binding_cannot_be_selected_by_code():
     with pytest.raises(ValueError, match="code cannot select"):
         NormBinding(
@@ -95,6 +111,40 @@ def test_batch_agent_exposes_only_rag_read_and_model_submission_tools():
     submit = tools[-1]["function"]["parameters"]["properties"]["rows"]["items"]
     assert "quantity_multiplier" not in submit["properties"]
     assert submit["properties"]["decision"]["enum"] == ["bind", "covered_by", "unbound"]
+    technology = submit["properties"]["technology_check"]
+    assert set(technology["required"]) == {
+        "matched_operations", "missing_operations", "extra_operations", "foreign_resources",
+        "overlaps_with_work_ids", "overlap_resolution", "conditions_checked",
+        "unresolved_conditions", "conclusion",
+    }
+    action = submit["properties"]["resource_actions"]["items"]
+    assert "basis_ref" in action["required"]
+
+
+def test_bind_submission_requires_complete_professional_evidence_and_resource_basis():
+    from proxy.smeta_core.document_workflow import _bind_submission_errors
+
+    incomplete = _bind_submission_errors({
+        "selection_kind": "analog",
+        "applicability": "close_analog",
+        "analog_limitations": [],
+        "technology_check": {"conclusion": "applicable"},
+        "resource_actions": [{"action": "exclude", "reason": "не нужен"}],
+        "reason": "похожая работа",
+    })
+    assert "analog requires explicit analog_limitations" in incomplete
+    assert "technology_check.matched_operations is required" in incomplete
+    assert "resource_actions[0].basis_ref is required" in incomplete
+
+    complete = _bind_submission_errors({
+        "selection_kind": "exact",
+        "applicability": "exact",
+        "analog_limitations": [],
+        "technology_check": _technology_check(),
+        "resource_actions": [],
+        "reason": "состав работ и измеритель совпадают",
+    })
+    assert complete == []
 
 
 def test_batch_agent_keeps_fifty_rows_in_one_model_owned_submission():
@@ -160,7 +210,8 @@ def test_batch_agent_searches_reads_and_submits_model_choice(monkeypatch):
         [_native_call("submit", "submit_lsr_mapping", rows=[{
             "work_id": "w1", "decision": "bind", "norm_code": "ГЭСН01-01-001-01",
             "selection_kind": "exact", "applicability": "exact",
-            "technology_check": {"conclusion": "applicable"},
+            "analog_limitations": [],
+            "technology_check": _technology_check(),
             "resource_actions": [], "reason": "модель выбрала после чтения карточки",
         }])],
     ])

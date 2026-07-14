@@ -55,6 +55,8 @@ def test_windows_patch_release_is_fail_closed_and_isolated():
     assert "Get-FileHash" in source
     assert "git -C $RepoRoot status --porcelain" in source
     assert '"--build-number", [string]$BuildNumber' in source
+    assert "ARTEL must not be bundled in the LES release runtime" in source
+    assert '"products\\artel"' in source
 
 
 def test_windows_patch_release_creates_missing_tracking_branch():
@@ -93,3 +95,12 @@ def test_makefile_exposes_one_patch_release_entrypoint():
 
     assert "patch-release:" in source
     assert "tools/patch_release.py $(PATCH_RELEASE_ARGS)" in source
+    assert "test-release:" in source
+    assert "tests/test_artel*.py" in source
+
+
+def test_patch_release_uses_les_release_suite_without_separate_artel_product():
+    source = (ROOT / "tools" / "patch_release.py").read_text(encoding="utf-8")
+
+    assert '["make", "test-release"]' in source
+    assert '["make", "test"],' not in source

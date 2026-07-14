@@ -50,6 +50,14 @@ EXCLUDE_PATTERNS = (
     "dist/*",
     "desktop/tauri/src-tauri/target/*",
     "desktop/tauri/src-tauri/resources/*",
+    # ARTEL is a separate Revit product with its own installer and release
+    # lifecycle. LES boxed artifacts must not silently bundle it.
+    "products/artel/*",
+    "tools/*artel*.py",
+    "tests/test_artel*.py",
+    "schema/artel_*",
+    "golden/artel_*",
+    "examples/artel/*",
 )
 
 

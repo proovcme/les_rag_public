@@ -1,6 +1,6 @@
 # LES Packaging Plan
 
-Goal: turn LES into a boxed solution for macOS, Linux and Windows while keeping АТЛАС and АРТЕЛЬ as separate products that consume LES APIs.
+Goal: turn LES into a boxed solution for macOS, Linux and Windows while keeping АТЛАС and АРТЕЛЬ as separate products that consume LES APIs. ARTEL is never bundled into a LES installer.
 
 ## Product Editions
 
@@ -8,7 +8,7 @@ Goal: turn LES into a boxed solution for macOS, Linux and Windows while keeping 
 |---|---|---|
 | LES Native Mac | Apple Silicon workstation | launchd services, MLX/Core ML, local Qdrant, Sovushka Lite |
 | LES Server Linux | Linux host/VPS/private server | Docker Compose or systemd, Qdrant, provider-configurable model host |
-| LES Workstation Windows | Windows BIM workstation | PowerShell installer, Docker/remote Qdrant, browser UI, Revit/ARTEL integration |
+| LES Workstation Windows | Windows BIM workstation | PowerShell installer, Docker/remote Qdrant, browser UI; ARTEL ships separately |
 | LES Lite | any platform | retrieval/search, remote model provider, no local heavy model |
 | LES Viewer Pack | offline/field machines | АТЛАС standalone, demo data, optional LES search endpoint |
 
@@ -109,6 +109,7 @@ artel-mvp.zip
 ```
 
 Model files and private corpora are not shipped inside these archives.
+The same applies to the separate ARTEL source/product tree, its tools, fixtures and tests.
 
 Build LES artifacts with:
 
@@ -140,7 +141,7 @@ uv run python tools/build_artel_release.py
 
 Before a boxed release:
 
-- full unit tests pass;
+- `make test-release` passes for the LES package; repository-wide `make test` additionally checks the separate ARTEL product;
 - `uv lock --check` passes;
 - `git diff --check` passes;
 - `lesctl doctor` passes for the target profile;
