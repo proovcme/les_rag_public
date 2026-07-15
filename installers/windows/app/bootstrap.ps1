@@ -244,7 +244,10 @@ if (-not (Test-Path -LiteralPath $SmetaBaseline)) {
   Warn "сметная база недоступна: в пакете нет verified baseline; сметный модуль ограничен"
 } else {
   Write-Status -Phase "smeta" -State "running" -Message "Проверяю базу ГЭСН и ФСЭМ"
-  $baselineResult = & $Uv run python tools\smeta_release_baseline.py provision `
+  # Updates must recover a partial/corrupt local baseline as well as provision a
+  # clean machine. `repair` verifies healthy state without touching it and moves
+  # only a broken set into storage/recovery before restoring the signed archive.
+  $baselineResult = & $Uv run python tools\smeta_release_baseline.py repair `
     --archive $SmetaBaseline --state-root $StateRoot
   if ($LASTEXITCODE -ne 0) {
     Warn "сметная база недоступна: $($baselineResult -join ' '); остальные модули запускаются"
@@ -382,6 +385,11 @@ Write-Status -Phase "services" -State "running" -Message "Запускаю сл�
 if ($env:LES_TAURI_SHELL -eq "1") {
   Log "start-light (Tauri shell)"
   try {
+    # An in-place update can leave the previous build listening on 8050/8051.
+    # Stop only the LES proxy/UI ports (Qdrant and independent FGIS jobs survive)
+    # so the installed build replaces the old one instead of hiding on 8052/8053.
+    $stopOutput = @(& (Join-Path $Root "installers\windows\stop-light.ps1"))
+    $stopOutput | Out-File -FilePath $Log -Append -Encoding utf8
     # Run the PowerShell script in-process. A native `powershell ... | Out-File`
     # pipeline can stay open after start-light exits because long-lived proxy/UI
     # descendants inherit its output handle, leaving bootstrap stuck at services/running.

@@ -217,7 +217,11 @@ def test_windows_bootstrap_writes_machine_readable_status_for_tauri():
     assert 'Write-Status -Phase "ready" -State "ready"' in text
     assert 'if ($env:LES_TAURI_SHELL -ne "1")' in text
     assert 'LES-smeta-baseline.zip' in text
-    assert 'tools\\smeta_release_baseline.py provision' in text
+    assert 'tools\\smeta_release_baseline.py repair' in text
+    stop = '$stopOutput = @(& (Join-Path $Root "installers\\windows\\stop-light.ps1"))'
+    start = '$serviceOutput = @(& (Join-Path $Root "installers\\windows\\start-light.ps1"))'
+    assert stop in text
+    assert text.index(stop) < text.index(start)
     assert 'Warn "сметная база недоступна:' in text
     assert '"bootstrap_degraded"' in text
     assert 'Fail "в установочном пакете отсутствует проверенная сметная база"' not in text
