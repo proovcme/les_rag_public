@@ -145,10 +145,12 @@ class ChatRequest(BaseModel):
     project_id: Optional[int] = None  # W17.1: режим проекта — ретрив сужается к датасетам объекта
     scope: Optional[dict] = None  # v0.21: нормализованная область поиска {scope_type, project_ids, dataset_ids}
     output_directive: Optional[str] = None  # формат/стиль ответа — ТОЛЬКО в генерацию (не в роутинг/заметки/ретрив)
+    response_length: Optional[str] = None  # short|standard|detailed|maximum; только бюджет/форма генерации
     mode: Optional[str] = None  # явный РЕЖИМ из UI («smeta» → форс сметного пути минуя роутер/RAG)
     attachment_context: Optional[str] = None  # текст файла из скрепки (read-mode), без индексации
     attachment_id: Optional[str] = None  # server-owned read_<id>; клиентский путь не принимается
     target_file: Optional[str] = None  # точный file_name из MetaDB documents (для клика по реестру/узкого RAG)
+    target_files: Optional[List[str]] = None  # явный выбор нескольких документов оператором
 
     @field_validator("question")
     @classmethod
@@ -195,6 +197,33 @@ class ChatRequest(BaseModel):
         if len(v) > 1000:
             raise ValueError(f"Имя целевого файла слишком длинное ({len(v)} симв., макс. 1000)")
         return v
+
+    @field_validator("response_length")
+    @classmethod
+    def response_length_values(cls, v):
+        if v is None:
+            return None
+        value = v.strip().casefold()
+        if value not in {"short", "standard", "detailed", "maximum"}:
+            raise ValueError("Некорректная длина ответа")
+        return value
+
+    @field_validator("target_files")
+    @classmethod
+    def target_files_limits(cls, values):
+        if values is None:
+            return None
+        result: list[str] = []
+        for raw in values:
+            value = str(raw or "").strip().replace("\\", "/")
+            if not value or value in result:
+                continue
+            if len(value) > 1000:
+                raise ValueError("Имя выбранного документа слишком длинное")
+            result.append(value)
+        if len(result) > 20:
+            raise ValueError("Можно выбрать не более 20 документов")
+        return result or None
 
 
 @dataclass
@@ -483,9 +512,9 @@ def _augment_model_tool_args(
     args = dict(call.get("args") or {})
     if tool == "dataset_map" and dataset_ids and not args.get("dataset_id"):
         args["dataset_id"] = dataset_ids[0]
-    if tool in {"search_sources", "read_source", "read_pdf_source", "read_excel_source"}:
-        if question and not args.get("q"):
-            args["q"] = question
+    if tool in {"search_sources", "read_source", "read_pdf_source", "read_excel_source", "look_at_pdf_page"}:
+        if question and not (args.get("q") or args.get("question")):
+            args["question" if tool == "look_at_pdf_page" else "q"] = question
         if dataset_ids:
             if tool == "search_sources" and not args.get("dataset_ids") and not args.get("dataset_id"):
                 args["dataset_ids"] = dataset_ids
@@ -3683,25 +3712,31 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     dataset_name_by_id = await _dataset_name_map(rag_backend)
     resolved_dataset_names = _names_for_dataset_ids(_dataset_ids, dataset_name_by_id)
     target_file_ref: dict[str, Any] | None = None
+    target_file_refs: list[dict[str, Any]] = []
     target_doc_filter: list[str] = []
     if _dataset_ids:
-        target_query = req.target_file or req.question
-        target_file_ref = await asyncio.to_thread(
-            resolve_inventory_file_reference,
-            target_query,
-            [str(d) for d in _dataset_ids],
-        )
-        if target_file_ref:
-            if target_file_ref.get("match_status") == "matched" and target_file_ref.get("file_name"):
-                target_doc_filter = [str(target_file_ref["file_name"])]
-                logger.info(
-                    "[FILE_TARGET] question scoped to file=%s status=%s chunks=%s",
-                    target_file_ref.get("file_name"),
-                    target_file_ref.get("status"),
-                    target_file_ref.get("chunk_count"),
-                )
-            elif target_file_ref.get("match_status") == "ambiguous":
-                logger.info("[FILE_TARGET] ambiguous file reference: %s", target_file_ref.get("match_count"))
+        explicit_targets = list(req.target_files or [])
+        if req.target_file:
+            explicit_targets.insert(0, req.target_file)
+        target_queries = list(dict.fromkeys(explicit_targets)) or [req.question]
+        for target_query in target_queries:
+            resolved_ref = await asyncio.to_thread(
+                resolve_inventory_file_reference,
+                target_query,
+                [str(d) for d in _dataset_ids],
+            )
+            if not resolved_ref:
+                continue
+            target_file_refs.append(resolved_ref)
+            if resolved_ref.get("match_status") == "matched" and resolved_ref.get("file_name"):
+                target_doc_filter.append(str(resolved_ref["file_name"]))
+            elif resolved_ref.get("match_status") == "ambiguous":
+                logger.info("[FILE_TARGET] ambiguous file reference: %s", resolved_ref.get("match_count"))
+        target_doc_filter = list(dict.fromkeys(target_doc_filter))
+        if len(target_file_refs) == 1:
+            target_file_ref = target_file_refs[0]
+        if target_doc_filter:
+            logger.info("[FILE_TARGET] question scoped to %s explicit files", len(target_doc_filter))
     try:
         context_memory_block = build_context_memory_block(
             session_id=req.session_id,
@@ -3837,6 +3872,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     query_route_payload["scope"] = _scope_snap   # v0.21: где реально искали (snapshot для trace/истории)
     if target_file_ref:
         query_route_payload["target_file"] = target_file_ref
+    if target_file_refs:
+        query_route_payload["target_files"] = target_file_refs
     study_requested = bool(req.dataset_ids or effective_dataset_filter) and is_notebook_study_query(req.question)
     inventory_requested = bool(req.dataset_ids or effective_dataset_filter) and is_project_inventory_query(req.question)
     if study_requested:
@@ -3893,7 +3930,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         if req.semantic_cache_enabled is not None
         else semantic_cache_enabled()
     )
-    if study_requested or inventory_requested or target_file_ref or topic_doc_filter:
+    if study_requested or inventory_requested or target_doc_filter or topic_doc_filter:
         # Broad project/object questions must re-read the selected area. A cached short RAG table
         # turns "расскажи про объект" into a stale narrow answer and hides the broad reading layer.
         # File-register questions need fresh MetaDB inventory, not an old aggregate RAG answer.

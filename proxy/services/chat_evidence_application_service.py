@@ -20,6 +20,7 @@ from fastapi import HTTPException
 from backend.inference.routing import decide_provider, is_cloud_provider, memory_aware_provider
 from backend.inference.validator import rules_pre_verdict
 from proxy.services.answer_form_service import classify_answer_form
+from proxy.services.answer_form_service import apply_response_length
 from proxy.services.cad_bim_highlight import extract_highlight, set_highlight
 from proxy.services.context_expander_service import expand_context_windows
 from proxy.services.evidence_packet_service import (
@@ -903,7 +904,7 @@ async def _execute_chat_evidence_application(
     )
 
     # ADR-12 слой 2: форму ответа диктует интент вопроса (детерминированно, до генерации).
-    answer_form = classify_answer_form(req.question)
+    answer_form = apply_response_length(classify_answer_form(req.question), req.response_length)
     retrieval_trace["answer_form"] = {"intent": answer_form.intent, "max_tokens": answer_form.max_tokens}
     if class_suggestions:
         retrieval_trace["class_suggestions"] = [s["class"] for s in class_suggestions]
@@ -1042,9 +1043,14 @@ async def _execute_chat_evidence_application(
 
                 tool_results_for_model: list[dict[str, Any]] = []
                 tool_context = ""
+                visual_tool_requested = any(
+                    marker in str(req.question or "").casefold().replace("ё", "е")
+                    for marker in ("посмотри глазами", "посмотри чертеж", "посмотри схему", "что видно на лист", "что изображено на лист")
+                )
                 tool_loop_enabled = _env_bool("LES_CHAT_TOOL_LOOP_ENABLED", True) and (
                     is_cloud_provider(llm_runtime.provider)
                     or _env_bool("LES_LOCAL_CHAT_TOOL_LOOP_ENABLED", False)
+                    or visual_tool_requested
                 )
                 if tool_loop_enabled:
                     try:
@@ -1269,11 +1275,10 @@ async def _execute_chat_evidence_application(
                         # чтобы роутинг/авто-заметки/ретрив видели чистый вопрос (не мусор-директиву).
                         if req.output_directive and req.output_directive.strip():
                             sys_msg += " " + req.output_directive.strip()
-                        if target_file_ref and target_file_ref.get("match_status") == "matched":
+                        if target_doc_filter:
                             sys_msg += (
-                                " Вопрос привязан к конкретному файлу из реестра. "
-                                "Отвечай по содержимому этого файла и явно назови файл; "
-                                "не подменяй его общим обзором датасета."
+                                " Оператор явно выбрал документы. Отвечай только по их содержимому, "
+                                "явно называй использованные файлы и не расширяй область на остальной датасет."
                             )
                     user_prompt = (
                         f"Материалы из найденных документов:\n{context}\n\n"
@@ -1281,14 +1286,7 @@ async def _execute_chat_evidence_application(
                         + (f"{dataset_memory_prompt}\n\n" if dataset_memory_prompt else "")
                         + (f"{project_inventory_prompt}\n\n" if project_inventory_prompt else "")
                         + (f"{notebook_study_prompt}\n\n" if notebook_study_prompt else "")
-                        + (
-                            "Целевой файл запроса: "
-                            f"{target_file_ref.get('file_name')} "
-                            f"(статус индекса: {target_file_ref.get('status')}, "
-                            f"чанков: {target_file_ref.get('chunk_count')}).\n\n"
-                            if target_file_ref and target_file_ref.get("match_status") == "matched"
-                            else ""
-                        )
+                        + ("Выбранные документы: " + "; ".join(target_doc_filter) + ".\n\n" if target_doc_filter else "")
                         + (f"{session_block}\n\n" if session_block else "")
                         + (f"{memory_block}\n\n" if memory_block else "")
                         + f"Вопрос: {req.question}\n\n"

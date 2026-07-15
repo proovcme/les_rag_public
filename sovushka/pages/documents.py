@@ -65,6 +65,7 @@ def build_documents() -> None:
         "selected_dataset": "",
         "selected_doc_id": "",
         "selected_doc_name": "",
+        "selected_doc_ids": [],
         "dataset_filter": "",
         "dataset_kind_filter": "",
         "dataset_group_filter": "",
@@ -564,6 +565,7 @@ def build_documents() -> None:
         state["selected_dataset"] = dataset_id
         state["selected_doc_id"] = ""
         state["selected_doc_name"] = ""
+        state["selected_doc_ids"] = []
         state["chunks"] = []
         state["hits"] = []
         state["dataset_memory"] = {}
@@ -998,6 +1000,38 @@ def build_documents() -> None:
             "scope": f"ds:{dataset_id}",
             "question": question,
             "target_file": file_name,
+            "tab": "chat",
+        }
+        path = str(getattr(context.client.request, "url", "") or "")
+        target_path = "/les/classic" if "/les/classic" in path else "/classic"
+        ui.navigate.to(f"{target_path}?{urlencode(params)}")
+
+    def _toggle_document_selection(doc_id: str) -> None:
+        selected = [str(value) for value in (state.get("selected_doc_ids") or [])]
+        if doc_id in selected:
+            selected.remove(doc_id)
+        elif len(selected) < 20:
+            selected.append(doc_id)
+        else:
+            ui.notify("Можно выбрать не более 20 документов", type="warning")
+            return
+        state["selected_doc_ids"] = selected
+        _render_documents()
+
+    def _ask_about_selected_documents() -> None:
+        selected = {str(value) for value in (state.get("selected_doc_ids") or [])}
+        files = [
+            str(row.get("file_name") or "")
+            for row in (state.get("documents") or [])
+            if str(row.get("id") or "") in selected and str(row.get("file_name") or "")
+        ]
+        dataset_id = str(state.get("selected_dataset") or "")
+        if not dataset_id or not files:
+            ui.notify("Выберите документы", type="warning")
+            return
+        params = {
+            "scope": f"ds:{dataset_id}",
+            "target_files": json.dumps(files, ensure_ascii=False, separators=(",", ":")),
             "tab": "chat",
         }
         path = str(getattr(context.client.request, "url", "") or "")
@@ -1932,6 +1966,17 @@ def build_documents() -> None:
             if not state["documents"]:
                 _label("Документы не найдены", color="var(--dim)")
                 return
+            selected_ids = {str(value) for value in (state.get("selected_doc_ids") or [])}
+            with ui.row().classes("items-center w-full").style("gap:6px;padding:2px 4px 6px;"):
+                _label(f"Выбрано: {len(selected_ids)}", size="10.5px", color="var(--dim)", weight=800).style("flex:1;")
+                if selected_ids:
+                    ui.button(
+                        "Спросить по выбранным", icon="o_chat", on_click=_ask_about_selected_documents,
+                    ).props("dense no-caps").classes("sov-docs-search-btn")
+                    ui.button(
+                        icon="o_close",
+                        on_click=lambda: (state.__setitem__("selected_doc_ids", []), _render_documents()),
+                    ).props('flat round dense aria-label="Снять выбор"')
             dataset_data_button = refs.get("dataset_data_button")
             if dataset_data_button is not None:
                 dataset_data_button.classes(remove="sov-dataset-data-button--active")
@@ -1999,6 +2044,10 @@ def build_documents() -> None:
                     "click", lambda _e, value=doc_id, name=file_name: _schedule(_inspect_composition_file(value, name))
                 ):
                     with ui.row().classes("items-center w-full sov-document-card-head"):
+                        select_btn = ui.button(
+                            icon="o_check_box" if doc_id in selected_ids else "o_check_box_outline_blank",
+                        ).props('flat round dense aria-label="Выбрать документ"').classes("sov-icon-btn")
+                        select_btn.on("click.stop", lambda _e, value=doc_id: _toggle_document_selection(value))
                         with ui.element("div").classes("sov-document-icon"):
                             ui.icon(_file_icon(file_name))
                         with ui.column().classes("sov-document-copy"):

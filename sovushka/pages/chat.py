@@ -458,6 +458,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
     selected_session_card = {"el": None}
     project_state = {"id": None}  # W17.1: активный объект (None = обычный RAG по всему)
     _pending_target_file = {"v": ""}
+    _pending_target_files = {"v": []}
 
     # Резиновый layout: тащим разделитель → меняем ширину панели артефактов (CSS-var),
     # ширина сохраняется в localStorage. Деградирует мягко (нет JS → разделитель статичен).
@@ -736,6 +737,14 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         _tf = (context.client.request.query_params.get("target_file") or "").strip()
                         if _tf:
                             _pending_target_file["v"] = _tf[:512]
+                        _tfs = (context.client.request.query_params.get("target_files") or "").strip()
+                        if _tfs:
+                            try:
+                                decoded = json.loads(_tfs)
+                            except json.JSONDecodeError:
+                                decoded = []
+                            if isinstance(decoded, list):
+                                _pending_target_files["v"] = [str(x)[:1000] for x in decoded if str(x).strip()][:20]
                     except Exception:
                         pass
                     # Служебные статусы нужны действующему UI-контракту, но не конкурируют с задачей
@@ -3135,7 +3144,17 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             "reranker_enabled": reranker_sw.value,
             "validation_enabled": bool(validation_sw.value),
             "session_id": state.get("session_id"),
+            "response_length": {
+                "Кратко (1-2 абзаца)": "short",
+                "Стандарт (3-5 абзацев)": "standard",
+                "Подробно (развёрнутый ответ)": "detailed",
+                "Максимум (полный анализ)": "maximum",
+            }.get(detail_depth.value, "standard"),
         }
+        target_files = [str(x).strip() for x in (_pending_target_files.get("v") or []) if str(x).strip()]
+        if target_files:
+            payload["target_files"] = target_files
+            _pending_target_files["v"] = []
         target_file = str(_pending_target_file.get("v") or "").strip()
         if target_file:
             payload["target_file"] = target_file

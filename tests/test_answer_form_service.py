@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from proxy.services.answer_form_service import classify_answer_form
+from proxy.services.answer_form_service import apply_response_length, classify_answer_form
 
 
 def test_value_intent_one_liner():
@@ -80,3 +80,11 @@ def test_yo_normalization():
 def test_instruction_present_for_non_default():
     for q in ["Перечисли разделы", "Расскажи кратко", "Собери всё", "Какова ширина"]:
         assert classify_answer_form(q).instruction, q
+
+
+def test_operator_response_length_changes_only_generation_contract():
+    base = classify_answer_form("Расскажи про проект")
+    assert apply_response_length(base, "standard").max_tokens == 8192
+    assert apply_response_length(base, "short").max_tokens == 1024
+    assert apply_response_length(base, "maximum").max_tokens == 16384
+    assert apply_response_length(base, None) == base

@@ -84,6 +84,28 @@ _BRIEF = AnswerForm(
 )
 _DEFAULT = AnswerForm("default", "", 8192)   # снят блок длины по умолчанию (было 2048) — не режем ответ
 
+_RESPONSE_LENGTHS: dict[str, tuple[int, str]] = {
+    "short": (1024, "Пользователь выбрал короткий ответ: дай только вывод и необходимое обоснование."),
+    # Standard intentionally preserves the previously successful default ceiling.
+    "standard": (8192, "Пользователь выбрал обычную длину: ответь достаточно полно, без лишнего повторения."),
+    "detailed": (12288, "Пользователь выбрал подробный ответ: раскрой выводы, evidence и ограничения."),
+    "maximum": (16384, "Пользователь выбрал полный разбор: не сокращай полезные детали ради краткости."),
+}
+
+
+def apply_response_length(form: AnswerForm, preference: str | None) -> AnswerForm:
+    """Apply an explicit operator preference to generation, not retrieval or routing.
+
+    The operator-owned setting is allowed to change the token ceiling and add one
+    lightweight instruction.  It does not choose facts, sources or professional
+    decisions for the model.
+    """
+    selected = _RESPONSE_LENGTHS.get(str(preference or "").strip().casefold())
+    if not selected:
+        return form
+    max_tokens, instruction = selected
+    return AnswerForm(form.intent, " ".join(x for x in (form.instruction, instruction) if x), max_tokens)
+
 
 def classify_answer_form(question: str) -> AnswerForm:
     """Детерминированно сопоставить вопрос с формой ответа (ADR-12 §2). Без LLM."""

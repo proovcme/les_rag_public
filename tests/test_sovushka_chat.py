@@ -23,6 +23,16 @@ from sovushka.pages.chat import (
 from proxy.routers.chat import ChatRequest, _attachment_source_label, _question_with_attachment
 
 
+def test_chat_request_accepts_explicit_multi_document_scope_and_response_length():
+    req = ChatRequest(
+        question="сравни документы",
+        target_files=["NS/ПЗ.pdf", "NS/Схемы.pdf", "NS/ПЗ.pdf"],
+        response_length="detailed",
+    )
+    assert req.target_files == ["NS/ПЗ.pdf", "NS/Схемы.pdf"]
+    assert req.response_length == "detailed"
+
+
 def test_ai_plain_markdown_is_rendered_as_markdown_widget():
     source = inspect.getsource(chat_page.build_chat)
 

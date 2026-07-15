@@ -7,6 +7,7 @@ these results later, but this layer only executes bounded operations.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import os
 import re
@@ -184,6 +185,18 @@ class ToolHarness:
                 tags=("pdf", "read", "document", "source"),
             ),
             _tool_read_pdf_source,
+        )
+        self._register(
+            ToolSpec(
+                name="look_at_pdf_page",
+                title="Посмотреть страницу PDF",
+                category="source",
+                summary="Render one selected PDF page or bounded region and let the local vision model inspect the actual drawing pixels.",
+                args_schema={"doc_id": "str", "dataset_id": "str", "doc_name": "str", "page": "int (1-based)", "question": "str", "bbox": "[x0,y0,x1,y1] normalized"},
+                returns="visual observations tied to the original file and page",
+                tags=("vision", "drawing", "чертёж", "схема", "графика", "изображение", "лист", "pdf", "page", "посмотри", "глазами"),
+            ),
+            _tool_look_at_pdf_page,
         )
         self._register(
             ToolSpec(
@@ -385,6 +398,96 @@ def _tool_read_pdf_source(args: dict[str, Any]) -> dict[str, Any]:
         payload["tool_trace"]["trace"] = payload["trace"]
     payload["contract_check"] = validate_tool_result(payload)
     return payload
+
+
+def _tool_look_at_pdf_page(args: dict[str, Any]) -> dict[str, Any]:
+    """Bounded pixel-level reading; the vision model observes, LES only renders."""
+    doc_id = str(args.get("doc_id") or "").strip()
+    if doc_id:
+        document = explorer().get_document(doc_id)
+    else:
+        dataset_id = str(args.get("dataset_id") or "").strip()
+        doc_name = str(args.get("doc_name") or "").strip()
+        payload = explorer().document_chunks(dataset_id, doc_name, limit=1, max_chars=200) if dataset_id and doc_name else {}
+        document = payload.get("document") if isinstance(payload, dict) else None
+    if not isinstance(document, dict):
+        return _result(tool="look_at_pdf_page", operation="vision_read", inputs=[args], status="missing",
+                       result={}, missing=["PDF document not found"], trace="document selector did not resolve")
+    source_path = Path(str(document.get("source_path") or "")).expanduser()
+    if source_path.suffix.casefold() != ".pdf" or not source_path.is_file():
+        return _result(tool="look_at_pdf_page", operation="vision_read", inputs=[args], status="missing",
+                       result={}, missing=["original PDF source is unavailable"], trace="source_path is not a readable PDF")
+    page_number = _int_arg(args.get("page"), 1, min_value=1, max_value=100000)
+    question = str(args.get("question") or args.get("q") or "Что видно на этом чертеже?").strip()[:2000]
+    try:
+        import fitz
+
+        with fitz.open(source_path) as pdf:
+            if page_number > len(pdf):
+                return _result(tool="look_at_pdf_page", operation="vision_read", inputs=[args], status="missing",
+                               result={"pages": len(pdf)}, missing=["page is outside the PDF"], trace="page bounds check failed")
+            page = pdf[page_number - 1]
+            clip = page.rect
+            bbox = args.get("bbox")
+            if isinstance(bbox, list) and len(bbox) == 4:
+                values = [max(0.0, min(1.0, float(value))) for value in bbox]
+                if values[2] > values[0] and values[3] > values[1]:
+                    clip = fitz.Rect(
+                        page.rect.x0 + page.rect.width * values[0],
+                        page.rect.y0 + page.rect.height * values[1],
+                        page.rect.x0 + page.rect.width * values[2],
+                        page.rect.y0 + page.rect.height * values[3],
+                    )
+            max_edge = max(clip.width, clip.height, 1.0)
+            scale = max(0.5, min(2.0, 1600.0 / max_edge))
+            pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=clip, alpha=False)
+            image_b64 = base64.b64encode(pix.tobytes("png")).decode("ascii")
+    except Exception as exc:  # noqa: BLE001
+        return _result(tool="look_at_pdf_page", operation="vision_read", inputs=[args], status="error",
+                       result={}, warnings=[str(exc)[:240]], trace=f"PDF render failed: {type(exc).__name__}")
+
+    model = (
+        os.getenv("LES_DRAWING_VISION_MODEL", "").strip()
+        or os.getenv("OLLAMA_MODEL", "").strip()
+        or "qwen3.5:9b"
+    )
+    base_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
+    prompt = (
+        "Ты рассматриваешь реальную страницу инженерного PDF. Ответь только о том, что визуально видно: "
+        "надписи, марки, размеры, условные обозначения и связи. Не достраивай невидимое. "
+        f"Вопрос: {question}"
+    )
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt, "images": [image_b64]}],
+        "think": False,
+        "options": {
+            "temperature": 0.1,
+            "num_predict": _int_arg(args.get("max_tokens"), 1200, min_value=128, max_value=3000),
+        },
+        "stream": False,
+    }
+    try:
+        import httpx
+
+        response = httpx.post(f"{base_url}/api/chat", json=body, timeout=180.0)
+        response.raise_for_status()
+        data = response.json()
+        observation = str((data.get("message") or {}).get("content") or "").strip()
+    except Exception as exc:  # noqa: BLE001
+        return _result(tool="look_at_pdf_page", operation="vision_read", inputs=[args], status="error",
+                       result={"model": model}, warnings=[str(exc)[:240]], trace=f"vision request failed: {type(exc).__name__}")
+    source_ref = f"{document.get('file_name') or source_path.name}#page={page_number}"
+    return _result(
+        tool="look_at_pdf_page", operation="vision_read",
+        inputs=[{"doc_id": document.get("id"), "page": page_number, "question": question, "bbox": args.get("bbox") or []}],
+        status="ok" if observation else "missing",
+        result={"observation": observation, "model": model, "source_ref": source_ref, "page": page_number},
+        evidence=[{"kind": "visual_pdf_page", "source_ref": source_ref, "is_evidence": True}],
+        sources=[{"kind": "pdf_page", "doc_id": document.get("id"), "doc_name": document.get("file_name"), "page": page_number, "source_ref": source_ref}],
+        missing=[] if observation else ["vision model returned no observation"],
+        trace="rendered one bounded original PDF page and inspected its pixels with the configured local vision model",
+    )
 
 
 def _tool_read_excel_source(args: dict[str, Any]) -> dict[str, Any]:
