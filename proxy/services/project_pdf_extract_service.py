@@ -147,6 +147,12 @@ def run_project_pdf_extract(
         )
         if checkpoints_current:
             existing["cache"] = "hit"
+            existing["list_integration"] = _refresh_list_registries(
+                dataset_id,
+                storage_root=storage_root,
+                meta_db_path=meta_db_path,
+            )
+            _write_json(summary_path, existing)
             return existing
 
     files: list[dict[str, Any]] = []
@@ -263,20 +269,72 @@ def run_project_pdf_extract(
         "warnings_truncated": len(unique_warnings) > SUMMARY_WARNING_LIMIT,
     }
     _write_json(summary_path, result)
+    result["list_integration"] = _refresh_list_registries(
+        dataset_id,
+        storage_root=storage_root,
+        meta_db_path=meta_db_path,
+    )
+    _write_json(summary_path, result)
     return result
+
+
+def _refresh_list_registries(
+    dataset_id: str,
+    *,
+    storage_root: Path,
+    meta_db_path: str | None,
+) -> dict[str, Any]:
+    """Make completed source maps immediately usable by the typed LIST tools."""
+    errors: list[str] = []
+    table_summary: dict[str, Any] = {}
+    document_summary: dict[str, Any] = {}
+    try:
+        from proxy.services.project_table_registry_service import build_project_table_registry
+
+        table_summary = build_project_table_registry(dataset_id, storage_root=storage_root)
+    except Exception as error:
+        errors.append(f"table_registry:{type(error).__name__}:{error}")
+    try:
+        from proxy.services.project_document_registry_service import build_project_document_registry
+
+        document_registry = build_project_document_registry(
+            dataset_id,
+            storage_root=storage_root,
+            meta_db_path=meta_db_path,
+        )
+        document_summary = {
+            key: document_registry.get(key)
+            for key in ("status", "document_count", "volume_count", "class_counts", "role_counts")
+        }
+    except Exception as error:
+        errors.append(f"document_registry:{type(error).__name__}:{error}")
+    return {
+        "status": "ready" if not errors else "partial",
+        "table_registry": table_summary,
+        "document_registry": document_summary,
+        "errors": errors,
+    }
 
 
 def compact_project_pdf_extract_for_model(summary: dict[str, Any], *, max_files: int = 12) -> dict[str, Any]:
     """Compact project-PDF summary for dataset memory / prompt brief."""
     if not isinstance(summary, dict) or summary.get("status") == "missing":
         return {}
+    low_signal_prefixes = ("UNKNOWN:", "SERVICE:", "NAV:", "NOISE:", "TEXT:")
+    source_navigation = [
+        item
+        for item in list(summary.get("source_navigation") or [])
+        if isinstance(item, dict)
+        and not str(item.get("role") or "").startswith(low_signal_prefixes)
+    ]
     return {
         "schema": "project_pdf_extract_brief_v1",
         "context_role": "navigation_not_evidence",
         "status": summary.get("status"),
         "coverage": summary.get("coverage") or {},
-        "source_navigation": list(summary.get("source_navigation") or [])[:12],
+        "source_navigation": source_navigation[:12],
         "discipline_summaries": list(summary.get("discipline_summaries") or [])[:8],
+        "list_integration": summary.get("list_integration") or {},
         "files": [
             {
                 "file_name": item.get("file_name"),

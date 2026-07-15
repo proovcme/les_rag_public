@@ -16,6 +16,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from proxy.services.lexical_index_service import stem_russian_word
 from proxy.services.project_pdf_extract_service import project_pdf_extract_root
 from proxy.services.project_pdf_table_service import (
     PROJECT_PDF_TABLE_ALGO_VERSION,
@@ -480,15 +481,33 @@ def _card_score(card: dict[str, Any], *, query_norm: str, terms: list[str]) -> i
     combined = " ".join((semantic, headers, sample, source))
     score = 12 if query_norm in combined else 0
     for term in terms:
-        if term in semantic:
-            score += 5
-        if term in headers:
+        if _field_matches(term, semantic):
+            # A recognized table type is stronger navigation than the same
+            # word appearing incidentally inside an UNKNOWN sample row.
+            score += 20
+        if _field_matches(term, headers):
             score += 4
-        if term in sample:
+        if _field_matches(term, sample):
             score += 2
-        if term in source:
+        if _field_matches(term, source):
             score += 1
     return score
+
+
+def _field_matches(term: str, field: str) -> bool:
+    """Match exact tokens plus conservative Russian inflection variants."""
+    if term in field:
+        return True
+    if not re.search(r"[а-яё]", term):
+        return False
+    wanted = stem_russian_word(term)
+    if len(wanted) < 5:
+        return False
+    prefix = wanted[:5]
+    return any(
+        len(candidate) >= 5 and stem_russian_word(candidate).startswith(prefix)
+        for candidate in re.findall(r"[а-яё]+", field)
+    )
 
 
 def _tokens(value: str) -> list[str]:

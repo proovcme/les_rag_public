@@ -69,7 +69,8 @@ def test_canonical_service_sources_include_smeta_and_normcontrol():
     assert processed["required_documents"]["summary"]["total"] >= 4
     assert "Play проверил состав" in processed["message"]
     fgis = service_source("fgis_price_base")
-    assert "Скачать ФГИС ЦС" in fgis["operator_action"]
+    assert "Скачать / обновить ФСНБ" in fgis["operator_action"]
+    assert "Сплит-форму каждой зоны" in fgis["operator_action"]
     assert "Положи сплит-формы" not in fgis["operator_action"]
 
 

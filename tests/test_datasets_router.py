@@ -1061,6 +1061,35 @@ async def test_parse_batch_background_reports_partial_large_queue(monkeypatch, d
 
 
 @pytest.mark.asyncio
+async def test_parse_batch_waiting_for_semaphore_is_reported_as_queued(monkeypatch, dataset_state):
+    dataset_state.pending_files["ds-1"] = 1
+    state = datasets.get_dataset_state()
+    state.parse_semaphore = asyncio.Semaphore(0)
+
+    async def _admit(state, **kwargs):
+        return None
+
+    monkeypatch.setattr(datasets, "assert_parse_admission", _admit)
+
+    response = await datasets.parse_dataset_batch(
+        "ds-1",
+        limit=1,
+        background=True,
+        _admin=object(),
+    )
+    await asyncio.sleep(0.01)
+
+    job = state.job_tracker[response["job_id"]]
+    assert job["status"] == "QUEUED"
+    assert job["message"].startswith("Ожидает очереди:")
+    assert dataset_state.parses == []
+
+    state.parse_semaphore.release()
+    await asyncio.sleep(0.05)
+    assert job["status"] == "COMPLETED"
+
+
+@pytest.mark.asyncio
 async def test_dataset_parse_drain_continues_until_dataset_empty(monkeypatch, dataset_state):
     dataset_state.pending_files["ds-1"] = 60
     state = datasets.get_dataset_state()

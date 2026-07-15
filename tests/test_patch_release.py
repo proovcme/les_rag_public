@@ -110,3 +110,17 @@ def test_patch_release_uses_les_release_suite_without_separate_artel_product():
 
     assert '["make", "test-release"]' in source
     assert '["make", "test"],' not in source
+
+
+def test_patch_release_requires_production_legion_heavy_pdf_gate():
+    source = (ROOT / "tools" / "patch_release.py").read_text(encoding="utf-8")
+    windows = (ROOT / "tools" / "windows_patch_release.ps1").read_text(encoding="utf-8")
+    production = (ROOT / "tools" / "windows_production_deploy.ps1").read_text(encoding="utf-8")
+
+    assert 'summary.get("production")' in source
+    assert 'indexed_files' in source and 'smoke_dataset_removed' in source
+    assert "windows_production_deploy.ps1" in windows
+    assert "production = $production" in windows
+    assert "Heavy PDF polygon must contain exactly 4 PDF files" in production
+    assert "dense+sparse RRF" in production
+    assert "/api/rag/datasets/$smokeDatasetId" in production

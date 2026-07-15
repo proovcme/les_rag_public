@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 from email.message import EmailMessage
 
+import httpx
 import pytest
 from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
 
@@ -66,6 +67,66 @@ def test_embed_client_accepts_ollama_openai_model_contract():
     )
 
     assert vectors == [[0.1, 0.2]]
+
+
+def test_embed_client_retries_transient_ollama_rejection(monkeypatch):
+    responses = [
+        httpx.Response(400, json={"error": "temporary runner overload"}),
+        httpx.Response(
+            200,
+            json={
+                "model": "bge-m3:latest",
+                "data": [{"index": 0, "embedding": [0.1, 0.2]}],
+            },
+        ),
+    ]
+
+    monkeypatch.setenv("RAG_EMBED_RETRY_ATTEMPTS", "2")
+    monkeypatch.setenv("RAG_EMBED_RETRY_DELAY_SEC", "0")
+    monkeypatch.setattr(qdrant_adapter.httpx, "post", lambda *_args, **_kwargs: responses.pop(0))
+    client = EmbedClient("http://ollama", model="bge-m3:latest", backend="ollama")
+
+    assert client.encode_sync(["фрагмент"]) == [[0.1, 0.2]]
+    assert responses == []
+
+
+def test_embed_client_splits_rejected_batch_and_preserves_order(monkeypatch):
+    calls = []
+
+    def _post(_url, *, json, timeout):
+        calls.append(list(json["input"]))
+        if len(json["input"]) > 1:
+            return httpx.Response(400, json={"error": "batch rejected"})
+        value = 1.0 if json["input"][0] == "первый" else 2.0
+        return httpx.Response(
+            200,
+            json={
+                "model": "bge-m3:latest",
+                "data": [{"index": 0, "embedding": [value]}],
+            },
+        )
+
+    monkeypatch.setenv("RAG_EMBED_RETRY_ATTEMPTS", "1")
+    monkeypatch.setattr(qdrant_adapter.httpx, "post", _post)
+    client = EmbedClient("http://ollama", model="bge-m3:latest", backend="ollama")
+
+    assert client.encode_sync(["первый", "второй"]) == [[1.0], [2.0]]
+    assert calls == [["первый", "второй"], ["первый"], ["второй"]]
+
+
+def test_embed_client_exposes_ollama_reason_without_mdn_link(monkeypatch):
+    monkeypatch.setenv("RAG_EMBED_RETRY_ATTEMPTS", "1")
+    monkeypatch.setattr(
+        qdrant_adapter.httpx,
+        "post",
+        lambda *_args, **_kwargs: httpx.Response(400, json={"error": "input is empty"}),
+    )
+    client = EmbedClient("http://ollama", model="bge-m3:latest", backend="ollama")
+
+    with pytest.raises(RuntimeError, match="HTTP 400; input is empty") as error:
+        client.encode_sync(["один фрагмент"])
+
+    assert "developer.mozilla.org" not in str(error.value)
 
 
 def test_embed_client_does_not_accept_openai_model_field_for_les_owned_backend():
@@ -202,6 +263,26 @@ def test_sync_parse_does_not_parse_all_files_when_no_pending(tmp_path):
         "remaining_pending": 0,
         "errors": 0,
         "elapsed_sec": 0,
+    }
+
+
+def test_meta_db_reports_current_file_stage_for_operator_progress(tmp_path):
+    db = MetaDB(str(tmp_path / "meta.sqlite"))
+    dataset_id = db.create_dataset("Проект")
+    db.add_document(dataset_id, "том/лист.pdf", file_size=100)
+    db.add_document(dataset_id, "том/готов.pdf", file_size=200)
+    db.update_document_status(dataset_id, "том/готов.pdf", "INDEXED", 12)
+    db.update_document_stage(dataset_id, "том/лист.pdf", "EMBED")
+
+    progress = db.dataset_parse_progress(dataset_id)
+
+    assert progress == {
+        "total": 2,
+        "indexed": 1,
+        "pending": 1,
+        "errors": 0,
+        "file_name": "том/лист.pdf",
+        "stage": "EMBED",
     }
 
 

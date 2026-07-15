@@ -103,14 +103,21 @@ uv run python tools/build_windows_installer.py --version X.Y.Z
    make patch-release PATCH_RELEASE_ARGS='--publish --notes-file dist/release-notes.md'
    ```
 
-2. `tools/patch_release.py` сам проверяет clean/pushed commit и запускает `make test`, `make verify`,
-   `make test-rag-core`, `make public-check`, `uv lock --check` и `git diff --check`.
+2. `tools/patch_release.py` сам проверяет clean/pushed commit и запускает `make verify`, полный
+   `make test-release` без отдельного продукта ARTEL, `make public-check`, `uv lock --check` и
+   `git diff --check`.
 
 3. `tools/windows_patch_release.ps1` на Windows строго обновляет `main` до запрошенного commit,
-   собирает Tauri/NSIS, устанавливает EXE в изолированный `%LOCALAPPDATA%\LES-release-smoke`,
-   запускает `windows_release_smoke.ps1` и возвращает SHA-256 с машинным отчётом.
+   собирает Tauri/NSIS, устанавливает EXE в изолированный `%LOCALAPPDATA%\LES-release-smoke` и
+   запускает `windows_release_smoke.ps1`. Только после его успеха
+   `windows_production_deploy.ps1` останавливает старые production API/UI, устанавливает тот же
+   проверенный EXE в `%LOCALAPPDATA%\Programs\LES`, поднимает persistent `%LOCALAPPDATA%\LES` и
+   прогоняет четыре тяжёлых project PDF из `C:\Users\Oleg\Downloads\NS\oleg` через реальную
+   индексацию и `dense + qdrant_sparse → RRF`. Qdrant и отдельная ФСНБ-задача не останавливаются;
+   временный smoke-датасет удаляется. Любая ошибка блокирует публикацию.
 
-4. Публикация начинается только после проверки версии, номера сборки, commit, живого RRF и SHA-256.
+4. Публикация начинается только после проверки версии, номера сборки, commit, изолированного
+   clean-install smoke, production heavy-PDF smoke и SHA-256.
    Выпуск содержит `latest.json`, `LES-Setup.exe` и `LES-Setup.exe.sha256`; затем эти assets
    скачиваются обратно и сверяются повторно.
 

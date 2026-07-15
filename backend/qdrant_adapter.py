@@ -18,6 +18,7 @@ import os
 import re
 import shutil
 import sqlite3
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from pathlib import Path
@@ -594,16 +595,76 @@ class EmbedClient:
         data.sort(key=lambda x: x["index"])
         return [d["embedding"] for d in data]
 
-    def encode_sync(self, texts: List[str]) -> List[List[float]]:
-        """Синхронный вариант для вызова из threadpool."""
+    @staticmethod
+    def _response_detail(response: Any) -> str:
+        try:
+            payload = response.json()
+        except Exception:
+            payload = None
+        if isinstance(payload, dict):
+            detail = payload.get("error") or payload.get("detail") or payload.get("message")
+            if detail:
+                return " ".join(str(detail).split())[:500]
+        return " ".join(str(getattr(response, "text", "") or "").split())[:500]
+
+    def _encode_sync_resilient(self, texts: List[str]) -> List[List[float]]:
         import httpx as _httpx
-        r = _httpx.post(
-            self.url,
-            json={"model": self.model, "input": texts},
-            timeout=EMBED_TIMEOUT,
+
+        try:
+            attempts = max(1, int(os.getenv("RAG_EMBED_RETRY_ATTEMPTS", "3")))
+        except ValueError:
+            attempts = 3
+        try:
+            delay = max(0.0, float(os.getenv("RAG_EMBED_RETRY_DELAY_SEC", "0.35")))
+        except ValueError:
+            delay = 0.35
+
+        response = None
+        request_error: Exception | None = None
+        retryable = {400, 408, 409, 425, 429, 500, 502, 503, 504}
+        for attempt in range(1, attempts + 1):
+            try:
+                response = _httpx.post(
+                    self.url,
+                    json={"model": self.model, "input": texts},
+                    timeout=EMBED_TIMEOUT,
+                )
+                if response.status_code < 400:
+                    return self._vectors_from_response(response.json())
+                request_error = None
+                if response.status_code not in retryable:
+                    break
+            except _httpx.RequestError as error:
+                request_error = error
+                response = None
+            if attempt < attempts:
+                time.sleep(delay * attempt)
+
+        # Ollama can reject one batch transiently while the same inputs work in
+        # smaller groups.  Split only after bounded retries; a bad item is then
+        # isolated without discarding already valid document chunks.
+        if len(texts) > 1 and (response is None or response.status_code in retryable):
+            middle = max(1, len(texts) // 2)
+            return self._encode_sync_resilient(texts[:middle]) + self._encode_sync_resilient(texts[middle:])
+
+        text_hash = hashlib.sha256((texts[0] if texts else "").encode("utf-8", errors="ignore")).hexdigest()[:12]
+        if response is not None:
+            detail = self._response_detail(response) or "сервер не сообщил причину"
+            raise RuntimeError(
+                "Сервис поискового представления отклонил фрагмент "
+                f"после {attempts} попыток: HTTP {response.status_code}; {detail}; "
+                f"fragment={text_hash}"
+            )
+        raise RuntimeError(
+            "Сервис поискового представления недоступен "
+            f"после {attempts} попыток: {request_error}; fragment={text_hash}"
         )
-        r.raise_for_status()
-        return self._vectors_from_response(r.json())
+
+    def encode_sync(self, texts: List[str]) -> List[List[float]]:
+        """Синхронный parse-клиент с bounded retry и изоляцией плохого фрагмента."""
+        if not texts:
+            return []
+        return self._encode_sync_resilient(texts)
 
     async def encode_async(self, texts: List[str], *, query: bool = False) -> List[List[float]]:
         """Асинхронный вариант для retrieve; query contract never touches documents."""
@@ -928,6 +989,40 @@ class MetaDB:
                 "UPDATE documents SET stage=? WHERE dataset_id=? AND file_name=?",
                 (stage, dataset_id, file_name),
             )
+
+    def dataset_parse_progress(self, dataset_id: str) -> dict[str, Any]:
+        """Small read-only snapshot for the operator job poller."""
+        with self._get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            counts = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN status='INDEXED' THEN 1 ELSE 0 END) AS indexed,
+                    SUM(CASE WHEN status='PENDING' THEN 1 ELSE 0 END) AS pending,
+                    SUM(CASE WHEN status='ERROR' THEN 1 ELSE 0 END) AS errors
+                FROM documents WHERE dataset_id=?
+                """,
+                (dataset_id,),
+            ).fetchone()
+            active = conn.execute(
+                """
+                SELECT file_name, stage
+                FROM documents
+                WHERE dataset_id=? AND status='PENDING' AND COALESCE(stage, '')<>''
+                ORDER BY file_name
+                LIMIT 1
+                """,
+                (dataset_id,),
+            ).fetchone()
+        return {
+            "total": int(counts["total"] or 0),
+            "indexed": int(counts["indexed"] or 0),
+            "pending": int(counts["pending"] or 0),
+            "errors": int(counts["errors"] or 0),
+            "file_name": str(active["file_name"] or "") if active else "",
+            "stage": str(active["stage"] or "") if active else "",
+        }
 
     def update_document_route(self, dataset_id: str, file_name: str, route: DocumentRoute):
         with self._get_conn() as conn:

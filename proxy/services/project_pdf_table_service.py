@@ -805,7 +805,10 @@ def _nav(file_name: str, role: str, discipline: str, use_for: str, row_count: in
 
 def _semantic_nav(file_name: str, manifest: dict[str, Any]) -> list[dict[str, Any]]:
     by_type: dict[str, dict[str, Any]] = {}
-    skip_prefixes = ("SERVICE:", "NAV:", "NOISE:", "TEXT:")
+    # Unknown/service/text fragments stay in coverage diagnostics, but must not
+    # crowd useful model navigation (SPEC/ELEC/HVAC/etc.) in the compact L.I.S.T.
+    # brief shown before targeted retrieval.
+    skip_prefixes = ("UNKNOWN:", "SERVICE:", "NAV:", "NOISE:", "TEXT:")
     for page in manifest.get("pages") or []:
         if not isinstance(page, dict):
             continue

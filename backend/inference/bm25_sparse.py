@@ -21,6 +21,9 @@ from proxy.services.lexical_index_service import NO_STEM_WORDS, TOKEN_RE, stem_r
 SPARSE_VECTOR_NAME = "bm25_sparse"
 
 _DIGIT_RE = re.compile(r"\d")
+_TECH_TOKEN_RE = re.compile(
+    r"(?u)[A-ZА-ЯЁ0-9]+(?:[_./-][A-ZА-ЯЁ0-9]+)*"
+)
 
 
 def _term_id(stem: str) -> int:
@@ -30,7 +33,8 @@ def _term_id(stem: str) -> int:
 def tokenize(text: str) -> list[str]:
     """Текст → список стемов (как в FTS: casefold, ё→е, стоп-слова, стемминг ≥4)."""
     out: list[str] = []
-    for raw in TOKEN_RE.findall((text or "").casefold().replace("ё", "е")):
+    source = str(text or "")
+    for raw in TOKEN_RE.findall(source.casefold().replace("ё", "е")):
         token = raw.strip(".-")
         if len(token) < 3 or token in NO_STEM_WORDS:
             continue
@@ -43,7 +47,21 @@ def tokenize(text: str) -> list[str]:
             out.append(stem)
         else:
             out.append(token)
-    return out
+    if out:
+        return out
+
+    # Project drawings often contain useful compact designations but no prose:
+    # ``BB_63``, ``PE``, ``N``, phase labels.  The ordinary lexical tokenizer
+    # intentionally drops one/two-character words, which used to produce an
+    # empty native-sparse vector and reject the *whole PDF*.  Only use these
+    # compact uppercase markers as a fallback for otherwise unsearchable
+    # fragments, so normal prose keeps the established BM25 vocabulary.
+    technical: list[str] = []
+    for raw in _TECH_TOKEN_RE.findall(source):
+        token = raw.casefold().replace("ё", "е").strip("._/-")
+        if token and any(char.isalnum() for char in token):
+            technical.append(token)
+    return technical
 
 
 def encode_bm25(text: str) -> dict[int, float]:

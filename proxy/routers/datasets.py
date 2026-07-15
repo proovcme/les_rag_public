@@ -481,6 +481,68 @@ async def _pending_count_for_dataset(state: DatasetRouterState, dataset_id: str)
     return 0
 
 
+_PARSE_STAGE_LABELS = {
+    "CONVERT": "чтение страниц",
+    "EMBED": "создание поискового индекса",
+    "UPSERT": "сохранение индекса",
+}
+
+
+async def _parse_progress_snapshot(state: DatasetRouterState, dataset_id: str) -> dict[str, Any]:
+    db = getattr(state.backend, "db", None)
+    reader = getattr(db, "dataset_parse_progress", None)
+    if not callable(reader):
+        return {}
+    try:
+        return await asyncio.to_thread(reader, dataset_id)
+    except Exception:
+        return {}
+
+
+async def _parse_with_job_progress(
+    state: DatasetRouterState,
+    *,
+    dataset_id: str,
+    dataset_name: str,
+    limit: int,
+    pending_before: int,
+    processed_offset: int,
+    job_id: str | None,
+) -> Any:
+    task = asyncio.create_task(state.backend.parse_dataset(dataset_id, limit=limit))
+    if not job_id:
+        return await task
+
+    while True:
+        done, _ = await asyncio.wait({task}, timeout=1.0)
+        if done:
+            return task.result()
+        snapshot = await _parse_progress_snapshot(state, dataset_id)
+        pending_now = int(snapshot.get("pending", pending_before) or 0)
+        errors_now = int(snapshot.get("errors", 0) or 0)
+        processed_batch = max(0, min(limit, pending_before - pending_now))
+        processed = processed_offset + processed_batch
+        file_name = str(snapshot.get("file_name") or "")
+        stage = _PARSE_STAGE_LABELS.get(str(snapshot.get("stage") or ""), "обработка")
+        current = Path(file_name).name if file_name else "подготовка следующего файла"
+        message = f"{dataset_name}: {stage} · {current}"
+        state.job_tracker[job_id].update(
+            {
+                "status": "PARSING",
+                "processed": processed,
+                "errors": errors_now,
+                "message": message,
+            }
+        )
+        state.job_service.update(
+            job_id,
+            status="running",
+            processed=processed,
+            errors=errors_now,
+            message=message,
+        )
+
+
 def _parse_result_ready_for_reader(result: Any) -> bool:
     if not isinstance(result, dict):
         return False
@@ -544,14 +606,11 @@ async def run_dataset_parse_drain(
         if pending_before <= 0:
             break
 
-        message = (
-            f"Dataset drain {batch_no}/{max_batches}: {dataset_name} "
-            f"pending={pending_before}, limit={batch_limit}"
-        )
+        message = f"Ожидает очереди: {dataset_name} · осталось файлов {pending_before}"
         if job_id:
             state.job_tracker[job_id].update(
                 {
-                    "status": "PARSING",
+                    "status": "QUEUED",
                     "processed": processed_files,
                     "total": max(processed_files + pending_before, processed_files + batch_limit),
                     "message": message,
@@ -559,7 +618,7 @@ async def run_dataset_parse_drain(
             )
             state.job_service.update(
                 job_id,
-                status="running",
+                status="queued",
                 processed=processed_files,
                 total=max(processed_files + pending_before, processed_files + batch_limit),
                 message=message,
@@ -567,7 +626,22 @@ async def run_dataset_parse_drain(
 
         await assert_parse_admission(state)
         async with state.parse_semaphore:
-            result = await state.backend.parse_dataset(dataset_id, limit=batch_limit)
+            if job_id:
+                state.job_tracker[job_id].update(
+                    {"status": "PARSING", "message": f"Начинаю обработку: {dataset_name}"}
+                )
+                state.job_service.update(
+                    job_id, status="running", message=f"Начинаю обработку: {dataset_name}"
+                )
+            result = await _parse_with_job_progress(
+                state,
+                dataset_id=dataset_id,
+                dataset_name=dataset_name,
+                limit=batch_limit,
+                pending_before=pending_before,
+                processed_offset=processed_files,
+                job_id=job_id,
+            )
 
         parsed_batches += 1
         batch_errors = int(result.get("errors") or 0) if isinstance(result, dict) else 1
@@ -2135,7 +2209,7 @@ async def _index_external_run(state, req, root, dataset) -> dict:
             source="external",
             dataset_id=req.dataset_id,
             dataset_name=dataset.name,
-            status="running",
+            status="queued",
             total=registered,
             message=f"Парсинг внешней папки: {dataset.name} · {registered} файлов",
         )
@@ -2422,7 +2496,7 @@ async def sync_external_dataset(req: ExternalDatasetSyncRequest, _admin=Depends(
             source="external_sync",
             dataset_id=req.dataset_id,
             dataset_name=dataset.name,
-            status="running",
+            status="queued",
             total=registered,
             message=f"Парсинг изменений внешней папки: {dataset.name} · {registered} файлов",
         )
@@ -2858,15 +2932,15 @@ async def parse_dataset_batch(
             source="dataset",
             dataset_id=dataset_id,
             dataset_name=dataset_name,
-            status="running",
+            status="queued",
             total=total,
-            message=f"Парсинг партии: {dataset_name} · до {limit} файлов",
+            message=f"Ожидает очереди: {dataset_name} · до {limit} файлов",
         )
         job_id = job["id"]
         state.job_tracker[job_id] = {
             "id": job_id,
             "type": "rag_parse_batch",
-            "status": "RUNNING",
+            "status": "QUEUED",
             "source": "dataset",
             "dataset_id": dataset_id,
             "dataset_name": dataset_name,
@@ -2874,14 +2948,28 @@ async def parse_dataset_batch(
             "processed": 0,
             "errors": 0,
             "started_at": job.get("started_at"),
-            "message": f"Парсинг партии: {dataset_name} · до {limit} файлов",
+            "message": f"Ожидает очереди: {dataset_name} · до {limit} файлов",
         }
 
         async def _run():
             try:
                 async with state.parse_semaphore:
                     await assert_parse_admission(state)
-                    result = await state.backend.parse_dataset(dataset_id, limit=limit)
+                    state.job_tracker[job_id].update(
+                        {"status": "PARSING", "message": f"Начинаю обработку: {dataset_name}"}
+                    )
+                    state.job_service.update(
+                        job_id, status="running", message=f"Начинаю обработку: {dataset_name}"
+                    )
+                    result = await _parse_with_job_progress(
+                        state,
+                        dataset_id=dataset_id,
+                        dataset_name=dataset_name,
+                        limit=limit,
+                        pending_before=pending,
+                        processed_offset=0,
+                        job_id=job_id,
+                    )
                 chunks = int(result.get("chunks") or 0) if isinstance(result, dict) else 0
                 errors = int(result.get("errors") or 0) if isinstance(result, dict) else 1
                 remaining = int(result.get("remaining_pending") or 0) if isinstance(result, dict) else 0

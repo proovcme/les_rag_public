@@ -128,6 +128,22 @@ try {
   $smoke = Get-Content -LiteralPath $SmokeReport -Raw | ConvertFrom-Json
   if (-not $smoke.ok) { throw "Live Windows smoke did not pass" }
 
+  # Only a clean isolated smoke may advance to the actual Legion production
+  # state. The production gate installs in-place, starts the persistent runtime
+  # and proves the four real heavy project PDFs through dense+sparse RRF.
+  Invoke-Checked "powershell.exe" @(
+    "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+    (Join-Path $RepoRoot "tools\windows_production_deploy.ps1"),
+    "-Installer", $Installer,
+    "-ExpectedVersion", $Version
+  )
+  $ProductionReport = Join-Path $env:LOCALAPPDATA "LES\logs\production-deploy.json"
+  if (-not (Test-Path -LiteralPath $ProductionReport)) {
+    throw "Production deploy report was not created: $ProductionReport"
+  }
+  $production = Get-Content -LiteralPath $ProductionReport -Raw | ConvertFrom-Json
+  if (-not $production.ok) { throw "Production Legion deploy did not pass" }
+
   $sha = (Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash.ToLowerInvariant()
   $Checksum = Join-Path $RepoRoot "dist\LES-Setup.exe.sha256"
   [System.IO.File]::WriteAllText($Checksum, "$sha  LES-Setup.exe`n", [System.Text.Encoding]::ASCII)
@@ -143,6 +159,7 @@ try {
     runtime_root = $RuntimeRoot
     state_root = $StateRoot
     smoke = $smoke
+    production = $production
   }
   $SummaryPath = Join-Path $RepoRoot "dist\windows-patch-release.json"
   $summary | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $SummaryPath -Encoding UTF8

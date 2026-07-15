@@ -847,6 +847,36 @@ def test_semantic_navigation_skips_text_noise_rows():
     assert summary["source_navigation"] == []
 
 
+def test_semantic_navigation_skips_unknown_tables_but_keeps_diagnostics():
+    manifest = {
+        "schema": "project_pdf_table_manifest_v1",
+        "file_name": "ЭОМ/project.pdf",
+        "summary": {
+            "detected_tables": 1,
+            "hvs_rows": 0,
+            "water_balance_rows": 0,
+            "room_explication_rows": 0,
+            "semantic_table_types": {"UNKNOWN: требует ручной/визуальной классификации": 1},
+        },
+        "pages": [
+            {
+                "source_ref": "project.pdf#page=1",
+                "table_type_candidates": [
+                    {
+                        "source_ref": "project.pdf#page=1#table=1",
+                        "semantic_type": "UNKNOWN: требует ручной/визуальной классификации",
+                    }
+                ],
+            }
+        ],
+    }
+
+    summary = summarize_project_table_manifests([manifest])
+
+    assert summary["summary"]["semantic_table_types"]["UNKNOWN: требует ручной/визуальной классификации"] == 1
+    assert summary["source_navigation"] == []
+
+
 def test_summary_keeps_semantic_type_counts_from_manifest_pages():
     manifest = {
         "schema": "project_pdf_table_manifest_v1",

@@ -124,6 +124,10 @@ def test_run_project_pdf_extract_writes_sidecars_without_reindex(tmp_path):
     assert "drawing_manifest" in summary["files"][0]["artifact_paths"]
     assert "pd_rd_manifest" in summary["files"][0]["artifact_paths"]
     assert (storage_root / dataset_id / "_les_pdf_extract" / "summary.json").exists()
+    assert summary["list_integration"]["status"] == "ready"
+    assert summary["list_integration"]["document_registry"]["document_count"] == 1
+    assert (storage_root / dataset_id / "_les_pdf_extract" / "table_registry.jsonl").exists()
+    assert (storage_root / dataset_id / "_les_pdf_extract" / "document_registry.json").exists()
 
     status = project_pdf_extract_status(dataset_id, storage_root=storage_root, meta_db_path=str(db))
     assert status["summary_exists"] is True
@@ -132,6 +136,21 @@ def test_run_project_pdf_extract_writes_sidecars_without_reindex(tmp_path):
     compact = compact_project_pdf_extract_for_model(summary)
     assert compact["context_role"] == "navigation_not_evidence"
     assert compact["files"][0]["file_name"] == "PD/ИОС.ЭС.ПЗ.pdf"
+    assert compact["list_integration"]["status"] == "ready"
+
+
+def test_compact_project_pdf_extract_hides_low_signal_navigation_from_old_summary():
+    compact = compact_project_pdf_extract_for_model({
+        "status": "ok",
+        "source_navigation": [
+            {"role": "UNKNOWN: требует ручной/визуальной классификации", "source_refs": ["x#page=1"]},
+            {"role": "SPEC: спецификации оборудования/изделий/материалов", "source_refs": ["x#page=2"]},
+        ],
+    })
+
+    assert [item["role"] for item in compact["source_navigation"]] == [
+        "SPEC: спецификации оборудования/изделий/материалов"
+    ]
 
 
 def test_run_project_pdf_extract_keeps_going_on_empty_pdf(tmp_path):

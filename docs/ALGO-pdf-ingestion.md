@@ -57,6 +57,22 @@ Embedding is also part of the PDF ingestion contract. The runtime default is
 be marked `ERROR` only because one local CPU embedding batch takes more than
 60 seconds.
 
+Compact drawing labels are valid searchable content. If the normal lexical
+tokenizer finds no word of three or more characters, native sparse encoding
+uses a narrow fallback for uppercase technical designations (`BB_63`, `PE`,
+`N`, phase labels). The fallback is not added to ordinary prose. Thus one
+short technical fragment cannot produce an empty sparse vector and reject the
+whole PDF.
+
+The local Ollama-compatible embedding client retries a rejected/transient
+batch a bounded number of times and then bisects it, preserving successful
+fragments and their order while isolating an actually bad fragment. A final
+failure reports the server's real reason and a content hash, not a generic
+HTTP help link or document text. Dataset jobs remain `QUEUED` while waiting for
+the parse semaphore, then expose the current file and the human stage
+(`чтение страниц`, `создание поискового индекса`, `сохранение индекса`). The
+shared jobs API derives percentage and ETA from completed files.
+
 `backend/document_router.py` must not classify an ordinary design/project PDF
 as `SMETA`/`TABLE_SMETA` just because it contains weak words like `смета затрат`
 or a substring such as `тер` inside another word. PDF estimate routing requires
@@ -223,6 +239,17 @@ versions. For an engineering claim, `read_project_table(table_id)` validates siz
 mtime, SHA-256, manifest/source linkage, versions, geometry and header before opening
 the original PDF. A changed source/detector or fragments that no longer merge return
 `stale`, never evidence. Only the exact verified matrix/normalized rows are evidence.
+`UNKNOWN`, service, navigation and paragraph-like detector fragments remain in
+coverage diagnostics but are excluded from the compact model navigation so they
+cannot displace recognized `SPEC`, `ELEC`, `HVAC` and other engineering tables.
+
+The source-map refresh also rebuilds the table registry and the document/virtual-
+volume registry. Therefore a successful Л.И.С.Т. pass is immediately usable by
+`search_project_tables`, `read_project_table` and `assemble_project_volume`; an
+operator does not need to call separate build endpoints. These typed registries
+are intentionally not copied into Qdrant as pseudo-evidence. Baseline page text
+stays in the common dense+sparse index, compact source navigation goes to dataset
+memory, and exact table rows are opened from the original PDF after identity checks.
 
 ## Documentation metadata model
 

@@ -165,6 +165,58 @@ def test_registry_search_hides_noise_by_default(tmp_path):
     )["returned"] == 1
 
 
+def test_registry_search_matches_russian_inflection_in_semantic_type(tmp_path):
+    dataset_id = "ds-inflection"
+    root = tmp_path / "storage" / dataset_id / "_les_pdf_extract" / "tables"
+    root.mkdir(parents=True)
+    manifest = {
+        "source_path": "/tmp/project.pdf",
+        "file_name": "project.pdf",
+        "pages": [{"page": 1, "table_type_candidates": [{
+            "source_ref": "/tmp/project.pdf#page=1#table=1",
+            "semantic_type": "SPEC: спецификации оборудования/изделий/материалов",
+            "category": "engineering",
+            "sample": "Позиция | Наименование",
+        }]}],
+    }
+    (root / "project_pdf_table_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    build_project_table_registry(dataset_id, storage_root=tmp_path / "storage")
+
+    result = search_project_tables(dataset_id, "спецификация", storage_root=tmp_path / "storage")
+
+    assert result["returned"] == 1
+
+
+def test_registry_search_ranks_recognized_semantic_type_above_unknown_sample(tmp_path):
+    dataset_id = "ds-semantic-rank"
+    root = tmp_path / "storage" / dataset_id / "_les_pdf_extract" / "tables"
+    root.mkdir(parents=True)
+    manifest = {
+        "source_path": "/tmp/project.pdf",
+        "file_name": "project.pdf",
+        "pages": [
+            {"page": 1, "table_type_candidates": [{
+                "source_ref": "/tmp/project.pdf#page=1#table=1",
+                "semantic_type": "UNKNOWN: требует ручной/визуальной классификации",
+                "category": "unknown",
+                "sample": "Расчетные нагрузки",
+            }]},
+            {"page": 2, "table_type_candidates": [{
+                "source_ref": "/tmp/project.pdf#page=2#table=1",
+                "semantic_type": "ELEC: таблицы нагрузок",
+                "category": "engineering",
+                "sample": "Щит | Pр",
+            }]},
+        ],
+    }
+    (root / "project_pdf_table_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    build_project_table_registry(dataset_id, storage_root=tmp_path / "storage")
+
+    result = search_project_tables(dataset_id, "нагрузки", storage_root=tmp_path / "storage")
+
+    assert result["items"][0]["semantic_type"].startswith("ELEC:")
+
+
 def test_table_reader_rejects_invalid_id(tmp_path):
     with pytest.raises(ValueError, match="table_id"):
         read_project_table("ds", "../bad", storage_root=tmp_path)
