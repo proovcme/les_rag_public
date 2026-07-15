@@ -35,6 +35,11 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def windows_runtime_bytes(data: bytes) -> bytes:
+    """Match text bytes staged by the Windows checkout used for the full installer."""
+    return data.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+
+
 def normalize_path(value: str) -> str:
     path = PurePosixPath(str(value).replace("\\", "/"))
     if path.is_absolute() or ".." in path.parts or not path.parts:
@@ -75,7 +80,7 @@ def build_patch(*, base: str, target: str, files: list[str], output: Path, origi
         entries.append(
             {
                 "path": path,
-                "base_sha256": sha256_bytes(before) if before is not None else None,
+                "base_sha256": sha256_bytes(windows_runtime_bytes(before)) if before is not None else None,
                 "sha256": sha256_bytes(after),
                 "bytes": len(after),
             }

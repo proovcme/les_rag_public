@@ -48,6 +48,7 @@ def test_build_patch_contains_only_manifest_and_declared_payload(tmp_path):
         manifest = json.loads(bundle.read("manifest.json"))
     assert manifest["base_commit"] == base
     assert manifest["target_commit"] == target
+    assert manifest["files"][0]["base_sha256"] == hashlib.sha256(b"VALUE = 1\r\n").hexdigest()
     assert result["archive_sha256"] == vps_patch.sha256_file(result["archive"])
 
 
