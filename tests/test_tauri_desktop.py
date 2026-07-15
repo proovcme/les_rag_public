@@ -41,6 +41,8 @@ def test_tauri_rust_shell_owns_only_lifecycle_and_navigation():
     assert 'bootstrap-status.json' in source
     assert "trim_start_matches('\\u{feff}')" in source
     assert 'tauri-bootstrap.err.log' in source
+    assert 'strip_prefix(r"\\\\?\\")' in source
+    assert "powershell_file_arg(" in source
     assert 'std::fs::remove_file(path)' in source
     assert '.get("install_url")' in source
     assert 'creation_flags(0x0800_0000)' in source
@@ -58,6 +60,7 @@ def test_tauri_bootstrap_does_not_install_or_launch_pywebview():
     assert 'LES_TAURI_SHELL:-0' in mac
     assert "lesctl start --include-ui (Tauri shell)" in mac
     assert 'LES_TAURI_SHELL -eq "1"' in windows
+    assert '$BootstrapPath.StartsWith("\\\\?\\")' in windows
     assert "uv sync (Tauri owns desktop shell)" in windows
     assert "start-light (Tauri shell)" in windows
 

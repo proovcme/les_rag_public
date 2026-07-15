@@ -102,6 +102,12 @@ fn bootstrap_launcher_logs() -> Option<(PathBuf, PathBuf)> {
     })
 }
 
+#[cfg(target_os = "windows")]
+fn powershell_file_arg(path: PathBuf) -> String {
+    let raw = path.to_string_lossy();
+    raw.strip_prefix(r"\\?\").unwrap_or(&raw).to_string()
+}
+
 fn bootstrap_failure_message(status: &std::process::ExitStatus) -> String {
     #[cfg(target_os = "windows")]
     if let Some(path) = bootstrap_status_path() {
@@ -165,7 +171,9 @@ fn bootstrap_command(app: &AppHandle, action: &str) -> Result<Command, String> {
 
         let mut value = Command::new("powershell.exe");
         value.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]);
-        value.arg(resources.join("runtime/installers/windows/app/bootstrap.ps1"));
+        value.arg(powershell_file_arg(
+            resources.join("runtime/installers/windows/app/bootstrap.ps1"),
+        ));
         value.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         value
     };

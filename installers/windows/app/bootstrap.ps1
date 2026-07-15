@@ -10,7 +10,11 @@
 # proxy + UI via start-light.ps1 and opens the browser.
 $ErrorActionPreference = "Stop"
 
-$AppDir   = Split-Path -Parent $MyInvocation.MyCommand.Definition          # ...\installers\windows\app
+$BootstrapPath = $MyInvocation.MyCommand.Definition
+if ($BootstrapPath.StartsWith("\\?\")) {
+  $BootstrapPath = $BootstrapPath.Substring(4)
+}
+$AppDir   = Split-Path -Parent $BootstrapPath                              # ...\installers\windows\app
 $Root     = (Resolve-Path (Join-Path $AppDir "..\..\..")).Path             # install root (runtime export)
 $UiUrl    = "http://127.0.0.1:8051/les"
 $StateRoot = if ($env:LES_WINDOWS_STATE_ROOT) {

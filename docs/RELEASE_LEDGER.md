@@ -8,17 +8,17 @@
 
 ```
 версия продукта (SemVer):  0.24.3  (clean-install smeta baseline, release candidate, 2026-07-15)
-номер сборки:              412     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.412 (внутренняя совместимость обновления)
+номер сборки:              413     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.413 (внутренняя совместимость обновления)
 ветка выпуска:             main (сведение веток выполняется перед публикацией)
 dev HEAD:                  HEAD  (см. git log -1)
 задеплоено на рантайм:     0.24.0.396 (live, 2026-07-13)
 Windows-выпуск:            0.24.1 / build 410 (public, 2026-07-14)
-следующий выпуск:          0.24.3 / build 412 (собирается, не опубликован)
+следующий выпуск:          0.24.3 / build 413 (собирается, не опубликован)
 рантайм /api/version:      проверяется отдельно; dev-правка не считается развёртыванием
 ```
 
-> 0.24.3 / build 412 — smeta baseline в чистой Windows-установке
+> 0.24.3 / build 413 — smeta baseline в чистой Windows-установке
 >
 > Дата: 2026-07-15
 > Статус: release candidate; публикация только после Legion clean-install smoke.
@@ -43,6 +43,9 @@ Windows-выпуск:            0.24.1 / build 410 (public, 2026-07-14)
 > проверяется отдельными тестами и больше не маскирует ожидаемую ошибку индексного контракта.
 > Legion build выявил Windows file-lock в baseline verifier: `sqlite3` context manager не закрывал
 > read-only connection. Verifier теперь явно закрывает каждое соединение до очистки staging-каталога.
+> Build 412 забракован на рабочем запуске Legion: Tauri передавал PowerShell verbatim-путь `\\?\C:\…`,
+> из-за чего bootstrap падал на `Resolve-Path` до объявления обработчика `Fail`. Build 413 снимает
+> префикс на границе Rust→PowerShell и повторно нормализует `$BootstrapPath` в самом bootstrap.
 
 > 0.24.2 / build 411 — smeta professional evidence contract
 >
