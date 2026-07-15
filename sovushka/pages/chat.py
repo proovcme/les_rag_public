@@ -935,8 +935,6 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         _mode_hint_refs[_mode_key] = _guide_panel
 
                 with ui.element("div").classes("sov-composer-footer"):
-                    ui.label("Shift+Enter — перенос строки · Enter — отправить").classes("sov-composer-hint")
-
                     with ui.row().classes("sov-composer-actions"):
                         ui.button(
                             icon="o_travel_explore",

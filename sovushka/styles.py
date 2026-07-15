@@ -1698,6 +1698,7 @@ body, .nicegui-content {
 }
 .sov-composer {
   align-self: center;
+  position: relative;
   width: calc(100% - 48px);
   max-width: 1440px;
   padding: 12px !important;
@@ -1766,6 +1767,9 @@ body, .nicegui-content {
   width: 100%;
   gap: 6px;
   margin-top: 9px;
+  min-height: 44px;
+  padding-right: 386px;
+  align-items: center;
   flex-wrap: wrap;
 }
 .sov-mode-example {
@@ -1787,22 +1791,18 @@ body, .nicegui-content {
   box-shadow: 0 0 0 1px rgba(52,211,153,.32);
 }
 .sov-composer-footer {
-  width: 100%;
-  min-height: 52px;
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  z-index: 2;
+  width: auto;
+  min-height: 44px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 6px;
-  padding: 4px 6px 4px 12px;
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--bg-mod) 54%, transparent);
-  box-shadow: 0 0 0 1px rgba(138,162,184,.18);
-}
-.sov-composer-footer .sov-composer-hint {
-  flex: 1;
-  min-width: 0;
   margin: 0;
   padding: 0;
+  background: transparent;
+  box-shadow: none;
 }
 .sov-composer-actions {
   width: auto;
@@ -1827,6 +1827,12 @@ body, .nicegui-content {
 .sov-send-btn:active:not(:disabled) {
   scale: .96;
   transform: none !important;
+}
+@media (max-width: 1100px) {
+  .sov-mode-examples {
+    padding-right: 0;
+    padding-bottom: 52px;
+  }
 }
 .sov-tools-menu {
   min-width: 280px;
@@ -2705,11 +2711,8 @@ body, .nicegui-content {
     width: calc(100% - 20px);
     margin: 0 10px 10px;
   }
-  .sov-composer-footer {
-    min-height: 48px;
-    padding-left: 6px;
-  }
-  .sov-composer-footer .sov-composer-hint { display: none; }
+  .sov-mode-examples { padding-right: 0; padding-bottom: 52px; }
+  .sov-composer-footer { min-height: 44px; }
   .sov-mode-guide-copy { min-width: 100%; }
   .sov-mode-example { width: 100%; justify-content: flex-start; }
   .sov-docs-topbar { align-items: stretch; flex-wrap: wrap; }

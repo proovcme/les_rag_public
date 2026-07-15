@@ -218,5 +218,7 @@ def test_windows_bootstrap_writes_machine_readable_status_for_tauri():
     assert 'if ($env:LES_TAURI_SHELL -ne "1")' in text
     assert 'LES-smeta-baseline.zip' in text
     assert 'tools\\smeta_release_baseline.py provision' in text
-    assert '"smeta_baseline_missing"' in text
-    assert '"smeta_baseline_failed"' in text
+    assert 'Warn "сметная база недоступна:' in text
+    assert '"bootstrap_degraded"' in text
+    assert 'Fail "в установочном пакете отсутствует проверенная сметная база"' not in text
+    assert 'Fail "не удалось подготовить сметную базу:' not in text

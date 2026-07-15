@@ -27,11 +27,17 @@ $StateRoot = if ($env:LES_WINDOWS_STATE_ROOT) {
 $LogDir   = Join-Path $StateRoot "logs"
 $Log      = Join-Path $LogDir "bootstrap.log"
 $Status   = Join-Path $LogDir "bootstrap-status.json"
+$script:BootstrapWarnings = @()
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
 $StateScript = Join-Path $Root "installers\windows\state.ps1"
 
 function Log([string]$m) { "$([DateTime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))  $m" | Out-File -FilePath $Log -Append -Encoding utf8 }
+
+function Warn([string]$m) {
+  $script:BootstrapWarnings += $m
+  Log "WARN: $m"
+}
 
 function Write-Status(
   [string]$Phase,
@@ -235,15 +241,17 @@ if ($LASTEXITCODE -ne 0) { Fail "uv sync не удался" }
 # overwrites partial or existing user state.
 $SmetaBaseline = Join-Path $Root "installers\windows\baseline\LES-smeta-baseline.zip"
 if (-not (Test-Path -LiteralPath $SmetaBaseline)) {
-  Fail "в установочном пакете отсутствует проверенная сметная база" "smeta_baseline_missing"
+  Warn "сметная база недоступна: в пакете нет verified baseline; сметный модуль ограничен"
+} else {
+  Write-Status -Phase "smeta" -State "running" -Message "Проверяю базу ГЭСН и ФСЭМ"
+  $baselineResult = & $Uv run python tools\smeta_release_baseline.py provision `
+    --archive $SmetaBaseline --state-root $StateRoot
+  if ($LASTEXITCODE -ne 0) {
+    Warn "сметная база недоступна: $($baselineResult -join ' '); остальные модули запускаются"
+  } else {
+    Log "smeta baseline: $($baselineResult -join ' ')"
+  }
 }
-Write-Status -Phase "smeta" -State "running" -Message "Проверяю базу ГЭСН и ФСЭМ"
-$baselineResult = & $Uv run python tools\smeta_release_baseline.py provision `
-  --archive $SmetaBaseline --state-root $StateRoot
-if ($LASTEXITCODE -ne 0) {
-  Fail "не удалось подготовить сметную базу: $($baselineResult -join ' ')" "smeta_baseline_failed"
-}
-Log "smeta baseline: $($baselineResult -join ' ')"
 
 # Tauri owns the native window. Lifecycle actions stay in the same bootstrap,
 # but must not launch the legacy pywebview shell.
@@ -389,5 +397,11 @@ if ($env:LES_TAURI_SHELL -eq "1") {
 }
 
 Log "===== bootstrap done ====="
-Write-Status -Phase "ready" -State "ready" -Message "ЛЕС запущен"
+if ($script:BootstrapWarnings.Count -gt 0) {
+  Write-Status -Phase "ready" -State "ready" `
+    -Message ("ЛЕС запущен с ограничениями: " + ($script:BootstrapWarnings -join "; ")) `
+    -Code "bootstrap_degraded"
+} else {
+  Write-Status -Phase "ready" -State "ready" -Message "ЛЕС запущен"
+}
 exit 0

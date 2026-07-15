@@ -93,7 +93,10 @@ def test_chat_ui_primary_surface_uses_progressive_disclosure():
     assert ".sov-mode-example" in styles
     assert 'classes("sov-composer-footer")' in source
     assert ".sov-composer-footer" in styles
-    assert "background: color-mix(in srgb, var(--bg-mod) 54%, transparent)" in styles
+    assert "Shift+Enter — перенос строки" not in source
+    assert "position: absolute" in styles
+    assert "padding-right: 386px" in styles
+    assert "background: transparent" in styles
     assert "width: auto" in styles
     assert "min-height: 40px" in styles
     assert "scale: .96" in styles
