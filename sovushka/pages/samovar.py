@@ -458,7 +458,10 @@ def build_samovar():
     async def _repair(r):
         d = await api_post(f"/api/rag/datasets/{r['id']}/repair", {})
         n = (d or {}).get("requeued", 0)
-        _notify(f"Ремонт {r['name']}: в очередь {n} файлов — нажми Пуск" if n else "Ошибочных файлов нет",
+        damaged = (d or {}).get("encoding_requeued", 0)
+        job_id = (d or {}).get("job_id") or "?"
+        _notify((f"Ремонт «{r['name']}» запущен: файлов {n}, повреждённый текст {damaged} · задача {job_id}")
+                if n else "Повреждений не найдено",
                   type="warning" if n else "info")
         await _refresh()
 
@@ -730,9 +733,8 @@ def build_samovar():
             "flat dense no-caps").style("font-size:11px;padding:2px 6px;color:var(--accent);")
         ui.button(icon="o_folder_open", on_click=_ui_handler(_open_files, r)).props(
             'flat dense round aria-label="Файлы"').style("color:var(--dim);")
-        if r["error"]:
-            ui.button(icon="o_build", on_click=_ui_handler(_repair, r)).props(
-                'flat dense round aria-label="Ремонт"').style("color:var(--accent);")
+        ui.button(icon="o_build", on_click=_ui_handler(_repair, r)).props(
+            'flat dense round aria-label="Проверить и починить"').style("color:var(--accent);")
         ui.button(icon="o_play_arrow", on_click=_ui_handler(_parse, r)).props(
             'flat dense round aria-label="Пуск"').style("color:var(--ok);")
         ui.button(icon="o_delete", on_click=_ui_handler(_delete, r)).props(

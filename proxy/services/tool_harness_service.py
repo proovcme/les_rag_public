@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from backend.converter import normalize_pdf_text
 from proxy.services.document_explorer_service import explorer
 from proxy.services.notebook_service import build_dataset_notebook
 from proxy.services.tool_trace_policy import make_tool_trace, validate_tool_result
@@ -408,8 +409,28 @@ def _tool_look_at_pdf_page(args: dict[str, Any]) -> dict[str, Any]:
     else:
         dataset_id = str(args.get("dataset_id") or "").strip()
         doc_name = str(args.get("doc_name") or "").strip()
-        payload = explorer().document_chunks(dataset_id, doc_name, limit=1, max_chars=200) if dataset_id and doc_name else {}
-        document = payload.get("document") if isinstance(payload, dict) else None
+        document = None
+        if dataset_id and doc_name:
+            # document_chunks() intentionally returns chunks only. Resolve the real
+            # registry row (and therefore source_path) by exact/suffix file name so
+            # model calls with a human-visible basename can render the original PDF.
+            listed = explorer().list_documents(dataset_id, q=Path(doc_name).name, limit=50)
+            candidates = listed.get("documents") or [] if isinstance(listed, dict) else []
+            wanted = doc_name.replace("\\", "/").casefold()
+            wanted_base = Path(doc_name).name.casefold()
+            document = next(
+                (
+                    item for item in candidates
+                    if str(item.get("file_name") or "").replace("\\", "/").casefold() == wanted
+                ),
+                None,
+            ) or next(
+                (
+                    item for item in candidates
+                    if Path(str(item.get("file_name") or "")).name.casefold() == wanted_base
+                ),
+                None,
+            )
     if not isinstance(document, dict):
         return _result(tool="look_at_pdf_page", operation="vision_read", inputs=[args], status="missing",
                        result={}, missing=["PDF document not found"], trace="document selector did not resolve")
@@ -427,6 +448,7 @@ def _tool_look_at_pdf_page(args: dict[str, Any]) -> dict[str, Any]:
                 return _result(tool="look_at_pdf_page", operation="vision_read", inputs=[args], status="missing",
                                result={"pages": len(pdf)}, missing=["page is outside the PDF"], trace="page bounds check failed")
             page = pdf[page_number - 1]
+            page_text = normalize_pdf_text(page.get_text("text") or "")
             clip = page.rect
             bbox = args.get("bbox")
             if isinstance(bbox, list) and len(bbox) == 4:
@@ -438,42 +460,98 @@ def _tool_look_at_pdf_page(args: dict[str, Any]) -> dict[str, Any]:
                         page.rect.x0 + page.rect.width * values[2],
                         page.rect.y0 + page.rect.height * values[3],
                     )
-            max_edge = max(clip.width, clip.height, 1.0)
-            scale = max(0.5, min(2.0, 1600.0 / max_edge))
-            pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=clip, alpha=False)
-            image_b64 = base64.b64encode(pix.tobytes("png")).decode("ascii")
+            def _render(region, target_edge: float) -> str:
+                max_edge = max(region.width, region.height, 1.0)
+                scale = max(0.5, min(4.0, target_edge / max_edge))
+                pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=region, alpha=False)
+                return base64.b64encode(pix.tobytes("png")).decode("ascii")
+
+            # Общий план даёт геометрию, но на больших листах штамп и легенда в нём
+            # нечитаемы. Кропы обрабатываются отдельными короткими вызовами: Gemma
+            # зависает на трёх больших изображениях в одном запросе.
+            image_tasks = [("Весь лист", _render(clip, 2100.0), page_text[:12000])]
+            if not (isinstance(bbox, list) and len(bbox) == 4):
+                rect = page.rect
+                title_clip = fitz.Rect(
+                    rect.x0 + rect.width * 0.72,
+                    rect.y0 + rect.height * 0.76,
+                    rect.x1,
+                    rect.y1,
+                )
+                legend_clip = fitz.Rect(
+                    rect.x0 + rect.width * 0.48,
+                    rect.y0 + rect.height * 0.72,
+                    rect.x0 + rect.width * 0.78,
+                    rect.y1,
+                )
+                image_tasks.extend([
+                    (
+                        "Штамп",
+                        _render(title_clip, 1600.0),
+                        normalize_pdf_text(page.get_text("text", clip=title_clip) or "")[:3000],
+                    ),
+                    (
+                        "Легенда",
+                        _render(legend_clip, 1600.0),
+                        normalize_pdf_text(page.get_text("text", clip=legend_clip) or "")[:4000],
+                    ),
+                ])
     except Exception as exc:  # noqa: BLE001
         return _result(tool="look_at_pdf_page", operation="vision_read", inputs=[args], status="error",
                        result={}, warnings=[str(exc)[:240]], trace=f"PDF render failed: {type(exc).__name__}")
 
     model = (
         os.getenv("LES_DRAWING_VISION_MODEL", "").strip()
-        or os.getenv("OLLAMA_MODEL", "").strip()
-        or "qwen3.5:9b"
+        or os.getenv("RAG_OCR_MODEL", "").strip()
+        or "gemma4:12b"
     )
     base_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
-    prompt = (
-        "Ты рассматриваешь реальную страницу инженерного PDF. Ответь только о том, что визуально видно: "
+    prompt_base = (
+        f"Ты рассматриваешь реальную PDF-страницу номер {page_number} (счёт страниц файла, начиная с 1). "
+        "Не ищи напечатанный номер страницы и не утверждай, что PDF-страница отсутствует: изображение перед тобой и есть запрошенная страница. "
+        "Ответь только о том, что визуально видно: "
         "надписи, марки, размеры, условные обозначения и связи. Не достраивай невидимое. "
         f"Вопрос: {question}"
     )
-    body = {
-        "model": model,
-        "messages": [{"role": "user", "content": prompt, "images": [image_b64]}],
-        "think": False,
-        "options": {
-            "temperature": 0.1,
-            "num_predict": _int_arg(args.get("max_tokens"), 1200, min_value=128, max_value=3000),
-        },
-        "stream": False,
-    }
     try:
         import httpx
 
-        response = httpx.post(f"{base_url}/api/chat", json=body, timeout=180.0)
-        response.raise_for_status()
-        data = response.json()
-        observation = str((data.get("message") or {}).get("content") or "").strip()
+        observations: list[str] = []
+        for label, image_b64, exact_text in image_tasks:
+            focus = {
+                "Весь лист": "Определи вид и назначение чертежа по геометрии и маркировкам; мелкий штамп не угадывай.",
+                "Штамп": "Прочитай название листа, стадию, номер листа и шифр из штампа. Нечитаемое так и назови.",
+                "Легенда": "Прочитай условные обозначения и пояснения легенды. Нечитаемое не угадывай.",
+            }.get(label, "Опиши видимое.")
+            body = {
+                "model": model,
+                "messages": [{
+                    "role": "user",
+                    "content": (
+                        f"{prompt_base} Область: {label}. {focus}\n"
+                        "Ниже точный текстовый слой этой же области; порядок строк может быть нарушен. "
+                        "Используй его только для чтения надписей, а геометрию определяй по изображению:\n"
+                        f"---\n{exact_text or '[текстового слоя нет]'}\n---"
+                    ),
+                    "images": [image_b64],
+                }],
+                "think": False,
+                "options": {
+                    "temperature": 0.1,
+                    "num_predict": min(
+                        _int_arg(args.get("max_tokens"), 1200, min_value=128, max_value=3000),
+                        900 if label == "Весь лист" else 550,
+                    ),
+                },
+                "stream": False,
+            }
+            response = httpx.post(f"{base_url}/api/chat", json=body, timeout=180.0)
+            response.raise_for_status()
+            data = response.json()
+            item = str((data.get("message") or {}).get("content") or "").strip()
+            if item:
+                observations.append(f"{label}:\n{item}")
+        observation = "\n\n".join(observations)
     except Exception as exc:  # noqa: BLE001
         return _result(tool="look_at_pdf_page", operation="vision_read", inputs=[args], status="error",
                        result={"model": model}, warnings=[str(exc)[:240]], trace=f"vision request failed: {type(exc).__name__}")
@@ -482,7 +560,13 @@ def _tool_look_at_pdf_page(args: dict[str, Any]) -> dict[str, Any]:
         tool="look_at_pdf_page", operation="vision_read",
         inputs=[{"doc_id": document.get("id"), "page": page_number, "question": question, "bbox": args.get("bbox") or []}],
         status="ok" if observation else "missing",
-        result={"observation": observation, "model": model, "source_ref": source_ref, "page": page_number},
+        result={
+            "observation": observation,
+            "model": model,
+            "source_ref": source_ref,
+            "page": page_number,
+            "text_layer_excerpt": page_text[:12000],
+        },
         evidence=[{"kind": "visual_pdf_page", "source_ref": source_ref, "is_evidence": True}],
         sources=[{"kind": "pdf_page", "doc_id": document.get("id"), "doc_name": document.get("file_name"), "page": page_number, "source_ref": source_ref}],
         missing=[] if observation else ["vision model returned no observation"],

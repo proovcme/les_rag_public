@@ -1,6 +1,6 @@
 """Чистка колонтитулов правовых систем (кейс Постановления 87)."""
 
-from backend.converter import strip_legal_boilerplate
+from backend.converter import normalize_pdf_text, strip_legal_boilerplate
 
 
 def test_strips_consultant_header_lines():
@@ -15,3 +15,13 @@ def test_strips_consultant_header_lines():
 def test_keeps_normal_text_with_page_words():
     md = "На странице чертежа указано 5 элементов из 49 позиций."
     assert strip_legal_boilerplate(md) == md
+
+
+def test_repairs_windows_utf8_latin1_pdf_mojibake():
+    broken = "ÐÐ»Ð°Ð½ Ð¦ÐÐ. 4 ÑÑÐ°Ð¶ · Ð©Ð4.18 · 1600Ð"
+    assert normalize_pdf_text(broken) == "План ЦОД. 4 этаж · ЩБ4.18 · 1600А"
+
+
+def test_keeps_valid_cyrillic_pdf_text():
+    valid = "План ЦОД. 4 этаж · ЩБ4.18 · 1600А"
+    assert normalize_pdf_text(valid) == valid

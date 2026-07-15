@@ -538,6 +538,27 @@ async def run_smeta_document_application(
     status = str(summary.get("result_status") or "unknown")
     source_name = str(attachment_meta.get("original_name") or source_path.name)
     answer = format_document_lsr_message(source_name, summary)
+    model_steps = [
+        str((item.get("assistant") or {}).get("model") or "").strip()
+        for item in (workflow.get("model_trace") or [])
+        if str((item.get("assistant") or {}).get("model") or "").strip()
+    ]
+    effective_models = list(dict.fromkeys(model_steps))
+    fallback_steps = [
+        {
+            "from": str((item.get("assistant") or {}).get("fallback_from") or "").strip(),
+            "to": str((item.get("assistant") or {}).get("model") or "").strip(),
+            "source_batch": item.get("source_batch"),
+            "turn": item.get("turn"),
+        }
+        for item in (workflow.get("model_trace") or [])
+        if (item.get("assistant") or {}).get("fallback_from")
+    ]
+    if fallback_steps:
+        switches = ", ".join(
+            f"{item['from']} → {item['to']}" for item in fallback_steps
+        )
+        answer += f"\n\nСметная модель переключилась на резерв: {switches}. Это записано в журнале ЛСР."
     artifact = {
         "mode": "xlsx",
         "stage": "priced_lsr",
@@ -566,7 +587,10 @@ async def run_smeta_document_application(
                 "result_status": status,
                 "summary": summary,
                 "model_provider": model_provider,
-                "model": model_name,
+                "model_requested": model_name,
+                "model": effective_models[-1] if effective_models else model_name,
+                "models_used": effective_models or [model_name],
+                "model_fallbacks": fallback_steps,
                 "model_calls": len(workflow.get("model_trace") or []),
             },
         },

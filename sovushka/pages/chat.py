@@ -530,6 +530,21 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         _html('<div class="sov-chat-title">Чат</div>')
                         _html('<div class="sov-chat-subtitle">Документы, расчёты и проверка</div>')
                 with ui.row().classes("items-center gap-2"):
+                    if tabs is not None and tab_documents is not None:
+                        ui.button(
+                            "Документы",
+                            icon="o_folder_open",
+                            on_click=lambda: tabs.set_value(tab_documents),
+                        ).props('flat dense no-caps aria-label="Документы"').classes(
+                            "sov-artifacts-open-btn"
+                        ).tooltip("Открыть документы датасетов")
+                    ui.button(
+                        "Артефакты",
+                        icon="o_view_sidebar",
+                        on_click=lambda: _open_artifacts(),
+                    ).props('flat dense no-caps aria-label="Открыть артефакты"').classes(
+                        "sov-artifacts-open-btn"
+                    ).tooltip("Открыть панель результатов и файлов")
                     # v0.22 ScopeSelector — ОБЛАСТЬ ПОИСКА (весь RAG / проект(ы) / датасет(ы) / mixed).
                     # Заменяет неясную выпадашку: явные группы Проекты/Датасеты/Непривязанные/Системные.
                     scope_state = {"scope_type": "all", "project_ids": [], "dataset_ids": [], "label": "Все источники"}
@@ -957,33 +972,24 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         ).props('no-caps flat round aria-label="Прикрепить файл"').classes(
                             "sov-composer-action"
                         ).tooltip("Прикрепить файл")
-                        advanced_btn = ui.button(icon="o_more_horiz").props(
-                            'no-caps flat round aria-label="Дополнительные действия"'
-                        ).classes("sov-composer-action").tooltip("Дополнительные действия")
-                        with advanced_btn:
-                            with ui.menu().classes("sov-tools-menu"):
-                                ui.label("Дополнительно").classes("sov-tools-title")
-                                with ui.row().classes("sov-validation-control"):
-                                    validation_sw = ui.switch("Проверка ответа", value=True).props("dense")
-                                    validation_state = ui.label("Включена").classes("sov-validation-state")
-                                ui.separator().style("border-color:var(--border);margin:4px 0;")
-                                cmd_menu_box = ui.column().classes("gap-0")
-                                with cmd_menu_box:
-                                    ui.menu_item("Загрузка команд…", on_click=lambda: None)
-                                ui.separator().style("border-color:var(--border);margin:4px 0;")
-                                ui.menu_item("Расширенный запрос…", on_click=lambda: advanced_dialog.open()).props("dense")
-                                ui.menu_item("Блокнот области", on_click=lambda: asyncio.create_task(_open_scope_passport())).props("dense")
-                                ui.menu_item("Файлы и папки", on_click=lambda: _toggle_files()).props("dense")
-                                if tabs is not None and tab_documents is not None:
-                                    ui.menu_item(
-                                        "Документы датасетов",
-                                        on_click=lambda: tabs.set_value(tab_documents),
-                                    ).props('dense aria-label="Документы"').tooltip("Открыть документы датасетов")
-                                ui.menu_item(
-                                    "Служебные источники",
-                                    on_click=lambda: asyncio.create_task(_show_service_sources()),
-                                ).props("dense")
-                                ui.menu_item("Артефакты ответа", on_click=lambda: _open_artifacts()).props("dense")
+                        response_settings_btn = ui.button(
+                            "Настройки ответа", icon="o_tune"
+                        ).props('no-caps flat dense aria-label="Настройки ответа"').classes(
+                            "sov-response-settings-btn"
+                        )
+                        with response_settings_btn:
+                            with ui.menu().classes("sov-response-settings-menu"):
+                                ui.label("Длина ответа").classes("sov-tools-title")
+                                response_length_select = ui.select(
+                                    {
+                                        "short": "Короткий",
+                                        "standard": "Обычный",
+                                        "detailed": "Подробный",
+                                        "maximum": "Максимальный",
+                                    },
+                                    value="standard",
+                                    label="Длина ответа",
+                                ).props("outlined dense options-dense").classes("sov-response-length-select")
                         send_btn = ui.button(
                             "Отправить",
                             icon="o_send",
@@ -1242,6 +1248,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         )
 
     _scope_files_loading = {"v": False}
+    _scope_files_collapsed = {"v": True}
+
+    def _toggle_scope_files() -> None:
+        _scope_files_collapsed["v"] = not _scope_files_collapsed["v"]
+        asyncio.create_task(_refresh_scope_files_panel())
     _scope_layer_labels = {
         "text": "текст",
         "graphics": "графика",
@@ -1307,11 +1318,15 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     total_files = sum(len(m.get("file_cards") or []) for m in memories)
                     ui.label(f"{len(ds_ids)} датасет(ов) · {total_files} файлов").classes("sov-scope-files-note")
                     ui.button(
+                        icon="o_expand_more" if _scope_files_collapsed["v"] else "o_expand_less",
+                        on_click=_toggle_scope_files,
+                    ).props('flat round dense aria-label="Показать или скрыть файлы"').classes("sov-icon-btn")
+                    ui.button(
                         icon="o_refresh",
                         on_click=lambda: asyncio.create_task(_refresh_scope_files_panel()),
                     ).props('flat round dense aria-label="Обновить файлы датасета"').classes("sov-icon-btn")
                 shown = 0
-                with ui.row().classes("sov-scope-files-list"):
+                with ui.row().classes("sov-scope-files-list") as scope_files_list:
                     for idx, memory in enumerate(memories):
                         dataset_name = (
                             (ds_names[idx] if idx < len(ds_names) else "")
@@ -1351,10 +1366,13 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                                 ).props('flat round dense aria-label="Спросить по файлу"').classes(
                                     "sov-scope-file-ask"
                                 ).tooltip(f"Спросить строго по файлу: {file_name}")
+                scope_files_list.set_visibility(not _scope_files_collapsed["v"])
                 if not shown:
-                    ui.label("В выбранной области пока нет карточек файлов. Нажми «Блокнот области» или переизучи датасет.").classes("sov-muted")
+                    no_files_label = ui.label("В выбранной области пока нет карточек файлов.").classes("sov-muted")
+                    no_files_label.set_visibility(not _scope_files_collapsed["v"])
                 if len(ds_ids) > 3:
-                    ui.label(f"Показаны первые 3 датасета из {len(ds_ids)}. Остальные остаются в области поиска.").classes("sov-muted")
+                    overflow_label = ui.label(f"Показаны первые 3 датасета из {len(ds_ids)}. Остальные остаются в области поиска.").classes("sov-muted")
+                    overflow_label.set_visibility(not _scope_files_collapsed["v"])
         finally:
             _scope_files_loading["v"] = False
 
@@ -2827,12 +2845,6 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
 
     def _build_extra_prompt(question: str) -> str:
         mode = out_mode_val["v"]
-        depth_map = {
-            "Кратко (1-2 абзаца)": "Ответь кратко — 1-2 абзаца.",
-            "Стандарт (3-5 абзацев)": "Ответь развёрнуто — 3-5 абзацев.",
-            "Подробно (развёрнутый ответ)": "Дай полный развёрнутый ответ со всеми деталями.",
-            "Максимум (полный анализ)": "Проведи максимально подробный анализ. Не сокращай.",
-        }
         style_map = {
             "Русский (технический)": "Пиши профессиональным техническим языком.",
             "Русский (нормативный ГОСТ)": "Пиши в нормативном стиле ГОСТ: чёткие формулировки, без лирики.",
@@ -2841,8 +2853,6 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         }
 
         parts = []
-        if depth_map.get(detail_depth.value):
-            parts.append(depth_map[detail_depth.value])
         if style_map.get(detail_lang.value):
             parts.append(style_map[detail_lang.value])
 
@@ -2952,7 +2962,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         _resource_blocked["v"] = blocked
         _resource_blocked["reason"] = reason
         if blocked:
-            advanced_btn.props("disabled")
+            response_settings_btn.props("disabled")
             if not _sending["v"]:
                 send_btn.props(remove="disabled")
                 apply_btn.props(remove="disabled")
@@ -2966,25 +2976,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         if not _sending["v"]:
             send_btn.props(remove="disabled")
             apply_btn.props(remove="disabled")
-            advanced_btn.props(remove="disabled")
+            response_settings_btn.props(remove="disabled")
             chat_input.props(remove="disabled")
         composer_box.classes(remove="sov-composer-blocked")
         indexing_banner.set_visibility(False)
         mode_chip.set_text("RAG")
         mode_chip.classes(remove="sov-chip-soft")
-
-    def _sync_validation_ui():
-        enabled = bool(validation_sw.value)
-        validation_chip.set_text("CRAG ON" if enabled else "CRAG OFF")
-        validation_state.set_text("Включена" if enabled else "Выключена")
-        if enabled:
-            validation_chip.classes(remove="sov-chip-warn")
-            validation_state.classes(remove="sov-chip-warn")
-        else:
-            validation_chip.classes(add="sov-chip-warn")
-            validation_state.classes(add="sov-chip-warn")
-
-    validation_sw.on("update:model-value", lambda _e: _sync_validation_ui())
 
     async def _refresh_resource_gate() -> bool:
         data = await refresh_indexing_mode()
@@ -3084,7 +3081,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         _sending["v"] = True
         send_btn.props("disabled")
         apply_btn.props("disabled")
-        advanced_btn.props("disabled")
+        response_settings_btn.props("disabled")
         chat_input.props("disabled")
         sent_attachment = dict(attach_state) if attach_state.get("id") else {}
         # Авто-GOST: «собери/составь спецификацию …» → формат спеки (ГОСТ 21.110), чтобы
@@ -3142,14 +3139,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             "question": payload_question,
             "output_directive": extra_prompt or None,
             "reranker_enabled": reranker_sw.value,
-            "validation_enabled": bool(validation_sw.value),
+            "validation_enabled": True,
             "session_id": state.get("session_id"),
-            "response_length": {
-                "Кратко (1-2 абзаца)": "short",
-                "Стандарт (3-5 абзацев)": "standard",
-                "Подробно (развёрнутый ответ)": "detailed",
-                "Максимум (полный анализ)": "maximum",
-            }.get(detail_depth.value, "standard"),
+            "response_length": str(response_length_select.value or "standard"),
         }
         target_files = [str(x).strip() for x in (_pending_target_files.get("v") or []) if str(x).strip()]
         if target_files:
@@ -3223,7 +3215,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 "evidence_summary": d.get("evidence_summary") or {},
                 "total_status": d.get("total_status") or "",
                 "cache": d.get("cache", "miss"),
-                "validation": d.get("validation") or {"enabled": bool(validation_sw.value)},
+                "validation": d.get("validation") or {"enabled": True},
                 "history_id": d.get("history_id"),
                 "table_query": d.get("table_query"),
                 "latency_phases": d.get("latency_phases") or (d.get("retrieval_trace") or {}).get("latency_phases"),
@@ -3789,26 +3781,6 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 _render_tree(item, level)
 
     select_format("text")
-    async def _load_commands() -> None:  # build_chat-уровень: зовётся ниже при сборке страницы
-        d = await api_get("/api/commands")
-        cmds = (d or {}).get("commands", []) if isinstance(d, dict) else []
-        cmd_menu_box.clear()
-        with cmd_menu_box:
-            if not cmds:
-                ui.menu_item("Команды недоступны", on_click=lambda: None)
-            else:
-                with ui.expansion("Команды", icon="o_terminal").props("dense").classes("sov-command-expansion"):
-                    for c in cmds:
-                        label = f"{c['cmd']} — {c['desc']}"
-
-                        def _run(cmd=c["cmd"]):
-                            chat_input.value = cmd
-                            _update_prompt_preview()
-                            asyncio.create_task(send_chat())
-
-                        ui.menu_item(label, on_click=_run)
-
-    asyncio.create_task(_load_commands())  # W11.17: наполнить /-палитру
     asyncio.create_task(_refresh_active_model_chip())
     asyncio.create_task(_refresh_resource_gate())
     resource_gate_timer = ui.timer(5.0, lambda: asyncio.create_task(_refresh_resource_gate()))

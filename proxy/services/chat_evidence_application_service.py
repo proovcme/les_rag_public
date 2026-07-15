@@ -496,8 +496,9 @@ async def _execute_chat_evidence_application(
     strong_signal = bool(effective_dataset_filter) or inventory_has_files or (retrieval.quality.top_score >= 0.5)
     if retrieval.quality.status == "needs_clarification" and not strong_signal:
         return {
-            "answer": "Найденные источники слишком разнородны. Уточните область или датасет, чтобы я не смешал требования."
-            + (f"\n\n{memory_block}" if memory_block else ""),
+            # Навигационная память помогает модели выбрать путь, но не является ответом.
+            # Не печатаем LES.md и паспорт чата в пользовательский пузырь.
+            "answer": "Найденные источники слишком разнородны. Уточните область или датасет, чтобы я не смешал требования.",
             "crag_status": "NEEDS_CLARIFICATION",
             "sources": source_names(chunks),
             "effective_dataset_filter": effective_dataset_filter,
@@ -1090,6 +1091,9 @@ async def _execute_chat_evidence_application(
                                         "content": (
                                             "Ты управляешь коротким исследовательским чтением LES. "
                                             "Выбирай только read-only инструменты, чтобы закрыть конкретный пробел evidence. "
+                                            "Если оператор явно просит посмотреть глазами страницу или лист PDF, "
+                                            "обязательно выбери look_at_pdf_page с указанными файлом и номером страницы; "
+                                            "текстовый read_pdf_source не заменяет просмотр пикселей. "
                                             "Инструменты не отвечают за тебя и не заменяют источники. "
                                             "Верни только JSON {\"calls\":[{\"tool\":\"...\",\"args\":{...}}]}. "
                                             "Если evidence достаточно или новый вызов повторит прошлый, верни {\"calls\":[]}. "

@@ -118,6 +118,18 @@ def test_cumulative_patch_accepts_mixed_base_and_already_updated_files(tmp_path,
     assert result["compatible"] is True
 
 
+def test_patch_helper_is_launched_as_independent_interactive_task(tmp_path):
+    helper = tmp_path / "vps patch apply.py"
+    job = tmp_path / "job file.json"
+    task_name, encoded = update_service._patch_task_command(helper, job, "patch:one")
+    command = __import__("base64").b64decode(encoded).decode("utf-16le")
+    assert task_name == "LES-Patch-patch-one"
+    assert "New-ScheduledTaskPrincipal" in command
+    assert "-LogonType Interactive" in command
+    assert str(helper) in command
+    assert str(job) in command
+
+
 @pytest.mark.asyncio
 async def test_patch_check_uses_only_les_https_origin(tmp_path, monkeypatch):
     runtime = tmp_path / "runtime"

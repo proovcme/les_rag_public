@@ -95,8 +95,12 @@ def test_chat_ui_primary_surface_uses_progressive_disclosure():
     assert 'classes("sov-mode-example")' in source
     assert "lambda _event, mm=_m: _set_mode(mm)" in source
     assert "lambda _event, example=_example: _fill_prompt(str(example))" in source
-    assert 'icon="o_more_horiz"' in source
-    assert 'ui.expansion("Команды"' in source
+    assert '"Настройки ответа"' in source
+    assert 'aria-label="Настройки ответа"' in source
+    assert 'response_length_select = ui.select(' in source
+    assert '"response_length": str(response_length_select.value or "standard")' in source
+    assert 'aria-label="Дополнительные действия"' not in source
+    assert '"Максимум (полный анализ)": "Проведи максимально подробный анализ.' not in source
     assert 'if key == "text":' in source
     assert "_set_artifacts_visible(False)" in source
     assert ".sov-mode-guide" in styles

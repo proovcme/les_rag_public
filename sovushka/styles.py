@@ -91,6 +91,9 @@ CUSTOM_CSS = """
   --font-chat: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Courier New', monospace;
 }
 body, .nicegui-content { font-family: var(--font) !important; color: var(--text) !important; }
+@media (min-width: 1000px) {
+  html { font-size: 12px !important; }
+}
 body, .nicegui-content, .q-page, .q-layout, .q-card, .q-dialog, .q-menu,
 .q-table, .q-item, .sov-chat-md, .sov-chat-message-text, .sov-artifact-markdown,
 .card-les, .kpi-box, .diag-node, .diag-acronym-item {
@@ -671,6 +674,23 @@ body, .nicegui-content, .q-page, .q-layout, .q-card, .q-dialog, .q-menu,
   align-items: center;
   gap: 8px;
 }
+.sov-response-settings-btn,
+.sov-artifacts-open-btn {
+  min-height: 34px !important;
+  border: 1px solid rgba(138,162,184,.32) !important;
+  border-radius: 8px !important;
+  color: var(--dim) !important;
+  background: transparent !important;
+  font-size: .66rem !important;
+  font-weight: 850 !important;
+}
+.sov-response-settings-menu {
+  min-width: 230px;
+  padding: 10px;
+  background: var(--bg-panel) !important;
+  border: 1px solid var(--border);
+}
+.sov-response-length-select { width: 100%; margin-top: 8px; }
 .sov-guard-controls {
   margin-right: auto;
   align-items: center;

@@ -260,7 +260,7 @@ def _parse_pdf_fast_text_layer(path: Path, *, reason: str = "") -> Optional[str]
         # Do not run the legal-boilerplate multiline regex here: project PDFs can
         # yield tens of megabytes of page text, and that cleanup is not worth
         # turning the guaranteed baseline into another slow path.
-        return "\n\n".join([*header, *pages])
+        return normalize_pdf_text("\n\n".join([*header, *pages]))
     except Exception as error:  # noqa: BLE001 - fallback must not hide original failure if it also fails
         logger.warning("[CONVERT] fast PDF text fallback failed for %s: %s", path.name, error)
         return None
@@ -296,7 +296,7 @@ def _parse_pdf(path: Path, route=None) -> str:
             parser = make_ocr_parser()
             md = parser.parse_pdf(path, dpi=ocr_dpi)
             if md and md.strip():
-                return md
+                return normalize_pdf_text(md)
         except Exception as ocr_err:
             logger.error(f"[CONVERT] Ошибка OCR для {path.name}: {ocr_err}", exc_info=True)
 
@@ -307,7 +307,7 @@ def _parse_pdf(path: Path, route=None) -> str:
         try:
             md = _docling_pdf_markdown(path)
             if md and len(md.strip()) > 100:
-                return md
+                return normalize_pdf_text(md)
             logger.warning("[CONVERT] docling вернул слишком мало текста для %s — fallback pymupdf", path.name)
         except Exception as docling_err:
             logger.warning("[CONVERT] docling failed для %s (%s) — fallback pymupdf", path.name, docling_err)
@@ -323,7 +323,7 @@ def _parse_pdf(path: Path, route=None) -> str:
                 layout_md = extract_layout_markdown(path)
                 if layout_md and len(layout_md.strip()) > 100:
                     logger.info("[CONVERT] %s: layout-aware извлечение (LES_LAYOUT_PDF)", path.name)
-                    return layout_md
+                    return normalize_pdf_text(layout_md)
         except Exception as layout_err:  # noqa: BLE001 — фолбэк на штатный путь
             logger.warning("[CONVERT] layout-парсер %s упал (%s) — fallback на pymupdf4llm",
                            path.name, layout_err)
@@ -362,7 +362,7 @@ def _parse_pdf(path: Path, route=None) -> str:
                 logger.warning(f"[CONVERT] Текст слишком короткий ({len(md_content)} симв.), подозрение на скан. Пробуем OCR.")
                 force_ocr = True
             else:
-                return strip_legal_boilerplate(md_content)
+                return strip_legal_boilerplate(normalize_pdf_text(md_content))
     except Exception as e:
         logger.warning(f"[CONVERT] pymupdf4llm failed ({e}), пробуем fitз fallback")
 
@@ -379,7 +379,7 @@ def _parse_pdf(path: Path, route=None) -> str:
             doc.close()
             extracted = "\n\n".join(pages)
             if extracted.strip() and len(extracted.strip()) > 100:
-                return strip_legal_boilerplate(extracted)
+                return strip_legal_boilerplate(normalize_pdf_text(extracted))
         except Exception as e:
             logger.warning(f"[CONVERT] fitz fallback failed: {e}")
 
@@ -391,7 +391,7 @@ def _parse_pdf(path: Path, route=None) -> str:
             parser = make_ocr_parser()
             md = parser.parse_pdf(path, dpi=ocr_dpi)
             if md and md.strip():
-                return md
+                return normalize_pdf_text(md)
         except Exception as ocr_err:
             logger.error(f"[CONVERT] Ошибка фонового OCR для {path.name}: {ocr_err}", exc_info=True)
 
@@ -418,6 +418,31 @@ def strip_legal_boilerplate(md: str) -> str:
         return md
     cleaned = _BOILERPLATE_LINE_RE.sub("", md)
     return re.sub(r"\n{4,}", "\n\n\n", cleaned)
+
+
+def normalize_pdf_text(text: str) -> str:
+    """Repair UTF-8 Cyrillic accidentally exposed as Latin-1 by Windows PDF parsers."""
+    raw = str(text or "")
+    if not raw or not any(marker in raw for marker in ("Ð", "Ñ", "Â")):
+        return raw
+
+    def _repair_run(match: re.Match[str]) -> str:
+        run = match.group(0)
+        try:
+            candidate = run.encode("latin-1").decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            return run
+        candidate_cyr = sum("А" <= ch <= "я" or ch in "Ёё" for ch in candidate)
+        return candidate if candidate_cyr else run
+
+    # Repair only high-byte runs. Valid punctuation such as the middle dot may
+    # coexist with broken Cyrillic and is not itself a valid UTF-8 byte sequence.
+    repaired = re.sub(r"[\x80-\xff]+", _repair_run, raw)
+    raw_noise = sum(raw.count(marker) for marker in ("Ð", "Ñ", "Â"))
+    repaired_noise = sum(repaired.count(marker) for marker in ("Ð", "Ñ", "Â"))
+    raw_cyr = sum("А" <= ch <= "я" or ch in "Ёё" for ch in raw)
+    repaired_cyr = sum("А" <= ch <= "я" or ch in "Ёё" for ch in repaired)
+    return repaired if repaired_noise < raw_noise and repaired_cyr > raw_cyr else raw
 
 
 _docling_converter = None  # ленивая инициализация: тяжёлые layout-модели грузятся один раз

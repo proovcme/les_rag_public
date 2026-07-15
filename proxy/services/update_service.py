@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import zipfile
+import base64
 from pathlib import Path
 from pathlib import PurePosixPath
 from urllib.parse import urlparse
@@ -203,6 +204,29 @@ def patch_status_path() -> Path:
     return update_root() / "vps-patch-status.json"
 
 
+def _ps_literal(value: str) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _patch_task_command(helper: Path, job: Path, patch_id: str) -> tuple[str, str]:
+    safe_id = re.sub(r"[^A-Za-z0-9_-]", "-", patch_id)[:32] or "update"
+    task_name = f"LES-Patch-{safe_id}"
+    arguments = f'"{helper}" --job "{job}"'
+    script = (
+        "$ErrorActionPreference='Stop'; "
+        f"$name={_ps_literal(task_name)}; "
+        "Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue; "
+        f"$action=New-ScheduledTaskAction -Execute {_ps_literal(str(sys.executable))} "
+        f"-Argument {_ps_literal(arguments)}; "
+        "$trigger=New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1); "
+        "$principal=New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited; "
+        "Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null; "
+        "Start-ScheduledTask -TaskName $name"
+    )
+    encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+    return task_name, encoded
+
+
 def _validate_patch_feed(payload: dict) -> dict:
     if payload.get("schema") != VPS_PATCH_FEED_SCHEMA:
         raise UpdateError("Неподдерживаемая схема быстрого обновления")
@@ -346,13 +370,26 @@ async def download_and_launch_vps_patch() -> dict:
                 "archive": str(archive),
                 "status_path": str(status),
                 "patch_id": info["patch_id"],
+                "helper_task_name": "",
             },
             ensure_ascii=False,
             indent=2,
         ),
         encoding="utf-8",
     )
+    task_name, encoded_command = _patch_task_command(helper, job, info["patch_id"])
+    job_payload = json.loads(job.read_text(encoding="utf-8"))
+    job_payload["helper_task_name"] = task_name
+    job.write_text(json.dumps(job_payload, ensure_ascii=False, indent=2), encoding="utf-8")
     status.write_text(json.dumps({"schema": "les.vps-patch-status.v1", "state": "starting", "stage": "downloaded", "patch_id": info["patch_id"], "message": "Обновление проверено, начинаю установку"}, ensure_ascii=False, indent=2), encoding="utf-8")
-    flags = getattr(subprocess, "DETACHED_PROCESS", 0x00000008) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
-    subprocess.Popen([sys.executable, str(helper), "--job", str(job)], cwd=str(root), close_fds=True, creationflags=flags)  # noqa: S603
+    launched = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-EncodedCommand", encoded_command],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if launched.returncode != 0:
+        raise UpdateError("Windows не смог запустить независимую задачу обновления")
     return {**info, "state": "starting", "message": "Обновление проверено и запущено"}

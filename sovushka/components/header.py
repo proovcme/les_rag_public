@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from nicegui import app, ui
 
 from backend.auth import logout
@@ -21,6 +22,7 @@ def build_header(
     admin_tabs: bool | None = None,
     include_chat: bool = True,
     include_documents: bool = False,
+    include_datasets: bool = False,
     admin_link: bool = False,
     chat_link: bool = False,
     visualizer_url: str | None = None,
@@ -32,6 +34,7 @@ def build_header(
 
     tab_refs = {}
     show_admin_tabs = is_admin if admin_tabs is None else admin_tabs
+    is_windows = sys.platform.startswith("win")
 
     with ui.element("header").classes("w-full").style(
         "position:sticky;top:0;z-index:999;"
@@ -135,6 +138,8 @@ def build_header(
                 tab_refs["volk"]       = ui.tab("Доступ",    icon="o_vpn_key")  # В.О.Л.К. — контур доступа
             if include_chat:
                 tab_refs["chat"]     = ui.tab("AI ЧАТ",         icon="o_forum")
+                if include_datasets and "samovar" not in tab_refs:
+                    tab_refs["samovar"] = ui.tab("Датасеты", icon="o_inventory_2")
                 if include_documents and "documents" not in tab_refs:
                     tab_refs["documents"] = ui.tab("Документы", icon="o_folder_open")
                 tab_refs["history"]  = ui.tab("ИСТОРИЯ",        icon="o_history")
@@ -193,7 +198,7 @@ def build_header(
                     ).style("color:var(--accent);font-size:.62rem;font-family:var(--font);")
 
                 if admin_link:
-                    ui.button("АДМИНКА", on_click=lambda: ui.navigate.to("/les")).props(
+                    ui.button("КОНФИГУРАЦИЯ", on_click=lambda: ui.navigate.to("/les")).props(
                         "flat no-caps dense"
                     ).style("color:var(--accent);font-size:.62rem;font-family:var(--font);")
 
@@ -209,7 +214,7 @@ def build_header(
                 with ui.dialog() as settings_dialog, ui.card().style(
                     "background:var(--bg-panel);border:1px solid var(--border);min-width:640px;padding:24px;"
                 ):
-                    ui.label("⚙ НАСТРОЙКИ Л.Е.С.").style(
+                    ui.label("НАСТРОЙКИ Л.Е.С.").style(
                         "font-size:.95rem;font-weight:900;margin-bottom:8px;"
                     )
                     # Однозначный ответ «какая модель отвечает» — всегда наверху диалога.
@@ -243,22 +248,27 @@ def build_header(
                             "border:1px solid var(--border);color:var(--warn);background:transparent;flex:1;")
                         ui.button("⚖ Микс", on_click=lambda: _apply_preset("mix")).props("no-caps flat").style(
                             "border:1px solid var(--border);color:var(--accent);background:transparent;flex:1;")
+                    provider_options = {
+                        "ollama": "Ollama — локально",
+                        "openrouter": "OpenRouter — облако",
+                        "openai": "OpenAI-compatible — облако",
+                    }
+                    if not is_windows:
+                        provider_options = {"mlx": "MLX — локально на Mac", **provider_options}
                     set_provider = ui.select(
-                        {
-                            "mlx": "MLX — локальный (валидация Т.О.С.К.А.; блок по памяти активен)",
-                            "ollama": "Ollama — локальный (без валидации; блок по памяти активен)",
-                            "openrouter": "OpenRouter — ОБЛАКО (без валидации; блок по памяти снят)",
-                            "openai": "OpenAI-compatible — ОБЛАКО (без валидации; блок по памяти снят)",
-                        },
+                        provider_options,
                         label="Активный LLM-провайдер",
-                        value="mlx",
+                        value="ollama" if is_windows else "mlx",
                     ).style("width:100%;font-family:var(--font);")
-                    # Локальная модель чата (MLX): лёгкий 4B (основной) ↔ тяжёлый 9B (резерв).
-                    # Переключается вживую через /api/settings/mlx-model — без рестарта хоста.
-                    _mlx_loading = {"v": False}
-                    set_llm = ui.select({}, label="Локальная модель (MLX): 4B быстрый / 9B тяжёлый").props(
-                        "dense outlined"
-                    ).style("width:100%;font-family:var(--font);")
+                    with ui.column().classes("w-full gap-2") as mlx_settings:
+                        # Mac-only MLX runtime. Windows production uses Ollama and never shows these controls.
+                        _mlx_loading = {"v": False}
+                        set_llm = ui.select({}, label="Локальная модель MLX").props(
+                            "dense outlined"
+                        ).style("width:100%;font-family:var(--font);")
+                        set_embed = ui.input("Модель эмбеддингов MLX", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                        set_url = ui.input("Адрес MLX", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    mlx_settings.set_visibility(not is_windows)
 
                     async def _apply_mlx_model(e) -> None:
                         if _mlx_loading["v"]:
@@ -280,10 +290,16 @@ def build_header(
                             ui.notify(last_api_error_text("Не удалось переключить локальную модель"), type="negative")
 
                     set_llm.on_value_change(_apply_mlx_model)
-                    set_embed = ui.input("Embedding Модель",  value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
-                    set_url   = ui.input("MLX URL",  value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
-                    set_ollama_url = ui.input("Ollama URL", value="http://127.0.0.1:11434").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
-                    set_ollama_model = ui.input("Ollama Model (например gemma4:12b)", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_ollama_url = ui.input("Адрес Ollama", value="http://127.0.0.1:11434").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_ollama_model = ui.input("Модель Ollama, например gemma4:12b", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_smeta_model = ui.input("Модель для смет", value="qwen3.5:9b").props(
+                        'hint="Можно указать gemma4:12b для чистой проверки"'
+                    ).style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_smeta_fallback_model = ui.input(
+                        "Резервная модель для смет", value="qwen3.5:9b"
+                    ).props('hint="Очисти поле, чтобы проверять выбранную модель без подстраховки"').style(
+                        "background:var(--bg);color:var(--text);font-family:var(--font);width:100%;"
+                    )
                     ui.separator().style("border-color:var(--border);margin:12px 0;")
                     ui.label("Облачные провайдеры").style("color:var(--dim);font-size:.65rem;font-weight:900;text-transform:uppercase;")
                     set_openrouter_url = ui.input("OpenRouter Base URL", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
@@ -294,7 +310,7 @@ def build_header(
                     set_openai_model = ui.input("OpenAI-compatible Model", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
                     set_openai_key = ui.input("OpenAI-compatible API Key", value="", password=True, password_toggle_button=True).style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
                     set_openai_clear = ui.checkbox("Сбросить OpenAI-compatible key", value=False).style("color:var(--text);font-family:var(--font);")
-                    # W3.3/ADR-9: данные по чувствительности. P0 — только локально (MLX),
+                    # W3.3/ADR-9: данные по чувствительности. P0 — только локально,
                     # P1 — можно в облако, P2 — облако ТОЛЬКО при этом согласии. Уровень
                     # датасета ставится в САМОВАРе (колонка «Данные»).
                     set_cloud_consent = ui.checkbox("Разрешить облако для данных P2 (согласие)", value=False).style(
@@ -302,7 +318,7 @@ def build_header(
                     )
                     _html(
                         '<div class="sov-muted" style="font-size:.6rem;line-height:1.4;">P0 (приватные: НТД по умолчанию, '
-                        'почта, договоры) всегда локально на MLX. Уровень датасета — в САМОВАРе → «Данные».</div>'
+                        'почта, договоры) всегда остаются на этой машине. Уровень датасета — в САМОВАРе → «Данные».</div>'
                     )
                     ui.separator().style("border-color:var(--border);margin:12px 0;")
                     ui.label("Е.Ж.И.К. IMAP").style("color:var(--dim);font-size:.65rem;font-weight:900;text-transform:uppercase;")
@@ -370,10 +386,13 @@ def build_header(
                             except Exception:
                                 pass
                             active = (providers.get("active") or "mlx").lower()
-                            set_provider.set_value(active if active in ("mlx", "ollama", "openrouter", "openai") else "mlx")
+                            default_provider = "ollama" if is_windows else "mlx"
+                            set_provider.set_value(active if active in provider_options else default_provider)
                             ollama = providers.get("ollama") or {}
                             set_ollama_url.set_value(ollama.get("base_url", "http://127.0.0.1:11434"))
                             set_ollama_model.set_value(ollama.get("model", ""))
+                            set_smeta_model.set_value(d.get("smeta_document_model") or "qwen3.5:9b")
+                            set_smeta_fallback_model.set_value(d.get("smeta_document_fallback_model", "qwen3.5:9b"))
                             openrouter = providers.get("openrouter") or {}
                             openai = providers.get("openai_compatible") or {}
                             set_openrouter_url.set_value(openrouter.get("base_url", "https://openrouter.ai/api/v1"))
@@ -502,9 +521,12 @@ def build_header(
                                 "llm_model":   set_llm.value,
                                 "embed_model": set_embed.value,
                                 "mlx_url":     set_url.value,
-                                "llm_provider": set_provider.value or "mlx",
+                                "llm_provider": set_provider.value or ("ollama" if is_windows else "mlx"),
                                 "ollama_base_url": set_ollama_url.value or "",
                                 "ollama_model": set_ollama_model.value or "",
+                                "smeta_document_provider": "ollama" if is_windows else "",
+                                "smeta_document_model": set_smeta_model.value or "",
+                                "smeta_document_fallback_model": set_smeta_fallback_model.value or "",
                                 "openrouter_base_url": set_openrouter_url.value or "",
                                 "openrouter_model": set_openrouter_model.value or "",
                                 "openrouter_api_key": set_openrouter_key.value or None,
@@ -535,7 +557,9 @@ def build_header(
                             "border:1px solid var(--accent);color:var(--accent);background:transparent;"
                         )
 
-                ui.button(icon="o_settings", on_click=lambda: settings_dialog.open()).props('flat dense round aria-label="Настройки"').style("color:var(--dim);")
+                ui.button("Настройки", icon="o_settings", on_click=lambda: settings_dialog.open()).props(
+                    'flat dense no-caps aria-label="Настройки"'
+                ).style("color:var(--dim);font-size:.62rem;")
 
             # Пользователь / выход
             ui.button(auth_holder or auth_role, icon=("o_shield" if is_admin else "o_person"),

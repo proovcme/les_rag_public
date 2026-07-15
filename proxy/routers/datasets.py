@@ -1269,14 +1269,31 @@ async def extraction_status_endpoint(dataset_id: str, _admin=Depends(require_adm
 
 @router.post("/datasets/{dataset_id}/repair")
 async def repair_dataset(dataset_id: str, _admin=Depends(require_admin)):
-    """«Ремонт»: ERROR-файлы датасета → PENDING (без удаления датасета/индекса), затем перепарс.
-    Возвращает число поставленных в очередь. Парс — фоном (parse-scheduler), если есть что чинить."""
+    """Repair failed and encoding-damaged documents, then start their reindex job."""
     backend = get_dataset_state().backend
-    requeued = await asyncio.to_thread(backend.db.requeue_error_documents, dataset_id)
+    error_count = await asyncio.to_thread(backend.db.requeue_error_documents, dataset_id)
+    encoding_documents = await asyncio.to_thread(
+        backend.db.requeue_corrupt_pdf_text_documents, dataset_id
+    )
+    requeued = error_count + len(encoding_documents)
+    parse_job = None
     if requeued:
         backend.db.update_dataset_status(dataset_id, "IDLE")
-    return {"id": dataset_id, "requeued": requeued,
-            "hint": "нажмите Пуск (parse-scheduler) для переиндексации" if requeued else "ошибочных файлов нет"}
+        parse_job = await parse_dataset_batch(
+            dataset_id,
+            limit=min(25, requeued),
+            background=True,
+            _admin=_admin,
+        )
+    return {
+        "id": dataset_id,
+        "requeued": requeued,
+        "errors_requeued": error_count,
+        "encoding_requeued": len(encoding_documents),
+        "encoding_documents": encoding_documents,
+        "job_id": (parse_job or {}).get("job_id"),
+        "hint": "ремонт запущен" if requeued else "повреждений не найдено",
+    }
 
 
 @router.post("/datasets/{dataset_id}/reconcile")

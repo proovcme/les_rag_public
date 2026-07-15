@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import compileall
 import hashlib
 import json
@@ -44,6 +45,51 @@ def health(url: str, timeout: int = 90) -> bool:
     return False
 
 
+def ps_literal(value: str) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def powershell(script: str, *, check: bool = True) -> subprocess.CompletedProcess:
+    encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+    return subprocess.run(
+        ["powershell.exe", "-NoProfile", "-EncodedCommand", encoded],
+        capture_output=True,
+        text=True,
+        timeout=45,
+        check=check,
+    )
+
+
+def start_desktop(runtime: Path, patch_id: str) -> str:
+    executable = runtime.parent / "les-desktop.exe"
+    if not executable.is_file():
+        raise RuntimeError(f"LES desktop executable is missing: {executable}")
+    safe_id = "".join(char if char.isalnum() or char in "-_" else "-" for char in patch_id)[:32]
+    task_name = f"LES-Patch-Start-{safe_id or 'update'}"
+    subprocess.run(["taskkill.exe", "/IM", "les-desktop.exe", "/F"], check=False, capture_output=True)
+    script = (
+        "$ErrorActionPreference='Stop'; "
+        f"$name={ps_literal(task_name)}; "
+        "Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue; "
+        f"$action=New-ScheduledTaskAction -Execute {ps_literal(str(executable))}; "
+        "$trigger=New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1); "
+        "$principal=New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited; "
+        "Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null; "
+        "Start-ScheduledTask -TaskName $name"
+    )
+    powershell(script)
+    return task_name
+
+
+def remove_task(name: str) -> None:
+    if not name:
+        return
+    powershell(
+        f"Unregister-ScheduledTask -TaskName {ps_literal(name)} -Confirm:$false -ErrorAction SilentlyContinue",
+        check=False,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--job", type=Path, required=True)
@@ -54,9 +100,9 @@ def main() -> int:
     archive = Path(job["archive"]).resolve()
     status = Path(job["status_path"]).resolve()
     patch_id = str(job["patch_id"])
+    helper_task_name = str(job.get("helper_task_name") or "")
     backup = state / "artifacts" / "patch-backups" / patch_id
     stop = runtime / "installers" / "windows" / "stop-light.ps1"
-    start = runtime / "installers" / "windows" / "start-light.ps1"
     manifest: dict = {}
     changed: list[Path] = []
     try:
@@ -97,15 +143,15 @@ def main() -> int:
         ):
             raise RuntimeError("Python compile check failed")
         write_status(status, state="applying", stage="restart", patch_id=patch_id, message="Перезапускаю ЛЕС")
-        env = os.environ.copy()
-        env["LES_WINDOWS_STATE_ROOT"] = str(state)
-        subprocess.Popen(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(start)], env=env, creationflags=0x00000008 | 0x00000200)
+        desktop_task = start_desktop(runtime, patch_id)
         if not health("http://127.0.0.1:8050/api/health") or not health("http://127.0.0.1:8051/healthz", 45):
             raise RuntimeError("ЛЕС не ответил после патча")
+        remove_task(desktop_task)
         state_file = state / "artifacts" / "vps-patch-state.json"
         state_file.parent.mkdir(parents=True, exist_ok=True)
         state_file.write_text(json.dumps({"schema": "les.vps-patch-state.v1", "patch_id": patch_id, "commit": manifest["target_commit"]}, ensure_ascii=False, indent=2), encoding="utf-8")
         write_status(status, state="ready", stage="done", patch_id=patch_id, message="Обновление установлено", target_commit=manifest["target_commit"])
+        remove_task(helper_task_name)
         return 0
     except Exception as exc:
         write_status(status, state="rollback", stage="restore", patch_id=patch_id, message="Возвращаю предыдущую версию", error=str(exc))
@@ -116,10 +162,27 @@ def main() -> int:
                 shutil.copy2(saved, target)
             else:
                 target.unlink(missing_ok=True)
-        env = os.environ.copy()
-        env["LES_WINDOWS_STATE_ROOT"] = str(state)
-        subprocess.Popen(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(start)], env=env, creationflags=0x00000008 | 0x00000200)
-        write_status(status, state="failed", stage="rolled_back", patch_id=patch_id, message="Обновление отменено, предыдущая версия восстановлена", error=str(exc))
+        try:
+            rollback_task = start_desktop(runtime, f"{patch_id}-rollback")
+            rollback_ready = health("http://127.0.0.1:8050/api/health") and health(
+                "http://127.0.0.1:8051/healthz", 45
+            )
+            remove_task(rollback_task)
+        except Exception:
+            rollback_ready = False
+        write_status(
+            status,
+            state="failed",
+            stage="rolled_back" if rollback_ready else "rollback_restart_failed",
+            patch_id=patch_id,
+            message=(
+                "Обновление отменено, предыдущая версия восстановлена"
+                if rollback_ready
+                else "Файлы восстановлены, но ЛЕС не перезапустился автоматически"
+            ),
+            error=str(exc),
+        )
+        remove_task(helper_task_name)
         return 1
 
 

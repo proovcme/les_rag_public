@@ -93,7 +93,10 @@ async def test_document_application_preserves_stream_artifact_and_trace(tmp_path
             "total_with_vat": 122,
         },
         "model_provider": "openai",
+        "model_requested": "gpt-5.4",
         "model": "gpt-5.4",
+        "models_used": ["gpt-5.4"],
+        "model_fallbacks": [],
         "model_calls": 1,
     }
     assert workflow_call["candidate_limit"] == 12
@@ -220,6 +223,59 @@ def test_document_application_contains_no_professional_selector():
     assert "bind_norm" not in source
     assert "selected_norm" not in source
     assert "resource_actions" not in source
+
+
+def test_document_exchange_requires_tool_and_falls_back_from_non_tool_ollama(monkeypatch):
+    from proxy.services import smeta_chat_adapter_service as adapter
+
+    bodies = []
+
+    class Response:
+        status_code = 200
+
+        def __init__(self, message):
+            self._message = message
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": self._message}]}
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, _url, **kwargs):
+            bodies.append(kwargs["json"])
+            if len(bodies) <= 2:
+                return Response({"content": "Я отвечу текстом"})
+            return Response({"tool_calls": [{"id": "tool-1", "function": {"name": "search_norms_batch"}}]})
+
+    monkeypatch.setattr(adapter, "_smeta_model_runtime", lambda _name: adapter.LlmRuntime(
+        "ollama", "http://127.0.0.1:11434", "http://127.0.0.1:11434/v1/chat/completions",
+        "gemma4:12b", "", True,
+    ))
+    monkeypatch.setattr(adapter.httpx, "Client", Client)
+
+    result = adapter._smeta_document_exchange(
+        [{"role": "user", "content": "Собери ЛСР"}],
+        [{"type": "function", "function": {"name": "search_norms_batch"}}],
+    )
+
+    assert result["tool_calls"][0]["id"] == "tool-1"
+    assert result["_les_model"] == "qwen3.5:9b"
+    assert result["_les_fallback_from"] == "gemma4:12b"
+    assert bodies[1]["tool_choice"] == "required"
+    assert bodies[1]["model"] == "gemma4:12b"
+    assert bodies[2]["tool_choice"] == "required"
+    assert bodies[2]["model"] == "qwen3.5:9b"
 
 
 def test_default_direct_dependencies_live_in_smeta_adapter_not_router():

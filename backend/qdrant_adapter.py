@@ -31,7 +31,7 @@ from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
 from llama_index.core.schema import Document, TextNode
 from qdrant_client import models
 
-from .converter import convert_to_markdown_for_indexing
+from .converter import convert_to_markdown_for_indexing, normalize_pdf_text
 from .document_router import DocumentRoute, route_document
 from .interface import Chunk, DatasetInfo, EmbeddingContractError, RAGBackend
 from .mail_profile import build_mail_vector_profile, deterministic_mail_node_id
@@ -997,6 +997,47 @@ class MetaDB:
                 (dataset_id,),
             )
             return cur.rowcount
+
+    def requeue_corrupt_pdf_text_documents(self, dataset_id: str) -> list[str]:
+        """Find already indexed PDF text damaged by UTF-8/Latin-1 mojibake and requeue its source.
+
+        Detection is based on the same conservative normalizer used by new PDF
+        ingestion.  A document is touched only when at least two chunks are
+        repairable and at least a quarter of its indexed chunks are affected.
+        """
+        with self._get_conn() as conn:
+            table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='lexical_chunks'"
+            ).fetchone()
+            if not table:
+                return []
+            rows = conn.execute(
+                "SELECT doc_name, text FROM lexical_chunks WHERE dataset_id=? ORDER BY doc_name, id",
+                (dataset_id,),
+            ).fetchall()
+            totals: dict[str, int] = {}
+            damaged: dict[str, int] = {}
+            for row in rows:
+                name = str(row["doc_name"] or "")
+                if not name.lower().endswith((".pdf", ".p7m")):
+                    continue
+                text = str(row["text"] or "")
+                totals[name] = totals.get(name, 0) + 1
+                if normalize_pdf_text(text) != text:
+                    damaged[name] = damaged.get(name, 0) + 1
+            names = sorted(
+                name for name, count in damaged.items()
+                if count >= 2 and count * 4 >= totals.get(name, 0)
+            )
+            if not names:
+                return []
+            placeholders = ",".join("?" for _ in names)
+            conn.execute(
+                f"UPDATE documents SET status='PENDING', last_error='', stage='', chunk_count=0 "
+                f"WHERE dataset_id=? AND file_name IN ({placeholders})",
+                (dataset_id, *names),
+            )
+            return names
 
     def update_document_stage(self, dataset_id: str, file_name: str, stage: str) -> None:
         """W1.4: текущая стадия конвейера файла (CONVERT/EMBED/UPSERT) — для прогресса/диагностики."""

@@ -9,6 +9,17 @@ scripts/smoke_unified_v08.py` (фикстура) или `--dataset-id <ds>` (р�
 `query_route.version=unified_construction_harness_v0_8` + `unified_trace` + `evidence_summary`.
 Выключить: убрать env-переменную. Runtime (`/Users/ovc/LES/.env`) НЕ трогался — флаг ставит оператор.
 
+## Operational incident 2026-07-15: Gemma returned prose instead of the required smeta tool call
+
+На реальной ВОР из 19 строк обычная модель чата `gemma4:12b` неявно стала моделью document workflow
+и после 81,2 с вернула prose без `tool_calls`. ЛСР не была собрана. Локальный Ollama игнорировал
+`LES_SMETA_DOCUMENT_MODEL`, а непустой prose не попадал под transport retry. Исправление отделяет
+сметную модель от чата, повторяет исходную модель с обязательным tool-call и разрешает явную
+резервную модель. Резерв можно отключить для чистого сравнения Gemma.
+
+**Rule:** выбор модели чата не меняет сметного агента. Смена модели внутри сметного хода не может
+быть скрытой; код не подменяет отсутствующий mapping собственным выбором норм.
+
 ## Operational incident 2026-07-15: FGIS unified parquet diverged from structured manifest
 
 Legion bootstrap history recorded a real repair with reason `unified parquet does not match
@@ -45,6 +56,12 @@ one-shot interactive task and independently verified as 0.24.15/build 426 with U
 
 **Status:** production was recovered and independently verified twice; automated post-session
 persistence gate remains open and is a release-orchestrator blocker, not a runtime-data failure.
+
+The first 0.24.15 VPS docs patch exposed the same Windows job boundary inside the updater itself:
+`DETACHED_PROCESS` did not escape the Tauri job-object, so the helper replaced the file and died when
+the UI listener was stopped, before restart/status completion. The public feed was removed before
+general use. The corrected contract starts both helper and replacement Tauri shell through separate
+interactive Scheduled Tasks; 0.24.15 is not an updater-compatible base.
 
 ## Operational incident 2026-07-14: clean Windows smoke reused shared Qdrant collection
 

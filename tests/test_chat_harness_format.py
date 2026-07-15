@@ -118,6 +118,33 @@ def test_smeta_model_runtime_follows_configured_local_ollama(monkeypatch):
     assert runtime.base_url == "http://127.0.0.1:11434"
 
 
+def test_smeta_document_runtime_does_not_inherit_visual_chat_model(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+    monkeypatch.setenv("OLLAMA_MODEL", "gemma4:12b")
+    monkeypatch.setenv("LLM_MODEL", "gemma4:12b")
+    monkeypatch.delenv("LES_SMETA_PROVIDER", raising=False)
+    monkeypatch.delenv("LES_SMETA_DOCUMENT_PROVIDER", raising=False)
+    monkeypatch.delenv("LES_SMETA_DOCUMENT_MODEL", raising=False)
+
+    runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
+
+    assert runtime.provider == "ollama"
+    assert runtime.model == "qwen3.5:9b"
+
+
+def test_smeta_document_runtime_honors_dedicated_ollama_model(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_MODEL", "gemma4:12b")
+    monkeypatch.setenv("LES_SMETA_DOCUMENT_MODEL", "qwen3.5:9b")
+    monkeypatch.delenv("LES_SMETA_PROVIDER", raising=False)
+    monkeypatch.delenv("LES_SMETA_DOCUMENT_PROVIDER", raising=False)
+
+    runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
+
+    assert runtime.model == "qwen3.5:9b"
+
+
 def test_smeta_document_runtime_uses_configured_cloud_only_with_consent(monkeypatch):
     monkeypatch.setenv("LES_LLM_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://openai.api.proxyapi.ru/v1")

@@ -69,6 +69,7 @@ class SettingsRequest(BaseModel):
     openai_models: Optional[str] = None  # цепочка фолбэка (через запятую)
     smeta_document_provider: Optional[str] = None
     smeta_document_model: Optional[str] = None
+    smeta_document_fallback_model: Optional[str] = None
     openai_api_key: Optional[str] = None
     openai_api_key_clear: Optional[bool] = None
     llm_provider: Optional[str] = None
@@ -120,6 +121,9 @@ async def get_settings(_user=Depends(require_user)):
             "providers": _provider_settings_payload(),
             "smeta_document_provider": os.getenv("LES_SMETA_DOCUMENT_PROVIDER", "").strip(),
             "smeta_document_model": os.getenv("LES_SMETA_DOCUMENT_MODEL", "").strip(),
+            "smeta_document_fallback_model": os.getenv(
+                "LES_SMETA_DOCUMENT_FALLBACK_MODEL", "qwen3.5:9b"
+            ).strip(),
             "mail": _mail_settings_payload(),
         }
     except Exception as e:
@@ -321,6 +325,7 @@ def _provider_updates(req: SettingsRequest) -> dict[str, str]:
         "openai_models": "OPENAI_MODELS",
         "smeta_document_provider": "LES_SMETA_DOCUMENT_PROVIDER",
         "smeta_document_model": "LES_SMETA_DOCUMENT_MODEL",
+        "smeta_document_fallback_model": "LES_SMETA_DOCUMENT_FALLBACK_MODEL",
         "ollama_base_url": "OLLAMA_BASE_URL",
         "ollama_model": "OLLAMA_MODEL",
         "lemonade_base_url": "LEMONADE_BASE_URL",

@@ -368,6 +368,10 @@ def _run_batch_norm_agent(
             "content": str(assistant.get("content") or "").strip() or None,
             "tool_calls": calls,
         }
+        if assistant.get("_les_model"):
+            assistant_message["model"] = str(assistant["_les_model"])
+        if assistant.get("_les_fallback_from"):
+            assistant_message["fallback_from"] = str(assistant["_les_fallback_from"])
         conversation.append(assistant_message)
         model_trace.append({"turn": turn, "assistant": assistant_message, "model_wait_ms": model_wait_ms})
         context_metrics.append({

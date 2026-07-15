@@ -2,6 +2,7 @@ import hashlib
 import os
 import sqlite3
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -113,6 +114,42 @@ def test_tool_read_pdf_and_excel_are_indexed_readers_with_limits(monkeypatch, ex
     assert any("raw PDF" in warning for warning in pdf_payload["warnings"])
     assert xlsx_payload["status"] == "ok"
     assert any("sheet/range" in warning for warning in xlsx_payload["warnings"])
+
+
+def test_look_at_pdf_page_resolves_visible_basename_and_uses_vision_model(monkeypatch, explorer, tmp_path):
+    import fitz
+    import httpx
+
+    pdf_path = tmp_path / "ИОС 5.2 пожарная сигнализация.pdf"
+    with fitz.open() as pdf:
+        page = pdf.new_page()
+        page.insert_text((72, 72), "VISUAL PAGE")
+        pdf.save(pdf_path)
+    with sqlite3.connect(explorer.db_path) as conn:
+        conn.execute("UPDATE documents SET source_path=? WHERE id='doc-pdf'", (str(pdf_path),))
+        conn.commit()
+
+    monkeypatch.setattr(tool_harness_service, "explorer", lambda: explorer)
+    monkeypatch.setenv("RAG_OCR_MODEL", "gemma4:12b")
+
+    def fake_post(url, *, json, timeout):
+        assert url.endswith("/api/chat")
+        assert json["model"] == "gemma4:12b"
+        assert json["messages"][0]["images"]
+        return SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {"message": {"content": "На листе видна надпись VISUAL PAGE."}},
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    payload = ToolHarness().call(
+        "look_at_pdf_page",
+        {"dataset_id": "bai", "doc_name": pdf_path.name, "page": 1, "question": "Что видно?"},
+    )
+
+    assert payload["status"] == "ok"
+    assert "На листе видна надпись VISUAL PAGE." in payload["result"]["observation"]
+    assert payload["result"]["source_ref"].endswith("#page=1")
 
 
 def test_filesystem_tool_is_whitelisted_read_only(monkeypatch, tmp_path):

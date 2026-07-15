@@ -323,6 +323,35 @@ def test_metadb_list_datasets_counts_pending_as_files(tmp_path):
     assert row.pending_files == 1
 
 
+def test_metadb_requeues_existing_pdf_with_systemic_mojibake(tmp_path):
+    from backend.qdrant_adapter import MetaDB
+    from proxy.services.lexical_index_service import LexicalIndex
+
+    db_path = tmp_path / "data" / "les_meta.db"
+    db = MetaDB(str(db_path))
+    dataset_id = db.create_dataset("NS")
+    db.add_document(dataset_id, "project.pdf", file_mtime=1.0, file_size=12)
+    db.update_document_status(dataset_id, "project.pdf", "INDEXED", 3)
+    lexical = LexicalIndex(db_path=str(db_path))
+    with lexical.connect() as conn:
+        now = 1.0
+        for index, text in enumerate((
+            "ÐÐ»Ð°Ð½ ÑÑÐ°Ð¶Ð° Ð¸ ÑÐ¸ÑÑ",
+            "Ð¡ÑÐµÐ¼Ð° ÑÐ»ÐµÐºÑÑÐ¾ÑÐ½Ð°Ð±Ð¶ÐµÐ½Ð¸Ñ",
+            "ÐÐ°Ð±ÐµÐ»ÑÐ½ÑÐµ ÑÑÐ°ÑÑÑ",
+        )):
+            conn.execute(
+                "INSERT INTO lexical_chunks(collection,point_id,dataset_id,doc_name,text,content_hash,updated_at) "
+                "VALUES(?,?,?,?,?,?,?)",
+                ("les_rag", f"p{index}", dataset_id, "project.pdf", text, f"h{index}", now),
+            )
+
+    names = db.requeue_corrupt_pdf_text_documents(dataset_id)
+
+    assert names == ["project.pdf"]
+    assert db.get_pending_files(dataset_id) == ["project.pdf"]
+
+
 @pytest.mark.asyncio
 async def test_retrieve_debug_returns_ranked_chunks_and_inferred_dataset(dataset_state):
     result = await datasets.retrieve_debug(
@@ -1058,6 +1087,38 @@ async def test_parse_batch_background_reports_partial_large_queue(monkeypatch, d
     assert job["processed"] == 25
     assert "осталось pending=226" in job["message"]
     assert dataset_state.parses == [("ds-1", 25)]
+
+
+@pytest.mark.asyncio
+async def test_repair_detects_encoding_damage_and_starts_parse_job(monkeypatch, dataset_state):
+    class RepairDB:
+        def requeue_error_documents(self, dataset_id):
+            assert dataset_id == "ds-1"
+            return 1
+
+        def requeue_corrupt_pdf_text_documents(self, dataset_id):
+            assert dataset_id == "ds-1"
+            return ["project.pdf"]
+
+        def update_dataset_status(self, dataset_id, status):
+            assert (dataset_id, status) == ("ds-1", "IDLE")
+
+    dataset_state.db = RepairDB()
+    dataset_state.pending_files["ds-1"] = 2
+
+    async def _admit(state, **kwargs):
+        return None
+
+    monkeypatch.setattr(datasets, "assert_parse_admission", _admit)
+
+    result = await datasets.repair_dataset("ds-1", _admin=object())
+    await asyncio.sleep(0.05)
+
+    assert result["requeued"] == 2
+    assert result["errors_requeued"] == 1
+    assert result["encoding_documents"] == ["project.pdf"]
+    assert result["job_id"] == "job-1"
+    assert dataset_state.parses == [("ds-1", 2)]
 
 
 @pytest.mark.asyncio

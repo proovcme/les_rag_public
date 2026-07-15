@@ -19,6 +19,7 @@ from proxy.services.retrieval_service import resolve_dataset_ids, retrieve_chat_
 from proxy.services.saferag_service import build_context, concentrate_sources, rank_chunks_for_question, source_map_for_context, source_names
 logger = logging.getLogger(__name__)
 DEFAULT_OPENAI_MODEL = "gpt-5.4"
+DEFAULT_LOCAL_SMETA_TOOL_MODEL = "qwen3.5:9b"
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _SMETA_ROW_UNITS_RE = re.compile(r"^(?:м|м2|м²|м3|м³|мм|см|км|шт\.?|компл\.?|комплект|ед\.?|т|кг|100\s*м|100\s*м2|100\s*м²|100\s*шт|100\s*отверстий)$", re.IGNORECASE)
 
@@ -196,6 +197,15 @@ def _smeta_model_runtime(env_name: str) -> LlmRuntime:
         runtime = configured if not is_cloud_provider(configured.provider) else _mlx_runtime()
         if env_name == "LES_SMETA_DOCUMENT_PROVIDER":
             document_model = os.getenv("LES_SMETA_DOCUMENT_MODEL", "").strip()
+            if runtime.provider == "ollama":
+                return LlmRuntime(
+                    runtime.provider,
+                    runtime.base_url,
+                    runtime.chat_url,
+                    document_model or DEFAULT_LOCAL_SMETA_TOOL_MODEL,
+                    runtime.api_key,
+                    runtime.supports_validation,
+                )
             if document_model.startswith("mlx-") or document_model.startswith("mlx/"):
                 mlx_runtime = _mlx_runtime()
                 return LlmRuntime(
@@ -349,7 +359,38 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
                 response = client.post(runtime.chat_url, headers=headers, json=fallback_body)
             response.raise_for_status()
             message = response.json().get("choices", [{}])[0].get("message", {})
-            return message if isinstance(message, dict) else {}
+            message = message if isinstance(message, dict) else {}
+            if not message.get("tool_calls"):
+                required_body = dict(body)
+                required_body["tool_choice"] = "required"
+                response = client.post(runtime.chat_url, headers=headers, json=required_body)
+                response.raise_for_status()
+                required_message = response.json().get("choices", [{}])[0].get("message", {})
+                if isinstance(required_message, dict):
+                    message = required_message
+                    message["_les_model"] = str(required_body["model"])
+            fallback_model = os.getenv(
+                "LES_SMETA_DOCUMENT_FALLBACK_MODEL", DEFAULT_LOCAL_SMETA_TOOL_MODEL
+            ).strip()
+            if (
+                not message.get("tool_calls")
+                and runtime.provider == "ollama"
+                and fallback_model.casefold() not in {"", "0", "false", "none", "off"}
+                and fallback_model != runtime.model
+            ):
+                fallback_body = dict(body)
+                fallback_body["model"] = fallback_model
+                fallback_body["tool_choice"] = "required"
+                response = client.post(runtime.chat_url, headers=headers, json=fallback_body)
+                response.raise_for_status()
+                fallback_message = response.json().get("choices", [{}])[0].get("message", {})
+                if isinstance(fallback_message, dict):
+                    message = fallback_message
+                    message["_les_model"] = fallback_model
+                    message["_les_fallback_from"] = runtime.model
+            message.setdefault("_les_model", runtime.model)
+            message.setdefault("_les_provider", runtime.provider)
+            return message
     except Exception as error:
         logger.warning("[SMETA_DOCUMENT] native agent exchange failed: %s", error)
         if isinstance(error, httpx.HTTPStatusError):
