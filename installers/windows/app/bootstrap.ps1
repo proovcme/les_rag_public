@@ -388,7 +388,13 @@ if ($env:LES_TAURI_SHELL -eq "1") {
     # An in-place update can leave the previous build listening on 8050/8051.
     # Stop only the LES proxy/UI ports (Qdrant and independent FGIS jobs survive)
     # so the installed build replaces the old one instead of hiding on 8052/8053.
-    $stopOutput = @(& (Join-Path $Root "installers\windows\stop-light.ps1"))
+    $stopScript = Join-Path $Root "installers\windows\stop-light.ps1"
+    # First clear any fallback ports remembered by an older side-by-side start,
+    # then always clear the canonical production ports. The second call passes
+    # explicit values so stop-light cannot substitute stale state-file ports.
+    $stopStaleOutput = @(& $stopScript)
+    $stopStaleOutput | Out-File -FilePath $Log -Append -Encoding utf8
+    $stopOutput = @(& $stopScript -ProxyPort 8050 -UiPort 8051)
     $stopOutput | Out-File -FilePath $Log -Append -Encoding utf8
     # Run the PowerShell script in-process. A native `powershell ... | Out-File`
     # pipeline can stay open after start-light exits because long-lived proxy/UI
