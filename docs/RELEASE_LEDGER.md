@@ -21,12 +21,16 @@ Windows-выпуск:            0.24.3 / build 414 (public, live on Legion, 202
 > 0.24.4 / build 415 — видимый FGIS job и self-migration Document Explorer
 >
 > Дата: 2026-07-15
-> Статус: dev; не опубликован и не развёрнут на Legion.
+> Статус: live на Legion, не опубликован.
 > «Источники данных» отделяют обычное перечитывание показателей от реального фонового обновления
 > ФГИС ЦС. Job сообщает запуск/скачивание/обработку/ожидание/готовность/ошибку, heartbeat, текущий
 > регион/период или сборник/отдел, completed/total/remaining, скачанные байты, среднюю скорость и ETA.
 > Document Explorer при первом открытии старой MetaDB создаёт отсутствующие additive
 > `lexical_chunks`/`lexical_chunks_fts` без reindex, вместо ответа 503.
+> Живой Legion: bootstrap `ready`, API/UI `200`, `/api/version` = `0.24.4` / build `415`,
+> `/api/documents/datasets?limit=400` = `200`; FGIS status без запущенного job возвращает честный
+> `idle` и пояснение, что общее обновление ещё не запускалось. Полный FGIS scrape не запускался.
+> No-publish installer: SHA-256 `76f8c0c5f2f36dd297cb9e981c9fd3d82f5f2b059b4570a76e72a340d4b7e9fc`.
 
 > 0.24.3 / build 414 — smeta baseline в чистой Windows-установке
 >
