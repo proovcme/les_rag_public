@@ -167,6 +167,7 @@ def verify_local_artifacts(contract: dict[str, Any], commit: str) -> dict[str, A
     smoke = summary.get("smoke") or {}
     production = summary.get("production") or {}
     smeta = smoke.get("smeta_baseline") or {}
+    expected_pdf_count = int(production.get("expected_pdf_count") or 0)
     if summary.get("build_commit") != commit or not smoke.get("ok"):
         raise RuntimeError("remote build commit or live smoke is not verified")
     if not smeta.get("ok") or int(smeta.get("norm_count") or 0) < 40_000:
@@ -174,7 +175,8 @@ def verify_local_artifacts(contract: dict[str, Any], commit: str) -> dict[str, A
     if (
         not production.get("ok")
         or production.get("les_version") != contract["product_version"]
-        or int(production.get("indexed_files") or 0) != 4
+        or expected_pdf_count < 4
+        or int(production.get("indexed_files") or 0) != expected_pdf_count
         or int(production.get("indexed_chunks") or 0) <= 0
         or not production.get("smoke_dataset_removed")
     ):
@@ -253,6 +255,11 @@ def main(argv: list[str] | None = None) -> int:
         help="reuse an already verified LES-smeta-baseline.zip",
     )
     parser.add_argument("--publish", action="store_true")
+    parser.add_argument(
+        "--resume-verified-commit",
+        default="",
+        help="publish already fetched/verified Legion artifacts for this ancestor runtime commit",
+    )
     parser.add_argument("--skip-gates", action="store_true", help="local development only; cannot publish")
     args = parser.parse_args(argv)
 
@@ -263,6 +270,19 @@ def main(argv: list[str] | None = None) -> int:
     require_tools(("git", "uv", "make", "ssh", "scp", *( ("gh",) if args.publish else () )))
     contract = load_contract()
     commit = require_clean_pushed_branch(args.branch)
+    if args.resume_verified_commit:
+        if not args.publish:
+            raise RuntimeError("resume requires --publish")
+        run(["git", "merge-base", "--is-ancestor", args.resume_verified_commit, commit])
+        fetch_remote_artifacts(host=args.legion_host, repo_root=args.legion_root)
+        summary = verify_local_artifacts(contract, args.resume_verified_commit)
+        notes = args.notes_file.read_text(encoding="utf-8") if args.notes_file else (
+            "Исправительное обновление ЛЕС. Подробности зафиксированы в журнале выпуска."
+        )
+        create_release_files(contract, args.resume_verified_commit, notes)
+        publish(contract)
+        print(json.dumps({"ok": True, "published": True, "resumed": True, **summary}, ensure_ascii=False, indent=2))
+        return 0
     from tools.smeta_release_baseline import create_archive, verify_archive
 
     if args.smeta_baseline_archive:

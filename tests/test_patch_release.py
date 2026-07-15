@@ -119,6 +119,10 @@ def test_patch_release_requires_production_legion_heavy_pdf_gate():
 
     assert 'summary.get("production")' in source
     assert 'indexed_files' in source and 'smoke_dataset_removed' in source
+    assert 'expected_pdf_count = int(production.get("expected_pdf_count") or 0)' in source
+    assert 'int(production.get("indexed_files") or 0) != expected_pdf_count' in source
+    assert '"--resume-verified-commit"' in source
+    assert '"merge-base", "--is-ancestor"' in source
     assert "windows_production_deploy.ps1" in windows
     assert "production = $production" in windows
     assert "Heavy PDF polygon must contain at least 4 PDF files" in production
