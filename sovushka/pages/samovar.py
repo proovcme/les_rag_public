@@ -198,6 +198,19 @@ def build_samovar():
             return "var(--err)"
         return "var(--dim)"
 
+    def _job_status_label(status: str) -> str:
+        return {
+            "QUEUED": "В ОЧЕРЕДИ",
+            "RUNNING": "ВЫПОЛНЯЕТСЯ",
+            "PARSING": "РАЗБОР",
+            "STARTED": "ЗАПУЩЕНО",
+            "COMPLETED": "ГОТОВО",
+            "PARTIAL": "ЧАСТИЧНО",
+            "FAILED": "ОШИБКА",
+            "ERROR": "ОШИБКА",
+            "CANCELLED": "ОТМЕНЕНО",
+        }.get(str(status or "").upper(), str(status or "—").upper())
+
     def _render_ops():
         panel = _refs.get("ops")
         if panel is None:
@@ -231,11 +244,19 @@ def build_samovar():
                         ui.label(f"ошибки {counts['errors']}").style("font-size:12px;color:var(--err);")
                     ui.element("div").style("flex:1;")
                     mem_color = "var(--ok)" if state_name in {"GREEN", "OK"} else "var(--warn)" if state_name in {"YELLOW", "RED"} else "var(--err)"
+                    memory_label = {"GREEN": "НОРМА", "OK": "НОРМА", "YELLOW": "МАЛО", "RED": "КРИТИЧНО"}.get(
+                        state_name, "НЕТ ДАННЫХ"
+                    )
                     ui.label(
-                        f"RAM {float(mem.get('ram_free_gb') or 0):.1f} GB · {state_name}"
+                        f"ОЗУ свободно {float(mem.get('ram_free_gb') or 0):.1f} ГБ · {memory_label}"
                     ).style(f"font-size:12px;color:{mem_color};font-variant-numeric:tabular-nums;")
                 if reason:
-                    ui.label(reason).style("font-size:11.5px;color:var(--dim);margin-top:4px;")
+                    swap_pct = float(mem.get("swap_pct") or 0)
+                    ui.label(
+                        "Памяти достаточно для разбора файлов."
+                        if state_name in {"GREEN", "OK"}
+                        else f"Разбор ограничен по памяти; файл подкачки занят на {swap_pct:.0f}%."
+                    ).style("font-size:11.5px;color:var(--dim);margin-top:4px;")
                 if counts["ocr"] and state_name in {"RED", "CRITICAL"}:
                     ui.label(
                         "OCR/сканы лучше отложить: можно гнать текст, DOCX и таблицы, а тяжёлые сканы оставить до зелёной памяти."
@@ -257,7 +278,7 @@ def build_samovar():
                                     "font-size:12.5px;font-weight:700;flex:1;"
                                 )
                                 ui.label(str(job.get("id") or "")[:12]).style("font-size:11px;color:var(--dim);")
-                                ui.label(str(job.get("status") or "")).style(
+                                ui.label(_job_status_label(str(job.get("status") or ""))).style(
                                     f"font-size:11px;color:{_job_status_color(str(job.get('status') or ''))};"
                                 )
                                 if eta:
@@ -268,9 +289,18 @@ def build_samovar():
                             ui.label(f"{processed}/{total} · {msg}").style("font-size:11.5px;color:var(--dim);")
                 elif recent:
                     last = recent[0]
-                    ui.label(
-                        f"Активной parse-job нет. Последняя: {last.get('status')} · {last.get('message') or last.get('id')}"
-                    ).style("font-size:11.5px;color:var(--dim);margin-top:8px;")
+                    last_status = str(last.get("status") or "").upper()
+                    last_message = str(last.get("message") or last.get("id") or "")
+                    if counts["pending"] and last_status in {"FAILED", "ERROR", "CANCELLED"}:
+                        if "index contract missing" in last_message.lower():
+                            last_message = "локальный индекс не был подготовлен установщиком"
+                        ui.label(
+                            f"ОСТАНОВЛЕНО · {counts['pending']} файлов ждут · {last_message}"
+                        ).style("font-size:12px;color:var(--err);font-weight:700;margin-top:8px;")
+                    else:
+                        ui.label(
+                            f"Последняя задача: {_job_status_label(last_status)} · {last_message}"
+                        ).style("font-size:11.5px;color:var(--dim);margin-top:8px;")
 
     def _ui_handler(coro_func, *args, **kwargs):
         async def _handler(*_event_args):
@@ -500,42 +530,13 @@ def build_samovar():
 
     add_dialog = ui.dialog()
 
-    def _format_intake_plan(plan: dict) -> str:
-        will = plan.get("will_create") or {}
-        maps = plan.get("maps") or []
-        disciplines = plan.get("disciplines") or []
-        missing = plan.get("missing_for_estimate") or []
-        skipped = plan.get("skipped") or []
-        skipped_bits = []
-        for item in skipped[:5]:
-            skipped_bits.append(f"{item.get('file_name')} ({item.get('reason')})")
-        lines = [
-            "План загрузки перед Play:",
-            "",
-            f"будет создано: проект {will.get('project') or plan.get('project_name')}, "
-            f"dataset {will.get('dataset') or plan.get('dataset_name')}",
-            f"принято: {plan.get('accepted_count', 0)} файлов",
-            f"пропущено: {plan.get('skipped_count', 0)}"
-            + (f" — {', '.join(skipped_bits)}" if skipped_bits else ""),
-            "карта: " + ", ".join(
-                f"{item.get('file_name')} ({item.get('status')})" for item in maps
-            ),
-            "дисциплины: " + (", ".join(disciplines) if disciplines else "не распознаны"),
-        ]
-        if missing:
-            lines.append("не хватает для сметы: " + ", ".join(missing))
-        else:
-            lines.append("не хватает для сметы: базовые сметные входы распознаны")
-        lines.extend(["", "Продолжить индексацию?"])
-        return "\n".join(lines)
-
     def _open_add():
         add_dialog.clear()
         picked = {"path": ""}
         browse = {"path": ""}
         with add_dialog, ui.card().classes("sov-advanced-dialog").style("min-width:560px;"):
             ui.label("Добавить датасет").classes("sov-panel-title")
-            ui.label("Папка индексируется in-place (без копии в storage).").classes("sov-muted")
+            ui.label("Папка индексируется на месте: исходные файлы не копируются.").classes("sov-muted")
             name_in = ui.input("Название").props("dense outlined").classes("w-full")
             with ui.row().classes("items-center w-full").style("gap:8px;"):
                 path_lbl = ui.label("Папка не выбрана").style(
@@ -667,13 +668,6 @@ def build_samovar():
                 plan = await api_post("/api/rag/external/intake-plan", {"path": pth, "dataset_name": nm})
                 if not isinstance(plan, dict) or plan.get("status") != "ok":
                     ui.notify(last_api_error_text("Не удалось построить план загрузки"), type="negative")
-                    return
-                ok = await ui.run_javascript(
-                    f"confirm({json.dumps(_format_intake_plan(plan), ensure_ascii=False)})",
-                    timeout=30,
-                )
-                if not ok:
-                    ui.notify("Индексация отменена", type="info")
                     return
                 ds = await api_post(f"/api/rag/datasets?name={quote(nm)}", {})
                 did = (ds or {}).get("id")
@@ -832,11 +826,11 @@ def build_samovar():
             if active_parse:
                 current = active_parse[0]
                 _refs["status"].set_text(
-                    f"Индексатор: идёт job {str(current.get('id', ''))[:12]} "
+                    f"Индексатор: выполняется задача {str(current.get('id', ''))[:12]} "
                     f"{current.get('processed', 0)}/{current.get('total', 0)}"
                 )
             elif disp:
-                _refs["status"].set_text("Индексатор: режим индексации, активной parse-job нет")
+                _refs["status"].set_text("Индексатор включён, но активной задачи разбора нет")
             elif pending:
                 _refs["status"].set_text(f"Индексатор: простаивает · ждут {pending} файлов")
             else:

@@ -121,6 +121,24 @@ def test_release_baseline_refuses_partial_existing_state(tmp_path: Path):
     assert partial.read_bytes() == b"user-state"
 
 
+def test_release_baseline_repair_backs_up_partial_state_and_restores_complete_set(tmp_path: Path):
+    source_root = _fixture_root(tmp_path / "source")
+    archive = tmp_path / "baseline.zip"
+    baseline.create_archive(source_root, archive, minimum_norms=2, minimum_fsem_rows=2)
+    state = tmp_path / "state"
+    partial = state / "data/smeta_base/les_smeta_base.sqlite"
+    partial.parent.mkdir(parents=True)
+    partial.write_bytes(b"broken-user-state")
+
+    repaired = baseline.repair_archive(archive, state)
+
+    assert repaired["action"] == "repaired"
+    assert repaired["norm_count"] == 2
+    backup = Path(repaired["backup"]) / "data/smeta_base/les_smeta_base.sqlite"
+    assert backup.read_bytes() == b"broken-user-state"
+    assert baseline.validate_root(state, minimum_norms=2, minimum_fsem_rows=2)["ok"] is True
+
+
 def test_release_baseline_rejects_norm_count_regression(tmp_path: Path):
     source_root = _fixture_root(tmp_path / "source", norms=1)
 

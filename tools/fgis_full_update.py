@@ -21,8 +21,11 @@ from proxy.services import fgis_price_fetch_service as price_fetch
 from tools import gesn_update_from_fgis
 
 DEFAULT_STATUS = Path("storage/jobs/fgis_full_update_status.json")
+DEFAULT_LOG = Path("storage/jobs/fgis_full_update.log")
+DEFAULT_CHECKPOINT = Path("storage/jobs/fgis_full_update_checkpoint.json")
 DEFAULT_CATALOG = Path("data/price_base/fgis_catalog.json")
 DEFAULT_MANIFEST = Path("data/price_base/fgis_latest_manifest.json")
+PACKAGED_BASELINE = Path("installers/windows/baseline/LES-smeta-baseline.zip")
 
 
 def _slug(subject: str, quarter: str) -> str:
@@ -43,11 +46,72 @@ def _slug(subject: str, quarter: str) -> str:
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(path)
 
 
+def _read_json(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _book_checkpoint_key(zone: dict[str, Any], period: dict[str, Any]) -> str:
+    return f"{int(zone.get('id') or 0)}:{int(period.get('id') or 0)}"
+
+
+def _valid_checkpoint_book(item: dict[str, Any]) -> bool:
+    path = Path(str(item.get("parquet") or ""))
+    if not path.is_file() or path.stat().st_size < 1024 or int(item.get("rows") or 0) <= 0:
+        return False
+    try:
+        import pyarrow.parquet as pq
+
+        return int(pq.ParquetFile(path).metadata.num_rows) == int(item.get("rows") or 0)
+    except Exception:
+        return False
+
+
+def _repair_local_baseline() -> dict[str, Any]:
+    """Validate/repair the immutable norms+FSEM starting point when packaged."""
+    if not PACKAGED_BASELINE.is_file():
+        return {
+            "state": "unavailable",
+            "message": "В установке нет резервной базы ФСНБ; нормы будут скачаны, ФСЭМ восстановить нельзя",
+        }
+    from tools.smeta_release_baseline import repair_archive
+
+    result = repair_archive(PACKAGED_BASELINE, Path("."))
+    return {
+        "state": "ready",
+        "message": "Базовый ФСНБ и ФСЭМ проверены",
+        "action": result.get("action"),
+        "norms": result.get("norm_count"),
+        "fsem_rows": result.get("fsem_rows"),
+        "backup": result.get("backup"),
+    }
 def _write_status(path: Path, **payload: Any) -> None:
     _write_json(path, {"updated_at": datetime.now(timezone.utc).isoformat(), **payload})
+    current = payload.get("current") if isinstance(payload.get("current"), dict) else {}
+    location = " · ".join(
+        str(current.get(key) or "").strip()
+        for key in ("subject", "zone", "period")
+        if str(current.get(key) or "").strip()
+    )
+    progress = ""
+    if payload.get("completed") is not None and payload.get("total"):
+        progress = f" {payload.get('completed')}/{payload.get('total')}"
+    message = str(payload.get("message") or payload.get("error") or payload.get("stage") or "обновление")
+    line = f"[{datetime.now().astimezone().strftime('%H:%M:%S')}] {message}{progress}"
+    if location:
+        line += f" · {location}"
+    log_path = DEFAULT_LOG if path == DEFAULT_STATUS else path.with_suffix(".log")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8") as stream:
+        stream.write(line + "\n")
 
 
 def _period_order(period: dict[str, Any]) -> tuple[int, int, int]:
@@ -85,6 +149,8 @@ def update_price_books(
     out_root: Path = Path("data/price_base"),
     rate: float = 0.3,
     status_out: Path = DEFAULT_STATUS,
+    checkpoint_out: Path = DEFAULT_CHECKPOINT,
+    retries: int = 3,
 ) -> dict[str, Any]:
     """Download latest (or explicitly all) split forms for every price zone."""
     tasks: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] = []
@@ -94,6 +160,8 @@ def update_price_books(
             for period in periods if all_periods else periods[:1]:
                 tasks.append((subject, zone, period))
 
+    checkpoint = _read_json(checkpoint_out)
+    completed_books = checkpoint.get("books") if isinstance(checkpoint.get("books"), dict) else {}
     done: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
     delay = 1.0 / rate if rate > 0 else 0.0
@@ -120,13 +188,49 @@ def update_price_books(
             rate_bytes_per_second=round(rate_bytes_per_second, 1) if rate_bytes_per_second else None,
             current={"subject": subject.get("name"), "zone": zone.get("name"), "period": period.get("name")},
         )
-        result = price_fetch.import_price_zone(
-            subject=subject,
-            zone=zone,
-            period=period,
-            name=_book_name(subject, zone, period),
-            out_root=out_root,
-        )
+        key = _book_checkpoint_key(zone, period)
+        saved = completed_books.get(key) if isinstance(completed_books.get(key), dict) else {}
+        if saved and _valid_checkpoint_book(saved):
+            result = {**saved, "ok": True, "resumed": True}
+        else:
+            result = {}
+            for attempt in range(1, max(1, retries) + 1):
+                result = price_fetch.import_price_zone(
+                    subject=subject,
+                    zone=zone,
+                    period=period,
+                    name=_book_name(subject, zone, period),
+                    out_root=out_root,
+                )
+                if result.get("ok"):
+                    break
+                _write_status(
+                    status_out,
+                    status="running",
+                    stage="price_books",
+                    activity="retrying",
+                    message=f"Повторяем Сплит-форму после ошибки ({attempt}/{max(1, retries)})",
+                    completed=completed,
+                    total=len(tasks),
+                    remaining=len(tasks) - completed,
+                    percent=round(completed * 100 / len(tasks), 1) if tasks else 100.0,
+                    elapsed_seconds=round(time.monotonic() - started, 1),
+                    bytes_downloaded=bytes_downloaded,
+                    current={"subject": subject.get("name"), "zone": zone.get("name"), "period": period.get("name")},
+                    retry={"attempt": attempt, "maximum": max(1, retries), "reason": result.get("note")},
+                )
+                if attempt < max(1, retries):
+                    time.sleep(min(30.0, 2.0**attempt))
+            if result.get("ok"):
+                completed_books[key] = result
+                _write_json(
+                    checkpoint_out,
+                    {
+                        "schema": "les.fgis.update-checkpoint.v1",
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                        "books": completed_books,
+                    },
+                )
         (done if result.get("ok") else failed).append(result)
         bytes_downloaded += int(result.get("bytes") or 0)
         if delay and index < len(tasks):
@@ -156,10 +260,20 @@ def run_update(
     _write_status(
         status_out,
         status="running",
+        stage="baseline",
+        activity="validating",
+        message="Проверяем локальную основу ФСНБ и при необходимости восстанавливаем её",
+        started_at=started_at,
+    )
+    baseline = _repair_local_baseline()
+    _write_status(
+        status_out,
+        status="running",
         stage="catalog",
         activity="requesting_metadata",
         message="ФГИС ЦС: получаем список регионов, ценовых зон и периодов",
         started_at=started_at,
+        baseline=baseline,
     )
     catalog = discover_catalog()
     _write_json(catalog_out, catalog)
@@ -207,6 +321,7 @@ def run_update(
         "stage": "done",
         "scope": ["public_catalog", "split_forms", *( ["gesn_norms_resources"] if include_gesn else [])],
         "catalog": str(catalog_out),
+        "baseline": baseline,
         "prices": prices,
         "gesn": gesn,
         "limitations": [
@@ -228,10 +343,12 @@ def main(argv: Iterable[str] | None = None) -> int:
     try:
         result = run_update(include_gesn=not args.skip_gesn, all_periods=args.all_periods, rate=args.rate)
     except Exception as exc:  # noqa: BLE001 - persist an operator-visible failed job
+        previous = _read_json(DEFAULT_STATUS)
         result = {
             "schema": "les.fgis.public-update.v1",
             "status": "failed",
             "stage": "failed",
+            "failed_stage": previous.get("stage"),
             "error": f"{type(exc).__name__}: {exc}",
         }
         _write_status(DEFAULT_STATUS, **result)

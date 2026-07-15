@@ -342,6 +342,11 @@ def _named_collection_layout(info: Any, *, vector_size: int) -> tuple[bool, int]
     return compatible, points_count
 
 
+def _can_adopt_missing_contract(*, points_count: int, matching_fingerprint_count: int) -> bool:
+    """A missing sidecar is safe to recreate only from a provably canonical collection."""
+    return points_count == 0 or matching_fingerprint_count == points_count
+
+
 _MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.{2,160})$")
 _NUM_HEADING_RE = re.compile(r"^(\d+(?:\.\d+){0,4})[.\s]+([А-ЯЁA-Z].{1,150})$")
 _DATA_URI_RE = re.compile(
@@ -1190,6 +1195,38 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     )
                     await self.aclient.delete_collection(self.collection_name)
                     collection_info = None
+                elif index_contract_status().get("status") == "missing":
+                    # A packaged/clean Windows baseline may already contain the
+                    # canonical named collection while its small sidecar file is
+                    # absent. Adopt it only when the collection is empty or every
+                    # existing point proves the current embedding identity.
+                    matching_count = 0
+                    if points_count:
+                        expected_fingerprint = point_embedding_fingerprint()
+                        matching = await self.aclient.count(
+                            collection_name=self.collection_name,
+                            count_filter=models.Filter(
+                                must=[
+                                    models.FieldCondition(
+                                        key="embedding_fingerprint",
+                                        match=models.MatchValue(value=expected_fingerprint),
+                                    )
+                                ]
+                            ),
+                            exact=True,
+                        )
+                        matching_count = int(matching.count or 0)
+                    adopt = _can_adopt_missing_contract(
+                        points_count=points_count,
+                        matching_fingerprint_count=matching_count,
+                    )
+                    if adopt:
+                        write_index_contract(replace=False)
+                        logger.info(
+                            "[INIT] Adopted compatible named collection %s (%s points) into index contract",
+                            self.collection_name,
+                            points_count,
+                        )
             if collection_info is None:
                 if _qdrant_schema_mode() == "named":
                     await self.aclient.create_collection(

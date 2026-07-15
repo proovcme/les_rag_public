@@ -16,6 +16,7 @@ import shutil
 import sqlite3
 import tempfile
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -312,6 +313,65 @@ def provision_archive(archive: Path, state_root: Path) -> dict[str, Any]:
     return {**validation, "action": "installed"}
 
 
+def repair_archive(archive: Path, state_root: Path) -> dict[str, Any]:
+    """Restore a broken/partial baseline from the verified release payload.
+
+    A valid newer operator base is kept. A broken state is copied to a dated
+    recovery directory before the verified baseline replaces the complete
+    linked file set, so norms/manifests/FSEM can never be mixed across revisions.
+    """
+    archive_status = verify_archive(archive)
+    try:
+        current = validate_root(
+            state_root,
+            minimum_norms=int(archive_status["minimum_norms"]),
+            minimum_fsem_rows=int(archive_status["minimum_fsem_rows"]),
+        )
+        return {**current, "action": "kept_valid"}
+    except (BaselineError, OSError) as current_error:
+        reason = str(current_error)
+
+    state_root.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_root = state_root / "storage" / "recovery" / f"smeta_baseline_{stamp}"
+    backed_up: list[str] = []
+    for relative in REQUIRED_FILES:
+        source = state_root / Path(*relative.parts)
+        if not source.is_file():
+            continue
+        target = backup_root / Path(*relative.parts)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        backed_up.append(relative.as_posix())
+
+    with tempfile.TemporaryDirectory(prefix="les-smeta-repair-", dir=state_root) as temporary:
+        staging = Path(temporary)
+        with zipfile.ZipFile(archive) as bundle:
+            for relative in REQUIRED_FILES:
+                member = (PAYLOAD_PREFIX / relative).as_posix()
+                target = staging / Path(*relative.parts)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with bundle.open(member) as source, target.open("wb") as output:
+                    shutil.copyfileobj(source, output, length=8 * 1024 * 1024)
+        validation = validate_root(
+            staging,
+            minimum_norms=int(archive_status["minimum_norms"]),
+            minimum_fsem_rows=int(archive_status["minimum_fsem_rows"]),
+        )
+        for relative in REQUIRED_FILES:
+            source = staging / Path(*relative.parts)
+            target = state_root / Path(*relative.parts)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(source, target)
+    return {
+        **validation,
+        "action": "repaired",
+        "reason": reason,
+        "backup": str(backup_root) if backed_up else "",
+        "backed_up": backed_up,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -327,6 +387,9 @@ def main(argv: list[str] | None = None) -> int:
     provision = subparsers.add_parser("provision")
     provision.add_argument("--archive", type=Path, required=True)
     provision.add_argument("--state-root", type=Path, required=True)
+    repair = subparsers.add_parser("repair")
+    repair.add_argument("--archive", type=Path, required=True)
+    repair.add_argument("--state-root", type=Path, required=True)
     args = parser.parse_args(argv)
     if args.command == "create":
         result = create_archive(args.source_root, args.archive, minimum_norms=args.minimum_norms)
@@ -334,8 +397,10 @@ def main(argv: list[str] | None = None) -> int:
         result = verify_archive(args.archive)
     elif args.command == "verify-root":
         result = validate_root(args.root, minimum_norms=args.minimum_norms)
-    else:
+    elif args.command == "provision":
         result = provision_archive(args.archive, args.state_root)
+    else:
+        result = repair_archive(args.archive, args.state_root)
     print(json.dumps(result, ensure_ascii=False))
     return 0
 

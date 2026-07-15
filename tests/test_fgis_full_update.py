@@ -7,6 +7,7 @@ from proxy.services import fgis_price_fetch_service as price_fetch
 from proxy.services import fgis_update_service
 from sovushka.pages.instrumenty import _fgis_progress_text
 from tools import fgis_full_update
+from tools import fgis_update_supervisor
 
 
 def _catalog() -> dict:
@@ -115,10 +116,21 @@ def test_full_fgis_update_is_wired_to_operator_api_and_gui():
 
     assert '@router.post("/fgis/update")' in routes
     assert "fgis_update_service.start(include_gesn=True, all_periods=False)" in routes
-    assert "СКАЧАТЬ ФГИС ЦС" in ui
+    assert "СКАЧАТЬ / ОБНОВИТЬ ФСНБ" in ui
     assert 'api_post("/api/service-sources/fgis/update", {})' in ui
-    assert "каталог, Сплит-формы всех ценовых зон и ГЭСН" in ui
+    assert "ЖУРНАЛ ОБНОВЛЕНИЯ" in ui
     assert 'd.get("message") or d.get("reason")' in ui
+
+
+def test_dataset_addition_has_no_browser_confirm_and_operator_status_is_human():
+    source = (Path(__file__).resolve().parents[1] / "sovushka/pages/samovar.py").read_text(encoding="utf-8")
+    add_flow = source.split("async def _do_add():", 1)[1].split("ds = await api_post", 1)[0]
+
+    assert "План загрузки перед Play" not in source
+    assert "confirm(" not in add_flow
+    assert "ОСТАНОВЛЕНО" in source
+    assert "ОЗУ свободно" in source
+    assert "активной parse-job нет" not in source
 
 
 def test_fgis_progress_explains_running_and_interrupted_states():
@@ -161,3 +173,92 @@ def test_fgis_idle_text_distinguishes_refresh_from_download():
     assert "Обычная кнопка обновления" in detail
     assert percent is None
     assert running is False
+
+
+def test_price_update_resumes_verified_book_from_checkpoint(tmp_path: Path, monkeypatch):
+    import pandas as pd
+
+    parquet = tmp_path / "ready.parquet"
+    pd.DataFrame([{"code": "01.1-1"}]).to_parquet(parquet, index=False)
+    checkpoint = tmp_path / "checkpoint.json"
+    checkpoint.write_text(
+        json.dumps(
+            {
+                "schema": "les.fgis.update-checkpoint.v1",
+                "books": {
+                    "10:102": {"ok": True, "rows": 1, "bytes": 2048, "parquet": str(parquet)},
+                    "20:201": {"ok": True, "rows": 1, "bytes": 2048, "parquet": str(parquet)},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(price_fetch, "import_price_zone", lambda **_: (_ for _ in ()).throw(AssertionError("downloaded again")))
+
+    result = fgis_full_update.update_price_books(
+        catalog=_catalog(),
+        out_root=tmp_path,
+        status_out=tmp_path / "status.json",
+        checkpoint_out=checkpoint,
+        rate=0,
+    )
+
+    assert result["done"] == 2
+    assert result["failed"] == 0
+    assert all(item.get("resumed") for item in result["books"])
+
+
+def test_operator_start_downloads_prices_when_gesn_is_already_running(tmp_path: Path, monkeypatch):
+    from proxy.services import gesn_update_service
+
+    commands: list[list[str]] = []
+
+    class Process:
+        pid = 4321
+
+    monkeypatch.setattr(fgis_update_service, "_LOG", tmp_path / "fgis.log")
+    monkeypatch.setattr(fgis_update_service, "_PID", tmp_path / "fgis.pid")
+    monkeypatch.setattr(fgis_update_service, "DEFAULT_STATUS", tmp_path / "fgis-status.json")
+    monkeypatch.setattr(fgis_update_service, "pid_running", lambda pid: pid == 4321)
+    monkeypatch.setattr(gesn_update_service, "status", lambda: {"running": True, "progress": {"current_prefix": "12-03"}})
+    monkeypatch.setattr(
+        fgis_update_service.subprocess,
+        "Popen",
+        lambda cmd, **_: commands.append(cmd) or Process(),
+    )
+
+    result = fgis_update_service.start(include_gesn=True)
+
+    assert result["started"] is True
+    assert result["joined_existing_gesn"] is True
+    assert "--skip-gesn" in commands[0]
+
+
+def test_supervisor_restarts_failed_update_from_checkpoint(monkeypatch):
+    calls: list[list[str]] = []
+    statuses = [
+        {"status": "failed", "stage": "failed", "failed_stage": "price_books"},
+        {"status": "done", "stage": "done"},
+    ]
+    writes: list[dict] = []
+
+    class Result:
+        def __init__(self, code: int):
+            self.returncode = code
+
+    codes = iter([1, 0])
+    monkeypatch.setattr(
+        fgis_update_supervisor.subprocess,
+        "run",
+        lambda command, **_: calls.append(command) or Result(next(codes)),
+    )
+    monkeypatch.setattr(fgis_update_supervisor, "_read_json", lambda _path: statuses.pop(0))
+    monkeypatch.setattr(fgis_update_supervisor, "_write_json", lambda _path, payload: writes.append(payload))
+    monkeypatch.setattr(fgis_update_supervisor.time, "sleep", lambda _seconds: None)
+
+    code = fgis_update_supervisor.run_supervised(include_gesn=True, all_periods=False, attempts=3)
+
+    assert code == 0
+    assert len(calls) == 2
+    assert writes[0]["stage"] == "retry"
+    assert writes[0]["retry_stage"] == "price_books"

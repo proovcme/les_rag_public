@@ -758,6 +758,19 @@ body, .nicegui-content, .q-page, .q-layout, .q-card, .q-dialog, .q-menu,
   font-size: .68rem;
   line-height: 1.45;
 }
+.sov-status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel) 88%, var(--accent) 12%);
+  color: var(--fg);
+  font-size: .66rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
 .sov-artifacts-body {
   flex: 1;
   width: 100%;

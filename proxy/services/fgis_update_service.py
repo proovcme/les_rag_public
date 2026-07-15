@@ -32,6 +32,7 @@ def _tail(path: Path, limit: int = 30) -> list[str]:
 
 
 _STAGE_LABELS = {
+    "baseline": "проверка и восстановление ФСНБ",
     "starting": "запуск",
     "catalog": "каталог регионов и периодов",
     "price_books": "Сплит-формы",
@@ -41,7 +42,65 @@ _STAGE_LABELS = {
     "service_rag": "обновление навигационного индекса",
     "done": "готово",
     "failed": "ошибка",
+    "retry": "автоматическое продолжение",
 }
+
+_LAYER_ORDER = (
+    ("baseline", "Основа ФСНБ и ФСЭМ"),
+    ("catalog", "Каталог регионов и периодов"),
+    ("price_books", "Ресурсы и цены: Сплит-формы"),
+    ("gesn", "Нормы ФСНБ: ГЭСН, ГЭСНм, ГЭСНп, ГЭСНр, ГЭСНмр"),
+    ("unify", "Единый типизированный Parquet"),
+    ("structured", "Расчётная база SQLite"),
+    ("service_rag", "Поисковый индекс сметной базы"),
+)
+
+
+def _operator_reason(value: object) -> str:
+    text = str(value or "").strip()
+    low = text.casefold()
+    if not text:
+        return "Неизвестная ошибка обновления"
+    if "permission denied" in low or "errno 13" in low:
+        return "Нет доступа к локальному файлу. ЛЕС повторит операцию после освобождения файла."
+    if "timed out" in low or "timeout" in low:
+        return "ФГИС не ответил вовремя. ЛЕС повторяет запрос и продолжит с контрольной точки."
+    if "json" in low:
+        return "ФГИС вернул повреждённый ответ. ЛЕС повторяет запрос с контрольной точки."
+    if "url" in low or "connection" in low or "network" in low:
+        return "Нет устойчивого соединения с ФГИС. Уже скачанное сохранено; ЛЕС повторит запрос."
+    return text
+
+
+def _layers(raw: dict[str, Any], *, running: bool) -> list[dict[str, Any]]:
+    current_stage = str(raw.get("stage") or "")
+    effective_stage = str(raw.get("retry_stage") or raw.get("failed_stage") or current_stage)
+    current_index = next((i for i, item in enumerate(_LAYER_ORDER) if item[0] == effective_stage), -1)
+    finished = str(raw.get("status") or "") in {"done", "partial"}
+    failed = str(raw.get("status") or "") == "failed"
+    layers: list[dict[str, Any]] = []
+    for index, (key, label) in enumerate(_LAYER_ORDER):
+        if finished:
+            state = "done"
+        elif failed and key == effective_stage:
+            state = "error"
+        elif index < current_index:
+            state = "done"
+        elif running and index == current_index:
+            state = "running"
+        else:
+            state = "pending"
+        item: dict[str, Any] = {"id": key, "label": label, "state": state}
+        if key == "baseline" and isinstance(raw.get("baseline"), dict):
+            item["detail"] = raw["baseline"].get("message")
+        elif key == "price_books" and isinstance(raw.get("prices"), dict):
+            item["detail"] = f"{raw['prices'].get('done', 0)}/{raw['prices'].get('requested', 0)} книг"
+        elif key == effective_stage:
+            item["detail"] = str(raw.get("message") or "")
+        if key == "price_books" and finished and int((raw.get("prices") or {}).get("failed") or 0):
+            item["state"] = "warning"
+        layers.append(item)
+    return layers
 
 
 def _heartbeat_age(value: object) -> float | None:
@@ -86,7 +145,7 @@ def _progress(raw: dict[str, Any], *, running: bool) -> dict[str, Any]:
         reason = "Обновление завершено" if status_name == "done" else "Обновление завершено с отдельными ошибками"
     elif status_name == "failed":
         state = "failed"
-        reason = str(raw.get("error") or "Обновление завершилось ошибкой")
+        reason = _operator_reason(raw.get("error") or "Обновление завершилось ошибкой")
     elif running:
         state = "running"
         reason = str(raw.get("message") or "Фоновый процесс работает")
@@ -125,35 +184,74 @@ def _progress(raw: dict[str, Any], *, running: bool) -> dict[str, Any]:
 def status() -> dict[str, Any]:
     raw_pid = _PID.read_text().strip() if _PID.exists() else ""
     pid = int(raw_pid) if raw_pid.isdigit() else 0
-    running = bool(pid and pid_running(pid))
+    process_running = bool(pid and pid_running(pid))
     raw = _read_json(DEFAULT_STATUS)
+    from proxy.services import gesn_update_service
+
+    gesn = gesn_update_service.status()
+    dependency = {
+        "running": bool(gesn.get("running")),
+        "progress": gesn.get("progress") or {},
+        "stage": (gesn.get("status") or {}).get("stage"),
+    }
+    running = process_running or bool(dependency["running"])
+    normalized_progress = _progress(raw, running=process_running)
+    if dependency["running"] and not process_running:
+        gesn_progress = dependency["progress"]
+        total = int(gesn_progress.get("collection_total") or 0) or None
+        completed = max(0, int(gesn_progress.get("collection_index") or 1) - 1)
+        normalized_progress.update(
+            {
+                "state": "running",
+                "stage": "gesn",
+                "stage_label": _STAGE_LABELS["gesn"],
+                "reason": "Продолжается загрузка пяти семейств норм ФСНБ",
+                "completed": completed,
+                "total": total,
+                "remaining": max(0, total - completed) if total else None,
+                "percent": round(completed * 100 / total, 1) if total else None,
+                "units": "collections",
+                "current": {
+                    "collection": gesn_progress.get("collection"),
+                    "prefix": gesn_progress.get("current_prefix"),
+                },
+            }
+        )
+    layer_status = _layers(raw, running=process_running)
+    if dependency["running"]:
+        for item in layer_status:
+            if item["id"] == "gesn":
+                item["state"] = "running"
+                item["detail"] = "Скачиваются пять семейств норм ФСНБ"
     return {
         "running": running,
-        "pid": pid if running else None,
+        "process_running": process_running,
+        "pid": pid if process_running else gesn.get("pid"),
         "status": raw,
-        "progress": _progress(raw, running=running),
+        "progress": normalized_progress,
+        "gesn_dependency": dependency,
         "catalog": {"path": str(DEFAULT_CATALOG), "exists": DEFAULT_CATALOG.exists()},
         "manifest": {"path": str(DEFAULT_MANIFEST), "exists": DEFAULT_MANIFEST.exists()},
         "log": str(_LOG),
         "log_tail": _tail(_LOG),
+        "layers": layer_status,
     }
 
 
 def start(*, include_gesn: bool = True, all_periods: bool = False) -> dict[str, Any]:
     current = status()
-    if current["running"]:
+    if current["process_running"]:
         return {"ok": True, "started": False, **current}
+    joined_existing_gesn = False
     if include_gesn:
         from proxy.services import gesn_update_service
 
         if gesn_update_service.status().get("running"):
-            return {
-                "ok": False,
-                "started": False,
-                "reason": "gesn_update_running",
-                "message": "Отдельное обновление ГЭСН уже выполняется; дождитесь его завершения.",
-                **current,
-            }
+            # Price books and GESN use different staging/canonical files.  Keep
+            # the already-running GESN job and start only the missing price
+            # part instead of turning the operator's click into a dead end.
+            include_gesn = False
+            joined_existing_gesn = True
     _LOG.parent.mkdir(parents=True, exist_ok=True)
     DEFAULT_STATUS.parent.mkdir(parents=True, exist_ok=True)
     DEFAULT_STATUS.write_text(
@@ -170,7 +268,7 @@ def start(*, include_gesn: bool = True, all_periods: bool = False) -> dict[str, 
         ),
         encoding="utf-8",
     )
-    cmd = [sys.executable, "-m", "tools.fgis_full_update"]
+    cmd = [sys.executable, "-m", "tools.fgis_update_supervisor"]
     if not include_gesn:
         cmd.append("--skip-gesn")
     if all_periods:
@@ -194,4 +292,14 @@ def start(*, include_gesn: bool = True, all_periods: bool = False) -> dict[str, 
         )
         return {"ok": False, "started": False, **status()}
     _PID.write_text(str(proc.pid), encoding="utf-8")
-    return {"ok": True, "started": True, **status()}
+    return {
+        "ok": True,
+        "started": True,
+        "joined_existing_gesn": joined_existing_gesn,
+        "message": (
+            "Сплит-формы запущены; уже выполняющееся обновление ГЭСН продолжает работу отдельно."
+            if joined_existing_gesn
+            else "Полное обновление ФГИС ЦС запущено."
+        ),
+        **status(),
+    }

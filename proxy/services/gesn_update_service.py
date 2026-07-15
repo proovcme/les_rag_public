@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -34,6 +35,24 @@ def _tail(path: Path, limit: int = 30) -> list[str]:
         return []
 
 
+def _log_progress(lines: list[str]) -> dict[str, Any]:
+    for line in reversed(lines):
+        match = re.search(r"\[queue\]\s+(\d{2}-\d{2}).*done=(\d+)\s+err=(\d+)", line)
+        if match:
+            prefix = match.group(1)
+            collection = int(prefix[:2])
+            return {
+                "current_prefix": prefix,
+                "collection": collection,
+                "collection_index": collection,
+                "collection_total": 69,
+                "collections_remaining": max(0, 69 - collection),
+                "otdels_done": int(match.group(2)),
+                "errors": int(match.group(3)),
+            }
+    return {}
+
+
 def status() -> dict[str, Any]:
     pid = int(_PID.read_text().strip()) if _PID.exists() and _PID.read_text().strip().isdigit() else 0
     running = bool(pid and pid_running(pid))
@@ -42,10 +61,14 @@ def status() -> dict[str, Any]:
     structured = DEFAULT_STRUCTURED_OUT
     structured_manifest = DEFAULT_STRUCTURED_MANIFEST
     service_rag_overview = DEFAULT_SERVICE_RAG_OUT / "00_smeta_service_overview.md"
+    log_tail = _tail(_LOG)
+    raw_status = _read_json(DEFAULT_STATUS)
+    progress = raw_status.get("progress") or _log_progress(log_tail)
     return {
         "running": running,
         "pid": pid if running else None,
-        "status": _read_json(DEFAULT_STATUS),
+        "status": raw_status,
+        "progress": progress,
         "unified": {
             "path": str(unified),
             "exists": unified.exists(),
@@ -72,7 +95,7 @@ def status() -> dict[str, Any]:
             "overview_size_bytes": service_rag_overview.stat().st_size if service_rag_overview.exists() else 0,
         },
         "log": str(_LOG),
-        "log_tail": _tail(_LOG),
+        "log_tail": log_tail,
     }
 
 

@@ -49,6 +49,7 @@ $runtimeState = $null
 $smokeDatasetId = $null
 $smokeSeedPath = $null
 $smokeCollectionCreated = $false
+$fgisSmokeStarted = $false
 
 try {
   if (-not (Test-Path -LiteralPath $Bootstrap)) {
@@ -128,6 +129,41 @@ try {
     throw "isolated Qdrant collection was not created: $smokeCollection"
   }
 
+  # Prove that the installed operator button is wired to a real resumable
+  # process, not only to a static status response. Stop it after the first live
+  # catalogue/download heartbeat; the release smoke must stay bounded.
+  $result.stage = "fgis_start"
+  $fgisStart = Invoke-RestMethod -Method Post `
+    -Uri "http://127.0.0.1:$proxyPort/api/service-sources/fgis/update" -TimeoutSec 30
+  if (-not $fgisStart.ok -or -not $fgisStart.started) {
+    throw "FGIS operator update did not start: $($fgisStart.message)"
+  }
+  $fgisSmokeStarted = $true
+  $fgisDeadline = (Get-Date).AddSeconds(120)
+  $fgisStatus = $null
+  do {
+    Start-Sleep -Seconds 1
+    $fgisStatus = Invoke-RestMethod `
+      -Uri "http://127.0.0.1:$proxyPort/api/service-sources/fgis/update/status" -TimeoutSec 30
+    if ($fgisStatus.running -and $fgisStatus.progress.stage -in @("baseline", "catalog", "price_books")) {
+      break
+    }
+  } while ((Get-Date) -lt $fgisDeadline)
+  if (-not $fgisStatus -or -not $fgisStatus.running) {
+    throw "FGIS operator update did not produce a live process/status"
+  }
+  if (@($fgisStatus.layers).Count -lt 7) {
+    throw "FGIS operator status does not expose the FSNB layer plan"
+  }
+  $result.fgis = [ordered]@{
+    started = $true
+    pid = $fgisStatus.pid
+    stage = $fgisStatus.progress.stage
+    stage_label = $fgisStatus.progress.stage_label
+    layers = @($fgisStatus.layers).Count
+    log_lines = @($fgisStatus.log_tail).Count
+  }
+
   # A clean release state has no local dataset catalog. Looking only at the
   # shared Qdrant collections would test somebody else's data and can return an
   # empty result even when indexing is healthy. Seed one isolated dataset
@@ -199,6 +235,8 @@ try {
     [int]$smetaBaseline.norm_count -ge 40000 -and
     [int]$smetaBaseline.fsem_rows -ge 1500 -and
     [int]$ui.StatusCode -eq 200 -and
+    $result.fgis.started -and
+    [int]$result.fgis.layers -ge 7 -and
     @($rrf.chunks).Count -gt 0 -and
     $rrf.retrieval_trace.fusion -match "rrf" -and
     $channels -contains "dense" -and
@@ -209,6 +247,17 @@ try {
   $result.error = $_.Exception.Message
   $result.error_type = $_.Exception.GetType().FullName
 } finally {
+  if ($fgisSmokeStarted) {
+    try {
+      Get-CimInstance Win32_Process | Where-Object {
+        $_.ExecutablePath -and
+        $_.ExecutablePath.StartsWith($StateRoot, [System.StringComparison]::OrdinalIgnoreCase) -and
+        $_.CommandLine -match "tools\.fgis_(update_supervisor|full_update)"
+      } | ForEach-Object {
+        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+      }
+    } catch { }
+  }
   if ($smokeDatasetId -and $runtimeState) {
     try {
       Invoke-RestMethod -Method Delete `

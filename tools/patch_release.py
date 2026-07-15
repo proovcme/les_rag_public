@@ -80,9 +80,8 @@ def require_clean_pushed_branch(branch: str) -> str:
 
 def run_local_gates() -> None:
     for command in (
-        ["make", "test-release"],
         ["make", "verify"],
-        ["make", "test-rag-core"],
+        ["make", "test-release-critical"],
         ["make", "public-check"],
         ["uv", "lock", "--check"],
         ["git", "diff", "--check"],

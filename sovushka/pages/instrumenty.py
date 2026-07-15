@@ -227,21 +227,36 @@ def build_instrumenty():
                     "Папки и датасеты, на которых ЛЕС считает сметы и проверяет документацию."
                 ).style("font-size:.72rem;color:var(--dim);")
             with ui.row().classes("items-center gap-2"):
-                fgis_update_btn = ui.button("СКАЧАТЬ ФГИС ЦС", icon="cloud_download").props(
+                fgis_update_btn = ui.button("СКАЧАТЬ / ОБНОВИТЬ ФСНБ", icon="cloud_download").props(
                     "dense no-caps"
                 ).style("min-height:40px;")
                 refresh_btn = ui.button("ОБНОВИТЬ").props("dense no-caps")
 
         with ui.card().classes("card-les w-full"):
             summary = ui.label("Загрузка источников…").style("font-size:.74rem;color:var(--dim);")
-            fgis_status = ui.label(
-                "ФГИС ЦС: проверка состояния общего обновления…"
-            ).style("font-size:.7rem;color:var(--dim);font-variant-numeric:tabular-nums;")
+            with ui.row().classes("w-full items-center gap-2"):
+                fgis_state_icon = ui.icon("o_schedule").style("font-size:20px;color:var(--dim);")
+                fgis_status = ui.label(
+                    "ФГИС ЦС: проверка состояния общего обновления…"
+                ).style("font-size:.78rem;font-weight:800;flex:1;font-variant-numeric:tabular-nums;")
             fgis_progress = ui.linear_progress(value=0).props("rounded size=6px").classes("w-full")
             fgis_progress.set_visibility(False)
             fgis_detail = ui.label("").style(
                 "font-size:.66rem;color:var(--dim);font-variant-numeric:tabular-nums;text-wrap:pretty;"
             )
+            with ui.row().classes("w-full gap-2").style("flex-wrap:wrap;"):
+                fgis_stage = ui.label("Этап: —").classes("sov-status-pill")
+                fgis_counter = ui.label("Готово: —").classes("sov-status-pill")
+                fgis_volume = ui.label("Скачано: —").classes("sov-status-pill")
+                fgis_eta = ui.label("Осталось: —").classes("sov-status-pill")
+            fgis_layers = ui.column().classes("w-full gap-1")
+            with ui.expansion("ЖУРНАЛ ОБНОВЛЕНИЯ", icon="o_terminal").classes("w-full").props("dense"):
+                fgis_log = ui.log(max_lines=40).classes("w-full").style(
+                    "height:180px;background:#111827;color:#d1fae5;border-radius:8px;"
+                    "padding:8px;font-size:11px;font-variant-numeric:tabular-nums;"
+                )
+                fgis_log.push("Ожидаем запуск обновления…")
+            fgis_log_state = {"seen": set(), "started": False}
             cards = ui.column().classes("w-full gap-2")
 
         with ui.card().classes("card-les w-full"):
@@ -284,13 +299,15 @@ def build_instrumenty():
         async def _update_all_fgis() -> None:
             d = await api_post("/api/service-sources/fgis/update", {})
             if not isinstance(d, dict) or not d.get("ok"):
-                ui.notify(last_api_error_text("Обновление ФГИС ЦС не запущено"), type="negative")
+                message = (
+                    str(d.get("message") or d.get("reason") or "").strip()
+                    if isinstance(d, dict)
+                    else ""
+                )
+                ui.notify(message or last_api_error_text("Обновление ФГИС ЦС не запущено"), type="negative")
                 return
             if d.get("started"):
-                ui.notify(
-                    "ФГИС ЦС: в фоне обновляются каталог, Сплит-формы всех ценовых зон и ГЭСН",
-                    type="positive",
-                )
+                ui.notify(str(d.get("message") or "Обновление ФГИС ЦС запущено"), type="positive")
             else:
                 ui.notify("Обновление ФГИС ЦС уже выполняется", type="info")
             await _refresh_fgis_status()
@@ -468,8 +485,86 @@ def build_instrumenty():
                 fgis_update_btn.props(remove="loading disable")
                 return
             status_text, detail_text, percent, running = _fgis_progress_text(d)
+            progress = d.get("progress") or {}
+            dependency = d.get("gesn_dependency") or {}
+            if dependency.get("running"):
+                dep_progress = dependency.get("progress") or {}
+                dep_text = "ГЭСН уже скачивается отдельно"
+                if dep_progress.get("current_prefix"):
+                    dep_text += f" · сейчас {dep_progress.get('current_prefix')}"
+                if dep_progress.get("otdels_done") is not None:
+                    dep_text += f" · отделов готово {dep_progress.get('otdels_done')}"
+                detail_text = f"{detail_text} · {dep_text}" if detail_text else dep_text
             fgis_status.text = status_text
             fgis_detail.text = detail_text
+            state = str(progress.get("state") or "idle")
+            if running:
+                fgis_state_icon.name = "o_cloud_download"
+                fgis_state_icon.style("color:var(--accent);")
+            elif state in {"done", "partial"}:
+                fgis_state_icon.name = "o_check_circle"
+                fgis_state_icon.style("color:var(--ok);")
+            elif state in {"failed", "interrupted"}:
+                fgis_state_icon.name = "o_error"
+                fgis_state_icon.style("color:var(--err);")
+            else:
+                fgis_state_icon.name = "o_schedule"
+                fgis_state_icon.style("color:var(--dim);")
+            fgis_stage.text = f"Этап: {progress.get('stage_label') or 'ожидание'}"
+            completed = progress.get("completed")
+            total = progress.get("total")
+            fgis_counter.text = (
+                f"Готово: {completed}/{total}" if completed is not None and total else "Готово: —"
+            )
+            fgis_volume.text = f"Скачано: {_format_bytes(progress.get('bytes_downloaded'))}"
+            fgis_eta.text = (
+                f"Осталось: {_format_duration(progress.get('eta_seconds'))}"
+                if progress.get("eta_seconds") is not None
+                else "Осталось: считаем…" if running else "Осталось: —"
+            )
+            fgis_layers.clear()
+            with fgis_layers:
+                for layer in d.get("layers") or []:
+                    layer_state = str(layer.get("state") or "pending")
+                    icon_name, icon_color, state_label = {
+                        "done": ("o_check_circle", "var(--ok)", "готово"),
+                        "running": ("o_downloading", "var(--accent)", "выполняется"),
+                        "warning": ("o_warning", "var(--warn)", "нужен повтор"),
+                        "error": ("o_error", "var(--err)", "остановлено"),
+                    }.get(layer_state, ("o_schedule", "var(--dim)", "ожидает"))
+                    with ui.row().classes("w-full items-center gap-2").style(
+                        "padding:5px 7px;border:1px solid var(--line);border-radius:7px;"
+                    ):
+                        ui.icon(icon_name).style(f"font-size:16px;color:{icon_color};")
+                        ui.label(str(layer.get("label") or "Слой")).style(
+                            "font-size:.7rem;font-weight:750;flex:1;"
+                        )
+                        detail = str(layer.get("detail") or "").strip()
+                        if detail:
+                            ui.label(detail).style("font-size:.64rem;color:var(--dim);")
+                        ui.label(state_label).style(f"font-size:.64rem;font-weight:800;color:{icon_color};")
+            raw_lines = [str(line) for line in d.get("log_tail") or []]
+            current = progress.get("current") or {}
+            current_name = " · ".join(
+                str(current.get(key) or "").strip()
+                for key in ("subject", "zone", "period", "collection", "prefix")
+                if str(current.get(key) or "").strip()
+            )
+            synthetic = (
+                f"[{str(progress.get('updated_at') or '')[11:19]}] "
+                f"{progress.get('stage_label') or 'ожидание'}"
+                + (f" · {completed}/{total}" if completed is not None and total else "")
+                + (f" · {current_name}" if current_name else "")
+            )
+            if running or state in {"done", "partial", "failed", "interrupted"}:
+                raw_lines.append(synthetic)
+            new_lines = [line for line in raw_lines if line and line not in fgis_log_state["seen"]]
+            if new_lines and not fgis_log_state["started"]:
+                fgis_log.clear()
+                fgis_log_state["started"] = True
+            for line in new_lines:
+                fgis_log.push(line)
+                fgis_log_state["seen"].add(line)
             if running:
                 fgis_update_btn.props("loading disable")
                 fgis_progress.set_visibility(True)
