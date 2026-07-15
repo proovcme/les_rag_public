@@ -534,6 +534,7 @@ def _run_batch_norm_agent(
         raise ValueError("max_turns must be positive")
     consecutive_non_tool_turns = 0
     invalid_submission_attempts = 0
+    accepted_rows: dict[str, dict[str, Any]] = {}
     for turn in range(1, max_turns + 1):
         started = perf_counter()
         last_tool_name = next(
@@ -670,7 +671,7 @@ def _run_batch_norm_agent(
                 for item in rows:
                     work_id = str(item.get("work_id") or "")
                     decision = str(item.get("decision") or "")
-                    if work_id not in by_id or work_id in proposed:
+                    if work_id not in by_id or work_id in proposed or work_id in accepted_rows:
                         errors.append({"work_id": work_id, "error": "unknown or duplicate work_id"})
                         continue
                     if decision == "unbound":
@@ -722,15 +723,29 @@ def _run_batch_norm_agent(
                         "review_status": "model_batch",
                         "resource_bindings": _model_resource_bindings(work_id, item, by_id[work_id]),
                     }
-                missing = [work_id for work_id in by_id if work_id not in proposed]
+                missing = [
+                    work_id for work_id in by_id
+                    if work_id not in accepted_rows and work_id not in proposed
+                ]
                 if missing:
                     errors.append({"error": "missing work_ids", "work_ids": missing})
                 for work_id, item in proposed.items():
                     if item.get("covered_by_work_id") and item["covered_by_work_id"] not in all_work_ids:
                         errors.append({"work_id": work_id, "error": "covered_by_work_id is absent"})
                 if errors:
+                    # Keep the model's already valid decisions intact and ask it
+                    # only for the rejected/missing rows.  Code does not choose
+                    # or rewrite them, and a retry no longer regenerates a whole
+                    # large VOR because one row needed another RAG read.
+                    accepted_rows.update(proposed)
                     invalid_submission_attempts += 1
-                    result = {"ok": False, "errors": errors}
+                    remaining = [work_id for work_id in by_id if work_id not in accepted_rows]
+                    result = {
+                        "ok": False,
+                        "errors": errors,
+                        "accepted_work_ids": list(accepted_rows),
+                        "remaining_work_ids": remaining,
+                    }
                     if progress:
                         first_error = str((errors[0] or {}).get("error") or "некорректный mapping")
                         progress({
@@ -746,8 +761,8 @@ def _run_batch_norm_agent(
                             + json.dumps(errors[:5], ensure_ascii=False, default=str)
                         )
                 else:
-                    submitted = proposed
-                    result = {"ok": True, "rows": len(proposed)}
+                    submitted = {**accepted_rows, **proposed}
+                    result = {"ok": True, "rows": len(submitted)}
             else:
                 result = {"ok": False, "error": f"unknown tool: {name}"}
             tool_message = {

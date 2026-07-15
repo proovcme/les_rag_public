@@ -499,6 +499,56 @@ def test_batch_agent_rejects_unopened_norm_without_selecting_for_model():
     assert "opened by the model" in first_result["errors"][0]["error"]
 
 
+def test_batch_agent_keeps_valid_rows_while_model_repairs_only_rejected_row(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": [{
+            "norm_code": "ГЭСН01-01-001-01", "title": "Работа 1",
+            "measure_unit": "шт", "work_steps": ["Работа"], "resource_preview": [],
+        }]}
+        for query in queries
+    })
+    monkeypatch.setattr(workflow.nr_sp_service, "candidates", lambda **_kwargs: [])
+    monkeypatch.setattr(workflow.gesn_service, "get_norm", lambda *_args, **_kwargs: {
+        "name": "Работа 1", "unit": "шт", "work_steps": ["Работа"], "resources": [],
+    })
+    turns = iter([
+        [_native_call("search", "search_norms_batch", items=[
+            {"work_id": "w1", "queries": ["работа 1"]},
+            {"work_id": "w2", "queries": ["работа 2"]},
+        ])],
+        [_native_call("read", "read_norms_batch", items=[{
+            "work_id": "w1", "norm_codes": ["ГЭСН01-01-001-01"],
+        }])],
+        [_native_call("submit1", "submit_lsr_mapping", rows=[
+            {"work_id": "w1", "decision": "bind", "norm_code": "ГЭСН01-01-001-01",
+             "selection_kind": "exact", "applicability": "exact", "reason": "совпадает"},
+            {"work_id": "w2", "decision": "bind", "norm_code": "ГЭСН01-01-999-99",
+             "selection_kind": "exact", "applicability": "exact", "reason": "не открыта"},
+        ])],
+        [_native_call("submit2", "submit_lsr_mapping", rows=[{
+            "work_id": "w2", "decision": "unbound", "reason": "точной нормы нет",
+        }])],
+    ])
+
+    result = workflow._run_native_norm_agent(
+        [
+            {"work_id": "w1", "title": "Работа 1", "unit": "шт", "quantity": 1},
+            {"work_id": "w2", "title": "Работа 2", "unit": "шт", "quantity": 1},
+        ],
+        lambda _messages, _tools: {"tool_calls": next(turns)},
+        candidate_limit=3,
+        max_turns=4,
+    )
+
+    assert result["selections"]["w1"]["norm_code"] == "ГЭСН01-01-001-01"
+    assert result["selections"]["w2"]["norm_code"] == ""
+    retry = result["model_trace"][2]["tool_results"][0]["result"]
+    assert retry["accepted_work_ids"] == ["w1"]
+    assert retry["remaining_work_ids"] == ["w2"]
+
+
 def test_batch_agent_has_configurable_transport_turn_budget():
     from proxy.smeta_core import document_workflow as workflow
 
