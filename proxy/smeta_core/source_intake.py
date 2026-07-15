@@ -64,6 +64,7 @@ def _rows_to_items(
     source_path: Path,
     source_locator: str,
     table_index: int,
+    work_id_start: int = 0,
 ) -> tuple[list[WorkItem], list[dict[str, Any]]]:
     items: list[WorkItem] = []
     issues: list[dict[str, Any]] = []
@@ -91,11 +92,6 @@ def _rows_to_items(
         # This is layout metadata, not a work row.
         if nonempty and all(re.fullmatch(r"\d+(?:[.,]\d+)?", value) for value in nonempty):
             continue
-        section_match = _SECTION_RE.match(joined)
-        if section_match and len(nonempty) <= 2:
-            current_section = joined
-            continue
-
         title = _cell(row, columns.get("title"))
         unit = _cell(row, columns.get("unit"))
         quantity_raw = _cell(row, columns.get("quantity"))
@@ -105,7 +101,21 @@ def _rows_to_items(
         if not title and not unit and quantity is None:
             continue
 
-        work_id = f"vor-{len(items) + 1:04d}"
+        # Printed/exported workbooks commonly keep section totals as numeric
+        # zeroes in price columns.  A row with a visible title but without a
+        # unit or quantity is a section only when every other source cell is
+        # empty or zero; no work operation is inferred or discarded here.
+        title_index = columns.get("title")
+        number_index = columns.get("number")
+        other_values = [
+            value for index, value in enumerate(values)
+            if index not in {title_index, number_index} and value
+        ]
+        if title and not unit and quantity is None and all(_number(value) == 0 for value in other_values):
+            current_section = title
+            continue
+
+        work_id = f"vor-{work_id_start + len(items) + 1:04d}"
         source_ref = f"{source_path}#{source_locator};table={table_index};row={raw_index}"
         assumptions: tuple[str, ...] = ()
         if not title or not unit or quantity is None:
@@ -156,6 +166,7 @@ def intake_vor_pdf(path: str | Path) -> dict[str, Any]:
                     source_path=source,
                     source_locator=f"page={page_number}",
                     table_index=page_table_index,
+                    work_id_start=len(items),
                 )
                 items.extend(extracted)
                 issues.extend(table_issues)
@@ -170,3 +181,58 @@ def intake_vor_pdf(path: str | Path) -> dict[str, Any]:
         "issues": issues,
         "semantic_selection_performed": False,
     }
+
+
+def intake_vor_xlsx(path: str | Path) -> dict[str, Any]:
+    """Extract visible work rows from every worksheet without semantic guessing."""
+    source = Path(path).expanduser().resolve()
+    if not source.is_file() or source.suffix.lower() not in {".xlsx", ".xlsm"}:
+        raise ValueError(f"XLSX source not found: {source}")
+    try:
+        import openpyxl
+    except ImportError as exc:  # pragma: no cover - environment capability
+        raise RuntimeError("openpyxl is required for XLSX VOR intake") from exc
+
+    items: list[WorkItem] = []
+    issues: list[dict[str, Any]] = []
+    sheet_count = 0
+    workbook = openpyxl.load_workbook(source, data_only=True, read_only=True)
+    try:
+        for worksheet in workbook.worksheets:
+            rows = [list(row) for row in worksheet.iter_rows(values_only=True)]
+            if not any(any(value not in (None, "") for value in row) for row in rows):
+                continue
+            sheet_count += 1
+            extracted, sheet_issues = _rows_to_items(
+                rows,
+                source_path=source,
+                source_locator=f"sheet={worksheet.title}",
+                table_index=1,
+                work_id_start=len(items),
+            )
+            items.extend(extracted)
+            issues.extend(sheet_issues)
+    finally:
+        workbook.close()
+    return {
+        "schema": "smeta_vor_intake_v1",
+        "source_kind": "xlsx",
+        "source_path": str(source),
+        "source_sha256": _source_id(source).split(":", 1)[1],
+        "table_count": sheet_count,
+        "work_item_count": len(items),
+        "section_count": len({item.section for item in items}),
+        "work_items": [asdict(item) for item in items],
+        "issues": issues,
+        "semantic_selection_performed": False,
+    }
+
+
+def intake_vor_document(path: str | Path) -> dict[str, Any]:
+    """Dispatch a supported source document to its lossless intake parser."""
+    suffix = Path(path).suffix.lower()
+    if suffix == ".pdf":
+        return intake_vor_pdf(path)
+    if suffix in {".xlsx", ".xlsm"}:
+        return intake_vor_xlsx(path)
+    raise ValueError(f"Unsupported VOR document format: {suffix or 'none'}")

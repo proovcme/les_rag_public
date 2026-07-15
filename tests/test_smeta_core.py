@@ -147,23 +147,26 @@ def test_bind_submission_requires_complete_professional_evidence_and_resource_ba
     assert complete == []
 
 
-def test_batch_agent_keeps_fifty_rows_in_one_model_owned_submission():
+def test_batch_agent_bounds_fifty_rows_and_keeps_full_coverage():
     from proxy.smeta_core import document_workflow as workflow
 
     rows = [
         {"work_id": f"w{index:02d}", "title": f"Работа {index}", "unit": "шт", "quantity": index}
         for index in range(1, 51)
     ]
-    captured = {}
+    captured = []
 
     def exchange(messages, tools):
-        captured["payload"] = json.loads(messages[1]["content"])
-        captured["tools"] = [(item.get("function") or {}).get("name") for item in tools]
+        payload = json.loads(messages[1]["content"])
+        captured.append({
+            "payload": payload,
+            "tools": [(item.get("function") or {}).get("name") for item in tools],
+        })
         return {"tool_calls": [_native_call(
             "submit", "submit_lsr_mapping",
             rows=[
                 {"work_id": row["work_id"], "decision": "unbound", "reason": "модель не выбрала норму"}
-                for row in rows
+                for row in payload["work_items"]
             ],
         )]}
 
@@ -175,10 +178,12 @@ def test_batch_agent_keeps_fifty_rows_in_one_model_owned_submission():
         user_request="Собери ЛСР по всем строкам",
     )
 
-    assert len(captured["payload"]["work_items"]) == 50
-    assert captured["payload"]["user_request"] == "Собери ЛСР по всем строкам"
-    assert captured["tools"] == ["search_norms_batch", "read_norms_batch", "submit_lsr_mapping"]
+    assert [len(item["payload"]["work_items"]) for item in captured] == [12, 12, 12, 12, 2]
+    assert all(len(item["payload"]["all_source_rows_context"]) == 50 for item in captured)
+    assert captured[0]["payload"]["user_request"] == "Собери ЛСР по всем строкам"
+    assert captured[0]["tools"] == ["search_norms_batch", "read_norms_batch", "submit_lsr_mapping"]
     assert len(result["selections"]) == 50
+    assert result["agent_trace"]["batches"] == 5
     assert all(item["review_status"] == "model_batch_unbound" for item in result["selections"].values())
 
 
@@ -289,7 +294,7 @@ def test_batch_agent_fails_closed_when_model_returns_no_tools():
 def test_document_workflow_passes_neighbor_context_and_calculates_once(monkeypatch):
     from proxy.smeta_core import document_workflow as workflow
 
-    monkeypatch.setattr(workflow, "intake_vor_pdf", lambda _path: {"work_items": [
+    monkeypatch.setattr(workflow, "intake_vor_document", lambda _path: {"work_items": [
         {"work_id": "w1", "title": "Прокладка кабеля", "unit": "м", "quantity": 10, "section": "ЭОМ"},
         {"work_id": "w2", "title": "Монтаж трубы", "unit": "м", "quantity": 10, "section": "ЭОМ"},
     ]})
@@ -315,6 +320,33 @@ def test_document_workflow_passes_neighbor_context_and_calculates_once(monkeypat
     assert seen["w2"]["neighbor_context"][0]["work_id"] == "w1"
     assert len(calculations) == 1
     assert "dominant_review" not in result
+
+
+def test_xlsx_vor_intake_preserves_all_rows_and_sheet_provenance(tmp_path):
+    import openpyxl
+
+    from proxy.smeta_core.source_intake import intake_vor_document
+
+    source = tmp_path / "СКС.xlsx"
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "СКС"
+    sheet.append(["№ п/п", "Наименование работ и затрат", "Ед. изм.", "Объём", "Цена"])
+    sheet.append([1, "Раздел 1. СКС", None, None, 0])
+    sheet.append([2, "Оборудование", None, None, 0])
+    sheet.append([3, "Шкаф телекоммуникационный", "шт.", 2, None])
+    sheet.append([4, "Кабель витая пара", "м", 1200, None])
+    workbook.save(source)
+
+    intake = intake_vor_document(source)
+
+    assert intake["source_kind"] == "xlsx"
+    assert intake["work_item_count"] == 2
+    assert [row["work_id"] for row in intake["work_items"]] == ["vor-0001", "vor-0002"]
+    assert intake["work_items"][0]["section"] == "Оборудование"
+    assert intake["work_items"][0]["source_row"] == 4
+    assert "#sheet=СКС;table=1;row=4" in intake["work_items"][0]["source_refs"][0]
+    assert intake["work_items"][1]["quantity"] == 1200.0
 
 
 

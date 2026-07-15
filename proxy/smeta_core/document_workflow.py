@@ -16,7 +16,7 @@ from proxy.smeta_core.contracts import NormBinding, ResourceBinding, WorkItem
 from proxy.smeta_core.norm_browser import browse_norms_many
 from proxy.smeta_core.norm_validator import units_compatible, validate_binding
 from proxy.smeta_core.resource_normalizer import normalize_norm_resources
-from proxy.smeta_core.source_intake import intake_vor_pdf
+from proxy.smeta_core.source_intake import intake_vor_document
 from proxy.smeta_core.application import calculate_visible_rows, calculate_visible_rows_revision
 
 
@@ -227,18 +227,81 @@ def _run_native_norm_agent(
     *,
     candidate_limit: int,
     max_turns: int = 64,
+    batch_size: int = 12,
     progress: Progress | None = None,
     user_request: str = "",
 ) -> dict[str, Any]:
-    """Give the model the source and RAG tools; code only executes and compacts state."""
-    return _run_batch_norm_agent(
-        work_rows,
-        exchange,
-        candidate_limit=candidate_limit,
-        max_turns=max_turns,
-        progress=progress,
-        user_request=user_request,
-    )
+    """Give the model bounded row batches and merge its untouched decisions."""
+    size = max(1, int(batch_size))
+    batches = [work_rows[index:index + size] for index in range(0, len(work_rows), size)]
+    if len(batches) <= 1:
+        return _run_batch_norm_agent(
+            work_rows,
+            exchange,
+            candidate_limit=candidate_limit,
+            max_turns=max_turns,
+            progress=progress,
+            user_request=user_request,
+            context_rows=work_rows,
+        )
+
+    merged = {
+        "selections": {},
+        "browse_trace": {},
+        "query_trace": [],
+        "model_trace": [],
+        "valid_model_rows": 0,
+    }
+    batch_traces: list[dict[str, Any]] = []
+    for batch_index, rows in enumerate(batches, 1):
+        if progress:
+            progress({
+                "phase": "source_batch",
+                "status": "started",
+                "label": f"Смета: обрабатываю строки {merged['valid_model_rows'] + 1}–{merged['valid_model_rows'] + len(rows)} из {len(work_rows)}",
+                "batch": batch_index,
+                "batches": len(batches),
+                "completed_rows": merged["valid_model_rows"],
+                "total_rows": len(work_rows),
+            })
+        result = _run_batch_norm_agent(
+            rows,
+            exchange,
+            candidate_limit=candidate_limit,
+            max_turns=max_turns,
+            progress=progress,
+            user_request=user_request,
+            context_rows=work_rows,
+        )
+        merged["selections"].update(result["selections"])
+        merged["browse_trace"].update(result["browse_trace"])
+        merged["query_trace"].extend(result["query_trace"])
+        merged["model_trace"].extend(
+            {**item, "source_batch": batch_index} for item in result["model_trace"]
+        )
+        merged["valid_model_rows"] += int(result.get("valid_model_rows") or 0)
+        batch_traces.append(result.get("agent_trace") or {})
+        if progress:
+            progress({
+                "phase": "source_batch",
+                "status": "done",
+                "label": f"Смета: обработано {merged['valid_model_rows']} из {len(work_rows)} строк",
+                "batch": batch_index,
+                "batches": len(batches),
+                "completed_rows": merged["valid_model_rows"],
+                "total_rows": len(work_rows),
+            })
+    missing = [str(row["work_id"]) for row in work_rows if str(row["work_id"]) not in merged["selections"]]
+    if missing:
+        raise RuntimeError(f"model batches did not cover source rows: {missing}")
+    merged["agent_trace"] = {
+        "mode": "model_bounded_batch_rag_tools",
+        "batch_size": size,
+        "batches": len(batches),
+        "source_rows": len(work_rows),
+        "batch_traces": batch_traces,
+    }
+    return merged
 
 
 def _run_batch_norm_agent(
@@ -249,9 +312,12 @@ def _run_batch_norm_agent(
     max_turns: int = 64,
     progress: Progress | None = None,
     user_request: str = "",
+    context_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Thin model tool loop: batch RAG, batch read, one model-owned mapping submission."""
     by_id = {str(row["work_id"]): row for row in work_rows}
+    all_rows = context_rows or work_rows
+    all_work_ids = {str(row["work_id"]) for row in all_rows}
     candidates: dict[str, dict[str, dict[str, Any]]] = {work_id: {} for work_id in by_id}
     opened: dict[str, dict[str, dict[str, Any]]] = {work_id: {} for work_id in by_id}
     browse_trace: dict[str, list[dict[str, Any]]] = {work_id: [] for work_id in by_id}
@@ -263,7 +329,7 @@ def _run_batch_norm_agent(
     system_prompt = (
         "Ты сметчик. Самостоятельно собери mapping для денежной ЛСР. Используй batch RAG tools в любом "
         "нужном порядке, прочитай фактические карточки и одним submit_lsr_mapping передай решения по всем "
-        "исходным строкам. Код не выбирает нормы, аналоги, coverage или ресурсы — после submit он только "
+        "строкам текущего пакета work_items. Код не выбирает нормы, аналоги, coverage или ресурсы — после submit он только "
         "проверит ссылки и единицы, рассчитает твоё решение и сформирует XLSX."
     )
     if skill_excerpt:
@@ -273,6 +339,20 @@ def _run_batch_norm_agent(
         {"role": "user", "content": json.dumps({
             "user_request": str(user_request or "").strip(),
             "work_items": list(by_id.values()),
+            "all_source_rows_context": [
+                {
+                    "work_id": row.get("work_id"),
+                    "title": str(row.get("title") or "")[:180],
+                    "unit": row.get("unit"),
+                    "quantity": row.get("quantity"),
+                    "section": str(row.get("section") or "")[:100],
+                }
+                for row in all_rows
+            ],
+            "batch_contract": (
+                "submit decisions for every work_id in work_items only; all_source_rows_context is navigation "
+                "for overlap/coverage and is not an instruction to submit other batches"
+            ),
         }, ensure_ascii=False, default=str)},
     ]
 
@@ -393,7 +473,7 @@ def _run_batch_norm_agent(
                     if decision == "covered_by":
                         covered_by = str(item.get("covered_by_work_id") or "")
                         reason = str(item.get("reason") or "").strip()
-                        if not covered_by or covered_by == work_id or not reason:
+                        if not covered_by or covered_by == work_id or covered_by not in all_work_ids or not reason:
                             errors.append({"work_id": work_id, "error": "covered_by requires another work_id and a non-empty reason"})
                             continue
                         proposed[work_id] = {
@@ -428,7 +508,7 @@ def _run_batch_norm_agent(
                 if missing:
                     errors.append({"error": "missing work_ids", "work_ids": missing})
                 for work_id, item in proposed.items():
-                    if item.get("covered_by_work_id") and item["covered_by_work_id"] not in proposed:
+                    if item.get("covered_by_work_id") and item["covered_by_work_id"] not in all_work_ids:
                         errors.append({"work_id": work_id, "error": "covered_by_work_id is absent"})
                 if errors:
                     result = {"ok": False, "errors": errors}
@@ -703,7 +783,7 @@ def _finalize_document_workflow(
     return result
 
 
-def run_vor_pdf_workflow(
+def run_vor_document_workflow(
     path: str | Path,
     *,
     exchange: Exchange,
@@ -718,9 +798,13 @@ def run_vor_pdf_workflow(
     lsr_meta: dict[str, Any] | None = None,
     user_request: str = "",
 ) -> dict[str, Any]:
-    """Run the same generic workflow for any table-like VOR PDF using a caller-provided model."""
-    intake = intake_vor_pdf(path)
+    """Run the generic workflow for a supported table-like VOR document."""
+    intake = intake_vor_document(path)
     work_rows = [dict(item) for item in intake.get("work_items") or []]
+    if not work_rows:
+        raise RuntimeError(
+            "в исходном документе не распознаны строки с наименованием, единицей измерения и количеством"
+        )
     query_rows: list[dict[str, Any]] = []
     for index, row in enumerate(work_rows):
         neighbors = []
@@ -774,3 +858,8 @@ def run_vor_pdf_workflow(
         source_name=source_name,
         lsr_meta=lsr_meta,
     )
+
+
+def run_vor_pdf_workflow(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """Backward-compatible public name; the workflow now also accepts XLSX."""
+    return run_vor_document_workflow(*args, **kwargs)

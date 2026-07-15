@@ -3,7 +3,7 @@
 Карта сметного режима: как запрос превращается в ВОР, нормативный ход, цены, расчётную трассу и
 видимый ответ.
 
-> **Статус 2026-07-12: актуален для dev batch-контура.** Верхняя схема ниже описывает PDF→ЛСР
+> **Статус 2026-07-15: актуален для dev batch-контура.** Верхняя схема ниже описывает PDF/XLSX→ЛСР
 > контур. Разделы про РИМ, quantities, ресурсы и форму ЛСР остаются полезной предметной механикой.
 > В нижней части ещё присутствуют исторические direct/harness-слои; они не являются доказательством
 > текущего runtime. Канонический долг и порядок удаления legacy — [TODO_SMETA_CORE.md](TODO_SMETA_CORE.md),
@@ -20,7 +20,7 @@
 > Canonical auto-вход — `proxy.smeta_core.workflow.run_smeta_workflow`; миграция остальных путей —
 > [TODO_SMETA_CORE.md](TODO_SMETA_CORE.md).
 
-> **Zero-state chat path 0.24.0.354.** Если пользователь прикрепил PDF в режиме чтения,
+> **Zero-state chat path 0.24.9.** Если пользователь прикрепил PDF или XLSX в режиме чтения,
 > выбрал «Смета» и явно попросил ЛСР, чат не использует прежнюю сессию/кандидатов/ревизию.
 > Server-owned вложение проходит `source_intake → document_workflow → model decisions →
 > ФГИС/КАЦ → calculator → formula XLSX`. Модель владеет профессиональными связями; код
@@ -89,13 +89,16 @@
 
 ## Точки входа
 
-Текущий живой путь явного PDF→ЛСР:
+Текущий живой путь явного PDF/XLSX→ЛСР:
 
 1. Совушка сохраняет read-вложение под server-owned `attachment_id`.
-2. `proxy/routers/chat.py` вызывает `smeta_core.document_workflow.run_vor_pdf_workflow`.
-3. `source_intake` сохраняет строки, количества, разделы и координаты без выбора норм.
-4. Одна модельная native-tool сессия сама вызывает `search_norms_batch`, `read_norms_batch`, затем
-   одним `submit_lsr_mapping` передаёт `bind|covered_by|unbound` и ресурсные действия по всем строкам.
+2. `proxy/routers/chat.py` вызывает `smeta_core.document_workflow.run_vor_document_workflow`.
+3. `source_intake` читает исходный PDF/XLSX, сохраняет строки, количества, разделы и координаты
+   `страница/таблица` или `лист/строка` без выбора норм; усечённый текст скрепки не заменяет файл.
+4. Модельная native-tool сессия получает ограниченный пакет строк и компактный контекст всей ведомости,
+   вызывает `search_norms_batch`, `read_norms_batch`, затем `submit_lsr_mapping` для каждой строки пакета.
+   Пакеты дают оператору прогресс `обработано N из total`; итог принимается только при полном coverage.
+   На MLX tool-диалог заканчивается реальным user/tool message без prose-prefill.
 5. Код один раз применяет решение модели, считает РИМ/НР/СП/НДС и рендерит формульный XLSX.
 6. `smeta_user_message_service` переводит готовую summary в короткий пользовательский текст. Machine
    statuses, blockers и trace остаются в payload/журнале проверки.
@@ -110,7 +113,7 @@
 - `skills/smeta/SKILL.md` — профессиональный workflow и правила для агента.
 - `proxy/services/prompt_registry_service.py` — рендер compact role-pack в system prompt.
 - `proxy/routers/chat.py` — direct smeta answer, RAG packet, видимый ответ.
-- `proxy/smeta_core/document_workflow.py` — тонкий batch model-agent PDF→mapping→один расчёт→ЛСР.
+- `proxy/smeta_core/document_workflow.py` — bounded-batch model-agent PDF/XLSX→mapping→один расчёт→ЛСР.
 - `proxy/services/smeta_user_message_service.py` — детерминированный человеческий ответ из summary.
 - `proxy/services/estimate_harness_service.py` — model-owned work-plan + calculator gates.
 - `proxy/services/estimate_math_service.py` — generic arithmetic/quantity audit:

@@ -323,7 +323,11 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
     runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
     body = {
         "model": runtime.model,
-        "messages": _mlx_prefill_no_think_messages(messages, runtime.provider),
+        # Native tool selection must end on the real user/tool message.  The
+        # MLX no-think assistant prefill is useful for visible prose, but here
+        # it turns the next turn into prose continuation and suppresses
+        # Qwen's tool_calls entirely.
+        "messages": messages,
         "tools": tools,
         "temperature": 0.0,
         "max_tokens": _env_int(

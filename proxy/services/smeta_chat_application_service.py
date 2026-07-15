@@ -29,7 +29,7 @@ from proxy.services.smeta_artifact_service import (
     compact_smeta_answer,
     persist_smeta_artifact_exports,
 )
-from proxy.smeta_core.document_workflow import run_vor_pdf_workflow
+from proxy.smeta_core.document_workflow import run_vor_document_workflow
 
 
 logger = logging.getLogger(__name__)
@@ -257,6 +257,40 @@ async def run_smeta_direct_application(
             question=harness_question,
         )
 
+    if pricing_requested and not structured_rim_form:
+        lookup_trace = norm_lookup_packet.get("trace") or {}
+        choice_trace = norm_choice_packet.get("trace") or {}
+        source_rows = int(lookup_trace.get("source_rows_expected") or 0)
+        lookup_calls = len(lookup_trace.get("results") or [])
+        trace = {
+            "mode": "smeta",
+            "model_first": True,
+            "direct_model_answer_present": False,
+            "smeta_failure": "verified_calculation_missing",
+            "smeta_rag_context": direct_rag_packet.get("trace") or {},
+            "smeta_norm_lookup": lookup_trace,
+            "smeta_norm_choice": choice_trace,
+            "smeta_execution_mode": execution_mode,
+            "smeta_dataset_filter": dataset_filter or "",
+            "smeta_artifact_present": False,
+        }
+        return SmetaApplicationResult(
+            answer=(
+                "ЛСР не сформирована: сметный контур не получил проверяемых расчётных строк "
+                f"(исходных строк распознано: {source_rows}, запросов к нормам выполнено: {lookup_calls}). "
+                "Неподтверждённые цены, шифры и трудозатраты в результат не выпущены. "
+                "Повтори расчёт; если приложен файл, он сохранён для повторной обработки."
+            ),
+            operation="smeta_verified_calculation_missing",
+            channel="smeta_mode",
+            crag="ERROR",
+            extra={
+                "retrieval_trace": trace,
+                "sources": direct_rag_packet.get("sources") or [],
+                "source_map": direct_rag_packet.get("source_map") or [],
+            },
+        )
+
     structured_rim_context = ""
     if structured_rim_form:
         structured_rim_context = "CHECKED RIM CALCULATION FROM MODEL-SELECTED NORM CODES:\n" + json.dumps(
@@ -388,7 +422,7 @@ async def run_smeta_document_application(
     token_sink: TokenSink | None = None,
     artifact_dir: str | Path = SMETA_ARTIFACT_DIR,
 ) -> SmetaDocumentApplicationResult | None:
-    """Build one zero-state PDF LSR or return ``None`` for a non-PDF attachment.
+    """Build one zero-state PDF/XLSX LSR or return ``None`` for another attachment.
 
     A failed run deliberately leaves the attachment in place for a retry.  It is
     consumed only after the XLSX and trace were produced successfully.
@@ -418,7 +452,7 @@ async def run_smeta_document_application(
             extra={"retrieval_trace": {"mode": "smeta_document", "error": str(error)}},
         )
 
-    if source_path.suffix.lower() != ".pdf":
+    if source_path.suffix.lower() not in {".pdf", ".xlsx", ".xlsm"}:
         return None
 
     out_dir = Path(artifact_dir)
@@ -433,7 +467,7 @@ async def run_smeta_document_application(
             "data": {
                 "phase": "document_workflow",
                 "status": "started",
-                "label": "Смета: читаю PDF с нуля и собираю ЛСР",
+                "label": "Смета: читаю исходный документ с нуля и собираю ЛСР",
             },
         })
 
@@ -472,7 +506,7 @@ async def run_smeta_document_application(
 
     try:
         workflow = await asyncio.to_thread(
-            run_vor_pdf_workflow,
+            run_vor_document_workflow,
             source_path,
             exchange=exchange,
             candidate_limit=12 if cloud_provider else 8,

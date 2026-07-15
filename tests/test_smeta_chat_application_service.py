@@ -55,7 +55,7 @@ async def test_document_application_preserves_stream_artifact_and_trace(tmp_path
             },
         }
 
-    monkeypatch.setattr(service, "run_vor_pdf_workflow", run_workflow)
+    monkeypatch.setattr(service, "run_vor_document_workflow", run_workflow)
 
     async def sink(event):
         events.append(event)
@@ -119,7 +119,7 @@ async def test_document_application_keeps_attachment_after_workflow_failure(tmp_
     monkeypatch.setattr(service, "consume_read_attachment", consumed.append)
     monkeypatch.setattr(
         service,
-        "run_vor_pdf_workflow",
+        "run_vor_document_workflow",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("provider down")),
     )
 
@@ -163,7 +163,7 @@ async def test_document_application_reports_missing_attachment(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_document_application_leaves_non_pdf_for_other_smeta_flow(tmp_path, monkeypatch):
+async def test_document_application_routes_xlsx_through_document_workflow(tmp_path, monkeypatch):
     source = tmp_path / "source.xlsx"
     source.write_bytes(b"xlsx")
     consumed = []
@@ -172,6 +172,30 @@ async def test_document_application_leaves_non_pdf_for_other_smeta_flow(tmp_path
         {"original_name": "source.xlsx", "sha256": "sha"},
     ))
     monkeypatch.setattr(service, "consume_read_attachment", consumed.append)
+    workflow_calls = []
+
+    def run_workflow(path, **kwargs):
+        workflow_calls.append((path, kwargs))
+        Path(kwargs["out_xlsx"]).write_bytes(b"xlsx-result")
+        Path(kwargs["out_report"]).write_text("{}", encoding="utf-8")
+        return {
+            "schema": "smeta_document_workflow_v2",
+            "agent_trace": {},
+            "model_trace": [],
+            "lsr": {
+                "summary": {
+                    "result_status": "priced_complete",
+                    "input_rows": 2,
+                    "bound_rows": 2,
+                    "open_rows": 0,
+                    "total_without_vat": 100,
+                    "total_with_vat": 122,
+                },
+                "positions": [],
+            },
+        }
+
+    monkeypatch.setattr(service, "run_vor_document_workflow", run_workflow)
 
     result = await service.run_smeta_document_application(
         attachment_id="read_0123456789ab",
@@ -183,8 +207,11 @@ async def test_document_application_leaves_non_pdf_for_other_smeta_flow(tmp_path
         artifact_dir=tmp_path / "artifacts",
     )
 
-    assert result is None
-    assert consumed == []
+    assert result is not None
+    assert result.operation == "smeta_document_lsr"
+    assert workflow_calls[0][0] == source
+    assert workflow_calls[0][1]["source_name"] == "source.xlsx"
+    assert consumed == ["read_0123456789ab"]
 
 
 def test_document_application_contains_no_professional_selector():
@@ -207,6 +234,48 @@ def test_default_direct_dependencies_live_in_smeta_adapter_not_router():
     assert "def _smeta_direct_norm_lookup_context" not in router_source
     assert "def _smeta_direct_structured_norm_choice" not in router_source
     assert "def _smeta_direct_model_answer" not in router_source
+
+
+def test_mlx_native_tool_exchange_does_not_append_prose_prefill(monkeypatch):
+    from proxy.services import smeta_chat_adapter_service as adapter
+
+    captured = {}
+
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"tool_calls": [{"id": "tool-1"}]}}]}
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, _url, **kwargs):
+            captured.update(kwargs["json"])
+            return Response()
+
+    monkeypatch.setattr(adapter, "_smeta_model_runtime", lambda _name: adapter.LlmRuntime(
+        "mlx", "http://127.0.0.1:8080", "http://127.0.0.1:8080/v1/chat/completions",
+        "local-tool-model", "", True,
+    ))
+    monkeypatch.setattr(adapter.httpx, "Client", Client)
+    messages = [{"role": "user", "content": "Вызови инструмент"}]
+
+    result = adapter._smeta_document_exchange(messages, [{"type": "function"}])
+
+    assert result["tool_calls"] == [{"id": "tool-1"}]
+    assert captured["messages"] == messages
+    assert captured["messages"][-1]["role"] == "user"
 
 
 @pytest.mark.asyncio
@@ -349,6 +418,57 @@ async def test_direct_application_answer_mode_does_not_calculate_or_choose(monke
     assert result.operation == "smeta_auto_work"
     assert result.extra["retrieval_trace"]["smeta_execution_mode"] == "answer"
     assert result.extra["retrieval_trace"]["smeta_norm_choice"]["status"] == "not_requested"
+
+
+@pytest.mark.asyncio
+async def test_direct_priced_lsr_fails_closed_without_verified_rows(monkeypatch, tmp_path):
+    request = SimpleNamespace(
+        question="Сделай ЛСР",
+        project_id=None,
+        dataset_ids=None,
+        dataset_filter=None,
+    )
+    monkeypatch.setattr(
+        "proxy.services.system_dataset_service.module_dataset_ids", lambda _module_id: []
+    )
+    model_called = False
+
+    def model_answer(*_args):
+        nonlocal model_called
+        model_called = True
+        return "| Работа | Цена |\n|---|---:|\n| Выдуманная | 913700 |"
+
+    result = await service.run_smeta_direct_application(
+        request=request,
+        harness_question="Файл распознан без строк",
+        rag_backend=None,
+        router_state=None,
+        dataset_ids=None,
+        dataset_filter=None,
+        pricing_requested=True,
+        auto_estimate_work=False,
+        dependencies=service.SmetaDirectDependencies(
+            rag_context=lambda *_args, **_kwargs: None,
+            norm_lookup=lambda _question: {
+                "text": "",
+                "trace": {"source_rows_expected": 0, "results": []},
+            },
+            norm_choice=lambda *_args: {
+                "rows": [],
+                "trace": {"status": "no_lookup_results"},
+            },
+            model_answer=model_answer,
+            active_state=lambda *_args: {},
+            model_runtime=lambda: SimpleNamespace(provider="ollama", model="qwen3.5:9b"),
+        ),
+        artifact_dir=tmp_path,
+    )
+
+    assert result.operation == "smeta_verified_calculation_missing"
+    assert result.crag == "ERROR"
+    assert "913700" not in result.answer
+    assert result.extra["retrieval_trace"]["smeta_failure"] == "verified_calculation_missing"
+    assert model_called is False
 
 
 @pytest.mark.asyncio
