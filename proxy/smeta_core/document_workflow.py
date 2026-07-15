@@ -224,6 +224,8 @@ def _bind_submission_errors(item: dict[str, Any]) -> list[str]:
 def _normalize_mapping_row_transport(item: dict[str, Any]) -> dict[str, Any]:
     """Repair a harmless tool-schema placement error without changing model decisions."""
     normalized = dict(item)
+    if normalized.get("selection_kind") == "exact" and "analog_limitations" not in normalized:
+        normalized["analog_limitations"] = []
     check = normalized.get("technology_check")
     if not str(normalized.get("work_id") or "").strip() and isinstance(check, dict):
         nested_work_id = str(check.get("work_id") or "").strip()
@@ -616,10 +618,11 @@ def _run_batch_norm_agent(
                 for item in _tool_array_argument(args, "items"):
                     work_id = str(item.get("work_id") or "")
                     cards = []
-                    include_resources = _tool_bool(
-                        item.get("include_resources"),
-                        _tool_bool(args.get("include_resources"), False),
-                    )
+                    # Full resources are deliberately item-scoped in the declared
+                    # schema.  A model may inspect any chosen card, but an
+                    # undeclared top-level flag must not explode every card in a
+                    # large VOR into one huge tool result.
+                    include_resources = _tool_bool(item.get("include_resources"), False)
                     available = candidates.get(work_id, {})
                     for requested_code in _normalize_norm_codes_transport(item):
                         code = _resolve_norm_code_transport(requested_code, available)

@@ -420,6 +420,16 @@ def test_norm_card_resources_are_model_opt_in_without_losing_internal_card():
     assert card["resources"][1]["name"] == "Кабель"
 
 
+def test_exact_mapping_transport_defaults_only_semantically_empty_limitations():
+    from proxy.smeta_core.document_workflow import _normalize_mapping_row_transport
+
+    exact = _normalize_mapping_row_transport({"selection_kind": "exact", "norm_code": "ГЭСН01"})
+    analog = _normalize_mapping_row_transport({"selection_kind": "analog", "norm_code": "ГЭСН02"})
+
+    assert exact["analog_limitations"] == []
+    assert "analog_limitations" not in analog
+
+
 def test_tool_array_transport_unwraps_qwen_double_serialization():
     from proxy.smeta_core.document_workflow import _tool_arguments, _tool_array_argument, _tool_bool
 
