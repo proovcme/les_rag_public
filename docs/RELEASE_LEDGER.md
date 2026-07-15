@@ -7,21 +7,21 @@
 ## Текущее состояние (2026-07-15)
 
 ```
-версия продукта (SemVer):  0.24.3  (clean-install smeta baseline, release candidate, 2026-07-15)
+версия продукта (SemVer):  0.24.3  (clean-install smeta baseline, public, 2026-07-15)
 номер сборки:              414     (отдельно от версии продукта)
 версия Tauri/NSIS:         5.1.414 (внутренняя совместимость обновления)
 ветка выпуска:             main (сведение веток выполняется перед публикацией)
 dev HEAD:                  HEAD  (см. git log -1)
 задеплоено на рантайм:     0.24.0.396 (live, 2026-07-13)
-Windows-выпуск:            0.24.1 / build 410 (public, 2026-07-14)
-следующий выпуск:          0.24.3 / build 414 (собирается, не опубликован)
+Windows-выпуск:            0.24.3 / build 414 (public, live on Legion, 2026-07-15)
+следующий выпуск:          не назначен
 рантайм /api/version:      проверяется отдельно; dev-правка не считается развёртыванием
 ```
 
 > 0.24.3 / build 414 — smeta baseline в чистой Windows-установке
 >
 > Дата: 2026-07-15
-> Статус: release candidate; публикация только после Legion clean-install smoke.
+> Статус: публичный Windows-выпуск; build 414 запущен и проверен на Legion.
 > Windows EXE теперь обязан содержать generated `LES-smeta-baseline.zip`: typed unified source,
 > canonical SQLite, совпадающие manifest/integrity и ФСЭМ SQLite/manifest. `patch_release.py`
 > проверяет SHA, provenance, не менее 40 000 норм и 1 500 строк ФСЭМ до передачи payload на Legion.
@@ -50,6 +50,13 @@ Windows-выпуск:            0.24.1 / build 410 (public, 2026-07-14)
 > имели ACL без console-user и сметный guard остановил весь продукт. ACL шести файлов исправлен точечно.
 > С build 414 недоступная сметная база переводит только сметный модуль в degraded и не блокирует чат,
 > документы и UI; clean-install release smoke по-прежнему fail-closed проверяет полный baseline.
+> Рабочий Legion подтвердил bootstrap `ready`, API `0.24.3` / build `414`, UI `200` и Tauri
+> `5.1.414` в интерактивной session 1. Перед повторным запуском удалены только пережившие обновление
+> процессы LES на портах 8050/8051; после этого API доказал, что отвечает новый runtime, а не build 413.
+> Финальный clean-install smoke подтвердил 49 756 норм, 504 259 ресурсных строк, 1 576 строк ФСЭМ
+> и native hybrid RRF (`dense + qdrant_sparse + lexical`). Публичный установщик: `55 171 952` байта,
+> SHA-256 `a2324bb133905ae42e4509a19f4fd35ab2bb79ba1735c691824140d0589dcc78`.
+> Выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.24.3 . ARTEL не включён.
 
 > 0.24.2 / build 411 — smeta professional evidence contract
 >
