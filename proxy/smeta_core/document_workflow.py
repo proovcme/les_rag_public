@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 from dataclasses import asdict
 from pathlib import Path
@@ -254,21 +255,31 @@ def _tool_arguments(call: dict[str, Any]) -> dict[str, Any]:
     raw = (function or {}).get("arguments")
     if isinstance(raw, dict):
         return raw
+    text = str(raw or "{}").strip()
     try:
-        parsed = json.loads(str(raw or "{}"))
+        parsed = json.loads(text)
     except json.JSONDecodeError:
-        return {}
+        try:
+            parsed = ast.literal_eval(text)
+        except (SyntaxError, ValueError):
+            return {}
     return parsed if isinstance(parsed, dict) else {}
 
 
 def _tool_array_argument(args: dict[str, Any], key: str) -> list[dict[str, Any]]:
     """Unwrap a model's harmless double-serialization of a tool array."""
     raw = args.get(key)
-    if isinstance(raw, str):
+    for _ in range(3):
+        if not isinstance(raw, str):
+            break
+        text = raw.strip()
         try:
-            raw = json.loads(raw)
+            raw = json.loads(text)
         except json.JSONDecodeError:
-            return []
+            try:
+                raw = ast.literal_eval(text)
+            except (SyntaxError, ValueError):
+                return []
     return [item for item in (raw or []) if isinstance(item, dict)] if isinstance(raw, list) else []
 
 

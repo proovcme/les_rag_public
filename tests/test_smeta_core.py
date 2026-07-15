@@ -382,7 +382,7 @@ def test_norm_card_resources_are_model_opt_in_without_losing_internal_card():
 
 
 def test_tool_array_transport_unwraps_qwen_double_serialization():
-    from proxy.smeta_core.document_workflow import _tool_array_argument, _tool_bool
+    from proxy.smeta_core.document_workflow import _tool_arguments, _tool_array_argument, _tool_bool
 
     args = {
         "items": '[{"work_id":"w1","norm_codes":["ГЭСН67-01-003-01"]}]',
@@ -394,6 +394,9 @@ def test_tool_array_transport_unwraps_qwen_double_serialization():
     ]
     assert _tool_bool(args["include_resources"]) is True
     assert _tool_bool("False") is False
+    assert _tool_array_argument({"items": json.dumps(args["items"])}, "items") == _tool_array_argument(args, "items")
+    python_call = {"function": {"arguments": "{'items': '[{\"work_id\": \"w1\"}]'}"}}
+    assert _tool_arguments(python_call)["items"].startswith("[")
 
 
 def test_batch_agent_rejects_unopened_norm_without_selecting_for_model():
