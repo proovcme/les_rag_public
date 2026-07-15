@@ -46,8 +46,7 @@ Mac live-проверка на реальном листе ЭОМ закрыла
 
 ## Доставка изменений
 
-Быстрый VPS-патч разрешён только для replaceable Python/UI/prompts/docs без зависимостей, схем,
-baseline, Rust/Tauri/NSIS и нативных компонентов. Патч обязан иметь base/target commit, allowlist,
-SHA-256, backup, compile/smoke и автоматический rollback. Пока такого инструмента нет, ручной SCP
-не является штатным обновлением. Всё остальное проходит Git → Windows build → isolated smoke →
-production Legion smoke → publish.
+С 0.24.15 быстрый VPS-патч доступен любой совместимой Windows-установке и разрешён только для
+replaceable Python/UI/prompts/docs без зависимостей, схем, baseline, Rust/Tauri/NSIS и нативных
+компонентов. Патч имеет base/target commit, двойной allowlist, SHA-256, backup, compile/health и
+автоматический rollback. Legion — полигон, не особый адресат. Всё остальное остаётся полным выпуском.

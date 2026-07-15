@@ -29,12 +29,13 @@ retrieval/evidence gates, но не заменяет roadmap v1 или release l
   «посмотри глазами» сама выбирает инструмент, код только рендерит пиксели и сохраняет page provenance.
 - ✅ Продуктовый non-regression floor хорошо отвечающего Legion-контура и запрещённые подмены модели
   записаны в `docs/CHAT_OPERATOR_CONTRACT.md`.
-- ⏳ Быстрые Windows-патчи через VPS: только Python/Совушка/prompts/docs без зависимостей,
+- ✅ С 0.24.15 быстрые Windows-патчи для всех совместимых установок идут через HTTPS VPS:
+  только Python/Совушка/prompts/docs без зависимостей,
   нативных бинарников, схем данных и installer hooks. Обязательны trusted HTTPS, manifest с
   base/target commit и SHA-256, allowlist файлов, backup, compile/smoke, атомарное включение и
   автоматический rollback. Всё, что меняет Rust/Tauri/NSIS, зависимости, миграции или baseline,
-  остаётся полным Git/release-проходом. До реализации этого контракта ручной `scp` не считается
-  штатным каналом обновления.
+  остаётся полным Git/release-проходом. Builder и клиент имеют одинаковый fail-closed allowlist;
+  helper работает вне заменяемого runtime, делает rollback и пишет видимый операторский статус.
 - ⏳ Восстановить `ARTEL_Index` из исходников в contract-compatible generation; старые legacy
   vectors не копировать. Отдельный продукт ARTEL по-прежнему не входит в LES release.
 

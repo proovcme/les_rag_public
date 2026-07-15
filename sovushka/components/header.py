@@ -405,65 +405,71 @@ def build_header(
 
                     asyncio.create_task(_load_settings())
                     ui.separator().style("border-color:var(--border);margin:12px 0;")
-                    ui.label("Обновление ЛЕС").style(
+                    ui.label("Быстрое обновление ЛЕС").style(
                         "color:var(--dim);font-size:.65rem;font-weight:900;text-transform:uppercase;"
                     )
                     update_status = ui.label(
-                        "Проверка выполняется только по нажатию кнопки."
+                        "Проверка выполняется только по нажатию. Рабочие данные не затрагиваются."
                     ).style("color:var(--dim);font-size:.68rem;width:100%;")
 
                     async def _check_application_update() -> None:
                         from sovushka.state import api_get
 
                         update_button.disable()
-                        update_status.set_text("Проверяю опубликованные версии…")
-                        result = await api_get("/api/update/check")
+                        update_status.set_text("Проверяю доступный патч…")
+                        result = await api_get("/api/update/patch/check")
                         if not isinstance(result, dict):
                             update_status.set_text(last_api_error_text("Не удалось проверить обновление"))
                             return
                         if not result.get("available"):
-                            update_status.set_text(
-                                f"Установлена актуальная версия {result.get('current_version', '')}."
-                            )
+                            update_status.set_text("Все быстрые обновления уже установлены.")
                             return
-                        latest = result.get("latest_version", "?")
-                        if not result.get("package_complete"):
-                            update_status.set_text(
-                                f"Найдена версия {latest}, но пакет обновления опубликован не полностью."
-                            )
+                        if not result.get("compatible"):
+                            update_status.set_text(str(result.get("message") or "Требуется полный выпуск."))
                             return
-                        if not result.get("install_supported"):
-                            update_status.set_text(
-                                f"Найдена версия {latest}; установка этой кнопкой доступна в Windows."
-                            )
-                            return
-                        update_status.set_text(f"Доступна версия {latest}.")
+                        update_status.set_text(
+                            f"Доступно быстрое обновление: {int(result.get('files') or 0)} файлов."
+                        )
                         update_button.enable()
 
                     async def _install_application_update() -> None:
                         from sovushka.state import api_post
 
                         update_button.disable()
-                        update_status.set_text("Скачиваю и проверяю обновление…")
-                        result = await api_post("/api/update/install", {})
+                        update_status.set_text("Скачиваю и проверяю патч…")
+                        result = await api_post("/api/update/patch/install", {})
                         if not isinstance(result, dict):
                             update_status.set_text(last_api_error_text("Не удалось запустить обновление"))
                             return
-                        update_status.set_text(
-                            "Проверенный установщик запущен. Завершите обновление в открывшемся окне."
-                        )
-                        ui.notify("Установщик обновления запущен", type="positive")
+                        update_status.set_text("Патч проверен. ЛЕС перезапустится и сам проверит результат.")
+                        ui.notify("Быстрое обновление запущено", type="positive")
+
+                        async def _watch_patch() -> None:
+                            for _ in range(120):
+                                await asyncio.sleep(2)
+                                state = await api_get("/api/update/patch/status")
+                                if not isinstance(state, dict):
+                                    continue
+                                update_status.set_text(str(state.get("message") or "Обновляю ЛЕС…"))
+                                if state.get("state") in {"ready", "failed"}:
+                                    if state.get("state") == "ready":
+                                        ui.notify("ЛЕС обновлён", type="positive")
+                                    else:
+                                        ui.notify("Патч отменён, предыдущая версия восстановлена", type="negative")
+                                    return
+
+                        asyncio.create_task(_watch_patch())
 
                     with ui.row().classes("w-full gap-2").style("margin:6px 0 12px;"):
                         ui.button(
-                            "Проверить обновление",
+                            "Проверить патч",
                             icon="o_system_update_alt",
                             on_click=_check_application_update,
                         ).props("no-caps flat").style(
                             "border:1px solid var(--border);color:var(--accent);background:transparent;"
                         )
                         update_button = ui.button(
-                            "Обновить",
+                            "Установить",
                             icon="o_download",
                             on_click=_install_application_update,
                         ).props("no-caps disable").style(

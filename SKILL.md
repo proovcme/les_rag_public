@@ -46,7 +46,7 @@ Current runtime posture:
 - Sovushka UI (NiceGUI): `http://127.0.0.1:8051` → `/classic` (чат), `/les/classic` (админка). HTML-шеллы lite удалены (W5.4/5.5): `/` и `/les` редиректят в NiceGUI; мост `/lite-api/*` сохранён.
 - MLX Host: `http://127.0.0.1:8080`
 - Qdrant: `http://127.0.0.1:6333`
-- External: `https://les.ovc.me` through P.A.U.K. reverse SSH tunnel and V.O.L.K. API keys; on 2026-06-01 external smoke passes `12/12`.
+- Public `https://les.ovc.me` с 2026-07-15 больше не проксирует живой LES: `/` — статический лендинг, `/updates/*` — HTTPS origin быстрых патчей, старые API/UI paths возвращают 404. Рабочий доступ только loopback/ZeroTier.
 - ZeroTier trusted GUI/API access: `TRUSTED_NETWORKS=127.0.0.0/8,::1/128,10.195.146.0/24`, `TRUSTED_NETWORK_ROLE=admin`. Trusted clients should open `/classic`, `/les/classic` and `/lite-api/*` without a key; stale browser keys fallback to `trusted-network`, while public clients still receive `401`.
 - **КРИТ для public-401:** `TRUSTED_PROXY_NETWORKS` ОБЯЗАН включать ZeroTier-IP VPS-Caddy — `127.0.0.0/8,::1/128,10.195.146.136/32`. Иначе Mac игнорирует `X-Forwarded-For` + заголовок `X-LES-Trusted-Network` (Caddy ставит `1` для `@zerotier`, `""` для public) и падает на peer-IP Caddy (∈ TRUSTED_NETWORKS) → **весь public-трафик идёт как доверенный admin** (дыра, чинено 2026-06-26). Проверка: `curl -D- https://les.ovc.me/classic` → `307 → /login`; `POST /api/chat` без ключа → `401`. Без ключа пускает только ZeroTier-прямой `10.195.146.98`.
 

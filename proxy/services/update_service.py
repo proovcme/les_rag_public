@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
+from pathlib import PurePosixPath
 from urllib.parse import urlparse
 
 import httpx
@@ -22,6 +26,15 @@ UPDATE_MANIFEST_URL = os.getenv(
 ).strip()
 INSTALLER_ASSET = "LES-Setup.exe"
 CHECKSUM_ASSET = f"{INSTALLER_ASSET}.sha256"
+VPS_PATCH_MANIFEST_URL = os.getenv(
+    "LES_VPS_PATCH_MANIFEST_URL", "https://les.ovc.me/updates/latest.json"
+).strip()
+VPS_PATCH_FEED_SCHEMA = "les.vps-patch-feed.v1"
+VPS_PATCH_SCHEMA = "les.vps-patch.v1"
+VPS_PATCH_ALLOWED_ROOTS = ("backend/", "proxy/", "sovushka/", "config/prompts/", "skills/", "docs/")
+VPS_PATCH_ALLOWED_FILES = {"sovushka_ng.py", "proxy_server.py"}
+VPS_PATCH_DENIED_PARTS = {"__pycache__", ".git", "migrations", "baseline", "installers", "desktop"}
+VPS_PATCH_SUFFIXES = {".py", ".json", ".yaml", ".yml", ".md", ".css", ".js", ".html"}
 _SHA256 = re.compile(r"\b([0-9a-fA-F]{64})\b")
 
 
@@ -102,6 +115,11 @@ def _trusted_release_url(url: str) -> bool:
     return parsed.scheme == "https" and parsed.hostname in {"github.com", "objects.githubusercontent.com"}
 
 
+def _trusted_patch_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.scheme == "https" and parsed.hostname == "les.ovc.me" and parsed.path.startswith("/updates/")
+
+
 def parse_checksum(text: str) -> str:
     match = _SHA256.search(text or "")
     if not match:
@@ -117,9 +135,16 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-async def _download(client: httpx.AsyncClient, url: str, target: Path, *, max_bytes: int) -> None:
-    if not _trusted_release_url(url):
-        raise UpdateError("Выпуск содержит недоверенный адрес загрузки")
+async def _download(
+    client: httpx.AsyncClient,
+    url: str,
+    target: Path,
+    *,
+    max_bytes: int,
+    trusted_url=_trusted_release_url,
+) -> None:
+    if not trusted_url(url):
+        raise UpdateError("Обновление содержит недоверенный адрес загрузки")
     temporary = target.with_suffix(target.suffix + ".part")
     temporary.unlink(missing_ok=True)
     total = 0
@@ -168,3 +193,166 @@ async def download_and_launch_update() -> dict:
         "sha256": actual,
         "installer": str(installer),
     }
+
+
+def runtime_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def patch_status_path() -> Path:
+    return update_root() / "vps-patch-status.json"
+
+
+def _validate_patch_feed(payload: dict) -> dict:
+    if payload.get("schema") != VPS_PATCH_FEED_SCHEMA:
+        raise UpdateError("Неподдерживаемая схема быстрого обновления")
+    patch = payload.get("patch")
+    if not isinstance(patch, dict) or patch.get("schema") != VPS_PATCH_SCHEMA:
+        raise UpdateError("Манифест быстрого обновления повреждён")
+    archive_url = str(payload.get("archive_url") or "")
+    archive_sha256 = str(payload.get("archive_sha256") or "").lower()
+    if not _trusted_patch_url(archive_url) or not re.fullmatch(r"[0-9a-f]{64}", archive_sha256):
+        raise UpdateError("Быстрое обновление опубликовано с недоверенного адреса или без SHA-256")
+    files = patch.get("files")
+    if not isinstance(files, list) or not files or len(files) > 200:
+        raise UpdateError("В быстром обновлении некорректный список файлов")
+    root = runtime_root()
+    target_matches = 0
+    compatible_files = 0
+    for entry in files:
+        if not isinstance(entry, dict):
+            raise UpdateError("Некорректная запись файла в обновлении")
+        rel = PurePosixPath(str(entry.get("path") or ""))
+        if rel.is_absolute() or ".." in rel.parts or not rel.parts:
+            raise UpdateError("Обновление содержит небезопасный путь")
+        normalized = rel.as_posix()
+        if any(part in VPS_PATCH_DENIED_PARTS for part in rel.parts):
+            raise UpdateError("Обновление пытается изменить запрещённую часть приложения")
+        if not (normalized in VPS_PATCH_ALLOWED_FILES or normalized.startswith(VPS_PATCH_ALLOWED_ROOTS)):
+            raise UpdateError("Обновление пытается выйти за список заменяемых файлов")
+        if Path(normalized).suffix.lower() not in VPS_PATCH_SUFFIXES:
+            raise UpdateError("Обновление содержит неподдерживаемый тип файла")
+        target = root / Path(*rel.parts)
+        current = sha256_file(target) if target.is_file() else None
+        if current == entry.get("sha256"):
+            target_matches += 1
+        if current in {entry.get("base_sha256"), entry.get("sha256")} or (
+            current is None and entry.get("base_sha256") is None
+        ):
+            compatible_files += 1
+    available = target_matches != len(files)
+    compatible = compatible_files == len(files)
+    return {
+        "patch_id": str(patch.get("patch_id") or ""),
+        "base_commit": str(patch.get("base_commit") or ""),
+        "target_commit": str(patch.get("target_commit") or ""),
+        "files": len(files),
+        "available": available,
+        "compatible": compatible,
+        "message": (
+            "Быстрое обновление доступно"
+            if available and compatible
+            else "Обновление уже установлено"
+            if not available
+            else "Текущие файлы не соответствуют базе патча; требуется полный выпуск"
+        ),
+        "archive_url": archive_url,
+        "archive_sha256": archive_sha256,
+        "patch": patch,
+    }
+
+
+async def check_vps_patch(*, client: httpx.AsyncClient | None = None) -> dict:
+    if not _trusted_patch_url(VPS_PATCH_MANIFEST_URL):
+        raise UpdateError("Задан недоверенный адрес быстрых обновлений")
+    owns_client = client is None
+    if client is None:
+        client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+    try:
+        response = await client.get(VPS_PATCH_MANIFEST_URL, headers={"User-Agent": "LES-vps-updater"})
+        if response.status_code == 404:
+            return {
+                "patch_id": "",
+                "available": False,
+                "compatible": True,
+                "files": 0,
+                "message": "Быстрых обновлений пока нет",
+            }
+        response.raise_for_status()
+        return _validate_patch_feed(response.json())
+    except UpdateError:
+        raise
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        raise UpdateError(f"Не удалось проверить быстрое обновление: {exc}") from exc
+    finally:
+        if owns_client:
+            await client.aclose()
+
+
+def read_vps_patch_status() -> dict:
+    path = patch_status_path()
+    if not path.is_file():
+        return {"schema": "les.vps-patch-status.v1", "state": "idle", "message": "Обновление не запускалось"}
+    try:
+        return json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {"schema": "les.vps-patch-status.v1", "state": "failed", "message": "Не удалось прочитать состояние обновления"}
+
+
+async def download_and_launch_vps_patch() -> dict:
+    if not sys.platform.startswith("win"):
+        raise UpdateError("Быстрое обновление поддерживается только в Windows-сборке")
+    info = await check_vps_patch()
+    if not info["available"]:
+        raise UpdateError("Быстрое обновление уже установлено")
+    if not info["compatible"]:
+        raise UpdateError(info["message"])
+    root = update_root() / "vps" / info["patch_id"]
+    root.mkdir(parents=True, exist_ok=True)
+    archive = root / "patch.zip"
+    async with httpx.AsyncClient(timeout=600.0, follow_redirects=True) as client:
+        await _download(
+            client,
+            info["archive_url"],
+            archive,
+            max_bytes=64 * 1024 * 1024,
+            trusted_url=_trusted_patch_url,
+        )
+    actual = sha256_file(archive)
+    if actual != info["archive_sha256"]:
+        archive.unlink(missing_ok=True)
+        raise UpdateError("Контрольная сумма быстрого обновления не совпала")
+    try:
+        with zipfile.ZipFile(archive) as bundle:
+            bundled = json.loads(bundle.read("manifest.json"))
+            if bundled != info["patch"]:
+                raise UpdateError("Манифест внутри архива не совпадает с опубликованным")
+            names = set(bundle.namelist())
+            expected = {"manifest.json", *(f"payload/{entry['path']}" for entry in bundled["files"])}
+            if names != expected:
+                raise UpdateError("Архив быстрого обновления содержит лишние или отсутствующие файлы")
+    except (zipfile.BadZipFile, KeyError, ValueError, TypeError) as exc:
+        raise UpdateError(f"Архив быстрого обновления повреждён: {exc}") from exc
+    state_root = update_root().parents[1]
+    helper = root / "vps_patch_apply.py"
+    shutil.copy2(runtime_root() / "tools" / "vps_patch_apply.py", helper)
+    status = patch_status_path()
+    job = root / "job.json"
+    job.write_text(
+        json.dumps(
+            {
+                "runtime_root": str(runtime_root()),
+                "state_root": str(state_root),
+                "archive": str(archive),
+                "status_path": str(status),
+                "patch_id": info["patch_id"],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    status.write_text(json.dumps({"schema": "les.vps-patch-status.v1", "state": "starting", "stage": "downloaded", "patch_id": info["patch_id"], "message": "Обновление проверено, начинаю установку"}, ensure_ascii=False, indent=2), encoding="utf-8")
+    flags = getattr(subprocess, "DETACHED_PROCESS", 0x00000008) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+    subprocess.Popen([sys.executable, str(helper), "--job", str(job)], cwd=str(root), close_fds=True, creationflags=flags)  # noqa: S603
+    return {**info, "state": "starting", "message": "Обновление проверено и запущено"}

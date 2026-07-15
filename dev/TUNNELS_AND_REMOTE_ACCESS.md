@@ -6,7 +6,7 @@
 
 Документ описывает текущую схему аварийного доступа между Mac mini, MacBook Air, Lenovo Legion, VPS и iPhone/Termius.
 
-Главный принцип: ZeroTier остается основной приватной сетью, VPS используется как публичная точка входа и bastion, а для нестабильного пути VPS -> Legion используется reverse tunnel через Mac mini.
+Главный принцип: ZeroTier остается основной приватной сетью, VPS используется как bastion, статический сайт и origin обновлений, а для нестабильного пути VPS -> Legion используется reverse tunnel через Mac mini. Публичного входа в LES runtime через `les.ovc.me` больше нет.
 
 ## Узлы
 
@@ -322,19 +322,18 @@ curl -I https://speckle.ovc.me
 
 ```text
 HTTP 308 на http://...       = Caddy доступен на 80 и редиректит в HTTPS
-HTTP 200/302/401 на https:// = TLS и backend живы
-HTTP 502 на https://         = TLS жив, backend за Caddy не отвечает
+HTTP 200 на https://         = TLS и статический сайт живы
+HTTP 404 на /api/health      = публичный runtime действительно закрыт
+HTTP 200 на /updates/...     = опубликован общий патч
 timeout/refused              = порт/firewall/DNS проблема
 ```
 
 На момент фиксации:
 
 ```text
-speckle.ovc.me -> HTTPS OK, backend отвечает
-les.ovc.me     -> HTTPS OK, backend отвечает через П.А.У.К. reverse tunnel на Mac Mini;
-                  внешний runtime smoke прошёл 12/12
-les.ovc.me/vv  -> HTTPS OK, standalone CAD/BIM viewer отдается Caddy напрямую
-                  из /var/www/vv на VPS, без регистрации и без LES auth
+les.ovc.me             -> HTTPS OK, статический лендинг и общий origin обновлений
+les.ovc.me/api/health  -> 404, публичный LES runtime закрыт
+speckle.ovc.me         -> отдельный virtual host; его состояние не связано с LES
 ```
 
 ## Быстрый чек-лист аварийного доступа

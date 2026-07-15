@@ -19,7 +19,7 @@
 | Local proxy API | `http://127.0.0.1:8050` | Основной FastAPI proxy, все `/api/*` |
 | Sovushka UI / bridge | `http://127.0.0.1:8051` | UI, `/lite-api/*`, `/lite-runtime/*`, CAD/BIM viewer |
 | ZeroTier UI / bridge | `http://10.195.146.98:8051` | Доверенный доступ из ZeroTier |
-| Public bridge | `https://les.ovc.me` | Публичный вход через P.A.U.K./V.O.L.K.; API через `/lite-api/*` |
+| Public site | `https://les.ovc.me` | Статический лендинг и `/updates/*`; живой LES API/UI публично закрыт |
 | MLX host | `http://127.0.0.1:8080` | OpenAI-compatible локальная генерация/embeddings/rerank/validate |
 | Qdrant | `http://127.0.0.1:6333` | Нативный Qdrant HTTP API; не LES-router |
 | MCP stdio | `uv run python tools/les_mcp_server.py` | Инструменты LES наружу для MCP-клиентов |

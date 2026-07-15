@@ -1,0 +1,30 @@
+les.ovc.me {
+	encode zstd gzip
+
+	redir /updates /updates/ 308
+	handle_path /updates/* {
+		header {
+			Cache-Control "no-store"
+			X-Content-Type-Options "nosniff"
+		}
+		root * /var/www/les-updates
+		file_server
+	}
+
+	@retired_runtime path /api/* /lite-api/* /lite-runtime/* /les /les/* /classic /classic/*
+	handle @retired_runtime {
+		respond 404
+	}
+
+	handle {
+		header {
+			Cache-Control "no-store"
+			X-Content-Type-Options "nosniff"
+			Referrer-Policy "no-referrer"
+			X-Frame-Options "DENY"
+		}
+		root * /var/www/les-landing
+		try_files {path} /index.html
+		file_server
+	}
+}
