@@ -38,8 +38,13 @@ scheduled task; the task was removed, and a new independent SSH probe confirmed 
 The release orchestrator must close the build/deploy SSH session, then independently verify that
 the interactive desktop-owned runtime still answers. If it does not, release publication must stop.
 
-**Status:** production was recovered and independently verified; automated post-session persistence
-gate remains open.
+The same defect recurred after the 0.24.15 release session: in-session production checks were green,
+but independent 8050/8051 probes failed. The installed Tauri shell was recovered again through a
+one-shot interactive task and independently verified as 0.24.15/build 426 with UI 200 and
+`qwen3.5:9b`.
+
+**Status:** production was recovered and independently verified twice; automated post-session
+persistence gate remains open and is a release-orchestrator blocker, not a runtime-data failure.
 
 ## Operational incident 2026-07-14: clean Windows smoke reused shared Qdrant collection
 
