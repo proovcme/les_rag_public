@@ -348,7 +348,7 @@ def _smeta_document_turn_tokens(messages: list[dict[str, Any]], configured: int)
 def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[str, Any]:
     """Native tool-call exchange for one continuous smeta conversation."""
     runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
-    local_default_tokens = 5000 if "gemma" in str(runtime.model or "").casefold() else 900
+    local_default_tokens = 3000 if "gemma" in str(runtime.model or "").casefold() else 900
     max_tokens = _env_int(
         "LES_SMETA_DOCUMENT_MAX_TOKENS",
         3200 if is_cloud_provider(runtime.provider) else local_default_tokens,

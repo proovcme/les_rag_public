@@ -351,6 +351,28 @@ def test_batch_agent_accepts_gemma_scalar_norm_code_for_read(monkeypatch):
     assert result["selections"]["w1"]["norm_code"] == "ГЭСН67-01-003-01"
 
 
+def test_norm_card_resources_are_model_opt_in_without_losing_internal_card():
+    from proxy.smeta_core.document_workflow import _norm_card_for_model
+
+    card = {
+        "norm_code": "ГЭСН67-01-003-01",
+        "work_steps": ["Прокладка кабеля"],
+        "resources": [
+            {"code": "1-100-34", "name": "Рабочий", "kind": "labor", "per_unit": 2.5},
+            {"code": "01.7.03", "name": "Кабель", "kind": "material", "per_unit": 101},
+        ],
+    }
+
+    compact = _norm_card_for_model(card, include_resources=False)
+    expanded = _norm_card_for_model(card, include_resources=True)
+
+    assert compact["resource_count"] == 2
+    assert compact["resource_kinds"] == {"labor": 1, "material": 1}
+    assert "resources" not in compact
+    assert expanded["resources"] == card["resources"]
+    assert card["resources"][1]["name"] == "Кабель"
+
+
 def test_batch_agent_rejects_unopened_norm_without_selecting_for_model():
     from proxy.smeta_core import document_workflow as workflow
 

@@ -142,6 +142,22 @@ def _opened_norm_card(code: str, candidate: dict[str, Any]) -> dict[str, Any] | 
     }
 
 
+def _norm_card_for_model(card: dict[str, Any], *, include_resources: bool) -> dict[str, Any]:
+    """Keep full resource evidence model-addressable without repeating it in every read."""
+    payload = dict(card)
+    resources = [item for item in (payload.pop("resources", []) or []) if isinstance(item, dict)]
+    kinds: dict[str, int] = {}
+    for resource in resources:
+        kind = str(resource.get("kind") or "other")
+        kinds[kind] = kinds.get(kind, 0) + 1
+    payload["resource_count"] = len(resources)
+    payload["resource_kinds"] = kinds
+    payload["resources_included"] = bool(include_resources)
+    if include_resources:
+        payload["resources"] = resources
+    return payload
+
+
 _TECHNOLOGY_CHECK_FIELDS = {
     "matched_operations": list,
     "missing_operations": list,
@@ -498,12 +514,13 @@ def _run_batch_norm_agent(
                 for item in [value for value in (args.get("items") or []) if isinstance(value, dict)]:
                     work_id = str(item.get("work_id") or "")
                     cards = []
+                    include_resources = bool(item.get("include_resources", False))
                     for code in _normalize_norm_codes_transport(item):
                         candidate = candidates.get(work_id, {}).get(code)
                         card = _opened_norm_card(code, candidate) if candidate else None
                         if card:
                             opened[work_id][code] = card
-                            cards.append(card)
+                            cards.append(_norm_card_for_model(card, include_resources=include_resources))
                     rows_out.append({"work_id": work_id, "ok": bool(cards), "norms": cards})
                 result = {"ok": True, "rows": rows_out}
             elif name == "submit_lsr_mapping":
@@ -736,6 +753,7 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
                 "parameters": {"type": "object", "properties": {
                     "items": {"type": "array", "items": {"type": "object", "properties": {
                         "work_id": {"type": "string"}, "norm_codes": {"type": "array", "items": {"type": "string"}},
+                        "include_resources": {"type": "boolean", "description": "Return the full resource list when resource composition or edits must be reviewed."},
                     }, "required": ["work_id", "norm_codes"]}},
                 }, "required": ["items"]},
             },
