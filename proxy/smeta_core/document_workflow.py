@@ -419,7 +419,20 @@ def _run_batch_norm_agent(
     invalid_submission_attempts = 0
     for turn in range(1, max_turns + 1):
         started = perf_counter()
-        assistant = exchange(conversation, tools) or {}
+        last_tool_name = next(
+            (
+                str(message.get("name") or "")
+                for message in reversed(conversation)
+                if str(message.get("role") or "") == "tool"
+            ),
+            "",
+        )
+        turn_tools = (
+            [tool for tool in tools if str((tool.get("function") or {}).get("name") or "") != "submit_lsr_mapping"]
+            if last_tool_name == "search_norms_batch"
+            else tools
+        )
+        assistant = exchange(conversation, turn_tools) or {}
         model_wait_ms = round((perf_counter() - started) * 1000, 2)
         calls = [call for call in (assistant.get("tool_calls") or []) if isinstance(call, dict)]
         assistant_message = {

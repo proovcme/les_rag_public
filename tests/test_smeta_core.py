@@ -251,10 +251,15 @@ def test_batch_agent_searches_reads_and_submits_model_choice(monkeypatch):
             "resource_actions": [], "reason": "модель выбрала после чтения карточки",
         }])],
     ])
+    tool_sets = []
+
+    def exchange(_messages, tools):
+        tool_sets.append([(tool.get("function") or {}).get("name") for tool in tools])
+        return {"tool_calls": next(turns)}
 
     result = workflow._run_native_norm_agent(
         [{"work_id": "w1", "title": "Монтаж элемента", "unit": "шт", "quantity": 1}],
-        lambda _messages, _tools: {"tool_calls": next(turns)},
+        exchange,
         candidate_limit=6,
         max_turns=3,
     )
@@ -263,6 +268,9 @@ def test_batch_agent_searches_reads_and_submits_model_choice(monkeypatch):
     assert result["selections"]["w1"]["review_status"] == "model_batch"
     assert result["query_trace"][0]["phase"] == "batch_search"
     assert result["agent_trace"]["turns"] == 3
+    assert tool_sets[0] == ["search_norms_batch", "read_norms_batch", "submit_lsr_mapping"]
+    assert tool_sets[1] == ["search_norms_batch", "read_norms_batch"]
+    assert tool_sets[2] == ["search_norms_batch", "read_norms_batch", "submit_lsr_mapping"]
 
 
 def test_batch_agent_repairs_gemma_nested_work_id_without_changing_choice(monkeypatch):
