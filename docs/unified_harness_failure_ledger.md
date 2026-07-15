@@ -9,6 +9,22 @@ scripts/smoke_unified_v08.py` (фикстура) или `--dataset-id <ds>` (р�
 `query_route.version=unified_construction_harness_v0_8` + `unified_trace` + `evidence_summary`.
 Выключить: убрать env-переменную. Runtime (`/Users/ovc/LES/.env`) НЕ трогался — флаг ставит оператор.
 
+## Operational incident 2026-07-15: FGIS unified parquet diverged from structured manifest
+
+Legion bootstrap history recorded a real repair with reason `unified parquet does not match
+structured-base manifest`. The release baseline restored one internally consistent set; the
+0.24.14 production deployment later returned `action=kept_valid`, so it did not overwrite the
+validated Legion state. This proves the archive is a clean-install/recovery floor, not an update
+mechanism.
+
+**Rule:** a full FGIS update must build typed parquet, structured SQLite, manifests, integrity
+reports and FSEM linkage in staging; validate the complete linked set; then atomically activate it.
+No canonical file may be replaced before the whole generation is green. A failed generation stays
+available for diagnosis and the previous active generation remains live.
+
+**Status:** recovery and fail-closed validation work; end-to-end atomic FGIS generation activation
+remains open and must not be represented as solved by bundling a release archive.
+
 ## Operational incident 2026-07-14: clean Windows smoke reused shared Qdrant collection
 
 Изолированная Windows-установка получила собственные MetaDB/storage, но сохранила дефолтную

@@ -7,21 +7,21 @@
 ## Текущее состояние (2026-07-15)
 
 ```
-версия продукта (SemVer):  0.24.14 (dev: operator-scoped chat + vision, 2026-07-15)
+версия продукта (SemVer):  0.24.14 (released: operator-scoped chat + vision, 2026-07-15)
 номер сборки:              425     (отдельно от версии продукта)
 версия Tauri/NSIS:         5.1.425 (внутренняя совместимость обновления)
 ветка выпуска:             main (сведение веток выполняется перед публикацией)
 dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.12 / build 423 (live on Legion, 2026-07-15)
-Windows-выпуск:            0.24.8 / build 419 (последний public; Legion runtime новее)
-следующий выпуск:          0.24.14 / build 425 (Python/UI patch; Legion gate pending)
+задеплоено на рантайм:     0.24.14 / build 425 (live on Legion, 2026-07-15)
+Windows-выпуск:            0.24.14 / build 425 (public GitHub release)
+следующий выпуск:          не назначен
 рантайм /api/version:      проверяется отдельно; dev-правка не считается развёртыванием
 ```
 
 > 0.24.14 / build 425 — выбранные документы, реальная длина ответа и взгляд на чертёж
 >
 > Дата: 2026-07-15
-> Статус: dev patch; Legion deploy pending.
+> Статус: released; Legion production gate и public publish пройдены.
 > В «Документах» оператор выбирает до 20 файлов и передаёт их в чат одной областью; backend
 > разрешает exact file references внутри выбранных dataset ids и применяет общий `doc_filter`,
 > не расширяя retrieval на весь корпус. Закреплённые системные датасеты из build 424 остаются
@@ -38,11 +38,17 @@ Windows-выпуск:            0.24.8 / build 419 (последний public; 
 > получил bounded edge 1 600 px; OpenAI-compatible vision transport с пустым content заменён нативным.
 > Контракт качества Legion, запрет подмены модели кодом, правила служебных датасетов и граница
 > будущих VPS-патчей зафиксированы в `docs/CHAT_OPERATOR_CONTRACT.md`. Live Legion подтвердил
-> `/api/version = 0.24.12 / build 423` и `/api/settings.llm_model = qwen3.5:9b`; новый build 425
-> не объявляется установленным до production gate.
+> До выпуска live Legion подтвердил baseline `/api/version = 0.24.12 / build 423` и
+> `/api/settings.llm_model = qwen3.5:9b`. Build 425 затем установлен штатным production gate:
+> 7/7 тяжёлых PDF, 2 247 chunks, native dense+sparse+lexical RRF, временный smoke dataset удалён.
+> Release: `v0.24.14`; installer SHA-256
+> `6f0c130d3cbd5049c1aee2afebd1c4ed41fc42f94c6bd771fb57b0e35049409e`.
 > Служебные датасеты создаются только при bootstrap реального RAG runtime. Открытие временной
 > `MetaDB` тестом, утилитой или import-probe остаётся изолированным и не добавляет продуктовые строки;
 > это закрывает три реальные регрессии release-suite без изменения тестовых ожиданий.
+> Production bootstrap в 17:30 вернул `action=kept_valid`: релизный baseline не перезаписал
+> существующую сметную базу Legion. Предыдущий инцидент `unified parquet does not match
+> structured-base manifest` остаётся отдельным долгом атомарного FGIS build→integrity→activate.
 
 > 0.24.13 / build 424 — честная готовность и закреплённые служебные датасеты
 >
