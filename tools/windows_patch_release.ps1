@@ -7,6 +7,7 @@ param(
   [string]$BuildCommit,
   [string]$Branch = "main",
   [string]$RepoRoot = "C:\Users\Oleg\les_rag",
+  [string]$SmetaBaselineArchive = "",
   [string]$InstallRoot = "",
   [string]$StateRoot = ""
 )
@@ -70,6 +71,13 @@ try {
   if ($head -ne $BuildCommit) {
     throw "Legion HEAD $head does not match requested build commit $BuildCommit"
   }
+  if (-not $SmetaBaselineArchive) {
+    $SmetaBaselineArchive = Join-Path $RepoRoot "dist\LES-smeta-baseline.zip"
+  }
+  if (-not (Test-Path -LiteralPath $SmetaBaselineArchive)) {
+    throw "Verified smeta baseline archive was not provided: $SmetaBaselineArchive"
+  }
+  $env:LES_SMETA_BASELINE_ARCHIVE = $SmetaBaselineArchive
 
   Invoke-Checked "uv" @(
     "run", "python", "tools/build_windows_installer.py",

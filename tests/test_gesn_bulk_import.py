@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from tools.gesn_bulk_import import (
+    ALL_COLLECTION_PREFIXES,
     _existing_otdel_prefixes,
     _otdel_codes,
     _records_for_prefix,
@@ -149,6 +150,10 @@ def test_etalon_12_01_034_02_classification():
 def test_otdel_codes_format():
     codes = _otdel_codes(12, otdel_max=5)
     assert codes == ["12-01", "12-02", "12-03", "12-04", "12-05"]
+
+
+def test_full_import_scans_all_fgis_numeric_prefixes():
+    assert ALL_COLLECTION_PREFIXES == tuple(range(1, 70))
 
 
 def test_records_for_prefix_filters_fulltext_noise():

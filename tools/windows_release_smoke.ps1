@@ -90,6 +90,25 @@ try {
   $result.proxy_port = $proxyPort
   $result.ui_port = $uiPort
 
+  $result.stage = "smeta_baseline"
+  $Python = Join-Path $StateRoot ".venv\Scripts\python.exe"
+  if (-not (Test-Path -LiteralPath $Python)) {
+    throw "release smoke Python was not created: $Python"
+  }
+  $smetaJson = @(& $Python (Join-Path $RuntimeRoot "tools\smeta_release_baseline.py") `
+    verify-root --root $StateRoot) -join "`n"
+  if ($LASTEXITCODE -ne 0) { throw "clean-install smeta baseline verification failed: $smetaJson" }
+  $smetaBaseline = $smetaJson | ConvertFrom-Json
+  $result.smeta_baseline = $smetaBaseline
+  if (-not $smetaBaseline.ok -or [int]$smetaBaseline.norm_count -lt 40000 -or `
+      [int]$smetaBaseline.fsem_rows -lt 1500) {
+    throw "clean-install smeta baseline is incomplete"
+  }
+  $result.price_scope = [ordered]@{
+    bundled = $false
+    status = "requires_region_zone_period_selection"
+  }
+
   $result.stage = "api"
   $proxy = Invoke-RestMethod -Uri "http://127.0.0.1:$proxyPort/api/health" -TimeoutSec 30
   $version = Invoke-RestMethod -Uri "http://127.0.0.1:$proxyPort/api/version" -TimeoutSec 30
@@ -176,6 +195,9 @@ try {
   $result.ok = (
     $bootstrapStatus.state -eq "ready" -and
     $version.les_version -eq $ExpectedVersion -and
+    $smetaBaseline.ok -and
+    [int]$smetaBaseline.norm_count -ge 40000 -and
+    [int]$smetaBaseline.fsem_rows -ge 1500 -and
     [int]$ui.StatusCode -eq 200 -and
     @($rrf.chunks).Count -gt 0 -and
     $rrf.retrieval_trace.fusion -match "rrf" -and

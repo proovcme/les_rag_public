@@ -5,6 +5,7 @@ import sqlite3
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from tools.build_smeta_structured_base import build_structured_base
 from tools.gesn_import import RESOURCE_FIELDS
@@ -89,6 +90,34 @@ def test_structured_base_excludes_norms_without_machine_metadata(tmp_path: Path)
     assert row[2] == "FSNB-2022"
     assert json.loads(row[3]) == ["Разметка", "Установка"]
     assert parent == row[1]
+
+
+def test_structured_base_refuses_to_replace_canonical_output_below_floor(tmp_path: Path):
+    source = tmp_path / "source.parquet"
+    out = tmp_path / "base.sqlite"
+    out.write_bytes(b"existing-canonical-base")
+    pd.DataFrame([
+        _row(
+            norm_code="ГЭСН08-01-001-01",
+            norm_key="ГЭСН:08-01-001-01",
+            base_type="ГЭСН",
+            norm_name="Монтаж оборудования",
+            norm_unit="шт",
+            kind="labor",
+            resource_name="Рабочий",
+            per_unit=1,
+        )
+    ], columns=list(RESOURCE_FIELDS)).to_parquet(source, index=False)
+
+    with pytest.raises(RuntimeError, match="1 < 40000 norms"):
+        build_structured_base(
+            source=source,
+            out=out,
+            manifest_out=tmp_path / "manifest.json",
+            minimum_norms=40_000,
+        )
+
+    assert out.read_bytes() == b"existing-canonical-base"
 
 
 def test_gesn_service_prefers_structured_base(tmp_path: Path, monkeypatch):

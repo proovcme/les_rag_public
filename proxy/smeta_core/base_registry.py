@@ -25,6 +25,7 @@ def active_base(config_path: str | Path = DEFAULT_CONFIG) -> dict[str, Any]:
         "manifest_path": str(payload.get("manifest_path") or base.with_name(f"{base.stem}_manifest.json")),
         "integrity_path": str(payload.get("integrity_path") or base.with_name(f"{base.stem}_integrity.json")),
         "source_path": str(payload.get("source_path") or ""),
+        "minimum_norms": max(1, int(payload.get("minimum_norms") or 1)),
         "rag_collection": str(payload.get("rag_collection") or "les_smeta_norm_cards_v1"),
         "rag_embedding_model": str(payload.get("rag_embedding_model") or "qwen3-embedding-0.6b"),
     }

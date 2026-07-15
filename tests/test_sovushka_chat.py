@@ -91,6 +91,10 @@ def test_chat_ui_primary_surface_uses_progressive_disclosure():
     assert "_set_artifacts_visible(False)" in source
     assert ".sov-mode-guide" in styles
     assert ".sov-mode-example" in styles
+    assert 'classes("sov-composer-footer")' in source
+    assert ".sov-composer-footer" in styles
+    assert "background: color-mix(in srgb, var(--bg-mod) 54%, transparent)" in styles
+    assert "width: auto" in styles
     assert "min-height: 40px" in styles
     assert "scale: .96" in styles
     assert "max-width: 1440px" in styles

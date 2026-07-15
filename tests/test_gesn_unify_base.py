@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from tools.gesn_import import RESOURCE_FIELDS
 from tools.gesn_unify_base import build_unified
@@ -191,3 +192,32 @@ def test_untyped_bare_resource_without_metadata_is_quarantined_not_defaulted_to_
     assert "Экскаватор" not in set(df["resource_name"])
     assert result["untyped_rows_quarantined"]["count"] == 1
     assert result["identity_source_counts"] == {"provided": 1}
+
+
+def test_unify_refuses_to_replace_canonical_source_below_floor(tmp_path: Path):
+    legacy = tmp_path / "legacy.parquet"
+    out = tmp_path / "unified.parquet"
+    out.write_bytes(b"existing-canonical-source")
+    pd.DataFrame([
+        _row(
+            norm_code="ГЭСН01-01-001-01",
+            norm_key="ГЭСН:01-01-001-01",
+            base_type="ГЭСН",
+            norm_name="Работа",
+            norm_unit="шт",
+            kind="labor",
+            resource_name="Рабочий",
+            per_unit=1,
+        )
+    ], columns=list(RESOURCE_FIELDS)).to_parquet(legacy, index=False)
+
+    with pytest.raises(RuntimeError, match="1 < 40000 norms"):
+        build_unified(
+            legacy=legacy,
+            overlay=tmp_path / "missing.parquet",
+            out=out,
+            audit_out=tmp_path / "audit.json",
+            minimum_norms=40_000,
+        )
+
+    assert out.read_bytes() == b"existing-canonical-source"

@@ -108,7 +108,15 @@ atlas-standalone.zip
 artel-mvp.zip
 ```
 
-Model files and private corpora are not shipped inside these archives.
+Model files and private project corpora are not shipped inside these archives. The Windows installer
+is the deliberate exception for the immutable estimating baseline: canonical typed GESN SQLite,
+its source/manifest/integrity report and the FSEM SQLite/manifest are packed by
+`tools/smeta_release_baseline.py` only after SHA, provenance and completeness gates pass.
+This is a normative/resource baseline, not a universal price book: regional split forms, indices and
+project KAC/KP stay outside the installer and are selected for an explicit price zone and period.
+The patch releaser accepts either `--smeta-baseline-root <operator-root>` or an already generated
+`--smeta-baseline-archive dist/LES-smeta-baseline.zip`; the archive remains a local release input,
+not a git-tracked corpus.
 The same applies to the separate ARTEL source/product tree, its tools, fixtures and tests.
 
 Build LES artifacts with:
@@ -150,6 +158,10 @@ Before a boxed release:
 - Qdrant data is stored in the correct profile path/volume;
 - docs for that platform are current;
 - no `.env`, corpora, logs, snapshots or private samples are in the artifact.
+- Windows contains `LES-smeta-baseline.zip`; clean-install bootstrap provisions it only into an empty
+  persistent state, while release smoke requires at least 40 000 GESN norms and 1 500 FSEM rows.
+- Windows does not claim complete monetary pricing until an applicable regional split form is selected;
+  absent prices remain `MISSING`.
 - АТЛАС zip contains `ATLAS_MANIFEST.json` and excludes private `JSON/` and `ifc-sample/` folders.
 - АТЛАС bundle budget passes so dependency drift is explicit.
 - АРТЕЛЬ zip contains `ARTEL_MANIFEST.json`, UI, backend, OpenAPI and runbook; it excludes binary build output and legacy Revit distribution files.

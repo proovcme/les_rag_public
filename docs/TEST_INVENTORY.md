@@ -2,8 +2,8 @@
 
 Гейт: `make verify` (офлайн, синтаксис+сбор коллекции). Полная сюита: `make test`.
 На исходном срезе 2026-07-14 полный контролируемый прогон дал `2926 passed, 6 warnings`;
-после release-bootstrap, version-contract и clean-RRF regression текущая коллекция — **2931 тест из 303 файлов**.
-Это регрессионная коллекция, а не 2931 равноценный release-гейт.
+после clean-install smeta baseline и Windows launcher regression текущая коллекция — **2946 тестов**.
+Это регрессионная коллекция, а не 2946 равноценных release-гейтов.
 
 Архитектурный разбор и список исторического долга:
 [TEST_ARCHITECTURE_AUDIT_2026-07-14.md](TEST_ARCHITECTURE_AUDIT_2026-07-14.md).
@@ -22,7 +22,7 @@ RAG-ядро имеет отдельный обязательный профил
 
 | Файл | Тестов | Покрывает |
 |---|---:|---|
-| `tests/test_installer_windows.py`, `tests/test_tauri_desktop.py`, `tests/test_install_les.py`, `tests/test_onboard_reranker.py`, `tests/test_software_versions.py`; live `tools/windows_release_smoke.ps1` | focused + Windows live | Windows/Tauri release contract: `%LOCALAPPDATA%\LES` persistent state, обязательные uv/Ollama/Docker/Qdrant, закреплённый Qdrant image, единый SemVer продукта + отдельный build, `make version-sync` + drift-gate, машинный bootstrap-status, named Qdrant volume, dynamic-port lifecycle, external `.env`, verified BGE onboarding. Live gate запускает установленный runtime, ждёт `ready`, сверяет точную версию, в собственной одноразовой Qdrant-коллекции индексирует seed-датасет, проверяет API/UI и настоящий `dense + qdrant_sparse → RRF`, затем удаляет dataset/collection. Ошибка фонового upload переводит документ в `ERROR`, а не оставляет `PENDING`; multi-candidate live rerank не подменяется single-chunk smoke |
+| `tests/test_installer_windows.py`, `tests/test_tauri_desktop.py`, `tests/test_install_les.py`, `tests/test_onboard_reranker.py`, `tests/test_software_versions.py`; live `tools/windows_release_smoke.ps1` | focused + Windows live | Windows/Tauri release contract: persistent state, обязательные uv/Ollama/Docker/Qdrant, version/build contract, bootstrap-status и verified BGE. Live gate запускает установленный runtime, доказывает provisioned smeta baseline (≥40 000 ГЭСН, ≥1 500 ФСЭМ), точную версию, API/UI и настоящий `dense + qdrant_sparse → RRF` в одноразовой коллекции |
 | `tests/test_local_inference_benchmark.py` | 8 | офлайн-контракт direct OpenAI benchmark и OptiQ probe: p50/p95, usage/cache normalization, MTP summary, tool/prefix profiles, sampler forwarding и чтение per-request telemetry JSONL; live model-series запускаются отдельно через `tools/local_inference_benchmark.py` + `tools/optiq_mtp_probe_server.py` |
 | `tests/test_answer_render_v16.py` | 26 | render-хелперы Совушки: strip markdown из ячеек, source-chips, evidence-секции, citation/conflict-блоки, citation drawer payload, compact trace включая topic-guided retrieval, `answer_copy_text` (Копировать без trace/тела письма) |
 | `tests/test_sidecar_ops_v16.py` | 50 | sidecar-операции: инвентарь датасетов, heading-классификатор, extraction-state (7 кейсов), lexical `extracted_fts`, OCR-детект, `run_extraction`/`extract_body_op` (gate env+confirm), originals read-only (shasum), legacy `.xls` |
@@ -48,7 +48,8 @@ RAG-ядро имеет отдельный обязательный профил
 | `tests/test_prices_router_batch.py`, `tests/test_fgis_price_service.py`, `tests/test_les_mcp_server.py` | focused | пакетный exact lookup ФГИС: одна загрузка книги, сохранение missing, дедупликация кодов и наличие `les_price_lookup_batch` в MCP-каталоге |
 | `tests/test_kac_web_service.py` | 2 | fail-closed web-KAC: strong exact-product identifier and three distinct suppliers with VAT normalization |
 | `tests/test_smeta_norm_store.py` | 7 | typed SQLite-light smeta norm projection over existing GESN/FSM/TER sources: schema payload, FTS/LIKE candidate search, norm-card profiles with hints/resources/condition_hints/provenance/model_card/navigation, nearby norms, worker-thread cached reads, no heavy row leak in trace |
-| `tests/test_smeta_structured_base.py` | 2 | canonical smeta machine base: builds `data/smeta_base/les_smeta_base.sqlite` from unified GESN parquet, excludes norms without name/unit, writes manifest counts, and makes `gesn_service.load_base_norms()` prefer structured SQLite |
+| `tests/test_smeta_structured_base.py` | focused | canonical smeta machine base: typed SQLite, quarantine, resource dedupe and pre-replace `minimum_norms` floor that preserves the existing canonical file on regression |
+| `tests/test_smeta_release_baseline.py` | 5 | immutable Windows smeta payload: source/base/FSEM SHA and counts, archive verification, clean-state provisioning, keep-valid-existing and fail-closed partial-state protection |
 | `tests/test_gesn_update_pipeline.py` | 2 | smeta base update pipeline: FGIS download/unify now continues into structured SQLite and generated `SMETA_SERVICE` cards, with explicit skip flags for generated layers |
 | `tests/test_smetnoedelo_rag_import.py` | 5 | Smetnoedelo API v2.0 → smeta RAG importer: section/code payload normalization, markdown card rendering, request-budget stop, manifest output, and token-free cache/card behavior |
 | `tests/test_smeta_ru_norm_download.py` | 5 | Smeta.RU public norm ZIP downloader: HTML link extraction, archive metadata, latest selection, pattern filter, and manifest-only run without network download |

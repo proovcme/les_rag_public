@@ -47,7 +47,11 @@ function Write-Status(
     updated_at = [DateTime]::Now.ToString("o")
   }
   $tmp = "$Status.tmp"
-  $payload | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $tmp -Encoding UTF8
+  [System.IO.File]::WriteAllText(
+    $tmp,
+    ($payload | ConvertTo-Json -Depth 3),
+    (New-Object System.Text.UTF8Encoding($false))
+  )
   Move-Item -LiteralPath $tmp -Destination $Status -Force
 }
 
@@ -219,6 +223,23 @@ if ($env:LES_TAURI_SHELL -eq "1") {
   & $Uv sync --extra desktop
 }
 if ($LASTEXITCODE -ne 0) { Fail "uv sync не удался" }
+
+# A clean install must be able to resolve norms and calculate normative resource
+# quantities without borrowing data from another workstation or scraping FGIS
+# for hours. Regional split forms remain an explicit period/zone selection. The
+# release baseline is immutable and checksum-verified; provisioning never
+# overwrites partial or existing user state.
+$SmetaBaseline = Join-Path $Root "installers\windows\baseline\LES-smeta-baseline.zip"
+if (-not (Test-Path -LiteralPath $SmetaBaseline)) {
+  Fail "в установочном пакете отсутствует проверенная сметная база" "smeta_baseline_missing"
+}
+Write-Status -Phase "smeta" -State "running" -Message "Проверяю базу ГЭСН и ФСЭМ"
+$baselineResult = & $Uv run python tools\smeta_release_baseline.py provision `
+  --archive $SmetaBaseline --state-root $StateRoot
+if ($LASTEXITCODE -ne 0) {
+  Fail "не удалось подготовить сметную базу: $($baselineResult -join ' ')" "smeta_baseline_failed"
+}
+Log "smeta baseline: $($baselineResult -join ' ')"
 
 # Tauri owns the native window. Lifecycle actions stay in the same bootstrap,
 # but must not launch the legacy pywebview shell.

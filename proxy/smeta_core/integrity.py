@@ -110,6 +110,10 @@ def _evaluate(
     report_source_sha = str(report.get("source_sha256") or "")
     if not manifest_source_sha or report_source_sha != manifest_source_sha:
         reasons.append("integrity report does not match manifest source sha256")
+    minimum_norms = int(manifest.get("minimum_norms") or 0)
+    manifest_norms = int((manifest.get("output") or {}).get("norms") or 0)
+    if minimum_norms and manifest_norms < minimum_norms:
+        reasons.append(f"structured base completeness floor failed: {manifest_norms} < {minimum_norms}")
 
     expected_base_sha = str(report.get("base_sha256") or "")
     if not expected_base_sha:
@@ -129,6 +133,10 @@ def _evaluate(
             navigation_reasons.append(f"required navigation check is absent: {check}")
         elif failures != 0:
             navigation_reasons.append(f"navigation check failed: {check}={failures}")
+    if minimum_norms and manifest_norms < minimum_norms:
+        navigation_reasons.append(
+            f"structured base completeness floor failed: {manifest_norms} < {minimum_norms}"
+        )
     trusted_for_navigation = not navigation_reasons
     return {
         "schema": "smeta_base_integrity_status_v1",

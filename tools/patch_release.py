@@ -91,7 +91,14 @@ def run_local_gates() -> None:
 
 
 def remote_build(
-    *, host: str, repo_root: str, branch: str, version: str, build_number: int, commit: str
+    *,
+    host: str,
+    repo_root: str,
+    branch: str,
+    version: str,
+    build_number: int,
+    commit: str,
+    smeta_baseline_archive: Path,
 ) -> None:
     # The release script itself may not exist in an older checkout. Prepare the
     # canonical branch with an inline bootstrap first, then execute the
@@ -112,10 +119,13 @@ def remote_build(
         "& git -C $repo pull --ff-only origin $branch; if($LASTEXITCODE -ne 0){throw 'git pull failed'}; "
         "$head=(& git -C $repo rev-parse HEAD).Trim(); "
         "if($head -ne $commit){throw \"Legion HEAD $head does not match $commit\"}; "
+        "$dist=Join-Path $repo 'dist'; New-Item -ItemType Directory -Force -Path $dist | Out-Null; "
         "exit 0 } catch { Write-Error $_; exit 1 }"
     )
     encoded_prepare = base64.b64encode(prepare.encode("utf-16le")).decode("ascii")
     run(["ssh", host, "powershell", "-NoProfile", "-EncodedCommand", encoded_prepare])
+    remote_baseline = f"{repo_root.replace('\\', '/')}/dist/LES-smeta-baseline.zip"
+    run(["scp", str(smeta_baseline_archive), f"{host}:{remote_baseline}"])
     remote_script = f"{repo_root.rstrip('\\/')}\\tools\\windows_patch_release.ps1"
     run(
         [
@@ -126,6 +136,7 @@ def remote_build(
             "-BuildCommit", commit,
             "-Branch", branch,
             "-RepoRoot", repo_root,
+            "-SmetaBaselineArchive", f"{repo_root.rstrip('\\/')}\\dist\\LES-smeta-baseline.zip",
         ]
     )
 
@@ -154,8 +165,12 @@ def verify_local_artifacts(contract: dict[str, Any], commit: str) -> dict[str, A
         raise RuntimeError("remote product version does not match config/version.json")
     if int(summary.get("build_number") or -1) != int(contract["build_number"]):
         raise RuntimeError("remote build number does not match config/version.json")
-    if summary.get("build_commit") != commit or not (summary.get("smoke") or {}).get("ok"):
+    smoke = summary.get("smoke") or {}
+    smeta = smoke.get("smeta_baseline") or {}
+    if summary.get("build_commit") != commit or not smoke.get("ok"):
         raise RuntimeError("remote build commit or live smoke is not verified")
+    if not smeta.get("ok") or int(smeta.get("norm_count") or 0) < 40_000:
+        raise RuntimeError("clean-install smeta baseline was not verified")
     return summary
 
 
@@ -217,15 +232,37 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--legion-host", default="legion")
     parser.add_argument("--legion-root", default=r"C:\Users\Oleg\les_rag")
     parser.add_argument("--notes-file", type=Path)
+    parser.add_argument(
+        "--smeta-baseline-root",
+        type=Path,
+        default=None,
+        help="operator root containing the verified data/gesn_base and data/smeta_base baseline",
+    )
+    parser.add_argument(
+        "--smeta-baseline-archive",
+        type=Path,
+        default=None,
+        help="reuse an already verified LES-smeta-baseline.zip",
+    )
     parser.add_argument("--publish", action="store_true")
     parser.add_argument("--skip-gates", action="store_true", help="local development only; cannot publish")
     args = parser.parse_args(argv)
 
+    if args.smeta_baseline_root and args.smeta_baseline_archive:
+        raise RuntimeError("choose either --smeta-baseline-root or --smeta-baseline-archive")
     if args.publish and args.skip_gates:
         raise RuntimeError("publishing cannot skip local gates")
     require_tools(("git", "uv", "make", "ssh", "scp", *( ("gh",) if args.publish else () )))
     contract = load_contract()
     commit = require_clean_pushed_branch(args.branch)
+    from tools.smeta_release_baseline import create_archive, verify_archive
+
+    if args.smeta_baseline_archive:
+        baseline = args.smeta_baseline_archive.resolve()
+        verify_archive(baseline)
+    else:
+        baseline = DIST / "LES-smeta-baseline.zip"
+        create_archive((args.smeta_baseline_root or ROOT).resolve(), baseline)
     if not args.skip_gates:
         run_local_gates()
     remote_build(
@@ -235,6 +272,7 @@ def main(argv: list[str] | None = None) -> int:
         version=str(contract["product_version"]),
         build_number=int(contract["build_number"]),
         commit=commit,
+        smeta_baseline_archive=baseline,
     )
     fetch_remote_artifacts(host=args.legion_host, repo_root=args.legion_root)
     summary = verify_local_artifacts(contract, commit)

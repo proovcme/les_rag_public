@@ -155,6 +155,7 @@ def build_structured_base(
     manifest_out: Path = DEFAULT_MANIFEST,
     integrity_out: Path | None = None,
     edition: str = DEFAULT_EDITION,
+    minimum_norms: int = 0,
 ) -> dict[str, Any]:
     if not source.exists():
         raise FileNotFoundError(source)
@@ -330,6 +331,13 @@ def build_structured_base(
         conn.commit()
     finally:
         conn.close()
+    with sqlite3.connect(tmp_out) as preflight_conn:
+        preflight_norm_count = int(preflight_conn.execute("SELECT count(*) FROM norms").fetchone()[0])
+    if preflight_norm_count < int(minimum_norms):
+        tmp_out.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"refusing to replace structured base: {preflight_norm_count} < {minimum_norms} norms"
+        )
     tmp_out.replace(out)
 
     source_sha256 = _sha256(source)
@@ -386,6 +394,11 @@ def build_structured_base(
         "empty_machine_base": {"failures": 0 if machine_norm_count else 1},
         "missing_provenance": {"failures": missing_provenance},
         "fts_coverage": {"failures": fts_coverage},
+        "minimum_norms": {
+            "failures": int(machine_norm_count < int(minimum_norms)),
+            "actual": machine_norm_count,
+            "minimum": int(minimum_norms),
+        },
     }
     integrity = {
         "schema": INTEGRITY_SCHEMA,
@@ -409,6 +422,7 @@ def build_structured_base(
 
     manifest = {
         "schema": SCHEMA,
+        "minimum_norms": int(minimum_norms),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "source": {
             "path": str(source),
@@ -448,12 +462,16 @@ def build_structured_base(
 
 
 def main(argv: Iterable[str] | None = None) -> int:
+    from proxy.smeta_core.base_registry import active_base
+
+    configured_minimum = int(active_base().get("minimum_norms") or 1)
     parser = argparse.ArgumentParser(description="Build canonical structured smeta SQLite base")
     parser.add_argument("--source", default=str(DEFAULT_SOURCE))
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     parser.add_argument("--manifest-out", default=str(DEFAULT_MANIFEST))
     parser.add_argument("--integrity-out", default="")
     parser.add_argument("--edition", default=DEFAULT_EDITION)
+    parser.add_argument("--minimum-norms", type=int, default=configured_minimum)
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     manifest = build_structured_base(
@@ -462,6 +480,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         manifest_out=Path(args.manifest_out),
         integrity_out=Path(args.integrity_out) if args.integrity_out else None,
         edition=str(args.edition),
+        minimum_norms=int(args.minimum_norms),
     )
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
     return 0

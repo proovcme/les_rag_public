@@ -57,6 +57,8 @@ def test_windows_patch_release_is_fail_closed_and_isolated():
     assert '"--build-number", [string]$BuildNumber' in source
     assert "ARTEL must not be bundled in the LES release runtime" in source
     assert '"products\\artel"' in source
+    assert "LES_SMETA_BASELINE_ARCHIVE" in source
+    assert "Verified smeta baseline archive was not provided" in source
 
 
 def test_windows_patch_release_creates_missing_tracking_branch():
@@ -79,15 +81,19 @@ def test_remote_build_bootstraps_branch_before_versioned_script(monkeypatch):
         version="0.24.1",
         build_number=407,
         commit="abc123",
+        smeta_baseline_archive=Path("baseline.zip"),
     )
 
-    assert len(calls) == 2
+    assert len(calls) == 3
     assert calls[0][-2] == "-EncodedCommand"
     decoded = base64.b64decode(calls[0][-1]).decode("utf-16le")
     assert 'fetch origin "${branch}:refs/remotes/origin/${branch}"' in decoded
     assert 'checkout -b $branch "refs/remotes/origin/$branch"' in decoded
-    assert calls[1][6] == "-File"
-    assert calls[1][7].endswith(r"tools\windows_patch_release.ps1")
+    assert calls[1][0] == "scp"
+    assert calls[1][1] == "baseline.zip"
+    assert calls[2][6] == "-File"
+    assert calls[2][7].endswith(r"tools\windows_patch_release.ps1")
+    assert "-SmetaBaselineArchive" in calls[2]
 
 
 def test_makefile_exposes_one_patch_release_entrypoint():

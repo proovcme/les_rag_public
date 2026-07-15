@@ -3,8 +3,9 @@
   "edition": "FSNB-2022",
   "base_path": "data/smeta_base/les_smeta_base.sqlite",
   "manifest_path": "data/smeta_base/les_smeta_base_manifest.json",
-  "integrity_path": "",
+  "integrity_path": "data/smeta_base/les_smeta_base_integrity.json",
   "source_path": "data/gesn_base/gesn2022_unified.parquet",
+  "minimum_norms": 40000,
   "rag_collection": "les_smeta_norm_cards",
   "rag_embedding_model": "qwen3-embedding-0.6b"
 }

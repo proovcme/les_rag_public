@@ -50,6 +50,8 @@ def run_update(
     skip_structured: bool = False,
     skip_service_rag: bool = False,
 ) -> dict:
+    from proxy.smeta_core.base_registry import active_base
+
     raw_out.parent.mkdir(parents=True, exist_ok=True)
     _write_status(status_out, {"status": "running", "stage": "download", "raw_out": str(raw_out)})
     sborniki = list(gesn_bulk_import.ALL_COLLECTION_PREFIXES) if all_sborniki else [int(sbornik or 0)]
@@ -61,7 +63,14 @@ def run_update(
         resume=not no_resume,
     )
     _write_status(status_out, {"status": "running", "stage": "unify", "download": stats})
-    audit = build_unified(legacy=raw_out, overlay=overlay, out=unified_out, audit_out=audit_out)
+    minimum_norms = int(active_base().get("minimum_norms") or 1)
+    audit = build_unified(
+        legacy=raw_out,
+        overlay=overlay,
+        out=unified_out,
+        audit_out=audit_out,
+        minimum_norms=minimum_norms,
+    )
     structured: dict | None = None
     if not skip_structured:
         _write_status(
@@ -78,6 +87,7 @@ def run_update(
             source=unified_out,
             out=structured_out,
             manifest_out=structured_manifest_out,
+            minimum_norms=minimum_norms,
         )
     service_rag: dict | None = None
     if not skip_service_rag:
@@ -108,7 +118,7 @@ def run_update(
 def main(argv: Iterable[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Update GESN unified base from official FGIS")
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("--all", action="store_true", help="all GESN collections 01..47")
+    group.add_argument("--all", action="store_true", help="all FGIS numeric prefixes 01..69")
     group.add_argument("--sbornik", type=int, help="one collection, e.g. 12")
     parser.add_argument("--raw-out", default=str(DEFAULT_LEGACY))
     parser.add_argument("--overlay", default=str(DEFAULT_OVERLAY))

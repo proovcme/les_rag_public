@@ -60,7 +60,11 @@ def npm_executable(platform: str | None = None) -> str:
     raise RuntimeError("npm executable not found; install Node.js before building Tauri")
 
 
-def stage_runtime(platform: str | None = None) -> int:
+def stage_runtime(
+    platform: str | None = None,
+    *,
+    smeta_baseline_archive: str | Path | None = None,
+) -> int:
     target_platform = platform or os.sys.platform
     runtime = RESOURCES / "runtime"
     if runtime.exists():
@@ -78,6 +82,17 @@ def stage_runtime(platform: str | None = None) -> int:
         target = runtime / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
+        count += 1
+    if target_platform.startswith("win") and smeta_baseline_archive:
+        baseline = Path(smeta_baseline_archive)
+        if not baseline.is_file():
+            raise RuntimeError(f"Windows smeta baseline archive is missing: {baseline}")
+        from tools.smeta_release_baseline import verify_archive
+
+        verify_archive(baseline)
+        target = runtime / "installers" / "windows" / "baseline" / "LES-smeta-baseline.zip"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(baseline, target)
         count += 1
     bootstrap = RESOURCES / "bootstrap.sh"
     if target_platform == "darwin":
@@ -109,7 +124,12 @@ def build(version: str, bundles: str | None, *, build_number: int | None = None)
     set_version(desktop_version)
     if desktop_version != version:
         print(f"[tauri] LES {version} -> desktop {desktop_version}")
-    count = stage_runtime()
+    smeta_baseline = None
+    if os.sys.platform.startswith("win"):
+        smeta_baseline = os.getenv("LES_SMETA_BASELINE_ARCHIVE", "").strip()
+        if not smeta_baseline:
+            raise RuntimeError("Windows release build requires LES_SMETA_BASELINE_ARCHIVE")
+    count = stage_runtime(smeta_baseline_archive=smeta_baseline)
     print(f"[tauri] staged clean runtime: {count} files")
     npm = npm_executable()
     subprocess.run([npm, "install"], cwd=TAURI_ROOT, check=True)

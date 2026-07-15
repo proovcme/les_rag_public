@@ -246,6 +246,7 @@ def build_unified(
     overlay: Path = DEFAULT_OVERLAY,
     out: Path = DEFAULT_OUT,
     audit_out: Path = DEFAULT_AUDIT,
+    minimum_norms: int = 0,
 ) -> dict[str, Any]:
     frames: list[pd.DataFrame] = []
     if legacy.exists():
@@ -319,6 +320,12 @@ def build_unified(
     output_fields = [*RESOURCE_FIELDS, "_identity_source", "_source_label"]
     df = df[output_fields]
 
+    norm_count = int(df["norm_key"].nunique())
+    if norm_count < int(minimum_norms):
+        raise RuntimeError(
+            f"refusing to replace unified GESN source: {norm_count} < {minimum_norms} norms"
+        )
+
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp_out = out.with_suffix(out.suffix + ".tmp")
     df.to_parquet(tmp_out, compression="snappy", index=False)
@@ -339,11 +346,15 @@ def build_unified(
 
 
 def main(argv: Iterable[str] | None = None) -> int:
+    from proxy.smeta_core.base_registry import active_base
+
+    configured_minimum = int(active_base().get("minimum_norms") or 1)
     parser = argparse.ArgumentParser(description="Build typed unified GESN parquet")
     parser.add_argument("--legacy", default=str(DEFAULT_LEGACY))
     parser.add_argument("--overlay", default=str(DEFAULT_OVERLAY))
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     parser.add_argument("--audit-out", default=str(DEFAULT_AUDIT))
+    parser.add_argument("--minimum-norms", type=int, default=configured_minimum)
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     audit = build_unified(
@@ -351,6 +362,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         overlay=Path(args.overlay),
         out=Path(args.out),
         audit_out=Path(args.audit_out),
+        minimum_norms=int(args.minimum_norms),
     )
     print(json.dumps({
         "schema": audit["schema"],

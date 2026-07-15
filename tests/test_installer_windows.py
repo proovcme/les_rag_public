@@ -67,6 +67,10 @@ def test_windows_release_smoke_executes_installed_runtime_and_real_rrf():
     assert 'retrieval_trace.fusion -match "rrf"' in text
     assert 'Invoke-RestMethod -Method Delete' in text
     assert 'collections/$smokeCollection' in text
+    assert 'verify-root --root $StateRoot' in text
+    assert '[int]$smetaBaseline.norm_count -lt 40000' in text
+    assert '[int]$smetaBaseline.fsem_rows -lt 1500' in text
+    assert 'status = "requires_region_zone_period_selection"' in text
 
 
 def test_start_light_keeps_uv_server_processes_alive():
@@ -209,5 +213,10 @@ def test_windows_bootstrap_writes_machine_readable_status_for_tauri():
     assert 'services_start_failed' in text
     assert 'schema = "les_windows_bootstrap_status_v1"' in text
     assert 'install_url = $InstallUrl' in text
+    assert 'New-Object System.Text.UTF8Encoding($false)' in text
     assert 'Write-Status -Phase "ready" -State "ready"' in text
     assert 'if ($env:LES_TAURI_SHELL -ne "1")' in text
+    assert 'LES-smeta-baseline.zip' in text
+    assert 'tools\\smeta_release_baseline.py provision' in text
+    assert '"smeta_baseline_missing"' in text
+    assert '"smeta_baseline_failed"' in text

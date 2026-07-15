@@ -492,6 +492,7 @@ def test_normative_base_requires_zero_failure_checks_and_matching_hashes(tmp_pat
                         "empty_machine_base": {"failures": 0},
                         "missing_provenance": {"failures": 0},
                         "fts_coverage": {"failures": 0},
+                        "minimum_norms": {"failures": 0},
                 },
             }
         ),
@@ -520,6 +521,7 @@ def test_missing_historical_provenance_allows_navigation_but_not_final_pricing(t
         "empty_machine_base": {"failures": 0},
         "missing_provenance": {"failures": 7},
         "fts_coverage": {"failures": 0},
+        "minimum_norms": {"failures": 0},
     }
     report.write_text(json.dumps({
         "schema": "les_smeta_base_integrity_v1",
@@ -535,6 +537,39 @@ def test_missing_historical_provenance_allows_navigation_but_not_final_pricing(t
     assert result["navigation_reasons"] == []
     assert result["trusted_for_pricing"] is False
     assert "required check failed: missing_provenance=7" in result["reasons"]
+
+
+def test_normative_base_manifest_floor_blocks_small_but_structurally_valid_base(tmp_path):
+    base = tmp_path / "base.sqlite"
+    manifest = tmp_path / "manifest.json"
+    report = tmp_path / "integrity.json"
+    base.write_bytes(b"small-structured-base")
+    manifest.write_text(json.dumps({
+        "source": {"sha256": "source-revision"},
+        "minimum_norms": 40_000,
+        "output": {"norms": 171},
+    }), encoding="utf-8")
+    report.write_text(json.dumps({
+        "schema": "les_smeta_base_integrity_v1",
+        "verdict": "passed",
+        "source_sha256": "source-revision",
+        "base_sha256": _sha(base),
+        "checks": {
+            "cross_family_contamination": {"failures": 0},
+            "orphan_resources": {"failures": 0},
+            "duplicate_norm_keys": {"failures": 0},
+            "resource_parent_mismatch": {"failures": 0},
+            "empty_machine_base": {"failures": 0},
+            "missing_provenance": {"failures": 0},
+            "fts_coverage": {"failures": 0},
+        },
+    }), encoding="utf-8")
+
+    result = normative_base_integrity(base_path=base, manifest_path=manifest, report_path=report)
+
+    assert result["trusted_for_pricing"] is False
+    assert result["trusted_for_navigation"] is False
+    assert "171 < 40000" in " ".join(result["reasons"])
 
 
 def test_finality_is_blocked_for_quarantined_normative_source():

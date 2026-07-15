@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from tools import build_release_artifacts, build_tauri_app
+from tools import smeta_release_baseline
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,6 +39,9 @@ def test_tauri_rust_shell_owns_only_lifecycle_and_navigation():
     assert 'env("LES_TAURI_SHELL", "1")' in source
     assert 'env("LES_TAURI_ACTION", action)' in source
     assert 'bootstrap-status.json' in source
+    assert "trim_start_matches('\\u{feff}')" in source
+    assert 'tauri-bootstrap.err.log' in source
+    assert 'std::fs::remove_file(path)' in source
     assert '.get("install_url")' in source
     assert 'creation_flags(0x0800_0000)' in source
     assert '"restart" => run_action' in source
@@ -91,6 +95,20 @@ def test_tauri_runtime_stage_is_platform_specific(tmp_path, monkeypatch):
     assert (resources / "bootstrap.sh").is_file()
     assert (resources / "runtime/installers/macos/app/bootstrap.sh").is_file()
     assert not (resources / "runtime/installers/windows/app/bootstrap.ps1").exists()
+
+
+def test_windows_tauri_stage_bundles_verified_smeta_baseline(tmp_path, monkeypatch):
+    resources = tmp_path / "resources"
+    archive = tmp_path / "LES-smeta-baseline.zip"
+    archive.write_bytes(b"verified-baseline")
+    monkeypatch.setattr(build_tauri_app, "RESOURCES", resources)
+    monkeypatch.setattr(build_tauri_app, "iter_files", lambda: [ROOT / "README.md"])
+    monkeypatch.setattr(smeta_release_baseline, "verify_archive", lambda path: {"ok": True})
+
+    assert build_tauri_app.stage_runtime("win32", smeta_baseline_archive=archive) == 2
+    assert (
+        resources / "runtime/installers/windows/baseline/LES-smeta-baseline.zip"
+    ).read_bytes() == b"verified-baseline"
 
 
 def test_release_stage_excludes_agent_and_runtime_temporary_files():

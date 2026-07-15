@@ -4,19 +4,41 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-07-14)
+## Текущее состояние (2026-07-15)
 
 ```
-версия продукта (SemVer):  0.24.2  (smeta evidence hardening, release candidate, 2026-07-14)
-номер сборки:              411     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.411 (внутренняя совместимость обновления)
+версия продукта (SemVer):  0.24.3  (clean-install smeta baseline, release candidate, 2026-07-15)
+номер сборки:              412     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.412 (внутренняя совместимость обновления)
 ветка выпуска:             main (сведение веток выполняется перед публикацией)
 dev HEAD:                  HEAD  (см. git log -1)
 задеплоено на рантайм:     0.24.0.396 (live, 2026-07-13)
 Windows-выпуск:            0.24.1 / build 410 (public, 2026-07-14)
-следующий выпуск:          0.24.2 / build 411 (собирается, не опубликован)
+следующий выпуск:          0.24.3 / build 412 (собирается, не опубликован)
 рантайм /api/version:      проверяется отдельно; dev-правка не считается развёртыванием
 ```
+
+> 0.24.3 / build 412 — smeta baseline в чистой Windows-установке
+>
+> Дата: 2026-07-15
+> Статус: release candidate; публикация только после Legion clean-install smoke.
+> Windows EXE теперь обязан содержать generated `LES-smeta-baseline.zip`: typed unified source,
+> canonical SQLite, совпадающие manifest/integrity и ФСЭМ SQLite/manifest. `patch_release.py`
+> проверяет SHA, provenance, не менее 40 000 норм и 1 500 строк ФСЭМ до передачи payload на Legion.
+> Фактический payload: 49 756 trusted норм, 504 259 ресурсных строк, 1 576 строк ФСЭМ;
+> ZIP SHA-256 `fb298f78f1f216a5e6d7bcd44e57234358e86aa39cca138c575c85b89a415d2c` (49 MiB).
+> Bootstrap разворачивает baseline только в полностью пустой persistent state; частичная или
+> существующая деградированная база не перезаписывается. `build_smeta_structured_base.py` проверяет
+> completeness floor до atomic replace, поэтому сборки на 171 или 14 570 норм не могут затереть
+> canonical SQLite. Windows smoke повторяет проверку уже из установленного EXE. Baseline даёт нормы/ресурсы,
+> но не подменяет региональную Сплит-форму: до выбора региона/зоны/периода цены честно остаются `MISSING`.
+> ARTEL не включён.
+> На Legion подтверждён ещё один release-регресс: PowerShell 5.1 писал `bootstrap-status.json` с UTF-8 BOM,
+> Rust/serde отвергал JSON, а stdout/stderr launcher глушились в `null`, поэтому UI показывал только `exit code: 1`.
+> Status теперь BOM-free, reader толерантен к legacy BOM, stale status удаляется перед запуском, а launcher
+> сохраняет `tauri-bootstrap.{out,err}.log` и показывает реальную причину/путь журнала.
+> Нижний белый подвал чат-композера убран: scope/attach/more/send находятся в общей серой footer-панели;
+> мобильный layout скрывает только клавиатурную подсказку и сохраняет доступные размеры действий.
 
 > 0.24.2 / build 411 — smeta professional evidence contract
 >

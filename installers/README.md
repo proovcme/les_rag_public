@@ -10,7 +10,11 @@ The installers are intentionally thin adapters around the repository runtime:
 - `tools/build_release_artifacts.py` builds distributable archives without local data.
 
 Local corpora, `.env`, model files, Qdrant data, logs, snapshots and private samples
-must never be packed into release archives.
+must never be packed into release archives. Windows additionally carries one immutable generated
+`LES-smeta-baseline.zip`: it contains only canonical typed GESN/FSEM calculation artifacts,
+manifests and integrity evidence, never project documents or runtime indexes.
+Regional split forms and indices are not universal installer assets: the operator selects the applicable
+subject, price zone and period after installation; missing prices remain visible as `MISSING`.
 
 ARTEL is a separate Revit product with its own installer and release lifecycle. LES boxed artifacts
 exclude `products/artel`, ARTEL-only tools, fixtures and tests; the canonical LES release gate is
@@ -79,6 +83,11 @@ uv run python tools/build_windows_installer.py --version 5.1.0
 
 `bootstrap.ps1` carries Cyrillic UI strings and is stored UTF-8 with BOM for
 Windows PowerShell 5.1. `windows/app/LES.ico` brands the Tauri bundle.
+On first start bootstrap verifies and provisions the bundled smeta baseline into `%LOCALAPPDATA%\LES`.
+If any target smeta file already exists, the complete existing set must validate; a partial or degraded
+user base is reported and never overwritten. The canonical patch-release uploads the generated baseline
+to Legion before building and proves it again in the isolated clean-install smoke.
+This proves norm/resource and FSEM readiness, not the presence of a region-specific price book.
 
 ## Windows (advanced: docker / lite profiles)
 

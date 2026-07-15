@@ -89,7 +89,7 @@ cs.smetnoedelo.ru дают **постраничный HTML** на каждую �
     # один сборник (проверка):
     uv run python -m tools.gesn_bulk_import --sbornik 12
 
-    # ПОЛНАЯ база (47 сборников, ~часы — оценка ниже):
+    # ПОЛНАЯ база (numeric prefixes 01..69, ~часы — оценка ниже):
     uv run python -m tools.gesn_bulk_import --all --rate 1.0
 
 После bulk/import raw-слой пересобирается в единый source parquet и canonical SQLite:
@@ -97,13 +97,21 @@ cs.smetnoedelo.ru дают **постраничный HTML** на каждую �
     uv run python -m tools.gesn_unify_base
     uv run python -m tools.build_smeta_structured_base
 
+Canonical build reads `minimum_norms` from `config/domain/smeta_base_active.json` and checks the floor
+before atomically replacing SQLite. An incomplete build remains an error and cannot overwrite the active
+base. For Windows clean install the releaser creates a verified payload with
+`uv run python tools/smeta_release_baseline.py create`; manually bundling an old `gesn2022.parquet` or
+an unverified SQLite is prohibited.
+
 Операторский путь в GUI: **Инструменты → Источники данных → ГЭСН-2022 → скачать/обновить из ФГИС ЦС**.
 API: `POST /api/service-sources/gesn_base/fgis-update`, статус:
 `GET /api/service-sources/gesn_base/fgis-update/status`.
 
 Свойства: **резюмируемость** (уже залитые отделы пропускаются — прогон можно прерывать/продолжать),
 rate-limit + retry с backoff, прогресс-лог, идемпотентный append с дедупом по ключу нормы.
-**Оценка полного прогона:** ~47 сборников × ~20–40 отделов ≈ **600–900 запросов**; при `--rate 1.0`
+**Оценка полного прогона:** prefixes 01..69, до 40 отделов с early-stop после 8 пустых;
+обычно сотни запросов. Диапазон включает 47 строительных сборников и поздние префиксы
+ГЭСНм/ГЭСНп/ГЭСНр/ГЭСНмр; семейство определяет metadata ФГИС. При `--rate 1.0`
 (1 req/с) + время скачивания крупных отделов (отдельные ответы до 15 МБ) — порядка **30–90 мин**;
 итог — десятки тысяч норм. На проверке: сб.12 = 1536 норм / 27 899 строк-ресурсов; сб.1 (2 отдела)
 = 1462 нормы / 6714 строк; эталон 12-01-034-02 в базе точен (труд 12.94, краны 0.97/0.01, бортовой

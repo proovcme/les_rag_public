@@ -3,8 +3,9 @@
 Зачем
 =====
 ``tools/gesn_pdf_import.py`` тянет ОДНУ норму/таблицу по коду; ``gesn_fgis_service`` — on-demand
-по встреченному коду. Этот модуль закрывает РАЗОВУЮ полную заливку всех 47 строительных сборников
-ГЭСН-2022 (Приказ Минстроя 1046/пр) — десятки тысяч норм — в один Parquet, идемпотентно и вежливо.
+по встреченному коду. Этот модуль закрывает РАЗОВУЮ полную заливку numeric-prefix диапазона
+01..69: 47 строительных сборников и семейства ГЭСНм/ГЭСНп/ГЭСНр/ГЭСНмр. Тип базы берётся только
+из metadata ФГИС, а не из номера, и сохраняется в один Parquet идемпотентно и вежливо.
 
 Источник и перечисление кодов (доказано)
 ----------------------------------------
@@ -265,7 +266,7 @@ def run(
 def _main(argv: Optional[Iterable[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Массовая заливка базы ГЭСН-2022 из ФГИС ЦС → Parquet")
     grp = ap.add_mutually_exclusive_group(required=True)
-    grp.add_argument("--all", action="store_true", help="все строительные сборники 01..47")
+    grp.add_argument("--all", action="store_true", help="все numeric prefixes 01..69; семейство берётся из ФГИС")
     grp.add_argument("--sbornik", type=int, metavar="NN", help="один сборник (напр. 12)")
     ap.add_argument("--out", default=str(DEFAULT_OUT), help=f"Parquet (по умолч. {DEFAULT_OUT})")
     ap.add_argument("--rate", type=float, default=1.0, help="запросов/сек (вежливость, дефолт 1.0)")

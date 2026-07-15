@@ -115,7 +115,18 @@ Missing price хранится как `null`, не как бесплатный �
 Совушка должна восстановить карточку того же файла без повторного расчёта и без вызова модели.
 Внешний ответ формируется отдельно от машинного JSON и не показывает служебные имена полей.
 
-## Гейты
+## Clean-install baseline и гейты
+
+Windows release не строит нормативную базу из случайного локального parquet. `make patch-release`
+создаёт `LES-smeta-baseline.zip` из canonical typed source/SQLite/manifest/integrity и ФСЭМ,
+проверяет SHA и нижние границы 40 000 норм / 1 500 машин, передаёт архив на Legion и встраивает в EXE.
+Bootstrap разворачивает его только в пустой persistent state. `build_smeta_structured_base` до замены
+канонического файла проверяет `minimum_norms`, поэтому результат 171 или 14 570 норм не может затереть
+живую базу. Clean-install smoke повторно проверяет фактические SQLite после установки.
+Это гейт норм/ресурсов и ФСЭМ, а не ценовой гейт: региональная Сплит-форма выбирается по субъекту,
+ценовой зоне и периоду после установки. Без неё точные цены остаются `MISSING`.
+
+Гейты:
 
 - `tests/test_smeta_core.py` — три инструмента, model-owned выбор, полный technology/resource evidence,
   50 строк, единицы и один расчёт.
@@ -123,11 +134,13 @@ Missing price хранится как `null`, не как бесплатный �
 - `tests/test_smeta_prompt_freedom.py` — отсутствие объектных якорей и скрытого selector.
 - `tests/test_prompt_registry_service.py` — runtime skill и prompt registry.
 - `tests/test_specification_to_bor_contract.py` — model-owned декомпозиция и quantity trace.
+- `tests/test_smeta_release_baseline.py` — SHA/count/integrity, clean provision и запрет overwrite.
+- `tests/test_installer_windows.py` — baseline в bootstrap и обязательная Windows-smoke проверка.
 - `make verify` и `make test` — релизный офлайн-гейт.
 
 ## Открытые долги
 
-- Завершить integrity gate нормативной SQLite и полный ценовой контур ФГИС/ФСЭМ/КАЦ.
+- Доказать полноту всех семейств/редакций сверх общего floor и закрыть полный ценовой контур ФГИС/КАЦ.
 - Подтвердить новый batch-путь живым zero-state прогоном и качественным аудитом ЛСР.
 - Завершить clean dense+sparse reindex общего RAG и только после гейтов переключить alias.
 

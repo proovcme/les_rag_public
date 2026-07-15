@@ -934,53 +934,54 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         _guide_panel.set_visibility(_mode_key == out_mode_val["v"])
                         _mode_hint_refs[_mode_key] = _guide_panel
 
-                ui.label("Shift+Enter — перенос строки · Enter — отправить").classes("sov-composer-hint")
+                with ui.element("div").classes("sov-composer-footer"):
+                    ui.label("Shift+Enter — перенос строки · Enter — отправить").classes("sov-composer-hint")
 
-                with ui.row().classes("sov-composer-actions"):
-                    ui.button(
-                        icon="o_travel_explore",
-                        on_click=lambda: _open_scope_dialog(),
-                    ).props('no-caps flat round aria-label="Выбрать область"').classes(
-                        "sov-composer-action"
-                    ).tooltip("Выбрать проект или датасет")
-                    ui.button(
-                        icon="o_attach_file",
-                        on_click=lambda: attach_dialog.open(),
-                    ).props('no-caps flat round aria-label="Прикрепить файл"').classes(
-                        "sov-composer-action"
-                    ).tooltip("Прикрепить файл")
-                    advanced_btn = ui.button(icon="o_more_horiz").props(
-                        'no-caps flat round aria-label="Дополнительные действия"'
-                    ).classes("sov-composer-action").tooltip("Дополнительные действия")
-                    with advanced_btn:
-                        with ui.menu().classes("sov-tools-menu"):
-                            ui.label("Дополнительно").classes("sov-tools-title")
-                            with ui.row().classes("sov-validation-control"):
-                                validation_sw = ui.switch("Проверка ответа", value=True).props("dense")
-                                validation_state = ui.label("Включена").classes("sov-validation-state")
-                            ui.separator().style("border-color:var(--border);margin:4px 0;")
-                            cmd_menu_box = ui.column().classes("gap-0")
-                            with cmd_menu_box:
-                                ui.menu_item("Загрузка команд…", on_click=lambda: None)
-                            ui.separator().style("border-color:var(--border);margin:4px 0;")
-                            ui.menu_item("Расширенный запрос…", on_click=lambda: advanced_dialog.open()).props("dense")
-                            ui.menu_item("Блокнот области", on_click=lambda: asyncio.create_task(_open_scope_passport())).props("dense")
-                            ui.menu_item("Файлы и папки", on_click=lambda: _toggle_files()).props("dense")
-                            if tabs is not None and tab_documents is not None:
+                    with ui.row().classes("sov-composer-actions"):
+                        ui.button(
+                            icon="o_travel_explore",
+                            on_click=lambda: _open_scope_dialog(),
+                        ).props('no-caps flat round aria-label="Выбрать область"').classes(
+                            "sov-composer-action"
+                        ).tooltip("Выбрать проект или датасет")
+                        ui.button(
+                            icon="o_attach_file",
+                            on_click=lambda: attach_dialog.open(),
+                        ).props('no-caps flat round aria-label="Прикрепить файл"').classes(
+                            "sov-composer-action"
+                        ).tooltip("Прикрепить файл")
+                        advanced_btn = ui.button(icon="o_more_horiz").props(
+                            'no-caps flat round aria-label="Дополнительные действия"'
+                        ).classes("sov-composer-action").tooltip("Дополнительные действия")
+                        with advanced_btn:
+                            with ui.menu().classes("sov-tools-menu"):
+                                ui.label("Дополнительно").classes("sov-tools-title")
+                                with ui.row().classes("sov-validation-control"):
+                                    validation_sw = ui.switch("Проверка ответа", value=True).props("dense")
+                                    validation_state = ui.label("Включена").classes("sov-validation-state")
+                                ui.separator().style("border-color:var(--border);margin:4px 0;")
+                                cmd_menu_box = ui.column().classes("gap-0")
+                                with cmd_menu_box:
+                                    ui.menu_item("Загрузка команд…", on_click=lambda: None)
+                                ui.separator().style("border-color:var(--border);margin:4px 0;")
+                                ui.menu_item("Расширенный запрос…", on_click=lambda: advanced_dialog.open()).props("dense")
+                                ui.menu_item("Блокнот области", on_click=lambda: asyncio.create_task(_open_scope_passport())).props("dense")
+                                ui.menu_item("Файлы и папки", on_click=lambda: _toggle_files()).props("dense")
+                                if tabs is not None and tab_documents is not None:
+                                    ui.menu_item(
+                                        "Документы датасетов",
+                                        on_click=lambda: tabs.set_value(tab_documents),
+                                    ).props('dense aria-label="Документы"').tooltip("Открыть документы датасетов")
                                 ui.menu_item(
-                                    "Документы датасетов",
-                                    on_click=lambda: tabs.set_value(tab_documents),
-                                ).props('dense aria-label="Документы"').tooltip("Открыть документы датасетов")
-                            ui.menu_item(
-                                "Служебные источники",
-                                on_click=lambda: asyncio.create_task(_show_service_sources()),
-                            ).props("dense")
-                            ui.menu_item("Артефакты ответа", on_click=lambda: _open_artifacts()).props("dense")
-                    send_btn = ui.button(
-                        "Отправить",
-                        icon="o_send",
-                        on_click=lambda: asyncio.create_task(send_chat()),
-                    ).props("no-caps").classes("sov-send-btn")
+                                    "Служебные источники",
+                                    on_click=lambda: asyncio.create_task(_show_service_sources()),
+                                ).props("dense")
+                                ui.menu_item("Артефакты ответа", on_click=lambda: _open_artifacts()).props("dense")
+                        send_btn = ui.button(
+                            "Отправить",
+                            icon="o_send",
+                            on_click=lambda: asyncio.create_task(send_chat()),
+                        ).props("no-caps").classes("sov-send-btn")
 
         # Резиновый layout: разделитель между чатом и артефактами (таскать по ширине).
         artifact_divider = ui.element("div").classes("sov-resize-divider")

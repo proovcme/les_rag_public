@@ -83,18 +83,32 @@ fn resource_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 #[cfg(target_os = "windows")]
-fn bootstrap_status_path() -> Option<PathBuf> {
+fn windows_state_root() -> Option<PathBuf> {
     std::env::var_os("LES_WINDOWS_STATE_ROOT")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("LOCALAPPDATA").map(|path| PathBuf::from(path).join("LES")))
-        .map(|root| root.join("logs/bootstrap-status.json"))
+}
+
+#[cfg(target_os = "windows")]
+fn bootstrap_status_path() -> Option<PathBuf> {
+    windows_state_root().map(|root| root.join("logs/bootstrap-status.json"))
+}
+
+#[cfg(target_os = "windows")]
+fn bootstrap_launcher_logs() -> Option<(PathBuf, PathBuf)> {
+    windows_state_root().map(|root| {
+        let logs = root.join("logs");
+        (logs.join("tauri-bootstrap.out.log"), logs.join("tauri-bootstrap.err.log"))
+    })
 }
 
 fn bootstrap_failure_message(status: &std::process::ExitStatus) -> String {
     #[cfg(target_os = "windows")]
     if let Some(path) = bootstrap_status_path() {
         if let Ok(text) = std::fs::read_to_string(&path) {
-            if let Ok(payload) = serde_json::from_str::<serde_json::Value>(&text) {
+            if let Ok(payload) = serde_json::from_str::<serde_json::Value>(
+                text.trim_start_matches('\u{feff}'),
+            ) {
                 let message = payload.get("message").and_then(|value| value.as_str()).unwrap_or("");
                 let code = payload.get("code").and_then(|value| value.as_str()).unwrap_or("");
                 let install_url = payload
@@ -117,6 +131,20 @@ fn bootstrap_failure_message(status: &std::process::ExitStatus) -> String {
                 }
             }
         }
+    }
+    #[cfg(target_os = "windows")]
+    if let Some((_, stderr_path)) = bootstrap_launcher_logs() {
+        if let Ok(stderr) = std::fs::read_to_string(&stderr_path) {
+            let excerpt = stderr.trim_start_matches('\u{feff}').trim();
+            if !excerpt.is_empty() {
+                let tail = excerpt.chars().rev().take(1200).collect::<String>().chars().rev().collect::<String>();
+                return format!("{tail}\nЖурнал: {}", stderr_path.display());
+            }
+        }
+        return format!(
+            "bootstrap завершился с кодом {status}\nЖурнал: {}",
+            stderr_path.display()
+        );
     }
     format!("bootstrap завершился с кодом {status}")
 }
@@ -152,13 +180,26 @@ fn bootstrap_command(app: &AppHandle, action: &str) -> Result<Command, String> {
     command
         .env("LES_TAURI_SHELL", "1")
         .env("LES_TAURI_ACTION", action)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stdin(Stdio::null());
+    #[cfg(target_os = "windows")]
+    if let Some((stdout_path, stderr_path)) = bootstrap_launcher_logs() {
+        if let Some(parent) = stdout_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        let stdout = std::fs::File::create(stdout_path).map_err(|error| error.to_string())?;
+        let stderr = std::fs::File::create(stderr_path).map_err(|error| error.to_string())?;
+        command.stdout(Stdio::from(stdout)).stderr(Stdio::from(stderr));
+    }
+    #[cfg(not(target_os = "windows"))]
+    command.stdout(Stdio::null()).stderr(Stdio::null());
     Ok(command)
 }
 
 fn run_bootstrap(app: &AppHandle, action: &str) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    if let Some(path) = bootstrap_status_path() {
+        let _ = std::fs::remove_file(path);
+    }
     let status = bootstrap_command(app, action)?
         .status()
         .map_err(|error| format!("не удалось запустить bootstrap: {error}"))?;
