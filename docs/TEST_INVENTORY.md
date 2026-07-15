@@ -2,8 +2,8 @@
 
 Гейт: `make verify` (офлайн, синтаксис+сбор коллекции). Полная сюита: `make test`.
 На исходном срезе 2026-07-14 полный контролируемый прогон дал `2926 passed, 6 warnings`;
-после clean-install smeta baseline и Windows launcher regression текущая коллекция — **2946 тестов**.
-Это регрессионная коллекция, а не 2946 равноценных release-гейтов.
+после clean-install smeta baseline и Windows launcher regression текущая коллекция — **2947 тестов**.
+Это регрессионная коллекция, а не 2947 равноценных release-гейтов.
 
 Архитектурный разбор и список исторического долга:
 [TEST_ARCHITECTURE_AUDIT_2026-07-14.md](TEST_ARCHITECTURE_AUDIT_2026-07-14.md).

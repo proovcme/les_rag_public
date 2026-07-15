@@ -74,6 +74,29 @@ def test_release_baseline_roundtrip_provisions_clean_state(tmp_path: Path):
     assert packaged_manifest["minimum_norms"] == 2
 
 
+def test_sqlite_count_releases_file_handle(monkeypatch, tmp_path: Path):
+    class _Cursor:
+        @staticmethod
+        def fetchone():
+            return (7,)
+
+    class _Connection:
+        closed = False
+
+        @staticmethod
+        def execute(_query: str):
+            return _Cursor()
+
+        def close(self):
+            self.closed = True
+
+    connection = _Connection()
+    monkeypatch.setattr(baseline.sqlite3, "connect", lambda *_args, **_kwargs: connection)
+
+    assert baseline._sqlite_count(tmp_path / "locked-on-windows.sqlite", "machines") == 7
+    assert connection.closed is True
+
+
 def test_release_baseline_keeps_complete_existing_state(tmp_path: Path):
     source_root = _fixture_root(tmp_path / "source")
     archive = tmp_path / "baseline.zip"

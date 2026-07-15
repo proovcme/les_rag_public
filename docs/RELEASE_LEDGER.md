@@ -41,6 +41,8 @@ Windows-выпуск:            0.24.1 / build 410 (public, 2026-07-14)
 > мобильный layout скрывает только клавиатурную подсказку и сохраняет доступные размеры действий.
 > Release-тест фоновой ошибки parse изолирован от фактической свободной RAM машины: memory-admission
 > проверяется отдельными тестами и больше не маскирует ожидаемую ошибку индексного контракта.
+> Legion build выявил Windows file-lock в baseline verifier: `sqlite3` context manager не закрывал
+> read-only connection. Verifier теперь явно закрывает каждое соединение до очистки staging-каталога.
 
 > 0.24.2 / build 411 — smeta professional evidence contract
 >

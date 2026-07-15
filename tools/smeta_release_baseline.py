@@ -68,11 +68,15 @@ def _sha256(path: Path) -> str:
 
 
 def _sqlite_count(path: Path, table: str) -> int:
+    conn: sqlite3.Connection | None = None
     try:
-        with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
-            return int(conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0])
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        return int(conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0])
     except (sqlite3.Error, OSError) as exc:
         raise BaselineError(f"cannot read {table} from {path}: {exc}") from exc
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def _failures(value: Any) -> int:
