@@ -438,6 +438,16 @@ def test_tool_array_transport_unwraps_qwen_double_serialization():
     assert _tool_arguments(python_call)["items"].startswith("[")
 
 
+def test_tool_array_transport_closes_only_missing_trailing_array_delimiter():
+    from proxy.smeta_core.document_workflow import _tool_array_argument
+
+    truncated = '[{"work_id":"w1","norm_codes":["ГЭСН17-01-010-01"]}'
+    assert _tool_array_argument({"items": truncated}, "items") == [{
+        "work_id": "w1", "norm_codes": ["ГЭСН17-01-010-01"],
+    }]
+    assert _tool_array_argument({"items": '[{"work_id":"w1"}] garbage'}, "items") == []
+
+
 def test_batch_agent_rejects_unopened_norm_without_selecting_for_model():
     from proxy.smeta_core import document_workflow as workflow
 

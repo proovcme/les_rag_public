@@ -300,8 +300,46 @@ def _tool_array_argument(args: dict[str, Any], key: str) -> list[dict[str, Any]]
             try:
                 raw = ast.literal_eval(text)
             except (SyntaxError, ValueError):
-                return []
+                repaired = _close_unterminated_json_containers(text)
+                if repaired == text:
+                    return []
+                try:
+                    raw = json.loads(repaired)
+                except json.JSONDecodeError:
+                    return []
     return [item for item in (raw or []) if isinstance(item, dict)] if isinstance(raw, list) else []
+
+
+def _close_unterminated_json_containers(text: str) -> str:
+    """Close only missing trailing JSON delimiters in model tool transport.
+
+    Ollama can serialize a large ``items`` array as a string and omit its final
+    ``]`` while leaving every item intact.  We may close a balanced prefix, but
+    never delete, reorder or synthesize array items.
+    """
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+    for char in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in "[{":
+            stack.append(char)
+        elif char in "]}":
+            expected = "[" if char == "]" else "{"
+            if not stack or stack.pop() != expected:
+                return text
+    if in_string or not stack or len(stack) > 3:
+        return text
+    return text + "".join("]" if opener == "[" else "}" for opener in reversed(stack))
 
 
 def _tool_bool(value: Any, default: bool = False) -> bool:
