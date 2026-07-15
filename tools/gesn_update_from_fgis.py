@@ -6,7 +6,7 @@ import argparse
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Callable, Iterable
 
 from tools import gesn_bulk_import
 from tools import build_smeta_service_rag
@@ -49,20 +49,34 @@ def run_update(
     no_resume: bool = False,
     skip_structured: bool = False,
     skip_service_rag: bool = False,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict:
     from proxy.smeta_core.base_registry import active_base
 
     raw_out.parent.mkdir(parents=True, exist_ok=True)
-    _write_status(status_out, {"status": "running", "stage": "download", "raw_out": str(raw_out)})
+    initial = {"status": "running", "stage": "download", "raw_out": str(raw_out)}
+    _write_status(status_out, initial)
+    if progress_callback:
+        progress_callback(initial)
     sborniki = list(gesn_bulk_import.ALL_COLLECTION_PREFIXES) if all_sborniki else [int(sbornik or 0)]
+    def _download_progress(progress: dict[str, Any]) -> None:
+        payload = {"status": "running", "stage": "download", "raw_out": str(raw_out), "progress": progress}
+        _write_status(status_out, payload)
+        if progress_callback:
+            progress_callback(payload)
+
     stats = gesn_bulk_import.run(
         sborniki=sborniki,
         out_path=raw_out,
         rate=rate,
         limit=limit,
         resume=not no_resume,
+        progress_callback=_download_progress,
     )
-    _write_status(status_out, {"status": "running", "stage": "unify", "download": stats})
+    unify_payload = {"status": "running", "stage": "unify", "download": stats}
+    _write_status(status_out, unify_payload)
+    if progress_callback:
+        progress_callback(unify_payload)
     minimum_norms = int(active_base().get("minimum_norms") or 1)
     audit = build_unified(
         legacy=raw_out,
@@ -73,16 +87,16 @@ def run_update(
     )
     structured: dict | None = None
     if not skip_structured:
-        _write_status(
-            status_out,
-            {
+        structured_payload = {
                 "status": "running",
                 "stage": "structured",
                 "download": stats,
                 "audit": audit,
                 "structured_out": str(structured_out),
-            },
-        )
+            }
+        _write_status(status_out, structured_payload)
+        if progress_callback:
+            progress_callback(structured_payload)
         structured = build_structured_base(
             source=unified_out,
             out=structured_out,
@@ -91,17 +105,17 @@ def run_update(
         )
     service_rag: dict | None = None
     if not skip_service_rag:
-        _write_status(
-            status_out,
-            {
+        service_rag_payload = {
                 "status": "running",
                 "stage": "service_rag",
                 "download": stats,
                 "audit": audit,
                 "structured": structured,
                 "service_rag_out": str(service_rag_out),
-            },
-        )
+            }
+        _write_status(status_out, service_rag_payload)
+        if progress_callback:
+            progress_callback(service_rag_payload)
         service_rag = build_smeta_service_rag.build(service_rag_out)
     result = {
         "status": "done",
@@ -112,6 +126,8 @@ def run_update(
         "service_rag": service_rag,
     }
     _write_status(status_out, result)
+    if progress_callback:
+        progress_callback(result)
     return result
 
 

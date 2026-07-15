@@ -107,6 +107,108 @@ def _prompt_text(value: object, *, limit: int = 2200) -> str:
     return text
 
 
+def _format_duration(value: object) -> str:
+    try:
+        seconds = max(0, int(float(value)))
+    except (TypeError, ValueError):
+        return "—"
+    hours, remainder = divmod(seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours} ч {minutes} мин"
+    if minutes:
+        return f"{minutes} мин {secs} с"
+    return f"{secs} с"
+
+
+def _format_bytes(value: object) -> str:
+    try:
+        size = max(0, int(value))
+    except (TypeError, ValueError):
+        return "0 Б"
+    for unit in ("Б", "КБ", "МБ", "ГБ"):
+        if size < 1024 or unit == "ГБ":
+            return f"{size:.1f} {unit}" if unit != "Б" else f"{size} {unit}"
+        size /= 1024
+    return "0 Б"
+
+
+def _format_rate(value: object) -> str:
+    try:
+        rate = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    return f"{_format_bytes(max(0, int(rate)))}/с"
+
+
+def _fgis_progress_text(payload: dict) -> tuple[str, str, float | None, bool]:
+    progress = payload.get("progress") or {}
+    state = str(progress.get("state") or "idle")
+    running = state == "running"
+    stage = str(progress.get("stage_label") or "ожидание")
+    percent_raw = progress.get("percent")
+    try:
+        percent = min(100.0, max(0.0, float(percent_raw))) if percent_raw is not None else None
+    except (TypeError, ValueError):
+        percent = None
+
+    if running:
+        completed = progress.get("completed")
+        total = progress.get("total")
+        counter = f" · {completed}/{total}" if completed is not None and total else ""
+        summary = f"ФГИС ЦС: выполняется · {stage}{counter}"
+    elif state in {"done", "partial"}:
+        raw = payload.get("status") or {}
+        prices = raw.get("prices") or {}
+        summary = (
+            f"ФГИС ЦС: завершено · книг {prices.get('done', 0)}/{prices.get('requested', 0)} · "
+            f"строк {prices.get('rows', 0)}"
+        )
+        percent = 100.0
+    elif state == "failed":
+        summary = "ФГИС ЦС: ошибка обновления"
+    elif state == "interrupted":
+        summary = "ФГИС ЦС: обновление прервано"
+    else:
+        return (
+            "ФГИС ЦС: общее обновление ещё не запускалось",
+            "Нажмите «Скачать ФГИС ЦС». Обычная кнопка обновления сверху только перечитывает показатели.",
+            None,
+            False,
+        )
+
+    details: list[str] = []
+    reason = str(progress.get("reason") or "").strip()
+    if reason:
+        details.append(reason)
+    current = progress.get("current") or {}
+    location = " · ".join(
+        str(current.get(key) or "").strip()
+        for key in ("subject", "zone", "period")
+        if str(current.get(key) or "").strip()
+    )
+    if not location and current.get("collection"):
+        location = f"сборник {current.get('collection')}"
+        if current.get("prefix"):
+            location += f" · отдел {current.get('prefix')}"
+    if location:
+        details.append(f"Сейчас: {location}")
+    remaining = progress.get("remaining")
+    if remaining is not None:
+        unit = "книг" if progress.get("units") == "books" else "сборников"
+        details.append(f"Осталось: {remaining} {unit}")
+    if progress.get("eta_seconds") is not None:
+        details.append(f"Примерно: {_format_duration(progress.get('eta_seconds'))}")
+    if progress.get("bytes_downloaded"):
+        details.append(f"Скачано: {_format_bytes(progress.get('bytes_downloaded'))}")
+    if progress.get("rate_bytes_per_second"):
+        details.append(f"Средняя скорость: {_format_rate(progress.get('rate_bytes_per_second'))}")
+    age = progress.get("heartbeat_age_seconds")
+    if running and age is not None:
+        details.append(f"Статус обновлён {_format_duration(age)} назад")
+    return summary, " · ".join(details), percent, running
+
+
 def build_instrumenty():
     """Содержимое вкладки ИНСТРУМЕНТЫ. Вызывать внутри with ui.tab_panel(...)."""
     def _ui_handler(coro_func, *args, **kwargs):
@@ -125,14 +227,21 @@ def build_instrumenty():
                     "Папки и датасеты, на которых ЛЕС считает сметы и проверяет документацию."
                 ).style("font-size:.72rem;color:var(--dim);")
             with ui.row().classes("items-center gap-2"):
-                fgis_update_btn = ui.button("СКАЧАТЬ ФГИС ЦС", icon="cloud_download").props("dense no-caps")
+                fgis_update_btn = ui.button("СКАЧАТЬ ФГИС ЦС", icon="cloud_download").props(
+                    "dense no-caps"
+                ).style("min-height:40px;")
                 refresh_btn = ui.button("ОБНОВИТЬ").props("dense no-caps")
 
         with ui.card().classes("card-les w-full"):
             summary = ui.label("Загрузка источников…").style("font-size:.74rem;color:var(--dim);")
             fgis_status = ui.label(
                 "ФГИС ЦС: проверка состояния общего обновления…"
-            ).style("font-size:.7rem;color:var(--dim);")
+            ).style("font-size:.7rem;color:var(--dim);font-variant-numeric:tabular-nums;")
+            fgis_progress = ui.linear_progress(value=0).props("rounded size=6px").classes("w-full")
+            fgis_progress.set_visibility(False)
+            fgis_detail = ui.label("").style(
+                "font-size:.66rem;color:var(--dim);font-variant-numeric:tabular-nums;text-wrap:pretty;"
+            )
             cards = ui.column().classes("w-full gap-2")
 
         with ui.card().classes("card-les w-full"):
@@ -354,23 +463,29 @@ def build_instrumenty():
             d = await api_get("/api/service-sources/fgis/update/status")
             if not isinstance(d, dict):
                 fgis_status.text = "ФГИС ЦС: статус обновления недоступен"
+                fgis_detail.text = last_api_error_text("Не удалось прочитать состояние фоновой задачи")
+                fgis_progress.set_visibility(False)
+                fgis_update_btn.props(remove="loading disable")
                 return
-            state = d.get("status") or {}
-            if d.get("running"):
-                stage = str(state.get("stage") or "подготовка")
-                completed = state.get("completed")
-                total = state.get("total")
-                progress = f" · {completed}/{total}" if completed is not None and total else ""
-                fgis_status.text = f"ФГИС ЦС: обновление выполняется · {stage}{progress}"
-            elif state.get("status") in {"done", "partial"}:
-                prices = state.get("prices") or {}
-                fgis_status.text = (
-                    "ФГИС ЦС: последнее обновление "
-                    f"{state.get('status')} · книг цен {prices.get('done', 0)}/{prices.get('requested', 0)} · "
-                    f"строк {prices.get('rows', 0)}"
-                )
+            status_text, detail_text, percent, running = _fgis_progress_text(d)
+            fgis_status.text = status_text
+            fgis_detail.text = detail_text
+            if running:
+                fgis_update_btn.props("loading disable")
+                fgis_progress.set_visibility(True)
+                if percent is None:
+                    fgis_progress.props("indeterminate")
+                else:
+                    fgis_progress.props(remove="indeterminate")
+                    fgis_progress.value = percent / 100.0
             else:
-                fgis_status.text = "ФГИС ЦС: общее обновление ещё не запускалось"
+                fgis_update_btn.props(remove="loading disable")
+                if percent is None:
+                    fgis_progress.set_visibility(False)
+                else:
+                    fgis_progress.props(remove="indeterminate")
+                    fgis_progress.value = percent / 100.0
+                    fgis_progress.set_visibility(True)
 
         refresh_btn.on("click", _refresh)
         fgis_update_btn.on("click", _update_all_fgis)

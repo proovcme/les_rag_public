@@ -7,10 +7,14 @@ from tools import gesn_update_from_fgis as updater
 
 def test_fgis_update_runs_full_machine_base_pipeline(tmp_path: Path, monkeypatch):
     calls: list[str] = []
+    progress_events: list[dict] = []
 
     def fake_download(**kwargs):
         calls.append("download")
         assert kwargs["out_path"] == tmp_path / "raw.parquet"
+        kwargs["progress_callback"](
+            {"collection": 12, "collection_index": 1, "collection_total": 1, "current_prefix": "12-01"}
+        )
         return {"rows": 3, "sborniki": [12]}
 
     def fake_unify(**kwargs):
@@ -47,12 +51,21 @@ def test_fgis_update_runs_full_machine_base_pipeline(tmp_path: Path, monkeypatch
         service_rag_out=tmp_path / "SMETA_SERVICE",
         status_out=tmp_path / "status.json",
         rate=0.1,
+        progress_callback=progress_events.append,
     )
 
     assert calls == ["download", "unify", "structured", "service_rag"]
     assert result["status"] == "done"
     assert result["structured"]["schema"] == "les_smeta_base_v1"
     assert result["service_rag"]["collection_cards"] == 1
+    assert [event["stage"] for event in progress_events] == [
+        "download",
+        "download",
+        "unify",
+        "structured",
+        "service_rag",
+        "done",
+    ]
     assert '"stage": "done"' in (tmp_path / "status.json").read_text(encoding="utf-8")
 
 

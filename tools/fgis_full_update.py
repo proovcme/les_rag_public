@@ -97,13 +97,27 @@ def update_price_books(
     done: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
     delay = 1.0 / rate if rate > 0 else 0.0
+    started = time.monotonic()
+    bytes_downloaded = 0
     for index, (subject, zone, period) in enumerate(tasks, 1):
+        elapsed = max(0.0, time.monotonic() - started)
+        completed = index - 1
+        eta = (elapsed / completed * (len(tasks) - completed)) if completed else None
+        rate_bytes_per_second = (bytes_downloaded / elapsed) if elapsed > 0 and bytes_downloaded else None
         _write_status(
             status_out,
             status="running",
             stage="price_books",
-            completed=index - 1,
+            activity="downloading",
+            message="Скачивается Сплит-форма ФГИС ЦС",
+            completed=completed,
             total=len(tasks),
+            remaining=len(tasks) - completed,
+            percent=round(completed * 100 / len(tasks), 1) if tasks else 100.0,
+            elapsed_seconds=round(elapsed, 1),
+            eta_seconds=round(eta, 1) if eta is not None else None,
+            bytes_downloaded=bytes_downloaded,
+            rate_bytes_per_second=round(rate_bytes_per_second, 1) if rate_bytes_per_second else None,
             current={"subject": subject.get("name"), "zone": zone.get("name"), "period": period.get("name")},
         )
         result = price_fetch.import_price_zone(
@@ -114,6 +128,7 @@ def update_price_books(
             out_root=out_root,
         )
         (done if result.get("ok") else failed).append(result)
+        bytes_downloaded += int(result.get("bytes") or 0)
         if delay and index < len(tasks):
             time.sleep(delay)
     return {
@@ -137,7 +152,15 @@ def run_update(
     manifest_out: Path = DEFAULT_MANIFEST,
     price_root: Path = Path("data/price_base"),
 ) -> dict[str, Any]:
-    _write_status(status_out, status="running", stage="catalog")
+    started_at = datetime.now(timezone.utc).isoformat()
+    _write_status(
+        status_out,
+        status="running",
+        stage="catalog",
+        activity="requesting_metadata",
+        message="ФГИС ЦС: получаем список регионов, ценовых зон и периодов",
+        started_at=started_at,
+    )
     catalog = discover_catalog()
     _write_json(catalog_out, catalog)
     prices = update_price_books(
@@ -149,8 +172,35 @@ def run_update(
     )
     gesn: dict[str, Any] | None = None
     if include_gesn:
-        _write_status(status_out, status="running", stage="gesn", prices=prices)
-        gesn = gesn_update_from_fgis.run_update()
+        _write_status(
+            status_out,
+            status="running",
+            stage="gesn",
+            activity="downloading",
+            message="Скачиваются нормы и ресурсы ГЭСН из ФГИС ЦС",
+            started_at=started_at,
+            prices=prices,
+        )
+
+        def _gesn_progress(payload: dict[str, Any]) -> None:
+            progress = payload.get("progress") or {}
+            nested_stage = str(payload.get("stage") or "download")
+            _write_status(
+                status_out,
+                status="running",
+                stage="gesn" if nested_stage == "download" else nested_stage,
+                activity="downloading" if nested_stage == "download" else "processing",
+                message=(
+                    "Скачиваются нормы и ресурсы ГЭСН из ФГИС ЦС"
+                    if nested_stage == "download"
+                    else "Скачивание завершено; собирается локальная база ГЭСН"
+                ),
+                started_at=started_at,
+                prices=prices,
+                gesn_progress=progress,
+            )
+
+        gesn = gesn_update_from_fgis.run_update(progress_callback=_gesn_progress)
     result = {
         "schema": "les.fgis.public-update.v1",
         "status": "done" if not prices["failed"] else "partial",

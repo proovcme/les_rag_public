@@ -113,6 +113,24 @@ def test_document_explorer_lists_datasets_and_documents(explorer):
     assert docs["documents"][0]["source_path"] == "/src/sp7.docx"
 
 
+def test_document_explorer_adds_missing_lexical_schema_without_reindex(tmp_path):
+    db = tmp_path / "legacy-meta.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE datasets (id TEXT PRIMARY KEY, name TEXT, status TEXT, chunk_count INTEGER)")
+        conn.execute(
+            "CREATE TABLE documents (id TEXT PRIMARY KEY, dataset_id TEXT, file_name TEXT, status TEXT)"
+        )
+        conn.execute("INSERT INTO datasets VALUES ('legacy', 'Legacy', 'IDLE', 0)")
+        conn.commit()
+
+    rows = DocumentExplorer(db_path=str(db), collection="les_test").list_datasets()
+
+    assert rows[0]["id"] == "legacy"
+    with sqlite3.connect(db) as conn:
+        names = {row[0] for row in conn.execute("SELECT name FROM sqlite_master")}
+    assert {"lexical_chunks", "lexical_chunks_fts"} <= names
+
+
 def test_document_explorer_reads_dataset_kind_for_sorting(explorer):
     with explorer.connect() as conn:
         conn.execute(

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.rag_config import rag_collection_name, rag_meta_db_path
-from proxy.services.lexical_index_service import build_fts_query, lexical_db_path
+from proxy.services.lexical_index_service import LexicalIndex, build_fts_query, lexical_db_path
 
 DATASET_KIND_LABELS = {
     "project": "Проект",
@@ -55,6 +55,11 @@ class DocumentExplorer:
     def connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path)
         conn.row_factory = sqlite3.Row
+        # A clean/updated runtime may already have MetaDB datasets/documents but
+        # not the additive lexical projection yet.  Document Explorer is a
+        # reader, but opening it must run the cheap schema migration instead of
+        # returning 503 until a document happens to be reindexed.
+        LexicalIndex.ensure_schema(conn)
         return conn
 
     def list_datasets(self, *, q: str = "", limit: int = 200) -> list[dict[str, Any]]:

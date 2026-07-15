@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from proxy.services import fgis_price_fetch_service as price_fetch
+from proxy.services import fgis_update_service
+from sovushka.pages.instrumenty import _fgis_progress_text
 from tools import fgis_full_update
 
 
@@ -73,6 +76,12 @@ def test_price_update_downloads_latest_period_of_every_zone(tmp_path: Path, monk
     assert result["requested"] == 2
     assert result["done"] == 2
     assert result["rows"] == 24
+    status = json.loads((tmp_path / "status.json").read_text(encoding="utf-8"))
+    assert status["stage"] == "price_books"
+    assert status["activity"] == "downloading"
+    assert status["completed"] == 1
+    assert status["total"] == 2
+    assert status["remaining"] == 1
 
 
 def test_full_update_persists_catalog_and_manifest_without_gesn(tmp_path: Path, monkeypatch):
@@ -110,3 +119,45 @@ def test_full_fgis_update_is_wired_to_operator_api_and_gui():
     assert 'api_post("/api/service-sources/fgis/update", {})' in ui
     assert "каталог, Сплит-формы всех ценовых зон и ГЭСН" in ui
     assert 'd.get("message") or d.get("reason")' in ui
+
+
+def test_fgis_progress_explains_running_and_interrupted_states():
+    raw = {
+        "status": "running",
+        "stage": "price_books",
+        "message": "Скачивается Сплит-форма ФГИС ЦС",
+        "completed": 4,
+        "total": 10,
+        "remaining": 6,
+        "percent": 40,
+        "eta_seconds": 125,
+        "bytes_downloaded": 8 * 1024 * 1024,
+        "rate_bytes_per_second": 512 * 1024,
+        "current": {"subject": "Москва", "period": "2 квартал 2026"},
+    }
+
+    progress = fgis_update_service._progress(raw, running=True)
+    summary, detail, percent, running = _fgis_progress_text({"progress": progress})
+
+    assert running is True
+    assert percent == 40
+    assert "Сплит-формы · 4/10" in summary
+    assert "Осталось: 6 книг" in detail
+    assert "Примерно: 2 мин 5 с" in detail
+    assert "Скачано: 8.0 МБ" in detail
+    assert "Средняя скорость: 512.0 КБ/с" in detail
+
+    interrupted = fgis_update_service._progress(raw, running=False)
+    assert interrupted["state"] == "interrupted"
+    assert "не записал итоговый статус" in interrupted["reason"]
+
+
+def test_fgis_idle_text_distinguishes_refresh_from_download():
+    summary, detail, percent, running = _fgis_progress_text(
+        {"progress": {"state": "idle", "reason": "Обновление ещё не запускалось"}}
+    )
+
+    assert "ещё не запускалось" in summary
+    assert "Обычная кнопка обновления" in detail
+    assert percent is None
+    assert running is False

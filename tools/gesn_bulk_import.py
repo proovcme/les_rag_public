@@ -52,7 +52,7 @@ import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 from tools.gesn_pdf_import import DEFAULT_OUT, build_parquet, parse_fgis_json
 
@@ -176,6 +176,7 @@ def run(
     resume: bool = True,
     flush_every: int = 20,
     log: Any = sys.stderr,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Перебрать отделы сборников → ФГИС ЦС → дозалить в Parquet. Возвращает сводку.
 
@@ -206,11 +207,20 @@ def run(
         pending_rows.clear()
         pending_prefixes.clear()
 
-    for sb in sborniki:
+    sborniki = list(sborniki)
+    for sb_index, sb in enumerate(sborniki, 1):
         gap = 0
         for prefix in _otdel_codes(sb, otdel_max=otdel_max):
             if gap >= otdel_gap:
                 break                                # длинная серия пустых → сборник кончился
+            if progress_callback:
+                progress_callback({
+                    **stats,
+                    "current_prefix": prefix,
+                    "collection": sb,
+                    "collection_index": sb_index,
+                    "collection_total": len(sborniki),
+                })
             if resume and prefix in done_prefixes:
                 stats["otdels_skipped"] += 1
                 gap = 0                              # отдел существует (был залит) → не считаем пропуском
@@ -251,6 +261,14 @@ def run(
             _emit(f"[queue] {prefix}: +{n_norms} норм / {len(rows)} строк "
                   f"(batch={len(pending_prefixes)}/{max(1, flush_every)}, "
                   f"done={stats['otdels_done']} err={stats['errors']})")
+            if progress_callback:
+                progress_callback({
+                    **stats,
+                    "current_prefix": prefix,
+                    "collection": sb,
+                    "collection_index": sb_index,
+                    "collection_total": len(sborniki),
+                })
             if len(pending_prefixes) >= max(1, flush_every):
                 _flush()
             if limit is not None and stats["otdels_done"] >= limit:
