@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from backend.qdrant_adapter import MetaDB
-from proxy.services.system_dataset_service import dataset_identity, module_dataset_ids, system_dataset_spec
+from proxy.services.system_dataset_service import (
+    dataset_identity,
+    module_dataset_ids,
+    system_dataset_spec,
+)
 
 
 def test_smeta_service_is_module_owned_system_dataset():
@@ -9,6 +13,8 @@ def test_smeta_service_is_module_owned_system_dataset():
     assert spec is not None
     assert spec.module_id == "smeta"
     assert dataset_identity("SMETA_SERVICE_Index") == ("system", "smeta")
+    assert dataset_identity("PRICE_SERVICE_Index") == ("system", "smeta")
+    assert dataset_identity("NORMATIVE_SERVICE_Index") == ("system", "normcontrol")
 
 
 def test_gesn_projection_is_system_but_project_table_is_user():
@@ -26,4 +32,4 @@ def test_metadb_persists_dataset_identity(tmp_path):
     assert by_id[system_id].module_id == "smeta"
     assert by_id[user_id].dataset_scope == "user"
     assert by_id[user_id].module_id == ""
-    assert module_dataset_ids("smeta", db_path=str(tmp_path / "meta.db")) == [system_id]
+    assert system_id in module_dataset_ids("smeta", db_path=str(tmp_path / "meta.db"))

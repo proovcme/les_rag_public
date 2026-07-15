@@ -90,6 +90,37 @@ def test_general_rrf_is_not_ready_without_alias_lexical_projection(monkeypatch):
     assert result["lexical"]["ready"] is False
 
 
+def test_general_direct_config_is_active_and_legacy_lexical_marker_is_optional(monkeypatch):
+    monkeypatch.setattr(service, "rag_collection_name", lambda: "windows_v2")
+    monkeypatch.setattr(service, "_source_chunks", lambda dataset_id: 10)
+    monkeypatch.setattr(
+        service,
+        "_lexical_status",
+        lambda collection, dataset_id=None: {
+            "ready": True,
+            "stale": False,
+            "chunks": 10,
+            "point_count": 0,
+            "indexed_count": 10,
+        },
+    )
+    monkeypatch.setattr(
+        service,
+        "index_contract_status",
+        lambda: {
+            "status": "compatible",
+            "compatible": True,
+            "actual": {"point_embedding_fingerprint": "fp"},
+        },
+    )
+
+    result = service._general_status(FakeClient(), {}, dataset_id=None)
+
+    assert result["state"] == "ready"
+    assert result["activated"] is True
+    assert result["rrf_ready"] is True
+
+
 def test_smeta_build_progress_is_visible(monkeypatch, tmp_path):
     base = tmp_path / "base.sqlite"
     base.write_bytes(b"sqlite")
@@ -108,6 +139,10 @@ def test_smeta_build_progress_is_visible(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "proxy.smeta_core.base_registry.active_base",
         lambda: {"base_path": str(base), "rag_collection": "les_smeta_norm_cards"},
+    )
+    monkeypatch.setattr(
+        "proxy.smeta_core.integrity.normative_base_integrity",
+        lambda: {"status": "quarantined", "trusted_for_pricing": False, "trusted_for_navigation": False},
     )
 
     result = service._smeta_status(FakeClient(points=10), {})
@@ -136,9 +171,40 @@ def test_smeta_complete_generation_waits_for_alias(monkeypatch, tmp_path):
         "proxy.smeta_core.base_registry.active_base",
         lambda: {"base_path": str(base), "rag_collection": "les_smeta_norm_cards"},
     )
+    monkeypatch.setattr(
+        "proxy.smeta_core.integrity.normative_base_integrity",
+        lambda: {"status": "quarantined", "trusted_for_pricing": False, "trusted_for_navigation": False},
+    )
 
     result = service._smeta_status(FakeClient(points=10), {})
 
     assert result["state"] == "awaiting_activation"
     assert result["ready"] is True
     assert result["activated"] is False
+
+
+def test_smeta_verified_mechanical_base_is_ready_without_optional_card_index(monkeypatch, tmp_path):
+    base = tmp_path / "base.sqlite"
+    base.write_bytes(b"sqlite")
+    monkeypatch.setattr(
+        "proxy.smeta_core.base_registry.active_base",
+        lambda: {"base_path": str(base), "rag_collection": "les_smeta_norm_cards"},
+    )
+    monkeypatch.setattr(
+        "proxy.smeta_core.integrity.normative_base_integrity",
+        lambda: {"status": "trusted", "trusted_for_pricing": True, "trusted_for_navigation": True},
+    )
+    client = FakeClient()
+    client.collection_exists = lambda _collection: False
+
+    result = service._smeta_status(client, {})
+
+    assert result["state"] == "ready"
+    assert result["ready"] is True
+    assert result["mechanical_base"]["ready"] is True
+    assert result["search_index"] == {
+        "state": "missing",
+        "ready": False,
+        "optional": True,
+        "reason": "collection_missing",
+    }

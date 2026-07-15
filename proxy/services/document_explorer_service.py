@@ -79,6 +79,8 @@ class DocumentExplorer:
                     d.name,
                     COALESCE(d.status, '') AS status,
                     COALESCE(d.chunk_count, 0) AS chunk_count,
+                    COALESCE(d.dataset_scope, 'user') AS dataset_scope,
+                    COALESCE(d.module_id, '') AS module_id,
                     COUNT(doc.id) AS document_count,
                     SUM(CASE WHEN doc.status = 'INDEXED' THEN 1 ELSE 0 END) AS indexed_count,
                     SUM(CASE WHEN doc.status = 'PENDING' THEN 1 ELSE 0 END) AS pending_count,
@@ -87,8 +89,9 @@ class DocumentExplorer:
                 FROM datasets d
                 LEFT JOIN documents doc ON doc.dataset_id = d.id
                 {where}
-                GROUP BY d.id, d.name, d.status, d.chunk_count
-                ORDER BY LOWER(COALESCE(d.name, d.id))
+                GROUP BY d.id, d.name, d.status, d.chunk_count, d.dataset_scope, d.module_id
+                ORDER BY CASE WHEN COALESCE(d.dataset_scope, 'user')='system' THEN 0 ELSE 1 END,
+                         LOWER(COALESCE(d.name, d.id))
                 LIMIT ?
                 """,
                 params,
@@ -96,6 +99,12 @@ class DocumentExplorer:
             result = [dict(row) for row in rows]
             kinds = _dataset_profile_kinds(conn, [str(row.get("id") or "") for row in result])
         for row in result:
+            from proxy.services.system_dataset_service import system_dataset_spec
+
+            spec = system_dataset_spec(str(row.get("name") or ""))
+            row["display_name"] = spec.display_name if spec else str(row.get("name") or "")
+            row["source_role"] = spec.source_role if spec else ""
+            row["pinned_order"] = spec.pinned_order if spec else 999
             kind = kinds.get(str(row.get("id") or ""), "")
             row["dataset_kind"] = kind
             row["dataset_kind_label"] = DATASET_KIND_LABELS.get(kind, "")
@@ -103,6 +112,8 @@ class DocumentExplorer:
         return sorted(
             result,
             key=lambda row: (
+                0 if str(row.get("dataset_scope") or "user") == "system" else 1,
+                int(row.get("pinned_order") or 999),
                 int(row.get("dataset_kind_sort") or DATASET_KIND_ORDER[""]),
                 str(row.get("name") or row.get("id") or "").casefold(),
             ),
@@ -535,6 +546,11 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
             missing.append(table)
     if missing:
         raise RuntimeError("document explorer requires tables: " + ", ".join(missing))
+    columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(datasets)")}
+    if "dataset_scope" not in columns:
+        conn.execute("ALTER TABLE datasets ADD COLUMN dataset_scope TEXT DEFAULT 'user'")
+    if "module_id" not in columns:
+        conn.execute("ALTER TABLE datasets ADD COLUMN module_id TEXT DEFAULT ''")
 
 
 def _dataset_profile_kinds(conn: sqlite3.Connection, dataset_ids: list[str]) -> dict[str, str]:

@@ -6,13 +6,14 @@ does not ask the model anything; it makes the indexed corpus visible.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import re
 from urllib.parse import quote, urlencode
 
 from nicegui import context, ui
 
-from sovushka.state import api_get, api_patch, api_post, add_log, last_api_error_text
+from sovushka.state import api_get, api_patch, api_post, api_post_file, add_log, last_api_error_text
 
 DATASET_KIND_OPTIONS = {
     "": "Все типы",
@@ -114,8 +115,12 @@ def build_documents() -> None:
         return f"{n:.1f} {units[i]}" if i else f"{int(n)} {units[i]}"
 
     def _dataset_title(row: dict) -> str:
-        name = str(row.get("name") or row.get("id") or "")
+        name = str(row.get("display_name") or row.get("name") or row.get("id") or "")
         return name or "Без названия"
+
+    def _is_system_dataset(row: dict | None = None) -> bool:
+        target = row or _selected_dataset_row()
+        return str((target or {}).get("dataset_scope") or "user") == "system"
 
     def _file_icon(file_name: str) -> str:
         suffix = str(file_name or "").lower().rsplit(".", 1)[-1]
@@ -579,6 +584,9 @@ def build_documents() -> None:
         state["view_mode"] = "map"
         state["view_title"] = _dataset_title(_selected_dataset_row()) if dataset_id else "Выберите датасет"
         state["view_note"] = "Паспорт, состав и извлечённые данные датасета."
+        service_upload = refs.get("service_upload")
+        if service_upload is not None:
+            service_upload.set_visibility(_is_system_dataset())
         await _load_documents()
         await asyncio.gather(
             _load_memory(),
@@ -1519,7 +1527,9 @@ def build_documents() -> None:
             general = readiness.get("general") if isinstance(readiness.get("general"), dict) else {}
             smeta = readiness.get("smeta") if isinstance(readiness.get("smeta"), dict) else {}
             general_label, general_cls = _readiness_label(general)
-            smeta_label, smeta_cls = _readiness_label(smeta)
+            mechanical = smeta.get("mechanical_base") if isinstance(smeta.get("mechanical_base"), dict) else {}
+            smeta_label = "База готова" if mechanical.get("ready") else "База не готова"
+            smeta_cls = "tag-ok" if mechanical.get("ready") else "tag-warn"
             _badge(f"RAG: {general_label}", general_cls)
             _badge(f"Сметы: {smeta_label}", smeta_cls)
 
@@ -1548,7 +1558,9 @@ def build_documents() -> None:
                 _label("Статус RAG пока недоступен.", size="11px", color="var(--dim)").style("margin-top:8px;")
                 return
             general_label, general_cls = _readiness_label(general)
-            smeta_label, smeta_cls = _readiness_label(smeta)
+            mechanical = smeta.get("mechanical_base") if isinstance(smeta.get("mechanical_base"), dict) else {}
+            smeta_label = "Механическая база готова" if mechanical.get("ready") else "Механическая база не готова"
+            smeta_cls = "tag-ok" if mechanical.get("ready") else "tag-warn"
             with ui.row().classes("items-center w-full").style("gap:6px;margin-top:9px;flex-wrap:wrap;"):
                 _badge(general_label, general_cls)
                 _badge(f"dense {int(general.get('dense_points') or 0)}/{int(general.get('points') or 0)}")
@@ -1564,11 +1576,15 @@ def build_documents() -> None:
                     color="var(--warn)",
                 ).style("margin-top:7px;")
             with ui.row().classes("items-center w-full").style("gap:6px;margin-top:10px;flex-wrap:wrap;"):
-                _badge(f"Сметные нормы: {smeta_label}", smeta_cls)
+                _badge(f"Сметы: {smeta_label}", smeta_cls)
                 _badge(f"{float(smeta.get('progress_pct') or 0):.1f}%")
                 _badge(f"dense {int(smeta.get('dense_points') or 0)}/{int(smeta.get('expected_points') or 0)}")
                 _badge(f"sparse {int(smeta.get('sparse_points') or 0)}/{int(smeta.get('expected_points') or 0)}")
-                _badge("RRF" if smeta.get("rrf_ready") else "RRF не готов", "tag-ok" if smeta.get("rrf_ready") else "tag-warn")
+                search_index = smeta.get("search_index") if isinstance(smeta.get("search_index"), dict) else {}
+                _badge(
+                    "Поиск по карточкам готов" if search_index.get("ready") else "Карточки норм не построены (необязательно)",
+                    "tag-ok" if search_index.get("ready") else "tag-dim",
+                )
             quality = smeta.get("quality_probe") if isinstance(smeta.get("quality_probe"), dict) else {}
             if quality.get("status") == "measured":
                 _label(
@@ -1815,7 +1831,17 @@ def build_documents() -> None:
             if not rows:
                 _label("Датасетов с такой меткой нет", color="var(--dim)")
                 return
+            previous_scope = ""
             for row in rows:
+                current_scope = "system" if _is_system_dataset(row) else "user"
+                if current_scope != previous_scope:
+                    _label(
+                        "Служебные" if current_scope == "system" else "Пользовательские",
+                        size="10px",
+                        color="var(--dim)",
+                        weight=900,
+                    ).style("margin:8px 2px 2px;text-transform:uppercase;letter-spacing:.05em;")
+                    previous_scope = current_scope
                 did = str(row.get("id") or "")
                 selected = did == state["selected_dataset"]
                 selected_cls = " sov-dataset-card--selected" if selected else ""
@@ -1824,12 +1850,14 @@ def build_documents() -> None:
                 ):
                     with ui.row().classes("items-center w-full sov-dataset-card-head"):
                         with ui.element("div").classes("sov-dataset-icon"):
-                            ui.icon("o_folder_open")
+                            ui.icon("o_push_pin" if _is_system_dataset(row) else "o_folder_open")
                         _label(_dataset_title(row), size="13px", weight=850).classes("sov-dataset-name")
                         ui.icon("o_chevron_right").classes("sov-dataset-chevron")
                     status_ready = str(row.get("status", "")).upper() in {"IDLE", "INDEXED"}
                     meta = [
-                        "проект" if _dataset_group(row) == "project" else "база знаний",
+                        "служебный датасет" if _is_system_dataset(row) else (
+                            "проект" if _dataset_group(row) == "project" else "база знаний"
+                        ),
                         f"{int(row.get('document_count') or 0)} файлов",
                         "готов" if status_ready else "индексируется",
                     ]
@@ -1850,6 +1878,39 @@ def build_documents() -> None:
                         attention.append(f"{missing} отсутствует")
                     if attention:
                         _label(" · ".join(attention), size="10.3px", color="var(--warn)").classes("sov-dataset-attention")
+
+    async def _upload_service_file(event) -> None:
+        dataset_id = str(state.get("selected_dataset") or "")
+        if not dataset_id or not _is_system_dataset():
+            ui.notify("Сначала выберите служебный датасет", type="warning")
+            return
+        try:
+            upload = getattr(event, "file", None)
+            if upload is not None and hasattr(upload, "read"):
+                content = await upload.read()
+                file_name = getattr(upload, "name", "") or getattr(event, "name", "") or "document.bin"
+            else:
+                raw = getattr(event, "content", None)
+                if raw is None or not hasattr(raw, "read"):
+                    raise AttributeError("не удалось прочитать выбранный файл")
+                value = raw.read()
+                content = await value if inspect.isawaitable(value) else value
+                file_name = getattr(event, "name", "") or "document.bin"
+            if isinstance(content, str):
+                content = content.encode("utf-8")
+            if not content:
+                raise ValueError("файл пуст")
+        except Exception as error:
+            ui.notify(f"Не удалось прочитать файл: {error}", type="negative")
+            return
+        ui.notify(f"Добавляю «{file_name}»", type="info")
+        result = await api_post_file(f"/api/rag/upload/{quote(dataset_id, safe='')}", content, file_name)
+        if not isinstance(result, dict):
+            ui.notify(last_api_error_text("Не удалось добавить файл"), type="negative")
+            return
+        ui.notify("Файл добавлен. Индексация выполняется в фоне.", type="positive")
+        await _load_documents()
+        await _load_datasets(select_first=False)
 
     def _set_dataset_group_filter(group: str) -> None:
         state["dataset_group_filter"] = group
@@ -2461,6 +2522,16 @@ def build_documents() -> None:
                     icon="o_dataset",
                     on_click=_show_dataset_data,
                 ).props("flat no-caps").classes("w-full sov-dataset-data-button")
+                service_upload = ui.upload(
+                    label="Добавить файл",
+                    auto_upload=True,
+                    max_files=1,
+                    on_upload=_upload_service_file,
+                ).props("flat accept=.xlsx,.xlsm,.xls,.csv,.pdf,.docx,.md,.txt,.json,.yaml").classes(
+                    "w-full sov-dataset-data-button"
+                )
+                service_upload.set_visibility(False)
+                refs["service_upload"] = service_upload
                 document_filter = ui.input(placeholder="Название файла…").props("outlined clearable").classes("sov-docs-filter")
                 refs["document_filter"] = document_filter
                 document_filter.on(

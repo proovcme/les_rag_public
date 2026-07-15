@@ -795,13 +795,21 @@ class MetaDB:
                 "WHERE name='SMETA_SERVICE_Index' OR name='GESN_NORMS_2022_PDF' "
                 "OR name LIKE 'SMETA_RU_NORM_%'"
             )
+            from proxy.services.system_dataset_service import ensure_system_datasets
+
+            ensure_system_datasets(conn)
 
     def create_dataset(self, name: str) -> str:
-        from proxy.services.system_dataset_service import dataset_identity
+        from proxy.services.system_dataset_service import dataset_identity, system_dataset_spec
 
-        ds_id = str(uuid.uuid4())
+        spec = system_dataset_spec(name)
         dataset_scope, module_id = dataset_identity(name)
         with self._get_conn() as conn:
+            if spec:
+                existing = conn.execute("SELECT id FROM datasets WHERE name=? LIMIT 1", (name,)).fetchone()
+                if existing:
+                    return str(existing[0])
+            ds_id = str(uuid.uuid4())
             conn.execute(
                 "INSERT INTO datasets (id, name, status, dataset_scope, module_id) "
                 "VALUES (?, ?, 'IDLE', ?, ?)",

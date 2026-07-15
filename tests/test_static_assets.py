@@ -119,7 +119,8 @@ def test_documents_ui_is_a_visual_read_only_dataset_browser():
     assert "/api/rag/readiness" in page
     assert "Готовность поиска" in page
     assert "RRF не готов" in page
-    assert "Сметные нормы" in page
+    assert "Механическая база готова" in page
+    assert "Карточки норм не построены (необязательно)" in page
     assert "Это проверка retrieval, а не подтверждение применимости норм" in page
     assert 'ui.button("CAD/BIM"' in page
     assert "/api/cad-bim/imports?limit=300" in page

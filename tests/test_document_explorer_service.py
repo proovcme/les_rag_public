@@ -19,7 +19,9 @@ def _seed_db(path):
                 id TEXT PRIMARY KEY,
                 name TEXT,
                 status TEXT,
-                chunk_count INTEGER DEFAULT 0
+                chunk_count INTEGER DEFAULT 0,
+                dataset_scope TEXT DEFAULT 'user',
+                module_id TEXT DEFAULT ''
             )
             """
         )
@@ -95,11 +97,16 @@ def test_document_explorer_lists_datasets_and_documents(explorer):
             "name": "NTD_FIRE_Index",
             "status": "IDLE",
             "chunk_count": 3,
+            "dataset_scope": "user",
+            "module_id": "",
             "document_count": 3,
             "indexed_count": 3,
             "pending_count": 0,
             "error_count": 0,
             "missing_count": 0,
+            "display_name": "NTD_FIRE_Index",
+            "source_role": "",
+            "pinned_order": 999,
             "dataset_kind": "",
             "dataset_kind_label": "",
             "dataset_kind_sort": 999,

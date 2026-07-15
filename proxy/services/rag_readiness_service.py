@@ -59,7 +59,20 @@ def _aliases(client: QdrantClient) -> dict[str, str]:
 
 
 def _source_chunks(dataset_id: str | None) -> int | None:
-    if not dataset_id:
+    try:
+        with sqlite3.connect(rag_meta_db_path()) as conn:
+            if dataset_id:
+                row = conn.execute(
+                    "SELECT coalesce(sum(chunk_count), 0) FROM documents "
+                    "WHERE dataset_id=? AND status='INDEXED'",
+                    (dataset_id,),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT coalesce(sum(chunk_count), 0) FROM documents WHERE status='INDEXED'"
+                ).fetchone()
+        return int((row or [0])[0] or 0)
+    except (OSError, sqlite3.Error):
         return None
 
 
@@ -79,15 +92,6 @@ def _lexical_status(collection: str, dataset_id: str | None = None) -> dict[str,
         return status
     except Exception:
         return {"collection": collection, "ready": False, "stale": True, "chunks": 0}
-    try:
-        with sqlite3.connect(rag_meta_db_path()) as conn:
-            row = conn.execute(
-                "SELECT coalesce(sum(chunk_count), 0) FROM documents WHERE dataset_id=? AND status='INDEXED'",
-                (dataset_id,),
-            ).fetchone()
-            return int((row or [0])[0] or 0)
-    except (OSError, sqlite3.Error):
-        return None
 
 
 def _general_status(
@@ -99,7 +103,10 @@ def _general_status(
     alias = "les_rag"
     configured = rag_collection_name()
     physical = aliases.get(alias) or configured
-    activated = aliases.get(alias) == physical and bool(aliases.get(alias))
+    activated = bool(
+        (aliases.get(alias) == physical and aliases.get(alias))
+        or (not aliases.get(alias) and configured == physical)
+    )
     contract = index_contract_status()
     actual_contract = contract.get("actual") if isinstance(contract.get("actual"), dict) else {}
     fingerprint = str(actual_contract.get("point_embedding_fingerprint") or "")
@@ -149,11 +156,15 @@ def _general_status(
             and int(lexical.get("scope_chunks") or 0) == total
         )
     else:
+        lexical_point_count = int(lexical.get("point_count") or 0)
         lexical_complete = bool(
             lexical.get("ready")
             and lexical.get("stale") is False
             and int(lexical.get("chunks") or 0) == total
-            and int(lexical.get("point_count") or 0) == total
+            # Incremental indexing predates lexical_index_meta on some clean
+            # Windows states. Exact FTS/Qdrant/MetaDB equality is sufficient;
+            # a missing advisory marker must not invent a degraded runtime.
+            and lexical_point_count in {0, total}
             and int(lexical.get("indexed_count") or 0) == total
         )
     ready = bool(
@@ -205,6 +216,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def _smeta_status(client: QdrantClient, aliases: dict[str, str]) -> dict[str, Any]:
     from proxy.smeta_core.base_registry import active_base
+    from proxy.smeta_core.integrity import normative_base_integrity
 
     alias = "les_smeta_norm_cards"
     base = active_base()
@@ -257,8 +269,34 @@ def _smeta_status(client: QdrantClient, aliases: dict[str, str]) -> dict[str, An
             "collection": str(quality.get("collection") or ""),
         },
     }
+    integrity = normative_base_integrity()
+    mechanical_ready = bool(
+        base_path.is_file()
+        and (integrity.get("trusted_for_pricing") or integrity.get("trusted_for_navigation"))
+    )
+    result["mechanical_base"] = {
+        "state": "ready" if mechanical_ready else str(integrity.get("status") or "missing"),
+        "ready": mechanical_ready,
+        "trusted_for_pricing": bool(integrity.get("trusted_for_pricing")),
+        "trusted_for_navigation": bool(integrity.get("trusted_for_navigation")),
+        "base_path": str(base_path),
+    }
+    result["search_index"] = {
+        "state": "unknown",
+        "ready": False,
+        "optional": True,
+    }
     if not physical or not client.collection_exists(physical):
-        result.update({"state": "missing", "ready": False, "reason": "collection_missing", "progress_pct": 0.0})
+        result["search_index"].update({"state": "missing", "reason": "collection_missing"})
+        result.update(
+            {
+                "state": "ready" if mechanical_ready else "missing",
+                "ready": mechanical_ready,
+                "reason": "" if mechanical_ready else "mechanical_base_missing_or_untrusted",
+                "rrf_ready": False,
+                "progress_pct": 0.0,
+            }
+        )
         return result
     total = _count(client, physical)
     dense = _count(client, physical, vector="dense")
@@ -291,6 +329,22 @@ def _smeta_status(client: QdrantClient, aliases: dict[str, str]) -> dict[str, An
             "progress_pct": round((100.0 * total / expected), 2) if expected else 0.0,
         }
     )
+    result["search_index"].update(
+        {
+            "state": state,
+            "ready": complete,
+            "reason": reason,
+            "points": total,
+            "expected_points": expected,
+        }
+    )
+    # The typed SQLite reader is the operational smeta base. The vector card
+    # index is an optional model-navigation accelerator and must not make a
+    # verified mechanical base look absent.
+    if mechanical_ready:
+        result["state"] = "ready"
+        result["ready"] = True
+        result["reason"] = ""
     return result
 
 

@@ -160,7 +160,7 @@ def _dataset_hits(query: dict[str, Any] | None) -> dict[str, Any]:
         hay = f"{ds_name} {file_name} {domain}".casefold()
         domain_ok = not domains or domain in domains
         needle_ok = not needles or any(n in hay for n in needles)
-        if not (domain_ok or needle_ok):
+        if not (domain_ok and needle_ok):
             continue
         docs += 1
         rec = by_ds.setdefault(str(ds_id), {"id": str(ds_id), "name": ds_name or str(ds_id), "documents": 0})

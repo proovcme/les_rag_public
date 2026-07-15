@@ -87,6 +87,8 @@ sources:
     domain: smeta
     label: "SMETA_SERVICE: служебный сметный датасет"
     status_if_missing: degraded
+    dataset_query:
+      name_contains: ["SMETA_SERVICE_Index"]
     paths:
       - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*.md
       - RAG_Content/TABLE_SMETA/SMETA_SERVICE/**/*.json
@@ -188,6 +190,20 @@ sources:
           - "ЛСР/ВОР/КАЦ/XLSX оформление"
           - "контроль формы результата"
 
+  - id: price_service_dataset
+    domain: smeta
+    label: "Прайсы поставщиков"
+    status_if_missing: degraded
+    dataset_query:
+      name_contains: ["PRICE_SERVICE_Index"]
+    accepted_files: ["*.xlsx", "*.xlsm", "*.xls", "*.csv", "*.pdf", "*.docx", "*.md", "*.json"]
+    needed_for:
+      - "поиск цены по наименованию и артикулу"
+      - "проверяемая ссылка на файл, лист и строку прайса"
+      - "добор цены, отсутствующей в ФГИС ЦС"
+    operator_action: "Открой в Документах закреплённый датасет «Прайсы» и добавь файл кнопкой «Добавить файл». В сметном чате он подключается автоматически."
+    process_label: "Проверить прайсы"
+
   - id: normcontrol_spds_rulepack
     domain: normcontrol
     label: "СПДС rulepack: ГОСТ Р 21.101-2026"
@@ -210,7 +226,7 @@ sources:
     status_if_missing: degraded
     dataset_query:
       domains: ["NTD_SPDS", "NTD_GENERAL"]
-      name_contains: ["21.101", "СПДС", "SPDS"]
+      name_contains: ["NORMATIVE_SERVICE_Index", "21.101", "СПДС", "SPDS"]
     accepted_files: ["*.pdf", "*.docx", "*.md", "*.txt"]
     needed_for:
       - "цитаты/текст требований"
