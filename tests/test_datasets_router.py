@@ -919,6 +919,11 @@ async def test_upload_background_parse_failure_is_persisted(tmp_path, monkeypatc
     (tmp_path / "storage" / "datasets").mkdir(parents=True)
     dataset_state.parse_error = RuntimeError("index contract missing")
     tasks = []
+
+    async def _admit(state, **kwargs):
+        return None
+
+    monkeypatch.setattr(datasets, "assert_parse_admission", _admit)
     monkeypatch.setattr(datasets.asyncio, "create_task", tasks.append)
 
     response = await datasets.upload_file(
