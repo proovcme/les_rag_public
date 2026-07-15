@@ -25,6 +25,22 @@ available for diagnosis and the previous active generation remains live.
 **Status:** recovery and fail-closed validation work; end-to-end atomic FGIS generation activation
 remains open and must not be represented as solved by bundling a release archive.
 
+## Operational incident 2026-07-15: production smoke outlived neither OpenSSH session nor job
+
+The 0.24.14 production gate proved API/UI and heavy-PDF RRF while its remote PowerShell session was
+still open, then published successfully. A separate request after the SSH command returned found no
+listeners on 8050/8051: children created from session 0 had exited with the remote job. The installed
+Tauri executable was then started in the logged-in Oleg session through a one-shot interactive
+scheduled task; the task was removed, and a new independent SSH probe confirmed version 0.24.14,
+`qwen3.5:9b` and UI HTTP 200.
+
+**Rule:** an in-session smoke is necessary but not sufficient for Windows production persistence.
+The release orchestrator must close the build/deploy SSH session, then independently verify that
+the interactive desktop-owned runtime still answers. If it does not, release publication must stop.
+
+**Status:** production was recovered and independently verified; automated post-session persistence
+gate remains open.
+
 ## Operational incident 2026-07-14: clean Windows smoke reused shared Qdrant collection
 
 Изолированная Windows-установка получила собственные MetaDB/storage, но сохранила дефолтную

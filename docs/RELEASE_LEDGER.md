@@ -49,6 +49,11 @@ Windows-выпуск:            0.24.14 / build 425 (public GitHub release)
 > Production bootstrap в 17:30 вернул `action=kept_valid`: релизный baseline не перезаписал
 > существующую сметную базу Legion. Предыдущий инцидент `unified parquet does not match
 > structured-base manifest` остаётся отдельным долгом атомарного FGIS build→integrity→activate.
+> После выхода remote release-сеанса процессы, поднятые из Windows OpenSSH session 0, завершились,
+> хотя внутрисеансовый production-smoke был зелёным. Установленный Tauri запущен через одноразовую
+> interactive scheduled task пользователя Oleg; задача удалена после старта. Повторный внешний
+> probe после закрытия SSH: `/api/version=0.24.14`, `/api/settings.llm_model=qwen3.5:9b`, UI=200.
+> Release-gate должен получить отдельную post-session persistence-проверку.
 
 > 0.24.13 / build 424 — честная готовность и закреплённые служебные датасеты
 >
