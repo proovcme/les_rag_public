@@ -359,6 +359,45 @@ def test_batch_agent_accepts_gemma_scalar_norm_code_for_read(monkeypatch):
     assert result["selections"]["w1"]["norm_code"] == "ГЭСН67-01-003-01"
 
 
+def test_batch_agent_resolves_colon_display_alias_without_changing_norm_family(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": [{
+            "norm_code": "ГЭСН:67-01-003-01", "title": "Прокладка кабеля",
+            "measure_unit": "100 м", "work_steps": ["Прокладка кабеля"],
+            "resource_preview": [],
+        }]}
+        for query in queries
+    })
+    monkeypatch.setattr(workflow.nr_sp_service, "candidates", lambda **_kwargs: [])
+    monkeypatch.setattr(workflow.gesn_service, "get_norm", lambda code, **_kwargs: {
+        "name": code, "unit": "100 м", "work_steps": ["Прокладка кабеля"], "resources": [],
+    })
+    turns = iter([
+        [_native_call("search", "search_norms_batch", items=[{
+            "work_id": "w1", "queries": ["прокладка кабеля"],
+        }])],
+        [_native_call("read", "read_norms_batch", items=[{
+            "work_id": "w1", "norm_codes": ["ГЭСН67-01-003-01"],
+        }])],
+        [_native_call("submit", "submit_lsr_mapping", rows=[{
+            "work_id": "w1", "decision": "bind", "norm_code": "ГЭСН67-01-003-01",
+            "selection_kind": "exact", "applicability": "exact",
+            "analog_limitations": [], "reason": "состав работ совпадает",
+        }])],
+    ])
+
+    result = workflow._run_native_norm_agent(
+        [{"work_id": "w1", "title": "Прокладка кабеля", "unit": "м", "quantity": 10}],
+        lambda _messages, _tools: {"tool_calls": next(turns)},
+        candidate_limit=6,
+        max_turns=3,
+    )
+
+    assert result["selections"]["w1"]["norm_code"] == "ГЭСН:67-01-003-01"
+
+
 def test_norm_card_resources_are_model_opt_in_without_losing_internal_card():
     from proxy.smeta_core.document_workflow import _norm_card_for_model
 

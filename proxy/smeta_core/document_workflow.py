@@ -248,6 +248,27 @@ def _normalize_norm_codes_transport(item: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
 
 
+def _resolve_norm_code_transport(code: Any, available: dict[str, Any]) -> str:
+    """Resolve harmless display aliases while preserving the norm family.
+
+    Search may expose ``ГЭСН:01-...`` while a local model returns
+    ``ГЭСН01-...``.  They are the same typed norm reference; matching them by
+    the canonical family-aware key is transport repair, not norm selection.
+    """
+    requested = str(code or "").strip()
+    if requested in available:
+        return requested
+    requested_key = gesn_service._norm_key(requested)
+    if not requested_key:
+        return ""
+    matches = [
+        candidate_code
+        for candidate_code in available
+        if gesn_service._norm_key(candidate_code) == requested_key
+    ]
+    return matches[0] if len(matches) == 1 else ""
+
+
 
 
 def _tool_arguments(call: dict[str, Any]) -> dict[str, Any]:
@@ -561,11 +582,14 @@ def _run_batch_norm_agent(
                         item.get("include_resources"),
                         _tool_bool(args.get("include_resources"), False),
                     )
-                    for code in _normalize_norm_codes_transport(item):
-                        candidate = candidates.get(work_id, {}).get(code)
+                    available = candidates.get(work_id, {})
+                    for requested_code in _normalize_norm_codes_transport(item):
+                        code = _resolve_norm_code_transport(requested_code, available)
+                        candidate = available.get(code)
                         card = _opened_norm_card(code, candidate) if candidate else None
                         if card:
                             opened[work_id][code] = card
+                            opened[work_id][requested_code] = card
                             cards.append(_norm_card_for_model(card, include_resources=include_resources))
                     rows_out.append({"work_id": work_id, "ok": bool(cards), "norms": cards})
                 result = {"ok": True, "rows": rows_out}
@@ -607,8 +631,12 @@ def _run_batch_norm_agent(
                             "review_status": "model_batch_covered", "resource_bindings": [],
                         }
                         continue
-                    code = str(item.get("norm_code") or "")
-                    if decision != "bind" or code not in opened.get(work_id, {}):
+                    requested_code = str(item.get("norm_code") or "")
+                    opened_for_work = opened.get(work_id, {})
+                    opened_code = _resolve_norm_code_transport(requested_code, opened_for_work)
+                    opened_card = opened_for_work.get(opened_code) if opened_code else None
+                    code = str((opened_card or {}).get("norm_code") or opened_code)
+                    if decision != "bind" or not code:
                         errors.append({"work_id": work_id, "error": "bound norm must be returned by RAG and opened by the model"})
                         continue
                     bind_errors = _bind_submission_errors(item)
