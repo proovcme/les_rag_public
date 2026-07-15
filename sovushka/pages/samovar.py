@@ -107,6 +107,20 @@ def _computed_index_status(
     return raw or "EMPTY"
 
 
+def _operator_queue_notice(
+    *, pending: int, last_status: str, last_message: str, contract_compatible: bool
+) -> tuple[str, str] | None:
+    """Return one current, actionable operator state instead of a stale job verdict."""
+    if pending <= 0 or str(last_status).upper() not in {"FAILED", "ERROR", "CANCELLED"}:
+        return None
+    message = str(last_message or "").strip()
+    if "index contract missing" in message.lower():
+        if contract_compatible:
+            return (f"ГОТОВ К ПРОДОЛЖЕНИЮ · {pending} файлов ждут · нажмите «Пуск»", "ready")
+        message = "локальный индекс не подготовлен; перезапустите ЛЕС"
+    return (f"ОСТАНОВЛЕНО · {pending} файлов ждут · {message}", "error")
+
+
 def build_samovar():
     """Датасеты (v0.24) — таблица/карточки, светофор статуса, бар файлов, Пуск/Стоп/Ремонт,
     ошибка→что делать, диалог файлов, одна кнопка «Добавить». На API proxy/routers/datasets."""
@@ -117,6 +131,7 @@ def build_samovar():
         "filter": "all",
         "jobs": [],
         "memory": {},
+        "readiness": {},
         "index_settings": dict(_DEFAULT_INDEX_SETTINGS),
     }
     _refs = {"disp": None, "kpi": None, "status": None, "ops": None, "tbtn": None, "cbtn": None}
@@ -237,7 +252,7 @@ def build_samovar():
                         "font-size:12px;color:var(--text);font-variant-numeric:tabular-nums;"
                     )
                     ui.label(f"лёгкие {counts['light']}").style("font-size:12px;color:var(--ok);")
-                    ui.label(f"OCR {counts['ocr']}").style("font-size:12px;color:var(--warn);")
+                    ui.label(f"сканы {counts['ocr']}").style("font-size:12px;color:var(--warn);")
                     if counts["unknown"]:
                         ui.label(f"не распознано {counts['unknown']}").style("font-size:12px;color:var(--dim);")
                     if counts["errors"]:
@@ -259,7 +274,7 @@ def build_samovar():
                     ).style("font-size:11.5px;color:var(--dim);margin-top:4px;")
                 if counts["ocr"] and state_name in {"RED", "CRITICAL"}:
                     ui.label(
-                        "OCR/сканы лучше отложить: можно гнать текст, DOCX и таблицы, а тяжёлые сканы оставить до зелёной памяти."
+                        "Сканы лучше отложить: можно разбирать текст, документы и таблицы, а тяжёлые сканы оставить до нормальной памяти."
                     ).style("font-size:12px;color:var(--warn);margin-top:6px;")
                 if _settings_changed():
                     ui.label("Настройки отличаются от умолчания. Лучше трогать только если понимаем, зачем.").style(
@@ -282,7 +297,7 @@ def build_samovar():
                                     f"font-size:11px;color:{_job_status_color(str(job.get('status') or ''))};"
                                 )
                                 if eta:
-                                    ui.label(f"ETA {eta}").style("font-size:11px;color:var(--dim);")
+                                    ui.label(f"Осталось {eta}").style("font-size:11px;color:var(--dim);")
                             ui.linear_progress(value=max(0.0, min(1.0, pct / 100.0))).props(
                                 "instant-feedback color=orange"
                             ).style("height:7px;border-radius:4px;")
@@ -291,12 +306,20 @@ def build_samovar():
                     last = recent[0]
                     last_status = str(last.get("status") or "").upper()
                     last_message = str(last.get("message") or last.get("id") or "")
-                    if counts["pending"] and last_status in {"FAILED", "ERROR", "CANCELLED"}:
-                        if "index contract missing" in last_message.lower():
-                            last_message = "локальный индекс не был подготовлен установщиком"
-                        ui.label(
-                            f"ОСТАНОВЛЕНО · {counts['pending']} файлов ждут · {last_message}"
-                        ).style("font-size:12px;color:var(--err);font-weight:700;margin-top:8px;")
+                    readiness = _S.get("readiness") or {}
+                    general = readiness.get("general") if isinstance(readiness.get("general"), dict) else {}
+                    notice = _operator_queue_notice(
+                        pending=counts["pending"],
+                        last_status=last_status,
+                        last_message=last_message,
+                        contract_compatible=bool(general.get("contract_compatible")),
+                    )
+                    if notice:
+                        message, tone = notice
+                        color = "var(--ok)" if tone == "ready" else "var(--err)"
+                        ui.label(message).style(
+                            f"font-size:12px;color:{color};font-weight:700;margin-top:8px;"
+                        )
                     else:
                         ui.label(
                             f"Последняя задача: {_job_status_label(last_status)} · {last_message}"
@@ -485,7 +508,7 @@ def build_samovar():
             with ui.row().classes("items-center w-full").style("gap:10px;"):
                 ui.label(r["name"]).classes("sov-panel-title")
                 ui.label(f"{r['total']} файлов · {r['indexed']} в индексе · {r['pending']} ждут · "
-                         f"{r['error']} ошибок · {r['chunks']} чанков").classes("sov-muted")
+                         f"{r['error']} ошибок · {r['chunks']} фрагментов").classes("sov-muted")
                 ui.element("div").style("flex:1;")
                 if r["error"]:
                     ui.button("Ремонт", icon="o_build",
@@ -762,7 +785,7 @@ def build_samovar():
                         ui.label("Статус").style("flex:1.4;")
                         ui.label("Файлы" + _sort_arrow("files")).style("flex:1.6;cursor:pointer;").on(
                             "click", lambda: _set_sort("files"))
-                        ui.label("Чанки" + _sort_arrow("chunks")).style("width:70px;cursor:pointer;").on(
+                        ui.label("Фрагменты" + _sort_arrow("chunks")).style("width:88px;cursor:pointer;").on(
                             "click", lambda: _set_sort("chunks"))
                         ui.label("").style("width:160px;")
                     for r in vis:
@@ -777,7 +800,7 @@ def build_samovar():
                                     if r["pending"]:
                                         detail = (
                                             f"лёгкие {r.get('pending_light', 0)} · "
-                                            f"OCR {r.get('pending_ocr', 0)}"
+                                            f"сканы {r.get('pending_ocr', 0)}"
                                         )
                                         if r.get("pending_unknown"):
                                             detail += f" · ? {r.get('pending_unknown', 0)}"
@@ -796,12 +819,12 @@ def build_samovar():
                             with ui.row().classes("items-center w-full").style("gap:8px;margin-bottom:8px;"):
                                 ui.icon("o_circle").style(f"font-size:9px;color:{col};")
                                 ui.label(r["name"]).style("font-size:14px;font-weight:500;flex:1;")
-                                ui.label(f"{r['chunks']} чанков").classes("sov-muted")
+                                ui.label(f"{r['chunks']} фрагментов").classes("sov-muted")
                             _bar(r)
                             with ui.row().classes("items-center w-full").style("gap:6px;margin-top:8px;"):
                                 extra = ""
                                 if r["pending"]:
-                                    extra = f" · лёгкие {r.get('pending_light', 0)} · OCR {r.get('pending_ocr', 0)}"
+                                    extra = f" · лёгкие {r.get('pending_light', 0)} · сканы {r.get('pending_ocr', 0)}"
                                 ui.label(txt + extra).style(f"font-size:12px;color:{col};flex:1;")
                                 _row_actions(r)
 
@@ -812,8 +835,10 @@ def build_samovar():
         idx = await api_get("/api/indexing-mode") or {}
         disp = bool((st.get("reindex") or {}).get("running") or st.get("running"))
         jobs = await api_get("/api/jobs/summary?limit=40") or {}
+        readiness = await api_get("/api/rag/readiness") or {}
         job_items = jobs.get("jobs", []) if isinstance(jobs, dict) else []
         _S["jobs"] = job_items
+        _S["readiness"] = readiness if isinstance(readiness, dict) else {}
         if isinstance(idx, dict):
             _S["memory"] = idx.get("memory_state") if isinstance(idx.get("memory_state"), dict) else {}
         active_parse = [
@@ -908,7 +933,7 @@ def build_samovar():
         _refs["stats"] = {}
         _STAT_DEFS = (("datasets", "Датасеты", "var(--text)"), ("files", "Файлов", "var(--text)"),
                       ("indexed", "В индексе", "var(--ok)"), ("pending", "Ждут", "var(--warn)"),
-                      ("error", "Ошибки", "var(--err)"), ("chunks", "Чанков", "var(--accent)"))
+                      ("error", "Ошибки", "var(--err)"), ("chunks", "Фрагментов", "var(--accent)"))
         with ui.element("div").style("display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));"
                                      "gap:10px;width:100%;"):
             for _k, _lbl, _col in _STAT_DEFS:
@@ -936,7 +961,7 @@ def build_samovar():
         with ui.expansion("Настройки индексации", icon="o_tune", value=False).classes("w-full").style(
             "border:1px solid var(--border);border-radius:8px;background:var(--bg-panel);"
         ):
-            ui.label("Лучше не трогать без причины: маленький batch и пауза берегут память, особенно перед OCR.").style(
+            ui.label("Лучше не менять без причины: небольшая партия и пауза берегут память, особенно перед разбором сканов.").style(
                 "font-size:12px;color:var(--warn);padding:0 12px 8px;"
             )
             with ui.element("div").style(

@@ -203,7 +203,7 @@ def _resolve_auth(request: Request):
 
     if not is_auth and trusted_role:
         role = trusted_role
-        holder = "Trusted Network"
+        holder = "Доверенная сеть"
 
     is_admin = (role == "admin")
     return True, role, holder, is_admin

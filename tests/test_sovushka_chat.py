@@ -170,10 +170,10 @@ def test_samovar_operator_panel_shows_jobs_memory_and_ocr_queue():
 
     assert "Оператор индекса" in source
     assert "лёгкие" in source
-    assert "OCR" in source
+    assert "сканы" in source
     assert "/api/indexing-mode" in source
     assert "/api/jobs/summary?limit=40" in source
-    assert "ETA {eta}" in source
+    assert "Осталось {eta}" in source
     assert "complexity='needs_ocr'" in adapter_source
     assert "pipeline='markdown_needs_ocr'" in adapter_source
 
@@ -250,6 +250,23 @@ async def test_prepare_notebook_reader_memory_runs_or_schedules(monkeypatch):
 def test_samovar_pending_means_waiting_not_active_parsing():
     assert samovar_page._computed_index_status(total=10, indexed=2, pending=8) == "WAITING"
     assert samovar_page._computed_index_status(total=10, indexed=2, pending=8, active=True) == "PARSING"
+
+
+def test_samovar_stale_contract_failure_becomes_actionable_when_runtime_is_ready():
+    assert samovar_page._operator_queue_notice(
+        pending=8,
+        last_status="FAILED",
+        last_message="index contract missing: expected=x actual=none",
+        contract_compatible=True,
+    ) == ("ГОТОВ К ПРОДОЛЖЕНИЮ · 8 файлов ждут · нажмите «Пуск»", "ready")
+
+    blocked = samovar_page._operator_queue_notice(
+        pending=8,
+        last_status="FAILED",
+        last_message="index contract missing: expected=x actual=none",
+        contract_compatible=False,
+    )
+    assert blocked == ("ОСТАНОВЛЕНО · 8 файлов ждут · локальный индекс не подготовлен; перезапустите ЛЕС", "error")
 
 
 def test_samovar_document_layer_labels_are_human_readable():
