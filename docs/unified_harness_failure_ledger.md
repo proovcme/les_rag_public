@@ -20,6 +20,10 @@ scripts/smoke_unified_v08.py` (фикстура) или `--dataset-id <ds>` (р�
 **Rule:** выбор модели чата не меняет сметного агента. Смена модели внутри сметного хода не может
 быть скрытой; код не подменяет отсутствующий mapping собственным выбором норм.
 
+Живой повтор на Legion после 0.24.16 уточнил корень: через `/v1/chat/completions` Gemma дважды
+вернула пустой message без tools, а тот же `gemma4:12b` через нативный `/api/chat` немедленно вызвал
+тестовый tool. Локальный smeta transport переведён на native Ollama; модельный контракт не менялся.
+
 ## Operational incident 2026-07-15: FGIS unified parquet diverged from structured manifest
 
 Legion bootstrap history recorded a real repair with reason `unified parquet does not match

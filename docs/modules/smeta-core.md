@@ -43,6 +43,8 @@
   чистого сравнения резерв можно отключить пустым `LES_SMETA_DOCUMENT_FALLBACK_MODEL`; при заданном
   резерве transport сначала повторяет исходную модель с обязательным tool-call и только затем явно
   переключает неудавшийся ход. Профессиональное решение по-прежнему остаётся модельным.
+  Для Ollama используется нативный `/api/chat`, потому что совместимый `/v1/chat/completions` теряет
+  tool-calls `gemma4:12b`; это transport-различие, а не отдельная логика выбора норм.
 - `proxy.smeta_core.norm_browser.browse_norms_many` — пакетный RRF-поиск.
 - `proxy.smeta_core.calculator.calculate_visible_rows_revision` — один расчёт решения модели.
 - `proxy.services.smeta_user_message_service` — человеческое сообщение из готовой summary.

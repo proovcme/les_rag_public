@@ -331,41 +331,74 @@ def _smeta_document_timeout(runtime: LlmRuntime) -> float:
 def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[str, Any]:
     """Native tool-call exchange for one continuous smeta conversation."""
     runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
-    body = {
-        "model": runtime.model,
-        # Native tool selection must end on the real user/tool message.  The
-        # MLX no-think assistant prefill is useful for visible prose, but here
-        # it turns the next turn into prose continuation and suppresses
-        # Qwen's tool_calls entirely.
-        "messages": messages,
-        "tools": tools,
-        "temperature": 0.0,
-        "max_tokens": _env_int(
-            "LES_SMETA_DOCUMENT_MAX_TOKENS",
-            3200 if is_cloud_provider(runtime.provider) else 900,
-        ),
-        "parallel_tool_calls": True,
-    }
-    body = _cloud_body_for_model(body, runtime.model, runtime.provider)
+    max_tokens = _env_int(
+        "LES_SMETA_DOCUMENT_MAX_TOKENS",
+        3200 if is_cloud_provider(runtime.provider) else 900,
+    )
+    native_ollama = runtime.provider == "ollama"
+    if native_ollama:
+        # Ollama's OpenAI-compatible endpoint can silently lose Gemma native
+        # tool_calls. Its native /api/chat contract preserves them for both
+        # Gemma and Qwen, while keeping the same messages/tools schema.
+        body = {
+            "model": runtime.model,
+            "messages": messages,
+            "tools": tools,
+            "stream": False,
+            "think": False,
+            "options": {"temperature": 0.0, "num_predict": max_tokens},
+        }
+        chat_url = _join_openai_path(runtime.base_url, "/api/chat")
+    else:
+        body = {
+            "model": runtime.model,
+            # Native tool selection must end on the real user/tool message.  The
+            # MLX no-think assistant prefill is useful for visible prose, but here
+            # it turns the next turn into prose continuation and suppresses
+            # Qwen's tool_calls entirely.
+            "messages": messages,
+            "tools": tools,
+            "temperature": 0.0,
+            "max_tokens": max_tokens,
+            "parallel_tool_calls": True,
+        }
+        body = _cloud_body_for_model(body, runtime.model, runtime.provider)
+        chat_url = runtime.chat_url
     if is_cloud_provider(runtime.provider) and "glm" in str(runtime.model or "").casefold():
         body["thinking"] = {"type": "disabled"}
     headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
     try:
         with httpx.Client(timeout=_smeta_document_timeout(runtime)) as client:
-            response = client.post(runtime.chat_url, headers=headers, json=body)
+            response = client.post(chat_url, headers=headers, json=body)
             if response.status_code == 400 and "thinking" in body:
                 fallback_body = dict(body)
                 fallback_body.pop("thinking", None)
-                response = client.post(runtime.chat_url, headers=headers, json=fallback_body)
+                response = client.post(chat_url, headers=headers, json=fallback_body)
             response.raise_for_status()
-            message = response.json().get("choices", [{}])[0].get("message", {})
+            payload = response.json()
+            message = (
+                payload.get("message", {})
+                if native_ollama
+                else payload.get("choices", [{}])[0].get("message", {})
+            )
             message = message if isinstance(message, dict) else {}
             if not message.get("tool_calls"):
                 required_body = dict(body)
-                required_body["tool_choice"] = "required"
-                response = client.post(runtime.chat_url, headers=headers, json=required_body)
+                if native_ollama:
+                    required_body["messages"] = [
+                        *messages,
+                        {"role": "user", "content": "Продолжи только вызовом одного из предоставленных инструментов."},
+                    ]
+                else:
+                    required_body["tool_choice"] = "required"
+                response = client.post(chat_url, headers=headers, json=required_body)
                 response.raise_for_status()
-                required_message = response.json().get("choices", [{}])[0].get("message", {})
+                required_payload = response.json()
+                required_message = (
+                    required_payload.get("message", {})
+                    if native_ollama
+                    else required_payload.get("choices", [{}])[0].get("message", {})
+                )
                 if isinstance(required_message, dict):
                     message = required_message
                     message["_les_model"] = str(required_body["model"])
@@ -380,10 +413,21 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
             ):
                 fallback_body = dict(body)
                 fallback_body["model"] = fallback_model
-                fallback_body["tool_choice"] = "required"
-                response = client.post(runtime.chat_url, headers=headers, json=fallback_body)
+                if native_ollama:
+                    fallback_body["messages"] = [
+                        *messages,
+                        {"role": "user", "content": "Продолжи только вызовом одного из предоставленных инструментов."},
+                    ]
+                else:
+                    fallback_body["tool_choice"] = "required"
+                response = client.post(chat_url, headers=headers, json=fallback_body)
                 response.raise_for_status()
-                fallback_message = response.json().get("choices", [{}])[0].get("message", {})
+                fallback_payload = response.json()
+                fallback_message = (
+                    fallback_payload.get("message", {})
+                    if native_ollama
+                    else fallback_payload.get("choices", [{}])[0].get("message", {})
+                )
                 if isinstance(fallback_message, dict):
                     message = fallback_message
                     message["_les_model"] = fallback_model

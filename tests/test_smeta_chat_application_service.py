@@ -240,7 +240,7 @@ def test_document_exchange_requires_tool_and_falls_back_from_non_tool_ollama(mon
             return None
 
         def json(self):
-            return {"choices": [{"message": self._message}]}
+            return {"choices": [{"message": self._message}], "message": self._message}
 
     class Client:
         def __init__(self, **_kwargs):
@@ -272,10 +272,11 @@ def test_document_exchange_requires_tool_and_falls_back_from_non_tool_ollama(mon
     assert result["tool_calls"][0]["id"] == "tool-1"
     assert result["_les_model"] == "qwen3.5:9b"
     assert result["_les_fallback_from"] == "gemma4:12b"
-    assert bodies[1]["tool_choice"] == "required"
+    assert bodies[1]["messages"][-1]["content"].startswith("Продолжи только")
     assert bodies[1]["model"] == "gemma4:12b"
-    assert bodies[2]["tool_choice"] == "required"
+    assert bodies[2]["messages"][-1]["content"].startswith("Продолжи только")
     assert bodies[2]["model"] == "qwen3.5:9b"
+    assert "options" in bodies[0]
 
 
 def test_default_direct_dependencies_live_in_smeta_adapter_not_router():
