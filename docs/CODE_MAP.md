@@ -195,7 +195,8 @@ projection под тем же alias; при rollback старый FTS восст
 Группы: рантайм-контроль (`install_les`, `les_runtime_control`, `lesctl`, `les_doctor` — W7.2 health-отчёт: порты/RAM/диск/GPU/инференс/провайдеры/коллекции, офлайн-безопасный, переиспользует `les_runtime_control`; `deploy_to_runtime` — манифест-деплой dev→рантайм-клон с защитой дивергентных файлов, `--apply/--restart`, Ц2; `onboard_provider` — мастер выбора LLM-провайдера до GUI, Ц15) · релизы (`build_*_release`, `build_release_artifacts`, `check_*_budget`, `build_icons` — SVG→.icns/.ico, Ц15) · сметное (`gesn_bulk_import` — полная база ГЭСН-2022 из ФГИС ЦС, резюмируемый; `gesn_import` — XLSX/CSV ГРАНД/НСИ; `gesn_pdf_import` — PDF/JSON; `harvest_dataset` — verify→train-set) · почта (`legion_mail_tunnel.sh` — обратный SSH Legion-Outlook→Мак) · CAD/BIM экстракторы (`cad_bim_extract_dxf` — DXF и DWG через `dwg2dxf`; `cad_bim_extract_ifc`) · Core ML/эмбеддинги (`coreml_*`) · smoke (`browser_smoke`, `chat_format_smoke`, `clean_install_smoke`, `runtime_smoke`) · индексация/eval (`build_lexical_index`, `reindex_*_guarded`, `rag_golden_set`, `rag_eval_report`, `measure_weak_retry` — W2.7: доля weak, закрываемой словарём, на golden → go/no-go по LLM-ступени) · сиды (`seed_artel_*`).
 
 - **Windows release smoke:** `tools/windows_release_smoke.ps1` запускает установленный runtime
-  отдельным bootstrap-процессом, ждёт terminal `ready`, проверяет `/api/version`, UI, Qdrant и
+  отдельным bootstrap-процессом, ждёт terminal `ready`, который bootstrap публикует только после
+  живого `/api/health`, проверяет `/api/version`, UI, Qdrant и
   фактический `dense + qdrant_sparse → RRF` на собственной одноразовой Qdrant-коллекции,
   затем удаляет её и останавливает только выбранные динамические порты. Русский JSON передаётся
   явными UTF-8 bytes; stdout bootstrap не читается через pipe, который могут удерживать

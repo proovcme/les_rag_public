@@ -7,7 +7,7 @@
   [string]$ExpectedVersion,
   [string]$Question = "ширина путей эвакуации",
   [int]$TopK = 3,
-  [int]$BootstrapTimeoutSeconds = 240,
+  [int]$BootstrapTimeoutSeconds = 480,
   [int]$RetrievalTimeoutSeconds = 180
 )
 

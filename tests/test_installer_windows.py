@@ -94,6 +94,25 @@ def test_start_light_keeps_uv_server_processes_alive():
     assert "Start-Process uv -ArgumentList" not in text
 
 
+def test_windows_bootstrap_reports_ready_only_after_api_health():
+    bootstrap = (
+        build_windows_installer.ROOT / "installers" / "windows" / "app" / "bootstrap.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    assert "function Wait-LesApiReady" in bootstrap
+    assert 'Wait-LesApiReady "http://127.0.0.1:$proxyPort/api/health" 180' in bootstrap
+    assert '"services_api_not_ready"' in bootstrap
+
+
+def test_qdrant_payload_indexes_do_not_block_api_startup():
+    adapter = (
+        build_windows_installer.ROOT / "backend" / "qdrant_adapter.py"
+    ).read_text(encoding="utf-8")
+
+    payload_index_call = adapter.split("await self.aclient.create_payload_index(", 1)[1].split(")", 1)[0]
+    assert "wait=False" in payload_index_call
+
+
 def test_windows_tauri_uses_update_safe_persistent_state():
     root = build_windows_installer.ROOT
     state = (root / "installers" / "windows" / "state.ps1").read_text(encoding="utf-8")

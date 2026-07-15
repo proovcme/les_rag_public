@@ -75,6 +75,18 @@ function Toast([string]$m) {
   } catch { }
 }
 
+function Wait-LesApiReady([string]$Url, [int]$TimeoutSeconds = 180) {
+  $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+  do {
+    try {
+      $health = Invoke-RestMethod -Uri $Url -TimeoutSec 5
+      if ($health -and $health.status -eq "ok") { return $health }
+    } catch { }
+    Start-Sleep -Seconds 1
+  } while ([DateTime]::UtcNow -lt $deadline)
+  return $null
+}
+
 function Fail([string]$m, [string]$Code = "bootstrap_failed", [string]$InstallUrl = "") {
   Log "FAIL: $m"
   Write-Status -Phase "failed" -State "failed" -Message $m -Code $Code -InstallUrl $InstallUrl
@@ -401,6 +413,20 @@ if ($env:LES_TAURI_SHELL -eq "1") {
     # descendants inherit its output handle, leaving bootstrap stuck at services/running.
     $serviceOutput = @(& (Join-Path $Root "installers\windows\start-light.ps1"))
     $serviceOutput | Out-File -FilePath $Log -Append -Encoding utf8
+    # start-light starts long-lived child processes and has its own short
+    # diagnostic timeout.  Bootstrap must not publish terminal `ready` until
+    # the installed API itself answers; a clean Qdrant collection can still be
+    # finishing asynchronous payload-index creation at that point.
+    $runtimeStatePath = Join-Path $StateRoot "logs\windows-light-state.json"
+    if (-not (Test-Path -LiteralPath $runtimeStatePath)) {
+      Fail "службы запущены без файла состояния" "services_state_missing"
+    }
+    $runtimeState = Get-Content -LiteralPath $runtimeStatePath -Raw | ConvertFrom-Json
+    $proxyPort = [int]$runtimeState.proxy_port
+    $apiHealth = Wait-LesApiReady "http://127.0.0.1:$proxyPort/api/health" 180
+    if (-not $apiHealth) {
+      Fail "API ЛЕС не ответил после запуска служб" "services_api_not_ready"
+    }
   } catch {
     Fail "не удалось поднять службы: $($_.Exception.Message)" "services_start_failed"
   }

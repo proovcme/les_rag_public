@@ -1366,6 +1366,11 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                         collection_name=self.collection_name,
                         field_name=_field,
                         field_schema=models.PayloadSchemaType.KEYWORD,
+                        # Qdrant may serialize collection mutations immediately
+                        # after a clean collection was created.  Waiting for
+                        # every payload index made FastAPI startup look dead for
+                        # minutes even though the operation was safely queued.
+                        wait=False,
                     )
                 except Exception as _idx_err:  # noqa: BLE001
                     logger.warning("[INIT] payload-индекс %s: %s", _field, _idx_err)
