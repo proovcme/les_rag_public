@@ -795,9 +795,17 @@ class MetaDB:
                 "WHERE name='SMETA_SERVICE_Index' OR name='GESN_NORMS_2022_PDF' "
                 "OR name LIKE 'SMETA_RU_NORM_%'"
             )
-            from proxy.services.system_dataset_service import ensure_system_datasets
 
-            ensure_system_datasets(conn)
+    def ensure_system_datasets(self) -> list[str]:
+        """Provision module-owned datasets only from the real runtime bootstrap.
+
+        Constructing an isolated MetaDB must remain free of product-data side
+        effects; tests, tools and import probes legitimately use temporary DBs.
+        """
+        from proxy.services.system_dataset_service import ensure_system_datasets
+
+        with self._get_conn() as conn:
+            return ensure_system_datasets(conn)
 
     def create_dataset(self, name: str) -> str:
         from proxy.services.system_dataset_service import dataset_identity, system_dataset_spec
@@ -1244,6 +1252,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         self.content_dir     = Path(content_dir)
         self.content_dir.mkdir(parents=True, exist_ok=True)
         self.db              = MetaDB()
+        self.db.ensure_system_datasets()
         recovered = self.db.recover_interrupted_parsing()
         if recovered:
             logger.info("[INIT] Recovered %s interrupted parsing dataset(s)", recovered)
