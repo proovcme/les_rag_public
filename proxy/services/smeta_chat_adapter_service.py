@@ -348,7 +348,10 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
             "think": False,
             "options": {"temperature": 0.0, "num_predict": max_tokens},
         }
-        chat_url = _join_openai_path(runtime.base_url, "/api/chat")
+        ollama_root = runtime.base_url.rstrip("/")
+        if ollama_root.casefold().endswith("/v1"):
+            ollama_root = ollama_root[:-3]
+        chat_url = f"{ollama_root}/api/chat"
     else:
         body = {
             "model": runtime.model,

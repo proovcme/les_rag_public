@@ -229,6 +229,7 @@ def test_document_exchange_requires_tool_and_falls_back_from_non_tool_ollama(mon
     from proxy.services import smeta_chat_adapter_service as adapter
 
     bodies = []
+    urls = []
 
     class Response:
         status_code = 200
@@ -253,13 +254,14 @@ def test_document_exchange_requires_tool_and_falls_back_from_non_tool_ollama(mon
             return None
 
         def post(self, _url, **kwargs):
+            urls.append(_url)
             bodies.append(kwargs["json"])
             if len(bodies) <= 2:
                 return Response({"content": "Я отвечу текстом"})
             return Response({"tool_calls": [{"id": "tool-1", "function": {"name": "search_norms_batch"}}]})
 
     monkeypatch.setattr(adapter, "_smeta_model_runtime", lambda _name: adapter.LlmRuntime(
-        "ollama", "http://127.0.0.1:11434", "http://127.0.0.1:11434/v1/chat/completions",
+        "ollama", "http://127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1/chat/completions",
         "gemma4:12b", "", True,
     ))
     monkeypatch.setattr(adapter.httpx, "Client", Client)
@@ -277,6 +279,7 @@ def test_document_exchange_requires_tool_and_falls_back_from_non_tool_ollama(mon
     assert bodies[2]["messages"][-1]["content"].startswith("Продолжи только")
     assert bodies[2]["model"] == "qwen3.5:9b"
     assert "options" in bodies[0]
+    assert urls == ["http://127.0.0.1:11434/api/chat"] * 3
 
 
 def test_default_direct_dependencies_live_in_smeta_adapter_not_router():
